@@ -45,6 +45,18 @@ It is the next deliverable.
    also emitted as flat fixed-layout arrays, with SQLite holding everything
    else (symbols, debug info, interfaces, dependencies, provenance).
    Not researched.
+9. **SQLite as a foundational system library.** The owner expects SQLite to
+   be easy to build for this OS even with a different binary format, and
+   wants it available as a fundamental library. Points raised with the
+   owner, from general knowledge of SQLite and not yet checked against its
+   documentation: the port is mostly a matter of writing the OS interface
+   layer (the VFS: file access, sync, locking, time, randomness), plus
+   supplying memory and mutex hooks; SQLite's durability guarantees are
+   only as good as that layer's sync behaviour; there is a bootstrap
+   circularity if the loader needs SQLite to load SQLite (the flat-table
+   split in property 8 removes it); and SQLite and a bcachefs-style
+   engine are both B-tree databases, so the plan must say which one owns
+   what.
 
 The owner ended the list with "etc., etc.", so it is not closed. Additional
 properties drawn from the research should be offered as proposals for the
