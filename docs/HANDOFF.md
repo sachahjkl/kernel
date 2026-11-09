@@ -55,6 +55,7 @@ The next step is the owner's review of that file.
 - **Never use `gui_toolkit` in this project.** Decided on 2026-11-09. It is not made for a kernel. Graphical code is written from nothing, as a program of this system. The kernel tool uses only the Odin standard library.
 - **Decided on 2026-11-09**: WebGPU implementation written from nothing; `lld` now and a study of the RAD Linker next; RDI as the debug information format; a stream is a handle; BLAKE3; exports are functions only; the kernel tool counts kernel operations, with no fixed limit yet.
 - **Next step chosen by the owner: more research before design or code.**
+- **Graphics order (suggested by the owner, 2026-11-09, to confirm)**: no GPU at first. UEFI framebuffer, surfaces in shared memory, CPU drawing. WebGPU comes later on a working desktop. See property 18.
 - No pull request unless the owner asks.
 
 ## Research
