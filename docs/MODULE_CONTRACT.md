@@ -1,6 +1,6 @@
 # Module contract
 
-Status: draft 1, 2026-11-09. Proposal for review by the owner. Nothing here is decided or implemented.
+Status: draft 1, 2026-11-09. The owner closed its decisions on 2026-11-09. `module/format.odin` is version 1 of the format at the level of bytes; `FIRST_MILESTONE.md` lists the gaps.
 
 This document proposes the contract between modules: the module format, the loader, the call form, the type description, and the context.
 `GLOSSARY.md` defines the terms. `PROPERTIES.md` gives the rules; (P10) points to a property.

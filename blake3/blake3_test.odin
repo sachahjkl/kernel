@@ -1,3 +1,4 @@
+#+build !freestanding
 package blake3
 
 import "core:encoding/hex"

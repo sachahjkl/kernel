@@ -15,12 +15,14 @@
     pkgs = inputs.nixpkgs.legacyPackages.${system};
 
     # What tools/kerneltool needs on the path.
-    buildTools = [pkgs.odin pkgs.llvmPackages.lld pkgs.qemu pkgs.coreutils];
+    buildTools = [pkgs.odin pkgs.llvmPackages.lld pkgs.nasm pkgs.qemu pkgs.coreutils];
 
     # The UEFI firmware of the first machine. kerneltool reads these two names.
     firmware = {
       OVMF_CODE = "${pkgs.OVMF.fd}/FV/OVMF_CODE.fd";
       OVMF_VARS = "${pkgs.OVMF.fd}/FV/OVMF_VARS.fd";
+      # The source of the font, for the command "font" of kerneltool.
+      FONT_SOURCE = "${pkgs.spleen}/share/fonts/misc/spleen-8x16.bdf";
     };
 
     preCommitCheck = inputs.git-hooks.lib.${system}.run {
@@ -34,13 +36,13 @@
       };
     };
 
-    # kerneltool check: the tool passes -vet, the boot program builds, and the
-    # machine starts under QEMU and prints the mark of the boot program.
+    # kerneltool check: the host code passes -vet and its tests, the system builds,
+    # and the machine test passes under QEMU (console, desktop, tools).
     bootTest = pkgs.stdenvNoCC.mkDerivation ({
         name = "kernel-boot-test";
         src = inputs.nixpkgs.lib.fileset.toSource {
           root = ./.;
-          fileset = inputs.nixpkgs.lib.fileset.unions [./flake.nix ./boot ./tools ./module ./modules ./blake3];
+          fileset = inputs.nixpkgs.lib.fileset.unions [./flake.nix ./boot ./boot_info ./kernel ./tools ./module ./modules ./blake3 ./ring ./system ./graphics ./display ./programs];
         };
         nativeBuildInputs = buildTools;
         buildPhase = ''

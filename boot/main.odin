@@ -1,90 +1,251 @@
-// The boot program: a UEFI program (PROPERTIES.md, property 17).
+// The boot program: a UEFI program (docs/PROPERTIES.md, property 17).
 //
-// First version: it proves that the tool chain produces a UEFI program that
-// starts. It prints BOOT_MARK on the firmware console, then it stops the
-// machine. `kerneltool test` looks for BOOT_MARK.
+// It contains the kernel module and the boot image. It does this:
+//   1. reads the framebuffer of the firmware;
+//   2. loads the kernel module with the loader of package module;
+//   3. builds page tables: all physical memory at DIRECT_MAP_BASE, the kernel
+//      at KERNEL_BASE, and the same physical memory at its own addresses for
+//      the moment of the jump;
+//   4. reads the memory map and leaves the firmware services;
+//   5. starts the entry of the kernel with a Boot_Info record.
 package boot
 
-import "base:runtime"
+import info "../boot_info"
+import module "../module"
+import "base:intrinsics"
 
-// The records of the UEFI specification that this program reads. Only the
-// fields up to the last one that is used have a type; the others are rawptr.
+kernel_file := #load("../build/modules/kernel.module")
+boot_image := #load("../build/boot.image")
 
-Efi_Status :: uint
-
-Efi_Table_Header :: struct {
-	signature:   u64,
-	revision:    u32,
-	header_size: u32,
-	crc32:       u32,
-	reserved:    u32,
+foreign _ {
+	boot_jump :: proc "win64" (page_table: u64, entry: u64, boot: u64, stack: u64) -> ! ---
 }
 
-Efi_Text_Output :: struct {
-	reset:         rawptr,
-	output_string: proc "win64" (this: ^Efi_Text_Output, text: [^]u16) -> Efi_Status,
-}
+PAGE_SIZE :: info.PAGE_SIZE
+PAGE_PRESENT :: u64(1) << 0
+PAGE_WRITE :: u64(1) << 1
+PAGE_LARGE :: u64(1) << 7
+PAGE_NO_EXECUTE :: u64(1) << 63
+LARGE_PAGE_SIZE :: 2 << 20
+TABLE_SPAN :: 1 << 30 // The memory that one table of large pages maps.
+MINIMUM_DIRECT_MAP :: 4 << 30 // Device memory, such as the framebuffer, is below this.
+MEMORY_RANGE_CAPACITY :: 1024
+FIRMWARE_MAP_PAGES :: 16
 
-Efi_Reset_Type :: enum u32 {
-	Cold     = 0,
-	Warm     = 1,
-	Shutdown = 2,
-}
+PREFERRED_WIDTH :: 1024
+PREFERRED_HEIGHT :: 768
 
-Efi_Runtime_Services :: struct {
-	header:                        Efi_Table_Header,
-	get_time:                      rawptr,
-	set_time:                      rawptr,
-	get_wakeup_time:               rawptr,
-	set_wakeup_time:               rawptr,
-	set_virtual_address_map:       rawptr,
-	convert_pointer:               rawptr,
-	get_variable:                  rawptr,
-	get_next_variable_name:        rawptr,
-	set_variable:                  rawptr,
-	get_next_high_monotonic_count: rawptr,
-	reset_system:                  proc "win64" (type: Efi_Reset_Type, status: Efi_Status, data_size: uint, data: rawptr),
-}
-
-Efi_System_Table :: struct {
-	header:               Efi_Table_Header,
-	firmware_vendor:      [^]u16,
-	firmware_revision:    u32,
-	console_in_handle:    rawptr,
-	console_in:           rawptr,
-	console_out_handle:   rawptr,
-	console_out:          ^Efi_Text_Output,
-	standard_error_handle: rawptr,
-	standard_error:       ^Efi_Text_Output,
-	runtime_services:     ^Efi_Runtime_Services,
-}
-
-// BOOT_MARK is the text that `kerneltool test` waits for. Keep the two equal.
-BOOT_MARK :: "boot program: ok"
+system: ^Efi_System_Table
+image_handle: rawptr
 
 @(export, link_name = "efi_main")
 efi_main :: proc "win64" (image: rawptr, system_table: ^Efi_System_Table) -> Efi_Status {
-	context = runtime.default_context()
-	print(system_table.console_out, BOOT_MARK + "\r\n")
-	system_table.runtime_services.reset_system(.Shutdown, 0, 0, nil)
+	system = system_table
+	image_handle = image
+	services := system.boot_services
+	print("boot program: started\r\n")
+
+	boot := (^info.Boot_Info)(allocate(1))
+	boot.magic = info.MAGIC
+	boot.framebuffer = framebuffer()
+
+	// The kernel module.
+	if module.validate(kernel_file) != .None {
+		stop("boot program: the kernel module is not valid\r\n")
+	}
+	head, _ := module.header(kernel_file)
+	kernel := ([^]u8)(allocate(head.memory_size / PAGE_SIZE))[:head.memory_size]
+	module.copy_segments(kernel_file, kernel)
+	if module.rebase(kernel_file, kernel, info.KERNEL_BASE) != .None || module.count(kernel_file, .Imports) > 1 {
+		stop("boot program: the kernel module cannot be loaded\r\n")
+	}
+	entry, has_entry := module.export_address(kernel_file, info.KERNEL_BASE, head.entry_export)
+	if !has_entry {
+		stop("boot program: the kernel module has no entry\r\n")
+	}
+	boot.kernel_address = u64(uintptr(raw_data(kernel)))
+	boot.kernel_size = head.memory_size
+	boot.kernel_file = u64(uintptr(raw_data(kernel_file)))
+	boot.kernel_file_size = u64(len(kernel_file))
+	// The boot image goes to its own pages: the kernel gives it to the root service as memory.
+	image_copy := allocate((u64(len(boot_image)) + PAGE_SIZE - 1) / PAGE_SIZE)
+	intrinsics.mem_copy_non_overlapping(image_copy, raw_data(boot_image), len(boot_image))
+	boot.boot_image = u64(uintptr(image_copy))
+	boot.boot_image_size = u64(len(boot_image))
+
+	stack := u64(uintptr(allocate(info.KERNEL_STACK_PAGES))) + info.KERNEL_STACK_PAGES * PAGE_SIZE
+	ranges := ([^]info.Memory_Range)(allocate((MEMORY_RANGE_CAPACITY * size_of(info.Memory_Range) + PAGE_SIZE - 1) / PAGE_SIZE))
+	firmware_map := allocate(FIRMWARE_MAP_PAGES)
+
+	// The page tables need the size of physical memory, so the memory map is
+	// read once now, and once more after the last allocation.
+	top := u64(MINIMUM_DIRECT_MAP)
+	{
+		count, _ := read_memory_map(firmware_map, ranges)
+		for range in ranges[:count] {
+			if range.kind != .Reserved {
+				top = max(top, range.start + range.page_count * PAGE_SIZE)
+			}
+		}
+	}
+	top = (top + TABLE_SPAN - 1) / TABLE_SPAN * TABLE_SPAN
+	boot.direct_map_size = top
+	boot.page_table = build_page_tables(top, kernel, head.memory_size)
+	boot.memory_ranges = u64(uintptr(ranges))
+
+	print("boot program: ok\r\n")
+	for attempt in 0 ..< 2 {
+		count, key := read_memory_map(firmware_map, ranges)
+		boot.memory_range_count = u64(count)
+		if services.exit_boot_services(image_handle, key) == 0 {
+			boot_jump(boot.page_table, u64(entry), u64(info.DIRECT_MAP_BASE) + u64(uintptr(boot)), u64(info.DIRECT_MAP_BASE) + stack)
+		}
+		_ = attempt
+	}
+	stop("boot program: the firmware refused to end its services\r\n")
+}
+
+// build_page_tables gives the address of the top level table.
+build_page_tables :: proc "contextless" (top: u64, kernel: []u8, kernel_size: u64) -> u64 {
+	table :: proc "contextless" () -> ^[512]u64 {
+		return (^[512]u64)(allocate(1))
+	}
+	// child gives the table that entry `index` of `parent` points to. It makes the table if needed.
+	child :: proc "contextless" (parent: ^[512]u64, index: u64) -> ^[512]u64 {
+		if parent[index] & PAGE_PRESENT == 0 {
+			parent[index] = u64(uintptr(table())) | PAGE_PRESENT | PAGE_WRITE
+		}
+		return (^[512]u64)(uintptr(parent[index] &~ 0xFFF))
+	}
+
+	root := table()
+
+	// Physical memory, in large pages: one set of tables, reached from entry 0
+	// (the addresses that the boot program runs at) and from the direct map.
+	physical := table()
+	for span in 0 ..< top / TABLE_SPAN {
+		large := child(physical, span)
+		for i in 0 ..< u64(512) {
+			large[i] = (span * TABLE_SPAN + i * LARGE_PAGE_SIZE) | PAGE_PRESENT | PAGE_WRITE | PAGE_LARGE
+		}
+	}
+	root[0] = u64(uintptr(physical)) | PAGE_PRESENT | PAGE_WRITE
+	root[(u64(info.DIRECT_MAP_BASE) >> 39) & 511] = u64(uintptr(physical)) | PAGE_PRESENT | PAGE_WRITE
+
+	// The kernel, in small pages, with the protection of each segment.
+	for index in 1 ..< module.count(kernel_file, .Segments) {
+		segment, _ := module.record(kernel_file, .Segments, index, module.Segment)
+		flags := PAGE_PRESENT
+		if .Write in segment.flags && .Read_Only_After_Load not_in segment.flags {
+			flags |= PAGE_WRITE
+		}
+		if .Execute not_in segment.flags {
+			flags |= PAGE_NO_EXECUTE
+		}
+		for offset := segment.memory_offset; offset < segment.memory_offset + segment.memory_size; offset += PAGE_SIZE {
+			address := u64(info.KERNEL_BASE) + offset
+			level3 := child(root, (address >> 39) & 511)
+			level2 := child(level3, (address >> 30) & 511)
+			level1 := child(level2, (address >> 21) & 511)
+			level1[(address >> 12) & 511] = (u64(uintptr(raw_data(kernel))) + offset) | flags
+		}
+	}
+	_ = kernel_size
+	return u64(uintptr(root))
+}
+
+// read_memory_map reads the memory map of the firmware into ranges.
+read_memory_map :: proc "contextless" (firmware_map: rawptr, ranges: [^]info.Memory_Range) -> (count: int, key: uint) {
+	size := uint(FIRMWARE_MAP_PAGES * PAGE_SIZE)
+	descriptor_size: uint
+	version: u32
+	if system.boot_services.get_memory_map(&size, firmware_map, &key, &descriptor_size, &version) != 0 {
+		stop("boot program: cannot read the memory map\r\n")
+	}
+	for offset := uint(0); offset < size && count < MEMORY_RANGE_CAPACITY; offset += descriptor_size {
+		descriptor := (^Efi_Memory_Descriptor)(uintptr(firmware_map) + uintptr(offset))
+		kind := info.Memory_Kind.Reserved
+		switch descriptor.type {
+		case .Conventional:
+			kind = .Free
+		case .Loader_Code, .Loader_Data:
+			kind = .Boot
+		case .Reserved, .Boot_Services_Code, .Boot_Services_Data, .Runtime_Services_Code, .Runtime_Services_Data, .Unusable, .Acpi_Reclaim, .Acpi_Storage, .Device, .Device_Ports, .Processor_Code, .Persistent:
+		}
+		ranges[count] = {start = descriptor.physical_start, page_count = descriptor.page_count, kind = kind}
+		count += 1
+	}
+	return
+}
+
+// framebuffer chooses a graphics mode and gives its description.
+framebuffer :: proc "contextless" () -> (result: info.Framebuffer) {
+	guid := EFI_GRAPHICS_OUTPUT_GUID
+	graphics: ^Efi_Graphics_Output
+	if system.boot_services.locate_protocol(&guid, nil, (^rawptr)(&graphics)) != 0 || graphics == nil {
+		print("boot program: no graphics output\r\n")
+		return
+	}
+	for mode in 0 ..< graphics.mode.mode_count {
+		size: uint
+		mode_info: ^Efi_Graphics_Mode_Info
+		if graphics.query_mode(graphics, mode, &size, &mode_info) != 0 {
+			continue
+		}
+		if mode_info.width == PREFERRED_WIDTH && mode_info.height == PREFERRED_HEIGHT && mode_info.format <= .Blue_Green_Red {
+			graphics.set_mode(graphics, mode)
+			break
+		}
+	}
+	mode_info := graphics.mode.info
+	result = {
+		address         = graphics.mode.framebuffer_base,
+		width           = mode_info.width,
+		height          = mode_info.height,
+		pixels_per_line = mode_info.pixels_per_line,
+	}
+	#partial switch mode_info.format {
+	case .Red_Green_Blue:
+		result.format = .Red_Green_Blue_X
+	case .Blue_Green_Red:
+		result.format = .Blue_Green_Red_X
+	case:
+		result = {}
+	}
+	return
+}
+
+// allocate gives zero pages that stay in use after the boot program.
+allocate :: proc "contextless" (page_count: u64) -> rawptr {
+	address: u64
+	if system.boot_services.allocate_pages(.Any, .Loader_Data, uint(page_count), &address) != 0 {
+		stop("boot program: no memory\r\n")
+	}
+	intrinsics.mem_zero(rawptr(uintptr(address)), int(page_count * PAGE_SIZE))
+	return rawptr(uintptr(address))
+}
+
+stop :: proc "contextless" (text: string) -> ! {
+	print(text)
+	system.runtime_services.reset_system(.Shutdown, 1, 0, nil)
 	for {}
 }
 
-// print writes ASCII text on a UEFI text output, which takes UTF-16.
-print :: proc(output: ^Efi_Text_Output, text: string) {
+// print writes ASCII text on the firmware console, which takes UTF-16.
+print :: proc "contextless" (text: string) {
 	buffer: [128]u16
 	count := 0
 	for i in 0 ..< len(text) {
 		if count == len(buffer) - 1 {
 			buffer[count] = 0
-			output.output_string(output, raw_data(buffer[:]))
+			system.console_out.output_string(system.console_out, raw_data(buffer[:]))
 			count = 0
 		}
 		buffer[count] = u16(text[i])
 		count += 1
 	}
 	buffer[count] = 0
-	output.output_string(output, raw_data(buffer[:]))
+	system.console_out.output_string(system.console_out, raw_data(buffer[:]))
 }
 
 // The Odin runtime refers to these two symbols on a Windows object target.

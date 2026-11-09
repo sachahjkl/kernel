@@ -1,6 +1,6 @@
 # Hand-off: kernel design
 
-Updated 2026-11-09. This repository contains no kernel code yet.
+Updated 2026-11-10. The first milestone is implemented: the system boots under QEMU to a desktop with a console, a system tool and demos. See `FIRST_MILESTONE.md`.
 
 ## What the owner wants
 
@@ -13,9 +13,11 @@ Reuse existing software where it fits.
 
 ## Current deliverable
 
-`PROPERTIES.md` is the plan of the properties on which the kernel is built. It is draft 2.
-It lists 21 properties, their status (decided or proposed), their costs, the tensions between them, and six decisions for the owner.
+The code of the first milestone, with its test under QEMU (`kerneltool test`, `nix flake check`).
+`FIRST_MILESTONE.md` describes what the code does, the choices that the owner has not reviewed, and the gaps.
 The next step is the owner's review of that file.
+
+`PROPERTIES.md` is the plan of the properties on which the kernel is built. It lists 21 properties, all accepted.
 
 ## Rules from the owner
 
@@ -58,6 +60,8 @@ The next step is the owner's review of that file.
 - **Graphics order (decided on 2026-11-09)**: no GPU at first. UEFI framebuffer, surfaces in shared memory, CPU drawing. WebGPU comes later on a working desktop. See property 18.
 - **RAD Linker and RDI study done** (2026-11-09, `research/rad_linker_rdi_study.md`; nothing was built or run, so build and runtime facts are unverified). Result: do not adapt the RAD Linker now; write the module converter with a linked image as input; RDI fits as the debug format but not as the description tables. Decided by the owner on 2026-11-09: modules are built on the ELF target with `lld`; RDI is not required, and debug information is DWARF in a separate object. Only the boot program uses the COFF target, because UEFI requires a PE file.
 - **Module contract rules closed on 2026-11-09**: no intermediate form of code; private module data and no code before the entry; one level of nested data across a ring; no thread-local data in the contract; no unwinding and required frame pointers; the kernel is a module. See `MODULE_CONTRACT.md`, "Rules closed".
+- **Goal of the first milestone (owner, 2026-11-09)**: a booted system with a working console and a basic graphical desktop, with demos and system tools that show what the system can do. Done on 2026-11-10.
+- **Font (owner, 2026-11-10)**: no enlarged low-resolution font. Use a bitmap font of good quality at its native size. Chosen: Spleen 8x16, BSD 2-Clause.
 - No pull request unless the owner asks.
 
 ## Research
@@ -85,7 +89,9 @@ Notes are in `research/`.
 
 ## Next steps
 
-1. Get the owner's decisions listed at the end of `PROPERTIES.md`.
-2. Research executable formats, linkers and loaders for property 10.
-3. Write the design of the first milestone in `PROPERTIES.md`: boot, two isolated modules, one shared ring.
-4. Set up the build as commands of an Odin tool, if the owner accepts Odin.
+1. Get the owner's review of the choices in `FIRST_MILESTONE.md`.
+2. Commands as exports of separate modules, with type descriptions, loaded by the console (property 19).
+3. Rights on handles, and a split of the Machine handle.
+4. Damage rectangles in the compositor.
+5. A block device service (virtio), then the storage service.
+6. Research on identity across machines; check of the licences in the reuse list of `PROPERTIES.md`.

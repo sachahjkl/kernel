@@ -1,6 +1,6 @@
 # Architecture
 
-Status: draft 1, 2026-11-09. Proposal for review by the owner. Nothing here is implemented.
+Status: draft 1, 2026-11-09. Proposal for review by the owner. `FIRST_MILESTONE.md` says which parts are implemented, and how.
 
 This document names the key systems and shows how they connect.
 It does not design the inside of each system.

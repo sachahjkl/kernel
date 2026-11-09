@@ -19,6 +19,7 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Flat table | An array of fixed-size records at a known offset. The form of the module metadata inside a module. The loader reads this form (P12, P13) | section, blob |
 | Index | A SQLite database that is built from flat tables and can be rebuilt from them. It answers queries across many modules. It is never the source of truth (P12) | registry, catalogue, cache |
 | Loader | The user-space code that builds a program from a module and its imports | linker, dynamic linker |
+| Boot image | The one block of data that the boot program loads with the kernel. It holds the modules of the first programs, each with its name | initrd, ramdisk |
 | Position-independent | Code that runs correctly at any address with no change to its bytes | relocatable, PIC, PIE |
 
 ## Running code
@@ -29,6 +30,7 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Thread | One flow of execution inside a program | fiber, task |
 | Service | A program that other programs call through rings. A service has no special privilege | daemon, server, driver |
 | Device service | A service that owns the queues of one device class (P7) | driver |
+| Input service | The device service of the keyboard and the mouse. It sends key and pointer events to the compositor | input driver |
 | Root service | The first program. It receives every handle that exists at boot and gives them out | init, PID 1, system manager |
 | Context | The one typed record that a program receives when it starts: arguments, granted handles, rings. It is defined by the system, not by a language (P19) | argv, argc, environment, arguments |
 | Kernel | The code that runs with processor privilege. It holds five systems: handle table, memory, scheduler, rings and wait, device grant | core, supervisor |
@@ -40,6 +42,7 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Term | Definition | Do not use |
 |---|---|---|
 | Handle | An index and a generation in the handle table of a program. It names one object with a set of rights. Handle 0 names no object (P2) | file descriptor, capability, token, reference |
+| Memory object | A run of page frames that the kernel names by handle. Programs map it; two programs that map the same one share it | region, shared memory segment, buffer |
 | Right | One permitted kind of operation on the object of a handle, for example read or map | permission, privilege, mode |
 | Grant | The act that gives a handle to a program, and the record of that act. A grant is visible and can be revoked (P20) | permission, authorization, consent |
 | Ambient access | Access that a program has because it runs, and not because it received a handle. The system has none (P20) | ambient authority |
@@ -53,6 +56,7 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Term | Definition | Do not use |
 |---|---|---|
 | Ring | A pair of queues in shared memory between two programs, or between a program and the kernel: one for command records, one for completion records (P4, P6) | pipe, socket, channel, port, message queue |
+| Kernel ring | The ring between a program and the kernel. Each kernel operation is a command record in it (P1) | system call table |
 | Record | A fixed-layout block of bytes with typed fields. An all-zero record is valid (P13) | struct, message, packet, object |
 | Command record | A record that asks the other side of a ring for one operation | request, message, call |
 | Completion record | A record that reports the result of one command record | response, reply, event |
@@ -77,7 +81,7 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Term | Definition | Do not use |
 |---|---|---|
 | Surface | A region of shared memory that one program draws into and the compositor displays (P18) | window buffer, framebuffer (reserved for the UEFI one) |
-| Compositor | The service that owns the display, combines surfaces and routes input to the program with focus | window manager, display server |
+| Compositor | The service that owns the display, combines surfaces and routes input to the program with focus. In the first milestone it is also the desktop shell | window manager, display server |
 | Console | A normal program that shows text in a surface and calls commands in a real programming language (P19) | terminal, TTY, shell |
 | Desktop shell | The program that starts programs and shows surfaces and grants to the person | launcher, window manager |
 | Picker | The surface of the document service where the person chooses a document. Its result is a grant | file dialog, powerbox |
