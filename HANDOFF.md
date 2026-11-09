@@ -63,8 +63,8 @@ Notes live in `research_notes/Jonathan Blow OS et kernel data oriented/`.
 | Blow's own OS/kernel statements | `blow_os_kernel.md` | Done |
 | Handmade sphere (Muratori, Fleury, Essence, Serenum, allocators) | `handmade_sphere_os.md` | Done |
 | Data-oriented and cache-conscious kernel patterns | `data_oriented_kernel.md` | Done. Findings tagged [V] were checked against the source; [R] are recalled and must be verified before being quoted as exact |
-| Good ideas from Linux, NT, and radical alternatives | `existing_kernels_good_ideas.md` | Was still running at hand-off; absent unless a later commit added it |
-| bcachefs and storage design (fork vs port vs reimplement) | `bcachefs_storage.md` | Same |
+| Good ideas from Linux, NT, and radical alternatives | `existing_kernels_good_ideas.md` | Done. About 40% of URLs checked ([V]); the rest recalled ([R]). DBOS details are from memory only and need confirming. "libnt" most plausibly means the NT Native API in `ntdll.dll` (second candidate: Cosmopolitan libc's `libc/nt`); ask the owner which |
+| bcachefs and storage design (fork vs port vs reimplement) | `bcachefs_storage.md` | Was still running at hand-off; absent unless a later commit added it |
 
 No research was commissioned on executable formats, linkers and loaders
 (property 6). That is a gap.
