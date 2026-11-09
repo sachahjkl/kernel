@@ -111,6 +111,9 @@ run_build :: proc(args: []string) -> int {
 	if !run(link[:]) {
 		return EXIT_FAILURE
 	}
+	if !build_modules() {
+		return EXIT_FAILURE
+	}
 	return 0
 }
 
@@ -167,12 +170,21 @@ run_test :: proc(args: []string) -> int {
 		return EXIT_FAILURE
 	}
 	fmt.printfln("kerneltool: test passed: the machine printed \"%s\"", BOOT_MARK)
+	if !test_modules() {
+		return EXIT_FAILURE
+	}
 	return 0
 }
 
 run_check :: proc(args: []string) -> int {
 	if !run({"odin", "check", "tools/kerneltool", "-vet"}) {
 		return EXIT_FAILURE
+	}
+	for folder in ([]string{"blake3", "tools/kerneltool"}) {
+		name, _ := strings.replace_all(folder, "/", "_", context.temp_allocator)
+		if !run({"odin", "test", folder, "-vet", strings.concatenate({"-out:" + BUILD_FOLDER + "/test_", name}, context.temp_allocator)}) {
+			return EXIT_FAILURE
+		}
 	}
 	return run_test(nil)
 }

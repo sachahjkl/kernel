@@ -248,12 +248,21 @@ Closed on 2026-11-09:
 7. **Build-time intermediate format**: ELF, chosen by the owner on 2026-11-09. It matches the System V register assignment of the call form (section 4). It never reaches the running system. The boot program is the one exception: UEFI requires a PE file, so `boot/` stays on the COFF target.
 8. **Kernel entry**: the kernel ring only.
 
+## Rules closed on 2026-11-09
+
+The owner closed the open questions of draft 1:
+
+1. **No intermediate form of code.** A module holds machine code only. Merge rewrites a call through a slot into a direct call, and no more. To inline across two bodies of code, compile their sources into one module. The contract depends on no compiler.
+2. **Exports are functions only.**
+3. **Module state: private data, no hidden start code.** A module can have global data. Each program gets its own copy, taken from the file. No code runs before the entry: the format has no constructors and no static initializers. A module that needs setup exports a function for it, and the caller calls it.
+4. **Debug information**: DWARF, in a separate object named by hash.
+5. **Nested data across a ring: one level only.** A record that goes through a ring can hold slices of flat records. A flat record holds no slice. The receiver checks all offsets in one pass with no recursion. Deeper data goes through a handle to a shared region or a stream.
+6. **Kernel entry**: the kernel ring only.
+7. **Thread-local data is not in the contract.** The loader has no support for thread-local segments. Each thread starts with the address of its thread record, and code passes it explicitly. The `fs` register is free for the private use of a program.
+8. **No unwinding. Frame pointers are required.** No exception crosses a module boundary. An error is a status value. A fault stops the program. Every module keeps frame pointers (`rbp` on x86-64), so that a debugger or a profiler walks the stack with no tables.
+9. **The kernel is a module.** The boot program contains the loader and loads the kernel as a module. The hash of the kernel module is the value that the TPM measures (P17).
+
 ## Open questions
 
-1. **Inlining across modules.** A merged module can inline only if the modules carry an intermediate form of the code. This form would become a part of the contract.
-2. **Data exports.** Closed: functions only.
-3. **Module state.** Two programs that map one module share its code. Each program has its own copy of its data. A rule is needed for the initial data of a module that is merged.
-4. **Debug information.** Closed: DWARF, in a separate object named by hash.
-5. **Description of nested data.** A record that holds a slice of records that hold slices. The check of all offsets on receipt must have a bounded cost. Cap'n Proto sets a traversal limit. [Types §4]
-6. **Kernel operations.** Closed on 2026-11-09: the kernel ring is the only entry. Fuchsia gives each program a kernel-supplied module instead. [Load §6]
-7. **Thread-local data and unwinding.** Not studied.
+1. **Initial data of a merged module.** Rule 3 gives each program one copy of the data of each module. The merge tool must keep this true when it merges two modules that both have data.
+2. **Description tables.** The first version of the format writes only the function names. The type, field and parameter tables are not yet specified at the level of bytes.

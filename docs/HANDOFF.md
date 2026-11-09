@@ -57,6 +57,7 @@ The next step is the owner's review of that file.
 - **Next step chosen by the owner: more research before design or code.**
 - **Graphics order (decided on 2026-11-09)**: no GPU at first. UEFI framebuffer, surfaces in shared memory, CPU drawing. WebGPU comes later on a working desktop. See property 18.
 - **RAD Linker and RDI study done** (2026-11-09, `research/rad_linker_rdi_study.md`; nothing was built or run, so build and runtime facts are unverified). Result: do not adapt the RAD Linker now; write the module converter with a linked image as input; RDI fits as the debug format but not as the description tables. Decided by the owner on 2026-11-09: modules are built on the ELF target with `lld`; RDI is not required, and debug information is DWARF in a separate object. Only the boot program uses the COFF target, because UEFI requires a PE file.
+- **Module contract rules closed on 2026-11-09**: no intermediate form of code; private module data and no code before the entry; one level of nested data across a ring; no thread-local data in the contract; no unwinding and required frame pointers; the kernel is a module. See `MODULE_CONTRACT.md`, "Rules closed".
 - No pull request unless the owner asks.
 
 ## Research
