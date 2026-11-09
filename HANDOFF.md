@@ -62,8 +62,8 @@ Notes live in `research_notes/Jonathan Blow OS et kernel data oriented/`.
 |---|---|---|
 | Blow's own OS/kernel statements | `blow_os_kernel.md` | Done |
 | Handmade sphere (Muratori, Fleury, Essence, Serenum, allocators) | `handmade_sphere_os.md` | Done |
-| Data-oriented and cache-conscious kernel patterns | `data_oriented_kernel.md` | Was still running at hand-off; absent unless a later commit added it |
-| Good ideas from Linux, NT, and radical alternatives | `existing_kernels_good_ideas.md` | Same |
+| Data-oriented and cache-conscious kernel patterns | `data_oriented_kernel.md` | Done. Findings tagged [V] were checked against the source; [R] are recalled and must be verified before being quoted as exact |
+| Good ideas from Linux, NT, and radical alternatives | `existing_kernels_good_ideas.md` | Was still running at hand-off; absent unless a later commit added it |
 | bcachefs and storage design (fork vs port vs reimplement) | `bcachefs_storage.md` | Same |
 
 No research was commissioned on executable formats, linkers and loaders
