@@ -220,7 +220,9 @@ Status: Decided.
 
 - **Rule**: The metadata of a unit is a SQLite database: symbols, interfaces, dependencies, origin of each bundled unit, debug information.
 - **Rule**: SQLite is a base library of the system. It is public domain, so it fits the MIT licence.
-- **Proposal for the open question**: The loader does not read SQLite. A unit also carries the few tables that the loader needs, as flat arrays with a fixed layout: segments, exports, imports by hash. The build tool writes these arrays from the database. This removes the circular dependency "load SQLite to load SQLite" and keeps program start free of a query engine.
+- **Rule** (accepted by the owner on 2026-11-09): The loader does not read SQLite. The unit metadata inside a unit is a set of flat tables: arrays of fixed-size records at known offsets, valid when zero. The flat tables are the source of truth.
+- **Rule**: The unit store copies the flat tables of each unit into a SQLite index. The index answers queries across units, for the console, the debugger and the tools. The index can be rebuilt completely from the units.
+- **Why**: This removes the circular dependency "load SQLite to load SQLite". It keeps SQLite out of the boot program and out of the code that reads untrusted units.
 - **Proposal**: The store index of property 11 and the grant records of property 2 are also SQLite databases. System state becomes one queryable format in place of text files.
 - **Cost**: SQLite needs an interface layer to the system: storage access, sync, locks, time, random numbers. Its durability is only as good as the sync of that layer.
 - **Rule to keep roles separate**: The storage engine of property 9 owns blocks and objects. SQLite owns structured metadata inside objects. One does not replace the other.
@@ -426,7 +428,7 @@ Licences in this table come from memory. Verify each one before the code is impo
 
 ## Decisions that the owner must make
 
-1. **Implementation language.** The proposal is Odin, because the owner's other programs and `gui_toolkit` use it, and because it has explicit allocators and a freestanding target.
+1. **Implementation language.** Odin, accepted by the owner on 2026-11-09. No system contract depends on it (property 19).
 2. **Graphics implementation** in property 18: write it, or port wgpu or Dawn.
 3. **Storage licence.** Keep MIT and reimplement ideas (recommended), or run bcachefs as a separate GPL service.
 4. **Status of properties 4, 14, 15 and 16, and of the driver rules of property 7.** Accept, change or reject each one.

@@ -8,15 +8,7 @@ It does not design the inside of each system.
 
 ## Vocabulary
 
-| Term | Meaning |
-|---|---|
-| Unit | The one format of code. A unit exports functions. A unit with an entry function can be started (P10) |
-| Program | A running unit with its own address space and its own handle table |
-| Service | A program that other programs call through rings. A service has no special privilege |
-| Handle | An index and a generation in the handle table of a program. It names one object with a set of rights (P2) |
-| Ring | A pair of queues in shared memory: one for commands, one for completions (P4) |
-| Store | The set of all units and system data, identified by content hash (P11) |
-| System description | The list of hashes that defines one version of the system (P11) |
+`GLOSSARY.md` defines every term of this document.
 
 ## The whole system
 
