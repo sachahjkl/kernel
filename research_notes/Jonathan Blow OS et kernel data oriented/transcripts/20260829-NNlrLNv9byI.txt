@@ -1,0 +1,11 @@
+Title: Jonathan Blow on the GPUs that lie about DirectX 12
+Channel: Jonathan Blow highlights
+Uploaded: 2026-08-29
+Duration: 1:55
+URL: https://www.youtube.com/watch?v=NNlrLNv9byI
+Source: YouTube automatic captions, unedited. Timestamps are mm:ss.
+
+[00:00] Your brother wasn't able to run either of the low performance updates. He has older GPU. Well, wait. Was he able to run the original game or none of them? Um is contacting support through Discord the only best way to Yeah, right now that's probably the best way. Um let us know. Like I said, it this is a DirectX 12 game, so you need a GPU that can do DirectX 12. Which is like from 10 or 12 years ago or whatever, but still some people have stuff that's older than that. Um The other thing is there is this confusing thing that's called DirectX 12 feature level 11. And what that means is that's not really a DirectX 12 GPU. It was just when DirectX 12 was announced. Like it's called feature level 11 because it's DirectX 11, right? But when DirectX 12 was announced, people wanted to sell GPUs still and didn't want them to be uh
+
+[01:01] considered obsolete. So they called their DirectX 11 GPUs DirectX 12 because they just had driver compatibility for the things that were there. So that was um I don't think feature level 11 works, right? Even though they kind of claim to be DirectX 12. Anyway, we're doing what we can uh with it. I think I think it's pretty good. But it being PC, like you just can't ever on PC run on 100% of people's systems. It's just not really possible. Um so but we're doing everything we can to run on 99.999% of systems. Does it run on Steam Deck? Yes. Yes, it runs very well on Steam Deck at this point.
+

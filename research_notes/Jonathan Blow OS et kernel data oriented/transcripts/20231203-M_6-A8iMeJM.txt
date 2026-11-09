@@ -1,0 +1,9 @@
+Title: Jonathan Blow on Shipping to Linux
+Channel: Jonathan Blow Clips
+Uploaded: 2023-12-03
+Duration: 29
+URL: https://www.youtube.com/watch?v=M_6-A8iMeJM
+Source: YouTube automatic captions, unedited. Timestamps are mm:ss.
+
+[00:00] bro we shipped braid on Linux it was a [ __ ] disaster it's a huge amount of effort it's like the most high maintenance girlfriend ever except she also hates you is she hot though no no she looks like a penguin
+

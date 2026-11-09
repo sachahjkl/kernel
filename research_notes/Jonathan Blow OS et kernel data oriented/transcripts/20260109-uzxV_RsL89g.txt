@@ -1,0 +1,13 @@
+Title: Jonathan Blow on why his stream sound (and Windows) sucks
+Channel: Jonathan Blow highlights
+Uploaded: 2026-01-09
+Duration: 2:39
+URL: https://www.youtube.com/watch?v=uzxV_RsL89g
+Source: YouTube automatic captions, unedited. Timestamps are mm:ss.
+
+[00:00] Um, hello. Hello. I mean, maybe the volume is slightly low. So, we have we have this problem now on Windows where it just changes the volume for no reason. Now, I don't know who the [ __ ] added some code to do this. Um, but like I I constantly have to tweak things up and down because it it just changes them all the time for no reason. Like I literally I leave this computer turned on all day every day. I never reboot it unless I'm forced to, which does happen sometimes. But like we did a stream last night. The volume was fine. I come down this morning. I do a stream. It's too low. Why? Because there's no adults in charge at Windows anymore. And they're just doing [ __ ] like this all the time. It's them wanting to be too smart. Yeah, I agree with that. But like if you're
+
+[01:02] going to try to be smart, you have to actually at least be kind of smart. You know what I'm saying? And they don't seem to be anymore. In the in long past Windows developers, at least some of them were pretty smart. Turned out it was some program you were using that was doing it. Can't remember if it was Google Hangouts or Skype or what. I could see that. But like it it should not be possible for a user program to alter my global microphone microphone volume in a way that affects other programs. Like that was settled a long time ago. Like we realize that that's not a good thing for an operating system to let programs do. It's one of the things it's supposed to prevent. But yeah, it's true. I've done in the past week. I've done a lot of Zoom meetings. I've done a lot of Google Meet. However, I have not done any of those things between last night's stream and this morning's stream. In fact, I've
+
+[02:04] run literally no programs except for the compiler and Emacs here between last night's stream. Well, we have twitch.tv in the background. So, maybe twitch.tv is changing the volume, but it's just st like it's unbelievably bad. Do I think it's possible for Windows to get fixed at this point? Um, I mean, anything's possible, but what I would say is it's probably easier to make a new operating system and make it successful than it is to make Windows good at this point.
+

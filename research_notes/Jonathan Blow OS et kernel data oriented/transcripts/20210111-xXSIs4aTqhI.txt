@@ -1,0 +1,17 @@
+Title: Jonathan Blow on Drivers
+Channel: Anton Swifton
+Uploaded: 2021-01-11
+Duration: 4:24
+URL: https://www.youtube.com/watch?v=xXSIs4aTqhI
+Source: YouTube automatic captions, unedited. Timestamps are mm:ss.
+
+[00:00] say no drivers trying to wrap your head around that does every user space process implement a tcp stack yes why does that sound bad let me put it a different way does every user space process implement printf is that bad do you need a driver to implement printf how do you do hardware abstraction in general um you have an interface that is standardized where you say i want a dma to the hardware and there's a particular protocol over what that packet format is and you just dma to the hardware and the hardware dma is back to you and you're good no drivers dude drivers need to get out of town why do drivers exist because people think it's cheaper
+
+[01:00] to do stuff in software than in firmware or hardware and they may be right i don't know but um i mean the result is an obvious disaster so we just have to try other things like it's crazy it's crazy what we have now would devs have to do a ton of specific work per kind of graphics card um well i mean we already do so i'm not sure what the question means we already have to do everything separate for every api like actually the situation might get better because right now right now if i want to target an nvidia graphics card on a mac and an nvidia graphics card on windows i have to program it twice like for the same card does every process carry driver for the
+
+[02:00] hardware um but that's the thing okay so about the sound card driver's question like sound is is just solved like it just shouldn't be there shouldn't be that much to it like if you want to do some special super experimental proto sound that's fine but you know most programs aren't going to use that until that becomes solved but like streaming you know 8.1 samples to sound hardware is pretty much trivial it's embarrassing how badly it's broken in linux and even now in windows it's not really broken but it's embarrassing how complicated they've made it it's actually very simple okay with 3d sound processing the solution is to stop pretending like that's a thing it's not a thing acceptance software there are dozens of ethernet cards with different protocols yeah but why it's stupid just have one just say if you want to target our
+
+[03:01] operating system do this or have them be in user space i'm fine if you want to have a user space program that marshals communication with your ethernet card it's just that's going to suck worse than not having that so i don't recommend it but if you want that that's fine ideally all of them would follow the same hard respect but that is not what we have i agree that that is not what we have but like either someone creates impetus for some kind of cleanup or nobody does you know what i mean linux is changing some things up with pipe wire i don't know what pipe wire is but anything anytime something has a name like that my reflexes that it's gonna be terrible maybe it's not maybe it's fine but like check out pipe wire it's like pulse audio it's like come on brute dude
+
+[04:03] it's a huge spec that has video stuff in it too i don't want huge specs part of what i want is for the interface the core interface that the operating system implements should be very simple it should be as simple as possible it shouldn't be a big spec so that that is my opinion
+

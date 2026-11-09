@@ -1,0 +1,15 @@
+Title: Jonathan Blow on why the socket API is the wrong abstraction for networking
+Channel: Jonathan Blow highlights
+Uploaded: 2026-06-18
+Duration: 3:05
+URL: https://www.youtube.com/watch?v=yKfaU4Ke6mg
+Source: YouTube automatic captions, unedited. Timestamps are mm:ss.
+
+[00:00] I was recently quoted as having said I don't like the socket module. Why is that? Because, okay. So, socket is a Unix concept, first of all. And it's it's a Unix concept for tying together a bunch of different things that are not related. Like writing to files and writing over the network and you know, freaking reading dev whatever, right? What I would do is just make an And I've done this before in C++. It's just I didn't have time to make a new one. What I would do is I would make a networking library that does what you [ __ ] want and doesn't give you a bunch of [ __ ] socket [ __ ] right? Cuz like you spend so much time like, "Oh, I didn't HTML my [ __ ] fuck." And it doesn't work, right? Like
+
+[01:01] just you know, just let me send TCP to the server, right? It's not hard. It's like a couple of function calls. Let me connect. Let me write and read messages and let me disconnect. Like it's a very simple API that people actually want. And they just have to go through hell to actually get the functionality they want every single time. Problem is NAT punch through and P2P. Well, that is an additional problem. Okay? But before you even try to solve that problem, uh you might as well make a good API for what people actually want to do. Dude, I never ever ever want anything to fail because I didn't HTML the [ __ ] Like that's the stupidest thing in the world. It's a horrible API. And I'm just angry about it because I've spent so much time
+
+[02:03] using these horrible APIs. And I did I really didn't want to propagate them, but Raphael wanted to do He wanted to provide some networking functionality in a module, and he didn't like understand what I was saying I wanted, and so he just did a a socket interface, which is fine. It does provide the functionality for people, so it gets the job done at some level, but it is not what I would do at all. Not at all. Or at least I don't know. I mean, it makes sense to provide those bindings for every operating system to people, right? Because you know, people are going to want to actually do some kind of thing that you can only do on a socket. But like if you say I want to do networking, like the word socket just shouldn't happen. It's It's not relevant to networking. If you know what I'm saying, which
+
+[03:03] you probably don't.
+

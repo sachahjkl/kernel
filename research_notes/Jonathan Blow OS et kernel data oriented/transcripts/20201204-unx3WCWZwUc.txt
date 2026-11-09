@@ -1,0 +1,13 @@
+Title: Jonathan Blow on Apple's M1 Processor (Faster CPUs don't matter)
+Channel: Blow Fan
+Uploaded: 2020-12-04
+Duration: 2:23
+URL: https://www.youtube.com/watch?v=unx3WCWZwUc
+Source: YouTube automatic captions, unedited. Timestamps are mm:ss.
+
+[00:00] any opinion or Insight on Apple's N1 processor I think the M2 processor will be even better you know what no I'm tired of people asking me this question like okay I realize that this is the new thing in the news the Apple M1 processor oh it's faster and all this but guys it doesn't matter it doesn't matter how fast CPUs are to for almost anything in your life because all that will happen is the same programmers who are making CPUs orders of magnitude slower at doing actual computation than they should be are just going to make them even slower that is all that happens and no they're not trading that off for productivity because again they're not productive so why do you care that a new faster CPU is coming out your computer can be a hundred times faster than it is with slightly different software all right 100 at least 100 times probably a lot
+
+[01:02] more than that oh no the M1 is like 40% faster you could be a hundred times faster 100 that is what I think about Apple's M1 processor computers are so fast you have no idea most professional programmers have no idea most okay most professional programmers have no idea how fast computers are they're crazy they're insane supercomputers who cares if m1 is twice as fast three you could be a hundred times faster starting today starting right now right now right this second I guess it's becoming a ranty night isn't
+
+[02:08] it isn't it where do you download the fast software unfortunately you have to write the fast software it's very sad it's a very sad State of Affairs
+

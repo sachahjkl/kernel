@@ -1,0 +1,11 @@
+Title: Writing Everything from Scratch - Jonathan Blow
+Channel: gamedev cuts
+Uploaded: 2022-08-08
+Duration: 1:18
+URL: https://www.youtube.com/watch?v=2pJtqDgWXys
+Source: YouTube automatic captions, unedited. Timestamps are mm:ss.
+
+[00:00] i mean that escalated quickly so you're working on a game then you thought oh it would be nicer to have a better game engine for that oh it would be nicer to write the game engine in a better language so so when when's your operating system coming out maybe soon and not not too soon actually the plan was the other way around so while working on the witness which was the last game that we released um in the middle of that to take a break i worked on a different game and that game was really fun i really enjoyed making it and stuff but it's it's not a first person 3d game it's like a top down camera kind of game and so it would use a moderately different engine than the witness did and i said well you know then i started thinking about making a new programming language and i said well if i make a new programming language i should make this game in that language but this game is really ambitious so let's do something that's maybe less ambitious first
+
+[01:00] and so the the game that we're making that i just described the puzzle movement system rewrite for is actually the game that we are making so that we can make this other game later so it's complicated
+

@@ -1,0 +1,13 @@
+Title: Jonathan Blow on two patterns every Windows programmer runs into
+Channel: Jonathan Blow highlights
+Uploaded: 2026-09-24
+Duration: 2:12
+URL: https://www.youtube.com/watch?v=zZUnt_XLgrk
+Source: YouTube automatic captions, unedited. Timestamps are mm:ss.
+
+[00:00] You're using ready pre-parsed data? No, this, okay. For those who don't know what's going on, this is a very standard WinAPI pattern. Okay? We can go read the docs, but tons of WinAPI works like this. You call it first with a null pointer. And when you do that, it tells you how much memory you need in this. Then, you get that much memory, you call it again with the same size and the new data pointer, and it's guaranteed to give you the data. That is how WinAPI has worked for decades. It's how all the memory allocating things work. We could like double, triple-check it, but I'm telling you pointer to a buffer that contains the information. If it's ready device info, the CB size info to Oh. Oh. Okay.
+
+[01:00] That's the problem. They should error on this. So, this is a different Windows pattern? All right. Yeah, I should have thought of this. This is a different Windows pattern. This one is how do you add stuff to your data structures over time without the whole API breaking? And the answer is you pass the size, right? And uh this is this is pretty messy. Because there the input is for one reason, and the output is for another another purpose, and that's why it's confusing. All right. Um So, it's going to be that. All right. We read We read the documentation, guys. But those are both I forgot a little bit about that one cuz it's less obvious, but um
+
+[02:02] wait no not size of ready pre-parsed data. We want size of rid device info if we even have that struct.
+

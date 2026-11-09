@@ -1,133 +1,67 @@
-# Hand-off: kernel design research
+# Hand-off: kernel design
 
-Written 2026-11-09 for whichever agent picks this up next. Nothing in this
-repo is code yet; the work so far is research toward a design.
+Updated 2026-11-09. This repository contains no kernel code yet.
 
 ## What the owner wants
 
-A new kernel that breaks with current designs while keeping the proven ideas
-of Linux, NT (and its native layer), and others. Starting point: the OS and
-kernel ideas Jonathan Blow has described in streams and interviews. Central
-theme: data-oriented design, meaning full awareness of the CPU/memory speed
-gap and optimisation for cache lines. End goal: a desktop environment and
-user programs.
+A new kernel that breaks with current designs and keeps the proven ideas of Linux, NT and others.
+The starting point is the set of ideas that Jonathan Blow described on stream.
+The central theme is data-oriented design. The end goal is a desktop environment and user programs.
 
-**The owner's first request, before any design or code: a very clear plan of
-the properties the kernel is built on.** That plan has not been written yet.
-It is the next deliverable.
+The owner wants help to collect separate ideas, develop them, and make them concrete.
+Reuse existing software where it fits.
 
-### Properties the owner has stated so far
+## Current deliverable
 
-1. **Sandboxing by default.** A program can reach nothing it was not
-   explicitly given.
-2. **Kernel off the hot path.** Avoid going through the kernel for operations
-   such as talking to the network interface.
-3. **Simple, maximal inter-process communication.** Simplify and lean hard on
-   the IPC mechanism.
-4. **No global, mutable, shared filesystem** as a concept programs rely on.
-5. **A proper storage engine underneath.** Either fork bcachefs or take
-   strong inspiration from it. Open issue: bcachefs is GPL-2.0 and this repo
-   is MIT, so a fork forces a licence decision that belongs to the owner.
-6. **Uniform position-independent code units.** One binary/code format, all
-   position-independent, so that static and dynamic linking stop being
-   different things: any piece of code can be swapped whether it was bundled
-   or bound at load time.
-7. **Data-oriented throughout** (cache lines, batching, flat tables over
-   pointer chasing).
-
-8. **Binary metadata stored in SQLite.** The metadata of the binary format
-   lives in a SQLite database: resilient, reliable, fast, and queryable.
-   The owner frames this as a pillar and as an instance of a wider
-   principle: **stay pragmatic**, reuse proven software where it fits.
-   SQLite is public domain, so there is no conflict with the MIT licence.
-   Open question raised with the owner: whether the loader itself reads
-   SQLite at program start, or whether the few tables the loader needs are
-   also emitted as flat fixed-layout arrays, with SQLite holding everything
-   else (symbols, debug info, interfaces, dependencies, provenance).
-   Not researched.
-9. **SQLite as a foundational system library.** The owner expects SQLite to
-   be easy to build for this OS even with a different binary format, and
-   wants it available as a fundamental library. Points raised with the
-   owner, from general knowledge of SQLite and not yet checked against its
-   documentation: the port is mostly a matter of writing the OS interface
-   layer (the VFS: file access, sync, locking, time, randomness), plus
-   supplying memory and mutex hooks; SQLite's durability guarantees are
-   only as good as that layer's sync behaviour; there is a bootstrap
-   circularity if the loader needs SQLite to load SQLite (the flat-table
-   split in property 8 removes it); and SQLite and a bcachefs-style
-   engine are both B-tree databases, so the plan must say which one owns
-   what.
-
-The owner ended the list with "etc., etc.", so it is not closed. Additional
-properties drawn from the research should be offered as proposals for the
-owner to accept or reject, not presented as decided.
-
-Open design questions already raised with the owner on property 6:
-where cross-unit inlining/LTO is allowed (it destroys replaceability);
-whether the loader patches inter-unit calls into direct calls (faster, but
-pages stop being shared between processes); whether units are identified by
-content hash (gives sharing without a global library directory).
+`PROPERTIES.md` is the plan of the properties on which the kernel is built. It is draft 2.
+It lists 20 properties, their status (decided or proposed), their costs, the tensions between them, and six decisions for the owner.
+The next step is the owner's review of that file.
 
 ## Rules from the owner
 
-- **Never commit under an AI identity.** No AI author, committer,
-  `Co-Authored-By`, or session trailer. Commits carry the owner's identity
-  only (same as the initial commit). The container's default git identity is
-  an AI one, so override both author and committer explicitly.
+- **Never commit under an AI identity.** No AI author, committer, `Co-Authored-By` or session trailer. Commits carry the owner's identity only.
 - **Deliverables in English.** The owner writes in French.
-- Work on branch `ccr-9f9d1e64-odx4pm`. No pull request unless asked.
+- **"Everything is a file" is rejected.** Decided on 2026-11-09.
+- **Relocatable units must also give reproducibility**, in the manner of NixOS. Decided on 2026-11-09.
+- **First machine: QEMU with virtio.** Decided on 2026-11-09. The owner does not see hardware as the main problem.
+- **Use the TPM, UEFI programs ("rich boot") and Secure Boot.** Decided on 2026-11-09.
+- **Target WebGPU and WGSL as the graphics stack.** Decided on 2026-11-09.
+- **Implementation language: Odin.** Accepted by the owner on 2026-11-09 ("odin ok"). The owner checks if they have access to the Jai beta. A UEFI program in Odin was proven to start under QEMU with OVMF.
+- **First use: a dedicated machine. No compatibility at first.** Decided on 2026-11-09. POSIX and Win32/NT layers are possible later, above the base interface.
+- **The console is a normal program with a real language. No TTY concept.** Decided on 2026-11-09.
+- **Do not go too fast.** The owner asked for architecture and key systems before any code. See `ARCHITECTURE.md`.
+- **A command is a function. No text between programs.** Decided on 2026-11-09. No `argv`, no text pipes, no parsing. A command line program and a library are the same unit; the metadata makes each exported function callable from the console. A started program receives a structured context, never `argc` and `argv`. See property 19.
+- **No system contract depends on a feature of one language.** Decided on 2026-11-09. Odin is the implementation language, not part of the interface. Contracts are memory layouts and numbers.
+- **The removal of the shared file system is a security requirement**, not a preference (owner, 2026-11-09). Property 20 lists the other cases of ambient access to close. The owner accepted the whole list.
+- **Zero is initialization (ZII).** Named by the owner on 2026-11-09. An all-zero record is valid in every system contract. See property 13.
+- No pull request unless the owner asks.
 
-## State of the research
+## Research
 
-Notes live in `research_notes/Jonathan Blow OS et kernel data oriented/`.
+Notes are in `research_notes/Jonathan Blow OS et kernel data oriented/`.
 
-| Thread | File | State |
+| Subject | File | State |
 |---|---|---|
-| Blow's own OS/kernel statements | `blow_os_kernel.md` | Done |
-| Handmade sphere (Muratori, Fleury, Essence, Serenum, allocators) | `handmade_sphere_os.md` | Done |
-| Data-oriented and cache-conscious kernel patterns | `data_oriented_kernel.md` | Done. Findings tagged [V] were checked against the source; [R] are recalled and must be verified before being quoted as exact |
-| Good ideas from Linux, NT, and radical alternatives | `existing_kernels_good_ideas.md` | Done. About 40% of URLs checked ([V]); the rest recalled ([R]). DBOS details are from memory only and need confirming. "libnt" most plausibly means the NT Native API in `ntdll.dll` (second candidate: Cosmopolitan libc's `libc/nt`); ask the owner which |
-| bcachefs and storage design (fork vs port vs reimplement) | `bcachefs_storage.md` | Done. Conclusion: reimplement a small subset of the ideas natively; a fork is ruled out by licence (GPL-2.0 vs MIT) and by coupling to Linux; a port through the existing userspace shim is feasible only as an optional, separate component. Closest existing fit for this kernel: Fuchsia's Fxfs. Nothing verified after July 2026. Effort and risk judgments are inferences |
+| Blow, statements read at the source | `blow_verified_statements.md` | Done. 17 design clips read. Use this file for citations |
+| Blow, transcripts | `transcripts/` | 36 videos, automatic captions, index in `transcripts/README.md` |
+| Blow, first survey from secondary sources | `blow_os_kernel.md` | Superseded for design items. Still useful for tweets, critiques and rebuttals |
+| Handmade community | `handmade_sphere_os.md` | Done |
+| Data-oriented kernel patterns | `data_oriented_kernel.md` | Done. [V] is verified, [R] is recalled |
+| Ideas from Linux, NT and research kernels | `existing_kernels_good_ideas.md` | Done. About 40% of URLs verified |
+| bcachefs and storage | `bcachefs_storage.md` | Done |
 
-No research was commissioned on executable formats, linkers and loaders
-(property 6). That is a gap.
+### Limits of the research
 
-### Caveats on what was found
-
-- **No video was read directly.** YouTube, transcript sites and X were
-  blocked in the research environment. Blow's concrete design list rests on
-  one third-party set of viewing notes (paritybit.ca) for two clips:
-  - "Jonathan Blow on how an operating system should work":
-    https://www.youtube.com/watch?v=k0uE_chSnV8
-  - "Jonathan Blow on Drivers":
-    https://www.youtube.com/watch?v=xXSIs4aTqhI
-
-  Their content is unverified and there are no timestamps. Someone watching
-  those two clips would turn the secondary items into verified ones.
-- **Attributed to Blow (secondary):** no drivers in the kernel; a minimal
-  kernel interface; processes communicating through mapped memory instead of
-  syscalls; processes "super-sandboxed" by default; a TCP stack as a
-  per-process library; no installation, registry or PATH; all code
-  position-independent with a single library type.
-- **Not attested for Blow:** explicit per-program filesystem views, any
-  scheduler design, any data-oriented kernel internals, a new executable
-  format. Those parts of the plan are the owner's own design.
-- Blow has never announced an OS project of his own.
-- In the Handmade notes, the mapping from allocator design (arenas,
-  caller-supplied memory) to syscall design is the researcher's inference,
-  labelled as such. "Dawn" as a Handmade OS project and "the OS as a
-  library" as a Muratori phrase could not be confirmed; do not attribute
-  them.
+- Transcripts are automatic captions. Check the video before you publish a quote as exact.
+- 19 of the 36 transcripts were not read. Their subjects are Windows defects and general programming.
+- Upload dates are known. Stream dates are not, except `bQnB6eI8DU4` (2026-04-11).
+- The "On the Metal" podcast episode with Blow (2020) was not transcribed. It discusses microkernels and dynamic linking.
+- No research exists on executable formats, linkers and loaders. Property 10 needs it.
+- DBOS details and the licences in the reuse list of `PROPERTIES.md` come from memory.
 
 ## Next steps
 
-1. All five note files are in; read them before writing anything.
-2. Write the properties plan the owner asked for, in English. For each
-   property: precise definition, what it forbids, what it costs, precedents
-   (Blow, NT, Linux, research systems), and tensions with the other
-   properties. Mark sourced claims versus design reasoning.
-3. Then a full synthesis report at
-   `reports/Jonathan Blow OS et kernel data oriented.md` (planned, not
-   written).
-4. Get the owner's decisions on: the licence question for bcachefs, and the
-   three open questions on property 6.
+1. Get the owner's decisions listed at the end of `PROPERTIES.md`.
+2. Research executable formats, linkers and loaders for property 10.
+3. Write the design of the first milestone in `PROPERTIES.md`: boot, two isolated units, one shared ring.
+4. Set up the build as commands of an Odin tool, if the owner accepts Odin.

@@ -1,0 +1,9 @@
+Title: Jon gives homework to the Linux nerds
+Channel: Ninad Sachania
+Uploaded: 2026-02-15
+Duration: 47
+URL: https://www.youtube.com/watch?v=iLYJadO9FOA
+Source: YouTube automatic captions, unedited. Timestamps are mm:ss.
+
+[00:00] Like instead of bothering me about not porting a game to Linux, you could fix any one of the 10,000 things that have wasted so much of my goddamn time. Like the whole [ __ ] [ __ ] about how you cannot have readonly data segments in a DLL because like the [ __ ] I forget exactly why because the [ __ ] address patching happens in user space for some [ __ ] reason and like the segment has to be writable. Like fix that.
+

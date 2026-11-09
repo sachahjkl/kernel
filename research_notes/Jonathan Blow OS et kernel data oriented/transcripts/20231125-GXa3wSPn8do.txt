@@ -1,0 +1,9 @@
+Title: Jonathan Blow on libc
+Channel: Jonathan Blow Clips
+Uploaded: 2023-11-25
+Duration: 36
+URL: https://www.youtube.com/watch?v=GXa3wSPn8do
+Source: YouTube automatic captions, unedited. Timestamps are mm:ss.
+
+[00:00] How would I change the G Libc IO and string management? I mean, dude, all of Libc is like that scene in Raiders of the Lost Ark when they open it and all the Nazis' faces melt. Like, that's what happens when you look at Libc. It's just like the worst code in the history of anything. So, like, asking me how I would change a small part of it is just not Like, I I wouldn't use any of that code. I would take off and nuke the site from orbit cuz it's the only way to be sure.
+

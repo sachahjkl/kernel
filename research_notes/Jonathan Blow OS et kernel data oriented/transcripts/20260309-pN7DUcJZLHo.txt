@@ -1,0 +1,13 @@
+Title: Jonathan Blow on X11
+Channel: Jonathan Blow highlights
+Uploaded: 2026-03-09
+Duration: 2:22
+URL: https://www.youtube.com/watch?v=pN7DUcJZLHo
+Source: YouTube automatic captions, unedited. Timestamps are mm:ss.
+
+[00:00] Dude, X11 is such a nightmare. Do you want to know something funny? When I went to college at Berkeley Computer School in 1989 the computers ran X11. Put that in your [ __ ] pipe and smoke it. And so I didn't know any better, so I was learning all these APIs and stuff. Everything about the way X11 works is exactly the opposite of what you would want to do if you want to do fast high-quality graphics. Literally everything about Why is it so backwards? You thought the devs in this age were so cracked. First of all, nobody used the word cracked that way. Secondly, it depends. There were some good programmers. The average programmer back then was a lot better than today. However, X11 came from MIT, the people who [ __ ] over-engineer
+
+[01:00] everything. The people who brought you GNU libc, not exactly, but like, you know. It's just X11 is way over-engineered in a really stupid way. And the whole reason it's designed that way is because they were like, "Hey, you want to send all the graphics over a network all the time, right?" And in retrospect, the approach that won and that's very superior technologically is no, just draw graphics however you want and then sample the screen and send that over the network. And that's what won. But X11's entire API is designed like a multiplayer game, essentially. It's really bad. That said, I mean, some of these things you could forgive people for not knowing back then. You could forgive them for not knowing that that's not the right paradigm to do graphics, but the problem
+
+[02:00] is everyone is so uh weak and flaccid at programming that like it's 35 years later and we're still running X11 cuz you can't even make Wayland good enough that people want to use it. Like, what's going on?
+

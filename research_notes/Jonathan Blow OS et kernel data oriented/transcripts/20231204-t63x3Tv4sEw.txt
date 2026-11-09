@@ -1,0 +1,9 @@
+Title: Jonathan Blow on the Complexity of Linux
+Channel: Jonathan Blow Clips
+Uploaded: 2023-12-04
+Duration: 54
+URL: https://www.youtube.com/watch?v=t63x3Tv4sEw
+Source: YouTube automatic captions, unedited. Timestamps are mm:ss.
+
+[00:00] like like if somebody could hand me a Linux distribution and I would be able to work on it uh and be productive I would get off Windows absolutely as as my regular work operating system because as I've said before Windows does not respect the user anymore they haven't for quite some time so I would like to use an operating system that respects the user instead the problem is I mean Linux has all these other problems it's like not that usable so yeah all right um like the basic like Linux is just too complicated if they would get rid of all the complexity it would be so much better than every other option
+

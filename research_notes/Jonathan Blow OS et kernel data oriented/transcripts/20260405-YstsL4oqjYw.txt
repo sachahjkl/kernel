@@ -1,0 +1,13 @@
+Title: Jonathan Blow on modern OS projects
+Channel: Jonathan Blow highlights
+Uploaded: 2026-04-05
+Duration: 2:44
+URL: https://www.youtube.com/watch?v=YstsL4oqjYw
+Source: YouTube automatic captions, unedited. Timestamps are mm:ss.
+
+[00:00] You feel like there are many OS projects going on right now. What is wrong with those projects? Okay, here's what I will say. I am not familiar with very many OS projects. So, maybe you know about more than me. That's great. I haven't been following too closely. What I will say though is that what I perceive as the number one problem is overall complexity of the entire stack of crap that everybody's supposed to be running. And I certainly have quite a few ideas if I were to make an operating system about how to shrink all that stuff. Like you do not need 95% of the software on the computer, right? And maybe it's inevitable that that will get bloated out by people making a bunch of crap again, but you can at least make a core that's clean and beautiful and reusable and modern and not Unix and all these things, all right?
+
+[01:00] And most projects that I've seen don't seem to have that kind of motivation, right? That's all. They They don't They don't seem to think that that's very important. Is a bare-bones Linux Linux install not light enough for you? No. Linux user space is a giant horrendous trash heap that's deeply embarrassing to everybody in the world, okay? Like the fact that you would even say that. No, there should be again, I will reiterate. I said 95% before, but that's just a number just pulled out of the air. I'm pretty sure it would be more like 99% of all that code simply should not be there. It should not be there. How much easier would it be to develop for a system that only has 1% of the code of current day Linux?
+
+[02:03] It would be tremendously better. Tremendously better. Your clean install of Ubuntu has 290 processes running. Insert Simpsons meme. 290 processes so far. Guys, it's not even that long ago that a Linux system would only have like 50 processes when you started it up. And guess what? How much more does Linux do today than it did then? Zero. It does the same thing. People just keep putting crap in. I need a Handmade Hero for OS development. That would be cool.
+

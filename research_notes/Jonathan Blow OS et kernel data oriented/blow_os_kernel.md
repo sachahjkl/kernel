@@ -1,5 +1,9 @@
 # Jonathan Blow on designing a new operating system / kernel
 
+> Superseded for design items. The clips were later read at the source.
+> Use `blow_verified_statements.md` for what Blow said about OS design, with timestamps.
+> This file stays useful for the tweets, the critiques and the rebuttals.
+
 Research date: 2026-11-09. Reliability legend used throughout:
 
 - **[P]** primary source fetched and read by me (Blow's own words, or a page quoting them verbatim).

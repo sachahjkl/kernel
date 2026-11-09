@@ -1,0 +1,11 @@
+Title: Jonathan Blow on why Unix is the wrong base for modern computers
+Channel: Jonathan Blow highlights
+Uploaded: 2026-10-19
+Duration: 1:57
+URL: https://www.youtube.com/watch?v=uF_3aRpyzD8
+Source: YouTube automatic captions, unedited. Timestamps are mm:ss.
+
+[00:00] Just make your own non-sucky Linux distro. I mean, the big problem with Linux is user space. But here's the problem is like Linux itself is mostly an operating system design from the 70s to the 80s, right? It's a re-implementation of Unix. And I don't think Unix is that good of an idea on modern computers. I just don't. So like if you really want to advance technology, you do something different. But like this is the crazy thing. There's like only really two operating systems right now in the whole world, right? Unless you talk embedded devices or something. There's only two operating systems. There's Unix and there's Windows. Right? So Android is like Unix with a bunch of poop on top, for example. And like not not letting you call APIs without Java, which in retrospect is like the worst technical decision ever
+
+[01:00] made. Um But like there's every every other operating system is a Unix variant, which is great. It's great that Unix has been so successful, but like it's been 50 years. Computers are way different. We should like our operating system core should be way different than Unix. And a lot of problems would just melt away if we just did that. But the complexity of the task is so high. I'm not surprised that we're just not getting the activation energy to do it. I mean for a while for a while I liked Windows enough and thought it was better than than Linux, but like they're rapidly destroying like I hate Windows now and they're just making it worse and worse every year. So I don't know, man. I don't know. Uh okay.
+

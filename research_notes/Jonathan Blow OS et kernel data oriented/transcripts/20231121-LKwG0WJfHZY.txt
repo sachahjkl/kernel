@@ -1,0 +1,9 @@
+Title: Jonathan Blow on the Windows Terminal
+Channel: Jonathan Blow Clips
+Uploaded: 2023-11-21
+Duration: 1:00
+URL: https://www.youtube.com/watch?v=LKwG0WJfHZY
+Source: YouTube automatic captions, unedited. Timestamps are mm:ss.
+
+[00:00] why does anybody think it's not going to be terrible first of all second of all why have we sunk so low that it's somehow exciting that somebody made a different version of a commandline where you type text characters and text characters get printed back to you like how far has software and software development Fallen to where that's even a notable thing like why isn't that somebody that 50 people just did their own version of this past weekend right why is this like some [ __ ] giant Manhattan Project battl Star Galactica like situation what is wrong with people I don't even
+

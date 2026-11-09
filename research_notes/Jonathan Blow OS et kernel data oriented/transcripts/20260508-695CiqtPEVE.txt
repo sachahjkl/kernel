@@ -1,0 +1,15 @@
+Title: Jonathan Blow on graphics APIs
+Channel: Jonathan Blow highlights
+Uploaded: 2026-05-08
+Duration: 3:24
+URL: https://www.youtube.com/watch?v=695CiqtPEVE
+Source: YouTube automatic captions, unedited. Timestamps are mm:ss.
+
+[00:00] You've been learning OpenGL lately. Yeah, that's a complete waste of time. I am with Selena pipeline to prepare you to learn Vulcan. Would you recommend? No. The thing about OpenGL is quite literally OpenGL was designed for graphics hardware from 1990. Okay? It's designed for graphics hardware from 46 years ago. Wait. 36 years ago. And then they hacked some stuff, and then they hacked some more stuff, and then they hacked some more stuff. Everything that you try to do in OpenGL that's modern in any way is bitter and painful because it's all like hacked through this tiny like glory hole through this API from 36 years ago. It's a complete waste of time. All it'll do is it'll give you weird ideas about
+
+[01:00] what makes sense. It'll mislead you as to what is appropriate. That said, Vulcan is also a complete nightmare. If you were going to going to learn something, use raylib, or use metal, even though that's only one platform, or use like DirectX 9. That's how you get started. Don't Like OpenGL is so far beyond what anybody should waste their time with at this point. It's unbelievable that anyone Like it's a severe breach of ethics that this isn't common knowledge. Right? Because it wastes so many people's time. Metal is saner than Vulcan and OpenGL. That's what I've been told. I haven't used it myself, but that's what I've been told. Like just just use anything but OpenGL. Literally anything. Write your own software renderer. It's better than OpenGL, all right?
+
+[02:00] Options on what graphics API you should aspire to learn once you're better. It doesn't matter. All these graphics APIs are poop sauce, all right? Except for game consoles, which are better. They're all terrible. Don't aspire to learn any They're not cool. They're pain that you have to go through to put graphics on the screen because the people in charge of designing them did not do their job. Okay? That's what modern graphics APIs are. They're They're just awful. They're not cool. They're not fun They're not interesting, and they're not necessary. Here's what you should do is go read the no graphics API post, right? What was that? This one. Read this. Read this. That's what you should do. Some people on Twitter have hyped up Vulkan to be the hard thing that you're proud of knowing, but like that's only That only makes sense
+
+[03:02] if it needs to be that hard. Like if what you're actually doing is some kind of super rocket science, then sure. You know? But like that's not really how it is. It's not really how it is.
+

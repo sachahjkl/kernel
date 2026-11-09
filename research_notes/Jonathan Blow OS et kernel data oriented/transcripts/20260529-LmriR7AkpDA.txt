@@ -1,0 +1,11 @@
+Title: Jonathan Blow on why code size should be small
+Channel: Ninad Sachania
+Uploaded: 2026-05-29
+Duration: 1:28
+URL: https://www.youtube.com/watch?v=LmriR7AkpDA
+Source: YouTube automatic captions, unedited. Timestamps are mm:ss.
+
+[00:01] A big project with legacy code it is hard to make things smaller sometimes. That is true also. However, that is why it's so important to try and keep things small, right? I mean, that's a thing people don't make it that much of a priority, right? Because hey, we've got we've got work to do. We've got problems to fix. We've got stuff to ship, right? But like the bigger it gets the bigger it's going to get. It's like a black hole, but in the opposite direction. Or well, two things happen, right? One, either the bigger it gets, the bigger it keeps getting because as you keep adding stuff it just understanding of the code goes down and and as your understanding of what the code what's best for the code, as that understanding goes away, you just implement by adding things. That's just what happens because it takes it takes a clear picture to know how to implement without adding things, right? The second thing that happens is it gets
+
+[01:02] big and complicated enough that nobody understands it anymore. And then it kind of stops getting bigger, but not for good reasons. It stops getting bigger because progress grinds to a halt, right? Um and that's a bad case, too. So, I agree that that is definitely a thing that in big projects with legacy code uh it's hard to keep it small, but I think it's important to keep it small.
+
