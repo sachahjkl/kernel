@@ -40,6 +40,12 @@ The next step is the owner's review of that file.
 - **The loader reads flat tables; SQLite is an index.** Accepted on 2026-11-09. See property 12.
 - **Principals and sessions, no users.** Decided on 2026-11-09. The kernel has no concept of who executes. See property 21.
 - **Usability concessions are accepted for the desktop**, but must not ruin the security model (owner, 2026-11-09).
+- **Odin is the implementation language.** Final, 2026-11-09.
+- **One kernel tool, no scripts.** Decided on 2026-11-09. All project automation is a command of one Odin tool: build, convert to modules, make the boot image, start QEMU, run tests (also the tests that do not fit a unit test suite), and every call to a third-party tool. Run it with `odin run tools/<tool> -- <command>`. The tool fixes in advance how third-party tools are run. Do not add shell, Python or other scripts.
+- **Performance is a criterion at every level**, also for the build tools. The owner rejects slow software.
+- **Linker: do not write one from nothing.** Reuse or adapt a well-written existing linker, and connect the project's module output to it. The owner names the RAD Linker as a candidate. See `MODULE_CONTRACT.md` section 7.
+- **ELF is accepted as a build-time intermediate format only.** It never reaches the running system.
+- **`MODULE_CONTRACT.md`** is the proposal for the contract between modules. The owner's first reaction is positive; its four decisions are not yet confirmed.
 - No pull request unless the owner asks.
 
 ## Research
