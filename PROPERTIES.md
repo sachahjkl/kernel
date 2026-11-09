@@ -172,6 +172,19 @@ Status: Decided as a goal. The engine is open.
 - **Cost**: A new storage engine is the largest reliability risk in the project. The first versions can store everything in one SQLite database on a raw block device, through a SQLite VFS. This gives transactions on day one and delays the engine.
 - **Open**: the owner must decide the licence question. Options: keep MIT and reimplement; or run upstream bcachefs as a separate GPL user-space service.
 
+### Persistence: no save action, and versions for all programs
+
+Status: Decided by the owner on 2026-11-09.
+
+- **Rule**: A program sends each change of a document to the storage service when the change occurs. The document in storage is always current. The system has no "save" action.
+- **Rule**: The storage service keeps the earlier versions of each object. A program or the person can read an object as it was at an earlier time.
+- **Guarantee**: A document is never lost and never half written. A power loss or a program failure loses at most the change that was in progress.
+- **Interface that this requires from storage**: "apply this change atomically" and "give me this object at time T". Not "replace the whole object".
+- **Why it is cheap**: A copy-on-write store writes new blocks and keeps the old ones. The earlier versions exist already. The system exposes them and does not discard them.
+- **Result**: Protection against lost work and a history are supplied one time, by the system, to all programs. A program writes no code for them.
+- **Cost**: Disk space. A retention rule deletes old versions, for example: keep all versions for one day, then one per hour, then one per day.
+- **Open**: the retention rule and who sets it. How a program groups small changes into one step that the person can undo. A later option above this model is a program whose full state returns after a restart.
+
 ## 10. One code unit
 
 Status: Decided.

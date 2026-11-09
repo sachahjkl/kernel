@@ -34,6 +34,7 @@ The next step is the owner's review of that file.
 - **No system contract depends on a feature of one language.** Decided on 2026-11-09. Odin is the implementation language, not part of the interface. Contracts are memory layouts and numbers.
 - **The removal of the shared file system is a security requirement**, not a preference (owner, 2026-11-09). Property 20 lists the other cases of ambient access to close. The owner accepted the whole list.
 - **Zero is initialization (ZII).** Named by the owner on 2026-11-09. An all-zero record is valid in every system contract. See property 13.
+- **Persistence: no save action; storage keeps versions for all programs.** Decided on 2026-11-09. See property 9.
 - No pull request unless the owner asks.
 
 ## Research

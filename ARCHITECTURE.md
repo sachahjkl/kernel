@@ -285,7 +285,7 @@ Status: Decided by the owner on 2026-11-09.
 - **Composition of programs**: the console uses a real programming language. A person calls the exported functions of units directly, with typed data. The system has no pipes of text and no shell script language.
 - **Concepts to research first**: the contract between units; identity and several machines.
 - **Other concepts** (program distribution, failures and quotas, observability, guaranteed latency): the owner expects the answers to come from the design as it grows. They are not researched ahead of need.
-- **Not decided**: the persistence model. The owner asked for a clearer question.
+- **Persistence**: no save action. Each change goes to storage when it occurs, and storage keeps earlier versions for all programs. See property 9.
 
 ## Open questions about the architecture
 
