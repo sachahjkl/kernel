@@ -226,13 +226,14 @@ This reuses the compiler, the linker and the debugger formats. The project write
 - **ELF is a build-time intermediate format only.** LLVM, which Odin and clang use, writes only ELF, COFF and Mach-O objects. ELF never reaches the running system.
 - **Every step is a command of the kernel tool.** No script calls the compiler or the linker directly.
 
-### The linker (direction from the owner, 2026-11-09)
+### The linker
 
-- The project does not write a linker from nothing. It reuses or adapts an existing linker that is well written and fast, and adds the module format as an output.
-- **Candidate: the RAD Linker**, from the RAD Debugger project. Verified in its README: it generates x64 PE/COFF binaries only, its command line is compatible with MSVC, it is built for speed on very large programs (50% faster link times in their cases), and a Linux port is in progress. The same repository has layers that parse and write COFF and PE, and that parse ELF. Its licence is not verified here.
-- **Fit**: Odin can emit COFF objects (`freestanding_amd64_win64`, checked in this project). So a path exists with no ELF: Odin, COFF objects, an adapted RAD Linker, module. The cost is the weaker position-independent model of COFF; this must be studied before a choice.
-- **Other candidates to compare**: `lld` (already in the Nix closure of Odin), `mold` (fast, ELF), `wild` (fast, ELF, Rust).
-- **Criteria**: link speed, size of the code to adapt, support for the "call through a slot" sequence, licence.
+Status: Decided by the owner on 2026-11-09, after the study in `research/rad_linker_rdi_study.md`.
+
+- The project does not write a linker. It uses `lld` on the ELF target.
+- The converter of the kernel tool takes the linked ELF file as input and writes the module.
+- **RAD Linker**: not adapted. It reads COFF and writes x64 PE only. Its output stage is not separate from its core. A COFF target also brings the Windows x64 convention, which conflicts with section 4.
+- **Later**: the merge tool of section 3 can replace `lld`. `mold` and `wild` are faster ELF linkers to compare if link time becomes a problem.
 
 ## Decisions of the owner
 
@@ -242,9 +243,9 @@ Closed on 2026-11-09:
 2. **Stream**: a handle to a ring that carries batches of records. It is not a type (section 5).
 3. **Hash function**: BLAKE3. Its licence must be verified.
 4. **Exports are functions only.** A module does not export data. Data is reached through a function.
-5. **Debug information**: RDI, the format of the RAD Debugger. It is made of flat tables and has converters from DWARF and PDB. The module names its debug information by hash. A study and a licence check are pending.
-6. **Linker**: keep `lld` now. Study the RAD Linker next (section 7).
-7. **Build-time intermediate format**: ELF or COFF is accepted. It never reaches the running system.
+5. **Debug information**: a separate object that the module names by hash. The format is DWARF, as the compiler writes it on an ELF target. RDI is not required (owner, 2026-11-09). RDI stays a candidate for later; see `research/rad_linker_rdi_study.md`.
+6. **Linker**: `lld`. The study of the RAD Linker is done: the project does not adapt it. It writes x64 PE only, and its output stage is not separate from its core.
+7. **Build-time intermediate format**: ELF, chosen by the owner on 2026-11-09. It matches the System V register assignment of the call form (section 4). It never reaches the running system. The boot program is the one exception: UEFI requires a PE file, so `boot/` stays on the COFF target.
 8. **Kernel entry**: the kernel ring only.
 
 ## Open questions
@@ -252,7 +253,7 @@ Closed on 2026-11-09:
 1. **Inlining across modules.** A merged module can inline only if the modules carry an intermediate form of the code. This form would become a part of the contract.
 2. **Data exports.** Closed: functions only.
 3. **Module state.** Two programs that map one module share its code. Each program has its own copy of its data. A rule is needed for the initial data of a module that is merged.
-4. **Debug information.** Closed: RDI, in a separate object named by hash. The study is pending.
+4. **Debug information.** Closed: DWARF, in a separate object named by hash.
 5. **Description of nested data.** A record that holds a slice of records that hold slices. The check of all offsets on receipt must have a bounded cost. Cap'n Proto sets a traversal limit. [Types §4]
 6. **Kernel operations.** Closed on 2026-11-09: the kernel ring is the only entry. Fuchsia gives each program a kernel-supplied module instead. [Load §6]
 7. **Thread-local data and unwinding.** Not studied.
