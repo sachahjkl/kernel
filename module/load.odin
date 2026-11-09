@@ -208,3 +208,21 @@ bind :: proc "contextless" (file: []u8, memory: []u8, import_files: [][]u8, impo
 	}
 	return .None
 }
+
+// string_at gives bytes of the string table. Call validate first.
+string_at :: proc "contextless" (file: []u8, offset, count: u32) -> string {
+	entry := table(file, .Strings)
+	if offset > entry.count || count > entry.count - offset {
+		return ""
+	}
+	return string(file[entry.offset + u64(offset):][:count])
+}
+
+// function gives the description of an export.
+function :: proc "contextless" (file: []u8, export_index: u32) -> (value: Function, ok: bool) {
+	if export_index == 0 {
+		return {}, false
+	}
+	export := record(file, .Exports, export_index, Export) or_return
+	return record(file, .Functions, export.function, Function)
+}

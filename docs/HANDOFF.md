@@ -90,7 +90,7 @@ Notes are in `research/`.
 ## Next steps
 
 1. Get the owner's review of the choices in `FIRST_MILESTONE.md`.
-2. Commands as exports of separate modules, with type descriptions, loaded by the console (property 19).
+2. Isolated call of an export through a ring; Text results; descriptions made from the source (property 19).
 3. Rights on handles, and a split of the Machine handle.
 4. Damage rectangles in the compositor.
 5. A block device service (virtio), then the storage service.

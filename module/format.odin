@@ -103,12 +103,28 @@ Export :: struct {
 }
 #assert(size_of(Export) == 16)
 
-// The description of one export. Version 1 holds only the name. The build
-// tool uses the name; the loader does not.
-Function :: struct {
-	name_offset: u32, // In the string table.
-	name_count:  u32,
+// The type of a parameter or of a result of an export, in the call form
+// (docs/MODULE_CONTRACT.md, section 4).
+Type :: enum u8 {
+	None    = 0,
+	Integer = 1, // A signed integer of 64 bits, in a register.
+	Text    = 2, // The address of a slice record {address, count} of UTF-8 bytes. Parameters only.
 }
+
+PARAMETER_CAPACITY :: 6 // The integer registers of the call form.
+
+// The description of one export. It is sufficient to call the export: the
+// console reads it. The loader does not.
+Function :: struct {
+	name_offset:     u32, // In the string table.
+	name_count:      u32,
+	about_offset:    u32, // One line of help, in the string table.
+	about_count:     u32,
+	parameter_count: u8,
+	result:          Type,
+	parameters:      [PARAMETER_CAPACITY]Type,
+}
+#assert(size_of(Function) == 24)
 
 // The rebase table is not indexed. It is a sequence of 64-bit words in the
 // RELR form, and it names the 8-byte locations that hold a memory offset:

@@ -23,7 +23,9 @@ The scenario does these actions:
 4. Start `monitor`, `paint` and `plasma` from the bar. Choose colors and draw lines in `paint`.
 5. Start `fault`. The kernel stops it on a page fault. The other programs continue.
 6. Close `plasma` with its close button. Stop `paint` with `stop("paint")`.
-7. Call `programs()`, `memory()`, `help()`, then `shutdown()`. The machine stops with code 0.
+7. Call `programs()` and `memory()`.
+8. Call `gcd(84, 36)`: the console has no such command. Call `load("math")`, then `gcd(84, 36) + power(2, 10)`: the result is 1036.
+9. Call `help()`, then `shutdown()`. The machine stops with code 0.
 
 ## The path from power to desktop
 
@@ -90,8 +92,9 @@ The owner did not review these. Each one can change.
 5. **Fixed addresses.** A program module is at `0x40_0000`. The stack, the context and the kernel ring have fixed addresses. No random base address.
 6. **The compositor is also the desktop shell.** The glossary defines them as two programs. One program holds both roles now.
 7. **Grants by program name.** The root service decides the handles of a program from its name, in code. No grant record, no revoke.
-8. **Commands are compiled into the console.** They are typed functions with a signature table, but not exports of separate modules.
+8. **Commands of two origins.** The system commands (`programs`, `start`, `shutdown`...) are compiled into the console. `load("math")` loads a module of the boot image: each export becomes a command. The console reads the name, the types and the help of an export from the function table of the module, and calls the export with the call form. `load` checks the hash of the module first.
 9. **Font.** Spleen 8x16, BSD 2-Clause, converted from its BDF file by `kerneltool font`.
+10. **Types of the description.** `Integer` (64 bits, in a register) and `Text` (the address of a slice record, parameters only). At most 6 parameters. The kernel tool holds the description of each export in its module table; no tool checks it against the source.
 
 ## Gaps
 
@@ -99,7 +102,7 @@ Against the properties and the module contract:
 
 - Handles have no rights. A program can give any of its handles onward.
 - The Machine handle gives inspect and stop together.
-- Property 19 is not complete: the console does not load a module and call its exports. The description tables hold only names.
+- Property 19 is not complete: a loaded module runs in the address space of the console (direct call only, no isolated call through a ring). A command cannot give a Text. The description has no records, no handles and no grants.
 - Frame pointers are not enforced. An import call goes through a stub that the linker adds.
 - The test "a C program calls an Odin module" does not exist.
 - One processor. One thread per program.
@@ -117,7 +120,7 @@ Input:
 
 ## Next steps
 
-1. Commands as exports of separate modules, with type descriptions, loaded by the console (property 19).
+1. Isolated call of an export through a ring; Text results; descriptions made from the source (property 19).
 2. Rights on handles, and a split of the Machine handle.
 3. Damage rectangles in the compositor.
 4. A block device service (virtio), then the storage service.

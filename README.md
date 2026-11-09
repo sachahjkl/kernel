@@ -20,6 +20,7 @@ The system boots under QEMU to a graphical desktop with a console, a system tool
 - The input service reads the keyboard and the mouse through granted ports and interrupts.
 - The compositor owns the framebuffer. Each program draws into a surface in shared memory.
 - The console is a normal program. A command is a typed function: `hash("abc")`, `start("life")`, `programs()`.
+- `load("math")` loads a module: its exports become commands. The module describes their types.
 - A program that faults stops alone. The system continues.
 
 `docs/FIRST_MILESTONE.md` gives the details, the design choices and the gaps.

@@ -19,12 +19,20 @@ Segment_Image :: struct {
 	data:   []u8, // The bytes of the segment from its memory_offset.
 }
 
+// The description of an export: what module.Function holds.
+Export_Description :: struct {
+	name:       string,
+	parameters: []module.Type,
+	result:     module.Type,
+	about:      string,
+}
+
 // convert writes a module from a shared object that lld linked.
-//   exports: the names of the exports. Export n + 1 is exports[n].
+//   exports: the descriptions of the exports. Export n + 1 is exports[n].
 //   imports: the modules that the undefined symbols of the object come from.
 // The module binds each import by (import index, export index). The names
 // are used here only, at build time.
-convert :: proc(name: string, elf: []u8, exports: []string, imports: []Import_File) -> (result: []u8, ok: bool) {
+convert :: proc(name: string, elf: []u8, exports: []Export_Description, imports: []Import_File) -> (result: []u8, ok: bool) {
 	fail :: proc(name: string, format: string, args: ..any) -> ([]u8, bool) {
 		fmt.eprintf("kerneltool: convert %s: ", name)
 		fmt.eprintfln(format, ..args)
@@ -167,7 +175,11 @@ convert :: proc(name: string, elf: []u8, exports: []string, imports: []Import_Fi
 	append(&function_records, module.Function{})
 	append(&string_bytes, 0)
 	entry_export: u32
-	for export_name, index in exports {
+	for description, index in exports {
+		export_name := description.name
+		if len(description.parameters) > module.PARAMETER_CAPACITY {
+			return fail(name, "export %s has more than %d parameters", export_name, module.PARAMETER_CAPACITY)
+		}
 		found := false
 		for i in 0 ..< symbol_count {
 			symbol := at(elf, dynamic_symbols.offset + i * size_of(Elf_Symbol), Elf_Symbol) or_return
@@ -175,8 +187,18 @@ convert :: proc(name: string, elf: []u8, exports: []string, imports: []Import_Fi
 				continue
 			}
 			append(&export_records, module.Export{code_offset = symbol.value, function = u32(len(function_records))})
-			append(&function_records, module.Function{name_offset = u32(len(string_bytes)), name_count = u32(len(export_name))})
+			function := module.Function {
+				name_offset     = u32(len(string_bytes)),
+				name_count      = u32(len(export_name)),
+				about_offset    = u32(len(string_bytes) + len(export_name)),
+				about_count     = u32(len(description.about)),
+				parameter_count = u8(len(description.parameters)),
+				result          = description.result,
+			}
+			copy(function.parameters[:], description.parameters)
+			append(&function_records, function)
 			append(&string_bytes, export_name)
+			append(&string_bytes, description.about)
 			found = true
 			break
 		}
@@ -303,14 +325,8 @@ convert :: proc(name: string, elf: []u8, exports: []string, imports: []Import_Fi
 
 // module_export_name gives the name of an export of a module file.
 module_export_name :: proc(file: []u8, export_index: u32) -> string {
-	export, _ := module.record(file, .Exports, export_index, module.Export)
-	function, _ := module.record(file, .Functions, export.function, module.Function)
-	strings_table := module.table(file, .Strings)
-	start := strings_table.offset + u64(function.name_offset)
-	if function.name_offset >= strings_table.count || function.name_count > strings_table.count - function.name_offset {
-		return ""
-	}
-	return string(file[start:][:function.name_count])
+	function, _ := module.function(file, export_index)
+	return module.string_at(file, function.name_offset, function.name_count)
 }
 
 // encode_rebases writes memory offsets in the RELR form (module/format.odin).

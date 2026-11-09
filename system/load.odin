@@ -65,29 +65,7 @@ program_start :: proc "contextless" (file: []u8, name: string, handles: [op.CONT
 
 @(private)
 program_fill :: proc "contextless" (program: Handle, file: []u8, head: module.Header, handles: [op.CONTEXT_HANDLES]Handle, values: [op.CONTEXT_VALUES]u64, text: string) -> Status {
-	// The module: copy and rebase here, then map each segment in the program.
-	code := memory_create(head.memory_size / PAGE_SIZE) or_return
-	defer close(code)
-	{
-		address := memory_map(code) or_return
-		defer memory_unmap(address)
-		memory := ([^]u8)(address)[:head.memory_size]
-		module.copy_segments(file, memory)
-		if module.rebase(file, memory, op.PROGRAM_BASE) != .None {
-			return .Bad_Operation
-		}
-	}
-	for index in 1 ..< module.count(file, .Segments) {
-		segment, _ := module.record(file, .Segments, index, module.Segment)
-		flags: op.Map_Flags
-		if .Write in segment.flags && .Read_Only_After_Load not_in segment.flags {
-			flags += {.Write}
-		}
-		if .Execute in segment.flags {
-			flags += {.Execute}
-		}
-		memory_map(code, flags, program, op.PROGRAM_BASE + segment.memory_offset, segment.memory_offset / PAGE_SIZE, segment.memory_size / PAGE_SIZE) or_return
-	}
+	module_map(file, head, program, op.PROGRAM_BASE) or_return
 
 	stack := memory_create(op.STACK_PAGES) or_return
 	defer close(stack)
@@ -107,6 +85,48 @@ program_fill :: proc "contextless" (program: Handle, file: []u8, head: module.He
 	intrinsics.mem_copy_non_overlapping(&record.text, raw_data(text), int(record.text_count))
 	memory_map(record_memory, {.Write}, program, op.CONTEXT_ADDRESS) or_return
 	return .Ok
+}
+
+// module_map puts a module in a program at base: copy and rebase here, then
+// map each segment in the program with the protection of the segment.
+// The caller validates the file first.
+@(private)
+module_map :: proc "contextless" (file: []u8, head: module.Header, program: Handle, base: u64) -> Status {
+	code := memory_create(head.memory_size / PAGE_SIZE) or_return
+	defer close(code)
+	{
+		address := memory_map(code) or_return
+		defer memory_unmap(address)
+		memory := ([^]u8)(address)[:head.memory_size]
+		module.copy_segments(file, memory)
+		if module.rebase(file, memory, uintptr(base)) != .None {
+			return .Bad_Operation
+		}
+	}
+	for index in 1 ..< module.count(file, .Segments) {
+		segment, _ := module.record(file, .Segments, index, module.Segment)
+		flags: op.Map_Flags
+		if .Write in segment.flags && .Read_Only_After_Load not_in segment.flags {
+			flags += {.Write}
+		}
+		if .Execute in segment.flags {
+			flags += {.Execute}
+		}
+		memory_map(code, flags, program, base + segment.memory_offset, segment.memory_offset / PAGE_SIZE, segment.memory_size / PAGE_SIZE) or_return
+	}
+	return .Ok
+}
+
+// module_load loads a module with no imports in this program, at base.
+// The caller then calls its exports at module.export_address(file, base, n).
+// size is the size of the address range that the module uses.
+module_load :: proc "contextless" (file: []u8, base: u64) -> (size: u64, status: Status) {
+	if len(file) == 0 || module.validate(file) != .None || module.count(file, .Imports) > 1 {
+		return 0, .Bad_Operation
+	}
+	head, _ := module.header(file)
+	module_map(file, head, 0, base) or_return
+	return head.memory_size, .Ok
 }
 
 // program_state gives the state of a program, and its code when it stopped.

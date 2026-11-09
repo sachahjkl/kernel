@@ -2,6 +2,7 @@ package console
 
 import "../../blake3"
 import op "../../kernel/operation"
+import module "../../module"
 import "../../ring"
 import "../../system"
 
@@ -12,10 +13,17 @@ Command :: struct {
 	parameter_count: int,
 	result:          Kind,
 	about:           string,
-	run:             proc "contextless" (arguments: []Value) -> Value,
+	run:             proc "contextless" (arguments: []Value) -> Value, // A command of the console itself.
+	address:         uintptr, // Not 0: an export of a loaded module.
 }
 
-COMMAND_CAPACITY :: 32
+COMMAND_CAPACITY :: 48
+LOADED_CAPACITY :: 8
+
+// The modules that the console loaded, by hash.
+loaded: [LOADED_CAPACITY][32]u8
+loaded_count: int
+module_base: u64 = op.MODULE_BASE // Where the next module goes.
 
 commands: [COMMAND_CAPACITY]Command
 command_count: int
@@ -47,6 +55,7 @@ commands_start :: proc "contextless" () {
 	command("programs", {}, .None, "list the programs that run", list_programs)
 	command("memory", {}, .None, "memory and kernel counters", show_memory)
 	command("modules", {}, .None, "list the modules of the boot image", list_modules)
+	command("load", {.Text}, .None, "load a module: its exports become commands", load_module)
 	command("start", {.Text}, .None, "start a program, by module name", start_program)
 	command("stop", {.Text}, .None, "stop a program, by name", stop_program)
 	command("time", {}, .Integer, "milliseconds since boot", time)
@@ -76,7 +85,8 @@ help :: proc "contextless" (arguments: []Value) -> Value {
 			system.write_part(&writer, " -> ")
 			system.write_part(&writer, kind_names[item.result])
 		}
-		for writer.count < 31 {
+		system.write_part(&writer, " ")
+		for writer.count < 36 {
 			system.write_part(&writer, " ")
 		}
 		print(system.written(&writer), item.about, "\n")
@@ -160,6 +170,102 @@ list_modules :: proc "contextless" (arguments: []Value) -> Value {
 	print("name        bytes    hash (BLAKE3)\n")
 	for &entry in system.image_entries(image) {
 		print(padded(system.name_of(entry.name[:]), 12), number(entry.size, 9), hex_text(entry.hash[:12]), "...\n")
+	}
+	return {}
+}
+
+// load_module loads a module of the boot image in the console. Each export
+// that the console can call becomes a command: the description of the export
+// in the module gives its name, its types and its help.
+load_module :: proc "contextless" (arguments: []Value) -> Value {
+	name := arguments[0].text
+	for &entry in system.image_entries(image) {
+		if system.name_of(entry.name[:]) != name || entry.offset > u64(len(image)) || entry.size > u64(len(image)) - entry.offset {
+			continue
+		}
+		file := image[entry.offset:][:entry.size]
+		if blake3.hash(file) != entry.hash || module.validate(file) != .None {
+			return fail("the module ", name, " does not have the hash that the boot image names")
+		}
+		for &hash in loaded[:loaded_count] {
+			if hash == entry.hash {
+				return fail("the module ", name, " is loaded")
+			}
+		}
+		head, _ := module.header(file)
+		export_count := module.count(file, .Exports)
+		callable := 0
+		for index in 1 ..< export_count {
+			if function, ok := module.function(file, index); ok && index != head.entry_export && callable_by_console(function) {
+				callable += 1
+			}
+		}
+		if callable == 0 {
+			return fail("the module ", name, " exports no command; start(\"", name, "\") starts a program")
+		}
+		if loaded_count == LOADED_CAPACITY || command_count + callable > COMMAND_CAPACITY {
+			return fail("no room for the commands of ", name)
+		}
+		base := module_base
+		size, status := system.module_load(file, base)
+		if status != .Ok {
+			return fail("cannot load the module ", name)
+		}
+		module_base += size + system.PAGE_SIZE
+		loaded[loaded_count] = entry.hash
+		loaded_count += 1
+		for index in 1 ..< export_count {
+			function, ok := module.function(file, index)
+			address, has_address := module.export_address(file, uintptr(base), index)
+			if !ok || !has_address || index == head.entry_export || !callable_by_console(function) {
+				continue
+			}
+			item := &commands[command_count]
+			item^ = {
+				name            = module.string_at(file, function.name_offset, function.name_count),
+				about           = module.string_at(file, function.about_offset, function.about_count),
+				parameter_count = int(function.parameter_count),
+				result          = Kind(function.result),
+				address         = address,
+			}
+			for type, parameter in function.parameters[:function.parameter_count] {
+				item.parameters[parameter] = Kind(type)
+			}
+			command_count += 1
+		}
+		print(name, ": ", i64(callable), " commands, hash ", hex_text(entry.hash[:8]), "...\n")
+		return {}
+	}
+	return fail("no module has the name ", name)
+}
+
+// callable_by_console says if the console has a value for each parameter and
+// for the result of an export.
+callable_by_console :: proc "contextless" (function: module.Function) -> bool {
+	function := function
+	if function.name_count == 0 || function.parameter_count > ARGUMENT_CAPACITY || function.result > .Integer {
+		return false
+	}
+	for type in function.parameters[:function.parameter_count] {
+		if type != .Integer && type != .Text {
+			return false
+		}
+	}
+	return true
+}
+
+// call_export calls an export of a loaded module with the call form: each
+// argument in one integer register, in order. An Integer is the value; a Text
+// is the address of its slice record.
+call_export :: proc "contextless" (item: ^Command, arguments: []Value) -> Value {
+	registers: [module.PARAMETER_CAPACITY]u64
+	for &argument, index in arguments {
+		registers[index] = argument.kind == .Text ? u64(uintptr(&argument.text)) : u64(argument.integer)
+	}
+	export := cast(proc "c" (a, b, c, d, e, f: u64) -> u64)rawptr(item.address)
+	result := export(registers[0], registers[1], registers[2], registers[3], registers[4], registers[5])
+	if item.result == .Integer {
+		return {kind = .Integer, integer = i64(result)}
 	}
 	return {}
 }

@@ -16,31 +16,44 @@ SYSTEM_LIBRARY_FOLDER :: "system"
 
 // The modules of the project, each one after its imports.
 //   source:  the folder of the Odin package, and of its .asm files.
-//   exports: export n + 1 of the module is exports[n].
+//   exports: export n + 1 of the module is exports[n]. The description must
+//            agree with the source: no tool checks it yet.
 //   kernel:  the module runs in kernel mode: interrupts use its stack.
 //   image:   the module is in the boot image.
 Module_Build :: struct {
 	name:    string,
 	source:  string,
-	exports: []string,
+	exports: []Export_Description,
 	imports: []string,
 	kernel:  bool,
 	image:   bool,
 }
 
 module_builds := [?]Module_Build {
-	{name = "test_callee", source = "modules/test_callee", exports = {"apply"}},
-	{name = "test_caller", source = "modules/test_caller", exports = {"entry"}, imports = {"test_callee"}},
-	{name = "kernel", source = "kernel", exports = {"entry"}, kernel = true},
-	{name = "root", source = "programs/root", exports = {"entry"}, image = true},
-	{name = "input", source = "programs/input", exports = {"entry"}, image = true},
-	{name = "compositor", source = "programs/compositor", exports = {"entry"}, image = true},
-	{name = "console", source = "programs/console", exports = {"entry"}, image = true},
-	{name = "monitor", source = "programs/monitor", exports = {"entry"}, image = true},
-	{name = "plasma", source = "programs/plasma", exports = {"entry"}, image = true},
-	{name = "life", source = "programs/life", exports = {"entry"}, image = true},
-	{name = "paint", source = "programs/paint", exports = {"entry"}, image = true},
-	{name = "fault", source = "programs/fault", exports = {"entry"}, image = true},
+	{name = "test_callee", source = "modules/test_callee", exports = {{name = "apply", parameters = {.Integer, .Integer}, result = .Integer}}},
+	{name = "test_caller", source = "modules/test_caller", exports = {{name = "entry"}}, imports = {"test_callee"}},
+	{name = "kernel", source = "kernel", exports = {{name = "entry"}}, kernel = true},
+	{name = "root", source = "programs/root", exports = {{name = "entry"}}, image = true},
+	{name = "input", source = "programs/input", exports = {{name = "entry"}}, image = true},
+	{name = "compositor", source = "programs/compositor", exports = {{name = "entry"}}, image = true},
+	{name = "console", source = "programs/console", exports = {{name = "entry"}}, image = true},
+	{name = "monitor", source = "programs/monitor", exports = {{name = "entry"}}, image = true},
+	{name = "plasma", source = "programs/plasma", exports = {{name = "entry"}}, image = true},
+	{name = "life", source = "programs/life", exports = {{name = "entry"}}, image = true},
+	{name = "paint", source = "programs/paint", exports = {{name = "entry"}}, image = true},
+	{name = "fault", source = "programs/fault", exports = {{name = "entry"}}, image = true},
+	{
+		name = "math",
+		source = "modules/math",
+		image = true,
+		exports = {
+			{name = "gcd", parameters = {.Integer, .Integer}, result = .Integer, about = "the greatest common divisor"},
+			{name = "power", parameters = {.Integer, .Integer}, result = .Integer, about = "an integer to a power"},
+			{name = "fibonacci", parameters = {.Integer}, result = .Integer, about = "the Fibonacci number of an index"},
+			{name = "next_prime", parameters = {.Integer}, result = .Integer, about = "the first prime number from an integer"},
+			{name = "number", parameters = {.Text}, result = .Integer, about = "the integer that a text holds"},
+		},
+	},
 }
 
 join :: proc(parts: ..string) -> string {
@@ -116,8 +129,8 @@ build_module :: proc(build: Module_Build) -> bool {
 	// Only the exports of the module are visible in the linked object.
 	script := strings.builder_make(context.temp_allocator)
 	strings.write_string(&script, "{ global: ")
-	for name in build.exports {
-		fmt.sbprintf(&script, "%s; ", name)
+	for export in build.exports {
+		fmt.sbprintf(&script, "%s; ", export.name)
 	}
 	strings.write_string(&script, "local: *; };\n")
 	script_path := join(folder, "/exports.version")

@@ -265,4 +265,4 @@ The owner closed the open questions of draft 1:
 ## Open questions
 
 1. **Initial data of a merged module.** Rule 3 gives each program one copy of the data of each module. The merge tool must keep this true when it merges two modules that both have data.
-2. **Description tables.** The first version of the format writes only the function names. The type, field and parameter tables are not yet specified at the level of bytes.
+2. **Description tables.** Version 1 of the format has one function record per export: name, help text, up to 6 parameter types, result type. The types are `Integer` and `Text` only (`module/format.odin`). The type, field and parameter tables are not yet specified at the level of bytes.

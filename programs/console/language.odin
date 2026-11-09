@@ -322,5 +322,8 @@ call :: proc "contextless" (name: string) -> Value {
 			return fail(name, ": argument ", i64(index + 1), " is ", kind_names[kind], ", not ", kind_names[arguments[index].kind])
 		}
 	}
+	if found.address != 0 {
+		return call_export(found, arguments[:count])
+	}
 	return found.run(arguments[:count])
 }

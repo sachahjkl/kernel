@@ -18,6 +18,7 @@ WAIT_FOREVER :: max(u64)
 // The addresses of a program that the system fixes.
 PROGRAM_BASE :: 0x0000_0000_0040_0000 // The module of the program.
 CHOSEN_BASE :: 0x0000_1000_0000_0000 // Where the kernel puts a mapping with no given address.
+MODULE_BASE :: 0x0000_2000_0000_0000 // Where a program loads the modules that it calls.
 STACK_TOP :: 0x0000_7FFF_FFE0_0000
 STACK_PAGES :: 64
 CONTEXT_ADDRESS :: 0x0000_7FFF_FFF0_0000
