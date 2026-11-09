@@ -434,6 +434,12 @@ The "user" of current systems does six jobs. This system splits them:
   5. One principal on several machines, and sharing between principals: the principal key signs each machine key; signed grants carry access between machines.
 - **Usability** (owner, 2026-11-09): A desktop that ordinary people can use needs concessions on security. This is accepted. It must not ruin the security model.
 - **Proposed rule for concessions**: A concession is made in the desktop shell, as a default grant that is data: visible, recorded, and revocable. A concession is never made in the kernel, in a contract, or as a new form of ambient access. The base system stays strict; the desktop chooses how much it grants without a question.
+- **Forms of concession** (proposed, after the owner's note that some doors can stay open so that the system is not painful to use):
+  1. A remembered grant: the system asks one time, then renews the grant with no question.
+  2. A grant that follows from an action: the person opens, drops or pastes a document. No question is shown.
+  3. A default set of grants for a kind of program, given at first start.
+  4. A broad grant for a trusted program, such as a document manager or a backup program.
+  In each form, the grant is still a record that the principal can see and revoke.
 - **Cost**: No administrator can reset a key. A lost key is lost data. Layer 3 needs recovery from its first version: a second device or a printed recovery key.
 - **Cost**: A signed grant that left the machine cannot be revoked at once. It needs a short lifetime or a revocation list.
 - **Cost**: Work that runs while the principal is locked needs a key that stays available. This must be a narrow and visible grant.
