@@ -35,6 +35,17 @@ It is the next deliverable.
 7. **Data-oriented throughout** (cache lines, batching, flat tables over
    pointer chasing).
 
+8. **Binary metadata stored in SQLite.** The metadata of the binary format
+   lives in a SQLite database: resilient, reliable, fast, and queryable.
+   The owner frames this as a pillar and as an instance of a wider
+   principle: **stay pragmatic**, reuse proven software where it fits.
+   SQLite is public domain, so there is no conflict with the MIT licence.
+   Open question raised with the owner: whether the loader itself reads
+   SQLite at program start, or whether the few tables the loader needs are
+   also emitted as flat fixed-layout arrays, with SQLite holding everything
+   else (symbols, debug info, interfaces, dependencies, provenance).
+   Not researched.
+
 The owner ended the list with "etc., etc.", so it is not closed. Additional
 properties drawn from the research should be offered as proposals for the
 owner to accept or reject, not presented as decided.
