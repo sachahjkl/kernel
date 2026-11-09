@@ -74,7 +74,7 @@ Notes are in `research/`.
 ### Limits of the research
 
 - Transcripts are automatic captions. Check the video before you publish a quote as exact.
-- 19 of the 36 transcripts were not read. Their subjects are Windows defects and general programming.
+- All 36 transcripts are now read. `research/blow_remaining_transcripts.md` holds the statements from the 21 that were read last.
 - Upload dates are known. Stream dates are not, except `bQnB6eI8DU4` (2026-04-11).
 - The "On the Metal" podcast episode with Blow (2020) was not transcribed. It discusses microkernels and dynamic linking.
 - No research exists on executable formats, linkers and loaders. Property 10 needs it.
