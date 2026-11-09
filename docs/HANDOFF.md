@@ -52,6 +52,9 @@ The next step is the owner's review of that file.
 - **Nix flake at the root supplies all build tooling**: compiler, linker, QEMU, firmware. The kernel tool runs inside it.
 - **Layout of the repository** (2026-11-09): documents are in `docs/`, research notes in `docs/research/`, the boot program in `boot/`, the kernel tool in `tools/kerneltool/`. Build output goes to `build/`, which git ignores.
 - **Commands**: `nix develop`, then `odin run tools/kerneltool -out:build/kerneltool -- help`. `nix flake check` runs the hooks and the boot test under QEMU.
+- **Never use `gui_toolkit` in this project.** Decided on 2026-11-09. It is not made for a kernel. Graphical code is written from nothing, as a program of this system. The kernel tool uses only the Odin standard library.
+- **Decided on 2026-11-09**: WebGPU implementation written from nothing; `lld` now and a study of the RAD Linker next; RDI as the debug information format; a stream is a handle; BLAKE3; exports are functions only; the kernel tool counts kernel operations, with no fixed limit yet.
+- **Next step chosen by the owner: more research before design or code.**
 - No pull request unless the owner asks.
 
 ## Research

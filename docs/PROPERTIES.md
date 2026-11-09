@@ -339,7 +339,8 @@ Status: Decided by the owner on 2026-11-09. The detail below is proposed.
 - **Cost**: WebGPU lacks some features of the native interfaces. This is accepted: one mechanism for one concept.
 - **Tension with property 7**: Blow wants a very thin graphics driver. A WebGPU back end for a real device is not thin. The software back end and virtio-gpu delay this problem; they do not remove it.
 - **Reuse**: the WebGPU and WGSL specifications. An existing WGSL compiler front end (Naga, Tint) if its language fits the project. The WebGPU conformance test suite, to test the implementation.
-- **Open**: write the implementation, or port wgpu or Dawn with a new back end. The role of the kernel: the proposal is none beyond the mapping of device queues (property 5). How the compositor shares surfaces with programs; shared memory of property 6 is the proposal.
+- **Decided by the owner on 2026-11-09**: The project writes the WebGPU implementation from nothing. It does not port wgpu or Dawn. Graphical code is a program of this system and uses no existing toolkit.
+- **Open**: The role of the kernel: the proposal is none beyond the mapping of device queues (property 5). How the compositor shares surfaces with programs; shared memory of property 6 is the proposal.
 
 ## 19. A command is a function: no text between programs
 
@@ -475,11 +476,9 @@ Licences in this table come from memory. Verify each one before the code is impo
 
 ## Decisions that the owner must make
 
-1. **Graphics implementation** in property 18: write it, or port wgpu or Dawn.
-2. **Module contract**: the remaining decisions and open questions of `MODULE_CONTRACT.md`.
-3. **Kernel operation limit** in property 1.
+1. **Module contract**: the open questions of `MODULE_CONTRACT.md`.
 
-Closed on 2026-11-09: implementation language (Odin), storage licence (new engine under MIT), status of properties 4, 7, 14, 15 and 16 (accepted), kernel entry (kernel ring only), threads (several threads per program), call form (registers, `MODULE_CONTRACT.md` section 4).
+Closed on 2026-11-09: implementation language (Odin), storage licence (new engine under MIT), status of properties 4, 7, 14, 15 and 16 (accepted), kernel entry (kernel ring only), threads (several threads per program), call form (registers, `MODULE_CONTRACT.md` section 4), graphics implementation (written from nothing, no port of wgpu or Dawn), kernel operation limit (the kernel tool counts the kinds of kernel operation; no fixed limit yet).
 
 ## Proposed first milestone
 

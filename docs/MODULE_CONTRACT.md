@@ -234,20 +234,25 @@ This reuses the compiler, the linker and the debugger formats. The project write
 - **Other candidates to compare**: `lld` (already in the Nix closure of Odin), `mold` (fast, ELF), `wild` (fast, ELF, Rust).
 - **Criteria**: link speed, size of the code to adapt, support for the "call through a slot" sequence, licence.
 
-## Decisions for the owner
+## Decisions of the owner
 
-1. **Stream as a handle**, not as a type (section 5).
-2. **Hash function**: BLAKE3 is proposed. Its licence is not verified here.
-3. **Linker**: the choice between `lld` plus a converter and an adapted existing linker (section 7) needs a study first.
+Closed on 2026-11-09:
 
-Closed on 2026-11-09: the call form (section 4); ELF or COFF is accepted as a build-time intermediate format only.
+1. **Call form**: registers, scalar-only subset (section 4).
+2. **Stream**: a handle to a ring that carries batches of records. It is not a type (section 5).
+3. **Hash function**: BLAKE3. Its licence must be verified.
+4. **Exports are functions only.** A module does not export data. Data is reached through a function.
+5. **Debug information**: RDI, the format of the RAD Debugger. It is made of flat tables and has converters from DWARF and PDB. The module names its debug information by hash. A study and a licence check are pending.
+6. **Linker**: keep `lld` now. Study the RAD Linker next (section 7).
+7. **Build-time intermediate format**: ELF or COFF is accepted. It never reaches the running system.
+8. **Kernel entry**: the kernel ring only.
 
 ## Open questions
 
 1. **Inlining across modules.** A merged module can inline only if the modules carry an intermediate form of the code. This form would become a part of the contract.
-2. **Data exports.** This proposal exports functions only. A module that exports a table of data needs a rule.
+2. **Data exports.** Closed: functions only.
 3. **Module state.** Two programs that map one module share its code. Each program has its own copy of its data. A rule is needed for the initial data of a module that is merged.
-4. **Debug information.** The proposal is a separate object, named by hash in the module, so that a module stays small.
+4. **Debug information.** Closed: RDI, in a separate object named by hash. The study is pending.
 5. **Description of nested data.** A record that holds a slice of records that hold slices. The check of all offsets on receipt must have a bounded cost. Cap'n Proto sets a traversal limit. [Types §4]
 6. **Kernel operations.** Closed on 2026-11-09: the kernel ring is the only entry. Fuchsia gives each program a kernel-supplied module instead. [Load §6]
 7. **Thread-local data and unwinding.** Not studied.
