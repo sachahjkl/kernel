@@ -281,12 +281,12 @@ Status: Decided by the owner on 2026-11-09.
 
 ## Open questions about the architecture
 
-1. **Kernel ring or direct operations.** K4 puts every kernel operation in a ring. The alternative is about 20 direct operations. The ring is more uniform; direct operations are easier to debug at the start.
+1. **Kernel ring or direct operations.** Closed on 2026-11-09: kernel ring only. Every kernel operation is a record in the kernel ring, plus one "enter and wait" entry point.
 2. **Loader location.** U3 puts the loader in user space. The first programs then need the boot program to load them. The alternative is a minimal loader in the kernel.
 3. **Queue filtering for the network.** A program must receive only its own packets. This needs a card with several queues and filters, or a software switch in the network card service. virtio-net under QEMU needs the second form.
 4. **Compositor and the WebGPU library.** Which side owns the display device: the compositor alone, or each program through the library.
 5. **Root service size.** It holds all power at boot. It must stay small enough to read completely.
-6. **Threads.** One address space with several threads, or one thread per program and more programs. The second form is simpler and matches the sandbox model.
+6. **Threads.** Closed on 2026-11-09. The owner asked for the choice that Blow would make, and for no complication of the execution model. Choice: a program can have several threads in one address space. A thread is a plain kernel object: a stack and a register state. The system has no `fork`, no signals, no asynchronous runtime, and no thread state hidden in a language runtime. Blow reasons in threads and asks for a thread with limited write permission. [Blow, STAG-2026 00:00] This choice is an inference from his statements, not a quotation. The first milestone uses one thread per program.
 
 ## Order of construction
 

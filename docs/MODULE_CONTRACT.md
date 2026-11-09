@@ -7,8 +7,8 @@ This document proposes the contract between modules: the module format, the load
 
 The facts come from two research notes, with sources:
 
-- `research_notes/Jonathan Blow OS et kernel data oriented/module_loading_prior_art.md` (cited as [Load §n])
-- `research_notes/Jonathan Blow OS et kernel data oriented/interface_types_prior_art.md` (cited as [Types §n])
+- `research/module_loading_prior_art.md` (cited as [Load §n])
+- `research/interface_types_prior_art.md` (cited as [Types §n])
 
 ## Requirements
 
@@ -106,26 +106,62 @@ What this design removes, compared with ELF:
 
 ## 4. The call form
 
-Proposal: every export has one form.
+Status: Chosen on 2026-11-09. The owner prefers registers, doubts that the C convention is the right one to reuse, and delegated the choice.
 
-```
-status = export(arguments, results)
-```
+### The choice
 
-- `arguments` is the address of one record that the caller filled.
-- `results` is the address of one record that the caller owns and the callee fills.
-- `status` is a 32-bit number. Zero is success.
+A call between modules passes values in registers. It uses the register assignment of the machine's main convention, limited to a small subset.
+On x86-64 this is the System V AMD64 assignment:
 
-Reasons:
+| Item | Rule |
+|---|---|
+| Parameters | Scalars only: an integer of 64 bits or less, a `f32` or `f64`, an address, a handle |
+| Integer parameters | Up to 6, in `rdi`, `rsi`, `rdx`, `rcx`, `r8`, `r9`, in order |
+| Float parameters | Up to 8, in `xmm0` to `xmm7`, in order |
+| Results | Up to 2 integers in `rax`, `rdx`, and up to 2 floats in `xmm0`, `xmm1` |
+| A record, a slice, a string, a variant | Passed as the address of memory that the caller owns. Never by value |
+| More parameters than registers | Not permitted. Use a record |
+| Variable parameter lists | Not permitted |
+| Errors | A function that can fail declares a status result: an enumeration, 0 is success |
 
-1. **Language independence**: Two addresses in two registers is a form that every language can produce. The rules for records passed by value differ between the System V and the Windows conventions, and between compilers. This form does not use them. [Types §7]
-2. **One description, two paths**: An isolated call puts the same argument record in a command record of a ring, and the same result record in a completion record. A direct call passes the two addresses. No second encoding exists. [Types §3, §4]
-3. **Growth**: A new field at the end of the argument record is zero for old callers (ZII). The export does not change. COM needs a new interface for each change. [Types §2]
-4. **Console**: The console builds the argument record from the description, and displays the result record from the description.
+### Why this subset and not the whole C convention
 
-- **Cost**: A call through this form writes its arguments to memory. For a small function that is called very often, this is slower than registers.
-- **Answer to the cost**: This form is for calls between modules. Calls inside a module use any convention. Merge (section 3) can turn a call between modules into a call inside a module.
-- **Memory**: The caller owns all memory. The callee never allocates in the caller. For a result of unknown size, the caller gives a buffer with a capacity and receives a count, or receives a handle and reads later. The WebAssembly component model lets the callee allocate, and reports this as a main defect. [Types §1]
+The C conventions have real defects. The subset avoids each one:
+
+| Defect of the C conventions | Subset |
+|---|---|
+| The rules for a record passed by value are complex, differ between System V and Windows, and differ between compilers in edge cases [Types §7] | No record by value |
+| Variable parameter lists need special rules | Not permitted |
+| Types with a size that depends on the system (`long`, bare `enum`, `long double`) | Only the base types of section 5 |
+| Parameters on the stack have alignment and order rules | No parameter on the stack |
+| Windows x64 has 4 register parameters and a reserved stack area | Not used. One assignment per machine architecture |
+
+- **Why not a new convention**: A new convention needs a change in each compiler. Every language can already produce this subset: `proc "c"` in Odin, `extern "C"` in C, Rust and Zig. This satisfies the rule that no contract depends on one language (P19).
+- **Why registers and not two records**: Speed. A call between modules costs the same as a normal function call. The owner sets performance as a criterion at every level.
+
+### One description, two paths
+
+The description of a function is its list of parameters and results, each with a base type or a reference to a described record.
+
+- **Direct call**: the values go in registers, as above.
+- **Isolated call**: the argument record is derived by rule: one field per parameter, in order. It travels in a command record of a ring. The results travel in a completion record. The derivation is mechanical; nobody writes a second encoding.
+- **One generic entry routine**: Because every parameter is a scalar, one small routine loads up to 6 integer registers and 8 float registers from an argument record and calls the export. The receiving side of a ring and the console both use it. A library for foreign calls is not needed.
+
+### Growth
+
+- A module imports another module by hash, with an export index. The caller and the callee are always the exact versions that were built together. A direct call cannot meet a changed signature.
+- Growth by added fields (ZII) applies where two sides have separate versions: the records of rings between programs and services, and the records that a function receives by address.
+- The signature of an export does not change inside one module hash. A new signature is a new module.
+
+### Memory
+
+The caller owns all memory. The callee never allocates in the caller (P14). For a result of unknown size, the caller gives a buffer with a capacity and receives a count, or receives a handle and reads later. The WebAssembly component model lets the callee allocate, and reports this as a main defect. [Types §1]
+
+### Cost
+
+- A function with a large set of inputs passes the address of a record. This is one memory access more than registers.
+- The registers that a callee can change are those of the System V convention. All `xmm` registers are in that set, so a caller that keeps float values across a call must save them.
+- A second machine architecture needs its own table. For ARM64 it is the same subset on the AAPCS64 assignment.
 
 ## 5. The types
 
@@ -200,10 +236,11 @@ This reuses the compiler, the linker and the debugger formats. The project write
 
 ## Decisions for the owner
 
-1. **Own format, built by conversion from ELF** (section 7). The alternative is to use ELF as the module format and to forbid most of its features.
-2. **One call form** with two records (section 4). The alternative is the C convention of the machine with typed parameters in registers. It is faster for small functions, and it needs a second encoding for rings.
-3. **Stream as a handle**, not as a type (section 5).
-4. **Hash function**: BLAKE3 is proposed. Its licence is not verified here.
+1. **Stream as a handle**, not as a type (section 5).
+2. **Hash function**: BLAKE3 is proposed. Its licence is not verified here.
+3. **Linker**: the choice between `lld` plus a converter and an adapted existing linker (section 7) needs a study first.
+
+Closed on 2026-11-09: the call form (section 4); ELF or COFF is accepted as a build-time intermediate format only.
 
 ## Open questions
 
@@ -212,5 +249,5 @@ This reuses the compiler, the linker and the debugger formats. The project write
 3. **Module state.** Two programs that map one module share its code. Each program has its own copy of its data. A rule is needed for the initial data of a module that is merged.
 4. **Debug information.** The proposal is a separate object, named by hash in the module, so that a module stays small.
 5. **Description of nested data.** A record that holds a slice of records that hold slices. The check of all offsets on receipt must have a bounded cost. Cap'n Proto sets a traversal limit. [Types §4]
-6. **Kernel operations.** Fuchsia gives each program a kernel-supplied module as the only way to enter the kernel. [Load §6] This fits "a kernel operation is a call to an export". It competes with the kernel ring of `ARCHITECTURE.md` (K4).
+6. **Kernel operations.** Closed on 2026-11-09: the kernel ring is the only entry. Fuchsia gives each program a kernel-supplied module instead. [Load §6]
 7. **Thread-local data and unwinding.** Not studied.

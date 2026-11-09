@@ -21,8 +21,8 @@ Each property gives the same fields:
 Sources are marked as follows:
 
 - `[Blow …]`: a statement of Jonathan Blow, with its reference in
-  `research_notes/Jonathan Blow OS et kernel data oriented/blow_verified_statements.md`.
-- `[Notes …]`: a file in `research_notes/Jonathan Blow OS et kernel data oriented/`.
+  `research/blow_verified_statements.md`.
+- `[Notes …]`: a file in `research/`.
 - No mark: design reasoning written for this document.
 
 ## Objective
@@ -45,19 +45,19 @@ Three rules apply to every decision:
 | 1 | Small kernel with a small, counted interface | Decided |
 | 2 | Sandbox by default: a program reaches only what it was given | Decided |
 | 3 | No "everything is a file": each resource type has its own interface | Decided |
-| 4 | Base interface is a non-blocking command buffer in shared memory | Proposed |
+| 4 | Base interface is a non-blocking command buffer in shared memory | Decided |
 | 5 | Kernel off the data path | Decided |
 | 6 | One communication mechanism between programs: shared memory | Decided |
-| 7 | No drivers in the kernel, and fixed hardware first | Decided (first machine); rest proposed |
+| 7 | No drivers in the kernel, and fixed hardware first | Decided |
 | 8 | No global, mutable, shared file system | Decided |
-| 9 | A storage engine with one private store per program | Decided (engine choice open) |
+| 9 | A storage engine with one private store per program | Decided: new engine under MIT |
 | 10 | One code module: position-independent, static and dynamic are the same | Decided |
 | 11 | Reproducible system: modules identified by content hash | Decided |
 | 12 | Module metadata in SQLite, and SQLite as a base library | Decided |
 | 13 | Data-oriented kernel internals | Decided |
-| 14 | Memory is supplied by the caller | Proposed |
-| 15 | Isolation inside a program for untrusted code | Proposed |
-| 16 | Removed concepts | Proposed |
+| 14 | Memory is supplied by the caller | Decided |
+| 15 | Isolation inside a program for untrusted code | Decided |
+| 16 | Removed concepts | Decided |
 | 17 | Trusted boot: UEFI program, Secure Boot, TPM | Decided (detail proposed) |
 | 18 | One graphics interface: WebGPU with WGSL | Decided (detail proposed) |
 | 19 | A command is a function: no text between programs | Decided (detail proposed) |
@@ -100,7 +100,7 @@ Status: Decided by the owner on 2026-11-09.
 
 ## 4. Base interface: non-blocking command buffers
 
-Status: Proposed. It is the interface that Blow describes. [Blow §3]
+Status: Decided. Accepted by the owner on 2026-11-09. It is the interface that Blow describes. [Blow §3]
 
 - **Rule**: A program asks for work by writing command records into a submission ring in memory that it shares with the receiver. It reads results from a completion ring. The receiver is the kernel or another program.
 - **Rule**: No operation blocks at this level. One kernel operation exists to wait: "sleep until one of these rings has entries".
@@ -137,7 +137,7 @@ Status: Decided.
 
 ## 7. No drivers in the kernel, and fixed hardware first
 
-Status: The first machine is decided by the owner on 2026-11-09. The other rules are proposed. They follow Blow. [Blow §5, §6]
+Status: Decided. Accepted by the owner on 2026-11-09. The rules follow Blow. [Blow §5, §6]
 
 - **Rule**: The kernel contains no device driver. The code that knows a device is a library or a user-space program.
 - **Rule**: The system targets one fixed machine at a time. The first machine is virtual: QEMU on x86-64 with virtio devices, UEFI firmware (OVMF) and a TPM 2.0 (property 17).
@@ -163,7 +163,7 @@ Status: Decided.
 
 ## 9. A storage engine with one private store per program
 
-Status: Decided as a goal. The engine is open.
+Status: Decided. On 2026-11-09 the owner chose the engine: do not fork bcachefs; write a new engine under MIT that reuses its ideas. The first version is SQLite on the raw block device.
 
 - **Rule**: Storage is a transactional object store in user space. Objects have identifiers, not paths. A directory is an optional index, not the base structure.
 - **Rule**: Each program gets a private store. A copy-on-write clone is the way to give a copy of an object. A snapshot gives versions of a store.
@@ -260,7 +260,7 @@ Status: Decided by the owner on 2026-11-09 as a principle. The detail below is p
 
 ## 14. Memory is supplied by the caller
 
-Status: Proposed.
+Status: Decided. Accepted by the owner on 2026-11-09.
 
 - **Rule**: A kernel operation writes its result into memory that the caller gives. The kernel does not allocate hidden state per call.
 - **Rule**: "Reserve address space" and "commit pages" are two cheap operations. Programs build arenas on them.
@@ -271,7 +271,7 @@ Status: Proposed.
 
 ## 15. Isolation inside a program
 
-Status: Proposed. Blow names it as an unsolved problem. [Blow §11]
+Status: Decided. Accepted by the owner on 2026-11-09. Blow names it as an unsolved problem. [Blow §11]
 
 - **Problem**: A program wants to run a plugin that it does not trust, share data structures with it, and survive its crash. Today this needs a second process and serialization.
 - **Proposal**: A process can contain several protection domains. A domain is a set of page rights inside one address space. A switch between domains costs less than a process switch. A domain can be destroyed alone.
@@ -281,7 +281,7 @@ Status: Proposed. Blow names it as an unsolved problem. [Blow §11]
 
 ## 16. Removed concepts
 
-Status: Proposed, except the lines marked Decided.
+Status: Decided. Accepted by the owner on 2026-11-09.
 
 | Concept | Replacement |
 |---|---|
@@ -475,12 +475,11 @@ Licences in this table come from memory. Verify each one before the code is impo
 
 ## Decisions that the owner must make
 
-1. **Implementation language.** Odin, accepted by the owner on 2026-11-09. No system contract depends on it (property 19).
-2. **Graphics implementation** in property 18: write it, or port wgpu or Dawn.
-3. **Storage licence.** Keep MIT and reimplement ideas (recommended), or run bcachefs as a separate GPL service.
-4. **Status of properties 4, 14, 15 and 16, and of the driver rules of property 7.** Accept, change or reject each one.
-5. **Module format questions** in property 10: inlining, call patching, calling convention.
-6. **Kernel operation limit** in property 1.
+1. **Graphics implementation** in property 18: write it, or port wgpu or Dawn.
+2. **Module contract**: the remaining decisions and open questions of `MODULE_CONTRACT.md`.
+3. **Kernel operation limit** in property 1.
+
+Closed on 2026-11-09: implementation language (Odin), storage licence (new engine under MIT), status of properties 4, 7, 14, 15 and 16 (accepted), kernel entry (kernel ring only), threads (several threads per program), call form (registers, `MODULE_CONTRACT.md` section 4).
 
 ## Proposed first milestone
 

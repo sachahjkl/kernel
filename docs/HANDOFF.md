@@ -46,11 +46,17 @@ The next step is the owner's review of that file.
 - **Linker: do not write one from nothing.** Reuse or adapt a well-written existing linker, and connect the project's module output to it. The owner names the RAD Linker as a candidate. See `MODULE_CONTRACT.md` section 7.
 - **ELF is accepted as a build-time intermediate format only.** It never reaches the running system.
 - **`MODULE_CONTRACT.md`** is the proposal for the contract between modules. The owner's first reaction is positive; its four decisions are not yet confirmed.
+- **Accepted on 2026-11-09**: properties 4, 7, 14, 15 and 16 as written; a new storage engine under MIT (no bcachefs fork); the kernel ring as the only kernel entry.
+- **Call form: registers.** The owner delegated the choice. Chosen: a scalar-only subset of the machine's register assignment. See `MODULE_CONTRACT.md` section 4.
+- **Threads: do what Blow would do; do not complicate the execution model.** Chosen: several plain threads per program. See `ARCHITECTURE.md`, open question 6.
+- **Nix flake at the root supplies all build tooling**: compiler, linker, QEMU, firmware. The kernel tool runs inside it.
+- **Layout of the repository** (2026-11-09): documents are in `docs/`, research notes in `docs/research/`, the boot program in `boot/`, the kernel tool in `tools/kerneltool/`. Build output goes to `build/`, which git ignores.
+- **Commands**: `nix develop`, then `odin run tools/kerneltool -out:build/kerneltool -- help`. `nix flake check` runs the hooks and the boot test under QEMU.
 - No pull request unless the owner asks.
 
 ## Research
 
-Notes are in `research_notes/Jonathan Blow OS et kernel data oriented/`.
+Notes are in `research/`.
 
 | Subject | File | State |
 |---|---|---|
