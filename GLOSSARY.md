@@ -1,6 +1,6 @@
 # Glossary
 
-Status: draft 1, 2026-11-09.
+Status: draft 2, 2026-11-09. The owner accepted the terms on 2026-11-09, with "module" in place of "unit". "Person" is provisional.
 
 This file is the one place that defines the terms of the project.
 Each concept has one term. Documents, code and conversation use that term and no synonym.
@@ -11,21 +11,21 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 
 | Term | Definition | Do not use |
 |---|---|---|
-| Unit | The one format of compiled code. A unit is position-independent, exports functions, and is identified by the hash of its content. A library and an executable are both units (P10) | library, executable, binary, module, package, DLL, shared object |
-| Export | A function that a unit makes callable from outside the unit | symbol, entry |
-| Import | A reference from one unit to another unit by content hash, with the exports that it uses | dependency, link |
+| Module | The one format of compiled code. A module is position-independent, exports functions, and is identified by the hash of its content. A library and an executable are both modules (P10) | unit, library, executable, binary, package, DLL, shared object. "Kernel module" names the Linux concept only |
+| Export | A function that a module makes callable from outside the module | symbol, entry |
+| Import | A reference from one module to another module by content hash, with the exports that it uses | dependency, link |
 | Command | An export that a person can call from the console. A command is not a separate kind of thing (P19) | CLI program, tool, script |
-| Unit metadata | The description of a unit: segments, imports, exports with the type of each parameter and result, origin, debug information (P12) | headers, manifest, symbol table |
-| Flat table | An array of fixed-size records at a known offset. The form of the unit metadata inside a unit. The loader reads this form (P12, P13) | section, blob |
-| Index | A SQLite database that is built from flat tables and can be rebuilt from them. It answers queries across many units. It is never the source of truth (P12) | registry, catalogue, cache |
-| Loader | The user-space code that builds a program from a unit and its imports | linker, dynamic linker |
+| Module metadata | The description of a module: segments, imports, exports with the type of each parameter and result, origin, debug information (P12) | headers, manifest, symbol table |
+| Flat table | An array of fixed-size records at a known offset. The form of the module metadata inside a module. The loader reads this form (P12, P13) | section, blob |
+| Index | A SQLite database that is built from flat tables and can be rebuilt from them. It answers queries across many modules. It is never the source of truth (P12) | registry, catalogue, cache |
+| Loader | The user-space code that builds a program from a module and its imports | linker, dynamic linker |
 | Position-independent | Code that runs correctly at any address with no change to its bytes | relocatable, PIC, PIE |
 
 ## Running code
 
 | Term | Definition | Do not use |
 |---|---|---|
-| Program | A running unit with its own address space and its own handle table | process, task, application, app |
+| Program | A running module with its own address space and its own handle table | process, task, application, app |
 | Thread | One flow of execution inside a program | fiber, task |
 | Service | A program that other programs call through rings. A service has no special privilege | daemon, server, driver |
 | Device service | A service that owns the queues of one device class (P7) | driver |
@@ -44,7 +44,7 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Grant | The act that gives a handle to a program, and the record of that act. A grant is visible and can be revoked (P20) | permission, authorization, consent |
 | Ambient access | Access that a program has because it runs, and not because it received a handle. The system has none (P20) | ambient authority |
 | Sandbox | The state of every program: it can reach only the objects of its handles (P2) | jail, container |
-| Person | The human at the machine. The only source of new grants | user, account, owner, root |
+| Person | Provisional term. The human at the machine, the only source of new grants. The system has no desktop yet, so this concept is not designed. A concept of "who executes" is expected later; its name and form are open | user, account, owner, root |
 
 ## Communication
 
@@ -66,7 +66,7 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Snapshot | The state of a whole private store at one time | checkpoint, backup |
 | Private store | The set of objects that belongs to one program. No other program sees it (P8, P9) | home directory, app data, container |
 | Document | An object that belongs to the person and not to one program. The document service grants it (P8) | file, user file |
-| Unit store | The set of all units and system data, each identified by content hash (P11) | package store, repository, the Nix store |
+| Module store | The set of all modules and system data, each identified by content hash (P11) | package store, repository, the Nix store |
 | System description | The list of hashes that defines one version of the whole system (P11) | image, generation, manifest, profile |
 | Storage service | The service that owns the block device and gives objects, versions and private stores (P9) | file system |
 

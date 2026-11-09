@@ -25,7 +25,7 @@ flowchart TB
     documents["Document service"]
     storage["Storage service"]
     network["Network steering service"]
-    unitstore["Unit store and loader"]
+    unitstore["Module store and loader"]
     root["Root service"]
   end
 
@@ -67,7 +67,7 @@ The same picture in text:
  Programs            program   program   desktop shell
                         |         |           |
                   ======|=========|===========|======  rings in shared memory
- Services          compositor  documents  storage  network  unit store  root
+ Services          compositor  documents  storage  network  module store  root
                         |         |           |
                   ======|=========|===========|======  rings in shared memory
  Device services     display    block    network card   input   TPM
@@ -116,7 +116,7 @@ The kernel has five systems. Each one owns a small set of flat tables (P13).
 
 ### What the kernel does not contain
 
-File systems, network protocols, device drivers, the unit loader, the unit store, graphics, the TPM protocol, names, users.
+File systems, network protocols, device drivers, the module loader, the module store, graphics, the TPM protocol, names, users.
 
 ## User-space systems
 
@@ -124,7 +124,7 @@ File systems, network protocols, device drivers, the unit loader, the unit store
 
 A UEFI program (P17). It runs before the kernel.
 
-- Verifies and loads the kernel, the system description and the first units.
+- Verifies and loads the kernel, the system description and the first modules.
 - Measures the system description into the TPM.
 - Collects the memory map, the framebuffer and the device list.
 - Gives all of this to the kernel in one fixed structure, then leaves the firmware.
@@ -137,12 +137,12 @@ The first program. The kernel gives it every handle that exists at boot.
 - Holds the system description and the grant records.
 - Is the only program that can create access from nothing. All other access is a handle that came from it, directly or through a chain.
 
-### U3. Unit store and loader
+### U3. Module store and loader
 
-- **Store**: keeps units by content hash. Answers "give me the unit with this hash". Its index is a SQLite database (P11, P12).
-- **Loader**: builds a new program. It asks the kernel for an empty address space, maps the segments of the unit and of the units that it imports, and starts it.
+- **Store**: keeps modules by content hash. Answers "give me the module with this hash". Its index is a SQLite database (P11, P12).
+- **Loader**: builds a new program. It asks the kernel for an empty address space, maps the segments of the module and of the modules that it imports, and starts it.
 - The loader is in user space. The kernel only maps memory.
-- The first units are loaded by the boot program, because the store does not run yet.
+- The first modules are loaded by the boot program, because the store does not run yet.
 
 ### U4. Device services
 
@@ -177,7 +177,7 @@ One service per device class: block, network card, display, input, TPM.
 
 ### U9. Base library
 
-A set of units that most programs use. It is not a C library and no program is forced to use it.
+A set of modules that most programs use. It is not a C library and no program is forced to use it.
 
 - Ring access, with blocking functions built above the rings.
 - Arena allocators above reserve and commit.
@@ -194,7 +194,7 @@ The program that the person sees: starts programs, shows windows, shows grants. 
 flowchart LR
   boot["U1 Boot program"] --> kernel["Kernel K1 to K5"]
   kernel --> root["U2 Root service"]
-  root --> loader["U3 Unit store and loader"]
+  root --> loader["U3 Module store and loader"]
   root --> devs["U4 Device services"]
   devs --> storage["U5 Storage"]
   storage --> loader
@@ -220,9 +220,9 @@ sequenceDiagram
   participant K as Kernel
   participant R as Root service
   FW->>BP: verify signature (Secure Boot), start
-  BP->>BP: load kernel, system description, first units
+  BP->>BP: load kernel, system description, first modules
   BP->>TPM: extend with hash of system description
-  BP->>K: boot structure (memory map, framebuffer, devices, units)
+  BP->>K: boot structure (memory map, framebuffer, devices, modules)
   K->>K: build tables, start processors
   K->>R: start, with all boot handles
   R->>R: start device services, storage, loader, compositor, shell
@@ -274,8 +274,8 @@ Status: Decided by the owner on 2026-11-09.
 - **First use**: a dedicated machine. The system is not a general replacement for an existing desktop at first.
 - **Compatibility**: none at first. The project defines a small, fundamental interface that shows its concepts. Later layers are built above it. A POSIX layer and a Win32/NT layer are possible later, as layers above the interface and not as parts of it.
 - **Console**: a normal program. A console is one buffer that a program draws into. The system has no terminal concept in the kernel and no equivalent of the Linux TTY.
-- **Composition of programs**: the console uses a real programming language. A person calls the exported functions of units directly, with typed data. The system has no pipes of text and no shell script language.
-- **Concepts to research first**: the contract between units; identity and several machines.
+- **Composition of programs**: the console uses a real programming language. A person calls the exported functions of modules directly, with typed data. The system has no pipes of text and no shell script language.
+- **Concepts to research first**: the contract between modules; identity and several machines.
 - **Other concepts** (program distribution, failures and quotas, observability, guaranteed latency): the owner expects the answers to come from the design as it grows. They are not researched ahead of need.
 - **Persistence**: no save action. Each change goes to storage when it occurs, and storage keeps earlier versions for all programs. See property 9.
 
@@ -297,7 +297,7 @@ Each step adds one system to a system that already works.
 3. K4 rings: the two programs exchange a record.
 4. U2 root service: programs get handles from it and not from the kernel.
 5. K5 and one device service: the console, then block.
-6. U3 unit store and loader, then U5 storage.
+6. U3 module store and loader, then U5 storage.
 7. U8 software graphics and compositor, then input.
 8. U6 documents, U10 shell.
 9. U7 network.

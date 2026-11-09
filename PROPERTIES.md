@@ -51,9 +51,9 @@ Three rules apply to every decision:
 | 7 | No drivers in the kernel, and fixed hardware first | Decided (first machine); rest proposed |
 | 8 | No global, mutable, shared file system | Decided |
 | 9 | A storage engine with one private store per program | Decided (engine choice open) |
-| 10 | One code unit: position-independent, static and dynamic are the same | Decided |
-| 11 | Reproducible system: units identified by content hash | Decided |
-| 12 | Unit metadata in SQLite, and SQLite as a base library | Decided |
+| 10 | One code module: position-independent, static and dynamic are the same | Decided |
+| 11 | Reproducible system: modules identified by content hash | Decided |
+| 12 | Module metadata in SQLite, and SQLite as a base library | Decided |
 | 13 | Data-oriented kernel internals | Decided |
 | 14 | Memory is supplied by the caller | Proposed |
 | 15 | Isolation inside a program for untrusted code | Proposed |
@@ -93,7 +93,7 @@ Status: Decided by the owner on 2026-11-09.
 - **Rule**: A stored object, a network connection, a device queue, a timer and a memory region are different types. Each type has its own small set of operations. [Blow §4]
 - **Rule**: The handle table is uniform. The operations are not. A handle has a type, and the kernel rejects an operation that does not belong to the type.
 - **Forbids**: a universal `read`/`write`/`ioctl` interface, a `/dev` tree, a `/proc` tree, pipes as the composition mechanism, sockets as the network interface, text as the format of system state.
-- **Cost**: Generic tools that work on "any stream" do not exist. Composition between programs uses typed data in shared memory (property 6) and callable units (property 10).
+- **Cost**: Generic tools that work on "any stream" do not exist. Composition between programs uses typed data in shared memory (property 6) and callable modules (property 10).
 - **Reuse**: NT object types. Zircon object types.
 - **Note**: This rule does not conflict with one handle table. NT keeps uniform naming and lifetime with typed operations. Unix makes the operations uniform, and that is the part that is rejected.
 
@@ -185,44 +185,44 @@ Status: Decided by the owner on 2026-11-09.
 - **Cost**: Disk space. A retention rule deletes old versions, for example: keep all versions for one day, then one per hour, then one per day.
 - **Open**: the retention rule and who sets it. How a program groups small changes into one step that the person can undo. A later option above this model is a program whose full state returns after a restart.
 
-## 10. One code unit
+## 10. One code module
 
 Status: Decided.
 
-- **Rule**: All code is position-independent. One unit format exists. [Blow §9]
-- **Rule**: "Static" and "dynamic" are link-time choices on the same unit. A unit that was bundled keeps its identity inside the bundle, so a tool can find and replace it. [Blow §9]
-- **Rule**: A program and a library are the same thing. A unit exports functions. A unit that exports an entry function can be started. The `grep` program is the `grep` unit with an entry function. [Blow §9]
+- **Rule**: All code is position-independent. One module format exists. [Blow §9]
+- **Rule**: "Static" and "dynamic" are link-time choices on the same module. A module that was bundled keeps its identity inside the bundle, so a tool can find and replace it. [Blow §9]
+- **Rule**: A program and a library are the same thing. A module exports functions. A module that exports an entry function can be started. The `grep` program is the `grep` module with an entry function. [Blow §9]
 - **Forbids**: separate archive and shared-object formats, a global library directory, symbol lookup by search order, a C library that the system imposes.
-- **Cost**: Inlining across units removes the ability to replace a unit. Patching calls at load time makes pages private to a process.
+- **Cost**: Inlining across modules removes the ability to replace a module. Patching calls at load time makes pages private to a process.
 - **Reuse**: The object formats of today already contain position-independent code. The project can use an existing compiler back end and define only the container and the loader.
 - **Open**, already raised with the owner:
-  1. Where inlining across units is allowed. Proposal: only inside a bundle, and the bundle records it.
-  2. If the loader patches calls between units. Proposal: no; calls go through a table per unit, so code pages stay shared and identical to the file.
-  3. The calling convention between units. It is a permanent contract. [Blow, `6zQzNpjgbAY` 15:15]
+  1. Where inlining across modules is allowed. Proposal: only inside a bundle, and the bundle records it.
+  2. If the loader patches calls between modules. Proposal: no; calls go through a table per module, so code pages stay shared and identical to the file.
+  3. The calling convention between modules. It is a permanent contract. [Blow, `6zQzNpjgbAY` 15:15]
 
 ## 11. Reproducible system
 
 Status: Decided by the owner on 2026-11-09. The detail below is proposed.
 
-- **Rule**: The identity of a unit is the hash of its content. A unit refers to another unit by hash, never by path or by name.
+- **Rule**: The identity of a module is the hash of its content. A module refers to another module by hash, never by path or by name.
 - **Rule**: A system is a list of hashes. Two machines with the same list run the same code.
 - **Rule**: An upgrade writes a new list. A rollback selects an old list. Both are atomic.
-- **Why property 10 makes this cheaper**: Nix reaches the same goal on Linux, and it must fix the store at one absolute path, because binaries contain absolute paths. Units that are relocatable and that refer by hash contain no path. The store can be at any location, and a unit needs no patch after a copy.
-- **Consequence**: "Install" becomes "the store contains the hash". This matches "no installs". [Blow §9] Identical units are stored one time and their pages are shared, with no global library directory.
-- **Consequence**: A security fix is a query: "which bundles contain the hash of the bad unit". [Blow §9]
-- **Cost**: A build must be deterministic for the hash to mean something. The compiler and the linker must not write times, host names or random identifiers. Old units need garbage collection.
+- **Why property 10 makes this cheaper**: Nix reaches the same goal on Linux, and it must fix the store at one absolute path, because binaries contain absolute paths. Modules that are relocatable and that refer by hash contain no path. The store can be at any location, and a module needs no patch after a copy.
+- **Consequence**: "Install" becomes "the store contains the hash". This matches "no installs". [Blow §9] Identical modules are stored one time and their pages are shared, with no global library directory.
+- **Consequence**: A security fix is a query: "which bundles contain the hash of the bad module". [Blow §9]
+- **Cost**: A build must be deterministic for the hash to mean something. The compiler and the linker must not write times, host names or random identifiers. Old modules need garbage collection.
 - **Reuse**: The Nix store model and its closure concept. Content-addressed derivations in Nix.
 - **Open**: the hash function. BLAKE3 is the proposal. How names for people map to hashes; the proposal is a signed table in the system description.
 
-## 12. Unit metadata in SQLite, and SQLite as a base library
+## 12. Module metadata in SQLite, and SQLite as a base library
 
 Status: Decided.
 
-- **Rule**: The metadata of a unit is a SQLite database: symbols, interfaces, dependencies, origin of each bundled unit, debug information.
+- **Rule**: The metadata of a module is a SQLite database: symbols, interfaces, dependencies, origin of each bundled module, debug information.
 - **Rule**: SQLite is a base library of the system. It is public domain, so it fits the MIT licence.
-- **Rule** (accepted by the owner on 2026-11-09): The loader does not read SQLite. The unit metadata inside a unit is a set of flat tables: arrays of fixed-size records at known offsets, valid when zero. The flat tables are the source of truth.
-- **Rule**: The unit store copies the flat tables of each unit into a SQLite index. The index answers queries across units, for the console, the debugger and the tools. The index can be rebuilt completely from the units.
-- **Why**: This removes the circular dependency "load SQLite to load SQLite". It keeps SQLite out of the boot program and out of the code that reads untrusted units.
+- **Rule** (accepted by the owner on 2026-11-09): The loader does not read SQLite. The module metadata inside a module is a set of flat tables: arrays of fixed-size records at known offsets, valid when zero. The flat tables are the source of truth.
+- **Rule**: The module store copies the flat tables of each module into a SQLite index. The index answers queries across modules, for the console, the debugger and the tools. The index can be rebuilt completely from the modules.
+- **Why**: This removes the circular dependency "load SQLite to load SQLite". It keeps SQLite out of the boot program and out of the code that reads untrusted modules.
 - **Proposal**: The store index of property 11 and the grant records of property 2 are also SQLite databases. System state becomes one queryable format in place of text files.
 - **Cost**: SQLite needs an interface layer to the system: storage access, sync, locks, time, random numbers. Its durability is only as good as the sync of that layer.
 - **Rule to keep roles separate**: The storage engine of property 9 owns blocks and objects. SQLite owns structured metadata inside objects. One does not replace the other.
@@ -247,7 +247,7 @@ Status: Decided.
 Status: Decided by the owner on 2026-11-09 as a principle. The detail below is proposed. The name comes from Casey Muratori.
 
 - **Rule**: A record that is all zero bytes is a valid record with a defined meaning. No record needs a constructor.
-- **Rule**: This applies to every contract of the system: the context of property 19, ring records, unit metadata, kernel tables.
+- **Rule**: This applies to every contract of the system: the context of property 19, ring records, module metadata, kernel tables.
 - **Consequences**:
   1. Memory from the kernel is zero pages, so new memory is already initialized (property 14).
   2. Handle 0 is the "no object" handle. An operation on it fails in a defined way and does no damage. Index 0 of each table is a reserved empty entry, so a zero index never points to a live object.
@@ -276,7 +276,7 @@ Status: Proposed. Blow names it as an unsolved problem. [Blow §11]
 - **Proposal**: A process can contain several protection domains. A domain is a set of page rights inside one address space. A switch between domains costs less than a process switch. A domain can be destroyed alone.
 - **Cost**: The hardware support differs by processor. The x86-64 memory protection keys give 16 domains and do not stop all attacks by themselves. Shared lock-free state stays the problem that Blow describes.
 - **Alternative**: A standard sandboxed bytecode for untrusted code, in the role of WebAssembly. [Blow §11]
-- **Recommendation**: Do not design this now. Keep the handle table and the unit format free of assumptions that prevent it. Decide after the first desktop program exists.
+- **Recommendation**: Do not design this now. Keep the handle table and the module format free of assumptions that prevent it. Decide after the first desktop program exists.
 
 ## 16. Removed concepts
 
@@ -286,7 +286,7 @@ Status: Proposed, except the lines marked Decided.
 |---|---|
 | Everything is a file (Decided) | Typed handles (property 3) |
 | Global file system (Decided) | Private stores and grants (properties 8, 9) |
-| `fork` | Create an empty process, then give it units and handles |
+| `fork` | Create an empty process, then give it modules and handles |
 | Signals | Completion records in a ring |
 | Pipes and terminals | Shared memory with typed data; a terminal is a normal program |
 | Sockets | A network library with connect, send, receive, disconnect [Blow §4] |
@@ -294,7 +294,7 @@ Status: Proposed, except the lines marked Decided.
 | Users, groups, root | Handles and grants |
 | Installers, package scripts | The store contains the hash (property 11) |
 | `PATH`, registry, environment as configuration | The system description and per-program stores |
-| Shell scripts as system glue | Programs that call units [Blow §9] |
+| Shell scripts as system glue | Programs that call modules [Blow §9] |
 | Kernel modules | User-space device code (property 7) |
 | Hundreds of background processes | Services start when a program asks for them [Blow §2] |
 
@@ -302,10 +302,10 @@ Status: Proposed, except the lines marked Decided.
 
 Status: Decided by the owner on 2026-11-09. The detail below is proposed.
 
-- **Rule**: The boot stage is a UEFI program. It uses the firmware services before it gives control to the kernel: it reads the units from the boot volume, gets the memory map, gets the framebuffer, gets random numbers, and talks to the TPM. The project writes no boot loader and no boot-time disk or display code.
+- **Rule**: The boot stage is a UEFI program. It uses the firmware services before it gives control to the kernel: it reads the modules from the boot volume, gets the memory map, gets the framebuffer, gets random numbers, and talks to the TPM. The project writes no boot loader and no boot-time disk or display code.
 - **Rule**: Secure Boot verifies the boot program. The owner's key signs it. The firmware refuses a boot program that is not signed.
 - **Rule**: The boot is measured. The boot program extends a TPM register with the hash of the system description of property 11, before the kernel starts.
-- **Why property 11 makes this cheap**: A system is one list of hashes. One measurement of that list covers every unit of the system. Current systems must measure a kernel, an initial disk image, a command line and many files separately.
+- **Why property 11 makes this cheap**: A system is one list of hashes. One measurement of that list covers every module of the system. Current systems must measure a kernel, an initial disk image, a command line and many files separately.
 - **Uses of the TPM**:
   1. Seal the storage encryption key to the measured state. A changed system cannot read the disk.
   2. Hold the key that signs the name table of property 11, or the key that verifies it.
@@ -345,11 +345,11 @@ Status: Decided by the owner on 2026-11-09. The detail below is proposed.
 Status: Decided by the owner on 2026-11-09. The detail below is proposed.
 
 - **Rule**: Programs do not exchange text that the receiver must parse. The system has no command line arguments as strings, no text pipes, no standard input and output streams, and no environment variables.
-- **Rule**: A command line program and a library are the same thing. Both are a unit that exports functions (property 10). A command is one exported function.
-- **Rule**: The metadata of a unit (property 12) describes each exported function completely: its name, the name and type of each parameter, the type of each result, and a text for the person. This description is sufficient to call the function with no other knowledge of the unit.
+- **Rule**: A command line program and a library are the same thing. Both are a module that exports functions (property 10). A command is one exported function.
+- **Rule**: The metadata of a module (property 12) describes each exported function completely: its name, the name and type of each parameter, the type of each result, and a text for the person. This description is sufficient to call the function with no other knowledge of the module.
 - **Rule**: A started program receives no `argc` and no `argv`. At the minimum, it receives one structured context: a typed record with a fixed layout. Decided by the owner on 2026-11-09.
 - **Content of the context** (proposed): the typed arguments of the called function, the handles that the caller grants (property 2), and the rings to the caller and to the kernel (property 4). The context holds no strings that the program must parse.
-- **Rule**: No contract of the system depends on a feature of one programming language. Decided by the owner on 2026-11-09. The context, the unit format, the calling convention, the type description and the ring layouts are defined as memory layouts and numbers. A program in any language that can read and write memory at fixed offsets can use them.
+- **Rule**: No contract of the system depends on a feature of one programming language. Decided by the owner on 2026-11-09. The context, the module format, the calling convention, the type description and the ring layouts are defined as memory layouts and numbers. A program in any language that can read and write memory at fixed offsets can use them.
 - **Consequence**: The context is a plain record of the system. It is not the implicit `context` of Odin or Jai. A language binding can copy its fields into a language feature; the system does not know about it.
 - **Consequences**:
   1. The console reads the metadata and calls the function directly, with typed values. Completion, help and argument checks come from the metadata, not from code in each program.
@@ -358,9 +358,9 @@ Status: Decided by the owner on 2026-11-09. The detail below is proposed.
   4. Other front ends can be generated from the same metadata: a form in the desktop, a remote call, a test.
 - **Why**: Text between programs forces each program to write a parser and a printer, and each pair of programs to agree on a format that no tool checks. Errors appear at run time and in the data. Blow's "a program is a library" gives the mechanism. [Blow §3]
 - **Forbids**: `argv`, `stdin`, `stdout`, exit codes as the only result, a shell script language, formats that are defined only by the output of a tool.
-- **Depends on**: the contract between units (property 10). The type description must be independent of the implementation language, so that a unit in one language can call a unit in another.
-- **Isolation**: A call from the console to an untrusted unit starts the unit as a sandboxed program, and the arguments travel as records in a ring (properties 2 and 4). A call to a trusted unit can be a direct call in the same address space. The metadata is the same in both cases.
-- **Cost**: The type description becomes a permanent contract of the system. Its design must come before the first units.
+- **Depends on**: the contract between modules (property 10). The type description must be independent of the implementation language, so that a module in one language can call a module in another.
+- **Isolation**: A call from the console to an untrusted module starts the module as a sandboxed program, and the arguments travel as records in a ring (properties 2 and 4). A call to a trusted module can be a direct call in the same address space. The metadata is the same in both cases.
+- **Cost**: The type description becomes a permanent contract of the system. Its design must come before the first modules.
 - **Cost**: Streams of data with no known end (logs, audio, large results) need a typed stream form above rings, not one return value.
 - **Prior art to study**: PowerShell (objects in pipelines), Nushell (typed tables), Lisp machines and Oberon (commands are exported procedures), COM and WinRT metadata, the WebAssembly component model (language-independent interface types).
 - **Open**: the set of base types. How a function declares the handles that it needs (property 2), so that the console can ask the person before the call. Versioning of a function whose description changes.
@@ -387,8 +387,8 @@ The shared file system (property 8) is one case. This property lists the other c
 | 11 | Global names: named pipes, shared memory names, temporary directories, ports | No global name exists. Names are local to a handle |
 | 12 | A program with access acts for a program without access (confused deputy) | A service acts only on handles that the caller sends with the request. It does not combine its own access with a name from the caller |
 | 13 | Access is for ever once given | Each grant is recorded, visible, and can be revoked. A grant can have an end time |
-| 14 | A library or plugin gets all the access of its host program | Isolation inside a program (property 15). An untrusted unit runs as its own program |
-| 15 | An update or an installer runs code with full access | No installer. A unit is data identified by hash. It runs only in the sandbox (properties 8, 11) |
+| 14 | A library or plugin gets all the access of its host program | Isolation inside a program (property 15). An untrusted module runs as its own program |
+| 15 | An update or an installer runs code with full access | No installer. A module is data identified by hash. It runs only in the sandbox (properties 8, 11) |
 | 16 | A program consumes all memory, processor time or storage | Each resource is a handle with a limit. A program divides its limit among its children |
 | 17 | Precise clocks and shared caches leak data between programs (side channels) | Not solved by handles. Reduce: a precise clock is a grant; the scheduler can keep two programs off the same core |
 | 18 | One administrator account can do everything | No root. The root service holds all handles at boot and gives them out. The person, present at the machine, is the only source of new grants |
@@ -402,7 +402,7 @@ The shared file system (property 8) is one case. This property lists the other c
 
 - **Sandbox (2) against direct device access (5)**: Direct access is safe only when the hardware isolates queues. On the first machine the hypervisor does this. On real hardware an IOMMU is a requirement.
 - **Per-program network stack (5) against shared network identity**: Several programs share one address. A small user-space service must assign ports and steer packets to queues. It stays off the data path.
-- **Replaceable units (10) against speed**: Calls through a table cost one indirect call. The bundle is the place where a developer trades replaceability for inlining.
+- **Replaceable modules (10) against speed**: Calls through a table cost one indirect call. The bundle is the place where a developer trades replaceability for inlining.
 - **No global file system (8) against the desktop**: A person thinks in documents, not in programs. The document store service must exist before the first real desktop program.
 - **Small interface (1) against typed resources (3)**: Types multiply operations. The ring of property 4 solves this: the kernel has few entry operations, and the typed commands are records in a ring.
 - **New storage engine (9) against reliability**: Start on SQLite, then replace the lower layer when the rest of the system works.
@@ -432,15 +432,15 @@ Licences in this table come from memory. Verify each one before the code is impo
 2. **Graphics implementation** in property 18: write it, or port wgpu or Dawn.
 3. **Storage licence.** Keep MIT and reimplement ideas (recommended), or run bcachefs as a separate GPL service.
 4. **Status of properties 4, 14, 15 and 16, and of the driver rules of property 7.** Accept, change or reject each one.
-5. **Unit format questions** in property 10: inlining, call patching, calling convention.
+5. **Module format questions** in property 10: inlining, call patching, calling convention.
 6. **Kernel operation limit** in property 1.
 
 ## Proposed first milestone
 
 The smallest end-to-end system that shows the model:
 
-1. A UEFI program starts under QEMU with OVMF, loads the kernel and two units, and starts the kernel. The kernel prints on the serial port.
-2. The kernel loads two units from a boot image, each in its own address space, with an empty handle table.
+1. A UEFI program starts under QEMU with OVMF, loads the kernel and two modules, and starts the kernel. The kernel prints on the serial port.
+2. The kernel loads two modules from a boot image, each in its own address space, with an empty handle table.
 3. The kernel gives both programs one shared ring.
 4. Program A sends a typed record to program B through the ring. Program B prints it through a console ring.
 

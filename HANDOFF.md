@@ -22,7 +22,7 @@ The next step is the owner's review of that file.
 - **Never commit under an AI identity.** No AI author, committer, `Co-Authored-By` or session trailer. Commits carry the owner's identity only.
 - **Deliverables in English.** The owner writes in French.
 - **"Everything is a file" is rejected.** Decided on 2026-11-09.
-- **Relocatable units must also give reproducibility**, in the manner of NixOS. Decided on 2026-11-09.
+- **Relocatable modules must also give reproducibility**, in the manner of NixOS. Decided on 2026-11-09.
 - **First machine: QEMU with virtio.** Decided on 2026-11-09. The owner does not see hardware as the main problem.
 - **Use the TPM, UEFI programs ("rich boot") and Secure Boot.** Decided on 2026-11-09.
 - **Target WebGPU and WGSL as the graphics stack.** Decided on 2026-11-09.
@@ -30,13 +30,13 @@ The next step is the owner's review of that file.
 - **First use: a dedicated machine. No compatibility at first.** Decided on 2026-11-09. POSIX and Win32/NT layers are possible later, above the base interface.
 - **The console is a normal program with a real language. No TTY concept.** Decided on 2026-11-09.
 - **Do not go too fast.** The owner asked for architecture and key systems before any code. See `ARCHITECTURE.md`.
-- **A command is a function. No text between programs.** Decided on 2026-11-09. No `argv`, no text pipes, no parsing. A command line program and a library are the same unit; the metadata makes each exported function callable from the console. A started program receives a structured context, never `argc` and `argv`. See property 19.
+- **A command is a function. No text between programs.** Decided on 2026-11-09. No `argv`, no text pipes, no parsing. A command line program and a library are the same module; the metadata makes each exported function callable from the console. A started program receives a structured context, never `argc` and `argv`. See property 19.
 - **No system contract depends on a feature of one language.** Decided on 2026-11-09. Odin is the implementation language, not part of the interface. Contracts are memory layouts and numbers.
 - **The removal of the shared file system is a security requirement**, not a preference (owner, 2026-11-09). Property 20 lists the other cases of ambient access to close. The owner accepted the whole list.
 - **Zero is initialization (ZII).** Named by the owner on 2026-11-09. An all-zero record is valid in every system contract. See property 13.
 - **Persistence: no save action; storage keeps versions for all programs.** Decided on 2026-11-09. See property 9.
 - **Conversation in English** from 2026-11-09, at the owner's request, to keep one term per concept.
-- **`GLOSSARY.md` defines the terms.** Use each term as defined and no synonym. Add a term there before using it.
+- **`GLOSSARY.md` defines the terms.** Use each term as defined and no synonym. Add a term there before using it. The code format is a "module" (the owner's choice over "unit"). The concept of who executes ("person", user, executor) is deferred until a desktop exists.
 - **The loader reads flat tables; SQLite is an index.** Accepted on 2026-11-09. See property 12.
 - No pull request unless the owner asks.
 
@@ -67,5 +67,5 @@ Notes are in `research_notes/Jonathan Blow OS et kernel data oriented/`.
 
 1. Get the owner's decisions listed at the end of `PROPERTIES.md`.
 2. Research executable formats, linkers and loaders for property 10.
-3. Write the design of the first milestone in `PROPERTIES.md`: boot, two isolated units, one shared ring.
+3. Write the design of the first milestone in `PROPERTIES.md`: boot, two isolated modules, one shared ring.
 4. Set up the build as commands of an Odin tool, if the owner accepts Odin.
