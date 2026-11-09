@@ -56,6 +56,7 @@ The next step is the owner's review of that file.
 - **Decided on 2026-11-09**: WebGPU implementation written from nothing; `lld` now and a study of the RAD Linker next; RDI as the debug information format; a stream is a handle; BLAKE3; exports are functions only; the kernel tool counts kernel operations, with no fixed limit yet.
 - **Next step chosen by the owner: more research before design or code.**
 - **Graphics order (decided on 2026-11-09)**: no GPU at first. UEFI framebuffer, surfaces in shared memory, CPU drawing. WebGPU comes later on a working desktop. See property 18.
+- **RAD Linker and RDI study done** (2026-11-09, `research/rad_linker_rdi_study.md`; nothing was built or run, so build and runtime facts are unverified). Result: do not adapt the RAD Linker now; write the module converter with a linked image as input; RDI fits as the debug format but not as the description tables. Open: the choice of a COFF target or an ELF target for modules.
 - No pull request unless the owner asks.
 
 ## Research
