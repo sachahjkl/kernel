@@ -42,6 +42,7 @@ COMMANDS :: [?]Command {
 	{name = "test", about = "build, start the machine under QEMU, act as the person, check the log, save pictures of the screen", run = run_test},
 	{name = "screenshots", about = "test, then copy the pictures to " + DOCUMENT_SCREENSHOT_FOLDER, run = run_screenshots},
 	{name = "font", about = "convert the BDF file of the font to " + FONT_OUTPUT, run = run_font},
+	{name = "portrait", about = "convert " + PORTRAIT_SOURCE + " to " + PORTRAIT_OUTPUT, run = run_portrait},
 	{name = "check", about = "odin check -vet and odin test of the host code, then test", run = run_check},
 }
 

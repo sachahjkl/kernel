@@ -9,6 +9,8 @@ The system boots under QEMU to a graphical desktop with a console, a system tool
 |---|---|
 | ![The console](docs/screenshots/console.png) | ![The commands of the console](docs/screenshots/tools.png) |
 
+![The temple of Jon: a portrait of Jonathan Blow that turns](docs/screenshots/temple.png)
+
 `kerneltool screenshots` makes these pictures from the running machine.
 
 ## What works
@@ -47,7 +49,7 @@ The system boots under QEMU to a graphical desktop with a console, a system tool
 | `ring/` | The ring: two queues in shared memory |
 | `system/` | The library of a program: kernel operations, text, loader, grants |
 | `graphics/`, `display/` | Drawing with the processor; the protocol of the compositor |
-| `programs/` | `root`, `input`, `compositor`, `console`, `monitor`, `plasma`, `life`, `paint`, `fault` |
+| `programs/` | `root`, `input`, `compositor`, `console`, `monitor`, `plasma`, `life`, `paint`, `fault`, `temple` |
 | `modules/` | Test modules of the host load test |
 | `tools/kerneltool/` | The kernel tool: all the automation of the project |
 
@@ -68,6 +70,7 @@ odin run tools/kerneltool -out:build/kerneltool -- run
 | `test` | Build, start the machine, act as the person (keys, pointer), check the log, save pictures |
 | `screenshots` | `test`, then copy the pictures to `docs/screenshots/` |
 | `font` | Convert the BDF file of the font to `graphics/font.odin` |
+| `portrait` | Convert `programs/temple/portrait.jpg` to `programs/temple/portrait.pixels` |
 | `check` | `odin check -vet` and `odin test` of the host code, then `test` |
 
 `nix flake check` runs the formatting hooks and `check`.
@@ -77,3 +80,5 @@ In the machine, type `help()` in the console. The buttons of the bar start progr
 ## Licences
 
 The font is Spleen 8x16 by Frederic Cambus, BSD 2-Clause. See `graphics/FONT_LICENSE`.
+
+The portrait of the `temple` program is a public domain picture from Wikimedia Commons. See `programs/temple/PORTRAIT_LICENSE`.

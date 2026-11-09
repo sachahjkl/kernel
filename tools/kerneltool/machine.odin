@@ -119,6 +119,13 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[console] shutdown()"},
 	{kind = .Wait, text = "[console] number(Text) -> Integer"},
 	{kind = .Shot, text = "tools"},
+
+	// The temple of Jon, then back to the console.
+	{kind = .Click, x = 512, y = 14}, // temple
+	{kind = .Wait, text = "temple: ok"},
+	{kind = .Wait, text = "compositor: surface temple"},
+	{kind = .Shot, text = "temple"},
+	{kind = .Click, x = 780, y = 300},
 	{kind = .Type, text = "shutdown()"},
 	{kind = .Wait, text = "kernel: the machine stops with code 0"},
 }

@@ -12,7 +12,7 @@ It lists the gaps between the code and the documents.
 - `kerneltool test` starts the machine under QEMU and acts as the person through the QEMU monitor: keys, pointer moves, clicks.
 - Each step of the scenario waits for a text in the log of the kernel. A step that does not see its text in 20 seconds fails the test.
 - The scenario is a table in `tools/kerneltool/machine.odin`.
-- The test saves three pictures of the screen. `kerneltool screenshots` copies them to `docs/screenshots/`.
+- The test saves four pictures of the screen. `kerneltool screenshots` copies them to `docs/screenshots/`.
 - `nix flake check` runs the same test in the Nix sandbox.
 
 The scenario does these actions:
@@ -25,7 +25,8 @@ The scenario does these actions:
 6. Close `plasma` with its close button. Stop `paint` with `stop("paint")`.
 7. Call `programs()` and `memory()`.
 8. Call `gcd(84, 36)`: the console has no such command. Call `load("math")`, then `gcd(84, 36) + power(2, 10)`: the result is 1036.
-9. Call `help()`, then `shutdown()`. The machine stops with code 0.
+9. Call `help()`.
+10. Start `temple` from the bar. Then call `shutdown()`. The machine stops with code 0.
 
 ## The path from power to desktop
 
@@ -67,6 +68,7 @@ The kernel contains no code for a device, except the timer, the interrupt contro
 | `programs/console` | Console: integers, texts, variables, arithmetic, typed commands |
 | `programs/monitor` | System tool: memory, kernel entries, interrupts, pages and processor share of each program |
 | `programs/plasma`, `life`, `paint` | Demos: animation, simulation, pointer and key input |
+| `programs/temple` | Demo, for fun: a portrait of Jonathan Blow turns about its vertical axis, with perspective. The processor draws it |
 | `programs/fault` | A program that writes to an address that it does not own |
 
 Grants by the root service:

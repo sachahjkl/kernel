@@ -44,7 +44,7 @@ Client :: struct {
 }
 
 @(rodata)
-launcher := [?]string{"console", "monitor", "plasma", "life", "paint", "fault"}
+launcher := [?]string{"console", "monitor", "plasma", "life", "paint", "fault", "temple"}
 
 @(rodata)
 pointer_shape := [?]string {
