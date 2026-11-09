@@ -82,6 +82,7 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 |---|---|---|
 | Surface | A region of shared memory that one program draws into and the compositor displays (P18) | window buffer, framebuffer (reserved for the UEFI one) |
 | Compositor | The service that owns the display, combines surfaces and routes input to the program with focus. In the first milestone it is also the desktop shell | window manager, display server |
+| Damage rectangle | A rectangle of the screen that changed. The compositor draws again only the damage rectangles of a frame | dirty region, invalid area |
 | Console | A normal program that shows text in a surface and calls commands in a real programming language (P19) | terminal, TTY, shell |
 | Desktop shell | The program that starts programs and shows surfaces and grants to the person | launcher, window manager |
 | Picker | The surface of the document service where the person chooses a document. Its result is a grant | file dialog, powerbox |

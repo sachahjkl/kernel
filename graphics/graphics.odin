@@ -19,6 +19,12 @@ Canvas :: struct {
 	stride: int,
 }
 
+// view gives the part of a canvas in a rectangle, as a canvas of the same
+// memory. The rectangle must be inside the canvas.
+view :: proc "contextless" (canvas: Canvas, x, y, width, height: int) -> Canvas {
+	return {pixels = canvas.pixels[y * canvas.stride + x:], width = width, height = height, stride = canvas.stride}
+}
+
 fill :: proc "contextless" (canvas: Canvas, x, y, width, height: int, color: Color) {
 	x0 := max(x, 0)
 	y0 := max(y, 0)

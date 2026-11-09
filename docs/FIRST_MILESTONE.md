@@ -112,7 +112,7 @@ Against the properties and the module contract:
 
 Performance:
 
-- The compositor draws the full screen for each frame. With `plasma` open it uses about 60 % of the processor under QEMU.
+- The compositor keeps at most 8 damage rectangles and draws only these for each frame. With `plasma` open it uses about 7 % of the processor under QEMU (60 % before, with a full redraw). A program cannot give the part of its surface that changed: `Present` damages the full surface.
 - The kernel saves and restores the floating-point state on every entry.
 - `display.open` repeats `Handle_Give` until the compositor maps the ring.
 
