@@ -44,7 +44,9 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Grant | The act that gives a handle to a program, and the record of that act. A grant is visible and can be revoked (P20) | permission, authorization, consent |
 | Ambient access | Access that a program has because it runs, and not because it received a handle. The system has none (P20) | ambient authority |
 | Sandbox | The state of every program: it can reach only the objects of its handles (P2) | jail, container |
-| Person | Provisional term. The human at the machine, the only source of new grants. The system has no desktop yet, so this concept is not designed. A concept of "who executes" is expected later; its name and form are open | user, account, owner, root |
+| Principal | A key pair and the root handles that the key unlocks: documents, grant records, settings. The kernel does not know it. Principal 0 is the machine (P21) | user, account, owner, root, administrator, executor |
+| Session | The tree of programs that started from the root handles of one principal (P21) | login, user session |
+| Person | A human who acts in a session. The word has no meaning to the system; it is used only to describe actions at the desktop, such as "the person chooses a document" | user |
 
 ## Communication
 

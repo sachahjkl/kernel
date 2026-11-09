@@ -62,6 +62,7 @@ Three rules apply to every decision:
 | 18 | One graphics interface: WebGPU with WGSL | Decided (detail proposed) |
 | 19 | A command is a function: no text between programs | Decided (detail proposed) |
 | 20 | No ambient access: the other holes to close | Decided |
+| 21 | Principals: who acts, without users | Decided (layers 1 and 2); direction for the rest |
 
 ## 1. Small kernel with a small, counted interface
 
@@ -397,6 +398,46 @@ The shared file system (property 8) is one case. This property lists the other c
 - **Cost**: The person receives more requests for access. Too many requests train the person to accept all of them. The design must prefer grants that follow from an action (the person chooses a document, the person pastes) over questions.
 - **Cost**: Programs that manage the system (task manager, backup, debugger, screen reader) need broad grants. These grants must be rare, visible and revocable.
 - **Open**: line 17. Blow says that isolation of untrusted code inside one program is not solved. [Blow §7] Side channels between programs are a similar limit.
+
+## 21. Principals: who acts, without users
+
+Status: Decided by the owner on 2026-11-09. Layers 1 and 2 are the design. Layers 3 to 5 are a direction, not a design.
+
+- **Rule**: The kernel has no concept of "who executes". The answer is always: a program, with the handles that it holds.
+- **Rule**: A principal is a key pair and the root handles that the key unlocks: documents, grant records, settings. A principal exists in the root service and in storage. The kernel does not know it.
+- **Rule**: A session is the tree of programs that started from the root handles of one principal. "Who did this" is a fact that the grant records give. It is not a check.
+- **Rule**: A human, a scheduled job, a remote caller and an automation agent are the same thing: a program tree that received handles from a principal. No separate concept exists for each.
+
+The "user" of current systems does six jobs. This system splits them:
+
+| Job of the user in current systems | In this system |
+|---|---|
+| Subject of access checks | Removed. Handles do this (property 2) |
+| Owner of data | A root handle to a set of documents |
+| Proof that a human is present | Unlock of a key |
+| Identity across machines | A public key |
+| Accounting and limits | Limits on the handle tree (property 20, line 16) |
+| Audit | The grant records |
+
+- **Defects of current systems that this removes**:
+  1. Every program that a user starts has all the rights of that user. Here a program does not inherit the principal. The desktop shell holds the root handles and gives narrow ones.
+  2. `root`, `sudo` and setuid change identity to gain access. Here no identity exists to change to. More access is always a received handle.
+  3. Privileged code compares a password with a database. Here the unlock is cryptographic: the TPM seals the key of the principal behind a PIN or a hardware key (property 17). Without the key, the documents cannot be read.
+  4. An administrator role. Here the principal that holds the handle to the system description can change the system. This is one handle. It can be delegated.
+  5. Groups, access lists, and identifiers that differ between machines. Here sharing is a grant. A grant to another principal is a signed record that names its public key.
+  6. Removal of a user leaves data behind. Here the root handle is dropped and the whole tree goes with it.
+- **Layers** (grow in this order; the zero case follows ZII):
+  1. No principal. The root service is the only source of grants.
+  2. Principal 0 is the machine. Its key is in the TPM. It signs the system description. A dedicated machine stops here: no login, and the TPM unlocks storage at boot.
+  3. One human principal. The unlock decrypts its documents. The lock discards the key.
+  4. Several principals on one machine: disjoint handle trees, no kernel change.
+  5. One principal on several machines, and sharing between principals: the principal key signs each machine key; signed grants carry access between machines.
+- **Usability** (owner, 2026-11-09): A desktop that ordinary people can use needs concessions on security. This is accepted. It must not ruin the security model.
+- **Proposed rule for concessions**: A concession is made in the desktop shell, as a default grant that is data: visible, recorded, and revocable. A concession is never made in the kernel, in a contract, or as a new form of ambient access. The base system stays strict; the desktop chooses how much it grants without a question.
+- **Cost**: No administrator can reset a key. A lost key is lost data. Layer 3 needs recovery from its first version: a second device or a printed recovery key.
+- **Cost**: A signed grant that left the machine cannot be revoked at once. It needs a short lifetime or a revocation list.
+- **Cost**: Work that runs while the principal is locked needs a key that stays available. This must be a narrow and visible grant.
+- **Prior art to study**: SPKI/SDSI, object-capability systems (KeyKOS, seL4, Fuchsia), macaroons and UCAN for signed delegation, passkeys for the unlock.
 
 ## Tensions between properties
 

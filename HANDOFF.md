@@ -14,7 +14,7 @@ Reuse existing software where it fits.
 ## Current deliverable
 
 `PROPERTIES.md` is the plan of the properties on which the kernel is built. It is draft 2.
-It lists 20 properties, their status (decided or proposed), their costs, the tensions between them, and six decisions for the owner.
+It lists 21 properties, their status (decided or proposed), their costs, the tensions between them, and six decisions for the owner.
 The next step is the owner's review of that file.
 
 ## Rules from the owner
@@ -36,8 +36,10 @@ The next step is the owner's review of that file.
 - **Zero is initialization (ZII).** Named by the owner on 2026-11-09. An all-zero record is valid in every system contract. See property 13.
 - **Persistence: no save action; storage keeps versions for all programs.** Decided on 2026-11-09. See property 9.
 - **Conversation in English** from 2026-11-09, at the owner's request, to keep one term per concept.
-- **`GLOSSARY.md` defines the terms.** Use each term as defined and no synonym. Add a term there before using it. The code format is a "module" (the owner's choice over "unit"). The concept of who executes ("person", user, executor) is deferred until a desktop exists.
+- **`GLOSSARY.md` defines the terms.** Use each term as defined and no synonym. Add a term there before using it. The code format is a "module" (the owner's choice over "unit"). "Who executes" is defined by principals and sessions (property 21).
 - **The loader reads flat tables; SQLite is an index.** Accepted on 2026-11-09. See property 12.
+- **Principals and sessions, no users.** Decided on 2026-11-09. The kernel has no concept of who executes. See property 21.
+- **Usability concessions are accepted for the desktop**, but must not ruin the security model (owner, 2026-11-09).
 - No pull request unless the owner asks.
 
 ## Research
