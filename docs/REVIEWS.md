@@ -32,7 +32,7 @@ A step is one tested commit that adds one capability.
 | 24 | `4a28242` | Descriptions with records and handles: the tables Records and Fields; a Record goes as bytes; a Handle is lent with the rights of the description and ends with its call; the kernel operation `Handle_State` proves where a handle came from; Record and Handle values in the console; the module `sample` |
 | 25 | `476d3d4` | Revocation of a grant: the kernel keeps the origin of each handle and each mapping; the operation `Handle_Revoke`; `Handle_Give` with the target 0 copies a handle; a lent handle is revoked after its call; the root service records and revokes grants; `grants` and `revoke` in the console; the program `origin` |
 | 26 | `1c9d04a` | Limits of a budget: processor time for each second, counted with the cycle counter and applied in periods of 100 ms; log records for each second; a limit counts in each budget above; `thread_start` with a budget; the program `limits` |
-| 27 | `HASH27` | The menu of the windows in the bar: a window comes to the front by its title; the step kind `Front` of the machine test in place of clicks at a fixed place; the tool reads only complete lines of the log (a cause for the intermittent failure of step 24) |
+| 27 | `fa80e79` | The menu of the windows in the bar: a window comes to the front by its title; the step kind `Front` of the machine test in place of clicks at a fixed place; the tool reads only complete lines of the log (a cause for the intermittent failure of step 24) |
 
 ## Review 1: steps 1 to 5 (2026-11-10)
 
