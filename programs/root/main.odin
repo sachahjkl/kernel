@@ -244,12 +244,13 @@ screen: graphics.Canvas
 screen_data: bootscreen.Data
 message: bootscreen.Text
 
-show :: proc "contextless" (text: string, state: bootscreen.State) {
+show :: proc "contextless" (text: string, state: bootscreen.State, step: bootscreen.Step) {
 	if screen.pixels == nil {
 		return
 	}
 	screen_data.message = text
 	screen_data.state = state
+	screen_data.step = step
 	collect.data(&screen_data, machine)
 	bootscreen.draw_screen(screen, &screen_data)
 }
@@ -266,7 +267,7 @@ fail :: proc "contextless" (text: string, status: system.Status) -> ! {
 	bootscreen.put(&message, text)
 	bootscreen.put(&message, ": status ")
 	bootscreen.put_number(&message, u64(status))
-	show(string(message.bytes[:message.count]), .Failed)
+	show(string(message.bytes[:message.count]), .Failed, screen_data.step)
 	system.log("root: the boot display shows the failure")
 	for {
 		system.sleep(max(u64))
@@ -293,7 +294,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		screen_data.image = image
 		screen_data.red_first = ctx.values[op.ROOT_VALUE_FORMAT] == u64(info.Pixel_Format.Red_Green_Blue_X)
 	}
-	show("the root service starts input", .Running)
+	show("the root service starts input", .Running, .Input)
 	{
 		table: rawptr
 		replacement_memory, status = system.memory_create(1)
@@ -335,7 +336,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 	}
 
-	show("the root service starts the compositor", .Running)
+	show("the root service starts the compositor", .Running, .Compositor)
 	// The compositor: the framebuffer, the input ring, and a ring to this service.
 	control_memory, control, status = system.ring_create()
 	if status != .Ok {

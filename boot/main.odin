@@ -305,6 +305,7 @@ display :: proc "contextless" (boot: ^info.Boot_Info, message: string) {
 	data.image = boot_image
 	data.processor_name = bootscreen.processor_name()
 	data.message = message
+	data.step = .Kernel
 	data.red_first = screen.format == .Red_Green_Blue_X
 	bootscreen.draw_screen({pixels = ([^]graphics.Color)(uintptr(screen.address)), width = int(screen.width), height = int(screen.height), stride = int(screen.pixels_per_line)}, data)
 }
