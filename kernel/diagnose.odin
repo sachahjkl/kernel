@@ -173,7 +173,7 @@ read_regions_full :: proc "contextless" () -> bool {
 // Machine_Full: which tables of the machine are full.
 @(private = "file")
 Machine_Full :: struct {
-	programs, threads, budgets, messages: bool,
+	programs, budgets, messages: bool,
 }
 
 // read_machine_full reads the tables of the machine that the operations
@@ -182,15 +182,10 @@ Machine_Full :: struct {
 read_machine_full :: proc "contextless" () -> (full: Machine_Full) {
 	control_take()
 	defer control_free()
-	full = {true, true, true, true}
+	full = {true, true, true}
 	for program in programs[1:] {
 		if program.state == .None {
 			full.programs = false
-		}
-	}
-	for &thread in threads[1:] {
-		if thread.state == .None && intrinsics.atomic_load(&thread.references) == 0 {
-			full.threads = false
 		}
 	}
 	for budget in budgets[1:] {
@@ -702,7 +697,8 @@ slot_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Prog
 		record_set(record, .Full, .Handles, 0, 0, HANDLE_CAPACITY - 1, 0)
 		return true
 	}
-	machine := read_machine_full()
+	// A table of the machine is named only where it is the one cause that
+	// the status leaves, and its lock is taken only for that operation.
 	#partial switch operation {
 	case .Memory_Create:
 		if !read_regions_full() {
@@ -710,35 +706,34 @@ slot_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Prog
 		}
 		record_set(record, .Full, .Memory, 0, 0, REGION_CAPACITY - 1, 0)
 	case .Program_Create:
-		if !machine.programs {
+		if !read_machine_full().programs {
 			return false
 		}
 		record_set(record, .Full, .Programs, 0, 0, PROGRAM_CAPACITY - 1, 0)
 	case .Thread_Create, .Program_Start:
 		// The causes: the thread areas of the program, its mappings (the
 		// thread area is a mapping), the memory objects of the machine (the
-		// thread area is one), the thread table of the machine. The areas and
-		// the mappings of another program (Program_Start) need its lock.
+		// thread area is one), the thread table of the machine. The record
+		// names a table of the caller only. Which of two tables of the
+		// machine is full is a fact of the machine that the status does not
+		// give (P20): Refused. The areas and the mappings of another program
+		// (Program_Start) need its lock: Refused too.
 		switch {
 		case operation == .Thread_Create && areas:
 			record_set(record, .Full, .Threads, 0, 0, op.THREAD_CAPACITY, 0)
 		case operation == .Thread_Create && mappings:
 			record_set(record, .Full, .Mappings, 0, 0, MAPPING_CAPACITY, 0)
-		case read_regions_full():
-			record_set(record, .Full, .Memory, 0, 0, REGION_CAPACITY - 1, 0)
-		case machine.threads:
-			record_set(record, .Full, .Threads, 0, 0, THREAD_TABLE_CAPACITY - 1, 0)
 		case:
 			return false
 		}
 	case .Budget_Create:
-		if !machine.budgets {
+		if !read_machine_full().budgets {
 			return false
 		}
 		record_set(record, .Full, .Budgets, 0, 0, BUDGET_CAPACITY - 1, 0)
 	case .Device_Create:
 		switch {
-		case op.Device_Kind(v[1]) == .Message && machine.messages:
+		case op.Device_Kind(v[1]) == .Message && read_machine_full().messages:
 			record_set(record, .Full, .Interrupts, 0, 0, op.MESSAGE_CAPACITY, 0)
 		case op.Device_Kind(v[1]) == .Memory && read_regions_full():
 			record_set(record, .Full, .Memory, 0, 0, REGION_CAPACITY - 1, 0)
