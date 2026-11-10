@@ -210,6 +210,13 @@ scenario := [?]Step {
 	{kind = .Wait, text = "workers: ok, 4 threads computed 140 tiles: "},
 	{kind = .Drag, x = 400, y = 62, to_x = 640, to_y = 340},
 	{kind = .Shot, text = "workers"},
+
+	// Rights: a program with a part of the rights of two handles. The
+	// kernel refuses each operation that needs another right.
+	{kind = .Click, x = 800, y = 14}, // rights
+	{kind = .Wait, text = "rights: ok, 4 allowed, 5 refused", any_order = true},
+	{kind = .Wait, text = "compositor: surface rights"},
+	{kind = .Shot, text = "rights"},
 	{kind = .Click, x = 70, y = 300},
 	{kind = .Type, text = "programs()"},
 	{kind = .Wait, text = "   threads     "},

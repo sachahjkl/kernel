@@ -385,15 +385,15 @@ sandbox_create :: proc "contextless" (sandbox: ^Sandbox) -> bool {
 // boot image.
 sandbox_start :: proc "contextless" (sandbox: ^Sandbox) -> system.Status {
 	sandbox.ring^ = {}
-	handles: [op.CONTEXT_HANDLES]system.Handle
+	grants: [op.CONTEXT_HANDLES]system.Grant
 	values: [op.CONTEXT_VALUES]u64
-	handles[isolated.GRANT_RING] = sandbox.ring_memory
-	handles[isolated.GRANT_REGION] = sandbox.region_memory
+	grants[isolated.GRANT_RING] = {sandbox.ring_memory, {.Read, .Write}}
+	grants[isolated.GRANT_REGION] = {sandbox.region_memory, {.Read, .Write}}
 	values[isolated.VALUE_FILE_ADDRESS] = isolated.FILE_ADDRESS
 	values[isolated.VALUE_FILE_SIZE] = sandbox.file_size
 	mappings := [1]system.Mapping{{memory = image_memory, address = isolated.FILE_ADDRESS, first = sandbox.first_page, page_count = sandbox.page_count}}
 	status: system.Status
-	sandbox.program, status = system.program_start(system.image_find(image, "host"), sandbox.name, handles, values, mappings[:])
+	sandbox.program, status = system.program_start(system.image_find(image, "host"), sandbox.name, grants, values, mappings[:])
 	return status
 }
 

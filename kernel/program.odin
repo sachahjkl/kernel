@@ -28,13 +28,22 @@ Object_Kind :: enum u8 {
 	Program   = 2, // object: index in programs
 	Interrupt = 3, // object: interrupt line
 	Ports     = 4, // object: first port; count: number of ports
-	Machine   = 5, // The right to create device handles, to inspect and to stop the machine.
+	Machine   = 5, // The machine: its rights are Devices, Inspect and Stop.
 	Thread    = 6, // object: index in threads
 }
+
+// The rights of the handle of a new object, by kind.
+RIGHTS_MEMORY :: op.Rights{.Give, .Read, .Write, .Execute}
+RIGHTS_PROGRAM :: op.Rights{.Give, .Read, .Control}
+RIGHTS_THREAD :: op.Rights{.Give, .Read, .Control}
+RIGHTS_PORTS :: op.Rights{.Give}
+RIGHTS_INTERRUPT :: op.Rights{.Give, .Read}
+RIGHTS_MACHINE :: op.Rights{.Give, .Inspect, .Devices, .Stop}
 
 Handle_Slot :: struct {
 	kind:       Object_Kind,
 	generation: u16,
+	rights:     op.Rights,
 	object:     u32,
 	count:      u32,
 }
@@ -173,16 +182,21 @@ handle_insert :: proc "contextless" (program: ^Program, slot: Handle_Slot) -> op
 	return 0
 }
 
-handle_find :: proc "contextless" (program: ^Program, handle: u64, kind: Object_Kind) -> ^Handle_Slot {
+// handle_find gives the slot of a handle of a program. The handle must name
+// an object of this kind (.None: any kind) and have each of these rights.
+handle_find :: proc "contextless" (program: ^Program, handle: u64, kind: Object_Kind, rights: op.Rights = {}) -> (slot: ^Handle_Slot, status: op.Status) {
 	index := handle & 0xFFFF
 	if index == 0 || index >= HANDLE_CAPACITY || handle >> 32 != 0 {
-		return nil
+		return nil, .Bad_Handle
 	}
-	slot := &program.handles[index]
+	slot = &program.handles[index]
 	if slot.kind == .None || u64(slot.generation) != handle >> 16 || (kind != .None && slot.kind != kind) {
-		return nil
+		return nil, .Bad_Handle
 	}
-	return slot
+	if !(rights <= slot.rights) {
+		return nil, .No_Right
+	}
+	return slot, .Ok
 }
 
 handle_close :: proc "contextless" (program: ^Program, slot: ^Handle_Slot) {

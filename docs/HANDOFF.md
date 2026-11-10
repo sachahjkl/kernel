@@ -98,7 +98,7 @@ Notes are in `research/`.
 
 1. Get the owner's review of the choices in `FIRST_MILESTONE.md`.
 2. Descriptions made from the source (property 19): done on 2026-11-10 (`tools/kerneltool/describe.odin`). Text results are done (2026-11-10). The isolated call of an export through a ring is done (2026-11-10): see `MODULE_CONTRACT.md` section 4.
-3. Rights on handles, and a split of the Machine handle.
+3. Rights on handles, and a split of the Machine handle: done on 2026-11-10 (choice 27 of `FIRST_MILESTONE.md`). The Machine handle is one kind with the rights Inspect, Devices and Stop.
 4. Damage rectangles in the compositor.
 5. A block device service (virtio), then the storage service.
 6. Research on identity across machines; check of the licences in the reuse list of `PROPERTIES.md`.

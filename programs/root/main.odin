@@ -16,16 +16,19 @@ ROOT_MARK :: "root: ok"
 // ring to the compositor and nothing else.
 Grant :: enum {
 	Root_Ring, // Start and stop programs.
-	Machine, // Inspect the system; stop the machine.
+	Inspect, // The machine, with the right Inspect.
+	Stop, // The machine, with the right Stop.
 	Image, // Read the boot image.
 }
 
 grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 	switch name {
 	case "console":
-		return {.Root_Ring, .Machine, .Image}
+		return {.Root_Ring, .Inspect, .Stop, .Image}
 	case "monitor":
-		return {.Machine}
+		return {.Inspect}
+	case "rights":
+		return {.Inspect, .Image} // It shows what the kernel refuses.
 	case "rings":
 		return {.Image} // It starts its nodes from the boot image.
 	}
@@ -82,17 +85,17 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			}
 			return system.Handle(results[0])
 		}
-		handles: [op.CONTEXT_HANDLES]system.Handle
-		handles[0] = input_memory
-		handles[1] = device(.Ports, 0x60, 5)
-		handles[2] = device(.Interrupt, 1, 0)
-		handles[3] = device(.Interrupt, 12, 0)
-		_, status = system.program_start(system.image_find(image, "input"), "input", handles, {})
+		grants: [op.CONTEXT_HANDLES]system.Grant
+		grants[0] = {input_memory, {.Read, .Write}}
+		grants[1] = {device(.Ports, 0x60, 5), {}}
+		grants[2] = {device(.Interrupt, 1, 0), {.Read}}
+		grants[3] = {device(.Interrupt, 12, 0), {.Read}}
+		_, status = system.program_start(system.image_find(image, "input"), "input", grants, {})
 		if status != .Ok {
 			fail("cannot start input", status)
 		}
-		for handle in handles[1:4] {
-			system.close(handle)
+		for grant in grants[1:4] {
+			system.close(grant.handle)
 		}
 	}
 
@@ -102,16 +105,16 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		fail("cannot create a ring", status)
 	}
 	{
-		handles: [op.CONTEXT_HANDLES]system.Handle
-		handles[0] = ctx.handles[op.ROOT_FRAMEBUFFER]
-		handles[1] = input_memory
-		handles[2] = control_memory
+		grants: [op.CONTEXT_HANDLES]system.Grant
+		grants[0] = {ctx.handles[op.ROOT_FRAMEBUFFER], {.Read, .Write}}
+		grants[1] = {input_memory, {.Read, .Write}}
+		grants[2] = {control_memory, {.Read, .Write}}
 		values: [op.CONTEXT_VALUES]u64
 		values[0] = ctx.values[op.ROOT_VALUE_WIDTH]
 		values[1] = ctx.values[op.ROOT_VALUE_HEIGHT]
 		values[2] = ctx.values[op.ROOT_VALUE_PIXELS_PER_LINE]
 		values[3] = ctx.values[op.ROOT_VALUE_FORMAT]
-		compositor, status = system.program_start(system.image_find(image, "compositor"), "compositor", handles, values)
+		compositor, status = system.program_start(system.image_find(image, "compositor"), "compositor", grants, values)
 		if status != .Ok {
 			fail("cannot start the compositor", status)
 		}
@@ -192,27 +195,35 @@ start :: proc "contextless" (name: string) -> system.Status {
 	// The ring between the program and the compositor. This service does not keep it.
 	display_memory := system.memory_create(ring.PAGE_COUNT) or_return
 	defer system.close(display_memory)
-	slot.client = system.give(compositor, display_memory) or_return
+	slot.client = system.give(compositor, display_memory, {.Read, .Write}) or_return
 	system.send(&control.commands, ring.Record{kind = u32(display.Control.Client_Add), values = {0 = u64(slot.client)}})
 
-	handles: [op.CONTEXT_HANDLES]system.Handle
+	grants: [op.CONTEXT_HANDLES]system.Grant
 	values: [op.CONTEXT_VALUES]u64
-	handles[system.GRANT_DISPLAY] = display_memory
-	grants := grants_of(name)
+	grants[system.GRANT_DISPLAY] = {display_memory, {.Read, .Write}}
+	role := grants_of(name)
 	status := system.Status.Ok
-	if .Root_Ring in grants {
+	if .Root_Ring in role {
 		slot.requests_memory, slot.requests, status = system.ring_create()
-		handles[system.GRANT_ROOT] = slot.requests_memory
+		grants[system.GRANT_ROOT] = {slot.requests_memory, {.Read, .Write}}
 	}
-	if .Machine in grants {
-		handles[system.GRANT_MACHINE] = machine
+	// One Machine handle; each role receives a part of its rights.
+	machine_rights: system.Rights
+	if .Inspect in role {
+		machine_rights += {.Inspect}
 	}
-	if .Image in grants {
-		handles[system.GRANT_IMAGE] = image_memory
+	if .Stop in role {
+		machine_rights += {.Stop}
+	}
+	if machine_rights != {} {
+		grants[system.GRANT_MACHINE] = {machine, machine_rights}
+	}
+	if .Image in role {
+		grants[system.GRANT_IMAGE] = {image_memory, {.Read}}
 		values[system.GRANT_VALUE_IMAGE_SIZE] = u64(len(image))
 	}
 	if status == .Ok {
-		slot.program, status = system.program_start(file, name, handles, values)
+		slot.program, status = system.program_start(file, name, grants, values)
 	}
 	if status != .Ok {
 		release(slot)

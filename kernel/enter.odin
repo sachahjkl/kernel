@@ -42,16 +42,14 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 	program := &programs[program_index]
 	v := command.values
 
-	// target gives the program that a program handle names. 0 names the caller.
-	target :: proc "contextless" (program: ^Program, handle: u64) -> ^Program {
+	// target gives the program that a program handle with the right Control
+	// names. 0 names the caller.
+	target :: proc "contextless" (program: ^Program, handle: u64) -> (to: ^Program, status: op.Status) {
 		if handle == 0 {
-			return program
+			return program, .Ok
 		}
-		slot := handle_find(program, handle, .Program)
-		if slot == nil {
-			return nil
-		}
-		return &programs[slot.object]
+		slot := handle_find(program, handle, .Program, {.Control}) or_return
+		return &programs[slot.object], .Ok
 	}
 
 	switch op.Operation(command.kind) {
@@ -74,7 +72,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		if region == 0 {
 			return .No_Memory
 		}
-		handle := handle_insert(program, {kind = .Memory, object = region})
+		handle := handle_insert(program, {kind = .Memory, rights = RIGHTS_MEMORY, object = region})
 		if handle == 0 {
 			regions[region].references = 1
 			region_release(region)
@@ -84,23 +82,25 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		return .Ok
 
 	case .Memory_Map:
-		slot := handle_find(program, v[0], .Memory)
-		to := target(program, v[1])
-		if slot == nil || to == nil {
-			return .Bad_Handle
+		flags := transmute(op.Map_Flags)v[3]
+		needed := op.Rights{.Read}
+		if .Write in flags {
+			needed += {.Write}
 		}
+		if .Execute in flags {
+			needed += {.Execute}
+		}
+		slot := handle_find(program, v[0], .Memory, needed) or_return
+		to := target(program, v[1]) or_return
 		if to.state == .None || to.state == .Stopped {
 			return .Bad_State
 		}
-		address, status := map_region(to, slot.object, v[2], transmute(op.Map_Flags)v[3], v[4], v[5])
+		address, status := map_region(to, slot.object, v[2], flags, v[4], v[5])
 		results[0] = address
 		return status
 
 	case .Memory_Unmap:
-		to := target(program, v[0])
-		if to == nil {
-			return .Bad_Handle
-		}
+		to := target(program, v[0]) or_return
 		if to.state == .None || to.state == .Stopped {
 			return .Bad_State
 		}
@@ -113,10 +113,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		return .Bad_Address
 
 	case .Memory_Size:
-		slot := handle_find(program, v[0], .Memory)
-		if slot == nil {
-			return .Bad_Handle
-		}
+		slot := handle_find(program, v[0], .Memory) or_return
 		results[0] = regions[slot.object].page_count
 		return .Ok
 
@@ -128,7 +125,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		if created == 0 {
 			return .No_Memory
 		}
-		handle := handle_insert(program, {kind = .Program, object = created})
+		handle := handle_insert(program, {kind = .Program, rights = RIGHTS_PROGRAM, object = created})
 		if handle == 0 {
 			program_stop(created, 0)
 			return .No_Slot
@@ -137,10 +134,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		return .Ok
 
 	case .Program_Start:
-		slot := handle_find(program, v[0], .Program)
-		if slot == nil {
-			return .Bad_Handle
-		}
+		slot := handle_find(program, v[0], .Program, {.Control}) or_return
 		to := &programs[slot.object]
 		if to.state != .Created {
 			return .Bad_State
@@ -156,7 +150,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		if status != .Ok {
 			return status
 		}
-		handle := handle_insert(program, {kind = .Thread, object = created})
+		handle := handle_insert(program, {kind = .Thread, rights = RIGHTS_THREAD, object = created})
 		if handle == 0 {
 			thread_stop(created)
 			return .No_Slot
@@ -169,47 +163,35 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			thread_stop(index)
 			return .Ok
 		}
-		slot := handle_find(program, v[0], .Thread)
-		if slot == nil {
-			return .Bad_Handle
-		}
+		slot := handle_find(program, v[0], .Thread, {.Control}) or_return
 		thread_stop(slot.object)
 		return .Ok
 
 	case .Thread_State:
-		slot := handle_find(program, v[0], .Thread)
-		if slot == nil {
-			return .Bad_Handle
-		}
+		slot := handle_find(program, v[0], .Thread, {.Read}) or_return
 		results[0] = u64(threads[slot.object].state)
 		return .Ok
 
 	case .Program_Stop:
-		to := target(program, v[0])
-		if to == nil {
-			return .Bad_Handle
-		}
+		to := target(program, v[0]) or_return
 		program_stop(u32(intrinsics.ptr_sub(to, &programs[0])), u32(v[1]))
 		return .Ok
 
 	case .Program_State:
-		slot := handle_find(program, v[0], .Program)
-		if slot == nil {
-			return .Bad_Handle
-		}
+		slot := handle_find(program, v[0], .Program, {.Read}) or_return
 		results[0] = u64(program_state(slot.object))
 		results[1] = u64(programs[slot.object].code)
 		return .Ok
 
 	case .Handle_Give:
-		given := handle_find(program, v[1], .None)
-		to_slot := handle_find(program, v[0], .None)
-		if given == nil || to_slot == nil {
-			return .Bad_Handle
-		}
+		given := handle_find(program, v[1], .None, {.Give}) or_return
+		to_slot := handle_find(program, v[0], .None) or_return
 		to: ^Program
 		#partial switch to_slot.kind {
 		case .Program:
+			if .Control not_in to_slot.rights {
+				return .No_Right
+			}
 			to = &programs[to_slot.object]
 		case .Memory:
 			find: for &other in programs[1:] {
@@ -228,7 +210,9 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		if to.state == .None || to.state == .Stopped {
 			return .Bad_State
 		}
-		handle := handle_insert(to, given^)
+		copy := given^
+		copy.rights &= transmute(op.Rights)u32(v[2])
+		handle := handle_insert(to, copy)
 		if handle == 0 {
 			return .No_Slot
 		}
@@ -236,10 +220,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		return .Ok
 
 	case .Handle_Close:
-		slot := handle_find(program, v[0], .None)
-		if slot == nil {
-			return .Bad_Handle
-		}
+		slot := handle_find(program, v[0], .None) or_return
 		handle_close(program, slot)
 		return .Ok
 
@@ -274,30 +255,25 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		return .Ok
 
 	case .Interrupt_Read:
-		slot := handle_find(program, v[0], .Interrupt)
-		if slot == nil {
-			return .Bad_Handle
-		}
+		slot := handle_find(program, v[0], .Interrupt, {.Read}) or_return
 		results[0] = u64(interrupt_pending[slot.object])
 		interrupt_pending[slot.object] = 0
 		return .Ok
 
 	case .Device_Create:
-		if handle_find(program, v[0], .Machine) == nil {
-			return .Bad_Handle
-		}
+		_ = handle_find(program, v[0], .Machine, {.Devices}) or_return
 		slot: Handle_Slot
 		switch op.Device_Kind(v[1]) {
 		case .Ports:
 			if v[2] >= 65536 || v[3] == 0 || v[3] > 65536 - v[2] {
 				return .Bad_Address
 			}
-			slot = {kind = .Ports, object = u32(v[2]), count = u32(v[3])}
+			slot = {kind = .Ports, rights = RIGHTS_PORTS, object = u32(v[2]), count = u32(v[3])}
 		case .Interrupt:
 			if v[2] == 0 || v[2] >= INTERRUPT_LINES {
 				return .Bad_Address
 			}
-			slot = {kind = .Interrupt, object = u32(v[2])}
+			slot = {kind = .Interrupt, rights = RIGHTS_INTERRUPT, object = u32(v[2])}
 		case .None:
 			return .Bad_Operation
 		case:
@@ -311,9 +287,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		return .Ok
 
 	case .Inspect:
-		if handle_find(program, v[0], .Machine) == nil {
-			return .Bad_Handle
-		}
+		_ = handle_find(program, v[0], .Machine, {.Inspect}) or_return
 		switch op.Inspect_Kind(v[1]) {
 		case .System:
 			if v[4] < size_of(op.System_Report) || !user_range(program.table, v[3], size_of(op.System_Report), true) {
@@ -366,9 +340,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		return .Ok
 
 	case .Machine_Stop:
-		if handle_find(program, v[0], .Machine) == nil {
-			return .Bad_Handle
-		}
+		_ = handle_find(program, v[0], .Machine, {.Stop}) or_return
 		log("kernel: the machine stops with code ", v[1])
 		machine_stop(u8(v[1]))
 

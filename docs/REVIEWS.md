@@ -14,6 +14,7 @@ A step is one tested commit that adds one capability.
 | 6 | `887f23b` | One wait: rings wait on words, `Wake(memory)` deleted, the event word |
 | 7 | `6d900bc` | The console runs a line in a second thread: keys during a call, Escape stops an isolated call |
 | 8 | `ec91461` | Descriptions come from the source: parameter names, help from the comment, checked by the test |
+| 9 | (the commit of step 9) | Rights on handles: `Handle_Give` takes a mask, `No_Right`, one Machine object with Inspect, Devices and Stop, shown by `rights` |
 
 ## Review 1: steps 1 to 5 (2026-11-10)
 

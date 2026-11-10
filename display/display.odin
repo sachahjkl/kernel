@@ -96,7 +96,7 @@ open :: proc "contextless" (ctx: ^system.Context, width, height: int, title: str
 	// program. Until then, the grant has no receiver.
 	granted: system.Handle
 	for attempt in 0 ..< 200 {
-		granted, status = system.give(window.ring_memory, window.surface)
+		granted, status = system.give(window.ring_memory, window.surface, {.Read}) // The compositor reads the surface.
 		if status == .Ok {
 			break
 		}

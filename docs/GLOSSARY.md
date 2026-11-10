@@ -48,7 +48,7 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 |---|---|---|
 | Handle | An index and a generation in the handle table of a program. It names one object with a set of rights. Handle 0 names no object (P2) | file descriptor, capability, token, reference |
 | Memory object | A run of page frames that the kernel names by handle. Programs map it; two programs that map the same one share it | region, shared memory segment, buffer |
-| Right | One permitted kind of operation on the object of a handle, for example read or map | permission, privilege, mode |
+| Right | One permitted kind of operation on the object of a handle. The rights are Give, Read, Write, Execute, Control, Inspect, Devices and Stop. A grant can remove rights and cannot add one | permission, privilege, mode |
 | Grant | The act that gives a handle to a program, and the record of that act. A grant is visible and can be revoked (P20) | permission, authorization, consent |
 | Ambient access | Access that a program has because it runs, and not because it received a handle. The system has none (P20) | ambient authority |
 | Sandbox | The state of every program: it can reach only the objects of its handles (P2) | jail, container |

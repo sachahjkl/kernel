@@ -83,17 +83,17 @@ root_start :: proc "contextless" (boot: ^info.Boot_Info) {
 
 	// The root service receives every handle that exists at boot.
 	record := direct(regions[ctx].physical, op.Context)
-	record.handles[op.ROOT_MACHINE] = handle_insert(program, {kind = .Machine})
+	record.handles[op.ROOT_MACHINE] = handle_insert(program, {kind = .Machine, rights = RIGHTS_MACHINE})
 	framebuffer := boot.framebuffer
 	if framebuffer.format != .None {
 		pages := (u64(framebuffer.pixels_per_line) * u64(framebuffer.height) * 4 + PAGE_SIZE - 1) / PAGE_SIZE
-		record.handles[op.ROOT_FRAMEBUFFER] = handle_insert(program, {kind = .Memory, object = region_device(framebuffer.address, pages)})
+		record.handles[op.ROOT_FRAMEBUFFER] = handle_insert(program, {kind = .Memory, rights = {.Give, .Read, .Write}, object = region_device(framebuffer.address, pages)})
 		record.values[op.ROOT_VALUE_WIDTH] = u64(framebuffer.width)
 		record.values[op.ROOT_VALUE_HEIGHT] = u64(framebuffer.height)
 		record.values[op.ROOT_VALUE_PIXELS_PER_LINE] = u64(framebuffer.pixels_per_line)
 		record.values[op.ROOT_VALUE_FORMAT] = u64(framebuffer.format)
 	}
-	record.handles[op.ROOT_BOOT_IMAGE] = handle_insert(program, {kind = .Memory, object = region_device(boot.boot_image, (boot.boot_image_size + PAGE_SIZE - 1) / PAGE_SIZE)})
+	record.handles[op.ROOT_BOOT_IMAGE] = handle_insert(program, {kind = .Memory, rights = {.Give, .Read}, object = region_device(boot.boot_image, (boot.boot_image_size + PAGE_SIZE - 1) / PAGE_SIZE)})
 	record.values[op.ROOT_VALUE_BOOT_IMAGE_SIZE] = boot.boot_image_size
 
 	if _, status := thread_create(index, u64(start), op.STACK_TOP, op.CONTEXT_ADDRESS); status != .Ok {

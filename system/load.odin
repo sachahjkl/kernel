@@ -31,6 +31,12 @@ image_find :: proc "contextless" (image: []u8, name: string) -> []u8 {
 	return nil
 }
 
+// A grant: a handle that a new program receives, and the rights of its copy.
+Grant :: struct {
+	handle: Handle,
+	rights: Rights,
+}
+
 // A part of a memory object at an address of a program.
 Mapping :: struct {
 	memory:     Handle,
@@ -41,13 +47,14 @@ Mapping :: struct {
 }
 
 // program_start builds and starts a program from a module file.
-//   handles: the grants. Each handle that is not 0 is copied to the program;
-//            the context of the program has the copy at the same index.
+//   grants:  each handle that is not 0 is copied to the program with the
+//            rights of the grant; the context of the program has the copy
+//            at the same index.
 //   values:   copied to the context.
 //   mappings: memory that the program has from its start, with no handle to
 //             it: the program cannot map it again with other flags.
 // The program stops when the last handle to it closes.
-program_start :: proc "contextless" (file: []u8, name: string, handles: [op.CONTEXT_HANDLES]Handle, values: [op.CONTEXT_VALUES]u64, mappings: []Mapping = nil) -> (program: Handle, status: Status) {
+program_start :: proc "contextless" (file: []u8, name: string, grants: [op.CONTEXT_HANDLES]Grant, values: [op.CONTEXT_VALUES]u64, mappings: []Mapping = nil) -> (program: Handle, status: Status) {
 	if len(file) == 0 || module.validate(file) != .None || module.count(file, .Imports) > 1 {
 		return 0, .Bad_Operation
 	}
@@ -63,7 +70,7 @@ program_start :: proc "contextless" (file: []u8, name: string, handles: [op.CONT
 		return 0, status
 	}
 	program = Handle(results[0])
-	if status = program_fill(program, file, head, handles, values, mappings); status == .Ok {
+	if status = program_fill(program, file, head, grants, values, mappings); status == .Ok {
 		_, status = call(.Program_Start, u64(program), u64(entry), op.STACK_TOP, op.CONTEXT_ADDRESS)
 	}
 	if status != .Ok {
@@ -75,7 +82,7 @@ program_start :: proc "contextless" (file: []u8, name: string, handles: [op.CONT
 }
 
 @(private)
-program_fill :: proc "contextless" (program: Handle, file: []u8, head: module.Header, handles: [op.CONTEXT_HANDLES]Handle, values: [op.CONTEXT_VALUES]u64, mappings: []Mapping) -> Status {
+program_fill :: proc "contextless" (program: Handle, file: []u8, head: module.Header, grants: [op.CONTEXT_HANDLES]Grant, values: [op.CONTEXT_VALUES]u64, mappings: []Mapping) -> Status {
 	module_map(file, head, program, op.PROGRAM_BASE) or_return
 	for mapping in mappings {
 		memory_map(mapping.memory, mapping.flags, program, mapping.address, mapping.first, mapping.page_count) or_return
@@ -89,9 +96,9 @@ program_fill :: proc "contextless" (program: Handle, file: []u8, head: module.He
 	defer close(record_memory)
 	record := (^op.Context)(memory_map(record_memory) or_return)
 	defer memory_unmap(record)
-	for handle, index in handles {
-		if handle != 0 {
-			record.handles[index] = give(program, handle) or_return
+	for grant, index in grants {
+		if grant.handle != 0 {
+			record.handles[index] = give(program, grant.handle, grant.rights) or_return
 		}
 	}
 	record.values = values

@@ -4,7 +4,7 @@ package system
 // A handle that the program was not granted is 0.
 GRANT_DISPLAY :: 0 // Memory: the ring to the compositor.
 GRANT_ROOT :: 1 // Memory: the ring to the root service, to start and stop programs.
-GRANT_MACHINE :: 2 // The machine: inspect the system, stop the machine.
+GRANT_MACHINE :: 2 // The machine, with the rights of the role: Inspect, or Inspect and Stop.
 GRANT_IMAGE :: 3 // Memory: the boot image, to list the modules.
 GRANT_VALUE_IMAGE_SIZE :: 0
 

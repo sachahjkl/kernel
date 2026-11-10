@@ -7,6 +7,8 @@ import "../ring"
 
 Handle :: op.Handle
 Status :: op.Status
+Right :: op.Right
+Rights :: op.Rights
 Context :: op.Context
 PAGE_SIZE :: op.PAGE_SIZE
 WAIT_FOREVER :: op.WAIT_FOREVER
@@ -91,10 +93,11 @@ memory_size :: proc "contextless" (memory: Handle) -> u64 {
 
 // give copies a handle to another program. target is a program handle, or a
 // memory handle: then the other program that maps this memory receives it.
+// The new handle has the rights of handle that are also in rights.
 // The result is the handle in the table of that program.
-give :: proc "contextless" (target: Handle, handle: Handle) -> (result: Handle, status: Status) {
+give :: proc "contextless" (target: Handle, handle: Handle, rights: Rights) -> (result: Handle, status: Status) {
 	results: [7]u64
-	results, status = call(.Handle_Give, u64(target), u64(handle))
+	results, status = call(.Handle_Give, u64(target), u64(handle), u64(transmute(u32)rights))
 	return Handle(results[0]), status
 }
 

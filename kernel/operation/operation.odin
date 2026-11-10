@@ -34,6 +34,21 @@ USER_END :: 0x0000_8000_0000_0000
 
 Handle :: distinct u32 // 0 names no object.
 
+// A right: one kind of operation that a handle permits on its object. The
+// handle of a new object has each right of its kind. Handle_Give copies a
+// handle with a part of its rights. No operation adds a right to a handle.
+Right :: enum u32 {
+	Give    = 0, // Each kind: give a copy of the handle to another program.
+	Read    = 1, // Memory: map it. Program, Thread: read its state. Interrupt: read its count.
+	Write   = 2, // Memory: map it with Write.
+	Execute = 3, // Memory: map it with Execute.
+	Control = 4, // Program: map memory in it, give handles to it, start it, stop it. Thread: stop it.
+	Inspect = 5, // Machine: read the reports.
+	Devices = 6, // Machine: create device handles.
+	Stop    = 7, // Machine: stop the machine.
+}
+Rights :: bit_set[Right;u32]
+
 Operation :: enum u32 {
 	None           = 0,
 	Log            = 1, // (address, count): write text on the log of the kernel.
@@ -45,7 +60,8 @@ Operation :: enum u32 {
 	Program_Start  = 7, // (program, entry address, stack address, context address): the first thread of the program.
 	Program_Stop   = 8, // (program or 0 for self, code)
 	Program_State  = 9, // (program) -> Program_State, code
-	Handle_Give    = 10, // (target: program handle or memory handle, handle) -> the handle in the target program.
+	Handle_Give    = 10, // (target: program handle or memory handle, handle, Rights) -> the handle in the target program.
+	// The new handle has the rights of the handle that are also in Rights: a grant never adds a right.
 	// With a memory handle, the target is the other program that maps this memory: the other side of a ring.
 	Handle_Close   = 11, // (handle). The kernel stops a program when its last handle closes.
 	Interrupt_Read = 12, // (interrupt) -> the number of interrupts since the last read.
@@ -100,6 +116,7 @@ Status :: enum u32 {
 	No_Memory     = 4,
 	No_Slot       = 5,
 	Bad_State     = 6,
+	No_Right      = 7, // The handle names the object, but it does not have the right for this operation.
 }
 
 Map_Flag :: enum u64 {

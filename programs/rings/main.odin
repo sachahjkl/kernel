@@ -75,16 +75,16 @@ fail :: proc "contextless" (text: string) -> ! {
 node_start :: proc "contextless" (index: int) -> bool {
 	node := &nodes[index]
 	node.state^ = {}
-	handles: [op.CONTEXT_HANDLES]system.Handle
+	grants: [op.CONTEXT_HANDLES]system.Grant
 	values: [op.CONTEXT_VALUES]u64
-	handles[relay.GRANT_BEFORE] = nodes[(index + relay.NODE_COUNT - 1) % relay.NODE_COUNT].after_memory
-	handles[relay.GRANT_AFTER] = node.after_memory
-	handles[relay.GRANT_CONTROL] = node.control_memory
-	handles[relay.GRANT_STATE] = node.state_memory
+	grants[relay.GRANT_BEFORE] = {nodes[(index + relay.NODE_COUNT - 1) % relay.NODE_COUNT].after_memory, {.Read, .Write}}
+	grants[relay.GRANT_AFTER] = {node.after_memory, {.Read, .Write}}
+	grants[relay.GRANT_CONTROL] = {node.control_memory, {.Read, .Write}}
+	grants[relay.GRANT_STATE] = {node.state_memory, {.Read, .Write}}
 	values[relay.VALUE_WORK_TIME] = work_times[index]
 	name := [?]u8{'n', 'o', 'd', 'e', ' ', u8('1' + index)}
 	status: system.Status
-	node.program, status = system.program_start(system.image_find(image, "node"), string(name[:]), handles, values)
+	node.program, status = system.program_start(system.image_find(image, "node"), string(name[:]), grants, values)
 	node.waiting_logged = false
 	return status == .Ok
 }

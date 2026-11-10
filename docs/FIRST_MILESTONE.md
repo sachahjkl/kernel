@@ -33,7 +33,8 @@ The scenario does these actions:
 14. Start `rings` from the bar: six programs pass records through six rings. Add three records. Stop node 4: all the records wait in the ring before it. Start node 4 again.
 15. Start `threads` from the bar: one program, five threads. A thread adds the numbers to 1000 and ends; the first thread reads 500500. Four threads draw one Julia set each in the surface of the program. Key `3` stops thread 3, then starts it again. `programs()` shows 5 threads.
 16. Start `workers` from the bar. Four threads add to one number for 150 ms each: with the lock no addition is lost; with no lock, millions are lost. Then four threads take 140 tiles from one queue and compute a picture.
-17. Call `shutdown()`. The machine stops with code 0.
+17. Start `rights` from the bar. The program holds the machine with the right Inspect and the boot image with the right Read. It asks the kernel for nine operations. The kernel does four and refuses five with the status `No_Right`: create a device handle, stop the machine, map the boot image to write, map it to execute, give it to the compositor. The log has "rights: ok, 4 allowed, 5 refused".
+18. Call `shutdown()`. The machine stops with code 0.
 
 ## The path from power to desktop
 
@@ -51,6 +52,7 @@ The scenario does these actions:
 | Entry | One entry point: the `syscall` instruction. `rdi` is 0, a deadline in milliseconds, or `WAIT_FOREVER`. `rax` returns the time |
 | Kernel operations | 20 command kinds in the kernel ring of each thread. `kernel/operation/operation.odin` is the full list |
 | Objects | Memory, Program, Thread, Interrupt, Ports, Machine |
+| Rights | Each handle slot holds a set of rights: Give, Read, Write, Execute, Control, Inspect, Devices, Stop. The handle of a new object has each right of its kind. `Handle_Give(target, handle, Rights)` copies a handle with the rights that are in both sets. No operation adds a right. An operation on a handle without the needed right gives `No_Right` |
 | Tables | Flat and fixed: 2048 memory objects, 64 programs, 256 threads, 128 handles and 128 mappings per program, 32 threads per program |
 | Threads | A thread is a register state and a thread area: the thread record and the kernel ring of the thread. `Thread_Create(entry, stack, parameter)` adds a thread to the caller. The threads of a program share its memory and its handles. A program with no thread stops with code 0 |
 | Memory | A memory object is a run of contiguous page frames with a reference count. `Memory_Map` maps it in a program |
@@ -60,7 +62,7 @@ The scenario does these actions:
 | Devices | A Ports object opens a port range in the port bitmap of the program. An Interrupt object counts interrupts and wakes its owner |
 | Faults | A fault in a thread stops its program with a code. The kernel wakes each program that holds its handle |
 | Life of a program | A program runs while a handle names it. When its last handle closes, the kernel stops it. Only the root service has no handle |
-| Inspect | The Machine handle gives `System_Report` and `Program_Report` records, and stops the machine |
+| Machine | One Machine object with three rights. Inspect: read `System_Report` and `Program_Report` records. Devices: create device handles. Stop: stop the machine. The root service keeps Devices. `monitor` receives Inspect. The console receives Inspect and Stop |
 
 The kernel contains no code for a device, except the timer, the interrupt controller and the serial port of its log.
 
@@ -133,20 +135,18 @@ The owner did not review these. Each one can change.
 24. **The event word.** The thread record has an `events` word. The kernel adds 1 to it for each event of the program (choice 17). A thread reads the word (`system.wait_begin`), reads the state, then waits on the word with the value that it read: an event between the read and the wait ends the wait at once. This replaces the wake-pending flag with the rule of the word wait.
 25. **The console runs a line in a second thread.** The first thread reads the keys and draws. The second thread runs each line. The two threads share one `Work` record and wait on its words. During a line, the first thread keeps at most 128 keys, shows the time of the line in a status line, and sets the `cancel` word on Escape. An isolated call waits on the completion queue and on the `cancel` word in one entry. The limit of 2000 ms is deleted: the person decides. Escape does not stop a direct call or a command of the console: that code runs in the console itself, and choice 18 says that a thread stopped from outside can hold a lock.
 26. **Descriptions come from the source.** `tools/kerneltool/describe.odin` reads each Odin package with `core:odin/parser`. An export is a procedure with `@(export)` and the calling convention "c". `i64` is an Integer, `^string` is a Text, and a last parameter `^[]u8` is the buffer of a Text result. The description holds the name of the export, the name and the type of each parameter, the result, and the first sentence of the comment as the help. Another type, a missing comment or an export of data is a build error: the tool does not guess. The module table has no description. A function record is 56 bytes. The test reads each module file and compares its descriptions with the source. The kernel exports functions only: its two words that the assembly reads are now in `processor.asm`. The rules are those of the Odin binding; the description in the module file does not depend on Odin.
+27. **Rights on handles.** A right is one bit of a 32-bit set in the handle slot. There are 8 rights for 6 kinds of object; the table in `kernel/operation/operation.odin` says what each right permits for each kind. `Memory_Map` needs Read, and Write or Execute when the flags ask for them. An operation on another program needs Control on its handle. `Handle_Give` needs Give on the given handle, and Control when the target is a program handle. The copy has the intersection of the rights of the handle and of the mask: a grant never adds a right. `system.program_start` takes grants: a handle and its rights. Each caller names the rights; there is no default "all rights". The boot image handle of the root service has no Write and no Execute. A surface goes to the compositor with Read only. The Machine handle is not split in three kinds: one kind with three rights uses the one mechanism. A thread handle can go to another program with Read only: that program reads the state and cannot stop the thread.
 
 ## Gaps
 
 Against the properties and the module contract:
 
-- Handles have no rights. A program can give any of its handles onward.
-- The Machine handle gives inspect and stop together.
 - Property 19 is not complete: the description has no records, no floats, no handles and no grants. A module with imports cannot be loaded by a program.
 - Each program can create memory objects and programs with no limit, and can write on the log of the kernel.
 - Frame pointers are not enforced. An import call goes through a stub that the linker adds.
 - The test "a C program calls an Odin module" does not exist.
 - One processor.
 - A thread that stops with a lock held keeps the lock: the other threads wait with no end.
-- A thread handle can go to another program, which can then stop the thread (no rights on handles).
 - No storage, no network, no document service, no principals, no TPM, no Secure Boot.
 
 Performance:
@@ -161,7 +161,7 @@ Input:
 
 ## Next steps
 
-1. Rights on handles, and a split of the Machine handle.
+1. Limits for the operations with no handle.
 2. Damage rectangles in the compositor.
 3. A block device service (virtio), then the storage service.
 4. Several processors.
