@@ -60,7 +60,13 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Log record | One entry of the log: a number, a time, a program, a thread, a level, a channel and a text (`Log_Record`). The kernel sets all but the last three | log line, message |
 | Channel | The short name that a program gives to a log record, to group records of one subject | facility, tag, category, logger |
 | Level | How much a log record matters: Info, Debug, Warning or Error | severity, priority |
-| Kernel lock | The one lock of the kernel: one processor at a time runs kernel code | big kernel lock, giant lock |
+| Lock of the kernel | A word that one processor holds at a time, to change one kind of kernel data. Each kind has a place in the lock order (`ARCHITECTURE.md`, "Locks of the kernel"). Not the lock of a program, which is a word of the program | spinlock, mutex (for this) |
+| Lock order | The order of the kinds of locks of the kernel: control, program, origin, region, frame, log, wait, run. A processor takes a lock only if it holds no lock of a later kind, so no deadlock exists | lock hierarchy, lock ranking |
+| Control lock | The one lock of the kernel for the paths that cross programs or end objects that several programs name: start, stop, give to another program, revoke. Not on the paths of the work of a program | big kernel lock, giant lock, kernel lock |
+| Program lock | The lock of one program: its handles, its mappings and its page table | address space lock, mmap lock |
+| Frame lock | The lock of the page frames, the reserved pages, the pages of the budgets and the slots of the memory objects | zone lock, page allocator lock |
+| Run queue | The threads that are ready and that no processor runs, of one processor: its home threads. Its run lock protects it and the scheduling state of these threads | runqueue, ready list |
+| Wait table | The threads that wait on words, in buckets chosen by the physical address of the word, each with a wait lock | futex hash table |
 | Locker | A program that the program `locks` starts several times. It works only on its own objects, so a locker waits for another one only when the kernel makes it wait. The measures of the locks of the kernel count what the lockers do | load generator, stress worker |
 | Lock count | What the kernel counts for one kind of lock, on all the processors: the times that a processor took it, and the times that it had to wait for it (`Lock_Count` in `System_Report`) | lock statistics, contention counter |
 | Thread area | The memory that the kernel makes for one thread: the thread record, then the kernel ring of the thread | |

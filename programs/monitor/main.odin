@@ -8,7 +8,7 @@ import op "contract:operation"
 import "support:system"
 
 WIDTH :: 440
-HEIGHT :: 330
+HEIGHT :: 350
 INTERVAL :: 500
 LINE :: 20
 BAR_X :: 190
@@ -67,6 +67,27 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			y += LINE
 			x = graphics.text(canvas, 10, y, "interrupts ", COLOR_DIM)
 			graphics.unsigned(canvas, x, y, report.interrupts, COLOR_TEXT)
+			y += LINE
+			// The locks of the kernel: the waits of all kinds, and the kind
+			// that waited most.
+			takes, waits, most: u64
+			most_kind: op.Lock_Kind
+			for kind in op.Lock_Kind {
+				count := report.locks[kind]
+				takes += count.takes
+				waits += count.waits
+				if count.waits > most {
+					most, most_kind = count.waits, kind
+				}
+			}
+			x = graphics.text(canvas, 10, y, "kernel locks ", COLOR_DIM)
+			x = graphics.unsigned(canvas, x, y, waits, COLOR_TEXT)
+			x = graphics.text(canvas, x, y, " waits of ", COLOR_DIM)
+			x = graphics.unsigned(canvas, x, y, takes, COLOR_TEXT)
+			if most != 0 {
+				x = graphics.text(canvas, x, y, ", most: ", COLOR_DIM)
+				graphics.text(canvas, x, y, op.LOCK_KIND_NAMES[most_kind], COLOR_TEXT)
+			}
 			y += LINE + 6
 			graphics.text(canvas, 10, y, "program       pages", COLOR_DIM)
 			graphics.text(canvas, BAR_X, y, "processor", COLOR_DIM)
