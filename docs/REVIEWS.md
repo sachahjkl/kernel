@@ -283,7 +283,7 @@ Three, all removed.
 - Step 24: the record kind `COMMAND_RELEASE` asked the receiver to close handles that the caller gave for a call that it did not send. The caller depended on the receiver. Step 25 removed the record kind: the caller revokes.
 - Before step 25: the compositor had 16 places for windows and no check, and the removal of a window read past the table (choice 114). The scenario with one more program stopped the compositor. The table has 32 places, the number of programs that the root service can start.
 
-One is still open: the machine test failed one time at "the window paint is not at 516,408" during step 24. It did not fail in the six full runs of step 25. The cause is not found; the out-of-bounds copy of the compositor in the same code path (the order of windows) is a candidate, not a proof.
+One is still open: the machine test failed one time at "the window paint is not at 516,408" during step 24. It did not fail in the four full runs of step 25 that passed (a fifth run failed for the compositor fault of choice 114). The cause is not found; the out-of-bounds copy of the compositor in the same code path (the order of windows) is a candidate, not a proof.
 
 ### Order of the next steps
 
