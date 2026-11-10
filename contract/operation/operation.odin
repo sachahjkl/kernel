@@ -39,6 +39,11 @@ USER_END :: 0x0000_8000_0000_0000
 // of 64 bits: the value is always complete.
 Time_Record :: struct {
 	milliseconds: u64, // Since the kernel started its timer. It never goes back.
+	// Cycles of the cycle counter in one second. It does not change after
+	// boot. The milliseconds count the ticks of the timer, and a tick can
+	// come late on a machine that runs under another system: a program that
+	// measures an interval reads the cycle counter and divides by this.
+	cycle_frequency: u64,
 }
 
 Handle :: distinct u32 // 0 names no object.

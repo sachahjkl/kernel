@@ -140,4 +140,6 @@ Notes are in `research/`.
 11. Functions that give the information of the modules, with tables that the console combines: done on 2026-11-10 (step 36, choices 172 to 182). It answers the requirement of the owner that replaced SQLite. For the owner to know: the manual holds the machine with the right Inspect to read the module records, and gives what runs only to a caller that acts for the person.
 12. Corrections of the storage service after Review 7: done on 2026-11-10 (step 37, choices 183 to 188).
 13. One build gives one hash: done on 2026-11-10 (step 38, choice 189).
-14. Research on identity across machines; check of the licences in the reuse list of `PROPERTIES.md`.
+14. The boot display as an interface, and the design rules (`docs/DESIGN.md`): done on 2026-11-10 (step 39, choice 190).
+15. The first layer of the network: done on 2026-11-10 (step 40, choices 191 to 208). Fourth branch of an agent that the coordinator merged. A frame service drives the virtio network device; the network service speaks Ethernet, ARP, IPv4, ICMP echo and UDP and gives a program an endpoint whose grant names one remote. For the owner to know: for UDP the network service is on the data path, against the rule of property 5; the property has a dated note (the owner answered "keep going" to the objection). TCP, QUIC and a server come next, as libraries in the program. The time page now has the frequency of the cycle counter (choice 208).
+16. Research on identity across machines; check of the licences in the reuse list of `PROPERTIES.md`.

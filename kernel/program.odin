@@ -705,6 +705,7 @@ time_page_create :: proc "contextless" () -> bool {
 	regions[time_region].references = 1
 	time_record = direct(physical, op.Time_Record)
 	direct(physical, [PAGE_SIZE]u8)^ = {}
+	time_record.cycle_frequency = cycle_frequency // timer_calibrate measured it.
 	return true
 }
 

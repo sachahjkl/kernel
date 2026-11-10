@@ -112,10 +112,14 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 
 	canvas := window.canvas
 	sample := 0
-	last := system.time()
+	// The kernel counts processor time with the cycle counter, so the
+	// interval is measured with it too. The milliseconds of the time page
+	// count ticks, and a tick can come late: the two do not compare.
+	per_millisecond := max(system.cycle_frequency() / 1000, 1)
+	last := system.cycles()
 	for {
-		now := system.time()
-		elapsed := max(now - last, 1)
+		now := system.cycles()
+		elapsed := max((now - last) / per_millisecond, 1)
 		last = now
 		for &row in rows {
 			used, _ := system.budget_used(row.budget)
@@ -167,6 +171,6 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		graphics.text(canvas, 424, y, system.format(line[:], accepted, " written, ", refused, " refused"), log_right ? COLOR_RIGHT : COLOR_WRONG)
 		display.present(&window)
 		for _ in display.next_event(&window) {}
-		system.sleep(now + INTERVAL)
+		system.sleep(system.time() + INTERVAL)
 	}
 }

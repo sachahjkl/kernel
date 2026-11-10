@@ -83,6 +83,13 @@ time :: proc "contextless" () -> u64 {
 	return intrinsics.volatile_load(&record.milliseconds)
 }
 
+// cycle_frequency gives the cycles of the cycle counter in one second. It
+// reads the time page: it does not enter the kernel.
+cycle_frequency :: proc "contextless" () -> u64 {
+	record := (^op.Time_Record)(uintptr(op.TIME_ADDRESS))
+	return record.cycle_frequency
+}
+
 // time_entered gives the milliseconds since boot with a kernel entry. The
 // kernel also does the commands in the kernel ring of the thread.
 time_entered :: proc "contextless" () -> u64 {
