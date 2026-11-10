@@ -14,8 +14,15 @@ PAGE_NO_EXECUTE :: u64(1) << 63
 PAGE_ADDRESS :: u64(0x000F_FFFF_FFFF_F000)
 
 // One bit per page frame. 1: in use, or not memory.
+// The frame lock protects frame_bits, frame_hint, free_frames,
+// reserved_pages, the pages and `live` of each budget, the slots of the
+// table of memory objects, and the budget that paid for each object
+// (docs/ARCHITECTURE.md, "Locks of the kernel"). Each move of pages between
+// a budget, the reserved pages and the frames is one section under it, so
+// free_frames = pages of all budgets + reserved_pages when it is free.
+frame_lock: Lock
 frame_bits: []u64
-frame_count: u64
+frame_count: u64 // Read-only after boot.
 frame_hint: u64
 free_frames: u64
 kernel_table: u64 // The top level page table that all address spaces share the upper half of.
@@ -87,6 +94,24 @@ frame_used :: #force_inline proc "contextless" (frame: u64) -> bool {
 // frames_allocate gives count page frames in one block, filled with zero.
 // It gives 0 when there is no such block.
 frames_allocate :: proc "contextless" (count: u64) -> u64 {
+	lock_take(&frame_lock, .Frame)
+	first := frames_take(count)
+	lock_free(&frame_lock, .Frame)
+	frames_zero(first, count)
+	return first
+}
+
+// frames_zero fills frames with zero. The caller took them: no other
+// processor uses them, and the frame lock need not be held.
+frames_zero :: proc "contextless" (first: u64, count: u64) {
+	if first != 0 {
+		intrinsics.mem_zero(direct(first, u8), int(count * PAGE_SIZE))
+	}
+}
+
+// frames_take takes count page frames in one block, not zero. 0: no such
+// block. The caller holds the frame lock.
+frames_take :: proc "contextless" (count: u64) -> u64 {
 	if count == 0 || count > free_frames {
 		return 0
 	}
@@ -110,7 +135,6 @@ frames_allocate :: proc "contextless" (count: u64) -> u64 {
 				}
 				free_frames -= count
 				frame_hint = frame + 1
-				intrinsics.mem_zero(direct(first * PAGE_SIZE, u8), int(count * PAGE_SIZE))
 				return first * PAGE_SIZE
 			}
 		}
@@ -118,7 +142,15 @@ frames_allocate :: proc "contextless" (count: u64) -> u64 {
 	return 0
 }
 
+// frames_free gives frames back.
 frames_free :: proc "contextless" (address: u64, count: u64) {
+	lock_take(&frame_lock, .Frame)
+	frames_free_held(address, count)
+	lock_free(&frame_lock, .Frame)
+}
+
+// frames_free_held gives frames back. The caller holds the frame lock.
+frames_free_held :: proc "contextless" (address: u64, count: u64) {
 	first := address / PAGE_SIZE
 	for f in first ..< first + count {
 		frame_bits[f / 64] &~= 1 << (f % 64)
@@ -128,8 +160,9 @@ frames_free :: proc "contextless" (address: u64, count: u64) {
 }
 
 // page_entry gives the entry of the last level table for an address.
-// With create, it makes the tables that are missing: the budget pays.
-page_entry :: proc "contextless" (table: u64, address: u64, create: bool, budget: u32 = 0) -> ^u64 {
+// With create, it makes the tables that are missing: the budget pays. The
+// budget is the field of the program that names it: the frame lock reads it.
+page_entry :: proc "contextless" (table: u64, address: u64, create: bool, budget: ^u32 = nil) -> ^u64 {
 	current := table
 	for level := uint(3); level >= 1; level -= 1 {
 		entry := &direct(current, [512]u64)[address >> (12 + 9 * level) & 511]
@@ -137,14 +170,10 @@ page_entry :: proc "contextless" (table: u64, address: u64, create: bool, budget
 			if !create {
 				return nil
 			}
-			if !budgets[budget].live || budgets[budget].amounts.pages == 0 {
-				return nil
-			}
-			child := frames_allocate(1)
+			child := frame_paid(budget)
 			if child == 0 {
 				return nil
 			}
-			budgets[budget].amounts.pages -= 1
 			entry^ = child | PAGE_PRESENT | PAGE_WRITE | PAGE_USER
 		}
 		current = entry^ & PAGE_ADDRESS
@@ -152,9 +181,28 @@ page_entry :: proc "contextless" (table: u64, address: u64, create: bool, budget
 	return &direct(current, [512]u64)[address >> 12 & 511]
 }
 
+// frame_paid takes one zero page frame that a budget pays for: a page
+// table. 0: the budget has no page. The end of a budget changes the field
+// under the frame lock (budget_release).
+frame_paid :: proc "contextless" (budget_field: ^u32) -> u64 {
+	lock_take(&frame_lock, .Frame)
+	frame: u64
+	budget := budget_field^
+	if budgets[budget].live && budgets[budget].amounts.pages != 0 {
+		frame = frames_take(1)
+		if frame != 0 {
+			budgets[budget].amounts.pages -= 1
+		}
+	}
+	lock_free(&frame_lock, .Frame)
+	frames_zero(frame, 1)
+	return frame
+}
+
 // address_space_create gives a top level table with the kernel half only.
-address_space_create :: proc "contextless" () -> u64 {
-	table := frames_allocate(1)
+// The budget pays for it. 0: the budget has no page.
+address_space_create :: proc "contextless" (budget: ^u32) -> u64 {
+	table := frame_paid(budget)
 	if table != 0 {
 		for i in 256 ..< 512 {
 			direct(table, [512]u64)[i] = direct(kernel_table, [512]u64)[i]
@@ -164,8 +212,8 @@ address_space_create :: proc "contextless" () -> u64 {
 }
 
 // address_space_free frees the tables of the program half, and the top
-// table. It gives the number of pages that it freed.
-address_space_free :: proc "contextless" (table: u64) -> u64 {
+// table. The budget receives the pages.
+address_space_free :: proc "contextless" (table: u64, budget: ^u32) {
 	free_level :: proc "contextless" (table: u64, level: int, limit: int) -> (count: u64) {
 		for i in 0 ..< limit {
 			entry := direct(table, [512]u64)[i]
@@ -173,10 +221,12 @@ address_space_free :: proc "contextless" (table: u64) -> u64 {
 				count += free_level(entry & PAGE_ADDRESS, level - 1, 512)
 			}
 		}
-		frames_free(table, 1)
+		frames_free_held(table, 1)
 		return count + 1
 	}
-	return free_level(table, 4, 256)
+	lock_take(&frame_lock, .Frame)
+	budgets[budget^].amounts.pages += free_level(table, 4, 256)
+	lock_free(&frame_lock, .Frame)
 }
 
 // user_range says if a program can read (or write) all bytes of a range.

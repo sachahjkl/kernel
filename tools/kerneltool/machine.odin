@@ -741,6 +741,19 @@ scenario := [?]Step {
 	{kind = .Wait, text = "processors: the picture took "},
 	{kind = .Shot, text = "processors"},
 
+	// The locks of the kernel: four programs that each work on their own
+	// objects, with 1, 2 and 4 at one time; two threads that wake each
+	// other. The program checks the counts, not the speed.
+	{kind = .Launch, text = "locks"},
+	{kind = .Wait, text = "locks: kernel entries in one second, each locker on its own objects: "},
+	{kind = .Wait, text = "locks: pages on first use in one second, each locker in its own memory: "},
+	{kind = .Wait, text = "locks: word wait, two threads wake each other: "},
+	{kind = .Wait, text = "locks: ok, the kernel counted each entry, each page returned, no wake was lost, each stopped program returned its pages, its slot and its threads"},
+	{kind = .Shot, text = "locks"},
+	{kind = .Front, text = "console"},
+	{kind = .Type, text = "stop(\"locks\")"},
+	{kind = .Wait, text = "root: locks stopped"},
+
 	// The boot display in a window: how the machine started, with the
 	// records that the kernel has now.
 	{kind = .Launch, text = "boot"},
@@ -1142,6 +1155,25 @@ scenario := [?]Step {
 	// Each page is free or paid, after all the starts and stops of this test.
 	{kind = .Type, text = "memory()"},
 	{kind = .Wait, text = " pages: all the free pages"},
+	{kind = .Type, text = "shutdown()"},
+	{kind = .Wait, text = "kernel: the machine stops with code 0"},
+}
+
+// The measures of the locks of the kernel, with only the desktop.
+@(rodata)
+scenario_measure := [?]Step {
+	{kind = .Wait, text = "boot program: ok"},
+	{kind = .Wait, text = "kernel: ok"},
+	{kind = .Wait, text = "root: ok"},
+	{kind = .Wait, text = "compositor: first frame", any_order = true},
+	{kind = .Wait, text = "compositor: surface console"},
+	{kind = .Launch, text = "locks"},
+	{kind = .Wait, text = "locks: kernel entries in one second, each locker on its own objects: "},
+	{kind = .Wait, text = "locks: pages on first use in one second, each locker in its own memory: "},
+	{kind = .Wait, text = "locks: word wait, two threads wake each other: "},
+	{kind = .Wait, text = "locks: ok, the kernel counted each entry, each page returned, no wake was lost, each stopped program returned its pages, its slot and its threads"},
+	{kind = .Shot, text = "locks_alone"},
+	{kind = .Front, text = "console"},
 	{kind = .Type, text = "shutdown()"},
 	{kind = .Wait, text = "kernel: the machine stops with code 0"},
 }

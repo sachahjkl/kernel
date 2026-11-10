@@ -106,11 +106,34 @@ Processor :: struct {
 	record_thread: u32, // The thread whose thread record address is in the gs register of programs.
 	ports_loaded:  u32, // The program whose ports are open in the task state.
 	pending:       u32, // Not 0: another processor waits in processor_sync.
-	idle:          bool, // The processor waits for an interrupt, with no thread.
-	table:         u64, // The page table that the processor uses.
+	idle:          bool, // The processor waits for an interrupt, with no thread. Another processor clears it to wake it (kick).
+	table:         u64, // The page table that the processor uses. Only this processor writes it; others read it (unmap).
 	slice_left:    u64,
 	charged_from:  u64, // The cycle counter when the kernel last counted the time of the current thread (limit.odin).
 	busy_time:     u64, // Ticks with a thread.
+	// Counts of this processor only: no other processor writes them, and
+	// the reports add the counts of all processors.
+	entries:       u64, // Kernel entries.
+	interrupts:    u64, // Device interrupts.
+	first_use_faults: u64, // Page faults after which the page was present.
+	lock_counts:   [op.LOCK_KIND_CAPACITY]op.Lock_Count, // By Lock_Kind (lock.odin).
+	held:          [op.Lock_Kind]u32, // The locks of each kind that the processor holds.
+	programs_held: u64, // Bit n: the processor holds the lock of program n.
+	control:       bool, // The operation that runs holds the control lock (enter.odin).
+	retry:         bool, // The operation needs the control lock: it runs again with it.
+	ports_serial:  u64, // The ports_serial of the program whose ports are open (ports_switch).
+	record_serial: u32, // The serial of the thread whose record address is in the gs register of programs.
+	// The stops that the operation in progress made (stop_wait).
+	operation:     bool, // A kernel operation of the current thread runs (command_run).
+	stopped_thread, stopped_thread_serial: u32, // A thread that ran on another processor. 0: none.
+	stopped_programs: u64, // Bit n: program n had a thread on a processor.
+	stopped_serials:  [PROGRAM_CAPACITY]u32,
+	// Records too large for the kernel stack, for the operation that runs on
+	// this processor.
+	log_text:       [4096]u8,
+	boot_report:    op.Boot_Report,
+	mapping_report: op.Mapping_Report,
+	module_report:  op.Module_Report,
 	segments:      [7]u64,
 	task_state:    Task_State,
 	idle_fpu:      Fpu_State,
@@ -121,52 +144,12 @@ processor_count: u32
 gates: [256]Interrupt_Gate
 machine_stopping: bool
 
-// The kernel lock: one processor at a time runs kernel code. A processor
-// takes the lock at each kernel entry and frees it when it returns to a
-// program or waits for an interrupt. Interrupts are off in the kernel, so
-// the holder never waits for anything but another processor in
-// processor_sync. The kernel is off the hot path (property 3): the count
-// of waits shows what the one lock costs.
-kernel_lock: u32
-lock_waits: u64
-wake_needed: u32 // Threads that became ready since the last lock_release.
-
-lock_acquire :: proc "contextless" (cpu: ^Processor) {
-	waited := false
-	for intrinsics.atomic_exchange(&kernel_lock, 1) != 0 {
-		waited = true
-		for intrinsics.atomic_load(&kernel_lock) != 0 {
-			sync_acknowledge(cpu)
-			intrinsics.cpu_relax()
-		}
-	}
-	if waited {
-		lock_waits += 1
-	}
-}
-
-// lock_release frees the kernel lock. Before, it wakes one idle processor
-// for each thread that became ready.
-lock_release :: proc "contextless" () {
-	for cpu in processors[:processor_count] {
-		if wake_needed == 0 {
-			break
-		}
-		if cpu.idle {
-			cpu.idle = false
-			wake_needed -= 1
-			apic_send(cpu.apic_id, VECTOR_WAKE)
-		}
-	}
-	wake_needed = 0
-	intrinsics.atomic_store(&kernel_lock, 0)
-}
-
 // processor_sync waits until each processor of the set (bit n: processor n)
-// is in the kernel and has no address translation of a program from before
-// the call. Such a processor then waits for the kernel lock, which the
-// caller holds. The caller uses it after it removed a mapping, and before
-// it frees what a thread on another processor used.
+// passed a point where it has no address translation of a program from
+// before the call, and walks no chain of budgets: a kernel entry, the idle
+// wait, or the wait for a lock (sync_acknowledge). The caller uses it after
+// it removed a mapping (before the frames return), before it frees a page
+// table, and before the slot of a budget that ended serves again.
 processor_sync :: proc "contextless" (set: u64) {
 	if set == 0 {
 		return
@@ -177,9 +160,12 @@ processor_sync :: proc "contextless" (set: u64) {
 			apic_send(cpu.apic_id, VECTOR_SYNC)
 		}
 	}
+	self := processor_self()
 	for cpu in processors[:processor_count] {
 		if set & (1 << cpu.index) != 0 {
 			for intrinsics.atomic_load(&cpu.pending) != 0 {
+				// Two processors can synchronize each other at one time.
+				sync_acknowledge(self)
 				intrinsics.cpu_relax()
 			}
 		}
@@ -187,7 +173,7 @@ processor_sync :: proc "contextless" (set: u64) {
 }
 
 // sync_acknowledge answers processor_sync. The processor is in the kernel
-// with interrupts off, and it does not hold the kernel lock.
+// with interrupts off, at a kernel entry or in a wait for a lock.
 sync_acknowledge :: proc "contextless" (cpu: ^Processor) {
 	if intrinsics.atomic_load(&machine_stopping) {
 		processor_stop()
@@ -197,7 +183,7 @@ sync_acknowledge :: proc "contextless" (cpu: ^Processor) {
 	}
 	if intrinsics.atomic_load(&cpu.current) == 0 {
 		// No thread: the page table of the last program can end.
-		cpu.table = kernel_table
+		intrinsics.atomic_store(&cpu.table, kernel_table)
 		cr3_write(kernel_table)
 	} else {
 		cr3_write(cr3_read())
@@ -319,6 +305,7 @@ processor_start :: proc "contextless" () {
 	processors[0] = cpu
 	processor_count = 1
 	processor_setup(cpu)
+	lock_ready = true
 	timer_calibrate()
 	timer_start()
 }

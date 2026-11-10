@@ -35,12 +35,16 @@ foreign _ {
 kernel_no_execute: bool // The processors refuse to execute the memory of programs in the kernel.
 
 // kernel_entry gives the entry of the last level table for an address of
-// the kernel half. It makes the tables that are missing. nil: no memory.
-kernel_entry :: proc "contextless" (address: u64) -> ^u64 {
+// the kernel half. With create, it makes the tables that are missing: only
+// at boot, on one processor. nil: no memory, or no table.
+kernel_entry :: proc "contextless" (address: u64, create := true) -> ^u64 {
 	current := kernel_table
 	for level := uint(3); level >= 1; level -= 1 {
 		entry := &direct(current, [512]u64)[address >> (12 + 9 * level) & 511]
 		if entry^ & PAGE_PRESENT == 0 {
+			if !create {
+				return nil
+			}
 			child := frames_allocate(1)
 			if child == 0 {
 				return nil
@@ -132,7 +136,7 @@ stacks_create :: proc "contextless" (index: u32) -> (stack_top, fault_top: u64, 
 stacks_free :: proc "contextless" (index: u32) {
 	slot := u64(op.KERNEL_STACK_BASE) + u64(index) * op.KERNEL_STACK_SLOT_PAGES * PAGE_SIZE
 	for page in 0 ..< u64(op.KERNEL_STACK_SLOT_PAGES) {
-		entry := kernel_entry(slot + page * PAGE_SIZE)
+		entry := kernel_entry(slot + page * PAGE_SIZE, false) // A free makes no table.
 		if entry != nil && entry^ & PAGE_PRESENT != 0 {
 			frames_free(entry^ & PAGE_ADDRESS, 1)
 			entry^ = 0
@@ -148,7 +152,8 @@ stack_guard :: proc "contextless" (address: u64) -> (processor: u64, guard: bool
 		return 0, false
 	}
 	page := (address - op.KERNEL_STACK_BASE) / PAGE_SIZE
-	entry := kernel_entry(address)
+	// A report reads the tables: it does not make one.
+	entry := kernel_entry(address, false)
 	return page / op.KERNEL_STACK_SLOT_PAGES, entry != nil && entry^ & PAGE_PRESENT == 0
 }
 

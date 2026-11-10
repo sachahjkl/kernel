@@ -4,6 +4,7 @@ package kernel
 import info "contract:boot_info"
 import module "contract:module"
 import op "contract:operation"
+import "base:intrinsics"
 
 KERNEL_MARK :: "kernel: ok"
 ROOT_NAME :: "root"
@@ -23,15 +24,16 @@ entry :: proc "c" (boot: ^info.Boot_Info) -> ! {
 	stage_end(.Kernel_Memory)
 	processor_start()
 	stage_end(.Kernel_Processor)
-	// The first processor holds the kernel lock until it runs the first thread.
-	lock_acquire(processors[0])
 	processors_start(boot)
 	stage_end(.Kernel_Processors)
 	log("kernel: ", u64(processor_count), " processors")
 	log("kernel: free memory ", free_frames * PAGE_SIZE >> 20, " MiB")
 	log("kernel: framebuffer ", u64(boot.framebuffer.width), "x", u64(boot.framebuffer.height), " at ", Hex(boot.framebuffer.address))
 	log(KERNEL_MARK)
+	control_take()
 	root_start(boot)
+	control_free()
+	intrinsics.atomic_store(&root_started, true)
 	stage_end(.Kernel_Root)
 	paging_audit()
 	for stage in Stage {
@@ -93,6 +95,8 @@ root_start :: proc "contextless" (boot: ^info.Boot_Info) {
 		fail("no memory")
 	}
 	program := &programs[index]
+	taken := program_lock(index)
+	defer program_unlock(index, taken)
 	program_module(program, {base = op.PROGRAM_BASE, size = head.memory_size, hash = hash})
 	memory := info.physical_slice(regions[code].physical, head.memory_size, u8)
 	module.copy_segments(file, memory)

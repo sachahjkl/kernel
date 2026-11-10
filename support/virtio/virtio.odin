@@ -77,6 +77,7 @@ Device :: struct {
 
 // One split virtqueue, as the driver sees it.
 Queue :: struct {
+	index:        u16, // The number of the queue in its device.
 	size:         u32,
 	descriptors:  [^]Descriptor,
 	driver_index: ^u16,
@@ -240,6 +241,7 @@ queue_start :: proc "contextless" (device: ^Device, index: u16, base: uintptr, p
 	queue.device_index = (^u16)(base + 2 * system.PAGE_SIZE + 2)
 	queue.device_ring = ([^]Used)(base + 2 * system.PAGE_SIZE + 4)
 	queue.physical = physical
+	queue.index = index
 	store_64(device.common + COMMON_QUEUE_DESCRIPTORS, physical)
 	store_64(device.common + COMMON_QUEUE_DRIVER, physical + system.PAGE_SIZE)
 	store_64(device.common + COMMON_QUEUE_DEVICE, physical + 2 * system.PAGE_SIZE)
@@ -271,7 +273,7 @@ notify :: proc "contextless" (queue: ^Queue) {
 	intrinsics.atomic_store_explicit(queue.driver_index, queue.given, .Release)
 	intrinsics.atomic_thread_fence(.Seq_Cst)
 	if intrinsics.volatile_load(queue.device_flags) & 1 == 0 { // The device asks for no notice when this bit is set.
-		store_16(queue.notify, 0)
+		store_16(queue.notify, queue.index) // The notice is the number of the queue (virtio 1.x, 4.1.5.2).
 	}
 }
 

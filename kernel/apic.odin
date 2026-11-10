@@ -240,8 +240,7 @@ foreign _ {
 }
 
 // processors_start starts each other processor. The first processor runs
-// it once, with the kernel lock: a new processor waits for the lock, then
-// looks for a thread.
+// it once. A new processor looks for a thread in the run queues.
 processors_start :: proc "contextless" (boot: ^info.Boot_Info) {
 	direct_map_size = boot.direct_map_size
 	ids: [PROCESSOR_CAPACITY]u32
@@ -327,6 +326,5 @@ processor_entry :: proc "c" (cpu: ^Processor) -> ! {
 	processor_setup(cpu)
 	timer_start()
 	intrinsics.atomic_add(&started_count, 1)
-	lock_acquire(cpu)
 	schedule()
 }

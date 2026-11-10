@@ -75,6 +75,8 @@ The system boots under QEMU to a graphical desktop with a console, a system tool
 
 ![Four processors run the threads of one program at the same time; the same picture with 1, 2 and 4 threads](docs/screenshots/processors.png)
 
+![The locks of the kernel: kernel entries and pages on first use of 1, 2 and 4 programs, two threads that wake each other, and the waits of each lock](docs/screenshots/locks.png)
+
 ![The block service: a virtio disk in a program, a ring, and the data in the memory of the client; blocks in one second and kernel entries for each request](docs/screenshots/disk.png)
 
 ![The storage service: the private store of the console, its limit of blocks, the stores that the person sees, and a grant that the person revokes](docs/screenshots/storage.png)
@@ -113,6 +115,7 @@ The system boots under QEMU to a graphical desktop with a console, a system tool
 - `frames` shows paging as a tool of the system: a page gets its page frame at its first use, and the budget paid at creation, so no access fails; programs of one module map one memory object for its code, and a write to it is a page fault.
 - `limits` shows the limits of a budget: processor time and log records for each second. The kernel counts the time with the cycle counter and stops a thread at the limit of its budget.
 - `processors` shows several processors: the kernel says that four processors run threads of one program at the same time, and the same picture takes less time with 2 and 4 threads.
+- `locks` shows the locks of the kernel, split by data: four programs that work on their own objects enter the kernel 3.5 times as often as one, and the window gives the waits of each lock.
 - `workers` shows the lock and the word wait: four threads take tiles from one queue. Four threads add to one number: with the lock no addition is lost, with no lock millions are lost.
 - A program that faults stops alone. The system continues.
 
@@ -139,7 +142,7 @@ The system boots under QEMU to a graphical desktop with a console, a system tool
 | `kernel/` | The kernel. It compiles with the contract library only |
 | `contract/` | The source library `contract:`: what two parties agree on. `operation` (the kernel operations), `boot_info` (the record from the boot program to the kernel), `module` (the module format and the loader code), `store` (the format of the data disk), `blake3` (the hash), `ring` (two queues in shared memory, and the shared queue), `isolated` (the isolated call) |
 | `support/` | The source library `support:`: what a program compiles in. `system` (kernel operations, text, loader, grants, services), `graphics`, `display` (the protocol of the compositor), `terminal` (the terminal ring), `bootscreen`, `launcher` (the menu of the bar), `relay` (the records of the `rings` demonstration), `twins` (the modes of the program `twin`) |
-| `programs/` | `root`, `input`, `compositor`, `console`, `host`, `monitor`, `plasma`, `life`, `paint`, `fault`, `temple`, `rings`, `node`, `threads`, `workers`, `rights`, `origin`, `budget`, `limits`, `processors`, `boot`, `pages`, `frames`, `twin`, `log`, `flow`, `crowd`, `clock`, `tally`, `manual`, `terminal`, `flood`, and the table `launcher` |
+| `programs/` | `root`, `input`, `compositor`, `console`, `host`, `monitor`, `plasma`, `life`, `paint`, `fault`, `temple`, `rings`, `node`, `threads`, `workers`, `rights`, `origin`, `budget`, `limits`, `processors`, `locks`, `locker`, `boot`, `pages`, `frames`, `twin`, `log`, `flow`, `crowd`, `clock`, `tally`, `manual`, `terminal`, `flood`, and the table `launcher` |
 | `modules/` | Modules of commands (`math`, `probe`) and the test modules of the host load test |
 | `tools/kerneltool/` | The kernel tool: all the automation of the project |
 

@@ -431,3 +431,63 @@ One in the merged code, two in the work of the coordinator.
 7. The network: a virtio device service, then UDP, TCP, QUIC, with a server as the scenario.
 8. The other gaps: principals, signatures, TPM and Secure Boot, the document service with versions, keyboard layouts, the date, the IOMMU.
 9. Last, by the wish of the owner: a gradient to a darker blue toward the right, and a launcher as an experiment.
+
+## Review 8: steps 36 to 40 (2026-11-10)
+
+The corrections of the virtio notice and of `limits` (below) are the result of this review. The branches `work/locks` and `work/errors` are not merged: this text names what their reviews found, and Review 9 covers them.
+
+### What the five steps added
+
+- Step 36 added the functions that give the information of the modules: flat tables that the console combines, in place of a query language.
+- Step 37 corrected the storage service after the read of Review 7.
+- Step 38 made one build give one hash: the cause was the threads of the compiler; the check builds each module two times.
+- Step 39 made the boot display an interface (a path of ten steps of the start, cards, tiles, rectangles only) and gave the design rules (`docs/DESIGN.md`).
+- Step 40 added the first layer of the network: a frame service for the virtio network device, a network service (Ethernet, ARP, IPv4, ICMP echo, UDP), an endpoint with a grant of one remote, the program `net`, and a machine of the test with a peer.
+
+The kernel still has 26 operations: the network added no kernel code. After step 40 the test has 434 checks, 51 modules and 17 machines.
+
+### Against the properties
+
+| Property | State after step 40 |
+|---|---|
+| P1 small counted interface | 26 operations. The time page has one more field, the frequency of the cycle counter (choice 208) |
+| P5 kernel off the data path | The kernel carries no frame and no datagram: 0.22 kernel entries for each datagram in `net`. **The rule "the network stack is a library in the program" does not hold for UDP**: the network service writes the headers and copies each datagram one time. The property has a dated note. TCP and QUIC are not done |
+| P7 no device code in the kernel | The network device is driven by a program; `support/virtio` is one package for the block service and the frame service |
+| P11 identity by hash | The check compares two builds of each module. **Open**: the errors agent saw one build in about 13 give a different `console.module`, on its branch, with another compile path (`llc`). The cause is not found; the claim of step 38 holds only for the compile path of `master` |
+| P12 module metadata in flat tables | Done by step 36 |
+| P20 no ambient access | A grant names one remote; a program does not choose its local port. Found by the read of the coordinator before the merge: the table of refused frames gave each endpoint the remote port of the grant of another endpoint. Corrected (choice 205), with a host test of two endpoints |
+| Errors are values (rule of the owner) | Not done on `master`. The branch `work/errors` has it in five layers |
+| Performance is measured (criterion of the owner) | Round trip of one datagram 60 to 88 us at least; 57 886 to 81 171 datagrams in one second; headers and checksum 800 ns for 1472 bytes; one draw of the boot display about 0.5 ms on the host |
+| Design rules (owner, 2026-11-10) | The boot display follows them. `net` follows the cheap part. No other desktop program follows them |
+
+### Concessions, and what removes each one
+
+1. **The network service is on the data path for UDP** (choice 194). Remove: a device with a queue pair for each endpoint, or a filter that the device applies; until then the service is the user-space multiplexer of the cost line of P5.
+2. **The milliseconds of the time page count ticks**, and a tick comes late on a loaded host: the clock of the system loses time. Remove: derive the milliseconds from the cycle counter at each tick.
+3. **The test sends pointer events at a fixed pace** and confirms only the open menu (step 39). A lost move still fails at a later step. Remove: the compositor writes the place of the pointer on request, and the tool confirms it before each press.
+4. **The peer of the network test is a second implementation written in the same step**, by the same agent. Remove: frames captured from another stack as known answers.
+5. **The desktop programs do not follow the design rules.** Remove: the last step of the plan (rule constants to `support/graphics`).
+6. Review 7, concessions 1, 2, 3, 5 are still true. Its concession 6 (the hash and the folder) is closed by step 38, with the open point of P11 above. Concessions 4 and 7 wait for the merge of `work/errors`.
+
+### Bad compromises found
+
+Four, all in the work of the coordinator.
+
+- **Step 40 was merged before the read was complete**, the fault that Review 7 named for the storage engine. `support/virtio`, the block service refactor, the parsers of `support/network`, the peer and `net` were not read at the merge. The read after the merge found one fault: `virtio.notify` wrote 0 to the notice register for each queue, where the virtio rule is the number of the queue. QEMU ignores the value, so each test passed; another device can ignore the send queue. Corrected (the queue keeps its number). The peer and `net` are still not read line by line. Rule from now: the row of a step in this file is written only after the read, and the report to the owner lists each file that was not read.
+- **A correction of the coordinator went two times into a full check without a build.** The change of `limits` first did not compile, then slept on a time in cycles. Each fault cost one full run of about 20 minutes. Rule from now: `kerneltool build`, then the one scenario where a tool command permits it, before the full check.
+- **`limits` compared two clocks** since step 26: the processor time of the kernel (cycle counter) against an interval in ticks. It passed on a quiet host and failed at 1.4 times each limit with a load average of 24. The kernel was right and the test was wrong. A test that passes only on a quiet host proves less than its text says.
+- **Three checks of an agent do not show a race.** `work/locks` passed its full check each time, and an independent read found five certain faults (a thread that runs after its program is freed, a slot freed before its cleanup, a thread created in a stopped program, a late finish of a reused slot, a mixed atomic count). Rule from now: a change of concurrent kernel code gets an independent read-only review before its merge, with the interleavings written step by step, and a stress case for each fault that a test can reach.
+
+### Order of the next steps
+
+1. Merge `work/locks` after its corrections and a second read of the corrected paths.
+2. Merge `work/errors` after its rebase on the lock split; find the cause of the build that differed.
+3. The milliseconds of the time page from the cycle counter; the pointer confirmed by the test.
+4. The name `modus` in the code, the tool, the bar and the README.
+5. The module records protected by writer.
+6. Scheduling strategies that the system can change while it runs, with wake-up preemption.
+7. A program drives its virtual memory; tools that inspect memory and execution.
+8. TCP and QUIC as libraries in the program, and a server as the scenario.
+9. A block device in the test that drops the writes after the last flush.
+10. The other gaps: principals, signatures, TPM and Secure Boot, the document service with versions, keyboard layouts, the date, the IOMMU.
+11. Last, by the wish of the owner: the desktop to the design rules, a gradient to a darker blue toward the right, and a launcher as an experiment.
