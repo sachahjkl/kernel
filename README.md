@@ -43,6 +43,8 @@ The system boots under QEMU to a graphical desktop with a console, a system tool
 
 ![The page tables as the kernel reads them: the direct map, the kernel stacks between guard pages, the kernel module, the half of a program](docs/screenshots/pages.png)
 
+![Pages on first use and shared code: ten cases with the answer of the kernel, and the measures](docs/screenshots/frames.png)
+
 ![A service serves its own exports while it runs: the console draws in the window of paint with isolated calls](docs/screenshots/services.png)
 
 ![The log: records with a time, a program, a channel and a level](docs/screenshots/log.png)
@@ -87,6 +89,7 @@ The system boots under QEMU to a graphical desktop with a console, a system tool
 - `rights` shows the rights on handles: the program holds the machine with Inspect and the boot image with Read, and the kernel refuses each operation that needs another right.
 - `origin` shows revocation: the kernel keeps the handle that each handle and each mapping came from, and a program takes back what came from a handle that it holds. `revoke("monitor", "machine")` in the console ends one grant of a program that runs.
 - `budget` shows the budgets: no object comes from nothing. The program creates memory and threads until its budget cannot pay, and each page returns when it frees them. `memory()` shows that the budgets hold all the free pages.
+- `frames` shows paging as a tool of the system: a page gets its page frame at its first use, and the budget paid at creation, so no access fails; programs of one module map one memory object for its code, and a write to it is a page fault.
 - `limits` shows the limits of a budget: processor time and log records for each second. The kernel counts the time with the cycle counter and stops a thread at the limit of its budget.
 - `processors` shows several processors: the kernel says that four processors run threads of one program at the same time, and the same picture takes less time with 2 and 4 threads.
 - `workers` shows the lock and the word wait: four threads take tiles from one queue. Four threads add to one number: with the lock no addition is lost, with no lock millions are lost.
@@ -113,8 +116,8 @@ The system boots under QEMU to a graphical desktop with a console, a system tool
 | `boot/` | The boot program (UEFI) |
 | `kernel/` | The kernel. It compiles with the contract library only |
 | `contract/` | The source library `contract:`: what two parties agree on. `operation` (the kernel operations), `boot_info` (the record from the boot program to the kernel), `module` (the module format and the loader code), `blake3` (the hash), `ring` (two queues in shared memory, and the shared queue), `isolated` (the isolated call) |
-| `support/` | The source library `support:`: what a program compiles in. `system` (kernel operations, text, loader, grants, services), `graphics`, `display` (the protocol of the compositor), `terminal` (the terminal ring), `bootscreen`, `launcher` (the menu of the bar), `relay` (the records of the `rings` demonstration) |
-| `programs/` | `root`, `input`, `compositor`, `console`, `host`, `monitor`, `plasma`, `life`, `paint`, `fault`, `temple`, `rings`, `node`, `threads`, `workers`, `rights`, `origin`, `budget`, `limits`, `processors`, `boot`, `pages`, `log`, `flow`, `crowd`, `clock`, `tally`, `manual`, `terminal`, `flood`, and the table `launcher` |
+| `support/` | The source library `support:`: what a program compiles in. `system` (kernel operations, text, loader, grants, services), `graphics`, `display` (the protocol of the compositor), `terminal` (the terminal ring), `bootscreen`, `launcher` (the menu of the bar), `relay` (the records of the `rings` demonstration), `twins` (the modes of the program `twin`) |
+| `programs/` | `root`, `input`, `compositor`, `console`, `host`, `monitor`, `plasma`, `life`, `paint`, `fault`, `temple`, `rings`, `node`, `threads`, `workers`, `rights`, `origin`, `budget`, `limits`, `processors`, `boot`, `pages`, `frames`, `twin`, `log`, `flow`, `crowd`, `clock`, `tally`, `manual`, `terminal`, `flood`, and the table `launcher` |
 | `modules/` | Modules of commands (`math`, `probe`) and the test modules of the host load test |
 | `tools/kerneltool/` | The kernel tool: all the automation of the project |
 

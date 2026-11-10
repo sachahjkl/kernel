@@ -46,6 +46,8 @@ grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 		return {.Inspect, .Image} // It shows the modules of the boot image.
 	case "rings":
 		return {.Image} // It starts its nodes from the boot image.
+	case "frames":
+		return {.Inspect, .Image} // It reads its own page table, and starts its twins from the boot image.
 	case "paint", "life", "tally":
 		return {.Serve}
 	case "manual":
@@ -87,6 +89,8 @@ things_of :: proc "contextless" (name: string) -> system.Budget_Amounts {
 		return {pages = 2048, programs = 1, threads = 5}
 	case "origin":
 		return {pages = 2048, programs = 2, threads = 1} // One program that only receives.
+	case "frames":
+		return {pages = 12288, programs = 6, threads = 6} // 8192 pages at a time, and 5 twins.
 	case "budget":
 		return {pages = 1024, programs = 1, threads = 4}
 	case "processors":

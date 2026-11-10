@@ -456,6 +456,20 @@ scenario := [?]Step {
 	{kind = .Type, text = "stop(\"pages\")"},
 	{kind = .Wait, text = "root: pages stopped"},
 
+	// Paging as a tool of the system: pages on first use, and the shared
+	// code of a module. The program starts its twins and measures.
+	{kind = .Launch, text = "frames"},
+	{kind = .Wait, text = "frames: 4 twins: ", any_order = true},
+	{kind = .Wait, text = "frames: create and map 8192 pages: ", any_order = true},
+	{kind = .Wait, text = "frames: the first use of a page: ", any_order = true},
+	{kind = .Wait, text = "frames: start a twin: ", any_order = true},
+	{kind = .Wait, text = "frames: ok, 10 cases", any_order = true},
+	{kind = .Wait, text = "compositor: surface frames"},
+	{kind = .Shot, text = "frames"},
+	{kind = .Front, text = "console"},
+	{kind = .Type, text = "stop(\"frames\")"},
+	{kind = .Wait, text = "root: frames stopped"},
+
 	// A service serves its own exports while it runs. The root service makes
 	// the connection; the console reads the descriptions in the file of the
 	// program, and each export is a command.
