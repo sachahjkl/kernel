@@ -81,6 +81,8 @@ The system boots under QEMU to a graphical desktop with a console, a system tool
 
 ![A persistent program after a restart of the machine: notes finds its note and its count of 1000 commits in its private store](docs/screenshots/notes.png)
 
+![A block of the note changed on the disk outside the storage service: the service serves the count, and notes says that the note is damaged](docs/screenshots/notes_damaged.png)
+
 ![The temple of Jon: a portrait of Jonathan Blow that turns](docs/screenshots/temple.png)
 
 `kerneltool screenshots` makes these pictures from the running machine.

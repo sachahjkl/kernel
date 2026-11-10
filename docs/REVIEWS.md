@@ -42,7 +42,7 @@ A step is one tested commit that adds one capability.
 | 34 | `feddd40` | Replacement of an import: the root service holds the table, the loader checks the descriptions, the module records of a program (`Program_Module`) and the stop report name the module that ran; the program `imports` (same agent and branch) |
 | 35 | `6fe8d02` | The code of an imported module is one copy for all the programs of a table of prepared modules, at any base (same agent and branch) |
 | 36 | `f8fe828` | Functions that give the information of the modules (property 12, no SQLite): a Table result and a Text field in the record description; `support/information` reads the flat tables, the module records and the replacement table, with a `Problem` for a malformed module; the manual serves the tables; the console combines tables with `where`, `sort`, `join`, `columns` (built by an agent on a branch, reviewed and merged by the coordinator) |
-| 37 | `HASH37` | Corrections of the storage service after the line-by-line read of Review 7: a wrong block damages one object and not the service; a damaged object is never an empty object; the name of an object is copied one time; a cut format is formatted again; the format of the disk is the contract `store`; four more machines in the test of persistence |
+| 37 | `66e2a31` | Corrections of the storage service after the line-by-line read of Review 7: a wrong block damages one object and not the service; a damaged object is never an empty object; the name of an object is copied one time; a cut format is formatted again; the format of the disk is the contract `store`; four more machines in the test of persistence |
 
 ## Review 1: steps 1 to 5 (2026-11-10)
 
@@ -369,3 +369,62 @@ No bad compromise was found in the merged code by the reading of the kernel chan
 6. A program drives its virtual memory; tools that inspect memory and execution.
 7. The network: a virtio device service, then UDP, TCP, QUIC, with a server as the scenario.
 8. The other gaps: principals, signatures, TPM and Secure Boot, the document service, keyboard layouts, the date, the IOMMU.
+
+## Review 7: steps 31 to 35 (2026-11-10)
+
+Steps 36 (the information of the modules) and 37 (the corrections of the storage service) came before this text. Step 37 is the result of this review. Review 8 covers step 36.
+
+### What the five steps added
+
+- Step 31 added the storage service: a native engine with copy on write, two places for the root block, and a check of each block in the block that names it.
+- Step 32 added the first program that keeps its state: `notes`, with three tests of a stop.
+- Step 33 let a program load a module with imports, in its own module space. The load source is a grant.
+- Step 34 added the replacement of an import: one table of the machine in the root service, a check of each description that a slot uses, and a load error that is a record.
+- Step 35 made the code of an imported module one copy for all the programs of a table.
+
+The kernel has 26 operations: `Program_Module` (step 34). After step 37 the test has 393 checks, 43 pictures and 16 machines.
+
+### Against the properties
+
+| Property | State after step 35 |
+|---|---|
+| P1 small counted interface | 26 operations. The kernel keeps the module records of a program and does not check them |
+| P2, P20 sandbox, no ambient access | A program reads only the modules that its load source names. A caller of the storage service reaches its own store only: the root service gives the name of the store in the connection. Found by this review: a service read a Text argument in memory that the caller can still change. Corrected for the name of an object (choice 186); the contract does not do the copy for a service |
+| P8, P9 storage | A commit is whole or absent on the disk, shown by a stop at a random time and by a cut root. Found by this review: one wrong block stopped the service for every program, and a disk error looked like an empty object. Corrected in step 37 (choices 183 to 185). Not done: versions of an object, snapshots, clones, documents, encryption |
+| P10, P11 one code module, identity by hash | Imports are bound by hash, and a replacement names two hashes. One copy of the code of an import for the programs of one table. Not done: the hash of `console` and of `root` depends on the folder of the build, cause not found |
+| P14 memory supplied by the caller | A read gives its bytes in memory of the caller (a Text result in the call region). The engine allocates nothing after its start: its tables are fixed arrays |
+| P12 module metadata in flat tables | The loader reads the tables of imports and of slots in place. Step 36 gives the functions that read them |
+| P13 ZII, data-oriented | The format of the disk is fixed-size records in blocks of 4096 bytes; a zero entry is a free entry. This is why a name must not have a zero byte (choice 186) |
+| Errors are values (rule of the owner, 2026-11-10) | A failed load gives a record that the caller owns. The storage exports still answer a small negative number: step of the error records |
+| Performance is measured (criterion of the owner) | A commit about 3.2 ms (two flushes). A call through an import slot 3.4 ns. A load of `agenda` and its import 128 us. The start of the storage service checks 7 blocks in 1 to 3 ms |
+
+### Concessions, and what removes each one
+
+1. **The test does not show the order of the flushes.** The tool ends the machine, and the host keeps each write that completed: the tests of a stop pass without the flushes. Remove: a block device in the test that drops the writes after the last flush.
+2. **The storage service trusts its own tables at its start.** It checks each block against its check, not that a block has one owner or that the count of blocks of a store is true. Remove: a full check of the disk as a function of the service, with a report.
+3. **A damaged store refuses each call**, and the person cannot drop it. Remove: with the step of the document service and the versions, where the person sees the stores.
+4. **A service copies each Text argument that it checks, by hand.** Remove: the step of the error records changes the service contract; decide there if the contract gives a copy.
+5. **A program can change its own module records** (step 34): the answer "what runs" is the word of the program. Remove: the kernel accepts the records from the writer of the program only.
+6. **The hash of a large module depends on the folder of the build.** Remove: find the cause in the compiler output; until then no scenario names a hash.
+7. **The storage exports answer a small negative number**, now with -8 for a damaged object. Remove: the step of the error records.
+8. Review 6, concessions 1 to 7 are still true.
+
+### Bad compromises found
+
+One in the merged code, two in the work of the coordinator.
+
+- **The storage engine was merged on the evidence of its tests, not of a read** (step 31). The line-by-line read of this review found five faults: one damaged block stopped storage for every program; a disk error on a read looked like an empty object, and `notes` wrote over its note; a name with a zero byte made an entry that looked free; the service used a name that the caller could still change; a cut format made a disk that the service refused for good. No test covered a wrong block of data. Step 37 corrects the five and adds four machines.
+- **The tool held its own copy of the format of the disk** (offsets as numbers in `root_cut`). Now the format is the contract `store`, and the tool imports it.
+- **The check of an agent passed only in its own folder** (step 35): the scenario named hashes of modules, and a hash depended on the folder. Lesson, applied since: the coordinator runs the full check and the flake check on `master`, in the main folder, before each push.
+
+### Order of the next steps
+
+1. Merge `work/locks`: the kernel lock split by data, with measures.
+2. The name `modus` in the code, the tool, the bar and the README.
+3. Errors that diagnose, with the program that shows each case; the copy of Text arguments is decided there.
+4. The module records protected by writer; the cause of the folder in the hash.
+5. Scheduling strategies that the system can change while it runs.
+6. A program drives its virtual memory; tools that inspect memory and execution.
+7. The network: a virtio device service, then UDP, TCP, QUIC, with a server as the scenario.
+8. The other gaps: principals, signatures, TPM and Secure Boot, the document service with versions, keyboard layouts, the date, the IOMMU.
+9. Last, by the wish of the owner: a gradient to a darker blue toward the right, and a launcher as an experiment.
