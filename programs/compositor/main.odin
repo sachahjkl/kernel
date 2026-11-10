@@ -330,7 +330,7 @@ surface_create :: proc "contextless" (index: int, record: ring.Record) {
 	order[order_count] = index
 	order_count += 1
 	damage_window(client)
-	system.log_in("surfaces", .Info, "compositor: surface ", system.name_of(client.title[:]), " ", width, "x", height)
+	system.log_in("surfaces", .Info, "compositor: surface ", system.name_of(client.title[:]), " ", width, "x", height, " at ", u64(client.x), ",", u64(client.y))
 }
 
 raise :: proc "contextless" (position: int) {

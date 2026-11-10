@@ -33,6 +33,7 @@ Step_Kind :: enum {
 	Launch, // Open the menu of the launcher, and press the line of the program text.
 	Drag, // Hold the left button from (x, y) to (to_x, to_y).
 	Shot, // Save the screen as text.png.
+	Move, // Drag the window with the title text to the place (to_x, to_y). The tool reads the first place of the window in the log.
 	Film, // Save the screen 25 times in one second, for x milliseconds, as the next pictures of the film.
 	Quit, // End QEMU: the machine does not stop by itself.
 }
@@ -297,6 +298,17 @@ scenario := [?]Step {
 	{kind = .Wait, text = "flow: ok, 4 measures, 0 records lost"},
 	{kind = .Shot, text = "flow"},
 
+	// One queue for several writers and several readers, with no lock; one
+	// event starts the threads of each measure.
+	{kind = .Launch, text = "crowd"},
+	{kind = .Wait, text = "crowd: shared queue, 1 writers, 1 readers: ", any_order = true},
+	{kind = .Wait, text = "crowd: shared queue, 2 writers, 2 readers: "},
+	{kind = .Wait, text = "crowd: shared queue, 3 writers, 1 readers: "},
+	{kind = .Wait, text = "crowd: shared queue, 1 writers, 3 readers: "},
+	{kind = .Wait, text = "crowd: queue with a lock, 2 writers, 2 readers: "},
+	{kind = .Wait, text = "crowd: ok, 5 measures, each record written is read one time, each event started all the threads"},
+	{kind = .Shot, text = "crowd"},
+
 	// Several processors: the kernel says that the four processors ran
 	// threads of one program at the same time. Then 1, 2 and 4 threads
 	// compute the same picture.
@@ -311,7 +323,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "boot: ok, 7 stages, "},
 	{kind = .Shot, text = "boot"},
 	// The window covers the screen: move it down, away from the console.
-	{kind = .Drag, x = 500, y = 54, to_x = 500, to_y = 754},
+	{kind = .Move, text = "boot", to_x = 60, to_y = 742},
 	{kind = .Click, x = 70, y = 300},
 	{kind = .Type, text = "stop(\"boot\")"},
 	{kind = .Wait, text = "root: boot stopped"},
@@ -335,7 +347,7 @@ scenario := [?]Step {
 	// program, and each export is a command.
 	{kind = .Launch, text = "paint"},
 	{kind = .Wait, text = "compositor: surface paint"},
-	{kind = .Drag, x = 400, y = 244, to_x = 640, to_y = 420}, // Below the console, at the right.
+	{kind = .Move, text = "paint", to_x = 516, to_y = 408}, // Below the console, at the right.
 	{kind = .Click, x = 70, y = 300},
 	{kind = .Type, text = "clear()"},
 	{kind = .Type, text = "connect(\"paint\")"},
@@ -368,7 +380,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "error: no service runs with the name paint"},
 	{kind = .Launch, text = "paint"},
 	{kind = .Wait, text = "compositor: surface paint"},
-	{kind = .Drag, x = 300, y = 64, to_x = 700, to_y = 700}, // The window covers the console: move it down.
+	{kind = .Move, text = "paint", to_x = 460, to_y = 688}, // The window covers the console: move it down.
 	{kind = .Click, x = 70, y = 300},
 	{kind = .Type, text = "paint.lines()"},
 	{kind = .Wait, text = "root: connected console to the service paint"},
@@ -384,7 +396,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = " 0 lost, "},
 	{kind = .Shot, text = "log"},
 	// The window covers the console: move it down.
-	{kind = .Drag, x = 500, y = 94, to_x = 500, to_y = 754},
+	{kind = .Move, text = "log", to_x = 96, to_y = 742},
 	{kind = .Click, x = 70, y = 300},
 	// The terminal: a program gives text as records with a style, in a ring
 	// of 4096 records. The terminal reads them in one thread and draws in
@@ -402,7 +414,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "terminal: stopped flood after "},
 	{kind = .Key, text = "end"},
 	{kind = .Shot, text = "terminal_stopped"},
-	{kind = .Drag, x = 500, y = 64, to_x = 500, to_y = 754},
+	{kind = .Move, text = "terminal", to_x = 132, to_y = 742},
 	{kind = .Click, x = 70, y = 300},
 	{kind = .Type, text = "stop(\"terminal\")"},
 	{kind = .Wait, text = "root: terminal stopped"},
@@ -507,6 +519,39 @@ pointer_move :: proc(machine: ^Machine, x, y: int) {
 pointer_button :: proc(machine: ^Machine, down: bool) {
 	monitor_send(machine, down ? "mouse_button 1" : "mouse_button 0")
 	time.sleep(4 * MOUSE_PAUSE)
+}
+
+WINDOW_GRAB_X :: 100 // A point of the title bar of each window.
+WINDOW_GRAB_Y :: 12
+
+// window_place gives the place where the compositor put the last window
+// with a title: "compositor: surface title 480x320 at 276,232".
+window_place :: proc(machine: ^Machine, title: string) -> (x, y: int, ok: bool) {
+	log, err := os.read_entire_file(machine.output, context.temp_allocator)
+	if err != nil {
+		return 0, 0, false
+	}
+	text := string(log)
+	start := strings.last_index(text, strings.concatenate({"compositor: surface ", title, " "}, context.temp_allocator))
+	if start < 0 {
+		return 0, 0, false
+	}
+	line := text[start:]
+	if end := strings.index_byte(line, '\n'); end >= 0 {
+		line = line[:end]
+	}
+	at := strings.index(line, " at ")
+	if at < 0 {
+		return 0, 0, false
+	}
+	place := strings.trim_space(line[at + 4:])
+	comma := strings.index_byte(place, ',')
+	if comma < 0 {
+		return 0, 0, false
+	}
+	x = strconv.parse_int(place[:comma]) or_return
+	y = strconv.parse_int(place[comma + 1:]) or_return
+	return x, y, true
 }
 
 log_wait :: proc(machine: ^Machine, text: string, any_order := false) -> bool {
@@ -688,8 +733,20 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 		case .Key:
 			monitor_send(machine, "sendkey ", step.text, " 20")
 			time.sleep(KEY_PAUSE)
-		case .Click, .Drag, .Launch:
+		case .Click, .Drag, .Launch, .Move:
 			step := step
+			if step.kind == .Move {
+				// The compositor wrote where it put the window. The pointer
+				// takes the title bar.
+				x, y, found := window_place(machine, step.text)
+				if !found {
+					fmt.eprintfln("kerneltool: test failed: step %d: the log does not have the place of the window %s", index + 1, step.text)
+					return false
+				}
+				step.kind = .Drag
+				step.x, step.y = x + WINDOW_GRAB_X, y + WINDOW_GRAB_Y
+				step.to_x, step.to_y = step.to_x + WINDOW_GRAB_X, step.to_y + WINDOW_GRAB_Y
+			}
 			if step.kind == .Launch {
 				found: bool
 				step.x, step.y, found = launcher.center(step.text)

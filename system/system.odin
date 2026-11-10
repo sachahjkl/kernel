@@ -177,6 +177,45 @@ ring_close :: proc "contextless" (mapped: ^ring.Ring) {
 	mapped^ = {}
 }
 
+// shared_create makes the memory of a shared queue and maps it in this
+// program. The capacity is a power of two, 64 or more.
+shared_create :: proc "contextless" (capacity: u32 = ring.SHARED_CAPACITY) -> (memory: Handle, mapped: ring.Shared, status: Status) {
+	if capacity < ring.SHARED_CAPACITY || capacity > ring.SHARED_CAPACITY_LIMIT || capacity & (capacity - 1) != 0 {
+		return 0, {}, .Bad_Operation
+	}
+	memory = memory_create(ring.shared_pages(capacity)) or_return
+	mapped, status = shared_open(memory)
+	if status != .Ok {
+		close(memory)
+		memory = 0
+	}
+	return memory, mapped, status
+}
+
+// shared_open maps the memory of a shared queue in this program. The
+// capacity comes from the size of the memory, that the kernel gives.
+shared_open :: proc "contextless" (memory: Handle) -> (mapped: ring.Shared, status: Status) {
+	page_count := memory_size(memory)
+	if page_count > ring.shared_pages(ring.SHARED_CAPACITY_LIMIT) {
+		return {}, .Bad_Handle
+	}
+	address := memory_map(memory) or_return
+	opened, ok := ring.shared_open(address, page_count)
+	if !ok {
+		memory_unmap(address)
+		return {}, .Bad_Handle
+	}
+	return opened, .Ok
+}
+
+// shared_close unmaps a shared queue.
+shared_close :: proc "contextless" (mapped: ^ring.Shared) {
+	if mapped.head != nil {
+		memory_unmap(mapped.head)
+	}
+	mapped^ = {}
+}
+
 // A thread of this program, and the memory of its stack.
 Thread :: struct {
 	handle: Handle,

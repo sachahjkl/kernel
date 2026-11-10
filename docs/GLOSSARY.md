@@ -76,6 +76,8 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Ring | A pair of queues in shared memory between two programs, or between a program and the kernel: one for command records, one for completion records (P4, P6) | pipe, socket, channel, port, message queue |
 | Capacity | The count of records of each queue of a ring: a power of two, chosen when the ring is created, never changed after. It comes from the size of the memory of the ring | buffer size, queue depth, backlog |
 | Terminal | A program that shows the text records of other programs, and keeps their lines. A program holds the terminal as two grants: the terminal ring and the text region. The kernel has no such concept | TTY, pty, terminal emulator, standard output |
+| Shared queue | One queue of records in shared memory that several threads write and several threads read, with no lock. Each record has a turn word that says if a writer or a reader can use it. Use a ring for one writer and one reader | MPMC queue, channel, work queue, mailbox |
+| Event | A count in memory that several threads wait on. A thread adds 1 to it and wakes all the threads that wait | condition variable, semaphore, signal, barrier |
 | Terminal ring | The ring from a program to its terminal. A record has a kind (text, status, clear), a count of bytes and a style. It has no place on the screen | escape sequence, control character, stream |
 | Text region | The shared memory beside a terminal ring where the program writes the bytes of its text, in order. A record gives only a count of bytes: the terminal keeps its own place | scrollback (for this), pipe buffer |
 | Run | Bytes of text that have one style. A line is a list of runs | span, segment, chunk |
