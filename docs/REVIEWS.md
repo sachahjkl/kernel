@@ -28,7 +28,7 @@ A step is one tested commit that adds one capability.
 | 20 | `f3bdf49` | The time page: the kernel writes the time in one page that each program reads; `system.time()` does not enter the kernel; measured by `clock` |
 | 21 | `1b92079` | One module in each role (`tally`: program, service, library, sandboxed program); a module carries its documentation; `manual` shows it; `unload` in the console |
 | 22 | `48f1eee` | Two source libraries, `contract:` and `support:`; no relative import; the kernel compiles with the contract library only; the command `kerneltool` |
-| 23 | `HASH23` | The console has a terminal and no surface; key records from the terminal to its program; the edit line; the root service wires a program and its terminal; a terminal draws after a change only; the step kind `Close` |
+| 23 | `1898531` | The console has a terminal and no surface; key records from the terminal to its program; the edit line; the root service wires a program and its terminal; a terminal draws after a change only; the step kind `Close` |
 
 ## Review 1: steps 1 to 5 (2026-11-10)
 
