@@ -103,7 +103,7 @@ scenario := [?]Step {
 	{kind = .Type, text = "gcd(84, 36)"},
 	{kind = .Wait, text = "error: no command has the name gcd"},
 	{kind = .Type, text = "load(\"math\")"},
-	{kind = .Wait, text = "[console] math: 5 commands"},
+	{kind = .Wait, text = "[console] math: 7 commands"},
 	{kind = .Type, text = "gcd(84, 36) + power(2, 10)"},
 	{kind = .Wait, text = "[console] 1036"},
 	{kind = .Type, text = "number(\"41\") + fibonacci(10)"},
@@ -115,6 +115,9 @@ scenario := [?]Step {
 	{kind = .Wait, text = "exports no command"},
 	{kind = .Type, text = "next_prime(1000) * gcd(84, 36)"},
 	{kind = .Wait, text = "[console] 12108"},
+	// A Text result: the console gives a buffer, the export writes in it.
+	{kind = .Type, text = "reverse(roman(2026)) + roman(length(roman(3888)))"},
+	{kind = .Wait, text = "[console] IVXXMMXV"},
 	{kind = .Type, text = "help()"},
 	{kind = .Wait, text = "[console] shutdown()"},
 	{kind = .Wait, text = "[console] number(Text) -> Integer"},
@@ -124,12 +127,20 @@ scenario := [?]Step {
 	// arguments go through a ring. The description is the same.
 	{kind = .Type, text = "clear()"},
 	{kind = .Type, text = "isolate(\"probe\")"},
-	{kind = .Wait, text = "[console] probe: 5 commands in a sandboxed program"},
-	{kind = .Wait, text = "[probe] host: ready, 5 exports"},
+	{kind = .Wait, text = "[console] probe: 7 commands in a sandboxed program"},
+	{kind = .Wait, text = "[probe] host: ready, 7 exports"},
 	{kind = .Type, text = "count() + count() * 10"},
 	{kind = .Wait, text = "[console] 21"},
 	{kind = .Type, text = "checksum(\"abc\" + name)"},
 	{kind = .Wait, text = "[console] 935"},
+	// A Text result through the ring: the module writes in the call region.
+	{kind = .Type, text = "shout(\"abc\" + name) + shout(\"\")"},
+	{kind = .Wait, text = "[console] ABCKERNEL"},
+	// A module that gives a false count: the console reads no more than its buffer.
+	{kind = .Type, text = "lie(100000)"},
+	{kind = .Wait, text = "[console] error: the result of lie has 100000 bytes: it does not fit"},
+	{kind = .Type, text = "length(lie(3))"},
+	{kind = .Wait, text = "[console] 3"},
 	{kind = .Type, text = "checksum(7)"},
 	{kind = .Wait, text = "error: checksum: argument 1 is Text, not Integer"},
 	// The module has no handle: it cannot stop the machine.

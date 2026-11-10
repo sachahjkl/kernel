@@ -168,7 +168,9 @@ Status: implemented on 2026-11-10 (`isolated/`, `programs/host`). The owner has 
 
 ### Memory
 
-The caller owns all memory. The callee never allocates in the caller (P14). For a result of unknown size, the caller gives a buffer with a capacity and receives a count, or receives a handle and reads later. The WebAssembly component model lets the callee allocate, and reports this as a main defect. [Types §1]
+The caller owns all memory. The callee never allocates in the caller (P14). For a result of unknown size, the caller gives a buffer with a capacity and receives a count, or receives a handle and reads later.
+
+Implemented for the Text result (2026-11-10): after the parameters, the caller gives the address of a buffer record `{address, capacity}`. The callee writes the bytes that fit. Its integer result is the count of bytes of the full text; a count larger than the capacity means that the text did not fit. In an isolated call, the buffer is the part of the call region after the arguments: the callee writes where the caller reads. The caller reads `min(count, capacity)` bytes: it does not trust the count. The WebAssembly component model lets the callee allocate, and reports this as a main defect. [Types §1]
 
 ### Cost
 

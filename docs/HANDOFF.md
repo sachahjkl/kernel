@@ -67,6 +67,7 @@ The next step is the owner's review of that file.
 - **Next step: the isolated call, "no bad compromise" (owner, 2026-11-10).** Done: `isolated/`, `programs/host`, `isolate("probe")` in the console.
 - **Development log (owner, 2026-11-10)**: keep all the screenshots in a folder out of the repository. `kerneltool screenshots` copies the pictures of each run to a new folder of `../kernel-devlog`, named with the time in UTC. The rule "no tweet" still applies to these pictures.
 - **Show the concepts (owner, 2026-11-10)**: add APIs for communication between programs and for more than one thread, and demonstrate each one with a picture. First: `rings` (six programs, six rings).
+- **Work to the end, with no pause (owner, 2026-11-10)**: "I want everything." Do the planned steps and the steps that follow from the properties, without a question to the owner between steps. After each five steps, review the work against the properties and the rule "no bad compromise", and write the result in `docs/REVIEWS.md`.
 - No pull request unless the owner asks.
 
 ## Research
@@ -95,7 +96,7 @@ Notes are in `research/`.
 ## Next steps
 
 1. Get the owner's review of the choices in `FIRST_MILESTONE.md`.
-2. Text results; descriptions made from the source (property 19). The isolated call of an export through a ring is done (2026-11-10): see `MODULE_CONTRACT.md` section 4.
+2. Descriptions made from the source (property 19). Text results are done (2026-11-10). The isolated call of an export through a ring is done (2026-11-10): see `MODULE_CONTRACT.md` section 4.
 3. Rights on handles, and a split of the Machine handle.
 4. Damage rectangles in the compositor.
 5. A block device service (virtio), then the storage service.

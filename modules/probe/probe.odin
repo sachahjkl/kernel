@@ -52,3 +52,21 @@ checksum :: proc "c" (text: ^string) -> i64 {
 	}
 	return sum
 }
+
+// shout gives a text in capital letters. In a call host, the buffer of the
+// result is in the call region: the caller reads the text there.
+@(export, link_name = "shout")
+shout :: proc "c" (text: ^string, result: ^[]u8) -> i64 {
+	for i in 0 ..< min(len(text), len(result)) {
+		c := text[i]
+		result[i] = c >= 'a' && c <= 'z' ? c - 'a' + 'A' : c
+	}
+	return i64(len(text))
+}
+
+// lie writes nothing, and says that its text has `count` bytes. The caller
+// must not read more than its buffer.
+@(export, link_name = "lie")
+lie :: proc "c" (count: i64, result: ^[]u8) -> i64 {
+	return count
+}

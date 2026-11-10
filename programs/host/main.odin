@@ -78,6 +78,7 @@ serve :: proc "contextless" (command: ring.Record, results: ^[7]u64) -> isolated
 	floats: [system.CALL_FLOATS]u64
 	out: [system.CALL_RESULTS]u64
 	system.export_call(address, &integers, &floats, &out)
+	// For a Text result, this is the count; the text is in the call region.
 	if function.result != .None {
 		results[0] = out[0]
 	}

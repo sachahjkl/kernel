@@ -111,7 +111,7 @@ The owner did not review these. Each one can change.
 8. **Commands of two origins.** The system commands (`programs`, `start`, `shutdown`...) are compiled into the console. `load("math")` loads a module of the boot image: each export becomes a command. The console reads the name, the types and the help of an export from the function table of the module, and calls the export with the call form. `load` checks the hash of the module first.
    **The person chooses the trust.** `load` gives direct calls: the module has the memory and the handles of the console. `isolate` gives isolated calls: the module runs in a call host. The description and the way to type a call are the same.
 9. **Font.** Spleen 8x16, BSD 2-Clause, converted from its BDF file by `kerneltool font`.
-10. **Types of the description.** `Integer` (64 bits, in a register) and `Text` (the address of a slice record, parameters only). At most 6 parameters. The kernel tool holds the description of each export in its module table; no tool checks it against the source.
+10. **Types of the description.** `Integer` (64 bits, in a register) and `Text` (the address of a slice record). At most 6 parameters. For a Text result, the caller gives one more argument: the address of a buffer record `{address, capacity}`. The export writes what fits and gives the count of bytes of the full text. In an isolated call the buffer is the free part of the call region. The kernel tool holds the description of each export in its module table; no tool checks it against the source.
 
 11. **Isolated call.** `MODULE_CONTRACT.md` section 4, "The isolated call, as implemented", lists these choices: one call host per module, the argument record in the call region, the status numbers, the limit of 2000 ms, a call region of 16 pages, one call at a time per call host.
 12. **The caller starts the call host.** The console creates the program with `system.program_start`; the root service takes no part. Any program can create a program: the new program has only the handles that its creator gives.
@@ -124,7 +124,7 @@ Against the properties and the module contract:
 
 - Handles have no rights. A program can give any of its handles onward.
 - The Machine handle gives inspect and stop together.
-- Property 19 is not complete: a command cannot give a Text. The description has no records, no floats, no handles and no grants. A module with imports cannot be loaded by a program.
+- Property 19 is not complete: the description has no records, no floats, no handles and no grants. A module with imports cannot be loaded by a program.
 - The machine test failed one time in the Nix sandbox at step 1 (2026-11-10): the firmware did not start the boot program in 20 s. The next run of the same tree passed. The cause is not known.
 - The console waits during an isolated call: it draws nothing and reads no key until the call ends or the limit passes.
 - Each program can create memory objects and programs with no limit, and can write on the log of the kernel.
@@ -145,7 +145,7 @@ Input:
 
 ## Next steps
 
-1. Text results; descriptions made from the source (property 19).
+1. Descriptions made from the source (property 19).
 2. Rights on handles, and a split of the Machine handle.
 3. Damage rectangles in the compositor.
 4. A block device service (virtio), then the storage service.

@@ -27,6 +27,13 @@
 //             program, so the field holds the slice record itself, and the
 //             slice holds an offset in the call region.
 //
+// An export with a Text result has one more field after the parameters, and
+// one more register in the direct call: a buffer, {start, capacity}. The
+// caller owns the buffer; the callee writes the text in it and gives the
+// count of bytes of the full text as its integer result. For an isolated
+// call the buffer is in the call region: the callee writes the result where
+// the caller reads it, with no copy between.
+//
 // The receiver trusts nothing in the call region. It copies the argument
 // record to private memory, and it checks each offset and each count
 // against the size of the call region (decode).
@@ -91,6 +98,16 @@ record_size :: proc "contextless" (function: module.Function) -> (size: u64, ok:
 		}
 		size += field
 	}
+	#partial switch function.result {
+	case .None, .Integer:
+	case .Text:
+		if function.parameter_count == module.PARAMETER_CAPACITY {
+			return 0, false // No register is free for the buffer.
+		}
+		size += size_of(Slice)
+	case:
+		return 0, false
+	}
 	return size, true
 }
 
@@ -109,13 +126,15 @@ load :: proc "contextless" (region: []u8, offset: u64, $T: typeid) -> (value: T)
 // encode writes the argument record of a call at the start of the call
 // region, and the bytes of each Text after it. The caller owns the call
 // region: one call uses it at a time.
+// For a Text result, the buffer is the part of the call region after the
+// arguments: `result` names it.
 // ok is false when the arguments do not agree with the description, or when
 // the call region is too small.
-encode :: proc "contextless" (function: module.Function, arguments: []Argument, region: []u8) -> (offset, size: u64, ok: bool) {
+encode :: proc "contextless" (function: module.Function, arguments: []Argument, region: []u8) -> (offset, size: u64, result: Slice, ok: bool) {
 	function := function
 	size = record_size(function) or_return
 	if len(arguments) != int(function.parameter_count) || size > u64(len(region)) {
-		return 0, 0, false
+		return 0, 0, {}, false
 	}
 	field := u64(0)
 	next := size // Where the bytes of the next Text go.
@@ -126,7 +145,7 @@ encode :: proc "contextless" (function: module.Function, arguments: []Argument, 
 		case .Text:
 			text := arguments[index].text
 			if u64(len(text)) > u64(len(region)) - next {
-				return 0, 0, false
+				return 0, 0, {}, false
 			}
 			intrinsics.mem_copy_non_overlapping(raw_data(region[next:]), raw_data(text), len(text))
 			store(region, field, Slice{start = next, count = u64(len(text))})
@@ -134,7 +153,21 @@ encode :: proc "contextless" (function: module.Function, arguments: []Argument, 
 		}
 		field += field_size(type)
 	}
-	return 0, size, true
+	if function.result == .Text {
+		result = {start = next, count = u64(len(region)) - next}
+		store(region, field, result)
+	}
+	return 0, size, result, true
+}
+
+// result_text gives the Text result of a call: the bytes that the callee
+// wrote in the buffer. `count` is the number that the callee gave: the
+// caller does not trust it. complete is false when the text did not fit.
+result_text :: proc "contextless" (region: []u8, result: Slice, count: u64) -> (text: []u8, complete: bool) {
+	if result.start > u64(len(region)) || result.count > u64(len(region)) - result.start {
+		return nil, false
+	}
+	return region[result.start:][:min(count, result.count)], count <= result.count
 }
 
 // decode reads the argument record of a call from the call region, and gives
@@ -143,6 +176,7 @@ encode :: proc "contextless" (function: module.Function, arguments: []Argument, 
 //              the address of slices[n].
 //   slices:    slices[n] is the slice record of a Text parameter: the address
 //              of its bytes in the call region, and their count.
+// The buffer of a Text result is one more Text, after the last parameter.
 // ok is false when a part of the argument record is not in the call region.
 // Then the receiver must not call the export.
 decode :: proc "contextless" (
@@ -180,6 +214,18 @@ decode :: proc "contextless" (
 			registers[index] = u64(uintptr(&slices[index]))
 		}
 		field += field_size(type)
+	}
+	if function.result == .Text {
+		index := function.parameter_count
+		slice := load(record[:], field, Slice)
+		if slice.start > limit || slice.count > limit - slice.start {
+			return false
+		}
+		slices[index] = {
+			start = u64(uintptr(raw_data(region))) + slice.start,
+			count = slice.count,
+		}
+		registers[index] = u64(uintptr(&slices[index]))
 	}
 	return true
 }

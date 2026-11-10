@@ -304,7 +304,7 @@ add_module :: proc "contextless" (name: string, isolate: bool) -> Value {
 // for the result of an export.
 callable_by_console :: proc "contextless" (function: module.Function) -> bool {
 	function := function
-	if function.name_count == 0 || function.parameter_count > ARGUMENT_CAPACITY || function.result > .Integer {
+	if function.name_count == 0 || function.parameter_count > ARGUMENT_CAPACITY || function.result > .Text {
 		return false
 	}
 	for type in function.parameters[:function.parameter_count] {
@@ -323,11 +323,23 @@ call_export :: proc "contextless" (item: ^Command, arguments: []Value) -> Value 
 	for &argument, index in arguments {
 		integers[index] = argument.kind == .Text ? u64(uintptr(&argument.text)) : u64(argument.integer)
 	}
+	// A Text result: the buffer is the free part of the memory of the line.
+	buffer := scratch[scratch_count:]
+	if item.result == .Text {
+		integers[len(arguments)] = u64(uintptr(&buffer))
+	}
 	floats: [system.CALL_FLOATS]u64
 	results: [system.CALL_RESULTS]u64
 	system.export_call(item.address, &integers, &floats, &results)
-	if item.result == .Integer {
+	#partial switch item.result {
+	case .Integer:
 		return {kind = .Integer, integer = i64(results[0])}
+	case .Text:
+		if results[0] > u64(len(buffer)) {
+			return fail("the result of ", item.name, " has ", results[0], " bytes: it does not fit")
+		}
+		scratch_count += int(results[0])
+		return {kind = .Text, text = string(buffer[:results[0]])}
 	}
 	return {}
 }
@@ -420,7 +432,7 @@ call_isolated :: proc "contextless" (item: ^Command, arguments: []Value) -> Valu
 	for argument, index in arguments {
 		encoded[index] = {integer = u64(argument.integer), text = transmute([]u8)argument.text}
 	}
-	offset, size, ok := isolated.encode(item.function, encoded[:len(arguments)], sandbox.region)
+	offset, size, buffer, ok := isolated.encode(item.function, encoded[:len(arguments)], sandbox.region)
 	if !ok {
 		return fail("the arguments of ", item.name, " do not fit in the call region")
 	}
@@ -444,8 +456,17 @@ call_isolated :: proc "contextless" (item: ^Command, arguments: []Value) -> Valu
 			}
 			switch isolated.Status(completion.kind) {
 			case .Ok:
-				if item.result == .Integer {
+				#partial switch item.result {
+				case .Integer:
 					return {kind = .Integer, integer = i64(completion.values[0])}
+				case .Text:
+					// The count comes from the other program: read no more
+					// than the buffer, and copy the text out of the call region.
+					text, complete := isolated.result_text(sandbox.region, buffer, completion.values[0])
+					if !complete || len(text) > len(scratch) - scratch_count {
+						return fail("the result of ", item.name, " has ", completion.values[0], " bytes: it does not fit")
+					}
+					return {kind = .Text, text = scratch_text(string(text))}
 				}
 				return {}
 			case .Bad_Export:

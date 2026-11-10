@@ -20,7 +20,7 @@ arguments_round_trip :: proc(t: ^testing.T) {
 	function := description(.Integer, .Text, .Integer, .Text, .Text, .Integer)
 	first, second := "the first text", "second"
 	arguments := [?]Argument{{integer = 7}, {text = transmute([]u8)first}, {integer = max(u64)}, {text = transmute([]u8)second}, {}, {integer = 1 << 40}}
-	offset, size, encoded := encode(function, arguments[:], region[:])
+	offset, size, _, encoded := encode(function, arguments[:], region[:])
 	testing.expect(t, encoded)
 	testing.expect_value(t, size, 3 * 8 + 3 * 16)
 
@@ -44,17 +44,17 @@ arguments_round_trip :: proc(t: ^testing.T) {
 encode_refuses :: proc(t: ^testing.T) {
 	region: [64]u8
 	long: [64]u8
-	_, _, ok := encode(description(.Integer), {}, region[:])
+	_, _, _, ok := encode(description(.Integer), {}, region[:])
 	testing.expect(t, !ok, "the argument count differs from the description")
-	_, _, ok = encode(description(.Text), {{text = long[:]}}, region[:])
+	_, _, _, ok = encode(description(.Text), {{text = long[:]}}, region[:])
 	testing.expect(t, !ok, "the text does not fit in the call region")
-	_, _, ok = encode(description(.Text), {{text = long[:48]}}, region[:])
+	_, _, _, ok = encode(description(.Text), {{text = long[:48]}}, region[:])
 	testing.expect(t, ok, "the text fills the call region exactly")
-	_, _, ok = encode(description(module.Type(200)), {{}}, region[:])
+	_, _, _, ok = encode(description(module.Type(200)), {{}}, region[:])
 	testing.expect(t, !ok, "the description has an unknown type")
 	unknown := description(.Integer)
 	unknown.parameter_count = module.PARAMETER_CAPACITY + 1
-	_, _, ok = encode(unknown, {{}}, region[:])
+	_, _, _, ok = encode(unknown, {{}}, region[:])
 	testing.expect(t, !ok, "the description has too many parameters")
 }
 
@@ -106,6 +106,7 @@ decode_random :: proc(t: ^testing.T) {
 	for _ in 0 ..< 200_000 {
 		function: module.Function
 		function.parameter_count = u8(rand.int_max(module.PARAMETER_CAPACITY + 2))
+		function.result = module.Type(rand.int_max(4))
 		for &type in function.parameters {
 			type = module.Type(rand.int_max(4))
 		}
@@ -129,7 +130,15 @@ decode_random :: proc(t: ^testing.T) {
 			continue
 		}
 		accepted += 1
-		for type, index in function.parameters[:function.parameter_count] {
+		types := function.parameters
+		count := int(function.parameter_count)
+		if function.result == .Text {
+			// The buffer of the result is one more slice.
+			testing.expect(t, count < module.PARAMETER_CAPACITY)
+			types[count] = .Text
+			count += 1
+		}
+		for type, index in types[:count] {
 			if type != .Text {
 				continue
 			}
@@ -142,4 +151,43 @@ decode_random :: proc(t: ^testing.T) {
 		}
 	}
 	testing.expect(t, accepted > 1000, "the test must accept many records")
+}
+
+// A Text result: the buffer is the rest of the call region. The callee
+// writes there; the caller reads the count that the callee gave, and never
+// more than the buffer.
+@(test)
+text_result :: proc(t: ^testing.T) {
+	region: [128]u8
+	function := description(.Text, .Integer)
+	function.result = .Text
+	argument := "abc"
+	offset, size, result, encoded := encode(function, {{text = transmute([]u8)argument}, {integer = 5}}, region[:])
+	testing.expect(t, encoded)
+	testing.expect_value(t, size, 16 + 8 + 16)
+	testing.expect_value(t, result, Slice{start = 43, count = 85})
+
+	registers: [module.PARAMETER_CAPACITY]u64
+	slices: [module.PARAMETER_CAPACITY]Slice
+	testing.expect(t, decode(function, offset, size, region[:], &registers, &slices))
+	buffer := (^[]u8)(uintptr(registers[2]))^
+	testing.expect_value(t, len(buffer), 85)
+	testing.expect(t, raw_data(buffer) == &region[43])
+	copy(buffer, "result")
+
+	text, complete := result_text(region[:], result, 6)
+	testing.expect_value(t, string(text), "result")
+	testing.expect(t, complete)
+	text, complete = result_text(region[:], result, 86)
+	testing.expect_value(t, len(text), 85)
+	testing.expect(t, !complete, "the callee gave a count larger than the buffer")
+	text, complete = result_text(region[:], result, max(u64))
+	testing.expect(t, len(text) == 85 && !complete)
+	_, complete = result_text(region[:], Slice{start = 100, count = 29}, 1)
+	testing.expect(t, !complete, "a buffer that is not in the call region")
+
+	full := description(.Integer, .Integer, .Integer, .Integer, .Integer, .Integer)
+	full.result = .Text
+	_, _, _, ok := encode(full, {{}, {}, {}, {}, {}, {}}, region[:])
+	testing.expect(t, !ok, "six parameters leave no register for the buffer")
 }

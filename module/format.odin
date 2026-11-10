@@ -108,7 +108,12 @@ Export :: struct {
 Type :: enum u8 {
 	None    = 0,
 	Integer = 1, // A signed integer of 64 bits, in a register.
-	Text    = 2, // The address of a slice record {address, count} of UTF-8 bytes. Parameters only.
+	Text    = 2, // The address of a slice record {address, count} of UTF-8 bytes.
+	// A Text result: the caller gives one more argument after the parameters,
+	// the address of a buffer record {address, capacity}. The callee writes
+	// the text in the buffer, and its integer result is the count of bytes of
+	// the full text. A count larger than the capacity means "the text did
+	// not fit": the caller owns all memory (property 14).
 }
 
 PARAMETER_CAPACITY :: 6 // The integer registers of the call form.

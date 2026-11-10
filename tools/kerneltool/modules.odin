@@ -56,6 +56,8 @@ module_builds := [?]Module_Build {
 			{name = "spin", result = .Integer, about = "a loop with no end"},
 			{name = "stop_machine", parameters = {.Integer}, result = .Integer, about = "try to stop the machine with a handle"},
 			{name = "checksum", parameters = {.Text}, result = .Integer, about = "the sum of the bytes of a text"},
+			{name = "shout", parameters = {.Text}, result = .Text, about = "a text in capital letters"},
+			{name = "lie", parameters = {.Integer}, result = .Text, about = "a false count of bytes, and no text"},
 		},
 	},
 	{
@@ -68,6 +70,8 @@ module_builds := [?]Module_Build {
 			{name = "fibonacci", parameters = {.Integer}, result = .Integer, about = "the Fibonacci number of an index"},
 			{name = "next_prime", parameters = {.Integer}, result = .Integer, about = "the first prime number from an integer"},
 			{name = "number", parameters = {.Text}, result = .Integer, about = "the integer that a text holds"},
+			{name = "roman", parameters = {.Integer}, result = .Text, about = "an integer in Roman numerals"},
+			{name = "reverse", parameters = {.Text}, result = .Text, about = "the bytes of a text, last first"},
 		},
 	},
 }

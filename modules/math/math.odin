@@ -72,3 +72,38 @@ number :: proc "c" (text: ^string) -> i64 {
 	}
 	return negative ? -value : value
 }
+
+// A Text result: the caller gives a buffer record {address, capacity} after
+// the parameters. The export writes what fits, and gives the count of bytes
+// of the full text.
+ROMAN_LIMIT :: 3999
+@(rodata)
+roman_values := [?]i64{1000, 900, 500, 400, 100, 90, 50, 40, 10, 9, 5, 4, 1}
+@(rodata)
+roman_symbols := [?]string{"M", "CM", "D", "CD", "C", "XC", "L", "XL", "X", "IX", "V", "IV", "I"}
+
+@(export, link_name = "roman")
+roman :: proc "c" (number: i64, result: ^[]u8) -> i64 {
+	rest := clamp(number, 0, ROMAN_LIMIT)
+	count := 0
+	for value, index in roman_values {
+		for rest >= value {
+			rest -= value
+			for i in 0 ..< len(roman_symbols[index]) {
+				if count < len(result) {
+					result[count] = roman_symbols[index][i]
+				}
+				count += 1
+			}
+		}
+	}
+	return i64(count)
+}
+
+@(export, link_name = "reverse")
+reverse :: proc "c" (text: ^string, result: ^[]u8) -> i64 {
+	for i in 0 ..< min(len(text), len(result)) {
+		result[i] = text[len(text) - 1 - i]
+	}
+	return i64(len(text))
+}

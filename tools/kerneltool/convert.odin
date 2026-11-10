@@ -177,7 +177,8 @@ convert :: proc(name: string, elf: []u8, exports: []Export_Description, imports:
 	entry_export: u32
 	for description, index in exports {
 		export_name := description.name
-		if len(description.parameters) > module.PARAMETER_CAPACITY {
+		// The buffer of a Text result takes one register.
+		if len(description.parameters) + int(description.result == .Text) > module.PARAMETER_CAPACITY {
 			return fail(name, "export %s has more than %d parameters", export_name, module.PARAMETER_CAPACITY)
 		}
 		found := false
