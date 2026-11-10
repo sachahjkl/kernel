@@ -87,6 +87,8 @@ control: ^ring.Ring
 pointer_x, pointer_y: int
 buttons: u32
 dragging := -1
+menu_open: bool // The menu of the launcher is on the screen.
+menu_line := -1 // The line of the menu under the pointer.
 drag_x, drag_y: int
 damage: [DAMAGE_CAPACITY]Rectangle // The parts of the screen that the next frame draws again.
 damage_count: int
@@ -130,6 +132,14 @@ damage_focus :: proc "contextless" () {
 	if order_count > 0 {
 		damage_window(&clients[order[order_count - 1]])
 	}
+}
+
+// damage_menu records the button and the menu of the launcher.
+damage_menu :: proc "contextless" () {
+	x, y, width, height := launcher.button()
+	damage_add(x, y, width, height)
+	x, y, width, height = launcher.menu()
+	damage_add(x, y, width + SHADOW, height + SHADOW)
 }
 
 damage_clock :: proc "contextless" () {
@@ -350,15 +360,31 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32) 
 		}
 		return
 	}
+	// The launcher: the button of the bar opens the menu. A press on a
+	// line starts the program. Any press closes the menu.
+	if menu_open {
+		over := launcher.line_at(pointer_x, pointer_y)
+		if over != menu_line {
+			menu_line = over
+			damage_menu()
+		}
+	}
 	if pressed {
-		if pointer_y < BAR_HEIGHT {
-			for name, index in launcher.names {
-				x, width := launcher.button(index)
-				if inside(pointer_x, pointer_y, x, 3, width, BAR_HEIGHT - 6) {
-					packed := system.name_pack(name)
-					system.send(&control.completions, ring.Record{kind = u32(display.Control.Start), values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3]}})
-				}
+		was_open := menu_open
+		if menu_open {
+			if menu_line >= 0 {
+				packed := system.name_pack(launcher.names[menu_line])
+				system.send(&control.completions, ring.Record{kind = u32(display.Control.Start), values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3]}})
 			}
+			menu_open = false
+			menu_line = -1
+			damage_menu()
+		}
+		if x, y, width, height := launcher.button(); inside(pointer_x, pointer_y, x, y, width, height) && !was_open {
+			menu_open = true
+			damage_menu()
+		}
+		if was_open || pointer_y < BAR_HEIGHT {
 			return
 		}
 		for position := order_count - 1; position >= 0; position -= 1 {
@@ -432,11 +458,9 @@ draw_area :: proc "contextless" (area: Rectangle, now: u64) {
 		y := 6 + origin_y
 		graphics.fill(canvas, origin_x, origin_y, frame.width, BAR_HEIGHT, COLOR_BAR)
 		graphics.text(canvas, 10 + origin_x, y, "kernel", 0x7FC8FF)
-		for name, index in launcher.names {
-			left, button_width := launcher.button(index)
-			graphics.fill(canvas, left + origin_x, 3 + origin_y, button_width, BAR_HEIGHT - 6, COLOR_BUTTON)
-			graphics.text(canvas, left + origin_x + launcher.PADDING, y, name, COLOR_BAR_TEXT)
-		}
+		left, top, button_width, button_height := launcher.button()
+		graphics.fill(canvas, left + origin_x, top + origin_y, button_width, button_height, menu_open ? COLOR_FOCUS : COLOR_BUTTON)
+		graphics.text(canvas, left + origin_x + launcher.PADDING, y, launcher.LABEL, COLOR_BAR_TEXT)
 		seconds := now / 1000
 		x := frame.width - graphics.text_width("00:00:00") - 10 + origin_x
 		x = graphics.unsigned(canvas, x, y, seconds / 3600, COLOR_BAR_TEXT, 2)
@@ -444,6 +468,18 @@ draw_area :: proc "contextless" (area: Rectangle, now: u64) {
 		x = graphics.unsigned(canvas, x, y, seconds / 60 % 60, COLOR_BAR_TEXT, 2)
 		x = graphics.text(canvas, x, y, ":", COLOR_BAR_TEXT)
 		graphics.unsigned(canvas, x, y, seconds % 60, COLOR_BAR_TEXT, 2)
+	}
+
+	// The menu of the launcher, over the windows.
+	if menu_open {
+		left, top, menu_width, menu_height := launcher.menu()
+		graphics.fill(canvas, left + SHADOW + origin_x, top + SHADOW + origin_y, menu_width, menu_height, 0x0A1018)
+		graphics.fill(canvas, left + origin_x, top + origin_y, menu_width, menu_height, COLOR_BUTTON)
+		for name, index in launcher.names {
+			x, y, line_width, line_height := launcher.line(index)
+			graphics.fill(canvas, x + origin_x, y + origin_y, line_width, line_height, index == menu_line ? COLOR_FOCUS : COLOR_BAR)
+			graphics.text(canvas, x + launcher.PADDING + origin_x, y + (line_height - graphics.CELL_HEIGHT) / 2 + origin_y, name, COLOR_BAR_TEXT)
+		}
 	}
 
 	for row, y in pointer_shape {

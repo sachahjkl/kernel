@@ -26,7 +26,7 @@ Step_Kind :: enum {
 	Type, // Press the keys of text, then Enter.
 	Key, // Press one key: text is its QEMU name.
 	Click, // Press the left button at (x, y).
-	Launch, // Press the button of the program text in the launcher.
+	Launch, // Open the menu of the launcher, and press the line of the program text.
 	Drag, // Hold the left button from (x, y) to (to_x, to_y).
 	Shot, // Save the screen as text.png.
 	Quit, // End QEMU: the machine does not stop by itself.
@@ -139,6 +139,10 @@ scenario := [?]Step {
 	{kind = .Wait, text = "compositor: surface plasma"},
 	{kind = .Drag, x = 250, y = 182, to_x = 276, to_y = 150},
 	{kind = .Shot, text = "desktop"},
+	// The menu of the launcher: the button of the bar opens and closes it.
+	{kind = .Click, x = 116, y = 14},
+	{kind = .Shot, text = "launcher"},
+	{kind = .Click, x = 116, y = 14},
 
 	// A program that fails stops alone. The close button stops a program.
 	{kind = .Launch, text = "fault"},
@@ -582,6 +586,12 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 					monitor_send(machine, "mouse_move -100 -100")
 					time.sleep(MOUSE_PAUSE)
 				}
+			}
+			if step.kind == .Launch {
+				menu_x, menu_y := launcher.button_center()
+				pointer_move(machine, menu_x, menu_y)
+				pointer_button(machine, true)
+				pointer_button(machine, false)
 			}
 			pointer_move(machine, step.x, step.y)
 			pointer_button(machine, true)

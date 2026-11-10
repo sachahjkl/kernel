@@ -5,6 +5,8 @@ The system boots under QEMU to a graphical desktop with a console, a system tool
 
 ![The desktop: console, monitor, plasma, life and paint](docs/screenshots/desktop.png)
 
+![The launcher: the menu of the bar that starts the programs](docs/screenshots/launcher.png)
+
 | | |
 |---|---|
 | ![The console](docs/screenshots/console.png) | ![The commands of the console](docs/screenshots/tools.png) |
@@ -108,7 +110,7 @@ odin run tools/kerneltool -out:build/kerneltool -- run
 
 `nix flake check` runs the formatting hooks and `check`.
 
-In the machine, type `help()` in the console. The buttons of the bar start programs.
+In the machine, type `help()` in the console. The button "programs" of the bar opens the menu that starts programs.
 
 ## Licences
 

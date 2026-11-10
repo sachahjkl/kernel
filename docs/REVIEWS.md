@@ -19,6 +19,7 @@ A step is one tested commit that adds one capability.
 | 11 | `61b8661` | Several processors: one kernel lock, a processor record, `processor_sync`, shown by `processors` |
 | 12 | `f71ea23` | The boot display: a boot record with stages, drawn by the boot program, the root service and `boot`; a start that fails keeps the display |
 | 13 | `06b7df7` | Paging on the kernel itself: guard pages, no page writable and executable, SMEP and SMAP with one `user_copy`, six self tests, shown by `pages`; owner decision "no standard input, no standard output" recorded |
+| 14 | `HASH14` | The launcher is a menu: one button in the bar, one line for each program, the same table for the compositor and the test |
 
 ## Review 1: steps 1 to 5 (2026-11-10)
 

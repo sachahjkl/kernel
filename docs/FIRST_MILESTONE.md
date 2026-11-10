@@ -20,7 +20,7 @@ The scenario does these actions:
 1. Wait for the kernel, the root service, the input service, the compositor and the console.
 2. Type expressions and commands in the console: `1 + 2 * 3`, a variable, `length`, `hash("abc")`, a type error, `modules()`.
 3. Start `life` from the console with `start("life")`. Drag its window.
-4. Start `monitor`, `paint` and `plasma` from the bar. Choose colors and draw lines in `paint`.
+4. Start `monitor`, `paint` and `plasma` from the menu of the bar. Choose colors and draw lines in `paint`.
 5. Start `fault`. The kernel stops it on a page fault. The other programs continue.
 6. Close `plasma` with its close button. Stop `paint` with `stop("paint")`.
 7. Call `programs()` and `memory()`.
@@ -29,15 +29,15 @@ The scenario does these actions:
 10. Call `isolate("probe")`: the module runs in a call host. Call `count()`, `checksum("abc" + name)`, and `stop_machine` with three handle numbers: the kernel refuses each one.
 11. Call `peek(0)`: the kernel stops the call host on a page fault, and the console reports an error. Call `count()`: a new call host gives 1.
 12. Call `spin()`, which never returns, then type `count() + gcd(84, 36)` during the call: the console keeps the keys. Press Escape: the console closes the handle of the call host, and the kernel stops it. The line that waited then runs: an isolated call and a direct call in one expression.
-13. Start `temple` from the bar.
-14. Start `rings` from the bar: six programs pass records through six rings. Add three records. Stop node 4: all the records wait in the ring before it. Start node 4 again.
-15. Start `threads` from the bar: one program, five threads. A thread adds the numbers to 1000 and ends; the first thread reads 500500. Four threads draw one Julia set each in the surface of the program. Key `3` stops thread 3, then starts it again. `programs()` shows 5 threads.
-16. Start `workers` from the bar. Four threads add to one number for 150 ms each: with the lock no addition is lost; with no lock, millions are lost. Then four threads take 140 tiles from one queue and compute a picture.
-17. Start `rights` from the bar. The program holds the machine with the right Inspect and the boot image with the right Read. It asks the kernel for nine operations. The kernel does four and refuses five with the status `No_Right`: create a device handle, stop the machine, map the boot image to write, map it to execute, give it to the compositor. The log has "rights: ok, 4 allowed, 5 refused".
-18. Start `budget` from the bar. The program creates memory objects of 64 pages until the kernel answers `No_Budget`, then closes them: its budget has the first number of pages again. It does the same with threads. It takes 256 pages for a new budget, creates 200 pages with it, and closes the new budget: its own budget then pays for the 200 pages. The log has "budget: ok, 10 memory objects then no budget, 3 threads then no budget, each page returned".
-19. Start `processors` from the bar. The machine of the test has four processors. Five threads of the program compute, and the program asks the kernel what each processor runs: the log has "processors: ok, 4 processors ran the program at the same time". Then 1, 2 and 4 threads compute the same picture, and the log has the three times: "processors: the picture took 404 ms with 1 thread, 198 ms with 2 threads, 148 ms with 4 threads" in one run. The test does not check the times.
-20. Start `boot` from the bar. The window shows the boot display: the seven stages of the start on one line of time, the memory that the firmware gave, the machine, the modules of the boot image, the programs. The log has "boot: ok, 7 stages, N memory ranges, N programs".
-21. Start `pages` from the bar. The window shows what the page tables give, as the kernel reads it from the tables: the direct map, the kernel module, the kernel stacks, and the half of the program. The log has "0 write and execute, 48 guard pages of 48", "pages: ok, the page tables keep the rules" and "pages: the processor refuses the memory of programs to the kernel".
+13. Start `temple` from the menu of the bar.
+14. Start `rings` from the menu of the bar: six programs pass records through six rings. Add three records. Stop node 4: all the records wait in the ring before it. Start node 4 again.
+15. Start `threads` from the menu of the bar: one program, five threads. A thread adds the numbers to 1000 and ends; the first thread reads 500500. Four threads draw one Julia set each in the surface of the program. Key `3` stops thread 3, then starts it again. `programs()` shows 5 threads.
+16. Start `workers` from the menu of the bar. Four threads add to one number for 150 ms each: with the lock no addition is lost; with no lock, millions are lost. Then four threads take 140 tiles from one queue and compute a picture.
+17. Start `rights` from the menu of the bar. The program holds the machine with the right Inspect and the boot image with the right Read. It asks the kernel for nine operations. The kernel does four and refuses five with the status `No_Right`: create a device handle, stop the machine, map the boot image to write, map it to execute, give it to the compositor. The log has "rights: ok, 4 allowed, 5 refused".
+18. Start `budget` from the menu of the bar. The program creates memory objects of 64 pages until the kernel answers `No_Budget`, then closes them: its budget has the first number of pages again. It does the same with threads. It takes 256 pages for a new budget, creates 200 pages with it, and closes the new budget: its own budget then pays for the 200 pages. The log has "budget: ok, 10 memory objects then no budget, 3 threads then no budget, each page returned".
+19. Start `processors` from the menu of the bar. The machine of the test has four processors. Five threads of the program compute, and the program asks the kernel what each processor runs: the log has "processors: ok, 4 processors ran the program at the same time". Then 1, 2 and 4 threads compute the same picture, and the log has the three times: "processors: the picture took 404 ms with 1 thread, 198 ms with 2 threads, 148 ms with 4 threads" in one run. The test does not check the times.
+20. Start `boot` from the menu of the bar. The window shows the boot display: the seven stages of the start on one line of time, the memory that the firmware gave, the machine, the modules of the boot image, the programs. The log has "boot: ok, 7 stages, N memory ranges, N programs".
+21. Start `pages` from the menu of the bar. The window shows what the page tables give, as the kernel reads it from the tables: the direct map, the kernel module, the kernel stacks, and the half of the program. The log has "0 write and execute, 48 guard pages of 48", "pages: ok, the page tables keep the rules" and "pages: the processor refuses the memory of programs to the kernel".
 22. Call `memory()`. The console prints "budgets N pages: all the free pages": after all the starts and stops of the test, each page is free or paid. It also prints the number of processors, and the times that a processor waited for the kernel lock.
 23. Call `shutdown()`. The machine stops with code 0.
 24. A second machine starts with a boot image that has no compositor. The root service cannot start the compositor: the boot display stays on the screen with "the start failed: cannot start the compositor: status 1", and the machine does not stop. The log has "root: the boot display shows the failure". The test runs this machine first.
@@ -167,6 +167,7 @@ The owner did not review these. Each one can change.
 44. **The kernel uses the memory of a program in one place.** `user_copy` (in `kernel/processor.asm`) is the one place where the kernel reads or writes at the addresses of a program. If the processor has the guards (SMEP and SMAP), the kernel sets them: any other use, and any jump to the code of a program, is a page fault. The kernel copies the parameters of an operation to its own memory before it uses them. The QEMU machine has `-cpu max` so that the test has the guards.
 45. **The kernel reads its own tables.** `Inspect` has a new kind, `Mappings`, with the record `Mapping_Report`: the runs of pages with one protection, the counts, the guard pages. At the start, the kernel reads its half and stops the machine if a page is writable and executable or if a guard page is missing. The program `pages` shows the same record.
 46. **Tests of the kernel on itself.** A test that the kernel survives proves nothing about a protection: the test must do the thing that is refused. The boot record has a field `self_test`. The kernel tool builds one boot program for each test (`-define:SELF_TEST=`), and the machine test checks the report of each fault. A normal boot program has the value 0.
+47. **The launcher is a menu.** The bar had one button for each program, and 15 names filled it. The bar now has one button, "programs". It opens a menu with one line for each program. A press on a line starts the program, and any press closes the menu. `programs/launcher` still holds the one table of the names and the places: the compositor draws from it, and the machine test clicks from it. The buttons of choices 35 and 41 do not exist any more.
 
 ## Gaps
 
@@ -184,7 +185,6 @@ Against the properties and the module contract:
 - The 16 pages of the stack of the boot program stay in use after the kernel leaves that stack.
 - With a processor that has no SMEP or SMAP, the kernel runs without these two guards. `pages` and the log say so.
 - The log is lines of text with the name of the program. It has no channels, no levels and no reader but the serial port. The owner asked for records in channels (`HANDOFF.md`). The system has no standard input and no standard output, by decision of the owner: a command has typed parameters and a typed result, and a flow of data is a ring of records.
-- The bar has place for one more name. More programs need a menu.
 - The boot display needs 976 x 700 pixels. On a smaller screen it is cut.
 - A thread that stops with a lock held keeps the lock: the other threads wait with no end.
 - No storage, no network, no document service, no principals, no TPM, no Secure Boot.
@@ -203,5 +203,5 @@ Input:
 
 1. The log as records in channels, with a log service and a `log` window (`HANDOFF.md`).
 2. Paging, second part: pages on first use, and read-only code that programs share.
-2. Damage rectangles in the compositor.
+3. Damage rectangles in the compositor.
 3. A block device service (virtio), then the storage service.
