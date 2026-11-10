@@ -41,6 +41,7 @@ A step is one tested commit that adds one capability.
 | 33 | `fbb5866` | A program loads a module with imports: a module space, each import found by its hash in the files that the program was granted; a load error is a record with its detail (`Load_Error`) (built by an agent on a branch, reviewed and merged by the coordinator) |
 | 34 | `feddd40` | Replacement of an import: the root service holds the table, the loader checks the descriptions, the module records of a program (`Program_Module`) and the stop report name the module that ran; the program `imports` (same agent and branch) |
 | 35 | `6fe8d02` | The code of an imported module is one copy for all the programs of a table of prepared modules, at any base (same agent and branch) |
+| 36 | `f8fe828` | Functions that give the information of the modules (property 12, no SQLite): a Table result and a Text field in the record description; `support/information` reads the flat tables, the module records and the replacement table, with a `Problem` for a malformed module; the manual serves the tables; the console combines tables with `where`, `sort`, `join`, `columns` (built by an agent on a branch, reviewed and merged by the coordinator) |
 
 ## Review 1: steps 1 to 5 (2026-11-10)
 
