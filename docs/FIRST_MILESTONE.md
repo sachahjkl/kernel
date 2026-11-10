@@ -125,6 +125,7 @@ Against the properties and the module contract:
 - Handles have no rights. A program can give any of its handles onward.
 - The Machine handle gives inspect and stop together.
 - Property 19 is not complete: a command cannot give a Text. The description has no records, no floats, no handles and no grants. A module with imports cannot be loaded by a program.
+- The machine test failed one time in the Nix sandbox at step 1 (2026-11-10): the firmware did not start the boot program in 20 s. The next run of the same tree passed. The cause is not known.
 - The console waits during an isolated call: it draws nothing and reads no key until the call ends or the limit passes.
 - Each program can create memory objects and programs with no limit, and can write on the log of the kernel.
 - Frame pointers are not enforced. An import call goes through a stub that the linker adds.
