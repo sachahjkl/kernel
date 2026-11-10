@@ -66,12 +66,28 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		if v[2] > 4096 || !user_range(program.table, v[1], v[2], false) {
 			return .Bad_Address
 		}
-		log_bytes({'['})
-		log_bytes(transmute([]u8)program_name(program))
-		log_bytes({']', ' '})
+		if v[3] > u64(max(op.Log_Level)) {
+			return .Bad_Operation
+		}
+		// The channel: the characters before the first one that is not a
+		// character of a text.
+		channel := transmute([op.LOG_CHANNEL_CAPACITY]u8)[2]u64{v[4], v[5]}
+		channel_count := 0
+		for channel_count < len(channel) && channel[channel_count] > ' ' && channel[channel_count] < 127 {
+			channel_count += 1
+		}
+		name := transmute([]u8)program_name(program)
 		user_copy(&log_text, rawptr(uintptr(v[1])), v[2])
+		log_bytes({'['})
+		log_bytes(name)
+		if channel_count != 0 {
+			log_bytes({':'})
+			log_bytes(channel[:channel_count])
+		}
+		log_bytes({']', ' '})
 		log_bytes(log_text[:v[2]])
 		log_bytes({'\r', '\n'})
+		log_record(program_index, index, name, channel[:channel_count], op.Log_Level(v[3]), log_text[:v[2]])
 		return .Ok
 
 	case .Memory_Create:

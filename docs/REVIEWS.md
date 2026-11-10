@@ -20,6 +20,7 @@ A step is one tested commit that adds one capability.
 | 12 | `f71ea23` | The boot display: a boot record with stages, drawn by the boot program, the root service and `boot`; a start that fails keeps the display |
 | 13 | `06b7df7` | Paging on the kernel itself: guard pages, no page writable and executable, SMEP and SMAP with one `user_copy`, six self tests, shown by `pages`; owner decision "no standard input, no standard output" recorded |
 | 14 | `89e315b` | The launcher is a menu: one button in the bar, one line for each program, the same table for the compositor and the test |
+| 15 | `HASH15` | The log is records in channels: the kernel is the one writer, readers map the records, shown by `log` |
 
 ## Review 1: steps 1 to 5 (2026-11-10)
 
@@ -115,3 +116,59 @@ The intermittent failure of the boot test (Review 1, concession 9) did not come 
 3. Multi-threading: a queue for several writers and several readers on the word wait; an event that several threads wait for.
 4. Descriptions with records and handles.
 5. Revocation of a grant.
+
+## Review 3: steps 11 to 15 (2026-11-10)
+
+### What the five steps added
+
+- Step 11 made the kernel run on several processors, with one lock.
+- Step 12 made the start of the machine visible: a boot record, and one display that three programs draw. A start that fails keeps the display.
+- Step 13 used paging on the kernel itself, and added tests where the kernel does what its page tables must refuse.
+- Step 14 replaced the buttons of the bar by a menu. It added no capability to the kernel: the bar was full.
+- Step 15 made the log a set of records in channels.
+
+The kernel has 22 operations: none added since step 10. `Inspect` has two more kinds (`Boot`, `Mappings`) and `Log` has two more parameters. The test has 114 checks, 18 pictures and 8 machines (1 normal start, 1 start that fails, 6 self tests).
+
+### Against the properties
+
+| Property | State after step 15 |
+|---|---|
+| P1 small counted interface | 22 operations. Three steps added records to read, and no operation |
+| P2 sandbox by default | Holds. New: the kernel cannot execute the memory of a program, and uses it only in `user_copy` (SMEP, SMAP). The records of the log are a grant |
+| P3, P5 kernel off the hot path | One kernel lock: `Processor_Report` counts the waits. A reader of the log costs the kernel nothing. A writer of the log enters the kernel for each record |
+| P6 one communication mechanism | Holds. The log uses the word wait, and adds no way to wait |
+| P13 ZII, data-oriented | Holds. A boot record that is all zero draws "not known yet". A log record with a channel that is all zero has no channel. Level 0 is Info |
+| P16 removed concepts | New, by decision of the owner: no standard input, no standard output, no standard error |
+| P17 trusted boot | Not started. The boot display shows the firmware and the stages; it measures nothing for trust |
+| P19 command is a function | Not changed since step 10: no records, floats, handles or grants in a description |
+| P20 no ambient access | Not changed for lines 13 and 16: a grant cannot be revoked, and a budget has no processor time. New hole, small: the log has no limit of rate |
+
+### Concessions, and what removes each one
+
+1. **A grant cannot be revoked** (Review 2, concession 1). Still true.
+2. **A budget has no processor time** (Review 2, concession 2). Still true, and now also for the log: a program can push the records of the others out of the 1023 places. Remove: a share of time and a share of records for each budget.
+3. **One kernel lock.** Two processors cannot be in the kernel together. Remove: when `lock_waits` shows a cost in a real program, split the lock by table.
+4. **A reader of the log reads all of it.** A grant for one channel or one program does not exist. Remove: a service that reads the log and gives a part of it, as a ring.
+5. **The boot display needs 976 x 700 pixels, and does not show the log.** Remove: a layout by the size of the screen, with the last records.
+6. **The stack of the boot program** (16 pages) stays in use after the kernel leaves it. Remove: free it in the first thread run.
+7. **No SMEP or SMAP: no guard.** The kernel says it and continues. This is a choice: old processors still start.
+8. Review 2, concessions 3, 4, 5 and 7 are still true (empty page tables, contiguous memory objects, a stopped thread that holds a lock, budgets by name).
+
+### Bad compromises found
+
+Three, all removed inside their step.
+
+- Step 12: the root service stopped the machine when a start failed, so the screen was lost at the moment when a person needs it. The display now stays.
+- Step 13: the kernel stack was inside the processor record. A full stack wrote on the record with no fault. The stack now has guard pages, and a test proves the fault.
+- Step 15: the first design of the log had a service in user space beside the log of the kernel: two writers and two formats. One writer and one record replaced it before any code.
+
+One change of design that the owner must know: the log has no log service (choice 49).
+
+### Order of the next steps
+
+1. Communication between programs: a call of an export of a program that runs, through a ring, with the same description as a module.
+2. Multi-threading: a queue for several writers and several readers on the word wait; an event that several threads wait for.
+3. Descriptions with records and handles.
+4. Revocation of a grant.
+5. Processor time and log records in budgets.
+6. Paging, second part: pages on first use, read-only code that programs share.

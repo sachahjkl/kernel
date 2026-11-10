@@ -314,6 +314,17 @@ scenario := [?]Step {
 	{kind = .Wait, text = "pages: the processor refuses the memory of programs to the kernel"},
 	{kind = .Shot, text = "pages"},
 	{kind = .Click, x = 70, y = 300},
+	{kind = .Type, text = "stop(\"pages\")"},
+	{kind = .Wait, text = "root: pages stopped"},
+
+	// The log: records in channels. The kernel sets the program of each
+	// record; a program with the grant reads the records.
+	{kind = .Launch, text = "log"},
+	{kind = .Wait, text = "[log:log] log: the kernel wrote 7 records in the channel boot"},
+	{kind = .Wait, text = "[log:log] log: ok, ", any_order = true},
+	{kind = .Wait, text = " 0 lost, "},
+	{kind = .Shot, text = "log"},
+	{kind = .Click, x = 70, y = 300},
 	// Each page is free or paid, after all the starts and stops of this test.
 	{kind = .Type, text = "memory()"},
 	{kind = .Wait, text = " pages: all the free pages"},

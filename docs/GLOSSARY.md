@@ -40,6 +40,9 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Direct map | The part of the kernel half of the addresses that shows all physical memory. It is never executable | physmap, identity map |
 | Run | Pages that follow each other in a page table with one protection (`Mapping_Run`) | extent, VMA |
 | Self test | A boot of the machine where the kernel does one thing that its page tables must refuse, to prove that the processor refuses it | negative test, lkdtm |
+| Log record | One entry of the log: a number, a time, a program, a thread, a level, a channel and a text (`Log_Record`). The kernel sets all but the last three | log line, message |
+| Channel | The short name that a program gives to a log record, to group records of one subject | facility, tag, category, logger |
+| Level | How much a log record matters: Info, Debug, Warning or Error | severity, priority |
 | Kernel lock | The one lock of the kernel: one processor at a time runs kernel code | big kernel lock, giant lock |
 | Thread area | The memory that the kernel makes for one thread: the thread record, then the kernel ring of the thread | |
 | Service | A program that other programs call through rings. A service has no special privilege | daemon, server, driver |

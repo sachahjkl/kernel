@@ -23,6 +23,7 @@ Grant :: enum {
 	Inspect, // The machine, with the right Inspect.
 	Stop, // The machine, with the right Stop.
 	Image, // Read the boot image.
+	Log_Records, // Read the records of the log.
 }
 
 grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
@@ -33,6 +34,8 @@ grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 		return {.Inspect}
 	case "rights":
 		return {.Inspect, .Image} // It shows what the kernel refuses.
+	case "log":
+		return {.Log_Records}
 	case "boot":
 		return {.Inspect, .Image} // It shows the modules of the boot image.
 	case "rings":
@@ -117,7 +120,7 @@ show :: proc "contextless" (text: string, state: bootscreen.State) {
 // fail ends the start of the machine. The machine does not stop: the boot
 // display stays, with the failure, until a person stops the machine.
 fail :: proc "contextless" (text: string, status: system.Status) -> ! {
-	system.log("root: ", text, ": status ", u64(status))
+	system.log_in("programs", .Error, "root: ", text, ": status ", u64(status))
 	if compositor != 0 {
 		system.call(.Program_Stop, u64(compositor), 0) // The screen returns to this service.
 	}
@@ -306,6 +309,9 @@ start :: proc "contextless" (name: string) -> system.Status {
 	if machine_rights != {} {
 		grants[system.GRANT_MACHINE] = {machine, machine_rights}
 	}
+	if .Log_Records in role {
+		grants[system.GRANT_LOG_RECORDS] = {system.context_record().handles[op.ROOT_LOG_RECORDS], {.Read}}
+	}
 	if .Image in role {
 		grants[system.GRANT_IMAGE] = {image_memory, {.Read}}
 		values[system.GRANT_VALUE_IMAGE_SIZE] = u64(len(image))
@@ -318,7 +324,7 @@ start :: proc "contextless" (name: string) -> system.Status {
 		return status
 	}
 	copy(slot.name[:len(slot.name) - 1], name)
-	system.log("root: started ", name)
+	system.log_in("programs", .Info, "root: started ", name)
 	return .Ok
 }
 
@@ -343,7 +349,7 @@ reap :: proc "contextless" () {
 		}
 		state, code := system.program_state(item.program)
 		if state == .Stopped {
-			system.log("root: ", system.name_of(item.name[:]), " stopped with code ", u64(code))
+			system.log_in("programs", code == 0 ? .Info : .Warning, "root: ", system.name_of(item.name[:]), " stopped with code ", u64(code))
 			release(&item)
 		}
 	}

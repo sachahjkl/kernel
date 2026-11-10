@@ -793,6 +793,7 @@ kernel_interrupt :: proc "c" (frame: ^Frame) {
 		// The processor can hold the kernel lock: it does not take it.
 		name := EXCEPTION_NAMES[frame.vector]
 		address := cr2_read()
+		log_serial_only = true
 		log("kernel: exception in the kernel: ", name, " vector ", frame.vector, " error ", Hex(frame.error), " at ", Hex(frame.rip), " address ", Hex(address), ": ", fault_reason(frame, address))
 		machine_stop(2)
 	}
@@ -845,7 +846,7 @@ kernel_interrupt :: proc "c" (frame: ^Frame) {
 		// their memory.
 		name := frame.vector < 32 ? EXCEPTION_NAMES[frame.vector] : ""
 		program := threads[cpu.current].program
-		log("kernel: program ", program_name(&programs[program]), " stopped: ", name, " vector ", frame.vector, " error ", Hex(frame.error), " at ", Hex(frame.rip), " address ", Hex(cr2_read()))
+		log_in("fault", .Warning, "kernel: program ", program_name(&programs[program]), " stopped: ", name, " vector ", frame.vector, " error ", Hex(frame.error), " at ", Hex(frame.rip), " address ", Hex(cr2_read()))
 		program_stop(program, op.STOP_CODE_FAULT + u32(frame.vector))
 	}
 	if !from_program {

@@ -6,6 +6,7 @@ GRANT_DISPLAY :: 0 // Memory: the ring to the compositor.
 GRANT_ROOT :: 1 // Memory: the ring to the root service, to start and stop programs.
 GRANT_MACHINE :: 2 // The machine, with the rights of the role: Inspect, or Inspect and Stop.
 GRANT_IMAGE :: 3 // Memory: the boot image, to list the modules.
+GRANT_LOG_RECORDS :: 4 // Memory, with Read: the records of the log.
 GRANT_VALUE_IMAGE_SIZE :: 0
 
 // The ring to the root service. The name of the program is in values[0..4].

@@ -38,10 +38,11 @@ The scenario does these actions:
 19. Start `processors` from the menu of the bar. The machine of the test has four processors. Five threads of the program compute, and the program asks the kernel what each processor runs: the log has "processors: ok, 4 processors ran the program at the same time". Then 1, 2 and 4 threads compute the same picture, and the log has the three times: "processors: the picture took 404 ms with 1 thread, 198 ms with 2 threads, 148 ms with 4 threads" in one run. The test does not check the times.
 20. Start `boot` from the menu of the bar. The window shows the boot display: the seven stages of the start on one line of time, the memory that the firmware gave, the machine, the modules of the boot image, the programs. The log has "boot: ok, 7 stages, N memory ranges, N programs".
 21. Start `pages` from the menu of the bar. The window shows what the page tables give, as the kernel reads it from the tables: the direct map, the kernel module, the kernel stacks, and the half of the program. The log has "0 write and execute, 48 guard pages of 48", "pages: ok, the page tables keep the rules" and "pages: the processor refuses the memory of programs to the kernel".
-22. Call `memory()`. The console prints "budgets N pages: all the free pages": after all the starts and stops of the test, each page is free or paid. It also prints the number of processors, and the times that a processor waited for the kernel lock.
-23. Call `shutdown()`. The machine stops with code 0.
-24. A second machine starts with a boot image that has no compositor. The root service cannot start the compositor: the boot display stays on the screen with "the start failed: cannot start the compositor: status 1", and the machine does not stop. The log has "root: the boot display shows the failure". The test runs this machine first.
-25. Six more machines start, each with one test of the kernel on itself. The kernel does one thing that its page tables must refuse: it uses more than its stack, it writes to its code, it writes to its code through the direct map, it executes its data, it reads the memory of a program outside a copy, it executes the code of a program. Each time the processor refuses, the kernel reports the fault with its reason ("the kernel stack of the processor is full", "write to a read-only page", ...), and the machine stops with code 2.
+22. Start `log` from the menu of the bar. The window shows the records of the log: the time, the program, the channel and the text of each one, and the count of records of each channel. The log has "log: the kernel wrote 7 records in the channel boot" and "log: ok, N records, 0 lost, N channels".
+23. Call `memory()`. The console prints "budgets N pages: all the free pages": after all the starts and stops of the test, each page is free or paid. It also prints the number of processors, and the times that a processor waited for the kernel lock.
+24. Call `shutdown()`. The machine stops with code 0.
+25. A second machine starts with a boot image that has no compositor. The root service cannot start the compositor: the boot display stays on the screen with "the start failed: cannot start the compositor: status 1", and the machine does not stop. The log has "root: the boot display shows the failure". The test runs this machine first.
+26. Six more machines start, each with one test of the kernel on itself. The kernel does one thing that its page tables must refuse: it uses more than its stack, it writes to its code, it writes to its code through the direct map, it executes its data, it reads the memory of a program outside a copy, it executes the code of a program. Each time the processor refuses, the kernel reports the fault with its reason ("the kernel stack of the processor is full", "write to a read-only page", ...), and the machine stops with code 2.
 
 ## The path from power to desktop
 
@@ -168,6 +169,10 @@ The owner did not review these. Each one can change.
 45. **The kernel reads its own tables.** `Inspect` has a new kind, `Mappings`, with the record `Mapping_Report`: the runs of pages with one protection, the counts, the guard pages. At the start, the kernel reads its half and stops the machine if a page is writable and executable or if a guard page is missing. The program `pages` shows the same record.
 46. **Tests of the kernel on itself.** A test that the kernel survives proves nothing about a protection: the test must do the thing that is refused. The boot record has a field `self_test`. The kernel tool builds one boot program for each test (`-define:SELF_TEST=`), and the machine test checks the report of each fault. A normal boot program has the value 0.
 47. **The launcher is a menu.** The bar had one button for each program, and 15 names filled it. The bar now has one button, "programs". It opens a menu with one line for each program. A press on a line starts the program, and any press closes the menu. `programs/launcher` still holds the one table of the names and the places: the compositor draws from it, and the machine test clicks from it. The buttons of choices 35 and 41 do not exist any more.
+48. **The log is records in channels.** Owner decision of 2026-11-10. A log record (`Log_Record`, 256 bytes) has a number, a time, a program, a thread, a level, a channel and a text. A long text takes several records. The operation `Log` takes a level and a channel; `system.log_in(channel, level, ...)` writes one, and `system.log(...)` writes with no channel and the level Info. The serial port receives the same record as one line: "[program] text", or "[program:channel] text".
+49. **The kernel is the one writer of the log.** The first design (in `HANDOFF.md`) had a log service in user space. The implementation has none. The kernel must set the program and the thread of a record, or a program could write a record of another program. With one writer, the log is one memory object with a counter: the last 1023 records. A reader maps it with the right Read and waits on the counter with the word wait. The kernel does no work for a reader: no copy, no operation. A reader that is late knows how many records it lost. A service that keeps or filters records can be a reader later.
+50. **Who reads the log.** The root service receives the memory object of the log with Read (`ROOT_LOG_RECORDS`) and gives it to the program `log` (`GRANT_LOG_RECORDS`). No other program has it. The kernel writes its stages in the channel "boot", its page tables in "paging", and a program that stops by a fault in "fault" with the level Warning. The root service writes in "programs", the compositor in "surfaces".
+51. **No standard input and no standard output.** Owner decision of 2026-11-10. A program has no ambient stream of bytes: its context has no place "input", "output" or "error". The input of a command is its typed parameters and its output is its typed result (property 19). A flow of data in time is a ring of records. The log is not an output: it is for the person who looks for a fault.
 
 ## Gaps
 
@@ -184,7 +189,8 @@ Against the properties and the module contract:
 - Paging does not yet give pages on first use, and two programs that run the same module do not share its code.
 - The 16 pages of the stack of the boot program stay in use after the kernel leaves that stack.
 - With a processor that has no SMEP or SMAP, the kernel runs without these two guards. `pages` and the log say so.
-- The log is lines of text with the name of the program. It has no channels, no levels and no reader but the serial port. The owner asked for records in channels (`HANDOFF.md`). The system has no standard input and no standard output, by decision of the owner: a command has typed parameters and a typed result, and a flow of data is a ring of records.
+- The log has no limit of rate: a program can write records until the records of the other programs leave the memory object. A reader with the grant reads the records of all the programs and all the channels: a grant for one channel does not exist.
+- The boot display does not show the records of the log. A long text is cut at 80 characters in the `log` window.
 - The boot display needs 976 x 700 pixels. On a smaller screen it is cut.
 - A thread that stops with a lock held keeps the lock: the other threads wait with no end.
 - No storage, no network, no document service, no principals, no TPM, no Secure Boot.
@@ -201,7 +207,7 @@ Input:
 
 ## Next steps
 
-1. The log as records in channels, with a log service and a `log` window (`HANDOFF.md`).
+1. A call of an export of a program that runs, through a ring (the order is in Review 3 of `REVIEWS.md`).
 2. Paging, second part: pages on first use, and read-only code that programs share.
 3. Damage rectangles in the compositor.
 3. A block device service (virtio), then the storage service.

@@ -52,7 +52,7 @@ Rights :: bit_set[Right;u32]
 
 Operation :: enum u32 {
 	None           = 0,
-	Log            = 1, // (log, address, count): write text on the log of the kernel.
+	Log            = 1, // (log, address, count, level, channel 0, channel 1): write one text on the log. The channel is 16 bytes in two values.
 	Memory_Create  = 2, // (budget, page_count) -> memory handle. The memory is zero.
 	Memory_Map     = 3, // (memory, program or 0 for self, address or 0, Map_Flags, first page, page_count or 0 for all) -> address
 	Memory_Unmap   = 4, // (program or 0, address)
@@ -196,6 +196,54 @@ Processor_Report :: struct {
 	apic_id:   u64, // The number that the machine gives to the processor.
 }
 
+// The log: records in channels.
+//
+// The kernel keeps the last LOG_RECORD_CAPACITY records in one memory
+// object. The kernel is the one writer: it sets the time, the program and
+// the thread of each record, so a program cannot write a record of another
+// program. A program chooses only the level, the channel and the text.
+// A reader maps the memory object without Write. It reads Log_Head.written,
+// and it waits on the low 32 bits of that word (Word_Wait).
+//
+// Record n is at index n % LOG_RECORD_CAPACITY, after the head. A reader
+// that is late by more than the capacity lost records: it knows how many.
+// The kernel can write over a record while a reader copies it: the reader
+// reads `written` again after the copy.
+Log_Level :: enum u8 {
+	Info    = 0,
+	Debug   = 1, // For the person who looks for a fault.
+	Warning = 2,
+	Error   = 3,
+}
+
+LOG_TEXT_CAPACITY :: 176
+LOG_CHANNEL_CAPACITY :: 16
+LOG_PAGES :: 64
+LOG_RECORD_CAPACITY :: LOG_PAGES * 4096 / size_of(Log_Record) - 1
+
+Log_Head :: struct {
+	written:  u64, // The count of records since the start of the machine.
+	capacity: u64, // LOG_RECORD_CAPACITY.
+	reserved: [30]u64,
+}
+
+Log_Record :: struct {
+	sequence:   u64, // The number of the record, from 0.
+	time:       u64, // Microseconds since the start of the machine.
+	program:    u32, // The slot of the program. 0: the kernel.
+	thread:     u32, // The slot of the thread. 0: the kernel.
+	level:      Log_Level,
+	more:       u8, // 1: the text continues in the next record.
+	text_count: u16,
+	reserved:   u32,
+	name:       [32]u8, // The name of the program, or "kernel".
+	channel:    [LOG_CHANNEL_CAPACITY]u8, // All zero: the program gave no channel.
+	text:       [LOG_TEXT_CAPACITY]u8,
+}
+
+#assert(size_of(Log_Record) == 256)
+#assert(size_of(Log_Head) == size_of(Log_Record))
+
 // The stacks of the kernel. Each processor has one slot of addresses: a
 // guard page with no memory, the kernel stack, a guard page, the stack of
 // the double fault, and guard pages to the end of the slot.
@@ -327,6 +375,7 @@ CONTEXT_BUDGET :: 15 // The budget of the program.
 ROOT_MACHINE :: 0
 ROOT_FRAMEBUFFER :: 1
 ROOT_BOOT_IMAGE :: 2
+ROOT_LOG_RECORDS :: 3 // Memory, with Read: the records of the log.
 ROOT_VALUE_WIDTH :: 0
 ROOT_VALUE_HEIGHT :: 1
 ROOT_VALUE_PIXELS_PER_LINE :: 2

@@ -88,13 +88,23 @@ format :: proc "contextless" (buffer: []u8, parts: ..Part) -> string {
 // log writes one line on the log of the kernel. A program with no handle to
 // the log writes nothing.
 log :: proc "contextless" (parts: ..Part) {
+	log_in("", .Info, ..parts)
+}
+
+// log_in writes one text on the log, in a channel and with a level. The
+// channel is a short name with no space: at most 16 characters. The kernel
+// sets the time, the program and the thread of the record.
+log_in :: proc "contextless" (channel: string, level: op.Log_Level, parts: ..Part) {
 	handle := context_record().handles[op.CONTEXT_LOG]
 	if handle == 0 {
 		return
 	}
 	buffer: [512]u8
 	text := format(buffer[:], ..parts)
-	call(.Log, u64(handle), u64(uintptr(raw_data(text))), u64(len(text)))
+	name: [op.LOG_CHANNEL_CAPACITY]u8
+	copy(name[:], channel)
+	packed := transmute([2]u64)name
+	call(.Log, u64(handle), u64(uintptr(raw_data(text))), u64(len(text)), u64(level), packed[0], packed[1])
 }
 
 // name_of gives the text of a fixed array of bytes that ends with zero bytes.

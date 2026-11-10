@@ -76,6 +76,7 @@ memory_start :: proc "contextless" (boot: ^info.Boot_Info) {
 	}
 	cr3_write(kernel_table)
 	paging_start(boot)
+	log_start()
 }
 
 frame_used :: #force_inline proc "contextless" (frame: u64) -> bool {
