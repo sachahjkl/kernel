@@ -193,7 +193,7 @@ The program that the person sees: starts programs, shows windows, shows grants. 
 
 ## Locks of the kernel
 
-Status: design of the step "the kernel lock split by data" (2026-11-10). In the code: layer 1, the lock type with its counts and the order check, the counts and the report buffers of each processor, and one run queue for each processor; the kernel lock still covers each kernel entry.
+Status: design of the step "the kernel lock split by data" (2026-11-10). In the code: layer 1, the lock type with its counts and the order check, the counts and the report buffers of each processor, and one run queue for each processor; layer 2, the frame lock, the region locks, the atomic counts of the budgets, the log lock and the wait table. The kernel lock still covers each kernel entry.
 
 Before this step, one kernel lock covered all kernel data: a processor took it at each kernel entry. The owner decided that the kernel runs on all processors with no single lock as the final design (`HANDOFF.md`, "Full queues and speed", item 8, and "Truly multi-threaded"). A lock protects data: a table, or a part of a table. It does not protect a code path.
 

@@ -44,7 +44,26 @@ Log_Part :: union {
 
 log_head: ^op.Log_Head // nil before log_start.
 log_records: [^]op.Log_Record
-log_serial_only: bool // The kernel reports its own fault: it can be without the kernel lock.
+log_serial_only: bool // The kernel reports its own fault: it takes no lock, and writes the serial port only.
+// The log lock protects the serial port, the records of the log and their
+// counter (docs/ARCHITECTURE.md, "Locks of the kernel").
+log_lock: Lock
+
+// log_take takes the log lock, except before the first processor has its
+// record, and when the kernel reports its own fault.
+log_take :: proc "contextless" () -> bool {
+	if intrinsics.atomic_load(&log_serial_only) {
+		return false
+	}
+	lock_take(&log_lock, .Log)
+	return true
+}
+
+log_free :: proc "contextless" (taken: bool) {
+	if taken {
+		lock_free(&log_lock, .Log)
+	}
+}
 
 @(private = "file")
 HEX_DIGITS :: [16]u8{'0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'}
@@ -107,14 +126,16 @@ log_in :: proc "contextless" (channel: string, level: op.Log_Level, parts: ..Log
 			put(buffer[:], &count, digits[:])
 		}
 	}
+	taken := log_take()
 	log_bytes(buffer[:count])
 	log_bytes({'\r', '\n'})
 	name := KERNEL_NAME
 	log_record(0, 0, name[:], transmute([]u8)channel, level, buffer[:count])
+	log_free(taken)
 }
 
 // log_record adds a text to the memory object of the log: one record, or
-// more if the text is long. The caller holds the kernel lock.
+// more if the text is long. The caller holds the log lock.
 log_record :: proc "contextless" (program: u32, thread: u32, name: []u8, channel: []u8, level: op.Log_Level, text: []u8) {
 	if log_head == nil || log_serial_only {
 		return

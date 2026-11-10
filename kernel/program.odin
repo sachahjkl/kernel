@@ -111,8 +111,10 @@ Thread :: struct {
 	// The word wait of the entry in progress or of the wait in progress:
 	// the physical addresses of the words.
 	words:        [op.WORD_WAIT_CAPACITY]u64,
-	word_count:   u32,
+	word_count:   u32, // The words registered in the wait table (wait.odin).
 	word_changed: bool, // A word did not hold the value: this entry does not wait.
+	wait_serial:  u32, // Changes when a wait ends: wait.odin. Run lock of home.
+	woken:        bool, // A waker came while the thread registered its words. Run lock of home.
 }
 
 // word_address gives the physical address of a 32-bit word of a program,
@@ -206,7 +208,7 @@ Budget :: struct {
 	// limit.odin:
 	spent:       u64, // Cycles of processor time in this period, and what was above the part of the periods before.
 	spent_total: u64, // Cycles of processor time since the budget was made.
-	logged:      u64, // Log records in this second.
+	logged:      u64, // The second (high 32 bits) and the log records in it (low 32 bits): limit.odin.
 	refused:     u64, // Log records that the kernel refused.
 }
 
@@ -224,6 +226,8 @@ time_record: ^op.Time_Record
 // budget_create moves amounts from a budget to a new budget.
 budget_create :: proc "contextless" (parent: u32, amounts: op.Budget_Amounts) -> (index: u32, status: op.Status) {
 	from := &budgets[parent]
+	lock_take(&frame_lock, .Frame)
+	defer lock_free(&frame_lock, .Frame)
 	if !from.live || amounts.pages > from.amounts.pages || amounts.programs > from.amounts.programs || amounts.threads > from.amounts.threads || amounts.processor > from.amounts.processor || amounts.log_records > from.amounts.log_records {
 		return 0, .No_Budget
 	}
@@ -249,6 +253,8 @@ budget_release :: proc "contextless" (index: u32) {
 		return
 	}
 	parent := budget.parent
+	lock_take(&frame_lock, .Frame)
+	defer lock_free(&frame_lock, .Frame)
 	budgets[parent].amounts.pages += budget.amounts.pages
 	budgets[parent].amounts.programs += budget.amounts.programs
 	budgets[parent].amounts.threads += budget.amounts.threads
@@ -282,12 +288,13 @@ region_cost :: proc "contextless" (page_count: u64, contiguous: bool) -> u64 {
 	return contiguous ? page_count : op.memory_cost(page_count)
 }
 
-// frame_take gives one page frame for a page that a budget reserved. The
-// kernel keeps free_frames >= reserved_pages, and any free frame serves:
-// it cannot fail.
+// frame_take gives one page frame, not zero, for a page that a budget
+// reserved or paid. The kernel keeps free_frames >= reserved_pages + what
+// the caller paid, and any free frame serves: it cannot fail. The caller
+// holds the frame lock.
 @(private = "file")
 frame_take :: proc "contextless" () -> u64 {
-	frame := frames_allocate(1)
+	frame := frames_take(1)
 	if frame == 0 {
 		log("kernel: no page frame for a reserved page")
 		machine_stop(1)
@@ -303,55 +310,89 @@ region_create :: proc "contextless" (budget: u32, page_count: u64, contiguous :=
 		return 0, .Bad_Operation
 	}
 	cost := region_cost(page_count, contiguous)
+	// One section of the frame lock: the budget pays, the slot is taken, the
+	// frames of a contiguous object or of the frame list are taken, the pages
+	// are reserved. The frames are zero filled after the section.
+	lock_take(&frame_lock, .Frame)
 	if !budgets[budget].live || budgets[budget].amounts.pages < cost {
+		lock_free(&frame_lock, .Frame)
 		return 0, .No_Budget
 	}
-	for &region, slot in regions[1:] {
-		if region.page_count != 0 {
-			continue
+	index = region_slot_take()
+	if index == 0 {
+		lock_free(&frame_lock, .Frame)
+		return 0, .No_Slot
+	}
+	region := &regions[index]
+	region^ = {page_count = page_count, budget = budget, contiguous = contiguous, serial = region.serial}
+	if contiguous {
+		region.physical = frames_take(page_count)
+		if region.physical == 0 {
+			region^ = {serial = region.serial}
+			lock_free(&frame_lock, .Frame)
+			return 0, .No_Memory
 		}
-		region = {page_count = page_count, budget = budget, contiguous = contiguous}
-		if contiguous {
-			region.physical = frames_allocate(page_count)
-			if region.physical == 0 {
-				region = {}
-				return 0, .No_Memory
-			}
-			region.present = page_count
-		} else {
-			// The budget has the cost: free frames for the list exist, and
-			// after the payment free_frames stays >= reserved_pages.
-			lists := list_pages(page_count)
-			if lists != 0 {
-				region.frames[0] = frame_take()
-			}
+		region.present = page_count
+	} else {
+		// The budget has the cost: free frames for the list exist, and
+		// after the payment free_frames stays >= reserved_pages.
+		lists := list_pages(page_count)
+		if lists != 0 {
+			region.frames[0] = frame_take()
+		}
+		reserved_pages += page_count
+	}
+	budgets[budget].amounts.pages -= cost
+	lock_free(&frame_lock, .Frame)
+	if contiguous {
+		frames_zero(region.physical, page_count)
+	} else if lists := list_pages(page_count); lists != 0 {
+		frames_zero(region.frames[0], 1)
+		if lists > 1 {
+			lock_take(&frame_lock, .Frame)
 			for list in 1 ..< lists {
 				direct(region.frames[0], [LIST_ENTRIES]u64)[list - 1] = frame_take()
 			}
-			reserved_pages += page_count
-		}
-		budgets[budget].amounts.pages -= cost
-		region_serial += 1
-		region.serial = region_serial
-		if now {
-			for page in 0 ..< page_count {
-				region_frame(&region, page, true)
+			lock_free(&frame_lock, .Frame)
+			for list in 1 ..< lists {
+				frames_zero(direct(region.frames[0], [LIST_ENTRIES]u64)[list - 1], 1)
 			}
 		}
-		return u32(slot + 1), .Ok
 	}
-	return 0, .No_Slot
+	if now {
+		for page in 0 ..< page_count {
+			region_frame(region, page, true)
+		}
+	}
+	return index, .Ok
 }
 
-region_device :: proc "contextless" (physical: u64, page_count: u64) -> u32 {
-	for &region, index in regions[1:] {
-		if region.page_count == 0 {
+region_hint: u32 // Where the search of a free slot starts. Frame lock.
+
+// region_slot_take takes a free slot of the table of memory objects, and
+// gives it a new serial. The caller holds the frame lock. 0: none.
+@(private = "file")
+region_slot_take :: proc "contextless" () -> u32 {
+	for step in 0 ..< u32(REGION_CAPACITY - 1) {
+		index := 1 + (region_hint + step) % (REGION_CAPACITY - 1)
+		if regions[index].page_count == 0 {
+			region_hint = index
 			region_serial += 1
-			region = {physical = physical, page_count = page_count, present = page_count, device = true, contiguous = true, serial = region_serial}
-			return u32(index + 1)
+			regions[index].serial = region_serial
+			return index
 		}
 	}
 	return 0
+}
+
+region_device :: proc "contextless" (physical: u64, page_count: u64) -> u32 {
+	lock_take(&frame_lock, .Frame)
+	defer lock_free(&frame_lock, .Frame)
+	index := region_slot_take()
+	if index != 0 {
+		regions[index] = {physical = physical, page_count = page_count, present = page_count, device = true, contiguous = true, serial = regions[index].serial}
+	}
+	return index
 }
 
 // region_slot gives the place of the frame of one page in the frame list of
@@ -376,13 +417,30 @@ region_frame :: proc "contextless" (region: ^Region, page: u64, give: bool) -> u
 		return region.physical + page * PAGE_SIZE
 	}
 	slot := region_slot(region, page)
-	if slot^ == 0 && give {
-		slot^ = frame_take()
-		region.present += 1
-		reserved_pages -= 1
+	frame := intrinsics.atomic_load(slot)
+	if frame != 0 || !give {
+		return frame
 	}
-	return slot^
+	// The region lock gives the page one frame, when two processors give it
+	// at one time. The frame is zero before the slot names it.
+	index := u32(intrinsics.ptr_sub(region, &regions[0]))
+	lock_take(&region_locks[index], .Region)
+	frame = intrinsics.atomic_load(slot)
+	if frame == 0 {
+		lock_take(&frame_lock, .Frame)
+		frame = frame_take()
+		reserved_pages -= 1
+		lock_free(&frame_lock, .Frame)
+		frames_zero(frame, 1)
+		intrinsics.atomic_store(slot, frame)
+		intrinsics.atomic_add(&region.present, 1)
+	}
+	lock_free(&region_locks[index], .Region)
+	return frame
 }
+
+// The lock of each memory object: it gives a page on first use one frame.
+region_locks: [REGION_CAPACITY]Lock
 
 // region_has_frame says if a page frame is a frame of a memory object.
 region_has_frame :: proc "contextless" (region: ^Region, frame: u64) -> bool {
@@ -399,32 +457,34 @@ region_has_frame :: proc "contextless" (region: ^Region, frame: u64) -> bool {
 
 region_release :: proc "contextless" (index: u32) {
 	region := &regions[index]
-	region.references -= 1
-	if region.references != 0 {
+	if intrinsics.atomic_sub(&region.references, 1) != 1 {
 		return
 	}
+	// No handle and no mapping names the object: no other processor uses it.
+	lock_take(&frame_lock, .Frame)
 	switch {
 	case region.device:
 	case region.contiguous:
-		frames_free(region.physical, region.page_count)
+		frames_free_held(region.physical, region.page_count)
 		budgets[region.budget].amounts.pages += region.page_count
 	case:
 		for page in 0 ..< region.page_count {
 			if frame := region_frame(region, page, false); frame != 0 {
-				frames_free(frame, 1)
+				frames_free_held(frame, 1)
 			}
 		}
 		lists := list_pages(region.page_count)
 		for list in 1 ..< lists {
-			frames_free(direct(region.frames[0], [LIST_ENTRIES]u64)[list - 1], 1)
+			frames_free_held(direct(region.frames[0], [LIST_ENTRIES]u64)[list - 1], 1)
 		}
 		if lists != 0 {
-			frames_free(region.frames[0], 1)
+			frames_free_held(region.frames[0], 1)
 		}
 		reserved_pages -= region.page_count - region.present
 		budgets[region.budget].amounts.pages += region_cost(region.page_count, false)
 	}
-	region^ = {}
+	region^ = {serial = region.serial}
+	lock_free(&frame_lock, .Frame)
 }
 
 handle_insert :: proc "contextless" (program: ^Program, slot: Handle_Slot) -> op.Handle {
@@ -437,7 +497,7 @@ handle_insert :: proc "contextless" (program: ^Program, slot: Handle_Slot) -> op
 		entry.generation = generation
 		#partial switch slot.kind {
 		case .Memory:
-			regions[slot.object].references += 1
+			intrinsics.atomic_add(&regions[slot.object].references, 1)
 		case .Program:
 			programs[slot.object].references += 1
 		case .Thread:
@@ -570,7 +630,7 @@ map_region :: proc "contextless" (program: ^Program, region_index: u32, address:
 		bits |= PAGE_NO_CACHE
 	}
 	for page in 0 ..< count {
-		entry := page_entry(program.table, address + page * PAGE_SIZE, true, program.budget)
+		entry := page_entry(program.table, address + page * PAGE_SIZE, true, &program.budget)
 		if entry == nil {
 			for undo in 0 ..< page {
 				page_entry(program.table, address + undo * PAGE_SIZE, false)^ = 0
@@ -584,7 +644,7 @@ map_region :: proc "contextless" (program: ^Program, region_index: u32, address:
 	}
 	mapping^ = {address = address, page_count = count, first = first, bits = bits, region = region_index}
 	origin_attach(holding_of_mapping(program, mapping), origin)
-	region.references += 1
+	intrinsics.atomic_add(&region.references, 1)
 	program.mapped_pages += count
 	return address, .Ok
 }
@@ -721,18 +781,18 @@ program_create :: proc "contextless" (budget: u32, name: []u8) -> (index: u32, s
 			continue
 		}
 		program = {}
-		program.table = address_space_create()
-		if program.table == 0 {
-			return 0, .No_Memory
-		}
-		budgets[budget].amounts.pages -= 1
-		budgets[budget].amounts.programs -= 1
 		program.budget = budget
+		program.table = address_space_create(&program.budget)
+		if program.table == 0 {
+			program = {}
+			return 0, .No_Budget
+		}
+		budgets[budget].amounts.programs -= 1
 		program.next_address = op.CHOSEN_BASE
 		copy(program.name[:len(program.name) - 1], name)
 		// The time page: read only. A program cannot remove it (Memory_Unmap).
 		if _, map_status := map_region(&program, time_region, op.TIME_ADDRESS, {}, 0, 1); map_status != .Ok {
-			budgets[budget].amounts.pages += address_space_free(program.table)
+			address_space_free(program.table, &program.budget)
 			budgets[budget].amounts.programs += 1
 			program = {}
 			return 0, map_status
@@ -839,7 +899,9 @@ thread_end :: proc "contextless" (thread: ^Thread) {
 	}
 	queue_remove(thread)
 	thread.state = .Stopped
+	intrinsics.atomic_add(&thread.wait_serial, 1)
 	run_unlock(home)
+	wait_unregister(thread)
 	if running != 0 && processors[running - 1] != processor_self() {
 		processor_sync(1 << (running - 1))
 	}
@@ -847,6 +909,7 @@ thread_end :: proc "contextless" (thread: ^Thread) {
 		thread_free(thread)
 	}
 	thread.ring = {}
+	thread.events = nil
 	for cpu in processors[:processor_count] {
 		if cpu.record_thread == index {
 			cpu.record_thread = 0 // The slot can get a new thread.
@@ -879,44 +942,15 @@ thread_stop :: proc "contextless" (index: u32) {
 	}
 }
 
-// word_wake ends the wait of at most count threads that wait on a word.
-word_wake :: proc "contextless" (word: u64, count: u64) -> (woken: u64) {
-	for &thread in threads[1:] {
-		if woken == count {
-			break
-		}
-		if thread.state != .Waiting {
-			continue
-		}
-		for candidate in thread.words[:thread.word_count] {
-			if candidate == word {
-				if thread_wake(&thread) {
-					woken += 1
-				}
-				break
-			}
-		}
-	}
-	return woken
-}
-
 // program_event tells each thread of a program that an event arrived: see
-// operation.Word.
+// operation.Word. A thread that waits on its event word wakes.
 program_event :: proc "contextless" (index: u32) {
 	for &thread in threads[1:] {
-		if thread.program != index || thread.state != .Ready && thread.state != .Waiting {
+		if thread.program != index || thread.state != .Ready && thread.state != .Waiting || thread.events == nil {
 			continue
 		}
-		intrinsics.volatile_store(thread.events, intrinsics.volatile_load(thread.events) + 1)
-		if thread.state == .Waiting {
-			word := physical_of(thread.events)
-			for candidate in thread.words[:thread.word_count] {
-				if candidate == word {
-					thread_wake(&thread)
-					break
-				}
-			}
-		}
+		intrinsics.atomic_add(thread.events, 1)
+		word_wake(physical_of(thread.events), max(u64))
 	}
 }
 
@@ -981,7 +1015,7 @@ program_stop :: proc "contextless" (index: u32, code: u32) {
 			handle_close(program, &slot)
 		}
 	}
-	budgets[program.budget].amounts.pages += address_space_free(program.table)
+	address_space_free(program.table, &program.budget)
 	program.table = 0
 	for &other, other_index in programs[1:] {
 		if other.state == .None || other.state == .Stopped {
@@ -1035,7 +1069,7 @@ kernel_interrupt :: proc "c" (frame: ^Frame) {
 		// The processor can hold the kernel lock: it does not take it.
 		name := EXCEPTION_NAMES[frame.vector]
 		address := cr2_read()
-		log_serial_only = true
+		intrinsics.atomic_store(&log_serial_only, true)
 		log("kernel: exception in the kernel: ", name, " vector ", frame.vector, " error ", Hex(frame.error), " at ", Hex(frame.rip), " address ", Hex(address), ": ", fault_reason(frame, address))
 		machine_stop(2)
 	}
@@ -1070,7 +1104,7 @@ kernel_interrupt :: proc "c" (frame: ^Frame) {
 			now := ticks + 1
 			intrinsics.atomic_store(&ticks, now)
 			intrinsics.volatile_store(&time_record.milliseconds, now)
-			budget_period()
+			budget_period(now)
 			// The deadlines: read with no lock, then checked under the run
 			// lock by thread_wake.
 			for &thread in threads[1:] {

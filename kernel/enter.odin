@@ -12,8 +12,7 @@ enter :: proc "contextless" (index: u32) {
 	thread := &threads[index]
 	programs[thread.program].entries += 1
 	thread.in_enter = true
-	thread.word_count = 0
-	thread.word_changed = false
+	wait_begin(thread)
 	for _ in 0 ..< ring.CAPACITY {
 		command, ok := ring.pop(&thread.ring.commands)
 		if !ok {
@@ -28,14 +27,8 @@ enter :: proc "contextless" (index: u32) {
 		completion.kind = u32(status)
 		ring.push(&thread.ring.completions, completion)
 	}
-	wait := thread.frame.rdi
-	if wait != 0 {
-		// A word that changed before the wait: the thread reads it again.
-		if !thread.word_changed {
-			thread.state = .Waiting
-			thread.deadline = wait
-		}
-	}
+	// A word that changed before the wait: the thread reads it again.
+	wait_end(thread, thread.frame.rdi)
 }
 
 execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u64) -> op.Status {
@@ -78,6 +71,8 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		name := transmute([]u8)program_name(program)
 		log_text := &processor_self().log_text
 		user_copy(log_text, rawptr(uintptr(v[1])), v[2])
+		taken := log_take()
+		defer log_free(taken)
 		log_bytes({'['})
 		log_bytes(name)
 		if channel_count != 0 {
@@ -351,11 +346,9 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 				thread.word_changed = true // The wait cannot end by this word: do not wait.
 				return .Bad_Address
 			}
-			if direct(physical, u32)^ != u32(word.value) {
+			if !wait_register(thread, physical, u32(word.value)) {
 				thread.word_changed = true
 			}
-			thread.words[thread.word_count] = physical
-			thread.word_count += 1
 		}
 		return .Ok
 
@@ -398,7 +391,8 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			regions[region].uncached = true
 			handle := handle_insert(program, {kind = .Memory, rights = {.Give, .Read, .Write}, object = region})
 			if handle == 0 {
-				regions[region] = {}
+				regions[region].references = 1
+				region_release(region)
 				return .No_Slot
 			}
 			results[0] = u64(handle)
@@ -447,12 +441,19 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			report := op.System_Report {
 				time          = intrinsics.atomic_load(&ticks),
 				page_count    = frame_count,
-				free_pages    = free_frames,
 				program_slots = PROGRAM_CAPACITY,
 				processors    = u64(processor_count),
 				locks         = lock_counts_sum(),
-				reserved_pages = reserved_pages,
 			}
+			// One section of the frame lock: the free pages are the pages of
+			// the budgets and the reserved pages, at this moment.
+			lock_take(&frame_lock, .Frame)
+			report.free_pages = free_frames
+			report.reserved_pages = reserved_pages
+			for budget in budgets {
+				report.budget_pages += budget.amounts.pages
+			}
+			lock_free(&frame_lock, .Frame)
 			for cpu in processors[:processor_count] {
 				report.entries += intrinsics.volatile_load(&cpu.entries)
 				report.interrupts += intrinsics.volatile_load(&cpu.interrupts)
@@ -462,9 +463,6 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 				if region.page_count != 0 {
 					report.region_count += 1
 				}
-			}
-			for budget in budgets {
-				report.budget_pages += budget.amounts.pages
 			}
 			user_copy(rawptr(uintptr(v[3])), &report, size_of(report))
 			results[0] = size_of(op.System_Report)

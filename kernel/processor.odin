@@ -305,6 +305,7 @@ processor_start :: proc "contextless" () {
 	processors[0] = cpu
 	processor_count = 1
 	processor_setup(cpu)
+	lock_ready = true
 	timer_calibrate()
 	timer_start()
 }

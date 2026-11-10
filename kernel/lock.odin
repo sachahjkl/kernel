@@ -22,8 +22,15 @@ Lock :: struct {
 	serving: u32, // The ticket that holds the lock.
 }
 
+// Before the first processor has its record, the kernel runs on one
+// processor, with no gs register: a lock is not taken.
+lock_ready: bool
+
 // lock_take waits for the lock, then holds it.
 lock_take :: proc "contextless" (lock: ^Lock, kind: op.Lock_Kind) {
+	if !lock_ready {
+		return
+	}
 	cpu := processor_self()
 	when LOCK_ORDER_CHECK {
 		lock_order_check(cpu, kind)
@@ -43,6 +50,9 @@ lock_take :: proc "contextless" (lock: ^Lock, kind: op.Lock_Kind) {
 
 // lock_free gives the lock to the next ticket.
 lock_free :: proc "contextless" (lock: ^Lock, kind: op.Lock_Kind) {
+	if !lock_ready {
+		return
+	}
 	cpu := processor_self()
 	cpu.held[kind] -= 1
 	intrinsics.atomic_add(&lock.serving, 1)
@@ -69,7 +79,7 @@ lock_order_check :: proc "contextless" (cpu: ^Processor, kind: op.Lock_Kind) {
 
 @(private = "file")
 lock_order_broken :: proc "contextless" (taken, held: op.Lock_Kind) -> ! {
-	log_serial_only = true
+	intrinsics.atomic_store(&log_serial_only, true)
 	log("kernel: the lock order is broken: a lock ", op.LOCK_KIND_NAMES[taken], " was taken while a lock ", op.LOCK_KIND_NAMES[held], " is held")
 	machine_stop(3)
 }

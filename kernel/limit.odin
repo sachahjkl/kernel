@@ -1,5 +1,7 @@
 package kernel
 
+import "base:intrinsics"
+
 // The limits of a budget: processor time and log records (property 20).
 //
 // Pages, programs and threads are things that a budget holds: they move
@@ -25,6 +27,12 @@ package kernel
 // under another system loses time. The kernel measures the true length of
 // each period with the cycle counter. A budget has its part of the true
 // length: a late tick takes time from no budget.
+//
+// No lock protects these counts: each one is an atomic word (docs/
+// ARCHITECTURE.md, "Locks of the kernel", "Budgets and the tick"). The tick
+// reads the chain of budgets with no lock: `parent` changes only when a
+// budget ends, and the slot of a budget that ended is used again only after
+// processor_sync to all processors (budget_create).
 LIMIT_PERIOD :: 100 // Ticks.
 LOG_PERIOD :: 1000 // Ticks.
 
@@ -36,9 +44,9 @@ budget_charge :: proc "contextless" (cpu: ^Processor) {
 	if cpu.current == 0 {
 		return
 	}
-	for index := threads[cpu.current].budget; index != 0; index = budgets[index].parent {
-		budgets[index].spent += spent
-		budgets[index].spent_total += spent
+	for index := intrinsics.atomic_load(&threads[cpu.current].budget); index != 0; index = intrinsics.atomic_load(&budgets[index].parent) {
+		intrinsics.atomic_add(&budgets[index].spent, spent)
+		intrinsics.atomic_add(&budgets[index].spent_total, spent)
 	}
 }
 
@@ -49,7 +57,8 @@ period_start: u64 // The cycle counter at the start of this period.
 @(private = "file")
 allowance :: proc "contextless" (budget: ^Budget) -> u64 {
 	now := cycles_now()
-	length := max(cycle_frequency * LIMIT_PERIOD / TICKS_PER_SECOND, now > period_start ? now - period_start : 0)
+	start := intrinsics.atomic_load(&period_start)
+	length := max(cycle_frequency * LIMIT_PERIOD / TICKS_PER_SECOND, now > start ? now - start : 0)
 	// A whole day in one period does not overflow, with 64 processors.
 	return budget.amounts.processor * (length / 1000) / 1000
 }
@@ -57,8 +66,8 @@ allowance :: proc "contextless" (budget: ^Budget) -> u64 {
 // budget_spent says if a budget, or a budget above it, has no processor
 // time left in this period.
 budget_spent :: proc "contextless" (index: u32) -> bool {
-	for at := index; at != 0; at = budgets[at].parent {
-		if budgets[at].spent >= allowance(&budgets[at]) {
+	for at := index; at != 0; at = intrinsics.atomic_load(&budgets[at].parent) {
+		if intrinsics.atomic_load(&budgets[at].spent) >= allowance(&budgets[at]) {
 			return true
 		}
 	}
@@ -66,43 +75,73 @@ budget_spent :: proc "contextless" (index: u32) -> bool {
 }
 
 // budget_period starts a new period, at a tick of the first processor.
-budget_period :: proc "contextless" () {
-	if ticks % LIMIT_PERIOD == 0 {
+// Only this processor subtracts from `spent`; the others only add. So
+// `spent` is at least the value read when the subtraction happens.
+budget_period :: proc "contextless" (now: u64) {
+	if now % LIMIT_PERIOD == 0 {
 		refreshed := false
 		for &budget in budgets[1:] {
-			if !budget.live {
-				continue
-			}
 			part := allowance(&budget)
-			if budget.spent >= part {
+			spent := intrinsics.atomic_load(&budget.spent)
+			if spent >= part {
 				refreshed = true
 			}
-			budget.spent -= min(budget.spent, part)
+			intrinsics.atomic_sub(&budget.spent, min(spent, part))
 		}
-		period_start = cycles_now()
+		intrinsics.atomic_store(&period_start, cycles_now())
 		if refreshed {
 			// Threads of these budgets can run again: the idle processors look.
 			kick_all()
 		}
 	}
-	if ticks % LOG_PERIOD == 0 {
-		for &budget in budgets[1:] {
-			budget.logged = 0
-		}
-	}
 }
 
 // budget_log counts one log record of a program. false: a budget has no
-// record left in this second.
+// record left in this second. The word `logged` holds the second in its
+// high 32 bits and the count of that second in its low 32 bits: a new
+// second starts at 0 with no reset by another processor. A record is
+// accepted only if each budget of the chain counted it under its limit; a
+// refusal takes back the counts that this record added, in the same second
+// only. So no budget accepts more records than its limit in one second.
 budget_log :: proc "contextless" (index: u32) -> bool {
-	for at := index; at != 0; at = budgets[at].parent {
-		if budgets[at].logged >= budgets[at].amounts.log_records {
-			budgets[index].refused += 1
-			return false
+	second := intrinsics.atomic_load(&ticks) / LOG_PERIOD
+	counted: [BUDGET_CAPACITY]u32
+	depth := 0
+	accepted := true
+	for at := index; at != 0 && depth < BUDGET_CAPACITY; at = intrinsics.atomic_load(&budgets[at].parent) {
+		budget := &budgets[at]
+		for {
+			word := intrinsics.atomic_load(&budget.logged)
+			count := word >> 32 == second ? word & 0xFFFF_FFFF : 0
+			if count >= budget.amounts.log_records {
+				accepted = false
+				break
+			}
+			if _, swapped := intrinsics.atomic_compare_exchange_strong(&budget.logged, word, second << 32 | (count + 1)); swapped {
+				counted[depth] = at
+				depth += 1
+				break
+			}
+		}
+		if !accepted {
+			break
 		}
 	}
-	for at := index; at != 0; at = budgets[at].parent {
-		budgets[at].logged += 1
+	if accepted {
+		return true
 	}
-	return true
+	for at in counted[:depth] {
+		budget := &budgets[at]
+		for {
+			word := intrinsics.atomic_load(&budget.logged)
+			if word >> 32 != second || word & 0xFFFF_FFFF == 0 {
+				break
+			}
+			if _, swapped := intrinsics.atomic_compare_exchange_strong(&budget.logged, word, word - 1); swapped {
+				break
+			}
+		}
+	}
+	intrinsics.atomic_add(&budgets[index].refused, 1)
+	return false
 }
