@@ -35,14 +35,15 @@ The scenario does these actions:
 16. Start `workers` from the bar. Four threads add to one number for 150 ms each: with the lock no addition is lost; with no lock, millions are lost. Then four threads take 140 tiles from one queue and compute a picture.
 17. Start `rights` from the bar. The program holds the machine with the right Inspect and the boot image with the right Read. It asks the kernel for nine operations. The kernel does four and refuses five with the status `No_Right`: create a device handle, stop the machine, map the boot image to write, map it to execute, give it to the compositor. The log has "rights: ok, 4 allowed, 5 refused".
 18. Start `budget` from the bar. The program creates memory objects of 64 pages until the kernel answers `No_Budget`, then closes them: its budget has the first number of pages again. It does the same with threads. It takes 256 pages for a new budget, creates 200 pages with it, and closes the new budget: its own budget then pays for the 200 pages. The log has "budget: ok, 10 memory objects then no budget, 3 threads then no budget, each page returned".
-19. Call `memory()`. The console prints "budgets N pages: all the free pages": after all the starts and stops of the test, each page is free or paid.
-20. Call `shutdown()`. The machine stops with code 0.
+19. Start `processors` from the bar. The machine of the test has four processors. Five threads of the program compute, and the program asks the kernel what each processor runs: the log has "processors: ok, 4 processors ran the program at the same time". Then 1, 2 and 4 threads compute the same picture, and the log has the three times: "processors: the picture took 404 ms with 1 thread, 198 ms with 2 threads, 148 ms with 4 threads" in one run. The test does not check the times.
+20. Call `memory()`. The console prints "budgets N pages: all the free pages": after all the starts and stops of the test, each page is free or paid. It also prints the number of processors, and the times that a processor waited for the kernel lock.
+21. Call `shutdown()`. The machine stops with code 0.
 
 ## The path from power to desktop
 
 1. The firmware starts the boot program (`boot/`), a PE file.
 2. The boot program reads the kernel module and the boot image from the boot volume. It loads the kernel with the code of `module/`. It collects the memory map and the framebuffer in a `Boot_Info` record, leaves the firmware, and jumps to the kernel.
-3. The kernel (`kernel/`) takes the memory, builds its tables, sets the processor tables, the interrupt controller and the timer.
+3. The kernel (`kernel/`) takes the memory, builds its tables, sets the processor tables, the interrupt controller and the timer. It reads the list of the processors in the ACPI tables and starts each one.
 4. The kernel loads one program from the boot image: the root service. It gives it three handles: the machine, the framebuffer, the boot image.
 5. The root service (`programs/root`) loads the other programs in user space with `system.program_start`. It starts the input service, the compositor and the console.
 6. From this point, the kernel only executes kernel operations, schedules, and turns interrupts into wakes.
@@ -62,11 +63,13 @@ The scenario does these actions:
 | Memory | A memory object is a run of contiguous page frames with a reference count. `Memory_Map` maps it in a program |
 | Wait | A thread waits for a time, or on words (the word wait). The kernel has no other wake. For an interrupt, the stop of a held program and the end of another thread, the kernel adds 1 to the event word of each thread of the program, and wakes the threads that wait on that word |
 | Word wait | `Word_Wait(address of Word records, count)` and `Word_Wake(address, count)`. The kernel names a word by its page frame, so the word can be in memory that two programs share. One entry can wait on 64 words. `system.Lock` and the wait of a ring are built on it |
-| Scheduler | One processor. Round-robin over the threads, with preemption. A time slice is 10 ms. The timer runs at 1000 Hz. Idle is `hlt` |
+| Scheduler | Round-robin over one flat table of threads, with preemption. Each processor takes the next thread that is ready and that no processor runs. A time slice is 10 ms. Idle is `hlt`: a processor that makes a thread ready wakes one idle processor with an interrupt |
+| Processors | At most 64. Each processor has a processor record: its kernel stack, its task state with the port bitmap, its segment table, its current thread. One kernel lock: one processor at a time runs kernel code. Each processor has its own timer at 1000 Hz (local APIC); the first processor counts the time. The 16 device lines stay on the 8259 and interrupt the first processor |
+| Address translations | Before the kernel frees a memory object, a page table or a thread, each other processor that uses it enters the kernel and forgets it (`processor_sync`) |
 | Devices | A Ports object opens a port range in the port bitmap of the program. An Interrupt object counts interrupts and wakes its owner |
 | Faults | A fault in a thread stops its program with a code. The kernel wakes each program that holds its handle |
 | Life of a program | A program runs while a handle names it. When its last handle closes, the kernel stops it. Only the root service has no handle |
-| Machine | One Machine object with three rights. Inspect: read `System_Report` and `Program_Report` records. Devices: create device handles. Stop: stop the machine. The root service keeps Devices. `monitor` receives Inspect. The console receives Inspect and Stop |
+| Machine | One Machine object with three rights. Inspect: read `System_Report`, `Program_Report` and `Processor_Report` records. Devices: create device handles. Stop: stop the machine. The root service keeps Devices. `monitor` receives Inspect. The console receives Inspect and Stop |
 
 The kernel contains no code for a device, except the timer, the interrupt controller and the serial port of its log.
 
@@ -142,6 +145,13 @@ The owner did not review these. Each one can change.
 27. **Rights on handles.** A right is one bit of a 32-bit set in the handle slot. There are 8 rights for 6 kinds of object; the table in `kernel/operation/operation.odin` says what each right permits for each kind. `Memory_Map` needs Read, and Write or Execute when the flags ask for them. An operation on another program needs Control on its handle. `Handle_Give` needs Give on the given handle, and Control when the target is a program handle. The copy has the intersection of the rights of the handle and of the mask: a grant never adds a right. `system.program_start` takes grants: a handle and its rights. Each caller names the rights; there is no default "all rights". The boot image handle of the root service has no Write and no Execute. A surface goes to the compositor with Read only. The Machine handle is not split in three kinds: one kind with three rights uses the one mechanism. A thread handle can go to another program with Read only: that program reads the state and cannot stop the thread.
 28. **Budgets: no operation creates an object from nothing.** Property 20, line 16, says: "each resource is a handle with a limit; a program divides its limit among its children". A budget is that handle. Three other designs were refused. A limit per program that is only a ceiling does not conserve: the children of a program multiply it. A count per program with no object cannot be given or divided by the handle rules. A budget as a field of the program record makes a second mechanism beside handles. With a budget object, the rights apply (Give, Read, Spend), and the end of a program returns all: `system.program_start` makes a new budget for the program, pays for all that it creates with it, gives the one handle to the program, and closes its own. Two indexes of the context are fixed by the system for each program: `CONTEXT_LOG` (14) and `CONTEXT_BUDGET` (15); `system.log` and `system.memory_create` read them there, so no program has code before its entry. The page tables of a program are paid by the budget that paid for the program. The kernel has no pool of its own after boot: `free pages = sum of the budgets` is the invariant, and the test reads it. The root service chooses each budget by name (`budget_of`).
 29. **The log is an object.** The log of the kernel was the last operation that any program could use. It is now a handle with the right Write. The root service gives it with Write; the console and `rings` also receive Give, because they start programs. A program with no log handle logs nothing: `system.log` returns.
+30. **Several processors, one kernel lock.** A processor takes the lock at each kernel entry and frees it when it returns to a program or waits for an interrupt. Interrupts are off in the kernel. Property 3 puts the kernel off the hot path: a program enters the kernel to wait, not to work. So the lock is held for a short time, and finer locks add states that nothing needs yet. The kernel counts each acquisition that had to wait (`lock_waits` in `System_Report`), so the cost is a number that `memory()` prints. In one run of the test: 1.7 million kernel entries, 0.6 million waits, most of them during `rings`, where six programs do nothing but wake each other. Review 2 planned one run queue per processor. It is not done: the thread table is flat and the lock covers it, so a queue per processor adds a second structure with no gain while there is one lock.
+31. **The processor record.** In the kernel, the `gs` register holds the address of the record of the processor; in a program, it holds the address of the thread record. `swapgs` exchanges the two at each entry and each return. The kernel has no global "current thread". Each processor has its own kernel stack, because a kernel entry starts at the top of the stack and never continues an earlier entry.
+32. **`processor_sync`.** The caller holds the kernel lock. It sends an interrupt to a set of processors and waits until each one is in the kernel. Such a processor reloads its page table, then waits for the lock. Two uses. After `Memory_Unmap` and at the stop of a program, no other processor keeps an address translation to memory that returns to the page frames. When a thread on another processor is stopped, the kernel writes 0 in `current` of that processor, then waits: after the answer, that processor does not use the thread, and its entry is not an entry of a thread.
+33. **Start of a processor.** The boot program gives the address of the ACPI root record in `Boot_Info`. The kernel reads the processor list (MADT). It copies the start code, less than one page, to the page 0x8000 and starts one processor at a time (INIT, then SIPI). The start code goes from 16 bits to 64 bits with a temporary page table. If the machine has no ACPI tables, or no free low page, the kernel runs with one processor and says it in the log.
+34. **The timer is the local APIC.** The kernel measures it against the 8254 once. An idle processor stops its timer, except the first processor. The device lines stay on the 8259: the system has two device interrupts (keyboard, mouse), and a new device class will send its interrupts as messages to a local APIC (MSI), so the kernel needs no I/O APIC code.
+35. **One table for the launcher.** `programs/launcher` holds the names and the place of each button. The compositor draws from it and the kernel tool clicks from it: the test step is `Launch` with a name, not a click at a number.
+36. **A failure of the check that came sometimes: found.** The flake check of step 11 failed once with "runtime assertion: import" in a unit test of the tool. The tokenizer of the Odin library (`core:odin/tokenizer`) fills its table of keywords at its first use, and its test of "already filled" is outside its lock. The test runner gives each test a thread: two tests that parse Odin source at the same time fill the table twice, and the second stops on an assertion. The tool itself has one thread and is not affected. `tools/kerneltool/describe_test.odin` now fills the table before the threads start.
 
 ## Gaps
 
@@ -153,7 +163,9 @@ Against the properties and the module contract:
 - A memory object is a run of contiguous page frames: `Memory_Create` can give `No_Memory` when the budget can pay.
 - Frame pointers are not enforced. An import call goes through a stub that the linker adds.
 - The test "a C program calls an Odin module" does not exist.
-- One processor.
+- A thread has no preferred processor: it can change processor at each time slice.
+- When each processor runs a thread, a thread that becomes ready waits for the end of a time slice (10 ms at most) or for a thread that waits.
+- Paging protects programs from each other, but the kernel does not yet use it on itself: the kernel image is not split in read-only and no-execute parts, and a kernel stack has no guard page. Owner decision of 2026-11-10: see `HANDOFF.md`.
 - A thread that stops with a lock held keeps the lock: the other threads wait with no end.
 - No storage, no network, no document service, no principals, no TPM, no Secure Boot.
 
@@ -169,6 +181,6 @@ Input:
 
 ## Next steps
 
-1. Several processors.
+1. Paging as a design tool: guard pages, read-only and no-execute parts of the kernel, pages on first use.
 2. Damage rectangles in the compositor.
 3. A block device service (virtio), then the storage service.

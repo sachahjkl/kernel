@@ -1,7 +1,21 @@
 package kerneltool
 
 import module "../../module"
+import "base:runtime"
+import "core:odin/tokenizer"
 import "core:testing"
+
+// The tokenizer of the Odin library fills its table of keywords at its
+// first use. Two threads that use it first at the same time fill the
+// table twice, and the second one stops on an assertion ("runtime
+// assertion: import"). The test runner gives each test a thread, so the
+// table is filled here, before the threads start.
+@(init)
+keywords_prepare :: proc "contextless" () {
+	context = runtime.default_context()
+	scanner: tokenizer.Tokenizer
+	tokenizer.init(&scanner, "", "")
+}
 
 @(private = "file")
 DESCRIBED_SOURCE :: `package sample

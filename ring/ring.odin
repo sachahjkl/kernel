@@ -44,21 +44,22 @@ Ring :: struct {
 
 push :: proc "contextless" (queue: ^Queue, record: Record) -> bool {
 	write := intrinsics.volatile_load(&queue.write)
-	if write - intrinsics.volatile_load(&queue.read) >= CAPACITY {
+	if write - intrinsics.atomic_load_explicit(&queue.read, .Acquire) >= CAPACITY {
 		return false
 	}
 	queue.records[write % CAPACITY] = record
-	intrinsics.volatile_store(&queue.write, write + 1)
+	// The other side, on another processor, sees the record before the count.
+	intrinsics.atomic_store_explicit(&queue.write, write + 1, .Release)
 	return true
 }
 
 pop :: proc "contextless" (queue: ^Queue) -> (record: Record, ok: bool) {
 	read := intrinsics.volatile_load(&queue.read)
-	if intrinsics.volatile_load(&queue.write) == read {
+	if intrinsics.atomic_load_explicit(&queue.write, .Acquire) == read {
 		return {}, false
 	}
 	record = queue.records[read % CAPACITY]
-	intrinsics.volatile_store(&queue.read, read + 1)
+	intrinsics.atomic_store_explicit(&queue.read, read + 1, .Release)
 	return record, true
 }
 

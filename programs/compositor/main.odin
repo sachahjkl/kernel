@@ -6,6 +6,7 @@ package compositor
 
 import "../../display"
 import "../../graphics"
+import "../launcher"
 import "../../ring"
 import "../../system"
 import "base:intrinsics"
@@ -21,7 +22,7 @@ VALUE_FORMAT :: 3
 FORMAT_RED_FIRST :: 2 // boot_info.Pixel_Format.Red_Green_Blue_X
 
 FRAME_INTERVAL :: 16 // Milliseconds.
-BAR_HEIGHT :: 28
+BAR_HEIGHT :: launcher.BAR_HEIGHT
 TITLE_HEIGHT :: 24
 BORDER :: 2
 CLOSE_SIZE :: 16
@@ -51,9 +52,6 @@ Client :: struct {
 Rectangle :: struct {
 	left, top, right, bottom: int,
 }
-
-@(rodata)
-launcher := [?]string{"console", "monitor", "plasma", "life", "paint", "fault", "temple", "rings", "threads", "workers", "rights", "budget"}
 
 @(rodata)
 pointer_shape := [?]string {
@@ -351,14 +349,12 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32) 
 	}
 	if pressed {
 		if pointer_y < BAR_HEIGHT {
-			x := launcher_start()
-			for name in launcher {
-				width := graphics.text_width(name) + 16
+			for name, index in launcher.names {
+				x, width := launcher.button(index)
 				if inside(pointer_x, pointer_y, x, 3, width, BAR_HEIGHT - 6) {
 					packed := system.name_pack(name)
 					system.send(&control.completions, ring.Record{kind = u32(display.Control.Start), values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3]}})
 				}
-				x += width + 6
 			}
 			return
 		}
@@ -391,10 +387,6 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32) 
 			send(client, ring.Record{kind = u32(display.Event_Kind.Pointer), values = {0 = u64(i64(x)), 1 = u64(i64(y)), 2 = u64(buttons)}})
 		}
 	}
-}
-
-launcher_start :: proc "contextless" () -> int {
-	return graphics.text_width("kernel") + 28
 }
 
 // draw draws again each damage rectangle, then copies it to the screen.
@@ -437,15 +429,13 @@ draw_area :: proc "contextless" (area: Rectangle, now: u64) {
 		y := 6 + origin_y
 		graphics.fill(canvas, origin_x, origin_y, frame.width, BAR_HEIGHT, COLOR_BAR)
 		graphics.text(canvas, 10 + origin_x, y, "kernel", 0x7FC8FF)
-		x := launcher_start() + origin_x
-		for name in launcher {
-			button_width := graphics.text_width(name) + 16
-			graphics.fill(canvas, x, 3 + origin_y, button_width, BAR_HEIGHT - 6, COLOR_BUTTON)
-			graphics.text(canvas, x + 8, y, name, COLOR_BAR_TEXT)
-			x += button_width + 6
+		for name, index in launcher.names {
+			left, button_width := launcher.button(index)
+			graphics.fill(canvas, left + origin_x, 3 + origin_y, button_width, BAR_HEIGHT - 6, COLOR_BUTTON)
+			graphics.text(canvas, left + origin_x + launcher.PADDING, y, name, COLOR_BAR_TEXT)
 		}
 		seconds := now / 1000
-		x = frame.width - graphics.text_width("00:00:00") - 10 + origin_x
+		x := frame.width - graphics.text_width("00:00:00") - 10 + origin_x
 		x = graphics.unsigned(canvas, x, y, seconds / 3600, COLOR_BAR_TEXT, 2)
 		x = graphics.text(canvas, x, y, ":", COLOR_BAR_TEXT)
 		x = graphics.unsigned(canvas, x, y, seconds / 60 % 60, COLOR_BAR_TEXT, 2)

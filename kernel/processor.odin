@@ -1,5 +1,7 @@
 package kernel
 
+import "base:intrinsics"
+
 // The processor: segments, the interrupt table, the interrupt controller and
 // the timer. The frame layout is the one of kernel/processor.asm.
 
@@ -22,13 +24,17 @@ SELECTOR_TASK :: 0x28
 USER_FLAGS :: 0x202 // Interrupts on.
 
 VECTOR_PAGE_FAULT :: 14
-VECTOR_INTERRUPT_BASE :: 32
-VECTOR_TIMER :: 32
+VECTOR_INTERRUPT_BASE :: 32 // The 16 lines of the 8259 are the vectors 32 to 47.
+VECTOR_TIMER :: 48 // The timer of the processor.
+VECTOR_WAKE :: 49 // Another processor made a thread ready.
+VECTOR_SYNC :: 50 // Another processor waits for this one: see processor_sync.
+VECTOR_SPURIOUS :: 63
 VECTOR_KERNEL_ENTER :: 128
 INTERRUPT_LINES :: 16
-STUB_COUNT :: 48
+STUB_COUNT :: 64
 TICKS_PER_SECOND :: 1000
 MSR_GS_BASE :: 0xC000_0101
+MSR_KERNEL_GS_BASE :: 0xC000_0102 // In the kernel: the gs register of the program.
 TIME_SLICE :: 10 // Ticks that a program runs before another ready program gets the processor.
 
 foreign _ {
@@ -41,6 +47,10 @@ foreign _ {
 	cr2_read :: proc "c" () -> u64 ---
 	cr3_read :: proc "c" () -> u64 ---
 	cr3_write :: proc "c" (table: u64) ---
+	cr0_read :: proc "c" () -> u64 ---
+	cr4_read :: proc "c" () -> u64 ---
+	cr4_write :: proc "c" (value: u64) ---
+	processor_self :: proc "c" () -> ^Processor ---
 	page_flush :: proc "c" (address: u64) ---
 	kernel_enter :: proc "c" () ---
 	resume :: proc "c" (frame: ^Frame) -> ! ---
@@ -75,34 +85,143 @@ Interrupt_Gate :: struct {
 }
 
 KERNEL_STACK_SIZE :: 64 * 1024
+PROCESSOR_CAPACITY :: 64
 
-segments: [7]u64
-task_state: Task_State
-gates: [256]Interrupt_Gate
-kernel_stack: [KERNEL_STACK_SIZE]u8
-
-// Two words that the instructions of processor.asm read at each kernel
-// entry. They are in processor.asm: the exports of a module are functions
-// only, so Odin does not export them.
-foreign _ {
-	kernel_stack_top: u64
-	current_fpu_area: ^Fpu_State
+// The record of one processor. The kernel has one stack per processor: a
+// kernel entry starts at the top of the stack and never continues an
+// earlier entry.
+Processor :: struct {
+	// processor.asm reads these four fields through the gs register.
+	stack_top:     u64,
+	user_stack:    u64,
+	fpu_area:      ^Fpu_State, // Where the next entry from a program saves the floating-point state.
+	self:          ^Processor,
+	index:         u32,
+	apic_id:       u32,
+	current:       u32, // The thread that runs. 0: none. Another processor writes 0 here to take the thread away.
+	record_thread: u32, // The thread whose thread record address is in the gs register of programs.
+	ports_loaded:  u32, // The program whose ports are open in the task state.
+	pending:       u32, // Not 0: another processor waits in processor_sync.
+	idle:          bool, // The processor waits for an interrupt, with no thread.
+	table:         u64, // The page table that the processor uses.
+	slice_left:    u64,
+	busy_time:     u64, // Ticks with a thread.
+	segments:      [7]u64,
+	task_state:    Task_State,
+	idle_fpu:      Fpu_State,
+	stack:         [KERNEL_STACK_SIZE]u8,
 }
 
-idle_fpu_area: Fpu_State
+processors: [PROCESSOR_CAPACITY]^Processor
+processor_count: u32
+gates: [256]Interrupt_Gate
+machine_stopping: bool
 
-processor_start :: proc "contextless" () {
-	kernel_stack_top = (u64(uintptr(&kernel_stack)) + KERNEL_STACK_SIZE) &~ 15
-	current_fpu_area = &idle_fpu_area
+// The kernel lock: one processor at a time runs kernel code. A processor
+// takes the lock at each kernel entry and frees it when it returns to a
+// program or waits for an interrupt. Interrupts are off in the kernel, so
+// the holder never waits for anything but another processor in
+// processor_sync. The kernel is off the hot path (property 3): the count
+// of waits shows what the one lock costs.
+kernel_lock: u32
+lock_waits: u64
+wake_needed: u32 // Threads that became ready since the last lock_release.
 
-	task_state.stack_0 = kernel_stack_top
-	task_state.port_offset = u16(offset_of(Task_State, ports))
-	for &b in task_state.ports {
+lock_acquire :: proc "contextless" (cpu: ^Processor) {
+	waited := false
+	for intrinsics.atomic_exchange(&kernel_lock, 1) != 0 {
+		waited = true
+		for intrinsics.atomic_load(&kernel_lock) != 0 {
+			sync_acknowledge(cpu)
+			intrinsics.cpu_relax()
+		}
+	}
+	if waited {
+		lock_waits += 1
+	}
+}
+
+// lock_release frees the kernel lock. Before, it wakes one idle processor
+// for each thread that became ready.
+lock_release :: proc "contextless" () {
+	for cpu in processors[:processor_count] {
+		if wake_needed == 0 {
+			break
+		}
+		if cpu.idle {
+			cpu.idle = false
+			wake_needed -= 1
+			apic_send(cpu.apic_id, VECTOR_WAKE)
+		}
+	}
+	wake_needed = 0
+	intrinsics.atomic_store(&kernel_lock, 0)
+}
+
+// processor_sync waits until each processor of the set (bit n: processor n)
+// is in the kernel and has no address translation of a program from before
+// the call. Such a processor then waits for the kernel lock, which the
+// caller holds. The caller uses it after it removed a mapping, and before
+// it frees what a thread on another processor used.
+processor_sync :: proc "contextless" (set: u64) {
+	if set == 0 {
+		return
+	}
+	for cpu in processors[:processor_count] {
+		if set & (1 << cpu.index) != 0 {
+			intrinsics.atomic_store(&cpu.pending, 1)
+			apic_send(cpu.apic_id, VECTOR_SYNC)
+		}
+	}
+	for cpu in processors[:processor_count] {
+		if set & (1 << cpu.index) != 0 {
+			for intrinsics.atomic_load(&cpu.pending) != 0 {
+				intrinsics.cpu_relax()
+			}
+		}
+	}
+}
+
+// sync_acknowledge answers processor_sync. The processor is in the kernel
+// with interrupts off, and it does not hold the kernel lock.
+sync_acknowledge :: proc "contextless" (cpu: ^Processor) {
+	if intrinsics.atomic_load(&machine_stopping) {
+		processor_stop()
+	}
+	if intrinsics.atomic_load(&cpu.pending) == 0 {
+		return
+	}
+	if intrinsics.atomic_load(&cpu.current) == 0 {
+		// No thread: the page table of the last program can end.
+		cpu.table = kernel_table
+		cr3_write(kernel_table)
+	} else {
+		cr3_write(cr3_read())
+	}
+	intrinsics.atomic_store(&cpu.pending, 0)
+}
+
+// processor_create makes the record of a processor.
+processor_create :: proc "contextless" (index: u32, apic_id: u32) -> ^Processor {
+	address := frames_allocate((size_of(Processor) + PAGE_SIZE - 1) / PAGE_SIZE)
+	if address == 0 {
+		return nil
+	}
+	cpu := direct(address, Processor)
+	cpu.self = cpu
+	cpu.index = index
+	cpu.apic_id = apic_id
+	cpu.stack_top = (u64(uintptr(&cpu.stack)) + KERNEL_STACK_SIZE) &~ 15
+	cpu.fpu_area = &cpu.idle_fpu
+	cpu.table = kernel_table
+	cpu.task_state.stack_0 = cpu.stack_top
+	cpu.task_state.port_offset = u16(offset_of(Task_State, ports))
+	for &b in cpu.task_state.ports {
 		b = 0xFF
 	}
-	task_address := u64(uintptr(&task_state))
+	task_address := u64(uintptr(&cpu.task_state))
 	task_limit := u64(size_of(Task_State) - 1)
-	segments = {
+	cpu.segments = {
 		0,
 		0x00AF_9A00_0000_FFFF, // kernel code
 		0x00CF_9200_0000_FFFF, // kernel data
@@ -111,21 +230,18 @@ processor_start :: proc "contextless" () {
 		task_limit & 0xFFFF | (task_address & 0xFF_FFFF) << 16 | 0x89 << 40 | (task_limit >> 16 & 0xF) << 48 | (task_address >> 24 & 0xFF) << 56,
 		task_address >> 32,
 	}
-	descriptor := Table_Descriptor{size_of(segments) - 1, u64(uintptr(&segments))}
+	return cpu
+}
+
+// processor_setup loads the registers of the processor that runs it.
+processor_setup :: proc "contextless" (cpu: ^Processor) {
+	descriptor := Table_Descriptor{size_of(cpu.segments) - 1, u64(uintptr(&cpu.segments))}
 	gdt_load(&descriptor)
 	task_load(SELECTOR_TASK)
-
-	for stub, vector in interrupt_stubs {
-		gates[vector] = {
-			offset_low  = u16(stub),
-			selector    = SELECTOR_KERNEL_CODE,
-			type        = 0x8E, // Interrupt gate: interrupts are off in the kernel.
-			offset_mid  = u16(stub >> 16),
-			offset_high = u32(stub >> 32),
-		}
-	}
 	descriptor = {size_of(gates) - 1, u64(uintptr(&gates))}
 	idt_load(&descriptor)
+	msr_write(MSR_GS_BASE, u64(uintptr(cpu)))
+	msr_write(MSR_KERNEL_GS_BASE, 0)
 
 	// The syscall instruction.
 	MSR_EFER :: 0xC000_0080
@@ -136,8 +252,24 @@ processor_start :: proc "contextless" () {
 	msr_write(MSR_STAR, 0x0010_0008 << 32)
 	msr_write(MSR_LSTAR, u64(uintptr(rawptr(kernel_enter))))
 	msr_write(MSR_SFMASK, 0x700) // Clear the interrupt, direction and trap flags.
+	apic_setup(cpu)
+}
 
-	// The interrupt controller (8259): lines 0 to 15 become vectors 32 to 47.
+// processor_start prepares the first processor.
+processor_start :: proc "contextless" () {
+	for stub, vector in interrupt_stubs {
+		gates[vector] = {
+			offset_low  = u16(stub),
+			selector    = SELECTOR_KERNEL_CODE,
+			type        = 0x8E, // Interrupt gate: interrupts are off in the kernel.
+			offset_mid  = u16(stub >> 16),
+			offset_high = u32(stub >> 32),
+		}
+	}
+
+	// The interrupt controller of the device lines (8259): lines 0 to 15
+	// become vectors 32 to 47. Line 0 (the 8254 timer) is off: each
+	// processor has its own timer.
 	port_write_8(0x20, 0x11)
 	port_write_8(0xA0, 0x11)
 	port_write_8(0x21, VECTOR_INTERRUPT_BASE)
@@ -146,14 +278,20 @@ processor_start :: proc "contextless" () {
 	port_write_8(0xA1, 2)
 	port_write_8(0x21, 1)
 	port_write_8(0xA1, 1)
-	port_write_8(0x21, 0x00)
+	port_write_8(0x21, 0x01)
 	port_write_8(0xA1, 0x00)
 
-	// The timer (8254): one interrupt per millisecond.
-	DIVISOR :: 1193182 / TICKS_PER_SECOND
-	port_write_8(0x43, 0x34)
-	port_write_8(0x40, u8(DIVISOR & 0xFF))
-	port_write_8(0x40, u8(DIVISOR >> 8))
+	apic_start()
+	cpu := processor_create(0, apic_id())
+	if cpu == nil {
+		log("kernel: no memory for the record of the processor")
+		machine_stop(1)
+	}
+	processors[0] = cpu
+	processor_count = 1
+	processor_setup(cpu)
+	timer_calibrate()
+	timer_start()
 }
 
 interrupt_end :: proc "contextless" (line: u64) {
@@ -163,13 +301,13 @@ interrupt_end :: proc "contextless" (line: u64) {
 	port_write_8(0x20, 0x20)
 }
 
-// ports_allow lets the running program use, or not use, a range of ports.
-ports_allow :: proc "contextless" (first, count: u64, allow: bool) {
+// ports_allow lets the program on a processor use, or not use, a range of ports.
+ports_allow :: proc "contextless" (cpu: ^Processor, first, count: u64, allow: bool) {
 	for port in first ..< min(first + count, 65536) {
 		if allow {
-			task_state.ports[port / 8] &~= 1 << (port % 8)
+			cpu.task_state.ports[port / 8] &~= 1 << (port % 8)
 		} else {
-			task_state.ports[port / 8] |= 1 << (port % 8)
+			cpu.task_state.ports[port / 8] |= 1 << (port % 8)
 		}
 	}
 }

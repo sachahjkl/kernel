@@ -131,7 +131,16 @@ Efi_System_Table :: struct {
 	standard_error:        ^Efi_Text_Output,
 	runtime_services:      ^Efi_Runtime_Services,
 	boot_services:         ^Efi_Boot_Services,
+	table_count:           uint,
+	tables:                [^]Efi_Configuration_Table,
 }
+
+Efi_Configuration_Table :: struct {
+	guid:  Efi_Guid,
+	table: rawptr,
+}
+
+EFI_ACPI_GUID :: Efi_Guid{0x8868E871, 0xE4F1, 0x11D3, {0xBC, 0x22, 0x00, 0x80, 0xC7, 0x3C, 0x88, 0x81}}
 
 EFI_GRAPHICS_OUTPUT_GUID :: Efi_Guid{0x9042A9DE, 0x23DC, 0x4A38, {0x96, 0xFB, 0x7A, 0xDE, 0xD0, 0x80, 0x51, 0x6A}}
 

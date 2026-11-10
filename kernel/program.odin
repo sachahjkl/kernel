@@ -73,6 +73,7 @@ Thread :: struct {
 	events:       ^u32, // The `events` word of the thread record, for the kernel.
 	deadline:     u64,
 	references:   u32, // Handles to this thread.
+	processor:    u32, // 1 + the index of the processor that runs the thread. 0: none.
 	budget:       u32, // The budget that paid for the slot.
 	in_enter:     bool,
 	run_time:     u64,
@@ -129,12 +130,8 @@ programs: [PROGRAM_CAPACITY]Program
 threads: [THREAD_TABLE_CAPACITY]Thread
 interrupt_owner: [INTERRUPT_LINES]u32 // A program.
 interrupt_pending: [INTERRUPT_LINES]u32
-current: u32 // The thread that runs. 0: the kernel is idle.
 last_run: u32
-record_thread: u32 // The thread whose thread record address is in the gs register.
-ports_loaded: u32 // The program whose ports are open in the task state.
 ticks: u64
-slice_left: u64
 entry_count: u64
 interrupt_count: u64
 
@@ -370,18 +367,27 @@ map_region :: proc "contextless" (program: ^Program, region_index: u32, address:
 	return address, .Ok
 }
 
+// unmap removes a mapping. Before the memory object can end, each
+// processor that uses the page table of the program forgets the mapping.
 unmap :: proc "contextless" (program: ^Program, mapping: ^Mapping) {
-	active := cr3_read() == program.table
+	self := processor_self()
 	for page in 0 ..< mapping.page_count {
 		address := mapping.address + page * PAGE_SIZE
 		entry := page_entry(program.table, address, false)
 		if entry != nil {
 			entry^ = 0
-			if active {
+			if self.table == program.table {
 				page_flush(address)
 			}
 		}
 	}
+	others: u64
+	for cpu in processors[:processor_count] {
+		if cpu != self && cpu.table == program.table {
+			others |= 1 << cpu.index
+		}
+	}
+	processor_sync(others)
 	program.mapped_pages -= mapping.page_count
 	region_release(mapping.region)
 	mapping^ = {}
@@ -493,6 +499,7 @@ thread_create :: proc "contextless" (program_index: u32, budget: u32, entry, sta
 	}
 	start := FPU_START
 	copy(thread.fpu.bytes[:], start[:])
+	wake_needed += 1
 	budgets[budget].amounts.threads -= 1
 	program.thread_areas |= 1 << number
 	program.thread_count += 1
@@ -503,14 +510,34 @@ thread_create :: proc "contextless" (program_index: u32, budget: u32, entry, sta
 // handle to the thread closes: a handle never names another thread.
 @(private = "file")
 thread_end :: proc "contextless" (thread: ^Thread) {
+	index := u32(intrinsics.ptr_sub(thread, &threads[0]))
+	if thread.processor != 0 {
+		// The thread leaves its processor. Another processor learns it at
+		// its next kernel entry, and processor_sync waits for that entry:
+		// after it, that processor does not use the thread.
+		cpu := processors[thread.processor - 1]
+		intrinsics.atomic_store(&cpu.current, 0)
+		thread.processor = 0
+		if cpu != processor_self() {
+			processor_sync(1 << cpu.index)
+		}
+	}
 	thread.state = .Stopped
 	if thread.references == 0 {
 		thread_free(thread)
 	}
 	thread.ring = nil
-	if record_thread == u32(intrinsics.ptr_sub(thread, &threads[0])) {
-		record_thread = 0 // The slot can get a new thread.
+	for cpu in processors[:processor_count] {
+		if cpu.record_thread == index {
+			cpu.record_thread = 0 // The slot can get a new thread.
+		}
 	}
+}
+
+// thread_ready ends the wait of a thread.
+thread_ready :: proc "contextless" (thread: ^Thread) {
+	thread.state = .Ready
+	wake_needed += 1
 }
 
 // thread_stop ends one thread and frees its thread area. The other threads
@@ -549,7 +576,7 @@ word_wake :: proc "contextless" (word: u64, count: u64) -> (woken: u64) {
 		}
 		for candidate in thread.words[:thread.word_count] {
 			if candidate == word {
-				thread.state = .Ready
+				thread_ready(&thread)
 				woken += 1
 				break
 			}
@@ -570,7 +597,7 @@ program_event :: proc "contextless" (index: u32) {
 			word := physical_of(thread.events)
 			for candidate in thread.words[:thread.word_count] {
 				if candidate == word {
-					thread.state = .Ready
+					thread_ready(&thread)
 					break
 				}
 			}
@@ -610,12 +637,24 @@ program_stop :: proc "contextless" (index: u32, code: u32) {
 	}
 	program.thread_count = 0
 	program.thread_areas = 0
-	if cr3_read() == program.table {
-		cr3_write(kernel_table)
+	// No processor keeps the page table or the ports of the program.
+	self := processor_self()
+	others: u64
+	for cpu in processors[:processor_count] {
+		if cpu.ports_loaded == index {
+			ports_switch(cpu, 0)
+		}
+		if cpu.table != program.table {
+			continue
+		}
+		if cpu == self {
+			cpu.table = kernel_table
+			cr3_write(kernel_table)
+		} else {
+			others |= 1 << cpu.index
+		}
 	}
-	if ports_loaded == index {
-		ports_switch(0)
-	}
+	processor_sync(others)
 	for &mapping in program.mappings {
 		if mapping.page_count != 0 {
 			unmap(program, &mapping)
@@ -644,29 +683,35 @@ program_stop :: proc "contextless" (index: u32, code: u32) {
 	}
 }
 
-// ports_switch closes the ports of the program that had them, and opens the
-// ports of program index.
-ports_switch :: proc "contextless" (index: u32) {
-	if ports_loaded == index {
+// ports_switch closes the ports of the program that had them on a
+// processor, and opens the ports of program index.
+ports_switch :: proc "contextless" (cpu: ^Processor, index: u32) {
+	if cpu.ports_loaded == index {
 		return
 	}
 	for pass in 0 ..< 2 {
-		program := &programs[pass == 0 ? ports_loaded : index]
+		program := &programs[pass == 0 ? cpu.ports_loaded : index]
 		if !program.has_ports {
 			continue
 		}
 		for slot in program.handles {
 			if slot.kind == .Ports {
-				ports_allow(u64(slot.object), u64(slot.count), pass == 1)
+				ports_allow(cpu, u64(slot.object), u64(slot.count), pass == 1)
 			}
 		}
 	}
-	ports_loaded = index
+	cpu.ports_loaded = index
 }
 
-// schedule runs the next thread that is ready. With none, it waits for an
-// interrupt.
+// schedule runs the next thread that is ready and that no processor runs.
+// With none, the processor waits for an interrupt. The caller holds the
+// kernel lock.
 schedule :: proc "contextless" () -> ! {
+	cpu := processor_self()
+	if cpu.current != 0 {
+		threads[cpu.current].processor = 0
+		cpu.current = 0
+	}
 	for {
 		alive := false
 		for step in 1 ..= u32(THREAD_TABLE_CAPACITY) {
@@ -676,41 +721,53 @@ schedule :: proc "contextless" () -> ! {
 				continue
 			}
 			alive = true
-			if thread.state != .Ready {
+			if thread.state != .Ready || thread.processor != 0 {
 				continue
 			}
-			current = index
+			cpu.current = index
+			thread.processor = cpu.index + 1
 			last_run = index
-			slice_left = TIME_SLICE
-			run(thread)
+			cpu.slice_left = TIME_SLICE
+			run(cpu, thread)
 		}
 		if !alive {
 			log("kernel: no program is left")
 			machine_stop(0)
 		}
-		current = 0
+		cpu.idle = true
+		if cpu.index != 0 {
+			timer_pause(true)
+		}
+		lock_release()
 		idle_wait()
+		lock_acquire(cpu)
+		cpu.idle = false
+		if cpu.index != 0 {
+			timer_pause(false)
+		}
 	}
 }
 
-// run gives the processor to a thread.
-run :: proc "contextless" (thread: ^Thread) -> ! {
+// run gives the processor to its current thread, and frees the kernel lock.
+run :: proc "contextless" (cpu: ^Processor, thread: ^Thread) -> ! {
 	program := &programs[thread.program]
-	ports_switch(program.has_ports ? thread.program : 0)
-	if cr3_read() != program.table {
+	ports_switch(cpu, program.has_ports ? thread.program : 0)
+	if cpu.table != program.table {
+		cpu.table = program.table
 		cr3_write(program.table)
 	}
 	// Two programs have thread records at the same address. The test is on
 	// the thread, so a program that changes its gs register harms only itself.
-	if record_thread != current {
-		record_thread = current
-		msr_write(MSR_GS_BASE, thread.record)
+	if cpu.record_thread != cpu.current {
+		cpu.record_thread = cpu.current
+		msr_write(MSR_KERNEL_GS_BASE, thread.record)
 	}
-	current_fpu_area = &thread.fpu
+	cpu.fpu_area = &thread.fpu
 	if thread.in_enter {
 		thread.in_enter = false
 		thread.frame.rax = ticks
 	}
+	lock_release()
 	resume(&thread.frame)
 }
 
@@ -726,27 +783,48 @@ EXCEPTION_NAMES := [32]string {
 @(require, linkage = "strong", link_name = "kernel_interrupt")
 kernel_interrupt :: proc "c" (frame: ^Frame) {
 	from_program := frame.cs & 3 != 0
-	if from_program {
-		threads[current].frame = frame^
+	if !from_program && frame.vector < VECTOR_INTERRUPT_BASE {
+		// The processor can hold the kernel lock: it does not take it.
+		name := EXCEPTION_NAMES[frame.vector]
+		log("kernel: exception in the kernel: ", name, " vector ", frame.vector, " error ", Hex(frame.error), " at ", Hex(frame.rip), " address ", Hex(cr2_read()))
+		machine_stop(2)
+	}
+	cpu := processor_self()
+	sync_acknowledge(cpu)
+	lock_acquire(cpu)
+	// Another processor took the thread away: the thread ended. This entry
+	// is not an entry of a thread.
+	taken := from_program && cpu.current == 0
+	if from_program && !taken {
+		threads[cpu.current].frame = frame^
 	}
 	switch {
 	case frame.vector == VECTOR_KERNEL_ENTER:
 		entry_count += 1
-		enter(current)
-	case frame.vector == VECTOR_TIMER:
-		ticks += 1
-		if from_program {
-			threads[current].run_time += 1
-			programs[threads[current].program].run_time += 1
-			slice_left -= min(slice_left, 1)
+		if !taken {
+			enter(cpu.current)
 		}
-		for &thread in threads[1:] {
-			if thread.state == .Waiting && thread.deadline <= ticks {
-				thread.state = .Ready
+	case frame.vector == VECTOR_TIMER:
+		if from_program && !taken {
+			cpu.busy_time += 1
+			threads[cpu.current].run_time += 1
+			programs[threads[cpu.current].program].run_time += 1
+			cpu.slice_left -= min(cpu.slice_left, 1)
+		}
+		// The first processor counts the time.
+		if cpu.index == 0 {
+			ticks += 1
+			for &thread in threads[1:] {
+				if thread.state == .Waiting && thread.deadline <= ticks {
+					thread_ready(&thread)
+				}
 			}
 		}
-		interrupt_end(0)
-	case frame.vector > VECTOR_TIMER && frame.vector < VECTOR_INTERRUPT_BASE + INTERRUPT_LINES:
+		apic_write(APIC_END, 0)
+	case frame.vector == VECTOR_WAKE || frame.vector == VECTOR_SYNC:
+		apic_write(APIC_END, 0)
+	case frame.vector == VECTOR_SPURIOUS:
+	case frame.vector >= VECTOR_INTERRUPT_BASE && frame.vector < VECTOR_INTERRUPT_BASE + INTERRUPT_LINES:
 		line := frame.vector - VECTOR_INTERRUPT_BASE
 		interrupt_count += 1
 		interrupt_pending[line] += 1
@@ -754,26 +832,29 @@ kernel_interrupt :: proc "c" (frame: ^Frame) {
 			program_event(owner)
 		}
 		interrupt_end(line)
+	case taken:
 	case:
-		name := frame.vector < 32 ? EXCEPTION_NAMES[frame.vector] : ""
-		if !from_program {
-			log("kernel: exception in the kernel: ", name, " vector ", frame.vector, " error ", Hex(frame.error), " at ", Hex(frame.rip), " address ", Hex(cr2_read()))
-			machine_stop(2)
-		}
 		// A fault in one thread stops the program: the threads share all
 		// their memory.
-		program := threads[current].program
+		name := frame.vector < 32 ? EXCEPTION_NAMES[frame.vector] : ""
+		program := threads[cpu.current].program
 		log("kernel: program ", program_name(&programs[program]), " stopped: ", name, " vector ", frame.vector, " error ", Hex(frame.error), " at ", Hex(frame.rip), " address ", Hex(cr2_read()))
 		program_stop(program, op.STOP_CODE_FAULT + u32(frame.vector))
 	}
 	if !from_program {
+		// The processor was idle. It looks for a thread itself.
+		cpu.idle = false
+		wake_needed -= min(wake_needed, 1)
+		lock_release()
 		return
 	}
 	// The thread that entered continues, unless it waits, it stopped, or its
 	// time slice is over.
-	thread := &threads[current]
-	if thread.state == .Ready && slice_left > 0 {
-		run(thread)
+	if cpu.current != 0 {
+		thread := &threads[cpu.current]
+		if thread.state == .Ready && cpu.slice_left > 0 {
+			run(cpu, thread)
+		}
 	}
 	schedule()
 }

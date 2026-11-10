@@ -48,6 +48,12 @@ efi_main :: proc "win64" (image: rawptr, system_table: ^Efi_System_Table) -> Efi
 	boot := (^info.Boot_Info)(allocate(1))
 	boot.magic = info.MAGIC
 	boot.framebuffer = framebuffer()
+	// The kernel reads the list of the processors in the ACPI tables.
+	for entry in system.tables[:system.table_count] {
+		if entry.guid == EFI_ACPI_GUID {
+			boot.acpi_root = u64(uintptr(entry.table))
+		}
+	}
 
 	// The kernel module.
 	if module.validate(kernel_file) != .None {

@@ -1,5 +1,6 @@
 package kerneltool
 
+import "../../programs/launcher"
 import "core:fmt"
 import "core:hash"
 import "core:os"
@@ -25,6 +26,7 @@ Step_Kind :: enum {
 	Type, // Press the keys of text, then Enter.
 	Key, // Press one key: text is its QEMU name.
 	Click, // Press the left button at (x, y).
+	Launch, // Press the button of the program text in the launcher.
 	Drag, // Hold the left button from (x, y) to (to_x, to_y).
 	Shot, // Save the screen as text.png.
 }
@@ -68,10 +70,10 @@ scenario := [?]Step {
 
 	// The desktop: start programs from the launcher, and move the windows.
 	{kind = .Drag, x = 172, y = 92, to_x = 100, to_y = 420}, // life
-	{kind = .Click, x = 190, y = 14}, // monitor
+	{kind = .Launch, text = "monitor"},
 	{kind = .Wait, text = "compositor: surface monitor"},
 	{kind = .Drag, x = 172, y = 122, to_x = 610, to_y = 50},
-	{kind = .Click, x = 384, y = 14}, // paint
+	{kind = .Launch, text = "paint"},
 	{kind = .Wait, text = "compositor: surface paint"},
 	{kind = .Drag, x = 208, y = 152, to_x = 560, to_y = 420},
 	{kind = .Click, x = 582, y = 446}, // The red color.
@@ -79,14 +81,14 @@ scenario := [?]Step {
 	{kind = .Click, x = 662, y = 446}, // The blue color.
 	{kind = .Drag, x = 760, y = 520, to_x = 560, to_y = 700},
 	{kind = .Drag, x = 800, y = 600, to_x = 960, to_y = 600},
-	{kind = .Click, x = 264, y = 14}, // plasma
+	{kind = .Launch, text = "plasma"},
 	{kind = .Wait, text = "plasma: ok", any_order = true},
 	{kind = .Wait, text = "compositor: surface plasma"},
 	{kind = .Drag, x = 250, y = 182, to_x = 276, to_y = 150},
 	{kind = .Shot, text = "desktop"},
 
 	// A program that fails stops alone. The close button stops a program.
-	{kind = .Click, x = 446, y = 14}, // fault
+	{kind = .Launch, text = "fault"},
 	{kind = .Wait, text = "stopped: page fault"},
 	{kind = .Wait, text = "root: fault stopped"},
 	{kind = .Click, x = 540, y = 152}, // The close button of plasma.
@@ -173,14 +175,14 @@ scenario := [?]Step {
 	{kind = .Shot, text = "isolated"},
 
 	// The temple of Jon, then back to the console.
-	{kind = .Click, x = 512, y = 14}, // temple
+	{kind = .Launch, text = "temple"},
 	{kind = .Wait, text = "temple: ok", any_order = true},
 	{kind = .Wait, text = "compositor: surface temple"},
 	{kind = .Shot, text = "temple"},
 
 	// Communication between programs: six programs pass records through
 	// six rings. A stopped program takes no record: the records wait.
-	{kind = .Click, x = 578, y = 14}, // rings
+	{kind = .Launch, text = "rings"},
 	{kind = .Wait, text = "rings: ok, 6 programs, 6 rings, 5 records"},
 	{kind = .Drag, x = 600, y = 243, to_x = 500, to_y = 71},
 	{kind = .Type, text = "aaa"},
@@ -194,7 +196,7 @@ scenario := [?]Step {
 
 	// Threads: one program, five threads, one surface. A thread ends and
 	// the first thread reads its result. A stopped thread draws no more.
-	{kind = .Click, x = 645, y = 14}, // threads
+	{kind = .Launch, text = "threads"},
 	{kind = .Wait, text = "threads: a thread added the numbers to 1000: 500500"},
 	{kind = .Wait, text = "threads: ok, 4 threads draw in one surface"},
 	{kind = .Type, text = "3"},
@@ -205,7 +207,7 @@ scenario := [?]Step {
 
 	// The lock and the word wait: four threads add to one number, then take
 	// tiles from one queue.
-	{kind = .Click, x = 726, y = 14}, // workers
+	{kind = .Launch, text = "workers"},
 	{kind = .Wait, text = "workers: the lock lost no addition"},
 	{kind = .Wait, text = "workers: ok, 4 threads computed 140 tiles: "},
 	{kind = .Drag, x = 400, y = 62, to_x = 640, to_y = 340},
@@ -213,17 +215,25 @@ scenario := [?]Step {
 
 	// Rights: a program with a part of the rights of two handles. The
 	// kernel refuses each operation that needs another right.
-	{kind = .Click, x = 800, y = 14}, // rights
+	{kind = .Launch, text = "rights"},
 	{kind = .Wait, text = "rights: ok, 4 allowed, 5 refused", any_order = true},
 	{kind = .Wait, text = "compositor: surface rights"},
 	{kind = .Shot, text = "rights"},
 
 	// Budgets: no object comes from nothing. The program creates until
 	// its budget cannot pay; what it frees returns.
-	{kind = .Click, x = 878, y = 14}, // budget
+	{kind = .Launch, text = "budget"},
 	{kind = .Wait, text = "budget: ok, ", any_order = true},
 	{kind = .Wait, text = "compositor: surface budget"},
 	{kind = .Shot, text = "budget"},
+
+	// Several processors: the kernel says that the four processors ran
+	// threads of one program at the same time. Then 1, 2 and 4 threads
+	// compute the same picture.
+	{kind = .Launch, text = "processors"},
+	{kind = .Wait, text = "processors: ok, 4 processors ran the program at the same time"},
+	{kind = .Wait, text = "processors: the picture took "},
+	{kind = .Shot, text = "processors"},
 	{kind = .Click, x = 70, y = 300},
 	{kind = .Type, text = "programs()"},
 	{kind = .Wait, text = "   threads     "},
@@ -480,7 +490,16 @@ scenario_run :: proc(machine: ^Machine) -> bool {
 		case .Key:
 			monitor_send(machine, "sendkey ", step.text, " 20")
 			time.sleep(KEY_PAUSE)
-		case .Click, .Drag:
+		case .Click, .Drag, .Launch:
+			step := step
+			if step.kind == .Launch {
+				found: bool
+				step.x, step.y, found = launcher.center(step.text)
+				if !found {
+					fmt.eprintfln("error: the launcher does not have the program %s", step.text)
+					return false
+				}
+			}
 			if !machine.pointer_known {
 				// The pointer starts at an unknown place: push it to the corner.
 				machine.pointer_known = true

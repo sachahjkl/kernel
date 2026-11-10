@@ -5,7 +5,7 @@ default rel
 extern kernel_interrupt
 
 KERNEL_ENTER_VECTOR equ 128
-STUB_COUNT equ 48
+STUB_COUNT equ 64
 
 section .text
 
@@ -137,17 +137,26 @@ page_flush:                      ; (address)
 	pop rax
 %endmacro
 
+; In the kernel, the gs register holds the address of the record of the
+; processor (Processor in kernel/processor.odin). In a program, it holds
+; the address of the thread record. The swapgs instruction exchanges the two.
+;   gs:0   the top of the kernel stack of the processor
+;   gs:8   the stack of the program, during a kernel entry
+;   gs:16  the area where the next entry saves the floating-point state
+;   gs:24  the address of the record
 interrupt_common:
 	PUSH_REGISTERS
 	test byte [rsp + 15 * 8 + 24], 3 ; did the interrupt come from a program?
-	jz .call
-	mov rax, [current_fpu_area]
+	jz interrupt_call
+	swapgs
+interrupt_from_program:
+	mov rax, [gs:abs 16]
 	fxsave64 [rax]
-.call:
+interrupt_call:
 	mov rdi, rsp
 	cld
 	call kernel_interrupt
-	POP_REGISTERS
+	POP_REGISTERS                ; Only an interrupt of the kernel returns here.
 	add rsp, 16
 	iretq
 
@@ -156,25 +165,48 @@ interrupt_common:
 ; as an interrupt.
 global kernel_enter
 kernel_enter:
-	mov [enter_user_stack], rsp
-	mov rsp, [kernel_stack_top]
+	swapgs
+	mov [gs:abs 8], rsp
+	mov rsp, [gs:abs 0]
 	push 0x1B                    ; ss: user data
-	push qword [enter_user_stack]
+	push qword [gs:abs 8]
 	push r11                     ; flags
 	push 0x23                    ; cs: user code
 	push rcx                     ; return address
 	push 0
 	push KERNEL_ENTER_VECTOR
-	jmp interrupt_common
+	PUSH_REGISTERS
+	jmp interrupt_from_program
 
 global resume
 resume:                          ; (frame: ^Frame) -> !: run a program
 	mov rsp, rdi
-	mov rax, [current_fpu_area]
+	mov rax, [gs:abs 16]
 	fxrstor64 [rax]
+	swapgs
 	POP_REGISTERS
 	add rsp, 16
 	iretq
+
+global processor_self
+processor_self:                  ; () -> ^Processor
+	mov rax, [gs:abs 24]
+	ret
+
+global cr0_read
+cr0_read:
+	mov rax, cr0
+	ret
+
+global cr4_read
+cr4_read:
+	mov rax, cr4
+	ret
+
+global cr4_write
+cr4_write:
+	mov cr4, rdi
+	ret
 
 %assign vector 0
 %rep STUB_COUNT
@@ -188,14 +220,6 @@ stub_ %+ vector:
 %endrep
 
 section .data
-enter_user_stack: dq 0
-
-; The top of the kernel stack, and the area where the next entry saves the
-; floating-point state. The Odin code of the kernel writes them.
-global kernel_stack_top
-kernel_stack_top: dq 0
-global current_fpu_area
-current_fpu_area: dq 0
 
 global interrupt_stubs
 interrupt_stubs:
@@ -204,3 +228,71 @@ interrupt_stubs:
 	dq stub_ %+ vector
 %assign vector vector + 1
 %endrep
+
+; The start code of a processor. The kernel copies it to the page AP_BASE
+; of physical memory and fills the parameters at its end. A processor
+; starts there in 16-bit mode, and goes to 64-bit mode with the page table
+; and the registers of the first processor.
+AP_BASE equ 0x8000
+%define AP(label) (AP_BASE + label - ap_start_begin)
+
+global ap_start_begin
+ap_start_begin:
+bits 16
+	cli
+	cld
+	xor ax, ax
+	mov ds, ax
+	lgdt [AP(ap_descriptor)]
+	mov eax, cr0
+	or eax, 1
+	mov cr0, eax
+	jmp dword 0x08:AP(ap_32)
+bits 32
+ap_32:
+	mov ax, 0x10
+	mov ds, ax
+	mov es, ax
+	mov ss, ax
+	mov eax, 0x620               ; 36-bit addresses, and the two bits of fxsave
+	mov cr4, eax
+	mov eax, [AP(ap_table)]
+	mov cr3, eax
+	mov ecx, 0xC0000080          ; EFER
+	mov eax, [AP(ap_efer)]
+	xor edx, edx
+	wrmsr
+	mov eax, [AP(ap_cr0)]
+	mov cr0, eax
+	jmp 0x18:AP(ap_64)
+bits 64
+ap_64:
+	mov rsp, [abs AP(ap_stack)]
+	mov rdi, [abs AP(ap_parameter)]
+	mov rax, [abs AP(ap_entry)]
+	fninit
+	ldmxcsr [abs AP(ap_mxcsr)]
+	xor ebp, ebp
+	push 0                       ; a null return address: the entry does not return
+	jmp rax
+
+align 8
+ap_segments:
+	dq 0
+	dq 0x00CF9A000000FFFF        ; 32-bit code
+	dq 0x00CF92000000FFFF        ; data
+	dq 0x00AF9A000000FFFF        ; 64-bit code
+ap_descriptor:
+	dw 4 * 8 - 1
+	dd AP(ap_segments)
+align 8
+; Ap_Parameters in kernel/apic.odin.
+ap_table:     dd 0
+ap_cr0:       dd 0
+ap_efer:      dd 0
+ap_mxcsr:     dd 0x1F80
+ap_stack:     dq 0
+ap_parameter: dq 0
+ap_entry:     dq 0
+global ap_start_end
+ap_start_end:

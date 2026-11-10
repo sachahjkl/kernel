@@ -25,7 +25,7 @@ grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 	switch name {
 	case "console":
 		return {.Root_Ring, .Inspect, .Stop, .Image}
-	case "monitor":
+	case "monitor", "processors":
 		return {.Inspect}
 	case "rights":
 		return {.Inspect, .Image} // It shows what the kernel refuses.
@@ -56,6 +56,8 @@ budget_of :: proc "contextless" (name: string) -> system.Budget_Amounts {
 		return {pages = 2048, programs = 1, threads = 2}
 	case "budget":
 		return {pages = 1024, programs = 1, threads = 4}
+	case "processors":
+		return {pages = 2048, programs = 1, threads = 9}
 	}
 	return {pages = 2048, programs = 1, threads = 1}
 }

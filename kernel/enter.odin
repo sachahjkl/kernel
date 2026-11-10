@@ -315,6 +315,8 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 				program_slots = PROGRAM_CAPACITY,
 				entries       = entry_count,
 				interrupts    = interrupt_count,
+				processors    = u64(processor_count),
+				lock_waits    = lock_waits,
 			}
 			for region in regions {
 				if region.page_count != 0 {
@@ -353,6 +355,21 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			}
 			(^op.Program_Report)(uintptr(v[3]))^ = report
 			results[0] = size_of(op.Program_Report)
+		case .Processor:
+			if v[4] < size_of(op.Processor_Report) || !user_range(program.table, v[3], size_of(op.Processor_Report), true) {
+				return .Bad_Address
+			}
+			report: op.Processor_Report
+			if v[2] < u64(processor_count) {
+				cpu := processors[v[2]]
+				report.busy_time = cpu.busy_time
+				if cpu.current != 0 {
+					report.program = u64(threads[cpu.current].program)
+					report.same = u64(programs[report.program].table == program.table)
+				}
+			}
+			(^op.Processor_Report)(uintptr(v[3]))^ = report
+			results[0] = size_of(op.Processor_Report)
 		case .None:
 			return .Bad_Operation
 		case:

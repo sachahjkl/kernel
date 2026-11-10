@@ -192,6 +192,8 @@ show_memory :: proc "contextless" (arguments: []Value) -> Value {
 	print("memory objects  ", report.region_count, "\n")
 	print("kernel entries  ", report.entries, "\n")
 	print("interrupts      ", report.interrupts, "\n")
+	print("processors      ", report.processors, "\n")
+	print("kernel lock     ", report.lock_waits, " waits\n")
 	return {}
 }
 

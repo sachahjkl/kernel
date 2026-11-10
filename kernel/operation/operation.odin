@@ -170,7 +170,8 @@ Device_Kind :: enum u64 {
 Inspect_Kind :: enum u64 {
 	None    = 0,
 	System  = 1, // System_Report
-	Program = 2, // Program_Report of program slot `index`
+	Program   = 2, // Program_Report of program slot `index`
+	Processor = 3, // Processor_Report of processor `index`
 }
 
 System_Report :: struct {
@@ -182,6 +183,14 @@ System_Report :: struct {
 	entries:       u64, // Kernel entries since boot.
 	interrupts:    u64,
 	budget_pages:  u64, // The pages of all the budgets. It is always free_pages: each page is free or paid.
+	processors:    u64, // The processors that run threads.
+	lock_waits:    u64, // The times that a processor waited for the kernel lock.
+}
+
+Processor_Report :: struct {
+	program:   u64, // The slot of the program that the processor runs. 0: the processor is idle.
+	busy_time: u64, // Milliseconds with a thread.
+	same:      u64, // 1: the program is the program that asks.
 }
 
 Program_Report :: struct {

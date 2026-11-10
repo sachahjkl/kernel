@@ -229,6 +229,8 @@ machine_command :: proc(test: bool) -> (command: []string, ok: bool) {
 		"tcg",
 		"-m",
 		"512",
+		"-smp",
+		"4",
 		"-device",
 		"isa-debug-exit,iobase=0xf4,iosize=0x04",
 		"-no-reboot",

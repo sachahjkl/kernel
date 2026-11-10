@@ -1,5 +1,7 @@
 package kernel
 
+import "base:intrinsics"
+
 // The serial port is the log of the kernel. It is the only device that the
 // kernel has code for, apart from the processor and its interrupt controller.
 
@@ -69,6 +71,16 @@ log :: proc "contextless" (parts: ..union {
 
 // machine_stop ends the machine under QEMU, or halts the processor.
 machine_stop :: proc "contextless" (code: u8) -> ! {
+	// Each other processor stops at its next kernel entry.
+	if processor_count > 1 {
+		intrinsics.atomic_store(&machine_stopping, true)
+		self := apic_id()
+		for cpu in processors[:processor_count] {
+			if cpu.apic_id != self {
+				apic_send(cpu.apic_id, VECTOR_SYNC)
+			}
+		}
+	}
 	port_write_8(DEBUG_EXIT_PORT, code)
 	processor_stop()
 }

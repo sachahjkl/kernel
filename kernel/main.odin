@@ -15,8 +15,12 @@ entry :: proc "c" (boot: ^info.Boot_Info) -> ! {
 		log("kernel: the boot record is not valid")
 		machine_stop(1)
 	}
-	processor_start()
 	memory_start(boot)
+	processor_start()
+	// The first processor holds the kernel lock until it runs the first thread.
+	lock_acquire(processors[0])
+	processors_start(boot)
+	log("kernel: ", u64(processor_count), " processors")
 	log("kernel: free memory ", free_frames * PAGE_SIZE >> 20, " MiB")
 	log("kernel: framebuffer ", u64(boot.framebuffer.width), "x", u64(boot.framebuffer.height), " at ", Hex(boot.framebuffer.address))
 	log(KERNEL_MARK)

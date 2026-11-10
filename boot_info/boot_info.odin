@@ -52,6 +52,7 @@ Boot_Info :: struct {
 	boot_image:         u64, // The boot image: the modules of the first programs.
 	boot_image_size:    u64,
 	framebuffer:        Framebuffer,
+	acpi_root:          u64, // The root record of the ACPI tables of the firmware ("RSD PTR "). 0: none.
 }
 
 // physical gives a pointer to physical memory, through the direct map.
