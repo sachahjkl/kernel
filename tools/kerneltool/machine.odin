@@ -54,6 +54,46 @@ scenario_fails := [?]Step {
 	{kind = .Quit},
 }
 
+// A test of the kernel on itself (boot_info.Self_Test): the kernel does one
+// thing that its page tables must refuse. The processor refuses, and the
+// kernel reports the fault and stops the machine with code 2.
+Self_Test :: struct {
+	number:  int, // boot_info.Self_Test.
+	does:    string,
+	reports: []string, // Parts of the report of the fault.
+}
+
+MACHINE_STOP_FAULT :: 2 << 1 | 1 // The status of QEMU for the code 2.
+
+self_tests := [?]Self_Test {
+	{1, "use more than the kernel stack", {" vector 8 ", ": the kernel stack of the processor is full"}},
+	{2, "write to the code of the kernel", {" vector 14 ", ": write to a read-only page"}},
+	{3, "write to the code of the kernel through the direct map", {" vector 14 ", ": write to a read-only page"}},
+	{4, "execute the data of the kernel", {" vector 14 ", ": execute of a page that is not code"}},
+	{5, "read the memory of a program outside a copy", {" vector 14 ", ": the kernel used memory of a program outside a copy"}},
+	{6, "execute the code of a program", {" vector 14 ", ": the kernel executed memory of a program"}},
+}
+
+self_test_file :: proc(pattern: string, number: int) -> string {
+	// The machine test frees the temporary memory: this text stays.
+	return fmt.aprintf(pattern, number)
+}
+
+self_tests_run :: proc() -> bool {
+	for test in self_tests {
+		steps := make([dynamic]Step)
+		append(&steps, Step{kind = .Wait, text = "kernel: ok"})
+		append(&steps, Step{kind = .Wait, text = fmt.aprintf("kernel: self test: %s", test.does)})
+		for report in test.reports {
+			append(&steps, Step{kind = .Wait, text = report, any_order = true})
+		}
+		if !machine_test(steps[:], self_test_file(BOOT_VOLUME_SELF_TEST, test.number), self_test_file(TEST_OUTPUT_SELF_TEST, test.number), MACHINE_STOP_FAULT) {
+			return false
+		}
+	}
+	return true
+}
+
 // The positions below come from programs/compositor/main.odin: the launcher
 // in the bar, and the place of window n at (60 + 36 n, 52 + 30 n).
 scenario := [?]Step {
@@ -260,6 +300,16 @@ scenario := [?]Step {
 	{kind = .Wait, text = "root: boot stopped"},
 	{kind = .Type, text = "programs()"},
 	{kind = .Wait, text = "   threads     "},
+
+	// Paging: the kernel reads its own page tables. No page is both
+	// writable and executable, and each kernel stack has its guard pages.
+	{kind = .Launch, text = "pages"},
+	{kind = .Wait, text = "pages: the kernel half: ", any_order = true},
+	{kind = .Wait, text = " 0 write and execute, 48 guard pages of 48"},
+	{kind = .Wait, text = "pages: ok, the page tables keep the rules"},
+	{kind = .Wait, text = "pages: the processor refuses the memory of programs to the kernel"},
+	{kind = .Shot, text = "pages"},
+	{kind = .Click, x = 70, y = 300},
 	// Each page is free or paid, after all the starts and stops of this test.
 	{kind = .Type, text = "memory()"},
 	{kind = .Wait, text = " pages: all the free pages"},

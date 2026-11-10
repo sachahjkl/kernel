@@ -84,7 +84,6 @@ Interrupt_Gate :: struct {
 	reserved:    u32,
 }
 
-KERNEL_STACK_SIZE :: 64 * 1024
 PROCESSOR_CAPACITY :: 64
 
 // The record of one processor. The kernel has one stack per processor: a
@@ -92,7 +91,7 @@ PROCESSOR_CAPACITY :: 64
 // earlier entry.
 Processor :: struct {
 	// processor.asm reads these four fields through the gs register.
-	stack_top:     u64,
+	stack_top:     u64, // The top of the kernel stack (paging.odin).
 	user_stack:    u64,
 	fpu_area:      ^Fpu_State, // Where the next entry from a program saves the floating-point state.
 	self:          ^Processor,
@@ -109,7 +108,6 @@ Processor :: struct {
 	segments:      [7]u64,
 	task_state:    Task_State,
 	idle_fpu:      Fpu_State,
-	stack:         [KERNEL_STACK_SIZE]u8,
 }
 
 processors: [PROCESSOR_CAPACITY]^Processor
@@ -207,11 +205,18 @@ processor_create :: proc "contextless" (index: u32, apic_id: u32) -> ^Processor 
 	if address == 0 {
 		return nil
 	}
+	stack_top, fault_top, ok := stacks_create(index)
+	if !ok {
+		frames_free(address, (size_of(Processor) + PAGE_SIZE - 1) / PAGE_SIZE)
+		return nil
+	}
 	cpu := direct(address, Processor)
 	cpu.self = cpu
 	cpu.index = index
 	cpu.apic_id = apic_id
-	cpu.stack_top = (u64(uintptr(&cpu.stack)) + KERNEL_STACK_SIZE) &~ 15
+	cpu.stack_top = stack_top
+	// A double fault arrives on its own stack: the kernel stack can be full.
+	cpu.task_state.interrupts[0] = fault_top
 	cpu.fpu_area = &cpu.idle_fpu
 	cpu.table = kernel_table
 	cpu.task_state.stack_0 = cpu.stack_top
@@ -251,7 +256,24 @@ processor_setup :: proc "contextless" (cpu: ^Processor) {
 	msr_write(MSR_EFER, msr_read(MSR_EFER) | 1)
 	msr_write(MSR_STAR, 0x0010_0008 << 32)
 	msr_write(MSR_LSTAR, u64(uintptr(rawptr(kernel_enter))))
-	msr_write(MSR_SFMASK, 0x700) // Clear the interrupt, direction and trap flags.
+	msr_write(MSR_SFMASK, 0x40700) // Clear the interrupt, direction, trap and user access flags.
+	// The kernel does not execute the memory of programs, and uses it only
+	// in user_copy, when the processor can refuse the rest (SMEP, SMAP).
+	CR4_NO_EXECUTE_PROGRAM :: 1 << 20
+	CR4_GUARD_PROGRAM :: 1 << 21
+	if highest, _, _, _ := intrinsics.x86_cpuid(0, 0); highest >= 7 {
+		_, features, _, _ := intrinsics.x86_cpuid(7, 0)
+		cr4 := cr4_read()
+		if features & (1 << 7) != 0 {
+			cr4 |= CR4_NO_EXECUTE_PROGRAM
+			kernel_no_execute = true
+		}
+		if features & (1 << 20) != 0 {
+			cr4 |= CR4_GUARD_PROGRAM
+			user_access_guard = 1
+		}
+		cr4_write(cr4)
+	}
 	apic_setup(cpu)
 }
 
@@ -266,6 +288,7 @@ processor_start :: proc "contextless" () {
 			offset_high = u32(stub >> 32),
 		}
 	}
+	gates[8].stack = 1 // The double fault: stack 1 of the task state.
 
 	// The interrupt controller of the device lines (8259): lines 0 to 15
 	// become vectors 32 to 47. Line 0 (the 8254 timer) is off: each

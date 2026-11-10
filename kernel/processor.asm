@@ -146,6 +146,10 @@ page_flush:                      ; (address)
 ;   gs:24  the address of the record
 interrupt_common:
 	PUSH_REGISTERS
+	cmp byte [user_access_guard], 0
+	je .no_guard
+	clac                         ; The interrupted code could be in user_copy, or a program set the flag.
+.no_guard:
 	test byte [rsp + 15 * 8 + 24], 3 ; did the interrupt come from a program?
 	jz interrupt_call
 	swapgs
@@ -188,6 +192,29 @@ resume:                          ; (frame: ^Frame) -> !: run a program
 	add rsp, 16
 	iretq
 
+; user_copy(destination, source, count): the one place where the kernel
+; uses the memory of a program at the addresses of the program. With the
+; guard, the processor refuses such a use everywhere else.
+global user_copy
+user_copy:
+	mov rcx, rdx
+	cmp byte [user_access_guard], 0
+	je .copy
+	stac
+	rep movsb
+	clac
+	ret
+.copy:
+	rep movsb
+	ret
+
+global stack_switch
+stack_switch:                    ; (top: u64, entry: rawptr) -> !: continue on another stack
+	mov rsp, rdi
+	xor ebp, ebp
+	push 0                       ; a null return address: the entry does not return
+	jmp rsi
+
 global processor_self
 processor_self:                  ; () -> ^Processor
 	mov rax, [gs:abs 24]
@@ -221,6 +248,10 @@ stub_ %+ vector:
 
 section .data
 
+global user_access_guard
+user_access_guard: db 0          ; 1: the processors refuse the memory of programs to the kernel (SMAP)
+
+align 8
 global interrupt_stubs
 interrupt_stubs:
 %assign vector 0

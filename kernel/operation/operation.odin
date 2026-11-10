@@ -173,6 +173,7 @@ Inspect_Kind :: enum u64 {
 	Program   = 2, // Program_Report of program slot `index`
 	Processor = 3, // Processor_Report of processor `index`
 	Boot      = 4, // Boot_Report
+	Mappings  = 5, // Mapping_Report. index 0: the kernel half of the addresses. 1: the half of the program that asks.
 }
 
 System_Report :: struct {
@@ -193,6 +194,44 @@ Processor_Report :: struct {
 	busy_time: u64, // Milliseconds with a thread.
 	same:      u64, // 1: the program is the program that asks.
 	apic_id:   u64, // The number that the machine gives to the processor.
+}
+
+// The stacks of the kernel. Each processor has one slot of addresses: a
+// guard page with no memory, the kernel stack, a guard page, the stack of
+// the double fault, and guard pages to the end of the slot.
+KERNEL_STACK_BASE :: 0xFFFF_FF00_0000_0000
+KERNEL_STACK_SLOT_PAGES :: 32
+KERNEL_STACK_PAGES :: 16 // From page 1 of the slot.
+KERNEL_FAULT_STACK_PAGES :: 4 // From page 2 + KERNEL_STACK_PAGES of the slot.
+
+// A run of pages that a page table gives, with one protection.
+Mapping_Flag :: enum u64 {
+	Write   = 0,
+	Execute = 1,
+	Program = 2, // A program can use the pages.
+	Large   = 3, // The table holds pages of 2 MiB.
+}
+
+Mapping_Run :: struct {
+	start:      u64,
+	page_count: u64, // Pages of 4096 bytes.
+	flags:      bit_set[Mapping_Flag;u64],
+}
+
+MAPPING_RUN_CAPACITY :: 96
+
+// What the page table says, as the kernel reads it from the table itself.
+Mapping_Report :: struct {
+	run_count:           u64, // The runs of the table. `runs` has the first ones.
+	runs:                [MAPPING_RUN_CAPACITY]Mapping_Run, // By address.
+	pages:               u64,
+	write_pages:         u64,
+	execute_pages:       u64,
+	write_execute_pages: u64, // Always 0: no page is both.
+	guard_pages:         u64, // Kernel half: the pages around the kernel stacks that have no memory.
+	guards_expected:     u64,
+	kernel_guard:        u64, // 1: the processors refuse the memory of programs to the kernel, outside a copy.
+	kernel_no_execute:   u64, // 1: the processors refuse to execute the memory of programs in the kernel.
 }
 
 // The record of how the machine started. A time is a number of

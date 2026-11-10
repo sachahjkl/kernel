@@ -37,9 +37,11 @@ The scenario does these actions:
 18. Start `budget` from the bar. The program creates memory objects of 64 pages until the kernel answers `No_Budget`, then closes them: its budget has the first number of pages again. It does the same with threads. It takes 256 pages for a new budget, creates 200 pages with it, and closes the new budget: its own budget then pays for the 200 pages. The log has "budget: ok, 10 memory objects then no budget, 3 threads then no budget, each page returned".
 19. Start `processors` from the bar. The machine of the test has four processors. Five threads of the program compute, and the program asks the kernel what each processor runs: the log has "processors: ok, 4 processors ran the program at the same time". Then 1, 2 and 4 threads compute the same picture, and the log has the three times: "processors: the picture took 404 ms with 1 thread, 198 ms with 2 threads, 148 ms with 4 threads" in one run. The test does not check the times.
 20. Start `boot` from the bar. The window shows the boot display: the seven stages of the start on one line of time, the memory that the firmware gave, the machine, the modules of the boot image, the programs. The log has "boot: ok, 7 stages, N memory ranges, N programs".
-21. Call `memory()`. The console prints "budgets N pages: all the free pages": after all the starts and stops of the test, each page is free or paid. It also prints the number of processors, and the times that a processor waited for the kernel lock.
-22. Call `shutdown()`. The machine stops with code 0.
-23. A second machine starts with a boot image that has no compositor. The root service cannot start the compositor: the boot display stays on the screen with "the start failed: cannot start the compositor: status 1", and the machine does not stop. The log has "root: the boot display shows the failure". The test runs this machine first.
+21. Start `pages` from the bar. The window shows what the page tables give, as the kernel reads it from the tables: the direct map, the kernel module, the kernel stacks, and the half of the program. The log has "0 write and execute, 48 guard pages of 48", "pages: ok, the page tables keep the rules" and "pages: the processor refuses the memory of programs to the kernel".
+22. Call `memory()`. The console prints "budgets N pages: all the free pages": after all the starts and stops of the test, each page is free or paid. It also prints the number of processors, and the times that a processor waited for the kernel lock.
+23. Call `shutdown()`. The machine stops with code 0.
+24. A second machine starts with a boot image that has no compositor. The root service cannot start the compositor: the boot display stays on the screen with "the start failed: cannot start the compositor: status 1", and the machine does not stop. The log has "root: the boot display shows the failure". The test runs this machine first.
+25. Six more machines start, each with one test of the kernel on itself. The kernel does one thing that its page tables must refuse: it uses more than its stack, it writes to its code, it writes to its code through the direct map, it executes its data, it reads the memory of a program outside a copy, it executes the code of a program. Each time the processor refuses, the kernel reports the fault with its reason ("the kernel stack of the processor is full", "write to a read-only page", ...), and the machine stops with code 2.
 
 ## The path from power to desktop
 
@@ -159,7 +161,12 @@ The owner did not review these. Each one can change.
 38. **The boot record.** `Inspect` has a new kind, `Boot`, with the record `Boot_Report`: the stages with their times, the memory ranges of the firmware, the firmware, the framebuffer, the sizes, the frequencies of the cycle counter and of the timer. The kernel reads the cycle counter of the processor at the end of each stage. The counter is 0 when the machine starts, so the time before the boot program is the stage "firmware". The kernel measures the frequency of the counter with the wait that already measures the timer. `Program_Report` has `start_time`, and `Processor_Report` has `apic_id`. The kernel also writes each stage on the log ("kernel: boot: ...").
 39. **A start that fails keeps the display.** Before, the root service stopped the machine when a start failed. Now it stops the compositor if it runs, draws the boot display with the failure in red, and waits. A person reads the display and stops the machine. The kernel tool builds a second boot image with no compositor, and a second boot volume, and the machine test checks this path (`scenario_fails`).
 40. **No pause for the eye.** With a start that succeeds, the boot display is on the screen for about 20 ms under QEMU: the system does not wait so that a person can read it. The program `boot` shows the same display at any time.
-41. **The launcher and large windows.** The buttons of the launcher have 4 pixels of padding and 2 of gap (6 and 4 before), for the 14 names. The compositor moves a new window up and left until the screen shows all of it.
+41. **The launcher and large windows.** The buttons of the launcher have 4 pixels of padding and 2 of gap (6 and 4 before), for the names (15 now). The compositor moves a new window up and left until the screen shows all of it.
+42. **Paging protects the kernel from itself.** Owner decision of 2026-11-10: paging is a design tool. `kernel/paging.odin` gives the kernel half of the addresses three parts. The direct map is data: no address of it is executable. The kernel module has each segment with its own protection, and its code and constants are read-only in the direct map too. The kernel stacks are in their own region. No page of the kernel or of a program is both writable and executable: `Memory_Map` refuses the two flags together.
+43. **Guard pages around each kernel stack.** Each processor has a slot of 32 pages of addresses: a guard page, the kernel stack of 16 pages, a guard page, the stack of the double fault of 4 pages, and guard pages to the end. A guard page has no memory. A stack that is full gives a page fault, then a double fault on its own stack, and the kernel reports "the kernel stack of the processor is full". Before, the stack was in the processor record, and a full stack wrote on the record. The first processor leaves the stack of the boot program before it runs the first thread.
+44. **The kernel uses the memory of a program in one place.** `user_copy` (in `kernel/processor.asm`) is the one place where the kernel reads or writes at the addresses of a program. If the processor has the guards (SMEP and SMAP), the kernel sets them: any other use, and any jump to the code of a program, is a page fault. The kernel copies the parameters of an operation to its own memory before it uses them. The QEMU machine has `-cpu max` so that the test has the guards.
+45. **The kernel reads its own tables.** `Inspect` has a new kind, `Mappings`, with the record `Mapping_Report`: the runs of pages with one protection, the counts, the guard pages. At the start, the kernel reads its half and stops the machine if a page is writable and executable or if a guard page is missing. The program `pages` shows the same record.
+46. **Tests of the kernel on itself.** A test that the kernel survives proves nothing about a protection: the test must do the thing that is refused. The boot record has a field `self_test`. The kernel tool builds one boot program for each test (`-define:SELF_TEST=`), and the machine test checks the report of each fault. A normal boot program has the value 0.
 
 ## Gaps
 
@@ -173,8 +180,10 @@ Against the properties and the module contract:
 - The test "a C program calls an Odin module" does not exist.
 - A thread has no preferred processor: it can change processor at each time slice.
 - When each processor runs a thread, a thread that becomes ready waits for the end of a time slice (10 ms at most) or for a thread that waits.
-- Paging protects programs from each other, but the kernel does not yet use it on itself: the kernel image is not split in read-only and no-execute parts, and a kernel stack has no guard page. Owner decision of 2026-11-10: see `HANDOFF.md`.
-- The log is lines of text with the name of the program. It has no channels, no levels and no reader but the serial port. The system has no convention for the input and the output of a program. Proposals wait for the owner (`HANDOFF.md`).
+- Paging does not yet give pages on first use, and two programs that run the same module do not share its code.
+- The 16 pages of the stack of the boot program stay in use after the kernel leaves that stack.
+- With a processor that has no SMEP or SMAP, the kernel runs without these two guards. `pages` and the log say so.
+- The log is lines of text with the name of the program. It has no channels, no levels and no reader but the serial port. The owner asked for records in channels (`HANDOFF.md`). The system has no standard input and no standard output, by decision of the owner: a command has typed parameters and a typed result, and a flow of data is a ring of records.
 - The bar has place for one more name. More programs need a menu.
 - The boot display needs 976 x 700 pixels. On a smaller screen it is cut.
 - A thread that stops with a lock held keeps the lock: the other threads wait with no end.
@@ -192,6 +201,7 @@ Input:
 
 ## Next steps
 
-1. Paging as a design tool: guard pages, read-only and no-execute parts of the kernel, pages on first use.
+1. The log as records in channels, with a log service and a `log` window (`HANDOFF.md`).
+2. Paging, second part: pages on first use, and read-only code that programs share.
 2. Damage rectangles in the compositor.
 3. A block device service (virtio), then the storage service.

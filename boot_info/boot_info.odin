@@ -10,7 +10,7 @@ MAGIC :: u64(0x4F464E49544F4F42) // The bytes "BOOTINFO".
 DIRECT_MAP_BASE :: uintptr(0xFFFF_8000_0000_0000)
 KERNEL_BASE :: uintptr(0xFFFF_FFFF_8000_0000)
 PAGE_SIZE :: 4096
-KERNEL_STACK_PAGES :: 16
+BOOT_STACK_PAGES :: 16
 
 Memory_Kind :: enum u32 {
 	Reserved = 0, // Not usable: firmware, devices, holes.
@@ -59,6 +59,20 @@ Boot_Info :: struct {
 	cycles_loaded:      u64, // The kernel and the boot image are in memory.
 	firmware_vendor:    [32]u8, // Zero bytes after the name.
 	firmware_revision:  u64,
+	self_test:          Self_Test,
+}
+
+// A test of the kernel on itself. The kernel does one thing that its page
+// tables must refuse, and the machine stops with the report of the fault.
+// The kernel tool builds one boot program for each test.
+Self_Test :: enum u64 {
+	None            = 0,
+	Stack_Overflow  = 1, // Use more than the kernel stack.
+	Write_Code      = 2, // Write to the code of the kernel.
+	Write_Code_View = 3, // Write to the code of the kernel through the direct map.
+	Execute_Data    = 4, // Execute the data of the kernel.
+	Read_Program    = 5, // Read the memory of a program, outside a copy.
+	Execute_Program = 6, // Execute the code of a program.
 }
 
 // physical gives a pointer to physical memory, through the direct map.

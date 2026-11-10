@@ -54,6 +54,7 @@ efi_main :: proc "win64" (image: rawptr, system_table: ^Efi_System_Table) -> Efi
 	boot := (^info.Boot_Info)(allocate(1))
 	boot.magic = info.MAGIC
 	boot.cycles_start = cycles_start
+	boot.self_test = info.Self_Test(#config(SELF_TEST, 0))
 	boot.framebuffer = framebuffer()
 	for &character, index in boot.firmware_vendor[:len(boot.firmware_vendor) - 1] {
 		unit := system.firmware_vendor[index]
@@ -95,7 +96,7 @@ efi_main :: proc "win64" (image: rawptr, system_table: ^Efi_System_Table) -> Efi
 	boot.boot_image_size = u64(len(boot_image))
 	boot.cycles_loaded = u64(intrinsics.read_cycle_counter())
 
-	stack := u64(uintptr(allocate(info.KERNEL_STACK_PAGES))) + info.KERNEL_STACK_PAGES * PAGE_SIZE
+	stack := u64(uintptr(allocate(info.BOOT_STACK_PAGES))) + info.BOOT_STACK_PAGES * PAGE_SIZE
 	ranges := ([^]info.Memory_Range)(allocate((MEMORY_RANGE_CAPACITY * size_of(info.Memory_Range) + PAGE_SIZE - 1) / PAGE_SIZE))
 	firmware_map := allocate(FIRMWARE_MAP_PAGES)
 

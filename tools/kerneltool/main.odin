@@ -27,11 +27,13 @@ BOOT_OBJECT_FOLDER :: BUILD_FOLDER + "/boot"
 BOOT_PROGRAM :: BOOT_OBJECT_FOLDER + "/BOOTX64.EFI"
 BOOT_VOLUME :: BUILD_FOLDER + "/boot_volume.img"
 BOOT_VOLUME_FAILS :: BUILD_FOLDER + "/boot_volume_fails.img"
+BOOT_VOLUME_SELF_TEST :: BUILD_FOLDER + "/boot_volume_self_test_%d.img"
 // The path where the firmware looks for the boot program of a disk.
 BOOT_PROGRAM_PATH :: "EFI/BOOT/BOOTX64.EFI"
 FIRMWARE_VARIABLES :: BUILD_FOLDER + "/ovmf_vars.fd"
 TEST_OUTPUT :: BUILD_FOLDER + "/test_output.txt"
 TEST_OUTPUT_FAILS :: BUILD_FOLDER + "/test_output_fails.txt"
+TEST_OUTPUT_SELF_TEST :: BUILD_FOLDER + "/test_output_self_test_%d.txt"
 
 DOCUMENT_SCREENSHOT_FOLDER :: "docs/screenshots"
 // The development log: one folder of pictures per run of `screenshots`. It
@@ -86,7 +88,16 @@ usage :: proc() {
 // which contains the kernel module and a boot image. It builds a second
 // boot program for the test of a start that fails.
 run_build :: proc(args: []string) -> int {
-	if !build_modules() || !build_boot_program("boot.image", BOOT_VOLUME) || !build_boot_program("boot_fails.image", BOOT_VOLUME_FAILS) {
+	if !build_modules() || !build_boot_program("boot_fails.image", BOOT_VOLUME_FAILS, 0) {
+		return EXIT_FAILURE
+	}
+	// One boot program for each test of the kernel on itself.
+	for test in self_tests {
+		if !build_boot_program("boot.image", self_test_file(BOOT_VOLUME_SELF_TEST, test.number), test.number) {
+			return EXIT_FAILURE
+		}
+	}
+	if !build_boot_program("boot.image", BOOT_VOLUME, 0) {
 		return EXIT_FAILURE
 	}
 	return 0
@@ -94,7 +105,7 @@ run_build :: proc(args: []string) -> int {
 
 // build_boot_program builds the boot program with a boot image of the build
 // folder, and writes a boot volume with it. BOOT_PROGRAM is the last one.
-build_boot_program :: proc(image: string, volume_path: string) -> bool {
+build_boot_program :: proc(image: string, volume_path: string, self_test: int) -> bool {
 	reset_folder(BOOT_OBJECT_FOLDER) or_return
 	run(
 		{
@@ -110,6 +121,7 @@ build_boot_program :: proc(image: string, volume_path: string) -> bool {
 			"-o:speed",
 			"-vet",
 			strings.concatenate({"-define:BOOT_IMAGE=../build/", image}, context.temp_allocator),
+			fmt.tprintf("-define:SELF_TEST=%d", self_test),
 			"-out:" + BOOT_OBJECT_FOLDER + "/boot.obj",
 		},
 	) or_return
@@ -155,7 +167,7 @@ run_test :: proc(args: []string) -> int {
 		return EXIT_FAILURE
 	}
 	// A start that fails ends when the tool ends QEMU: status 0.
-	if !machine_test(scenario_fails[:], BOOT_VOLUME_FAILS, TEST_OUTPUT_FAILS, 0) || !machine_test(scenario[:], BOOT_VOLUME, TEST_OUTPUT, MACHINE_STOP_OK) || !test_modules() || !test_descriptions() {
+	if !machine_test(scenario_fails[:], BOOT_VOLUME_FAILS, TEST_OUTPUT_FAILS, 0) || !self_tests_run() || !machine_test(scenario[:], BOOT_VOLUME, TEST_OUTPUT, MACHINE_STOP_OK) || !test_modules() || !test_descriptions() {
 		return EXIT_FAILURE
 	}
 	fmt.println("kerneltool: all tests passed")
@@ -230,6 +242,8 @@ machine_command :: proc(volume: string, test_output: string) -> (command: []stri
 		"kvm",
 		"-accel",
 		"tcg",
+		"-cpu",
+		"max", // Each feature that the host processor, or the emulation, has.
 		"-m",
 		"512",
 		"-smp",

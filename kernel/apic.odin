@@ -268,7 +268,8 @@ processors_start :: proc "contextless" (boot: ^info.Boot_Info) {
 		return
 	}
 	direct(table, [512]u64)^ = direct(kernel_table, [512]u64)^
-	direct(table, [512]u64)[0] = direct(table, [512]u64)[(u64(info.DIRECT_MAP_BASE) >> 39) & 511]
+	// The start code executes at low addresses: this view of memory is executable.
+	direct(table, [512]u64)[0] = direct(table, [512]u64)[DIRECT_MAP_INDEX] &~ PAGE_NO_EXECUTE
 
 	code_size := int(uintptr(&ap_start_end) - uintptr(&ap_start_begin))
 	code := ([^]u8)(direct(AP_BASE, u8))
@@ -309,6 +310,7 @@ processors_start :: proc "contextless" (boot: ^info.Boot_Info) {
 			log("kernel: the processor ", u64(id), " did not start")
 			apic_send(id, 0x4500) // It stays in reset: its record ends.
 			pit_wait(10_000)
+			stacks_free(cpu.index)
 			frames_free(physical_of(cpu), (size_of(Processor) + PAGE_SIZE - 1) / PAGE_SIZE)
 			continue
 		}

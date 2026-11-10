@@ -36,6 +36,10 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Processor record | The record that the kernel keeps for one processor: its kernel stack, its current thread, its page table | per-CPU data |
 | Stage | One part of the start of the machine, with a start time and a duration: the firmware, two of the boot program, four of the kernel | phase, boot step |
 | Boot record | The record that the kernel keeps of how the machine started (`Boot_Report`): the stages, the memory ranges of the firmware, the firmware, the framebuffer | boot log, dmesg |
+| Guard page | A page of addresses with no memory, next to a stack: a use of it is a page fault, not a write on other memory | red zone, canary |
+| Direct map | The part of the kernel half of the addresses that shows all physical memory. It is never executable | physmap, identity map |
+| Run | Pages that follow each other in a page table with one protection (`Mapping_Run`) | extent, VMA |
+| Self test | A boot of the machine where the kernel does one thing that its page tables must refuse, to prove that the processor refuses it | negative test, lkdtm |
 | Kernel lock | The one lock of the kernel: one processor at a time runs kernel code | big kernel lock, giant lock |
 | Thread area | The memory that the kernel makes for one thread: the thread record, then the kernel ring of the thread | |
 | Service | A program that other programs call through rings. A service has no special privilege | daemon, server, driver |

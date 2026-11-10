@@ -29,6 +29,8 @@ The system boots under QEMU to a graphical desktop with a console, a system tool
 
 ![A start that fails: the boot display stays, with the failure](docs/screenshots/boot_fails.png)
 
+![The page tables as the kernel reads them: the direct map, the kernel stacks between guard pages, the kernel module, the half of a program](docs/screenshots/pages.png)
+
 ![Four processors run the threads of one program at the same time; the same picture with 1, 2 and 4 threads](docs/screenshots/processors.png)
 
 ![The temple of Jon: a portrait of Jonathan Blow that turns](docs/screenshots/temple.png)

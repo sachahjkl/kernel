@@ -345,6 +345,10 @@ map_region :: proc "contextless" (program: ^Program, region_index: u32, address:
 			return 0, .Bad_Address
 		}
 	}
+	// No page is both writable and executable.
+	if .Write in flags && .Execute in flags {
+		return 0, .Bad_Operation
+	}
 	bits := PAGE_PRESENT | PAGE_USER
 	if .Write in flags {
 		bits |= PAGE_WRITE
@@ -788,7 +792,8 @@ kernel_interrupt :: proc "c" (frame: ^Frame) {
 	if !from_program && frame.vector < VECTOR_INTERRUPT_BASE {
 		// The processor can hold the kernel lock: it does not take it.
 		name := EXCEPTION_NAMES[frame.vector]
-		log("kernel: exception in the kernel: ", name, " vector ", frame.vector, " error ", Hex(frame.error), " at ", Hex(frame.rip), " address ", Hex(cr2_read()))
+		address := cr2_read()
+		log("kernel: exception in the kernel: ", name, " vector ", frame.vector, " error ", Hex(frame.error), " at ", Hex(frame.rip), " address ", Hex(address), ": ", fault_reason(frame, address))
 		machine_stop(2)
 	}
 	cpu := processor_self()

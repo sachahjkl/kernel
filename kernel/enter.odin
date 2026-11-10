@@ -7,6 +7,11 @@ import op "operation"
 // K4: the kernel entry. It executes the command records of the kernel ring
 // of the program, then makes the program wait if it asked for that.
 
+// Records that are too large for the kernel stack. The kernel lock guards them.
+log_text: [4096]u8
+boot_report_record: op.Boot_Report
+mapping_report_record: op.Mapping_Report
+
 enter :: proc "contextless" (index: u32) {
 	thread := &threads[index]
 	programs[thread.program].entries += 1
@@ -64,7 +69,8 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		log_bytes({'['})
 		log_bytes(transmute([]u8)program_name(program))
 		log_bytes({']', ' '})
-		log_bytes(([^]u8)(uintptr(v[1]))[:v[2]])
+		user_copy(&log_text, rawptr(uintptr(v[1])), v[2])
+		log_bytes(log_text[:v[2]])
 		log_bytes({'\r', '\n'})
 		return .Ok
 
@@ -121,7 +127,9 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		if v[2] > 31 || !user_range(program.table, v[1], v[2], false) {
 			return .Bad_Address
 		}
-		created := program_create(budget.object, ([^]u8)(uintptr(v[1]))[:v[2]]) or_return
+		name: [32]u8
+		user_copy(&name, rawptr(uintptr(v[1])), v[2])
+		created := program_create(budget.object, name[:v[2]]) or_return
 		handle := handle_insert(program, {kind = .Program, rights = RIGHTS_PROGRAM, object = created})
 		if handle == 0 {
 			program_stop(created, 0)
@@ -247,13 +255,15 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		if !user_range(program.table, v[0], v[1] * size_of(op.Word), false) {
 			return .Bad_Address
 		}
-		for word in ([^]op.Word)(uintptr(v[0]))[:v[1]] {
+		for index in 0 ..< v[1] {
+			word: op.Word
+			user_copy(&word, rawptr(uintptr(v[0] + index * size_of(op.Word))), size_of(op.Word))
 			physical := word_address(program, word.address)
 			if physical == 0 {
 				thread.word_changed = true // The wait cannot end by this word: do not wait.
 				return .Bad_Address
 			}
-			if (^u32)(uintptr(word.address))^ != u32(word.value) {
+			if direct(physical, u32)^ != u32(word.value) {
 				thread.word_changed = true
 			}
 			thread.words[thread.word_count] = physical
@@ -326,7 +336,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			for budget in budgets {
 				report.budget_pages += budget.amounts.pages
 			}
-			(^op.System_Report)(uintptr(v[3]))^ = report
+			user_copy(rawptr(uintptr(v[3])), &report, size_of(report))
 			results[0] = size_of(op.System_Report)
 		case .Program:
 			if v[4] < size_of(op.Program_Report) || !user_range(program.table, v[3], size_of(op.Program_Report), true) {
@@ -354,14 +364,26 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 					}
 				}
 			}
-			(^op.Program_Report)(uintptr(v[3]))^ = report
+			user_copy(rawptr(uintptr(v[3])), &report, size_of(report))
 			results[0] = size_of(op.Program_Report)
 		case .Boot:
 			if v[4] < size_of(op.Boot_Report) || !user_range(program.table, v[3], size_of(op.Boot_Report), true) {
 				return .Bad_Address
 			}
-			boot_report((^op.Boot_Report)(uintptr(v[3])))
+			boot_report(&boot_report_record)
+			user_copy(rawptr(uintptr(v[3])), &boot_report_record, size_of(op.Boot_Report))
 			results[0] = size_of(op.Boot_Report)
+		case .Mappings:
+			if v[4] < size_of(op.Mapping_Report) || !user_range(program.table, v[3], size_of(op.Mapping_Report), true) {
+				return .Bad_Address
+			}
+			if v[2] == 0 {
+				mappings_report(&mapping_report_record, kernel_table, 256, 512)
+			} else {
+				mappings_report(&mapping_report_record, program.table, 0, 256)
+			}
+			user_copy(rawptr(uintptr(v[3])), &mapping_report_record, size_of(op.Mapping_Report))
+			results[0] = size_of(op.Mapping_Report)
 		case .Processor:
 			if v[4] < size_of(op.Processor_Report) || !user_range(program.table, v[3], size_of(op.Processor_Report), true) {
 				return .Bad_Address
@@ -376,7 +398,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 					report.same = u64(programs[report.program].table == program.table)
 				}
 			}
-			(^op.Processor_Report)(uintptr(v[3]))^ = report
+			user_copy(rawptr(uintptr(v[3])), &report, size_of(report))
 			results[0] = size_of(op.Processor_Report)
 		case .None:
 			return .Bad_Operation

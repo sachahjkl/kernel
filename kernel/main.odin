@@ -33,9 +33,17 @@ entry :: proc "c" (boot: ^info.Boot_Info) -> ! {
 	log(KERNEL_MARK)
 	root_start(boot)
 	stage_end(.Kernel_Root)
+	paging_audit()
 	for stage in Stage {
 		log("kernel: boot: ", STAGE_NAMES[stage], ": ", microseconds(stage_cycles[stage] - (stage == .Firmware ? 0 : stage_cycles[Stage(int(stage) - 1)])), " us")
 	}
+	// The stack of the boot program has no guard pages: the processor
+	// continues on its own kernel stack.
+	stack_switch(processors[0].stack_top, rawptr(first_run))
+}
+
+first_run :: proc "c" () -> ! {
+	self_test(boot_record.self_test, &boot_record)
 	schedule()
 }
 
