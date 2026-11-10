@@ -1140,9 +1140,11 @@ scenario := [?]Step {
 	// stops three calls deep: the tool names the functions of its stack
 	// trace from the linked file of the module.
 	{kind = .Launch, text = "errors"},
+	// The window opens while the cases run: its line can come before or
+	// after any case.
+	{kind = .Wait, text = "compositor: surface errors", any_order = true},
 	{kind = .Trace, text = "errors: stack of fault: ", names = "fault::three fault::two fault::one entry"},
 	{kind = .Wait, text = "errors: ok, 19 cases, each with the expected error record"},
-	{kind = .Wait, text = "compositor: surface errors", any_order = true},
 	{kind = .Wait, text = "errors: under contention: "},
 	{kind = .Wait, text = " handles; 0 records contradict their status"},
 	{kind = .Wait, text = "errors: a kernel operation that succeeds: "},
