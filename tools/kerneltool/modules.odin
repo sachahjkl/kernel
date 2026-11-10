@@ -51,6 +51,8 @@ module_builds := [?]Module_Build {
 	{name = "budget", source = "programs/budget", image = true},
 	{name = "flow", source = "programs/flow", image = true},
 	{name = "crowd", source = "programs/crowd", image = true},
+	{name = "tally", source = "programs/tally", image = true},
+	{name = "manual", source = "programs/manual", image = true},
 	{name = "clock", source = "programs/clock", image = true},
 	{name = "terminal", source = "programs/terminal", image = true},
 	{name = "flood", source = "programs/flood", image = true},
@@ -137,8 +139,8 @@ build_module :: proc(build: Module_Build) -> bool {
 	// Only the exports of the module are visible in the linked object.
 	script := strings.builder_make(context.temp_allocator)
 	strings.write_string(&script, "{ global: ")
-	exports := describe_package(build.source) or_return
-	for export in exports {
+	description := describe_package(build.source) or_return
+	for export in description.exports {
 		fmt.sbprintf(&script, "%s; ", export.name)
 	}
 	strings.write_string(&script, "local: *; };\n")
@@ -174,7 +176,7 @@ build_module :: proc(build: Module_Build) -> bool {
 	for name in build.imports {
 		append(&imports, Import_File{name = name, file = read_file(module_path(name)) or_return})
 	}
-	file := convert(build.name, elf, exports, imports[:]) or_return
+	file := convert(build.name, elf, description, imports[:]) or_return
 	defer delete(file)
 	if err := os.write_entire_file(module_path(build.name), file); err != nil {
 		fmt.eprintfln("kerneltool: cannot write %s: %v", module_path(build.name), err)
@@ -296,7 +298,13 @@ test_descriptions :: proc() -> bool {
 	}
 	for build in module_builds {
 		file := read_file(module_path(build.name)) or_return
-		exports := describe_package(build.source) or_return
+		described := describe_package(build.source) or_return
+		exports := described.exports
+		about, text := module.documentation(file)
+		if about != described.about || text != described.text || about == "" {
+			fmt.eprintfln("kerneltool: test failed: the documentation of %s does not agree with its source", build.name)
+			return false
+		}
 		if int(module.count(file, .Exports)) != len(exports) + 1 {
 			fmt.eprintfln("kerneltool: test failed: %s has %d exports, its source has %d", build.name, module.count(file, .Exports) - 1, len(exports))
 			return false
@@ -308,6 +316,7 @@ test_descriptions :: proc() -> bool {
 				ok &&
 				module.string_at(file, function.name_offset, function.name_count) == description.name &&
 				module.string_at(file, function.about_offset, function.about_count) == description.about &&
+				module.string_at(file, function.text_offset, function.text_count) == description.text &&
 				int(function.parameter_count) == len(description.parameters) &&
 				function.result == description.result
 			strings.builder_reset(&last)
@@ -322,6 +331,9 @@ test_descriptions :: proc() -> bool {
 				fmt.eprintfln("kerneltool: test failed: the description of %s in %s does not agree with its source", description.name, build.name)
 				return false
 			}
+		}
+		if build.name == "math" {
+			fmt.printfln("kerneltool: test passed: the documentation of %s comes from its source: \"%s\", and %d bytes of text", build.name, about, len(text))
 		}
 		if len(exports) > 1 {
 			fmt.printfln("kerneltool: test passed: the %d descriptions of %s come from its source; the last is %s", len(exports), build.name, strings.to_string(last))

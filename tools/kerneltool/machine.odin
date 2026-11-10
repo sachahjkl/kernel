@@ -33,7 +33,7 @@ Step_Kind :: enum {
 	Launch, // Open the menu of the launcher, and press the line of the program text.
 	Drag, // Hold the left button from (x, y) to (to_x, to_y).
 	Shot, // Save the screen as text.png.
-	Move, // Drag the window with the title text to the place (to_x, to_y). The tool reads the first place of the window in the log.
+	Move, // Drag the window with the title text to the place (to_x, to_y). The tool reads the place of the window in the log, before and after.
 	Film, // Save the screen 25 times in one second, for x milliseconds, as the next pictures of the film.
 	Quit, // End QEMU: the machine does not stop by itself.
 }
@@ -397,6 +397,77 @@ scenario := [?]Step {
 	{kind = .Type, text = "stop(\"paint\")"},
 	{kind = .Wait, text = "root: paint stopped"},
 
+	// One module in each role: the file of tally is a program, a service, a
+	// library in the memory of the console, and a sandboxed program. Each
+	// program that runs the module has its own count.
+	{kind = .Launch, text = "tally"},
+	{kind = .Wait, text = "tally: ok"},
+	{kind = .Wait, text = "compositor: surface tally"},
+	{kind = .Move, text = "tally", to_x = 616, to_y = 530}, // Under the console, at the right.
+	{kind = .Click, x = 70, y = 300},
+	{kind = .Type, text = "clear()"},
+	{kind = .Type, text = "connect(\"tally\")"},
+	{kind = .Wait, text = "[console] tally: 5 commands of a service that runs"},
+	{kind = .Type, text = "tally.add(5, \"from the console, to the service\")"},
+	{kind = .Wait, text = "[console] 5"},
+	{kind = .Type, text = "load(\"tally\")"},
+	{kind = .Wait, text = "[console] tally: 5 commands, hash"},
+	{kind = .Type, text = "add(2, \"in the console\") + add(2, \"in the console\")"},
+	{kind = .Wait, text = "[console] 6"},
+	{kind = .Type, text = "tally.total()"},
+	{kind = .Wait, text = "[console] 5"},
+	{kind = .Type, text = "isolate(\"tally\")"},
+	{kind = .Wait, text = "error: the module tally is loaded; unload(\"tally\") removes it"},
+	{kind = .Type, text = "unload(\"tally\")"},
+	{kind = .Wait, text = "[console] tally: 5 commands removed, the module left the memory of the console"},
+	{kind = .Type, text = "total()"},
+	{kind = .Wait, text = "error: no command has the name total"},
+	{kind = .Type, text = "isolate(\"tally\")"},
+	{kind = .Wait, text = "[console] tally: 5 commands in a sandboxed program"},
+	{kind = .Type, text = "add(30, \"in a sandboxed program\") + adds()"},
+	{kind = .Wait, text = "[console] 31"},
+	{kind = .Type, text = "last()"},
+	{kind = .Wait, text = "[console] in a sandboxed program"},
+	{kind = .Type, text = "tally.last()"},
+	{kind = .Wait, text = "[console] from the console, to the service"},
+	{kind = .Shot, text = "roles"},
+	{kind = .Type, text = "unload(\"tally\")"},
+	{kind = .Wait, text = "[console] tally: 5 commands removed, its sandboxed program stops"},
+	{kind = .Type, text = "tally.total()"},
+	{kind = .Wait, text = "[console] 5"},
+
+	// The manual shows the documentation that each module carries. It is a
+	// service: the console asks for a page, and reads a description as text.
+	{kind = .Launch, text = "manual"},
+	{kind = .Wait, text = "compositor: surface manual", any_order = true},
+	{kind = .Wait, text = "manual: ok, "},
+	{kind = .Move, text = "manual", to_x = 204, to_y = 742},
+	{kind = .Click, x = 70, y = 300},
+	{kind = .Type, text = "connect(\"manual\")"},
+	{kind = .Wait, text = "[console] manual: 3 commands of a service that runs"},
+	{kind = .Type, text = "manual.about(\"math\")"},
+	{kind = .Wait, text = "[console] A module of commands (property 19)"},
+	{kind = .Type, text = "manual.signature(\"tally\", 1)"},
+	{kind = .Wait, text = "[console] add(amount: Integer, note: Text) -> Integer"},
+	{kind = .Type, text = "manual.show(\"nothing\")"},
+	{kind = .Wait, text = "[console] -1"},
+	{kind = .Type, text = "manual.show(\"tally\")"},
+	{kind = .Wait, text = "manual: tally: a program, 5 exports, "},
+	{kind = .Move, text = "manual", to_x = 76, to_y = 60},
+	{kind = .Shot, text = "manual"},
+	// The keys of the manual: the next module of the boot image, then the one before.
+	{kind = .Key, text = "down"},
+	{kind = .Wait, text = "manual: manual: a program, 3 exports, "},
+	{kind = .Key, text = "pgdn"},
+	{kind = .Key, text = "up"},
+	{kind = .Wait, text = "manual: tally: a program, 5 exports, "},
+	{kind = .Move, text = "manual", to_x = 204, to_y = 742},
+	{kind = .Click, x = 70, y = 300},
+	{kind = .Type, text = "stop(\"manual\")"},
+	{kind = .Wait, text = "root: manual stopped"},
+	{kind = .Type, text = "stop(\"tally\")"},
+	{kind = .Wait, text = "root: tally stopped"},
+
 	// The log: records in channels. The kernel sets the program of each
 	// record; a program with the grant reads the records.
 	{kind = .Launch, text = "log"},
@@ -533,15 +604,19 @@ pointer_button :: proc(machine: ^Machine, down: bool) {
 WINDOW_GRAB_X :: 100 // A point of the title bar of each window.
 WINDOW_GRAB_Y :: 12
 
-// window_place gives the place where the compositor put the last window
-// with a title: "compositor: surface title 480x320 at 276,232".
+// window_place gives the place of the last window with a title. The
+// compositor writes it when it makes the window, and when a person puts the
+// window down: "compositor: surface title 480x320 at 276,232" and
+// "compositor: window title moved to 60,742".
 window_place :: proc(machine: ^Machine, title: string) -> (x, y: int, ok: bool) {
 	log, err := os.read_entire_file(machine.output, context.temp_allocator)
 	if err != nil {
 		return 0, 0, false
 	}
 	text := string(log)
-	start := strings.last_index(text, strings.concatenate({"compositor: surface ", title, " "}, context.temp_allocator))
+	made := strings.last_index(text, strings.concatenate({"compositor: surface ", title, " "}, context.temp_allocator))
+	moved := strings.last_index(text, strings.concatenate({"compositor: window ", title, " moved to "}, context.temp_allocator))
+	start := max(made, moved)
 	if start < 0 {
 		return 0, 0, false
 	}
@@ -549,11 +624,12 @@ window_place :: proc(machine: ^Machine, title: string) -> (x, y: int, ok: bool) 
 	if end := strings.index_byte(line, '\n'); end >= 0 {
 		line = line[:end]
 	}
-	at := strings.index(line, " at ")
+	mark := moved > made ? " moved to " : " at "
+	at := strings.index(line, mark)
 	if at < 0 {
 		return 0, 0, false
 	}
-	place := strings.trim_space(line[at + 4:])
+	place := strings.trim_space(line[at + len(mark):])
 	comma := strings.index_byte(place, ',')
 	if comma < 0 {
 		return 0, 0, false
@@ -744,6 +820,8 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 			time.sleep(KEY_PAUSE)
 		case .Click, .Drag, .Launch, .Move:
 			step := step
+			moved_title: string
+			moved_x, moved_y: int
 			if step.kind == .Move {
 				// The compositor wrote where it put the window. The pointer
 				// takes the title bar.
@@ -758,6 +836,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 					fmt.eprintfln("kerneltool: test failed: step %d: the log does not have the place of the window %s", index + 1, step.text)
 					return false
 				}
+				moved_title, moved_x, moved_y = step.text, step.to_x, step.to_y
 				step.kind = .Drag
 				step.x, step.y = x + WINDOW_GRAB_X, y + WINDOW_GRAB_Y
 				step.to_x, step.to_y = step.to_x + WINDOW_GRAB_X, step.to_y + WINDOW_GRAB_Y
@@ -790,6 +869,20 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				pointer_move(machine, step.to_x, step.to_y)
 			}
 			pointer_button(machine, false)
+			if moved_title != "" {
+				// The compositor writes the new place: the window did move.
+				arrived := false
+				for start := time.now(); !arrived && time.since(start) < STEP_TIMEOUT; {
+					x, y, found := window_place(machine, moved_title)
+					if arrived = found && x == moved_x && y == moved_y; !arrived {
+						time.sleep(50 * time.Millisecond)
+					}
+				}
+				if !arrived {
+					fmt.eprintfln("kerneltool: test failed: step %d: the window %s is not at %d,%d", index + 1, moved_title, moved_x, moved_y)
+					return false
+				}
+			}
 		case .Quit:
 			monitor_send(machine, "quit")
 		case .Shot:

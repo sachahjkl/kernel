@@ -42,17 +42,35 @@ Sandbox :: struct {
 	calls:         u32, // The tag of the last call.
 }
 
-SANDBOX_CAPACITY :: 4
+SANDBOX_CAPACITY :: 8
 
+// A sandbox with no name is free.
 sandboxes: [SANDBOX_CAPACITY]Sandbox
-sandbox_count: int
+
+// sandbox_free gives a free sandbox, and its number. 0: all have a user.
+sandbox_free :: proc "contextless" () -> (sandbox: ^Sandbox, number: int) {
+	for &item, index in sandboxes {
+		if item.name == "" {
+			return &item, index + 1
+		}
+	}
+	return nil, 0
+}
 image_memory: system.Handle
 
-COMMAND_CAPACITY :: 48
+COMMAND_CAPACITY :: 96
 LOADED_CAPACITY :: 8
 
-// The modules that the console loaded, by hash.
-loaded: [LOADED_CAPACITY][32]u8
+// A module that the console loaded.
+Loaded :: struct {
+	hash:    [32]u8,
+	name:    string, // In the boot image.
+	file:    []u8, // In the boot image.
+	base:    u64, // A direct load: where the module is in this program.
+	sandbox: int, // Not 0: the module is in sandboxes[sandbox - 1].
+}
+
+loaded: [LOADED_CAPACITY]Loaded
 loaded_count: int
 module_base: u64 = op.MODULE_BASE // Where the next module goes.
 
@@ -66,7 +84,7 @@ requests_memory: system.Handle
 request_count: u32 // The tag of the last command to the root service.
 
 // The names of the commands of services: "program.export".
-names: [1024]u8
+names: [2048]u8
 names_count: int
 
 command :: proc "contextless" (name: string, parameters: []Kind, result: Kind, about: string, run: proc "contextless" (arguments: []Value) -> Value) {
@@ -92,6 +110,7 @@ commands_start :: proc "contextless" () {
 	command("modules", {}, .None, "list the modules of the boot image", list_modules)
 	command("load", {.Text}, .None, "load a module here: direct calls", load_module)
 	command("isolate", {.Text}, .None, "load a module in a sandboxed program", isolate_module)
+	command("unload", {.Text}, .None, "remove a module that load or isolate added", unload_module)
 	command("connect", {.Text}, .None, "call the exports of a service that runs", connect_service)
 	command("start", {.Text}, .None, "start a program, by module name", start_program)
 	command("stop", {.Text}, .None, "stop a program, by name", stop_program)
@@ -247,9 +266,9 @@ add_module :: proc "contextless" (name: string, isolate: bool) -> Value {
 		if blake3.hash(file) != entry.hash || module.validate(file) != .None {
 			return fail("the module ", name, " does not have the hash that the boot image names")
 		}
-		for &hash in loaded[:loaded_count] {
-			if hash == entry.hash {
-				return fail("the module ", name, " is loaded")
+		for &item in loaded[:loaded_count] {
+			if item.hash == entry.hash {
+				return fail("the module ", name, " is loaded; unload(\"", name, "\") removes it")
 			}
 		}
 		callable := callable_count(file)
@@ -260,11 +279,13 @@ add_module :: proc "contextless" (name: string, isolate: bool) -> Value {
 			return fail("no room for the commands of ", name)
 		}
 		base := module_base
+		number := 0
 		if isolate {
-			if sandbox_count == SANDBOX_CAPACITY || entry.offset % system.PAGE_SIZE != 0 {
+			sandbox: ^Sandbox
+			sandbox, number = sandbox_free()
+			if sandbox == nil || entry.offset % system.PAGE_SIZE != 0 {
 				return fail("no room for a sandboxed program")
 			}
-			sandbox := &sandboxes[sandbox_count]
 			sandbox^ = {
 				name       = system.name_of(entry.name[:]),
 				first_page = entry.offset / system.PAGE_SIZE,
@@ -272,9 +293,9 @@ add_module :: proc "contextless" (name: string, isolate: bool) -> Value {
 				file_size  = entry.size,
 			}
 			if !sandbox_create(sandbox) {
+				sandbox^ = {}
 				return fail("cannot start a sandboxed program for ", name)
 			}
-			sandbox_count += 1
 		} else {
 			size, status := system.module_load(file, base)
 			if status != .Ok {
@@ -282,13 +303,52 @@ add_module :: proc "contextless" (name: string, isolate: bool) -> Value {
 			}
 			module_base += size + system.PAGE_SIZE
 		}
-		loaded[loaded_count] = entry.hash
+		loaded[loaded_count] = {hash = entry.hash, name = system.name_of(entry.name[:]), file = file, base = base, sandbox = number}
 		loaded_count += 1
-		commands_add(file, "", isolate ? sandbox_count : 0, base)
+		commands_add(file, "", number, base)
 		print(name, ": ", i64(callable), isolate ? " commands in a sandboxed program, hash " : " commands, hash ", hex_text(entry.hash[:8]), "...\n")
 		return {}
 	}
 	return fail("no module has the name ", name)
+}
+
+// unload_module removes a module that load or isolate added: its commands
+// leave the console. A direct load leaves the memory of the console. A call
+// host stops: the kernel stops a program that no handle names.
+unload_module :: proc "contextless" (arguments: []Value) -> Value {
+	name := arguments[0].text
+	for &item, index in loaded[:loaded_count] {
+		if item.name != name {
+			continue
+		}
+		head, _ := module.header(item.file)
+		kept := 0
+		for &entry in commands[:command_count] {
+			module_command := entry.run == nil && (item.sandbox != 0 ? entry.sandbox == item.sandbox : entry.sandbox == 0 && u64(entry.address) >= item.base && u64(entry.address) - item.base < head.memory_size)
+			if !module_command {
+				commands[kept] = entry
+				kept += 1
+			}
+		}
+		removed := command_count - kept
+		command_count = kept
+		if item.sandbox != 0 {
+			sandbox := &sandboxes[item.sandbox - 1]
+			sandbox_end(sandbox)
+			system.ring_close(&sandbox.ring)
+			system.memory_unmap(raw_data(sandbox.region))
+			system.close(sandbox.ring_memory)
+			system.close(sandbox.region_memory)
+			sandbox^ = {}
+		} else {
+			system.module_unload(item.file, item.base)
+		}
+		print(item.name, ": ", i64(removed), item.sandbox != 0 ? " commands removed, its sandboxed program stops\n" : " commands removed, the module left the memory of the console\n")
+		loaded[index] = loaded[loaded_count - 1]
+		loaded_count -= 1
+		return {}
+	}
+	return fail("load and isolate added no module with the name ", name)
 }
 
 // callable_count gives the count of exports of a module that the console
@@ -347,20 +407,21 @@ commands_add :: proc "contextless" (file: []u8, prefix: string, sandbox: int, ba
 // program by its hash: the console reads the descriptions there.
 connect_service :: proc "contextless" (arguments: []Value) -> Value {
 	name := arguments[0].text
-	for &sandbox in sandboxes[:sandbox_count] {
+	for &sandbox in sandboxes {
 		if sandbox.service && sandbox.name == name {
 			return fail("the console has the commands of the service ", name)
 		}
 	}
-	if sandbox_count == SANDBOX_CAPACITY {
+	sandbox, number := sandbox_free()
+	if sandbox == nil {
 		return fail("no room for the service ", name)
 	}
-	sandbox := &sandboxes[sandbox_count]
 	sandbox^ = {
 		name    = name,
 		service = true,
 	}
 	if status := service_connect(sandbox); status != .Ok {
+		sandbox^ = {}
 		return fail("cannot connect to ", name, ": ", connect_reason(status))
 	}
 	for &entry in system.image_entries(image) {
@@ -374,15 +435,16 @@ connect_service :: proc "contextless" (arguments: []Value) -> Value {
 		callable := callable_count(file)
 		if callable == 0 || command_count + callable > COMMAND_CAPACITY || len(names) - names_count < callable * 64 {
 			service_disconnect(sandbox)
+			sandbox^ = {}
 			return fail("the service ", name, callable == 0 ? " exports no command" : ": no room for its commands")
 		}
 		sandbox.name = system.name_of(entry.name[:]) // The text of the line does not stay.
-		sandbox_count += 1
-		commands_add(file, sandbox.name, sandbox_count, 0)
+		commands_add(file, sandbox.name, number, 0)
 		print(sandbox.name, ": ", i64(callable), " commands of a service that runs, hash ", hex_text(entry.hash[:8]), "...\n")
 		return {}
 	}
 	service_disconnect(sandbox)
+	sandbox^ = {}
 	return fail("the boot image has no file with the hash of the program ", name)
 }
 
@@ -444,7 +506,7 @@ service_disconnect :: proc "contextless" (sandbox: ^Sandbox) {
 // services_check ends the connection to each service that stopped: the
 // handle of the console does not keep a stopped program.
 services_check :: proc "contextless" () {
-	for &sandbox in sandboxes[:sandbox_count] {
+	for &sandbox in sandboxes {
 		if sandbox.service && sandbox.program != 0 {
 			if state, _ := system.program_state(sandbox.program); state == .Stopped {
 				service_disconnect(&sandbox)

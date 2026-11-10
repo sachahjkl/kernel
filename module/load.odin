@@ -226,3 +226,10 @@ function :: proc "contextless" (file: []u8, export_index: u32) -> (value: Functi
 	export := record(file, .Exports, export_index, Export) or_return
 	return record(file, .Functions, export.function, Function)
 }
+
+// documentation gives the documentation of a module: one line, and the text.
+// A module with no documentation gives two empty texts.
+documentation :: proc "contextless" (file: []u8) -> (about, text: string) {
+	value, _ := record(file, .Documentation, 1, Documentation)
+	return string_at(file, value.about_offset, value.about_count), string_at(file, value.text_offset, value.text_count)
+}

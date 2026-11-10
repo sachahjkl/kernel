@@ -26,6 +26,14 @@ Export_Description :: struct {
 	names:      []string, // The name of each parameter.
 	result:     module.Type,
 	about:      string,
+	text:       string, // The documentation text: the full comment.
+}
+
+// The description of a module: what its source says to a person, and its exports.
+Module_Description :: struct {
+	about:   string, // One line: the first sentence of the comment of the package.
+	text:    string, // The documentation text: the comment of the package.
+	exports: []Export_Description,
 }
 
 // convert writes a module from a shared object that lld linked.
@@ -33,7 +41,8 @@ Export_Description :: struct {
 //   imports: the modules that the undefined symbols of the object come from.
 // The module binds each import by (import index, export index). The names
 // are used here only, at build time.
-convert :: proc(name: string, elf: []u8, exports: []Export_Description, imports: []Import_File) -> (result: []u8, ok: bool) {
+convert :: proc(name: string, elf: []u8, description: Module_Description, imports: []Import_File) -> (result: []u8, ok: bool) {
+	exports := description.exports
 	fail :: proc(name: string, format: string, args: ..any) -> ([]u8, bool) {
 		fmt.eprintf("kerneltool: convert %s: ", name)
 		fmt.eprintfln(format, ..args)
@@ -200,6 +209,9 @@ convert :: proc(name: string, elf: []u8, exports: []Export_Description, imports:
 			copy(function.parameters[:], description.parameters)
 			append(&string_bytes, export_name)
 			append(&string_bytes, description.about)
+			function.text_offset = u32(len(string_bytes))
+			function.text_count = u32(len(description.text))
+			append(&string_bytes, description.text)
 			for parameter_name, parameter in description.names {
 				function.parameter_names[parameter] = u32(len(string_bytes))
 				function.parameter_name_counts[parameter] = u8(len(parameter_name))
@@ -298,7 +310,17 @@ convert :: proc(name: string, elf: []u8, exports: []Export_Description, imports:
 	add_table(&output, &directory, .Exports, export_records[:])
 	add_table(&output, &directory, .Rebases, rebase_words)
 	add_table(&output, &directory, .Functions, function_records[:])
+	documentation_records := [2]module.Documentation{}
+	documentation_records[1] = {
+		about_offset = u32(len(string_bytes)),
+		about_count  = u32(len(description.about)),
+		text_offset  = u32(len(string_bytes) + len(description.about)),
+		text_count   = u32(len(description.text)),
+	}
+	append(&string_bytes, description.about)
+	append(&string_bytes, description.text)
 	add_table(&output, &directory, .Strings, string_bytes[:])
+	add_table(&output, &directory, .Documentation, documentation_records[:])
 	for image, index in images {
 		// The zero bytes at the end of a segment are not stored.
 		data := image.data

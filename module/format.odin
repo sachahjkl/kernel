@@ -42,14 +42,15 @@ Header :: struct {
 
 // The number of a table is its index in the table directory.
 Table_Kind :: enum u32 {
-	None      = 0,
-	Segments  = 1,
-	Imports   = 2,
-	Slots     = 3,
-	Exports   = 4,
-	Rebases   = 5,
-	Functions = 6,
-	Strings   = 7,
+	None          = 0,
+	Segments      = 1,
+	Imports       = 2,
+	Slots         = 3,
+	Exports       = 4,
+	Rebases       = 5,
+	Functions     = 6,
+	Strings       = 7,
+	Documentation = 8,
 }
 TABLE_COUNT :: len(Table_Kind)
 
@@ -131,8 +132,25 @@ Function :: struct {
 	parameters:            [PARAMETER_CAPACITY]Type,
 	parameter_name_counts: [PARAMETER_CAPACITY]u8,
 	reserved:              [2]u8,
+	text_offset:           u32, // The documentation text of the export, in the string table.
+	text_count:            u32,
 }
-#assert(size_of(Function) == 56)
+#assert(size_of(Function) == 64)
+
+// The documentation of the module, for a person. Record 1 of the
+// documentation table is the documentation of the module. No loader reads it.
+//
+// A documentation text is UTF-8 bytes. A line feed ends a line. A line is a
+// paragraph: the reader breaks it at the width that it has. A line that
+// starts with a space is not a paragraph: the reader keeps it as it is.
+// An empty line separates two paragraphs.
+Documentation :: struct {
+	about_offset: u32, // One line, in the string table: what the module is.
+	about_count:  u32,
+	text_offset:  u32, // The documentation text, in the string table.
+	text_count:   u32,
+}
+#assert(size_of(Documentation) == 16)
 
 // The rebase table is not indexed. It is a sequence of 64-bit words in the
 // RELR form, and it names the 8-byte locations that hold a memory offset:

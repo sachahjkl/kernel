@@ -39,6 +39,10 @@ The system boots under QEMU to a graphical desktop with a console, a system tool
 
 ![One ring between two threads: the records of one second and the kernel entries that they cost, for two capacities and two ways to wait](docs/screenshots/flow.png)
 
+![One module in each role: the file of tally is a program, a service, a library in the console and a sandboxed program](docs/screenshots/roles.png)
+
+![The manual shows the documentation that each module carries in its file](docs/screenshots/manual.png)
+
 ![One queue for several writers and several readers, with no lock: the records of one second and the kernel entries, against a queue with a lock](docs/screenshots/crowd.png)
 
 ![The time is a page that each program reads: the reads of one second from the page and with a kernel entry](docs/screenshots/clock.png)
@@ -99,7 +103,7 @@ The system boots under QEMU to a graphical desktop with a console, a system tool
 | `relay/` | The records and the grants of the `rings` demonstration |
 | `system/` | The library of a program: kernel operations, text, loader, grants |
 | `graphics/`, `display/` | Drawing with the processor; the protocol of the compositor |
-| `programs/` | `root`, `input`, `compositor`, `console`, `host`, `monitor`, `plasma`, `life`, `paint`, `fault`, `temple`, `rings`, `node`, `threads`, `workers`, `rights`, `budget`, `processors`, `boot`, `pages`, `log`, `flow`, `crowd`, `clock`, `terminal`, `flood`, and the table `launcher` |
+| `programs/` | `root`, `input`, `compositor`, `console`, `host`, `monitor`, `plasma`, `life`, `paint`, `fault`, `temple`, `rings`, `node`, `threads`, `workers`, `rights`, `budget`, `processors`, `boot`, `pages`, `log`, `flow`, `crowd`, `clock`, `tally`, `manual`, `terminal`, `flood`, and the table `launcher` |
 | `modules/` | Modules of commands (`math`, `probe`) and the test modules of the host load test |
 | `tools/kerneltool/` | The kernel tool: all the automation of the project |
 

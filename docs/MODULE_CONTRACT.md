@@ -68,6 +68,9 @@ A module is one file:
 | Functions | One export: name, argument record type, result record type, help text, flags |
 | Parameters | Console data for one field of an argument record: required, allowed values, completion source, accepts piped input |
 | Strings | The bytes of all names and help texts |
+| Documentation | Record 1: the documentation of the module, one line and a text (implemented on 2026-11-10) |
+
+The documentation is part of the file, so it has the hash of the module: a text cannot describe another version of the code. A record of the Functions table also names the documentation text of its export. A documentation text is UTF-8 bytes. A line feed ends a line. A line is a paragraph: the reader breaks it at the width that it has. A line that starts with a space stays as it is. An empty line separates two paragraphs. No loader reads these records.
 
 The model is the BTF format of Linux, changed so that all records have a fixed size. [Types §5]
 

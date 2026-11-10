@@ -25,31 +25,45 @@ import "core:strings"
 
 ENTRY_NAME :: "entry"
 
-// describe_package gives the descriptions of the exports of the Odin package
-// in a folder: the files in the order of their names, the exports of a file
-// in the order of the source. Export n + 1 of the module is descriptions[n].
-describe_package :: proc(folder: string) -> (descriptions: []Export_Description, ok: bool) {
+// describe_package gives the description of the Odin package in a folder:
+// the documentation of the module, and the descriptions of its exports. The
+// files are in the order of their names, the exports of a file in the order
+// of the source. Export n + 1 of the module is exports[n].
+// The documentation of the module is the comment before the word `package`,
+// in the first file that has one.
+describe_package :: proc(folder: string) -> (description: Module_Description, ok: bool) {
 	list := make([dynamic]Export_Description, context.temp_allocator)
 	for path in files_with_suffix(folder, ".odin") or_return {
 		if strings.has_suffix(path, "_test.odin") {
 			continue
 		}
 		source := read_file(path) or_return
-		describe_source(path, string(source), &list) or_return
+		text: string
+		describe_source(path, string(source), &list, &text) or_return
+		if description.text == "" {
+			description.text = text
+		}
 	}
-	for description, index in list {
+	for item, index in list {
 		for other in list[:index] {
-			if other.name == description.name {
-				fmt.eprintfln("kerneltool: describe %s: two exports have the name %s", folder, description.name)
-				return nil, false
+			if other.name == item.name {
+				fmt.eprintfln("kerneltool: describe %s: two exports have the name %s", folder, item.name)
+				return {}, false
 			}
 		}
 	}
-	return list[:], true
+	description.about = about_of(description.text, "")
+	if description.about == "" {
+		fmt.eprintfln("kerneltool: describe %s: no file has a comment before `package`: this comment is the documentation of the module", folder)
+		return {}, false
+	}
+	description.exports = list[:]
+	return description, true
 }
 
 // describe_source adds the descriptions of the exports of one source file.
-describe_source :: proc(path, source: string, list: ^[dynamic]Export_Description) -> bool {
+// package_text receives the documentation text of the package, if the file has one.
+describe_source :: proc(path, source: string, list: ^[dynamic]Export_Description, package_text: ^string = nil) -> bool {
 	context.allocator = context.temp_allocator
 	fail :: proc(path: string, node: ^ast.Node, format: string, args: ..any) -> bool {
 		fmt.eprintf("kerneltool: describe %s(%d): ", path, node.pos.line)
@@ -67,6 +81,10 @@ describe_source :: proc(path, source: string, list: ^[dynamic]Export_Description
 	if !parser.parse_file(&reader, file) {
 		fmt.eprintfln("kerneltool: describe %s: the parser found errors", path)
 		return false
+	}
+
+	if package_text != nil {
+		package_text^ = text_of(file.docs)
 	}
 
 	for statement in file.decls {
@@ -191,7 +209,8 @@ describe_source :: proc(path, source: string, list: ^[dynamic]Export_Description
 		}
 		description.parameters = parameters[:]
 		description.names = names[:]
-		description.about = about_of(declaration.docs, name)
+		description.text = text_of(declaration.docs)
+		description.about = about_of(description.text, name)
 		if description.about == "" {
 			return fail(path, declaration, "%s has no comment: the first sentence of the comment is the help of the export", name)
 		}
@@ -200,28 +219,58 @@ describe_source :: proc(path, source: string, list: ^[dynamic]Export_Description
 	return true
 }
 
-// about_of gives the first sentence of a comment, without the name of the
-// export at its start and without the period at its end.
-about_of :: proc(docs: ^ast.Comment_Group, name: string) -> string {
+// text_of gives the documentation text of a comment (module.Documentation
+// says the form). Lines of the source that follow each other are one
+// paragraph: one line of the text. A line of the source that starts with
+// more than one space stays as it is. A line that starts with "- " starts a
+// new paragraph.
+text_of :: proc(docs: ^ast.Comment_Group) -> string {
 	if docs == nil {
 		return ""
 	}
-	builder := strings.builder_make(context.temp_allocator)
+	lines := make([dynamic]string, context.temp_allocator)
+	open := false // The last line is a paragraph that the next line can continue.
 	for token in docs.list {
 		if !strings.has_prefix(token.text, "//") {
 			continue
 		}
-		if strings.builder_len(builder) > 0 {
-			strings.write_byte(&builder, ' ')
+		line := strings.trim_right_space(token.text[2:])
+		line = strings.trim_prefix(line, " ")
+		line, _ = strings.replace_all(line, "\t", "    ", context.temp_allocator)
+		switch {
+		case line == "":
+			if len(lines) > 0 && lines[len(lines) - 1] != "" {
+				append(&lines, "")
+			}
+			open = false
+		case line[0] == ' ':
+			append(&lines, line)
+			open = false
+		case open && !strings.has_prefix(line, "- "):
+			lines[len(lines) - 1] = strings.concatenate({lines[len(lines) - 1], " ", line}, context.temp_allocator)
+		case:
+			append(&lines, line)
+			open = true
 		}
-		strings.write_string(&builder, strings.trim_space(token.text[2:]))
 	}
-	text := strings.to_string(builder)
+	for len(lines) > 0 && lines[len(lines) - 1] == "" {
+		pop(&lines)
+	}
+	return strings.join(lines[:], "\n", context.temp_allocator)
+}
+
+// about_of gives the first sentence of a documentation text, without the
+// name of the export at its start and without the period at its end.
+about_of :: proc(documentation: string, name: string) -> string {
+	text := documentation
+	if end := strings.index_byte(text, '\n'); end >= 0 {
+		text = text[:end]
+	}
 	if end := strings.index(text, ". "); end >= 0 {
 		text = text[:end]
 	}
 	text = strings.trim_suffix(text, ".")
-	if strings.has_prefix(text, name) && len(text) > len(name) && text[len(name)] == ' ' {
+	if name != "" && strings.has_prefix(text, name) && len(text) > len(name) && text[len(name)] == ' ' {
 		text = text[len(name) + 1:]
 	}
 	return strings.trim_space(text)

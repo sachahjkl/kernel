@@ -162,6 +162,15 @@ module_load :: proc "contextless" (file: []u8, base: u64) -> (size: u64, status:
 	return head.memory_size, .Ok
 }
 
+// module_unload removes from this program a module that module_load put at
+// base. The caller calls no export of the module after this.
+module_unload :: proc "contextless" (file: []u8, base: u64) {
+	for index in 1 ..< module.count(file, .Segments) {
+		segment, _ := module.record(file, .Segments, index, module.Segment)
+		memory_unmap(rawptr(uintptr(base + segment.memory_offset)))
+	}
+}
+
 // program_state gives the state of a program, and its code when it stopped.
 program_state :: proc "contextless" (program: Handle) -> (state: op.Program_State, code: u32) {
 	results, _ := call(.Program_State, u64(program))

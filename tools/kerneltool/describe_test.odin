@@ -18,7 +18,15 @@ keywords_prepare :: proc "contextless" () {
 }
 
 @(private = "file")
-DESCRIBED_SOURCE :: `package sample
+DESCRIBED_SOURCE :: `// A sample of a module. The second sentence
+// of the first paragraph.
+//
+// A list:
+//   one line that stays
+// - a point
+// - a second point,
+// on two lines
+package sample
 
 helper :: proc "c" (x: i64) -> i64 {return x}
 
@@ -44,7 +52,15 @@ entry :: proc "c" (start: rawptr) -> ! {for {}}
 @(test)
 describe_reads_the_source :: proc(t: ^testing.T) {
 	list := make([dynamic]Export_Description, context.temp_allocator)
-	testing.expect(t, describe_source("sample.odin", DESCRIBED_SOURCE, &list))
+	package_text: string
+	testing.expect(t, describe_source("sample.odin", DESCRIBED_SOURCE, &list, &package_text))
+	// The documentation text: one line for each paragraph.
+	testing.expect_value(
+		t,
+		package_text,
+		"A sample of a module. The second sentence of the first paragraph.\n\nA list:\n  one line that stays\n- a point\n- a second point, on two lines",
+	)
+	testing.expect_value(t, about_of(package_text, ""), "A sample of a module")
 	testing.expect_value(t, len(list), 4)
 	if len(list) != 4 {
 		return
@@ -52,6 +68,7 @@ describe_reads_the_source :: proc(t: ^testing.T) {
 	scale := list[0]
 	testing.expect_value(t, scale.name, "scale")
 	testing.expect_value(t, scale.about, "gives a number times a factor")
+	testing.expect_value(t, scale.text, "scale gives a number times a factor. The second sentence is not help.")
 	testing.expect_value(t, scale.result, module.Type.Integer)
 	testing.expect_value(t, len(scale.parameters), 2)
 	testing.expect_value(t, scale.names[0], "number")

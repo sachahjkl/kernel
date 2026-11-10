@@ -44,8 +44,10 @@ grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 		return {.Image} // It starts its nodes from the boot image.
 	case "terminal":
 		return {.Inspect, .Image} // It starts its program from the boot image, and shows the kernel entries of that program.
-	case "paint", "life":
+	case "paint", "life", "tally":
 		return {.Serve}
+	case "manual":
+		return {.Serve, .Image} // It reads the documentation of each module of the boot image.
 	}
 	return {}
 }

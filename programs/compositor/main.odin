@@ -364,6 +364,9 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32) 
 			clients[dragging].y = max(pointer_y - drag_y, BAR_HEIGHT)
 			damage_window(&clients[dragging])
 		} else {
+			// The person put the window down: the log has its new place.
+			client := &clients[dragging]
+			system.log_in("surfaces", .Info, "compositor: window ", system.name_of(client.title[:]), " moved to ", u64(max(client.x, 0)), ",", u64(client.y))
 			dragging = -1
 		}
 		return
