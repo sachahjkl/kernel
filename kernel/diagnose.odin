@@ -1,5 +1,6 @@
 package kernel
 
+import "base:intrinsics"
 import "contract:errors"
 import op "contract:operation"
 import "contract:ring"
@@ -15,40 +16,69 @@ import "contract:ring"
 // of a program only when the handle has the right Read (P20).
 //
 // Each table is read in one place: the procedures `read_*` below. Each one
-// copies what it reads, and names the lock that protects it in the table
-// "Locks of the kernel" of docs/ARCHITECTURE.md. With one kernel lock they
-// take no lock. With a lock for each kind of data, another thread can change
-// the state between the failure and the record: then the record describes
-// what the kernel reads now, and `diagnose` keeps a record only if its kind
-// can explain the status (`kind_explains`); else the record is Refused with
-// the status. A record never contradicts its status.
+// takes the lock that protects what it reads in the table "Locks of the
+// kernel" of docs/ARCHITECTURE.md, in the lock order, copies what it reads,
+// and frees the lock before it returns. `diagnose` runs after the operation
+// freed all its locks (enter, after command_run), and only on a failure: the
+// path of a success takes no lock here. Between the failure and the record,
+// another thread can change the state: the record describes what the kernel
+// reads now, and `diagnose` keeps it only if its kind can explain the status
+// (`kind_explains`); else the record is Refused with the status. A record
+// never contradicts its status.
+//
+// A read that follows a handle to another object (a budget, a memory object,
+// a program) finds the handle again under the program lock of the caller,
+// and keeps that lock while it reads the object: the handle holds a
+// reference, so the slot of the object cannot serve another object.
 
-// read_handle copies the slot of a handle of a program. Lock: the program
-// lock of the caller.
+// The lock of the program that runs. Taken by each read of its handle table,
+// its mappings and its page table. A read in the stack trace runs under this
+// lock already (program_fault): program_lock then takes nothing.
 @(private = "file")
-read_handle :: proc "contextless" (program: ^Program, index: u64) -> Handle_Slot {
-	return program.handles[index]
+caller_lock :: proc "contextless" (program: ^Program) -> (index: u32, taken: bool) {
+	index = u32(intrinsics.ptr_sub(program, &programs[0]))
+	return index, program_lock(index)
 }
 
-// read_handle_find is handle_find on a copy of the slot. ok: the handle
-// names an object of the kind with the rights.
+// find is handle_find on a copy of the slot, under the program lock that the
+// caller of find holds.
 @(private = "file")
-read_handle_find :: proc "contextless" (program: ^Program, handle: u64, kind: Object_Kind, rights: op.Rights = {}) -> (slot: Handle_Slot, ok: bool) {
+find :: proc "contextless" (program: ^Program, handle: u64, kind: Object_Kind, rights: op.Rights) -> (slot: Handle_Slot, ok: bool) {
 	index := handle & 0xFFFF
 	if index == 0 || index >= HANDLE_CAPACITY || handle >> 32 != 0 {
 		return {}, false
 	}
-	slot = read_handle(program, index)
+	slot = program.handles[index]
 	if slot.kind == .None || u64(slot.generation) != handle >> 16 || kind != .None && slot.kind != kind || !(rights <= slot.rights) {
 		return {}, false
 	}
 	return slot, true
 }
 
+// read_handle copies the slot of a handle of a program. Lock: the program
+// lock.
+@(private = "file")
+read_handle :: proc "contextless" (program: ^Program, index: u64) -> Handle_Slot {
+	at, taken := caller_lock(program)
+	defer program_unlock(at, taken)
+	return program.handles[index]
+}
+
+// read_handle_find copies the slot of a handle that names an object of the
+// kind with the rights. Lock: the program lock.
+@(private = "file")
+read_handle_find :: proc "contextless" (program: ^Program, handle: u64, kind: Object_Kind, rights: op.Rights = {}) -> (slot: Handle_Slot, ok: bool) {
+	at, taken := caller_lock(program)
+	defer program_unlock(at, taken)
+	return find(program, handle, kind, rights)
+}
+
 // read_free_handles counts the free places of the handle table of a
 // program. Lock: the program lock.
 @(private = "file")
 read_free_handles :: proc "contextless" (program: ^Program) -> (count: u64) {
+	at, taken := caller_lock(program)
+	defer program_unlock(at, taken)
 	for slot in program.handles[1:] {
 		count += u64(slot.kind == .None)
 	}
@@ -56,9 +86,11 @@ read_free_handles :: proc "contextless" (program: ^Program) -> (count: u64) {
 }
 
 // read_user copies memory of the program that runs, if it can read it.
-// Lock: the program lock of the caller (user_range and user_copy).
+// Lock: the program lock: no unmap runs between user_range and user_copy.
 @(private = "file")
 read_user :: proc "contextless" (program: ^Program, address: u64, destination: rawptr, size: u64) -> bool {
+	at, taken := caller_lock(program)
+	defer program_unlock(at, taken)
 	if !user_range(program, address, size, false) {
 		return false
 	}
@@ -70,59 +102,112 @@ read_user :: proc "contextless" (program: ^Program, address: u64, destination: r
 // program lock.
 @(private = "file")
 read_range :: proc "contextless" (program: ^Program, address: u64, size: u64) -> bool {
+	at, taken := caller_lock(program)
+	defer program_unlock(at, taken)
 	return user_range(program, address, size, false)
 }
 
 // read_word says if a program can wait on a word. Lock: the program lock.
 @(private = "file")
 read_word :: proc "contextless" (program: ^Program, address: u64) -> bool {
+	at, taken := caller_lock(program)
+	defer program_unlock(at, taken)
 	return word_address(program, address) != 0
-}
-
-// read_holds_budget says if a program holds a handle to a budget with the
-// right Read. Lock: the program lock.
-@(private = "file")
-read_holds_budget :: proc "contextless" (program: ^Program, budget: u32) -> bool {
-	for slot in program.handles[1:] {
-		if slot.kind == .Budget && slot.object == budget && .Read in slot.rights {
-			return true
-		}
-	}
-	return false
 }
 
 // read_threads gives the threads of a program. Lock: the program lock.
 @(private = "file")
 read_threads :: proc "contextless" (program: ^Program) -> u32 {
+	at, taken := caller_lock(program)
+	defer program_unlock(at, taken)
 	return program.thread_count
 }
 
-// read_budget copies the amounts of a budget. Lock: the frame lock for the
-// pages, the control lock for the other amounts.
+// read_budget copies the amounts of the budget of a handle with the right
+// Spend. Locks, in their order: the control lock (the programs, the threads
+// and the limits of a budget), the program lock (the handle), the frame lock
+// (the pages of a budget).
 @(private = "file")
-read_budget :: proc "contextless" (index: u32) -> op.Budget_Amounts {
-	return budgets[index].amounts
+read_budget :: proc "contextless" (program: ^Program, handle: u64) -> (amounts: op.Budget_Amounts, rights: op.Rights, ok: bool) {
+	control_take()
+	defer control_free()
+	at, taken := caller_lock(program)
+	defer program_unlock(at, taken)
+	slot: Handle_Slot
+	if slot, ok = find(program, handle, .Budget, {.Spend}); !ok {
+		return {}, {}, false
+	}
+	lock_take(&frame_lock, .Frame)
+	amounts = budgets[slot.object].amounts
+	lock_free(&frame_lock, .Frame)
+	return amounts, slot.rights, true
 }
 
-// read_log_count gives the log records of a budget in this second, and its
-// limit. Atomic counts, and the control lock for the limit.
+// read_log_count gives the log records in this second of the budget that
+// paid for the program, and its limit, if the program holds that budget
+// with the right Read (P20); held is false otherwise. Locks, in their order:
+// the control lock (the limit), the program lock (the handles), the frame
+// lock (program.budget). The count is atomic.
 @(private = "file")
-read_log_count :: proc "contextless" (index: u32) -> (logged, limit: u64) {
-	return budgets[index].logged, budgets[index].amounts.log_records
+read_log_count :: proc "contextless" (program: ^Program) -> (logged, limit: u64, held: bool) {
+	control_take()
+	defer control_free()
+	at, taken := caller_lock(program)
+	defer program_unlock(at, taken)
+	lock_take(&frame_lock, .Frame)
+	budget := program.budget
+	lock_free(&frame_lock, .Frame)
+	for slot in program.handles[1:] {
+		if slot.kind == .Budget && slot.object == budget && .Read in slot.rights {
+			held = true
+		}
+	}
+	if !held {
+		return 0, 0, false
+	}
+	word := intrinsics.atomic_load(&budgets[budget].logged)
+	second := intrinsics.atomic_load(&ticks) / LOG_PERIOD
+	logged = word >> 32 == second ? word & 0xFFFF_FFFF : 0
+	return logged, budgets[budget].amounts.log_records, true
 }
 
-// read_region_pages gives the pages of a memory object. Lock: the frame
-// lock (the slot of the object).
+// read_memory_pages gives the pages of the memory object of a handle.
+// Locks, in their order: the program lock (the handle), the frame lock (the
+// slot of the object).
 @(private = "file")
-read_region_pages :: proc "contextless" (index: u32) -> u64 {
-	return regions[index].page_count
+read_memory_pages :: proc "contextless" (program: ^Program, handle: u64) -> (pages: u64, ok: bool) {
+	at, taken := caller_lock(program)
+	defer program_unlock(at, taken)
+	slot: Handle_Slot
+	if slot, ok = find(program, handle, .Memory, {}); !ok {
+		return 0, false
+	}
+	lock_take(&frame_lock, .Frame)
+	pages = regions[slot.object].page_count
+	lock_free(&frame_lock, .Frame)
+	return pages, true
 }
 
-// read_program_state gives the state of another program. Lock: the control
-// lock.
+// read_program_state gives the kind and the rights of a handle, and the
+// state of its program when it names a program with the right Read (else
+// None). Locks, in their order: the control lock (another program), the
+// program lock of the caller (the handle), the program lock of the other
+// program (two program locks only under the control lock).
 @(private = "file")
-read_program_state :: proc "contextless" (index: u32) -> op.Program_State {
-	return program_state(index)
+read_program_state :: proc "contextless" (program: ^Program, handle: u64) -> (slot: Handle_Slot, state: op.Program_State, ok: bool) {
+	control_take()
+	defer control_free()
+	at, taken := caller_lock(program)
+	defer program_unlock(at, taken)
+	if slot, ok = find(program, handle, .None, {}); !ok {
+		return {}, .None, false
+	}
+	if slot.kind == .Program && .Read in slot.rights {
+		other := program_lock(slot.object)
+		state = program_state(slot.object)
+		program_unlock(slot.object, other)
+	}
+	return slot, state, true
 }
 
 // kind_explains says if an error kind can be the cause of a status.
@@ -156,6 +241,15 @@ record_set :: proc "contextless" (record: ^errors.Error_Record, kind: errors.Kin
 // diagnose gives the error record of an operation of a program that failed
 // with a status.
 diagnose :: proc "contextless" (program_index: u32, command: ring.Record, status: op.Status) -> (record: errors.Error_Record) {
+	// It runs with no lock held: each read takes its locks in the lock order.
+	when LOCK_ORDER_CHECK {
+		for kind in op.Lock_Kind {
+			if lock_ready && lock_held(kind) {
+				log("kernel: diagnose runs with a lock ", op.LOCK_KIND_NAMES[kind], " held")
+				machine_stop(3)
+			}
+		}
+	}
 	record.operation = i64(command.kind)
 	if command.kind == 0 || command.kind > u32(max(op.Operation)) {
 		record_set(&record, .Unknown_Operation, .None, 0, u64(command.kind), u64(max(op.Operation)), 0)
@@ -272,22 +366,21 @@ budget_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Pr
 		// The limit of the budget of the program, or of a budget above it.
 		// The budget that paid for the program: its counts only with a
 		// handle with Read (P20); a budget above it is never described.
-		if !read_holds_budget(program, program.budget) {
+		logged, limit, held := read_log_count(program)
+		if !held {
 			record_set(record, .Budget_Hidden, .Log_Records, 0, 0, 1, 0)
 			return true
 		}
-		logged, limit := read_log_count(program.budget)
 		record_set(record, .Over_Limit, .Log_Records, 0, logged + 1, limit, 0)
 		return true
 	}
 	if operation != .Memory_Create && operation != .Program_Create && operation != .Thread_Create && operation != .Budget_Create {
 		return false
 	}
-	slot, found := read_handle_find(program, v[0], .Budget, {.Spend})
+	holds, rights, found := read_budget(program, v[0])
 	if !found {
 		return false
 	}
-	holds := read_budget(slot.object)
 	unit: errors.Unit
 	asked, held: u64
 	argument := 1
@@ -315,7 +408,7 @@ budget_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Pr
 			}
 		}
 	}
-	if .Read not_in slot.rights {
+	if .Read not_in rights {
 		record_set(record, .Budget_Hidden, unit, argument, v[0], asked, 0)
 	} else {
 		record_set(record, .Budget, unit, argument, v[0], asked, held)
@@ -387,11 +480,10 @@ address_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^P
 			record_set(record, .Bad_Address, .Bytes, 4, v[3], size, 1)
 		}
 	case .Memory_Map:
-		slot, found := read_handle_find(program, v[0], .Memory)
+		page_count, found := read_memory_pages(program, v[0])
 		if !found {
 			return false
 		}
-		page_count := read_region_pages(slot.object)
 		count := v[5] == 0 && v[4] < page_count ? page_count - v[4] : v[5]
 		switch {
 		case v[4] >= page_count:
@@ -470,14 +562,11 @@ state_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Pro
 	if handle == 0 {
 		return false
 	}
-	slot, held := read_handle_find(program, handle, .None)
+	_, state, held := read_program_state(program, handle)
 	if !held {
 		return false
 	}
-	found: u64
-	if slot.kind == .Program && .Read in slot.rights {
-		found = u64(read_program_state(slot.object))
-	}
+	found := u64(state)
 	limit := operation == .Program_Start ? u64(op.Program_State.Created) : 0
 	record_set(record, .State, .None, argument, handle, limit, found)
 	return true

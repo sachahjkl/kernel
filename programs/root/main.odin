@@ -175,7 +175,7 @@ things_of :: proc "contextless" (name: string) -> system.Budget_Amounts {
 	case "imports":
 		return {pages = 2048, programs = 3, threads = 3} // Two programs that import calendar.
 	case "errors":
-		return {pages = 2048, programs = 2, threads = 2} // It starts fault.
+		return {pages = 2048, programs = 2, threads = 4} // It starts fault, and 3 threads under contention.
 	}
 	return {pages = 2048, programs = 1, threads = 1}
 }

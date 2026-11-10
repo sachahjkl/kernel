@@ -13,6 +13,7 @@ import "support:display"
 import "support:graphics"
 import "support:storage"
 import "support:system"
+import "base:intrinsics"
 
 WIDTH :: 1000
 LINE :: 16
@@ -401,6 +402,120 @@ measure :: proc "contextless" () {
 	}
 }
 
+// Failures under contention: two threads make failures on the handles that
+// a third thread closes and makes again, at the same time. Each record must
+// explain its status: the kernel reads the state again after the failure,
+// and the state can change between the two (docs/MODULE_CONTRACT.md,
+// section 8).
+CONTENTION_MILLISECONDS :: 500
+SHARED_HANDLES :: 4
+
+Contention :: struct {
+	memories: [SHARED_HANDLES]u32, // Copies with the right Read only: a map to write fails.
+	budgets:  [SHARED_HANDLES]u32, // Budgets of 2 pages: 64 pages fail.
+	stop:     u32,
+	failures: [2]u64,
+	wrong:    [2]u64, // Records that contradict their status.
+	made:     u64, // Handles that the third thread closed and made again.
+	source:   system.Handle, // The memory object of the copies.
+}
+
+contention: Contention
+
+// explains says if the kind of a record can be the cause of a status, as
+// the contract states it.
+explains :: proc "contextless" (record: ^errors.Error_Record, status: system.Status) -> bool {
+	kind := errors.Kind(record.kind)
+	if kind == .Refused {
+		return record.found == i64(status)
+	}
+	#partial switch status {
+	case .Bad_Handle:
+		return kind == .Handle_Absent || kind == .Handle_Ended || kind == .Handle_Kind || kind == .No_Target
+	case .No_Right:
+		return kind == .Handle_Rights
+	case .No_Budget:
+		return kind == .Budget || kind == .Budget_Hidden || kind == .Over_Limit
+	}
+	return false
+}
+
+// failing makes failures until the stop: thread 0 maps a copy to write,
+// thread 1 asks 64 pages of a budget of 2 and the size of a copy.
+failing :: proc "c" (parameter: rawptr) -> ! {
+	number := int(uintptr(parameter))
+	turn := 0
+	for intrinsics.atomic_load(&contention.stop) == 0 {
+		turn += 1
+		record: errors.Error_Record
+		status: system.Status
+		if number == 0 {
+			handle := intrinsics.atomic_load(&contention.memories[turn % SHARED_HANDLES])
+			_, status = system.call_with_error(&record, .Memory_Map, u64(handle), 0, 0, transmute(u64)op.Map_Flags{.Write}, 0, 0)
+		} else if turn % 2 == 0 {
+			handle := intrinsics.atomic_load(&contention.budgets[turn % SHARED_HANDLES])
+			_, status = system.call_with_error(&record, .Memory_Create, u64(handle), 64, 0)
+		} else {
+			handle := intrinsics.atomic_load(&contention.memories[turn % SHARED_HANDLES])
+			_, status = system.call_with_error(&record, .Memory_Size, u64(handle) + 0x7F)
+		}
+		if status == .Ok {
+			continue
+		}
+		contention.failures[number] += 1
+		if !explains(&record, status) {
+			contention.wrong[number] += 1
+		}
+	}
+	system.thread_stop()
+}
+
+// changing closes and makes again the handles that the failures name.
+changing :: proc "c" (parameter: rawptr) -> ! {
+	turn := 0
+	for intrinsics.atomic_load(&contention.stop) == 0 {
+		turn += 1
+		place := turn % SHARED_HANDLES
+		system.close(system.Handle(intrinsics.atomic_load(&contention.memories[place])))
+		copy, _ := system.give(0, contention.source, {.Read})
+		intrinsics.atomic_store(&contention.memories[place], u32(copy))
+		system.close(system.Handle(intrinsics.atomic_load(&contention.budgets[place])))
+		budget, _ := system.budget_create({pages = 2})
+		intrinsics.atomic_store(&contention.budgets[place], u32(budget))
+		contention.made += 2
+	}
+	system.thread_stop()
+}
+
+// contend runs the two threads of failures and the thread of changes for
+// CONTENTION_MILLISECONDS. ok: each record explains its status.
+contend :: proc "contextless" () -> bool {
+	contention.source, _ = system.memory_create(1)
+	threads: [3]system.Thread
+	statuses: [3]system.Status
+	threads[0], statuses[0] = system.thread_start(failing, rawptr(uintptr(0)))
+	threads[1], statuses[1] = system.thread_start(failing, rawptr(uintptr(1)))
+	threads[2], statuses[2] = system.thread_start(changing, nil)
+	system.sleep(system.time() + CONTENTION_MILLISECONDS)
+	intrinsics.atomic_store(&contention.stop, 1)
+	started := 0
+	for thread, index in threads {
+		if statuses[index] == .Ok {
+			system.thread_wait(thread)
+			started += 1
+		}
+	}
+	for place in 0 ..< SHARED_HANDLES {
+		system.close(system.Handle(contention.memories[place]))
+		system.close(system.Handle(contention.budgets[place]))
+	}
+	system.close(contention.source)
+	failures := contention.failures[0] + contention.failures[1]
+	wrong := contention.wrong[0] + contention.wrong[1]
+	system.log("errors: under contention: ", failures, " failures from 2 threads while a third thread closed and made ", contention.made, " handles; ", wrong, " records contradict their status")
+	return started == 3 && failures > 0 && contention.made > 0 && wrong == 0
+}
+
 @(rodata)
 key_names := "abcdefghijklmnopqrs"
 FAULT_CASE :: 18
@@ -435,6 +550,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.log("errors: ok, ", u64(len(cases)), " cases, each with the expected error record")
 	} else {
 		system.log("errors: ", u64(wrong), " cases of ", u64(len(cases)), " gave another answer")
+	}
+	if !contend() {
+		system.log("errors: WRONG: the case under contention failed")
 	}
 	measure()
 	system.log("errors: a kernel operation that succeeds: ", kernel_good, " ns; one that fails, with its error record: ", kernel_failed, " ns; a direct call that succeeds: ", direct_good, " ns; one that fails: ", direct_failed, " ns")
