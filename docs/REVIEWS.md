@@ -15,7 +15,7 @@ A step is one tested commit that adds one capability.
 | 7 | `6d900bc` | The console runs a line in a second thread: keys during a call, Escape stops an isolated call |
 | 8 | `ec91461` | Descriptions come from the source: parameter names, help from the comment, checked by the test |
 | 9 | `07c1b00` | Rights on handles: `Handle_Give` takes a mask, `No_Right`, one Machine object with Inspect, Devices and Stop, shown by `rights` |
-| 10 | (the commit of step 10) | Budgets and the Log handle: no operation creates an object from nothing, shown by `budget` |
+| 10 | `6b6346f` | Budgets and the Log handle: no operation creates an object from nothing, shown by `budget` |
 
 ## Review 1: steps 1 to 5 (2026-11-10)
 
