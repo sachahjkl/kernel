@@ -72,18 +72,30 @@ ctx_log: system.Handle
 // The measures, in nanoseconds for one call.
 kernel_good, kernel_failed, direct_good, direct_failed: u64
 
-// kernel_case runs one kernel operation that must fail with an error kind,
-// and writes the sentence of its error record.
-kernel_case :: proc "contextless" (writer: ^system.Writer, expected: errors.Kind, operation: op.Operation, values: ..u64) -> (record: errors.Error_Record, right: bool) {
-	results, status := system.call(operation, ..values)
-	record = system.call_error(results, status)
-	system.kernel_error_text(writer, &record)
-	return record, status != .Ok && errors.Kind(record.kind) == expected
+// The kernel cases use the wrappers of support/system with their last
+// parameter `error`: the record is a value of the call, in memory of this
+// program. An operation with no wrapper that gives a status uses
+// system.call_with_error.
+
+// kernel_text writes the sentence of a record and says if the call failed
+// with the expected kind.
+kernel_text :: proc "contextless" (writer: ^system.Writer, record: ^errors.Error_Record, status: system.Status, expected: errors.Kind) -> bool {
+	system.kernel_error_text(writer, record)
+	return status != .Ok && errors.Kind(record.kind) == expected
 }
 
 case_rights :: proc "contextless" (writer: ^system.Writer) -> bool {
-	record, right := kernel_case(writer, .Handle_Rights, .Memory_Map, u64(image_memory), 0, 0, transmute(u64)op.Map_Flags{.Write}, 0, 0)
-	return right && .Write in transmute(op.Rights)u32(record.limit) && .Write not_in transmute(op.Rights)u32(record.found)
+	record: errors.Error_Record
+	address, status := system.memory_map(image_memory, {.Write}, error = &record)
+	right := kernel_text(writer, &record, status, .Handle_Rights)
+	return right && address == nil && .Write in transmute(op.Rights)u32(record.limit) && .Write not_in transmute(op.Rights)u32(record.found)
+}
+
+// size_case asks the size of a memory object of a handle that must fail.
+size_case :: proc "contextless" (writer: ^system.Writer, handle: system.Handle, expected: errors.Kind) -> (record: errors.Error_Record, right: bool) {
+	pages := system.memory_size(handle, &record)
+	system.kernel_error_text(writer, &record)
+	return record, pages == 0 && errors.Kind(record.kind) == expected
 }
 
 case_revoked :: proc "contextless" (writer: ^system.Writer) -> bool {
@@ -91,56 +103,62 @@ case_revoked :: proc "contextless" (writer: ^system.Writer) -> bool {
 	defer system.close(memory)
 	copy, _ := system.give(0, memory, {.Read})
 	system.handle_revoke(memory)
-	record, right := kernel_case(writer, .Handle_Ended, .Memory_Size, u64(copy))
+	record, right := size_case(writer, copy, .Handle_Ended)
 	return right && errors.End(record.found) == .Revoked
 }
 
 case_closed :: proc "contextless" (writer: ^system.Writer) -> bool {
 	memory, _ := system.memory_create(1)
 	system.close(memory)
-	record, right := kernel_case(writer, .Handle_Ended, .Memory_Size, u64(memory))
+	record, right := size_case(writer, memory, .Handle_Ended)
 	return right && errors.End(record.found) == .Closed
 }
 
 case_kind :: proc "contextless" (writer: ^system.Writer) -> bool {
-	record, right := kernel_case(writer, .Handle_Kind, .Memory_Size, u64(system.own_budget()))
+	record, right := size_case(writer, system.own_budget(), .Handle_Kind)
 	return right && op.Object_Kind(record.found) == .Budget && op.Object_Kind(record.limit) == .Memory
 }
 
 case_absent :: proc "contextless" (writer: ^system.Writer) -> bool {
-	_, right := kernel_case(writer, .Handle_Absent, .Memory_Size, 0x7F)
+	_, right := size_case(writer, 0x7F, .Handle_Absent)
 	return right
 }
 
 case_budget :: proc "contextless" (writer: ^system.Writer) -> bool {
-	budget, status := system.budget_create({pages = 8})
-	if status != .Ok {
+	budget, created := system.budget_create({pages = 8})
+	if created != .Ok {
 		return false
 	}
 	defer system.close(budget)
-	record, right := kernel_case(writer, .Budget, .Memory_Create, u64(budget), 64, 0)
-	return right && errors.Unit(record.unit) == .Pages && record.limit == 65 && record.found == 8
+	record: errors.Error_Record
+	memory, status := system.memory_create(64, budget, {}, &record)
+	right := kernel_text(writer, &record, status, .Budget)
+	return right && memory == 0 && errors.Unit(record.unit) == .Pages && record.limit == 65 && record.found == 8
 }
 
 case_address :: proc "contextless" (writer: ^system.Writer) -> bool {
-	record, right := kernel_case(writer, .Bad_Address, .Log, u64(ctx_log), 0xFFFF_8000_0000_0000, 10, 0, 0, 0)
-	return right && record.argument == 2
+	record: errors.Error_Record
+	_, status := system.call_with_error(&record, .Log, u64(ctx_log), 0xFFFF_8000_0000_0000, 10, 0, 0, 0)
+	return kernel_text(writer, &record, status, .Bad_Address) && record.argument == 2
 }
 
 case_name :: proc "contextless" (writer: ^system.Writer) -> bool {
 	name := "a name of forty bytes, nine more than 31"
-	record, right := kernel_case(writer, .Too_Long, .Program_Create, u64(system.own_budget()), u64(uintptr(raw_data(name))), u64(len(name)))
-	return right && record.value == 40 && record.limit == 31
+	record: errors.Error_Record
+	_, status := system.call_with_error(&record, .Program_Create, u64(system.own_budget()), u64(uintptr(raw_data(name))), u64(len(name)))
+	return kernel_text(writer, &record, status, .Too_Long) && record.value == 40 && record.limit == 31
 }
 
 case_flags :: proc "contextless" (writer: ^system.Writer) -> bool {
-	_, right := kernel_case(writer, .Bad_Flags, .Memory_Create, u64(system.own_budget()), 1, 0x4)
-	return right
+	record: errors.Error_Record
+	memory, status := system.memory_create(1, 0, transmute(op.Memory_Flags)u64(0x4), &record)
+	return kernel_text(writer, &record, status, .Bad_Flags) && memory == 0
 }
 
 case_operation :: proc "contextless" (writer: ^system.Writer) -> bool {
-	_, right := kernel_case(writer, .Unknown_Operation, op.Operation(99))
-	return right
+	record: errors.Error_Record
+	_, status := system.call_with_error(&record, op.Operation(99))
+	return kernel_text(writer, &record, status, .Unknown_Operation)
 }
 
 // load_case loads a module of the boot image, with replacements, and must

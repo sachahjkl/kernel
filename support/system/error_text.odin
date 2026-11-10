@@ -273,15 +273,6 @@ export_error_text :: proc "contextless" (writer: ^Writer, file: []u8, export: u3
 	error_text(writer, record, name, argument)
 }
 
-// call_error gives the error record of a kernel operation that failed: the
-// values of its completion record. Zero when the status is Ok.
-call_error :: proc "contextless" (results: [7]u64, status: Status) -> errors.Error_Record {
-	if status == .Ok {
-		return {}
-	}
-	return transmute(errors.Error_Record)results
-}
-
 // frame_text writes one frame of a stack trace: "probe + 0x1a2", with the
 // name of the module in the boot image, or the start of its hash. A frame
 // that no module record holds is its address.

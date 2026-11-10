@@ -2,6 +2,7 @@
 // programs. It is compiled into each program. It allocates no hidden memory.
 package system
 
+import "contract:errors"
 import op "contract:operation"
 import "contract:ring"
 import "base:intrinsics"
@@ -58,8 +59,19 @@ enter :: #force_inline proc "contextless" (wait: u64) -> u64 {
 	return system_enter(wait)
 }
 
-// call executes one kernel operation and gives its completion.
+// call executes one kernel operation and gives its results and its status.
+// When the status is not Ok, the results are zero.
 call :: proc "contextless" (operation: op.Operation, values: ..u64) -> (results: [7]u64, status: Status) {
+	return call_with_error(nil, operation, ..values)
+}
+
+// call_with_error executes one kernel operation, as call. When the status is
+// not Ok and error is not nil, the error record of the failure is written at
+// error (docs/MODULE_CONTRACT.md, section 8): the kernel gives it in the
+// values of the completion record. The caller owns the record; no global
+// state keeps the last error. A call that succeeds does not write it.
+// The wrappers below take the same `error` as their last parameter.
+call_with_error :: proc "contextless" (error: ^errors.Error_Record, operation: op.Operation, values: ..u64) -> (results: [7]u64, status: Status) {
 	command := ring.Record {
 		kind = u32(operation),
 	}
@@ -73,7 +85,13 @@ call :: proc "contextless" (operation: op.Operation, values: ..u64) -> (results:
 	if !ok {
 		return {}, .Bad_Operation
 	}
-	return completion.values, Status(completion.kind)
+	if completion.kind != u32(Status.Ok) {
+		if error != nil {
+			error^ = transmute(errors.Error_Record)completion.values
+		}
+		return {}, Status(completion.kind)
+	}
+	return completion.values, .Ok
 }
 
 // time gives the milliseconds since boot. It reads the time page: it does
@@ -118,16 +136,16 @@ own_budget :: proc "contextless" () -> Handle {
 
 // budget_create moves amounts from a budget (0: the budget of this program)
 // to a new budget.
-budget_create :: proc "contextless" (amounts: Budget_Amounts, from: Handle = 0) -> (budget: Handle, status: Status) {
+budget_create :: proc "contextless" (amounts: Budget_Amounts, from: Handle = 0, error: ^errors.Error_Record = nil) -> (budget: Handle, status: Status) {
 	results: [7]u64
-	results, status = call(.Budget_Create, u64(from == 0 ? own_budget() : from), amounts.pages, amounts.programs, amounts.threads, amounts.processor, amounts.log_records)
+	results, status = call_with_error(error, .Budget_Create, u64(from == 0 ? own_budget() : from), amounts.pages, amounts.programs, amounts.threads, amounts.processor, amounts.log_records)
 	return Handle(results[0]), status
 }
 
 // budget_read gives what a budget (0: the budget of this program) can still pay.
-budget_read :: proc "contextless" (budget: Handle = 0) -> (amounts: Budget_Amounts, status: Status) {
+budget_read :: proc "contextless" (budget: Handle = 0, error: ^errors.Error_Record = nil) -> (amounts: Budget_Amounts, status: Status) {
 	results: [7]u64
-	results, status = call(.Budget_Read, u64(budget == 0 ? own_budget() : budget))
+	results, status = call_with_error(error, .Budget_Read, u64(budget == 0 ? own_budget() : budget))
 	return {pages = results[0], programs = results[1], threads = results[2], processor = results[3], log_records = results[4]}, status
 }
 
@@ -142,36 +160,38 @@ budget_used :: proc "contextless" (budget: Handle = 0) -> (processor_time: u64, 
 // memory_create makes a memory object. The budget (0: the budget of this
 // program) pays for its pages now. Each page gets its page frame at its
 // first use, or at creation with the flag Frames_Now.
-memory_create :: proc "contextless" (page_count: u64, budget: Handle = 0, flags: op.Memory_Flags = {}) -> (memory: Handle, status: Status) {
+memory_create :: proc "contextless" (page_count: u64, budget: Handle = 0, flags: op.Memory_Flags = {}, error: ^errors.Error_Record = nil) -> (memory: Handle, status: Status) {
 	results: [7]u64
-	results, status = call(.Memory_Create, u64(budget == 0 ? own_budget() : budget), page_count, transmute(u64)flags)
+	results, status = call_with_error(error, .Memory_Create, u64(budget == 0 ? own_budget() : budget), page_count, transmute(u64)flags)
 	return Handle(results[0]), status
 }
 
 // memory_map maps a memory object in this program (program 0) or in another.
 // address 0 lets the kernel choose. page_count 0 maps all pages from first.
-memory_map :: proc "contextless" (memory: Handle, flags: op.Map_Flags = {.Write}, program: Handle = 0, address: u64 = 0, first: u64 = 0, page_count: u64 = 0) -> (result: rawptr, status: Status) {
+memory_map :: proc "contextless" (memory: Handle, flags: op.Map_Flags = {.Write}, program: Handle = 0, address: u64 = 0, first: u64 = 0, page_count: u64 = 0, error: ^errors.Error_Record = nil) -> (result: rawptr, status: Status) {
 	results: [7]u64
-	results, status = call(.Memory_Map, u64(memory), u64(program), address, transmute(u64)flags, first, page_count)
+	results, status = call_with_error(error, .Memory_Map, u64(memory), u64(program), address, transmute(u64)flags, first, page_count)
 	return rawptr(uintptr(results[0])), status
 }
 
-memory_unmap :: proc "contextless" (address: rawptr, program: Handle = 0) -> Status {
-	_, status := call(.Memory_Unmap, u64(program), u64(uintptr(address)))
+memory_unmap :: proc "contextless" (address: rawptr, program: Handle = 0, error: ^errors.Error_Record = nil) -> Status {
+	_, status := call_with_error(error, .Memory_Unmap, u64(program), u64(uintptr(address)))
 	return status
 }
 
 // memory_physical gives the physical address of the first page of a memory
 // object: its pages follow each other. The machine handle needs the right
 // Physical.
-memory_physical :: proc "contextless" (machine: Handle, memory: Handle) -> (address: u64, status: Status) {
+memory_physical :: proc "contextless" (machine: Handle, memory: Handle, error: ^errors.Error_Record = nil) -> (address: u64, status: Status) {
 	results: [7]u64
-	results, status = call(.Memory_Physical, u64(machine), u64(memory))
+	results, status = call_with_error(error, .Memory_Physical, u64(machine), u64(memory))
 	return results[0], status
 }
 
-memory_size :: proc "contextless" (memory: Handle) -> u64 {
-	results, _ := call(.Memory_Size, u64(memory))
+// memory_size gives the pages of a memory object, or 0 when the kernel
+// refuses; then the error record is at error, if it is not nil.
+memory_size :: proc "contextless" (memory: Handle, error: ^errors.Error_Record = nil) -> u64 {
+	results, _ := call_with_error(error, .Memory_Size, u64(memory))
 	return results[0]
 }
 
@@ -180,9 +200,9 @@ memory_size :: proc "contextless" (memory: Handle) -> u64 {
 // With the target 0, the copy is in this program.
 // The new handle has the rights of handle that are also in rights.
 // The result is the handle in the table of that program.
-give :: proc "contextless" (target: Handle, handle: Handle, rights: Rights) -> (result: Handle, status: Status) {
+give :: proc "contextless" (target: Handle, handle: Handle, rights: Rights, error: ^errors.Error_Record = nil) -> (result: Handle, status: Status) {
 	results: [7]u64
-	results, status = call(.Handle_Give, u64(target), u64(handle), u64(transmute(u32)rights))
+	results, status = call_with_error(error, .Handle_Give, u64(target), u64(handle), u64(transmute(u32)rights))
 	return Handle(results[0]), status
 }
 
@@ -202,9 +222,9 @@ handle_state :: proc "contextless" (handle: Handle, memory: Handle = 0) -> (kind
 // in one program (a handle with the right Control), or in each program.
 // The handle stays, and the mappings of this program stay. count is the
 // count of holdings that ended.
-handle_revoke :: proc "contextless" (handle: Handle, program: Handle = 0) -> (count: u64, status: Status) {
+handle_revoke :: proc "contextless" (handle: Handle, program: Handle = 0, error: ^errors.Error_Record = nil) -> (count: u64, status: Status) {
 	results: [7]u64
-	results, status = call(.Handle_Revoke, u64(handle), u64(program))
+	results, status = call_with_error(error, .Handle_Revoke, u64(handle), u64(program))
 	return results[0], status
 }
 
@@ -320,12 +340,12 @@ THREAD_STACK_PAGES :: 16
 // memory; the page under it has no memory.
 // The entry never returns: it calls thread_stop. The budget (0: the budget
 // of this program) pays for the thread and gives its processor time.
-thread_start :: proc "contextless" (entry: proc "c" (parameter: rawptr) -> !, parameter: rawptr, stack_pages: u64 = THREAD_STACK_PAGES, budget: Handle = 0) -> (thread: Thread, status: Status) {
-	memory := memory_create(stack_pages) or_return
+thread_start :: proc "contextless" (entry: proc "c" (parameter: rawptr) -> !, parameter: rawptr, stack_pages: u64 = THREAD_STACK_PAGES, budget: Handle = 0, error: ^errors.Error_Record = nil) -> (thread: Thread, status: Status) {
+	memory := memory_create(stack_pages, 0, {}, error) or_return
 	defer close(memory)
-	thread.stack = memory_map(memory) or_return
+	thread.stack = memory_map(memory, error = error) or_return
 	results: [7]u64
-	results, status = call(.Thread_Create, u64(budget == 0 ? own_budget() : budget), u64(uintptr(rawptr(entry))), u64(uintptr(thread.stack)) + stack_pages * PAGE_SIZE, u64(uintptr(parameter)))
+	results, status = call_with_error(error, .Thread_Create, u64(budget == 0 ? own_budget() : budget), u64(uintptr(rawptr(entry))), u64(uintptr(thread.stack)) + stack_pages * PAGE_SIZE, u64(uintptr(parameter)))
 	if status != .Ok {
 		memory_unmap(thread.stack)
 		return {}, status
