@@ -38,6 +38,9 @@ A step is one tested commit that adds one capability.
 | 30 | `5e65050` | The block service: a virtio disk driven by a program, with device memory, a message interrupt and contiguous memory with a physical address for a holder of the right Physical; the contract `block`; the root service gives one device from the bus; the measures of `disk` (built by an agent on a branch, reviewed and merged by the coordinator) |
 | 31 | `4962f8c` | The storage service: a private store for each program on the data disk, copy on write with two root blocks and a check in each pointer; a limit in blocks; the person lists and revokes (same agent and branch) |
 | 32 | `cb939b9` | A persistent program: `notes` keeps its state across a restart of the machine; four machines on one data disk test a clean stop, a stop during commits and a cut root block (same agent and branch) |
+| 33 | `fbb5866` | A program loads a module with imports: a module space, each import found by its hash in the files that the program was granted; a load error is a record with its detail (`Load_Error`) (built by an agent on a branch, reviewed and merged by the coordinator) |
+| 34 | `feddd40` | Replacement of an import: the root service holds the table, the loader checks the descriptions, the module records of a program (`Program_Module`) and the stop report name the module that ran; the program `imports` (same agent and branch) |
+| 35 | `6fe8d02` | The code of an imported module is one copy for all the programs of a table of prepared modules, at any base (same agent and branch) |
 
 ## Review 1: steps 1 to 5 (2026-11-10)
 

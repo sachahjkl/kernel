@@ -135,6 +135,9 @@ build_module :: proc(build: Module_Build) -> bool {
 		"-default-to-nil-allocator",
 		"-o:speed",
 		"-vet",
+		// The file name and the line in a message of a check, not the full path:
+		// the hash of a module does not depend on the folder of the build.
+		"-source-code-locations:filename",
 		CONTRACT_LIBRARY,
 		join("-out:", objects, "/", build.name, ".o"),
 	)

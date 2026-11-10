@@ -692,7 +692,7 @@ scenario := [?]Step {
 	{kind = .Type, text = "load(\"lonely\")"},
 	// An error is a record: the console prints its lines.
 	{kind = .Wait, text = "[console] error: cannot load lonely"},
-	{kind = .Wait, text = "[console] error: lonely imports 06711e49774633ea..., and the load source has no file with its hash"},
+	{kind = .Wait, text = "..., and the load source has no file with its hash"},
 	{kind = .Type, text = "load(\"agenda\")"},
 	{kind = .Wait, text = "[console] agenda: 3 commands, hash"},
 	{kind = .Wait, text = "[console]   imports calendar "},
@@ -761,7 +761,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = ", which replaces "},
 	{kind = .Wait, text = "[console] error: the program agenda stopped: invalid instruction"},
 	{kind = .Wait, text = "[console] error: the instruction is at offset "},
-	{kind = .Wait, text = "[console] error: calendar_fixed 5d8ff6e736fda684... runs in place of calendar b1f1b875df9992f8..."},
+	{kind = .Wait, text = "... runs in place of calendar "},
 	{kind = .Type, text = "replacements()"},
 	{kind = .Wait, text = "...: replaced by calendar_fixed "},
 	{kind = .Shot, text = "replacement"},

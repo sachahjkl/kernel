@@ -83,6 +83,10 @@ COMMANDS :: [?]Command {
 }
 
 main :: proc() {
+	// The development shell of Nix gives the linker a search path with the
+	// folder of the build in it (NIX_LDFLAGS). The linker would write it in
+	// each module, and the hash of a module would depend on that folder.
+	_ = os.unset_env("NIX_LDFLAGS")
 	if len(os.args) < 2 || os.args[1] == "help" || os.args[1] == "-h" || os.args[1] == "--help" {
 		usage()
 		return
