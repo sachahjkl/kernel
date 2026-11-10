@@ -81,10 +81,11 @@ node_start :: proc "contextless" (index: int) -> bool {
 	grants[relay.GRANT_AFTER] = {node.after_memory, {.Read, .Write}}
 	grants[relay.GRANT_CONTROL] = {node.control_memory, {.Read, .Write}}
 	grants[relay.GRANT_STATE] = {node.state_memory, {.Read, .Write}}
+	grants[op.CONTEXT_LOG] = {system.context_record().handles[op.CONTEXT_LOG], {.Write}}
 	values[relay.VALUE_WORK_TIME] = work_times[index]
 	name := [?]u8{'n', 'o', 'd', 'e', ' ', u8('1' + index)}
 	status: system.Status
-	node.program, status = system.program_start(system.image_find(image, "node"), string(name[:]), grants, values)
+	node.program, status = system.program_start(system.image_find(image, "node"), string(name[:]), grants, values, {pages = 256, programs = 1, threads = 1})
 	node.waiting_logged = false
 	return status == .Ok
 }

@@ -50,12 +50,17 @@ Mapping :: struct {
 //   grants:  each handle that is not 0 is copied to the program with the
 //            rights of the grant; the context of the program has the copy
 //            at the same index.
+//            The index CONTEXT_BUDGET must be 0: the program receives its
+//            new budget there.
 //   values:   copied to the context.
+//   amounts:  the budget of the program. It comes from the budget of this
+//             program. It pays for the program and for all that the loader
+//             creates. When the program stops, what remains returns.
 //   mappings: memory that the program has from its start, with no handle to
 //             it: the program cannot map it again with other flags.
 // The program stops when the last handle to it closes.
-program_start :: proc "contextless" (file: []u8, name: string, grants: [op.CONTEXT_HANDLES]Grant, values: [op.CONTEXT_VALUES]u64, mappings: []Mapping = nil) -> (program: Handle, status: Status) {
-	if len(file) == 0 || module.validate(file) != .None || module.count(file, .Imports) > 1 {
+program_start :: proc "contextless" (file: []u8, name: string, grants: [op.CONTEXT_HANDLES]Grant, values: [op.CONTEXT_VALUES]u64, amounts: Budget_Amounts, mappings: []Mapping = nil) -> (program: Handle, status: Status) {
+	if len(file) == 0 || module.validate(file) != .None || module.count(file, .Imports) > 1 || grants[op.CONTEXT_BUDGET].handle != 0 {
 		return 0, .Bad_Operation
 	}
 	head, _ := module.header(file)
@@ -64,13 +69,21 @@ program_start :: proc "contextless" (file: []u8, name: string, grants: [op.CONTE
 		return 0, .Bad_Operation
 	}
 
+	// The program holds the one handle to its budget: when the program
+	// stops, the budget ends.
+	budget: Handle
+	budget, status = budget_create(amounts)
+	if status != .Ok {
+		return 0, status
+	}
+	defer close(budget)
 	results: [7]u64
-	results, status = call(.Program_Create, u64(uintptr(raw_data(name))), u64(len(name)))
+	results, status = call(.Program_Create, u64(budget), u64(uintptr(raw_data(name))), u64(len(name)))
 	if status != .Ok {
 		return 0, status
 	}
 	program = Handle(results[0])
-	if status = program_fill(program, file, head, grants, values, mappings); status == .Ok {
+	if status = program_fill(program, budget, file, head, grants, values, mappings); status == .Ok {
 		_, status = call(.Program_Start, u64(program), u64(entry), op.STACK_TOP, op.CONTEXT_ADDRESS)
 	}
 	if status != .Ok {
@@ -82,17 +95,17 @@ program_start :: proc "contextless" (file: []u8, name: string, grants: [op.CONTE
 }
 
 @(private)
-program_fill :: proc "contextless" (program: Handle, file: []u8, head: module.Header, grants: [op.CONTEXT_HANDLES]Grant, values: [op.CONTEXT_VALUES]u64, mappings: []Mapping) -> Status {
-	module_map(file, head, program, op.PROGRAM_BASE) or_return
+program_fill :: proc "contextless" (program: Handle, budget: Handle, file: []u8, head: module.Header, grants: [op.CONTEXT_HANDLES]Grant, values: [op.CONTEXT_VALUES]u64, mappings: []Mapping) -> Status {
+	module_map(file, head, program, op.PROGRAM_BASE, budget) or_return
 	for mapping in mappings {
 		memory_map(mapping.memory, mapping.flags, program, mapping.address, mapping.first, mapping.page_count) or_return
 	}
 
-	stack := memory_create(op.STACK_PAGES) or_return
+	stack := memory_create(op.STACK_PAGES, budget) or_return
 	defer close(stack)
 	memory_map(stack, {.Write}, program, op.STACK_TOP - op.STACK_PAGES * PAGE_SIZE) or_return
 
-	record_memory := memory_create(1) or_return
+	record_memory := memory_create(1, budget) or_return
 	defer close(record_memory)
 	record := (^op.Context)(memory_map(record_memory) or_return)
 	defer memory_unmap(record)
@@ -101,6 +114,7 @@ program_fill :: proc "contextless" (program: Handle, file: []u8, head: module.He
 			record.handles[index] = give(program, grant.handle, grant.rights) or_return
 		}
 	}
+	record.handles[op.CONTEXT_BUDGET] = give(program, budget, {.Give, .Read, .Spend}) or_return
 	record.values = values
 	memory_map(record_memory, {.Write}, program, op.CONTEXT_ADDRESS) or_return
 	return .Ok
@@ -110,8 +124,8 @@ program_fill :: proc "contextless" (program: Handle, file: []u8, head: module.He
 // map each segment in the program with the protection of the segment.
 // The caller validates the file first.
 @(private)
-module_map :: proc "contextless" (file: []u8, head: module.Header, program: Handle, base: u64) -> Status {
-	code := memory_create(head.memory_size / PAGE_SIZE) or_return
+module_map :: proc "contextless" (file: []u8, head: module.Header, program: Handle, base: u64, budget: Handle) -> Status {
+	code := memory_create(head.memory_size / PAGE_SIZE, budget) or_return
 	defer close(code)
 	{
 		address := memory_map(code) or_return
@@ -144,7 +158,7 @@ module_load :: proc "contextless" (file: []u8, base: u64) -> (size: u64, status:
 		return 0, .Bad_Operation
 	}
 	head, _ := module.header(file)
-	module_map(file, head, 0, base) or_return
+	module_map(file, head, 0, base, 0) or_return
 	return head.memory_size, .Ok
 }
 

@@ -57,21 +57,20 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		return .Ok
 
 	case .Log:
-		if v[1] > 4096 || !user_range(program.table, v[0], v[1], false) {
+		_ = handle_find(program, v[0], .Log, {.Write}) or_return
+		if v[2] > 4096 || !user_range(program.table, v[1], v[2], false) {
 			return .Bad_Address
 		}
 		log_bytes({'['})
 		log_bytes(transmute([]u8)program_name(program))
 		log_bytes({']', ' '})
-		log_bytes(([^]u8)(uintptr(v[0]))[:v[1]])
+		log_bytes(([^]u8)(uintptr(v[1]))[:v[2]])
 		log_bytes({'\r', '\n'})
 		return .Ok
 
 	case .Memory_Create:
-		region := region_create(v[0])
-		if region == 0 {
-			return .No_Memory
-		}
+		budget := handle_find(program, v[0], .Budget, {.Spend}) or_return
+		region := region_create(budget.object, v[1]) or_return
 		handle := handle_insert(program, {kind = .Memory, rights = RIGHTS_MEMORY, object = region})
 		if handle == 0 {
 			regions[region].references = 1
@@ -118,13 +117,11 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		return .Ok
 
 	case .Program_Create:
-		if v[1] > 31 || !user_range(program.table, v[0], v[1], false) {
+		budget := handle_find(program, v[0], .Budget, {.Spend}) or_return
+		if v[2] > 31 || !user_range(program.table, v[1], v[2], false) {
 			return .Bad_Address
 		}
-		created := program_create(([^]u8)(uintptr(v[0]))[:v[1]])
-		if created == 0 {
-			return .No_Memory
-		}
+		created := program_create(budget.object, ([^]u8)(uintptr(v[1]))[:v[2]]) or_return
 		handle := handle_insert(program, {kind = .Program, rights = RIGHTS_PROGRAM, object = created})
 		if handle == 0 {
 			program_stop(created, 0)
@@ -139,17 +136,15 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		if to.state != .Created {
 			return .Bad_State
 		}
-		if _, status := thread_create(slot.object, v[1], v[2], v[3]); status != .Ok {
+		if _, status := thread_create(slot.object, to.budget, v[1], v[2], v[3]); status != .Ok {
 			return status
 		}
 		to.state = .Ready
 		return .Ok
 
 	case .Thread_Create:
-		created, status := thread_create(program_index, v[0], v[1], v[2])
-		if status != .Ok {
-			return status
-		}
+		budget := handle_find(program, v[0], .Budget, {.Spend}) or_return
+		created := thread_create(program_index, budget.object, v[1], v[2], v[3]) or_return
 		handle := handle_insert(program, {kind = .Thread, rights = RIGHTS_THREAD, object = created})
 		if handle == 0 {
 			thread_stop(created)
@@ -222,6 +217,26 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 	case .Handle_Close:
 		slot := handle_find(program, v[0], .None) or_return
 		handle_close(program, slot)
+		return .Ok
+
+	case .Budget_Create:
+		from := handle_find(program, v[0], .Budget, {.Spend}) or_return
+		created := budget_create(from.object, {pages = v[1], programs = v[2], threads = v[3]}) or_return
+		handle := handle_insert(program, {kind = .Budget, rights = RIGHTS_BUDGET, object = created})
+		if handle == 0 {
+			budgets[created].references = 1
+			budget_release(created)
+			return .No_Slot
+		}
+		results[0] = u64(handle)
+		return .Ok
+
+	case .Budget_Read:
+		slot := handle_find(program, v[0], .Budget, {.Read}) or_return
+		amounts := budgets[slot.object].amounts
+		results[0] = amounts.pages
+		results[1] = amounts.programs
+		results[2] = amounts.threads
 		return .Ok
 
 	case .Word_Wait:
@@ -306,6 +321,9 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 					report.region_count += 1
 				}
 			}
+			for budget in budgets {
+				report.budget_pages += budget.amounts.pages
+			}
 			(^op.System_Report)(uintptr(v[3]))^ = report
 			results[0] = size_of(op.System_Report)
 		case .Program:
@@ -323,6 +341,9 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 					mapped_pages = about.mapped_pages,
 					run_time     = about.run_time,
 					entries      = about.entries,
+				}
+				if about.state != .None {
+					report.budget = budgets[about.budget].amounts
 				}
 				for slot in about.handles {
 					if slot.kind != .None {

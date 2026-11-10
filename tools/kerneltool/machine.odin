@@ -217,9 +217,19 @@ scenario := [?]Step {
 	{kind = .Wait, text = "rights: ok, 4 allowed, 5 refused", any_order = true},
 	{kind = .Wait, text = "compositor: surface rights"},
 	{kind = .Shot, text = "rights"},
+
+	// Budgets: no object comes from nothing. The program creates until
+	// its budget cannot pay; what it frees returns.
+	{kind = .Click, x = 878, y = 14}, // budget
+	{kind = .Wait, text = "budget: ok, ", any_order = true},
+	{kind = .Wait, text = "compositor: surface budget"},
+	{kind = .Shot, text = "budget"},
 	{kind = .Click, x = 70, y = 300},
 	{kind = .Type, text = "programs()"},
 	{kind = .Wait, text = "   threads     "},
+	// Each page is free or paid, after all the starts and stops of this test.
+	{kind = .Type, text = "memory()"},
+	{kind = .Wait, text = " pages: all the free pages"},
 	{kind = .Type, text = "shutdown()"},
 	{kind = .Wait, text = "kernel: the machine stops with code 0"},
 }

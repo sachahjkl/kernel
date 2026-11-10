@@ -152,7 +152,7 @@ The description of a function is its list of parameters and results, each with a
 
 Status: implemented on 2026-11-10 (`isolated/`, `programs/host`). The owner has not reviewed the choices below.
 
-- **Call host**: The caller starts one program per module: the call host. The call host receives two memory objects and no other handle: the call ring and the call region. The caller maps the file of the module in the call host, read-only, with no handle. The call host checks the file and loads the module.
+- **Call host**: The caller starts one program per module: the call host. The call host receives two memory objects: the call ring and the call region. Like each program, it also has its budget and, if the caller gives it, the log. It receives no other handle. The caller maps the file of the module in the call host, read-only, with no handle. The call host checks the file and loads the module.
 - **Argument record**: One field per parameter, in order. A scalar is 8 bytes. A parameter that the direct call passes by address is the record itself: a Text is a slice of 16 bytes, `{offset, count}`. The offset is in the call region.
 - **Where it travels**: The argument record is in the call region. The command record names it: `kind` is the export index, `values[0]` is the offset of the argument record, `values[1]` is its size. Reason: 6 integers and 8 floats are 112 bytes, and a record of a ring has 56 bytes of values. One place for all argument records needs no second path.
 - **Completion record**: `kind` is a status: 0 is success, 1 is "no such export", 2 is "the argument record is not in the call region". `values[0]` and `values[1]` are the integer results; `values[2]` and `values[3]` are the float results.

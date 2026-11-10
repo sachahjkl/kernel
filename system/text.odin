@@ -1,5 +1,7 @@
 package system
 
+import op "../kernel/operation"
+
 // Text without an allocator: a Part is a string or a number, and format
 // writes parts in a buffer.
 
@@ -83,11 +85,16 @@ format :: proc "contextless" (buffer: []u8, parts: ..Part) -> string {
 	return written(&writer)
 }
 
-// log writes one line on the log of the kernel.
+// log writes one line on the log of the kernel. A program with no handle to
+// the log writes nothing.
 log :: proc "contextless" (parts: ..Part) {
+	handle := context_record().handles[op.CONTEXT_LOG]
+	if handle == 0 {
+		return
+	}
 	buffer: [512]u8
 	text := format(buffer[:], ..parts)
-	call(.Log, u64(uintptr(raw_data(text))), u64(len(text)))
+	call(.Log, u64(handle), u64(uintptr(raw_data(text))), u64(len(text)))
 }
 
 // name_of gives the text of a fixed array of bytes that ends with zero bytes.

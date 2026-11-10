@@ -19,6 +19,7 @@ Region :: struct {
 	physical:   u64,
 	page_count: u64, // 0: the slot is free.
 	references: u32, // Handles and mappings.
+	budget:     u32, // The budget that paid. 0 for a device.
 	device:     bool, // The frames are not from the page frame table: a framebuffer, boot data.
 }
 
@@ -30,6 +31,8 @@ Object_Kind :: enum u8 {
 	Ports     = 4, // object: first port; count: number of ports
 	Machine   = 5, // The machine: its rights are Devices, Inspect and Stop.
 	Thread    = 6, // object: index in threads
+	Budget    = 7, // object: index in budgets
+	Log       = 8, // The log of the kernel.
 }
 
 // The rights of the handle of a new object, by kind.
@@ -39,6 +42,8 @@ RIGHTS_THREAD :: op.Rights{.Give, .Read, .Control}
 RIGHTS_PORTS :: op.Rights{.Give}
 RIGHTS_INTERRUPT :: op.Rights{.Give, .Read}
 RIGHTS_MACHINE :: op.Rights{.Give, .Inspect, .Devices, .Stop}
+RIGHTS_BUDGET :: op.Rights{.Give, .Read, .Spend}
+RIGHTS_LOG :: op.Rights{.Give, .Write}
 
 Handle_Slot :: struct {
 	kind:       Object_Kind,
@@ -68,6 +73,7 @@ Thread :: struct {
 	events:       ^u32, // The `events` word of the thread record, for the kernel.
 	deadline:     u64,
 	references:   u32, // Handles to this thread.
+	budget:       u32, // The budget that paid for the slot.
 	in_enter:     bool,
 	run_time:     u64,
 	// The word wait of the entry in progress or of the wait in progress:
@@ -95,6 +101,7 @@ Program :: struct {
 	table:        u64,
 	next_address: u64,
 	references:   u32, // Handles to this program.
+	budget:       u32, // The budget that paid for the slot. It pays for the page tables.
 	thread_areas: u32, // Bit n: thread area n is in use.
 	thread_count: u32,
 	has_ports:    bool,
@@ -105,6 +112,18 @@ Program :: struct {
 	mappings:     [MAPPING_CAPACITY]Mapping,
 }
 
+BUDGET_CAPACITY :: 128
+
+// A budget: see operation.Budget_Amounts. Budget 0 is not live: it holds
+// what returned to no budget.
+Budget :: struct {
+	live:       bool,
+	parent:     u32, // The budget that this budget came from. It is live, or it is 0.
+	references: u32, // Handles to this budget.
+	amounts:    op.Budget_Amounts,
+}
+
+budgets: [BUDGET_CAPACITY]Budget
 regions: [REGION_CAPACITY]Region
 programs: [PROGRAM_CAPACITY]Program
 threads: [THREAD_TABLE_CAPACITY]Thread
@@ -119,21 +138,80 @@ slice_left: u64
 entry_count: u64
 interrupt_count: u64
 
-region_create :: proc "contextless" (page_count: u64) -> u32 {
-	if page_count == 0 {
-		return 0
+// budget_create moves amounts from a budget to a new budget.
+budget_create :: proc "contextless" (parent: u32, amounts: op.Budget_Amounts) -> (index: u32, status: op.Status) {
+	from := &budgets[parent]
+	if !from.live || amounts.pages > from.amounts.pages || amounts.programs > from.amounts.programs || amounts.threads > from.amounts.threads {
+		return 0, .No_Budget
 	}
-	for &region, index in regions[1:] {
+	for &budget, slot in budgets[1:] {
+		if !budget.live {
+			from.amounts.pages -= amounts.pages
+			from.amounts.programs -= amounts.programs
+			from.amounts.threads -= amounts.threads
+			budget = {live = true, parent = parent, amounts = amounts}
+			return u32(slot + 1), .Ok
+		}
+	}
+	return 0, .No_Slot
+}
+
+// budget_release closes one handle to a budget. With no handle, the budget
+// ends: what it holds returns to its parent, and its parent pays for the
+// objects that it paid for.
+budget_release :: proc "contextless" (index: u32) {
+	budget := &budgets[index]
+	budget.references -= 1
+	if budget.references != 0 {
+		return
+	}
+	parent := budget.parent
+	budgets[parent].amounts.pages += budget.amounts.pages
+	budgets[parent].amounts.programs += budget.amounts.programs
+	budgets[parent].amounts.threads += budget.amounts.threads
+	for &region in regions {
+		if region.page_count != 0 && region.budget == index {
+			region.budget = parent
+		}
+	}
+	for &program in programs {
+		if program.state != .None && program.budget == index {
+			program.budget = parent
+		}
+	}
+	for &thread in threads {
+		if thread.state != .None && thread.budget == index {
+			thread.budget = parent
+		}
+	}
+	for &other in budgets {
+		if other.live && other.parent == index {
+			other.parent = parent
+		}
+	}
+	budget^ = {}
+}
+
+// region_create makes a memory object. The budget pays for its pages.
+region_create :: proc "contextless" (budget: u32, page_count: u64) -> (index: u32, status: op.Status) {
+	if page_count == 0 {
+		return 0, .Bad_Operation
+	}
+	if !budgets[budget].live || budgets[budget].amounts.pages < page_count {
+		return 0, .No_Budget
+	}
+	for &region, slot in regions[1:] {
 		if region.page_count == 0 {
 			physical := frames_allocate(page_count)
 			if physical == 0 {
-				return 0
+				return 0, .No_Memory
 			}
-			region = {physical = physical, page_count = page_count}
-			return u32(index + 1)
+			budgets[budget].amounts.pages -= page_count
+			region = {physical = physical, page_count = page_count, budget = budget}
+			return u32(slot + 1), .Ok
 		}
 	}
-	return 0
+	return 0, .No_Slot
 }
 
 region_device :: proc "contextless" (physical: u64, page_count: u64) -> u32 {
@@ -152,6 +230,7 @@ region_release :: proc "contextless" (index: u32) {
 	if region.references == 0 {
 		if !region.device {
 			frames_free(region.physical, region.page_count)
+			budgets[region.budget].amounts.pages += region.page_count
 		}
 		region^ = {}
 	}
@@ -172,6 +251,8 @@ handle_insert :: proc "contextless" (program: ^Program, slot: Handle_Slot) -> op
 			programs[slot.object].references += 1
 		case .Thread:
 			threads[slot.object].references += 1
+		case .Budget:
+			budgets[slot.object].references += 1
 		case .Ports:
 			program.has_ports = true
 		case .Interrupt:
@@ -210,7 +291,7 @@ handle_close :: proc "contextless" (program: ^Program, slot: ^Handle_Slot) {
 		target.references -= 1
 		if target.references == 0 {
 			if target.state == .Stopped {
-				target.state = .None
+				program_free(target)
 			} else {
 				program_stop(slot.object, op.STOP_CODE_NO_HANDLE)
 			}
@@ -219,8 +300,10 @@ handle_close :: proc "contextless" (program: ^Program, slot: ^Handle_Slot) {
 		thread := &threads[slot.object]
 		thread.references -= 1
 		if thread.references == 0 && thread.state == .Stopped {
-			thread.state = .None
+			thread_free(thread)
 		}
+	case .Budget:
+		budget_release(slot.object)
 	case .Interrupt:
 		if interrupt_owner[slot.object] == u32(intrinsics.ptr_sub(program, &programs[0])) {
 			interrupt_owner[slot.object] = 0
@@ -272,12 +355,12 @@ map_region :: proc "contextless" (program: ^Program, region_index: u32, address:
 		bits |= PAGE_NO_EXECUTE
 	}
 	for page in 0 ..< count {
-		entry := page_entry(program.table, address + page * PAGE_SIZE, true)
+		entry := page_entry(program.table, address + page * PAGE_SIZE, true, program.budget)
 		if entry == nil {
 			for undo in 0 ..< page {
 				page_entry(program.table, address + undo * PAGE_SIZE, false)^ = 0
 			}
-			return 0, .No_Memory
+			return 0, budgets[program.budget].amounts.pages == 0 ? .No_Budget : .No_Memory
 		}
 		entry^ = (region.physical + (first + page) * PAGE_SIZE) | bits
 	}
@@ -316,27 +399,48 @@ maps_region :: proc "contextless" (program: ^Program, region: u32) -> bool {
 
 FPU_START :: [32]u8{0 = 0x7F, 1 = 0x03, 24 = 0x80, 25 = 0x1F}
 
-program_create :: proc "contextless" (name: []u8) -> u32 {
-	for &program, index in programs[1:] {
+// program_create makes a program with no memory. The budget pays for the
+// slot and for the page tables.
+program_create :: proc "contextless" (budget: u32, name: []u8) -> (index: u32, status: op.Status) {
+	if !budgets[budget].live || budgets[budget].amounts.programs == 0 || budgets[budget].amounts.pages == 0 {
+		return 0, .No_Budget
+	}
+	for &program, slot in programs[1:] {
 		if program.state != .None {
 			continue
 		}
 		program = {}
 		program.table = address_space_create()
 		if program.table == 0 {
-			return 0
+			return 0, .No_Memory
 		}
+		budgets[budget].amounts.pages -= 1
+		budgets[budget].amounts.programs -= 1
+		program.budget = budget
 		program.next_address = op.CHOSEN_BASE
 		copy(program.name[:len(program.name) - 1], name)
 		program.state = .Created
-		return u32(index + 1)
+		return u32(slot + 1), .Ok
 	}
-	return 0
+	return 0, .No_Slot
+}
+
+// program_free frees the slot of a stopped program that no handle names.
+program_free :: proc "contextless" (program: ^Program) {
+	program.state = .None
+	budgets[program.budget].amounts.programs += 1
+}
+
+// thread_free frees the slot of a stopped thread that no handle names.
+thread_free :: proc "contextless" (thread: ^Thread) {
+	thread.state = .None
+	budgets[thread.budget].amounts.threads += 1
 }
 
 // thread_create adds a thread to a program. The kernel makes the thread
 // area: the thread record and the kernel ring of the thread.
-thread_create :: proc "contextless" (program_index: u32, entry, stack, parameter: u64) -> (index: u32, status: op.Status) {
+// The budget pays for the slot and for the thread area.
+thread_create :: proc "contextless" (program_index: u32, budget: u32, entry, stack, parameter: u64) -> (index: u32, status: op.Status) {
 	program := &programs[program_index]
 	number := u32(op.THREAD_CAPACITY)
 	for candidate in 0 ..< u32(op.THREAD_CAPACITY) {
@@ -354,10 +458,10 @@ thread_create :: proc "contextless" (program_index: u32, entry, stack, parameter
 	if number == op.THREAD_CAPACITY || index == 0 {
 		return 0, .No_Slot
 	}
-	region := region_create(1 + ring.PAGE_COUNT)
-	if region == 0 {
-		return 0, .No_Memory
+	if !budgets[budget].live || budgets[budget].amounts.threads == 0 {
+		return 0, .No_Budget
 	}
+	region := region_create(budget, 1 + ring.PAGE_COUNT) or_return
 	record := op.THREAD_AREA_BASE + u64(number) * op.THREAD_AREA_PAGES * PAGE_SIZE
 	if _, map_status := map_region(program, region, record, {.Write}, 0, 0); map_status != .Ok {
 		regions[region].references = 1
@@ -373,6 +477,7 @@ thread_create :: proc "contextless" (program_index: u32, entry, stack, parameter
 	thread^ = {
 		state = .Ready,
 		program = program_index,
+		budget = budget,
 		number = number,
 		ring = direct(regions[region].physical + PAGE_SIZE, ring.Ring),
 		record = record,
@@ -388,6 +493,7 @@ thread_create :: proc "contextless" (program_index: u32, entry, stack, parameter
 	}
 	start := FPU_START
 	copy(thread.fpu.bytes[:], start[:])
+	budgets[budget].amounts.threads -= 1
 	program.thread_areas |= 1 << number
 	program.thread_count += 1
 	return index, .Ok
@@ -397,7 +503,10 @@ thread_create :: proc "contextless" (program_index: u32, entry, stack, parameter
 // handle to the thread closes: a handle never names another thread.
 @(private = "file")
 thread_end :: proc "contextless" (thread: ^Thread) {
-	thread.state = thread.references == 0 ? .None : .Stopped
+	thread.state = .Stopped
+	if thread.references == 0 {
+		thread_free(thread)
+	}
 	thread.ring = nil
 	if record_thread == u32(intrinsics.ptr_sub(thread, &threads[0])) {
 		record_thread = 0 // The slot can get a new thread.
@@ -517,7 +626,7 @@ program_stop :: proc "contextless" (index: u32, code: u32) {
 			handle_close(program, &slot)
 		}
 	}
-	address_space_free(program.table)
+	budgets[program.budget].amounts.pages += address_space_free(program.table)
 	program.table = 0
 	for &other, other_index in programs[1:] {
 		if other.state == .None || other.state == .Stopped {
@@ -531,7 +640,7 @@ program_stop :: proc "contextless" (index: u32, code: u32) {
 		}
 	}
 	if program.references == 0 {
-		program.state = .None
+		program_free(program)
 	}
 }
 

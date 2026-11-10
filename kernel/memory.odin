@@ -125,8 +125,8 @@ frames_free :: proc "contextless" (address: u64, count: u64) {
 }
 
 // page_entry gives the entry of the last level table for an address.
-// With create, it makes the tables that are missing.
-page_entry :: proc "contextless" (table: u64, address: u64, create: bool) -> ^u64 {
+// With create, it makes the tables that are missing: the budget pays.
+page_entry :: proc "contextless" (table: u64, address: u64, create: bool, budget: u32 = 0) -> ^u64 {
 	current := table
 	for level := uint(3); level >= 1; level -= 1 {
 		entry := &direct(current, [512]u64)[address >> (12 + 9 * level) & 511]
@@ -134,10 +134,14 @@ page_entry :: proc "contextless" (table: u64, address: u64, create: bool) -> ^u6
 			if !create {
 				return nil
 			}
+			if !budgets[budget].live || budgets[budget].amounts.pages == 0 {
+				return nil
+			}
 			child := frames_allocate(1)
 			if child == 0 {
 				return nil
 			}
+			budgets[budget].amounts.pages -= 1
 			entry^ = child | PAGE_PRESENT | PAGE_WRITE | PAGE_USER
 		}
 		current = entry^ & PAGE_ADDRESS
@@ -156,18 +160,20 @@ address_space_create :: proc "contextless" () -> u64 {
 	return table
 }
 
-// address_space_free frees the tables of the program half, and the top table.
-address_space_free :: proc "contextless" (table: u64) {
-	free_level :: proc "contextless" (table: u64, level: int, limit: int) {
+// address_space_free frees the tables of the program half, and the top
+// table. It gives the number of pages that it freed.
+address_space_free :: proc "contextless" (table: u64) -> u64 {
+	free_level :: proc "contextless" (table: u64, level: int, limit: int) -> (count: u64) {
 		for i in 0 ..< limit {
 			entry := direct(table, [512]u64)[i]
 			if entry & PAGE_PRESENT != 0 && level > 1 {
-				free_level(entry & PAGE_ADDRESS, level - 1, 512)
+				count += free_level(entry & PAGE_ADDRESS, level - 1, 512)
 			}
 		}
 		frames_free(table, 1)
+		return count + 1
 	}
-	free_level(table, 4, 256)
+	return free_level(table, 4, 256)
 }
 
 // user_range says if a program can read (or write) all bytes of a range.

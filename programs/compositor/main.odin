@@ -53,7 +53,7 @@ Rectangle :: struct {
 }
 
 @(rodata)
-launcher := [?]string{"console", "monitor", "plasma", "life", "paint", "fault", "temple", "rings", "threads", "workers", "rights"}
+launcher := [?]string{"console", "monitor", "plasma", "life", "paint", "fault", "temple", "rings", "threads", "workers", "rights", "budget"}
 
 @(rodata)
 pointer_shape := [?]string {

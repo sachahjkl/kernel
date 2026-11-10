@@ -9,6 +9,7 @@ Handle :: op.Handle
 Status :: op.Status
 Right :: op.Right
 Rights :: op.Rights
+Budget_Amounts :: op.Budget_Amounts
 Context :: op.Context
 PAGE_SIZE :: op.PAGE_SIZE
 WAIT_FOREVER :: op.WAIT_FOREVER
@@ -67,9 +68,36 @@ stop :: proc "contextless" (code: u32 = 0) -> ! {
 	for {}
 }
 
-memory_create :: proc "contextless" (page_count: u64) -> (memory: Handle, status: Status) {
+// context_record gives the context of this program: it is at a fixed address.
+context_record :: #force_inline proc "contextless" () -> ^Context {
+	return (^Context)(uintptr(op.CONTEXT_ADDRESS))
+}
+
+// own_budget gives the budget that this program received when it started.
+own_budget :: proc "contextless" () -> Handle {
+	return context_record().handles[op.CONTEXT_BUDGET]
+}
+
+// budget_create moves amounts from a budget (0: the budget of this program)
+// to a new budget.
+budget_create :: proc "contextless" (amounts: Budget_Amounts, from: Handle = 0) -> (budget: Handle, status: Status) {
 	results: [7]u64
-	results, status = call(.Memory_Create, page_count)
+	results, status = call(.Budget_Create, u64(from == 0 ? own_budget() : from), amounts.pages, amounts.programs, amounts.threads)
+	return Handle(results[0]), status
+}
+
+// budget_read gives what a budget (0: the budget of this program) can still pay.
+budget_read :: proc "contextless" (budget: Handle = 0) -> (amounts: Budget_Amounts, status: Status) {
+	results: [7]u64
+	results, status = call(.Budget_Read, u64(budget == 0 ? own_budget() : budget))
+	return {pages = results[0], programs = results[1], threads = results[2]}, status
+}
+
+// memory_create makes a memory object. The budget (0: the budget of this
+// program) pays for its pages.
+memory_create :: proc "contextless" (page_count: u64, budget: Handle = 0) -> (memory: Handle, status: Status) {
+	results: [7]u64
+	results, status = call(.Memory_Create, u64(budget == 0 ? own_budget() : budget), page_count)
 	return Handle(results[0]), status
 }
 
@@ -129,7 +157,7 @@ thread_start :: proc "contextless" (entry: proc "c" (parameter: rawptr) -> !, pa
 	defer close(memory)
 	thread.stack = memory_map(memory) or_return
 	results: [7]u64
-	results, status = call(.Thread_Create, u64(uintptr(rawptr(entry))), u64(uintptr(thread.stack)) + stack_pages * PAGE_SIZE, u64(uintptr(parameter)))
+	results, status = call(.Thread_Create, u64(own_budget()), u64(uintptr(rawptr(entry))), u64(uintptr(thread.stack)) + stack_pages * PAGE_SIZE, u64(uintptr(parameter)))
 	if status != .Ok {
 		memory_unmap(thread.stack)
 		return {}, status

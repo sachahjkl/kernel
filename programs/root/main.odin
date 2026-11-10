@@ -35,6 +35,42 @@ grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 	return {}
 }
 
+// The budget of each program, by name: pages of memory, programs, threads.
+// It comes from the budget of this service, and it returns when the program
+// stops.
+budget_of :: proc "contextless" (name: string) -> system.Budget_Amounts {
+	switch name {
+	case "input":
+		return {pages = 256, programs = 1, threads = 1}
+	case "compositor":
+		return {pages = 4096, programs = 1, threads = 1}
+	case "console":
+		return {pages = 8192, programs = 5, threads = 6} // 4 sandboxes.
+	case "rings":
+		return {pages = 4096, programs = 7, threads = 7} // 6 nodes.
+	case "threads":
+		return {pages = 2048, programs = 1, threads = 6}
+	case "workers":
+		return {pages = 2048, programs = 1, threads = 9}
+	case "rights":
+		return {pages = 2048, programs = 1, threads = 2}
+	case "budget":
+		return {pages = 1024, programs = 1, threads = 4}
+	}
+	return {pages = 2048, programs = 1, threads = 1}
+}
+
+// log_grant gives the grant of the log: each program that this service
+// starts can write on the log. A program that starts programs can also give
+// the log to them.
+log_grant :: proc "contextless" (name: string) -> system.Grant {
+	rights := system.Rights{.Write}
+	if name == "console" || name == "rings" {
+		rights += {.Give}
+	}
+	return {system.context_record().handles[op.CONTEXT_LOG], rights}
+}
+
 // A program that this service started.
 Started :: struct {
 	program:         system.Handle, // 0: the slot is free.
@@ -90,7 +126,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		grants[1] = {device(.Ports, 0x60, 5), {}}
 		grants[2] = {device(.Interrupt, 1, 0), {.Read}}
 		grants[3] = {device(.Interrupt, 12, 0), {.Read}}
-		_, status = system.program_start(system.image_find(image, "input"), "input", grants, {})
+		grants[op.CONTEXT_LOG] = log_grant("input")
+		_, status = system.program_start(system.image_find(image, "input"), "input", grants, {}, budget_of("input"))
 		if status != .Ok {
 			fail("cannot start input", status)
 		}
@@ -109,12 +146,13 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		grants[0] = {ctx.handles[op.ROOT_FRAMEBUFFER], {.Read, .Write}}
 		grants[1] = {input_memory, {.Read, .Write}}
 		grants[2] = {control_memory, {.Read, .Write}}
+		grants[op.CONTEXT_LOG] = log_grant("compositor")
 		values: [op.CONTEXT_VALUES]u64
 		values[0] = ctx.values[op.ROOT_VALUE_WIDTH]
 		values[1] = ctx.values[op.ROOT_VALUE_HEIGHT]
 		values[2] = ctx.values[op.ROOT_VALUE_PIXELS_PER_LINE]
 		values[3] = ctx.values[op.ROOT_VALUE_FORMAT]
-		compositor, status = system.program_start(system.image_find(image, "compositor"), "compositor", grants, values)
+		compositor, status = system.program_start(system.image_find(image, "compositor"), "compositor", grants, values, budget_of("compositor"))
 		if status != .Ok {
 			fail("cannot start the compositor", status)
 		}
@@ -201,6 +239,7 @@ start :: proc "contextless" (name: string) -> system.Status {
 	grants: [op.CONTEXT_HANDLES]system.Grant
 	values: [op.CONTEXT_VALUES]u64
 	grants[system.GRANT_DISPLAY] = {display_memory, {.Read, .Write}}
+	grants[op.CONTEXT_LOG] = log_grant(name)
 	role := grants_of(name)
 	status := system.Status.Ok
 	if .Root_Ring in role {
@@ -223,7 +262,7 @@ start :: proc "contextless" (name: string) -> system.Status {
 		values[system.GRANT_VALUE_IMAGE_SIZE] = u64(len(image))
 	}
 	if status == .Ok {
-		slot.program, status = system.program_start(file, name, grants, values)
+		slot.program, status = system.program_start(file, name, grants, values, budget_of(name))
 	}
 	if status != .Ok {
 		release(slot)

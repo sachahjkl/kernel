@@ -34,7 +34,9 @@ The scenario does these actions:
 15. Start `threads` from the bar: one program, five threads. A thread adds the numbers to 1000 and ends; the first thread reads 500500. Four threads draw one Julia set each in the surface of the program. Key `3` stops thread 3, then starts it again. `programs()` shows 5 threads.
 16. Start `workers` from the bar. Four threads add to one number for 150 ms each: with the lock no addition is lost; with no lock, millions are lost. Then four threads take 140 tiles from one queue and compute a picture.
 17. Start `rights` from the bar. The program holds the machine with the right Inspect and the boot image with the right Read. It asks the kernel for nine operations. The kernel does four and refuses five with the status `No_Right`: create a device handle, stop the machine, map the boot image to write, map it to execute, give it to the compositor. The log has "rights: ok, 4 allowed, 5 refused".
-18. Call `shutdown()`. The machine stops with code 0.
+18. Start `budget` from the bar. The program creates memory objects of 64 pages until the kernel answers `No_Budget`, then closes them: its budget has the first number of pages again. It does the same with threads. It takes 256 pages for a new budget, creates 200 pages with it, and closes the new budget: its own budget then pays for the 200 pages. The log has "budget: ok, 10 memory objects then no budget, 3 threads then no budget, each page returned".
+19. Call `memory()`. The console prints "budgets N pages: all the free pages": after all the starts and stops of the test, each page is free or paid.
+20. Call `shutdown()`. The machine stops with code 0.
 
 ## The path from power to desktop
 
@@ -50,8 +52,10 @@ The scenario does these actions:
 | Subject | Now |
 |---|---|
 | Entry | One entry point: the `syscall` instruction. `rdi` is 0, a deadline in milliseconds, or `WAIT_FOREVER`. `rax` returns the time |
-| Kernel operations | 20 command kinds in the kernel ring of each thread. `kernel/operation/operation.odin` is the full list |
-| Objects | Memory, Program, Thread, Interrupt, Ports, Machine |
+| Kernel operations | 22 command kinds in the kernel ring of each thread. `kernel/operation/operation.odin` is the full list |
+| Objects | Memory, Program, Thread, Interrupt, Ports, Machine, Budget, Log |
+| Budget | A budget holds pages, programs and threads. `Memory_Create`, `Program_Create` and `Thread_Create` take a budget handle with the right Spend. The budget pays for memory objects, thread areas, page tables and slots. `Budget_Create` moves a part of a budget to a new budget. What an object used returns to the budget that paid. A budget with no handle ends: what it holds returns to its parent, and its parent pays for its objects. The kernel creates one budget at boot, for the root service: all the free pages and all the slots. The sum of the pages of all budgets is always the count of free pages; `System_Report` gives both numbers |
+| Log | `Log` takes a Log handle with the right Write. The root service gives it to each program that it starts |
 | Rights | Each handle slot holds a set of rights: Give, Read, Write, Execute, Control, Inspect, Devices, Stop. The handle of a new object has each right of its kind. `Handle_Give(target, handle, Rights)` copies a handle with the rights that are in both sets. No operation adds a right. An operation on a handle without the needed right gives `No_Right` |
 | Tables | Flat and fixed: 2048 memory objects, 64 programs, 256 threads, 128 handles and 128 mappings per program, 32 threads per program |
 | Threads | A thread is a register state and a thread area: the thread record and the kernel ring of the thread. `Thread_Create(entry, stack, parameter)` adds a thread to the caller. The threads of a program share its memory and its handles. A program with no thread stops with code 0 |
@@ -136,13 +140,17 @@ The owner did not review these. Each one can change.
 25. **The console runs a line in a second thread.** The first thread reads the keys and draws. The second thread runs each line. The two threads share one `Work` record and wait on its words. During a line, the first thread keeps at most 128 keys, shows the time of the line in a status line, and sets the `cancel` word on Escape. An isolated call waits on the completion queue and on the `cancel` word in one entry. The limit of 2000 ms is deleted: the person decides. Escape does not stop a direct call or a command of the console: that code runs in the console itself, and choice 18 says that a thread stopped from outside can hold a lock.
 26. **Descriptions come from the source.** `tools/kerneltool/describe.odin` reads each Odin package with `core:odin/parser`. An export is a procedure with `@(export)` and the calling convention "c". `i64` is an Integer, `^string` is a Text, and a last parameter `^[]u8` is the buffer of a Text result. The description holds the name of the export, the name and the type of each parameter, the result, and the first sentence of the comment as the help. Another type, a missing comment or an export of data is a build error: the tool does not guess. The module table has no description. A function record is 56 bytes. The test reads each module file and compares its descriptions with the source. The kernel exports functions only: its two words that the assembly reads are now in `processor.asm`. The rules are those of the Odin binding; the description in the module file does not depend on Odin.
 27. **Rights on handles.** A right is one bit of a 32-bit set in the handle slot. There are 8 rights for 6 kinds of object; the table in `kernel/operation/operation.odin` says what each right permits for each kind. `Memory_Map` needs Read, and Write or Execute when the flags ask for them. An operation on another program needs Control on its handle. `Handle_Give` needs Give on the given handle, and Control when the target is a program handle. The copy has the intersection of the rights of the handle and of the mask: a grant never adds a right. `system.program_start` takes grants: a handle and its rights. Each caller names the rights; there is no default "all rights". The boot image handle of the root service has no Write and no Execute. A surface goes to the compositor with Read only. The Machine handle is not split in three kinds: one kind with three rights uses the one mechanism. A thread handle can go to another program with Read only: that program reads the state and cannot stop the thread.
+28. **Budgets: no operation creates an object from nothing.** Property 20, line 16, says: "each resource is a handle with a limit; a program divides its limit among its children". A budget is that handle. Three other designs were refused. A limit per program that is only a ceiling does not conserve: the children of a program multiply it. A count per program with no object cannot be given or divided by the handle rules. A budget as a field of the program record makes a second mechanism beside handles. With a budget object, the rights apply (Give, Read, Spend), and the end of a program returns all: `system.program_start` makes a new budget for the program, pays for all that it creates with it, gives the one handle to the program, and closes its own. Two indexes of the context are fixed by the system for each program: `CONTEXT_LOG` (14) and `CONTEXT_BUDGET` (15); `system.log` and `system.memory_create` read them there, so no program has code before its entry. The page tables of a program are paid by the budget that paid for the program. The kernel has no pool of its own after boot: `free pages = sum of the budgets` is the invariant, and the test reads it. The root service chooses each budget by name (`budget_of`).
+29. **The log is an object.** The log of the kernel was the last operation that any program could use. It is now a handle with the right Write. The root service gives it with Write; the console and `rings` also receive Give, because they start programs. A program with no log handle logs nothing: `system.log` returns.
 
 ## Gaps
 
 Against the properties and the module contract:
 
 - Property 19 is not complete: the description has no records, no floats, no handles and no grants. A module with imports cannot be loaded by a program.
-- Each program can create memory objects and programs with no limit, and can write on the log of the kernel.
+- A budget has no processor time. A program with the log can write on it with no limit of rate.
+- `Memory_Unmap` does not free a page table that became empty: the budget of the program pays for it until the program stops.
+- A memory object is a run of contiguous page frames: `Memory_Create` can give `No_Memory` when the budget can pay.
 - Frame pointers are not enforced. An import call goes through a stub that the linker adds.
 - The test "a C program calls an Odin module" does not exist.
 - One processor.
@@ -161,7 +169,6 @@ Input:
 
 ## Next steps
 
-1. Limits for the operations with no handle.
+1. Several processors.
 2. Damage rectangles in the compositor.
 3. A block device service (virtio), then the storage service.
-4. Several processors.

@@ -15,6 +15,7 @@ A step is one tested commit that adds one capability.
 | 7 | `6d900bc` | The console runs a line in a second thread: keys during a call, Escape stops an isolated call |
 | 8 | `ec91461` | Descriptions come from the source: parameter names, help from the comment, checked by the test |
 | 9 | `07c1b00` | Rights on handles: `Handle_Give` takes a mask, `No_Right`, one Machine object with Inspect, Devices and Stop, shown by `rights` |
+| 10 | (the commit of step 10) | Budgets and the Log handle: no operation creates an object from nothing, shown by `budget` |
 
 ## Review 1: steps 1 to 5 (2026-11-10)
 
@@ -62,3 +63,51 @@ None that needs a later replacement of a contract. Concession 1 is the nearest: 
 3. Descriptions made from the source.
 4. Rights on handles, split of the Machine handle, limits for the operations with no handle.
 5. Several processors.
+
+## Review 2: steps 6 to 10 (2026-11-10)
+
+### What the five steps added
+
+- Step 6 deleted a mechanism: one wait (the word wait) for rings, events and locks.
+- Step 7 used threads in a real program: the console reads keys while a line runs.
+- Step 8 removed the descriptions written by hand: the tool reads the source.
+- Step 9 added rights to handles. The Machine handle is one object with three rights.
+- Step 10 added budgets and the Log handle. No kernel operation creates an object without a handle.
+
+The kernel has 22 operations (21 after step 5: 1 deleted, 2 added). The test has 73 checks and 12 pictures.
+
+### Against the properties
+
+| Property | State after step 10 |
+|---|---|
+| P1 small counted interface | 22 kernel operations, one entry point. Step 6 deleted `Wake`. Step 10 added `Budget_Create` and `Budget_Read` |
+| P2 sandbox by default | Holds, with rights. "No operation exists that works without a handle" is now true for each operation that creates or reaches an object. The operations with no handle act only on the caller: stop, unmap, word wait, word wake, time |
+| P4 command buffers | Holds |
+| P6 one communication mechanism | Clean. One wait. Concession 1 of Review 1 is removed |
+| P13 ZII | Holds. A zero budget slot is not live. A zero right set permits nothing. Handle 0 in the context means "not granted" |
+| P19 command is a function | The description comes from the source and the test checks it. Not complete: no records, floats, handles or grants in a description |
+| P20 no ambient access | Line 16 (resources) holds for memory, programs and threads. Line 1 holds: a program inspects other programs only with the right Inspect. Not done: processor time, the rate of the log, line 13 (a grant can be revoked) |
+
+### Concessions, and what removes each one
+
+1. **A grant cannot be revoked.** `Handle_Give` copies. The giver cannot take the copy back. Property 2 names this as open. Remove: a design for revocation (a step of its own, before the document service).
+2. **A budget has no processor time.** A program with one thread can use a full processor. The scheduler is round-robin, so the other programs still run. Remove: with the scheduler of several processors, a share per budget.
+3. **Empty page tables stay until the program stops.** The budget of the program pays for them, so the invariant holds. Remove: count the entries of each table and free a table at 0. Not urgent: bounded by the mappings of the program.
+4. **Contiguous memory objects.** `Memory_Create` needs one run of frames. Remove: a memory object as a list of runs. Do it when a test shows a refusal that the budget could pay.
+5. **`Thread_Stop` on a thread that holds a lock** (Review 1, concession 4). Still true. The rule stays "ask the thread to end".
+6. **One processor** (Review 1, concession 7). The next step.
+7. **The root service chooses budgets by name.** `budget_of` and `grants_of` are tables in the code of the root service. This is the first version of a policy that the desktop shell and the person will own (property 20, line 13). It is not a contract: no program depends on it.
+
+### Bad compromises found
+
+One, found and removed inside step 10: a first design gave each program a ceiling ("at most N pages") with no object. It did not conserve, and it was a second mechanism beside handles. The budget object replaced it before any code.
+
+The intermittent failure of the boot test (Review 1, concession 9) did not come back: the flake check passed at each of the steps 6 to 10 with the boot volume on `virtio-blk-pci`.
+
+### Order of the next steps
+
+1. Several processors: one kernel stack and one run queue per processor, a lock for the kernel, shown by a program whose threads run at the same time.
+2. Communication between programs: a call of an export of another program through a ring with the same description as a module (the isolated call, for a program that already runs).
+3. Multi-threading: a queue for several writers and several readers on the word wait; an event that several threads wait for.
+4. Descriptions with records and handles.
+5. Revocation of a grant.

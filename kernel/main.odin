@@ -48,10 +48,16 @@ root_start :: proc "contextless" (boot: ^info.Boot_Info) {
 	}
 	head, _ := module.header(file)
 	name := ROOT_NAME
-	index := program_create(transmute([]u8)name)
-	code := region_create(head.memory_size / PAGE_SIZE)
-	stack := region_create(op.STACK_PAGES)
-	ctx := region_create(1)
+	// The one budget that comes from nothing: all the free memory, all the slots.
+	ROOT_BUDGET :: 1
+	budgets[ROOT_BUDGET] = {
+		live = true,
+		amounts = {pages = free_frames, programs = PROGRAM_CAPACITY - 1, threads = THREAD_TABLE_CAPACITY - 1},
+	}
+	index, _ := program_create(ROOT_BUDGET, transmute([]u8)name)
+	code, _ := region_create(ROOT_BUDGET, head.memory_size / PAGE_SIZE)
+	stack, _ := region_create(ROOT_BUDGET, op.STACK_PAGES)
+	ctx, _ := region_create(ROOT_BUDGET, 1)
 	if index == 0 || code == 0 || stack == 0 || ctx == 0 {
 		fail("no memory")
 	}
@@ -83,6 +89,8 @@ root_start :: proc "contextless" (boot: ^info.Boot_Info) {
 
 	// The root service receives every handle that exists at boot.
 	record := direct(regions[ctx].physical, op.Context)
+	record.handles[op.CONTEXT_BUDGET] = handle_insert(program, {kind = .Budget, rights = RIGHTS_BUDGET, object = ROOT_BUDGET})
+	record.handles[op.CONTEXT_LOG] = handle_insert(program, {kind = .Log, rights = RIGHTS_LOG})
 	record.handles[op.ROOT_MACHINE] = handle_insert(program, {kind = .Machine, rights = RIGHTS_MACHINE})
 	framebuffer := boot.framebuffer
 	if framebuffer.format != .None {
@@ -96,7 +104,7 @@ root_start :: proc "contextless" (boot: ^info.Boot_Info) {
 	record.handles[op.ROOT_BOOT_IMAGE] = handle_insert(program, {kind = .Memory, rights = {.Give, .Read}, object = region_device(boot.boot_image, (boot.boot_image_size + PAGE_SIZE - 1) / PAGE_SIZE)})
 	record.values[op.ROOT_VALUE_BOOT_IMAGE_SIZE] = boot.boot_image_size
 
-	if _, status := thread_create(index, u64(start), op.STACK_TOP, op.CONTEXT_ADDRESS); status != .Ok {
+	if _, status := thread_create(index, ROOT_BUDGET, u64(start), op.STACK_TOP, op.CONTEXT_ADDRESS); status != .Ok {
 		fail("no memory for the first thread")
 	}
 	program.state = .Ready

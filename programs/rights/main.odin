@@ -58,6 +58,8 @@ answer :: proc "contextless" (status: system.Status) -> string {
 		return "no slot"
 	case .Bad_State:
 		return "bad state"
+	case .No_Budget:
+		return "no budget"
 	}
 	return "?"
 }

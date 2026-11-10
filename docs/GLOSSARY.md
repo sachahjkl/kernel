@@ -49,6 +49,7 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Handle | An index and a generation in the handle table of a program. It names one object with a set of rights. Handle 0 names no object (P2) | file descriptor, capability, token, reference |
 | Memory object | A run of page frames that the kernel names by handle. Programs map it; two programs that map the same one share it | region, shared memory segment, buffer |
 | Right | One permitted kind of operation on the object of a handle. The rights are Give, Read, Write, Execute, Control, Inspect, Devices and Stop. A grant can remove rights and cannot add one | permission, privilege, mode |
+| Budget | An object that holds pages, programs and threads. It pays for each object that a program creates. A program moves a part of its budget to a new budget. What ends returns to the budget that paid (P20) | quota, limit, cgroup, job |
 | Grant | The act that gives a handle to a program, and the record of that act. A grant is visible and can be revoked (P20) | permission, authorization, consent |
 | Ambient access | Access that a program has because it runs, and not because it received a handle. The system has none (P20) | ambient authority |
 | Sandbox | The state of every program: it can reach only the objects of its handles (P2) | jail, container |
@@ -63,7 +64,7 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Ring | A pair of queues in shared memory between two programs, or between a program and the kernel: one for command records, one for completion records (P4, P6) | pipe, socket, channel, port, message queue |
 | Direct call | A call of an export in the address space of the caller. The arguments are in registers (the call form) | in-process call, local call |
 | Isolated call | A call of an export of a module that runs in another program. The arguments travel in a ring (P19) | remote call, RPC, IPC call |
-| Call host | The program that loads one module and executes the isolated calls of its exports. It has no handle but its call ring and its call region | worker, helper process, server |
+| Call host | The program that loads one module and executes the isolated calls of its exports. It has no handle but its call ring, its call region, its budget and the log | worker, helper process, server |
 | Call ring | The ring between a caller and a call host. One command record is one isolated call | channel, pipe |
 | Call region | The memory object that a caller and a call host share. The caller writes the argument record and the bytes of its slices in it | shared buffer, arena |
 | Argument record | The record that holds the arguments of one isolated call: one field per parameter, in order. It is derived from the description of the export | message, payload, marshalled arguments |
