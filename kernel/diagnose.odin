@@ -13,6 +13,121 @@ import "contract:ring"
 // in their order, as the operation reads them. It describes what the
 // caller gave and its own handles: the amounts of a budget and the state
 // of a program only when the handle has the right Read (P20).
+//
+// Each table is read in one place: the procedures `read_*` below. Each one
+// copies what it reads, and names the lock that protects it in the table
+// "Locks of the kernel" of docs/ARCHITECTURE.md. With one kernel lock they
+// take no lock. With a lock for each kind of data, another thread can change
+// the state between the failure and the record: then the record describes
+// what the kernel reads now, and `diagnose` keeps a record only if its kind
+// can explain the status (`kind_explains`); else the record is Refused with
+// the status. A record never contradicts its status.
+
+// read_handle copies the slot of a handle of a program. Lock: the program
+// lock of the caller.
+@(private = "file")
+read_handle :: proc "contextless" (program: ^Program, index: u64) -> Handle_Slot {
+	return program.handles[index]
+}
+
+// read_handle_find is handle_find on a copy of the slot. ok: the handle
+// names an object of the kind with the rights.
+@(private = "file")
+read_handle_find :: proc "contextless" (program: ^Program, handle: u64, kind: Object_Kind, rights: op.Rights = {}) -> (slot: Handle_Slot, ok: bool) {
+	index := handle & 0xFFFF
+	if index == 0 || index >= HANDLE_CAPACITY || handle >> 32 != 0 {
+		return {}, false
+	}
+	slot = read_handle(program, index)
+	if slot.kind == .None || u64(slot.generation) != handle >> 16 || kind != .None && slot.kind != kind || !(rights <= slot.rights) {
+		return {}, false
+	}
+	return slot, true
+}
+
+// read_free_handles counts the free places of the handle table of a
+// program. Lock: the program lock.
+@(private = "file")
+read_free_handles :: proc "contextless" (program: ^Program) -> (count: u64) {
+	for slot in program.handles[1:] {
+		count += u64(slot.kind == .None)
+	}
+	return count
+}
+
+// read_user copies memory of the program that runs, if it can read it.
+// Lock: the program lock of the caller (user_range and user_copy).
+@(private = "file")
+read_user :: proc "contextless" (program: ^Program, address: u64, destination: rawptr, size: u64) -> bool {
+	if !user_range(program, address, size, false) {
+		return false
+	}
+	user_copy(destination, rawptr(uintptr(address)), size)
+	return true
+}
+
+// read_range says if the program can read a range of its memory. Lock: the
+// program lock.
+@(private = "file")
+read_range :: proc "contextless" (program: ^Program, address: u64, size: u64) -> bool {
+	return user_range(program, address, size, false)
+}
+
+// read_word says if a program can wait on a word. Lock: the program lock.
+@(private = "file")
+read_word :: proc "contextless" (program: ^Program, address: u64) -> bool {
+	return word_address(program, address) != 0
+}
+
+// read_budget copies the amounts of a budget. Lock: the frame lock for the
+// pages, the control lock for the other amounts.
+@(private = "file")
+read_budget :: proc "contextless" (index: u32) -> op.Budget_Amounts {
+	return budgets[index].amounts
+}
+
+// read_log_count gives the log records of a budget in this second, and its
+// limit. Atomic counts, and the control lock for the limit.
+@(private = "file")
+read_log_count :: proc "contextless" (index: u32) -> (logged, limit: u64) {
+	return budgets[index].logged, budgets[index].amounts.log_records
+}
+
+// read_region_pages gives the pages of a memory object. Lock: the frame
+// lock (the slot of the object).
+@(private = "file")
+read_region_pages :: proc "contextless" (index: u32) -> u64 {
+	return regions[index].page_count
+}
+
+// read_program_state gives the state of another program. Lock: the control
+// lock.
+@(private = "file")
+read_program_state :: proc "contextless" (index: u32) -> op.Program_State {
+	return program_state(index)
+}
+
+// kind_explains says if an error kind can be the cause of a status.
+@(private = "file")
+kind_explains :: proc "contextless" (kind: errors.Kind, status: op.Status) -> bool {
+	#partial switch status {
+	case .Bad_Handle:
+		return kind == .Handle_Absent || kind == .Handle_Ended || kind == .Handle_Kind || kind == .No_Target
+	case .No_Right:
+		return kind == .Handle_Rights
+	case .No_Budget:
+		return kind == .Budget || kind == .Budget_Hidden || kind == .Over_Limit
+	case .Bad_Address:
+		return kind == .Bad_Address || kind == .Too_Long || kind == .Too_Small || kind == .Overlap || kind == .Absent
+	case .No_Slot:
+		return kind == .Full || kind == .Too_Long
+	case .Bad_State:
+		return kind == .State
+	case .Bad_Operation:
+		return kind == .Bad_Flags || kind == .Bad_Value || kind == .Too_Small || kind == .Too_Long || kind == .Unknown_Operation
+	}
+	return false
+}
 
 @(private = "file")
 record_set :: proc "contextless" (record: ^errors.Error_Record, kind: errors.Kind, unit: errors.Unit, argument: int, value, limit, found: u64) {
@@ -50,7 +165,8 @@ diagnose :: proc "contextless" (program_index: u32, command: ring.Record, status
 	case .Bad_Operation:
 		explained = value_explain(&record, operation, v)
 	}
-	if !explained {
+	if !explained || !kind_explains(errors.Kind(record.kind), status) {
+		record = {operation = record.operation}
 		record_set(&record, .Refused, .None, 0, 0, 0, u64(status))
 	}
 	return record
@@ -66,7 +182,7 @@ handle_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Pr
 		record_set(record, .Handle_Absent, .None, argument, handle, 0, 0)
 		return true
 	}
-	slot := &program.handles[index]
+	slot := read_handle(program, index)
 	if slot.kind == .None || u64(slot.generation) != generation {
 		switch {
 		case slot.kind == .None && u64(slot.generation) == generation + 1:
@@ -115,10 +231,10 @@ handles_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^P
 			}
 			if n == 0 {
 				// The target: a program with Control, or a memory object.
-				slot, status := handle_find(program, v[0], .None)
-				if status == .Ok && slot.kind == .Program {
+				slot, found := read_handle_find(program, v[0], .None)
+				if found && slot.kind == .Program {
 					rights = {.Control}
-				} else if status == .Ok && slot.kind != .Memory {
+				} else if found && slot.kind != .Memory {
 					kind = .Program
 				}
 			}
@@ -136,18 +252,18 @@ handles_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^P
 budget_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Program, operation: op.Operation, v: [7]u64) -> bool {
 	if operation == .Log {
 		// The limit of the budget of the program, or of a budget above it.
-		budget := &budgets[program.budget]
-		record_set(record, .Over_Limit, .Log_Records, 0, budget.logged + 1, budget.amounts.log_records, 0)
+		logged, limit := read_log_count(program.budget)
+		record_set(record, .Over_Limit, .Log_Records, 0, logged + 1, limit, 0)
 		return true
 	}
 	if operation != .Memory_Create && operation != .Program_Create && operation != .Thread_Create && operation != .Budget_Create {
 		return false
 	}
-	slot, status := handle_find(program, v[0], .Budget, {.Spend})
-	if status != .Ok {
+	slot, found := read_handle_find(program, v[0], .Budget, {.Spend})
+	if !found {
 		return false
 	}
-	holds := budgets[slot.object].amounts
+	holds := read_budget(slot.object)
 	unit: errors.Unit
 	asked, held: u64
 	argument := 1
@@ -212,26 +328,25 @@ address_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^P
 	case .Program_State:
 		record_set(record, .Bad_Address, .Bytes, 2, v[1], size_of(op.Stop_Report), 1)
 	case .Program_Module:
-		if !user_range(program, v[1], size_of(op.Module_Record), false) {
+		module: op.Module_Record
+		if !read_user(program, v[1], &module, size_of(module)) {
 			record_set(record, .Bad_Address, .Bytes, 2, v[1], size_of(op.Module_Record), 0)
 			return true
 		}
-		module: op.Module_Record
-		user_copy(&module, rawptr(uintptr(v[1])), size_of(module))
 		if module.size == 0 {
 			record_set(record, .Absent, .Bytes, 2, module.base, 0, 0) // No record has this base.
 		} else {
 			record_set(record, .Overlap, .Bytes, 2, module.base, module.size, 0)
 		}
 	case .Word_Wait:
-		if !user_range(program, v[0], v[1] * size_of(op.Word), false) {
+		if !read_range(program, v[0], v[1] * size_of(op.Word)) {
 			record_set(record, .Bad_Address, .Bytes, 1, v[0], v[1] * size_of(op.Word), 0)
 			return true
 		}
 		for index in 0 ..< v[1] {
 			word: op.Word
-			user_copy(&word, rawptr(uintptr(v[0] + index * size_of(op.Word))), size_of(op.Word))
-			if word_address(program, word.address) == 0 {
+			read_user(program, v[0] + index * size_of(op.Word), &word, size_of(op.Word))
+			if !read_word(program, word.address) {
 				record_set(record, .Bad_Address, .Bytes, 1, word.address, 4, 0)
 				return true
 			}
@@ -248,11 +363,11 @@ address_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^P
 			record_set(record, .Bad_Address, .Bytes, 4, v[3], size, 1)
 		}
 	case .Memory_Map:
-		slot, status := handle_find(program, v[0], .Memory)
-		if status != .Ok {
+		slot, found := read_handle_find(program, v[0], .Memory)
+		if !found {
 			return false
 		}
-		page_count := regions[slot.object].page_count
+		page_count := read_region_pages(slot.object)
 		count := v[5] == 0 && v[4] < page_count ? page_count - v[4] : v[5]
 		switch {
 		case v[4] >= page_count:
@@ -274,10 +389,7 @@ address_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^P
 
 @(private = "file")
 slot_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Program, operation: op.Operation, v: [7]u64) -> bool {
-	free_handles: u64
-	for slot in program.handles[1:] {
-		free_handles += u64(slot.kind == .None)
-	}
+	free_handles := read_free_handles(program)
 	#partial switch operation {
 	case .Word_Wait:
 		thread_words: u64 = op.WORD_WAIT_CAPACITY
@@ -329,13 +441,13 @@ state_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Pro
 	if handle == 0 {
 		return false
 	}
-	slot, status := handle_find(program, handle, .None)
-	if status != .Ok {
+	slot, held := read_handle_find(program, handle, .None)
+	if !held {
 		return false
 	}
 	found: u64
 	if slot.kind == .Program && .Read in slot.rights {
-		found = u64(program_state(slot.object))
+		found = u64(read_program_state(slot.object))
 	}
 	limit := operation == .Program_Start ? u64(op.Program_State.Created) : 0
 	record_set(record, .State, .None, argument, handle, limit, found)
@@ -372,7 +484,8 @@ value_explain :: proc "contextless" (record: ^errors.Error_Record, operation: op
 // stack_trace writes the stack trace of a thread that faulted: frame 0 is
 // the instruction; each next frame is the return address that the frame
 // pointer names. The program is the one of this processor: its page table
-// is the one in use, so user_copy reads its stack.
+// is the one in use, so read_user reads its stack (the program lock). It
+// runs on the path of the stop of a program on a fault.
 stack_trace :: proc "contextless" (program: ^Program, frame: ^Frame, report: ^op.Stop_Report) {
 	add :: proc "contextless" (program: ^Program, report: ^op.Stop_Report, address: u64) {
 		item := &report.frames[report.frame_count]
@@ -386,11 +499,10 @@ stack_trace :: proc "contextless" (program: ^Program, frame: ^Frame, report: ^op
 	add(program, report, frame.rip)
 	at := frame.rbp
 	for report.frame_count < op.STOP_FRAME_CAPACITY {
-		if at == 0 || at % 8 != 0 || !user_range(program, at, 16, false) {
+		pair: [2]u64 // The frame pointer of the caller, then the return address.
+		if at == 0 || at % 8 != 0 || !read_user(program, at, &pair, 16) {
 			break
 		}
-		pair: [2]u64 // The frame pointer of the caller, then the return address.
-		user_copy(&pair, rawptr(uintptr(at)), 16)
 		if pair[1] == 0 {
 			break
 		}
