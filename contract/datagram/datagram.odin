@@ -57,7 +57,7 @@ Command :: enum u32 {
 	// port, values[2] the address of the gateway, values[3] the length of
 	// the prefix of the network, values[4] the hardware address of the
 	// device (the first byte in the low bits), values[5] 1 if the link is
-	// up, values[6] the grant: the remote address << 16 | the remote port.
+	// up, values[6] the grant (grant_pack), with the right Inspect if it has it.
 	Info       = 1,
 	// values[0]: the place of the data in the region. values[1]: its count of
 	// bytes, DATA_LIMIT at most. values[2], values[3]: the remote address and
@@ -79,16 +79,22 @@ Command :: enum u32 {
 	// the bytes of data, values[2] the time to live of the reply.
 	Echo       = 5,
 	// The completion: values[0] the datagrams that this endpoint sent,
-	// values[1] the datagrams that it received, values[2] the kernel entries
-	// of the network service, values[3] the kernel entries of the frame
-	// service, values[4] the frames that the network service refused,
-	// values[5] the echo requests that it answered, values[6] the datagrams
-	// for this endpoint that it dropped with no place.
+	// values[1] the datagrams that it received, values[4] the datagrams that
+	// reached its local port from a remote that its grant does not name,
+	// values[6] the datagrams for this endpoint that the network service
+	// dropped with no place. With the right Inspect of the grant only, the
+	// facts of the machine: values[2] the kernel entries of the network
+	// service, values[3] those of the frame service, values[5] the echo
+	// requests that the network service answered, and values[4] also counts
+	// the frames that no endpoint owns. Without the right they are 0: they
+	// tell of the traffic of other programs (property 20).
 	Statistics = 6,
 	// values[0]: a place in the region. values[1]: the room there, in
 	// Problem_Row records. The network service writes one row for each kind
-	// of refused frame; the completion has the count of the full table in
-	// values[0].
+	// of frame that it refused for this endpoint (scope Endpoint), then, with
+	// the right Inspect of the grant only, one row for each kind of frame
+	// that no endpoint owns (scope Machine). It never gives a row of another
+	// endpoint. The completion has the count of the full table in values[0].
 	Problems   = 7,
 }
 
@@ -116,7 +122,8 @@ Control :: enum u32 {
 	None            = 0,
 	// values[0], values[1]: the datagram ring and the datagram region, as
 	// the network service names them (the root service gives them through
-	// the memory of the control ring). values[2]: the grant (grant_pack).
+	// the memory of the control ring). values[2]: the grant (grant_pack),
+	// with or without the right Inspect.
 	// values[3..6]: the name of the program, 32 bytes. The completion:
 	// values[0] the local port of the endpoint.
 	Endpoint_Add    = 1,
@@ -161,21 +168,33 @@ Problem :: struct {
 }
 #assert(size_of(Problem) == 16)
 
+// Whose fact a row of Problems is.
+Problem_Scope :: enum u64 {
+	Endpoint = 0, // A datagram that reached the local port of this endpoint.
+	Machine  = 1, // A frame that no endpoint owns: a fact of the machine.
+}
+
 // One row of the table that Problems writes: the frames refused for one
 // kind and one layer, and the problem of the last one.
 Problem_Row :: struct {
-	last:     Problem,
-	count:    u64,
-	reserved: u64,
+	last:  Problem,
+	count: u64,
+	scope: Problem_Scope,
 }
 #assert(size_of(Problem_Row) == 32)
 
+// The right Inspect of a grant: the endpoint reads the facts of the network
+// of the machine (Statistics, Problems). The root service gives it only to
+// a program that holds the machine with the right Inspect, which reads the
+// facts of all programs already.
+GRANT_INSPECT :: u64(1) << 48
+
 // grant_pack gives the grant of an endpoint in one value: the remote address
-// << 16 | the remote port. 0 is no grant.
-grant_pack :: proc "contextless" (address: u32, port: u16) -> u64 {
-	return u64(address) << 16 | u64(port)
+// << 16 | the remote port, and GRANT_INSPECT. 0 is no grant.
+grant_pack :: proc "contextless" (address: u32, port: u16, inspect := false) -> u64 {
+	return u64(address) << 16 | u64(port) | (inspect ? GRANT_INSPECT : 0)
 }
 
-grant_unpack :: proc "contextless" (value: u64) -> (address: u32, port: u16) {
-	return u32(value >> 16), u16(value)
+grant_unpack :: proc "contextless" (value: u64) -> (address: u32, port: u16, inspect: bool) {
+	return u32(value >> 16), u16(value), value & GRANT_INSPECT != 0
 }

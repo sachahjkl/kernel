@@ -83,7 +83,7 @@ The system boots under QEMU to a graphical desktop with a console, a system tool
 
 ![A block of the note changed on the disk outside the storage service: the service serves the count, and notes says that the note is damaged](docs/screenshots/notes_damaged.png)
 
-![The network: a virtio network device in a program, a network service with ARP, IPv4, ICMP echo and UDP, and an endpoint with a grant of one remote; nine cases with their answers, and the measures](docs/screenshots/network.png)
+![The network: a virtio network device in a program, a network service with ARP, IPv4, ICMP echo and UDP, and an endpoint with a grant of one remote; ten cases with their answers, and the measures](docs/screenshots/network.png)
 
 ![The temple of Jon: a portrait of Jonathan Blow that turns](docs/screenshots/temple.png)
 

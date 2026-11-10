@@ -36,13 +36,16 @@ DATA_BYTES :: 64
 
 // The frames that the peer of the test sends before its first answer, and
 // that the network service must refuse: one of each row (tools/kerneltool,
-// peer.odin).
+// peer.odin). Ten have no endpoint: facts of the machine, that this program
+// reads with the right Inspect of its grant. One came to the local port of
+// this endpoint from a remote that its grant does not name: a fact of this
+// endpoint.
 Expected_Row :: struct {
 	kind:  datagram.Problem_Kind,
 	layer: datagram.Layer,
 }
 @(rodata)
-expected_rows := [?]Expected_Row {
+expected_machine_rows := [?]Expected_Row {
 	{.Too_Short, .Ethernet},
 	{.Unsupported, .Ethernet},
 	{.Bad_Checksum, .Ipv4},
@@ -52,23 +55,26 @@ expected_rows := [?]Expected_Row {
 	{.Bad_Checksum, .Udp},
 	{.Bad_Length, .Udp},
 	{.No_Endpoint, .Udp},
-	{.Not_Granted, .Udp},
 	{.Bad_Header, .Arp},
 }
 
-LINE :: 22
-ANSWER_X :: 372
-WIDTH :: 860
-CASE_CAPACITY :: 10
-HEIGHT :: 12 + 16 * LINE + 12
+// The window follows docs/DESIGN.md where it is cheap now: rectangles, a
+// grid of 8 pixels, names in the dim color, values in the text color, the
+// state of a case in the color of a program that runs or in the color
+// "failed", with a text that says the same.
+LINE :: 24
+LEFT :: 16
+ANSWER_X :: 376
+WIDTH :: 864
+CASE_CAPACITY :: 11
+HEIGHT :: 16 + 2 * LINE + CASE_CAPACITY * LINE + 4 * LINE + 16
 
-COLOR_BACKGROUND :: 0x10151C
-COLOR_PANEL :: 0x18202A
-COLOR_TEXT :: 0xD8E0E8
-COLOR_DIM :: 0x7A8794
-COLOR_RIGHT :: 0x58D878
-COLOR_WRONG :: 0xF06060
-COLOR_MEASURE :: 0xE0A040
+COLOR_BACKGROUND :: 0x0B1018
+COLOR_BAND :: 0x17212E // A card, as a band under one case of two.
+COLOR_TEXT :: 0xDCE4EC
+COLOR_DIM :: 0x7C8A99
+COLOR_RIGHT :: 0x58D878 // Program: the case has the expected answer.
+COLOR_WRONG :: 0xF06060 // Failed.
 
 Case :: struct {
 	text:   string,
@@ -90,6 +96,7 @@ round_least, round_middle: u64 // Microseconds.
 burst_rate, burst_lost: u64
 entries_program, entries_network, entries_frame: u64 // Hundredths of an entry for each datagram.
 measured: bool
+inspect: bool // The grant has the right Inspect: the facts of the machine.
 
 note :: proc "contextless" (text: string, right: bool, parts: ..system.Part) {
 	item := &cases[case_count]
@@ -195,7 +202,9 @@ cases_run :: proc "contextless" () {
 	// 1. The link and the address.
 	info, has_info := call(.Info)
 	link := has_info && datagram.Status(info.kind) == .Ok
-	note("the link and the address", link && info.values[0] == LOCAL && info.values[3] == 24 && info.values[5] == 1 && info.values[6] == datagram.grant_pack(GATEWAY, ECHO_PORT), address_text(text[:], u32(info.values[0])), "/24, the link is ", info.values[5] == 1 ? "up, " : "down, ", hardware_text(other[:], info.values[4]))
+	granted_address, granted_port, has_inspect := datagram.grant_unpack(info.values[6])
+	inspect = has_inspect
+	note("the link and the address", link && info.values[0] == LOCAL && info.values[3] == 24 && info.values[5] == 1 && granted_address == GATEWAY && granted_port == ECHO_PORT, address_text(text[:], u32(info.values[0])), "/24, the link is ", info.values[5] == 1 ? "up, " : "down, ", hardware_text(other[:], info.values[4]))
 
 	// 2. The hardware address of the gateway (ARP).
 	start := system.cycles()
@@ -238,30 +247,56 @@ cases_run :: proc "contextless" () {
 	refused, has_refused = call(.Send, {0 = 0, 1 = 2000, 2 = GATEWAY, 3 = ECHO_PORT})
 	note("UDP of 2000 bytes", has_refused && datagram.Status(refused.kind) == .Too_Large && refused.values[0] == 2000 && refused.values[1] == datagram.DATA_LIMIT, "refused: ", refused.values[0], " bytes, the limit is ", refused.values[1], ": no fragment")
 
-	// 8. The frames from the wire that the network service refused. The peer
-	// sent them before its first answer, so they arrived before case 4.
+	// 8 and 9. The frames that the network service refused. The peer sent
+	// them before its first answer, so they arrived before case 4. A row of
+	// this endpoint: any endpoint reads its own. A row of the machine: only
+	// with the right Inspect of the grant. No row of another endpoint.
 	rows_place := SEND_FIRST + 8
 	problems, has_problems := call(.Problems, {0 = u64(rows_place * PLACE_SIZE), 1 = PLACE_SIZE / size_of(datagram.Problem_Row)})
 	rows := ([^]datagram.Problem_Row)(raw_data(place_of(rows_place)))[:min(problems.values[0], PLACE_SIZE / size_of(datagram.Problem_Row))]
-	found := 0
-	total: u64
+	own_rows, own_right, machine_rows, machine_found: int
+	machine_total: u64
+	own_from: u64
 	for row in rows {
-		total += row.count
-		for wanted in expected_rows {
-			if row.last.kind == wanted.kind && row.last.layer == wanted.layer {
-				found += 1
-			}
-		}
 		buffer: [128]u8
 		writer := system.Writer{buffer = buffer[:]}
 		network.problem_write(&writer, row.last)
-		system.log("net: refused by the network service: ", row.count, " x ", system.written(&writer))
+		switch row.scope {
+		case .Endpoint:
+			own_rows += 1
+			// Its own row names the port of its own grant, and nothing else.
+			if row.last.kind == .Not_Granted && row.last.layer == .Udp && row.last.limit == ECHO_PORT {
+				own_right += 1
+				own_from = u64(row.last.value)
+			}
+			system.log("net: refused for this endpoint: ", row.count, " x ", system.written(&writer))
+		case .Machine:
+			machine_rows += 1
+			machine_total += row.count
+			for wanted in expected_machine_rows {
+				if row.last.kind == wanted.kind && row.last.layer == wanted.layer {
+					machine_found += 1
+				}
+			}
+			system.log("net: refused for the machine: ", row.count, " x ", system.written(&writer))
+		case:
+			machine_rows += 1000 // A scope that the contract does not have.
+		}
 	}
-	note("malformed frames from the wire", has_problems && found == len(expected_rows) && len(rows) == len(expected_rows), total, " refused in ", u64(len(rows)), " kinds, ", u64(found), " of ", u64(len(expected_rows)), " expected; no fault")
+	note("UDP from 10.0.2.2 port 9 to this endpoint", has_problems && own_rows == 1 && own_right == 1 && own_from == OTHER_PORT, "refused: from port ", own_from, "; a row of this endpoint")
+	if inspect {
+		note("malformed frames from the wire", has_problems && machine_found == len(expected_machine_rows) && machine_rows == len(expected_machine_rows), machine_total, " refused in ", u64(machine_rows), " kinds, ", u64(machine_found), " of ", u64(len(expected_machine_rows)), " expected; no fault")
+	} else {
+		note("malformed frames from the wire", has_problems && machine_rows == 0, "not shown: the grant has no right Inspect")
+	}
 
-	// 9. The echo requests of the gateway, that the network service answered.
+	// 10. The echo requests of the gateway, that the network service answered.
 	statistics, has_statistics := call(.Statistics)
-	note("ICMP echo from 10.0.2.2 to this machine", has_statistics && statistics.values[5] >= 1, "the network service answered ", statistics.values[5], statistics.values[5] == 1 ? " request" : " requests")
+	if inspect {
+		note("ICMP echo from 10.0.2.2 to this machine", has_statistics && statistics.values[5] >= 1, "the network service answered ", statistics.values[5], statistics.values[5] == 1 ? " request" : " requests")
+	} else {
+		note("ICMP echo from 10.0.2.2 to this machine", has_statistics && statistics.values[5] == 0, "not shown: the grant has no right Inspect")
+	}
 }
 
 // measure_round_trips sends one datagram at a time and waits for its answer.
@@ -340,31 +375,49 @@ measure_burst :: proc "contextless" () {
 draw :: proc "contextless" (window: ^display.Window) {
 	canvas := window.canvas
 	graphics.clear(canvas, COLOR_BACKGROUND)
-	y := 12
-	graphics.text(canvas, 12, y, "an endpoint of datagrams: the root service granted 10.0.2.2 port 7, and nothing else.", COLOR_DIM)
-	y += LINE + LINE / 2
-	graphics.text(canvas, 12, y, "the program asks", COLOR_DIM)
+	y := 16
+	graphics.text(canvas, LEFT, y, "an endpoint of datagrams: the root service granted 10.0.2.2 port 7, and nothing else.", COLOR_DIM)
+	y += LINE
+	graphics.text(canvas, LEFT, y, "the program asks", COLOR_DIM)
 	graphics.text(canvas, ANSWER_X, y, "the network answers", COLOR_DIM)
 	y += LINE
 	for &item, index in cases[:case_count] {
 		if index % 2 == 0 {
-			graphics.fill(canvas, 6, y - 3, WIDTH - 12, LINE, COLOR_PANEL)
+			graphics.fill(canvas, 8, y - 4, WIDTH - 16, LINE, COLOR_BAND)
 		}
-		graphics.text(canvas, 12, y, item.text, COLOR_TEXT)
-		graphics.text(canvas, ANSWER_X, y, string(item.answer[:item.count]), item.right ? COLOR_RIGHT : COLOR_WRONG)
+		graphics.text(canvas, LEFT, y, item.text, COLOR_DIM)
+		end := graphics.text(canvas, ANSWER_X, y, string(item.answer[:item.count]), item.right ? COLOR_RIGHT : COLOR_WRONG)
+		if !item.right {
+			graphics.text(canvas, end + 8, y, "not expected", COLOR_WRONG)
+		}
 		y += LINE
 	}
 	y += LINE / 2
+	Measure :: struct {
+		name:  string,
+		value: string,
+	}
+	values: [3][96]u8
+	measures: [3]Measure
 	if measured {
-		line: [112]u8
 		a, b, c: [16]u8
-		graphics.text(canvas, 12, y, system.format(line[:], "round trip of one datagram of 64 bytes: ", round_least, " us at least, ", round_middle, " us in the middle"), COLOR_MEASURE)
-		y += LINE
-		graphics.text(canvas, 12, y, system.format(line[:], "a burst, 64 in flight: ", burst_rate, " datagrams in one second, sent and answered, ", burst_lost, " lost"), COLOR_MEASURE)
-		y += LINE
-		graphics.text(canvas, 12, y, system.format(line[:], "kernel entries for each datagram: ", hundredths(a[:], entries_program), " here, ", hundredths(b[:], entries_network), " network, ", hundredths(c[:], entries_frame), " frame service"), COLOR_MEASURE)
+		measures[0] = {"round trip, one datagram of 64 bytes", system.format(values[0][:], round_least, " us at least, ", round_middle, " us in the middle")}
+		measures[1] = {"a burst, 64 datagrams in flight", system.format(values[1][:], burst_rate, " in one second, sent and answered, ", burst_lost, " lost")}
+		if inspect {
+			measures[2] = {"kernel entries for each datagram", system.format(values[2][:], hundredths(a[:], entries_program), " here, ", hundredths(b[:], entries_network), " network, ", hundredths(c[:], entries_frame), " frame")}
+		} else {
+			measures[2] = {"kernel entries for each datagram", system.format(values[2][:], hundredths(a[:], entries_program), " here; the services: no right Inspect")}
+		}
 	} else {
-		graphics.text(canvas, 12, y, "measures...", COLOR_DIM)
+		measures[0] = {"measures", "not known yet"}
+	}
+	for item in measures {
+		if item.name == "" {
+			continue
+		}
+		graphics.text(canvas, LEFT, y, item.name, COLOR_DIM)
+		graphics.text(canvas, ANSWER_X, y, item.value, measured ? COLOR_TEXT : COLOR_DIM)
+		y += LINE
 	}
 	display.present(window)
 }

@@ -333,9 +333,10 @@ peer_header_fix :: proc(frame: []u8) {
 	put16(frame, 24, internet_sum(0, frame[14:34]))
 }
 
-// peer_refused sends the frames that the network service must refuse, one
-// for each row of the table of `net` (programs/net, expected_rows), then
-// one correct echo request to the machine.
+// peer_refused sends the frames that the network service must refuse: ten
+// that no endpoint owns (programs/net, expected_machine_rows) and one to the
+// endpoint of `net` from a remote that its grant does not name, then one
+// correct echo request to the machine.
 @(private = "file")
 peer_refused :: proc(peer: ^Peer) {
 	port := int(peer.machine_port)

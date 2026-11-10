@@ -202,10 +202,14 @@ scenario_network := [?]Step {
 	{kind = .Wait, text = "net: UDP to 10.0.2.2 port 9: refused: the grant gives 10.0.2.2 port 7 only"},
 	{kind = .Wait, text = "net: ICMP echo to 10.0.2.3: refused: the grant names 10.0.2.2 only"},
 	{kind = .Wait, text = "net: UDP of 2000 bytes: refused: 2000 bytes, the limit is 1472: no fragment"},
-	{kind = .Wait, text = "net: refused by the network service: 1 x udp, byte 40: the checksum is 0x"},
-	{kind = .Wait, text = "net: malformed frames from the wire: 11 refused in 11 kinds, 11 of 11 expected; no fault"},
+	// The row of the endpoint names its own grant; the rows of the machine
+	// need the right Inspect, that `net` has with the machine.
+	{kind = .Wait, text = "net: refused for this endpoint: 1 x udp, byte 34: the remote port 9 is not the port of the grant, 7"},
+	{kind = .Wait, text = "net: refused for the machine: 1 x udp, byte 40: the checksum is 0x"},
+	{kind = .Wait, text = "net: UDP from 10.0.2.2 port 9 to this endpoint: refused: from port 9; a row of this endpoint"},
+	{kind = .Wait, text = "net: malformed frames from the wire: 10 refused in 10 kinds, 10 of 10 expected; no fault"},
 	{kind = .Wait, text = "net: ICMP echo from 10.0.2.2 to this machine: the network service answered 1 request"},
-	{kind = .Wait, text = "net: ok, 9 cases"},
+	{kind = .Wait, text = "net: ok, 10 cases"},
 	{kind = .Wait, text = "net: the round trip of one datagram of 64 bytes: "},
 	{kind = .Wait, text = "net: a burst with 64 datagrams in flight: "},
 	{kind = .Wait, text = " datagrams in one second, sent and answered, 0 lost"},

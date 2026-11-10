@@ -41,7 +41,6 @@ PORT_FIRST :: 49152 // The local port of endpoint n is PORT_FIRST + n.
 ECHO_IDENTIFIER :: 0x6E00 // The identifier of an echo request of endpoint n is ECHO_IDENTIFIER + n.
 ANSWER_TIME :: 1000 // Milliseconds for an answer of ARP or of an echo.
 PENDING_CAPACITY :: 64
-ARP_CAPACITY :: 16
 
 // The tags of the frame ring: a place for Receive and Send.
 TAG_ATTACH :: 1000
@@ -95,15 +94,13 @@ Endpoint :: struct {
 	held:            ring.Record, // A Send that waits for a free send place.
 	has_held:        bool,
 	changed:         bool, // A completion was written: wake the program.
+	inspect:         bool, // The right Inspect of the grant: the facts of the machine.
 	sent:            u64,
 	received:        u64,
 	dropped:         u64,
-}
-
-Neighbor :: struct {
-	address:  u32,
-	hardware: network.Hardware,
-	known:    bool,
+	// The datagrams that reached the local port of this endpoint from a
+	// remote that its grant does not name: facts of this endpoint only.
+	problems:        network.Problem_Table,
 }
 
 frames: ring.Ring
@@ -118,13 +115,13 @@ control: ring.Ring
 control_memory: system.Handle
 endpoints: [ENDPOINT_CAPACITY]Endpoint
 pending: [PENDING_CAPACITY]Pending
-neighbors: [ARP_CAPACITY]Neighbor
+neighbors: network.Neighbors
 identification: u16
 
-// The counts of the service.
-refused: u64
-answered: u64
-problems: [datagram.Problem_Kind][datagram.Layer]datagram.Problem_Row
+// The facts of the machine: an endpoint reads them only with the right
+// Inspect of its grant (property 20).
+answered: u64 // Echo requests from the wire that this service answered.
+machine_problems: network.Problem_Table // The frames that no endpoint owns.
 
 fail :: proc "contextless" (text: string) -> ! {
 	system.log_in("network", .Error, "network: ", text)
@@ -176,26 +173,27 @@ next_hop :: proc "contextless" (address: u32) -> u32 {
 }
 
 neighbor_of :: proc "contextless" (address: u32) -> (hardware: network.Hardware, ok: bool) {
-	for item in neighbors {
-		if item.known && item.address == address {
-			return item.hardware, true
-		}
-	}
-	return {}, false
+	return network.neighbor_find(&neighbors, address)
 }
 
-neighbor_learn :: proc "contextless" (address: u32, hardware: network.Hardware) {
-	free := -1
-	for &item, index in neighbors {
-		if item.known && item.address == address {
-			item.hardware = hardware
-			return
+// neighbor_answer takes an ARP frame from address: the table learns it only
+// if a request of this service waits for it (network.neighbor_learn). It
+// says if a request asked for it.
+neighbor_answer :: proc "contextless" (address: u32, found: network.Hardware, now: u64) -> (asked: bool) {
+	busy: [PENDING_CAPACITY]u32
+	busy_count := 0
+	for item in pending {
+		if item.kind == .None {
+			continue
 		}
-		if !item.known && free < 0 {
-			free = index
+		busy[busy_count] = item.address
+		busy_count += 1
+		if item.address == address && (item.kind == .Send || item.kind == .Resolve || item.kind == .Echo) {
+			asked = true
 		}
 	}
-	neighbors[max(free, 0)] = {address = address, hardware = hardware, known = true}
+	network.neighbor_learn(&neighbors, address, found, now, asked, busy[:busy_count])
+	return asked
 }
 
 // arp_request sends a request for the hardware address of address.
@@ -229,12 +227,9 @@ pending_add :: proc "contextless" (item: Pending) -> bool {
 	return false
 }
 
-// problem counts a refused frame.
+// problem counts a refused frame that no endpoint owns: a fact of the machine.
 problem :: proc "contextless" (found: datagram.Problem) {
-	refused += 1
-	row := &problems[found.kind][found.layer]
-	row.last = found
-	row.count += 1
+	network.problem_count(&machine_problems, found, .Machine)
 }
 
 // udp_send builds the frame of a datagram whose data is in the send place,
@@ -284,7 +279,7 @@ command :: proc "contextless" (endpoint: ^Endpoint, index: int, record: ring.Rec
 		for byte, place in hardware {
 			hardware_value |= u64(byte) << (8 * uint(place))
 		}
-		complete(endpoint, tag, .Ok, {LOCAL_ADDRESS, u64(endpoint.local_port), GATEWAY_ADDRESS, PREFIX, hardware_value, u64(link_up), datagram.grant_pack(endpoint.remote_address, endpoint.remote_port)})
+		complete(endpoint, tag, .Ok, {LOCAL_ADDRESS, u64(endpoint.local_port), GATEWAY_ADDRESS, PREFIX, hardware_value, u64(link_up), datagram.grant_pack(endpoint.remote_address, endpoint.remote_port, endpoint.inspect)})
 	case .Send:
 		place, count := values[0], values[1]
 		if endpoint.region == nil {
@@ -383,20 +378,9 @@ command :: proc "contextless" (endpoint: ^Endpoint, index: int, record: ring.Rec
 			complete(endpoint, tag, .Out_Of_Range, {0 = values[0], 1 = room, 2 = u64(len(endpoint.region))})
 			return true
 		}
-		rows := ([^]datagram.Problem_Row)(raw_data(endpoint.region[values[0]:]))
-		count: u64
-		for &by_layer in problems {
-			for &row in by_layer {
-				if row.count == 0 {
-					continue
-				}
-				if count < room {
-					rows[count] = row
-				}
-				count += 1
-			}
-		}
-		complete(endpoint, tag, .Ok, {0 = count})
+		rows := ([^]datagram.Problem_Row)(raw_data(endpoint.region[values[0]:]))[:room]
+		count := network.problem_rows(&endpoint.problems, &machine_problems, endpoint.inspect, rows)
+		complete(endpoint, tag, .Ok, {0 = u64(count)})
 	case:
 		complete(endpoint, tag, .Bad_Command)
 	}
@@ -417,14 +401,16 @@ arrived :: proc "contextless" (place: int, length: int, now: u64) {
 		if packet.target_address != LOCAL_ADDRESS {
 			return // For another machine of the link.
 		}
-		neighbor_learn(packet.sender_address, packet.sender_hardware)
+		asked := neighbor_answer(packet.sender_address, packet.sender_hardware, now)
 		if packet.operation == network.ARP_REQUEST {
 			if send_place, ok := send_place_take(); ok {
 				total := network.arp_frame(place_bytes(send_place), network.ARP_REPLY, hardware, LOCAL_ADDRESS, packet.sender_hardware, packet.sender_address)
 				frame_send(send_place, total)
 			}
 		}
-		resolved(packet.sender_address, packet.sender_hardware, now)
+		if asked {
+			resolved(packet.sender_address, packet.sender_hardware, now)
+		}
 	case .Icmp:
 		if packet.destination_address != LOCAL_ADDRESS {
 			return
@@ -460,7 +446,7 @@ arrived :: proc "contextless" (place: int, length: int, now: u64) {
 		}
 		endpoint := &endpoints[port]
 		if endpoint.remote_address == 0 || packet.source_address != endpoint.remote_address || packet.source_port != endpoint.remote_port {
-			problem({kind = .Not_Granted, layer = .Udp, offset = network.ETHERNET_HEADER + network.IPV4_HEADER, value = u32(packet.source_port), limit = u32(endpoint.remote_port)})
+			network.problem_count(&endpoint.problems, {kind = .Not_Granted, layer = .Udp, offset = network.ETHERNET_HEADER + network.IPV4_HEADER, value = u32(packet.source_port), limit = u32(endpoint.remote_port)}, .Endpoint)
 			return
 		}
 		if endpoint.posted_count == 0 {
@@ -582,8 +568,8 @@ controlled :: proc "contextless" (record: ring.Record) {
 		} else {
 			endpoint := &endpoints[free]
 			name := system.name_unpack({record.values[3], record.values[4], record.values[5], record.values[6]})
-			remote_address, remote_port := datagram.grant_unpack(record.values[2])
-			endpoint^ = {ring_memory = handle, datagram_ring = opened, region_memory = region_handle, region = ([^]u8)(region_address)[:datagram.REGION_PAGES * system.PAGE_SIZE], remote_address = remote_address, remote_port = remote_port, local_port = u16(PORT_FIRST + free), name = name}
+			remote_address, remote_port, inspect := datagram.grant_unpack(record.values[2])
+			endpoint^ = {ring_memory = handle, datagram_ring = opened, region_memory = region_handle, region = ([^]u8)(region_address)[:datagram.REGION_PAGES * system.PAGE_SIZE], remote_address = remote_address, remote_port = remote_port, inspect = inspect, local_port = u16(PORT_FIRST + free), name = name}
 			values[0] = u64(endpoint.local_port)
 			text: [32]u8
 			writer := system.Writer{buffer = text[:]}
@@ -594,7 +580,7 @@ controlled :: proc "contextless" (record: ring.Record) {
 		result = .Bad_Command
 		for &item in endpoints {
 			if item.ring_memory != 0 && item.ring_memory == handle {
-				item.remote_address, item.remote_port = datagram.grant_unpack(record.values[1])
+				item.remote_address, item.remote_port, item.inspect = datagram.grant_unpack(record.values[1])
 				system.log("network: the grant of the endpoint of ", system.name_of(item.name[:]), " changed: ", item.remote_address == 0 ? "none" : "a new remote")
 				result = .Ok
 			}
@@ -724,7 +710,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				for &item in pending {
 					if item.kind == .Statistics {
 						endpoint := &endpoints[item.endpoint]
-						complete_taken(endpoint, item.tag, .Ok, {0 = endpoint.sent, 1 = endpoint.received, 2 = system.kernel_entries(), 3 = record.values[2], 4 = refused, 5 = answered, 6 = endpoint.dropped})
+						values := [7]u64{0 = endpoint.sent, 1 = endpoint.received, 4 = endpoint.problems.count, 6 = endpoint.dropped}
+						if endpoint.inspect {
+							values[2], values[3], values[5] = system.kernel_entries(), record.values[2], answered
+							values[4] += machine_problems.count
+						}
+						complete_taken(endpoint, item.tag, .Ok, values)
 						item = {}
 					}
 				}

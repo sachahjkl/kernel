@@ -12,6 +12,11 @@ import "support:system"
 // service. The program cannot choose its remote or its local port
 // (property 20, lines 3 and 11).
 
+// The right Inspect of the grant of an endpoint (the facts of the network
+// of the machine: the frames that no endpoint owns, the kernel entries of
+// the two services) goes only to a program that holds the machine with the
+// right Inspect: it reads the facts of all programs already (property 20).
+
 // endpoint_of gives the grant of the endpoint of a program: the one remote
 // address and remote port that it can reach. Today one program has the
 // grant: `net` reaches the echo server of the test, at the gateway.
@@ -58,7 +63,7 @@ endpoint_open :: proc "contextless" (slot: ^Started, name: string) -> (ring_memo
 	}
 	address, port := endpoint_of(name)
 	packed := system.name_pack(name)
-	if status == .Ok && !system.send(&service.network.commands, ring.Record{kind = u32(datagram.Control.Endpoint_Add), values = {0 = u64(given[0]), 1 = u64(given[1]), 2 = datagram.grant_pack(address, port), 3 = packed[0], 4 = packed[1], 5 = packed[2], 6 = packed[3]}}) {
+	if status == .Ok && !system.send(&service.network.commands, ring.Record{kind = u32(datagram.Control.Endpoint_Add), values = {0 = u64(given[0]), 1 = u64(given[1]), 2 = datagram.grant_pack(address, port, .Inspect in grants_of(name)), 3 = packed[0], 4 = packed[1], 5 = packed[2], 6 = packed[3]}}) {
 		status = .No_Slot
 	}
 	if status != .Ok {

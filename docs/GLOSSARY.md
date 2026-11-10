@@ -160,12 +160,13 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Term | Definition | Do not use |
 |---|---|---|
 | Network service | The one client of the frame service. It speaks Ethernet, ARP, IPv4, ICMP echo and UDP with the protocol library `support/network`, and gives each program with the grant one endpoint. It starts when the first such program starts | network stack, TCP/IP stack, netd, network daemon |
-| Endpoint | What a program holds to send and receive datagrams: a datagram ring and a datagram region, with a grant of one remote. The network service gives its local UDP port; the program does not choose it (P20) | socket, port (for this), connection (for this) |
+| Endpoint | What a program holds to send and receive datagrams: a datagram ring and a datagram region, with a grant of one remote. The network service gives its local UDP port; the program does not choose it (P20). With the right Inspect of its grant, it also reads the facts of the network of the machine: the frames that no endpoint owns, the kernel entries of the two services | socket, port (for this), connection (for this) |
 | Datagram | The data of one UDP datagram and its remote: what a program sends and receives through an endpoint. 1472 bytes at most: one frame, no fragment | packet, message |
 | Remote | The IPv4 address and the UDP port at the other end of a datagram. The grant of an endpoint names one remote | peer (for this), destination, host |
 | UDP port | The 16-bit number of UDP that names an endpoint at an address. It is not the Ports object of the kernel | port (alone), socket number |
 | Datagram ring | The ring between a program and the network service for one endpoint (`contract/datagram`). A command is a Send, a Receive, or a question (Info, Resolve, Echo, Statistics, Problems) | socket, channel |
 | Datagram region | The memory of an endpoint where the program writes the data of a datagram to send, and where the network service writes the data of a datagram that arrives. The root service makes it with the datagram ring | socket buffer, send buffer, receive buffer |
+| Neighbor | An address of the link and its hardware address, that the network service learned from an answer to its own ARP request. The network service keeps 16 | ARP cache entry, neighbour entry |
 | Gateway | The machine of the link that carries IPv4 packets to other networks: 10.0.2.2 on the first machine | router, default route |
 | Peer | The part of the kernel tool that is the gateway and the echo server of the network of the test machine. QEMU gives it each frame as a UDP datagram on the loopback of the host. It reads each frame with its own code | mock, fake server, simulator |
 
