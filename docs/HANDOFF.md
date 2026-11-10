@@ -137,4 +137,5 @@ Notes are in `research/`.
 10. A program loads a module with imports, replacement of an import, shared code of an import: done on 2026-11-10 (steps 33 to 35, choices 160 to 171). Third branch of an agent that the coordinator merged. New in the kernel, for the owner to know: the module records of a program (operation 26, `Program_Module`), which a loader writes and the kernel does not check.
 11. Functions that give the information of the modules, with tables that the console combines: done on 2026-11-10 (step 36, choices 172 to 182). It answers the requirement of the owner that replaced SQLite. For the owner to know: the manual holds the machine with the right Inspect to read the module records, and gives what runs only to a caller that acts for the person.
 12. Corrections of the storage service after Review 7: done on 2026-11-10 (step 37, choices 183 to 188).
-13. Research on identity across machines; check of the licences in the reuse list of `PROPERTIES.md`.
+13. One build gives one hash: done on 2026-11-10 (step 38, choice 189).
+14. Research on identity across machines; check of the licences in the reuse list of `PROPERTIES.md`.

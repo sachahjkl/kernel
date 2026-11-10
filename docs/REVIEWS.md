@@ -43,6 +43,7 @@ A step is one tested commit that adds one capability.
 | 35 | `6fe8d02` | The code of an imported module is one copy for all the programs of a table of prepared modules, at any base (same agent and branch) |
 | 36 | `f8fe828` | Functions that give the information of the modules (property 12, no SQLite): a Table result and a Text field in the record description; `support/information` reads the flat tables, the module records and the replacement table, with a `Problem` for a malformed module; the manual serves the tables; the console combines tables with `where`, `sort`, `join`, `columns` (built by an agent on a branch, reviewed and merged by the coordinator) |
 | 37 | `66e2a31` | Corrections of the storage service after the line-by-line read of Review 7: a wrong block damages one object and not the service; a damaged object is never an empty object; the name of an object is copied one time; a cut format is formatted again; the format of the disk is the contract `store`; four more machines in the test of persistence |
+| 38 | `1df3c26` | One build gives one hash (property 11): the cause was the threads of the compiler, not the folder; two options of the compiler; the check builds the modules two times and compares |
 
 ## Review 1: steps 1 to 5 (2026-11-10)
 
