@@ -118,18 +118,24 @@ queue_move :: proc "contextless" (from: u32, to: u32) -> u32 {
 	return index
 }
 
-// longest_queue gives the other processor with the most threads in its
-// queue, and that count. It reads the counts with no lock: a hint.
-longest_queue :: proc "contextless" (cpu: ^Processor) -> (longest: u32, count: u32) {
+// busiest_queue gives the other processor with the highest load (the
+// threads that wait in its queue, plus 1 if it runs a thread) that has a
+// thread in its queue, and that load. It reads with no lock: a hint.
+busiest_queue :: proc "contextless" (cpu: ^Processor) -> (busiest: u32, load: u32) {
 	for other in processors[:processor_count] {
 		if other == cpu {
 			continue
 		}
-		if waiting := intrinsics.atomic_load(&run_queues[other.index].count); waiting > count {
-			longest, count = other.index, waiting
+		waiting := intrinsics.atomic_load(&run_queues[other.index].count)
+		if waiting == 0 {
+			continue
+		}
+		other_load := waiting + (intrinsics.atomic_load(&other.current) != 0 ? 1 : 0)
+		if other_load > load {
+			busiest, load = other.index, other_load
 		}
 	}
-	return longest, count
+	return busiest, load
 }
 
 // queue_pushes gives the sum of the pushes of all the queues.
@@ -205,13 +211,15 @@ thread_queue :: proc "contextless" (thread: ^Thread) {
 	kick(home)
 }
 
-// schedule_pick takes the next thread for a processor: from its own queue,
-// or from the longest queue when its own queue is empty or shorter by 2.
-// 0: none.
+// schedule_pick takes the next thread for a processor that runs no thread
+// now: from the busiest other queue when its load is above the threads
+// that wait in the own queue, else from the own queue. So the threads that
+// are ready move to the processors that have less, and each one gets its
+// turn on all the processors, as with one queue. 0: none.
 schedule_pick :: proc "contextless" (cpu: ^Processor) -> u32 {
 	own := intrinsics.atomic_load(&run_queues[cpu.index].count)
-	if longest, count := longest_queue(cpu); count != 0 && (own == 0 || count >= own + 2) {
-		if index := queue_move(longest, cpu.index); index != 0 {
+	if busiest, load := busiest_queue(cpu); load > own {
+		if index := queue_move(busiest, cpu.index); index != 0 {
 			return index
 		}
 	}
