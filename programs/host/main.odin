@@ -14,7 +14,6 @@ import "../../ring"
 import "../../system"
 
 file: []u8
-entry_export: u32
 region: []u8
 
 @(export, link_name = "entry")
@@ -36,8 +35,6 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.log("host: cannot load the module")
 		system.stop(1)
 	}
-	head, _ := module.header(file)
-	entry_export = head.entry_export
 	system.log("host: ready, ", u64(module.count(file, .Exports) - 1), " exports")
 
 	queue := (^ring.Ring)(calls)
@@ -47,37 +44,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			if !ok {
 				break
 			}
-			completion := ring.Record {
-				tag = command.tag,
-			}
-			completion.kind = u32(serve(command, &completion.values))
-			system.send(&queue.completions, completion)
+			system.send(&queue.completions, system.export_serve(file, op.MODULE_BASE, region, command))
 		}
 		wait: system.Wait
 		system.wait_records(&wait, &queue.commands)
 		system.wait_end(&wait)
 	}
-}
-
-// serve executes one call. The description of the export says how to read
-// the argument record; the caller does not send the types.
-serve :: proc "contextless" (command: ring.Record, results: ^[7]u64) -> isolated.Status {
-	function, described := module.function(file, command.kind)
-	address, has_address := module.export_address(file, uintptr(op.MODULE_BASE), command.kind)
-	if !described || !has_address || command.kind == entry_export {
-		return .Bad_Export
-	}
-	integers: [system.CALL_INTEGERS]u64
-	slices: [module.PARAMETER_CAPACITY]isolated.Slice
-	if !isolated.decode(function, command.values[0], command.values[1], region, &integers, &slices) {
-		return .Bad_Arguments
-	}
-	floats: [system.CALL_FLOATS]u64
-	out: [system.CALL_RESULTS]u64
-	system.export_call(address, &integers, &floats, &out)
-	// For a Text result, this is the count; the text is in the call region.
-	if function.result != .None {
-		results[0] = out[0]
-	}
-	return .Ok
 }

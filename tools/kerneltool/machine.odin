@@ -174,7 +174,7 @@ scenario := [?]Step {
 	{kind = .Type, text = "next_prime(\"x\")"},
 	{kind = .Wait, text = "error: next_prime: argument 1 is Integer, not Text"},
 	{kind = .Type, text = "clear()"},
-	{kind = .Type, text = "load(\"life\")"},
+	{kind = .Type, text = "load(\"plasma\")"},
 	{kind = .Wait, text = "exports no command"},
 	{kind = .Type, text = "next_prime(1000) * gcd(84, 36)"},
 	{kind = .Wait, text = "[console] 12108"},
@@ -317,6 +317,51 @@ scenario := [?]Step {
 	{kind = .Type, text = "stop(\"pages\")"},
 	{kind = .Wait, text = "root: pages stopped"},
 
+	// A service serves its own exports while it runs. The root service makes
+	// the connection; the console reads the descriptions in the file of the
+	// program, and each export is a command.
+	{kind = .Launch, text = "paint"},
+	{kind = .Wait, text = "compositor: surface paint"},
+	{kind = .Drag, x = 400, y = 244, to_x = 640, to_y = 420}, // Below the console, at the right.
+	{kind = .Click, x = 70, y = 300},
+	{kind = .Type, text = "clear()"},
+	{kind = .Type, text = "connect(\"paint\")"},
+	{kind = .Wait, text = "root: connected console to the service paint"},
+	{kind = .Wait, text = "[console] paint: 4 commands of a service that runs"},
+	{kind = .Type, text = "connect(\"life\")"},
+	{kind = .Wait, text = "[console] life: 3 commands of a service that runs"},
+	{kind = .Type, text = "connect(\"monitor\")"},
+	{kind = .Wait, text = "error: cannot connect to monitor: no service runs with this name"},
+	{kind = .Type, text = "help()"},
+	{kind = .Wait, text = "paint.write(x: Integer, y: Integer, text: Text, color: Integer)"},
+	{kind = .Type, text = "paint.line(40, 30, 440, 250, 1)"},
+	{kind = .Type, text = "paint.line(40, 250, 440, 30, 3)"},
+	{kind = .Type, text = "paint.write(150, 20, \"drawn by isolated calls\", 0)"},
+	{kind = .Type, text = "paint.lines()"},
+	{kind = .Wait, text = "[console] 2"},
+	{kind = .Type, text = "life.empty()"},
+	{kind = .Type, text = "life.glider(10, 10)"},
+	{kind = .Type, text = "life.population()"},
+	{kind = .Wait, text = "[console] 5"},
+	{kind = .Click, x = 900, y = 420}, // The title of paint: the window comes to the front.
+	{kind = .Shot, text = "services"},
+	{kind = .Click, x = 70, y = 300},
+	// The service stops: the call fails, and the console continues. The
+	// service starts again: the next call makes a new connection.
+	{kind = .Type, text = "stop(\"paint\")"},
+	{kind = .Wait, text = "root: paint stopped"},
+	{kind = .Wait, text = "root: disconnected console from the service paint"},
+	{kind = .Type, text = "paint.lines()"},
+	{kind = .Wait, text = "error: no service runs with the name paint"},
+	{kind = .Launch, text = "paint"},
+	{kind = .Wait, text = "compositor: surface paint"},
+	{kind = .Click, x = 70, y = 300},
+	{kind = .Type, text = "paint.lines()"},
+	{kind = .Wait, text = "root: connected console to the service paint"},
+	{kind = .Wait, text = "[console] 0"},
+	{kind = .Type, text = "stop(\"paint\")"},
+	{kind = .Wait, text = "root: paint stopped"},
+
 	// The log: records in channels. The kernel sets the program of each
 	// record; a program with the grant reads the records.
 	{kind = .Launch, text = "log"},
@@ -324,6 +369,8 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[log:log] log: ok, ", any_order = true},
 	{kind = .Wait, text = " 0 lost, "},
 	{kind = .Shot, text = "log"},
+	// The window covers the console: move it down.
+	{kind = .Drag, x = 500, y = 64, to_x = 500, to_y = 754},
 	{kind = .Click, x = 70, y = 300},
 	// Each page is free or paid, after all the starts and stops of this test.
 	{kind = .Type, text = "memory()"},

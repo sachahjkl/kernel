@@ -53,6 +53,21 @@ VALUE_FILE_SIZE :: 1 // The size of the file, in bytes.
 FILE_ADDRESS :: 0x0000_3000_0000_0000 // Where a caller maps the file of the module in the call host.
 REGION_PAGES :: 16
 
+// A service that serves its own exports receives calls in the same form. It
+// has one connection for each caller: one call ring and one call region.
+// The root service names each connection on the service ring of the
+// program, as a command record:
+//   kind        a Service_Command
+//   values[0]   the handle of the call ring, in the service
+//   values[1]   the handle of the call region, in the service
+SERVICE_CONNECTION_CAPACITY :: 8 // The callers of one service.
+
+Service_Command :: enum u32 {
+	None       = 0,
+	Connect    = 1, // The service maps the two memory objects, and serves the calls of the call ring.
+	Disconnect = 2, // The service unmaps them and closes the two handles.
+}
+
 Status :: enum u32 {
 	Ok            = 0,
 	Bad_Export    = 1, // The module has no export with this index, or the export has no description.

@@ -79,6 +79,8 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Call host | The program that loads one module and executes the isolated calls of its exports. It has no handle but its call ring, its call region, its budget and the log | worker, helper process, server |
 | Call ring | The ring between a caller and a call host. One command record is one isolated call | channel, pipe |
 | Call region | The memory object that a caller and a call host share. The caller writes the argument record and the bytes of its slices in it | shared buffer, arena |
+| Connection | One call ring and one call region between one caller and one service that serves its own exports. The root service makes it and ends it | session, socket, channel |
+| Service ring | The ring between the root service and a service that serves its own exports. One command record names one connection that starts or ends | control channel, accept queue |
 | Argument record | The record that holds the arguments of one isolated call: one field per parameter, in order. It is derived from the description of the export | message, payload, marshalled arguments |
 | Kernel ring | The ring between a program and the kernel. Each kernel operation is a command record in it (P1) | system call table |
 | Record | A fixed-layout block of bytes with typed fields. An all-zero record is valid (P13) | struct, message, packet, object |

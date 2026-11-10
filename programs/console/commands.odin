@@ -23,13 +23,18 @@ Command :: struct {
 	function:        module.Function, // The description of the export.
 }
 
-// A module that the console calls in a call host: a sandboxed program.
+// A program that executes the isolated calls of the console. It is a call
+// host with a module (a sandboxed program that the console starts), or a
+// service that runs and serves its own exports (the console has a
+// connection to it).
 Sandbox :: struct {
 	name:          string,
+	service:       bool, // A service that runs: the console does not start it and does not stop it.
+	hash:          [32]u8, // A service: the hash of the file of the program.
 	first_page:    u64, // The file of the module, in the boot image.
 	page_count:    u64,
 	file_size:     u64,
-	program:       system.Handle, // 0: no call host runs. The next call starts one.
+	program:       system.Handle, // 0: no call host runs, or no connection exists. The next call makes one.
 	ring_memory:   system.Handle,
 	ring:          ^ring.Ring,
 	region_memory: system.Handle,
@@ -58,6 +63,11 @@ machine: system.Handle
 image: []u8
 requests: ^ring.Ring
 requests_memory: system.Handle
+request_count: u32 // The tag of the last command to the root service.
+
+// The names of the commands of services: "program.export".
+names: [1024]u8
+names_count: int
 
 command :: proc "contextless" (name: string, parameters: []Kind, result: Kind, about: string, run: proc "contextless" (arguments: []Value) -> Value) {
 	item := &commands[command_count]
@@ -84,6 +94,7 @@ commands_start :: proc "contextless" () {
 	command("modules", {}, .None, "list the modules of the boot image", list_modules)
 	command("load", {.Text}, .None, "load a module here: direct calls", load_module)
 	command("isolate", {.Text}, .None, "load a module in a sandboxed program", isolate_module)
+	command("connect", {.Text}, .None, "call the exports of a service that runs", connect_service)
 	command("start", {.Text}, .None, "start a program, by module name", start_program)
 	command("stop", {.Text}, .None, "stop a program, by name", stop_program)
 	command("time", {}, .Integer, "milliseconds since boot", time)
@@ -243,14 +254,7 @@ add_module :: proc "contextless" (name: string, isolate: bool) -> Value {
 				return fail("the module ", name, " is loaded")
 			}
 		}
-		head, _ := module.header(file)
-		export_count := module.count(file, .Exports)
-		callable := 0
-		for index in 1 ..< export_count {
-			if function, ok := module.function(file, index); ok && index != head.entry_export && callable_by_console(function) {
-				callable += 1
-			}
-		}
+		callable := callable_count(file)
 		if callable == 0 {
 			return fail("the module ", name, " exports no command; start(\"", name, "\") starts a program")
 		}
@@ -282,36 +286,173 @@ add_module :: proc "contextless" (name: string, isolate: bool) -> Value {
 		}
 		loaded[loaded_count] = entry.hash
 		loaded_count += 1
-		for index in 1 ..< export_count {
-			function, ok := module.function(file, index)
-			address, has_address := module.export_address(file, uintptr(base), index)
-			if !ok || !has_address || index == head.entry_export || !callable_by_console(function) {
-				continue
-			}
-			item := &commands[command_count]
-			item^ = {
-				name            = module.string_at(file, function.name_offset, function.name_count),
-				about           = module.string_at(file, function.about_offset, function.about_count),
-				parameter_count = int(function.parameter_count),
-				result          = Kind(function.result),
-				export          = index,
-				function        = function,
-			}
-			if isolate {
-				item.sandbox = sandbox_count
-			} else {
-				item.address = address
-			}
-			for type, parameter in function.parameters[:function.parameter_count] {
-				item.parameters[parameter] = Kind(type)
-				item.parameter_names[parameter] = module.string_at(file, function.parameter_names[parameter], u32(function.parameter_name_counts[parameter]))
-			}
-			command_count += 1
-		}
+		commands_add(file, "", isolate ? sandbox_count : 0, base)
 		print(name, ": ", i64(callable), isolate ? " commands in a sandboxed program, hash " : " commands, hash ", hex_text(entry.hash[:8]), "...\n")
 		return {}
 	}
 	return fail("no module has the name ", name)
+}
+
+// callable_count gives the count of exports of a module that the console
+// can call.
+callable_count :: proc "contextless" (file: []u8) -> (callable: int) {
+	head, _ := module.header(file)
+	for index in 1 ..< module.count(file, .Exports) {
+		if function, ok := module.function(file, index); ok && index != head.entry_export && callable_by_console(function) {
+			callable += 1
+		}
+	}
+	return callable
+}
+
+// commands_add makes each callable export of a module a command. The
+// description of the export gives its name, its types and its help.
+//   prefix:  "", or the name of a service: the command is "service.export".
+//   sandbox: 0 for a direct call at base, or the number of the sandbox.
+commands_add :: proc "contextless" (file: []u8, prefix: string, sandbox: int, base: u64) {
+	head, _ := module.header(file)
+	for index in 1 ..< module.count(file, .Exports) {
+		function, ok := module.function(file, index)
+		address, has_address := module.export_address(file, uintptr(base), index)
+		if !ok || !has_address || index == head.entry_export || !callable_by_console(function) {
+			continue
+		}
+		item := &commands[command_count]
+		item^ = {
+			name            = module.string_at(file, function.name_offset, function.name_count),
+			about           = module.string_at(file, function.about_offset, function.about_count),
+			parameter_count = int(function.parameter_count),
+			result          = Kind(function.result),
+			export          = index,
+			function        = function,
+		}
+		if prefix != "" {
+			item.name = system.format(names[names_count:], prefix, ".", item.name)
+			names_count += len(item.name)
+		}
+		if sandbox != 0 {
+			item.sandbox = sandbox
+		} else {
+			item.address = address
+		}
+		for type, parameter in function.parameters[:function.parameter_count] {
+			item.parameters[parameter] = Kind(type)
+			item.parameter_names[parameter] = module.string_at(file, function.parameter_names[parameter], u32(function.parameter_name_counts[parameter]))
+		}
+		command_count += 1
+	}
+}
+
+// connect_service makes a connection to a service that runs, and makes each
+// export of the service a command: "service.export". The root service
+// decides if the console can call the service. It names the file of the
+// program by its hash: the console reads the descriptions there.
+connect_service :: proc "contextless" (arguments: []Value) -> Value {
+	name := arguments[0].text
+	for &sandbox in sandboxes[:sandbox_count] {
+		if sandbox.service && sandbox.name == name {
+			return fail("the console has the commands of the service ", name)
+		}
+	}
+	if sandbox_count == SANDBOX_CAPACITY {
+		return fail("no room for the service ", name)
+	}
+	sandbox := &sandboxes[sandbox_count]
+	sandbox^ = {
+		name    = name,
+		service = true,
+	}
+	if status := service_connect(sandbox); status != .Ok {
+		return fail("cannot connect to ", name, ": ", connect_reason(status))
+	}
+	for &entry in system.image_entries(image) {
+		if entry.hash != sandbox.hash || entry.offset > u64(len(image)) || entry.size > u64(len(image)) - entry.offset {
+			continue
+		}
+		file := image[entry.offset:][:entry.size]
+		if blake3.hash(file) != entry.hash || module.validate(file) != .None {
+			break
+		}
+		callable := callable_count(file)
+		if callable == 0 || command_count + callable > COMMAND_CAPACITY || len(names) - names_count < callable * 64 {
+			service_disconnect(sandbox)
+			return fail("the service ", name, callable == 0 ? " exports no command" : ": no room for its commands")
+		}
+		sandbox.name = system.name_of(entry.name[:]) // The text of the line does not stay.
+		sandbox_count += 1
+		commands_add(file, sandbox.name, sandbox_count, 0)
+		print(sandbox.name, ": ", i64(callable), " commands of a service that runs, hash ", hex_text(entry.hash[:8]), "...\n")
+		return {}
+	}
+	service_disconnect(sandbox)
+	return fail("the boot image has no file with the hash of the program ", name)
+}
+
+connect_reason :: proc "contextless" (status: system.Status) -> string {
+	#partial switch status {
+	case .Bad_Handle:
+		return "no service runs with this name"
+	case .No_Slot:
+		return "the service has no room for one more caller"
+	case .Bad_State:
+		return "the root service did not answer"
+	}
+	return "the root service refused"
+}
+
+// service_connect asks the root service for a connection to the service of
+// a sandbox, and maps the call ring and the call region that it gives.
+service_connect :: proc "contextless" (sandbox: ^Sandbox) -> system.Status {
+	completion, answered := request_record(.Connect, sandbox.name)
+	if !answered {
+		return .Bad_State
+	}
+	if status := system.Status(completion.kind); status != .Ok {
+		return status
+	}
+	sandbox.program = system.Handle(completion.values[0])
+	sandbox.ring_memory = system.Handle(completion.values[1])
+	sandbox.region_memory = system.Handle(completion.values[2])
+	hash := transmute([32]u8)[4]u64{completion.values[3], completion.values[4], completion.values[5], completion.values[6]}
+	calls, ring_status := system.memory_map(sandbox.ring_memory)
+	bytes, region_status := system.memory_map(sandbox.region_memory)
+	sandbox.ring = (^ring.Ring)(calls)
+	sandbox.region = ([^]u8)(bytes)[:region_status == .Ok ? system.memory_size(sandbox.region_memory) * system.PAGE_SIZE : 0]
+	// After the first connection, the commands are those of one file.
+	if ring_status != .Ok || region_status != .Ok || sandbox.hash != {} && sandbox.hash != hash {
+		service_disconnect(sandbox)
+		return .Bad_Operation
+	}
+	sandbox.hash = hash
+	return .Ok
+}
+
+// service_disconnect ends the connection of a sandbox. The service
+// continues.
+service_disconnect :: proc "contextless" (sandbox: ^Sandbox) {
+	request_record(.Disconnect, sandbox.name)
+	if sandbox.ring != nil {
+		system.memory_unmap(sandbox.ring)
+	}
+	if len(sandbox.region) != 0 {
+		system.memory_unmap(raw_data(sandbox.region))
+	}
+	system.close(sandbox.ring_memory)
+	system.close(sandbox.region_memory)
+	system.close(sandbox.program)
+	sandbox.program, sandbox.ring_memory, sandbox.region_memory, sandbox.ring, sandbox.region = 0, 0, 0, nil, nil
+}
+
+// services_check ends the connection to each service that stopped: the
+// handle of the console does not keep a stopped program.
+services_check :: proc "contextless" () {
+	for &sandbox in sandboxes[:sandbox_count] {
+		if sandbox.service && sandbox.program != 0 {
+			if state, _ := system.program_state(sandbox.program); state == .Stopped {
+				service_disconnect(&sandbox)
+			}
+		}
+	}
 }
 
 // callable_by_console says if the console has a value for each parameter and
@@ -392,6 +533,9 @@ sandbox_create :: proc "contextless" (sandbox: ^Sandbox) -> bool {
 // file of the module in it, read-only: the program has no handle to the
 // boot image.
 sandbox_start :: proc "contextless" (sandbox: ^Sandbox) -> system.Status {
+	if sandbox.service {
+		return service_connect(sandbox)
+	}
 	sandbox.ring^ = {}
 	grants: [op.CONTEXT_HANDLES]system.Grant
 	values: [op.CONTEXT_VALUES]u64
@@ -409,6 +553,10 @@ sandbox_start :: proc "contextless" (sandbox: ^Sandbox) -> system.Status {
 // sandbox_end closes the handle of the call host. The kernel stops a program
 // that no handle names.
 sandbox_end :: proc "contextless" (sandbox: ^Sandbox) {
+	if sandbox.service {
+		service_disconnect(sandbox)
+		return
+	}
 	system.close(sandbox.program)
 	sandbox.program = 0
 }
@@ -443,7 +591,7 @@ call_isolated :: proc "contextless" (item: ^Command, arguments: []Value) -> Valu
 		}
 	}
 	if sandbox.program == 0 && sandbox_start(sandbox) != .Ok {
-		return fail("cannot start a sandboxed program for ", sandbox.name)
+		return fail(sandbox.service ? "no service runs with the name " : "cannot start a sandboxed program for ", sandbox.name)
 	}
 	encoded: [ARGUMENT_CAPACITY]isolated.Argument
 	for argument, index in arguments {
@@ -456,7 +604,7 @@ call_isolated :: proc "contextless" (item: ^Command, arguments: []Value) -> Valu
 	sandbox.calls += 1
 	if !system.send(&sandbox.ring.commands, ring.Record{kind = item.export, tag = sandbox.calls, values = {0 = offset, 1 = size}}) {
 		sandbox_end(sandbox)
-		return fail("the call ring of ", sandbox.name, " is full: the console stopped the program")
+		return fail("the call ring of ", sandbox.name, " is full: the console ", sandbox.service ? "closed the connection" : "stopped the program")
 	}
 	for {
 		// The stop of the call host is an event.
@@ -500,7 +648,7 @@ call_isolated :: proc "contextless" (item: ^Command, arguments: []Value) -> Valu
 		}
 		if intrinsics.volatile_load(&work.cancel) != 0 {
 			sandbox_end(sandbox)
-			return fail("the person stopped the call of ", item.name, ": the console stopped the program ", sandbox.name)
+			return fail("the person stopped the call of ", item.name, sandbox.service ? ": the console closed the connection to " : ": the console stopped the program ", sandbox.name)
 		}
 		system.wait_records(&wait, &sandbox.ring.completions)
 		system.wait_word(&wait, &work.cancel, 0)
@@ -508,27 +656,42 @@ call_isolated :: proc "contextless" (item: ^Command, arguments: []Value) -> Valu
 	}
 }
 
-// request sends one command to the root service and waits for its completion.
-request :: proc "contextless" (kind: system.Root_Command, name: string) -> Value {
+// request_record sends one command to the root service and waits for its
+// completion. answered is false when the root service gave none.
+request_record :: proc "contextless" (kind: system.Root_Command, name: string) -> (completion: ring.Record, answered: bool) {
 	if requests == nil {
-		return fail("the console has no ring to the root service")
+		return {}, false
 	}
 	packed := system.name_pack(name)
-	system.send(&requests.commands, ring.Record{kind = u32(kind), values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3]}})
+	request_count += 1
+	system.send(&requests.commands, ring.Record{kind = u32(kind), tag = request_count, values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3]}})
 	limit := system.time() + 3000
 	for {
-		if completion, ok := system.receive(&requests.completions); ok {
-			if system.Status(completion.kind) != .Ok {
-				return fail("the root service refused: ", kind == .Start ? "no module has the name " : "no program has the name ", name)
+		// A completion with another tag answers a command that this
+		// program waits for no more.
+		for record in system.receive(&requests.completions) {
+			if record.tag == request_count {
+				return record, true
 			}
-			return {}
 		}
 		wait: system.Wait
 		system.wait_records(&wait, &requests.completions)
 		if system.wait_end(&wait, limit) >= limit {
-			return fail("the root service did not answer")
+			return {}, false
 		}
 	}
+}
+
+// request asks the root service to start or to stop a program.
+request :: proc "contextless" (kind: system.Root_Command, name: string) -> Value {
+	completion, answered := request_record(kind, name)
+	if !answered {
+		return fail(requests == nil ? "the console has no ring to the root service" : "the root service did not answer")
+	}
+	if system.Status(completion.kind) != .Ok {
+		return fail("the root service refused: ", kind == .Start ? "no module has the name " : "no program has the name ", name)
+	}
+	return {}
 }
 
 start_program :: proc "contextless" (arguments: []Value) -> Value {

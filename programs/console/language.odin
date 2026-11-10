@@ -33,7 +33,7 @@ kind_names := [Kind]string {
 VARIABLE_CAPACITY :: 16
 VARIABLE_NAME_SIZE :: 16
 VARIABLE_TEXT_SIZE :: 96
-ARGUMENT_CAPACITY :: 4
+ARGUMENT_CAPACITY :: 6 // The parameters of an export: module.PARAMETER_CAPACITY.
 
 Variable :: struct {
 	name:       [VARIABLE_NAME_SIZE]u8,
@@ -98,7 +98,7 @@ is_digit :: proc "contextless" (c: u8) -> bool {
 read_name :: proc "contextless" () -> string {
 	skip_spaces()
 	start := position
-	for position < len(source) && (is_letter(source[position]) || is_digit(source[position]) && position > start) {
+	for position < len(source) && (is_letter(source[position]) || (is_digit(source[position]) || source[position] == '.') && position > start) {
 		position += 1
 	}
 	return source[start:position]

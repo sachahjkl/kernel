@@ -9,7 +9,9 @@ import "../../bootscreen"
 import "../../bootscreen/collect"
 import "../../display"
 import "../../graphics"
+import "base:intrinsics"
 import info "../../boot_info"
+import "../../isolated"
 import op "../../kernel/operation"
 import "../../ring"
 import "../../system"
@@ -24,6 +26,7 @@ Grant :: enum {
 	Stop, // The machine, with the right Stop.
 	Image, // Read the boot image.
 	Log_Records, // Read the records of the log.
+	Serve, // A service: other programs call its exports through connections.
 }
 
 grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
@@ -40,6 +43,8 @@ grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 		return {.Inspect, .Image} // It shows the modules of the boot image.
 	case "rings":
 		return {.Image} // It starts its nodes from the boot image.
+	case "paint", "life":
+		return {.Serve}
 	}
 	return {}
 }
@@ -88,8 +93,23 @@ Started :: struct {
 	client:          system.Handle, // The ring of the program, as the compositor names it.
 	requests:        ^ring.Ring, // The ring from the program to this service, if it has one.
 	requests_memory: system.Handle,
+	service:         ^ring.Ring, // The service ring of the program, if it is a service.
+	service_memory:  system.Handle,
+	hash:            [32]u8, // The hash of the file of the program.
 	name:            system.Name,
 }
+
+// A connection: one caller can call the exports of one service.
+Connection :: struct {
+	caller:  ^Started, // nil: the place is free.
+	service: ^Started,
+	ring:    system.Handle, // The call ring, as the service names it.
+	region:  system.Handle, // The call region, as the service names it.
+}
+
+CONNECTION_CAPACITY :: 32
+
+connections: [CONNECTION_CAPACITY]Connection
 
 STARTED_CAPACITY :: 32
 
@@ -237,7 +257,20 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			for record in system.receive(&item.requests.commands) {
 				name := system.name_unpack({record.values[0], record.values[1], record.values[2], record.values[3]})
 				result := system.Status.Bad_Operation
+				completion := ring.Record {
+					tag = record.tag,
+				}
 				#partial switch system.Root_Command(record.kind) {
+				case .Connect:
+					result = connect(&item, system.name_of(name[:]), &completion.values)
+				case .Disconnect:
+					result = .Bad_Handle
+					for &connection in connections {
+						if connection.caller == &item && system.name_of(connection.service.name[:]) == system.name_of(name[:]) {
+							disconnect(&connection)
+							result = .Ok
+						}
+					}
 				case .Start:
 					result = start(system.name_of(name[:]))
 				case .Stop:
@@ -250,7 +283,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 						}
 					}
 				}
-				system.send(&item.requests.completions, ring.Record{kind = u32(result), tag = record.tag})
+				completion.kind = u32(result)
+				system.send(&item.requests.completions, completion)
 			}
 		}
 		reap()
@@ -266,7 +300,15 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 
 // start starts a program that shows a surface.
 start :: proc "contextless" (name: string) -> system.Status {
-	file := system.image_find(image, name)
+	file: []u8
+	entry: ^info.Image_Entry
+	for &item in system.image_entries(image) {
+		if system.name_of(item.name[:]) == name && item.offset <= u64(len(image)) && item.size <= u64(len(image)) - item.offset {
+			file = image[item.offset:][:item.size]
+			entry = &item
+			break
+		}
+	}
 	if len(file) == 0 || name == "root" || name == "input" || name == "compositor" {
 		return .Bad_Operation
 	}
@@ -316,20 +358,132 @@ start :: proc "contextless" (name: string) -> system.Status {
 		grants[system.GRANT_IMAGE] = {image_memory, {.Read}}
 		values[system.GRANT_VALUE_IMAGE_SIZE] = u64(len(image))
 	}
+	// A service: the service ring, and its own file, to read the
+	// descriptions of its exports.
+	mappings: [1]system.Mapping
+	mapping_count := 0
+	if .Serve in role && status == .Ok && entry.offset % system.PAGE_SIZE == 0 {
+		slot.service_memory, slot.service, status = system.ring_create()
+		grants[system.GRANT_SERVICE] = {slot.service_memory, {.Read, .Write}}
+		values[system.GRANT_VALUE_FILE_ADDRESS] = isolated.FILE_ADDRESS
+		values[system.GRANT_VALUE_FILE_SIZE] = entry.size
+		mappings[0] = {memory = image_memory, address = isolated.FILE_ADDRESS, first = entry.offset / system.PAGE_SIZE, page_count = (entry.size + system.PAGE_SIZE - 1) / system.PAGE_SIZE}
+		mapping_count = 1
+	}
 	if status == .Ok {
-		slot.program, status = system.program_start(file, name, grants, values, budget_of(name))
+		slot.program, status = system.program_start(file, name, grants, values, budget_of(name), mappings[:mapping_count])
 	}
 	if status != .Ok {
 		release(slot)
 		return status
 	}
+	slot.hash = entry.hash
 	copy(slot.name[:len(slot.name) - 1], name)
 	system.log_in("programs", .Info, "root: started ", name)
 	return .Ok
 }
 
+// connect makes a connection from a caller to the service with a name: a
+// new call ring and a new call region, that the two programs receive. This
+// service pays for the two memory objects and does not keep them. values is
+// the completion of Root_Command.Connect.
+connect :: proc "contextless" (caller: ^Started, name: string, values: ^[7]u64) -> system.Status {
+	service: ^Started
+	for &item in started {
+		if item.program != 0 && item.service != nil && system.name_of(item.name[:]) == name {
+			service = &item
+		}
+	}
+	if service == nil || service == caller {
+		return .Bad_Handle
+	}
+	free: ^Connection
+	count := 0
+	for &connection in connections {
+		if connection.caller == nil {
+			free = &connection
+		} else if connection.service == service {
+			count += 1
+			if connection.caller == caller {
+				return .Bad_State
+			}
+		}
+	}
+	if free == nil || count == isolated.SERVICE_CONNECTION_CAPACITY {
+		return .No_Slot
+	}
+	// The service ring keeps room for one Disconnect for each connection:
+	// this service never waits for a service that does not read its ring.
+	names := &service.service.commands
+	unread := intrinsics.volatile_load(&names.write) - intrinsics.volatile_load(&names.read)
+	if unread > ring.CAPACITY || ring.CAPACITY - unread < u32(count) + 2 {
+		return .No_Slot
+	}
+	ring_memory := system.memory_create(ring.PAGE_COUNT) or_return
+	defer system.close(ring_memory)
+	region_memory := system.memory_create(isolated.REGION_PAGES) or_return
+	defer system.close(region_memory)
+	// The service first. It receives its handles through its service ring.
+	in_service_ring := system.give(service.service_memory, ring_memory, {.Read, .Write}) or_return
+	in_service_region := system.give(service.service_memory, region_memory, {.Read, .Write}) or_return
+	if !system.send(&service.service.commands, ring.Record{kind = u32(isolated.Service_Command.Connect), values = {0 = u64(in_service_ring), 1 = u64(in_service_region)}}) {
+		return .No_Slot
+	}
+	free^ = {
+		caller  = caller,
+		service = service,
+		ring    = in_service_ring,
+		region  = in_service_region,
+	}
+	// The caller receives its handles through its ring to this service.
+	status: system.Status
+	given: [3]system.Handle
+	given[0], status = system.give(caller.requests_memory, service.program, {.Read})
+	if status == .Ok {
+		given[1], status = system.give(caller.requests_memory, ring_memory, {.Read, .Write})
+	}
+	if status == .Ok {
+		given[2], status = system.give(caller.requests_memory, region_memory, {.Read, .Write})
+	}
+	if status != .Ok {
+		disconnect(free)
+		return status
+	}
+	hash := transmute([4]u64)service.hash
+	values^ = {u64(given[0]), u64(given[1]), u64(given[2]), hash[0], hash[1], hash[2], hash[3]}
+	system.log_in("calls", .Info, "root: connected ", system.name_of(caller.name[:]), " to the service ", name)
+	return .Ok
+}
+
+// disconnect ends a connection: the service unmaps the call ring and the
+// call region. The service ring has room for the record (see connect); a
+// service that gives a false count of records read keeps its own mappings.
+disconnect :: proc "contextless" (connection: ^Connection) {
+	if connection.service.program != 0 {
+		system.send(&connection.service.service.commands, ring.Record{kind = u32(isolated.Service_Command.Disconnect), values = {0 = u64(connection.ring), 1 = u64(connection.region)}})
+	}
+	system.log_in("calls", .Info, "root: disconnected ", system.name_of(connection.caller.name[:]), " from the service ", system.name_of(connection.service.name[:]))
+	connection^ = {}
+}
+
 // release frees what this service holds for a program, and tells the compositor.
 release :: proc "contextless" (item: ^Started) {
+	// The connections of the program end: those that it made, and those
+	// that it served.
+	served := item.service != nil
+	if item.program != 0 {
+		system.close(item.program)
+		item.program = 0
+	}
+	for &connection in connections {
+		if connection.caller == item || connection.service == item {
+			disconnect(&connection)
+		}
+	}
+	if served {
+		system.memory_unmap(item.service)
+		system.close(item.service_memory)
+	}
 	system.send(&control.commands, ring.Record{kind = u32(display.Control.Client_Remove), values = {0 = u64(item.client)}})
 	if item.requests != nil {
 		system.memory_unmap(item.requests)

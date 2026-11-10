@@ -147,6 +147,7 @@ run_lines :: proc "c" (parameter: rawptr) -> ! {
 			continue
 		}
 		done += 1
+		services_check()
 		run_line(string(work.text[:work.count]))
 		intrinsics.atomic_store(&work.finished, done)
 		change()

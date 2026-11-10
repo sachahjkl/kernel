@@ -33,6 +33,8 @@ The system boots under QEMU to a graphical desktop with a console, a system tool
 
 ![The page tables as the kernel reads them: the direct map, the kernel stacks between guard pages, the kernel module, the half of a program](docs/screenshots/pages.png)
 
+![A service serves its own exports while it runs: the console draws in the window of paint with isolated calls](docs/screenshots/services.png)
+
 ![The log: records with a time, a program, a channel and a level](docs/screenshots/log.png)
 
 ![Four processors run the threads of one program at the same time; the same picture with 1, 2 and 4 threads](docs/screenshots/processors.png)
