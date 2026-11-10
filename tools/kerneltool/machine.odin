@@ -23,6 +23,7 @@ MACHINE_STOP_OK :: 1
 Step_Kind :: enum {
 	Wait, // The log of the kernel has text, after the text of the last Wait.
 	Type, // Press the keys of text, then Enter.
+	Key, // Press one key: text is its QEMU name.
 	Click, // Press the left button at (x, y).
 	Drag, // Hold the left button from (x, y) to (to_x, to_y).
 	Shot, // Save the screen as text.png.
@@ -157,10 +158,15 @@ scenario := [?]Step {
 	{kind = .Type, text = "count()"},
 	{kind = .Wait, text = "[probe] host: ready"},
 	{kind = .Wait, text = "[console] 1"},
-	// A module that does not return: the console stops its program.
+	// A module that does not return. The line runs in the second thread of
+	// the console: the console keeps the keys of the next line, and Escape
+	// stops the call. Then the line that waited runs.
 	{kind = .Type, text = "spin()"},
-	{kind = .Wait, text = "[console] error: the program probe did not answer in 2000 ms"},
 	{kind = .Type, text = "count() + gcd(84, 36)"},
+	{kind = .Shot, text = "running"},
+	{kind = .Key, text = "esc"},
+	{kind = .Wait, text = "console: Escape stops the line after "},
+	{kind = .Wait, text = "[console] error: the person stopped the call of spin"},
 	{kind = .Wait, text = "[console] 13"},
 	{kind = .Type, text = "programs()"},
 	{kind = .Wait, text = "probe"},
@@ -453,6 +459,9 @@ scenario_run :: proc(machine: ^Machine) -> bool {
 				time.sleep(KEY_PAUSE)
 			}
 			monitor_send(machine, "sendkey ret 20")
+			time.sleep(KEY_PAUSE)
+		case .Key:
+			monitor_send(machine, "sendkey ", step.text, " 20")
 			time.sleep(KEY_PAUSE)
 		case .Click, .Drag:
 			if !machine.pointer_known {

@@ -123,8 +123,13 @@ present :: proc "contextless" (window: ^Window) {
 // time is deadline. It gives the time.
 wait :: proc "contextless" (window: ^Window, deadline: u64 = system.WAIT_FOREVER) -> u64 {
 	list: system.Wait
-	system.wait_records(&list, &window.ring.completions)
+	wait_events(&list, window)
 	return system.wait_end(&list, deadline)
+}
+
+// wait_events adds the input events of the window to a wait list.
+wait_events :: proc "contextless" (list: ^system.Wait, window: ^Window) {
+	system.wait_records(list, &window.ring.completions)
 }
 
 // next_event gives the next input event of the window, if there is one.

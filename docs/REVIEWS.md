@@ -12,6 +12,7 @@ A step is one tested commit that adds one capability.
 | 4 | `e8cbcb5` | Threads: several per program, shown by `threads` |
 | 5 | `44d2973` | The word wait and the lock, shown by `workers` |
 | 6 | `887f23b` | One wait: rings wait on words, `Wake(memory)` deleted, the event word |
+| 7 | (the commit of step 7) | The console runs a line in a second thread: keys during a call, Escape stops an isolated call |
 
 ## Review 1: steps 1 to 5 (2026-11-10)
 
@@ -42,7 +43,7 @@ A step is one tested commit that adds one capability.
 2. **The `gs` register.** Rule 7 of the module contract said that code passes the thread record explicitly. The kernel ring per thread made this too costly: each call of `system` needs the ring. The amendment is narrow (one register, one word, no module data), but it is an amendment of a closed rule. The owner saw it before the code.
 3. **A fault in a thread stops the program.** This is the decision, not a concession: the threads share all their memory.
 4. **`Thread_Stop` on another thread is not safe for locks.** The thread can hold a lock. Remove: nothing in the kernel. The rule for programs is "ask the thread to end; stop it only when its data is lost anyway".
-5. **The console waits during an isolated call.** Threads now permit the removal: the call runs in a second thread of the console.
+5. **The console waits during an isolated call.** Threads now permit the removal: the call runs in a second thread of the console. **Removed in step 7.**
 6. **Text result: at most 5 parameters.** Accepted limit of the call form, written in the contract.
 7. **One processor.** The thread code has no assumption of one processor in its contracts, but the kernel has one stack and no lock. Remove: the step "several processors".
 8. **Descriptions by hand.** Remove: the step "descriptions from the source".

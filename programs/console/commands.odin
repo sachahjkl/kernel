@@ -6,6 +6,7 @@ import op "../../kernel/operation"
 import module "../../module"
 import "../../ring"
 import "../../system"
+import "base:intrinsics"
 
 // A command: a function with typed parameters and a typed result.
 Command :: struct {
@@ -36,7 +37,6 @@ Sandbox :: struct {
 }
 
 SANDBOX_CAPACITY :: 4
-CALL_LIMIT :: 2000 // Milliseconds. The console stops a call host that takes more time for one call.
 
 sandboxes: [SANDBOX_CAPACITY]Sandbox
 sandbox_count: int
@@ -416,8 +416,10 @@ stop_reason :: proc "contextless" (code: u32) -> string {
 // call_isolated calls an export of a module in its call host. The arguments
 // go in the call region as one argument record; one command record of the
 // call ring names it; the completion record has the result.
-// A module that faults or that does not answer stops alone: the console
-// reports an error and continues. The next call starts a new call host.
+// A module that faults stops alone: the console reports an error and
+// continues. A call has no time limit: the person stops it with Escape,
+// and the console then stops the call host. The next call starts a new
+// call host.
 call_isolated :: proc "contextless" (item: ^Command, arguments: []Value) -> Value {
 	sandbox := &sandboxes[item.sandbox - 1]
 	if sandbox.program != 0 {
@@ -441,7 +443,6 @@ call_isolated :: proc "contextless" (item: ^Command, arguments: []Value) -> Valu
 		sandbox_end(sandbox)
 		return fail("the call ring of ", sandbox.name, " is full: the console stopped the program")
 	}
-	limit := system.time() + CALL_LIMIT
 	for {
 		// The stop of the call host is an event.
 		wait := system.wait_begin()
@@ -482,11 +483,13 @@ call_isolated :: proc "contextless" (item: ^Command, arguments: []Value) -> Valu
 			sandbox_end(sandbox)
 			return fail("the program ", sandbox.name, " stopped: ", stop_reason(code))
 		}
-		system.wait_records(&wait, &sandbox.ring.completions)
-		if system.wait_end(&wait, limit) >= limit {
+		if intrinsics.volatile_load(&work.cancel) != 0 {
 			sandbox_end(sandbox)
-			return fail("the program ", sandbox.name, " did not answer in ", u64(CALL_LIMIT), " ms: the console stopped it")
+			return fail("the person stopped the call of ", item.name, ": the console stopped the program ", sandbox.name)
 		}
+		system.wait_records(&wait, &sandbox.ring.completions)
+		system.wait_word(&wait, &work.cancel, 0)
+		system.wait_end(&wait)
 	}
 }
 

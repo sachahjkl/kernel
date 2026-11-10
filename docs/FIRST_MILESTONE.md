@@ -12,7 +12,7 @@ It lists the gaps between the code and the documents.
 - `kerneltool test` starts the machine under QEMU and acts as the person through the QEMU monitor: keys, pointer moves, clicks.
 - Each step of the scenario waits for a text in the log of the kernel. A step that does not see its text in 20 seconds fails the test.
 - The scenario is a table in `tools/kerneltool/machine.odin`.
-- The test saves seven pictures of the screen. `kerneltool screenshots` copies them to `docs/screenshots/`.
+- The test saves ten pictures of the screen. `kerneltool screenshots` copies them to `docs/screenshots/`.
 - `nix flake check` runs the same test in the Nix sandbox.
 
 The scenario does these actions:
@@ -28,7 +28,7 @@ The scenario does these actions:
 9. Call `help()`.
 10. Call `isolate("probe")`: the module runs in a call host. Call `count()`, `checksum("abc" + name)`, and `stop_machine` with three handle numbers: the kernel refuses each one.
 11. Call `peek(0)`: the kernel stops the call host on a page fault, and the console reports an error. Call `count()`: a new call host gives 1.
-12. Call `spin()`: after 2000 ms the console closes the handle of the call host, and the kernel stops it. Call `count() + gcd(84, 36)`: an isolated call and a direct call in one expression.
+12. Call `spin()`, which never returns, then type `count() + gcd(84, 36)` during the call: the console keeps the keys. Press Escape: the console closes the handle of the call host, and the kernel stops it. The line that waited then runs: an isolated call and a direct call in one expression.
 13. Start `temple` from the bar.
 14. Start `rings` from the bar: six programs pass records through six rings. Add three records. Stop node 4: all the records wait in the ring before it. Start node 4 again.
 15. Start `threads` from the bar: one program, five threads. A thread adds the numbers to 1000 and ends; the first thread reads 500500. Four threads draw one Julia set each in the surface of the program. Key `3` stops thread 3, then starts it again. `programs()` shows 5 threads.
@@ -117,7 +117,7 @@ The owner did not review these. Each one can change.
 9. **Font.** Spleen 8x16, BSD 2-Clause, converted from its BDF file by `kerneltool font`.
 10. **Types of the description.** `Integer` (64 bits, in a register) and `Text` (the address of a slice record). At most 6 parameters. For a Text result, the caller gives one more argument: the address of a buffer record `{address, capacity}`. The export writes what fits and gives the count of bytes of the full text. In an isolated call the buffer is the free part of the call region. The kernel tool holds the description of each export in its module table; no tool checks it against the source.
 
-11. **Isolated call.** `MODULE_CONTRACT.md` section 4, "The isolated call, as implemented", lists these choices: one call host per module, the argument record in the call region, the status numbers, the limit of 2000 ms, a call region of 16 pages, one call at a time per call host.
+11. **Isolated call.** `MODULE_CONTRACT.md` section 4, "The isolated call, as implemented", lists these choices: one call host per module, the argument record in the call region, the status numbers, no time limit (choice 25), a call region of 16 pages, one call at a time per call host.
 12. **The caller starts the call host.** The console creates the program with `system.program_start`; the root service takes no part. Any program can create a program: the new program has only the handles that its creator gives.
 13. **A program runs while a handle names it.** The kernel stops a program when its last handle closes (stop code `0x200`). Reason: nobody can stop a program that no handle names. A fault gives stop code `0x100` plus the exception number.
 14. **The context has no text.** The 256 bytes of text of the context are removed: no program used them, and property 19 forbids them.
@@ -131,6 +131,7 @@ The owner did not review these. Each one can change.
 22. **The boot volume is a file that the tool writes.** `tools/kerneltool/volume.odin` writes a FAT32 volume of 64 MiB with the boot program, and the machine gets it as a virtio block device. Before, QEMU made a FAT disk from a folder, on its SATA controller. With KVM, about 1 boot in 10 then stopped in the firmware, in a read of the disk, until an event came to QEMU (measured: 7 of 80 boots with a plain image on SATA, 0 of 160 on virtio). This was the intermittent failure of step 1 of the machine test. A test reads the volume back with a separate reader.
 23. **One wait.** The word wait is the one way to wait for something else than a time. `Wake(memory)` and the wake-pending flag are deleted. A queue has two words more, `reader_waits` and `writer_waits`. The reader of a queue sets `reader_waits`, then waits on the `write` counter while the queue is empty. `system.send` writes a record, and enters the kernel to wake the reader only if `reader_waits` is set. `system.receive` does the same for a writer that waits for room. A `system.Wait` is a list of at most 64 words: the compositor waits on the queues of all its clients in one entry. Measured in the machine test: the picture of `rings` and the logs do not change.
 24. **The event word.** The thread record has an `events` word. The kernel adds 1 to it for each event of the program (choice 17). A thread reads the word (`system.wait_begin`), reads the state, then waits on the word with the value that it read: an event between the read and the wait ends the wait at once. This replaces the wake-pending flag with the rule of the word wait.
+25. **The console runs a line in a second thread.** The first thread reads the keys and draws. The second thread runs each line. The two threads share one `Work` record and wait on its words. During a line, the first thread keeps at most 128 keys, shows the time of the line in a status line, and sets the `cancel` word on Escape. An isolated call waits on the completion queue and on the `cancel` word in one entry. The limit of 2000 ms is deleted: the person decides. Escape does not stop a direct call or a command of the console: that code runs in the console itself, and choice 18 says that a thread stopped from outside can hold a lock.
 
 ## Gaps
 
@@ -139,7 +140,6 @@ Against the properties and the module contract:
 - Handles have no rights. A program can give any of its handles onward.
 - The Machine handle gives inspect and stop together.
 - Property 19 is not complete: the description has no records, no floats, no handles and no grants. A module with imports cannot be loaded by a program.
-- The console waits during an isolated call: it draws nothing and reads no key until the call ends or the limit passes.
 - Each program can create memory objects and programs with no limit, and can write on the log of the kernel.
 - Frame pointers are not enforced. An import call goes through a stub that the linker adds.
 - The test "a C program calls an Odin module" does not exist.
