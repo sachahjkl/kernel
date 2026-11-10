@@ -79,6 +79,24 @@ read_word :: proc "contextless" (program: ^Program, address: u64) -> bool {
 	return word_address(program, address) != 0
 }
 
+// read_holds_budget says if a program holds a handle to a budget with the
+// right Read. Lock: the program lock.
+@(private = "file")
+read_holds_budget :: proc "contextless" (program: ^Program, budget: u32) -> bool {
+	for slot in program.handles[1:] {
+		if slot.kind == .Budget && slot.object == budget && .Read in slot.rights {
+			return true
+		}
+	}
+	return false
+}
+
+// read_threads gives the threads of a program. Lock: the program lock.
+@(private = "file")
+read_threads :: proc "contextless" (program: ^Program) -> u32 {
+	return program.thread_count
+}
+
 // read_budget copies the amounts of a budget. Lock: the frame lock for the
 // pages, the control lock for the other amounts.
 @(private = "file")
@@ -252,6 +270,12 @@ handles_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^P
 budget_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Program, operation: op.Operation, v: [7]u64) -> bool {
 	if operation == .Log {
 		// The limit of the budget of the program, or of a budget above it.
+		// The budget that paid for the program: its counts only with a
+		// handle with Read (P20); a budget above it is never described.
+		if !read_holds_budget(program, program.budget) {
+			record_set(record, .Budget_Hidden, .Log_Records, 0, 0, 1, 0)
+			return true
+		}
 		logged, limit := read_log_count(program.budget)
 		record_set(record, .Over_Limit, .Log_Records, 0, logged + 1, limit, 0)
 		return true
@@ -415,7 +439,12 @@ slot_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Prog
 	case .Program_Create:
 		record_set(record, .Full, .Programs, 0, 0, PROGRAM_CAPACITY - 1, 0)
 	case .Thread_Create, .Program_Start:
-		record_set(record, .Full, .Threads, 0, 0, op.THREAD_CAPACITY, 0)
+		// The threads of the program, else the thread table of the machine.
+		if operation == .Thread_Create && read_threads(program) >= op.THREAD_CAPACITY {
+			record_set(record, .Full, .Threads, 0, 0, op.THREAD_CAPACITY, 0)
+		} else {
+			record_set(record, .Full, .Threads, 0, 0, THREAD_TABLE_CAPACITY - 1, 0)
+		}
 	case .Budget_Create:
 		record_set(record, .Full, .Budgets, 0, 0, BUDGET_CAPACITY - 1, 0)
 	case .Device_Create:

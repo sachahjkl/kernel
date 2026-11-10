@@ -487,7 +487,7 @@ change :: proc "contextless" (store_name: string, limit: u64, given: string, dat
 			}
 		}
 		if store_index < 0 {
-			return errors.fail(error, ERROR_FULL, .Full, .Stores, 0, 0, STORE_CAPACITY)
+			return errors.fail(error, ERROR_FULL, .Full) // The disk: a fact of all the stores, with no number (P20).
 		}
 		next.stores[store_index] = {used = 1}
 		copy(next.stores[store_index].name[:NAME_CAPACITY - 1], store_name)
@@ -547,7 +547,7 @@ change :: proc "contextless" (store_name: string, limit: u64, given: string, dat
 		number := allocate()
 		if number == 0 {
 			undo(taken[:taken_count])
-			return errors.fail(error, ERROR_FULL, .Full, .Blocks, 0, 0, i64(root.disk_blocks))
+			return errors.fail(error, ERROR_FULL, .Full) // The disk: a fact of all the stores, with no number (P20).
 		}
 		taken[taken_count] = number
 		taken_count += 1
@@ -571,7 +571,7 @@ change :: proc "contextless" (store_name: string, limit: u64, given: string, dat
 			number := allocate()
 			if number == 0 {
 				undo(taken[:taken_count])
-				return errors.fail(error, ERROR_FULL, .Full, .Blocks, 0, 0, i64(root.disk_blocks))
+				return errors.fail(error, ERROR_FULL, .Full) // The disk: a fact of all the stores, with no number (P20).
 			}
 			taken[taken_count] = number
 			taken_count += 1
@@ -584,7 +584,7 @@ change :: proc "contextless" (store_name: string, limit: u64, given: string, dat
 	table_number := allocate()
 	if table_number == 0 {
 		undo(taken[:taken_count])
-		return errors.fail(error, ERROR_FULL, .Full, .Blocks, 0, 0, i64(root.disk_blocks))
+		return errors.fail(error, ERROR_FULL, .Full) // The disk: a fact of all the stores, with no number (P20).
 	}
 	taken[taken_count] = table_number
 	taken_count += 1

@@ -158,6 +158,12 @@ error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record,
 		write_part(writer, ": it holds ")
 		amount(writer, record.found, unit)
 	case .Budget_Hidden:
+		if record.argument == 0 {
+			write_part(writer, "the budget of the program cannot pay ")
+			amount(writer, record.limit, unit)
+			write_part(writer, "; the program holds it with no right Read, so the budget is not described")
+			return
+		}
 		handle(writer, record, argument)
 		write_part(writer, " cannot pay ")
 		amount(writer, record.limit, unit)
@@ -168,8 +174,12 @@ error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record,
 		write_part(writer, " in all; the limit is ")
 		amount(writer, record.limit, unit)
 	case .Full:
-		write_part(writer, "no free place: the table has its ")
-		amount(writer, record.limit, unit)
+		if record.unit == 0 {
+			write_part(writer, "no free place for the call")
+		} else {
+			write_part(writer, "no free place: the table has its ")
+			amount(writer, record.limit, unit)
+		}
 	case .State:
 		handle(writer, record, argument)
 		state := record.found >= 0 && record.found <= i64(max(op.Program_State)) ? op.STATE_NAMES[op.Program_State(record.found)] : "in an unknown state"

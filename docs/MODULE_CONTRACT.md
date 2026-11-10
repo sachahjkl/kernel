@@ -391,7 +391,13 @@ The kinds, the meaning of `limit` and `found` for each kind, and the units are i
   2. When the cause is gone (the kernel finds no argument that is wrong now), the record is `Refused` with the status.
   3. Each value of the record comes from one copy of one table, read under the lock that protects it; two tables are not read at one instant. A record can describe a cause that came after the failure, if it explains the same status: for example a handle revoked after a refusal for a right is then Handle_Ended, and becomes Refused, because Handle_Ended does not explain No_Right.
   `kernel/diagnose.odin` reads each table in one procedure (`read_handle`, `read_free_handles`, `read_user`, `read_range`, `read_word`, `read_budget`, `read_log_count`, `read_region_pages`, `read_program_state`), which names its lock: the step of the locks takes the lock there.
-- **P20**: the record gives the amounts of a budget only when the handle of the caller has the right Read, and the state of a program only when the handle has Read: the operations that read them need this right.
+- **P20**: the record gives the amounts of a budget only when the handle of the caller has the right Read, and the state of a program only when the handle has Read: the operations that read them need this right. The rule for each record: it gives no fact of another program, or of the machine, that the status and the facts of the caller do not already give. Reviewed on 2026-11-10, in `kernel/diagnose.odin`:
+  - `Handle_Give` with `No_Slot`: the table of the target is full. It is the one cause of this status; the record adds the handle of the caller and a constant capacity.
+  - A full table of the machine (memory objects, programs, threads, budgets, message interrupts): the kernel names it only when the handle table of the caller has a free place, which the caller can count. The record adds a constant capacity, never a count of what other programs hold.
+  - The log limit: the counts of the budget that paid for the program, only when the program holds that budget with Read (else `Budget_Hidden`). A budget above it is never described.
+  - `No_Target`: one sentence for "no other program" and "two other programs": the record does not say which.
+  - A program state (`State`) and a budget (`Budget`): only with Read.
+  The storage service: a full disk (no place for one more store, no free block) is one record with no number; a full store (48 objects) is a fact of the store of the caller. The stack trace of a call host: the reader holds the program handle with Read, the right of `Program_State`, and the trace holds addresses and modules of that program only.
 - **Cost**: on failure only. Measured by the program `errors`: see `FIRST_MILESTONE.md`.
 
 **An export.** An export that can fail declares an error record: its last parameter is `error: ^errors.Error_Record`. The description has the index of the record description in `Function.error_record`.
