@@ -318,7 +318,10 @@ show_memory :: proc "contextless" (arguments: []Value) -> Value {
 	print("kernel entries  ", report.entries, "\n")
 	print("interrupts      ", report.interrupts, "\n")
 	print("processors      ", report.processors, "\n")
-	print("kernel lock     ", report.lock_waits, " waits\n")
+	for kind in op.Lock_Kind {
+		count := report.locks[kind]
+		print("lock ", padded(op.LOCK_KIND_NAMES[kind], 11), count.waits, " waits of ", count.takes, "\n")
+	}
 	return {}
 }
 

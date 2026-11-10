@@ -63,6 +63,8 @@ module_builds := [?]Module_Build {
 	{name = "pages", source = "programs/pages", image = true},
 	{name = "frames", source = "programs/frames", image = true},
 	{name = "twin", source = "programs/twin", image = true},
+	{name = "locks", source = "programs/locks", image = true},
+	{name = "locker", source = "programs/locker", image = true},
 	{name = "log", source = "programs/log", image = true},
 	{name = "block", source = "programs/block", image = true},
 	{name = "frame", source = "programs/frame", image = true},

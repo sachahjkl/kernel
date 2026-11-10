@@ -61,6 +61,8 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Channel | The short name that a program gives to a log record, to group records of one subject | facility, tag, category, logger |
 | Level | How much a log record matters: Info, Debug, Warning or Error | severity, priority |
 | Kernel lock | The one lock of the kernel: one processor at a time runs kernel code | big kernel lock, giant lock |
+| Locker | A program that the program `locks` starts several times. It works only on its own objects, so a locker waits for another one only when the kernel makes it wait. The measures of the locks of the kernel count what the lockers do | load generator, stress worker |
+| Lock count | What the kernel counts for one kind of lock, on all the processors: the times that a processor took it, and the times that it had to wait for it (`Lock_Count` in `System_Report`) | lock statistics, contention counter |
 | Thread area | The memory that the kernel makes for one thread: the thread record, then the kernel ring of the thread | |
 | Service | A program that other programs call through rings. A service has no special privilege | daemon, server, driver |
 | Device service | A service that owns the queues of one device class (P7) | driver |

@@ -128,7 +128,7 @@ machine_stopping: bool
 // processor_sync. The kernel is off the hot path (property 3): the count
 // of waits shows what the one lock costs.
 kernel_lock: u32
-lock_waits: u64
+lock_counts: [op.LOCK_KIND_CAPACITY]op.Lock_Count // The holder writes them.
 wake_needed: u32 // Threads that became ready since the last lock_release.
 
 lock_acquire :: proc "contextless" (cpu: ^Processor) {
@@ -140,8 +140,9 @@ lock_acquire :: proc "contextless" (cpu: ^Processor) {
 			intrinsics.cpu_relax()
 		}
 	}
+	lock_counts[op.Lock_Kind.Kernel].takes += 1
 	if waited {
-		lock_waits += 1
+		lock_counts[op.Lock_Kind.Kernel].waits += 1
 	}
 }
 

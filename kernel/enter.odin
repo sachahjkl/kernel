@@ -456,7 +456,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 				entries       = entry_count,
 				interrupts    = interrupt_count,
 				processors    = u64(processor_count),
-				lock_waits    = lock_waits,
+				locks         = lock_counts,
 				reserved_pages = reserved_pages,
 				first_use_faults = first_use_faults,
 			}

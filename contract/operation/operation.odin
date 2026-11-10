@@ -329,9 +329,28 @@ System_Report :: struct {
 	interrupts:    u64,
 	budget_pages:  u64, // The pages of all the budgets. With reserved_pages, it is always free_pages: each page is free or paid.
 	processors:    u64, // The processors that run threads.
-	lock_waits:    u64, // The times that a processor waited for the kernel lock.
 	reserved_pages:   u64, // Pages that a budget paid for and that have no page frame yet: pages on first use.
 	first_use_faults: u64, // Page faults of programs after which the page was present.
+	locks:            [LOCK_KIND_CAPACITY]Lock_Count, // By Lock_Kind.
+}
+
+// The locks of the kernel, by the data that each one protects
+// (docs/ARCHITECTURE.md, "Locks of the kernel").
+Lock_Kind :: enum u64 {
+	Kernel = 0, // The one kernel lock: one processor at a time runs kernel code.
+}
+
+LOCK_KIND_CAPACITY :: 12
+
+@(rodata)
+LOCK_KIND_NAMES := [Lock_Kind]string {
+	.Kernel = "kernel",
+}
+
+// What the kernel counts for one kind of lock, on all the processors.
+Lock_Count :: struct {
+	takes: u64, // The times that a processor took a lock of this kind.
+	waits: u64, // The times that the lock was held, and the processor had to wait for it.
 }
 
 Processor_Report :: struct {
