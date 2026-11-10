@@ -25,6 +25,7 @@ A step is one tested commit that adds one capability.
 | 17 | `6bc4898` | A ring has a capacity chosen at creation; one wake for many records; `wait_spin`; measured by `flow` |
 | 18 | `eef9227` | The terminal: typed records of text with a style, no escape sequence; a reader thread and a drawer; a surface with two pictures; the lost wake of step 17 removed; shown by `terminal` and `flood`, filmed by `kerneltool film` |
 | 19 | `c538baa` | A shared queue: several writers and several readers with no lock; an event that several threads wait on; a wake for one thread that does not enter the kernel for each record; the scenario reads the place of each window; measured by `crowd` |
+| 20 | `HASH20` | The time page: the kernel writes the time in one page that each program reads; `system.time()` does not enter the kernel; measured by `clock` |
 
 ## Review 1: steps 1 to 5 (2026-11-10)
 

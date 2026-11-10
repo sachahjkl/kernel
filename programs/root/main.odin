@@ -32,7 +32,7 @@ grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 	switch name {
 	case "console":
 		return {.Root_Ring, .Inspect, .Stop, .Image}
-	case "monitor", "processors", "pages", "flow", "crowd":
+	case "monitor", "processors", "pages", "flow", "crowd", "clock":
 		return {.Inspect}
 	case "rights":
 		return {.Inspect, .Image} // It shows what the kernel refuses.

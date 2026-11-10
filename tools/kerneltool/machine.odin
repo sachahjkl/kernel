@@ -309,6 +309,14 @@ scenario := [?]Step {
 	{kind = .Wait, text = "crowd: ok, 5 measures, each record written is read one time, each event started all the threads"},
 	{kind = .Shot, text = "crowd"},
 
+	// The time is in a page that each program reads: no kernel entry.
+	{kind = .Launch, text = "clock"},
+	{kind = .Wait, text = "clock: the time page: "},
+	{kind = .Wait, text = " reads in one second, 0 kernel entries for one million reads"},
+	{kind = .Wait, text = "clock: a kernel entry: "},
+	{kind = .Wait, text = "clock: ok, the time never went back, the page and the kernel give the same time, the kernel refuses to remove the time page"},
+	{kind = .Shot, text = "clock"},
+
 	// Several processors: the kernel says that the four processors ran
 	// threads of one program at the same time. Then 1, 2 and 4 threads
 	// compute the same picture.
@@ -338,6 +346,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "pages: ok, the page tables keep the rules"},
 	{kind = .Wait, text = "pages: the processor refuses the memory of programs to the kernel"},
 	{kind = .Shot, text = "pages"},
+	{kind = .Move, text = "pages", to_x = 168, to_y = 742}, // The window covers the console.
 	{kind = .Click, x = 70, y = 300},
 	{kind = .Type, text = "stop(\"pages\")"},
 	{kind = .Wait, text = "root: pages stopped"},
@@ -738,7 +747,13 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 			if step.kind == .Move {
 				// The compositor wrote where it put the window. The pointer
 				// takes the title bar.
-				x, y, found := window_place(machine, step.text)
+				x, y: int
+				found: bool
+				for start := time.now(); !found && time.since(start) < STEP_TIMEOUT; {
+					if x, y, found = window_place(machine, step.text); !found {
+						time.sleep(50 * time.Millisecond)
+					}
+				}
 				if !found {
 					fmt.eprintfln("kerneltool: test failed: step %d: the log does not have the place of the window %s", index + 1, step.text)
 					return false

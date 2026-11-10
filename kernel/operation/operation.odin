@@ -30,7 +30,16 @@ CONTEXT_ADDRESS :: 0x0000_7FFF_FFF0_0000
 THREAD_AREA_BASE :: 0x0000_7FFF_FFF4_0000
 THREAD_AREA_PAGES :: 4
 THREAD_CAPACITY :: 32 // The threads of one program.
+// The time page: one page that the kernel writes and that each program can
+// only read. A program reads the time with no kernel entry.
+TIME_ADDRESS :: 0x0000_7FFF_FFFE_0000
 USER_END :: 0x0000_8000_0000_0000
+
+// The record at TIME_ADDRESS. A program reads `milliseconds` with one load
+// of 64 bits: the value is always complete.
+Time_Record :: struct {
+	milliseconds: u64, // Since the kernel started its timer. It never goes back.
+}
 
 Handle :: distinct u32 // 0 names no object.
 

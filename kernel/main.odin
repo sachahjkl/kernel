@@ -71,6 +71,10 @@ root_start :: proc "contextless" (boot: ^info.Boot_Info) {
 	}
 	head, _ := module.header(file)
 	name := ROOT_NAME
+	// The time page is memory of the kernel: no budget has it.
+	if !time_page_create() {
+		fail("no memory for the time page")
+	}
 	// The one budget that comes from nothing: all the free memory, all the slots.
 	ROOT_BUDGET :: 1
 	budgets[ROOT_BUDGET] = {

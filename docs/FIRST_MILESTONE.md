@@ -43,10 +43,11 @@ The scenario does these actions:
 24. Start `log` from the menu of the bar. The window shows the records of the log: the time, the program, the channel and the text of each one, and the count of records of each channel. The log has "log: the kernel wrote 7 records in the channel boot" and "log: ok, N records, 0 lost, N channels".
 25. Start `terminal` from the menu of the bar. The terminal starts the program `flood`, which writes lines of four runs as fast as it can. The log has "terminal: flood wrote N lines in one second, N records, with N kernel entries for one million records; the terminal drew N pictures". Space holds the view: the log has "terminal: the view stays at line N, flood continues". Page Up moves in the lines that the terminal keeps. Key `s` stops `flood`: the log has "terminal: stopped flood after N lines and N records". Three pictures: `terminal`, `terminal_held`, `terminal_stopped`.
 26. Start `crowd` from the menu of the bar. Five measures of one second each: 1 writer and 1 reader, 2 and 2, 3 and 1, 1 and 3 on a shared queue, then 2 and 2 on a queue with one lock. One event starts the threads of each measure. The log has, for each measure, "crowd: shared queue, N writers, N readers: N records in one second, N kernel entries for one million records, N written, N read, 0 wrong", then "crowd: ok, 5 measures, each record written is read one time, each event started all the threads". One picture: `crowd`.
-27. Call `memory()`. The console prints "budgets N pages: all the free pages": after all the starts and stops of the test, each page is free or paid. It also prints the number of processors, and the times that a processor waited for the kernel lock.
-28. Call `shutdown()`. The machine stops with code 0.
-29. A second machine starts with a boot image that has no compositor. The root service cannot start the compositor: the boot display stays on the screen with "the start failed: cannot start the compositor: status 1", and the machine does not stop. The log has "root: the boot display shows the failure". The test runs this machine first.
-30. Six more machines start, each with one test of the kernel on itself. The kernel does one thing that its page tables must refuse: it uses more than its stack, it writes to its code, it writes to its code through the direct map, it executes its data, it reads the memory of a program outside a copy, it executes the code of a program. Each time the processor refuses, the kernel reports the fault with its reason ("the kernel stack of the processor is full", "write to a read-only page", ...), and the machine stops with code 2.
+27. Start `clock` from the menu of the bar. It reads the time as often as it can for one second, from the time page, then with a kernel entry. The log has "clock: the time page: N reads in one second, 0 kernel entries for one million reads", "clock: a kernel entry: N reads in one second, 1000000 kernel entries for one million reads", then "clock: ok, the time never went back, the page and the kernel give the same time, the kernel refuses to remove the time page". One picture: `clock`.
+28. Call `memory()`. The console prints "budgets N pages: all the free pages": after all the starts and stops of the test, each page is free or paid. It also prints the number of processors, and the times that a processor waited for the kernel lock.
+29. Call `shutdown()`. The machine stops with code 0.
+30. A second machine starts with a boot image that has no compositor. The root service cannot start the compositor: the boot display stays on the screen with "the start failed: cannot start the compositor: status 1", and the machine does not stop. The log has "root: the boot display shows the failure". The test runs this machine first.
+31. Six more machines start, each with one test of the kernel on itself. The kernel does one thing that its page tables must refuse: it uses more than its stack, it writes to its code, it writes to its code through the direct map, it executes its data, it reads the memory of a program outside a copy, it executes the code of a program. Each time the processor refuses, the kernel reports the fault with its reason ("the kernel stack of the processor is full", "write to a read-only page", ...), and the machine stops with code 2.
 
 ## The path from power to desktop
 
@@ -203,6 +204,10 @@ The owner did not review these. Each one can change.
 75. **The threads of a shared queue trust each other.** A thread that writes wrong numbers cannot make another thread use memory out of the queue: each place is a count and the mask. It can make the other threads lose records. A thread that stops between its compare-and-exchange and its turn word stops the queue at that record. Between programs that do not trust each other, the way is a ring for each pair.
 76. **The scenario reads the place of a window in the log.** The compositor writes "surface name WxH at X,Y". The step `Move` of the scenario reads that line and drags the title bar from that place. Before, each drag had fixed coordinates, and a new window in the scenario moved the windows after it: the scenario failed for a reason that was not in the system.
 77. **Measured.** In the machine with `crowd` alone (4 processors, QEMU with KVM): 33.9 million records in one second for 1 writer and 1 reader, 12.4 million for 2 and 2, 12.8 million for 3 and 1, 11.3 million for 1 and 3, each with 2 to 6 kernel entries for one million records. The queue with one lock and two events, 2 and 2: 11.6 million records, 157 009 kernel entries for one million records. In the test machine, with the other programs of the scenario open, two runs: 32.2 to 32.6 million (1 and 1), 14.9 to 15.6 million (2 and 2), 22.8 to 23.4 million (3 and 1), 13.2 to 14.6 million (1 and 3), with 29 to 13 813 kernel entries; the queue with a lock: 8.4 to 10.2 million with 151 488 to 152 591. More threads on one shared queue give fewer records in one second than 1 writer and 1 reader: the threads share the lines of the cache of `write` and `read`. With 2 writers and 2 readers, the shared queue gives 1.1 to 1.8 times the records of the queue with a lock, and enters the kernel 11 to 78 000 times less. More records in one second need more queues, not more threads on one queue (owner decision of step 17).
+78. **The time is a page, not an operation.** The kernel has one page, the time page. `program_create` maps it in each program at `TIME_ADDRESS`, read-only and not executable. The record `Time_Record` has one field, the milliseconds since boot; the first processor stores it at each tick of its timer. `system.time()` is one load of 64 bits: the value is always complete, and no sequence count is necessary. The contract is an address and a record: a program in any language reads it. The time was already free to each program (P20): the page gives no new knowledge.
+79. **No budget pays for the time page, and no program removes it.** The page is memory of the kernel, taken before the first budget exists: the check "budgets N pages: all the free pages" still holds. `Memory_Unmap` refuses each address at or above the thread areas, and the time page is above them. A second program cannot map another object at this address in a new program: the address is taken at creation.
+80. **The kernel entry that gives the time stays.** `system_enter` still returns the time: a thread that leaves a wait has the time with no second read. `system.time_entered` names that path for the measure.
+81. **Measured.** In the test machine, four runs: `clock` reads the time 879 to 1 491 million times in one second from the time page, with 0 kernel entries, and 1.9 to 2.4 million times in one second with a kernel entry: 460 to 620 times more. A program that reads the time in a loop (each program that draws, each measure) no longer takes the kernel lock for it.
 
 ## Gaps
 
@@ -214,7 +219,7 @@ Against the properties and the module contract:
 - Only `terminal` has two pictures: the other programs can still show a part of a new picture with a part of the old one.
 - The kernel ring of a thread has 32 records. `workers` still takes its tiles from a queue with a lock, not from a shared queue.
 - A thread that stops in the middle of a write or a read of a shared queue stops the queue: no thread repairs the record of a thread that is not there.
-- A program reads the time with a kernel entry. With the time in a page that each program reads, `wait_end` can read the counters before each wait.
+- The time has a resolution of one millisecond, the tick of the timer. A finer time needs the cycle counter and its frequency in the time page. The time page has no date: the kernel does not read the clock of the machine.
 - A budget has no processor time. A program with the log can write on it with no limit of rate.
 - `Memory_Unmap` does not free a page table that became empty: the budget of the program pays for it until the program stops.
 - A memory object is a run of contiguous page frames: `Memory_Create` can give `No_Memory` when the budget can pay.
@@ -243,10 +248,9 @@ Input:
 
 ## Next steps
 
-1. The time without a kernel entry (the order is in Review 3 of `REVIEWS.md`).
-2. The console writes through the terminal ring; a terminal gives input records to its program.
-3. Descriptions with records and handles; revocation of a grant; processor time and log records in budgets.
-4. Paging, second part: pages on first use, and read-only code that programs share.
-5. The kernel lock split by data; scheduling strategies that the system can change while it runs.
-6. A block device service (virtio), then the storage service, with a program that keeps its data.
-7. The network: a virtio device service, then UDP, TCP, QUIC.
+1. The console writes through the terminal ring; a terminal gives input records to its program.
+2. Descriptions with records and handles; revocation of a grant; processor time and log records in budgets.
+3. Paging, second part: pages on first use, and read-only code that programs share.
+4. The kernel lock split by data; scheduling strategies that the system can change while it runs.
+5. A block device service (virtio), then the storage service, with a program that keeps its data.
+6. The network: a virtio device service, then UDP, TCP, QUIC.

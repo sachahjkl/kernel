@@ -41,6 +41,8 @@ The system boots under QEMU to a graphical desktop with a console, a system tool
 
 ![One queue for several writers and several readers, with no lock: the records of one second and the kernel entries, against a queue with a lock](docs/screenshots/crowd.png)
 
+![The time is a page that each program reads: the reads of one second from the page and with a kernel entry](docs/screenshots/clock.png)
+
 ![A terminal with no escape sequence: flood writes millions of styled lines in one second, the terminal draws only the view](docs/screenshots/terminal.png)
 
 ![The person holds the view while the program continues to write](docs/screenshots/terminal_held.png)
@@ -97,7 +99,7 @@ The system boots under QEMU to a graphical desktop with a console, a system tool
 | `relay/` | The records and the grants of the `rings` demonstration |
 | `system/` | The library of a program: kernel operations, text, loader, grants |
 | `graphics/`, `display/` | Drawing with the processor; the protocol of the compositor |
-| `programs/` | `root`, `input`, `compositor`, `console`, `host`, `monitor`, `plasma`, `life`, `paint`, `fault`, `temple`, `rings`, `node`, `threads`, `workers`, `rights`, `budget`, `processors`, `boot`, `pages`, `log`, `flow`, `crowd`, `terminal`, `flood`, and the table `launcher` |
+| `programs/` | `root`, `input`, `compositor`, `console`, `host`, `monitor`, `plasma`, `life`, `paint`, `fault`, `temple`, `rings`, `node`, `threads`, `workers`, `rights`, `budget`, `processors`, `boot`, `pages`, `log`, `flow`, `crowd`, `clock`, `terminal`, `flood`, and the table `launcher` |
 | `modules/` | Modules of commands (`math`, `probe`) and the test modules of the host load test |
 | `tools/kerneltool/` | The kernel tool: all the automation of the project |
 

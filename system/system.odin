@@ -4,6 +4,7 @@ package system
 
 import op "../kernel/operation"
 import "../ring"
+import "base:intrinsics"
 
 Handle :: op.Handle
 Status :: op.Status
@@ -57,8 +58,16 @@ call :: proc "contextless" (operation: op.Operation, values: ..u64) -> (results:
 	return completion.values, Status(completion.kind)
 }
 
-// time gives the milliseconds since boot.
+// time gives the milliseconds since boot. It reads the time page: it does
+// not enter the kernel.
 time :: proc "contextless" () -> u64 {
+	record := (^op.Time_Record)(uintptr(op.TIME_ADDRESS))
+	return intrinsics.volatile_load(&record.milliseconds)
+}
+
+// time_entered gives the milliseconds since boot with a kernel entry. The
+// kernel also does the commands in the kernel ring of the thread.
+time_entered :: proc "contextless" () -> u64 {
 	return system_enter(0)
 }
 

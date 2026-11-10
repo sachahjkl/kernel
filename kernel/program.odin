@@ -133,6 +133,8 @@ interrupt_owner: [INTERRUPT_LINES]u32 // A program.
 interrupt_pending: [INTERRUPT_LINES]u32
 last_run: u32
 ticks: u64
+time_region: u32 // The memory object of the time page. It is in each program.
+time_record: ^op.Time_Record
 entry_count: u64
 interrupt_count: u64
 
@@ -410,6 +412,23 @@ maps_region :: proc "contextless" (program: ^Program, region: u32) -> bool {
 
 FPU_START :: [32]u8{0 = 0x7F, 1 = 0x03, 24 = 0x80, 25 = 0x1F}
 
+// time_page_create makes the time page. The kernel keeps one reference:
+// the page stays when no program has it.
+time_page_create :: proc "contextless" () -> bool {
+	physical := frames_allocate(1)
+	if physical == 0 {
+		return false
+	}
+	time_region = region_device(physical, 1) // No budget pays for it, and no program frees it.
+	if time_region == 0 {
+		return false
+	}
+	regions[time_region].references = 1
+	time_record = direct(physical, op.Time_Record)
+	direct(physical, [PAGE_SIZE]u8)^ = {}
+	return true
+}
+
 // program_create makes a program with no memory. The budget pays for the
 // slot and for the page tables.
 program_create :: proc "contextless" (budget: u32, name: []u8) -> (index: u32, status: op.Status) {
@@ -430,6 +449,13 @@ program_create :: proc "contextless" (budget: u32, name: []u8) -> (index: u32, s
 		program.budget = budget
 		program.next_address = op.CHOSEN_BASE
 		copy(program.name[:len(program.name) - 1], name)
+		// The time page: read only. A program cannot remove it (Memory_Unmap).
+		if _, map_status := map_region(&program, time_region, op.TIME_ADDRESS, {}, 0, 1); map_status != .Ok {
+			budgets[budget].amounts.pages += address_space_free(program.table)
+			budgets[budget].amounts.programs += 1
+			program = {}
+			return 0, map_status
+		}
 		program.state = .Created
 		program.start_time = microseconds(cycles_now())
 		return u32(slot + 1), .Ok
@@ -824,6 +850,7 @@ kernel_interrupt :: proc "c" (frame: ^Frame) {
 		// The first processor counts the time.
 		if cpu.index == 0 {
 			ticks += 1
+			intrinsics.volatile_store(&time_record.milliseconds, ticks)
 			for &thread in threads[1:] {
 				if thread.state == .Waiting && thread.deadline <= ticks {
 					thread_ready(&thread)

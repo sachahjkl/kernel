@@ -51,6 +51,7 @@ module_builds := [?]Module_Build {
 	{name = "budget", source = "programs/budget", image = true},
 	{name = "flow", source = "programs/flow", image = true},
 	{name = "crowd", source = "programs/crowd", image = true},
+	{name = "clock", source = "programs/clock", image = true},
 	{name = "terminal", source = "programs/terminal", image = true},
 	{name = "flood", source = "programs/flood", image = true},
 	{name = "processors", source = "programs/processors", image = true},
