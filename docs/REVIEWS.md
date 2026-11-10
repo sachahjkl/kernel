@@ -46,6 +46,7 @@ A step is one tested commit that adds one capability.
 | 38 | `1df3c26` | One build gives one hash (property 11): the cause was the threads of the compiler, not the folder; two options of the compiler; the check builds the modules two times and compares |
 | 39 | `d56177a`, `0cd0828`, `9b55243` | The boot display in its new form: a path of ten steps of the start, the stages as one tube, cards, tiles, no round corner; the design rules in `docs/DESIGN.md` |
 | 40 | `fb611ac`, `51b09ad`, `0c0bdc7` | The first layer of the network (choices 191 to 208): the frame service of the virtio network device, the network service (Ethernet, ARP, IPv4, ICMP echo, UDP) with an endpoint and a grant of one remote for each program, the program `net`, a machine of the test with a peer that the tool runs; property 5 has a note for UDP; the time page has the frequency of the cycle counter, and `limits` measures its interval with it |
+| 41 | `022eb49` (merge of `work/locks`) | The kernel lock split by data (choices 210 to 226): eight kinds of lock in one order that the kernel checks at each take, a run queue for each processor, no kernel entry takes a lock for all the kernel; the program `locks` with measures and a stress case of 120 stopped programs. Two independent read-only reviews before the merge: eight faults that the tests did not reach, each corrected |
 
 ## Review 1: steps 1 to 5 (2026-11-10)
 
