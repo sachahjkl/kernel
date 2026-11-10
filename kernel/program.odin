@@ -1116,6 +1116,12 @@ program_stop :: proc "contextless" (index: u32, code: u32) {
 	program := &programs[index]
 	taken := program_lock(index)
 	if program.state == .None || program.state == .Stopped {
+		// Another stop marked the threads, and some can still be on their
+		// processors: this operation also returns only after they left.
+		if self := processor_self(); program.state == .Stopped && self.operation {
+			self.stopped_programs |= 1 << index
+			self.stopped_serials[index] = program.serial
+		}
 		program_unlock(index, taken)
 		return
 	}

@@ -136,7 +136,7 @@ stacks_create :: proc "contextless" (index: u32) -> (stack_top, fault_top: u64, 
 stacks_free :: proc "contextless" (index: u32) {
 	slot := u64(op.KERNEL_STACK_BASE) + u64(index) * op.KERNEL_STACK_SLOT_PAGES * PAGE_SIZE
 	for page in 0 ..< u64(op.KERNEL_STACK_SLOT_PAGES) {
-		entry := kernel_entry(slot + page * PAGE_SIZE)
+		entry := kernel_entry(slot + page * PAGE_SIZE, false) // A free makes no table.
 		if entry != nil && entry^ & PAGE_PRESENT != 0 {
 			frames_free(entry^ & PAGE_ADDRESS, 1)
 			entry^ = 0
