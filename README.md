@@ -85,6 +85,8 @@ The system boots under QEMU to a graphical desktop with a console, a system tool
 
 ![The network: a virtio network device in a program, a network service with ARP, IPv4, ICMP echo and UDP, and an endpoint with a grant of one remote; ten cases with their answers, and the measures](docs/screenshots/network.png)
 
+![Errors that diagnose: each case makes an error for real, and the line under it is the sentence of the error record that the kernel, the loader, a module or a service gave; the stack trace of a fault three calls deep](docs/screenshots/errors.png)
+
 ![The temple of Jon: a portrait of Jonathan Blow that turns](docs/screenshots/temple.png)
 
 `kerneltool screenshots` makes these pictures from the running machine.
