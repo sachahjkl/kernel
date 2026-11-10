@@ -36,7 +36,7 @@ Sandbox :: struct {
 	file_size:     u64,
 	program:       system.Handle, // 0: no call host runs, or no connection exists. The next call makes one.
 	ring_memory:   system.Handle,
-	ring:          ^ring.Ring,
+	ring:          ring.Ring,
 	region_memory: system.Handle,
 	region:        []u8,
 	calls:         u32, // The tag of the last call.
@@ -61,7 +61,7 @@ command_count: int
 
 machine: system.Handle
 image: []u8
-requests: ^ring.Ring
+requests: ring.Ring
 requests_memory: system.Handle
 request_count: u32 // The tag of the last command to the root service.
 
@@ -84,9 +84,7 @@ commands_start :: proc "contextless" () {
 		image = ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]
 	}
 	requests_memory = ctx.handles[system.GRANT_ROOT]
-	if address, status := system.memory_map(requests_memory); status == .Ok {
-		requests = (^ring.Ring)(address)
-	}
+	requests, _ = system.ring_open(requests_memory)
 
 	command("help", {}, .None, "list the commands", help)
 	command("programs", {}, .None, "list the programs that run", list_programs)
@@ -414,9 +412,9 @@ service_connect :: proc "contextless" (sandbox: ^Sandbox) -> system.Status {
 	sandbox.ring_memory = system.Handle(completion.values[1])
 	sandbox.region_memory = system.Handle(completion.values[2])
 	hash := transmute([32]u8)[4]u64{completion.values[3], completion.values[4], completion.values[5], completion.values[6]}
-	calls, ring_status := system.memory_map(sandbox.ring_memory)
+	calls, ring_status := system.ring_open(sandbox.ring_memory)
 	bytes, region_status := system.memory_map(sandbox.region_memory)
-	sandbox.ring = (^ring.Ring)(calls)
+	sandbox.ring = calls
 	sandbox.region = ([^]u8)(bytes)[:region_status == .Ok ? system.memory_size(sandbox.region_memory) * system.PAGE_SIZE : 0]
 	// After the first connection, the commands are those of one file.
 	if ring_status != .Ok || region_status != .Ok || sandbox.hash != {} && sandbox.hash != hash {
@@ -431,8 +429,8 @@ service_connect :: proc "contextless" (sandbox: ^Sandbox) -> system.Status {
 // continues.
 service_disconnect :: proc "contextless" (sandbox: ^Sandbox) {
 	request_record(.Disconnect, sandbox.name)
-	if sandbox.ring != nil {
-		system.memory_unmap(sandbox.ring)
+	if sandbox.ring.head != nil {
+		system.ring_close(&sandbox.ring)
 	}
 	if len(sandbox.region) != 0 {
 		system.memory_unmap(raw_data(sandbox.region))
@@ -440,7 +438,7 @@ service_disconnect :: proc "contextless" (sandbox: ^Sandbox) {
 	system.close(sandbox.ring_memory)
 	system.close(sandbox.region_memory)
 	system.close(sandbox.program)
-	sandbox.program, sandbox.ring_memory, sandbox.region_memory, sandbox.ring, sandbox.region = 0, 0, 0, nil, nil
+	sandbox.program, sandbox.ring_memory, sandbox.region_memory, sandbox.ring, sandbox.region = 0, 0, 0, {}, nil
 }
 
 // services_check ends the connection to each service that stopped: the
@@ -512,14 +510,14 @@ sandbox_create :: proc "contextless" (sandbox: ^Sandbox) -> bool {
 		address, status = system.memory_map(sandbox.region_memory)
 	}
 	if status != .Ok {
-		system.memory_unmap(sandbox.ring)
+		system.ring_close(&sandbox.ring)
 		system.close(sandbox.ring_memory)
 		system.close(sandbox.region_memory)
 		return false
 	}
 	sandbox.region = ([^]u8)(address)[:isolated.REGION_PAGES * system.PAGE_SIZE]
 	if sandbox_start(sandbox) != .Ok {
-		system.memory_unmap(sandbox.ring)
+		system.ring_close(&sandbox.ring)
 		system.memory_unmap(address)
 		system.close(sandbox.ring_memory)
 		system.close(sandbox.region_memory)
@@ -536,7 +534,7 @@ sandbox_start :: proc "contextless" (sandbox: ^Sandbox) -> system.Status {
 	if sandbox.service {
 		return service_connect(sandbox)
 	}
-	sandbox.ring^ = {}
+	sandbox.ring.head^ = {}
 	grants: [op.CONTEXT_HANDLES]system.Grant
 	values: [op.CONTEXT_VALUES]u64
 	grants[isolated.GRANT_RING] = {sandbox.ring_memory, {.Read, .Write}}
@@ -659,7 +657,7 @@ call_isolated :: proc "contextless" (item: ^Command, arguments: []Value) -> Valu
 // request_record sends one command to the root service and waits for its
 // completion. answered is false when the root service gave none.
 request_record :: proc "contextless" (kind: system.Root_Command, name: string) -> (completion: ring.Record, answered: bool) {
-	if requests == nil {
+	if requests.head == nil {
 		return {}, false
 	}
 	packed := system.name_pack(name)
@@ -686,7 +684,7 @@ request_record :: proc "contextless" (kind: system.Root_Command, name: string) -
 request :: proc "contextless" (kind: system.Root_Command, name: string) -> Value {
 	completion, answered := request_record(kind, name)
 	if !answered {
-		return fail(requests == nil ? "the console has no ring to the root service" : "the root service did not answer")
+		return fail(requests.head == nil ? "the console has no ring to the root service" : "the root service did not answer")
 	}
 	if system.Status(completion.kind) != .Ok {
 		return fail("the root service refused: ", kind == .Start ? "no module has the name " : "no program has the name ", name)

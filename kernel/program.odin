@@ -68,7 +68,7 @@ Thread :: struct {
 	state:        op.Program_State, // None, Ready, Waiting or Stopped.
 	program:      u32,
 	number:       u32, // The index of the thread area in the program.
-	ring:         ^ring.Ring,
+	ring:         ring.Ring,
 	record:       u64, // The address of the thread record in the program.
 	events:       ^u32, // The `events` word of the thread record, for the kernel.
 	deadline:     u64,
@@ -484,14 +484,16 @@ thread_create :: proc "contextless" (program_index: u32, budget: u32, entry, sta
 		self      = record,
 		parameter = parameter,
 		number    = u64(number),
+		processors = u32(processor_count),
 	}
+	thread_ring, _ := ring.open(direct(regions[region].physical + PAGE_SIZE, u8), ring.PAGE_COUNT)
 	thread := &threads[index]
 	thread^ = {
 		state = .Ready,
 		program = program_index,
 		budget = budget,
 		number = number,
-		ring = direct(regions[region].physical + PAGE_SIZE, ring.Ring),
+		ring = thread_ring,
 		record = record,
 		events = &direct(regions[region].physical, op.Thread_Record).events,
 		frame = {
@@ -532,7 +534,7 @@ thread_end :: proc "contextless" (thread: ^Thread) {
 	if thread.references == 0 {
 		thread_free(thread)
 	}
-	thread.ring = nil
+	thread.ring = {}
 	for cpu in processors[:processor_count] {
 		if cpu.record_thread == index {
 			cpu.record_thread = 0 // The slot can get a new thread.

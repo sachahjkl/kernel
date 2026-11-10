@@ -18,9 +18,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			system.stop(1)
 		}
 	}
-	before := (^ring.Ring)(address[relay.GRANT_BEFORE])
-	after := (^ring.Ring)(address[relay.GRANT_AFTER])
-	control := (^ring.Ring)(address[relay.GRANT_CONTROL])
+	before, _ := ring.open(address[relay.GRANT_BEFORE], ring.PAGE_COUNT)
+	after, _ := ring.open(address[relay.GRANT_AFTER], ring.PAGE_COUNT)
+	control, _ := ring.open(address[relay.GRANT_CONTROL], ring.PAGE_COUNT)
 	state := (^relay.State)(address[relay.GRANT_STATE])
 	work_time := ctx.values[relay.VALUE_WORK_TIME]
 

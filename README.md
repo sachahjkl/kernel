@@ -37,6 +37,8 @@ The system boots under QEMU to a graphical desktop with a console, a system tool
 
 ![The log: records with a time, a program, a channel and a level](docs/screenshots/log.png)
 
+![One ring between two threads: the records of one second and the kernel entries that they cost, for two capacities and two ways to wait](docs/screenshots/flow.png)
+
 ![Four processors run the threads of one program at the same time; the same picture with 1, 2 and 4 threads](docs/screenshots/processors.png)
 
 ![The temple of Jon: a portrait of Jonathan Blow that turns](docs/screenshots/temple.png)

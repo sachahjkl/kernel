@@ -9,7 +9,6 @@ import "../../bootscreen"
 import "../../bootscreen/collect"
 import "../../display"
 import "../../graphics"
-import "base:intrinsics"
 import info "../../boot_info"
 import "../../isolated"
 import op "../../kernel/operation"
@@ -33,7 +32,7 @@ grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 	switch name {
 	case "console":
 		return {.Root_Ring, .Inspect, .Stop, .Image}
-	case "monitor", "processors", "pages":
+	case "monitor", "processors", "pages", "flow":
 		return {.Inspect}
 	case "rights":
 		return {.Inspect, .Image} // It shows what the kernel refuses.
@@ -72,6 +71,8 @@ budget_of :: proc "contextless" (name: string) -> system.Budget_Amounts {
 		return {pages = 1024, programs = 1, threads = 4}
 	case "processors":
 		return {pages = 2048, programs = 1, threads = 9}
+	case "flow":
+		return {pages = 2048, programs = 1, threads = 3}
 	}
 	return {pages = 2048, programs = 1, threads = 1}
 }
@@ -91,9 +92,9 @@ log_grant :: proc "contextless" (name: string) -> system.Grant {
 Started :: struct {
 	program:         system.Handle, // 0: the slot is free.
 	client:          system.Handle, // The ring of the program, as the compositor names it.
-	requests:        ^ring.Ring, // The ring from the program to this service, if it has one.
+	requests:        ring.Ring, // The ring from the program to this service, if it has one.
 	requests_memory: system.Handle,
-	service:         ^ring.Ring, // The service ring of the program, if it is a service.
+	service:         ring.Ring, // The service ring of the program, if it is a service.
 	service_memory:  system.Handle,
 	hash:            [32]u8, // The hash of the file of the program.
 	name:            system.Name,
@@ -118,7 +119,7 @@ image: []u8
 image_memory: system.Handle
 started: [STARTED_CAPACITY]Started
 compositor: system.Handle
-control: ^ring.Ring
+control: ring.Ring
 control_memory: system.Handle
 
 // The boot display (package bootscreen), on the screen of the machine.
@@ -251,7 +252,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			}
 		}
 		for &item in started {
-			if item.program == 0 || item.requests == nil {
+			if item.program == 0 || item.requests.head == nil {
 				continue
 			}
 			for record in system.receive(&item.requests.commands) {
@@ -290,7 +291,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		reap()
 		system.wait_records(&wait, &control.completions)
 		for &item in started {
-			if item.program != 0 && item.requests != nil {
+			if item.program != 0 && item.requests.head != nil {
 				system.wait_records(&wait, &item.requests.commands)
 			}
 		}
@@ -390,7 +391,7 @@ start :: proc "contextless" (name: string) -> system.Status {
 connect :: proc "contextless" (caller: ^Started, name: string, values: ^[7]u64) -> system.Status {
 	service: ^Started
 	for &item in started {
-		if item.program != 0 && item.service != nil && system.name_of(item.name[:]) == name {
+		if item.program != 0 && item.service.head != nil && system.name_of(item.name[:]) == name {
 			service = &item
 		}
 	}
@@ -415,8 +416,7 @@ connect :: proc "contextless" (caller: ^Started, name: string, values: ^[7]u64) 
 	// The service ring keeps room for one Disconnect for each connection:
 	// this service never waits for a service that does not read its ring.
 	names := &service.service.commands
-	unread := intrinsics.volatile_load(&names.write) - intrinsics.volatile_load(&names.read)
-	if unread > ring.CAPACITY || ring.CAPACITY - unread < u32(count) + 2 {
+	if ring.capacity(names) - ring.count(names) < u32(count) + 2 {
 		return .No_Slot
 	}
 	ring_memory := system.memory_create(ring.PAGE_COUNT) or_return
@@ -470,7 +470,7 @@ disconnect :: proc "contextless" (connection: ^Connection) {
 release :: proc "contextless" (item: ^Started) {
 	// The connections of the program end: those that it made, and those
 	// that it served.
-	served := item.service != nil
+	served := item.service.head != nil
 	if item.program != 0 {
 		system.close(item.program)
 		item.program = 0
@@ -481,12 +481,12 @@ release :: proc "contextless" (item: ^Started) {
 		}
 	}
 	if served {
-		system.memory_unmap(item.service)
+		system.ring_close(&item.service)
 		system.close(item.service_memory)
 	}
 	system.send(&control.commands, ring.Record{kind = u32(display.Control.Client_Remove), values = {0 = u64(item.client)}})
-	if item.requests != nil {
-		system.memory_unmap(item.requests)
+	if item.requests.head != nil {
+		system.ring_close(&item.requests)
 		system.close(item.requests_memory)
 	}
 	if item.program != 0 {

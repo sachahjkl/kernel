@@ -31,13 +31,13 @@ import "../ring"
 Connection :: struct {
 	ring_memory:   Handle, // 0: the place is free.
 	region_memory: Handle,
-	calls:         ^ring.Ring,
+	calls:         ring.Ring,
 	region:        []u8,
 }
 
 Service :: struct {
 	file:        []u8, // The file of this program: the descriptions of its exports.
-	names:       ^ring.Ring, // The service ring.
+	names:       ring.Ring, // The service ring.
 	connections: [isolated.SERVICE_CONNECTION_CAPACITY]Connection,
 	connected:   int,
 	calls:       u64, // The calls that this program executed.
@@ -48,28 +48,28 @@ service_open :: proc "contextless" (ctx: ^Context) -> (service: Service, ok: boo
 	if memory == 0 {
 		return {}, false
 	}
-	address, status := memory_map(memory)
+	names, status := ring_open(memory)
 	if status != .Ok {
 		return {}, false
 	}
 	service.file = ([^]u8)(uintptr(ctx.values[GRANT_VALUE_FILE_ADDRESS]))[:ctx.values[GRANT_VALUE_FILE_SIZE]]
 	if module.validate(service.file) != .None {
-		memory_unmap(address)
+		ring_close(&names)
 		return {}, false
 	}
-	service.names = (^ring.Ring)(address)
+	service.names = names
 	return service, true
 }
 
 // service_wait adds the service to a wait list: the thread waits while no
 // connection has a call, and while the root service names no connection.
 service_wait :: proc "contextless" (wait: ^Wait, service: ^Service) {
-	if service.names == nil {
+	if service.names.head == nil {
 		return
 	}
 	wait_records(wait, &service.names.commands)
 	for &connection in service.connections {
-		if connection.calls != nil {
+		if connection.calls.head != nil {
 			wait_records(wait, &connection.calls.commands)
 		}
 	}
@@ -78,7 +78,7 @@ service_wait :: proc "contextless" (wait: ^Wait, service: ^Service) {
 // service_run adds and removes the connections that the root service
 // names, then executes the calls that wait. It gives the count of calls.
 service_run :: proc "contextless" (service: ^Service) -> (calls: int) {
-	if service.names == nil {
+	if service.names.head == nil {
 		return 0
 	}
 	for _ in 0 ..< ring.CAPACITY {
@@ -95,8 +95,8 @@ service_run :: proc "contextless" (service: ^Service) -> (calls: int) {
 			}
 		case .Disconnect:
 			for &connection in service.connections {
-				if connection.calls != nil && connection.ring_memory == ring_memory {
-					memory_unmap(connection.calls)
+				if connection.calls.head != nil && connection.ring_memory == ring_memory {
+					ring_close(&connection.calls)
 					memory_unmap(raw_data(connection.region))
 					close(connection.ring_memory)
 					close(connection.region_memory)
@@ -107,7 +107,7 @@ service_run :: proc "contextless" (service: ^Service) -> (calls: int) {
 		}
 	}
 	for &connection in service.connections {
-		if connection.calls == nil {
+		if connection.calls.head == nil {
 			continue
 		}
 		for _ in 0 ..< ring.CAPACITY {
@@ -126,25 +126,22 @@ service_run :: proc "contextless" (service: ^Service) -> (calls: int) {
 @(private)
 connection_add :: proc "contextless" (service: ^Service, ring_memory, region_memory: Handle) -> bool {
 	for &connection in service.connections {
-		if connection.calls != nil {
+		if connection.calls.head != nil {
 			continue
 		}
-		if memory_size(ring_memory) != ring.PAGE_COUNT {
-			return false
-		}
-		calls, ring_status := memory_map(ring_memory)
+		calls, ring_status := ring_open(ring_memory)
 		if ring_status != .Ok {
 			return false
 		}
 		bytes, region_status := memory_map(region_memory)
 		if region_status != .Ok {
-			memory_unmap(calls)
+			ring_close(&calls)
 			return false
 		}
 		connection = {
 			ring_memory   = ring_memory,
 			region_memory = region_memory,
-			calls         = (^ring.Ring)(calls),
+			calls         = calls,
 			region        = ([^]u8)(bytes)[:memory_size(region_memory) * PAGE_SIZE],
 		}
 		service.connected += 1

@@ -20,9 +20,9 @@ region: []u8
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	ring_memory := ctx.handles[isolated.GRANT_RING]
 	region_memory := ctx.handles[isolated.GRANT_REGION]
-	calls, ring_status := system.memory_map(ring_memory)
+	queue, ring_status := system.ring_open(ring_memory)
 	bytes, region_status := system.memory_map(region_memory)
-	if ring_status != .Ok || region_status != .Ok || system.memory_size(ring_memory) != ring.PAGE_COUNT {
+	if ring_status != .Ok || region_status != .Ok {
 		system.log("host: no call ring or no call region")
 		system.stop(1)
 	}
@@ -37,7 +37,6 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	system.log("host: ready, ", u64(module.count(file, .Exports) - 1), " exports")
 
-	queue := (^ring.Ring)(calls)
 	for {
 		for _ in 0 ..< ring.CAPACITY {
 			command, ok := system.receive(&queue.commands)

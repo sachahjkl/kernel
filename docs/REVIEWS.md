@@ -22,6 +22,7 @@ A step is one tested commit that adds one capability.
 | 14 | `89e315b` | The launcher is a menu: one button in the bar, one line for each program, the same table for the compositor and the test |
 | 15 | `4e5cc8a` | The log is records in channels: the kernel is the one writer, readers map the records, shown by `log` |
 | 16 | `bed545a` | A program that runs serves its own exports: connections made by the root service, the same description and the same call form as a module, shown by `paint` and `life` |
+| 17 | `HASH17` | A ring has a capacity chosen at creation; one wake for many records; `wait_spin`; measured by `flow` |
 
 ## Review 1: steps 1 to 5 (2026-11-10)
 

@@ -284,6 +284,14 @@ scenario := [?]Step {
 	{kind = .Wait, text = "compositor: surface budget"},
 	{kind = .Shot, text = "budget"},
 
+	// One ring between two threads: the records of one second, and the
+	// kernel entries that they cost, for two capacities and two ways to wait.
+	{kind = .Launch, text = "flow"},
+	{kind = .Wait, text = "flow: capacity 32, wait at once: ", any_order = true},
+	{kind = .Wait, text = "flow: capacity 1024, read the counters then wait: "},
+	{kind = .Wait, text = "flow: ok, 4 measures, 0 records lost"},
+	{kind = .Shot, text = "flow"},
+
 	// Several processors: the kernel says that the four processors ran
 	// threads of one program at the same time. Then 1, 2 and 4 threads
 	// compute the same picture.
@@ -355,6 +363,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "error: no service runs with the name paint"},
 	{kind = .Launch, text = "paint"},
 	{kind = .Wait, text = "compositor: surface paint"},
+	{kind = .Drag, x = 300, y = 64, to_x = 700, to_y = 700}, // The window covers the console: move it down.
 	{kind = .Click, x = 70, y = 300},
 	{kind = .Type, text = "paint.lines()"},
 	{kind = .Wait, text = "root: connected console to the service paint"},
@@ -370,7 +379,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = " 0 lost, "},
 	{kind = .Shot, text = "log"},
 	// The window covers the console: move it down.
-	{kind = .Drag, x = 500, y = 64, to_x = 500, to_y = 754},
+	{kind = .Drag, x = 500, y = 94, to_x = 500, to_y = 754},
 	{kind = .Click, x = 70, y = 300},
 	// Each page is free or paid, after all the starts and stops of this test.
 	{kind = .Type, text = "memory()"},

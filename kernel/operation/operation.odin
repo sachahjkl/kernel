@@ -127,6 +127,7 @@ Thread_Record :: struct {
 	parameter: u64, // The parameter of the entry of the thread.
 	number:    u64, // The number of the thread in its program. The first thread is 0.
 	events:    u32, // The kernel adds 1 for each event: see Word_Wait.
+	processors: u32, // The processors that run threads: a thread that is alone on the machine does not spin.
 }
 
 Status :: enum u32 {

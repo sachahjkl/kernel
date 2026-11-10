@@ -32,8 +32,11 @@ CALL_INTEGERS :: 6
 CALL_FLOATS :: 8
 CALL_RESULTS :: 4
 
-kernel_ring :: #force_inline proc "contextless" () -> ^ring.Ring {
-	return (^ring.Ring)(uintptr(thread_record()) + PAGE_SIZE)
+// kernel_ring gives the kernel ring of the thread that runs: it is after the
+// thread record.
+kernel_ring :: #force_inline proc "contextless" () -> ring.Ring {
+	kernel, _ := ring.open(rawptr(uintptr(thread_record()) + PAGE_SIZE), ring.PAGE_COUNT)
+	return kernel
 }
 
 // call executes one kernel operation and gives its completion.
@@ -44,9 +47,10 @@ call :: proc "contextless" (operation: op.Operation, values: ..u64) -> (results:
 	for value, index in values {
 		command.values[index] = value
 	}
-	ring.push(&kernel_ring().commands, command)
+	kernel := kernel_ring()
+	ring.push(&kernel.commands, command)
 	system_enter(0)
-	completion, ok := ring.pop(&kernel_ring().completions)
+	completion, ok := ring.pop(&kernel.completions)
 	if !ok {
 		return {}, .Bad_Operation
 	}
@@ -133,11 +137,44 @@ close :: proc "contextless" (handle: Handle) {
 	call(.Handle_Close, u64(handle))
 }
 
-// ring_create makes the memory of a ring and maps it in this program.
-ring_create :: proc "contextless" () -> (memory: Handle, mapped: ^ring.Ring, status: Status) {
-	memory = memory_create(ring.PAGE_COUNT) or_return
+// ring_create makes the memory of a ring and maps it in this program. The
+// capacity is the count of records of each queue: a power of two, 32 or
+// more. Choose it for the largest burst of the writer.
+ring_create :: proc "contextless" (capacity: u32 = ring.CAPACITY) -> (memory: Handle, mapped: ring.Ring, status: Status) {
+	if capacity < ring.CAPACITY || capacity > ring.CAPACITY_LIMIT || capacity & (capacity - 1) != 0 {
+		return 0, {}, .Bad_Operation
+	}
+	memory = memory_create(ring.pages(capacity)) or_return
+	mapped, status = ring_open(memory)
+	if status != .Ok {
+		close(memory)
+		memory = 0
+	}
+	return memory, mapped, status
+}
+
+// ring_open maps the memory of a ring in this program. The capacity of the
+// ring comes from the size of the memory, that the kernel gives.
+ring_open :: proc "contextless" (memory: Handle) -> (mapped: ring.Ring, status: Status) {
+	page_count := memory_size(memory)
+	if page_count < ring.PAGE_COUNT || page_count > ring.pages(ring.CAPACITY_LIMIT) {
+		return {}, .Bad_Handle
+	}
 	address := memory_map(memory) or_return
-	return memory, (^ring.Ring)(address), .Ok
+	opened, ok := ring.open(address, page_count)
+	if !ok {
+		memory_unmap(address)
+		return {}, .Bad_Handle
+	}
+	return opened, .Ok
+}
+
+// ring_close unmaps a ring.
+ring_close :: proc "contextless" (mapped: ^ring.Ring) {
+	if mapped.head != nil {
+		memory_unmap(mapped.head)
+	}
+	mapped^ = {}
 }
 
 // A thread of this program, and the memory of its stack.

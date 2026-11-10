@@ -67,7 +67,7 @@ Event :: struct {
 
 Window :: struct {
 	ring_memory: system.Handle,
-	ring:        ^ring.Ring,
+	ring:        ring.Ring,
 	surface:     system.Handle,
 	canvas:      graphics.Canvas,
 }
@@ -76,11 +76,11 @@ Window :: struct {
 // then calls present.
 open :: proc "contextless" (ctx: ^system.Context, width, height: int, title: string) -> (window: Window, ok: bool) {
 	window.ring_memory = ctx.handles[system.GRANT_DISPLAY]
-	address, status := system.memory_map(window.ring_memory)
-	if status != .Ok {
+	status: system.Status
+	if window.ring, status = system.ring_open(window.ring_memory); status != .Ok {
 		return {}, false
 	}
-	window.ring = (^ring.Ring)(address)
+	address: rawptr
 	pages := (u64(width * height * size_of(graphics.Color)) + system.PAGE_SIZE - 1) / system.PAGE_SIZE
 	window.surface, status = system.memory_create(pages)
 	if status != .Ok {

@@ -74,6 +74,7 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Term | Definition | Do not use |
 |---|---|---|
 | Ring | A pair of queues in shared memory between two programs, or between a program and the kernel: one for command records, one for completion records (P4, P6) | pipe, socket, channel, port, message queue |
+| Capacity | The count of records of each queue of a ring: a power of two, chosen when the ring is created, never changed after. It comes from the size of the memory of the ring | buffer size, queue depth, backlog |
 | Direct call | A call of an export in the address space of the caller. The arguments are in registers (the call form) | in-process call, local call |
 | Isolated call | A call of an export of a module that runs in another program. The arguments travel in a ring (P19) | remote call, RPC, IPC call |
 | Call host | The program that loads one module and executes the isolated calls of its exports. It has no handle but its call ring, its call region, its budget and the log | worker, helper process, server |

@@ -32,7 +32,7 @@ SCAN_RIGHT_SHIFT :: 0x36
 SCAN_CONTROL :: 0x1D
 SCAN_EXTENDED :: 0xE0
 
-output: ^ring.Ring
+output: ring.Ring
 output_memory: system.Handle
 modifiers: u32
 extended: bool
@@ -75,12 +75,11 @@ mouse_command :: proc "contextless" (command: u8) {
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	output_memory = ctx.handles[GRANT_RING]
-	address, status := system.memory_map(output_memory)
-	if status != .Ok {
+	status: system.Status
+	if output, status = system.ring_open(output_memory); status != .Ok {
 		system.log("input: no ring")
 		system.stop(1)
 	}
-	output = (^ring.Ring)(address)
 
 	for system.port_read_8(PORT_STATUS) & STATUS_OUTPUT_FULL != 0 {
 		system.port_read_8(PORT_DATA)

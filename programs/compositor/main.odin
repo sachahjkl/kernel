@@ -42,7 +42,7 @@ COLOR_EMPTY :: 0x10141A
 
 Client :: struct {
 	ring_memory: system.Handle, // 0: the slot is free.
-	ring:        ^ring.Ring,
+	ring:        ring.Ring,
 	surface:     graphics.Canvas, // pixels is nil until the program creates its surface.
 	x, y:        int,
 	title:       system.Name,
@@ -82,8 +82,8 @@ clients: [CLIENT_CAPACITY]Client
 order: [CLIENT_CAPACITY]int // The clients that have a surface, from back to front. The last one has focus.
 order_count: int
 placed: int
-input: ^ring.Ring
-control: ^ring.Ring
+input: ring.Ring
+control: ring.Ring
 pointer_x, pointer_y: int
 buttons: u32
 dragging := -1
@@ -165,16 +165,15 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	width := int(ctx.values[VALUE_WIDTH])
 	height := int(ctx.values[VALUE_HEIGHT])
 	address, status := system.memory_map(ctx.handles[GRANT_FRAMEBUFFER])
-	input_address, input_status := system.memory_map(ctx.handles[GRANT_INPUT])
-	control_address, control_status := system.memory_map(ctx.handles[GRANT_CONTROL])
+	input_status, control_status: system.Status
+	input, input_status = system.ring_open(ctx.handles[GRANT_INPUT])
+	control, control_status = system.ring_open(ctx.handles[GRANT_CONTROL])
 	if status != .Ok || input_status != .Ok || control_status != .Ok || width == 0 {
 		system.log("compositor: no framebuffer")
 		system.stop(1)
 	}
 	screen = {pixels = ([^]graphics.Color)(address), width = width, height = height, stride = int(ctx.values[VALUE_PIXELS_PER_LINE])}
 	red_first = ctx.values[VALUE_FORMAT] == FORMAT_RED_FIRST
-	input = (^ring.Ring)(input_address)
-	control = (^ring.Ring)(control_address)
 	frame = canvas_create(width, height)
 	background = canvas_create(width, height)
 	for y in 0 ..< height {
@@ -194,7 +193,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.wait_records(&wait, &control.commands)
 		system.wait_records(&wait, &input.commands)
 		for &client in clients {
-			if client.ring != nil {
+			if client.ring.head != nil {
 				system.wait_records(&wait, &client.ring.commands)
 			}
 		}
@@ -218,7 +217,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			}
 		}
 		for &client, index in clients {
-			if client.ring == nil {
+			if client.ring.head == nil {
 				continue
 			}
 			for record in system.receive(&client.ring.commands) {
@@ -256,11 +255,11 @@ client_add :: proc "contextless" (memory: system.Handle) {
 		if client.ring_memory != 0 {
 			continue
 		}
-		address, status := system.memory_map(memory)
+		opened, status := system.ring_open(memory)
 		if status != .Ok {
 			break
 		}
-		client = {ring_memory = memory, ring = (^ring.Ring)(address)}
+		client = {ring_memory = memory, ring = opened}
 		return
 	}
 	system.close(memory)
@@ -286,7 +285,7 @@ client_remove :: proc "contextless" (memory: system.Handle) {
 		if client.surface.pixels != nil {
 			system.memory_unmap(client.surface.pixels)
 		}
-		system.memory_unmap(client.ring)
+		system.ring_close(&client.ring)
 		system.close(client.ring_memory)
 		client = {}
 		return

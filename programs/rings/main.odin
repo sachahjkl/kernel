@@ -44,9 +44,9 @@ COLOR_STOPPED :: 0xD05050
 Node :: struct {
 	program:        system.Handle, // 0: the program does not run.
 	after_memory:   system.Handle, // The ring from this node to the next one.
-	after:          ^ring.Ring,
+	after:          ring.Ring,
 	control_memory: system.Handle,
-	control:        ^ring.Ring,
+	control:        ring.Ring,
 	state_memory:   system.Handle,
 	state:          ^relay.State,
 	waiting_logged: bool,
@@ -119,7 +119,7 @@ add :: proc "contextless" (index: int) {
 // pending gives the records that wait in a queue. The other programs write
 // the two counters: the result is never more than the capacity.
 pending :: proc "contextless" (queue: ^ring.Queue) -> (first, count: u32) {
-	return queue.read, min(queue.write - queue.read, ring.CAPACITY)
+	return queue.counters.read, ring.count(queue)
 }
 
 @(export, link_name = "entry")
@@ -237,7 +237,7 @@ draw :: proc "contextless" (canvas: graphics.Canvas, now: u64) {
 		// The oldest record is next to the node that reads the ring.
 		length := abs(to.x - from.x) + abs(to.y - from.y)
 		for position in 0 ..< min(count, SHOWN_RECORDS) {
-			record := node.after.commands.records[(first + position) % ring.CAPACITY]
+			record := node.after.commands.records[(first + position) & node.after.commands.mask]
 			// 256 is the end of the line at the reader. The first square is
 			// just out of the node.
 			along := 256 - (NODE_SIZE / 2 + 10 + int(position) * (CELL + 3)) * 256 * 3 / (length * 2)
