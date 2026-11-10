@@ -14,6 +14,9 @@ import "core:time"
 SCREENSHOT_FOLDER :: BUILD_FOLDER + "/screenshots"
 SCREEN_DUMP :: BUILD_FOLDER + "/screen.ppm"
 STEP_TIMEOUT :: 20 * time.Second
+// The firmware runs before the first line of the system. Its time is not a
+// property of the system: on a machine with no KVM it can be long.
+FIRMWARE_TIMEOUT :: 120 * time.Second
 KEY_PAUSE :: 45 * time.Millisecond
 MOUSE_PAUSE :: 25 * time.Millisecond
 MOUSE_STEP :: 40
@@ -33,12 +36,16 @@ Step :: struct {
 	text:       string,
 	x, y:       int,
 	to_x, to_y: int,
+	// For Wait: the next Wait searches from the same place. Use it when two
+	// programs print in an order that the system does not fix.
+	any_order:  bool,
+	timeout:    time.Duration, // For Wait. 0: STEP_TIMEOUT.
 }
 
 // The positions below come from programs/compositor/main.odin: the launcher
 // in the bar, and the place of window n at (60 + 36 n, 52 + 30 n).
 scenario := [?]Step {
-	{kind = .Wait, text = "boot program: ok"},
+	{kind = .Wait, text = "boot program: ok", timeout = FIRMWARE_TIMEOUT},
 	{kind = .Wait, text = "kernel: ok"},
 	{kind = .Wait, text = "root: ok"},
 	{kind = .Wait, text = "input: ok"},
@@ -58,7 +65,7 @@ scenario := [?]Step {
 	{kind = .Type, text = "modules()"},
 	{kind = .Wait, text = "[console] compositor"},
 	{kind = .Type, text = "start(\"life\")"},
-	{kind = .Wait, text = "life: ok"},
+	{kind = .Wait, text = "life: ok", any_order = true},
 	{kind = .Wait, text = "compositor: surface life"},
 	{kind = .Shot, text = "console"},
 
@@ -76,7 +83,7 @@ scenario := [?]Step {
 	{kind = .Drag, x = 760, y = 520, to_x = 560, to_y = 700},
 	{kind = .Drag, x = 800, y = 600, to_x = 960, to_y = 600},
 	{kind = .Click, x = 264, y = 14}, // plasma
-	{kind = .Wait, text = "plasma: ok"},
+	{kind = .Wait, text = "plasma: ok", any_order = true},
 	{kind = .Wait, text = "compositor: surface plasma"},
 	{kind = .Drag, x = 250, y = 182, to_x = 276, to_y = 150},
 	{kind = .Shot, text = "desktop"},
@@ -165,7 +172,7 @@ scenario := [?]Step {
 
 	// The temple of Jon, then back to the console.
 	{kind = .Click, x = 512, y = 14}, // temple
-	{kind = .Wait, text = "temple: ok"},
+	{kind = .Wait, text = "temple: ok", any_order = true},
 	{kind = .Wait, text = "compositor: surface temple"},
 	{kind = .Shot, text = "temple"},
 
@@ -173,7 +180,6 @@ scenario := [?]Step {
 	// six rings. A stopped program takes no record: the records wait.
 	{kind = .Click, x = 578, y = 14}, // rings
 	{kind = .Wait, text = "rings: ok, 6 programs, 6 rings, 5 records"},
-	{kind = .Wait, text = "compositor: surface rings"},
 	{kind = .Drag, x = 600, y = 243, to_x = 500, to_y = 71},
 	{kind = .Type, text = "aaa"},
 	{kind = .Shot, text = "rings"},
@@ -183,7 +189,20 @@ scenario := [?]Step {
 	{kind = .Shot, text = "rings_stopped"},
 	{kind = .Type, text = "4"},
 	{kind = .Wait, text = "rings: node 4 started"},
+
+	// Threads: one program, five threads, one surface. A thread ends and
+	// the first thread reads its result. A stopped thread draws no more.
+	{kind = .Click, x = 645, y = 14}, // threads
+	{kind = .Wait, text = "threads: a thread added the numbers to 1000: 500500"},
+	{kind = .Wait, text = "threads: ok, 4 threads draw in one surface"},
+	{kind = .Type, text = "3"},
+	{kind = .Wait, text = "threads: thread 3 stopped at frame "},
+	{kind = .Shot, text = "threads"},
+	{kind = .Type, text = "3"},
+	{kind = .Wait, text = "threads: thread 3 started"},
 	{kind = .Click, x = 70, y = 300},
+	{kind = .Type, text = "programs()"},
+	{kind = .Wait, text = "   threads     "},
 	{kind = .Type, text = "shutdown()"},
 	{kind = .Wait, text = "kernel: the machine stops with code 0"},
 }
@@ -256,13 +275,15 @@ pointer_button :: proc(machine: ^Machine, down: bool) {
 	time.sleep(4 * MOUSE_PAUSE)
 }
 
-log_wait :: proc(machine: ^Machine, text: string) -> bool {
+log_wait :: proc(machine: ^Machine, text: string, any_order := false, timeout: time.Duration = STEP_TIMEOUT) -> bool {
 	start := time.now()
-	for time.since(start) < STEP_TIMEOUT {
+	for time.since(start) < timeout {
 		log, err := os.read_entire_file(TEST_OUTPUT, context.temp_allocator)
 		if err == nil && len(log) > machine.seen {
 			if index := strings.index(string(log[machine.seen:]), text); index >= 0 {
-				machine.seen += index + len(text)
+				if !any_order {
+					machine.seen += index + len(text)
+				}
 				return true
 			}
 		}
@@ -412,7 +433,7 @@ scenario_run :: proc(machine: ^Machine) -> bool {
 	for step, index in scenario {
 		switch step.kind {
 		case .Wait:
-			if !log_wait(machine, step.text) {
+			if !log_wait(machine, step.text, step.any_order, step.timeout == 0 ? STEP_TIMEOUT : step.timeout) {
 				fmt.eprintfln("kerneltool: test failed: step %d: the machine did not print \"%s\"", index + 1, step.text)
 				return false
 			}

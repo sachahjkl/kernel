@@ -1,6 +1,8 @@
 // The kernel operations: what a program can ask the kernel (property 1).
 //
-// A program has one ring to the kernel, at KERNEL_RING_ADDRESS. A kernel
+// Each thread of a program has one ring to the kernel: the kernel ring. It
+// is one page after the thread record of the thread, and the `gs` register
+// of the thread holds the address of the thread record. A kernel
 // operation is a command record in that ring: kind is an Operation, values
 // are its parameters. The completion record has a Status in kind, and the
 // results in values.
@@ -22,7 +24,12 @@ MODULE_BASE :: 0x0000_2000_0000_0000 // Where a program loads the modules that i
 STACK_TOP :: 0x0000_7FFF_FFE0_0000
 STACK_PAGES :: 64
 CONTEXT_ADDRESS :: 0x0000_7FFF_FFF0_0000
-KERNEL_RING_ADDRESS :: 0x0000_7FFF_FFFF_0000
+// The thread areas: one per thread, THREAD_AREA_PAGES pages each. An area
+// is the thread record (one page), the kernel ring, and one page with no
+// memory.
+THREAD_AREA_BASE :: 0x0000_7FFF_FFF4_0000
+THREAD_AREA_PAGES :: 4
+THREAD_CAPACITY :: 32 // The threads of one program.
 USER_END :: 0x0000_8000_0000_0000
 
 Handle :: distinct u32 // 0 names no object.
@@ -35,17 +42,29 @@ Operation :: enum u32 {
 	Memory_Unmap   = 4, // (program or 0, address)
 	Memory_Size    = 5, // (memory) -> page_count
 	Program_Create = 6, // (name address, name count) -> program handle. The program has no memory and no handle.
-	Program_Start  = 7, // (program, entry address, stack address, context address)
+	Program_Start  = 7, // (program, entry address, stack address, context address): the first thread of the program.
 	Program_Stop   = 8, // (program or 0 for self, code)
 	Program_State  = 9, // (program) -> Program_State, code
 	Handle_Give    = 10, // (target: program handle or memory handle, handle) -> the handle in the target program.
 	// With a memory handle, the target is the other program that maps this memory: the other side of a ring.
 	Handle_Close   = 11, // (handle). The kernel stops a program when its last handle closes.
-	Wake           = 12, // (memory): wake the other programs that map this memory.
+	Wake           = 12, // (memory): wake the other threads of all programs that map this memory.
 	Interrupt_Read = 13, // (interrupt) -> the number of interrupts since the last read.
 	Device_Create  = 14, // (machine, Device_Kind, a, b) -> handle. Ports: a = first port, b = count. Interrupt: a = line.
 	Inspect        = 15, // (machine, Inspect_Kind, index, address, size) -> bytes written
 	Machine_Stop   = 16, // (machine, code)
+	Thread_Create  = 17, // (entry address, stack address, parameter) -> thread handle. A new thread of this program.
+	// The thread starts at the entry with the parameter in the first register.
+	Thread_Stop    = 18, // (thread or 0 for self). A program with no thread stops.
+	Thread_State   = 19, // (thread) -> Program_State: Ready, Waiting or Stopped.
+}
+
+// What a thread can read about itself, at the address in its `gs` register.
+// The kernel writes it when the thread starts, and does not read it again.
+Thread_Record :: struct {
+	self:      u64, // The address of this record. The kernel ring is PAGE_SIZE after it.
+	parameter: u64, // The parameter of the entry of the thread.
+	number:    u64, // The number of the thread in its program. The first thread is 0.
 }
 
 Status :: enum u32 {
@@ -68,6 +87,8 @@ Map_Flags :: bit_set[Map_Flag;u64]
 STOP_CODE_FAULT :: 0x100 // Add the number of the processor exception: 14 is a page fault.
 STOP_CODE_NO_HANDLE :: 0x200 // The last handle to the program closed.
 
+// The state of a program or of a thread. A program is Ready when one of
+// its threads is Ready.
 Program_State :: enum u32 {
 	None    = 0,
 	Created = 1,
@@ -106,6 +127,7 @@ Program_Report :: struct {
 	handle_count: u64,
 	run_time:     u64, // Milliseconds of processor time.
 	entries:      u64,
+	thread_count: u64,
 }
 
 // The context: the one record that a program receives when it starts

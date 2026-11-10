@@ -158,7 +158,7 @@ list_programs :: proc "contextless" (arguments: []Value) -> Value {
 	if !ok {
 		return {}
 	}
-	print("slot name        state    pages handles  cpu ms  entries\n")
+	print("slot name        state    threads pages handles  cpu ms  entries\n")
 	for slot in 1 ..< report.program_slots {
 		program: op.Program_Report
 		system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Program), slot, u64(uintptr(&program)), size_of(program))
@@ -166,7 +166,7 @@ list_programs :: proc "contextless" (arguments: []Value) -> Value {
 			continue
 		}
 		print(number(slot, 5), padded(system.name_of(program.name[:]), 12), padded(state_names[program.state], 9))
-		print(number(program.mapped_pages, 6), number(program.handle_count, 9), number(program.run_time, 8), number(program.entries, 0), "\n")
+		print(number(program.thread_count, 8), number(program.mapped_pages, 6), number(program.handle_count, 9), number(program.run_time, 8), number(program.entries, 0), "\n")
 	}
 	return {}
 }

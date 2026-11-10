@@ -8,6 +8,11 @@ system_enter:                    ; (wait: u64) -> u64: the one kernel entry poin
 	syscall
 	ret
 
+global thread_record
+thread_record:                   ; () -> ^Thread_Record: the kernel keeps this address in gs
+	mov rax, [gs:0]
+	ret
+
 global port_write_8
 port_write_8:                    ; (port: u16, value: u8)
 	mov edx, edi

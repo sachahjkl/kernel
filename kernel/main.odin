@@ -96,13 +96,8 @@ root_start :: proc "contextless" (boot: ^info.Boot_Info) {
 	record.handles[op.ROOT_BOOT_IMAGE] = handle_insert(program, {kind = .Memory, object = region_device(boot.boot_image, (boot.boot_image_size + PAGE_SIZE - 1) / PAGE_SIZE)})
 	record.values[op.ROOT_VALUE_BOOT_IMAGE_SIZE] = boot.boot_image_size
 
-	program.frame = {
-		rip    = u64(start),
-		cs     = SELECTOR_USER_CODE,
-		rflags = USER_FLAGS,
-		rsp    = op.STACK_TOP - 8,
-		ss     = SELECTOR_USER_DATA,
-		rdi    = op.CONTEXT_ADDRESS,
+	if _, status := thread_create(index, u64(start), op.STACK_TOP, op.CONTEXT_ADDRESS); status != .Ok {
+		fail("no memory for the first thread")
 	}
 	program.state = .Ready
 }

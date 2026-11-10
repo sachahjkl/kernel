@@ -28,6 +28,7 @@ VECTOR_KERNEL_ENTER :: 128
 INTERRUPT_LINES :: 16
 STUB_COUNT :: 48
 TICKS_PER_SECOND :: 1000
+MSR_GS_BASE :: 0xC000_0101
 TIME_SLICE :: 10 // Ticks that a program runs before another ready program gets the processor.
 
 foreign _ {

@@ -8,35 +8,37 @@ import op "operation"
 // of the program, then makes the program wait if it asked for that.
 
 enter :: proc "contextless" (index: u32) {
-	program := &programs[index]
-	program.entries += 1
-	program.in_enter = true
+	thread := &threads[index]
+	programs[thread.program].entries += 1
+	thread.in_enter = true
 	for _ in 0 ..< ring.CAPACITY {
-		command, ok := ring.pop(&program.ring.commands)
+		command, ok := ring.pop(&thread.ring.commands)
 		if !ok {
 			break
 		}
 		completion := ring.Record{tag = command.tag}
 		status := execute(index, command, &completion.values)
-		if program.state == .None || program.state == .Stopped {
+		// The operation can stop the thread: then it has no ring.
+		if thread.state != .Ready {
 			return
 		}
 		completion.kind = u32(status)
-		ring.push(&program.ring.completions, completion)
+		ring.push(&thread.ring.completions, completion)
 	}
-	wait := program.frame.rdi
+	wait := thread.frame.rdi
 	if wait != 0 {
-		if program.wake_pending {
-			program.wake_pending = false
+		if thread.wake_pending {
+			thread.wake_pending = false
 		} else {
-			program.state = .Waiting
-			program.deadline = wait
+			thread.state = .Waiting
+			thread.deadline = wait
 		}
 	}
 }
 
 execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u64) -> op.Status {
-	program := &programs[index]
+	program_index := threads[index].program
+	program := &programs[program_index]
 	v := command.values
 
 	// target gives the program that a program handle names. 0 names the caller.
@@ -102,7 +104,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			return .Bad_State
 		}
 		for &mapping in to.mappings {
-			if mapping.page_count != 0 && mapping.address == v[1] && mapping.address != op.KERNEL_RING_ADDRESS {
+			if mapping.page_count != 0 && mapping.address == v[1] && mapping.address < op.THREAD_AREA_BASE {
 				unmap(to, &mapping)
 				return .Ok
 			}
@@ -142,15 +144,43 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		if to.state != .Created {
 			return .Bad_State
 		}
-		to.frame = {
-			rip    = v[1],
-			cs     = SELECTOR_USER_CODE,
-			rflags = USER_FLAGS,
-			rsp    = v[2] - 8, // As after a call instruction.
-			ss     = SELECTOR_USER_DATA,
-			rdi    = v[3],
+		if _, status := thread_create(slot.object, v[1], v[2], v[3]); status != .Ok {
+			return status
 		}
 		to.state = .Ready
+		return .Ok
+
+	case .Thread_Create:
+		created, status := thread_create(program_index, v[0], v[1], v[2])
+		if status != .Ok {
+			return status
+		}
+		handle := handle_insert(program, {kind = .Thread, object = created})
+		if handle == 0 {
+			thread_stop(created)
+			return .No_Slot
+		}
+		results[0] = u64(handle)
+		return .Ok
+
+	case .Thread_Stop:
+		if v[0] == 0 {
+			thread_stop(index)
+			return .Ok
+		}
+		slot := handle_find(program, v[0], .Thread)
+		if slot == nil {
+			return .Bad_Handle
+		}
+		thread_stop(slot.object)
+		return .Ok
+
+	case .Thread_State:
+		slot := handle_find(program, v[0], .Thread)
+		if slot == nil {
+			return .Bad_Handle
+		}
+		results[0] = u64(threads[slot.object].state)
 		return .Ok
 
 	case .Program_Stop:
@@ -166,7 +196,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		if slot == nil {
 			return .Bad_Handle
 		}
-		results[0] = u64(programs[slot.object].state)
+		results[0] = u64(program_state(slot.object))
 		results[1] = u64(programs[slot.object].code)
 		return .Ok
 
@@ -217,12 +247,9 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		if slot == nil {
 			return .Bad_Handle
 		}
-		for &other in programs[1:] {
-			if &other == program || other.state == .None || other.state == .Stopped {
-				continue
-			}
-			if maps_region(&other, slot.object) {
-				wake(&other)
+		for &other, other_index in programs[1:] {
+			if other.state == .Ready && maps_region(&other, slot.object) {
+				wake_program(u32(other_index + 1), index)
 			}
 		}
 		return .Ok
@@ -296,7 +323,8 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			if v[2] != 0 && v[2] < PROGRAM_CAPACITY {
 				about := &programs[v[2]]
 				report = {
-					state        = about.state,
+					state        = program_state(u32(v[2])),
+					thread_count = u64(about.thread_count),
 					code         = about.code,
 					name         = about.name,
 					mapped_pages = about.mapped_pages,

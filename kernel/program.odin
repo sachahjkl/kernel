@@ -29,6 +29,7 @@ Object_Kind :: enum u8 {
 	Interrupt = 3, // object: interrupt line
 	Ports     = 4, // object: first port; count: number of ports
 	Machine   = 5, // The right to create device handles, to inspect and to stop the machine.
+	Thread    = 6, // object: index in threads
 }
 
 Handle_Slot :: struct {
@@ -44,19 +45,35 @@ Mapping :: struct {
 	region:     u32,
 }
 
-Program :: struct {
+// A thread: one flow of execution in a program. It is a register state and
+// a kernel ring. Its stack is memory of the program: the kernel does not
+// know it.
+Thread :: struct {
 	frame:        Frame,
 	fpu:          Fpu_State,
-	state:        op.Program_State,
+	state:        op.Program_State, // None, Ready, Waiting or Stopped.
+	program:      u32,
+	number:       u32, // The index of the thread area in the program.
+	ring:         ^ring.Ring,
+	record:       u64, // The address of the thread record in the program.
+	deadline:     u64,
+	references:   u32, // Handles to this thread.
+	wake_pending: bool,
+	in_enter:     bool,
+	run_time:     u64,
+}
+
+THREAD_TABLE_CAPACITY :: 256
+
+Program :: struct {
+	state:        op.Program_State, // None, Created, Ready or Stopped.
 	code:         u32,
 	name:         [32]u8,
 	table:        u64,
-	ring:         ^ring.Ring,
 	next_address: u64,
-	deadline:     u64,
 	references:   u32, // Handles to this program.
-	wake_pending: bool,
-	in_enter:     bool,
+	thread_areas: u32, // Bit n: thread area n is in use.
+	thread_count: u32,
 	has_ports:    bool,
 	run_time:     u64,
 	entries:      u64,
@@ -67,10 +84,12 @@ Program :: struct {
 
 regions: [REGION_CAPACITY]Region
 programs: [PROGRAM_CAPACITY]Program
-interrupt_owner: [INTERRUPT_LINES]u32
+threads: [THREAD_TABLE_CAPACITY]Thread
+interrupt_owner: [INTERRUPT_LINES]u32 // A program.
 interrupt_pending: [INTERRUPT_LINES]u32
-current: u32 // The program that runs. 0: the kernel is idle.
+current: u32 // The thread that runs. 0: the kernel is idle.
 last_run: u32
+record_thread: u32 // The thread whose thread record address is in the gs register.
 ports_loaded: u32 // The program whose ports are open in the task state.
 ticks: u64
 slice_left: u64
@@ -128,6 +147,8 @@ handle_insert :: proc "contextless" (program: ^Program, slot: Handle_Slot) -> op
 			regions[slot.object].references += 1
 		case .Program:
 			programs[slot.object].references += 1
+		case .Thread:
+			threads[slot.object].references += 1
 		case .Ports:
 			program.has_ports = true
 		case .Interrupt:
@@ -165,6 +186,12 @@ handle_close :: proc "contextless" (program: ^Program, slot: ^Handle_Slot) {
 			} else {
 				program_stop(slot.object, op.STOP_CODE_NO_HANDLE)
 			}
+		}
+	case .Thread:
+		thread := &threads[slot.object]
+		thread.references -= 1
+		if thread.references == 0 && thread.state == .Stopped {
+			thread.state = .None
 		}
 	case .Interrupt:
 		if interrupt_owner[slot.object] == u32(intrinsics.ptr_sub(program, &programs[0])) {
@@ -268,17 +295,10 @@ program_create :: proc "contextless" (name: []u8) -> u32 {
 		}
 		program = {}
 		program.table = address_space_create()
-		ring_region := region_create(ring.PAGE_COUNT)
-		if program.table == 0 || ring_region == 0 {
+		if program.table == 0 {
 			return 0
 		}
-		program.ring = direct(regions[ring_region].physical, ring.Ring)
 		program.next_address = op.CHOSEN_BASE
-		if _, status := map_region(&program, ring_region, op.KERNEL_RING_ADDRESS, {.Write}, 0, 0); status != .Ok {
-			return 0
-		}
-		start := FPU_START
-		copy(program.fpu.bytes[:], start[:])
 		copy(program.name[:len(program.name) - 1], name)
 		program.state = .Created
 		return u32(index + 1)
@@ -286,12 +306,131 @@ program_create :: proc "contextless" (name: []u8) -> u32 {
 	return 0
 }
 
-wake :: proc "contextless" (program: ^Program) {
-	if program.state == .Waiting {
-		program.state = .Ready
-	} else {
-		program.wake_pending = true
+// thread_create adds a thread to a program. The kernel makes the thread
+// area: the thread record and the kernel ring of the thread.
+thread_create :: proc "contextless" (program_index: u32, entry, stack, parameter: u64) -> (index: u32, status: op.Status) {
+	program := &programs[program_index]
+	number := u32(op.THREAD_CAPACITY)
+	for candidate in 0 ..< u32(op.THREAD_CAPACITY) {
+		if program.thread_areas & (1 << candidate) == 0 {
+			number = candidate
+			break
+		}
 	}
+	for &candidate, slot in threads[1:] {
+		if candidate.state == .None && candidate.references == 0 {
+			index = u32(slot + 1)
+			break
+		}
+	}
+	if number == op.THREAD_CAPACITY || index == 0 {
+		return 0, .No_Slot
+	}
+	region := region_create(1 + ring.PAGE_COUNT)
+	if region == 0 {
+		return 0, .No_Memory
+	}
+	record := op.THREAD_AREA_BASE + u64(number) * op.THREAD_AREA_PAGES * PAGE_SIZE
+	if _, map_status := map_region(program, region, record, {.Write}, 0, 0); map_status != .Ok {
+		regions[region].references = 1
+		region_release(region)
+		return 0, map_status
+	}
+	direct(regions[region].physical, op.Thread_Record)^ = {
+		self      = record,
+		parameter = parameter,
+		number    = u64(number),
+	}
+	thread := &threads[index]
+	thread^ = {
+		state = .Ready,
+		program = program_index,
+		number = number,
+		ring = direct(regions[region].physical + PAGE_SIZE, ring.Ring),
+		record = record,
+		frame = {
+			rip    = entry,
+			cs     = SELECTOR_USER_CODE,
+			rflags = USER_FLAGS,
+			rsp    = stack - 8, // As after a call instruction.
+			ss     = SELECTOR_USER_DATA,
+			rdi    = parameter,
+		},
+	}
+	start := FPU_START
+	copy(thread.fpu.bytes[:], start[:])
+	program.thread_areas |= 1 << number
+	program.thread_count += 1
+	return index, .Ok
+}
+
+// thread_end marks a thread as stopped. The slot stays until the last
+// handle to the thread closes: a handle never names another thread.
+@(private = "file")
+thread_end :: proc "contextless" (thread: ^Thread) {
+	thread.state = thread.references == 0 ? .None : .Stopped
+	thread.ring = nil
+	if record_thread == u32(intrinsics.ptr_sub(thread, &threads[0])) {
+		record_thread = 0 // The slot can get a new thread.
+	}
+}
+
+// thread_stop ends one thread and frees its thread area. The other threads
+// of the program wake: one of them can wait for this end. A program with
+// no thread stops.
+thread_stop :: proc "contextless" (index: u32) {
+	thread := &threads[index]
+	if thread.state == .None || thread.state == .Stopped {
+		return
+	}
+	program := &programs[thread.program]
+	thread_end(thread)
+	for &mapping in program.mappings {
+		if mapping.page_count != 0 && mapping.address == thread.record {
+			unmap(program, &mapping)
+			break
+		}
+	}
+	program.thread_areas &~= 1 << thread.number
+	program.thread_count -= 1
+	if program.thread_count == 0 {
+		program_stop(thread.program, 0)
+	} else {
+		wake_program(thread.program)
+	}
+}
+
+wake :: proc "contextless" (thread: ^Thread) {
+	if thread.state == .Waiting {
+		thread.state = .Ready
+	} else if thread.state == .Ready {
+		thread.wake_pending = true
+	}
+}
+
+// wake_program wakes each thread of a program. A thread that wakes for
+// another reason than its own reads its queues and waits again.
+wake_program :: proc "contextless" (index: u32, except: u32 = 0) {
+	for &thread, slot in threads[1:] {
+		if thread.program == index && u32(slot + 1) != except {
+			wake(&thread)
+		}
+	}
+}
+
+// program_state gives the state of a program for a report: a running
+// program is Ready when one of its threads is Ready.
+program_state :: proc "contextless" (index: u32) -> op.Program_State {
+	program := &programs[index]
+	if program.state != .Ready {
+		return program.state
+	}
+	for &thread in threads[1:] {
+		if thread.program == index && thread.state == .Ready {
+			return .Ready
+		}
+	}
+	return .Waiting
 }
 
 // program_stop ends a program and frees all that it has.
@@ -304,6 +443,13 @@ program_stop :: proc "contextless" (index: u32, code: u32) {
 	// name this program.
 	program.state = .Stopped
 	program.code = code
+	for &thread in threads[1:] {
+		if thread.program == index && thread.state != .None && thread.state != .Stopped {
+			thread_end(&thread)
+		}
+	}
+	program.thread_count = 0
+	program.thread_areas = 0
 	if cr3_read() == program.table {
 		cr3_write(kernel_table)
 	}
@@ -322,14 +468,13 @@ program_stop :: proc "contextless" (index: u32, code: u32) {
 	}
 	address_space_free(program.table)
 	program.table = 0
-	program.ring = nil
-	for &other in programs[1:] {
+	for &other, other_index in programs[1:] {
 		if other.state == .None || other.state == .Stopped {
 			continue
 		}
 		for slot in other.handles {
 			if slot.kind == .Program && slot.object == index {
-				wake(&other)
+				wake_program(u32(other_index + 1))
 				break
 			}
 		}
@@ -359,34 +504,25 @@ ports_switch :: proc "contextless" (index: u32) {
 	ports_loaded = index
 }
 
-// schedule runs the next program that is ready. With none, it waits for an
+// schedule runs the next thread that is ready. With none, it waits for an
 // interrupt.
 schedule :: proc "contextless" () -> ! {
 	for {
 		alive := false
-		for step in 1 ..= u32(PROGRAM_CAPACITY) {
-			index := (last_run + step) % PROGRAM_CAPACITY
-			program := &programs[index]
-			if index == 0 || program.state == .None || program.state == .Stopped {
+		for step in 1 ..= u32(THREAD_TABLE_CAPACITY) {
+			index := (last_run + step) % THREAD_TABLE_CAPACITY
+			thread := &threads[index]
+			if index == 0 || thread.state == .None || thread.state == .Stopped {
 				continue
 			}
 			alive = true
-			if program.state != .Ready {
+			if thread.state != .Ready {
 				continue
 			}
 			current = index
 			last_run = index
 			slice_left = TIME_SLICE
-			ports_switch(program.has_ports ? index : 0)
-			if cr3_read() != program.table {
-				cr3_write(program.table)
-			}
-			current_fpu_area = &program.fpu
-			if program.in_enter {
-				program.in_enter = false
-				program.frame.rax = ticks
-			}
-			resume(&program.frame)
+			run(thread)
 		}
 		if !alive {
 			log("kernel: no program is left")
@@ -395,6 +531,27 @@ schedule :: proc "contextless" () -> ! {
 		current = 0
 		idle_wait()
 	}
+}
+
+// run gives the processor to a thread.
+run :: proc "contextless" (thread: ^Thread) -> ! {
+	program := &programs[thread.program]
+	ports_switch(program.has_ports ? thread.program : 0)
+	if cr3_read() != program.table {
+		cr3_write(program.table)
+	}
+	// Two programs have thread records at the same address. The test is on
+	// the thread, so a program that changes its gs register harms only itself.
+	if record_thread != current {
+		record_thread = current
+		msr_write(MSR_GS_BASE, thread.record)
+	}
+	current_fpu_area = &thread.fpu
+	if thread.in_enter {
+		thread.in_enter = false
+		thread.frame.rax = ticks
+	}
+	resume(&thread.frame)
 }
 
 EXCEPTION_NAMES := [32]string {
@@ -410,7 +567,7 @@ EXCEPTION_NAMES := [32]string {
 kernel_interrupt :: proc "c" (frame: ^Frame) {
 	from_program := frame.cs & 3 != 0
 	if from_program {
-		programs[current].frame = frame^
+		threads[current].frame = frame^
 	}
 	switch {
 	case frame.vector == VECTOR_KERNEL_ENTER:
@@ -419,12 +576,13 @@ kernel_interrupt :: proc "c" (frame: ^Frame) {
 	case frame.vector == VECTOR_TIMER:
 		ticks += 1
 		if from_program {
-			programs[current].run_time += 1
+			threads[current].run_time += 1
+			programs[threads[current].program].run_time += 1
 			slice_left -= min(slice_left, 1)
 		}
-		for &program in programs[1:] {
-			if program.state == .Waiting && program.deadline <= ticks {
-				program.state = .Ready
+		for &thread in threads[1:] {
+			if thread.state == .Waiting && thread.deadline <= ticks {
+				thread.state = .Ready
 			}
 		}
 		interrupt_end(0)
@@ -433,7 +591,7 @@ kernel_interrupt :: proc "c" (frame: ^Frame) {
 		interrupt_count += 1
 		interrupt_pending[line] += 1
 		if owner := interrupt_owner[line]; owner != 0 {
-			wake(&programs[owner])
+			wake_program(owner)
 		}
 		interrupt_end(line)
 	case:
@@ -442,22 +600,20 @@ kernel_interrupt :: proc "c" (frame: ^Frame) {
 			log("kernel: exception in the kernel: ", name, " vector ", frame.vector, " error ", Hex(frame.error), " at ", Hex(frame.rip), " address ", Hex(cr2_read()))
 			machine_stop(2)
 		}
-		program := &programs[current]
-		log("kernel: program ", program_name(program), " stopped: ", name, " vector ", frame.vector, " error ", Hex(frame.error), " at ", Hex(frame.rip), " address ", Hex(cr2_read()))
-		program_stop(current, op.STOP_CODE_FAULT + u32(frame.vector))
+		// A fault in one thread stops the program: the threads share all
+		// their memory.
+		program := threads[current].program
+		log("kernel: program ", program_name(&programs[program]), " stopped: ", name, " vector ", frame.vector, " error ", Hex(frame.error), " at ", Hex(frame.rip), " address ", Hex(cr2_read()))
+		program_stop(program, op.STOP_CODE_FAULT + u32(frame.vector))
 	}
 	if !from_program {
 		return
 	}
-	// The program that entered continues, unless it waits, it stopped, or its
+	// The thread that entered continues, unless it waits, it stopped, or its
 	// time slice is over.
-	program := &programs[current]
-	if program.state == .Ready && slice_left > 0 {
-		if program.in_enter {
-			program.in_enter = false
-			program.frame.rax = ticks
-		}
-		resume(&program.frame)
+	thread := &threads[current]
+	if thread.state == .Ready && slice_left > 0 {
+		run(thread)
 	}
 	schedule()
 }

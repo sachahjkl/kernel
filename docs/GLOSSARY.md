@@ -27,7 +27,9 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Term | Definition | Do not use |
 |---|---|---|
 | Program | A running module with its own address space and its own handle table | process, task, application, app |
-| Thread | One flow of execution inside a program | fiber, task |
+| Thread | One flow of execution inside a program: a register state and a kernel ring. The threads of a program share its memory and its handles | fiber, task |
+| Thread record | The record that a thread can read about itself: its own address, the parameter of its entry, its number. The `gs` register of the thread holds its address | thread-local storage, TLS, TEB |
+| Thread area | The memory that the kernel makes for one thread: the thread record, then the kernel ring of the thread | |
 | Service | A program that other programs call through rings. A service has no special privilege | daemon, server, driver |
 | Device service | A service that owns the queues of one device class (P7) | driver |
 | Input service | The device service of the keyboard and the mouse. It sends key and pointer events to the compositor | input driver |

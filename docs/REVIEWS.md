@@ -8,4 +8,5 @@ A step is one tested commit that adds one capability.
 |---|---|---|
 | 1 | `7305ad2` | Isolated call |
 | 2 | `71ca9ec` | `rings`: communication between programs, shown |
-| 3 | (this commit) | Text results |
+| 3 | `ba67b95` | Text results |
+| 4 | (the commit after `ba67b95`) | Threads: several per program, shown by `threads` |
