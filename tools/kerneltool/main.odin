@@ -53,6 +53,10 @@ TEST_OUTPUT_SELF_TEST :: BUILD_FOLDER + "/test_output_self_test_%d.txt"
 DATA_DISK :: BUILD_FOLDER + "/data_disk.img"
 TEST_DATA_DISK :: BUILD_FOLDER + "/test_data_disk.img"
 SCRATCH_DISK :: BUILD_FOLDER + "/scratch_disk.img"
+// The data disk of the three machines of the test of persistence: new
+// before the first one, kept for the two others.
+TEST_PERSIST_DISK :: BUILD_FOLDER + "/test_persist_disk.img"
+TEST_OUTPUT_PERSIST :: BUILD_FOLDER + "/test_output_persist_%d.txt"
 DATA_DISK_SIZE :: 64 << 20
 SCRATCH_DISK_SIZE :: 32 << 20
 
@@ -197,7 +201,7 @@ run_test :: proc(args: []string) -> int {
 	if !disk_prepare(TEST_DATA_DISK, DATA_DISK_SIZE, true) {
 		return EXIT_FAILURE
 	}
-	if !machine_test(scenario_fails[:], BOOT_VOLUME_FAILS, TEST_OUTPUT_FAILS, 0) || !self_tests_run() || !machine_test(scenario[:], BOOT_VOLUME, TEST_OUTPUT, MACHINE_STOP_OK, TEST_DATA_DISK) || !test_modules() || !test_descriptions() {
+	if !machine_test(scenario_fails[:], BOOT_VOLUME_FAILS, TEST_OUTPUT_FAILS, 0) || !self_tests_run() || !machine_test(scenario[:], BOOT_VOLUME, TEST_OUTPUT, MACHINE_STOP_OK, TEST_DATA_DISK) || !persistence_run() || !test_modules() || !test_descriptions() {
 		return EXIT_FAILURE
 	}
 	fmt.println("kerneltool: all tests passed")

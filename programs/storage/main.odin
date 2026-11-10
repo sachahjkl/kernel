@@ -184,6 +184,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	case mounted.formatted:
 		system.log("storage: ok, a new disk: generation 1, ", root.disk_blocks, " blocks")
 	case:
+		if mounted.cut != 0 {
+			system.log_in("storage", .Warning, "storage: the root of generation ", mounted.cut, " has a wrong check: a write that a stop cut; the service uses the root before it")
+		}
 		if mounted.older {
 			system.log_in("storage", .Warning, "storage: the newest root names a block with a wrong check: the root before it is used")
 		}

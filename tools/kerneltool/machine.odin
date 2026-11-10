@@ -62,6 +62,108 @@ scenario_fails := [?]Step {
 	{kind = .Quit},
 }
 
+// Persistence: three machines with one data disk. The first one starts
+// from a new disk: the person types a note in `notes` and counts 1000 (1000
+// commits), then stops the machine. The second one finds the note and the
+// count; the person counts again, and the tool ends QEMU in the middle of
+// the commits, with no stop of the machine. The third one finds a store
+// that the checks accept, and a count of one commit: its three blocks agree.
+scenario_persist_first := [?]Step {
+	{kind = .Wait, text = "compositor: surface console"},
+	{kind = .Launch, text = "notes"},
+	{kind = .Wait, text = "root: started storage"},
+	{kind = .Wait, text = "storage: ok, a new disk: generation 1, 16384 blocks", any_order = true},
+	{kind = .Wait, text = "root: started notes"},
+	{kind = .Wait, text = "notes: a new store: no note, the count 0", any_order = true},
+	{kind = .Wait, text = "compositor: surface notes"},
+	{kind = .Type, text = "kept across a restart"},
+	{kind = .Wait, text = "notes: the note is \"kept across a restart\", generation 22"},
+	{kind = .Key, text = "tab"},
+	{kind = .Wait, text = "notes: count 1000, stopped: 1000 commits in "},
+	{kind = .Front, text = "console"},
+	{kind = .Type, text = "shutdown()"},
+	{kind = .Wait, text = "kernel: the machine stops with code 0"},
+}
+
+scenario_persist_second := [?]Step {
+	{kind = .Wait, text = "compositor: surface console"},
+	{kind = .Launch, text = "notes"},
+	{kind = .Wait, text = "storage: ok, generation 1022: 1 stores, 2 objects, ", any_order = true},
+	{kind = .Wait, text = " blocks checked, 0 wrong, in ", any_order = true},
+	{kind = .Wait, text = "notes: restored the note \"kept across a restart\" and the count 1000, its 3 blocks agree", any_order = true},
+	{kind = .Wait, text = "compositor: surface notes"},
+	{kind = .Shot, text = "notes"},
+	{kind = .Key, text = "tab"},
+	{kind = .Wait, text = "notes: count 1100"},
+	{kind = .Quit}, // In the middle of the commits: the machine does not stop.
+}
+
+scenario_persist_crash := [?]Step {
+	{kind = .Wait, text = "compositor: surface console"},
+	{kind = .Launch, text = "notes"},
+	{kind = .Wait, text = "storage: ok, generation ", any_order = true},
+	{kind = .Wait, text = " blocks checked, 0 wrong, in ", any_order = true},
+	{kind = .Wait, text = "notes: restored the note \"kept across a restart\" and the count ", any_order = true},
+	{kind = .Wait, text = ", its 3 blocks agree, the last run stopped before its end", any_order = true},
+	{kind = .Wait, text = "compositor: surface notes"},
+	{kind = .Shot, text = "notes_crash"},
+	{kind = .Quit},
+}
+
+// A root block that a stop cut: the tool writes zero bytes over the second
+// half of the root with the highest generation, as a write that the machine
+// did not finish. The storage service finds the wrong check and uses the
+// root before it: the count of the commit before.
+scenario_persist_cut := [?]Step {
+	{kind = .Wait, text = "compositor: surface console"},
+	{kind = .Launch, text = "notes"},
+	{kind = .Wait, text = " has a wrong check: a write that a stop cut; the service uses the root before it", any_order = true},
+	{kind = .Wait, text = " blocks checked, 0 wrong, in ", any_order = true},
+	{kind = .Wait, text = "notes: restored the note \"kept across a restart\" and the count ", any_order = true},
+	{kind = .Wait, text = ", its 3 blocks agree, the last run stopped before its end", any_order = true},
+	{kind = .Wait, text = "compositor: surface notes"},
+	{kind = .Quit},
+}
+
+// root_cut writes zero bytes over the second half of the root block with
+// the highest generation (programs/storage/engine.odin: blocks 0 and 1, the
+// generation at byte 8).
+root_cut :: proc(path: string) -> bool {
+	file, err := os.open(path, {.Read, .Write})
+	if err != nil {
+		fmt.eprintfln("kerneltool: cannot open %s: %v", path, err)
+		return false
+	}
+	defer os.close(file)
+	roots: [8192]u8
+	if count, read_err := os.read_at(file, roots[:], 0); read_err != nil || count != len(roots) {
+		fmt.eprintfln("kerneltool: cannot read the roots of %s", path)
+		return false
+	}
+	generation :: proc(bytes: []u8) -> u64 {
+		value: u64
+		for index in 0 ..< 8 {
+			value |= u64(bytes[8 + index]) << uint(8 * index)
+		}
+		return value
+	}
+	newest := generation(roots[4096:]) > generation(roots[:]) ? 1 : 0
+	zero: [2048]u8
+	if _, write_err := os.write_at(file, zero[:], i64(newest * 4096 + 2048)); write_err != nil {
+		fmt.eprintfln("kerneltool: cannot write %s: %v", path, write_err)
+		return false
+	}
+	fmt.printfln("kerneltool: the root block %d of %s is cut, generation %d", newest, path, generation(roots[newest * 4096:]))
+	return true
+}
+
+persistence_run :: proc() -> bool {
+	if !disk_prepare(TEST_PERSIST_DISK, DATA_DISK_SIZE, true) {
+		return false
+	}
+	return machine_test(scenario_persist_first[:], BOOT_VOLUME, self_test_file(TEST_OUTPUT_PERSIST, 1), MACHINE_STOP_OK, TEST_PERSIST_DISK) && machine_test(scenario_persist_second[:], BOOT_VOLUME, self_test_file(TEST_OUTPUT_PERSIST, 2), 0, TEST_PERSIST_DISK) && machine_test(scenario_persist_crash[:], BOOT_VOLUME, self_test_file(TEST_OUTPUT_PERSIST, 3), 0, TEST_PERSIST_DISK) && root_cut(TEST_PERSIST_DISK) && machine_test(scenario_persist_cut[:], BOOT_VOLUME, self_test_file(TEST_OUTPUT_PERSIST, 4), 0, TEST_PERSIST_DISK)
+}
+
 // A test of the kernel on itself (boot_info.Self_Test): the kernel does one
 // thing that its page tables must refuse. The processor refuses, and the
 // kernel reports the fault and stops the machine with code 2.

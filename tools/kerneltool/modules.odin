@@ -67,6 +67,7 @@ module_builds := [?]Module_Build {
 	{name = "block", source = "programs/block", image = true},
 	{name = "disk", source = "programs/disk", image = true},
 	{name = "storage", source = "programs/storage", image = true},
+	{name = "notes", source = "programs/notes", image = true},
 	{name = "host", source = "programs/host", image = true},
 	{name = "probe", source = "modules/probe", image = true},
 	{name = "math", source = "modules/math", image = true},

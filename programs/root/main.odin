@@ -17,6 +17,7 @@ import "support:system"
 import "support:terminal"
 import "contract:block"
 import "support:pci"
+import "support:storage"
 
 ROOT_MARK :: "root: ok"
 
@@ -62,6 +63,8 @@ grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 		return {.Scratch_Disk}
 	case "storage":
 		return {.Serve, .Data_Disk}
+	case "notes":
+		return {.Store}
 	}
 	return {}
 }
@@ -418,6 +421,18 @@ start :: proc "contextless" (name: string) -> system.Status {
 		return .Bad_Operation
 	}
 	role := grants_of(name)
+	// A program with a store: the storage service starts first.
+	if .Store in role && .Person not_in role {
+		running := false
+		for &item in started {
+			if item.program != 0 && item.service.head != nil && system.name_of(item.name[:]) == "storage" {
+				running = true
+			}
+		}
+		if !running {
+			start("storage") or_return
+		}
+	}
 	// A client of a block service: the service of its disk starts first.
 	driver: ^Started
 	block_ring: system.Handle
@@ -451,6 +466,39 @@ start :: proc "contextless" (name: string) -> system.Status {
 	}
 	values: [op.CONTEXT_VALUES]u64
 	grants[op.CONTEXT_LOG] = log_grant(name)
+	copy(slot.name[:len(slot.name) - 1], name) // The connection to the storage service names the program.
+	// The connection to the private store, in the context: the call ring, the
+	// call region, the storage service with the right Read, and its file.
+	mappings: [2]system.Mapping
+	mapping_count := 0
+	// This service closes its handles of the connection after the start.
+	store_ring, store_region: system.Handle
+	defer if store_ring != 0 {
+		system.close(store_ring)
+		system.close(store_region)
+	}
+	if .Store in role && .Person not_in role {
+		storage_service: ^Started
+		store_status: system.Status
+		_, storage_service, store_ring, store_region, store_status = connection_open(slot, "storage")
+		if store_status != .Ok {
+			if driver != nil {
+				system.call(.Program_Stop, u64(driver.program), 0)
+			}
+			slot^ = {}
+			return store_status
+		}
+		grants[storage.GRANT_RING] = {store_ring, {.Read, .Write}}
+		grants[storage.GRANT_REGION] = {store_region, {.Read, .Write}}
+		grants[storage.GRANT_SERVICE] = {storage_service.program, {.Read}}
+		for &item in system.image_entries(image) {
+			if system.name_of(item.name[:]) == "storage" && item.offset % system.PAGE_SIZE == 0 && item.offset <= u64(len(image)) && item.size <= u64(len(image)) - item.offset {
+				values[storage.VALUE_FILE_SIZE] = item.size
+				mappings[mapping_count] = {memory = image_memory, address = storage.FILE_ADDRESS, first = item.offset / system.PAGE_SIZE, page_count = (item.size + system.PAGE_SIZE - 1) / system.PAGE_SIZE}
+				mapping_count += 1
+			}
+		}
+	}
 
 	// A program has a surface, or it has a terminal. This service does not
 	// keep the memory objects that it creates here.
@@ -506,20 +554,19 @@ start :: proc "contextless" (name: string) -> system.Status {
 	}
 	// A service: the service ring, and its own file, to read the
 	// descriptions of its exports.
-	mappings: [1]system.Mapping
-	mapping_count := 0
 	if .Serve in role && status == .Ok && entry.offset % system.PAGE_SIZE == 0 {
 		slot.service_memory, slot.service, status = system.ring_create()
 		grants[system.GRANT_SERVICE] = {slot.service_memory, {.Read, .Write}}
 		values[system.GRANT_VALUE_FILE_ADDRESS] = isolated.FILE_ADDRESS
 		values[system.GRANT_VALUE_FILE_SIZE] = entry.size
-		mappings[0] = {memory = image_memory, address = isolated.FILE_ADDRESS, first = entry.offset / system.PAGE_SIZE, page_count = (entry.size + system.PAGE_SIZE - 1) / system.PAGE_SIZE}
-		mapping_count = 1
+		mappings[mapping_count] = {memory = image_memory, address = isolated.FILE_ADDRESS, first = entry.offset / system.PAGE_SIZE, page_count = (entry.size + system.PAGE_SIZE - 1) / system.PAGE_SIZE}
+		mapping_count += 1
 	}
 	if status == .Ok {
 		slot.program, status = system.program_start(file, name, grants, values, budget_of(name), mappings[:mapping_count], &prepared)
 	}
 	if status != .Ok {
+		system.log_in("programs", .Warning, "root: cannot start ", name, ": status ", u64(status))
 		release(slot)
 		if driver != nil {
 			system.call(.Program_Stop, u64(driver.program), 0)
@@ -528,7 +575,7 @@ start :: proc "contextless" (name: string) -> system.Status {
 	}
 	slot.driver = driver
 	slot.hash = entry.hash
-	slot.granted = {.Log}
+	slot.granted += {.Log}
 	if machine_rights != {} {
 		slot.granted += {.Machine}
 	}
@@ -655,63 +702,9 @@ terminal_start :: proc "contextless" (view: ^Started, writer: ^Started, ring_mem
 // service pays for the two memory objects and does not keep them. values is
 // the completion of Root_Command.Connect.
 connect :: proc "contextless" (caller: ^Started, name: string, values: ^[7]u64) -> system.Status {
-	service: ^Started
-	for pass in 0 ..< 2 {
-		for &item in started {
-			if item.program != 0 && item.service.head != nil && system.name_of(item.name[:]) == name {
-				service = &item
-			}
-		}
-		if service != nil || pass == 1 || !on_demand(name) {
-			break
-		}
-		start(name) or_return
-	}
-	if service == nil || service == caller {
-		return .Bad_Handle
-	}
-	free: ^Connection
-	count := 0
-	for &connection in connections {
-		if connection.caller == nil {
-			free = &connection
-		} else if connection.service == service {
-			count += 1
-			if connection.caller == caller {
-				return .Bad_State
-			}
-		}
-	}
-	if free == nil || count == isolated.SERVICE_CONNECTION_CAPACITY {
-		return .No_Slot
-	}
-	// The service ring keeps room for one Disconnect for each connection:
-	// this service never waits for a service that does not read its ring.
-	names := &service.service.commands
-	if ring.capacity(names) - ring.count(names) < u32(count) + 2 {
-		return .No_Slot
-	}
-	ring_memory := system.memory_create(ring.PAGE_COUNT) or_return
+	free, service, ring_memory, region_memory := connection_open(caller, name) or_return
 	defer system.close(ring_memory)
-	region_memory := system.memory_create(isolated.REGION_PAGES) or_return
 	defer system.close(region_memory)
-	// The service first. It receives its handles through its service ring.
-	in_service_ring := system.give(service.service_memory, ring_memory, {.Read, .Write}) or_return
-	in_service_region := system.give(service.service_memory, region_memory, {.Read, .Write}) or_return
-	caller_name := system.name_pack(system.name_of(caller.name[:]))
-	grant := grant_for(caller, service)
-	if !system.send(&service.service.commands, ring.Record{kind = u32(isolated.Service_Command.Connect), values = {0 = u64(in_service_ring), 1 = u64(in_service_region), 2 = caller_name[0], 3 = caller_name[1], 4 = caller_name[2], 5 = caller_name[3], 6 = grant}}) {
-		return .No_Slot
-	}
-	if grant & isolated.CALLER_AMOUNT_MASK != 0 {
-		caller.granted += {.Store}
-	}
-	free^ = {
-		caller  = caller,
-		service = service,
-		ring    = in_service_ring,
-		region  = in_service_region,
-	}
 	// The caller receives its handles through its ring to this service.
 	status: system.Status
 	given: [3]system.Handle
@@ -730,6 +723,82 @@ connect :: proc "contextless" (caller: ^Started, name: string, values: ^[7]u64) 
 	values^ = {u64(given[0]), u64(given[1]), u64(given[2]), hash[0], hash[1], hash[2], hash[3]}
 	system.log_in("calls", .Info, "root: connected ", system.name_of(caller.name[:]), " to the service ", name)
 	return .Ok
+}
+
+// connection_open makes the service side of a connection from a caller to
+// the service with a name, and starts the service if it starts on demand.
+// It gives the call ring and the call region: give them to the caller,
+// then close them.
+connection_open :: proc "contextless" (caller: ^Started, name: string) -> (free: ^Connection, service: ^Started, ring_memory, region_memory: system.Handle, status: system.Status) {
+	for pass in 0 ..< 2 {
+		for &item in started {
+			if item.program != 0 && item.service.head != nil && system.name_of(item.name[:]) == name {
+				service = &item
+			}
+		}
+		if service != nil || pass == 1 || !on_demand(name) {
+			break
+		}
+		if status = start(name); status != .Ok {
+			return nil, nil, 0, 0, status
+		}
+	}
+	if service == nil || service == caller {
+		return nil, nil, 0, 0, .Bad_Handle
+	}
+	count := 0
+	for &connection in connections {
+		if connection.caller == nil {
+			free = &connection
+		} else if connection.service == service {
+			count += 1
+			if connection.caller == caller {
+				return nil, nil, 0, 0, .Bad_State
+			}
+		}
+	}
+	if free == nil || count == isolated.SERVICE_CONNECTION_CAPACITY {
+		return nil, nil, 0, 0, .No_Slot
+	}
+	// The service ring keeps room for one Disconnect for each connection:
+	// this service never waits for a service that does not read its ring.
+	names := &service.service.commands
+	if ring.capacity(names) - ring.count(names) < u32(count) + 2 {
+		return nil, nil, 0, 0, .No_Slot
+	}
+	ring_memory = system.memory_create(ring.PAGE_COUNT) or_return
+	region_memory, status = system.memory_create(isolated.REGION_PAGES)
+	in_service_ring, in_service_region: system.Handle
+	if status == .Ok {
+		in_service_ring, status = system.give(service.service_memory, ring_memory, {.Read, .Write})
+	}
+	if status == .Ok {
+		in_service_region, status = system.give(service.service_memory, region_memory, {.Read, .Write})
+	}
+	if status != .Ok {
+		system.close(ring_memory)
+		if region_memory != 0 {
+			system.close(region_memory)
+		}
+		return nil, nil, 0, 0, status
+	}
+	caller_name := system.name_pack(system.name_of(caller.name[:]))
+	grant := grant_for(caller, service)
+	if !system.send(&service.service.commands, ring.Record{kind = u32(isolated.Service_Command.Connect), values = {0 = u64(in_service_ring), 1 = u64(in_service_region), 2 = caller_name[0], 3 = caller_name[1], 4 = caller_name[2], 5 = caller_name[3], 6 = grant}}) {
+		system.close(ring_memory)
+		system.close(region_memory)
+		return nil, nil, 0, 0, .No_Slot
+	}
+	if grant & isolated.CALLER_AMOUNT_MASK != 0 {
+		caller.granted += {.Store}
+	}
+	free^ = {
+		caller  = caller,
+		service = service,
+		ring    = in_service_ring,
+		region  = in_service_region,
+	}
+	return free, service, ring_memory, region_memory, .Ok
 }
 
 // disconnect ends a connection: the service unmaps the call ring and the

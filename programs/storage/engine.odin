@@ -98,6 +98,7 @@ blocks: ring.Ring
 region: [^]u8
 disk_tag: u32
 disk_errors: u64
+disk_size: u64 // The blocks of the disk that the service uses.
 broken: bool // A write of a root failed: the service does not know which root the disk has, and makes no change.
 
 check_of :: proc "contextless" (bytes: []u8) -> u64 {
@@ -233,7 +234,7 @@ read_checked :: proc "contextless" (pointers: []Pointer, first_slot: u64) -> (wr
 	requests: [REGION_BLOCKS]Request
 	for pointer, index in pointers {
 		requests[index] = {number = pointer.block, slot = first_slot + u64(index)}
-		if pointer.block < 2 || pointer.block >= root.disk_blocks {
+		if pointer.block < 2 || pointer.block >= disk_size {
 			return u64(len(pointers)), false
 		}
 	}
@@ -256,6 +257,7 @@ Mount :: struct {
 	wrong:      u64,
 	formatted:  bool,
 	older:      bool, // The newest root named a wrong block: the root before it is used.
+	cut:        u64, // Not 0: the generation that a root with a wrong check gives; the service does not use it.
 	failed:     bool, // No root is usable: the service does not serve.
 }
 
@@ -320,6 +322,7 @@ walk :: proc "contextless" (candidate: ^Root, result: ^Mount) -> bool {
 // mount finds the root, reads and checks each block that it names, and
 // formats a disk that has never had a root.
 mount :: proc "contextless" (disk_blocks: u64) -> (result: Mount) {
+	disk_size = min(disk_blocks, DISK_BLOCKS_LIMIT)
 	candidates: [2]Root
 	requests := [2]Request{{0, 0}, {1, 1}}
 	if !transfer(.Read, requests[:]) {
@@ -337,7 +340,7 @@ mount :: proc "contextless" (disk_blocks: u64) -> (result: Mount) {
 		intrinsics.mem_copy_non_overlapping(&candidates[index], raw_data(bytes), BLOCK_SIZE)
 	}
 	valid :: proc "contextless" (candidate: ^Root) -> bool {
-		return candidate.magic == ROOT_MAGIC && candidate.check == root_check(candidate) && candidate.disk_blocks >= 2
+		return candidate.magic == ROOT_MAGIC && candidate.check == root_check(candidate) && candidate.disk_blocks >= 2 && candidate.disk_blocks <= disk_size
 	}
 	if empty {
 		// A new disk: the first root, with no store.
@@ -365,6 +368,9 @@ mount :: proc "contextless" (disk_blocks: u64) -> (result: Mount) {
 	tried := 0
 	for index in order {
 		if !valid(&candidates[index]) {
+			if candidates[index].magic == ROOT_MAGIC {
+				result.cut = candidates[index].generation
+			}
 			continue
 		}
 		if tried == 1 {
