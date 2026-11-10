@@ -7,6 +7,8 @@ The system boots under QEMU to a graphical desktop with a console, a system tool
 
 ![The launcher: the menu of the bar that starts the programs](docs/screenshots/launcher.png)
 
+![The menu of the windows: a press on a line brings the window to the front](docs/screenshots/windows.png)
+
 | | |
 |---|---|
 | ![The console](docs/screenshots/console.png) | ![The commands of the console](docs/screenshots/tools.png) |

@@ -34,6 +34,7 @@ Step_Kind :: enum {
 	Drag, // Hold the left button from (x, y) to (to_x, to_y).
 	Shot, // Save the screen as text.png.
 	Move, // Drag the window with the title text to the place (to_x, to_y). The tool reads the place of the window in the log, before and after.
+	Front, // Open the menu of the windows, and press the line of the last window with the title text: the window comes to the front. The tool reads the lines of the menu in the log.
 	Close, // Press the close button of the window with the title text. The tool reads the place and the size of the window in the log.
 	Film, // Save the screen 25 times in one second, for x milliseconds, as the next pictures of the film.
 	Quit, // End QEMU: the machine does not stop by itself.
@@ -150,6 +151,14 @@ scenario := [?]Step {
 	{kind = .Click, x = 116, y = 14},
 	{kind = .Shot, text = "launcher"},
 	{kind = .Click, x = 116, y = 14},
+	// The menu of the windows: a press on a line brings the window to the
+	// front.
+	{kind = .Click, x = 200, y = 14},
+	{kind = .Wait, text = "compositor: windows: "},
+	{kind = .Shot, text = "windows"},
+	{kind = .Click, x = 200, y = 14},
+	{kind = .Front, text = "console"},
+	{kind = .Front, text = "plasma"},
 
 	// A program that fails stops alone. The close button stops a program.
 	{kind = .Launch, text = "fault"},
@@ -159,7 +168,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "root: plasma stopped"},
 
 	// Back to the console: the system tools, then stop the machine.
-	{kind = .Click, x = 300, y = 300},
+	{kind = .Front, text = "console"},
 	{kind = .Type, text = "clear()"},
 	{kind = .Type, text = "programs()"},
 	{kind = .Wait, text = "[console] slot name"},
@@ -283,7 +292,7 @@ scenario := [?]Step {
 	// The root service ends one grant of a program that runs. The window of
 	// monitor goes below the console for the picture, then back.
 	{kind = .Drag, x = 900, y = 50, to_x = 900, to_y = 560},
-	{kind = .Click, x = 70, y = 300},
+	{kind = .Front, text = "console"},
 	{kind = .Type, text = "grants(\"monitor\")"},
 	{kind = .Wait, text = "[console] monitor has: log, machine"},
 	{kind = .Type, text = "revoke(\"monitor\", \"machine\")"},
@@ -299,7 +308,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[console] error: no grant has the name keys"},
 	{kind = .Shot, text = "revocation"},
 	{kind = .Drag, x = 900, y = 570, to_x = 900, to_y = 60},
-	{kind = .Click, x = 70, y = 300},
+	{kind = .Front, text = "console"},
 	// The same descriptions serve a direct call. The module is then in the
 	// console: it has the handles of the console, and kept gives 0.
 	{kind = .Type, text = "unload(\"sample\")"},
@@ -381,7 +390,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "limits: ok, 4 budgets within their processor time, ", any_order = true},
 	{kind = .Wait, text = "compositor: surface limits", any_order = true},
 	{kind = .Shot, text = "limits"},
-	{kind = .Click, x = 70, y = 300},
+	{kind = .Front, text = "console"},
 	{kind = .Type, text = "stop(\"limits\")"},
 	{kind = .Wait, text = "root: limits stopped"},
 
@@ -419,7 +428,6 @@ scenario := [?]Step {
 	{kind = .Wait, text = "processors: ok, 4 processors ran the program at the same time"},
 	{kind = .Wait, text = "processors: the picture took "},
 	{kind = .Shot, text = "processors"},
-	{kind = .Move, text = "processors", to_x = 250, to_y = 60}, // The window covers the place where the test clicks the console.
 
 	// The boot display in a window: how the machine started, with the
 	// records that the kernel has now.
@@ -428,7 +436,7 @@ scenario := [?]Step {
 	{kind = .Shot, text = "boot"},
 	// The window covers the screen: move it down, away from the console.
 	{kind = .Move, text = "boot", to_x = 60, to_y = 742},
-	{kind = .Click, x = 70, y = 300},
+	{kind = .Front, text = "console"},
 	{kind = .Type, text = "stop(\"boot\")"},
 	{kind = .Wait, text = "root: boot stopped"},
 	{kind = .Type, text = "programs()"},
@@ -443,7 +451,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "pages: the processor refuses the memory of programs to the kernel"},
 	{kind = .Shot, text = "pages"},
 	{kind = .Move, text = "pages", to_x = 168, to_y = 742}, // The window covers the console.
-	{kind = .Click, x = 70, y = 300},
+	{kind = .Front, text = "console"},
 	{kind = .Type, text = "stop(\"pages\")"},
 	{kind = .Wait, text = "root: pages stopped"},
 
@@ -453,7 +461,7 @@ scenario := [?]Step {
 	{kind = .Launch, text = "paint"},
 	{kind = .Wait, text = "compositor: surface paint"},
 	{kind = .Move, text = "paint", to_x = 516, to_y = 408}, // Below the console, at the right.
-	{kind = .Click, x = 70, y = 300},
+	{kind = .Front, text = "console"},
 	{kind = .Type, text = "clear()"},
 	{kind = .Type, text = "connect(\"paint\")"},
 	{kind = .Wait, text = "root: connected console to the service paint"},
@@ -473,9 +481,9 @@ scenario := [?]Step {
 	{kind = .Type, text = "life.glider(10, 10)"},
 	{kind = .Type, text = "life.population()"},
 	{kind = .Wait, text = "[console] 5"},
-	{kind = .Click, x = 900, y = 420}, // The title of paint: the window comes to the front.
+	{kind = .Front, text = "paint"},
 	{kind = .Shot, text = "services"},
-	{kind = .Click, x = 70, y = 300},
+	{kind = .Front, text = "console"},
 	// The service stops: the call fails, and the console continues. The
 	// service starts again: the next call makes a new connection.
 	{kind = .Type, text = "stop(\"paint\")"},
@@ -486,7 +494,7 @@ scenario := [?]Step {
 	{kind = .Launch, text = "paint"},
 	{kind = .Wait, text = "compositor: surface paint"},
 	{kind = .Move, text = "paint", to_x = 460, to_y = 688}, // The window covers the console: move it down.
-	{kind = .Click, x = 70, y = 300},
+	{kind = .Front, text = "console"},
 	{kind = .Type, text = "paint.lines()"},
 	{kind = .Wait, text = "root: connected console to the service paint"},
 	{kind = .Wait, text = "[console] 0"},
@@ -500,7 +508,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "tally: ok"},
 	{kind = .Wait, text = "compositor: surface tally"},
 	{kind = .Move, text = "tally", to_x = 616, to_y = 530}, // Under the console, at the right.
-	{kind = .Click, x = 70, y = 300},
+	{kind = .Front, text = "console"},
 	{kind = .Type, text = "clear()"},
 	{kind = .Type, text = "connect(\"tally\")"},
 	{kind = .Wait, text = "[console] tally: 5 commands of a service that runs"},
@@ -538,7 +546,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "compositor: surface manual", any_order = true},
 	{kind = .Wait, text = "manual: ok, "},
 	{kind = .Move, text = "manual", to_x = 204, to_y = 742},
-	{kind = .Click, x = 70, y = 300},
+	{kind = .Front, text = "console"},
 	{kind = .Type, text = "connect(\"manual\")"},
 	{kind = .Wait, text = "[console] manual: 3 commands of a service that runs"},
 	{kind = .Type, text = "manual.about(\"math\")"},
@@ -558,7 +566,7 @@ scenario := [?]Step {
 	{kind = .Key, text = "up"},
 	{kind = .Wait, text = "manual: tally: a program, 5 exports, "},
 	{kind = .Move, text = "manual", to_x = 204, to_y = 742},
-	{kind = .Click, x = 70, y = 300},
+	{kind = .Front, text = "console"},
 	{kind = .Type, text = "stop(\"manual\")"},
 	{kind = .Wait, text = "root: manual stopped"},
 	{kind = .Type, text = "stop(\"tally\")"},
@@ -573,7 +581,7 @@ scenario := [?]Step {
 	{kind = .Shot, text = "log"},
 	// The window covers the console: move it down.
 	{kind = .Move, text = "log", to_x = 96, to_y = 742},
-	{kind = .Click, x = 70, y = 300},
+	{kind = .Front, text = "console"},
 	// The terminal: a program gives text as records with a style, in a ring
 	// of 4096 records. The terminal reads them in one thread and draws in
 	// another: the display does not slow the program.
@@ -600,7 +608,7 @@ scenario := [?]Step {
 	{kind = .Key, text = "spc"},
 	{kind = .Wait, text = "flood: the person pressed Space: the lines continue"},
 	// The program stops: its terminal stays, with what the program wrote.
-	{kind = .Click, x = 70, y = 300},
+	{kind = .Front, text = "console"},
 	{kind = .Type, text = "stop(\"flood\")"},
 	{kind = .Wait, text = "terminal: flood stopped with code 0 after "},
 	{kind = .Click, x = 940, y = 400}, // A part of the window that the console does not cover.
@@ -608,7 +616,7 @@ scenario := [?]Step {
 	// The person closes the window: the terminal stops.
 	{kind = .Close, text = "flood"},
 	{kind = .Wait, text = "root: terminal stopped"},
-	{kind = .Click, x = 70, y = 300},
+	{kind = .Front, text = "console"},
 	// Each page is free or paid, after all the starts and stops of this test.
 	{kind = .Type, text = "memory()"},
 	{kind = .Wait, text = " pages: all the free pages"},
@@ -722,11 +730,7 @@ WINDOW_CLOSE_Y :: 12
 // window_width gives the width of the surface of the last window with a
 // title: "compositor: surface title 480x320 at 276,232".
 window_width :: proc(machine: ^Machine, title: string) -> (width: int, ok: bool) {
-	log, err := os.read_entire_file(machine.output, context.temp_allocator)
-	if err != nil {
-		return 0, false
-	}
-	text := string(log)
+	text := log_read(machine)
 	mark := strings.concatenate({"compositor: surface ", title, " "}, context.temp_allocator)
 	made := strings.last_index(text, mark)
 	if made < 0 {
@@ -741,11 +745,7 @@ window_width :: proc(machine: ^Machine, title: string) -> (width: int, ok: bool)
 // window down: "compositor: surface title 480x320 at 276,232" and
 // "compositor: window title moved to 60,742".
 window_place :: proc(machine: ^Machine, title: string) -> (x, y: int, ok: bool) {
-	log, err := os.read_entire_file(machine.output, context.temp_allocator)
-	if err != nil {
-		return 0, 0, false
-	}
-	text := string(log)
+	text := log_read(machine)
 	made := strings.last_index(text, strings.concatenate({"compositor: surface ", title, " "}, context.temp_allocator))
 	moved := strings.last_index(text, strings.concatenate({"compositor: window ", title, " moved to "}, context.temp_allocator))
 	start := max(made, moved)
@@ -771,12 +771,48 @@ window_place :: proc(machine: ^Machine, title: string) -> (x, y: int, ok: bool) 
 	return x, y, true
 }
 
+// log_read gives the complete lines of the log of the machine. QEMU writes
+// the log one byte at a time: the last line can be a part of a line, and a
+// part of "at 168,142" reads as another place.
+log_read :: proc(machine: ^Machine) -> string {
+	log, err := os.read_entire_file(machine.output, context.temp_allocator)
+	if err != nil {
+		return ""
+	}
+	return string(log[:strings.last_index_byte(string(log), '\n') + 1])
+}
+
+// windows_line gives the line of the last window with a title in the menu
+// of the windows. The compositor writes the lines when the menu opens:
+// "compositor: windows: console, life, monitor". from: the bytes of the
+// log before the menu opened.
+windows_line :: proc(machine: ^Machine, title: string, from: int) -> (line: int, ok: bool) {
+	MARK :: "compositor: windows: "
+	for start := time.now(); time.since(start) < STEP_TIMEOUT; {
+		text := log_read(machine)
+		at := len(text) > from ? strings.index(text[from:], MARK) : -1
+		if at < 0 {
+			time.sleep(50 * time.Millisecond)
+			continue
+		}
+		text = text[from + at + len(MARK):]
+		titles := strings.split(strings.trim_right(text[:strings.index_byte(text, '\n')], "\r"), ", ", context.temp_allocator)
+		#reverse for name, index in titles {
+			if name == title {
+				return index, true
+			}
+		}
+		return 0, false
+	}
+	return 0, false
+}
+
 log_wait :: proc(machine: ^Machine, text: string, any_order := false) -> bool {
 	start := time.now()
 	for time.since(start) < STEP_TIMEOUT {
-		log, err := os.read_entire_file(machine.output, context.temp_allocator)
-		if err == nil && len(log) > machine.seen {
-			if index := strings.index(string(log[machine.seen:]), text); index >= 0 {
+		log := log_read(machine)
+		if len(log) > machine.seen {
+			if index := strings.index(log[machine.seen:], text); index >= 0 {
 				if !any_order {
 					machine.seen += index + len(text)
 				}
@@ -950,10 +986,11 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 		case .Key:
 			monitor_send(machine, "sendkey ", step.text, " 20")
 			time.sleep(KEY_PAUSE)
-		case .Click, .Drag, .Launch, .Move, .Close:
+		case .Click, .Drag, .Launch, .Move, .Close, .Front:
 			step := step
 			moved_title: string
 			moved_x, moved_y: int
+			before := len(log_read(machine))
 			if step.kind == .Close {
 				x, y, found := window_place(machine, step.text)
 				width, sized := window_width(machine, step.text)
@@ -1005,12 +1042,40 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				pointer_button(machine, true)
 				pointer_button(machine, false)
 			}
+			if step.kind == .Front {
+				menu_x, menu_y := launcher.windows_button_center()
+				pointer_move(machine, menu_x, menu_y)
+				pointer_button(machine, true)
+				pointer_button(machine, false)
+				line, found := windows_line(machine, step.text, before)
+				if !found {
+					fmt.eprintfln("kerneltool: test failed: step %d: the menu of the windows does not have %s", index + 1, step.text)
+					return false
+				}
+				step.x, step.y = launcher.windows_line_center(line)
+			}
 			pointer_move(machine, step.x, step.y)
 			pointer_button(machine, true)
 			if step.kind == .Drag {
 				pointer_move(machine, step.to_x, step.to_y)
 			}
 			pointer_button(machine, false)
+			if step.kind == .Front {
+				// The compositor writes that the window is in front.
+				mark := strings.concatenate({"compositor: window ", step.text, " in front"}, context.temp_allocator)
+				arrived := false
+				for start := time.now(); !arrived && time.since(start) < STEP_TIMEOUT; {
+					text := log_read(machine)
+					if arrived = len(text) > before && strings.contains(text[before:], mark); !arrived {
+						time.sleep(50 * time.Millisecond)
+					}
+				}
+				if !arrived {
+					fmt.eprintfln("kerneltool: test failed: step %d: the window %s did not come to the front", index + 1, step.text)
+					return false
+				}
+				fmt.printfln("kerneltool: test passed: the window %s came to the front", step.text)
+			}
 			if moved_title != "" {
 				// The compositor writes the new place: the window did move.
 				arrived := false

@@ -1,7 +1,8 @@
 // The compositor (docs/ARCHITECTURE.md, U8): the service that owns the
 // display. It combines the surfaces of programs into the framebuffer, and it
 // sends input to the program that has focus. It is also the desktop shell of
-// this first version: a bar with a launcher, and windows that the person moves.
+// this first version: a bar with a launcher and a menu of the windows, and
+// windows that the person moves.
 package compositor
 
 import "support:display"
@@ -89,7 +90,14 @@ control: ring.Ring
 pointer_x, pointer_y: int
 buttons: u32
 dragging := -1
-menu_open: bool // The menu of the launcher is on the screen.
+// A menu of the bar.
+Menu :: enum {
+	None,
+	Programs, // The launcher: a press on a line starts the program.
+	Windows, // One line for each window, in the order of the client table: a press brings the window to the front.
+}
+
+menu_open: Menu // The menu that is on the screen.
 menu_line := -1 // The line of the menu under the pointer.
 drag_x, drag_y: int
 damage: [DAMAGE_CAPACITY]Rectangle // The parts of the screen that the next frame draws again.
@@ -142,6 +150,42 @@ damage_menu :: proc "contextless" () {
 	damage_add(x, y, width, height)
 	x, y, width, height = launcher.menu()
 	damage_add(x, y, width + SHADOW, height + SHADOW)
+	x, y, width, height = launcher.windows_button()
+	damage_add(x, y, width, height)
+	x, y, width, height = launcher.windows_menu(CLIENT_CAPACITY) // A window can leave while the menu is open.
+	damage_add(x, y, width + SHADOW, height + SHADOW)
+}
+
+// window_of_line gives the client of a line of the menu of the windows, or -1.
+window_of_line :: proc "contextless" (line: int) -> int {
+	count := 0
+	for &client, index in clients {
+		if client.surface.pixels == nil {
+			continue
+		}
+		if count == line {
+			return index
+		}
+		count += 1
+	}
+	return -1
+}
+
+// windows_log writes the lines of the menu of the windows on the log, in
+// their order: "compositor: windows: console, life, monitor".
+windows_log :: proc "contextless" () {
+	buffer: [CLIENT_CAPACITY * (size_of(system.Name) + 2)]u8
+	count := 0
+	for &client in clients {
+		if client.surface.pixels == nil {
+			continue
+		}
+		if count > 0 {
+			count += copy(buffer[count:], ", ")
+		}
+		count += copy(buffer[count:], system.name_of(client.title[:]))
+	}
+	system.log_in("surfaces", .Info, "compositor: windows: ", string(buffer[:count]))
 }
 
 damage_clock :: proc "contextless" () {
@@ -373,8 +417,10 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32) 
 	}
 	// The launcher: the button of the bar opens the menu. A press on a
 	// line starts the program. Any press closes the menu.
-	if menu_open {
-		over := launcher.line_at(pointer_x, pointer_y)
+	// The menu of the windows: its button opens it, and a press on a line
+	// brings the window to the front.
+	if menu_open != .None {
+		over := menu_open == .Programs ? launcher.line_at(pointer_x, pointer_y) : launcher.windows_line_at(order_count, pointer_x, pointer_y)
 		if over != menu_line {
 			menu_line = over
 			damage_menu()
@@ -382,20 +428,34 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32) 
 	}
 	if pressed {
 		was_open := menu_open
-		if menu_open {
-			if menu_line >= 0 {
+		if menu_open != .None {
+			if menu_open == .Programs && menu_line >= 0 {
 				packed := system.name_pack(launcher.names[menu_line])
 				system.send(&control.completions, ring.Record{kind = u32(display.Control.Start), values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3]}})
 			}
-			menu_open = false
+			if index := window_of_line(menu_line); menu_open == .Windows && menu_line >= 0 && index >= 0 {
+				for position in 0 ..< order_count {
+					if order[position] == index {
+						raise(position)
+						break
+					}
+				}
+				system.log_in("surfaces", .Info, "compositor: window ", system.name_of(clients[index].title[:]), " in front")
+			}
+			menu_open = .None
 			menu_line = -1
 			damage_menu()
 		}
-		if x, y, width, height := launcher.button(); inside(pointer_x, pointer_y, x, y, width, height) && !was_open {
-			menu_open = true
+		if x, y, width, height := launcher.button(); inside(pointer_x, pointer_y, x, y, width, height) && was_open != .Programs {
+			menu_open = .Programs
 			damage_menu()
 		}
-		if was_open || pointer_y < BAR_HEIGHT {
+		if x, y, width, height := launcher.windows_button(); inside(pointer_x, pointer_y, x, y, width, height) && was_open != .Windows {
+			menu_open = .Windows
+			windows_log()
+			damage_menu()
+		}
+		if was_open != .None || pointer_y < BAR_HEIGHT {
 			return
 		}
 		for position := order_count - 1; position >= 0; position -= 1 {
@@ -470,8 +530,11 @@ draw_area :: proc "contextless" (area: Rectangle, now: u64) {
 		graphics.fill(canvas, origin_x, origin_y, frame.width, BAR_HEIGHT, COLOR_BAR)
 		graphics.text(canvas, 10 + origin_x, y, "kernel", 0x7FC8FF)
 		left, top, button_width, button_height := launcher.button()
-		graphics.fill(canvas, left + origin_x, top + origin_y, button_width, button_height, menu_open ? COLOR_FOCUS : COLOR_BUTTON)
+		graphics.fill(canvas, left + origin_x, top + origin_y, button_width, button_height, menu_open == .Programs ? COLOR_FOCUS : COLOR_BUTTON)
 		graphics.text(canvas, left + origin_x + launcher.PADDING, y, launcher.LABEL, COLOR_BAR_TEXT)
+		left, top, button_width, button_height = launcher.windows_button()
+		graphics.fill(canvas, left + origin_x, top + origin_y, button_width, button_height, menu_open == .Windows ? COLOR_FOCUS : COLOR_BUTTON)
+		graphics.text(canvas, left + origin_x + launcher.PADDING, y, launcher.WINDOWS_LABEL, COLOR_BAR_TEXT)
 		seconds := now / 1000
 		x := frame.width - graphics.text_width("00:00:00") - 10 + origin_x
 		x = graphics.unsigned(canvas, x, y, seconds / 3600, COLOR_BAR_TEXT, 2)
@@ -482,7 +545,22 @@ draw_area :: proc "contextless" (area: Rectangle, now: u64) {
 	}
 
 	// The menu of the launcher, over the windows.
-	if menu_open {
+	if menu_open == .Windows && order_count > 0 {
+		left, top, menu_width, menu_height := launcher.windows_menu(order_count)
+		graphics.fill(canvas, left + SHADOW + origin_x, top + SHADOW + origin_y, menu_width, menu_height, 0x0A1018)
+		graphics.fill(canvas, left + origin_x, top + origin_y, menu_width, menu_height, COLOR_BUTTON)
+		for line in 0 ..< order_count {
+			index := window_of_line(line)
+			if index < 0 {
+				break
+			}
+			x, y, line_width, line_height := launcher.windows_line(line)
+			focus := index == order[order_count - 1]
+			graphics.fill(canvas, x + origin_x, y + origin_y, line_width, line_height, line == menu_line ? COLOR_FOCUS : COLOR_BAR)
+			graphics.text(canvas, x + launcher.PADDING + origin_x, y + (line_height - graphics.CELL_HEIGHT) / 2 + origin_y, system.name_of(clients[index].title[:]), focus ? 0xFFFFFF : COLOR_BAR_TEXT)
+		}
+	}
+	if menu_open == .Programs {
 		left, top, menu_width, menu_height := launcher.menu()
 		graphics.fill(canvas, left + SHADOW + origin_x, top + SHADOW + origin_y, menu_width, menu_height, 0x0A1018)
 		graphics.fill(canvas, left + origin_x, top + origin_y, menu_width, menu_height, COLOR_BUTTON)

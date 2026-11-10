@@ -137,6 +137,7 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Boot display | The picture of how the machine started, drawn from the boot record and the other records of the kernel. The boot program and the root service draw it on the screen; the program `boot` draws it in a window | splash screen, boot log, POST screen |
 | Console | A normal program that calls commands in a real programming language (P19). It has a terminal and no surface: it writes text records, and reads key records | TTY, shell |
 | Desktop shell | The program that starts programs and shows surfaces and grants to the person | launcher, window manager |
+| Menu of the windows | The menu of the bar with one line for each window. A press on a line brings the window to the front and gives it the focus | task bar, window list, switcher |
 | Picker | The surface of the document service where the person chooses a document. Its result is a grant | file dialog, powerbox |
 
 ## Terms that the system does not have
