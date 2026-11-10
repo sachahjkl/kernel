@@ -10,7 +10,7 @@ A step is one tested commit that adds one capability.
 | 2 | `71ca9ec` | `rings`: communication between programs, shown |
 | 3 | `ba67b95` | Text results |
 | 4 | `e8cbcb5` | Threads: several per program, shown by `threads` |
-| 5 | (the commit of this review) | The word wait and the lock, shown by `workers` |
+| 5 | `44d2973` | The word wait and the lock, shown by `workers` |
 
 ## Review 1: steps 1 to 5 (2026-11-10)
 
