@@ -295,7 +295,7 @@ budget_release :: proc "contextless" (index: u32) {
 	}
 	for &program in programs {
 		if program.state != .None && program.budget == index {
-			program.budget = parent
+			intrinsics.atomic_store(&program.budget, parent) // read_log_count reads it with an atomic load.
 		}
 	}
 	for &thread in threads {
@@ -1373,12 +1373,17 @@ program_fault :: proc "contextless" (index: u32, frame: ^Frame) {
 	// The module of the instruction, as the loader recorded it: a
 	// replacement names the module that runs, not the one of the import.
 	found := module_of(program, frame.rip)
-	program.stop = {code = op.STOP_CODE_FAULT + u32(frame.vector), vector = u32(frame.vector), instruction = frame.rip}
-	if frame.vector == 14 {
-		program.stop.address = cr2_read()
-	}
-	if found != nil {
-		program.stop.module = found^
+	// The first stop is the one that the report keeps: a program that a stop
+	// or another fault already stopped keeps its code and its report.
+	first := program.state != .Stopped && program.state != .None
+	if first {
+		program.stop = {code = op.STOP_CODE_FAULT + u32(frame.vector), vector = u32(frame.vector), instruction = frame.rip}
+		if frame.vector == 14 {
+			program.stop.address = cr2_read()
+		}
+		if found != nil {
+			program.stop.module = found^
+		}
 	}
 	if found == nil {
 		log_in("fault", .Warning, "kernel: program ", program_name(program), " stopped: ", name, " vector ", frame.vector, " error ", Hex(frame.error), " at ", Hex(frame.rip), " address ", Hex(cr2_read()))
@@ -1389,7 +1394,9 @@ program_fault :: proc "contextless" (index: u32, frame: ^Frame) {
 	}
 	// The stack trace: the page table of the program is the one of this
 	// processor, and the program lock is held (user_range, user_copy).
-	stack_trace(program, frame, &program.stop)
+	if first {
+		stack_trace(program, frame, &program.stop)
+	}
 	program_unlock(index, taken)
 	program_stop(index, op.STOP_CODE_FAULT + u32(frame.vector))
 }

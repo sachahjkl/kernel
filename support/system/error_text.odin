@@ -165,8 +165,12 @@ error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record,
 			return
 		}
 		handle(writer, record, argument)
-		write_part(writer, " cannot pay ")
-		amount(writer, record.limit, unit)
+		if record.unit == 0 {
+			write_part(writer, " cannot pay what the call asks")
+		} else {
+			write_part(writer, " cannot pay ")
+			amount(writer, record.limit, unit)
+		}
 		write_part(writer, "; the handle has no right Read, so the budget is not described")
 	case .Over_Limit:
 		write_part(writer, "the call needs ")

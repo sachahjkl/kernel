@@ -98,13 +98,112 @@ read_user :: proc "contextless" (program: ^Program, address: u64, destination: r
 	return true
 }
 
-// read_range says if the program can read a range of its memory. Lock: the
-// program lock.
+// read_range says if the program can read (or write) a range of its
+// memory. Lock: the program lock.
 @(private = "file")
-read_range :: proc "contextless" (program: ^Program, address: u64, size: u64) -> bool {
+read_range :: proc "contextless" (program: ^Program, address: u64, size: u64, write := false) -> bool {
 	at, taken := caller_lock(program)
 	defer program_unlock(at, taken)
-	return user_range(program, address, size, false)
+	return user_range(program, address, size, write)
+}
+
+// read_overlaps says if a range of addresses overlaps a mapping of the
+// program. Lock: the program lock.
+@(private = "file")
+read_overlaps :: proc "contextless" (program: ^Program, address: u64, size: u64) -> bool {
+	at, taken := caller_lock(program)
+	defer program_unlock(at, taken)
+	for mapping in program.mappings {
+		if mapping.page_count != 0 && address < mapping.address + mapping.page_count * PAGE_SIZE && mapping.address < address + size {
+			return true
+		}
+	}
+	return false
+}
+
+// read_mapping_at says if a mapping of the program starts at an address.
+// Lock: the program lock.
+@(private = "file")
+read_mapping_at :: proc "contextless" (program: ^Program, address: u64) -> bool {
+	at, taken := caller_lock(program)
+	defer program_unlock(at, taken)
+	for mapping in program.mappings {
+		if mapping.page_count != 0 && mapping.address == address {
+			return true
+		}
+	}
+	return false
+}
+
+// read_own_full says which tables of the program are full: its mappings,
+// its module records, its thread areas. Lock: the program lock.
+@(private = "file")
+read_own_full :: proc "contextless" (program: ^Program) -> (mappings, modules, threads: bool) {
+	at, taken := caller_lock(program)
+	defer program_unlock(at, taken)
+	mappings, modules = true, true
+	for mapping in program.mappings {
+		if mapping.page_count == 0 {
+			mappings = false
+		}
+	}
+	for item in program.modules {
+		if item.size == 0 {
+			modules = false
+		}
+	}
+	threads = program.thread_areas == max(u32)
+	return mappings, modules, threads
+}
+
+// read_regions_full says if the table of the memory objects is full. Lock:
+// the frame lock (the slots of the memory objects).
+@(private = "file")
+read_regions_full :: proc "contextless" () -> bool {
+	lock_take(&frame_lock, .Frame)
+	defer lock_free(&frame_lock, .Frame)
+	for region in regions[1:] {
+		if region.page_count == 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// Machine_Full: which tables of the machine are full.
+@(private = "file")
+Machine_Full :: struct {
+	programs, threads, budgets, messages: bool,
+}
+
+// read_machine_full reads the tables of the machine that the operations
+// that create objects scan under the control lock. Lock: the control lock.
+@(private = "file")
+read_machine_full :: proc "contextless" () -> (full: Machine_Full) {
+	control_take()
+	defer control_free()
+	full = {true, true, true, true}
+	for program in programs[1:] {
+		if program.state == .None {
+			full.programs = false
+		}
+	}
+	for &thread in threads[1:] {
+		if thread.state == .None && intrinsics.atomic_load(&thread.references) == 0 {
+			full.threads = false
+		}
+	}
+	for budget in budgets[1:] {
+		if !budget.live {
+			full.budgets = false
+		}
+	}
+	for candidate in u32(INTERRUPT_LINES) ..< INTERRUPT_CAPACITY {
+		if interrupt_references[candidate] == 0 {
+			full.messages = false
+		}
+	}
+	return full
 }
 
 // read_word says if a program can wait on a word. Lock: the program lock.
@@ -123,40 +222,62 @@ read_threads :: proc "contextless" (program: ^Program) -> u32 {
 	return program.thread_count
 }
 
-// read_budget copies the amounts of the budget of a handle with the right
-// Spend. Locks, in their order: the control lock (the programs, the threads
-// and the limits of a budget), the program lock (the handle), the frame lock
-// (the pages of a budget).
+// read_budget copies the rights of a budget handle with the right Spend,
+// and, with the right Read, the amounts that the operation needs. Locks, in
+// their order: the control lock only for the programs, the threads and the
+// limits (Program_Create, Thread_Create, Budget_Create); the program lock
+// (the handle); the frame lock (the pages). A handle without Read gives no
+// amount (P20).
 @(private = "file")
-read_budget :: proc "contextless" (program: ^Program, handle: u64) -> (amounts: op.Budget_Amounts, rights: op.Rights, ok: bool) {
-	control_take()
-	defer control_free()
+read_budget :: proc "contextless" (program: ^Program, handle: u64, operation: op.Operation) -> (amounts: op.Budget_Amounts, rights: op.Rights, ok: bool) {
+	rights, ok = read_budget_rights(program, handle)
+	if !ok || .Read not_in rights {
+		return {}, rights, ok
+	}
+	control := operation != .Memory_Create
+	if control {
+		control_take()
+	}
+	at, taken := caller_lock(program)
+	slot: Handle_Slot
+	if slot, ok = find(program, handle, .Budget, {.Spend, .Read}); ok {
+		budget := &budgets[slot.object]
+		if control {
+			amounts = budget.amounts
+		}
+		lock_take(&frame_lock, .Frame)
+		amounts.pages = budget.amounts.pages
+		lock_free(&frame_lock, .Frame)
+	}
+	program_unlock(at, taken)
+	if control {
+		control_free()
+	}
+	return amounts, slot.rights, ok
+}
+
+// read_budget_rights gives the rights of a budget handle with the right
+// Spend. Lock: the program lock.
+@(private = "file")
+read_budget_rights :: proc "contextless" (program: ^Program, handle: u64) -> (rights: op.Rights, ok: bool) {
 	at, taken := caller_lock(program)
 	defer program_unlock(at, taken)
 	slot: Handle_Slot
-	if slot, ok = find(program, handle, .Budget, {.Spend}); !ok {
-		return {}, {}, false
-	}
-	lock_take(&frame_lock, .Frame)
-	amounts = budgets[slot.object].amounts
-	lock_free(&frame_lock, .Frame)
-	return amounts, slot.rights, true
+	slot, ok = find(program, handle, .Budget, {.Spend})
+	return slot.rights, ok
 }
 
 // read_log_count gives the log records in this second of the budget that
 // paid for the program, and its limit, if the program holds that budget
-// with the right Read (P20); held is false otherwise. Locks, in their order:
-// the control lock (the limit), the program lock (the handles), the frame
-// lock (program.budget). The count is atomic.
+// with the right Read (P20); held is false otherwise. Lock: the program lock
+// only. The handle keeps the budget live; program.budget changes only when
+// that budget ends (an atomic store), and the limit of a live budget never
+// changes: no other lock is needed. The count is atomic.
 @(private = "file")
 read_log_count :: proc "contextless" (program: ^Program) -> (logged, limit: u64, held: bool) {
-	control_take()
-	defer control_free()
 	at, taken := caller_lock(program)
 	defer program_unlock(at, taken)
-	lock_take(&frame_lock, .Frame)
-	budget := program.budget
-	lock_free(&frame_lock, .Frame)
+	budget := intrinsics.atomic_load(&program.budget)
 	for slot in program.handles[1:] {
 		if slot.kind == .Budget && slot.object == budget && .Read in slot.rights {
 			held = true
@@ -297,7 +418,7 @@ handle_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Pr
 	slot := read_handle(program, index)
 	if slot.kind == .None || u64(slot.generation) != generation {
 		switch {
-		case slot.kind == .None && u64(slot.generation) == generation + 1:
+		case slot.kind == .None && slot.generation == u16(generation + 1): // A close of generation 0xFFFF gives 0.
 			record_set(record, .Handle_Ended, .None, argument, handle, 0, u64(slot.ended))
 		case u64(slot.generation) > generation:
 			record_set(record, .Handle_Ended, .None, argument, handle, 0, u64(errors.End.Unknown))
@@ -363,13 +484,17 @@ handles_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^P
 @(private = "file")
 budget_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Program, operation: op.Operation, v: [7]u64) -> bool {
 	if operation == .Log {
-		// The limit of the budget of the program, or of a budget above it.
-		// The budget that paid for the program: its counts only with a
-		// handle with Read (P20); a budget above it is never described.
+		// The limit of the budget of the program. Its counts only with a
+		// handle with Read (P20); a budget above it is never described: when
+		// the budget of the program is not over its limit now, a budget above
+		// refused, or a new second started, and the record is Refused.
 		logged, limit, held := read_log_count(program)
 		if !held {
 			record_set(record, .Budget_Hidden, .Log_Records, 0, 0, 1, 0)
 			return true
+		}
+		if logged < limit {
+			return false
 		}
 		record_set(record, .Over_Limit, .Log_Records, 0, logged + 1, limit, 0)
 		return true
@@ -377,9 +502,24 @@ budget_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Pr
 	if operation != .Memory_Create && operation != .Program_Create && operation != .Thread_Create && operation != .Budget_Create {
 		return false
 	}
-	holds, rights, found := read_budget(program, v[0])
+	holds, rights, found := read_budget(program, v[0], operation)
 	if !found {
 		return false
+	}
+	// Without Read the record depends on the operation alone (P20).
+	if .Read not_in rights {
+		#partial switch operation {
+		case .Memory_Create:
+			flags := transmute(op.Memory_Flags)v[2]
+			record_set(record, .Budget_Hidden, .Pages, 1, v[0], region_cost(v[1], .Contiguous in flags), 0)
+		case .Program_Create:
+			record_set(record, .Budget_Hidden, .Programs, 1, v[0], 1, 0)
+		case .Thread_Create:
+			record_set(record, .Budget_Hidden, .Threads, 1, v[0], 1, 0)
+		case .Budget_Create:
+			record_set(record, .Budget_Hidden, .None, 1, v[0], 0, 0)
+		}
+		return true
 	}
 	unit: errors.Unit
 	asked, held: u64
@@ -408,11 +548,11 @@ budget_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Pr
 			}
 		}
 	}
-	if .Read not_in rights {
-		record_set(record, .Budget_Hidden, unit, argument, v[0], asked, 0)
-	} else {
-		record_set(record, .Budget, unit, argument, v[0], asked, held)
+	// The cause is gone: the budget can pay now.
+	if asked <= held {
+		return false
 	}
+	record_set(record, .Budget, unit, argument, v[0], asked, held)
 	return true
 }
 
@@ -433,22 +573,33 @@ address_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^P
 	case .Log:
 		if v[2] > 4096 {
 			record_set(record, .Too_Long, .Bytes, 3, v[2], 4096, 0)
-		} else {
+		} else if !read_range(program, v[1], v[2]) {
 			record_set(record, .Bad_Address, .Bytes, 2, v[1], v[2], 0)
+		} else {
+			return false
 		}
 	case .Program_Create:
 		if v[2] > 31 {
 			record_set(record, .Too_Long, .Bytes, 3, v[2], 31, 0)
-		} else {
+		} else if !read_range(program, v[1], v[2]) {
 			record_set(record, .Bad_Address, .Bytes, 2, v[1], v[2], 0)
+		} else {
+			return false
 		}
 	case .Program_State:
+		if read_range(program, v[1], size_of(op.Stop_Report), true) {
+			return false
+		}
 		record_set(record, .Bad_Address, .Bytes, 2, v[1], size_of(op.Stop_Report), 1)
 	case .Program_Module:
 		module: op.Module_Record
 		if !read_user(program, v[1], &module, size_of(module)) {
 			record_set(record, .Bad_Address, .Bytes, 2, v[1], size_of(op.Module_Record), 0)
 			return true
+		}
+		// The records of another program need its lock: no more detail.
+		if v[0] != 0 {
+			return false
 		}
 		if module.size == 0 {
 			record_set(record, .Absent, .Bytes, 2, module.base, 0, 0) // No record has this base.
@@ -462,7 +613,9 @@ address_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^P
 		}
 		for index in 0 ..< v[1] {
 			word: op.Word
-			read_user(program, v[0] + index * size_of(op.Word), &word, size_of(op.Word))
+			if !read_user(program, v[0] + index * size_of(op.Word), &word, size_of(op.Word)) {
+				return false // Unmapped since: the cause is not known now.
+			}
 			if !read_word(program, word.address) {
 				record_set(record, .Bad_Address, .Bytes, 1, word.address, 4, 0)
 				return true
@@ -470,14 +623,19 @@ address_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^P
 		}
 		return false
 	case .Word_Wake:
+		if read_word(program, v[0]) {
+			return false
+		}
 		record_set(record, .Bad_Address, .Bytes, 1, v[0], 4, 0)
 	case .Inspect:
 		kind := op.Inspect_Kind(v[1])
 		size := kind <= max(op.Inspect_Kind) ? INSPECT_SIZES[kind] : 0
 		if v[4] < size {
 			record_set(record, .Too_Small, .Bytes, 5, v[4], size, 0)
-		} else {
+		} else if !read_range(program, v[3], size, true) {
 			record_set(record, .Bad_Address, .Bytes, 4, v[3], size, 1)
+		} else {
+			return false
 		}
 	case .Memory_Map:
 		page_count, found := read_memory_pages(program, v[0])
@@ -492,10 +650,15 @@ address_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^P
 			record_set(record, .Too_Long, .Pages, 6, count, page_count - v[4], 0)
 		case v[2] != 0 && (v[2] % PAGE_SIZE != 0 || v[2] < PAGE_SIZE || v[2] >= USER_END || count * PAGE_SIZE > USER_END - v[2]):
 			record_set(record, .Bad_Address, .Bytes, 3, v[2], count * PAGE_SIZE, 0)
-		case:
+		case v[2] != 0 && v[1] == 0 && read_overlaps(program, v[2], count * PAGE_SIZE):
 			record_set(record, .Overlap, .Bytes, 3, v[2], count * PAGE_SIZE, 0) // The addresses of another mapping.
+		case:
+			return false // In another program, whose mappings need its lock, or the overlap is gone.
 		}
 	case .Memory_Unmap:
+		if v[0] != 0 || read_mapping_at(program, v[1]) {
+			return false
+		}
 		record_set(record, .Absent, .Bytes, 2, v[1], 0, 0) // No mapping starts at this address.
 	case:
 		return false
@@ -503,44 +666,85 @@ address_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^P
 	return true
 }
 
+// slot_explain names the full table that refused, only when the table is
+// full now and it is the one cause that the state shows; else Refused.
 @(private = "file")
 slot_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Program, operation: op.Operation, v: [7]u64) -> bool {
-	free_handles := read_free_handles(program)
+	mappings, modules, areas := read_own_full(program)
 	#partial switch operation {
 	case .Word_Wait:
-		thread_words: u64 = op.WORD_WAIT_CAPACITY
-		record_set(record, .Too_Long, .Words, 2, v[1], thread_words, 0)
+		// The words of this entry count too: only a list longer than the
+		// capacity is one cause that the record can name.
+		if v[1] <= op.WORD_WAIT_CAPACITY {
+			return false
+		}
+		record_set(record, .Too_Long, .Words, 2, v[1], op.WORD_WAIT_CAPACITY, 0)
 		return true
 	case .Memory_Map:
+		if v[1] != 0 || !mappings {
+			return false
+		}
 		record_set(record, .Full, .Mappings, 0, 0, MAPPING_CAPACITY, 0)
 		return true
 	case .Program_Module:
+		if v[0] != 0 || !modules {
+			return false
+		}
 		record_set(record, .Full, .Modules, 0, 0, op.PROGRAM_MODULE_CAPACITY, 0)
 		return true
 	case .Handle_Give:
-		record_set(record, .Full, .Handles, 1, v[0], HANDLE_CAPACITY - 1, 0) // The table of the target.
+		// The one cause of No_Slot here: the handle table of the target.
+		record_set(record, .Full, .Handles, 1, v[0], HANDLE_CAPACITY - 1, 0)
 		return true
 	}
-	if free_handles == 0 {
+	// The new handle goes in the table of the caller.
+	if operation != .Program_Start && read_free_handles(program) == 0 {
 		record_set(record, .Full, .Handles, 0, 0, HANDLE_CAPACITY - 1, 0)
 		return true
 	}
+	machine := read_machine_full()
 	#partial switch operation {
 	case .Memory_Create:
+		if !read_regions_full() {
+			return false
+		}
 		record_set(record, .Full, .Memory, 0, 0, REGION_CAPACITY - 1, 0)
 	case .Program_Create:
+		if !machine.programs {
+			return false
+		}
 		record_set(record, .Full, .Programs, 0, 0, PROGRAM_CAPACITY - 1, 0)
 	case .Thread_Create, .Program_Start:
-		// The threads of the program, else the thread table of the machine.
-		if operation == .Thread_Create && read_threads(program) >= op.THREAD_CAPACITY {
+		// The causes: the thread areas of the program, its mappings (the
+		// thread area is a mapping), the memory objects of the machine (the
+		// thread area is one), the thread table of the machine. The areas and
+		// the mappings of another program (Program_Start) need its lock.
+		switch {
+		case operation == .Thread_Create && areas:
 			record_set(record, .Full, .Threads, 0, 0, op.THREAD_CAPACITY, 0)
-		} else {
+		case operation == .Thread_Create && mappings:
+			record_set(record, .Full, .Mappings, 0, 0, MAPPING_CAPACITY, 0)
+		case read_regions_full():
+			record_set(record, .Full, .Memory, 0, 0, REGION_CAPACITY - 1, 0)
+		case machine.threads:
 			record_set(record, .Full, .Threads, 0, 0, THREAD_TABLE_CAPACITY - 1, 0)
+		case:
+			return false
 		}
 	case .Budget_Create:
+		if !machine.budgets {
+			return false
+		}
 		record_set(record, .Full, .Budgets, 0, 0, BUDGET_CAPACITY - 1, 0)
 	case .Device_Create:
-		record_set(record, .Full, .Interrupts, 0, 0, op.MESSAGE_CAPACITY, 0)
+		switch {
+		case op.Device_Kind(v[1]) == .Message && machine.messages:
+			record_set(record, .Full, .Interrupts, 0, 0, op.MESSAGE_CAPACITY, 0)
+		case op.Device_Kind(v[1]) == .Memory && read_regions_full():
+			record_set(record, .Full, .Memory, 0, 0, REGION_CAPACITY - 1, 0)
+		case:
+			return false
+		}
 	case:
 		return false
 	}

@@ -75,7 +75,7 @@ grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 	case "notes":
 		return {.Store}
 	case "errors":
-		return {.Store, .Image} // It makes errors in its store, and loads modules and starts fault from the boot image.
+		return {.Store, .Image, .Inspect} // It makes errors in its store, loads modules and starts fault from the boot image, and counts the locks.
 	case "imports":
 		return {.Inspect, .Image} // It loads modules of the boot image, and measures with the cycle counter.
 	case "net":
@@ -175,7 +175,7 @@ things_of :: proc "contextless" (name: string) -> system.Budget_Amounts {
 	case "imports":
 		return {pages = 2048, programs = 3, threads = 3} // Two programs that import calendar.
 	case "errors":
-		return {pages = 2048, programs = 2, threads = 4} // It starts fault, and 3 threads under contention.
+		return {pages = 2048, programs = 3, threads = 4} // It starts fault and its child, and 3 threads under contention.
 	}
 	return {pages = 2048, programs = 1, threads = 1}
 }
@@ -185,7 +185,7 @@ things_of :: proc "contextless" (name: string) -> system.Budget_Amounts {
 // the log to them.
 log_grant :: proc "contextless" (name: string) -> system.Grant {
 	rights := system.Rights{.Write}
-	if name == "console" || name == "rings" {
+	if name == "console" || name == "rings" || name == "errors" { // errors gives it to its child, which measures a refused Log.
 		rights += {.Give}
 	}
 	return {system.context_record().handles[op.CONTEXT_LOG], rights}

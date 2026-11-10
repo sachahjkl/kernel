@@ -402,6 +402,84 @@ measure :: proc "contextless" () {
 	}
 }
 
+// The refusals that read a budget: a Log over the limit of the budget of the
+// program, and a Memory_Create that a budget cannot pay. A refused Log needs
+// a program with a log limit of 0: this program starts a copy of itself as
+// a child (VALUE_CHILD), with a budget of 0 log records, which measures and
+// writes its time in a page that the two map. The locks: System_Report.locks
+// before and after each loop, for all the processors.
+VALUE_CHILD :: 8
+MEASURE_ADDRESS :: 0x0000_3200_0000_0000
+REFUSALS :: 100_000
+
+Child_Page :: struct {
+	log_ns: u64,
+	done:   u64,
+}
+
+refused_log_ns, refused_log_control, refused_log_frame: u64
+refused_create_ns, refused_create_control, refused_create_frame: u64
+
+lock_takes :: proc "contextless" (machine: system.Handle) -> (control, frame: u64) {
+	report: op.System_Report
+	system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.System), 0, u64(uintptr(&report)), size_of(report))
+	return report.locks[op.Lock_Kind.Control].takes, report.locks[op.Lock_Kind.Frame].takes
+}
+
+// child runs REFUSALS refused Log operations, writes their time, and stops.
+child :: proc "contextless" (ctx: ^system.Context) -> ! {
+	page := (^Child_Page)(uintptr(MEASURE_ADDRESS))
+	log := u64(ctx.handles[op.CONTEXT_LOG])
+	text := "x"
+	start := system.time()
+	for _ in 0 ..< REFUSALS {
+		system.call(.Log, log, u64(uintptr(raw_data(text))), 1, u64(op.Log_Level.Debug), 0, 0)
+	}
+	page.log_ns = (system.time() - start) * 1_000_000 / REFUSALS
+	intrinsics.atomic_store(&page.done, 1)
+	system.stop(0)
+}
+
+// refusals measures the two refusals; the machine handle reads the counts of
+// the locks.
+refusals :: proc "contextless" (ctx: ^system.Context) {
+	machine := ctx.handles[system.GRANT_MACHINE]
+	memory, _ := system.memory_create(1)
+	defer system.close(memory)
+	address, _ := system.memory_map(memory)
+	page := (^Child_Page)(address)
+	grants: [op.CONTEXT_HANDLES]system.Grant
+	grants[op.CONTEXT_LOG] = {ctx.handles[op.CONTEXT_LOG], {.Write}}
+	values: [op.CONTEXT_VALUES]u64
+	values[VALUE_CHILD] = 1
+	mappings := [1]system.Mapping{{memory = memory, address = MEASURE_ADDRESS, flags = {.Write}}}
+	control, frame := lock_takes(machine)
+	error: module.Load_Error
+	program, status := system.program_start(system.image_find(image, "errors"), "errors child", grants, values, {pages = 256, programs = 1, threads = 1, processor = 1_000_000, log_records = 0}, mappings[:], nil, {image = image}, &error)
+	if status == .Ok {
+		for intrinsics.atomic_load(&page.done) == 0 {
+			if state, _ := system.program_state(program); state == .Stopped {
+				break
+			}
+			system.sleep(system.time() + 10)
+		}
+		system.close(program)
+	}
+	control_after, frame_after := lock_takes(machine)
+	refused_log_ns, refused_log_control, refused_log_frame = page.log_ns, control_after - control, frame_after - frame
+	budget, _ := system.budget_create({pages = 2})
+	defer system.close(budget)
+	control, frame = lock_takes(machine)
+	start := system.time()
+	for _ in 0 ..< REFUSALS {
+		system.call(.Memory_Create, u64(budget), 64, 0)
+	}
+	refused_create_ns = (system.time() - start) * 1_000_000 / REFUSALS
+	control_after, frame_after = lock_takes(machine)
+	refused_create_control, refused_create_frame = control_after - control, frame_after - frame
+	system.log("errors: ", u64(REFUSALS), " refused Log: ", refused_log_ns, " ns each, the control lock taken ", refused_log_control, " times and the frame lock ", refused_log_frame, " times; ", u64(REFUSALS), " refused Memory_Create: ", refused_create_ns, " ns each, the control lock taken ", refused_create_control, " times and the frame lock ", refused_create_frame, " times")
+}
+
 // Failures under contention: two threads make failures on the handles that
 // a third thread closes and makes again, at the same time. Each record must
 // explain its status: the kernel reads the state again after the failure,
@@ -435,7 +513,9 @@ explains :: proc "contextless" (record: ^errors.Error_Record, status: system.Sta
 	case .No_Right:
 		return kind == .Handle_Rights
 	case .No_Budget:
-		return kind == .Budget || kind == .Budget_Hidden || kind == .Over_Limit
+		// A budget record names a cause that holds: the budget holds less
+		// than the call asks; a count over its limit.
+		return kind == .Budget && record.limit > record.found || kind == .Budget_Hidden || kind == .Over_Limit && record.value > record.limit
 	}
 	return false
 }
@@ -522,6 +602,9 @@ FAULT_CASE :: 18
 
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
+	if ctx.values[VALUE_CHILD] != 0 {
+		child(ctx)
+	}
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "errors")
 	if !ok {
 		system.stop(1)
@@ -555,6 +638,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.log("errors: WRONG: the case under contention failed")
 	}
 	measure()
+	refusals(ctx)
 	system.log("errors: a kernel operation that succeeds: ", kernel_good, " ns; one that fails, with its error record: ", kernel_failed, " ns; a direct call that succeeds: ", direct_good, " ns; one that fails: ", direct_failed, " ns")
 
 	pressed := false

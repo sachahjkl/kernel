@@ -1147,6 +1147,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "errors: ok, 19 cases, each with the expected error record"},
 	{kind = .Wait, text = "errors: under contention: "},
 	{kind = .Wait, text = " handles; 0 records contradict their status"},
+	{kind = .Wait, text = " refused Memory_Create: "},
 	{kind = .Wait, text = "errors: a kernel operation that succeeds: "},
 	{kind = .Front, text = "errors"},
 	{kind = .Key, text = "b"},
