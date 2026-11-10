@@ -1,9 +1,9 @@
 package kernel
 
-import info "../boot_info"
-import module "../module"
+import info "contract:boot_info"
+import module "contract:module"
 import "base:intrinsics"
-import op "operation"
+import op "contract:operation"
 
 // Paging as a tool of the kernel on itself (owner decision of 2026-11-10).
 //

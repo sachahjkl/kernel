@@ -4,11 +4,11 @@
 // this first version: a bar with a launcher, and windows that the person moves.
 package compositor
 
-import "../../display"
-import "../../graphics"
-import "../launcher"
-import "../../ring"
-import "../../system"
+import "support:display"
+import "support:graphics"
+import "support:launcher"
+import "contract:ring"
+import "support:system"
 import "base:intrinsics"
 
 // The context of this service.

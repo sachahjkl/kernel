@@ -1,9 +1,9 @@
 // A demonstration: an animation that the processor computes for each frame.
 package plasma
 
-import "../../display"
-import "../../graphics"
-import "../../system"
+import "support:display"
+import "support:graphics"
+import "support:system"
 
 WIDTH :: 320
 HEIGHT :: 200

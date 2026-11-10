@@ -11,9 +11,9 @@
 // lock, then with no lock. With no lock, additions are lost.
 package workers
 
-import "../../display"
-import "../../graphics"
-import "../../system"
+import "support:display"
+import "support:graphics"
+import "support:system"
 import "base:intrinsics"
 
 TILE :: 32

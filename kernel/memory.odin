@@ -1,6 +1,6 @@
 package kernel
 
-import info "../boot_info"
+import info "contract:boot_info"
 import "base:intrinsics"
 
 // K2, memory: the page frames, and the page tables of address spaces.

@@ -1,6 +1,6 @@
 package system
 
-import op "../kernel/operation"
+import op "contract:operation"
 
 // Text without an allocator: a Part is a string or a number, and format
 // writes parts in a buffer.

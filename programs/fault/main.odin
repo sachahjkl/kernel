@@ -2,7 +2,7 @@
 // the kernel stops this program only: the rest of the system continues.
 package fault
 
-import "../../system"
+import "support:system"
 import "base:intrinsics"
 
 @(export, link_name = "entry")

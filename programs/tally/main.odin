@@ -11,9 +11,9 @@
 // An export needs nothing from the entry: it reads and writes the data of the module only. That is the one rule for a module that has each role.
 package tally
 
-import "../../display"
-import "../../graphics"
-import "../../system"
+import "support:display"
+import "support:graphics"
+import "support:system"
 
 WIDTH :: 400
 HEIGHT :: 214

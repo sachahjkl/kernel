@@ -4,10 +4,10 @@
 // image.
 package boot
 
-import "../../bootscreen"
-import "../../bootscreen/collect"
-import "../../display"
-import "../../system"
+import "support:bootscreen"
+import "support:bootscreen/collect"
+import "support:display"
+import "support:system"
 
 INTERVAL :: 500
 

@@ -27,6 +27,7 @@ A step is one tested commit that adds one capability.
 | 19 | `c538baa` | A shared queue: several writers and several readers with no lock; an event that several threads wait on; a wake for one thread that does not enter the kernel for each record; the scenario reads the place of each window; measured by `crowd` |
 | 20 | `f3bdf49` | The time page: the kernel writes the time in one page that each program reads; `system.time()` does not enter the kernel; measured by `clock` |
 | 21 | `1b92079` | One module in each role (`tally`: program, service, library, sandboxed program); a module carries its documentation; `manual` shows it; `unload` in the console |
+| 22 | `HASH22` | Two source libraries, `contract:` and `support:`; no relative import; the kernel compiles with the contract library only; the command `kerneltool` |
 
 ## Review 1: steps 1 to 5 (2026-11-10)
 

@@ -11,10 +11,10 @@
 // The program needs the grant to inspect the machine.
 package processors
 
-import "../../display"
-import "../../graphics"
-import op "../../kernel/operation"
-import "../../system"
+import "support:display"
+import "support:graphics"
+import op "contract:operation"
+import "support:system"
 import "base:intrinsics"
 
 PICTURE_WIDTH :: 448

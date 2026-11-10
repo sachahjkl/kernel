@@ -1,8 +1,8 @@
 package kernel
 
-import "../ring"
+import "contract:ring"
 import "base:intrinsics"
-import op "operation"
+import op "contract:operation"
 
 // K1 and K3: the objects, the handle tables, the programs and the scheduler.
 // All tables are flat arrays with a fixed capacity. Index 0 of each table is

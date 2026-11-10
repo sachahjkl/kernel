@@ -20,12 +20,12 @@
 // when it is full: the oldest lines go.
 package terminal_program
 
-import "../../display"
-import "../../graphics"
-import op "../../kernel/operation"
-import "../../ring"
-import "../../system"
-import "../../terminal"
+import "support:display"
+import "support:graphics"
+import op "contract:operation"
+import "contract:ring"
+import "support:system"
+import "support:terminal"
 import "base:intrinsics"
 
 PROGRAM :: "flood" // The program that this terminal starts.

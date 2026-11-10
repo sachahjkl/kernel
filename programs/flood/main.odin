@@ -5,8 +5,8 @@
 // is a field of its record. The status has the count of lines.
 package flood
 
-import "../../system"
-import "../../terminal"
+import "support:system"
+import "support:terminal"
 
 STATUS_LINES :: 1 << 16 // The lines between two statuses.
 ROUND :: 100_000_000 // The lines of one round of the status.

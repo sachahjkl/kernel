@@ -9,9 +9,9 @@
 // isolated call when the person presses Escape.
 package console
 
-import "../../display"
-import "../../graphics"
-import "../../system"
+import "support:display"
+import "support:graphics"
+import "support:system"
 import "base:intrinsics"
 
 CONSOLE_MARK :: "console: ready"

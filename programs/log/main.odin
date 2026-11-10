@@ -10,9 +10,9 @@
 // The program needs the grant to read the records of the log.
 package log
 
-import "../../display"
-import "../../graphics"
-import "../../system"
+import "support:display"
+import "support:graphics"
+import "support:system"
 
 ROWS :: 30
 CHANNELS :: 12

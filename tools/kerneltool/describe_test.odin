@@ -1,6 +1,6 @@
 package kerneltool
 
-import module "../../module"
+import module "contract:module"
 import "base:runtime"
 import "core:odin/tokenizer"
 import "core:testing"

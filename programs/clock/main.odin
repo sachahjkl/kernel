@@ -10,10 +10,10 @@
 // time, and that the kernel refuses to remove the time page.
 package clock
 
-import "../../display"
-import "../../graphics"
-import op "../../kernel/operation"
-import "../../system"
+import "support:display"
+import "support:graphics"
+import op "contract:operation"
+import "support:system"
 
 DURATION :: 1000 // Milliseconds of one measure.
 

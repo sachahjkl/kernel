@@ -1,6 +1,6 @@
 package console
 
-import "../../system"
+import "support:system"
 
 // The language of the console.
 //

@@ -23,6 +23,17 @@ EXIT_USAGE :: 2
 ROOT_MARK :: "flake.nix"
 
 BUILD_FOLDER :: "build"
+
+// The two source libraries of the project (docs/GLOSSARY.md). An import
+// names its library: "contract:ring", "support:system".
+//   contract   what two parties agree on: records, numbers, and the code
+//              that reads them. It uses no kernel operation. The kernel
+//              compiles with this library only.
+//   support    what a program compiles in to use the contracts.
+// flake.nix gives the same two flags to the compiler when it builds this tool.
+CONTRACT_LIBRARY :: "-collection:contract=contract"
+SUPPORT_LIBRARY :: "-collection:support=support"
+CONTRACT_PACKAGES :: []string{"blake3", "boot_info", "isolated", "module", "operation", "ring"}
 BOOT_OBJECT_FOLDER :: BUILD_FOLDER + "/boot"
 BOOT_PROGRAM :: BOOT_OBJECT_FOLDER + "/BOOTX64.EFI"
 BOOT_VOLUME :: BUILD_FOLDER + "/boot_volume.img"
@@ -121,6 +132,8 @@ build_boot_program :: proc(image: string, volume_path: string, self_test: int) -
 			"-disable-red-zone",
 			"-o:speed",
 			"-vet",
+			CONTRACT_LIBRARY,
+			SUPPORT_LIBRARY,
 			strings.concatenate({"-define:BOOT_IMAGE=../build/", image}, context.temp_allocator),
 			fmt.tprintf("-define:SELF_TEST=%d", self_test),
 			"-out:" + BOOT_OBJECT_FOLDER + "/boot.obj",
@@ -240,12 +253,20 @@ run_film :: proc(args: []string) -> int {
 }
 
 run_check :: proc(args: []string) -> int {
-	if !run({"odin", "check", "tools/kerneltool", "-vet"}) {
+	if !run({"odin", "check", "tools/kerneltool", "-vet", CONTRACT_LIBRARY, SUPPORT_LIBRARY}) {
 		return EXIT_FAILURE
 	}
-	for folder in ([]string{"blake3", "isolated", "tools/kerneltool"}) {
+	// A package of the contract library compiles with that library only:
+	// the compiler refuses an import of "support:".
+	for name in CONTRACT_PACKAGES {
+		if !run({"odin", "check", strings.concatenate({"contract/", name}, context.temp_allocator), "-no-entry-point", "-vet", CONTRACT_LIBRARY}) {
+			return EXIT_FAILURE
+		}
+		fmt.printfln("kerneltool: test passed: contract:%s compiles with the contract library only", name)
+	}
+	for folder in ([]string{"contract/blake3", "contract/isolated", "tools/kerneltool"}) {
 		name, _ := strings.replace_all(folder, "/", "_", context.temp_allocator)
-		if !run({"odin", "test", folder, "-vet", strings.concatenate({"-out:" + BUILD_FOLDER + "/test_", name}, context.temp_allocator)}) {
+		if !run({"odin", "test", folder, "-vet", CONTRACT_LIBRARY, SUPPORT_LIBRARY, strings.concatenate({"-out:" + BUILD_FOLDER + "/test_", name}, context.temp_allocator)}) {
 			return EXIT_FAILURE
 		}
 	}

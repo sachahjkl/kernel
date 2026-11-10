@@ -12,9 +12,9 @@
 // and Present names the picture that is complete.
 package display
 
-import "../graphics"
-import "../ring"
-import "../system"
+import "support:graphics"
+import "contract:ring"
+import "support:system"
 
 Command :: enum u32 {
 	None           = 0,

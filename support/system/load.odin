@@ -1,8 +1,8 @@
 package system
 
-import info "../boot_info"
-import op "../kernel/operation"
-import module "../module"
+import info "contract:boot_info"
+import op "contract:operation"
+import module "contract:module"
 
 // The loader (docs/ARCHITECTURE.md, U3): it builds a program from a module.
 // It runs in user space. The kernel only creates the empty program and maps

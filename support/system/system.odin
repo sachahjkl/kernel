@@ -2,8 +2,8 @@
 // programs. It is compiled into each program. It allocates no hidden memory.
 package system
 
-import op "../kernel/operation"
-import "../ring"
+import op "contract:operation"
+import "contract:ring"
 import "base:intrinsics"
 
 Handle :: op.Handle

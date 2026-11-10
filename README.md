@@ -94,15 +94,10 @@ The system boots under QEMU to a graphical desktop with a console, a system tool
 
 | Folder | Content |
 |---|---|
-| `boot/`, `boot_info/` | The boot program (UEFI) and the record that it gives to the kernel |
-| `kernel/` | The kernel. `kernel/operation/` defines the kernel operations |
-| `module/`, `blake3/` | The module format, the loader code, the hash |
-| `ring/` | The ring: two queues in shared memory. The shared queue: several writers and several readers |
-| `isolated/` | The isolated call: the argument record and its checks |
-| `terminal/` | The terminal ring and the text region: what a program sends to a terminal |
-| `relay/` | The records and the grants of the `rings` demonstration |
-| `system/` | The library of a program: kernel operations, text, loader, grants |
-| `graphics/`, `display/` | Drawing with the processor; the protocol of the compositor |
+| `boot/` | The boot program (UEFI) |
+| `kernel/` | The kernel. It compiles with the contract library only |
+| `contract/` | The source library `contract:`: what two parties agree on. `operation` (the kernel operations), `boot_info` (the record from the boot program to the kernel), `module` (the module format and the loader code), `blake3` (the hash), `ring` (two queues in shared memory, and the shared queue), `isolated` (the isolated call) |
+| `support/` | The source library `support:`: what a program compiles in. `system` (kernel operations, text, loader, grants, services), `graphics`, `display` (the protocol of the compositor), `terminal` (the terminal ring), `bootscreen`, `launcher` (the menu of the bar), `relay` (the records of the `rings` demonstration) |
 | `programs/` | `root`, `input`, `compositor`, `console`, `host`, `monitor`, `plasma`, `life`, `paint`, `fault`, `temple`, `rings`, `node`, `threads`, `workers`, `rights`, `budget`, `processors`, `boot`, `pages`, `log`, `flow`, `crowd`, `clock`, `tally`, `manual`, `terminal`, `flood`, and the table `launcher` |
 | `modules/` | Modules of commands (`math`, `probe`) and the test modules of the host load test |
 | `tools/kerneltool/` | The kernel tool: all the automation of the project |
@@ -113,8 +108,7 @@ The Nix flake supplies the compiler, the linker, the assembler, QEMU and the UEF
 
 ```
 nix develop
-mkdir -p build
-odin run tools/kerneltool -out:build/kerneltool -- run
+kerneltool run
 ```
 
 | Command | Action |
@@ -124,7 +118,7 @@ odin run tools/kerneltool -out:build/kerneltool -- run
 | `test` | Build, start the machine, act as the person (keys, pointer), check the log, save pictures |
 | `screenshots` | `test`, then copy the pictures to `docs/screenshots/` |
 | `film` | Build, start the machine, film the terminal, write `build/film/terminal.mp4` (not a test) |
-| `font` | Convert the BDF file of the font to `graphics/font.odin` |
+| `font` | Convert the BDF file of the font to `support/graphics/font.odin` |
 | `portrait` | Convert `programs/temple/portrait.jpg` to `programs/temple/portrait.pixels` |
 | `check` | `odin check -vet` and `odin test` of the host code, then `test` |
 
@@ -134,6 +128,6 @@ In the machine, type `help()` in the console. The button "programs" of the bar o
 
 ## Licences
 
-The font is Spleen 8x16 by Frederic Cambus, BSD 2-Clause. See `graphics/FONT_LICENSE`.
+The font is Spleen 8x16 by Frederic Cambus, BSD 2-Clause. See `support/graphics/FONT_LICENSE`.
 
 The portrait of the `temple` program is a public domain picture from Wikimedia Commons. See `programs/temple/PORTRAIT_LICENSE`.

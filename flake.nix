@@ -36,19 +36,26 @@
       };
     };
 
+    # The command "kerneltool": it compiles tools/kerneltool with the two source
+    # libraries of the project, and runs it in the folder of the project.
+    kerneltool = pkgs.writeShellScriptBin "kerneltool" ''
+      mkdir -p build
+      exec odin run tools/kerneltool -vet -collection:contract=contract -collection:support=support -out:build/kerneltool -- "$@"
+    '';
+
     # kerneltool check: the host code passes -vet and its tests, the system builds,
     # and the machine test passes under QEMU (console, desktop, tools).
     bootTest = pkgs.stdenvNoCC.mkDerivation ({
         name = "kernel-boot-test";
         src = inputs.nixpkgs.lib.fileset.toSource {
           root = ./.;
-          fileset = inputs.nixpkgs.lib.fileset.unions [./flake.nix ./boot ./boot_info ./kernel ./tools ./module ./modules ./blake3 ./ring ./relay ./terminal ./isolated ./system ./graphics ./bootscreen ./display ./programs];
+          fileset = inputs.nixpkgs.lib.fileset.unions [./flake.nix ./boot ./contract ./kernel ./modules ./programs ./support ./tools];
         };
-        nativeBuildInputs = buildTools;
+        nativeBuildInputs = buildTools ++ [kerneltool];
         buildPhase = ''
           export HOME=$TMPDIR
           mkdir -p build
-          odin run tools/kerneltool -out:build/kerneltool -- check
+          kerneltool check
         '';
         installPhase = ''
           cp build/test_output.txt $out
@@ -64,7 +71,7 @@
     };
 
     devShells.${system}.default = pkgs.mkShell ({
-        packages = buildTools ++ [pkgs.ffmpeg] ++ preCommitCheck.enabledPackages; # ffmpeg: the command "film" of kerneltool.
+        packages = buildTools ++ [kerneltool pkgs.ffmpeg] ++ preCommitCheck.enabledPackages; # ffmpeg: the command "film" of kerneltool.
         inherit (preCommitCheck) shellHook;
       }
       // firmware);

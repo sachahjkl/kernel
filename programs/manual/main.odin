@@ -13,11 +13,11 @@
 // The manual is a service: another program asks for a page with show, and reads a description as a text with about and signature.
 package manual
 
-import "../../display"
-import "../../graphics"
-import info "../../boot_info"
-import module "../../module"
-import "../../system"
+import "support:display"
+import "support:graphics"
+import info "contract:boot_info"
+import module "contract:module"
+import "support:system"
 
 CELL_WIDTH :: graphics.CELL_WIDTH
 CELL_HEIGHT :: graphics.CELL_HEIGHT

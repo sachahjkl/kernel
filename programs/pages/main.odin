@@ -9,11 +9,11 @@
 // The program needs the grant to inspect the machine.
 package pages
 
-import info "../../boot_info"
-import "../../display"
-import "../../graphics"
-import op "../../kernel/operation"
-import "../../system"
+import info "contract:boot_info"
+import "support:display"
+import "support:graphics"
+import op "contract:operation"
+import "support:system"
 
 WIDTH :: 688
 HEIGHT :: 668

@@ -6,10 +6,10 @@
 // kernel: the kernel refuses each operation that needs another right.
 package rights
 
-import "../../display"
-import "../../graphics"
-import op "../../kernel/operation"
-import "../../system"
+import "support:display"
+import "support:graphics"
+import op "contract:operation"
+import "support:system"
 
 LINE :: 22
 ANSWER_X :: 384

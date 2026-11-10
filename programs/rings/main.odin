@@ -17,12 +17,12 @@
 // record and waits.
 package rings
 
-import "../../display"
-import "../../graphics"
-import op "../../kernel/operation"
-import "../../relay"
-import "../../ring"
-import "../../system"
+import "support:display"
+import "support:graphics"
+import op "contract:operation"
+import "support:relay"
+import "contract:ring"
+import "support:system"
 
 WIDTH :: 720
 HEIGHT :: 540

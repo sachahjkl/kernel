@@ -1,7 +1,7 @@
 package kernel
 
 import "base:intrinsics"
-import op "operation"
+import op "contract:operation"
 
 // The serial port is the log of the kernel. It is the only device that the
 // kernel has code for, apart from the processor and its interrupt controller.

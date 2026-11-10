@@ -15,9 +15,9 @@
 // fills Data.
 package bootscreen
 
-import info "../boot_info"
-import "../graphics"
-import op "../kernel/operation"
+import info "contract:boot_info"
+import "support:graphics"
+import op "contract:operation"
 import "base:intrinsics"
 
 WIDTH :: 976 // The size that the display needs.

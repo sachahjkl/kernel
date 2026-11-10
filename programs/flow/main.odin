@@ -13,11 +13,11 @@
 // continued.
 package flow
 
-import "../../display"
-import "../../graphics"
-import op "../../kernel/operation"
-import "../../ring"
-import "../../system"
+import "support:display"
+import "support:graphics"
+import op "contract:operation"
+import "contract:ring"
+import "support:system"
 import "base:intrinsics"
 
 DURATION :: 1000 // Milliseconds of one measure.

@@ -3,9 +3,9 @@
 // The processor draws all of it (property 18, step 1: no GPU).
 package temple
 
-import "../../display"
-import "../../graphics"
-import "../../system"
+import "support:display"
+import "support:graphics"
+import "support:system"
 
 WIDTH :: 440
 HEIGHT :: 460

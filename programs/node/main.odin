@@ -3,9 +3,9 @@
 // nodes. It communicates only through its rings.
 package node
 
-import "../../relay"
-import "../../ring"
-import "../../system"
+import "support:relay"
+import "contract:ring"
+import "support:system"
 
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {

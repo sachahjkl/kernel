@@ -22,8 +22,8 @@
 // that the terminal did not read.
 package terminal
 
-import "../ring"
-import "../system"
+import "contract:ring"
+import "support:system"
 
 // The roles of the context of a program that a terminal starts.
 GRANT_RING :: 6 // Memory: the terminal ring. The program writes its command queue.

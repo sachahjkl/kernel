@@ -1,7 +1,7 @@
 #+build !freestanding
 package isolated
 
-import module "../module"
+import module "contract:module"
 import "core:math/rand"
 import "core:testing"
 

@@ -6,8 +6,8 @@
 // it runs with the memory and the handles of the console.
 package probe
 
-import op "../../kernel/operation"
-import "../../system"
+import op "contract:operation"
+import "support:system"
 import "base:intrinsics"
 
 // peek reads 8 bytes at an address. In a call host, the address space has

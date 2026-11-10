@@ -8,9 +8,9 @@
 // this budget pays for the objects that live.
 package budget
 
-import "../../display"
-import "../../graphics"
-import "../../system"
+import "support:display"
+import "support:graphics"
+import "support:system"
 
 LINE :: 22
 ANSWER_X :: 336

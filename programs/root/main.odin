@@ -5,15 +5,15 @@
 // only program that creates access from nothing.
 package root
 
-import "../../bootscreen"
-import "../../bootscreen/collect"
-import "../../display"
-import "../../graphics"
-import info "../../boot_info"
-import "../../isolated"
-import op "../../kernel/operation"
-import "../../ring"
-import "../../system"
+import "support:bootscreen"
+import "support:bootscreen/collect"
+import "support:display"
+import "support:graphics"
+import info "contract:boot_info"
+import "contract:isolated"
+import op "contract:operation"
+import "contract:ring"
+import "support:system"
 
 ROOT_MARK :: "root: ok"
 

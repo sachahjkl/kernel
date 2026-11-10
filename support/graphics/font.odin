@@ -1,7 +1,7 @@
 // This file is the output of "kerneltool font". Do not change it by hand.
 //
 // The font is Spleen 8x16 2.1.0, Copyright (c) 2018-2024, Frederic Cambus.
-// Its license is BSD 2-Clause: see graphics/FONT_LICENSE.
+// Its license is BSD 2-Clause: see support/graphics/FONT_LICENSE.
 package graphics
 
 // One glyph is one byte per line, from the top. Bit 7 is the left pixel.

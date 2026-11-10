@@ -6,9 +6,9 @@
 // in the one thread of this program, between two input events.
 package paint
 
-import "../../display"
-import "../../graphics"
-import "../../system"
+import "support:display"
+import "support:graphics"
+import "support:system"
 
 WIDTH :: 480
 HEIGHT :: 320

@@ -1,7 +1,7 @@
 package kernel
 
-import info "../boot_info"
-import op "operation"
+import info "contract:boot_info"
+import op "contract:operation"
 import "base:intrinsics"
 
 // The record of how the machine started (op.Boot_Report). The kernel reads

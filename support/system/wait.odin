@@ -1,7 +1,7 @@
 package system
 
-import op "../kernel/operation"
-import "../ring"
+import op "contract:operation"
+import "contract:ring"
 import "base:intrinsics"
 
 // The wait: the one way for a thread to wait for something else than a

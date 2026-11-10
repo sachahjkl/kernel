@@ -1,11 +1,11 @@
 package console
 
-import "../../blake3"
-import "../../isolated"
-import op "../../kernel/operation"
-import module "../../module"
-import "../../ring"
-import "../../system"
+import "contract:blake3"
+import "contract:isolated"
+import op "contract:operation"
+import module "contract:module"
+import "contract:ring"
+import "support:system"
 import "base:intrinsics"
 
 // A command: a function with typed parameters and a typed result.

@@ -41,7 +41,7 @@
 // This package allocates no memory and calls no kernel operation.
 package isolated
 
-import module "../module"
+import module "contract:module"
 import "base:intrinsics"
 
 // The roles of the context of a call host.

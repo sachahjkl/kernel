@@ -1,9 +1,9 @@
 // The kernel (docs/ARCHITECTURE.md, systems K1 to K5).
 package kernel
 
-import info "../boot_info"
-import module "../module"
-import op "operation"
+import info "contract:boot_info"
+import module "contract:module"
+import op "contract:operation"
 
 KERNEL_MARK :: "kernel: ok"
 ROOT_NAME :: "root"

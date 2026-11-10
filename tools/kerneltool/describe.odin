@@ -1,6 +1,6 @@
 package kerneltool
 
-import module "../../module"
+import module "contract:module"
 import "core:fmt"
 import "core:odin/ast"
 import "core:odin/parser"

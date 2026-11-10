@@ -7,11 +7,11 @@
 // program only.
 package host
 
-import op "../../kernel/operation"
-import "../../isolated"
-import module "../../module"
-import "../../ring"
-import "../../system"
+import op "contract:operation"
+import "contract:isolated"
+import module "contract:module"
+import "contract:ring"
+import "support:system"
 
 file: []u8
 region: []u8

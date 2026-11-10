@@ -1,6 +1,6 @@
 # Module contract
 
-Status: draft 1, 2026-11-09. The owner closed its decisions on 2026-11-09. `module/format.odin` is version 1 of the format at the level of bytes; `FIRST_MILESTONE.md` lists the gaps.
+Status: draft 1, 2026-11-09. The owner closed its decisions on 2026-11-09. `contract/module/format.odin` is version 1 of the format at the level of bytes; `FIRST_MILESTONE.md` lists the gaps.
 
 This document proposes the contract between modules: the module format, the loader, the call form, the type description, and the context.
 `GLOSSARY.md` defines the terms. `PROPERTIES.md` gives the rules; (P10) points to a property.
@@ -149,11 +149,11 @@ The description of a function is its list of parameters and results, each with a
 
 - **Direct call**: the values go in registers, as above.
 - **Isolated call**: the argument record is derived by rule: one field per parameter, in order. The results travel in a completion record. The derivation is mechanical; nobody writes a second encoding.
-- **One generic entry routine**: Because every parameter is a scalar, one small routine loads up to 6 integer registers and 8 float registers from two arrays and calls the export. The receiving side of a ring and the console both use it. A library for foreign calls is not needed. It is `export_call` in `system/enter.asm`: 30 instructions.
+- **One generic entry routine**: Because every parameter is a scalar, one small routine loads up to 6 integer registers and 8 float registers from two arrays and calls the export. The receiving side of a ring and the console both use it. A library for foreign calls is not needed. It is `export_call` in `support/system/enter.asm`: 30 instructions.
 
 ### The isolated call, as implemented
 
-Status: implemented on 2026-11-10 (`isolated/`, `programs/host`). The owner has not reviewed the choices below.
+Status: implemented on 2026-11-10 (`contract/isolated/`, `programs/host`). The owner has not reviewed the choices below.
 
 - **Call host**: The caller starts one program per module: the call host. The call host receives two memory objects: the call ring and the call region. Like each program, it also has its budget and, if the caller gives it, the log. It receives no other handle. The caller maps the file of the module in the call host, read-only, with no handle. The call host checks the file and loads the module.
 - **Argument record**: One field per parameter, in order. A scalar is 8 bytes. A parameter that the direct call passes by address is the record itself: a Text is a slice of 16 bytes, `{offset, count}`. The offset is in the call region.
@@ -226,7 +226,7 @@ The context is one record in memory that the loader prepared:
 | Caller ring | The ring to the program that started this one |
 | Arguments | The argument record of the called export, with its type index |
 
-Now (`kernel/operation/operation.odin`): the context is 16 handles and 16 values of 64 bits. The index of a handle is its role. It has no header and no text. The kernel ring is at a fixed address. For a call host, the caller ring is the call ring (role 0), and the argument records arrive in the call region (role 1).
+Now (`contract/operation/operation.odin`): the context is 16 handles and 16 values of 64 bits. The index of a handle is its role. It has no header and no text. The kernel ring is at a fixed address. For a call host, the caller ring is the call ring (role 0), and the argument records arrive in the call region (role 1).
 
 - It holds no strings that the program must parse, no environment, no names.
 - A program reads it with no memory allocator and no library.
@@ -286,4 +286,4 @@ The owner closed the open questions of draft 1:
 ## Open questions
 
 1. **Initial data of a merged module.** Rule 3 gives each program one copy of the data of each module. The merge tool must keep this true when it merges two modules that both have data.
-2. **Description tables.** Version 1 of the format has one function record per export: name, help text, up to 6 parameter types, result type. The types are `Integer` and `Text` only (`module/format.odin`). The type, field and parameter tables are not yet specified at the level of bytes.
+2. **Description tables.** Version 1 of the format has one function record per export: name, help text, up to 6 parameter types, result type. The types are `Integer` and `Text` only (`contract/module/format.odin`). The type, field and parameter tables are not yet specified at the level of bytes.

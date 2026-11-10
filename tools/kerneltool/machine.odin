@@ -1,6 +1,6 @@
 package kerneltool
 
-import "../../programs/launcher"
+import "support:launcher"
 import "core:fmt"
 import "core:hash"
 import "core:os"

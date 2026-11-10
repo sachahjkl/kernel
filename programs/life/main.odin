@@ -5,9 +5,9 @@
 // cells with isolated calls, while the game runs.
 package life
 
-import "../../display"
-import "../../graphics"
-import "../../system"
+import "support:display"
+import "support:graphics"
+import "support:system"
 
 COLUMNS :: 96
 ROWS :: 64

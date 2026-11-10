@@ -10,7 +10,7 @@ import "core:strings"
 // The result is in the repository, so that a build does not need the BDF file.
 
 FONT_SOURCE_VARIABLE :: "FONT_SOURCE"
-FONT_OUTPUT :: "graphics/font.odin"
+FONT_OUTPUT :: "support/graphics/font.odin"
 FONT_FIRST :: 32
 FONT_LAST :: 126
 FONT_WIDTH :: 8
@@ -63,7 +63,7 @@ run_font :: proc(args: []string) -> int {
 	fmt.sbprintln(&out, "// This file is the output of \"kerneltool font\". Do not change it by hand.")
 	fmt.sbprintln(&out, "//")
 	fmt.sbprintln(&out, "// The font is Spleen 8x16 2.1.0, Copyright (c) 2018-2024, Frederic Cambus.")
-	fmt.sbprintln(&out, "// Its license is BSD 2-Clause: see graphics/FONT_LICENSE.")
+	fmt.sbprintln(&out, "// Its license is BSD 2-Clause: see support/graphics/FONT_LICENSE.")
 	fmt.sbprintln(&out, "package graphics")
 	fmt.sbprintln(&out)
 	fmt.sbprintln(&out, "// One glyph is one byte per line, from the top. Bit 7 is the left pixel.")

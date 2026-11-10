@@ -1,9 +1,9 @@
 package system
 
-import "../isolated"
-import op "../kernel/operation"
-import module "../module"
-import "../ring"
+import "contract:isolated"
+import op "contract:operation"
+import module "contract:module"
+import "contract:ring"
 
 // A service that serves its own exports: other programs call the exports of
 // this program with isolated calls (package isolated), while it runs.

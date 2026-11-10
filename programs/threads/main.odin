@@ -12,9 +12,9 @@
 //   1 to 4: stop the thread of a square, or start it again
 package threads
 
-import "../../display"
-import "../../graphics"
-import "../../system"
+import "support:display"
+import "support:graphics"
+import "support:system"
 
 SQUARE :: 176
 MARGIN :: 12

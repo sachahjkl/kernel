@@ -1,6 +1,6 @@
 package kernel
 
-import info "../boot_info"
+import info "contract:boot_info"
 import "base:intrinsics"
 
 // The interrupt controller of each processor (local APIC): the timer, and

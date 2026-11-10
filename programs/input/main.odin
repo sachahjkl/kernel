@@ -3,9 +3,9 @@
 // interrupts, and nothing else. It sends input records to the compositor.
 package input
 
-import "../../display"
-import "../../ring"
-import "../../system"
+import "support:display"
+import "contract:ring"
+import "support:system"
 
 // The context of this service.
 GRANT_RING :: 0

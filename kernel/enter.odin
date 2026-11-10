@@ -1,8 +1,8 @@
 package kernel
 
-import "../ring"
+import "contract:ring"
 import "base:intrinsics"
-import op "operation"
+import op "contract:operation"
 
 // K4: the kernel entry. It executes the command records of the kernel ring
 // of the program, then makes the program wait if it asked for that.

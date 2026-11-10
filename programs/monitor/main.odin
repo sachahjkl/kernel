@@ -2,10 +2,10 @@
 // picture that changes twice per second. It needs the grant to inspect the machine.
 package monitor
 
-import "../../display"
-import "../../graphics"
-import op "../../kernel/operation"
-import "../../system"
+import "support:display"
+import "support:graphics"
+import op "contract:operation"
+import "support:system"
 
 WIDTH :: 440
 HEIGHT :: 330

@@ -3,9 +3,9 @@
 // Inspect.
 package collect
 
-import ".."
-import op "../../kernel/operation"
-import "../../system"
+import "support:bootscreen"
+import op "contract:operation"
+import "support:system"
 
 data :: proc "contextless" (result: ^bootscreen.Data, machine: system.Handle) {
 	inspect :: proc "contextless" (machine: system.Handle, kind: op.Inspect_Kind, index: u64, report: ^$T) {

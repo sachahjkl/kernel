@@ -1,9 +1,9 @@
 package kerneltool
 
-import "../../blake3"
-import module "../../module"
+import "contract:blake3"
+import module "contract:module"
 import "core:fmt"
-import info "../../boot_info"
+import info "contract:boot_info"
 import "core:mem"
 import "core:os"
 import "core:slice"
@@ -13,7 +13,7 @@ import "core:sys/linux"
 MODULE_BUILD_FOLDER :: BUILD_FOLDER + "/modules"
 BOOT_IMAGE :: BUILD_FOLDER + "/boot.image"
 BOOT_IMAGE_FAILS :: BUILD_FOLDER + "/boot_fails.image"
-SYSTEM_LIBRARY_FOLDER :: "system"
+SYSTEM_LIBRARY_FOLDER :: "support/system"
 
 // The modules of the project, each one after its imports.
 //   source:  the folder of the Odin package, and of its .asm files.
@@ -119,10 +119,13 @@ build_module :: proc(build: Module_Build) -> bool {
 		"-default-to-nil-allocator",
 		"-o:speed",
 		"-vet",
+		CONTRACT_LIBRARY,
 		join("-out:", objects, "/", build.name, ".o"),
 	)
 	if build.kernel {
 		append(&compile, "-disable-red-zone")
+	} else {
+		append(&compile, SUPPORT_LIBRARY) // The kernel has the contract library only.
 	}
 	run(compile[:]) or_return
 	assembly := make([dynamic]string, context.temp_allocator)
