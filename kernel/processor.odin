@@ -118,6 +118,11 @@ Processor :: struct {
 	first_use_faults: u64, // Page faults after which the page was present.
 	lock_counts:   [op.LOCK_KIND_CAPACITY]op.Lock_Count, // By Lock_Kind (lock.odin).
 	held:          [op.Lock_Kind]u32, // The locks of each kind that the processor holds.
+	programs_held: u64, // Bit n: the processor holds the lock of program n.
+	control:       bool, // The operation that runs holds the control lock (enter.odin).
+	retry:         bool, // The operation needs the control lock: it runs again with it.
+	ports_serial:  u64, // The ports_serial of the program whose ports are open (ports_switch).
+	record_serial: u32, // The serial of the thread whose record address is in the gs register of programs.
 	// Records too large for the kernel stack, for the operation that runs on
 	// this processor.
 	log_text:       [4096]u8,
@@ -134,25 +139,12 @@ processor_count: u32
 gates: [256]Interrupt_Gate
 machine_stopping: bool
 
-// The kernel lock: a processor takes it at each kernel entry and frees it
-// when it returns to a program or waits for an interrupt. The step "the
-// kernel lock split by data" takes it out of the hot paths, layer by layer
-// (docs/ARCHITECTURE.md, "Locks of the kernel").
-kernel_lock: Lock
-
-lock_acquire :: proc "contextless" (cpu: ^Processor) {
-	lock_take(&kernel_lock, .Kernel)
-}
-
-lock_release :: proc "contextless" (cpu: ^Processor) {
-	lock_free(&kernel_lock, .Kernel)
-}
-
 // processor_sync waits until each processor of the set (bit n: processor n)
-// is in the kernel and has no address translation of a program from before
-// the call. Such a processor then waits for the kernel lock, which the
-// caller holds. The caller uses it after it removed a mapping, and before
-// it frees what a thread on another processor used.
+// passed a point where it has no address translation of a program from
+// before the call, and walks no chain of budgets: a kernel entry, the idle
+// wait, or the wait for a lock (sync_acknowledge). The caller uses it after
+// it removed a mapping (before the frames return), before it frees a page
+// table, and before the slot of a budget that ended serves again.
 processor_sync :: proc "contextless" (set: u64) {
 	if set == 0 {
 		return
@@ -163,9 +155,12 @@ processor_sync :: proc "contextless" (set: u64) {
 			apic_send(cpu.apic_id, VECTOR_SYNC)
 		}
 	}
+	self := processor_self()
 	for cpu in processors[:processor_count] {
 		if set & (1 << cpu.index) != 0 {
 			for intrinsics.atomic_load(&cpu.pending) != 0 {
+				// Two processors can synchronize each other at one time.
+				sync_acknowledge(self)
 				intrinsics.cpu_relax()
 			}
 		}
@@ -173,7 +168,7 @@ processor_sync :: proc "contextless" (set: u64) {
 }
 
 // sync_acknowledge answers processor_sync. The processor is in the kernel
-// with interrupts off, and it does not hold the kernel lock.
+// with interrupts off, at a kernel entry or in a wait for a lock.
 sync_acknowledge :: proc "contextless" (cpu: ^Processor) {
 	if intrinsics.atomic_load(&machine_stopping) {
 		processor_stop()
@@ -183,7 +178,7 @@ sync_acknowledge :: proc "contextless" (cpu: ^Processor) {
 	}
 	if intrinsics.atomic_load(&cpu.current) == 0 {
 		// No thread: the page table of the last program can end.
-		cpu.table = kernel_table
+		intrinsics.atomic_store(&cpu.table, kernel_table)
 		cr3_write(kernel_table)
 	} else {
 		cr3_write(cr3_read())

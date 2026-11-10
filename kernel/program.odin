@@ -115,6 +115,9 @@ Thread :: struct {
 	word_changed: bool, // A word did not hold the value: this entry does not wait.
 	wait_serial:  u32, // Changes when a wait ends: wait.odin. Run lock of home.
 	woken:        bool, // A waker came while the thread registered its words. Run lock of home.
+	stop_requested: bool, // Another processor ends the thread: its processor ends it (atomic).
+	finished:     bool, // thread_finish ran: the thread area is free. Control lock.
+	serial:       u32, // Changes for each new thread in the slot (the record of the gs register).
 }
 
 // word_address gives the physical address of a 32-bit word of a program,
@@ -147,6 +150,22 @@ Program :: struct {
 	mappings:     [MAPPING_CAPACITY]Mapping,
 	modules:      [op.PROGRAM_MODULE_CAPACITY]op.Module_Record, // What the loaders asserted (Program_Module).
 	stop:         op.Stop_Report, // A program that stopped on a fault: where.
+	// The processors that run a thread of the program, plus 1 while a stop
+	// marks the threads; HOLDS_STOPPED when the marks are done (atomic).
+	holds:        u64,
+	ports_serial: u64, // Changes with each Ports handle of the program. It stays when the slot serves a new program.
+}
+
+HOLDS_STOPPED :: u64(1) << 32
+
+// An operation that needs the control lock gives this status: enter.odin
+// runs it again with the control lock. No program sees it.
+STATUS_RETRY :: op.Status(0xFFFF)
+
+// program_leave says that a processor left a thread of a program. true:
+// it was the last one after a stop, and the caller cleans the program up.
+program_leave :: proc "contextless" (index: u32) -> bool {
+	return intrinsics.atomic_sub(&programs[index].holds, 1) - 1 == HOLDS_STOPPED
 }
 
 // program_module records a module that a loader put in a program, replaces
@@ -210,6 +229,7 @@ Budget :: struct {
 	spent_total: u64, // Cycles of processor time since the budget was made.
 	logged:      u64, // The second (high 32 bits) and the log records in it (low 32 bits): limit.odin.
 	refused:     u64, // Log records that the kernel refused.
+	ended:       bool, // The slot held a budget that ended: a tick can still walk through it (budget_create).
 }
 
 budgets: [BUDGET_CAPACITY]Budget
@@ -233,6 +253,11 @@ budget_create :: proc "contextless" (parent: u32, amounts: op.Budget_Amounts) ->
 	}
 	for &budget, slot in budgets[1:] {
 		if !budget.live {
+			if budget.ended {
+				// A tick or a log record can walk the chain of a thread
+				// through this slot: after processor_sync, none does.
+				processor_sync(all_other_processors())
+			}
 			from.amounts.pages -= amounts.pages
 			from.amounts.programs -= amounts.programs
 			from.amounts.threads -= amounts.threads
@@ -270,15 +295,15 @@ budget_release :: proc "contextless" (index: u32) {
 	}
 	for &thread in threads {
 		if thread.state != .None && thread.budget == index {
-			thread.budget = parent
+			intrinsics.atomic_store(&thread.budget, parent)
 		}
 	}
 	for &other in budgets {
 		if other.live && other.parent == index {
-			other.parent = parent
+			intrinsics.atomic_store(&other.parent, parent)
 		}
 	}
-	budget^ = {}
+	budget^ = {ended = true, parent = parent}
 }
 
 list_pages :: op.memory_list_pages
@@ -487,6 +512,10 @@ region_release :: proc "contextless" (index: u32) {
 	lock_free(&frame_lock, .Frame)
 }
 
+// handle_insert puts a handle in a free slot of a program. The caller holds
+// the program lock; for a Ports or an Interrupt handle, also the control
+// lock. A reference count is atomic: the caller holds a handle or a mapping
+// of the object, so the count is not 0. 0: no free slot.
 handle_insert :: proc "contextless" (program: ^Program, slot: Handle_Slot) -> op.Handle {
 	for &entry, index in program.handles[1:] {
 		if entry.kind != .None {
@@ -499,27 +528,60 @@ handle_insert :: proc "contextless" (program: ^Program, slot: Handle_Slot) -> op
 		case .Memory:
 			intrinsics.atomic_add(&regions[slot.object].references, 1)
 		case .Program:
-			programs[slot.object].references += 1
+			intrinsics.atomic_add(&programs[slot.object].references, 1)
 		case .Thread:
-			threads[slot.object].references += 1
+			intrinsics.atomic_add(&threads[slot.object].references, 1)
 		case .Budget:
-			budgets[slot.object].references += 1
+			intrinsics.atomic_add(&budgets[slot.object].references, 1)
 		case .Ports:
-			program.has_ports = true
-			// A processor that has the ports of the program open opens these
-			// too: ports_switch does nothing while the program stays.
-			for cpu in processors[:processor_count] {
-				if cpu.ports_loaded == u32(intrinsics.ptr_sub(program, &programs[0])) {
-					ports_allow(cpu, u64(slot.object), u64(slot.count), true)
-				}
-			}
+			intrinsics.atomic_store(&program.has_ports, true)
+			ports_changed(program)
 		case .Interrupt:
-			interrupt_owner[slot.object] = u32(intrinsics.ptr_sub(program, &programs[0]))
+			intrinsics.atomic_store(&interrupt_owner[slot.object], index_of_program(program))
 			interrupt_references[slot.object] += 1
 		}
 		return op.Handle(u32(index + 1) | u32(generation) << 16)
 	}
 	return 0
+}
+
+// handle_insert_undo takes back a handle that handle_insert just made and
+// that no program saw: the origin tree refused it during a revocation.
+handle_insert_undo :: proc "contextless" (program: ^Program, handle: op.Handle) {
+	slot := &program.handles[u32(handle) & 0xFFFF]
+	#partial switch slot.kind {
+	case .Memory:
+		intrinsics.atomic_sub(&regions[slot.object].references, 1)
+	case .Program:
+		intrinsics.atomic_sub(&programs[slot.object].references, 1)
+	case .Thread:
+		intrinsics.atomic_sub(&threads[slot.object].references, 1)
+	case .Budget:
+		intrinsics.atomic_sub(&budgets[slot.object].references, 1)
+	}
+	slot^ = {generation = slot.generation}
+}
+
+// handle_needs_control says if a handle of this kind changes data of the
+// control lock when it is made or closed.
+handle_needs_control :: proc "contextless" (kind: Object_Kind) -> bool {
+	#partial switch kind {
+	case .Memory, .Log, .Machine:
+		return false
+	}
+	return true
+}
+
+index_of_program :: #force_inline proc "contextless" (program: ^Program) -> u32 {
+	return u32(intrinsics.ptr_sub(program, &programs[0]))
+}
+
+// ports_changed makes each processor open the ports of the program again
+// before it returns to a program: run checks ports_serial. The caller holds
+// the control lock.
+ports_changed :: proc "contextless" (program: ^Program) {
+	intrinsics.atomic_add(&program.ports_serial, 1)
+	processor_sync(all_other_processors())
 }
 
 // handle_find gives the slot of a handle of a program. The handle must name
@@ -539,43 +601,34 @@ handle_find :: proc "contextless" (program: ^Program, handle: u64, kind: Object_
 	return slot, .Ok
 }
 
+// handle_close closes a handle of a program. The caller holds the program
+// lock; for a kind of handle_needs_control, also the control lock.
 handle_close :: proc "contextless" (program: ^Program, slot: ^Handle_Slot) {
 	origin_detach(holding_of_handle(program, slot))
 	#partial switch slot.kind {
 	case .Memory:
 		region_release(slot.object)
 	case .Program:
-		target := &programs[slot.object]
 		// A program runs only while a handle names it: nobody can stop a
-		// program that no handle names.
-		target.references -= 1
-		if target.references == 0 {
-			if target.state == .Stopped {
-				program_free(target)
-			} else {
-				program_stop(slot.object, op.STOP_CODE_NO_HANDLE)
-			}
+		// program that no handle names. The stop waits for control_free.
+		if intrinsics.atomic_sub(&programs[slot.object].references, 1) == 1 {
+			stops_pending |= 1 << slot.object
 		}
 	case .Thread:
 		thread := &threads[slot.object]
-		thread.references -= 1
-		if thread.references == 0 && thread.state == .Stopped {
+		if intrinsics.atomic_sub(&thread.references, 1) == 1 && thread.finished {
 			thread_free(thread)
 		}
 	case .Budget:
 		budget_release(slot.object)
 	case .Interrupt:
 		interrupt_references[slot.object] -= 1
-		if interrupt_owner[slot.object] == u32(intrinsics.ptr_sub(program, &programs[0])) {
-			interrupt_owner[slot.object] = 0
+		if interrupt_owner[slot.object] == index_of_program(program) {
+			intrinsics.atomic_store(&interrupt_owner[slot.object], 0)
 		}
 	case .Ports:
-		// A processor that has the ports of the program open closes these.
-		for cpu in processors[:processor_count] {
-			if cpu.ports_loaded == u32(intrinsics.ptr_sub(program, &programs[0])) {
-				ports_allow(cpu, u64(slot.object), u64(slot.count), false)
-			}
-		}
+		slot.kind = .None
+		ports_changed(program)
 	}
 	slot^ = {generation = slot.generation + 1}
 }
@@ -592,9 +645,9 @@ map_region :: proc "contextless" (program: ^Program, region_index: u32, address:
 		return 0, .Bad_Address
 	}
 	address := address
-	if address == 0 {
+	chosen := address == 0
+	if chosen {
 		address = program.next_address
-		program.next_address += (count + 1) * PAGE_SIZE
 	}
 	size := count * PAGE_SIZE
 	if address % PAGE_SIZE != 0 || address < PAGE_SIZE || address >= USER_END || size > USER_END - address {
@@ -629,12 +682,19 @@ map_region :: proc "contextless" (program: ^Program, region_index: u32, address:
 	if region.uncached {
 		bits |= PAGE_NO_CACHE
 	}
+	// The origin first: during a revocation, a path with no control lock
+	// adds no holding, and runs again under the control lock.
+	holding := holding_of_mapping(program, mapping)
+	if !origin_attach(holding, origin) {
+		return 0, STATUS_RETRY
+	}
 	for page in 0 ..< count {
 		entry := page_entry(program.table, address + page * PAGE_SIZE, true, &program.budget)
 		if entry == nil {
 			for undo in 0 ..< page {
 				page_entry(program.table, address + undo * PAGE_SIZE, false)^ = 0
 			}
+			origin_detach(holding)
 			return 0, budgets[program.budget].amounts.pages == 0 ? .No_Budget : .No_Memory
 		}
 		// The tables exist now: a page fault never needs a table. A page
@@ -643,7 +703,9 @@ map_region :: proc "contextless" (program: ^Program, region_index: u32, address:
 		entry^ = frame == 0 ? 0 : frame | bits
 	}
 	mapping^ = {address = address, page_count = count, first = first, bits = bits, region = region_index}
-	origin_attach(holding_of_mapping(program, mapping), origin)
+	if chosen {
+		program.next_address += (count + 1) * PAGE_SIZE
+	}
 	intrinsics.atomic_add(&region.references, 1)
 	program.mapped_pages += count
 	return address, .Ok
@@ -651,6 +713,7 @@ map_region :: proc "contextless" (program: ^Program, region_index: u32, address:
 
 // unmap removes a mapping. Before the memory object can end, each
 // processor that uses the page table of the program forgets the mapping.
+// The caller holds the program lock.
 unmap :: proc "contextless" (program: ^Program, mapping: ^Mapping) {
 	origin_detach(holding_of_mapping(program, mapping))
 	self := processor_self()
@@ -664,16 +727,35 @@ unmap :: proc "contextless" (program: ^Program, mapping: ^Mapping) {
 			}
 		}
 	}
-	others: u64
-	for cpu in processors[:processor_count] {
-		if cpu != self && cpu.table == program.table {
-			others |= 1 << cpu.index
-		}
-	}
-	processor_sync(others)
+	// The entries are 0 before the read of the tables of the processors: a
+	// processor that loads the table after the read sees the 0 entries.
+	intrinsics.atomic_thread_fence(.Seq_Cst)
+	processor_sync(processors_with_table(program.table))
 	program.mapped_pages -= mapping.page_count
 	region_release(mapping.region)
 	mapping^ = {}
+}
+
+// all_other_processors gives the set of the processors but this one.
+all_other_processors :: proc "contextless" () -> (set: u64) {
+	self := processor_self()
+	for cpu in processors[:processor_count] {
+		if cpu != self {
+			set |= 1 << cpu.index
+		}
+	}
+	return set
+}
+
+// processors_with_table gives the other processors that use a page table.
+processors_with_table :: proc "contextless" (table: u64) -> (set: u64) {
+	self := processor_self()
+	for cpu in processors[:processor_count] {
+		if cpu != self && intrinsics.atomic_load(&cpu.table) == table {
+			set |= 1 << cpu.index
+		}
+	}
+	return set
 }
 
 // mapping_at gives the mapping of a program that holds an address, or nil.
@@ -689,7 +771,7 @@ mapping_at :: proc "contextless" (program: ^Program, address: u64) -> ^Mapping {
 // page_give makes the page of an address present in a program, for an
 // access of the program (a page fault) or of the kernel (user_range). The
 // page gets the frame of its memory object; a page on first use gets its
-// zero frame now. The caller holds the kernel lock, so no other processor
+// zero frame now. The caller holds the program lock, so no other processor
 // changes the tables or the mappings of the program meanwhile. A processor
 // keeps no translation of an entry that was not present, so no other
 // processor must forget anything: a thread there that faults on the same
@@ -771,7 +853,7 @@ time_page_create :: proc "contextless" () -> bool {
 }
 
 // program_create makes a program with no memory. The budget pays for the
-// slot and for the page tables.
+// slot and for the page tables. The caller holds the control lock.
 program_create :: proc "contextless" (budget: u32, name: []u8) -> (index: u32, status: op.Status) {
 	if !budgets[budget].live || budgets[budget].amounts.programs == 0 || budgets[budget].amounts.pages == 0 {
 		return 0, .No_Budget
@@ -780,11 +862,14 @@ program_create :: proc "contextless" (budget: u32, name: []u8) -> (index: u32, s
 		if program.state != .None {
 			continue
 		}
-		program = {}
-		program.budget = budget
+		index = u32(slot + 1)
+		taken := program_lock(index)
+		defer program_unlock(index, taken)
+		ports_serial := program.ports_serial
+		program = {ports_serial = ports_serial, budget = budget}
 		program.table = address_space_create(&program.budget)
 		if program.table == 0 {
-			program = {}
+			program = {ports_serial = ports_serial}
 			return 0, .No_Budget
 		}
 		budgets[budget].amounts.programs -= 1
@@ -794,33 +879,38 @@ program_create :: proc "contextless" (budget: u32, name: []u8) -> (index: u32, s
 		if _, map_status := map_region(&program, time_region, op.TIME_ADDRESS, {}, 0, 1); map_status != .Ok {
 			address_space_free(program.table, &program.budget)
 			budgets[budget].amounts.programs += 1
-			program = {}
+			program = {ports_serial = ports_serial}
 			return 0, map_status
 		}
 		program.state = .Created
 		program.start_time = microseconds(cycles_now())
-		return u32(slot + 1), .Ok
+		return index, .Ok
 	}
 	return 0, .No_Slot
 }
 
 // program_free frees the slot of a stopped program that no handle names.
+// The caller holds the control lock.
 program_free :: proc "contextless" (program: ^Program) {
 	program.state = .None
 	budgets[program.budget].amounts.programs += 1
 }
 
-// thread_free frees the slot of a stopped thread that no handle names.
+// thread_free frees the slot of a finished thread that no handle names.
+// The caller holds the control lock.
 thread_free :: proc "contextless" (thread: ^Thread) {
-	thread.state = .None
+	intrinsics.atomic_store(&thread.state, .None)
 	budgets[thread.budget].amounts.threads += 1
 }
 
 // thread_create adds a thread to a program. The kernel makes the thread
 // area: the thread record and the kernel ring of the thread.
-// The budget pays for the slot and for the thread area.
+// The budget pays for the slot and for the thread area. The caller holds
+// the control lock.
 thread_create :: proc "contextless" (program_index: u32, budget: u32, entry, stack, parameter: u64) -> (index: u32, status: op.Status) {
 	program := &programs[program_index]
+	taken := program_lock(program_index)
+	defer program_unlock(program_index, taken)
 	number := u32(op.THREAD_CAPACITY)
 	for candidate in 0 ..< u32(op.THREAD_CAPACITY) {
 		if program.thread_areas & (1 << candidate) == 0 {
@@ -829,7 +919,7 @@ thread_create :: proc "contextless" (program_index: u32, budget: u32, entry, sta
 		}
 	}
 	for &candidate, slot in threads[1:] {
-		if candidate.state == .None && candidate.references == 0 {
+		if candidate.state == .None && intrinsics.atomic_load(&candidate.references) == 0 {
 			index = u32(slot + 1)
 			break
 		}
@@ -857,6 +947,9 @@ thread_create :: proc "contextless" (program_index: u32, budget: u32, entry, sta
 	}
 	thread_ring, _ := ring.open(direct(regions[region].physical + PAGE_SIZE, u8), ring.PAGE_COUNT)
 	thread := &threads[index]
+	serial := thread.serial + 1
+	wait_serial := thread.wait_serial
+	home := thread.home
 	thread^ = {
 		state = .Ready,
 		program = program_index,
@@ -865,6 +958,9 @@ thread_create :: proc "contextless" (program_index: u32, budget: u32, entry, sta
 		ring = thread_ring,
 		record = record,
 		events = &direct(regions[region].physical, op.Thread_Record).events,
+		serial = serial,
+		wait_serial = wait_serial,
+		home = home,
 		frame = {
 			rip    = entry,
 			cs     = SELECTOR_USER_CODE,
@@ -883,70 +979,80 @@ thread_create :: proc "contextless" (program_index: u32, budget: u32, entry, sta
 	return index, .Ok
 }
 
-// thread_end marks a thread as stopped. The slot stays until the last
-// handle to the thread closes: a handle never names another thread.
-@(private = "file")
-thread_end :: proc "contextless" (thread: ^Thread) {
-	index := u32(intrinsics.ptr_sub(thread, &threads[0]))
+// thread_stop ends one thread (docs/ARCHITECTURE.md, "The owner of a
+// running thread"). A thread on a processor gets stop_requested, and its
+// processor ends it (schedule); another thread ends now. The caller holds
+// the control lock.
+thread_stop :: proc "contextless" (index: u32) {
+	thread := &threads[index]
 	home := run_lock(thread)
-	running := thread.processor
-	if running != 0 {
-		// The thread leaves its processor. Another processor learns it at
-		// its next kernel entry, and processor_sync waits for that entry:
-		// after it, that processor does not use the thread.
-		intrinsics.atomic_store(&processors[running - 1].current, 0)
-		thread.processor = 0
+	if thread.state == .None || thread.state == .Stopped {
+		run_unlock(home)
+		return
+	}
+	if running := thread.processor; running != 0 {
+		intrinsics.atomic_store(&thread.stop_requested, true)
+		run_unlock(home)
+		if cpu := processors[running - 1]; cpu != processor_self() {
+			apic_send(cpu.apic_id, VECTOR_WAKE)
+		}
+		return
 	}
 	queue_remove(thread)
 	thread.state = .Stopped
 	intrinsics.atomic_add(&thread.wait_serial, 1)
 	run_unlock(home)
-	wait_unregister(thread)
-	if running != 0 && processors[running - 1] != processor_self() {
-		processor_sync(1 << (running - 1))
-	}
-	if thread.references == 0 {
-		thread_free(thread)
-	}
-	thread.ring = {}
-	thread.events = nil
-	for cpu in processors[:processor_count] {
-		if cpu.record_thread == index {
-			cpu.record_thread = 0 // The slot can get a new thread.
-		}
-	}
+	thread_finish(index)
 }
 
-// thread_stop ends one thread and frees its thread area. The other threads
-// of the program get an event: one of them can wait for this end. A program with
-// no thread stops.
-thread_stop :: proc "contextless" (index: u32) {
+// thread_finish frees what an ended thread has: its entries in the wait
+// table, its thread area. No processor runs the thread. The other threads
+// of the program get an event: one of them can wait for this end. A
+// program with no thread stops. The caller holds the control lock.
+thread_finish :: proc "contextless" (index: u32) {
 	thread := &threads[index]
-	if thread.state == .None || thread.state == .Stopped {
+	if thread.finished {
 		return
 	}
-	program := &programs[thread.program]
-	thread_end(thread)
-	for &mapping in program.mappings {
-		if mapping.page_count != 0 && mapping.address == thread.record {
-			unmap(program, &mapping)
-			break
+	thread.finished = true
+	wait_unregister(thread)
+	program_index := thread.program
+	program := &programs[program_index]
+	taken := program_lock(program_index)
+	thread.events = nil
+	thread.ring = {}
+	running := program.state != .Stopped
+	last := false
+	if running {
+		for &mapping in program.mappings {
+			if mapping.page_count != 0 && mapping.address == thread.record {
+				unmap(program, &mapping)
+				break
+			}
 		}
+		program.thread_areas &~= 1 << thread.number
+		program.thread_count -= 1
+		last = program.thread_count == 0
 	}
-	program.thread_areas &~= 1 << thread.number
-	program.thread_count -= 1
-	if program.thread_count == 0 {
-		program_stop(thread.program, 0)
-	} else {
-		program_event(thread.program)
+	program_unlock(program_index, taken)
+	if intrinsics.atomic_load(&thread.references) == 0 {
+		thread_free(thread)
+	}
+	if last {
+		program_stop(program_index, 0)
+	} else if running {
+		program_event(program_index)
 	}
 }
 
 // program_event tells each thread of a program that an event arrived: see
-// operation.Word. A thread that waits on its event word wakes.
+// operation.Word. A thread that waits on its event word wakes. It takes the
+// program lock: the thread area of a thread that ends is free only after.
 program_event :: proc "contextless" (index: u32) {
+	taken := program_lock(index)
+	defer program_unlock(index, taken)
 	for &thread in threads[1:] {
-		if thread.program != index || thread.state != .Ready && thread.state != .Waiting || thread.events == nil {
+		if thread.program != index || thread.events == nil {
 			continue
 		}
 		intrinsics.atomic_add(thread.events, 1)
@@ -962,49 +1068,86 @@ program_state :: proc "contextless" (index: u32) -> op.Program_State {
 		return program.state
 	}
 	for &thread in threads[1:] {
-		if thread.program == index && thread.state == .Ready {
+		if thread.program == index && intrinsics.atomic_load(&thread.state) == .Ready {
 			return .Ready
 		}
 	}
 	return .Waiting
 }
 
-// program_stop ends a program and frees all that it has.
+// program_stop ends a program (docs/ARCHITECTURE.md, "A program ends after
+// its last thread leaves its processor"). Each thread that waits or is in a
+// queue ends now; each thread on a processor gets stop_requested. The last
+// of these processors to leave its thread, or this call if none runs one,
+// cleans the program up. The caller holds the control lock.
 program_stop :: proc "contextless" (index: u32, code: u32) {
 	program := &programs[index]
+	taken := program_lock(index)
 	if program.state == .None || program.state == .Stopped {
+		program_unlock(index, taken)
 		return
 	}
-	// The state changes first: a handle that this program closes below can
-	// name this program.
+	intrinsics.atomic_add(&program.holds, 1)
+	// The state changes first: a handle that this program closes later can
+	// name this program, and an operation of the program sees it.
 	program.state = .Stopped
 	program.code = code
-	program_stops += 1
-	for &thread in threads[1:] {
-		if thread.program == index && thread.state != .None && thread.state != .Stopped {
-			thread_end(&thread)
-		}
-	}
-	program.thread_count = 0
-	program.thread_areas = 0
-	// No processor keeps the page table or the ports of the program.
+	program_unlock(index, taken)
 	self := processor_self()
-	others: u64
-	for cpu in processors[:processor_count] {
-		if cpu.ports_loaded == index {
-			ports_switch(cpu, 0)
-		}
-		if cpu.table != program.table {
+	running: u64
+	ended: [THREAD_TABLE_CAPACITY]bool
+	for &thread, slot in threads[1:] {
+		if thread.program != index {
 			continue
 		}
-		if cpu == self {
-			cpu.table = kernel_table
-			cr3_write(kernel_table)
-		} else {
-			others |= 1 << cpu.index
+		home := run_lock(&thread)
+		if thread.state != .None && thread.state != .Stopped {
+			if thread.processor != 0 {
+				intrinsics.atomic_store(&thread.stop_requested, true)
+				running |= 1 << (thread.processor - 1)
+			} else {
+				queue_remove(&thread)
+				thread.state = .Stopped
+				intrinsics.atomic_add(&thread.wait_serial, 1)
+				ended[slot + 1] = true
+			}
+		}
+		run_unlock(home)
+	}
+	for slot in 1 ..< u32(THREAD_TABLE_CAPACITY) {
+		if ended[slot] {
+			thread_finish(slot)
 		}
 	}
-	processor_sync(others)
+	for cpu in processors[:processor_count] {
+		if running & (1 << cpu.index) != 0 && cpu != self {
+			apic_send(cpu.apic_id, VECTOR_WAKE)
+		}
+	}
+	if intrinsics.atomic_add(&program.holds, HOLDS_STOPPED - 1) + HOLDS_STOPPED - 1 == HOLDS_STOPPED {
+		program_cleanup(index)
+	}
+}
+
+// program_cleanup frees all that a stopped program has. No processor runs
+// a thread of it. The caller holds the control lock.
+program_cleanup :: proc "contextless" (index: u32) {
+	program := &programs[index]
+	for &thread, slot in threads[1:] {
+		if thread.program == index && thread.state == .Stopped && !thread.finished {
+			thread_finish(u32(slot + 1))
+		}
+	}
+	taken := program_lock(index)
+	program.thread_count = 0
+	program.thread_areas = 0
+	// No processor keeps the page table of the program.
+	self := processor_self()
+	if intrinsics.atomic_load(&self.table) == program.table {
+		intrinsics.atomic_store(&self.table, kernel_table)
+		cr3_write(kernel_table)
+	}
+	processor_sync(processors_with_table(program.table))
 	for &mapping in program.mappings {
 		if mapping.page_count != 0 {
 			unmap(program, &mapping)
@@ -1017,40 +1160,51 @@ program_stop :: proc "contextless" (index: u32, code: u32) {
 	}
 	address_space_free(program.table, &program.budget)
 	program.table = 0
+	program_unlock(index, taken)
 	for &other, other_index in programs[1:] {
-		if other.state == .None || other.state == .Stopped {
-			continue
-		}
-		for slot in other.handles {
-			if slot.kind == .Program && slot.object == index {
-				program_event(u32(other_index + 1))
-				break
+		other_slot := u32(other_index + 1)
+		other_taken := program_lock(other_slot)
+		holds := false
+		if other.state != .None && other.state != .Stopped {
+			for slot in other.handles {
+				if slot.kind == .Program && slot.object == index {
+					holds = true
+					break
+				}
 			}
 		}
+		program_unlock(other_slot, other_taken)
+		if holds {
+			program_event(other_slot)
+		}
 	}
-	if program.references == 0 {
+	if intrinsics.atomic_load(&program.references) == 0 {
 		program_free(program)
 	}
 }
 
-// ports_switch closes the ports of the program that had them on a
-// processor, and opens the ports of program index.
+// ports_switch opens on a processor the ports of program index (0: none),
+// when the program or its ports changed (ports_serial). A processor writes
+// only its own port bitmap.
 ports_switch :: proc "contextless" (cpu: ^Processor, index: u32) {
-	if cpu.ports_loaded == index {
+	serial := intrinsics.atomic_load(&programs[index].ports_serial)
+	if cpu.ports_loaded == index && (index == 0 || cpu.ports_serial == serial) {
 		return
 	}
-	for pass in 0 ..< 2 {
-		program := &programs[pass == 0 ? cpu.ports_loaded : index]
-		if !program.has_ports {
-			continue
+	if cpu.ports_loaded != 0 {
+		for &b in cpu.task_state.ports {
+			b = 0xFF
 		}
-		for slot in program.handles {
-			if slot.kind == .Ports {
-				ports_allow(cpu, u64(slot.object), u64(slot.count), pass == 1)
+	}
+	if index != 0 {
+		for &slot in programs[index].handles {
+			if intrinsics.atomic_load(&slot.kind) == .Ports {
+				ports_allow(cpu, u64(slot.object), u64(slot.count), true)
 			}
 		}
 	}
 	cpu.ports_loaded = index
+	cpu.ports_serial = serial
 }
 
 EXCEPTION_NAMES := [32]string {
@@ -1061,12 +1215,14 @@ EXCEPTION_NAMES := [32]string {
 	14 = "page fault",
 }
 
-// kernel_interrupt is where every interrupt, exception and kernel entry arrives.
+// kernel_interrupt is where every interrupt, exception and kernel entry
+// arrives. It takes no lock of its own: each path takes the locks of the
+// data that it touches (docs/ARCHITECTURE.md, "Locks of the kernel").
 @(require, linkage = "strong", link_name = "kernel_interrupt")
 kernel_interrupt :: proc "c" (frame: ^Frame) {
 	from_program := frame.cs & 3 != 0
 	if !from_program && frame.vector < VECTOR_INTERRUPT_BASE {
-		// The processor can hold the kernel lock: it does not take it.
+		// The processor can hold any lock: it takes none.
 		name := EXCEPTION_NAMES[frame.vector]
 		address := cr2_read()
 		intrinsics.atomic_store(&log_serial_only, true)
@@ -1075,27 +1231,25 @@ kernel_interrupt :: proc "c" (frame: ^Frame) {
 	}
 	cpu := processor_self()
 	sync_acknowledge(cpu)
-	lock_acquire(cpu)
-	// Another processor took the thread away: the thread ended. This entry
-	// is not an entry of a thread.
-	taken := from_program && cpu.current == 0
-	if from_program && !taken {
-		threads[cpu.current].frame = frame^
+	// The thread of a program entry is the current thread of this
+	// processor: no other processor takes it away.
+	thread: ^Thread
+	if from_program {
+		thread = &threads[cpu.current]
+		thread.frame = frame^
 	}
 	switch {
 	case frame.vector == VECTOR_KERNEL_ENTER:
 		cpu.entries += 1
-		if !taken {
-			enter(cpu.current)
-		}
+		enter(cpu.current)
 	case frame.vector == VECTOR_TIMER:
-		if from_program && !taken {
+		if from_program {
 			cpu.busy_time += 1
-			threads[cpu.current].run_time += 1
-			programs[threads[cpu.current].program].run_time += 1
+			thread.run_time += 1
+			intrinsics.atomic_add(&programs[thread.program].run_time, 1)
 			cpu.slice_left -= min(cpu.slice_left, 1)
 			budget_charge(cpu)
-			if budget_spent(threads[cpu.current].budget) {
+			if budget_spent(intrinsics.atomic_load(&thread.budget)) {
 				cpu.slice_left = 0 // The budget has no time left in this period.
 			}
 		}
@@ -1107,9 +1261,9 @@ kernel_interrupt :: proc "c" (frame: ^Frame) {
 			budget_period(now)
 			// The deadlines: read with no lock, then checked under the run
 			// lock by thread_wake.
-			for &thread in threads[1:] {
-				if intrinsics.atomic_load(&thread.state) == .Waiting && intrinsics.atomic_load(&thread.deadline) <= now {
-					thread_wake(&thread, now)
+			for &waiting in threads[1:] {
+				if intrinsics.atomic_load(&waiting.state) == .Waiting && intrinsics.atomic_load(&waiting.deadline) <= now {
+					thread_wake(&waiting, now)
 				}
 			}
 		}
@@ -1120,62 +1274,75 @@ kernel_interrupt :: proc "c" (frame: ^Frame) {
 	case frame.vector >= VECTOR_INTERRUPT_BASE && frame.vector < VECTOR_INTERRUPT_BASE + INTERRUPT_LINES:
 		line := frame.vector - VECTOR_INTERRUPT_BASE
 		cpu.interrupts += 1
-		intrinsics.atomic_add(&interrupt_pending[line], 1)
-		if owner := interrupt_owner[line]; owner != 0 {
-			program_event(owner)
-		}
+		interrupt_signal(line)
 		interrupt_end(line)
 	case frame.vector >= VECTOR_MESSAGE_BASE && frame.vector < VECTOR_MESSAGE_BASE + op.MESSAGE_CAPACITY:
-		index := INTERRUPT_LINES + frame.vector - VECTOR_MESSAGE_BASE
 		cpu.interrupts += 1
-		intrinsics.atomic_add(&interrupt_pending[index], 1)
-		if owner := interrupt_owner[index]; owner != 0 {
-			program_event(owner)
-		}
+		interrupt_signal(INTERRUPT_LINES + frame.vector - VECTOR_MESSAGE_BASE)
 		apic_write(APIC_END, 0)
-	case taken:
-	case frame.vector == VECTOR_PAGE_FAULT && frame.error & FAULT_PRESENT == 0 && page_give(&programs[threads[cpu.current].program], cr2_read(), frame.error & FAULT_WRITE != 0, frame.error & FAULT_EXECUTE != 0):
+	case frame.vector == VECTOR_PAGE_FAULT && frame.error & FAULT_PRESENT == 0 && page_fault(thread.program, cr2_read(), frame.error):
 		// A page on first use, or a page that another thread made present
 		// while this one waited for the lock: the instruction runs again.
 		cpu.first_use_faults += 1
 	case:
-		// A fault in one thread stops the program: the threads share all
-		// their memory.
-		name := frame.vector < 32 ? EXCEPTION_NAMES[frame.vector] : ""
-		program := threads[cpu.current].program
-		// The module of the instruction, as the loader recorded it: a
-		// replacement names the module that runs, not the one of the import.
-		found := module_of(&programs[program], frame.rip)
-		programs[program].stop = {code = op.STOP_CODE_FAULT + u32(frame.vector), vector = u32(frame.vector), instruction = frame.rip}
-		if frame.vector == 14 {
-			programs[program].stop.address = cr2_read()
-		}
-		if found != nil {
-			programs[program].stop.module = found^
-		}
-		if found == nil {
-			log_in("fault", .Warning, "kernel: program ", program_name(&programs[program]), " stopped: ", name, " vector ", frame.vector, " error ", Hex(frame.error), " at ", Hex(frame.rip), " address ", Hex(cr2_read()))
-		} else if found.replaces == {} {
-			log_in("fault", .Warning, "kernel: program ", program_name(&programs[program]), " stopped: ", name, " vector ", frame.vector, " at ", Hex(frame.rip), " address ", Hex(cr2_read()), ", in module ", hash_head(found.hash), " at offset ", Hex(frame.rip - found.base))
-		} else {
-			log_in("fault", .Warning, "kernel: program ", program_name(&programs[program]), " stopped: ", name, " vector ", frame.vector, " at ", Hex(frame.rip), " address ", Hex(cr2_read()), ", in module ", hash_head(found.hash), " at offset ", Hex(frame.rip - found.base), ", which replaces ", hash_head(found.replaces))
-		}
-		program_stop(program, op.STOP_CODE_FAULT + u32(frame.vector))
+		program_fault(thread.program, frame)
 	}
 	if !from_program {
-		// The processor was idle. It looks for a thread itself.
-		lock_release(cpu)
-		return
+		return // The processor was idle: it looks for a thread itself.
 	}
-	// The thread that entered continues, unless it waits, it stopped, or its
+	// The thread that entered continues, unless it waits, it ends, or its
 	// time slice is over.
-	if cpu.current != 0 {
-		thread := &threads[cpu.current]
-		if thread.state == .Ready && cpu.slice_left > 0 {
-			run(cpu, thread)
-		}
+	if !intrinsics.atomic_load(&thread.stop_requested) && intrinsics.atomic_load(&thread.state) == .Ready && cpu.slice_left > 0 {
+		run(cpu, thread)
 	}
 	schedule()
+}
+
+// interrupt_signal counts an interrupt and tells its owner. The owner is
+// read with no lock: when the handle closes at the same time, the event
+// can go to the program that held it.
+interrupt_signal :: proc "contextless" (index: u64) {
+	intrinsics.atomic_add(&interrupt_pending[index], 1)
+	if owner := intrinsics.atomic_load(&interrupt_owner[index]); owner != 0 {
+		program_event(owner)
+	}
+}
+
+// page_fault gives a page on first use to a program, under its program
+// lock. false: the program has no mapping there, or no right for the access.
+page_fault :: proc "contextless" (index: u32, address: u64, error: u64) -> bool {
+	taken := program_lock(index)
+	defer program_unlock(index, taken)
+	return page_give(&programs[index], address, error & FAULT_WRITE != 0, error & FAULT_EXECUTE != 0)
+}
+
+// program_fault stops the program of a thread that faulted. A fault in one
+// thread stops the program: the threads share all their memory.
+program_fault :: proc "contextless" (index: u32, frame: ^Frame) {
+	control_take()
+	defer control_free()
+	program := &programs[index]
+	taken := program_lock(index)
+	name := frame.vector < 32 ? EXCEPTION_NAMES[frame.vector] : ""
+	// The module of the instruction, as the loader recorded it: a
+	// replacement names the module that runs, not the one of the import.
+	found := module_of(program, frame.rip)
+	program.stop = {code = op.STOP_CODE_FAULT + u32(frame.vector), vector = u32(frame.vector), instruction = frame.rip}
+	if frame.vector == 14 {
+		program.stop.address = cr2_read()
+	}
+	if found != nil {
+		program.stop.module = found^
+	}
+	if found == nil {
+		log_in("fault", .Warning, "kernel: program ", program_name(program), " stopped: ", name, " vector ", frame.vector, " error ", Hex(frame.error), " at ", Hex(frame.rip), " address ", Hex(cr2_read()))
+	} else if found.replaces == {} {
+		log_in("fault", .Warning, "kernel: program ", program_name(program), " stopped: ", name, " vector ", frame.vector, " at ", Hex(frame.rip), " address ", Hex(cr2_read()), ", in module ", hash_head(found.hash), " at offset ", Hex(frame.rip - found.base))
+	} else {
+		log_in("fault", .Warning, "kernel: program ", program_name(program), " stopped: ", name, " vector ", frame.vector, " at ", Hex(frame.rip), " address ", Hex(cr2_read()), ", in module ", hash_head(found.hash), " at offset ", Hex(frame.rip - found.base), ", which replaces ", hash_head(found.replaces))
+	}
+	program_unlock(index, taken)
+	program_stop(index, op.STOP_CODE_FAULT + u32(frame.vector))
 }
 
 program_name :: proc "contextless" (program: ^Program) -> string {

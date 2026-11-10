@@ -10,6 +10,11 @@ import "base:intrinsics"
 //
 // The policy is in queue_pick and in schedule_pick: a later step changes
 // them (the scheduling strategies).
+//
+// A thread that a processor runs belongs to that processor. Another
+// processor that ends it sets stop_requested; the processor ends it in
+// schedule. A program ends when the last processor that ran one of its
+// threads leaves it after a stop (program_leave).
 
 Run_Queue :: struct #align (64) {
 	lock:   Lock,
@@ -216,6 +221,10 @@ schedule_pick :: proc "contextless" (cpu: ^Processor) -> u32 {
 	return index
 }
 
+// root_started: the first thread exists. Before, a processor that the
+// first processor started finds no thread, and waits.
+root_started: bool
+
 // threads_alive says if a thread exists that is not stopped.
 threads_alive :: proc "contextless" () -> bool {
 	for &thread in threads[1:] {
@@ -227,19 +236,38 @@ threads_alive :: proc "contextless" () -> bool {
 }
 
 // schedule leaves the current thread and runs the next one. With none, the
-// processor waits for an interrupt. The caller holds the kernel lock.
+// processor waits for an interrupt. The caller holds no lock.
 schedule :: proc "contextless" () -> ! {
 	cpu := processor_self()
 	budget_charge(cpu)
 	if cpu.current != 0 {
-		thread := &threads[cpu.current]
+		index := cpu.current
+		thread := &threads[index]
+		program := thread.program
 		home := run_lock(thread)
 		thread.processor = 0
-		if thread.state == .Ready {
+		ended := intrinsics.atomic_load(&thread.stop_requested)
+		if ended {
+			// This processor owns the thread: it ends it (thread_stop,
+			// program_stop).
+			thread.state = .Stopped
+			intrinsics.atomic_add(&thread.wait_serial, 1)
+		} else if thread.state == .Ready {
 			queue_push(thread)
 		}
-		cpu.current = 0
+		intrinsics.atomic_store(&cpu.current, 0)
 		run_unlock(home)
+		cleanup := program_leave(program)
+		if ended || cleanup {
+			control_take()
+			if ended {
+				thread_finish(index)
+			}
+			if cleanup {
+				program_cleanup(program)
+			}
+			control_free()
+		}
 	}
 	for {
 		// A thread that a queue receives after this read is seen below.
@@ -248,13 +276,16 @@ schedule :: proc "contextless" () -> ! {
 			thread := &threads[index]
 			lock_take(&run_queues[cpu.index].lock, .Run)
 			thread.processor = cpu.index + 1
-			cpu.current = index
+			intrinsics.atomic_store(&cpu.current, index)
+			// Under the run lock: a stop that marks this thread sees it on
+			// this processor, and counts it in `holds`.
+			intrinsics.atomic_add(&programs[thread.program].holds, 1)
 			lock_free(&run_queues[cpu.index].lock, .Run)
 			cpu.charged_from = cycles_now()
 			cpu.slice_left = TIME_SLICE
 			run(cpu, thread)
 		}
-		if !threads_alive() {
+		if intrinsics.atomic_load(&root_started) && !threads_alive() {
 			log("kernel: no program is left")
 			machine_stop(0)
 		}
@@ -270,9 +301,7 @@ schedule :: proc "contextless" () -> ! {
 		if cpu.index != 0 {
 			timer_pause(true)
 		}
-		lock_release(cpu)
 		idle_wait()
-		lock_acquire(cpu)
 		intrinsics.atomic_store(&cpu.idle, false)
 		if cpu.index != 0 {
 			timer_pause(false)
@@ -280,18 +309,22 @@ schedule :: proc "contextless" () -> ! {
 	}
 }
 
-// run gives the processor to its current thread, and frees the kernel lock.
+// run gives the processor to its current thread. The program of the
+// thread stays while the thread is on this processor (`holds`).
 run :: proc "contextless" (cpu: ^Processor, thread: ^Thread) -> ! {
 	program := &programs[thread.program]
-	ports_switch(cpu, program.has_ports ? thread.program : 0)
+	ports_switch(cpu, intrinsics.atomic_load(&program.has_ports) ? thread.program : 0)
 	if cpu.table != program.table {
+		// The store comes before the load of the table: an unmap that does
+		// not see it cleared its entries before this load.
 		intrinsics.atomic_store(&cpu.table, program.table)
 		cr3_write(program.table)
 	}
 	// Two programs have thread records at the same address. The test is on
 	// the thread, so a program that changes its gs register harms only itself.
-	if cpu.record_thread != cpu.current {
+	if cpu.record_thread != cpu.current || cpu.record_serial != thread.serial {
 		cpu.record_thread = cpu.current
+		cpu.record_serial = thread.serial
 		msr_write(MSR_KERNEL_GS_BASE, thread.record)
 	}
 	cpu.fpu_area = &thread.fpu
@@ -299,6 +332,5 @@ run :: proc "contextless" (cpu: ^Processor, thread: ^Thread) -> ! {
 		thread.in_enter = false
 		thread.frame.rax = intrinsics.atomic_load(&ticks)
 	}
-	lock_release(cpu)
 	resume(&thread.frame)
 }

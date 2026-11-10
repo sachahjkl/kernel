@@ -339,24 +339,28 @@ System_Report :: struct {
 // the lock order: a processor takes a lock only if it holds no lock of a
 // later kind.
 Lock_Kind :: enum u64 {
-	Kernel = 0, // The kernel lock: each kernel entry takes it.
-	Region = 1, // One memory object: it gives a page on first use one frame.
-	Frame  = 2, // The page frames, the reserved pages, the pages of the budgets, the slots of the memory objects.
-	Log    = 3, // The serial port and the records of the log.
-	Wait   = 4, // One bucket of the wait table: the threads that wait on its words.
-	Run    = 5, // The run queue of one processor, and the scheduling state of its threads.
+	Control = 0, // The paths that cross programs or end objects that several programs name: rare.
+	Program = 1, // The handles, the mappings and the page table of one program.
+	Origin  = 2, // The origin tree of the holdings.
+	Region  = 3, // One memory object: it gives a page on first use one frame.
+	Frame   = 4, // The page frames, the reserved pages, the pages of the budgets, the slots of the memory objects.
+	Log     = 5, // The serial port and the records of the log.
+	Wait    = 6, // One bucket of the wait table: the threads that wait on its words.
+	Run     = 7, // The run queue of one processor, and the scheduling state of its threads.
 }
 
 LOCK_KIND_CAPACITY :: 12
 
 @(rodata)
 LOCK_KIND_NAMES := [Lock_Kind]string {
-	.Kernel = "kernel",
-	.Region = "region",
-	.Frame  = "frame",
-	.Log    = "log",
-	.Wait   = "wait",
-	.Run    = "run",
+	.Control = "control",
+	.Program = "program",
+	.Origin  = "origin",
+	.Region  = "region",
+	.Frame   = "frame",
+	.Log     = "log",
+	.Wait    = "wait",
+	.Run     = "run",
 }
 
 // What the kernel counts for one kind of lock, on all the processors.
