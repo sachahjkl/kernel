@@ -1477,6 +1477,20 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				pointer_move(machine, menu_x, menu_y)
 				pointer_button(machine, true)
 				pointer_button(machine, false)
+				// The compositor writes that the menu is open: a press that
+				// the machine did not receive is a failure of this step, with
+				// its cause, and not of a later one.
+				open := false
+				for start := time.now(); !open && time.since(start) < STEP_TIMEOUT; {
+					text := log_read(machine)
+					if open = len(text) > before && strings.contains(text[before:], "compositor: the menu of the programs is open"); !open {
+						time.sleep(50 * time.Millisecond)
+					}
+				}
+				if !open {
+					fmt.eprintfln("kerneltool: test failed: step %d: the menu of the programs did not open for %s: the machine did not receive the press on its button", index + 1, step.text)
+					return false
+				}
 			}
 			if step.kind == .Front {
 				menu_x, menu_y := launcher.windows_button_center()

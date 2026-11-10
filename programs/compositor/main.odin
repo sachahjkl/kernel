@@ -448,6 +448,7 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32) 
 		}
 		if x, y, width, height := launcher.button(); inside(pointer_x, pointer_y, x, y, width, height) && was_open != .Programs {
 			menu_open = .Programs
+			system.log_in("surfaces", .Info, "compositor: the menu of the programs is open")
 			damage_menu()
 		}
 		if x, y, width, height := launcher.windows_button(); inside(pointer_x, pointer_y, x, y, width, height) && was_open != .Windows {

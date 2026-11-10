@@ -682,7 +682,7 @@ draw :: proc "contextless" (canvas: graphics.Canvas, data: ^Data) {
 			put_number(&text, boot.firmware_ranges)
 			put(&text, " firmware ranges, ")
 			put_number(&text, boot.range_count)
-			put(&text, " after neighbours join")
+			put(&text, " joined")
 			if boot.direct_map_size != 0 {
 				put(&text, ", direct map ")
 				put_size(&text, boot.direct_map_size)
