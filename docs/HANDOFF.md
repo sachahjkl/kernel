@@ -97,7 +97,7 @@ Notes are in `research/`.
 ## Next steps
 
 1. Get the owner's review of the choices in `FIRST_MILESTONE.md`.
-2. Descriptions made from the source (property 19). Text results are done (2026-11-10). The isolated call of an export through a ring is done (2026-11-10): see `MODULE_CONTRACT.md` section 4.
+2. Descriptions made from the source (property 19): done on 2026-11-10 (`tools/kerneltool/describe.odin`). Text results are done (2026-11-10). The isolated call of an export through a ring is done (2026-11-10): see `MODULE_CONTRACT.md` section 4.
 3. Rights on handles, and a split of the Machine handle.
 4. Damage rectangles in the compositor.
 5. A block device service (virtio), then the storage service.

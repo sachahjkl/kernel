@@ -16,66 +16,39 @@ SYSTEM_LIBRARY_FOLDER :: "system"
 
 // The modules of the project, each one after its imports.
 //   source:  the folder of the Odin package, and of its .asm files.
-//   exports: export n + 1 of the module is exports[n]. The description must
-//            agree with the source: no tool checks it yet.
+// The exports of a module and their descriptions come from the source
+// (describe.odin).
 //   kernel:  the module runs in kernel mode: interrupts use its stack.
 //   image:   the module is in the boot image.
 Module_Build :: struct {
 	name:    string,
 	source:  string,
-	exports: []Export_Description,
 	imports: []string,
 	kernel:  bool,
 	image:   bool,
 }
 
 module_builds := [?]Module_Build {
-	{name = "test_callee", source = "modules/test_callee", exports = {{name = "apply", parameters = {.Integer, .Integer}, result = .Integer}}},
-	{name = "test_caller", source = "modules/test_caller", exports = {{name = "entry"}}, imports = {"test_callee"}},
-	{name = "kernel", source = "kernel", exports = {{name = "entry"}}, kernel = true},
-	{name = "root", source = "programs/root", exports = {{name = "entry"}}, image = true},
-	{name = "input", source = "programs/input", exports = {{name = "entry"}}, image = true},
-	{name = "compositor", source = "programs/compositor", exports = {{name = "entry"}}, image = true},
-	{name = "console", source = "programs/console", exports = {{name = "entry"}}, image = true},
-	{name = "monitor", source = "programs/monitor", exports = {{name = "entry"}}, image = true},
-	{name = "plasma", source = "programs/plasma", exports = {{name = "entry"}}, image = true},
-	{name = "life", source = "programs/life", exports = {{name = "entry"}}, image = true},
-	{name = "paint", source = "programs/paint", exports = {{name = "entry"}}, image = true},
-	{name = "fault", source = "programs/fault", exports = {{name = "entry"}}, image = true},
-	{name = "temple", source = "programs/temple", exports = {{name = "entry"}}, image = true},
-	{name = "node", source = "programs/node", exports = {{name = "entry"}}, image = true},
-	{name = "rings", source = "programs/rings", exports = {{name = "entry"}}, image = true},
-	{name = "threads", source = "programs/threads", exports = {{name = "entry"}}, image = true},
-	{name = "workers", source = "programs/workers", exports = {{name = "entry"}}, image = true},
-	{name = "host", source = "programs/host", exports = {{name = "entry"}}, image = true},
-	{
-		name = "probe",
-		source = "modules/probe",
-		image = true,
-		exports = {
-			{name = "peek", parameters = {.Integer}, result = .Integer, about = "the 8 bytes at an address"},
-			{name = "count", result = .Integer, about = "the number of calls of count"},
-			{name = "spin", result = .Integer, about = "a loop with no end"},
-			{name = "stop_machine", parameters = {.Integer}, result = .Integer, about = "try to stop the machine with a handle"},
-			{name = "checksum", parameters = {.Text}, result = .Integer, about = "the sum of the bytes of a text"},
-			{name = "shout", parameters = {.Text}, result = .Text, about = "a text in capital letters"},
-			{name = "lie", parameters = {.Integer}, result = .Text, about = "a false count of bytes, and no text"},
-		},
-	},
-	{
-		name = "math",
-		source = "modules/math",
-		image = true,
-		exports = {
-			{name = "gcd", parameters = {.Integer, .Integer}, result = .Integer, about = "the greatest common divisor"},
-			{name = "power", parameters = {.Integer, .Integer}, result = .Integer, about = "an integer to a power"},
-			{name = "fibonacci", parameters = {.Integer}, result = .Integer, about = "the Fibonacci number of an index"},
-			{name = "next_prime", parameters = {.Integer}, result = .Integer, about = "the first prime number from an integer"},
-			{name = "number", parameters = {.Text}, result = .Integer, about = "the integer that a text holds"},
-			{name = "roman", parameters = {.Integer}, result = .Text, about = "an integer in Roman numerals"},
-			{name = "reverse", parameters = {.Text}, result = .Text, about = "the bytes of a text, last first"},
-		},
-	},
+	{name = "test_callee", source = "modules/test_callee"},
+	{name = "test_caller", source = "modules/test_caller", imports = {"test_callee"}},
+	{name = "kernel", source = "kernel", kernel = true},
+	{name = "root", source = "programs/root", image = true},
+	{name = "input", source = "programs/input", image = true},
+	{name = "compositor", source = "programs/compositor", image = true},
+	{name = "console", source = "programs/console", image = true},
+	{name = "monitor", source = "programs/monitor", image = true},
+	{name = "plasma", source = "programs/plasma", image = true},
+	{name = "life", source = "programs/life", image = true},
+	{name = "paint", source = "programs/paint", image = true},
+	{name = "fault", source = "programs/fault", image = true},
+	{name = "temple", source = "programs/temple", image = true},
+	{name = "node", source = "programs/node", image = true},
+	{name = "rings", source = "programs/rings", image = true},
+	{name = "threads", source = "programs/threads", image = true},
+	{name = "workers", source = "programs/workers", image = true},
+	{name = "host", source = "programs/host", image = true},
+	{name = "probe", source = "modules/probe", image = true},
+	{name = "math", source = "modules/math", image = true},
 }
 
 join :: proc(parts: ..string) -> string {
@@ -151,7 +124,8 @@ build_module :: proc(build: Module_Build) -> bool {
 	// Only the exports of the module are visible in the linked object.
 	script := strings.builder_make(context.temp_allocator)
 	strings.write_string(&script, "{ global: ")
-	for export in build.exports {
+	exports := describe_package(build.source) or_return
+	for export in exports {
 		fmt.sbprintf(&script, "%s; ", export.name)
 	}
 	strings.write_string(&script, "local: *; };\n")
@@ -187,7 +161,7 @@ build_module :: proc(build: Module_Build) -> bool {
 	for name in build.imports {
 		append(&imports, Import_File{name = name, file = read_file(module_path(name)) or_return})
 	}
-	file := convert(build.name, elf, build.exports, imports[:]) or_return
+	file := convert(build.name, elf, exports, imports[:]) or_return
 	defer delete(file)
 	if err := os.write_entire_file(module_path(build.name), file); err != nil {
 		fmt.eprintfln("kerneltool: cannot write %s: %v", module_path(build.name), err)
@@ -297,6 +271,50 @@ load_on_host :: proc(name: string, imports: []Host_Module) -> (loaded: Host_Modu
 		}
 	}
 	return {file = file, memory = memory}, true
+}
+
+// test_descriptions reads the description of each export from a module
+// file, and compares it with the source of the module.
+test_descriptions :: proc() -> bool {
+	type_names := [module.Type]string {
+		.None    = "None",
+		.Integer = "Integer",
+		.Text    = "Text",
+	}
+	for build in module_builds {
+		file := read_file(module_path(build.name)) or_return
+		exports := describe_package(build.source) or_return
+		if int(module.count(file, .Exports)) != len(exports) + 1 {
+			fmt.eprintfln("kerneltool: test failed: %s has %d exports, its source has %d", build.name, module.count(file, .Exports) - 1, len(exports))
+			return false
+		}
+		last := strings.builder_make(context.temp_allocator)
+		for description, index in exports {
+			function, ok := module.function(file, u32(index + 1))
+			agree :=
+				ok &&
+				module.string_at(file, function.name_offset, function.name_count) == description.name &&
+				module.string_at(file, function.about_offset, function.about_count) == description.about &&
+				int(function.parameter_count) == len(description.parameters) &&
+				function.result == description.result
+			strings.builder_reset(&last)
+			fmt.sbprintf(&last, "%s(", description.name)
+			for parameter in 0 ..< (agree ? len(description.parameters) : 0) {
+				parameter_name := module.string_at(file, function.parameter_names[parameter], u32(function.parameter_name_counts[parameter]))
+				agree &&= function.parameters[parameter] == description.parameters[parameter] && parameter_name == description.names[parameter]
+				fmt.sbprintf(&last, "%s%s: %s", parameter > 0 ? ", " : "", parameter_name, type_names[function.parameters[parameter]])
+			}
+			fmt.sbprintf(&last, ") -> %s", type_names[description.result])
+			if !agree {
+				fmt.eprintfln("kerneltool: test failed: the description of %s in %s does not agree with its source", description.name, build.name)
+				return false
+			}
+		}
+		if len(exports) > 1 {
+			fmt.printfln("kerneltool: test passed: the %d descriptions of %s come from its source; the last is %s", len(exports), build.name, strings.to_string(last))
+		}
+	}
+	return true
 }
 
 MODULE_TEST_RESULT :: (10 * 3 + 1) + (10 * 2 + 2)

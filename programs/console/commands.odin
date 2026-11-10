@@ -12,6 +12,7 @@ import "base:intrinsics"
 Command :: struct {
 	name:            string,
 	parameters:      [ARGUMENT_CAPACITY]Kind,
+	parameter_names: [ARGUMENT_CAPACITY]string, // From the description of an export. "": no name.
 	parameter_count: int,
 	result:          Kind,
 	about:           string,
@@ -97,7 +98,7 @@ commands_start :: proc "contextless" () {
 
 help :: proc "contextless" (arguments: []Value) -> Value {
 	for &item in commands[:command_count] {
-		buffer: [64]u8
+		buffer: [COLUMNS]u8
 		writer := system.Writer {
 			buffer = buffer[:],
 		}
@@ -105,6 +106,10 @@ help :: proc "contextless" (arguments: []Value) -> Value {
 		system.write_part(&writer, "(")
 		for kind, index in item.parameters[:item.parameter_count] {
 			system.write_part(&writer, index > 0 ? ", " : "")
+			if item.parameter_names[index] != "" {
+				system.write_part(&writer, item.parameter_names[index])
+				system.write_part(&writer, ": ")
+			}
 			system.write_part(&writer, kind_names[kind])
 		}
 		system.write_part(&writer, ")")
@@ -113,7 +118,7 @@ help :: proc "contextless" (arguments: []Value) -> Value {
 			system.write_part(&writer, kind_names[item.result])
 		}
 		system.write_part(&writer, " ")
-		for writer.count < 36 {
+		for writer.count < 53 {
 			system.write_part(&writer, " ")
 		}
 		print(system.written(&writer), item.about, "\n")
@@ -291,6 +296,7 @@ add_module :: proc "contextless" (name: string, isolate: bool) -> Value {
 			}
 			for type, parameter in function.parameters[:function.parameter_count] {
 				item.parameters[parameter] = Kind(type)
+				item.parameter_names[parameter] = module.string_at(file, function.parameter_names[parameter], u32(function.parameter_name_counts[parameter]))
 			}
 			command_count += 1
 		}

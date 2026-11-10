@@ -115,7 +115,7 @@ The owner did not review these. Each one can change.
 8. **Commands of two origins.** The system commands (`programs`, `start`, `shutdown`...) are compiled into the console. `load("math")` loads a module of the boot image: each export becomes a command. The console reads the name, the types and the help of an export from the function table of the module, and calls the export with the call form. `load` checks the hash of the module first.
    **The person chooses the trust.** `load` gives direct calls: the module has the memory and the handles of the console. `isolate` gives isolated calls: the module runs in a call host. The description and the way to type a call are the same.
 9. **Font.** Spleen 8x16, BSD 2-Clause, converted from its BDF file by `kerneltool font`.
-10. **Types of the description.** `Integer` (64 bits, in a register) and `Text` (the address of a slice record). At most 6 parameters. For a Text result, the caller gives one more argument: the address of a buffer record `{address, capacity}`. The export writes what fits and gives the count of bytes of the full text. In an isolated call the buffer is the free part of the call region. The kernel tool holds the description of each export in its module table; no tool checks it against the source.
+10. **Types of the description.** `Integer` (64 bits, in a register) and `Text` (the address of a slice record). At most 6 parameters. For a Text result, the caller gives one more argument: the address of a buffer record `{address, capacity}`. The export writes what fits and gives the count of bytes of the full text. In an isolated call the buffer is the free part of the call region. The kernel tool makes the description of each export from the source (choice 26).
 
 11. **Isolated call.** `MODULE_CONTRACT.md` section 4, "The isolated call, as implemented", lists these choices: one call host per module, the argument record in the call region, the status numbers, no time limit (choice 25), a call region of 16 pages, one call at a time per call host.
 12. **The caller starts the call host.** The console creates the program with `system.program_start`; the root service takes no part. Any program can create a program: the new program has only the handles that its creator gives.
@@ -132,6 +132,7 @@ The owner did not review these. Each one can change.
 23. **One wait.** The word wait is the one way to wait for something else than a time. `Wake(memory)` and the wake-pending flag are deleted. A queue has two words more, `reader_waits` and `writer_waits`. The reader of a queue sets `reader_waits`, then waits on the `write` counter while the queue is empty. `system.send` writes a record, and enters the kernel to wake the reader only if `reader_waits` is set. `system.receive` does the same for a writer that waits for room. A `system.Wait` is a list of at most 64 words: the compositor waits on the queues of all its clients in one entry. Measured in the machine test: the picture of `rings` and the logs do not change.
 24. **The event word.** The thread record has an `events` word. The kernel adds 1 to it for each event of the program (choice 17). A thread reads the word (`system.wait_begin`), reads the state, then waits on the word with the value that it read: an event between the read and the wait ends the wait at once. This replaces the wake-pending flag with the rule of the word wait.
 25. **The console runs a line in a second thread.** The first thread reads the keys and draws. The second thread runs each line. The two threads share one `Work` record and wait on its words. During a line, the first thread keeps at most 128 keys, shows the time of the line in a status line, and sets the `cancel` word on Escape. An isolated call waits on the completion queue and on the `cancel` word in one entry. The limit of 2000 ms is deleted: the person decides. Escape does not stop a direct call or a command of the console: that code runs in the console itself, and choice 18 says that a thread stopped from outside can hold a lock.
+26. **Descriptions come from the source.** `tools/kerneltool/describe.odin` reads each Odin package with `core:odin/parser`. An export is a procedure with `@(export)` and the calling convention "c". `i64` is an Integer, `^string` is a Text, and a last parameter `^[]u8` is the buffer of a Text result. The description holds the name of the export, the name and the type of each parameter, the result, and the first sentence of the comment as the help. Another type, a missing comment or an export of data is a build error: the tool does not guess. The module table has no description. A function record is 56 bytes. The test reads each module file and compares its descriptions with the source. The kernel exports functions only: its two words that the assembly reads are now in `processor.asm`. The rules are those of the Odin binding; the description in the module file does not depend on Odin.
 
 ## Gaps
 
@@ -160,8 +161,7 @@ Input:
 
 ## Next steps
 
-1. Descriptions made from the source (property 19).
-2. Rights on handles, and a split of the Machine handle.
-3. Damage rectangles in the compositor.
-4. A block device service (virtio), then the storage service.
-5. Several processors.
+1. Rights on handles, and a split of the Machine handle.
+2. Damage rectangles in the compositor.
+3. A block device service (virtio), then the storage service.
+4. Several processors.

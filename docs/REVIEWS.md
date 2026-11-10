@@ -13,6 +13,7 @@ A step is one tested commit that adds one capability.
 | 5 | `44d2973` | The word wait and the lock, shown by `workers` |
 | 6 | `887f23b` | One wait: rings wait on words, `Wake(memory)` deleted, the event word |
 | 7 | `6d900bc` | The console runs a line in a second thread: keys during a call, Escape stops an isolated call |
+| 8 | (the commit of step 8) | Descriptions come from the source: parameter names, help from the comment, checked by the test |
 
 ## Review 1: steps 1 to 5 (2026-11-10)
 
@@ -46,7 +47,7 @@ A step is one tested commit that adds one capability.
 5. **The console waits during an isolated call.** Threads now permit the removal: the call runs in a second thread of the console. **Removed in step 7.**
 6. **Text result: at most 5 parameters.** Accepted limit of the call form, written in the contract.
 7. **One processor.** The thread code has no assumption of one processor in its contracts, but the kernel has one stack and no lock. Remove: the step "several processors".
-8. **Descriptions by hand.** Remove: the step "descriptions from the source".
+8. **Descriptions by hand.** Remove: the step "descriptions from the source". **Removed in step 8.**
 9. **The machine test depended on the order of two programs and on the speed of the firmware.** The order: removed in step 4 (`any_order`). The failure of step 1 was not the firmware: QEMU lost a disk event on its SATA controller with KVM. Removed with step 5: the tool writes the boot volume, on a virtio block device (0 slow boots of 160).
 
 ### Bad compromises found

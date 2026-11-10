@@ -121,15 +121,18 @@ PARAMETER_CAPACITY :: 6 // The integer registers of the call form.
 // The description of one export. It is sufficient to call the export: the
 // console reads it. The loader does not.
 Function :: struct {
-	name_offset:     u32, // In the string table.
-	name_count:      u32,
-	about_offset:    u32, // One line of help, in the string table.
-	about_count:     u32,
-	parameter_count: u8,
-	result:          Type,
-	parameters:      [PARAMETER_CAPACITY]Type,
+	name_offset:           u32, // In the string table.
+	name_count:            u32,
+	about_offset:          u32, // One line of help, in the string table.
+	about_count:           u32,
+	parameter_names:       [PARAMETER_CAPACITY]u32, // The name of each parameter, in the string table.
+	parameter_count:       u8,
+	result:                Type,
+	parameters:            [PARAMETER_CAPACITY]Type,
+	parameter_name_counts: [PARAMETER_CAPACITY]u8,
+	reserved:              [2]u8,
 }
-#assert(size_of(Function) == 24)
+#assert(size_of(Function) == 56)
 
 // The rebase table is not indexed. It is a sequence of 64-bit words in the
 // RELR form, and it names the 8-byte locations that hold a memory offset:

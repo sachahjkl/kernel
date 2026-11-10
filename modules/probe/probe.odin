@@ -19,8 +19,8 @@ peek :: proc "c" (address: i64) -> i64 {
 
 calls: i64
 
-// count gives the number of calls of count since the module started. The
-// data of a module is private to the program that runs it.
+// count gives the number of calls of count. The data of a module is private
+// to the program that runs it.
 @(export, link_name = "count")
 count :: proc "c" () -> i64 {
 	calls += 1
@@ -35,8 +35,8 @@ spin :: proc "c" () -> i64 {
 	}
 }
 
-// stop_machine asks the kernel to stop the machine, with a handle number
-// that the caller gives. The result is the status of the kernel operation.
+// stop_machine asks the kernel to stop the machine with a handle. The
+// result is the status of the kernel operation.
 @(export, link_name = "stop_machine")
 stop_machine :: proc "c" (handle: i64) -> i64 {
 	_, status := system.call(op.Operation.Machine_Stop, u64(handle), 0)
@@ -64,8 +64,8 @@ shout :: proc "c" (text: ^string, result: ^[]u8) -> i64 {
 	return i64(len(text))
 }
 
-// lie writes nothing, and says that its text has `count` bytes. The caller
-// must not read more than its buffer.
+// lie writes no text, and gives a false count of bytes. The caller must not
+// read more than its buffer.
 @(export, link_name = "lie")
 lie :: proc "c" (count: i64, result: ^[]u8) -> i64 {
 	return count

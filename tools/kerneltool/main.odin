@@ -153,7 +153,7 @@ run_test :: proc(args: []string) -> int {
 	if code := run_build(nil); code != 0 {
 		return code
 	}
-	if !machine_test() || !test_modules() {
+	if !machine_test() || !test_modules() || !test_descriptions() {
 		return EXIT_FAILURE
 	}
 	fmt.println("kerneltool: all tests passed")

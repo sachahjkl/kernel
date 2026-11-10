@@ -11,7 +11,7 @@ calls: i64
 
 // apply gives operations[operation](x), plus the number of calls so far.
 @(export, link_name = "apply")
-apply :: proc "c" (operation: u32, x: i64) -> i64 {
+apply :: proc "c" (operation, x: i64) -> i64 {
 	calls += 1
 	return operations[operation & 1](x) + calls
 }

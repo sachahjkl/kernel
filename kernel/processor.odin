@@ -81,11 +81,13 @@ task_state: Task_State
 gates: [256]Interrupt_Gate
 kernel_stack: [KERNEL_STACK_SIZE]u8
 
-@(export, link_name = "kernel_stack_top")
-kernel_stack_top: u64
-
-@(export, link_name = "current_fpu_area")
-current_fpu_area: ^Fpu_State
+// Two words that the instructions of processor.asm read at each kernel
+// entry. They are in processor.asm: the exports of a module are functions
+// only, so Odin does not export them.
+foreign _ {
+	kernel_stack_top: u64
+	current_fpu_area: ^Fpu_State
+}
 
 idle_fpu_area: Fpu_State
 

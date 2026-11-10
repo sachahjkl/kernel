@@ -124,7 +124,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[console] IVXXMMXV"},
 	{kind = .Type, text = "help()"},
 	{kind = .Wait, text = "[console] shutdown()"},
-	{kind = .Wait, text = "[console] number(Text) -> Integer"},
+	{kind = .Wait, text = "[console] number(text: Text) -> Integer"},
 	{kind = .Shot, text = "tools"},
 
 	// An isolated call: the module runs in a sandboxed program. The

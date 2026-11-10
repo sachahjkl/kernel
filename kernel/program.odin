@@ -600,7 +600,7 @@ EXCEPTION_NAMES := [32]string {
 }
 
 // kernel_interrupt is where every interrupt, exception and kernel entry arrives.
-@(export, link_name = "kernel_interrupt")
+@(require, linkage = "strong", link_name = "kernel_interrupt")
 kernel_interrupt :: proc "c" (frame: ^Frame) {
 	from_program := frame.cs & 3 != 0
 	if from_program {

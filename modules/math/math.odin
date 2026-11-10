@@ -1,9 +1,11 @@
 // A module of commands (property 19). It is not a program: it has no entry.
 // The console loads it and calls its exports with the call form
-// (docs/MODULE_CONTRACT.md, section 4). The description of each export is in
-// the module table of tools/kerneltool/modules.odin.
+// (docs/MODULE_CONTRACT.md, section 4). The tool makes the description of each
+// export from this source: the name, the parameters, the result, and the
+// first sentence of the comment (tools/kerneltool/describe.odin).
 package math
 
+// gcd gives the greatest common divisor.
 @(export, link_name = "gcd")
 gcd :: proc "c" (first, second: i64) -> i64 {
 	a, b := abs(first), abs(second)
@@ -13,6 +15,7 @@ gcd :: proc "c" (first, second: i64) -> i64 {
 	return a
 }
 
+// power gives an integer to a power.
 @(export, link_name = "power")
 power :: proc "c" (base, exponent: i64) -> i64 {
 	result: i64 = 1
@@ -29,6 +32,7 @@ power :: proc "c" (base, exponent: i64) -> i64 {
 
 FIBONACCI_LAST :: 92 // The last index whose number fits in 64 bits.
 
+// fibonacci gives the Fibonacci number of an index.
 @(export, link_name = "fibonacci")
 fibonacci :: proc "c" (index: i64) -> i64 {
 	a, b: i64 = 0, 1
@@ -40,6 +44,7 @@ fibonacci :: proc "c" (index: i64) -> i64 {
 
 NEXT_PRIME_LIMIT :: 1 << 40 // Above this, the search is too slow: the result is 0.
 
+// next_prime gives the first prime from an integer.
 @(export, link_name = "next_prime")
 next_prime :: proc "c" (from: i64) -> i64 {
 	if from > NEXT_PRIME_LIMIT {
@@ -55,7 +60,8 @@ next_prime :: proc "c" (from: i64) -> i64 {
 	}
 }
 
-// A Text parameter is the address of a slice record: {address, count}.
+// number gives the integer that a text holds. A Text parameter is the
+// address of a slice record: {address, count}.
 @(export, link_name = "number")
 number :: proc "c" (text: ^string) -> i64 {
 	digits := text^
@@ -82,6 +88,7 @@ roman_values := [?]i64{1000, 900, 500, 400, 100, 90, 50, 40, 10, 9, 5, 4, 1}
 @(rodata)
 roman_symbols := [?]string{"M", "CM", "D", "CD", "C", "XC", "L", "XL", "X", "IX", "V", "IV", "I"}
 
+// roman gives an integer in Roman numerals.
 @(export, link_name = "roman")
 roman :: proc "c" (number: i64, result: ^[]u8) -> i64 {
 	rest := clamp(number, 0, ROMAN_LIMIT)
@@ -100,6 +107,7 @@ roman :: proc "c" (number: i64, result: ^[]u8) -> i64 {
 	return i64(count)
 }
 
+// reverse gives the bytes of a text, last first.
 @(export, link_name = "reverse")
 reverse :: proc "c" (text: ^string, result: ^[]u8) -> i64 {
 	for i in 0 ..< min(len(text), len(result)) {

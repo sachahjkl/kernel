@@ -237,7 +237,7 @@ Proposal: do not write a compiler or a linker.
 1. Odin and clang produce normal ELF object files, position-independent.
 2. The existing linker (`lld`) links one module into one ELF file.
 3. A tool of the project converts that ELF file into a module: it writes the flat tables, converts relocations to rebases and slots, and computes the hash.
-4. The description tables come from the source: from Odin type information for Odin, from a small description file for C.
+4. The description tables come from the source: from the Odin source for Odin (implemented: `tools/kerneltool/describe.odin` reads the syntax tree), from a small description file for C.
 
 This reuses the compiler, the linker and the debugger formats. The project writes one converter and one loader.
 

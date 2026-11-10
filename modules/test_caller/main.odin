@@ -2,7 +2,7 @@
 package test_caller
 
 foreign _ {
-	apply :: proc "c" (operation: u32, x: i64) -> i64 ---
+	apply :: proc "c" (operation, x: i64) -> i64 ---
 }
 
 // kerneltool test expects this value: (10 * 3 + 1) + (10 * 2 + 2).

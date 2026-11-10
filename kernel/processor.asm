@@ -3,8 +3,6 @@ bits 64
 default rel
 
 extern kernel_interrupt
-extern current_fpu_area
-extern kernel_stack_top
 
 KERNEL_ENTER_VECTOR equ 128
 STUB_COUNT equ 48
@@ -191,6 +189,13 @@ stub_ %+ vector:
 
 section .data
 enter_user_stack: dq 0
+
+; The top of the kernel stack, and the area where the next entry saves the
+; floating-point state. The Odin code of the kernel writes them.
+global kernel_stack_top
+kernel_stack_top: dq 0
+global current_fpu_area
+current_fpu_area: dq 0
 
 global interrupt_stubs
 interrupt_stubs:

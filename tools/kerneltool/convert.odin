@@ -23,6 +23,7 @@ Segment_Image :: struct {
 Export_Description :: struct {
 	name:       string,
 	parameters: []module.Type,
+	names:      []string, // The name of each parameter.
 	result:     module.Type,
 	about:      string,
 }
@@ -197,9 +198,14 @@ convert :: proc(name: string, elf: []u8, exports: []Export_Description, imports:
 				result          = description.result,
 			}
 			copy(function.parameters[:], description.parameters)
-			append(&function_records, function)
 			append(&string_bytes, export_name)
 			append(&string_bytes, description.about)
+			for parameter_name, parameter in description.names {
+				function.parameter_names[parameter] = u32(len(string_bytes))
+				function.parameter_name_counts[parameter] = u8(len(parameter_name))
+				append(&string_bytes, parameter_name)
+			}
+			append(&function_records, function)
 			found = true
 			break
 		}
