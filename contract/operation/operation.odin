@@ -70,7 +70,7 @@ Operation :: enum u32 {
 	// The budget pays for the program, for its page tables and for its first thread.
 	Program_Start  = 7, // (program, entry address, stack address, context address): the first thread of the program.
 	Program_Stop   = 8, // (program or 0 for self, code)
-	Program_State  = 9, // (program) -> Program_State, code
+	Program_State  = 9, // (program) -> Program_State, code, kernel entries of the program
 	Handle_Give    = 10, // (target: program handle or memory handle, handle, Rights) -> the handle in the target program.
 	// The new handle has the rights of the handle that are also in Rights: a grant never adds a right.
 	// With a memory handle, the target is the other program that maps this memory: the other side of a ring.

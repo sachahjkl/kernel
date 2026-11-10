@@ -14,6 +14,7 @@ import "contract:isolated"
 import op "contract:operation"
 import "contract:ring"
 import "support:system"
+import "support:terminal"
 
 ROOT_MARK :: "root: ok"
 
@@ -26,12 +27,15 @@ Grant :: enum {
 	Image, // Read the boot image.
 	Log_Records, // Read the records of the log.
 	Serve, // A service: other programs call its exports through connections.
+	Terminal, // The program has no surface: it writes records to a terminal, and reads keys from it.
 }
 
 grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 	switch name {
 	case "console":
-		return {.Root_Ring, .Inspect, .Stop, .Image}
+		return {.Root_Ring, .Inspect, .Stop, .Image, .Terminal}
+	case "flood":
+		return {.Terminal}
 	case "monitor", "processors", "pages", "flow", "crowd", "clock":
 		return {.Inspect}
 	case "rights":
@@ -42,8 +46,6 @@ grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 		return {.Inspect, .Image} // It shows the modules of the boot image.
 	case "rings":
 		return {.Image} // It starts its nodes from the boot image.
-	case "terminal":
-		return {.Inspect, .Image} // It starts its program from the boot image, and shows the kernel entries of that program.
 	case "paint", "life", "tally":
 		return {.Serve}
 	case "manual":
@@ -80,7 +82,9 @@ budget_of :: proc "contextless" (name: string) -> system.Budget_Amounts {
 	case "crowd":
 		return {pages = 2048, programs = 1, threads = 5}
 	case "terminal":
-		return {pages = 8192, programs = 2, threads = 3} // The lines that it keeps, and its program.
+		return {pages = 8192, programs = 1, threads = 2} // The lines that it keeps.
+	case "flood":
+		return {pages = 256, programs = 1, threads = 1}
 	}
 	return {pages = 2048, programs = 1, threads = 1}
 }
@@ -90,7 +94,7 @@ budget_of :: proc "contextless" (name: string) -> system.Budget_Amounts {
 // the log to them.
 log_grant :: proc "contextless" (name: string) -> system.Grant {
 	rights := system.Rights{.Write}
-	if name == "console" || name == "rings" || name == "terminal" {
+	if name == "console" || name == "rings" {
 		rights += {.Give}
 	}
 	return {system.context_record().handles[op.CONTEXT_LOG], rights}
@@ -106,6 +110,16 @@ Started :: struct {
 	service_memory:  system.Handle,
 	hash:            [32]u8, // The hash of the file of the program.
 	name:            system.Name,
+	writer:          ^Started, // A terminal: the program that writes in it. nil after that program stopped.
+	is_terminal:     bool,
+}
+
+// The size of the terminal of each program, and what it shows.
+terminal_of :: proc "contextless" (name: string) -> (columns, rows: u64, measure: bool) {
+	if name == "flood" {
+		return terminal.COLUMNS_LIMIT, terminal.ROWS_LIMIT, true // It shows the rates of the program.
+	}
+	return 96, 26, false
 }
 
 // A connection: one caller can call the exports of one service.
@@ -285,7 +299,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				case .Stop:
 					result = .Bad_Handle
 					for &other in started {
-						if other.program != 0 && system.name_of(other.name[:]) == system.name_of(name[:]) {
+						if other.program != 0 && !other.is_terminal && system.name_of(other.name[:]) == system.name_of(name[:]) {
 							system.call(.Program_Stop, u64(other.program), 0)
 							result = .Ok
 							break
@@ -318,7 +332,7 @@ start :: proc "contextless" (name: string) -> system.Status {
 			break
 		}
 	}
-	if len(file) == 0 || name == "root" || name == "input" || name == "compositor" {
+	if len(file) == 0 || name == "root" || name == "input" || name == "compositor" || name == "terminal" {
 		return .Bad_Operation
 	}
 	slot: ^Started
@@ -332,18 +346,40 @@ start :: proc "contextless" (name: string) -> system.Status {
 		return .No_Slot
 	}
 	slot^ = {}
-
-	// The ring between the program and the compositor. This service does not keep it.
-	display_memory := system.memory_create(ring.PAGE_COUNT) or_return
-	defer system.close(display_memory)
-	slot.client = system.give(compositor, display_memory, {.Read, .Write}) or_return
-	system.send(&control.commands, ring.Record{kind = u32(display.Control.Client_Add), values = {0 = u64(slot.client)}})
-
+	role := grants_of(name)
 	grants: [op.CONTEXT_HANDLES]system.Grant
 	values: [op.CONTEXT_VALUES]u64
-	grants[system.GRANT_DISPLAY] = {display_memory, {.Read, .Write}}
 	grants[op.CONTEXT_LOG] = log_grant(name)
-	role := grants_of(name)
+
+	// A program has a surface, or it has a terminal. This service does not
+	// keep the memory objects that it creates here.
+	view: ^Started
+	shared: [2]system.Handle // The ring to the compositor; or the terminal ring and the text region.
+	defer for memory in shared {
+		if memory != 0 {
+			system.close(memory)
+		}
+	}
+	if .Terminal in role {
+		for &item in started {
+			if item.program == 0 && &item != slot {
+				view = &item
+				break
+			}
+		}
+		if view == nil {
+			return .No_Slot
+		}
+		shared[0] = system.memory_create(ring.pages(terminal.RING_CAPACITY)) or_return
+		shared[1] = system.memory_create(terminal.TEXT_PAGES) or_return
+		grants[terminal.GRANT_RING] = {shared[0], {.Read, .Write}}
+		grants[terminal.GRANT_TEXT] = {shared[1], {.Read, .Write}}
+	} else {
+		shared[0] = system.memory_create(ring.PAGE_COUNT) or_return
+		slot.client = system.give(compositor, shared[0], {.Read, .Write}) or_return
+		system.send(&control.commands, ring.Record{kind = u32(display.Control.Client_Add), values = {0 = u64(slot.client)}})
+		grants[system.GRANT_DISPLAY] = {shared[0], {.Read, .Write}}
+	}
 	status := system.Status.Ok
 	if .Root_Ring in role {
 		slot.requests_memory, slot.requests, status = system.ring_create()
@@ -388,7 +424,48 @@ start :: proc "contextless" (name: string) -> system.Status {
 	}
 	slot.hash = entry.hash
 	copy(slot.name[:len(slot.name) - 1], name)
+	if view != nil {
+		if status = terminal_start(view, slot, shared[0], shared[1]); status != .Ok {
+			system.call(.Program_Stop, u64(slot.program), 0)
+			return status
+		}
+		system.log_in("programs", .Info, "root: started ", name, ", with a terminal")
+		return .Ok
+	}
 	system.log_in("programs", .Info, "root: started ", name)
+	return .Ok
+}
+
+// terminal_start starts the terminal of a program that runs. The terminal
+// receives a surface, the terminal ring, the text region with the right
+// Read, and a handle that reads the state of the program. It receives
+// nothing of the role of the program.
+terminal_start :: proc "contextless" (view: ^Started, writer: ^Started, ring_memory, text_memory: system.Handle) -> system.Status {
+	view^ = {}
+	display_memory := system.memory_create(ring.PAGE_COUNT) or_return
+	defer system.close(display_memory)
+	client := system.give(compositor, display_memory, {.Read, .Write}) or_return
+	system.send(&control.commands, ring.Record{kind = u32(display.Control.Client_Add), values = {0 = u64(client)}})
+
+	grants: [op.CONTEXT_HANDLES]system.Grant
+	values: [op.CONTEXT_VALUES]u64
+	grants[system.GRANT_DISPLAY] = {display_memory, {.Read, .Write}}
+	grants[terminal.GRANT_RING] = {ring_memory, {.Read, .Write}}
+	grants[terminal.GRANT_TEXT] = {text_memory, {.Read}}
+	grants[terminal.GRANT_PROGRAM] = {writer.program, {.Read}}
+	grants[op.CONTEXT_LOG] = log_grant("terminal")
+	name := system.name_pack(system.name_of(writer.name[:]))
+	copy(values[terminal.VALUE_NAME:], name[:])
+	measure: bool
+	values[terminal.VALUE_COLUMNS], values[terminal.VALUE_ROWS], measure = terminal_of(system.name_of(writer.name[:]))
+	values[terminal.VALUE_MEASURE] = u64(measure)
+	program, status := system.program_start(system.image_find(image, "terminal"), "terminal", grants, values, budget_of("terminal"))
+	if status != .Ok {
+		system.send(&control.commands, ring.Record{kind = u32(display.Control.Client_Remove), values = {0 = u64(client)}})
+		return status
+	}
+	view.program, view.client, view.writer, view.is_terminal = program, client, writer, true
+	copy(view.name[:len(view.name) - 1], "terminal")
 	return .Ok
 }
 
@@ -479,6 +556,16 @@ release :: proc "contextless" (item: ^Started) {
 	// The connections of the program end: those that it made, and those
 	// that it served.
 	served := item.service.head != nil
+	// A terminal that stops: its program stops. A program that stops: its
+	// terminal stays, and shows what the program wrote.
+	if item.writer != nil && item.writer.program != 0 {
+		system.call(.Program_Stop, u64(item.writer.program), 0)
+	}
+	for &other in started {
+		if other.writer == item {
+			other.writer = nil
+		}
+	}
 	if item.program != 0 {
 		system.close(item.program)
 		item.program = 0
@@ -492,7 +579,9 @@ release :: proc "contextless" (item: ^Started) {
 		system.ring_close(&item.service)
 		system.close(item.service_memory)
 	}
-	system.send(&control.commands, ring.Record{kind = u32(display.Control.Client_Remove), values = {0 = u64(item.client)}})
+	if item.client != 0 {
+		system.send(&control.commands, ring.Record{kind = u32(display.Control.Client_Remove), values = {0 = u64(item.client)}})
+	}
 	if item.requests.head != nil {
 		system.ring_close(&item.requests)
 		system.close(item.requests_memory)

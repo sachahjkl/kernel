@@ -171,6 +171,13 @@ module_unload :: proc "contextless" (file: []u8, base: u64) {
 	}
 }
 
+// program_entries gives the count of kernel entries of a program, from its
+// start. The handle needs the right Read.
+program_entries :: proc "contextless" (program: Handle) -> u64 {
+	results, _ := call(.Program_State, u64(program))
+	return results[2]
+}
+
 // program_state gives the state of a program, and its code when it stopped.
 program_state :: proc "contextless" (program: Handle) -> (state: op.Program_State, code: u32) {
 	results, _ := call(.Program_State, u64(program))

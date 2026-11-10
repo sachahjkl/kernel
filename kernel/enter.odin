@@ -200,6 +200,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		slot := handle_find(program, v[0], .Program, {.Read}) or_return
 		results[0] = u64(program_state(slot.object))
 		results[1] = u64(programs[slot.object].code)
+		results[2] = programs[slot.object].entries
 		return .Ok
 
 	case .Handle_Give:

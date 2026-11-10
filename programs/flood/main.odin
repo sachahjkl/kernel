@@ -3,12 +3,17 @@
 // Each line has four runs of text with four styles: a number, a level, a
 // name, a text. The program sends no escape sequence: the style of a run
 // is a field of its record. The status has the count of lines.
+//
+// The program has no surface. It reads the keys of the person from its
+// terminal: the key Space stops the lines, and starts them again. While
+// the lines do not move, the program waits for a key and uses no processor.
 package flood
 
 import "support:system"
 import "support:terminal"
 
 STATUS_LINES :: 1 << 16 // The lines between two statuses.
+KEY_LINES :: 256 // The lines between two looks at the keys.
 ROUND :: 100_000_000 // The lines of one round of the status.
 
 Level :: struct {
@@ -50,6 +55,32 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		digit = '0'
 	}
 	for number: u64 = 1;; number += 1 {
+		if number % KEY_LINES == 0 {
+			paused := false
+			for {
+				pressed, has_key := terminal.key(&output)
+				if has_key && pressed.character == ' ' {
+					paused = !paused
+					if paused {
+						terminal.status(&output, "lines written", number % ROUND, ROUND, {tone = .Warning})
+						terminal.edit(&output, "the lines wait: the key Space continues", style = {tone = .Warning})
+						system.log("flood: the person pressed Space: no more lines after ", number - 1)
+					} else {
+						terminal.edit(&output, "")
+						system.log("flood: the person pressed Space: the lines continue")
+					}
+				}
+				if has_key {
+					continue
+				}
+				if !paused {
+					break
+				}
+				wait: system.Wait
+				system.wait_records(&wait, &output.ring.completions)
+				system.wait_end(&wait)
+			}
+		}
 		// Add 1 to the decimal number.
 		for place := len(digits) - 1; place >= 0; place -= 1 {
 			if digits[place] != '9' {

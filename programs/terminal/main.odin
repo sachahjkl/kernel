@@ -1,5 +1,15 @@
-// The terminal: it shows the text that a program gives as records
-// (terminal/terminal.odin). It starts the program `flood`.
+// The terminal: it shows the text that a program gives as records, and it
+// gives the keys of the person to that program (support/terminal).
+//
+// The terminal starts no program. The root service starts a program and its
+// terminal, and gives the same terminal ring and text region to the two.
+// The terminal holds a surface, these two memory objects, and a handle that
+// reads the state of the program: it has nothing of the role of the program.
+// The name of the program, the size of the text and what the window shows
+// are values of its context.
+//
+// Keys: Page Up and Page Down move the view. Each other key goes to the
+// program, and the view returns to the last lines.
 //
 // Two threads:
 //   the reader   It reads the records of the terminal ring and keeps the
@@ -22,37 +32,45 @@ package terminal_program
 
 import "support:display"
 import "support:graphics"
-import op "contract:operation"
 import "contract:ring"
 import "support:system"
 import "support:terminal"
 import "base:intrinsics"
 
-PROGRAM :: "flood" // The program that this terminal starts.
-
-COLUMNS :: 104
-ROWS :: 32
+COLUMNS_LIMIT :: terminal.COLUMNS_LIMIT
+ROWS_LIMIT :: terminal.ROWS_LIMIT
 CELL_WIDTH :: graphics.CELL_WIDTH
 CELL_HEIGHT :: graphics.CELL_HEIGHT
 
 MARGIN :: 8
 HEAD_HEIGHT :: 72
 TEXT_X :: MARGIN
-TEXT_Y :: HEAD_HEIGHT
-TEXT_WIDTH :: COLUMNS * CELL_WIDTH
-TEXT_HEIGHT :: ROWS * CELL_HEIGHT
-SCROLL_X :: TEXT_X + TEXT_WIDTH + 6
 SCROLL_WIDTH :: 8
-STATUS_Y :: TEXT_Y + TEXT_HEIGHT + 8
-HINT_Y :: STATUS_Y + 24
-WIDTH :: SCROLL_X + SCROLL_WIDTH + MARGIN
-HEIGHT :: HINT_Y + CELL_HEIGHT + 8
+
+// What the root service chose for this terminal, and the places that
+// follow from it.
+program_name: string
+name_bytes: system.Name
+columns, rows: int
+measure: bool // The window shows the rates of the program, and the status on its own line.
+text_y, text_width, text_height, scroll_x, status_y, hint_y, width, height, graph_x: int
+
+layout :: proc "contextless" () {
+	text_y = measure ? HEAD_HEIGHT : MARGIN
+	text_width = columns * CELL_WIDTH
+	text_height = rows * CELL_HEIGHT
+	scroll_x = TEXT_X + text_width + 6
+	status_y = text_y + text_height + 8
+	hint_y = measure ? status_y + 24 : status_y
+	width = scroll_x + SCROLL_WIDTH + MARGIN
+	height = hint_y + CELL_HEIGHT + 6
+	graph_x = width - MARGIN - SCROLL_WIDTH - 6 - HISTORY * GRAPH_BAR
+}
 
 FRAME_TIME :: 16 // Milliseconds.
 SAMPLE_TIME :: 250 // Milliseconds of one measure of the rates.
 HISTORY :: 48 // The measures that the graph shows.
 GRAPH_BAR :: 4
-GRAPH_X :: WIDTH - MARGIN - SCROLL_WIDTH - 6 - HISTORY * GRAPH_BAR
 GRAPH_HEIGHT :: 48
 
 COLOR_BACKGROUND :: 0x0C1016
@@ -65,6 +83,7 @@ COLOR_GRAPH_DIM :: 0x1C3A28
 COLOR_THUMB :: 0x5A6878
 COLOR_STOPPED :: 0xF07060
 COLOR_HELD :: 0xF0C050
+COLOR_CURSOR :: 0x7FC8FF
 
 // The color of each tone.
 @(rodata)
@@ -111,7 +130,7 @@ source_text: []u8 // The text region, read-only.
 source_read: u64 // The bytes that the reader took from the text region.
 
 Status_Line :: struct {
-	text:   [COLUMNS]u8,
+	text:   [COLUMNS_LIMIT]u8,
 	length: int,
 	value:  u64,
 	total:  u64,
@@ -119,13 +138,23 @@ Status_Line :: struct {
 }
 status_line: Status_Line
 
+// The line that the program changes (terminal.Kind.Edit).
+Edit_Line :: struct {
+	text:       [terminal.RUN_LIMIT]u8,
+	length:     int,
+	cursor:     int,
+	has_cursor: bool,
+	style:      terminal.Style,
+}
+edit_line: Edit_Line
+
 // ---- What the drawer asks, and the view that the reader gives.
 
 Request :: struct {
 	follow: bool, // The view shows the last lines.
 	top:    u64, // If not follow: the line of the first row.
-	reset:  bool, // The program stopped: the ring starts again.
-	clear:  bool,
+	stopped: bool, // The program stopped: the reader writes a line that says it.
+	code:    u32,
 }
 
 Cell :: struct {
@@ -135,7 +164,7 @@ Cell :: struct {
 }
 
 View :: struct {
-	cells:   [ROWS][COLUMNS]Cell,
+	cells:   [ROWS_LIMIT][COLUMNS_LIMIT]Cell,
 	top:     u64,
 	count:   u64, // The lines since the start.
 	oldest:  u64,
@@ -150,6 +179,10 @@ view: View
 request_word: u32 // 1: the drawer asks for a view. The reader sets 0 when the view is ready.
 reader_idle: u32 // The reader waits, or will wait.
 drawer_waits: u32
+// The reader adds 1 after each group of records. The drawer draws a new
+// picture only after a change: a terminal that receives nothing draws nothing.
+activity: u32
+drawer_idle: u32
 
 line_valid :: proc "contextless" (index: u64) -> bool {
 	line := lines[index & (LINE_CAPACITY - 1)]
@@ -219,6 +252,15 @@ apply :: proc "contextless" (record: ring.Record) {
 		status_line.length += copy(status_line.text[status_line.length:], second)
 	case .Clear:
 		forget()
+	case .Edit:
+		first, second := take(record.tag)
+		edit_line = {style = transmute(terminal.Style)record.values[0]}
+		edit_line.length = copy(edit_line.text[:], first)
+		edit_line.length += copy(edit_line.text[edit_line.length:], second)
+		if record.values[1] != terminal.NO_CURSOR {
+			edit_line.has_cursor = true
+			edit_line.cursor = int(min(record.values[1], u64(edit_line.length)))
+		}
 	}
 }
 
@@ -231,7 +273,7 @@ forget :: proc "contextless" () {
 
 // note adds a line of the terminal itself.
 note :: proc "contextless" (parts: ..system.Part) {
-	buffer: [COLUMNS]u8
+	buffer: [COLUMNS_LIMIT]u8
 	if lines[lines_written & (LINE_CAPACITY - 1)].run_count != 0 {
 		line_end()
 	}
@@ -240,36 +282,49 @@ note :: proc "contextless" (parts: ..system.Part) {
 
 // view_make fills the view for the request.
 view_make :: proc "contextless" () {
-	if request.reset {
-		// The program does not run: no other thread writes the ring.
-		source.head^ = {}
-		source_read = 0
-		note("-- the terminal stopped ", PROGRAM, " after ", lines_written, " lines --")
+	if request.stopped {
+		note("-- ", program_name, " stopped with code ", u64(request.code), " after ", lines_written, " lines --")
 		status_line.total = 0
-	}
-	if request.clear {
-		forget()
+		edit_line = {}
 	}
 	count := lines_written
 	if lines[lines_written & (LINE_CAPACITY - 1)].run_count != 0 {
 		count += 1
 	}
+	// The line that the program changes takes rows after the last line.
+	edit_cells := edit_line.length + int(edit_line.has_cursor)
+	edit_rows := u64(min((edit_cells + columns - 1) / columns, rows))
+	total := count + edit_rows
 	top := request.top
-	if request.follow || top + ROWS > count {
-		top = count > ROWS ? count - ROWS : 0
+	if request.follow || top + u64(rows) > total {
+		top = total > u64(rows) ? total - u64(rows) : 0
 	}
 	view.count, view.oldest, view.records, view.bytes, view.status = count, oldest, records_read, bytes_written, status_line
 	// The person holds lines that the terminal does not have now: the view
 	// keeps its cells.
-	view.gone = !request.follow && !request.clear && top == view.top && top < oldest
+	view.gone = !request.follow && top == view.top && top < oldest
 	if view.gone {
 		return
 	}
 	top = max(top, oldest)
 	view.top = top
-	for &row, index in view.cells {
+	edit_color := .Color in edit_line.style.flags ? edit_line.style.color & 0xFFFFFF : tone_colors[terminal.Tone(min(u8(edit_line.style.tone), u8(max(terminal.Tone))))]
+	for &row, index in view.cells[:rows] {
 		row = {}
 		number := top + u64(index)
+		if number >= count && number - count < edit_rows {
+			first := int(number - count) * columns
+			for column in 0 ..< columns {
+				place := first + column
+				if place < edit_line.length {
+					row[column] = {edit_line.text[place], false, edit_color}
+				}
+				if edit_line.has_cursor && place == edit_line.cursor {
+					row[column] = {max(row[column].character, ' '), true, COLOR_CURSOR}
+				}
+			}
+			continue
+		}
 		if number >= count || !line_valid(number) {
 			continue
 		}
@@ -280,15 +335,15 @@ view_make :: proc "contextless" () {
 			color := .Color in run.style.flags ? run.style.color & 0xFFFFFF : tone_colors[terminal.Tone(min(u8(run.style.tone), u8(max(terminal.Tone))))]
 			reverse := .Reverse in run.style.flags
 			for offset in 0 ..< u64(run.length) {
-				if column == COLUMNS {
+				if column == columns {
 					break
 				}
 				row[column] = {bytes[(run.start + offset) & (BYTE_CAPACITY - 1)], reverse, color}
 				column += 1
 			}
 		}
-		if line.length > COLUMNS {
-			row[COLUMNS - 1] = {'>', true, COLOR_DIM} // The line continues after the window.
+		if int(line.length) > columns {
+			row[columns - 1] = {'>', true, COLOR_DIM} // The line continues after the window.
 		}
 	}
 }
@@ -313,6 +368,12 @@ read :: proc "c" (parameter: rawptr) -> ! {
 			}
 			apply(record)
 			count += 1
+		}
+		if count != 0 {
+			intrinsics.atomic_add(&activity, 1)
+			if intrinsics.atomic_load(&drawer_idle) != 0 && intrinsics.atomic_exchange(&drawer_idle, 0) != 0 {
+				system.word_wake(&activity)
+			}
 		}
 		// The oldest lines go when an area starts again.
 		if lines_written >= LINE_CAPACITY {
@@ -349,16 +410,12 @@ view_take :: proc "contextless" () {
 		system.wait_word(&list, &request_word, 1, &drawer_waits)
 		system.wait_end(&list)
 	}
-	request.reset, request.clear = false, false
+	request.stopped = false
 }
 
 // ---- The drawer.
 
-machine: system.Handle
-image: []u8
-program: system.Handle
-program_slot: u64
-ring_memory, text_memory: system.Handle
+program: system.Handle // The program that writes, with the right Read. 0 after it stopped.
 
 Rates :: struct {
 	lines:   u64, // In one second.
@@ -370,43 +427,6 @@ Rates :: struct {
 
 rates: Rates
 history: [HISTORY]u64 // Lines in one second, the last measure at the end.
-
-program_entries :: proc "contextless" () -> u64 {
-	if program_slot == 0 {
-		return 0
-	}
-	report: op.Program_Report
-	system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Program), program_slot, u64(uintptr(&report)), size_of(report))
-	return report.entries
-}
-
-program_begin :: proc "contextless" () -> bool {
-	grants: [op.CONTEXT_HANDLES]system.Grant
-	values: [op.CONTEXT_VALUES]u64
-	grants[terminal.GRANT_RING] = {ring_memory, {.Read, .Write}}
-	grants[terminal.GRANT_TEXT] = {text_memory, {.Read, .Write}}
-	grants[op.CONTEXT_LOG] = {system.context_record().handles[op.CONTEXT_LOG], {.Write}}
-	status: system.Status
-	program, status = system.program_start(system.image_find(image, PROGRAM), PROGRAM, grants, values, {pages = 256, programs = 1, threads = 1})
-	if status != .Ok {
-		system.log("terminal: cannot start ", PROGRAM, ": status ", u64(status))
-		program = 0
-		return false
-	}
-	// The slot of the program in the kernel: the newest program with this name.
-	system_report: op.System_Report
-	system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.System), 0, u64(uintptr(&system_report)), size_of(system_report))
-	newest: u64
-	program_slot = 0
-	for index in 1 ..< system_report.program_slots {
-		report: op.Program_Report
-		system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Program), index, u64(uintptr(&report)), size_of(report))
-		if report.state != .None && report.state != .Stopped && system.name_of(report.name[:]) == PROGRAM && report.start_time >= newest {
-			program_slot, newest = index, report.start_time
-		}
-	}
-	return true
-}
 
 // number gives a number as text, with a space between each three digits.
 number :: proc "contextless" (buffer: ^[27]u8, value: u64) -> string {
@@ -454,28 +474,30 @@ draw :: proc "contextless" (window: ^display.Window, follow: bool) {
 	canvas := window.canvas
 	buffer: [27]u8
 
-	// The head: the rates, and the graph of the lines in one second.
-	graphics.fill(canvas, 0, 0, WIDTH, HEAD_HEIGHT - 6, COLOR_HEAD)
-	graphics.fill(canvas, 0, HEAD_HEIGHT - 6, WIDTH, 6, COLOR_BACKGROUND)
-	tile(canvas, 12, "lines in one second", rates.lines, COLOR_GRAPH)
-	tile(canvas, 196, "records in one second", rates.records, COLOR_TEXT)
-	tile(canvas, 388, "kernel entries, million records", rates.entries, COLOR_HELD)
-	most: u64 = 1
-	for value in history {
-		most = max(most, value)
-	}
-	for value, index in history {
-		height := int(value * GRAPH_HEIGHT / most)
-		x := GRAPH_X + index * GRAPH_BAR
-		graphics.fill(canvas, x, 9, GRAPH_BAR - 1, GRAPH_HEIGHT - height, COLOR_GRAPH_DIM)
-		graphics.fill(canvas, x, 9 + GRAPH_HEIGHT - height, GRAPH_BAR - 1, height, COLOR_GRAPH)
+	graphics.fill(canvas, 0, 0, width, text_y, COLOR_BACKGROUND)
+	if measure {
+		// The head: the rates, and the graph of the lines in one second.
+		graphics.fill(canvas, 0, 0, width, HEAD_HEIGHT - 6, COLOR_HEAD)
+		tile(canvas, 12, "lines in one second", rates.lines, COLOR_GRAPH)
+		tile(canvas, 196, "records in one second", rates.records, COLOR_TEXT)
+		tile(canvas, 388, "kernel entries, million records", rates.entries, COLOR_HELD)
+		most: u64 = 1
+		for value in history {
+			most = max(most, value)
+		}
+		for value, index in history {
+			bar_height := int(value * GRAPH_HEIGHT / most)
+			x := graph_x + index * GRAPH_BAR
+			graphics.fill(canvas, x, 9, GRAPH_BAR - 1, GRAPH_HEIGHT - bar_height, COLOR_GRAPH_DIM)
+			graphics.fill(canvas, x, 9 + GRAPH_HEIGHT - bar_height, GRAPH_BAR - 1, bar_height, COLOR_GRAPH)
+		}
 	}
 
 	// The text: only the rows of the window.
-	graphics.fill(canvas, 0, TEXT_Y, WIDTH, HEIGHT - TEXT_Y, COLOR_BACKGROUND)
-	for &row, row_index in view.cells {
-		y := TEXT_Y + row_index * CELL_HEIGHT
-		for cell, column in row {
+	graphics.fill(canvas, 0, text_y, width, height - text_y, COLOR_BACKGROUND)
+	for &row, row_index in view.cells[:rows] {
+		y := text_y + row_index * CELL_HEIGHT
+		for cell, column in row[:columns] {
 			if cell.character <= ' ' && !cell.reverse {
 				continue
 			}
@@ -490,45 +512,54 @@ draw :: proc "contextless" (window: ^display.Window, follow: bool) {
 	}
 
 	// Where the view is in the lines that the terminal has.
-	graphics.fill(canvas, SCROLL_X, TEXT_Y, SCROLL_WIDTH, TEXT_HEIGHT, COLOR_RULE)
+	graphics.fill(canvas, scroll_x, text_y, SCROLL_WIDTH, text_height, COLOR_RULE)
 	kept := view.count - view.oldest
 	if kept > 0 && !view.gone {
-		thumb := max(int(min(u64(ROWS), kept) * TEXT_HEIGHT / kept), 12)
-		place := kept > ROWS ? int((view.top - view.oldest) * u64(TEXT_HEIGHT - thumb) / (kept - ROWS)) : 0
-		graphics.fill(canvas, SCROLL_X, TEXT_Y + place, SCROLL_WIDTH, thumb, follow ? COLOR_THUMB : COLOR_HELD)
+		thumb := max(int(min(u64(rows), kept) * u64(text_height) / kept), 12)
+		place := kept > u64(rows) ? int(min(view.top - view.oldest, kept - u64(rows)) * u64(text_height - thumb) / (kept - u64(rows))) : 0
+		graphics.fill(canvas, scroll_x, text_y + place, SCROLL_WIDTH, thumb, follow ? COLOR_THUMB : COLOR_HELD)
 	}
 
-	// The status of the program: a text, and a value of a total.
-	graphics.fill(canvas, 0, STATUS_Y - 4, WIDTH, 1, COLOR_RULE)
+	// The status of the program: a text, and a value of a total. With the
+	// rates it has its own line. If not, it takes the place of the line count.
+	graphics.fill(canvas, 0, status_y - 4, width, 1, COLOR_RULE)
 	status := &view.status
-	if status.total != 0 {
+	has_status := status.total != 0
+	if has_status {
 		color := .Color in status.style.flags ? status.style.color & 0xFFFFFF : tone_colors[terminal.Tone(min(u8(status.style.tone), u8(max(terminal.Tone))))]
-		x := graphics.text(canvas, TEXT_X, STATUS_Y, string(status.text[:status.length]), COLOR_TEXT) + 12
+		x := graphics.text(canvas, TEXT_X, status_y, string(status.text[:status.length]), COLOR_TEXT) + 12
 		bar :: 240
-		graphics.fill(canvas, x, STATUS_Y + 4, bar, 8, COLOR_RULE)
-		graphics.fill(canvas, x, STATUS_Y + 4, int(min(status.value, status.total) * bar / status.total), 8, color)
-		x = graphics.text(canvas, x + bar + 12, STATUS_Y, number(&buffer, status.value), COLOR_TEXT)
-		x = graphics.text(canvas, x, STATUS_Y, " of ", COLOR_DIM)
-		graphics.text(canvas, x, STATUS_Y, number(&buffer, status.total), COLOR_DIM)
-	} else if program == 0 {
-		graphics.text(canvas, TEXT_X, STATUS_Y, "the program does not run", COLOR_STOPPED)
+		graphics.fill(canvas, x, status_y + 4, bar, 8, COLOR_RULE)
+		graphics.fill(canvas, x, status_y + 4, int(min(status.value, status.total) * bar / status.total), 8, color)
+		x = graphics.text(canvas, x + bar + 12, status_y, number(&buffer, status.value), COLOR_TEXT)
+		x = graphics.text(canvas, x, status_y, " of ", COLOR_DIM)
+		graphics.text(canvas, x, status_y, number(&buffer, status.total), COLOR_DIM)
+	} else if program == 0 && measure {
+		graphics.text(canvas, TEXT_X, status_y, "the program does not run", COLOR_STOPPED)
 	}
-	// At the right: the frames of the terminal.
-	frames := number(&buffer, rates.frames)
-	x := WIDTH - MARGIN - (len(frames) + len(" pictures in one second")) * CELL_WIDTH
-	x = graphics.text(canvas, x, STATUS_Y, frames, COLOR_TEXT)
-	graphics.text(canvas, x, STATUS_Y, " pictures in one second", COLOR_DIM)
+	if measure {
+		// At the right: the frames of the terminal.
+		frames := number(&buffer, rates.frames)
+		x := width - MARGIN - (len(frames) + len(" pictures in one second")) * CELL_WIDTH
+		x = graphics.text(canvas, x, status_y, frames, COLOR_TEXT)
+		graphics.text(canvas, x, status_y, " pictures in one second", COLOR_DIM)
+	}
 
 	// The place of the view, and the keys.
-	x = graphics.text(canvas, TEXT_X, HINT_Y, follow ? "line " : "held at line ", follow ? COLOR_DIM : COLOR_HELD)
-	x = graphics.text(canvas, x, HINT_Y, number(&buffer, view.top + 1), follow ? COLOR_TEXT : COLOR_HELD)
-	x = graphics.text(canvas, x, HINT_Y, " of ", COLOR_DIM)
-	x = graphics.text(canvas, x, HINT_Y, number(&buffer, view.count), COLOR_TEXT)
-	if view.gone {
-		graphics.text(canvas, x, HINT_Y, "  older than the lines kept", COLOR_DIM)
+	if measure || !has_status {
+		x := graphics.text(canvas, TEXT_X, hint_y, follow ? "line " : "held at line ", follow ? COLOR_DIM : COLOR_HELD)
+		x = graphics.text(canvas, x, hint_y, number(&buffer, view.top + 1), follow ? COLOR_TEXT : COLOR_HELD)
+		x = graphics.text(canvas, x, hint_y, " of ", COLOR_DIM)
+		x = graphics.text(canvas, x, hint_y, number(&buffer, view.count), COLOR_TEXT)
+		if view.gone {
+			x = graphics.text(canvas, x, hint_y, "  older than the lines kept", COLOR_DIM)
+		}
+		if program == 0 && !measure {
+			graphics.text(canvas, x, hint_y, "  the program does not run", COLOR_STOPPED)
+		}
 	}
-	hint :: "space: hold  arrows, page: move  s: stop  c: clear"
-	graphics.text(canvas, WIDTH - MARGIN - len(hint) * CELL_WIDTH, HINT_Y, hint, COLOR_DIM)
+	hint :: "page up, page down: move  other keys: to the program"
+	graphics.text(canvas, width - MARGIN - len(hint) * CELL_WIDTH, hint_y, hint, COLOR_DIM)
 	display.present(window)
 }
 
@@ -539,15 +570,16 @@ fail :: proc "contextless" (text: string) -> ! {
 
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
-	window, ok := display.open(ctx, WIDTH, HEIGHT, "terminal", two_pictures = true)
+	name_bytes = system.name_unpack({ctx.values[terminal.VALUE_NAME], ctx.values[terminal.VALUE_NAME + 1], ctx.values[terminal.VALUE_NAME + 2], ctx.values[terminal.VALUE_NAME + 3]})
+	program_name = system.name_of(name_bytes[:])
+	columns = int(clamp(ctx.values[terminal.VALUE_COLUMNS], 40, COLUMNS_LIMIT))
+	rows = int(clamp(ctx.values[terminal.VALUE_ROWS], 4, ROWS_LIMIT))
+	measure = ctx.values[terminal.VALUE_MEASURE] != 0
+	layout()
+	program = ctx.handles[terminal.GRANT_PROGRAM]
+	window, ok := display.open(ctx, width, height, program_name, two_pictures = true)
 	if !ok {
 		fail("no surface")
-	}
-	machine = ctx.handles[system.GRANT_MACHINE]
-	if address, status := system.memory_map(ctx.handles[system.GRANT_IMAGE], {}); status == .Ok {
-		image = ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]
-	} else {
-		fail("no grant to read the boot image")
 	}
 
 	// The areas of the lines.
@@ -566,16 +598,16 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	runs = ([^]Run)(area(RUN_CAPACITY * size_of(Run)))
 	bytes = ([^]u8)(area(BYTE_CAPACITY))[:BYTE_CAPACITY]
 
-	// The terminal ring and the text region. This program only reads the
-	// text region.
+	// The terminal ring and the text region, from the root service. This
+	// program has the right Read only on the text region.
 	status: system.Status
-	if ring_memory, source, status = system.ring_create(terminal.RING_CAPACITY); status != .Ok {
+	if source, status = system.ring_open(ctx.handles[terminal.GRANT_RING]); status != .Ok {
 		fail("no terminal ring")
 	}
-	if text_memory, status = system.memory_create(terminal.TEXT_PAGES); status != .Ok {
+	if system.memory_size(ctx.handles[terminal.GRANT_TEXT]) != terminal.TEXT_PAGES {
 		fail("no text region")
 	}
-	if address, map_status := system.memory_map(text_memory, {}); map_status == .Ok {
+	if address, map_status := system.memory_map(ctx.handles[terminal.GRANT_TEXT], {}); map_status == .Ok {
 		source_text = ([^]u8)(address)[:terminal.TEXT_SIZE]
 	} else {
 		fail("no text region")
@@ -583,10 +615,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if _, status = system.thread_start(read, nil); status != .Ok {
 		fail("no thread")
 	}
-	if !program_begin() {
-		fail("cannot start the program")
-	}
-	system.log("terminal: ok, ", PROGRAM, " writes in a ring of ", u64(terminal.RING_CAPACITY), " records")
+	system.log("terminal: ok, ", program_name, " writes in a ring of ", u64(ring.capacity(&source.commands)), " records")
 
 	request.follow = true
 	now := system.time()
@@ -594,58 +623,65 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	sample_time := now
 	sample_lines, sample_records, sample_bytes, sample_entries: u64
 	frames, sample_frames: u64
-	sample_entries = program_entries()
+	sample_entries = system.program_entries(program)
+	keys_sent, keys_lost: u64
 	// One line of the log, for the second that follows the first second.
 	second_start: u64
 	second_lines, second_records, second_entries, second_frames: u64
 	second_logged := false
+	drawn: u32 // The value of activity at the last picture.
+	dirty := true // The view changed with no record: a key, the first picture.
+	STATE_TIME :: 250 // Milliseconds between two looks at the state of the program.
 	for {
-		now = display.wait(&window, next_frame)
+		if !measure && !dirty && intrinsics.atomic_load(&activity) == drawn {
+			// Nothing to draw: wait for a record, a key, or the next look at the program.
+			wait: system.Wait
+			display.wait_events(&wait, &window)
+			system.wait_word(&wait, &activity, drawn, &drawer_idle)
+			system.wait_end(&wait, program != 0 ? system.time() + STATE_TIME : system.WAIT_FOREVER)
+			now = system.time()
+			next_frame = now
+		} else {
+			now = display.wait(&window, next_frame)
+		}
 		for event in display.next_event(&window) {
 			if event.kind != .Key || !event.pressed {
 				continue
 			}
+			dirty = true
 			move: i64
 			switch event.code {
-			case display.KEY_UP:
-				move = -1
-			case display.KEY_DOWN:
-				move = 1
 			case display.KEY_PAGE_UP:
-				move = -(ROWS - 1)
+				move = -i64(rows - 1)
 			case display.KEY_PAGE_DOWN:
-				move = ROWS - 1
-			case display.KEY_HOME:
-				request.follow, request.top = false, 0
-			case display.KEY_END:
+				move = i64(rows - 1)
+			case:
+				// The key goes to the program. The terminal never waits for
+				// the program: if the queue is full, the key is lost.
+				if program != 0 {
+					if system.send(&source.completions, ring.Record{kind = u32(terminal.Input.Key), tag = event.code, values = {0 = u64(event.character)}}) {
+						keys_sent += 1
+						if keys_sent == 1 {
+							system.log("terminal: the first key goes to ", program_name)
+						}
+					} else {
+						keys_lost += 1
+						if keys_lost == 1 {
+							system.log("terminal: ", program_name, " does not read its keys: the queue is full, a key is lost")
+						}
+					}
+				}
 				request.follow = true
 			}
 			if move != 0 {
+				was_following := request.follow
 				request.follow = false
 				request.top = u64(max(i64(view.top) + move, i64(view.oldest)))
-				if request.top + ROWS >= view.count {
+				if request.top + u64(rows) >= view.count {
 					request.follow = true
 				}
-			}
-			switch event.character {
-			case ' ':
-				request.follow = !request.follow
-				request.top = view.top
-				if !request.follow {
-					system.log("terminal: the view stays at line ", view.top + 1, ", ", PROGRAM, " continues")
-				}
-			case 'c':
-				request.clear = true
-			case 's':
-				if program != 0 {
-					system.close(program)
-					program, program_slot = 0, 0
-					request.reset = true
-					view_take()
-					system.log("terminal: stopped ", PROGRAM, " after ", view.count - 1, " lines and ", view.records, " records")
-				} else if program_begin() {
-					system.log("terminal: started ", PROGRAM)
-					sample_entries = 0
+				if was_following && !request.follow {
+					system.log("terminal: the view stays at line ", request.top + 1, ", ", program_name, " continues")
 				}
 			}
 		}
@@ -658,11 +694,26 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			continue
 		}
 		next_frame = max(next_frame + FRAME_TIME, now + 1)
+		if program != 0 {
+			if state, code := system.program_state(program); state == .Stopped {
+				request.stopped, request.code = true, code
+				view_take()
+				system.log("terminal: ", program_name, " stopped with code ", u64(code), " after ", view.count - 1, " lines and ", view.records, " records")
+				system.close(program)
+				program = 0
+				dirty = true
+			}
+		}
+		current := intrinsics.atomic_load(&activity)
+		if !measure && !dirty && current == drawn {
+			continue
+		}
+		drawn, dirty = current, false
 		view_take()
 		frames += 1
 		if now - sample_time >= SAMPLE_TIME {
 			elapsed := now - sample_time
-			entries := program_entries()
+			entries := program != 0 ? system.program_entries(program) : sample_entries
 			records := view.records - sample_records
 			rates = {
 				lines   = (view.count - sample_lines) * 1000 / elapsed,
@@ -674,7 +725,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			copy(history[:], history[1:])
 			history[HISTORY - 1] = rates.lines
 			sample_time, sample_lines, sample_records, sample_bytes, sample_entries, sample_frames = now, view.count, view.records, view.bytes, entries, frames
-			if !second_logged && program != 0 {
+			if measure && !second_logged && program != 0 {
 				if second_start == 0 {
 					if view.records != 0 {
 						second_start, second_lines, second_records, second_entries, second_frames = now, view.count, view.records, entries, frames
@@ -684,7 +735,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					time := now - second_start
 					system.log(
 						"terminal: ",
-						PROGRAM,
+						program_name,
 						" wrote ",
 						(view.count - second_lines) * 1000 / time,
 						" lines in one second, ",

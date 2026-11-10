@@ -51,6 +51,10 @@ The system boots under QEMU to a graphical desktop with a console, a system tool
 
 ![The person holds the view while the program continues to write](docs/screenshots/terminal_held.png)
 
+![A key is a record from the terminal to its program: flood stops its lines at the key Space, and shows it in its edit line](docs/screenshots/terminal_keys.png)
+
+![The program stopped: its terminal stays, with the lines that the program wrote](docs/screenshots/terminal_stopped.png)
+
 ![Four processors run the threads of one program at the same time; the same picture with 1, 2 and 4 threads](docs/screenshots/processors.png)
 
 ![The temple of Jon: a portrait of Jonathan Blow that turns](docs/screenshots/temple.png)

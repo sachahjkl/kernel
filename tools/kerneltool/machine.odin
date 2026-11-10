@@ -34,6 +34,7 @@ Step_Kind :: enum {
 	Drag, // Hold the left button from (x, y) to (to_x, to_y).
 	Shot, // Save the screen as text.png.
 	Move, // Drag the window with the title text to the place (to_x, to_y). The tool reads the place of the window in the log, before and after.
+	Close, // Press the close button of the window with the title text. The tool reads the place and the size of the window in the log.
 	Film, // Save the screen 25 times in one second, for x milliseconds, as the next pictures of the film.
 	Quit, // End QEMU: the machine does not stop by itself.
 }
@@ -481,23 +482,37 @@ scenario := [?]Step {
 	// The terminal: a program gives text as records with a style, in a ring
 	// of 4096 records. The terminal reads them in one thread and draws in
 	// another: the display does not slow the program.
-	{kind = .Launch, text = "terminal"},
+	// The root service starts the program and its terminal: the terminal
+	// starts no program, and has nothing of the role of the program.
+	{kind = .Launch, text = "flood"},
 	{kind = .Wait, text = "flood: ok", any_order = true},
-	{kind = .Wait, text = "terminal: ok, flood writes in a ring of 4096 records"},
+	{kind = .Wait, text = "terminal: ok, flood writes in a ring of 4096 records", any_order = true},
+	{kind = .Wait, text = "root: started flood, with a terminal"},
 	{kind = .Wait, text = "terminal: flood wrote "},
 	{kind = .Shot, text = "terminal"},
-	{kind = .Key, text = "spc"},
+	// The terminal keeps Page Up and Page Down: its view stays, the program continues.
+	{kind = .Key, text = "pgup"},
 	{kind = .Wait, text = "terminal: the view stays at line "},
 	{kind = .Key, text = "pgup"},
 	{kind = .Shot, text = "terminal_held"},
-	{kind = .Key, text = "s"},
-	{kind = .Wait, text = "terminal: stopped flood after "},
-	{kind = .Key, text = "end"},
-	{kind = .Shot, text = "terminal_stopped"},
-	{kind = .Move, text = "terminal", to_x = 132, to_y = 742},
+	// Each other key is a record for the program. flood stops its lines at
+	// the key Space, and shows it in the line that it changes.
+	{kind = .Key, text = "spc"},
+	{kind = .Wait, text = "terminal: the first key goes to flood", any_order = true},
+	{kind = .Wait, text = "flood: the person pressed Space: no more lines after "},
+	{kind = .Shot, text = "terminal_keys"},
+	{kind = .Key, text = "spc"},
+	{kind = .Wait, text = "flood: the person pressed Space: the lines continue"},
+	// The program stops: its terminal stays, with what the program wrote.
 	{kind = .Click, x = 70, y = 300},
-	{kind = .Type, text = "stop(\"terminal\")"},
+	{kind = .Type, text = "stop(\"flood\")"},
+	{kind = .Wait, text = "terminal: flood stopped with code 0 after "},
+	{kind = .Click, x = 940, y = 400}, // A part of the window that the console does not cover.
+	{kind = .Shot, text = "terminal_stopped"},
+	// The person closes the window: the terminal stops.
+	{kind = .Close, text = "flood"},
 	{kind = .Wait, text = "root: terminal stopped"},
+	{kind = .Click, x = 70, y = 300},
 	// Each page is free or paid, after all the starts and stops of this test.
 	{kind = .Type, text = "memory()"},
 	{kind = .Wait, text = " pages: all the free pages"},
@@ -506,26 +521,25 @@ scenario := [?]Step {
 }
 
 // The film of the terminal: the program flood writes lines, the person
-// holds the view, moves in the lines, then stops and starts the program.
+// holds the view, moves in the lines, then stops the lines with a key and
+// starts them again.
 @(rodata)
 scenario_film := [?]Step {
 	{kind = .Wait, text = "compositor: surface console"},
-	{kind = .Launch, text = "terminal"},
+	{kind = .Launch, text = "flood"},
 	{kind = .Wait, text = "terminal: ok, flood writes in a ring of 4096 records"},
 	{kind = .Film, x = 5000},
+	{kind = .Key, text = "pgup"},
+	{kind = .Film, x = 2500},
 	{kind = .Key, text = "spc"},
 	{kind = .Film, x = 2500},
-	{kind = .Key, text = "end"},
-	{kind = .Film, x = 2500},
-	{kind = .Key, text = "s"},
+	{kind = .Key, text = "pgup"},
+	{kind = .Film, x = 500},
+	{kind = .Key, text = "pgup"},
+	{kind = .Film, x = 500},
+	{kind = .Key, text = "pgup"},
 	{kind = .Film, x = 1500},
-	{kind = .Key, text = "pgup"},
-	{kind = .Film, x = 500},
-	{kind = .Key, text = "pgup"},
-	{kind = .Film, x = 500},
-	{kind = .Key, text = "pgup"},
-	{kind = .Film, x = 1000},
-	{kind = .Key, text = "s"},
+	{kind = .Key, text = "spc"},
 	{kind = .Film, x = 4000},
 	{kind = .Shot, text = "film_end"},
 	{kind = .Quit},
@@ -603,6 +617,28 @@ pointer_button :: proc(machine: ^Machine, down: bool) {
 
 WINDOW_GRAB_X :: 100 // A point of the title bar of each window.
 WINDOW_GRAB_Y :: 12
+// The close button of a window, as the compositor draws it: its center, from
+// the right side and from the top of the window.
+WINDOW_BORDER :: 2
+WINDOW_CLOSE_RIGHT :: 14
+WINDOW_CLOSE_Y :: 12
+
+// window_width gives the width of the surface of the last window with a
+// title: "compositor: surface title 480x320 at 276,232".
+window_width :: proc(machine: ^Machine, title: string) -> (width: int, ok: bool) {
+	log, err := os.read_entire_file(machine.output, context.temp_allocator)
+	if err != nil {
+		return 0, false
+	}
+	text := string(log)
+	mark := strings.concatenate({"compositor: surface ", title, " "}, context.temp_allocator)
+	made := strings.last_index(text, mark)
+	if made < 0 {
+		return 0, false
+	}
+	size := text[made + len(mark):]
+	return strconv.parse_int(size[:max(strings.index_byte(size, 'x'), 0)])
+}
 
 // window_place gives the place of the last window with a title. The
 // compositor writes it when it makes the window, and when a person puts the
@@ -818,10 +854,20 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 		case .Key:
 			monitor_send(machine, "sendkey ", step.text, " 20")
 			time.sleep(KEY_PAUSE)
-		case .Click, .Drag, .Launch, .Move:
+		case .Click, .Drag, .Launch, .Move, .Close:
 			step := step
 			moved_title: string
 			moved_x, moved_y: int
+			if step.kind == .Close {
+				x, y, found := window_place(machine, step.text)
+				width, sized := window_width(machine, step.text)
+				if !found || !sized {
+					fmt.eprintfln("kerneltool: test failed: step %d: the log does not have the place of the window %s", index + 1, step.text)
+					return false
+				}
+				step.kind = .Click
+				step.x, step.y = x + width + 2 * WINDOW_BORDER - WINDOW_CLOSE_RIGHT, y + WINDOW_CLOSE_Y
+			}
 			if step.kind == .Move {
 				// The compositor wrote where it put the window. The pointer
 				// takes the title bar.

@@ -126,7 +126,7 @@ commands_start :: proc "contextless" () {
 
 help :: proc "contextless" (arguments: []Value) -> Value {
 	for &item in commands[:command_count] {
-		buffer: [COLUMNS]u8
+		buffer: [160]u8
 		writer := system.Writer {
 			buffer = buffer[:],
 		}
@@ -806,7 +806,7 @@ list_variables :: proc "contextless" (arguments: []Value) -> Value {
 }
 
 clear :: proc "contextless" (arguments: []Value) -> Value {
-	clear_grid()
+	screen_clear()
 	return {}
 }
 

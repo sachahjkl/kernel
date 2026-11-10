@@ -273,7 +273,7 @@ Status: Decided by the owner on 2026-11-09.
 
 - **First use**: a dedicated machine. The system is not a general replacement for an existing desktop at first.
 - **Compatibility**: none at first. The project defines a small, fundamental interface that shows its concepts. Later layers are built above it. A POSIX layer and a Win32/NT layer are possible later, as layers above the interface and not as parts of it.
-- **Console**: a normal program. A console is one buffer that a program draws into. The system has no terminal concept in the kernel and no equivalent of the Linux TTY.
+- **Console**: a normal program. It has a terminal: it writes text records and reads key records. A terminal is a normal program too. The system has no terminal concept in the kernel and no equivalent of the Linux TTY.
 - **Composition of programs**: the console uses a real programming language. A person calls the exported functions of modules directly, with typed data. The system has no pipes of text and no shell script language.
 - **Concepts to research first**: the contract between modules; identity and several machines.
 - **Other concepts** (program distribution, failures and quotas, observability, guaranteed latency): the owner expects the answers to come from the design as it grows. They are not researched ahead of need.

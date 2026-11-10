@@ -1,4 +1,5 @@
-// The terminal: how a program gives text to a terminal (properties 4, 6, 13).
+// The terminal: how a program gives text to a terminal, and how the
+// terminal gives keys to the program (properties 4, 6, 13, 20).
 //
 // A program does not write a stream of bytes with commands hidden in it:
 // no escape character and no escape sequence exists. A program sends
@@ -17,6 +18,17 @@
 // window shows: the display does not slow the program. When the ring is
 // full, the program waits for the terminal.
 //
+// The input goes the other way, in the completion queue of the terminal
+// ring: one record for each key that the person presses (Input). The
+// program edits its line: the terminal does not know what a line of input
+// is. The program shows the line with an Edit record; the terminal draws it
+// after the last line, with a cursor.
+//
+// The root service makes the terminal ring and the text region, and starts
+// the two programs. The terminal starts no program and holds three things:
+// a surface, the two memory objects, and a handle that reads the state of
+// the program. The program holds what its role gives, and no surface.
+//
 // The ring keeps at most RING_CAPACITY records that the terminal did not
 // read, of RUN_LIMIT bytes at most: the program never writes over text
 // that the terminal did not read.
@@ -25,9 +37,19 @@ package terminal
 import "contract:ring"
 import "support:system"
 
-// The roles of the context of a program that a terminal starts.
+// The roles of the context of a program that has a terminal, and of the
+// terminal itself.
 GRANT_RING :: 6 // Memory: the terminal ring. The program writes its command queue.
-GRANT_TEXT :: 7 // Memory: the text region.
+GRANT_TEXT :: 7 // Memory: the text region. The terminal has the right Read only.
+GRANT_PROGRAM :: 1 // For the terminal only: the program that writes, with the right Read.
+
+// The values of the context of the terminal itself.
+VALUE_NAME :: 0 // 4 values: the name of the program. It is the title of the window.
+VALUE_COLUMNS :: 4
+VALUE_ROWS :: 5
+VALUE_MEASURE :: 6 // 1: the window shows the rates of the program.
+COLUMNS_LIMIT :: 104
+ROWS_LIMIT :: 32
 
 RING_CAPACITY :: 4096
 TEXT_PAGES :: 1024 // 4 MiB. A power of two.
@@ -43,11 +65,37 @@ RUN_LIMIT :: 256 // The bytes of the text of one record.
 //           text. values[0]: a Style. values[1]: the value. values[2]: the
 //           total; 0 removes the status.
 //   Clear   The terminal forgets all the lines.
+//   Edit    The line that the program changes: the line of input of the
+//           person, or a line that says what the program does now. The
+//           terminal shows it after the last line. A new one replaces the
+//           one before. tag: the count of bytes of its text. values[0]: a
+//           Style. values[1]: the place of the cursor, in bytes from the
+//           start of the text, or NO_CURSOR. No text and no cursor: the
+//           terminal shows no such line.
 Kind :: enum u32 {
 	None   = 0,
 	Text   = 1,
 	Status = 2,
 	Clear  = 3,
+	Edit   = 4,
+}
+
+NO_CURSOR :: max(u64)
+
+// The kind of a completion record: what the terminal gives to the program.
+//   Key     The person pressed a key. tag: the code of the key
+//           (display.KEY_*). values[0]: its character, or 0.
+// The terminal keeps the keys Page Up and Page Down: they move its view.
+// If the program does not read and the queue is full, the newest keys are
+// lost: the terminal never waits for a program.
+Input :: enum u32 {
+	None = 0,
+	Key  = 1,
+}
+
+Key :: struct {
+	code:      u32,
+	character: u8,
 }
 
 // What a run of text is. The terminal chooses the color of each tone.
@@ -163,6 +211,27 @@ status :: proc "contextless" (terminal: ^Terminal, text: string, value, total: u
 	append(terminal, part)
 	push(terminal, ring.Record{kind = u32(Kind.Status), tag = u32(len(part)), values = {0 = transmute(u64)style, 1 = value, 2 = total}})
 	system.wake_reader(&terminal.ring.commands)
+}
+
+// edit sets the line that the program changes, with the place of its
+// cursor. edit(terminal, "") removes the line.
+edit :: proc "contextless" (terminal: ^Terminal, text: string, cursor: u64 = NO_CURSOR, style: Style = {}) {
+	part := text[:min(len(text), RUN_LIMIT)]
+	append(terminal, part)
+	push(terminal, ring.Record{kind = u32(Kind.Edit), tag = u32(len(part)), values = {0 = transmute(u64)style, 1 = cursor}})
+	system.wake_reader(&terminal.ring.commands)
+}
+
+// key gives the next key that the person pressed. false: no key waits.
+// A program waits for a key with system.wait_records on
+// terminal.ring.completions.
+key :: proc "contextless" (terminal: ^Terminal) -> (pressed: Key, ok: bool) {
+	for {
+		record := system.receive(&terminal.ring.completions) or_return
+		if Input(record.kind) == .Key {
+			return {code = record.tag, character = u8(record.values[0])}, true
+		}
+	}
 }
 
 clear :: proc "contextless" (terminal: ^Terminal) {
