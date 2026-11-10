@@ -80,6 +80,7 @@ COMMANDS :: [?]Command {
 	{name = "film", about = "build, start the machine, film the terminal, and write " + FILM_OUTPUT + " and a copy in " + DEVELOPMENT_LOG_FOLDER + " (needs ffmpeg)", run = run_film},
 	{name = "font", about = "convert the BDF file of the font to " + FONT_OUTPUT, run = run_font},
 	{name = "portrait", about = "convert " + PORTRAIT_SOURCE + " to " + PORTRAIT_OUTPUT, run = run_portrait},
+	{name = "repeat", about = "repeat <module> <count>: build one module again and again, with no machine, and compare each build with the first one", run = run_repeat},
 	{name = "check", about = "odin check -vet and odin test of the host code, then test", run = run_check},
 }
 
