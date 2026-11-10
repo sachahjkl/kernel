@@ -33,18 +33,25 @@ CHURN_AMOUNTS :: system.Budget_Amounts{pages = 512, programs = 1, threads = lock
 CHURN_ROUNDS :: 40
 CHURN_COUNT :: 3 // The programs of one round.
 
-WIDTH :: 760
-LINE :: 22
-HEIGHT :: 12 + 3 * LINE + 3 * LINE + LINE / 2 + 2 * LINE + LINE / 2 + (len(op.Lock_Kind) + 1) * LINE + 2 * LINE + 12
-COLUMN_X :: 300
+// The window follows docs/DESIGN.md where it is cheap: rectangles only,
+// the grid of 8 pixels, the colors of the rules, a name in the dim color
+// and a value in the text color.
+WIDTH :: 784
+LINE :: 24 // A line of text (16) and 8 between lines.
+LEFT :: 16
+GAP :: 8
+HEIGHT :: LEFT + 4 * LINE + 2 * GAP + 2 * LINE + GAP + (len(op.Lock_Kind) + 1) * LINE + GAP + 2 * LINE + LEFT
+COLUMN_X :: 304
 COLUMN_WIDTH :: 120
+LOCK_X :: 176 // The table of the locks: the names are short.
+LOCK_COLUMN_WIDTH :: 200
 
-COLOR_BACKGROUND :: 0x10151C
-COLOR_PANEL :: 0x18202A
-COLOR_TEXT :: 0xD8E0E8
-COLOR_DIM :: 0x7A8794
-COLOR_RIGHT :: 0x58D878
-COLOR_WRONG :: 0xE0B040
+COLOR_BACKGROUND :: 0x0B1018
+COLOR_BAND :: 0x17212E // A card, as a band under one row of two.
+COLOR_TEXT :: 0xDCE4EC
+COLOR_DIM :: 0x7C8A99
+COLOR_RIGHT :: 0x58D878 // Program: the counts add up.
+COLOR_WRONG :: 0xF06060 // Failed.
 
 @(rodata)
 counts := [3]int{1, 2, 4}
@@ -265,55 +272,64 @@ locks_text :: proc "contextless" (buffer: []u8, locks: [op.LOCK_KIND_CAPACITY]op
 	return system.written(&writer)
 }
 
-row :: proc "contextless" (canvas: graphics.Canvas, y: int, label: string, values: []u64, unit: string) {
-	graphics.text(canvas, 12, y, label, COLOR_TEXT)
+row :: proc "contextless" (canvas: graphics.Canvas, y: int, label: string, values: []u64) {
+	graphics.text(canvas, LEFT, y, label, COLOR_DIM)
 	line: [48]u8
 	for value, index in values {
-		graphics.text(canvas, COLUMN_X + index * COLUMN_WIDTH, y, system.format(line[:], value, unit), COLOR_TEXT)
+		graphics.text(canvas, COLUMN_X + index * COLUMN_WIDTH, y, system.format(line[:], value), COLOR_TEXT)
 	}
 }
 
 draw :: proc "contextless" (canvas: graphics.Canvas) {
 	graphics.clear(canvas, COLOR_BACKGROUND)
-	y := 12
-	graphics.text(canvas, 12, y, "each locker works on its own objects: it waits only if the kernel makes it wait.", COLOR_DIM)
-	y += LINE + LINE / 2
-	graphics.text(canvas, 12, y, "in one second, all lockers", COLOR_DIM)
+	y := LEFT
+	graphics.text(canvas, LEFT, y, "each locker works on its own objects: it waits only if the kernel makes it wait.", COLOR_DIM)
+	y += LINE + GAP
+	graphics.text(canvas, LEFT, y, "in one second, all lockers", COLOR_DIM)
 	for active, index in counts {
 		line: [24]u8
 		graphics.text(canvas, COLUMN_X + index * COLUMN_WIDTH, y, system.format(line[:], u64(active), active == 1 ? " locker" : " lockers"), COLOR_DIM)
 	}
 	y += LINE
-	row(canvas, y, "kernel entries", entry_rates[:], "")
+	graphics.fill(canvas, GAP, y - 4, WIDTH - 2 * GAP, LINE, COLOR_BAND)
+	row(canvas, y, "kernel entries", entry_rates[:])
 	y += LINE
-	row(canvas, y, "pages on first use", fault_rates[:], "")
-	y += LINE + LINE / 2
-	graphics.text(canvas, 12, y, "word wait, two threads", COLOR_DIM)
+	row(canvas, y, "pages on first use", fault_rates[:])
+	y += LINE + GAP
+	graphics.text(canvas, LEFT, y, "word wait, two threads", COLOR_DIM)
 	graphics.text(canvas, COLUMN_X, y, "alone", COLOR_DIM)
 	graphics.text(canvas, COLUMN_X + COLUMN_WIDTH, y, "2 lockers enter", COLOR_DIM)
 	y += LINE
-	row(canvas, y, "wakes", {pairs_alone, pairs_loaded}, "")
-	y += LINE + LINE / 2
-	graphics.text(canvas, 12, y, "lock: waits of takes", COLOR_DIM)
-	graphics.text(canvas, COLUMN_X, y, "4 entries", COLOR_DIM)
-	graphics.text(canvas, COLUMN_X + COLUMN_WIDTH + 60, y, "4 faults", COLOR_DIM)
-	graphics.text(canvas, COLUMN_X + 2 * COLUMN_WIDTH + 120, y, "word wait", COLOR_DIM)
+	graphics.fill(canvas, GAP, y - 4, WIDTH - 2 * GAP, LINE, COLOR_BAND)
+	row(canvas, y, "wakes", {pairs_alone, pairs_loaded})
+	y += LINE + GAP
+	graphics.text(canvas, LEFT, y, "waits of takes", COLOR_DIM)
+	for name, index in ([3]string{"4 lockers, entries", "4 lockers, faults", "word wait"}) {
+		graphics.text(canvas, LOCK_X + index * LOCK_COLUMN_WIDTH, y, name, COLOR_DIM)
+	}
 	y += LINE
 	for kind in op.Lock_Kind {
-		graphics.text(canvas, 12, y, op.LOCK_KIND_NAMES[kind], COLOR_TEXT)
+		if int(kind) % 2 == 0 {
+			graphics.fill(canvas, GAP, y - 4, WIDTH - 2 * GAP, LINE, COLOR_BAND)
+		}
+		graphics.text(canvas, LEFT, y, op.LOCK_KIND_NAMES[kind], COLOR_DIM)
 		line: [48]u8
 		for locks, index in ([3][op.LOCK_KIND_CAPACITY]op.Lock_Count{entry_locks, fault_locks, pair_locks}) {
 			count := locks[kind]
-			graphics.text(canvas, COLUMN_X + index * (COLUMN_WIDTH + 60), y, system.format(line[:], count.waits, " of ", count.takes), COLOR_TEXT)
+			graphics.text(canvas, LOCK_X + index * LOCK_COLUMN_WIDTH, y, system.format(line[:], count.waits, " of ", count.takes), COLOR_TEXT)
 		}
 		y += LINE
 	}
-	y += LINE / 2
+	y += GAP
+	line: [64]u8
+	graphics.text(canvas, LEFT, y, "programs stopped while they ran", COLOR_DIM)
+	graphics.text(canvas, COLUMN_X, y, system.format(line[:], stress_started), COLOR_TEXT)
+	y += LINE
 	if done {
 		right := entries_right && faults_right && pages_right && pairs_right && lost_wakes == 0 && stress_right
-		graphics.text(canvas, 12, y, right ? "the counts add up, no wake was lost, stopped programs returned all" : "a count is wrong", right ? COLOR_RIGHT : COLOR_WRONG)
+		graphics.text(canvas, LEFT, y, right ? "the counts add up, no wake was lost, stopped programs returned all" : "a count is wrong", right ? COLOR_RIGHT : COLOR_WRONG)
 	} else {
-		graphics.text(canvas, 12, y, "measures in progress", COLOR_DIM)
+		graphics.text(canvas, LEFT, y, "measures in progress", COLOR_DIM)
 	}
 }
 
@@ -398,12 +414,14 @@ stress :: proc "contextless" (image: []u8, programs_free: u64) {
 		}
 		system.sleep(system.time() + 10)
 	}
+	stress_started = started
 	final := report()
 	stress_right = started == CHURN_ROUNDS * CHURN_COUNT && after.pages <= initial.pages && after.pages + STRESS_TABLES >= initial.pages && after.programs == initial.programs && after.threads == initial.threads && final.budget_pages + final.reserved_pages == final.free_pages
 	system.log("locks: stress: ", started, " programs started, ", stopped, " stopped by this program (some by a thread while another thread closed the last handle), ", closed - stopped, " only by the close of their last handle, while their threads ran and they stopped each other; budget: pages ", after.pages, " of ", initial.pages, ", programs ", after.programs, " of ", initial.programs, ", threads ", after.threads, " of ", initial.threads, "; free pages ", final.free_pages, ", in budgets ", final.budget_pages, ", reserved ", final.reserved_pages)
 }
 
 stress_right: bool
+stress_started: u64
 
 // The second thread of the stress case: it stops the program that the
 // first thread names in `stop_target`, while the first thread closes its
