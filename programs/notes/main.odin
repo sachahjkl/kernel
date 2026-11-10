@@ -57,10 +57,12 @@ keep_count :: proc "contextless" () -> bool {
 }
 
 // restore reads the note and the count, and checks that the three blocks
-// of the count hold one count.
+// of the count hold one count. An object that the storage service has and
+// cannot give is not an empty object: the window says it.
 restore :: proc "contextless" () {
 	text, found, status := storage.read(&client, "note", note[:])
-	if status != .Ok {
+	note_damaged := status == .Damaged
+	if status != .Ok && !note_damaged {
 		restored, gone = "no store: the program keeps nothing", true
 		system.log("notes: no store")
 		return
@@ -68,8 +70,8 @@ restore :: proc "contextless" () {
 	if found {
 		note_count = len(text)
 	}
-	bytes, has_count, _ := storage.read(&client, "count", ([^]u8)(&words)[:size_of(words)])
-	if !found && !has_count {
+	bytes, has_count, count_status := storage.read(&client, "count", ([^]u8)(&words)[:size_of(words)])
+	if !found && !has_count && !note_damaged && count_status == .Ok {
 		restored, restored_good = "a new store: no note, the count 0", true
 		system.log("notes: a new store: no note, the count 0")
 		return
@@ -83,14 +85,21 @@ restore :: proc "contextless" () {
 			}
 		}
 	}
-	restored_good = agree
-	if !agree {
+	restored_good = agree && !note_damaged
+	switch {
+	case count_status == .Damaged:
+		restored = "WRONG: the count is damaged on the disk: tab writes a new count"
+		system.log("notes: WRONG: the storage service cannot give the count: the object is damaged")
+	case !agree:
 		restored = "WRONG: the 3 blocks of the count do not agree"
 		system.log("notes: WRONG: the 3 blocks of the count do not agree")
-		return
+	case note_damaged:
+		restored = "WRONG: the note is damaged on the disk: a key writes a new note"
+		system.log("notes: WRONG: the storage service cannot give the note: the object is damaged; restored the count ", count, ", its 3 blocks agree")
+	case:
+		restored = "restored at the start: the note and the count, 3 blocks agree"
+		system.log("notes: restored the note \"", string(note[:note_count]), "\" and the count ", count, ", its 3 blocks agree", count % RUN_STEPS != 0 ? ", the last run stopped before its end" : "")
 	}
-	restored = "restored at the start: the note and the count, 3 blocks agree"
-	system.log("notes: restored the note \"", string(note[:note_count]), "\" and the count ", count, ", its 3 blocks agree", count % RUN_STEPS != 0 ? ", the last run stopped before its end" : "")
 }
 
 draw :: proc "contextless" (window: ^display.Window) {

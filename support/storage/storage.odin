@@ -27,6 +27,17 @@ GRANT_SERVICE :: 9 // The storage service, with the right Read: its state.
 VALUE_FILE_SIZE :: 3 // The size of the file of the storage service.
 FILE_ADDRESS :: 0x0000_3100_0000_0000 // Where the root service maps that file.
 
+// The answer of an export of the storage service that is not a generation
+// or a size: one of these numbers.
+ERROR_NO_STORE :: -1 // The caller has no grant of a store.
+ERROR_NO_BUDGET :: -2 // The store would have more blocks than its limit.
+ERROR_NAME :: -3 // The name of the object is empty, too long, or has a zero byte.
+ERROR_TOO_LARGE :: -4 // The object would have more than 32 blocks.
+ERROR_FULL :: -5 // No place for one more object or store, or no free block on the disk.
+ERROR_DISK :: -6 // The block service reported an error.
+ERROR_ABSENT :: -7 // The store has no object with this name.
+ERROR_DAMAGED :: -8 // A block of the object, or the table of the store, has a wrong check.
+
 Client :: struct {
 	ring_memory:   system.Handle,
 	region_memory: system.Handle,
@@ -42,6 +53,7 @@ Status :: enum {
 	Ok,
 	Gone, // The connection ended: the grant was revoked, or the storage service stopped.
 	Refused, // The storage service refused the call: see isolated.Status.
+	Damaged, // The storage service has the object and cannot give its bytes: a block has a wrong check, or the disk gave an error.
 }
 
 open :: proc "contextless" (ctx: ^system.Context) -> (client: Client, ok: bool) {
@@ -152,11 +164,16 @@ write :: proc "contextless" (client: ^Client, name: string, data: []u8) -> (gene
 }
 
 // read copies the bytes of an object of the store into result. found is
-// false when the store has no such object.
+// false when the store has no such object. The status Damaged says that
+// the store has the object and that its bytes did not come: the caller
+// must not take it for an empty object.
 read :: proc "contextless" (client: ^Client, name: string, result: []u8) -> (bytes: []u8, found: bool, status: Status) {
 	arguments := [1]isolated.Argument{{text = transmute([]u8)name}}
 	size: i64
 	size, _, status = call(client, "size", arguments[:])
+	if status == .Ok && size == ERROR_DAMAGED {
+		return nil, false, .Damaged
+	}
 	if status != .Ok || size < 0 {
 		return nil, false, status
 	}
@@ -164,6 +181,9 @@ read :: proc "contextless" (client: ^Client, name: string, result: []u8) -> (byt
 	_, text, status = call(client, "read", arguments[:])
 	if status != .Ok {
 		return nil, false, status
+	}
+	if i64(len(text)) != size {
+		return nil, false, .Damaged
 	}
 	count := copy(result, text)
 	return result[:count], true, .Ok

@@ -21,44 +21,44 @@ caller_store :: proc "contextless" () -> (name: string, limit: u64, person: bool
 	return system.name_of(connection.caller[:]), connection.grant & isolated.CALLER_AMOUNT_MASK, connection.grant & isolated.CALLER_PERSON != 0
 }
 
-// write replaces the object with this name in the store of the caller, with the bytes of data, in one commit on the disk. The result is the generation of the commit, or a negative number: -1 no store, -2 over the limit of the store, -3 a wrong name, -4 too large, -5 no room, -6 a disk error.
+// write replaces the object with this name in the store of the caller, with the bytes of data, in one commit on the disk. The result is the generation of the commit, or a negative number: -1 no store, -2 over the limit of the store, -3 a wrong name, -4 too large, -5 no room, -6 a disk error, -8 the table of the store has a wrong check.
 @(export, link_name = "write")
 write :: proc "c" (name: ^string, data: ^string) -> i64 {
 	store, limit, _ := caller_store()
 	return change(store, limit, name^, transmute([]u8)data^, false)
 }
 
-// read gives the bytes of the object with this name in the store of the caller. The text is empty when the store has no such object.
+// read gives the bytes of the object with this name in the store of the caller. The text is empty when the store has no such object, and when the service cannot give its bytes: size says which, with -7 for no such object and -8 for a damaged object.
 @(export, link_name = "read")
 read_export :: proc "c" (name: ^string, result: ^[]u8) -> i64 {
 	store, limit, _ := caller_store()
 	if limit == 0 {
 		return 0
 	}
-	if size := object_size(store, name^); size > i64(len(result)) {
+	if size := object_state(store, name^); size > i64(len(result)) {
 		return size // The caller sees that the text did not fit.
 	}
 	return max(read(store, name^, result^), 0)
 }
 
-// size gives the count of bytes of the object with this name in the store of the caller, or -7 when it has no such object.
+// size gives the count of bytes of the object with this name in the store of the caller, or -7 when it has no such object, or -8 when the object is damaged: a block of it on the disk has a wrong check, and the service does not give its bytes. A write or a remove of the object replaces it.
 @(export, link_name = "size")
 size :: proc "c" (name: ^string) -> i64 {
 	store, limit, _ := caller_store()
 	if limit == 0 {
 		return ERROR_NO_STORE
 	}
-	return object_size(store, name^)
+	return object_state(store, name^)
 }
 
-// remove removes the object with this name from the store of the caller, in one commit. The result is the generation of the commit, or a negative number: -7 no such object.
+// remove removes the object with this name from the store of the caller, in one commit. The result is the generation of the commit, or a negative number: -7 no such object. A damaged object can be removed.
 @(export, link_name = "remove")
 remove :: proc "c" (name: ^string) -> i64 {
 	store, limit, _ := caller_store()
 	return change(store, limit, name^, nil, true)
 }
 
-// objects gives the objects of the store of the caller: the name, the bytes and the generation of the last change of each one.
+// objects gives the objects of the store of the caller: the name, the bytes and the generation of the last change of each one, and the word damaged for an object with a wrong block.
 @(export, link_name = "objects")
 objects :: proc "c" (result: ^[]u8) -> i64 {
 	store, limit, _ := caller_store()
@@ -69,15 +69,19 @@ objects :: proc "c" (result: ^[]u8) -> i64 {
 	}
 	index := store_find(store)
 	count := 0
+	if index >= 0 && store_damaged[index] {
+		system.write_part(&writer, "the table of the store has a wrong check: the service does not know its objects")
+		return i64(writer.count)
+	}
 	if index >= 0 {
-		for &object in tables[index].objects {
+		for &object, object_index in tables[index].objects {
 			if object.name[0] == 0 {
 				continue
 			}
 			if count != 0 {
 				system.write_part(&writer, "; ")
 			}
-			parts := [?]system.Part{system.name_of(object.name[:]), " ", object.size, " bytes, generation ", object.generation}
+			parts := [?]system.Part{system.name_of(object.name[:]), " ", object.size, " bytes, generation ", object.generation, damaged[index] >> uint(object_index) & 1 != 0 ? ", damaged" : ""}
 			for part in parts {
 				system.write_part(&writer, part)
 			}
@@ -90,7 +94,7 @@ objects :: proc "c" (result: ^[]u8) -> i64 {
 	return i64(writer.count)
 }
 
-// stores gives each store of the disk, with its objects, its blocks and its limit, and the count of connections that hold its grant now. Only a caller that acts for the person sees them.
+// stores gives each store of the disk, with its objects, its blocks and its limit, the count of connections that hold its grant now, and its damage. Only a caller that acts for the person sees them.
 @(export, link_name = "stores")
 stores :: proc "c" (result: ^[]u8) -> i64 {
 	_, _, person := caller_store()
@@ -123,20 +127,20 @@ stores :: proc "c" (result: ^[]u8) -> i64 {
 		for part in line {
 			system.write_part(&writer, part)
 		}
+		damaged_count: u64
+		for object_index in 0 ..< OBJECT_CAPACITY {
+			damaged_count += damaged[index] >> uint(object_index) & 1
+		}
+		if store_damaged[index] {
+			system.write_part(&writer, ", its table has a wrong check")
+		} else if damaged_count != 0 {
+			tail := [?]system.Part{", ", damaged_count, " damaged"}
+			for part in tail {
+				system.write_part(&writer, part)
+			}
+		}
 	}
 	return i64(writer.count)
-}
-
-object_size :: proc "contextless" (store: string, name: string) -> i64 {
-	index := store_find(store)
-	if index < 0 {
-		return ERROR_ABSENT
-	}
-	object := object_find(&tables[index], name)
-	if object < 0 {
-		return ERROR_ABSENT
-	}
-	return i64(tables[index].objects[object].size)
 }
 
 service: system.Service
@@ -182,13 +186,19 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.log_in("storage", .Error, "storage: no valid root on the disk: the service keeps the disk as it is, and serves nothing")
 		system.stop(1)
 	case mounted.formatted:
+		if mounted.first_cut {
+			system.log_in("storage", .Warning, "storage: the first root of the disk has a wrong check and no commit followed it: a format that a stop cut; the service formats again")
+		}
 		system.log("storage: ok, a new disk: generation 1, ", root.disk_blocks, " blocks")
 	case:
 		if mounted.cut != 0 {
 			system.log_in("storage", .Warning, "storage: the root of generation ", mounted.cut, " has a wrong check: a write that a stop cut; the service uses the root before it")
 		}
 		if mounted.older {
-			system.log_in("storage", .Warning, "storage: the newest root names a block with a wrong check: the root before it is used")
+			system.log_in("storage", .Warning, "storage: the newest root names a block with a wrong check, and the root before it names none: the root before it is used")
+		}
+		if mounted.wrong != 0 {
+			system.log_in("storage", .Warning, "storage: ", mounted.wrong, " blocks have a wrong check: ", mounted.damaged_objects, " objects and ", mounted.damaged_stores, " stores are damaged; the service serves the others, and a write or a remove replaces a damaged object")
 		}
 		system.log("storage: ok, generation ", mounted.generation, ": ", mounted.stores, " stores, ", mounted.objects, " objects, ", in_use_count, " blocks in use, ", mounted.checked, " blocks checked, ", mounted.wrong, " wrong, in ", elapsed, " ms")
 	}

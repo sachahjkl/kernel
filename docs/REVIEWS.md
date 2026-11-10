@@ -42,6 +42,7 @@ A step is one tested commit that adds one capability.
 | 34 | `feddd40` | Replacement of an import: the root service holds the table, the loader checks the descriptions, the module records of a program (`Program_Module`) and the stop report name the module that ran; the program `imports` (same agent and branch) |
 | 35 | `6fe8d02` | The code of an imported module is one copy for all the programs of a table of prepared modules, at any base (same agent and branch) |
 | 36 | `f8fe828` | Functions that give the information of the modules (property 12, no SQLite): a Table result and a Text field in the record description; `support/information` reads the flat tables, the module records and the replacement table, with a `Problem` for a malformed module; the manual serves the tables; the console combines tables with `where`, `sort`, `join`, `columns` (built by an agent on a branch, reviewed and merged by the coordinator) |
+| 37 | `HASH37` | Corrections of the storage service after the line-by-line read of Review 7: a wrong block damages one object and not the service; a damaged object is never an empty object; the name of an object is copied one time; a cut format is formatted again; the format of the disk is the contract `store`; four more machines in the test of persistence |
 
 ## Review 1: steps 1 to 5 (2026-11-10)
 

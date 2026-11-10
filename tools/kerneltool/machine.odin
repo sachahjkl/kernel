@@ -1,5 +1,6 @@
 package kerneltool
 
+import "contract:store"
 import "support:launcher"
 import "core:fmt"
 import "core:hash"
@@ -110,6 +111,57 @@ scenario_persist_crash := [?]Step {
 	{kind = .Quit},
 }
 
+// A block of data that changed on the disk outside the service: the tool
+// changes one byte of the note. Each valid root names the block, so no
+// root is better: the storage service serves, with one damaged object. The
+// count is whole. `notes` says that the note is damaged, and does not take
+// it for an empty note. A key writes a new note in place of it.
+scenario_persist_damaged := [?]Step {
+	{kind = .Wait, text = "compositor: surface console"},
+	{kind = .Launch, text = "notes"},
+	{kind = .Wait, text = "storage: 1 blocks have a wrong check: 1 objects and 0 stores are damaged; the service serves the others", any_order = true},
+	{kind = .Wait, text = " blocks checked, 1 wrong, in ", any_order = true},
+	{kind = .Wait, text = "notes: WRONG: the storage service cannot give the note: the object is damaged; restored the count ", any_order = true},
+	{kind = .Wait, text = "compositor: surface notes"},
+	{kind = .Shot, text = "notes_damaged"},
+	{kind = .Type, text = "again"},
+	{kind = .Wait, text = "notes: the note is \"again\", generation "},
+	{kind = .Quit},
+}
+
+// After the new note: no wrong block, and the note and the count.
+scenario_persist_replaced := [?]Step {
+	{kind = .Wait, text = "compositor: surface console"},
+	{kind = .Launch, text = "notes"},
+	{kind = .Wait, text = " blocks checked, 0 wrong, in ", any_order = true},
+	{kind = .Wait, text = "notes: restored the note \"again\" and the count ", any_order = true},
+	{kind = .Wait, text = "compositor: surface notes"},
+	{kind = .Quit},
+}
+
+// A wrong block that only the newest root names: the last commit is not
+// whole on the disk. The root before it names no wrong block, so the
+// storage service uses it: the note is the note before its last letter.
+scenario_persist_older := [?]Step {
+	{kind = .Wait, text = "compositor: surface console"},
+	{kind = .Launch, text = "notes"},
+	{kind = .Wait, text = "storage: the newest root names a block with a wrong check, and the root before it names none: the root before it is used", any_order = true},
+	{kind = .Wait, text = " blocks checked, 0 wrong, in ", any_order = true},
+	{kind = .Wait, text = "notes: restored the note \"agai\" and the count ", any_order = true},
+	{kind = .Quit},
+}
+
+// A format that a stop cut: a first root with a wrong check, and no commit
+// after it. The disk holds no object: the storage service formats again.
+scenario_persist_first_cut := [?]Step {
+	{kind = .Wait, text = "compositor: surface console"},
+	{kind = .Launch, text = "notes"},
+	{kind = .Wait, text = "storage: the first root of the disk has a wrong check and no commit followed it", any_order = true},
+	{kind = .Wait, text = "storage: ok, a new disk: generation 1, 16384 blocks", any_order = true},
+	{kind = .Wait, text = "notes: a new store: no note, the count 0", any_order = true},
+	{kind = .Quit},
+}
+
 // A root block that a stop cut: the tool writes zero bytes over the second
 // half of the root with the highest generation, as a write that the machine
 // did not finish. The storage service finds the wrong check and uses the
@@ -125,43 +177,135 @@ scenario_persist_cut := [?]Step {
 	{kind = .Quit},
 }
 
-// root_cut writes zero bytes over the second half of the root block with
-// the highest generation (programs/storage/engine.odin: blocks 0 and 1, the
-// generation at byte 8).
-root_cut :: proc(path: string) -> bool {
-	file, err := os.open(path, {.Read, .Write})
-	if err != nil {
+// The data disk of the test of persistence, read with the format of the
+// storage service (contract/store).
+disk_open :: proc(path: string) -> (file: ^os.File, ok: bool) {
+	err: os.Error
+	if file, err = os.open(path, {.Read, .Write}); err != nil {
 		fmt.eprintfln("kerneltool: cannot open %s: %v", path, err)
+		return nil, false
+	}
+	return file, true
+}
+
+disk_block :: proc(file: ^os.File, number: u64, value: ^$T) -> bool where size_of(T) == store.BLOCK_SIZE {
+	count, err := os.read_at(file, ([^]u8)(value)[:store.BLOCK_SIZE], i64(number * store.BLOCK_SIZE))
+	if err != nil || count != store.BLOCK_SIZE {
+		fmt.eprintfln("kerneltool: cannot read the block %d of the disk", number)
 		return false
 	}
-	defer os.close(file)
-	roots: [8192]u8
-	if count, read_err := os.read_at(file, roots[:], 0); read_err != nil || count != len(roots) {
-		fmt.eprintfln("kerneltool: cannot read the roots of %s", path)
-		return false
-	}
-	generation :: proc(bytes: []u8) -> u64 {
-		value: u64
-		for index in 0 ..< 8 {
-			value |= u64(bytes[8 + index]) << uint(8 * index)
+	return true
+}
+
+// disk_root gives the valid root with the highest generation, and its place.
+disk_root :: proc(file: ^os.File, root: ^store.Root) -> (place: u64, ok: bool) {
+	roots: [2]store.Root
+	disk_block(file, 0, &roots[0]) or_return
+	disk_block(file, 1, &roots[1]) or_return
+	found := false
+	for &candidate, index in roots {
+		if store.root_valid(&candidate, store.DISK_BLOCKS_LIMIT) && (!found || candidate.generation > root.generation) {
+			root^, place, found = candidate, u64(index), true
 		}
-		return value
 	}
-	newest := generation(roots[4096:]) > generation(roots[:]) ? 1 : 0
-	zero: [2048]u8
-	if _, write_err := os.write_at(file, zero[:], i64(newest * 4096 + 2048)); write_err != nil {
-		fmt.eprintfln("kerneltool: cannot write %s: %v", path, write_err)
+	if !found {
+		fmt.eprintln("kerneltool: the disk has no valid root")
+	}
+	return place, found
+}
+
+// root_cut writes zero bytes over the second half of the valid root block
+// with the highest generation, as a write that the machine did not finish.
+root_cut :: proc(path: string) -> bool {
+	file := disk_open(path) or_return
+	defer os.close(file)
+	root: store.Root
+	place := disk_root(file, &root) or_return
+	zero: [store.BLOCK_SIZE / 2]u8
+	if _, err := os.write_at(file, zero[:], i64(place * store.BLOCK_SIZE + store.BLOCK_SIZE / 2)); err != nil {
+		fmt.eprintfln("kerneltool: cannot write %s: %v", path, err)
 		return false
 	}
-	fmt.printfln("kerneltool: the root block %d of %s is cut, generation %d", newest, path, generation(roots[newest * 4096:]))
+	fmt.printfln("kerneltool: the root block %d of %s is cut, generation %d", place, path, root.generation)
+	return true
+}
+
+// object_damage changes one byte of the first block of data of an object:
+// a change on the disk that the storage service did not make.
+object_damage :: proc(path: string, store_name: string, object_name: string) -> bool {
+	file := disk_open(path) or_return
+	defer os.close(file)
+	root: store.Root
+	disk_root(file, &root) or_return
+	name_of :: proc(bytes: []u8) -> string {
+		count := 0
+		for count < len(bytes) && bytes[count] != 0 {
+			count += 1
+		}
+		return string(bytes[:count])
+	}
+	for &entry in root.stores {
+		if name_of(entry.name[:]) != store_name {
+			continue
+		}
+		table: store.Table
+		disk_block(file, entry.table.block, &table) or_return
+		for &object in table.objects {
+			if name_of(object.name[:]) != object_name || object.list.block == 0 {
+				continue
+			}
+			list: store.List
+			disk_block(file, object.list.block, &list) or_return
+			number := list.data[0].block
+			at := i64(number * store.BLOCK_SIZE)
+			one: [1]u8
+			if count, err := os.read_at(file, one[:], at); err != nil || count != 1 {
+				return false
+			}
+			one[0] ~= 0x40
+			if _, err := os.write_at(file, one[:], at); err != nil {
+				fmt.eprintfln("kerneltool: cannot write %s: %v", path, err)
+				return false
+			}
+			fmt.printfln("kerneltool: one byte of the block %d is changed: the first block of data of the object %s of the store %s, under the root of generation %d", number, object_name, store_name, root.generation)
+			return true
+		}
+	}
+	fmt.eprintfln("kerneltool: the disk has no object %s in a store %s", object_name, store_name)
+	return false
+}
+
+// first_root_cut makes a new disk with a first root that a stop cut: the
+// first half of a first root in block 1, and zero bytes after it.
+first_root_cut :: proc(path: string) -> bool {
+	disk_prepare(path, DATA_DISK_SIZE, true) or_return
+	file := disk_open(path) or_return
+	defer os.close(file)
+	root := store.Root{magic = store.ROOT_MAGIC, generation = 1, disk_blocks = DATA_DISK_SIZE / store.BLOCK_SIZE}
+	if _, err := os.write_at(file, ([^]u8)(&root)[:store.BLOCK_SIZE / 2], store.BLOCK_SIZE); err != nil {
+		fmt.eprintfln("kerneltool: cannot write %s: %v", path, err)
+		return false
+	}
+	fmt.printfln("kerneltool: %s has a first root with no check: a format that a stop cut", path)
 	return true
 }
 
 persistence_run :: proc() -> bool {
-	if !disk_prepare(TEST_PERSIST_DISK, DATA_DISK_SIZE, true) {
-		return false
-	}
-	return machine_test(scenario_persist_first[:], BOOT_VOLUME, self_test_file(TEST_OUTPUT_PERSIST, 1), MACHINE_STOP_OK, TEST_PERSIST_DISK) && machine_test(scenario_persist_second[:], BOOT_VOLUME, self_test_file(TEST_OUTPUT_PERSIST, 2), 0, TEST_PERSIST_DISK) && machine_test(scenario_persist_crash[:], BOOT_VOLUME, self_test_file(TEST_OUTPUT_PERSIST, 3), 0, TEST_PERSIST_DISK) && root_cut(TEST_PERSIST_DISK) && machine_test(scenario_persist_cut[:], BOOT_VOLUME, self_test_file(TEST_OUTPUT_PERSIST, 4), 0, TEST_PERSIST_DISK)
+	disk_prepare(TEST_PERSIST_DISK, DATA_DISK_SIZE, true) or_return
+	machine_test(scenario_persist_first[:], BOOT_VOLUME, self_test_file(TEST_OUTPUT_PERSIST, 1), MACHINE_STOP_OK, TEST_PERSIST_DISK) or_return
+	machine_test(scenario_persist_second[:], BOOT_VOLUME, self_test_file(TEST_OUTPUT_PERSIST, 2), 0, TEST_PERSIST_DISK) or_return
+	machine_test(scenario_persist_crash[:], BOOT_VOLUME, self_test_file(TEST_OUTPUT_PERSIST, 3), 0, TEST_PERSIST_DISK) or_return
+	root_cut(TEST_PERSIST_DISK) or_return
+	machine_test(scenario_persist_cut[:], BOOT_VOLUME, self_test_file(TEST_OUTPUT_PERSIST, 4), 0, TEST_PERSIST_DISK) or_return
+	object_damage(TEST_PERSIST_DISK, "notes", "note") or_return
+	machine_test(scenario_persist_damaged[:], BOOT_VOLUME, self_test_file(TEST_OUTPUT_PERSIST, 5), 0, TEST_PERSIST_DISK) or_return
+	machine_test(scenario_persist_replaced[:], BOOT_VOLUME, self_test_file(TEST_OUTPUT_PERSIST, 6), 0, TEST_PERSIST_DISK) or_return
+	// The last commit wrote the last letter of the note: only the newest
+	// root names the block of data that the tool changes now.
+	object_damage(TEST_PERSIST_DISK, "notes", "note") or_return
+	machine_test(scenario_persist_older[:], BOOT_VOLUME, self_test_file(TEST_OUTPUT_PERSIST, 7), 0, TEST_PERSIST_DISK) or_return
+	first_root_cut(TEST_PERSIST_DISK) or_return
+	return machine_test(scenario_persist_first_cut[:], BOOT_VOLUME, self_test_file(TEST_OUTPUT_PERSIST, 8), 0, TEST_PERSIST_DISK)
 }
 
 // A test of the kernel on itself (boot_info.Self_Test): the kernel does one

@@ -1,88 +1,34 @@
 package storage_service
 
 import "base:intrinsics"
-import "contract:blake3"
 import "contract:block"
 import "contract:ring"
+import format "contract:store"
+import answers "support:storage"
 import "support:system"
 
-// The format of the disk, and the one rule that keeps it whole.
-//
-// The disk is a row of blocks of 4096 bytes. Blocks 0 and 1 are the two
-// places of the root block. Each other block is free, or it is a table, a
-// list or a block of data. A block names another block with a Pointer: its
-// number and the first 8 bytes of the BLAKE3 hash of its 4096 bytes.
-//
-//   root     the generation, and one Store_Entry for each private store
-//   table    one for each store: one Object_Entry for each object
-//   list     one for each object that has bytes: the Pointers of its data
-//   data     the bytes of the object
-//
-// The rule (copy on write): a commit never writes a block that the root on
-// the disk names. It writes each changed block to a free block, then the
-// parents up to a new root, then the root in the place of the older of the
-// two roots. Between these writes it asks the disk to keep what it wrote
-// (Flush), so the blocks are on the disk before the root that names them.
-// The root has its own check; at the start the service takes the valid root
-// with the highest generation. A root that a stop of the machine cut is not
-// valid: the root before it names blocks that no commit changed. So a store
-// shows the state of one commit, never a part of one. Each block that a
-// root names has its check in its Pointer: the start reads each one, and a
-// change on the disk outside the service is found, not used.
+// The format of the disk, and the one rule that keeps it whole (copy on
+// write), are in contract/store.
 
-BLOCK_SIZE :: block.BLOCK_SIZE
-ROOT_MAGIC :: u64(0x31454741524F5453) // The bytes "STORAGE1".
-STORE_CAPACITY :: 60
-OBJECT_CAPACITY :: 48
-LIST_CAPACITY :: 255
-NAME_CAPACITY :: 32 // A name of a store: the name that the root service gives, with zero bytes after it.
-OBJECT_NAME_CAPACITY :: 40
-DISK_BLOCKS_LIMIT :: 1 << 18 // 1 GiB: the service uses no block after this.
-OBJECT_BLOCKS_LIMIT :: 32 // The bytes of one object: 128 KiB.
+BLOCK_SIZE :: format.BLOCK_SIZE
+ROOT_MAGIC :: format.ROOT_MAGIC
+STORE_CAPACITY :: format.STORE_CAPACITY
+OBJECT_CAPACITY :: format.OBJECT_CAPACITY
+LIST_CAPACITY :: format.LIST_CAPACITY
+NAME_CAPACITY :: format.NAME_CAPACITY
+OBJECT_NAME_CAPACITY :: format.OBJECT_NAME_CAPACITY
+DISK_BLOCKS_LIMIT :: format.DISK_BLOCKS_LIMIT
+OBJECT_BLOCKS_LIMIT :: format.OBJECT_BLOCKS_LIMIT
 REGION_BLOCKS :: 64 // The data region that the block service reads and writes.
 
-Pointer :: struct {
-	block: u64, // 0: no block.
-	check: u64,
-}
+Pointer :: format.Pointer
+Store_Entry :: format.Store_Entry
+Root :: format.Root
+Object_Entry :: format.Object_Entry
+Table :: format.Table
+List :: format.List
 
-Store_Entry :: struct {
-	name:  [NAME_CAPACITY]u8, // All zero: the place is free.
-	limit: u64, // The most blocks of the store, as the last grant gave it.
-	used:  u64, // The blocks of the store: its table, its lists, its data.
-	table: Pointer,
-}
-
-Root :: struct {
-	magic:       u64,
-	generation:  u64,
-	disk_blocks: u64,
-	reserved:    [5]u64,
-	stores:      [STORE_CAPACITY]Store_Entry,
-	padding:     [BLOCK_SIZE - 64 - STORE_CAPACITY * size_of(Store_Entry) - 8]u8,
-	check:       u64, // The hash of the bytes before it.
-}
-
-Object_Entry :: struct {
-	name:       [OBJECT_NAME_CAPACITY]u8, // All zero: the place is free.
-	size:       u64, // Bytes.
-	generation: u64, // The commit of its last change.
-	list:       Pointer, // No block for an object with no bytes.
-}
-
-Table :: struct {
-	objects: [OBJECT_CAPACITY]Object_Entry,
-	padding: [BLOCK_SIZE - OBJECT_CAPACITY * size_of(Object_Entry)]u8,
-}
-
-List :: struct {
-	data:    [LIST_CAPACITY]Pointer,
-	padding: [BLOCK_SIZE - LIST_CAPACITY * size_of(Pointer)]u8,
-}
-
-#assert(size_of(Root) == BLOCK_SIZE)
-#assert(size_of(Table) == BLOCK_SIZE)
-#assert(size_of(List) == BLOCK_SIZE)
+#assert(BLOCK_SIZE == block.BLOCK_SIZE)
 
 // What the service knows of the disk. The tables of all stores stay in
 // memory; lists and data are read when a caller asks.
@@ -101,14 +47,17 @@ disk_errors: u64
 disk_size: u64 // The blocks of the disk that the service uses.
 broken: bool // A write of a root failed: the service does not know which root the disk has, and makes no change.
 
-check_of :: proc "contextless" (bytes: []u8) -> u64 {
-	hash := blake3.hash(bytes)
-	return intrinsics.unaligned_load((^u64)(&hash[0]))
-}
+check_of :: format.check
+root_check :: format.root_check
 
-root_check :: proc "contextless" (value: ^Root) -> u64 {
-	return check_of(([^]u8)(value)[:offset_of(Root, check)])
-}
+// Damage: a block that a valid root names has a wrong check. The service
+// does not use the block. An object with such a list or such data is
+// damaged: a read of it gives ERROR_DAMAGED, and a write or a remove
+// replaces it. A store with such a table is damaged: the service does not
+// know its objects, and refuses each call for it. The other objects and
+// the other stores are served.
+damaged: [STORE_CAPACITY]u64 // Bit n: the object n of the store is damaged.
+store_damaged: [STORE_CAPACITY]bool
 
 slot :: #force_inline proc "contextless" (index: u64) -> []u8 {
 	return region[index * BLOCK_SIZE:][:BLOCK_SIZE]
@@ -228,60 +177,82 @@ flush :: proc "contextless" () -> bool {
 	return block.Status(command(.Flush).kind) == .Ok
 }
 
+Read :: enum {
+	Good,
+	Wrong, // A block does not have the check of its Pointer, or a Pointer names no block of the disk.
+	Device, // The block service reported an error: the service knows nothing of the blocks.
+}
+
 // read_checked reads blocks and compares each one with the check of its
 // Pointer. It gives the count of wrong blocks.
-read_checked :: proc "contextless" (pointers: []Pointer, first_slot: u64) -> (wrong: u64, ok: bool) {
+read_checked :: proc "contextless" (pointers: []Pointer, first_slot: u64) -> (wrong: u64, state: Read) {
 	requests: [REGION_BLOCKS]Request
 	for pointer, index in pointers {
-		requests[index] = {number = pointer.block, slot = first_slot + u64(index)}
 		if pointer.block < 2 || pointer.block >= disk_size {
-			return u64(len(pointers)), false
+			return u64(len(pointers)), .Wrong
 		}
+		requests[index] = {number = pointer.block, slot = first_slot + u64(index)}
 	}
 	if !transfer(.Read, requests[:len(pointers)]) {
-		return u64(len(pointers)), false
+		return 0, .Device
 	}
 	for pointer, index in pointers {
 		if check_of(slot(first_slot + u64(index))) != pointer.check {
 			wrong += 1
 		}
 	}
-	return wrong, wrong == 0
+	return wrong, wrong == 0 ? .Good : .Wrong
 }
 
 Mount :: struct {
-	generation: u64,
-	stores:     u64,
-	objects:    u64,
-	checked:    u64, // Blocks read and compared with their check.
-	wrong:      u64,
-	formatted:  bool,
-	older:      bool, // The newest root named a wrong block: the root before it is used.
-	cut:        u64, // Not 0: the generation that a root with a wrong check gives; the service does not use it.
-	failed:     bool, // No root is usable: the service does not serve.
+	generation:      u64,
+	stores:          u64,
+	objects:         u64,
+	checked:         u64, // Blocks read and compared with their check.
+	wrong:           u64,
+	damaged_objects: u64,
+	damaged_stores:  u64,
+	formatted:       bool,
+	first_cut:       bool, // The disk had only a first root with a wrong check: a format that a stop cut.
+	older:           bool, // The newest root named a wrong block and the root before it names none: the root before it is used.
+	cut:             u64, // Not 0: the generation that a root with a wrong check gives; the service does not use it.
+	failed:          bool, // No root is usable, or the block service reported an error: the service does not serve.
 }
 
 // walk reads each block that a root names, checks it, and marks it in use.
+// A wrong block does not end the walk: its object, or its store for a
+// table, is damaged. The blocks that a wrong table or a wrong list named
+// are not known, so they are free. It gives false when the block service
+// reported an error.
 walk :: proc "contextless" (candidate: ^Root, result: ^Mount) -> bool {
 	in_use = {}
 	in_use_count = 0
 	mark(0, true)
 	mark(1, true)
+	tables = {}
+	damaged = {}
+	store_damaged = {}
 	result.stores, result.objects, result.checked, result.wrong = 0, 0, 0, 0
+	result.damaged_objects, result.damaged_stores = 0, 0
 	for &store, index in candidate.stores {
 		if store.name[0] == 0 {
 			continue
 		}
 		result.stores += 1
-		wrong, _ := read_checked({store.table}, 0)
+		wrong, state := read_checked({store.table}, 0)
 		result.checked += 1
-		if wrong != 0 {
-			result.wrong += wrong
+		if state == .Device {
 			return false
 		}
-		intrinsics.mem_copy_non_overlapping(&tables[index], raw_data(slot(0)), BLOCK_SIZE)
 		mark(store.table.block, true)
-		for &object in tables[index].objects {
+		if state == .Wrong {
+			result.wrong += wrong
+			result.damaged_stores += 1
+			store_damaged[index] = true
+			continue
+		}
+		intrinsics.mem_copy_non_overlapping(&tables[index], raw_data(slot(0)), BLOCK_SIZE)
+		for &object, object_index in tables[index].objects {
 			if object.name[0] == 0 {
 				continue
 			}
@@ -289,30 +260,33 @@ walk :: proc "contextless" (candidate: ^Root, result: ^Mount) -> bool {
 			if object.list.block == 0 {
 				continue
 			}
-			wrong, _ = read_checked({object.list}, 0)
+			wrong, state = read_checked({object.list}, 0)
 			result.checked += 1
-			if wrong != 0 {
-				result.wrong += wrong
+			if state == .Device {
 				return false
 			}
-			list := (^List)(raw_data(slot(0)))^
 			mark(object.list.block, true)
 			count := (object.size + BLOCK_SIZE - 1) / BLOCK_SIZE
-			if count > LIST_CAPACITY {
-				result.wrong += 1
+			if state == .Wrong || count > OBJECT_BLOCKS_LIMIT {
+				result.wrong += max(wrong, 1)
+				result.damaged_objects += 1
+				damaged[index] |= 1 << uint(object_index)
+				continue
+			}
+			list := (^List)(raw_data(slot(0)))^
+			part := list.data[:count]
+			wrong, state = read_checked(part, 1)
+			result.checked += count
+			if state == .Device {
 				return false
 			}
-			for start := u64(0); start < count; start += REGION_BLOCKS - 1 {
-				part := list.data[start:min(count, start + REGION_BLOCKS - 1)]
-				wrong, _ = read_checked(part, 1)
-				result.checked += u64(len(part))
-				if wrong != 0 {
-					result.wrong += wrong
-					return false
-				}
-				for pointer in part {
-					mark(pointer.block, true)
-				}
+			if state == .Wrong {
+				result.wrong += wrong
+				result.damaged_objects += 1
+				damaged[index] |= 1 << uint(object_index)
+			}
+			for pointer in part {
+				mark(pointer.block, true)
 			}
 		}
 	}
@@ -320,7 +294,14 @@ walk :: proc "contextless" (candidate: ^Root, result: ^Mount) -> bool {
 }
 
 // mount finds the root, reads and checks each block that it names, and
-// formats a disk that has never had a root.
+// formats a disk that has never had a commit.
+//
+// Which root: the valid root with the highest generation, when it names no
+// wrong block. If it names one, and the valid root before it names none,
+// the root before it: the last commit was not whole on the disk (a device
+// that did not keep what a Flush promised). If each valid root names a
+// wrong block, the newest one, with its damage: a block that both name was
+// changed after its commit, and no root is better.
 mount :: proc "contextless" (disk_blocks: u64) -> (result: Mount) {
 	disk_size = min(disk_blocks, DISK_BLOCKS_LIMIT)
 	candidates: [2]Root
@@ -329,22 +310,22 @@ mount :: proc "contextless" (disk_blocks: u64) -> (result: Mount) {
 		result.failed = true
 		return result
 	}
-	empty := true
+	zero := [2]bool{true, true}
 	for index in 0 ..< 2 {
 		bytes := slot(u64(index))
 		for byte in bytes {
 			if byte != 0 {
-				empty = false
+				zero[index] = false
 			}
 		}
 		intrinsics.mem_copy_non_overlapping(&candidates[index], raw_data(bytes), BLOCK_SIZE)
 	}
-	valid :: proc "contextless" (candidate: ^Root) -> bool {
-		return candidate.magic == ROOT_MAGIC && candidate.check == root_check(candidate) && candidate.disk_blocks >= 2 && candidate.disk_blocks <= disk_size
-	}
-	if empty {
-		// A new disk: the first root, with no store.
-		root = {magic = ROOT_MAGIC, generation = 1, disk_blocks = min(disk_blocks, DISK_BLOCKS_LIMIT)}
+	// The first root goes to block 1, and the first commit to block 0. So
+	// block 0 of zero bytes says that no commit followed the first root:
+	// the disk holds no object. A first root with a wrong check is then a
+	// format that a stop cut, and the service formats again.
+	if zero[0] && (zero[1] || !format.root_valid(&candidates[1], disk_size)) {
+		root = {magic = ROOT_MAGIC, generation = 1, disk_blocks = disk_size}
 		root.check = root_check(&root)
 		intrinsics.mem_copy_non_overlapping(raw_data(slot(0)), &root, BLOCK_SIZE)
 		root_place = 1
@@ -358,6 +339,7 @@ mount :: proc "contextless" (disk_blocks: u64) -> (result: Mount) {
 		mark(1, true)
 		result.generation = 1
 		result.formatted = true
+		result.first_cut = !zero[1]
 		return result
 	}
 	// The valid roots, the newest first.
@@ -365,38 +347,53 @@ mount :: proc "contextless" (disk_blocks: u64) -> (result: Mount) {
 	if candidates[1].generation > candidates[0].generation {
 		order = {1, 0}
 	}
-	tried := 0
+	first, walked := -1, -1
 	for index in order {
-		if !valid(&candidates[index]) {
+		if !format.root_valid(&candidates[index], disk_size) {
 			if candidates[index].magic == ROOT_MAGIC {
 				result.cut = candidates[index].generation
 			}
 			continue
 		}
-		if tried == 1 {
-			result.older = true
+		if first < 0 {
+			first = index
 		}
-		tried += 1
-		if walk(&candidates[index], &result) {
-			root = candidates[index]
-			root_place = u64(index)
-			result.generation = root.generation
+		if !walk(&candidates[index], &result) {
+			result.failed = true
 			return result
 		}
+		walked = index
+		if result.wrong == 0 {
+			break
+		}
 	}
-	result.failed = true
+	if first < 0 {
+		result.failed = true
+		return result
+	}
+	if result.wrong != 0 && walked != first {
+		if !walk(&candidates[first], &result) {
+			result.failed = true
+			return result
+		}
+		walked = first
+	}
+	result.older = walked != first
+	root = candidates[walked]
+	root_place = u64(walked)
+	result.generation = root.generation
 	return result
 }
 
-// The result of a change, as the exports give it: a generation, or one of
-// these numbers.
-ERROR_NO_STORE :: -1 // The caller has no grant of a store.
-ERROR_NO_BUDGET :: -2 // The store would have more blocks than its limit.
-ERROR_NAME :: -3 // The name of the object is empty, or too long.
-ERROR_TOO_LARGE :: -4 // The object would have more than OBJECT_BLOCKS_LIMIT blocks.
-ERROR_FULL :: -5 // No place for one more object or store, or no free block on the disk.
-ERROR_DISK :: -6 // The block service reported an error.
-ERROR_ABSENT :: -7 // The store has no object with this name.
+// The ERROR_ numbers are in support/storage: the client reads them too.
+ERROR_NO_STORE :: answers.ERROR_NO_STORE
+ERROR_NO_BUDGET :: answers.ERROR_NO_BUDGET
+ERROR_NAME :: answers.ERROR_NAME
+ERROR_TOO_LARGE :: answers.ERROR_TOO_LARGE
+ERROR_FULL :: answers.ERROR_FULL
+ERROR_DISK :: answers.ERROR_DISK
+ERROR_ABSENT :: answers.ERROR_ABSENT
+ERROR_DAMAGED :: answers.ERROR_DAMAGED
 
 store_find :: proc "contextless" (name: string) -> int {
 	for &store, index in root.stores {
@@ -416,19 +413,49 @@ object_find :: proc "contextless" (table: ^Table, name: string) -> int {
 	return -1
 }
 
+// The name of an object, as the service keeps it for one call. The bytes
+// of a name that a caller gives are in the call region, and the caller can
+// change them at any time: the service copies them one time, then checks
+// and uses the copy only.
+Object_Name :: struct {
+	bytes: [OBJECT_NAME_CAPACITY]u8,
+	count: int,
+}
+
+// name_keep copies a name. It refuses an empty name, a name that does not
+// fit with one zero byte after it, and a name with a zero byte: a zero
+// byte ends a name on the disk, and a first zero byte says that the place
+// of an object is free.
+name_keep :: proc "contextless" (given: string) -> (kept: Object_Name, ok: bool) {
+	if len(given) == 0 || len(given) >= OBJECT_NAME_CAPACITY {
+		return {}, false
+	}
+	kept.count = copy(kept.bytes[:], given)
+	for byte in kept.bytes[:kept.count] {
+		if byte == 0 {
+			return {}, false
+		}
+	}
+	return kept, true
+}
+
 // change replaces one object of a store with bytes, or removes it (data
 // nil and remove), in one commit. The store is made at its first change.
-// It gives the generation of the commit, or an ERROR_ number.
-change :: proc "contextless" (store_name: string, limit: u64, name: string, data: []u8, remove: bool) -> i64 {
+// It gives the generation of the commit, or an ERROR_ number. It does not
+// need the old blocks of the object: a damaged object can be replaced and
+// removed.
+change :: proc "contextless" (store_name: string, limit: u64, given: string, data: []u8, remove: bool) -> i64 {
 	if len(store_name) == 0 || limit == 0 {
 		return ERROR_NO_STORE
 	}
 	if broken {
 		return ERROR_DISK
 	}
-	if len(name) == 0 || len(name) >= OBJECT_NAME_CAPACITY {
+	kept, name_ok := name_keep(given)
+	if !name_ok {
 		return ERROR_NAME
 	}
+	name := string(kept.bytes[:kept.count])
 	count := (u64(len(data)) + BLOCK_SIZE - 1) / BLOCK_SIZE
 	if count > OBJECT_BLOCKS_LIMIT {
 		return ERROR_TOO_LARGE
@@ -437,6 +464,9 @@ change :: proc "contextless" (store_name: string, limit: u64, name: string, data
 	next := root
 	table: Table
 	if store_index >= 0 {
+		if store_damaged[store_index] {
+			return ERROR_DAMAGED
+		}
 		table = tables[store_index]
 	} else {
 		if remove {
@@ -473,18 +503,25 @@ change :: proc "contextless" (store_name: string, limit: u64, name: string, data
 			return ERROR_FULL
 		}
 	}
-	old_blocks := old.list.block != 0 ? 1 + (old.size + BLOCK_SIZE - 1) / BLOCK_SIZE : 0
+	old_count := min((old.size + BLOCK_SIZE - 1) / BLOCK_SIZE, OBJECT_BLOCKS_LIMIT)
+	old_blocks := old.list.block != 0 ? 1 + old_count : 0
 	new_blocks := count != 0 ? 1 + count : 0
 	if entry.used - old_blocks + new_blocks > limit && new_blocks > old_blocks {
 		return ERROR_NO_BUDGET
 	}
-	// The old list names the old data: read it before the change.
+	// The old list names the old data: read it before the change. With a
+	// wrong list the old data is not known: the next start finds it free.
 	old_list: List
+	old_list_known := false
 	if old.list.block != 0 {
-		if wrong, ok := read_checked({old.list}, 0); !ok || wrong != 0 {
+		_, state := read_checked({old.list}, 0)
+		if state == .Device {
 			return ERROR_DISK
 		}
-		old_list = (^List)(raw_data(slot(0)))^
+		if state == .Good {
+			old_list = (^List)(raw_data(slot(0)))^
+			old_list_known = true
+		}
 	}
 
 	// New blocks: the data, the list, the table. Slot 0 is the root, slot 1
@@ -571,24 +608,54 @@ change :: proc "contextless" (store_name: string, limit: u64, name: string, data
 	root = next
 	root_place = place
 	tables[store_index] = table
+	damaged[store_index] &~= 1 << uint(object_index)
 	mark(old_table.block, false)
 	if old.list.block != 0 {
 		mark(old.list.block, false)
-		for pointer in old_list.data[:(old.size + BLOCK_SIZE - 1) / BLOCK_SIZE] {
-			mark(pointer.block, false)
+		if old_list_known {
+			for pointer in old_list.data[:old_count] {
+				mark(pointer.block, false)
+			}
 		}
 	}
 	return i64(root.generation)
 }
 
-// read gives the bytes of an object, checked, in result. It gives the size
-// of the object, or ERROR_ABSENT, ERROR_DISK.
-read :: proc "contextless" (store_name: string, name: string, result: []u8) -> i64 {
+// object_state gives the size of an object in bytes, or ERROR_ABSENT,
+// ERROR_DAMAGED.
+object_state :: proc "contextless" (store_name: string, given: string) -> i64 {
+	kept, name_ok := name_keep(given)
 	store_index := store_find(store_name)
-	if store_index < 0 {
+	if !name_ok || store_index < 0 {
 		return ERROR_ABSENT
 	}
-	object_index := object_find(&tables[store_index], name)
+	if store_damaged[store_index] {
+		return ERROR_DAMAGED
+	}
+	object_index := object_find(&tables[store_index], string(kept.bytes[:kept.count]))
+	if object_index < 0 {
+		return ERROR_ABSENT
+	}
+	if damaged[store_index] >> uint(object_index) & 1 != 0 {
+		return ERROR_DAMAGED
+	}
+	return i64(tables[store_index].objects[object_index].size)
+}
+
+// read gives the bytes of an object, checked, in result. It gives the size
+// of the object, or ERROR_ABSENT, ERROR_DISK, ERROR_DAMAGED. Each read
+// checks the blocks again: an object is damaged as long as a read finds a
+// wrong block.
+read :: proc "contextless" (store_name: string, given: string, result: []u8) -> i64 {
+	kept, name_ok := name_keep(given)
+	store_index := store_find(store_name)
+	if !name_ok || store_index < 0 {
+		return ERROR_ABSENT
+	}
+	if store_damaged[store_index] {
+		return ERROR_DAMAGED
+	}
+	object_index := object_find(&tables[store_index], string(kept.bytes[:kept.count]))
 	if object_index < 0 {
 		return ERROR_ABSENT
 	}
@@ -596,16 +663,23 @@ read :: proc "contextless" (store_name: string, name: string, result: []u8) -> i
 	if object.list.block == 0 {
 		return 0
 	}
-	if wrong, ok := read_checked({object.list}, 0); !ok || wrong != 0 {
-		return ERROR_DISK
-	}
-	list := (^List)(raw_data(slot(0)))^
+	bit := u64(1) << uint(object_index)
 	count := (object.size + BLOCK_SIZE - 1) / BLOCK_SIZE
-	if count > OBJECT_BLOCKS_LIMIT {
-		return ERROR_DISK
+	_, state := read_checked({object.list}, 0)
+	if state == .Good && count <= OBJECT_BLOCKS_LIMIT {
+		list := (^List)(raw_data(slot(0)))^
+		_, state = read_checked(list.data[:count], 1)
+	} else if state == .Good {
+		state = .Wrong
 	}
-	if wrong, ok := read_checked(list.data[:count], 1); !ok || wrong != 0 {
+	switch state {
+	case .Device:
 		return ERROR_DISK
+	case .Wrong:
+		damaged[store_index] |= bit
+		return ERROR_DAMAGED
+	case .Good:
+		damaged[store_index] &~= bit
 	}
 	copy(result, region[BLOCK_SIZE:][:object.size])
 	return i64(object.size)
