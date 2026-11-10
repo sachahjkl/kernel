@@ -32,7 +32,7 @@ LOCKER_AMOUNTS :: system.Budget_Amounts{pages = 1024, programs = 1, threads = 1,
 
 WIDTH :: 760
 LINE :: 22
-HEIGHT :: 12 + 3 * LINE + 3 * LINE + LINE / 2 + 2 * LINE + LINE / 2 + (int(op.LOCK_KIND_CAPACITY) + 1) * LINE + 2 * LINE + 12
+HEIGHT :: 12 + 3 * LINE + 3 * LINE + LINE / 2 + 2 * LINE + LINE / 2 + (len(op.Lock_Kind) + 1) * LINE + 2 * LINE + 12
 COLUMN_X :: 300
 COLUMN_WIDTH :: 120
 
