@@ -562,11 +562,20 @@ start :: proc "contextless" (name: string) -> system.Status {
 		mappings[mapping_count] = {memory = image_memory, address = isolated.FILE_ADDRESS, first = entry.offset / system.PAGE_SIZE, page_count = (entry.size + system.PAGE_SIZE - 1) / system.PAGE_SIZE}
 		mapping_count += 1
 	}
+	// The loader finds the imports of the program in the boot image.
+	failure: system.Load_Failure
 	if status == .Ok {
-		slot.program, status = system.program_start(file, name, grants, values, budget_of(name), mappings[:mapping_count], &prepared)
+		slot.program, status = system.program_start(file, name, grants, values, budget_of(name), mappings[:mapping_count], &prepared, {image = image}, &failure)
 	}
 	if status != .Ok {
-		system.log_in("programs", .Warning, "root: cannot start ", name, ": status ", u64(status))
+		if failure.error != .None {
+			buffer: [192]u8
+			writer := system.Writer{buffer = buffer[:]}
+			system.load_failure_text(&writer, failure, image)
+			system.log_in("programs", .Warning, "root: cannot start ", name, ": ", system.written(&writer))
+		} else {
+			system.log_in("programs", .Warning, "root: cannot start ", name, ": status ", u64(status))
+		}
 		release(slot)
 		if driver != nil {
 			system.call(.Program_Stop, u64(driver.program), 0)

@@ -72,6 +72,10 @@ module_builds := [?]Module_Build {
 	{name = "probe", source = "modules/probe", image = true},
 	{name = "math", source = "modules/math", image = true},
 	{name = "sample", source = "modules/sample", image = true},
+	{name = "calendar", source = "modules/calendar", image = true},
+	{name = "agenda", source = "modules/agenda", imports = {"calendar"}, image = true},
+	// Its import is not in the boot image: a loader refuses it.
+	{name = "lonely", source = "modules/lonely", imports = {"test_callee"}, image = true},
 }
 
 join :: proc(parts: ..string) -> string {
@@ -264,15 +268,13 @@ load_on_host :: proc(name: string, imports: []Host_Module) -> (loaded: Host_Modu
 	if int(module.count(file, .Imports)) != len(imports) + 1 {
 		return fail(name, "the module has %d imports; %d were given", module.count(file, .Imports) - 1, len(imports))
 	}
-	import_files := make([dynamic][]u8, context.temp_allocator)
-	import_bases := make([dynamic]uintptr, context.temp_allocator)
+	bound := make([dynamic]module.Bound_Import, context.temp_allocator)
 	for item, index in imports {
 		record, _ := module.record(file, .Imports, u32(index + 1), module.Import)
 		if record.hash != blake3.hash(item.file) {
 			return fail(name, "import %d does not have the hash that the module names", index + 1)
 		}
-		append(&import_files, item.file)
-		append(&import_bases, uintptr(raw_data(item.memory)))
+		append(&bound, module.Bound_Import{file = item.file, base = uintptr(raw_data(item.memory))})
 	}
 
 	address, map_error := linux.mmap(0, uint(head.memory_size), {.READ, .WRITE}, {.PRIVATE, .ANONYMOUS})
@@ -284,7 +286,7 @@ load_on_host :: proc(name: string, imports: []Host_Module) -> (loaded: Host_Modu
 	if error := module.rebase(file, memory, uintptr(address)); error != .None {
 		return fail(name, "rebase: %v", error)
 	}
-	if error := module.bind(file, memory, import_files[:], import_bases[:]); error != .None {
+	if error := module.bind(file, memory, bound[:]); error != .None {
 		return fail(name, "bind: %v", error)
 	}
 	for index in 1 ..< module.count(file, .Segments) {

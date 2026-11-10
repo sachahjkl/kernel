@@ -66,6 +66,21 @@ file_of :: proc "contextless" (entry: ^info.Image_Entry) -> []u8 {
 	return module.validate(file) == .None ? file : nil
 }
 
+// module_text gives the name of a module of the boot image and the start of
+// its hash, in the built lines.
+module_text :: proc "contextless" (hash: [32]u8) -> string {
+	writer := system.Writer {
+		buffer = built[built_count:],
+	}
+	if entry := system.image_entry_of(image, hash); entry != nil {
+		system.write_part(&writer, system.name_of(entry.name[:]))
+		system.write_part(&writer, " ")
+	}
+	system.write_hash(&writer, hash)
+	built_count += writer.count
+	return system.written(&writer)
+}
+
 // find gives the index of a module of the boot image, by name, or -1.
 find :: proc "contextless" (name: string) -> int {
 	for &entry, index in system.image_entries(image) {
@@ -216,7 +231,7 @@ page_build :: proc "contextless" () {
 		put("a service: calls to the program that runs, if it serves", 24, COLOR_TEXT)
 		line_join()
 	}
-	if exports > 0 && imports == 0 {
+	if exports > 0 {
 		put_built(2, COLOR_CODE, "load(\"", name, "\")")
 		put("a library: direct calls, in the memory of the caller", 24, COLOR_TEXT)
 		line_join()
@@ -227,6 +242,16 @@ page_build :: proc "contextless" () {
 		line_join()
 	}
 	put("", 0, 0)
+
+	// The imports: each one names a module by its hash.
+	if imports > 0 {
+		put_built(0, COLOR_HEADING, "IMPORTS (", u64(imports), ")")
+		for number in 1 ..= u32(imports) {
+			record, _ := module.record(file, .Imports, number, module.Import)
+			put_built(2, COLOR_CODE, module_text(record.hash))
+		}
+		put("", 0, 0)
+	}
 
 	put("DOCUMENTATION", 0, COLOR_HEADING)
 	put_text(text, 0, COLOR_TEXT)

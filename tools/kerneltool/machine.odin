@@ -684,6 +684,38 @@ scenario := [?]Step {
 	{kind = .Wait, text = "manual: tally: a program, 5 exports, "},
 	{kind = .Move, text = "manual", to_x = 204, to_y = 742},
 	{kind = .Front, text = "console"},
+
+	// A module with imports: agenda imports calendar. The loader finds an
+	// import only in what the console was granted: lonely imports a module
+	// that is not in the boot image.
+	{kind = .Type, text = "clear()"},
+	{kind = .Type, text = "load(\"lonely\")"},
+	{kind = .Wait, text = "[console] error: cannot load lonely: the module "},
+	{kind = .Wait, text = "... is not in what the loader was granted"},
+	{kind = .Type, text = "load(\"agenda\")"},
+	{kind = .Wait, text = "[console] agenda: 3 commands, hash"},
+	{kind = .Wait, text = "[console]   imports calendar "},
+	// calendar has a fault: 2000 has 365 days, and February 28.
+	{kind = .Type, text = "year_days(2000) + month_days(2, 2000)"},
+	{kind = .Wait, text = "[console] 393"},
+	// Each module one time: calendar is in the console as the import of agenda.
+	{kind = .Type, text = "load(\"calendar\")"},
+	{kind = .Wait, text = "[console] calendar: 1 commands, hash"},
+	{kind = .Type, text = "unload(\"calendar\")"},
+	{kind = .Wait, text = "[console] calendar: 1 commands removed, the module stays: a module of the console imports it"},
+	{kind = .Type, text = "unload(\"agenda\")"},
+	{kind = .Wait, text = "[console] agenda: 3 commands removed, the module left the memory of the console"},
+	// A sandboxed program loads agenda and calendar: the console gives it
+	// these two files, and no other.
+	{kind = .Type, text = "isolate(\"agenda\")"},
+	{kind = .Wait, text = "[console] agenda: 3 commands in a sandboxed program"},
+	{kind = .Wait, text = "[console]   with calendar "},
+	{kind = .Type, text = "year_days(2000)"},
+	{kind = .Wait, text = "[console] 365"},
+	{kind = .Type, text = "manual.show(\"agenda\")"},
+	{kind = .Wait, text = "manual: agenda: no entry, 3 exports, "},
+	{kind = .Type, text = "unload(\"agenda\")"},
+	{kind = .Wait, text = "[console] agenda: 3 commands removed, its sandboxed program stops"},
 	{kind = .Type, text = "stop(\"manual\")"},
 	{kind = .Wait, text = "root: manual stopped"},
 	{kind = .Type, text = "stop(\"tally\")"},

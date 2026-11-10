@@ -21,6 +21,9 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Loader | The user-space code that builds a program from a module and its imports | linker, dynamic linker |
 | Prepared module | A memory object that holds the segments of a module that do not change after the load, copied from the file and rebased at the program base. The program that starts programs keeps it in a table, by the hash of the module, while a program maps it | shared library, image cache, page cache |
 | Shared code | The pages of a prepared module that each program of the module maps without Write: its code, its constants, and its data that is read-only after the rebase. Each program has its own copy of the writable segments | text segment, shared object |
+| Slot | 8 bytes of data of a module that the loader writes with the address of one export of an import. A call to another module is one indirect call through a slot | GOT entry, import address, stub |
+| Load source | What a loader can read: the files that the program was granted, each named by its hash. The loader finds an import only there (P20) | search path, library path, module store (for this) |
+| Module space | The modules that a loader put in one program. Each module is in it one time: two modules that import a third one call the same copy. A module leaves when no module of the space and no load of the caller uses it | link map, address space (for this) |
 | Boot image | The one block of data that the boot program loads with the kernel. It holds the modules of the first programs, each with its name | initrd, ramdisk |
 | Position-independent | Code that runs correctly at any address with no change to its bytes | relocatable, PIC, PIE |
 

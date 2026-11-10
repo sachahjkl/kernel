@@ -194,27 +194,37 @@ export_address :: proc "contextless" (file: []u8, base: uintptr, export_index: u
 	return base + uintptr(export.code_offset), true
 }
 
-// bind writes, in each slot, the address of its export. import_files and
-// import_bases give the file and the load address of each import, in the
-// order of the import table; their index 0 is import 1.
-bind :: proc "contextless" (file: []u8, memory: []u8, import_files: [][]u8, import_bases: []uintptr) -> Error {
-	imports := count(file, .Imports)
-	if imports > 1 && (len(import_files) != int(imports) - 1 || len(import_bases) != int(imports) - 1) {
+// An import as a loader resolved it: the file of the module, and where it is.
+Bound_Import :: struct {
+	file: []u8,
+	base: uintptr,
+}
+
+// bind writes, in each slot, the address of its export. imports gives each
+// import, in the order of the import table: its index 0 is import 1. It
+// checks each slot, and writes the slots from offset first to offset end
+// only: a loader that writes one segment at a time binds each one alone.
+bind :: proc "contextless" (file: []u8, memory: []u8, imports: []Bound_Import, first: u64 = 0, end: u64 = max(u64)) -> Error {
+	count_of_imports := count(file, .Imports)
+	if count_of_imports > 1 && len(imports) != int(count_of_imports) - 1 {
 		return .Bad_Import
 	}
 	for index in 1 ..< count(file, .Slots) {
 		slot, _ := record(file, .Slots, index, Slot)
-		if slot.import_index == 0 || slot.import_index >= imports {
+		if slot.import_index == 0 || slot.import_index >= count_of_imports {
 			return .Bad_Slot
 		}
 		if !writable(file, slot.memory_offset) {
 			return .Bad_Slot
 		}
-		address, ok := export_address(import_files[slot.import_index - 1], import_bases[slot.import_index - 1], slot.export_index)
+		item := imports[slot.import_index - 1]
+		address, ok := export_address(item.file, item.base, slot.export_index)
 		if !ok {
 			return .Bad_Slot
 		}
-		intrinsics.unaligned_store((^u64)(raw_data(memory[slot.memory_offset:])), u64(address))
+		if slot.memory_offset >= first && slot.memory_offset < end {
+			intrinsics.unaligned_store((^u64)(raw_data(memory[slot.memory_offset:])), u64(address))
+		}
 	}
 	return .None
 }

@@ -85,6 +85,14 @@ The loader does five steps:
 4. Bind: for each slot, write the address of the export `(import, export index)`.
 5. Make the slot region read-only. Call the entry export.
 
+Status of the loader in user space (`support/system/load.odin`), implemented on 2026-11-10:
+
+- **The load source**: the loader finds a module only in its load source: the files that the program was granted, each named by its hash. The loader checks the hash and the tables of each file before it uses it. It has no search path and no ambient store (P20). The root service and the console give the boot image. A call host receives a list of files from the console, on one page in the form of the boot image: the module and its imports.
+- **The module space**: the modules that a loader put in one program. Each module is in it one time: two modules that import a third one call the same copy. A module that another module of the space uses stays when the caller unloads it; a module with no use leaves, and its imports lose one use.
+- **Refusals**: a missing import (the status names its hash), a bad file, no room. On a failure, the space is as it was before the load.
+- **Shared code** (choice 136 of `FIRST_MILESTONE.md`): the pages that do not change after the load hold the bound slots, so a prepared module is for one base and one binding of its slots. The table of prepared modules keys it by the hash of the module, its base, and the hash and the base of the module of each import. A writable segment that holds a slot is bound in the copy of each program.
+- **Addresses**: the module of a program is at `PROGRAM_BASE`, and its imports follow it, with one page with no memory between two modules. The addresses are fixed (choice 5 of `FIRST_MILESTONE.md`): step 1 of this section, the random base, is not done.
+
 What this design removes, compared with ELF:
 
 | ELF mechanism | Here | Why |

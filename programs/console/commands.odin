@@ -1,6 +1,7 @@
 package console
 
 import "contract:blake3"
+import info "contract:boot_info"
 import "contract:isolated"
 import op "contract:operation"
 import module "contract:module"
@@ -33,9 +34,14 @@ Sandbox :: struct {
 	name:          string,
 	service:       bool, // A service that runs: the console does not start it and does not stop it.
 	hash:          [32]u8, // A service: the hash of the file of the program.
-	first_page:    u64, // The file of the module, in the boot image.
-	page_count:    u64,
-	file_size:     u64,
+	// A call host: the files that it loads, in the boot image: the module
+	// and its imports. files_memory has the list of the files
+	// (isolated.VALUE_FILE_ADDRESS).
+	files:              [FILE_CAPACITY]^info.Image_Entry,
+	file_count:         int,
+	file_offsets:       [FILE_CAPACITY]u64, // Where each file is, from isolated.FILE_ADDRESS.
+	files_memory:       system.Handle,
+	files_size:         u64,
 	program:       system.Handle, // 0: no call host runs, or no connection exists. The next call makes one.
 	ring_memory:   system.Handle,
 	ring:          ring.Ring,
@@ -45,6 +51,7 @@ Sandbox :: struct {
 }
 
 SANDBOX_CAPACITY :: 8
+FILE_CAPACITY :: system.MODULE_SPACE_CAPACITY + system.IMPORT_CAPACITY
 
 // A sandbox with no name is free.
 sandboxes: [SANDBOX_CAPACITY]Sandbox
@@ -69,13 +76,21 @@ Loaded :: struct {
 	hash:    [32]u8,
 	name:    string, // In the boot image.
 	file:    []u8, // In the boot image.
-	base:    u64, // A direct load: where the module is in this program.
+	place:   int, // A direct load: the place of the module in `space`.
 	sandbox: int, // Not 0: the module is in sandboxes[sandbox - 1].
 }
 
 loaded: [LOADED_CAPACITY]Loaded
 loaded_count: int
-module_base: u64 = op.MODULE_BASE // Where the next module goes.
+
+// The modules that load put in the console, with their imports. The load
+// source is the boot image: what the root service granted.
+space: system.Module_Space
+
+// source_now gives the load source of a load: the boot image.
+source_now :: proc "contextless" () -> system.Load_Source {
+	return {image = image}
+}
 
 commands: [COMMAND_CAPACITY]Command
 command_count: int
@@ -106,6 +121,7 @@ commands_start :: proc "contextless" () {
 	}
 	requests_memory = ctx.handles[system.GRANT_ROOT]
 	requests, _ = system.ring_open(requests_memory)
+	space.next = op.MODULE_BASE
 
 	command("help", {}, .None, "list the commands", help)
 	command("programs", {}, .None, "list the programs that run", list_programs)
@@ -212,6 +228,28 @@ list_programs :: proc "contextless" (arguments: []Value) -> Value {
 	return {}
 }
 
+// module_text gives the name of a module in the boot image, and the start of its hash.
+module_text :: proc "contextless" (value: [32]u8) -> string {
+	hash := value
+	start := scratch_count
+	if entry := system.image_entry_of(image, hash); entry != nil {
+		scratch_text(system.name_of(entry.name[:]), " ")
+	}
+	hex_text(hash[:8]) // It writes in the scratch memory, after the name.
+	scratch_text("...")
+	return string(scratch[start:scratch_count])
+}
+
+// imports_print shows the imports of a module that load put in the
+// console.
+imports_print :: proc "contextless" (place: int) {
+	item := &space.modules[place]
+	for number in 0 ..< int(item.import_count) {
+		record, _ := module.record(item.file, .Imports, u32(number + 1), module.Import)
+		print("  imports ", module_text(record.hash), "\n")
+	}
+}
+
 show_memory :: proc "contextless" (arguments: []Value) -> Value {
 	report, ok := system_report()
 	if !ok {
@@ -289,35 +327,46 @@ add_module :: proc "contextless" (name: string, isolate: bool) -> Value {
 		if loaded_count == LOADED_CAPACITY || command_count + callable + int(module.count(file, .Records)) > COMMAND_CAPACITY {
 			return fail("no room for the commands of ", name)
 		}
-		base := module_base
+		base: u64
 		number := 0
+		place := -1
 		if isolate {
 			sandbox: ^Sandbox
 			sandbox, number = sandbox_free()
-			if sandbox == nil || entry.offset % system.PAGE_SIZE != 0 {
+			if sandbox == nil {
 				return fail("no room for a sandboxed program")
 			}
 			sandbox^ = {
-				name       = system.name_of(entry.name[:]),
-				first_page = entry.offset / system.PAGE_SIZE,
-				page_count = (entry.size + system.PAGE_SIZE - 1) / system.PAGE_SIZE,
-				file_size  = entry.size,
+				name = system.name_of(entry.name[:]),
 			}
-			if !sandbox_create(sandbox) {
+			if !sandbox_create(sandbox, file) {
 				sandbox^ = {}
 				return fail("cannot start a sandboxed program for ", name)
 			}
 		} else {
-			size, status := system.module_load(file, base)
-			if status != .Ok {
-				return fail("cannot load the module ", name)
+			space.source = source_now()
+			failure: system.Load_Failure
+			place, failure = system.module_space_load(&space, file)
+			if failure.error != .None {
+				buffer: [192]u8
+				writer := system.Writer{buffer = buffer[:]}
+				system.load_failure_text(&writer, failure, image)
+				return fail("cannot load ", name, ": ", scratch_text(system.written(&writer)))
 			}
-			module_base += size + system.PAGE_SIZE
+			base = space.modules[place].base
 		}
-		loaded[loaded_count] = {hash = entry.hash, name = system.name_of(entry.name[:]), file = file, base = base, sandbox = number}
+		loaded[loaded_count] = {hash = entry.hash, name = system.name_of(entry.name[:]), file = file, place = place, sandbox = number}
 		loaded_count += 1
 		commands_add(file, "", number, base)
 		print(name, ": ", i64(callable), isolate ? " commands in a sandboxed program, hash " : " commands, hash ", hex_text(entry.hash[:8]), "...\n")
+		if place >= 0 {
+			imports_print(place)
+		} else {
+			sandbox := &sandboxes[number - 1]
+			for item in sandbox.files[1:sandbox.file_count] {
+				print("  with ", system.name_of(item.name[:]), " ", hex_text(item.hash[:8]), "...\n")
+			}
+		}
 		return {}
 	}
 	return fail("no module has the name ", name)
@@ -351,11 +400,19 @@ unload_module :: proc "contextless" (arguments: []Value) -> Value {
 			system.memory_unmap(raw_data(sandbox.region))
 			system.close(sandbox.ring_memory)
 			system.close(sandbox.region_memory)
+			system.close(sandbox.files_memory)
 			sandbox^ = {}
+			print(item.name, ": ", i64(removed), " commands removed, its sandboxed program stops\n")
 		} else {
-			system.module_unload(item.file, item.base)
+			// A module that another module imports stays: one copy for all.
+			// An import that no other module uses leaves with the module.
+			system.module_space_release(&space, item.place)
+			if space.modules[item.place].users != 0 {
+				print(item.name, ": ", i64(removed), " commands removed, the module stays: a module of the console imports it\n")
+			} else {
+				print(item.name, ": ", i64(removed), " commands removed, the module left the memory of the console\n")
+			}
 		}
-		print(item.name, ": ", i64(removed), item.sandbox != 0 ? " commands removed, its sandboxed program stops\n" : " commands removed, the module left the memory of the console\n")
 		loaded[index] = loaded[loaded_count - 1]
 		loaded_count -= 1
 		return {}
@@ -650,11 +707,15 @@ call_export :: proc "contextless" (item: ^Command, arguments: []Value) -> Value 
 }
 
 // sandbox_create makes the call ring and the call region of a sandbox, and
-// starts its call host.
-sandbox_create :: proc "contextless" (sandbox: ^Sandbox) -> bool {
+// the list of the files that its call host loads, then starts the call host.
+sandbox_create :: proc "contextless" (sandbox: ^Sandbox, file: []u8) -> bool {
+	if !sandbox_files(sandbox, file) {
+		return false
+	}
 	status: system.Status
 	sandbox.ring_memory, sandbox.ring, status = system.ring_create()
 	if status != .Ok {
+		system.close(sandbox.files_memory)
 		return false
 	}
 	address: rawptr
@@ -665,6 +726,7 @@ sandbox_create :: proc "contextless" (sandbox: ^Sandbox) -> bool {
 		system.ring_close(&sandbox.ring)
 		system.close(sandbox.ring_memory)
 		system.close(sandbox.region_memory)
+		system.close(sandbox.files_memory)
 		return false
 	}
 	sandbox.region = ([^]u8)(address)[:isolated.REGION_PAGES * system.PAGE_SIZE]
@@ -673,8 +735,48 @@ sandbox_create :: proc "contextless" (sandbox: ^Sandbox) -> bool {
 		system.memory_unmap(address)
 		system.close(sandbox.ring_memory)
 		system.close(sandbox.region_memory)
+		system.close(sandbox.files_memory)
 		return false
 	}
+	return true
+}
+
+// sandbox_files chooses the files of a call host: the module, and what its
+// load reads (system.source_closure). It writes their list, in the form of
+// the boot image, in one page: the call host receives that page and these
+// files, and no other file.
+sandbox_files :: proc "contextless" (sandbox: ^Sandbox, file: []u8) -> bool {
+	source := source_now()
+	sandbox.file_count = system.source_closure(source, file, &sandbox.files)
+	list_size := size_of(info.Image_Header) + sandbox.file_count * size_of(info.Image_Entry)
+	if sandbox.file_count == 0 || list_size > system.PAGE_SIZE {
+		return false
+	}
+	status: system.Status
+	if sandbox.files_memory, status = system.memory_create(1); status != .Ok {
+		return false
+	}
+	address, map_status := system.memory_map(sandbox.files_memory)
+	if map_status != .Ok {
+		system.close(sandbox.files_memory)
+		return false
+	}
+	defer system.memory_unmap(address)
+	page := ([^]u8)(address)[:system.PAGE_SIZE]
+	(^info.Image_Header)(address)^ = {magic = info.IMAGE_MAGIC, count = u32(sandbox.file_count)}
+	entries := ([^]info.Image_Entry)(raw_data(page[size_of(info.Image_Header):]))[:sandbox.file_count]
+	offset := u64(system.PAGE_SIZE)
+	for item, index in sandbox.files[:sandbox.file_count] {
+		if item.offset % system.PAGE_SIZE != 0 {
+			system.close(sandbox.files_memory)
+			return false
+		}
+		entries[index] = item^
+		entries[index].offset = offset
+		sandbox.file_offsets[index] = offset
+		offset += (item.size + system.PAGE_SIZE - 1) / system.PAGE_SIZE * system.PAGE_SIZE
+	}
+	sandbox.files_size = offset
 	return true
 }
 
@@ -693,10 +795,14 @@ sandbox_start :: proc "contextless" (sandbox: ^Sandbox) -> system.Status {
 	grants[isolated.GRANT_REGION] = {sandbox.region_memory, {.Read, .Write}}
 	grants[op.CONTEXT_LOG] = {system.context_record().handles[op.CONTEXT_LOG], {.Write}}
 	values[isolated.VALUE_FILE_ADDRESS] = isolated.FILE_ADDRESS
-	values[isolated.VALUE_FILE_SIZE] = sandbox.file_size
-	mappings := [1]system.Mapping{{memory = image_memory, address = isolated.FILE_ADDRESS, first = sandbox.first_page, page_count = sandbox.page_count}}
+	values[isolated.VALUE_FILE_SIZE] = sandbox.files_size
+	mappings: [FILE_CAPACITY + 1]system.Mapping
+	mappings[0] = {memory = sandbox.files_memory, address = isolated.FILE_ADDRESS}
+	for item, index in sandbox.files[:sandbox.file_count] {
+		mappings[index + 1] = {memory = image_memory, address = isolated.FILE_ADDRESS + sandbox.file_offsets[index], first = item.offset / system.PAGE_SIZE, page_count = (item.size + system.PAGE_SIZE - 1) / system.PAGE_SIZE}
+	}
 	status: system.Status
-	sandbox.program, status = system.program_start(system.image_find(image, "host"), sandbox.name, grants, values, {pages = 512, programs = 1, threads = 1, processor = 500_000, log_records = 100}, mappings[:], &prepared)
+	sandbox.program, status = system.program_start(system.image_find(image, "host"), sandbox.name, grants, values, {pages = 512, programs = 1, threads = 1, processor = 500_000, log_records = 100}, mappings[:sandbox.file_count + 1], &prepared)
 	return status
 }
 

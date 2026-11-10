@@ -15,6 +15,7 @@ import "support:system"
 
 file: []u8
 region: []u8
+space: system.Module_Space // The module and its imports, in this program.
 
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
@@ -28,13 +29,25 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	region = ([^]u8)(bytes)[:system.memory_size(region_memory) * system.PAGE_SIZE]
 
-	// The caller mapped the file of the module. This program loads it: it
-	// checks the file, then it maps the segments.
-	file = ([^]u8)(uintptr(ctx.values[isolated.VALUE_FILE_ADDRESS]))[:ctx.values[isolated.VALUE_FILE_SIZE]]
-	if _, status := system.module_load(file, op.MODULE_BASE); status != .Ok {
-		system.log("host: cannot load the module")
+	// The caller mapped the files of the module and of its imports. This
+	// program loads the module: the loader checks the hash of each file,
+	// then maps the segments.
+	files := ([^]u8)(uintptr(ctx.values[isolated.VALUE_FILE_ADDRESS]))[:ctx.values[isolated.VALUE_FILE_SIZE]]
+	entries := system.image_entries(files)
+	if len(entries) > 0 && entries[0].offset <= u64(len(files)) && entries[0].size <= u64(len(files)) - entries[0].offset {
+		file = files[entries[0].offset:][:entries[0].size]
+	}
+	space.source = {image = files}
+	space.next = op.MODULE_BASE
+	index, failure := system.module_space_load(&space, file)
+	if failure.error != .None {
+		buffer: [256]u8
+		writer := system.Writer{buffer = buffer[:]}
+		system.load_failure_text(&writer, failure, files)
+		system.log("host: cannot load the module: ", system.written(&writer))
 		system.stop(1)
 	}
+	base := space.modules[index].base
 	system.log("host: ready, ", u64(module.count(file, .Exports) - 1), " exports")
 
 	for {
@@ -43,7 +56,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			if !ok {
 				break
 			}
-			system.send(&queue.completions, system.export_serve(file, op.MODULE_BASE, region, ring_memory, command))
+			system.send(&queue.completions, system.export_serve(file, base, region, ring_memory, command))
 		}
 		wait: system.Wait
 		system.wait_records(&wait, &queue.commands)

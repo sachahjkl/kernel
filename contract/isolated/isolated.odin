@@ -64,10 +64,13 @@ import "base:intrinsics"
 // The roles of the context of a call host.
 GRANT_RING :: 0 // Memory: the call ring.
 GRANT_REGION :: 1 // Memory: the call region.
-VALUE_FILE_ADDRESS :: 0 // Where the caller mapped the file of the module, read-only.
-VALUE_FILE_SIZE :: 1 // The size of the file, in bytes.
+// The files of a call host: the caller maps them read-only at FILE_ADDRESS,
+// in the form of the boot image. Entry 1 is the module; the other entries
+// are its imports.
+VALUE_FILE_ADDRESS :: 0 // Where the caller mapped the files.
+VALUE_FILE_SIZE :: 1 // The size of the files, in bytes, from FILE_ADDRESS.
 
-FILE_ADDRESS :: 0x0000_3000_0000_0000 // Where a caller maps the file of the module in the call host.
+FILE_ADDRESS :: 0x0000_3000_0000_0000 // Where a caller maps the files of the module in the call host.
 REGION_PAGES :: 16
 
 // A service that serves its own exports receives calls in the same form. It
