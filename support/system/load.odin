@@ -59,19 +59,36 @@ Mapping :: struct {
 	flags:      op.Map_Flags,
 }
 
-PREPARED_CAPACITY :: 32
+PREPARED_CAPACITY :: 64 // Two parts for each module: the code, and the fixed part for one base.
 
-// A prepared module: a memory object that holds a module as the loader
-// prepared it, its segments copied from the file and rebased at
-// PROGRAM_BASE. Each program that runs the module maps the pages that do
-// not change (the code and the constants: the shared code of the module),
-// and receives its own copy of the writable pages. The loader writes the
+// The parts of a module for a loader (Module_Part).
+//   Code:  the segments with no Write: the code and the constants. The
+//          loader never writes them (a rebase or a slot is in a segment
+//          with Write), so their pages are the same at each base, with
+//          each binding: one copy for all the programs of the table.
+//   Fixed: the segments that are read-only after the load: the loader
+//          writes their rebases and their slots, so their pages are for
+//          one base and one binding.
+//   All:   each segment: the copy of a module that has no table.
+Module_Part :: enum u8 {
+	All,
+	Code,
+	Fixed,
+}
+
+// A prepared module: a memory object that holds one part of a module as the
+// loader prepared it, its segments copied from the file, and for the part
+// Fixed rebased at base and bound. Each program that runs the module maps
+// the pages that do not change (the shared code of the module), and
+// receives its own copy of the writable pages. The loader writes the
 // memory object one time; after that, the table holds it with the rights
 // Read and Execute only, so no program writes it.
 Prepared :: struct {
 	hash:    [32]u8, // The hash of the module file.
-	base:    u64, // The address of the module in each program that maps it.
-	binding: [32]u8, // What its slots hold (binding_of): zero for a module with no import.
+	part:    Module_Part,
+	base:    u64, // Fixed: the address of the module in each program that maps it.
+	binding: [32]u8, // Fixed: what its slots hold (binding_of): zero for a module with no import.
+	first:   u64, // The offset in the module of the first page of the memory object.
 	memory:  Handle, // 0: the place is free.
 	pages:   u64,
 }
@@ -314,16 +331,21 @@ place :: proc "contextless" (space: ^Module_Space, named: [32]u8, first: []u8, i
 place_map :: proc "contextless" (space: ^Module_Space, item: ^Placed, head: module.Header, imports: []module.Bound_Import, error: ^module.Load_Error) -> bool {
 	status: Status
 	if space.prepared == nil {
-		memory: Handle
-		if memory, status = module_prepare(item.file, head.memory_size / PAGE_SIZE, item.base, space.budget, imports, error); status == .Ok {
-			status = segments_map(item.file, memory, space.program, item.base, space.budget, false, imports, error)
-			close(memory)
+		own: Prepared
+		if own, status = module_prepare(item.file, .All, item.base, space.budget, imports, error); status == .Ok {
+			status = segments_map(item.file, &own, &own, space.program, item.base, space.budget, imports, error)
+			close(own.memory)
 		}
 	} else {
+		// The code from the table at any base; the fixed part for this base
+		// and this binding; the writable segments of this program.
 		lock(&space.prepared.lock)
-		memory: Handle
-		if memory, status = prepared_find(space.prepared, item.file, item.hash, item.base, binding_of(space, item), imports, error); status == .Ok {
-			status = segments_map(item.file, memory, space.program, item.base, space.budget, true, imports, error)
+		prepared_sweep(space.prepared)
+		code, fixed: ^Prepared
+		if code, status = prepared_find(space.prepared, item.file, item.hash, .Code, 0, {}, nil, error); status == .Ok {
+			if fixed, status = prepared_find(space.prepared, item.file, item.hash, .Fixed, item.base, binding_of(space, item), imports, error); status == .Ok {
+				status = segments_map(item.file, code, fixed, space.program, item.base, space.budget, imports, error)
+			}
 		}
 		unlock(&space.prepared.lock)
 	}
@@ -341,7 +363,7 @@ place_map :: proc "contextless" (space: ^Module_Space, item: ^Placed, head: modu
 					error.replacement = named_of(space.source, used.hash)
 				}
 			}
-		case .Read:
+		case .Read, .Room:
 			error.module = named_of(space.source, item.hash)
 		case:
 			error^ = {stage = .Map, status = u32(status), module = named_of(space.source, item.hash)}
@@ -420,50 +442,69 @@ segment_flags :: proc "contextless" (segment: module.Segment) -> (flags: op.Map_
 	return flags
 }
 
-// shared_pages gives the pages of a module up to the end of its last
-// segment that does not change after the load: the pages of a prepared
-// module in a table.
+// in_part says if a segment is in a part of a module.
 @(private)
-shared_pages :: proc "contextless" (file: []u8) -> (pages: u64) {
-	for index in 1 ..< module.count(file, .Segments) {
-		segment, _ := module.record(file, .Segments, index, module.Segment)
-		if .Write not_in segment_flags(segment) {
-			pages = max(pages, (segment.memory_offset + segment.memory_size) / PAGE_SIZE)
-		}
+in_part :: proc "contextless" (segment: module.Segment, part: Module_Part) -> bool {
+	switch part {
+	case .All:
+		return true
+	case .Code:
+		return .Write not_in segment.flags
+	case .Fixed:
+		return .Write in segment.flags && .Read_Only_After_Load in segment.flags
 	}
-	return pages
+	return false
 }
 
-// module_prepare makes a memory object of `pages` pages with the module as
-// it runs at base: the segments in these pages copied from the file,
-// rebased, and the slots in these pages bound to the imports. The budget
-// pays for it.
+// part_range gives the offsets of the first and of the end of the pages of
+// a part of a module. end is 0 when the part has no segment.
 @(private)
-module_prepare :: proc "contextless" (file: []u8, pages: u64, base: u64, budget: Handle, imports: []module.Bound_Import, error: ^module.Load_Error) -> (memory: Handle, status: Status) {
-	memory = memory_create(pages, budget) or_return
+part_range :: proc "contextless" (file: []u8, part: Module_Part) -> (first, end: u64) {
+	first = max(u64)
+	for index in 1 ..< module.count(file, .Segments) {
+		segment, _ := module.record(file, .Segments, index, module.Segment)
+		if in_part(segment, part) {
+			first = min(first, segment.memory_offset)
+			end = max(end, segment.memory_offset + segment.memory_size)
+		}
+	}
+	return end == 0 ? 0 : first, end
+}
+
+// module_prepare makes a memory object with one part of the module as it
+// runs at base: the segments of the part copied from the file; for the
+// parts Fixed and All, rebased and bound to the imports. Its first page is
+// the page of the module at offset `first`. The budget pays for it.
+@(private)
+module_prepare :: proc "contextless" (file: []u8, part: Module_Part, base: u64, budget: Handle, imports: []module.Bound_Import, error: ^module.Load_Error) -> (prepared: Prepared, status: Status) {
+	first, end := part_range(file, part)
+	if end == 0 {
+		return {part = part}, .Ok
+	}
+	memory := memory_create((end - first) / PAGE_SIZE, budget) or_return
 	address: rawptr
 	if address, status = memory_map(memory); status != .Ok {
 		close(memory)
-		return 0, status
+		return {}, status
 	}
-	size := pages * PAGE_SIZE
-	head, _ := module.header(file)
-	// The view has the size of the module, so that an offset of the module
-	// is an index; only the first `size` bytes are memory.
-	view := ([^]u8)(address)[:head.memory_size]
+	// The view starts where the module would start: an offset of the
+	// module is an index, and only the part is memory.
+	view := ([^]u8)(uintptr(address) - uintptr(first))[:end]
 	for index in 1 ..< module.count(file, .Segments) {
 		segment, _ := module.record(file, .Segments, index, module.Segment)
-		if segment.file_size != 0 && segment.memory_offset + segment.memory_size <= size {
+		if in_part(segment, part) && segment.file_size != 0 {
 			intrinsics.mem_copy_non_overlapping(&view[segment.memory_offset], &file[segment.file_offset], int(segment.file_size))
 		}
 	}
-	ok := code_ready(file, view, base, imports, error, 0, size)
+	// The part Code has no rebase and no slot: the file checks it (rebase
+	// and bind refuse a location in a segment with no Write).
+	ok := part == .Code || code_ready(file, view, base, imports, error, first, end)
 	memory_unmap(address)
 	if !ok {
 		close(memory)
-		return 0, .Bad_Operation
+		return {}, .Bad_Operation
 	}
-	return memory, .Ok
+	return {part = part, base = base, first = first, memory = memory, pages = (end - first) / PAGE_SIZE}, .Ok
 }
 
 // code_ready rebases and binds the locations of a module from offset first
@@ -478,58 +519,78 @@ code_ready :: proc "contextless" (file: []u8, view: []u8, base: u64, imports: []
 	return module.bind(file, view, imports, error, first, end)
 }
 
-// prepared_find gives the prepared module of a file from a table, and
-// prepares it if the table does not have it. A prepared module is for one
-// base and one binding of its slots. It closes each prepared module that no
-// program maps: the count of the holdings of its handle is 0. The caller
-// checked the hash of the file.
+// prepared_sweep closes each prepared module of a table that no program
+// maps: the count of the holdings of its handle is 0. The caller holds the
+// lock of the table, and sweeps before it finds the parts of one module.
 @(private)
-prepared_find :: proc "contextless" (table: ^Prepared_Modules, file: []u8, hash: [32]u8, base: u64, binding: [32]u8, imports: []module.Bound_Import, error: ^module.Load_Error) -> (memory: Handle, status: Status) {
-	free: ^Prepared
+prepared_sweep :: proc "contextless" (table: ^Prepared_Modules) {
 	for &item in table.modules {
-		if item.memory != 0 && item.hash == hash && item.base == base && item.binding == binding {
-			return item.memory, .Ok
-		}
 		if item.memory != 0 && handle_holdings(item.memory) == 0 {
 			close(item.memory)
 			item = {}
+		}
+	}
+}
+
+// prepared_find gives one part of the prepared module of a file from a
+// table, and prepares it if the table does not have it. The part Code is
+// for each base and each binding; the part Fixed is for one base and one
+// binding of its slots. The caller checked the hash of the file. A part
+// with no segment has no memory object.
+@(private)
+prepared_find :: proc "contextless" (table: ^Prepared_Modules, file: []u8, hash: [32]u8, part: Module_Part, base: u64, binding: [32]u8, imports: []module.Bound_Import, error: ^module.Load_Error) -> (found: ^Prepared, status: Status) {
+	free: ^Prepared
+	for &item in table.modules {
+		if item.memory != 0 && item.hash == hash && item.part == part && item.base == base && item.binding == binding {
+			return &item, .Ok
 		}
 		if item.memory == 0 && free == nil {
 			free = &item
 		}
 	}
 	if free == nil {
-		return 0, .No_Slot
+		error.stage = .Room
+		return nil, .No_Slot
 	}
-	pages := shared_pages(file)
-	written := module_prepare(file, pages, base, 0, imports, error) or_return
-	defer close(written)
+	written := module_prepare(file, part, base, 0, imports, error) or_return
+	if written.memory == 0 {
+		free^ = {} // No segment: nothing to keep, and the place stays free.
+		return free, .Ok
+	}
+	defer close(written.memory)
 	// After the preparation, nobody writes the module: the table keeps a
 	// handle without Write, and closes the one that wrote.
-	memory = give(0, written, {.Read, .Execute}) or_return
-	free^ = {hash = hash, base = base, binding = binding, memory = memory, pages = pages}
-	return memory, .Ok
+	free^ = written
+	free.hash, free.binding = hash, binding
+	free.memory = give(0, written.memory, {.Read, .Execute}) or_return
+	return free, .Ok
 }
 
-// segments_map maps each segment of a prepared module in a program, with
-// the protection of the segment. With copy, a writable segment is a new
+// segments_map maps each segment of a module in a program, with the
+// protection of the segment: a segment of the part Code from code, a
+// segment of the part Fixed from fixed, and a writable segment from a new
 // memory object that the budget pays for, with the bytes of the file,
-// rebased and bound: the program does not write the prepared module.
+// rebased and bound, when code is not the part All. A program does not
+// write a prepared module.
 @(private)
-segments_map :: proc "contextless" (file: []u8, memory: Handle, program: Handle, base: u64, budget: Handle, copy: bool, imports: []module.Bound_Import, error: ^module.Load_Error) -> Status {
+segments_map :: proc "contextless" (file: []u8, code, fixed: ^Prepared, program: Handle, base: u64, budget: Handle, imports: []module.Bound_Import, error: ^module.Load_Error) -> Status {
 	for index in 1 ..< module.count(file, .Segments) {
 		segment, _ := module.record(file, .Segments, index, module.Segment)
 		flags := segment_flags(segment)
-		if .Write in flags && copy {
+		from := code
+		if code.part != .All && .Write in flags {
 			own := segment_copy(file, segment, base, budget, imports, error) or_return
 			_, status := memory_map(own, flags, program, base + segment.memory_offset)
 			close(own)
 			if status != .Ok {
 				return status
 			}
-		} else {
-			memory_map(memory, flags, program, base + segment.memory_offset, segment.memory_offset / PAGE_SIZE, segment.memory_size / PAGE_SIZE) or_return
+			continue
 		}
+		if code.part != .All && in_part(segment, .Fixed) {
+			from = fixed
+		}
+		memory_map(from.memory, flags, program, base + segment.memory_offset, (segment.memory_offset - from.first) / PAGE_SIZE, segment.memory_size / PAGE_SIZE) or_return
 	}
 	return .Ok
 }
@@ -843,7 +904,7 @@ load_error_text :: proc "contextless" (writer: ^Writer, error: ^module.Load_Erro
 	case .Room:
 		write_part(writer, "no room for ")
 		name(writer, subject)
-		write_part(writer, ": a program has 16 modules at most, and a module 8 imports\n")
+		write_part(writer, ": a program has 16 modules at most, a module 8 imports, a table of prepared modules 64 parts\n")
 	}
 	if error.replaced.hash != {} && error.stage != .Cycle {
 		write_part(writer, "on the path of the load, the replacement table gives ")

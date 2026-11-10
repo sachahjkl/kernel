@@ -16,7 +16,7 @@ Load_Stage :: enum u32 {
 	Check = 4, // Check a replacement: an export that a slot uses is missing in the module of the replacement, or its description differs (`difference`).
 	Bind  = 5, // Bind a slot: the slot names no import or no export, or it is not in writable data.
 	Map   = 6, // Map the memory of a module: a kernel operation failed (`status`).
-	Room  = 7, // The module space, or the imports of one module, have no room for one more.
+	Room  = 7, // The module space, the imports of one module, or the table of prepared modules of the loader have no room for one more.
 	Unmap = 8, // Remove a module: a kernel operation failed (`status`).
 }
 

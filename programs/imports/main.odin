@@ -24,7 +24,7 @@ foreign _ {
 LINE :: 22
 ANSWER_X :: 440
 WIDTH :: 760
-CASE_CAPACITY :: 11
+CASE_CAPACITY :: 12
 HEIGHT :: 12 + 4 * LINE + CASE_CAPACITY * LINE + 4 * LINE + 12
 
 COLOR_BACKGROUND :: 0x10151C
@@ -118,6 +118,19 @@ measure_calls :: proc "contextless" (space: ^system.Module_Space, place: int) ->
 }
 sink: i64
 
+VALUE_CHILD :: 8 // Not 0: this program waits, so that its code stays mapped.
+shared_pages, shared_mappings: u64
+
+// code_segments gives the count of segments of a module that the loader
+// never writes: the part Code of the table of prepared modules.
+code_segments :: proc "contextless" (file: []u8) -> (count: u64) {
+	for index in 1 ..< module.count(file, .Segments) {
+		segment, _ := module.record(file, .Segments, index, module.Segment)
+		count += .Write not_in segment.flags ? 1 : 0
+	}
+	return count
+}
+
 // measure_binds binds agenda again, in memory of this program, BINDS times:
 // the cost of the bind with the import that the space gave.
 measure_binds :: proc "contextless" (space: ^system.Module_Space, place: int) -> u64 {
@@ -173,6 +186,12 @@ module_report: op.Module_Report
 
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
+	// A program that this program started to share calendar: it waits.
+	if ctx.values[VALUE_CHILD] != 0 {
+		for {
+			system.sleep(max(u64))
+		}
+	}
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "imports")
 	if !ok {
 		system.stop(1)
@@ -256,7 +275,41 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		note("unload agenda, then calendar", left == 1 && used(&shared) == 0, "1 module stays, then 0")
 	}
 
-	// 7. This program: the root service loaded calendar for its import, or
+	// 7. Two programs that import calendar, at two places: this program,
+	// started again, and agenda. With one table of prepared modules, the
+	// code of calendar is one memory object that the two map.
+	{
+		table: system.Prepared_Modules
+		values: [op.CONTEXT_VALUES]u64
+		values[VALUE_CHILD] = 1
+		amounts := system.Budget_Amounts{pages = 256, programs = 1, threads = 1, processor = 10_000, log_records = 10}
+		own := system.image_find(image, "imports")
+		first_program, first_status := system.program_start(own, "imports child", {}, values, amounts, nil, &table, {image = image}, &error)
+		second_program, second_status := system.program_start(agenda, "agenda", {}, {}, amounts, nil, &table, {image = image}, &error)
+		copies, mappings, pages: u64
+		for &item in table.modules {
+			if item.memory != 0 && item.hash == hash_of("calendar") && item.part == .Code {
+				copies += 1
+				mappings = system.handle_holdings(item.memory)
+				pages = item.pages
+			}
+		}
+		// The place of calendar: after the module of the program.
+		own_head, _ := module.header(own)
+		agenda_head, _ := module.header(agenda)
+		segments := code_segments(system.image_find(image, "calendar"))
+		note("two programs import calendar at two places", first_status == .Ok && second_status == .Ok && copies == 1 && mappings == 2 * segments && own_head.memory_size != agenda_head.memory_size, copies, " copy of its code, ", pages, " pages, ", mappings, " mappings")
+		shared_pages, shared_mappings = pages, mappings
+		system.close(first_program)
+		system.close(second_program)
+		for item in table.modules {
+			if item.memory != 0 {
+				system.close(item.memory)
+			}
+		}
+	}
+
+	// 8. This program: the root service loaded calendar for its import, or
 	// the module of the replacement of the machine.
 	own_days := days_in_month(2, 2000)
 	own, found := own_replaced()
@@ -280,6 +333,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	load_whole, _ := tenths(load_direct, 1)
 	load_replaced_whole, _ := tenths(load_replaced, 1)
 	system.log("imports: the bind of agenda: ", bind_whole, ".", bind_tenth, " ns, and ", checked_whole, ".", checked_tenth, " ns with the check of the replacement; the load of agenda and its import: ", load_whole / 1000, " us, and ", load_replaced_whole / 1000, " us")
+	system.log("imports: two programs import calendar at two places: one copy of its code, ", shared_pages, " pages, mapped ", shared_mappings, " times")
 
 	canvas := window.canvas
 	for {

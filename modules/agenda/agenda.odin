@@ -1,7 +1,9 @@
 // A module of commands that imports the module calendar.
 //
-// Each export calls days_in_month of calendar through an import slot: one indirect call. The loader puts calendar in the same program, or the module that a replacement gives in its place: the file of this module does not change, so its hash does not change.
+// Each export calls days_in_month of calendar through an import slot: one indirect call. The loader puts calendar in the same program, or the module that a replacement gives in its place: the file of this module does not change, so its hash does not change. The module is also a program that waits: two programs that import calendar at two places share one copy of its code.
 package agenda
+
+import "support:system"
 
 foreign _ {
 	days_in_month :: proc "c" (month, year: i64) -> i64 ---
@@ -31,4 +33,12 @@ calls :: proc "c" (count: i64) -> i64 {
 		total += days_in_month(index % 12 + 1, 2000 + index % 7)
 	}
 	return total
+}
+
+// entry runs agenda as a program: it waits with no end. A program that runs agenda maps the code of calendar that another program of the same starter maps.
+@(export, link_name = "entry")
+entry :: proc "c" (ctx: ^system.Context) -> ! {
+	for {
+		system.sleep(max(u64))
+	}
 }

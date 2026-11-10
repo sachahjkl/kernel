@@ -158,6 +158,8 @@ things_of :: proc "contextless" (name: string) -> system.Budget_Amounts {
 		return {pages = 256, programs = 1, threads = 1}
 	case "disk":
 		return {pages = 2048, programs = 1, threads = 1}
+	case "imports":
+		return {pages = 2048, programs = 3, threads = 3} // Two programs that import calendar.
 	}
 	return {pages = 2048, programs = 1, threads = 1}
 }

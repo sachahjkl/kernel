@@ -225,14 +225,16 @@ shared_code_cases :: proc "contextless" () {
 
 	// The twins with the shared code: this program pays for it, one time.
 	shared_paid, shared_cycles, shared_ok := twins_start(&programs, &prepared)
-	code: system.Prepared
+	// A prepared module has two parts: its code, and its part that is
+	// fixed after the load. Each part is a memory object.
+	shared_pages: u64
 	for item in prepared.modules {
 		if item.memory != 0 {
-			code = item
+			shared_pages += item.pages
+			shared_paid += op.memory_cost(item.pages)
 		}
 	}
-	shared_paid += op.memory_cost(code.pages)
-	note("4 twins with the shared code", shared_ok && shared_paid < own_paid, shared_paid, " pages, ", code.pages, " of them shared")
+	note("4 twins with the shared code", shared_ok && shared_paid < own_paid, shared_paid, " pages, ", shared_pages, " of them shared")
 	start_own, start_shared = nanoseconds(own_cycles) / 1000, nanoseconds(shared_cycles) / 1000
 
 	// A write to the shared code: the kernel stops the twin that writes.
@@ -250,7 +252,7 @@ shared_code_cases :: proc "contextless" () {
 	for program in programs {
 		system.close(program)
 	}
-	system.log("frames: 4 twins: ", own_paid, " pages with a copy of the module each, ", shared_paid, " pages with the shared code (", code.pages, " pages of the module, once)")
+	system.log("frames: 4 twins: ", own_paid, " pages with a copy of the module each, ", shared_paid, " pages with the shared code (", shared_pages, " pages of the module, once)")
 }
 
 @(export, link_name = "entry")

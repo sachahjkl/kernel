@@ -733,14 +733,15 @@ scenario := [?]Step {
 	{kind = .Type, text = "year_days(2000) + month_days(2, 2000)"},
 	{kind = .Wait, text = "[console] 395"},
 	{kind = .Type, text = "manual.show(\"agenda\")"},
-	{kind = .Wait, text = "manual: agenda: no entry, 3 exports, "},
+	{kind = .Wait, text = "manual: agenda: a program, 3 exports, "},
 	// A program that imports calendar: the root service gives it the
 	// replacements of the machine when it starts it.
 	{kind = .Launch, text = "imports"},
 	{kind = .Wait, text = "compositor: surface imports", any_order = true},
-	{kind = .Wait, text = "imports: ok, 11 cases"},
+	{kind = .Wait, text = "imports: ok, 12 cases"},
 	{kind = .Wait, text = "imports: a call through an import slot: "},
 	{kind = .Wait, text = "imports: the bind of agenda: "},
+	{kind = .Wait, text = "imports: two programs import calendar at two places: one copy of its code, "},
 	{kind = .Move, text = "imports", to_x = 132, to_y = 300},
 	{kind = .Shot, text = "imports"},
 	{kind = .Front, text = "console"},
