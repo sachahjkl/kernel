@@ -219,8 +219,9 @@ export_serve :: proc "contextless" (file: []u8, base: u64, region: []u8, ring_me
 	out: [CALL_RESULTS]u64
 	export_call(address, &prepared.registers, &floats, &out)
 	isolated.result_store(function, &prepared, region)
-	// For a Text result, this is the count; the text is in the call region.
-	if function.result == .Integer || function.result == .Text {
+	// For a Text or Table result, this is the count; the bytes are in the
+	// call region.
+	if function.result == .Integer || function.result == .Text || function.result == .Table {
 		completion.values[0] = out[0]
 	}
 	return completion

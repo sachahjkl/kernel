@@ -311,7 +311,7 @@ record_type :: proc "contextless" (file: []u8, index: u32) -> (value: Record, ok
 	}
 	for number in 0 ..< value.field_count {
 		item := field(file, value, number) or_return
-		size := field_size(item.type)
+		size := field_size(item.type, item.detail)
 		if size == 0 || item.offset > value.size || size > value.size - item.offset {
 			return {}, false
 		}
@@ -347,16 +347,32 @@ field :: proc "contextless" (file: []u8, of: Record, number: u32) -> (value: Fie
 	return record(file, .Fields, of.first_field + number, Field)
 }
 
-// field_size gives the bytes of a field of a record. 0: a record cannot
-// have a field of this type.
-field_size :: proc "contextless" (type: Type) -> u32 {
+// field_size gives the bytes of a field of a record, from its type and its
+// detail. 0: a record cannot have such a field.
+field_size :: proc "contextless" (type: Type, detail: u32) -> u32 {
 	#partial switch type {
 	case .Integer:
 		return 8
 	case .Handle:
 		return 4
+	case .Text:
+		return detail <= RECORD_SIZE_LIMIT ? detail : 0
 	}
 	return 0
+}
+
+// field_text gives the text of a Text field of a record: the bytes before
+// the first zero byte. record has the size of the description.
+field_text :: proc "contextless" (record: []u8, item: Field) -> string {
+	if item.type != .Text || u64(item.offset) > u64(len(record)) || u64(item.detail) > u64(len(record)) - u64(item.offset) {
+		return ""
+	}
+	bytes := record[item.offset:][:item.detail]
+	count := 0
+	for count < len(bytes) && bytes[count] != 0 {
+		count += 1
+	}
+	return string(bytes[:count])
 }
 
 // documentation gives the documentation of a module: one line, and the text.

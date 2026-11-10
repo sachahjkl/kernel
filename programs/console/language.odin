@@ -10,11 +10,13 @@ import "support:system"
 //   term       = factor { ("*" | "/" | "%") factor }
 //   factor     = "-" factor | integer | "text" | name | name "(" arguments ")" | "(" expression ")"
 //
-// A value is an Integer, a Text, a Record or a Handle. "+" joins two Texts.
-// A Record has the description of a record of a module: the command with
-// the name of the record makes one from its fields, and `variable.field`
-// reads one field. A Handle names an object of the kernel that the console
-// holds.
+// A value is an Integer, a Text, a Record, a Handle or a Table. "+" joins
+// two Texts. A Record has the description of a record of a module: the
+// command with the name of the record makes one from its fields, and
+// `variable.field` reads one field. A Handle names an object of the kernel
+// that the console holds. A Table is records of one description, one after
+// the other: a Table result gives one, and the commands of tables.odin
+// combine them.
 
 // The values are those of module.Type: the kind of a parameter is its type.
 Kind :: enum u8 {
@@ -23,15 +25,18 @@ Kind :: enum u8 {
 	Text    = 2,
 	Record  = 3,
 	Handle  = 4,
+	Table   = 5,
 }
 
+// A parameter of a command of the console with the kind None takes a value
+// of any kind: the command checks it.
 Value :: struct {
 	kind:    Kind,
 	integer: i64, // An Integer. A Handle: the handle.
 	text:    string,
-	record:  []u8, // A Record: its bytes.
-	file:    []u8, // A Record: the module that has its description.
-	detail:  u32, // A Record: the index of its description in the module.
+	record:  []u8, // A Record: its bytes. A Table: the bytes of its records.
+	file:    []u8, // A Record or a Table: the module that has the description of the record.
+	detail:  u32, // A Record or a Table: the index of the description of the record in the module.
 }
 
 @(rodata)
@@ -41,6 +46,7 @@ kind_names := [Kind]string {
 	.Text    = "Text",
 	.Record  = "Record",
 	.Handle  = "Handle",
+	.Table   = "Table",
 }
 
 // type_text gives the name of a type: "Integer", the name of a record, or
@@ -84,6 +90,8 @@ field_value :: proc "contextless" (value: Value, name: string) -> (result: Value
 			return {kind = .Integer, integer = (^i64)(&value.record[item.offset])^}, true
 		case .Handle:
 			return {kind = .Handle, integer = i64((^u32)(&value.record[item.offset])^)}, true
+		case .Text:
+			return {kind = .Text, text = module.field_text(value.record, item)}, true
 		}
 	}
 	return {}, false
@@ -111,6 +119,8 @@ print_value :: proc "contextless" (value: Value, nested := false) {
 			print_value(field, true)
 		}
 		print("}")
+	case .Table:
+		table_print(value)
 	case .Handle:
 		print("Handle ", u64(value.integer))
 		if !nested {
@@ -135,11 +145,13 @@ VARIABLE_TEXT_SIZE :: 96
 ARGUMENT_CAPACITY :: 6 // The parameters of an export: module.PARAMETER_CAPACITY.
 
 Variable :: struct {
-	name:       [VARIABLE_NAME_SIZE]u8,
-	name_count: int, // 0: the slot is free.
-	value:      Value,
-	text:       [VARIABLE_TEXT_SIZE]u8,
-	record:     [module.RECORD_SIZE_LIMIT / 8]u64,
+	name:        [VARIABLE_NAME_SIZE]u8,
+	name_count:  int, // 0: the slot is free.
+	value:       Value,
+	text:        [VARIABLE_TEXT_SIZE]u8,
+	record:      [module.RECORD_SIZE_LIMIT / 8]u64,
+	table:       [TABLE_KEPT / 8]u64, // The records of a Table.
+	description: [DESCRIPTION_SIZE / 8]u64, // A description that join or columns made: it is in the memory of the line.
 }
 
 variables: [VARIABLE_CAPACITY]Variable
@@ -205,7 +217,7 @@ read_name :: proc "contextless" () -> string {
 }
 
 run_line :: proc "contextless" (text: string) {
-	source, position, failed, scratch_count = text, 0, false, 0
+	source, position, failed, scratch_count, table_used = text, 0, false, 0, 0
 
 	// An assignment starts with a name and "=".
 	name := read_name()
@@ -242,6 +254,10 @@ assign :: proc "contextless" (name: string, value: Value) {
 		fail("the name or the text is too long")
 		return
 	}
+	if value.kind == .Table && len(value.record) > TABLE_KEPT || in_table_memory(value.file) && len(value.file) > DESCRIPTION_SIZE {
+		fail("a variable keeps a table of ", i64(TABLE_KEPT), " bytes at most; this one has ", i64(len(value.record)))
+		return
+	}
 	slot: ^Variable
 	for &variable in variables {
 		if string(variable.name[:variable.name_count]) == name {
@@ -266,6 +282,16 @@ assign :: proc "contextless" (name: string, value: Value) {
 		bytes := ([^]u8)(&slot.record)[:len(value.record)]
 		copy(bytes, value.record)
 		slot.value.record = bytes
+	case .Table:
+		bytes := ([^]u8)(&slot.table)[:len(value.record)]
+		copy(bytes, value.record)
+		slot.value.record = bytes
+	}
+	// The description that join or columns made lives for one line.
+	if in_table_memory(value.file) {
+		bytes := ([^]u8)(&slot.description)[:len(value.file)]
+		copy(bytes, value.file)
+		slot.value.file = bytes
 	}
 }
 
@@ -439,6 +465,10 @@ call :: proc "contextless" (name: string) -> Value {
 		detail := found.function.parameter_details[index]
 		// A Record agrees when the two descriptions are equal: a record of
 		// one module is a record of another module with the same fields.
+		// A parameter None of a command of the console takes any value.
+		if kind == .None && found.run != nil {
+			continue
+		}
 		if argument.kind != kind || kind == .Record && !module.records_equal(found.file, detail, argument.file, argument.detail) {
 			return fail(name, ": argument ", i64(index + 1), " is ", type_text(found.file, kind, detail), ", not ", type_text(argument.file, argument.kind, argument.detail))
 		}

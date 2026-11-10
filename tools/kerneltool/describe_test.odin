@@ -155,6 +155,45 @@ describe_reads_records_and_handles :: proc(t: ^testing.T) {
 	}
 }
 
+@(private = "file")
+TABLE_SOURCE :: `// Tables of records.
+package sample
+
+Row :: struct {
+	name:  [20]u8,
+	count: i64,
+	tag:   [3]u8,
+}
+
+// rows gives the rows of a sample, in the memory of the caller.
+@(export)
+rows :: proc "c" (first: i64, result: ^[]Row) -> i64 {return 0}
+`
+
+// A field [N]u8 is a Text of N bytes, and a last parameter result: ^[]Name
+// is the buffer of a Table result.
+@(test)
+describe_reads_tables :: proc(t: ^testing.T) {
+	list := make([dynamic]Export_Description, context.temp_allocator)
+	records: []Record_Description
+	testing.expect(t, describe_source("sample.odin", TABLE_SOURCE, &list, nil, &records))
+	if len(list) != 1 || len(records) != 1 {
+		testing.expectf(t, false, "%d exports and %d records", len(list), len(records))
+		return
+	}
+	row := records[0]
+	testing.expect_value(t, row.size, 40)
+	testing.expect_value(t, len(row.fields), 3)
+	if len(row.fields) == 3 {
+		testing.expect_value(t, row.fields[0], Field_Description{"name", 0, .Text, 20})
+		testing.expect_value(t, row.fields[1], Field_Description{"count", 24, .Integer, 0})
+		testing.expect_value(t, row.fields[2], Field_Description{"tag", 32, .Text, 3})
+	}
+	testing.expect_value(t, list[0].result, module.Type.Table)
+	testing.expect_value(t, list[0].result_detail, 1)
+	testing.expect_value(t, len(list[0].parameters), 1)
+}
+
 // The tool does not guess: a source that breaks a rule gives no description.
 @(test)
 describe_rejects_what_has_no_description :: proc(t: ^testing.T) {
@@ -184,6 +223,11 @@ describe_rejects_what_has_no_description :: proc(t: ^testing.T) {
 		{"a right that does not exist", "package p\n// f gives x.\n@(export)\nf :: proc \"c\" (h: Lent({.Fly})) -> i64 {return 0}\n"},
 		{"a handle result", "package p\n// f gives x.\n@(export)\nf :: proc \"c\" (x: i64) -> Lent({.Read}) {return {}}\n"},
 		{"an entry with an integer", "package p\n@(export)\nentry :: proc \"c\" (a: i64) -> ! {for {}}\n"},
+		{"a Table result with no count", "package p\nR :: struct {a: i64}\n// f gives x.\n@(export)\nf :: proc \"c\" (result: ^[]R) {}\n"},
+		{"a Table that is not the result", "package p\nR :: struct {a: i64}\n// f gives x.\n@(export)\nf :: proc \"c\" (rows: ^[]R, x: i64) -> i64 {return 0}\n"},
+		{"a Table of records with a handle", "package p\nR :: struct {h: Lent({.Read})}\n// f gives x.\n@(export)\nf :: proc \"c\" (result: ^[]R) -> i64 {return 0}\n"},
+		{"a Text field with a size that is not a number", "package p\nN :: 4\nR :: struct {a: [N]u8}\n// f gives x.\n@(export)\nf :: proc \"c\" (r: ^R) -> i64 {return 0}\n"},
+		{"a Text field of 300 bytes", "package p\nR :: struct {a: [300]u8}\n// f gives x.\n@(export)\nf :: proc \"c\" (r: ^R) -> i64 {return 0}\n"},
 	}
 	for item in cases {
 		list := make([dynamic]Export_Description, context.temp_allocator)

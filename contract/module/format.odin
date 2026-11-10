@@ -129,6 +129,14 @@ Type :: enum u8 {
 	// bit set of rights (the kernel operations name the bits). The caller
 	// keeps its handle. In an isolated call, the receiver has a copy of the
 	// handle with these rights only, and closes it when the export returns.
+	Table   = 5, // A result only: records of one description that follow each other (a table).
+	// The detail of the result is the index of the description of the
+	// record, in the record table. The caller gives one more argument after
+	// the parameters, the address of a buffer record {address, capacity}:
+	// the capacity is a count of records. The callee writes the records
+	// that fit, and its integer result is the count of records of the full
+	// table. A count larger than the capacity means "the table did not
+	// fit". A record of a Table result has no Handle field.
 }
 
 PARAMETER_CAPACITY :: 6 // The integer registers of the call form.
@@ -149,7 +157,7 @@ Function :: struct {
 	text_offset:           u32, // The documentation text of the export, in the string table.
 	text_count:            u32,
 	parameter_details:     [PARAMETER_CAPACITY]u32, // What the type of each parameter needs: Type says what it is.
-	result_detail:         u32, // A Record result: the index of the description of the record.
+	result_detail:         u32, // A Record or Table result: the index of the description of the record.
 	reserved_details:      u32,
 }
 #assert(size_of(Function) == 96)
@@ -169,16 +177,19 @@ Record :: struct {
 }
 #assert(size_of(Record) == 24)
 
-// One field of a record. A field is an Integer (8 bytes) or a Handle (4
-// bytes). The fields are in the order of their offsets, and no two fields
-// share a byte.
+// One field of a record. A field is an Integer (8 bytes), a Handle (4
+// bytes) or a Text (detail bytes). A Text field holds its bytes in the
+// record: UTF-8, and zero bytes after the text; the text ends at the first
+// zero byte or at the end of the field. It holds no address, so a record
+// still means the same in each program. The fields are in the order of
+// their offsets, and no two fields share a byte.
 Field :: struct {
 	name_offset: u32, // In the string table.
 	name_count:  u32,
 	offset:      u32, // From the start of the record, in bytes.
 	type:        Type,
 	reserved:    [3]u8,
-	detail:      u32, // A Handle: the rights that the callee needs.
+	detail:      u32, // A Handle: the rights that the callee needs. A Text: its size in bytes.
 	reserved2:   u32,
 }
 #assert(size_of(Field) == 24)

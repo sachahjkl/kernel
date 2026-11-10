@@ -70,7 +70,7 @@ sandbox_free :: proc "contextless" () -> (sandbox: ^Sandbox, number: int) {
 }
 image_memory: system.Handle
 
-COMMAND_CAPACITY :: 96
+COMMAND_CAPACITY :: 128
 LOADED_CAPACITY :: 8
 
 // A module that the console loaded.
@@ -159,6 +159,7 @@ commands_start :: proc "contextless" () {
 	command("variables", {}, .None, "list the variables", list_variables)
 	command("clear", {}, .None, "clear the console", clear)
 	command("shutdown", {}, .None, "stop the machine", shutdown)
+	tables_start()
 }
 
 help :: proc "contextless" (arguments: []Value) -> Value {
@@ -174,6 +175,9 @@ help :: proc "contextless" (arguments: []Value) -> Value {
 			if item.parameter_names[index] != "" {
 				system.write_part(&writer, item.parameter_names[index])
 				system.write_part(&writer, ": ")
+			}
+			if kind == .None {
+				system.write_part(&writer, "Value") // Any kind: the command checks it.
 			}
 			system.write_type(&writer, item.file, module.Type(kind), item.function.parameter_details[index])
 		}
@@ -663,10 +667,10 @@ services_check :: proc "contextless" () {
 // for the result of an export.
 callable_by_console :: proc "contextless" (file: []u8, function: module.Function) -> bool {
 	function := function
-	if function.name_count == 0 || function.parameter_count > ARGUMENT_CAPACITY || function.result > .Record {
+	if function.name_count == 0 || function.parameter_count > ARGUMENT_CAPACITY || function.result > .Table || function.result == .Handle {
 		return false
 	}
-	if function.result == .Record {
+	if function.result == .Record || function.result == .Table {
 		if _, ok := module.record_type(file, function.result_detail); !ok || function.parameter_count == ARGUMENT_CAPACITY {
 			return false
 		}
@@ -695,7 +699,9 @@ record_build :: proc "contextless" (item: ^Command, arguments: []Value) -> Value
 	}
 	for argument, number in arguments {
 		field, _ := module.field(item.file, described, u32(number))
-		if field.type == .Handle {
+		if field.type == .Text {
+			copy(bytes[field.offset:][:field.detail], argument.text)
+		} else if field.type == .Handle {
 			(^u32)(&bytes[field.offset])^ = u32(argument.integer)
 		} else {
 			(^i64)(&bytes[field.offset])^ = argument.integer
@@ -736,6 +742,13 @@ call_export :: proc "contextless" (item: ^Command, arguments: []Value) -> Value 
 	if item.result == .Text {
 		integers[len(arguments)] = u64(uintptr(&buffer))
 	}
+	// A Table result: the buffer is the free part of the memory of the
+	// tables of the line, with a capacity in records.
+	table: Table_Buffer
+	if item.result == .Table {
+		table = table_buffer(item.file, item.function.result_detail)
+		integers[len(arguments)] = u64(uintptr(&table.slice))
+	}
 	floats: [system.CALL_FLOATS]u64
 	results: [system.CALL_RESULTS]u64
 	system.export_call(item.address, &integers, &floats, &results)
@@ -750,6 +763,8 @@ call_export :: proc "contextless" (item: ^Command, arguments: []Value) -> Value 
 		return {kind = .Text, text = string(buffer[:results[0]])}
 	case .Record:
 		return {kind = .Record, record = record, file = item.file, detail = item.function.result_detail}
+	case .Table:
+		return table_take(item, &table, results[0])
 	}
 	return {}
 }
@@ -1041,6 +1056,24 @@ call_isolated :: proc "contextless" (item: ^Command, arguments: []Value) -> Valu
 						return fail("the result of ", item.name, " does not fit")
 					}
 					return {kind = .Record, record = record, file = item.file, detail = item.function.result_detail}
+				case .Table:
+					// The other program wrote the records and the count:
+					// read no more than the buffer, and copy the records
+					// out of the call region.
+					if i64(completion.values[0]) < 0 {
+						return table_error(item, i64(completion.values[0]))
+					}
+					described, _ := module.record_type(item.file, item.function.result_detail)
+					rows, complete := isolated.result_table(sandbox.region, buffer, completion.values[0], u64(described.size))
+					if !complete {
+						return fail("the result of ", item.name, " has ", completion.values[0], " records; ", i64(len(rows) / int(max(described.size, 1))), " fit in the call region")
+					}
+					bytes := table_bytes(len(rows))
+					if bytes == nil && len(rows) > 0 {
+						return fail("the line has no room for the ", completion.values[0], " records of ", item.name)
+					}
+					copy(bytes, rows)
+					return {kind = .Table, record = bytes, file = item.file, detail = item.function.result_detail}
 				}
 				return {}
 			case .Bad_Export:
@@ -1161,7 +1194,7 @@ revoke :: proc "contextless" (arguments: []Value) -> Value {
 		}
 		return fail("the root service refused: no program has the name ", name)
 	}
-	return fail("no grant has the name ", arguments[1].text, ": the grants are log, machine, image, log_records")
+	return fail("no grant has the name ", arguments[1].text, ": the grants are log, machine, image, log_records, store")
 }
 
 // replace asks the root service to give a module where a module imports

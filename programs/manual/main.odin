@@ -278,6 +278,7 @@ page_build :: proc "contextless" () {
 		put("", 0, 0)
 	}
 
+	information_page(entry.hash)
 	put("DOCUMENTATION", 0, COLOR_HEADING)
 	put_text(text, 0, COLOR_TEXT)
 	if exports == 0 {
@@ -353,7 +354,7 @@ draw :: proc "contextless" (canvas: graphics.Canvas) {
 	for index in list_first ..< min(len(entries), list_first + list_rows) {
 		entry := &entries[index]
 		y := 4 + (index - list_first) * CELL_HEIGHT
-		if index == selected {
+		if index == selected && !showing_overview {
 			graphics.fill(canvas, 0, y, LIST_WIDTH, CELL_HEIGHT, COLOR_SELECTED)
 		}
 		file := file_of(entry)
@@ -495,6 +496,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if address, status := system.memory_map(ctx.handles[system.GRANT_REPLACEMENTS], {}); status == .Ok {
 		replacement_table = (^system.Replacement_Table)(address)
 	}
+	information_start(ctx)
 	entries := system.image_entries(image)
 	documented := 0
 	for &item in entries {
@@ -537,6 +539,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					scroll(ROWS - 2)
 				case display.KEY_HOME:
 					scroll(-LINE_CAPACITY)
+				case KEY_TAB:
+					overview_build()
 				}
 			case .Pointer:
 				down := event.buttons & display.BUTTON_LEFT != 0

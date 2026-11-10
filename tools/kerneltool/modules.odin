@@ -317,6 +317,7 @@ test_descriptions :: proc() -> bool {
 		.Text    = "Text",
 		.Record  = "Record",
 		.Handle  = "Handle",
+		.Table   = "Table",
 	}
 	for build in module_builds {
 		file := read_file(module_path(build.name)) or_return

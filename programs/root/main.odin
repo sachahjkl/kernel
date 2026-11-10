@@ -61,7 +61,7 @@ grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 	case "paint", "life", "tally":
 		return {.Serve}
 	case "manual":
-		return {.Serve, .Image, .Replacements} // It reads the documentation of each module of the boot image.
+		return {.Serve, .Image, .Replacements, .Inspect} // It reads the documentation of each module of the boot image, and the module records of each program.
 	case "disk":
 		return {.Scratch_Disk}
 	case "storage":
@@ -91,14 +91,12 @@ on_demand :: proc "contextless" (name: string) -> bool {
 
 // grant_for gives what a caller receives in a service (isolated.Service_Command).
 // The storage service: the private store of the caller, by its name, with a
-// limit of blocks.
+// limit of blocks. Each service: the flag that the caller acts for the
+// person (the manual gives what runs only to such a caller).
 grant_for :: proc "contextless" (caller: ^Started, service: ^Started) -> (grant: u64) {
-	if system.name_of(service.name[:]) != "storage" {
-		return 0
-	}
 	name := system.name_of(caller.name[:])
 	role := grants_of(name)
-	if .Store in role && .Store not_in caller.revoked {
+	if .Store in role && .Store not_in caller.revoked && system.name_of(service.name[:]) == "storage" {
 		grant = store_limit_of(name)
 	}
 	if .Person in role {

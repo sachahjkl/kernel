@@ -51,6 +51,12 @@
 // call the buffer is in the call region: the callee writes the result where
 // the caller reads it, with no copy between.
 //
+// An export with a Table result has one more field after the parameters,
+// and one more register in the direct call: a buffer, {start, capacity},
+// where the capacity is a count of records. In an isolated call the buffer
+// is the rest of the call region, from a multiple of 8 bytes. The callee
+// gives the count of records of the full table as its integer result.
+//
 // The receiver trusts nothing in the call region. It copies the argument
 // record to private memory, and it checks each offset and each count
 // against the size of the call region (decode).
@@ -154,7 +160,7 @@ field_size :: proc "contextless" (type: module.Type) -> u64 {
 		return 8
 	case .Text:
 		return size_of(Slice)
-	case .None:
+	case .None, .Table: // A Table is a result only.
 	}
 	return 0
 }
@@ -175,7 +181,7 @@ record_size :: proc "contextless" (function: module.Function) -> (size: u64, ok:
 	}
 	#partial switch function.result {
 	case .None, .Integer:
-	case .Text:
+	case .Text, .Table:
 		if function.parameter_count == module.PARAMETER_CAPACITY {
 			return 0, false // No register is free for the buffer.
 		}
@@ -254,6 +260,14 @@ encode :: proc "contextless" (file: []u8, function: module.Function, arguments: 
 	case .Text:
 		result = {start = next, count = u64(len(region)) - next}
 		store(region, field, result)
+	case .Table:
+		described := module.record_type(file, function.result_detail) or_return
+		next = (next + 7) &~ 7
+		if next > u64(len(region)) || described.size == 0 {
+			return 0, 0, {}, false
+		}
+		result = {start = next, count = (u64(len(region)) - next) / u64(described.size)}
+		store(region, field, result)
 	case .Record:
 		described := module.record_type(file, function.result_detail) or_return
 		next = (next + 7) &~ 7
@@ -286,6 +300,19 @@ result_text :: proc "contextless" (region: []u8, result: Slice, count: u64) -> (
 		return nil, false
 	}
 	return region[result.start:][:min(count, result.count)], count <= result.count
+}
+
+// result_table gives the Table result of a call: the records that the
+// callee wrote in the buffer, as bytes. `count` is the number that the
+// callee gave, and `size` the size of a record of the description: the
+// caller trusts neither the count nor the buffer that the region holds.
+// complete is false when the table did not fit.
+result_table :: proc "contextless" (region: []u8, result: Slice, count: u64, size: u64) -> (records: []u8, complete: bool) {
+	if size == 0 || result.start > u64(len(region)) || result.count > (u64(len(region)) - result.start) / size {
+		return nil, false
+	}
+	kept := min(count, result.count)
+	return region[result.start:][:kept * size], count <= result.count
 }
 
 // decode reads the argument record of a call from the call region, and gives
@@ -368,6 +395,17 @@ decode :: proc "contextless" (file: []u8, function: module.Function, offset, siz
 	case .Text:
 		slice := load(record[:], field, Slice)
 		if slice.start > limit || slice.count > limit - slice.start {
+			return false
+		}
+		call.slices[index] = {
+			start = u64(uintptr(raw_data(region))) + slice.start,
+			count = slice.count,
+		}
+		call.registers[index] = u64(uintptr(&call.slices[index]))
+	case .Table:
+		described := module.record_type(file, function.result_detail) or_return
+		slice := load(record[:], field, Slice)
+		if described.size == 0 || slice.start > limit || slice.count > (limit - slice.start) / u64(described.size) {
 			return false
 		}
 		call.slices[index] = {

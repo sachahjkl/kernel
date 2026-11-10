@@ -207,6 +207,76 @@ record_file :: proc(file: ^[512]u8) -> []u8 {
 	return file[:offset]
 }
 
+// A module file with one record of 24 bytes: {name: Text(16) at 0, integer at 16}.
+@(private = "file")
+table_file :: proc(file: ^[512]u8) -> []u8 {
+	Directory :: [module.TABLE_COUNT]module.Table_Entry
+	directory: Directory
+	offset := u64(size_of(module.Header) + size_of(Directory))
+	records := [2]module.Record{1 = {size = 24, first_field = 1, field_count = 2}}
+	fields := [3]module.Field{1 = {offset = 0, type = .Text, detail = 16}, 2 = {offset = 16, type = .Integer}}
+	directory[module.Table_Kind.Records] = {offset = offset, count = 2, record_size = size_of(module.Record)}
+	(^[2]module.Record)(&file[offset])^ = records
+	offset += size_of(records)
+	directory[module.Table_Kind.Fields] = {offset = offset, count = 3, record_size = size_of(module.Field)}
+	(^[3]module.Field)(&file[offset])^ = fields
+	offset += size_of(fields)
+	(^module.Header)(&file[0])^ = {magic = module.MAGIC, version = module.VERSION, header_size = size_of(module.Header), machine = .X86_64, table_count = module.TABLE_COUNT}
+	(^Directory)(&file[size_of(module.Header)])^ = directory
+	return file[:offset]
+}
+
+// A Table result: the buffer is the rest of the call region, from a
+// multiple of 8, with a capacity in records. The caller reads the count of
+// records that the callee gave, and never more than the buffer.
+@(test)
+table_result :: proc(t: ^testing.T) {
+	storage: [512]u8
+	file := table_file(&storage)
+	described, valid := module.record_type(file, 1)
+	testing.expect(t, valid, "a record with a Text field of 16 bytes is valid")
+	testing.expect_value(t, described.size, 24)
+	region: [128]u8
+	function := description(.Text)
+	function.result, function.result_detail = .Table, 1
+	argument := "abc"
+	offset, size, result, encoded := encode(file, function, {{text = transmute([]u8)argument}}, region[:])
+	testing.expect(t, encoded)
+	testing.expect_value(t, size, 16 + 16)
+	// The text ends at 35; the records start at 40: 88 bytes, 3 records.
+	testing.expect_value(t, result, Slice{start = 40, count = 3})
+
+	Row :: struct {
+		name:  [16]u8,
+		value: i64,
+	}
+	call: Call
+	testing.expect(t, decode(file, function, offset, size, region[:], &call))
+	rows := (^[]Row)(uintptr(call.registers[1]))^
+	testing.expect_value(t, len(rows), 3)
+	testing.expect(t, rawptr(raw_data(rows)) == rawptr(&region[40]))
+	rows[0].value, rows[1].value = 1, 2
+	copy(rows[0].name[:], "one")
+	copy(rows[1].name[:], "xxxxxxxxxxxxxxxx")
+
+	bytes, complete := result_table(region[:], result, 2, 24)
+	testing.expect(t, complete && len(bytes) == 48)
+	item, _ := module.field(file, described, 0)
+	testing.expect_value(t, module.field_text(bytes[:24], item), "one")
+	testing.expect_value(t, module.field_text(bytes[24:48], item), "xxxxxxxxxxxxxxxx")
+	bytes, complete = result_table(region[:], result, 5, 24)
+	testing.expect(t, !complete && len(bytes) == 72, "the callee gave a count larger than the buffer")
+	_, complete = result_table(region[:], Slice{start = 100, count = 2}, 1, 24)
+	testing.expect(t, !complete, "a buffer that is not in the call region")
+	// An argument record that names a buffer out of the call region: refused.
+	(^Slice)(&region[16])^ = Slice{start = 40, count = 4}
+	testing.expect(t, !decode(file, function, offset, size, region[:], &call))
+	// A Text field of 0 bytes has no description: its detail is its size.
+	storage[size_of(module.Header) + module.TABLE_COUNT * size_of(module.Table_Entry) + 2 * size_of(module.Record) + size_of(module.Field) + 16] = 0
+	_, valid = module.record_type(file, 1)
+	testing.expect(t, !valid, "a Text field of 0 bytes")
+}
+
 // A Record goes as its bytes, a Handle as its number. decode gives a
 // private copy of the record, and the list of the handles to prove: the
 // Handle parameters and the Handle fields.

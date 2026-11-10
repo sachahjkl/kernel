@@ -29,7 +29,7 @@ Difference :: enum u32 {
 	Parameter_Type  = 3, // Parameter `parameter` has another type.
 	Parameter_Detail = 4, // Parameter `parameter`: a Handle with other rights, or another Record.
 	Result_Type     = 5,
-	Result_Detail   = 6, // A Record result with another record.
+	Result_Detail   = 6, // A Record or Table result with another record.
 }
 
 // One side of a difference: a type, its detail (the rights of a Handle, or a
@@ -96,7 +96,7 @@ functions_compare :: proc "contextless" (file: []u8, index: u32, other_file: []u
 	}
 	side :: proc "contextless" (file: []u8, type: Type, detail: u32) -> (value: Described) {
 		value.type, value.detail = type, detail
-		if type == .Record {
+		if type == .Record || type == .Table {
 			if described, ok := record_type(file, detail); ok {
 				name_set(&value.record, string_at(file, described.name_offset, described.name_count))
 			}
@@ -127,10 +127,11 @@ functions_compare :: proc "contextless" (file: []u8, index: u32, other_file: []u
 	return .None, 0, {}, {}
 }
 
-// details_equal: two Records with equal descriptions, or two equal details.
+// details_equal: two Records or two Tables with equal record descriptions,
+// or two equal details.
 @(private)
 details_equal :: proc "contextless" (file, other_file: []u8, expected, found: Described) -> bool {
-	if expected.type == .Record {
+	if expected.type == .Record || expected.type == .Table {
 		return records_equal(file, expected.detail, other_file, found.detail)
 	}
 	return expected.detail == found.detail

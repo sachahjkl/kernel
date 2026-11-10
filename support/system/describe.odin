@@ -46,8 +46,10 @@ write_rights :: proc "contextless" (writer: ^Writer, rights: Rights, between: st
 }
 
 // write_type writes the type of a parameter, of a result or of a field:
-// "Integer", "Text", the name of a record, or "Handle(Read, Write)" with
-// the rights that the callee needs. file is the module of the description.
+// "Integer", "Text", "Text(32)" for a Text field of 32 bytes, the name of a
+// record, "Table(Name)" for a table of records, or "Handle(Read, Write)"
+// with the rights that the callee needs. file is the module of the
+// description.
 write_type :: proc "contextless" (writer: ^Writer, file: []u8, type: module.Type, detail: u32) {
 	switch type {
 	case .None:
@@ -55,6 +57,15 @@ write_type :: proc "contextless" (writer: ^Writer, file: []u8, type: module.Type
 		write_part(writer, "Integer")
 	case .Text:
 		write_part(writer, "Text")
+		if detail != 0 {
+			write_part(writer, "(")
+			write_part(writer, u64(detail))
+			write_part(writer, ")")
+		}
+	case .Table:
+		write_part(writer, "Table(")
+		write_type(writer, file, .Record, detail)
+		write_part(writer, ")")
 	case .Record:
 		if described, ok := module.record_type(file, detail); ok {
 			write_part(writer, module.string_at(file, described.name_offset, described.name_count))

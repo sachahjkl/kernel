@@ -6,6 +6,7 @@ import "core:reflect"
 import "core:fmt"
 import "core:odin/ast"
 import "core:odin/parser"
+import "core:strconv"
 import "core:strings"
 
 // The descriptions of the exports of a module come from its source
@@ -19,13 +20,18 @@ import "core:strings"
 //   - A result of type i64 is an Integer. If the last parameter has the type
 //     ^[]u8, it is the buffer of a Text result, and the result type is i64.
 //   - A parameter of type ^Name is a Record, if Name is a struct of the
-//     package. A field of the struct has the type i64 (Integer) or
-//     Lent({...}) (Handle). The struct has the layout of the C language:
-//     no #packed, no #align, no `using`. Its size is at most
+//     package, or a struct of a package of the libraries `support:` and
+//     `contract:` that the file imports (^information.Module). A field of
+//     the struct has the type i64 (Integer), Lent({...}) (Handle) or [N]u8
+//     (Text of N bytes, N a number). The struct has the layout of the C
+//     language: no #packed, no #align, no `using`. Its size is at most
 //     module.RECORD_SIZE_LIMIT bytes.
 //   - If the last parameter has a type ^Name and the name `result`, it is
 //     the memory of a Record result. The export has no result type, and
 //     the record has no Handle.
+//   - If the last parameter has a type ^[]Name and the name `result`, it is
+//     the buffer of a Table result of the record Name. The result type is
+//     i64, the count of records, and the record has no Handle.
 //   - A parameter of type Lent({.Read, .Write}) is a Handle that the caller
 //     lends, with the rights that the callee needs (support/system).
 //   - Each parameter has a name.
@@ -92,7 +98,9 @@ Struct_Source :: struct {
 
 // What the tool keeps while it reads a package.
 Describe_State :: struct {
-	structs: map[string]Struct_Source,
+	structs: map[string]Struct_Source, // By name; a struct of an imported package by "package.Name".
+	imports: map[string]string, // The folder of each package that the files import, by the name that the files use.
+	read:    map[string]bool, // The imported packages whose structs are in `structs`.
 	records: [dynamic]Record_Description, // The records that an export uses, each one time.
 }
 
@@ -119,6 +127,37 @@ parse_source :: proc(path, source: string, state: ^Describe_State) -> (file: ^as
 		fmt.eprintfln("kerneltool: describe %s: the parser found errors", path)
 		return nil, false
 	}
+	structs_add(file, "", state)
+	if state.imports == nil {
+		state.imports = make(map[string]string, context.temp_allocator)
+	}
+	for item in file.imports {
+		full := strings.trim(item.fullpath, "\"")
+		folder := ""
+		for library in ([]string{"support", "contract"}) {
+			if strings.has_prefix(full, library) && len(full) > len(library) && full[len(library)] == ':' {
+				folder = strings.concatenate({library, "/", full[len(library) + 1:]})
+			}
+		}
+		if folder == "" {
+			continue
+		}
+		name := item.name.text
+		if name == "" {
+			name = folder[strings.last_index_byte(folder, '/') + 1:]
+		}
+		state.imports[name] = folder
+	}
+	return file, true
+}
+
+// structs_add keeps the structs of a parsed file, with the prefix
+// "package." for a file of an imported package.
+@(private = "file")
+structs_add :: proc(file: ^ast.File, prefix: string, state: ^Describe_State) {
+	if state.structs == nil {
+		state.structs = make(map[string]Struct_Source, context.temp_allocator)
+	}
 	for statement in file.decls {
 		declaration, is_value := statement.derived.(^ast.Value_Decl)
 		if !is_value || len(declaration.names) != 1 || len(declaration.values) != 1 {
@@ -127,10 +166,56 @@ parse_source :: proc(path, source: string, state: ^Describe_State) -> (file: ^as
 		identifier, has_name := declaration.names[0].derived.(^ast.Ident)
 		type, is_struct := declaration.values[0].derived.(^ast.Struct_Type)
 		if has_name && is_struct {
-			state.structs[identifier.name] = {type, path, source}
+			state.structs[strings.concatenate({prefix, identifier.name}, context.temp_allocator)] = {type, file.fullpath, file.src}
 		}
 	}
-	return file, true
+}
+
+// imported_structs reads the structs of a package that the files import,
+// one time.
+@(private = "file")
+imported_structs :: proc(name: string, state: ^Describe_State) -> bool {
+	context.allocator = context.temp_allocator
+	if state.read == nil {
+		state.read = make(map[string]bool, context.temp_allocator)
+	}
+	folder, known := state.imports[name]
+	if !known || state.read[name] {
+		return known
+	}
+	state.read[name] = true
+	for path in files_with_suffix(folder, ".odin") or_return {
+		if strings.has_suffix(path, "_test.odin") {
+			continue
+		}
+		source := read_file(path) or_return
+		file := ast.new_from_positions(ast.File, {}, {})
+		file.src = string(source)
+		file.fullpath = path
+		reader := parser.default_parser()
+		if !parser.parse_file(&reader, file) {
+			fmt.eprintfln("kerneltool: describe %s: the parser found errors", path)
+			return false
+		}
+		structs_add(file, strings.concatenate({name, "."}), state)
+	}
+	return true
+}
+
+// struct_name gives the name of a struct type: "Name", or "package.Name"
+// for a struct of an imported package. "" when the type is not a name.
+@(private = "file")
+struct_name :: proc(state: ^Describe_State, type: ^ast.Expr) -> (key: string, name: string) {
+	#partial switch named in type.derived {
+	case ^ast.Ident:
+		return named.name, named.name
+	case ^ast.Selector_Expr:
+		library, is_name := named.expr.derived.(^ast.Ident)
+		if is_name && imported_structs(library.name, state) {
+			return strings.concatenate({library.name, ".", named.field.name}, context.temp_allocator), named.field.name
+		}
+	}
+	return "", ""
 }
 
 // lent_rights reads a type Lent({.Read, .Write}): the rights that the
@@ -179,44 +264,91 @@ record_of :: proc(state: ^Describe_State, type: ^ast.Expr, result: bool) -> (num
 	if !is_pointer {
 		return 0, false, false
 	}
-	identifier, is_name := pointer.elem.derived.(^ast.Ident)
-	if !is_name {
+	return struct_record(state, pointer.elem, result)
+}
+
+// table_of gives the number of the description of the record of a Table
+// result: the type is ^[]Name. is_table is false for another type.
+table_of :: proc(state: ^Describe_State, type: ^ast.Expr) -> (number: u32, is_table, ok: bool) {
+	pointer, is_pointer := type.derived.(^ast.Pointer_Type)
+	if !is_pointer {
 		return 0, false, false
 	}
-	found, has_struct := state.structs[identifier.name]
-	if !has_struct {
+	slice, is_slice := pointer.elem.derived.(^ast.Array_Type)
+	if !is_slice || slice.len != nil {
+		return 0, false, false
+	}
+	return struct_record(state, slice.elem, true)
+}
+
+// text_size reads a type [N]u8: a Text field of N bytes. is_text is false
+// for another type.
+@(private = "file")
+text_size :: proc(type: ^ast.Expr) -> (size: u32, is_text, ok: bool) {
+	array, is_array := type.derived.(^ast.Array_Type)
+	if !is_array || array.len == nil {
+		return 0, false, false
+	}
+	element, is_name := array.elem.derived.(^ast.Ident)
+	if !is_name || element.name != "u8" {
+		return 0, false, false
+	}
+	count, is_literal := array.len.derived.(^ast.Basic_Lit)
+	if !is_literal {
+		return 0, true, false
+	}
+	value, parsed := strconv.parse_u64_of_base(count.tok.text, 10)
+	if !parsed || value == 0 || value > module.RECORD_SIZE_LIMIT {
+		return 0, true, false
+	}
+	return u32(value), true, true
+}
+
+// struct_record gives the number of the description of a struct, by its
+// type name. 0 and is_record false: the name is no struct that the tool
+// knows.
+@(private = "file")
+struct_record :: proc(state: ^Describe_State, type: ^ast.Expr, result: bool) -> (number: u32, is_record, ok: bool) {
+	key, record_name := struct_name(state, type)
+	found, has_struct := state.structs[key]
+	if key == "" || !has_struct {
 		return 0, false, false
 	}
 	declared := found.type
 	if declared.is_packed || declared.is_raw_union || declared.align != nil || declared.poly_params != nil || declared.fields == nil || len(declared.fields.list) == 0 {
-		return 0, true, describe_fail(found.path, declared, "the record %s must have fields, and the layout of the C language: no #packed, no #align, no parameter", identifier.name)
+		return 0, true, describe_fail(found.path, declared, "the record %s must have fields, and the layout of the C language: no #packed, no #align, no parameter", record_name)
 	}
 	fields := make([dynamic]Field_Description, context.temp_allocator)
 	size, alignment: u32 = 0, 1
 	has_handle := false
 	for field in declared.fields.list {
 		if field.type == nil || .Using in field.flags {
-			return 0, true, describe_fail(found.path, field, "the record %s: each field has a type, and no `using`", identifier.name)
+			return 0, true, describe_fail(found.path, field, "the record %s: each field has a type, and no `using`", record_name)
 		}
 		item: Field_Description
-		field_size: u32
+		field_size, field_alignment: u32
 		if rights, is_lent, lent_ok := lent_rights(field.type); is_lent {
 			if !lent_ok {
-				return 0, true, describe_fail(found.path, field, "the record %s: write the rights of a handle as Lent({{.Read, .Write}})", identifier.name)
+				return 0, true, describe_fail(found.path, field, "the record %s: write the rights of a handle as Lent({{.Read, .Write}})", record_name)
 			}
-			item, field_size, has_handle = {type = .Handle, detail = transmute(u32)rights}, 4, true
+			item, field_size, field_alignment, has_handle = {type = .Handle, detail = transmute(u32)rights}, 4, 4, true
 		} else if type_text(found.source, field.type) == "i64" {
-			item, field_size = {type = .Integer}, 8
+			item, field_size, field_alignment = {type = .Integer}, 8, 8
+		} else if count, is_text, text_ok := text_size(field.type); is_text {
+			if !text_ok {
+				return 0, true, describe_fail(found.path, field, "the record %s: a Text field is [N]u8, with a number N from 1 to %d", record_name, module.RECORD_SIZE_LIMIT)
+			}
+			item, field_size, field_alignment = {type = .Text, detail = count}, count, 1
 		} else {
-			return 0, true, describe_fail(found.path, field, "the record %s: the type %s has no description. A field is an i64 (Integer) or a Lent({{...}}) (Handle)", identifier.name, type_text(found.source, field.type))
+			return 0, true, describe_fail(found.path, field, "the record %s: the type %s has no description. A field is an i64 (Integer), a Lent({{...}}) (Handle) or a [N]u8 (Text)", record_name, type_text(found.source, field.type))
 		}
-		alignment = max(alignment, field_size)
+		alignment = max(alignment, field_alignment)
 		for expression in field.names {
 			name, is_identifier := expression.derived.(^ast.Ident)
 			if !is_identifier || name.name == "_" {
-				return 0, true, describe_fail(found.path, field, "the record %s: each field has a name", identifier.name)
+				return 0, true, describe_fail(found.path, field, "the record %s: each field has a name", record_name)
 			}
-			size = (size + field_size - 1) / field_size * field_size
+			size = (size + field_alignment - 1) / field_alignment * field_alignment
 			item.name, item.offset = name.name, size
 			append(&fields, item)
 			size += field_size
@@ -224,17 +356,17 @@ record_of :: proc(state: ^Describe_State, type: ^ast.Expr, result: bool) -> (num
 	}
 	size = (size + alignment - 1) / alignment * alignment
 	if size > module.RECORD_SIZE_LIMIT {
-		return 0, true, describe_fail(found.path, declared, "the record %s has %d bytes: the limit is %d", identifier.name, size, module.RECORD_SIZE_LIMIT)
+		return 0, true, describe_fail(found.path, declared, "the record %s has %d bytes: the limit is %d", record_name, size, module.RECORD_SIZE_LIMIT)
 	}
 	if result && has_handle {
-		return 0, true, describe_fail(found.path, declared, "the record %s is a result: a result has no handle", identifier.name)
+		return 0, true, describe_fail(found.path, declared, "the record %s is a result: a result has no handle", record_name)
 	}
 	for item, index in state.records {
-		if item.name == identifier.name {
+		if item.name == record_name {
 			return u32(index + 1), true, true
 		}
 	}
-	append(&state.records, Record_Description{name = identifier.name, size = size, fields = fields[:]})
+	append(&state.records, Record_Description{name = record_name, size = size, fields = fields[:]})
 	return u32(len(state.records)), true, true
 }
 
@@ -364,6 +496,16 @@ describe_file :: proc(file: ^ast.File, list: ^[dynamic]Export_Description, state
 					kind, detail = .Handle, transmute(u32)rights
 					break
 				}
+				if number, is_table, table_ok := table_of(state, field.type); is_table {
+					if !table_ok {
+						return false
+					}
+					if !is_result {
+						return describe_fail(path, field, "%s: the buffer of a Table result (^[]Name) is the last parameter, with the name result", name)
+					}
+					description.result, description.result_detail = .Table, number
+					continue
+				}
 				if number, is_record, record_ok := record_of(state, field.type, is_result); is_record {
 					if !record_ok {
 						return false
@@ -378,7 +520,7 @@ describe_file :: proc(file: ^ast.File, list: ^[dynamic]Export_Description, state
 				return describe_fail(
 					path,
 					field,
-					"%s: the type %s has no description. Use i64 (Integer), ^string (Text), Lent({{...}}) (Handle), the address of a struct of the package (Record), or a last parameter ^[]u8 (the buffer of a Text result)",
+					"%s: the type %s has no description. Use i64 (Integer), ^string (Text), Lent({{...}}) (Handle), the address of a struct of the package (Record), a last parameter ^[]u8 (the buffer of a Text result), or a last parameter result: ^[]Name (the buffer of a Table result)",
 					name,
 					text,
 				)
@@ -399,15 +541,17 @@ describe_file :: proc(file: ^ast.File, list: ^[dynamic]Export_Description, state
 				return describe_fail(path, declaration, "%s: the callee writes a Record result in the memory of the caller: the export has no result type", name)
 			}
 		case result_text == "i64":
-			if description.result != .Text {
+			if description.result != .Text && description.result != .Table {
 				description.result = .Integer
 			}
 		case result_text != "":
 			return describe_fail(path, declaration, "%s: the result type %s has no description. Use i64", name, result_text)
 		case description.result == .Text:
 			return describe_fail(path, declaration, "%s: a Text result gives its count of bytes: the result type is i64", name)
+		case description.result == .Table:
+			return describe_fail(path, declaration, "%s: a Table result gives its count of records: the result type is i64", name)
 		}
-		if len(parameters) + int(description.result == .Text || description.result == .Record) > module.PARAMETER_CAPACITY {
+		if len(parameters) + int(description.result == .Text || description.result == .Record || description.result == .Table) > module.PARAMETER_CAPACITY {
 			return describe_fail(path, declaration, "%s has more than %d parameters", name, module.PARAMETER_CAPACITY)
 		}
 		description.parameters = parameters[:]

@@ -45,7 +45,7 @@ Field_Description :: struct {
 	name:   string,
 	offset: u32,
 	type:   module.Type,
-	detail: u32, // A Handle: the rights that the callee needs.
+	detail: u32, // A Handle: the rights that the callee needs. A Text: its size in bytes.
 }
 
 // The description of a module: what its source says to a person, and its exports.
