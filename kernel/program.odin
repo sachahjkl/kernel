@@ -156,9 +156,15 @@ handle_close :: proc "contextless" (program: ^Program, slot: ^Handle_Slot) {
 		region_release(slot.object)
 	case .Program:
 		target := &programs[slot.object]
+		// A program runs only while a handle names it: nobody can stop a
+		// program that no handle names.
 		target.references -= 1
-		if target.references == 0 && target.state == .Stopped {
-			target.state = .None
+		if target.references == 0 {
+			if target.state == .Stopped {
+				target.state = .None
+			} else {
+				program_stop(slot.object, op.STOP_CODE_NO_HANDLE)
+			}
 		}
 	case .Interrupt:
 		if interrupt_owner[slot.object] == u32(intrinsics.ptr_sub(program, &programs[0])) {
@@ -294,6 +300,10 @@ program_stop :: proc "contextless" (index: u32, code: u32) {
 	if program.state == .None || program.state == .Stopped {
 		return
 	}
+	// The state changes first: a handle that this program closes below can
+	// name this program.
+	program.state = .Stopped
+	program.code = code
 	if cr3_read() == program.table {
 		cr3_write(kernel_table)
 	}
@@ -313,8 +323,6 @@ program_stop :: proc "contextless" (index: u32, code: u32) {
 	address_space_free(program.table)
 	program.table = 0
 	program.ring = nil
-	program.state = .Stopped
-	program.code = code
 	for &other in programs[1:] {
 		if other.state == .None || other.state == .Stopped {
 			continue
@@ -436,7 +444,7 @@ kernel_interrupt :: proc "c" (frame: ^Frame) {
 		}
 		program := &programs[current]
 		log("kernel: program ", program_name(program), " stopped: ", name, " vector ", frame.vector, " error ", Hex(frame.error), " at ", Hex(frame.rip), " address ", Hex(cr2_read()))
-		program_stop(current, 0x100 + u32(frame.vector))
+		program_stop(current, op.STOP_CODE_FAULT + u32(frame.vector))
 	}
 	if !from_program {
 		return

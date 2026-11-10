@@ -56,6 +56,12 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Term | Definition | Do not use |
 |---|---|---|
 | Ring | A pair of queues in shared memory between two programs, or between a program and the kernel: one for command records, one for completion records (P4, P6) | pipe, socket, channel, port, message queue |
+| Direct call | A call of an export in the address space of the caller. The arguments are in registers (the call form) | in-process call, local call |
+| Isolated call | A call of an export of a module that runs in another program. The arguments travel in a ring (P19) | remote call, RPC, IPC call |
+| Call host | The program that loads one module and executes the isolated calls of its exports. It has no handle but its call ring and its call region | worker, helper process, server |
+| Call ring | The ring between a caller and a call host. One command record is one isolated call | channel, pipe |
+| Call region | The memory object that a caller and a call host share. The caller writes the argument record and the bytes of its slices in it | shared buffer, arena |
+| Argument record | The record that holds the arguments of one isolated call: one field per parameter, in order. It is derived from the description of the export | message, payload, marshalled arguments |
 | Kernel ring | The ring between a program and the kernel. Each kernel operation is a command record in it (P1) | system call table |
 | Record | A fixed-layout block of bytes with typed fields. An all-zero record is valid (P13) | struct, message, packet, object |
 | Command record | A record that asks the other side of a ring for one operation | request, message, call |

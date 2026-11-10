@@ -64,6 +64,7 @@ The next step is the owner's review of that file.
 - **Font (owner, 2026-11-10)**: no enlarged low-resolution font. Use a bitmap font of good quality at its native size. Chosen: Spleen 8x16, BSD 2-Clause.
 - **Temple of Jon (owner, 2026-11-10)**: a demo, for fun, in the spirit of Jai: a portrait of Jonathan Blow that turns. Done as `programs/temple`: a flat card with perspective, drawn by the processor. The portrait is a public domain picture (`programs/temple/PORTRAIT_LICENSE`).
 - **No tweet (owner, 2026-11-10)**: never post about this project on X or on another public service. This includes the temple of Jon and all screenshots.
+- **Next step: the isolated call, "no bad compromise" (owner, 2026-11-10).** Done: `isolated/`, `programs/host`, `isolate("probe")` in the console.
 - No pull request unless the owner asks.
 
 ## Research
@@ -92,7 +93,7 @@ Notes are in `research/`.
 ## Next steps
 
 1. Get the owner's review of the choices in `FIRST_MILESTONE.md`.
-2. Isolated call of an export through a ring; Text results; descriptions made from the source (property 19).
+2. Text results; descriptions made from the source (property 19). The isolated call of an export through a ring is done (2026-11-10): see `MODULE_CONTRACT.md` section 4.
 3. Rights on handles, and a split of the Machine handle.
 4. Damage rectangles in the compositor.
 5. A block device service (virtio), then the storage service.

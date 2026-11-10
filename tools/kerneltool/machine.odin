@@ -120,6 +120,38 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[console] number(Text) -> Integer"},
 	{kind = .Shot, text = "tools"},
 
+	// An isolated call: the module runs in a sandboxed program. The
+	// arguments go through a ring. The description is the same.
+	{kind = .Type, text = "clear()"},
+	{kind = .Type, text = "isolate(\"probe\")"},
+	{kind = .Wait, text = "[console] probe: 5 commands in a sandboxed program"},
+	{kind = .Wait, text = "[probe] host: ready, 5 exports"},
+	{kind = .Type, text = "count() + count() * 10"},
+	{kind = .Wait, text = "[console] 21"},
+	{kind = .Type, text = "checksum(\"abc\" + name)"},
+	{kind = .Wait, text = "[console] 935"},
+	{kind = .Type, text = "checksum(7)"},
+	{kind = .Wait, text = "error: checksum: argument 1 is Text, not Integer"},
+	// The module has no handle: it cannot stop the machine.
+	{kind = .Type, text = "stop_machine(1) + stop_machine(2) + stop_machine(3)"},
+	{kind = .Wait, text = "[console] 6"},
+	// A fault in the module stops its program only. The next call starts a
+	// new program, with new data.
+	{kind = .Type, text = "peek(0)"},
+	{kind = .Wait, text = "kernel: program probe stopped: page fault"},
+	{kind = .Wait, text = "[console] error: the program probe stopped: page fault"},
+	{kind = .Type, text = "count()"},
+	{kind = .Wait, text = "[probe] host: ready"},
+	{kind = .Wait, text = "[console] 1"},
+	// A module that does not return: the console stops its program.
+	{kind = .Type, text = "spin()"},
+	{kind = .Wait, text = "[console] error: the program probe did not answer in 2000 ms"},
+	{kind = .Type, text = "count() + gcd(84, 36)"},
+	{kind = .Wait, text = "[console] 13"},
+	{kind = .Type, text = "programs()"},
+	{kind = .Wait, text = "probe"},
+	{kind = .Shot, text = "isolated"},
+
 	// The temple of Jon, then back to the console.
 	{kind = .Click, x = 512, y = 14}, // temple
 	{kind = .Wait, text = "temple: ok"},

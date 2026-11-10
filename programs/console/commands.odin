@@ -1,6 +1,7 @@
 package console
 
 import "../../blake3"
+import "../../isolated"
 import op "../../kernel/operation"
 import module "../../module"
 import "../../ring"
@@ -14,8 +15,32 @@ Command :: struct {
 	result:          Kind,
 	about:           string,
 	run:             proc "contextless" (arguments: []Value) -> Value, // A command of the console itself.
-	address:         uintptr, // Not 0: an export of a loaded module.
+	address:         uintptr, // Not 0: an export of a module in this program. The call is direct.
+	sandbox:         int, // Not 0: an export of sandboxes[sandbox - 1]. The call is isolated.
+	export:          u32, // The index of the export in its module.
+	function:        module.Function, // The description of the export.
 }
+
+// A module that the console calls in a call host: a sandboxed program.
+Sandbox :: struct {
+	name:          string,
+	first_page:    u64, // The file of the module, in the boot image.
+	page_count:    u64,
+	file_size:     u64,
+	program:       system.Handle, // 0: no call host runs. The next call starts one.
+	ring_memory:   system.Handle,
+	ring:          ^ring.Ring,
+	region_memory: system.Handle,
+	region:        []u8,
+	calls:         u32, // The tag of the last call.
+}
+
+SANDBOX_CAPACITY :: 4
+CALL_LIMIT :: 2000 // Milliseconds. The console stops a call host that takes more time for one call.
+
+sandboxes: [SANDBOX_CAPACITY]Sandbox
+sandbox_count: int
+image_memory: system.Handle
 
 COMMAND_CAPACITY :: 48
 LOADED_CAPACITY :: 8
@@ -43,7 +68,8 @@ command :: proc "contextless" (name: string, parameters: []Kind, result: Kind, a
 // commands_start maps what the root service granted, and lists the commands.
 commands_start :: proc "contextless" () {
 	machine = ctx.handles[system.GRANT_MACHINE]
-	if address, status := system.memory_map(ctx.handles[system.GRANT_IMAGE], {}); status == .Ok {
+	image_memory = ctx.handles[system.GRANT_IMAGE]
+	if address, status := system.memory_map(image_memory, {}); status == .Ok {
 		image = ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]
 	}
 	requests_memory = ctx.handles[system.GRANT_ROOT]
@@ -55,7 +81,8 @@ commands_start :: proc "contextless" () {
 	command("programs", {}, .None, "list the programs that run", list_programs)
 	command("memory", {}, .None, "memory and kernel counters", show_memory)
 	command("modules", {}, .None, "list the modules of the boot image", list_modules)
-	command("load", {.Text}, .None, "load a module: its exports become commands", load_module)
+	command("load", {.Text}, .None, "load a module here: direct calls", load_module)
+	command("isolate", {.Text}, .None, "load a module in a sandboxed program", isolate_module)
 	command("start", {.Text}, .None, "start a program, by module name", start_program)
 	command("stop", {.Text}, .None, "stop a program, by name", stop_program)
 	command("time", {}, .Integer, "milliseconds since boot", time)
@@ -174,11 +201,22 @@ list_modules :: proc "contextless" (arguments: []Value) -> Value {
 	return {}
 }
 
-// load_module loads a module of the boot image in the console. Each export
-// that the console can call becomes a command: the description of the export
-// in the module gives its name, its types and its help.
+// load_module loads a module in the console: a call of its exports is a
+// direct call. The module has the memory and the handles of the console.
 load_module :: proc "contextless" (arguments: []Value) -> Value {
-	name := arguments[0].text
+	return add_module(arguments[0].text, false)
+}
+
+// isolate_module loads a module in a call host: a call of its exports is an
+// isolated call. The module has no handle and no memory of the console.
+isolate_module :: proc "contextless" (arguments: []Value) -> Value {
+	return add_module(arguments[0].text, true)
+}
+
+// add_module makes each export of a module of the boot image a command: the
+// description of the export in the module gives its name, its types and its
+// help. The description is the same for a direct call and an isolated call.
+add_module :: proc "contextless" (name: string, isolate: bool) -> Value {
 	for &entry in system.image_entries(image) {
 		if system.name_of(entry.name[:]) != name || entry.offset > u64(len(image)) || entry.size > u64(len(image)) - entry.offset {
 			continue
@@ -207,11 +245,28 @@ load_module :: proc "contextless" (arguments: []Value) -> Value {
 			return fail("no room for the commands of ", name)
 		}
 		base := module_base
-		size, status := system.module_load(file, base)
-		if status != .Ok {
-			return fail("cannot load the module ", name)
+		if isolate {
+			if sandbox_count == SANDBOX_CAPACITY || entry.offset % system.PAGE_SIZE != 0 {
+				return fail("no room for a sandboxed program")
+			}
+			sandbox := &sandboxes[sandbox_count]
+			sandbox^ = {
+				name       = system.name_of(entry.name[:]),
+				first_page = entry.offset / system.PAGE_SIZE,
+				page_count = (entry.size + system.PAGE_SIZE - 1) / system.PAGE_SIZE,
+				file_size  = entry.size,
+			}
+			if !sandbox_create(sandbox) {
+				return fail("cannot start a sandboxed program for ", name)
+			}
+			sandbox_count += 1
+		} else {
+			size, status := system.module_load(file, base)
+			if status != .Ok {
+				return fail("cannot load the module ", name)
+			}
+			module_base += size + system.PAGE_SIZE
 		}
-		module_base += size + system.PAGE_SIZE
 		loaded[loaded_count] = entry.hash
 		loaded_count += 1
 		for index in 1 ..< export_count {
@@ -226,14 +281,20 @@ load_module :: proc "contextless" (arguments: []Value) -> Value {
 				about           = module.string_at(file, function.about_offset, function.about_count),
 				parameter_count = int(function.parameter_count),
 				result          = Kind(function.result),
-				address         = address,
+				export          = index,
+				function        = function,
+			}
+			if isolate {
+				item.sandbox = sandbox_count
+			} else {
+				item.address = address
 			}
 			for type, parameter in function.parameters[:function.parameter_count] {
 				item.parameters[parameter] = Kind(type)
 			}
 			command_count += 1
 		}
-		print(name, ": ", i64(callable), " commands, hash ", hex_text(entry.hash[:8]), "...\n")
+		print(name, ": ", i64(callable), isolate ? " commands in a sandboxed program, hash " : " commands, hash ", hex_text(entry.hash[:8]), "...\n")
 		return {}
 	}
 	return fail("no module has the name ", name)
@@ -258,16 +319,152 @@ callable_by_console :: proc "contextless" (function: module.Function) -> bool {
 // argument in one integer register, in order. An Integer is the value; a Text
 // is the address of its slice record.
 call_export :: proc "contextless" (item: ^Command, arguments: []Value) -> Value {
-	registers: [module.PARAMETER_CAPACITY]u64
+	integers: [system.CALL_INTEGERS]u64
 	for &argument, index in arguments {
-		registers[index] = argument.kind == .Text ? u64(uintptr(&argument.text)) : u64(argument.integer)
+		integers[index] = argument.kind == .Text ? u64(uintptr(&argument.text)) : u64(argument.integer)
 	}
-	export := cast(proc "c" (a, b, c, d, e, f: u64) -> u64)rawptr(item.address)
-	result := export(registers[0], registers[1], registers[2], registers[3], registers[4], registers[5])
+	floats: [system.CALL_FLOATS]u64
+	results: [system.CALL_RESULTS]u64
+	system.export_call(item.address, &integers, &floats, &results)
 	if item.result == .Integer {
-		return {kind = .Integer, integer = i64(result)}
+		return {kind = .Integer, integer = i64(results[0])}
 	}
 	return {}
+}
+
+// sandbox_create makes the call ring and the call region of a sandbox, and
+// starts its call host.
+sandbox_create :: proc "contextless" (sandbox: ^Sandbox) -> bool {
+	status: system.Status
+	sandbox.ring_memory, sandbox.ring, status = system.ring_create()
+	if status != .Ok {
+		return false
+	}
+	address: rawptr
+	if sandbox.region_memory, status = system.memory_create(isolated.REGION_PAGES); status == .Ok {
+		address, status = system.memory_map(sandbox.region_memory)
+	}
+	if status != .Ok {
+		system.memory_unmap(sandbox.ring)
+		system.close(sandbox.ring_memory)
+		system.close(sandbox.region_memory)
+		return false
+	}
+	sandbox.region = ([^]u8)(address)[:isolated.REGION_PAGES * system.PAGE_SIZE]
+	if sandbox_start(sandbox) != .Ok {
+		system.memory_unmap(sandbox.ring)
+		system.memory_unmap(address)
+		system.close(sandbox.ring_memory)
+		system.close(sandbox.region_memory)
+		return false
+	}
+	return true
+}
+
+// sandbox_start starts the call host of a sandbox. The program receives the
+// call ring and the call region, and no other handle. The console maps the
+// file of the module in it, read-only: the program has no handle to the
+// boot image.
+sandbox_start :: proc "contextless" (sandbox: ^Sandbox) -> system.Status {
+	sandbox.ring^ = {}
+	handles: [op.CONTEXT_HANDLES]system.Handle
+	values: [op.CONTEXT_VALUES]u64
+	handles[isolated.GRANT_RING] = sandbox.ring_memory
+	handles[isolated.GRANT_REGION] = sandbox.region_memory
+	values[isolated.VALUE_FILE_ADDRESS] = isolated.FILE_ADDRESS
+	values[isolated.VALUE_FILE_SIZE] = sandbox.file_size
+	mappings := [1]system.Mapping{{memory = image_memory, address = isolated.FILE_ADDRESS, first = sandbox.first_page, page_count = sandbox.page_count}}
+	status: system.Status
+	sandbox.program, status = system.program_start(system.image_find(image, "host"), sandbox.name, handles, values, mappings[:])
+	return status
+}
+
+// sandbox_end closes the handle of the call host. The kernel stops a program
+// that no handle names.
+sandbox_end :: proc "contextless" (sandbox: ^Sandbox) {
+	system.close(sandbox.program)
+	sandbox.program = 0
+}
+
+// stop_reason gives the text of the code of a stopped program.
+stop_reason :: proc "contextless" (code: u32) -> string {
+	switch code {
+	case op.STOP_CODE_FAULT + 0:
+		return "division by zero"
+	case op.STOP_CODE_FAULT + 6:
+		return "invalid instruction"
+	case op.STOP_CODE_FAULT + 13:
+		return "protection fault"
+	case op.STOP_CODE_FAULT + 14:
+		return "page fault"
+	}
+	return code >= op.STOP_CODE_FAULT ? "fault" : "it stopped itself"
+}
+
+// call_isolated calls an export of a module in its call host. The arguments
+// go in the call region as one argument record; one command record of the
+// call ring names it; the completion record has the result.
+// A module that faults or that does not answer stops alone: the console
+// reports an error and continues. The next call starts a new call host.
+call_isolated :: proc "contextless" (item: ^Command, arguments: []Value) -> Value {
+	sandbox := &sandboxes[item.sandbox - 1]
+	if sandbox.program != 0 {
+		if state, _ := system.program_state(sandbox.program); state == .Stopped {
+			sandbox_end(sandbox)
+		}
+	}
+	if sandbox.program == 0 && sandbox_start(sandbox) != .Ok {
+		return fail("cannot start a sandboxed program for ", sandbox.name)
+	}
+	encoded: [ARGUMENT_CAPACITY]isolated.Argument
+	for argument, index in arguments {
+		encoded[index] = {integer = u64(argument.integer), text = transmute([]u8)argument.text}
+	}
+	offset, size, ok := isolated.encode(item.function, encoded[:len(arguments)], sandbox.region)
+	if !ok {
+		return fail("the arguments of ", item.name, " do not fit in the call region")
+	}
+	sandbox.calls += 1
+	if !ring.push(&sandbox.ring.commands, ring.Record{kind = item.export, tag = sandbox.calls, values = {0 = offset, 1 = size}}) {
+		sandbox_end(sandbox)
+		return fail("the call ring of ", sandbox.name, " is full: the console stopped the program")
+	}
+	system.wake(sandbox.ring_memory)
+	limit := system.time() + CALL_LIMIT
+	for {
+		// The other side writes this queue: read a bounded number of records,
+		// and ignore each one that does not answer this call.
+		for _ in 0 ..< ring.CAPACITY {
+			completion, has_completion := ring.pop(&sandbox.ring.completions)
+			if !has_completion {
+				break
+			}
+			if completion.tag != sandbox.calls {
+				continue
+			}
+			switch isolated.Status(completion.kind) {
+			case .Ok:
+				if item.result == .Integer {
+					return {kind = .Integer, integer = i64(completion.values[0])}
+				}
+				return {}
+			case .Bad_Export:
+				return fail("the program ", sandbox.name, " has no export ", item.name)
+			case .Bad_Arguments:
+				return fail("the program ", sandbox.name, " refused the arguments of ", item.name)
+			case:
+				return fail("the program ", sandbox.name, " gave an unknown status")
+			}
+		}
+		if state, code := system.program_state(sandbox.program); state == .Stopped {
+			sandbox_end(sandbox)
+			return fail("the program ", sandbox.name, " stopped: ", stop_reason(code))
+		}
+		if system.wait(limit) >= limit {
+			sandbox_end(sandbox)
+			return fail("the program ", sandbox.name, " did not answer in ", u64(CALL_LIMIT), " ms: the console stopped it")
+		}
+	}
 }
 
 // request sends one command to the root service and waits for its completion.

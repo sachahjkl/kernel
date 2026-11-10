@@ -12,7 +12,7 @@ It lists the gaps between the code and the documents.
 - `kerneltool test` starts the machine under QEMU and acts as the person through the QEMU monitor: keys, pointer moves, clicks.
 - Each step of the scenario waits for a text in the log of the kernel. A step that does not see its text in 20 seconds fails the test.
 - The scenario is a table in `tools/kerneltool/machine.odin`.
-- The test saves four pictures of the screen. `kerneltool screenshots` copies them to `docs/screenshots/`.
+- The test saves five pictures of the screen. `kerneltool screenshots` copies them to `docs/screenshots/`.
 - `nix flake check` runs the same test in the Nix sandbox.
 
 The scenario does these actions:
@@ -26,7 +26,10 @@ The scenario does these actions:
 7. Call `programs()` and `memory()`.
 8. Call `gcd(84, 36)`: the console has no such command. Call `load("math")`, then `gcd(84, 36) + power(2, 10)`: the result is 1036.
 9. Call `help()`.
-10. Start `temple` from the bar. Then call `shutdown()`. The machine stops with code 0.
+10. Call `isolate("probe")`: the module runs in a call host. Call `count()`, `checksum("abc" + name)`, and `stop_machine` with three handle numbers: the kernel refuses each one.
+11. Call `peek(0)`: the kernel stops the call host on a page fault, and the console reports an error. Call `count()`: a new call host gives 1.
+12. Call `spin()`: after 2000 ms the console closes the handle of the call host, and the kernel stops it. Call `count() + gcd(84, 36)`: an isolated call and a direct call in one expression.
+13. Start `temple` from the bar. Then call `shutdown()`. The machine stops with code 0.
 
 ## The path from power to desktop
 
@@ -49,7 +52,8 @@ The scenario does these actions:
 | Wait and wake | `Wake(memory)` wakes the other programs that map this memory. Each program has a wake-pending flag, so no wake is lost |
 | Scheduler | One processor. Round-robin. A time slice is 10 ms. The timer runs at 1000 Hz. Idle is `hlt` |
 | Devices | A Ports object opens a port range in the port bitmap of the program. An Interrupt object counts interrupts and wakes its owner |
-| Faults | A fault in a program stops this program with a code. The root service sees the state and reclaims the handles |
+| Faults | A fault in a program stops this program with a code. The kernel wakes each program that holds its handle |
+| Life of a program | A program runs while a handle names it. When its last handle closes, the kernel stops it. Only the root service has no handle |
 | Inspect | The Machine handle gives `System_Report` and `Program_Report` records, and stops the machine |
 
 The kernel contains no code for a device, except the timer, the interrupt controller and the serial port of its log.
@@ -70,6 +74,10 @@ The kernel contains no code for a device, except the timer, the interrupt contro
 | `programs/plasma`, `life`, `paint` | Demos: animation, simulation, pointer and key input |
 | `programs/temple` | Demo, for fun: a portrait of Jonathan Blow turns about its vertical axis, with perspective. The processor draws it |
 | `programs/fault` | A program that writes to an address that it does not own |
+| `isolated/` | The isolated call: the layout of the argument record, `encode` for the caller, `decode` with the checks for the receiver |
+| `programs/host` | The call host: it loads one module and executes the isolated calls of its exports |
+| `modules/math` | A module of commands: `gcd`, `power`, `fibonacci`, `next_prime`, `number` |
+| `modules/probe` | A module of commands that tests the sandbox: it reads any address, loops with no end, tries to stop the machine |
 
 Grants by the root service:
 
@@ -80,6 +88,8 @@ Grants by the root service:
 | `console` | A display ring; a ring to the root service; the machine; the boot image |
 | `monitor` | A display ring; the machine |
 | all others | A display ring only |
+
+The console starts each call host. A call host receives a call ring and a call region only.
 
 A program with only a display ring can draw in its surface and read its own input events. It can do nothing else.
 
@@ -95,8 +105,14 @@ The owner did not review these. Each one can change.
 6. **The compositor is also the desktop shell.** The glossary defines them as two programs. One program holds both roles now.
 7. **Grants by program name.** The root service decides the handles of a program from its name, in code. No grant record, no revoke.
 8. **Commands of two origins.** The system commands (`programs`, `start`, `shutdown`...) are compiled into the console. `load("math")` loads a module of the boot image: each export becomes a command. The console reads the name, the types and the help of an export from the function table of the module, and calls the export with the call form. `load` checks the hash of the module first.
+   **The person chooses the trust.** `load` gives direct calls: the module has the memory and the handles of the console. `isolate` gives isolated calls: the module runs in a call host. The description and the way to type a call are the same.
 9. **Font.** Spleen 8x16, BSD 2-Clause, converted from its BDF file by `kerneltool font`.
 10. **Types of the description.** `Integer` (64 bits, in a register) and `Text` (the address of a slice record, parameters only). At most 6 parameters. The kernel tool holds the description of each export in its module table; no tool checks it against the source.
+
+11. **Isolated call.** `MODULE_CONTRACT.md` section 4, "The isolated call, as implemented", lists these choices: one call host per module, the argument record in the call region, the status numbers, the limit of 2000 ms, a call region of 16 pages, one call at a time per call host.
+12. **The caller starts the call host.** The console creates the program with `system.program_start`; the root service takes no part. Any program can create a program: the new program has only the handles that its creator gives.
+13. **A program runs while a handle names it.** The kernel stops a program when its last handle closes (stop code `0x200`). Reason: nobody can stop a program that no handle names. A fault gives stop code `0x100` plus the exception number.
+14. **The context has no text.** The 256 bytes of text of the context are removed: no program used them, and property 19 forbids them.
 
 ## Gaps
 
@@ -104,7 +120,9 @@ Against the properties and the module contract:
 
 - Handles have no rights. A program can give any of its handles onward.
 - The Machine handle gives inspect and stop together.
-- Property 19 is not complete: a loaded module runs in the address space of the console (direct call only, no isolated call through a ring). A command cannot give a Text. The description has no records, no handles and no grants.
+- Property 19 is not complete: a command cannot give a Text. The description has no records, no floats, no handles and no grants. A module with imports cannot be loaded by a program.
+- The console waits during an isolated call: it draws nothing and reads no key until the call ends or the limit passes.
+- Each program can create memory objects and programs with no limit, and can write on the log of the kernel.
 - Frame pointers are not enforced. An import call goes through a stub that the linker adds.
 - The test "a C program calls an Odin module" does not exist.
 - One processor. One thread per program.
@@ -122,7 +140,7 @@ Input:
 
 ## Next steps
 
-1. Isolated call of an export through a ring; Text results; descriptions made from the source (property 19).
+1. Text results; descriptions made from the source (property 19).
 2. Rights on handles, and a split of the Machine handle.
 3. Damage rectangles in the compositor.
 4. A block device service (virtio), then the storage service.

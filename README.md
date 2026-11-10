@@ -9,6 +9,8 @@ The system boots under QEMU to a graphical desktop with a console, a system tool
 |---|---|
 | ![The console](docs/screenshots/console.png) | ![The commands of the console](docs/screenshots/tools.png) |
 
+![An isolated call: a module that faults or loops stops alone](docs/screenshots/isolated.png)
+
 ![The temple of Jon: a portrait of Jonathan Blow that turns](docs/screenshots/temple.png)
 
 `kerneltool screenshots` makes these pictures from the running machine.
@@ -23,6 +25,7 @@ The system boots under QEMU to a graphical desktop with a console, a system tool
 - The compositor owns the framebuffer. Each program draws into a surface in shared memory.
 - The console is a normal program. A command is a typed function: `hash("abc")`, `start("life")`, `programs()`.
 - `load("math")` loads a module: its exports become commands. The module describes their types.
+- `isolate("probe")` runs a module in a sandboxed program with no handle. The same calls go through a ring. A module that faults, loops or tries to stop the machine does not harm the console.
 - A program that faults stops alone. The system continues.
 
 `docs/FIRST_MILESTONE.md` gives the details, the design choices and the gaps.
@@ -47,10 +50,11 @@ The system boots under QEMU to a graphical desktop with a console, a system tool
 | `kernel/` | The kernel. `kernel/operation/` defines the kernel operations |
 | `module/`, `blake3/` | The module format, the loader code, the hash |
 | `ring/` | The ring: two queues in shared memory |
+| `isolated/` | The isolated call: the argument record and its checks |
 | `system/` | The library of a program: kernel operations, text, loader, grants |
 | `graphics/`, `display/` | Drawing with the processor; the protocol of the compositor |
-| `programs/` | `root`, `input`, `compositor`, `console`, `monitor`, `plasma`, `life`, `paint`, `fault`, `temple` |
-| `modules/` | Test modules of the host load test |
+| `programs/` | `root`, `input`, `compositor`, `console`, `host`, `monitor`, `plasma`, `life`, `paint`, `fault`, `temple` |
+| `modules/` | Modules of commands (`math`, `probe`) and the test modules of the host load test |
 | `tools/kerneltool/` | The kernel tool: all the automation of the project |
 
 ## Use

@@ -144,8 +144,21 @@ The C conventions have real defects. The subset avoids each one:
 The description of a function is its list of parameters and results, each with a base type or a reference to a described record.
 
 - **Direct call**: the values go in registers, as above.
-- **Isolated call**: the argument record is derived by rule: one field per parameter, in order. It travels in a command record of a ring. The results travel in a completion record. The derivation is mechanical; nobody writes a second encoding.
-- **One generic entry routine**: Because every parameter is a scalar, one small routine loads up to 6 integer registers and 8 float registers from an argument record and calls the export. The receiving side of a ring and the console both use it. A library for foreign calls is not needed.
+- **Isolated call**: the argument record is derived by rule: one field per parameter, in order. The results travel in a completion record. The derivation is mechanical; nobody writes a second encoding.
+- **One generic entry routine**: Because every parameter is a scalar, one small routine loads up to 6 integer registers and 8 float registers from two arrays and calls the export. The receiving side of a ring and the console both use it. A library for foreign calls is not needed. It is `export_call` in `system/enter.asm`: 30 instructions.
+
+### The isolated call, as implemented
+
+Status: implemented on 2026-11-10 (`isolated/`, `programs/host`). The owner has not reviewed the choices below.
+
+- **Call host**: The caller starts one program per module: the call host. The call host receives two memory objects and no other handle: the call ring and the call region. The caller maps the file of the module in the call host, read-only, with no handle. The call host checks the file and loads the module.
+- **Argument record**: One field per parameter, in order. A scalar is 8 bytes. A parameter that the direct call passes by address is the record itself: a Text is a slice of 16 bytes, `{offset, count}`. The offset is in the call region.
+- **Where it travels**: The argument record is in the call region. The command record names it: `kind` is the export index, `values[0]` is the offset of the argument record, `values[1]` is its size. Reason: 6 integers and 8 floats are 112 bytes, and a record of a ring has 56 bytes of values. One place for all argument records needs no second path.
+- **Completion record**: `kind` is a status: 0 is success, 1 is "no such export", 2 is "the argument record is not in the call region". `values[0]` and `values[1]` are the integer results; `values[2]` and `values[3]` are the float results.
+- **The receiver checks**: The call host reads the types from the description in the module, not from the caller. It copies the argument record to private memory once. It checks the offset and the count of each slice against the size of the call region, with no overflow. Then it calls `export_call`.
+- **The caller checks**: The caller reads a bounded number of completion records, and ignores each record whose tag is not the tag of the call.
+- **Failure**: A fault in the module stops the call host only. The kernel wakes the caller, which holds the handle of the program. The caller reads the stop code. A call that takes more than 2000 ms ends when the caller closes the handle: the kernel stops a program that no handle names. The next call starts a new call host.
+- **Tests**: `odin test isolated` has a round trip, the refused cases at each limit, and 200 000 random argument records. The machine test calls a module that reads address 0, that loops with no end, and that tries to stop the machine.
 
 ### Growth
 
@@ -206,6 +219,8 @@ The context is one record in memory that the loader prepared:
 | Kernel ring | The ring for kernel operations |
 | Caller ring | The ring to the program that started this one |
 | Arguments | The argument record of the called export, with its type index |
+
+Now (`kernel/operation/operation.odin`): the context is 16 handles and 16 values of 64 bits. The index of a handle is its role. It has no header and no text. The kernel ring is at a fixed address. For a call host, the caller ring is the call ring (role 0), and the argument records arrive in the call region (role 1).
 
 - It holds no strings that the program must parse, no environment, no names.
 - A program reads it with no memory allocator and no library.

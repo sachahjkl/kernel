@@ -15,7 +15,16 @@ foreign _ {
 	system_enter :: proc "c" (wait: u64) -> u64 ---
 	port_write_8 :: proc "c" (port: u16, value: u8) ---
 	port_read_8 :: proc "c" (port: u16) -> u8 ---
+	// export_call calls an export with the call form (docs/MODULE_CONTRACT.md,
+	// section 4). It loads the 6 integer registers and the 8 float registers
+	// from the two arrays, calls address, and writes the results: the two
+	// integer results, then the two float results.
+	export_call :: proc "c" (address: uintptr, integers: ^[CALL_INTEGERS]u64, floats: ^[CALL_FLOATS]u64, results: ^[CALL_RESULTS]u64) ---
 }
+
+CALL_INTEGERS :: 6
+CALL_FLOATS :: 8
+CALL_RESULTS :: 4
 
 kernel_ring :: #force_inline proc "contextless" () -> ^ring.Ring {
 	return (^ring.Ring)(uintptr(op.KERNEL_RING_ADDRESS))

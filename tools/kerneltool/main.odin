@@ -164,7 +164,7 @@ run_check :: proc(args: []string) -> int {
 	if !run({"odin", "check", "tools/kerneltool", "-vet"}) {
 		return EXIT_FAILURE
 	}
-	for folder in ([]string{"blake3", "tools/kerneltool"}) {
+	for folder in ([]string{"blake3", "isolated", "tools/kerneltool"}) {
 		name, _ := strings.replace_all(folder, "/", "_", context.temp_allocator)
 		if !run({"odin", "test", folder, "-vet", strings.concatenate({"-out:" + BUILD_FOLDER + "/test_", name}, context.temp_allocator)}) {
 			return EXIT_FAILURE

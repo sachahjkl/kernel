@@ -40,7 +40,7 @@ Operation :: enum u32 {
 	Program_State  = 9, // (program) -> Program_State, code
 	Handle_Give    = 10, // (target: program handle or memory handle, handle) -> the handle in the target program.
 	// With a memory handle, the target is the other program that maps this memory: the other side of a ring.
-	Handle_Close   = 11, // (handle)
+	Handle_Close   = 11, // (handle). The kernel stops a program when its last handle closes.
 	Wake           = 12, // (memory): wake the other programs that map this memory.
 	Interrupt_Read = 13, // (interrupt) -> the number of interrupts since the last read.
 	Device_Create  = 14, // (machine, Device_Kind, a, b) -> handle. Ports: a = first port, b = count. Interrupt: a = line.
@@ -63,6 +63,10 @@ Map_Flag :: enum u64 {
 	Execute = 1,
 }
 Map_Flags :: bit_set[Map_Flag;u64]
+
+// The code of a program that the kernel stopped.
+STOP_CODE_FAULT :: 0x100 // Add the number of the processor exception: 14 is a page fault.
+STOP_CODE_NO_HANDLE :: 0x200 // The last handle to the program closed.
 
 Program_State :: enum u32 {
 	None    = 0,
@@ -108,13 +112,11 @@ Program_Report :: struct {
 // (property 19). The address of the record is the parameter of the entry.
 CONTEXT_HANDLES :: 16
 CONTEXT_VALUES :: 16
-CONTEXT_TEXT :: 256
 
+// It holds no text: a program has nothing to parse.
 Context :: struct {
-	handles:    [CONTEXT_HANDLES]Handle, // The granted handles. The role of each index is fixed by who starts the program.
-	values:     [CONTEXT_VALUES]u64,
-	text:       [CONTEXT_TEXT]u8, // The arguments.
-	text_count: u64,
+	handles: [CONTEXT_HANDLES]Handle, // The granted handles. The role of each index is fixed by who starts the program.
+	values:  [CONTEXT_VALUES]u64,
 }
 
 // The roles of the first program (the root service).

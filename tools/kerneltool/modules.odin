@@ -43,6 +43,19 @@ module_builds := [?]Module_Build {
 	{name = "paint", source = "programs/paint", exports = {{name = "entry"}}, image = true},
 	{name = "fault", source = "programs/fault", exports = {{name = "entry"}}, image = true},
 	{name = "temple", source = "programs/temple", exports = {{name = "entry"}}, image = true},
+	{name = "host", source = "programs/host", exports = {{name = "entry"}}, image = true},
+	{
+		name = "probe",
+		source = "modules/probe",
+		image = true,
+		exports = {
+			{name = "peek", parameters = {.Integer}, result = .Integer, about = "the 8 bytes at an address"},
+			{name = "count", result = .Integer, about = "the number of calls of count"},
+			{name = "spin", result = .Integer, about = "a loop with no end"},
+			{name = "stop_machine", parameters = {.Integer}, result = .Integer, about = "try to stop the machine with a handle"},
+			{name = "checksum", parameters = {.Text}, result = .Integer, about = "the sum of the bytes of a text"},
+		},
+	},
 	{
 		name = "math",
 		source = "modules/math",

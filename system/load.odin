@@ -3,7 +3,6 @@ package system
 import info "../boot_info"
 import op "../kernel/operation"
 import module "../module"
-import "base:intrinsics"
 
 // The loader (docs/ARCHITECTURE.md, U3): it builds a program from a module.
 // It runs in user space. The kernel only creates the empty program and maps
@@ -32,11 +31,23 @@ image_find :: proc "contextless" (image: []u8, name: string) -> []u8 {
 	return nil
 }
 
+// A part of a memory object at an address of a program.
+Mapping :: struct {
+	memory:     Handle,
+	address:    u64,
+	first:      u64, // The first page of the memory object.
+	page_count: u64, // 0: all pages from first.
+	flags:      op.Map_Flags,
+}
+
 // program_start builds and starts a program from a module file.
 //   handles: the grants. Each handle that is not 0 is copied to the program;
 //            the context of the program has the copy at the same index.
-//   values, text: copied to the context.
-program_start :: proc "contextless" (file: []u8, name: string, handles: [op.CONTEXT_HANDLES]Handle, values: [op.CONTEXT_VALUES]u64, text: string) -> (program: Handle, status: Status) {
+//   values:   copied to the context.
+//   mappings: memory that the program has from its start, with no handle to
+//             it: the program cannot map it again with other flags.
+// The program stops when the last handle to it closes.
+program_start :: proc "contextless" (file: []u8, name: string, handles: [op.CONTEXT_HANDLES]Handle, values: [op.CONTEXT_VALUES]u64, mappings: []Mapping = nil) -> (program: Handle, status: Status) {
 	if len(file) == 0 || module.validate(file) != .None || module.count(file, .Imports) > 1 {
 		return 0, .Bad_Operation
 	}
@@ -52,7 +63,7 @@ program_start :: proc "contextless" (file: []u8, name: string, handles: [op.CONT
 		return 0, status
 	}
 	program = Handle(results[0])
-	if status = program_fill(program, file, head, handles, values, text); status == .Ok {
+	if status = program_fill(program, file, head, handles, values, mappings); status == .Ok {
 		_, status = call(.Program_Start, u64(program), u64(entry), op.STACK_TOP, op.CONTEXT_ADDRESS)
 	}
 	if status != .Ok {
@@ -64,8 +75,11 @@ program_start :: proc "contextless" (file: []u8, name: string, handles: [op.CONT
 }
 
 @(private)
-program_fill :: proc "contextless" (program: Handle, file: []u8, head: module.Header, handles: [op.CONTEXT_HANDLES]Handle, values: [op.CONTEXT_VALUES]u64, text: string) -> Status {
+program_fill :: proc "contextless" (program: Handle, file: []u8, head: module.Header, handles: [op.CONTEXT_HANDLES]Handle, values: [op.CONTEXT_VALUES]u64, mappings: []Mapping) -> Status {
 	module_map(file, head, program, op.PROGRAM_BASE) or_return
+	for mapping in mappings {
+		memory_map(mapping.memory, mapping.flags, program, mapping.address, mapping.first, mapping.page_count) or_return
+	}
 
 	stack := memory_create(op.STACK_PAGES) or_return
 	defer close(stack)
@@ -81,8 +95,6 @@ program_fill :: proc "contextless" (program: Handle, file: []u8, head: module.He
 		}
 	}
 	record.values = values
-	record.text_count = u64(min(len(text), op.CONTEXT_TEXT))
-	intrinsics.mem_copy_non_overlapping(&record.text, raw_data(text), int(record.text_count))
 	memory_map(record_memory, {.Write}, program, op.CONTEXT_ADDRESS) or_return
 	return .Ok
 }

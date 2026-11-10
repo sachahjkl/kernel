@@ -1,7 +1,5 @@
 package system
 
-import op "../kernel/operation"
-
 // Text without an allocator: a Part is a string or a number, and format
 // writes parts in a buffer.
 
@@ -99,8 +97,4 @@ name_of :: proc "contextless" (bytes: []u8) -> string {
 		count += 1
 	}
 	return string(bytes[:count])
-}
-
-context_text :: proc "contextless" (ctx: ^op.Context) -> string {
-	return string(ctx.text[:min(ctx.text_count, op.CONTEXT_TEXT)])
 }

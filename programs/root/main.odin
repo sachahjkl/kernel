@@ -85,7 +85,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		handles[1] = device(.Ports, 0x60, 5)
 		handles[2] = device(.Interrupt, 1, 0)
 		handles[3] = device(.Interrupt, 12, 0)
-		_, status = system.program_start(system.image_find(image, "input"), "input", handles, {}, "")
+		_, status = system.program_start(system.image_find(image, "input"), "input", handles, {})
 		if status != .Ok {
 			fail("cannot start input", status)
 		}
@@ -109,7 +109,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		values[1] = ctx.values[op.ROOT_VALUE_HEIGHT]
 		values[2] = ctx.values[op.ROOT_VALUE_PIXELS_PER_LINE]
 		values[3] = ctx.values[op.ROOT_VALUE_FORMAT]
-		compositor, status = system.program_start(system.image_find(image, "compositor"), "compositor", handles, values, "")
+		compositor, status = system.program_start(system.image_find(image, "compositor"), "compositor", handles, values)
 		if status != .Ok {
 			fail("cannot start the compositor", status)
 		}
@@ -204,7 +204,7 @@ start :: proc "contextless" (name: string) -> system.Status {
 		values[system.GRANT_VALUE_IMAGE_SIZE] = u64(len(image))
 	}
 	if status == .Ok {
-		slot.program, status = system.program_start(file, name, handles, values, "")
+		slot.program, status = system.program_start(file, name, handles, values)
 	}
 	if status != .Ok {
 		release(slot)
