@@ -5,6 +5,8 @@
 // first sentence of the comment (tools/kerneltool/describe.odin).
 package math
 
+import "contract:errors"
+
 // gcd gives the greatest common divisor.
 @(export, link_name = "gcd")
 gcd :: proc "c" (first, second: i64) -> i64 {
@@ -77,6 +79,21 @@ number :: proc "c" (text: ^string) -> i64 {
 		value = value * 10 + i64(digits[i] - '0')
 	}
 	return negative ? -value : value
+}
+
+// square_root gives the largest integer whose square is not above a value, or -1 with an error record: the error kind Too_Small, when the value is negative.
+@(export, link_name = "square_root")
+square_root :: proc "c" (value: i64, error: ^errors.Error_Record) -> i64 {
+	if value < 0 {
+		return errors.fail(error, -1, .Too_Small, .None, 1, value, 0)
+	}
+	root := i64(0)
+	for bit := i64(1) << 31; bit != 0; bit >>= 1 {
+		if candidate := root | bit; candidate * candidate <= value {
+			root = candidate
+		}
+	}
+	return root
 }
 
 // A Text result: the caller gives a buffer record {address, capacity} after

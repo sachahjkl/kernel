@@ -366,7 +366,7 @@ Status: asked by the owner on 2026-11-10 (`HANDOFF.md`, "No exceptions in the co
 
 The kinds, the meaning of `limit` and `found` for each kind, and the units are in `contract/errors/errors.odin`. Examples of sentences:
 
-- `storage.write: the argument name is empty; it must have 1 to 31 bytes`
+- `storage.write: the argument name is empty; it must have 1 to 39 bytes`
 - `Memory_Map: the argument memory, handle 0x30004, has the rights Give Read; the operation needs Read Write`
 - `Memory_Size: the argument memory, handle 0x20007, was revoked`
 - `Memory_Create: the argument budget, handle 0x10009, cannot pay 66 pages: it holds 8 pages`

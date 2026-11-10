@@ -39,6 +39,7 @@ Step_Kind :: enum {
 	Close, // Press the close button of the window with the title text. The tool reads the place and the size of the window in the log.
 	Film, // Save the screen 25 times in one second, for x milliseconds, as the next pictures of the film.
 	Quit, // End QEMU: the machine does not stop by itself.
+	Trace, // The log has text, after the text of the last Wait, then a stack trace to the end of the line: the tool names each frame from the linked file of its module, and the names start with `names`.
 }
 
 Step :: struct {
@@ -49,6 +50,7 @@ Step :: struct {
 	// For Wait: the next Wait searches from the same place. Use it when two
 	// programs print in an order that the system does not fix.
 	any_order:  bool,
+	names:      string, // For Trace: the names of the functions of the first frames, separated by spaces.
 }
 
 // A start that fails: the boot image has no compositor. The boot display
@@ -489,9 +491,12 @@ scenario := [?]Step {
 	{kind = .Type, text = "gcd(84, 36)"},
 	{kind = .Wait, text = "error: no command has the name gcd"},
 	{kind = .Type, text = "load(\"math\")"},
-	{kind = .Wait, text = "[console] math: 7 commands"},
+	{kind = .Wait, text = "[console] math: 8 commands"},
 	{kind = .Type, text = "gcd(84, 36) + power(2, 10)"},
 	{kind = .Wait, text = "[console] 1036"},
+	// An export that fails gives an error record in a direct call too.
+	{kind = .Type, text = "square_root(1000000) + square_root(-4)"},
+	{kind = .Wait, text = "[console] error: square_root: the argument value has -4; it must have at least 0 (-1)"},
 	{kind = .Type, text = "number(\"41\") + fibonacci(10)"},
 	{kind = .Wait, text = "[console] 96"},
 	{kind = .Type, text = "next_prime(\"x\")"},
@@ -992,7 +997,7 @@ scenario := [?]Step {
 	{kind = .Type, text = "rows(manual.exports(\"\")) - rows(manual.exporters(\"show\"))"},
 	{kind = .Wait, text = "[console] "},
 	{kind = .Type, text = "manual.exports(\"nothing\")"},
-	{kind = .Wait, text = "[console] error: manual.exports gave no table but the error -1"},
+	{kind = .Wait, text = "[console] error: manual.exports: the argument name names none of the modules (-1)"},
 	{kind = .Type, text = "where(manual.modules(), \"code\", \"large\")"},
 	{kind = .Wait, text = "[console] error: where: the field code is Integer, the value is Text"},
 	{kind = .Type, text = "manual.overview()"},
@@ -1094,7 +1099,12 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[console] kept on the disk"},
 	// The limit of the store: one more object needs two more blocks.
 	{kind = .Type, text = "storage.write(\"second\", \"one block more\")"},
-	{kind = .Wait, text = "[console] -2"},
+	{kind = .Wait, text = "[console] error: storage.write: the call needs 5 blocks in all; the limit is 4 blocks (-2)"},
+	// An error of a service is a record: the console writes it as a sentence.
+	{kind = .Type, text = "storage.write(\"\", \"x\")"},
+	{kind = .Wait, text = "[console] error: storage.write: the argument name is empty; it must have 1 to 39 bytes (-3)"},
+	{kind = .Type, text = "storage.read(\"nothing\")"},
+	{kind = .Wait, text = "[console] error: storage.read: the argument name: the store has no object with this name (-7)"},
 	{kind = .Type, text = "storage.objects()"},
 	{kind = .Wait, text = "[console] greeting 16 bytes, generation 2"},
 	{kind = .Type, text = "storage.stores()"},
@@ -1106,12 +1116,28 @@ scenario := [?]Step {
 	{kind = .Type, text = "revoke(\"console\", \"store\")"},
 	{kind = .Wait, text = "root: revoked the grant store of console, connections changed: 1"},
 	{kind = .Type, text = "storage.write(\"greeting\", \"changed\")"},
-	{kind = .Wait, text = "[console] -1"},
+	{kind = .Wait, text = "[console] error: storage.write: the caller has no grant for this: a private store (-1)"},
 	{kind = .Type, text = "storage.stores()"},
 	{kind = .Wait, text = "; console: 1 objects, 3 of 4 blocks, 0 connections"},
 	{kind = .Type, text = "grants(\"console\")"},
 	{kind = .Wait, text = "[console] console lost: store"},
 	{kind = .Shot, text = "storage"},
+	// Errors that diagnose: each case makes an error for real, and the
+	// window shows the sentence of its error record. The program fault
+	// stops three calls deep: the tool names the functions of its stack
+	// trace from the linked file of the module.
+	{kind = .Launch, text = "errors"},
+	{kind = .Wait, text = "compositor: surface errors"},
+	{kind = .Wait, text = "errors: ok, 19 cases, each with the expected error record", any_order = true},
+	{kind = .Trace, text = "errors: stack of fault: ", names = "fault::three fault::two fault::one entry"},
+	{kind = .Wait, text = "errors: a kernel operation that succeeds: "},
+	{kind = .Front, text = "errors"},
+	{kind = .Key, text = "b"},
+	{kind = .Wait, text = "errors: case b again: Memory_Size: the argument memory, handle "},
+	{kind = .Wait, text = " was revoked"},
+	{kind = .Shot, text = "errors"},
+	{kind = .Close, text = "errors"},
+	{kind = .Wait, text = "root: errors stopped"},
 	{kind = .Front, text = "console"},
 	// Each page is free or paid, after all the starts and stops of this test.
 	{kind = .Type, text = "memory()"},
@@ -1476,6 +1502,20 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				return false
 			}
 			fmt.printfln("kerneltool: test passed: the machine printed \"%s\"", step.text)
+		case .Trace:
+			if !log_wait(machine, step.text) {
+				fmt.eprintfln("kerneltool: test failed: step %d: the machine did not print \"%s\"", index + 1, step.text)
+				return false
+			}
+			log := log_read(machine)
+			rest := log[machine.seen:]
+			line := rest[:max(strings.index_byte(rest, '\n'), 0)]
+			found, named := trace_check(strings.trim_right(line, "\r"), step.names)
+			if !named {
+				fmt.eprintfln("kerneltool: test failed: step %d: the stack trace names %s, not %s", index + 1, found, step.names)
+				return false
+			}
+			fmt.printfln("kerneltool: test passed: the stack trace after \"%s\" names the functions %s", step.text, found)
 		case .Type:
 			for i in 0 ..< len(step.text) {
 				name := key_name(step.text[i])

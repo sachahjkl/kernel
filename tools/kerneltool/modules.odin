@@ -82,6 +82,7 @@ module_builds := [?]Module_Build {
 	// Its import is not in the boot image: a loader refuses it.
 	{name = "lonely", source = "modules/lonely", imports = {"test_callee"}, image = true},
 	{name = "imports", source = "programs/imports", imports = {"calendar"}, image = true},
+	{name = "errors", source = "programs/errors", image = true},
 }
 
 join :: proc(parts: ..string) -> string {
@@ -131,7 +132,9 @@ build_module :: proc(build: Module_Build) -> bool {
 		"build",
 		build.source,
 		"-target:freestanding_amd64_sysv",
-		"-build-mode:obj",
+		// LLVM IR, then llc: Odin has no option that keeps the frame pointers
+		// (rule 8 of docs/MODULE_CONTRACT.md); llc has one.
+		"-build-mode:llvm-ir",
 		"-reloc-mode:pic",
 		"-no-entry-point",
 		"-no-crt",
@@ -151,7 +154,7 @@ build_module :: proc(build: Module_Build) -> bool {
 		"-thread-count:1",
 		"-no-threaded-checker",
 		CONTRACT_LIBRARY,
-		join("-out:", objects, "/", build.name, ".o"),
+		join("-out:", folder, "/", build.name, ".ll"),
 	)
 	if build.kernel {
 		append(&compile, "-disable-red-zone")
@@ -159,6 +162,14 @@ build_module :: proc(build: Module_Build) -> bool {
 		append(&compile, SUPPORT_LIBRARY) // The kernel has the contract library only.
 	}
 	run(compile[:]) or_return
+	// Odin writes the IR in the folder where it runs, with the name of -out.
+	if err := os.rename(join(build.name, ".ll"), join(folder, "/", build.name, ".ll")); err != nil {
+		fmt.eprintfln("kerneltool: cannot move the LLVM IR of %s: %v", build.name, err)
+		return false
+	}
+	// The LLVM of the Odin compiler (18) makes the object. Each function keeps
+	// its frame pointer: the kernel walks them for the stack trace of a fault.
+	run({"llc", "-O3", "--frame-pointer=all", "-relocation-model=pic", "--function-sections", "--data-sections", "-filetype=obj", "-o", join(objects, "/", build.name, ".o"), join(folder, "/", build.name, ".ll")}) or_return
 	assembly := make([dynamic]string, context.temp_allocator)
 	append(&assembly, ..(files_with_suffix(build.source, ".asm") or_return))
 	if build.image {
@@ -354,7 +365,8 @@ test_descriptions :: proc() -> bool {
 				module.string_at(file, function.text_offset, function.text_count) == description.text &&
 				int(function.parameter_count) == len(description.parameters) &&
 				function.result == description.result &&
-				function.result_detail == description.result_detail
+				function.result_detail == description.result_detail &&
+				function.error_record == description.error_record
 			strings.builder_reset(&last)
 			fmt.sbprintf(&last, "%s(", description.name)
 			for parameter in 0 ..< (agree ? len(description.parameters) : 0) {

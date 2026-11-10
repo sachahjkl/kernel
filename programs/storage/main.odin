@@ -8,6 +8,7 @@
 package storage_service
 
 import "contract:block"
+import "contract:errors"
 import "contract:isolated"
 import "support:system"
 
@@ -21,41 +22,49 @@ caller_store :: proc "contextless" () -> (name: string, limit: u64, person: bool
 	return system.name_of(connection.caller[:]), connection.grant & isolated.CALLER_AMOUNT_MASK, connection.grant & isolated.CALLER_PERSON != 0
 }
 
-// write replaces the object with this name in the store of the caller, with the bytes of data, in one commit on the disk. The result is the generation of the commit, or a negative number: -1 no store, -2 over the limit of the store, -3 a wrong name, -4 too large, -5 no room, -6 a disk error, -8 the table of the store has a wrong check.
+// write replaces the object with this name in the store of the caller, with the bytes of data, in one commit on the disk. The result is the generation of the commit, or a negative number with an error record.
+//
+// The error kinds: No_Grant (-1, the caller has no store); Over_Limit (-2, the change needs more blocks than the limit of the store); Empty, Too_Long or Bad_Byte (-3, the name has 1 to 39 bytes and no zero byte); Too_Long (-4, the data has more than 32 blocks); Full (-5, no place for one more object or store, or no free block); Device (-6, the block service reported an error); Damaged (-8, the table of the store has a wrong check).
 @(export, link_name = "write")
-write :: proc "c" (name: ^string, data: ^string) -> i64 {
+write :: proc "c" (name: ^string, data: ^string, error: ^errors.Error_Record) -> i64 {
 	store, limit, _ := caller_store()
-	return change(store, limit, name^, transmute([]u8)data^, false)
+	return change(store, limit, name^, transmute([]u8)data^, false, error)
 }
 
-// read gives the bytes of the object with this name in the store of the caller. The text is empty when the store has no such object, and when the service cannot give its bytes: size says which, with -7 for no such object and -8 for a damaged object.
+// read gives the bytes of the object with this name in the store of the caller, or a negative number with an error record.
+//
+// The error kinds: No_Grant (-1); Empty, Too_Long or Bad_Byte (-3, the name); Device (-6); Absent (-7, the store has no such object); Damaged (-8, a block of the object or of the table of the store has a wrong check: the service does not give its bytes).
 @(export, link_name = "read")
-read_export :: proc "c" (name: ^string, result: ^[]u8) -> i64 {
+read_export :: proc "c" (name: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 {
 	store, limit, _ := caller_store()
 	if limit == 0 {
-		return 0
+		return errors.fail(error, ERROR_NO_STORE, .No_Grant, .Store)
 	}
-	if size := object_state(store, name^); size > i64(len(result)) {
-		return size // The caller sees that the text did not fit.
+	if size := object_state(store, name^, error); size < 0 || size > i64(len(result)) {
+		return size // A failure, or a text that does not fit: the caller sees it.
 	}
-	return max(read(store, name^, result^), 0)
+	return read(store, name^, result^, error)
 }
 
-// size gives the count of bytes of the object with this name in the store of the caller, or -7 when it has no such object, or -8 when the object is damaged: a block of it on the disk has a wrong check, and the service does not give its bytes. A write or a remove of the object replaces it.
+// size gives the count of bytes of the object with this name in the store of the caller, or a negative number with an error record.
+//
+// The error kinds: No_Grant (-1); Empty, Too_Long or Bad_Byte (-3, the name); Absent (-7); Damaged (-8: a block of the object on the disk has a wrong check, and the service does not give its bytes; a write or a remove of the object replaces it).
 @(export, link_name = "size")
-size :: proc "c" (name: ^string) -> i64 {
+size :: proc "c" (name: ^string, error: ^errors.Error_Record) -> i64 {
 	store, limit, _ := caller_store()
 	if limit == 0 {
-		return ERROR_NO_STORE
+		return errors.fail(error, ERROR_NO_STORE, .No_Grant, .Store)
 	}
-	return object_state(store, name^)
+	return object_state(store, name^, error)
 }
 
-// remove removes the object with this name from the store of the caller, in one commit. The result is the generation of the commit, or a negative number: -7 no such object. A damaged object can be removed.
+// remove removes the object with this name from the store of the caller, in one commit. The result is the generation of the commit, or a negative number with an error record. A damaged object can be removed.
+//
+// The error kinds: those of write, and Absent (-7, the store has no such object).
 @(export, link_name = "remove")
-remove :: proc "c" (name: ^string) -> i64 {
+remove :: proc "c" (name: ^string, error: ^errors.Error_Record) -> i64 {
 	store, limit, _ := caller_store()
-	return change(store, limit, name^, nil, true)
+	return change(store, limit, name^, nil, true, error)
 }
 
 // objects gives the objects of the store of the caller: the name, the bytes and the generation of the last change of each one, and the word damaged for an object with a wrong block.

@@ -879,6 +879,13 @@ load_error_text :: proc "contextless" (writer: ^Writer, error: ^module.Load_Erro
 			name(writer, &error.imported)
 			write_part(writer, " has ")
 			described(writer, &error.expected)
+		case .Error_Record:
+			write_part(writer, "the error record is ")
+			described(writer, &error.found)
+			write_part(writer, ", ")
+			name(writer, &error.imported)
+			write_part(writer, " has ")
+			described(writer, &error.expected)
 		}
 		write_part(writer, "\n")
 		return // The first line names the replacement.

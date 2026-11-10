@@ -1,5 +1,6 @@
 package manual
 
+import "contract:errors"
 import "contract:isolated"
 import "support:graphics"
 import "support:information"
@@ -35,17 +36,21 @@ catalog :: proc "contextless" () -> information.Catalog {
 
 // table_count gives the count of a Table result: the count of rows, or a
 // negative error.
+// A failure writes the error record (contract/errors): Absent (-1), the
+// module of the argument 1 breaks a rule of the format: Malformed (-2), with
+// the kind of the problem and the byte of the file, or the kernel refused a
+// report: Refused (-3), with the status.
 @(private = "file")
-table_count :: proc "contextless" (count: int, problem: information.Problem) -> i64 {
+table_count :: proc "contextless" (count: int, problem: information.Problem, error: ^errors.Error_Record) -> i64 {
 	#partial switch problem.kind {
 	case .None:
 		return i64(count)
 	case .No_Module:
-		return -1
+		return errors.fail(error, -1, .Absent, .Modules, 1)
 	case .Refused:
-		return -3
+		return errors.fail(error, -3, .Refused, .None, 0, 0, 0, i64(problem.value))
 	}
-	return -2
+	return errors.fail(error, -2, .Malformed, .None, 1, i64(problem.kind), 0, i64(problem.offset))
 }
 
 // modules gives one row for each module of the boot image: its name, its hash, its sizes (code, constants, data, zero), whether it has an entry, its counts of exports, imports and records. A module that breaks a rule of the format has a row too: problem, place, index and offset say where. The result is the count of rows.
@@ -54,26 +59,26 @@ modules :: proc "c" (result: ^[]information.Module) -> i64 {
 	return i64(information.modules(catalog(), result^))
 }
 
-// exports gives one row for each export of a module, by name or by hash, with its signature and the rights that it asks of its handles. The module "" gives the exports of each module. The result is the count of rows; -1: no module has this name; -2: the module breaks a rule, problem(name) says where.
+// exports gives one row for each export of a module, by name or by hash, with its signature and the rights that it asks of its handles. The module "" gives the exports of each module. The result is the count of rows, or a negative number with an error record. The error kinds: Absent (-1, no module has this name); Malformed (-2, the module breaks a rule of the format: problem(name) says where).
 @(export, link_name = "exports")
-exports :: proc "c" (name: ^string, result: ^[]information.Export) -> i64 {
+exports :: proc "c" (name: ^string, result: ^[]information.Export, error: ^errors.Error_Record) -> i64 {
 	count, problem := information.exports(catalog(), name^, result^)
-	return table_count(count, problem)
+	return table_count(count, problem, error)
 }
 
-// imports gives one row for each import of a module, by name or by hash: the hash and the name of the imported module, its slots, and the module that the replacement table of the machine gives in its place. The module "" gives the imports of each module. The result is the count of rows; -1: no module has this name; -2: the module breaks a rule.
+// imports gives one row for each import of a module, by name or by hash: the hash and the name of the imported module, its slots, and the module that the replacement table of the machine gives in its place. The module "" gives the imports of each module. The result is the count of rows, or a negative number with an error record. The error kinds: Absent (-1, no module has this name); Malformed (-2, the module breaks a rule of the format).
 @(export, link_name = "imports")
-imports :: proc "c" (name: ^string, result: ^[]information.Import) -> i64 {
+imports :: proc "c" (name: ^string, result: ^[]information.Import, error: ^errors.Error_Record) -> i64 {
 	count, problem := information.imports(catalog(), name^, result^)
-	return table_count(count, problem)
+	return table_count(count, problem, error)
 }
 
-// importers gives the imports, in each module of the boot image, of a module, by name or by hash: who imports it. An import that a replacement of the machine changes to this module is a row too. The result is the count of rows; -1: no module has this name.
+// importers gives the imports, in each module of the boot image, of a module, by name or by hash: who imports it. An import that a replacement of the machine changes to this module is a row too. The result is the count of rows, or a negative number with an error record. The error kind: Absent (-1, no module has this name).
 @(export, link_name = "importers")
-importers :: proc "c" (name: ^string, result: ^[]information.Import) -> i64 {
+importers :: proc "c" (name: ^string, result: ^[]information.Import, error: ^errors.Error_Record) -> i64 {
 	found, problem := information.find(catalog(), name^)
 	if problem.kind == .No_Module {
-		return -1
+		return errors.fail(error, -1, .Absent, .Modules, 1)
 	}
 	return i64(information.importers(catalog(), found.hash, result^))
 }
@@ -90,39 +95,39 @@ described :: proc "c" (words: ^string, result: ^[]information.Export) -> i64 {
 	return i64(information.described(catalog(), words^, result^))
 }
 
-// handles gives the exports, in each module of the boot image, that take a handle with a right: Read, Write, Control, and the other rights of the kernel. The result is the count of rows; -1: no right has this name.
+// handles gives the exports, in each module of the boot image, that take a handle with a right: Read, Write, Control, and the other rights of the kernel. The result is the count of rows, or a negative number with an error record. The error kind: Absent (-1, no right has this name).
 @(export, link_name = "handles")
-handles :: proc "c" (right: ^string, result: ^[]information.Export) -> i64 {
+handles :: proc "c" (right: ^string, result: ^[]information.Export, error: ^errors.Error_Record) -> i64 {
 	for name, which in system.right_names {
 		if name == right^ {
 			return i64(information.handles(catalog(), which, result^))
 		}
 	}
-	return -1
+	return errors.fail(error, -1, .Absent, .None, 1)
 }
 
-// slots gives one row for each slot of a module, by name or by hash: the import and the export that the loader writes in it. The result is the count of rows; -1: no module has this name; -2: the module breaks a rule.
+// slots gives one row for each slot of a module, by name or by hash: the import and the export that the loader writes in it. The result is the count of rows, or a negative number with an error record. The error kinds: Absent (-1, no module has this name); Malformed (-2, the module breaks a rule of the format).
 @(export, link_name = "slots")
-slots :: proc "c" (name: ^string, result: ^[]information.Slot) -> i64 {
+slots :: proc "c" (name: ^string, result: ^[]information.Slot, error: ^errors.Error_Record) -> i64 {
 	count, problem := information.slots(catalog(), name^, result^)
-	return table_count(count, problem)
+	return table_count(count, problem, error)
 }
 
-// segments gives one row for each segment of a module, by name or by hash: its kind, its place in memory and in the file. The result is the count of rows; -1: no module has this name; -2: the module breaks a rule.
+// segments gives one row for each segment of a module, by name or by hash: its kind, its place in memory and in the file. The result is the count of rows, or a negative number with an error record. The error kinds: Absent (-1, no module has this name); Malformed (-2, the module breaks a rule of the format).
 @(export, link_name = "segments")
-segments :: proc "c" (name: ^string, result: ^[]information.Segment) -> i64 {
+segments :: proc "c" (name: ^string, result: ^[]information.Segment, error: ^errors.Error_Record) -> i64 {
 	count, problem := information.segments(catalog(), name^, result^)
-	return table_count(count, problem)
+	return table_count(count, problem, error)
 }
 
-// running gives one row for each module that runs in a program, from the module records of the kernel: the program, the module, its hash, and the hash that a replacement changed. The result is the count of rows; -3: the caller does not act for the person, or the kernel refused the report to this program.
+// running gives one row for each module that runs in a program, from the module records of the kernel: the program, the module, its hash, and the hash that a replacement changed. The result is the count of rows, or a negative number with an error record. The error kinds: No_Grant (-3, the caller does not act for the person); Refused (-3, the kernel refused the report to this program, with its status).
 @(export, link_name = "running")
-running :: proc "c" (result: ^[]information.Running) -> i64 {
+running :: proc "c" (result: ^[]information.Running, error: ^errors.Error_Record) -> i64 {
 	if caller := system.service_caller(); caller != nil && caller.grant & isolated.CALLER_PERSON == 0 {
-		return -3
+		return errors.fail(error, -3, .No_Grant, .Person)
 	}
 	count, problem := information.running(machine, catalog(), result^)
-	return table_count(count, problem)
+	return table_count(count, problem, error)
 }
 
 // replacements gives one row for each record of the replacement table of the machine: where an import names the module `from`, a loader gives the module `to`. The result is the count of rows.

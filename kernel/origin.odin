@@ -1,6 +1,7 @@
 package kernel
 
 import "base:intrinsics"
+import "contract:errors"
 
 // The origin tree: what came from which handle (property 13).
 //
@@ -121,6 +122,7 @@ holding_end :: proc "contextless" (holding: Holding) -> bool {
 			return false
 		}
 		handle_close(program, slot)
+		slot.ended = u8(errors.End.Revoked)
 	} else {
 		mapping := &program.mappings[n - HANDLE_CAPACITY]
 		if mapping.page_count == 0 {

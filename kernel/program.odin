@@ -1,5 +1,6 @@
 package kernel
 
+import "contract:errors"
 import "contract:ring"
 import "base:intrinsics"
 import op "contract:operation"
@@ -71,6 +72,7 @@ RIGHTS_LOG :: op.Rights{.Give, .Write}
 
 Handle_Slot :: struct {
 	kind:       Object_Kind,
+	ended:      u8, // An empty slot: how the handle of the generation before ended (errors.End). For an error record.
 	generation: u16,
 	rights:     op.Rights,
 	object:     u32,
@@ -516,7 +518,7 @@ handle_close :: proc "contextless" (program: ^Program, slot: ^Handle_Slot) {
 			}
 		}
 	}
-	slot^ = {generation = slot.generation + 1}
+	slot^ = {generation = slot.generation + 1, ended = u8(errors.End.Closed)}
 }
 
 // map puts pages of a region in the address space of a program. origin is
@@ -1194,6 +1196,7 @@ kernel_interrupt :: proc "c" (frame: ^Frame) {
 		} else {
 			log_in("fault", .Warning, "kernel: program ", program_name(&programs[program]), " stopped: ", name, " vector ", frame.vector, " at ", Hex(frame.rip), " address ", Hex(cr2_read()), ", in module ", hash_head(found.hash), " at offset ", Hex(frame.rip - found.base), ", which replaces ", hash_head(found.replaces))
 		}
+		stack_trace(&programs[program], frame, &programs[program].stop)
 		program_stop(program, op.STOP_CODE_FAULT + u32(frame.vector))
 	}
 	if !from_program {

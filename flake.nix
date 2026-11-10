@@ -15,7 +15,9 @@
     pkgs = inputs.nixpkgs.legacyPackages.${system};
 
     # What tools/kerneltool needs on the path.
-    buildTools = [pkgs.odin pkgs.llvmPackages.lld pkgs.nasm pkgs.qemu pkgs.coreutils];
+    # llc comes from the LLVM of the Odin compiler (18): Odin writes LLVM IR, and
+    # llc makes each object with frame pointers.
+    buildTools = [pkgs.odin pkgs.llvmPackages_18.llvm pkgs.llvmPackages.lld pkgs.nasm pkgs.qemu pkgs.coreutils];
 
     # The UEFI firmware of the first machine. kerneltool reads these two names.
     firmware = {

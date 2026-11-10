@@ -32,6 +32,7 @@ Export_Description :: struct {
 	// a Handle: the rights that the callee needs.
 	details:       []u32,
 	result_detail: u32,
+	error_record:  u32, // Not 0: the export gives an error record, with this record (module.Function.error_record).
 }
 
 // The description of a record: what module.Record and its fields hold.
@@ -229,6 +230,7 @@ convert :: proc(name: string, elf: []u8, description: Module_Description, import
 			copy(function.parameters[:], description.parameters)
 			copy(function.parameter_details[:], description.details)
 			function.result_detail = description.result_detail
+			function.error_record = description.error_record
 			append(&string_bytes, export_name)
 			append(&string_bytes, description.about)
 			function.text_offset = u32(len(string_bytes))

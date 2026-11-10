@@ -16,6 +16,7 @@
 // end: a call gives Gone, and the program continues.
 package storage
 
+import "contract:errors"
 import "contract:isolated"
 import module "contract:module"
 import "contract:ring"
@@ -28,7 +29,8 @@ VALUE_FILE_SIZE :: 3 // The size of the file of the storage service.
 FILE_ADDRESS :: 0x0000_3100_0000_0000 // Where the root service maps that file.
 
 // The answer of an export of the storage service that is not a generation
-// or a size: one of these numbers.
+// or a size: one of these numbers. The error record of the call says more
+// (contract/errors): the client gives it to its program.
 ERROR_NO_STORE :: -1 // The caller has no grant of a store.
 ERROR_NO_BUDGET :: -2 // The store would have more blocks than its limit.
 ERROR_NAME :: -3 // The name of the object is empty, too long, or has a zero byte.
@@ -54,6 +56,7 @@ Status :: enum {
 	Gone, // The connection ended: the grant was revoked, or the storage service stopped.
 	Refused, // The storage service refused the call: see isolated.Status.
 	Damaged, // The storage service has the object and cannot give its bytes: a block has a wrong check, or the disk gave an error.
+	Failed, // The export answered a negative number: the error record says why.
 }
 
 open :: proc "contextless" (ctx: ^system.Context) -> (client: Client, ok: bool) {
@@ -98,7 +101,9 @@ connected :: proc "contextless" (client: ^Client) -> bool {
 
 // call makes one isolated call of the export with a name. For a Text result,
 // text has the bytes in the call region: copy them before the next call.
-call :: proc "contextless" (client: ^Client, name: string, arguments: []isolated.Argument) -> (value: i64, text: []u8, status: Status) {
+// When the export answers a negative number, the status is Failed and error
+// has its error record, as the storage service wrote it.
+call :: proc "contextless" (client: ^Client, name: string, arguments: []isolated.Argument, error: ^errors.Error_Record = nil) -> (value: i64, text: []u8, status: Status) {
 	if !connected(client) {
 		return 0, nil, .Gone
 	}
@@ -115,7 +120,7 @@ call :: proc "contextless" (client: ^Client, name: string, arguments: []isolated
 	if export == 0 {
 		return 0, nil, .Refused
 	}
-	offset, size, buffer, ok := isolated.encode(client.file, function, arguments, client.region)
+	offset, size, buffer, error_place, ok := isolated.encode(client.file, function, arguments, client.region)
 	if !ok {
 		return 0, nil, .Refused
 	}
@@ -137,6 +142,13 @@ call :: proc "contextless" (client: ^Client, name: string, arguments: []isolated
 			if isolated.Status(completion.kind) != .Ok {
 				return 0, nil, .Refused
 			}
+			if i64(completion.values[0]) < 0 && error_place.count != 0 {
+				// The service wrote it: values only, read as values.
+				if error != nil {
+					error^ = (^errors.Error_Record)(raw_data(client.region[error_place.start:]))^
+				}
+				return i64(completion.values[0]), nil, .Failed
+			}
 			if function.result == .Text {
 				result, complete := isolated.result_text(client.region, buffer, completion.values[0])
 				if !complete {
@@ -155,11 +167,12 @@ call :: proc "contextless" (client: ^Client, name: string, arguments: []isolated
 }
 
 // write replaces an object of the store with bytes, in one commit. The
-// result is the generation of the commit, or a negative number (see the
-// export write of the storage service).
-write :: proc "contextless" (client: ^Client, name: string, data: []u8) -> (generation: i64, status: Status) {
+// result is the generation of the commit, or a negative number with the
+// status Failed and the error record (see the export write of the storage
+// service).
+write :: proc "contextless" (client: ^Client, name: string, data: []u8, error: ^errors.Error_Record = nil) -> (generation: i64, status: Status) {
 	arguments := [2]isolated.Argument{{text = transmute([]u8)name}, {text = data}}
-	generation, _, status = call(client, "write", arguments[:])
+	generation, _, status = call(client, "write", arguments[:], error)
 	return generation, status
 }
 
@@ -167,18 +180,25 @@ write :: proc "contextless" (client: ^Client, name: string, data: []u8) -> (gene
 // false when the store has no such object. The status Damaged says that
 // the store has the object and that its bytes did not come: the caller
 // must not take it for an empty object.
-read :: proc "contextless" (client: ^Client, name: string, result: []u8) -> (bytes: []u8, found: bool, status: Status) {
+read :: proc "contextless" (client: ^Client, name: string, result: []u8, error: ^errors.Error_Record = nil) -> (bytes: []u8, found: bool, status: Status) {
 	arguments := [1]isolated.Argument{{text = transmute([]u8)name}}
 	size: i64
-	size, _, status = call(client, "size", arguments[:])
-	if status == .Ok && size == ERROR_DAMAGED {
+	size, _, status = call(client, "size", arguments[:], error)
+	if status == .Failed && size == ERROR_DAMAGED {
 		return nil, false, .Damaged
 	}
-	if status != .Ok || size < 0 {
+	if status == .Failed && size == ERROR_ABSENT {
+		return nil, false, .Ok // No such object: found is false.
+	}
+	if status != .Ok {
 		return nil, false, status
 	}
 	text: []u8
-	_, text, status = call(client, "read", arguments[:])
+	answer: i64
+	answer, text, status = call(client, "read", arguments[:], error)
+	if status == .Failed && answer == ERROR_DAMAGED {
+		return nil, false, .Damaged
+	}
 	if status != .Ok {
 		return nil, false, status
 	}
@@ -187,4 +207,10 @@ read :: proc "contextless" (client: ^Client, name: string, result: []u8) -> (byt
 	}
 	count := copy(result, text)
 	return result[:count], true, .Ok
+}
+
+// error_text writes the sentence of an error record that the storage service
+// gave: the names come from the description of the export in its file.
+error_text :: proc "contextless" (writer: ^system.Writer, client: ^Client, error: ^errors.Error_Record) {
+	system.export_error_text(writer, client.file, u32(clamp(error.operation, 0, i64(max(u32)))), "storage", error)
 }

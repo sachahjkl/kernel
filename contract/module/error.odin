@@ -30,6 +30,7 @@ Difference :: enum u32 {
 	Parameter_Detail = 4, // Parameter `parameter`: a Handle with other rights, or another Record.
 	Result_Type     = 5,
 	Result_Detail   = 6, // A Record or Table result with another record.
+	Error_Record    = 7, // One gives an error record and the other does not, or the two records differ.
 }
 
 // One side of a difference: a type, its detail (the rights of a Handle, or a
@@ -123,6 +124,9 @@ functions_compare :: proc "contextless" (file: []u8, index: u32, other_file: []u
 	}
 	if !details_equal(file, other_file, expected, found) {
 		return .Result_Detail, 0, expected, found
+	}
+	if (a.error_record == 0) != (b.error_record == 0) || a.error_record != 0 && !records_equal(file, a.error_record, other_file, b.error_record) {
+		return .Error_Record, 0, side(file, .Record, a.error_record), side(other_file, .Record, b.error_record)
 	}
 	return .None, 0, {}, {}
 }

@@ -31,6 +31,10 @@ enter :: proc "contextless" (index: u32) {
 			return
 		}
 		completion.kind = u32(status)
+		if status != .Ok {
+			// The error record: the values of a failed operation (diagnose.odin).
+			completion.values = transmute([7]u64)diagnose(thread.program, command, status)
+		}
 		ring.push(&thread.ring.completions, completion)
 	}
 	wait := thread.frame.rdi

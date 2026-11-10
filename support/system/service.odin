@@ -1,5 +1,6 @@
 package system
 
+import "contract:errors"
 import "contract:isolated"
 import op "contract:operation"
 import module "contract:module"
@@ -219,6 +220,12 @@ export_serve :: proc "contextless" (file: []u8, base: u64, region: []u8, ring_me
 	out: [CALL_RESULTS]u64
 	export_call(address, &prepared.registers, &floats, &out)
 	isolated.result_store(function, &prepared, region)
+	// A failure: the error record names the export. The export does not
+	// know its own number.
+	if prepared.error.count != 0 && i64(out[0]) < 0 {
+		error := (^errors.Error_Record)(raw_data(region[prepared.error.start:]))
+		error.operation = i64(command.kind)
+	}
 	// For a Text or Table result, this is the count; the bytes are in the
 	// call region.
 	if function.result == .Integer || function.result == .Text || function.result == .Table {

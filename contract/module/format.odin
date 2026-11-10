@@ -158,7 +158,12 @@ Function :: struct {
 	text_count:            u32,
 	parameter_details:     [PARAMETER_CAPACITY]u32, // What the type of each parameter needs: Type says what it is.
 	result_detail:         u32, // A Record or Table result: the index of the description of the record.
-	reserved_details:      u32,
+	// Not 0: the export gives an error record (contract/errors), and this is
+	// the index of its description in the record table. The caller gives one
+	// more argument after all the others, after the buffer of a result too:
+	// the address of the record. The export writes it when it fails, and only
+	// then: it fails when its integer result is negative.
+	error_record:          u32,
 }
 #assert(size_of(Function) == 96)
 

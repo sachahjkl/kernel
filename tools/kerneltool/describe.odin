@@ -468,6 +468,19 @@ describe_file :: proc(file: ^ast.File, list: ^[dynamic]Export_Description, state
 		parameters := make([dynamic]module.Type, context.temp_allocator)
 		names := make([dynamic]string, context.temp_allocator)
 		details := make([dynamic]u32, context.temp_allocator)
+		// An error record: the last parameter, with the name `error`, after
+		// the buffer of a result too.
+		if count := len(fields); count > 0 && len(fields[count - 1].names) == 1 && fields[count - 1].type != nil {
+			last, _ := fields[count - 1].names[0].derived.(^ast.Ident)
+			if last != nil && last.name == "error" {
+				number, is_record, record_ok := record_of(state, fields[count - 1].type, true)
+				if !is_record || !record_ok {
+					return describe_fail(path, fields[count - 1], "%s: the parameter error is the address of an error record (^errors.Error_Record), the last parameter", name)
+				}
+				description.error_record = number
+				fields = fields[:count - 1]
+			}
+		}
 		for field, index in fields {
 			if field.type == nil || len(field.names) == 0 {
 				return describe_fail(path, field, "%s: each parameter has a name and a type", name)
@@ -551,7 +564,10 @@ describe_file :: proc(file: ^ast.File, list: ^[dynamic]Export_Description, state
 		case description.result == .Table:
 			return describe_fail(path, declaration, "%s: a Table result gives its count of records: the result type is i64", name)
 		}
-		if len(parameters) + int(description.result == .Text || description.result == .Record || description.result == .Table) > module.PARAMETER_CAPACITY {
+		if description.error_record != 0 && (description.result == .Record || description.result == .None) {
+			return describe_fail(path, declaration, "%s: an export with an error record gives an i64 result: it fails when the result is negative", name)
+		}
+		if len(parameters) + int(description.result == .Text || description.result == .Record || description.result == .Table) + int(description.error_record != 0) > module.PARAMETER_CAPACITY {
 			return describe_fail(path, declaration, "%s has more than %d parameters", name, module.PARAMETER_CAPACITY)
 		}
 		description.parameters = parameters[:]

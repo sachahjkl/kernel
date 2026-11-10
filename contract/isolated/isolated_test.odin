@@ -20,7 +20,7 @@ arguments_round_trip :: proc(t: ^testing.T) {
 	function := description(.Integer, .Text, .Integer, .Text, .Text, .Integer)
 	first, second := "the first text", "second"
 	arguments := [?]Argument{{integer = 7}, {text = transmute([]u8)first}, {integer = max(u64)}, {text = transmute([]u8)second}, {}, {integer = 1 << 40}}
-	offset, size, _, encoded := encode(nil, function, arguments[:], region[:])
+	offset, size, _, _, encoded := encode(nil, function, arguments[:], region[:])
 	testing.expect(t, encoded)
 	testing.expect_value(t, size, 3 * 8 + 3 * 16)
 
@@ -43,17 +43,17 @@ arguments_round_trip :: proc(t: ^testing.T) {
 encode_refuses :: proc(t: ^testing.T) {
 	region: [64]u8
 	long: [64]u8
-	_, _, _, ok := encode(nil, description(.Integer), {}, region[:])
+	_, _, _, _, ok := encode(nil, description(.Integer), {}, region[:])
 	testing.expect(t, !ok, "the argument count differs from the description")
-	_, _, _, ok = encode(nil, description(.Text), {{text = long[:]}}, region[:])
+	_, _, _, _, ok = encode(nil, description(.Text), {{text = long[:]}}, region[:])
 	testing.expect(t, !ok, "the text does not fit in the call region")
-	_, _, _, ok = encode(nil, description(.Text), {{text = long[:48]}}, region[:])
+	_, _, _, _, ok = encode(nil, description(.Text), {{text = long[:48]}}, region[:])
 	testing.expect(t, ok, "the text fills the call region exactly")
-	_, _, _, ok = encode(nil, description(module.Type(200)), {{}}, region[:])
+	_, _, _, _, ok = encode(nil, description(module.Type(200)), {{}}, region[:])
 	testing.expect(t, !ok, "the description has an unknown type")
 	unknown := description(.Integer)
 	unknown.parameter_count = module.PARAMETER_CAPACITY + 1
-	_, _, _, ok = encode(nil, unknown, {{}}, region[:])
+	_, _, _, _, ok = encode(nil, unknown, {{}}, region[:])
 	testing.expect(t, !ok, "the description has too many parameters")
 }
 
@@ -159,7 +159,7 @@ text_result :: proc(t: ^testing.T) {
 	function := description(.Text, .Integer)
 	function.result = .Text
 	argument := "abc"
-	offset, size, result, encoded := encode(nil, function, {{text = transmute([]u8)argument}, {integer = 5}}, region[:])
+	offset, size, result, _, encoded := encode(nil, function, {{text = transmute([]u8)argument}, {integer = 5}}, region[:])
 	testing.expect(t, encoded)
 	testing.expect_value(t, size, 16 + 8 + 16)
 	testing.expect_value(t, result, Slice{start = 43, count = 85})
@@ -184,7 +184,7 @@ text_result :: proc(t: ^testing.T) {
 
 	full := description(.Integer, .Integer, .Integer, .Integer, .Integer, .Integer)
 	full.result = .Text
-	_, _, _, ok := encode(nil, full, {{}, {}, {}, {}, {}, {}}, region[:])
+	_, _, _, _, ok := encode(nil, full, {{}, {}, {}, {}, {}, {}}, region[:])
 	testing.expect(t, !ok, "six parameters leave no register for the buffer")
 }
 
@@ -240,7 +240,7 @@ table_result :: proc(t: ^testing.T) {
 	function := description(.Text)
 	function.result, function.result_detail = .Table, 1
 	argument := "abc"
-	offset, size, result, encoded := encode(file, function, {{text = transmute([]u8)argument}}, region[:])
+	offset, size, result, _, encoded := encode(file, function, {{text = transmute([]u8)argument}}, region[:])
 	testing.expect(t, encoded)
 	testing.expect_value(t, size, 16 + 16)
 	// The text ends at 35; the records start at 40: 88 bytes, 3 records.
@@ -290,7 +290,7 @@ records_and_handles_round_trip :: proc(t: ^testing.T) {
 	function.result, function.result_detail = .Record, 1
 	sent := [2]u64{0x1_0007, 99}
 	arguments := [?]Argument{{record = ([^]u8)(&sent)[:16]}, {integer = 0x2_0009}, {integer = 5}}
-	offset, size, place, encoded := encode(file, function, arguments[:], region[:])
+	offset, size, place, _, encoded := encode(file, function, arguments[:], region[:])
 	testing.expect(t, encoded)
 	testing.expect_value(t, size, 4 * 8)
 	testing.expect_value(t, place.count, 16)
@@ -320,14 +320,52 @@ records_and_handles_round_trip :: proc(t: ^testing.T) {
 
 	// A record of another size, a handle of more than 32 bits, and a
 	// record that is not in the call region: refused.
-	_, _, _, encoded = encode(file, function, {{record = ([^]u8)(&sent)[:8]}, {}, {}}, region[:])
+	_, _, _, _, encoded = encode(file, function, {{record = ([^]u8)(&sent)[:8]}, {}, {}}, region[:])
 	testing.expect(t, !encoded)
-	_, _, _, encoded = encode(file, function, {{record = ([^]u8)(&sent)[:16]}, {integer = 1 << 32}, {}}, region[:])
+	_, _, _, _, encoded = encode(file, function, {{record = ([^]u8)(&sent)[:16]}, {integer = 1 << 32}, {}}, region[:])
 	testing.expect(t, !encoded)
-	offset, size, _, encoded = encode(file, function, arguments[:], region[:])
+	offset, size, _, _, encoded = encode(file, function, arguments[:], region[:])
 	(^u64)(&region[offset])^ = u64(len(region)) - 8
 	testing.expect(t, encoded && !decode(file, function, offset, size, region[:], &call))
 	// A description that names no record of the module: refused.
 	function.parameter_details[0] = 2
 	testing.expect(t, !decode(file, function, offset, size, region[:], &call))
+}
+
+// An export with an error record: one more field after the field of the
+// result, and a place of 56 bytes before the buffer of a Text result. The
+// export writes the record there, through the register after the buffer.
+@(test)
+error_record_place :: proc(t: ^testing.T) {
+	region: [256]u8
+	for &b in region {
+		b = 0xEE
+	}
+	function := description(.Text)
+	function.result = .Text
+	function.error_record = 1
+	argument := "name"
+	offset, size, result, error, encoded := encode(nil, function, {{text = transmute([]u8)argument}}, region[:])
+	testing.expect(t, encoded)
+	testing.expect_value(t, size, 16 + 16 + 8)
+	// The text ends at 44; the error record is at 48, the buffer after it.
+	testing.expect_value(t, error, Slice{start = 48, count = ERROR_RECORD_SIZE})
+	testing.expect_value(t, result.start, 48 + ERROR_RECORD_SIZE)
+	for b in region[48:][:ERROR_RECORD_SIZE] {
+		testing.expect_value(t, b, 0)
+	}
+	call: Call
+	testing.expect(t, decode(nil, function, offset, size, region[:], &call))
+	testing.expect_value(t, call.registers[2], u64(uintptr(&region[48])))
+	testing.expect_value(t, call.error, error)
+	// A place out of the call region, or not aligned: refused.
+	(^u64)(&region[32])^ = u64(len(region)) - 8
+	testing.expect(t, !decode(nil, function, offset, size, region[:], &call))
+	(^u64)(&region[32])^ = 49
+	testing.expect(t, !decode(nil, function, offset, size, region[:], &call))
+	// An export with an error record and six registers: no register is free.
+	full := description(.Integer, .Integer, .Integer, .Integer, .Integer, .Integer)
+	full.error_record = 1
+	_, _, _, _, encoded = encode(nil, full, {{}, {}, {}, {}, {}, {}}, region[:])
+	testing.expect(t, !encoded)
 }

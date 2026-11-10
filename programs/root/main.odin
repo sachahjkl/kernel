@@ -72,6 +72,8 @@ grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 		return {.Serve, .Data_Disk}
 	case "notes":
 		return {.Store}
+	case "errors":
+		return {.Store, .Image} // It makes errors in its store, and loads modules and starts fault from the boot image.
 	case "imports":
 		return {.Inspect, .Image} // It loads modules of the boot image, and measures with the cycle counter.
 	case "net":
@@ -88,6 +90,8 @@ store_limit_of :: proc "contextless" (name: string) -> u64 {
 	switch name {
 	case "console":
 		return 4 // A small limit: the test reaches it.
+	case "errors":
+		return 2 // One object is over the limit.
 	}
 	return 64
 }
@@ -166,6 +170,8 @@ things_of :: proc "contextless" (name: string) -> system.Budget_Amounts {
 		return {pages = 2048, programs = 1, threads = 1}
 	case "imports":
 		return {pages = 2048, programs = 3, threads = 3} // Two programs that import calendar.
+	case "errors":
+		return {pages = 2048, programs = 2, threads = 2} // It starts fault.
 	}
 	return {pages = 2048, programs = 1, threads = 1}
 }

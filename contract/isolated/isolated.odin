@@ -57,6 +57,12 @@
 // is the rest of the call region, from a multiple of 8 bytes. The callee
 // gives the count of records of the full table as its integer result.
 //
+// An export with an error record (module.Function.error_record) has one
+// more field, after all the others: the offset of the place of the record in
+// the call region (contract/errors, 56 bytes). In the direct call it is one
+// more register, after the buffer of a result. The receiver gives the export
+// the address of that place: the export only writes it, when it fails.
+//
 // The receiver trusts nothing in the call region. It copies the argument
 // record to private memory, and it checks each offset and each count
 // against the size of the call region (decode).
@@ -152,7 +158,10 @@ Call :: struct {
 	lent:       [module.HANDLE_CAPACITY]Lent, // The handles to prove before the call, and to close after it.
 	lent_count: int,
 	result:     Slice, // A Record result: its place in the call region, as offsets.
+	error:      Slice, // The place of the error record in the call region, as offsets. count 0: the export has none.
 }
+
+ERROR_RECORD_SIZE :: 56 // contract/errors: Error_Record.
 
 field_size :: proc "contextless" (type: module.Type) -> u64 {
 	switch type {
@@ -194,6 +203,13 @@ record_size :: proc "contextless" (function: module.Function) -> (size: u64, ok:
 	case:
 		return 0, false
 	}
+	if function.error_record != 0 {
+		registers := u64(function.parameter_count) + u64(function.result == .Text || function.result == .Table || function.result == .Record)
+		if registers >= module.PARAMETER_CAPACITY || function.result == .Record {
+			return 0, false
+		}
+		size += 8
+	}
 	return size, true
 }
 
@@ -218,11 +234,14 @@ load :: proc "contextless" (region: []u8, offset: u64, $T: typeid) -> (value: T)
 // file is the module of the export: it has the descriptions of the records.
 // ok is false when the arguments do not agree with the description, or when
 // the call region is too small.
-encode :: proc "contextless" (file: []u8, function: module.Function, arguments: []Argument, region: []u8) -> (offset, size: u64, result: Slice, ok: bool) {
+// For an export with an error record, `error` names its place, after the
+// result: encode writes zero bytes there. The caller reads it when the
+// integer result is negative.
+encode :: proc "contextless" (file: []u8, function: module.Function, arguments: []Argument, region: []u8) -> (offset, size: u64, result: Slice, error: Slice, ok: bool) {
 	function := function
 	size = record_size(function) or_return
 	if len(arguments) != int(function.parameter_count) || size > u64(len(region)) {
-		return 0, 0, {}, false
+		return 0, 0, {}, {}, false
 	}
 	field := u64(0)
 	next := size // Where the bytes of the next Text go.
@@ -233,7 +252,7 @@ encode :: proc "contextless" (file: []u8, function: module.Function, arguments: 
 		case .Text:
 			text := arguments[index].text
 			if u64(len(text)) > u64(len(region)) - next {
-				return 0, 0, {}, false
+				return 0, 0, {}, {}, false
 			}
 			intrinsics.mem_copy_non_overlapping(raw_data(region[next:]), raw_data(text), len(text))
 			store(region, field, Slice{start = next, count = u64(len(text))})
@@ -243,42 +262,59 @@ encode :: proc "contextless" (file: []u8, function: module.Function, arguments: 
 			bytes := arguments[index].record
 			next = (next + 7) &~ 7
 			if len(bytes) != int(described.size) || next > u64(len(region)) || u64(len(bytes)) > u64(len(region)) - next {
-				return 0, 0, {}, false
+				return 0, 0, {}, {}, false
 			}
 			intrinsics.mem_copy_non_overlapping(raw_data(region[next:]), raw_data(bytes), len(bytes))
 			store(region, field, next)
 			next += u64(len(bytes))
 		case .Handle:
 			if arguments[index].integer >> 32 != 0 {
-				return 0, 0, {}, false
+				return 0, 0, {}, {}, false
 			}
 			store(region, field, arguments[index].integer)
 		}
 		field += field_size(type)
 	}
+	// The place of the error record: after the bytes of the arguments, and
+	// before the buffer of a result, which is the rest of the region.
+	if function.error_record != 0 {
+		next = (next + 7) &~ 7
+		if next > u64(len(region)) || ERROR_RECORD_SIZE > u64(len(region)) - next {
+			return 0, 0, {}, {}, false
+		}
+		error = {start = next, count = ERROR_RECORD_SIZE}
+		intrinsics.mem_zero(raw_data(region[next:]), ERROR_RECORD_SIZE)
+		next += ERROR_RECORD_SIZE
+	}
 	#partial switch function.result {
 	case .Text:
 		result = {start = next, count = u64(len(region)) - next}
 		store(region, field, result)
+		field += size_of(Slice)
 	case .Table:
 		described := module.record_type(file, function.result_detail) or_return
 		next = (next + 7) &~ 7
 		if next > u64(len(region)) || described.size == 0 {
-			return 0, 0, {}, false
+			return 0, 0, {}, {}, false
 		}
 		result = {start = next, count = (u64(len(region)) - next) / u64(described.size)}
 		store(region, field, result)
+		field += size_of(Slice)
 	case .Record:
 		described := module.record_type(file, function.result_detail) or_return
 		next = (next + 7) &~ 7
 		if next > u64(len(region)) || u64(described.size) > u64(len(region)) - next {
-			return 0, 0, {}, false
+			return 0, 0, {}, {}, false
 		}
 		result = {start = next, count = u64(described.size)}
 		intrinsics.mem_zero(raw_data(region[next:]), int(described.size))
 		store(region, field, next)
+		field += 8
 	}
-	return 0, size, result, true
+	if function.error_record != 0 {
+		store(region, field, error.start)
+	}
+	return 0, size, result, error, true
 }
 
 // result_record gives the Record result of a call: the bytes at the place
@@ -351,7 +387,7 @@ decode :: proc "contextless" (file: []u8, function: module.Function, offset, siz
 		return true
 	}
 	// One copy: the other program can change the call region at any time.
-	record: [(module.PARAMETER_CAPACITY + 1) * size_of(Slice)]u8
+	record: [(module.PARAMETER_CAPACITY + 2) * size_of(Slice)]u8
 	intrinsics.mem_copy_non_overlapping(&record, raw_data(region[offset:]), int(size))
 	field := u64(0)
 	for type, index in function.parameters[:function.parameter_count] {
@@ -422,6 +458,20 @@ decode :: proc "contextless" (file: []u8, function: module.Function, offset, siz
 		call.records[index] = {}
 		call.result = {start = start, count = u64(described.size)}
 		call.registers[index] = u64(uintptr(&call.records[index]))
+	}
+	// The error record: the export writes it in the call region, at a place
+	// that the caller chose and the receiver checked. The receiver does not
+	// read it.
+	call.error = {}
+	if function.error_record != 0 {
+		field += function.result == .Text || function.result == .Table ? size_of(Slice) : 0
+		start := load(record[:], field, u64)
+		if start > limit || ERROR_RECORD_SIZE > limit - start || start % 8 != 0 {
+			return false
+		}
+		call.error = {start = start, count = ERROR_RECORD_SIZE}
+		registers := u64(function.parameter_count) + u64(function.result == .Text || function.result == .Table)
+		call.registers[registers] = u64(uintptr(raw_data(region))) + start
 	}
 	return true
 }

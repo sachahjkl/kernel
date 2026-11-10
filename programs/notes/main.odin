@@ -5,6 +5,7 @@
 // Keys: a character adds to the note, Backspace removes the last one, Enter writes the note on the log. Tab counts 1000 more, one commit for each step.
 package notes
 
+import "contract:errors"
 import "support:display"
 import "support:graphics"
 import "support:storage"
@@ -37,11 +38,15 @@ gone: bool // The grant of the store ended.
 
 // keep writes one object. It gives false when the store is gone or refuses.
 keep :: proc "contextless" (name: string, data: []u8) -> bool {
-	result, status := storage.write(&client, name, data)
+	error: errors.Error_Record
+	result, status := storage.write(&client, name, data, &error)
 	if status != .Ok || result < 0 {
 		gone = status == .Gone || result == -1
 		if !gone {
-			system.log("notes: the storage service refused the object ", name, ": ", result)
+			buffer: [256]u8
+			writer := system.Writer{buffer = buffer[:]}
+			storage.error_text(&writer, &client, &error)
+			system.log("notes: the storage service refused the object ", name, ": ", system.written(&writer))
 		}
 		return false
 	}

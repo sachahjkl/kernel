@@ -1,6 +1,7 @@
 package console
 
 import "contract:blake3"
+import "contract:errors"
 import info "contract:boot_info"
 import "contract:isolated"
 import op "contract:operation"
@@ -749,9 +750,19 @@ call_export :: proc "contextless" (item: ^Command, arguments: []Value) -> Value 
 		table = table_buffer(item.file, item.function.result_detail)
 		integers[len(arguments)] = u64(uintptr(&table.slice))
 	}
+	// An error record: one more argument, after the buffer of a result. The
+	// export writes it when it fails.
+	error: errors.Error_Record
+	if item.function.error_record != 0 {
+		integers[len(arguments) + int(item.result == .Text || item.result == .Table)] = u64(uintptr(&error))
+	}
 	floats: [system.CALL_FLOATS]u64
 	results: [system.CALL_RESULTS]u64
 	system.export_call(item.address, &integers, &floats, &results)
+	if item.function.error_record != 0 && i64(results[0]) < 0 {
+		error.operation = i64(item.export)
+		return export_failure(item, &error, i64(results[0]))
+	}
 	#partial switch item.result {
 	case .Integer:
 		return {kind = .Integer, integer = i64(results[0])}
@@ -940,12 +951,18 @@ fail_load :: proc "contextless" (what: string, name: string) -> Value {
 // ran, as the loader of the program recorded it, and the module that it
 // replaced.
 fault_print :: proc "contextless" (report: ^op.Stop_Report) {
-	if report.module.size == 0 {
-		return
+	if report.module.size != 0 {
+		print("error: the instruction is at offset ", system.Hex(report.instruction - report.module.base), " of ", module_text(report.module.hash), "\n")
+		if report.module.replaces != {} {
+			print("error: ", module_text(report.module.hash), " runs in place of ", module_text(report.module.replaces), "\n")
+		}
 	}
-	print("error: the instruction is at offset ", system.Hex(report.instruction - report.module.base), " of ", module_text(report.module.hash), "\n")
-	if report.module.replaces != {} {
-		print("error: ", module_text(report.module.hash), " runs in place of ", module_text(report.module.replaces), "\n")
+	// The stack trace: the instruction, then the return address of each call.
+	for &frame, number in report.frames[:min(report.frame_count, op.STOP_FRAME_CAPACITY)] {
+		buffer: [96]u8
+		writer := system.Writer{buffer = buffer[:]}
+		system.frame_text(&writer, image, &frame)
+		print("error: frame ", u64(number), ": ", system.written(&writer), number == 0 ? ", the instruction" : "", "\n")
 	}
 }
 
@@ -958,6 +975,19 @@ sandbox_end :: proc "contextless" (sandbox: ^Sandbox) {
 	}
 	system.close(sandbox.program)
 	sandbox.program = 0
+}
+
+// export_failure prints the sentence of the error record of an export that
+// failed, after "error: ". The names come from the description.
+export_failure :: proc "contextless" (item: ^Command, error: ^errors.Error_Record, answer: i64) -> Value {
+	argument := ""
+	if error.argument >= 1 && error.argument <= i64(item.parameter_count) {
+		argument = item.parameter_names[error.argument - 1]
+	}
+	buffer: [240]u8
+	writer := system.Writer{buffer = buffer[:]}
+	system.error_text(&writer, error, item.name, argument)
+	return fail(system.written(&writer), " (", answer, ")")
 }
 
 // stop_reason gives the text of the code of a stopped program.
@@ -1013,7 +1043,7 @@ call_isolated :: proc "contextless" (item: ^Command, arguments: []Value) -> Valu
 	case:
 		return fail(item.name, ": the program ", sandbox.name, " has no room for one more handle")
 	}
-	offset, size, buffer, ok := isolated.encode(item.file, item.function, encoded[:len(arguments)], sandbox.region)
+	offset, size, buffer, error_place, ok := isolated.encode(item.file, item.function, encoded[:len(arguments)], sandbox.region)
 	if !ok {
 		return fail("the arguments of ", item.name, " do not fit in the call region")
 	}
@@ -1037,6 +1067,12 @@ call_isolated :: proc "contextless" (item: ^Command, arguments: []Value) -> Valu
 			}
 			switch isolated.Status(completion.kind) {
 			case .Ok:
+				// A failure: the other program wrote the error record, values
+				// only, in the place that encode chose.
+				if error_place.count != 0 && i64(completion.values[0]) < 0 {
+					error := (^errors.Error_Record)(raw_data(sandbox.region[error_place.start:]))^
+					return export_failure(item, &error, i64(completion.values[0]))
+				}
 				#partial switch item.result {
 				case .Integer:
 					return {kind = .Integer, integer = i64(completion.values[0])}

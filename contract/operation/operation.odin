@@ -166,6 +166,21 @@ Stop_Report :: struct {
 	instruction: u64, // The address of the instruction.
 	address:     u64, // A page fault: the address that the instruction used. 0 for another fault.
 	module:      Module_Record, // The module of the instruction, as the loader recorded it: the module that ran. Zero: no record.
+	// The stack trace: frame 0 is the instruction, each next frame the
+	// return address of a call, from the frame pointers of the thread.
+	frame_count: u64,
+	frames:      [STOP_FRAME_CAPACITY]Stop_Frame,
+}
+
+STOP_FRAME_CAPACITY :: 16
+
+// One frame of a stack trace. A reader names it "module + offset": the
+// offset is address - base. A return address is the instruction after
+// the call.
+Stop_Frame :: struct {
+	address: u64,
+	base:    u64, // The base of the module record that holds the address. 0: no record holds it.
+	hash:    [32]u8, // The hash of that module.
 }
 
 // The module records of one program, in the order of their addresses.

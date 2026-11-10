@@ -2,6 +2,7 @@ package storage_service
 
 import "base:intrinsics"
 import "contract:block"
+import "contract:errors"
 import "contract:ring"
 import format "contract:store"
 import answers "support:storage"
@@ -425,14 +426,21 @@ Object_Name :: struct {
 // name_keep copies a name. It refuses an empty name, a name that does not
 // fit with one zero byte after it, and a name with a zero byte: a zero
 // byte ends a name on the disk, and a first zero byte says that the place
-// of an object is free.
-name_keep :: proc "contextless" (given: string) -> (kept: Object_Name, ok: bool) {
-	if len(given) == 0 || len(given) >= OBJECT_NAME_CAPACITY {
+// of an object is free. The name is argument 1 of each export. It writes
+// the error record of a refusal.
+name_keep :: proc "contextless" (given: string, error: ^errors.Error_Record) -> (kept: Object_Name, ok: bool) {
+	if len(given) == 0 {
+		errors.fail(error, ERROR_NAME, .Empty, .Bytes, 1, 0, OBJECT_NAME_CAPACITY - 1)
+		return {}, false
+	}
+	if len(given) >= OBJECT_NAME_CAPACITY {
+		errors.fail(error, ERROR_NAME, .Too_Long, .Bytes, 1, i64(len(given)), OBJECT_NAME_CAPACITY - 1)
 		return {}, false
 	}
 	kept.count = copy(kept.bytes[:], given)
-	for byte in kept.bytes[:kept.count] {
+	for byte, offset in kept.bytes[:kept.count] {
 		if byte == 0 {
+			errors.fail(error, ERROR_NAME, .Bad_Byte, .Bytes, 1, i64(offset), 0, 0)
 			return {}, false
 		}
 	}
@@ -444,33 +452,33 @@ name_keep :: proc "contextless" (given: string) -> (kept: Object_Name, ok: bool)
 // It gives the generation of the commit, or an ERROR_ number. It does not
 // need the old blocks of the object: a damaged object can be replaced and
 // removed.
-change :: proc "contextless" (store_name: string, limit: u64, given: string, data: []u8, remove: bool) -> i64 {
+change :: proc "contextless" (store_name: string, limit: u64, given: string, data: []u8, remove: bool, error: ^errors.Error_Record) -> i64 {
 	if len(store_name) == 0 || limit == 0 {
-		return ERROR_NO_STORE
+		return errors.fail(error, ERROR_NO_STORE, .No_Grant, .Store)
 	}
 	if broken {
-		return ERROR_DISK
+		return errors.fail(error, ERROR_DISK, .Device, .None, 0, 0, 0, 1)
 	}
-	kept, name_ok := name_keep(given)
+	kept, name_ok := name_keep(given, error)
 	if !name_ok {
 		return ERROR_NAME
 	}
 	name := string(kept.bytes[:kept.count])
 	count := (u64(len(data)) + BLOCK_SIZE - 1) / BLOCK_SIZE
 	if count > OBJECT_BLOCKS_LIMIT {
-		return ERROR_TOO_LARGE
+		return errors.fail(error, ERROR_TOO_LARGE, .Too_Long, .Bytes, 2, i64(len(data)), OBJECT_BLOCKS_LIMIT * BLOCK_SIZE)
 	}
 	store_index := store_find(store_name)
 	next := root
 	table: Table
 	if store_index >= 0 {
 		if store_damaged[store_index] {
-			return ERROR_DAMAGED
+			return errors.fail(error, ERROR_DAMAGED, .Damaged, .Stores)
 		}
 		table = tables[store_index]
 	} else {
 		if remove {
-			return ERROR_ABSENT
+			return errors.fail(error, ERROR_ABSENT, .Absent, .Objects, 1)
 		}
 		for &store, index in root.stores {
 			if store.name[0] == 0 {
@@ -479,7 +487,7 @@ change :: proc "contextless" (store_name: string, limit: u64, given: string, dat
 			}
 		}
 		if store_index < 0 {
-			return ERROR_FULL
+			return errors.fail(error, ERROR_FULL, .Full, .Stores, 0, 0, STORE_CAPACITY)
 		}
 		next.stores[store_index] = {used = 1}
 		copy(next.stores[store_index].name[:NAME_CAPACITY - 1], store_name)
@@ -491,7 +499,7 @@ change :: proc "contextless" (store_name: string, limit: u64, given: string, dat
 	if object_index >= 0 {
 		old = table.objects[object_index]
 	} else if remove {
-		return ERROR_ABSENT
+		return errors.fail(error, ERROR_ABSENT, .Absent, .Objects, 1)
 	} else {
 		for &object, index in table.objects {
 			if object.name[0] == 0 {
@@ -500,14 +508,14 @@ change :: proc "contextless" (store_name: string, limit: u64, given: string, dat
 			}
 		}
 		if object_index < 0 {
-			return ERROR_FULL
+			return errors.fail(error, ERROR_FULL, .Full, .Objects, 0, 0, OBJECT_CAPACITY)
 		}
 	}
 	old_count := min((old.size + BLOCK_SIZE - 1) / BLOCK_SIZE, OBJECT_BLOCKS_LIMIT)
 	old_blocks := old.list.block != 0 ? 1 + old_count : 0
 	new_blocks := count != 0 ? 1 + count : 0
 	if entry.used - old_blocks + new_blocks > limit && new_blocks > old_blocks {
-		return ERROR_NO_BUDGET
+		return errors.fail(error, ERROR_NO_BUDGET, .Over_Limit, .Blocks, 2, i64(entry.used - old_blocks + new_blocks), i64(limit))
 	}
 	// The old list names the old data: read it before the change. With a
 	// wrong list the old data is not known: the next start finds it free.
@@ -516,7 +524,7 @@ change :: proc "contextless" (store_name: string, limit: u64, given: string, dat
 	if old.list.block != 0 {
 		_, state := read_checked({old.list}, 0)
 		if state == .Device {
-			return ERROR_DISK
+			return errors.fail(error, ERROR_DISK, .Device)
 		}
 		if state == .Good {
 			old_list = (^List)(raw_data(slot(0)))^
@@ -539,7 +547,7 @@ change :: proc "contextless" (store_name: string, limit: u64, given: string, dat
 		number := allocate()
 		if number == 0 {
 			undo(taken[:taken_count])
-			return ERROR_FULL
+			return errors.fail(error, ERROR_FULL, .Full, .Blocks, 0, 0, i64(root.disk_blocks))
 		}
 		taken[taken_count] = number
 		taken_count += 1
@@ -563,7 +571,7 @@ change :: proc "contextless" (store_name: string, limit: u64, given: string, dat
 			number := allocate()
 			if number == 0 {
 				undo(taken[:taken_count])
-				return ERROR_FULL
+				return errors.fail(error, ERROR_FULL, .Full, .Blocks, 0, 0, i64(root.disk_blocks))
 			}
 			taken[taken_count] = number
 			taken_count += 1
@@ -576,7 +584,7 @@ change :: proc "contextless" (store_name: string, limit: u64, given: string, dat
 	table_number := allocate()
 	if table_number == 0 {
 		undo(taken[:taken_count])
-		return ERROR_FULL
+		return errors.fail(error, ERROR_FULL, .Full, .Blocks, 0, 0, i64(root.disk_blocks))
 	}
 	taken[taken_count] = table_number
 	taken_count += 1
@@ -590,7 +598,7 @@ change :: proc "contextless" (store_name: string, limit: u64, given: string, dat
 	// The blocks, then the root. Each one is on the disk before the next step.
 	if !transfer(.Write, requests[:request_count]) || !flush() {
 		undo(taken[:taken_count])
-		return ERROR_DISK
+		return errors.fail(error, ERROR_DISK, .Device)
 	}
 	next.generation = root.generation + 1
 	next.check = root_check(&next)
@@ -601,7 +609,7 @@ change :: proc "contextless" (store_name: string, limit: u64, given: string, dat
 		// cannot know. It stops serving changes.
 		undo(taken[:taken_count])
 		broken = true
-		return ERROR_DISK
+		return errors.fail(error, ERROR_DISK, .Device)
 	}
 	// The commit is on the disk. What the old root named and the new one
 	// does not is free for the next commit.
@@ -621,23 +629,26 @@ change :: proc "contextless" (store_name: string, limit: u64, given: string, dat
 	return i64(root.generation)
 }
 
-// object_state gives the size of an object in bytes, or ERROR_ABSENT,
-// ERROR_DAMAGED.
-object_state :: proc "contextless" (store_name: string, given: string) -> i64 {
-	kept, name_ok := name_keep(given)
+// object_state gives the size of an object in bytes, or ERROR_NAME,
+// ERROR_ABSENT, ERROR_DAMAGED.
+object_state :: proc "contextless" (store_name: string, given: string, error: ^errors.Error_Record) -> i64 {
+	kept, name_ok := name_keep(given, error)
+	if !name_ok {
+		return ERROR_NAME
+	}
 	store_index := store_find(store_name)
-	if !name_ok || store_index < 0 {
-		return ERROR_ABSENT
+	if store_index < 0 {
+		return errors.fail(error, ERROR_ABSENT, .Absent, .Objects, 1)
 	}
 	if store_damaged[store_index] {
-		return ERROR_DAMAGED
+		return errors.fail(error, ERROR_DAMAGED, .Damaged, .Stores)
 	}
 	object_index := object_find(&tables[store_index], string(kept.bytes[:kept.count]))
 	if object_index < 0 {
-		return ERROR_ABSENT
+		return errors.fail(error, ERROR_ABSENT, .Absent, .Objects, 1)
 	}
 	if damaged[store_index] >> uint(object_index) & 1 != 0 {
-		return ERROR_DAMAGED
+		return errors.fail(error, ERROR_DAMAGED, .Damaged, .Objects, 1)
 	}
 	return i64(tables[store_index].objects[object_index].size)
 }
@@ -646,18 +657,21 @@ object_state :: proc "contextless" (store_name: string, given: string) -> i64 {
 // of the object, or ERROR_ABSENT, ERROR_DISK, ERROR_DAMAGED. Each read
 // checks the blocks again: an object is damaged as long as a read finds a
 // wrong block.
-read :: proc "contextless" (store_name: string, given: string, result: []u8) -> i64 {
-	kept, name_ok := name_keep(given)
+read :: proc "contextless" (store_name: string, given: string, result: []u8, error: ^errors.Error_Record) -> i64 {
+	kept, name_ok := name_keep(given, error)
+	if !name_ok {
+		return ERROR_NAME
+	}
 	store_index := store_find(store_name)
-	if !name_ok || store_index < 0 {
-		return ERROR_ABSENT
+	if store_index < 0 {
+		return errors.fail(error, ERROR_ABSENT, .Absent, .Objects, 1)
 	}
 	if store_damaged[store_index] {
-		return ERROR_DAMAGED
+		return errors.fail(error, ERROR_DAMAGED, .Damaged, .Stores)
 	}
 	object_index := object_find(&tables[store_index], string(kept.bytes[:kept.count]))
 	if object_index < 0 {
-		return ERROR_ABSENT
+		return errors.fail(error, ERROR_ABSENT, .Absent, .Objects, 1)
 	}
 	object := tables[store_index].objects[object_index]
 	if object.list.block == 0 {
@@ -674,10 +688,10 @@ read :: proc "contextless" (store_name: string, given: string, result: []u8) -> 
 	}
 	switch state {
 	case .Device:
-		return ERROR_DISK
+		return errors.fail(error, ERROR_DISK, .Device)
 	case .Wrong:
 		damaged[store_index] |= bit
-		return ERROR_DAMAGED
+		return errors.fail(error, ERROR_DAMAGED, .Damaged, .Objects, 1)
 	case .Good:
 		damaged[store_index] &~= bit
 	}
