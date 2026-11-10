@@ -15,6 +15,8 @@ import op "contract:operation"
 import "contract:ring"
 import "support:system"
 import "support:terminal"
+import "contract:block"
+import "support:pci"
 
 ROOT_MARK :: "root: ok"
 
@@ -28,6 +30,8 @@ Grant :: enum {
 	Log_Records, // Read the records of the log.
 	Serve, // A service: other programs call its exports through connections.
 	Terminal, // The program has no surface: it writes records to a terminal, and reads keys from it.
+	Data_Disk, // A block service of the data disk, and its block ring.
+	Scratch_Disk, // A block service of the disk of the measures, and its block ring.
 }
 
 grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
@@ -52,6 +56,8 @@ grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 		return {.Serve}
 	case "manual":
 		return {.Serve, .Image} // It reads the documentation of each module of the boot image.
+	case "disk":
+		return {.Scratch_Disk}
 	}
 	return {}
 }
@@ -103,6 +109,10 @@ things_of :: proc "contextless" (name: string) -> system.Budget_Amounts {
 		return {pages = 8192, programs = 1, threads = 2} // The lines that it keeps.
 	case "flood":
 		return {pages = 256, programs = 1, threads = 1}
+	case "block":
+		return {pages = 256, programs = 1, threads = 1}
+	case "disk":
+		return {pages = 2048, programs = 1, threads = 1}
 	}
 	return {pages = 2048, programs = 1, threads = 1}
 }
@@ -132,6 +142,10 @@ Started :: struct {
 	revoked:         system.Root_Grants,
 	writer:          ^Started, // A terminal: the program that writes in it. nil after that program stopped.
 	is_terminal:     bool,
+	driver:          ^Started, // The block service that serves this program. nil: none, or it stopped.
+	is_driver:       bool, // A block service: it has the device at `device`.
+	device:          pci.Place,
+	queues:          system.Handle, // A block service: the memory of the queue of its device.
 }
 
 // The size of the terminal of each program, and what it shows.
@@ -363,8 +377,22 @@ start :: proc "contextless" (name: string) -> system.Status {
 			break
 		}
 	}
-	if len(file) == 0 || name == "root" || name == "input" || name == "compositor" || name == "terminal" {
+	if len(file) == 0 || name == "root" || name == "input" || name == "compositor" || name == "terminal" || name == "block" {
 		return .Bad_Operation
+	}
+	role := grants_of(name)
+	// A client of a block service: the service of its disk starts first.
+	driver: ^Started
+	block_ring: system.Handle
+	if .Data_Disk in role || .Scratch_Disk in role {
+		status: system.Status
+		driver, block_ring, status = driver_start(.Data_Disk in role ? pci.DATA_DISK_DEVICE : pci.SCRATCH_DISK_DEVICE)
+		if status != .Ok {
+			return status
+		}
+	}
+	defer if block_ring != 0 {
+		system.close(block_ring)
 	}
 	slot: ^Started
 	for &item in started {
@@ -374,11 +402,16 @@ start :: proc "contextless" (name: string) -> system.Status {
 		}
 	}
 	if slot == nil {
+		if driver != nil {
+			system.call(.Program_Stop, u64(driver.program), 0)
+		}
 		return .No_Slot
 	}
 	slot^ = {}
-	role := grants_of(name)
 	grants: [op.CONTEXT_HANDLES]system.Grant
+	if block_ring != 0 {
+		grants[block.GRANT_RING] = {block_ring, {.Read, .Write}}
+	}
 	values: [op.CONTEXT_VALUES]u64
 	grants[op.CONTEXT_LOG] = log_grant(name)
 
@@ -451,8 +484,12 @@ start :: proc "contextless" (name: string) -> system.Status {
 	}
 	if status != .Ok {
 		release(slot)
+		if driver != nil {
+			system.call(.Program_Stop, u64(driver.program), 0)
+		}
 		return status
 	}
+	slot.driver = driver
 	slot.hash = entry.hash
 	slot.granted = {.Log}
 	if machine_rights != {} {
@@ -653,6 +690,17 @@ release :: proc "contextless" (item: ^Started) {
 		if other.writer == item {
 			other.writer = nil
 		}
+		if other.driver == item {
+			other.driver = nil
+		}
+	}
+	// A client that stops: its block service stops. A block service that
+	// stops: the device stops using memory.
+	if item.driver != nil && item.driver.program != 0 {
+		system.call(.Program_Stop, u64(item.driver.program), 0)
+	}
+	if item.is_driver {
+		driver_end(item)
 	}
 	if item.program != 0 {
 		system.close(item.program)

@@ -111,7 +111,8 @@ The kernel has five systems. Each one owns a small set of flat tables (P13).
 
 ### K5. Device grant and interrupts
 
-- **Does**: Finds the devices that the boot program reported. Maps the queues and registers of one device into one device service. Turns each interrupt into a completion record in a ring. Programs the IOMMU so that a device reaches only the memory of its service.
+- **Does**: Maps the queues and registers of one device into one device service. Turns each interrupt into a completion record in a ring. Programs the IOMMU so that a device reaches only the memory of its service.
+- **Implemented** (2026-11-10): device memory over the registers of a device (`Device_Create`, kind `Memory`), message interrupts (kind `Message`), and the physical address of a memory object for a holder of the right Physical (`Memory_Physical`). The root service finds the devices on the bus, not the kernel. Not done: the IOMMU.
 - **Owns**: the device table; the interrupt routing table.
 - **Does not**: contain code for any device (P7).
 

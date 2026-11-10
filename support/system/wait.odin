@@ -154,7 +154,7 @@ wait_end :: proc "contextless" (wait: ^Wait, deadline: u64 = WAIT_FOREVER) -> u6
 	// `waits` word was set ends the wait at once.
 	kernel := kernel_ring()
 	ring.push(&kernel.commands, ring.Record{kind = u32(op.Operation.Word_Wait), values = {0 = u64(uintptr(&wait.words)), 1 = u64(total)}})
-	now := system_enter(max(deadline, 1))
+	now := enter(max(deadline, 1))
 	ring.pop(&kernel.completions)
 	// The thread does not wait now: the other side does not need to wake it.
 	for index in 0 ..< wait.count {

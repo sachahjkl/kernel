@@ -17,6 +17,7 @@ right_names := [Right]string {
 	.Devices = "Devices",
 	.Stop    = "Stop",
 	.Spend   = "Spend",
+	.Physical = "Physical",
 }
 
 @(rodata)

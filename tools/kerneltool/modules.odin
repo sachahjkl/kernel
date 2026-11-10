@@ -64,6 +64,8 @@ module_builds := [?]Module_Build {
 	{name = "frames", source = "programs/frames", image = true},
 	{name = "twin", source = "programs/twin", image = true},
 	{name = "log", source = "programs/log", image = true},
+	{name = "block", source = "programs/block", image = true},
+	{name = "disk", source = "programs/disk", image = true},
 	{name = "host", source = "programs/host", image = true},
 	{name = "probe", source = "modules/probe", image = true},
 	{name = "math", source = "modules/math", image = true},

@@ -5,7 +5,7 @@ default rel
 extern kernel_interrupt
 
 KERNEL_ENTER_VECTOR equ 128
-STUB_COUNT equ 64
+STUB_COUNT equ 80
 
 section .text
 

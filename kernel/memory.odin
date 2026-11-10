@@ -9,6 +9,7 @@ PAGE_SIZE :: info.PAGE_SIZE
 PAGE_PRESENT :: u64(1) << 0
 PAGE_WRITE :: u64(1) << 1
 PAGE_USER :: u64(1) << 2
+PAGE_NO_CACHE :: u64(1) << 4 | u64(1) << 3 // No cache, and each write goes to the device at once.
 PAGE_NO_EXECUTE :: u64(1) << 63
 PAGE_ADDRESS :: u64(0x000F_FFFF_FFFF_F000)
 
@@ -197,6 +198,25 @@ user_range :: proc "contextless" (program: ^Program, address: u64, size: u64, wr
 			return false
 		}
 		if write && entry^ & PAGE_WRITE == 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// device_range says if a range of physical addresses can be device memory:
+// no page of it is memory that the firmware gave as free or as loaded.
+device_range :: proc "contextless" (start: u64, page_count: u64) -> bool {
+	if page_count == 0 || start % PAGE_SIZE != 0 || start >> 52 != 0 || page_count > (u64(1) << 52 - start) / PAGE_SIZE {
+		return false
+	}
+	end := start + page_count * PAGE_SIZE
+	for range in info.physical_slice(boot_record.memory_ranges, boot_record.memory_range_count, info.Memory_Range) {
+		if range.kind == .Reserved {
+			continue
+		}
+		range_end := range.start + range.page_count * PAGE_SIZE
+		if start < range_end && range.start < end {
 			return false
 		}
 	}

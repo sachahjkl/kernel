@@ -66,7 +66,7 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Page on first use | A page of a memory object that gets its page frame at the first read or write, by a program (a page fault) or by the kernel. The frame is all zero. The budget paid for the page when the memory object was created | lazy allocation, demand paging, demand-zero page |
 | Reserved page | A page that a budget paid for and that has no page frame yet. The kernel keeps one free frame for each reserved page, so an access never fails for lack of memory | overcommit |
 | Frame list | The record of the page frames of one memory object: in the kernel record of the object for at most 4 pages, else in list pages that the budget pays for | page list, radix tree |
-| Right | One permitted kind of operation on the object of a handle. The rights are Give, Read, Write, Execute, Control, Inspect, Devices and Stop. A grant can remove rights and cannot add one | permission, privilege, mode |
+| Right | One permitted kind of operation on the object of a handle. The rights are Give, Read, Write, Execute, Control, Inspect, Devices, Stop, Spend and Physical. A grant can remove rights and cannot add one | permission, privilege, mode |
 | Budget | An object that holds pages, programs and threads, and that has two limits: processor time and log records. It pays for each object that a program creates. A program moves a part of its budget to a new budget. What ends returns to the budget that paid (P20) | quota, limit, cgroup, job |
 | Limit | A property of a budget for time: the microseconds of processor time, or the log records, that the budget can use in each second. A limit holds for the budget and for each budget that came from it. A limit does not move as pages do: a new budget has a limit that is not above the limit of the budget that it came from (P20) | quota, cap, bandwidth, rate limit |
 | Period | The 100 ms in which the kernel applies the processor limit of a budget. A thread of a budget that used its part of the period does not run until the next period | window, slice |
@@ -117,6 +117,22 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Completion record | A record that reports the result of one command record | response, reply, event |
 | Device queue | The queue that a device defines for its own commands, for example a virtio queue. The kernel maps it into one program (P5) | ring (reserved for program-to-program) |
 | Zero is initialization (ZII) | The rule that all-zero bytes are a valid value with a defined meaning, for every record of the system (P13) | default constructor |
+
+## Devices
+
+| Term | Definition | Do not use |
+|---|---|---|
+| Physical address | The number that the memory and the devices use for a byte of memory, before the page tables. A program uses virtual addresses only; a device uses physical addresses only | real address, bus address |
+| Device memory | A memory object over the registers of a device: physical addresses that are not memory of the kernel. A mapping of it uses no cache. The root service makes it with the right Devices | MMIO region, BAR mapping |
+| Message interrupt | An interrupt that a device sends as a write of a value to an address of the interrupt controller of a processor (MSI-X). The kernel gives each one a vector of its own, and an Interrupt object | MSI, vector |
+| Bus | The PCI bus of the machine: each device has a place on it (bus, device, function) and a configuration. Only the root service reads and writes the configuration | PCI tree |
+| Disk | A device that keeps blocks when the machine stops. The machine of the test has three: the boot volume, the data disk, and the disk of the measures | drive, volume (except the boot volume), LUN |
+| Block | 4096 bytes of a disk, at a number from 0. The unit of the block contract | sector, page (for a disk) |
+| Block service | The device service of one disk. It serves read, write and flush of blocks to one client, through a block ring (`contract/block`) | disk driver, block layer |
+| Block ring | The ring between a block service and its client. One command record is one request; many are in flight; a completion has the tag of its command and a status | I/O queue, submission queue |
+| Data region | The memory object of the client of a block service where the device reads and writes the bytes of the blocks, with no copy. It is contiguous (`Memory_Create` with `Contiguous`). A request names a place in it, never an address | DMA buffer, bounce buffer |
+| Data disk | The disk of the storage service | data drive, home disk |
+| Disk of the measures | A disk that holds no data that a program keeps: the program `disk` measures the block service on it | scratch disk, test disk |
 
 ## Storage
 

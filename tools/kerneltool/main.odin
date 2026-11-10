@@ -16,6 +16,7 @@ import "core:fmt"
 import "core:os"
 import "core:strings"
 import "core:time"
+import "support:pci"
 
 EXIT_FAILURE :: 1
 EXIT_USAGE :: 2
@@ -33,7 +34,7 @@ BUILD_FOLDER :: "build"
 // flake.nix gives the same two flags to the compiler when it builds this tool.
 CONTRACT_LIBRARY :: "-collection:contract=contract"
 SUPPORT_LIBRARY :: "-collection:support=support"
-CONTRACT_PACKAGES :: []string{"blake3", "boot_info", "isolated", "module", "operation", "ring"}
+CONTRACT_PACKAGES :: []string{"blake3", "block", "boot_info", "isolated", "module", "operation", "ring"}
 BOOT_OBJECT_FOLDER :: BUILD_FOLDER + "/boot"
 BOOT_PROGRAM :: BOOT_OBJECT_FOLDER + "/BOOTX64.EFI"
 BOOT_VOLUME :: BUILD_FOLDER + "/boot_volume.img"
@@ -45,6 +46,15 @@ FIRMWARE_VARIABLES :: BUILD_FOLDER + "/ovmf_vars.fd"
 TEST_OUTPUT :: BUILD_FOLDER + "/test_output.txt"
 TEST_OUTPUT_FAILS :: BUILD_FOLDER + "/test_output_fails.txt"
 TEST_OUTPUT_SELF_TEST :: BUILD_FOLDER + "/test_output_self_test_%d.txt"
+// The disks beside the boot volume (support/pci has their places on the
+// bus). The data disk keeps the stores of the storage service: `run` uses
+// one that stays from run to run, each test makes a new one. The disk of the
+// measures holds no data that a program keeps.
+DATA_DISK :: BUILD_FOLDER + "/data_disk.img"
+TEST_DATA_DISK :: BUILD_FOLDER + "/test_data_disk.img"
+SCRATCH_DISK :: BUILD_FOLDER + "/scratch_disk.img"
+DATA_DISK_SIZE :: 64 << 20
+SCRATCH_DISK_SIZE :: 32 << 20
 
 DOCUMENT_SCREENSHOT_FOLDER :: "docs/screenshots"
 // The development log: one folder of pictures per run of `screenshots`. It
@@ -162,7 +172,10 @@ run_machine :: proc(args: []string) -> int {
 	if code := run_build(nil); code != 0 {
 		return code
 	}
-	command, ok := machine_command(BOOT_VOLUME, "")
+	if !disk_prepare(DATA_DISK, DATA_DISK_SIZE, false) {
+		return EXIT_FAILURE
+	}
+	command, ok := machine_command(BOOT_VOLUME, "", DATA_DISK)
 	if !ok {
 		return EXIT_FAILURE
 	}
@@ -181,7 +194,10 @@ run_test :: proc(args: []string) -> int {
 		return EXIT_FAILURE
 	}
 	// A start that fails ends when the tool ends QEMU: status 0.
-	if !machine_test(scenario_fails[:], BOOT_VOLUME_FAILS, TEST_OUTPUT_FAILS, 0) || !self_tests_run() || !machine_test(scenario[:], BOOT_VOLUME, TEST_OUTPUT, MACHINE_STOP_OK) || !test_modules() || !test_descriptions() {
+	if !disk_prepare(TEST_DATA_DISK, DATA_DISK_SIZE, true) {
+		return EXIT_FAILURE
+	}
+	if !machine_test(scenario_fails[:], BOOT_VOLUME_FAILS, TEST_OUTPUT_FAILS, 0) || !self_tests_run() || !machine_test(scenario[:], BOOT_VOLUME, TEST_OUTPUT, MACHINE_STOP_OK, TEST_DATA_DISK) || !test_modules() || !test_descriptions() {
 		return EXIT_FAILURE
 	}
 	fmt.println("kerneltool: all tests passed")
@@ -228,7 +244,7 @@ run_film :: proc(args: []string) -> int {
 		return EXIT_FAILURE
 	}
 	// The tool ends QEMU: status 0.
-	if !machine_test(scenario_film[:], BOOT_VOLUME, TEST_OUTPUT_FILM, 0) {
+	if !disk_prepare(TEST_DATA_DISK, DATA_DISK_SIZE, true) || !machine_test(scenario_film[:], BOOT_VOLUME, TEST_OUTPUT_FILM, 0, TEST_DATA_DISK) {
 		return EXIT_FAILURE
 	}
 	if !run({"ffmpeg", "-loglevel", "error", "-y", "-framerate", fmt.tprint(FILM_RATE), "-i", FILM_FRAME, "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "20", FILM_OUTPUT}) {
@@ -276,7 +292,10 @@ run_check :: proc(args: []string) -> int {
 // machine_command gives the one QEMU command line of the project: the first
 // machine of property 7. The boot volume is a virtio block device. If
 // test_output is a path, the machine has no window and writes its log there.
-machine_command :: proc(volume: string, test_output: string) -> (command: []string, ok: bool) {
+machine_command :: proc(volume: string, test_output: string, data_disk: string) -> (command: []string, ok: bool) {
+	if !disk_prepare(SCRATCH_DISK, SCRATCH_DISK_SIZE, false) {
+		return nil, false
+	}
 	firmware_code := os.get_env("OVMF_CODE", context.temp_allocator)
 	firmware_variables := os.get_env("OVMF_VARS", context.temp_allocator)
 	if firmware_code == "" || firmware_variables == "" {
@@ -320,6 +339,14 @@ machine_command :: proc(volume: string, test_output: string) -> (command: []stri
 		strings.concatenate({"if=none,id=boot,format=raw,file=", volume}, context.temp_allocator),
 		"-device",
 		"virtio-blk-pci,drive=boot",
+		"-drive",
+		strings.concatenate({"if=none,id=data,format=raw,file=", data_disk}, context.temp_allocator),
+		"-device",
+		fmt.tprintf("virtio-blk-pci,drive=data,disable-legacy=on,addr=0x%x", pci.DATA_DISK_DEVICE),
+		"-drive",
+		"if=none,id=scratch,format=raw,file=" + SCRATCH_DISK,
+		"-device",
+		fmt.tprintf("virtio-blk-pci,drive=scratch,disable-legacy=on,addr=0x%x", pci.SCRATCH_DISK_DEVICE),
 	)
 	if test_output != "" {
 		// No window. The log of the kernel (the serial port) goes to a file.
@@ -341,6 +368,21 @@ run :: proc(command: []string) -> bool {
 	state, wait_err := os.process_wait(process)
 	if wait_err != nil || !state.success {
 		fmt.eprintfln("kerneltool: %s failed (code %d)", command[0], state.exit_code)
+		return false
+	}
+	return true
+}
+
+// disk_prepare makes a disk of zero bytes when the file is absent, or always
+// with fresh.
+disk_prepare :: proc(path: string, size: int, fresh: bool) -> bool {
+	if !fresh && os.exists(path) {
+		return true
+	}
+	zero := make([]u8, size)
+	defer delete(zero)
+	if err := os.write_entire_file(path, zero); err != nil {
+		fmt.eprintfln("kerneltool: cannot write %s: %v", path, err)
 		return false
 	}
 	return true

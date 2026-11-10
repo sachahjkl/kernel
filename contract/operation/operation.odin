@@ -56,6 +56,7 @@ Right :: enum u32 {
 	Devices = 6, // Machine: create device handles.
 	Stop    = 7, // Machine: stop the machine.
 	Spend   = 8, // Budget: create objects with it, and take a part of it for a new budget.
+	Physical = 9, // Machine: read the physical address of a memory object (Memory_Physical).
 }
 Rights :: bit_set[Right;u32]
 
@@ -94,6 +95,10 @@ Operation :: enum u32 {
 	Handle_Close   = 11, // (handle). The kernel stops a program when its last handle closes.
 	Interrupt_Read = 12, // (interrupt) -> the number of interrupts since the last read.
 	Device_Create  = 13, // (machine, Device_Kind, a, b) -> handle. Ports: a = first port, b = count. Interrupt: a = line.
+	// Memory: a = physical address, b = page count: the registers of a device, as a memory object that a program maps
+	// with no cache. The kernel refuses addresses of the memory that it manages.
+	// Message: an interrupt that a device sends as a write to the interrupt controller (MSI-X). The results
+	// are the handle, then the address and the value that the device must write.
 	Inspect        = 14, // (machine, Inspect_Kind, index, address, size) -> bytes written
 	Machine_Stop   = 15, // (machine, code)
 	Thread_Create  = 16, // (budget, entry address, stack address, parameter) -> thread handle. A new thread of this program.
@@ -124,6 +129,10 @@ Operation :: enum u32 {
 	// from those holdings in any program. The handle stays, and the mappings of the program that
 	// revokes stay. A program that lost a holding gets an event. A thread that uses memory that
 	// its program lost stops its program on a page fault.
+	Memory_Physical = 25, // (machine, memory) -> the physical address of the first page of a memory object that was
+	// created Contiguous, or of device memory: its pages follow each other in physical memory and do not move.
+	// Another memory object gives Bad_Operation. A device service gives these addresses to its device: the device
+	// reads and writes the memory with no processor (direct memory access). Needs the right Physical on the machine.
 }
 
 // A budget: what its holders can still create. No operation creates an
@@ -221,6 +230,10 @@ memory_cost :: proc "contextless" (page_count: u64) -> u64 {
 
 Memory_Flag :: enum u64 {
 	Frames_Now = 0, // Each page gets its page frame at creation, not at its first use.
+	// The page frames follow each other in physical memory, each one from the creation, and they do
+	// not move: memory that a device reads and writes (Memory_Physical). The budget pays for no frame
+	// list. It can give No_Memory when the budget can pay: no free run is long enough.
+	Contiguous = 1,
 }
 Memory_Flags :: bit_set[Memory_Flag;u64]
 
@@ -247,8 +260,14 @@ Program_State :: enum u32 {
 Device_Kind :: enum u64 {
 	None      = 0,
 	Ports     = 1,
-	Interrupt = 2,
+	Interrupt = 2, // A line of the 8259.
+	Memory    = 3, // The registers of a device.
+	Message   = 4, // A message interrupt.
 }
+
+// The message interrupts: each one has a vector of its own on the first
+// processor.
+MESSAGE_CAPACITY :: 16
 
 Inspect_Kind :: enum u64 {
 	None    = 0,

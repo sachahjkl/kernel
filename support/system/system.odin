@@ -22,6 +22,8 @@ foreign _ {
 	thread_record :: proc "c" () -> ^op.Thread_Record ---
 	port_write_8 :: proc "c" (port: u16, value: u8) ---
 	port_read_8 :: proc "c" (port: u16) -> u8 ---
+	port_write_32 :: proc "c" (port: u16, value: u32) ---
+	port_read_32 :: proc "c" (port: u16) -> u32 ---
 	// export_call calls an export with the call form (docs/MODULE_CONTRACT.md,
 	// section 4). It loads the 6 integer registers and the 8 float registers
 	// from the two arrays, calls address, and writes the results: the two
@@ -40,6 +42,22 @@ kernel_ring :: #force_inline proc "contextless" () -> ring.Ring {
 	return kernel
 }
 
+// entered counts the kernel entries of this program that go through this
+// library: a program measures its own cost with no grant to inspect.
+entered: u64
+
+// kernel_entries gives the kernel entries of this program, as this library
+// counted them.
+kernel_entries :: proc "contextless" () -> u64 {
+	return intrinsics.atomic_load(&entered)
+}
+
+// enter is the kernel entry of this library: it counts it.
+enter :: #force_inline proc "contextless" (wait: u64) -> u64 {
+	intrinsics.atomic_add(&entered, 1)
+	return system_enter(wait)
+}
+
 // call executes one kernel operation and gives its completion.
 call :: proc "contextless" (operation: op.Operation, values: ..u64) -> (results: [7]u64, status: Status) {
 	command := ring.Record {
@@ -50,7 +68,7 @@ call :: proc "contextless" (operation: op.Operation, values: ..u64) -> (results:
 	}
 	kernel := kernel_ring()
 	ring.push(&kernel.commands, command)
-	system_enter(0)
+	enter(0)
 	completion, ok := ring.pop(&kernel.completions)
 	if !ok {
 		return {}, .Bad_Operation
@@ -68,12 +86,12 @@ time :: proc "contextless" () -> u64 {
 // time_entered gives the milliseconds since boot with a kernel entry. The
 // kernel also does the commands in the kernel ring of the thread.
 time_entered :: proc "contextless" () -> u64 {
-	return system_enter(0)
+	return enter(0)
 }
 
 // sleep stops the thread until the time is deadline. It gives the time.
 sleep :: proc "contextless" (deadline: u64) -> u64 {
-	return system_enter(max(deadline, 1))
+	return enter(max(deadline, 1))
 }
 
 stop :: proc "contextless" (code: u32 = 0) -> ! {
@@ -134,6 +152,15 @@ memory_map :: proc "contextless" (memory: Handle, flags: op.Map_Flags = {.Write}
 memory_unmap :: proc "contextless" (address: rawptr, program: Handle = 0) -> Status {
 	_, status := call(.Memory_Unmap, u64(program), u64(uintptr(address)))
 	return status
+}
+
+// memory_physical gives the physical address of the first page of a memory
+// object: its pages follow each other. The machine handle needs the right
+// Physical.
+memory_physical :: proc "contextless" (machine: Handle, memory: Handle) -> (address: u64, status: Status) {
+	results: [7]u64
+	results, status = call(.Memory_Physical, u64(machine), u64(memory))
+	return results[0], status
 }
 
 memory_size :: proc "contextless" (memory: Handle) -> u64 {

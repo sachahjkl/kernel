@@ -96,10 +96,10 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 	case .Memory_Create:
 		budget := handle_find(program, v[0], .Budget, {.Spend}) or_return
 		flags := transmute(op.Memory_Flags)v[2]
-		if flags - {.Frames_Now} != {} {
+		if flags - {.Frames_Now, .Contiguous} != {} {
 			return .Bad_Operation
 		}
-		region := region_create(budget.object, v[1], now = .Frames_Now in flags) or_return
+		region := region_create(budget.object, v[1], contiguous = .Contiguous in flags, now = .Frames_Now in flags) or_return
 		handle := handle_insert(program, {kind = .Memory, rights = RIGHTS_MEMORY, object = region})
 		if handle == 0 {
 			regions[region].references = 1
@@ -372,6 +372,44 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 				return .Bad_Address
 			}
 			slot = {kind = .Interrupt, rights = RIGHTS_INTERRUPT, object = u32(v[2])}
+		case .Memory:
+			if !device_range(v[2], v[3]) {
+				return .Bad_Address
+			}
+			region := region_device(v[2], v[3])
+			if region == 0 {
+				return .No_Slot
+			}
+			regions[region].uncached = true
+			handle := handle_insert(program, {kind = .Memory, rights = {.Give, .Read, .Write}, object = region})
+			if handle == 0 {
+				regions[region] = {}
+				return .No_Slot
+			}
+			results[0] = u64(handle)
+			return .Ok
+		case .Message:
+			message := u32(INTERRUPT_CAPACITY)
+			for candidate in u32(INTERRUPT_LINES) ..< INTERRUPT_CAPACITY {
+				if interrupt_references[candidate] == 0 {
+					message = candidate
+					break
+				}
+			}
+			if message == INTERRUPT_CAPACITY {
+				return .No_Slot
+			}
+			interrupt_pending[message] = 0
+			handle := handle_insert(program, {kind = .Interrupt, rights = RIGHTS_INTERRUPT, object = message})
+			if handle == 0 {
+				return .No_Slot
+			}
+			// The first processor receives each message: the address names
+			// its interrupt controller, the value is the vector.
+			results[0] = u64(handle)
+			results[1] = 0xFEE0_0000 | u64(processors[0].apic_id & 0xFF) << 12
+			results[2] = u64(VECTOR_MESSAGE_BASE + message - INTERRUPT_LINES)
+			return .Ok
 		case .None:
 			return .Bad_Operation
 		case:
@@ -481,6 +519,15 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		case:
 			return .Bad_Operation
 		}
+		return .Ok
+
+	case .Memory_Physical:
+		_ = handle_find(program, v[0], .Machine, {.Physical}) or_return
+		slot := handle_find(program, v[1], .Memory, {.Read}) or_return
+		if !regions[slot.object].contiguous {
+			return .Bad_Operation // Its frames come at first use, from anywhere: no one address names them.
+		}
+		results[0] = regions[slot.object].physical
 		return .Ok
 
 	case .Machine_Stop:

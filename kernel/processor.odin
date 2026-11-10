@@ -1,6 +1,7 @@
 package kernel
 
 import "base:intrinsics"
+import op "contract:operation"
 
 // The processor: segments, the interrupt table, the interrupt controller and
 // the timer. The frame layout is the one of kernel/processor.asm.
@@ -29,9 +30,13 @@ VECTOR_TIMER :: 48 // The timer of the processor.
 VECTOR_WAKE :: 49 // Another processor made a thread ready.
 VECTOR_SYNC :: 50 // Another processor waits for this one: see processor_sync.
 VECTOR_SPURIOUS :: 63
+VECTOR_MESSAGE_BASE :: 64 // The message interrupts (operation.Device_Kind.Message): vectors 64 to 79.
 VECTOR_KERNEL_ENTER :: 128
 INTERRUPT_LINES :: 16
-STUB_COUNT :: 64
+// An interrupt object: a line of the 8259 (0 to 15), or a message interrupt
+// (16 and after).
+INTERRUPT_CAPACITY :: INTERRUPT_LINES + op.MESSAGE_CAPACITY
+STUB_COUNT :: 80
 TICKS_PER_SECOND :: 1000
 MSR_GS_BASE :: 0xC000_0101
 MSR_KERNEL_GS_BASE :: 0xC000_0102 // In the kernel: the gs register of the program.

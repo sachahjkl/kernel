@@ -40,8 +40,9 @@ Region :: struct {
 	present:    u64, // Pages that have a frame.
 	references: u32, // Handles and mappings.
 	budget:     u32, // The budget that paid. 0 for a device.
-	device:     bool, // The frames are not from the page frame table: a framebuffer, boot data.
+	device:     bool, // The frames are not from the page frame table: a framebuffer, boot data, the registers of a device.
 	contiguous: bool,
+	uncached:   bool, // The registers of a device: a mapping uses no cache.
 	serial:     u64, // A number that no other memory object has had: a slot of the table serves many objects in time.
 }
 
@@ -53,7 +54,8 @@ first_use_faults: u64 // The page faults of programs after which the page was pr
 
 // The `object` of a handle slot, by kind:
 //   Memory: index in regions       Program: index in programs
-//   Interrupt: interrupt line      Ports: first port; count: number of ports
+//   Interrupt: index in the interrupt tables (INTERRUPT_CAPACITY)
+//   Ports: first port; count: number of ports
 //   Thread: index in threads       Budget: index in budgets
 Object_Kind :: op.Object_Kind
 
@@ -63,7 +65,7 @@ RIGHTS_PROGRAM :: op.Rights{.Give, .Read, .Control}
 RIGHTS_THREAD :: op.Rights{.Give, .Read, .Control}
 RIGHTS_PORTS :: op.Rights{.Give}
 RIGHTS_INTERRUPT :: op.Rights{.Give, .Read}
-RIGHTS_MACHINE :: op.Rights{.Give, .Inspect, .Devices, .Stop}
+RIGHTS_MACHINE :: op.Rights{.Give, .Inspect, .Devices, .Stop, .Physical}
 RIGHTS_BUDGET :: op.Rights{.Give, .Read, .Spend}
 RIGHTS_LOG :: op.Rights{.Give, .Write}
 
@@ -159,8 +161,9 @@ budgets: [BUDGET_CAPACITY]Budget
 regions: [REGION_CAPACITY]Region
 programs: [PROGRAM_CAPACITY]Program
 threads: [THREAD_TABLE_CAPACITY]Thread
-interrupt_owner: [INTERRUPT_LINES]u32 // A program.
-interrupt_pending: [INTERRUPT_LINES]u32
+interrupt_owner: [INTERRUPT_CAPACITY]u32 // A program.
+interrupt_pending: [INTERRUPT_CAPACITY]u32
+interrupt_references: [INTERRUPT_CAPACITY]u32 // Handles. A message interrupt with none is free.
 last_run: u32
 ticks: u64
 time_region: u32 // The memory object of the time page. It is in each program.
@@ -393,8 +396,16 @@ handle_insert :: proc "contextless" (program: ^Program, slot: Handle_Slot) -> op
 			budgets[slot.object].references += 1
 		case .Ports:
 			program.has_ports = true
+			// A processor that has the ports of the program open opens these
+			// too: ports_switch does nothing while the program stays.
+			for cpu in processors[:processor_count] {
+				if cpu.ports_loaded == u32(intrinsics.ptr_sub(program, &programs[0])) {
+					ports_allow(cpu, u64(slot.object), u64(slot.count), true)
+				}
+			}
 		case .Interrupt:
 			interrupt_owner[slot.object] = u32(intrinsics.ptr_sub(program, &programs[0]))
+			interrupt_references[slot.object] += 1
 		}
 		return op.Handle(u32(index + 1) | u32(generation) << 16)
 	}
@@ -444,6 +455,7 @@ handle_close :: proc "contextless" (program: ^Program, slot: ^Handle_Slot) {
 	case .Budget:
 		budget_release(slot.object)
 	case .Interrupt:
+		interrupt_references[slot.object] -= 1
 		if interrupt_owner[slot.object] == u32(intrinsics.ptr_sub(program, &programs[0])) {
 			interrupt_owner[slot.object] = 0
 		}
@@ -503,6 +515,9 @@ map_region :: proc "contextless" (program: ^Program, region_index: u32, address:
 	}
 	if .Execute not_in flags {
 		bits |= PAGE_NO_EXECUTE
+	}
+	if region.uncached {
+		bits |= PAGE_NO_CACHE
 	}
 	for page in 0 ..< count {
 		entry := page_entry(program.table, address + page * PAGE_SIZE, true, program.budget)
@@ -1094,6 +1109,14 @@ kernel_interrupt :: proc "c" (frame: ^Frame) {
 			program_event(owner)
 		}
 		interrupt_end(line)
+	case frame.vector >= VECTOR_MESSAGE_BASE && frame.vector < VECTOR_MESSAGE_BASE + op.MESSAGE_CAPACITY:
+		index := INTERRUPT_LINES + frame.vector - VECTOR_MESSAGE_BASE
+		interrupt_count += 1
+		interrupt_pending[index] += 1
+		if owner := interrupt_owner[index]; owner != 0 {
+			program_event(owner)
+		}
+		apic_write(APIC_END, 0)
 	case taken:
 	case frame.vector == VECTOR_PAGE_FAULT && frame.error & FAULT_PRESENT == 0 && page_give(&programs[threads[cpu.current].program], cr2_read(), frame.error & FAULT_WRITE != 0, frame.error & FAULT_EXECUTE != 0):
 		// A page on first use, or a page that another thread made present

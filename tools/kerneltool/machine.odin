@@ -95,7 +95,7 @@ self_tests_run :: proc() -> bool {
 		for report in test.reports {
 			append(&steps, Step{kind = .Wait, text = report, any_order = true})
 		}
-		if !machine_test(steps[:], self_test_file(BOOT_VOLUME_SELF_TEST, test.number), self_test_file(TEST_OUTPUT_SELF_TEST, test.number), MACHINE_STOP_FAULT) {
+		if !machine_test(steps[:], self_test_file(BOOT_VOLUME_SELF_TEST, test.number), self_test_file(TEST_OUTPUT_SELF_TEST, test.number), MACHINE_STOP_FAULT, TEST_DATA_DISK) {
 			return false
 		}
 	}
@@ -631,6 +631,25 @@ scenario := [?]Step {
 	// The person closes the window: the terminal stops.
 	{kind = .Close, text = "flood"},
 	{kind = .Wait, text = "root: terminal stopped"},
+	// The block service: the root service gives one virtio disk to one
+	// block service, and the block ring to its client. The device reads and
+	// writes the memory of the client.
+	{kind = .Launch, text = "disk"},
+	{kind = .Wait, text = "root: started block for the device at the place 17 of the bus"},
+	{kind = .Wait, text = "block: ok, 8192 blocks of 4096 bytes, a queue of ", any_order = true},
+	{kind = .Wait, text = "disk: ok, the disk has 8192 blocks"},
+	{kind = .Wait, text = "disk: read, 1 block in each request, 1 in flight: "},
+	{kind = .Wait, text = "disk: read, 1 block in each request, 32 in flight: "},
+	{kind = .Wait, text = "disk: write, 1 block in each request, 1 in flight: "},
+	{kind = .Wait, text = "disk: write, 1 block in each request, 32 in flight: "},
+	{kind = .Wait, text = "disk: read, 16 blocks in each request, 8 in flight: "},
+	{kind = .Wait, text = "disk: ok, 5 measures, 0 errors, write then read back: 0 wrong"},
+	{kind = .Shot, text = "disk"},
+	// The client stops: its block service stops, and the device stops
+	// using memory.
+	{kind = .Close, text = "disk"},
+	{kind = .Wait, text = "root: disk stopped with code 0"},
+	{kind = .Wait, text = "root: block stopped with code 0"},
 	{kind = .Front, text = "console"},
 	// Each page is free or paid, after all the starts and stops of this test.
 	{kind = .Type, text = "memory()"},
@@ -926,8 +945,8 @@ png_encode :: proc(width, height: int, pixels: []u8) -> []u8 {
 
 // machine_test runs a scenario on a boot volume. It passes when each step
 // passes and QEMU ends with the status exit_status.
-machine_test :: proc(steps: []Step, volume: string, output: string, exit_status: int) -> bool {
-	command, ok := machine_command(volume, output)
+machine_test :: proc(steps: []Step, volume: string, output: string, exit_status: int, data_disk: string = TEST_DATA_DISK) -> bool {
+	command, ok := machine_command(volume, output, data_disk)
 	if !ok {
 		return false
 	}

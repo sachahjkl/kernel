@@ -27,6 +27,19 @@ port_read_8:                     ; (port: u16) -> u8
 	in al, dx
 	ret
 
+global port_write_32
+port_write_32:                   ; (port: u16, value: u32)
+	mov edx, edi
+	mov eax, esi
+	out dx, eax
+	ret
+
+global port_read_32
+port_read_32:                    ; (port: u16) -> u32
+	mov edx, edi
+	in eax, dx
+	ret
+
 ; The one routine that calls an export from values in memory: the call form
 ; of docs/MODULE_CONTRACT.md, section 4. Every parameter is a scalar, so the
 ; routine does not need the description of the export.
