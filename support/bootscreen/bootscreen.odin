@@ -1,4 +1,5 @@
-// The boot display: how the machine started, as a picture.
+// The boot display: how the machine started, as a picture. It is the model
+// of the design rules (docs/DESIGN.md).
 //
 // It draws one record, Data. Each part of Data is a record of the kernel:
 // the boot record (the stages and their times, the memory that the firmware
@@ -10,7 +11,7 @@
 // programs: if the start fails, the display stays, with the failure. The
 // program `boot` draws it in a window at any time.
 //
-// A record that is all zero is valid: its panel shows that the fact is
+// A record that is all zero is valid: its card shows that the fact is
 // not known yet. This package uses no kernel operation: package collect
 // fills Data.
 package bootscreen

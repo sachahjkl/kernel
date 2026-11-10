@@ -49,6 +49,9 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Processor record | The record that the kernel keeps for one processor: its kernel stack, its current thread, its page table | per-CPU data |
 | Stage | One part of the start of the machine, with a start time and a duration: the firmware, two of the boot program, four of the kernel | phase |
 | Step of the start | One point on the path of the start that the boot display shows (`bootscreen.Step`): ten points, from the firmware to the desktop. The program that draws says which step the machine does now. A step has no time: a stage is a part with a measured time | phase, progress |
+| Card | The frame of one subject in a display: a title in its accent, a caption that names its record, and its content (`docs/DESIGN.md`) | panel, box, widget |
+| Tile | A rectangle that stands for one thing of a set, with its name inside; its width can be a size (`docs/DESIGN.md`) | chip, badge |
+| Accent | The color of the concept that a card is about (`docs/DESIGN.md`) | theme color |
 | Boot record | The record that the kernel keeps of how the machine started (`Boot_Report`): the stages, the memory ranges of the firmware, the firmware, the framebuffer | boot log, dmesg |
 | Guard page | A page of addresses with no memory, next to a stack: a use of it is a page fault, not a write on other memory | red zone, canary |
 | Direct map | The part of the kernel half of the addresses that shows all physical memory. It is never executable | physmap, identity map |

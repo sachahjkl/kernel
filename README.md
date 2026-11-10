@@ -122,6 +122,7 @@ The system boots under QEMU to a graphical desktop with a console, a system tool
 | `docs/MODULE_CONTRACT.md` | The module format, the loader and the call form |
 | `docs/FIRST_MILESTONE.md` | What the code does now, the choices made, the gaps |
 | `docs/GLOSSARY.md` | The terms of the project. One term per concept |
+| `docs/DESIGN.md` | The design rules: how a program of the system looks. The boot display is the model |
 | `docs/HANDOFF.md` | Current state, rules of the owner, next steps |
 | `docs/research/` | Research notes with sources, and video transcripts |
 

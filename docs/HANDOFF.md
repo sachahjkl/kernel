@@ -99,6 +99,7 @@ The next step is the owner's review of that file.
 - **A richer look, last (owner, 2026-11-10)**: "purely by vanity". (1) A gradient from the current blue, as the start colour, to a darker blue toward the right. (2) After that, as an experiment, a launcher. Both come at the end: the other points come first. Not clear from the dictated text, to settle when the work starts: which surface holds "the current blue" (the background of the desktop already goes from dark blue at the top to green-blue at the bottom), and how the launcher of the experiment differs from the menu of the bar that starts the programs now.
 - **The display of the boot must be original (owner, 2026-11-10)**: the owner wants the display of the UEFI boot program to be "sexy" and original, not a low-technology text screen. The limit that the coordinator keeps: it shows true data of the boot and it does not make the boot slower without a measured number.
 - **No round corners in the boot display (owner, 2026-11-10)**: the owner likes the design of the new boot display and does not want round forms in it. Each form is a rectangle.
+- **Design rules (owner, 2026-11-10)**: the owner approved the new boot display ("j'adore") and asked to extract its design as rules. They are in `docs/DESIGN.md`. The boot display is the model; the desktop programs do not follow the rules yet.
 - No pull request unless the owner asks.
 
 ## Research
