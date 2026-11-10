@@ -14,6 +14,7 @@ package kerneltool
 
 import "core:fmt"
 import "core:os"
+import "core:slice"
 import "core:strings"
 import "core:time"
 import "support:pci"
@@ -150,6 +151,9 @@ build_boot_program :: proc(image: string, volume_path: string, self_test: int) -
 			"-disable-red-zone",
 			"-o:speed",
 			"-vet",
+			"-thread-count:1", // The same object at each build: see build_module.
+			"-no-threaded-checker",
+			"-source-code-locations:filename", // No path of the folder of the build in the program.
 			CONTRACT_LIBRARY,
 			SUPPORT_LIBRARY,
 			strings.concatenate({"-define:BOOT_IMAGE=../build/", image}, context.temp_allocator),
@@ -294,7 +298,40 @@ run_check :: proc(args: []string) -> int {
 			return EXIT_FAILURE
 		}
 	}
-	return run_test(nil)
+	if run_test(nil) != 0 {
+		return EXIT_FAILURE
+	}
+	return modules_same_again() ? 0 : EXIT_FAILURE
+}
+
+// modules_same_again builds the modules a second time and compares each
+// module file with the file of the first build: the hash of a module is
+// the identity of its source, not of one build (property 11).
+modules_same_again :: proc() -> bool {
+	paths := files_with_suffix(MODULE_BUILD_FOLDER, ".module") or_return
+	first := make([][]u8, len(paths), context.temp_allocator)
+	for path, index in paths {
+		bytes, err := os.read_entire_file(path, context.allocator)
+		if err != nil {
+			fmt.eprintfln("kerneltool: cannot read %s: %v", path, err)
+			return false
+		}
+		first[index] = bytes
+	}
+	build_modules() or_return
+	different := 0
+	for path, index in paths {
+		bytes, err := os.read_entire_file(path, context.allocator)
+		if err != nil || !slice.equal(bytes, first[index]) {
+			fmt.eprintfln("kerneltool: test failed: %s is not the same bytes after a second build", path)
+			different += 1
+		}
+	}
+	if different != 0 {
+		return false
+	}
+	fmt.printfln("kerneltool: test passed: %d modules are the same bytes after a second build", len(paths))
+	return true
 }
 
 // machine_command gives the one QEMU command line of the project: the first

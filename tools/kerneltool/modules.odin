@@ -138,6 +138,15 @@ build_module :: proc(build: Module_Build) -> bool {
 		// The file name and the line in a message of a check, not the full path:
 		// the hash of a module does not depend on the folder of the build.
 		"-source-code-locations:filename",
+		// One thread for the checker and one for the code: with more, the
+		// order of the functions and of the constants in the object changes
+		// from one build to the next, and so does the hash of the module.
+		// Measured for `console`, `host`, `manual`, `imports` and the kernel:
+		// 16 builds give one object with the two options, two objects with
+		// "-thread-count:1" only, and 4 or 5 objects of 5 with neither. The
+		// cost: 2.3 s for `console`, against 2.5 s.
+		"-thread-count:1",
+		"-no-threaded-checker",
 		CONTRACT_LIBRARY,
 		join("-out:", objects, "/", build.name, ".o"),
 	)
