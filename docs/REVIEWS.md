@@ -33,6 +33,8 @@ A step is one tested commit that adds one capability.
 | 25 | `476d3d4` | Revocation of a grant: the kernel keeps the origin of each handle and each mapping; the operation `Handle_Revoke`; `Handle_Give` with the target 0 copies a handle; a lent handle is revoked after its call; the root service records and revokes grants; `grants` and `revoke` in the console; the program `origin` |
 | 26 | `1c9d04a` | Limits of a budget: processor time for each second, counted with the cycle counter and applied in periods of 100 ms; log records for each second; a limit counts in each budget above; `thread_start` with a budget; the program `limits` |
 | 27 | `fa80e79` | The menu of the windows in the bar: a window comes to the front by its title; the step kind `Front` of the machine test in place of clicks at a fixed place; the tool reads only complete lines of the log (a cause for the intermittent failure of step 24) |
+| 28 | `a170f20` | Pages on first use: a memory object reserves its pages in its budget and gets each page frame at its first use; no overcommit; the frames of a memory object are in a frame list, not contiguous (built by an agent on a branch, reviewed and merged by the coordinator) |
+| 29 | `7e1d906`, `c9fe3d7` | Shared code: the programs of one module map the same pages of code and constants with no Write, each with its own writable data; the programs `frames` and `twin` show ten cases of steps 28 and 29 with measures (same agent and branch) |
 
 ## Review 1: steps 1 to 5 (2026-11-10)
 
