@@ -68,18 +68,22 @@ budget_spent :: proc "contextless" (index: u32) -> bool {
 // budget_period starts a new period, at a tick of the first processor.
 budget_period :: proc "contextless" () {
 	if ticks % LIMIT_PERIOD == 0 {
+		refreshed := false
 		for &budget in budgets[1:] {
 			if !budget.live {
 				continue
 			}
 			part := allowance(&budget)
 			if budget.spent >= part {
-				// Threads of this budget can run again: the idle processors look.
-				wake_needed += processor_count
+				refreshed = true
 			}
 			budget.spent -= min(budget.spent, part)
 		}
 		period_start = cycles_now()
+		if refreshed {
+			// Threads of these budgets can run again: the idle processors look.
+			kick_all()
+		}
 	}
 	if ticks % LOG_PERIOD == 0 {
 		for &budget in budgets[1:] {

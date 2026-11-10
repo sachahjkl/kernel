@@ -136,7 +136,7 @@ holding_end :: proc "contextless" (holding: Holding) -> bool {
 			}
 			for word in thread.words[:thread.word_count] {
 				if region_has_frame(region, word &~ (PAGE_SIZE - 1)) {
-					thread_ready(&thread)
+					thread_wake(&thread)
 					break
 				}
 			}

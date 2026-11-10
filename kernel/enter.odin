@@ -7,11 +7,6 @@ import op "contract:operation"
 // K4: the kernel entry. It executes the command records of the kernel ring
 // of the program, then makes the program wait if it asked for that.
 
-// Records that are too large for the kernel stack. The kernel lock guards them.
-log_text: [4096]u8
-boot_report_record: op.Boot_Report
-mapping_report_record: op.Mapping_Report
-module_report_record: op.Module_Report
 
 enter :: proc "contextless" (index: u32) {
 	thread := &threads[index]
@@ -81,7 +76,8 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			channel_count += 1
 		}
 		name := transmute([]u8)program_name(program)
-		user_copy(&log_text, rawptr(uintptr(v[1])), v[2])
+		log_text := &processor_self().log_text
+		user_copy(log_text, rawptr(uintptr(v[1])), v[2])
 		log_bytes({'['})
 		log_bytes(name)
 		if channel_count != 0 {
@@ -449,16 +445,18 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 				return .Bad_Address
 			}
 			report := op.System_Report {
-				time          = ticks,
+				time          = intrinsics.atomic_load(&ticks),
 				page_count    = frame_count,
 				free_pages    = free_frames,
 				program_slots = PROGRAM_CAPACITY,
-				entries       = entry_count,
-				interrupts    = interrupt_count,
 				processors    = u64(processor_count),
-				locks         = lock_counts,
+				locks         = lock_counts_sum(),
 				reserved_pages = reserved_pages,
-				first_use_faults = first_use_faults,
+			}
+			for cpu in processors[:processor_count] {
+				report.entries += intrinsics.volatile_load(&cpu.entries)
+				report.interrupts += intrinsics.volatile_load(&cpu.interrupts)
+				report.first_use_faults += intrinsics.volatile_load(&cpu.first_use_faults)
 			}
 			for region in regions {
 				if region.page_count != 0 {
@@ -503,25 +501,27 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			if v[4] < size_of(op.Boot_Report) || !user_range(program, v[3], size_of(op.Boot_Report), true) {
 				return .Bad_Address
 			}
-			boot_report(&boot_report_record)
-			user_copy(rawptr(uintptr(v[3])), &boot_report_record, size_of(op.Boot_Report))
+			record := &processor_self().boot_report
+			boot_report(record)
+			user_copy(rawptr(uintptr(v[3])), record, size_of(op.Boot_Report))
 			results[0] = size_of(op.Boot_Report)
 		case .Mappings:
 			if v[4] < size_of(op.Mapping_Report) || !user_range(program, v[3], size_of(op.Mapping_Report), true) {
 				return .Bad_Address
 			}
+			record := &processor_self().mapping_report
 			if v[2] == 0 {
-				mappings_report(&mapping_report_record, kernel_table, 256, 512)
+				mappings_report(record, kernel_table, 256, 512)
 			} else {
-				mappings_report(&mapping_report_record, program.table, 0, 256)
+				mappings_report(record, program.table, 0, 256)
 			}
-			user_copy(rawptr(uintptr(v[3])), &mapping_report_record, size_of(op.Mapping_Report))
+			user_copy(rawptr(uintptr(v[3])), record, size_of(op.Mapping_Report))
 			results[0] = size_of(op.Mapping_Report)
 		case .Modules:
 			if v[4] < size_of(op.Module_Report) || !user_range(program, v[3], size_of(op.Module_Report), true) {
 				return .Bad_Address
 			}
-			report := &module_report_record
+			report := &processor_self().module_report
 			report^ = {}
 			if v[2] != 0 && v[2] < PROGRAM_CAPACITY {
 				// In the order of the addresses: the module of the program first.

@@ -335,9 +335,12 @@ System_Report :: struct {
 }
 
 // The locks of the kernel, by the data that each one protects
-// (docs/ARCHITECTURE.md, "Locks of the kernel").
+// (docs/ARCHITECTURE.md, "Locks of the kernel"). The order of the kinds is
+// the lock order: a processor takes a lock only if it holds no lock of a
+// later kind.
 Lock_Kind :: enum u64 {
-	Kernel = 0, // The one kernel lock: one processor at a time runs kernel code.
+	Kernel = 0, // The kernel lock: each kernel entry takes it.
+	Run    = 1, // The run queue of one processor, and the scheduling state of its threads.
 }
 
 LOCK_KIND_CAPACITY :: 12
@@ -345,6 +348,7 @@ LOCK_KIND_CAPACITY :: 12
 @(rodata)
 LOCK_KIND_NAMES := [Lock_Kind]string {
 	.Kernel = "kernel",
+	.Run    = "run",
 }
 
 // What the kernel counts for one kind of lock, on all the processors.

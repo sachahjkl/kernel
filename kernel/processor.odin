@@ -106,11 +106,24 @@ Processor :: struct {
 	record_thread: u32, // The thread whose thread record address is in the gs register of programs.
 	ports_loaded:  u32, // The program whose ports are open in the task state.
 	pending:       u32, // Not 0: another processor waits in processor_sync.
-	idle:          bool, // The processor waits for an interrupt, with no thread.
-	table:         u64, // The page table that the processor uses.
+	idle:          bool, // The processor waits for an interrupt, with no thread. Another processor clears it to wake it (kick).
+	table:         u64, // The page table that the processor uses. Only this processor writes it; others read it (unmap).
 	slice_left:    u64,
 	charged_from:  u64, // The cycle counter when the kernel last counted the time of the current thread (limit.odin).
 	busy_time:     u64, // Ticks with a thread.
+	// Counts of this processor only: no other processor writes them, and
+	// the reports add the counts of all processors.
+	entries:       u64, // Kernel entries.
+	interrupts:    u64, // Device interrupts.
+	first_use_faults: u64, // Page faults after which the page was present.
+	lock_counts:   [op.LOCK_KIND_CAPACITY]op.Lock_Count, // By Lock_Kind (lock.odin).
+	held:          [op.Lock_Kind]u32, // The locks of each kind that the processor holds.
+	// Records too large for the kernel stack, for the operation that runs on
+	// this processor.
+	log_text:       [4096]u8,
+	boot_report:    op.Boot_Report,
+	mapping_report: op.Mapping_Report,
+	module_report:  op.Module_Report,
 	segments:      [7]u64,
 	task_state:    Task_State,
 	idle_fpu:      Fpu_State,
@@ -121,46 +134,18 @@ processor_count: u32
 gates: [256]Interrupt_Gate
 machine_stopping: bool
 
-// The kernel lock: one processor at a time runs kernel code. A processor
-// takes the lock at each kernel entry and frees it when it returns to a
-// program or waits for an interrupt. Interrupts are off in the kernel, so
-// the holder never waits for anything but another processor in
-// processor_sync. The kernel is off the hot path (property 3): the count
-// of waits shows what the one lock costs.
-kernel_lock: u32
-lock_counts: [op.LOCK_KIND_CAPACITY]op.Lock_Count // The holder writes them.
-wake_needed: u32 // Threads that became ready since the last lock_release.
+// The kernel lock: a processor takes it at each kernel entry and frees it
+// when it returns to a program or waits for an interrupt. The step "the
+// kernel lock split by data" takes it out of the hot paths, layer by layer
+// (docs/ARCHITECTURE.md, "Locks of the kernel").
+kernel_lock: Lock
 
 lock_acquire :: proc "contextless" (cpu: ^Processor) {
-	waited := false
-	for intrinsics.atomic_exchange(&kernel_lock, 1) != 0 {
-		waited = true
-		for intrinsics.atomic_load(&kernel_lock) != 0 {
-			sync_acknowledge(cpu)
-			intrinsics.cpu_relax()
-		}
-	}
-	lock_counts[op.Lock_Kind.Kernel].takes += 1
-	if waited {
-		lock_counts[op.Lock_Kind.Kernel].waits += 1
-	}
+	lock_take(&kernel_lock, .Kernel)
 }
 
-// lock_release frees the kernel lock. Before, it wakes one idle processor
-// for each thread that became ready.
-lock_release :: proc "contextless" () {
-	for cpu in processors[:processor_count] {
-		if wake_needed == 0 {
-			break
-		}
-		if cpu.idle {
-			cpu.idle = false
-			wake_needed -= 1
-			apic_send(cpu.apic_id, VECTOR_WAKE)
-		}
-	}
-	wake_needed = 0
-	intrinsics.atomic_store(&kernel_lock, 0)
+lock_release :: proc "contextless" (cpu: ^Processor) {
+	lock_free(&kernel_lock, .Kernel)
 }
 
 // processor_sync waits until each processor of the set (bit n: processor n)
