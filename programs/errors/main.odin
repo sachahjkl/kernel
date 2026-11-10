@@ -23,13 +23,14 @@ HEIGHT :: TOP + CASE_CAPACITY * CASE_HEIGHT + 8 + 2 * LINE + 8
 SENTENCE_CAPACITY :: 240
 SHOWN :: (WIDTH - 40) / 8 // The characters of a line of the window.
 
-COLOR_BACKGROUND :: 0x10151C
-COLOR_PANEL :: 0x18202A
-COLOR_TEXT :: 0xD8E0E8
-COLOR_DIM :: 0x7A8794
-COLOR_RIGHT :: 0x58D878
-COLOR_WRONG :: 0xE0B040
-COLOR_SENTENCE :: 0xE88070
+// The colors of docs/DESIGN.md: a name is dim, a value (the sentence of a
+// record, the expected kind, the answer) is in the text color, a wrong
+// answer is in the color "failed".
+COLOR_BACKGROUND :: 0x0B1018
+COLOR_TRACK :: 0x1C2633
+COLOR_TEXT :: 0xDCE4EC
+COLOR_DIM :: 0x7C8A99
+COLOR_FAILED :: 0xF06060
 
 // One case: what the program does, the error kind that it expects, and the
 // sentence of the error record that the system gave.
@@ -469,22 +470,22 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 draw :: proc "contextless" (window: ^display.Window) {
 	canvas := window.canvas
 	graphics.clear(canvas, COLOR_BACKGROUND)
-	graphics.text(canvas, 12, 8, "each case makes an error for real; the line under it is the sentence of the error record", COLOR_DIM)
-	graphics.text(canvas, 12, 8 + LINE, "a key from a to s, or a click on a case, runs it again", COLOR_DIM)
+	graphics.text(canvas, 16, 8, "each case makes an error for real; under it, the sentence of its record: errors.Error_Record,", COLOR_DIM)
+	graphics.text(canvas, 16, 8 + LINE, "module.Load_Error, op.Stop_Report.frames. A key from a to s, or a click on a case, runs it again", COLOR_DIM)
 	for &item, index in cases {
 		y := TOP + index * CASE_HEIGHT
 		if index % 2 == 0 {
-			graphics.fill(canvas, 6, y - 1, WIDTH - 12, CASE_HEIGHT, COLOR_PANEL)
+			graphics.fill(canvas, 8, y, WIDTH - 16, CASE_HEIGHT, COLOR_TRACK)
 		}
-		graphics.text(canvas, 12, y, key_names[index:index + 1], COLOR_DIM)
-		graphics.text(canvas, 32, y, item.text, COLOR_TEXT)
-		graphics.text(canvas, 440, y, item.expected, COLOR_DIM)
-		graphics.text(canvas, 640, y, item.right ? "the expected record" : "another answer", item.right ? COLOR_RIGHT : COLOR_WRONG)
+		graphics.text(canvas, 16, y, key_names[index:index + 1], COLOR_DIM)
+		graphics.text(canvas, 32, y, item.text, COLOR_DIM)
+		graphics.text(canvas, 440, y, item.expected, COLOR_TEXT)
+		graphics.text(canvas, 640, y, item.right ? "the expected record" : "another answer", item.right ? COLOR_TEXT : COLOR_FAILED)
 		sentence := string(item.sentence[:min(item.count, SHOWN)])
-		graphics.text(canvas, 32, y + LINE, sentence, COLOR_SENTENCE)
+		graphics.text(canvas, 32, y + LINE, sentence, item.right ? COLOR_TEXT : COLOR_FAILED)
 	}
 	y := TOP + len(cases) * CASE_HEIGHT + 8
 	line: [120]u8
-	graphics.text(canvas, 12, y, system.format(line[:], "kernel operation: ", kernel_good, " ns when it succeeds, ", kernel_failed, " ns when it fails with its error record"), COLOR_DIM)
-	graphics.text(canvas, 12, y + LINE, system.format(line[:], "direct call of an export: ", direct_good, " ns when it succeeds, ", direct_failed, " ns when it fails with its error record"), COLOR_DIM)
+	graphics.text(canvas, 16, y, system.format(line[:], "kernel operation: ", kernel_good, " ns when it succeeds, ", kernel_failed, " ns when it fails with its error record"), COLOR_DIM)
+	graphics.text(canvas, 16, y + LINE, system.format(line[:], "direct call of an export: ", direct_good, " ns when it succeeds, ", direct_failed, " ns when it fails with its error record"), COLOR_DIM)
 }

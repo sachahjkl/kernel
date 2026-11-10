@@ -161,6 +161,7 @@ kerneltool run
 | `film` | Build, start the machine, film the terminal, write `build/film/terminal.mp4` (not a test) |
 | `font` | Convert the BDF file of the font to `support/graphics/font.odin` |
 | `portrait` | Convert `programs/temple/portrait.jpg` to `programs/temple/portrait.pixels` |
+| `repeat` | `repeat <module> <count>`: build one module again and again and compare the module, the LLVM IR and the object with the first build |
 | `check` | `odin check -vet` and `odin test` of the host code, then `test` |
 
 `nix flake check` runs the formatting hooks and `check`.
