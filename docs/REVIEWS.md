@@ -302,3 +302,65 @@ One is still open: the machine test failed one time at "the window paint is not 
 6. A block device service (virtio), then the storage service, with a program that keeps its data.
 7. The network: a virtio device service, then UDP, TCP, QUIC, with a server as the scenario.
 8. The other gaps: principals, signatures, TPM and Secure Boot, the document service, keyboard layouts, the date.
+
+## Review 6: steps 26 to 30 (2026-11-10)
+
+Steps 31 and 32 (the storage service, the persistent program) came in the same merge as step 30. Review 7 covers them.
+
+### What the five steps added
+
+- Step 26 gave a budget two limits: processor time and log records. A limit counts in the budget and in each budget above it.
+- Step 27 added the menu of the windows, the test step `Front`, and a tool that reads only complete lines of the log.
+- Step 28 made pages on first use the default: the budget pays at creation, the page frame comes at the first use, and no access fails for lack of memory.
+- Step 29 made the programs of one module share the pages that do not change.
+- Step 30 added the first device service that is not the keyboard: a virtio disk driven by a program, behind the contract `block`.
+
+The kernel has 25 operations: `Memory_Physical` (step 30). The test has 307 checks, 38 pictures and 12 machines.
+
+Steps 28 to 32 are the first steps that agents built on branches, at the same time. The coordinator read each kernel change, merged one branch at a time, and ran the full check and the flake check on `master` before each push.
+
+### Against the properties
+
+| Property | State after step 30 |
+|---|---|
+| P1 small counted interface | 25 operations. `Device_Create` has two new kinds (device memory, a message interrupt). `Memory_Create` has flags (`Frames_Now`, `Contiguous`) |
+| P2, P20 sandbox, no ambient access | Line 16 of P20 holds for processor time and log records (step 26). A device service receives one device, not the bus: the root service holds the configuration ports. Not done: no IOMMU, so a device service that gives a wrong address to its device reaches all memory. A device service is trusted code until then |
+| P3, P5 kernel off the hot path | Measured by `disk`: with 32 requests in flight, 0.05 kernel entries of the client and 0.09 of the block service for each request; with 1 in flight, 2 and 3. Still one kernel lock; a page on first use takes it (725 ns for each first use) |
+| P7 drivers in user space | Shown for a real device class: PCI, MSI-X, queues in memory that the device reads. The kernel has no virtio code |
+| P8, P9 storage | Steps 31 and 32, Review 7. Open for the owner: the place of SQLite |
+| P10, P11 one code module, identity by hash | The hash now names the shared code: two programs of one hash map one copy. Cost: the loader hashes the file at each start (53 us against 34 us for a module of 3 pages). Not done: imports (the branch `work/imports` is in progress) |
+| P13 ZII, data-oriented | A page on first use is zero. The frame list of a memory object is flat pages of 512 entries. The owner asked on 2026-11-10 for interfaces that push programs to tables of records: a rule for each new contract, recorded in the handoff |
+| P14 paging as a tool | Pages on first use, no overcommit, shared code. The desktop uses 27 % fewer pages (measured by the agent, one run). Not done: reserve a range, change a protection, take pages back, large pages, guard pages under stacks |
+| P17 performance is measured | Each of the five steps prints its numbers on the log, and the test reads the log |
+
+### Concessions, and what removes each one
+
+1. **A period of a budget is 100 ticks of the first processor**, with its true length measured by the cycle counter (step 26). The log limit can pass two times at the change of a second. Remove: one clock for the periods, when the time page has the cycle counter.
+2. **The menu of the windows needs the pointer**, and two windows with one title have equal lines. Remove: keys for the bar; an identity of a window that is not its title.
+3. **The cause of the intermittent failure is explained, not proven** (choice 127). The log of the failed run was not kept. The tool writes the log of each machine in `build/`, and the next run writes over it: if the failure comes again, copy the log before the next run. Remove: the tool keeps the logs of a failed run in a dated folder.
+4. **A first read of a page takes a frame**, as a write does: no shared zero page. Remove: with the step where a program drives its virtual memory.
+5. **The loader hashes a module at each start**, and each program that starts programs has its own table of prepared modules. Remove: the hash kept with the file by the storage service; one table in the root service, or a module service.
+6. **One block service serves one client, and the disks are at fixed places of the bus.** Remove: the storage service is the one client of the data disk by design; the fixed places go when the boot record names the boot device.
+7. **No IOMMU.** Remove: a step for the IOMMU (VT-d), with the kernel that limits each device to the memory of its service.
+8. **The storage and block exports answer an error with a small negative number** (`-1`, `-2` in the picture `storage`). This is the gap that the owner named on 2026-11-10: errors must diagnose. Remove: the step of the error records.
+9. Review 5, concessions 2, 3, 5, 6 are still true. Concession 7 (the resolution of a measure) is still true for `origin`; the new programs measure with the cycle counter.
+
+### Bad compromises found
+
+Two, in the work of the coordinator, not in the code.
+
+- **A rule that the owner never gave.** The coordinator wrote "Odin standard library only" for the whole system in the brief of the agents. The recorded rule is about the kernel tool. The storage agent excluded SQLite for this reason, against the text of property 9. The owner saw it and corrected it on 2026-11-10. The documents now say that the reason was false, and the question of SQLite is open for the owner. Lesson: a brief for an agent quotes the rule from the handoff, word for word.
+- **An agent ended its turn while its check still ran.** The coordinator saw the branch with uncommitted work and sent the agent back. Lesson, now in the brief: each check runs in the foreground.
+
+No bad compromise was found in the merged code by the reading of the kernel changes. The storage engine (800 lines, step 31) was not read line by line: its evidence is its three tests of a stop. Review 7 reads it.
+
+### Order of the next steps
+
+1. Merge `work/imports`: a program loads a module with imports; replacement of an import; the detail record of a failed load.
+2. The name `modus` in the code, the tool, the bar and the README.
+3. Errors that diagnose, with the program that shows each case.
+4. The kernel lock split by data, with measures.
+5. Scheduling strategies that the system can change while it runs.
+6. A program drives its virtual memory; tools that inspect memory and execution.
+7. The network: a virtio device service, then UDP, TCP, QUIC, with a server as the scenario.
+8. The other gaps: principals, signatures, TPM and Secure Boot, the document service, keyboard layouts, the date, the IOMMU.
