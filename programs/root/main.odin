@@ -26,6 +26,8 @@ grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 		return {.Root_Ring, .Machine, .Image}
 	case "monitor":
 		return {.Machine}
+	case "rings":
+		return {.Image} // It starts its nodes from the boot image.
 	}
 	return {}
 }

@@ -157,7 +157,22 @@ scenario := [?]Step {
 	{kind = .Wait, text = "temple: ok"},
 	{kind = .Wait, text = "compositor: surface temple"},
 	{kind = .Shot, text = "temple"},
-	{kind = .Click, x = 780, y = 300},
+
+	// Communication between programs: six programs pass records through
+	// six rings. A stopped program takes no record: the records wait.
+	{kind = .Click, x = 578, y = 14}, // rings
+	{kind = .Wait, text = "rings: ok, 6 programs, 6 rings, 5 records"},
+	{kind = .Wait, text = "compositor: surface rings"},
+	{kind = .Drag, x = 600, y = 243, to_x = 500, to_y = 71},
+	{kind = .Type, text = "aaa"},
+	{kind = .Shot, text = "rings"},
+	{kind = .Type, text = "4"},
+	{kind = .Wait, text = "rings: node 4 stopped"},
+	{kind = .Wait, text = "rings: node 4 does not run: "},
+	{kind = .Shot, text = "rings_stopped"},
+	{kind = .Type, text = "4"},
+	{kind = .Wait, text = "rings: node 4 started"},
+	{kind = .Click, x = 70, y = 300},
 	{kind = .Type, text = "shutdown()"},
 	{kind = .Wait, text = "kernel: the machine stops with code 0"},
 }

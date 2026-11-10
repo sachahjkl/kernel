@@ -15,6 +15,7 @@ package kerneltool
 import "core:fmt"
 import "core:os"
 import "core:strings"
+import "core:time"
 
 EXIT_FAILURE :: 1
 EXIT_USAGE :: 2
@@ -30,6 +31,10 @@ FIRMWARE_VARIABLES :: BUILD_FOLDER + "/ovmf_vars.fd"
 TEST_OUTPUT :: BUILD_FOLDER + "/test_output.txt"
 
 DOCUMENT_SCREENSHOT_FOLDER :: "docs/screenshots"
+// The development log: one folder of pictures per run of `screenshots`. It
+// is beside the repository, not in it: no run replaces the pictures of
+// another run.
+DEVELOPMENT_LOG_FOLDER :: "../kernel-devlog"
 
 Command :: struct {
 	name, about: string,
@@ -40,7 +45,7 @@ COMMANDS :: [?]Command {
 	{name = "build", about = "the modules, the boot image and the boot program, as " + BOOT_PROGRAM, run = run_build},
 	{name = "run", about = "build, then start the machine under QEMU, with the log of the kernel on this terminal", run = run_machine},
 	{name = "test", about = "build, start the machine under QEMU, act as the person, check the log, save pictures of the screen", run = run_test},
-	{name = "screenshots", about = "test, then copy the pictures to " + DOCUMENT_SCREENSHOT_FOLDER, run = run_screenshots},
+	{name = "screenshots", about = "test, then copy the pictures to " + DOCUMENT_SCREENSHOT_FOLDER + " and to a new folder of " + DEVELOPMENT_LOG_FOLDER, run = run_screenshots},
 	{name = "font", about = "convert the BDF file of the font to " + FONT_OUTPUT, run = run_font},
 	{name = "portrait", about = "convert " + PORTRAIT_SOURCE + " to " + PORTRAIT_OUTPUT, run = run_portrait},
 	{name = "check", about = "odin check -vet and odin test of the host code, then test", run = run_check},
@@ -140,22 +145,29 @@ run_test :: proc(args: []string) -> int {
 	return 0
 }
 
-// run_screenshots runs the machine test and copies its pictures to the documents.
+// run_screenshots runs the machine test and copies its pictures to the
+// documents and to a new folder of the development log.
 run_screenshots :: proc(args: []string) -> int {
 	if code := run_test(nil); code != 0 {
 		return code
 	}
 	pictures, ok := files_with_suffix(SCREENSHOT_FOLDER, ".png")
-	if !ok || !make_folder(DOCUMENT_SCREENSHOT_FOLDER) {
+	// The name of the folder is the time of the run, in UTC.
+	year, month, day := time.date(time.now())
+	hour, minute, second := time.clock(time.now())
+	log_folder := fmt.tprintf("%s/%04d-%02d-%02d_%02d%02d%02d", DEVELOPMENT_LOG_FOLDER, year, int(month), day, hour, minute, second)
+	if !ok || !make_folder(DOCUMENT_SCREENSHOT_FOLDER) || !make_folder(DEVELOPMENT_LOG_FOLDER) || !make_folder(log_folder) {
 		return EXIT_FAILURE
 	}
 	for picture in pictures {
-		target := strings.concatenate({DOCUMENT_SCREENSHOT_FOLDER, picture[strings.last_index(picture, "/"):]}, context.temp_allocator)
-		if err := os.copy_file(target, picture); err != nil {
-			fmt.eprintfln("kerneltool: cannot write %s: %v", target, err)
-			return EXIT_FAILURE
+		for folder in ([]string{DOCUMENT_SCREENSHOT_FOLDER, log_folder}) {
+			target := strings.concatenate({folder, picture[strings.last_index(picture, "/"):]}, context.temp_allocator)
+			if err := os.copy_file(target, picture); err != nil {
+				fmt.eprintfln("kerneltool: cannot write %s: %v", target, err)
+				return EXIT_FAILURE
+			}
+			fmt.printfln("kerneltool: wrote %s", target)
 		}
-		fmt.printfln("kerneltool: wrote %s", target)
 	}
 	return 0
 }

@@ -12,7 +12,7 @@ It lists the gaps between the code and the documents.
 - `kerneltool test` starts the machine under QEMU and acts as the person through the QEMU monitor: keys, pointer moves, clicks.
 - Each step of the scenario waits for a text in the log of the kernel. A step that does not see its text in 20 seconds fails the test.
 - The scenario is a table in `tools/kerneltool/machine.odin`.
-- The test saves five pictures of the screen. `kerneltool screenshots` copies them to `docs/screenshots/`.
+- The test saves seven pictures of the screen. `kerneltool screenshots` copies them to `docs/screenshots/`.
 - `nix flake check` runs the same test in the Nix sandbox.
 
 The scenario does these actions:
@@ -29,7 +29,9 @@ The scenario does these actions:
 10. Call `isolate("probe")`: the module runs in a call host. Call `count()`, `checksum("abc" + name)`, and `stop_machine` with three handle numbers: the kernel refuses each one.
 11. Call `peek(0)`: the kernel stops the call host on a page fault, and the console reports an error. Call `count()`: a new call host gives 1.
 12. Call `spin()`: after 2000 ms the console closes the handle of the call host, and the kernel stops it. Call `count() + gcd(84, 36)`: an isolated call and a direct call in one expression.
-13. Start `temple` from the bar. Then call `shutdown()`. The machine stops with code 0.
+13. Start `temple` from the bar.
+14. Start `rings` from the bar: six programs pass records through six rings. Add three records. Stop node 4: all the records wait in the ring before it. Start node 4 again.
+15. Call `shutdown()`. The machine stops with code 0.
 
 ## The path from power to desktop
 
@@ -74,6 +76,7 @@ The kernel contains no code for a device, except the timer, the interrupt contro
 | `programs/plasma`, `life`, `paint` | Demos: animation, simulation, pointer and key input |
 | `programs/temple` | Demo, for fun: a portrait of Jonathan Blow turns about its vertical axis, with perspective. The processor draws it |
 | `programs/fault` | A program that writes to an address that it does not own |
+| `programs/rings`, `programs/node`, `relay/` | Demo of communication between programs: six `node` programs in a circle, one ring from each node to the next. `rings` starts them, and draws the real content of each ring from the shared memory. A node has four memory objects and no other handle |
 | `isolated/` | The isolated call: the layout of the argument record, `encode` for the caller, `decode` with the checks for the receiver |
 | `programs/host` | The call host: it loads one module and executes the isolated calls of its exports |
 | `modules/math` | A module of commands: `gcd`, `power`, `fibonacci`, `next_prime`, `number` |
@@ -87,6 +90,7 @@ Grants by the root service:
 | `compositor` | The framebuffer; the input ring; a control ring to the root service |
 | `console` | A display ring; a ring to the root service; the machine; the boot image |
 | `monitor` | A display ring; the machine |
+| `rings` | A display ring; the boot image, to start its `node` programs |
 | all others | A display ring only |
 
 The console starts each call host. A call host receives a call ring and a call region only.

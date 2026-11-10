@@ -65,6 +65,8 @@ The next step is the owner's review of that file.
 - **Temple of Jon (owner, 2026-11-10)**: a demo, for fun, in the spirit of Jai: a portrait of Jonathan Blow that turns. Done as `programs/temple`: a flat card with perspective, drawn by the processor. The portrait is a public domain picture (`programs/temple/PORTRAIT_LICENSE`).
 - **No tweet (owner, 2026-11-10)**: never post about this project on X or on another public service. This includes the temple of Jon and all screenshots.
 - **Next step: the isolated call, "no bad compromise" (owner, 2026-11-10).** Done: `isolated/`, `programs/host`, `isolate("probe")` in the console.
+- **Development log (owner, 2026-11-10)**: keep all the screenshots in a folder out of the repository. `kerneltool screenshots` copies the pictures of each run to a new folder of `../kernel-devlog`, named with the time in UTC. The rule "no tweet" still applies to these pictures.
+- **Show the concepts (owner, 2026-11-10)**: add APIs for communication between programs and for more than one thread, and demonstrate each one with a picture. First: `rings` (six programs, six rings).
 - No pull request unless the owner asks.
 
 ## Research
