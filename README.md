@@ -59,6 +59,8 @@ The system boots under QEMU to a graphical desktop with a console, a system tool
 
 ![The console sets a replacement through the root service; programs() shows the modules of each program and the replacements that the loader applied](docs/screenshots/replacement.png)
 
+![The information of the modules: the manual shows the table of all the modules, read from their flat tables, with who imports each one and the programs that run it; the console combines the same tables with where, sort and join](docs/screenshots/modules.png)
+
 ![One queue for several writers and several readers, with no lock: the records of one second and the kernel entries, against a queue with a lock](docs/screenshots/crowd.png)
 
 ![The time is a page that each program reads: the reads of one second from the page and with a kernel entry](docs/screenshots/clock.png)
