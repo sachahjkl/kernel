@@ -63,6 +63,7 @@ The next step is the owner's review of that file.
 - **Goal of the first milestone (owner, 2026-11-09)**: a booted system with a working console and a basic graphical desktop, with demos and system tools that show what the system can do. Done on 2026-11-10.
 - **Font (owner, 2026-11-10)**: no enlarged low-resolution font. Use a bitmap font of good quality at its native size. Chosen: Spleen 8x16, BSD 2-Clause.
 - **Temple of Jon (owner, 2026-11-10)**: a demo, for fun, in the spirit of Jai: a portrait of Jonathan Blow that turns. Done as `programs/temple`: a flat card with perspective, drawn by the processor. The portrait is a public domain picture (`programs/temple/PORTRAIT_LICENSE`).
+- **No tweet (owner, 2026-11-10)**: never post about this project on X or on another public service. This includes the temple of Jon and all screenshots.
 - No pull request unless the owner asks.
 
 ## Research
