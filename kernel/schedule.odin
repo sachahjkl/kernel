@@ -90,29 +90,36 @@ queue_remove :: proc "contextless" (thread: ^Thread) {
 }
 
 // queue_pick takes the first thread of a queue whose budget has processor
-// time in this period. The caller holds the run lock. 0: none.
-queue_pick :: proc "contextless" (home: u32) -> u32 {
+// time in this period, and gives it to a processor, in the same section:
+// the thread is never Ready in no queue and on no processor, where a stop
+// would end it while the processor is about to run it. The caller holds the
+// run lock of the queue, which is the home of the thread and of the
+// processor. 0: none.
+queue_pick :: proc "contextless" (home: u32, cpu: ^Processor) -> u32 {
 	for index := run_queues[home].head; index != 0; index = threads[index].queue_next {
 		thread := &threads[index]
 		if !budget_spent(thread.budget) {
 			queue_remove(thread)
+			intrinsics.atomic_store(&thread.home, cpu.index)
+			thread.processor = cpu.index + 1
+			intrinsics.atomic_store(&cpu.current, index)
+			// A stop that marks this thread sees it on this processor, and
+			// counts it in `holds`.
+			intrinsics.atomic_add(&programs[thread.program].holds, 1)
 			return index
 		}
 	}
 	return 0
 }
 
-// queue_move takes a thread from the queue of another processor, and makes
-// this processor its home. The two run locks are taken in the order of the
-// processors. 0: none.
-queue_move :: proc "contextless" (from: u32, to: u32) -> u32 {
-	first, second := min(from, to), max(from, to)
+// queue_move takes a thread from the queue of another processor for this
+// processor, which becomes its home. The two run locks are taken in the
+// order of the processors. 0: none.
+queue_move :: proc "contextless" (from: u32, cpu: ^Processor) -> u32 {
+	first, second := min(from, cpu.index), max(from, cpu.index)
 	lock_take(&run_queues[first].lock, .Run)
 	lock_take(&run_queues[second].lock, .Run)
-	index := queue_pick(from)
-	if index != 0 {
-		intrinsics.atomic_store(&threads[index].home, to)
-	}
+	index := queue_pick(from, cpu)
 	lock_free(&run_queues[second].lock, .Run)
 	lock_free(&run_queues[first].lock, .Run)
 	return index
@@ -211,7 +218,8 @@ thread_queue :: proc "contextless" (thread: ^Thread) {
 	kick(home)
 }
 
-// schedule_pick takes the next thread for a processor that runs no thread
+// schedule_pick takes the next thread for a processor that runs no thread,
+// and gives it to the processor (queue_pick)
 // now: from the busiest other queue when its load is above the threads
 // that wait in the own queue, else from the own queue. So the threads that
 // are ready move to the processors that have less, and each one gets its
@@ -219,12 +227,12 @@ thread_queue :: proc "contextless" (thread: ^Thread) {
 schedule_pick :: proc "contextless" (cpu: ^Processor) -> u32 {
 	own := intrinsics.atomic_load(&run_queues[cpu.index].count)
 	if busiest, load := busiest_queue(cpu); load > own {
-		if index := queue_move(busiest, cpu.index); index != 0 {
+		if index := queue_move(busiest, cpu); index != 0 {
 			return index
 		}
 	}
 	lock_take(&run_queues[cpu.index].lock, .Run)
-	index := queue_pick(cpu.index)
+	index := queue_pick(cpu.index, cpu)
 	lock_free(&run_queues[cpu.index].lock, .Run)
 	return index
 }
@@ -253,8 +261,11 @@ schedule :: proc "contextless" () -> ! {
 		thread := &threads[index]
 		program := thread.program
 		home := run_lock(thread)
-		thread.processor = 0
+		intrinsics.atomic_store(&thread.processor, 0)
 		ended := intrinsics.atomic_load(&thread.stop_requested)
+		// The slot of an ended thread can serve a new thread before this
+		// processor gets the control lock: the serial names this thread.
+		serial := thread.serial
 		if ended {
 			// This processor owns the thread: it ends it (thread_stop,
 			// program_stop).
@@ -269,7 +280,7 @@ schedule :: proc "contextless" () -> ! {
 		if ended || cleanup {
 			control_take()
 			if ended {
-				thread_finish(index)
+				thread_finish(index, serial)
 			}
 			if cleanup {
 				program_cleanup(program)
@@ -282,13 +293,6 @@ schedule :: proc "contextless" () -> ! {
 		pushes := queue_pushes()
 		if index := schedule_pick(cpu); index != 0 {
 			thread := &threads[index]
-			lock_take(&run_queues[cpu.index].lock, .Run)
-			thread.processor = cpu.index + 1
-			intrinsics.atomic_store(&cpu.current, index)
-			// Under the run lock: a stop that marks this thread sees it on
-			// this processor, and counts it in `holds`.
-			intrinsics.atomic_add(&programs[thread.program].holds, 1)
-			lock_free(&run_queues[cpu.index].lock, .Run)
 			cpu.charged_from = cycles_now()
 			cpu.slice_left = TIME_SLICE
 			run(cpu, thread)

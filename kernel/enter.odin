@@ -39,6 +39,7 @@ enter :: proc "contextless" (index: u32) {
 command_run :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u64) -> op.Status {
 	cpu := processor_self()
 	cpu.retry = false
+	cpu.operation = true
 	status := execute_locked(index, command, results)
 	if cpu.retry || status == STATUS_RETRY {
 		cpu.retry = false
@@ -49,7 +50,35 @@ command_run :: proc "contextless" (index: u32, command: ring.Record, results: ^[
 		cpu.control = false
 		control_free()
 	}
+	cpu.operation = false
+	stop_wait(cpu)
 	return status
+}
+
+// stop_wait waits, with no lock held, until each thread that this
+// operation stopped on another processor left it: after Thread_Stop or
+// Program_Stop, no thread of what stopped runs an instruction (choice 18).
+// The wait ends at once if the current thread is stopped too: two threads
+// that stop each other do not wait for each other.
+stop_wait :: proc "contextless" (cpu: ^Processor) {
+	self := &threads[cpu.current]
+	if cpu.stopped_thread != 0 {
+		thread := &threads[cpu.stopped_thread]
+		for intrinsics.atomic_load(&thread.serial) == cpu.stopped_thread_serial && intrinsics.atomic_load(&thread.processor) != 0 && !intrinsics.atomic_load(&self.stop_requested) {
+			sync_acknowledge(cpu)
+			intrinsics.cpu_relax()
+		}
+		cpu.stopped_thread = 0
+	}
+	for cpu.stopped_programs != 0 {
+		index := u32(intrinsics.count_trailing_zeros(cpu.stopped_programs))
+		cpu.stopped_programs &~= 1 << index
+		program := &programs[index]
+		for intrinsics.atomic_load(&program.serial) == cpu.stopped_serials[index] && intrinsics.atomic_load(&program.holds) & (HOLDS_STOPPED - 1) != 0 && !intrinsics.atomic_load(&self.stop_requested) {
+			sync_acknowledge(cpu)
+			intrinsics.cpu_relax()
+		}
+	}
 }
 
 execute_locked :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u64) -> op.Status {

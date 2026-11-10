@@ -6,7 +6,20 @@ package lockers
 
 // The roles of the context of a locker.
 GRANT_BOARD :: 0 // Memory, with Read and Write: the board, one page that `locks` also maps.
+GRANT_PEER :: 1 // ROLE_CHURN: a program, with the right Control, that this one stops. 0: none.
 VALUE_INDEX :: 0 // The place of the locker on the board.
+VALUE_ROLE :: 1 // ROLE_MEASURE or ROLE_CHURN.
+VALUE_STOP_AFTER :: 2 // ROLE_CHURN: the milliseconds after which the program stops its peer, or itself with no peer. 0: never.
+
+// A locker of the measures: it works on the board.
+ROLE_MEASURE :: 0
+// A locker of the stress case: it has no board. Two threads compute with no
+// end, and the first thread makes threads that end at once, and stops one
+// of the two and makes it again, with no end, until a stop: `locks` stops
+// the program while its threads run, closes its last handle at once, and
+// the program can stop itself or its peer at the same time.
+ROLE_CHURN :: 1
+CHURN_THREADS :: 4 // The threads that a churn locker can have at one time.
 
 LOCKER_CAPACITY :: 4
 FAULT_PAGES :: 256 // The pages of one memory object in the measure of the pages on first use.

@@ -66,6 +66,7 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Program lock | The lock of one program: its handles, its mappings and its page table | address space lock, mmap lock |
 | Frame lock | The lock of the page frames, the reserved pages, the pages of the budgets and the slots of the memory objects | zone lock, page allocator lock |
 | Run queue | The threads that are ready and that no processor runs, of one processor: its home threads. Its run lock protects it and the scheduling state of these threads | runqueue, ready list |
+| Serial | A number of a slot of a kernel table (a thread, a program, a memory object) that changes for each new object in the slot. A path that names a slot across a wait for a lock checks it: the slot can hold another object after the wait | generation (for handles only), epoch, version |
 | Wait table | The threads that wait on words, in buckets chosen by the physical address of the word, each with a wait lock | futex hash table |
 | Locker | A program that the program `locks` starts several times. It works only on its own objects, so a locker waits for another one only when the kernel makes it wait. The measures of the locks of the kernel count what the lockers do | load generator, stress worker |
 | Lock count | What the kernel counts for one kind of lock, on all the processors: the times that a processor took it, and the times that it had to wait for it (`Lock_Count` in `System_Report`) | lock statistics, contention counter |

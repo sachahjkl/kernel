@@ -202,15 +202,22 @@ holding_end :: proc "contextless" (holding: Holding, changes: u64) -> End {
 }
 
 // revoke_under ends a holding and each holding that came from it, the last
-// ones first. When another processor changed the tree (a program closed a
-// holding of it), the walk starts again from the top. It does not loop for
+// ones first. `changes` is origin_changes when the caller chose `top`: if
+// another processor changed the tree since (a program closed a holding, and
+// its slot can hold a new handle now), nothing more ends here, and the
+// caller looks again from its own handle (restart). It does not loop for
 // ever: during the revocation no holding is added to the tree, so each
 // change removes one holding.
 @(private = "file")
-revoke_under :: proc "contextless" (top: Holding, caller: u32) -> (count: u64) {
+revoke_under :: proc "contextless" (top: Holding, caller: u32, changes: u64) -> (count: u64) {
+	changes := changes
 	cursor := top
 	for {
 		lock_take(&origin_lock, .Origin)
+		if origin_changes != changes {
+			lock_free(&origin_lock, .Origin)
+			return count
+		}
 		for {
 			child := origins[cursor].first
 			for child != 0 && stays(child, caller) {
@@ -223,23 +230,16 @@ revoke_under :: proc "contextless" (top: Holding, caller: u32) -> (count: u64) {
 		}
 		origin := origins[cursor].origin
 		last := cursor == top
-		changes := origin_changes
 		lock_free(&origin_lock, .Origin)
-		end := holding_end(cursor, changes)
-		if end == .Ended {
-			count += 1
-		}
-		if last && end != .Changed {
+		if holding_end(cursor, changes) != .Ended {
 			return count
 		}
-		lock_take(&origin_lock, .Origin)
-		// The end of this holding is one change; another one restarts.
-		if end != .Ended || origin_changes != changes + 1 {
-			cursor = top
-		} else {
-			cursor = origin
+		count += 1
+		changes += 1 // The end of this holding is one change: its detach.
+		if last {
+			return count
 		}
-		lock_free(&origin_lock, .Origin)
+		cursor = origin
 	}
 }
 
@@ -261,11 +261,12 @@ revoke :: proc "contextless" (top: Holding, caller: u32, only: u32) -> (count: u
 				break
 			}
 		}
+		changes := origin_changes
 		lock_free(&origin_lock, .Origin)
 		if found == 0 {
 			break
 		}
-		count += revoke_under(found, caller)
+		count += revoke_under(found, caller, changes)
 	}
 	lock_take(&origin_lock, .Origin)
 	revoking = false

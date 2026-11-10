@@ -29,6 +29,9 @@ MEASURE_TIME :: 300 // Milliseconds of one measure.
 PAIR_TIME :: 500 // Milliseconds of one measure of the word wait.
 LOST_WAIT :: 1000 // Milliseconds: a wait that ends at its deadline after the word changed lost its wake.
 LOCKER_AMOUNTS :: system.Budget_Amounts{pages = 1024, programs = 1, threads = 1, processor = 1_000_000, log_records = 10}
+CHURN_AMOUNTS :: system.Budget_Amounts{pages = 512, programs = 1, threads = lockers.CHURN_THREADS, processor = 1_000_000, log_records = 10}
+CHURN_ROUNDS :: 40
+CHURN_COUNT :: 3 // The programs of one round.
 
 WIDTH :: 760
 LINE :: 22
@@ -307,12 +310,131 @@ draw :: proc "contextless" (canvas: graphics.Canvas) {
 	}
 	y += LINE / 2
 	if done {
-		right := entries_right && faults_right && pages_right && pairs_right && lost_wakes == 0
-		graphics.text(canvas, 12, y, right ? "the counts add up, no wake was lost" : "a count is wrong", right ? COLOR_RIGHT : COLOR_WRONG)
+		right := entries_right && faults_right && pages_right && pairs_right && lost_wakes == 0 && stress_right
+		graphics.text(canvas, 12, y, right ? "the counts add up, no wake was lost, stopped programs returned all" : "a count is wrong", right ? COLOR_RIGHT : COLOR_WRONG)
 	} else {
 		graphics.text(canvas, 12, y, "measures in progress", COLOR_DIM)
 	}
 }
+
+// stress stops programs while their threads run, many times: each round
+// starts three churn lockers; the second and the third stop the one before
+// them after a few milliseconds, while this program stops each one, or
+// closes its last handle at once. At the end, each page, program and thread
+// is back in the budget of this program, and the free pages are the pages
+// of the budgets and the reserved pages.
+stress :: proc "contextless" (image: []u8, programs_free: u64) {
+	// The lockers of the measures have ended: their slots are back.
+	initial: system.Budget_Amounts
+	for deadline := system.time() + 5000; system.time() < deadline; {
+		initial, _ = system.budget_read()
+		if initial.programs == programs_free {
+			break
+		}
+		system.sleep(system.time() + 10)
+	}
+	file := system.image_find(image, "locker")
+	started, stopped, closed: u64
+	helper, _ := system.thread_start(stopper_run, nil)
+	for round in 0 ..< u64(CHURN_ROUNDS) {
+		churners: [CHURN_COUNT]system.Handle
+		for &churner, index in churners {
+			grants: [op.CONTEXT_HANDLES]system.Grant
+			values: [op.CONTEXT_VALUES]u64
+			values[lockers.VALUE_ROLE] = lockers.ROLE_CHURN
+			values[lockers.VALUE_STOP_AFTER] = 1 + (round + u64(index)) % 4
+			if index != 0 {
+				grants[lockers.GRANT_PEER] = {churners[index - 1], {.Control}}
+			}
+			status: system.Status
+			churner, status = system.program_start(file, "churn", grants, values, CHURN_AMOUNTS)
+			if status == .Ok {
+				started += 1
+			}
+		}
+		pause := system.time() + 2 + round % 3
+		for system.time() < pause {
+			intrinsics.cpu_relax()
+		}
+		for churner, index in churners {
+			if churner == 0 {
+				continue
+			}
+			switch (round + u64(index)) % 3 {
+			case 0:
+				system.call(.Program_Stop, u64(churner), 7)
+				stopped += 1
+			case 1:
+				// The other thread stops it while this one closes the handle.
+				seen := intrinsics.atomic_load(&stopper.done)
+				intrinsics.atomic_store(&stopper.target, u32(churner))
+				system.word_wake(&stopper.target)
+				for intrinsics.atomic_load(&stopper.target) != 0 {
+					intrinsics.cpu_relax()
+				}
+				system.close(churner)
+				for intrinsics.atomic_load(&stopper.done) == seen {
+					intrinsics.cpu_relax()
+				}
+				stopped += 1
+				closed += 1
+				continue
+			}
+			system.close(churner) // The last handle of this program to it, at once.
+			closed += 1
+		}
+	}
+	intrinsics.atomic_store(&stopper.quit, 1)
+	system.word_wake(&stopper.target)
+	system.thread_wait(helper)
+	// The cleanup of a program runs when its last thread leaves its
+	// processor: wait for the budget.
+	deadline := system.time() + 5000
+	after: system.Budget_Amounts
+	for system.time() < deadline {
+		after, _ = system.budget_read()
+		if after.pages + STRESS_TABLES >= initial.pages && after.programs == initial.programs && after.threads == initial.threads {
+			break
+		}
+		system.sleep(system.time() + 10)
+	}
+	final := report()
+	stress_right = started == CHURN_ROUNDS * CHURN_COUNT && after.pages <= initial.pages && after.pages + STRESS_TABLES >= initial.pages && after.programs == initial.programs && after.threads == initial.threads && final.budget_pages + final.reserved_pages == final.free_pages
+	system.log("locks: stress: ", started, " programs started, ", stopped, " stopped by this program (some by a thread while another thread closed the last handle), ", closed - stopped, " only by the close of their last handle, while their threads ran and they stopped each other; budget: pages ", after.pages, " of ", initial.pages, ", programs ", after.programs, " of ", initial.programs, ", threads ", after.threads, " of ", initial.threads, "; free pages ", final.free_pages, ", in budgets ", final.budget_pages, ", reserved ", final.reserved_pages)
+}
+
+stress_right: bool
+
+// The second thread of the stress case: it stops the program that the
+// first thread names in `stop_target`, while the first thread closes its
+// last handle to it.
+Stopper :: struct {
+	target: u32, // A program handle. 0: none.
+	done:   u32, // Adds 1 after each stop.
+	quit:   u32,
+}
+
+stopper: Stopper
+
+stopper_run :: proc "c" (parameter: rawptr) -> ! {
+	for intrinsics.atomic_load(&stopper.quit) == 0 {
+		target := intrinsics.atomic_exchange(&stopper.target, 0)
+		if target == 0 {
+			system.word_wait(&stopper.target, 0, system.time() + 100)
+			continue
+		}
+		system.call(.Program_Stop, u64(target), 7)
+		intrinsics.atomic_add(&stopper.done, 1)
+	}
+	system.thread_stop()
+}
+
+// The loader maps each module in this program at a new address to copy it,
+// and Memory_Unmap does not free a page table that became empty: the
+// budget of this program pays for some page tables. One page that a
+// stopped program did not return is one page for each of the 120: the
+// check permits less than a quarter of that.
+STRESS_TABLES :: CHURN_ROUNDS * CHURN_COUNT / 4
 
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
@@ -325,6 +447,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	display.present(&window)
 
 	machine = ctx.handles[system.GRANT_MACHINE]
+	at_start, _ := system.budget_read()
 	image: []u8
 	if address, status := system.memory_map(ctx.handles[system.GRANT_IMAGE], {}); status == .Ok {
 		image = ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]
@@ -367,14 +490,15 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	system.log("locks: lock waits of takes, 4 lockers, kernel entries: ", locks_text(text[:], entry_locks))
 	system.log("locks: lock waits of takes, 4 lockers, pages on first use: ", locks_text(text[:], fault_locks))
 	system.log("locks: lock waits of takes, word wait with 2 lockers: ", locks_text(text[:], pair_locks))
-	done = true
-	if entries_right && faults_right && pages_right && pairs_right && lost_wakes == 0 {
-		system.log("locks: ok, the kernel counted each entry, each page returned, no wake was lost")
-	} else {
-		system.log("locks: wrong: entries ", u64(entries_right), " faults ", u64(faults_right), " pages ", u64(pages_right), " wakes ", u64(pairs_right), " lost ", lost_wakes)
-	}
 	for program in programs {
 		system.close(program)
+	}
+	stress(image, at_start.programs)
+	done = true
+	if entries_right && faults_right && pages_right && pairs_right && lost_wakes == 0 && stress_right {
+		system.log("locks: ok, the kernel counted each entry, each page returned, no wake was lost, each stopped program returned its pages, its slot and its threads")
+	} else {
+		system.log("locks: wrong: entries ", u64(entries_right), " faults ", u64(faults_right), " pages ", u64(pages_right), " wakes ", u64(pairs_right), " lost ", lost_wakes, " stress ", u64(stress_right))
 	}
 	draw(canvas)
 	display.present(&window)

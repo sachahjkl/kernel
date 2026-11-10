@@ -123,6 +123,11 @@ Processor :: struct {
 	retry:         bool, // The operation needs the control lock: it runs again with it.
 	ports_serial:  u64, // The ports_serial of the program whose ports are open (ports_switch).
 	record_serial: u32, // The serial of the thread whose record address is in the gs register of programs.
+	// The stops that the operation in progress made (stop_wait).
+	operation:     bool, // A kernel operation of the current thread runs (command_run).
+	stopped_thread, stopped_thread_serial: u32, // A thread that ran on another processor. 0: none.
+	stopped_programs: u64, // Bit n: program n had a thread on a processor.
+	stopped_serials:  [PROGRAM_CAPACITY]u32,
 	// Records too large for the kernel stack, for the operation that runs on
 	// this processor.
 	log_text:       [4096]u8,

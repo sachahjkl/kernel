@@ -116,7 +116,7 @@ control_free :: proc "contextless" () {
 			continue
 		}
 		if program.state == .Stopped {
-			program_free(program)
+			program_free(program) // Only after the cleanup; else the cleanup frees it.
 		} else if program.state != .None {
 			program_stop(index, op.STOP_CODE_NO_HANDLE)
 		}

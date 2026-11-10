@@ -48,8 +48,49 @@ faults :: proc "contextless" (end: u64) -> (count: u64) {
 	return count
 }
 
+spin :: proc "c" (parameter: rawptr) -> ! {
+	for {
+		intrinsics.cpu_relax()
+	}
+}
+
+brief :: proc "c" (parameter: rawptr) -> ! {
+	system.thread_stop()
+}
+
+// churn is the role of a locker in the stress case (lockers.ROLE_CHURN).
+churn :: proc "contextless" (stop_after: u64, peer: system.Handle) -> ! {
+	start := system.time()
+	stop_after := stop_after
+	spinners: [2]system.Thread
+	for &spinner in spinners {
+		spinner, _ = system.thread_start(spin, nil)
+	}
+	for round := 0; ; round += 1 {
+		if stop_after != 0 && system.time() >= start + stop_after {
+			if peer == 0 {
+				system.stop(0)
+			}
+			// Two programs stop each other: `locks` stops this one now too.
+			system.call(.Program_Stop, u64(peer), 5)
+			stop_after = 0
+		}
+		if thread, status := system.thread_start(brief, nil); status == .Ok {
+			system.thread_wait(thread)
+		}
+		spinner := &spinners[round % len(spinners)]
+		if spinner.handle != 0 {
+			system.thread_end(spinner^)
+		}
+		spinner^, _ = system.thread_start(spin, nil)
+	}
+}
+
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
+	if ctx.values[lockers.VALUE_ROLE] == lockers.ROLE_CHURN {
+		churn(ctx.values[lockers.VALUE_STOP_AFTER], ctx.handles[lockers.GRANT_PEER])
+	}
 	address, status := system.memory_map(ctx.handles[lockers.GRANT_BOARD])
 	index := ctx.values[lockers.VALUE_INDEX]
 	if status != .Ok || index >= lockers.LOCKER_CAPACITY {

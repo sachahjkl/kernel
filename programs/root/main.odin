@@ -155,7 +155,7 @@ things_of :: proc "contextless" (name: string) -> system.Budget_Amounts {
 	case "processors":
 		return {pages = 2048, programs = 1, threads = 9}
 	case "locks":
-		return {pages = 6144, programs = 5, threads = 6} // 4 lockers of 1024 pages.
+		return {pages = 9216, programs = 8, threads = 20} // 4 lockers of 1024 pages, then 3 at a time of the stress case.
 	case "flow":
 		return {pages = 2048, programs = 1, threads = 3}
 	case "crowd":

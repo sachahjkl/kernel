@@ -154,6 +154,8 @@ Program :: struct {
 	// marks the threads; HOLDS_STOPPED when the marks are done (atomic).
 	holds:        u64,
 	ports_serial: u64, // Changes with each Ports handle of the program. It stays when the slot serves a new program.
+	cleaned:      bool, // program_cleanup ran: the slot can be free when no handle names it. Control lock.
+	serial:       u32, // Changes for each new program in the slot. It stays when the slot serves a new program.
 }
 
 HOLDS_STOPPED :: u64(1) << 32
@@ -273,8 +275,9 @@ budget_create :: proc "contextless" (parent: u32, amounts: op.Budget_Amounts) ->
 // objects that it paid for.
 budget_release :: proc "contextless" (index: u32) {
 	budget := &budgets[index]
-	budget.references -= 1
-	if budget.references != 0 {
+	// A copy of a Budget handle in its own program adds 1 with no control
+	// lock: the count is atomic.
+	if intrinsics.atomic_sub(&budget.references, 1) != 1 {
 		return
 	}
 	parent := budget.parent
@@ -691,9 +694,17 @@ map_region :: proc "contextless" (program: ^Program, region_index: u32, address:
 	for page in 0 ..< count {
 		entry := page_entry(program.table, address + page * PAGE_SIZE, true, &program.budget)
 		if entry == nil {
+			// Another thread of the program can have used a page that was
+			// present: as in unmap, each processor forgets the entries.
+			self := processor_self()
 			for undo in 0 ..< page {
 				page_entry(program.table, address + undo * PAGE_SIZE, false)^ = 0
+				if intrinsics.atomic_load(&self.table) == program.table {
+					page_flush(address + undo * PAGE_SIZE)
+				}
 			}
+			intrinsics.atomic_thread_fence(.Seq_Cst)
+			processor_sync(processors_with_table(program.table))
 			origin_detach(holding)
 			return 0, budgets[program.budget].amounts.pages == 0 ? .No_Budget : .No_Memory
 		}
@@ -866,10 +877,11 @@ program_create :: proc "contextless" (budget: u32, name: []u8) -> (index: u32, s
 		taken := program_lock(index)
 		defer program_unlock(index, taken)
 		ports_serial := program.ports_serial
-		program = {ports_serial = ports_serial, budget = budget}
+		serial := program.serial + 1
+		program = {ports_serial = ports_serial, serial = serial, budget = budget}
 		program.table = address_space_create(&program.budget)
 		if program.table == 0 {
-			program = {ports_serial = ports_serial}
+			program = {ports_serial = ports_serial, serial = serial}
 			return 0, .No_Budget
 		}
 		budgets[budget].amounts.programs -= 1
@@ -879,7 +891,7 @@ program_create :: proc "contextless" (budget: u32, name: []u8) -> (index: u32, s
 		if _, map_status := map_region(&program, time_region, op.TIME_ADDRESS, {}, 0, 1); map_status != .Ok {
 			address_space_free(program.table, &program.budget)
 			budgets[budget].amounts.programs += 1
-			program = {ports_serial = ports_serial}
+			program = {ports_serial = ports_serial, serial = serial}
 			return 0, map_status
 		}
 		program.state = .Created
@@ -889,9 +901,14 @@ program_create :: proc "contextless" (budget: u32, name: []u8) -> (index: u32, s
 	return 0, .No_Slot
 }
 
-// program_free frees the slot of a stopped program that no handle names.
-// The caller holds the control lock.
+// program_free frees the slot of a stopped program that no handle names,
+// after its cleanup. Stopped alone does not say that the cleanup ran: a
+// thread of it can still run on a processor. The caller holds the control
+// lock.
 program_free :: proc "contextless" (program: ^Program) {
+	if program.state != .Stopped || !program.cleaned {
+		return
+	}
 	program.state = .None
 	budgets[program.budget].amounts.programs += 1
 }
@@ -911,6 +928,11 @@ thread_create :: proc "contextless" (program_index: u32, budget: u32, entry, sta
 	program := &programs[program_index]
 	taken := program_lock(program_index)
 	defer program_unlock(program_index, taken)
+	// A stop marks each thread of the program once: a thread made after it
+	// would run in a program that ends.
+	if program.state != .Created && program.state != .Ready {
+		return 0, .Bad_State
+	}
 	number := u32(op.THREAD_CAPACITY)
 	for candidate in 0 ..< u32(op.THREAD_CAPACITY) {
 		if program.thread_areas & (1 << candidate) == 0 {
@@ -995,6 +1017,10 @@ thread_stop :: proc "contextless" (index: u32) {
 		run_unlock(home)
 		if cpu := processors[running - 1]; cpu != processor_self() {
 			apic_send(cpu.apic_id, VECTOR_WAKE)
+			// The operation returns after the thread left its processor.
+			if self := processor_self(); self.operation {
+				self.stopped_thread, self.stopped_thread_serial = index, thread.serial
+			}
 		}
 		return
 	}
@@ -1002,16 +1028,18 @@ thread_stop :: proc "contextless" (index: u32) {
 	thread.state = .Stopped
 	intrinsics.atomic_add(&thread.wait_serial, 1)
 	run_unlock(home)
-	thread_finish(index)
+	thread_finish(index, thread.serial)
 }
 
 // thread_finish frees what an ended thread has: its entries in the wait
 // table, its thread area. No processor runs the thread. The other threads
 // of the program get an event: one of them can wait for this end. A
 // program with no thread stops. The caller holds the control lock.
-thread_finish :: proc "contextless" (index: u32) {
+// `serial` names the thread: if the slot serves another thread now, this
+// thread was finished already.
+thread_finish :: proc "contextless" (index: u32, serial: u32) {
 	thread := &threads[index]
-	if thread.finished {
+	if thread.finished || thread.serial != serial {
 		return
 	}
 	thread.finished = true
@@ -1021,6 +1049,10 @@ thread_finish :: proc "contextless" (index: u32) {
 	taken := program_lock(program_index)
 	thread.events = nil
 	thread.ring = {}
+	// Under the program lock: program_event, which holds only this lock,
+	// never reads this slot as a thread of the program again, also when a
+	// new thread of another program takes the slot.
+	thread.program = 0
 	running := program.state != .Stopped
 	last := false
 	if running {
@@ -1116,13 +1148,18 @@ program_stop :: proc "contextless" (index: u32, code: u32) {
 	}
 	for slot in 1 ..< u32(THREAD_TABLE_CAPACITY) {
 		if ended[slot] {
-			thread_finish(slot)
+			thread_finish(slot, threads[slot].serial)
 		}
 	}
 	for cpu in processors[:processor_count] {
 		if running & (1 << cpu.index) != 0 && cpu != self {
 			apic_send(cpu.apic_id, VECTOR_WAKE)
 		}
+	}
+	// The operation returns after the threads left their processors.
+	if running &~ (1 << self.index) != 0 && self.operation {
+		self.stopped_programs |= 1 << index
+		self.stopped_serials[index] = program.serial
 	}
 	if intrinsics.atomic_add(&program.holds, HOLDS_STOPPED - 1) + HOLDS_STOPPED - 1 == HOLDS_STOPPED {
 		program_cleanup(index)
@@ -1135,7 +1172,7 @@ program_cleanup :: proc "contextless" (index: u32) {
 	program := &programs[index]
 	for &thread, slot in threads[1:] {
 		if thread.program == index && thread.state == .Stopped && !thread.finished {
-			thread_finish(u32(slot + 1))
+			thread_finish(u32(slot + 1), thread.serial)
 		}
 	}
 	taken := program_lock(index)
@@ -1160,6 +1197,7 @@ program_cleanup :: proc "contextless" (index: u32) {
 	}
 	address_space_free(program.table, &program.budget)
 	program.table = 0
+	program.cleaned = true
 	program_unlock(index, taken)
 	for &other, other_index in programs[1:] {
 		other_slot := u32(other_index + 1)
