@@ -12,7 +12,7 @@ A step is one tested commit that adds one capability.
 | 4 | `e8cbcb5` | Threads: several per program, shown by `threads` |
 | 5 | `44d2973` | The word wait and the lock, shown by `workers` |
 | 6 | `887f23b` | One wait: rings wait on words, `Wake(memory)` deleted, the event word |
-| 7 | (the commit of step 7) | The console runs a line in a second thread: keys during a call, Escape stops an isolated call |
+| 7 | `6d900bc` | The console runs a line in a second thread: keys during a call, Escape stops an isolated call |
 
 ## Review 1: steps 1 to 5 (2026-11-10)
 
