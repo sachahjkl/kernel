@@ -77,12 +77,24 @@ REGION_PAGES :: 16
 //   kind        a Service_Command
 //   values[0]   the handle of the call ring, in the service
 //   values[1]   the handle of the call region, in the service
+//   values[2..5] Connect: the name of the caller, as the root service names
+//               it: 32 bytes, zero bytes after the name. A program that the
+//               root service starts again has the same name.
+//   values[6]   Connect and Grant: what the root service grants to the
+//               caller in this service. The bits of CALLER_AMOUNT_MASK are
+//               an amount: the service gives it a meaning, for example a
+//               limit of blocks. CALLER_PERSON: the caller acts for the
+//               person, and can see what the service holds for all callers.
+//               0: no grant. The caller cannot change it.
 SERVICE_CONNECTION_CAPACITY :: 8 // The callers of one service.
+CALLER_AMOUNT_MASK :: u64(1) << 48 - 1
+CALLER_PERSON :: u64(1) << 63
 
 Service_Command :: enum u32 {
 	None       = 0,
 	Connect    = 1, // The service maps the two memory objects, and serves the calls of the call ring.
 	Disconnect = 2, // The service unmaps them and closes the two handles.
+	Grant      = 3, // The grant of the connection of the call ring changes to values[6]: a revocation, for example.
 }
 
 Status :: enum u32 {

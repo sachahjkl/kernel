@@ -30,6 +30,8 @@ Grant :: enum {
 	Log_Records, // Read the records of the log.
 	Serve, // A service: other programs call its exports through connections.
 	Terminal, // The program has no surface: it writes records to a terminal, and reads keys from it.
+	Store, // A private store in the storage service: a connection to it names the program, with a limit of blocks.
+	Person, // The program acts for the person: a service shows it what it holds for all callers.
 	Data_Disk, // A block service of the data disk, and its block ring.
 	Scratch_Disk, // A block service of the disk of the measures, and its block ring.
 }
@@ -37,7 +39,7 @@ Grant :: enum {
 grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 	switch name {
 	case "console":
-		return {.Root_Ring, .Inspect, .Stop, .Image, .Terminal}
+		return {.Root_Ring, .Inspect, .Stop, .Image, .Terminal, .Store, .Person}
 	case "flood":
 		return {.Terminal}
 	case "monitor", "processors", "pages", "flow", "crowd", "clock":
@@ -58,8 +60,43 @@ grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 		return {.Serve, .Image} // It reads the documentation of each module of the boot image.
 	case "disk":
 		return {.Scratch_Disk}
+	case "storage":
+		return {.Serve, .Data_Disk}
 	}
 	return {}
+}
+
+// store_limit_of gives the blocks of the private store of a program with
+// the grant Store.
+store_limit_of :: proc "contextless" (name: string) -> u64 {
+	switch name {
+	case "console":
+		return 4 // A small limit: the test reaches it.
+	}
+	return 64
+}
+
+// A service that starts when a program asks for a connection to it.
+on_demand :: proc "contextless" (name: string) -> bool {
+	return name == "storage"
+}
+
+// grant_for gives what a caller receives in a service (isolated.Service_Command).
+// The storage service: the private store of the caller, by its name, with a
+// limit of blocks.
+grant_for :: proc "contextless" (caller: ^Started, service: ^Started) -> (grant: u64) {
+	if system.name_of(service.name[:]) != "storage" {
+		return 0
+	}
+	name := system.name_of(caller.name[:])
+	role := grants_of(name)
+	if .Store in role && .Store not_in caller.revoked {
+		grant = store_limit_of(name)
+	}
+	if .Person in role {
+		grant |= isolated.CALLER_PERSON
+	}
+	return grant
 }
 
 // The budget of each program, by name: pages of memory, programs, threads.
@@ -544,6 +581,25 @@ revoke :: proc "contextless" (name: string, grant: u64, values: ^[7]u64) -> syst
 	}
 	handle: system.Handle
 	switch which {
+	case .Store:
+		// The store is data of the storage service: the root service tells it
+		// on its service ring that the grant of each connection changed.
+		count: u64
+		for &connection in connections {
+			if connection.caller != item || system.name_of(connection.service.name[:]) != "storage" {
+				continue
+			}
+			person := grant_for(item, connection.service) & isolated.CALLER_PERSON
+			if !system.send(&connection.service.service.commands, ring.Record{kind = u32(isolated.Service_Command.Grant), values = {0 = u64(connection.ring), 6 = person}}) {
+				return .No_Slot
+			}
+			count += 1
+		}
+		item.granted -= {which}
+		item.revoked += {which}
+		values[0] = count
+		system.log_in("programs", .Info, "root: revoked the grant store of ", name, ", connections changed: ", count)
+		return .Ok
 	case .Log:
 		handle = system.context_record().handles[op.CONTEXT_LOG]
 	case .Machine:
@@ -600,10 +656,16 @@ terminal_start :: proc "contextless" (view: ^Started, writer: ^Started, ring_mem
 // the completion of Root_Command.Connect.
 connect :: proc "contextless" (caller: ^Started, name: string, values: ^[7]u64) -> system.Status {
 	service: ^Started
-	for &item in started {
-		if item.program != 0 && item.service.head != nil && system.name_of(item.name[:]) == name {
-			service = &item
+	for pass in 0 ..< 2 {
+		for &item in started {
+			if item.program != 0 && item.service.head != nil && system.name_of(item.name[:]) == name {
+				service = &item
+			}
 		}
+		if service != nil || pass == 1 || !on_demand(name) {
+			break
+		}
+		start(name) or_return
 	}
 	if service == nil || service == caller {
 		return .Bad_Handle
@@ -636,8 +698,13 @@ connect :: proc "contextless" (caller: ^Started, name: string, values: ^[7]u64) 
 	// The service first. It receives its handles through its service ring.
 	in_service_ring := system.give(service.service_memory, ring_memory, {.Read, .Write}) or_return
 	in_service_region := system.give(service.service_memory, region_memory, {.Read, .Write}) or_return
-	if !system.send(&service.service.commands, ring.Record{kind = u32(isolated.Service_Command.Connect), values = {0 = u64(in_service_ring), 1 = u64(in_service_region)}}) {
+	caller_name := system.name_pack(system.name_of(caller.name[:]))
+	grant := grant_for(caller, service)
+	if !system.send(&service.service.commands, ring.Record{kind = u32(isolated.Service_Command.Connect), values = {0 = u64(in_service_ring), 1 = u64(in_service_region), 2 = caller_name[0], 3 = caller_name[1], 4 = caller_name[2], 5 = caller_name[3], 6 = grant}}) {
 		return .No_Slot
+	}
+	if grant & isolated.CALLER_AMOUNT_MASK != 0 {
+		caller.granted += {.Store}
 	}
 	free^ = {
 		caller  = caller,

@@ -33,6 +33,20 @@ Connection :: struct {
 	region_memory: Handle,
 	calls:         ring.Ring,
 	region:        []u8,
+	caller:        Name, // The name of the caller, as the root service names it.
+	grant:         u64, // What the root service grants to the caller here (isolated.CALLER_AMOUNT_MASK, isolated.CALLER_PERSON).
+}
+
+// The connection of the call that runs: see service_caller.
+@(private)
+serving: ^Connection
+
+// service_caller gives the connection of the call that runs, in an export
+// that a service serves: the name of the caller and its grant. It gives nil
+// outside such a call. The caller cannot choose either: the root service
+// writes them.
+service_caller :: proc "contextless" () -> ^Connection {
+	return serving
 }
 
 Service :: struct {
@@ -89,9 +103,15 @@ service_run :: proc "contextless" (service: ^Service) -> (calls: int) {
 		ring_memory, region_memory := Handle(command.values[0]), Handle(command.values[1])
 		#partial switch isolated.Service_Command(command.kind) {
 		case .Connect:
-			if !connection_add(service, ring_memory, region_memory) {
+			if !connection_add(service, ring_memory, region_memory, name_unpack({command.values[2], command.values[3], command.values[4], command.values[5]}), command.values[6]) {
 				close(ring_memory)
 				close(region_memory)
+			}
+		case .Grant:
+			for &connection in service.connections {
+				if connection.calls.head != nil && connection.ring_memory == ring_memory {
+					connection.grant = command.values[6]
+				}
 			}
 		case .Disconnect:
 			for &connection in service.connections {
@@ -115,7 +135,9 @@ service_run :: proc "contextless" (service: ^Service) -> (calls: int) {
 			if !has_command {
 				break
 			}
+			serving = &connection
 			send(&connection.calls.completions, export_serve(service.file, op.PROGRAM_BASE, connection.region, connection.ring_memory, command))
+			serving = nil
 			calls += 1
 		}
 	}
@@ -124,7 +146,7 @@ service_run :: proc "contextless" (service: ^Service) -> (calls: int) {
 }
 
 @(private)
-connection_add :: proc "contextless" (service: ^Service, ring_memory, region_memory: Handle) -> bool {
+connection_add :: proc "contextless" (service: ^Service, ring_memory, region_memory: Handle, caller: Name, grant: u64) -> bool {
 	for &connection in service.connections {
 		if connection.calls.head != nil {
 			continue
@@ -143,6 +165,8 @@ connection_add :: proc "contextless" (service: ^Service, ring_memory, region_mem
 			region_memory = region_memory,
 			calls         = calls,
 			region        = ([^]u8)(bytes)[:memory_size(region_memory) * PAGE_SIZE],
+			caller        = caller,
+			grant         = grant,
 		}
 		service.connected += 1
 		return true

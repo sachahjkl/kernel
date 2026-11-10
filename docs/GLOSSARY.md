@@ -146,6 +146,10 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Module store | The set of all modules and system data, each identified by content hash (P11) | package store, repository, the Nix store |
 | System description | The list of hashes that defines one version of the whole system (P11) | image, generation, manifest, profile |
 | Storage service | The service that owns the block device and gives objects, versions and private stores (P9) | file system |
+| Root block | The block of the data disk that names the private stores. The disk has two places for it; the storage service takes the valid one with the highest generation | superblock, uberblock, meta page |
+| Commit | One change of the stores: the storage service writes new blocks, then a new root block. A commit is on the disk completely or not at all | transaction (for this), save, sync |
+| Generation | The number of a commit. Each commit has the generation of the one before plus 1 | epoch, transaction id, version (for this) |
+| Check | The first 8 bytes of the BLAKE3 hash of a block, kept in the block that names it. A block that does not have its check is wrong, and the storage service does not use it | checksum, CRC, digest |
 
 ## Desktop
 

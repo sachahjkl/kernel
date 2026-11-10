@@ -42,6 +42,7 @@ Root_Grant :: enum u32 {
 	Machine     = 1, // The machine, with the rights of the role.
 	Image       = 2, // Read the boot image.
 	Log_Records = 3, // Read the records of the log.
+	Store       = 4, // A private store in the storage service.
 }
 Root_Grants :: bit_set[Root_Grant;u64]
 
@@ -50,6 +51,7 @@ root_grant_names := [Root_Grant]string {
 	.Machine     = "machine",
 	.Image       = "image",
 	.Log_Records = "log_records",
+	.Store       = "store",
 }
 
 Name :: [32]u8

@@ -71,6 +71,8 @@ The system boots under QEMU to a graphical desktop with a console, a system tool
 
 ![The block service: a virtio disk in a program, a ring, and the data in the memory of the client; blocks in one second and kernel entries for each request](docs/screenshots/disk.png)
 
+![The storage service: the private store of the console, its limit of blocks, the stores that the person sees, and a grant that the person revokes](docs/screenshots/storage.png)
+
 ![The temple of Jon: a portrait of Jonathan Blow that turns](docs/screenshots/temple.png)
 
 `kerneltool screenshots` makes these pictures from the running machine.
@@ -83,6 +85,7 @@ The system boots under QEMU to a graphical desktop with a console, a system tool
 - The root service loads all other programs in user space and grants their handles.
 - The input service reads the keyboard and the mouse through granted ports and interrupts.
 - A block service drives a virtio disk with device memory and a message interrupt; its client gives the memory that the device reads and writes.
+- The storage service keeps a private store for each program on the data disk: each change is one commit, and a stop of the machine never shows a part of one.
 - The compositor owns the framebuffer. Each program draws into a surface in shared memory.
 - The console is a normal program. A command is a typed function: `hash("abc")`, `start("life")`, `programs()`.
 - `load("math")` loads a module: its exports become commands. The module describes them: the tool makes each description from the source (parameter names, types, help).

@@ -159,6 +159,7 @@ One service per device class: block, network card, display, input, TPM.
 - Owns the block device queues. Gives transactional object stores (P9).
 - Creates one private store per program. Gives clones and snapshots.
 - First version: SQLite on the raw block device. Later: a native engine below the same interface.
+- **Implemented** (2026-11-10, `programs/storage`): a native engine in place of SQLite, because the project imports no code that is not Odin. Copy on write with two places for the root block and a check of each block in the block that names it. The storage service is a service with exports; the root service names the private store of each connection and its limit of blocks. Not done: versions, snapshots, clones.
 
 ### U6. Document service
 
