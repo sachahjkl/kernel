@@ -201,23 +201,15 @@ pairs :: proc "contextless" (load: int) -> u64 {
 	before := report()
 	start := system.time() + 20
 	end := start + PAIR_TIME
-	if load != 0 {
-		seen: [lockers.LOCKER_CAPACITY]u32
-		for index in 0 ..< load {
-			slot := &board.slots[index]
-			seen[index] = intrinsics.atomic_load(&slot.done)
-			slot.mode = .Entries
-			slot.start = start
-			slot.end = end
-			intrinsics.atomic_add(&slot.command, 1)
-			system.word_wake(&slot.command, system.WAKE_ALL)
-		}
-		defer for index in 0 ..< load {
-			slot := &board.slots[index]
-			for intrinsics.atomic_load(&slot.done) == seen[index] {
-				system.word_wait(&slot.done, seen[index], system.time() + 5000)
-			}
-		}
+	seen: [lockers.LOCKER_CAPACITY]u32
+	for index in 0 ..< load {
+		slot := &board.slots[index]
+		seen[index] = intrinsics.atomic_load(&slot.done)
+		slot.mode = .Entries
+		slot.start = start
+		slot.end = end
+		intrinsics.atomic_add(&slot.command, 1)
+		system.word_wake(&slot.command, system.WAKE_ALL)
 	}
 	for system.time() < start {
 		intrinsics.cpu_relax()
@@ -231,6 +223,13 @@ pairs :: proc "contextless" (load: int) -> u64 {
 		pair_round(0, turn)
 	}
 	after := report()
+	// The lockers end at the same time.
+	for index in 0 ..< load {
+		slot := &board.slots[index]
+		for intrinsics.atomic_load(&slot.done) == seen[index] {
+			system.word_wait(&slot.done, seen[index], system.time() + 5000)
+		}
+	}
 	intrinsics.atomic_store(&pair.stop, 1)
 	intrinsics.atomic_add(&pair.turn, 2)
 	system.word_wake(&pair.turn, system.WAKE_ALL)
