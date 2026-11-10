@@ -237,3 +237,61 @@ Four, all removed.
 5. Paging, second part: pages on first use, read-only code that programs share.
 6. The kernel lock split by data; scheduling strategies that the system can change while it runs.
 7. Storage (virtio block device) with a program that keeps its data; then the network.
+
+## Review 5: steps 21 to 25 (2026-11-10)
+
+### What the five steps added
+
+- Step 21 showed one module in each role: a program, a service, a library in the memory of its caller, a sandboxed program. A module carries its documentation, and `manual` shows it.
+- Step 22 made two source libraries, `contract:` and `support:`. The kernel compiles with the contract library only.
+- Step 23 put the console in a terminal: key records go from the terminal to its program, and the console has no surface.
+- Step 24 added records and handles to the descriptions. A Record goes as bytes. A Handle is lent with the rights of its description.
+- Step 25 added revocation. The kernel keeps the origin of each handle and each mapping, and `Handle_Revoke` ends what came from a handle.
+
+The kernel has 24 operations: `Handle_State` (step 24) and `Handle_Revoke` (step 25). The test has 221 checks, 31 pictures and 8 machines.
+
+### Against the properties
+
+| Property | State after step 25 |
+|---|---|
+| P1 small counted interface | 24 operations. Two were added in five steps, each for a fact that only the kernel knows: where a handle came from, and what came from it |
+| P2 sandbox by default | Stronger. A receiver proves each lent handle (`Handle_State`). A giver takes back each holding, through each chain of gifts (`Handle_Revoke`). The open point of P2 on revocation in the table is closed |
+| P3, P5 kernel off the hot path | Not changed for records. A lent handle costs the caller 5 kernel entries in place of 2: 2000 ns for the four entries of the lend and the take back, measured by `origin`. A call with no handle has the cost of before. Still one kernel lock |
+| P4, P6 one communication mechanism | Holds. The terminal gives keys as records of a ring. A record argument and a lent handle go through the call ring and the call region: no new channel |
+| P10 one code module | Shown by `tally`: one file in four roles. Not done: a program cannot load a module with imports, and no import can be replaced |
+| P13 ZII, data-oriented | Holds. The origin table is one flat array of 8-byte links, all zero at the start: a holding with no origin |
+| P16 removed concepts | The console lost its window and its drawing code. No program reads a stream of bytes |
+| P19 command is a function | Records and handles are in the descriptions, made from the source. A record of the console comes from the description of the module. Not done: floats, texts in a record, a record in a record, a handle in a result |
+| P20 no ambient access | Line 13 (a grant is recorded, visible and revocable) now holds for the grants of the root service: `grants` and `revoke`. Not done: an end time for a grant, a window that shows the grants, a list of who can call which service. Line 16 is not changed: a budget has no processor time and the log has no limit of rate (step 26) |
+
+### Concessions, and what removes each one
+
+1. **The plan had one step for revocation and for processor time and log records in budgets.** The assistant split it: one capability for each step. Budgets are step 26.
+2. **The root service cannot revoke one ring** (choice 112). It closes its handle of a ring after the start. Remove: the root service keeps the ring handles of each connection, when it has the list of who can call which service.
+3. **The person sees grants in the console only.** Remove: a window of grants in a system tool, with the grants that programs gave to each other, from a kernel report of the origin table.
+4. **A program that uses revoked memory stops on a page fault** (choice 108). This is the decided behavior, not a temporary one: the program gets an event before, and a program that wants to continue must not use memory after that event. A service that must survive a revocation needs a handler of faults in the program; none exists.
+5. **A caller can fill the handle table of a receiver** through a call ring, with handles for calls that it never sends. Remove: a limit of lent handles for each connection, in the kernel object of the connection or in the count of `Handle_State`.
+6. **A direct call does not limit a Handle to its rights** (step 24): the module is in the program of the caller. Remove: nothing in the same address space can; the isolated call is the way for a module that the caller does not trust.
+7. **The measure of `origin` has a resolution of 50 ns**: 20 000 cycles against a clock of one millisecond. Remove: the cycle counter in the time page.
+8. Review 4, concessions 1 to 3 and 5 to 7 are still true. Concession 4 (the console draws its own text) was removed by step 23.
+
+### Bad compromises found
+
+Three, all removed.
+
+- Step 24: a mapping that an export made with a lent handle stayed after the call. The caller could not take its memory back. Step 25 removed it: the caller revokes, and the kernel removes the mapping.
+- Step 24: the record kind `COMMAND_RELEASE` asked the receiver to close handles that the caller gave for a call that it did not send. The caller depended on the receiver. Step 25 removed the record kind: the caller revokes.
+- Before step 25: the compositor had 16 places for windows and no check, and the removal of a window read past the table (choice 114). The scenario with one more program stopped the compositor. The table has 32 places, the number of programs that the root service can start.
+
+One is still open: the machine test failed one time at "the window paint is not at 516,408" during step 24. It did not fail in the six full runs of step 25. The cause is not found; the out-of-bounds copy of the compositor in the same code path (the order of windows) is a candidate, not a proof.
+
+### Order of the next steps
+
+1. Processor time and log records in budgets (step 26).
+2. A program loads a module with imports; replacement of an import.
+3. Paging, second part: pages on first use, read-only code that programs share.
+4. The kernel lock split by data, with measures.
+5. Scheduling strategies that the system can change while it runs.
+6. A block device service (virtio), then the storage service, with a program that keeps its data.
+7. The network: a virtio device service, then UDP, TCP, QUIC, with a server as the scenario.
+8. The other gaps: principals, signatures, TPM and Secure Boot, the document service, keyboard layouts, the date.
