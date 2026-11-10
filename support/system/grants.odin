@@ -120,6 +120,7 @@ Root_Grant :: enum u32 {
 	Image       = 2, // Read the boot image.
 	Log_Records = 3, // Read the records of the log.
 	Store       = 4, // A private store in the storage service.
+	Network     = 5, // An endpoint of datagrams in the network service, with one remote.
 }
 Root_Grants :: bit_set[Root_Grant;u64]
 
@@ -129,6 +130,7 @@ root_grant_names := [Root_Grant]string {
 	.Image       = "image",
 	.Log_Records = "log_records",
 	.Store       = "store",
+	.Network     = "network",
 }
 
 Name :: [32]u8

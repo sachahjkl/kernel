@@ -17,6 +17,8 @@ import "contract:ring"
 import "support:system"
 import "support:terminal"
 import "contract:block"
+import "contract:datagram"
+import "contract:frame"
 import "support:pci"
 import "support:storage"
 
@@ -38,6 +40,8 @@ Grant :: enum {
 	Scratch_Disk, // A block service of the disk of the measures, and its block ring.
 	Replacements, // Read the replacement table of the machine.
 	Replace, // Change the replacement table of the machine (Root_Command.Replace).
+	Network, // An endpoint of datagrams in the network service, with the remote of endpoint_of.
+	Network_Device, // The frame service of the network device and its frame ring, and a control ring from this service.
 }
 
 grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
@@ -70,6 +74,10 @@ grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 		return {.Store}
 	case "imports":
 		return {.Inspect, .Image} // It loads modules of the boot image, and measures with the cycle counter.
+	case "net":
+		return {.Inspect, .Network} // It measures with the cycle counter.
+	case "network":
+		return {.Network_Device}
 	}
 	return {}
 }
@@ -152,7 +160,7 @@ things_of :: proc "contextless" (name: string) -> system.Budget_Amounts {
 		return {pages = 8192, programs = 1, threads = 2} // The lines that it keeps.
 	case "flood":
 		return {pages = 256, programs = 1, threads = 1}
-	case "block":
+	case "block", "frame":
 		return {pages = 256, programs = 1, threads = 1}
 	case "disk":
 		return {pages = 2048, programs = 1, threads = 1}
@@ -191,6 +199,10 @@ Started :: struct {
 	is_driver:       bool, // A block service: it has the device at `device`.
 	device:          pci.Place,
 	queues:          system.Handle, // A block service: the memory of the queue of its device.
+	network:         ring.Ring, // The network service: the control ring from this service.
+	network_memory:  system.Handle,
+	endpoint:        system.Handle, // A program with an endpoint: its datagram ring, as the network service names it.
+	network_service: ^Started,
 }
 
 // The size of the terminal of each program, and what it shows.
@@ -428,6 +440,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			}
 		}
 		reap()
+		network_answers(&wait)
 		system.wait_records(&wait, &control.completions)
 		for &item in started {
 			if item.program != 0 && item.requests.head != nil {
@@ -449,10 +462,14 @@ start :: proc "contextless" (name: string) -> system.Status {
 			break
 		}
 	}
-	if len(file) == 0 || name == "root" || name == "input" || name == "compositor" || name == "terminal" || name == "block" {
+	if len(file) == 0 || name == "root" || name == "input" || name == "compositor" || name == "terminal" || name == "block" || name == "frame" {
 		return .Bad_Operation
 	}
 	role := grants_of(name)
+	// A program with an endpoint: the network service starts first.
+	if .Network in role {
+		network_service() or_return
+	}
 	// A program with a store: the storage service starts first.
 	if .Store in role && .Person not_in role {
 		running := false
@@ -471,6 +488,12 @@ start :: proc "contextless" (name: string) -> system.Status {
 	if .Data_Disk in role || .Scratch_Disk in role {
 		status: system.Status
 		driver, block_ring, status = driver_start(.Data_Disk in role ? pci.DATA_DISK_DEVICE : pci.SCRATCH_DISK_DEVICE)
+		if status != .Ok {
+			return status
+		}
+	} else if .Network_Device in role {
+		status: system.Status
+		driver, block_ring, status = driver_start(pci.NETWORK_DEVICE, DRIVER_FRAME)
 		if status != .Ok {
 			return status
 		}
@@ -494,7 +517,7 @@ start :: proc "contextless" (name: string) -> system.Status {
 	slot^ = {}
 	grants: [op.CONTEXT_HANDLES]system.Grant
 	if block_ring != 0 {
-		grants[block.GRANT_RING] = {block_ring, {.Read, .Write}}
+		grants[.Network_Device in role ? frame.GRANT_RING : block.GRANT_RING] = {block_ring, {.Read, .Write}}
 	}
 	values: [op.CONTEXT_VALUES]u64
 	grants[op.CONTEXT_LOG] = log_grant(name)
@@ -566,6 +589,21 @@ start :: proc "contextless" (name: string) -> system.Status {
 		slot.requests_memory, slot.requests, status = system.ring_create()
 		grants[system.GRANT_ROOT] = {slot.requests_memory, {.Read, .Write}}
 	}
+	if .Network_Device in role && status == .Ok {
+		slot.network_memory, slot.network, status = system.ring_create()
+		grants[datagram.SERVICE_CONTROL] = {slot.network_memory, {.Read, .Write}}
+	}
+	// This service closes its handles of the endpoint after the start.
+	endpoint_ring, endpoint_region: system.Handle
+	defer if endpoint_ring != 0 {
+		system.close(endpoint_ring)
+		system.close(endpoint_region)
+	}
+	if .Network in role && status == .Ok {
+		endpoint_ring, endpoint_region, status = endpoint_open(slot, name)
+		grants[datagram.GRANT_RING] = {endpoint_ring, {.Read, .Write}}
+		grants[datagram.GRANT_REGION] = {endpoint_region, {.Read, .Write}}
+	}
 	// One Machine handle; each role receives a part of its rights.
 	machine_rights: system.Rights
 	if .Inspect in role {
@@ -628,6 +666,9 @@ start :: proc "contextless" (name: string) -> system.Status {
 	if .Log_Records in role {
 		slot.granted += {.Log_Records}
 	}
+	if .Network in role {
+		slot.granted += {.Network}
+	}
 	copy(slot.name[:len(slot.name) - 1], name)
 	if view != nil {
 		if status = terminal_start(view, slot, shared[0], shared[1]); status != .Ok {
@@ -689,6 +730,15 @@ revoke :: proc "contextless" (name: string, grant: u64, values: ^[7]u64) -> syst
 		item.revoked += {which}
 		values[0] = count
 		system.log_in("programs", .Info, "root: revoked the grant store of ", name, ", connections changed: ", count)
+		return .Ok
+	case .Network:
+		// The endpoint is data of the network service, as a store is data of
+		// the storage service: the network service ends the grant.
+		count := endpoint_revoke(item)
+		item.granted -= {which}
+		item.revoked += {which}
+		values[0] = count
+		system.log_in("programs", .Info, "root: revoked the grant network of ", name, ", endpoints changed: ", count)
 		return .Ok
 	case .Log:
 		handle = system.context_record().handles[op.CONTEXT_LOG]
@@ -921,6 +971,10 @@ release :: proc "contextless" (item: ^Started) {
 	}
 	if item.is_driver {
 		driver_end(item)
+	}
+	endpoint_close(item)
+	if item.network.head != nil {
+		network_end(item)
 	}
 	if item.program != 0 {
 		system.close(item.program)

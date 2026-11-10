@@ -1,6 +1,7 @@
 package root
 
 import "contract:block"
+import "contract:frame"
 import op "contract:operation"
 import "contract:ring"
 import "support:pci"
@@ -18,9 +19,22 @@ device_handle :: proc "contextless" (kind: op.Device_Kind, a, b: u64) -> (handle
 	return system.Handle(values[0]), values, status
 }
 
-// driver_start starts the block service of the disk at a place of bus 0. It
-// gives the ring of the block service: this service gives it to the client.
-driver_start :: proc "contextless" (device_number: u32) -> (driver: ^Started, ring_memory: system.Handle, status: system.Status) {
+// A device service, by the class of its device: the program, and the ring
+// that it serves to its one client.
+Driver :: struct {
+	name:          string,
+	device:        u32, // The device number of the class on the bus (support/pci).
+	ring_capacity: u32,
+	ring_role:     int, // The role of the ring in the context of the device service.
+}
+
+DRIVER_BLOCK :: Driver{"block", pci.DEVICE_VIRTIO_BLOCK, block.RING_CAPACITY, block.SERVICE_RING}
+DRIVER_FRAME :: Driver{"frame", pci.DEVICE_VIRTIO_NETWORK, frame.RING_CAPACITY, frame.SERVICE_RING}
+
+// driver_start starts the device service of the device at a place of bus 0.
+// It gives the ring of the device service: this service gives it to the
+// client.
+driver_start :: proc "contextless" (device_number: u32, kind: Driver = DRIVER_BLOCK) -> (driver: ^Started, ring_memory: system.Handle, status: system.Status) {
 	if configuration_ports == 0 {
 		configuration_ports, _, status = device_handle(.Ports, pci.PORT_ADDRESS, pci.PORT_COUNT)
 		if status != .Ok {
@@ -29,8 +43,8 @@ driver_start :: proc "contextless" (device_number: u32) -> (driver: ^Started, ri
 	}
 	place := pci.Place{bus = 0, device = device_number}
 	identity := pci.read_32(place, 0)
-	if identity & 0xFFFF != pci.VENDOR_VIRTIO || identity >> 16 != pci.DEVICE_VIRTIO_BLOCK {
-		system.log_in("devices", .Error, "root: no virtio block device at the place ", u64(device_number), " of the bus")
+	if identity & 0xFFFF != pci.VENDOR_VIRTIO || identity >> 16 != kind.device {
+		system.log_in("devices", .Error, "root: no virtio device for ", kind.name, " at the place ", u64(device_number), " of the bus")
 		return nil, 0, .Bad_Handle
 	}
 	for &item in started {
@@ -57,7 +71,7 @@ driver_start :: proc "contextless" (device_number: u32) -> (driver: ^Started, ri
 		}
 	}
 	grants: [op.CONTEXT_HANDLES]system.Grant
-	grants[op.CONTEXT_LOG] = log_grant("block")
+	grants[op.CONTEXT_LOG] = log_grant(kind.name)
 	grants[pci.GRANT_MACHINE] = {machine, {.Physical}}
 
 	// The device: no line interrupt, its memory, and its message interrupt.
@@ -130,10 +144,10 @@ driver_start :: proc "contextless" (device_number: u32) -> (driver: ^Started, ri
 	// using it (driver_end).
 	driver.queues = system.memory_create(pci.QUEUE_PAGES, 0, {.Contiguous}) or_return // The device reads and writes it.
 	grants[pci.GRANT_QUEUES] = {driver.queues, {.Read, .Write}}
-	ring_memory, status = system.memory_create(ring.pages(block.RING_CAPACITY))
+	ring_memory, status = system.memory_create(ring.pages(kind.ring_capacity))
 	if status == .Ok {
-		grants[block.SERVICE_RING] = {ring_memory, {.Read, .Write}}
-		driver.program, status = system.program_start(system.image_find(image, "block"), "block", grants, {}, budget_of("block"))
+		grants[kind.ring_role] = {ring_memory, {.Read, .Write}}
+		driver.program, status = system.program_start(system.image_find(image, kind.name), kind.name, grants, {}, budget_of(kind.name))
 	}
 	if status != .Ok {
 		pci.write_16(place, pci.OFFSET_COMMAND, command &~ pci.COMMAND_BUS_MASTER)
@@ -147,8 +161,8 @@ driver_start :: proc "contextless" (device_number: u32) -> (driver: ^Started, ri
 	driver.is_driver = true
 	driver.device = place
 	driver.granted = {.Log}
-	copy(driver.name[:len(driver.name) - 1], "block")
-	system.log_in("devices", .Info, "root: started block for the device at the place ", u64(device_number), " of the bus")
+	copy(driver.name[:len(driver.name) - 1], kind.name)
+	system.log_in("devices", .Info, "root: started ", kind.name, " for the device at the place ", u64(device_number), " of the bus")
 	return driver, ring_memory, .Ok
 }
 

@@ -31,7 +31,7 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Table | Records of one record description that follow each other in memory, and their count. A Table result is written by the callee in memory of the caller, with the count of the full table (P12, P19). The console holds a table as one value | list, array (for this), result set, rowset, data frame |
 | Information function | A function that reads the flat tables of modules, the module records of the kernel or the replacement table, and fills a table in memory of the caller (`support/information`). It allocates nothing and keeps no state (P12) | query, reflection API, introspection |
 | Catalog | The input of an information function: the modules that a program can see, and the replacements of the machine. Today: the boot image that the program was granted, and the records of the replacement table | registry, repository, package database, index |
-| Problem | The error value that an information function gives for a module that breaks a rule of the format: the kind, the table, the record, the byte of the file, the bad value and its limit | exception, errno, error code |
+| Problem | The error value that a reader of input that nobody checked gives for a rule that the input breaks: the kind, where (the table and the record of a module, or the layer of a frame), the byte, the bad value and its limit. An information function gives one for a module (`information.Problem`); the network service gives one for a frame (`datagram.Problem`) | exception, errno, error code |
 | Boot image | The one block of data that the boot program loads with the kernel. It holds the modules of the first programs, each with its name | initrd, ramdisk |
 | Position-independent | Code that runs correctly at any address with no change to its bytes | relocatable, PIC, PIE |
 
@@ -147,6 +147,27 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Data region | The memory object of the client of a block service where the device reads and writes the bytes of the blocks, with no copy. It is contiguous (`Memory_Create` with `Contiguous`). A request names a place in it, never an address | DMA buffer, bounce buffer |
 | Data disk | The disk of the storage service | data drive, home disk |
 | Disk of the measures | A disk that holds no data that a program keeps: the program `disk` measures the block service on it | scratch disk, test disk |
+| Network device | A device that sends and receives frames on a link. The machine of the test has one virtio network device at the place 18 of the bus | NIC, network card, network adapter |
+| Frame | One Ethernet frame: from the destination hardware address to the end of the data, with no check sequence. 1514 bytes at most | packet (for this), datagram (for this), message |
+| Hardware address | The 6 bytes that name a network device on its link | MAC address, physical address (for this) |
+| Frame service | The device service of one network device. It sends and receives frames for one client, through a frame ring (`contract/frame`). It does not read a frame | NIC driver, network driver |
+| Frame ring | The ring between a frame service and its client. One command record is the Send of one frame, or a Receive: a place for one frame that arrives. Many are in flight | TX queue, RX queue, descriptor ring (for this) |
+| Frame region | The memory of the client of a frame service where the device reads and writes the frames, with no copy. It is contiguous. A request names a place in it, never an address | DMA buffer, skb, mbuf |
+| Virtio | The standard of devices in shared queues that the first machine uses (P7). `support/virtio` holds what each device service of a virtio device does the same way | paravirtual device |
+
+## Network
+
+| Term | Definition | Do not use |
+|---|---|---|
+| Network service | The one client of the frame service. It speaks Ethernet, ARP, IPv4, ICMP echo and UDP with the protocol library `support/network`, and gives each program with the grant one endpoint. It starts when the first such program starts | network stack, TCP/IP stack, netd, network daemon |
+| Endpoint | What a program holds to send and receive datagrams: a datagram ring and a datagram region, with a grant of one remote. The network service gives its local UDP port; the program does not choose it (P20) | socket, port (for this), connection (for this) |
+| Datagram | The data of one UDP datagram and its remote: what a program sends and receives through an endpoint. 1472 bytes at most: one frame, no fragment | packet, message |
+| Remote | The IPv4 address and the UDP port at the other end of a datagram. The grant of an endpoint names one remote | peer (for this), destination, host |
+| UDP port | The 16-bit number of UDP that names an endpoint at an address. It is not the Ports object of the kernel | port (alone), socket number |
+| Datagram ring | The ring between a program and the network service for one endpoint (`contract/datagram`). A command is a Send, a Receive, or a question (Info, Resolve, Echo, Statistics, Problems) | socket, channel |
+| Datagram region | The memory of an endpoint where the program writes the data of a datagram to send, and where the network service writes the data of a datagram that arrives. The root service makes it with the datagram ring | socket buffer, send buffer, receive buffer |
+| Gateway | The machine of the link that carries IPv4 packets to other networks: 10.0.2.2 on the first machine | router, default route |
+| Peer | The part of the kernel tool that is the gateway and the echo server of the network of the test machine. QEMU gives it each frame as a UDP datagram on the loopback of the host. It reads each frame with its own code | mock, fake server, simulator |
 
 ## Storage
 

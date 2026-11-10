@@ -177,6 +177,62 @@ scenario_persist_cut := [?]Step {
 	{kind = .Quit},
 }
 
+// The network: a machine of its own. The network service starts when `net`
+// starts, with the frame service of the network device. The peer of the
+// tool (peer.odin) is the gateway and the echo server. `net` shows each
+// case, then the measures. The person revokes the grant of the network:
+// the next datagram is refused. Then the endpoint ends with its program,
+// and each page is free or paid.
+TEST_OUTPUT_NETWORK :: BUILD_FOLDER + "/test_output_network.txt"
+
+scenario_network := [?]Step {
+	{kind = .Wait, text = "compositor: surface console"},
+	{kind = .Launch, text = "net"},
+	{kind = .Wait, text = "root: started frame for the device at the place 18 of the bus"},
+	{kind = .Wait, text = "frame: ok, the hardware address 52:54:00:12:34:56, the link is up", any_order = true},
+	{kind = .Wait, text = "root: started network"},
+	{kind = .Wait, text = "network: ok, the address 10.0.2.15/24 52:54:00:12:34:56, the gateway 10.0.2.2, the link is up", any_order = true},
+	{kind = .Wait, text = "network: the headers and the checksum of a datagram of 1472 bytes: ", any_order = true},
+	{kind = .Wait, text = "network: an endpoint for net: the local port 49152, the grant 10.0.2.2 port 7", any_order = true},
+	{kind = .Wait, text = "root: started net"},
+	{kind = .Wait, text = "net: the link and the address: 10.0.2.15/24, the link is up, 52:54:00:12:34:56"},
+	{kind = .Wait, text = "net: ARP: who has 10.0.2.2: the gateway answered 52:55:0a:00:02:02 in "},
+	{kind = .Wait, text = "net: ICMP echo to 10.0.2.2, 56 bytes: the echo reply came in "},
+	{kind = .Wait, text = "net: UDP to 10.0.2.2 port 7, 41 bytes: the same 41 bytes came back from 10.0.2.2 port 7 in "},
+	{kind = .Wait, text = "net: UDP to 10.0.2.2 port 9: refused: the grant gives 10.0.2.2 port 7 only"},
+	{kind = .Wait, text = "net: ICMP echo to 10.0.2.3: refused: the grant names 10.0.2.2 only"},
+	{kind = .Wait, text = "net: UDP of 2000 bytes: refused: 2000 bytes, the limit is 1472: no fragment"},
+	{kind = .Wait, text = "net: refused by the network service: 1 x udp, byte 40: the checksum is 0x"},
+	{kind = .Wait, text = "net: malformed frames from the wire: 11 refused in 11 kinds, 11 of 11 expected; no fault"},
+	{kind = .Wait, text = "net: ICMP echo from 10.0.2.2 to this machine: the network service answered 1 request"},
+	{kind = .Wait, text = "net: ok, 9 cases"},
+	{kind = .Wait, text = "net: the round trip of one datagram of 64 bytes: "},
+	{kind = .Wait, text = "net: a burst with 64 datagrams in flight: "},
+	{kind = .Wait, text = " datagrams in one second, sent and answered, 0 lost"},
+	{kind = .Wait, text = "net: kernel entries for each datagram: "},
+	{kind = .Wait, text = "net: the measures are done"},
+	{kind = .Shot, text = "network"},
+	// The grant is a record of the root service: the person sees it and
+	// revokes it. The network service ends the grant of the endpoint.
+	{kind = .Front, text = "console"},
+	{kind = .Type, text = "grants(\"net\")"},
+	{kind = .Wait, text = "[console] net has: log, machine, network"},
+	{kind = .Type, text = "revoke(\"net\", \"network\")"},
+	{kind = .Wait, text = "root: revoked the grant network of net, endpoints changed: 1"},
+	{kind = .Wait, text = "network: the grant of the endpoint of net changed: none"},
+	{kind = .Front, text = "net"},
+	{kind = .Key, text = "spc"},
+	{kind = .Wait, text = "net: a datagram to 10.0.2.2 port 7 after a key: refused: the endpoint has no grant now"},
+	{kind = .Close, text = "net"},
+	{kind = .Wait, text = "root: net stopped with code 0"},
+	{kind = .Wait, text = "network: the endpoint of net ended: "},
+	{kind = .Front, text = "console"},
+	{kind = .Type, text = "memory()"},
+	{kind = .Wait, text = " pages: all the free pages"},
+	{kind = .Type, text = "shutdown()"},
+	{kind = .Wait, text = "kernel: the machine stops with code 0"},
+}
+
 // The data disk of the test of persistence, read with the format of the
 // storage service (contract/store).
 disk_open :: proc(path: string) -> (file: ^os.File, ok: bool) {
@@ -1348,7 +1404,12 @@ png_encode :: proc(width, height: int, pixels: []u8) -> []u8 {
 // machine_test runs a scenario on a boot volume. It passes when each step
 // passes and QEMU ends with the status exit_status.
 machine_test :: proc(steps: []Step, volume: string, output: string, exit_status: int, data_disk: string = TEST_DATA_DISK) -> bool {
-	command, ok := machine_command(volume, output, data_disk)
+	peer: Peer
+	if !peer_start(&peer) {
+		return false
+	}
+	defer peer_stop(&peer)
+	command, ok := machine_command(volume, output, data_disk, peer.port)
 	if !ok {
 		return false
 	}
@@ -1387,6 +1448,10 @@ machine_test :: proc(steps: []Step, volume: string, output: string, exit_status:
 	}
 	os.close(monitor_write)
 	os.close(monitor_read)
+	peer_stop(&peer)
+	if passed {
+		passed = peer_check(&peer)
+	}
 	if !passed {
 		log, _ := os.read_entire_file(output, context.temp_allocator)
 		lines := strings.split_lines(string(log), context.temp_allocator)

@@ -125,5 +125,7 @@ capability :: proc "contextless" (configuration: []u8, kind: u8) -> u32 {
 // 0. The boot volume is at another place: no service receives it.
 DATA_DISK_DEVICE :: 0x10 // The disk of the storage service.
 SCRATCH_DISK_DEVICE :: 0x11 // A disk for the measures of the block service.
+NETWORK_DEVICE :: 0x12 // The network device of the frame service.
 VENDOR_VIRTIO :: 0x1AF4
 DEVICE_VIRTIO_BLOCK :: 0x1042 // A virtio 1 block device with no older interface.
+DEVICE_VIRTIO_NETWORK :: 0x1041 // A virtio 1 network device with no older interface.

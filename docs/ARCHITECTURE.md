@@ -171,6 +171,7 @@ One service per device class: block, network card, display, input, TPM.
 - Owns the network identity of the machine: address, ports.
 - Gives a program a network queue and a port range, then leaves the data path.
 - The TCP stack is a library inside each program (P5).
+- **Implemented, first layer** (2026-11-10, `programs/frame`, `programs/network`, `contract/frame`, `contract/datagram`, `support/network`): the frame service drives the virtio network device; the network service is its one client and gives each program with the grant one endpoint of UDP datagrams, with a grant of one remote. Not as written above: the virtio device of QEMU has one pair of queues, so the network service is on the data path (one copy) and writes the headers of UDP and IPv4 that it must check anyway. The plan keeps TCP and QUIC as libraries in the program (choice NEW-4 of `FIRST_MILESTONE.md`).
 
 ### U8. Graphics: WebGPU library and compositor
 

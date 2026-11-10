@@ -83,6 +83,8 @@ The system boots under QEMU to a graphical desktop with a console, a system tool
 
 ![A block of the note changed on the disk outside the storage service: the service serves the count, and notes says that the note is damaged](docs/screenshots/notes_damaged.png)
 
+![The network: a virtio network device in a program, a network service with ARP, IPv4, ICMP echo and UDP, and an endpoint with a grant of one remote; nine cases with their answers, and the measures](docs/screenshots/network.png)
+
 ![The temple of Jon: a portrait of Jonathan Blow that turns](docs/screenshots/temple.png)
 
 `kerneltool screenshots` makes these pictures from the running machine.
@@ -96,6 +98,7 @@ The system boots under QEMU to a graphical desktop with a console, a system tool
 - The input service reads the keyboard and the mouse through granted ports and interrupts.
 - A block service drives a virtio disk with device memory and a message interrupt; its client gives the memory that the device reads and writes.
 - The storage service keeps a private store for each program on the data disk: each change is one commit, and a stop of the machine never shows a part of one. `notes` finds its state after a restart of the machine, after QEMU was ended during its commits, and after its last root block was cut.
+- The network: a frame service drives a virtio network device, and the network service gives a program an endpoint of UDP datagrams that reaches only the remote of its grant. The kernel has no network code.
 - The compositor owns the framebuffer. Each program draws into a surface in shared memory.
 - The console is a normal program. A command is a typed function: `hash("abc")`, `start("life")`, `programs()`.
 - `load("math")` loads a module: its exports become commands. The module describes them: the tool makes each description from the source (parameter names, types, help).

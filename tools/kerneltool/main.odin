@@ -35,7 +35,7 @@ BUILD_FOLDER :: "build"
 // flake.nix gives the same two flags to the compiler when it builds this tool.
 CONTRACT_LIBRARY :: "-collection:contract=contract"
 SUPPORT_LIBRARY :: "-collection:support=support"
-CONTRACT_PACKAGES :: []string{"blake3", "block", "boot_info", "isolated", "module", "operation", "ring", "store"}
+CONTRACT_PACKAGES :: []string{"blake3", "block", "boot_info", "datagram", "frame", "isolated", "module", "operation", "ring", "store"}
 BOOT_OBJECT_FOLDER :: BUILD_FOLDER + "/boot"
 BOOT_PROGRAM :: BOOT_OBJECT_FOLDER + "/BOOTX64.EFI"
 BOOT_VOLUME :: BUILD_FOLDER + "/boot_volume.img"
@@ -187,7 +187,12 @@ run_machine :: proc(args: []string) -> int {
 	if !disk_prepare(DATA_DISK, DATA_DISK_SIZE, false) {
 		return EXIT_FAILURE
 	}
-	command, ok := machine_command(BOOT_VOLUME, "", DATA_DISK)
+	peer: Peer
+	if !peer_start(&peer) {
+		return EXIT_FAILURE
+	}
+	defer peer_stop(&peer)
+	command, ok := machine_command(BOOT_VOLUME, "", DATA_DISK, peer.port)
 	if !ok {
 		return EXIT_FAILURE
 	}
@@ -209,7 +214,7 @@ run_test :: proc(args: []string) -> int {
 	if !disk_prepare(TEST_DATA_DISK, DATA_DISK_SIZE, true) {
 		return EXIT_FAILURE
 	}
-	if !machine_test(scenario_fails[:], BOOT_VOLUME_FAILS, TEST_OUTPUT_FAILS, 0) || !self_tests_run() || !machine_test(scenario[:], BOOT_VOLUME, TEST_OUTPUT, MACHINE_STOP_OK, TEST_DATA_DISK) || !persistence_run() || !test_modules() || !test_descriptions() {
+	if !machine_test(scenario_fails[:], BOOT_VOLUME_FAILS, TEST_OUTPUT_FAILS, 0) || !self_tests_run() || !machine_test(scenario[:], BOOT_VOLUME, TEST_OUTPUT, MACHINE_STOP_OK, TEST_DATA_DISK) || !machine_test(scenario_network[:], BOOT_VOLUME, TEST_OUTPUT_NETWORK, MACHINE_STOP_OK, TEST_DATA_DISK) || !persistence_run() || !test_modules() || !test_descriptions() {
 		return EXIT_FAILURE
 	}
 	fmt.println("kerneltool: all tests passed")
@@ -292,7 +297,7 @@ run_check :: proc(args: []string) -> int {
 		}
 		fmt.printfln("kerneltool: test passed: contract:%s compiles with the contract library only", name)
 	}
-	for folder in ([]string{"contract/blake3", "contract/isolated", "support/information", "tools/kerneltool"}) {
+	for folder in ([]string{"contract/blake3", "contract/isolated", "support/information", "support/network", "tools/kerneltool"}) {
 		name, _ := strings.replace_all(folder, "/", "_", context.temp_allocator)
 		if !run({"odin", "test", folder, "-vet", CONTRACT_LIBRARY, SUPPORT_LIBRARY, strings.concatenate({"-out:" + BUILD_FOLDER + "/test_", name}, context.temp_allocator)}) {
 			return EXIT_FAILURE
@@ -337,7 +342,9 @@ modules_same_again :: proc() -> bool {
 // machine_command gives the one QEMU command line of the project: the first
 // machine of property 7. The boot volume is a virtio block device. If
 // test_output is a path, the machine has no window and writes its log there.
-machine_command :: proc(volume: string, test_output: string, data_disk: string) -> (command: []string, ok: bool) {
+// The network device sends each frame to the peer (peer.odin) on the
+// loopback of the host, at peer_port, as one UDP datagram.
+machine_command :: proc(volume: string, test_output: string, data_disk: string, peer_port: int) -> (command: []string, ok: bool) {
 	if !disk_prepare(SCRATCH_DISK, SCRATCH_DISK_SIZE, false) {
 		return nil, false
 	}
@@ -375,7 +382,11 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string) 
 		"isa-debug-exit,iobase=0xf4,iosize=0x04",
 		"-no-reboot",
 		"-net",
-		"none",
+		"none", // No other network device than the one below.
+		"-netdev",
+		fmt.tprintf("dgram,id=network,remote.type=inet,remote.host=127.0.0.1,remote.port=%d,local.type=inet,local.host=127.0.0.1,local.port=0", peer_port),
+		"-device",
+		fmt.tprintf("virtio-net-pci,netdev=network,disable-legacy=on,mac=%s,addr=0x%x", MACHINE_HARDWARE, pci.NETWORK_DEVICE),
 		"-drive",
 		strings.concatenate({"if=pflash,format=raw,readonly=on,file=", firmware_code}, context.temp_allocator),
 		"-drive",
