@@ -73,9 +73,12 @@ module_builds := [?]Module_Build {
 	{name = "math", source = "modules/math", image = true},
 	{name = "sample", source = "modules/sample", image = true},
 	{name = "calendar", source = "modules/calendar", image = true},
+	{name = "calendar_fixed", source = "modules/calendar_fixed", image = true},
+	{name = "calendar_changed", source = "modules/calendar_changed", image = true},
 	{name = "agenda", source = "modules/agenda", imports = {"calendar"}, image = true},
 	// Its import is not in the boot image: a loader refuses it.
 	{name = "lonely", source = "modules/lonely", imports = {"test_callee"}, image = true},
+	{name = "imports", source = "programs/imports", imports = {"calendar"}, image = true},
 }
 
 join :: proc(parts: ..string) -> string {
@@ -286,8 +289,8 @@ load_on_host :: proc(name: string, imports: []Host_Module) -> (loaded: Host_Modu
 	if error := module.rebase(file, memory, uintptr(address)); error != .None {
 		return fail(name, "rebase: %v", error)
 	}
-	if error := module.bind(file, memory, bound[:]); error != .None {
-		return fail(name, "bind: %v", error)
+	if error: module.Load_Error; !module.bind(file, memory, bound[:], &error) {
+		return fail(name, "bind: %v of slot %d", error.stage, error.slot)
 	}
 	for index in 1 ..< module.count(file, .Segments) {
 		segment, _ := module.record(file, .Segments, index, module.Segment)

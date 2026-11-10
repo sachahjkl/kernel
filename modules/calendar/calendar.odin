@@ -1,6 +1,6 @@
 // The days of the months of the Gregorian calendar.
 //
-// This version has a fault: it forgets the rule of the 400 years, so the year 2000 has 365 days and February 2000 has 28.
+// This version has a fault: it forgets the rule of the 400 years, so the year 2000 has 365 days and February 2000 has 28. The module calendar_fixed corrects it with the same description of each export: the system can give calendar_fixed to each module that imports this one (docs/MODULE_CONTRACT.md, "Replacement of an import").
 package calendar
 
 @(rodata)

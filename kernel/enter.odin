@@ -11,6 +11,7 @@ import op "contract:operation"
 log_text: [4096]u8
 boot_report_record: op.Boot_Report
 mapping_report_record: op.Mapping_Report
+module_report_record: op.Module_Report
 
 enter :: proc "contextless" (index: u32) {
 	thread := &threads[index]
@@ -208,6 +209,12 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		results[0] = u64(program_state(slot.object))
 		results[1] = u64(programs[slot.object].code)
 		results[2] = programs[slot.object].entries
+		if v[1] != 0 {
+			if !user_range(program, v[1], size_of(op.Stop_Report), true) {
+				return .Bad_Address
+			}
+			user_copy(rawptr(uintptr(v[1])), &programs[slot.object].stop, size_of(op.Stop_Report))
+		}
 		return .Ok
 
 	case .Handle_Give:
@@ -279,6 +286,18 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		}
 		results[0] = revoke(holding_of_handle(program, slot), program_index, only)
 		return .Ok
+
+	case .Program_Module:
+		to := target(program, v[0]) or_return
+		if to.state == .None || to.state == .Stopped {
+			return .Bad_State
+		}
+		if !user_range(program, v[1], size_of(op.Module_Record), false) {
+			return .Bad_Address
+		}
+		record: op.Module_Record
+		user_copy(&record, rawptr(uintptr(v[1])), size_of(record))
+		return program_module(to, record)
 
 	case .Handle_Close:
 		slot := handle_find(program, v[0], .None) or_return
@@ -498,6 +517,29 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			}
 			user_copy(rawptr(uintptr(v[3])), &mapping_report_record, size_of(op.Mapping_Report))
 			results[0] = size_of(op.Mapping_Report)
+		case .Modules:
+			if v[4] < size_of(op.Module_Report) || !user_range(program, v[3], size_of(op.Module_Report), true) {
+				return .Bad_Address
+			}
+			report := &module_report_record
+			report^ = {}
+			if v[2] != 0 && v[2] < PROGRAM_CAPACITY {
+				// In the order of the addresses: the module of the program first.
+				for item in programs[v[2]].modules {
+					if item.size == 0 {
+						continue
+					}
+					place := report.count
+					for place > 0 && report.modules[place - 1].base > item.base {
+						report.modules[place] = report.modules[place - 1]
+						place -= 1
+					}
+					report.modules[place] = item
+					report.count += 1
+				}
+			}
+			user_copy(rawptr(uintptr(v[3])), report, size_of(op.Module_Report))
+			results[0] = size_of(op.Module_Report)
 		case .Processor:
 			if v[4] < size_of(op.Processor_Report) || !user_range(program, v[3], size_of(op.Processor_Report), true) {
 				return .Bad_Address

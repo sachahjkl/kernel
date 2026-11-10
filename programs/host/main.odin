@@ -29,26 +29,36 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	region = ([^]u8)(bytes)[:system.memory_size(region_memory) * system.PAGE_SIZE]
 
-	// The caller mapped the files of the module and of its imports. This
-	// program loads the module: the loader checks the hash of each file,
-	// then maps the segments.
+	// The caller mapped the files of the module and of its imports, and the
+	// replacements that apply. This program loads the module: the loader
+	// checks the hash of each file, then maps the segments. The caller
+	// waits for the first completion.
 	files := ([^]u8)(uintptr(ctx.values[isolated.VALUE_FILE_ADDRESS]))[:ctx.values[isolated.VALUE_FILE_SIZE]]
+	replacements: []module.Replacement
+	if offset, count := ctx.values[isolated.VALUE_REPLACEMENT_OFFSET], ctx.values[isolated.VALUE_REPLACEMENT_COUNT]; count <= system.REPLACEMENT_CAPACITY && offset <= system.PAGE_SIZE - count * size_of(module.Replacement) && offset + count * size_of(module.Replacement) <= u64(len(files)) {
+		replacements = ([^]module.Replacement)(raw_data(files[offset:]))[:count]
+	}
 	entries := system.image_entries(files)
 	if len(entries) > 0 && entries[0].offset <= u64(len(files)) && entries[0].size <= u64(len(files)) - entries[0].offset {
 		file = files[entries[0].offset:][:entries[0].size]
 	}
-	space.source = {image = files}
+	space.source = {image = files, replacements = replacements}
 	space.next = op.MODULE_BASE
-	index, failure := system.module_space_load(&space, file)
-	if failure.error != .None {
-		buffer: [256]u8
+	// The caller learns the end of the load in the first completion: the
+	// record of a failure is data, in the call region.
+	error := (^module.Load_Error)(raw_data(region))
+	index, loaded := system.module_space_load(&space, file, error)
+	if !loaded {
+		buffer: [512]u8
 		writer := system.Writer{buffer = buffer[:]}
-		system.load_failure_text(&writer, failure, files)
+		system.load_error_text(&writer, error)
 		system.log("host: cannot load the module: ", system.written(&writer))
+		system.send(&queue.completions, ring.Record{kind = u32(isolated.Status.Load_Failed)})
 		system.stop(1)
 	}
 	base := space.modules[index].base
 	system.log("host: ready, ", u64(module.count(file, .Exports) - 1), " exports")
+	system.send(&queue.completions, ring.Record{kind = u32(isolated.Status.Ok)})
 
 	for {
 		for _ in 0 ..< ring.CAPACITY {

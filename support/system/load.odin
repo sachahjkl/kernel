@@ -89,33 +89,22 @@ Prepared_Modules :: struct {
 // else: the loader has no search path and no ambient module store
 // (property 20).
 Load_Source :: struct {
-	image: []u8, // The files that the program was granted, in the form of the boot image. A file has the hash that names it, or the loader refuses it.
+	image:        []u8, // The files that the program was granted, in the form of the boot image. A file has the hash that names it, or the loader refuses it.
+	replacements: []module.Replacement, // From the party that starts the program. The program cannot change them.
 }
 
-// Why a load failed.
-Load_Error :: enum u32 {
-	None           = 0,
-	Bad_Module     = 1, // The file is not a valid module, or it does not have its hash.
-	Missing_Module = 2, // The load source has no file with the hash of an import.
-	No_Room        = 3, // The space has no place for one more module.
-	Kernel         = 4, // A kernel operation failed: see status.
-}
-
-Load_Failure :: struct {
-	error:  Load_Error,
-	status: Status, // Kernel: the status of the operation.
-	hash:   [32]u8, // The module of the failure: the missing one, or the bad one.
-}
-
-MODULE_SPACE_CAPACITY :: 16 // The modules of one program.
+MODULE_SPACE_CAPACITY :: op.PROGRAM_MODULE_CAPACITY
 IMPORT_CAPACITY :: 8 // The imports of one module that this loader binds.
 
 // One module that a loader put in a program: a place of a module space.
 Placed :: struct {
 	hash:          [32]u8, // The module that is loaded.
+	replaces:      [32]u8, // Zero, or the hash of the import that a replacement changed to this module.
 	file:          []u8,
+	original:      []u8, // The file of the module that this one replaces: the names of the exports that a slot uses.
 	base:          u64,
 	users:         u32, // The modules that import it, and each load of it by the caller. 0: the place is free.
+	loading:       bool, // Its imports are not all loaded: a module that imports it now makes a cycle.
 	mapped:        bool,
 	import_count:  u8,
 	import_places: [IMPORT_CAPACITY]u8, // The place of each import.
@@ -132,147 +121,245 @@ Module_Space :: struct {
 	prepared:    ^Prepared_Modules, // Not nil: each module maps its shared code from this table. nil: each module is a copy of its own.
 }
 
+cycles :: #force_inline proc "contextless" () -> u64 {
+	return u64(intrinsics.read_cycle_counter())
+}
+
 // module_space_load loads a module and its imports, each one time, in the
-// program of the space. On a failure, the space is as it was before.
-module_space_load :: proc "contextless" (space: ^Module_Space, file: []u8) -> (index: int, failure: Load_Failure) {
-	if len(file) == 0 || module.validate(file) != .None {
-		return -1, {error = .Bad_Module}
+// program of the space. A replacement of the load source applies to each
+// import, and not to the module that the caller names. On a failure, the
+// space is as it was before, and error has the stage and the modules of the
+// failure: the caller owns the record.
+module_space_load :: proc "contextless" (space: ^Module_Space, file: []u8, error: ^module.Load_Error) -> (index: int, ok: bool) {
+	error^ = {}
+	hash := blake3.hash(file)
+	if file_error := module.validate(file); len(file) == 0 || file_error != .None {
+		error^ = {stage = .Read, file_error = file_error, module = named_of(space.source, hash)}
+		return -1, false
 	}
 	before: [MODULE_SPACE_CAPACITY]u32
 	for item, number in space.modules {
 		before[number] = item.users
 	}
 	next := space.next
-	index = place(space, blake3.hash(file), file, false, &failure)
-	if failure.error == .None {
-		return index, {}
+	index = place(space, hash, file, nil, error)
+	if index >= 0 {
+		return index, true
 	}
 	for &item, number in space.modules {
 		if before[number] == 0 && item.users != 0 {
 			place_remove(space, &item)
 		} else {
 			item.users = before[number]
+			item.loading = false
 		}
 	}
 	space.next = next
-	return -1, failure
+	return -1, false
 }
 
 // module_space_release ends one use of a module. A module with no use leaves
-// the program, and its imports lose one use.
-module_space_release :: proc "contextless" (space: ^Module_Space, index: int) {
+// the program, and its imports lose one use. If the kernel refuses to
+// remove a module, error has the stage Unmap and the module: the space
+// forgets the module, and its memory stays in the program.
+module_space_release :: proc "contextless" (space: ^Module_Space, index: int, error: ^module.Load_Error) -> bool {
 	item := &space.modules[index]
 	if item.users == 0 {
-		return
+		return true
 	}
 	item.users -= 1
 	if item.users > 0 {
-		return
+		return true
 	}
 	imports := item.import_places
 	count := item.import_count
-	place_remove(space, item)
-	for number in 0 ..< count {
-		module_space_release(space, int(imports[number]))
+	if status := place_remove(space, item); status != .Ok && error.stage == .None {
+		error^ = {stage = .Unmap, status = u32(status), module = named_of(space.source, item.hash)}
 	}
+	for number in 0 ..< count {
+		module_space_release(space, int(imports[number]), error)
+	}
+	return error.stage == .None
 }
 
-// source_file gives the file of the source with a hash, after it checked the
-// hash and the tables.
+// named_of gives a hash with the name that the load source gives to it.
+named_of :: proc "contextless" (source: Load_Source, hash: [32]u8) -> (value: module.Named) {
+	value.hash = hash
+	if entry := image_entry_of(source.image, hash); entry != nil {
+		module.name_set(&value.name, name_of(entry.name[:]))
+	}
+	return value
+}
+
+// source_file gives the file of the load source with a hash, after it
+// checked the hash and the tables.
 @(private)
-source_file :: proc "contextless" (source: Load_Source, hash: [32]u8) -> (file: []u8, error: Load_Error) {
+source_file :: proc "contextless" (source: Load_Source, hash: [32]u8) -> (file: []u8, stage: module.Load_Stage, file_error: module.Error) {
 	entry := image_entry_of(source.image, hash)
 	if entry == nil {
-		return nil, .Missing_Module
+		return nil, .Find, .None
 	}
 	file = source.image[entry.offset:][:entry.size]
-	if blake3.hash(file) != hash || module.validate(file) != .None {
-		return nil, .Bad_Module
+	if file_error = module.validate(file); file_error != .None || blake3.hash(file) != hash {
+		return nil, .Read, file_error
 	}
-	return file, .None
+	return file, .None, .None
 }
 
-// place puts a module in the space, after its imports. hash is the hash
-// that the caller or an import names. first is the file of the first module.
+// place puts a module in the space, after its imports. named is the hash
+// that the caller or an import of importer names. first is the file of the
+// first module.
 @(private)
-place :: proc "contextless" (space: ^Module_Space, hash: [32]u8, first: []u8, is_import: bool, failure: ^Load_Failure) -> int {
+place :: proc "contextless" (space: ^Module_Space, named: [32]u8, first: []u8, importer: ^Placed, error: ^module.Load_Error) -> (result: int) {
+	hash := named
+	replaces: [32]u8
+	if importer != nil {
+		for item in space.source.replacements {
+			if item.from == named {
+				hash, replaces = item.to, named
+				break
+			}
+		}
+	}
+	// A failure here concerns this module, as the import of importer.
+	fail :: proc "contextless" (space: ^Module_Space, error: ^module.Load_Error, stage: module.Load_Stage, importer: ^Placed, named: [32]u8, hash: [32]u8) -> int {
+		error.stage = stage
+		if importer != nil {
+			error.module = named_of(space.source, importer.hash)
+			error.imported = named_of(space.source, named)
+		} else {
+			error.module = named_of(space.source, hash)
+		}
+		return -1
+	}
+	// A failure on the path of a replaced import says which replacement
+	// the loader applied, if no replacement nearer to the failure says it.
+	defer if result < 0 && replaces != {} && error.replaced.hash == {} {
+		error.replaced = named_of(space.source, replaces)
+		error.replacement = named_of(space.source, hash)
+	}
 	free := -1
 	for &item, index in space.modules {
 		if item.users == 0 {
 			free = free < 0 ? index : free
 		} else if item.hash == hash {
+			if item.loading {
+				return fail(space, error, .Cycle, importer, named, hash)
+			}
 			item.users += 1
 			return index
 		}
 	}
 	if free < 0 {
-		failure^ = {error = .No_Room, hash = hash}
-		return -1
+		return fail(space, error, .Room, importer, named, hash)
 	}
 	file := first
-	if is_import {
-		error: Load_Error
-		if file, error = source_file(space.source, hash); error != .None {
-			failure^ = {error = error, hash = hash}
-			return -1
+	original: []u8
+	stage: module.Load_Stage
+	if importer != nil {
+		if file, stage, error.file_error = source_file(space.source, hash); stage != .None {
+			return fail(space, error, stage, importer, named, hash)
+		}
+	}
+	if replaces != {} {
+		// The names of the exports that the slots use are in the module of the import.
+		if original, stage, error.file_error = source_file(space.source, replaces); stage != .None {
+			return fail(space, error, stage, importer, named, hash)
 		}
 	}
 	head, _ := module.header(file)
 	import_count := int(max(module.count(file, .Imports), 1)) - 1
 	if import_count > IMPORT_CAPACITY {
-		failure^ = {error = .No_Room, hash = hash}
-		return -1
+		return fail(space, error, .Room, importer, named, hash)
 	}
 	item := &space.modules[free]
-	item^ = {hash = hash, file = file, base = space.next, users = 1}
+	item^ = {hash = hash, replaces = replaces, file = file, original = original, base = space.next, users = 1, loading = true}
 	// A page with no memory between two modules.
 	space.next += head.memory_size + PAGE_SIZE
 	imports: [IMPORT_CAPACITY]module.Bound_Import
 	for number in 0 ..< import_count {
 		record, _ := module.record(file, .Imports, u32(number + 1), module.Import)
-		at := place(space, record.hash, nil, true, failure)
+		at := place(space, record.hash, nil, item, error)
 		if at < 0 {
 			return -1
 		}
 		item.import_places[number] = u8(at)
 		item.import_count += 1
-		imports[number] = {file = space.modules[at].file, base = uintptr(space.modules[at].base)}
+		used := &space.modules[at]
+		imports[number] = {file = used.file, base = uintptr(used.base)}
+		if used.hash != record.hash {
+			// A replacement: the slots name exports of the module of the import.
+			imports[number].named = used.replaces == record.hash ? used.original : nil
+			if imports[number].named == nil {
+				if imports[number].named, stage, error.file_error = source_file(space.source, record.hash); stage != .None {
+					return fail(space, error, stage, item, record.hash, used.hash)
+				}
+			}
+		}
 	}
-	place_map(space, item, head, imports[:import_count], failure)
-	if failure.error != .None {
+	if !place_map(space, item, head, imports[:import_count], error) {
 		return -1
 	}
+	item.loading = false
 	return free
 }
 
 // place_map puts a module in the program of the space, bound to its
-// imports. With a table of prepared modules, the program maps the shared
-// code of the module from the table, and receives its own copy of each
-// writable segment. With no table, the program maps a prepared module of
-// its own, all of it, and the budget of the space pays for it.
+// imports, and writes its module record. With a table of prepared modules,
+// the program maps the shared code of the module from the table, and
+// receives its own copy of each writable segment. With no table, the
+// program maps a prepared module of its own, all of it, and the budget of
+// the space pays for it.
 @(private)
-place_map :: proc "contextless" (space: ^Module_Space, item: ^Placed, head: module.Header, imports: []module.Bound_Import, failure: ^Load_Failure) {
+place_map :: proc "contextless" (space: ^Module_Space, item: ^Placed, head: module.Header, imports: []module.Bound_Import, error: ^module.Load_Error) -> bool {
 	status: Status
 	if space.prepared == nil {
 		memory: Handle
-		if memory, status = module_prepare(item.file, head.memory_size / PAGE_SIZE, item.base, space.budget, imports); status == .Ok {
-			status = segments_map(item.file, memory, space.program, item.base, space.budget, false, imports)
+		if memory, status = module_prepare(item.file, head.memory_size / PAGE_SIZE, item.base, space.budget, imports, error); status == .Ok {
+			status = segments_map(item.file, memory, space.program, item.base, space.budget, false, imports, error)
 			close(memory)
 		}
 	} else {
 		lock(&space.prepared.lock)
 		memory: Handle
-		if memory, status = prepared_find(space.prepared, item.file, item.hash, item.base, binding_of(space, item), imports); status == .Ok {
-			status = segments_map(item.file, memory, space.program, item.base, space.budget, true, imports)
+		if memory, status = prepared_find(space.prepared, item.file, item.hash, item.base, binding_of(space, item), imports, error); status == .Ok {
+			status = segments_map(item.file, memory, space.program, item.base, space.budget, true, imports, error)
 		}
 		unlock(&space.prepared.lock)
 	}
 	if status != .Ok {
 		place_unmap(space, item)
-		failure^ = status == .Bad_Operation ? {error = .Bad_Module, hash = item.hash} : {error = .Kernel, status = status, hash = item.hash}
-		return
+		#partial switch error.stage {
+		case .Check, .Bind:
+			// The import of the slot, and its replacement if the loader applied one.
+			error.module = named_of(space.source, item.hash)
+			slot, _ := module.record(item.file, .Slots, error.slot, module.Slot)
+			if record, has_import := module.record(item.file, .Imports, slot.import_index, module.Import); has_import && slot.import_index != 0 {
+				error.imported = named_of(space.source, record.hash)
+				if used := &space.modules[item.import_places[slot.import_index - 1]]; used.hash != record.hash {
+					error.replaced = error.imported
+					error.replacement = named_of(space.source, used.hash)
+				}
+			}
+		case .Read:
+			error.module = named_of(space.source, item.hash)
+		case:
+			error^ = {stage = .Map, status = u32(status), module = named_of(space.source, item.hash)}
+		}
+		return false
 	}
 	item.mapped = true
+	record := op.Module_Record {
+		base     = item.base,
+		size     = head.memory_size,
+		hash     = item.hash,
+		replaces = item.replaces,
+	}
+	if _, status = call(.Program_Module, u64(space.program), u64(uintptr(&record))); status != .Ok {
+		error^ = {stage = .Map, status = u32(status), module = named_of(space.source, item.hash)}
+		return false
+	}
+	return true
 }
 
 // binding_of gives what the slots of a module hold, as one hash: the hash
@@ -293,21 +380,32 @@ binding_of :: proc "contextless" (space: ^Module_Space, item: ^Placed) -> [32]u8
 	return blake3.hash(bytes[:int(item.import_count) * 40])
 }
 
-// place_unmap removes each segment of a module that is mapped.
+// place_unmap removes each segment of a module that is mapped. It gives the
+// first status that is not Ok.
 @(private)
-place_unmap :: proc "contextless" (space: ^Module_Space, item: ^Placed) {
+place_unmap :: proc "contextless" (space: ^Module_Space, item: ^Placed) -> (result: Status) {
 	for index in 1 ..< module.count(item.file, .Segments) {
 		segment, _ := module.record(item.file, .Segments, index, module.Segment)
-		memory_unmap(rawptr(uintptr(item.base + segment.memory_offset)), space.program)
+		if status := memory_unmap(rawptr(uintptr(item.base + segment.memory_offset)), space.program); status != .Ok && result == .Ok {
+			result = status
+		}
 	}
+	return result
 }
 
 @(private)
-place_remove :: proc "contextless" (space: ^Module_Space, item: ^Placed) {
+place_remove :: proc "contextless" (space: ^Module_Space, item: ^Placed) -> (status: Status) {
 	if item.mapped {
-		place_unmap(space, item)
+		status = place_unmap(space, item)
+		record := op.Module_Record {
+			base = item.base,
+		}
+		if _, removed := call(.Program_Module, u64(space.program), u64(uintptr(&record))); removed != .Ok && status == .Ok {
+			status = removed
+		}
 	}
 	item^ = {}
+	return status
 }
 
 // segment_flags gives the protection of a segment in a program.
@@ -341,7 +439,7 @@ shared_pages :: proc "contextless" (file: []u8) -> (pages: u64) {
 // rebased, and the slots in these pages bound to the imports. The budget
 // pays for it.
 @(private)
-module_prepare :: proc "contextless" (file: []u8, pages: u64, base: u64, budget: Handle, imports: []module.Bound_Import) -> (memory: Handle, status: Status) {
+module_prepare :: proc "contextless" (file: []u8, pages: u64, base: u64, budget: Handle, imports: []module.Bound_Import, error: ^module.Load_Error) -> (memory: Handle, status: Status) {
 	memory = memory_create(pages, budget) or_return
 	address: rawptr
 	if address, status = memory_map(memory); status != .Ok {
@@ -359,16 +457,25 @@ module_prepare :: proc "contextless" (file: []u8, pages: u64, base: u64, budget:
 			intrinsics.mem_copy_non_overlapping(&view[segment.memory_offset], &file[segment.file_offset], int(segment.file_size))
 		}
 	}
-	rebased := module.rebase_range(file, view, uintptr(base), 0, size)
-	if rebased == .None {
-		rebased = module.bind(file, view, imports, 0, size)
-	}
+	ok := code_ready(file, view, base, imports, error, 0, size)
 	memory_unmap(address)
-	if rebased != .None {
+	if !ok {
 		close(memory)
 		return 0, .Bad_Operation
 	}
 	return memory, .Ok
+}
+
+// code_ready rebases and binds the locations of a module from offset first
+// to offset end. A failure fills the stage of error: Read for a rebase,
+// Check or Bind for a slot.
+@(private)
+code_ready :: proc "contextless" (file: []u8, view: []u8, base: u64, imports: []module.Bound_Import, error: ^module.Load_Error, first, end: u64) -> bool {
+	if rebased := module.rebase_range(file, view, uintptr(base), first, end); rebased != .None {
+		error.stage, error.file_error = .Read, rebased
+		return false
+	}
+	return module.bind(file, view, imports, error, first, end)
 }
 
 // prepared_find gives the prepared module of a file from a table, and
@@ -377,7 +484,7 @@ module_prepare :: proc "contextless" (file: []u8, pages: u64, base: u64, budget:
 // program maps: the count of the holdings of its handle is 0. The caller
 // checked the hash of the file.
 @(private)
-prepared_find :: proc "contextless" (table: ^Prepared_Modules, file: []u8, hash: [32]u8, base: u64, binding: [32]u8, imports: []module.Bound_Import) -> (memory: Handle, status: Status) {
+prepared_find :: proc "contextless" (table: ^Prepared_Modules, file: []u8, hash: [32]u8, base: u64, binding: [32]u8, imports: []module.Bound_Import, error: ^module.Load_Error) -> (memory: Handle, status: Status) {
 	free: ^Prepared
 	for &item in table.modules {
 		if item.memory != 0 && item.hash == hash && item.base == base && item.binding == binding {
@@ -395,7 +502,7 @@ prepared_find :: proc "contextless" (table: ^Prepared_Modules, file: []u8, hash:
 		return 0, .No_Slot
 	}
 	pages := shared_pages(file)
-	written := module_prepare(file, pages, base, 0, imports) or_return
+	written := module_prepare(file, pages, base, 0, imports, error) or_return
 	defer close(written)
 	// After the preparation, nobody writes the module: the table keeps a
 	// handle without Write, and closes the one that wrote.
@@ -409,12 +516,12 @@ prepared_find :: proc "contextless" (table: ^Prepared_Modules, file: []u8, hash:
 // memory object that the budget pays for, with the bytes of the file,
 // rebased and bound: the program does not write the prepared module.
 @(private)
-segments_map :: proc "contextless" (file: []u8, memory: Handle, program: Handle, base: u64, budget: Handle, copy: bool, imports: []module.Bound_Import) -> Status {
+segments_map :: proc "contextless" (file: []u8, memory: Handle, program: Handle, base: u64, budget: Handle, copy: bool, imports: []module.Bound_Import, error: ^module.Load_Error) -> Status {
 	for index in 1 ..< module.count(file, .Segments) {
 		segment, _ := module.record(file, .Segments, index, module.Segment)
 		flags := segment_flags(segment)
 		if .Write in flags && copy {
-			own := segment_copy(file, segment, base, budget, imports) or_return
+			own := segment_copy(file, segment, base, budget, imports, error) or_return
 			_, status := memory_map(own, flags, program, base + segment.memory_offset)
 			close(own)
 			if status != .Ok {
@@ -431,7 +538,7 @@ segments_map :: proc "contextless" (file: []u8, memory: Handle, program: Handle,
 // the bytes of the file, rebased and bound. The pages that the copy does
 // not write stay pages on first use.
 @(private)
-segment_copy :: proc "contextless" (file: []u8, segment: module.Segment, base: u64, budget: Handle, imports: []module.Bound_Import) -> (memory: Handle, status: Status) {
+segment_copy :: proc "contextless" (file: []u8, segment: module.Segment, base: u64, budget: Handle, imports: []module.Bound_Import, error: ^module.Load_Error) -> (memory: Handle, status: Status) {
 	memory = memory_create(segment.memory_size / PAGE_SIZE, budget) or_return
 	address: rawptr
 	if address, status = memory_map(memory); status != .Ok {
@@ -445,12 +552,9 @@ segment_copy :: proc "contextless" (file: []u8, segment: module.Segment, base: u
 	if segment.file_size != 0 {
 		intrinsics.mem_copy_non_overlapping(&view[segment.memory_offset], &file[segment.file_offset], int(segment.file_size))
 	}
-	rebased := module.rebase_range(file, view, uintptr(base), segment.memory_offset, end)
-	if rebased == .None {
-		rebased = module.bind(file, view, imports, segment.memory_offset, end)
-	}
+	ok := code_ready(file, view, base, imports, error, segment.memory_offset, end)
 	memory_unmap(address)
-	if rebased != .None {
+	if !ok {
 		close(memory)
 		return 0, .Bad_Operation
 	}
@@ -458,10 +562,12 @@ segment_copy :: proc "contextless" (file: []u8, segment: module.Segment, base: u
 }
 
 // source_closure gives the files that a load of a module reads from a load
-// source: the module and each import, at each level. files[0] is the
-// module. A caller gives these files, and only these, to a program that
-// loads the module (a call host). A hash that the load source does not
-// have is left out: the loader of the other program reports it.
+// source: the module and each import, at each level, and for a replaced
+// import both the module that the import names and the module of the
+// replacement. files[0] is the module. A caller gives these files, and only
+// these, to a program that loads the module (a call host). A hash that the
+// load source does not have is left out: the loader of the other program
+// reports it.
 source_closure :: proc "contextless" (source: Load_Source, file: []u8, files: ^[MODULE_SPACE_CAPACITY + IMPORT_CAPACITY]^info.Image_Entry) -> (count: int) {
 	add :: proc "contextless" (files: ^[MODULE_SPACE_CAPACITY + IMPORT_CAPACITY]^info.Image_Entry, count: ^int, entry: ^info.Image_Entry) -> bool {
 		if entry == nil {
@@ -494,6 +600,11 @@ source_closure :: proc "contextless" (source: Load_Source, file: []u8, files: ^[
 		for number in 1 ..< module.count(current, .Imports) {
 			record, _ := module.record(current, .Imports, number, module.Import)
 			add(files, &count, image_entry_of(source.image, record.hash))
+			for item in source.replacements {
+				if item.from == record.hash {
+					add(files, &count, image_entry_of(source.image, item.to))
+				}
+			}
 		}
 	}
 	return count
@@ -516,10 +627,12 @@ source_closure :: proc "contextless" (source: Load_Source, file: []u8, files: ^[
 //             this table, and the table keeps the prepared module for the
 //             next program of the same module, base and binding. nil: the
 //             program has its own copy of each module, and its budget pays.
-//   source:   where the loader finds the imports.
+//   source:   where the loader finds the imports, and the replacements that
+//             the caller gives to the program.
+//   error:    when the load fails, the record of the failure.
 // The module is at PROGRAM_BASE, its imports after it.
 // The program stops when the last handle to it closes.
-program_start :: proc "contextless" (file: []u8, name: string, grants: [op.CONTEXT_HANDLES]Grant, values: [op.CONTEXT_VALUES]u64, amounts: Budget_Amounts, mappings: []Mapping = nil, prepared: ^Prepared_Modules = nil, source: Load_Source = {}, failure: ^Load_Failure = nil) -> (program: Handle, status: Status) {
+program_start :: proc "contextless" (file: []u8, name: string, grants: [op.CONTEXT_HANDLES]Grant, values: [op.CONTEXT_VALUES]u64, amounts: Budget_Amounts, mappings: []Mapping = nil, prepared: ^Prepared_Modules = nil, source: Load_Source = {}, error: ^module.Load_Error = nil) -> (program: Handle, status: Status) {
 	if len(file) == 0 || module.validate(file) != .None || grants[op.CONTEXT_BUDGET].handle != 0 {
 		return 0, .Bad_Operation
 	}
@@ -550,11 +663,13 @@ program_start :: proc "contextless" (file: []u8, name: string, grants: [op.CONTE
 		next     = op.PROGRAM_BASE,
 		prepared = prepared,
 	}
-	_, loaded := module_space_load(&space, file)
-	if failure != nil {
-		failure^ = loaded
+	loaded: module.Load_Error
+	if _, ok := module_space_load(&space, file, &loaded); !ok {
+		status = loaded.stage == .Map ? Status(loaded.status) : .Bad_Operation
 	}
-	status = loaded.error == .None ? .Ok : loaded.error == .Kernel ? loaded.status : .Bad_Operation
+	if error != nil {
+		error^ = loaded
+	}
 	if status == .Ok {
 		status = program_fill(program, budget, grants, values, mappings)
 	}
@@ -594,29 +709,154 @@ program_fill :: proc "contextless" (program: Handle, budget: Handle, grants: [op
 	return .Ok
 }
 
-// load_failure_text writes why a load failed, with the names that the image
-// gives to the hashes.
-load_failure_text :: proc "contextless" (writer: ^Writer, failure: Load_Failure, image: []u8) {
-	// A module of the image by its name, another one by its hash.
-	module_name :: proc "contextless" (writer: ^Writer, image: []u8, hash: [32]u8) {
-		if entry := image_entry_of(image, hash); entry != nil {
-			write_part(writer, name_of(entry.name[:]))
+@(rodata)
+file_error_names := [module.Error]string {
+	.None            = "no error",
+	.Too_Small       = "the file is smaller than a header",
+	.Bad_Magic       = "it does not start with the bytes of a module",
+	.Unknown_Version = "its format version is not known",
+	.Unknown_Feature = "it needs a feature that this loader does not know",
+	.Unknown_Machine = "it is for another machine",
+	.Bad_Table       = "a table is outside the file",
+	.Bad_Segment     = "a segment is not valid",
+	.Bad_Rebase      = "a rebase is not in writable data",
+	.Bad_Slot        = "a slot is not valid",
+	.Bad_Import      = "an import is not valid",
+	.Bad_Export      = "an export is not valid",
+}
+
+// load_error_text writes a load error for a person: one line or more, each
+// one ended by a line feed. The record has the names: the text needs no
+// other data.
+load_error_text :: proc "contextless" (writer: ^Writer, error: ^module.Load_Error) {
+	name :: proc "contextless" (writer: ^Writer, value: ^module.Named) {
+		if value.name[0] != 0 {
+			write_part(writer, module.name_get(&value.name))
 		} else {
-			write_hash(writer, hash)
+			write_hash(writer, value.hash)
 		}
 	}
-	switch failure.error {
+	described :: proc "contextless" (writer: ^Writer, value: ^module.Described) {
+		#partial switch value.type {
+		case .None:
+			write_part(writer, "nothing")
+		case .Record:
+			write_part(writer, "the record ")
+			write_part(writer, module.name_get(&value.record))
+		case:
+			write_type(writer, nil, value.type, value.detail)
+		}
+	}
+	// The module that the stage concerns: the import, or the module itself.
+	subject := error.imported.hash != {} ? &error.imported : &error.module
+	switch error.stage {
 	case .None:
-	case .Bad_Module:
-		write_part(writer, "a file is not a valid module, or not the hash that names it")
-	case .Missing_Module:
-		write_part(writer, "the module ")
-		module_name(writer, image, failure.hash)
-		write_part(writer, " is not in what the loader was granted")
-	case .No_Room:
-		write_part(writer, "no room for one more module")
-	case .Kernel:
-		write_part(writer, "the kernel refused an operation of the loader")
+		return
+	case .Find:
+		if error.imported.hash != {} {
+			name(writer, &error.module)
+			write_part(writer, " imports ")
+			name(writer, &error.imported)
+			write_part(writer, ", and the load source has no file with its hash\n")
+		} else {
+			write_part(writer, "the load source has no file with the hash of ")
+			name(writer, &error.module)
+			write_part(writer, "\n")
+		}
+	case .Read:
+		write_part(writer, "the file of ")
+		name(writer, subject)
+		write_part(writer, error.file_error == .None ? " does not have the hash that names it\n" : " is not a valid module: ")
+		if error.file_error != .None {
+			// The record can come from another program: a value out of the enumeration is a value.
+			write_part(writer, error.file_error <= max(module.Error) ? file_error_names[error.file_error] : "an error that this program does not know")
+			write_part(writer, "\n")
+		}
+	case .Cycle:
+		write_part(writer, "an import cycle: ")
+		name(writer, &error.module)
+		write_part(writer, " imports ")
+		name(writer, &error.imported)
+		write_part(writer, ", and ")
+		name(writer, error.replacement.hash != {} ? &error.replacement : &error.imported)
+		write_part(writer, " still loads its imports\n")
+	case .Check:
+		name(writer, &error.module)
+		write_part(writer, " imports ")
+		name(writer, &error.imported)
+		write_part(writer, ", and its replacement ")
+		name(writer, &error.replacement)
+		write_part(writer, " fails the check\n")
+		write_part(writer, "export ")
+		write_part(writer, module.name_get(&error.export))
+		write_part(writer, " of ")
+		name(writer, &error.replacement)
+		write_part(writer, ": ")
+		switch error.difference {
+		case .None:
+		case .Missing_Export:
+			write_part(writer, "no export has this name")
+		case .Parameter_Count:
+			write_part(writer, u64(error.found.detail))
+			write_part(writer, " parameters, ")
+			name(writer, &error.imported)
+			write_part(writer, " has ")
+			write_part(writer, u64(error.expected.detail))
+		case .Parameter_Type, .Parameter_Detail:
+			write_part(writer, "parameter ")
+			write_part(writer, u64(error.parameter))
+			write_part(writer, " is ")
+			described(writer, &error.found)
+			write_part(writer, ", ")
+			name(writer, &error.imported)
+			write_part(writer, " has ")
+			described(writer, &error.expected)
+		case .Result_Type, .Result_Detail:
+			write_part(writer, "the result is ")
+			described(writer, &error.found)
+			write_part(writer, ", ")
+			name(writer, &error.imported)
+			write_part(writer, " has ")
+			described(writer, &error.expected)
+		}
+		write_part(writer, "\n")
+		return // The first line names the replacement.
+	case .Bind:
+		write_part(writer, "slot ")
+		write_part(writer, u64(error.slot))
+		write_part(writer, " of ")
+		name(writer, &error.module)
+		write_part(writer, " cannot be bound")
+		if error.export != {} {
+			write_part(writer, ": export ")
+			write_part(writer, module.name_get(&error.export))
+			write_part(writer, " of ")
+			name(writer, &error.imported)
+		}
+		write_part(writer, "\n")
+	case .Map, .Unmap:
+		write_part(writer, error.stage == .Map ? "the kernel refused to map " : "the kernel refused to remove ")
+		name(writer, &error.module)
+		write_part(writer, ": status ")
+		write_part(writer, u64(error.status))
+		write_part(writer, "\n")
+	case .Room:
+		write_part(writer, "no room for ")
+		name(writer, subject)
+		write_part(writer, ": a program has 16 modules at most, and a module 8 imports\n")
+	}
+	if error.replaced.hash != {} && error.stage != .Cycle {
+		write_part(writer, "on the path of the load, the replacement table gives ")
+		name(writer, &error.replacement)
+		write_part(writer, " in place of ")
+		name(writer, &error.replaced)
+		write_part(writer, "\n")
+	} else if error.stage == .Cycle && error.replaced.hash != {} {
+		write_part(writer, "the replacement table gives ")
+		name(writer, &error.replacement)
+		write_part(writer, " in place of ")
+		name(writer, &error.replaced)
+		write_part(writer, ": that makes the cycle\n")
 	}
 }
 
@@ -643,4 +883,11 @@ program_entries :: proc "contextless" (program: Handle) -> u64 {
 program_state :: proc "contextless" (program: Handle) -> (state: op.Program_State, code: u32) {
 	results, _ := call(.Program_State, u64(program))
 	return op.Program_State(results[0]), u32(results[1])
+}
+
+// program_stop_report gives where a program stopped on a fault, and the
+// module of the instruction. The handle needs the right Read.
+program_stop_report :: proc "contextless" (program: Handle) -> (report: op.Stop_Report) {
+	call(.Program_State, u64(program), u64(uintptr(&report)))
+	return report
 }

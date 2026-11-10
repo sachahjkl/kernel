@@ -11,6 +11,7 @@ import "support:display"
 import "support:graphics"
 import info "contract:boot_info"
 import "contract:isolated"
+import module "contract:module"
 import op "contract:operation"
 import "contract:ring"
 import "support:system"
@@ -35,12 +36,14 @@ Grant :: enum {
 	Person, // The program acts for the person: a service shows it what it holds for all callers.
 	Data_Disk, // A block service of the data disk, and its block ring.
 	Scratch_Disk, // A block service of the disk of the measures, and its block ring.
+	Replacements, // Read the replacement table of the machine.
+	Replace, // Change the replacement table of the machine (Root_Command.Replace).
 }
 
 grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 	switch name {
 	case "console":
-		return {.Root_Ring, .Inspect, .Stop, .Image, .Terminal, .Store, .Person}
+		return {.Root_Ring, .Inspect, .Stop, .Image, .Terminal, .Store, .Person, .Replacements, .Replace}
 	case "flood":
 		return {.Terminal}
 	case "monitor", "processors", "pages", "flow", "crowd", "clock":
@@ -58,13 +61,15 @@ grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 	case "paint", "life", "tally":
 		return {.Serve}
 	case "manual":
-		return {.Serve, .Image} // It reads the documentation of each module of the boot image.
+		return {.Serve, .Image, .Replacements} // It reads the documentation of each module of the boot image.
 	case "disk":
 		return {.Scratch_Disk}
 	case "storage":
 		return {.Serve, .Data_Disk}
 	case "notes":
 		return {.Store}
+	case "imports":
+		return {.Inspect, .Image} // It loads modules of the boot image, and measures with the cycle counter.
 	}
 	return {}
 }
@@ -220,6 +225,19 @@ compositor: system.Handle
 control: ring.Ring
 control_memory: system.Handle
 
+// The replacement table of the machine: this service writes it. Each
+// program that this service starts receives its records (property 20: a
+// program cannot ask for a replacement and cannot refuse one).
+replacement_memory: system.Handle
+replacement_table: ^system.Replacement_Table
+replacement_records: [system.REPLACEMENT_CAPACITY]module.Replacement
+
+// load_source gives what the loader of a program that this service starts can
+// read: the boot image, and the replacements of this time.
+load_source :: proc "contextless" () -> system.Load_Source {
+	return {image = image, replacements = system.replacements_read(replacement_table, &replacement_records)}
+}
+
 // The boot display (package bootscreen), on the screen of the machine.
 // This service draws it until the compositor has the screen.
 screen: graphics.Canvas
@@ -276,6 +294,17 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		screen_data.red_first = ctx.values[op.ROOT_VALUE_FORMAT] == u64(info.Pixel_Format.Red_Green_Blue_X)
 	}
 	show("the root service starts input", .Running)
+	{
+		table: rawptr
+		replacement_memory, status = system.memory_create(1)
+		if status == .Ok {
+			table, status = system.memory_map(replacement_memory)
+		}
+		if status != .Ok {
+			fail("cannot create the replacement table", status)
+		}
+		replacement_table = (^system.Replacement_Table)(table)
+	}
 
 	// The input service: the ports and the interrupts of the PS/2 controller.
 	input_memory: system.Handle
@@ -381,6 +410,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					}
 				case .Revoke:
 					result = revoke(system.name_of(name[:]), record.values[4], &completion.values)
+				case .Replace:
+					result = replace(&item, system.name_of(name[:]), record.values[4])
 				case .Stop:
 					result = .Bad_Handle
 					for &other in started {
@@ -552,6 +583,9 @@ start :: proc "contextless" (name: string) -> system.Status {
 		grants[system.GRANT_IMAGE] = {image_memory, {.Read}}
 		values[system.GRANT_VALUE_IMAGE_SIZE] = u64(len(image))
 	}
+	if .Replacements in role {
+		grants[system.GRANT_REPLACEMENTS] = {replacement_memory, {.Read}}
+	}
 	// A service: the service ring, and its own file, to read the
 	// descriptions of its exports.
 	if .Serve in role && status == .Ok && entry.offset % system.PAGE_SIZE == 0 {
@@ -562,16 +596,15 @@ start :: proc "contextless" (name: string) -> system.Status {
 		mappings[mapping_count] = {memory = image_memory, address = isolated.FILE_ADDRESS, first = entry.offset / system.PAGE_SIZE, page_count = (entry.size + system.PAGE_SIZE - 1) / system.PAGE_SIZE}
 		mapping_count += 1
 	}
-	// The loader finds the imports of the program in the boot image.
-	failure: system.Load_Failure
+	load_error: module.Load_Error
 	if status == .Ok {
-		slot.program, status = system.program_start(file, name, grants, values, budget_of(name), mappings[:mapping_count], &prepared, {image = image}, &failure)
+		slot.program, status = system.program_start(file, name, grants, values, budget_of(name), mappings[:mapping_count], &prepared, load_source(), &load_error)
 	}
 	if status != .Ok {
-		if failure.error != .None {
-			buffer: [192]u8
+		if load_error.stage != .None {
+			buffer: [512]u8
 			writer := system.Writer{buffer = buffer[:]}
-			system.load_failure_text(&writer, failure, image)
+			system.load_error_text(&writer, &load_error)
 			system.log_in("programs", .Warning, "root: cannot start ", name, ": ", system.written(&writer))
 		} else {
 			system.log_in("programs", .Warning, "root: cannot start ", name, ": status ", u64(status))
@@ -670,6 +703,47 @@ revoke :: proc "contextless" (name: string, grant: u64, values: ^[7]u64) -> syst
 	item.revoked += {which}
 	values[0] = count
 	system.log_in("programs", .Info, "root: revoked the grant ", system.root_grant_names[which], " of ", name, ", holdings ended: ", count)
+	return .Ok
+}
+
+// replace changes the replacement table of the machine, for a program with
+// the role Replace: where a module imports the module `name`, the loaders
+// give the module of entry `by` of the boot image (from 1). 0 removes the
+// record. It refuses a chain: one replacement for one import, so a loader
+// never follows two records.
+replace :: proc "contextless" (asker: ^Started, name: string, by: u64) -> system.Status {
+	if .Replace not_in grants_of(system.name_of(asker.name[:])) {
+		return .No_Right
+	}
+	entries := system.image_entries(image)
+	from, to: [32]u8
+	from_name := ""
+	for &entry in entries {
+		if system.name_of(entry.name[:]) == name {
+			from = entry.hash
+			from_name = system.name_of(entry.name[:])
+		}
+	}
+	if from == {} || by > u64(len(entries)) {
+		return .Bad_Handle
+	}
+	if by != 0 {
+		to = entries[by - 1].hash
+		if to == from {
+			return .Bad_Operation
+		}
+		for item in system.replacements_read(replacement_table, &replacement_records) {
+			if item.from == to || item.to == from {
+				return .Bad_State
+			}
+		}
+	}
+	system.replacements_write(replacement_table, from, to) or_return
+	if by == 0 {
+		system.log_in("programs", .Info, "root: no replacement of ", from_name)
+	} else {
+		system.log_in("programs", .Info, "root: ", system.name_of(entries[by - 1].name[:]), " replaces ", from_name, " in each load that follows")
+	}
 	return .Ok
 }
 

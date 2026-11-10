@@ -34,14 +34,16 @@ Sandbox :: struct {
 	name:          string,
 	service:       bool, // A service that runs: the console does not start it and does not stop it.
 	hash:          [32]u8, // A service: the hash of the file of the program.
-	// A call host: the files that it loads, in the boot image: the module
-	// and its imports. files_memory has the list of the files
-	// (isolated.VALUE_FILE_ADDRESS).
+	// A call host: the files that it loads, in the boot image: the module,
+	// its imports, and the modules of the replacements. files_memory has the
+	// list of the files and the replacements (isolated.VALUE_FILE_ADDRESS).
 	files:              [FILE_CAPACITY]^info.Image_Entry,
 	file_count:         int,
 	file_offsets:       [FILE_CAPACITY]u64, // Where each file is, from isolated.FILE_ADDRESS.
 	files_memory:       system.Handle,
 	files_size:         u64,
+	replacement_offset: u64,
+	replacement_count:  u64,
 	program:       system.Handle, // 0: no call host runs, or no connection exists. The next call makes one.
 	ring_memory:   system.Handle,
 	ring:          ring.Ring,
@@ -87,9 +89,15 @@ loaded_count: int
 // source is the boot image: what the root service granted.
 space: system.Module_Space
 
-// source_now gives the load source of a load: the boot image.
+// The replacement table of the machine: the root service writes it, the
+// console reads it before each load.
+replacement_table: ^system.Replacement_Table
+replacement_records: [system.REPLACEMENT_CAPACITY]module.Replacement
+
+// source_now gives the source of a load: the boot image, and the replacements
+// of the machine at this time.
 source_now :: proc "contextless" () -> system.Load_Source {
-	return {image = image}
+	return {image = image, replacements = system.replacements_read(replacement_table, &replacement_records)}
 }
 
 commands: [COMMAND_CAPACITY]Command
@@ -121,6 +129,9 @@ commands_start :: proc "contextless" () {
 	}
 	requests_memory = ctx.handles[system.GRANT_ROOT]
 	requests, _ = system.ring_open(requests_memory)
+	if address, status := system.memory_map(ctx.handles[system.GRANT_REPLACEMENTS], {}); status == .Ok {
+		replacement_table = (^system.Replacement_Table)(address)
+	}
 	space.next = op.MODULE_BASE
 
 	command("help", {}, .None, "list the commands", help)
@@ -135,6 +146,8 @@ commands_start :: proc "contextless" () {
 	command("stop", {.Text}, .None, "stop a program, by name", stop_program)
 	command("grants", {.Text}, .None, "what a program has from the root service", grants)
 	command("revoke", {.Text, .Text}, .None, "end a grant of a program that runs", revoke)
+	command("replace", {.Text, .Text}, .None, "give the second module where a module imports the first", replace)
+	command("replacements", {}, .None, "list the replacement table of the machine", list_replacements)
 	command("time", {}, .Integer, "milliseconds since boot", time)
 	command("hash", {.Text}, .Text, "the BLAKE3 hash of a text", hash)
 	command("length", {.Text}, .Integer, "the number of bytes of a text", length)
@@ -224,9 +237,34 @@ list_programs :: proc "contextless" (arguments: []Value) -> Value {
 		}
 		print(number(slot, 5), padded(system.name_of(program.name[:]), 12), padded(state_names[program.state], 9))
 		print(number(program.thread_count, 8), number(program.mapped_pages, 6), number(program.present_pages, 8), number(program.handle_count, 8), number(program.run_time, 8), number(program.budget.pages, 8), "  ", number(program.entries, 0), "\n")
+		modules_print(slot)
 	}
 	return {}
 }
+
+// modules_print shows the identity of a program that has more than its
+// module: each module that a loader put in it, and the replacements that
+// the loader applied (the module records of the kernel).
+modules_print :: proc "contextless" (slot: u64) {
+	report := &module_report
+	system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Modules), slot, u64(uintptr(report)), size_of(report^))
+	replaced := false
+	for item in report.modules[:report.count] {
+		replaced ||= item.replaces != {}
+	}
+	if report.count < 2 && !replaced {
+		return
+	}
+	for item, index in report.modules[:report.count] {
+		print(index == 0 ? "      modules " : "              ", module_text(item.hash))
+		if item.replaces != {} {
+			print(" in place of ", module_text(item.replaces))
+		}
+		print("\n")
+	}
+}
+
+module_report: op.Module_Report
 
 // module_text gives the name of a module in the boot image, and the start of its hash.
 module_text :: proc "contextless" (value: [32]u8) -> string {
@@ -241,12 +279,18 @@ module_text :: proc "contextless" (value: [32]u8) -> string {
 }
 
 // imports_print shows the imports of a module that load put in the
-// console.
+// console: the module that each import names, and the module that the
+// loader gave in its place.
 imports_print :: proc "contextless" (place: int) {
 	item := &space.modules[place]
 	for number in 0 ..< int(item.import_count) {
 		record, _ := module.record(item.file, .Imports, u32(number + 1), module.Import)
-		print("  imports ", module_text(record.hash), "\n")
+		used := &space.modules[item.import_places[number]]
+		print("  imports ", module_text(record.hash))
+		if used.hash != record.hash {
+			print(": the loader gave ", module_text(used.hash), " in its place")
+		}
+		print("\n")
 	}
 }
 
@@ -341,17 +385,18 @@ add_module :: proc "contextless" (name: string, isolate: bool) -> Value {
 			}
 			if !sandbox_create(sandbox, file) {
 				sandbox^ = {}
+				if load_error.stage != .None {
+					return fail_load("cannot isolate ", name)
+				}
 				return fail("cannot start a sandboxed program for ", name)
 			}
 		} else {
+			// The loader reads the replacement table of this time: the
+			// console cannot choose it.
 			space.source = source_now()
-			failure: system.Load_Failure
-			place, failure = system.module_space_load(&space, file)
-			if failure.error != .None {
-				buffer: [192]u8
-				writer := system.Writer{buffer = buffer[:]}
-				system.load_failure_text(&writer, failure, image)
-				return fail("cannot load ", name, ": ", scratch_text(system.written(&writer)))
+			ok: bool
+			if place, ok = system.module_space_load(&space, file, &load_error); !ok {
+				return fail_load("cannot load ", name)
 			}
 			base = space.modules[place].base
 		}
@@ -406,7 +451,10 @@ unload_module :: proc "contextless" (arguments: []Value) -> Value {
 		} else {
 			// A module that another module imports stays: one copy for all.
 			// An import that no other module uses leaves with the module.
-			system.module_space_release(&space, item.place)
+			if !system.module_space_release(&space, item.place, &load_error) {
+				print(item.name, ": ", i64(removed), " commands removed\n")
+				return fail_load("cannot remove ", item.name)
+			}
 			if space.modules[item.place].users != 0 {
 				print(item.name, ": ", i64(removed), " commands removed, the module stays: a module of the console imports it\n")
 			} else {
@@ -742,14 +790,15 @@ sandbox_create :: proc "contextless" (sandbox: ^Sandbox, file: []u8) -> bool {
 }
 
 // sandbox_files chooses the files of a call host: the module, and what its
-// load reads (system.source_closure). It writes their list, in the form of
-// the boot image, in one page: the call host receives that page and these
-// files, and no other file.
+// load reads with the replacement table of this time (system.source_closure).
+// It writes their list, in the form of the boot image, and the replacements
+// in one page: the call host receives that page and these files, and no
+// other file.
 sandbox_files :: proc "contextless" (sandbox: ^Sandbox, file: []u8) -> bool {
 	source := source_now()
 	sandbox.file_count = system.source_closure(source, file, &sandbox.files)
 	list_size := size_of(info.Image_Header) + sandbox.file_count * size_of(info.Image_Entry)
-	if sandbox.file_count == 0 || list_size > system.PAGE_SIZE {
+	if sandbox.file_count == 0 || list_size + len(source.replacements) * size_of(module.Replacement) > system.PAGE_SIZE {
 		return false
 	}
 	status: system.Status
@@ -777,6 +826,9 @@ sandbox_files :: proc "contextless" (sandbox: ^Sandbox, file: []u8) -> bool {
 		offset += (item.size + system.PAGE_SIZE - 1) / system.PAGE_SIZE * system.PAGE_SIZE
 	}
 	sandbox.files_size = offset
+	sandbox.replacement_offset = u64(list_size + 7) &~ 7
+	sandbox.replacement_count = u64(len(source.replacements))
+	copy(([^]module.Replacement)(raw_data(page[sandbox.replacement_offset:]))[:len(source.replacements)], source.replacements)
 	return true
 }
 
@@ -796,14 +848,90 @@ sandbox_start :: proc "contextless" (sandbox: ^Sandbox) -> system.Status {
 	grants[op.CONTEXT_LOG] = {system.context_record().handles[op.CONTEXT_LOG], {.Write}}
 	values[isolated.VALUE_FILE_ADDRESS] = isolated.FILE_ADDRESS
 	values[isolated.VALUE_FILE_SIZE] = sandbox.files_size
+	values[isolated.VALUE_REPLACEMENT_OFFSET] = sandbox.replacement_offset
+	values[isolated.VALUE_REPLACEMENT_COUNT] = sandbox.replacement_count
 	mappings: [FILE_CAPACITY + 1]system.Mapping
 	mappings[0] = {memory = sandbox.files_memory, address = isolated.FILE_ADDRESS}
 	for item, index in sandbox.files[:sandbox.file_count] {
 		mappings[index + 1] = {memory = image_memory, address = isolated.FILE_ADDRESS + sandbox.file_offsets[index], first = item.offset / system.PAGE_SIZE, page_count = (item.size + system.PAGE_SIZE - 1) / system.PAGE_SIZE}
 	}
 	status: system.Status
+	load_error = {}
 	sandbox.program, status = system.program_start(system.image_find(image, "host"), sandbox.name, grants, values, {pages = 512, programs = 1, threads = 1, processor = 500_000, log_records = 100}, mappings[:sandbox.file_count + 1], &prepared)
-	return status
+	if status != .Ok {
+		return status
+	}
+	// The first completion of the call host says if it loaded the module.
+	// With Load_Failed, the record of the failure is in the call region:
+	// the console copies it, and reads it as values.
+	limit := system.time() + 5000
+	for {
+		wait := system.wait_begin()
+		// The state first: a call host that stopped wrote its completion before.
+		state, _ := system.program_state(sandbox.program)
+		for _ in 0 ..< ring.CAPACITY {
+			completion, has_completion := system.receive(&sandbox.ring.completions)
+			if !has_completion {
+				break
+			}
+			if completion.tag != 0 {
+				continue
+			}
+			if isolated.Status(completion.kind) == .Ok {
+				return .Ok
+			}
+			intrinsics.mem_copy_non_overlapping(&load_error, raw_data(sandbox.region), size_of(load_error))
+			sandbox_end(sandbox)
+			return .Bad_State
+		}
+		if state == .Stopped {
+			sandbox_end(sandbox)
+			return .Bad_State
+		}
+		system.wait_records(&wait, &sandbox.ring.completions)
+		if system.wait_end(&wait, limit) >= limit {
+			sandbox_end(sandbox)
+			return .Bad_State
+		}
+	}
+}
+
+// load_error is the record of the last load that failed. The console owns
+// it; the loader, or a call host through the call region, fills it.
+load_error: module.Load_Error
+
+// fail_load writes a load error: the first line says what failed, and the
+// lines of the record follow. Each line starts with "error".
+fail_load :: proc "contextless" (what: string, name: string) -> Value {
+	result := fail(what, name)
+	buffer: [768]u8
+	writer := system.Writer {
+		buffer = buffer[:],
+	}
+	system.load_error_text(&writer, &load_error)
+	text := system.written(&writer)
+	for len(text) > 0 {
+		end := 0
+		for end < len(text) && text[end] != '\n' {
+			end += 1
+		}
+		print("error: ", text[:end], "\n")
+		text = text[min(end + 1, len(text)):]
+	}
+	return result
+}
+
+// fault_print writes where a program stopped on a fault: the module that
+// ran, as the loader of the program recorded it, and the module that it
+// replaced.
+fault_print :: proc "contextless" (report: ^op.Stop_Report) {
+	if report.module.size == 0 {
+		return
+	}
+	print("error: the instruction is at offset ", system.Hex(report.instruction - report.module.base), " of ", module_text(report.module.hash), "\n")
+	if report.module.replaces != {} {
+		print("error: ", module_text(report.module.hash), " runs in place of ", module_text(report.module.replaces), "\n")
+	}
 }
 
 // sandbox_end closes the handle of the call host. The kernel stops a program
@@ -847,6 +975,9 @@ call_isolated :: proc "contextless" (item: ^Command, arguments: []Value) -> Valu
 		}
 	}
 	if sandbox.program == 0 && sandbox_start(sandbox) != .Ok {
+		if !sandbox.service && load_error.stage != .None {
+			return fail_load("cannot start a sandboxed program for ", sandbox.name)
+		}
 		return fail(sandbox.service ? "no service runs with the name " : "cannot start a sandboxed program for ", sandbox.name)
 	}
 	encoded: [ARGUMENT_CAPACITY]isolated.Argument
@@ -918,13 +1049,18 @@ call_isolated :: proc "contextless" (item: ^Command, arguments: []Value) -> Valu
 				return fail("the program ", sandbox.name, " refused the arguments of ", item.name)
 			case .Bad_Handle:
 				return fail("the program ", sandbox.name, " refused a handle of ", item.name)
+			case .Load_Failed:
+				return fail("the program ", sandbox.name, " gave the status of a load for a call")
 			case:
 				return fail("the program ", sandbox.name, " gave an unknown status")
 			}
 		}
 		if state, code := system.program_state(sandbox.program); state == .Stopped {
+			report := system.program_stop_report(sandbox.program)
 			sandbox_end(sandbox)
-			return fail("the program ", sandbox.name, " stopped: ", stop_reason(code))
+			result := fail("the program ", sandbox.name, " stopped: ", stop_reason(code))
+			fault_print(&report)
+			return result
 		}
 		if intrinsics.volatile_load(&work.cancel) != 0 {
 			sandbox_end(sandbox)
@@ -1026,6 +1162,60 @@ revoke :: proc "contextless" (arguments: []Value) -> Value {
 		return fail("the root service refused: no program has the name ", name)
 	}
 	return fail("no grant has the name ", arguments[1].text, ": the grants are log, machine, image, log_records")
+}
+
+// replace asks the root service to give a module where a module imports
+// another one. An empty second text removes the replacement.
+replace :: proc "contextless" (arguments: []Value) -> Value {
+	name, by := arguments[0].text, arguments[1].text
+	value: u64
+	if by != "" {
+		for &entry, index in system.image_entries(image) {
+			if system.name_of(entry.name[:]) == by {
+				value = u64(index + 1)
+			}
+		}
+		if value == 0 {
+			return fail("no module has the name ", by)
+		}
+	}
+	completion, answered := request_record(.Replace, name, value)
+	if !answered {
+		return fail(requests.head == nil ? "the console has no ring to the root service" : "the root service did not answer")
+	}
+	#partial switch system.Status(completion.kind) {
+	case .Ok:
+		if by == "" {
+			print(name, ": no replacement for the loads that follow\n")
+		} else {
+			print(by, " replaces ", name, " in the loads that follow\n")
+		}
+		return {}
+	case .No_Right:
+		return fail("the console has no grant to change the replacement table")
+	case .Bad_State:
+		return fail("a chain of replacements is refused: ", name, ", ", by)
+	case .No_Slot:
+		return fail("the replacement table is full")
+	case .Bad_Operation:
+		return fail("a module does not replace itself")
+	}
+	return fail(by == "" ? "no replacement of the module " : "no module has the name ", name)
+}
+
+// list_replacements shows the replacement table of the machine.
+list_replacements :: proc "contextless" (arguments: []Value) -> Value {
+	if replacement_table == nil {
+		return fail("the console has no grant to read the replacement table")
+	}
+	records := system.replacements_read(replacement_table, &replacement_records)
+	if len(records) == 0 {
+		print("no replacement\n")
+	}
+	for item in records {
+		print(module_text(item.from), ": replaced by ", module_text(item.to), "\n")
+	}
+	return {}
 }
 
 start_program :: proc "contextless" (arguments: []Value) -> Value {

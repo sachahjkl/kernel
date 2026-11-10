@@ -6,7 +6,7 @@
 package launcher
 
 @(rodata)
-names := [?]string{"boot", "pages", "log", "console", "monitor", "plasma", "life", "paint", "fault", "temple", "rings", "threads", "workers", "rights", "origin", "budget", "limits", "processors", "flow", "crowd", "clock", "flood", "tally", "manual", "frames", "disk", "notes"}
+names := [?]string{"boot", "pages", "log", "console", "monitor", "plasma", "life", "paint", "fault", "temple", "rings", "threads", "workers", "rights", "origin", "budget", "limits", "processors", "flow", "crowd", "clock", "flood", "tally", "manual", "frames", "disk", "notes", "imports"}
 
 LABEL :: "programs" // The text of the button that opens the menu.
 CHARACTER_WIDTH :: 8 // The font of the system.

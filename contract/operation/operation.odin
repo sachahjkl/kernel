@@ -86,7 +86,8 @@ Operation :: enum u32 {
 	// The budget pays for the program, for its page tables and for its first thread.
 	Program_Start  = 7, // (program, entry address, stack address, context address): the first thread of the program.
 	Program_Stop   = 8, // (program or 0 for self, code)
-	Program_State  = 9, // (program) -> Program_State, code, kernel entries of the program
+	Program_State  = 9, // (program, address of a Stop_Report or 0) -> Program_State, code, kernel entries of the program.
+	// With an address, the kernel writes the Stop_Report of the program there.
 	Handle_Give    = 10, // (target: program handle, memory handle, or 0 for this program; handle; Rights) -> the handle in the target program.
 	// The new handle has the rights of the handle that are also in Rights: a grant never adds a right.
 	// With a memory handle, the target is the other program that maps this memory: the other side of a ring.
@@ -133,6 +134,39 @@ Operation :: enum u32 {
 	// created Contiguous, or of device memory: its pages follow each other in physical memory and do not move.
 	// Another memory object gives Bad_Operation. A device service gives these addresses to its device: the device
 	// reads and writes the memory with no processor (direct memory access). Needs the right Physical on the machine.
+	Program_Module = 26, // (program or 0 for self, address of a Module_Record): the module record of a module that a
+	// loader put in the program. A record with the base of a record that exists replaces it; with the size 0
+	// it removes it. The kernel does not read the module: the record is what the loader asserts. The kernel
+	// names the module of the address of a fault with it, and Inspect gives the records (Module_Report).
+}
+
+// A module record: one module that a loader put in a program (Program_Module).
+// The identity of a program that runs is the list of its module records: the
+// hash of each module, and the hash that a replacement put it in place of.
+Module_Record :: struct {
+	base:     u64, // The address of the first byte of the module in the program.
+	size:     u64, // The bytes of addresses of the module. 0: no module.
+	hash:     [32]u8, // The hash of the module that is loaded.
+	replaces: [32]u8, // Zero, or the hash that an import names and that a replacement changed to `hash`.
+}
+#assert(size_of(Module_Record) == 80)
+
+PROGRAM_MODULE_CAPACITY :: 16 // The module records of one program.
+
+// Where a program stopped on a fault (Program_State). Zero: the program
+// runs, or it stopped with no fault.
+Stop_Report :: struct {
+	code:        u32, // The stop code: STOP_CODE_FAULT plus the vector.
+	vector:      u32,
+	instruction: u64, // The address of the instruction.
+	address:     u64, // A page fault: the address that the instruction used. 0 for another fault.
+	module:      Module_Record, // The module of the instruction, as the loader recorded it: the module that ran. Zero: no record.
+}
+
+// The module records of one program, in the order of their addresses.
+Module_Report :: struct {
+	count:   u64,
+	modules: [PROGRAM_MODULE_CAPACITY]Module_Record,
 }
 
 // A budget: what its holders can still create. No operation creates an
@@ -276,6 +310,8 @@ Inspect_Kind :: enum u64 {
 	Processor = 3, // Processor_Report of processor `index`
 	Boot      = 4, // Boot_Report
 	Mappings  = 5, // Mapping_Report. index 0: the kernel half of the addresses. 1: the half of the program that asks.
+	Modules   = 6, // Module_Report of program slot `index`
+
 }
 
 System_Report :: struct {

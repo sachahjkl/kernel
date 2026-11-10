@@ -66,6 +66,10 @@ file_of :: proc "contextless" (entry: ^info.Image_Entry) -> []u8 {
 	return module.validate(file) == .None ? file : nil
 }
 
+// The replacement table of the machine, that the root service writes.
+replacement_table: ^system.Replacement_Table
+replacement_records: [system.REPLACEMENT_CAPACITY]module.Replacement
+
 // module_text gives the name of a module of the boot image and the start of
 // its hash, in the built lines.
 module_text :: proc "contextless" (hash: [32]u8) -> string {
@@ -243,12 +247,33 @@ page_build :: proc "contextless" () {
 	}
 	put("", 0, 0)
 
-	// The imports: each one names a module by its hash.
-	if imports > 0 {
+	// The imports, and the replacement table of the machine: the module
+	// that a loader gives in place of an import, at this time.
+	replaced := system.replacements_read(replacement_table, &replacement_records)
+	replaced_count := 0
+	for item in replaced {
+		if item.from == entry.hash || item.to == entry.hash {
+			replaced_count += 1
+		}
+	}
+	if imports > 0 || replaced_count > 0 {
 		put_built(0, COLOR_HEADING, "IMPORTS (", u64(imports), ")")
 		for number in 1 ..= u32(imports) {
 			record, _ := module.record(file, .Imports, number, module.Import)
 			put_built(2, COLOR_CODE, module_text(record.hash))
+			for item in replaced {
+				if item.from == record.hash {
+					put_built(4, COLOR_TITLE, "on this machine a loader gives ", module_text(item.to), " in its place")
+				}
+			}
+		}
+		for item in replaced {
+			if item.from == entry.hash {
+				put_built(2, COLOR_TITLE, "on this machine ", module_text(item.to), " replaces this module in each import")
+			}
+			if item.to == entry.hash {
+				put_built(2, COLOR_TITLE, "on this machine this module replaces ", module_text(item.from), " in each import")
+			}
 		}
 		put("", 0, 0)
 	}
@@ -466,6 +491,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	if address, status := system.memory_map(ctx.handles[system.GRANT_IMAGE], {}); status == .Ok {
 		image = ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]
+	}
+	if address, status := system.memory_map(ctx.handles[system.GRANT_REPLACEMENTS], {}); status == .Ok {
+		replacement_table = (^system.Replacement_Table)(address)
 	}
 	entries := system.image_entries(image)
 	documented := 0

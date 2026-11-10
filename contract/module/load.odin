@@ -194,39 +194,90 @@ export_address :: proc "contextless" (file: []u8, base: uintptr, export_index: u
 	return base + uintptr(export.code_offset), true
 }
 
-// An import as a loader resolved it: the file of the module, and where it is.
+// An import as a loader resolved it: the module that is loaded for it, and
+// where. When a replacement applies, `named` is the file of the module that
+// the import names: a slot names an export by its index in that file.
 Bound_Import :: struct {
-	file: []u8,
-	base: uintptr,
+	file:  []u8,
+	base:  uintptr,
+	named: []u8, // nil: `file` is the module that the import names.
 }
 
+// A replacement: where a module imports the module `from`, the loader loads
+// the module `to` (docs/MODULE_CONTRACT.md, "Replacement of an import").
+Replacement :: struct {
+	from: [HASH_SIZE]u8,
+	to:   [HASH_SIZE]u8,
+}
+#assert(size_of(Replacement) == 64)
+
 // bind writes, in each slot, the address of its export. imports gives each
-// import, in the order of the import table: its index 0 is import 1. It
-// checks each slot, and writes the slots from offset first to offset end
+// import, in the order of the import table: its index 0 is import 1.
+// A replaced import binds by name, one time: the loader finds in the
+// replacement the export with the name of the export of the slot, and the
+// two descriptions must be equal. If not, or if a slot is not valid, bind
+// fills the stage, the export, the slot and the difference of error, and
+// the module must not run. The loader fills the modules of the record.
+// It checks each slot, and writes the slots from offset first to offset end
 // only: a loader that writes one segment at a time binds each one alone.
-bind :: proc "contextless" (file: []u8, memory: []u8, imports: []Bound_Import, first: u64 = 0, end: u64 = max(u64)) -> Error {
+bind :: proc "contextless" (file: []u8, memory: []u8, imports: []Bound_Import, error: ^Load_Error, first: u64 = 0, end: u64 = max(u64)) -> bool {
 	count_of_imports := count(file, .Imports)
 	if count_of_imports > 1 && len(imports) != int(count_of_imports) - 1 {
-		return .Bad_Import
+		error.stage = .Bind
+		return false
 	}
 	for index in 1 ..< count(file, .Slots) {
 		slot, _ := record(file, .Slots, index, Slot)
-		if slot.import_index == 0 || slot.import_index >= count_of_imports {
-			return .Bad_Slot
-		}
-		if !writable(file, slot.memory_offset) {
-			return .Bad_Slot
+		error.slot = index
+		if slot.import_index == 0 || slot.import_index >= count_of_imports || !writable(file, slot.memory_offset) {
+			error.stage = .Bind
+			return false
 		}
 		item := imports[slot.import_index - 1]
-		address, ok := export_address(item.file, item.base, slot.export_index)
+		named_file := item.named != nil ? item.named : item.file
+		if named, has_function := function(named_file, slot.export_index); has_function {
+			name_set(&error.export, string_at(named_file, named.name_offset, named.name_count))
+		} else {
+			error.export = {}
+		}
+		export_index := slot.export_index
+		if item.named != nil {
+			export_index = export_find(item.file, name_get(&error.export))
+			if error.export == {} {
+				error.stage = .Bind
+				return false
+			}
+			if export_index == 0 {
+				error.stage, error.difference = .Check, .Missing_Export
+				return false
+			}
+			error.difference, error.parameter, error.expected, error.found = functions_compare(item.named, slot.export_index, item.file, export_index)
+			if error.difference != .None {
+				error.stage = .Check
+				return false
+			}
+		}
+		address, ok := export_address(item.file, item.base, export_index)
 		if !ok {
-			return .Bad_Slot
+			error.stage = .Bind
+			return false
 		}
 		if slot.memory_offset >= first && slot.memory_offset < end {
 			intrinsics.unaligned_store((^u64)(raw_data(memory[slot.memory_offset:])), u64(address))
 		}
 	}
-	return .None
+	error.slot, error.export = 0, {}
+	return true
+}
+
+// export_find gives the index of the export with a name. 0: no export has it.
+export_find :: proc "contextless" (file: []u8, name: string) -> u32 {
+	for index in 1 ..< count(file, .Exports) {
+		if value, ok := function(file, index); ok && string_at(file, value.name_offset, value.name_count) == name {
+			return index
+		}
+	}
+	return 0
 }
 
 // string_at gives bytes of the string table. Call validate first.

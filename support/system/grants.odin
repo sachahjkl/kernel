@@ -1,5 +1,8 @@
 package system
 
+import "base:intrinsics"
+import module "contract:module"
+
 // The roles of the context of a program that the root service starts.
 // A handle that the program was not granted is 0.
 GRANT_DISPLAY :: 0 // Memory: the ring to the compositor.
@@ -8,6 +11,7 @@ GRANT_MACHINE :: 2 // The machine, with the rights of the role: Inspect, or Insp
 GRANT_IMAGE :: 3 // Memory: the boot image, to list the modules.
 GRANT_LOG_RECORDS :: 4 // Memory, with Read: the records of the log.
 GRANT_SERVICE :: 5 // Memory: the service ring. The root service names each connection of a caller on it.
+GRANT_REPLACEMENTS :: 10 // Memory, with Read: the replacement table of the machine (Replacement_Table). 6 to 9 are the terminal and the store (packages terminal, storage).
 GRANT_VALUE_IMAGE_SIZE :: 0
 GRANT_VALUE_FILE_ADDRESS :: 1 // A service: where the file of the program is, read-only (the descriptions of its exports).
 GRANT_VALUE_FILE_SIZE :: 2
@@ -33,6 +37,79 @@ Root_Command :: enum u32 {
 	// from the grant, in that program and in the programs that it gave them
 	// to. values[0] of the completion is their count.
 	Revoke     = 6,
+	// Replace sets the replacement of the module with this name, in the
+	// replacement table of the machine: values[4] is the number, from 1, of
+	// the entry of the boot image of the module that replaces it. 0 removes
+	// the replacement. The root service refuses it to a program that does
+	// not have the role, and refuses a chain: a module that replaces is not
+	// replaced. The completion has Bad_State for a chain, No_Slot for a
+	// full table.
+	Replace    = 7,
+}
+
+// The replacement table of the machine. The root service writes it, and
+// gives it with the right Read. It gives the records to each program that
+// it starts (system.program_start); a program that loads modules reads the
+// table before each load. version is odd while the root service writes.
+REPLACEMENT_CAPACITY :: 32
+Replacement_Table :: struct {
+	version: u32,
+	count:   u32,
+	records: [REPLACEMENT_CAPACITY]module.Replacement,
+}
+#assert(size_of(Replacement_Table) <= PAGE_SIZE)
+
+// replacements_read copies the records of a replacement table that another
+// program writes. It reads again while the table changes.
+replacements_read :: proc "contextless" (table: ^Replacement_Table, records: ^[REPLACEMENT_CAPACITY]module.Replacement) -> []module.Replacement {
+	if table == nil {
+		return nil
+	}
+	for {
+		version := intrinsics.atomic_load_explicit(&table.version, .Acquire)
+		if version & 1 != 0 {
+			continue
+		}
+		count := min(intrinsics.volatile_load(&table.count), REPLACEMENT_CAPACITY)
+		intrinsics.mem_copy_non_overlapping(records, &table.records, size_of(table.records))
+		intrinsics.atomic_thread_fence(.Acquire)
+		if intrinsics.atomic_load_explicit(&table.version, .Relaxed) == version {
+			return records[:count]
+		}
+	}
+}
+
+// replacements_write changes a replacement table: it sets the record of
+// `from`, or removes it when `to` is zero. The one writer is the root
+// service.
+replacements_write :: proc "contextless" (table: ^Replacement_Table, from, to: [32]u8) -> Status {
+	place := -1
+	for index in 0 ..< int(table.count) {
+		if table.records[index].from == from {
+			place = index
+		}
+	}
+	if to == {} && place < 0 {
+		return .Bad_Handle
+	}
+	if to != {} && place < 0 && table.count == REPLACEMENT_CAPACITY {
+		return .No_Slot
+	}
+	intrinsics.atomic_store_explicit(&table.version, table.version + 1, .Release)
+	intrinsics.atomic_thread_fence(.Release)
+	switch {
+	case to == {}:
+		table.records[place] = table.records[table.count - 1]
+		table.records[table.count - 1] = {}
+		table.count -= 1
+	case place < 0:
+		table.records[table.count] = {from = from, to = to}
+		table.count += 1
+	case:
+		table.records[place].to = to
+	}
+	intrinsics.atomic_store_explicit(&table.version, table.version + 1, .Release)
+	return .Ok
 }
 
 // The grants that the root service records for each program, and that it

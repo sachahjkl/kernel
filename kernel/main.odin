@@ -59,11 +59,13 @@ root_start :: proc "contextless" (boot: ^info.Boot_Info) {
 		fail("the boot image is not valid")
 	}
 	file: []u8
+	hash: [32]u8 // As the boot image names it.
 	entries := ([^]info.Image_Entry)(raw_data(image[size_of(info.Image_Header):]))[:(^info.Image_Header)(raw_data(image)).count]
 	for &item in entries {
 		name := ROOT_NAME
 		if string(item.name[:len(name)]) == name && item.name[len(name)] == 0 {
 			file = image[item.offset:][:item.size]
+			hash = item.hash
 		}
 	}
 	if file == nil || module.validate(file) != .None {
@@ -91,6 +93,7 @@ root_start :: proc "contextless" (boot: ^info.Boot_Info) {
 		fail("no memory")
 	}
 	program := &programs[index]
+	program_module(program, {base = op.PROGRAM_BASE, size = head.memory_size, hash = hash})
 	memory := info.physical_slice(regions[code].physical, head.memory_size, u8)
 	module.copy_segments(file, memory)
 	if module.rebase(file, memory, op.PROGRAM_BASE) != .None || module.count(file, .Imports) > 1 {

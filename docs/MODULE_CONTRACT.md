@@ -47,7 +47,7 @@ A module is one file:
 - **Feature bits**: A loader that does not know a set bit refuses the module with a clear error. ELF has no such field, and old loaders crash on new files. [Load §1]
 - **Table directory**: Each entry gives the record size of its table. A table can gain fields at the end of its record. A reader that knows a shorter record ignores the rest. A reader that knows a longer record reads the missing fields as zero. [Types §4, §5]
 - **Index 0** of each table is the empty entry (ZII).
-- **Hash**: The identity of a module is the hash of the whole file. The file contains no reference to its own hash. Imports are hashes, so an import cycle cannot exist. [Load §4]
+- **Hash**: The identity of a module is the hash of the whole file. The file contains no reference to its own hash. Imports are hashes, so an import cycle cannot exist in the files. [Load §4] A replacement can make one (section "Replacement of an import"): the loader refuses it.
 
 ### Loader tables
 
@@ -87,11 +87,36 @@ The loader does five steps:
 
 Status of the loader in user space (`support/system/load.odin`), implemented on 2026-11-10:
 
-- **The load source**: the loader finds a module only in its load source: the files that the program was granted, each named by its hash. The loader checks the hash and the tables of each file before it uses it. It has no search path and no ambient store (P20). The root service and the console give the boot image. A call host receives a list of files from the console, on one page in the form of the boot image: the module and its imports.
+- **The load source**: the loader finds a module only in its load source: the files that the program was granted, each named by its hash, and the replacements that the starter of the program gives. The loader checks the hash and the tables of each file before it uses it. It has no search path and no ambient store (P20). The root service and the console give the boot image. A call host receives a list of files from the console, on one page in the form of the boot image: the module, its imports, and the modules of the replacements.
 - **The module space**: the modules that a loader put in one program. Each module is in it one time: two modules that import a third one call the same copy. A module that another module of the space uses stays when the caller unloads it; a module with no use leaves, and its imports lose one use.
-- **Refusals**: a missing import (the status names its hash), a bad file, no room. On a failure, the space is as it was before the load.
+- **Refusals**: a missing import, an import cycle, a bad file, a replacement that fails its check, a slot that cannot be bound, no room, a kernel operation that fails. On a failure, the space is as it was before the load, and the caller has a load error (below).
 - **Shared code** (choice 136 of `FIRST_MILESTONE.md`): the pages that do not change after the load hold the bound slots, so a prepared module is for one base and one binding of its slots. The table of prepared modules keys it by the hash of the module, its base, and the hash and the base of the module of each import. A writable segment that holds a slot is bound in the copy of each program.
 - **Addresses**: the module of a program is at `PROGRAM_BASE`, and its imports follow it, with one page with no memory between two modules. The addresses are fixed (choice 5 of `FIRST_MILESTONE.md`): step 1 of this section, the random base, is not done.
+- **Module records**: after it mapped a module, the loader writes its module record in the kernel (operation `Program_Module`): its addresses, its hash, and the hash that a replacement put it in place of. The kernel does not read the module: the record is what the loader asserts. It names the module of the address of a fault with it, and `Inspect` gives the records of a program.
+
+### The error of a load
+
+Status: asked by the owner on 2026-11-10 ("errors that are robust, descriptive and informative"), implemented the same day. The owner has not reviewed the choices below.
+
+No exception and no global error state: an error is a value that the call gives back. A load that fails gives `false`, and fills a record that the caller owns: `module.Load_Error` (`contract/module/error.odin`). Zero is "no error". The record is data, not text, in the contract library: a program in another language reads it, and a call host gives it to its caller in the call region.
+
+| Field | What it holds |
+|---|---|
+| `stage` | The stage that failed: Find (no file of the load source has the hash), Read (the file does not have its hash, or its tables are not valid), Cycle, Check (a replacement), Bind (a slot), Map (a kernel operation), Room, Unmap (the removal of a module) |
+| `status`, `file_error` | Map and Unmap: the status of the kernel. Read: what is not valid in the file (`module.Error`), or None when the hash differs |
+| `module` | The hash and the name of the module that was being loaded: the importer, when the stage concerns one of its imports |
+| `imported` | The hash and the name of the import concerned, as the file of `module` names it |
+| `replaced`, `replacement` | A replacement on the path of the load: where a module imported `replaced`, the loader gave `replacement`. It says who decided: the party that gave the replacements, for the console the replacement table of the machine |
+| `export`, `slot` | Check and Bind: the name of the export, in the module that the import names, and the number of the slot |
+| `difference`, `parameter`, `expected`, `found` | Check: what differs (no export with the name, the count of parameters, the type or the detail of parameter n, the type or the detail of the result), and the two sides: a type, its detail (the rights of a Handle, or a count) and the name of a Record |
+
+A name is 32 bytes, from the load source: the loader reads it in the entries of the boot image. A hash that the load source does not name has no name; the text then shows the hash.
+
+- **Text for a person**: `system.load_error_text` writes the record as lines, with no other data. The console prints each line after "error: ", for example "error: agenda imports calendar, and its replacement calendar_changed fails the check" and "error: export days_in_month of calendar_changed: 3 parameters, calendar has 2". The root service writes the lines on the log when a start fails.
+- **A call host**: its first completion has the tag 0: Ok when it loaded its module, or `Load_Failed` with the record at the start of the call region. The console waits for it in `isolate`, copies the record, and reads it as values: a value out of an enumeration is shown as unknown, and a name is read up to its 32 bytes.
+- **Unload**: `module_space_release` gives `false` and the stage Unmap when the kernel refuses to remove a module.
+- **A fault in a module**: the kernel keeps a stop report for each program (`op.Stop_Report`): the stop code, the instruction, the address, and the module record of the module of the instruction, that is the module that ran (B2, not B). The holder of the program handle reads it with `Program_State`. The console prints "error: the instruction is at offset ... of calendar_fixed ..." and "error: calendar_fixed ... runs in place of calendar ...". The log of the kernel has the same facts.
+- **What the record does not explain**: the first failure only: a load stops at the first stage that fails. It does not say which part of a Record differs (only that the two records differ, and their names). It does not say why a file is in the load source or not. A replacement nearer to the failure hides one farther on the path: the record holds one replacement. A fault report does not give the stack of calls, so a fault in B2 that a call from A caused names B2 only. The record of a call host comes from another program: the console checks its values, and cannot prove them.
 
 What this design removes, compared with ELF:
 
@@ -203,7 +228,7 @@ Status: implemented on 2026-11-10 (step 24). The owner has not reviewed the choi
 
 ### Replacement of an import
 
-Status: asked by the owner on 2026-11-10. Planned, not implemented.
+Status: asked by the owner on 2026-11-10. Implemented on 2026-11-10. The owner has not reviewed the choices below.
 
 A module names each import by its hash. The party that starts a program can give the loader a replacement table: records `{hash of B, hash of B2}`. When module A imports B, the loader loads B2 in its place. The file of A does not change, so its hash does not change.
 
@@ -214,6 +239,18 @@ A module names each import by its hash. The party that starts a program can give
 - **What the check cannot prove**: that B2 behaves as B. The party that writes the table asserts it. Later, a signature of the table by a principal carries this assertion (P9).
 - **Visible**: the identity of a program that runs is the hash of its module and the replacements that the loader applied. `programs()` and the manual show them. A report of a fault names B2, not B.
 - **Cost**: "the exact versions that were built together" is then true only for a program with no replacement. This is the purpose: the owner of the machine, not the author of A, has the last word on the code that runs.
+
+#### As implemented
+
+- **The table**: one page that the root service writes (`system.Replacement_Table`, 32 records of 64 bytes, `module.Replacement`). A count of versions lets a reader copy the records while the root service writes. The root service gives the records to the loader of each program that it starts. The console and the manual receive the page with the right Read (`GRANT_REPLACEMENTS`): the console reads it before each `load` and each `isolate`, and gives the records to a call host with its files.
+- **Who changes it**: a program with the role Replace (the console) asks the root service with `Root_Command.Replace`: the name of B, and the number of the entry of B2 in the boot image (two names of 32 bytes do not fit in the 56 bytes of values of a ring record). The console has `replace("calendar", "calendar_fixed")`, `replace("calendar", "")` to remove it, and `replacements()` to list the table.
+- **One step**: the loader applies one record to one import. The root service refuses a chain: a module that replaces is not replaced, and a replaced module does not replace.
+- **The check** (`module.bind`, `module.functions_compare`): for each slot whose import was replaced, the loader reads the name of the export in the file of B, finds the export with that name in B2, and compares the two descriptions: the count and the type of each parameter, the rights of each Handle, the description of each Record (`module.records_equal`), the result. The names of the parameters and the help are for a person: they can differ. The loader checks only the exports that a slot of A uses. A missing name or another description refuses the load: the load error has the export, the two modules and the first difference (section "The error of a load"). The slot receives the address of the export of B2: the call is the same indirect call.
+- **The replacement is in place of an import only**: `load("calendar")` loads calendar. The table applies to each import of a load, at each level.
+- **A table that changes applies to the loads that follow.** A program that runs keeps the modules that it has. The root service does not start a program again.
+- **Visible**: the module records of the kernel (operation `Program_Module`). `programs()` in the console shows the modules of each program that has more than its module, with "in place of" for each replacement. The manual shows the imports of a module, and the replacement of the machine for each one. When a thread faults, the kernel writes the hash of the module of the instruction, its offset, and the hash that the module replaces: "in module 5d8ff6e736fda684 at offset 00000000000019c0, which replaces b1f1b875df9992f8".
+- **What differs from the plan**: the plan did not say where the identity is kept. The kernel keeps it, as it keeps the name of a program: the fault report and `Inspect` are in the kernel, and the loader of a program is in the program that started it, or in the program itself. A cycle of imports is possible with a replacement, and the loader refuses it.
+- **Measured** (program `imports`, QEMU with KVM, in the machine test, the least of 5 runs): a call through an import slot, 1 000 000 calls: 3.5 ns to calendar, 2.7 ns to calendar_fixed in its place (the two are the same instruction; the bodies of the two exports differ). The bind of agenda: 372 ns with a direct import, 891 ns with the check of the replacement (one slot). The load of agenda and its import: 117 us and 154 us, with the hash of each file. Over five runs, the bind took 216 to 377 ns and 857 to 904 ns.
 
 ### Memory
 

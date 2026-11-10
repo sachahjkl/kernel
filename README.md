@@ -55,6 +55,10 @@ The system boots under QEMU to a graphical desktop with a console, a system tool
 
 ![The manual shows the documentation that each module carries in its file](docs/screenshots/manual.png)
 
+![The replacement of an import: agenda imports calendar, which has a fault; the loader gives calendar_fixed in its place after it compared the description of each export that agenda uses](docs/screenshots/imports.png)
+
+![The console sets a replacement through the root service; programs() shows the modules of each program and the replacements that the loader applied](docs/screenshots/replacement.png)
+
 ![One queue for several writers and several readers, with no lock: the records of one second and the kernel entries, against a queue with a lock](docs/screenshots/crowd.png)
 
 ![The time is a page that each program reads: the reads of one second from the page and with a kernel entry](docs/screenshots/clock.png)

@@ -139,6 +139,55 @@ Program :: struct {
 	mapped_pages: u64,
 	handles:      [HANDLE_CAPACITY]Handle_Slot,
 	mappings:     [MAPPING_CAPACITY]Mapping,
+	modules:      [op.PROGRAM_MODULE_CAPACITY]op.Module_Record, // What the loaders asserted (Program_Module).
+	stop:         op.Stop_Report, // A program that stopped on a fault: where.
+}
+
+// program_module records a module that a loader put in a program, replaces
+// the record with the same base, or removes it (size 0). Two records do not
+// share an address.
+program_module :: proc "contextless" (program: ^Program, record: op.Module_Record) -> op.Status {
+	if record.size != 0 && (record.base >= op.USER_END || record.size > op.USER_END - record.base) {
+		return .Bad_Address
+	}
+	place: ^op.Module_Record
+	for &item in program.modules {
+		if item.size != 0 && item.base == record.base {
+			place = &item
+		} else if item.size != 0 && record.size != 0 && record.base < item.base + item.size && item.base < record.base + record.size {
+			return .Bad_Address
+		} else if item.size == 0 && place == nil {
+			place = &item
+		}
+	}
+	if place == nil {
+		return .No_Slot
+	}
+	if record.size == 0 && (place.size == 0 || place.base != record.base) {
+		return .Bad_Address
+	}
+	place^ = record.size == 0 ? {} : record
+	return .Ok
+}
+
+// module_of gives the module record of a program that holds an address, or nil.
+module_of :: proc "contextless" (program: ^Program, address: u64) -> ^op.Module_Record {
+	for &item in program.modules {
+		if item.size != 0 && address >= item.base && address - item.base < item.size {
+			return &item
+		}
+	}
+	return nil
+}
+
+// hash_head gives the first 8 bytes of a hash as a number: its hexadecimal
+// text is the text of these bytes.
+hash_head :: proc "contextless" (hash: [32]u8) -> Hex {
+	value: u64
+	for index in 0 ..< 8 {
+		value = value << 8 | u64(hash[index])
+	}
+	return Hex(value)
 }
 
 BUDGET_CAPACITY :: 128
@@ -1127,7 +1176,23 @@ kernel_interrupt :: proc "c" (frame: ^Frame) {
 		// their memory.
 		name := frame.vector < 32 ? EXCEPTION_NAMES[frame.vector] : ""
 		program := threads[cpu.current].program
-		log_in("fault", .Warning, "kernel: program ", program_name(&programs[program]), " stopped: ", name, " vector ", frame.vector, " error ", Hex(frame.error), " at ", Hex(frame.rip), " address ", Hex(cr2_read()))
+		// The module of the instruction, as the loader recorded it: a
+		// replacement names the module that runs, not the one of the import.
+		found := module_of(&programs[program], frame.rip)
+		programs[program].stop = {code = op.STOP_CODE_FAULT + u32(frame.vector), vector = u32(frame.vector), instruction = frame.rip}
+		if frame.vector == 14 {
+			programs[program].stop.address = cr2_read()
+		}
+		if found != nil {
+			programs[program].stop.module = found^
+		}
+		if found == nil {
+			log_in("fault", .Warning, "kernel: program ", program_name(&programs[program]), " stopped: ", name, " vector ", frame.vector, " error ", Hex(frame.error), " at ", Hex(frame.rip), " address ", Hex(cr2_read()))
+		} else if found.replaces == {} {
+			log_in("fault", .Warning, "kernel: program ", program_name(&programs[program]), " stopped: ", name, " vector ", frame.vector, " at ", Hex(frame.rip), " address ", Hex(cr2_read()), ", in module ", hash_head(found.hash), " at offset ", Hex(frame.rip - found.base))
+		} else {
+			log_in("fault", .Warning, "kernel: program ", program_name(&programs[program]), " stopped: ", name, " vector ", frame.vector, " at ", Hex(frame.rip), " address ", Hex(cr2_read()), ", in module ", hash_head(found.hash), " at offset ", Hex(frame.rip - found.base), ", which replaces ", hash_head(found.replaces))
+		}
 		program_stop(program, op.STOP_CODE_FAULT + u32(frame.vector))
 	}
 	if !from_program {

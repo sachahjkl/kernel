@@ -66,9 +66,13 @@ GRANT_RING :: 0 // Memory: the call ring.
 GRANT_REGION :: 1 // Memory: the call region.
 // The files of a call host: the caller maps them read-only at FILE_ADDRESS,
 // in the form of the boot image. Entry 1 is the module; the other entries
-// are its imports.
+// are its imports, and the modules of the replacements that apply to them.
+// The replacement records (module.Replacement) are on the first page, after
+// the entries.
 VALUE_FILE_ADDRESS :: 0 // Where the caller mapped the files.
 VALUE_FILE_SIZE :: 1 // The size of the files, in bytes, from FILE_ADDRESS.
+VALUE_REPLACEMENT_OFFSET :: 2 // The offset of the replacement records, from FILE_ADDRESS.
+VALUE_REPLACEMENT_COUNT :: 3
 
 FILE_ADDRESS :: 0x0000_3000_0000_0000 // Where a caller maps the files of the module in the call host.
 REGION_PAGES :: 16
@@ -105,6 +109,10 @@ Status :: enum u32 {
 	Bad_Export    = 1, // The module has no export with this index, or the export has no description.
 	Bad_Arguments = 2, // The argument record, or one of its slices, is not in the call region.
 	Bad_Handle    = 3, // A handle of the argument record did not come through the call ring, or it lacks a right of the description.
+	// The first completion of a call host has the tag 0: Ok when it loaded
+	// its module, or Load_Failed. With Load_Failed, the call region starts
+	// with a module.Load_Error record, and the call host stops.
+	Load_Failed   = 4,
 }
 
 // In the call region, `start` is an offset. In a program, it is an address.
