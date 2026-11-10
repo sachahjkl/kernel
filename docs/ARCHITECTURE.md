@@ -93,7 +93,8 @@ The kernel has five systems. Each one owns a small set of flat tables (P13).
 ### K2. Memory
 
 - **Does**: Tracks physical page frames. Builds address spaces. Gives "reserve address space", "commit pages", and "map this region in that program" (P14).
-- **Owns**: the page frame table; one address space record per program.
+- **As implemented** (paging, second part): `Memory_Create` reserves: the budget pays for each page, and each page gets its page frame at its first use, by the program (a page fault) or by the kernel. The flag `Frames_Now` gives all the frames at creation. Map is a separate operation. No access fails for lack of memory: a reserved page always has a free frame.
+- **Owns**: the page frame table; one address space record per program; the frame list of each memory object.
 - **Does not**: page to disk, cache files, or allocate hidden memory for a caller.
 
 ### K3. Scheduler

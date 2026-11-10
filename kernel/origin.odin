@@ -126,19 +126,22 @@ holding_end :: proc "contextless" (holding: Holding) -> bool {
 		if mapping.page_count == 0 {
 			return false
 		}
-		region := regions[mapping.region]
-		unmap(program, mapping)
+		// Before the unmap: the unmap can end the memory object and free its
+		// frames. A thread that becomes ready runs after the kernel lock is
+		// free, so after the unmap.
+		region := &regions[mapping.region]
 		for &thread in threads[1:] {
 			if thread.program != index || thread.state != .Waiting {
 				continue
 			}
 			for word in thread.words[:thread.word_count] {
-				if word >= region.physical && word - region.physical < region.page_count * PAGE_SIZE {
+				if region_has_frame(region, word &~ (PAGE_SIZE - 1)) {
 					thread_ready(&thread)
 					break
 				}
 			}
 		}
+		unmap(program, mapping)
 	}
 	revoke_lost |= 1 << index
 	return true

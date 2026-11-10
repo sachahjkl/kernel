@@ -75,7 +75,9 @@ Object_Kind :: enum u8 {
 Operation :: enum u32 {
 	None           = 0,
 	Log            = 1, // (log, address, count, level, channel 0, channel 1): write one text on the log. The channel is 16 bytes in two values.
-	Memory_Create  = 2, // (budget, page_count) -> memory handle. The memory is zero.
+	Memory_Create  = 2, // (budget, page_count, Memory_Flags) -> memory handle. The memory is zero.
+	// The budget pays now for each page. A page gets its page frame at its first use (a page on first use),
+	// or now with Frames_Now. An access to the memory never fails for lack of memory.
 	Memory_Map     = 3, // (memory, program or 0 for self, address or 0, Map_Flags, first page, page_count or 0 for all) -> address
 	Memory_Unmap   = 4, // (program or 0, address)
 	Memory_Size    = 5, // (memory) -> page_count
@@ -193,6 +195,35 @@ Status :: enum u32 {
 	No_Budget     = 8, // The budget cannot pay for the operation.
 }
 
+// The kernel keeps the page frames of a memory object in a frame list: in
+// the record of the object for at most MEMORY_INLINE_PAGES pages; else in
+// list pages of MEMORY_LIST_ENTRIES frames each, and for more than one list
+// page, a top page that names them. The budget pays for the list pages too.
+MEMORY_INLINE_PAGES :: 4
+MEMORY_LIST_ENTRIES :: 512
+MEMORY_PAGE_LIMIT :: MEMORY_LIST_ENTRIES * MEMORY_LIST_ENTRIES // The pages of one memory object: 1 GiB.
+
+// memory_list_pages gives the list pages of a memory object.
+memory_list_pages :: proc "contextless" (page_count: u64) -> u64 {
+	switch {
+	case page_count <= MEMORY_INLINE_PAGES:
+		return 0
+	case page_count <= MEMORY_LIST_ENTRIES:
+		return 1
+	}
+	return 1 + (page_count + MEMORY_LIST_ENTRIES - 1) / MEMORY_LIST_ENTRIES
+}
+
+// memory_cost gives the pages that Memory_Create takes from a budget.
+memory_cost :: proc "contextless" (page_count: u64) -> u64 {
+	return page_count + memory_list_pages(page_count)
+}
+
+Memory_Flag :: enum u64 {
+	Frames_Now = 0, // Each page gets its page frame at creation, not at its first use.
+}
+Memory_Flags :: bit_set[Memory_Flag;u64]
+
 Map_Flag :: enum u64 {
 	Write   = 0,
 	Execute = 1,
@@ -236,9 +267,11 @@ System_Report :: struct {
 	region_count:  u64, // Memory objects in use.
 	entries:       u64, // Kernel entries since boot.
 	interrupts:    u64,
-	budget_pages:  u64, // The pages of all the budgets. It is always free_pages: each page is free or paid.
+	budget_pages:  u64, // The pages of all the budgets. With reserved_pages, it is always free_pages: each page is free or paid.
 	processors:    u64, // The processors that run threads.
 	lock_waits:    u64, // The times that a processor waited for the kernel lock.
+	reserved_pages:   u64, // Pages that a budget paid for and that have no page frame yet: pages on first use.
+	first_use_faults: u64, // Page faults of programs after which the page was present.
 }
 
 Processor_Report :: struct {
@@ -404,6 +437,7 @@ Program_Report :: struct {
 	thread_count: u64,
 	start_time:   u64, // Microseconds since the machine started.
 	budget:       Budget_Amounts, // What the budget that pays for the program still holds.
+	present_pages: u64, // The mapped pages that have a page frame.
 }
 
 // The context: the one record that a program receives when it starts

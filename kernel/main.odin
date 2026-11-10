@@ -82,9 +82,11 @@ root_start :: proc "contextless" (boot: ^info.Boot_Info) {
 		amounts = {pages = free_frames, programs = PROGRAM_CAPACITY - 1, threads = THREAD_TABLE_CAPACITY - 1, processor = u64(processor_count) * 1_000_000, log_records = op.LOG_RECORD_CAPACITY},
 	}
 	index, _ := program_create(ROOT_BUDGET, transmute([]u8)name)
-	code, _ := region_create(ROOT_BUDGET, head.memory_size / PAGE_SIZE)
+	// The kernel writes the module and the context through the direct map:
+	// these two are contiguous. The stack has its pages on first use.
+	code, _ := region_create(ROOT_BUDGET, head.memory_size / PAGE_SIZE, contiguous = true)
 	stack, _ := region_create(ROOT_BUDGET, op.STACK_PAGES)
-	ctx, _ := region_create(ROOT_BUDGET, 1)
+	ctx, _ := region_create(ROOT_BUDGET, 1, contiguous = true)
 	if index == 0 || code == 0 || stack == 0 || ctx == 0 {
 		fail("no memory")
 	}

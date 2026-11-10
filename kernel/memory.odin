@@ -179,7 +179,9 @@ address_space_free :: proc "contextless" (table: u64) -> u64 {
 }
 
 // user_range says if a program can read (or write) all bytes of a range.
-user_range :: proc "contextless" (table: u64, address: u64, size: u64, write: bool) -> bool {
+// It makes each page of the range present: a page on first use gets its
+// frame now, so the copy that follows does not fault in the kernel.
+user_range :: proc "contextless" (program: ^Program, address: u64, size: u64, write: bool) -> bool {
 	if size == 0 {
 		return true
 	}
@@ -187,7 +189,10 @@ user_range :: proc "contextless" (table: u64, address: u64, size: u64, write: bo
 		return false
 	}
 	for page := address &~ (PAGE_SIZE - 1); page < address + size; page += PAGE_SIZE {
-		entry := page_entry(table, page, false)
+		entry := page_entry(program.table, page, false)
+		if (entry == nil || entry^ & PAGE_PRESENT == 0) && page_give(program, page, write, false) {
+			entry = page_entry(program.table, page, false)
+		}
 		if entry == nil || entry^ & (PAGE_PRESENT | PAGE_USER) != PAGE_PRESENT | PAGE_USER {
 			return false
 		}

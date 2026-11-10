@@ -109,7 +109,8 @@ scenario := [?]Step {
 	{kind = .Wait, text = "kernel: ok"},
 	{kind = .Wait, text = "root: ok"},
 	{kind = .Wait, text = "input: ok"},
-	{kind = .Wait, text = "compositor: first frame"},
+	// The two come in an order that the system does not fix.
+	{kind = .Wait, text = "compositor: first frame", any_order = true},
 	{kind = .Wait, text = "compositor: surface console"},
 
 	// The console: a language with typed commands.

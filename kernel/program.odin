@@ -14,17 +14,42 @@ PROGRAM_CAPACITY :: 64
 HANDLE_CAPACITY :: 128
 MAPPING_CAPACITY :: 128
 
-// A memory object: a block of page frames.
+// A memory object: pages, each with a page frame or with none yet.
+//
+// A page on first use gets its page frame at the first read or write, by a
+// program (a page fault) or by the kernel (user_range). The budget paid for
+// each page when the object was created: the page is reserved, so a free
+// page frame exists for it at any time, and an access never fails for lack
+// of memory. A page that nobody touched costs no page frame and no zeroing.
+//
+// The frames of an object that is not contiguous are in its frame list:
+// in `frames` for at most REGION_INLINE_PAGES pages; else one list page of
+// 512 frames, or for more pages a top page of list pages. The budget pays
+// for the list pages too. 0 in the list: the page has no frame yet.
+//
+// A contiguous object has its frames in one block from `physical`, all
+// given at creation: device memory, and the memory that the kernel itself
+// reads through the direct map (a thread area, the first program).
+REGION_INLINE_PAGES :: op.MEMORY_INLINE_PAGES
+LIST_ENTRIES :: op.MEMORY_LIST_ENTRIES
+
 Region :: struct {
-	physical:   u64,
+	physical:   u64, // Contiguous: the first frame.
 	page_count: u64, // 0: the slot is free.
+	frames:     [REGION_INLINE_PAGES]u64, // Not contiguous: the frame list (see above).
+	present:    u64, // Pages that have a frame.
 	references: u32, // Handles and mappings.
 	budget:     u32, // The budget that paid. 0 for a device.
 	device:     bool, // The frames are not from the page frame table: a framebuffer, boot data.
+	contiguous: bool,
 	serial:     u64, // A number that no other memory object has had: a slot of the table serves many objects in time.
 }
 
 region_serial: u64 // The serial of the last memory object.
+// The reserved pages: paid by a budget, with no page frame yet. The kernel
+// keeps free_frames = the pages of all the budgets + reserved_pages.
+reserved_pages: u64
+first_use_faults: u64 // The page faults of programs after which the page was present.
 
 // The `object` of a handle slot, by kind:
 //   Memory: index in regions       Program: index in programs
@@ -54,6 +79,8 @@ Handle_Slot :: struct {
 Mapping :: struct {
 	address:    u64,
 	page_count: u64, // 0: the slot is free.
+	first:      u64, // The first page of the memory object.
+	bits:       u64, // The protection bits of each page table entry of the mapping.
 	region:     u32,
 }
 
@@ -85,7 +112,7 @@ Thread :: struct {
 // word_address gives the physical address of a 32-bit word of a program,
 // or 0 if the program cannot read it.
 word_address :: proc "contextless" (program: ^Program, address: u64) -> u64 {
-	if address & 3 != 0 || !user_range(program.table, address, 4, false) {
+	if address & 3 != 0 || !user_range(program, address, 4, false) {
 		return 0
 	}
 	return page_entry(program.table, address, false)^ & PAGE_ADDRESS | address & (PAGE_SIZE - 1)
@@ -195,25 +222,70 @@ budget_release :: proc "contextless" (index: u32) {
 	budget^ = {}
 }
 
-// region_create makes a memory object. The budget pays for its pages.
-region_create :: proc "contextless" (budget: u32, page_count: u64) -> (index: u32, status: op.Status) {
-	if page_count == 0 {
+list_pages :: op.memory_list_pages
+
+// region_cost gives the pages that a budget pays for a memory object.
+region_cost :: proc "contextless" (page_count: u64, contiguous: bool) -> u64 {
+	return contiguous ? page_count : op.memory_cost(page_count)
+}
+
+// frame_take gives one page frame for a page that a budget reserved. The
+// kernel keeps free_frames >= reserved_pages, and any free frame serves:
+// it cannot fail.
+@(private = "file")
+frame_take :: proc "contextless" () -> u64 {
+	frame := frames_allocate(1)
+	if frame == 0 {
+		log("kernel: no page frame for a reserved page")
+		machine_stop(1)
+	}
+	return frame
+}
+
+// region_create makes a memory object. The budget pays for its pages and
+// for its frame list. A contiguous object has all its frames now; another
+// one has its frames at first use, or now with `now`.
+region_create :: proc "contextless" (budget: u32, page_count: u64, contiguous := false, now := false) -> (index: u32, status: op.Status) {
+	if page_count == 0 || !contiguous && page_count > op.MEMORY_PAGE_LIMIT {
 		return 0, .Bad_Operation
 	}
-	if !budgets[budget].live || budgets[budget].amounts.pages < page_count {
+	cost := region_cost(page_count, contiguous)
+	if !budgets[budget].live || budgets[budget].amounts.pages < cost {
 		return 0, .No_Budget
 	}
 	for &region, slot in regions[1:] {
-		if region.page_count == 0 {
-			physical := frames_allocate(page_count)
-			if physical == 0 {
+		if region.page_count != 0 {
+			continue
+		}
+		region = {page_count = page_count, budget = budget, contiguous = contiguous}
+		if contiguous {
+			region.physical = frames_allocate(page_count)
+			if region.physical == 0 {
+				region = {}
 				return 0, .No_Memory
 			}
-			budgets[budget].amounts.pages -= page_count
-			region_serial += 1
-			region = {physical = physical, page_count = page_count, budget = budget, serial = region_serial}
-			return u32(slot + 1), .Ok
+			region.present = page_count
+		} else {
+			// The budget has the cost: free frames for the list exist, and
+			// after the payment free_frames stays >= reserved_pages.
+			lists := list_pages(page_count)
+			if lists != 0 {
+				region.frames[0] = frame_take()
+			}
+			for list in 1 ..< lists {
+				direct(region.frames[0], [LIST_ENTRIES]u64)[list - 1] = frame_take()
+			}
+			reserved_pages += page_count
 		}
+		budgets[budget].amounts.pages -= cost
+		region_serial += 1
+		region.serial = region_serial
+		if now {
+			for page in 0 ..< page_count {
+				region_frame(&region, page, true)
+			}
+		}
+		return u32(slot + 1), .Ok
 	}
 	return 0, .No_Slot
 }
@@ -222,23 +294,84 @@ region_device :: proc "contextless" (physical: u64, page_count: u64) -> u32 {
 	for &region, index in regions[1:] {
 		if region.page_count == 0 {
 			region_serial += 1
-			region = {physical = physical, page_count = page_count, device = true, serial = region_serial}
+			region = {physical = physical, page_count = page_count, present = page_count, device = true, contiguous = true, serial = region_serial}
 			return u32(index + 1)
 		}
 	}
 	return 0
 }
 
+// region_slot gives the place of the frame of one page in the frame list of
+// a memory object that is not contiguous.
+@(private = "file")
+region_slot :: proc "contextless" (region: ^Region, page: u64) -> ^u64 {
+	switch {
+	case region.page_count <= REGION_INLINE_PAGES:
+		return &region.frames[page]
+	case region.page_count <= LIST_ENTRIES:
+		return &direct(region.frames[0], [LIST_ENTRIES]u64)[page]
+	}
+	list := direct(region.frames[0], [LIST_ENTRIES]u64)[page / LIST_ENTRIES]
+	return &direct(list, [LIST_ENTRIES]u64)[page % LIST_ENTRIES]
+}
+
+// region_frame gives the page frame of one page of a memory object. With
+// give, a page with no frame gets one now: a zero page. Without give, 0
+// means that the page has no frame yet.
+region_frame :: proc "contextless" (region: ^Region, page: u64, give: bool) -> u64 {
+	if region.contiguous {
+		return region.physical + page * PAGE_SIZE
+	}
+	slot := region_slot(region, page)
+	if slot^ == 0 && give {
+		slot^ = frame_take()
+		region.present += 1
+		reserved_pages -= 1
+	}
+	return slot^
+}
+
+// region_has_frame says if a page frame is a frame of a memory object.
+region_has_frame :: proc "contextless" (region: ^Region, frame: u64) -> bool {
+	if region.contiguous {
+		return frame >= region.physical && frame - region.physical < region.page_count * PAGE_SIZE
+	}
+	for page in 0 ..< region.page_count {
+		if region_frame(region, page, false) == frame {
+			return true
+		}
+	}
+	return false
+}
+
 region_release :: proc "contextless" (index: u32) {
 	region := &regions[index]
 	region.references -= 1
-	if region.references == 0 {
-		if !region.device {
-			frames_free(region.physical, region.page_count)
-			budgets[region.budget].amounts.pages += region.page_count
-		}
-		region^ = {}
+	if region.references != 0 {
+		return
 	}
+	switch {
+	case region.device:
+	case region.contiguous:
+		frames_free(region.physical, region.page_count)
+		budgets[region.budget].amounts.pages += region.page_count
+	case:
+		for page in 0 ..< region.page_count {
+			if frame := region_frame(region, page, false); frame != 0 {
+				frames_free(frame, 1)
+			}
+		}
+		lists := list_pages(region.page_count)
+		for list in 1 ..< lists {
+			frames_free(direct(region.frames[0], [LIST_ENTRIES]u64)[list - 1], 1)
+		}
+		if lists != 0 {
+			frames_free(region.frames[0], 1)
+		}
+		reserved_pages -= region.page_count - region.present
+		budgets[region.budget].amounts.pages += region_cost(region.page_count, false)
+	}
+	region^ = {}
 }
 
 handle_insert :: proc "contextless" (program: ^Program, slot: Handle_Slot) -> op.Handle {
@@ -345,21 +478,20 @@ map_region :: proc "contextless" (program: ^Program, region_index: u32, address:
 	if address % PAGE_SIZE != 0 || address < PAGE_SIZE || address >= USER_END || size > USER_END - address {
 		return 0, .Bad_Address
 	}
+	// A page on first use has no page table entry yet: the mappings say
+	// which addresses are taken.
 	mapping: ^Mapping
 	for &candidate in program.mappings {
 		if candidate.page_count == 0 {
-			mapping = &candidate
-			break
+			if mapping == nil {
+				mapping = &candidate
+			}
+		} else if address < candidate.address + candidate.page_count * PAGE_SIZE && candidate.address < address + size {
+			return 0, .Bad_Address
 		}
 	}
 	if mapping == nil {
 		return 0, .No_Slot
-	}
-	for page in 0 ..< count {
-		entry := page_entry(program.table, address + page * PAGE_SIZE, false)
-		if entry != nil && entry^ & PAGE_PRESENT != 0 {
-			return 0, .Bad_Address
-		}
 	}
 	// No page is both writable and executable.
 	if .Write in flags && .Execute in flags {
@@ -380,9 +512,12 @@ map_region :: proc "contextless" (program: ^Program, region_index: u32, address:
 			}
 			return 0, budgets[program.budget].amounts.pages == 0 ? .No_Budget : .No_Memory
 		}
-		entry^ = (region.physical + (first + page) * PAGE_SIZE) | bits
+		// The tables exist now: a page fault never needs a table. A page
+		// with no frame keeps an entry of 0 until its first use.
+		frame := region_frame(region, first + page, false)
+		entry^ = frame == 0 ? 0 : frame | bits
 	}
-	mapping^ = {address = address, page_count = count, region = region_index}
+	mapping^ = {address = address, page_count = count, first = first, bits = bits, region = region_index}
 	origin_attach(holding_of_mapping(program, mapping), origin)
 	region.references += 1
 	program.mapped_pages += count
@@ -414,6 +549,60 @@ unmap :: proc "contextless" (program: ^Program, mapping: ^Mapping) {
 	program.mapped_pages -= mapping.page_count
 	region_release(mapping.region)
 	mapping^ = {}
+}
+
+// mapping_at gives the mapping of a program that holds an address, or nil.
+mapping_at :: proc "contextless" (program: ^Program, address: u64) -> ^Mapping {
+	for &mapping in program.mappings {
+		if mapping.page_count != 0 && address >= mapping.address && address - mapping.address < mapping.page_count * PAGE_SIZE {
+			return &mapping
+		}
+	}
+	return nil
+}
+
+// page_give makes the page of an address present in a program, for an
+// access of the program (a page fault) or of the kernel (user_range). The
+// page gets the frame of its memory object; a page on first use gets its
+// zero frame now. The caller holds the kernel lock, so no other processor
+// changes the tables or the mappings of the program meanwhile. A processor
+// keeps no translation of an entry that was not present, so no other
+// processor must forget anything: a thread there that faults on the same
+// page waits for the lock, then finds the entry present and continues.
+// false: the program has no mapping there, or it does not permit the access.
+page_give :: proc "contextless" (program: ^Program, address: u64, write: bool, execute: bool) -> bool {
+	mapping := mapping_at(program, address)
+	if mapping == nil || write && mapping.bits & PAGE_WRITE == 0 || execute && mapping.bits & PAGE_NO_EXECUTE != 0 {
+		return false
+	}
+	page := (address - mapping.address) / PAGE_SIZE
+	entry := page_entry(program.table, mapping.address + page * PAGE_SIZE, false)
+	if entry == nil {
+		return false // map_region made the tables: this does not happen.
+	}
+	if entry^ & PAGE_PRESENT == 0 {
+		entry^ = region_frame(&regions[mapping.region], mapping.first + page, true) | mapping.bits
+	}
+	return true
+}
+
+// present_pages gives the pages of the mappings of a program that have a
+// page frame.
+present_pages :: proc "contextless" (program: ^Program) -> (count: u64) {
+	for mapping in program.mappings {
+		// One walk of the tables for each last level table.
+		for page := u64(0); page < mapping.page_count; {
+			address := mapping.address + page * PAGE_SIZE
+			run := min(512 - (address >> 12 & 511), mapping.page_count - page)
+			if entry := page_entry(program.table, address, false); entry != nil {
+				for value in ([^]u64)(entry)[:run] {
+					count += value & PAGE_PRESENT
+				}
+			}
+			page += run
+		}
+	}
+	return count
 }
 
 // holds_region says if a program has a handle to a memory object.
@@ -525,7 +714,9 @@ thread_create :: proc "contextless" (program_index: u32, budget: u32, entry, sta
 	if !budgets[budget].live || budgets[budget].amounts.threads == 0 {
 		return 0, .No_Budget
 	}
-	region := region_create(budget, 1 + ring.PAGE_COUNT) or_return
+	// The kernel reads the thread area through the direct map, as one
+	// block: it is contiguous.
+	region := region_create(budget, 1 + ring.PAGE_COUNT, contiguous = true) or_return
 	record := op.THREAD_AREA_BASE + u64(number) * op.THREAD_AREA_PAGES * PAGE_SIZE
 	if _, map_status := map_region(program, region, record, {.Write}, 0, 0); map_status != .Ok {
 		regions[region].references = 1
@@ -904,6 +1095,10 @@ kernel_interrupt :: proc "c" (frame: ^Frame) {
 		}
 		interrupt_end(line)
 	case taken:
+	case frame.vector == VECTOR_PAGE_FAULT && frame.error & FAULT_PRESENT == 0 && page_give(&programs[threads[cpu.current].program], cr2_read(), frame.error & FAULT_WRITE != 0, frame.error & FAULT_EXECUTE != 0):
+		// A page on first use, or a page that another thread made present
+		// while this one waited for the lock: the instruction runs again.
+		first_use_faults += 1
 	case:
 		// A fault in one thread stops the program: the threads share all
 		// their memory.

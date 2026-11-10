@@ -10,6 +10,7 @@ package budget
 
 import "support:display"
 import "support:graphics"
+import op "contract:operation"
 import "support:system"
 
 LINE :: 22
@@ -95,7 +96,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 		object_count += 1
 	}
-	note("create memory objects of 64 pages", true, status == .No_Budget && object_count == start.pages / OBJECT_PAGES && pages_left() == start.pages % OBJECT_PAGES, object_count, " done, then no budget")
+	// An object also pays for its frame list (operation.memory_cost).
+	cost := op.memory_cost(OBJECT_PAGES)
+	note("create memory objects of 64 pages", true, status == .No_Budget && object_count == start.pages / cost && pages_left() == start.pages % cost, object_count, " done, then no budget")
 	for object in objects[:object_count] {
 		system.close(object)
 	}
@@ -128,7 +131,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	_, second_status := system.memory_create(SECOND_PAGES, part)
 	note("create 100 pages more with it", true, second_status == .No_Budget, "no budget")
 	system.close(part)
-	note("close the new budget, keep the memory", false, pages_left() == start.pages - FIRST_PAGES, "this budget pays for it")
+	note("close the new budget, keep the memory", false, pages_left() == start.pages - op.memory_cost(FIRST_PAGES), "this budget pays for it")
 	system.close(first)
 	note("close the memory", false, pages_left() == start.pages, "each page returns")
 

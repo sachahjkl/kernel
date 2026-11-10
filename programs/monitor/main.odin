@@ -55,6 +55,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			x = graphics.unsigned(canvas, x, y, used * system.PAGE_SIZE >> 20, COLOR_TEXT)
 			x = graphics.text(canvas, x, y, " / ", COLOR_TEXT)
 			x = graphics.unsigned(canvas, x, y, report.page_count * system.PAGE_SIZE >> 20, COLOR_TEXT)
+			x = graphics.text(canvas, x, y, " MiB, reserved ", COLOR_TEXT)
+			x = graphics.unsigned(canvas, x, y, report.reserved_pages * system.PAGE_SIZE >> 20, COLOR_TEXT)
 			graphics.text(canvas, x, y, " MiB", COLOR_TEXT)
 			y += LINE
 			graphics.fill(canvas, 10, y, WIDTH - 20, 10, COLOR_BAR_BACK)
@@ -80,7 +82,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				share := min((program.run_time - min(previous_run_time[slot], program.run_time)) * 100 / elapsed, 100)
 				previous_run_time[slot] = program.run_time
 				graphics.text(canvas, 10, y, system.name_of(program.name[:]), COLOR_TEXT)
-				graphics.unsigned(canvas, PAGES_X, y, program.mapped_pages, COLOR_TEXT)
+				graphics.unsigned(canvas, PAGES_X, y, program.present_pages, COLOR_TEXT)
 				graphics.fill(canvas, BAR_X, y + 2, BAR_WIDTH, 10, COLOR_BAR_BACK)
 				graphics.fill(canvas, BAR_X, y + 2, int(share) * BAR_WIDTH / 100, 10, COLOR_BAR)
 				x = graphics.unsigned(canvas, BAR_X + BAR_WIDTH + 8, y, share, COLOR_TEXT)

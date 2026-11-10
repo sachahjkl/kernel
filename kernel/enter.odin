@@ -63,7 +63,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 
 	case .Log:
 		_ = handle_find(program, v[0], .Log, {.Write}) or_return
-		if v[2] > 4096 || !user_range(program.table, v[1], v[2], false) {
+		if v[2] > 4096 || !user_range(program, v[1], v[2], false) {
 			return .Bad_Address
 		}
 		if v[3] > u64(max(op.Log_Level)) {
@@ -95,7 +95,11 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 
 	case .Memory_Create:
 		budget := handle_find(program, v[0], .Budget, {.Spend}) or_return
-		region := region_create(budget.object, v[1]) or_return
+		flags := transmute(op.Memory_Flags)v[2]
+		if flags - {.Frames_Now} != {} {
+			return .Bad_Operation
+		}
+		region := region_create(budget.object, v[1], now = .Frames_Now in flags) or_return
 		handle := handle_insert(program, {kind = .Memory, rights = RIGHTS_MEMORY, object = region})
 		if handle == 0 {
 			regions[region].references = 1
@@ -143,7 +147,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 
 	case .Program_Create:
 		budget := handle_find(program, v[0], .Budget, {.Spend}) or_return
-		if v[2] > 31 || !user_range(program.table, v[1], v[2], false) {
+		if v[2] > 31 || !user_range(program, v[1], v[2], false) {
 			return .Bad_Address
 		}
 		name: [32]u8
@@ -321,7 +325,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		if v[1] > u64(op.WORD_WAIT_CAPACITY - thread.word_count) {
 			return .No_Slot
 		}
-		if !user_range(program.table, v[0], v[1] * size_of(op.Word), false) {
+		if !user_range(program, v[0], v[1] * size_of(op.Word), false) {
 			return .Bad_Address
 		}
 		for index in 0 ..< v[1] {
@@ -384,7 +388,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		_ = handle_find(program, v[0], .Machine, {.Inspect}) or_return
 		switch op.Inspect_Kind(v[1]) {
 		case .System:
-			if v[4] < size_of(op.System_Report) || !user_range(program.table, v[3], size_of(op.System_Report), true) {
+			if v[4] < size_of(op.System_Report) || !user_range(program, v[3], size_of(op.System_Report), true) {
 				return .Bad_Address
 			}
 			report := op.System_Report {
@@ -396,6 +400,8 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 				interrupts    = interrupt_count,
 				processors    = u64(processor_count),
 				lock_waits    = lock_waits,
+				reserved_pages = reserved_pages,
+				first_use_faults = first_use_faults,
 			}
 			for region in regions {
 				if region.page_count != 0 {
@@ -408,7 +414,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			user_copy(rawptr(uintptr(v[3])), &report, size_of(report))
 			results[0] = size_of(op.System_Report)
 		case .Program:
-			if v[4] < size_of(op.Program_Report) || !user_range(program.table, v[3], size_of(op.Program_Report), true) {
+			if v[4] < size_of(op.Program_Report) || !user_range(program, v[3], size_of(op.Program_Report), true) {
 				return .Bad_Address
 			}
 			report: op.Program_Report
@@ -420,6 +426,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 					code         = about.code,
 					name         = about.name,
 					mapped_pages = about.mapped_pages,
+					present_pages = about.state == .None || about.table == 0 ? 0 : present_pages(about),
 					run_time     = about.run_time,
 					start_time   = about.start_time,
 					entries      = about.entries,
@@ -436,14 +443,14 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			user_copy(rawptr(uintptr(v[3])), &report, size_of(report))
 			results[0] = size_of(op.Program_Report)
 		case .Boot:
-			if v[4] < size_of(op.Boot_Report) || !user_range(program.table, v[3], size_of(op.Boot_Report), true) {
+			if v[4] < size_of(op.Boot_Report) || !user_range(program, v[3], size_of(op.Boot_Report), true) {
 				return .Bad_Address
 			}
 			boot_report(&boot_report_record)
 			user_copy(rawptr(uintptr(v[3])), &boot_report_record, size_of(op.Boot_Report))
 			results[0] = size_of(op.Boot_Report)
 		case .Mappings:
-			if v[4] < size_of(op.Mapping_Report) || !user_range(program.table, v[3], size_of(op.Mapping_Report), true) {
+			if v[4] < size_of(op.Mapping_Report) || !user_range(program, v[3], size_of(op.Mapping_Report), true) {
 				return .Bad_Address
 			}
 			if v[2] == 0 {
@@ -454,7 +461,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			user_copy(rawptr(uintptr(v[3])), &mapping_report_record, size_of(op.Mapping_Report))
 			results[0] = size_of(op.Mapping_Report)
 		case .Processor:
-			if v[4] < size_of(op.Processor_Report) || !user_range(program.table, v[3], size_of(op.Processor_Report), true) {
+			if v[4] < size_of(op.Processor_Report) || !user_range(program, v[3], size_of(op.Processor_Report), true) {
 				return .Bad_Address
 			}
 			report: op.Processor_Report

@@ -198,7 +198,7 @@ list_programs :: proc "contextless" (arguments: []Value) -> Value {
 	if !ok {
 		return {}
 	}
-	print("slot name        state    threads pages handles  cpu ms  budget  entries\n")
+	print("slot name        state    threads pages present handles  cpu ms  budget  entries\n")
 	for slot in 1 ..< report.program_slots {
 		program: op.Program_Report
 		system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Program), slot, u64(uintptr(&program)), size_of(program))
@@ -206,7 +206,7 @@ list_programs :: proc "contextless" (arguments: []Value) -> Value {
 			continue
 		}
 		print(number(slot, 5), padded(system.name_of(program.name[:]), 12), padded(state_names[program.state], 9))
-		print(number(program.thread_count, 8), number(program.mapped_pages, 6), number(program.handle_count, 9), number(program.run_time, 8), number(program.budget.pages, 8), "  ", number(program.entries, 0), "\n")
+		print(number(program.thread_count, 8), number(program.mapped_pages, 6), number(program.present_pages, 8), number(program.handle_count, 8), number(program.run_time, 8), number(program.budget.pages, 8), "  ", number(program.entries, 0), "\n")
 	}
 	return {}
 }
@@ -218,11 +218,14 @@ show_memory :: proc "contextless" (arguments: []Value) -> Value {
 	}
 	print("memory          ", report.page_count * system.PAGE_SIZE >> 20, " MiB\n")
 	print("free            ", report.free_pages * system.PAGE_SIZE >> 20, " MiB\n")
-	// Each page is free or paid: the budgets hold all the free pages.
-	if report.budget_pages == report.free_pages {
+	print("used            ", report.page_count - report.free_pages, " pages\n")
+	print("reserved        ", report.reserved_pages, " pages paid, with no page frame yet\n")
+	// Each page is free or paid: the budgets and the reserved pages hold all
+	// the free pages.
+	if report.budget_pages + report.reserved_pages == report.free_pages {
 		print("budgets         ", report.budget_pages, " pages: all the free pages\n")
 	} else {
-		print("budgets         ", report.budget_pages, " pages, but ", report.free_pages, " pages are free\n")
+		print("budgets         ", report.budget_pages, " pages, but ", report.free_pages - report.reserved_pages, " free pages are not reserved\n")
 	}
 	print("memory objects  ", report.region_count, "\n")
 	print("kernel entries  ", report.entries, "\n")

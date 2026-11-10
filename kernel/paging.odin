@@ -16,6 +16,10 @@ import op "contract:operation"
 // to prove it (mappings_report), at boot and for a program that asks.
 
 PAGE_LARGE :: u64(1) << 7
+// The bits of the error code of a page fault.
+FAULT_PRESENT :: 1 << 0 // The entry was present: the access is not permitted.
+FAULT_WRITE :: 1 << 1
+FAULT_EXECUTE :: 1 << 4
 LARGE_PAGE_SIZE :: 2 << 20
 DIRECT_MAP_INDEX :: (u64(info.DIRECT_MAP_BASE) >> 39) & 511
 
@@ -150,9 +154,6 @@ stack_guard :: proc "contextless" (address: u64) -> (processor: u64, guard: bool
 
 // fault_reason says what a page fault or a double fault of the kernel means.
 fault_reason :: proc "contextless" (frame: ^Frame, address: u64) -> string {
-	FAULT_PRESENT :: 1 << 0
-	FAULT_WRITE :: 1 << 1
-	FAULT_EXECUTE :: 1 << 4
 	if _, guard := stack_guard(address); guard && (frame.vector == 8 || frame.vector == VECTOR_PAGE_FAULT) {
 		return "the kernel stack of the processor is full"
 	}
