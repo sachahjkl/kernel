@@ -26,7 +26,7 @@ A step is one tested commit that adds one capability.
 | 18 | `eef9227` | The terminal: typed records of text with a style, no escape sequence; a reader thread and a drawer; a surface with two pictures; the lost wake of step 17 removed; shown by `terminal` and `flood`, filmed by `kerneltool film` |
 | 19 | `c538baa` | A shared queue: several writers and several readers with no lock; an event that several threads wait on; a wake for one thread that does not enter the kernel for each record; the scenario reads the place of each window; measured by `crowd` |
 | 20 | `f3bdf49` | The time page: the kernel writes the time in one page that each program reads; `system.time()` does not enter the kernel; measured by `clock` |
-| 21 | `HASH21` | One module in each role (`tally`: program, service, library, sandboxed program); a module carries its documentation; `manual` shows it; `unload` in the console |
+| 21 | `1b92079` | One module in each role (`tally`: program, service, library, sandboxed program); a module carries its documentation; `manual` shows it; `unload` in the console |
 
 ## Review 1: steps 1 to 5 (2026-11-10)
 
