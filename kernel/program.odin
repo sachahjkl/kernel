@@ -121,6 +121,11 @@ Budget :: struct {
 	parent:     u32, // The budget that this budget came from. It is live, or it is 0.
 	references: u32, // Handles to this budget.
 	amounts:    op.Budget_Amounts,
+	// limit.odin:
+	spent:       u64, // Cycles of processor time in this period, and what was above the part of the periods before.
+	spent_total: u64, // Cycles of processor time since the budget was made.
+	logged:      u64, // Log records in this second.
+	refused:     u64, // Log records that the kernel refused.
 }
 
 budgets: [BUDGET_CAPACITY]Budget
@@ -139,7 +144,7 @@ interrupt_count: u64
 // budget_create moves amounts from a budget to a new budget.
 budget_create :: proc "contextless" (parent: u32, amounts: op.Budget_Amounts) -> (index: u32, status: op.Status) {
 	from := &budgets[parent]
-	if !from.live || amounts.pages > from.amounts.pages || amounts.programs > from.amounts.programs || amounts.threads > from.amounts.threads {
+	if !from.live || amounts.pages > from.amounts.pages || amounts.programs > from.amounts.programs || amounts.threads > from.amounts.threads || amounts.processor > from.amounts.processor || amounts.log_records > from.amounts.log_records {
 		return 0, .No_Budget
 	}
 	for &budget, slot in budgets[1:] {
@@ -764,6 +769,7 @@ ports_switch :: proc "contextless" (cpu: ^Processor, index: u32) {
 // kernel lock.
 schedule :: proc "contextless" () -> ! {
 	cpu := processor_self()
+	budget_charge(cpu)
 	if cpu.current != 0 {
 		threads[cpu.current].processor = 0
 		cpu.current = 0
@@ -777,9 +783,10 @@ schedule :: proc "contextless" () -> ! {
 				continue
 			}
 			alive = true
-			if thread.state != .Ready || thread.processor != 0 {
+			if thread.state != .Ready || thread.processor != 0 || budget_spent(thread.budget) {
 				continue
 			}
+			cpu.charged_from = cycles_now()
 			cpu.current = index
 			thread.processor = cpu.index + 1
 			last_run = index
@@ -868,11 +875,16 @@ kernel_interrupt :: proc "c" (frame: ^Frame) {
 			threads[cpu.current].run_time += 1
 			programs[threads[cpu.current].program].run_time += 1
 			cpu.slice_left -= min(cpu.slice_left, 1)
+			budget_charge(cpu)
+			if budget_spent(threads[cpu.current].budget) {
+				cpu.slice_left = 0 // The budget has no time left in this period.
+			}
 		}
 		// The first processor counts the time.
 		if cpu.index == 0 {
 			ticks += 1
 			intrinsics.volatile_store(&time_record.milliseconds, ticks)
+			budget_period()
 			for &thread in threads[1:] {
 				if thread.state == .Waiting && thread.deadline <= ticks {
 					thread_ready(&thread)

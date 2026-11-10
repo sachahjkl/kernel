@@ -375,6 +375,16 @@ scenario := [?]Step {
 	{kind = .Wait, text = "compositor: surface budget"},
 	{kind = .Shot, text = "budget"},
 
+	// The limits of a budget: the kernel stops a thread at the processor
+	// time of its budget, and refuses the log records above the limit.
+	{kind = .Launch, text = "limits"},
+	{kind = .Wait, text = "limits: ok, 4 budgets within their processor time, ", any_order = true},
+	{kind = .Wait, text = "compositor: surface limits", any_order = true},
+	{kind = .Shot, text = "limits"},
+	{kind = .Click, x = 70, y = 300},
+	{kind = .Type, text = "stop(\"limits\")"},
+	{kind = .Wait, text = "root: limits stopped"},
+
 	// One ring between two threads: the records of one second, and the
 	// kernel entries that they cost, for two capacities and two ways to wait.
 	{kind = .Launch, text = "flow"},
@@ -409,6 +419,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "processors: ok, 4 processors ran the program at the same time"},
 	{kind = .Wait, text = "processors: the picture took "},
 	{kind = .Shot, text = "processors"},
+	{kind = .Move, text = "processors", to_x = 250, to_y = 60}, // The window covers the place where the test clicks the console.
 
 	// The boot display in a window: how the machine started, with the
 	// records that the kernel has now.
@@ -572,6 +583,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "flood: ok", any_order = true},
 	{kind = .Wait, text = "terminal: ok, flood writes in a ring of 4096 records", any_order = true},
 	{kind = .Wait, text = "root: started flood, with a terminal"},
+	{kind = .Move, text = "flood", to_x = 158, to_y = 104}, // The place of the pictures and of the clicks below.
 	{kind = .Wait, text = "terminal: flood wrote "},
 	{kind = .Shot, text = "terminal"},
 	// The terminal keeps Page Up and Page Down: its view stays, the program continues.

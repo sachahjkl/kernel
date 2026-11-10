@@ -79,7 +79,7 @@ root_start :: proc "contextless" (boot: ^info.Boot_Info) {
 	ROOT_BUDGET :: 1
 	budgets[ROOT_BUDGET] = {
 		live = true,
-		amounts = {pages = free_frames, programs = PROGRAM_CAPACITY - 1, threads = THREAD_TABLE_CAPACITY - 1},
+		amounts = {pages = free_frames, programs = PROGRAM_CAPACITY - 1, threads = THREAD_TABLE_CAPACITY - 1, processor = u64(processor_count) * 1_000_000, log_records = op.LOG_RECORD_CAPACITY},
 	}
 	index, _ := program_create(ROOT_BUDGET, transmute([]u8)name)
 	code, _ := region_create(ROOT_BUDGET, head.memory_size / PAGE_SIZE)

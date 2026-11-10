@@ -31,6 +31,7 @@ A step is one tested commit that adds one capability.
 | 23 | `1898531` | The console has a terminal and no surface; key records from the terminal to its program; the edit line; the root service wires a program and its terminal; a terminal draws after a change only; the step kind `Close` |
 | 24 | `4a28242` | Descriptions with records and handles: the tables Records and Fields; a Record goes as bytes; a Handle is lent with the rights of the description and ends with its call; the kernel operation `Handle_State` proves where a handle came from; Record and Handle values in the console; the module `sample` |
 | 25 | `476d3d4` | Revocation of a grant: the kernel keeps the origin of each handle and each mapping; the operation `Handle_Revoke`; `Handle_Give` with the target 0 copies a handle; a lent handle is revoked after its call; the root service records and revokes grants; `grants` and `revoke` in the console; the program `origin` |
+| 26 | `HASH26` | Limits of a budget: processor time for each second, counted with the cycle counter and applied in periods of 100 ms; log records for each second; a limit counts in each budget above; `thread_start` with a budget; the program `limits` |
 
 ## Review 1: steps 1 to 5 (2026-11-10)
 

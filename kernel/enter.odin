@@ -69,6 +69,9 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		if v[3] > u64(max(op.Log_Level)) {
 			return .Bad_Operation
 		}
+		if !budget_log(program.budget) {
+			return .No_Budget
+		}
 		// The channel: the characters before the first one that is not a
 		// character of a text.
 		channel := transmute([op.LOG_CHANNEL_CAPACITY]u8)[2]u64{v[4], v[5]}
@@ -280,7 +283,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 
 	case .Budget_Create:
 		from := handle_find(program, v[0], .Budget, {.Spend}) or_return
-		created := budget_create(from.object, {pages = v[1], programs = v[2], threads = v[3]}) or_return
+		created := budget_create(from.object, {pages = v[1], programs = v[2], threads = v[3], processor = v[4], log_records = v[5]}) or_return
 		handle := handle_insert(program, {kind = .Budget, rights = RIGHTS_BUDGET, object = created})
 		if handle == 0 {
 			budgets[created].references = 1
@@ -307,6 +310,10 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		results[0] = amounts.pages
 		results[1] = amounts.programs
 		results[2] = amounts.threads
+		results[3] = amounts.processor
+		results[4] = amounts.log_records
+		results[5] = microseconds(budgets[slot.object].spent_total)
+		results[6] = budgets[slot.object].refused
 		return .Ok
 
 	case .Word_Wait:

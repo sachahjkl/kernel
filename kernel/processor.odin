@@ -104,6 +104,7 @@ Processor :: struct {
 	idle:          bool, // The processor waits for an interrupt, with no thread.
 	table:         u64, // The page table that the processor uses.
 	slice_left:    u64,
+	charged_from:  u64, // The cycle counter when the kernel last counted the time of the current thread (limit.odin).
 	busy_time:     u64, // Ticks with a thread.
 	segments:      [7]u64,
 	task_state:    Task_State,

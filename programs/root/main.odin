@@ -57,7 +57,17 @@ grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 // The budget of each program, by name: pages of memory, programs, threads.
 // It comes from the budget of this service, and it returns when the program
 // stops.
+// The limits: the processor time of one processor for each thread, and 1000
+// log records in each second.
 budget_of :: proc "contextless" (name: string) -> system.Budget_Amounts {
+	amounts := things_of(name)
+	own, _ := system.budget_read()
+	amounts.processor = min(name == "limits" ? 1_500_000 : amounts.threads * 1_000_000, own.processor)
+	amounts.log_records = name == "limits" ? 40 : 1000
+	return amounts
+}
+
+things_of :: proc "contextless" (name: string) -> system.Budget_Amounts {
 	switch name {
 	case "input":
 		return {pages = 256, programs = 1, threads = 1}
@@ -73,6 +83,8 @@ budget_of :: proc "contextless" (name: string) -> system.Budget_Amounts {
 		return {pages = 2048, programs = 1, threads = 9}
 	case "rights":
 		return {pages = 2048, programs = 1, threads = 2}
+	case "limits":
+		return {pages = 2048, programs = 1, threads = 5}
 	case "origin":
 		return {pages = 2048, programs = 2, threads = 1} // One program that only receives.
 	case "budget":

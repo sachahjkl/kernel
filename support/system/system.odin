@@ -95,7 +95,7 @@ own_budget :: proc "contextless" () -> Handle {
 // to a new budget.
 budget_create :: proc "contextless" (amounts: Budget_Amounts, from: Handle = 0) -> (budget: Handle, status: Status) {
 	results: [7]u64
-	results, status = call(.Budget_Create, u64(from == 0 ? own_budget() : from), amounts.pages, amounts.programs, amounts.threads)
+	results, status = call(.Budget_Create, u64(from == 0 ? own_budget() : from), amounts.pages, amounts.programs, amounts.threads, amounts.processor, amounts.log_records)
 	return Handle(results[0]), status
 }
 
@@ -103,7 +103,15 @@ budget_create :: proc "contextless" (amounts: Budget_Amounts, from: Handle = 0) 
 budget_read :: proc "contextless" (budget: Handle = 0) -> (amounts: Budget_Amounts, status: Status) {
 	results: [7]u64
 	results, status = call(.Budget_Read, u64(budget == 0 ? own_budget() : budget))
-	return {pages = results[0], programs = results[1], threads = results[2]}, status
+	return {pages = results[0], programs = results[1], threads = results[2], processor = results[3], log_records = results[4]}, status
+}
+
+// budget_used gives the microseconds of processor time that a budget (0: the
+// budget of this program) used since it was made, with the budgets that came
+// from it, and the log records that the kernel refused.
+budget_used :: proc "contextless" (budget: Handle = 0) -> (processor_time: u64, refused: u64) {
+	results, _ := call(.Budget_Read, u64(budget == 0 ? own_budget() : budget))
+	return results[5], results[6]
 }
 
 // memory_create makes a memory object. The budget (0: the budget of this
@@ -275,13 +283,14 @@ THREAD_STACK_PAGES :: 16
 // thread_start starts a new thread of this program at entry. The threads of
 // a program share all its memory and all its handles. The stack is new
 // memory; the page under it has no memory.
-// The entry never returns: it calls thread_stop.
-thread_start :: proc "contextless" (entry: proc "c" (parameter: rawptr) -> !, parameter: rawptr, stack_pages: u64 = THREAD_STACK_PAGES) -> (thread: Thread, status: Status) {
+// The entry never returns: it calls thread_stop. The budget (0: the budget
+// of this program) pays for the thread and gives its processor time.
+thread_start :: proc "contextless" (entry: proc "c" (parameter: rawptr) -> !, parameter: rawptr, stack_pages: u64 = THREAD_STACK_PAGES, budget: Handle = 0) -> (thread: Thread, status: Status) {
 	memory := memory_create(stack_pages) or_return
 	defer close(memory)
 	thread.stack = memory_map(memory) or_return
 	results: [7]u64
-	results, status = call(.Thread_Create, u64(own_budget()), u64(uintptr(rawptr(entry))), u64(uintptr(thread.stack)) + stack_pages * PAGE_SIZE, u64(uintptr(parameter)))
+	results, status = call(.Thread_Create, u64(budget == 0 ? own_budget() : budget), u64(uintptr(rawptr(entry))), u64(uintptr(thread.stack)) + stack_pages * PAGE_SIZE, u64(uintptr(parameter)))
 	if status != .Ok {
 		memory_unmap(thread.stack)
 		return {}, status

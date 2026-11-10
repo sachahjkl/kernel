@@ -33,6 +33,8 @@ The system boots under QEMU to a graphical desktop with a console, a system tool
 
 ![A budget pays for each page and each thread; the kernel refuses when it cannot pay, and each page returns](docs/screenshots/budget.png)
 
+![The limits of a budget: three threads that compute with no end use 5 %, 20 % and 60 % of one processor, and the kernel refuses 60 of 100 log records](docs/screenshots/limits.png)
+
 ![The boot display: the stages of the start on a line of time, the memory, the machine, the boot image, the programs](docs/screenshots/boot.png)
 
 ![A start that fails: the boot display stays, with the failure](docs/screenshots/boot_fails.png)
@@ -83,6 +85,7 @@ The system boots under QEMU to a graphical desktop with a console, a system tool
 - `rights` shows the rights on handles: the program holds the machine with Inspect and the boot image with Read, and the kernel refuses each operation that needs another right.
 - `origin` shows revocation: the kernel keeps the handle that each handle and each mapping came from, and a program takes back what came from a handle that it holds. `revoke("monitor", "machine")` in the console ends one grant of a program that runs.
 - `budget` shows the budgets: no object comes from nothing. The program creates memory and threads until its budget cannot pay, and each page returns when it frees them. `memory()` shows that the budgets hold all the free pages.
+- `limits` shows the limits of a budget: processor time and log records for each second. The kernel counts the time with the cycle counter and stops a thread at the limit of its budget.
 - `processors` shows several processors: the kernel says that four processors run threads of one program at the same time, and the same picture takes less time with 2 and 4 threads.
 - `workers` shows the lock and the word wait: four threads take tiles from one queue. Four threads add to one number: with the lock no addition is lost, with no lock millions are lost.
 - A program that faults stops alone. The system continues.
@@ -109,7 +112,7 @@ The system boots under QEMU to a graphical desktop with a console, a system tool
 | `kernel/` | The kernel. It compiles with the contract library only |
 | `contract/` | The source library `contract:`: what two parties agree on. `operation` (the kernel operations), `boot_info` (the record from the boot program to the kernel), `module` (the module format and the loader code), `blake3` (the hash), `ring` (two queues in shared memory, and the shared queue), `isolated` (the isolated call) |
 | `support/` | The source library `support:`: what a program compiles in. `system` (kernel operations, text, loader, grants, services), `graphics`, `display` (the protocol of the compositor), `terminal` (the terminal ring), `bootscreen`, `launcher` (the menu of the bar), `relay` (the records of the `rings` demonstration) |
-| `programs/` | `root`, `input`, `compositor`, `console`, `host`, `monitor`, `plasma`, `life`, `paint`, `fault`, `temple`, `rings`, `node`, `threads`, `workers`, `rights`, `origin`, `budget`, `processors`, `boot`, `pages`, `log`, `flow`, `crowd`, `clock`, `tally`, `manual`, `terminal`, `flood`, and the table `launcher` |
+| `programs/` | `root`, `input`, `compositor`, `console`, `host`, `monitor`, `plasma`, `life`, `paint`, `fault`, `temple`, `rings`, `node`, `threads`, `workers`, `rights`, `origin`, `budget`, `limits`, `processors`, `boot`, `pages`, `log`, `flow`, `crowd`, `clock`, `tally`, `manual`, `terminal`, `flood`, and the table `launcher` |
 | `modules/` | Modules of commands (`math`, `probe`) and the test modules of the host load test |
 | `tools/kerneltool/` | The kernel tool: all the automation of the project |
 

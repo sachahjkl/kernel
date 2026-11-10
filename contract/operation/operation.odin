@@ -106,8 +106,9 @@ Operation :: enum u32 {
 	// of these words, or at its deadline. If a word does not hold its value, the wait ends at once.
 	// One entry can wait on WORD_WAIT_CAPACITY words.
 	Word_Wake      = 20, // (address, count) -> threads woken: wake at most count threads that wait on this word.
-	Budget_Create  = 21, // (budget, pages, programs, threads) -> budget handle. The amounts move from the budget to the new budget.
-	Budget_Read    = 22, // (budget) -> pages, programs, threads: what the budget can still pay.
+	Budget_Create  = 21, // (budget, pages, programs, threads, processor, log_records) -> budget handle. See Budget_Amounts.
+	Budget_Read    = 22, // (budget) -> pages, programs, threads: what the budget can still pay; processor, log_records: its limits;
+	// the microseconds of processor time that it used since it was made; the log records that the kernel refused.
 	Handle_State   = 23, // (handle, memory or 0) -> Object_Kind, Rights, 1 if the handle came through this memory object,
 	// the count of the holdings that came from this handle.
 	// A program that receives the number of a handle from another program, in a ring, proves with this
@@ -129,15 +130,28 @@ Operation :: enum u32 {
 //   pages:    the pages of memory objects, of thread areas and of page tables.
 //   programs: program slots.
 //   threads:  thread slots.
+// These three move: Budget_Create takes them from a budget for a new budget.
+// Time does not return, so the two others are limits for each second:
+//   processor:   microseconds of processor time in each second, on all the
+//                processors together. 1 000 000 is one full processor.
+//   log_records: records on the log in each second.
+// A limit is for a budget and for each budget that came from it: what a
+// thread uses counts in its budget and in each budget above. A new budget
+// cannot have a limit above the limit of the budget that it came from. With
+// the limit 0 a budget has no time: its threads do not run, and Log gives
+// No_Budget. The processor limit holds in each period of 100 ms, the log
+// limit in each second.
 // The kernel gives one budget to the root service: all the free memory and
 // all the slots. Budget_Create moves a part of a budget to a new budget.
 // When an object ends, what it used returns to the budget that paid.
 // When the last handle to a budget closes, what the budget holds returns to
 // the budget that it came from, and that budget pays for its objects.
 Budget_Amounts :: struct {
-	pages:    u64,
-	programs: u64,
-	threads:  u64,
+	pages:       u64,
+	programs:    u64,
+	threads:     u64,
+	processor:   u64,
+	log_records: u64,
 }
 
 // One word of a word wait: the address of 32 bits of memory, and the value
