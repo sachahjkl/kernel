@@ -328,7 +328,10 @@ modules_same_again :: proc() -> bool {
 	for path, index in paths {
 		bytes, err := os.read_entire_file(path, context.allocator)
 		if err != nil || !slice.equal(bytes, first[index]) {
-			fmt.eprintfln("kerneltool: test failed: %s is not the same bytes after a second build", path)
+			// The first file stays beside the second one, to compare them.
+			kept := strings.concatenate({path, ".first"}, context.temp_allocator)
+			_ = os.write_entire_file(kept, first[index])
+			fmt.eprintfln("kerneltool: test failed: %s is not the same bytes after a second build (the first build is %s)", path, kept)
 			different += 1
 		}
 	}
