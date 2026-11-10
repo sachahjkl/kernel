@@ -177,3 +177,58 @@ One change of design that the owner must know: the log has no log service (choic
 4. Revocation of a grant.
 5. Processor time and log records in budgets.
 6. Paging, second part: pages on first use, read-only code that programs share.
+
+## Review 4: steps 16 to 20 (2026-11-10)
+
+### What the five steps added
+
+- Step 16 made a program that runs serve its own exports. The root service makes each connection.
+- Step 17 gave each ring a capacity, one wake for many records, and a short read of the counters before a wait.
+- Step 18 made the terminal: typed records of text, no escape sequence, and a surface with two pictures.
+- Step 19 made the shared queue and the event: several threads on one queue with no lock.
+- Step 20 put the time in a page that each program reads.
+
+The kernel has 22 operations: none added since step 10. Steps 17 to 20 changed only memory layouts and the library `system`, except the time page (one mapping at the creation of a program). The test has 150 checks, 25 pictures and 8 machines. The tool has one more command, `film`.
+
+### Against the properties
+
+| Property | State after step 20 |
+|---|---|
+| P1 small counted interface | 22 operations. A service, a queue for several threads, an event and the time are not operations |
+| P2 sandbox by default | Holds. A connection to a service is made by the root service only. The time page is read-only, and a program cannot remove it |
+| P3, P5 kernel off the hot path | Measured at each step. A ring: 20 million records in one second with 53 to 590 kernel entries for one million. A shared queue: 13 to 37 million with 29 to 16 464. The time: 0 kernel entries. Still one kernel lock |
+| P4, P6 one communication mechanism | Holds. A service, the terminal, the shared queue and the event all wait with the word wait. No second way to wait exists |
+| P13 ZII, data-oriented | Holds. Memory that is all zero is an empty ring, an empty shared queue, an event that never happened and the time 0 |
+| P16 removed concepts | The terminal has no escape sequence and no stream of bytes. The console does not use it yet |
+| P19 command is a function | A service and a module have the same description and the same call form. Not changed: no records, floats, handles or grants in a description. The description has one line of help for each export and nothing for the module |
+| P20 no ambient access | Not changed: a grant cannot be revoked, and a budget has no processor time. The root service has no list of who can call which service |
+
+### Concessions, and what removes each one
+
+1. **The threads of a shared queue trust each other** (choice 75). A thread that stops in the middle of a write stops the queue. Remove: this is the contract of a shared queue; between programs that do not trust each other, the way is one ring for each pair. A kernel that tells the other threads "a thread of this queue stopped" is possible with the event word, when a program needs it.
+2. **`workers` does not use the shared queue.** Its tiles still come from a queue with a lock. Remove: change `workers` when the scheduler work measures it.
+3. **The time has a resolution of one millisecond**, and no date. Remove: the cycle counter and its frequency in the time page; a clock device service for the date.
+4. **The console draws its own text.** The terminal ring has one user, `flood`. Remove: the console writes through the terminal ring, and a terminal gives input records.
+5. **Only `terminal` has two pictures.** Remove: each program that draws a full picture at each change opens its window with two pictures.
+6. **A call that never returns stops the one thread of a service** (step 16). Remove: a service with one thread for each connection, or a limit of time for a call, with processor time in budgets.
+7. **The measures change from run to run** in the test machine (a factor of 2 for some rows of `crowd`): the scenario has 20 programs open. The test asserts no speed. The film machine gives the stable numbers.
+8. Review 3, concessions 1 to 8 are still true, except the cost of the time (concession 3 named the kernel lock: each read of the time took it; it does not now).
+
+### Bad compromises found
+
+Four, all removed.
+
+- Step 17: a reader could miss the wake of a writer (a lost wake, about one run in five). Step 18 removed it: a `waits` word is a word of the wait.
+- Step 19: the first wake of the shared queue entered the kernel for each record when one reader slept (346 099 kernel entries for one million records). Three rules in `wake_one` removed it inside the step.
+- Step 19: the scenario dragged each window from fixed coordinates. A new window moved the others, and the test failed for a reason that was not in the system. The step `Move` reads the place in the log.
+- Step 20: the first time page was taken from memory after the first budget counted it. The check "budgets N pages: all the free pages" failed in the test. The page is now taken before the first budget.
+
+### Order of the next steps
+
+1. One module in each role, with its documentation (owner, 2026-11-10): a module carries the text of its documentation; one program shows the documentation of any module; one module is shown as a program, as a library in the memory of its caller, in a sandboxed program, and as a service.
+2. The console writes through the terminal ring; a terminal gives input records to its program.
+3. Descriptions with records and handles.
+4. Revocation of a grant; processor time and log records in budgets.
+5. Paging, second part: pages on first use, read-only code that programs share.
+6. The kernel lock split by data; scheduling strategies that the system can change while it runs.
+7. Storage (virtio block device) with a program that keeps its data; then the network.

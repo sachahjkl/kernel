@@ -248,9 +248,10 @@ Input:
 
 ## Next steps
 
-1. The console writes through the terminal ring; a terminal gives input records to its program.
-2. Descriptions with records and handles; revocation of a grant; processor time and log records in budgets.
-3. Paging, second part: pages on first use, and read-only code that programs share.
-4. The kernel lock split by data; scheduling strategies that the system can change while it runs.
-5. A block device service (virtio), then the storage service, with a program that keeps its data.
-6. The network: a virtio device service, then UDP, TCP, QUIC.
+1. One module in each role, with its documentation: a program that shows the documentation of any module (the order is in Review 4 of `REVIEWS.md`).
+2. The console writes through the terminal ring; a terminal gives input records to its program.
+3. Descriptions with records and handles; revocation of a grant; processor time and log records in budgets.
+4. Paging, second part: pages on first use, and read-only code that programs share.
+5. The kernel lock split by data; scheduling strategies that the system can change while it runs.
+6. A block device service (virtio), then the storage service, with a program that keeps its data.
+7. The network: a virtio device service, then UDP, TCP, QUIC.

@@ -33,6 +33,7 @@ The next step is the owner's review of that file.
 - **The console is a normal program with a real language. No TTY concept.** Decided on 2026-11-09.
 - **Do not go too fast.** The owner asked for architecture and key systems before any code. See `ARCHITECTURE.md`.
 - **A command is a function. No text between programs.** Decided on 2026-11-09. No `argv`, no text pipes, no parsing. A command line program and a library are the same module; the metadata makes each exported function callable from the console. A started program receives a structured context, never `argc` and `argv`. See property 19.
+- **Show that one module is all of them.** Asked on 2026-11-10. A command line program, a library and a dynamic library are the same module: the system has no difference between them. One program must export its capabilities with the metadata of their documentation, and one program must show the documentation of any module. The names and types of the parameters are part of that documentation.
 - **No system contract depends on a feature of one language.** Decided on 2026-11-09. Odin is the implementation language, not part of the interface. Contracts are memory layouts and numbers.
 - **The removal of the shared file system is a security requirement**, not a preference (owner, 2026-11-09). Property 20 lists the other cases of ambient access to close. The owner accepted the whole list.
 - **Zero is initialization (ZII).** Named by the owner on 2026-11-09. An all-zero record is valid in every system contract. See property 13.
