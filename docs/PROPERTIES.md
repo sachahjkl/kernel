@@ -172,6 +172,8 @@ Status: Decided.
 
 Status: Decided. On 2026-11-09 the owner chose the engine: do not fork bcachefs; write a new engine under MIT that reuses its ideas. The first version is SQLite on the raw block device.
 
+State on 2026-11-10 (steps 30 to 32): the first version is not SQLite. The storage service is a new engine in Odin, about 800 lines: copy on write, two places for the root block, a check of each block in the pointer that names it (choices 150 and 151 of `FIRST_MILESTONE.md`). The agent that built the step had a wrong rule from the coordinator ("Odin standard library only"; the recorded rule is about the kernel tool only), so it excluded SQLite for a false reason. The owner corrected this on 2026-11-10: SQLite is not forbidden. Open, for the owner: keep this engine as the engine of this property and bring SQLite above it as the base library of property 12 (the proposal of the coordinator, by the rule of property 12 that keeps the roles separate), or put SQLite below. Not done from the rules below: objects have names in a store, not identifiers; no clone, no snapshot, no versions.
+
 - **Rule**: Storage is a transactional object store in user space. Objects have identifiers, not paths. A directory is an optional index, not the base structure.
 - **Rule**: Each program gets a private store. A copy-on-write clone is the way to give a copy of an object. A snapshot gives versions of a store.
 - **Rule**: The storage service reaches the disk through the queues of property 5.

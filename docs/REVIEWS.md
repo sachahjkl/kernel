@@ -35,6 +35,9 @@ A step is one tested commit that adds one capability.
 | 27 | `fa80e79` | The menu of the windows in the bar: a window comes to the front by its title; the step kind `Front` of the machine test in place of clicks at a fixed place; the tool reads only complete lines of the log (a cause for the intermittent failure of step 24) |
 | 28 | `a170f20` | Pages on first use: a memory object reserves its pages in its budget and gets each page frame at its first use; no overcommit; the frames of a memory object are in a frame list, not contiguous (built by an agent on a branch, reviewed and merged by the coordinator) |
 | 29 | `7e1d906`, `c9fe3d7` | Shared code: the programs of one module map the same pages of code and constants with no Write, each with its own writable data; the programs `frames` and `twin` show ten cases of steps 28 and 29 with measures (same agent and branch) |
+| 30 | `5e65050` | The block service: a virtio disk driven by a program, with device memory, a message interrupt and contiguous memory with a physical address for a holder of the right Physical; the contract `block`; the root service gives one device from the bus; the measures of `disk` (built by an agent on a branch, reviewed and merged by the coordinator) |
+| 31 | `4962f8c` | The storage service: a private store for each program on the data disk, copy on write with two root blocks and a check in each pointer; a limit in blocks; the person lists and revokes (same agent and branch) |
+| 32 | `cb939b9` | A persistent program: `notes` keeps its state across a restart of the machine; four machines on one data disk test a clean stop, a stop during commits and a cut root block (same agent and branch) |
 
 ## Review 1: steps 1 to 5 (2026-11-10)
 
