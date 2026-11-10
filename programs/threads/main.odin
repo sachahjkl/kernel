@@ -78,7 +78,7 @@ draw_square :: proc "c" (parameter: rawptr) -> ! {
 		}
 		worker.frames += 1
 		// Each thread has its own kernel ring: it waits alone.
-		system.wait(system.time() + FRAME_TIME)
+		system.sleep(system.time() + FRAME_TIME)
 	}
 }
 
@@ -173,6 +173,6 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			system.log("threads: ok, ", u64(WORKER_COUNT), " threads draw in one surface")
 		}
 		display.present(&window)
-		system.wait(system.time() + FRAME_TIME)
+		display.wait(&window, system.time() + FRAME_TIME)
 	}
 }

@@ -11,6 +11,7 @@ A step is one tested commit that adds one capability.
 | 3 | `ba67b95` | Text results |
 | 4 | `e8cbcb5` | Threads: several per program, shown by `threads` |
 | 5 | `44d2973` | The word wait and the lock, shown by `workers` |
+| 6 | (the commit of step 6) | One wait: rings wait on words, `Wake(memory)` deleted, the event word |
 
 ## Review 1: steps 1 to 5 (2026-11-10)
 
@@ -37,7 +38,7 @@ A step is one tested commit that adds one capability.
 
 ### Concessions, and what removes each one
 
-1. **Two wake mechanisms.** `Wake(memory)` wakes all the threads of all the programs that map a memory object. The word wait is exact. Remove: make each ring reader wait on the `write` counter of its queues with `Word_Wait` (4 words per wait; the compositor needs more, so the count must grow or the compositor must use one shared counter). Then delete `Wake`, the wake-pending flag and `maps_region`. This is the next step.
+1. **Two wake mechanisms.** `Wake(memory)` wakes all the threads of all the programs that map a memory object. The word wait is exact. Remove: make each ring reader wait on the `write` counter of its queues with `Word_Wait` (4 words per wait; the compositor needs more, so the count must grow or the compositor must use one shared counter). Then delete `Wake`, the wake-pending flag and `maps_region`. This is the next step. **Removed in step 6**: one entry waits on 64 words; `Wake` and the wake-pending flag are deleted. `maps_region` stays for `Handle_Give` only.
 2. **The `gs` register.** Rule 7 of the module contract said that code passes the thread record explicitly. The kernel ring per thread made this too costly: each call of `system` needs the ring. The amendment is narrow (one register, one word, no module data), but it is an amendment of a closed rule. The owner saw it before the code.
 3. **A fault in a thread stops the program.** This is the decision, not a concession: the threads share all their memory.
 4. **`Thread_Stop` on another thread is not safe for locks.** The thread can hold a lock. Remove: nothing in the kernel. The rule for programs is "ask the thread to end; stop it only when its data is lost anyway".

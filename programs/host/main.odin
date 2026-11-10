@@ -42,9 +42,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 
 	queue := (^ring.Ring)(calls)
 	for {
-		served := false
 		for _ in 0 ..< ring.CAPACITY {
-			command, ok := ring.pop(&queue.commands)
+			command, ok := system.receive(&queue.commands)
 			if !ok {
 				break
 			}
@@ -52,13 +51,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				tag = command.tag,
 			}
 			completion.kind = u32(serve(command, &completion.values))
-			ring.push(&queue.completions, completion)
-			served = true
+			system.send(&queue.completions, completion)
 		}
-		if served {
-			system.wake(ring_memory)
-		}
-		system.wait()
+		wait: system.Wait
+		system.wait_records(&wait, &queue.commands)
+		system.wait_end(&wait)
 	}
 }
 

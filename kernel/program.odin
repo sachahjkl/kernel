@@ -56,9 +56,9 @@ Thread :: struct {
 	number:       u32, // The index of the thread area in the program.
 	ring:         ^ring.Ring,
 	record:       u64, // The address of the thread record in the program.
+	events:       ^u32, // The `events` word of the thread record, for the kernel.
 	deadline:     u64,
 	references:   u32, // Handles to this thread.
-	wake_pending: bool,
 	in_enter:     bool,
 	run_time:     u64,
 	// The word wait of the entry in progress or of the wait in progress:
@@ -362,6 +362,7 @@ thread_create :: proc "contextless" (program_index: u32, entry, stack, parameter
 		number = number,
 		ring = direct(regions[region].physical + PAGE_SIZE, ring.Ring),
 		record = record,
+		events = &direct(regions[region].physical, op.Thread_Record).events,
 		frame = {
 			rip    = entry,
 			cs     = SELECTOR_USER_CODE,
@@ -390,7 +391,7 @@ thread_end :: proc "contextless" (thread: ^Thread) {
 }
 
 // thread_stop ends one thread and frees its thread area. The other threads
-// of the program wake: one of them can wait for this end. A program with
+// of the program get an event: one of them can wait for this end. A program with
 // no thread stops.
 thread_stop :: proc "contextless" (index: u32) {
 	thread := &threads[index]
@@ -410,28 +411,46 @@ thread_stop :: proc "contextless" (index: u32) {
 	if program.thread_count == 0 {
 		program_stop(thread.program, 0)
 	} else {
-		wake_program(thread.program)
+		program_event(thread.program)
 	}
 }
 
-// wake ends the wait of a thread. A word wait ends only by its words or by
-// its deadline: the wake stays pending for the next wait with no word.
-wake :: proc "contextless" (thread: ^Thread) {
-	if thread.state == .Waiting && thread.word_count > 0 {
-		thread.wake_pending = true
-	} else if thread.state == .Waiting {
-		thread.state = .Ready
-	} else if thread.state == .Ready {
-		thread.wake_pending = true
+// word_wake ends the wait of at most count threads that wait on a word.
+word_wake :: proc "contextless" (word: u64, count: u64) -> (woken: u64) {
+	for &thread in threads[1:] {
+		if woken == count {
+			break
+		}
+		if thread.state != .Waiting {
+			continue
+		}
+		for candidate in thread.words[:thread.word_count] {
+			if candidate == word {
+				thread.state = .Ready
+				woken += 1
+				break
+			}
+		}
 	}
+	return woken
 }
 
-// wake_program wakes each thread of a program. A thread that wakes for
-// another reason than its own reads its queues and waits again.
-wake_program :: proc "contextless" (index: u32, except: u32 = 0) {
-	for &thread, slot in threads[1:] {
-		if thread.program == index && u32(slot + 1) != except {
-			wake(&thread)
+// program_event tells each thread of a program that an event arrived: see
+// operation.Word.
+program_event :: proc "contextless" (index: u32) {
+	for &thread in threads[1:] {
+		if thread.program != index || thread.state != .Ready && thread.state != .Waiting {
+			continue
+		}
+		intrinsics.volatile_store(thread.events, intrinsics.volatile_load(thread.events) + 1)
+		if thread.state == .Waiting {
+			word := physical_of(thread.events)
+			for candidate in thread.words[:thread.word_count] {
+				if candidate == word {
+					thread.state = .Ready
+					break
+				}
+			}
 		}
 	}
 }
@@ -492,7 +511,7 @@ program_stop :: proc "contextless" (index: u32, code: u32) {
 		}
 		for slot in other.handles {
 			if slot.kind == .Program && slot.object == index {
-				wake_program(u32(other_index + 1))
+				program_event(u32(other_index + 1))
 				break
 			}
 		}
@@ -609,7 +628,7 @@ kernel_interrupt :: proc "c" (frame: ^Frame) {
 		interrupt_count += 1
 		interrupt_pending[line] += 1
 		if owner := interrupt_owner[line]; owner != 0 {
-			wake_program(owner)
+			program_event(owner)
 		}
 		interrupt_end(line)
 	case:

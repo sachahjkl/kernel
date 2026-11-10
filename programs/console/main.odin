@@ -63,7 +63,7 @@ entry :: proc "c" (start_context: ^system.Context) -> ! {
 		if changed {
 			draw()
 		}
-		system.wait()
+		display.wait(&window)
 	}
 }
 

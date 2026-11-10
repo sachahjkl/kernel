@@ -28,22 +28,19 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	for {
 		now := system.time()
 		if state.holding != 0 && now >= state.release {
-			// A full ring refuses the record: the node keeps it. The node
-			// after wakes this node when it takes a record.
-			if ring.push(&after.commands, record) {
+			// A full ring refuses the record: the node keeps it, and waits
+			// for room in the ring.
+			if system.send(&after.commands, record) {
 				state.holding, state.blocked = 0, 0
 				state.passed += 1
-				system.wake(memory[relay.GRANT_AFTER])
 			} else {
 				state.blocked = 1
 			}
 		}
 		if state.holding == 0 {
-			taken, ok := ring.pop(&control.commands)
+			taken, ok := system.receive(&control.commands)
 			if !ok {
-				if taken, ok = ring.pop(&before.commands); ok {
-					system.wake(memory[relay.GRANT_BEFORE])
-				}
+				taken, ok = system.receive(&before.commands)
 			}
 			if ok && taken.kind == relay.RECORD {
 				record = taken
@@ -53,6 +50,15 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				state.holding = 1
 			}
 		}
-		system.wait(state.holding != 0 && state.blocked == 0 ? state.release : system.WAIT_FOREVER)
+		// The node waits for one thing: a record, the end of its work, or
+		// room in the ring after it.
+		wait: system.Wait
+		if state.holding == 0 {
+			system.wait_records(&wait, &control.commands)
+			system.wait_records(&wait, &before.commands)
+		} else if state.blocked != 0 {
+			system.wait_room(&wait, &after.commands)
+		}
+		system.wait_end(&wait, state.holding != 0 && state.blocked == 0 ? state.release : system.WAIT_FOREVER)
 	}
 }

@@ -97,7 +97,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	system.log("input: ok")
 
 	for {
-		sent := false
+		// An interrupt of this program is an event.
+		wait := system.wait_begin()
 		for {
 			state := system.port_read_8(PORT_STATUS)
 			if state & STATUS_OUTPUT_FULL == 0 {
@@ -105,22 +106,19 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			}
 			value := system.port_read_8(PORT_DATA)
 			if state & STATUS_MOUSE != 0 {
-				sent |= mouse_byte(value)
+				mouse_byte(value)
 			} else {
-				sent |= keyboard_byte(value)
+				keyboard_byte(value)
 			}
 		}
-		if sent {
-			system.wake(output_memory)
-		}
-		system.wait()
+		system.wait_end(&wait)
 	}
 }
 
-keyboard_byte :: proc "contextless" (value: u8) -> bool {
+keyboard_byte :: proc "contextless" (value: u8) {
 	if value == SCAN_EXTENDED {
 		extended = true
-		return false
+		return
 	}
 	pressed := value & 0x80 == 0
 	scan := value & 0x7F
@@ -147,20 +145,20 @@ keyboard_byte :: proc "contextless" (value: u8) -> bool {
 	if code < len(characters[0]) {
 		character = characters[modifiers & display.MODIFIER_SHIFT][code]
 	}
-	return ring.push(&output.commands, ring.Record{kind = u32(display.Input.Key), values = {0 = u64(code), 1 = u64(character), 2 = u64(pressed), 3 = u64(modifiers)}})
+	system.send(&output.commands, ring.Record{kind = u32(display.Input.Key), values = {0 = u64(code), 1 = u64(character), 2 = u64(pressed), 3 = u64(modifiers)}})
 }
 
-mouse_byte :: proc "contextless" (value: u8) -> bool {
+mouse_byte :: proc "contextless" (value: u8) {
 	if packet_count == 0 && value & 0x08 == 0 {
-		return false // Not the first byte of a packet.
+		return // Not the first byte of a packet.
 	}
 	packet[packet_count] = value
 	packet_count += 1
 	if packet_count < len(packet) {
-		return false
+		return
 	}
 	packet_count = 0
 	motion_x := i64(packet[1]) - (packet[0] & 0x10 != 0 ? 256 : 0)
 	motion_y := i64(packet[2]) - (packet[0] & 0x20 != 0 ? 256 : 0)
-	return ring.push(&output.commands, ring.Record{kind = u32(display.Input.Pointer), values = {0 = u64(motion_x), 1 = u64(-motion_y), 2 = u64(packet[0] & 0x07)}})
+	system.send(&output.commands, ring.Record{kind = u32(display.Input.Pointer), values = {0 = u64(motion_x), 1 = u64(-motion_y), 2 = u64(packet[0] & 0x07)}})
 }

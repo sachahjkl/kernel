@@ -100,7 +100,7 @@ open :: proc "contextless" (ctx: ^system.Context, width, height: int, title: str
 		if status == .Ok {
 			break
 		}
-		system.wait(system.time() + 5)
+		system.sleep(system.time() + 5)
 		_ = attempt
 	}
 	if status != .Ok {
@@ -111,19 +111,25 @@ open :: proc "contextless" (ctx: ^system.Context, width, height: int, title: str
 		kind = u32(Command.Surface_Create),
 		values = {u64(granted), u64(width), u64(height), name[0], name[1], name[2], name[3]},
 	}
-	ring.push(&window.ring.commands, command)
-	system.wake(window.ring_memory)
+	system.send(&window.ring.commands, command)
 	return window, true
 }
 
 present :: proc "contextless" (window: ^Window) {
-	ring.push(&window.ring.commands, ring.Record{kind = u32(Command.Present)})
-	system.wake(window.ring_memory)
+	system.send(&window.ring.commands, ring.Record{kind = u32(Command.Present)})
+}
+
+// wait stops the thread until the window has an input event, or until the
+// time is deadline. It gives the time.
+wait :: proc "contextless" (window: ^Window, deadline: u64 = system.WAIT_FOREVER) -> u64 {
+	list: system.Wait
+	system.wait_records(&list, &window.ring.completions)
+	return system.wait_end(&list, deadline)
 }
 
 // next_event gives the next input event of the window, if there is one.
 next_event :: proc "contextless" (window: ^Window) -> (event: Event, ok: bool) {
-	record := ring.pop(&window.ring.completions) or_return
+	record := system.receive(&window.ring.completions) or_return
 	event.kind = Event_Kind(record.kind)
 	#partial switch event.kind {
 	case .Key:

@@ -110,9 +110,8 @@ toggle :: proc "contextless" (index: int) {
 add :: proc "contextless" (index: int) {
 	node := &nodes[index]
 	colors := record_colors
-	if ring.push(&node.control.commands, ring.Record{kind = relay.RECORD, values = {0 = u64(colors[added % len(colors)])}}) {
+	if system.send(&node.control.commands, ring.Record{kind = relay.RECORD, values = {0 = u64(colors[added % len(colors)])}}) {
 		added += 1
-		system.wake(node.control_memory)
 	}
 }
 
@@ -195,7 +194,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		watch()
 		draw(window.canvas, now)
 		display.present(&window)
-		system.wait(now + FRAME_TIME)
+		display.wait(&window, now + FRAME_TIME)
 	}
 }
 

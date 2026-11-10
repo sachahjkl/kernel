@@ -139,7 +139,7 @@ Status: Decided.
 - **Forbids**: pipes, signals, message queues, sockets between local programs, a second mechanism "for small messages".
 - **Cost**: A receiver must treat shared memory as hostile: the sender can change it during the read. The rule is "copy, then validate". Layouts must be versioned. A program that waits on a dead peer needs a kernel notification.
 - **Reuse**: L4 and seL4 show how few cache lines a fast path needs. [Notes `data_oriented_kernel.md` §3]
-- **Open**: How a handle moves through a ring. The wake-up primitive exists since 2026-11-10: the word wait (`Word_Wait`, `Word_Wake`). The rings still use the older `Wake(memory)`; see the gaps in `FIRST_MILESTONE.md`.
+- **Open**: How a handle moves through a ring. The wake-up primitive exists since 2026-11-10: the word wait (`Word_Wait`, `Word_Wake`). Since step 6 each ring waits on it: the system has one wait.
 
 ## 7. No drivers in the kernel, and fixed hardware first
 

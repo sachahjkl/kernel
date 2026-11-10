@@ -36,7 +36,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 		graphics.text(canvas, len(colors) * PALETTE_CELL + 10, 4, "c: clear", 0x606468)
 		display.present(&window)
-		system.wait()
+		display.wait(&window)
 		for event in display.next_event(&window) {
 			#partial switch event.kind {
 			case .Key:

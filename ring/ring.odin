@@ -21,10 +21,18 @@ Record :: struct {
 
 // write and read count records since the start; the slot is the count modulo
 // CAPACITY. A reader never trusts the two numbers of the other side.
+//
+// A side that waits for the other side waits on a word of the queue (the
+// word wait of the kernel): the reader on `write`, while the queue is
+// empty; the writer on `read`, while the queue is full. Before it waits, it
+// sets its `waits` word. The other side enters the kernel to wake it only
+// if that word is set. The system library does this: see system/wait.odin.
 Queue :: struct {
-	write:    u32,
-	read:     u32,
-	reserved: [56]u8,
+	write:        u32,
+	read:         u32,
+	reader_waits: u32, // The reader waits, or will wait, for a record.
+	writer_waits: u32, // The writer waits, or will wait, for room.
+	reserved:     [48]u8,
 	records:  [63]Record,
 }
 #assert(size_of(Queue) == 4096)

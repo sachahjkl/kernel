@@ -49,13 +49,13 @@ The scenario does these actions:
 | Subject | Now |
 |---|---|
 | Entry | One entry point: the `syscall` instruction. `rdi` is 0, a deadline in milliseconds, or `WAIT_FOREVER`. `rax` returns the time |
-| Kernel operations | 21 command kinds in the kernel ring of each thread. `kernel/operation/operation.odin` is the full list |
+| Kernel operations | 20 command kinds in the kernel ring of each thread. `kernel/operation/operation.odin` is the full list |
 | Objects | Memory, Program, Thread, Interrupt, Ports, Machine |
 | Tables | Flat and fixed: 2048 memory objects, 64 programs, 256 threads, 128 handles and 128 mappings per program, 32 threads per program |
 | Threads | A thread is a register state and a thread area: the thread record and the kernel ring of the thread. `Thread_Create(entry, stack, parameter)` adds a thread to the caller. The threads of a program share its memory and its handles. A program with no thread stops with code 0 |
 | Memory | A memory object is a run of contiguous page frames with a reference count. `Memory_Map` maps it in a program |
-| Wait and wake | `Wake(memory)` wakes the other threads of all programs that map this memory. A thread wait is per thread. Each thread has a wake-pending flag, so no wake is lost |
-| Word wait | `Word_Wait(address, value)` and `Word_Wake(address, count)`. The kernel names a word by its page frame, so the word can be in memory that two programs share. One entry can wait on 4 words. `system.Lock` is built on it |
+| Wait | A thread waits for a time, or on words (the word wait). The kernel has no other wake. For an interrupt, the stop of a held program and the end of another thread, the kernel adds 1 to the event word of each thread of the program, and wakes the threads that wait on that word |
+| Word wait | `Word_Wait(address of Word records, count)` and `Word_Wake(address, count)`. The kernel names a word by its page frame, so the word can be in memory that two programs share. One entry can wait on 64 words. `system.Lock` and the wait of a ring are built on it |
 | Scheduler | One processor. Round-robin over the threads, with preemption. A time slice is 10 ms. The timer runs at 1000 Hz. Idle is `hlt` |
 | Devices | A Ports object opens a port range in the port bitmap of the program. An Interrupt object counts interrupts and wakes its owner |
 | Faults | A fault in a thread stops its program with a code. The kernel wakes each program that holds its handle |
@@ -107,7 +107,7 @@ The owner did not review these. Each one can change.
 
 1. **Export numbers.** The kernel tool holds an ordered export list per module. The export index is the position in that list. Imports resolve by name at build time only.
 2. **Entry instruction.** `syscall`, with the full register state saved per program and a return by `iretq`. The kernel is not preemptible and has one stack.
-3. **Wake by memory.** `Wake` and `Handle_Give` take a memory handle to name "the other side of this ring". The kernel has no ring object: a ring is a memory object with a layout that the two programs agree on.
+3. **Give by memory.** `Handle_Give` takes a memory handle to name "the other side of this ring". The kernel has no ring object: a ring is a memory object with a layout that the two programs agree on.
 4. **The kernel loads the root service only.** The loader of all other programs is user-space code in `system/load.odin`. This closes open question 2 of `ARCHITECTURE.md` in the direction "minimal loader in the kernel, for one program".
 5. **Fixed addresses.** A program module is at `0x40_0000`. The stack, the context and the kernel ring have fixed addresses. No random base address.
 6. **The compositor is also the desktop shell.** The glossary defines them as two programs. One program holds both roles now.
@@ -123,12 +123,14 @@ The owner did not review these. Each one can change.
 14. **The context has no text.** The 256 bytes of text of the context are removed: no program used them, and property 19 forbids them.
 15. **One kernel ring per thread.** With one ring per program, a thread that the timer interrupts can get the completion of another thread. Each thread has a thread area that the kernel makes: the thread record (one page), then the kernel ring. `THREAD_AREA_BASE` is the address of the first one; a program has at most 32.
 16. **The `gs` register holds the address of the thread record.** `system.call` must find the kernel ring of the thread that runs, on any stack. This amends rule 7 of the module contract: see there.
-17. **A wake is for all the threads of a program.** `Wake(memory)`, an interrupt, the end of a thread and the stop of a program wake each thread of the programs concerned. A thread that wakes for another reason reads its queues and waits again. The kernel keeps no list of who waits for what.
-18. **A thread ends alone or by its handle.** `Thread_Stop(0)` ends the caller. `Thread_Stop(thread)` ends another thread of the program at any instruction: the caller is responsible for the data that this thread was changing. `Thread_State` and the wake at the end of a thread make `system.thread_wait`.
+17. **An event is for all the threads of a program.** An interrupt, the end of a thread and the stop of a held program add 1 to the event word of each thread of the program concerned. A thread that waits on its event word wakes, reads the state, and waits again. The kernel keeps no list of who waits for what event.
+18. **A thread ends alone or by its handle.** `Thread_Stop(0)` ends the caller. `Thread_Stop(thread)` ends another thread of the program at any instruction: the caller is responsible for the data that this thread was changing. `Thread_State` and the event at the end of a thread make `system.thread_wait`.
 19. **Order in the machine test.** Two programs print in an order that the system does not fix. A `Wait` step with `any_order` does not move the place in the log.
-20. **The word wait.** Property 6 proposed "a futex-like wait on a ring counter". `Word_Wait` is a command of the entry that waits: the kernel compares the word and records the wait in one step, so no wake is lost. A word wait ends only by `Word_Wake` on one of its words or by the deadline. A wake of `Wake(memory)` stays pending for the next wait with no word: a lock never takes the wake of a ring. The word is 32 bits on all machines, the size of a ring counter.
+20. **The word wait.** Property 6 proposed "a futex-like wait on a ring counter". `Word_Wait` is a command of the entry that waits: the kernel compares the word and records the wait in one step, so no wake is lost. A word wait ends only by `Word_Wake` on one of its words, by an event if the event word is in the list, or by the deadline. The word is 32 bits on all machines, the size of a ring counter.
 21. **The lock is a library.** `system.Lock` is one word with three values (free, held, held with a thread that waits). The kernel has no lock object. A free lock costs one atomic instruction and no kernel entry.
 22. **The boot volume is a file that the tool writes.** `tools/kerneltool/volume.odin` writes a FAT32 volume of 64 MiB with the boot program, and the machine gets it as a virtio block device. Before, QEMU made a FAT disk from a folder, on its SATA controller. With KVM, about 1 boot in 10 then stopped in the firmware, in a read of the disk, until an event came to QEMU (measured: 7 of 80 boots with a plain image on SATA, 0 of 160 on virtio). This was the intermittent failure of step 1 of the machine test. A test reads the volume back with a separate reader.
+23. **One wait.** The word wait is the one way to wait for something else than a time. `Wake(memory)` and the wake-pending flag are deleted. A queue has two words more, `reader_waits` and `writer_waits`. The reader of a queue sets `reader_waits`, then waits on the `write` counter while the queue is empty. `system.send` writes a record, and enters the kernel to wake the reader only if `reader_waits` is set. `system.receive` does the same for a writer that waits for room. A `system.Wait` is a list of at most 64 words: the compositor waits on the queues of all its clients in one entry. Measured in the machine test: the picture of `rings` and the logs do not change.
+24. **The event word.** The thread record has an `events` word. The kernel adds 1 to it for each event of the program (choice 17). A thread reads the word (`system.wait_begin`), reads the state, then waits on the word with the value that it read: an event between the read and the wait ends the wait at once. This replaces the wake-pending flag with the rule of the word wait.
 
 ## Gaps
 
@@ -142,7 +144,6 @@ Against the properties and the module contract:
 - Frame pointers are not enforced. An import call goes through a stub that the linker adds.
 - The test "a C program calls an Odin module" does not exist.
 - One processor.
-- `Wake(memory)` is still the wake of a ring, and it goes to all the threads of the programs that map the memory. The word wait can replace it: the reader waits on the `write` counter of the queue. Then `Wake(memory)` and the wake-pending flag can go (rule "one mechanism").
 - A thread that stops with a lock held keeps the lock: the other threads wait with no end.
 - A thread handle can go to another program, which can then stop the thread (no rights on handles).
 - No storage, no network, no document service, no principals, no TPM, no Secure Boot.

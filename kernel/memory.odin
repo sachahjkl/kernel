@@ -23,6 +23,11 @@ direct :: #force_inline proc "contextless" (address: u64, $T: typeid) -> ^T {
 	return (^T)(info.DIRECT_MAP_BASE + uintptr(address))
 }
 
+// physical_of gives the physical address of a pointer of the direct map.
+physical_of :: #force_inline proc "contextless" (pointer: rawptr) -> u64 {
+	return u64(uintptr(pointer) - info.DIRECT_MAP_BASE)
+}
+
 memory_start :: proc "contextless" (boot: ^info.Boot_Info) {
 	ranges := info.physical_slice(boot.memory_ranges, boot.memory_range_count, info.Memory_Range)
 	top: u64

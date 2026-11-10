@@ -59,7 +59,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		frame += 1
 		for _ in display.next_event(&window) {}
 		next = max(next + FRAME_INTERVAL, now + 5)
-		system.wait(next)
+		system.sleep(next)
 	}
 }
 

@@ -55,10 +55,8 @@ time :: proc "contextless" () -> u64 {
 	return system_enter(0)
 }
 
-// wait stops the thread until another thread or an interrupt wakes it, or
-// until the time is deadline. It gives the time. A wake can be for another
-// thread of the program: read the queues, then wait again.
-wait :: proc "contextless" (deadline: u64 = WAIT_FOREVER) -> u64 {
+// sleep stops the thread until the time is deadline. It gives the time.
+sleep :: proc "contextless" (deadline: u64) -> u64 {
 	return system_enter(max(deadline, 1))
 }
 
@@ -102,12 +100,6 @@ give :: proc "contextless" (target: Handle, handle: Handle) -> (result: Handle, 
 
 close :: proc "contextless" (handle: Handle) {
 	call(.Handle_Close, u64(handle))
-}
-
-// wake wakes the other threads of all programs that map this memory: the
-// other side of a ring.
-wake :: proc "contextless" (memory: Handle) {
-	call(.Wake, u64(memory))
 }
 
 // ring_create makes the memory of a ring and maps it in this program.
@@ -163,29 +155,14 @@ thread_end :: proc "contextless" (thread: Thread) {
 }
 
 // thread_wait waits until a thread ends by itself, then frees its stack and
-// its handle. The kernel wakes the threads of a program when one of them ends.
+// its handle. The end of a thread is an event for the other threads.
 thread_wait :: proc "contextless" (thread: Thread) {
-	for !thread_stopped(thread) {
-		wait()
+	for {
+		wait := wait_begin()
+		if thread_stopped(thread) {
+			break
+		}
+		wait_end(&wait)
 	}
 	thread_end(thread)
-}
-
-// word_wait stops the thread while the word holds value, until word_wake
-// names the word or until the time is deadline. It gives the time.
-// The word can be in memory that another program maps. A wake of `wake`
-// does not end this wait: it stays for the next call of `wait`.
-// Read the word again after the wait: the deadline also ends it.
-word_wait :: proc "contextless" (word: ^u32, value: u32, deadline: u64 = WAIT_FOREVER) -> u64 {
-	ring.push(&kernel_ring().commands, ring.Record{kind = u32(op.Operation.Word_Wait), values = {0 = u64(uintptr(word)), 1 = u64(value)}})
-	now := system_enter(max(deadline, 1))
-	ring.pop(&kernel_ring().completions)
-	return now
-}
-
-// word_wake wakes at most count threads that wait on the word. It gives
-// the number of threads that it woke.
-word_wake :: proc "contextless" (word: ^u32, count: u64 = 1) -> u64 {
-	results, _ := call(.Word_Wake, u64(uintptr(word)), count)
-	return results[0]
 }

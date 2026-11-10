@@ -122,8 +122,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 
 	for {
-		system.wait()
-		for record in ring.pop(&control.completions) {
+		// The stop of a program is an event.
+		wait := system.wait_begin()
+		for record in system.receive(&control.completions) {
 			#partial switch display.Control(record.kind) {
 			case .Start:
 				name := system.name_unpack({record.values[0], record.values[1], record.values[2], record.values[3]})
@@ -140,7 +141,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			if item.program == 0 || item.requests == nil {
 				continue
 			}
-			for record in ring.pop(&item.requests.commands) {
+			for record in system.receive(&item.requests.commands) {
 				name := system.name_unpack({record.values[0], record.values[1], record.values[2], record.values[3]})
 				result := system.Status.Bad_Operation
 				#partial switch system.Root_Command(record.kind) {
@@ -156,11 +157,17 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 						}
 					}
 				}
-				ring.push(&item.requests.completions, ring.Record{kind = u32(result), tag = record.tag})
-				system.wake(item.requests_memory)
+				system.send(&item.requests.completions, ring.Record{kind = u32(result), tag = record.tag})
 			}
 		}
 		reap()
+		system.wait_records(&wait, &control.completions)
+		for &item in started {
+			if item.program != 0 && item.requests != nil {
+				system.wait_records(&wait, &item.requests.commands)
+			}
+		}
+		system.wait_end(&wait)
 	}
 }
 
@@ -186,8 +193,7 @@ start :: proc "contextless" (name: string) -> system.Status {
 	display_memory := system.memory_create(ring.PAGE_COUNT) or_return
 	defer system.close(display_memory)
 	slot.client = system.give(compositor, display_memory) or_return
-	ring.push(&control.commands, ring.Record{kind = u32(display.Control.Client_Add), values = {0 = u64(slot.client)}})
-	system.wake(control_memory)
+	system.send(&control.commands, ring.Record{kind = u32(display.Control.Client_Add), values = {0 = u64(slot.client)}})
 
 	handles: [op.CONTEXT_HANDLES]system.Handle
 	values: [op.CONTEXT_VALUES]u64
@@ -219,8 +225,7 @@ start :: proc "contextless" (name: string) -> system.Status {
 
 // release frees what this service holds for a program, and tells the compositor.
 release :: proc "contextless" (item: ^Started) {
-	ring.push(&control.commands, ring.Record{kind = u32(display.Control.Client_Remove), values = {0 = u64(item.client)}})
-	system.wake(control_memory)
+	system.send(&control.commands, ring.Record{kind = u32(display.Control.Client_Remove), values = {0 = u64(item.client)}})
 	if item.requests != nil {
 		system.memory_unmap(item.requests)
 		system.close(item.requests_memory)

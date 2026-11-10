@@ -51,6 +51,6 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		frame += 1
 		for _ in display.next_event(&window) {}
 		next += FRAME_INTERVAL
-		system.wait(next)
+		system.sleep(next)
 	}
 }

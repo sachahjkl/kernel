@@ -250,6 +250,6 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		after = graphics.text(window.canvas, x + 8, line + 60, "no lock: lost ", COLOR_TEXT)
 		graphics.unsigned(window.canvas, after, line + 60, made_free - sum_free, COLOR_WAITS)
 		display.present(&window)
-		system.wait(now + FRAME_TIME)
+		display.wait(&window, now + FRAME_TIME)
 	}
 }

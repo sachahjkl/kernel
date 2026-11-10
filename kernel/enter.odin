@@ -29,11 +29,8 @@ enter :: proc "contextless" (index: u32) {
 	}
 	wait := thread.frame.rdi
 	if wait != 0 {
-		if thread.word_changed {
-			// A word changed before the wait: the thread reads it again.
-		} else if thread.wake_pending && thread.word_count == 0 {
-			thread.wake_pending = false
-		} else {
+		// A word that changed before the wait: the thread reads it again.
+		if !thread.word_changed {
 			thread.state = .Waiting
 			thread.deadline = wait
 		}
@@ -246,33 +243,26 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		handle_close(program, slot)
 		return .Ok
 
-	case .Wake:
-		slot := handle_find(program, v[0], .Memory)
-		if slot == nil {
-			return .Bad_Handle
-		}
-		for &other, other_index in programs[1:] {
-			if other.state == .Ready && maps_region(&other, slot.object) {
-				wake_program(u32(other_index + 1), index)
-			}
-		}
-		return .Ok
-
 	case .Word_Wait:
 		thread := &threads[index]
-		word := word_address(program, v[0])
-		if word == 0 {
-			return .Bad_Address
-		}
-		if thread.word_count == op.WORD_WAIT_CAPACITY {
+		if v[1] > u64(op.WORD_WAIT_CAPACITY - thread.word_count) {
 			return .No_Slot
 		}
-		if (^u32)(uintptr(v[0]))^ != u32(v[1]) {
-			thread.word_changed = true
-			return .Ok
+		if !user_range(program.table, v[0], v[1] * size_of(op.Word), false) {
+			return .Bad_Address
 		}
-		thread.words[thread.word_count] = word
-		thread.word_count += 1
+		for word in ([^]op.Word)(uintptr(v[0]))[:v[1]] {
+			physical := word_address(program, word.address)
+			if physical == 0 {
+				thread.word_changed = true // The wait cannot end by this word: do not wait.
+				return .Bad_Address
+			}
+			if (^u32)(uintptr(word.address))^ != u32(word.value) {
+				thread.word_changed = true
+			}
+			thread.words[thread.word_count] = physical
+			thread.word_count += 1
+		}
 		return .Ok
 
 	case .Word_Wake:
@@ -280,21 +270,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		if word == 0 {
 			return .Bad_Address
 		}
-		for &other in threads[1:] {
-			if results[0] == v[1] {
-				break
-			}
-			if other.state != .Waiting {
-				continue
-			}
-			for candidate in other.words[:other.word_count] {
-				if candidate == word {
-					other.state = .Ready
-					results[0] += 1
-					break
-				}
-			}
-		}
+		results[0] = word_wake(word, v[1])
 		return .Ok
 
 	case .Interrupt_Read:

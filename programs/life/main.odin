@@ -80,7 +80,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			system.log("life: ok")
 			logged = true
 		}
-		system.wait(paused ? system.WAIT_FOREVER : next)
+		display.wait(&window, paused ? system.WAIT_FOREVER : next)
 	}
 }
 

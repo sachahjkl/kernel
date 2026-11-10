@@ -48,32 +48,48 @@ Operation :: enum u32 {
 	Handle_Give    = 10, // (target: program handle or memory handle, handle) -> the handle in the target program.
 	// With a memory handle, the target is the other program that maps this memory: the other side of a ring.
 	Handle_Close   = 11, // (handle). The kernel stops a program when its last handle closes.
-	Wake           = 12, // (memory): wake the other threads of all programs that map this memory.
-	Interrupt_Read = 13, // (interrupt) -> the number of interrupts since the last read.
-	Device_Create  = 14, // (machine, Device_Kind, a, b) -> handle. Ports: a = first port, b = count. Interrupt: a = line.
-	Inspect        = 15, // (machine, Inspect_Kind, index, address, size) -> bytes written
-	Machine_Stop   = 16, // (machine, code)
-	Thread_Create  = 17, // (entry address, stack address, parameter) -> thread handle. A new thread of this program.
+	Interrupt_Read = 12, // (interrupt) -> the number of interrupts since the last read.
+	Device_Create  = 13, // (machine, Device_Kind, a, b) -> handle. Ports: a = first port, b = count. Interrupt: a = line.
+	Inspect        = 14, // (machine, Inspect_Kind, index, address, size) -> bytes written
+	Machine_Stop   = 15, // (machine, code)
+	Thread_Create  = 16, // (entry address, stack address, parameter) -> thread handle. A new thread of this program.
 	// The thread starts at the entry with the parameter in the first register.
-	Thread_Stop    = 18, // (thread or 0 for self). A program with no thread stops.
-	Thread_State   = 19, // (thread) -> Program_State: Ready, Waiting or Stopped.
-	// The word wait: a thread waits while a 32-bit word of memory keeps a
-	// value. The kernel names the word by its page frame, so two programs
-	// that map one memory object can use one word.
-	Word_Wait      = 20, // (address, value): the wait of this entry ends only when a Word_Wake names this word, or at its deadline.
-	// If the word does not hold the value, the wait of this entry ends at once.
-	// One entry can have WORD_WAIT_CAPACITY of these commands.
-	Word_Wake      = 21, // (address, count) -> threads woken: wake at most count threads that wait on this word.
+	Thread_Stop    = 17, // (thread or 0 for self). A program with no thread stops.
+	Thread_State   = 18, // (thread) -> Program_State: Ready, Waiting or Stopped.
+	// The word wait: the one way to wait for something else than a time.
+	// A thread waits while each word of a list holds its value. The kernel
+	// names a word by its page frame, so two programs that map one memory
+	// object can use one word.
+	Word_Wait      = 19, // (address of Word records, count): the wait of this entry ends when a Word_Wake names one
+	// of these words, or at its deadline. If a word does not hold its value, the wait ends at once.
+	// One entry can wait on WORD_WAIT_CAPACITY words.
+	Word_Wake      = 20, // (address, count) -> threads woken: wake at most count threads that wait on this word.
 }
 
-WORD_WAIT_CAPACITY :: 4
+// One word of a word wait: the address of 32 bits of memory, and the value
+// that they hold while the thread waits.
+Word :: struct {
+	address: u64,
+	value:   u64, // The low 32 bits.
+}
+
+WORD_WAIT_CAPACITY :: 64
+
+// What the kernel tells a thread: the kernel adds 1 to the `events` word of
+// the thread record and wakes the thread, when
+//   an interrupt of the program arrives,
+//   a program stops and this program holds its handle,
+//   another thread of the program ends.
+// The thread reads `events`, reads the state that it needs, then waits on
+// the word with the value that it read first.
 
 // What a thread can read about itself, at the address in its `gs` register.
-// The kernel writes it when the thread starts, and does not read it again.
+// The kernel writes it when the thread starts. After that it only adds to `events`.
 Thread_Record :: struct {
 	self:      u64, // The address of this record. The kernel ring is PAGE_SIZE after it.
 	parameter: u64, // The parameter of the entry of the thread.
 	number:    u64, // The number of the thread in its program. The first thread is 0.
+	events:    u32, // The kernel adds 1 for each event: see Word_Wait.
 }
 
 Status :: enum u32 {

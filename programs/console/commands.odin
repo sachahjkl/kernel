@@ -437,17 +437,18 @@ call_isolated :: proc "contextless" (item: ^Command, arguments: []Value) -> Valu
 		return fail("the arguments of ", item.name, " do not fit in the call region")
 	}
 	sandbox.calls += 1
-	if !ring.push(&sandbox.ring.commands, ring.Record{kind = item.export, tag = sandbox.calls, values = {0 = offset, 1 = size}}) {
+	if !system.send(&sandbox.ring.commands, ring.Record{kind = item.export, tag = sandbox.calls, values = {0 = offset, 1 = size}}) {
 		sandbox_end(sandbox)
 		return fail("the call ring of ", sandbox.name, " is full: the console stopped the program")
 	}
-	system.wake(sandbox.ring_memory)
 	limit := system.time() + CALL_LIMIT
 	for {
+		// The stop of the call host is an event.
+		wait := system.wait_begin()
 		// The other side writes this queue: read a bounded number of records,
 		// and ignore each one that does not answer this call.
 		for _ in 0 ..< ring.CAPACITY {
-			completion, has_completion := ring.pop(&sandbox.ring.completions)
+			completion, has_completion := system.receive(&sandbox.ring.completions)
 			if !has_completion {
 				break
 			}
@@ -481,7 +482,8 @@ call_isolated :: proc "contextless" (item: ^Command, arguments: []Value) -> Valu
 			sandbox_end(sandbox)
 			return fail("the program ", sandbox.name, " stopped: ", stop_reason(code))
 		}
-		if system.wait(limit) >= limit {
+		system.wait_records(&wait, &sandbox.ring.completions)
+		if system.wait_end(&wait, limit) >= limit {
 			sandbox_end(sandbox)
 			return fail("the program ", sandbox.name, " did not answer in ", u64(CALL_LIMIT), " ms: the console stopped it")
 		}
@@ -494,17 +496,18 @@ request :: proc "contextless" (kind: system.Root_Command, name: string) -> Value
 		return fail("the console has no ring to the root service")
 	}
 	packed := system.name_pack(name)
-	ring.push(&requests.commands, ring.Record{kind = u32(kind), values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3]}})
-	system.wake(requests_memory)
+	system.send(&requests.commands, ring.Record{kind = u32(kind), values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3]}})
 	limit := system.time() + 3000
 	for {
-		if completion, ok := ring.pop(&requests.completions); ok {
+		if completion, ok := system.receive(&requests.completions); ok {
 			if system.Status(completion.kind) != .Ok {
 				return fail("the root service refused: ", kind == .Start ? "no module has the name " : "no program has the name ", name)
 			}
 			return {}
 		}
-		if system.wait(system.time() + 20) > limit {
+		wait: system.Wait
+		system.wait_records(&wait, &requests.completions)
+		if system.wait_end(&wait, limit) >= limit {
 			return fail("the root service did not answer")
 		}
 	}

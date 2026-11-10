@@ -86,7 +86,6 @@ order_count: int
 placed: int
 input: ^ring.Ring
 control: ^ring.Ring
-control_memory: system.Handle
 pointer_x, pointer_y: int
 buttons: u32
 dragging := -1
@@ -168,7 +167,6 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	red_first = ctx.values[VALUE_FORMAT] == FORMAT_RED_FIRST
 	input = (^ring.Ring)(input_address)
 	control = (^ring.Ring)(control_address)
-	control_memory = ctx.handles[GRANT_CONTROL]
 	frame = canvas_create(width, height)
 	background = canvas_create(width, height)
 	for y in 0 ..< height {
@@ -184,8 +182,16 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	next_frame: u64
 	shown_second: u64
 	for {
-		now := system.wait(damage_count > 0 ? max(next_frame, 1) : (shown_second + 1) * 1000)
-		for record in ring.pop(&control.commands) {
+		wait: system.Wait
+		system.wait_records(&wait, &control.commands)
+		system.wait_records(&wait, &input.commands)
+		for &client in clients {
+			if client.ring != nil {
+				system.wait_records(&wait, &client.ring.commands)
+			}
+		}
+		now := system.wait_end(&wait, damage_count > 0 ? max(next_frame, 1) : (shown_second + 1) * 1000)
+		for record in system.receive(&control.commands) {
 			#partial switch display.Control(record.kind) {
 			case .Client_Add:
 				client_add(system.Handle(record.values[0]))
@@ -193,7 +199,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				client_remove(system.Handle(record.values[0]))
 			}
 		}
-		for record in ring.pop(&input.commands) {
+		for record in system.receive(&input.commands) {
 			#partial switch display.Input(record.kind) {
 			case .Key:
 				if order_count > 0 {
@@ -207,7 +213,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			if client.ring == nil {
 				continue
 			}
-			for record in ring.pop(&client.ring.commands) {
+			for record in system.receive(&client.ring.commands) {
 				#partial switch display.Command(record.kind) {
 				case .Surface_Create:
 					surface_create(index, record)
@@ -234,9 +240,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 }
 
 send :: proc "contextless" (client: ^Client, record: ring.Record) {
-	if ring.push(&client.ring.completions, record) {
-		system.wake(client.ring_memory)
-	}
+	system.send(&client.ring.completions, record)
 }
 
 client_add :: proc "contextless" (memory: system.Handle) {
@@ -352,8 +356,7 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32) 
 				width := graphics.text_width(name) + 16
 				if inside(pointer_x, pointer_y, x, 3, width, BAR_HEIGHT - 6) {
 					packed := system.name_pack(name)
-					ring.push(&control.completions, ring.Record{kind = u32(display.Control.Start), values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3]}})
-					system.wake(control_memory)
+					system.send(&control.completions, ring.Record{kind = u32(display.Control.Start), values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3]}})
 				}
 				x += width + 6
 			}
@@ -367,8 +370,7 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32) 
 			}
 			raise(position)
 			if inside(pointer_x, pointer_y, client.x + outer_width - CLOSE_SIZE - 6, client.y + 4, CLOSE_SIZE, CLOSE_SIZE) {
-				ring.push(&control.completions, ring.Record{kind = u32(display.Control.Stop), values = {0 = u64(client.ring_memory)}})
-				system.wake(control_memory)
+				system.send(&control.completions, ring.Record{kind = u32(display.Control.Stop), values = {0 = u64(client.ring_memory)}})
 				return
 			}
 			if pointer_y < client.y + TITLE_HEIGHT {

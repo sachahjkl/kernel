@@ -89,6 +89,6 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			logged = true
 		}
 		for _ in display.next_event(&window) {}
-		system.wait(system.time() + INTERVAL)
+		system.sleep(system.time() + INTERVAL)
 	}
 }
