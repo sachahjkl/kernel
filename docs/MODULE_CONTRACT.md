@@ -161,7 +161,7 @@ On x86-64 this is the System V AMD64 assignment:
 | A record, a slice, a string, a variant | Passed as the address of memory that the caller owns. Never by value |
 | More parameters than registers | Not permitted. Use a record |
 | Variable parameter lists | Not permitted |
-| Errors | A function that can fail declares a status result: an enumeration, 0 is success |
+| Errors | A function that can fail gives a negative integer result, and writes an error record at an address that the caller gives (section 8) |
 
 ### Why this subset and not the whole C convention
 
@@ -340,6 +340,81 @@ Status: Decided by the owner on 2026-11-09, after the study in `research/rad_lin
 - **RAD Linker**: not adapted. It reads COFF and writes x64 PE only. Its output stage is not separate from its core. A COFF target also brings the Windows x64 convention, which conflicts with section 4.
 - **Later**: the merge tool of section 3 can replace `lld`. `mold` and `wild` are faster ELF linkers to compare if link time becomes a problem.
 
+## 8. Errors that diagnose
+
+Status: asked by the owner on 2026-11-10 (`HANDOFF.md`, "No exceptions in the contracts", "System errors that diagnose", "A program that shows the errors"). Designed and implemented on 2026-11-10. The owner has not reviewed the choices below.
+
+### The rules
+
+1. **The status stays the fast answer.** A kernel operation gives a `Status`, and an export gives its result. A call that succeeds writes no error record and reads none: the path of success has no added instruction in the kernel and no added copy in a service.
+2. **A call that fails gives back an error record.** It is a value of the call, in memory that the caller owns (P14): no global state, no exception, no text.
+3. **One form**: `errors.Error_Record` (`contract/errors`), 56 bytes, seven Integer fields. Zero is "no error" (P13).
+4. **No ambient facts** (P20): a record describes what the caller gave and the handles of the caller. It names no other program and no object that the caller cannot see.
+5. **A sentence comes from the record.** `system.error_text` writes one sentence from the record and the names of the operation and of the argument. The record holds no text: the caller has the text of each argument that it gave.
+
+### The error record
+
+| Field | What it holds |
+|---|---|
+| `kind` | An error kind (`errors.Kind`): what is wrong. 0: no error |
+| `unit` | What `value`, `limit` and `found` count (`errors.Unit`): bytes, pages, blocks, handles, objects, ... |
+| `operation` | The kernel operation (`op.Operation`), or the number of the export in the file of its module |
+| `argument` | The number of the argument that is wrong, from 1. 0: the call as a whole |
+| `value` | The value that the argument had: a number, the count of bytes of a text, a handle, an address |
+| `limit` | What the argument must respect: a largest value, a size, the rights that the operation needs, the kind of object that it needs |
+| `found` | What the system found: the rights of the handle, what a budget still holds, the kind of the object, how a handle ended |
+
+The kinds, the meaning of `limit` and `found` for each kind, and the units are in `contract/errors/errors.odin`. Examples of sentences:
+
+- `storage.write: the argument name is empty; it must have 1 to 31 bytes`
+- `Memory_Map: the argument memory, handle 0x30004, has the rights Give Read; the operation needs Read Write`
+- `Memory_Size: the argument memory, handle 0x20007, was revoked`
+- `Memory_Create: the argument budget, handle 0x10009, cannot pay 66 pages: it holds 8 pages`
+
+**Why 56 bytes**: it is the size of the values of a completion record. A kernel operation gives its record there, with no other memory.
+
+**Why Integer fields only**: a record description has Integer, Handle and Text fields (section 4). Seven Integer fields make the record a described record: an export names it in its description, and the console and a program in any language read it with that description.
+
+**Why no field for the source** (kernel, service, module, loader): the caller knows where it called. The `operation` field has its meaning from that place.
+
+**Why no name in the record**: the name of a kernel operation and of its parameters is in the operation table (`op.OPERATIONS`); the name of an export and of its parameters is in its description. 56 bytes cannot hold them.
+
+### The three places
+
+**A kernel operation.** The completion record of a command that failed has the status in `kind` and the error record in `values`. A batch of commands that fails several times has one record for each failure. The kernel finds the record after the operation failed (`kernel/diagnose.odin`): it reads the form of each parameter in the operation table (a handle of a kind with rights, an address with a size, a count with a limit, flags), and checks the parameters in order, as the operation does. The operations themselves do not change. With an operation that the table does not explain, the record has the kind `Refused` with the status: an honest "no more detail".
+
+- **Why the completion record, and not a record in the thread record**: the owner was told "a record for the thread, in memory of the thread". The completion record is in the kernel ring, which is memory of the thread. One record in the thread record holds one failure of a batch, and it is a value outside the call: the defect of `errno`. A completion record is the answer of one command.
+- **A handle that ended**: the kernel keeps, in the handle slot that a close or a revocation emptied, how it ended. A handle of the generation before says "was closed" or "was revoked". An older handle says "names no handle".
+- **P20**: the record gives the amounts of a budget only when the handle of the caller has the right Read, and the state of a program only when the handle has Read: the operations that read them need this right.
+- **Cost**: on failure only. Measured by the program `errors`: see `FIRST_MILESTONE.md`.
+
+**An export.** An export that can fail declares an error record: its last parameter is `error: ^errors.Error_Record`. The description has the index of the record description in `Function.error_record`.
+
+- **Direct call**: one more argument, after the buffer of a result: the address of an error record of the caller.
+- **Isolated call**: one more field of the argument record, after the field of a result: the offset of 56 bytes in the call region. The receiver gives the export the address of that place: the export only writes it, so no copy is needed. `isolated.encode` writes zero bytes there.
+- **When**: the export writes the record when it fails, and only then. It fails when its integer result is negative. An export with a Record result has no integer result and no error record.
+- **Documentation**: the text of the export names its error kinds: `manual` shows them.
+- **Replacement**: the check of a replacement compares the error records of the two descriptions (`Difference.Error_Record`).
+- **A service**: the storage service and the information functions of `manual` give it. The client library `support/storage` gives it to its program.
+
+**The loader.** `module.Load_Error` stays. It is the same form of answer: a record of values and fixed texts that the caller owns, with no pointer, zero for no error. It is larger (288 bytes): it names modules by hash and by name, and the caller of a call host does not have these names. To fit 56 bytes it loses the names. `system.load_error_text` makes its sentences.
+
+### A fault: the stack trace
+
+Rule 8 below requires frame pointers. The kernel walks them when a thread faults:
+
+- Frame 0 is the instruction. For each next frame, `rbp` names 16 bytes of the stack: the `rbp` of the caller, then the return address. The walk stops at 16 frames, or at an `rbp` that is 0, not aligned on 8, not above the one before, or not memory of the program that it can read.
+- Each frame of the stop report (`op.Stop_Frame`) has the address, and the base and the hash of the module record that holds it. A reader gives "module + offset".
+- **Names of functions**: the module names its exports only. The names of the other functions are debug information, in a separate object (decision 5 below), which the system does not load yet. The kernel tool names each function from the linked file of the module (`build/modules/<name>/linked.elf`, where an offset is the address): the machine test checks the frames of `fault` this way.
+- **Frame pointers**: Odin with `-o:speed` keeps no frame pointer in about half of the functions. The kernel tool now compiles each module in two steps: Odin writes LLVM IR, and `llc` of the same LLVM (18) compiles it with `--frame-pointer=all`. The cost is in `FIRST_MILESTONE.md`.
+
+### What the records do not explain
+
+- The kernel finds the record after the operation, from the operation table: an operation that refuses for a reason that the table does not know gives `Refused` with the status.
+- A record holds one failure: the first argument that is wrong.
+- The record of an isolated call comes from another program: the caller checks the kind and the unit, and cannot prove the values.
+- The stack trace has 16 frames at most, and a function that does not keep `rbp` (code that is not built by the kernel tool) cuts it.
+
 ## Decisions of the owner
 
 Closed on 2026-11-09:
@@ -364,7 +439,7 @@ The owner closed the open questions of draft 1:
 5. **Nested data across a ring: one level only.** A record that goes through a ring can hold slices of flat records. A flat record holds no slice. The receiver checks all offsets in one pass with no recursion. Deeper data goes through a handle to a shared region or a stream.
 6. **Kernel entry**: the kernel ring only.
 7. **Thread-local data is not in the contract.** The loader has no support for thread-local segments. Each thread starts with the address of its thread record. The `gs` register of the thread also holds this address: the first word of the thread record is its own address, so `mov rax, [gs:0]` gives it on any stack. The kernel ring of the thread is one page after the thread record. This is the only use of `gs` (amended on 2026-11-10, with threads: one kernel ring per thread needs a way to find the ring that does not depend on the call chain). The thread record holds no data of a module, and the loader has no thread-local segment. The `fs` register is free for the private use of a program.
-8. **No unwinding. Frame pointers are required.** No exception crosses a module boundary. An error is a status value. A fault stops the program. Every module keeps frame pointers (`rbp` on x86-64), so that a debugger or a profiler walks the stack with no tables. The owner confirmed and widened this rule on 2026-11-10: no contract of the system uses an exception to tell an error. An exception makes a program fail at a place that the code does not show, and it needs a runtime that unwinds the stack to give the explanation. The system needs no such runtime. A language can have exceptions inside its own module, with its own runtime in that module: the system does not control that, and does not serve it. To read the stack is not forbidden: after a fault, a tool walks the frame pointers and names the calls, and no code of the program runs for that.
+8. **No unwinding. Frame pointers are required.** No exception crosses a module boundary. An error is a status value. A fault stops the program. Every module keeps frame pointers (`rbp` on x86-64), so that a debugger or a profiler walks the stack with no tables. The owner confirmed and widened this rule on 2026-11-10: no contract of the system uses an exception to tell an error. An exception makes a program fail at a place that the code does not show, and it needs a runtime that unwinds the stack to give the explanation. The system needs no such runtime. A language can have exceptions inside its own module, with its own runtime in that module: the system does not control that, and does not serve it. To read the stack is not forbidden: after a fault, a tool walks the frame pointers and names the calls, and no code of the program runs for that. Since 2026-11-10 the kernel tool builds each module with frame pointers, and the kernel walks them into the stop report (section 8).
 9. **The kernel is a module.** The boot program contains the loader and loads the kernel as a module. The hash of the kernel module is the value that the TPM measures (P17).
 
 ## Open questions
