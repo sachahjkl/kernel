@@ -142,18 +142,25 @@ writable :: proc "contextless" (file: []u8, memory_offset: u64) -> bool {
 // where the module runs. It differs from the address of memory when a loader
 // prepares a module for another address space.
 rebase :: proc "contextless" (file: []u8, memory: []u8, load_address: uintptr) -> Error {
+	return rebase_range(file, memory, load_address, 0, u64(len(memory)))
+}
+
+// rebase_range does the work of rebase for the locations from offset first
+// to offset end only: a loader that writes one segment at a time rebases
+// each one alone. It checks each location of the table.
+rebase_range :: proc "contextless" (file: []u8, memory: []u8, load_address: uintptr, first, end: u64) -> Error {
 	base := u64(load_address)
 	cursor: u64
 	for index in 0 ..< count(file, .Rebases) {
 		word, _ := record(file, .Rebases, index, u64)
 		if word & 1 == 0 {
-			rebase_location(file, memory, word, base) or_return
+			rebase_location(file, memory, word, base, first, end) or_return
 			cursor = word + 8
 			continue
 		}
 		for bit in u64(1) ..= REBASE_BITMAP_LOCATIONS {
 			if word >> bit & 1 != 0 {
-				rebase_location(file, memory, cursor + 8 * (bit - 1), base) or_return
+				rebase_location(file, memory, cursor + 8 * (bit - 1), base, first, end) or_return
 			}
 		}
 		cursor += 8 * REBASE_BITMAP_LOCATIONS
@@ -162,9 +169,12 @@ rebase :: proc "contextless" (file: []u8, memory: []u8, load_address: uintptr) -
 }
 
 @(private)
-rebase_location :: proc "contextless" (file: []u8, memory: []u8, memory_offset: u64, base: u64) -> Error {
+rebase_location :: proc "contextless" (file: []u8, memory: []u8, memory_offset: u64, base: u64, first, end: u64) -> Error {
 	if !writable(file, memory_offset) {
 		return .Bad_Rebase
+	}
+	if memory_offset < first || memory_offset >= end {
+		return .None
 	}
 	location := (^u64)(raw_data(memory[memory_offset:]))
 	intrinsics.unaligned_store(location, intrinsics.unaligned_load(location) + base)

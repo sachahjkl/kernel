@@ -48,6 +48,7 @@ SANDBOX_CAPACITY :: 8
 
 // A sandbox with no name is free.
 sandboxes: [SANDBOX_CAPACITY]Sandbox
+prepared: system.Prepared_Modules // The shared code of the call hosts.
 
 // sandbox_free gives a free sandbox, and its number. 0: all have a user.
 sandbox_free :: proc "contextless" () -> (sandbox: ^Sandbox, number: int) {
@@ -695,7 +696,7 @@ sandbox_start :: proc "contextless" (sandbox: ^Sandbox) -> system.Status {
 	values[isolated.VALUE_FILE_SIZE] = sandbox.file_size
 	mappings := [1]system.Mapping{{memory = image_memory, address = isolated.FILE_ADDRESS, first = sandbox.first_page, page_count = sandbox.page_count}}
 	status: system.Status
-	sandbox.program, status = system.program_start(system.image_find(image, "host"), sandbox.name, grants, values, {pages = 512, programs = 1, threads = 1, processor = 500_000, log_records = 100}, mappings[:])
+	sandbox.program, status = system.program_start(system.image_find(image, "host"), sandbox.name, grants, values, {pages = 512, programs = 1, threads = 1, processor = 500_000, log_records = 100}, mappings[:], &prepared)
 	return status
 }
 

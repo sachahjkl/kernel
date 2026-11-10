@@ -91,7 +91,7 @@ The kernel contains no code for a device, except the timer, the interrupt contro
 
 | Part | Role |
 |---|---|
-| `support/system/` | Wrappers of the kernel operations, text formatting, the loader, the grant roles |
+| `support/system/` | Wrappers of the kernel operations, text formatting, the loader with its table of prepared modules, the grant roles |
 | `contract/ring/` | Command queue and completion queue in one memory object |
 | `support/display/` | The protocol of the compositor (create a surface, present, key and pointer events) and the client code |
 | `support/graphics/` | Canvas, fill, line, copy, text. The font is Spleen 8x16 at its native size |
@@ -267,6 +267,11 @@ NEW-6. **A new mapping is checked against the mappings, not against the page tab
 NEW-7. **What the reports show.** `System_Report` has `reserved_pages` and `first_use_faults`; `Program_Report` has `present_pages`, the mapped pages that have a frame. `memory()` prints the pages in use and the reserved pages. `programs()` prints the present pages of each program, and `monitor` shows them in place of the mapped pages. The program `pages` reads the page table itself, so its half of the program now shows only the pages that the program used.
 NEW-8. **The machine test waited for "compositor: first frame" before "compositor: surface console".** The system does not fix this order. With pages on first use, the first frame of the compositor takes more time (the frames of its pictures come at the first draw), and the surface of the console came first. The step has `any_order` now (choice 19).
 
+NEW-9. **Shared code: the loader prepares a module one time, and each program of the module maps it.** The program that starts programs keeps a table of prepared modules (`system.Prepared_Modules`), by the hash of the module file. A prepared module is one memory object with the segments that do not change after the load: the code, the constants, and the data that is read-only after the rebase. Each program of the module maps these pages with the protection of their segment. It receives a new memory object for each writable segment, with the bytes of the file, rebased for that segment only (`module.rebase_range`): the pages of zeros after them stay pages on first use. The kernel learns nothing of the module format: it maps a memory object with the rights of a handle, as before.
+NEW-10. **Nobody writes the shared code.** After the preparation, the table keeps a copy of the handle with the rights Read and Execute only, and closes the handle that wrote. A program of the module has a mapping and no handle: a write to its code is a page fault, and the kernel stops it. The program that starts programs cannot write it either.
+NEW-11. **The starter pays, and a prepared module lives while a program maps it.** The budget of the program that owns the table pays for each prepared module, one time; the budget of each program pays for its writable segments, its stack and its context. Each mapping of a program comes from the handle of the table (choice 105), so `Handle_State` gives the count of programs that map it. At each start, the loader closes each prepared module that no program maps. No new kernel operation is needed.
+NEW-12. **Three programs keep a table**: the root service (each program of the desktop and each terminal), `rings` (its six `node` programs) and the console (its call hosts, which run the module `host`). `program_start` with no table gives the program its own copy of the module, as before: the program `frames` uses it to measure the difference.
+
 ## Gaps
 
 Against the properties and the module contract:
@@ -293,7 +298,7 @@ Against the properties and the module contract:
 - The console has no command that ends the connection to a service.
 - A thread has no preferred processor: it can change processor at each time slice.
 - When each processor runs a thread, a thread that becomes ready waits for the end of a time slice (10 ms at most) or for a thread that waits.
-- Two programs that run the same module do not share its code.
+- Shared code: each program that starts programs has its own table of prepared modules: two such programs that start the same module prepare it two times. A module that a program loads in itself (`load` in the console, the module of a call host) is not shared. A prepared module stays after its last program until the next start by the same program. The loader computes the hash of the module file at each start.
 - Pages on first use: no page of zeros is shared, so the first read of a page takes a frame, as a write does. A program cannot give back the frames of a part of a memory object that lives. No operation gives contiguous memory to a device service, for a device that reads memory itself. A memory object has at most 1 GiB.
 - The revocation of a mapping walks the frame list of its memory object for each word that a thread of the program waits on. `Program_Report` walks the page tables of the program to count its present pages.
 - The 16 pages of the stack of the boot program stay in use after the kernel leaves that stack.

@@ -20,6 +20,8 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Index | A SQLite database that is built from flat tables and can be rebuilt from them. It answers queries across many modules. It is never the source of truth (P12) | registry, catalogue, cache |
 | Replacement | A record `{hash, hash}` that the starter of a program gives to the loader: where a module imports the first module, the loader loads the second one, after it checked that the descriptions of the used exports are equal | override, shim, LD_PRELOAD, DLL redirection |
 | Loader | The user-space code that builds a program from a module and its imports | linker, dynamic linker |
+| Prepared module | A memory object that holds the segments of a module that do not change after the load, copied from the file and rebased at the program base. The program that starts programs keeps it in a table, by the hash of the module, while a program maps it | shared library, image cache, page cache |
+| Shared code | The pages of a prepared module that each program of the module maps without Write: its code, its constants, and its data that is read-only after the rebase. Each program has its own copy of the writable segments | text segment, shared object |
 | Boot image | The one block of data that the boot program loads with the kernel. It holds the modules of the first programs, each with its name | initrd, ramdisk |
 | Position-independent | Code that runs correctly at any address with no change to its bytes | relocatable, PIC, PIE |
 

@@ -115,10 +115,11 @@ budget_used :: proc "contextless" (budget: Handle = 0) -> (processor_time: u64, 
 }
 
 // memory_create makes a memory object. The budget (0: the budget of this
-// program) pays for its pages.
-memory_create :: proc "contextless" (page_count: u64, budget: Handle = 0) -> (memory: Handle, status: Status) {
+// program) pays for its pages now. Each page gets its page frame at its
+// first use, or at creation with the flag Frames_Now.
+memory_create :: proc "contextless" (page_count: u64, budget: Handle = 0, flags: op.Memory_Flags = {}) -> (memory: Handle, status: Status) {
 	results: [7]u64
-	results, status = call(.Memory_Create, u64(budget == 0 ? own_budget() : budget), page_count)
+	results, status = call(.Memory_Create, u64(budget == 0 ? own_budget() : budget), page_count, transmute(u64)flags)
 	return Handle(results[0]), status
 }
 

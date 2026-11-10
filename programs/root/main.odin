@@ -156,6 +156,8 @@ machine: system.Handle
 image: []u8
 image_memory: system.Handle
 started: [STARTED_CAPACITY]Started
+// The shared code of the modules of the programs that this service starts.
+prepared: system.Prepared_Modules
 compositor: system.Handle
 control: ring.Ring
 control_memory: system.Handle
@@ -237,7 +239,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		grants[2] = {device(.Interrupt, 1, 0), {.Read}}
 		grants[3] = {device(.Interrupt, 12, 0), {.Read}}
 		grants[op.CONTEXT_LOG] = log_grant("input")
-		_, status = system.program_start(system.image_find(image, "input"), "input", grants, {}, budget_of("input"))
+		_, status = system.program_start(system.image_find(image, "input"), "input", grants, {}, budget_of("input"), nil, &prepared)
 		if status != .Ok {
 			fail("cannot start input", status)
 		}
@@ -263,7 +265,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		values[1] = ctx.values[op.ROOT_VALUE_HEIGHT]
 		values[2] = ctx.values[op.ROOT_VALUE_PIXELS_PER_LINE]
 		values[3] = ctx.values[op.ROOT_VALUE_FORMAT]
-		compositor, status = system.program_start(system.image_find(image, "compositor"), "compositor", grants, values, budget_of("compositor"))
+		compositor, status = system.program_start(system.image_find(image, "compositor"), "compositor", grants, values, budget_of("compositor"), nil, &prepared)
 		if status != .Ok {
 			fail("cannot start the compositor", status)
 		}
@@ -441,7 +443,7 @@ start :: proc "contextless" (name: string) -> system.Status {
 		mapping_count = 1
 	}
 	if status == .Ok {
-		slot.program, status = system.program_start(file, name, grants, values, budget_of(name), mappings[:mapping_count])
+		slot.program, status = system.program_start(file, name, grants, values, budget_of(name), mappings[:mapping_count], &prepared)
 	}
 	if status != .Ok {
 		release(slot)
@@ -541,7 +543,7 @@ terminal_start :: proc "contextless" (view: ^Started, writer: ^Started, ring_mem
 	measure: bool
 	values[terminal.VALUE_COLUMNS], values[terminal.VALUE_ROWS], measure = terminal_of(system.name_of(writer.name[:]))
 	values[terminal.VALUE_MEASURE] = u64(measure)
-	program, status := system.program_start(system.image_find(image, "terminal"), "terminal", grants, values, budget_of("terminal"))
+	program, status := system.program_start(system.image_find(image, "terminal"), "terminal", grants, values, budget_of("terminal"), nil, &prepared)
 	if status != .Ok {
 		system.send(&control.commands, ring.Record{kind = u32(display.Control.Client_Remove), values = {0 = u64(client)}})
 		return status
