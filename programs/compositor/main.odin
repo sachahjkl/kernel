@@ -304,6 +304,9 @@ surface_create :: proc "contextless" (index: int, record: ring.Record) {
 	client.title = system.name_unpack({record.values[3], record.values[4], record.values[5], record.values[6]})
 	client.x = 60 + placed % 8 * 36
 	client.y = BAR_HEIGHT + 24 + placed % 8 * 30
+	// A large window moves up and left until the screen shows all of it.
+	client.x = max(min(client.x, screen.width - int(width) - 2 * BORDER), 0)
+	client.y = max(min(client.y, screen.height - int(height) - TITLE_HEIGHT - BORDER), BAR_HEIGHT)
 	placed += 1
 	damage_focus()
 	order[order_count] = index

@@ -29,6 +29,7 @@ Step_Kind :: enum {
 	Launch, // Press the button of the program text in the launcher.
 	Drag, // Hold the left button from (x, y) to (to_x, to_y).
 	Shot, // Save the screen as text.png.
+	Quit, // End QEMU: the machine does not stop by itself.
 }
 
 Step :: struct {
@@ -39,6 +40,18 @@ Step :: struct {
 	// For Wait: the next Wait searches from the same place. Use it when two
 	// programs print in an order that the system does not fix.
 	any_order:  bool,
+}
+
+// A start that fails: the boot image has no compositor. The boot display
+// stays on the screen with the failure, and the machine does not stop.
+scenario_fails := [?]Step {
+	{kind = .Wait, text = "boot program: ok"},
+	{kind = .Wait, text = "kernel: ok"},
+	{kind = .Wait, text = "root: ok"},
+	{kind = .Wait, text = "root: cannot start the compositor: status "},
+	{kind = .Wait, text = "root: the boot display shows the failure"},
+	{kind = .Shot, text = "boot_fails"},
+	{kind = .Quit},
 }
 
 // The positions below come from programs/compositor/main.odin: the launcher
@@ -234,7 +247,17 @@ scenario := [?]Step {
 	{kind = .Wait, text = "processors: ok, 4 processors ran the program at the same time"},
 	{kind = .Wait, text = "processors: the picture took "},
 	{kind = .Shot, text = "processors"},
+
+	// The boot display in a window: how the machine started, with the
+	// records that the kernel has now.
+	{kind = .Launch, text = "boot"},
+	{kind = .Wait, text = "boot: ok, 7 stages, "},
+	{kind = .Shot, text = "boot"},
+	// The window covers the screen: move it down, away from the console.
+	{kind = .Drag, x = 500, y = 54, to_x = 500, to_y = 754},
 	{kind = .Click, x = 70, y = 300},
+	{kind = .Type, text = "stop(\"boot\")"},
+	{kind = .Wait, text = "root: boot stopped"},
 	{kind = .Type, text = "programs()"},
 	{kind = .Wait, text = "   threads     "},
 	// Each page is free or paid, after all the starts and stops of this test.
@@ -248,6 +271,7 @@ Machine :: struct {
 	process:   os.Process,
 	monitor:   ^os.File,
 	seen:      int, // The bytes of the log that the Wait steps used.
+	output:    string, // The file of the log of the kernel.
 	x, y:      int, // The pointer.
 	pointer_known: bool, // The tool knows where the pointer is.
 }
@@ -315,7 +339,7 @@ pointer_button :: proc(machine: ^Machine, down: bool) {
 log_wait :: proc(machine: ^Machine, text: string, any_order := false) -> bool {
 	start := time.now()
 	for time.since(start) < STEP_TIMEOUT {
-		log, err := os.read_entire_file(TEST_OUTPUT, context.temp_allocator)
+		log, err := os.read_entire_file(machine.output, context.temp_allocator)
 		if err == nil && len(log) > machine.seen {
 			if index := strings.index(string(log[machine.seen:]), text); index >= 0 {
 				if !any_order {
@@ -414,14 +438,14 @@ png_encode :: proc(width, height: int, pixels: []u8) -> []u8 {
 	return out[:]
 }
 
-// machine_test runs the scenario. It passes when each step passes and the
-// kernel stops the machine with code 0.
-machine_test :: proc() -> bool {
-	command, ok := machine_command(true)
-	if !ok || !reset_folder(SCREENSHOT_FOLDER) {
+// machine_test runs a scenario on a boot volume. It passes when each step
+// passes and QEMU ends with the status exit_status.
+machine_test :: proc(steps: []Step, volume: string, output: string, exit_status: int) -> bool {
+	command, ok := machine_command(volume, output)
+	if !ok {
 		return false
 	}
-	_ = os.remove(TEST_OUTPUT)
+	_ = os.remove(output)
 	monitor_read, monitor_write, pipe_err := os.pipe()
 	if pipe_err != nil {
 		fmt.eprintfln("kerneltool: cannot create a pipe: %v", pipe_err)
@@ -435,8 +459,9 @@ machine_test :: proc() -> bool {
 	machine := Machine {
 		process = process,
 		monitor = monitor_write,
+		output  = output,
 	}
-	passed := scenario_run(&machine)
+	passed := scenario_run(&machine, steps)
 	state: os.Process_State
 	if passed {
 		wait_err: os.Error
@@ -444,7 +469,7 @@ machine_test :: proc() -> bool {
 		if wait_err != nil || !state.exited {
 			fmt.eprintln("kerneltool: test failed: the machine did not stop")
 			passed = false
-		} else if state.exit_code != MACHINE_STOP_OK {
+		} else if state.exit_code != exit_status {
 			fmt.eprintfln("kerneltool: test failed: QEMU ended with status %d", state.exit_code)
 			passed = false
 		}
@@ -456,7 +481,7 @@ machine_test :: proc() -> bool {
 	os.close(monitor_write)
 	os.close(monitor_read)
 	if !passed {
-		log, _ := os.read_entire_file(TEST_OUTPUT, context.temp_allocator)
+		log, _ := os.read_entire_file(output, context.temp_allocator)
 		lines := strings.split_lines(string(log), context.temp_allocator)
 		fmt.eprintln("kerneltool: the end of the log of the kernel:")
 		for line in lines[max(len(lines) - 25, 0):] {
@@ -466,8 +491,8 @@ machine_test :: proc() -> bool {
 	return passed
 }
 
-scenario_run :: proc(machine: ^Machine) -> bool {
-	for step, index in scenario {
+scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
+	for step, index in steps {
 		switch step.kind {
 		case .Wait:
 			if !log_wait(machine, step.text, step.any_order) {
@@ -514,6 +539,8 @@ scenario_run :: proc(machine: ^Machine) -> bool {
 				pointer_move(machine, step.to_x, step.to_y)
 			}
 			pointer_button(machine, false)
+		case .Quit:
+			monitor_send(machine, "quit")
 		case .Shot:
 			if !screen_save(machine, step.text) {
 				return false

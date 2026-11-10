@@ -36,8 +36,10 @@ The scenario does these actions:
 17. Start `rights` from the bar. The program holds the machine with the right Inspect and the boot image with the right Read. It asks the kernel for nine operations. The kernel does four and refuses five with the status `No_Right`: create a device handle, stop the machine, map the boot image to write, map it to execute, give it to the compositor. The log has "rights: ok, 4 allowed, 5 refused".
 18. Start `budget` from the bar. The program creates memory objects of 64 pages until the kernel answers `No_Budget`, then closes them: its budget has the first number of pages again. It does the same with threads. It takes 256 pages for a new budget, creates 200 pages with it, and closes the new budget: its own budget then pays for the 200 pages. The log has "budget: ok, 10 memory objects then no budget, 3 threads then no budget, each page returned".
 19. Start `processors` from the bar. The machine of the test has four processors. Five threads of the program compute, and the program asks the kernel what each processor runs: the log has "processors: ok, 4 processors ran the program at the same time". Then 1, 2 and 4 threads compute the same picture, and the log has the three times: "processors: the picture took 404 ms with 1 thread, 198 ms with 2 threads, 148 ms with 4 threads" in one run. The test does not check the times.
-20. Call `memory()`. The console prints "budgets N pages: all the free pages": after all the starts and stops of the test, each page is free or paid. It also prints the number of processors, and the times that a processor waited for the kernel lock.
-21. Call `shutdown()`. The machine stops with code 0.
+20. Start `boot` from the bar. The window shows the boot display: the seven stages of the start on one line of time, the memory that the firmware gave, the machine, the modules of the boot image, the programs. The log has "boot: ok, 7 stages, N memory ranges, N programs".
+21. Call `memory()`. The console prints "budgets N pages: all the free pages": after all the starts and stops of the test, each page is free or paid. It also prints the number of processors, and the times that a processor waited for the kernel lock.
+22. Call `shutdown()`. The machine stops with code 0.
+23. A second machine starts with a boot image that has no compositor. The root service cannot start the compositor: the boot display stays on the screen with "the start failed: cannot start the compositor: status 1", and the machine does not stop. The log has "root: the boot display shows the failure". The test runs this machine first.
 
 ## The path from power to desktop
 
@@ -46,6 +48,7 @@ The scenario does these actions:
 3. The kernel (`kernel/`) takes the memory, builds its tables, sets the processor tables, the interrupt controller and the timer. It reads the list of the processors in the ACPI tables and starts each one.
 4. The kernel loads one program from the boot image: the root service. It gives it three handles: the machine, the framebuffer, the boot image.
 5. The root service (`programs/root`) loads the other programs in user space with `system.program_start`. It starts the input service, the compositor and the console.
+   The boot display (`bootscreen/`) is on the screen from step 2 to step 5. The boot program draws it with what it knows. The root service draws it again before each start, with the records of the kernel. The compositor then takes the screen.
 6. From this point, the kernel only executes kernel operations, schedules, and turns interrupts into wakes.
 
 ## Kernel
@@ -152,6 +155,11 @@ The owner did not review these. Each one can change.
 34. **The timer is the local APIC.** The kernel measures it against the 8254 once. An idle processor stops its timer, except the first processor. The device lines stay on the 8259: the system has two device interrupts (keyboard, mouse), and a new device class will send its interrupts as messages to a local APIC (MSI), so the kernel needs no I/O APIC code.
 35. **One table for the launcher.** `programs/launcher` holds the names and the place of each button. The compositor draws from it and the kernel tool clicks from it: the test step is `Launch` with a name, not a click at a number.
 36. **A failure of the check that came sometimes: found.** The flake check of step 11 failed once with "runtime assertion: import" in a unit test of the tool. The tokenizer of the Odin library (`core:odin/tokenizer`) fills its table of keywords at its first use, and its test of "already filled" is outside its lock. The test runner gives each test a thread: two tests that parse Odin source at the same time fill the table twice, and the second stops on an assertion. The tool itself has one thread and is not affected. `tools/kerneltool/describe_test.odin` now fills the table before the threads start.
+37. **The boot display is one picture of the records of the kernel.** Owner decision of 2026-11-10: the start of the machine must show a rich, coloured and documented display, with all the facts that help to find a fault, and not a terminal of an old machine. `bootscreen/` draws one record (`bootscreen.Data`) at the full resolution of the framebuffer. Each panel names the kernel record that it shows. A record that is all zero is valid: its panel says "not known yet". Three programs draw it: the boot program, the root service, and the program `boot` in a window. The kernel does not draw.
+38. **The boot record.** `Inspect` has a new kind, `Boot`, with the record `Boot_Report`: the stages with their times, the memory ranges of the firmware, the firmware, the framebuffer, the sizes, the frequencies of the cycle counter and of the timer. The kernel reads the cycle counter of the processor at the end of each stage. The counter is 0 when the machine starts, so the time before the boot program is the stage "firmware". The kernel measures the frequency of the counter with the wait that already measures the timer. `Program_Report` has `start_time`, and `Processor_Report` has `apic_id`. The kernel also writes each stage on the log ("kernel: boot: ...").
+39. **A start that fails keeps the display.** Before, the root service stopped the machine when a start failed. Now it stops the compositor if it runs, draws the boot display with the failure in red, and waits. A person reads the display and stops the machine. The kernel tool builds a second boot image with no compositor, and a second boot volume, and the machine test checks this path (`scenario_fails`).
+40. **No pause for the eye.** With a start that succeeds, the boot display is on the screen for about 20 ms under QEMU: the system does not wait so that a person can read it. The program `boot` shows the same display at any time.
+41. **The launcher and large windows.** The buttons of the launcher have 4 pixels of padding and 2 of gap (6 and 4 before), for the 14 names. The compositor moves a new window up and left until the screen shows all of it.
 
 ## Gaps
 
@@ -166,6 +174,9 @@ Against the properties and the module contract:
 - A thread has no preferred processor: it can change processor at each time slice.
 - When each processor runs a thread, a thread that becomes ready waits for the end of a time slice (10 ms at most) or for a thread that waits.
 - Paging protects programs from each other, but the kernel does not yet use it on itself: the kernel image is not split in read-only and no-execute parts, and a kernel stack has no guard page. Owner decision of 2026-11-10: see `HANDOFF.md`.
+- The log is lines of text with the name of the program. It has no channels, no levels and no reader but the serial port. The system has no convention for the input and the output of a program. Proposals wait for the owner (`HANDOFF.md`).
+- The bar has place for one more name. More programs need a menu.
+- The boot display needs 976 x 700 pixels. On a smaller screen it is cut.
 - A thread that stops with a lock held keeps the lock: the other threads wait with no end.
 - No storage, no network, no document service, no principals, no TPM, no Secure Boot.
 

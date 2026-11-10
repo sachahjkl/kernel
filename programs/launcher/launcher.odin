@@ -4,12 +4,12 @@
 package launcher
 
 @(rodata)
-names := [?]string{"console", "monitor", "plasma", "life", "paint", "fault", "temple", "rings", "threads", "workers", "rights", "budget", "processors"}
+names := [?]string{"boot", "console", "monitor", "plasma", "life", "paint", "fault", "temple", "rings", "threads", "workers", "rights", "budget", "processors"}
 
 CHARACTER_WIDTH :: 8 // The font of the system.
 START :: 76 // After the name of the system.
-PADDING :: 6
-GAP :: 4
+PADDING :: 4
+GAP :: 2
 BAR_HEIGHT :: 28
 
 // button gives the left side and the width of the button of names[index].

@@ -70,6 +70,8 @@ The next step is the owner's review of that file.
 - **Work to the end, with no pause (owner, 2026-11-10)**: "I want everything." Do the planned steps and the steps that follow from the properties, without a question to the owner between steps. After each five steps, review the work against the properties and the rule "no bad compromise", and write the result in `docs/REVIEWS.md`.
 - **64 bits only (owner, 2026-11-10)**: a basic assumption of the whole design. An address is 64 bits. The system has no 32-bit target and no 32-bit program. The targets are x86-64 first, and ARM64 at best. Use this to make records, handles and the call form simpler: one size for an address, a count and a register value, and no second layout of a record. Recorded in `PROPERTIES.md` ("Assumptions") and in `MODULE_CONTRACT.md`.
 - **Use paging and virtual memory (owner, 2026-11-10)**: "do leverage paging, virtual memory, read-only memory". Page protection is a design tool of the kernel and of the system, not only the wall between programs. Use read-only mappings, no-execute pages, guard pages and pages on first use where they make a rule physical. First uses, planned as the step after "several processors": a guard page under each kernel stack and each thread stack, the kernel image split in read-only code and no-execute data, read-only code shared between programs that run the same module, the start code of processors mapped only during the start.
+- **A rich boot display (owner, 2026-11-10)**: the start of the machine must show a display that is rich, documented and coloured, with as many facts as possible to find a fault. No display that is limited on purpose, such as a terminal of an old machine. No special font and no picture is needed. The facts must also go to the log, in channels. Done: choices 37 to 41 of `FIRST_MILESTONE.md`, `bootscreen/`, the program `boot`. Not done: the channels of the log.
+- **Log, input and output of a program (owner, 2026-11-10)**: the owner asked for proposals. They are below, in "Proposals that wait for the owner". Do not implement before the owner chooses.
 - **Several processors: done on 2026-11-10** (choices 30 to 34 of `FIRST_MILESTONE.md`). One kernel lock, with a count of its waits; a processor record behind the `gs` register; shown by `processors`.
 - No pull request unless the owner asks.
 
@@ -95,6 +97,16 @@ Notes are in `research/`.
 - The "On the Metal" podcast episode with Blow (2020) was not transcribed. It discusses microkernels and dynamic linking.
 - No research exists on executable formats, linkers and loaders. Property 10 needs it.
 - DBOS details and the licences in the reuse list of `PROPERTIES.md` come from memory.
+
+## Proposals that wait for the owner
+
+Log, input and output of a program (asked on 2026-11-10).
+
+1. **The log is records in channels.** A log record has a time, a program, a thread, a level, a channel and a text. A log service in user space keeps the records in rings and gives them to readers. The kernel keeps only a small ring for the time before the log service. A program cannot choose its program name: the grant fixes it. A grant can fix the channel too. The boot display and a `log` window read the same records, by channel, program and level.
+2. **No standard input and no standard output.** A program has no ambient stream of bytes. The input of a command is its typed parameters, and its output is its typed result (property 19). A flow of data in time is a ring of records with a description, given as a grant. The console joins two programs with such a ring. Text is one type of record.
+3. **Three places in the context: input, output, log.** Each place holds a ring, or 0. The program that starts another one chooses each ring: the console, a document, another program, or nothing. A write to place 0 does nothing. Messages for the person who looks for a fault go to the log, never to the output.
+
+Recommendation: 1 and 2 together, with the two places "input" and "output" of 3 as typed rings of records and not as bytes.
 
 ## Next steps
 

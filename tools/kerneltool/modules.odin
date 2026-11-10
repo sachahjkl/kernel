@@ -12,6 +12,7 @@ import "core:sys/linux"
 
 MODULE_BUILD_FOLDER :: BUILD_FOLDER + "/modules"
 BOOT_IMAGE :: BUILD_FOLDER + "/boot.image"
+BOOT_IMAGE_FAILS :: BUILD_FOLDER + "/boot_fails.image"
 SYSTEM_LIBRARY_FOLDER :: "system"
 
 // The modules of the project, each one after its imports.
@@ -49,6 +50,7 @@ module_builds := [?]Module_Build {
 	{name = "rights", source = "programs/rights", image = true},
 	{name = "budget", source = "programs/budget", image = true},
 	{name = "processors", source = "programs/processors", image = true},
+	{name = "boot", source = "programs/boot", image = true},
 	{name = "host", source = "programs/host", image = true},
 	{name = "probe", source = "modules/probe", image = true},
 	{name = "math", source = "modules/math", image = true},
@@ -66,7 +68,8 @@ build_modules :: proc() -> bool {
 	for build in module_builds {
 		build_module(build) or_return
 	}
-	return build_boot_image()
+	// The second boot image has no compositor: with it, the start fails.
+	return build_boot_image(BOOT_IMAGE, "") && build_boot_image(BOOT_IMAGE_FAILS, "compositor")
 }
 
 // files_with_suffix gives the paths of the files of a folder that end with suffix.
@@ -174,12 +177,12 @@ build_module :: proc(build: Module_Build) -> bool {
 }
 
 // build_boot_image writes the modules that have `image` set into one block
-// (boot_info/boot_info.odin).
-build_boot_image :: proc() -> bool {
+// (boot_info/boot_info.odin). It leaves out the module `without`.
+build_boot_image :: proc(path: string, without: string) -> bool {
 	entries := make([dynamic]info.Image_Entry, context.temp_allocator)
 	files := make([dynamic][]u8, context.temp_allocator)
 	for build in module_builds {
-		if !build.image {
+		if !build.image || build.name == without {
 			continue
 		}
 		file := read_file(module_path(build.name)) or_return
@@ -200,8 +203,8 @@ build_boot_image :: proc() -> bool {
 	if len(entries) > 0 {
 		mem.copy(&image[size_of(header)], &entries[0], len(entries) * size_of(info.Image_Entry))
 	}
-	if err := os.write_entire_file(BOOT_IMAGE, image[:]); err != nil {
-		fmt.eprintfln("kerneltool: cannot write %s: %v", BOOT_IMAGE, err)
+	if err := os.write_entire_file(path, image[:]); err != nil {
+		fmt.eprintfln("kerneltool: cannot write %s: %v", path, err)
 		return false
 	}
 	return true

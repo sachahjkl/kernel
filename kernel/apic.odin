@@ -108,8 +108,11 @@ timer_calibrate :: proc "contextless" () {
 	apic_write(APIC_TIMER_DIVIDE, 3) // Divide by 16.
 	apic_write(APIC_TIMER, APIC_MASKED)
 	apic_write(APIC_TIMER_START, max(u32))
+	cycles := cycles_now()
 	pit_wait(MEASURE_TICKS * 1_000_000 / TICKS_PER_SECOND)
 	timer_count = (max(u32) - apic_read(APIC_TIMER_NOW)) / MEASURE_TICKS
+	// The same wait measures the cycle counter: the boot record uses it.
+	cycle_frequency = (cycles_now() - cycles) * TICKS_PER_SECOND / MEASURE_TICKS
 	apic_write(APIC_TIMER_START, 0)
 	if timer_count == 0 {
 		log("kernel: the timer of the processor does not count")

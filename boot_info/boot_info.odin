@@ -53,6 +53,12 @@ Boot_Info :: struct {
 	boot_image_size:    u64,
 	framebuffer:        Framebuffer,
 	acpi_root:          u64, // The root record of the ACPI tables of the firmware ("RSD PTR "). 0: none.
+	// The cycle counter of the processor at two moments of the boot program.
+	// The counter is 0 when the machine starts.
+	cycles_start:       u64, // The boot program starts.
+	cycles_loaded:      u64, // The kernel and the boot image are in memory.
+	firmware_vendor:    [32]u8, // Zero bytes after the name.
+	firmware_revision:  u64,
 }
 
 // physical gives a pointer to physical memory, through the direct map.

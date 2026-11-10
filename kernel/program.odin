@@ -107,6 +107,7 @@ Program :: struct {
 	thread_count: u32,
 	has_ports:    bool,
 	run_time:     u64,
+	start_time:   u64, // Microseconds since the machine started.
 	entries:      u64,
 	mapped_pages: u64,
 	handles:      [HANDLE_CAPACITY]Handle_Slot,
@@ -426,6 +427,7 @@ program_create :: proc "contextless" (budget: u32, name: []u8) -> (index: u32, s
 		program.next_address = op.CHOSEN_BASE
 		copy(program.name[:len(program.name) - 1], name)
 		program.state = .Created
+		program.start_time = microseconds(cycles_now())
 		return u32(slot + 1), .Ok
 	}
 	return 0, .No_Slot

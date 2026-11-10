@@ -34,6 +34,8 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Event word | A word of the thread record. The kernel adds 1 to it when an interrupt of the program arrives, when a held program stops, and when another thread of the program ends. A thread waits on it with the word wait | signal, notification |
 | Processor | One unit of the machine that executes instructions. A machine has several. Each one runs one thread at a time | core, CPU, hart |
 | Processor record | The record that the kernel keeps for one processor: its kernel stack, its current thread, its page table | per-CPU data |
+| Stage | One part of the start of the machine, with a start time and a duration: the firmware, two of the boot program, four of the kernel | phase, boot step |
+| Boot record | The record that the kernel keeps of how the machine started (`Boot_Report`): the stages, the memory ranges of the firmware, the firmware, the framebuffer | boot log, dmesg |
 | Kernel lock | The one lock of the kernel: one processor at a time runs kernel code | big kernel lock, giant lock |
 | Thread area | The memory that the kernel makes for one thread: the thread record, then the kernel ring of the thread | |
 | Service | A program that other programs call through rings. A service has no special privilege | daemon, server, driver |
@@ -98,6 +100,7 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Surface | A region of shared memory that one program draws into and the compositor displays (P18) | window buffer, framebuffer (reserved for the UEFI one) |
 | Compositor | The service that owns the display, combines surfaces and routes input to the program with focus. In the first milestone it is also the desktop shell | window manager, display server |
 | Damage rectangle | A rectangle of the screen that changed. The compositor draws again only the damage rectangles of a frame | dirty region, invalid area |
+| Boot display | The picture of how the machine started, drawn from the boot record and the other records of the kernel. The boot program and the root service draw it on the screen; the program `boot` draws it in a window | splash screen, boot log, POST screen |
 | Console | A normal program that shows text in a surface and calls commands in a real programming language (P19) | terminal, TTY, shell |
 | Desktop shell | The program that starts programs and shows surfaces and grants to the person | launcher, window manager |
 | Picker | The surface of the document service where the person chooses a document. Its result is a grant | file dialog, powerbox |

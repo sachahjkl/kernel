@@ -17,6 +17,7 @@ A step is one tested commit that adds one capability.
 | 9 | `07c1b00` | Rights on handles: `Handle_Give` takes a mask, `No_Right`, one Machine object with Inspect, Devices and Stop, shown by `rights` |
 | 10 | `6b6346f` | Budgets and the Log handle: no operation creates an object from nothing, shown by `budget` |
 | 11 | `61b8661` | Several processors: one kernel lock, a processor record, `processor_sync`, shown by `processors` |
+| 12 | `HASH12` | The boot display: a boot record with stages, drawn by the boot program, the root service and `boot`; a start that fails keeps the display |
 
 ## Review 1: steps 1 to 5 (2026-11-10)
 

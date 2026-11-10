@@ -342,6 +342,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 					name         = about.name,
 					mapped_pages = about.mapped_pages,
 					run_time     = about.run_time,
+					start_time   = about.start_time,
 					entries      = about.entries,
 				}
 				if about.state != .None {
@@ -355,6 +356,12 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			}
 			(^op.Program_Report)(uintptr(v[3]))^ = report
 			results[0] = size_of(op.Program_Report)
+		case .Boot:
+			if v[4] < size_of(op.Boot_Report) || !user_range(program.table, v[3], size_of(op.Boot_Report), true) {
+				return .Bad_Address
+			}
+			boot_report((^op.Boot_Report)(uintptr(v[3])))
+			results[0] = size_of(op.Boot_Report)
 		case .Processor:
 			if v[4] < size_of(op.Processor_Report) || !user_range(program.table, v[3], size_of(op.Processor_Report), true) {
 				return .Bad_Address
@@ -363,6 +370,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			if v[2] < u64(processor_count) {
 				cpu := processors[v[2]]
 				report.busy_time = cpu.busy_time
+				report.apic_id = u64(cpu.apic_id)
 				if cpu.current != 0 {
 					report.program = u64(threads[cpu.current].program)
 					report.same = u64(programs[report.program].table == program.table)

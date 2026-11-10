@@ -172,6 +172,7 @@ Inspect_Kind :: enum u64 {
 	System  = 1, // System_Report
 	Program   = 2, // Program_Report of program slot `index`
 	Processor = 3, // Processor_Report of processor `index`
+	Boot      = 4, // Boot_Report
 }
 
 System_Report :: struct {
@@ -191,6 +192,66 @@ Processor_Report :: struct {
 	program:   u64, // The slot of the program that the processor runs. 0: the processor is idle.
 	busy_time: u64, // Milliseconds with a thread.
 	same:      u64, // 1: the program is the program that asks.
+	apic_id:   u64, // The number that the machine gives to the processor.
+}
+
+// The record of how the machine started. A time is a number of
+// microseconds since the machine started.
+BOOT_STAGE_CAPACITY :: 12
+BOOT_RANGE_CAPACITY :: 64
+
+Boot_Stage :: struct {
+	name:     [48]u8, // Zero bytes after the name.
+	start:    u64,
+	duration: u64,
+}
+
+// A run of physical memory, as the firmware gave it. kind is a
+// boot_info.Memory_Kind: 0 not usable, 1 free, 2 loaded by the boot program.
+Boot_Range :: struct {
+	start:      u64,
+	page_count: u64,
+	kind:       u64,
+}
+
+// boot_range_add adds a run of memory to a report. The runs come by
+// address. A run that continues the last one, with the same kind, joins it.
+boot_range_add :: proc "contextless" (report: ^Boot_Report, start, page_count, kind: u64) {
+	report.firmware_ranges += 1
+	if report.range_count != 0 {
+		last := &report.ranges[report.range_count - 1]
+		if last.kind == kind && last.start + last.page_count * 4096 == start {
+			last.page_count += page_count
+			return
+		}
+	}
+	if report.range_count < BOOT_RANGE_CAPACITY {
+		report.ranges[report.range_count] = {start = start, page_count = page_count, kind = kind}
+		report.range_count += 1
+	}
+}
+
+Boot_Report :: struct {
+	time:                   u64, // Now.
+	stage_count:            u64,
+	stages:                 [BOOT_STAGE_CAPACITY]Boot_Stage,
+	range_count:            u64,
+	ranges:                 [BOOT_RANGE_CAPACITY]Boot_Range, // By address. Neighbours of one kind are one range.
+	firmware_ranges:        u64, // The ranges that the firmware gave.
+	firmware_vendor:        [32]u8,
+	firmware_revision:      u64,
+	framebuffer_address:    u64,
+	framebuffer_width:      u64,
+	framebuffer_height:     u64,
+	framebuffer_line:       u64, // Pixels from one line to the next.
+	framebuffer_format:     u64, // A boot_info.Pixel_Format.
+	kernel_size:            u64, // Bytes of the kernel in memory.
+	kernel_file_size:       u64,
+	boot_image_size:        u64,
+	direct_map_size:        u64,
+	acpi_root:              u64,
+	cycle_frequency:        u64, // Cycles of the cycle counter per second.
+	timer_frequency:        u64, // Counts of the timer of a processor per second.
 }
 
 Program_Report :: struct {
@@ -202,6 +263,7 @@ Program_Report :: struct {
 	run_time:     u64, // Milliseconds of processor time.
 	entries:      u64,
 	thread_count: u64,
+	start_time:   u64, // Microseconds since the machine started.
 	budget:       Budget_Amounts, // What the budget that pays for the program still holds.
 }
 

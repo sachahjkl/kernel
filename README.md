@@ -25,6 +25,10 @@ The system boots under QEMU to a graphical desktop with a console, a system tool
 
 ![A budget pays for each page and each thread; the kernel refuses when it cannot pay, and each page returns](docs/screenshots/budget.png)
 
+![The boot display: the stages of the start on a line of time, the memory, the machine, the boot image, the programs](docs/screenshots/boot.png)
+
+![A start that fails: the boot display stays, with the failure](docs/screenshots/boot_fails.png)
+
 ![Four processors run the threads of one program at the same time; the same picture with 1, 2 and 4 threads](docs/screenshots/processors.png)
 
 ![The temple of Jon: a portrait of Jonathan Blow that turns](docs/screenshots/temple.png)

@@ -5,7 +5,11 @@
 // only program that creates access from nothing.
 package root
 
+import "../../bootscreen"
+import "../../bootscreen/collect"
 import "../../display"
+import "../../graphics"
+import info "../../boot_info"
 import op "../../kernel/operation"
 import "../../ring"
 import "../../system"
@@ -29,6 +33,8 @@ grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 		return {.Inspect}
 	case "rights":
 		return {.Inspect, .Image} // It shows what the kernel refuses.
+	case "boot":
+		return {.Inspect, .Image} // It shows the modules of the boot image.
 	case "rings":
 		return {.Image} // It starts its nodes from the boot image.
 	}
@@ -92,10 +98,39 @@ compositor: system.Handle
 control: ^ring.Ring
 control_memory: system.Handle
 
+// The boot display (package bootscreen), on the screen of the machine.
+// This service draws it until the compositor has the screen.
+screen: graphics.Canvas
+screen_data: bootscreen.Data
+message: bootscreen.Text
+
+show :: proc "contextless" (text: string, state: bootscreen.State) {
+	if screen.pixels == nil {
+		return
+	}
+	screen_data.message = text
+	screen_data.state = state
+	collect.data(&screen_data, machine)
+	bootscreen.draw_screen(screen, &screen_data)
+}
+
+// fail ends the start of the machine. The machine does not stop: the boot
+// display stays, with the failure, until a person stops the machine.
 fail :: proc "contextless" (text: string, status: system.Status) -> ! {
 	system.log("root: ", text, ": status ", u64(status))
-	system.call(.Machine_Stop, u64(machine), 1)
-	system.stop(1)
+	if compositor != 0 {
+		system.call(.Program_Stop, u64(compositor), 0) // The screen returns to this service.
+	}
+	message.count = 0
+	bootscreen.put(&message, "the start failed: ")
+	bootscreen.put(&message, text)
+	bootscreen.put(&message, ": status ")
+	bootscreen.put_number(&message, u64(status))
+	show(string(message.bytes[:message.count]), .Failed)
+	system.log("root: the boot display shows the failure")
+	for {
+		system.sleep(max(u64))
+	}
 }
 
 @(export, link_name = "entry")
@@ -108,6 +143,17 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	image = ([^]u8)(address)[:ctx.values[op.ROOT_VALUE_BOOT_IMAGE_SIZE]]
 	system.log(ROOT_MARK, ", ", u64(len(system.image_entries(image))), " modules in the boot image")
+	if pixels, map_status := system.memory_map(ctx.handles[op.ROOT_FRAMEBUFFER], {.Write}); map_status == .Ok {
+		screen = {
+			pixels = ([^]graphics.Color)(pixels),
+			width  = int(ctx.values[op.ROOT_VALUE_WIDTH]),
+			height = int(ctx.values[op.ROOT_VALUE_HEIGHT]),
+			stride = int(ctx.values[op.ROOT_VALUE_PIXELS_PER_LINE]),
+		}
+		screen_data.image = image
+		screen_data.red_first = ctx.values[op.ROOT_VALUE_FORMAT] == u64(info.Pixel_Format.Red_Green_Blue_X)
+	}
+	show("the root service starts input", .Running)
 
 	// The input service: the ports and the interrupts of the PS/2 controller.
 	input_memory: system.Handle
@@ -138,6 +184,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 	}
 
+	show("the root service starts the compositor", .Running)
 	// The compositor: the framebuffer, the input ring, and a ring to this service.
 	control_memory, control, status = system.ring_create()
 	if status != .Ok {

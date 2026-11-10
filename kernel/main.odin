@@ -10,21 +10,32 @@ ROOT_NAME :: "root"
 
 @(export, link_name = "entry")
 entry :: proc "c" (boot: ^info.Boot_Info) -> ! {
+	stage_end(.Boot_Program_Tables)
 	serial_start()
 	if boot.magic != info.MAGIC {
 		log("kernel: the boot record is not valid")
 		machine_stop(1)
 	}
+	boot_record = boot^
+	stage_cycles[.Firmware] = boot.cycles_start
+	stage_cycles[.Boot_Program_Load] = boot.cycles_loaded
 	memory_start(boot)
+	stage_end(.Kernel_Memory)
 	processor_start()
+	stage_end(.Kernel_Processor)
 	// The first processor holds the kernel lock until it runs the first thread.
 	lock_acquire(processors[0])
 	processors_start(boot)
+	stage_end(.Kernel_Processors)
 	log("kernel: ", u64(processor_count), " processors")
 	log("kernel: free memory ", free_frames * PAGE_SIZE >> 20, " MiB")
 	log("kernel: framebuffer ", u64(boot.framebuffer.width), "x", u64(boot.framebuffer.height), " at ", Hex(boot.framebuffer.address))
 	log(KERNEL_MARK)
 	root_start(boot)
+	stage_end(.Kernel_Root)
+	for stage in Stage {
+		log("kernel: boot: ", STAGE_NAMES[stage], ": ", microseconds(stage_cycles[stage] - (stage == .Firmware ? 0 : stage_cycles[Stage(int(stage) - 1)])), " us")
+	}
 	schedule()
 }
 

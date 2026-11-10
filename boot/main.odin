@@ -11,11 +11,16 @@
 package boot
 
 import info "../boot_info"
+import "../bootscreen"
+import "../graphics"
+import op "../kernel/operation"
 import module "../module"
 import "base:intrinsics"
 
 kernel_file := #load("../build/modules/kernel.module")
-boot_image := #load("../build/boot.image")
+// The tool can give another boot image, for the test of a start that fails.
+boot_image := #load(#config(BOOT_IMAGE, "../build/boot.image"))
+display_data: bootscreen.Data
 
 foreign _ {
 	boot_jump :: proc "win64" (page_table: u64, entry: u64, boot: u64, stack: u64) -> ! ---
@@ -40,6 +45,7 @@ image_handle: rawptr
 
 @(export, link_name = "efi_main")
 efi_main :: proc "win64" (image: rawptr, system_table: ^Efi_System_Table) -> Efi_Status {
+	cycles_start := u64(intrinsics.read_cycle_counter())
 	system = system_table
 	image_handle = image
 	services := system.boot_services
@@ -47,7 +53,16 @@ efi_main :: proc "win64" (image: rawptr, system_table: ^Efi_System_Table) -> Efi
 
 	boot := (^info.Boot_Info)(allocate(1))
 	boot.magic = info.MAGIC
+	boot.cycles_start = cycles_start
 	boot.framebuffer = framebuffer()
+	for &character, index in boot.firmware_vendor[:len(boot.firmware_vendor) - 1] {
+		unit := system.firmware_vendor[index]
+		if unit == 0 {
+			break
+		}
+		character = unit < 0x7F ? u8(unit) : '?'
+	}
+	boot.firmware_revision = u64(system.firmware_revision)
 	// The kernel reads the list of the processors in the ACPI tables.
 	for entry in system.tables[:system.table_count] {
 		if entry.guid == EFI_ACPI_GUID {
@@ -78,6 +93,7 @@ efi_main :: proc "win64" (image: rawptr, system_table: ^Efi_System_Table) -> Efi
 	intrinsics.mem_copy_non_overlapping(image_copy, raw_data(boot_image), len(boot_image))
 	boot.boot_image = u64(uintptr(image_copy))
 	boot.boot_image_size = u64(len(boot_image))
+	boot.cycles_loaded = u64(intrinsics.read_cycle_counter())
 
 	stack := u64(uintptr(allocate(info.KERNEL_STACK_PAGES))) + info.KERNEL_STACK_PAGES * PAGE_SIZE
 	ranges := ([^]info.Memory_Range)(allocate((MEMORY_RANGE_CAPACITY * size_of(info.Memory_Range) + PAGE_SIZE - 1) / PAGE_SIZE))
@@ -89,11 +105,13 @@ efi_main :: proc "win64" (image: rawptr, system_table: ^Efi_System_Table) -> Efi
 	{
 		count, _ := read_memory_map(firmware_map, ranges)
 		for range in ranges[:count] {
+			op.boot_range_add(&display_data.boot, range.start, range.page_count, u64(range.kind))
 			if range.kind != .Reserved {
 				top = max(top, range.start + range.page_count * PAGE_SIZE)
 			}
 		}
 	}
+	display(boot, "the boot program starts the kernel")
 	top = (top + TABLE_SPAN - 1) / TABLE_SPAN * TABLE_SPAN
 	boot.direct_map_size = top
 	boot.page_table = build_page_tables(top, kernel, head.memory_size)
@@ -262,3 +280,30 @@ _fltused: i32 = 0x9875
 
 @(export, link_name = "_tls_index")
 _tls_index: u32
+
+// display draws the boot display (package bootscreen) with what the boot
+// program knows. The kernel does not draw: the root service draws the
+// display again with the records of the kernel.
+display :: proc "contextless" (boot: ^info.Boot_Info, message: string) {
+	screen := boot.framebuffer
+	if screen.address == 0 || screen.format == .None {
+		return
+	}
+	data := &display_data
+	data.boot.firmware_vendor = boot.firmware_vendor
+	data.boot.firmware_revision = boot.firmware_revision
+	data.boot.framebuffer_address = screen.address
+	data.boot.framebuffer_width = u64(screen.width)
+	data.boot.framebuffer_height = u64(screen.height)
+	data.boot.framebuffer_line = u64(screen.pixels_per_line)
+	data.boot.framebuffer_format = u64(screen.format)
+	data.boot.kernel_size = boot.kernel_size
+	data.boot.kernel_file_size = boot.kernel_file_size
+	data.boot.boot_image_size = boot.boot_image_size
+	data.boot.acpi_root = boot.acpi_root
+	data.image = boot_image
+	data.processor_name = bootscreen.processor_name()
+	data.message = message
+	data.red_first = screen.format == .Red_Green_Blue_X
+	bootscreen.draw_screen({pixels = ([^]graphics.Color)(uintptr(screen.address)), width = int(screen.width), height = int(screen.height), stride = int(screen.pixels_per_line)}, data)
+}

@@ -26,10 +26,12 @@ BUILD_FOLDER :: "build"
 BOOT_OBJECT_FOLDER :: BUILD_FOLDER + "/boot"
 BOOT_PROGRAM :: BOOT_OBJECT_FOLDER + "/BOOTX64.EFI"
 BOOT_VOLUME :: BUILD_FOLDER + "/boot_volume.img"
+BOOT_VOLUME_FAILS :: BUILD_FOLDER + "/boot_volume_fails.img"
 // The path where the firmware looks for the boot program of a disk.
 BOOT_PROGRAM_PATH :: "EFI/BOOT/BOOTX64.EFI"
 FIRMWARE_VARIABLES :: BUILD_FOLDER + "/ovmf_vars.fd"
 TEST_OUTPUT :: BUILD_FOLDER + "/test_output.txt"
+TEST_OUTPUT_FAILS :: BUILD_FOLDER + "/test_output_fails.txt"
 
 DOCUMENT_SCREENSHOT_FOLDER :: "docs/screenshots"
 // The development log: one folder of pictures per run of `screenshots`. It
@@ -80,13 +82,21 @@ usage :: proc() {
 	}
 }
 
-// run_build builds the modules, the boot image, and then the boot program,
-// which contains the kernel module and the boot image.
+// run_build builds the modules, the boot images, and then the boot program,
+// which contains the kernel module and a boot image. It builds a second
+// boot program for the test of a start that fails.
 run_build :: proc(args: []string) -> int {
-	if !build_modules() || !reset_folder(BOOT_OBJECT_FOLDER) {
+	if !build_modules() || !build_boot_program("boot.image", BOOT_VOLUME) || !build_boot_program("boot_fails.image", BOOT_VOLUME_FAILS) {
 		return EXIT_FAILURE
 	}
-	if !run(
+	return 0
+}
+
+// build_boot_program builds the boot program with a boot image of the build
+// folder, and writes a boot volume with it. BOOT_PROGRAM is the last one.
+build_boot_program :: proc(image: string, volume_path: string) -> bool {
+	reset_folder(BOOT_OBJECT_FOLDER) or_return
+	run(
 		{
 			"odin",
 			"build",
@@ -99,46 +109,34 @@ run_build :: proc(args: []string) -> int {
 			"-disable-red-zone",
 			"-o:speed",
 			"-vet",
+			strings.concatenate({"-define:BOOT_IMAGE=../build/", image}, context.temp_allocator),
 			"-out:" + BOOT_OBJECT_FOLDER + "/boot.obj",
 		},
-	) {
-		return EXIT_FAILURE
-	}
-	if !run({"nasm", "-f", "win64", "-o", BOOT_OBJECT_FOLDER + "/jump.obj", "boot/jump.asm"}) {
-		return EXIT_FAILURE
-	}
-	objects, ok := files_with_suffix(BOOT_OBJECT_FOLDER, ".obj")
-	if !ok {
-		return EXIT_FAILURE
-	}
+	) or_return
+	run({"nasm", "-f", "win64", "-o", BOOT_OBJECT_FOLDER + "/jump.obj", "boot/jump.asm"}) or_return
+	objects := files_with_suffix(BOOT_OBJECT_FOLDER, ".obj") or_return
 	link := make([dynamic]string, context.temp_allocator)
 	append(&link, "lld-link", "/subsystem:efi_application", "/entry:efi_main", "/nodefaultlib", "/out:" + BOOT_PROGRAM)
 	append(&link, ..objects)
-	if !run(link[:]) {
-		return EXIT_FAILURE
-	}
-	program, read_err := os.read_entire_file(BOOT_PROGRAM, context.temp_allocator)
-	if read_err != nil {
-		fmt.eprintfln("kerneltool: cannot read %s: %v", BOOT_PROGRAM, read_err)
-		return EXIT_FAILURE
-	}
+	run(link[:]) or_return
+	program := read_file(BOOT_PROGRAM) or_return
 	volume, fits := volume_encode({{path = BOOT_PROGRAM_PATH, data = program}}, context.temp_allocator)
 	if !fits {
 		fmt.eprintln("kerneltool: the boot program does not fit in the boot volume")
-		return EXIT_FAILURE
+		return false
 	}
-	if write_err := os.write_entire_file(BOOT_VOLUME, volume); write_err != nil {
-		fmt.eprintfln("kerneltool: cannot write %s: %v", BOOT_VOLUME, write_err)
-		return EXIT_FAILURE
+	if write_err := os.write_entire_file(volume_path, volume); write_err != nil {
+		fmt.eprintfln("kerneltool: cannot write %s: %v", volume_path, write_err)
+		return false
 	}
-	return 0
+	return true
 }
 
 run_machine :: proc(args: []string) -> int {
 	if code := run_build(nil); code != 0 {
 		return code
 	}
-	command, ok := machine_command(false)
+	command, ok := machine_command(BOOT_VOLUME, "")
 	if !ok {
 		return EXIT_FAILURE
 	}
@@ -153,7 +151,11 @@ run_test :: proc(args: []string) -> int {
 	if code := run_build(nil); code != 0 {
 		return code
 	}
-	if !machine_test() || !test_modules() || !test_descriptions() {
+	if !reset_folder(SCREENSHOT_FOLDER) {
+		return EXIT_FAILURE
+	}
+	// A start that fails ends when the tool ends QEMU: status 0.
+	if !machine_test(scenario_fails[:], BOOT_VOLUME_FAILS, TEST_OUTPUT_FAILS, 0) || !machine_test(scenario[:], BOOT_VOLUME, TEST_OUTPUT, MACHINE_STOP_OK) || !test_modules() || !test_descriptions() {
 		return EXIT_FAILURE
 	}
 	fmt.println("kerneltool: all tests passed")
@@ -201,8 +203,9 @@ run_check :: proc(args: []string) -> int {
 }
 
 // machine_command gives the one QEMU command line of the project: the first
-// machine of property 7. The boot volume is BOOT_VOLUME: a virtio block device.
-machine_command :: proc(test: bool) -> (command: []string, ok: bool) {
+// machine of property 7. The boot volume is a virtio block device. If
+// test_output is a path, the machine has no window and writes its log there.
+machine_command :: proc(volume: string, test_output: string) -> (command: []string, ok: bool) {
 	firmware_code := os.get_env("OVMF_CODE", context.temp_allocator)
 	firmware_variables := os.get_env("OVMF_VARS", context.temp_allocator)
 	if firmware_code == "" || firmware_variables == "" {
@@ -241,14 +244,14 @@ machine_command :: proc(test: bool) -> (command: []string, ok: bool) {
 		"-drive",
 		"if=pflash,format=raw,file=" + FIRMWARE_VARIABLES,
 		"-drive",
-		"if=none,id=boot,format=raw,file=" + BOOT_VOLUME,
+		strings.concatenate({"if=none,id=boot,format=raw,file=", volume}, context.temp_allocator),
 		"-device",
 		"virtio-blk-pci,drive=boot",
 	)
-	if test {
+	if test_output != "" {
 		// No window. The log of the kernel (the serial port) goes to a file.
 		// The QEMU monitor is on the standard input: the tool sends keys through it.
-		append(&list, "-display", "none", "-serial", "file:" + TEST_OUTPUT, "-monitor", "stdio")
+		append(&list, "-display", "none", "-serial", strings.concatenate({"file:", test_output}, context.temp_allocator), "-monitor", "stdio")
 	} else {
 		append(&list, "-serial", "stdio")
 	}

@@ -42,7 +42,7 @@
         name = "kernel-boot-test";
         src = inputs.nixpkgs.lib.fileset.toSource {
           root = ./.;
-          fileset = inputs.nixpkgs.lib.fileset.unions [./flake.nix ./boot ./boot_info ./kernel ./tools ./module ./modules ./blake3 ./ring ./relay ./isolated ./system ./graphics ./display ./programs];
+          fileset = inputs.nixpkgs.lib.fileset.unions [./flake.nix ./boot ./boot_info ./kernel ./tools ./module ./modules ./blake3 ./ring ./relay ./isolated ./system ./graphics ./bootscreen ./display ./programs];
         };
         nativeBuildInputs = buildTools;
         buildPhase = ''
