@@ -17,7 +17,6 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Command | An export that a person can call from the console. A command is not a separate kind of thing (P19) | CLI program, tool, script |
 | Module metadata | The description of a module: segments, imports, exports with the type of each parameter and result, origin, debug information (P12) | headers, manifest, symbol table |
 | Flat table | An array of fixed-size records at a known offset. The form of the module metadata inside a module. The loader reads this form (P12, P13) | section, blob |
-| Index | A SQLite database that is built from flat tables and can be rebuilt from them. It answers queries across many modules. It is never the source of truth (P12) | registry, catalogue, cache |
 | Replacement | A record `{hash, hash}` that the starter of a program gives to the loader: where a module imports the first module, the loader loads the second one, after it checked that the descriptions of the used exports are equal | override, shim, LD_PRELOAD, DLL redirection |
 | Loader | The user-space code that builds a program from a module and its imports | linker, dynamic linker |
 | Prepared module | A memory object that holds the segments of a module that do not change after the load, copied from the file and rebased at the program base. The program that starts programs keeps it in a table, by the hash of the module, while a program maps it | shared library, image cache, page cache |

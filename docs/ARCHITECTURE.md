@@ -141,7 +141,7 @@ The first program. The kernel gives it every handle that exists at boot.
 
 ### U3. Module store and loader
 
-- **Store**: keeps modules by content hash. Answers "give me the module with this hash". Its index is a SQLite database (P11, P12).
+- **Store**: keeps modules by content hash. Answers "give me the module with this hash". It has no separate index: functions read the flat tables of the modules (P11, P12).
 - **Loader**: builds a new program. It asks the kernel for an empty address space, maps the segments of the module and of the modules that it imports, and starts it.
 - The loader is in user space. The kernel only maps memory.
 - The first modules are loaded by the boot program, because the store does not run yet.
@@ -158,8 +158,7 @@ One service per device class: block, network card, display, input, TPM.
 
 - Owns the block device queues. Gives transactional object stores (P9).
 - Creates one private store per program. Gives clones and snapshots.
-- First version: SQLite on the raw block device. Later: a native engine below the same interface.
-- **Implemented** (2026-11-10, `programs/storage`): a native engine, not SQLite. The reason given at the time was a wrong rule ("no code that is not Odin"); the owner corrected it on 2026-11-10. SQLite is not forbidden; the owner decides if it comes below or above this engine. Copy on write with two places for the root block and a check of each block in the block that names it. The storage service is a service with exports; the root service names the private store of each connection and its limit of blocks. Not done: versions, snapshots, clones.
+- **Implemented** (2026-11-10, `programs/storage`): a native engine. The owner removed SQLite from the system on 2026-11-10. Copy on write with two places for the root block and a check of each block in the block that names it. The storage service is a service with exports; the root service names the private store of each connection and its limit of blocks. Not done: versions, snapshots, clones.
 
 ### U6. Document service
 
@@ -184,7 +183,7 @@ A set of modules that most programs use. It is not a C library and no program is
 
 - Ring access, with blocking functions built above the rings.
 - Arena allocators above reserve and commit.
-- SQLite.
+- Functions that give the information of the modules from their flat tables (P12).
 - The TCP library.
 
 ### U10. Desktop shell

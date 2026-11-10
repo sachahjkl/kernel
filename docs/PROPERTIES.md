@@ -59,7 +59,7 @@ Three rules apply to every decision:
 | 9 | A storage engine with one private store per program | Decided: new engine under MIT |
 | 10 | One code module: position-independent, static and dynamic are the same | Decided |
 | 11 | Reproducible system: modules identified by content hash | Decided |
-| 12 | Module metadata in SQLite, and SQLite as a base library | Decided |
+| 12 | Module metadata in flat tables, read through functions | Decided |
 | 13 | Data-oriented kernel internals | Decided |
 | 14 | Memory is supplied by the caller | Decided |
 | 15 | Isolation inside a program for untrusted code | Decided |
@@ -172,14 +172,14 @@ Status: Decided.
 
 Status: Decided. On 2026-11-09 the owner chose the engine: do not fork bcachefs; write a new engine under MIT that reuses its ideas. The first version is SQLite on the raw block device.
 
-State on 2026-11-10 (steps 30 to 32): the first version is not SQLite. The storage service is a new engine in Odin, about 800 lines: copy on write, two places for the root block, a check of each block in the pointer that names it (choices 150 and 151 of `FIRST_MILESTONE.md`). The agent that built the step had a wrong rule from the coordinator ("Odin standard library only"; the recorded rule is about the kernel tool only), so it excluded SQLite for a false reason. The owner corrected this on 2026-11-10: SQLite is not forbidden. Open, for the owner: keep this engine as the engine of this property and bring SQLite above it as the base library of property 12 (the proposal of the coordinator, by the rule of property 12 that keeps the roles separate), or put SQLite below. Not done from the rules below: objects have names in a store, not identifiers; no clone, no snapshot, no versions.
+State on 2026-11-10 (steps 30 to 32), with the decision of the owner of the same day: SQLite is removed. The engine is the storage service in Odin, about 800 lines: copy on write, two places for the root block, a check of each block in the pointer that names it (choice 150 of `FIRST_MILESTONE.md`). The sentence above about a first version on SQLite is no longer a rule. Not done from the rules below: objects have names in a store, not identifiers; no clone, no snapshot, no versions.
 
 - **Rule**: Storage is a transactional object store in user space. Objects have identifiers, not paths. A directory is an optional index, not the base structure.
 - **Rule**: Each program gets a private store. A copy-on-write clone is the way to give a copy of an object. A snapshot gives versions of a store.
 - **Rule**: The storage service reaches the disk through the queues of property 5.
 - **Recommendation**: Do not fork bcachefs. It is GPL-2.0, more than 100,000 lines of Linux-specific code, and it has one maintainer. Write a small engine that takes its best ideas: the cache-line-aware search inside a B-tree node, and buckets with generation numbers. [Notes `bcachefs_storage.md` §3, §7]
 - **Recommendation**: Take the structure from Fuchsia Fxfs: user-space, object identifiers, directories optional. [Notes `bcachefs_storage.md` §5]
-- **Cost**: A new storage engine is the largest reliability risk in the project. The first versions can store everything in one SQLite database on a raw block device, through a SQLite VFS. This gives transactions on day one and delays the engine.
+- **Cost**: A new storage engine is the largest reliability risk in the project. The answer is its tests of a stop in the machine test (steps 31 and 32), not a borrowed engine.
 - **Open**: the owner must decide the licence question. Options: keep MIT and reimplement; or run upstream bcachefs as a separate GPL user-space service.
 
 ### Persistence: no save action, and versions for all programs
@@ -224,19 +224,16 @@ Status: Decided by the owner on 2026-11-09. The detail below is proposed.
 - **Reuse**: The Nix store model and its closure concept. Content-addressed derivations in Nix.
 - **Open**: the hash function. BLAKE3 is the proposal. How names for people map to hashes; the proposal is a signed table in the system description.
 
-## 12. Module metadata in SQLite, and SQLite as a base library
+## 12. Module metadata in flat tables, read through functions
 
-Status: Decided.
+Status: Decided. Changed by the owner on 2026-11-10: SQLite is removed from the system. Before, this property made SQLite a base library and an index over the tables of the modules.
 
-- **Rule**: The metadata of a module is a SQLite database: symbols, interfaces, dependencies, origin of each bundled module, debug information.
-- **Rule**: SQLite is a base library of the system. It is public domain, so it fits the MIT licence.
-- **Rule** (accepted by the owner on 2026-11-09): The loader does not read SQLite. The module metadata inside a module is a set of flat tables: arrays of fixed-size records at known offsets, valid when zero. The flat tables are the source of truth.
-- **Rule**: The module store copies the flat tables of each module into a SQLite index. The index answers queries across modules, for the console, the debugger and the tools. The index can be rebuilt completely from the modules.
-- **Why**: This removes the circular dependency "load SQLite to load SQLite". It keeps SQLite out of the boot program and out of the code that reads untrusted modules.
-- **Proposal**: The store index of property 11 and the grant records of property 2 are also SQLite databases. System state becomes one queryable format in place of text files.
-- **Cost**: SQLite needs an interface layer to the system: storage access, sync, locks, time, random numbers. Its durability is only as good as the sync of that layer.
-- **Rule to keep roles separate**: The storage engine of property 9 owns blocks and objects. SQLite owns structured metadata inside objects. One does not replace the other.
-- **Open**: none that blocks the first milestone.
+- **Rule**: The metadata of a module is a set of flat tables inside the module: arrays of fixed-size records at known offsets, valid when zero. They hold the symbols, the interfaces, the dependencies, the origin of each bundled module and the debug information. The flat tables are the source of truth, and the only format.
+- **Rule**: The loader reads the flat tables directly.
+- **Rule** (owner, 2026-11-10): A rich and descriptive set of functions gives the information of the modules: clear functions with documentation, that a program and the console call. A question across many modules is a function that reads the tables in a line. The results are tables of records, so that the functions combine. No query language exists in the system.
+- **Why**: The owner judged that a language and an engine to maintain cost far more than good functions. The tables of a machine are small, and a linear read of flat tables is the data-oriented way (P13). One format has no copy to keep equal to its source.
+- **Cost**: A new kind of question needs a new function, or a combination of functions in the console.
+- **Not forbidden**: a program can bring SQLite as its own module. The system does not need it and does not serve it.
 
 ## 13. Data-oriented kernel internals
 
@@ -463,7 +460,7 @@ The "user" of current systems does six jobs. This system splits them:
 - **Replaceable modules (10) against speed**: Calls through a table cost one indirect call. The bundle is the place where a developer trades replaceability for inlining.
 - **No global file system (8) against the desktop**: A person thinks in documents, not in programs. The document store service must exist before the first real desktop program.
 - **Small interface (1) against typed resources (3)**: Types multiply operations. The ring of property 4 solves this: the kernel has few entry operations, and the typed commands are records in a ring.
-- **New storage engine (9) against reliability**: Start on SQLite, then replace the lower layer when the rest of the system works.
+- **New storage engine (9) against reliability**: The engine is small and each commit is tested against a stop of the machine. SQLite is not used (owner, 2026-11-10).
 
 ## Reuse list
 
@@ -475,7 +472,6 @@ The "user" of current systems does six jobs. This system splits them:
 | Graphics interface | WebGPU and WGSL specifications; conformance test suite | Standard |
 | WGSL front end | Naga or Tint | MIT or Apache-2.0 / BSD-3-Clause |
 | Ring layout | io_uring design | Design only |
-| Structured data, metadata, first storage | SQLite | Public domain |
 | TCP library | lwIP or smoltcp | BSD-3-Clause / 0BSD |
 | Hash | BLAKE3 | CC0 or Apache-2.0 |
 | Store and system description model | Nix concepts | Design only |

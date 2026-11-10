@@ -17,7 +17,7 @@ These come from decisions of the owner.
 1. One format of code. A library and an executable are the same module (P10).
 2. Static linking and dynamic linking are one mechanism (P10).
 3. A module is identified by the hash of its content, and imports other modules by hash (P11).
-4. The loader reads flat tables. SQLite is an index (P12).
+4. The loader reads flat tables. They are the only format of the metadata; functions give the information of the modules from them (P12, changed on 2026-11-10: no SQLite).
 5. An all-zero record is valid (P13, ZII).
 6. No contract depends on a feature of one language (P19).
 7. A command is an export. The module metadata is sufficient to call it (P19).
