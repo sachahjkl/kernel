@@ -11,7 +11,7 @@ A step is one tested commit that adds one capability.
 | 3 | `ba67b95` | Text results |
 | 4 | `e8cbcb5` | Threads: several per program, shown by `threads` |
 | 5 | `44d2973` | The word wait and the lock, shown by `workers` |
-| 6 | (the commit of step 6) | One wait: rings wait on words, `Wake(memory)` deleted, the event word |
+| 6 | `887f23b` | One wait: rings wait on words, `Wake(memory)` deleted, the event word |
 
 ## Review 1: steps 1 to 5 (2026-11-10)
 
