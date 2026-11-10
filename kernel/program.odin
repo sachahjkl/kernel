@@ -281,6 +281,7 @@ handle_find :: proc "contextless" (program: ^Program, handle: u64, kind: Object_
 }
 
 handle_close :: proc "contextless" (program: ^Program, slot: ^Handle_Slot) {
+	origin_detach(holding_of_handle(program, slot))
 	#partial switch slot.kind {
 	case .Memory:
 		region_release(slot.object)
@@ -308,12 +309,20 @@ handle_close :: proc "contextless" (program: ^Program, slot: ^Handle_Slot) {
 		if interrupt_owner[slot.object] == u32(intrinsics.ptr_sub(program, &programs[0])) {
 			interrupt_owner[slot.object] = 0
 		}
+	case .Ports:
+		// A processor that has the ports of the program open closes these.
+		for cpu in processors[:processor_count] {
+			if cpu.ports_loaded == u32(intrinsics.ptr_sub(program, &programs[0])) {
+				ports_allow(cpu, u64(slot.object), u64(slot.count), false)
+			}
+		}
 	}
 	slot^ = {generation = slot.generation + 1}
 }
 
-// map puts pages of a region in the address space of a program.
-map_region :: proc "contextless" (program: ^Program, region_index: u32, address: u64, flags: op.Map_Flags, first: u64, count: u64) -> (result: u64, status: op.Status) {
+// map puts pages of a region in the address space of a program. origin is
+// the memory handle that a program mapped (origin.odin), or 0.
+map_region :: proc "contextless" (program: ^Program, region_index: u32, address: u64, flags: op.Map_Flags, first: u64, count: u64, origin: Holding = 0) -> (result: u64, status: op.Status) {
 	region := &regions[region_index]
 	count := count
 	if count == 0 && first < region.page_count {
@@ -369,6 +378,7 @@ map_region :: proc "contextless" (program: ^Program, region_index: u32, address:
 		entry^ = (region.physical + (first + page) * PAGE_SIZE) | bits
 	}
 	mapping^ = {address = address, page_count = count, region = region_index}
+	origin_attach(holding_of_mapping(program, mapping), origin)
 	region.references += 1
 	program.mapped_pages += count
 	return address, .Ok
@@ -377,6 +387,7 @@ map_region :: proc "contextless" (program: ^Program, region_index: u32, address:
 // unmap removes a mapping. Before the memory object can end, each
 // processor that uses the page table of the program forgets the mapping.
 unmap :: proc "contextless" (program: ^Program, mapping: ^Mapping) {
+	origin_detach(holding_of_mapping(program, mapping))
 	self := processor_self()
 	for page in 0 ..< mapping.page_count {
 		address := mapping.address + page * PAGE_SIZE
@@ -674,6 +685,7 @@ program_stop :: proc "contextless" (index: u32, code: u32) {
 	// name this program.
 	program.state = .Stopped
 	program.code = code
+	program_stops += 1
 	for &thread in threads[1:] {
 		if thread.program == index && thread.state != .None && thread.state != .Stopped {
 			thread_end(&thread)

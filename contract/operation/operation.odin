@@ -84,7 +84,7 @@ Operation :: enum u32 {
 	Program_Start  = 7, // (program, entry address, stack address, context address): the first thread of the program.
 	Program_Stop   = 8, // (program or 0 for self, code)
 	Program_State  = 9, // (program) -> Program_State, code, kernel entries of the program
-	Handle_Give    = 10, // (target: program handle or memory handle, handle, Rights) -> the handle in the target program.
+	Handle_Give    = 10, // (target: program handle, memory handle, or 0 for this program; handle; Rights) -> the handle in the target program.
 	// The new handle has the rights of the handle that are also in Rights: a grant never adds a right.
 	// With a memory handle, the target is the other program that maps this memory: the other side of a ring.
 	// If no other program maps it, the target is the one other program that holds a handle to it.
@@ -108,10 +108,19 @@ Operation :: enum u32 {
 	Word_Wake      = 20, // (address, count) -> threads woken: wake at most count threads that wait on this word.
 	Budget_Create  = 21, // (budget, pages, programs, threads) -> budget handle. The amounts move from the budget to the new budget.
 	Budget_Read    = 22, // (budget) -> pages, programs, threads: what the budget can still pay.
-	Handle_State   = 23, // (handle, memory or 0) -> Object_Kind, Rights, 1 if the handle came through this memory object.
+	Handle_State   = 23, // (handle, memory or 0) -> Object_Kind, Rights, 1 if the handle came through this memory object,
+	// the count of the holdings that came from this handle.
 	// A program that receives the number of a handle from another program, in a ring, proves with this
 	// operation that the other program gave the handle through that ring. Without the proof, the
 	// other program can name a handle that the receiver holds for itself.
+	Handle_Revoke  = 24, // (handle, program or 0) -> the count of holdings that ended.
+	// A holding is a handle or a mapping. The origin of a handle that Handle_Give made is the handle
+	// that was given. The origin of a mapping is the memory handle that was mapped. When a handle
+	// closes, what came from it comes from its origin. Handle_Revoke ends each holding that came from
+	// the handle, in one program (a handle with the right Control) or in each program, and what came
+	// from those holdings in any program. The handle stays, and the mappings of the program that
+	// revokes stay. A program that lost a holding gets an event. A thread that uses memory that
+	// its program lost stops its program on a page fault.
 }
 
 // A budget: what its holders can still create. No operation creates an

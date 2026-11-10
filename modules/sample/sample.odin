@@ -123,3 +123,25 @@ kept :: proc "c" () -> i64 {
 	}
 	return i64(status)
 }
+
+view: []u8
+
+// hold maps a memory object that the caller lent, keeps the mapping for a
+// later call of look, and gives the first byte.
+@(export, link_name = "hold")
+hold :: proc "c" (memory: system.Lent({.Read})) -> i64 {
+	bytes, status := bytes_of(memory.handle, {})
+	if status != .Ok {
+		return -i64(status)
+	}
+	view = bytes
+	return i64(bytes[0])
+}
+
+// look reads the first byte through the mapping that hold kept. After an
+// isolated call the caller revoked what it lent: the kernel removed the
+// mapping, and the program of this module stops on a page fault.
+@(export, link_name = "look")
+look :: proc "c" () -> i64 {
+	return len(view) == 0 ? -1 : i64(view[0])
+}

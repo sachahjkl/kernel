@@ -73,6 +73,8 @@ budget_of :: proc "contextless" (name: string) -> system.Budget_Amounts {
 		return {pages = 2048, programs = 1, threads = 9}
 	case "rights":
 		return {pages = 2048, programs = 1, threads = 2}
+	case "origin":
+		return {pages = 2048, programs = 2, threads = 1} // One program that only receives.
 	case "budget":
 		return {pages = 1024, programs = 1, threads = 4}
 	case "processors":
@@ -110,6 +112,8 @@ Started :: struct {
 	service_memory:  system.Handle,
 	hash:            [32]u8, // The hash of the file of the program.
 	name:            system.Name,
+	granted:         system.Root_Grants, // What the program has from this service, of the grants that this service can revoke.
+	revoked:         system.Root_Grants,
 	writer:          ^Started, // A terminal: the program that writes in it. nil after that program stopped.
 	is_terminal:     bool,
 }
@@ -296,6 +300,15 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					}
 				case .Start:
 					result = start(system.name_of(name[:]))
+				case .Grants:
+					result = .Bad_Handle
+					if other := find(system.name_of(name[:])); other != nil {
+						completion.values[0] = transmute(u64)other.granted
+						completion.values[1] = transmute(u64)other.revoked
+						result = .Ok
+					}
+				case .Revoke:
+					result = revoke(system.name_of(name[:]), record.values[4], &completion.values)
 				case .Stop:
 					result = .Bad_Handle
 					for &other in started {
@@ -423,6 +436,16 @@ start :: proc "contextless" (name: string) -> system.Status {
 		return status
 	}
 	slot.hash = entry.hash
+	slot.granted = {.Log}
+	if machine_rights != {} {
+		slot.granted += {.Machine}
+	}
+	if .Image in role {
+		slot.granted += {.Image}
+	}
+	if .Log_Records in role {
+		slot.granted += {.Log_Records}
+	}
 	copy(slot.name[:len(slot.name) - 1], name)
 	if view != nil {
 		if status = terminal_start(view, slot, shared[0], shared[1]); status != .Ok {
@@ -433,6 +456,53 @@ start :: proc "contextless" (name: string) -> system.Status {
 		return .Ok
 	}
 	system.log_in("programs", .Info, "root: started ", name)
+	return .Ok
+}
+
+// find gives the program with a name that this service started. A terminal
+// has the name of no program.
+find :: proc "contextless" (name: string) -> ^Started {
+	for &item in started {
+		if item.program != 0 && !item.is_terminal && system.name_of(item.name[:]) == name {
+			return &item
+		}
+	}
+	return nil
+}
+
+// revoke ends one grant of a program that runs (property 13). Each grant
+// here is a handle that this service keeps: the handle of the program came
+// from it, and the kernel ends what came from it in that program
+// (Handle_Revoke). What the program gave to other programs ends too.
+// values is the completion of Root_Command.Revoke.
+revoke :: proc "contextless" (name: string, grant: u64, values: ^[7]u64) -> system.Status {
+	item := find(name)
+	if item == nil {
+		return .Bad_Handle
+	}
+	if grant > u64(max(system.Root_Grant)) {
+		return .Bad_Operation
+	}
+	which := system.Root_Grant(grant)
+	if which not_in item.granted {
+		return .Bad_State
+	}
+	handle: system.Handle
+	switch which {
+	case .Log:
+		handle = system.context_record().handles[op.CONTEXT_LOG]
+	case .Machine:
+		handle = machine
+	case .Image:
+		handle = image_memory
+	case .Log_Records:
+		handle = system.context_record().handles[op.ROOT_LOG_RECORDS]
+	}
+	count := system.handle_revoke(handle, item.program) or_return
+	item.granted -= {which}
+	item.revoked += {which}
+	values[0] = count
+	system.log_in("programs", .Info, "root: revoked the grant ", system.root_grant_names[which], " of ", name, ", holdings ended: ", count)
 	return .Ok
 }
 

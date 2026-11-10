@@ -26,7 +26,7 @@ BAR_HEIGHT :: launcher.BAR_HEIGHT
 TITLE_HEIGHT :: 24
 BORDER :: 2
 CLOSE_SIZE :: 16
-CLIENT_CAPACITY :: 16
+CLIENT_CAPACITY :: 32 // The root service starts 32 programs at most.
 SHADOW :: 4
 DAMAGE_CAPACITY :: 8
 POINTER_WIDTH :: 11
@@ -278,7 +278,7 @@ client_remove :: proc "contextless" (memory: system.Handle) {
 		}
 		for position in 0 ..< order_count {
 			if order[position] == index {
-				intrinsics.mem_copy(&order[position], &order[position + 1], (order_count - position - 1) * size_of(int))
+				copy(order[position:order_count - 1], order[position + 1:order_count]) // The last place has no next one.
 				order_count -= 1
 				break
 			}
@@ -340,7 +340,7 @@ raise :: proc "contextless" (position: int) {
 	}
 	damage_focus()
 	damage_window(&clients[index])
-	intrinsics.mem_copy(&order[position], &order[position + 1], (order_count - position - 1) * size_of(int))
+	copy(order[position:order_count - 1], order[position + 1:order_count]) // The last place has no next one.
 	order[order_count - 1] = index
 }
 

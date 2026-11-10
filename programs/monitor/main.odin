@@ -34,12 +34,17 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	machine := ctx.handles[system.GRANT_MACHINE]
 	previous_time: u64
 	logged := false
+	lost := false
 	for {
 		report: op.System_Report
 		_, status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.System), 0, u64(uintptr(&report)), size_of(report))
 		graphics.clear(canvas, COLOR_BACKGROUND)
 		if status != .Ok {
 			graphics.text(canvas, 10, 10, "no grant to inspect the machine", COLOR_TEXT)
+			if !lost {
+				system.log("monitor: no grant to inspect the machine")
+				lost = true
+			}
 		} else {
 			elapsed := max(report.time - previous_time, 1)
 			previous_time = report.time

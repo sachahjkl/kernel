@@ -64,6 +64,10 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Right | One permitted kind of operation on the object of a handle. The rights are Give, Read, Write, Execute, Control, Inspect, Devices and Stop. A grant can remove rights and cannot add one | permission, privilege, mode |
 | Budget | An object that holds pages, programs and threads. It pays for each object that a program creates. A program moves a part of its budget to a new budget. What ends returns to the budget that paid (P20) | quota, limit, cgroup, job |
 | Grant | The act that gives a handle to a program, and the record of that act. A grant is visible and can be revoked (P20) | permission, authorization, consent |
+| Holding | A handle or a mapping of a program: one thing that the program has of an object (P2) | reference, capability |
+| Origin | The handle that a holding came from. A handle that `Handle_Give` made came from the handle that was given. A mapping came from the memory handle that was mapped. A holding that the kernel made has no origin. When a handle closes, what came from it comes from its own origin | parent, derivation, delegation chain |
+| Revocation | The act that ends each holding that came from a handle, in one program or in each program (the kernel operation `Handle_Revoke`). The handle stays. The program that lost a holding cannot refuse (P2, P20) | recall, invalidation |
+| Lent handle | A handle that a caller gives for the time of one call. The caller makes a copy of its handle with the rights of the description, gives a handle that comes from the copy, and revokes the copy after the call | borrowed handle, loan |
 | Ambient access | Access that a program has because it runs, and not because it received a handle. The system has none (P20) | ambient authority |
 | Sandbox | The state of every program: it can reach only the objects of its handles (P2) | jail, container |
 | Principal | A key pair and the root handles that the key unlocks: documents, grant records, settings. The kernel does not know it. Principal 0 is the machine (P21) | user, account, owner, root, administrator, executor |

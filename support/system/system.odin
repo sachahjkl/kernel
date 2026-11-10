@@ -134,6 +134,7 @@ memory_size :: proc "contextless" (memory: Handle) -> u64 {
 
 // give copies a handle to another program. target is a program handle, or a
 // memory handle: then the other program that maps this memory receives it.
+// With the target 0, the copy is in this program.
 // The new handle has the rights of handle that are also in rights.
 // The result is the handle in the table of that program.
 give :: proc "contextless" (target: Handle, handle: Handle, rights: Rights) -> (result: Handle, status: Status) {
@@ -152,6 +153,23 @@ handle_state :: proc "contextless" (handle: Handle, memory: Handle = 0) -> (kind
 		return .None, {}, false
 	}
 	return op.Object_Kind(results[0]), transmute(Rights)u32(results[1]), results[2] != 0
+}
+
+// handle_revoke ends each handle and each mapping that came from a handle:
+// in one program (a handle with the right Control), or in each program.
+// The handle stays, and the mappings of this program stay. count is the
+// count of holdings that ended.
+handle_revoke :: proc "contextless" (handle: Handle, program: Handle = 0) -> (count: u64, status: Status) {
+	results: [7]u64
+	results, status = call(.Handle_Revoke, u64(handle), u64(program))
+	return results[0], status
+}
+
+// handle_holdings gives the count of the handles and the mappings that
+// came from a handle, in each program.
+handle_holdings :: proc "contextless" (handle: Handle) -> u64 {
+	results, _ := call(.Handle_State, u64(handle), 0)
+	return results[3]
 }
 
 // A handle that the caller of an export lends for the time of the call

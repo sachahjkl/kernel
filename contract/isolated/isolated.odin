@@ -85,11 +85,6 @@ Service_Command :: enum u32 {
 	Disconnect = 2, // The service unmaps them and closes the two handles.
 }
 
-// A command record of a call ring with this kind is not a call: its values
-// are handles that the caller lent for a call that it did not send. The
-// receiver proves each one and closes it. 0 is "no handle".
-COMMAND_RELEASE :: max(u32)
-
 Status :: enum u32 {
 	Ok            = 0,
 	Bad_Export    = 1, // The module has no export with this index, or the export has no description.

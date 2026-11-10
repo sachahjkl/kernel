@@ -91,7 +91,8 @@ Status: Decided.
 - **Forbids**: global names that any program can open, user identifiers as the access model, access control lists on a shared namespace, a "root" user.
 - **Cost**: The desktop must give access through user actions. A file picker that runs outside the program and returns a handle is the standard solution. Programs that need broad access, such as a backup tool or a file manager, need an explicit grant model.
 - **Reuse**: Zircon handles with rights. Capsicum. The "powerbox" file picker pattern. [Notes `existing_kernels_good_ideas.md` §3, §4]
-- **Open**: how the user sees and revokes grants. How revocation works in the table: the generation number gives it for one holder, and delegation chains need a design. Blow gives no design for the desktop part. [Blow §7]
+- **Revocation** (2026-11-10, step 25): the kernel keeps the origin of each handle and each mapping, and `Handle_Revoke` ends what came from a handle, through each chain of gifts (`FIRST_MILESTONE.md`, choices 105 to 113).
+- **Open**: how the user sees and revokes grants on the desktop: the console has `grants` and `revoke`, and no window yet. Blow gives no design for the desktop part. [Blow §7]
 
 ## 3. No "everything is a file"
 

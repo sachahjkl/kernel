@@ -116,7 +116,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		if to.state == .None || to.state == .Stopped {
 			return .Bad_State
 		}
-		address, status := map_region(to, slot.object, v[2], flags, v[4], v[5])
+		address, status := map_region(to, slot.object, v[2], flags, v[4], v[5], holding_of_handle(program, slot))
 		results[0] = address
 		return status
 
@@ -204,11 +204,18 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		return .Ok
 
 	case .Handle_Give:
-		given := handle_find(program, v[1], .None, {.Give}) or_return
-		to_slot := handle_find(program, v[0], .None) or_return
+		// A copy in this program needs no Give right: no other program receives it.
+		given := handle_find(program, v[1], .None, v[0] == 0 ? op.Rights{} : op.Rights{.Give}) or_return
 		to: ^Program
 		through: u64
-		#partial switch to_slot.kind {
+		to_slot: ^Handle_Slot
+		if v[0] == 0 {
+			to = program
+			to_slot = given
+		} else {
+			to_slot = handle_find(program, v[0], .None) or_return
+		}
+		#partial switch v[0] == 0 ? Object_Kind.None : to_slot.kind {
 		case .Program:
 			if .Control not_in to_slot.rights {
 				return .No_Right
@@ -252,7 +259,18 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		if handle == 0 {
 			return .No_Slot
 		}
+		origin_attach(holding_of_handle(to, &to.handles[u32(handle) & 0xFFFF]), holding_of_handle(program, given))
 		results[0] = u64(handle)
+		return .Ok
+
+	case .Handle_Revoke:
+		slot := handle_find(program, v[0], .None) or_return
+		only: u32
+		if v[1] != 0 {
+			in_program := handle_find(program, v[1], .Program, {.Control}) or_return
+			only = in_program.object
+		}
+		results[0] = revoke(holding_of_handle(program, slot), program_index, only)
 		return .Ok
 
 	case .Handle_Close:
@@ -280,6 +298,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			memory := handle_find(program, v[1], .Memory) or_return
 			results[2] = u64(slot.through != 0 && slot.through == regions[memory.object].serial)
 		}
+		results[3] = origin_count(holding_of_handle(program, slot))
 		return .Ok
 
 	case .Budget_Read:

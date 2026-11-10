@@ -243,7 +243,7 @@ scenario := [?]Step {
 	// with the rights of the description, for the time of the call.
 	{kind = .Type, text = "clear()"},
 	{kind = .Type, text = "isolate(\"sample\")"},
-	{kind = .Wait, text = "[console] sample: 8 commands in a sandboxed program"},
+	{kind = .Wait, text = "[console] sample: 10 commands in a sandboxed program"},
 	{kind = .Type, text = "r = Rectangle(1, 2, 30, 4)"},
 	{kind = .Type, text = "area(r)"},
 	{kind = .Wait, text = "[console] 120"},
@@ -271,18 +271,47 @@ scenario := [?]Step {
 	{kind = .Type, text = "b"},
 	{kind = .Wait, text = ": Memory (Give, Read, Write, Execute)"},
 	{kind = .Shot, text = "records"},
+
+	// Revocation. The console revokes what it lent at the end of each
+	// call: the mapping that the module kept is gone, and the next read
+	// stops the program of the module on a page fault.
+	{kind = .Type, text = "clear()"},
+	{kind = .Type, text = "hold(b)"},
+	{kind = .Wait, text = "[console] 3"},
+	{kind = .Type, text = "look()"},
+	{kind = .Wait, text = "[console] error: the program sample stopped: page fault"},
+	// The root service ends one grant of a program that runs. The window of
+	// monitor goes below the console for the picture, then back.
+	{kind = .Drag, x = 900, y = 50, to_x = 900, to_y = 560},
+	{kind = .Click, x = 70, y = 300},
+	{kind = .Type, text = "grants(\"monitor\")"},
+	{kind = .Wait, text = "[console] monitor has: log, machine"},
+	{kind = .Type, text = "revoke(\"monitor\", \"machine\")"},
+	{kind = .Wait, text = "root: revoked the grant machine of monitor, holdings ended: 1", any_order = true},
+	{kind = .Wait, text = "[console] monitor lost the grant machine, holdings ended: 1", any_order = true},
+	{kind = .Wait, text = "monitor: no grant to inspect the machine"},
+	{kind = .Type, text = "grants(\"monitor\")"},
+	{kind = .Wait, text = "[console] monitor has: log"},
+	{kind = .Wait, text = "[console] monitor lost: machine"},
+	{kind = .Type, text = "revoke(\"monitor\", \"machine\")"},
+	{kind = .Wait, text = "[console] error: the program monitor does not have the grant machine"},
+	{kind = .Type, text = "revoke(\"monitor\", \"keys\")"},
+	{kind = .Wait, text = "[console] error: no grant has the name keys"},
+	{kind = .Shot, text = "revocation"},
+	{kind = .Drag, x = 900, y = 570, to_x = 900, to_y = 60},
+	{kind = .Click, x = 70, y = 300},
 	// The same descriptions serve a direct call. The module is then in the
 	// console: it has the handles of the console, and kept gives 0.
 	{kind = .Type, text = "unload(\"sample\")"},
-	{kind = .Wait, text = "[console] sample: 8 commands removed, its sandboxed program stops"},
+	{kind = .Wait, text = "[console] sample: 10 commands removed, its sandboxed program stops"},
 	{kind = .Type, text = "clear()"},
 	{kind = .Type, text = "load(\"sample\")"},
-	{kind = .Wait, text = "[console] sample: 8 commands, hash"},
+	{kind = .Wait, text = "[console] sample: 10 commands, hash"},
 	{kind = .Type, text = "g = grow(r, 5)"},
 	{kind = .Type, text = "g.width * g.height + keep(b) + kept()"},
 	{kind = .Wait, text = "[console] 12848"},
 	{kind = .Type, text = "unload(\"sample\")"},
-	{kind = .Wait, text = "[console] sample: 8 commands removed, the module left the memory of the console"},
+	{kind = .Wait, text = "[console] sample: 10 commands removed, the module left the memory of the console"},
 	{kind = .Type, text = "release(b)"},
 
 	// The temple of Jon, then back to the console.
@@ -330,6 +359,14 @@ scenario := [?]Step {
 	{kind = .Wait, text = "rights: ok, 4 allowed, 5 refused", any_order = true},
 	{kind = .Wait, text = "compositor: surface rights"},
 	{kind = .Shot, text = "rights"},
+
+	// The origin of a handle: the kernel ends what came from a handle, in
+	// this program and in another one.
+	{kind = .Launch, text = "origin"},
+	{kind = .Wait, text = "origin: ok, 12 cases", any_order = true},
+	{kind = .Wait, text = "origin: lend a handle and take it back: ", any_order = true},
+	{kind = .Wait, text = "compositor: surface origin"},
+	{kind = .Shot, text = "origin"},
 
 	// Budgets: no object comes from nothing. The program creates until
 	// its budget cannot pay; what it frees returns.

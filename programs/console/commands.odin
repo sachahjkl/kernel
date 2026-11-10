@@ -116,6 +116,8 @@ commands_start :: proc "contextless" () {
 	command("connect", {.Text}, .None, "call the exports of a service that runs", connect_service)
 	command("start", {.Text}, .None, "start a program, by module name", start_program)
 	command("stop", {.Text}, .None, "stop a program, by name", stop_program)
+	command("grants", {.Text}, .None, "what a program has from the root service", grants)
+	command("revoke", {.Text, .Text}, .None, "end a grant of a program that runs", revoke)
 	command("time", {}, .Integer, "milliseconds since boot", time)
 	command("hash", {.Text}, .Text, "the BLAKE3 hash of a text", hash)
 	command("length", {.Text}, .Integer, "the number of bytes of a text", length)
@@ -743,7 +745,10 @@ call_isolated :: proc "contextless" (item: ^Command, arguments: []Value) -> Valu
 	}
 	// The handles: the other program receives a copy of each one, with the
 	// rights of the description, through the call ring.
-	#partial switch system.lend(item.file, item.function, encoded[:len(arguments)], &sandbox.ring, sandbox.ring_memory) {
+	// At the end of the call the console revokes the copies: the kernel ends what the other program kept.
+	lending: system.Lending
+	defer system.lend_end(&lending)
+	#partial switch system.lend(item.file, item.function, encoded[:len(arguments)], sandbox.ring_memory, &lending) {
 	case .Ok:
 	case .Bad_Handle:
 		return fail(item.name, ": an argument names no handle of the console")
@@ -823,13 +828,13 @@ call_isolated :: proc "contextless" (item: ^Command, arguments: []Value) -> Valu
 
 // request_record sends one command to the root service and waits for its
 // completion. answered is false when the root service gave none.
-request_record :: proc "contextless" (kind: system.Root_Command, name: string) -> (completion: ring.Record, answered: bool) {
+request_record :: proc "contextless" (kind: system.Root_Command, name: string, value: u64 = 0) -> (completion: ring.Record, answered: bool) {
 	if requests.head == nil {
 		return {}, false
 	}
 	packed := system.name_pack(name)
 	request_count += 1
-	system.send(&requests.commands, ring.Record{kind = u32(kind), tag = request_count, values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3]}})
+	system.send(&requests.commands, ring.Record{kind = u32(kind), tag = request_count, values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3], 4 = value}})
 	limit := system.time() + 3000
 	for {
 		// A completion with another tag answers a command that this
@@ -857,6 +862,60 @@ request :: proc "contextless" (kind: system.Root_Command, name: string) -> Value
 		return fail("the root service refused: ", kind == .Start ? "no module has the name " : "no program has the name ", name)
 	}
 	return {}
+}
+
+// grants shows what a program has from the root service, of the grants
+// that the root service can revoke.
+grants :: proc "contextless" (arguments: []Value) -> Value {
+	name := arguments[0].text
+	completion, answered := request_record(.Grants, name)
+	if !answered {
+		return fail(requests.head == nil ? "the console has no ring to the root service" : "the root service did not answer")
+	}
+	if system.Status(completion.kind) != .Ok {
+		return fail("the root service refused: no program has the name ", name)
+	}
+	for set, pass in ([2]system.Root_Grants{transmute(system.Root_Grants)completion.values[0], transmute(system.Root_Grants)completion.values[1]}) {
+		if pass == 1 && set == {} {
+			break
+		}
+		print(name, pass == 0 ? " has:" : " lost:")
+		if set == {} {
+			print(" no grant")
+		}
+		first := true
+		for grant in system.Root_Grant {
+			if grant in set {
+				print(first ? " " : ", ", system.root_grant_names[grant])
+				first = false
+			}
+		}
+		print("\n")
+	}
+	return {}
+}
+
+// revoke asks the root service to end one grant of a program that runs.
+revoke :: proc "contextless" (arguments: []Value) -> Value {
+	name := arguments[0].text
+	for grant in system.Root_Grant {
+		if system.root_grant_names[grant] != arguments[1].text {
+			continue
+		}
+		completion, answered := request_record(.Revoke, name, u64(grant))
+		if !answered {
+			return fail(requests.head == nil ? "the console has no ring to the root service" : "the root service did not answer")
+		}
+		#partial switch system.Status(completion.kind) {
+		case .Ok:
+			print(name, " lost the grant ", arguments[1].text, ", holdings ended: ", completion.values[0], "\n")
+			return {}
+		case .Bad_State:
+			return fail("the program ", name, " does not have the grant ", arguments[1].text)
+		}
+		return fail("the root service refused: no program has the name ", name)
+	}
+	return fail("no grant has the name ", arguments[1].text, ": the grants are log, machine, image, log_records")
 }
 
 start_program :: proc "contextless" (arguments: []Value) -> Value {
