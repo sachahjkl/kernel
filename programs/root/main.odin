@@ -42,6 +42,8 @@ grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 		return {.Inspect, .Image} // It shows the modules of the boot image.
 	case "rings":
 		return {.Image} // It starts its nodes from the boot image.
+	case "terminal":
+		return {.Inspect, .Image} // It starts its program from the boot image, and shows the kernel entries of that program.
 	case "paint", "life":
 		return {.Serve}
 	}
@@ -73,6 +75,8 @@ budget_of :: proc "contextless" (name: string) -> system.Budget_Amounts {
 		return {pages = 2048, programs = 1, threads = 9}
 	case "flow":
 		return {pages = 2048, programs = 1, threads = 3}
+	case "terminal":
+		return {pages = 8192, programs = 2, threads = 3} // The lines that it keeps, and its program.
 	}
 	return {pages = 2048, programs = 1, threads = 1}
 }
@@ -82,7 +86,7 @@ budget_of :: proc "contextless" (name: string) -> system.Budget_Amounts {
 // the log to them.
 log_grant :: proc "contextless" (name: string) -> system.Grant {
 	rights := system.Rights{.Write}
-	if name == "console" || name == "rings" {
+	if name == "console" || name == "rings" || name == "terminal" {
 		rights += {.Give}
 	}
 	return {system.context_record().handles[op.CONTEXT_LOG], rights}

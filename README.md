@@ -39,6 +39,10 @@ The system boots under QEMU to a graphical desktop with a console, a system tool
 
 ![One ring between two threads: the records of one second and the kernel entries that they cost, for two capacities and two ways to wait](docs/screenshots/flow.png)
 
+![A terminal with no escape sequence: flood writes millions of styled lines in one second, the terminal draws only the view](docs/screenshots/terminal.png)
+
+![The person holds the view while the program continues to write](docs/screenshots/terminal_held.png)
+
 ![Four processors run the threads of one program at the same time; the same picture with 1, 2 and 4 threads](docs/screenshots/processors.png)
 
 ![The temple of Jon: a portrait of Jonathan Blow that turns](docs/screenshots/temple.png)
@@ -87,10 +91,11 @@ The system boots under QEMU to a graphical desktop with a console, a system tool
 | `module/`, `blake3/` | The module format, the loader code, the hash |
 | `ring/` | The ring: two queues in shared memory |
 | `isolated/` | The isolated call: the argument record and its checks |
+| `terminal/` | The terminal ring and the text region: what a program sends to a terminal |
 | `relay/` | The records and the grants of the `rings` demonstration |
 | `system/` | The library of a program: kernel operations, text, loader, grants |
 | `graphics/`, `display/` | Drawing with the processor; the protocol of the compositor |
-| `programs/` | `root`, `input`, `compositor`, `console`, `host`, `monitor`, `plasma`, `life`, `paint`, `fault`, `temple`, `rings`, `node`, `threads`, `workers`, `rights`, `budget`, `processors`, and the table `launcher` |
+| `programs/` | `root`, `input`, `compositor`, `console`, `host`, `monitor`, `plasma`, `life`, `paint`, `fault`, `temple`, `rings`, `node`, `threads`, `workers`, `rights`, `budget`, `processors`, `boot`, `pages`, `log`, `flow`, `terminal`, `flood`, and the table `launcher` |
 | `modules/` | Modules of commands (`math`, `probe`) and the test modules of the host load test |
 | `tools/kerneltool/` | The kernel tool: all the automation of the project |
 
@@ -107,9 +112,10 @@ odin run tools/kerneltool -out:build/kerneltool -- run
 | Command | Action |
 |---|---|
 | `build` | Build the modules, the boot image and the boot program |
-| `run` | Build, then start the machine under QEMU, with the log of the kernel on the terminal |
+| `run` | Build, then start the machine under QEMU, with the log of the kernel on the terminal of the host |
 | `test` | Build, start the machine, act as the person (keys, pointer), check the log, save pictures |
 | `screenshots` | `test`, then copy the pictures to `docs/screenshots/` |
+| `film` | Build, start the machine, film the terminal, write `build/film/terminal.mp4` (not a test) |
 | `font` | Convert the BDF file of the font to `graphics/font.odin` |
 | `portrait` | Convert `programs/temple/portrait.jpg` to `programs/temple/portrait.pixels` |
 | `check` | `odin check -vet` and `odin test` of the host code, then `test` |

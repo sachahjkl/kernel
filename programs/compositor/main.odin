@@ -44,6 +44,8 @@ Client :: struct {
 	ring_memory: system.Handle, // 0: the slot is free.
 	ring:        ring.Ring,
 	surface:     graphics.Canvas, // pixels is nil until the program creates its surface.
+	pictures:    [^]graphics.Color, // The memory of the surface: one picture or two. surface is one of them.
+	picture_count: u64,
 	x, y:        int,
 	title:       system.Name,
 }
@@ -226,6 +228,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					surface_create(index, record)
 				case .Present:
 					if client.surface.pixels != nil {
+						// The program names the picture that is complete.
+						if record.values[0] < client.picture_count {
+							client.surface.pixels = client.pictures[int(record.values[0]) * client.surface.width * client.surface.height:]
+						}
 						damage_add(client.x + BORDER, client.y + TITLE_HEIGHT, client.surface.width, client.surface.height)
 					}
 				}
@@ -283,7 +289,7 @@ client_remove :: proc "contextless" (memory: system.Handle) {
 		damage_window(&client)
 		damage_focus()
 		if client.surface.pixels != nil {
-			system.memory_unmap(client.surface.pixels)
+			system.memory_unmap(client.pictures)
 		}
 		system.ring_close(&client.ring)
 		system.close(client.ring_memory)
@@ -300,7 +306,8 @@ surface_create :: proc "contextless" (index: int, record: ring.Record) {
 	if client.surface.pixels != nil || width == 0 || height == 0 || width > display.SURFACE_LIMIT || height > display.SURFACE_LIMIT {
 		return
 	}
-	if system.memory_size(memory) * system.PAGE_SIZE < width * height * size_of(graphics.Color) {
+	size := system.memory_size(memory) * system.PAGE_SIZE
+	if size < width * height * size_of(graphics.Color) {
 		system.close(memory)
 		return
 	}
@@ -309,7 +316,9 @@ surface_create :: proc "contextless" (index: int, record: ring.Record) {
 	if status != .Ok {
 		return
 	}
-	client.surface = {pixels = ([^]graphics.Color)(address), width = int(width), height = int(height), stride = int(width)}
+	client.pictures = ([^]graphics.Color)(address)
+	client.picture_count = size >= 2 * width * height * size_of(graphics.Color) ? 2 : 1
+	client.surface = {pixels = client.pictures, width = int(width), height = int(height), stride = int(width)}
 	client.title = system.name_unpack({record.values[3], record.values[4], record.values[5], record.values[6]})
 	client.x = 60 + placed % 8 * 36
 	client.y = BAR_HEIGHT + 24 + placed % 8 * 30

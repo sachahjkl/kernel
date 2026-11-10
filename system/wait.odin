@@ -24,8 +24,10 @@ WAKE_ALL :: max(u64)
 Wait :: struct {
 	words:   [op.WORD_WAIT_CAPACITY]op.Word,
 	flags:   [op.WORD_WAIT_CAPACITY]^u32, // The `waits` word of a queue: wait_end sets it.
-	readers: [op.WORD_WAIT_CAPACITY]^ring.Counters, // A queue that this thread reads.
+	other_flags: [op.WORD_WAIT_CAPACITY]^u32, // A queue: the `waits` word of the other side.
+	other_words: [op.WORD_WAIT_CAPACITY]^u32, // A queue: the counter that the other side waits on.
 	count:   int,
+	flag_count: int, // The words that have a flag: wait_end adds one word for each.
 	full:    bool, // A word did not fit: the wait ends at once.
 }
 
@@ -48,14 +50,18 @@ wait_begin :: proc "contextless" () -> (wait: Wait) {
 
 // wait_word adds a word: the thread waits while the word holds value.
 // word_wake ends the wait.
-wait_word :: proc "contextless" (wait: ^Wait, word: ^u32, value: u32, flag: ^u32 = nil, reader: ^ring.Counters = nil) {
-	if wait.count == len(wait.words) {
+wait_word :: proc "contextless" (wait: ^Wait, word: ^u32, value: u32, flag: ^u32 = nil, other_flag: ^u32 = nil, other_word: ^u32 = nil) {
+	if wait.count + wait.flag_count + (flag != nil ? 2 : 1) > len(wait.words) {
 		wait.full = true
 		return
 	}
+	if flag != nil {
+		wait.flag_count += 1
+	}
 	wait.words[wait.count] = {address = u64(uintptr(word)), value = u64(value)}
 	wait.flags[wait.count] = flag
-	wait.readers[wait.count] = reader
+	wait.other_flags[wait.count] = other_flag
+	wait.other_words[wait.count] = other_word
 	wait.count += 1
 }
 
@@ -63,14 +69,14 @@ wait_word :: proc "contextless" (wait: ^Wait, word: ^u32, value: u32, flag: ^u32
 // the queue is empty.
 wait_records :: proc "contextless" (wait: ^Wait, queue: ^ring.Queue) {
 	counters := queue.counters
-	wait_word(wait, &counters.write, intrinsics.volatile_load(&counters.read), &counters.reader_waits, counters)
+	wait_word(wait, &counters.write, intrinsics.volatile_load(&counters.read), &counters.reader_waits, &counters.writer_waits, &counters.read)
 }
 
 // wait_room adds a queue that this thread writes: the thread waits while
 // the queue is full. The reader wakes it when half of the queue is free.
 wait_room :: proc "contextless" (wait: ^Wait, queue: ^ring.Queue) {
 	counters := queue.counters
-	wait_word(wait, &counters.read, intrinsics.volatile_load(&counters.write) - ring.capacity(queue), &counters.writer_waits)
+	wait_word(wait, &counters.read, intrinsics.volatile_load(&counters.write) - ring.capacity(queue), &counters.writer_waits, &counters.reader_waits, &counters.write)
 }
 
 // wait_spin reads the words of the list for a short time, with no kernel
@@ -102,22 +108,37 @@ wait_end :: proc "contextless" (wait: ^Wait, deadline: u64 = WAIT_FOREVER) -> u6
 	if wait.full {
 		return time()
 	}
+	// A `waits` word is also a word of the wait: the thread waits while it
+	// is 1. The other side sets it to 0 before each wake. A late wake, for
+	// a record that this thread already read, can set it to 0 before this
+	// thread waits: the wait then ends at once, and no later wake is lost.
+	total := wait.count
 	for index in 0 ..< wait.count {
 		if flag := wait.flags[index]; flag != nil {
 			intrinsics.atomic_store(flag, 1)
+			wait.words[total] = {address = u64(uintptr(flag)), value = 1}
+			total += 1
 		}
-		// This thread reads no record while it waits: a writer that waits
-		// for half of the queue must continue now.
-		if reader := wait.readers[index]; reader != nil && intrinsics.atomic_exchange(&reader.writer_waits, 0) != 0 {
-			word_wake(&reader.read, WAKE_ALL)
+		// This thread does nothing with the queue while it waits. If the
+		// other side waits for this thread, it must continue now: a writer
+		// that waits for half of the queue, or a reader that was not told
+		// of the last records (ring.push with no wake_reader).
+		if other := wait.other_flags[index]; other != nil && intrinsics.atomic_exchange(other, 0) != 0 {
+			word_wake(wait.other_words[index], WAKE_ALL)
 		}
 	}
 	// The kernel reads each word again: a record that arrived before the
 	// `waits` word was set ends the wait at once.
 	kernel := kernel_ring()
-	ring.push(&kernel.commands, ring.Record{kind = u32(op.Operation.Word_Wait), values = {0 = u64(uintptr(&wait.words)), 1 = u64(wait.count)}})
+	ring.push(&kernel.commands, ring.Record{kind = u32(op.Operation.Word_Wait), values = {0 = u64(uintptr(&wait.words)), 1 = u64(total)}})
 	now := system_enter(max(deadline, 1))
 	ring.pop(&kernel.completions)
+	// The thread does not wait now: the other side does not need to wake it.
+	for index in 0 ..< wait.count {
+		if flag := wait.flags[index]; flag != nil {
+			intrinsics.atomic_store(flag, 0)
+		}
+	}
 	return now
 }
 
@@ -142,19 +163,38 @@ word_wake :: proc "contextless" (word: ^u32, count: u64 = 1) -> u64 {
 // enters the kernel only for that wake. false: the queue is full.
 send :: proc "contextless" (queue: ^ring.Queue, record: ring.Record) -> bool {
 	ring.push(queue, record) or_return
+	wake_reader(queue)
+	return true
+}
+
+// wake_reader wakes the reader of a queue if it waits. A thread that
+// writes several records with ring.push calls it one time after the last
+// record: one complete store for the group, in place of one for each
+// record.
+wake_reader :: proc "contextless" (queue: ^ring.Queue) {
+	// The count is complete in memory before this thread reads the `waits`
+	// word. If not, this thread can read "no wait" while the reader reads
+	// the old count, and the reader then waits with no wake.
+	ring.complete(&queue.counters.write)
 	if intrinsics.atomic_load(&queue.counters.reader_waits) != 0 && intrinsics.atomic_exchange(&queue.counters.reader_waits, 0) != 0 {
 		word_wake(&queue.counters.write, WAKE_ALL)
 	}
-	return true
 }
 
 // receive reads a record from a queue. If the writer waits for room, it
 // wakes the writer when half of the queue is free: the writer then writes
 // many records for one kernel entry.
+//
+// A writer waits only while the queue is full. From a full queue, the count
+// of records passes each number: the reader looks at the `waits` word only
+// when half of the queue is free, and before it waits itself (wait_end).
 receive :: proc "contextless" (queue: ^ring.Queue) -> (record: ring.Record, ok: bool) {
 	record = ring.pop(queue) or_return
-	if intrinsics.atomic_load(&queue.counters.writer_waits) != 0 && ring.count(queue) <= ring.capacity(queue) / 2 && intrinsics.atomic_exchange(&queue.counters.writer_waits, 0) != 0 {
-		word_wake(&queue.counters.read, WAKE_ALL)
+	if ring.count(queue) == ring.capacity(queue) / 2 {
+		ring.complete(&queue.counters.read) // See wake_reader.
+		if intrinsics.atomic_load(&queue.counters.writer_waits) != 0 && intrinsics.atomic_exchange(&queue.counters.writer_waits, 0) != 0 {
+			word_wake(&queue.counters.read, WAKE_ALL)
+		}
 	}
 	return record, true
 }

@@ -4,6 +4,12 @@
 // records; the compositor sends input as completion records. The pixels of
 // the surface are memory that the program creates and grants to the
 // compositor. No pixel goes through the ring or through the kernel.
+//
+// The memory of a surface has one picture or two. With one picture, the
+// compositor can read the picture while the program draws: the screen can
+// show a part of the new picture with a part of the old one. With two
+// pictures, the program draws one while the compositor reads the other,
+// and Present names the picture that is complete.
 package display
 
 import "../graphics"
@@ -13,7 +19,7 @@ import "../system"
 Command :: enum u32 {
 	None           = 0,
 	Surface_Create = 1, // values: memory handle (in the compositor), width, height, title (4 values)
-	Present        = 2, // The pixels of the surface changed.
+	Present        = 2, // The pixels of the surface changed. values: the picture to show (0 or 1)
 }
 
 Event_Kind :: enum u32 {
@@ -46,6 +52,10 @@ KEY_UP :: KEY_EXTENDED | 0x48
 KEY_DOWN :: KEY_EXTENDED | 0x50
 KEY_LEFT :: KEY_EXTENDED | 0x4B
 KEY_RIGHT :: KEY_EXTENDED | 0x4D
+KEY_HOME :: KEY_EXTENDED | 0x47
+KEY_END :: KEY_EXTENDED | 0x4F
+KEY_PAGE_UP :: KEY_EXTENDED | 0x49
+KEY_PAGE_DOWN :: KEY_EXTENDED | 0x51
 
 MODIFIER_SHIFT :: 1
 MODIFIER_CONTROL :: 2
@@ -69,19 +79,26 @@ Window :: struct {
 	ring_memory: system.Handle,
 	ring:        ring.Ring,
 	surface:     system.Handle,
-	canvas:      graphics.Canvas,
+	canvas:      graphics.Canvas, // Where the program draws now.
+	pictures:    [2]graphics.Canvas,
+	picture:     int, // The index of canvas in pictures.
+	two:         bool, // The surface has two pictures.
+	presented:   u32, // The count of commands after the last Present.
 }
 
 // open creates a surface and shows it. The program draws in window.canvas,
 // then calls present.
-open :: proc "contextless" (ctx: ^system.Context, width, height: int, title: string) -> (window: Window, ok: bool) {
+// With two_pictures, present changes window.canvas to the other picture:
+// the program draws each picture from nothing, and it calls canvas_free
+// before it draws.
+open :: proc "contextless" (ctx: ^system.Context, width, height: int, title: string, two_pictures := false) -> (window: Window, ok: bool) {
 	window.ring_memory = ctx.handles[system.GRANT_DISPLAY]
 	status: system.Status
 	if window.ring, status = system.ring_open(window.ring_memory); status != .Ok {
 		return {}, false
 	}
 	address: rawptr
-	pages := (u64(width * height * size_of(graphics.Color)) + system.PAGE_SIZE - 1) / system.PAGE_SIZE
+	pages := (u64(width * height * size_of(graphics.Color) * (two_pictures ? 2 : 1)) + system.PAGE_SIZE - 1) / system.PAGE_SIZE
 	window.surface, status = system.memory_create(pages)
 	if status != .Ok {
 		return {}, false
@@ -90,7 +107,11 @@ open :: proc "contextless" (ctx: ^system.Context, width, height: int, title: str
 	if status != .Ok {
 		return {}, false
 	}
-	window.canvas = {pixels = ([^]graphics.Color)(address), width = width, height = height, stride = width}
+	window.two = two_pictures
+	for &picture, index in window.pictures {
+		picture = {pixels = ([^]graphics.Color)(address)[index * width * height:], width = width, height = height, stride = width}
+	}
+	window.canvas = window.pictures[0]
 
 	// The compositor maps the ring when the root service tells it of this
 	// program. Until then, the grant has no receiver.
@@ -115,8 +136,22 @@ open :: proc "contextless" (ctx: ^system.Context, width, height: int, title: str
 	return window, true
 }
 
+// present tells the compositor that the picture in window.canvas is
+// complete.
 present :: proc "contextless" (window: ^Window) {
-	system.send(&window.ring.commands, ring.Record{kind = u32(Command.Present)})
+	if !system.send(&window.ring.commands, ring.Record{kind = u32(Command.Present), values = {0 = u64(window.picture)}}) || !window.two {
+		return
+	}
+	window.presented = window.ring.commands.counters.write
+	window.picture = 1 - window.picture
+	window.canvas = window.pictures[window.picture]
+}
+
+// canvas_free says if the program can draw in window.canvas. With two
+// pictures, the compositor reads the other picture only after it took the
+// last Present: until then, it can still read this one.
+canvas_free :: proc "contextless" (window: ^Window) -> bool {
+	return !window.two || i32(window.ring.commands.counters.read - window.presented) >= 0
 }
 
 // wait stops the thread until the window has an input event, or until the

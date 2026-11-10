@@ -75,6 +75,13 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 |---|---|---|
 | Ring | A pair of queues in shared memory between two programs, or between a program and the kernel: one for command records, one for completion records (P4, P6) | pipe, socket, channel, port, message queue |
 | Capacity | The count of records of each queue of a ring: a power of two, chosen when the ring is created, never changed after. It comes from the size of the memory of the ring | buffer size, queue depth, backlog |
+| Terminal | A program that shows the text records of other programs, and keeps their lines. A program holds the terminal as two grants: the terminal ring and the text region. The kernel has no such concept | TTY, pty, terminal emulator, standard output |
+| Terminal ring | The ring from a program to its terminal. A record has a kind (text, status, clear), a count of bytes and a style. It has no place on the screen | escape sequence, control character, stream |
+| Text region | The shared memory beside a terminal ring where the program writes the bytes of its text, in order. A record gives only a count of bytes: the terminal keeps its own place | scrollback (for this), pipe buffer |
+| Run | Bytes of text that have one style. A line is a list of runs | span, segment, chunk |
+| Style | What a run is, and how to show it: a tone, flags (end of the line, own color, reverse) and a color | attribute, SGR, escape code |
+| Tone | What a run of text means: plain, dim, good, warning, bad, accent, number. The terminal chooses the color of each tone | color code, severity (for text) |
+| Status | One line that a program replaces at any time, with a value and a total. The terminal shows it out of the lines: no line is drawn again | progress bar hack, carriage return |
 | Direct call | A call of an export in the address space of the caller. The arguments are in registers (the call form) | in-process call, local call |
 | Isolated call | A call of an export of a module that runs in another program. The arguments travel in a ring (P19) | remote call, RPC, IPC call |
 | Call host | The program that loads one module and executes the isolated calls of its exports. It has no handle but its call ring, its call region, its budget and the log | worker, helper process, server |
@@ -108,10 +115,11 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Term | Definition | Do not use |
 |---|---|---|
 | Surface | A region of shared memory that one program draws into and the compositor displays (P18) | window buffer, framebuffer (reserved for the UEFI one) |
+| Picture | One complete image in the memory of a surface. A surface has one picture or two. With two, the program draws one while the compositor reads the other | back buffer, front buffer, swap chain |
 | Compositor | The service that owns the display, combines surfaces and routes input to the program with focus. In the first milestone it is also the desktop shell | window manager, display server |
 | Damage rectangle | A rectangle of the screen that changed. The compositor draws again only the damage rectangles of a frame | dirty region, invalid area |
 | Boot display | The picture of how the machine started, drawn from the boot record and the other records of the kernel. The boot program and the root service draw it on the screen; the program `boot` draws it in a window | splash screen, boot log, POST screen |
-| Console | A normal program that shows text in a surface and calls commands in a real programming language (P19) | terminal, TTY, shell |
+| Console | A normal program that shows text in a surface and calls commands in a real programming language (P19). It is not a terminal: it shows its own text | TTY, shell |
 | Desktop shell | The program that starts programs and shows surfaces and grants to the person | launcher, window manager |
 | Picker | The surface of the document service where the person chooses a document. Its result is a grant | file dialog, powerbox |
 

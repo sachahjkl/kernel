@@ -23,6 +23,7 @@ A step is one tested commit that adds one capability.
 | 15 | `4e5cc8a` | The log is records in channels: the kernel is the one writer, readers map the records, shown by `log` |
 | 16 | `bed545a` | A program that runs serves its own exports: connections made by the root service, the same description and the same call form as a module, shown by `paint` and `life` |
 | 17 | `6bc4898` | A ring has a capacity chosen at creation; one wake for many records; `wait_spin`; measured by `flow` |
+| 18 | `HASH18` | The terminal: typed records of text with a style, no escape sequence; a reader thread and a drawer; a surface with two pictures; the lost wake of step 17 removed; shown by `terminal` and `flood`, filmed by `kerneltool film` |
 
 ## Review 1: steps 1 to 5 (2026-11-10)
 

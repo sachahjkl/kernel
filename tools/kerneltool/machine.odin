@@ -14,6 +14,10 @@ import "core:time"
 
 SCREENSHOT_FOLDER :: BUILD_FOLDER + "/screenshots"
 SCREEN_DUMP :: BUILD_FOLDER + "/screen.ppm"
+FILM_FOLDER :: BUILD_FOLDER + "/film"
+FILM_FRAME :: FILM_FOLDER + "/%05d.ppm"
+FILM_RATE :: 25 // Pictures in one second.
+FILM_FRAME_TIME :: time.Second / FILM_RATE
 STEP_TIMEOUT :: 20 * time.Second
 KEY_PAUSE :: 45 * time.Millisecond
 MOUSE_PAUSE :: 25 * time.Millisecond
@@ -29,6 +33,7 @@ Step_Kind :: enum {
 	Launch, // Open the menu of the launcher, and press the line of the program text.
 	Drag, // Hold the left button from (x, y) to (to_x, to_y).
 	Shot, // Save the screen as text.png.
+	Film, // Save the screen 25 times in one second, for x milliseconds, as the next pictures of the film.
 	Quit, // End QEMU: the machine does not stop by itself.
 }
 
@@ -381,11 +386,57 @@ scenario := [?]Step {
 	// The window covers the console: move it down.
 	{kind = .Drag, x = 500, y = 94, to_x = 500, to_y = 754},
 	{kind = .Click, x = 70, y = 300},
+	// The terminal: a program gives text as records with a style, in a ring
+	// of 4096 records. The terminal reads them in one thread and draws in
+	// another: the display does not slow the program.
+	{kind = .Launch, text = "terminal"},
+	{kind = .Wait, text = "flood: ok", any_order = true},
+	{kind = .Wait, text = "terminal: ok, flood writes in a ring of 4096 records"},
+	{kind = .Wait, text = "terminal: flood wrote "},
+	{kind = .Shot, text = "terminal"},
+	{kind = .Key, text = "spc"},
+	{kind = .Wait, text = "terminal: the view stays at line "},
+	{kind = .Key, text = "pgup"},
+	{kind = .Shot, text = "terminal_held"},
+	{kind = .Key, text = "s"},
+	{kind = .Wait, text = "terminal: stopped flood after "},
+	{kind = .Key, text = "end"},
+	{kind = .Shot, text = "terminal_stopped"},
+	{kind = .Drag, x = 500, y = 64, to_x = 500, to_y = 754},
+	{kind = .Click, x = 70, y = 300},
+	{kind = .Type, text = "stop(\"terminal\")"},
+	{kind = .Wait, text = "root: terminal stopped"},
 	// Each page is free or paid, after all the starts and stops of this test.
 	{kind = .Type, text = "memory()"},
 	{kind = .Wait, text = " pages: all the free pages"},
 	{kind = .Type, text = "shutdown()"},
 	{kind = .Wait, text = "kernel: the machine stops with code 0"},
+}
+
+// The film of the terminal: the program flood writes lines, the person
+// holds the view, moves in the lines, then stops and starts the program.
+@(rodata)
+scenario_film := [?]Step {
+	{kind = .Wait, text = "compositor: surface console"},
+	{kind = .Launch, text = "terminal"},
+	{kind = .Wait, text = "terminal: ok, flood writes in a ring of 4096 records"},
+	{kind = .Film, x = 5000},
+	{kind = .Key, text = "spc"},
+	{kind = .Film, x = 2500},
+	{kind = .Key, text = "end"},
+	{kind = .Film, x = 2500},
+	{kind = .Key, text = "s"},
+	{kind = .Film, x = 1500},
+	{kind = .Key, text = "pgup"},
+	{kind = .Film, x = 500},
+	{kind = .Key, text = "pgup"},
+	{kind = .Film, x = 500},
+	{kind = .Key, text = "pgup"},
+	{kind = .Film, x = 1000},
+	{kind = .Key, text = "s"},
+	{kind = .Film, x = 4000},
+	{kind = .Shot, text = "film_end"},
+	{kind = .Quit},
 }
 
 Machine :: struct {
@@ -395,6 +446,7 @@ Machine :: struct {
 	output:    string, // The file of the log of the kernel.
 	x, y:      int, // The pointer.
 	pointer_known: bool, // The tool knows where the pointer is.
+	film_frames: int, // The pictures of the film that the tool asked for.
 }
 
 monitor_send :: proc(machine: ^Machine, parts: ..string) {
@@ -671,6 +723,14 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 		case .Shot:
 			if !screen_save(machine, step.text) {
 				return false
+			}
+		case .Film:
+			// QEMU does the commands of the monitor in order: one file for each picture.
+			start := time.tick_now()
+			for time.tick_since(start) < time.Duration(step.x) * time.Millisecond {
+				monitor_send(machine, "screendump ", fmt.tprintf(FILM_FRAME, machine.film_frames))
+				machine.film_frames += 1
+				time.sleep(FILM_FRAME_TIME - time.tick_since(start) % FILM_FRAME_TIME)
 			}
 		}
 		free_all(context.temp_allocator)

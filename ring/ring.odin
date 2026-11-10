@@ -132,3 +132,11 @@ pop :: proc "contextless" (queue: ^Queue) -> (record: Record, ok: bool) {
 empty :: proc "contextless" (queue: ^Queue) -> bool {
 	return intrinsics.volatile_load(&queue.counters.write) == intrinsics.volatile_load(&queue.counters.read)
 }
+
+// complete makes the last store of a counter complete in memory, as each
+// processor sees it, before the thread reads another word. push and pop do
+// not do it: it costs more than the store. A side does it before it reads
+// the `waits` word of the other side.
+complete :: proc "contextless" (counter: ^u32) {
+	intrinsics.atomic_store_explicit(counter, intrinsics.volatile_load(counter), .Seq_Cst)
+}
