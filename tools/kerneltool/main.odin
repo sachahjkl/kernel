@@ -24,9 +24,10 @@ ROOT_MARK :: "flake.nix"
 
 BUILD_FOLDER :: "build"
 BOOT_OBJECT_FOLDER :: BUILD_FOLDER + "/boot"
-BOOT_VOLUME :: BUILD_FOLDER + "/esp"
-BOOT_PROGRAM_FOLDER :: BOOT_VOLUME + "/EFI/BOOT"
-BOOT_PROGRAM :: BOOT_PROGRAM_FOLDER + "/BOOTX64.EFI"
+BOOT_PROGRAM :: BOOT_OBJECT_FOLDER + "/BOOTX64.EFI"
+BOOT_VOLUME :: BUILD_FOLDER + "/boot_volume.img"
+// The path where the firmware looks for the boot program of a disk.
+BOOT_PROGRAM_PATH :: "EFI/BOOT/BOOTX64.EFI"
 FIRMWARE_VARIABLES :: BUILD_FOLDER + "/ovmf_vars.fd"
 TEST_OUTPUT :: BUILD_FOLDER + "/test_output.txt"
 
@@ -82,7 +83,7 @@ usage :: proc() {
 // run_build builds the modules, the boot image, and then the boot program,
 // which contains the kernel module and the boot image.
 run_build :: proc(args: []string) -> int {
-	if !build_modules() || !reset_folder(BOOT_OBJECT_FOLDER) || !make_folder(BOOT_PROGRAM_FOLDER) {
+	if !build_modules() || !reset_folder(BOOT_OBJECT_FOLDER) {
 		return EXIT_FAILURE
 	}
 	if !run(
@@ -114,6 +115,20 @@ run_build :: proc(args: []string) -> int {
 	append(&link, "lld-link", "/subsystem:efi_application", "/entry:efi_main", "/nodefaultlib", "/out:" + BOOT_PROGRAM)
 	append(&link, ..objects)
 	if !run(link[:]) {
+		return EXIT_FAILURE
+	}
+	program, read_err := os.read_entire_file(BOOT_PROGRAM, context.temp_allocator)
+	if read_err != nil {
+		fmt.eprintfln("kerneltool: cannot read %s: %v", BOOT_PROGRAM, read_err)
+		return EXIT_FAILURE
+	}
+	volume, fits := volume_encode({{path = BOOT_PROGRAM_PATH, data = program}}, context.temp_allocator)
+	if !fits {
+		fmt.eprintln("kerneltool: the boot program does not fit in the boot volume")
+		return EXIT_FAILURE
+	}
+	if write_err := os.write_entire_file(BOOT_VOLUME, volume); write_err != nil {
+		fmt.eprintfln("kerneltool: cannot write %s: %v", BOOT_VOLUME, write_err)
 		return EXIT_FAILURE
 	}
 	return 0
@@ -186,7 +201,7 @@ run_check :: proc(args: []string) -> int {
 }
 
 // machine_command gives the one QEMU command line of the project: the first
-// machine of property 7. The boot volume is BOOT_VOLUME, shown as a FAT disk.
+// machine of property 7. The boot volume is BOOT_VOLUME: a virtio block device.
 machine_command :: proc(test: bool) -> (command: []string, ok: bool) {
 	firmware_code := os.get_env("OVMF_CODE", context.temp_allocator)
 	firmware_variables := os.get_env("OVMF_VARS", context.temp_allocator)
@@ -224,7 +239,9 @@ machine_command :: proc(test: bool) -> (command: []string, ok: bool) {
 		"-drive",
 		"if=pflash,format=raw,file=" + FIRMWARE_VARIABLES,
 		"-drive",
-		"format=raw,file=fat:rw:" + BOOT_VOLUME,
+		"if=none,id=boot,format=raw,file=" + BOOT_VOLUME,
+		"-device",
+		"virtio-blk-pci,drive=boot",
 	)
 	if test {
 		// No window. The log of the kernel (the serial port) goes to a file.

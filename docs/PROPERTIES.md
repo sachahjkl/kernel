@@ -38,6 +38,12 @@ Three rules apply to every decision:
 2. **Reuse proven software where it fits.** Do not write again what is small, correct and permissively licensed.
 3. **No compatibility goal.** The system does not implement POSIX, Win32, or the Linux system call interface.
 
+## Assumptions
+
+- **64 bits only.** Decided by the owner on 2026-11-10. An address is 64 bits on every machine of the system. The system has no 32-bit target and runs no 32-bit program. The targets are x86-64 first, and ARM64 at best.
+- **Result**: an address, a count, a handle and a register value have one size: 8 bytes. A record has one layout on all machines. The call form passes each scalar in one register. No contract has a second form for a smaller machine.
+- **Forbids**: a type whose size depends on the machine, a 32-bit variant of a record, a compatibility mode for 32-bit code.
+
 ## Summary
 
 | # | Property | Status |
@@ -133,7 +139,7 @@ Status: Decided.
 - **Forbids**: pipes, signals, message queues, sockets between local programs, a second mechanism "for small messages".
 - **Cost**: A receiver must treat shared memory as hostile: the sender can change it during the read. The rule is "copy, then validate". Layouts must be versioned. A program that waits on a dead peer needs a kernel notification.
 - **Reuse**: L4 and seL4 show how few cache lines a fast path needs. [Notes `data_oriented_kernel.md` §3]
-- **Open**: the wake-up primitive. A futex-like wait on a ring counter is the proposal. How a handle moves through a ring.
+- **Open**: How a handle moves through a ring. The wake-up primitive exists since 2026-11-10: the word wait (`Word_Wait`, `Word_Wake`). The rings still use the older `Wake(memory)`; see the gaps in `FIRST_MILESTONE.md`.
 
 ## 7. No drivers in the kernel, and fixed hardware first
 

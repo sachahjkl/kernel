@@ -66,8 +66,9 @@ The next step is the owner's review of that file.
 - **No tweet (owner, 2026-11-10)**: never post about this project on X or on another public service. This includes the temple of Jon and all screenshots.
 - **Next step: the isolated call, "no bad compromise" (owner, 2026-11-10).** Done: `isolated/`, `programs/host`, `isolate("probe")` in the console.
 - **Development log (owner, 2026-11-10)**: keep all the screenshots in a folder out of the repository. `kerneltool screenshots` copies the pictures of each run to a new folder of `../kernel-devlog`, named with the time in UTC. The rule "no tweet" still applies to these pictures.
-- **Show the concepts (owner, 2026-11-10)**: add APIs for communication between programs and for more than one thread, and demonstrate each one with a picture. First: `rings` (six programs, six rings). Second: `threads` (one program, five threads, one surface).
+- **Show the concepts (owner, 2026-11-10)**: add APIs for communication between programs and for more than one thread, and demonstrate each one with a picture. First: `rings` (six programs, six rings). Second: `threads` (one program, five threads, one surface). Third: `workers` (the lock and the word wait: one queue, four threads).
 - **Work to the end, with no pause (owner, 2026-11-10)**: "I want everything." Do the planned steps and the steps that follow from the properties, without a question to the owner between steps. After each five steps, review the work against the properties and the rule "no bad compromise", and write the result in `docs/REVIEWS.md`.
+- **64 bits only (owner, 2026-11-10)**: a basic assumption of the whole design. An address is 64 bits. The system has no 32-bit target and no 32-bit program. The targets are x86-64 first, and ARM64 at best. Use this to make records, handles and the call form simpler: one size for an address, a count and a register value, and no second layout of a record. Recorded in `PROPERTIES.md` ("Assumptions") and in `MODULE_CONTRACT.md`.
 - No pull request unless the owner asks.
 
 ## Research

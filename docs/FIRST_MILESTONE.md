@@ -32,7 +32,8 @@ The scenario does these actions:
 13. Start `temple` from the bar.
 14. Start `rings` from the bar: six programs pass records through six rings. Add three records. Stop node 4: all the records wait in the ring before it. Start node 4 again.
 15. Start `threads` from the bar: one program, five threads. A thread adds the numbers to 1000 and ends; the first thread reads 500500. Four threads draw one Julia set each in the surface of the program. Key `3` stops thread 3, then starts it again. `programs()` shows 5 threads.
-16. Call `shutdown()`. The machine stops with code 0.
+16. Start `workers` from the bar. Four threads add to one number for 150 ms each: with the lock no addition is lost; with no lock, millions are lost. Then four threads take 140 tiles from one queue and compute a picture.
+17. Call `shutdown()`. The machine stops with code 0.
 
 ## The path from power to desktop
 
@@ -48,12 +49,13 @@ The scenario does these actions:
 | Subject | Now |
 |---|---|
 | Entry | One entry point: the `syscall` instruction. `rdi` is 0, a deadline in milliseconds, or `WAIT_FOREVER`. `rax` returns the time |
-| Kernel operations | 19 command kinds in the kernel ring of each thread. `kernel/operation/operation.odin` is the full list |
+| Kernel operations | 21 command kinds in the kernel ring of each thread. `kernel/operation/operation.odin` is the full list |
 | Objects | Memory, Program, Thread, Interrupt, Ports, Machine |
 | Tables | Flat and fixed: 2048 memory objects, 64 programs, 256 threads, 128 handles and 128 mappings per program, 32 threads per program |
 | Threads | A thread is a register state and a thread area: the thread record and the kernel ring of the thread. `Thread_Create(entry, stack, parameter)` adds a thread to the caller. The threads of a program share its memory and its handles. A program with no thread stops with code 0 |
 | Memory | A memory object is a run of contiguous page frames with a reference count. `Memory_Map` maps it in a program |
 | Wait and wake | `Wake(memory)` wakes the other threads of all programs that map this memory. A thread wait is per thread. Each thread has a wake-pending flag, so no wake is lost |
+| Word wait | `Word_Wait(address, value)` and `Word_Wake(address, count)`. The kernel names a word by its page frame, so the word can be in memory that two programs share. One entry can wait on 4 words. `system.Lock` is built on it |
 | Scheduler | One processor. Round-robin over the threads, with preemption. A time slice is 10 ms. The timer runs at 1000 Hz. Idle is `hlt` |
 | Devices | A Ports object opens a port range in the port bitmap of the program. An Interrupt object counts interrupts and wakes its owner |
 | Faults | A fault in a thread stops its program with a code. The kernel wakes each program that holds its handle |
@@ -123,7 +125,10 @@ The owner did not review these. Each one can change.
 16. **The `gs` register holds the address of the thread record.** `system.call` must find the kernel ring of the thread that runs, on any stack. This amends rule 7 of the module contract: see there.
 17. **A wake is for all the threads of a program.** `Wake(memory)`, an interrupt, the end of a thread and the stop of a program wake each thread of the programs concerned. A thread that wakes for another reason reads its queues and waits again. The kernel keeps no list of who waits for what.
 18. **A thread ends alone or by its handle.** `Thread_Stop(0)` ends the caller. `Thread_Stop(thread)` ends another thread of the program at any instruction: the caller is responsible for the data that this thread was changing. `Thread_State` and the wake at the end of a thread make `system.thread_wait`.
-19. **Order in the machine test.** Two programs print in an order that the system does not fix. A `Wait` step with `any_order` does not move the place in the log. The first `Wait` has 120 s: the time of the firmware is not a property of the system.
+19. **Order in the machine test.** Two programs print in an order that the system does not fix. A `Wait` step with `any_order` does not move the place in the log.
+20. **The word wait.** Property 6 proposed "a futex-like wait on a ring counter". `Word_Wait` is a command of the entry that waits: the kernel compares the word and records the wait in one step, so no wake is lost. A word wait ends only by `Word_Wake` on one of its words or by the deadline. A wake of `Wake(memory)` stays pending for the next wait with no word: a lock never takes the wake of a ring. The word is 32 bits on all machines, the size of a ring counter.
+21. **The lock is a library.** `system.Lock` is one word with three values (free, held, held with a thread that waits). The kernel has no lock object. A free lock costs one atomic instruction and no kernel entry.
+22. **The boot volume is a file that the tool writes.** `tools/kerneltool/volume.odin` writes a FAT32 volume of 64 MiB with the boot program, and the machine gets it as a virtio block device. Before, QEMU made a FAT disk from a folder, on its SATA controller. With KVM, about 1 boot in 10 then stopped in the firmware, in a read of the disk, until an event came to QEMU (measured: 7 of 80 boots with a plain image on SATA, 0 of 160 on virtio). This was the intermittent failure of step 1 of the machine test. A test reads the volume back with a separate reader.
 
 ## Gaps
 
@@ -132,12 +137,13 @@ Against the properties and the module contract:
 - Handles have no rights. A program can give any of its handles onward.
 - The Machine handle gives inspect and stop together.
 - Property 19 is not complete: the description has no records, no floats, no handles and no grants. A module with imports cannot be loaded by a program.
-- The machine test failed two times at step 1 (2026-11-10, one time in the Nix sandbox, one time out of it with a load average of 4.5): the firmware did not start the boot program in 20 s. The log of the machine held only the screen commands of the firmware. The first step now waits 120 s. If the failure comes back with this limit, the cause is not the speed of the firmware.
 - The console waits during an isolated call: it draws nothing and reads no key until the call ends or the limit passes.
 - Each program can create memory objects and programs with no limit, and can write on the log of the kernel.
 - Frame pointers are not enforced. An import call goes through a stub that the linker adds.
 - The test "a C program calls an Odin module" does not exist.
-- One processor. No wait on a memory word: threads wait on rings or on the end of a thread. A wake goes to all the threads of a program.
+- One processor.
+- `Wake(memory)` is still the wake of a ring, and it goes to all the threads of the programs that map the memory. The word wait can replace it: the reader waits on the `write` counter of the queue. Then `Wake(memory)` and the wake-pending flag can go (rule "one mechanism").
+- A thread that stops with a lock held keeps the lock: the other threads wait with no end.
 - A thread handle can go to another program, which can then stop the thread (no rights on handles).
 - No storage, no network, no document service, no principals, no TPM, no Secure Boot.
 

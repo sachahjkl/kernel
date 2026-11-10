@@ -17,6 +17,8 @@ The system boots under QEMU to a graphical desktop with a console, a system tool
 
 ![One program, five threads: each square is drawn by its own thread](docs/screenshots/threads.png)
 
+![One queue of tiles, one lock, four threads: each tile has the tint of the thread that computed it](docs/screenshots/workers.png)
+
 ![The temple of Jon: a portrait of Jonathan Blow that turns](docs/screenshots/temple.png)
 
 `kerneltool screenshots` makes these pictures from the running machine.
@@ -34,6 +36,7 @@ The system boots under QEMU to a graphical desktop with a console, a system tool
 - `isolate("probe")` runs a module in a sandboxed program with no handle. The same calls go through a ring. A module that faults, loops or tries to stop the machine does not harm the console.
 - `rings` shows communication between programs: six programs pass records through six rings in shared memory. Stop one program: its records wait in the ring. Start it again: they continue.
 - `threads` shows several threads in one program: four threads draw in one surface, each with its own kernel ring. The kernel preempts them. Key `3` stops one thread.
+- `workers` shows the lock and the word wait: four threads take tiles from one queue. Four threads add to one number: with the lock no addition is lost, with no lock millions are lost.
 - A program that faults stops alone. The system continues.
 
 `docs/FIRST_MILESTONE.md` gives the details, the design choices and the gaps.
@@ -62,7 +65,7 @@ The system boots under QEMU to a graphical desktop with a console, a system tool
 | `relay/` | The records and the grants of the `rings` demonstration |
 | `system/` | The library of a program: kernel operations, text, loader, grants |
 | `graphics/`, `display/` | Drawing with the processor; the protocol of the compositor |
-| `programs/` | `root`, `input`, `compositor`, `console`, `host`, `monitor`, `plasma`, `life`, `paint`, `fault`, `temple`, `rings`, `node`, `threads` |
+| `programs/` | `root`, `input`, `compositor`, `console`, `host`, `monitor`, `plasma`, `life`, `paint`, `fault`, `temple`, `rings`, `node`, `threads`, `workers` |
 | `modules/` | Modules of commands (`math`, `probe`) and the test modules of the host load test |
 | `tools/kerneltool/` | The kernel tool: all the automation of the project |
 

@@ -57,7 +57,16 @@ Operation :: enum u32 {
 	// The thread starts at the entry with the parameter in the first register.
 	Thread_Stop    = 18, // (thread or 0 for self). A program with no thread stops.
 	Thread_State   = 19, // (thread) -> Program_State: Ready, Waiting or Stopped.
+	// The word wait: a thread waits while a 32-bit word of memory keeps a
+	// value. The kernel names the word by its page frame, so two programs
+	// that map one memory object can use one word.
+	Word_Wait      = 20, // (address, value): the wait of this entry ends only when a Word_Wake names this word, or at its deadline.
+	// If the word does not hold the value, the wait of this entry ends at once.
+	// One entry can have WORD_WAIT_CAPACITY of these commands.
+	Word_Wake      = 21, // (address, count) -> threads woken: wake at most count threads that wait on this word.
 }
+
+WORD_WAIT_CAPACITY :: 4
 
 // What a thread can read about itself, at the address in its `gs` register.
 // The kernel writes it when the thread starts, and does not read it again.

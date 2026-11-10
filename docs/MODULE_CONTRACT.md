@@ -24,6 +24,7 @@ These come from decisions of the owner.
 8. A program receives one context and no `argv` (P19).
 9. The same description serves a direct call and an isolated call through a ring (P19).
 10. Test: a C program with no library calls a module written in Odin, and the reverse.
+11. 64 bits only (owner, 2026-11-10): an address is 8 bytes on every machine. The targets are x86-64 and ARM64. No table, record or call form has a 32-bit variant.
 
 ## 1. The module file
 

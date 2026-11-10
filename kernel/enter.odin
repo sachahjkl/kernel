@@ -11,6 +11,8 @@ enter :: proc "contextless" (index: u32) {
 	thread := &threads[index]
 	programs[thread.program].entries += 1
 	thread.in_enter = true
+	thread.word_count = 0
+	thread.word_changed = false
 	for _ in 0 ..< ring.CAPACITY {
 		command, ok := ring.pop(&thread.ring.commands)
 		if !ok {
@@ -27,7 +29,9 @@ enter :: proc "contextless" (index: u32) {
 	}
 	wait := thread.frame.rdi
 	if wait != 0 {
-		if thread.wake_pending {
+		if thread.word_changed {
+			// A word changed before the wait: the thread reads it again.
+		} else if thread.wake_pending && thread.word_count == 0 {
 			thread.wake_pending = false
 		} else {
 			thread.state = .Waiting
@@ -250,6 +254,45 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		for &other, other_index in programs[1:] {
 			if other.state == .Ready && maps_region(&other, slot.object) {
 				wake_program(u32(other_index + 1), index)
+			}
+		}
+		return .Ok
+
+	case .Word_Wait:
+		thread := &threads[index]
+		word := word_address(program, v[0])
+		if word == 0 {
+			return .Bad_Address
+		}
+		if thread.word_count == op.WORD_WAIT_CAPACITY {
+			return .No_Slot
+		}
+		if (^u32)(uintptr(v[0]))^ != u32(v[1]) {
+			thread.word_changed = true
+			return .Ok
+		}
+		thread.words[thread.word_count] = word
+		thread.word_count += 1
+		return .Ok
+
+	case .Word_Wake:
+		word := word_address(program, v[0])
+		if word == 0 {
+			return .Bad_Address
+		}
+		for &other in threads[1:] {
+			if results[0] == v[1] {
+				break
+			}
+			if other.state != .Waiting {
+				continue
+			}
+			for candidate in other.words[:other.word_count] {
+				if candidate == word {
+					other.state = .Ready
+					results[0] += 1
+					break
+				}
 			}
 		}
 		return .Ok

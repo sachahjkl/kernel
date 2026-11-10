@@ -46,6 +46,7 @@ module_builds := [?]Module_Build {
 	{name = "node", source = "programs/node", exports = {{name = "entry"}}, image = true},
 	{name = "rings", source = "programs/rings", exports = {{name = "entry"}}, image = true},
 	{name = "threads", source = "programs/threads", exports = {{name = "entry"}}, image = true},
+	{name = "workers", source = "programs/workers", exports = {{name = "entry"}}, image = true},
 	{name = "host", source = "programs/host", exports = {{name = "entry"}}, image = true},
 	{
 		name = "probe",

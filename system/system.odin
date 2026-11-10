@@ -170,3 +170,22 @@ thread_wait :: proc "contextless" (thread: Thread) {
 	}
 	thread_end(thread)
 }
+
+// word_wait stops the thread while the word holds value, until word_wake
+// names the word or until the time is deadline. It gives the time.
+// The word can be in memory that another program maps. A wake of `wake`
+// does not end this wait: it stays for the next call of `wait`.
+// Read the word again after the wait: the deadline also ends it.
+word_wait :: proc "contextless" (word: ^u32, value: u32, deadline: u64 = WAIT_FOREVER) -> u64 {
+	ring.push(&kernel_ring().commands, ring.Record{kind = u32(op.Operation.Word_Wait), values = {0 = u64(uintptr(word)), 1 = u64(value)}})
+	now := system_enter(max(deadline, 1))
+	ring.pop(&kernel_ring().completions)
+	return now
+}
+
+// word_wake wakes at most count threads that wait on the word. It gives
+// the number of threads that it woke.
+word_wake :: proc "contextless" (word: ^u32, count: u64 = 1) -> u64 {
+	results, _ := call(.Word_Wake, u64(uintptr(word)), count)
+	return results[0]
+}

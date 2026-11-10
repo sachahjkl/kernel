@@ -61,6 +61,20 @@ Thread :: struct {
 	wake_pending: bool,
 	in_enter:     bool,
 	run_time:     u64,
+	// The word wait of the entry in progress or of the wait in progress:
+	// the physical addresses of the words.
+	words:        [op.WORD_WAIT_CAPACITY]u64,
+	word_count:   u32,
+	word_changed: bool, // A word did not hold the value: this entry does not wait.
+}
+
+// word_address gives the physical address of a 32-bit word of a program,
+// or 0 if the program cannot read it.
+word_address :: proc "contextless" (program: ^Program, address: u64) -> u64 {
+	if address & 3 != 0 || !user_range(program.table, address, 4, false) {
+		return 0
+	}
+	return page_entry(program.table, address, false)^ & PAGE_ADDRESS | address & (PAGE_SIZE - 1)
 }
 
 THREAD_TABLE_CAPACITY :: 256
@@ -400,8 +414,12 @@ thread_stop :: proc "contextless" (index: u32) {
 	}
 }
 
+// wake ends the wait of a thread. A word wait ends only by its words or by
+// its deadline: the wake stays pending for the next wait with no word.
 wake :: proc "contextless" (thread: ^Thread) {
-	if thread.state == .Waiting {
+	if thread.state == .Waiting && thread.word_count > 0 {
+		thread.wake_pending = true
+	} else if thread.state == .Waiting {
 		thread.state = .Ready
 	} else if thread.state == .Ready {
 		thread.wake_pending = true

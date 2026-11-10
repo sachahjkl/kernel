@@ -14,9 +14,6 @@ import "core:time"
 SCREENSHOT_FOLDER :: BUILD_FOLDER + "/screenshots"
 SCREEN_DUMP :: BUILD_FOLDER + "/screen.ppm"
 STEP_TIMEOUT :: 20 * time.Second
-// The firmware runs before the first line of the system. Its time is not a
-// property of the system: on a machine with no KVM it can be long.
-FIRMWARE_TIMEOUT :: 120 * time.Second
 KEY_PAUSE :: 45 * time.Millisecond
 MOUSE_PAUSE :: 25 * time.Millisecond
 MOUSE_STEP :: 40
@@ -39,13 +36,12 @@ Step :: struct {
 	// For Wait: the next Wait searches from the same place. Use it when two
 	// programs print in an order that the system does not fix.
 	any_order:  bool,
-	timeout:    time.Duration, // For Wait. 0: STEP_TIMEOUT.
 }
 
 // The positions below come from programs/compositor/main.odin: the launcher
 // in the bar, and the place of window n at (60 + 36 n, 52 + 30 n).
 scenario := [?]Step {
-	{kind = .Wait, text = "boot program: ok", timeout = FIRMWARE_TIMEOUT},
+	{kind = .Wait, text = "boot program: ok"},
 	{kind = .Wait, text = "kernel: ok"},
 	{kind = .Wait, text = "root: ok"},
 	{kind = .Wait, text = "input: ok"},
@@ -200,6 +196,14 @@ scenario := [?]Step {
 	{kind = .Shot, text = "threads"},
 	{kind = .Type, text = "3"},
 	{kind = .Wait, text = "threads: thread 3 started"},
+
+	// The lock and the word wait: four threads add to one number, then take
+	// tiles from one queue.
+	{kind = .Click, x = 726, y = 14}, // workers
+	{kind = .Wait, text = "workers: the lock lost no addition"},
+	{kind = .Wait, text = "workers: ok, 4 threads computed 140 tiles: "},
+	{kind = .Drag, x = 400, y = 62, to_x = 640, to_y = 340},
+	{kind = .Shot, text = "workers"},
 	{kind = .Click, x = 70, y = 300},
 	{kind = .Type, text = "programs()"},
 	{kind = .Wait, text = "   threads     "},
@@ -275,9 +279,9 @@ pointer_button :: proc(machine: ^Machine, down: bool) {
 	time.sleep(4 * MOUSE_PAUSE)
 }
 
-log_wait :: proc(machine: ^Machine, text: string, any_order := false, timeout: time.Duration = STEP_TIMEOUT) -> bool {
+log_wait :: proc(machine: ^Machine, text: string, any_order := false) -> bool {
 	start := time.now()
-	for time.since(start) < timeout {
+	for time.since(start) < STEP_TIMEOUT {
 		log, err := os.read_entire_file(TEST_OUTPUT, context.temp_allocator)
 		if err == nil && len(log) > machine.seen {
 			if index := strings.index(string(log[machine.seen:]), text); index >= 0 {
@@ -433,7 +437,7 @@ scenario_run :: proc(machine: ^Machine) -> bool {
 	for step, index in scenario {
 		switch step.kind {
 		case .Wait:
-			if !log_wait(machine, step.text, step.any_order, step.timeout == 0 ? STEP_TIMEOUT : step.timeout) {
+			if !log_wait(machine, step.text, step.any_order) {
 				fmt.eprintfln("kerneltool: test failed: step %d: the machine did not print \"%s\"", index + 1, step.text)
 				return false
 			}
