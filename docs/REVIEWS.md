@@ -29,6 +29,7 @@ A step is one tested commit that adds one capability.
 | 21 | `1b92079` | One module in each role (`tally`: program, service, library, sandboxed program); a module carries its documentation; `manual` shows it; `unload` in the console |
 | 22 | `48f1eee` | Two source libraries, `contract:` and `support:`; no relative import; the kernel compiles with the contract library only; the command `kerneltool` |
 | 23 | `1898531` | The console has a terminal and no surface; key records from the terminal to its program; the edit line; the root service wires a program and its terminal; a terminal draws after a change only; the step kind `Close` |
+| 24 | `HASH24` | Descriptions with records and handles: the tables Records and Fields; a Record goes as bytes; a Handle is lent with the rights of the description and ends with its call; the kernel operation `Handle_State` proves where a handle came from; Record and Handle values in the console; the module `sample` |
 
 ## Review 1: steps 1 to 5 (2026-11-10)
 

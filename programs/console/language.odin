@@ -1,5 +1,6 @@
 package console
 
+import module "contract:module"
 import "support:system"
 
 // The language of the console.
@@ -9,18 +10,28 @@ import "support:system"
 //   term       = factor { ("*" | "/" | "%") factor }
 //   factor     = "-" factor | integer | "text" | name | name "(" arguments ")" | "(" expression ")"
 //
-// A value is an Integer or a Text. "+" joins two Texts.
+// A value is an Integer, a Text, a Record or a Handle. "+" joins two Texts.
+// A Record has the description of a record of a module: the command with
+// the name of the record makes one from its fields, and `variable.field`
+// reads one field. A Handle names an object of the kernel that the console
+// holds.
 
+// The values are those of module.Type: the kind of a parameter is its type.
 Kind :: enum u8 {
 	None    = 0,
 	Integer = 1,
 	Text    = 2,
+	Record  = 3,
+	Handle  = 4,
 }
 
 Value :: struct {
 	kind:    Kind,
-	integer: i64,
+	integer: i64, // An Integer. A Handle: the handle.
 	text:    string,
+	record:  []u8, // A Record: its bytes.
+	file:    []u8, // A Record: the module that has its description.
+	detail:  u32, // A Record: the index of its description in the module.
 }
 
 @(rodata)
@@ -28,6 +39,94 @@ kind_names := [Kind]string {
 	.None    = "None",
 	.Integer = "Integer",
 	.Text    = "Text",
+	.Record  = "Record",
+	.Handle  = "Handle",
+}
+
+// type_text gives the name of a type: "Integer", the name of a record, or
+// "Handle(Read)". The text lasts for one line.
+type_text :: proc "contextless" (file: []u8, kind: Kind, detail: u32) -> string {
+	if kind == .None {
+		return "None"
+	}
+	writer := system.Writer {
+		buffer = scratch[scratch_count:],
+	}
+	system.write_type(&writer, file, module.Type(kind), detail)
+	scratch_count += writer.count
+	return system.written(&writer)
+}
+
+// scratch_bytes gives zero bytes for a record, for one line.
+scratch_bytes :: proc "contextless" (size: int) -> []u8 {
+	start := (scratch_count + 7) &~ 7
+	if size > len(scratch) - start {
+		return nil
+	}
+	scratch_count = start + size
+	bytes := scratch[start:scratch_count]
+	for &b in bytes {
+		b = 0
+	}
+	return bytes
+}
+
+// field_value gives one field of a Record value, by name.
+field_value :: proc "contextless" (value: Value, name: string) -> (result: Value, ok: bool) {
+	described := module.record_type(value.file, value.detail) or_return
+	for number in 0 ..< described.field_count {
+		item := module.field(value.file, described, number) or_return
+		if module.string_at(value.file, item.name_offset, item.name_count) != name {
+			continue
+		}
+		#partial switch item.type {
+		case .Integer:
+			return {kind = .Integer, integer = (^i64)(&value.record[item.offset])^}, true
+		case .Handle:
+			return {kind = .Handle, integer = i64((^u32)(&value.record[item.offset])^)}, true
+		}
+	}
+	return {}, false
+}
+
+// print_value writes a value, without the end of the line.
+//   Rectangle{x = 1, y = 2}        Handle 65541: Memory (Give, Read, Write)
+print_value :: proc "contextless" (value: Value, nested := false) {
+	switch value.kind {
+	case .Integer:
+		print(value.integer)
+	case .Text:
+		print(value.text)
+	case .Record:
+		described, ok := module.record_type(value.file, value.detail)
+		if !ok {
+			return
+		}
+		print(module.string_at(value.file, described.name_offset, described.name_count), "{")
+		for number in 0 ..< described.field_count {
+			item, _ := module.field(value.file, described, number)
+			name := module.string_at(value.file, item.name_offset, item.name_count)
+			print(number > 0 ? ", " : "", name, " = ")
+			field, _ := field_value(value, name)
+			print_value(field, true)
+		}
+		print("}")
+	case .Handle:
+		print("Handle ", u64(value.integer))
+		if !nested {
+			kind, rights, _ := system.handle_state(system.Handle(value.integer))
+			buffer: [96]u8
+			writer := system.Writer {
+				buffer = buffer[:],
+			}
+			system.write_rights(&writer, rights, ", ")
+			print(": ", system.object_names[kind])
+			if kind != .None {
+				print(" (", system.written(&writer), ")")
+			}
+		}
+	case .None:
+	}
 }
 
 VARIABLE_CAPACITY :: 16
@@ -40,6 +139,7 @@ Variable :: struct {
 	name_count: int, // 0: the slot is free.
 	value:      Value,
 	text:       [VARIABLE_TEXT_SIZE]u8,
+	record:     [module.RECORD_SIZE_LIMIT / 8]u64,
 }
 
 variables: [VARIABLE_CAPACITY]Variable
@@ -127,12 +227,9 @@ run_line :: proc "contextless" (text: string) {
 	if failed {
 		return
 	}
-	switch value.kind {
-	case .Integer:
-		print(value.integer, "\n")
-	case .Text:
-		print(value.text, "\n")
-	case .None:
+	if value.kind != .None {
+		print_value(value)
+		print("\n")
 	}
 }
 
@@ -161,9 +258,14 @@ assign :: proc "contextless" (name: string, value: Value) {
 	}
 	slot.name_count = copy(slot.name[:], name)
 	slot.value = value
-	if value.kind == .Text {
+	#partial switch value.kind {
+	case .Text:
 		count := copy(slot.text[:], value.text)
 		slot.value.text = string(slot.text[:count])
+	case .Record:
+		bytes := ([^]u8)(&slot.record)[:len(value.record)]
+		copy(bytes, value.record)
+		slot.value.record = bytes
 	}
 }
 
@@ -274,6 +376,21 @@ factor :: proc "contextless" () -> Value {
 				return fail(name, " is a command: write ", name, "(...)")
 			}
 		}
+		// variable.field: one field of a Record.
+		for split := len(name) - 1; split > 0; split -= 1 {
+			if name[split] != '.' {
+				continue
+			}
+			for &variable in variables {
+				if string(variable.name[:variable.name_count]) == name[:split] && variable.value.kind == .Record {
+					if value, found := field_value(variable.value, name[split + 1:]); found {
+						return value
+					}
+					return fail(type_text(variable.value.file, .Record, variable.value.detail), " has no field ", name[split + 1:])
+				}
+			}
+			break
+		}
 		return fail("no variable has the name ", name)
 	case c == 0:
 		return fail("the line ends too soon")
@@ -318,9 +435,26 @@ call :: proc "contextless" (name: string) -> Value {
 		return fail(name, " takes ", i64(found.parameter_count), " arguments, not ", i64(count))
 	}
 	for kind, index in found.parameters[:count] {
-		if arguments[index].kind != kind {
-			return fail(name, ": argument ", i64(index + 1), " is ", kind_names[kind], ", not ", kind_names[arguments[index].kind])
+		argument := &arguments[index]
+		detail := found.function.parameter_details[index]
+		// A Record agrees when the two descriptions are equal: a record of
+		// one module is a record of another module with the same fields.
+		if argument.kind != kind || kind == .Record && !module.records_equal(found.file, detail, argument.file, argument.detail) {
+			return fail(name, ": argument ", i64(index + 1), " is ", type_text(found.file, kind, detail), ", not ", type_text(argument.file, argument.kind, argument.detail))
 		}
+		if kind == .Record {
+			// A copy: the export can write in its record, and a call
+			// writes the handles of the receiver in it.
+			bytes := scratch_bytes(len(argument.record))
+			if bytes == nil && len(argument.record) != 0 {
+				return fail("the line has too many records")
+			}
+			copy(bytes, argument.record)
+			argument.record = bytes
+		}
+	}
+	if found.record != 0 {
+		return record_build(found, arguments[:count])
 	}
 	if found.sandbox != 0 {
 		return call_isolated(found, arguments[:count])

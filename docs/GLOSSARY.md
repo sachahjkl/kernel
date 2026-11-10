@@ -18,6 +18,7 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Module metadata | The description of a module: segments, imports, exports with the type of each parameter and result, origin, debug information (P12) | headers, manifest, symbol table |
 | Flat table | An array of fixed-size records at a known offset. The form of the module metadata inside a module. The loader reads this form (P12, P13) | section, blob |
 | Index | A SQLite database that is built from flat tables and can be rebuilt from them. It answers queries across many modules. It is never the source of truth (P12) | registry, catalogue, cache |
+| Replacement | A record `{hash, hash}` that the starter of a program gives to the loader: where a module imports the first module, the loader loads the second one, after it checked that the descriptions of the used exports are equal | override, shim, LD_PRELOAD, DLL redirection |
 | Loader | The user-space code that builds a program from a module and its imports | linker, dynamic linker |
 | Boot image | The one block of data that the boot program loads with the kernel. It holds the modules of the first programs, each with its name | initrd, ramdisk |
 | Position-independent | Code that runs correctly at any address with no change to its bytes | relocatable, PIC, PIE |
@@ -91,6 +92,8 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Status | One line that a program replaces at any time, with a value and a total. The terminal shows it out of the lines: no line is drawn again | progress bar hack, carriage return |
 | Direct call | A call of an export in the address space of the caller. The arguments are in registers (the call form) | in-process call, local call |
 | Isolated call | A call of an export of a module that runs in another program. The arguments travel in a ring (P19) | remote call, RPC, IPC call |
+| Record description | The part of the description of a module that gives the name, the size and the fields of one record that an export receives or gives. A field is an Integer or a Handle. Two record descriptions that are equal name the same record, in one module or in two | struct type, schema, class |
+| Lent handle | A handle that the caller of an export gives for the time of one call. The description of the export names the rights that the export needs. In an isolated call, the receiver has a copy with these rights only, and closes it when the export returns. The caller keeps its handle | borrowed handle, passed capability, inherited descriptor |
 | Call host | The program that loads one module and executes the isolated calls of its exports. It has no handle but its call ring, its call region, its budget and the log | worker, helper process, server |
 | Call ring | The ring between a caller and a call host. One command record is one isolated call | channel, pipe |
 | Call region | The memory object that a caller and a call host share. The caller writes the argument record and the bytes of its slices in it | shared buffer, arena |

@@ -20,7 +20,9 @@ Command :: struct {
 	address:         uintptr, // Not 0: an export of a module in this program. The call is direct.
 	sandbox:         int, // Not 0: an export of sandboxes[sandbox - 1]. The call is isolated.
 	export:          u32, // The index of the export in its module.
-	function:        module.Function, // The description of the export.
+	function:        module.Function, // The description of the export: the details of its types.
+	file:            []u8, // The module of the description.
+	record:          u32, // Not 0: the command makes a record with this description of file, from its fields.
 }
 
 // A program that executes the isolated calls of the console. It is a call
@@ -119,6 +121,9 @@ commands_start :: proc "contextless" () {
 	command("length", {.Text}, .Integer, "the number of bytes of a text", length)
 	command("text", {.Integer}, .Text, "the decimal text of an integer", text)
 	command("repeat", {.Text, .Integer}, .Text, "a text, several times", repeat)
+	command("buffer", {.Integer}, .Handle, "a new memory object, in pages", buffer_create)
+	command("byte", {.Handle, .Integer}, .Integer, "one byte of a memory object", buffer_byte)
+	command("release", {.Handle}, .None, "close a handle", release)
 	command("variables", {}, .None, "list the variables", list_variables)
 	command("clear", {}, .None, "clear the console", clear)
 	command("shutdown", {}, .None, "stop the machine", shutdown)
@@ -138,12 +143,12 @@ help :: proc "contextless" (arguments: []Value) -> Value {
 				system.write_part(&writer, item.parameter_names[index])
 				system.write_part(&writer, ": ")
 			}
-			system.write_part(&writer, kind_names[kind])
+			system.write_type(&writer, item.file, module.Type(kind), item.function.parameter_details[index])
 		}
 		system.write_part(&writer, ")")
 		if item.result != .None {
 			system.write_part(&writer, " -> ")
-			system.write_part(&writer, kind_names[item.result])
+			system.write_type(&writer, item.file, module.Type(item.result), item.function.result_detail)
 		}
 		system.write_part(&writer, " ")
 		for writer.count < 53 {
@@ -275,7 +280,7 @@ add_module :: proc "contextless" (name: string, isolate: bool) -> Value {
 		if callable == 0 {
 			return fail("the module ", name, " exports no command; start(\"", name, "\") starts a program")
 		}
-		if loaded_count == LOADED_CAPACITY || command_count + callable > COMMAND_CAPACITY {
+		if loaded_count == LOADED_CAPACITY || command_count + callable + int(module.count(file, .Records)) > COMMAND_CAPACITY {
 			return fail("no room for the commands of ", name)
 		}
 		base := module_base
@@ -321,16 +326,17 @@ unload_module :: proc "contextless" (arguments: []Value) -> Value {
 		if item.name != name {
 			continue
 		}
-		head, _ := module.header(item.file)
-		kept := 0
+		kept, removed := 0, 0
 		for &entry in commands[:command_count] {
-			module_command := entry.run == nil && (item.sandbox != 0 ? entry.sandbox == item.sandbox : entry.sandbox == 0 && u64(entry.address) >= item.base && u64(entry.address) - item.base < head.memory_size)
+			module_command := entry.run == nil && raw_data(entry.file) == raw_data(item.file) && entry.sandbox == item.sandbox
 			if !module_command {
 				commands[kept] = entry
 				kept += 1
+			} else if entry.record != 0 {
+				removed -= 1 // The count that the console prints is the count of exports.
 			}
 		}
-		removed := command_count - kept
+		removed += command_count - kept
 		command_count = kept
 		if item.sandbox != 0 {
 			sandbox := &sandboxes[item.sandbox - 1]
@@ -356,7 +362,7 @@ unload_module :: proc "contextless" (arguments: []Value) -> Value {
 callable_count :: proc "contextless" (file: []u8) -> (callable: int) {
 	head, _ := module.header(file)
 	for index in 1 ..< module.count(file, .Exports) {
-		if function, ok := module.function(file, index); ok && index != head.entry_export && callable_by_console(function) {
+		if function, ok := module.function(file, index); ok && index != head.entry_export && callable_by_console(file, function) {
 			callable += 1
 		}
 	}
@@ -365,14 +371,40 @@ callable_count :: proc "contextless" (file: []u8) -> (callable: int) {
 
 // commands_add makes each callable export of a module a command. The
 // description of the export gives its name, its types and its help.
+// Each record of the module is a command too, with the name of the record:
+// it makes a Record value from one argument for each field.
 //   prefix:  "", or the name of a service: the command is "service.export".
 //   sandbox: 0 for a direct call at base, or the number of the sandbox.
 commands_add :: proc "contextless" (file: []u8, prefix: string, sandbox: int, base: u64) {
 	head, _ := module.header(file)
+	for index in 1 ..< module.count(file, .Records) {
+		described, ok := module.record_type(file, index)
+		if !ok || described.field_count > ARGUMENT_CAPACITY {
+			continue
+		}
+		item := &commands[command_count]
+		item^ = {
+			name            = module.string_at(file, described.name_offset, described.name_count),
+			about           = "make a record from its fields",
+			parameter_count = int(described.field_count),
+			result          = .Record,
+			file            = file,
+			record          = index,
+			sandbox         = sandbox, // The owner of the command. A record has no call.
+		}
+		item.function.result_detail = index
+		for number in 0 ..< described.field_count {
+			field, _ := module.field(file, described, number)
+			item.parameters[number] = Kind(field.type)
+			item.parameter_names[number] = module.string_at(file, field.name_offset, field.name_count)
+			item.function.parameter_details[number] = field.detail
+		}
+		command_count += 1
+	}
 	for index in 1 ..< module.count(file, .Exports) {
 		function, ok := module.function(file, index)
 		address, has_address := module.export_address(file, uintptr(base), index)
-		if !ok || !has_address || index == head.entry_export || !callable_by_console(function) {
+		if !ok || !has_address || index == head.entry_export || !callable_by_console(file, function) {
 			continue
 		}
 		item := &commands[command_count]
@@ -383,6 +415,7 @@ commands_add :: proc "contextless" (file: []u8, prefix: string, sandbox: int, ba
 			result          = Kind(function.result),
 			export          = index,
 			function        = function,
+			file            = file,
 		}
 		if prefix != "" {
 			item.name = system.format(names[names_count:], prefix, ".", item.name)
@@ -433,7 +466,7 @@ connect_service :: proc "contextless" (arguments: []Value) -> Value {
 			break
 		}
 		callable := callable_count(file)
-		if callable == 0 || command_count + callable > COMMAND_CAPACITY || len(names) - names_count < callable * 64 {
+		if callable == 0 || command_count + callable + int(module.count(file, .Records)) > COMMAND_CAPACITY || len(names) - names_count < callable * 64 {
 			service_disconnect(sandbox)
 			sandbox^ = {}
 			return fail("the service ", name, callable == 0 ? " exports no command" : ": no room for its commands")
@@ -517,26 +550,75 @@ services_check :: proc "contextless" () {
 
 // callable_by_console says if the console has a value for each parameter and
 // for the result of an export.
-callable_by_console :: proc "contextless" (function: module.Function) -> bool {
+callable_by_console :: proc "contextless" (file: []u8, function: module.Function) -> bool {
 	function := function
-	if function.name_count == 0 || function.parameter_count > ARGUMENT_CAPACITY || function.result > .Text {
+	if function.name_count == 0 || function.parameter_count > ARGUMENT_CAPACITY || function.result > .Record {
 		return false
 	}
-	for type in function.parameters[:function.parameter_count] {
-		if type != .Integer && type != .Text {
+	if function.result == .Record {
+		if _, ok := module.record_type(file, function.result_detail); !ok || function.parameter_count == ARGUMENT_CAPACITY {
+			return false
+		}
+	}
+	for type, index in function.parameters[:function.parameter_count] {
+		#partial switch type {
+		case .Integer, .Text, .Handle:
+		case .Record:
+			if _, ok := module.record_type(file, function.parameter_details[index]); !ok {
+				return false
+			}
+		case:
 			return false
 		}
 	}
 	return true
 }
 
+// record_build makes a Record value: one argument for each field, in the
+// order of the description.
+record_build :: proc "contextless" (item: ^Command, arguments: []Value) -> Value {
+	described, _ := module.record_type(item.file, item.record)
+	bytes := scratch_bytes(int(described.size))
+	if bytes == nil {
+		return fail("the line has too many records")
+	}
+	for argument, number in arguments {
+		field, _ := module.field(item.file, described, u32(number))
+		if field.type == .Handle {
+			(^u32)(&bytes[field.offset])^ = u32(argument.integer)
+		} else {
+			(^i64)(&bytes[field.offset])^ = argument.integer
+		}
+	}
+	return {kind = .Record, record = bytes, file = item.file, detail = item.record}
+}
+
 // call_export calls an export of a loaded module with the call form: each
 // argument in one integer register, in order. An Integer is the value; a Text
-// is the address of its slice record.
+// is the address of its slice record; a Record is the address of its bytes;
+// a Handle is the handle. The module is in this program: it has each handle
+// of the console, and the rights of a description limit nothing here.
 call_export :: proc "contextless" (item: ^Command, arguments: []Value) -> Value {
 	integers: [system.CALL_INTEGERS]u64
 	for &argument, index in arguments {
-		integers[index] = argument.kind == .Text ? u64(uintptr(&argument.text)) : u64(argument.integer)
+		#partial switch argument.kind {
+		case .Text:
+			integers[index] = u64(uintptr(&argument.text))
+		case .Record:
+			integers[index] = u64(uintptr(raw_data(argument.record)))
+		case:
+			integers[index] = u64(argument.integer)
+		}
+	}
+	// A Record result: the export writes it in the memory of the line.
+	record: []u8
+	if item.result == .Record {
+		described, _ := module.record_type(item.file, item.function.result_detail)
+		record = scratch_bytes(int(described.size))
+		if record == nil {
+			return fail("the line has too many records")
+		}
+		integers[len(arguments)] = u64(uintptr(raw_data(record)))
 	}
 	// A Text result: the buffer is the free part of the memory of the line.
 	buffer := scratch[scratch_count:]
@@ -555,6 +637,8 @@ call_export :: proc "contextless" (item: ^Command, arguments: []Value) -> Value 
 		}
 		scratch_count += int(results[0])
 		return {kind = .Text, text = string(buffer[:results[0]])}
+	case .Record:
+		return {kind = .Record, record = record, file = item.file, detail = item.function.result_detail}
 	}
 	return {}
 }
@@ -655,9 +739,20 @@ call_isolated :: proc "contextless" (item: ^Command, arguments: []Value) -> Valu
 	}
 	encoded: [ARGUMENT_CAPACITY]isolated.Argument
 	for argument, index in arguments {
-		encoded[index] = {integer = u64(argument.integer), text = transmute([]u8)argument.text}
+		encoded[index] = {integer = u64(argument.integer), text = transmute([]u8)argument.text, record = argument.record}
 	}
-	offset, size, buffer, ok := isolated.encode(item.function, encoded[:len(arguments)], sandbox.region)
+	// The handles: the other program receives a copy of each one, with the
+	// rights of the description, through the call ring.
+	#partial switch system.lend(item.file, item.function, encoded[:len(arguments)], &sandbox.ring, sandbox.ring_memory) {
+	case .Ok:
+	case .Bad_Handle:
+		return fail(item.name, ": an argument names no handle of the console")
+	case .No_Right:
+		return fail(item.name, ": a handle of the console lacks a right that the description asks, or the Give right")
+	case:
+		return fail(item.name, ": the program ", sandbox.name, " has no room for one more handle")
+	}
+	offset, size, buffer, ok := isolated.encode(item.file, item.function, encoded[:len(arguments)], sandbox.region)
 	if !ok {
 		return fail("the arguments of ", item.name, " do not fit in the call region")
 	}
@@ -692,12 +787,22 @@ call_isolated :: proc "contextless" (item: ^Command, arguments: []Value) -> Valu
 						return fail("the result of ", item.name, " has ", completion.values[0], " bytes: it does not fit")
 					}
 					return {kind = .Text, text = scratch_text(string(text))}
+				case .Record:
+					// The other program wrote these bytes: they are values, and
+					// the console reads them with the description.
+					record := scratch_bytes(int(buffer.count))
+					if record == nil || !isolated.result_record(sandbox.region, buffer, record) {
+						return fail("the result of ", item.name, " does not fit")
+					}
+					return {kind = .Record, record = record, file = item.file, detail = item.function.result_detail}
 				}
 				return {}
 			case .Bad_Export:
 				return fail("the program ", sandbox.name, " has no export ", item.name)
 			case .Bad_Arguments:
 				return fail("the program ", sandbox.name, " refused the arguments of ", item.name)
+			case .Bad_Handle:
+				return fail("the program ", sandbox.name, " refused a handle of ", item.name)
 			case:
 				return fail("the program ", sandbox.name, " gave an unknown status")
 			}
@@ -790,16 +895,52 @@ repeat :: proc "contextless" (arguments: []Value) -> Value {
 	return {kind = .Text, text = string(scratch[start:scratch_count])}
 }
 
+// buffer_create makes a memory object. The console holds the handle until
+// release.
+buffer_create :: proc "contextless" (arguments: []Value) -> Value {
+	memory, status := system.memory_create(u64(arguments[0].integer))
+	if status != .Ok {
+		return fail("the budget of the console cannot pay for ", arguments[0].integer, " pages")
+	}
+	return {kind = .Handle, integer = i64(memory)}
+}
+
+// buffer_byte reads one byte of a memory object: the console maps the
+// object for the time of the command.
+buffer_byte :: proc "contextless" (arguments: []Value) -> Value {
+	memory := system.Handle(arguments[0].integer)
+	kind, _, _ := system.handle_state(memory)
+	size := kind == .Memory ? system.memory_size(memory) * system.PAGE_SIZE : 0
+	if arguments[1].integer < 0 || u64(arguments[1].integer) >= size {
+		return fail(kind == .Memory ? "the memory object has no byte " : "the handle names no memory object: byte ", arguments[1].integer)
+	}
+	address, status := system.memory_map(memory, {})
+	if status != .Ok {
+		return fail("the console cannot map the memory object")
+	}
+	defer system.memory_unmap(address)
+	return {kind = .Integer, integer = i64(([^]u8)(address)[arguments[1].integer])}
+}
+
+release :: proc "contextless" (arguments: []Value) -> Value {
+	if kind, _, _ := system.handle_state(system.Handle(arguments[0].integer)); kind != .Memory {
+		return fail("release closes a memory object that buffer made")
+	}
+	system.close(system.Handle(arguments[0].integer))
+	return {}
+}
+
 list_variables :: proc "contextless" (arguments: []Value) -> Value {
 	for &variable in variables {
 		if variable.name_count == 0 {
 			continue
 		}
-		print(string(variable.name[:variable.name_count]), ": ", kind_names[variable.value.kind], " = ")
-		if variable.value.kind == .Integer {
-			print(variable.value.integer, "\n")
-		} else {
+		print(string(variable.name[:variable.name_count]), ": ", type_text(variable.value.file, variable.value.kind, variable.value.detail), " = ")
+		if variable.value.kind == .Text {
 			print("\"", variable.value.text, "\"\n")
+		} else {
+			print_value(variable.value)
+			print("\n")
 		}
 	}
 	return {}

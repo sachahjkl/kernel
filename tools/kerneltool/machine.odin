@@ -238,6 +238,53 @@ scenario := [?]Step {
 	{kind = .Wait, text = "probe"},
 	{kind = .Shot, text = "isolated"},
 
+	// A record and a lent handle in an isolated call. The record goes as
+	// bytes with described fields. The module receives a copy of the handle
+	// with the rights of the description, for the time of the call.
+	{kind = .Type, text = "clear()"},
+	{kind = .Type, text = "isolate(\"sample\")"},
+	{kind = .Wait, text = "[console] sample: 8 commands in a sandboxed program"},
+	{kind = .Type, text = "r = Rectangle(1, 2, 30, 4)"},
+	{kind = .Type, text = "area(r)"},
+	{kind = .Wait, text = "[console] 120"},
+	{kind = .Type, text = "grow(r, 5)"},
+	{kind = .Wait, text = "[console] Rectangle{x = -4, y = -3, width = 40, height = 14}"},
+	{kind = .Type, text = "b = buffer(1)"},
+	{kind = .Type, text = "fill(b, 3)"},
+	{kind = .Wait, text = "[console] 4096"},
+	// The module wrote in the memory of the console: the object is shared, not copied.
+	{kind = .Type, text = "byte(b, 4095)"},
+	{kind = .Wait, text = "[console] 3"},
+	// A handle in a field of a record.
+	{kind = .Type, text = "span_total(Span(b, 96, 10))"},
+	{kind = .Wait, text = "[console] 30"},
+	// The description of spoil asks Read: the module cannot write. 7: no right.
+	{kind = .Type, text = "spoil(b)"},
+	{kind = .Wait, text = "[console] 7"},
+	// A lent handle ends with its call. 2: no handle.
+	{kind = .Type, text = "keep(b)"},
+	{kind = .Wait, text = "[console] 12288"},
+	{kind = .Type, text = "kept()"},
+	{kind = .Wait, text = "[console] 2"},
+	{kind = .Type, text = "area(Span(b, 0, 1))"},
+	{kind = .Wait, text = "[console] error: area: argument 1 is Rectangle, not Span"},
+	{kind = .Type, text = "b"},
+	{kind = .Wait, text = ": Memory (Give, Read, Write, Execute)"},
+	{kind = .Shot, text = "records"},
+	// The same descriptions serve a direct call. The module is then in the
+	// console: it has the handles of the console, and kept gives 0.
+	{kind = .Type, text = "unload(\"sample\")"},
+	{kind = .Wait, text = "[console] sample: 8 commands removed, its sandboxed program stops"},
+	{kind = .Type, text = "clear()"},
+	{kind = .Type, text = "load(\"sample\")"},
+	{kind = .Wait, text = "[console] sample: 8 commands, hash"},
+	{kind = .Type, text = "g = grow(r, 5)"},
+	{kind = .Type, text = "g.width * g.height + keep(b) + kept()"},
+	{kind = .Wait, text = "[console] 12848"},
+	{kind = .Type, text = "unload(\"sample\")"},
+	{kind = .Wait, text = "[console] sample: 8 commands removed, the module left the memory of the console"},
+	{kind = .Type, text = "release(b)"},
+
 	// The temple of Jon, then back to the console.
 	{kind = .Launch, text = "temple"},
 	{kind = .Wait, text = "temple: ok", any_order = true},

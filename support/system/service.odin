@@ -115,7 +115,7 @@ service_run :: proc "contextless" (service: ^Service) -> (calls: int) {
 			if !has_command {
 				break
 			}
-			send(&connection.calls.completions, export_serve(service.file, op.PROGRAM_BASE, connection.region, command))
+			send(&connection.calls.completions, export_serve(service.file, op.PROGRAM_BASE, connection.region, connection.ring_memory, command))
 			calls += 1
 		}
 	}
@@ -155,8 +155,20 @@ connection_add :: proc "contextless" (service: ^Service, ring_memory, region_mem
 // completion record. The description of the export says how to read the
 // argument record; the caller does not send the types. The entry of a
 // module is not callable.
-export_serve :: proc "contextless" (file: []u8, base: u64, region: []u8, command: ring.Record) -> (completion: ring.Record) {
+// ring_memory is the memory of the call ring. The caller lends each handle
+// through it; this code proves each handle before the call (handle_state),
+// and closes each one after it. An export never receives a handle that
+// this program holds for itself.
+export_serve :: proc "contextless" (file: []u8, base: u64, region: []u8, ring_memory: Handle, command: ring.Record) -> (completion: ring.Record) {
 	completion.tag = command.tag
+	if command.kind == isolated.COMMAND_RELEASE {
+		for value in command.values {
+			if _, _, through := handle_state(Handle(value), ring_memory); value >> 32 == 0 && through {
+				close(Handle(value))
+			}
+		}
+		return completion
+	}
 	head, _ := module.header(file)
 	function, described := module.function(file, command.kind)
 	address, has_address := module.export_address(file, uintptr(base), command.kind)
@@ -164,18 +176,115 @@ export_serve :: proc "contextless" (file: []u8, base: u64, region: []u8, command
 		completion.kind = u32(isolated.Status.Bad_Export)
 		return completion
 	}
-	integers: [CALL_INTEGERS]u64
-	slices: [module.PARAMETER_CAPACITY]isolated.Slice
-	if !isolated.decode(function, command.values[0], command.values[1], region, &integers, &slices) {
+	prepared: isolated.Call
+	if !isolated.decode(file, function, command.values[0], command.values[1], region, &prepared) {
 		completion.kind = u32(isolated.Status.Bad_Arguments)
+		return completion
+	}
+	lent := prepared.lent[:prepared.lent_count]
+	came: [module.HANDLE_CAPACITY]bool
+	proven := true
+	for item, index in lent {
+		_, rights, through := handle_state(Handle(item.handle), ring_memory)
+		came[index] = through
+		proven &&= through && transmute(Rights)item.rights <= rights
+	}
+	// Close what the caller lent, after the call or in place of it.
+	defer for item, index in lent {
+		if came[index] {
+			close(Handle(item.handle))
+		}
+	}
+	if !proven {
+		completion.kind = u32(isolated.Status.Bad_Handle)
 		return completion
 	}
 	floats: [CALL_FLOATS]u64
 	out: [CALL_RESULTS]u64
-	export_call(address, &integers, &floats, &out)
+	export_call(address, &prepared.registers, &floats, &out)
+	isolated.result_store(function, &prepared, region)
 	// For a Text result, this is the count; the text is in the call region.
-	if function.result != .None {
+	if function.result == .Integer || function.result == .Text {
 		completion.values[0] = out[0]
 	}
 	return completion
+}
+
+// lend prepares the handles of the arguments of an isolated call: the
+// caller side of module.Type.Handle. For each Handle argument, and for each
+// Handle field of each Record argument, it gives the receiver a copy of the
+// handle through the call ring, with the rights of the description and no
+// other right. It writes the handle of the receiver in place of the handle
+// of the caller: give it copies of the records. Call it before
+// isolated.encode.
+//   file:        the module of the export: the descriptions.
+//   calls:       the call ring, and ring_memory its memory.
+// The handle of the caller needs the Give right and each right of the
+// description. If one handle fails, the receiver closes those that it has
+// (isolated.COMMAND_RELEASE), and the caller does not send the call.
+lend :: proc "contextless" (file: []u8, function: module.Function, arguments: []isolated.Argument, calls: ^ring.Ring, ring_memory: Handle) -> (status: Status) {
+	function := function
+	given: [module.HANDLE_CAPACITY]Handle
+	count := 0
+	one :: proc "contextless" (ring_memory: Handle, handle: Handle, wanted: Rights, given: ^[module.HANDLE_CAPACITY]Handle, count: ^int) -> (result: Handle, status: Status) {
+		if handle == 0 {
+			return 0, .Ok
+		}
+		if count^ == len(given) {
+			return 0, .No_Slot
+		}
+		kind, held, _ := handle_state(handle)
+		if kind == .None {
+			return 0, .Bad_Handle
+		}
+		if !(wanted + {.Give} <= held) {
+			return 0, .No_Right
+		}
+		result = give(ring_memory, handle, wanted) or_return
+		given[count^] = result
+		count^ += 1
+		return result, .Ok
+	}
+	each: for type, index in function.parameters[:min(int(function.parameter_count), len(arguments))] {
+		#partial switch type {
+		case .Handle:
+			result: Handle
+			result, status = one(ring_memory, Handle(arguments[index].integer), transmute(Rights)function.parameter_details[index], &given, &count)
+			if status != .Ok {
+				break each
+			}
+			arguments[index].integer = u64(result)
+		case .Record:
+			described, ok := module.record_type(file, function.parameter_details[index])
+			if !ok || len(arguments[index].record) != int(described.size) {
+				status = .Bad_Operation
+				break each
+			}
+			for number in 0 ..< described.field_count {
+				item, _ := module.field(file, described, number)
+				if item.type != .Handle {
+					continue
+				}
+				place := (^Handle)(&arguments[index].record[item.offset])
+				place^, status = one(ring_memory, place^, transmute(Rights)item.detail, &given, &count)
+				if status != .Ok {
+					break each
+				}
+			}
+		}
+	}
+	if status != .Ok {
+		for first := 0; first < count; first += len(ring.Record{}.values) {
+			record := ring.Record {
+				kind = isolated.COMMAND_RELEASE,
+			}
+			for &value, place in record.values {
+				if first + place < count {
+					value = u64(given[first + place])
+				}
+			}
+			send(&calls.commands, record)
+		}
+	}
+	return status
 }

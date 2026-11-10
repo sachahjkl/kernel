@@ -21,19 +21,16 @@ Region :: struct {
 	references: u32, // Handles and mappings.
 	budget:     u32, // The budget that paid. 0 for a device.
 	device:     bool, // The frames are not from the page frame table: a framebuffer, boot data.
+	serial:     u64, // A number that no other memory object has had: a slot of the table serves many objects in time.
 }
 
-Object_Kind :: enum u8 {
-	None      = 0,
-	Memory    = 1, // object: index in regions
-	Program   = 2, // object: index in programs
-	Interrupt = 3, // object: interrupt line
-	Ports     = 4, // object: first port; count: number of ports
-	Machine   = 5, // The machine: its rights are Devices, Inspect and Stop.
-	Thread    = 6, // object: index in threads
-	Budget    = 7, // object: index in budgets
-	Log       = 8, // The log of the kernel.
-}
+region_serial: u64 // The serial of the last memory object.
+
+// The `object` of a handle slot, by kind:
+//   Memory: index in regions       Program: index in programs
+//   Interrupt: interrupt line      Ports: first port; count: number of ports
+//   Thread: index in threads       Budget: index in budgets
+Object_Kind :: op.Object_Kind
 
 // The rights of the handle of a new object, by kind.
 RIGHTS_MEMORY :: op.Rights{.Give, .Read, .Write, .Execute}
@@ -51,6 +48,7 @@ Handle_Slot :: struct {
 	rights:     op.Rights,
 	object:     u32,
 	count:      u32,
+	through:    u64, // Not 0: the serial of the memory object that the handle came through (Handle_Give).
 }
 
 Mapping :: struct {
@@ -207,7 +205,8 @@ region_create :: proc "contextless" (budget: u32, page_count: u64) -> (index: u3
 				return 0, .No_Memory
 			}
 			budgets[budget].amounts.pages -= page_count
-			region = {physical = physical, page_count = page_count, budget = budget}
+			region_serial += 1
+			region = {physical = physical, page_count = page_count, budget = budget, serial = region_serial}
 			return u32(slot + 1), .Ok
 		}
 	}
@@ -217,7 +216,8 @@ region_create :: proc "contextless" (budget: u32, page_count: u64) -> (index: u3
 region_device :: proc "contextless" (physical: u64, page_count: u64) -> u32 {
 	for &region, index in regions[1:] {
 		if region.page_count == 0 {
-			region = {physical = physical, page_count = page_count, device = true}
+			region_serial += 1
+			region = {physical = physical, page_count = page_count, device = true, serial = region_serial}
 			return u32(index + 1)
 		}
 	}
@@ -398,6 +398,16 @@ unmap :: proc "contextless" (program: ^Program, mapping: ^Mapping) {
 	program.mapped_pages -= mapping.page_count
 	region_release(mapping.region)
 	mapping^ = {}
+}
+
+// holds_region says if a program has a handle to a memory object.
+holds_region :: proc "contextless" (program: ^Program, region: u32) -> bool {
+	for &slot in program.handles {
+		if slot.kind == .Memory && slot.object == region {
+			return true
+		}
+	}
+	return false
 }
 
 // maps_region says if a program has a mapping of a memory object.

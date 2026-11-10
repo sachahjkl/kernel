@@ -63,6 +63,7 @@ module_builds := [?]Module_Build {
 	{name = "host", source = "programs/host", image = true},
 	{name = "probe", source = "modules/probe", image = true},
 	{name = "math", source = "modules/math", image = true},
+	{name = "sample", source = "modules/sample", image = true},
 }
 
 join :: proc(parts: ..string) -> string {
@@ -298,6 +299,8 @@ test_descriptions :: proc() -> bool {
 		.None    = "None",
 		.Integer = "Integer",
 		.Text    = "Text",
+		.Record  = "Record",
+		.Handle  = "Handle",
 	}
 	for build in module_builds {
 		file := read_file(module_path(build.name)) or_return
@@ -321,12 +324,14 @@ test_descriptions :: proc() -> bool {
 				module.string_at(file, function.about_offset, function.about_count) == description.about &&
 				module.string_at(file, function.text_offset, function.text_count) == description.text &&
 				int(function.parameter_count) == len(description.parameters) &&
-				function.result == description.result
+				function.result == description.result &&
+				function.result_detail == description.result_detail
 			strings.builder_reset(&last)
 			fmt.sbprintf(&last, "%s(", description.name)
 			for parameter in 0 ..< (agree ? len(description.parameters) : 0) {
 				parameter_name := module.string_at(file, function.parameter_names[parameter], u32(function.parameter_name_counts[parameter]))
 				agree &&= function.parameters[parameter] == description.parameters[parameter] && parameter_name == description.names[parameter]
+				agree &&= function.parameter_details[parameter] == description.details[parameter]
 				fmt.sbprintf(&last, "%s%s: %s", parameter > 0 ? ", " : "", parameter_name, type_names[function.parameters[parameter]])
 			}
 			fmt.sbprintf(&last, ") -> %s", type_names[description.result])
@@ -334,6 +339,27 @@ test_descriptions :: proc() -> bool {
 				fmt.eprintfln("kerneltool: test failed: the description of %s in %s does not agree with its source", description.name, build.name)
 				return false
 			}
+		}
+		// The records: the file has the layout that the tool read in the source.
+		if int(max(module.count(file, .Records), 1)) != len(described.records) + 1 {
+			fmt.eprintfln("kerneltool: test failed: %s has %d records, its source has %d", build.name, int(module.count(file, .Records)) - 1, len(described.records))
+			return false
+		}
+		for item, index in described.records {
+			record, ok := module.record_type(file, u32(index + 1))
+			agree := ok && module.string_at(file, record.name_offset, record.name_count) == item.name && record.size == item.size && int(record.field_count) == len(item.fields)
+			layout := strings.builder_make(context.temp_allocator)
+			fmt.sbprintf(&layout, "%s {{", item.name)
+			for field, number in (agree ? item.fields : nil) {
+				stored, _ := module.field(file, record, u32(number))
+				agree &&= module.string_at(file, stored.name_offset, stored.name_count) == field.name && stored.offset == field.offset && stored.type == field.type && stored.detail == field.detail
+				fmt.sbprintf(&layout, "%s%s: %s at %d", number > 0 ? ", " : "", field.name, type_names[field.type], field.offset)
+			}
+			if !agree {
+				fmt.eprintfln("kerneltool: test failed: the record %s in %s does not agree with its source", item.name, build.name)
+				return false
+			}
+			fmt.printfln("kerneltool: test passed: the record %s}}, %d bytes, of %s comes from its source", strings.to_string(layout), item.size, build.name)
 		}
 		if build.name == "math" {
 			fmt.printfln("kerneltool: test passed: the documentation of %s comes from its source: \"%s\", and %d bytes of text", build.name, about, len(text))

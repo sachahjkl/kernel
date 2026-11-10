@@ -64,7 +64,8 @@ A module is one file:
 | Table | One record describes |
 |---|---|
 | Types | One type: kind, size, alignment, range of fields |
-| Fields | One field of a record type: name, type, offset |
+| Records | One record that an export receives or gives: name, size, range of fields (implemented on 2026-11-10) |
+| Fields | One field of a record: name, offset, type, and the rights of a handle (implemented on 2026-11-10) |
 | Functions | One export: name, argument record type, result record type, help text, flags |
 | Parameters | Console data for one field of an argument record: required, allowed values, completion source, accepts piped input |
 | Strings | The bytes of all names and help texts |
@@ -164,11 +165,46 @@ Status: implemented on 2026-11-10 (`contract/isolated/`, `programs/host`). The o
 - **Failure**: A fault in the module stops the call host only. The kernel wakes the caller, which holds the handle of the program. The caller reads the stop code. A call has no time limit. The caller ends a call when it closes the handle: the kernel stops a program that no handle names. The console does this when the person presses Escape. The next call starts a new call host.
 - **Tests**: `odin test isolated` has a round trip, the refused cases at each limit, and 200 000 random argument records. The machine test calls a module that reads address 0, that loops with no end, and that tries to stop the machine.
 
+### Records and handles, as implemented
+
+Status: implemented on 2026-11-10 (step 24). The owner has not reviewed the choices below.
+
+| Type | Direct call: the register has | Isolated call: the field of the argument record has |
+|---|---|---|
+| Integer | The value | 8 bytes: the value |
+| Text | The address of a slice record | 16 bytes: `{offset, count}` in the call region |
+| Record | The address of the record | 8 bytes: the offset of the bytes of the record in the call region |
+| Handle | The handle of the caller | 8 bytes: the handle, as the receiver names it |
+| Record result | One more argument: the address of the memory of the result | One more field: the offset of the place of the result |
+
+- **Record description**: The tables Records and Fields. A record has a name, a size (256 bytes at most) and fields. A field has a name, an offset and a type: Integer (8 bytes) or Handle (4 bytes). A record holds values only. The loader code checks each description before a use: each field is inside the record.
+- **A record is copied one time**: The receiver copies the bytes of the record from the call region to private memory, then gives the address of the copy to the export. The caller cannot change the record while the export reads it.
+- **A handle is lent**: The description has the rights that the export needs. The caller gives a copy of its handle to the receiver, with these rights only, through the call ring: the kernel operation `Handle_Give`, with the memory object of the call ring as the target. The receiver closes the copy when the export returns. The caller keeps its handle.
+- **The receiver proves each handle**: The number of the handle is in memory that the caller writes. The receiver asks the kernel if this handle came through the call ring (`Handle_State`), and if it has each right of the description. If not, the status of the call is 3, "bad handle", and the export does not run. Without this proof a caller names a handle that the receiver holds for itself.
+- **A call that the caller does not send**: If the caller gave some handles and cannot give the next one, it sends a command record of the kind `0xFFFFFFFF` with the handles. The receiver proves and closes each one.
+- **Limits**: 16 handles for one call. A result record has no handle. An export with a Record result has 5 parameters at most.
+- **In Odin**: `^Name` is a Record, `result: ^Name` as the last parameter is a Record result, and `system.Lent({.Read, .Write})` is a Handle. The tool reads them in the source (`kerneltool`, `describe.odin`). A module in another language writes the same tables.
+- **Tests**: `odin test` of `contract/isolated` has a round trip with a record, a handle and a record result, and the refused cases. The machine test calls `modules/sample` in a call host and in the console.
+
 ### Growth
 
 - A module imports another module by hash, with an export index. The caller and the callee are always the exact versions that were built together. A direct call cannot meet a changed signature.
 - Growth by added fields (ZII) applies where two sides have separate versions: the records of rings between programs and services, and the records that a function receives by address.
 - The signature of an export does not change inside one module hash. A new signature is a new module.
+
+### Replacement of an import
+
+Status: asked by the owner on 2026-11-10. Planned, not implemented.
+
+A module names each import by its hash. The party that starts a program can give the loader a replacement table: records `{hash of B, hash of B2}`. When module A imports B, the loader loads B2 in its place. The file of A does not change, so its hash does not change.
+
+- **Use**: B has a security fault. B2 has the correction. Each program that imports B receives B2, with no new build of the program.
+- **Who decides**: the party that starts the program, with a grant. The root service holds the table of the machine. A program cannot refuse a replacement and cannot ask for one: the table is not ambient (P20).
+- **The loader checks, it does not trust**: for each slot of A in B, the loader finds in B2 the export with the same name. The description of that export must be equal in B and in B2: the same parameters, the same result, the same records and the same rights of each handle. If one differs, the load fails. A replacement cannot change a signature.
+- **Bind by name, one time**: the slot of A holds an export index of B. The loader translates it to the index in B2 at load. The call stays one indirect call through a slot.
+- **What the check cannot prove**: that B2 behaves as B. The party that writes the table asserts it. Later, a signature of the table by a principal carries this assertion (P9).
+- **Visible**: the identity of a program that runs is the hash of its module and the replacements that the loader applied. `programs()` and the manual show them. A report of a fault names B2, not B.
+- **Cost**: "the exact versions that were built together" is then true only for a program with no replacement. This is the purpose: the owner of the machine, not the author of A, has the last word on the code that runs.
 
 ### Memory
 

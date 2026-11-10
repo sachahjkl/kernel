@@ -207,6 +207,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		given := handle_find(program, v[1], .None, {.Give}) or_return
 		to_slot := handle_find(program, v[0], .None) or_return
 		to: ^Program
+		through: u64
 		#partial switch to_slot.kind {
 		case .Program:
 			if .Control not_in to_slot.rights {
@@ -223,6 +224,20 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 					break find
 				}
 			}
+			if to == nil {
+				// No other program maps the memory yet: the one other
+				// program that holds a handle to it. Two holders: no target.
+				for &other in programs[1:] {
+					if &other == program || other.state == .None || other.state == .Stopped || !holds_region(&other, to_slot.object) {
+						continue
+					}
+					if to != nil {
+						return .Bad_Handle
+					}
+					to = &other
+				}
+			}
+			through = regions[to_slot.object].serial
 		}
 		if to == nil {
 			return .Bad_Handle
@@ -232,6 +247,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		}
 		copy := given^
 		copy.rights &= transmute(op.Rights)u32(v[2])
+		copy.through = through
 		handle := handle_insert(to, copy)
 		if handle == 0 {
 			return .No_Slot
@@ -254,6 +270,16 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			return .No_Slot
 		}
 		results[0] = u64(handle)
+		return .Ok
+
+	case .Handle_State:
+		slot := handle_find(program, v[0], .None) or_return
+		results[0] = u64(slot.kind)
+		results[1] = u64(transmute(u32)slot.rights)
+		if v[1] != 0 {
+			memory := handle_find(program, v[1], .Memory) or_return
+			results[2] = u64(slot.through != 0 && slot.through == regions[memory.object].serial)
+		}
 		return .Ok
 
 	case .Budget_Read:

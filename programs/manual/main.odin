@@ -56,13 +56,6 @@ built_count: int
 selected: int // The index of the module of the page, in the boot image.
 first_line: int // The first line that the window shows.
 
-@(rodata)
-type_names := [module.Type]string {
-	.None    = "",
-	.Integer = "Integer",
-	.Text    = "Text",
-}
-
 // file_of gives the file of an entry of the boot image, or nothing when the
 // file is not a valid module.
 file_of :: proc "contextless" (entry: ^info.Image_Entry) -> []u8 {
@@ -105,12 +98,12 @@ write_signature :: proc "contextless" (writer: ^system.Writer, file: []u8, funct
 		system.write_part(writer, parameter > 0 ? ", " : "")
 		system.write_part(writer, module.string_at(file, function.parameter_names[parameter], u32(function.parameter_name_counts[parameter])))
 		system.write_part(writer, ": ")
-		system.write_part(writer, type <= .Text ? type_names[type] : "?")
+		system.write_type(writer, file, type, function.parameter_details[parameter])
 	}
 	system.write_part(writer, ")")
 	if function.result != .None {
 		system.write_part(writer, " -> ")
-		system.write_part(writer, function.result <= .Text ? type_names[function.result] : "?")
+		system.write_type(writer, file, function.result, function.result_detail)
 	}
 }
 
@@ -254,6 +247,33 @@ page_build :: proc "contextless" () {
 		built_count += writer.count
 		put(system.written(&writer), 0, COLOR_EXPORT)
 		put_text(module.string_at(file, function.text_offset, function.text_count), 4, COLOR_TEXT)
+		put("", 0, 0)
+	}
+	// The records that the exports use: the name, the size, and each field.
+	records := module.count(file, .Records)
+	if records <= 1 {
+		return
+	}
+	put_built(0, COLOR_HEADING, "RECORDS (", u64(records - 1), ")")
+	for index in 1 ..< records {
+		described, ok := module.record_type(file, index)
+		if !ok {
+			continue
+		}
+		put_built(0, COLOR_EXPORT, module.string_at(file, described.name_offset, described.name_count), "  ", u64(described.size), " bytes")
+		for number in 0 ..< described.field_count {
+			item, _ := module.field(file, described, number)
+			writer := system.Writer {
+				buffer = built[built_count:],
+			}
+			system.write_part(&writer, module.string_at(file, item.name_offset, item.name_count))
+			system.write_part(&writer, ": ")
+			system.write_type(&writer, file, item.type, item.detail)
+			system.write_part(&writer, ", at byte ")
+			system.write_part(&writer, u64(item.offset))
+			built_count += writer.count
+			put(system.written(&writer), 4, COLOR_TEXT)
+		}
 		put("", 0, 0)
 	}
 }

@@ -13,6 +13,8 @@ The system boots under QEMU to a graphical desktop with a console, a system tool
 
 ![An isolated call: a module that faults or loops stops alone](docs/screenshots/isolated.png)
 
+![A record and a lent handle in an isolated call: the module has the rights of the description, for the time of the call](docs/screenshots/records.png)
+
 ![A line runs in the second thread of the console: the console keeps the keys, and Escape stops the call](docs/screenshots/running.png)
 
 | | |

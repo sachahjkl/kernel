@@ -59,6 +59,19 @@ Right :: enum u32 {
 }
 Rights :: bit_set[Right;u32]
 
+// The kind of the object that a handle names.
+Object_Kind :: enum u8 {
+	None      = 0,
+	Memory    = 1,
+	Program   = 2,
+	Interrupt = 3,
+	Ports     = 4,
+	Machine   = 5, // The machine: its rights are Devices, Inspect and Stop.
+	Thread    = 6,
+	Budget    = 7,
+	Log       = 8, // The log of the kernel.
+}
+
 Operation :: enum u32 {
 	None           = 0,
 	Log            = 1, // (log, address, count, level, channel 0, channel 1): write one text on the log. The channel is 16 bytes in two values.
@@ -74,6 +87,8 @@ Operation :: enum u32 {
 	Handle_Give    = 10, // (target: program handle or memory handle, handle, Rights) -> the handle in the target program.
 	// The new handle has the rights of the handle that are also in Rights: a grant never adds a right.
 	// With a memory handle, the target is the other program that maps this memory: the other side of a ring.
+	// If no other program maps it, the target is the one other program that holds a handle to it.
+	// The kernel keeps, with the new handle, the memory object that it came through (Handle_State).
 	Handle_Close   = 11, // (handle). The kernel stops a program when its last handle closes.
 	Interrupt_Read = 12, // (interrupt) -> the number of interrupts since the last read.
 	Device_Create  = 13, // (machine, Device_Kind, a, b) -> handle. Ports: a = first port, b = count. Interrupt: a = line.
@@ -93,6 +108,10 @@ Operation :: enum u32 {
 	Word_Wake      = 20, // (address, count) -> threads woken: wake at most count threads that wait on this word.
 	Budget_Create  = 21, // (budget, pages, programs, threads) -> budget handle. The amounts move from the budget to the new budget.
 	Budget_Read    = 22, // (budget) -> pages, programs, threads: what the budget can still pay.
+	Handle_State   = 23, // (handle, memory or 0) -> Object_Kind, Rights, 1 if the handle came through this memory object.
+	// A program that receives the number of a handle from another program, in a ring, proves with this
+	// operation that the other program gave the handle through that ring. Without the proof, the
+	// other program can name a handle that the receiver holds for itself.
 }
 
 // A budget: what its holders can still create. No operation creates an

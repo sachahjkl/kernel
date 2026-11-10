@@ -27,6 +27,25 @@ Export_Description :: struct {
 	result:     module.Type,
 	about:      string,
 	text:       string, // The documentation text: the full comment.
+	// What the type of each parameter needs (module.Function.parameter_details):
+	// a Record: the number of the record, from 1, in Module_Description.records;
+	// a Handle: the rights that the callee needs.
+	details:       []u32,
+	result_detail: u32,
+}
+
+// The description of a record: what module.Record and its fields hold.
+Record_Description :: struct {
+	name:   string,
+	size:   u32,
+	fields: []Field_Description,
+}
+
+Field_Description :: struct {
+	name:   string,
+	offset: u32,
+	type:   module.Type,
+	detail: u32, // A Handle: the rights that the callee needs.
 }
 
 // The description of a module: what its source says to a person, and its exports.
@@ -34,6 +53,7 @@ Module_Description :: struct {
 	about:   string, // One line: the first sentence of the comment of the package.
 	text:    string, // The documentation text: the comment of the package.
 	exports: []Export_Description,
+	records: []Record_Description, // The records that the exports use. Record n + 1 of the module is records[n].
 }
 
 // convert writes a module from a shared object that lld linked.
@@ -188,7 +208,7 @@ convert :: proc(name: string, elf: []u8, description: Module_Description, import
 	for description, index in exports {
 		export_name := description.name
 		// The buffer of a Text result takes one register.
-		if len(description.parameters) + int(description.result == .Text) > module.PARAMETER_CAPACITY {
+		if len(description.parameters) + int(description.result == .Text || description.result == .Record) > module.PARAMETER_CAPACITY {
 			return fail(name, "export %s has more than %d parameters", export_name, module.PARAMETER_CAPACITY)
 		}
 		found := false
@@ -207,6 +227,8 @@ convert :: proc(name: string, elf: []u8, description: Module_Description, import
 				result          = description.result,
 			}
 			copy(function.parameters[:], description.parameters)
+			copy(function.parameter_details[:], description.details)
+			function.result_detail = description.result_detail
 			append(&string_bytes, export_name)
 			append(&string_bytes, description.about)
 			function.text_offset = u32(len(string_bytes))
@@ -319,6 +341,21 @@ convert :: proc(name: string, elf: []u8, description: Module_Description, import
 	}
 	append(&string_bytes, description.about)
 	append(&string_bytes, description.text)
+	// The records, and the fields of each record one after the other.
+	record_records := make([dynamic]module.Record, context.temp_allocator)
+	field_records := make([dynamic]module.Field, context.temp_allocator)
+	append(&record_records, module.Record{})
+	append(&field_records, module.Field{})
+	for item in description.records {
+		append(&record_records, module.Record{name_offset = u32(len(string_bytes)), name_count = u32(len(item.name)), size = item.size, first_field = u32(len(field_records)), field_count = u32(len(item.fields))})
+		append(&string_bytes, item.name)
+		for field in item.fields {
+			append(&field_records, module.Field{name_offset = u32(len(string_bytes)), name_count = u32(len(field.name)), offset = field.offset, type = field.type, detail = field.detail})
+			append(&string_bytes, field.name)
+		}
+	}
+	add_table(&output, &directory, .Records, record_records[:])
+	add_table(&output, &directory, .Fields, field_records[:])
 	add_table(&output, &directory, .Strings, string_bytes[:])
 	add_table(&output, &directory, .Documentation, documentation_records[:])
 	for image, index in images {

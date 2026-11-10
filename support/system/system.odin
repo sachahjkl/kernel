@@ -142,6 +142,27 @@ give :: proc "contextless" (target: Handle, handle: Handle, rights: Rights) -> (
 	return Handle(results[0]), status
 }
 
+// handle_state gives the kind of the object of a handle, and the rights of
+// the handle. kind is None when the number names no handle of this program.
+// through says if the handle came through a memory object: another program
+// gave it with this memory as the target of give.
+handle_state :: proc "contextless" (handle: Handle, memory: Handle = 0) -> (kind: op.Object_Kind, rights: Rights, through: bool) {
+	results, status := call(.Handle_State, u64(handle), u64(memory))
+	if status != .Ok {
+		return .None, {}, false
+	}
+	return op.Object_Kind(results[0]), transmute(Rights)u32(results[1]), results[2] != 0
+}
+
+// A handle that the caller of an export lends for the time of the call
+// (module.Type.Handle). RIGHTS is what the export needs: the description of
+// the export has it, and the caller lends no other right.
+//   fill :: proc "c" (memory: system.Lent({.Read, .Write}), value: i64) -> i64
+// In a register and in a record, it is the 32 bits of the handle.
+Lent :: struct($RIGHTS: Rights) {
+	handle: Handle,
+}
+
 close :: proc "contextless" (handle: Handle) {
 	call(.Handle_Close, u64(handle))
 }

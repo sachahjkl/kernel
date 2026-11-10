@@ -227,6 +227,67 @@ function :: proc "contextless" (file: []u8, export_index: u32) -> (value: Functi
 	return record(file, .Functions, export.function, Function)
 }
 
+// record_type gives the description of a record, by its index in the
+// record table, after it checked the description: the size is in the
+// limit, and each field is of a known type and inside the record.
+record_type :: proc "contextless" (file: []u8, index: u32) -> (value: Record, ok: bool) {
+	if index == 0 {
+		return {}, false
+	}
+	value = record(file, .Records, index, Record) or_return
+	if value.size > RECORD_SIZE_LIMIT || value.field_count > RECORD_SIZE_LIMIT / 4 {
+		return {}, false
+	}
+	for number in 0 ..< value.field_count {
+		item := field(file, value, number) or_return
+		size := field_size(item.type)
+		if size == 0 || item.offset > value.size || size > value.size - item.offset {
+			return {}, false
+		}
+	}
+	return value, true
+}
+
+// records_equal says if two descriptions of a record are equal: the same
+// name, the same size, and the same fields at the same places. The two
+// records can be in two modules: a record has no identity but its
+// description.
+records_equal :: proc "contextless" (file: []u8, index: u32, other_file: []u8, other_index: u32) -> bool {
+	first := record_type(file, index) or_return
+	second := record_type(other_file, other_index) or_return
+	if first.size != second.size || first.field_count != second.field_count || string_at(file, first.name_offset, first.name_count) != string_at(other_file, second.name_offset, second.name_count) {
+		return false
+	}
+	for number in 0 ..< first.field_count {
+		a := field(file, first, number) or_return
+		b := field(other_file, second, number) or_return
+		if a.offset != b.offset || a.type != b.type || a.detail != b.detail || string_at(file, a.name_offset, a.name_count) != string_at(other_file, b.name_offset, b.name_count) {
+			return false
+		}
+	}
+	return true
+}
+
+// field gives field `number` of a record, from 0.
+field :: proc "contextless" (file: []u8, of: Record, number: u32) -> (value: Field, ok: bool) {
+	if number >= of.field_count || of.first_field == 0 {
+		return {}, false
+	}
+	return record(file, .Fields, of.first_field + number, Field)
+}
+
+// field_size gives the bytes of a field of a record. 0: a record cannot
+// have a field of this type.
+field_size :: proc "contextless" (type: Type) -> u32 {
+	#partial switch type {
+	case .Integer:
+		return 8
+	case .Handle:
+		return 4
+	}
+	return 0
+}
+
 // documentation gives the documentation of a module: one line, and the text.
 // A module with no documentation gives two empty texts.
 documentation :: proc "contextless" (file: []u8) -> (about, text: string) {

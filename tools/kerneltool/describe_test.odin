@@ -1,6 +1,7 @@
 package kerneltool
 
 import module "contract:module"
+import op "contract:operation"
 import "base:runtime"
 import "core:odin/tokenizer"
 import "core:testing"
@@ -88,6 +89,72 @@ describe_reads_the_source :: proc(t: ^testing.T) {
 	testing.expect_value(t, len(list[3].parameters), 0)
 }
 
+@(private = "file")
+RECORD_SOURCE :: `// Records and handles.
+package sample
+
+Span :: struct {
+	memory: system.Lent({.Read}),
+	first, count: i64,
+}
+
+Pair :: struct {
+	left:  i64,
+	right: i64,
+}
+
+Unused :: struct {
+	value: i64,
+}
+
+// swap gives a pair in the other order.
+@(export)
+swap :: proc "c" (pair: ^Pair, result: ^Pair) {}
+
+// sum adds the bytes of a span, and writes them.
+@(export)
+sum :: proc "c" (span: ^Span, target: Lent({.Read, .Write}), pair: ^Pair) -> i64 {return 0}
+`
+
+// A struct of the package is a Record with the layout of the C language,
+// and Lent is a Handle with the rights that the callee needs.
+@(test)
+describe_reads_records_and_handles :: proc(t: ^testing.T) {
+	list := make([dynamic]Export_Description, context.temp_allocator)
+	records: []Record_Description
+	testing.expect(t, describe_source("sample.odin", RECORD_SOURCE, &list, nil, &records))
+	if len(list) != 2 || len(records) != 2 {
+		testing.expectf(t, false, "%d exports and %d records", len(list), len(records))
+		return
+	}
+	// Each record one time, in the order of the first use. Unused has no description.
+	pair, span := records[0], records[1]
+	testing.expect_value(t, pair.name, "Pair")
+	testing.expect_value(t, pair.size, 16)
+	testing.expect_value(t, span.name, "Span")
+	testing.expect_value(t, span.size, 24)
+	testing.expect_value(t, len(span.fields), 3)
+	if len(span.fields) == 3 {
+		testing.expect_value(t, span.fields[0], Field_Description{"memory", 0, .Handle, transmute(u32)op.Rights{.Read}})
+		testing.expect_value(t, span.fields[1], Field_Description{"first", 8, .Integer, 0})
+		testing.expect_value(t, span.fields[2], Field_Description{"count", 16, .Integer, 0})
+	}
+	swap, sum := list[0], list[1]
+	testing.expect_value(t, swap.result, module.Type.Record)
+	testing.expect_value(t, swap.result_detail, 1)
+	testing.expect_value(t, len(swap.parameters), 1)
+	testing.expect_value(t, swap.details[0], 1)
+	testing.expect_value(t, sum.result, module.Type.Integer)
+	testing.expect_value(t, len(sum.parameters), 3)
+	if len(sum.parameters) == 3 {
+		testing.expect_value(t, sum.parameters[0], module.Type.Record)
+		testing.expect_value(t, sum.details[0], 2)
+		testing.expect_value(t, sum.parameters[1], module.Type.Handle)
+		testing.expect_value(t, sum.details[1], transmute(u32)op.Rights{.Read, .Write})
+		testing.expect_value(t, sum.details[2], 1)
+	}
+}
+
 // The tool does not guess: a source that breaks a rule gives no description.
 @(test)
 describe_rejects_what_has_no_description :: proc(t: ^testing.T) {
@@ -107,6 +174,15 @@ describe_rejects_what_has_no_description :: proc(t: ^testing.T) {
 		{"a Text result and six parameters", "package p\n// f gives x.\n@(export)\nf :: proc \"c\" (a, b, c, d, e, g: i64, result: ^[]u8) -> i64 {return 0}\n"},
 		{"a function that does not return", "package p\n// f gives x.\n@(export)\nf :: proc \"c\" (x: i64) -> ! {for {}}\n"},
 		{"an entry with two parameters", "package p\n@(export)\nentry :: proc \"c\" (a, b: rawptr) -> ! {for {}}\n"},
+		{"a record with a field of 32 bits", "package p\nR :: struct {a: u32}\n// f gives x.\n@(export)\nf :: proc \"c\" (r: ^R) -> i64 {return 0}\n"},
+		{"a packed record", "package p\nR :: struct #packed {a: i64}\n// f gives x.\n@(export)\nf :: proc \"c\" (r: ^R) -> i64 {return 0}\n"},
+		{"a record that is too large", "package p\nR :: struct {a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p, q, r, s, t, u, v, w, x, y, z, aa, ab, ac, ad, ae, af, ag: i64}\n// f gives x.\n@(export)\nf :: proc \"c\" (r: ^R) -> i64 {return 0}\n"},
+		{"a result record with a handle", "package p\nR :: struct {h: Lent({.Read})}\n// f gives x.\n@(export)\nf :: proc \"c\" (x: i64, result: ^R) {}\n"},
+		{"a record result and a result type", "package p\nR :: struct {a: i64}\n// f gives x.\n@(export)\nf :: proc \"c\" (x: i64, result: ^R) -> i64 {return 0}\n"},
+		{"a record result and six parameters", "package p\nR :: struct {a: i64}\n// f gives x.\n@(export)\nf :: proc \"c\" (a, b, c, d, e, g: i64, result: ^R) {}\n"},
+		{"a pointer to an unknown type", "package p\n// f gives x.\n@(export)\nf :: proc \"c\" (r: ^Other) -> i64 {return 0}\n"},
+		{"a right that does not exist", "package p\n// f gives x.\n@(export)\nf :: proc \"c\" (h: Lent({.Fly})) -> i64 {return 0}\n"},
+		{"a handle result", "package p\n// f gives x.\n@(export)\nf :: proc \"c\" (x: i64) -> Lent({.Read}) {return {}}\n"},
 		{"an entry with an integer", "package p\n@(export)\nentry :: proc \"c\" (a: i64) -> ! {for {}}\n"},
 	}
 	for item in cases {

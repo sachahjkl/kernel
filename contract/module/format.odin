@@ -51,6 +51,8 @@ Table_Kind :: enum u32 {
 	Functions     = 6,
 	Strings       = 7,
 	Documentation = 8,
+	Records       = 9,
+	Fields        = 10,
 }
 TABLE_COUNT :: len(Table_Kind)
 
@@ -115,6 +117,18 @@ Type :: enum u8 {
 	// the text in the buffer, and its integer result is the count of bytes of
 	// the full text. A count larger than the capacity means "the text did
 	// not fit": the caller owns all memory (property 14).
+	Record  = 3, // The address of a record: bytes with a fixed size and described fields (Record).
+	// A record holds values only, and no address: its bytes mean the same
+	// in each program. The detail of the parameter is the index of the
+	// description of the record, in the record table.
+	// A Record result: the caller gives one more argument after the
+	// parameters, the address of the memory of the record. The callee
+	// writes the record there. The export has no integer result.
+	Handle  = 4, // A handle that the caller lends for the time of the call, in a register.
+	// The detail of the parameter is the rights that the callee needs: a
+	// bit set of rights (the kernel operations name the bits). The caller
+	// keeps its handle. In an isolated call, the receiver has a copy of the
+	// handle with these rights only, and closes it when the export returns.
 }
 
 PARAMETER_CAPACITY :: 6 // The integer registers of the call form.
@@ -134,8 +148,40 @@ Function :: struct {
 	reserved:              [2]u8,
 	text_offset:           u32, // The documentation text of the export, in the string table.
 	text_count:            u32,
+	parameter_details:     [PARAMETER_CAPACITY]u32, // What the type of each parameter needs: Type says what it is.
+	result_detail:         u32, // A Record result: the index of the description of the record.
+	reserved_details:      u32,
 }
-#assert(size_of(Function) == 64)
+#assert(size_of(Function) == 96)
+
+RECORD_SIZE_LIMIT :: 256 // The bytes of a record that a call carries.
+HANDLE_CAPACITY :: 16 // The handles that one call lends: its Handle parameters, and the Handle fields of its Record parameters.
+
+// The description of a record: a parameter or a result of the type Record.
+// Record 0 of the record table is the empty record.
+Record :: struct {
+	name_offset: u32, // In the string table.
+	name_count:  u32,
+	size:        u32, // In bytes: at most RECORD_SIZE_LIMIT.
+	first_field: u32, // An index in the field table. The fields of a record follow each other.
+	field_count: u32,
+	reserved:    u32,
+}
+#assert(size_of(Record) == 24)
+
+// One field of a record. A field is an Integer (8 bytes) or a Handle (4
+// bytes). The fields are in the order of their offsets, and no two fields
+// share a byte.
+Field :: struct {
+	name_offset: u32, // In the string table.
+	name_count:  u32,
+	offset:      u32, // From the start of the record, in bytes.
+	type:        Type,
+	reserved:    [3]u8,
+	detail:      u32, // A Handle: the rights that the callee needs.
+	reserved2:   u32,
+}
+#assert(size_of(Field) == 24)
 
 // The documentation of the module, for a person. Record 1 of the
 // documentation table is the documentation of the module. No loader reads it.
