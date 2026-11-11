@@ -121,7 +121,8 @@ The owner asked for "a gradient from the current blue, as the start colour, to a
 
 ### Pointer
 
-- The pointer is an arrow of squares of 2 pixels, 8 squares wide and 11 high: black at the edge, white inside. Its point is the top left square.
+- The pointer is an arrow of squares of 2 pixels, 8 squares wide and 11 high: black at the edge, white inside. Its point is the top left square. This arrow is the shape `arrow` of the pointer theme of the system (`resources/pointers/system.manifest`). Each other pointer shape of that theme has the same style: squares of 2 pixels, black and white.
+- **An exception to section 2 (2026-11-11).** The owner asked for the pointer theme that the owner uses on Linux, "Posy's Cursor" (`docs/POINTERS.md`). Its pointer pictures have smooth edges, curves and transparency: they are not rectangles. The request of the owner, in the words of the dictation: "si tu peux juste bah importer migrer ajuster les posies curseur c'est celui que j'utilise normalement sur Linux". The coordinator recorded this exception, as the nearest form that keeps the rule for the rest: the pointer picture is the one picture resource of the desktop that does not follow sections 2 and 7. It is drawn with a blend of premultiplied alpha. The windows, the bar, the menus, the launcher and each program keep "rectangles only, no round corners" and "no transparency". The owner can reverse this exception: then the theme of the system is the one theme.
 
 ### Launcher
 

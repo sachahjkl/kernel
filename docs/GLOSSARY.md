@@ -259,6 +259,17 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Element identity | A number that names one element from one frame to the next, made from a text: the focus and the pointer state follow it | id, key, handle (reserved for the kernel) |
 | Interface state | What the interface package keeps between frames, in the memory of the program: the element with the focus, the element under the pointer, the pressed element, the order of the focus | UI context, retained state |
 | Damage by difference | The damage rectangles that the interface package finds by a comparison of the draw table of this frame with the draw table of the frame before | dirty tracking, invalidation |
+| Pointer | The mark on the screen that the pointing device moves. Its place is a point of the screen: a press acts there. The compositor draws it with the pointer picture of the pointer shape that it chose. Not the caret | cursor, mouse cursor, mouse pointer |
+| Pointer shape | What the pointer shows, as one name of the system (`pointer_pictures.Pointer_Shape`): `arrow`, `text`, `move`, `wait`, ... The compositor chooses it from what is under the pointer; a program asks for one over its own surface (`docs/POINTERS.md`) | cursor type, cursor name, cursor kind |
+| Pointer picture | One image of one pointer shape at one nominal size, for one frame of an animation: its width, height, hot spot, delay and pixels with premultiplied alpha | cursor image, sprite, icon |
+| Hot spot | The pixel of a pointer picture that the compositor puts at the place of the pointer | click point, hotspot, anchor |
+| Nominal size | The size in pixels that a theme gives to a pointer picture, to choose among its sizes. The width and the height of the picture can differ from it | cursor size |
+| Pointer theme | The pointer pictures of each pointer shape, with a name, a license and an attribution. The system has its own theme in the repository; the theme of the owner comes from a build input | cursor theme, icon theme |
+| Pointer theme file | One pointer theme in the format of the system (`contract/pointer_pictures`): a header, a table of shapes, a table of pictures, the pixels. A program maps it and reads it with no parse, after one validation | cursor file, .cur, Xcursor file (for this) |
+| Pointer manifest | A text file of the repository that says how the tool makes a pointer theme file: for each pointer shape, the files of an Xcursor theme or grids of squares, and the adjustments (`docs/POINTERS.md`, "The manifest") | config, recipe, index.theme |
+| Premultiplied alpha | A form of a pixel whose red, green and blue are already multiplied by its alpha. A blend is then `result = source + destination * (255 - alpha) / 255` for each channel | straight alpha (for this) |
+| Resource | A file of the boot image that is not a module: a pointer theme file today. It has a name and the hash of its bytes, in the resource table of the boot image. The root service gives a program a read-only mapping of it | asset, data file, blob |
+| Caret | The mark in a text input of the place where the next typed character goes. Not the pointer | cursor, text cursor, insertion point |
 | Picker | The surface of the document service where the person chooses a document. Its result is a grant | file dialog, powerbox |
 
 ## Terms that the system does not have
