@@ -80,19 +80,23 @@ place_bytes :: proc "contextless" (place: u32) -> []u8 {
 	return region[int(place) * PLACE_SIZE:][:PLACE_SIZE]
 }
 
-// queue puts a command in the ring; a full ring keeps it for the next
-// pass, so that no Send and no Receive is lost with its place.
-held: [256]ring.Record
+// command_push_or_hold puts a command in the ring; a full ring keeps it for
+// the next pass, so that no Send and no Receive is lost with its place. A
+// proven bound (an independent read of server, W11): each command names
+// one place, and a place is in one command at most.
+held: [PLACE_COUNT]ring.Record
 held_count: int
 
 command_push_or_hold :: proc "contextless" (record: ring.Record) {
 	if held_count == 0 && ring.push(&endpoint.commands, record) {
 		return
 	}
-	if held_count < len(held) {
-		held[held_count] = record
-		held_count += 1
+	if held_count == len(held) {
+		system.log("fetch: the held commands passed their proven bound")
+		system.stop(1)
 	}
+	held[held_count] = record
+	held_count += 1
 }
 
 held_commands_push :: proc "contextless" () {

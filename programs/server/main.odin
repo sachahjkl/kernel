@@ -38,7 +38,13 @@ PLACE_COUNT :: datagram.REGION_PAGES * system.PAGE_SIZE / PLACE_SIZE
 RECEIVE_PLACES :: 96 // Places 0 to 95: segments that arrive. The others: segments to send.
 SEND_TAG :: 1000 // Tags from 1000: a Send of place tag - 1000.
 CALL_TAG :: 100_000 // Info and Release.
-HELD_CAPACITY :: 512 // Commands that the ring did not take: they go at the next pass.
+// Commands that the ring did not take: they go at the next pass. A proven
+// bound, not a guess (an independent read, W11): a Send or a Receive names
+// one place, and a place is in one command at most: PLACE_COUNT; a Release
+// is held only while fewer than RELEASE_WAITING_CAPACITY are held. So the
+// held commands never pass HELD_CAPACITY; command_push_or_hold checks it.
+RELEASE_WAITING_CAPACITY :: 2 * CAPACITY + RECEIVE_PLACES
+HELD_CAPACITY :: PLACE_COUNT + RELEASE_WAITING_CAPACITY
 
 CONNECTION_HISTORY :: 16 // Connections that ended, that the window still shows.
 
@@ -66,7 +72,8 @@ secret_source: string
 secret_weak: bool // No rdrand that works: the secret of the initial sequence numbers comes from the cycle counter.
 held_commands: [HELD_CAPACITY]ring.Record // Commands that the ring did not take.
 held_command_count: int
-held_commands_lost: u64 // Commands lost because held_commands was full: 0 in each test.
+held_release_count: int // The Releases among the held commands.
+releases_lost: u64 // Releases that found releases_waiting full: the network service frees their place after ADMITTED_IDLE.
 store_client: storage.Client
 store_connected: bool
 service: system.Service
@@ -103,16 +110,21 @@ command_push_or_hold :: proc "contextless" (record: ring.Record) {
 		return
 	}
 	if held_command_count == HELD_CAPACITY {
-		held_commands_lost += 1
-		return
+		fail("the held commands passed their proven bound")
 	}
 	held_commands[held_command_count] = record
 	held_command_count += 1
+	if record.kind == u32(datagram.Command.Release) {
+		held_release_count += 1
+	}
 }
 
 held_commands_push :: proc "contextless" () {
 	done := 0
 	for done < held_command_count && ring.push(&endpoint.commands, held_commands[done]) {
+		if held_commands[done].kind == u32(datagram.Command.Release) {
+			held_release_count -= 1
+		}
 		done += 1
 	}
 	copy(held_commands[:], held_commands[done:held_command_count])
@@ -151,7 +163,7 @@ Release_Waiting :: struct {
 	port:       u16,
 	connection: int,
 }
-releases_waiting: [2 * CAPACITY + RECEIVE_PLACES]Release_Waiting
+releases_waiting: [RELEASE_WAITING_CAPACITY]Release_Waiting
 releases_waiting_count: int
 
 release :: proc "contextless" (address: u32, port: u16, connection := -1) {
@@ -161,6 +173,8 @@ release :: proc "contextless" (address: u32, port: u16, connection := -1) {
 	if releases_waiting_count < len(releases_waiting) {
 		releases_waiting[releases_waiting_count] = {address, port, connection}
 		releases_waiting_count += 1
+	} else {
+		releases_lost += 1
 	}
 }
 
@@ -168,7 +182,9 @@ release :: proc "contextless" (address: u32, port: u16, connection := -1) {
 releases_send_now :: proc "contextless" () {
 	kept := 0
 	for item in releases_waiting[:releases_waiting_count] {
-		if item.connection >= 0 && connections[item.connection].reset_pending {
+		// A release waits for the RST of its record, and for room among
+		// the held commands (the bound of HELD_CAPACITY).
+		if (item.connection >= 0 && connections[item.connection].reset_pending) || held_release_count >= RELEASE_WAITING_CAPACITY {
 			releases_waiting[kept] = item
 			kept += 1
 			continue
