@@ -132,7 +132,7 @@ callable_of :: proc "contextless" (name: string) -> []string {
 }
 
 @(rodata)
-remote_callable := [?]string{"compositor", "inspect", "log", "manual", "monitor", "sample", "settings", "storage"}
+remote_callable := [?]string{"compositor", "inspect", "log", "manual", "monitor", "settings", "storage"}
 @(rodata)
 tables_callable := [?]string{"sample"}
 

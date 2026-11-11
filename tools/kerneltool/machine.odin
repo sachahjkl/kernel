@@ -1654,7 +1654,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "compositor: surface tables", any_order = true},
 	{kind = .Wait, text = "tables: the ways: direct ready, call host ready, service ready"},
 	{kind = .Wait, text = "tables: sum_values, direct call: "},
-	{kind = .Wait, text = "tables: ok, 8 cases in 3 ways and 5 hostile cases"},
+	{kind = .Wait, text = "tables: ok, 8 cases in 3 ways and 8 hostile cases"},
 	{kind = .Shot, text = "tables"},
 	{kind = .Close, text = "tables"},
 	{kind = .Wait, text = "root: tables stopped"},
