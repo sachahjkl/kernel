@@ -42,7 +42,7 @@ Header :: struct #packed {
 	flags:            u32, // FLAG_GRID_FIT, and the filter in bits 8 to 15.
 	word_offset:      u64, // From the start of the file; a multiple of 64.
 	word_count:       u64,
-	font_hash:        [32]u8, // BLAKE3 of the font file that the glyphs come from (property 11).
+	font_hash:        [32]u8, // BLAKE3 of the font file that the glyphs come from: the cache is named by what made it.
 	font_name:        [32]u8, // ASCII 32 to 126, then zero bytes.
 }
 #assert(size_of(Header) <= HEADER_SIZE)

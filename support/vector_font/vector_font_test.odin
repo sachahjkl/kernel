@@ -272,8 +272,8 @@ damaged_glyph_cache :: proc(t: ^testing.T) {
 }
 
 // A vertical segment on the last column, and a coverage of width 1, write
-// nothing outside their rows (review F1 of step 51, kept for the
-// rasterizer in fixed point): the cell after the accumulation stays 0.
+// nothing outside their rows: the cell after the accumulation stays 0. The
+// rasterizer in floating point that came before wrote there.
 @(test)
 segments_at_the_edges_stay_in_their_rows :: proc(t: ^testing.T) {
 	cells: [(5 + 1) * 3 + 1]i32

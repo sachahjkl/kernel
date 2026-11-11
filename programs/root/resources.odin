@@ -32,8 +32,8 @@ resource_mapping :: proc "contextless" (name: string, address: u64, receiver: st
 
 // pointer_theme_choice gives the names of the pointer theme files that the
 // compositor receives, in order: the theme of the owner when the build had
-// its input, then the theme of the system (decision of the owner,
-// 2026-11-11). The setting "pointer_theme" of the person (contract:settings)
+// its input, then the theme of the system (docs/POINTERS.md, section 5).
+// The setting "pointer_theme" of the person (contract:settings)
 // chooses between them while the compositor runs: "owner" is the first one
 // that the image has, "system" the last.
 pointer_theme_choice :: proc "contextless" () -> []string {

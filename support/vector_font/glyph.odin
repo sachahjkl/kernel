@@ -26,8 +26,8 @@ Glyph_Style :: struct {
 }
 
 // The version of the renderer: a glyph cache keeps it, and a change of the
-// pixels that the renderer gives is a new version (property 11: the cache
-// is a function of the font file and of the renderer).
+// pixels that the renderer gives is a new version: the cache is a function
+// of the font file and of the renderer, and the same two give the same bytes.
 RENDERER_VERSION :: 1
 
 // The largest cell: scale 3 of the grid.
