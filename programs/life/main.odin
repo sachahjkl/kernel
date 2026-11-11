@@ -32,6 +32,7 @@ fill_random :: proc "contextless" () {
 			cell = u8(random() % 4 == 0)
 		}
 	}
+	board_generation += 1
 }
 
 // population gives the count of live cells.
@@ -50,6 +51,7 @@ population :: proc "c" () -> i64 {
 @(export, link_name = "empty")
 empty :: proc "c" () {
 	cells[shown] = {}
+	board_generation += 1
 }
 
 // glider adds a glider: five cells that move down and right.
@@ -118,10 +120,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 						paused = !paused
 					case 'r':
 						fill_random()
-						board_generation += 1
 					case 'c':
 						empty()
-						board_generation += 1
 					}
 				}
 			case .Pointer:
