@@ -1167,8 +1167,12 @@ change :: proc "contextless" (store: Store_Of, given: string, kind: Change_Kind,
 	} else if kind != .Write {
 		list_name(object.list)
 	}
-	// The state before becomes a version.
-	if existed {
+	// The state before becomes a version. A damaged state (a block with a
+	// wrong check) is not kept: the change replaces it, and its blocks lose
+	// this name.
+	if existed && damaged[store_index] >> uint(object_index) & 1 != 0 {
+		list_release(old.list, old.size)
+	} else if existed {
 		version_add(object_index, {generation = old.generation, size = old.size, time = old.time, date = old.date, list = old.list})
 		retention(object_index, now)
 	}
