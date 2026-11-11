@@ -277,6 +277,8 @@ case_size :: proc "contextless" (writer: ^system.Writer) -> bool {
 	return storage_case(writer, "size", .Absent, "nothing")
 }
 
+last_fault: system.Handle // The program fault of the last run of its case.
+
 // case_fault starts the program fault, which writes to address 0 three
 // calls deep, and reads its stop report: the stack trace.
 case_fault :: proc "contextless" (writer: ^system.Writer) -> bool {
@@ -286,7 +288,12 @@ case_fault :: proc "contextless" (writer: ^system.Writer) -> bool {
 		system.write_part(writer, "the program fault did not start")
 		return false
 	}
-	defer system.close(program)
+	// The stopped program stays until the next run of this case: a
+	// developer tool shows it, with its stop report (docs/TOOLS.md).
+	if last_fault != 0 {
+		system.close(last_fault)
+	}
+	last_fault = program
 	limit := system.time() + 5000
 	for {
 		wait := system.wait_begin()

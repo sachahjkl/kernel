@@ -364,7 +364,82 @@ Inspect_Kind :: enum u64 {
 	Boot      = 4, // Boot_Report
 	Mappings  = 5, // Mapping_Report. index 0: the kernel half of the addresses. 1: the half of the program that asks.
 	Modules   = 6, // Module_Report of program slot `index`
+	// The reports of a developer tool (docs/TOOLS.md): what one program has,
+	// read with the right Inspect. None gives a byte of the memory of the
+	// program: the counts, the places and the states only (property 20).
+	Program_Mappings = 7, // Program_Mapping_Report of program slot `index`.
+	Threads          = 8, // Thread_Table_Report of program slot `index`.
+	Stop             = 9, // Stop_Report of program slot `index`: zero when it did not stop on a fault.
+	Pages            = 10, // Page_Report of program slot `index` (0: the program that asks), for the address that the caller writes in the Page_Report.
+}
 
+// One mapping of a program: Program_Mapping_Report.
+Program_Mapping_Flag :: enum u32 {
+	Write       = 0,
+	Execute     = 1,
+	Uncached    = 2, // The registers of a device.
+	Device      = 3, // The frames are not from the page frame table: a framebuffer, boot data, a device.
+	Contiguous  = 4,
+	Shared      = 5, // Another mapping or another handle names the memory object.
+	Thread_Area = 6, // The thread record and the kernel ring of a thread.
+}
+
+Program_Mapping :: struct {
+	address:       u64,
+	page_count:    u64,
+	first:         u64, // The first page of the memory object.
+	present:       u64, // The pages of this mapping that have a page frame, from the page table.
+	region_pages:  u64, // The pages of the memory object.
+	region_serial: u64, // The memory object: two mappings with one serial map one object.
+	flags:         bit_set[Program_Mapping_Flag;u32],
+	references:    u32, // The handles and the mappings that name the memory object, in all programs.
+}
+#assert(size_of(Program_Mapping) == 56)
+
+MAPPING_REPORT_CAPACITY :: 128 // MAPPING_CAPACITY of the kernel.
+
+// The mappings of one program, in the order of their addresses.
+Program_Mapping_Report :: struct {
+	count:    u64,
+	mappings: [MAPPING_REPORT_CAPACITY]Program_Mapping,
+}
+
+// One thread of a program: Thread_Table_Report. The kernel reads the
+// fields of the scheduler with no lock: each field is whole, two fields can
+// come from two instants.
+Thread_Report :: struct {
+	number:           u32, // The thread area of the thread in the program.
+	state:            Program_State, // Ready or Waiting (Stopped: it ended).
+	processor:        u32, // 1 + the processor that runs it now. 0: none.
+	home:             u32, // The processor of its run queue.
+	weight:           u32,
+	request:          u32, // Microseconds.
+	words:            u32, // The words of the word wait that it is in. 0: no word.
+	queued:           u32, // 1: it is in the run queue of home.
+	virtual:          u64,
+	virtual_deadline: u64,
+	lag:              i64,
+	run_time:         u64, // Milliseconds of processor time: the ticks in which it ran.
+	deadline:         u64, // The end of its wait, in milliseconds since the start. WAIT_FOREVER: none.
+}
+#assert(size_of(Thread_Report) == 72)
+
+THREAD_REPORT_CAPACITY :: 32 // The thread areas of one program.
+
+Thread_Table_Report :: struct {
+	count:   u64,
+	threads: [THREAD_REPORT_CAPACITY]Thread_Report,
+}
+
+// The pages of a range of a program that have a page frame: a reader that
+// shows the bytes of memory knows which pages it can read with no fault,
+// and does not give a frame to a page by its read.
+PAGE_REPORT_CAPACITY :: 64
+
+Page_Report :: struct {
+	address: u64, // The first page: the caller writes it, a multiple of 4096.
+	present: u64, // Bit n: page n has a frame.
+	mapped:  u64, // Bit n: page n is in a mapping.
 }
 
 System_Report :: struct {

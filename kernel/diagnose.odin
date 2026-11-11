@@ -560,6 +560,10 @@ INSPECT_SIZES := [op.Inspect_Kind]u64 {
 	.Boot      = size_of(op.Boot_Report),
 	.Mappings  = size_of(op.Mapping_Report),
 	.Modules   = size_of(op.Module_Report),
+	.Program_Mappings = size_of(op.Program_Mapping_Report),
+	.Threads   = size_of(op.Thread_Table_Report),
+	.Stop      = size_of(op.Stop_Report),
+	.Pages     = size_of(op.Page_Report),
 }
 
 @(private = "file")

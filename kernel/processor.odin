@@ -156,6 +156,11 @@ Processor :: struct {
 	boot_report:    op.Boot_Report,
 	mapping_report: op.Mapping_Report,
 	module_report:  op.Module_Report,
+	// The reports of a developer tool (report.odin): built here under the
+	// locks, then copied to the caller with no lock of another program.
+	program_mapping_report: op.Program_Mapping_Report,
+	thread_table_report:    op.Thread_Table_Report,
+	stop_report:            op.Stop_Report,
 	segments:      [7]u64,
 	task_state:    Task_State,
 	idle_fpu:      Fpu_State,

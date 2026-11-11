@@ -712,6 +712,50 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			}
 			user_copy(rawptr(uintptr(v[3])), &report, size_of(report))
 			results[0] = size_of(op.Processor_Report)
+		case .Program_Mappings, .Threads, .Stop:
+			// The reports of a developer tool (report.odin). Another program:
+			// with the control lock, so that the slot keeps its program.
+			kind := op.Inspect_Kind(v[1])
+			size := u64(kind == .Program_Mappings ? size_of(op.Program_Mapping_Report) : kind == .Threads ? size_of(op.Thread_Table_Report) : size_of(op.Stop_Report))
+			if v[4] < size || !user_range(program, v[3], size, true) {
+				return .Bad_Address
+			}
+			if need_control() {
+				return STATUS_RETRY
+			}
+			cpu := processor_self()
+			source: rawptr
+			#partial switch kind {
+			case .Program_Mappings:
+				program_mappings_report(&cpu.program_mapping_report, u32(min(v[2], PROGRAM_CAPACITY)))
+				source = &cpu.program_mapping_report
+			case .Threads:
+				threads_report(&cpu.thread_table_report, u32(min(v[2], PROGRAM_CAPACITY)))
+				source = &cpu.thread_table_report
+			case:
+				cpu.stop_report = {}
+				if v[2] != 0 && v[2] < PROGRAM_CAPACITY {
+					taken := program_lock(u32(v[2]))
+					cpu.stop_report = programs[v[2]].stop
+					program_unlock(u32(v[2]), taken)
+				}
+				source = &cpu.stop_report
+			}
+			user_copy(rawptr(uintptr(v[3])), source, size)
+			results[0] = size
+		case .Pages:
+			if v[4] < size_of(op.Page_Report) || !user_range(program, v[3], size_of(op.Page_Report), true) {
+				return .Bad_Address
+			}
+			if need_control() {
+				return STATUS_RETRY
+			}
+			report: op.Page_Report
+			user_copy(&report, rawptr(uintptr(v[3])), size_of(report))
+			// Slot 0: the program that asks.
+			pages_report(&report, v[2] == 0 ? u32(intrinsics.ptr_sub(program, &programs[0])) : u32(min(v[2], PROGRAM_CAPACITY)))
+			user_copy(rawptr(uintptr(v[3])), &report, size_of(report))
+			results[0] = size_of(op.Page_Report)
 		case .None:
 			return .Bad_Operation
 		case:

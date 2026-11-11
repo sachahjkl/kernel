@@ -91,3 +91,138 @@ boot_report :: proc "contextless" (report: ^op.Boot_Report) {
 		op.boot_range_add(report, range.start, range.page_count, u64(range.kind))
 	}
 }
+
+// The reports of a developer tool (docs/TOOLS.md): what one program has, for
+// a holder of the machine with the right Inspect. They give counts, places
+// and states, never a byte of the memory of the program (property 20).
+
+// program_mappings_report writes the mappings of program slot `index`, in
+// the order of their addresses. The caller holds the control lock; this
+// procedure takes the program lock of the program, and the present pages
+// come from its page table (as present_pages reads it).
+program_mappings_report :: proc "contextless" (report: ^op.Program_Mapping_Report, index: u32) {
+	report^ = {}
+	if index == 0 || index >= PROGRAM_CAPACITY {
+		return
+	}
+	about := &programs[index]
+	taken := program_lock(index)
+	defer program_unlock(index, taken)
+	if about.state == .None || about.table == 0 {
+		return
+	}
+	for &mapping in about.mappings {
+		if mapping.page_count == 0 || report.count == op.MAPPING_REPORT_CAPACITY {
+			continue
+		}
+		item := op.Program_Mapping {
+			address    = mapping.address,
+			page_count = mapping.page_count,
+			first      = mapping.first,
+		}
+		for page := u64(0); page < mapping.page_count; {
+			address := mapping.address + page * PAGE_SIZE
+			run := min(512 - (address >> 12 & 511), mapping.page_count - page)
+			if entry := page_entry(about.table, address, false); entry != nil {
+				for value in ([^]u64)(entry)[:run] {
+					item.present += value & PAGE_PRESENT
+				}
+			}
+			page += run
+		}
+		if mapping.bits & PAGE_WRITE != 0 {
+			item.flags += {.Write}
+		}
+		if mapping.bits & PAGE_NO_EXECUTE == 0 {
+			item.flags += {.Execute}
+		}
+		if mapping.address >= op.THREAD_AREA_BASE {
+			item.flags += {.Thread_Area}
+		}
+		if mapping.region < REGION_CAPACITY {
+			region := &regions[mapping.region]
+			item.region_pages = region.page_count
+			item.region_serial = region.serial
+			item.references = intrinsics.atomic_load(&region.references)
+			if region.uncached {
+				item.flags += {.Uncached}
+			}
+			if region.device {
+				item.flags += {.Device}
+			}
+			if region.contiguous {
+				item.flags += {.Contiguous}
+			}
+			if item.references > 1 {
+				item.flags += {.Shared}
+			}
+		}
+		// In the order of the addresses.
+		place := report.count
+		for place > 0 && report.mappings[place - 1].address > item.address {
+			report.mappings[place] = report.mappings[place - 1]
+			place -= 1
+		}
+		report.mappings[place] = item
+		report.count += 1
+	}
+}
+
+// threads_report writes the threads of program slot `index`. The caller
+// holds the control lock: no thread of the program starts or ends. The
+// fields of the scheduler are read with no run lock, each one whole.
+threads_report :: proc "contextless" (report: ^op.Thread_Table_Report, index: u32) {
+	report^ = {}
+	if index == 0 || index >= PROGRAM_CAPACITY || programs[index].state == .None {
+		return
+	}
+	for &thread in threads[1:] {
+		state := intrinsics.atomic_load(&thread.state)
+		if state == .None || thread.program != index || report.count == op.THREAD_REPORT_CAPACITY {
+			continue
+		}
+		report.threads[report.count] = {
+			number           = thread.number,
+			state            = state,
+			processor        = intrinsics.atomic_load(&thread.processor),
+			home             = intrinsics.atomic_load(&thread.home),
+			weight           = thread.weight,
+			request          = thread.request,
+			words            = intrinsics.atomic_load(&thread.word_count),
+			queued           = u32(intrinsics.atomic_load(&thread.queued)),
+			virtual          = intrinsics.atomic_load(&thread.virtual),
+			virtual_deadline = intrinsics.atomic_load(&thread.virtual_deadline),
+			lag              = intrinsics.atomic_load(&thread.lag),
+			run_time         = intrinsics.atomic_load(&thread.run_time),
+			deadline         = intrinsics.atomic_load(&thread.deadline),
+		}
+		report.count += 1
+	}
+}
+
+// pages_report writes which of 64 pages of program slot `index` have a
+// frame, from its page table: it gives no frame to a page.
+pages_report :: proc "contextless" (report: ^op.Page_Report, index: u32) {
+	report.present, report.mapped = 0, 0
+	if index == 0 || index >= PROGRAM_CAPACITY || report.address & (PAGE_SIZE - 1) != 0 {
+		return
+	}
+	about := &programs[index]
+	taken := program_lock(index)
+	defer program_unlock(index, taken)
+	if about.state == .None || about.table == 0 {
+		return
+	}
+	for page in u64(0) ..< op.PAGE_REPORT_CAPACITY {
+		address := report.address + page * PAGE_SIZE
+		for &mapping in about.mappings {
+			if mapping.page_count != 0 && address >= mapping.address && address - mapping.address < mapping.page_count * PAGE_SIZE {
+				report.mapped |= 1 << page
+				if entry := page_entry(about.table, address, false); entry != nil && entry^ & PAGE_PRESENT != 0 {
+					report.present |= 1 << page
+				}
+				break
+			}
+		}
+	}
+}
