@@ -212,10 +212,27 @@ sparse :: proc "contextless" () {
 	}
 	// Decommit: the budget gets each page back at once.
 	before, _ := system.budget_read()
+	// At most RANGE_TABLE_PAGE_LIMIT pages in one call: four calls for 1 GiB;
+	// the longest is the longest section of the kernel with interrupts off
+	// that a call of this kind makes.
+	returned: u64
+	decommit := system.Status.Ok
+	for part in u64(0) ..< GIGABYTE_PAGES / op.RANGE_TABLE_PAGE_LIMIT {
+		quarter := [1]op.Page_Range{{first = part * op.RANGE_TABLE_PAGE_LIMIT, page_count = op.RANGE_TABLE_PAGE_LIMIT}}
+		start := system.nanoseconds()
+		changed, part_status := system.memory_decommit(memory, quarter[:])
+		decommit_microseconds = max(decommit_microseconds, (system.nanoseconds() - start) / 1000)
+		returned += changed
+		if part_status != .Ok {
+			decommit = part_status
+		}
+	}
+	record: errors.Error_Record
 	everything := [1]op.Page_Range{{first = 0, page_count = GIGABYTE_PAGES}}
-	start := system.nanoseconds()
-	returned, decommit := system.memory_decommit(memory, everything[:])
-	decommit_microseconds = (system.nanoseconds() - start) / 1000
+	_, too_many := system.memory_decommit(memory, everything[:], &record)
+	if too_many != .Bad_Operation || record.kind != i64(errors.Kind.Too_Long) {
+		fail("a decommit of more than the page limit of one call was not refused with its record")
+	}
 	after, _ := system.budget_read()
 	decommit_returned, decommit_expected = after.pages - before.pages, SPARSE_PAGES
 	if decommit != .Ok || returned != SPARSE_PAGES || decommit_returned != SPARSE_PAGES {
@@ -403,13 +420,13 @@ refuse :: proc "contextless" () {
 	memory, _ := system.memory_create(64, flags = {.Uncommitted})
 	defer system.close(memory)
 	outside := [1]op.Page_Range{{first = 60, page_count = 10}}
-	_, status := system.memory_commit(memory, outside[:], &record)
+	_, status := system.memory_commit(memory, outside[:], error = &record)
 	refusal(&refusals[0], "a range outside the object", .Bad_Address, status, record)
 	big, _ := system.memory_create(GIGABYTE_PAGES, flags = {.Uncommitted})
 	defer system.close(big)
 	record = {}
-	over := [1]op.Page_Range{{first = 0, page_count = 200_000}}
-	_, status = system.memory_commit(big, over[:], &record)
+	over := [1]op.Page_Range{{first = 0, page_count = 60_000}} // Under the page limit of one call, over the budget.
+	_, status = system.memory_commit(big, over[:], error = &record)
 	refusal(&refusals[1], "a commit over the budget", .No_Budget, status, record)
 	plain, _ := system.memory_create(4)
 	defer system.close(plain)
@@ -424,6 +441,398 @@ refuse :: proc "contextless" () {
 	refusal(&refusals[3], "large pages of 100 pages", .Bad_Operation, status, record)
 }
 
+// The findings of the independent read of the kernel part (each a case
+// that failed before its correction). Each one logs a line and sets a bit
+// of review_right.
+REVIEW_CASES :: 6
+review_names := [REVIEW_CASES]string{"F1 a decommit wakes a thread that waits on a word of the page", "F2 a word in the second 4 KiB of a large page is its own word", "F3 an object with protection marks is not mapped again", "W2 a small uncommitted object costs a page", "W4 a part cannot get more than its mapping", "a page that is not committed stops with its own code"}
+review_results: [REVIEW_CASES]bool
+
+Waiter :: struct #align (64) {
+	word:   ^u32,
+	value:  u32,
+	ended:  u32,
+	woke_at: u64,
+}
+waiter: Waiter
+
+wait_run :: proc "c" (parameter: rawptr) -> ! {
+	deadline := system.time() + 2000
+	system.word_wait(waiter.word, waiter.value, deadline)
+	waiter.woke_at = system.time()
+	intrinsics.atomic_store(&waiter.ended, 1)
+	system.thread_stop()
+}
+
+// waiter_start starts a thread that waits on a word, and gives it time to
+// wait (its state is Waiting).
+waiter_start :: proc "contextless" (word: ^u32) -> system.Thread {
+	waiter = {word = word, value = intrinsics.atomic_load(word)}
+	thread, _ := system.thread_start(wait_run, nil)
+	for _ in 0 ..< 200 {
+		results, _ := system.call(.Thread_State, u64(thread.handle))
+		if op.Program_State(results[0]) == .Waiting {
+			break
+		}
+		system.sleep(system.time() + 1)
+	}
+	return thread
+}
+
+review :: proc "contextless" (ctx: ^system.Context) {
+	// F1: a thread waits on a word of a committed page; the page is
+	// decommitted: the waiter must wake at once, not at its deadline.
+	{
+		memory, _ := system.memory_create(16, flags = {.Uncommitted})
+		address, _ := system.memory_map(memory)
+		ranges := [1]op.Page_Range{{first = 3, page_count = 1}}
+		system.memory_commit(memory, ranges[:])
+		word := (^u32)(uintptr(address) + 3 * system.PAGE_SIZE + 64)
+		word^ = 7
+		thread := waiter_start(word)
+		start := system.time()
+		system.memory_decommit(memory, ranges[:])
+		for intrinsics.atomic_load(&waiter.ended) == 0 {
+			system.sleep(system.time() + 1)
+		}
+		system.thread_wait(thread)
+		review_results[0] = waiter.woke_at - start < 1000
+		system.memory_unmap(address)
+		system.close(memory)
+	}
+	// F2: one thread waits on a word in the second 4 KiB of a large page; a
+	// wake of the word at the same offset of the first 4 KiB wakes nobody,
+	// a wake of its own word wakes it.
+	{
+		memory, _ := system.memory_create(op.LARGE_PAGE_PAGES, flags = {.Large_Pages})
+		address, _ := system.memory_map(memory, {.Write}, 0, LARGE_ADDRESS)
+		first := (^u32)(uintptr(address) + 128)
+		second := (^u32)(uintptr(address) + system.PAGE_SIZE + 128)
+		thread := waiter_start(second)
+		wrong := system.word_wake(first)
+		intrinsics.atomic_add(second, 1)
+		woken := system.word_wake(second)
+		system.thread_wait(thread)
+		review_results[1] = wrong == 0 && woken == 1
+		system.memory_unmap(address)
+		system.close(memory)
+	}
+	// F3: a part of a mapping is made No_Access; the object cannot be
+	// mapped a second time while it has marks; after the part has the
+	// protection of its mapping again, it can.
+	{
+		memory, _ := system.memory_create(8)
+		address, _ := system.memory_map(memory)
+		part := [1]op.Address_Range{{address = u64(uintptr(address)) + system.PAGE_SIZE, page_count = 2}}
+		system.memory_protect(part[:], {.No_Access})
+		record: errors.Error_Record
+		second, refused := system.memory_map(memory, error = &record)
+		if refused == .Ok {
+			system.memory_unmap(second)
+		}
+		system.memory_protect(part[:], {.Write})
+		third, allowed := system.memory_map(memory)
+		if allowed == .Ok {
+			system.memory_unmap(third)
+		}
+		review_results[2] = refused == .Bad_State && record.kind != i64(errors.Kind.Refused) && allowed == .Ok
+		system.memory_unmap(address)
+		system.close(memory)
+	}
+	// W2: a budget with no page cannot hold a slot of the table of memory
+	// objects with an uncommitted object of 4 pages.
+	{
+		empty, _ := system.budget_create({pages = 0})
+		memory, status := system.memory_create(4, empty, {.Uncommitted})
+		if status == .Ok {
+			system.close(memory)
+		}
+		system.close(empty)
+		review_results[3] = status == .No_Budget
+	}
+	// W4: the whole mapping becomes read only; a part of it cannot become
+	// writable alone: refused, not a success that changes nothing.
+	{
+		memory, _ := system.memory_create(8)
+		address, _ := system.memory_map(memory)
+		whole := [1]op.Address_Range{{address = u64(uintptr(address)), page_count = 8}}
+		part := [1]op.Address_Range{{address = u64(uintptr(address)), page_count = 2}}
+		system.memory_protect(whole[:], {})
+		record: errors.Error_Record
+		_, status := system.memory_protect(part[:], {.Write}, &record)
+		review_results[4] = status == .Bad_Operation && record.kind != i64(errors.Kind.Refused)
+		system.memory_unmap(address)
+		system.close(memory)
+	}
+	// A child touches a page of an uncommitted object that is not committed:
+	// it stops with the code of a page that is not committed.
+	review_results[5] = child_stop_code(ctx, 3) == op.STOP_CODE_NOT_COMMITTED
+	for name, index in review_names {
+		system.log("address_space: review: ", name, ": ", review_results[index] ? "right" : "WRONG")
+		if !review_results[index] {
+			fail("a case of the review")
+		}
+	}
+}
+
+// child_stop_code starts the child with a role and gives its stop code.
+child_stop_code :: proc "contextless" (ctx: ^system.Context, role: u64) -> u32 {
+	address, status := system.memory_map(ctx.handles[system.GRANT_IMAGE], {})
+	if status != .Ok {
+		return 0
+	}
+	image := ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]
+	grants: [op.CONTEXT_HANDLES]system.Grant
+	values: [op.CONTEXT_VALUES]u64
+	values[VALUE_ROLE] = role
+	program, start := system.program_start(system.image_find(image, "address_space"), "address_space child", grants, values, {pages = 2048, programs = 1, threads = 1, processor = 100_000, log_records = 10})
+	if start != .Ok {
+		return 0
+	}
+	defer system.close(program)
+	for deadline := system.time() + 5000; system.time() < deadline; {
+		if state, _ := system.program_state(program); state == .Stopped {
+			break
+		}
+		system.sleep(system.time() + 10)
+	}
+	_, code := system.program_state(program)
+	return code
+}
+
+// The child of the role 3: it touches a page that is not committed.
+child_not_committed :: proc "contextless" () -> ! {
+	memory, _ := system.memory_create(16, flags = {.Uncommitted})
+	address, _ := system.memory_map(memory)
+	intrinsics.volatile_store(&([^]u8)(address)[5 * system.PAGE_SIZE], 1)
+	system.stop(0)
+}
+
+// The delegation of a commit (owner, 2026-11-11, "budget delegation"): this
+// program A makes a child budget and an uncommitted object on it, and gives
+// a second program B the object (Read, Write) and the child budget with the
+// right Commit only. B runs the cases of the amendment of the read, one at
+// a time on a board that the two map; A acts between them (revocations, a
+// decommit, the end of the child budget). Each case logs its line with the
+// sentence of its error record.
+DELEGATION_OBJECT_PAGES :: 64
+DELEGATION_BUDGET_PAGES :: 33 // 1 page of the frame list, then 32 pages that B can commit.
+DELEGATION_CASES :: 10
+GRANT_DELEGATION_BOARD :: 0
+GRANT_DELEGATION_OBJECT :: 1
+GRANT_DELEGATION_BUDGET :: 2 // The child budget, with Commit only.
+GRANT_DELEGATION_SPEND :: 3 // A second child budget with Spend: does a revocation end what B made with it?
+
+Delegation_Result :: struct {
+	status:   system.Status,
+	record:   errors.Error_Record,
+	value:    u64,
+}
+
+Delegation_Board :: struct {
+	step:    u32, // A writes the case that B runs now.
+	done:    u32, // B writes the case that it ran.
+	results: [DELEGATION_CASES + 1]Delegation_Result,
+}
+
+delegation_names := [DELEGATION_CASES + 1]string {
+	"",
+	"1 B commits 32 pages, then one more",
+	"2 B commits with no budget handle; it reads and writes the committed pages",
+	"3 B makes an object with the handle that has Commit only",
+	"4 B commits with a budget that does not pay for the object",
+	"5 A revokes the budget handle of B: B commits no more",
+	"6 A takes the pages back: it revokes the object of B, then decommits",
+	"7 B decommits pages of an object that A holds too",
+	"8 the child budget ends: the object moves to the budget of A",
+	"9 B gives its Commit handle on: it has no right Give",
+	"10 an object that B made with a Spend handle, after the revocation",
+}
+delegation_right: [DELEGATION_CASES + 1]bool
+delegation_lines: [DELEGATION_CASES + 1][200]u8
+delegation_line_counts: [DELEGATION_CASES + 1]int
+
+// child_delegate is B: it runs case n when A writes n, and writes its result.
+child_delegate :: proc "contextless" (ctx: ^system.Context) -> ! {
+	address, _ := system.memory_map(ctx.handles[GRANT_DELEGATION_BOARD])
+	board := (^Delegation_Board)(address)
+	memory := ctx.handles[GRANT_DELEGATION_OBJECT]
+	budget := ctx.handles[GRANT_DELEGATION_BUDGET]
+	spend := ctx.handles[GRANT_DELEGATION_SPEND]
+	object, _ := system.memory_map(memory)
+	bytes := ([^]u8)(object)
+	made: system.Handle
+	seen: u32
+	for {
+		step := intrinsics.atomic_load(&board.step)
+		if step == seen {
+			system.word_wait(&board.step, step, system.time() + 1000)
+			continue
+		}
+		seen = step
+		result := &board.results[step]
+		switch step {
+		case 1:
+			first := [1]op.Page_Range{{first = 0, page_count = 32}}
+			if _, status := system.memory_commit(memory, first[:], budget); status == .Ok {
+				one := [1]op.Page_Range{{first = 32, page_count = 1}}
+				_, result.status = system.memory_commit(memory, one[:], budget, &result.record)
+			}
+		case 2:
+			ranges := [1]op.Page_Range{{first = 40, page_count = 1}}
+			_, result.status = system.call_with_error(&result.record, .Memory_Commit, u64(memory), 0, u64(uintptr(&ranges[0])), 1, 0)
+			bytes[5 * system.PAGE_SIZE] = 55
+			result.value = u64(bytes[5 * system.PAGE_SIZE])
+		case 3:
+			_, result.status = system.memory_create(1, budget, error = &result.record)
+		case 4:
+			ranges := [1]op.Page_Range{{first = 33, page_count = 1}}
+			_, result.status = system.memory_commit(memory, ranges[:], system.own_budget(), &result.record)
+		case 5:
+			ranges := [1]op.Page_Range{{first = 34, page_count = 1}}
+			_, result.status = system.memory_commit(memory, ranges[:], budget, &result.record)
+			// The object that B made with the Spend handle before the revocation.
+			result.value = system.memory_size(made)
+		case 7:
+			ranges := [1]op.Page_Range{{first = 0, page_count = 32}}
+			_, result.status = system.memory_decommit(memory, ranges[:], &result.record)
+		case 9:
+			_, result.status = system.give(ctx.handles[GRANT_DELEGATION_BOARD], budget, {.Commit}, &result.record)
+		case 10:
+			made, result.status = system.memory_create(1, spend, error = &result.record)
+		}
+		intrinsics.atomic_store(&board.done, step)
+		system.word_wake(&board.done)
+	}
+}
+
+delegation_run :: proc "contextless" (board: ^Delegation_Board, step: u32) -> ^Delegation_Result {
+	intrinsics.atomic_store(&board.step, step)
+	system.word_wake(&board.step)
+	for deadline := system.time() + 5000; intrinsics.atomic_load(&board.done) != step && system.time() < deadline; {
+		system.word_wait(&board.done, intrinsics.atomic_load(&board.done), system.time() + 100)
+	}
+	return &board.results[step]
+}
+
+delegation_note :: proc "contextless" (step: int, right: bool, result: ^Delegation_Result, parts: ..system.Part) {
+	delegation_right[step] = right
+	writer := system.Writer{buffer = delegation_lines[step][:]}
+	for part in parts {
+		system.write_part(&writer, part)
+	}
+	if result != nil && result.status != .Ok {
+		system.kernel_error_text(&writer, &result.record)
+	}
+	delegation_line_counts[step] = len(system.written(&writer))
+	system.log("address_space: delegation: ", delegation_names[step], ": ", right ? "as expected: " : "WRONG: ", string(delegation_lines[step][:delegation_line_counts[step]]))
+	if !right {
+		fail("a case of the delegation")
+	}
+}
+
+delegation :: proc "contextless" (ctx: ^system.Context) {
+	address, status := system.memory_map(ctx.handles[system.GRANT_IMAGE], {})
+	if status != .Ok {
+		fail("the delegation: no boot image")
+		return
+	}
+	image := ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]
+	child_budget, _ := system.budget_create({pages = DELEGATION_BUDGET_PAGES})
+	spend_budget, _ := system.budget_create({pages = 8})
+	object, _ := system.memory_create(DELEGATION_OBJECT_PAGES, child_budget, {.Uncommitted})
+	board_memory, _ := system.memory_create(1)
+	board_address, _ := system.memory_map(board_memory)
+	board := (^Delegation_Board)(board_address)
+	grants: [op.CONTEXT_HANDLES]system.Grant
+	grants[GRANT_DELEGATION_BOARD] = {board_memory, {.Read, .Write}}
+	grants[GRANT_DELEGATION_OBJECT] = {object, {.Read, .Write}}
+	grants[GRANT_DELEGATION_BUDGET] = {child_budget, {.Commit}}
+	grants[GRANT_DELEGATION_SPEND] = {spend_budget, {.Spend}}
+	values: [op.CONTEXT_VALUES]u64
+	values[VALUE_ROLE] = 2
+	program, start := system.program_start(system.image_find(image, "address_space"), "address_space delegate", grants, values, {pages = 512, programs = 1, threads = 1, processor = 100_000, log_records = 50})
+	if start != .Ok {
+		fail("the delegation: B did not start")
+		return
+	}
+	defer system.close(program)
+
+	result := delegation_run(board, 1)
+	delegation_note(1, result.status == .No_Budget && result.record.kind == i64(errors.Kind.Budget_Hidden), result, "32 pages committed; the 33rd: ")
+	result = delegation_run(board, 2)
+	delegation_note(2, result.status == .Bad_Handle && result.value == 55, result, "B wrote and read 55 in a committed page; a commit: ")
+	result = delegation_run(board, 3)
+	delegation_note(3, result.status == .No_Right, result, "")
+	result = delegation_run(board, 4)
+	delegation_note(4, result.status == .Bad_Handle && result.record.kind == i64(errors.Kind.Not_Payer), result, "")
+	result = delegation_run(board, 7)
+	delegation_note(7, result.status == .Bad_State && result.record.kind == i64(errors.Kind.Object_Shared), result, "")
+	result = delegation_run(board, 9)
+	delegation_note(9, result.status == .No_Right, result, "")
+	result = delegation_run(board, 10)
+	made := result.status == .Ok
+	// 5: A revokes the two budget handles of B.
+	system.handle_revoke(child_budget, program)
+	system.handle_revoke(spend_budget, program)
+	held, _ := system.budget_read(child_budget)
+	result = delegation_run(board, 5)
+	delegation_note(5, result.status == .Bad_Handle && result.record.kind == i64(errors.Kind.Handle_Ended) && held.pages == 0, result, "the 32 pages stay committed and paid (the child budget holds 0); a commit: ")
+	// 10: the object that B made with the Spend handle stays: a revocation
+	// ends the holdings that came from the handle (handles and mappings),
+	// not the objects that were made with it.
+	delegation_note(10, made && result.value == 1, nil, made && result.value == 1 ? "the object of 1 page that B made with it lives on after the revocation, paid by the child budget, and A cannot end it: the narrow right Commit makes no object" : "the object did not stay")
+	// 6: A revokes the object of B (B is unmapped), then decommits.
+	system.handle_revoke(object, program)
+	before, _ := system.budget_read(child_budget)
+	everything := [1]op.Page_Range{{first = 0, page_count = DELEGATION_OBJECT_PAGES}}
+	returned, decommit := system.memory_decommit(object, everything[:])
+	after, _ := system.budget_read(child_budget)
+	delegation_note(6, decommit == .Ok && returned == 32 && after.pages - before.pages == 32, nil, decommit == .Ok ? "32 pages back in the child budget; A held the object with no mapping" : "the decommit was refused")
+	// 8: A closes the child budget: the object moves to the budget of A,
+	// and a commit needs the budget of A now; the old handle names nothing.
+	system.close(child_budget)
+	record: errors.Error_Record
+	one := [1]op.Page_Range{{first = 0, page_count = 1}}
+	_, old := system.memory_commit(object, one[:], child_budget, &record)
+	committed, now := system.memory_commit(object, one[:])
+	delegation_note(8, old == .Bad_Handle && now == .Ok && committed == 1, nil, now == .Ok ? "a commit with the budget of A: 1 page; with the old handle: refused" : "the commit with the budget of A was refused")
+	system.close(object)
+	system.close(spend_budget)
+	system.call(.Program_Stop, u64(program), 0)
+	system.memory_unmap(board_address)
+	system.close(board_memory)
+}
+
+// The addresses that the kernel chooses are used again (the fault found by
+// the agent of work/tables): one object mapped and unmapped 100 000 times
+// costs the budget the same as one time.
+reuse_right: bool
+reuse_pages_first, reuse_pages_last: u64
+
+addresses_reused :: proc "contextless" () {
+	memory, _ := system.memory_create(4)
+	defer system.close(memory)
+	for round in 0 ..< 100_000 {
+		address, status := system.memory_map(memory)
+		if status != .Ok {
+			fail("the reuse of addresses: a map was refused")
+			return
+		}
+		system.memory_unmap(address)
+		if round == 0 {
+			first, _ := system.budget_read()
+			reuse_pages_first = first.pages
+		}
+	}
+	last, _ := system.budget_read()
+	reuse_pages_last = last.pages
+	reuse_right = reuse_pages_first == reuse_pages_last
+	if !reuse_right {
+		fail("the reuse of addresses: the budget paid for more page tables")
+	}
+}
+
 // The window: one card for each case, with the numbers.
 records_now, records_before: [1024]interface.Draw_Record
 text_now, text_before: [16384]u8
@@ -431,7 +840,7 @@ drawing: interface.Window_Drawing
 
 line :: proc "contextless" (frame: ^interface.Frame, column: ^interface.Column, label: string, parts: ..system.Part) {
 	buffer: [96]u8
-	interface.label_value_line(frame, interface.column_take(column, 16), label, system.format(buffer[:], ..parts), graphics.COLOR_TEXT, 184)
+	interface.label_value_line(frame, interface.column_take(column, 16), label, system.format(buffer[:], ..parts), graphics.COLOR_TEXT, 208)
 }
 
 build :: proc "contextless" (frame: ^interface.Frame) {
@@ -439,28 +848,33 @@ build :: proc "contextless" (frame: ^interface.Frame) {
 	left := interface.card(frame, {8, 8, WIDTH / 2 - 12, HEIGHT - 16}, "RESERVE AND COMMIT", "Memory_Commit", graphics.COLOR_MEMORY)
 	column := interface.column_of(left, 4)
 	line(frame, &column, "arena: addresses", u64(GIGABYTE_PAGES / 256), " MiB, one mapping")
-	interface.cell_text(frame, interface.column_take(&column, 16), "  pages committed and used; entries for 1000 pages:", graphics.COLOR_DIM)
-	line(frame, &column, "  paid for its frame list", arena_list_pages, " pages")
+	line(frame, &column, "  frame list paid", arena_list_pages, " pages")
 	line(frame, &column, "  mapped in", arena_map_microseconds, " us")
+	interface.cell_text(frame, interface.column_take(&column, 16), "  committed and used, and kernel entries for 1000:", graphics.COLOR_DIM)
 	for batch, row in batch_sizes {
 		buffer: [48]u8
 		label := system.format(buffer[:], "  ", batch, batch == 1 ? " range" : " ranges", " / entry")
 		line(frame, &column, label, arena_pages_per_second[row], " pages/s, ", arena_entries_per_thousand_pages[row], " entries")
 	}
 	interface.column_take(&column, 8)
-	line(frame, &column, "sparse table: committed", sparse_committed, " of ", u64(GIGABYTE_PAGES))
+	line(frame, &column, "sparse: committed", sparse_committed, " of ", u64(GIGABYTE_PAGES), " pages")
 	line(frame, &column, "  with a frame", sparse_present, " pages")
 	line(frame, &column, "decommit: returned", decommit_returned, " of ", decommit_expected, " pages")
-	line(frame, &column, "  in", decommit_microseconds, " us")
-	line(frame, &column, "  a page committed again", recommit_zero ? "is zero" : "is not zero")
+	line(frame, &column, "  longest call", decommit_microseconds, " us")
+	line(frame, &column, "  committed again", recommit_zero ? "zero" : "not zero")
+	line(frame, &column, "map and unmap 100000", reuse_right ? "no page table more" : "page tables grew")
 	interface.column_take(&column, 8)
 	interface.cell_text(frame, interface.column_take(&column, 16), "refusals, each with its error record", graphics.COLOR_DIM)
 	for &item in refusals {
 		color: graphics.Color = item.status == item.expected ? graphics.COLOR_PROGRAM : graphics.COLOR_FAILED
 		interface.cell_text(frame, interface.column_take(&column, 16), item.name, graphics.COLOR_TEXT)
+		// Two lines, cut at a space.
 		first := min(item.count, 52)
+		for first < item.count && first > 0 && item.sentence[first] != ' ' {
+			first -= 1
+		}
 		interface.cell_text(frame, interface.column_take(&column, 16), string(item.sentence[:first]), color)
-		interface.cell_text(frame, interface.column_take(&column, 16), string(item.sentence[first:min(item.count, 104)]), color)
+		interface.cell_text(frame, interface.column_take(&column, 16), string(item.sentence[min(first + 1, item.count):min(item.count, first + 53)]), color)
 	}
 	right_card := interface.card(frame, {WIDTH / 2 + 4, 8, WIDTH / 2 - 12, HEIGHT - 16}, "PROTECT, GUARD, LARGE PAGES", "Memory_Protect", graphics.COLOR_KERNEL)
 	column = interface.column_of(right_card, 4)
@@ -489,6 +903,24 @@ build :: proc "contextless" (frame: ^interface.Frame) {
 	interface.bar(frame, interface.column_take(&column, 8), small_nanoseconds, slowest, graphics.COLOR_MEMORY)
 	interface.cell_text(frame, interface.column_take(&column, 16), "(the processor of the host, under KVM)", graphics.COLOR_DIM)
 	interface.column_take(&column, 8)
+	interface.cell_text(frame, interface.column_take(&column, 16), "delegation: B commits for A with the right Commit", graphics.COLOR_DIM)
+	cases_line: [64]u8
+	cases_right: u64
+	for step in 1 ..= DELEGATION_CASES {
+		cases_right += delegation_right[step] ? 1 : 0
+	}
+	marks := interface.column_take(&column, 16)
+	for step in 1 ..= DELEGATION_CASES {
+		color: graphics.Color = delegation_line_counts[step] == 0 ? graphics.COLOR_TRACK : delegation_right[step] ? graphics.COLOR_PROGRAM : graphics.COLOR_FAILED
+		interface.mark(frame, marks.x + (step - 1) * 24, marks.y + 4, 8, color)
+	}
+	interface.cell_text(frame, {marks.x + 248, marks.y, marks.width - 248, 16}, system.format(cases_line[:], cases_right, " of 10 cases as expected"), graphics.COLOR_TEXT)
+	review_count: u64
+	for result in review_results {
+		review_count += result ? 1 : 0
+	}
+	line(frame, &column, "review findings", review_count, " of ", u64(REVIEW_CASES), " tested right")
+	interface.column_take(&column, 8)
 	status_text := done ? (right ? "ok: each check holds" : problem) : "the cases run"
 	interface.cell_text(frame, interface.column_take(&column, 16), status_text, done ? (right ? graphics.COLOR_PROGRAM : graphics.COLOR_FAILED) : graphics.COLOR_BOOT_PROGRAM)
 }
@@ -503,6 +935,12 @@ frame_draw :: proc "contextless" (window: ^display.Window) {
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if ctx.values[VALUE_ROLE] == 1 {
 		child()
+	}
+	if ctx.values[VALUE_ROLE] == 3 {
+		child_not_committed()
+	}
+	if ctx.values[VALUE_ROLE] == 2 {
+		child_delegate(ctx)
 	}
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "address_space")
 	if !ok {
@@ -525,6 +963,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	large_pages()
 	system.log("address_space: large pages: one random read over 64 MiB: ", large_nanoseconds / 10, ".", large_nanoseconds % 10, " ns through large pages of 2 MiB, ", small_nanoseconds / 10, ".", small_nanoseconds % 10, " ns through pages of 4 KiB of the same object; the report says Large: ", u64(large_flags_right))
 	refuse()
+	review(ctx)
+	delegation(ctx)
+	addresses_reused()
+	system.log("address_space: addresses: one object mapped and unmapped 100000 times: the budget holds ", reuse_pages_last, " pages after, ", reuse_pages_first, " after the first time")
 	for &item in refusals {
 		system.log("address_space: refused: ", item.name, ": ", string(item.sentence[:item.count]))
 	}

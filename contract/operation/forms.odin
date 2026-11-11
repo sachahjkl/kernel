@@ -59,7 +59,7 @@ OPERATIONS := [Operation]Operation_Form {
 	.Memory_Physical = {"Memory_Physical", {{"machine", .Handle, .Machine, {.Physical}, 0}, {"memory", .Handle, .Memory, {.Read}, 0}, {}, {}, {}, {}, {}}},
 	.Program_Module = {"Program_Module", {{"program", .Handle_Or_Zero, .Program, {.Control}, 0}, {"record", .Address, .None, {}, 0}, {}, {}, {}, {}, {}}},
 	.Strategy_Set = {"Strategy_Set", {{"machine", .Handle, .Machine, {.Schedule}, 0}, {"strategy", .Choice, .None, {}, u64(max(Strategy))}, {}, {}, {}, {}, {}}},
-	.Memory_Commit = {"Memory_Commit", {{"memory", .Handle, .Memory, {.Write}, 0}, {"ranges", .Address, .None, {}, 0}, {"count", .Count, .None, {}, RANGE_TABLE_CAPACITY}, {"flags", .Flags, .None, {}, 0b1}, {}, {}, {}}},
+	.Memory_Commit = {"Memory_Commit", {{"memory", .Handle, .Memory, {.Write}, 0}, {"budget", .Handle_Or_Zero, .Budget, {}, 0}, {"ranges", .Address, .None, {}, 0}, {"count", .Count, .None, {}, RANGE_TABLE_CAPACITY}, {"flags", .Flags, .None, {}, 0b1}, {}, {}}},
 	.Memory_Protect = {"Memory_Protect", {{"ranges", .Address, .None, {}, 0}, {"count", .Count, .None, {}, RANGE_TABLE_CAPACITY}, {"flags", .Flags, .None, {}, 0b111}, {}, {}, {}, {}}},
 }
 

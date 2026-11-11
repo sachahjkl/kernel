@@ -380,6 +380,11 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		if to.state == .None || to.state == .Stopped {
 			return .Bad_State
 		}
+		// An object with marks of protection of a part is not given: the marks
+		// would reach the mapping of the other program (finding F3).
+		if given.kind == .Memory && to != program && intrinsics.atomic_load(&regions[given.object].marked_pages) != 0 {
+			return .Bad_State
+		}
 		copy := given^
 		copy.rights &= transmute(op.Rights)u32(v[2])
 		copy.through = through
@@ -786,16 +791,36 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 
 	case .Memory_Commit:
 		memory := handle_find(program, v[0], .Memory, {.Write}) or_return
-		flags := transmute(op.Commit_Flags)v[3]
-		if v[2] == 0 || v[2] > op.RANGE_TABLE_CAPACITY || flags - {.Decommit} != {} {
+		flags := transmute(op.Commit_Flags)v[4]
+		decommit := .Decommit in flags
+		// The payer: a handle to the budget of the object, with Commit or
+		// Spend (owner, 2026-11-11). A decommit gives pages back to it, and
+		// reads no budget handle.
+		if !decommit {
+			budget := handle_find(program, v[1], .Budget) or_return
+			if budget.rights & {.Commit, .Spend} == {} {
+				return .No_Right
+			}
+			if budget.object != intrinsics.atomic_load(&regions[memory.object].budget) {
+				return .Bad_Handle
+			}
+		}
+		if v[3] == 0 || v[3] > op.RANGE_TABLE_CAPACITY || flags - {.Decommit} != {} {
 			return .Bad_Operation
 		}
-		if !user_range(program, v[1], v[2] * size_of(op.Page_Range), false) {
+		if !user_range(program, v[2], v[3] * size_of(op.Page_Range), false) {
 			return .Bad_Address
 		}
 		table := &processor_self().range_table
-		user_copy(table, rawptr(uintptr(v[1])), v[2] * size_of(op.Page_Range))
-		changed := memory_commit(program, memory.object, table[:v[2]], .Decommit in flags) or_return
+		user_copy(table, rawptr(uintptr(v[2])), v[3] * size_of(op.Page_Range))
+		counts: [op.RANGE_TABLE_CAPACITY]u64
+		for range, index in table[:v[3]] {
+			counts[index] = range.page_count
+		}
+		if table_pages(counts[:v[3]]) > op.RANGE_TABLE_PAGE_LIMIT {
+			return .Bad_Operation
+		}
+		changed := memory_commit(program, memory.object, table[:v[3]], decommit) or_return
 		results[0] = changed
 		return .Ok
 
@@ -810,6 +835,13 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		table := &processor_self().range_table
 		user_copy(table, rawptr(uintptr(v[0])), v[1] * size_of(op.Address_Range))
 		ranges := ([^]op.Address_Range)(&table[0])[:v[1]]
+		counts: [op.RANGE_TABLE_CAPACITY]u64
+		for range, index in ranges {
+			counts[index] = range.page_count
+		}
+		if table_pages(counts[:v[1]]) > op.RANGE_TABLE_PAGE_LIMIT {
+			return .Bad_Operation
+		}
 		changed := memory_protect(program, ranges, flags) or_return
 		results[0] = changed
 		return .Ok

@@ -294,6 +294,28 @@ error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record,
 		amount(writer, record.value, unit)
 		write_part(writer, ", past the end: there are ")
 		amount(writer, record.limit, unit)
+	case .Not_Payer:
+		handle(writer, record, argument)
+		write_part(writer, " is not the budget that pays for the memory object; the call needs the budget of the object, with the right Commit or Spend")
+	case .Object_Shared:
+		if record.value != 0 {
+			handle(writer, record, argument)
+		} else {
+			subject(writer, record, argument)
+		}
+		write_part(writer, " names a memory object that another program or another mapping also names; the call needs an object that only this program names, with one mapping at most")
+	case .Object_Marked:
+		handle(writer, record, argument)
+		write_part(writer, " names a memory object with ")
+		write_part(writer, record.found)
+		write_part(writer, " pages with a protection of their own: it is not mapped again and not given until they have the protection of their mapping")
+	case .Whole_Only:
+		subject(writer, record, argument)
+		write_part(writer, ", ")
+		write_number(writer, u64(record.value))
+		write_part(writer, " with ")
+		write_part(writer, record.limit)
+		write_part(writer, " bytes, is a part of a mapping whose protection changes only whole (device memory, large pages), or of a thread area")
 	case .Refused:
 		write_part(writer, "refused with the status ")
 		write_part(writer, record.found)

@@ -9,14 +9,13 @@ import op "contract:operation"
 // lock of the program.
 
 // object_only_here says if a memory object is named only by this program,
-// with one mapping: its pages have page table entries only in this program.
-// It gives that mapping. The references of the object are the handles and
+// with one mapping at most: its pages have page table entries only in this
+// program. It gives that mapping, or nil when it has none. The references of the object are the handles and
 // the mappings of all programs; under the program lock the handles and the
 // mappings of this program do not change, and another program that names
 // the object holds a reference.
-object_only_here :: proc "contextless" (program: ^Program, region_index: u32) -> ^Mapping {
+object_only_here :: proc "contextless" (program: ^Program, region_index: u32) -> (found: ^Mapping, alone: bool) {
 	own: u32
-	found: ^Mapping
 	mappings: u32
 	for &mapping in program.mappings {
 		if mapping.page_count != 0 && mapping.region == region_index {
@@ -29,10 +28,12 @@ object_only_here :: proc "contextless" (program: ^Program, region_index: u32) ->
 			own += 1
 		}
 	}
-	if mappings != 1 || intrinsics.atomic_load(&regions[region_index].references) != own + mappings {
-		return nil
+	// At most one mapping: the decommit of an object that this program holds
+	// with no mapping has no entry to clear.
+	if mappings > 1 || intrinsics.atomic_load(&regions[region_index].references) != own + mappings {
+		return nil, false
 	}
-	return found
+	return found, true
 }
 
 // ranges_valid says if a table of page ranges is in an object of page_count
@@ -46,6 +47,19 @@ ranges_valid :: proc "contextless" (ranges: []op.Page_Range, page_count: u64) ->
 		end = range.first + range.page_count
 	}
 	return true
+}
+
+// table_pages gives the pages of a table of ranges, at most the limit plus
+// one: a table above op.RANGE_TABLE_PAGE_LIMIT is refused (finding W3: the
+// sections of one call walk each page with interrupts off).
+table_pages :: proc "contextless" (counts: []u64) -> (sum: u64) {
+	for count in counts {
+		sum += min(count, op.RANGE_TABLE_PAGE_LIMIT + 1)
+		if sum > op.RANGE_TABLE_PAGE_LIMIT {
+			return op.RANGE_TABLE_PAGE_LIMIT + 1
+		}
+	}
+	return sum
 }
 
 // memory_commit commits, or decommits, the pages of the ranges of an
@@ -101,8 +115,8 @@ memory_commit :: proc "contextless" (program: ^Program, region_index: u32, range
 		}
 		return needed, .Ok
 	}
-	mapping := object_only_here(program, region_index)
-	if mapping == nil {
+	mapping, alone := object_only_here(program, region_index)
+	if !alone {
 		return 0, .Bad_State
 	}
 	lock_take(region_lock, .Region)
@@ -110,7 +124,7 @@ memory_commit :: proc "contextless" (program: ^Program, region_index: u32, range
 	self := processor_self()
 	for range in ranges {
 		for page in range.first ..< range.first + range.page_count {
-			if page < mapping.first || page - mapping.first >= mapping.page_count {
+			if mapping == nil || page < mapping.first || page - mapping.first >= mapping.page_count {
 				continue // Not in the mapping: no entry.
 			}
 			address := mapping.address + (page - mapping.first) * PAGE_SIZE
@@ -125,6 +139,13 @@ memory_commit :: proc "contextless" (program: ^Program, region_index: u32, range
 	}
 	intrinsics.atomic_thread_fence(.Seq_Cst)
 	processor_sync(processors_with_table(program.table))
+	// A thread of the program that waits on a word of a page whose frame
+	// returns wakes now, before the frame can serve another program (finding
+	// F1): its wait names the frame, so a later wake through a new frame of
+	// the page would not reach it, and a wake by the next owner of the frame
+	// would. Only this program names the object, and the program lock keeps
+	// its threads from a new wait meanwhile. It runs again and reads its words.
+	decommit_wake_waiters(program, region, ranges)
 	lock_take(&frame_lock, .Frame)
 	defer lock_free(&frame_lock, .Frame)
 	cache := &self.frame_cache
@@ -150,6 +171,53 @@ memory_commit :: proc "contextless" (program: ^Program, region_index: u32, range
 	budgets[region.budget].amounts.pages += changed
 	region.committed -= changed
 	return changed, .Ok
+}
+
+// decommit_wake_waiters wakes each thread of a program that waits on a word
+// of a frame of the committed pages of the ranges. The caller holds the
+// program lock and the region lock of the object. A thread that waits on
+// more words than this table holds wakes anyway: a wake that was not needed
+// is allowed (the thread reads its words again).
+WAITING_WORD_CAPACITY :: 256
+
+decommit_wake_waiters :: proc "contextless" (program: ^Program, region: ^Region, ranges: []op.Page_Range) {
+	Waiting_Word :: struct {
+		page:   u64, // The frame of the word.
+		thread: u32,
+	}
+	words: [WAITING_WORD_CAPACITY]Waiting_Word
+	count := 0
+	index := index_of_program(program)
+	for &thread, slot in threads[1:] {
+		if thread.program != index || intrinsics.atomic_load(&thread.state) != .Waiting {
+			continue
+		}
+		if count + int(thread.word_count) > WAITING_WORD_CAPACITY {
+			thread_wake(&thread)
+			continue
+		}
+		for word in thread.words[:thread.word_count] {
+			words[count] = {page = word &~ (PAGE_SIZE - 1), thread = u32(slot + 1)}
+			count += 1
+		}
+	}
+	if count == 0 {
+		return
+	}
+	for range in ranges {
+		for page in range.first ..< range.first + range.page_count {
+			frame := intrinsics.atomic_load(region_slot(region, page)) & PAGE_ADDRESS
+			if frame == 0 {
+				continue
+			}
+			for &item in words[:count] {
+				if item.page == frame && item.thread != 0 {
+					thread_wake(&threads[item.thread])
+					item.thread = 0
+				}
+			}
+		}
+	}
 }
 
 // protection_bits gives the bits of the mappings of a protection.
@@ -195,15 +263,22 @@ protect_check :: proc "contextless" (program: ^Program, ranges: []op.Address_Ran
 		if mapping.address >= op.THREAD_AREA_BASE {
 			return mappings, .Bad_Address // The thread areas and the time page keep their protection.
 		}
+		// More than the handle permitted when the program mapped the object.
 		if .Write in flags && mapping.limit_bits & PAGE_WRITE == 0 || .Execute in flags && mapping.limit_bits & PAGE_NO_EXECUTE != 0 {
-			return mappings, .No_Right
+			return mappings, .Bad_Operation
 		}
 		whole := address == mapping.address && count == mapping.page_count
+		// A part takes away from the protection of its mapping now: it
+		// cannot get more than it (finding W4: a part that asked for more
+		// changed nothing and succeeded).
+		if !whole && .No_Access not_in flags && (mapping.bits == 0 || .Write in flags && mapping.bits & PAGE_WRITE == 0 || .Execute in flags && mapping.bits & PAGE_NO_EXECUTE != 0) {
+			return mappings, .Bad_Operation
+		}
 		if !whole {
 			if regions[mapping.region].contiguous {
 				return mappings, .Bad_Address // Device memory, large pages: the protection is of the whole mapping.
 			}
-			if object_only_here(program, mapping.region) == nil {
+			if _, alone := object_only_here(program, mapping.region); !alone {
 				return mappings, .Bad_State
 			}
 		}
@@ -228,16 +303,21 @@ memory_protect :: proc "contextless" (program: ^Program, ranges: []op.Address_Ra
 		if first == 0 && count == mapping.page_count {
 			mapping.bits = protection_bits(mapping, flags)
 		}
-		// The protection of each page of a part, in its slot; a whole
-		// mapping of an object named only here loses the marks of parts.
-		if !region.contiguous && (first != 0 || count != mapping.page_count || object_only_here(program, region_index) != nil) {
+		// The protection of each page of a part, in its slot, as marks that
+		// take away from the protection of the mapping now: a part that gets
+		// the protection of its mapping has no mark. A whole mapping loses
+		// the marks of its pages. While an object has marks it is not mapped
+		// again and not given (finding F3): the marks are of the object, so
+		// they would reach another mapping.
+		whole := first == 0 && count == mapping.page_count
+		if !region.contiguous && (!whole || intrinsics.atomic_load(&region.marked_pages) != 0) {
 			marks: u64
-			if first != 0 || count != mapping.page_count {
+			if !whole {
 				if .No_Access in flags {
 					marks = SLOT_NO_ACCESS
 				} else {
-					marks |= .Write in flags ? 0 : SLOT_DENY_WRITE
-					marks |= .Execute in flags ? 0 : SLOT_DENY_EXECUTE
+					marks |= .Write not_in flags && mapping.bits & PAGE_WRITE != 0 ? SLOT_DENY_WRITE : 0
+					marks |= .Execute not_in flags && mapping.bits & PAGE_NO_EXECUTE == 0 ? SLOT_DENY_EXECUTE : 0
 				}
 			}
 			lock := &region_locks[region_index]
@@ -245,7 +325,13 @@ memory_protect :: proc "contextless" (program: ^Program, ranges: []op.Address_Ra
 			for page in mapping.first + first ..< mapping.first + first + count {
 				slot := region_slot(region, page)
 				value := intrinsics.atomic_load(slot)
-				intrinsics.atomic_store(slot, value &~ (SLOT_DENY_WRITE | SLOT_DENY_EXECUTE | SLOT_NO_ACCESS) | marks)
+				old := value & SLOT_MARKS
+				intrinsics.atomic_store(slot, value &~ SLOT_MARKS | marks)
+				if old != 0 && marks == 0 {
+					intrinsics.atomic_sub(&region.marked_pages, 1)
+				} else if old == 0 && marks != 0 {
+					intrinsics.atomic_add(&region.marked_pages, 1)
+				}
 			}
 			lock_free(lock, .Region)
 		}

@@ -191,12 +191,14 @@ memory_unmap :: proc "contextless" (address: rawptr, program: Handle = 0, error:
 }
 
 // memory_commit commits the pages of a table of ranges of an object made
-// with the flag Uncommitted: its budget pays one page for each page that
-// was not committed. It gives the pages that changed. The ranges are in
-// increasing order and do not overlap (op.RANGE_TABLE_CAPACITY at most).
-memory_commit :: proc "contextless" (memory: Handle, ranges: []op.Page_Range, error: ^errors.Error_Record = nil) -> (changed: u64, status: Status) {
+// with the flag Uncommitted: the budget pays one page for each page that
+// was not committed. The budget (0: the budget of this program) must be the
+// budget of the object, with the right Commit or Spend. It gives the pages
+// that changed. The ranges are in increasing order and do not overlap
+// (op.RANGE_TABLE_CAPACITY ranges and op.RANGE_TABLE_PAGE_LIMIT pages at most).
+memory_commit :: proc "contextless" (memory: Handle, ranges: []op.Page_Range, budget: Handle = 0, error: ^errors.Error_Record = nil) -> (changed: u64, status: Status) {
 	results: [7]u64
-	results, status = call_with_error(error, .Memory_Commit, u64(memory), u64(uintptr(raw_data(ranges))), u64(len(ranges)), 0)
+	results, status = call_with_error(error, .Memory_Commit, u64(memory), u64(budget == 0 ? own_budget() : budget), u64(uintptr(raw_data(ranges))), u64(len(ranges)), 0)
 	return results[0], status
 }
 
@@ -206,7 +208,7 @@ memory_commit :: proc "contextless" (memory: Handle, ranges: []op.Page_Range, er
 // this program only.
 memory_decommit :: proc "contextless" (memory: Handle, ranges: []op.Page_Range, error: ^errors.Error_Record = nil) -> (changed: u64, status: Status) {
 	results: [7]u64
-	results, status = call_with_error(error, .Memory_Commit, u64(memory), u64(uintptr(raw_data(ranges))), u64(len(ranges)), transmute(u64)op.Commit_Flags{.Decommit})
+	results, status = call_with_error(error, .Memory_Commit, u64(memory), 0, u64(uintptr(raw_data(ranges))), u64(len(ranges)), transmute(u64)op.Commit_Flags{.Decommit})
 	return results[0], status
 }
 

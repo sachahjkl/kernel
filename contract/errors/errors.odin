@@ -56,6 +56,10 @@ Kind :: enum i64 {
 	Busy              = 29, // Too many requests are in flight. value: the requests in flight, or 0 when the receiver does not count them; limit: the most.
 	Out_Of_Range      = 30, // The argument names units past the end. value: the end of what it names (its first unit and its count); limit: the units that exist.
 	Reserved          = 31, // The argument names a program of the system that the call does not act on: it starts at boot, or it is a device service.
+	Not_Payer         = 32, // value: the handle of a budget that does not pay for the memory object of the call. It says nothing of the budget.
+	Object_Shared     = 33, // value: the handle of a memory object, or 0; the call needs an object that only this program names, with one mapping at most.
+	Object_Marked     = 34, // value: the handle of a memory object; found: its pages with a protection of their own. The object is not mapped again and not given.
+	Whole_Only        = 35, // value: an address; limit: the bytes of the range. The range is a part of a mapping whose protection changes only whole (device memory, large pages), or of an area that the system keeps (a thread area).
 }
 
 // What value, limit and found count.
