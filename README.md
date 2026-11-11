@@ -15,6 +15,10 @@ The system boots under QEMU to a graphical desktop with a console, a system tool
 
 ![Six candidate fonts beside Spleen 8x16, each from a glyph cache in fixed point, and a word of each enlarged](docs/screenshots/font_candidates.png)
 
+Tables as parameters: one description, three ways to call (a direct call, a call host, a service), the same answers, the hostile cases and the cost of each way.
+
+![Tables as parameters: one description, three ways to call](docs/screenshots/tables.png)
+
 ![The menu of the windows: a press on a line brings the window to the front](docs/screenshots/windows.png)
 
 | | |
