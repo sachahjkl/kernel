@@ -1,6 +1,7 @@
 package kernel
 
 import "base:intrinsics"
+import op "contract:operation"
 
 // K3: the scheduler (docs/ARCHITECTURE.md, "Locks of the kernel", "The
 // scheduler"). Each processor has a run queue: the threads that are Ready,
@@ -8,8 +9,10 @@ import "base:intrinsics"
 // a processor protects its queue and the scheduling state of the threads
 // whose home it is: state, processor, home and the links of the queue.
 //
-// The policy is in queue_pick and in schedule_pick: a later step changes
-// them (the scheduling strategies).
+// The order of the threads of a queue is the strategy of the queue
+// (strategy.odin, docs/SCHEDULING.md): ready, pick, tick, stopping, wake
+// preemption and move. This file keeps the lists, the locks and the
+// balance between the processors.
 //
 // A thread that a processor runs belongs to that processor. Another
 // processor that ends it sets stop_requested; the processor ends it in
@@ -17,12 +20,17 @@ import "base:intrinsics"
 // threads leaves it after a stop (program_leave).
 
 Run_Queue :: struct #align (64) {
-	lock:   Lock,
-	head:   u32, // The first thread. 0: the queue is empty.
-	tail:   u32,
-	count:  u32,
-	pushes: u32, // Threads put in the queue since boot: an idle processor sees a new one.
+	lock:     Lock,
+	head:     u32, // The first thread. 0: the queue is empty.
+	tail:     u32,
+	count:    u32,
+	pushes:   u32, // Threads put in the queue since boot: an idle processor sees a new one.
+	strategy: op.Strategy, // The strategy whose state the queue and the threads of this home hold.
+	weight:   u32, // The sum of the weights of the threads in the list.
+	virtual:  u64, // The queue clock: it never goes back (strategy.odin).
 }
+
+#assert(size_of(Run_Queue) == 64)
 
 run_queues: [PROCESSOR_CAPACITY]Run_Queue
 
@@ -62,6 +70,7 @@ queue_push :: proc "contextless" (thread: ^Thread) {
 	}
 	queue.tail = index
 	thread.queued = true
+	queue.weight += thread.weight
 	intrinsics.atomic_store(&queue.count, queue.count + 1)
 	intrinsics.atomic_add(&queue.pushes, 1)
 }
@@ -86,30 +95,55 @@ queue_remove :: proc "contextless" (thread: ^Thread) {
 	thread.queue_next = 0
 	thread.queue_previous = 0
 	thread.queued = false
+	queue.weight -= thread.weight
 	intrinsics.atomic_store(&queue.count, queue.count - 1)
 }
 
-// queue_pick takes the first thread of a queue whose budget has processor
-// time in this period, and gives it to a processor, in the same section:
-// the thread is never Ready in no queue and on no processor, where a stop
-// would end it while the processor is about to run it. The caller holds the
-// run lock of the queue, which is the home of the thread and of the
-// processor. 0: none.
+// queue_ready puts a thread that became ready in the queue of its home,
+// placed by the strategy of the queue. The caller holds the run lock of
+// the home.
+queue_ready :: proc "contextless" (thread: ^Thread, kind: Ready_Kind) {
+	queue := &run_queues[thread.home]
+	strategy_of(queue).ready(queue, thread.home, thread, kind)
+	queue_push(thread)
+}
+
+// queue_pick takes the thread that the strategy of a queue picks, among
+// the threads whose budget has processor time in this period, and gives it
+// to a processor, in the same section: the thread is never Ready in no
+// queue and on no processor, where a stop would end it while the processor
+// is about to run it. The caller holds the run lock of the queue, and the
+// run lock of the processor when it is another one (queue_move): the
+// thread changes its home under the two. 0: none.
 queue_pick :: proc "contextless" (home: u32, cpu: ^Processor) -> u32 {
-	for index := run_queues[home].head; index != 0; index = threads[index].queue_next {
-		thread := &threads[index]
-		if !budget_spent(thread.budget) {
-			queue_remove(thread)
-			intrinsics.atomic_store(&thread.home, cpu.index)
-			thread.processor = cpu.index + 1
-			intrinsics.atomic_store(&cpu.current, index)
-			// A stop that marks this thread sees it on this processor, and
-			// counts it in `holds`.
-			intrinsics.atomic_add(&programs[thread.program].holds, 1)
-			return index
-		}
+	start := cycles_now()
+	queue := &run_queues[home]
+	thread := strategy_of(queue).pick(queue, home)
+	if thread == nil {
+		return 0
 	}
-	return 0
+	index := thread_index(thread)
+	if home != cpu.index {
+		to := &run_queues[cpu.index]
+		if to.strategy == queue.strategy {
+			strategy_of(queue).move(queue, home, to, cpu.index, thread)
+		} else {
+			// During a change of strategy: the fields of the old strategy
+			// mean nothing in the new one (strategy_change).
+			strategy_clear(thread)
+		}
+		cpu.moves += 1
+	}
+	queue_remove(thread)
+	intrinsics.atomic_store(&thread.home, cpu.index)
+	thread.processor = cpu.index + 1
+	intrinsics.atomic_store(&cpu.current, index)
+	// A stop that marks this thread sees it on this processor, and
+	// counts it in `holds`.
+	intrinsics.atomic_add(&programs[thread.program].holds, 1)
+	cpu.picks += 1
+	cpu.pick_cycles += cycles_now() - start
+	return index
 }
 
 // queue_move takes a thread from the queue of another processor for this
@@ -188,7 +222,7 @@ thread_ready_held :: proc "contextless" (thread: ^Thread) -> bool {
 	intrinsics.atomic_store(&thread.deadline, 0)
 	intrinsics.atomic_add(&thread.wait_serial, 1)
 	if thread.processor == 0 {
-		queue_push(thread)
+		queue_ready(thread, .Woken)
 		return true
 	}
 	return false
@@ -211,9 +245,13 @@ thread_wake :: proc "contextless" (thread: ^Thread, deadline_before := max(u64))
 // this code.
 thread_queue :: proc "contextless" (thread: ^Thread) {
 	home := processor_self().index
-	intrinsics.atomic_store(&thread.home, home)
 	lock_take(&run_queues[home].lock, .Run)
-	queue_push(thread)
+	// The home changes under the run lock of the new home: a change of
+	// strategy that visits the old home does not count this thread
+	// (strategy_change skips a thread that is Ready, in no list and on no
+	// processor).
+	intrinsics.atomic_store(&thread.home, home)
+	queue_ready(thread, .New)
 	lock_free(&run_queues[home].lock, .Run)
 	kick(home)
 }
@@ -255,14 +293,22 @@ threads_alive :: proc "contextless" () -> bool {
 // processor waits for an interrupt. The caller holds no lock.
 schedule :: proc "contextless" () -> ! {
 	cpu := processor_self()
-	budget_charge(cpu)
+	spent := budget_charge(cpu)
 	if cpu.current != 0 {
 		index := cpu.current
 		thread := &threads[index]
 		program := thread.program
 		home := run_lock(thread)
-		intrinsics.atomic_store(&thread.processor, 0)
 		ended := intrinsics.atomic_load(&thread.stop_requested)
+		// The strategy sees the thread while it is still the current
+		// thread of its home: the last part of its turn, and its lag.
+		queue := &run_queues[home]
+		strategy := strategy_of(queue)
+		if !thread.placed {
+			strategy.ready(queue, home, thread, .New)
+		}
+		strategy.stopping(queue, cpu, thread, spent, ended || thread.state != .Ready)
+		intrinsics.atomic_store(&thread.processor, 0)
 		// The slot of an ended thread can serve a new thread before this
 		// processor gets the control lock: the serial names this thread.
 		serial := thread.serial
@@ -272,7 +318,7 @@ schedule :: proc "contextless" () -> ! {
 			thread.state = .Stopped
 			intrinsics.atomic_add(&thread.wait_serial, 1)
 		} else if thread.state == .Ready {
-			queue_push(thread)
+			queue_ready(thread, .Back)
 		}
 		intrinsics.atomic_store(&cpu.current, 0)
 		run_unlock(home)
@@ -294,6 +340,7 @@ schedule :: proc "contextless" () -> ! {
 		if index := schedule_pick(cpu); index != 0 {
 			thread := &threads[index]
 			cpu.charged_from = cycles_now()
+			cpu.turn_start = cpu.charged_from
 			cpu.slice_left = TIME_SLICE
 			run(cpu, thread)
 		}

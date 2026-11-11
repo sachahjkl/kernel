@@ -37,18 +37,20 @@ import "base:intrinsics"
 LIMIT_PERIOD :: 100 // Milliseconds.
 LOG_PERIOD :: 1000 // Milliseconds.
 
-// budget_charge counts the time of the thread of a processor, up to now.
-budget_charge :: proc "contextless" (cpu: ^Processor) {
+// budget_charge counts the time of the thread of a processor, up to now,
+// and gives it: the strategy charges the same time (strategy.odin).
+budget_charge :: proc "contextless" (cpu: ^Processor) -> (spent: u64) {
 	now := cycles_now()
-	spent := now - cpu.charged_from
+	spent = now - cpu.charged_from
 	cpu.charged_from = now
 	if cpu.current == 0 {
-		return
+		return 0
 	}
 	for index := intrinsics.atomic_load(&threads[cpu.current].budget); index != 0; index = intrinsics.atomic_load(&budgets[index].parent) {
 		intrinsics.atomic_add(&budgets[index].spent, spent)
 		intrinsics.atomic_add(&budgets[index].spent_total, spent)
 	}
+	return spent
 }
 
 period_start: u64 // The cycle counter at the start of this period.

@@ -80,6 +80,7 @@ root_start :: proc "contextless" (boot: ^info.Boot_Info) {
 		fail("no memory for the time page")
 	}
 	// The one budget that comes from nothing: all the free memory, all the slots.
+	strategy_start()
 	ROOT_BUDGET :: 1
 	budgets[ROOT_BUDGET] = {
 		live = true,

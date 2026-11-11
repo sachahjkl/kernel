@@ -112,8 +112,10 @@ Operation :: enum u32 {
 	// are the handle, then the address and the value that the device must write.
 	Inspect        = 14, // (machine, Inspect_Kind, index, address, size) -> bytes written
 	Machine_Stop   = 15, // (machine, code)
-	Thread_Create  = 16, // (budget, entry address, stack address, parameter) -> thread handle. A new thread of this program.
-	// The thread starts at the entry with the parameter in the first register.
+	Thread_Create  = 16, // (budget, entry address, stack address, parameter, weight, request) -> thread handle. A new thread
+	// of this program. The thread starts at the entry with the parameter in the first register. The weight (1 to
+	// WEIGHT_FULL; 0 is WEIGHT_FULL) and the request (microseconds, 1 to REQUEST_LIMIT; 0 is REQUEST_DEFAULT) are for
+	// the strategies that use them (Strategy). A weight can only be lower than the weight of a thread with 0.
 	Thread_Stop    = 17, // (thread or 0 for self). A program with no thread stops.
 	Thread_State   = 18, // (thread) -> Program_State: Ready, Waiting or Stopped.
 	// The word wait: the one way to wait for something else than a time.
@@ -149,6 +151,28 @@ Operation :: enum u32 {
 	// it removes it. The kernel does not read the module: the record is what the loader asserts. The kernel
 	// names the module of the address of a fault with it, and Inspect gives the records (Module_Report).
 }
+
+// The scheduling strategy of the machine (docs/SCHEDULING.md): the rule that
+// orders the ready threads of each run queue. 0 is no strategy: a report of
+// a kernel that has none.
+Strategy :: enum u32 {
+	None        = 0,
+	Round_Robin = 1, // A queue in order, a time slice of 10 ms, no wake preemption.
+	Fair        = 2, // Virtual time and weights: the least virtual time runs (the idea of CFS).
+	Eevdf       = 3, // Earliest eligible virtual deadline first: weights for the share, the request for the delay.
+}
+
+@(rodata)
+STRATEGY_NAMES := [Strategy]string {
+	.None        = "none",
+	.Round_Robin = "round robin",
+	.Fair        = "fair",
+	.Eevdf       = "EEVDF",
+}
+
+WEIGHT_FULL :: 1024 // The weight of a thread created with the weight 0: the most.
+REQUEST_DEFAULT :: 3000 // Microseconds: the request of a thread created with the request 0.
+REQUEST_LIMIT :: 100_000 // Microseconds: the longest request.
 
 // A module record: one module that a loader put in a program (Program_Module).
 // The identity of a program that runs is the list of its module records: the

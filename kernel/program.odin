@@ -90,10 +90,29 @@ Mapping :: struct {
 // A thread: one flow of execution in a program. It is a register state and
 // a kernel ring. Its stack is memory of the program: the kernel does not
 // know it.
-Thread :: struct {
+//
+// The first 64 bytes are the hot line of the scheduler: what a pick, a wake
+// and a tick read (docs/SCHEDULING.md, "The hot data"). The record is
+// aligned on 64 bytes, so the line is one cache line.
+Thread :: struct #align (64) {
+	// Scheduling (schedule.odin, strategy.odin), under the run lock of home.
+	state:          op.Program_State, // None, Ready, Waiting or Stopped.
+	home:           u32, // The processor whose run queue the thread is in, or was in last.
+	queue_next:     u32,
+	queue_previous: u32,
+	processor:      u32, // 1 + the index of the processor that runs the thread. 0: none.
+	budget:         u32, // The budget that paid for the slot. Written under the frame lock (atomic).
+	weight:         u32, // 1 to op.WEIGHT_FULL. Written at the creation only.
+	request:        u32, // Microseconds: the request of EEVDF. Written at the creation only.
+	// The fields of the strategy of the queue of home (strategy.odin). Zero
+	// is valid for each strategy: the thread is not placed.
+	virtual:          u64, // The virtual time.
+	virtual_deadline: u64, // EEVDF.
+	lag:              i64, // EEVDF: the lag at the last wait.
+	queued:           bool,
+	placed:           bool, // The strategy placed the thread: virtual means something.
 	frame:        Frame,
 	fpu:          Fpu_State,
-	state:        op.Program_State, // None, Ready, Waiting or Stopped.
 	program:      u32,
 	number:       u32, // The index of the thread area in the program.
 	ring:         ring.Ring,
@@ -101,13 +120,6 @@ Thread :: struct {
 	events:       ^u32, // The `events` word of the thread record, for the kernel.
 	deadline:     u64,
 	references:   u32, // Handles to this thread.
-	processor:    u32, // 1 + the index of the processor that runs the thread. 0: none. Run lock of home.
-	// Scheduling (schedule.odin), under the run lock of home.
-	home:           u32, // The processor whose run queue the thread is in, or was in last.
-	queue_next:     u32,
-	queue_previous: u32,
-	queued:         bool,
-	budget:       u32, // The budget that paid for the slot.
 	in_enter:     bool,
 	run_time:     u64,
 	// The word wait of the entry in progress or of the wait in progress:
@@ -121,6 +133,9 @@ Thread :: struct {
 	finished:     bool, // thread_finish ran: the thread area is free. Control lock.
 	serial:       u32, // Changes for each new thread in the slot (the record of the gs register).
 }
+
+#assert(offset_of(Thread, placed) < 64)
+#assert(offset_of(Thread, frame) == 64)
 
 // word_address gives the physical address of a 32-bit word of a program,
 // or 0 if the program cannot read it.
@@ -930,9 +945,10 @@ thread_free :: proc "contextless" (thread: ^Thread) {
 
 // thread_create adds a thread to a program. The kernel makes the thread
 // area: the thread record and the kernel ring of the thread.
-// The budget pays for the slot and for the thread area. The caller holds
-// the control lock.
-thread_create :: proc "contextless" (program_index: u32, budget: u32, entry, stack, parameter: u64) -> (index: u32, status: op.Status) {
+// The budget pays for the slot and for the thread area. The weight and the
+// request are checked by the caller; 0 gives the full weight and the
+// default request (docs/SCHEDULING.md). The caller holds the control lock.
+thread_create :: proc "contextless" (program_index: u32, budget: u32, entry, stack, parameter: u64, weight: u64 = 0, request: u64 = 0) -> (index: u32, status: op.Status) {
 	program := &programs[program_index]
 	taken := program_lock(program_index)
 	defer program_unlock(program_index, taken)
@@ -991,6 +1007,8 @@ thread_create :: proc "contextless" (program_index: u32, budget: u32, entry, sta
 		serial = serial,
 		wait_serial = wait_serial,
 		home = home,
+		weight = weight == 0 ? op.WEIGHT_FULL : u32(weight),
+		request = request == 0 ? op.REQUEST_DEFAULT : u32(request),
 		frame = {
 			rip    = entry,
 			cs     = SELECTOR_USER_CODE,
@@ -1299,8 +1317,9 @@ kernel_interrupt :: proc "c" (frame: ^Frame) {
 			cpu.busy_time += 1
 			thread.run_time += 1
 			intrinsics.atomic_add(&programs[thread.program].run_time, 1)
-			cpu.slice_left -= min(cpu.slice_left, 1)
-			budget_charge(cpu)
+			if strategy_tick(cpu, thread, budget_charge(cpu)) {
+				cpu.slice_left = 0 // The strategy ends the turn.
+			}
 			if budget_spent(intrinsics.atomic_load(&thread.budget)) {
 				cpu.slice_left = 0 // The budget has no time left in this period.
 			}

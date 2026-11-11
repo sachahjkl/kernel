@@ -108,8 +108,17 @@ Processor :: struct {
 	pending:       u32, // Not 0: another processor waits in processor_sync.
 	idle:          bool, // The processor waits for an interrupt, with no thread. Another processor clears it to wake it (kick).
 	table:         u64, // The page table that the processor uses. Only this processor writes it; others read it (unmap).
-	slice_left:    u64,
+	slice_left:    u64, // Ticks of the time slice of round robin; 0: the turn ends (strategy.odin).
 	charged_from:  u64, // The cycle counter when the kernel last counted the time of the current thread (limit.odin).
+	turn_start:    u64, // The cycle counter when the processor picked its current thread.
+	// The scheduler (strategy.odin): counts of this processor only.
+	picks:         u64, // Threads that a pick gave to this processor.
+	preemptions:   u64, // Turns that a wake preemption ended.
+	moves:         u64, // Threads that this processor took from the queue of another processor.
+	pick_cycles:   u64, // The cycles of all the picks.
+	// Another processor sets it: a thread that woke preempts the thread
+	// that runs here (kick). The processor clears it (atomic).
+	preempt:       bool,
 	busy_time:     u64, // Ticks with a thread.
 	// Counts of this processor only: no other processor writes them, and
 	// the reports add the counts of all processors.
