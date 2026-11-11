@@ -51,7 +51,7 @@
         name = "kernel-boot-test";
         src = inputs.nixpkgs.lib.fileset.toSource {
           root = ./.;
-          fileset = inputs.nixpkgs.lib.fileset.unions [./flake.nix ./boot ./contract ./kernel ./modules ./programs ./support ./tools];
+          fileset = inputs.nixpkgs.lib.fileset.unions [./flake.nix ./boot ./contract ./kernel ./modules ./programs ./runtime ./support ./tools];
         };
         nativeBuildInputs = buildTools ++ [kerneltool];
         buildPhase = ''

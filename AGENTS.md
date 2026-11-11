@@ -21,4 +21,7 @@ The owner asked for this rule on 2026-11-10.
 - All automation is a command of `tools/kerneltool`. Run it with `nix develop -c kerneltool <command>`.
 - Record each decision of the owner in `docs/HANDOFF.md` and in the document of its subject.
 - The order of the next steps is in `docs/FIRST_MILESTONE.md`, section "Next steps".
+- Names (owner, 2026-11-11): no esoteric, over-compressed name of a type, a function, a field or a file. Use long, descriptive names of complete words (`copy_bytes_without_overlap`, not `memcpy`).
+- Pictures (owner, 2026-11-11): each picture that you produce and view goes in `~/Projects/kernel-devlog`, in a dated folder. Never delete a folder of the devlog.
+- A full check is `kerneltool screenshots` AND `nix flake check` (the flake sees only the folders that `flake.nix` names: a new top-level folder must be added there).
 - Never commit under an AI identity.
