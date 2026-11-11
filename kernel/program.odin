@@ -169,7 +169,7 @@ Thread :: struct #align (64) {
 	queued:           bool,
 	placed:           bool, // The strategy placed the thread: virtual means something.
 	frame:        Frame,
-	fpu:          Fpu_State,
+	extended_state: Extended_State_Area, // Only the processor that runs the thread uses it (docs/ARCHITECTURE.md, "The extended state of the processor").
 	program:      u32,
 	number:       u32, // The index of the thread area in the program.
 	ring:         ring.Ring,
@@ -1118,8 +1118,6 @@ maps_region :: proc "contextless" (program: ^Program, region: u32) -> bool {
 	return false
 }
 
-FPU_START :: [32]u8{0 = 0x7F, 1 = 0x03, 24 = 0x80, 25 = 0x1F}
-
 // time_page_create makes the time page. The kernel keeps one reference:
 // the page stays when no program has it.
 time_page_create :: proc "contextless" () -> bool {
@@ -1279,8 +1277,7 @@ thread_create :: proc "contextless" (program_index: u32, budget: u32, entry, sta
 			rdi    = parameter,
 		},
 	}
-	start := FPU_START
-	copy(thread.fpu.bytes[:], start[:])
+	extended_state_start(&thread.extended_state)
 	budgets[budget].amounts.threads -= 1
 	program.thread_areas |= 1 << number
 	program.thread_count += 1

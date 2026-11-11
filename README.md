@@ -121,6 +121,8 @@ Tables as parameters: one description, three ways to call (a direct call, a call
 
 The same window with the pointer theme of the owner (Posy's Cursor, CC BY-NC 4.0) is a picture of the devlog only: the repository holds no file of that theme.
 
+![The extended state of each thread: more threads than processors hold every ymm or zmm register, the x87 stack and MXCSR across kernel entries, one square for each register; and the cost of one empty kernel entry with xmm, ymm and zmm in use](docs/screenshots/extended_state.png)
+
 ![The temple of Jon: a portrait of Jonathan Blow that turns](docs/screenshots/temple.png)
 
 `kerneltool screenshots` makes these pictures from the running machine.

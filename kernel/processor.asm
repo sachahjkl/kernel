@@ -142,8 +142,13 @@ page_flush:                      ; (address)
 ; the address of the thread record. The swapgs instruction exchanges the two.
 ;   gs:0   the top of the kernel stack of the processor
 ;   gs:8   the stack of the program, during a kernel entry
-;   gs:16  the area where the next entry saves the floating-point state
+;   gs:16  the extended state area of the thread that the processor resumed
 ;   gs:24  the address of the record
+;
+; The extended state (docs/ARCHITECTURE.md, "The extended state of the
+; processor"): with xsave, edx:eax is all ones, so the save and the restore
+; take every component that XCR0 enables. The general registers are on the
+; stack already, so rax, rcx and rdx are free here.
 interrupt_common:
 	PUSH_REGISTERS
 	cmp byte [user_access_guard], 0
@@ -154,8 +159,15 @@ interrupt_common:
 	jz interrupt_call
 	swapgs
 interrupt_from_program:
-	mov rax, [gs:abs 16]
-	fxsave64 [rax]
+	mov rcx, [gs:abs 16]
+	cmp byte [extended_state_uses_xsave], 0
+	je .with_fxsave
+	mov eax, -1
+	mov edx, -1
+	xsaveopt64 [rcx]
+	jmp interrupt_call
+.with_fxsave:
+	fxsave64 [rcx]
 interrupt_call:
 	mov rdi, rsp
 	cld
@@ -185,8 +197,16 @@ kernel_enter:
 global resume
 resume:                          ; (frame: ^Frame) -> !: run a program
 	mov rsp, rdi
-	mov rax, [gs:abs 16]
-	fxrstor64 [rax]
+	mov rcx, [gs:abs 16]
+	cmp byte [extended_state_uses_xsave], 0
+	je .with_fxrstor
+	mov eax, -1
+	mov edx, -1
+	xrstor64 [rcx]
+	jmp .restored
+.with_fxrstor:
+	fxrstor64 [rcx]
+.restored:
 	swapgs
 	POP_REGISTERS
 	add rsp, 16
@@ -235,6 +255,41 @@ cr4_write:
 	mov cr4, rdi
 	ret
 
+global extended_control_register_write
+extended_control_register_write: ; (register: u32, value: u64): xsetbv
+	mov ecx, edi
+	mov eax, esi
+	mov rdx, rsi
+	shr rdx, 32
+	xsetbv
+	ret
+
+; The save and the restore of the entry and of the resume, as functions:
+; the kernel proves the start state of a thread with them at boot.
+global extended_state_save
+extended_state_save:             ; (area: ^Extended_State_Area)
+	cmp byte [extended_state_uses_xsave], 0
+	je .with_fxsave
+	mov eax, -1
+	mov edx, -1
+	xsaveopt64 [rdi]
+	ret
+.with_fxsave:
+	fxsave64 [rdi]
+	ret
+
+global extended_state_restore
+extended_state_restore:          ; (area: ^Extended_State_Area)
+	cmp byte [extended_state_uses_xsave], 0
+	je .with_fxrstor
+	mov eax, -1
+	mov edx, -1
+	xrstor64 [rdi]
+	ret
+.with_fxrstor:
+	fxrstor64 [rdi]
+	ret
+
 %assign vector 0
 %rep STUB_COUNT
 stub_ %+ vector:
@@ -250,6 +305,9 @@ section .data
 
 global user_access_guard
 user_access_guard: db 0          ; 1: the processors refuse the memory of programs to the kernel (SMAP)
+
+global extended_state_uses_xsave
+extended_state_uses_xsave: db 0  ; 1: xsaveopt64 and xrstor64; 0: fxsave64 and fxrstor64 (kernel/extended_state.odin)
 
 align 8
 global interrupt_stubs

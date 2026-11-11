@@ -447,7 +447,7 @@ run :: proc "contextless" (cpu: ^Processor, thread: ^Thread) -> ! {
 		cpu.record_serial = thread.serial
 		msr_write(MSR_KERNEL_GS_BASE, thread.record)
 	}
-	cpu.fpu_area = &thread.fpu
+	cpu.extended_state_area = &thread.extended_state
 	if thread.in_enter {
 		thread.in_enter = false
 		thread.frame.rax = intrinsics.atomic_load(&time_milliseconds)

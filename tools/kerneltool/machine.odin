@@ -1786,6 +1786,12 @@ scenario_measure := [?]Step {
 	{kind = .Wait, text = "locks: frame caches after the measures (frames now, batches taken, batches given, drains): processor 0: "},
 	{kind = .Wait, text = "locks: ok, the kernel counted each entry, each page returned, no wake was lost, each stopped program returned its pages, its slot and its threads"},
 	{kind = .Shot, text = "locks_alone"},
+	// One empty kernel entry with xmm, ymm and zmm in use: the cost of the
+	// save of the extended state (docs/ARCHITECTURE.md, "The extended state
+	// of the processor", section 4).
+	{kind = .Launch, text = "extended_state"},
+	{kind = .Wait, text = "extended_state: an empty kernel entry, 100000 times: "},
+	{kind = .Wait, text = "extended_state: ok, "},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "shutdown()"},
 	{kind = .Wait, text = "kernel: the machine stops with code 0"},
@@ -2282,7 +2288,7 @@ png_encode :: proc(width, height: int, pixels: []u8) -> []u8 {
 
 // machine_test runs a scenario on a boot volume. It passes when each step
 // passes and QEMU ends with the status exit_status.
-machine_test :: proc(steps: []Step, volume: string, output: string, exit_status: int, data_disk: string = TEST_DATA_DISK, user_network := false, disk_server: ^Network_Block_Device = nil, processor_without_random := false) -> bool {
+machine_test :: proc(steps: []Step, volume: string, output: string, exit_status: int, data_disk: string = TEST_DATA_DISK, user_network := false, disk_server: ^Network_Block_Device = nil, processor: Processor_Model = .Maximum) -> bool {
 	peer: Peer
 	if !peer_start(&peer) {
 		return false
@@ -2299,7 +2305,7 @@ machine_test :: proc(steps: []Step, volume: string, output: string, exit_status:
 		forward = {host_port = port, listener = &listener}
 	}
 	defer listener_stop(&listener)
-	command, ok := machine_command(volume, output, data_disk, &peer, forward, processor_without_random)
+	command, ok := machine_command(volume, output, data_disk, &peer, forward, processor)
 	if !ok {
 		return false
 	}

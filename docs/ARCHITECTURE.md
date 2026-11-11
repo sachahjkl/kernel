@@ -250,7 +250,7 @@ Paths: **op** a kernel operation; **tick** the timer of a processor; **dev** a d
 | Data | Read by | Written by | Protection | Ties to other data |
 |---|---|---|---|---|
 | `processors`, `processor_count`, `gates`, `kernel_table`, `frame_count`, `cycle_frequency`, `timer_count`, APIC addresses, `boot_record`, `stage_cycles`, `time_region`, `log_head`; the tables of the strategies (`STRATEGIES`) and their lengths in cycles (`fair_latency`, `fair_least_turn`, `fair_wake`, `fair_credit`, `tick_cycles`) | all paths | boot only | none: read-only after boot | |
-| Processor record: `slice_left`, `charged_from`, `turn_start`, `busy_time`, `record_thread`, `fpu_area`, the counts of entries, interrupts, faults and locks, the counts of the scheduler (`picks`, `preemptions`, `moves`, `pick_cycles`), the report buffers, the log text buffer | its processor; reports read the counts (`Processor_Report`, volatile loads) | its processor only | none: data of one processor | |
+| Processor record: `slice_left`, `charged_from`, `turn_start`, `busy_time`, `record_thread`, `extended_state_area`, the counts of entries, interrupts, faults and locks, the counts of the scheduler (`picks`, `preemptions`, `moves`, `pick_cycles`), the report buffers, the log text buffer | its processor; reports read the counts (`Processor_Report`, volatile loads) | its processor only | none: data of one processor | |
 | Processor record: `current` | its processor; a strategy of its run queue (`eevdf_average`, `thread_ready_held`) on any processor, under the run lock; with no lock: `busiest_queue` (a hint), `Processor_Report`, `kernel_interrupt` of its processor, `processors_with_table` and `sync_acknowledge` (atomic loads) | its processor, in `queue_pick` and `schedule` | run lock of the processor (a running thread has this processor as its home) | `current` names a thread whose `processor` is this one |
 | Processor record: `look_first` | its processor (`schedule_pick`) | a waker that wakes it from idle (`kick`); its processor clears it | atomic | a hint: a lost or old value gives the pick of before |
 | Processor record: `preempted_at` | a waker of a thread whose home is this processor (`thread_ready_held`) | the same | run lock of the processor | at most one wake preemption by another program in each millisecond |
@@ -265,7 +265,7 @@ Paths: **op** a kernel operation; **tick** the timer of a processor; **dev** a d
 | Thread: the strategy fields `virtual`, `virtual_deadline`, `lag`, `placed` | the strategy of the queue of `home` (**wake**, **tick**, scheduler, **op** `Strategy_Set`) | the same | run lock of `home` | zero, or the state of the strategy of the queue of `home` |
 | Thread: `weight`, `request` | the strategies, `queue_push` and `queue_remove` (`Run_Queue.weight`) | **op** thread create, before the thread enters a list | none: written once, before any other processor reads them | |
 | Thread: `program`, `events`, `finished`, `serial` | **dev** and **stop** (`program_event`), scheduler | **op** (create, under the program lock and the control lock), **stop** (`thread_finish`) | program lock of `program`; `serial` changes for each new thread in the slot | a finished thread has `program` 0 and `events` nil, so `program_event` of its old program never reads the slot again |
-| Thread: frame, floating-point state, kernel ring, `in_enter`, `run_time`, `words` | its processor while it runs; a waker reads `words` of a thread that waits | the processor that runs it | the rule of the owner (below) | |
+| Thread: frame, extended state area, kernel ring, `in_enter`, `run_time`, `words` | its processor while it runs; a waker reads `words` of a thread that waits | the processor that runs it | the rule of the owner (below) | |
 | Thread: `stop_requested` | the processor that runs it | **stop** | atomic | |
 | Thread: `references`, `budget` | **op**, **tick** (budget) | **op**, budget end | `references` atomic (a copy of a handle in its own program adds 1 with no control lock); `budget` written under the frame lock | |
 | Wait table: buckets of entries (word, thread, serial) | **wake** | **op** (`Word_Wait`), the start of the next entry, **stop** | wait lock of the bucket | an entry is valid while its serial is the `wait_serial` of its thread |
@@ -317,7 +317,7 @@ Interrupts are off in the kernel, so a processor never takes a lock again in an 
 
 ### Rules that keep each path correct
 
-- **The owner of a running thread.** A thread that runs on a processor belongs to that processor: only it reads and writes the frame, the floating-point state, the kernel ring and the word list of the thread. Another processor that stops the thread sets `stop_requested` and sends an interrupt. The processor ends the thread itself, at its next pass in the kernel. No processor takes a thread away from another one.
+- **The owner of a running thread.** A thread that runs on a processor belongs to that processor: only it reads and writes the frame, the extended state area, the kernel ring and the word list of the thread. Another processor that stops the thread sets `stop_requested` and sends an interrupt. The processor ends the thread itself, at its next pass in the kernel. No processor takes a thread away from another one.
 - **Three rules against the forms of error that a review found** (2026-11-10). (1) A state that is true only between two sections of one lock is a state that another processor sees: a thread is taken from its queue and given to a processor in one section of the run lock (`queue_pick`). (2) A slot named by its index across a wait for a lock can serve another object when the wait ends: a path that names a thread or a program across such a wait also keeps its serial and checks it (`thread_finish`, `stop_wait`), or holds a lock that keeps the slot (`program_free` only after `cleaned`). (3) A state checked before a work must mean that the work is done: Stopped means that the threads were marked, not that the program was cleaned up (`cleaned`); a new thread is refused in a program that is not Created or Ready.
 - **A program ends after its last thread leaves its processor.** `holds` counts the processors that run a thread of the program. A stop adds 1, marks the program Stopped, marks each thread (a thread that waits or is in a queue ends at once; a thread on a processor gets `stop_requested`), then subtracts 1 and sets the bit Stopped in the same atomic addition. The one subtraction that leaves exactly the bit Stopped does the cleanup: unmap, close the handles, free the page tables. So no processor uses the page table or the mappings of a program while they are freed, and the cleanup runs one time. The slot of the program is free (`program_free`) only after the cleanup: by the cleanup if no handle names the program, else when the last handle closes.
 - **A stop returns after the threads left their processors.** `Thread_Stop` and `Program_Stop` mark the threads under their locks; the operation then frees all its locks and waits until each marked thread that ran on another processor left it (`stop_wait`): after the operation, no thread of what stopped runs an instruction. A stop of a program that another stop already marked waits in the same way: the state Stopped does not say that the threads left. A wait inside the locks could wait for a thread that waits for these locks. The wait ends at once if the thread that waits is stopped too: two threads that stop each other do not wait for each other.
@@ -420,6 +420,98 @@ The locks: a commit holds the program lock of the caller (the operation), then t
 ### The fault ring (designed, not built in this step)
 
 A fault of a program stops it today, with a stop report. The form in the style of the system (no signal: property 16; an error is a value): a program gives the kernel a ring (`Fault_Ring_Set`, with a ring of fault records and the thread that serves it). A thread that faults on a page of a mapping with the flag `Faults_To_Ring` is not stopped: the kernel writes a record (address, kind of access, the thread, the mapping) in the ring, wakes the serving thread, and makes the thread wait. The serving thread commits or changes the protection (the operations above) and answers with `Fault_Resume` (the thread runs the instruction again) or `Fault_Stop` (the program stops as today, with the record). A supervisor program that holds the program handle with Control can serve the ring of another program. What cannot be served: a fault of the serving thread itself, a fault of a thread while the ring is full (the program stops), a fault in the kernel half, a fault in the thread area. The design needs a wait state of a thread that no word ends (only `Fault_Resume`), a record of the ring that names the faulting thread and its serial, and a decision for a thread that stops while it waits for its answer: it is a step of its own, with the review of these states.
+
+## The extended state of the processor
+
+Status: designed and written on 2026-11-11 (owner: "Nah évidemment qu'il faut donc ajouter le support mdrr. On va pas se faire artificiellement limiter par fxsave"). Before this, the kernel saved 512 bytes with `fxsave64` (x87 and SSE) and kept the `CR4` and `XCR0` that the firmware left: a program that used AVX on a firmware that enabled it got the high halves of its ymm registers from another thread, with no error.
+
+The terms are in `GLOSSARY.md`: extended state, state component, extended state area, start state, usable instruction set. The code is `kernel/extended_state.odin`, the entry and the resume in `kernel/processor.asm`, and `support/instruction_sets`. The test is the program `extended_state`.
+
+### 1. The state components that the kernel enables
+
+The rule: a bit of `XCR0` is set only if the kernel saves its component. The kernel writes `CR4` and `XCR0` itself on each processor; it does not keep what the firmware left.
+
+| Component | `XCR0` bit | Offset and size in the area (standard form) | Enabled |
+|---|---|---|---|
+| x87 | 0 | 0, 160 (in the legacy area of 512 bytes) | always |
+| SSE (xmm0 to xmm15, `MXCSR`) | 1 | 160, 256 (in the legacy area) | always |
+| header (`XSTATE_BV`, `XCOMP_BV`) | none | 512, 64 | with `xsave` |
+| AVX (high halves of ymm0 to ymm15) | 2 | 576, 256 | when the processor has AVX |
+| MPX (`BNDREGS`, `BNDCSR`) | 3, 4 | 960, 128 | no: MPX is removed from the processors and from the compilers |
+| AVX-512 opmask (k0 to k7) | 5 | 1088, 64 | when the processor has AVX-512 F |
+| AVX-512 `ZMM_Hi256` (high halves of zmm0 to zmm15) | 6 | 1152, 512 | with the opmask |
+| AVX-512 `Hi16_ZMM` (zmm16 to zmm31) | 7 | 1664, 1024 | with the opmask |
+| PKRU | 9 | 2688, 8 | no: the kernel does not use protection keys (`CR4.PKE` stays clear) |
+| AMX `XTILECFG`, `XTILEDATA` | 17, 18 | 2752, 64 and 2816, 8192 | no: out of scope |
+
+The area of a thread therefore holds 512 bytes (`fxsave`), 576 (`xsave` with x87 and SSE), 832 (with AVX) or 2688 (with AVX-512). The offsets of the table are those of the processors of Intel and AMD; the kernel does not trust them: after it writes `XCR0`, it reads the size that the processor needs (`CPUID` leaf `0xD`, subleaf 0, `EBX`). If that size is more than the area of a thread, the kernel drops AVX-512 and tries again; x87 and SSE with `xsave` need 576 bytes, which always fit.
+
+Why AVX-512 is in: it costs 1856 more bytes in each thread entry of the thread table of the kernel, and nothing at an entry of a program that does not use it (section 3). Why AMX is out: its tile data is 8 KiB for each thread, and its use needs a permission model (Linux asks each program to request it), and the tile configuration has rules of its own. A program that executes an AMX instruction gets an invalid opcode and stops. It is its own step, if the owner wants it.
+
+On each processor, the kernel sets `CR4.OSFXSR` (bit 9) and `CR4.OSXMMEXCPT` (bit 10). It sets `CR4.OSXSAVE` (bit 18) and writes `XCR0` when the processor has `xsave` and `xsaveopt`, and clears `CR4.OSXSAVE` when it does not. The first processor chooses the components. Each other processor checks that it has the same components with the same offsets and sizes, and sets the same `XCR0`. A processor that does not have them stays stopped, and the kernel logs a line for it: the machine runs on the other processors. The reason: the area of a thread is restored on any processor, so the format must be the same on all. The reason against a lower common choice: the first processor chose before the others started, and the processors of one machine report the same components (Intel and AMD give the same `CPUID` leaf `0xD` on the cores of a hybrid processor).
+
+### 2. Where the area of a thread lives
+
+The area is a fixed field of 2688 bytes, aligned on 64 bytes, in the entry of each thread in the thread table of the kernel (`Thread.extended_state`), as the frame of the general registers is. It is not pages that the budget of the thread pays. The reasons:
+
+- The thread table is already a fixed table of 256 entries. A budget pays for a thread with its `threads` amount: the slot, its frame and its area. The area is a part of the slot, as the frame is.
+- Pages of the budget would cost 4096 bytes for each thread for 832 bytes of use, a refusal path in `Thread_Create`, a free in the end of a thread, and a pointer in place of a field.
+- The cost: 256 x 2688 bytes = 672 KiB of kernel memory, against 128 KiB with 512 bytes: 544 KiB more, the same on every machine, before any program starts. The processor records do not have an area: the save at an entry always goes to the area of the thread that the processor resumed (section 3).
+
+The kernel writes an area at one time only: `Thread_Create` writes the start state. The start state is the bytes of a zero area with the x87 control word `0x037F` (offset 0), `MXCSR` `0x1F80` (offset 24), and, with `xsave`, `XSTATE_BV` = 3 (offset 512): x87 and SSE come from the area, and every other component starts in its init state (zero). With `fxsave`, the header is not read. A new thread therefore never sees a register of another thread.
+
+### 3. The instructions
+
+- At an entry from a program (`interrupt_from_program`): `xsaveopt64` with `EDX:EAX` = all ones (every component that `XCR0` enables), into the area of the current thread.
+- At the resume of a thread (`resume`): `xrstor64` with `EDX:EAX` = all ones, from the area of the thread.
+- With no `xsave` or no `xsaveopt` on the first processor: `fxsave64` and `fxrstor64`, as before. One byte of the kernel, `extended_state_uses_xsave`, written once by the first processor before any program runs, chooses the path: one compare and one branch at each entry and each resume, always predicted the same way.
+
+Why `xsaveopt64` (Intel SDM, volume 1, sections 13.6 and 13.9): it has two optimizations. The init optimization: a component in its init state is not written, and its bit of `XSTATE_BV` is 0; `xrstor` then sets the component to its init state without a read. So a program that never uses AVX pays no write and no read of the 256 bytes of the ymm high halves. The modified optimization: a component that the program did not change since the last `xrstor` of this processor from this same address is not written. The processor keeps, for that, the linear address of the area of its last `xrstor` (with the privilege level and the form of the area).
+
+The trap of the modified optimization: if another writer changes an area between the `xrstor` of a processor from it and the next `xsaveopt` of that processor into it, the `xsaveopt` can skip a component, and the area keeps the bytes of the other writer. The kernel never makes this case:
+
+- A processor saves only at an entry from a program. It runs a program only after `resume`, which restores from the area of the thread, and only the code of that thread runs between the two. So each `xsaveopt` of a processor goes to the area of its last `xrstor`, and that `xrstor` read the area as it is.
+- A thread that moves to another processor is restored there with `xrstor`. When it comes back, the first processor restores it again before it runs: the address that the processor tracks is set again at each resume.
+- The kernel writes an area only at `Thread_Create`, when the thread runs nowhere; its first resume restores it.
+
+A future operation that writes the extended state of a thread that is not running (a debugger) keeps this rule: the next resume of the thread restores from the area. An operation that writes the area of a thread while its registers are live on a processor breaks it, and must not exist.
+
+Why not `xsavec` or `xsaves`: they write the compacted form, whose offsets depend on the components in use; `xsaves` also saves supervisor components (`IA32_XSS`) that the kernel does not use. The standard form has fixed offsets: the start state and the test read them directly. The gain of the compacted form is in memory, and the area is fixed (section 2).
+
+A processor without `xsave` (a processor of x86-64 before about 2011, or the default processor `qemu64` of QEMU, or `-cpu max,-xsave`): the kernel keeps `fxsave64` as its one other path, chosen once at start, and logs it. A kernel that refused to start would refuse the default QEMU command line. This is not a compatibility layer: it is one of two forms of the same save, chosen by the hardware, with no code of an earlier release of the system. A processor with `xsave` but no `xsaveopt` (the first AMD processors with AVX, family 15h) gets the `fxsave64` path too, and the log says why: one fast instruction is simpler than three.
+
+### 4. The cost
+
+| | Before | Now (with `xsave`) |
+|---|---|---|
+| Each entry from a program | `fxsave64`: 512 bytes written | one compare; `xsaveopt64`: the header (8 bytes), and only the components that are in use and that changed since the resume |
+| Each resume | `fxrstor64`: 512 bytes read | one compare; `xrstor64`: the components whose bit of `XSTATE_BV` is 1; the others go to their init state with no read |
+| A thread switch | nothing more than one entry and one resume | the same |
+| A program that uses only SSE | | the compare and branch, the header of 8 bytes; the ymm high halves stay in their init state, so `xsaveopt` writes nothing of AVX; the x87 registers are not written when the program did not change them |
+| A program that uses AVX | it could not, with a correct result | + 256 bytes at each entry after which the ymm high halves changed |
+| A program that uses AVX-512 | it could not | up to + 1600 bytes (the opmask and the two parts of zmm) |
+
+The program `extended_state` measures one empty kernel entry (a `syscall` with no command and no wait) with the state of SSE only, of AVX in use and of AVX-512 in use; `kerneltool measure` prints it, beside the entries of `locks` that it printed before.
+
+What would cut the cost more, and is NOT done in this step: save the extended state only when a processor switches to another thread, not at each entry. That needs a kernel that uses no SSE register at all: the kernel built with no SSE (an Odin target feature list with `-sse` and the rest, so that the compiler makes no use of the xmm registers for copies, with a check of the linked kernel that no instruction uses an xmm register), the kernel form of `runtime/memory.asm` with general registers and `rep movsb` only, the save moved from `interrupt_from_program` to `run` with a field "the thread whose registers are on this processor", a save before a thread enters a run queue that another processor reads (a thread that moves must have its state in memory before another processor restores it), and the end of a thread and the idle wait that clear that field. The next step lists it (`FIRST_MILESTONE.md`, "Next steps").
+
+### 5. A hostile program
+
+- **Can a program write its own area?** No. The area is in the thread table of the kernel, in the kernel half of the address space, whose pages no program maps (the page tables of the kernel half have no user bit, and the paging audit of each boot proves it). The processor writes the area at an entry; the kernel writes the start state; no kernel operation copies bytes of a program into an area.
+- **A bad header.** `xrstor` faults (general protection) when a bit of `XSTATE_BV` is set for a component that `XCR0` does not enable, or when bytes 8 to 23 of the header (`XCOMP_BV` at offset 520, and the 8 bytes after it) are not zero in the standard form (Intel SDM, volume 1, section 13.8.1). Such a fault in `resume` is a fault of the kernel and stops the machine. The kernel never makes such a header: the start state has `XSTATE_BV` = 3 and zeros after it, and an `xsaveopt` writes only bits of `XCR0`, which is the same on each processor that runs threads. The first processor proves the start state at boot: it restores it and saves it again before any program runs, and stops the machine with a sentence if the result is not the start state.
+- **`MXCSR`.** `fxrstor` and `xrstor` fault if a reserved bit of `MXCSR` is set. `MXCSR` in an area comes from the start state (`0x1F80`) or from a save of the register. A program sets the register only with `ldmxcsr`, `fxrstor` or `xrstor` of its own memory, and these fault in the program (the program stops) when a reserved bit is set. So the register never holds a reserved bit, and a save never writes one.
+- **The state of the program in the kernel.** The kernel runs with the `MXCSR` and the x87 control word of the program that entered. That is safe because the kernel does no floating-point arithmetic: it uses xmm registers only to move bytes (`runtime/memory.asm` and the copies of the compiler), and a move raises no floating-point exception, also with every exception unmasked. A kernel change that adds floating-point arithmetic loads its own `MXCSR` first.
+
+### 6. How a program knows what it can use
+
+With no kernel operation: the processor tells it. `CPUID` leaf 1 gives `OSXSAVE` (`ECX` bit 27), which is the bit `CR4.OSXSAVE` that the kernel set; with it, `xgetbv` with `ECX` = 0 reads `XCR0`, the components that the kernel saves. An instruction set is usable when the processor has it (`CPUID` leaves 1 and 7) and when the kernel saves its registers. `support/instruction_sets` reads both once (`cpuid` and `xgetbv` as `asm` templates) and gives a `bit_set` of usable instruction sets: SSE to SSE4.2, POPCNT, AES, PCLMULQDQ; AVX, F16C, FMA, AVX2 when `XCR0` has x87, SSE and AVX; AVX-512 F, DQ, CD, BW, VL when `XCR0` also has the three AVX-512 components; BMI1 and BMI2, which use general registers. A program reads it once at its start: `CPUID` is slow in a virtual machine (an exit to the host). A program that uses an instruction that is not usable stops with an invalid opcode, its own fault.
+
+### 7. The other parts
+
+- **The other processors**: the start code of a processor sets `CR4` to `0x620` (PAE, `OSFXSR`, `OSXMMEXCPT`) before the kernel runs there; `processor_entry` writes the `CR4` of the first processor without `OSXSAVE`, then the extended state setup of section 1.
+- **The idle wait**: a processor with no thread saves nothing: no entry from a program comes before the next resume.
+- **The boot program** (UEFI): not changed. It runs before the kernel, with the `CR4` of the firmware, and uses no AVX.
+- **The faults of the kernel**: an interrupt or a fault of the kernel saves nothing (only an entry from a program saves), and the report of a fault of the kernel reads no extended state.
 
 ## How the systems depend on each other
 

@@ -305,8 +305,13 @@ processors_start :: proc "contextless" (boot: ^info.Boot_Info) {
 				}
 			}
 		}
-		if !started {
+		if started && intrinsics.atomic_load(&cpu.extended_state_refused) {
+			log("kernel: the processor ", u64(id), " cannot save the extended state that the first processor saves: it stays stopped")
+			started = false
+		} else if !started {
 			log("kernel: the processor ", u64(id), " did not start")
+		}
+		if !started {
 			apic_send(id, 0x4500) // It stays in reset: its record ends.
 			pit_wait(10_000)
 			stacks_free(cpu.index)
@@ -322,7 +327,17 @@ processors_start :: proc "contextless" (boot: ^info.Boot_Info) {
 // processor_entry is where each other processor arrives from the start code.
 processor_entry :: proc "c" (cpu: ^Processor) -> ! {
 	cr3_write(kernel_table)
-	cr4_write(first_cr4)
+	// Not OSXSAVE: a processor with no xsave faults on it. The setup of the
+	// extended state sets it when this processor can save what the first
+	// processor saves.
+	cr4_write(first_cr4 &~ CR4_OSXSAVE)
+	if !extended_state_other_setup() {
+		// The first processor sees started_count move, reads the flag, logs
+		// it, and resets this processor.
+		intrinsics.atomic_store(&cpu.extended_state_refused, true)
+		intrinsics.atomic_add(&started_count, 1)
+		processor_stop()
+	}
 	processor_setup(cpu)
 	timer_start()
 	intrinsics.atomic_add(&started_count, 1)

@@ -27,9 +27,11 @@
 ; before it writes for 64 bytes or less, so the small forms also move.
 ;
 ; The registers: rax, rcx, rdx, rsi, rdi, r8 to r10, xmm0 to xmm4. The
-; kernel saves the registers of a program at each entry (fxsave), and runs
-; its own code with the interrupts off, so the kernel can use xmm0 to xmm4.
-; No AVX: fxsave does not save the upper halves of the ymm registers.
+; kernel saves the extended state of a program at each entry (xsaveopt, or
+; fxsave on a processor without it), and runs its own code with the
+; interrupts off, so the kernel can use xmm0 to xmm4. No AVX: the same file
+; runs in the boot program, in the kernel and in every program, also on a
+; processor where the kernel does not enable AVX.
 ; The direction flag is clear at each call (docs/MODULE_CONTRACT.md, rule
 ; of the direction flag): rep movsb and rep stosb go up.
 bits 64

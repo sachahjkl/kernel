@@ -61,5 +61,5 @@ scenario_random_without_the_processor := [?]Step {
 
 random_tests_run :: proc() -> bool {
 	clear(&remembered_values)
-	return machine_test(scenario_random_with_the_processor[:], BOOT_VOLUME, TEST_OUTPUT_RANDOM, MACHINE_STOP_OK, TEST_DATA_DISK) && machine_test(scenario_random_restart[:], BOOT_VOLUME, TEST_OUTPUT_RANDOM, MACHINE_STOP_OK, TEST_DATA_DISK) && machine_test(scenario_random_without_the_processor[:], BOOT_VOLUME, TEST_OUTPUT_RANDOM, MACHINE_STOP_OK, TEST_DATA_DISK, processor_without_random = true)
+	return machine_test(scenario_random_with_the_processor[:], BOOT_VOLUME, TEST_OUTPUT_RANDOM, MACHINE_STOP_OK, TEST_DATA_DISK) && machine_test(scenario_random_restart[:], BOOT_VOLUME, TEST_OUTPUT_RANDOM, MACHINE_STOP_OK, TEST_DATA_DISK) && machine_test(scenario_random_without_the_processor[:], BOOT_VOLUME, TEST_OUTPUT_RANDOM, MACHINE_STOP_OK, TEST_DATA_DISK, processor = .Without_Random)
 }

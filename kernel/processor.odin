@@ -14,10 +14,6 @@ Frame :: struct {
 }
 #assert(size_of(Frame) == 22 * 8)
 
-Fpu_State :: struct #align (16) {
-	bytes: [512]u8,
-}
-
 SELECTOR_KERNEL_CODE :: 0x08
 SELECTOR_USER_DATA :: 0x18 | 3
 SELECTOR_USER_CODE :: 0x20 | 3
@@ -114,7 +110,7 @@ Processor :: struct {
 	// processor.asm reads these four fields through the gs register.
 	stack_top:     u64, // The top of the kernel stack (paging.odin).
 	user_stack:    u64,
-	fpu_area:      ^Fpu_State, // Where the next entry from a program saves the floating-point state.
+	extended_state_area: ^Extended_State_Area, // The area of the thread that the processor resumed: the next entry from a program saves there.
 	self:          ^Processor,
 	index:         u32,
 	apic_id:       u32,
@@ -123,6 +119,7 @@ Processor :: struct {
 	ports_loaded:  u32, // The program whose ports are open in the task state.
 	pending:       u32, // Not 0: another processor waits in processor_sync.
 	idle:          bool, // The processor waits for an interrupt, with no thread. Another processor clears it to wake it (kick).
+	extended_state_refused: bool, // At its start, the processor could not save the extended state that the first processor saves: it never runs a thread.
 	table:         u64, // The page table that the processor uses. Only this processor writes it; others read it (unmap).
 	slice_left:    u64, // Ticks left of the time slice, the longest turn under each strategy; 0: the turn ends (strategy.odin).
 	charged_from:  u64, // The cycle counter when the kernel last counted the time of the current thread (limit.odin).
@@ -183,7 +180,6 @@ Processor :: struct {
 	stop_report:            op.Stop_Report,
 	segments:      [7]u64,
 	task_state:    Task_State,
-	idle_fpu:      Fpu_State,
 }
 
 processors: [PROCESSOR_CAPACITY]^Processor
@@ -256,7 +252,6 @@ processor_create :: proc "contextless" (index: u32, apic_id: u32) -> ^Processor 
 	cpu.stack_top = stack_top
 	// A double fault arrives on its own stack: the kernel stack can be full.
 	cpu.task_state.interrupts[0] = fault_top
-	cpu.fpu_area = &cpu.idle_fpu
 	cpu.table = kernel_table
 	cpu.task_state.stack_0 = cpu.stack_top
 	cpu.task_state.port_offset = u16(offset_of(Task_State, ports))
@@ -351,8 +346,11 @@ processor_start :: proc "contextless" () {
 	}
 	processors[0] = cpu
 	processor_count = 1
+	extended_state_first_setup()
 	processor_setup(cpu)
 	lock_ready = true
+	extended_state_prove()
+	extended_state_log()
 	timer_calibrate()
 	timer_start()
 }
