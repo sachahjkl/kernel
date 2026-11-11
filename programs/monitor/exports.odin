@@ -105,7 +105,7 @@ programs :: proc "c" (result: ^[]Program, error: ^errors.Error_Record) -> i64 {
 	return i64(total)
 }
 
-// counts gives one row for each count of the machine that the kernel reports: the time, the pages, the free pages, the reserved pages, the memory objects, the programs, the processors, the kernel entries, the interrupts, the page faults of a first use, and the takes and the waits of the locks of the kernel. The result is the count of rows, or a negative number with an error record. The error kinds: No_Grant (-1, the caller does not act for the person); Refused (-2, the kernel refused the report to the monitor, with its status).
+// counts gives one row for each count of the machine that the kernel reports: the time, the pages, the free pages, the reserved pages, the memory objects, the programs, the processors, the kernel entries, the interrupts, the page faults of a first use, and the takes and the waits of the locks of the kernel, the scheduling strategy (its number, and its name as the unit) and its changes. The result is the count of rows, or a negative number with an error record. The error kinds: No_Grant (-1, the caller does not act for the person); Refused (-2, the kernel refused the report to the monitor, with its status).
 @(export, link_name = "counts")
 counts :: proc "c" (result: ^[]Count, error: ^errors.Error_Record) -> i64 {
 	if !person() {
@@ -184,6 +184,9 @@ counts_read :: proc "contextless" (rows: ^[COUNT_CAPACITY]Count) -> (total: int,
 		{"first use faults", report.first_use_faults, "faults"},
 		{"lock takes", takes, "takes"},
 		{"lock waits", waits, "waits"},
+		// The value is the number of the strategy; the unit names it.
+		{"strategy", u64(report.strategy), report.strategy <= max(op.Strategy) ? op.STRATEGY_NAMES[report.strategy] : "unknown"},
+		{"strategy changes", u64(report.strategy_changes), "changes"},
 	}
 	#assert(len(items) <= COUNT_CAPACITY)
 	for item, index in items {

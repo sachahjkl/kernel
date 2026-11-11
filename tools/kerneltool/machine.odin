@@ -283,7 +283,7 @@ scenario_network := [?]Step {
 	// and the tool names the two hashes.
 	{kind = .Call, text = "monitor.count(\"processors\")", outcome = .Refused, wrong_hash = true, expected = "the request named "},
 	{kind = .Wait, text = "remote: refused a request: remote: the argument hash has the value 0, which the call refuses"},
-	{kind = .Call, text = "monitor.counts()", expected = "13 rows of Count"},
+	{kind = .Call, text = "monitor.counts()", expected = "15 rows of Count"},
 	// A Record: the counts of the monitor itself, which each caller sees.
 	{kind = .Call, text = "monitor.served()", expected = "Served{calls = "},
 	// A result larger than one datagram.
