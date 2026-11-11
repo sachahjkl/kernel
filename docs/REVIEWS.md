@@ -497,3 +497,62 @@ Four, all in the work of the coordinator.
 9. A block device in the test that drops the writes after the last flush.
 10. The other gaps: principals, signatures, TPM and Secure Boot, the document service with versions, keyboard layouts, the date, the IOMMU.
 11. Last, by the wish of the owner: the desktop to the design rules, a gradient to a darker blue toward the right, and a launcher as an experiment.
+
+## Review 9: steps 41 to 46 (2026-11-11)
+
+Six steps, not five: steps 44 to 46 were merged in one night, each from the branch of an agent, and the review after step 45 waited for the merge of step 46, whose branch was complete.
+
+### What the six steps added
+
+- Step 41 split the kernel lock by data: eight kinds of lock in one order, a run queue for each processor.
+- Step 42 made an error a value that diagnoses: an error record of 56 bytes in the completion record of a failed kernel operation and as the last parameter of an export, a stack trace from frame pointers.
+- Step 43 took the milliseconds of the time page from the cycle counter, and gave `system.nanoseconds()`.
+- Step 44 added the call from the host: the program `remote`, `kerneltool call`, the step `Call`, `monitor` as a service.
+- Step 45 brought the desktop to the design rules, with the gradient of the title bar and the launcher.
+- Step 46 added the scheduling strategies: round robin, fair and EEVDF behind one interface, wake preemption, a change of strategy while the machine runs.
+
+The kernel has 27 operations (`Strategy_Set` is new). After step 46 the test has more than 530 checks and 56 modules.
+
+### Against the properties
+
+| Property | State after step 46 |
+|---|---|
+| P1 small counted interface | 27 operations. `Thread_Create` has two more values (weight, request). The machine handle has one more right, `Schedule` |
+| P3 the kernel scales with the processors | Kernel entries: 1.65 M, 4.69 M, 4.85 M in one second for 1, 2, 4 lockers. The frame lock is the contended lock (34 215 waits of 727 303 takes): pages on first use do not scale. Next: a cache of free frames for each processor |
+| P5 kernel off the data path | A call from the host takes 178 us at least and enters the kernel only for the waits. The note of UDP (Review 8) is unchanged |
+| P10, P11 modules, identity by hash | `remote` refuses a call whose module hash is not the hash of the service that runs. That refusal has no test yet. The one differing `console.module` (Review 8) did not come back in the six full checks of the night; the cause is still not found |
+| P19 a command is a function | The host calls an export with its description: `kerneltool call "monitor.programs()"` prints a typed table. The log as text is still the path of most checks of the scenario |
+| P20 no ambient access | `remote` has no machine handle, reaches three named services, and its grant to act for the person is revoked in the scenario. **Open, and serious outside the test**: UDP has no authentication; while `remote` runs, a program of the host that sends to the port of the peer acts for the person. A person starts `remote`; it does not start with the system. A weight of a thread can only be lower than the full weight. A thread of another program preempts a processor at most one time in each millisecond |
+| Errors are values (rule of the owner) | Done for the kernel operations and for the wrappers of storage, manual, math, monitor, remote. The wrappers of the other services give a status only |
+| Performance is measured (criterion of the owner) | A failed kernel operation 405 to 435 ns with its record. A wake under EEVDF: late by 0.9 ms in the middle, against 19 ms under round robin. A full frame of the desktop 2.1 ms with 15 windows, against 26.6 ms: the `memcpy` of the freestanding Odin runtime copies one byte at a time, in every program and maybe in the kernel |
+| Design rules (owner, 2026-11-10) | The boot display, the desktop, `errors`, `locks`, `net`, `remote`, `scheduler` follow them. 21 programs keep their own palette |
+
+### Concessions, and what removes each one
+
+1. **UDP with no authentication carries the grant to act for the person** (step 44). Remove: QUIC, after TCP.
+2. **`graphics.copy_pixels` avoids the slow `memcpy` with a volatile store** (step 45). Remove: one fast copy and one fast fill for every module and for the kernel; the step is started.
+3. **One strategy for the whole machine; no strategy that a program supplies** (step 46). Remove: a verifier or an isolated path for a strategy of a program; not planned before the other gaps.
+4. **The correction of the fair strategy is by argument** (a wait of 35 days): no test runs it. Remove: a host test of the strategy functions, if the kernel code of the strategies is made to compile on the host.
+5. **The wake rate of EEVDF fell after the corrections of the review** (332 954 to 114 643 in one run) and the cause is not found. Remove: the measure of part A of the next step of the scheduler agent.
+6. Review 8, concession 2 (the time counts ticks) is closed by step 43. Concession 3 (the pointer of the test) is in progress: the compositor as a service with `pointer()`. Concession 5 (the desktop) is closed for the desktop and five programs. Concessions 1 and 4 are unchanged.
+
+### Bad compromises found
+
+Three.
+
+1. **The coordinator stopped a check to change the code under it** (step 43): the second flake run, started to confirm that a failure was host load, was killed for the correction of `clock`. The failure at step 469 (" rows of Running_Module" not printed) is therefore explained by an assumption, not by a measure. Rule: a run that tests a hypothesis ends before the tree changes; the change waits or goes in a worktree.
+2. **The first check of `clock` measured the host** (the page at most 20 ms behind): it would have failed on a loaded host with a right kernel. Replaced in the same step by the least delay. Rule (already in Review 7 for the limits): a check compares facts that the load of the host does not change.
+3. **An agent ended its turn two times before its step was complete** (desktop), and the coordinator saw it only at the report. No rule of the brief said it. Rule, now in each brief: "Do not end your turn before the final report".
+
+Not a bad compromise, but new: four agents and the coordinator share one computer. The machine lock (`flock`) and low priority for builds removed the lost keys. The branches touched the same four files (`programs/root/main.odin`, `support/bar/bar.odin`, `tools/kerneltool/machine.odin`, `docs/FIRST_MILESTONE.md`); each agent rebased before its final check, and each merge was a fast-forward that the coordinator checked in full on `master`.
+
+### What the coordinator did not read
+
+Listed in each row of the table of the steps. The largest: `programs/scheduler/main.odin` (851 lines), `programs/remote/window.odin`, the diffs of the tool in step 45, `support/bar/bar.odin`.
+
+### Order of the next steps
+
+1. In progress, each on a branch: the second layer of the call from the host (the pointer confirmed, log records as binary records); TCP as a library and the program `server`; one fast copy for every module; the cause of the wake rate of EEVDF, then a cache of free frames for each processor.
+2. Then: QUIC (it gives `remote` its authentication); the rename to `modus`; module records protected by writer; a program drives its virtual memory, with the graphical tools that inspect memory and execution; error records in the wrappers of the other services; a block device in the test that drops writes after the last flush.
+3. Then the other gaps: principals, signatures, TPM and Secure Boot, a document service with versions, keyboard layouts, the date, IOMMU; a demonstration of each property.
+4. Not a priority (owner, 2026-11-11): the ARM64 port.
