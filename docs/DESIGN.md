@@ -115,7 +115,7 @@ The owner asked for "a gradient from the current blue, as the start colour, to a
 - The title bar of another window is quiet: it goes from `COLOR_TITLE_QUIET` (`0x2A3442`) to `COLOR_TITLE_QUIET_END` (`0x161D27`), and its title is in the dim color. So the gradient also says which window has the keyboard. Its title also says it: a title in white has the focus.
 - The close button is a square of 24 x 24 pixels at the right end of the title bar, in the end color of the title bar at 70 %, with the character `x`. It is not red: red is the color "failed", and to close a window is not a failure.
 - The compositor places a new window at (60, 52), and each next one 36 pixels to the right and 30 pixels lower, for 8 windows. These numbers are not on the grid: the machine test presses places in windows at these numbers (see "State").
-- Cost: the compositor computes the colors of one line of a title bar once, for the columns that the frame shows, then copies them to each line. Choice NEW-3 of `docs/FIRST_MILESTONE.md` has the measures.
+- Cost: the compositor computes the colors of one line of a title bar once, for the columns that the frame shows, then copies them to each line. Choice 265 of `docs/FIRST_MILESTONE.md` has the measures.
 
 ### Pointer
 
