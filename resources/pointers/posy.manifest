@@ -1,0 +1,31 @@
+# The theme of the owner: "Posy's Cursor" (docs/POINTERS.md, sections 5 and 6).
+# The pictures are not in the repository: the build reads the Xcursor folder
+# of the input posy-cursors of flake.nix (POINTER_THEME_SOURCE), and writes
+# build/pointers/posy.pointers. This file says which file gives each shape.
+theme Posy's Cursor
+license CC-BY-NC-4.0
+attribution Posy's Cursor by Michiel de Boer (Posy), michieldb.nl/other/cursors.
+attribution Linux port 1.6 by simtrami, github.com/simtrami/posy-improved-cursor-linux.
+attribution License CC BY-NC 4.0, creativecommons.org/licenses/by-nc/4.0 (non-commercial use).
+attribution Converted by kerneltool: the sizes 32 and 64 (32 only for wait and busy_with_arrow), no pixel changed.
+
+# 32 is the smallest size of the theme; 64 is for a screen with twice the pixels.
+sizes 32 64
+
+# shape                        sources: CSS name first, then the X names
+shape arrow                         default left_ptr
+shape text                          text xterm
+shape pointing_hand                 pointer hand2
+shape move                          move fleur
+shape grab                          grab openhand
+shape grabbing                      grabbing closedhand
+# 77 frames of 33 ms: 32 only (1.2 MiB more at 64).
+shape wait                          wait watch sizes 32
+shape busy_with_arrow               progress left_ptr_watch sizes 32
+shape forbidden                     not-allowed crossed_circle
+shape help                          help question_arrow
+shape crosshair                     crosshair cross
+shape resize_left_right             ew-resize sb_h_double_arrow
+shape resize_up_down                ns-resize sb_v_double_arrow
+shape resize_top_left_bottom_right  nwse-resize fd_double_arrow
+shape resize_top_right_bottom_left  nesw-resize bd_double_arrow

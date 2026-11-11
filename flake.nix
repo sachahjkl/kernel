@@ -19,12 +19,25 @@
     # llc makes each object with frame pointers.
     buildTools = [pkgs.odin pkgs.llvmPackages_18.llvm pkgs.llvmPackages.lld pkgs.nasm pkgs.qemu pkgs.coreutils];
 
+    # The pointer theme of the owner (docs/POINTERS.md): "Posy's Cursor", the
+    # package of nixpkgs, pinned by flake.lock. Its license is CC-BY-NC-4.0,
+    # which nixpkgs marks unfree and not redistributable: this one package is
+    # allowed by its name. The repository holds no file of the theme: the
+    # tool converts it at each build into build/pointers.
+    pointerTheme =
+      (import inputs.nixpkgs {
+        inherit system;
+        config.allowUnfreePredicate = package: inputs.nixpkgs.lib.getName package == "posy-cursors";
+      }).posy-cursors;
+
     # The UEFI firmware of the first machine. kerneltool reads these two names.
     firmware = {
       OVMF_CODE = "${pkgs.OVMF.fd}/FV/OVMF_CODE.fd";
       OVMF_VARS = "${pkgs.OVMF.fd}/FV/OVMF_VARS.fd";
       # The source of the font, for the command "font" of kerneltool.
       FONT_SOURCE = "${pkgs.spleen}/share/fonts/misc/spleen-8x16.bdf";
+      # The Xcursor folder of the pointer theme of the owner, for the build.
+      POINTER_THEME_SOURCE = "${pointerTheme}/share/icons/Posy_Cursor/cursors";
     };
 
     preCommitCheck = inputs.git-hooks.lib.${system}.run {
@@ -51,7 +64,7 @@
         name = "kernel-boot-test";
         src = inputs.nixpkgs.lib.fileset.toSource {
           root = ./.;
-          fileset = inputs.nixpkgs.lib.fileset.unions [./flake.nix ./boot ./contract ./kernel ./modules ./programs ./runtime ./support ./tools];
+          fileset = inputs.nixpkgs.lib.fileset.unions [./flake.nix ./boot ./contract ./kernel ./modules ./programs ./resources ./runtime ./support ./tools];
         };
         nativeBuildInputs = buildTools ++ [kerneltool];
         buildPhase = ''
