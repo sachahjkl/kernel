@@ -97,7 +97,7 @@ shared_capacity :: proc "contextless" (queue: ^Shared) -> u32 {
 // shared_count gives the records that wait in a shared queue. Other
 // threads change it at the same time: it is right only for a moment.
 shared_count :: proc "contextless" (queue: ^Shared) -> u32 {
-	count := intrinsics.volatile_load(&queue.head.write) - intrinsics.volatile_load(&queue.head.read)
+	count := intrinsics.atomic_load_explicit(&queue.head.write, .Relaxed) - intrinsics.atomic_load_explicit(&queue.head.read, .Relaxed)
 	return i32(count) < 0 ? 0 : min(count, queue.mask + 1)
 }
 

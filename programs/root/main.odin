@@ -80,10 +80,12 @@ grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 		return {.Inspect, .Image} // It reads its own page table, and starts its twins from the boot image.
 	case "locks":
 		return {.Inspect, .Image} // It reads the counts of the locks, and starts its lockers from the boot image.
+	case "address_space":
+		return {.Inspect, .Image} // It reads its own mappings, and starts its child from the boot image.
 	case "scheduler":
 		return {.Inspect, .Schedule} // It reads the counts of the scheduler, and changes the strategy.
-	case "paint", "life", "tally":
-		return {.Serve}
+	case "paint", "life", "tally", "sample":
+		return {.Serve} // sample: the module of the tables, started as a program when a caller connects.
 	case "settings":
 		return {.Settings, .Serve} // It writes the settings of the person, and serves set() and get().
 	case "date":
@@ -113,6 +115,13 @@ grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 		// connections to the services of callable_of, and the grant to act
 		// for the person (docs/MODULE_CONTRACT.md, "A call from the host").
 		return {.Connect, .Network, .Person}
+	case "interface_through_module":
+		return {.Image} // It reads the size of the code of interface_module.
+	case "tables":
+		// It loads sample, starts a call host of it from the boot image,
+		// and connects to the service sample (docs/MODULE_CONTRACT.md,
+		// "Tables and bytes as parameters").
+		return {.Image, .Connect}
 	}
 	return {}
 }
@@ -123,12 +132,16 @@ callable_of :: proc "contextless" (name: string) -> []string {
 	switch name {
 	case "remote":
 		return remote_callable[:]
+	case "tables":
+		return tables_callable[:]
 	}
 	return nil
 }
 
 @(rodata)
 remote_callable := [?]string{"compositor", "date", "inspect", "log", "manual", "monitor", "settings", "storage"}
+@(rodata)
+tables_callable := [?]string{"sample"}
 
 // The values of the context of the compositor that name its own file: 0 to
 // 3 are the screen.
@@ -174,7 +187,7 @@ store_limit_of :: proc "contextless" (name: string) -> u64 {
 
 // A service that starts when a program asks for a connection to it.
 on_demand :: proc "contextless" (name: string) -> bool {
-	return name == "storage"
+	return name == "storage" || name == "sample"
 }
 
 // grant_for gives what a caller receives in a service (isolated.Service_Command).
@@ -234,6 +247,8 @@ things_of :: proc "contextless" (name: string) -> system.Budget_Amounts {
 		return {pages = 2048, programs = 1, threads = 9}
 	case "locks":
 		return {pages = 9216, programs = 8, threads = 20} // 4 lockers of 1024 pages, then 3 at a time of the stress case.
+	case "address_space":
+		return {pages = 40960, programs = 2, threads = 6} // 64 MiB of large pages, two ranges of 1 GiB with their page tables, a child.
 	case "scheduler":
 		return {pages = 2048, programs = 1, threads = 24} // 12 spinners, two threads that wake each other, one that sleeps, a changer, a thread that starts threads.
 	case "flow":
@@ -259,6 +274,8 @@ things_of :: proc "contextless" (name: string) -> system.Budget_Amounts {
 		return {pages = 2048, programs = 3, threads = 4} // It starts fault and its child, and 3 threads under contention.
 	case "server":
 		return {pages = 4096, programs = 1, threads = 1} // A table of 32 connections with their buffers, and a large window.
+	case "tables":
+		return {pages = 4096, programs = 3, threads = 3} // A table of 65536 readings in a memory object (640 pages), and two call hosts (sample, hostile_exports) with their threads.
 	}
 	return {pages = 2048, programs = 1, threads = 1}
 }
@@ -360,6 +377,34 @@ show :: proc "contextless" (text: string, state: bootscreen.State, step: bootscr
 	bootscreen.draw_screen(screen, &screen_data)
 }
 
+// shortage_start gives the program shortage nearly all the pages of this
+// service, and the machine; the program stops the machine at its end. This
+// service keeps SHORTAGE_KEEP pages: the module of the program is copied in
+// memory that it pays.
+SHORTAGE_KEEP :: 24
+
+shortage_start :: proc "contextless" (ctx: ^system.Context) -> ! {
+	own, _ := system.budget_read()
+	grants: [op.CONTEXT_HANDLES]system.Grant
+	grants[system.GRANT_MACHINE] = {machine, {.Inspect, .Stop}}
+	grants[op.CONTEXT_LOG] = log_grant("shortage")
+	amounts := system.Budget_Amounts {
+		pages       = own.pages - SHORTAGE_KEEP,
+		programs    = 1,
+		threads     = 8,
+		processor   = own.processor,
+		log_records = 1000,
+	}
+	if _, status := system.program_start(system.image_find(image, "shortage"), "shortage", grants, random.values_with_seed(&program_generator, {}), amounts, nil, &prepared); status != .Ok {
+		system.log("root: cannot start shortage: status ", u64(status))
+		system.call(.Machine_Stop, u64(machine), 1)
+	}
+	system.log("root: started shortage with ", amounts.pages, " pages")
+	for {
+		system.sleep(max(u64))
+	}
+}
+
 // fail ends the start of the machine. The machine does not stop: the boot
 // display stays, with the failure, until a person stops the machine.
 fail :: proc "contextless" (text: string, status: system.Status) -> ! {
@@ -401,6 +446,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		random.generator_seed(&program_generator, &seed)
 		report := &entropy_report
 		system.log("root: the random seed of the system, strength ", random.seed_strength_names[report.strength], ": rdseed ", report.rdseed_present ? "present" : "absent", ", ", u64(report.rdseed_good), " good values, ", u64(report.rdseed_refused), " refused; rdrand ", report.rdrand_present ? "present" : "absent", ", ", u64(report.rdrand_good), " good, ", u64(report.rdrand_refused), " refused; the cycle counter, ", u64(report.jitter_samples), " samples, ", u64(report.jitter_distinct), " distinct low bytes")
+	}
+	// The machine of the test of the shortage of frames: its boot image has
+	// the program shortage and no input service, so no desktop.
+	if len(system.image_find(image, "input")) == 0 && len(system.image_find(image, "shortage")) != 0 {
+		shortage_start(ctx)
 	}
 	if pixels, map_status := system.memory_map(ctx.handles[op.ROOT_FRAMEBUFFER], {.Write}); map_status == .Ok {
 		screen = {

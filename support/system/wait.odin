@@ -74,14 +74,14 @@ wait_word :: proc "contextless" (wait: ^Wait, word: ^u32, value: u32, flag: ^u32
 // the queue is empty.
 wait_records :: proc "contextless" (wait: ^Wait, queue: ^ring.Queue) {
 	counters := queue.counters
-	wait_word(wait, &counters.write, intrinsics.volatile_load(&counters.read), &counters.reader_waits, &counters.writer_waits, &counters.read)
+	wait_word(wait, &counters.write, intrinsics.atomic_load_explicit(&counters.read, .Relaxed), &counters.reader_waits, &counters.writer_waits, &counters.read)
 }
 
 // wait_room adds a queue that this thread writes: the thread waits while
 // the queue is full. The reader wakes it when half of the queue is free.
 wait_room :: proc "contextless" (wait: ^Wait, queue: ^ring.Queue) {
 	counters := queue.counters
-	wait_word(wait, &counters.read, intrinsics.volatile_load(&counters.write) - ring.capacity(queue), &counters.writer_waits, &counters.reader_waits, &counters.write)
+	wait_word(wait, &counters.read, intrinsics.atomic_load_explicit(&counters.write, .Relaxed) - ring.capacity(queue), &counters.writer_waits, &counters.reader_waits, &counters.write)
 }
 
 // wait_spin reads the words of the list for a short time, with no kernel

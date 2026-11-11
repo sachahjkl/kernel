@@ -1,5 +1,6 @@
 package monitor
 
+import "base:intrinsics"
 import "contract:errors"
 import "contract:isolated"
 import op "contract:operation"
@@ -26,6 +27,11 @@ Program :: struct {
 	time:    i64, // Milliseconds of processor time.
 	entries: i64, // Kernel entries.
 	started: i64, // Microseconds after the start of the machine.
+}
+
+// The name of one count: a row of the table of counts_named().
+Count_Name :: struct {
+	name: [24]u8,
 }
 
 // One row for each count of the machine: counts().
@@ -143,6 +149,38 @@ count :: proc "c" (name: ^string, error: ^errors.Error_Record) -> i64 {
 		}
 	}
 	return errors.fail(error, ERROR_ABSENT, .Absent, .None, 1)
+}
+
+// counts_named gives the counts of the machine that a table of names names, in the order of the table: many counts in one call. The result is the count of rows, or a negative number with an error record. The error kinds: No_Grant (-1, the caller does not act for the person); Refused (-2, the kernel refused the report to the monitor); Absent (-3, a name names no count: found is the number of its row, from 1).
+@(export, link_name = "counts_named")
+counts_named :: proc "c" (names: ^system.Table_To_Read(Count_Name), result: ^[]Count, error: ^errors.Error_Record) -> i64 {
+	if !person() {
+		return errors.fail(error, ERROR_PERSON, .No_Grant, .Person)
+	}
+	rows: [COUNT_CAPACITY]Count
+	total, status := counts_read(&rows)
+	if status != .Ok {
+		return errors.fail(error, ERROR_REFUSED, .Refused, .None, 0, 0, 0, i64(status))
+	}
+	for number in 0 ..< names.count {
+		// One copy of the record: the caller can change the call region
+		// during the call (docs/MODULE_CONTRACT.md: an export copies a
+		// record before it checks it).
+		wanted := intrinsics.volatile_load(&names.records[number])
+		found := -1
+		for &row, index in rows[:total] {
+			if system.name_of(row.name[:]) == system.name_of(wanted.name[:]) {
+				found = index
+			}
+		}
+		if found < 0 {
+			return errors.fail(error, ERROR_ABSENT, .Absent, .None, 1, 0, 0, i64(number + 1))
+		}
+		if number < u64(len(result^)) {
+			result[number] = rows[found]
+		}
+	}
+	return i64(names.count)
 }
 
 COUNT_CAPACITY :: 16

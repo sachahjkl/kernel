@@ -167,6 +167,9 @@ Processor :: struct {
 	stopped_programs: u64, // Bit n: program n had a thread on a processor.
 	stopped_serials:  [PROGRAM_CAPACITY]u32,
 	frame_cache:   Frame_Cache,
+	// The table of ranges of the Memory_Commit or Memory_Protect that runs
+	// on this processor (a copy of the table of the caller).
+	range_table:   [op.RANGE_TABLE_CAPACITY]op.Page_Range,
 	// Records too large for the kernel stack, for the operation that runs on
 	// this processor.
 	log_text:       [4096]u8,

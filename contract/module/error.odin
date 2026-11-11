@@ -31,13 +31,16 @@ Difference :: enum u32 {
 	Result_Type     = 5,
 	Result_Detail   = 6, // A Record or Table result with another record.
 	Error_Record    = 7, // One gives an error record and the other does not, or the two records differ.
+	Parameter_Direction = 8, // Parameter `parameter`: a Table or Bytes with another direction.
 }
 
 // One side of a difference: a type, its detail (the rights of a Handle, or a
-// count), and the name of a Record.
+// count), the direction of a Table or Bytes parameter, and the name of a
+// Record.
 Described :: struct {
-	type:   Type,
-	_:      [3]u8,
+	type:      Type,
+	direction: Direction,
+	_:         [2]u8,
 	detail: u32,
 	record: [NAME_SIZE]u8,
 }
@@ -115,6 +118,10 @@ functions_compare :: proc "contextless" (file: []u8, index: u32, other_file: []u
 		}
 		if !details_equal(file, other_file, expected, found) {
 			return .Parameter_Detail, number + 1, expected, found
+		}
+		expected.direction, found.direction = a.parameter_directions[number], b.parameter_directions[number]
+		if expected.direction != found.direction {
+			return .Parameter_Direction, number + 1, expected, found
 		}
 	}
 	expected = side(file, a.result, a.result_detail)

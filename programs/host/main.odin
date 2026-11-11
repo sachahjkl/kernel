@@ -66,7 +66,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			if !ok {
 				break
 			}
-			system.send(&queue.completions, system.export_serve(file, base, region, ring_memory, command))
+			system.send(&queue.completions, system.export_serve(file, base, region, ring_memory, command, true))
 		}
 		wait: system.Wait
 		system.wait_records(&wait, &queue.commands)

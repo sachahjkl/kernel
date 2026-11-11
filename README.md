@@ -17,6 +17,10 @@ The system boots under QEMU to a graphical desktop with a console, a system tool
 
 ![Six candidate fonts beside Spleen 8x16, each from a glyph cache in fixed point, and a word of each enlarged](docs/screenshots/font_candidates.png)
 
+Tables as parameters: one description, three ways to call (a direct call, a call host, a service), the same answers, the hostile cases and the cost of each way.
+
+![Tables as parameters: one description, three ways to call](docs/screenshots/tables.png)
+
 ![The menu of the windows: a press on a line brings the window to the front](docs/screenshots/windows.png)
 
 | | |
@@ -146,6 +150,7 @@ The same window with the pointer theme of the owner (Posy's Cursor, CC BY-NC 4.0
 - `limits` shows the limits of a budget: processor time and log records for each second. The kernel counts the time with the cycle counter and stops a thread at the limit of its budget.
 - `processors` shows several processors: the kernel says that four processors run threads of one program at the same time, and the same picture takes less time with 2 and 4 threads.
 - `locks` shows the locks of the kernel, split by data: four programs that work on their own objects enter the kernel 3.5 times as often as one, and the window gives the waits of each lock and the frame cache of each processor (a stack of free frames that pages on first use take with no frame lock).
+- `address_space` shows a program that drives its own virtual memory: 1 GiB of addresses in one mapping that pays only the pages that it commits, pages that return to the budget at once, a protection change with its shoot-down, a guard page, and large pages.
 - `scheduler` shows the scheduling strategies, which the machine changes while it runs: two threads that wake each other on a busy machine make about 80 wakes in one second under round robin and more than 300 000 under EEVDF, and the weights 1, 2 and 4 give shares of about 4, 7.5 and 13.5 %.
 - `workers` shows the lock and the word wait: four threads take tiles from one queue. Four threads add to one number: with the lock no addition is lost, with no lock millions are lost.
 - The pointer has pictures in a format of the system (`docs/POINTERS.md`): the tool converts the Xcursor theme of the owner, Posy's Cursor, from a build input, and a theme of the system drawn as grids of squares; each is a resource of the boot image with its hash. The compositor chooses the shape from what is under the pointer (a title bar, a close button, a text input) and blends its picture at its hot spot; a program asks for a shape over its own surface. `pointers` shows each theme.
@@ -179,7 +184,7 @@ The same window with the pointer theme of the owner (Posy's Cursor, CC BY-NC 4.0
 | `runtime/` | `memory.asm`: the copy and the fill of every module, of the kernel and of the boot program (`copy_bytes_without_overlap`, `copy_bytes_with_overlap`, `fill_bytes_with_value`), with its host tests |
 | `contract/` | The source library `contract:`: what two parties agree on. `operation` (the kernel operations), `boot_info` (the record from the boot program to the kernel), `module` (the module format and the loader code), `store` (the format of the data disk), `pointer_pictures` (the pointer theme file and its validation), `blake3` (the hash), `ring` (two queues in shared memory, and the shared queue), `isolated` (the isolated call), `glyph_cache` (the drawn glyphs of the vector font), `settings` (the settings page of the person), `date` (the date page: the date of the time 0 of the system) |
 | `support/` | The source library `support:`: what a program compiles in. `system` (kernel operations, text, loader, grants, services), `graphics` (drawing, and the table of the design rules), `interface` (the elements of the windows as draw tables, the damage by difference), `vector_font` (the vector font: a reader of TrueType outlines, a rasterizer in fixed point with subpixel bands, the builder of the glyph cache), `display` (the protocol of the compositor), `terminal` (the terminal ring), `bootscreen`, `bar` (the names of the programs and the places of the bar, its menus and the filter of the launcher), `relay` (the records of the `rings` demonstration), `twins` (the modes of the program `twin`) |
-| `programs/` | `root`, `input`, `compositor`, `console`, `host`, `monitor`, `plasma`, `life`, `paint`, `fault`, `temple`, `rings`, `node`, `threads`, `workers`, `rights`, `origin`, `budget`, `limits`, `processors`, `locks`, `locker`, `scheduler`, `boot`, `pages`, `frames`, `twin`, `log`, `flow`, `crowd`, `clock`, `tally`, `manual`, `terminal`, `flood`, `pointers` |
+| `programs/` | `root`, `input`, `compositor`, `console`, `host`, `monitor`, `plasma`, `life`, `paint`, `fault`, `temple`, `rings`, `node`, `threads`, `workers`, `rights`, `origin`, `budget`, `limits`, `processors`, `locks`, `locker`, `scheduler`, `address_space`, `shortage`, `boot`, `pages`, `frames`, `twin`, `log`, `flow`, `crowd`, `clock`, `tally`, `manual`, `terminal`, `flood`, `pointers` |
 | `resources/` | The sources of the resources of the boot image: the pointer manifests (`resources/pointers/`), and the ASCII subsets of the six candidate vector fonts with their licenses (`resources/fonts/`, `docs/FONTS.md`) |
 | `modules/` | Modules of commands (`math`, `probe`) and the test modules of the host load test |
 | `tools/kerneltool/` | The kernel tool: all the automation of the project |
