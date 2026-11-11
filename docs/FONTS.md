@@ -104,6 +104,8 @@ The other two forms stay possible: `vector_glyphs` builds the cache of each cand
 
 On the host (`glyph_draw_cost`): 333 to 362 ns from the cache against 33 to 44 ns for Spleen. The target was "the same order as Spleen": a glyph from the cache costs 9 times a glyph of Spleen. The steps that brought it from 921 ns: a loop for each order of the stripes (a constant), no bounds check after the one validation of the cache, the squares of the pixel under kept from one pixel to the next, a shift in place of a division. What stays: about 40 pixels of a glyph have a partial coverage, and each needs three blends in linear light. Section 9 has the effect on whole frames, which is small.
 
+The blend of a glyph now has an SSE2 form beside this scalar form, with the same bytes: `docs/SIMD.md`, sections 3 and 6, says what it computes in vectors and how to measure it against the numbers above.
+
 ## 6. The font file
 
 The owner did not choose one. Six candidates, each read from the build input of `flake.nix` (the packages of nixpkgs, pinned by `flake.lock`). Their license texts were read at the source on 2026-11-11.

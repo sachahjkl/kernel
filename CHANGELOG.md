@@ -6,6 +6,26 @@ The project has steps, not separate releases. The merge of step N on `master` is
 
 What is not in a release yet is in `changelog.d/`, one fragment for each change. `kerneltool changelog release` writes a release from the fragments. Nobody edits this file by hand.
 
+## [0.73.0] - 2026-11-11
+
+### Added
+
+- **A caret in the line of the console**: Left, Right, Home, End, Delete and Backspace edit the line at the caret, and a character goes in at the caret.
+- **A completion list in the console**: while the person types, a list under the line shows the commands, the exports, the services, the variables and the modules that match by a fuzzy match (`mcnt` finds `monitor.count`), the matched letters lit, each name with its signature; Tab or Enter takes one, and the line under the input shows the signature of the call at the caret.
+- **A longer line history in the console, with a search**: 256 lines in place of 8; Control-R opens a search over them with the same fuzzy match, Control-R and Control-S move to an older and a newer line, and Enter puts the line in the input.
+
+### Changed
+
+- **A terminal gives its program the modifiers of each key**, so that Control with a key reaches the console; a cell of the text grid of the interface package can have a fill color (draw record version 5).
+
+## [0.72.0] - 2026-11-11
+
+### Changed
+
+- **BLAKE3 hashes four chunks at a time**: in an input of more than 4096 bytes, the four chunks of each subtree of four chunks are compressed side by side in the SSE2 registers, with the same hash as before. The root service checks the hash of each module and resource at its start with it.
+- **The text of the vector font is blended four pixels at a time**: the blend of a glyph over a pixel, in linear light with the three subpixel bands, runs in the SSE2 registers and gives the same pixels as before.
+- **The pointer picture is blended four pixels at a time**, in the SSE2 registers, with the same pixels as before.
+
 ## [0.71.0] - 2026-11-11
 
 ### Added

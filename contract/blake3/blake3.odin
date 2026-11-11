@@ -3,6 +3,11 @@
 // This is the plain hash mode only, for an input that is whole in memory.
 // It is written from the BLAKE3 specification. It allocates no memory, so the
 // boot program and the kernel can use it.
+//
+// On amd64 the chunks of a subtree of four whole chunks are compressed side
+// by side, one chunk in each lane of an SSE2 register
+// (chunks_side_by_side_amd64.odin, docs/SIMD.md). The scalar form here is the
+// reference, and the code of every other part of the tree.
 package blake3
 
 import "base:intrinsics"
@@ -34,13 +39,21 @@ MESSAGE_PERMUTATION :: [16]int{2, 6, 3, 10, 7, 0, 4, 13, 1, 11, 12, 5, 9, 14, 15
 ROUND_COUNT :: 7
 
 // hash gives the BLAKE3 hash of input.
-hash :: proc "contextless" (input: []u8) -> (result: Hash) {
+hash :: proc "contextless" (input: []u8) -> Hash {
+	return hash_in_form(input, ODIN_ARCH == .amd64)
+}
+
+// hash_in_form gives the hash with the chunks of each subtree of four chunks
+// compressed side by side, or with the scalar form only: the host tests
+// compare the two.
+@(private)
+hash_in_form :: proc "contextless" (input: []u8, side_by_side: bool) -> (result: Hash) {
 	words: [8]u32
 	if len(input) <= CHUNK_SIZE {
 		words = chunk_value(input, 0, {.Root})
 	} else {
 		left := left_size(len(input))
-		block := parent_block(subtree_value(input[:left], 0), subtree_value(input[left:], u64(left / CHUNK_SIZE)))
+		block := parent_block(subtree_value(input[:left], 0, side_by_side), subtree_value(input[left:], u64(left / CHUNK_SIZE), side_by_side))
 		words = first_half(compress(INITIAL_VALUE, block, 0, BLOCK_SIZE, {.Parent, .Root}))
 	}
 	for word, i in words {
@@ -64,17 +77,41 @@ left_size :: proc "contextless" (size: int) -> int {
 	return power * CHUNK_SIZE
 }
 
+// subtree_value gives the chaining value of a subtree that is not the root.
+// With side_by_side, a subtree of exactly four chunks (the left part of a
+// tree is always a power of two of whole chunks) has its chunks compressed
+// side by side in the SSE2 form.
 @(private)
-subtree_value :: proc "contextless" (input: []u8, chunk_counter: u64) -> [8]u32 {
+subtree_value :: proc "contextless" (input: []u8, chunk_counter: u64, side_by_side: bool) -> [8]u32 {
 	if len(input) <= CHUNK_SIZE {
 		return chunk_value(input, chunk_counter, {})
 	}
+	when ODIN_ARCH == .amd64 {
+		if side_by_side && len(input) == 4 * CHUNK_SIZE {
+			return subtree_value_of_four_chunks_sse2(input, chunk_counter)
+		}
+	}
 	left := left_size(len(input))
 	block := parent_block(
-		subtree_value(input[:left], chunk_counter),
-		subtree_value(input[left:], chunk_counter + u64(left / CHUNK_SIZE)),
+		subtree_value(input[:left], chunk_counter, side_by_side),
+		subtree_value(input[left:], chunk_counter + u64(left / CHUNK_SIZE), side_by_side),
 	)
 	return first_half(compress(INITIAL_VALUE, block, 0, BLOCK_SIZE, {.Parent}))
+}
+
+// subtree_value_of_chunk_values joins the chaining values of a power of two
+// of whole chunks, two by two, as subtree_value does: the parent of each
+// pair, then the parent of each pair of parents. values is changed.
+@(private)
+subtree_value_of_chunk_values :: #force_inline proc "contextless" (values: [][8]u32) -> [8]u32 {
+	count := len(values)
+	for count > 1 {
+		for index in 0 ..< count / 2 {
+			values[index] = first_half(compress(INITIAL_VALUE, parent_block(values[2 * index], values[2 * index + 1]), 0, BLOCK_SIZE, {.Parent}))
+		}
+		count /= 2
+	}
+	return values[0]
 }
 
 @(private)
