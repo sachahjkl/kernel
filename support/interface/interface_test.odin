@@ -258,3 +258,26 @@ text_input_and_list :: proc(t: ^testing.T) {
 	testing.expect_value(t, choice, 0) // From the last line to the first.
 	testing.expect(t, listed.activated)
 }
+
+// The keys of one frame act in their order: Enter after "ls" activates the
+// field with "ls", and the key after Enter is not taken (review W2).
+@(test)
+text_input_keys_in_their_order :: proc(t: ^testing.T) {
+	memory: Tables
+	table := table_of(&memory)
+	state: Interface_State
+	input: Input
+	text: [8]u8
+	count := 0
+	state.focus = identity("input")
+	key(&input, 0x26, 'l')
+	key(&input, 0x1F, 's')
+	key(&input, display.KEY_ENTER)
+	key(&input, 0x2D, 'x')
+	frame := frame_begin(&table, &state, &input)
+	result := text_input(&frame, {0, 0, 200, 24}, identity("input"), text[:], &count)
+	frame_end(&frame)
+	testing.expect(t, result.activated)
+	testing.expect_value(t, string(text[:count]), "ls")
+	testing.expect(t, !input.keys[3].taken, "the key after Enter stays for the next element")
+}

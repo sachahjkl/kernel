@@ -145,7 +145,7 @@ Element_Result :: struct {
 Element_Kind :: enum u8 {
 	Button, // Enter and Space activate it.
 	List, // Enter activates it; up and down move its choice.
-	Text_Input, // Enter activates it; Space is a character.
+	Text_Input, // Enter activates it, in the order of the keys; Space is a character.
 }
 
 // element_interact gives what the input did to an element in an area. Each
@@ -169,7 +169,8 @@ element_interact :: proc "contextless" (frame: ^Frame, element: Element_Identity
 		}
 	}
 	result.focused = state.focus == element
-	if result.focused {
+	// A text input takes Enter in the order of its keys (text_input).
+	if result.focused && kind != .Text_Input {
 		for &key in input.keys[:input.key_count] {
 			if !key.taken && (key.code == display.KEY_ENTER || kind == .Button && key.character == ' ') {
 				key.taken = true

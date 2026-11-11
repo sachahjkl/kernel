@@ -202,15 +202,21 @@ list_with_choice :: proc "contextless" (frame: ^Frame, area: Area, element: Elem
 // text_input draws a field of one line: the text in white and, with the
 // focus, a caret; the placeholder in the dim color when it is empty. With
 // the focus, a character adds to the text and Backspace removes the last
-// one; Enter activates it. The text is in the memory of the caller.
+// one; Enter activates it, in the order of the keys of the frame: the keys
+// after Enter are not taken. The text is in the memory of the caller.
 text_input :: proc "contextless" (frame: ^Frame, area: Area, element: Element_Identity, text: []u8, count: ^int, placeholder := "") -> Element_Result {
 	result := element_interact(frame, element, area, .Text_Input)
 	if result.focused {
-		for &key in frame.input.keys[:frame.input.key_count] {
+		keys: for &key in frame.input.keys[:frame.input.key_count] {
 			if key.taken {
 				continue
 			}
 			switch {
+			case key.code == display.KEY_ENTER:
+				// The keys after Enter stay for what Enter starts.
+				key.taken = true
+				result.activated = true
+				break keys
 			case key.code == display.KEY_BACKSPACE:
 				key.taken = true
 				if count^ > 0 {
