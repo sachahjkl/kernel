@@ -132,7 +132,9 @@ jitter_values :: proc "contextless" (deltas: ^[JITTER_SAMPLES]u32, cycles: Cycle
 // key_derive gives the BLAKE3 hash of a domain text, a key and the fresh
 // bytes, each with its length before it: no two inputs give the same bytes
 // to hash.
-key_derive :: proc "contextless" (domain: string, key: []u8, fresh: []u8) -> [SEED_SIZE]u8 {
+// Its frames and those of BLAKE3 under it hold the key and the chaining
+// values: its callers erase the stack below them after it returns.
+key_derive :: #force_no_inline proc "contextless" (domain: string, key: []u8, fresh: []u8) -> [SEED_SIZE]u8 {
 	input: [128 + 64 + 3 * 8 + FRESH_LIMIT]u8
 	count := 0
 	put :: proc "contextless" (input: []u8, count: ^int, bytes: []u8) {
@@ -191,6 +193,7 @@ entropy_gather :: proc "contextless" (sources: Entropy_Sources, report: ^Entropy
 	report.jitter_distinct = jitter_values(&gathered.jitter, sources.cycles)
 	report.jitter_samples = JITTER_SAMPLES
 	seed = key_derive(DOMAIN_SEED, nil, ([^]u8)(&gathered)[:size_of(gathered)])
+	crypto.erase_stack_below_the_caller()
 	crypto.zero_explicit(&gathered, size_of(gathered))
 	return seed
 }

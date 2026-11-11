@@ -3,7 +3,8 @@
 // This program imports the module through its import slots, as `agenda`
 // imports `calendar`: each call is a direct call of an export. It runs the
 // published vectors of each primitive through the exports, checks that a
-// changed byte gives the error record Not_Authentic, measures the speed of
+// changed byte, or a point of small order, gives its error record and no
+// byte of output, measures the speed of
 // each primitive and the cost of one call of an export, and shows the hash
 // of the module in the boot image: the hash names the code that ran.
 package cryptography_vectors
@@ -40,7 +41,7 @@ Vector :: struct {
 	name:     string,
 	standard: string,
 	passed:   bool,
-	refused:  bool, // A changed byte gave Not_Authentic (for the primitives that check).
+	refused:  bool, // A changed byte, or a point of small order, was refused with its error kind, and no byte was given.
 	checks:   bool, // The primitive checks a tag or a signature.
 }
 
@@ -89,7 +90,18 @@ same_as_hex :: proc "contextless" (bytes: []u8, text: string) -> bool {
 record_vector :: proc "contextless" (name, standard: string, passed: bool, checks := false, refused := false) {
 	vectors[vector_count] = {name = name, standard = standard, passed = passed, checks = checks, refused = refused}
 	vector_count += 1
-	system.log("cryptography_vectors: ", name, " (", standard, "): ", passed ? "passed" : "FAILED", checks ? (refused ? "; a changed byte gives Not_Authentic" : "; a changed byte was NOT refused") : "")
+	system.log("cryptography_vectors: ", name, " (", standard, "): ", passed ? "passed" : "FAILED", checks ? (refused ? "; a bad input is refused with no byte given" : "; a bad input was NOT refused") : "")
+}
+
+// no_byte_given says that a refused open left no byte of the text: the
+// module erases what it wrote.
+no_byte_given :: proc "contextless" (output: []u8) -> bool {
+	for byte in output {
+		if byte != 0 {
+			return false
+		}
+	}
+	return true
 }
 
 SUNSCREEN :: "Ladies and Gentlemen of the class of '99: If I could offer you only one tip for the future, sunscreen would be it."
@@ -113,7 +125,7 @@ vectors_run :: proc "contextless" () {
 		opened_result := opened[:]
 		passed &&= open_with_chacha20_poly1305(&key, &nonce, &additional, &sealed, &opened_result, &error) == i64(len(SUNSCREEN)) && string(opened[:len(SUNSCREEN)]) == SUNSCREEN
 		output[5] ~= 1
-		refused := open_with_chacha20_poly1305(&key, &nonce, &additional, &sealed, &opened_result, &error) < 0 && error.kind == i64(errors.Kind.Not_Authentic)
+		refused := open_with_chacha20_poly1305(&key, &nonce, &additional, &sealed, &opened_result, &error) < 0 && error.kind == i64(errors.Kind.Not_Authentic) && no_byte_given(opened[:len(SUNSCREEN)])
 		record_vector("ChaCha20-Poly1305", "RFC 8439 2.8.2", passed, true, refused)
 	}
 	// AES-128-GCM, the test case 4 of the GCM specification.
@@ -126,9 +138,9 @@ vectors_run :: proc "contextless" () {
 		passed := count == 76 && same_as_hex(output[:16], "42831ec2217774244b7221b784d0d49c") && same_as_hex(output[60:76], "5bc94fbc3221a5db94fae95ae7121a47")
 		sealed := string(output[:count])
 		opened_result := opened[:]
-		passed &&= open_with_aes_128_gcm(&key, &nonce, &additional, &sealed, &opened_result, &error) == 60
+		passed &&= open_with_aes_128_gcm(&key, &nonce, &additional, &sealed, &opened_result, &error) == 60 && string(opened[:60]) == text
 		output[70] ~= 1
-		refused := open_with_aes_128_gcm(&key, &nonce, &additional, &sealed, &opened_result, &error) < 0 && error.kind == i64(errors.Kind.Not_Authentic)
+		refused := open_with_aes_128_gcm(&key, &nonce, &additional, &sealed, &opened_result, &error) < 0 && error.kind == i64(errors.Kind.Not_Authentic) && no_byte_given(opened[:60])
 		record_vector("AES-128-GCM", "GCM test case 4", passed, true, refused)
 	}
 	// SHA-256, FIPS 180-4.
@@ -154,7 +166,8 @@ vectors_run :: proc "contextless" () {
 		passed &&= hkdf_sha256_expand(&pseudorandom, &info, 42, &result, &error) == 42 && same_as_hex(output[:42], "3cb25f25faacd57a90434f64d0362f2a2d2d0a90cf1a5a4c5db02d56ecc4c5bf34007208d5b887185865")
 		record_vector("HKDF-SHA-256", "RFC 5869 A.1", passed)
 	}
-	// X25519, RFC 7748 5.2 and 6.1; a point of order 1 gives Not_Authentic.
+	// X25519, RFC 7748 5.2 and 6.1; the point 1, of small order, gives
+	// Bad_Value: its shared secret would be 32 zero bytes.
 	{
 		scalar := bytes_from_hex(key_buffer[:], "a546e36bf0527c9d3b16154b82465edd62144c0ac1fc5a18506a2244ba449ac4")
 		point := bytes_from_hex(nonce_buffer[:], "e6db6867583030db3594c1a424b15f7c726624ec26b3353b10a903a6d0ab1c4c")
@@ -163,10 +176,24 @@ vectors_run :: proc "contextless" () {
 		bob_public := bytes_from_hex(nonce_buffer[:], "de9edb7d7b7dc1b4d35b61c2ece435373f8343c85b78674dadfc7e146f882b4f")
 		passed &&= x25519(&alice, &bob_public, &result, &error) == 32 && same_as_hex(output[:32], "4a5d9d5ba4ce2de1728e3bf480350f25e07e21c947d19e3376f09b3c1e161742")
 		zero_point := bytes_from_hex(nonce_buffer[:], "0100000000000000000000000000000000000000000000000000000000000000")
-		refused := x25519(&alice, &zero_point, &result, &error) < 0 && error.kind == i64(errors.Kind.Not_Authentic)
+		output[0] = 0xA5
+		refused := x25519(&alice, &zero_point, &result, &error) < 0 && error.kind == i64(errors.Kind.Bad_Value) && output[0] == 0xA5
 		record_vector("X25519", "RFC 7748 5.2, 6.1", passed, true, refused)
 	}
-	// Ed25519, RFC 8032 7.1 test 2; a changed signature gives Not_Authentic.
+	// Ed25519, RFC 8032 7.1 test 1 (an empty message) and test 2; a changed
+	// signature gives Not_Authentic.
+	{
+		secret := bytes_from_hex(key_buffer[:], "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60")
+		message := ""
+		passed := ed25519_public_key(&secret, &result, &error) == 32 && same_as_hex(output[:32], "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a")
+		public := string(bytes_from_hex(nonce_buffer[:], "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a"))
+		passed &&= ed25519_sign(&secret, &message, &result, &error) == 64 && same_as_hex(output[:64], "e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e065224901555fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b")
+		signature := string(output[:64])
+		passed &&= ed25519_verify(&public, &message, &signature, &error) == 0
+		output[40] ~= 1
+		refused := ed25519_verify(&public, &message, &signature, &error) < 0 && error.kind == i64(errors.Kind.Not_Authentic)
+		record_vector("Ed25519", "RFC 8032 7.1 test 1", passed, true, refused)
+	}
 	{
 		secret := bytes_from_hex(key_buffer[:], "4ccd089b28ff96da9db6c346ec114e0f5b8a319f35aba624da8cf6ed4fb8a6fb")
 		message := bytes_from_hex(additional_buffer[:], "72")
@@ -177,7 +204,7 @@ vectors_run :: proc "contextless" () {
 		passed &&= ed25519_verify(&public, &message, &signature, &error) == 0
 		output[1] ~= 1
 		refused := ed25519_verify(&public, &message, &signature, &error) < 0 && error.kind == i64(errors.Kind.Not_Authentic)
-		record_vector("Ed25519", "RFC 8032 7.1", passed, true, refused)
+		record_vector("Ed25519", "RFC 8032 7.1 test 2", passed, true, refused)
 	}
 }
 
@@ -278,12 +305,12 @@ draw :: proc "contextless" (window: ^display.Window) {
 	interface.text_put(&builder, " ns")
 	interface.label_value_line(&frame, interface.column_take(&column, LINE), "size", interface.text_of(&builder), graphics.COLOR_TEXT, 120)
 
-	content = interface.card(&frame, {8, 116, WIDTH - 16, 252}, "THE VECTORS", "through the exports of the module, live", graphics.COLOR_PROGRAM)
+	content = interface.card(&frame, {8, 116, WIDTH - 16, 276}, "THE VECTORS", "through the exports of the module, live", graphics.COLOR_PROGRAM)
 	column = interface.column_of(content)
 	cells: [4]interface.Area
-	sizes := [4]interface.Size{interface.characters(20), interface.characters(20), interface.characters(8), interface.share()}
+	sizes := [4]interface.Size{interface.characters(20), interface.characters(22), interface.characters(8), interface.share()}
 	interface.row_split(interface.column_take(&column, LINE), sizes[:], cells[:], 16)
-	interface.table_header(&frame, cells[:], {"primitive", "standard", "vector", "a changed byte"}, {.Left, .Left, .Left, .Left})
+	interface.table_header(&frame, cells[:], {"primitive", "standard", "vector", "a bad input"}, {.Left, .Left, .Left, .Left})
 	for vector, index in vectors[:vector_count] {
 		line := interface.column_take(&column, LINE)
 		interface.table_band(&frame, {line.x - 8, line.y, line.width + 16, line.height}, index)
@@ -292,11 +319,11 @@ draw :: proc "contextless" (window: ^display.Window) {
 		interface.cell_text(&frame, cells[1], vector.standard, graphics.COLOR_DIM)
 		interface.cell_text(&frame, cells[2], vector.passed ? "passed" : "FAILED", vector.passed ? graphics.COLOR_PROGRAM : graphics.COLOR_FAILED)
 		if vector.checks {
-			interface.cell_text(&frame, cells[3], vector.refused ? "Not_Authentic, no byte given" : "NOT refused", vector.refused ? graphics.COLOR_PROGRAM : graphics.COLOR_FAILED)
+			interface.cell_text(&frame, cells[3], vector.refused ? "refused, no byte given" : "NOT refused", vector.refused ? graphics.COLOR_PROGRAM : graphics.COLOR_FAILED)
 		}
 	}
 
-	content = interface.card(&frame, {8, 376, WIDTH - 16, HEIGHT - 384}, "THE SPEEDS", "the mean of 100 calls, system.nanoseconds", graphics.COLOR_MACHINE)
+	content = interface.card(&frame, {8, 400, WIDTH - 16, HEIGHT - 408}, "THE SPEEDS", "the mean of 100 calls, system.nanoseconds", graphics.COLOR_MACHINE)
 	column = interface.column_of(content)
 	most: u64 = 1
 	for speed in speeds[:speed_count] {

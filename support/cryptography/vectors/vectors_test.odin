@@ -9,7 +9,6 @@ import "core:testing"
 import "support:cryptography/aes"
 import "support:cryptography/chacha20poly1305"
 import "support:cryptography/ed25519"
-import hash "support:cryptography/compatibility_hash"
 import "support:cryptography/hkdf"
 import "support:cryptography/hmac"
 import "support:cryptography/poly1305"
@@ -53,6 +52,25 @@ chacha20_poly1305_of_rfc_8439 :: proc(t: ^testing.T) {
 	testing.expect_value(t, string(opened), SUNSCREEN)
 	sealed[3] ~= 1
 	testing.expect(t, !chacha20poly1305.open(&ctx, opened, iv, aad, sealed, tag[:]))
+	// A refused open leaves no byte of the text in its output.
+	for byte in opened {
+		testing.expect_value(t, byte, 0)
+	}
+	sealed[3] ~= 1
+	// A changed byte of the additional data, and a changed nonce.
+	aad[0] ~= 1
+	testing.expect(t, !chacha20poly1305.open(&ctx, opened, iv, aad, sealed, tag[:]))
+	aad[0] ~= 1
+	iv[11] ~= 1
+	testing.expect(t, !chacha20poly1305.open(&ctx, opened, iv, aad, sealed, tag[:]))
+	iv[11] ~= 1
+	testing.expect(t, chacha20poly1305.open(&ctx, opened, iv, aad, sealed, tag[:]))
+	// An empty text with empty additional data: a tag alone, which opens.
+	empty_tag: [16]byte
+	chacha20poly1305.seal(&ctx, nil, empty_tag[:], iv, nil, nil)
+	testing.expect(t, chacha20poly1305.open(&ctx, nil, iv, nil, nil, empty_tag[:]))
+	empty_tag[15] ~= 1
+	testing.expect(t, !chacha20poly1305.open(&ctx, nil, iv, nil, nil, empty_tag[:]))
 }
 
 // FIPS 180-4 examples "abc".
@@ -78,6 +96,30 @@ sha2_of_abc :: proc(t: ^testing.T) {
 	testing.expect_value(t, hex_of(digest_512[:]), "ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f")
 }
 
+// FIPS 180-4 examples of two blocks: the padding goes into a second block.
+// The message of 448 bits for SHA-256, of 896 bits for SHA-384 and SHA-512.
+@(test)
+sha2_of_two_blocks :: proc(t: ^testing.T) {
+	digest_256: [32]byte
+	digest_384: [48]byte
+	digest_512: [64]byte
+	context_256: sha2.Context_256
+	sha2.init_256(&context_256)
+	sha2.update(&context_256, transmute([]byte)string("abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"))
+	sha2.final(&context_256, digest_256[:])
+	testing.expect_value(t, hex_of(digest_256[:]), "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1")
+	long := transmute([]byte)string("abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmnhijklmnoijklmnopjklmnopqklmnopqrlmnopqrsmnopqrstnopqrstu")
+	context_512: sha2.Context_512
+	sha2.init_384(&context_512)
+	sha2.update(&context_512, long)
+	sha2.final(&context_512, digest_384[:])
+	testing.expect_value(t, hex_of(digest_384[:]), "09330c33f71147e83d192fc782cd1b4753111b173b3b05d22fa08086e3b0f712fcc7c71a557e2db966c3e9fa91746039")
+	sha2.init_512(&context_512)
+	sha2.update(&context_512, long)
+	sha2.final(&context_512, digest_512[:])
+	testing.expect_value(t, hex_of(digest_512[:]), "8e959b75dae313da8cf4f72814fc143f8f7779c6eb9f7fa17299aeadb6889018501d289e4900f7e4331b99dec4b5433ac7d329eeb6dd26545e96e55b874be909")
+}
+
 // RFC 4231 test case 2.
 @(test)
 hmac_of_rfc_4231 :: proc(t: ^testing.T) {
@@ -98,7 +140,23 @@ hkdf_of_rfc_5869 :: proc(t: ^testing.T) {
 	testing.expect_value(t, hex_of(output[:]), "3cb25f25faacd57a90434f64d0362f2a2d2d0a90cf1a5a4c5db02d56ecc4c5bf34007208d5b887185865")
 	hkdf.extract_and_expand(.SHA256, nil, ikm, nil, output[:])
 	testing.expect_value(t, hex_of(output[:]), "8da4e775a563c18f715f802a063c5a31b8a11f5c5ee1879ec3454e5f3c738d2d9d201395faa4b61a96c8")
-	_ = hash.Algorithm.SHA384
+}
+
+// RFC 5869 A.2: long inputs of 80 bytes, 82 bytes of output.
+@(test)
+hkdf_of_rfc_5869_with_long_inputs :: proc(t: ^testing.T) {
+	ikm, salt, info: [80]byte
+	for index in 0 ..< 80 {
+		ikm[index] = u8(index)
+		salt[index] = u8(0x60 + index)
+		info[index] = u8(0xb0 + index)
+	}
+	pseudorandom_key: [32]byte
+	hkdf.extract(.SHA256, salt[:], ikm[:], pseudorandom_key[:])
+	testing.expect_value(t, hex_of(pseudorandom_key[:]), "06a6b88c5853361a06104c9ceb35b45cef760014904671014a193f40c15fc244")
+	output: [82]byte
+	hkdf.expand(.SHA256, pseudorandom_key[:], info[:], output[:])
+	testing.expect_value(t, hex_of(output[:]), "b11e398dc80327a1c8e7f78c596a49344f012eda2d4efad8a050cc4c19afa97c59045a99cac7827271cb41c65e590e09da3275600c2f09b8367793a9aca3db71cc30c58179ec3e87c14c01d5c1f3434f1d87")
 }
 
 // RFC 7748 5.2 (the first vector) and 6.1.
@@ -116,6 +174,52 @@ x25519_of_rfc_7748 :: proc(t: ^testing.T) {
 	testing.expect_value(t, hex_of(bob_public[:]), "de9edb7d7b7dc1b4d35b61c2ece435373f8343c85b78674dadfc7e146f882b4f")
 	x25519.scalarmult(shared[:], alice, bob_public[:])
 	testing.expect_value(t, hex_of(shared[:]), "4a5d9d5ba4ce2de1728e3bf480350f25e07e21c947d19e3376f09b3c1e161742")
+	// RFC 7748 5.2, the second vector: its u has the top bit set, which the
+	// function must mask.
+	x25519.scalarmult(out[:], bytes_of("4b66e9d4d1b4673c5ad22691957d6af5c11b6421e0ea01d42ca4169e7918ba0d"), bytes_of("e5210f12786811d3f4b7959d0538ae2c31dbe7106fc03c3efc4cd549c715a493"))
+	testing.expect_value(t, hex_of(out[:]), "95cbde9476e8907d7aade45cb4b873f88b595a68799fa152e6f8f7647aac7957")
+}
+
+// RFC 7748 5.2, the iterations: k and u start as 9; each round gives
+// k = X25519(k, u), u = the old k. After 1 and after 1000 rounds.
+@(test)
+x25519_iterations_of_rfc_7748 :: proc(t: ^testing.T) {
+	k, u, next: [32]byte
+	k[0], u[0] = 9, 9
+	for round in 1 ..= 1000 {
+		x25519.scalarmult(next[:], k[:], u[:])
+		u = k
+		k = next
+		if round == 1 {
+			testing.expect_value(t, hex_of(k[:]), "422c8e7a6227d7bca1350b3e2bb7279f7897b87bb6854b783c60e80311ae3079")
+		}
+	}
+	testing.expect_value(t, hex_of(k[:]), "684cf59ba83309552800ef566f2f4d3c1c3887c49360e3875f2eb94d99532c51")
+}
+
+// The points of small order, and the encodings of 0, 1 and -1 above p: the
+// shared secret is 32 zero bytes with each scalar (RFC 7748, section 6.1),
+// which the module refuses.
+LOW_ORDER_POINTS :: [?]string {
+	"0000000000000000000000000000000000000000000000000000000000000000", // 0
+	"0100000000000000000000000000000000000000000000000000000000000000", // 1
+	"e0eb7a7c3b41b8ae1656e3faf19fc46ada098deb9c32b1fd866205165f49b800", // order 8
+	"5f9c95bca3508c24b1d0b1559c83ef5b04445cc4581c8e86d8224eddd09f1157", // order 8
+	"ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f", // p - 1
+	"edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f", // p
+	"eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f", // p + 1
+}
+
+@(test)
+x25519_of_points_of_small_order :: proc(t: ^testing.T) {
+	scalar := bytes_of("a546e36bf0527c9d3b16154b82465edd62144c0ac1fc5a18506a2244ba449ac4")
+	points := LOW_ORDER_POINTS
+	for point in points {
+		out: [32]byte
+		out[0] = 0xFF
+		x25519.scalarmult(out[:], scalar, bytes_of(point))
+		testing.expectf(t, out == [32]byte{}, "the point %s gave %s", point, hex_of(out[:]))
+	}
 }
 
 // RFC 8032 7.1, tests 1 and 2, and a changed signature that verify refuses.
@@ -145,6 +249,34 @@ ed25519_of_rfc_8032 :: proc(t: ^testing.T) {
 	}
 }
 
+// The checks of a strict verify (RFC 8032, section 5.1.7, and the decoding
+// of section 5.1.3), each with a signature that a lax verify accepts:
+// - S + L: the signature of test 1 with S plus the order L of the group. The
+//   equation holds with S mod L; a strict verify refuses an S that is not
+//   under L (computed: S + L of test 1, little-endian).
+// - A public key of small order (the neutral point, encoded 01 00 ... 00), R
+//   the neutral point, S = 0: [0]B = R + [k]A holds for each message.
+// - The same, with R encoded as y = p + 1 (not canonical, ee ff ... ff 7f).
+//   With a public key of small order, this case cannot show the check of R
+//   alone; a signature with a valid key and a non-canonical R needs an R with
+//   y under 19, which no signer can make on purpose.
+// The cofactored form of the check has no test here: its vectors need points
+// with a part of small order (the "Taming the many EdDSAs" set), which this
+// test does not have.
+@(test)
+ed25519_strict_verify :: proc(t: ^testing.T) {
+	public_key: ed25519.Public_Key
+	testing.expect(t, ed25519.public_key_set_bytes(&public_key, bytes_of("d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a")))
+	testing.expect(t, !ed25519.verify(&public_key, nil, bytes_of("e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e065224901554c8c7872aa064e049dbb3013fbf29380d25bf5f0595bbe24655141438e7a101b")))
+	neutral := bytes_of("0100000000000000000000000000000000000000000000000000000000000000")
+	small_order_key: ed25519.Public_Key
+	if ed25519.public_key_set_bytes(&small_order_key, neutral) {
+		message := transmute([]byte)string("any message")
+		testing.expect(t, !ed25519.verify(&small_order_key, message, bytes_of("01000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")))
+		testing.expect(t, !ed25519.verify(&small_order_key, message, bytes_of("eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f0000000000000000000000000000000000000000000000000000000000000000")))
+	}
+}
+
 // The GCM specification of McGrew and Viega, test case 4 (AES-128).
 @(test)
 aes_128_gcm_test_case_4 :: proc(t: ^testing.T) {
@@ -160,6 +292,29 @@ aes_128_gcm_test_case_4 :: proc(t: ^testing.T) {
 	testing.expect_value(t, hex_of(tag[:]), "5bc94fbc3221a5db94fae95ae7121a47")
 	opened := make([]byte, len(plaintext), context.temp_allocator)
 	testing.expect(t, aes.open_gcm(&ctx, opened, iv, aad, sealed, tag[:]))
+	testing.expect_value(t, hex_of(opened), hex_of(plaintext))
 	tag[0] ~= 1
 	testing.expect(t, !aes.open_gcm(&ctx, opened, iv, aad, sealed, tag[:]))
+	// A refused open leaves no byte of the text in its output.
+	for byte in opened {
+		testing.expect_value(t, byte, 0)
+	}
+}
+
+// The GCM specification, test cases 1 and 2 (AES-128, a key and a nonce of
+// zeros): an empty text with empty additional data, then one block of
+// zeros.
+@(test)
+aes_128_gcm_test_cases_1_and_2 :: proc(t: ^testing.T) {
+	key, iv: [16]byte
+	ctx: aes.Context_GCM
+	aes.init_gcm(&ctx, key[:])
+	tag: [16]byte
+	aes.seal_gcm(&ctx, nil, tag[:], iv[:12], nil, nil)
+	testing.expect_value(t, hex_of(tag[:]), "58e2fccefa7e3061367f1d57a4e7455a")
+	testing.expect(t, aes.open_gcm(&ctx, nil, iv[:12], nil, nil, tag[:]))
+	zeros, sealed: [16]byte
+	aes.seal_gcm(&ctx, sealed[:], tag[:], iv[:12], nil, zeros[:])
+	testing.expect_value(t, hex_of(sealed[:]), "0388dace60b6a392f328c2b971b2fe78")
+	testing.expect_value(t, hex_of(tag[:]), "ab6e47d42cec13bdf53a67b21257bddf")
 }

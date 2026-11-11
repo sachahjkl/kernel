@@ -3,6 +3,7 @@
 ;   copy_bytes_with_overlap    (destination, source, count)
 ;   fill_bytes_with_value      (destination, value, count)
 ;   erase_secret_bytes         (destination, count)
+;   erase_stack_below_the_caller ()
 ; Each gives the destination. The kernel tool links this file in every
 ; module, in the kernel and in the boot program, and builds them without
 ; -no-crt: with it, Odin gives its own functions, loops of one byte, two of
@@ -255,10 +256,42 @@ erase_secret_bytes:
 .done:
 	ret
 
+; erase_stack_below_the_caller: no argument, no result. Writes 0 in the
+; STACK_ERASE_SIZE bytes below the stack pointer of its caller: the frames of
+; the procedures that the caller called and that returned, which can still
+; hold a key, an expanded key or a hash state. A cryptographic export calls
+; it after its work, and the random generator after a refill and a reseed.
+;
+; Why 16 KiB is enough: the largest frames below an export of the module
+; cryptography are its own copies (8160 bytes of HKDF output and 1024 bytes of
+; info, or 4096 bytes of a message to sign) and the frames of the code of the
+; origin under them: SHA-512 and HMAC states of some hundred bytes, the
+; points of edwards25519 (160 bytes each, a few at once), the counter blocks
+; of AES (ct64, 4 blocks of 16 bytes and the bitsliced state). Together they
+; stay under 12 KiB; 16 KiB leaves room. The area is in the stack of the
+; thread: the main stack has 256 KiB and a thread 64 KiB, and the exports
+; run near their top.
+;
+; Writing below the stack pointer is safe here: the interrupts and the
+; kernel entries of a program use the kernel stack, so nothing lives below
+; the stack pointer of a program. The direction flag is clear at each call.
+%ifndef STACK_ERASE_SIZE
+%define STACK_ERASE_SIZE 16384
+%endif
+erase_stack_below_the_caller:
+	; At the entry, rsp points to the return address: each byte below it is
+	; free.
+	lea rdi, [rsp - STACK_ERASE_SIZE]
+	mov rcx, STACK_ERASE_SIZE
+	xor eax, eax
+	rep stosb
+	ret
+
 global copy_bytes_without_overlap
 global copy_bytes_with_overlap
 global fill_bytes_with_value
 global erase_secret_bytes
+global erase_stack_below_the_caller
 
 ; Names that the compiler calls.
 %ifdef HOST

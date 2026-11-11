@@ -95,9 +95,9 @@ grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 	case "errors":
 		return {.Store, .Image, .Inspect, .Connect} // It makes errors in its store, loads modules and starts fault from the boot image, counts the locks, and asks for connections that the root service refuses (callable_of gives it none).
 	case "imports":
-		return {.Inspect, .Image}
+		return {.Inspect, .Image} // It loads modules of the boot image, and measures with the cycle counter.
 	case "cryptography_vectors":
-		return {.Image} // It reads the hash of the module cryptography in the boot image. // It loads modules of the boot image, and measures with the cycle counter.
+		return {.Image} // It reads the hash of the module cryptography in the boot image.
 	case "net":
 		return {.Inspect, .Network} // It measures with the cycle counter.
 	case "server":
@@ -389,7 +389,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// The random seed of the system: before the first program starts.
 	{
 		seed := random.entropy_gather(random.sources_of_the_processor(), &entropy_report)
-		random.generator_seed(&program_generator, &seed)
+		if !random.generator_seed(&program_generator, &seed, entropy_report.strength) {
+			// BLAKE3 does not give 32 zero bytes in practice; if it does, root
+			// says why it cannot start a program, instead of a stop at its
+			// first draw.
+			fail("the random seed of the system is 32 zero bytes: no program can get a seed", .Bad_Operation)
+		}
 		report := &entropy_report
 		system.log("root: the random seed of the system, strength ", random.seed_strength_names[report.strength], ": rdseed ", report.rdseed_present ? "present" : "absent", ", ", u64(report.rdseed_good), " good values, ", u64(report.rdseed_refused), " refused; rdrand ", report.rdrand_present ? "present" : "absent", ", ", u64(report.rdrand_good), " good, ", u64(report.rdrand_refused), " refused; the cycle counter, ", u64(report.jitter_samples), " samples, ", u64(report.jitter_distinct), " distinct low bytes")
 	}

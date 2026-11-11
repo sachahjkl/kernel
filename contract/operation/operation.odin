@@ -725,6 +725,11 @@ CONTEXT_LOG :: 14 // The log of the kernel.
 // not use the values 9 to 12 for another role.
 CONTEXT_VALUE_SEED :: 9
 CONTEXT_VALUE_SEED_COUNT :: 4
+// The value 15: the strength of the seed of the system, from which the seed
+// of the program comes (support/random, Seed_Strength): 1 weak (the cycle
+// counter only), 2 processor (rdrand), 3 entropy (rdseed). The starter
+// writes it with the seed.
+CONTEXT_VALUE_SEED_STRENGTH :: 15
 CONTEXT_BUDGET :: 15 // The budget of the program.
 // The value that the root service fixes for each program that it starts
 // with a surface or a terminal: values[13] is the address of the settings

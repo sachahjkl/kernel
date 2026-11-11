@@ -15,7 +15,7 @@ What it means here:
 
 ## 2. The origin, and its license
 
-- **Origin**: Odin's `core:crypto`, from the compiler that the flake pins: the tag `dev-2026-05` of Odin (nixpkgs takes it from `https://github.com/odin-lang/Odin/archive/refs/tags/dev-2026-05.tar.gz`).
+- **Origin**: Odin's `core:crypto`, from the compiler that the flake pins: the tag `dev-2026-05` of Odin (nixpkgs takes it from `https://github.com/odin-lang/Odin/archive/refs/tags/dev-2026-05.tar.gz`). The flake applies a patch to the compiler, in `src/` only; `core/` is the tag, and the BLAKE3 hash of each origin file proves it.
 - **License of Odin, and of `core:crypto`** (its README: "This library is made available under the zlib license"): the zlib license, in `support/cryptography/LICENSE.odin.txt`. Its second clause, "Altered source versions must be plainly marked as such", is met by the first line of each file that is taken.
 - **fiat-crypto**: the field arithmetic of `core:crypto/_fiat` is a port of fiat-crypto, which gives three licenses. Odin chose BSD-1-Clause; its text is in `support/cryptography/LICENSE.fiat-crypto.txt`, with the first part that is taken.
 - **Review**: the README of `core:crypto` says that the packages "have not received independent third party review". The system relies on the RFC test vectors (section 5) and on the timing rules of the origin. It does not claim more.
@@ -40,11 +40,17 @@ What it means here:
 - the origin file, under `ODIN_ROOT` of the compiler that built the tool, has the BLAKE3 hash of the manifest. If not, the compiler of the flake changed;
 - the origin with the listed changes is the file of the repository, byte for byte.
 
-The listed changes, all in `tools/kerneltool/cryptography_origin.odin`:
+The listed changes, all in `tools/kerneltool/cryptography_origin.odin` (`cryptography_import_changes`, applied in this order):
 1. The first line: "// Altered source: Odin dev-2026-05, <origin path>; only its imports changed (...)".
 2. `"core:crypto"` becomes `crypto "support:cryptography/compatibility_crypto"`.
-3. `"core:crypto/` becomes `"support:cryptography/`.
-4. `"core:encoding/endian"`, `"core:math/bits"` and `"core:bytes"` become the compatibility packages, with the name of the origin as their alias.
+3. `"core:crypto/hash"` becomes `hash "support:cryptography/compatibility_hash"` (before the next rule, which would send it to a copy of the origin package).
+4. `"core:crypto/` becomes `"support:cryptography/`.
+5. `"core:encoding/endian"`, `"core:math/bits"` and `"core:bytes"` become the compatibility packages, with the name of the origin as their alias.
+
+The check also covers the folders, not only the listed files: Odin compiles each `.odin` file of a package folder, so a new file in a folder of a copy would change the code with no line of a manifest.
+- It walks each folder of `support/cryptography`. Each `.odin` file must be a line of `origin.manifest` or a line of `system_files.manifest`, and no file is in both or two times.
+- `system_files.manifest` lists the files that the system wrote (the compatibility layer, the files in the place of a hardware dispatch, the tests), each with its BLAKE3 hash. A change of one of them fails the check until a reviewer writes its new hash: `kerneltool cryptography-system-hashes` prints the lines.
+- An origin path starts with `core/crypto/` and holds no `..`; a file of the repository starts with `support/cryptography/` and holds no `..`. A line cannot take a file from another part of Odin or of the host.
 
 A new file comes with `kerneltool cryptography-take <origin> <file>`, which writes it and prints its line of the manifest.
 
@@ -92,10 +98,24 @@ So the code that runs is the portable code of the origin: the bitsliced, constan
 | `ed25519_public_key`, `ed25519_sign`, `ed25519_verify` | private key or public key, message, signature, error | 32 bytes, 64 bytes, or 0 / `Not_Authentic` |
 
 **The forms of the system.**
-- **The caller supplies each byte.** A Text parameter is the bytes of the caller; the result is a buffer of the caller. A buffer that is too small gets no byte, and the count says the size that it needs (the rule of a Text result).
-- **A failure is an error record.** A key or a nonce of another size gives `Too_Small`, `Too_Long` or `Empty`, with the number of the argument and the size that it must have. A tag or a signature that does not verify gives the new kind `Not_Authentic` (`contract/errors`, with its sentence in `support/sentence`). An open writes no byte of a text that is not authentic: it erases what it wrote. A caller cannot take a failed open for a success, because the count is negative.
-- **Secrets are erased.** Each export copies a key into its own frame and erases the copy before it returns. The caller erases its own copies.
-- **No hidden state, no allocation.** The code of the origin runs with a zero `context`. `runtime.default_context()` stores the default random generator of the runtime, whose state is thread-local, and a module has no thread-local data (the convert step of the tool refuses it).
+- **The caller supplies each byte.** A Text parameter is the bytes of the caller; the result is a buffer of the caller. For a seal, a hash or a key, a buffer that is too small gets no byte, and the count says the size that it needs (the rule of a Text result). For an open, a buffer that is too small is the error `Too_Small` with a negative count: a caller that reads a count of zero or more as a success must not read the old bytes of its buffer as an authentic text.
+- **Each byte of the caller is read once.** Another thread of the caller, or another program that can write the memory of an argument, can change it during the call. So the module reads the header of each Text and of the result once, at the entry, and copies each input that the code of the origin reads more than once into its own memory, with a limit:
+
+| Input | Why the origin reads it more than once | Copy, and its limit |
+|---|---|---|
+| The sealed text of an open | The tag is checked over the text, then the text is decrypted: a change between the two gives a forged text with a positive count | Into the result (each byte read once), then the open in place; the tag into the module |
+| The nonce, the additional data | The nonce makes the key of Poly1305 and the stream; the additional data is short | Into the module: 12 bytes; 1024 bytes |
+| The message of `ed25519_sign` | It is hashed two times, for r and for the digest of R, A and M: two signatures with one r and two messages give the private key | Into the module: 4096 bytes (the content of a TLS 1.3 CertificateVerify has 146) |
+| The message and the signature of `ed25519_verify` | Read once by the origin; copied for one rule | Into the module: 4096 and 64 bytes |
+| The info of `hkdf_sha256_expand` | Read once for each block of output | Into the module: 1024 bytes (a TLS 1.3 HkdfLabel has 514) |
+| The output of HKDF, HMAC, Ed25519 | The origin computes in its output and reads it back (each block of HKDF; R of a signature) | Made in the module, copied to the result at the end |
+
+- **Which arguments must be private memory of the caller**: the result of each export. A seal computes the tag over the bytes that it wrote in the result, and an open decrypts in place in the result after it copied the sealed text there; a result that another party writes during the call gets a tag over its bytes, or a text that was not checked. The text of a seal and the input of a hash are read once and can be in shared memory; the hash is then of the bytes that the call read.
+- **A result that overlaps an argument** with an offset is the error `Bad_Value` for argument 5 (the code of the origin would stop the program); a result at the same address as the text (in place) is right.
+- **A nonce never comes two times with one key**: that is the duty of the caller. With ChaCha20-Poly1305, a repeated nonce gives the XOR of the two texts and the key of Poly1305; with AES-GCM, it gives the key of GHASH, and with it forgeries.
+- **A failure is an error record.** A key or a nonce of another size gives `Too_Small`, `Too_Long` or `Empty`, with the number of the argument and the size that it must have. A tag or a signature that does not verify gives the new kind `Not_Authentic` (`contract/errors`, with its sentence in `support/sentence`). An open leaves no byte of a text that is not authentic in the result: it erases what it wrote. A caller cannot take a failed open for a success, because the count is negative. X25519 gives `Bad_Value` for argument 2 for a point of small order, whose shared secret is 32 zero bytes: it is a point that shares no secret, not a text that is not authentic.
+- **Secrets are erased, and so is the stack below each export.** Each export copies a key into its own frame and erases the copy. The frames of the code of the origin under it also hold secrets: the SHA-512 of an Ed25519 private key (its scalar and its nonce prefix), the expanded AES key, the words of the ChaCha20 key, the states of SHA-2 and HMAC. So each export, after its work, calls `erase_stack_below_the_caller` (`runtime/memory.asm`): it writes 0 in the 16 KiB below the stack pointer. The largest frames under an export are its own copies (8160 bytes of HKDF output and 1024 bytes of info, or 4096 bytes of a message) and the frames of the origin under them (states of some hundred bytes, points of 160 bytes, the bitsliced AES state), together under 12 KiB. This is a reasoned size, not a measure (the coordinator can measure the frames with `llc -stack-size-section`). What stays: the registers after the return, the copies that the caller makes, and the memory of the caller. The cost is one `rep stosb` of 16 KiB in each call, some hundred nanoseconds.
+- **One call at a time per thread, no hidden state, no allocation.** The code of the origin runs with a zero `context`. `runtime.default_context()` stores the default random generator of the runtime, whose state is thread-local, and a module has no thread-local data (the convert step of the tool refuses it).
 - **A key of zeros is valid** for the AEADs and HKDF, as their standards say. X25519 refuses the result of zeros, not the key.
 
 **What the module boundary costs**, measured by `cryptography_vectors` on the machine (the mean of 100 calls, host load about 20):
