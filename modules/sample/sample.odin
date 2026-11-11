@@ -6,7 +6,9 @@
 // Change or Append.
 // The console calls it with load("sample"), isolate("sample") or
 // connect("sample"): the module has an entry, so the same module also runs
-// as a program that serves its exports.
+// as a program that serves its exports. A service holds no export that is
+// wrong on purpose: those are in the module hostile_exports, which no
+// service holds.
 package sample
 
 import "contract:errors"
@@ -109,48 +111,6 @@ spoil :: proc "c" (memory: system.Lent({.Read})) -> i64 {
 	return i64(status)
 }
 
-held: system.Handle
-
-// keep remembers the handle that the caller lent, for a later call of kept.
-@(export, link_name = "keep")
-keep :: proc "c" (memory: system.Lent({.Read})) -> i64 {
-	held = memory.handle
-	return total(memory)
-}
-
-// kept uses the handle that keep remembered. The result is the status of
-// the kernel: 2 is "no handle", because a lent handle ends with its call.
-@(export, link_name = "kept")
-kept :: proc "c" () -> i64 {
-	bytes, status := bytes_of(held, {})
-	if status == .Ok {
-		system.memory_unmap(raw_data(bytes))
-	}
-	return i64(status)
-}
-
-view: []u8
-
-// hold maps a memory object that the caller lent, keeps the mapping for a
-// later call of look, and gives the first byte.
-@(export, link_name = "hold")
-hold :: proc "c" (memory: system.Lent({.Read})) -> i64 {
-	bytes, status := bytes_of(memory.handle, {})
-	if status != .Ok {
-		return -i64(status)
-	}
-	view = bytes
-	return i64(bytes[0])
-}
-
-// look reads the first byte through the mapping that hold kept. After an
-// isolated call the caller revoked what it lent: the kernel removed the
-// mapping, and the program of this module stops on a page fault.
-@(export, link_name = "look")
-look :: proc "c" () -> i64 {
-	return len(view) == 0 ? -1 : i64(view[0])
-}
-
 // A reading of a sensor: one record of 40 bytes of a table.
 Reading :: struct {
 	sensor:  i64,
@@ -242,16 +202,6 @@ upper_case :: proc "c" (text: ^system.Bytes_To_Change) -> i64 {
 		}
 	}
 	return changed
-}
-
-// append_past_capacity writes 4 readings after the capacity of the table, against the rule of the direction Append: a test of the caller. In a direct call the caller and the module share one address space, and the caller has no protection. In an isolated call the caller copies back the readings up to the capacity only.
-@(export, link_name = "append_past_capacity")
-append_past_capacity :: proc "c" (readings: ^system.Table_To_Append(Reading)) -> i64 {
-	for number in readings.capacity ..< readings.capacity + 4 {
-		readings.records[number] = {sensor = -1, time = -1, value = -1, minimum = -1, maximum = -1}
-	}
-	readings.count = readings.capacity + 4
-	return 4
 }
 
 // The same module as a program: a service that serves the exports above.

@@ -82,6 +82,12 @@ sample_file: []u8
 sample_base: u64
 host: system.Call_Connection
 service: system.Call_Connection
+// The module of the exports that are wrong on purpose: in this program and
+// in a call host of its own; no service holds it.
+hostile_file: []u8
+hostile_base: u64
+hostile_host: system.Call_Connection
+hostile_ready: [Way]bool
 requests: ring.Ring
 ways_ready: [Way]bool
 
@@ -95,6 +101,20 @@ export_of :: proc "contextless" (name: string) -> (index: u32, function: module.
 	index = module.export_find(sample_file, name)
 	function, _ = module.function(sample_file, index)
 	address, _ = module.export_address(sample_file, uintptr(sample_base), index)
+	return
+}
+
+// call_hostile runs one export of hostile_exports in one way.
+call_hostile :: proc "contextless" (way: Way, name: string, arguments: []isolated.Argument) -> (result: i64, status: system.Call_Status) {
+	index := module.export_find(hostile_file, name)
+	function, _ := module.function(hostile_file, index)
+	address, _ := module.export_address(hostile_file, uintptr(hostile_base), index)
+	#partial switch way {
+	case .Direct:
+		result = system.call_direct(hostile_file, address, function, arguments)
+	case .Call_Host:
+		return system.call_isolated(&hostile_host, hostile_file, index, arguments)
+	}
 	return
 }
 
@@ -227,7 +247,16 @@ run_cases :: proc "contextless" () {
 		guard_fill(bytes_of(&memory[2], 6 * 40))
 		arguments[0] = {}
 		arguments[0].table = {records = bytes_of(&memory, 2 * 40), count = 0}
-		result, status = call(way, "append_past_capacity", arguments[:1])
+		// No service holds such an export (a network host could name it).
+		if way == .Service {
+			answer_set(&past.answers[way], module.export_find(sample_file, "append_past_capacity") == 0, "no service holds it")
+			continue
+		}
+		if !hostile_ready[way] {
+			answer_set(&past.answers[way], false, "not reached")
+			continue
+		}
+		result, status = call_hostile(way, "append_past_capacity", arguments[:1])
 		holds := guard_holds(bytes_of(&memory[2], 6 * 40))
 		answer_set(&past.answers[way], way == .Direct ? !holds : holds && status == .Ok, holds ? "the guard holds" : "guard written: one space")
 	}
@@ -503,6 +532,15 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				ways_ready[.Service] = true
 			}
 		}
+	}
+	// The exports that are wrong on purpose: in this program, and in a call host.
+	hostile_file = system.image_find(image, "hostile_exports")
+	if place, loaded := system.module_space_load(&space, hostile_file, &load_error); loaded {
+		hostile_base = space.modules[place].base
+		hostile_ready[.Direct] = true
+	}
+	if hostile_host, status = system.call_host_start(image, image_memory, hostile_file, "hostile host", &load_error); status == .Ok {
+		hostile_ready[.Call_Host] = true
 	}
 	system.log("tables: the ways: direct ", ways_ready[.Direct] ? "ready" : "refused", ", call host ", ways_ready[.Call_Host] ? "ready" : "refused", ", service ", ways_ready[.Service] ? "ready" : "refused")
 

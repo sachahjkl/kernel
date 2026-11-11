@@ -744,7 +744,11 @@ scenario := [?]Step {
 	// with the rights of the description, for the time of the call.
 	{kind = .Type, text = "clear()"},
 	{kind = .Type, text = "isolate(\"sample\")"},
-	{kind = .Wait, text = "[console] sample: 14 commands in a sandboxed program"},
+	{kind = .Wait, text = "[console] sample: 10 commands in a sandboxed program"},
+	// The exports that are wrong on purpose are in a module of their own,
+	// which no service holds.
+	{kind = .Type, text = "isolate(\"hostile_exports\")"},
+	{kind = .Wait, text = "[console] hostile_exports: 4 commands in a sandboxed program"},
 	{kind = .Type, text = "r = Rectangle(1, 2, 30, 4)"},
 	{kind = .Type, text = "area(r)"},
 	{kind = .Wait, text = "[console] 120"},
@@ -780,7 +784,7 @@ scenario := [?]Step {
 	{kind = .Type, text = "hold(b)"},
 	{kind = .Wait, text = "[console] 3"},
 	{kind = .Type, text = "look()"},
-	{kind = .Wait, text = "[console] error: the program sample stopped: page fault"},
+	{kind = .Wait, text = "[console] error: the program hostile_exports stopped: page fault"},
 	// The root service ends one grant of a program that runs. The window of
 	// monitor goes below the console for the picture, then back.
 	{kind = .Drag, x = 900, y = 50, to_x = 900, to_y = 560},
@@ -804,15 +808,21 @@ scenario := [?]Step {
 	// The same descriptions serve a direct call. The module is then in the
 	// console: it has the handles of the console, and kept gives 0.
 	{kind = .Type, text = "unload(\"sample\")"},
-	{kind = .Wait, text = "[console] sample: 14 commands removed, its sandboxed program stops"},
+	{kind = .Wait, text = "[console] sample: 10 commands removed, its sandboxed program stops"},
+	{kind = .Type, text = "unload(\"hostile_exports\")"},
+	{kind = .Wait, text = "[console] hostile_exports: 4 commands removed"},
 	{kind = .Type, text = "clear()"},
 	{kind = .Type, text = "load(\"sample\")"},
-	{kind = .Wait, text = "[console] sample: 14 commands, hash"},
+	{kind = .Wait, text = "[console] sample: 10 commands, hash"},
+	{kind = .Type, text = "load(\"hostile_exports\")"},
+	{kind = .Wait, text = "[console] hostile_exports: 4 commands, hash"},
 	{kind = .Type, text = "g = grow(r, 5)"},
 	{kind = .Type, text = "g.width * g.height + keep(b) + kept()"},
 	{kind = .Wait, text = "[console] 12848"},
 	{kind = .Type, text = "unload(\"sample\")"},
-	{kind = .Wait, text = "[console] sample: 14 commands removed, the module left the memory of the console"},
+	{kind = .Wait, text = "[console] sample: 10 commands removed, the module left the memory of the console"},
+	{kind = .Type, text = "unload(\"hostile_exports\")"},
+	{kind = .Wait, text = "[console] hostile_exports: 4 commands removed, the module left the memory of the console"},
 	{kind = .Type, text = "release(b)"},
 
 	// The temple of Jon, then back to the console.
@@ -1309,7 +1319,7 @@ scenario := [?]Step {
 	// (After the check of the log: these lines do not push the boot
 	// records out of the log.)
 	{kind = .Type, text = "load(\"sample\")"},
-	{kind = .Wait, text = "[console] sample: 14 commands, hash"},
+	{kind = .Wait, text = "[console] sample: 10 commands, hash"},
 	// A table goes into a direct call: the export reads and changes the
 	// memory of the variable, with no copy. A table from where() goes in;
 	// a table from columns() has another record, and the console refuses it.
@@ -1326,24 +1336,24 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[console] error: sum_values: argument 1 is Table(Reading, Read), not Table(Reading)"},
 	{kind = .Shot, text = "table_argument"},
 	{kind = .Type, text = "unload(\"sample\")"},
-	{kind = .Wait, text = "[console] sample: 14 commands removed, the module left the memory of the console"},
+	{kind = .Wait, text = "[console] sample: 10 commands removed, the module left the memory of the console"},
 	// A table goes into an isolated call: the rows go into the call
 	// region, and the rows of a Change table come back.
 	{kind = .Type, text = "isolate(\"sample\")"},
-	{kind = .Wait, text = "[console] sample: 14 commands in a sandboxed program"},
+	{kind = .Wait, text = "[console] sample: 10 commands in a sandboxed program"},
 	{kind = .Type, text = "t = readings(4)"},
 	{kind = .Type, text = "scale_values(t, 3)"},
 	{kind = .Type, text = "sum_values(t)"},
 	{kind = .Wait, text = "[console] 300"},
 	{kind = .Type, text = "unload(\"sample\")"},
-	{kind = .Wait, text = "[console] sample: 14 commands removed, its sandboxed program stops"},
+	{kind = .Wait, text = "[console] sample: 10 commands removed, its sandboxed program stops"},
 	// The signature of an export with a table and bytes: one form in the
 	// manual, the console and the errors.
 	{kind = .Type, text = "start(\"manual\")"},
 	{kind = .Wait, text = "root: started manual"},
 	{kind = .Wait, text = "manual: ok, "},
 	{kind = .Front, text = "console"},
-	{kind = .Type, text = "manual.signature(\"sample\", 15)"},
+	{kind = .Type, text = "manual.signature(\"sample\", 11)"},
 	{kind = .Wait, text = "[console] sum_words(words: Table(Word, Change), text: Bytes(Read)) -> Integer"},
 	{kind = .Type, text = "manual.show(\"sample\")"},
 	{kind = .Wait, text = "manual: sample: a program, "},
@@ -1531,10 +1541,13 @@ scenario := [?]Step {
 	{kind = .Call, text = "inspect.modules(\"console\")", expected = "console "},
 	{kind = .Call, text = "inspect.mappings(\"nothing\")", outcome = .Failed, expected = "error: inspect.mappings: the argument program names none of the programs (-2)"},
 	// A table from the host: rows of field values go into the call region
-	// of the service sample, which the root service starts on demand. A
-	// Change table is refused: its rows would not come back.
-	{kind = .Call, text = "sample.sum_values([(0, 0, 10, 10, 10), (1, 1, 20, 20, 20), (2, 2, 30, 30, 30)])", expected = "60"},
+	// of the monitor. A Change table is refused by the tool: its rows would
+	// not come back. The service sample is not reachable from the network
+	// (callable_of("remote")).
+	{kind = .Call, text = "monitor.counts_named([(\"programs\"), (\"processors\")])", expected = "2 rows of Count"},
+	{kind = .Call, text = "monitor.counts_named([(\"programs\"), (\"nothing\")])", outcome = .Failed, expected = "names nothing that exists"},
 	{kind = .Call, text = "sample.scale_values([(0, 0, 10, 10, 10)], 2)", outcome = .Wrong, expected = "error: the parameter readings of sample.scale_values is Table(Reading, Change): a call from the host gives tables to read only"},
+	{kind = .Call, text = "sample.sum_values([(0, 0, 10, 10, 10)])", outcome = .Refused, expected = "no grant"},
 	{kind = .Close, text = "inspect"},
 	{kind = .Close, text = "errors"},
 	{kind = .Record, program = "root", channel = "programs", level = "info", text = "root: errors stopped with code 0"},

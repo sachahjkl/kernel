@@ -89,6 +89,7 @@ module_builds := [?]Module_Build {
 	{name = "probe", source = "modules/probe", image = true},
 	{name = "math", source = "modules/math", image = true},
 	{name = "sample", source = "modules/sample", image = true},
+	{name = "hostile_exports", source = "modules/hostile_exports", image = true},
 	{name = "calendar", source = "modules/calendar", image = true},
 	{name = "calendar_fixed", source = "modules/calendar_fixed", image = true},
 	{name = "calendar_changed", source = "modules/calendar_changed", image = true},

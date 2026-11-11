@@ -259,7 +259,7 @@ things_of :: proc "contextless" (name: string) -> system.Budget_Amounts {
 	case "server":
 		return {pages = 4096, programs = 1, threads = 1} // A table of 32 connections with their buffers, and a large window.
 	case "tables":
-		return {pages = 4096, programs = 2, threads = 2} // A table of 65536 readings in a memory object (640 pages), and a call host with its thread.
+		return {pages = 4096, programs = 3, threads = 3} // A table of 65536 readings in a memory object (640 pages), and two call hosts (sample, hostile_exports) with their threads.
 	}
 	return {pages = 2048, programs = 1, threads = 1}
 }
