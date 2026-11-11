@@ -737,6 +737,11 @@ start :: proc "contextless" (name: string) -> system.Status {
 		grants[.Network_Device in role ? frame.GRANT_RING : block.GRANT_RING] = {block_ring, {.Read, .Write}}
 	}
 	values: [op.CONTEXT_VALUES]u64
+	if name == "randomness" {
+		// The facts of the seed of the system, that only this service has:
+		// the program shows them (docs/RANDOMNESS.md). Facts, not the seed.
+		random.report_values_write(&entropy_report, &values)
+	}
 	grants[op.CONTEXT_LOG] = log_grant(name)
 	copy(slot.name[:len(slot.name) - 1], name) // The connection to the storage service names the program.
 	// The connection to the private store, in the context: the call ring, the

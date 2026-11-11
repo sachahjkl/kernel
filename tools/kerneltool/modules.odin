@@ -63,6 +63,7 @@ module_builds := [?]Module_Build {
 	{name = "tally", source = "programs/tally", image = true},
 	{name = "manual", source = "programs/manual", image = true},
 	{name = "clock", source = "programs/clock", image = true},
+	{name = "randomness", source = "programs/randomness", image = true},
 	{name = "terminal", source = "programs/terminal", image = true},
 	{name = "flood", source = "programs/flood", image = true},
 	{name = "processors", source = "programs/processors", image = true},

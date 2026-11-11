@@ -56,6 +56,8 @@ Step_Kind :: enum {
 	Call, // Call an export of a service from the host (call.odin), through the remote service: what the tool prints has `expected`. With `rows_call`, that call gives the count of rows of the Table. With `repeat`, the tool also measures the round trip and the calls in one second.
 	Peer, // The peer runs the TCP case text (peer_tcp.odin) and checks its answers.
 	Point, // Move the pointer to (x, y) with no press, then read compositor.pointer(): its shape must be the name text (docs/POINTERS.md). With inside_window, (x, y) are from the corner of that window, its title bar included; a negative x is from its right side. It needs the confirmation of the pointer (a Call with pointer before it).
+	Remember, // The rest of the line after the text, in the log after the last Wait, is kept for the step Distinct (a value that the machine drew).
+	Distinct, // Each value that Remember kept in this test part differs from each other one; text names them.
 	Peer_Start, // The peer starts the TCP case text; the next steps run while it runs.
 	Peer_Result, // The end of the case of the last Peer_Start: it must pass. text is its name.
 	Fetch, // The TCP of the host fetches the page text of `server` through QEMU user networking (web_host.odin).
@@ -1969,7 +1971,7 @@ png_encode :: proc(width, height: int, pixels: []u8) -> []u8 {
 
 // machine_test runs a scenario on a boot volume. It passes when each step
 // passes and QEMU ends with the status exit_status.
-machine_test :: proc(steps: []Step, volume: string, output: string, exit_status: int, data_disk: string = TEST_DATA_DISK, user_network := false, disk_server: ^Network_Block_Device = nil) -> bool {
+machine_test :: proc(steps: []Step, volume: string, output: string, exit_status: int, data_disk: string = TEST_DATA_DISK, user_network := false, disk_server: ^Network_Block_Device = nil, processor_without_random := false) -> bool {
 	peer: Peer
 	if !peer_start(&peer) {
 		return false
@@ -1986,7 +1988,7 @@ machine_test :: proc(steps: []Step, volume: string, output: string, exit_status:
 		forward = {host_port = port, listener = &listener}
 	}
 	defer listener_stop(&listener)
-	command, ok := machine_command(volume, output, data_disk, &peer, forward)
+	command, ok := machine_command(volume, output, data_disk, &peer, forward, processor_without_random)
 	if !ok {
 		return false
 	}
@@ -2052,6 +2054,10 @@ machine_test :: proc(steps: []Step, volume: string, output: string, exit_status:
 	}
 	return passed
 }
+
+// The values that the steps Remember kept, in one test part (several
+// machines): the step Distinct compares them.
+remembered_values: [dynamic]string
 
 scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 	peer_case_started := 0 // The number of the case of the last step Peer_Start.
@@ -2426,6 +2432,26 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				}
 				fmt.printfln("kerneltool: test passed: the call %s from the host: the round trip %d us at least, %d us in the middle, over %d calls; %d calls in one second, one after the other", step.text, i64(least / time.Microsecond), i64(middle / time.Microsecond), step.repeat, per_second)
 			}
+		case .Remember:
+			if !log_wait(machine, step.text, false) {
+				fmt.eprintfln("kerneltool: test failed: step %d: the machine did not print \"%s\"", index + 1, step.text)
+				return false
+			}
+			log := log_read(machine)
+			rest := log[machine.seen:]
+			line := strings.trim_right(rest[:max(strings.index_byte(rest, '\n'), 0)], "\r")
+			append(&remembered_values, strings.clone(line))
+			fmt.printfln("kerneltool: the machine drew \"%s\" after \"%s\"", line, step.text)
+		case .Distinct:
+			for value, first in remembered_values {
+				for other in remembered_values[first + 1:] {
+					if value == other {
+						fmt.eprintfln("kerneltool: test failed: step %d: %s: the value \"%s\" came two times", index + 1, step.text, value)
+						return false
+					}
+				}
+			}
+			fmt.printfln("kerneltool: test passed: %s: %d values, each different", step.text, len(remembered_values))
 		case .Peer_Start:
 			peer_case_started = peer_case_start_from_the_tool(machine.peer, step.text)
 			fmt.printfln("kerneltool: the TCP case \"%s\" of the peer runs; the next steps run with it", step.text)
