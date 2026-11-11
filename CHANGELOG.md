@@ -6,6 +6,31 @@ The project has steps, not separate releases. The merge of step N on `master` is
 
 What is not in a release yet is in `changelog.d/`, one fragment for each change. `kerneltool changelog release` writes a release from the fragments. Nobody edits this file by hand.
 
+## [0.70.0] - 2026-11-11
+
+### Added
+
+- **A cryptography module**: the module `cryptography` gives ChaCha20-Poly1305, AES-128-GCM, SHA-256, HMAC, HKDF, X25519 and Ed25519 to each program, from the code of Odin's `core:crypto` with a check that proves each changed line; a tag or a signature that does not verify is an error with no byte given, and the program `cryptography_vectors` runs the published vectors through it and shows the speed of each primitive.
+- **QUIC packet protection**: the library `support/quic` reads QUIC version 1 packet headers as hostile input, derives the Initial keys of a connection, and seals and opens packets with header protection, with AES-128-GCM or ChaCha20-Poly1305 from the module `cryptography`; it gives the packets of RFC 9001 appendix A byte for byte.
+- **A program chooses how strong its random seed must be**: a key drawn with `random.fill_for_a_key` names the least seed strength that the program accepts (weak, processor or entropy), and a weaker seed gives the error "the random seed of this program has the strength ..." with nothing made; QUIC and TLS ask for processor at least.
+- **TLS 1.3 for QUIC with raw public keys**: `support/quic` runs the handshake of TLS 1.3 for a client and a server, with X25519, Ed25519 and ChaCha20-Poly1305, and a client accepts the server only when it proves the public key that its caller pinned; no certificate authority and no X.509 are used.
+- **A QUIC connection over memory**: `support/quic` runs one connection of QUIC with acknowledgements, loss detection, the probe timeout, flow control, one bidirectional stream, the idle timeout, the anti-amplification limit and the close, with the TLS 1.3 handshake inside; a test sends 1 MiB each way through a channel that loses 5 % of the datagrams.
+
+### Changed
+
+- **The context of a program has 24 values**: the values 16 to 23 are for the roles that the system fixes for every program, and the strength of the random seed is the value 16. The 16 values before were full, and two roles wanted one number.
+- **TLS for QUIC refuses a configuration that would accept a weak seed or that pins no key, and takes a large ClientHello**: a least seed strength under processor, or a client pinned key of zeros, stops the start with an error; the transcript holds 8192 bytes; handshake bytes left at a level whose keys were replaced close the connection.
+
+### Fixed
+
+- **A QUIC packet no longer stops the program with its header protection sample**: a ChaCha20 sample that starts with `ff ff ff ff` gives its mask, and an Initial packet with a token of up to 2008 bytes is sealed and opened.
+- **A thread with a short stack stops at its guard page**: the erasure of the stack after a cryptographic call writes from the top down, so no memory under the stack is written first; a thread that calls the module `cryptography` or draws random bytes needs 24 KiB of stack.
+- **A QUIC connection no longer stops for ever when its data has many holes, and a forged Initial no longer takes a server**: data that had no place is not acknowledged, so the peer sends it again; a server takes a client only with an Initial that opens, and a handshake that does not complete within 10 s ends; an old packet whose number was forgotten is refused; a peer cannot move a timer into the past.
+
+### Security
+
+- **One datagram could stop a program that uses ChaCha20 for QUIC header protection**: the ChaCha20 code taken from Odin refused the block with the last counter, and the sender of a packet chooses that counter. The taken file has the correction as listed adjustments, and the correction is offered to Odin. No program used this path yet.
+
 ## [0.69.0] - 2026-11-11
 
 ### Added
