@@ -10,6 +10,7 @@ import "support:graphics"
 import "support:network"
 import "support:system"
 import "support:tcp"
+import "support:web"
 
 WIDTH :: 976
 HEIGHT :: 672
@@ -118,17 +119,22 @@ state_color :: proc "contextless" (state: tcp.State) -> graphics.Color {
 	return graphics.COLOR_KERNEL // FIN states and TIME-WAIT: the end of a connection.
 }
 
-// The columns of the table of connections.
-COLUMN_STATE :: 160
-COLUMN_IN :: 384 // Right edge.
-COLUMN_OUT :: 488
-COLUMN_RTT :: 576
-COLUMN_WINDOW :: 600 // A bar of WINDOW_BAR pixels for 64 KiB, then its value.
-WINDOW_BAR :: 96
-COLUMN_RETRANSMIT :: 856 // Right edge.
-COLUMN_PROBES :: 936
+// The columns of the table of connections (a card 536 pixels wide).
+COLUMN_STATE :: 120
+COLUMN_IN :: 296 // Right edges.
+COLUMN_OUT :: 360
+COLUMN_RTT :: 424
+COLUMN_WINDOW :: 432 // A bar of WINDOW_BAR pixels for 64 KiB.
+WINDOW_BAR :: 64
 
-row_draw :: proc "contextless" (canvas: graphics.Canvas, y: int, connection: ^tcp.Connection, how: string, band: bool) {
+// The columns of the table of the last requests (a card 424 pixels wide).
+ACCESS_TARGET :: 48
+ACCESS_STATUS :: 184
+ACCESS_BYTES :: 296 // Right edges.
+ACCESS_TIME :: 368
+ACCESS_PORT :: 384
+
+connection_row_draw :: proc "contextless" (canvas: graphics.Canvas, y: int, connection: ^tcp.Connection, how: string, band: bool) {
 	if band {
 		graphics.fill(canvas, -8, y - 4, canvas.width + 16, LINE, graphics.COLOR_TRACK)
 	}
@@ -141,7 +147,7 @@ row_draw :: proc "contextless" (canvas: graphics.Canvas, y: int, connection: ^tc
 	system.write_unsigned(&writer, u64(connection.remote_port))
 	graphics.text(canvas, 0, y, system.written(&writer), ended ? graphics.COLOR_DIM : graphics.COLOR_MACHINE)
 	if ended {
-		graphics.text(canvas, COLUMN_STATE, y, how, how == "reset" || how == "timed out" ? graphics.COLOR_FAILED : graphics.COLOR_NOT_USABLE)
+		graphics.text(canvas, COLUMN_STATE, y, how, how == "reset" || how == "timed out" || how == "aborted" ? graphics.COLOR_FAILED : graphics.COLOR_NOT_USABLE)
 	} else {
 		graphics.text(canvas, COLUMN_STATE, y, state_names[connection.state], state_color(connection.state))
 	}
@@ -155,9 +161,31 @@ row_draw :: proc "contextless" (canvas: graphics.Canvas, y: int, connection: ^tc
 	if filled > 0 {
 		bar(canvas, COLUMN_WINDOW, y + 4, filled, 8, ended ? graphics.COLOR_NOT_USABLE : graphics.COLOR_MEMORY)
 	}
-	right(canvas, COLUMN_WINDOW + WINDOW_BAR + 96, y, size_text(buffer[:], u64(connection.congestion_window)), text_color)
-	right(canvas, COLUMN_RETRANSMIT, y, system.format(buffer[:], connection.retransmissions), connection.retransmissions > 0 && !ended ? graphics.COLOR_BOOT_PROGRAM : text_color)
-	right(canvas, COLUMN_PROBES - 16, y, system.format(buffer[:], connection.probes), text_color)
+}
+
+status_color :: proc "contextless" (status: int) -> graphics.Color {
+	switch {
+	case status < 300:
+		return graphics.COLOR_PROGRAM
+	case status < 500:
+		return graphics.COLOR_BOOT_PROGRAM
+	}
+	return graphics.COLOR_FAILED
+}
+
+access_row_draw :: proc "contextless" (canvas: graphics.Canvas, y: int, record: ^Access_Record, band: bool) {
+	if band {
+		graphics.fill(canvas, -8, y - 4, canvas.width + 16, LINE, graphics.COLOR_TRACK)
+	}
+	buffer: [32]u8
+	method := web.request_method_name(record.method)
+	graphics.text(canvas, 0, y, method == "" ? "-" : method, graphics.COLOR_DIM)
+	target := string(record.target[:min(record.target_length, 16)])
+	graphics.text(canvas, ACCESS_TARGET, y, target, graphics.COLOR_TEXT)
+	graphics.text(canvas, ACCESS_STATUS, y, system.format(buffer[:], u64(record.status)), status_color(record.status))
+	right(canvas, ACCESS_BYTES, y, size_text(buffer[:], record.bytes), graphics.COLOR_TEXT)
+	right(canvas, ACCESS_TIME, y, time_text(buffer[:], max(record.time, 1)), graphics.COLOR_MACHINE)
+	graphics.text(canvas, ACCESS_PORT, y, system.format(buffer[:], u64(record.remote_port)), graphics.COLOR_DIM)
 }
 
 draw :: proc "contextless" (window: ^display.Window) {
@@ -171,40 +199,41 @@ draw :: proc "contextless" (window: ^display.Window) {
 	}
 	buffer: [64]u8
 	other: [64]u8
-	open := tcp.open_count(&table)
+	open := tcp_open_count()
 
 	// The listen grant and the table.
-	inside := card(canvas, 8, 8, 312, 176, "LISTEN", "tcp.Table", graphics.COLOR_PROGRAM)
+	inside := card(canvas, 8, 8, 232, 160, "LISTEN", "tcp.Table", graphics.COLOR_PROGRAM)
 	after := write_large(inside, 0, 0, system.format(buffer[:], u64(open)), 3, graphics.COLOR_PROGRAM)
-	graphics.text(inside, after + 8, 24, open == 1 ? "connection open" : "connections open", graphics.COLOR_DIM)
-	fact(inside, 56, "listen port", system.format(buffer[:], u64(listen_port), ", any remote"))
+	graphics.text(inside, after + 8, 24, open == 1 ? "connection" : "connections", graphics.COLOR_DIM)
+	fact(inside, 56, "port", system.format(buffer[:], u64(listen_port), ", any remote"))
 	fact(inside, 76, "most at once", system.format(buffer[:], u64(most_open), " of ", u64(CAPACITY)))
-	fact(inside, 96, "accepted", system.format(buffer[:], accepted))
-	fact(inside, 116, "refused SYN", system.format(buffer[:], table.refused_syns, ", RST sent ", table.resets_sent))
+	fact(inside, 96, "accepted", system.format(buffer[:], accepted, ", ", aborted_count, " ended"))
 
-	// What went through.
-	inside = card(canvas, 328, 8, 312, 176, "TRAFFIC", "tcp.Connection", graphics.COLOR_MEMORY)
-	after = write_large(inside, 0, 0, system.format(buffer[:], requests), 3, graphics.COLOR_MEMORY)
-	graphics.text(inside, after + 8, 24, requests == 1 ? "request answered" : "requests answered", graphics.COLOR_DIM)
-	live_in, live_out, live_retransmit: u64
-	for &connection, index in connections {
-		if connection.state != .Closed && !sessions[index].logged {
-			live_in += connection.bytes_received
-			live_out += connection.bytes_sent
-			live_retransmit += connection.retransmissions
+	// The answers by class of status.
+	inside = card(canvas, 248, 8, 232, 160, "ANSWERS", "web.Request", graphics.COLOR_MEMORY)
+	after = write_large(inside, 0, 0, system.format(buffer[:], requests_answered), 3, graphics.COLOR_MEMORY)
+	graphics.text(inside, after + 8, 24, "requests", graphics.COLOR_DIM)
+	total := max(requests_answered, 1)
+	classes := [3]int{2, 4, 5}
+	names := [3]string{"2xx", "4xx", "5xx"}
+	colors := [3]graphics.Color{graphics.COLOR_PROGRAM, graphics.COLOR_BOOT_PROGRAM, graphics.COLOR_FAILED}
+	for class, row in classes {
+		y := 56 + row * 20
+		graphics.text(inside, 0, y, names[row], graphics.COLOR_DIM)
+		graphics.fill(inside, 40, y + 4, 96, 8, graphics.COLOR_TRACK)
+		filled := int(status_classes[class] * 96 / total)
+		if filled > 0 {
+			bar(inside, 40, y + 4, filled, 8, colors[row])
 		}
+		graphics.text(inside, 144, y, system.format(buffer[:], status_classes[class]), graphics.COLOR_TEXT)
 	}
-	fact(inside, 56, "bytes in", size_text(buffer[:], bytes_in + live_in))
-	fact(inside, 76, "bytes out", size_text(buffer[:], bytes_out + live_out))
-	fact(inside, 96, "retransmitted", system.format(buffer[:], retransmissions + live_retransmit, " segments"))
-	fact(inside, 116, "reset", system.format(buffer[:], resets, resets == 1 ? " connection" : " connections"))
 
 	// The measures, with the cycle counter.
-	inside = card(canvas, 648, 8, 320, 176, "MEASURES", "system.nanoseconds", graphics.COLOR_MACHINE)
+	inside = card(canvas, 488, 8, 480, 160, "MEASURES", "system.nanoseconds", graphics.COLOR_MACHINE)
 	fact(inside, 0, "handshake", handshake_last == 0 ? "" : system.format(buffer[:], time_text(other[:], handshake_last), ", least ", handshake_least, " us"), graphics.COLOR_MACHINE)
-	fact(inside, 20, "GET /, least", request_least == 0 ? "" : time_text(buffer[:], request_least), graphics.COLOR_MACHINE)
-	fact(inside, 40, "/large, best", send_best == 0 ? "" : megabytes(buffer[:], send_best), graphics.COLOR_MACHINE)
-	fact(inside, 60, "/sink, best", receive_best == 0 ? "" : megabytes(buffer[:], receive_best), graphics.COLOR_MACHINE)
+	fact(inside, 20, "one connection", best_keep_alive_rate == 0 ? "" : system.format(buffer[:], best_keep_alive_rate, " requests in one second, the best"), graphics.COLOR_MACHINE)
+	fact(inside, 40, "new connections", best_new_connection_rate == 0 ? "" : system.format(buffer[:], best_new_connection_rate, " requests in one second, the best"), graphics.COLOR_MACHINE)
+	fact(inside, 60, "one second", best_second_requests == 0 ? "" : system.format(buffer[:], best_second_requests, " requests at most"), graphics.COLOR_MACHINE)
 	fact(inside, 80, "one draw", draw_time == 0 ? "" : time_text(buffer[:], draw_time), graphics.COLOR_TEXT)
 	if secret_weak {
 		fact(inside, 100, "ISN secret", "weak: the cycle counter", graphics.COLOR_FAILED)
@@ -213,37 +242,35 @@ draw :: proc "contextless" (window: ^display.Window) {
 	}
 
 	// The connection table, live, then the connections that ended.
-	inside = card(canvas, 8, 192, 960, 472, "CONNECTIONS", "tcp.Table.connections, then the ones that ended", graphics.COLOR_PROGRAM)
+	inside = card(canvas, 8, 176, 536, 488, "CONNECTIONS", "tcp.Connection", graphics.COLOR_PROGRAM)
 	graphics.text(inside, 0, 0, "remote", graphics.COLOR_DIM)
 	graphics.text(inside, COLUMN_STATE, 0, "state", graphics.COLOR_DIM)
 	right(inside, COLUMN_IN, 0, "in", graphics.COLOR_DIM)
 	right(inside, COLUMN_OUT, 0, "out", graphics.COLOR_DIM)
 	right(inside, COLUMN_RTT, 0, "srtt", graphics.COLOR_DIM)
-	graphics.text(inside, COLUMN_WINDOW, 0, "congestion window", graphics.COLOR_DIM)
-	right(inside, COLUMN_RETRANSMIT, 0, "retx", graphics.COLOR_DIM)
-	right(inside, COLUMN_PROBES - 16, 0, "probes", graphics.COLOR_DIM)
+	graphics.text(inside, COLUMN_WINDOW, 0, "cwnd", graphics.COLOR_DIM)
 	graphics.fill(inside, 0, 20, inside.width, 1, graphics.COLOR_TRACK)
 	y := 28
 	rows := 0
-	ROWS :: 16
+	ROWS :: 17
 	for &connection in connections {
 		if connection.state == .Closed || rows == ROWS {
 			continue
 		}
-		row_draw(inside, y, &connection, "", rows % 2 == 1)
+		connection_row_draw(inside, y, &connection, "", rows % 2 == 1)
 		y += LINE
 		rows += 1
 	}
 	if rows == 0 {
-		graphics.text(inside, 0, y, "no connection open: the table waits for a SYN on the listen port", graphics.COLOR_DIM)
+		graphics.text(inside, 0, y, "no connection: the table waits for a SYN", graphics.COLOR_DIM)
 		y += LINE
 		rows += 1
 	}
-	for back in 1 ..= HISTORY {
+	for back in 1 ..= CONNECTION_HISTORY {
 		if rows == ROWS {
 			break
 		}
-		item := &history[(history_next - back + HISTORY) % HISTORY]
+		item := &ended_connections[(ended_connection_next - back + CONNECTION_HISTORY) % CONNECTION_HISTORY]
 		if !item.known {
 			break
 		}
@@ -258,17 +285,45 @@ draw :: proc "contextless" (window: ^display.Window) {
 			continue
 		}
 		how := item.how
-		switch how {
-		case "reset by the remote":
+		switch {
+		case how == "reset by the remote":
 			how = "reset"
-		case "closed, the remote first":
+		case how == "closed, the remote first":
 			how = "closed by it"
-		case "closed, this server first":
+		case how == "closed, this server first":
 			how = "closed by us"
+		case len(how) >= 7 && how[:7] == "aborted":
+			how = "aborted"
 		}
-		row_draw(inside, y, &item.record, how, rows % 2 == 1)
+		connection_row_draw(inside, y, &item.record, how, rows % 2 == 1)
 		y += LINE
 		rows += 1
+	}
+
+	// The last requests, the newest first.
+	inside = card(canvas, 552, 176, 416, 488, "REQUESTS", "Access_Record", graphics.COLOR_MEMORY)
+	graphics.text(inside, 0, 0, "method", graphics.COLOR_DIM)
+	graphics.text(inside, ACCESS_TARGET + 16, 0, "target", graphics.COLOR_DIM)
+	graphics.text(inside, ACCESS_STATUS - 8, 0, "status", graphics.COLOR_DIM)
+	right(inside, ACCESS_BYTES, 0, "bytes", graphics.COLOR_DIM)
+	right(inside, ACCESS_TIME, 0, "time", graphics.COLOR_DIM)
+	graphics.fill(inside, 0, 20, inside.width, 1, graphics.COLOR_TRACK)
+	y = 28
+	shown := 0
+	for back in 1 ..= ACCESS_HISTORY {
+		if shown == 17 {
+			break
+		}
+		record := &access_records[(access_next - back + ACCESS_HISTORY) % ACCESS_HISTORY]
+		if record.status == 0 {
+			break
+		}
+		access_row_draw(inside, y, record, shown % 2 == 1)
+		y += LINE
+		shown += 1
+	}
+	if shown == 0 {
+		graphics.text(inside, 0, y, "no request yet", graphics.COLOR_DIM)
 	}
 	display.present(window)
 	took := (system.nanoseconds() - started) / 1000

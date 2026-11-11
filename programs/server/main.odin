@@ -1,43 +1,33 @@
-// A web server of this system: TCP in the program (support/tcp), one
-// thread, one connection table, and a small HTTP/1.1 (support/web).
+// A simple HTTP/1.1 server of this system (RFC 9110, RFC 9112): TCP in the
+// program (support/tcp), one thread, one table of connections, and records
+// of fixed size for all its state. It allocates nothing.
 //
-// The root service gave it one segment endpoint with a listen grant: the
-// TCP port 80, and the remotes that send a segment to it. It reaches no
-// other machine. Its pages come from what it has: its own counts.
+// What it can reach comes from its grants only (property 20):
+//   a segment endpoint with a listen grant: the TCP port 80, and the
+//       remotes that send a SYN to it;
+//   a private store in the storage service (property 9): the pages that it
+//       serves, by name;
+//   a service ring: the console calls its exports server.put,
+//       server.pages, server.remove and server.served (property 19).
+// No shared folder: a person puts a page with server.put from the console.
+// PUT and DELETE over HTTP are refused (405): the network is not
+// authenticated.
 //
-//   GET /             a page of text: the connections and the counts.
-//   GET /large        LARGE_SIZE bytes of a known pattern (support/web).
-//   POST /sink        reads a body of Content-Length bytes, and answers
-//                     with its length and its hash.
-//
-// The window shows the connection table live: the state of each
-// connection, its bytes, its round trip, its congestion window, its
-// retransmissions; and the totals and the measures.
+// main.odin: the TCP side and the loop. http.odin: the requests and the
+// answers. pages.odin: the pages of the store, and the exports. draw.odin:
+// the window.
 package server
 
 import "contract:datagram"
 import "contract:ring"
 import "support:display"
 import "support:network"
+import "support:storage"
 import "support:system"
 import "support:tcp"
-import "support:web"
 
 CAPACITY :: 48 // Connections at one time, with the ones in TIME-WAIT.
 REMOTE_LIMIT :: 24 // The open connections of one remote address: half the table (tcp.Table.remote_limit).
-
-// The limits of a connection that makes no progress (milliseconds). One
-// host must not keep a record for ever (an independent read of the step,
-// B2). 10 s is long for a request on a link of the machine, where a round
-// trip is under 1 ms, and short against 48 records: a host that opens 24
-// connections and sends nothing frees them in 10 s.
-IDLE_LIMIT :: 10_000 // No byte of a request on an open connection.
-HEAD_TIME :: 10_000 // A head that started and is not whole: 408.
-PROGRESS_LIMIT :: 10_000 // A request in progress with no byte read and no byte acknowledged (a zero window for ever).
-BODY_GRACE :: 10_000 // After it, a body must come at BODY_RATE bytes in one second at least.
-BODY_RATE :: 4096
-SINK_LIMIT :: 16 << 20 // The largest body: 413 over it.
-HELD_CAPACITY :: 512 // Commands that the ring did not take: they go at the next pass.
 SEND_SIZE :: 64 * 1024
 RECEIVE_SIZE :: 32 * 1024
 BUFFER_PAGES :: CAPACITY * (SEND_SIZE + RECEIVE_SIZE) / system.PAGE_SIZE
@@ -48,54 +38,12 @@ PLACE_COUNT :: datagram.REGION_PAGES * system.PAGE_SIZE / PLACE_SIZE
 RECEIVE_PLACES :: 96 // Places 0 to 95: segments that arrive. The others: segments to send.
 SEND_TAG :: 1000 // Tags from 1000: a Send of place tag - 1000.
 CALL_TAG :: 100_000 // Info and Release.
+HELD_CAPACITY :: 512 // Commands that the ring did not take: they go at the next pass.
 
-HISTORY :: 16 // Connections that ended, that the window still shows.
-
-Page :: enum u8 {
-	None,
-	Root,
-	Large,
-	Sink,
-	Missing,
-	Bad,
-	Timeout, // 408: the head did not come in HEAD_TIME.
-	Too_Large, // 413: a body over SINK_LIMIT.
-}
-
-// The HTTP side of one connection: the record with the same index as its
-// connection in the table.
-Session :: struct {
-	head:           [web.HEAD_LIMIT]u8,
-	head_length:    int,
-	request:        web.Head,
-	page:           Page,
-	body_left:      int,
-	body_hash:      u64,
-	body_bytes:     int,
-	pending:        [1024]u8, // The head of the answer, and a small body.
-	pending_length: int,
-	pending_done:   int,
-	large_left:     int,
-	large_offset:   int,
-	written:        u64, // The bytes that this side wrote in the connection.
-	answer_bytes:   u64,
-	wait_ack:       bool, // The answer is written: its time ends at the ACK of its last byte.
-	acked_at:       u64, // written at the end of the answer: the bytes_sent that ends it.
-	request_start:  u64, // Nanoseconds.
-	body_start:     u64,
-	close_after:    bool,
-	closing:        bool,
-	logged:         bool, // The end of the connection is on the log and in the history.
-	requests:       int,
-	progress_at:    u64, // Milliseconds: the last byte read, or acknowledged.
-	acknowledged:   u64, // bytes_sent of the connection at progress_at.
-	head_at:        u64, // Milliseconds: the first byte of the head.
-	body_at:        u64, // Milliseconds: the head of a body.
-	last_byte_sent_at: u64, // Nanoseconds: the last byte of the answer left this program (the ACK can wait for a delayed ACK of the remote).
-}
+CONNECTION_HISTORY :: 16 // Connections that ended, that the window still shows.
 
 // A connection that ended, as the window shows it.
-Ended :: struct {
+Ended_Connection :: struct {
 	record: tcp.Connection,
 	how:    string,
 	known:  bool,
@@ -103,9 +51,8 @@ Ended :: struct {
 
 table: tcp.Table
 connections: [CAPACITY]tcp.Connection
-sessions: [CAPACITY]Session
-history: [HISTORY]Ended
-history_next: int
+ended_connections: [CONNECTION_HISTORY]Ended_Connection
+ended_connection_next: int
 
 endpoint: ring.Ring
 region: []u8
@@ -117,22 +64,21 @@ local_address: u32
 listen_port: u16
 secret_source: string
 secret_weak: bool // No rdrand that works: the secret of the initial sequence numbers comes from the cycle counter.
-held: [HELD_CAPACITY]ring.Record // Commands that the ring did not take (F3).
-held_count: int
-held_lost: u64 // Commands lost because held was full: 0 in each test.
-aborted_count: u64 // Connections that this server ended for a limit.
-released_strays: u64 // Remotes released because a segment of theirs had no record.
+held_commands: [HELD_CAPACITY]ring.Record // Commands that the ring did not take.
+held_command_count: int
+held_commands_lost: u64 // Commands lost because held_commands was full: 0 in each test.
+store_client: storage.Client
+store_connected: bool
+service: system.Service
 
-// Totals and measures.
+// Totals and measures of TCP.
 accepted: u64
-requests: u64
 most_open: int
 bytes_in, bytes_out: u64
 retransmissions, resets, timeouts: u64
+aborted_count: u64 // Connections that this server ended for a limit.
+released_strays: u64 // Remotes released because a segment of theirs had no record.
 handshake_last, handshake_least: u64 // Microseconds.
-request_last, request_least: u64 // Microseconds: an answer of the page /, to the ACK of its last byte.
-send_rate, receive_rate: u64 // Kilobytes in one second: the last /large and the last /sink.
-send_best, receive_best: u64
 draw_time: u64
 start_time: u64
 
@@ -149,28 +95,28 @@ place_bytes :: proc "contextless" (place: u32) -> []u8 {
 	return region[int(place) * PLACE_SIZE:][:PLACE_SIZE]
 }
 
-// command puts a command in the ring. A full ring keeps it in `held`, for
+// command_push_or_hold puts a command in the ring. A full ring keeps it for
 // the next pass: a Send, a Receive or a Release is never lost, so no place
 // and no admitted remote leaks.
 command_push_or_hold :: proc "contextless" (record: ring.Record) {
-	if held_count == 0 && ring.push(&endpoint.commands, record) {
+	if held_command_count == 0 && ring.push(&endpoint.commands, record) {
 		return
 	}
-	if held_count == HELD_CAPACITY {
-		held_lost += 1
+	if held_command_count == HELD_CAPACITY {
+		held_commands_lost += 1
 		return
 	}
-	held[held_count] = record
-	held_count += 1
+	held_commands[held_command_count] = record
+	held_command_count += 1
 }
 
 held_commands_push :: proc "contextless" () {
 	done := 0
-	for done < held_count && ring.push(&endpoint.commands, held[done]) {
+	for done < held_command_count && ring.push(&endpoint.commands, held_commands[done]) {
 		done += 1
 	}
-	copy(held[:], held[done:held_count])
-	held_count -= done
+	copy(held_commands[:], held_commands[done:held_command_count])
+	held_command_count -= done
 }
 
 post :: proc "contextless" (place: u32) {
@@ -195,262 +141,11 @@ megabytes :: proc "contextless" (buffer: []u8, kilobytes: u64) -> string {
 	return system.format(buffer, kilobytes / 1000, ".", kilobytes % 1000 / 100, " MB/s")
 }
 
-session_reset :: proc "contextless" (session: ^Session) {
-	keep_written := session.written
-	keep_requests := session.requests
-	keep_closing := session.closing
-	session^ = {}
-	session.written = keep_written
-	session.requests = keep_requests
-	session.closing = keep_closing
-	session.progress_at = system.time() // The idle time of the next request starts now.
-}
-
-// answer_start makes the head of the answer of a request.
-answer_start :: proc "contextless" (index: int) {
-	session := &sessions[index]
-	request := &session.request
-	body: [512]u8
-	text: string
-	status := "200 OK"
-	length := 0
-	switch session.page {
-	case .Root:
-		open := tcp.open_count(&table)
-		text = system.format(body[:], "server: TCP in the program, one thread, one table.\nconnections open: ", u64(open), ", most at once: ", u64(most_open), ", accepted: ", accepted, "\nrequests: ", requests, ", bytes in: ", bytes_in, ", bytes out: ", bytes_out, "\nretransmissions: ", retransmissions, ", resets: ", resets, "\nuptime: ", system.time() - start_time, " ms, kernel entries: ", system.kernel_entries(), "\n")
-		length = len(text)
-	case .Large:
-		length = web.LARGE_SIZE
-		session.large_left = web.LARGE_SIZE
-	case .Sink:
-		text = system.format(body[:], "received ", u64(session.body_bytes), " bytes, fnv1a64 ", system.Hex(session.body_hash), "\n")
-		length = len(text)
-	case .Missing:
-		status = "404 Not Found"
-		text = "no such page\n"
-		length = len(text)
-	case .Bad, .None:
-		status = "400 Bad Request"
-		text = "a request that this server cannot read\n"
-		length = len(text)
-		session.close_after = true
-	case .Timeout:
-		status = "408 Request Timeout"
-		text = "the head of the request did not come in time\n"
-		length = len(text)
-		session.close_after = true
-	case .Too_Large:
-		status = "413 Content Too Large"
-		text = "the body is over the limit of this server\n"
-		length = len(text)
-		session.close_after = true
-	}
-	if request.close {
-		session.close_after = true
-	}
-	head := system.format(session.pending[:], "HTTP/1.1 ", status, "\r\nContent-Length: ", u64(length), "\r\nContent-Type: text/plain\r\n", session.close_after ? "Connection: close\r\n" : "", "\r\n")
-	session.pending_length = len(head) + copy(session.pending[len(head):], text)
-	session.pending_done = 0
-	session.answer_bytes = u64(len(head) + length)
-}
-
-// answer_write writes what the send buffer takes. It gives true when the
-// answer is all written.
-answer_write :: proc "contextless" (index: int) -> bool {
-	session := &sessions[index]
-	if session.pending_done < session.pending_length {
-		count, _ := tcp.write(&table, index, session.pending[session.pending_done:session.pending_length])
-		session.pending_done += count
-		session.written += u64(count)
-		if session.pending_done < session.pending_length {
-			return false
-		}
-	}
-	chunk: [4096]u8
-	for session.large_left > 0 {
-		room := tcp.send_room(&table, index)
-		if room == 0 {
-			return false
-		}
-		part := min(session.large_left, len(chunk), room)
-		web.pattern_fill(chunk[:part], session.large_offset)
-		count, _ := tcp.write(&table, index, chunk[:part])
-		session.large_left -= count
-		session.large_offset += count
-		session.written += u64(count)
-	}
-	return true
-}
-
-// request_take reads the bytes that arrived on a connection, and answers.
-request_take :: proc "contextless" (index: int, now: u64) {
-	session := &sessions[index]
-	connection := &connections[index]
-	for !session.closing {
-		// An answer in progress: write more of it.
-		if session.page != .None && session.body_left == 0 {
-			if !session.wait_ack {
-				if !answer_write(index) {
-					return
-				}
-				session.wait_ack = true
-				session.acked_at = session.written
-			}
-			return // The next request waits for the ACK of this answer.
-		}
-		chunk: [4096]u8
-		room := len(chunk)
-		if session.page == .None {
-			room = min(room, len(session.head) - session.head_length)
-		} else {
-			room = min(room, session.body_left)
-		}
-		count, _ := tcp.read(&table, index, chunk[:room])
-		if count > 0 {
-			session.progress_at = system.time()
-		}
-		if count == 0 {
-			if session.page == .None && session.head_length == len(session.head) {
-				session.page = .Bad // A head longer than HEAD_LIMIT.
-				answer_start(index)
-				continue
-			}
-			return
-		}
-		if session.page == .Sink {
-			session.body_hash = web.fnv(session.body_hash, chunk[:count])
-			session.body_bytes += count
-			session.body_left -= count
-			if session.body_left == 0 {
-				answer_start(index)
-			}
-			continue
-		}
-		if session.head_length == 0 {
-			session.request_start = system.nanoseconds()
-			session.head_at = system.time()
-		}
-		copy(session.head[session.head_length:], chunk[:count])
-		session.head_length += count
-		end := web.head_end(session.head[:session.head_length])
-		if end == 0 {
-			continue
-		}
-		head, ok := web.head_read(session.head[:session.head_length])
-		session.request = head
-		rest := session.head[end:session.head_length]
-		switch {
-		case !ok:
-			session.page = .Bad
-		case head.method == .Get && web.path(&head) == "/":
-			session.page = .Root
-		case head.method == .Get && web.path(&head) == "/large":
-			session.page = .Large
-		case head.method == .Post && web.path(&head) == "/sink" && head.content_length > SINK_LIMIT:
-			session.page = .Too_Large
-		case head.method == .Post && web.path(&head) == "/sink" && head.content_length >= 0:
-			session.page = .Sink
-			session.body_left = head.content_length
-			session.body_hash = web.FNV_START
-			session.body_start = system.nanoseconds()
-			session.body_at = system.time()
-			taken := min(len(rest), session.body_left)
-			session.body_hash = web.fnv(session.body_hash, rest[:taken])
-			session.body_bytes = taken
-			session.body_left -= taken
-		case:
-			session.page = .Missing
-		}
-		if session.page != .Sink || session.body_left == 0 {
-			answer_start(index)
-		}
-	}
-	_ = connection
-	_ = now
-}
-
-// answered ends a request whose answer the remote acknowledged.
-answered :: proc "contextless" (index: int) {
-	session := &sessions[index]
-	connection := &connections[index]
-	took := system.nanoseconds() - session.request_start
-	requests += 1
-	session.requests += 1
-	who: [32]u8
-	remote := address_text(who[:], connection.remote_address, connection.remote_port)
-	speed: [24]u8
-	#partial switch session.page {
-	case .Large:
-		// The rate is to the time when the last byte left this program: the
-		// ACK of the last byte can wait 40 ms for the delayed ACK of the
-		// remote, which is not the speed of the transfer.
-		sent := max(session.last_byte_sent_at, session.request_start) - session.request_start
-		send_rate = rate(u64(web.LARGE_SIZE), sent)
-		send_best = max(send_best, send_rate)
-		system.log("server: sent /large to ", remote, ": ", u64(web.LARGE_SIZE), " bytes, the last one left after ", sent / 1000, " us, ", megabytes(speed[:], send_rate), ", acknowledged after ", took / 1000, " us, ", connection.retransmissions, " retransmissions, ", connection.probes, " probes")
-	case .Sink:
-		receive_rate = rate(u64(session.body_bytes), system.nanoseconds() - session.body_start)
-		receive_best = max(receive_best, receive_rate)
-		system.log("server: received /sink from ", remote, ": ", u64(session.body_bytes), " bytes, fnv1a64 ", system.Hex(session.body_hash), ", ", megabytes(speed[:], receive_rate))
-	case .Root:
-		request_last = took / 1000
-		request_least = request_least == 0 ? request_last : min(request_least, request_last)
-		system.log("server: GET / for ", remote, ": ", session.answer_bytes, " bytes, answered and acknowledged in ", request_last, " us")
-	case:
-		system.log("server: a refused request of ", remote, ": ", session.answer_bytes, " bytes")
-	}
-	close_after := session.close_after
-	session_reset(session)
-	if close_after {
-		session.closing = true
-		tcp.close(&table, index)
-	}
-}
-
-// ended_log writes the end of a connection on the log and in the history:
-// when it ends, or when it enters TIME-WAIT (this side closed first: the
-// record stays 10 s more, and has nothing more to say).
-ended_log :: proc "contextless" (index: int, how: string) {
-	connection := &connections[index]
-	if sessions[index].logged {
-		return
-	}
-	sessions[index].logged = true
-	history[history_next] = {record = connection^, how = how, known = true}
-	history_next = (history_next + 1) % HISTORY
-	bytes_in += connection.bytes_received
-	bytes_out += connection.bytes_sent
-	retransmissions += connection.retransmissions
-	who: [32]u8
-	system.log("server: ", address_text(who[:], connection.remote_address, connection.remote_port), " ", how, ": in ", connection.bytes_received, ", out ", connection.bytes_sent, ", srtt ", connection.smoothed_rtt, " us, ", connection.retransmissions, " retransmissions, ", connection.probes, " probes, ", connection.challenges, " challenges")
-}
-
-// ended takes the end of a connection: the record is free after this
-// event, and the network service forgets its remote. A passive open that
-// never reached Established (a SYN, then a RST or no ACK) is not on the
-// log: one host can send many.
-ended :: proc "contextless" (index: int, how: string) {
-	connection := &connections[index]
-	if connection.established_at != 0 {
-		ended_log(index, how)
-	}
-	release(connection.remote_address, connection.remote_port, index)
-	sessions[index] = {}
-}
-
-// aborted ends a connection for a limit of this server: a RST, the log, and
-// the release of the remote. tcp.abort gives no event.
-aborted :: proc "contextless" (index: int, how: string) {
-	aborted_count += 1
-	tcp.abort(&table, index)
-	ended(index, how)
-}
-
-// release asks the network service to forget a remote, after the RST or
+// A release asks the network service to forget a remote, after the RST or
 // the last segment of its connection: a Release before them makes the
-// service refuse them. So a release waits in `releases_waiting` until the
-// Sends of the pass are in the ring, and until its record has no RST to
-// send (connection -1: no record).
+// service refuse them. So a release waits until the Sends of the pass are
+// in the ring, and until its record has no RST to send (connection -1: no
+// record).
 Release_Waiting :: struct {
 	address:    u32,
 	port:       u16,
@@ -483,43 +178,48 @@ releases_send_now :: proc "contextless" () {
 	releases_waiting_count = kept
 }
 
-// limits ends what makes no progress on an open connection (B2).
-limits :: proc "contextless" (index: int, now: u64) {
-	session := &sessions[index]
+// ended_log writes the end of a connection on the log and in the history:
+// when it ends, or when it enters TIME-WAIT (this side closed first: the
+// record stays 10 s more, and has nothing more to say).
+ended_log :: proc "contextless" (index: int, how: string) {
 	connection := &connections[index]
-	if connection.bytes_sent != session.acknowledged {
-		session.acknowledged = connection.bytes_sent
-		session.progress_at = now
-	}
-	if session.closing {
+	session := &sessions[index]
+	if session.logged {
 		return
 	}
-	switch {
-	case session.page == .None && session.head_length == 0:
-		if now - session.progress_at >= IDLE_LIMIT {
-			who: [32]u8
-			system.log("server: ", address_text(who[:], connection.remote_address, connection.remote_port), ": no request in 10 s, closed")
-			session.closing = true
-			tcp.close(&table, index)
-		}
-	case session.page == .None:
-		if now - session.head_at >= HEAD_TIME {
-			session.page = .Timeout
-			answer_start(index)
-		}
-	case session.page == .Sink && session.body_left > 0:
-		elapsed := now - session.body_at
-		if elapsed > BODY_GRACE && u64(session.body_bytes) * 1000 < (elapsed - BODY_GRACE) * BODY_RATE {
-			aborted(index, "aborted: a body under 4096 bytes in one second")
-		}
-	case:
-		if now - session.progress_at >= PROGRESS_LIMIT {
-			aborted(index, "aborted: no byte acknowledged in 10 s")
-		}
-	}
+	session.logged = true
+	ended_connections[ended_connection_next] = {record = connection^, how = how, known = true}
+	ended_connection_next = (ended_connection_next + 1) % CONNECTION_HISTORY
+	bytes_in += connection.bytes_received
+	bytes_out += connection.bytes_sent
+	retransmissions += connection.retransmissions
+	who: [32]u8
+	system.log("server: ", address_text(who[:], connection.remote_address, connection.remote_port), " ", how, ": ", u64(session.requests), " requests, in ", connection.bytes_received, ", out ", connection.bytes_sent, ", srtt ", connection.smoothed_rtt, " us, ", connection.retransmissions, " retransmissions, ", connection.probes, " probes, ", connection.challenges, " challenges")
+	keep_alive_measure(index)
 }
 
-event_take :: proc "contextless" (event: tcp.Event, now: u64) {
+// ended takes the end of a connection: the record is free after this
+// event, and the network service forgets its remote. A passive open that
+// never reached Established (a SYN, then a RST or no ACK) is not on the
+// log: one host can send many.
+ended :: proc "contextless" (index: int, how: string) {
+	connection := &connections[index]
+	if connection.established_at != 0 {
+		ended_log(index, how)
+	}
+	release(connection.remote_address, connection.remote_port, index)
+	sessions[index] = {}
+}
+
+// aborted ends a connection for a limit of this server: a RST, the log, and
+// the release of the remote. tcp.abort gives no event.
+aborted :: proc "contextless" (index: int, how: string) {
+	aborted_count += 1
+	tcp.abort(&table, index)
+	ended(index, how)
+}
+
+event_take :: proc "contextless" (event: tcp.Event) {
 	index := int(event.connection)
 	connection := &connections[index]
 	if .Accepted in event.kinds {
@@ -548,21 +248,12 @@ event_take :: proc "contextless" (event: tcp.Event, now: u64) {
 		return
 	}
 	if .Peer_Closed in event.kinds {
-		// No byte comes after a FIN: a request that is not whole never will
-		// be. Close now, or after the answer in progress.
-		session := &sessions[index]
-		answering := session.page != .None && session.body_left == 0
-		if !answering && !session.closing {
-			session.closing = true
-			tcp.close(&table, index)
-		} else {
-			session.close_after = true
-		}
+		http_remote_closed(index)
 	}
 }
 
 // exchange runs one step of the table: the segments that arrived, the
-// events, the answers, and the segments to send.
+// events, the requests and the answers, and the segments to send.
 exchange :: proc "contextless" (incoming: []tcp.Incoming) -> (deadline: u64) {
 	now := now_us()
 	output := tcp.Output{memory = region, place_size = PLACE_SIZE, places = free_places[:free_count], segments = segments[:]}
@@ -572,23 +263,16 @@ exchange :: proc "contextless" (incoming: []tcp.Incoming) -> (deadline: u64) {
 	// rounds end the work of one pass; what is left waits for the next pass.
 	for round := 0; round < 4; round += 1 {
 		for event in events[:count] {
-			event_take(event, now)
+			event_take(event)
 		}
 		for &connection, index in connections {
 			if connection.state == .Time_Wait {
 				ended_log(index, "closed, this server first")
 			}
 			if connection.state == .Established || connection.state == .Close_Wait {
-				session := &sessions[index]
-				if session.wait_ack && session.last_byte_sent_at == 0 && connection.send_next - connection.send_unacknowledged >= connection.send_length {
-					session.last_byte_sent_at = system.nanoseconds()
-				}
-				if session.wait_ack && connection.bytes_sent >= session.acked_at {
-					answered(index)
-				}
-				request_take(index, now)
+				http_connection_work(index)
 				if connection.state != .Closed && round == 0 {
-					limits(index, system.time())
+					http_limits(index, system.time())
 				}
 			}
 		}
@@ -605,7 +289,7 @@ exchange :: proc "contextless" (incoming: []tcp.Incoming) -> (deadline: u64) {
 		}
 	}
 	for event in events[:count] {
-		event_take(event, now)
+		event_take(event)
 	}
 	// Send each segment: the ring takes them, then one wake.
 	for item in segments[:output.count] {
@@ -621,7 +305,7 @@ exchange :: proc "contextless" (incoming: []tcp.Incoming) -> (deadline: u64) {
 	copy(free_places[:free_count], free_places[output.count:output.count + free_count])
 	// A segment whose connection has no record (a RST or an ACK of a
 	// connection that ended, a segment that the library refused): no event
-	// will release its remote, so it is released now (B1).
+	// will release its remote, so it is released now.
 	for item in incoming {
 		header, read := tcp.header_read(item.segment)
 		if !read || tcp.find(&table, item.remote_address, header.destination_port, header.source_port) < 0 {
@@ -633,9 +317,9 @@ exchange :: proc "contextless" (incoming: []tcp.Incoming) -> (deadline: u64) {
 	}
 	// After the Sends of this pass: the releases.
 	releases_send_now()
-	// The limits of the open connections need a time even when no segment
-	// and no timer of TCP comes: one pass each second at least.
-	if tcp.open_count(&table) > 0 {
+	// The limits of the open connections and the measure of each second
+	// need a time even when no segment and no timer of TCP comes.
+	if tcp.open_count(&table) > 0 || second_requests > 0 {
 		deadline = min(deadline, now + 1_000_000)
 	}
 	return deadline
@@ -648,6 +332,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.stop(1)
 	}
 	start_time = system.time()
+	service, _ = system.service_open(ctx)
 	status: system.Status
 	if endpoint, status = system.ring_open(ctx.handles[datagram.GRANT_RING]); status != .Ok {
 		fail("no endpoint: the program has no grant of the network")
@@ -692,6 +377,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	table.listen_port = listen_port
 	table.remote_limit = REMOTE_LIMIT
+	// The pages of the private store.
+	pages_load(ctx)
 	for place in 0 ..< RECEIVE_PLACES {
 		post(u32(place))
 	}
@@ -731,7 +418,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			post(place)
 		}
 		system.wake_reader(&endpoint.commands)
-		if count > 0 {
+		second_measure(system.time())
+		// The calls of the console: server.put, server.pages, ...
+		calls_before := service.calls
+		system.service_run(&service)
+		if count > 0 || service.calls != calls_before {
 			changed = true
 		}
 		for event in display.next_event(&window) {
@@ -748,6 +439,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 		system.wait_records(&wait, &endpoint.completions)
 		display.wait_events(&wait, &window)
+		system.service_wait(&wait, &service)
 		limit := changed ? last_draw + 100 : system.WAIT_FOREVER
 		if deadline != max(u64) {
 			limit = min(limit, deadline / 1000 + 1)

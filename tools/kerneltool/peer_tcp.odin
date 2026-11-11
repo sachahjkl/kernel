@@ -180,7 +180,7 @@ peer_case :: proc(peer: ^Peer, name: string) -> (passed: bool, result: string) {
 
 // The client for each kind of request.
 client_page :: proc(close_first: bool) -> Client {
-	return {request = "GET / HTTP/1.1\r\nHost: 10.0.2.15\r\n\r\n", expect_text = "server: TCP in the program", close_first = close_first}
+	return {request = "GET / HTTP/1.1\r\nHost: 10.0.2.15\r\n\r\n", expect_text = "<!doctype html>", close_first = close_first}
 }
 
 client_large :: proc() -> Client {

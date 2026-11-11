@@ -90,7 +90,9 @@ grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 		return {.Inspect, .Image} // It loads modules of the boot image, and measures with the cycle counter.
 	case "net":
 		return {.Inspect, .Network} // It measures with the cycle counter.
-	case "server", "fetch":
+	case "server":
+		return {.Network, .Serve, .Store} // A listen grant, its exports for the console, and its pages in its private store.
+	case "fetch":
 		return {.Network}
 	case "network":
 		return {.Network_Device}

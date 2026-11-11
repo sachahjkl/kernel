@@ -48,6 +48,7 @@ Step_Kind :: enum {
 	Call, // Call an export of a service from the host (call.odin), through the remote service: what the tool prints has `expected`. With `rows_call`, that call gives the count of rows of the Table. With `repeat`, the tool also measures the round trip and the calls in one second.
 	Peer, // The peer runs the TCP case text (peer_tcp.odin) and checks its answers.
 	Fetch, // The TCP of the host fetches the page text of `server` through QEMU user networking (web_host.odin).
+	Http, // The TCP of the host runs the HTTP case text against `server` (web_host.odin, http_case_run); `expected` is the body that a page must have.
 }
 
 Step :: struct {
@@ -2215,6 +2216,11 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 			fmt.printfln("kerneltool: test passed: the TCP case \"%s\" of the peer: %s", step.text, result)
 		case .Fetch:
 			if !forward_fetch(machine.forward, step.text) {
+				return false
+			}
+		case .Http:
+			if !http_case_run(machine.forward, step.text, step.expected) {
+				fmt.eprintfln("kerneltool: test failed: step %d: the HTTP case \"%s\"", index + 1, step.text)
 				return false
 			}
 		case .Quit:
