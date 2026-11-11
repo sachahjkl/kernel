@@ -305,6 +305,15 @@ error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record,
 	case .Unsupported:
 		write_part(writer, "the receiver does not do the command ")
 		write_part(writer, record.value)
+	case .Seed_Too_Weak:
+		write_part(writer, "the random seed of this program has the strength ")
+		write_part(writer, seed_strength_name(record.value))
+		write_part(writer, ", and the call asks for ")
+		write_part(writer, seed_strength_name(record.limit))
+		write_part(writer, " at least: it made nothing")
+	case .Not_Authentic:
+		subject(writer, record, argument)
+		write_part(writer, " is not authentic: its tag or its signature does not verify, and the call gives no byte of it")
 	case .Reserved:
 		subject(writer, record, argument)
 		write_part(writer, " names a program of the system: it starts at boot, or it is a device service, and the call does not act on it")
@@ -491,4 +500,19 @@ export_error_text :: proc "contextless" (writer: ^Writer, file: []u8, export: u3
 		}
 	}
 	error_text(writer, record, name, argument)
+}
+
+// seed_strength_name gives the name of a strength of a random seed
+// (support/random, Seed_Strength), for a sentence.
+@(private)
+seed_strength_name :: proc "contextless" (strength: i64) -> string {
+	switch strength {
+	case 1:
+		return "weak (the cycle counter only)"
+	case 2:
+		return "processor (rdrand)"
+	case 3:
+		return "entropy (rdseed)"
+	}
+	return "none"
 }

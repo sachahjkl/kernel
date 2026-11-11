@@ -52,3 +52,20 @@ blocks_of_rfc_8439_appendix_a_1 :: proc(t: ^testing.T) {
 	keystream_bytes(&ctx, block[:])
 	testing.expect_value(t, string(hex.encode(block[:], context.temp_allocator)), "9f07e7be5551387a98ba977c732d080dcb0f29a048e3656912c6533e32ee7aed29b721769ce64e43d57133b074d839d531ed1f28510afb45ace10a1f4b794d6f")
 }
+
+// The last block of the IETF stream: the counter 0xffffffff with a key and
+// a nonce of zeros. RFC 8439 allows this block (its counter has 32 bits),
+// and the header protection of QUIC can ask for it (RFC 9001, section
+// 5.4.4: the sender chooses the counter). The value comes from an
+// independent implementation.
+@(test)
+block_at_the_last_counter :: proc(t: ^testing.T) {
+	zero_key: [32]byte
+	zero_nonce: [12]byte
+	ctx: Context
+	init(&ctx, zero_key[:], zero_nonce[:])
+	seek(&ctx, 0xffffffff)
+	block: [64]byte
+	keystream_bytes(&ctx, block[:])
+	testing.expect_value(t, string(hex.encode(block[:], context.temp_allocator)), "ace4cd09e294d1912d4ad205d06f95d9c2f2bfcf453e8753f128765b62215f4d92c74f2f626c6a640c0b1284d839ec81f1696281dafc3e684593937023b58b1d")
+}

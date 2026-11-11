@@ -166,6 +166,8 @@ A third network machine (`scenario_tcp`) has the peer of the tool on `-netdev dg
 
 ## QUIC: what it reuses, and what it needs
 
+The design of QUIC and its first layer, packet protection, are in `docs/QUIC.md`. The text below was written before them, and stays as the list of what QUIC reuses; the list of what it needs is now answered: TLS 1.3 and its primitives (`docs/CRYPTOGRAPHY.md`), randomness (`docs/RANDOMNESS.md`), and raw public keys in place of certificates and a date (`docs/QUIC.md`, section 4).
+
 QUIC is the next step. It runs over UDP (RFC 9000), so it is a library in the program over a datagram endpoint, which exists.
 
 It reuses from this step:
