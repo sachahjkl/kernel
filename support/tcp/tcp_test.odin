@@ -27,6 +27,8 @@ Side :: struct {
 	events:      [CAPACITY]Event,
 	address:     u32,
 	seen:        Event_Kinds, // Each event kind that a step reported, for connection 0.
+	seen_by:     [CAPACITY]Event_Kinds, // The same, for each connection.
+	sent_out:    int, // The segments that this side put on the link.
 }
 
 Flying :: struct {
@@ -112,7 +114,9 @@ side_step :: proc(link: ^Link, index: int, arrived: []Incoming) -> u64 {
 		if event.connection == 0 {
 			side.seen += event.kinds
 		}
+		side.seen_by[event.connection] += event.kinds
 	}
+	side.sent_out += output.count
 	for item in side.segments[:output.count] {
 		bytes := side.memory[int(item.place) * PLACE_SIZE:][:item.length]
 		if !checksum_valid(side.address, item.remote_address, bytes) {
@@ -400,11 +404,18 @@ established :: proc(t: ^testing.T, link: ^Link) -> bool {
 	return ok
 }
 
-// inject puts one segment from A to B on the link.
-inject :: proc(link: ^Link, header: Header) {
-	flying := Flying{at = link.now, to = 1, from = ADDRESS_A, length = HEADER}
-	header_write(flying.bytes[:], ADDRESS_A, ADDRESS_B, header, HEADER)
+// inject puts one segment from A to B on the link, with data.
+inject :: proc(link: ^Link, header: Header, data: []u8 = nil) {
+	offset := header.mss != 0 ? HEADER_MSS : HEADER
+	flying := Flying{at = link.now, to = 1, from = ADDRESS_A, length = offset + len(data)}
+	copy(flying.bytes[offset:], data)
+	header_write(flying.bytes[:], ADDRESS_A, ADDRESS_B, header, flying.length)
 	append(&link.flying, flying)
+}
+
+// wait runs the link for a time, with no end condition.
+wait :: proc(link: ^Link, time: u64) {
+	link_run(link, time, proc(link: ^Link) -> bool {return false})
 }
 
 @(test)
@@ -526,5 +537,5 @@ malformed_segments :: proc(t: ^testing.T) {
 
 @(test)
 record_size :: proc(t: ^testing.T) {
-	testing.expect_value(t, size_of(Connection), 400)
+	testing.expect_value(t, size_of(Connection), 424)
 }

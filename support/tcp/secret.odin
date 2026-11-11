@@ -26,13 +26,25 @@ processor_random :: proc "contextless" () -> u64 {
 }
 
 // secret_make gives a secret, and says if it came from the processor. The
-// other source is the cycle counter.
+// other source is the cycle counter, which an attacker can guess. Some
+// processors of AMD give all ones with the carry set: a value of all ones,
+// or two equal values, is a processor that does not give random numbers.
 secret_make :: proc "contextless" (cycles: u64) -> (secret: [32]u8, from_processor: bool) {
+	values: [4]u64
 	from_processor = true
-	for index in 0 ..< 4 {
-		value := processor_random()
-		if value == 0 {
+	for &value, index in values {
+		value = processor_random()
+		if value == 0 || value == max(u64) {
 			from_processor = false
+		}
+		for other in values[:index] {
+			if other == value {
+				from_processor = false
+			}
+		}
+	}
+	for &value, index in values {
+		if !from_processor {
 			value = (cycles + u64(index)) * 0x9E37_79B9_7F4A_7C15
 		}
 		for byte in 0 ..< 8 {

@@ -17,6 +17,10 @@ DELAYED_ACK :: 40_000 // The most that an ACK waits.
 TIME_WAIT :: 10_000_000 // 2 MSL, with an MSL of 5 s for one link.
 RANGE_CAPACITY :: 8 // The ranges of data after a hole that a connection remembers.
 SLOW_START_THRESHOLD :: 1 << 30 // At the start: no threshold (RFC 5681 3.1).
+FIN_WAIT_2 :: 20_000_000 // The most that a record waits for the FIN of the remote after the ACK of its own.
+SYN_RECEIVED_RETRIES :: 3 // Timeouts of a SYN, ACK that end a passive open: 1 + 2 + 4 + 8 s.
+ANSWER_LIMIT :: 10 // The ACKs that answer segments out of the window, and the challenge ACKs, of one connection...
+ANSWER_PERIOD :: 1_000_000 // ...in this time.
 
 State :: enum u8 {
 	Closed       = 0, // The record is free when it also has no event and no RST to send.
@@ -74,7 +78,7 @@ Connection :: struct {
 	probe_now:             bool, // Send a probe of the zero window.
 	timing:                bool, // The segment that ends at rtt_sequence is timed.
 	in_recovery:           bool, // Fast recovery, until recover is acknowledged.
-	reserved:              u8,
+	syn_acknowledged:      bool, // The remote acknowledged the SYN of this side.
 	events:                Event_Kinds, // The events that the next step reports.
 	local_port:            u16,
 	remote_port:           u16,
@@ -116,7 +120,7 @@ Connection :: struct {
 	retransmit_at:         u64,
 	ack_at:                u64,
 	persist_at:            u64,
-	time_wait_at:          u64,
+	end_at:                u64, // TIME-WAIT, or FIN-WAIT-2: the end of the record.
 
 	// The round trip (RFC 6298), in microseconds.
 	smoothed_rtt:          u64,
@@ -127,6 +131,9 @@ Connection :: struct {
 	rtt_sequence:          u32,
 	backoff:               u32, // Timeouts in a row.
 	probe_backoff:         u32,
+	probes_unanswered:     u32, // Probes of a zero window with no segment of the remote after them.
+	answers:               u32, // Answers to segments out of the window in the period that starts at answers_at.
+	answers_at:            u64,
 	rtt_samples:           u32,
 
 	// What happened, for the program and for a person.
@@ -146,7 +153,7 @@ Connection :: struct {
 	out_of_order:          u64, // Segments after a hole.
 	challenges:            u64, // Challenge ACKs sent (RFC 5961).
 }
-#assert(size_of(Connection) == 400)
+#assert(size_of(Connection) == 424)
 
 // Table is the connection table of one program.
 Table :: struct {
@@ -156,6 +163,7 @@ Table :: struct {
 	receive_size:     u32,
 	local_address:    u32,
 	listen_port:      u16, // 0: no passive open.
+	remote_limit:     u16, // The open connections of one remote address that a passive open accepts. 0: no limit.
 	port_first:       u16, // The local TCP ports of an active open: a block of port_count.
 	port_count:       u16,
 	port_next:        u16,
@@ -167,7 +175,8 @@ Table :: struct {
 
 	// Segments that no connection took.
 	resets_sent:      u64,
-	refused_syns:     u64, // A SYN to the listen port when no record is free.
+	refused_syns:     u64, // A SYN to the listen port when no record is free, or over remote_limit.
+	reclaimed:        u64, // Records in TIME-WAIT that a SYN ended early, when no record was free.
 	unknown_segments: u64,
 	malformed:        u64,
 }
@@ -450,7 +459,7 @@ connection_end :: proc "contextless" (connection: ^Connection, now: u64, kinds: 
 	connection.retransmit_at = 0
 	connection.ack_at = 0
 	connection.persist_at = 0
-	connection.time_wait_at = 0
+	connection.end_at = 0
 	connection.ack_now = false
 	connection.retransmit_one = false
 	connection.probe_now = false
@@ -495,6 +504,24 @@ rtt_sample :: proc "contextless" (connection: ^Connection, measured: u64) {
 	connection.rto = min(max(connection.smoothed_rtt + max(1, 4 * connection.rtt_variance), RTO_LEAST), RTO_MOST)
 }
 
+// answer says if a connection can send one more ACK that answers a segment
+// out of the window, or a challenge ACK: ANSWER_LIMIT in each ANSWER_PERIOD,
+// for each connection (RFC 5961 7; one limit for all connections tells an
+// attacker of the traffic of the others: CVE-2016-5696).
+@(private)
+answer_out_of_window_allowed :: proc "contextless" (connection: ^Connection, now: u64) -> bool {
+	if now - connection.answers_at >= ANSWER_PERIOD {
+		connection.answers_at = now
+		connection.answers = 0
+	}
+	if connection.answers >= ANSWER_LIMIT {
+		return false
+	}
+	connection.answers += 1
+	connection.ack_now = true
+	return true
+}
+
 // flight gives the bytes sent and not acknowledged.
 @(private)
 flight :: #force_inline proc "contextless" (connection: ^Connection) -> u32 {
@@ -516,7 +543,8 @@ timeout :: proc "contextless" (connection: ^Connection, now: u64) {
 	connection.retransmit_at = 0
 	connection.backoff += 1
 	connection.timeouts += 1
-	if connection.backoff > RETRIES {
+	retries := u32(connection.state == .Syn_Received && connection.passive ? SYN_RECEIVED_RETRIES : RETRIES)
+	if connection.backoff > retries {
 		connection.reset_pending = true
 		connection_end(connection, now, {.Timed_Out})
 		return
@@ -534,6 +562,7 @@ timeout :: proc "contextless" (connection: ^Connection, now: u64) {
 	connection.in_recovery = false
 	connection.duplicate_acks = 0
 	connection.retransmit_one = false
+	connection.recover = connection.send_most // RFC 6582 3.2, step 4.
 	connection.send_next = connection.send_unacknowledged
 }
 
@@ -556,7 +585,7 @@ step :: proc "contextless" (table: ^Table, incoming: []Incoming, now: u64, outpu
 		if !full && !connection_output(table, index, now, output) {
 			full = true
 		}
-		for at in ([4]u64{connection.retransmit_at, connection.ack_at, connection.persist_at, connection.time_wait_at}) {
+		for at in ([4]u64{connection.retransmit_at, connection.ack_at, connection.persist_at, connection.end_at}) {
 			if at != 0 {
 				deadline = min(deadline, at)
 			}
@@ -575,7 +604,13 @@ step :: proc "contextless" (table: ^Table, incoming: []Incoming, now: u64, outpu
 
 @(private)
 timers :: proc "contextless" (connection: ^Connection, now: u64) {
-	if connection.time_wait_at != 0 && now >= connection.time_wait_at {
+	if connection.end_at != 0 && now >= connection.end_at {
+		if connection.state == .Fin_Wait_2 {
+			// The remote never sent its FIN: a RST says that the record ends.
+			connection.reset_pending = true
+			connection_end(connection, now, {.Timed_Out})
+			return
+		}
 		connection_end(connection, now, {.Closed})
 		return
 	}
@@ -583,6 +618,13 @@ timers :: proc "contextless" (connection: ^Connection, now: u64) {
 		timeout(connection, now)
 	}
 	if connection.persist_at != 0 && now >= connection.persist_at {
+		connection.probes_unanswered += 1
+		if connection.probes_unanswered > RETRIES {
+			// No segment of the remote after RETRIES probes: it went away.
+			connection.reset_pending = true
+			connection_end(connection, now, {.Timed_Out})
+			return
+		}
 		connection.probe_now = true
 		connection.probes += 1
 		connection.probe_backoff = min(connection.probe_backoff + 1, 16)
@@ -590,8 +632,8 @@ timers :: proc "contextless" (connection: ^Connection, now: u64) {
 	}
 }
 
-// find gives the connection of a segment: its remote and its two ports.
-@(private)
+// find gives the record of a connection: its remote and its two ports.
+// -1: no record. A program uses it to know if a segment had a connection.
 find :: proc "contextless" (table: ^Table, remote_address: u32, local_port, remote_port: u16) -> int {
 	for &item, index in table.connections {
 		if item.state != .Closed && item.remote_address == remote_address && item.local_port == local_port && item.remote_port == remote_port {
@@ -699,9 +741,14 @@ connection_output :: proc "contextless" (table: ^Table, index: int, now: u64, ou
 			if !segment_send(table, output, index, flags, connection.initial_send, 0, 0, table.mss != 0 ? table.mss : MSS_LOCAL) {
 				return false
 			}
+			first := connection.send_most == connection.initial_send
 			connection.send_next = connection.initial_send + 1
 			connection.send_most = connection.send_next
-			if connection.backoff == 0 {
+			// Karn: a SYN or a SYN, ACK that goes again gives no sample.
+			if !first {
+				connection.timing = false
+			}
+			if first {
 				connection.timing = true
 				connection.rtt_sequence = connection.send_next
 				connection.rtt_start = now
@@ -710,6 +757,13 @@ connection_output :: proc "contextless" (table: ^Table, index: int, now: u64, ou
 			}
 			if connection.retransmit_at == 0 {
 				connection.retransmit_at = now + connection.rto
+			}
+		}
+		// In SYN-RECEIVED after the SYN, ACK: an ACK that answers a segment
+		// out of the window (the SYN, ACK of a simultaneous open).
+		if connection.state == .Syn_Received && connection.send_next != connection.initial_send && connection.ack_now {
+			if !segment_send(table, output, index, {.Ack}, connection.send_next, 0, 0) {
+				return false
 			}
 		}
 		return true
@@ -887,9 +941,36 @@ listen :: proc "contextless" (table: ^Table, remote_address: u32, header: Header
 			break
 		}
 	}
+	// A limit for each remote address: one host cannot take each record.
+	if table.remote_limit != 0 {
+		open := 0
+		for &item in table.connections {
+			if item.remote_address == remote_address && item.state != .Closed && item.state != .Time_Wait {
+				open += 1
+			}
+		}
+		if open >= int(table.remote_limit) {
+			table.refused_syns += 1
+			reset_answer(table, output, remote_address, header)
+			return
+		}
+	}
 	if index < 0 {
-		// No SYN cookies: a full table refuses the SYN with a RST, so that
-		// the remote knows at once.
+		// No SYN cookies. A record in TIME-WAIT only waits for old
+		// segments: the oldest one ends now, and the SYN is dropped; the
+		// remote sends it again in 1 s and takes the record. With none, a
+		// RST tells the remote at once.
+		oldest := -1
+		for &item, place in table.connections {
+			if item.state == .Time_Wait && (oldest < 0 || before_time(item.end_at, table.connections[oldest].end_at)) {
+				oldest = place
+			}
+		}
+		if oldest >= 0 {
+			table.reclaimed += 1
+			connection_end(&table.connections[oldest], now, {.Closed})
+			return
+		}
 		table.refused_syns += 1
 		reset_answer(table, output, remote_address, header)
 		return
@@ -907,6 +988,11 @@ listen :: proc "contextless" (table: ^Table, remote_address: u32, header: Header
 	connection.send_window_most = u32(header.window)
 	connection.window_sequence = header.sequence
 	window_offer(table, connection)
+}
+
+@(private)
+before_time :: #force_inline proc "contextless" (a, b: u64) -> bool {
+	return a < b
 }
 
 // syn_sent reads a segment in the state Syn_Sent (RFC 9293 3.10.7.3).
@@ -936,6 +1022,11 @@ syn_sent :: proc "contextless" (table: ^Table, index: int, remote_address: u32, 
 	window_offer(table, connection)
 	if has_ack {
 		connection.send_unacknowledged = header.acknowledgment
+		connection.syn_acknowledged = true
+		// A timeout can have set send_next back to send the SYN again.
+		if before(connection.send_next, connection.send_unacknowledged) {
+			connection.send_next = connection.send_unacknowledged
+		}
 		connection.state = .Established
 		connection.established_at = now
 		connection.events += {.Opened}
@@ -974,15 +1065,20 @@ synchronized :: proc "contextless" (table: ^Table, index: int, header: Header, n
 	if connection.state == .Syn_Received && .Syn in header.flags && .Ack not_in header.flags && header.sequence == connection.initial_receive {
 		connection.send_next = connection.initial_send
 		connection.retransmit_at = 0
+		connection.timing = false // Karn: the SYN, ACK goes two times.
 		return
 	}
 	// A SYN in a synchronized state, at any sequence: a challenge ACK
-	// (RFC 5961 4.2).
-	if .Syn in header.flags && .Rst not_in header.flags {
-		connection.ack_now = true
-		connection.challenges += 1
+	// (RFC 5961 4.2). In SYN-RECEIVED (a simultaneous open), the SYN, ACK of
+	// the remote goes to the check of the window: it is out of it, and its
+	// answer is the ACK that ends the open.
+	if .Syn in header.flags && .Rst not_in header.flags && connection.state != .Syn_Received {
+		if answer_out_of_window_allowed(connection, now) {
+			connection.challenges += 1
+		}
 		return
 	}
+	original := header.sequence // The sequence of the segment as it came (RFC 5961 3.2).
 	// 1. Is the segment in the window?
 	length := sequence_length(header)
 	window := connection.receive_edge - connection.receive_next
@@ -1000,10 +1096,10 @@ synchronized :: proc "contextless" (table: ^Table, index: int, header: Header, n
 			header.flags -= {.Fin, .Syn}
 		} else {
 			if .Rst not_in header.flags {
-				connection.ack_now = true
 				connection.duplicates += 1
+				answer_out_of_window_allowed(connection, now)
 				if connection.state == .Time_Wait && .Fin in header.flags {
-					connection.time_wait_at = now + TIME_WAIT // A FIN again: the remote lost the ACK.
+					connection.end_at = now + TIME_WAIT // A FIN again: the remote lost the ACK.
 				}
 			}
 			return
@@ -1031,15 +1127,14 @@ synchronized :: proc "contextless" (table: ^Table, index: int, header: Header, n
 	}
 	// 2. RST: only at exactly receive_next (RFC 5961 3.2).
 	if .Rst in header.flags {
-		if header.sequence != connection.receive_next {
-			connection.ack_now = true
-			connection.challenges += 1
+		if original != connection.receive_next {
+			if answer_out_of_window_allowed(connection, now) {
+				connection.challenges += 1
+			}
 			return
 		}
-		if connection.state == .Syn_Received && connection.passive {
-			connection_end(connection, now, {}) // The program never saw it.
-			return
-		}
+		// Also a passive open that the program never saw Accepted: the event
+		// tells it to release the remote.
 		connection_end(connection, now, {.Reset})
 		return
 	}
@@ -1071,8 +1166,14 @@ synchronized :: proc "contextless" (table: ^Table, index: int, header: Header, n
 			receive(table, index, header, now)
 		}
 	}
-	// 6. FIN.
-	if .Fin in header.flags {
+	// 6. FIN: only before the FIN of the remote (RFC 9293 3.10.7.4, eighth).
+	// A FIN again in TIME-WAIT restarts its timer.
+	if .Fin in header.flags && connection.state == .Time_Wait {
+		connection.end_at = now + TIME_WAIT
+		connection.ack_now = true
+	}
+	fin_states := connection.state == .Established || connection.state == .Fin_Wait_1 || connection.state == .Fin_Wait_2
+	if .Fin in header.flags && fin_states {
 		fin_sequence := header.sequence + u32(len(header.data))
 		if fin_sequence == connection.receive_next {
 			fin_take(connection, now)
@@ -1090,20 +1191,25 @@ synchronized :: proc "contextless" (table: ^Table, index: int, header: Header, n
 acknowledge :: proc "contextless" (table: ^Table, connection: ^Connection, header: Header, now: u64) -> bool {
 	ack := header.acknowledgment
 	mss := u32(connection.mss)
+	// A segment of the remote came after the probes: it is there.
+	connection.probes_unanswered = 0
 	if after(ack, connection.send_most) {
-		connection.ack_now = true // An ACK of data that was never sent.
-		connection.challenges += 1
+		if answer_out_of_window_allowed(connection, now) { // An ACK of data that was never sent.
+			connection.challenges += 1
+		}
 		return false
 	}
 	if before(ack, connection.send_unacknowledged - max(connection.send_window_most, 1)) {
-		connection.ack_now = true // Too old: a challenge ACK (RFC 5961 5.2).
-		connection.challenges += 1
+		if answer_out_of_window_allowed(connection, now) { // Too old: a challenge ACK (RFC 5961 5.2).
+			connection.challenges += 1
+		}
 		return false
 	}
 	if after(ack, connection.send_unacknowledged) {
 		acknowledged := ack - connection.send_unacknowledged
-		if connection.send_unacknowledged == connection.initial_send {
-			acknowledged -= 1 // The SYN.
+		if !connection.syn_acknowledged {
+			acknowledged -= 1 // The SYN, one time: by the state, not by the sequence.
+			connection.syn_acknowledged = true
 		}
 		fin_now := connection.fin_sent && !connection.fin_acknowledged && after(ack, connection.fin_sequence)
 		if fin_now {
@@ -1149,6 +1255,11 @@ acknowledge :: proc "contextless" (table: ^Table, connection: ^Connection, heade
 		// A congestion window over the largest window of the remote says
 		// nothing: the send window limits the data first.
 		connection.congestion_window = min(connection.congestion_window, max(connection.send_window_most, 4 * mss))
+		// Outside recovery, recover follows the acknowledged edge, so that
+		// "ack after recover" holds after 2^31 bytes too (RFC 6582 3.2).
+		if !connection.in_recovery && after(ack, connection.recover) {
+			connection.recover = ack - 1
+		}
 		connection.duplicate_acks = 0
 		if connection.send_unacknowledged == connection.send_next {
 			connection.retransmit_at = 0
@@ -1159,9 +1270,10 @@ acknowledge :: proc "contextless" (table: ^Table, connection: ^Connection, heade
 			#partial switch connection.state {
 			case .Fin_Wait_1:
 				connection.state = .Fin_Wait_2
+				connection.end_at = now + FIN_WAIT_2
 			case .Closing:
 				connection.state = .Time_Wait
-				connection.time_wait_at = now + TIME_WAIT
+				connection.end_at = now + TIME_WAIT
 			case .Last_Ack:
 				connection_end(connection, now, {.Closed})
 				return false
@@ -1179,11 +1291,14 @@ acknowledge :: proc "contextless" (table: ^Table, connection: ^Connection, heade
 			connection.fast_retransmits += 1
 			connection.timing = false
 		} else if connection.in_recovery {
-			connection.congestion_window += mss
+			// The inflation of fast recovery, with the same limit.
+			connection.congestion_window = min(connection.congestion_window + mss, max(connection.send_window_most, 4 * mss) + 3 * mss)
 		}
 	}
-	// The send window: from the newest segment (SND.WL1, SND.WL2).
-	if before(connection.window_sequence, header.sequence) || (connection.window_sequence == header.sequence && before_or_same(connection.window_acknowledgment, ack)) {
+	// The send window: from the newest segment (SND.WL1, SND.WL2), with an
+	// ACK in [SND.UNA, SND.NXT] (RFC 9293 3.10.7.4).
+	newest := before(connection.window_sequence, header.sequence) || (connection.window_sequence == header.sequence && before_or_same(connection.window_acknowledgment, ack))
+	if newest && !before(ack, connection.send_unacknowledged) {
 		if header.window == 0 && connection.send_window != 0 {
 			connection.zero_windows += 1
 		}
@@ -1306,7 +1421,7 @@ fin_take :: proc "contextless" (connection: ^Connection, now: u64) {
 		connection.state = .Closing
 	case .Fin_Wait_2:
 		connection.state = .Time_Wait
-		connection.time_wait_at = now + TIME_WAIT
+		connection.end_at = now + TIME_WAIT
 	}
 }
 
