@@ -109,6 +109,8 @@ frames: u64
 // person drags a window.
 full_measure: bool // The next frame draws the whole screen, and the log has its time.
 move_frames, move_time, move_longest: u64 // Nanoseconds.
+// The colors of one line of a title bar, and of its lighter top line.
+title_row, title_light: [display.SURFACE_LIMIT + 2 * BORDER]graphics.Color
 
 // damage_add records that a rectangle of the screen changed. Rectangles that
 // touch become one rectangle. If there is no room, the new rectangle joins
@@ -235,6 +237,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 	}
 	pointer_x, pointer_y = width / 2, height / 2
+	title_measure()
 	damage_add(0, 0, width, height)
 	full_measure = true
 	system.log("compositor: ok ", u64(width), "x", u64(height))
@@ -621,19 +624,63 @@ draw_area :: proc "contextless" (area: Rectangle, now: u64) {
 }
 
 // window_draw draws a window at (x, y) of the canvas: its frame, then its
-// surface. The title bar of the window that has the focus is blue; the
-// title bar of another window is quiet.
+// surface. The title bar of the window that has the focus goes from the blue
+// of the title, at the left, to a darker blue, at the right; the title bar
+// of another window is quiet. The colors of one line of the title bar are
+// computed once, for the columns that the canvas shows, then copied to each
+// line.
 window_draw :: proc "contextless" (canvas: graphics.Canvas, client: ^Client, x, y: int, focus: bool) {
 	outer_width := client.surface.width + 2 * BORDER
 	outer_height := client.surface.height + TITLE_HEIGHT + BORDER
 	start := graphics.Color(focus ? graphics.COLOR_TITLE : graphics.COLOR_TITLE_QUIET)
 	end := graphics.Color(focus ? graphics.COLOR_TITLE_END : graphics.COLOR_TITLE_QUIET_END)
-	graphics.fill(canvas, x, y, outer_width, TITLE_HEIGHT, start)
-	graphics.fill(canvas, x, y + TITLE_HEIGHT, BORDER, outer_height - TITLE_HEIGHT, start)
-	graphics.fill(canvas, x + outer_width - BORDER, y + TITLE_HEIGHT, BORDER, outer_height - TITLE_HEIGHT, end)
-	graphics.fill(canvas, x, y + outer_height - BORDER, outer_width, BORDER, start)
+	first := max(-x, 0)
+	last := min(outer_width, canvas.width - x)
+	if first < last {
+		row := title_row[first:last]
+		graphics.gradient(row, start, end, outer_width, first)
+		// The line at the top is lighter: the sign of depth of the rules.
+		graphics.gradient(title_light[first:last], graphics.shade(start, 125), graphics.shade(end, 125), outer_width, first)
+		graphics.copy(canvas, x + first, y, {pixels = raw_data(title_light[first:]), width = last - first, height = 1})
+		lines := graphics.Canvas{pixels = raw_data(row), width = last - first, height = TITLE_HEIGHT - 1} // Stride 0: each line is the row.
+		graphics.copy(canvas, x + first, y + 1, lines)
+		lines.height = BORDER
+		graphics.copy(canvas, x + first, y + outer_height - BORDER, lines)
+	}
+	graphics.fill(canvas, x, y + TITLE_HEIGHT, BORDER, outer_height - TITLE_HEIGHT - BORDER, start)
+	graphics.fill(canvas, x + outer_width - BORDER, y + TITLE_HEIGHT, BORDER, outer_height - TITLE_HEIGHT - BORDER, end)
 	title_draw(canvas, client, x, y, focus, end)
 	graphics.copy(canvas, x + BORDER, y + TITLE_HEIGHT, client.surface)
+}
+
+// title_measure measures three forms of the title bar of the widest window
+// on the frame, before the first frame: one color, as before the gradient;
+// the gradient with a mix for each pixel; the gradient as one row of colors
+// that each line copies. The log has the time of each.
+title_measure :: proc "contextless" () {
+	ROUNDS :: 64
+	width := min(screen.width, len(title_row))
+	times: [3]u64
+	for form in 0 ..< 3 {
+		start := system.nanoseconds()
+		for _ in 0 ..< ROUNDS {
+			switch form {
+			case 0:
+				graphics.fill(frame, 0, 0, width, TITLE_HEIGHT, graphics.COLOR_TITLE)
+			case 1:
+				for line in 0 ..< TITLE_HEIGHT {
+					for column in 0 ..< width {
+						frame.pixels[line * frame.stride + column] = graphics.mix(graphics.COLOR_TITLE, graphics.COLOR_TITLE_END, u32(column * 255 / (width - 1)))
+					}
+				}
+			case 2:
+				graphics.gradient(title_row[:width], graphics.COLOR_TITLE, graphics.COLOR_TITLE_END, width, 0)
+				graphics.copy(frame, 0, 0, {pixels = raw_data(title_row[:]), width = width, height = TITLE_HEIGHT})
+			}
+		}
+		times[form] = (system.nanoseconds() - start) / ROUNDS
+	}
+	system.log_in("surfaces", .Info, "compositor: a title bar of ", u64(width), " pixels: one color ", times[0] / 1000, ".", times[0] / 100 % 10, " us, a mix for each pixel ", times[1] / 1000, ".", times[1] / 100 % 10, " us, one row of colors then copies ", times[2] / 1000, ".", times[2] / 100 % 10, " us")
 }
 
 // title_draw draws the title and the close button on a title bar.

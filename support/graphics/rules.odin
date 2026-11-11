@@ -36,7 +36,7 @@ COLOR_DIM :: 0x7C8A99
 // title bar of another window goes from COLOR_TITLE_QUIET to
 // COLOR_TITLE_QUIET_END.
 COLOR_TITLE :: 0x3F7CC4 // The blue of the title bar before the rules.
-COLOR_TITLE_END :: 0x162B47 // COLOR_TITLE at 36 %.
+COLOR_TITLE_END :: 0x162C45 // graphics.shade(COLOR_TITLE, 36).
 COLOR_TITLE_QUIET :: 0x2A3442
 COLOR_TITLE_QUIET_END :: 0x161D27
 COLOR_BLACK :: 0x000000
@@ -61,5 +61,24 @@ shade :: proc "contextless" (color: Color, percent: u32) -> Color {
 block :: proc "contextless" (canvas: Canvas, x, y, width, height: int, top, bottom: Color) {
 	for row in 0 ..< height {
 		fill(canvas, x, y + row, width, 1, mix(top, bottom, u32(row * 255 / max(height - 1, 1))))
+	}
+}
+
+// gradient puts in row the colors of the columns first ..< first + len(row)
+// of a line of total columns, whose color goes from start, at column 0, to
+// end, at column total - 1. Each channel steps by a fixed-point number: no
+// division for each pixel.
+gradient :: proc "contextless" (row: []Color, start, end: Color, total, first: int) {
+	steps := i64(max(total - 1, 1))
+	value, step: [3]i64
+	for channel in 0 ..< 3 {
+		shift := uint(16 - 8 * channel)
+		from, to := i64(start >> shift & 0xFF), i64(end >> shift & 0xFF)
+		step[channel] = (to - from) * 65536 / steps
+		value[channel] = from * 65536 + step[channel] * i64(first) + 32768
+	}
+	for &color in row {
+		color = rgb(u32(value[0] >> 16), u32(value[1] >> 16), u32(value[2] >> 16))
+		value += step
 	}
 }
