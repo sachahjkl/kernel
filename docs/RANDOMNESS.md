@@ -68,7 +68,11 @@ The strength of the seed is the strongest source that gave all its values. The r
   - The first 16 bytes of the stream of the 4 programs all differ: two programs give different streams, and a restart gives different streams.
 - `server` and `fetch` take the secret of the initial sequence numbers of TCP from their generator (`kerneltool test tcp`).
 
-## 5. What is not built
+## 5. The TCP secret before this step was weaker than the window said
+
+Recorded on 2026-11-11 (the review row of step 60). Up to step 59, `tcp.secret_make` read `rdrand` in a loop with inline asm that had no `#side_effects`. LLVM took the instruction as a pure function and kept one value for the loop: the four values of the secret were the same value (the machine test of this step saw the same fault: "rdrand present, 1 good, 255 refused"). The check "two equal values" then refused the secret, so `server` and `fetch` took it from the cycle counter, which an attacker can guess. The window of `server` and the log said "rdrand" or "the cycle counter (weak)" by the result of that check; where the compiler kept one value, the source was the cycle counter. Since step 60 the secret is 32 bytes of the generator of the program.
+
+## 6. What is not built
 
 - **An entropy device.** QEMU has `virtio-rng-pci`. A device program of property 7 that reads it and gives its bytes to the root service (`reseed`) is the next layer. The window says "none yet".
 - **A reseed of a running program.** A program reseeds its own generator only from bytes that it has (`random.reseed`). No service gives fresh bytes to a running program.
