@@ -62,7 +62,32 @@ scenario_tcp := [?]Step {
 	{kind = .Peer, text = "slow"},
 	{kind = .Wait, text = ": no request in 10 s, closed", any_order = true},
 	{kind = .Wait, text = " aborted: a body under 4096 bytes in one second: ", any_order = true},
-	{kind = .Wait, text = " aborted: no byte acknowledged in 10 s: "},
+	{kind = .Wait, text = " aborted: an answer under 4096 bytes in one second: "},
+	// An independent read of the HTTP server: each case is a client that
+	// the server must end.
+	// B1: a whole request and one byte of the next one: 408 after 10 s.
+	{kind = .Peer, text = "one byte after a request"},
+	// F3: the answers fill the window of the peer, which never reads; the
+	// server closed, and must still end the connection.
+	{kind = .Peer, text = "answers then close to a zero window"},
+	// W6: 1 MiB of a body of 16 MiB, then nothing; a reader of 1 KiB in one second.
+	{kind = .Peer, text = "body then nothing"},
+	{kind = .Wait, text = " aborted: no byte of the body in 10 s: "},
+	{kind = .Peer, text = "slow reader"},
+	{kind = .Wait, text = " aborted: an answer under 4096 bytes in one second: "},
+	// B2: the console removes a page while answers of it are in progress.
+	{kind = .Front, text = "console"},
+	{kind = .Type, text = "connect(\"server\")"},
+	{kind = .Wait, text = "root: connected console to the service server"},
+	{kind = .Type, text = "server.put(\"changing.txt\", repeat(\"0123456789abcdef\", 200))"},
+	{kind = .Wait, text = "server: the page /changing.txt is in the store: 3200 bytes"},
+	{kind = .Peer_Start, text = "page changed during its answer"},
+	{kind = .Type, text = "server.remove(\"changing.txt\")"},
+	{kind = .Wait, text = "server: the page /changing.txt is out of the store"},
+	// Now the peer reads: the server writes again, and finds the change.
+	{kind = .Peer_Result, text = "page changed during its answer"},
+	{kind = .Wait, text = " aborted: the page changed during its answer: "},
+	{kind = .Front, text = "server"},
 	{kind = .Shot, text = "server"},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "grants(\"server\")"},
@@ -117,15 +142,33 @@ scenario_tcp_real := [?]Step {
 	{kind = .Http, text = "keep-alive"},
 	{kind = .Wait, text = " requests on one connection of 10.0.2.2 port ", any_order = true},
 	{kind = .Http, text = "new-connections"},
+	// W10: the ends of connections have their own budget on the log.
+	{kind = .Wait, text = " ends of connections in one second are not on the log (the limit is 50)", any_order = true},
 	{kind = .Http, text = "pipeline"},
 	{kind = .Http, text = "split"},
 	{kind = .Http, text = "head"},
 	{kind = .Http, text = "crowd"},
 	{kind = .Http, text = "errors"},
+	// An independent read of the HTTP server: F4, W7, the notes.
+	{kind = .Http, text = "body-not-taken"},
+	{kind = .Http, text = "requests-then-fin"},
+	{kind = .Http, text = "headers"},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "server.remove(\"hello.txt\")"},
 	{kind = .Wait, text = "server: the page /hello.txt is out of the store"},
 	{kind = .Http, text = "missing hello.txt"},
+	// F5 and W8: the person revokes the store of server: a put and a remove
+	// are refused, and the page that is served does not change.
+	{kind = .Type, text = "server.put(\"kept.txt\", \"the first text\")"},
+	{kind = .Wait, text = "server: the page /kept.txt is in the store: 14 bytes"},
+	{kind = .Type, text = "revoke(\"server\", \"store\")"},
+	{kind = .Wait, text = "root: revoked the grant store of server"},
+	{kind = .Type, text = "server.put(\"kept.txt\", \"a second text\")"},
+	{kind = .Wait, text = "server: the store refused the page /kept.txt: the page that is served did not change"},
+	{kind = .Http, text = "page kept.txt", expected = "the first text"},
+	{kind = .Type, text = "server.remove(\"kept.txt\")"},
+	{kind = .Wait, text = "server: the store refused the removal of /kept.txt: the page is still served"},
+	{kind = .Http, text = "page kept.txt", expected = "the first text"},
 	{kind = .Front, text = "server"},
 	{kind = .Shot, text = "server_real"},
 	{kind = .Front, text = "console"},

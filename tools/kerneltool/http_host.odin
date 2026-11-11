@@ -10,6 +10,8 @@ import "support:web"
 // the host connects through hostfwd and libslirp (web_host.odin), and the
 // tool checks each answer with its own reading of HTTP (support/web).
 
+HTTP_HOST_WAIT_LIMIT :: 120 * time.Second
+
 // An HTTP connection of the host: the bytes that came and were not used
 // yet, so that answers in one segment, or split, are read right.
 Http_Host_Connection :: struct {
@@ -31,7 +33,11 @@ http_host_connect :: proc(forward: Forward) -> (connection: Http_Host_Connection
 		fmt.eprintfln("kerneltool: the host cannot connect to the port %d: %v", forward.host_port, err)
 		return {}, false
 	}
-	_ = net.set_option(socket, .Receive_Timeout, 15 * time.Second)
+	// The bound of a wait for an answer: the timers of the server count on
+	// the clock of the machine, which a loaded host slows (the flake of
+	// master failed at a load of 28 on the 408 after 10 s). The bound only
+	// ends a test that hangs; no check compares a time of the host.
+	_ = net.set_option(socket, .Receive_Timeout, HTTP_HOST_WAIT_LIMIT)
 	return {socket = socket, received = make([dynamic]u8, context.temp_allocator)}, true
 }
 
@@ -83,6 +89,54 @@ http_host_request :: proc(forward: Forward, request: string, of_head := false) -
 		return {}
 	}
 	return http_host_answer(&connection, of_head)
+}
+
+// http_host_read_to_the_end reads until the server ends the connection, or
+// for limit at most. ended says if the end came.
+http_host_read_to_the_end :: proc(connection: ^Http_Host_Connection, limit: time.Duration) -> (bytes: []u8, ended: bool, took: time.Duration) {
+	_ = net.set_option(connection.socket, .Receive_Timeout, limit)
+	start := time.tick_now()
+	buffer: [65536]u8
+	for time.tick_since(start) < limit {
+		count, err := net.recv_tcp(connection.socket, buffer[:])
+		if err != nil {
+			// A RST ends the connection too; a timeout does not.
+			ended = err != net.TCP_Recv_Error.Timeout
+			break
+		}
+		if count == 0 {
+			ended = true
+			break
+		}
+		append(&connection.received, ..buffer[:count])
+	}
+	return connection.received[:], ended, time.tick_since(start)
+}
+
+// answers_count reads the answers in bytes one after the other, by their
+// heads and their Content-Length; heads_only gives the places of the
+// answers to HEAD (no body). It stops at bytes that are not an answer.
+answers_count :: proc(bytes: []u8, heads_only: []int = nil) -> int {
+	count, offset := 0, 0
+	for offset < len(bytes) {
+		end := web.head_end(bytes[offset:])
+		if end == 0 {
+			break
+		}
+		head, ok := web.head_read(bytes[offset:][:end])
+		if !ok {
+			break
+		}
+		body := max(head.content_length, 0)
+		for place in heads_only {
+			if place == count {
+				body = 0
+			}
+		}
+		offset += end + body
+		count += 1
+	}
+	return count
 }
 
 // http_case_run runs one case; it prints what it found, and says if each
@@ -217,7 +271,8 @@ http_case_run :: proc(forward: Forward, case_text: string, expected: string) -> 
 			}
 			fmt.sbprintf(&found, " %s %d;", item.name, answer.status)
 		}
-		// Half a head, then nothing: 408 after 10 s.
+		// Half a head, then nothing: 408 after 10 s of the clock of the
+		// machine; the host waits up to HTTP_HOST_WAIT_LIMIT.
 		start := time.tick_now()
 		late := http_host_request(forward, "GET / HTTP/1.1\r\nHo")
 		if late.status != 408 {
@@ -240,6 +295,60 @@ http_case_run :: proc(forward: Forward, case_text: string, expected: string) -> 
 			return false
 		}
 		fmt.printfln("kerneltool: test passed: /%s gives 404 after server.remove", parts[1])
+	// An independent read of the HTTP server (F4): a request with a body
+	// that the server does not take. The body must not be read as the next
+	// request (RFC 9112 6.3; with a proxy before the server: request
+	// smuggling): one answer, then the end of the connection.
+	case "body-not-taken":
+		connection, ok := http_host_connect(forward)
+		if !ok {
+			return false
+		}
+		defer http_host_close(&connection)
+		hidden := "GET /nothing HTTP/1.1\r\nHost: 10.0.2.15\r\n\r\n"
+		http_host_send(&connection, fmt.tprintf("GET / HTTP/1.1\r\nHost: 10.0.2.15\r\nContent-Length: %d\r\n\r\n%s", len(hidden), hidden))
+		bytes, ended, took := http_host_read_to_the_end(&connection, HTTP_HOST_WAIT_LIMIT)
+		answers := answers_count(bytes)
+		if answers != 1 || !ended || !strings.has_prefix(string(bytes), "HTTP/1.1 200 ") {
+			fmt.eprintfln("kerneltool: a GET with a body of a request: %d answers, the end of the connection: %v, the first line %q", answers, ended, string(bytes[:min(len(bytes), 20)]))
+			return false
+		}
+		fmt.printfln("kerneltool: test passed: a GET with a body that is a request: one answer 200, then the server ended the connection after %.0f ms; the body was not read as a request", time.duration_milliseconds(took))
+	// W7: three whole requests, then a FIN: three answers, then the end.
+	case "requests-then-fin":
+		connection, ok := http_host_connect(forward)
+		if !ok {
+			return false
+		}
+		defer http_host_close(&connection)
+		http_host_send(&connection, "GET /counts.json HTTP/1.1\r\nHost: a\r\n\r\nGET /nothing HTTP/1.1\r\nHost: a\r\n\r\nHEAD / HTTP/1.1\r\nHost: a\r\n\r\n")
+		net.shutdown(connection.socket, .Send)
+		bytes, ended, _ := http_host_read_to_the_end(&connection, HTTP_HOST_WAIT_LIMIT)
+		answers := answers_count(bytes, {2})
+		if answers != 3 || !ended {
+			fmt.eprintfln("kerneltool: three requests then a FIN: %d answers, the end of the connection: %v", answers, ended)
+			return false
+		}
+		fmt.printfln("kerneltool: test passed: three requests then a FIN in one send: three answers (200, 404, 200 of HEAD), then the end of the connection")
+	// The notes of the read: each answer says nosniff; HTTP/1.0 with
+	// keep-alive gets "Connection: keep-alive" and a second answer on the
+	// same connection.
+	case "headers":
+		connection, ok := http_host_connect(forward)
+		if !ok {
+			return false
+		}
+		defer http_host_close(&connection)
+		http_host_send(&connection, "GET /counts.json HTTP/1.0\r\nConnection: keep-alive\r\n\r\n")
+		first := http_host_answer(&connection)
+		http_host_send(&connection, "GET /nothing HTTP/1.0\r\nConnection: keep-alive\r\n\r\n")
+		second := http_host_answer(&connection)
+		head := strings.to_lower(first.head, context.temp_allocator)
+		if first.status != 200 || !strings.contains(head, "\r\nx-content-type-options: nosniff\r\n") || !strings.contains(head, "\r\nconnection: keep-alive\r\n") || second.status != 404 || !strings.contains(strings.to_lower(second.head, context.temp_allocator), "nosniff") {
+			fmt.eprintfln("kerneltool: HTTP/1.0 with keep-alive: %d, then %d; the head %q", first.status, second.status, first.head)
+			return false
+		}
+		fmt.printfln("kerneltool: test passed: HTTP/1.0 with keep-alive: the answer says Connection: keep-alive and X-Content-Type-Options: nosniff, and a second request on the connection gets its answer (404, nosniff too)")
 	case "crowd":
 		// 16 connections at once: each sends, then each reads.
 		COUNT :: 16

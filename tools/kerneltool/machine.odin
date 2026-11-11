@@ -48,6 +48,8 @@ Step_Kind :: enum {
 	Call, // Call an export of a service from the host (call.odin), through the remote service: what the tool prints has `expected`. With `rows_call`, that call gives the count of rows of the Table. With `repeat`, the tool also measures the round trip and the calls in one second.
 	Peer, // The peer runs the TCP case text (peer_tcp.odin) and checks its answers.
 	Point, // Move the pointer to (x, y) with no press, then read compositor.pointer(): its shape must be the name text (docs/POINTERS.md). With inside_window, (x, y) are from the corner of that window, its title bar included; a negative x is from its right side. It needs the confirmation of the pointer (a Call with pointer before it).
+	Peer_Start, // The peer starts the TCP case text; the next steps run while it runs.
+	Peer_Result, // The end of the case of the last Peer_Start: it must pass. text is its name.
 	Fetch, // The TCP of the host fetches the page text of `server` through QEMU user networking (web_host.odin).
 	Http, // The TCP of the host runs the HTTP case text against `server` (web_host.odin, http_case_run); `expected` is the body that a page must have.
 }
@@ -1963,6 +1965,7 @@ machine_test :: proc(steps: []Step, volume: string, output: string, exit_status:
 }
 
 scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
+	peer_case_started := 0 // The number of the case of the last step Peer_Start.
 	for step, index in steps {
 		switch step.kind {
 		case .Wait:
@@ -2305,6 +2308,16 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				}
 				fmt.printfln("kerneltool: test passed: the call %s from the host: the round trip %d us at least, %d us in the middle, over %d calls; %d calls in one second, one after the other", step.text, i64(least / time.Microsecond), i64(middle / time.Microsecond), step.repeat, per_second)
 			}
+		case .Peer_Start:
+			peer_case_started = peer_case_start_from_the_tool(machine.peer, step.text)
+			fmt.printfln("kerneltool: the TCP case \"%s\" of the peer runs; the next steps run with it", step.text)
+		case .Peer_Result:
+			passed, result := peer_case_result(machine.peer, peer_case_started)
+			if !passed {
+				fmt.eprintfln("kerneltool: test failed: step %d: the TCP case \"%s\" of the peer: %s", index + 1, step.text, result)
+				return false
+			}
+			fmt.printfln("kerneltool: test passed: the TCP case \"%s\" of the peer: %s", step.text, result)
 		case .Peer:
 			passed, result := peer_case(machine.peer, step.text)
 			if !passed {

@@ -5,6 +5,7 @@ import "core:os"
 import "core:strings"
 import "core:sync"
 import "core:time"
+import "contract:datagram"
 import "support:tcp"
 import "support:web"
 
@@ -27,7 +28,10 @@ PEER_TCP_PLACE_SIZE :: 2048
 MACHINE_TCP_ADDRESS :: 0x0A00020F
 PEER_TCP_ADDRESS :: 0x0A000202
 SERVER_PORT :: 80
-CASE_TIME_LIMIT :: 60 * time.Second
+// The bound of a case, on the clock of the host: the limits of the server
+// (10 s and more) count on the clock of the machine, which a loaded host
+// slows. The bound only ends a case that hangs; no check compares a time.
+CASE_TIME_LIMIT :: 180 * time.Second
 
 // The connections of a host that wants to keep the records of the server
 // (case "slow"; an independent read of the step, B2).
@@ -40,6 +44,12 @@ Attack :: enum {
 	Half_Head_Fin, // Half a head, then a FIN.
 	Zero_Window, // /large, and a window of 0 for ever.
 	Huge, // A Content-Length of 999 999 999 999.
+	// The kinds of an independent read of the HTTP server (after the 7 of "slow").
+	Request_Then_One_Byte, // A whole request and one byte of the next one, then nothing (B1).
+	Answers_Then_Close_To_A_Zero_Window, // 64 pipelined requests, the last one with "Connection: close"; it never reads (F3).
+	Body_Then_Nothing, // 1 MiB of a body of 16 MiB at once, then nothing (W6).
+	Slow_Reader, // GET /large; it reads 8 KiB each 8 s: 1 KiB in one second (W6).
+	Reader_Of_A_Page_That_Changes, // 40 pipelined GET of a page of 3200 bytes; it reads nothing until the step Peer_Result, after the console removed the page (B2).
 }
 
 Client_Phase :: enum {
@@ -83,6 +93,7 @@ Client :: struct {
 	refused:      bool, // The server answered the SYN with a RST.
 	ended_at:     time.Duration, // The server ended the connection: the time from the start of the case.
 	trickle_at:   time.Tick,
+	reset_by_server: bool, // The server ended the connection with a RST.
 	attempts:     int,
 	first_byte_at: time.Tick, // The first byte of the body of the answer, at the peer.
 	last_byte_at:  time.Tick,
@@ -122,6 +133,7 @@ Peer_Tcp :: struct {
 	fetch_at:    time.Duration, // The page came: the time from the start of the case.
 	// Between the threads: the tool writes `wanted`, the peer writes `done`.
 	wanted:      int,
+	result_wanted: int, // The tool waits for the end of the case with this number (step Peer_Result).
 	started_case: int, // The number of the case that peer_case_start prepared.
 	done:        int,
 	passed:      bool,
@@ -164,10 +176,26 @@ peer_tcp_free :: proc(state: ^Peer_Tcp) {
 
 // peer_case asks the thread of the peer for a case, and waits for its end.
 peer_case :: proc(peer: ^Peer, name: string) -> (passed: bool, result: string) {
+	return peer_case_result(peer, peer_case_start_from_the_tool(peer, name))
+}
+
+// peer_case_start_from_the_tool asks the thread of the peer for a case, and
+// gives its number at once: the steps after it run while the case runs
+// (step Peer_Start).
+peer_case_start_from_the_tool :: proc(peer: ^Peer, name: string) -> int {
 	state := peer.tcp
 	state.name = name
 	serial := sync.atomic_load(&state.wanted) + 1
 	sync.atomic_store(&state.wanted, serial)
+	return serial
+}
+
+// peer_case_result waits for the end of the case with the number serial
+// (step Peer_Result). A case can wait for this step: the steps between
+// Peer_Start and Peer_Result happened before it goes on.
+peer_case_result :: proc(peer: ^Peer, serial: int) -> (passed: bool, result: string) {
+	state := peer.tcp
+	sync.atomic_store(&state.result_wanted, serial)
 	start := time.tick_now()
 	for sync.atomic_load(&state.done) != serial {
 		if time.tick_since(start) > CASE_TIME_LIMIT + 5 * time.Second {
@@ -264,17 +292,35 @@ peer_case_start :: proc(state: ^Peer_Tcp, name: string) -> bool {
 			add(state, client_page(true))
 		}
 	case "leak":
-		// B1: 64 ports each of a bare RST, a bare ACK, a SYN then a RST at
+		// B1: 192 ports each of a bare RST, a bare ACK, a SYN then a RST at
 		// its exact sequence, and a SYN with an option that the library
-		// refuses. With the old admission, 64 of them fill the admitted
-		// remotes and each later SYN is refused. Then a page.
-		for index in 0 ..< 64 {
+		// refuses: three times the 64 admitted remotes. With the old
+		// admission, they fill the table and the SYN of the page is dropped
+		// (a scratch run on the old service: the page client stayed in
+		// SYN-SENT; with 64 ports of each kind, fewer than 64 remotes stayed
+		// and the case passed on the old service). Then a page.
+		for index in 0 ..< 3 * datagram.ADMITTED_CAPACITY {
 			segment_by_hand_add(state, u16(30000 + index), 1000, {.Rst})
 			segment_by_hand_add(state, u16(31000 + index), 1000, {.Ack})
 			segment_by_hand_add(state, u16(32000 + index), 5000, {.Syn})
 			segment_by_hand_add(state, u16(32000 + index), 5001, {.Rst})
 			segment_by_hand_add(state, u16(33000 + index), 1000, {.Syn}, bad_option = true)
 		}
+		client := client_page(true)
+		client.delayed = true
+		add(state, client)
+	// An independent read of the HTTP server: each case is one client that
+	// the server must end, then a page that shows that it still serves.
+	case "one byte after a request":
+		add(state, {attack = .Request_Then_One_Byte})
+	case "answers then close to a zero window":
+		add(state, {attack = .Answers_Then_Close_To_A_Zero_Window})
+	case "body then nothing":
+		add(state, {attack = .Body_Then_Nothing, body = 1 << 20})
+	case "slow reader":
+		add(state, {attack = .Slow_Reader})
+	case "page changed during its answer":
+		add(state, {attack = .Reader_Of_A_Page_That_Changes})
 		client := client_page(true)
 		client.delayed = true
 		add(state, client)
@@ -383,6 +429,10 @@ peer_tcp_tick :: proc(peer: ^Peer, incoming: []tcp.Incoming) {
 		}
 	}
 	if all_done {
+		if state.name == "page changed during its answer" && !state.clients[0].reset_by_server {
+			peer_case_end(state, wanted, false, "the server sent both answers whole: the page did not change during the second one")
+			return
+		}
 		peer_case_end(state, wanted, true, peer_case_summary(state))
 		return
 	}
@@ -438,7 +488,10 @@ peer_case_summary :: proc(state: ^Peer_Tcp) -> string {
 		took := time.tick_diff(client.first_byte_at, client.last_byte_at)
 		return fmt.aprintf("1 MiB from the server, at the peer: %.1f ms from its first byte to its last one, %.1f MB/s; the load of the host %s", time.duration_milliseconds(took), f64(web.LARGE_SIZE) / max(time.duration_seconds(took), 1e-9) / 1e6, host_load())
 	case "leak":
-		return fmt.aprintf("%d segments by hand from 256 ports: a bare RST, a bare ACK, a SYN then a RST, a SYN that the library refuses; then a page came in %.1f ms", len(state.raw), time.duration_milliseconds(state.fetch_at - state.raw_time))
+		return fmt.aprintf("%d segments by hand from 768 ports: a bare RST, a bare ACK, a SYN then a RST, a SYN that the library refuses; then a page came in %.1f ms", len(state.raw), time.duration_milliseconds(state.fetch_at - state.raw_time))
+	case "one byte after a request", "answers then close to a zero window", "body then nothing", "slow reader", "page changed during its answer":
+		client := &state.clients[0]
+		return fmt.aprintf("the server ended the connection after %.1f s with %s", time.duration_seconds(client.ended_at), client.reset_by_server ? "a RST" : "its FIN")
 	case "slow":
 		accepted, refused, latest := 0, 0, time.Duration(0)
 		for &client in state.clients[:state.client_count] {
@@ -457,16 +510,40 @@ peer_case_summary :: proc(state: ^Peer_Tcp) -> string {
 	return fmt.aprintf("%d connections, the frames: %d dropped, %d reordered, %d repeated; the peer sent %d segments again", state.client_count, state.dropped, state.reordered, state.repeated, retransmitted)
 }
 
-@(rodata)
-attack_texts := [Attack]string {
-	.None          = "",
-	.Idle          = "",
-	.Half_Head     = "GET / HTTP/1.1\r\nHo",
-	.Trickle       = "POST /sink HTTP/1.1\r\nHost: 10.0.2.15\r\nContent-Length: 1000000\r\n\r\n",
-	.No_Fin        = "x\r\n\r\n",
-	.Half_Head_Fin = "GET / HT",
-	.Zero_Window   = "GET /large HTTP/1.1\r\nHost: 10.0.2.15\r\n\r\n",
-	.Huge          = "POST /sink HTTP/1.1\r\nHost: 10.0.2.15\r\nContent-Length: 999999999999\r\n\r\n",
+// attack_text gives the bytes that a client of an attack sends after the
+// handshake.
+attack_text :: proc(attack: Attack) -> string {
+	switch attack {
+	case .None, .Idle:
+		return ""
+	case .Half_Head:
+		return "GET / HTTP/1.1\r\nHo"
+	case .Trickle:
+		return "POST /sink HTTP/1.1\r\nHost: 10.0.2.15\r\nContent-Length: 1000000\r\n\r\n"
+	case .No_Fin:
+		return "x\r\n\r\n"
+	case .Half_Head_Fin:
+		return "GET / HT"
+	case .Zero_Window:
+		return "GET /large HTTP/1.1\r\nHost: 10.0.2.15\r\n\r\n"
+	case .Huge:
+		return "POST /sink HTTP/1.1\r\nHost: 10.0.2.15\r\nContent-Length: 999999999999\r\n\r\n"
+	case .Request_Then_One_Byte:
+		return "GET / HTTP/1.1\r\nHost: 10.0.2.15\r\n\r\nG"
+	case .Answers_Then_Close_To_A_Zero_Window:
+		requests := strings.repeat("GET / HTTP/1.1\r\nHost: 10.0.2.15\r\n\r\n", 63, context.temp_allocator)
+		return strings.concatenate({requests, "GET / HTTP/1.1\r\nHost: 10.0.2.15\r\nConnection: close\r\n\r\n"}, context.temp_allocator)
+	case .Body_Then_Nothing:
+		return "POST /sink HTTP/1.1\r\nHost: 10.0.2.15\r\nContent-Length: 16777216\r\n\r\n"
+	case .Slow_Reader:
+		return "GET /large HTTP/1.1\r\nHost: 10.0.2.15\r\n\r\n"
+	case .Reader_Of_A_Page_That_Changes:
+		// 40 answers of 3.3 KiB: more than the window of the peer (32 KiB)
+		// and the send buffer of the server (64 KiB), so one answer is in
+		// progress when the page changes.
+		return strings.repeat("GET /changing.txt HTTP/1.1\r\nHost: 10.0.2.15\r\n\r\n", 40, context.temp_allocator)
+	}
+	return ""
 }
 
 each_attack_ended :: proc(state: ^Peer_Tcp) -> bool {
@@ -533,9 +610,23 @@ client_run :: proc(peer: ^Peer, state: ^Peer_Tcp, client: ^Client, now: u64) {
 		}
 	case .Request:
 		if client.attack != .None {
-			text := attack_texts[client.attack]
-			if len(text) > 0 {
-				tcp.write(&state.table, index, transmute([]u8)text)
+			text := attack_text(client.attack)
+			for client.written < len(text) {
+				count, _ := tcp.write(&state.table, index, transmute([]u8)text[client.written:])
+				if count == 0 {
+					return
+				}
+				client.written += count
+			}
+			chunk: [16384]u8
+			for client.body_sent < client.body {
+				part := min(len(chunk), client.body - client.body_sent, tcp.send_room(&state.table, index))
+				if part == 0 {
+					return
+				}
+				web.pattern_fill(chunk[:part], client.body_sent)
+				count, _ := tcp.write(&state.table, index, chunk[:part])
+				client.body_sent += count
 			}
 			if client.attack == .Half_Head_Fin {
 				tcp.close(&state.table, index)
@@ -572,17 +663,35 @@ client_run :: proc(peer: ^Peer, state: ^Peer_Tcp, client: ^Client, now: u64) {
 			kinds := state.seen_by[index]
 			if connection.state == .Closed || .Reset in kinds || .Peer_Closed in kinds || .Timed_Out in kinds {
 				client.ended_at = time.tick_since(state.started)
+				client.reset_by_server = .Reset in kinds
 				client.phase = .Done
 				return
 			}
 			#partial switch client.attack {
+			case .Zero_Window, .Answers_Then_Close_To_A_Zero_Window, .Body_Then_Nothing:
+			// It never reads: its window goes to 0 and stays there.
+			case .Slow_Reader:
+				if time.tick_since(client.trickle_at) >= 8 * time.Second {
+					chunk: [8192]u8
+					tcp.read(&state.table, index, chunk[:])
+					client.trickle_at = time.tick_now()
+				}
+			case .Reader_Of_A_Page_That_Changes:
+				// No time of the host: the steps of the console come first.
+				if sync.atomic_load(&state.result_wanted) == sync.atomic_load(&state.wanted) {
+					chunk: [16384]u8
+					for {
+						count, _ := tcp.read(&state.table, index, chunk[:])
+						if count == 0 {
+							break
+						}
+					}
+				}
 			case .Trickle:
 				if time.tick_since(client.trickle_at) >= time.Second {
 					tcp.write(&state.table, index, {'x'})
 					client.trickle_at = time.tick_now()
 				}
-			case .Zero_Window:
-			// It never reads: its window goes to 0 and stays there.
 			case:
 				chunk: [4096]u8
 				for {

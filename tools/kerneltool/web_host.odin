@@ -191,7 +191,7 @@ forward_fetch :: proc(forward: Forward, path: string) -> bool {
 		return false
 	}
 	defer net.close(socket)
-	_ = net.set_option(socket, .Receive_Timeout, 20 * time.Second)
+	_ = net.set_option(socket, .Receive_Timeout, HTTP_HOST_WAIT_LIMIT)
 	start := time.tick_now()
 	request: string
 	body := path == "/sink"
