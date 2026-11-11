@@ -89,7 +89,7 @@ entry :: proc "c" (start_context: ^system.Context) -> ! {
 	system.log(CONSOLE_MARK)
 
 	for {
-		seen := intrinsics.volatile_load(&changes)
+		seen := intrinsics.atomic_load_explicit(&changes, .Relaxed)
 		for {
 			pressed := terminal.key(&output) or_break
 			if !running {
@@ -103,7 +103,7 @@ entry :: proc "c" (start_context: ^system.Context) -> ! {
 				pending_count += 1
 			}
 		}
-		if running && intrinsics.volatile_load(&work.finished) == work.started {
+		if running && intrinsics.atomic_load_explicit(&work.finished, .Relaxed) == work.started {
 			running = false
 			// The keys that waited, until one of them starts a line.
 			taken := 0
@@ -128,7 +128,7 @@ run_lines :: proc "c" (parameter: rawptr) -> ! {
 	done: u32
 	for {
 		system.word_wait(&work.started, done)
-		if intrinsics.volatile_load(&work.started) == done {
+		if intrinsics.atomic_load_explicit(&work.started, .Relaxed) == done {
 			continue
 		}
 		done += 1

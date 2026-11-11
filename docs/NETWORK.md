@@ -181,5 +181,5 @@ It needs what the system does not have:
 
 - TLS 1.3 (RFC 8446, RFC 9001): the key exchange (X25519), AEAD (AES-GCM or ChaCha20-Poly1305), HKDF, certificates and their check. No such code exists in the system.
 - A random service: keys need a secret that an attacker cannot guess. `rdrand` in each program is not a service of the system.
-- A time of the day, to check a certificate: the time page has no date.
+- A time of the day, to check a certificate: the date page has the date of the real-time clock, read one time; a certificate needs a date that an attacker cannot set (the clock of the machine is not one).
 - A way to give a program the trusted certificates, as a grant.

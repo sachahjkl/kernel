@@ -379,7 +379,11 @@ ed25519_public_key_run :: #force_no_inline proc "contextless" (secret_text: stri
 	defer crypto.zero_explicit(&secret_copy, size_of(secret_copy))
 	private_key: ed25519.Private_Key
 	defer ed25519.private_key_clear(&private_key)
-	ed25519.private_key_set_bytes(&private_key, secret_copy[:])
+	// The copy has the size of a private key: the origin refuses only
+	// another size.
+	if !ed25519.private_key_set_bytes(&private_key, secret_copy[:]) {
+		return ERROR
+	}
 	public_key: ed25519.Public_Key
 	ed25519.public_key_set_priv(&public_key, &private_key)
 	ed25519.public_key_bytes(&public_key, output[:ed25519.PUBLIC_KEY_SIZE])
@@ -418,7 +422,11 @@ ed25519_sign_run :: #force_no_inline proc "contextless" (secret_text, message_te
 	defer crypto.zero_explicit(&secret_copy, size_of(secret_copy))
 	private_key: ed25519.Private_Key
 	defer ed25519.private_key_clear(&private_key)
-	ed25519.private_key_set_bytes(&private_key, secret_copy[:])
+	// The copy has the size of a private key: the origin refuses only
+	// another size.
+	if !ed25519.private_key_set_bytes(&private_key, secret_copy[:]) {
+		return ERROR
+	}
 	ed25519.sign(&private_key, message_copy[:len(message)], signature[:])
 	copy(output, signature[:])
 	return ed25519.SIGNATURE_SIZE

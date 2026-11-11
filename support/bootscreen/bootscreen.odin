@@ -18,6 +18,7 @@ package bootscreen
 
 import info "contract:boot_info"
 import "support:graphics"
+import "support:interface"
 import op "contract:operation"
 import "base:intrinsics"
 
@@ -249,16 +250,18 @@ stripes_of_screen :: proc "contextless" (order: graphics.Subpixel_Order) -> grap
 CARD_TITLE :: graphics.CARD_TITLE
 CARD_MARGIN :: graphics.CARD_MARGIN
 
-// card draws the frame of one part of the display, and gives the place of
-// its content. The caption says which record the card shows.
+// card draws the frame of one part of the display with the card of the
+// interface package (the same card as in each window), and gives the place
+// of its content. The caption says which record the card shows.
 @(private)
 card :: proc "contextless" (canvas: graphics.Canvas, x, y, width, height: int, title, caption: string, accent: graphics.Color) -> graphics.Canvas {
-	block(canvas, x, y, width, height, graphics.shade(accent, 28), graphics.shade(accent, 14))
-	block(canvas, x + 1, y + 1, width - 2, height - 2, graphics.COLOR_CARD_TOP, graphics.COLOR_CARD_BOTTOM)
-	block(canvas, x + CARD_MARGIN, y + 13, 4, 16, graphics.shade(accent, 130), accent)
-	after := write(canvas, x + CARD_MARGIN + 12, y + 13, title, accent)
-	write(canvas, after + 16, y + 13, caption, graphics.COLOR_DIM)
-	return graphics.view(canvas, x + CARD_MARGIN, y + CARD_TITLE, width - 2 * CARD_MARGIN, height - CARD_TITLE - 10)
+	records: [8]interface.Draw_Record
+	text: [128]u8
+	table := interface.Draw_Table{records = records[:], text = text[:]}
+	frame := interface.Frame{table = &table}
+	content := interface.card(&frame, {x, y, width, height}, title, caption, accent)
+	interface.execute(&table, canvas)
+	return graphics.view(canvas, content.x, content.y, content.width, content.height)
 }
 
 // fact draws one line "name value".
@@ -269,6 +272,17 @@ fact :: proc "contextless" (canvas: graphics.Canvas, y: int, name: string, value
 		put(value, "not known yet")
 		show(canvas, FACT_VALUE, y, value, graphics.COLOR_DIM)
 		return
+	}
+	// A value longer than the card is cut after its last whole word.
+	room := max(canvas.width - FACT_VALUE, 0) / graphics.CELL_WIDTH
+	if value.count > room {
+		value.count = room
+		for value.count > 0 && value.bytes[value.count] != ' ' {
+			value.count -= 1
+		}
+		for value.count > 0 && value.bytes[value.count - 1] == ' ' {
+			value.count -= 1
+		}
 	}
 	show(canvas, FACT_VALUE, y, value, color)
 }

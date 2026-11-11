@@ -1,10 +1,18 @@
-// A module of commands that take a record or a handle (property 19). A
-// record is bytes with described fields: the caller and the module read the
-// same layout. A handle is lent for the time of one call, with the rights
-// that the description names and no other right.
-// The console calls it with load("sample") or isolate("sample").
+// A module of commands that take a record, a handle or a table (property
+// 19). A record is bytes with described fields: the caller and the module
+// read the same layout. A handle is lent for the time of one call, with the
+// rights that the description names and no other right. A table is records
+// of one description in memory of the caller, with a direction: Read,
+// Change or Append.
+// The console calls it with load("sample"), isolate("sample") or
+// connect("sample"): the module has an entry, so the same module also runs
+// as a program that serves its exports. A service holds no export that is
+// wrong on purpose: those are in the module hostile_exports, which no
+// service holds.
 package sample
 
+import "base:intrinsics"
+import "contract:errors"
 import op "contract:operation"
 import "support:system"
 
@@ -104,44 +112,120 @@ spoil :: proc "c" (memory: system.Lent({.Read})) -> i64 {
 	return i64(status)
 }
 
-held: system.Handle
-
-// keep remembers the handle that the caller lent, for a later call of kept.
-@(export, link_name = "keep")
-keep :: proc "c" (memory: system.Lent({.Read})) -> i64 {
-	held = memory.handle
-	return total(memory)
+// A reading of a sensor: one record of 40 bytes of a table.
+Reading :: struct {
+	sensor:  i64,
+	time:    i64,
+	value:   i64,
+	minimum: i64,
+	maximum: i64,
 }
 
-// kept uses the handle that keep remembered. The result is the status of
-// the kernel: 2 is "no handle", because a lent handle ends with its call.
-@(export, link_name = "kept")
-kept :: proc "c" () -> i64 {
-	bytes, status := bytes_of(held, {})
-	if status == .Ok {
-		system.memory_unmap(raw_data(bytes))
+// readings gives a table of `count` readings: sensor n, time n, value 10 * (n + 1). The result is a Table of the readings that fit in the memory of the caller, and its count is `count`.
+@(export, link_name = "readings")
+readings :: proc "c" (count: i64, result: ^[]Reading) -> i64 {
+	for number in 0 ..< max(count, 0) {
+		if int(number) < len(result) {
+			value := 10 * (number + 1)
+			result[number] = {sensor = number, time = number, value = value, minimum = value, maximum = value}
+		}
 	}
-	return i64(status)
+	return max(count, 0)
 }
 
-view: []u8
-
-// hold maps a memory object that the caller lent, keeps the mapping for a
-// later call of look, and gives the first byte.
-@(export, link_name = "hold")
-hold :: proc "c" (memory: system.Lent({.Read})) -> i64 {
-	bytes, status := bytes_of(memory.handle, {})
-	if status != .Ok {
-		return -i64(status)
+// sum_values gives the sum of the values of a table of readings. The export reads the table: the direction Read.
+@(export, link_name = "sum_values")
+sum_values :: proc "c" (readings: ^system.Table_To_Read(Reading)) -> i64 {
+	sum: i64
+	for reading in system.table_records(readings) {
+		sum += reading.value
 	}
-	view = bytes
-	return i64(bytes[0])
+	return sum
 }
 
-// look reads the first byte through the mapping that hold kept. After an
-// isolated call the caller revoked what it lent: the kernel removed the
-// mapping, and the program of this module stops on a page fault.
-@(export, link_name = "look")
-look :: proc "c" () -> i64 {
-	return len(view) == 0 ? -1 : i64(view[0])
+// scale_values multiplies the value, the minimum and the maximum of each reading by a factor, in the memory of the caller (the direction Change), and gives the count of readings.
+@(export, link_name = "scale_values")
+scale_values :: proc "c" (readings: ^system.Table_To_Change(Reading), factor: i64) -> i64 {
+	for &reading in system.table_changed_records(readings) {
+		reading.value *= factor
+		reading.minimum *= factor
+		reading.maximum *= factor
+	}
+	return i64(readings.count)
+}
+
+// append_readings appends `count` readings after those of the table (the direction Append): sensor n, time n, value first_value + n. It writes those that fit before the capacity, and adds `count` to the count of the table: a count larger than the capacity says that they did not all fit. The result is the count of readings that it wrote.
+@(export, link_name = "append_readings")
+append_readings :: proc "c" (count: i64, first_value: i64, readings: ^system.Table_To_Append(Reading)) -> i64 {
+	written: i64
+	for number in 0 ..< max(count, 0) {
+		value := first_value + number
+		reading := Reading{sensor = i64(readings.count), time = number, value = value, minimum = value, maximum = value}
+		written += system.table_append(readings, reading) ? 1 : 0
+	}
+	return written
+}
+
+// A word of a text: the record names its bytes by offset in another
+// parameter; it holds no address.
+Word :: struct {
+	start: u32, // The first byte of the word in the text.
+	count: u32, // Its bytes.
+	sum:   i64, // Written by the export: the sum of its bytes.
+}
+
+// sum_words writes in each word the sum of the bytes of the text that the word names, and gives the sum of all. A word that names bytes after the end of the text is an error, not a fault: the result is -1 with an error record of the kind Out_Of_Range (the end of the bytes of the word, the count of bytes of the text, and the number of the word).
+@(export, link_name = "sum_words")
+sum_words :: proc "c" (words: ^system.Table_To_Change(Word), text: ^system.Bytes_To_Read, error: ^errors.Error_Record) -> i64 {
+	total: i64
+	for &word, number in system.table_changed_records(words) {
+		// The rule of an export (docs/MODULE_CONTRACT.md): it copies a
+		// record before it checks it, and uses only the copy. In an
+		// isolated call the records are in the call region, which another
+		// thread of the caller can change during the call. One volatile
+		// load: the compiler cannot read the record a second time.
+		copied := intrinsics.volatile_load(&word)
+		end := u64(copied.start) + u64(copied.count)
+		if end > text.count {
+			return errors.fail(error, -1, .Out_Of_Range, .Bytes, 1, i64(end), i64(text.count), i64(number + 1))
+		}
+		sum: i64
+		for b in text.bytes[copied.start:end] {
+			sum += i64(b)
+		}
+		word.sum = sum
+		total += sum
+	}
+	return total
+}
+
+// upper_case changes each letter of a range of bytes to upper case, in the memory of the caller (Bytes with the direction Change), and gives the count of letters that it changed.
+@(export, link_name = "upper_case")
+upper_case :: proc "c" (text: ^system.Bytes_To_Change) -> i64 {
+	changed: i64
+	for &b in text.bytes[:text.count] {
+		if b >= 'a' && b <= 'z' {
+			b -= 'a' - 'A'
+			changed += 1
+		}
+	}
+	return changed
+}
+
+// The same module as a program: a service that serves the exports above.
+// An export needs nothing from the entry.
+@(export, link_name = "entry")
+entry :: proc "c" (ctx: ^system.Context) -> ! {
+	service, ok := system.service_open(ctx)
+	if !ok {
+		system.log("sample: no service ring")
+		system.stop(1)
+	}
+	system.log("sample: serves its exports")
+	for {
+		wait: system.Wait
+		system.service_wait(&wait, &service)
+		system.wait_end(&wait)
+		system.service_run(&service)
+	}
 }

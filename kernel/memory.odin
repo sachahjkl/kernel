@@ -142,6 +142,35 @@ frames_take :: proc "contextless" (count: u64) -> u64 {
 	return 0
 }
 
+// frames_take_aligned takes count page frames in one block whose first
+// frame is a multiple of alignment frames (a large page: 512), not zero.
+// 0: no such block. The caller holds the frame lock.
+frames_take_aligned :: proc "contextless" (count: u64, alignment: u64) -> u64 {
+	if alignment <= 1 {
+		return frames_take(count)
+	}
+	if count == 0 || count > free_frames {
+		return 0
+	}
+	first := u64(0)
+	search: for first + count <= frame_count {
+		for frame in first ..< first + count {
+			if frame_used(frame) {
+				// The next candidate is the multiple of the alignment above
+				// the used frame, not the next multiple only.
+				first = (frame / alignment + 1) * alignment
+				continue search
+			}
+		}
+		for frame in first ..< first + count {
+			frame_bits[frame / 64] |= 1 << (frame % 64)
+		}
+		free_frames -= count
+		return first * PAGE_SIZE
+	}
+	return 0
+}
+
 // frames_free gives frames back.
 frames_free :: proc "contextless" (address: u64, count: u64) {
 	lock_take(&frame_lock, .Frame)
@@ -351,7 +380,7 @@ frames_check :: proc "contextless" () {
 		budget_pages += budget.amounts.pages
 	}
 	if free_bits != free_frames || !marked || free_frames + stacked != budget_pages + reserved_pages - taken {
-		intrinsics.atomic_store(&log_serial_only, true)
+		fault_report_begin()
 		log("kernel: the frames do not add up: free bits ", free_bits, ", free frames ", free_frames, ", in stacks ", stacked, ", marked ", u64(marked), ", budgets ", budget_pages, ", reserved ", reserved_pages, ", taken ", taken)
 		machine_stop(3)
 	}
@@ -364,6 +393,11 @@ page_entry :: proc "contextless" (table: u64, address: u64, create: bool, budget
 	current := table
 	for level := uint(3); level >= 1; level -= 1 {
 		entry := &direct(current, [512]u64)[address >> (12 + 9 * level) & 511]
+		// A large page: the entry of the second level is the entry of the
+		// address (an object made Large_Pages).
+		if level == 1 && entry^ & PAGE_LARGE != 0 {
+			return entry
+		}
 		if entry^ & PAGE_PRESENT == 0 {
 			if !create {
 				return nil
@@ -377,6 +411,49 @@ page_entry :: proc "contextless" (table: u64, address: u64, create: bool, budget
 		current = entry^ & PAGE_ADDRESS
 	}
 	return &direct(current, [512]u64)[address >> 12 & 511]
+}
+
+// page_directory_entry gives the entry of the second level for an address
+// aligned on 2 MiB, present or not: the place of a large page. With create
+// it makes the tables above it that are missing (the budget pays); a table
+// of the last level that is there, with no present entry (a range that a
+// mapping left), returns to the budget. nil: no table, or the budget has
+// no page. The caller holds the program lock.
+page_directory_entry :: proc "contextless" (table: u64, address: u64, create: bool, budget: ^u32 = nil) -> ^u64 {
+	current := table
+	for level := uint(3); level >= 2; level -= 1 {
+		entry := &direct(current, [512]u64)[address >> (12 + 9 * level) & 511]
+		if entry^ & PAGE_PRESENT == 0 {
+			if !create {
+				return nil
+			}
+			child := frame_paid(budget)
+			if child == 0 {
+				return nil
+			}
+			entry^ = child | PAGE_PRESENT | PAGE_WRITE | PAGE_USER
+		}
+		current = entry^ & PAGE_ADDRESS
+	}
+	entry := &direct(current, [512]u64)[address >> 21 & 511]
+	if create && entry^ & PAGE_PRESENT != 0 && entry^ & PAGE_LARGE == 0 {
+		// No mapping is in these 2 MiB (map_region checked it): the table
+		// of the last level has no present entry. Its page returns, after
+		// each processor that uses this page table forgot the entry that
+		// names it (a processor can keep the entries of the upper levels).
+		old_table := entry^ & PAGE_ADDRESS
+		entry^ = 0
+		intrinsics.atomic_thread_fence(.Seq_Cst)
+		processor_sync(processors_with_table(table))
+		if self := processor_self(); intrinsics.atomic_load(&self.table) == table {
+			cr3_write(table)
+		}
+		lock_take(&frame_lock, .Frame)
+		frames_free_held(old_table, 1)
+		budgets[budget^].amounts.pages += 1
+		lock_free(&frame_lock, .Frame)
+	}
+	return entry
 }
 
 // frame_paid takes one zero page frame that a budget pays for: a page
@@ -419,7 +496,8 @@ address_space_free :: proc "contextless" (table: u64, budget: ^u32) {
 	free_level :: proc "contextless" (table: u64, level: int, limit: int) -> (count: u64) {
 		for i in 0 ..< limit {
 			entry := direct(table, [512]u64)[i]
-			if entry & PAGE_PRESENT != 0 && level > 1 {
+			// A large page is not a table: its frames belong to its object.
+			if entry & PAGE_PRESENT != 0 && level > 1 && !(level == 2 && entry & PAGE_LARGE != 0) {
 				count += free_level(entry & PAGE_ADDRESS, level - 1, 512)
 			}
 		}

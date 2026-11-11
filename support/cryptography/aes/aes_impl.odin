@@ -1,4 +1,4 @@
-// Altered source: Odin dev-2026-05, core/crypto/aes/aes_impl.odin; only its imports changed (support/cryptography/origin.manifest, docs/CRYPTOGRAPHY.md).
+// Altered source: Odin dev-2026-11a, core/crypto/aes/aes_impl.odin; only its imports changed (support/cryptography/origin.manifest, docs/CRYPTOGRAPHY.md).
 package aes
 
 import crypto "support:cryptography/compatibility_crypto"

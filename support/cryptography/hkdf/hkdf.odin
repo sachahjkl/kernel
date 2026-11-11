@@ -1,4 +1,4 @@
-// Altered source: Odin dev-2026-05, core/crypto/hkdf/hkdf.odin; only its imports changed (support/cryptography/origin.manifest, docs/CRYPTOGRAPHY.md).
+// Altered source: Odin dev-2026-11a, core/crypto/hkdf/hkdf.odin; only its imports changed (support/cryptography/origin.manifest, docs/CRYPTOGRAPHY.md).
 /*
 `HKDF` HMAC-based Extract-and-Expand Key Derivation Function.
 

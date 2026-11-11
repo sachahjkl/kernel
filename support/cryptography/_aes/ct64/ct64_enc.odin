@@ -1,4 +1,4 @@
-// Altered source: Odin dev-2026-05, core/crypto/_aes/ct64/ct64_enc.odin; only its imports changed (support/cryptography/origin.manifest, docs/CRYPTOGRAPHY.md).
+// Altered source: Odin dev-2026-11a, core/crypto/_aes/ct64/ct64_enc.odin; only its imports changed (support/cryptography/origin.manifest, docs/CRYPTOGRAPHY.md).
 // Copyright (c) 2016 Thomas Pornin <pornin@bolet.org>
 // All rights reserved.
 //

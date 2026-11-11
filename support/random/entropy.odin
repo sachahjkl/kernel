@@ -54,17 +54,33 @@ Cycles_Read :: #type proc "contextless" () -> u64
 // gave none. The tests give their own.
 Processor_Read :: #type proc "contextless" () -> (value: u64, ok: bool)
 
-// #side_effects: each run is a new value. Without it the compiler took the
-// instruction as a pure function and kept one value for a loop (a machine
-// test found rdrand with 1 good value and 255 "repeated" ones).
+// One instruction of the processor as a template: the value, and the carry
+// flag of the processor, which says if the value is good. Volatile: each
+// use runs the instruction again. An inline instruction that the compiler
+// took as a pure function kept one value for a loop (a machine test found
+// rdrand with 1 good value and 255 "repeated" ones).
+processor_seed_value :: asm() -> (value: u64, good: bool) [
+	good = %flags.c,
+	#volatile,
+] {
+	rdseed value
+}
+
+processor_random_value :: asm() -> (value: u64, good: bool) [
+	good = %flags.c,
+	#volatile,
+] {
+	rdrand value
+}
+
 rdseed_read :: proc "contextless" () -> (value: u64, ok: bool) {
-	value = asm() -> u64 #side_effects {"rdseed $0\n\tjc 1f\n\txor $0, $0\n1:", "=r,~{cc}"}()
-	return value, value != 0
+	value, ok = processor_seed_value()
+	return value, ok && value != 0
 }
 
 rdrand_read :: proc "contextless" () -> (value: u64, ok: bool) {
-	value = asm() -> u64 #side_effects {"rdrand $0\n\tjc 1f\n\txor $0, $0\n1:", "=r,~{cc}"}()
-	return value, value != 0
+	value, ok = processor_random_value()
+	return value, ok && value != 0
 }
 
 // processor_features says if the processor has rdrand (CPUID 1, ECX bit

@@ -13,6 +13,7 @@ import "core:sys/linux"
 MODULE_BUILD_FOLDER :: BUILD_FOLDER + "/modules"
 BOOT_IMAGE :: BUILD_FOLDER + "/boot.image"
 BOOT_IMAGE_FAILS :: BUILD_FOLDER + "/boot_fails.image"
+BOOT_IMAGE_SHORTAGE :: BUILD_FOLDER + "/boot_shortage.image"
 SYSTEM_LIBRARY_FOLDER :: "support/system"
 // The copy and the fill of every module, of the kernel and of the boot
 // program: copy_bytes_without_overlap, copy_bytes_with_overlap,
@@ -72,7 +73,9 @@ module_builds := [?]Module_Build {
 	{name = "frames", source = "programs/frames", image = true},
 	{name = "twin", source = "programs/twin", image = true},
 	{name = "locks", source = "programs/locks", image = true},
+	{name = "shortage", source = "programs/shortage", image = true},
 	{name = "scheduler", source = "programs/scheduler", image = true},
+	{name = "address_space", source = "programs/address_space", image = true},
 	{name = "locker", source = "programs/locker", image = true},
 	{name = "log", source = "programs/log", image = true},
 	{name = "block", source = "programs/block", image = true},
@@ -92,6 +95,7 @@ module_builds := [?]Module_Build {
 	{name = "cryptography", source = "modules/cryptography", image = true},
 	{name = "cryptography_vectors", source = "programs/cryptography_vectors", imports = {"cryptography"}, image = true},
 	{name = "sample", source = "modules/sample", image = true},
+	{name = "hostile_exports", source = "modules/hostile_exports", image = true},
 	{name = "calendar", source = "modules/calendar", image = true},
 	{name = "calendar_fixed", source = "modules/calendar_fixed", image = true},
 	{name = "calendar_changed", source = "modules/calendar_changed", image = true},
@@ -101,9 +105,13 @@ module_builds := [?]Module_Build {
 	{name = "imports", source = "programs/imports", imports = {"calendar"}, image = true},
 	{name = "errors", source = "programs/errors", image = true},
 	{name = "interface_elements", source = "programs/interface_elements", image = true},
+	{name = "tables", source = "programs/tables", image = true},
+	{name = "interface_module", source = "modules/interface_module", image = true},
+	{name = "interface_through_module", source = "programs/interface_through_module", imports = {"interface_module"}, image = true},
 	{name = "vector_glyphs", source = "programs/vector_glyphs", image = true},
 	{name = "pointers", source = "programs/pointers", image = true},
 	{name = "settings", source = "programs/settings", image = true},
+	{name = "date", source = "programs/date", image = true},
 }
 
 join :: proc(parts: ..string) -> string {
@@ -115,9 +123,8 @@ module_path :: proc(name: string) -> string {
 }
 
 build_modules :: proc() -> bool {
-	for build in module_builds {
-		build_module(build) or_return
-	}
+	// One process for each module, several at once (parallel_build.odin).
+	build_modules_in_parallel() or_return
 	// The pointer themes: the resources of the boot image (pointers.odin).
 	resources := build_pointer_themes(os.get_env(POINTER_THEME_SOURCE_VARIABLE, context.temp_allocator), false) or_return
 	// The glyph cache of the default font: one more resource (vector_fonts.odin).
@@ -126,7 +133,9 @@ build_modules :: proc() -> bool {
 	append(&all_resources, ..resources)
 	append(&all_resources, glyph_cache_resource)
 	// The second boot image has no compositor: with it, the start fails.
-	return build_boot_image(BOOT_IMAGE, "", all_resources[:]) && build_boot_image(BOOT_IMAGE_FAILS, "compositor", all_resources[:])
+	// The third has no input service: the root service starts only the
+	// program shortage (the test of the shortage of frames).
+	return build_boot_image(BOOT_IMAGE, "", all_resources[:]) && build_boot_image(BOOT_IMAGE_FAILS, "compositor", all_resources[:]) && build_boot_image(BOOT_IMAGE_SHORTAGE, "input", all_resources[:])
 }
 
 // files_with_suffix gives the paths of the files of a folder that end with suffix.
@@ -154,6 +163,9 @@ files_with_suffix :: proc(folder, suffix: string) -> (paths: []string, ok: bool)
 // passes the two defines in each build: the defaults of the source never
 // decide.
 test_build_checks := true
+// A measure run of the windows: the programs write the time of their
+// pictures (display.MEASURE_RUN, `kerneltool measure windows`).
+measure_run := false
 
 // build_module compiles a package to objects, assembles its .asm files, links
 // all with lld into one position-independent object, and converts that
@@ -162,6 +174,8 @@ build_module :: proc(build: Module_Build) -> bool {
 	folder := join(MODULE_BUILD_FOLDER, "/", build.name)
 	objects := join(folder, "/objects")
 	reset_folder(objects) or_return
+	llvm_ir_folder := join(folder, "/llvm_ir")
+	reset_folder(llvm_ir_folder) or_return
 	compile := make([dynamic]string, context.temp_allocator)
 	append(
 		&compile,
@@ -180,16 +194,8 @@ build_module :: proc(build: Module_Build) -> bool {
 		// The file name and the line in a message of a check, not the full path:
 		// the hash of a module does not depend on the folder of the build.
 		"-source-code-locations:filename",
-		// One thread: with two or more, the order in which the compiler
-		// checks the declarations changes from one build to the next, and
-		// with it the order and the inlining of the code, and so the hash of
-		// the module. The stock compiler starts a worker thread beside the
-		// main thread even with "-thread-count:1": the flake applies the patch
-		// tools/odin_compiler/thread_count_counts_the_main_thread.patch, which
-		// gives one thread in all (choice 189 and the choice that follows 359).
-		"-thread-count:1",
 		CONTRACT_LIBRARY,
-		join("-out:", folder, "/", build.name, ".ll"),
+		join("-out:", llvm_ir_folder),
 	)
 	if build.kernel {
 		append(&compile, "-disable-red-zone")
@@ -197,10 +203,19 @@ build_module :: proc(build: Module_Build) -> bool {
 		append(&compile, test_build_checks ? "-define:TEST_BUILD_CHECKS_FRAME_SUMS=true" : "-define:TEST_BUILD_CHECKS_FRAME_SUMS=false")
 	} else {
 		append(&compile, SUPPORT_LIBRARY) // The kernel has the contract library only.
+		if measure_run {
+			append(&compile, "-define:MEASURE_RUN=true")
+		}
 	}
 	run(compile[:]) or_return
-	// Odin writes the IR in the folder where it runs, with the name of -out.
-	if err := file_move(join(build.name, ".ll"), join(folder, "/", build.name, ".ll")); err != nil {
+	// Odin writes the IR in the folder of -out, with the name of the first
+	// package of the module. The folder was empty: its one .ll file is the IR.
+	llvm_ir_files := files_with_suffix(llvm_ir_folder, ".ll") or_return
+	if len(llvm_ir_files) != 1 {
+		fmt.eprintfln("kerneltool: the compiler wrote %d LLVM IR files for %s; one module is one file", len(llvm_ir_files), build.name)
+		return false
+	}
+	if err := file_move(llvm_ir_files[0], join(folder, "/", build.name, ".ll")); err != nil {
 		fmt.eprintfln("kerneltool: cannot move the LLVM IR of %s: %v", build.name, err)
 		return false
 	}
@@ -389,6 +404,7 @@ test_descriptions :: proc() -> bool {
 		.Record  = "Record",
 		.Handle  = "Handle",
 		.Table   = "Table",
+		.Bytes   = "Bytes",
 	}
 	for build in module_builds {
 		file := read_file(module_path(build.name)) or_return
@@ -421,6 +437,7 @@ test_descriptions :: proc() -> bool {
 				parameter_name := module.string_at(file, function.parameter_names[parameter], u32(function.parameter_name_counts[parameter]))
 				agree &&= function.parameters[parameter] == description.parameters[parameter] && parameter_name == description.names[parameter]
 				agree &&= function.parameter_details[parameter] == description.details[parameter]
+				agree &&= function.parameter_directions[parameter] == description.directions[parameter]
 				fmt.sbprintf(&last, "%s%s: %s", parameter > 0 ? ", " : "", parameter_name, type_names[function.parameters[parameter]])
 			}
 			fmt.sbprintf(&last, ") -> %s", type_names[description.result])
@@ -441,7 +458,7 @@ test_descriptions :: proc() -> bool {
 			fmt.sbprintf(&layout, "%s {{", item.name)
 			for field, number in (agree ? item.fields : nil) {
 				stored, _ := module.field(file, record, u32(number))
-				agree &&= module.string_at(file, stored.name_offset, stored.name_count) == field.name && stored.offset == field.offset && stored.type == field.type && stored.detail == field.detail
+				agree &&= module.string_at(file, stored.name_offset, stored.name_count) == field.name && stored.offset == field.offset && stored.type == field.type && stored.detail == field.detail && stored.unsigned == field.unsigned
 				fmt.sbprintf(&layout, "%s%s: %s at %d", number > 0 ? ", " : "", field.name, type_names[field.type], field.offset)
 			}
 			if !agree {

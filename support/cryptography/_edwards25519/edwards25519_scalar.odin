@@ -1,4 +1,4 @@
-// Altered source: Odin dev-2026-05, core/crypto/_edwards25519/edwards25519_scalar.odin; only its imports changed (support/cryptography/origin.manifest, docs/CRYPTOGRAPHY.md).
+// Altered source: Odin dev-2026-11a, core/crypto/_edwards25519/edwards25519_scalar.odin; only its imports changed (support/cryptography/origin.manifest, docs/CRYPTOGRAPHY.md).
 package _edwards25519
 
 import field "support:cryptography/_fiat/field_scalar25519"

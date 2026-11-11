@@ -38,26 +38,27 @@ Why, against a retained tree of widgets:
 - The output is data: a table of records of one size, in the memory of the caller (P14). A table can be compared, measured, sent to another rasterizer, or written to a file to test it.
 - A retained tree gives damage for free: a node that changed knows its rectangle. Immediate mode loses that. Section 2.2 gives it back without a tree.
 
-### 2.1 Draw record (format version 1)
+### 2.1 Draw record (format version 3)
 
 A draw record is 40 bytes. The fields are little-endian, in this order:
 
 | Offset | Field | Type | Meaning |
 |---|---|---|---|
-| 0 | `kind` | u8 | `None` 0, `Rectangle` 1, `Vertical_Gradient` 2, `Horizontal_Gradient` 3, `Text` 4, `Clip` 5 |
+| 0 | `kind` | u8 | `None` 0, `Rectangle` 1, `Vertical_Gradient` 2, `Horizontal_Gradient` 3, `Text` 4, `Clip` 5, `Point_Grid` 6, `Folded_Gap` 7 (version 2), `Picture` 8 (version 2), `Text_Grid` 9 (version 3) |
 | 1 | `text_scale` | u8 | Text: 1, 2 or 3 (DESIGN.md, section 5) |
 | 2 | `text_subpixel_x` | u8 | Text: the position after `x` in 1/64 of a pixel. 0 for Spleen 8x16, which places each glyph on a whole pixel |
 | 3 | `reserved` | u8 | 0 |
 | 4 | `x`, `y`, `width`, `height` | 4 x i32 | The rectangle of the record, in pixels of the surface. For text, the rectangle that the run covers |
 | 20 | `first_color` | u32 | `0x00RRGGBB`: the color of a rectangle or a text; the top or the left color of a gradient |
 | 24 | `second_color` | u32 | The bottom or the right color of a gradient |
-| 28 | `text_start`, `text_count` | 2 x u32 | Text: the bytes of the run in the text table of the draw table |
+| 28 | `text_start`, `text_count` | 2 x u32 | Text: the bytes of the run in the text table of the draw table. Picture: the index of the picture in `Draw_Table.pictures` and its generation. Text grid: the index of the grid in `Draw_Table.grids` |
 | 36 | `element` | u32 | The low 32 bits of the element identity that wrote the record, 0 for none: a tool can say which element changed |
 
 - `Clip` sets the rectangle that the next records are cut to, until the next `Clip`; a `Clip` of width 0 ends the cut.
-- A version number (`DRAW_RECORD_VERSION`, 1) is beside the format, as for the contracts. A new kind is a new version.
+- A version number (`DRAW_RECORD_VERSION`, 3) is beside the format, as for the contracts. A new kind is a new version.
 - The text of a run is in the text table of the draw table, not in the record: a record stays 40 bytes, and two runs with the same bytes compare equal.
-- Pictures (the surface of `plasma`, the cells of `life`) are not in version 1: those programs draw pixels, not an interface.
+- A `Picture` record shows the pixels of a picture of the caller. The program raises its generation when its pixels change; with the same generation the record compares equal and damages nothing. `life`, `paint`, `plasma`, `temple` and the surfaces of the windows in the compositor are pictures.
+- A `Text_Grid` record shows a grid of text cells of the caller (`Text_Grid_Cell`: a character, reverse, a color). Its 40 bytes do not change when its cells change: the difference compares the cells (section 2.4).
 
 ### 2.2 Damage by difference
 
@@ -71,7 +72,7 @@ The program keeps the draw table of the last frame that it drew (a second table,
 Then `execute_in_rectangles` draws again, in each damage rectangle, each record of the new table that touches it, cut to the rectangle. The program never tracks damage by hand.
 
 - **The limit of the index rule**: a record added in the middle of the table moves all the records after it, and they all compare as different: the damage is too large, never too small. It is right, and it costs only time. An element identity in each record (offset 36) allows a later rule that matches records by identity; it is not needed by the first users.
-- **Two pictures**: a surface with two pictures needs the table that was drawn in the picture that the program draws now, which is the table of two frames before. The caller keeps one table for each picture.
+- **Two pictures**: a surface with two pictures needs the table that was drawn in the picture that the program draws now, which is the table of two frames before. The caller keeps one table for each picture. The program draws the difference with its own picture, but it presents also the difference with the picture that the screen shows (`damage_of_two_pictures`): a frame equal to its own picture can differ from the screen. Without that rule the terminal showed rows of two different frames (host test `two_pictures_screen_is_each_frame`).
 - **Present with a rectangle**: `display.present_rectangle` gives the compositor the union of the damage: the compositor draws again only that part of the window (the protocol had a gap there: `Present` damaged the whole surface). A full rectangle stays the default of `display.present`.
 - **The cost**, measured by the program `interface_elements` on its window of 68 records (choice 328 of `FIRST_MILESTONE.md`): nothing changed, 0 rectangles in 0.8 us; one number changed, 3 rectangles in 0.8 us; everything moved, 1 rectangle in 1.8 us: about 13 ns for each record. The whole frame is drawn in 366 to 411 us, a frame in its damage in 89 to 120 us. `clock` draws one picture in 11.6 us against 109.2 us by hand.
 
@@ -81,6 +82,15 @@ Then `execute_in_rectangles` draws again, in each damage rectangle, each record 
 - On the surface of a program, each damage rectangle is painted with the background before the records draw again (`draw_damage_on_surface`), and a whole frame starts from the background: a record that a frame no longer has leaves no pixel, with no rule for the caller. The compositor draws its panels over other windows, so it draws the records only.
 - A table that is full stops taking records and keeps the flag `full`: the frame is drawn without the records that did not fit, the program can test the flag and write it on its log. No element fails in silence.
 - An element gives its result as a value (`Element_Result`): pressed, has the focus, changed. Nothing is hidden in a context.
+
+### 2.4 Text grid
+
+A text grid is the element of the terminal: up to 104 x 32 cells, which a program changes many times in one second.
+
+- The table of the frame now names the cells of the caller; each table before keeps its own copy of the cells that its picture shows (`draw_table_copy` copies them, about 26 KiB for each table of the terminal).
+- The difference damages, in each row, the span from the first changed cell to the last one; the rectangles merge as in section 2.2. A grid that changes its size is damaged whole.
+- The execution draws the cells of one color that follow each other as one text, so the text goes through `graphics.text_scaled` (and the glyph cache of the vector font) once for each run.
+- The console draws no pixels: it writes records into its terminal, so the text grid of the terminal is the drawing of the console too.
 
 ## 3. Layout
 
@@ -126,6 +136,8 @@ Two forms were weighed:
 The module is the right form: the interface is shared code, as P10 and P11 say. It is not possible today: the calls of the interface pass tables of the caller (the draw table, the rows of a list, the columns of a row), and the description of an export cannot describe a table as a parameter (`FIRST_MILESTONE.md`, the gaps of property 19). Passing an address as an Integer would work in a direct call and mean nothing in an isolated call: it breaks the contract.
 
 **The choice**: `support/interface`, a package that a program compiles in, written as a module would be: each function takes the tables of the caller and fixed-size records, no global state, no callback. When the description gains "a table as a parameter", the package becomes a module with the same functions as exports, and the programs import it. This is a decision for the owner (section 10).
+
+**The test of the claim** (2026-11-11, after tables as parameters, `MODULE_CONTRACT.md`): the module `interface_module` has eight exports that call the functions of the package with no change to the package: the draw table is a `Table(Draw_Record, Append)`, the text table `Bytes(Append)`, an area a Record, the area of the content of a card a `Table(Area, Change)` of one row, the pixels of the canvas `Bytes(Change)`, the damage a Table result. The program `interface_through_module` imports it, builds one frame through it and the same frame with the package compiled in: the two draw tables are equal, record for record. What the claim missed: (1) the calls are not the same calls: a function of the package takes a `^Frame` (three addresses: the table, the state, the input), which a description cannot carry; an export takes the two tables and the records of its element, and makes a frame over them for one call. (2) The record `Draw_Record` has fields of 1 and 4 bytes, which the description could not describe before this step (Integer fields of 1, 2 and 4 bytes are added). (3) The elements that take input (a button, a list, a text input) keep the interface state of the program between frames: as exports they need the state as a `Table(Interface_State, Change)` of one row; not done in this step. Measured: about 10 ns more for each element call than the package compiled in (25 calls, 523 ns against 283 ns for one frame); the module has 14 980 bytes of code, against 8 865 bytes of functions of the package in `clock` and 24 948 bytes in `interface_elements` (the functions that the compiler did not inline).
 
 ## 8. Property 20 and the compositor
 
@@ -182,3 +194,94 @@ Refused:
 - **Floating point, transforms, round corners, shadows, themes** (its `draw` layer): the rules of this system are integer rectangles on a grid.
 - **Allocation by the toolkit** (its frame allocator and maps): the caller gives each table.
 - **A font stack of a host system** (DirectWrite, Fontations, HarfRust): the system has its own font.
+
+## 12. State of the conversions (2026-11-11)
+
+This section is the report of steps 52 to 54 (the conversions), written after the merge.
+
+### The findings of the independent read (`/tmp/review_interface.md`)
+
+| Finding | What was done | What holds it |
+|---|---|---|
+| F1: `line_add` of the vector font wrote one cell past its row (a vertical segment on the last column; a coverage of width 1) | Corrected. `support/vector_font/raster.odin:34`: `if start_y == end_y \|\| target.width < 2 { return }`; line 60: `if left_index < 0 \|\| left_index + 1 >= target.width \|\| right_index >= target.width` before the clamp | Host test `segments_at_the_edges_stay_in_their_rows`: it failed before (an index out of its row), it passes after |
+| W1: a `Present` for the whole surface with a place of its own damaged up to one surface past the window | Corrected. `programs/compositor/main.odin:317-318`: `changed_width, changed_height := client.surface.width - left, client.surface.height - top` | The compositor does not run on the host: no host test. The rectangle stays inside the surface in each case by its two lines; the machine test draws each window |
+| W2: Enter was taken before the characters of the same frame | Corrected: a text input takes Enter in the order of its keys and stops there; `element_interact` takes no Enter for a text input | Host test `text_input_keys_in_their_order` (keys `l s Enter x` give "ls", activated, `x` not taken): failed before, passes |
+| W3: key 17 and later of one frame were dropped | Corrected: `window_events` stops when the input has 16 keys, the other events wait in the ring | Host test `a_full_input_says_so` (the reading itself needs a ring: no host test of it) |
+| W4: the partial-frame test missed cases | Added: a clip that changes, horizontal gradients, text at the scales 1 to 3, records outside the surface, records of one line, more than 8 rectangles (the merge), a full table, pictures | Host tests `damage_is_never_too_small_for_each_kind`, `picture_and_folded_gap` |
+| N1: more than 20 digits indexed `digits[-1]` | Corrected: `min(minimum_digits, 20)` | Host test `number_with_many_digits`: failed before |
+| N2: a negative height of a column made `used` smaller | Corrected: `top + max(height, 0)` | Host test `column_negative_height`: failed before |
+| N3: `row_split` did not check its sizes | Corrected: negative sizes are 0, fixed sizes are cut, each column stays in the row, no overflow | Host test `row_split_checks_its_sizes`: failed before |
+| N4: a press under the last line or on the bar of a list chose a line; a cut choice was not reported | Corrected | Host test `list_press_and_cut_choice`: failed before |
+| N5: Tab in the launcher moved the focus to the list for one build | Corrected: the launcher ignores Tab | The compositor does not run on the host; the launcher steps of the machine test |
+| N6: two elements with one identity; elements past 64 not reachable by Tab | `identity_in` and `identity_with`; `Frame.identity_collisions` and `Frame.focus_overflow` count them; section 4 says the limit | Host test `identity_collision` (did not compile before: the count did not exist) |
+| N7: `draw_text_right` lost the element; `int` cut to `i32` with no check | Corrected: the element passes; each place and size is clamped to `i32` | Host test `coordinates_are_cut_to_i32` |
+| N8: "makes no kernel call" was false for `window_drawing.odin` | The claim is kept to the core files (`draw_table.odin`, section 2.3) | Read |
+| N9: a table that does not cover its surface kept stale pixels | Corrected with no rule for the caller: each damage rectangle of a surface is painted with the background first (`draw_damage_on_surface`), a whole frame starts from the background | Host test `a_gone_record_leaves_no_pixel` |
+| Names | `raster.odin`: `start_x`, `signed_height`, `width_inverse`, `first_x`, ...; `parse.odin`: `start_read`, `end_read`, `glyph_bytes`; `vector_glyphs`: `pixel_x`, `pixel_y`; `bar`: `full_width`; the launcher: `name_index`, `line_number`. The TrueType tags stay | Read |
+
+The package has 24 host tests (`support/interface/interface_test.odin`), the font prototype 4.
+
+### The converted windows
+
+"Calls" are the direct drawing calls of `support/graphics` (`fill`, `text`, `block`, `unsigned`, `character`, `clear`, `line`, `outline`) in the program before the conversion (`859f078`) and after. "Module" is the size of the module file, in bytes, on `master` `c909390` and on the branch of the conversions: the package is compiled in each program.
+
+| Program | Calls before | Calls after | Module before | Module after |
+|---|---|---|---|---|
+| inspect | 58 | 0 | 81 920 | 90 112 |
+| scheduler | 50 | 0 | 61 440 | 73 728 |
+| monitor | 29 | 0 | 49 152 | 61 440 |
+| locks | 20 | 0 | 86 016 | 98 304 |
+| disk | 19 | 0 | 35 284 | 45 124 |
+| limits | 17 | 0 | 28 129 | 42 225 |
+| crowd | 15 | 0 | 28 672 | 45 056 |
+| tally | 15 | 0 | 36 864 | 49 152 |
+| flow | 13 | 0 | 28 672 | 40 960 |
+| budget | 12 | 0 | 28 672 | 40 960 |
+| notes | 12 | 0 | 53 248 | 65 536 |
+| errors | 11 | 0 | 134 113 | 144 609 |
+| rights | 11 | 0 | 24 576 | 40 960 |
+| frames | 11 | 0 | 73 728 | 90 112 |
+| imports | 11 | 0 | 81 920 | 94 208 |
+| net | 10 | 0 | 50 179 | 64 515 |
+| origin | 10 | 0 | 24 576 | 40 960 |
+| manual | 10 | 0 | 114 688 | 126 976 |
+| life | 2 | 2 (its own board picture, by design: the Picture record) | 32 768 | 51 148 |
+| clock, remote, the launcher (step 51) | 32, 31, 48 lines | 0 | | |
+| Sum of the 19 programs above | 346 | 2 | | |
+
+- Each converted module grows by 8 to 16 KiB (2 to 4 pages): the package is in each one. `processors`, which is not converted, grows by 4 KiB from the measure of pictures of `display`. This is the measured argument for the package as one shared module (section 7): about 230 KiB in all for these programs, today paid once for each.
+- The boot image: 3 284 753 bytes on `master` `c909390`, 3 566 097 bytes with the conversions (+281 344).
+- Lines: in the 19 programs, 865 lines added and 494 removed (+371), against 1 242 lines of the package (and 537 of its host tests). A conversion replaces each drawing call by one record and adds the tables of the program and the frame: it does not make the programs shorter. It removes the five private copies of `card` and of large text in the converted programs, it gives each window the damage by difference and the keyboard, and one change of the rules now changes every converted window.
+- The times of the pictures are not published: the host had a load of 17 to 62 during each run of this step, and a measure above a load of 8 is not valid. `kerneltool measure windows` (in the form of `kerneltool measure scheduler N`) starts each converted window alone in a measure build and prints one table of the time of the first picture and of the mean of 3 and of 10, with the load of the host. The coordinator runs it on a quiet host; to measure "before", the same command on the commit "display measures the time of a picture" (the programs before the conversion with the marks of the measure).
+
+### What the pictures of the last run show (devlog `2026-11-11_121254_branch_desktop`)
+
+- `inspect`: the caption "Program_Report" of the narrow SLOTS card touched its right border; the columns "weight" and "req us" of the threads read as one. Corrected: a card cuts its caption to the room between its title and its count (host test `card_caption_stays_inside`), and the columns of the threads have room. Both faults were there before the conversion.
+- `scheduler`, `locks`, `manual`, `life`: no fault seen.
+- `limits`, `crowd`, `origin`, `rights`, `disk`, `notes`: no clipped text and no column out of place. `crowd`: its header "kernel entries, one million records" ends 8 pixels from the right edge of the window. `notes`: an empty band between its status line and its keys.
+
+### The layers after the merge (step 59)
+
+Each layer is a commit that passed the main scenario; the last one passed the full check (789 checks).
+
+| Layer | Direct drawing calls before / after | Module before / after (bytes) | What holds it |
+|---|---|---|---|
+| The compositor: its windows (frame records and the surface as a Picture record), its bar and its two menus (cards) in one draw table for each frame | 42 / 7 (the pointer of `work/cursor`, the points of the background, the copy to the screen) | 125 723 / 121 979 | The main scenario (menus, moves, close buttons); one measure run: the frame of a window of 800 x 600 by hand 8.5 us, as 9 records 8.9 us (load 39 to 63: an indication only) |
+| The boot display: its five cards are the card of the package | the card by hand / `interface.card` | `boot` 69 632 / 77 824, `root` 172 032 / 180 224 | The pictures `boot`, `boot_fails`; the UEFI loader builds with the package (no kernel call in the core files) |
+| `paint`, `plasma`, `temple`: Picture records (`interface.show_picture` for one picture) | paint 13 / 5, plasma 0 / 0, temple 18 / 18: the remaining calls draw into the picture of the program, by design | paint 45 056 / 61 440, plasma 24 576 / 45 056, temple 212 992 / 229 376 | The pictures `desktop_moved`, `temple` |
+| The text grid (section 2.4) and `terminal` | terminal 29 / 0 | 49 152 / 65 536 | Host tests `text_grid_damage_for_each_cell`, `text_grid_draws_its_cells`, `two_pictures_present_what_the_screen_shows`, `two_pictures_screen_is_each_frame`; the pictures `terminal`, `terminal_held`, `terminal_keys`, `terminal_stopped` |
+| Window places on the grid of 8 | | | The compositor places each new window and each moved window with its corner on the grid; the scenarios move windows with steps `Move`; the tool reads places from `compositor.windows()` once it has the grant person; the full check |
+
+- Sizes are on `master` `b97fb08` against the branch; the boot image is 5 338 592 bytes against 5 531 104 (+192 512).
+- In this step the package grew by 401 lines (with 3 host tests and 1 simulation); the 16 changed files gained 844 lines and lost 273.
+- `flood`, lines in one second, as the terminal logs them: 3 492 315 before the text grid (load about 50), 4 651 133, 3 567 351 and 2 429 679 after (loads 15 to 23). Each is above a load of 8, so none is a valid measure; the text grid did not make the console slower in these runs. A frame of the terminal now draws only the rows that changed.
+- A fault found and corrected in the package: with two pictures, a frame presented only its difference with its own picture. The screen shows the other picture, so rows of two frames were mixed on the screen (seen in `terminal.png`, a row half of one line and half of another). The rule and a simulation of the screen are in section 2.2.
+- The pictures of this step (devlog `2026-11-11_150943_branch_desktop`): `desktop_moved` (plasma, paint, life, monitor on the grid), `temple`, `boot`, `rings`, `terminal`, `terminal_held`, `terminal_stopped`, `menu`, `windows`. Faults seen and corrected: the processor name of the boot display was cut in the middle of a word (a fact is now cut after its last whole word); the keys hint of the terminal ran over "older than the lines kept" (the hint is left out when the text at its left takes its room). No other clipped text, no misaligned column.
+
+### Not converted, and why
+
+- `server`, `fetch`: another agent rewrites `server`.
+- `console`: it draws no pixels; its terminal draws it (section 2.4).
+- `processors`, `threads`, `workers`, `rings`: they draw into views (`graphics.view`) or lines at an angle. A `Line` record is the next kind if the owner wants them converted.
+- `log`, `pages`: colors of their own meaning and a layout of their own. `twin` and `fault` have no window.
+- The pointer of the compositor: the branch `work/cursor` owns it.

@@ -298,9 +298,9 @@ draw_threads :: proc "contextless" (frame: ^interface.Frame) {
 	write(inside, 0, 0, "#", graphics.COLOR_DIM)
 	write(inside, 24, 0, "state", graphics.COLOR_DIM)
 	write(inside, 96, 0, "runs", graphics.COLOR_DIM)
-	right(inside, 216, 0, graphics.COLOR_DIM, "weight")
+	right(inside, 200, 0, graphics.COLOR_DIM, "weight")
 	right(inside, 272, 0, graphics.COLOR_DIM, "req us")
-	right(inside, 336, 0, graphics.COLOR_DIM, "lag")
+	right(inside, 360, 0, graphics.COLOR_DIM, "lag")
 	right(inside, inside.width, 0, graphics.COLOR_DIM, "time ms")
 	for &item, number in current.threads.threads[:min(current.threads.count, op.THREAD_REPORT_CAPACITY)] {
 		y := LINE + number * 2 * LINE
@@ -321,9 +321,9 @@ draw_threads :: proc "contextless" (frame: ^interface.Frame) {
 		} else {
 			text(inside, 96, y, graphics.COLOR_DIM, "home ", u64(item.home))
 		}
-		right(inside, 216, y, graphics.COLOR_TEXT, u64(item.weight))
+		right(inside, 200, y, graphics.COLOR_TEXT, u64(item.weight))
 		right(inside, 272, y, graphics.COLOR_TEXT, u64(item.request))
-		right(inside, 336, y, graphics.COLOR_TEXT, item.lag)
+		right(inside, 360, y, graphics.COLOR_TEXT, item.lag)
 		right(inside, inside.width, y, changed(item.run_time, before.run_time) ? FLASH : graphics.COLOR_TEXT, item.run_time)
 		// The second line: what the thread waits for, and its virtual time.
 		wait := "no wait"

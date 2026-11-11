@@ -1,4 +1,4 @@
-// Altered source: Odin dev-2026-05, core/crypto/poly1305/poly1305.odin; only its imports changed (support/cryptography/origin.manifest, docs/CRYPTOGRAPHY.md).
+// Altered source: Odin dev-2026-11a, core/crypto/poly1305/poly1305.odin; only its imports changed (support/cryptography/origin.manifest, docs/CRYPTOGRAPHY.md).
 /*
 `Poly1305` one-time MAC algorithm.
 

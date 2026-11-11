@@ -15,7 +15,7 @@ What it means here:
 
 ## 2. The origin, and its license
 
-- **Origin**: Odin's `core:crypto`, from the compiler that the flake pins: the tag `dev-2026-05` of Odin (nixpkgs takes it from `https://github.com/odin-lang/Odin/archive/refs/tags/dev-2026-05.tar.gz`). The flake applies a patch to the compiler, in `src/` only; `core/` is the tag, and the BLAKE3 hash of each origin file proves it.
+- **Origin**: Odin's `core:crypto`, from the compiler that the flake pins: the release `dev-2026-11a` of Odin, which `flake.nix` fetches by its tag and its hash. The first files were taken from `dev-2026-05`; they were taken again from `dev-2026-11a` when the compiler changed (`kerneltool cryptography-take`), and the origin had corrected its ChaCha20 counter check and rewritten `_subtle` since.
 - **License of Odin, and of `core:crypto`** (its README: "This library is made available under the zlib license"): the zlib license, in `support/cryptography/LICENSE.odin.txt`. Its second clause, "Altered source versions must be plainly marked as such", is met by the first line of each file that is taken.
 - **fiat-crypto**: the field arithmetic of `core:crypto/_fiat` is a port of fiat-crypto, which gives three licenses. Odin chose BSD-1-Clause; its text is in `support/cryptography/LICENSE.fiat-crypto.txt`, with the first part that is taken.
 - **Review**: the README of `core:crypto` says that the packages "have not received independent third party review". The system relies on the RFC test vectors (section 5) and on the timing rules of the origin. It does not claim more.
@@ -41,7 +41,7 @@ What it means here:
 - the origin with the listed changes is the file of the repository, byte for byte.
 
 The listed changes, all in `tools/kerneltool/cryptography_origin.odin` (`cryptography_import_changes`, applied in this order):
-1. The first line: "// Altered source: Odin dev-2026-05, <origin path>; only its imports changed (...)".
+1. The first line: "// Altered source: Odin dev-2026-11a, <origin path>; only its imports changed (...)".
 2. `"core:crypto"` becomes `crypto "support:cryptography/compatibility_crypto"`.
 3. `"core:crypto/hash"` becomes `hash "support:cryptography/compatibility_hash"` (before the next rule, which would send it to a copy of the origin package).
 4. `"core:crypto/` becomes `"support:cryptography/`.
@@ -56,6 +56,12 @@ The check also covers the folders, not only the listed files: Odin compiles each
 - The system list is a tripwire, not a proof of review: whoever changes a file of the system also writes its new hash. The review of the change reads it.
 
 A new file comes with `kerneltool cryptography-take <origin> <file>`, which writes it and prints its line of the manifest.
+
+### Listed adjustments (2026-11-11)
+
+A taken file can also have listed adjustments: `cryptography_adjustments` in `tools/kerneltool/cryptography_origin.odin` names, for one file of the origin, lines of the origin and the lines in their place. The lines of the origin must be in the origin exactly one time: when the origin changes them, the check fails and a person reads the adjustment again. The first line of an adjusted file says so. The owner allowed this form ("incorporate existing stuff and adjust it").
+
+Today there is one correction, as five adjustments of `_chacha20/chacha20.odin` and four lines of the system's own `chacha20/chacha20_implementation_portable.odin`. The fault of the origin: `check_counter_limit` refused the block with the counter 2^32 - 1, which RFC 8439 allows, and its branch for the counter of 64 bits allowed a call that wraps the counter. QUIC header protection (RFC 9001, section 5.4.4) takes the counter from the ciphertext of a packet, so a peer could stop a program with one datagram (found by the second independent read of `support/quic`). The correction allows a call that ends on the last block, refuses a call that goes past it, refuses each call after it until `seek` or `init`, and puts back the first word of the IV that the 64-bit increment of the implementation carried into. It is offered to Odin as its pull request 8329, from the account of the owner. When the release that the flake pins has it, the adjustments go.
 
 ## 5. The primitives, and their tests
 

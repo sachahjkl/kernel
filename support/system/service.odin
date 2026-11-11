@@ -137,7 +137,7 @@ service_run :: proc "contextless" (service: ^Service) -> (calls: int) {
 				break
 			}
 			serving = &connection
-			send(&connection.calls.completions, export_serve(service.file, op.PROGRAM_BASE, connection.region, connection.ring_memory, command))
+			send(&connection.calls.completions, export_serve(service.file, op.PROGRAM_BASE, connection.region, connection.ring_memory, command, false))
 			serving = nil
 			calls += 1
 		}
@@ -182,9 +182,16 @@ connection_add :: proc "contextless" (service: ^Service, ring_memory, region_mem
 // module is not callable.
 // ring_memory is the memory of the call ring. The caller lends each handle
 // through it; this code proves each handle before the call (handle_state),
-// and closes each one after it. The caller also revokes what it lent (lend_end). An export never receives a handle that
-// this program holds for itself.
-export_serve :: proc "contextless" (file: []u8, base: u64, region: []u8, ring_memory: Handle, command: ring.Record) -> (completion: ring.Record) {
+// and closes each one after it. The caller also revokes what it lent
+// (lend_end). An export never receives a handle that this program holds for
+// itself.
+// A refusal (Bad_Arguments, Bad_Handle) has an error record in the values
+// of the completion: the argument and why (finding W8 of the hostile read).
+// memory_objects_allowed: a table in a lent memory object is taken. A call
+// host takes it; a service does not (finding W1): the caller can revoke the
+// lent memory while the export runs, and the fault of the export would stop
+// the service for each of its callers. A call host serves one caller.
+export_serve :: proc "contextless" (file: []u8, base: u64, region: []u8, ring_memory: Handle, command: ring.Record, memory_objects_allowed: bool) -> (completion: ring.Record) {
 	completion.tag = command.tag
 	head, _ := module.header(file)
 	function, described := module.function(file, command.kind)
@@ -194,17 +201,29 @@ export_serve :: proc "contextless" (file: []u8, base: u64, region: []u8, ring_me
 		return completion
 	}
 	prepared: isolated.Call
-	if !isolated.decode(file, function, command.values[0], command.values[1], region, &prepared) {
-		completion.kind = u32(isolated.Status.Bad_Arguments)
-		return completion
+	refusal: errors.Error_Record
+	refused :: proc "contextless" (completion: ^ring.Record, status: isolated.Status, refusal: errors.Error_Record) -> ring.Record {
+		completion.kind = u32(status)
+		completion.values = transmute([7]u64)refusal
+		return completion^
 	}
+	if !isolated.decode(file, function, command.values[0], command.values[1], region, &prepared, &refusal) {
+		return refused(&completion, .Bad_Arguments, refusal)
+	}
+	// The proof of each handle, and the deferred close of each one that came
+	// through the call ring, come first: each refusal after this point
+	// closes them (note 1 of the second hostile read: the refusal of a
+	// memory object to a service left them open).
 	lent := prepared.lent[:prepared.lent_count]
 	came: [module.HANDLE_CAPACITY]bool
-	proven := true
+	first_unproven := -1
+	held_rights: Rights
 	for item, index in lent {
 		_, rights, through := handle_state(Handle(item.handle), ring_memory)
 		came[index] = through
-		proven &&= through && transmute(Rights)item.rights <= rights
+		if first_unproven < 0 && !(through && transmute(Rights)item.rights <= rights) {
+			first_unproven, held_rights = index, rights
+		}
 	}
 	// Close what the caller lent, after the call or in place of it.
 	defer for item, index in lent {
@@ -212,14 +231,64 @@ export_serve :: proc "contextless" (file: []u8, base: u64, region: []u8, ring_me
 			close(Handle(item.handle))
 		}
 	}
-	if !proven {
-		completion.kind = u32(isolated.Status.Bad_Handle)
-		return completion
+	if !memory_objects_allowed && prepared.mapping_count > 0 {
+		item := prepared.mappings[0]
+		return refused(&completion, .Bad_Arguments, errors.error_make(.Bad_Value, .None, i64(item.parameter + 1), i64(item.handle), 0))
+	}
+	// A handle that did not come through the call ring was not lent for
+	// this call; one that came lacks a right of the description (note 4).
+	if first_unproven >= 0 {
+		item := lent[first_unproven]
+		if !came[first_unproven] {
+			return refused(&completion, .Bad_Handle, errors.error_make(.Handle_Absent, .Lent_Handles, 0, i64(item.handle)))
+		}
+		return refused(&completion, .Bad_Handle, errors.error_make(.Handle_Rights, .None, 0, i64(item.handle), i64(item.rights), i64(transmute(u32)held_rights)))
+	}
+	// A table names a memory object, not another kind of object (N3 of the
+	// hostile read).
+	for item in prepared.mappings[:prepared.mapping_count] {
+		if kind, _, _ := handle_state(Handle(item.handle)); kind != .Memory {
+			return refused(&completion, .Bad_Handle, errors.error_make(.Handle_Kind, .None, i64(item.parameter + 1), i64(item.handle), i64(op.Object_Kind.Memory), i64(kind)))
+		}
+	}
+	// A table in a memory object (form iii): map it for the time of the
+	// export, Write only for Change and Append, and check that the records
+	// are inside it.
+	mapped: [module.PARAMETER_CAPACITY]rawptr
+	defer for address_of_mapping in mapped {
+		if address_of_mapping != nil {
+			memory_unmap(address_of_mapping)
+		}
+	}
+	// Only the pages of the records, at the same address at each call.
+	for item, index in prepared.mappings[:prepared.mapping_count] {
+		memory := Handle(item.handle)
+		object_size := memory_size(memory) * PAGE_SIZE
+		if item.start > object_size || item.size > object_size - item.start {
+			return refused(&completion, .Bad_Arguments, errors.error_make(.Out_Of_Range, .Bytes, i64(item.parameter + 1), i64(min(item.start, 1 << 62) + min(item.size, 1 << 62)), i64(object_size)))
+		}
+		// A work-around of a fault of the kernel (a mapping with no chosen
+		// address never reuses its range of addresses, given to the agent of
+		// work/scheduler): the same address at each call.
+		mapping_address := isolated.TABLE_ADDRESS + u64(item.parameter) * isolated.TABLE_SPAN
+		if item.size == 0 {
+			prepared.places[item.parameter].address = mapping_address // An empty table: nothing to reach.
+			continue
+		}
+		first := item.start / PAGE_SIZE
+		pages := (item.start + item.size + PAGE_SIZE - 1) / PAGE_SIZE - first
+		start, status := memory_map(memory, item.writable ? {.Write} : {}, 0, mapping_address, first, pages)
+		if status != .Ok {
+			return refused(&completion, .Bad_Arguments, errors.error_make(.Refused, .None, i64(item.parameter + 1), 0, 0, i64(status)))
+		}
+		mapped[index] = start
+		prepared.places[item.parameter].address = u64(uintptr(start)) + item.start % PAGE_SIZE
 	}
 	floats: [CALL_FLOATS]u64
 	out: [CALL_RESULTS]u64
 	export_call(address, &prepared.registers, &floats, &out)
 	isolated.result_store(function, &prepared, region)
+	isolated.counts_store(function, &prepared, region)
 	// A failure: the error record names the export. The export does not
 	// know its own number.
 	if prepared.error.count != 0 && i64(out[0]) < 0 {
@@ -241,8 +310,9 @@ Lending :: struct {
 }
 
 // lend prepares the handles of the arguments of an isolated call: the
-// caller side of module.Type.Handle. For each Handle argument, and for each
-// Handle field of each Record argument, it makes a copy of the handle in
+// caller side of module.Type.Handle. For each Handle argument, for each
+// Handle field of each Record argument, and for the memory object of each
+// table argument that names one (Table_Argument.memory_handle), it makes a copy of the handle in
 // this program with the rights of the description, and gives the receiver
 // a handle that comes from the copy, through the call ring. It writes the
 // handle of the receiver in place of the handle of the caller: give it
@@ -258,7 +328,7 @@ Lending :: struct {
 lend :: proc "contextless" (file: []u8, function: module.Function, arguments: []isolated.Argument, ring_memory: Handle, lending: ^Lending) -> (status: Status) {
 	function := function
 	lending.count = 0
-	one :: proc "contextless" (ring_memory: Handle, handle: Handle, wanted: Rights, lending: ^Lending) -> (result: Handle, status: Status) {
+	lend_one_handle :: proc "contextless" (ring_memory: Handle, handle: Handle, wanted: Rights, lending: ^Lending) -> (result: Handle, status: Status) {
 		if handle == 0 {
 			return 0, .Ok
 		}
@@ -281,11 +351,22 @@ lend :: proc "contextless" (file: []u8, function: module.Function, arguments: []
 		#partial switch type {
 		case .Handle:
 			result: Handle
-			result, status = one(ring_memory, Handle(arguments[index].integer), transmute(Rights)function.parameter_details[index], lending)
+			result, status = lend_one_handle(ring_memory, Handle(arguments[index].integer), transmute(Rights)function.parameter_details[index], lending)
 			if status != .Ok {
 				break each
 			}
 			arguments[index].integer = u64(result)
+		case .Table, .Bytes:
+			// A table in a memory object: the rights of the copy are the
+			// direction (property 20).
+			if arguments[index].table.memory_handle != 0 {
+				result: Handle
+				result, status = lend_one_handle(ring_memory, Handle(arguments[index].table.memory_handle), isolated.direction_rights(function.parameter_directions[index]), lending)
+				if status != .Ok {
+					break each
+				}
+				arguments[index].table.memory_handle = u64(result)
+			}
 		case .Record:
 			described, ok := module.record_type(file, function.parameter_details[index])
 			if !ok || len(arguments[index].record) != int(described.size) {
@@ -298,7 +379,7 @@ lend :: proc "contextless" (file: []u8, function: module.Function, arguments: []
 					continue
 				}
 				place := (^Handle)(&arguments[index].record[item.offset])
-				place^, status = one(ring_memory, place^, transmute(Rights)item.detail, lending)
+				place^, status = lend_one_handle(ring_memory, place^, transmute(Rights)item.detail, lending)
 				if status != .Ok {
 					break each
 				}

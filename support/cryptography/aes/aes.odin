@@ -1,4 +1,4 @@
-// Altered source: Odin dev-2026-05, core/crypto/aes/aes.odin; only its imports changed (support/cryptography/origin.manifest, docs/CRYPTOGRAPHY.md).
+// Altered source: Odin dev-2026-11a, core/crypto/aes/aes.odin; only its imports changed (support/cryptography/origin.manifest, docs/CRYPTOGRAPHY.md).
 /*
 The `AES` block cipher and some common modes.
 

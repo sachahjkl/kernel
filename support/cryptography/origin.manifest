@@ -5,8 +5,8 @@
 # each file is its origin with the import changes of
 # tools/kerneltool/cryptography_origin.odin and nothing else. A new line
 # comes from `kerneltool cryptography-take <origin> <file>`.
-support/cryptography/_subtle/subtle.odin core/crypto/_subtle/subtle.odin c950040ec8e79e977232de07d98890b267ce7304ec005eba9cd9dd9e7f88a1e3
-support/cryptography/_chacha20/chacha20.odin core/crypto/_chacha20/chacha20.odin 857cdd7e8ccb48b31012ee699e71ba6fcd59ee14b7af22af04a6523cf17d26be
+support/cryptography/_subtle/subtle.odin core/crypto/_subtle/subtle.odin 8aad340c7d5e46a52329ed143ffb58c0a867e078c744f688b4e825d21b160c44
+support/cryptography/_chacha20/chacha20.odin core/crypto/_chacha20/chacha20.odin 56b808ec73700917864ab7f74f5c8a1f2ba6293eec994a40de939f2e0267cc53
 support/cryptography/_chacha20/ref/chacha20_ref.odin core/crypto/_chacha20/ref/chacha20_ref.odin eace1cb27b37ae425a61ddbada988f645e0a6a7dd4185f13ca8af16ee29042f7
 support/cryptography/chacha20/chacha20.odin core/crypto/chacha20/chacha20.odin 9b3a0928089cf8b0ef0ba21157b962889bf968c60bf4bb3b5050beeeec607de7
 support/cryptography/_fiat/fiat.odin core/crypto/_fiat/fiat.odin 24bf73023264b3443fb1073cfb5103c5c5f765bd0a81743df3fb73f9aac6bf0a
@@ -28,7 +28,7 @@ support/cryptography/_edwards25519/edwards25519_scalar_mul.odin core/crypto/_edw
 support/cryptography/_edwards25519/edwards25519_scalar.odin core/crypto/_edwards25519/edwards25519_scalar.odin 549097beed3d40ff53c107da2f905a9d7d25b1f458b9ea5503a312d0f02978fe
 support/cryptography/_edwards25519/edwards25519_table.odin core/crypto/_edwards25519/edwards25519_table.odin 2a0c962d36239aebe14f9dc69b3007986a131535e7b63d7fd898321689916b94
 support/cryptography/x25519/x25519.odin core/crypto/x25519/x25519.odin b99794873331f9d4667d9145f34a9cb77aa3e38d6f089886f218c4cd823212d8
-support/cryptography/ed25519/ed25519.odin core/crypto/ed25519/ed25519.odin 2327f0a639494d44741e4f455b8895a720330ed276e0a743a4403f2d04588f96
+support/cryptography/ed25519/ed25519.odin core/crypto/ed25519/ed25519.odin cfeb0c81f1cf1022ec3a8b37c05b0433a48909e2fd0da947991d33621aeb74ec
 support/cryptography/_aes/aes.odin core/crypto/_aes/aes.odin 08301c7590259642034ca6ff5ae906468c0efc2490f58546008672e30c849d3a
 support/cryptography/_aes/ct64/api.odin core/crypto/_aes/ct64/api.odin 21a7d03e517bc2a8e0685ceac9c1e83d4065a0e73ec6e2347160a20e57049ce1
 support/cryptography/_aes/ct64/ct64_dec.odin core/crypto/_aes/ct64/ct64_dec.odin c6825957bb5c664eae4b55cc9861be364e0be166cc1fc6d53bc2669c95287c16

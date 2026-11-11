@@ -1,4 +1,4 @@
-// Altered source: Odin dev-2026-05, core/crypto/aes/aes_ecb.odin; only its imports changed (support/cryptography/origin.manifest, docs/CRYPTOGRAPHY.md).
+// Altered source: Odin dev-2026-11a, core/crypto/aes/aes_ecb.odin; only its imports changed (support/cryptography/origin.manifest, docs/CRYPTOGRAPHY.md).
 package aes
 
 import "support:cryptography/_aes/ct64"

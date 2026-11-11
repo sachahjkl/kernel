@@ -211,6 +211,7 @@ Status: implemented on 2026-11-10 (step 24). The owner has not reviewed the choi
 | Handle | The handle of the caller | 8 bytes: the handle, as the receiver names it |
 | Record result | One more argument: the address of the memory of the result | One more field: the offset of the place of the result |
 | Table result | One more argument: the address of a buffer record `{address, capacity in records}`; the integer result is the count of records of the full table | One more field: the buffer `{offset, capacity in records}`, the rest of the call region from a multiple of 8 |
+| Table or Bytes parameter (2026-11-11) | The address of a table place `{address, count, capacity}` in memory of the caller | 32 bytes: `{start, count, capacity, memory}`: the records in the call region, or in a lent memory object (section "Tables and bytes as parameters") |
 
 - **Record description**: The tables Records and Fields. A record has a name, a size (256 bytes at most) and fields. A field has a name, an offset and a type: Integer (8 bytes), Handle (4 bytes), or Text with its size in the detail (1 to 256 bytes: UTF-8, zero bytes after the text; added on 2026-11-10 for the information of the modules). A record holds values only. The loader code checks each description before a use: each field is inside the record.
 - **A record is copied one time**: The receiver copies the bytes of the record from the call region to private memory, then gives the address of the copy to the export. The caller cannot change the record while the export reads it.
@@ -218,9 +219,150 @@ Status: implemented on 2026-11-10 (step 24). The owner has not reviewed the choi
 - **The receiver proves each handle**: The number of the handle is in memory that the caller writes. The receiver asks the kernel if this handle came through the call ring (`Handle_State`), and if it has each right of the description. If not, the status of the call is 3, "bad handle", and the export does not run. Without this proof a caller names a handle that the receiver holds for itself.
 - **The caller takes back what it lent** (step 25): the caller gives a handle that comes from a copy of its own handle, and revokes the copy after the call (`system.lend`, `system.lend_end`, the kernel operation `Handle_Revoke`). The handle of the receiver ends, and each mapping that the export made with it. An export that keeps a mapping for a later call stops its program on a page fault at the first use. If the caller cannot give each handle, it revokes those that it gave and sends no record.
 - **Limits**: 16 handles for one call. A result record has no handle. An export with a Record result has 5 parameters at most.
-- **A Table result** (added on 2026-11-10, property 12; `GLOSSARY.md`, "Table"): records of one description that follow each other, in memory of the caller. The callee writes the records that fit and gives the count of the full table, as a Text result gives its count of bytes; a count larger than the capacity means "the table did not fit", and a negative count is an error that the documentation of the export names. A record of a Table has no Handle. The caller reads `min(count, capacity)` records: it trusts neither number (`isolated.result_table`). This is the form of HANDOFF item 94 (1) for a result: many records in one call, in memory of the caller, never a list of pointers. A table as a parameter (item 94 (2)) is not done.
-- **In Odin**: `^Name` is a Record, `result: ^Name` as the last parameter is a Record result, `result: ^[]Name` as the last parameter is a Table result, a field `[N]u8` is a Text of N bytes, and `system.Lent({.Read, .Write})` is a Handle. `Name` can be a struct of the package or of a package of `support:` or `contract:` that the file imports (`^information.Module`). The tool reads them in the source (`kerneltool`, `describe.odin`). A module in another language writes the same tables.
+- **A Table result** (added on 2026-11-10, property 12; `GLOSSARY.md`, "Table"): records of one description that follow each other, in memory of the caller. The callee writes the records that fit and gives the count of the full table, as a Text result gives its count of bytes; a count larger than the capacity means "the table did not fit", and a negative count is an error that the documentation of the export names. A record of a Table has no Handle. The caller reads `min(count, capacity)` records: it trusts neither number (`isolated.result_table`). This is the form of HANDOFF item 94 (1) for a result: many records in one call, in memory of the caller, never a list of pointers. A table as a parameter (item 94 (2)) is done on 2026-11-11: section "Tables and bytes as parameters".
+- **In Odin**: `^Name` is a Record, `result: ^Name` as the last parameter is a Record result, `result: ^[]Name` as the last parameter is a Table result, `^system.Table_To_Read(Name)` (and `_Change`, `_Append`) is a Table parameter, `^system.Bytes_To_Read` (and `_Change`, `_Append`) is Bytes, a field `[N]u8` is a Text of N bytes, a field `u8`, `i32`, `u32`, ... or an `enum u8` is an Integer of its size, and `system.Lent({.Read, .Write})` is a Handle. `Name` can be a struct of the package or of a package of `support:` or `contract:` that the file imports (`^information.Module`). The tool reads them in the source (`kerneltool`, `describe.odin`). A module in another language writes the same tables.
 - **Tests**: `odin test` of `contract/isolated` has a round trip with a record, a handle and a record result, and the refused cases. The machine test calls `modules/sample` in a call host and in the console.
+
+### Tables and bytes as parameters
+
+Status: decided by the owner on 2026-11-11 ("ok bah on le fait alors ? [...] sinon go"; `HANDOFF.md`, item 94 (2)). Designed and implemented on 2026-11-11. The owner has not reviewed the choices below.
+
+A table goes into a call, with no copy in a direct call. Two users need it: the interface package (a table of draw records and a table of text bytes that each call appends to) and the cryptography module (seal or open N packets in one call, over a table of packet records and the bytes of the packets).
+
+#### What the two users pass
+
+| Use | The table | What the callee does |
+|---|---|---|
+| Sum a field, draw a draw table, check a list | N records | Reads them |
+| Open or seal N packets | N packet records; the bytes of the packets | Writes a status and a length in each record; changes the bytes in place |
+| An element of the interface | The draw table and the text table of the frame | Appends records and bytes after those of the calls before |
+| The Table result of today | A buffer of records | Fills it from the start, and gives the count of the full table |
+
+A record can name bytes outside itself: a draw record names a run of the text table (`text_start`, `text_count`), a packet record names its bytes. Such a field is an offset into another parameter of the same call. It is data, not an address: the contract keeps "a record holds values only". The callee checks each offset against the count of the other parameter, and gives an error record when it is outside: never a fault.
+
+#### The forms
+
+Two parameter types, one direction for each parameter:
+
+| Type | Detail | Meaning |
+|---|---|---|
+| Table (5) | The index of the description of the record | Records of one description that follow each other. A record of a table parameter has no Handle field |
+| Bytes (6) | 0 | Bytes with no description, with a direction. A Text stays the read-only form of UTF-8 for a person |
+
+| Direction | Value | The callee | The count |
+|---|---|---|---|
+| Read | 0 | Reads the records `0 ..< count`. Writes nothing | Stays |
+| Change | 1 | Reads and writes the records `0 ..< count` | Stays |
+| Append | 2 | Writes the records `count ..< capacity` (none when `count >= capacity`). Reads none of the records before `count` | The count of the full answer, across calls: the callee adds to the count each record of its answer, also those that did not fit. The count on entry can be larger than the capacity |
+
+- **Read is 0**: a zero direction is the one with the least power (P13).
+- **Append covers fill and append.** Fill is Append with a count of 0. The Table result is the special case "the last parameter is a table that the export appends to from 0, and the new count is its integer result": it stays as it is.
+- **Did not fit, across calls** (decision of the coordinator, 2026-11-11, after the second hostile read): the count of an Append table is the count of the full answer across the calls that append to it. A count larger than the capacity means that the answer did not fit, as for a Text result. On entry the count can be larger than the capacity: earlier calls did not fit; the callee then writes nothing and adds to the count what it would have appended. A callee never writes a record at an index at or after the capacity. The caller reads `min(count, capacity)` records, and trusts neither number. This holds in the three ways: a sequence of calls on one table gives the same counts and the same records in a direct call, a call host and a service (host test `append_across_calls_is_the_same_in_each_way`). Before, the caller kept the count at most at the capacity, and the interface module used a count over the capacity as a mark that the contract refused: it worked in a direct call only.
+- **A callee that builds into a frame of its own**: the interface module builds each element into a small table on its stack, then appends it to the tables of the caller by this rule; it never makes the table of the caller the table of the package, which counts no record after a full table.
+- **The count stops at the largest number.** A callee adds with saturation (`system.table_append`, `system.bytes_append`): a count never wraps to a small number.
+- **A capacity of 0** is valid: the callee writes nothing and gives the count of the full answer.
+- **No capacity rule in the description.** The caller chooses the capacity; the count says how much the full answer needs, as the Text result does.
+- **Refused**: a table of tables, a table in a record, a record that holds an address, a Handle field in a record of a table (one call lends at most 16 handles), a direction on a parameter that is not a Table or Bytes, a "write only" direction (Append is it), more than one table in one register.
+
+#### One description, three ways to call
+
+The description is the same in the three ways (P10, P19). The source of the export does not change. Only the code of the caller and of the receiver differs, and `support/system` holds it.
+
+**(i) A direct call** (the module is in the address space of the caller: `load("sample")`, an import). A Table or Bytes parameter takes one integer register: the address of a table place in memory of the caller.
+
+| Offset | Field | Type | Meaning |
+|---|---|---|---|
+| 0 | `address` | u64 | The first record. Aligned on the alignment of the record (the largest alignment of its fields, at most 8); Bytes: no alignment |
+| 8 | `count` | u64 | Records (Bytes: bytes) |
+| 16 | `capacity` | u64 | Records (Bytes: bytes) that the memory at `address` holds |
+
+- The callee writes only the records that its direction names, and only `count` of an Append place.
+- **The size of a record** is the size of its description. No size travels with the place. The caller and the callee have the same description: an import names the exact module by hash, and the check of a replacement compares each record of each parameter, with its direction (`module.functions_compare`). A record of a parameter has no versions: the rule of the table directory ("a reader that knows a shorter record") is for the tables of the file. A caller that is not bound by the loader, the console, compares the record of its value with the description before it calls (`module.records_equal`).
+- **What a module in C writes** (no other language feature is used):
+  ```c
+  struct table_place { void *address; uint64_t count; uint64_t capacity; };
+  struct reading { int64_t sensor; int64_t value; };
+  int64_t sum_values(const struct table_place *readings);              // Read
+  int64_t scale_values(struct table_place *readings, int64_t factor);  // Change
+  int64_t readings_above(const struct table_place *readings, int64_t limit, struct table_place *result); // Read, Append
+  ```
+  Its description is the same tables: the Functions record has the type Table, the index of the record `reading`, and the direction of each parameter. The kernel tool reads the Odin source; a module in C gives a small description file (section 7).
+- **In Odin**: `readings: ^system.Table_To_Read(Reading)`, `^system.Table_To_Change(Reading)`, `^system.Table_To_Append(Reading)`, and `^system.Bytes_To_Read`, `^system.Bytes_To_Change`, `^system.Bytes_To_Append`. Each is a struct `{records: [^]Reading, count, capacity: u64}` with the layout of the table place: the name of the type is the direction, and the kernel tool reads it.
+
+**(ii) An isolated call** (a call host or a service: another address space). The field of the argument record has 32 bytes:
+
+| Offset | Field | Meaning |
+|---|---|---|
+| 0 | `start` | The offset of the records: in the call region, or in the memory object of `memory` |
+| 8 | `count` | As the table place |
+| 16 | `capacity` | As the table place |
+| 24 | `memory` | 0: the records are in the call region. Else: a lent memory object, as the receiver names it: form (iii) |
+
+- **The caller** (`isolated.encode`) copies the records `0 ..< count` of a Read or Change table into the call region, after the bytes of the other arguments, at a multiple of 8. For an Append table it reserves `capacity - min(count, capacity)` records and copies none: none when the count is at or over the capacity. A table that does not fit refuses the call: `encode` gives the place that was missing, and the caller writes "the table readings has 65536 records of 40 bytes: 2621440 bytes; the call region has 64992 bytes free; lend a memory object" (form (iii)).
+- **The receiver** (`isolated.decode`) copies the argument record once, then checks each table field: `start` is a multiple of 8, the bytes of the records are inside the call region with no overflow, no count or capacity times the size of a record passes `TABLE_SPAN` (finding F1 of the hostile read). It refuses two ranges of the call region that overlap when one of them is written: a Change or Append table, a result, the error record, and the argument record, whose counts it writes back (finding W3); two Read ranges can overlap. Each refusal of the receiver is an error record in the values of the completion record (Bad_Arguments, Bad_Handle): the number of the argument, the kind, the value and the limit (finding W8); the console and `system.call_isolated` give its sentence, for example "sum_values: the argument readings has 1099511627776 records; it can have at most 429496729 records". It gives the export a table place in its own memory: the caller cannot change `count` or `capacity` while the export runs. For an Append place in the call region, `address` is such that record `min(count, capacity)` is the first reserved byte: the records before `count` are not in the call, and an export that reads them reads its own memory, never the memory of the caller.
+- **After the export** the receiver writes the count of each Append place back into the field of the argument record (`isolated.counts_store`). The caller (`isolated.tables_return`) copies back, into its own memory: the records `0 ..< count` of a Change table, and the records `min(count, capacity) ..< min(new count, capacity)` of an Append table. A new count smaller than the count on entry is an error of the callee: the caller checks each answer before it copies, so it keeps each count and copies nothing (finding W7). When the export fails (a negative result with an error record), the caller copies nothing back from the call region; a table in a memory object keeps what the callee wrote before it failed: the callee wrote the memory of the caller (N7). The caller never writes its memory at or after the capacity: a callee that writes the whole call region changes nothing of the caller after the capacity (a host test proves it with a guard pattern).
+- **The call region is shared. Rule: an export copies a record before it checks it**, and uses only the copy. The caller can change the records while the export reads them, as for a Text (choice 186). The copy is one volatile load of the whole record (`intrinsics.volatile_load(&record)` in Odin, a `volatile` read in C): with a plain read, the compiler can read the field again after the check. `sample.sum_words` is the model; its host test changes the record from another thread during 2 000 000 calls (finding W2 of the hostile read: before, a start read two times made a slice that stopped the service). The table place itself is a private copy of the receiver. An Integer field from an isolated caller can hold any value of its size, also a value that is not a name of an `enum` of the source: the export checks it as each value.
+
+**(iii) A table in a memory object** (a table too large for the call region, or a table that the caller keeps in a memory object). The caller lends the handle of the memory object with the rights of the direction: Read for Read, Read and Write for Change and Append (P20: the rights of the lent handle are the direction). The field has `memory_handle` set and `start` is the offset of the records in the object.
+
+- **A call host only. A service refuses a table in a memory object** (finding W1 of the hostile read): another thread of the caller can revoke the lent copy while the export runs; the kernel then removes the mapping of the receiver, and the fault of the export stops the program. A call host serves one caller, which stops only its own call; a service serves each caller, and one caller must not stop it. `export_serve` takes `memory_objects_allowed`: true in a call host, false in a service, which refuses with Bad_Arguments and an error record of the argument. A table larger than the call region goes to a call host.
+
+- The receiver proves the handle as each lent handle (`Handle_State`: it came through the call ring, with each right), checks that it names a memory object (N3), checks that the records are inside the object, maps only the pages that hold the records for the time of the export (`Memory_Map`, Write only for Change and Append; N8), and gives the export a table place at the mapping. After the export it unmaps the object, writes the count of an Append place back, and closes the handle. The caller revokes its copy after the call (`lend_end`): a mapping that the export kept ends.
+- No copy: the export works in the pages of the caller. The caller reads its own memory after the call.
+- **The granularity is the memory object.** A callee with Write can write each byte of the object while the call runs, also after the capacity. A caller that lends only the table puts the table in an object of its own.
+- **The address of the mapping**: the receiver maps only the pages of the records, at `isolated.TABLE_ADDRESS + n * TABLE_SPAN` for parameter n (16 GiB for each parameter), the same addresses at each call. This is a work-around of a fault of the kernel, found by the measure: the kernel gives each mapping that does not choose its address a new range (`Program.next_address` only grows, "a mapping with no chosen address never reuses a range"), and each new range costs page tables that the budget of the receiver pays; a call host of 512 pages refused the 61st call of a table of 640 pages. The fault is given to the agent of `work/scheduler`; the work-around stays until its correction is in `master`. The records reach at most `TABLE_SPAN` less one page from the first page, so the pages of one parameter never enter the span of the next (N2).
+- **The seam**: `system.call_isolated` (`support/system/calls.odin`) chooses the form of each table argument that names a memory object: the call region when the records fit there, the memory object only when they do not. The measures below give the call region the lower cost at each size that fits. `keep_memory_objects` lends each memory object as given (the measure uses it). The export does not know which form ran: `system.call_direct`, `system.call_isolated` and `export_serve` take the same `isolated.Argument` records, and the program `tables` checks the same answers in the three ways.
+
+#### The format
+
+- `Function.parameter_directions` (6 bytes, one for each parameter) is added at the end of the Functions record: 96 bytes become 104, by the growth rule of the table directory. A reader of a file with 96-byte records reads each direction as 0, Read. No version and no feature bit change: each module is built again with the system (owner, "Do not preserve backward compatibility"), and the growth rule keeps a smaller record readable.
+- `Type.Bytes = 6`.
+- **Integer fields of 1, 2, 4 or 8 bytes** (the draw record has `u8`, `i32` and `u32` fields): `Field.detail` of an Integer is its size in bytes, 0 for 8 (the fields of today); `Field.unsigned` (a byte of the field that was reserved) is 1 for an unsigned integer. An Integer field is at an offset that is a multiple of its size. `module.field_integer` reads one as an i64. Odin `u8`, `i8`, `u16`, `i16`, `u32`, `i32`, `u64`, `i64`, and an `enum` with such a backing type, are Integer fields.
+- **The checks**: the loader does not read descriptions (section 2); each reader checks what it uses. `module.record_type` checks the size and the alignment of each Integer field. `isolated.record_size` refuses a direction out of the enumeration, a direction on a parameter that is not a Table or Bytes, a Table whose record is not valid or has a Handle field, Bytes with a detail. `information.check` gives a `Problem` with the byte of the file for each of them (`manual.check`).
+- **The check of a replacement** compares the directions: `Difference.Parameter_Direction`, with the sentence "export sum of sample_fixed: parameter 1 is Table(Reading, Change), sample has Table(Reading, Read)".
+
+#### The callers
+
+- **The console**: a Table value is an argument where the description takes a Table of an equal record (`module.records_equal`), with the direction Read or Change; a Text value is an argument of Bytes with the direction Read. A Change table changes the memory of the value: a variable holds the changed rows after the call. An export with an Append table parameter, or Bytes with Change or Append, is not a command of the console: the language has no second result. `columns` and `where` give tables that go into a call.
+- **`kerneltool call`**: a Table argument is a literal of rows, each row the values of its fields in order: `monitor.counts_named([("programs"), ("processors")])`; a Bytes argument with the direction Read is a text. The answer of `remote` has one result place: an export with an Append table parameter is refused with a sentence.
+- **The text of a signature**, one form in the manual, the console, the errors and `help()`: `sum_values(readings: Table(Reading, Read)) -> Integer`, `seal(packets: Table(Packet, Change), bytes: Bytes(Change), key: Key) -> Integer`.
+
+#### What the cryptography module uses (to the agent of `work/tcp`)
+
+Seal or open N packets in one call:
+
+```odin
+Packet :: struct {
+	bytes_start:   u32, // The first byte of the packet in the parameter `bytes`.
+	bytes_count:   u32, // Its bytes. Seal: the plain text in; open: the sealed text in.
+	result_count:  u32, // Written by the export: the bytes after the operation.
+	status:        u32, // Written by the export: 0 sealed or opened; else a reason (a tag that differs, outside the bytes).
+	number:        u64, // The packet number of the nonce.
+}
+// seal seals each packet in place. The bytes of each packet need 16 more bytes after it, for the tag.
+@(export, link_name = "seal")
+seal :: proc "c" (packets: ^system.Table_To_Change(Packet), bytes: ^system.Bytes_To_Change, key: ^Key, error: ^errors.Error_Record) -> i64
+```
+
+- The record names its bytes by offset in `bytes`; the export copies each packet record once (the rule above), checks `bytes_start + bytes_count + 16 <= bytes.count` on the copy, writes `status` for a packet outside, and goes on with the next one. Two packets whose bytes overlap: the export reads the bytes of each packet only after the packet before is sealed; the caller does not give overlapping packets (the receiver checks overlap of parameters, not of the records inside one parameter).
+- Direct call: no copy. Isolated call: the records and the bytes of a batch up to the call region (64 KiB with the argument record) are copied; a larger batch is a memory object (form (iii)), with Read and Write.
+- `Key` is a Record (at most 256 bytes); a key in a record is copied once by the receiver. A key that the caller must not give to the module stays outside it: that is a service that holds the key, not a parameter.
+
+#### Measures
+
+The program `tables` measures `sample.sum_values` (it reads 8 bytes of each record of 40 bytes), the least time of several runs, in ns for one call (QEMU with KVM, 4 processors; the load of the host was 32 to 48 during the run: other machine tests ran; a measure at a load above 8 is not valid by the rule of the coordinator, and these are the numbers of that run):
+
+| The way | 64 rows (2.5 KiB) | 1024 rows (40 KiB) | 65536 rows (2.5 MiB) |
+|---|---|---|---|
+| Direct call | 12 | 250 | 26 284 |
+| Call host, call region (ii) | 6 671 | 8 787 | does not fit |
+| Call host, lent memory object (iii) | 12 500 | 13 146 | 76 422 |
+| Service, call region (ii) | 3 327 | 8 217 | does not fit |
+
+- A direct call costs what the loop costs: no copy.
+- An isolated call costs a wake of the other program and its answer, 3 to 12 us under this load; the copy of 40 KiB into the call region adds about 2 us.
+- (iii) adds the lend of the handle, its proof, the map and the unmap, and the revocation: about 6 us more than (ii) at 64 and 1024 rows. It wins only when the table does not fit in the call region: then it is the one way, and 2.5 MiB cost 76 us, 50 us more than the direct call.
+- **The interface package as a module** (`programs/interface_through_module`): one frame of 31 draw records and 448 bytes of text in 25 element calls, 523 ns through the module against 283 ns with the package compiled in: about 10 ns more for each element call (an import slot and a frame of the package made over the two tables at each call). The damage and the drawing of the window through the module: 9.7 us (the third frame, its damage only). The two draw tables are equal, record for record and byte for byte.
 
 ### A call from the host
 
@@ -245,7 +387,7 @@ The test tool and a developer read the state of the running system as typed reco
   - **The compositor is a service**: `pointer()` (one row of `Pointer`: x, y, buttons, the pointer records that arrived, the menu of the bar that is open, whether the launcher is open) and `windows()` (a Table of `Window`: title, place, size, order from the front, focus, whether the keys go to it). They are facts of the screen of the person, so they need the caller to act for the person. `pointer()` is a Table of one row and not a Record: a Record result cannot refuse (this section, "Records and handles"). The root service gives the compositor a service ring and its own file at the values 4 and 5 of its context (0 to 3 are the screen).
   - **The confirmed place of the pointer.** Before each press of a step `Click`, `Drag`, `Launch`, `Move`, `Close` or `Front`, the tool reads `compositor.pointer()` and moves the pointer again from the place that the compositor has, until it is the place of the step (6 tries; a failure names the two places). Before `remote` runs, the tool moves the pointer with no confirmation, as before.
   - **The log records as a table**: the program `log`, which holds the grant to read the log, serves `records(after)`: one row of `Record` for each log record from the number `after` (number, time, program, slot, level, channel, text, and in the first row the records that the kernel wrote over). The caller acts for the person: the log has facts of all programs. The step `Record` of the test waits for a record of a program, a channel and a level with a part of a text. The serial port stays the one path that works before `remote` runs and when the network does not: the machine test reads it for each other check.
-  - **Arguments from the host**: Integers and Texts. A Record argument has no text form yet: no export that `remote` reaches takes a Record.
+  - **Arguments from the host**: Integers, Texts, and since 2026-11-11 tables to read: a literal of rows, `monitor.counts_named([("programs"), ("processors")])`, and a text for Bytes(Read). A Record argument has no text form yet: no export that `remote` reaches takes a Record. A Change or Append table is refused: the answer carries one result place, and the rows would not come back.
 - **The three uses that come next, with no change of the format.** Done in the second layer, except the move of most `.Wait` checks. (1) Log records as binary records: an export of a service gives a Table of log records (`op.Log_Record` has a fixed size), and the tool prints it with its field names. (2) The `.Wait` checks of the machine test become `.Call` checks that compare fields of records. (3) The pointer place of the compositor: an export of the compositor gives a Record of the place, and the tool reads it before a click. Each one is a new export with a description; the request and the answer stay as they are.
 
 ### Growth
@@ -479,7 +621,7 @@ Rule 8 below requires frame pointers. The kernel walks them when a thread faults
 - Each frame of the stop report (`op.Stop_Frame`) has the address, and the base and the hash of the module record that holds it. A reader gives "module + offset".
 - **Names of functions**: the module names its exports only. The names of the other functions are debug information, in a separate object (decision 5 below), which the system does not load yet. The kernel tool names each function from the linked file of the module (`build/modules/<name>/linked.elf`, where an offset is the address): the machine test checks the frames of `fault` this way.
 - **Frame pointers**: Odin with `-o:speed` keeps no frame pointer in about half of the functions. The kernel tool now compiles each module in two steps: Odin writes LLVM IR, and `llc` of the same LLVM (18) compiles it with `--frame-pointer=all`. The cost is in `FIRST_MILESTONE.md`.
-- **One source, one module** (property 11): the Odin compiler runs with `-thread-count:1`, and the flake patches the compiler so that this gives one thread (`tools/odin_compiler/thread_count_counts_the_main_thread.patch`, choice 400 of `FIRST_MILESTONE.md`). The stock compiler starts a second thread, and two threads change the order in which it checks the declarations, so a rare build gives other code. `kerneltool check` builds everything a second time and compares each module, its LLVM IR and its object, and the boot program.
+- **One source, one module** (property 11): the Odin compiler runs with `-thread-count:1`, and the flake patches the compiler so that this gives one thread (`tools/odin_compiler/thread_count_counts_the_main_thread.patch`, choice 400 of `FIRST_MILESTONE.md`). The stock compiler starts a second thread, and two threads change the order in which it checks the declarations, so a rare build gives other code. `kerneltool check` builds everything a second time and compares each module, its LLVM IR and its object, and the boot program. `kerneltool build` runs one compiler process for each module, several at once, and assembles the boot image in the order of the module table.
 
 ### What the records do not explain
 

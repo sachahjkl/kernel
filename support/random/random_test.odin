@@ -147,7 +147,7 @@ gathering_and_its_fallbacks :: proc(t: ^testing.T) {
 
 // The strength of the seed of the system goes with each seed: a child that a
 // generator of strength weak seeds is weak too, and the context carries it in
-// the value 15 (op.CONTEXT_VALUE_SEED_STRENGTH).
+// the value 8 (op.CONTEXT_VALUE_SEED_STRENGTH).
 @(test)
 seed_strength_goes_with_the_seed :: proc(t: ^testing.T) {
 	seed := seed_of(3)

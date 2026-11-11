@@ -321,7 +321,6 @@ aes_128_gcm_test_cases_1_and_2 :: proc(t: ^testing.T) {
 	testing.expect_value(t, hex_of(sealed[:]), "0388dace60b6a392f328c2b971b2fe78")
 	testing.expect_value(t, hex_of(tag[:]), "ab6e47d42cec13bdf53a67b21257bddf")
 }
-12
 // Taming the many EdDSAs, case 4 (github.com/novifinancial/ed25519-speccheck, cases.json).
 SPECCHECK_CASE_4_MESSAGE :: "e47d62c63f830dc7a6851a0b1f33ae4bb2f507fb6cffec4011eaccd55b53f56c"
 SPECCHECK_CASE_4_PUBLIC_KEY :: "cdb267ce40c5cd45306fa5d2f29731459387dbf9eb933b7bd5aed9a765b88d4d"

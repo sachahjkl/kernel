@@ -27,6 +27,7 @@ Kind :: enum u8 {
 	Record  = 3,
 	Handle  = 4,
 	Table   = 5,
+	Bytes   = 6, // A parameter only: a Text value is its argument.
 }
 
 // A parameter of a command of the console with the kind None takes a value
@@ -48,6 +49,7 @@ kind_names := [Kind]string {
 	.Record  = "Record",
 	.Handle  = "Handle",
 	.Table   = "Table",
+	.Bytes   = "Bytes",
 }
 
 // type_text gives the name of a type: "Integer", the name of a record, or
@@ -60,6 +62,17 @@ type_text :: proc "contextless" (file: []u8, kind: Kind, detail: u32) -> string 
 		buffer = scratch[scratch_count:],
 	}
 	system.write_type(&writer, file, module.Type(kind), detail)
+	scratch_count += writer.count
+	return system.written(&writer)
+}
+
+// parameter_text gives the type of a parameter of a command, with the
+// direction of a Table or Bytes: "Table(Reading, Change)".
+parameter_text :: proc "contextless" (item: ^Command, index: int) -> string {
+	writer := system.Writer {
+		buffer = scratch[scratch_count:],
+	}
+	system.write_parameter_type(&writer, item.file, module.Type(item.parameters[index]), item.function.parameter_details[index], item.function.parameter_directions[index])
 	scratch_count += writer.count
 	return system.written(&writer)
 }
@@ -88,7 +101,7 @@ field_value :: proc "contextless" (value: Value, name: string) -> (result: Value
 		}
 		#partial switch item.type {
 		case .Integer:
-			return {kind = .Integer, integer = (^i64)(&value.record[item.offset])^}, true
+			return {kind = .Integer, integer = module.field_integer(value.record, item)}, true
 		case .Handle:
 			return {kind = .Handle, integer = i64((^u32)(&value.record[item.offset])^)}, true
 		case .Text:
@@ -136,7 +149,7 @@ print_value :: proc "contextless" (value: Value, nested := false) {
 				print(" (", system.written(&writer), ")")
 			}
 		}
-	case .None:
+	case .None, .Bytes: // No value has the kind Bytes.
 	}
 }
 
@@ -470,8 +483,12 @@ call :: proc "contextless" (name: string) -> Value {
 		if kind == .None && found.run != nil {
 			continue
 		}
-		if argument.kind != kind || kind == .Record && !module.records_equal(found.file, detail, argument.file, argument.detail) {
-			return fail(name, ": argument ", i64(index + 1), " is ", type_text(found.file, kind, detail), ", not ", type_text(argument.file, argument.kind, argument.detail))
+		// A table parameter takes a Table value of an equal record; Bytes
+		// take a Text. The direction says what the export does with it.
+		wanted := kind == .Bytes ? Kind.Text : kind
+		// A command of the console (run) takes a Table of any record.
+		if argument.kind != wanted || (kind == .Record || kind == .Table && found.run == nil) && !module.records_equal(found.file, detail, argument.file, argument.detail) {
+			return fail(name, ": argument ", i64(index + 1), " is ", parameter_text(found, index), ", not ", type_text(argument.file, argument.kind, argument.detail))
 		}
 		if kind == .Record {
 			// A copy: the export can write in its record, and a call

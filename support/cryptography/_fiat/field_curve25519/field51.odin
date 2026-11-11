@@ -1,4 +1,4 @@
-// Altered source: Odin dev-2026-05, core/crypto/_fiat/field_curve25519/field51.odin; only its imports changed (support/cryptography/origin.manifest, docs/CRYPTOGRAPHY.md).
+// Altered source: Odin dev-2026-11a, core/crypto/_fiat/field_curve25519/field51.odin; only its imports changed (support/cryptography/origin.manifest, docs/CRYPTOGRAPHY.md).
 // The BSD 1-Clause License (BSD-1-Clause)
 //
 // Copyright (c) 2015-2020 the fiat-crypto authors (see the AUTHORS file)

@@ -19,6 +19,7 @@ import "support:system"
 import "support:terminal"
 import "contract:block"
 import "contract:datagram"
+import "contract:date"
 import "contract:errors"
 import "contract:frame"
 import "support:pci"
@@ -48,6 +49,7 @@ Grant :: enum {
 	Connect, // A ring to this service that serves Connect and Disconnect only, to the services of callable_of.
 	Schedule, // The machine, with the right Schedule: change the scheduling strategy of the machine.
 	Settings, // The settings page with Write (contract:settings): the one writer of the settings of the person.
+	Clock, // The date page with Write and the two ports of the real-time clock (contract:date): the one writer of the date.
 }
 
 grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
@@ -78,12 +80,16 @@ grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 		return {.Inspect, .Image} // It reads its own page table, and starts its twins from the boot image.
 	case "locks":
 		return {.Inspect, .Image} // It reads the counts of the locks, and starts its lockers from the boot image.
+	case "address_space":
+		return {.Inspect, .Image} // It reads its own mappings, and starts its child from the boot image.
 	case "scheduler":
 		return {.Inspect, .Schedule} // It reads the counts of the scheduler, and changes the strategy.
-	case "paint", "life", "tally":
-		return {.Serve}
+	case "paint", "life", "tally", "sample":
+		return {.Serve} // sample: the module of the tables, started as a program when a caller connects.
 	case "settings":
 		return {.Settings, .Serve} // It writes the settings of the person, and serves set() and get().
+	case "date":
+		return {.Clock, .Serve} // It reads the real-time clock, writes the date page, and serves now().
 	case "manual":
 		return {.Serve, .Image, .Replacements, .Inspect} // It reads the documentation of each module of the boot image, and the module records of each program.
 	case "disk":
@@ -111,6 +117,13 @@ grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 		// connections to the services of callable_of, and the grant to act
 		// for the person (docs/MODULE_CONTRACT.md, "A call from the host").
 		return {.Connect, .Network, .Person}
+	case "interface_through_module":
+		return {.Image} // It reads the size of the code of interface_module.
+	case "tables":
+		// It loads sample, starts a call host of it from the boot image,
+		// and connects to the service sample (docs/MODULE_CONTRACT.md,
+		// "Tables and bytes as parameters").
+		return {.Image, .Connect}
 	}
 	return {}
 }
@@ -121,12 +134,16 @@ callable_of :: proc "contextless" (name: string) -> []string {
 	switch name {
 	case "remote":
 		return remote_callable[:]
+	case "tables":
+		return tables_callable[:]
 	}
 	return nil
 }
 
 @(rodata)
-remote_callable := [?]string{"compositor", "inspect", "log", "manual", "monitor", "settings", "storage"}
+remote_callable := [?]string{"compositor", "date", "inspect", "log", "manual", "monitor", "settings", "storage"}
+@(rodata)
+tables_callable := [?]string{"sample"}
 
 // The values of the context of the compositor that name its own file: 0 to
 // 3 are the screen.
@@ -164,13 +181,15 @@ store_limit_of :: proc "contextless" (name: string) -> u64 {
 		return 4 // A small limit: the test reaches it.
 	case "errors":
 		return 2 // One object is over the limit.
+	case "notes":
+		return 4500 // The versions of a run of 1000 commits of the count (4 blocks each), then thinning at the limit.
 	}
 	return 64
 }
 
 // A service that starts when a program asks for a connection to it.
 on_demand :: proc "contextless" (name: string) -> bool {
-	return name == "storage"
+	return name == "storage" || name == "sample"
 }
 
 // grant_for gives what a caller receives in a service (isolated.Service_Command).
@@ -230,6 +249,8 @@ things_of :: proc "contextless" (name: string) -> system.Budget_Amounts {
 		return {pages = 2048, programs = 1, threads = 9}
 	case "locks":
 		return {pages = 9216, programs = 8, threads = 20} // 4 lockers of 1024 pages, then 3 at a time of the stress case.
+	case "address_space":
+		return {pages = 40960, programs = 2, threads = 6} // 64 MiB of large pages, two ranges of 1 GiB with their page tables, a child.
 	case "scheduler":
 		return {pages = 2048, programs = 1, threads = 24} // 12 spinners, two threads that wake each other, one that sleeps, a changer, a thread that starts threads.
 	case "flow":
@@ -242,6 +263,11 @@ things_of :: proc "contextless" (name: string) -> system.Budget_Amounts {
 		return {pages = 256, programs = 1, threads = 1}
 	case "block", "frame":
 		return {pages = 256, programs = 1, threads = 1}
+	case "storage":
+		// About 9 MB of tables: the count of names of each block of the disk,
+		// the changes of one commit, the leaves of one version index, and the
+		// versions of one object for versions().
+		return {pages = 4096, programs = 1, threads = 1}
 	case "disk":
 		return {pages = 2048, programs = 1, threads = 1}
 	case "imports":
@@ -250,6 +276,8 @@ things_of :: proc "contextless" (name: string) -> system.Budget_Amounts {
 		return {pages = 2048, programs = 3, threads = 4} // It starts fault and its child, and 3 threads under contention.
 	case "server":
 		return {pages = 4096, programs = 1, threads = 1} // A table of 32 connections with their buffers, and a large window.
+	case "tables":
+		return {pages = 4096, programs = 3, threads = 3} // A table of 65536 readings in a memory object (640 pages), and two call hosts (sample, hostile_exports) with their threads.
 	}
 	return {pages = 2048, programs = 1, threads = 1}
 }
@@ -351,6 +379,34 @@ show :: proc "contextless" (text: string, state: bootscreen.State, step: bootscr
 	bootscreen.draw_screen(screen, &screen_data)
 }
 
+// shortage_start gives the program shortage nearly all the pages of this
+// service, and the machine; the program stops the machine at its end. This
+// service keeps SHORTAGE_KEEP pages: the module of the program is copied in
+// memory that it pays.
+SHORTAGE_KEEP :: 24
+
+shortage_start :: proc "contextless" (ctx: ^system.Context) -> ! {
+	own, _ := system.budget_read()
+	grants: [op.CONTEXT_HANDLES]system.Grant
+	grants[system.GRANT_MACHINE] = {machine, {.Inspect, .Stop}}
+	grants[op.CONTEXT_LOG] = log_grant("shortage")
+	amounts := system.Budget_Amounts {
+		pages       = own.pages - SHORTAGE_KEEP,
+		programs    = 1,
+		threads     = 8,
+		processor   = own.processor,
+		log_records = 1000,
+	}
+	if _, status := system.program_start(system.image_find(image, "shortage"), "shortage", grants, random.values_with_seed(&program_generator, {}), amounts, nil, &prepared); status != .Ok {
+		system.log("root: cannot start shortage: status ", u64(status))
+		system.call(.Machine_Stop, u64(machine), 1)
+	}
+	system.log("root: started shortage with ", amounts.pages, " pages")
+	for {
+		system.sleep(max(u64))
+	}
+}
+
 // fail ends the start of the machine. The machine does not stop: the boot
 // display stays, with the failure, until a person stops the machine.
 fail :: proc "contextless" (text: string, status: system.Status) -> ! {
@@ -398,6 +454,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		report := &entropy_report
 		system.log("root: the random seed of the system, strength ", random.seed_strength_names[report.strength], ": rdseed ", report.rdseed_present ? "present" : "absent", ", ", u64(report.rdseed_good), " good values, ", u64(report.rdseed_refused), " refused; rdrand ", report.rdrand_present ? "present" : "absent", ", ", u64(report.rdrand_good), " good, ", u64(report.rdrand_refused), " refused; the cycle counter, ", u64(report.jitter_samples), " samples, ", u64(report.jitter_distinct), " distinct low bytes")
 	}
+	// The machine of the test of the shortage of frames: its boot image has
+	// the program shortage and no input service, so no desktop.
+	if len(system.image_find(image, "input")) == 0 && len(system.image_find(image, "shortage")) != 0 {
+		shortage_start(ctx)
+	}
 	if pixels, map_status := system.memory_map(ctx.handles[op.ROOT_FRAMEBUFFER], {.Write}); map_status == .Ok {
 		screen = {
 			pixels = ([^]graphics.Color)(pixels),
@@ -410,6 +471,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	// The settings page and the glyph cache, before the first boot display.
 	text_settings_create()
+	date_page_create()
 	show("the root service starts input", .Running, .Input)
 	{
 		table: rawptr
@@ -472,7 +534,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		// The compositor is also a service (programs/compositor/exports.odin):
 		// a service ring and its own file, as start() gives to a service.
 		// Its values 0 to 3 are the screen, so the file is at values 4 and 5.
-		mappings: [4]system.Mapping
+		mappings: [5]system.Mapping
 		mapping_count := 0
 		served := &started[0]
 		served^ = {}
@@ -501,6 +563,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			}
 		}
 		text_settings_give(mappings[:], &mapping_count, &values)
+		date_page_give(mappings[:], &mapping_count, &values)
 		compositor, status = system.program_start(system.image_find(image, "compositor"), "compositor", grants, random.values_with_seed(&program_generator, values), budget_of("compositor"), mappings[:mapping_count], &prepared)
 		if status != .Ok {
 			fail("cannot start the compositor", status)
@@ -511,6 +574,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		copy(served.name[:len(served.name) - 1], "compositor")
 	}
 
+	// The date: the program `date` reads the real-time clock. The programs
+	// that start before it writes the page read no date until then.
+	if status = start("date"); status != .Ok {
+		system.log_in("programs", .Warning, "root: cannot start date: the system has no date")
+	}
 	if status = start("console"); status != .Ok {
 		fail("cannot start the console", status)
 	}
@@ -753,7 +821,7 @@ start :: proc "contextless" (name: string) -> system.Status {
 	copy(slot.name[:len(slot.name) - 1], name) // The connection to the storage service names the program.
 	// The connection to the private store, in the context: the call ring, the
 	// call region, the storage service with the right Read, and its file.
-	mappings: [4]system.Mapping
+	mappings: [6]system.Mapping
 	mapping_count := 0
 	// This service closes its handles of the connection after the start.
 	store_ring, store_region: system.Handle
@@ -860,6 +928,20 @@ start :: proc "contextless" (name: string) -> system.Status {
 	if .Settings in role {
 		grants[settings.GRANT_PAGE] = {settings_memory, {.Read, .Write}}
 	}
+	clock_ports: system.Handle
+	defer if clock_ports != 0 {
+		system.close(clock_ports)
+	}
+	if .Clock in role {
+		grants[date.GRANT_PAGE] = {date_memory, {.Read, .Write}}
+		results, ports_status := system.call(.Device_Create, u64(machine), u64(op.Device_Kind.Ports), 0x70, 2)
+		if ports_status == .Ok {
+			clock_ports = system.Handle(results[0])
+			grants[date.GRANT_PORTS] = {clock_ports, {}}
+		}
+	}
+	// Each program: the date page, read-only.
+	date_page_give(mappings[:], &mapping_count, &values)
 	// A program with a surface: the settings page and the glyph cache, read-only.
 	if .Terminal not_in role {
 		text_settings_give(mappings[:], &mapping_count, &values)

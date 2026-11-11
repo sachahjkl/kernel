@@ -26,6 +26,7 @@ Pointer :: struct {
 	y:       i64, // From the top of the screen.
 	buttons: i64, // Bit 0: the left button is down; bit 1: the right one; bit 2: the middle one.
 	moves:   i64, // The pointer records that the input service sent since the start.
+	keys:    i64, // The key records that the input service sent since the start: each press and each release is one.
 	menu:    [16]u8, // The menu of the bar that is open: "programs", "windows", or empty.
 	launcher: i64, // 1: the launcher is open, and it takes the keys.
 	shape:    [32]u8, // The name of the pointer shape on the screen: "arrow", "move", "text", ... (docs/POINTERS.md).
@@ -47,6 +48,7 @@ ERROR_PERSON :: -1
 
 service: system.Service
 pointer_moves: u64
+key_records: u64
 
 // service_start opens the service ring. The file of this program is at
 // values 4 and 5, not at the places of a service that system.service_open
@@ -72,7 +74,7 @@ pointer :: proc "c" (result: ^[]Pointer, error: ^errors.Error_Record) -> i64 {
 		return errors.fail(error, ERROR_PERSON, .No_Grant, .Person)
 	}
 	if len(result^) > 0 {
-		result[0] = {x = i64(pointer_x), y = i64(pointer_y), buttons = i64(buttons), moves = i64(pointer_moves), launcher = launcher_open ? 1 : 0}
+		result[0] = {x = i64(pointer_x), y = i64(pointer_y), buttons = i64(buttons), moves = i64(pointer_moves), keys = i64(key_records), launcher = launcher_open ? 1 : 0}
 		copy(result[0].shape[:len(result[0].shape) - 1], pointer_pictures.SHAPE_NAMES[pointer_shape_under()])
 		#partial switch menu_open {
 		case .Programs:

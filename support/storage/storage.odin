@@ -39,6 +39,8 @@ ERROR_FULL :: -5 // No place for one more object or store, or no free block on t
 ERROR_DISK :: -6 // The block service reported an error.
 ERROR_ABSENT :: -7 // The store has no object with this name.
 ERROR_DAMAGED :: -8 // A block of the object, or the table of the store, has a wrong check.
+ERROR_NO_VERSION :: -9 // The object has no version of this generation.
+ERROR_PERSON :: -10 // The call names another store, and the caller does not act for the person.
 
 Client :: struct {
 	ring_memory:   system.Handle,
@@ -57,6 +59,7 @@ Status :: enum {
 	Refused, // The storage service refused the call: see isolated.Status.
 	Damaged, // The storage service has the object and cannot give its bytes: a block has a wrong check, or the disk gave an error.
 	Failed, // The export answered a negative number: the error record says why.
+	Too_Small, // The bytes do not fit in the buffer of the caller: the count of the bytes is the result.
 }
 
 open :: proc "contextless" (ctx: ^system.Context) -> (client: Client, ok: bool) {
@@ -156,6 +159,16 @@ call :: proc "contextless" (client: ^Client, name: string, arguments: []isolated
 				}
 				return i64(completion.values[0]), result, .Ok
 			}
+			if function.result == .Table {
+				// The records as bytes: the caller reads them with the record of
+				// the export. A table that did not fit gives the rows that did.
+				described, described_ok := module.record_type(client.file, function.result_detail)
+				if !described_ok {
+					return 0, nil, .Refused
+				}
+				records, _ := isolated.result_table(client.region, buffer, completion.values[0], u64(described.size))
+				return i64(completion.values[0]), records, .Ok
+			}
 			return i64(completion.values[0]), nil, .Ok
 		}
 		if !connected(client) {
@@ -213,4 +226,62 @@ read :: proc "contextless" (client: ^Client, name: string, result: []u8, error: 
 // gave: the names come from the description of the export in its file.
 error_text :: proc "contextless" (writer: ^system.Writer, client: ^Client, error: ^errors.Error_Record) {
 	system.export_error_text(writer, client.file, u32(clamp(error.operation, 0, i64(max(u32)))), "storage", error)
+}
+
+// One state of an object, as the export versions gives it: its row.
+Version :: struct {
+	generation: i64,
+	time:       i64, // Milliseconds since the format of the disk.
+	date:       i64, // Seconds since 1970 (UTC). 0: not known.
+	bytes:      i64,
+	own_blocks: i64, // The blocks that only this state holds.
+	current:    i64, // 1: the current version.
+}
+
+// versions copies the states of an object of the store of the program into
+// `into`, the oldest first, the current version last. total is the count of
+// all the states: more than len(rows) when they did not fit.
+versions :: proc "contextless" (client: ^Client, name: string, into: []Version, error: ^errors.Error_Record = nil) -> (rows: []Version, total: i64, status: Status) {
+	arguments := [2]isolated.Argument{{text = nil}, {text = transmute([]u8)name}}
+	bytes: []u8
+	total, bytes, status = call(client, "versions", arguments[:], error)
+	if status != .Ok {
+		return nil, total, status
+	}
+	count := min(len(bytes) / size_of(Version), len(into))
+	for index in 0 ..< count {
+		into[index] = (^Version)(raw_data(bytes[index * size_of(Version):]))^
+	}
+	return into[:count], total, .Ok
+}
+
+// version copies the bytes of an object at a generation (a version, or the
+// current version) into result. Too_Small: result is smaller than the bytes.
+version :: proc "contextless" (client: ^Client, name: string, generation: i64, result: []u8, error: ^errors.Error_Record = nil) -> (bytes: []u8, status: Status) {
+	arguments := [3]isolated.Argument{{text = nil}, {text = transmute([]u8)name}, {integer = u64(generation)}}
+	size: i64
+	text: []u8
+	size, text, status = call(client, "version", arguments[:], error)
+	if status == .Refused && size > i64(len(result)) {
+		return nil, .Too_Small // The service gave the size, and no bytes that fit the call region.
+	}
+	if status != .Ok {
+		return nil, status
+	}
+	if size > i64(len(result)) {
+		return nil, .Too_Small
+	}
+	if i64(len(text)) != size {
+		return nil, .Damaged
+	}
+	count := copy(result, text)
+	return result[:count], .Ok
+}
+
+// restore makes a version of an object its current version again, in one
+// commit. The result is the generation of the commit.
+restore :: proc "contextless" (client: ^Client, name: string, generation: i64, error: ^errors.Error_Record = nil) -> (commit: i64, status: Status) {
+	arguments := [3]isolated.Argument{{text = nil}, {text = transmute([]u8)name}, {integer = u64(generation)}}
+	commit, _, status = call(client, "restore", arguments[:], error)
+	return commit, status
 }

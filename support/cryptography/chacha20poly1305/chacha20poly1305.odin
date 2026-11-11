@@ -1,4 +1,4 @@
-// Altered source: Odin dev-2026-05, core/crypto/chacha20poly1305/chacha20poly1305.odin; only its imports changed (support/cryptography/origin.manifest, docs/CRYPTOGRAPHY.md).
+// Altered source: Odin dev-2026-11a, core/crypto/chacha20poly1305/chacha20poly1305.odin; only its imports changed (support/cryptography/origin.manifest, docs/CRYPTOGRAPHY.md).
 /*
 `AEAD_CHACHA20_POLY1305` and `AEAD_XChaCha20_Poly1305` algorithms.
 

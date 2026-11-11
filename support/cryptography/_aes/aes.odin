@@ -1,4 +1,4 @@
-// Altered source: Odin dev-2026-05, core/crypto/_aes/aes.odin; only its imports changed (support/cryptography/origin.manifest, docs/CRYPTOGRAPHY.md).
+// Altered source: Odin dev-2026-11a, core/crypto/_aes/aes.odin; only its imports changed (support/cryptography/origin.manifest, docs/CRYPTOGRAPHY.md).
 package _aes
 
 // KEY_SIZE_128 is the AES-128 key size in bytes.

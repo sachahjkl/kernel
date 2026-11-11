@@ -1,4 +1,4 @@
-// Altered source: Odin dev-2026-05, core/crypto/sha2/sha512_impl_hw_gen.odin; only its imports changed (support/cryptography/origin.manifest, docs/CRYPTOGRAPHY.md).
+// Altered source: Odin dev-2026-11a, core/crypto/sha2/sha512_impl_hw_gen.odin; only its imports changed (support/cryptography/origin.manifest, docs/CRYPTOGRAPHY.md).
 #+build !arm64
 package sha2
 

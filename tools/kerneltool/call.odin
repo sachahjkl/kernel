@@ -131,14 +131,17 @@ module_read :: proc(client: ^Call_Client, service: string) -> (file: []u8, hash:
 
 // Parsed argument of the text of a call.
 Call_Argument :: struct {
-	is_text: bool,
-	integer: i64,
-	text:    string,
+	is_text:  bool,
+	integer:  i64,
+	text:     string,
+	is_table: bool,
+	rows:     [][]Call_Argument, // A table: the values of the fields of each row, in order.
 }
 
 // call_parse reads "service.export(argument, ...)": an argument is an
-// integer (decimal, or hexadecimal after 0x) or a text in double quotes,
-// with \" \\ and \n.
+// integer (decimal, or hexadecimal after 0x), a text in double quotes,
+// with \" \\ and \n, or a table: rows in square brackets, each row the
+// values of its fields in parentheses, [(1, "a"), (2, "b")].
 call_parse :: proc(call_text: string) -> (service, export: string, arguments: [dynamic]Call_Argument, problem: string) {
 	text := strings.trim_space(call_text)
 	open := strings.index_byte(text, '(')
@@ -148,10 +151,24 @@ call_parse :: proc(call_text: string) -> (service, export: string, arguments: [d
 	}
 	service, export = text[:dot], text[dot + 1:open]
 	rest := strings.trim_space(text[open + 1:len(text) - 1])
-	arguments = make([dynamic]Call_Argument, context.temp_allocator)
-	for len(rest) > 0 {
+	arguments, rest, problem = values_parse(rest, true)
+	if problem == "" && len(rest) != 0 {
+		problem = fmt.tprintf("%q is not an argument", rest)
+	}
+	return
+}
+
+// values_parse reads values separated by commas, up to the end of the text
+// or to a closing parenthesis or square bracket. A table is allowed at the
+// top level only: a row holds integers and texts.
+@(private = "file")
+values_parse :: proc(text: string, tables: bool) -> (values: [dynamic]Call_Argument, rest: string, problem: string) {
+	values = make([dynamic]Call_Argument, context.temp_allocator)
+	rest = strings.trim_space(text)
+	for len(rest) > 0 && rest[0] != ')' && rest[0] != ']' {
 		argument: Call_Argument
-		if rest[0] == '"' {
+		switch {
+		case rest[0] == '"':
 			builder := strings.builder_make(context.temp_allocator)
 			index := 1
 			closed := false
@@ -176,36 +193,108 @@ call_parse :: proc(call_text: string) -> (service, export: string, arguments: [d
 				index += 1
 			}
 			if !closed {
-				return service, export, arguments, "a text has no closing double quote"
+				return values, rest, "a text has no closing double quote"
 			}
 			argument = {is_text = true, text = strings.to_string(builder)}
 			rest = rest[index:]
-		} else {
-			end := strings.index_byte(rest, ',')
-			if end < 0 {
-				end = len(rest)
+		case rest[0] == '[':
+			if !tables {
+				return values, rest, "a row of a table holds integers and texts, not a table"
+			}
+			rows := make([dynamic][]Call_Argument, context.temp_allocator)
+			rest = strings.trim_space(rest[1:])
+			for len(rest) > 0 && rest[0] == '(' {
+				row, after, row_problem := values_parse(rest[1:], false)
+				if row_problem != "" {
+					return values, rest, row_problem
+				}
+				if len(after) == 0 || after[0] != ')' {
+					return values, rest, "a row of a table ends with a closing parenthesis"
+				}
+				append(&rows, row[:])
+				rest = strings.trim_space(after[1:])
+				if len(rest) > 0 && rest[0] == ',' {
+					rest = strings.trim_space(rest[1:])
+				}
+			}
+			if len(rest) == 0 || rest[0] != ']' {
+				return values, rest, "a table is rows in parentheses between square brackets: [(1, 2), (3, 4)]"
+			}
+			argument = {is_table = true, rows = rows[:]}
+			rest = rest[1:]
+		case:
+			end := 0
+			for end < len(rest) && rest[end] != ',' && rest[end] != ')' && rest[end] != ']' {
+				end += 1
 			}
 			word := strings.trim_space(rest[:end])
 			value, ok := strconv.parse_i64(word)
 			if !ok {
-				return service, export, arguments, fmt.tprintf("%q is not an integer and not a text in double quotes", word)
+				return values, rest, fmt.tprintf("%q is not an integer, not a text in double quotes and not a table", word)
 			}
 			argument = {integer = value}
 			rest = rest[end:]
 		}
-		append(&arguments, argument)
+		append(&values, argument)
 		rest = strings.trim_space(rest)
-		if len(rest) > 0 {
-			if rest[0] != ',' {
-				return service, export, arguments, "two arguments need a comma between them"
-			}
+		if len(rest) > 0 && rest[0] == ',' {
 			rest = strings.trim_space(rest[1:])
-			if len(rest) == 0 {
-				return service, export, arguments, "an argument is missing after the last comma"
+			if len(rest) == 0 || rest[0] == ')' || rest[0] == ']' {
+				return values, rest, "an argument is missing after the last comma"
 			}
+		} else if len(rest) > 0 && rest[0] != ')' && rest[0] != ']' {
+			return values, rest, "two arguments need a comma between them"
 		}
 	}
 	return
+}
+
+// table_bytes writes the rows of a table literal as records of a
+// description: each row has one value for each field, in order.
+@(private = "file")
+table_bytes :: proc(file: []u8, detail: u32, rows: [][]Call_Argument) -> (bytes: []u8, problem: string) {
+	described, ok := module.record_type(file, detail)
+	if !ok {
+		return nil, "the record of the table has no valid description"
+	}
+	bytes = make([]u8, len(rows) * int(described.size), context.temp_allocator)
+	for row, number in rows {
+		if len(row) != int(described.field_count) {
+			return nil, fmt.tprintf("row %d has %d values; a record %s has %d fields", number + 1, len(row), module.string_at(file, described.name_offset, described.name_count), described.field_count)
+		}
+		record := bytes[number * int(described.size):][:described.size]
+		for value, index in row {
+			item, _ := module.field(file, described, u32(index))
+			#partial switch item.type {
+			case .Integer:
+				if value.is_text || value.is_table {
+					return nil, fmt.tprintf("row %d: the field %s is an Integer", number + 1, module.string_at(file, item.name_offset, item.name_count))
+				}
+				if !module.field_integer_fits(item, value.integer) {
+					buffer := make([]u8, 32, context.temp_allocator)
+					writer := sentence.Writer{buffer = buffer}
+					sentence.write_field_type(&writer, file, item)
+					return nil, fmt.tprintf("row %d: the field %s is %s, it does not hold %d", number + 1, module.string_at(file, item.name_offset, item.name_count), sentence.written(&writer), value.integer)
+				}
+				module.field_integer_set(record, item, value.integer)
+			case .Text:
+				if !value.is_text || len(value.text) > int(item.detail) {
+					return nil, fmt.tprintf("row %d: the field %s is a Text of %d bytes at most", number + 1, module.string_at(file, item.name_offset, item.name_count), item.detail)
+				}
+				copy(record[item.offset:], value.text)
+			case:
+				return nil, fmt.tprintf("row %d: the field %s has no text form", number + 1, module.string_at(file, item.name_offset, item.name_count))
+			}
+		}
+	}
+	return bytes, ""
+}
+
+parameter_type_name :: proc(file: []u8, function: module.Function, number: int) -> string {
+	buffer := make([]u8, 128, context.temp_allocator)
+	writer := sentence.Writer{buffer = buffer}
+	sentence.write_parameter_type(&writer, file, function.parameters[number], function.parameter_details[number], function.parameter_directions[number])
+	return sentence.written(&writer)
 }
 
 type_name :: proc(file: []u8, type: module.Type, detail: u32) -> string {
@@ -250,10 +339,34 @@ call_prepare :: proc(client: ^Call_Client, text: string) -> (call: Prepared_Call
 				return {}, fmt.tprintf("the parameter %s of %s.%s is a Text, the argument is an Integer", name, service, export)
 			}
 			encoded[number] = {text = transmute([]u8)argument.text}
+		case .Table, .Bytes:
+			// The answer of the remote service has one result place: the
+			// rows of a Change or Append table would not come back.
+			if direction := function.parameter_directions[number]; direction != .Read {
+				return {}, fmt.tprintf("the parameter %s of %s.%s is %s: a call from the host gives tables to read only, its rows would not come back", name, service, export, parameter_type_name(file, function, number))
+			}
+			if type == .Bytes {
+				if !argument.is_text {
+					return {}, fmt.tprintf("the parameter %s of %s.%s is Bytes(Read): give a text", name, service, export)
+				}
+				encoded[number].table = {records = transmute([]u8)argument.text, count = u64(len(argument.text))}
+				break
+			}
+			if !argument.is_table {
+				return {}, fmt.tprintf("the parameter %s of %s.%s is %s: give rows, [(1, 2), (3, 4)]", name, service, export, parameter_type_name(file, function, number))
+			}
+			bytes, table_problem := table_bytes(file, function.parameter_details[number], argument.rows)
+			if table_problem != "" {
+				return {}, fmt.tprintf("the parameter %s of %s.%s: %s", name, service, export, table_problem)
+			}
+			encoded[number].table = {records = bytes, count = u64(len(argument.rows))}
 		case:
 			// A handle of the host has no meaning in the machine, and a
 			// Record argument has no text form yet.
-			return {}, fmt.tprintf("the parameter %s of %s.%s is a %s: a call from the host gives Integers and Texts only", name, service, export, type_name(file, type, function.parameter_details[number]))
+			return {}, fmt.tprintf("the parameter %s of %s.%s is a %s: a call from the host gives Integers, Texts and tables to read only", name, service, export, type_name(file, type, function.parameter_details[number]))
+		}
+		if (type == .Integer || type == .Text) && argument.is_table {
+			return {}, fmt.tprintf("the parameter %s of %s.%s is %s, the argument is a table", name, service, export, type_name(file, type, function.parameter_details[number]))
 		}
 	}
 	slice.zero(client.region)
@@ -275,6 +388,10 @@ call_prepare :: proc(client: ^Call_Client, text: string) -> (call: Prepared_Call
 			start := (^u64)(&client.region[field])^
 			described, _ := module.record_type(file, function.parameter_details[number])
 			end = max(end, start + u64(described.size))
+		case .Table, .Bytes:
+			table := (^isolated.Table_Field)(&client.region[field])^
+			record_bytes, _, _ := isolated.table_record(file, type, function.parameter_details[number])
+			end = max(end, table.start + table.count * record_bytes)
 		}
 		field += isolated.field_size(type)
 	}
@@ -542,8 +659,8 @@ record_fields :: proc(client: ^Call_Client, text: string, names: []string) -> (v
 	for name, index in names {
 		for number in 0 ..< described.field_count {
 			item := module.field(call.file, described, number) or_return
-			if module.string_at(call.file, item.name_offset, item.name_count) == name && item.type == .Integer && int(item.offset) + 8 <= len(result) {
-				values[index] = (^i64)(&result[item.offset])^
+			if module.string_at(call.file, item.name_offset, item.name_count) == name && item.type == .Integer && int(item.offset) + int(module.field_size(item.type, item.detail)) <= len(result) {
+				values[index] = module.field_integer(result, item)
 				found += 1
 			}
 		}
@@ -577,8 +694,8 @@ record_text_field :: proc(client: ^Call_Client, text: string, name: string) -> (
 field_value :: proc(record: []u8, item: module.Field) -> string {
 	#partial switch item.type {
 	case .Integer:
-		if u64(item.offset) + 8 <= u64(len(record)) {
-			return fmt.tprintf("%d", (^i64)(&record[item.offset])^)
+		if u64(item.offset) + u64(module.field_size(item.type, item.detail)) <= u64(len(record)) {
+			return fmt.tprintf("%d", module.field_integer(record, item))
 		}
 	case .Handle:
 		if u64(item.offset) + 4 <= u64(len(record)) {

@@ -1,4 +1,4 @@
-// Altered source: Odin dev-2026-05, core/crypto/ed25519/ed25519.odin; only its imports changed (support/cryptography/origin.manifest, docs/CRYPTOGRAPHY.md).
+// Altered source: Odin dev-2026-11a, core/crypto/ed25519/ed25519.odin; only its imports changed (support/cryptography/origin.manifest, docs/CRYPTOGRAPHY.md).
 /*
 `Ed25519` EdDSA signature algorithm.
 
@@ -51,6 +51,7 @@ Public_Key :: struct {
 // private_key_generate uses the system entropy source to generate a new
 // Private_Key.  This will only fail if and only if (⟺) the system entropy source is
 // missing or broken.
+@(require_results)
 private_key_generate :: proc(priv_key: ^Private_Key) -> bool {
 	private_key_clear(priv_key)
 
@@ -62,13 +63,12 @@ private_key_generate :: proc(priv_key: ^Private_Key) -> bool {
 	defer crypto.zero_explicit(&b, size_of(b))
 
 	crypto.rand_bytes(b[:])
-	private_key_set_bytes(priv_key, b[:])
-
-	return true
+	return private_key_set_bytes(priv_key, b[:])
 }
 
 // private_key_set_bytes decodes a byte-encoded private key, and returns
 // true if and only if (⟺) the operation was successful.
+@(require_results)
 private_key_set_bytes :: proc(priv_key: ^Private_Key, b: []byte) -> bool {
 	if len(b) != PRIVATE_KEY_SIZE {
 		return false
@@ -119,6 +119,12 @@ private_key_bytes :: proc(priv_key: ^Private_Key, dst: []byte) {
 	ensure(len(dst) == PRIVATE_KEY_SIZE, "crypto/ed25519: invalid destination size")
 
 	copy(dst, priv_key._b[:])
+}
+
+// private_key_public_bytes sets dst to the byte-encoding of the public
+// key corresponding to priv_key.
+private_key_public_bytes :: proc(priv_key: ^Private_Key, dst: []byte) {
+	public_key_bytes(&priv_key._pub_key, dst)
 }
 
 // private_key_clear clears priv_key to the uninitialized state.
@@ -184,6 +190,7 @@ sign :: proc(priv_key: ^Private_Key, msg, sig: []byte) {
 
 // public_key_set_bytes decodes a byte-encoded public key, and returns
 // true if and only if (⟺) the operation was successful.
+@(require_results)
 public_key_set_bytes :: proc "contextless" (pub_key: ^Public_Key, b: []byte) -> bool {
 	if len(b) != PUBLIC_KEY_SIZE {
 		return false
@@ -232,6 +239,7 @@ public_key_bytes :: proc(pub_key: ^Public_Key, dst: []byte) {
 }
 
 // public_key_equal returns true if and only if (⟺) pub_key is equal to other.
+@(require_results)
 public_key_equal :: proc(pub_key, other: ^Public_Key) -> bool {
 	ensure(pub_key._is_initialized && other._is_initialized, "crypto/ed25519: uninitialized public key")
 
@@ -249,6 +257,7 @@ public_key_clear :: proc "contextless" (pub_key: ^Public_Key) {
 // implementation strictly compatible with FIPS 186-5, at the expense of
 // SBS-security.  Doing so is NOT recommended, and the disallowed
 // public keys all have a known discrete-log.
+@(require_results)
 verify :: proc(pub_key: ^Public_Key, msg, sig: []byte, allow_small_order_A := false) -> bool {
 	switch {
 	case !pub_key._is_initialized:

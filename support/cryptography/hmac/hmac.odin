@@ -1,4 +1,4 @@
-// Altered source: Odin dev-2026-05, core/crypto/hmac/hmac.odin; only its imports changed (support/cryptography/origin.manifest, docs/CRYPTOGRAPHY.md).
+// Altered source: Odin dev-2026-11a, core/crypto/hmac/hmac.odin; only its imports changed (support/cryptography/origin.manifest, docs/CRYPTOGRAPHY.md).
 /*
 `HMAC` message authentication code (`MAC`) algorithm.
 
