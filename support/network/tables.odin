@@ -54,10 +54,13 @@ problem_rows :: proc "contextless" (own: ^Problem_Table, machine: ^Problem_Table
 // The admitted remotes of a listen grant: a remote that sent a SYN to the
 // listen port. A segment to send goes out only to an admitted remote
 // (docs/NETWORK.md). Each place has the time of its last segment, in or
-// out: when the table is full, the oldest place with no segment for
-// ADMITTED_IDLE serves again, so that a program that forgets a Release
+// out: when the table is full, the oldest place with no segment for more
+// than ADMITTED_IDLE serves again, so that a program that forgets a Release
 // cannot close its own port.
-ADMITTED_IDLE :: 60_000 // Milliseconds: more than each timer of support/tcp and of `server`.
+// Milliseconds: twice RTO_MOST of support/tcp (60 s, the longest gap
+// between two probes of a zero window), so that a live remote keeps its
+// place (an independent read, W12: with 60 s and ">=", it lost it).
+ADMITTED_IDLE :: 2 * 60_000
 
 Admitted_Remote :: struct {
 	address: u32,
@@ -92,7 +95,7 @@ admitted_add :: proc "contextless" (table: ^Admitted, address: u32, port: u16, n
 			item = {address = address, port = port, used = true, time = now}
 			return true
 		}
-		if now - item.time >= ADMITTED_IDLE && (oldest < 0 || item.time < table[oldest].time) {
+		if item.time <= now && now - item.time > ADMITTED_IDLE && (oldest < 0 || item.time < table[oldest].time) {
 			oldest = index
 		}
 	}

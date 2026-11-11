@@ -100,10 +100,11 @@ admitted_remotes :: proc(t: ^testing.T) {
 	testing.expect(t, !admitted_release(&table, 0x0A000202, 40001))
 	testing.expect(t, !admitted_find(&table, 0x0A000202, 40001, 3000))
 	testing.expect(t, admitted_add(&table, 0x0A000203, 40000, 3000))
-	// Full again. 60 s later each place is idle but 40000 (time 2000) and
-	// the new one (3000): the oldest idle place is the port 40002 (time 1002).
+	// Full again. More than ADMITTED_IDLE after the port 40002 (time 1002),
+	// it is the only idle place, and the oldest: it serves again.
 	testing.expect(t, !admitted_add(&table, 0x0A000204, 1, 4000))
-	testing.expect(t, admitted_add(&table, 0x0A000204, 1, 1002 + ADMITTED_IDLE))
+	testing.expect(t, !admitted_add(&table, 0x0A000204, 1, 1002 + ADMITTED_IDLE))
+	testing.expect(t, admitted_add(&table, 0x0A000204, 1, 1002 + ADMITTED_IDLE + 1))
 	testing.expect(t, !admitted_find(&table, 0x0A000202, 40002, 70_000))
 	testing.expect(t, admitted_find(&table, 0x0A000202, 40003, 70_000))
 }
@@ -119,4 +120,21 @@ sources_that_are_refused :: proc(t: ^testing.T) {
 	testing.expect(t, !source_valid(0x0A0002FF, LOCAL, MASK)) // The subnet broadcast.
 	testing.expect(t, !source_valid(LOCAL, LOCAL, MASK))
 	testing.expect(t, !source_valid(0xE000_0001, LOCAL, MASK))
+}
+
+// A remote with no segment for 60 s is live: 60 s is RTO_MOST of
+// support/tcp, the longest gap between two probes of a zero window. A full
+// table must not give its place to a new remote then (an independent read,
+// W12): its place serves again only after twice that time.
+@(test)
+admitted_remote_at_the_longest_gap_of_tcp :: proc(t: ^testing.T) {
+	table: Admitted
+	for index in 0 ..< datagram.ADMITTED_CAPACITY {
+		testing.expect(t, admitted_add(&table, 0x0A000202, u16(40000 + index), 1000))
+	}
+	testing.expect(t, !admitted_add(&table, 0x0A000203, 40000, 1000 + 60_000))
+	testing.expect(t, !admitted_add(&table, 0x0A000203, 40000, 1000 + 2 * 60_000))
+	testing.expect(t, admitted_add(&table, 0x0A000203, 40000, 1000 + 2 * 60_000 + 1))
+	// A time before the time of a place (a clock that went back) takes no place.
+	testing.expect(t, !admitted_add(&table, 0x0A000204, 40000, 500))
 }
