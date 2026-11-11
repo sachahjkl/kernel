@@ -303,6 +303,52 @@ Interrupts are off in the kernel, so a processor never takes a lock again in an 
   5. **A stop.** `thread_stop` and `program_stop` take the thread out of its list under the run lock of its home, and `schedule` ends a thread that its processor ran under the same lock: each is one section, before or after a conversion.
   6. **Two changes at one time.** Let B be the operation whose write of `strategy_chosen` is the last one. B visits each queue after its write, and at its visit the word holds the value of B, so the queue gets it; a later visit of another operation reads the same value. So when the last operation returns, each queue has the strategy of the word.
 
+## The virtual memory of a program
+
+Status: design and implementation of 2026-11-11 (owner, 2026-11-10: "a program drives its own virtual memory", "use paging and virtual memory as a design tool"). The terms are in `GLOSSARY.md`: reserved object, committed page, decommit, page protection, shoot-down, large page, fault ring.
+
+### What a program can do, and with which operation
+
+| Need | Form | Why this form |
+|---|---|---|
+| Reserve a range of addresses with no memory behind it | `Memory_Create` with the new flag `Reserve`, then `Memory_Map` | A reserved object pays only its frame list; its pages are paid when they are committed. The reservation of addresses is the mapping of it: one mapping for a range of any size, so the 128 mappings of a program are not spent by parts of an arena or of a table. No new operation: an object with pages that are not paid yet is a kind of memory object |
+| Commit and decommit pages | the new operation `Memory_Commit` (memory, address of a table of `Page_Range`, count, flags): the flag `Decommit` takes pages back | A new operation: the existing ones create an object, map it, unmap it; none changes what the budget pays for some pages of an object that lives. One operation for the two ways, as `Handle_Give` and `Handle_Close` are not one: here the two ways change the same three counts (budget, reserved pages, frames) in opposite directions over the same table |
+| Change the protection of pages | the new operation `Memory_Protect` (address of a table of `Address_Range`, count, `Map_Flags`) | The protection of a mapping is set by `Memory_Map` for all its pages; changing it for some pages of a mapping that lives is a new act. The flag `No_Access` is new in `Map_Flags` |
+| Large pages | `Memory_Create` with the new flag `Large_Pages` (contiguous, a whole number of 2 MiB, aligned on 2 MiB); `Memory_Map` uses large pages for each 2 MiB that is aligned in the mapping | No new operation: the program asks for an object whose frames can be large pages; the kernel uses them where the mapping allows it |
+| A fault that the program answers | the fault ring: designed below, not built in this step | |
+| What the program reads about itself | `Program_Mapping` has the committed pages and the flags `Reserve`, `Large`, `Protected` | |
+
+Batches: `Memory_Commit` and `Memory_Protect` take a table of ranges in memory of the caller, at most 256 ranges, in one command. The kernel ring already batches 32 commands in one entry, but each command takes the program lock again, checks its handle again, and a protection change does its own shoot-down; a table of ranges in one command takes the lock once, checks the handle once, and does one shoot-down for all the ranges (property 13: many records in one call; property 14: the table is memory of the caller).
+
+### The state of a page
+
+The frame list of an object that is not contiguous has one slot of 8 bytes for each page. A frame is aligned on 4096 bytes, so the low 12 bits of a slot are free; the kernel keeps there the state of the page that is not a frame:
+
+- bit 0, `committed`: only for a reserved object. A page of a reserved object is committed when its budget paid for it; a page of another object is always committed. A page that is not committed has no frame, and an access to it is a fault.
+- bit 1, `deny write`, and bit 2, `deny execute`: the protection of the page is the protection of its mapping less what these bits deny.
+- bit 3, `no access`: any access is a fault.
+
+The frame of the slot is `slot & PAGE_ADDRESS`; 0 is no frame. A slot changes under the region lock of the object (a first use) or under the program lock and the region lock (commit, decommit, protection); the frame lock is held where frames or budgets move.
+
+### Commit and decommit
+
+- **Commit** of a range of a reserved object: under the program lock of the caller, the region lock of the object and the frame lock, in one section for the table: the budget of the object pays one page for each page that is not committed, `reserved_pages` grows by as much, the bit `committed` is set. A budget that cannot pay the whole table refuses the whole table (`No_Budget`, its error record names the range): no table is half done.
+- **Decommit**: the same locks. For each committed page: the bit is cleared; a page with a frame loses its page table entry (the shoot-down below), its frame goes to the frame cache of this processor (in the section of the frame lock, as the end of an object does), `present` of the object falls by one; a page with no frame gives back its reserved page; the budget receives one page for each page. The content of a page that is committed again is zero (a new frame at its first use: P20, ZII).
+- Decommit and a protection change of a part of a mapping need an object that only this program maps, with one mapping (the references of the object are the handles of this program to it and this one mapping): its pages have no page table entry in another program, so the shoot-down is the one of this program. Another object gives `Bad_State` with its error record.
+- The sums of the frames (`TEST_BUILD_CHECKS_FRAME_SUMS`) hold at each step: a commit moves pages from a budget to `reserved_pages`, a decommit moves them back, or moves a frame to a stack and a page to the budget.
+
+### Protection and the shoot-down
+
+`Memory_Protect` sets, for each page of each range, the protection of the page: Read only, Read and Write, Read and Execute, or `No_Access`. It can only take away what the mapping has: a range of a mapping made without Write cannot become writable (the handle was checked for the rights of the mapping). Write and Execute together are refused (no page is both). For an object with a frame list, the state is in the slots (above): a page that gets its frame later gets the protection of its slot. For a contiguous object (device memory, large pages) the protection is of the whole mapping: a range must cover the mapping. The page table entries that exist are rewritten; then one `processor_sync` to the processors whose page table is the one of the program, for all the ranges of the call. A processor answers it at its next kernel entry, its idle wait or its wait for a lock, and reloads its page table: it keeps no old translation. The cost is measured with 1, 2 and 4 processors running threads of the program.
+
+### Large pages
+
+An object made with `Large_Pages` takes its frames in one run aligned on 2 MiB (`frames_take_aligned`). A mapping of it uses a large page for each 2 MiB of the mapping whose address and first page are aligned: one entry of the second level, with the bit `PAGE_LARGE`; other parts use 4 KiB pages. The walk of the page table (`page_entry`) gives the entry of the second level for an address in a large page; each path that reads or writes entries knows it: the end of a mapping clears the large entries, the free of the page tables of a program does not free the frame of a large page as a table, the reports count 512 present pages for a large entry. A protection change of a part of a large page is refused (a range must cover the mapping); a decommit of such an object is refused (it is contiguous). The benefit is measured: random reads over 64 MiB, with large pages and with 4 KiB pages of the same object; under QEMU with KVM the numbers are those of the processor of the host, with the nested page tables of the host.
+
+### The fault ring (designed, not built in this step)
+
+A fault of a program stops it today, with a stop report. The form in the style of the system (no signal: property 16; an error is a value): a program gives the kernel a ring (`Fault_Ring_Set`, with a ring of fault records and the thread that serves it). A thread that faults on a page of a mapping with the flag `Faults_To_Ring` is not stopped: the kernel writes a record (address, kind of access, the thread, the mapping) in the ring, wakes the serving thread, and makes the thread wait. The serving thread commits or changes the protection (the operations above) and answers with `Fault_Resume` (the thread runs the instruction again) or `Fault_Stop` (the program stops as today, with the record). A supervisor program that holds the program handle with Control can serve the ring of another program. What cannot be served: a fault of the serving thread itself, a fault of a thread while the ring is full (the program stops), a fault in the kernel half, a fault in the thread area. The design needs a wait state of a thread that no word ends (only `Fault_Resume`), a record of the ring that names the faulting thread and its serial, and a decision for a thread that stops while it waits for its answer: it is a step of its own, with the review of these states.
+
 ## How the systems depend on each other
 
 ```mermaid
