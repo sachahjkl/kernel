@@ -1586,7 +1586,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "compositor: surface settings", any_order = true},
 	{kind = .Wait, text = "settings: ok, font vector, subpixel order rgb, pointer theme owner, grid fit on"},
 	{kind = .Front, text = "monitor"},
-	{kind = .Move, text = "monitor", to_x = 8, to_y = 412},
+	{kind = .Move, text = "monitor", to_x = 8, to_y = 408},
 	{kind = .Front, text = "settings"},
 	{kind = .Move, text = "settings", to_x = 456, to_y = 40},
 	{kind = .Shot, text = "font_vector"},
