@@ -11,6 +11,7 @@
 // service holds.
 package sample
 
+import "base:intrinsics"
 import "contract:errors"
 import op "contract:operation"
 import "support:system"
@@ -178,15 +179,22 @@ Word :: struct {
 sum_words :: proc "c" (words: ^system.Table_To_Change(Word), text: ^system.Bytes_To_Read, error: ^errors.Error_Record) -> i64 {
 	total: i64
 	for &word, number in system.table_changed_records(words) {
-		end := u64(word.start) + u64(word.count)
+		// The rule of an export (docs/MODULE_CONTRACT.md): it copies a
+		// record before it checks it, and uses only the copy. In an
+		// isolated call the records are in the call region, which another
+		// thread of the caller can change during the call. One volatile
+		// load: the compiler cannot read the record a second time.
+		copied := intrinsics.volatile_load(&word)
+		end := u64(copied.start) + u64(copied.count)
 		if end > text.count {
 			return errors.fail(error, -1, .Out_Of_Range, .Bytes, 1, i64(end), i64(text.count), i64(number + 1))
 		}
-		word.sum = 0
-		for b in text.bytes[word.start:end] {
-			word.sum += i64(b)
+		sum: i64
+		for b in text.bytes[copied.start:end] {
+			sum += i64(b)
 		}
-		total += word.sum
+		word.sum = sum
+		total += sum
 	}
 	return total
 }
