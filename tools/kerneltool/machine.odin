@@ -1663,6 +1663,7 @@ Machine :: struct {
 	call_port:   int, // The peer receives the call requests of the host there.
 	peer:        ^Peer,
 	confirm:     bool, // The tool reads compositor.pointer() before each press: see pointer_confirm.
+	keys_confirmed: int, // Keys that the tool sent only after the compositor had the key before (key_send).
 	confirmations: [dynamic]time.Duration, // The time of each confirmation of a place.
 	corrected:   int, // The places that needed a correction.
 	record_next: i64, // The number of the log record where the next Record step searches.
@@ -1715,6 +1716,57 @@ key_name :: proc(character: u8) -> string {
 		return "slash"
 	}
 	return ""
+}
+
+// KEY_TAKEN_TIME: how long the tool waits for the machine to take one key.
+KEY_TAKEN_TIME :: 20 * time.Second
+
+// key_records_read gives the count of the key records that the compositor
+// received, through the remote service.
+key_records_read :: proc(machine: ^Machine) -> (count: i64, ok: bool) {
+	values := record_fields(&machine.client, "compositor.pointer()", {"keys"}) or_return
+	return values[0], true
+}
+
+// key_send presses and releases one key of the QEMU monitor ("a",
+// "shift-a", "ret"). When the tool can call the compositor (machine.confirm),
+// it waits until the compositor received the records of that key: a press
+// and a release for each part of the name. A loaded host runs the machine
+// late: the keyboard of the machine holds few scancodes, and a key sent
+// before the machine read the last ones is lost (measured: "start("fetch")"
+// arrived as "start("ETCH")": the release of shift and the f were lost).
+// With the wait, the tool never sends a key before the last one arrived.
+// Before remote runs, the tool waits a fixed time, as before.
+key_send :: proc(machine: ^Machine, name: string) -> bool {
+	if !machine.confirm {
+		monitor_send(machine, "sendkey ", name, " 20")
+		time.sleep(KEY_PAUSE)
+		return true
+	}
+	before, read := key_records_read(machine)
+	if !read {
+		// The person revoked the grant of remote, or remote stopped: the
+		// fixed wait.
+		monitor_send(machine, "sendkey ", name, " 20")
+		time.sleep(KEY_PAUSE)
+		return true
+	}
+	wanted := before + 2 * i64(strings.count(name, "-") + 1)
+	monitor_send(machine, "sendkey ", name, " 20")
+	start := time.tick_now()
+	for time.tick_since(start) < KEY_TAKEN_TIME {
+		time.sleep(5 * time.Millisecond)
+		now, ok := key_records_read(machine)
+		if !ok {
+			time.sleep(KEY_PAUSE)
+			return true
+		}
+		if now >= wanted {
+			machine.keys_confirmed += 1
+			return true
+		}
+	}
+	return false
 }
 
 // POINTER_TRIES: the reads of the place before the tool says that the
@@ -2043,6 +2095,9 @@ machine_test :: proc(steps: []Step, volume: string, output: string, exit_status:
 		slice.sort(machine.confirmations[:])
 		fmt.printfln("kerneltool: test passed: the tool confirmed %d places of the pointer through compositor.pointer(), %d after a correction; one confirmation took %d us at least, %d us in the middle", len(machine.confirmations), machine.corrected, i64(machine.confirmations[0] / time.Microsecond), i64(machine.confirmations[len(machine.confirmations) / 2] / time.Microsecond))
 	}
+	if machine.keys_confirmed > 0 {
+		fmt.printfln("kerneltool: test passed: the tool sent %d keys, each one after the compositor had received the key before it", machine.keys_confirmed)
+	}
 	if machine.client_open {
 		call_client_close(&machine.client)
 	}
@@ -2119,16 +2174,22 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 					fmt.eprintfln("kerneltool: step %d: no key for '%c'", index + 1, step.text[i])
 					return false
 				}
-				monitor_send(machine, "sendkey ", name, " 20")
-				time.sleep(KEY_PAUSE)
+				if !key_send(machine, name) {
+					fmt.eprintfln("kerneltool: test failed: step %d: the machine did not take the key %s of \"%s\"", index + 1, name, step.text)
+					return false
+				}
 			}
 			if step.kind == .Type {
-				monitor_send(machine, "sendkey ret 20")
-				time.sleep(KEY_PAUSE)
+				if !key_send(machine, "ret") {
+					fmt.eprintfln("kerneltool: test failed: step %d: the machine did not take the key ret of \"%s\"", index + 1, step.text)
+					return false
+				}
 			}
 		case .Key:
-			monitor_send(machine, "sendkey ", step.text, " 20")
-			time.sleep(KEY_PAUSE)
+			if !key_send(machine, step.text) {
+				fmt.eprintfln("kerneltool: test failed: step %d: the machine did not take the key %s", index + 1, step.text)
+				return false
+			}
 		case .Point:
 			x, y := step.x, step.y
 			if step.inside_window != "" {

@@ -294,6 +294,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		for record in system.receive(&input.commands) {
 			#partial switch display.Input(record.kind) {
 			case .Key:
+				key_records += 1
 				if !launcher_key(u32(record.values[0]), u8(record.values[1]), record.values[2] != 0) && order_count > 0 {
 					send(&clients[order[order_count - 1]], ring.Record{kind = u32(display.Event_Kind.Key), values = record.values})
 				}
