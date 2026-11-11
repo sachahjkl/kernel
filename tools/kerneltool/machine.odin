@@ -1610,6 +1610,20 @@ scenario_measure := [?]Step {
 	{kind = .Wait, text = "kernel: the machine stops with code 0"},
 }
 
+// The shortage of frames: a machine whose boot image has no desktop; the
+// root service gives nearly all its pages to the program shortage, which
+// takes all the frames, drains the stacks, frees all, and stops the machine
+// (`kerneltool test shortage`, `kerneltool measure without_checks shortage`).
+@(rodata)
+scenario_shortage := [?]Step {
+	{kind = .Wait, text = "boot program: ok"},
+	{kind = .Wait, text = "kernel: ok"},
+	{kind = .Wait, text = "root: started shortage with "},
+	{kind = .Wait, text = "shortage: full: "},
+	{kind = .Wait, text = "shortage: ok, the stacks were drained for takes that cannot fail, a new object failed only when its budget could pay no page, and each frame returned"},
+	{kind = .Wait, text = "kernel: the machine stops with code 0"},
+}
+
 // The scheduling strategies with only the desktop (`kerneltool measure
 // scheduler N`).
 @(rodata)

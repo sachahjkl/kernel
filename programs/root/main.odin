@@ -349,6 +349,34 @@ show :: proc "contextless" (text: string, state: bootscreen.State, step: bootscr
 	bootscreen.draw_screen(screen, &screen_data)
 }
 
+// shortage_start gives the program shortage nearly all the pages of this
+// service, and the machine; the program stops the machine at its end. This
+// service keeps SHORTAGE_KEEP pages: the module of the program is copied in
+// memory that it pays.
+SHORTAGE_KEEP :: 24
+
+shortage_start :: proc "contextless" (ctx: ^system.Context) -> ! {
+	own, _ := system.budget_read()
+	grants: [op.CONTEXT_HANDLES]system.Grant
+	grants[system.GRANT_MACHINE] = {machine, {.Inspect, .Stop}}
+	grants[op.CONTEXT_LOG] = log_grant("shortage")
+	amounts := system.Budget_Amounts {
+		pages       = own.pages - SHORTAGE_KEEP,
+		programs    = 1,
+		threads     = 8,
+		processor   = own.processor,
+		log_records = 1000,
+	}
+	if _, status := system.program_start(system.image_find(image, "shortage"), "shortage", grants, {}, amounts, nil, &prepared); status != .Ok {
+		system.log("root: cannot start shortage: status ", u64(status))
+		system.call(.Machine_Stop, u64(machine), 1)
+	}
+	system.log("root: started shortage with ", amounts.pages, " pages")
+	for {
+		system.sleep(max(u64))
+	}
+}
+
 // fail ends the start of the machine. The machine does not stop: the boot
 // display stays, with the failure, until a person stops the machine.
 fail :: proc "contextless" (text: string, status: system.Status) -> ! {
@@ -390,6 +418,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		random.generator_seed(&program_generator, &seed)
 		report := &entropy_report
 		system.log("root: the random seed of the system, strength ", random.seed_strength_names[report.strength], ": rdseed ", report.rdseed_present ? "present" : "absent", ", ", u64(report.rdseed_good), " good values, ", u64(report.rdseed_refused), " refused; rdrand ", report.rdrand_present ? "present" : "absent", ", ", u64(report.rdrand_good), " good, ", u64(report.rdrand_refused), " refused; the cycle counter, ", u64(report.jitter_samples), " samples, ", u64(report.jitter_distinct), " distinct low bytes")
+	}
+	// The machine of the test of the shortage of frames: its boot image has
+	// the program shortage and no input service, so no desktop.
+	if len(system.image_find(image, "input")) == 0 && len(system.image_find(image, "shortage")) != 0 {
+		shortage_start(ctx)
 	}
 	if pixels, map_status := system.memory_map(ctx.handles[op.ROOT_FRAMEBUFFER], {.Write}); map_status == .Ok {
 		screen = {
