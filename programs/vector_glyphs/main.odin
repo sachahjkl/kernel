@@ -163,9 +163,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 	}
 	// The time of a glyph of Spleen: a copy of the bits of the font.
+	scratch: [16 * 16]graphics.Color // The measure draws here, not on the window.
+	scratch_canvas := graphics.Canvas{pixels = raw_data(scratch[:]), width = 16, height = 16, stride = 16}
 	spleen_start := system.nanoseconds()
 	for _ in 0 ..< 1000 {
-		graphics.character(canvas, content.x, content.y + 20, 'g', graphics.COLOR_TEXT)
+		graphics.character(scratch_canvas, 0, 0, 'g', graphics.COLOR_TEXT)
 	}
 	spleen := (system.nanoseconds() - spleen_start) / 1000
 	display.present(&window)
