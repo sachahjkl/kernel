@@ -321,6 +321,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			system.service_run(&service)
 			changed := false
 			for event in display.next_event(&window) {
+				// The keys and the pointer of the window are the program's own:
+				// the interface package draws, and takes no input here.
 				if event.kind == .Key && event.pressed {
 					key(event)
 					changed = true

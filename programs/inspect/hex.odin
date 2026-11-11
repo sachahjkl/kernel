@@ -3,6 +3,7 @@ package inspect
 import module "contract:module"
 import op "contract:operation"
 import "support:graphics"
+import "support:interface"
 import "support:system"
 
 // The bytes of the memory of this program itself (docs/TOOLS.md): the
@@ -43,8 +44,10 @@ hex_present :: proc "contextless" (address: u64) -> (present, mapped: u64) {
 	return report.present, report.mapped
 }
 
-// hex_row draws 16 bytes: the address, the bytes, the ASCII.
-hex_row :: proc "contextless" (canvas: graphics.Canvas, y: int, address: u64, bytes: []u8, own: []op.Module_Record) {
+// hex_row draws 16 bytes: the address, the bytes, the ASCII. Bytes next to
+// each other with one color are one run of text: "41 42 43 " keeps 24
+// pixels for each byte.
+hex_row :: proc "contextless" (area: interface.Area, y: int, address: u64, bytes: []u8, own: []op.Module_Record) {
 	buffer: [64]u8
 	writer := system.Writer{buffer = buffer[:]}
 	if own != nil && address >= own[0].base && address - own[0].base < own[0].size {
@@ -53,19 +56,45 @@ hex_row :: proc "contextless" (canvas: graphics.Canvas, y: int, address: u64, by
 	} else {
 		system.write_number(&writer, address)
 	}
-	graphics.text(canvas, 0, y, system.written(&writer), graphics.COLOR_DIM)
+	write(area, 0, y, system.written(&writer), graphics.COLOR_DIM)
 	digits := system.HEX_DIGITS
-	x := 200
-	for byte, index in bytes {
-		pair := [2]u8{digits[byte >> 4], digits[byte & 15]}
-		graphics.text(canvas, x + index * 24 + (index >= 8 ? 8 : 0), y, string(pair[:]), byte == 0 ? graphics.COLOR_NOT_USABLE : graphics.COLOR_TEXT)
-		character := byte >= 32 && byte < 127 ? byte : '.'
-		graphics.character(canvas, x + 16 * 24 + 24 + index * 8, y, character, byte >= 32 && byte < 127 ? graphics.COLOR_MEMORY : graphics.COLOR_NOT_USABLE)
+	HEX_X :: 200
+	ASCII_X :: HEX_X + 16 * 24 + 24
+	// The pairs, in runs of one color, the two halves of 8 apart.
+	for half in 0 ..< 2 {
+		start := half * 8
+		for start < half * 8 + 8 && start < len(bytes) {
+			zero := bytes[start] == 0
+			run: [24]u8
+			count := 0
+			index := start
+			for index < half * 8 + 8 && index < len(bytes) && (bytes[index] == 0) == zero {
+				run[count], run[count + 1], run[count + 2] = digits[bytes[index] >> 4], digits[bytes[index] & 15], ' '
+				count += 3
+				index += 1
+			}
+			write(area, HEX_X + start * 24 + half * 8, y, string(run[:count - 1]), zero ? graphics.COLOR_NOT_USABLE : graphics.COLOR_TEXT)
+			start = index
+		}
+	}
+	// The characters, in runs of one color.
+	for start := 0; start < len(bytes); {
+		printable := bytes[start] >= 32 && bytes[start] < 127
+		run: [16]u8
+		count := 0
+		index := start
+		for index < len(bytes) && (bytes[index] >= 32 && bytes[index] < 127) == printable {
+			run[count] = printable ? bytes[index] : '.'
+			count += 1
+			index += 1
+		}
+		write(area, ASCII_X + start * 8, y, string(run[:count]), printable ? graphics.COLOR_MEMORY : graphics.COLOR_NOT_USABLE)
+		start = index
 	}
 }
 
-draw_hex :: proc "contextless" (canvas: graphics.Canvas) {
-	inside := card(canvas, RIGHT_X, LOW_Y, RIGHT_WIDTH, LOW_HEIGHT, "BYTES OF INSPECT", "its own memory; Inspect_Kind.Pages: which pages have a frame", graphics.COLOR_MEMORY)
+draw_hex :: proc "contextless" (frame: ^interface.Frame) {
+	inside := card(frame, RIGHT_X, LOW_Y, RIGHT_WIDTH, LOW_HEIGHT, "BYTES OF INSPECT", "its own memory; Inspect_Kind.Pages: which pages have a frame", graphics.COLOR_MEMORY)
 	own: op.Module_Report
 	own_slot := slot_of("inspect")
 	inspect_call(.Modules, own_slot, &own, size_of(own))
@@ -84,7 +113,7 @@ draw_hex :: proc "contextless" (canvas: graphics.Canvas) {
 	if code != 0 {
 		base := code
 		present, _ := hex_present(base)
-		graphics.fill(inside, 0, y + 7, inside.width, 1, graphics.COLOR_TRACK)
+		fill(inside, 0, y + 7, inside.width, 1, graphics.COLOR_TRACK)
 		text(inside, 0, y, graphics.COLOR_PROGRAM, "the code of the export entry of inspect: ", present & 1 != 0 ? "it has a page frame" : "no page frame: not read")
 		y += LINE
 		if present & 1 != 0 {
@@ -97,7 +126,7 @@ draw_hex :: proc "contextless" (canvas: graphics.Canvas) {
 		y += 8
 	}
 	if hex_memory == nil {
-		graphics.text(inside, 0, y, "no memory of the demonstration: Memory_Create failed", graphics.COLOR_FAILED)
+		write(inside, 0, y, "no memory of the demonstration: Memory_Create failed", graphics.COLOR_FAILED)
 		return
 	}
 	start := u64(uintptr(hex_memory))
@@ -106,15 +135,15 @@ draw_hex :: proc "contextless" (canvas: graphics.Canvas) {
 		address := start + page * system.PAGE_SIZE
 		has := present >> page & 1 != 0
 		// The boundary of a page: a line and its state.
-		graphics.fill(inside, 0, y + 7, inside.width, 1, has ? graphics.COLOR_MEMORY : graphics.COLOR_NOT_USABLE)
+		fill(inside, 0, y + 7, inside.width, 1, has ? graphics.COLOR_MEMORY : graphics.COLOR_NOT_USABLE)
 		buffer: [96]u8
 		writer := system.Writer{buffer = buffer[:]}
 		system.write_part(&writer, "page ")
 		system.write_number(&writer, address)
 		system.write_part(&writer, has ? ": it has a page frame " : ": no page frame: the tool does not read it ")
 		label := system.written(&writer)
-		graphics.fill(inside, 0, y, graphics.text_width(label), LINE, graphics.COLOR_CARD_BOTTOM)
-		graphics.text(inside, 0, y, label, has ? graphics.COLOR_MEMORY : graphics.COLOR_DIM)
+		fill(inside, 0, y, interface.text_width({}, label), LINE, graphics.COLOR_CARD_BOTTOM)
+		write(inside, 0, y, label, has ? graphics.COLOR_MEMORY : graphics.COLOR_DIM)
 		y += LINE
 		if has {
 			for row in 0 ..< 3 {
