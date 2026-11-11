@@ -119,7 +119,7 @@ fragment_hostile_is_refused :: proc(t: ^testing.T) {
 		{"20261111-120000-thing.md", "type: Added\n\n   \n", "line 3: the text of the change is expected"},
 		{"20261111-120000-thing.md", "type: Added\n", "line 2: an empty line is expected"},
 		{"20261111-120000-thing.md", "type: Added\n\nOne.\n\nTwo.\n", "line 4: an empty line inside the text"},
-		{"20261111-120000-thing.md", "type: Added\n\nOne.\n- Two.\n", "line 4: the line starts a second entry"},
+		{"20261111-120000-thing.md", "type: Added\n\nOne.\n- Two.\n", "line 4: the line starts with \"- \""},
 		{"20261111-120000-thing.md", "type: Added\n\n## Heading\n", "line 3: the line is a heading"},
 		{"20261111-120000-thing.md", "type: Added\n\nOne.\r\n", "line 3: the line has a tab or a carriage return"},
 		{"20261111-120000-thing.md", "type: Added\n\nOne\tTwo.\n", "line 3: the line has a tab"},

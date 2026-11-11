@@ -6,6 +6,7 @@
 // moves the fragments into a new release.
 //
 //   kerneltool changelog new <type> <subject> "<text>"   write one fragment
+//   kerneltool changelog new <type> <subject> -          the same, with the text from the standard input
 //   kerneltool changelog check                           every fragment and CHANGELOG.md well formed
 //   kerneltool changelog assemble                        print what the next release brings
 //   kerneltool changelog release <release number>        write the release, set RELEASE_NUMBER, delete the fragments
@@ -85,7 +86,18 @@ run_changelog :: proc(args: []string) -> int {
 			fmt.eprintln("kerneltool: changelog new <type> <subject> \"<text>\": three arguments are expected")
 			return EXIT_USAGE
 		}
-		return changelog_new(args[1], args[2], args[3]) ? 0 : EXIT_FAILURE
+		text := args[3]
+		// "-": the text comes from the standard input. `odin run` gives
+		// the arguments to a shell, which runs the `...` of a text.
+		if text == "-" {
+			input, err := os.read_entire_file(os.stdin, context.temp_allocator)
+			if err != nil {
+				fmt.eprintfln("kerneltool: cannot read the standard input: %v", err)
+				return EXIT_FAILURE
+			}
+			text = string(input)
+		}
+		return changelog_new(args[1], args[2], text) ? 0 : EXIT_FAILURE
 	case "check":
 		return changelog_check() ? 0 : EXIT_FAILURE
 	case "assemble":
@@ -241,7 +253,7 @@ entry_line_problem :: proc(line: string) -> string {
 	case strings.has_prefix(line, "#"):
 		return "the line is a heading; the type of the fragment gives the part of the release"
 	case strings.has_prefix(line, "- ") || strings.has_prefix(line, "* "):
-		return "the line starts a second entry; a fragment is one change"
+		return "the line starts with \"- \": a fragment is one entry, and the tool writes its \"- \""
 	case strings.has_prefix(line, " "):
 		return "the line starts with a space; the tool indents the lines of an entry"
 	case strings.has_suffix(line, " "):
