@@ -1509,12 +1509,12 @@ scenario := [?]Step {
 	{kind = .Shot, text = "interface_damage"},
 	{kind = .Close, text = "interface_elements"},
 	{kind = .Wait, text = "root: interface_elements stopped"},
-	// A vector font, as research (docs/INTERFACE.md, section 9): the same
-	// text in Spleen 8x16 and from the outlines of DejaVu Sans Mono.
+	// The vector font of the system (docs/FONTS.md): the six candidates,
+	// each from a glyph cache that the program builds, beside Spleen 8x16.
 	{kind = .Launch, text = "vector_glyphs"},
-	{kind = .Wait, text = "vector_glyphs: one glyph: Spleen 8x16 "},
+	{kind = .Wait, text = "vector_glyphs: one glyph from its outline, in fixed point"},
 	{kind = .Wait, text = "vector_glyphs: ok, "},
-	{kind = .Shot, text = "vector_glyphs"},
+	{kind = .Shot, text = "font_candidates"},
 	{kind = .Close, text = "vector_glyphs"},
 	{kind = .Wait, text = "root: vector_glyphs stopped"},
 	// The pointer pictures (docs/POINTERS.md): the shape that the compositor
@@ -1548,6 +1548,37 @@ scenario := [?]Step {
 	{kind = .Point, x = 400, y = 260, text = "text"}, // The input line of the launcher.
 	{kind = .Key, text = "meta_l"},
 	{kind = .Wait, text = "compositor: the launcher is closed by the key super"},
+	// The settings of the person: the font and the order of the stripes
+	// change while the programs run; each window draws again, with no code
+	// of its own for it.
+	{kind = .Launch, text = "settings"},
+	{kind = .Wait, text = "compositor: surface settings", any_order = true},
+	{kind = .Wait, text = "settings: ok, font vector, subpixel order rgb"},
+	{kind = .Move, text = "settings", to_x = 392, to_y = 40},
+	{kind = .Front, text = "monitor"},
+	{kind = .Move, text = "monitor", to_x = 8, to_y = 400},
+	{kind = .Shot, text = "font_vector"},
+	{kind = .Front, text = "console"},
+	{kind = .Type, text = "connect(\"settings\")"},
+	{kind = .Wait, text = "[console] settings: 2 commands of a service that runs"},
+	{kind = .Type, text = "settings.set(\"font\", \"spleen\")"},
+	{kind = .Wait, text = "compositor: the settings changed: font spleen, subpixel order rgb; ", any_order = true},
+	{kind = .Wait, text = "settings: drawn with the font spleen, subpixel order rgb"},
+	{kind = .Front, text = "settings"},
+	{kind = .Shot, text = "font_spleen"},
+	{kind = .Call, text = "settings.get(\"font\")", expected = "spleen"},
+	{kind = .Call, text = "settings.set(\"font\", \"vector\")", expected = "1"},
+	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb; "},
+	{kind = .Call, text = "settings.set(\"subpixel_order\", \"bgr\")", expected = "1"},
+	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order bgr; "},
+	{kind = .Call, text = "settings.get(\"subpixel_order\")", expected = "bgr"},
+	{kind = .Call, text = "settings.set(\"font\", \"comic\")", outcome = .Failed, expected = "(-3)"},
+	{kind = .Call, text = "settings.set(\"colour\", \"red\")", outcome = .Failed, expected = "(-2)"},
+	{kind = .Call, text = "settings.set(\"subpixel_order\", \"rgb\")", expected = "1"},
+	{kind = .Wait, text = "settings: drawn with the font vector, subpixel order rgb"},
+	{kind = .Shot, text = "settings"},
+	{kind = .Close, text = "settings"},
+	{kind = .Wait, text = "root: settings stopped"},
 	{kind = .Front, text = "console"},
 	// Each page is free or paid, after all the starts and stops of this test.
 	{kind = .Type, text = "memory()"},

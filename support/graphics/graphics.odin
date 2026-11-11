@@ -101,47 +101,6 @@ copy :: proc "contextless" (canvas: Canvas, x, y: int, source: Canvas) {
 	}
 }
 
-// text draws characters from (x, y), the top left corner of the first one.
-// It gives the x after the last character.
-text :: proc "contextless" (canvas: Canvas, x, y: int, characters: string, color: Color) -> int {
-	x := x
-	for i in 0 ..< len(characters) {
-		character(canvas, x, y, characters[i], color)
-		x += CELL_WIDTH
-	}
-	return x
-}
-
-character :: proc "contextless" (canvas: Canvas, x, y: int, value: u8, color: Color) {
-	if value < FONT_FIRST || value > FONT_LAST {
-		return
-	}
-	glyph := font[value - FONT_FIRST]
-	if x >= 0 && y >= 0 && x + CELL_WIDTH <= canvas.width && y + CELL_HEIGHT <= canvas.height {
-		// The whole glyph is inside the canvas: no test for each pixel.
-		for bits, row in glyph {
-			line := canvas.pixels[(y + row) * canvas.stride + x:]
-			for column in 0 ..< CELL_WIDTH {
-				if bits << uint(column) & 0x80 != 0 {
-					line[column] = color
-				}
-			}
-		}
-		return
-	}
-	for bits, row in glyph {
-		for column in 0 ..< CELL_WIDTH {
-			if bits << uint(column) & 0x80 != 0 {
-				pixel(canvas, x + column, y + row, color)
-			}
-		}
-	}
-}
-
-text_width :: proc "contextless" (characters: string) -> int {
-	return len(characters) * CELL_WIDTH
-}
-
 // unsigned draws a number, and gives the x after it.
 unsigned :: proc "contextless" (canvas: Canvas, x, y: int, value: u64, color: Color, minimum_digits := 1) -> int {
 	digits: [20]u8

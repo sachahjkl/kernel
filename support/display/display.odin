@@ -15,7 +15,9 @@ package display
 import "contract:errors"
 import "support:graphics"
 import "contract:ring"
+import "contract:glyph_cache"
 import "contract:pointer_pictures"
+import "contract:settings"
 import "support:system"
 
 Command :: enum u32 {
@@ -26,9 +28,13 @@ Command :: enum u32 {
 }
 
 Event_Kind :: enum u32 {
-	None    = 0,
-	Key     = 1, // values: code, character, 1 when pressed, modifiers
-	Pointer = 2, // values: x, y in the surface (signed), buttons
+	None             = 0,
+	Key              = 1, // values: code, character, 1 when pressed, modifiers
+	Pointer          = 2, // values: x, y in the surface (signed), buttons
+	// The settings of the person changed (contract:settings): next_event
+	// already gave the new font to support/graphics; the program draws its
+	// window again. values: the change count of the settings page.
+	Settings_Changed = 3,
 }
 
 // The ring between the root service and the compositor.
@@ -149,6 +155,7 @@ open :: proc "contextless" (ctx: ^system.Context, width, height: int, title: str
 		errors.fail(error, 0, .Too_Long, .Bytes, 4, i64(len(title)), len(system.Name) - 1)
 		return {}, false
 	}
+	text_settings_open(ctx)
 	status: system.Status
 	if window.ring, status = system.ring_open(window.ring_memory, error); status != .Ok {
 		return {}, false
@@ -261,6 +268,43 @@ next_event :: proc "contextless" (window: ^Window) -> (event: Event, ok: bool) {
 		event.x = int(i64(record.values[0]))
 		event.y = int(i64(record.values[1]))
 		event.buttons = u32(record.values[2])
+	case .Settings_Changed:
+		text_settings_apply()
 	}
 	return event, true
+}
+
+// The settings page of this program (contract:settings), or nil.
+settings_page: ^settings.Page
+
+// text_settings_open finds the settings page in the context, validates the
+// glyph cache once (a font file and a cache are hostile input), and applies
+// the choice of the person. With no page, or a cache that the validation
+// refuses, the text of the program is Spleen 8x16, with a line on the log.
+// The compositor calls it too: it has no window of this package.
+text_settings_open :: proc "contextless" (ctx: ^system.Context) {
+	address := ctx.values[settings.VALUE_PAGE]
+	if address == 0 || settings_page != nil {
+		return
+	}
+	settings_page = (^settings.Page)(uintptr(address))
+	if settings_page.glyph_cache_size == 0 {
+		system.log_in("programs", .Warning, "display: no glyph cache: the text is Spleen 8x16")
+	} else {
+		bytes := ([^]u8)(uintptr(settings_page.glyph_cache_address))[:settings_page.glyph_cache_size]
+		if problem := graphics.text_cache_set(bytes); problem.kind != .None {
+			system.log_in("programs", .Warning, "display: the glyph cache is refused: ", glyph_cache.problem_sentences[problem.kind], ", value ", problem.value, ", limit ", problem.limit, ": the text is Spleen 8x16")
+		}
+	}
+	text_settings_apply()
+}
+
+// text_settings_apply gives the choice of the settings page to
+// support/graphics.
+text_settings_apply :: proc "contextless" () {
+	if settings_page == nil {
+		return
+	}
+	choice := settings.read(settings_page)
+	graphics.text_choice_set(choice.font == .Spleen ? .Spleen : .Vector, graphics.Subpixel_Order(u8(choice.subpixel_order)))
 }

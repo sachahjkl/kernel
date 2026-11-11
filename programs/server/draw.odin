@@ -34,22 +34,7 @@ bar :: proc "contextless" (canvas: graphics.Canvas, x, y, width, height: int, co
 }
 
 write_large :: proc "contextless" (canvas: graphics.Canvas, x, y: int, characters: string, scale: int, color: graphics.Color) -> int {
-	at := x
-	for index in 0 ..< len(characters) {
-		value := characters[index]
-		if value >= graphics.FONT_FIRST && value <= graphics.FONT_LAST {
-			glyph := graphics.font[value - graphics.FONT_FIRST]
-			for bits, row in glyph {
-				for column in 0 ..< graphics.CELL_WIDTH {
-					if bits << uint(column) & 0x80 != 0 {
-						graphics.fill(canvas, at + column * scale, y + row * scale, scale, scale, color)
-					}
-				}
-			}
-		}
-		at += graphics.CELL_WIDTH * scale
-	}
-	return at
+	return graphics.text_scaled(canvas, x, y, characters, color, scale)
 }
 
 // card draws the frame of one subject and gives the canvas of its content.

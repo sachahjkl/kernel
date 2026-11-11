@@ -1,103 +1,138 @@
-// The prototype of a vector font beside the font of the system
-// (docs/INTERFACE.md, section 9). Spleen 8x16 stays the font of the system
-// (owner, 2026-11-10): this window is a picture for the owner to judge.
+// The choice of the vector font (docs/FONTS.md, "The font file"): the same
+// lines of the system in each candidate font and in Spleen 8x16, one word of
+// each enlarged, and the measures of the text path.
 //
-// One text in Spleen 8x16, then in DejaVu Sans Mono (FONT_LICENSE) drawn
-// from its outlines: in grayscale with each glyph at its exact place (a
-// subpixel position), in grayscale with each glyph on a whole pixel, with
-// a coverage for each color stripe, and at two larger sizes. The log has
-// the time of one glyph in each way.
+// The program carries the six subsets of resources/fonts (ASCII only) and
+// builds a glyph cache of each one in its own memory: the time of that
+// build is the measure of a cache made by each program at run time (the
+// first of the three places of docs/FONTS.md, "Where the cache lives").
+// The text of the window itself is the text of the system: the glyph
+// cache that the root service maps, or Spleen, as the setting says.
 package vector_glyphs
 
+import "contract:glyph_cache"
 import "support:display"
 import "support:graphics"
 import "support:interface"
 import "support:system"
 import "support:vector_font"
 
-font_bytes := #load("DejaVuSansMono.ttf")
+WIDTH :: 1008
+HEIGHT :: 704
 
-WIDTH :: 816
-HEIGHT :: 600
-SAMPLE :: "The kernel draws text: Rb 0123456789 {fill} gi"
-
-font: vector_font.Font_File
-points: [512]vector_font.Outline_Point
-contours: [64]int
-// The memory of one glyph: accumulations and coverage, three times wider
-// with color stripes.
-CELL_CAPACITY :: 3 * 64 * 64
-cells: [CELL_CAPACITY]f32
-coverage: [CELL_CAPACITY]u8
-stripes: [CELL_CAPACITY]u8
-
-Way :: enum {
-	Grayscale, // Each glyph at its exact place.
-	Whole_Pixel, // Each glyph on a whole pixel.
-	Color_Stripes, // A coverage for each third of a pixel, filtered.
+Candidate :: struct {
+	name:  string,
+	bytes: []u8,
 }
 
-// glyph_draw draws one glyph at (x, y), the top of its line, in a size of
-// pixels for one em, and gives the advance in pixels.
-glyph_draw :: proc "contextless" (canvas: graphics.Canvas, x: f32, y: int, character: rune, size: f32, way: Way, color: graphics.Color) -> f32 {
-	glyph, found := vector_font.glyph_of(&font, character)
-	outline := vector_font.Outline{points = points[:], contour_ends = contours[:]}
-	if found != .None || vector_font.glyph_outline(&font, glyph, &outline) != .None {
-		return size * 0.6
-	}
-	scale := size / f32(font.units_per_em)
-	advance := f32(outline.advance) * scale
-	start := way == .Whole_Pixel ? f32(int(x + 0.5)) : x
-	left := int(start) - 1
-	fraction := start - f32(left)
-	height := int(f32(font.ascender - font.descender) * scale) + 2
-	width := int(advance) + 4
-	across := way == .Color_Stripes ? 3 : 1
-	if width * across * height > CELL_CAPACITY {
-		return advance
-	}
-	target := vector_font.Coverage{cells = cells[:], coverage = coverage[:], width = width * across, height = height}
-	placement := vector_font.Placement{scale = scale * f32(across), scale_y = scale, origin_x = fraction * f32(across), origin_y = f32(font.ascender) * scale}
-	vector_font.outline_add(&target, &outline, placement)
-	vector_font.coverage_finish(&target)
-	if way == .Color_Stripes {
-		vector_font.stripes_filter(coverage[:], stripes[:], width, height)
-	}
-	for row in 0 ..< height {
-		for column in 0 ..< width {
-			pixel_x, pixel_y := left + column, y + row
-			if pixel_x < 0 || pixel_y < 0 || pixel_x >= canvas.width || pixel_y >= canvas.height {
-				continue
-			}
-			under := canvas.pixels[pixel_y * canvas.stride + pixel_x]
-			result: graphics.Color
-			for channel in 0 ..< 3 {
-				shift := uint(16 - 8 * channel)
-				level := way == .Color_Stripes ? u32(stripes[row * width * 3 + column * 3 + channel]) : u32(coverage[row * width + column])
-				back := under >> shift & 0xFF
-				front := color >> shift & 0xFF
-				result |= (back * (255 - level) + front * level) / 255 << shift
-			}
-			canvas.pixels[pixel_y * canvas.stride + pixel_x] = result
-		}
-	}
-	return advance
+// The subsets that `kerneltool vector_fonts` writes, with their licenses
+// beside them in resources/fonts.
+candidates := [?]Candidate {
+	{"JetBrains Mono (default)", #load("../../resources/fonts/jetbrains_mono.ttf")},
+	{"DejaVu Sans Mono", #load("../../resources/fonts/dejavu_sans_mono.ttf")},
+	{"IBM Mono (Plex)", #load("../../resources/fonts/ibm_mono.ttf")},
+	{"Fira Mono", #load("../../resources/fonts/fira_mono.ttf")},
+	{"Commit Mono", #load("../../resources/fonts/commit_mono.ttf")},
+	{"Iosevka", #load("../../resources/fonts/iosevka.ttf")},
 }
 
-// line_draw draws the sample in one way and one size, and gives the time of
-// one glyph in nanoseconds.
-line_draw :: proc "contextless" (canvas: graphics.Canvas, x, y: int, size: f32, way: Way, text: string = SAMPLE) -> u64 {
-	start := system.nanoseconds()
-	at := f32(x)
-	for index in 0 ..< len(text) {
-		at += glyph_draw(canvas, at, y, rune(text[index]), size, way, graphics.COLOR_TEXT)
-	}
-	return (system.nanoseconds() - start) / u64(len(text))
-}
+SAMPLE :: "compositor  12.4 ms  2 418 pages {fill} [rings] gi Rb 0O 1lI"
+ENLARGED_WORD :: "Rag{0}%"
+ENLARGED :: 4
+
+// The glyph cache of one candidate, built here; 8-byte words.
+cache_memory: [vector_font.GLYPH_CACHE_LIMIT / 8 + 1]u64
+render_memory: vector_font.Render_Memory
+build_times: [len(candidates)]u64
+cache_sizes: [len(candidates)]int
 
 records_now, records_before: [256]interface.Draw_Record
 text_now, text_before: [8192]u8
 drawing: interface.Window_Drawing
+
+// with_font draws with one candidate: it builds its cache, gives it to
+// support/graphics, and gives the state of the system to restore after.
+with_font :: proc "contextless" (index: int) -> (saved: graphics.Text_State, ok: bool) {
+	saved = graphics.text_state
+	font, problem := vector_font.font_open(candidates[index].bytes)
+	out := ([^]u8)(raw_data(cache_memory[:]))[:vector_font.GLYPH_CACHE_LIMIT]
+	start := system.nanoseconds()
+	size := 0
+	if problem == .None {
+		size, problem = vector_font.glyph_cache_build(&font, candidates[index].bytes, candidates[index].name, true, &render_memory, out)
+	}
+	if problem != .None {
+		system.log("vector_glyphs: the font ", candidates[index].name, " is refused: ", vector_font.font_problem_names[problem])
+		return saved, false
+	}
+	build_times[index] = system.nanoseconds() - start
+	cache_sizes[index] = size
+	if refused := graphics.text_cache_set(out[:size]); refused.kind != .None {
+		system.log("vector_glyphs: the cache of ", candidates[index].name, " is refused: ", glyph_cache.problem_sentences[refused.kind])
+		return saved, false
+	}
+	graphics.text_choice_set(.Vector, saved.order)
+	return saved, true
+}
+
+// enlarged draws a word at scale 1 into a small canvas, then each pixel as a
+// square: the coverage of each stripe shows.
+enlarged :: proc "contextless" (canvas: graphics.Canvas, x, y: int) {
+	small: [8 * len(ENLARGED_WORD) * 16]graphics.Color
+	view := graphics.Canvas{pixels = raw_data(small[:]), width = 8 * len(ENLARGED_WORD), height = 16, stride = 8 * len(ENLARGED_WORD)}
+	graphics.clear(view, graphics.COLOR_CARD_BOTTOM)
+	graphics.text(view, 0, 0, ENLARGED_WORD, graphics.COLOR_TEXT)
+	for row in 0 ..< 16 {
+		for column in 0 ..< view.width {
+			graphics.fill(canvas, x + column * ENLARGED, y + row * ENLARGED, ENLARGED, ENLARGED, small[row * view.width + column])
+		}
+	}
+}
+
+ROW_HEIGHT :: 40
+LIST_TOP :: 48
+ENLARGED_TOP :: LIST_TOP + 7 * ROW_HEIGHT + 16
+
+// draw draws the whole window: the frame with the interface package, then
+// the lines of each candidate over it.
+draw :: proc "contextless" (window: ^display.Window) {
+	frame := interface.window_frame_begin(&drawing)
+	interface.background(&frame, {0, 0, WIDTH, HEIGHT})
+	content := interface.card(&frame, {8, 8, WIDTH - 16, HEIGHT - 16}, "THE FONT OF THE SYSTEM", "resources/fonts: six candidates, ASCII subsets, glyf outlines", graphics.COLOR_MACHINE)
+	interface.draw_text(frame.table, content.x, content.y, "the same line in each font, at scale 1 (8 x 16 pixels), then a word enlarged 4 times", graphics.COLOR_DIM)
+	for index in 0 ..= len(candidates) {
+		y := content.y + LIST_TOP - 24 + index * ROW_HEIGHT
+		name := index == 0 ? "Spleen 8x16 (bitmap)" : candidates[index - 1].name
+		interface.draw_text(frame.table, content.x, y, name, graphics.COLOR_DIM)
+		if index > 0 {
+			builder: interface.Text_Builder
+			interface.text_put(&builder, "cache built in ")
+			interface.text_put_number(&builder, build_times[index - 1] / 1000)
+			interface.text_put(&builder, " us, ")
+			interface.text_put_number(&builder, u64(cache_sizes[index - 1]))
+			interface.text_put(&builder, " bytes")
+			interface.draw_text_right(frame.table, content.x + content.width, y, interface.text_of(&builder), graphics.COLOR_DIM)
+		}
+	}
+	interface.window_frame_end(&drawing, &frame, window)
+
+	canvas := window.canvas
+	system_state := graphics.text_state
+	for index in 0 ..= len(candidates) {
+		y := content.y + LIST_TOP - 8 + index * ROW_HEIGHT
+		x := content.x + 8
+		if index == 0 {
+			graphics.text_choice_set(.Spleen, system_state.order)
+		} else if _, built := with_font(index - 1); !built {
+			continue
+		}
+		graphics.text(canvas, x, y, SAMPLE, graphics.COLOR_TEXT)
+		graphics.text_scaled(canvas, x + 560, y - 16, "12 345", graphics.COLOR_PROGRAM, 2)
+		enlarged(canvas, content.x + (index % 4) * 240, content.y + ENLARGED_TOP + (index / 4) * (16 * ENLARGED + 16))
+		graphics.text_state = system_state
+	}
+	display.present(window)
+}
 
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
@@ -105,76 +140,59 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if !ok {
 		system.stop(1)
 	}
-	problem: vector_font.Font_Problem
-	font, problem = vector_font.font_open(font_bytes)
-	if problem != .None {
-		system.log("vector_glyphs: the font is refused: problem ", u64(problem))
-		system.stop(1)
-	}
-	// The frame of the window, with the interface package.
 	drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
-	frame := interface.window_frame_begin(&drawing, &window)
-	interface.background(&frame, {0, 0, WIDTH, HEIGHT})
-	content := interface.card(&frame, {8, 8, WIDTH - 16, HEIGHT - 16}, "A VECTOR FONT, PROTOTYPE", "DejaVu Sans Mono, glyf outlines; Spleen 8x16 stays", graphics.COLOR_MACHINE)
-	Row :: struct {
-		name:   string,
-		y:      int,
-		size:   f32,
-		way:    Way,
-		spleen: bool,
-	}
-	rows := [?]Row {
-		{"Spleen 8x16, the font of the system", 0, 0, .Grayscale, true},
-		{"13 pixel_x, grayscale, exact place", 48, 13.3, .Grayscale, false},
-		{"13 pixel_x, grayscale, whole pixel", 96, 13.3, .Whole_Pixel, false},
-		{"13 pixel_x, color stripes", 144, 13.3, .Color_Stripes, false},
-		{"16 pixel_x, grayscale", 192, 16, .Grayscale, false},
-		{"32 pixel_x, grayscale", 248, 32, .Grayscale, false},
-	}
-	for row in rows {
-		interface.draw_text(frame.table, content.x, content.y + row.y, row.name, graphics.COLOR_DIM)
-		if row.spleen {
-			interface.draw_text(frame.table, content.x, content.y + row.y + 20, SAMPLE, graphics.COLOR_TEXT)
-		}
-	}
-	interface.draw_text(frame.table, content.x, content.y + 320, "a glyph at 13 pixel_x, enlarged 8 times: grayscale, then color stripes", graphics.COLOR_DIM)
-	interface.window_frame_end(&drawing, &frame, &window)
 
-	// The vector rows, over the frame.
-	canvas := window.canvas
-	times: [Way]u64
-	for row in rows[1:] {
-		time := line_draw(canvas, content.x, content.y + row.y + 20, row.size, row.way, row.size > 20 ? "Rb 0123 {fill} gi" : SAMPLE)
-		if row.size < 14 {
-			times[row.way] = time
-		}
+	// The measures, before the window: one glyph from its outline, in fixed
+	// point, at each scale; one glyph from the glyph cache of the system;
+	// one glyph of Spleen. The scratch canvas is not the window.
+	scratch: [48 * 48]graphics.Color
+	scratch_canvas := graphics.Canvas{pixels = raw_data(scratch[:]), width = 48, height = 48, stride = 48}
+	font, problem := vector_font.font_open(candidates[0].bytes)
+	measures: vector_font.Font_Measures
+	if problem == .None {
+		measures, problem = vector_font.font_measures(&font, &render_memory)
 	}
-	// One glyph enlarged: each pixel as a square of 8, so that the coverage shows.
-	ENLARGED :: 8
-	for way, index in ([2]Way{.Grayscale, .Color_Stripes}) {
-		small: [24 * 24]graphics.Color
-		view := graphics.Canvas{pixels = raw_data(small[:]), width = 24, height = 24, stride = 24}
-		graphics.clear(view, graphics.COLOR_CARD_BOTTOM)
-		glyph_draw(view, 4.3, 2, 'g', 13.3, way, graphics.COLOR_TEXT)
-		for y in 0 ..< 24 {
-			for x in 0 ..< 24 {
-				graphics.fill(canvas, content.x + index * 216 + x * ENLARGED, content.y + 344 + y * ENLARGED, ENLARGED, ENLARGED, small[y * 24 + x])
+	outline_times: [3]u64
+	pixels: [vector_font.CELL_WIDTH_LIMIT * vector_font.CELL_HEIGHT_LIMIT]u32
+	if problem == .None {
+		for scale in 1 ..= 3 {
+			style := vector_font.glyph_style_of(measures, 8 * scale, 16 * scale, true)
+			start := system.nanoseconds()
+			for character in u8(33) ..= 126 {
+				_ = vector_font.glyph_render(&font, measures, style, rune(character), &render_memory, pixels[:])
 			}
+			outline_times[scale - 1] = (system.nanoseconds() - start) / 94
 		}
 	}
-	// The time of a glyph of Spleen: a copy of the bits of the font.
-	scratch: [16 * 16]graphics.Color // The measure draws here, not on the window.
-	scratch_canvas := graphics.Canvas{pixels = raw_data(scratch[:]), width = 16, height = 16, stride = 16}
-	spleen_start := system.nanoseconds()
-	for _ in 0 ..< 1000 {
-		graphics.character(scratch_canvas, 0, 0, 'g', graphics.COLOR_TEXT)
+	REPEAT :: 2000
+	sample := "Rag{0}%e"
+	cache_time, spleen_time: u64
+	if graphics.text_vector_drawn() {
+		start := system.nanoseconds()
+		for index in 0 ..< REPEAT {
+			graphics.character(scratch_canvas, 0, 0, sample[index % len(sample)], graphics.COLOR_TEXT)
+		}
+		cache_time = (system.nanoseconds() - start) / REPEAT
 	}
-	spleen := (system.nanoseconds() - spleen_start) / 1000
-	display.present(&window)
-	system.log("vector_glyphs: one glyph: Spleen 8x16 ", spleen, " ns; 13 pixel_x from its outline: grayscale ", times[.Grayscale], " ns, whole pixel ", times[.Whole_Pixel], " ns, color stripes ", times[.Color_Stripes], " ns")
-	system.log("vector_glyphs: ok, ", u64(font.glyph_count), " glyphs in the font, ", u64(len(font_bytes)), " bytes")
+	saved := graphics.text_state
+	graphics.text_choice_set(.Spleen, saved.order)
+	start := system.nanoseconds()
+	for index in 0 ..< REPEAT {
+		graphics.character(scratch_canvas, 0, 0, sample[index % len(sample)], graphics.COLOR_TEXT)
+	}
+	spleen_time = (system.nanoseconds() - start) / REPEAT
+	graphics.text_state = saved
+	system.log("vector_glyphs: one glyph from its outline, in fixed point, with the stripes: scale 1 ", outline_times[0], " ns, scale 2 ", outline_times[1], " ns, scale 3 ", outline_times[2], " ns; from the glyph cache: ", cache_time, " ns; Spleen 8x16: ", spleen_time, " ns")
+
+	draw(&window)
+	for size, index in cache_sizes {
+		system.log("vector_glyphs: the cache of ", candidates[index].name, ": 95 characters at 3 scales built in ", build_times[index] / 1000, " us, ", u64(size), " bytes")
+	}
+	system.log("vector_glyphs: ok, ", u64(len(candidates)), " candidates beside Spleen 8x16")
 	for {
 		display.wait(&window)
-		interface.window_events(&drawing, &window)
+		if interface.window_events(&drawing, &window) {
+			draw(&window)
+		}
 	}
 }

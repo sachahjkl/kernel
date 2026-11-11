@@ -111,25 +111,7 @@ execute_in_rectangle :: proc "contextless" (table: ^Draw_Table, canvas: graphics
 // text_draw draws characters of the font of the system, each pixel of the
 // font as a square of scale pixels.
 text_draw :: proc "contextless" (canvas: graphics.Canvas, x, y: int, text: string, color: graphics.Color, scale: int) {
-	if scale <= 1 {
-		graphics.text(canvas, x, y, text, color)
-		return
-	}
-	at := x
-	for index in 0 ..< len(text) {
-		value := text[index]
-		if value >= graphics.FONT_FIRST && value <= graphics.FONT_LAST && at < canvas.width && at + graphics.CELL_WIDTH * scale > 0 {
-			glyph := graphics.font[value - graphics.FONT_FIRST]
-			for bits, row in glyph {
-				for column in 0 ..< graphics.CELL_WIDTH {
-					if bits << uint(column) & 0x80 != 0 {
-						graphics.fill(canvas, at + column * scale, y + row * scale, scale, scale, color)
-					}
-				}
-			}
-		}
-		at += graphics.CELL_WIDTH * scale
-	}
+	graphics.text_scaled(canvas, x, y, text, color, scale)
 }
 
 intersection :: proc "contextless" (first, second: Rectangle) -> Rectangle {

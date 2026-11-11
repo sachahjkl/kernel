@@ -40,6 +40,11 @@ window_events :: proc "contextless" (drawing: ^Window_Drawing, window: ^display.
 		event := display.next_event(window) or_break
 		input_add(&drawing.input, event)
 		came = true
+		// A new font: each record is the same, each pixel of text is not.
+		// The next frame draws the whole window.
+		if event.kind == .Settings_Changed {
+			drawing.drawn = false
+		}
 	}
 	return came
 }

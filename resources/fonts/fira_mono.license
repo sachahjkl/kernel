@@ -1,0 +1,14 @@
+Digitized data copyright (c) 2012-2015, The Mozilla Foundation and Telefonica S.A.
+
+This file is a subset of fira_mono, made by "kerneltool vector_fonts" (docs/FONTS.md):
+the characters 32 to 126 and the glyph .notdef, each glyph a simple glyph
+(0 glyphs made of glyphs were made simple), no hinting instructions, no
+OpenType layout tables. The subset carries the name "Fira Mono ASCII".
+License of the source: SIL OFL 1.1.
+
+The text of the license in the source font file:
+
+Licensed under the Open Font License, version 1.1 or later
+
+URL of the license: http://scripts.sil.org/OFL
+The full text of the license: OFL.txt, in this folder.

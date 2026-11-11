@@ -1,0 +1,14 @@
+Copyright 2017 IBM Corp. All rights reserved.
+
+This file is a subset of ibm_mono, made by "kerneltool vector_fonts" (docs/FONTS.md):
+the characters 32 to 126 and the glyph .notdef, each glyph a simple glyph
+(3 glyphs made of glyphs were made simple), no hinting instructions, no
+OpenType layout tables. The subset carries the name "IBM Mono ASCII".
+License of the source: SIL OFL 1.1, Reserved Font Name Plex: renamed.
+
+The text of the license in the source font file:
+
+This Font Software is licensed under the SIL Open Font License, Version 1.1. This license is available with a FAQ at: http://scripts.sil.org/OFL
+
+URL of the license: http://scripts.sil.org/OFL
+The full text of the license: OFL.txt, in this folder.

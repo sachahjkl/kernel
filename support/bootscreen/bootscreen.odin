@@ -168,13 +168,16 @@ put_size :: proc "contextless" (text: ^Text, bytes: u64) {
 
 @(private)
 show :: proc "contextless" (canvas: graphics.Canvas, x, y: int, text: ^Text, color: graphics.Color) -> int {
-	after := graphics.text(canvas, x, y, string(text.bytes[:text.count]), tone(color))
+	after := write(canvas, x, y, string(text.bytes[:text.count]), color)
 	text.count = 0
 	return after
 }
 
 @(private)
 write :: proc "contextless" (canvas: graphics.Canvas, x, y: int, characters: string, color: graphics.Color) -> int {
+	order := graphics.text_state.order
+	graphics.text_state.order = stripes_of_screen(order)
+	defer graphics.text_state.order = order
 	return graphics.text(canvas, x, y, characters, tone(color))
 }
 
@@ -220,22 +223,27 @@ block :: proc "contextless" (canvas: graphics.Canvas, x, y, width, height: int, 
 // scale pixels. It gives the x after the last character.
 @(private)
 write_large :: proc "contextless" (canvas: graphics.Canvas, x, y: int, characters: string, scale: int, color: graphics.Color) -> int {
-	at := x
-	for index in 0 ..< len(characters) {
-		value := characters[index]
-		if value >= graphics.FONT_FIRST && value <= graphics.FONT_LAST {
-			glyph := graphics.font[value - graphics.FONT_FIRST]
-			for bits, row in glyph {
-				for column in 0 ..< graphics.CELL_WIDTH {
-					if bits << uint(column) & 0x80 != 0 {
-						fill(canvas, at + column * scale, y + row * scale, scale, scale, color)
-					}
-				}
-			}
-		}
-		at += graphics.CELL_WIDTH * scale
+	order := graphics.text_state.order
+	graphics.text_state.order = stripes_of_screen(order)
+	defer graphics.text_state.order = order
+	return graphics.text_scaled(canvas, x, y, characters, tone(color), scale)
+}
+
+// stripes_of_screen gives the order of the stripes of the vector font for
+// the words of the screen: a screen with red in the low byte has the
+// channels of a color in the other order.
+@(private)
+stripes_of_screen :: proc "contextless" (order: graphics.Subpixel_Order) -> graphics.Subpixel_Order {
+	if !red_first {
+		return order
 	}
-	return at
+	#partial switch order {
+	case .Red_Green_Blue:
+		return .Blue_Green_Red
+	case .Blue_Green_Red:
+		return .Red_Green_Blue
+	}
+	return order
 }
 
 CARD_TITLE :: graphics.CARD_TITLE

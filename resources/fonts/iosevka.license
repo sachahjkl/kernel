@@ -1,0 +1,14 @@
+Copyright 2015-2026, Renzhi Li (aka. Belleve Invis, belleve@typeof.net).
+
+This file is a subset of iosevka, made by "kerneltool vector_fonts" (docs/FONTS.md):
+the characters 32 to 126 and the glyph .notdef, each glyph a simple glyph
+(5 glyphs made of glyphs were made simple), no hinting instructions, no
+OpenType layout tables. The subset carries the name "Iosevka ASCII".
+License of the source: SIL OFL 1.1, no Reserved Font Name.
+
+The text of the license in the source font file:
+
+This font software is licensed under the SIL Open Font License, Version 1.1. This license is available with a FAQ at: http://scripts.sil.org/OFL. This font software is distributed on an 'AS IS' basis, without warranties or conditions of any kind, either express or implied. See the SIL Open Font license for the specific language, permissions and limitations governing your use of this font software.
+
+URL of the license: https://openfontlicense.org/
+The full text of the license: OFL.txt, in this folder.

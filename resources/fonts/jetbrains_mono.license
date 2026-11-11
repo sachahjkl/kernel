@@ -1,0 +1,14 @@
+Copyright 2020 The JetBrains Mono Project Authors (https://github.com/JetBrains/JetBrainsMono)
+
+This file is a subset of jetbrains_mono, made by "kerneltool vector_fonts" (docs/FONTS.md):
+the characters 32 to 126 and the glyph .notdef, each glyph a simple glyph
+(4 glyphs made of glyphs were made simple), no hinting instructions, no
+OpenType layout tables. The subset carries the name "JetBrains Mono ASCII".
+License of the source: SIL OFL 1.1, no Reserved Font Name.
+
+The text of the license in the source font file:
+
+This Font Software is licensed under the SIL Open Font License, Version 1.1. This license is available with a FAQ at: https://openfontlicense.org
+
+URL of the license: https://openfontlicense.org
+The full text of the license: OFL.txt, in this folder.

@@ -8,6 +8,7 @@
 package compositor
 
 import "support:display"
+import "contract:settings"
 import "support:graphics"
 import "support:interface"
 import "support:bar"
@@ -245,6 +246,13 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	full_measure = true
 	system.log("compositor: ok ", u64(width), "x", u64(height))
 	service_start(ctx) // exports.odin
+	// The text of the desktop: the settings of the person and the glyph cache
+	// (contract:settings); a change of the settings wakes this loop.
+	display.text_settings_open(ctx)
+	settings_seen: u32
+	if display.settings_page != nil {
+		settings_seen = settings.read(display.settings_page).change_count
+	}
 
 	next_frame: u64
 	shown_second: u64
@@ -262,7 +270,16 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		if wake := pointer_wake(); wake != 0 {
 			deadline = min(deadline, wake) // An animated pointer shape shows.
 		}
+		if display.settings_page != nil {
+			system.wait_word(&wait, &display.settings_page.change_count, settings_seen)
+		}
 		now := system.wait_end(&wait, deadline)
+		if display.settings_page != nil {
+			if choice := settings.read(display.settings_page); choice.change_count != settings_seen {
+				settings_seen = choice.change_count
+				settings_changed(choice)
+			}
+		}
 		for record in system.receive(&control.commands) {
 			#partial switch display.Control(record.kind) {
 			case .Client_Add:
@@ -328,6 +345,22 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			}
 		}
 	}
+}
+
+// settings_changed gives the new font to the text of the desktop, draws the
+// whole screen again, and tells each window: its program draws again
+// (support/display gives it the new font before the event).
+settings_changed :: proc "contextless" (choice: settings.Choice) {
+	display.text_settings_apply()
+	told := 0
+	for &client in clients {
+		if client.ring.head != nil {
+			send(&client, ring.Record{kind = u32(display.Event_Kind.Settings_Changed), values = {0 = u64(choice.change_count)}})
+			told += 1
+		}
+	}
+	damage_add(0, 0, screen.width, screen.height)
+	system.log("compositor: the settings changed: font ", settings.font_names[choice.font], ", subpixel order ", settings.subpixel_order_names[choice.subpixel_order], "; ", u64(told), " windows draw again")
 }
 
 send :: proc "contextless" (client: ^Client, record: ring.Record) {

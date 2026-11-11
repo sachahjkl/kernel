@@ -720,6 +720,10 @@ Context :: struct {
 // program was not granted is 0.
 CONTEXT_LOG :: 14 // The log of the kernel.
 CONTEXT_BUDGET :: 15 // The budget of the program.
+// The value that the root service fixes for each program that it starts
+// with a surface or a terminal: values[13] is the address of the settings
+// page (contract:settings, VALUE_PAGE), 0 for none. A program does not use
+// value 13 for another role.
 
 // The roles of the first program (the root service).
 ROOT_MACHINE :: 0

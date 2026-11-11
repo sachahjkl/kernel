@@ -22,6 +22,7 @@ import "contract:errors"
 import "contract:frame"
 import "support:pci"
 import "support:storage"
+import "contract:settings"
 
 ROOT_MARK :: "root: ok"
 
@@ -45,6 +46,7 @@ Grant :: enum {
 	Network_Device, // The frame service of the network device and its frame ring, and a control ring from this service.
 	Connect, // A ring to this service that serves Connect and Disconnect only, to the services of callable_of.
 	Schedule, // The machine, with the right Schedule: change the scheduling strategy of the machine.
+	Settings, // The settings page with Write (contract:settings): the one writer of the settings of the person.
 }
 
 grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
@@ -79,6 +81,8 @@ grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 		return {.Inspect, .Schedule} // It reads the counts of the scheduler, and changes the strategy.
 	case "paint", "life", "tally":
 		return {.Serve}
+	case "settings":
+		return {.Settings, .Serve} // It writes the settings of the person, and serves set() and get().
 	case "manual":
 		return {.Serve, .Image, .Replacements, .Inspect} // It reads the documentation of each module of the boot image, and the module records of each program.
 	case "disk":
@@ -119,7 +123,7 @@ callable_of :: proc "contextless" (name: string) -> []string {
 }
 
 @(rodata)
-remote_callable := [?]string{"compositor", "inspect", "log", "manual", "monitor", "storage"}
+remote_callable := [?]string{"compositor", "inspect", "log", "manual", "monitor", "settings", "storage"}
 
 // The values of the context of the compositor that name its own file: 0 to
 // 3 are the screen.
@@ -383,6 +387,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		screen_data.image = image
 		screen_data.red_first = ctx.values[op.ROOT_VALUE_FORMAT] == u64(info.Pixel_Format.Red_Green_Blue_X)
 	}
+	// The settings page and the glyph cache, before the first boot display.
+	text_settings_create()
 	show("the root service starts input", .Running, .Input)
 	{
 		table: rawptr
@@ -445,7 +451,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		// The compositor is also a service (programs/compositor/exports.odin):
 		// a service ring and its own file, as start() gives to a service.
 		// Its values 0 to 3 are the screen, so the file is at values 4 and 5.
-		mappings: [2]system.Mapping
+		mappings: [4]system.Mapping
 		mapping_count := 0
 		served := &started[0]
 		served^ = {}
@@ -473,6 +479,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				break
 			}
 		}
+		text_settings_give(mappings[:], &mapping_count, &values)
 		compositor, status = system.program_start(system.image_find(image, "compositor"), "compositor", grants, values, budget_of("compositor"), mappings[:mapping_count], &prepared)
 		if status != .Ok {
 			fail("cannot start the compositor", status)
@@ -720,7 +727,7 @@ start :: proc "contextless" (name: string) -> system.Status {
 	copy(slot.name[:len(slot.name) - 1], name) // The connection to the storage service names the program.
 	// The connection to the private store, in the context: the call ring, the
 	// call region, the storage service with the right Read, and its file.
-	mappings: [2]system.Mapping
+	mappings: [4]system.Mapping
 	mapping_count := 0
 	// This service closes its handles of the connection after the start.
 	store_ring, store_region: system.Handle
@@ -823,6 +830,13 @@ start :: proc "contextless" (name: string) -> system.Status {
 	}
 	if .Replacements in role {
 		grants[system.GRANT_REPLACEMENTS] = {replacement_memory, {.Read}}
+	}
+	if .Settings in role {
+		grants[settings.GRANT_PAGE] = {settings_memory, {.Read, .Write}}
+	}
+	// A program with a surface: the settings page and the glyph cache, read-only.
+	if .Terminal not_in role {
+		text_settings_give(mappings[:], &mapping_count, &values)
 	}
 	// A service: the service ring, and its own file, to read the
 	// descriptions of its exports.
@@ -1042,7 +1056,10 @@ terminal_start :: proc "contextless" (view: ^Started, writer: ^Started, ring_mem
 	measure: bool
 	values[terminal.VALUE_COLUMNS], values[terminal.VALUE_ROWS], measure = terminal_of(system.name_of(writer.name[:]))
 	values[terminal.VALUE_MEASURE] = u64(measure)
-	program, status := system.program_start(system.image_find(image, "terminal"), "terminal", grants, values, budget_of("terminal"), nil, &prepared)
+	mappings: [2]system.Mapping
+	mapping_count := 0
+	text_settings_give(mappings[:], &mapping_count, &values)
+	program, status := system.program_start(system.image_find(image, "terminal"), "terminal", grants, values, budget_of("terminal"), mappings[:mapping_count], &prepared)
 	if status != .Ok {
 		system.send(&control.commands, ring.Record{kind = u32(display.Control.Client_Remove), values = {0 = u64(client)}})
 		return status

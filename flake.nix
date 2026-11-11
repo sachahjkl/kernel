@@ -40,6 +40,20 @@
       POINTER_THEME_SOURCE = "${pointerTheme}/share/icons/Posy_Cursor/cursors";
     };
 
+    # The vector font candidates, for the command "vector_fonts" of kerneltool
+    # (docs/FONTS.md): name=file, separated by ";". Only the development shell
+    # has them: the build reads the subsets in resources/fonts.
+    vectorFontSources = {
+      VECTOR_FONT_SOURCES = builtins.concatStringsSep ";" [
+        "dejavu_sans_mono=${pkgs.dejavu_fonts}/share/fonts/truetype/DejaVuSansMono.ttf"
+        "jetbrains_mono=${pkgs.jetbrains-mono}/share/fonts/truetype/JetBrainsMono-Regular.ttf"
+        "ibm_mono=${pkgs.ibm-plex}/share/fonts/truetype/IBMPlexMono-Regular.ttf"
+        "fira_mono=${pkgs.fira-mono}/share/fonts/truetype/FiraMono-Regular.ttf"
+        "commit_mono=${pkgs.commit-mono}/share/fonts/truetype/CommitMono-400-Regular.ttf"
+        "iosevka=${pkgs.iosevka-bin}/share/fonts/truetype/Iosevka-Regular.ttc"
+      ];
+    };
+
     preCommitCheck = inputs.git-hooks.lib.${system}.run {
       package = pkgs.prek;
       src = ./.;
@@ -89,6 +103,7 @@
         packages = buildTools ++ [kerneltool pkgs.ffmpeg] ++ preCommitCheck.enabledPackages; # ffmpeg: the command "film" of kerneltool.
         inherit (preCommitCheck) shellHook;
       }
-      // firmware);
+      // firmware
+      // vectorFontSources);
   };
 }

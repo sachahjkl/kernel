@@ -444,19 +444,7 @@ number :: proc "contextless" (buffer: ^[27]u8, value: u64) -> string {
 
 // large draws text at two times the size of the font.
 large :: proc "contextless" (canvas: graphics.Canvas, x, y: int, text: string, color: graphics.Color) {
-	for index in 0 ..< len(text) {
-		value := text[index]
-		if value < graphics.FONT_FIRST || value > graphics.FONT_LAST {
-			continue
-		}
-		for bits, row in graphics.font[value - graphics.FONT_FIRST] {
-			for column in 0 ..< CELL_WIDTH {
-				if bits << uint(column) & 0x80 != 0 {
-					graphics.fill(canvas, x + (index * CELL_WIDTH + column) * 2, y + row * 2, 2, 2, color)
-				}
-			}
-		}
-	}
+	graphics.text_scaled(canvas, x, y, text, color, 2)
 }
 
 tile :: proc "contextless" (canvas: graphics.Canvas, x: int, label: string, value: u64, color: graphics.Color) {

@@ -100,6 +100,7 @@ module_builds := [?]Module_Build {
 	{name = "interface_elements", source = "programs/interface_elements", image = true},
 	{name = "vector_glyphs", source = "programs/vector_glyphs", image = true},
 	{name = "pointers", source = "programs/pointers", image = true},
+	{name = "settings", source = "programs/settings", image = true},
 }
 
 join :: proc(parts: ..string) -> string {
@@ -116,8 +117,13 @@ build_modules :: proc() -> bool {
 	}
 	// The pointer themes: the resources of the boot image (pointers.odin).
 	resources := build_pointer_themes(os.get_env(POINTER_THEME_SOURCE_VARIABLE, context.temp_allocator), false) or_return
+	// The glyph cache of the default font: one more resource (vector_fonts.odin).
+	glyph_cache_resource := build_glyph_cache() or_return
+	all_resources := make([dynamic]Resource_File, context.temp_allocator)
+	append(&all_resources, ..resources)
+	append(&all_resources, glyph_cache_resource)
 	// The second boot image has no compositor: with it, the start fails.
-	return build_boot_image(BOOT_IMAGE, "", resources) && build_boot_image(BOOT_IMAGE_FAILS, "compositor", resources)
+	return build_boot_image(BOOT_IMAGE, "", all_resources[:]) && build_boot_image(BOOT_IMAGE_FAILS, "compositor", all_resources[:])
 }
 
 // files_with_suffix gives the paths of the files of a folder that end with suffix.
