@@ -14,6 +14,11 @@ MODULE_BUILD_FOLDER :: BUILD_FOLDER + "/modules"
 BOOT_IMAGE :: BUILD_FOLDER + "/boot.image"
 BOOT_IMAGE_FAILS :: BUILD_FOLDER + "/boot_fails.image"
 SYSTEM_LIBRARY_FOLDER :: "support/system"
+// memcpy, memmove and memset of every module, of the kernel and of the boot
+// program. The builds do not use -no-crt: with it, the Odin runtime gives
+// these functions as loops of one byte, memcpy and memmove with no
+// optimization, and a symbol of another object cannot replace them.
+RUNTIME_MEMORY :: "runtime/memory.asm"
 
 // The modules of the project, each one after its imports.
 //   source:  the folder of the Odin package, and of its .asm files.
@@ -143,7 +148,6 @@ build_module :: proc(build: Module_Build) -> bool {
 		"-build-mode:llvm-ir",
 		"-reloc-mode:pic",
 		"-no-entry-point",
-		"-no-crt",
 		"-default-to-nil-allocator",
 		"-o:speed",
 		"-vet",
@@ -177,6 +181,7 @@ build_module :: proc(build: Module_Build) -> bool {
 	// its frame pointer: the kernel walks them for the stack trace of a fault.
 	run({"llc", "-O3", "--frame-pointer=all", "-relocation-model=pic", "--function-sections", "--data-sections", "-filetype=obj", "-o", join(objects, "/", build.name, ".o"), join(folder, "/", build.name, ".ll")}) or_return
 	assembly := make([dynamic]string, context.temp_allocator)
+	append(&assembly, RUNTIME_MEMORY)
 	append(&assembly, ..(files_with_suffix(build.source, ".asm") or_return))
 	if build.image {
 		// A program uses the system library, which has instructions of its own.

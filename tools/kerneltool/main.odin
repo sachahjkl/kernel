@@ -149,7 +149,6 @@ build_boot_program :: proc(image: string, volume_path: string, self_test: int) -
 			"-target:freestanding_amd64_win64",
 			"-build-mode:obj",
 			"-no-entry-point",
-			"-no-crt",
 			"-default-to-nil-allocator",
 			"-disable-red-zone",
 			"-o:speed",
@@ -165,6 +164,7 @@ build_boot_program :: proc(image: string, volume_path: string, self_test: int) -
 		},
 	) or_return
 	run({"nasm", "-f", "win64", "-o", BOOT_OBJECT_FOLDER + "/jump.obj", "boot/jump.asm"}) or_return
+	run({"nasm", "-f", "win64", "-DWIN64", "-o", BOOT_OBJECT_FOLDER + "/memory.obj", RUNTIME_MEMORY}) or_return
 	objects := files_with_suffix(BOOT_OBJECT_FOLDER, ".obj") or_return
 	link := make([dynamic]string, context.temp_allocator)
 	append(&link, "lld-link", "/subsystem:efi_application", "/entry:efi_main", "/nodefaultlib", "/out:" + BOOT_PROGRAM)
@@ -324,7 +324,11 @@ run_check :: proc(args: []string) -> int {
 		}
 		fmt.printfln("kerneltool: test passed: contract:%s compiles with the contract library only", name)
 	}
-	for folder in ([]string{"contract/blake3", "contract/isolated", "contract/remote", "support/bar", "support/information", "support/network", "support/tcp", "support/web", "tools/kerneltool"}) {
+	// The tests of runtime/memory.asm link the form of the host.
+	if !run({"nasm", "-f", "elf64", "-DHOST", "-o", BUILD_FOLDER + "/runtime_host.o", RUNTIME_MEMORY}) {
+		return EXIT_FAILURE
+	}
+	for folder in ([]string{"runtime", "contract/blake3", "contract/isolated", "contract/remote", "support/bar", "support/information", "support/network", "support/tcp", "support/web", "tools/kerneltool"}) {
 		name, _ := strings.replace_all(folder, "/", "_", context.temp_allocator)
 		if !run({"odin", "test", folder, "-vet", CONTRACT_LIBRARY, SUPPORT_LIBRARY, strings.concatenate({"-out:" + BUILD_FOLDER + "/test_", name}, context.temp_allocator)}) {
 			return EXIT_FAILURE

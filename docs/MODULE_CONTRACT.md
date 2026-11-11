@@ -290,6 +290,7 @@ Implemented for the Text result (2026-11-10): after the parameters, the caller g
 
 - A function with a large set of inputs passes the address of a record. This is one memory access more than registers.
 - The registers that a callee can change are those of the System V convention. All `xmm` registers are in that set, so a caller that keeps float values across a call must save them.
+- **The direction flag** is clear at each call and at each return, as the System V convention says. A module that sets it clears it before its next call or its return. The kernel does not trust a program for it: the `syscall` entry clears it (the mask of `MSR_SFMASK`, `kernel/processor.odin`), and each interrupt entry runs `cld` before its first call (`kernel/processor.asm`). `rep movsb` and `rep stosb` in `memcpy`, `memmove` and `memset` (`runtime/memory.asm`) depend on this rule.
 - A second machine architecture needs its own table. For ARM64 it is the same subset on the AAPCS64 assignment.
 
 ## 5. The types
@@ -351,6 +352,7 @@ Proposal: do not write a compiler or a linker.
 2. The existing linker (`lld`) links one module into one ELF file.
 3. A tool of the project converts that ELF file into a module: it writes the flat tables, converts relocations to rebases and slots, and computes the hash.
 4. The description tables come from the source: from the Odin source for Odin (implemented: `tools/kerneltool/describe.odin` reads the syntax tree), from a small description file for C.
+5. Every module, the kernel and the boot program link `runtime/memory.asm`: `memcpy`, `memmove` and `memset`, the functions that a compiler calls. The kernel tool builds without `-no-crt`, so the Odin runtime does not give its own (loops of one byte, with no optimization). A module in another language links the same file.
 
 This reuses the compiler, the linker and the debugger formats. The project writes one converter and one loader.
 
