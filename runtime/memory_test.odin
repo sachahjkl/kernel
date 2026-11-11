@@ -14,6 +14,7 @@ foreign memory {
 	copy_bytes_without_overlap :: proc(destination, source: rawptr, count: int) -> rawptr ---
 	copy_bytes_with_overlap :: proc(destination, source: rawptr, count: int) -> rawptr ---
 	fill_bytes_with_value :: proc(destination: rawptr, value: i32, count: int) -> rawptr ---
+	erase_secret_bytes :: proc(destination: rawptr, count: int) -> rawptr ---
 }
 
 AREA :: 4096
@@ -141,5 +142,26 @@ large_sizes :: proc(t: ^testing.T) {
 		}
 		fill_bytes_with_value(&area[5], 0x3C, count)
 		testing.expectf(t, string(area) == string(expected), "fill: count %d", count)
+	}
+}
+
+// erase_secret_bytes writes 0 in each byte of the range, and no byte
+// around it.
+@(test)
+erase_each_size :: proc(t: ^testing.T) {
+	area: [300]u8
+	for count in 0 ..< 256 {
+		for &value in area {
+			value = 0xA5
+		}
+		result := erase_secret_bytes(&area[16], count)
+		testing.expect(t, result == &area[16])
+		for value, index in area {
+			wanted: u8 = index >= 16 && index < 16 + count ? 0 : 0xA5
+			if value != wanted {
+				testing.expectf(t, false, "count %d: the byte %d is %x", count, index, value)
+				return
+			}
+		}
 	}
 }

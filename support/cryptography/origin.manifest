@@ -1,0 +1,11 @@
+# The files of support/cryptography that are taken from Odin's core:crypto
+# (docs/CRYPTOGRAPHY.md). Each line: the file of the repository, the file
+# under the root of Odin, the BLAKE3 hash of that origin file. The check
+# `kerneltool cryptography-origin` (also in `kerneltool check`) proves that
+# each file is its origin with the import changes of
+# tools/kerneltool/cryptography_origin.odin and nothing else. A new line
+# comes from `kerneltool cryptography-take <origin> <file>`.
+support/cryptography/_subtle/subtle.odin core/crypto/_subtle/subtle.odin c950040ec8e79e977232de07d98890b267ce7304ec005eba9cd9dd9e7f88a1e3
+support/cryptography/_chacha20/chacha20.odin core/crypto/_chacha20/chacha20.odin 857cdd7e8ccb48b31012ee699e71ba6fcd59ee14b7af22af04a6523cf17d26be
+support/cryptography/_chacha20/ref/chacha20_ref.odin core/crypto/_chacha20/ref/chacha20_ref.odin eace1cb27b37ae425a61ddbada988f645e0a6a7dd4185f13ca8af16ee29042f7
+support/cryptography/chacha20/chacha20.odin core/crypto/chacha20/chacha20.odin 9b3a0928089cf8b0ef0ba21157b962889bf968c60bf4bb3b5050beeeec607de7
