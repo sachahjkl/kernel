@@ -93,7 +93,7 @@ PROCESSOR_CAPACITY :: 64
 
 // The frame cache of a processor (memory.odin): a stack of free page
 // frames, under its cache lock.
-FRAME_CACHE_CAPACITY :: 64
+FRAME_CACHE_CAPACITY :: 256 // Chosen by measure: 16, 64 and 256 (docs/FIRST_MILESTONE.md).
 FRAME_CACHE_BATCH :: FRAME_CACHE_CAPACITY / 2
 
 Frame_Cache :: struct #align (64) {
