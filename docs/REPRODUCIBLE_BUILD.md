@@ -57,6 +57,8 @@ This patch is not written. The estimate: several hundred lines in about 8 files,
 
 The decision of the owner (HANDOFF item 43): the parallelism goes one level up. `kerneltool build` runs one compiler process on one thread for each module, several at once, and assembles the boot image in the fixed order of the module table. Choice NEW-1 of `FIRST_MILESTONE.md` describes it.
 
+Measured, the whole `kerneltool build` in alternation, host load 20 to 46: one module process at a time (`build 1`) 171 s and 99 s; 16 at once 82 s and 58 s. The load was above 8, so these numbers are not a valid measure of speed: they show the order of the gain only.
+
 ## 6. What is proved, and what is not
 
 Proved:

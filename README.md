@@ -192,7 +192,8 @@ kerneltool run
 
 | Command | Action |
 |---|---|
-| `build` | Build the modules, the boot image and the boot program |
+| `build` | Build the modules, the boot image and the boot program. One process for each module, as many at once as the processors; `build <processes>` sets the count |
+| `module` | `module <name> with_checks\|without_checks`: build one module of the table (the parallel build runs it) |
 | `run` | Build, then start the machine under QEMU, with the log of the kernel on the terminal of the host |
 | `test` | Build, start the machine, act as the person (keys, pointer), check the log, save pictures |
 | `screenshots` | `test`, then copy the pictures to `docs/screenshots/` |
