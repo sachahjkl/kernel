@@ -394,8 +394,12 @@ eevdf_average :: proc "contextless" (queue: ^Run_Queue, home: u32) -> (average: 
 			add(&threads[index], clock, &sum, &weight)
 		}
 	}
-	if running := processors[home].current; running != 0 {
-		add(&threads[running], clock, &sum, &weight)
+	// A processor that starts runs schedule before the first processor
+	// puts its record in `processors`: no record, no thread on it.
+	if cpu := processors[home]; cpu != nil {
+		if running := cpu.current; running != 0 {
+			add(&threads[running], clock, &sum, &weight)
+		}
 	}
 	if weight == 0 {
 		return clock, 0
@@ -437,6 +441,9 @@ eevdf_ready :: proc "contextless" (queue: ^Run_Queue, home: u32, thread: ^Thread
 // under the clock; V; the earliest deadline among the eligible threads.
 // The second and the third read lines that the first brought.
 eevdf_pick :: proc "contextless" (queue: ^Run_Queue, home: u32) -> ^Thread {
+	if queue.head == 0 {
+		return nil
+	}
 	for index := queue.head; index != 0; index = threads[index].queue_next {
 		thread := &threads[index]
 		floor_to(thread, queue.virtual - eevdf_bound(thread))
