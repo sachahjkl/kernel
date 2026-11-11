@@ -40,7 +40,8 @@ WIDTH :: 784
 LINE :: 24 // A line of text (16) and 8 between lines.
 LEFT :: 16
 GAP :: 8
-HEIGHT :: LEFT + 4 * LINE + 2 * GAP + 2 * LINE + GAP + (len(op.Lock_Kind) + 1) * LINE + GAP + 2 * LINE + LEFT
+HEIGHT :: LEFT + 4 * LINE + 2 * GAP + 2 * LINE + GAP + (len(op.Lock_Kind) + 1) * LINE + GAP + (CACHE_ROWS + 1) * LINE + GAP + 2 * LINE + LEFT
+CACHE_ROWS :: 4 // The frame caches of the first 4 processors.
 COLUMN_X :: 304
 COLUMN_WIDTH :: 120
 LOCK_X :: 176 // The table of the locks: the names are short.
@@ -61,6 +62,7 @@ lost_wakes: u64
 entry_locks, fault_locks, pair_locks: [op.LOCK_KIND_CAPACITY]op.Lock_Count // The locks during the measures with 4 lockers, and with the word wait.
 entries_right, faults_right, pages_right, pairs_right := true, true, true, true
 done: bool
+caches: [CACHE_ROWS]op.Processor_Report // The frame caches after the measures.
 
 report :: proc "contextless" () -> (report: op.System_Report) {
 	system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.System), 0, u64(uintptr(&report)), size_of(report))
@@ -315,6 +317,26 @@ draw :: proc "contextless" (canvas: graphics.Canvas) {
 		y += LINE
 	}
 	y += GAP
+	// The frame cache of each processor (Processor_Report): a stack of free
+	// frames that pages on first use take with no frame lock.
+	graphics.text(canvas, LEFT, y, "frame cache", graphics.COLOR_DIM)
+	for name, index in ([4]string{"frames now", "batches taken", "batches given", "drains"}) {
+		graphics.text(canvas, LOCK_X + index * (LOCK_COLUMN_WIDTH * 3 / 4), y, name, graphics.COLOR_DIM)
+	}
+	y += LINE
+	for index in 0 ..< CACHE_ROWS {
+		cache := caches[index]
+		if index % 2 == 0 {
+			graphics.fill(canvas, GAP, y - 4, WIDTH - 2 * GAP, LINE, graphics.COLOR_CARD_TOP)
+		}
+		cache_line: [32]u8
+		graphics.text(canvas, LEFT, y, system.format(cache_line[:], "processor ", u64(index)), graphics.COLOR_DIM)
+		for value, column in ([4]u64{cache.cache_frames, cache.cache_batches_taken, cache.cache_batches_given, cache.cache_drains}) {
+			graphics.text(canvas, LOCK_X + column * (LOCK_COLUMN_WIDTH * 3 / 4), y, system.format(cache_line[:], value), graphics.COLOR_TEXT)
+		}
+		y += LINE
+	}
+	y += GAP
 	line: [64]u8
 	graphics.text(canvas, LEFT, y, "programs stopped while they ran", graphics.COLOR_DIM)
 	graphics.text(canvas, COLUMN_X, y, system.format(line[:], stress_started), graphics.COLOR_TEXT)
@@ -506,6 +528,35 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.close(program)
 	}
 	stress(image, at_start.programs)
+	// The frame caches of the processors, after the measures and the stress.
+	processor_count := report().processors
+	for &cache, index in caches {
+		if u64(index) < processor_count {
+			system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Processor), u64(index), u64(uintptr(&cache)), size_of(cache))
+		}
+	}
+	{
+		buffer: [512]u8
+		writer := system.Writer{buffer = buffer[:]}
+		system.write_part(&writer, "locks: frame caches after the measures (frames now, batches taken, batches given, drains):")
+		for cache, index in caches {
+			if u64(index) >= processor_count {
+				break
+			}
+			system.write_part(&writer, " processor ")
+			system.write_unsigned(&writer, u64(index))
+			system.write_part(&writer, ": ")
+			system.write_unsigned(&writer, cache.cache_frames)
+			system.write_part(&writer, ", ")
+			system.write_unsigned(&writer, cache.cache_batches_taken)
+			system.write_part(&writer, ", ")
+			system.write_unsigned(&writer, cache.cache_batches_given)
+			system.write_part(&writer, ", ")
+			system.write_unsigned(&writer, cache.cache_drains)
+			system.write_part(&writer, ";")
+		}
+		system.log(system.written(&writer))
+	}
 	done = true
 	if entries_right && faults_right && pages_right && pairs_right && lost_wakes == 0 && stress_right {
 		system.log("locks: ok, the kernel counted each entry, each page returned, no wake was lost, each stopped program returned its pages, its slot and its threads")

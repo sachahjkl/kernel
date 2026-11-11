@@ -531,6 +531,11 @@ Processor_Report :: struct {
 	pick_cycles: u64, // Cycles of the cycle counter in all the picks.
 	interrupt_preemptions: u64, // Wake preemptions by an interrupt from another processor.
 	preempt_cycles: u64, // Their cycles in the kernel: from the handler of the interrupt to the next thread.
+	// The frame cache of the processor: a stack of free page frames.
+	cache_frames:        u64, // The frames on the stack now.
+	cache_batches_taken: u64, // Batches that the stack took from the frame table.
+	cache_batches_given: u64, // Batches that the stack gave back.
+	cache_drains:        u64, // Drains that took the frames of the stack, for a take that found no free frame.
 }
 
 // The log: records in channels.

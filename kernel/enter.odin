@@ -708,6 +708,10 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 				report.pick_cycles = intrinsics.volatile_load(&cpu.pick_cycles)
 				report.interrupt_preemptions = intrinsics.volatile_load(&cpu.interrupt_preemptions)
 				report.preempt_cycles = intrinsics.volatile_load(&cpu.preempt_cycles)
+				report.cache_frames = u64(intrinsics.volatile_load(&cpu.frame_cache.count))
+				report.cache_batches_taken = intrinsics.volatile_load(&cpu.frame_cache.batches_taken)
+				report.cache_batches_given = intrinsics.volatile_load(&cpu.frame_cache.batches_given)
+				report.cache_drains = intrinsics.volatile_load(&cpu.frame_cache.drains)
 				if cpu.current != 0 {
 					report.program = u64(threads[cpu.current].program)
 					report.same = u64(programs[report.program].table == program.table)
