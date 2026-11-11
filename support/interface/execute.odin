@@ -9,6 +9,21 @@ execute :: proc "contextless" (table: ^Draw_Table, canvas: graphics.Canvas, orig
 	execute_in_rectangle(table, canvas, {-origin_x, -origin_y, canvas.width - origin_x, canvas.height - origin_y}, origin_x, origin_y)
 }
 
+// draw_damage_on_surface draws the damage of a frame on the surface of a
+// program: each damage rectangle is painted with the background first, so a
+// record that the frame no longer has leaves no pixel, then the records
+// that touch it are drawn again. The compositor draws a panel over other
+// windows: it calls execute_in_rectangle, which paints only the records.
+draw_damage_on_surface :: proc "contextless" (table: ^Draw_Table, canvas: graphics.Canvas, rectangles: []Rectangle) {
+	for rectangle in rectangles {
+		area := intersection(rectangle, {0, 0, canvas.width, canvas.height})
+		if !empty(area) {
+			graphics.fill(canvas, area.left, area.top, area.right - area.left, area.bottom - area.top, graphics.COLOR_BACKGROUND)
+		}
+		execute_in_rectangle(table, canvas, rectangle)
+	}
+}
+
 // execute_in_rectangles draws again, in each rectangle, the records that
 // touch it, cut to it. The rectangles are in the coordinates of the surface.
 execute_in_rectangles :: proc "contextless" (table: ^Draw_Table, canvas: graphics.Canvas, rectangles: []Rectangle, origin_x: int = 0, origin_y: int = 0) {

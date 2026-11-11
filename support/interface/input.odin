@@ -10,9 +10,22 @@ KEY_TAB :: 0x0F
 Element_Identity :: distinct u64
 
 // identity makes the identity of an element from a text: the 64-bit FNV-1a
-// hash of its bytes. 0 is no element.
+// hash of its bytes. 0 is no element. Two elements with one text have one
+// identity: give each one a number with identity_with (a row, a card), or a
+// parent with identity_in. Frame.identity_collisions counts the elements of
+// a frame whose identity an element before them had.
 identity :: proc "contextless" (name: string) -> Element_Identity {
 	hash: u64 = 0xCBF2_9CE4_8422_2325
+	for index in 0 ..< len(name) {
+		hash = (hash ~ u64(name[index])) * 0x0000_0100_0000_01B3
+	}
+	return Element_Identity(hash | 1)
+}
+
+// identity_in makes the identity of an element inside another one: a
+// button of a card.
+identity_in :: proc "contextless" (parent: Element_Identity, name: string) -> Element_Identity {
+	hash := u64(parent)
 	for index in 0 ..< len(name) {
 		hash = (hash ~ u64(name[index])) * 0x0000_0100_0000_01B3
 	}
@@ -102,6 +115,12 @@ Frame :: struct {
 	under_pointer: Element_Identity,
 	focus_order:   [FOCUS_ORDER_CAPACITY]Element_Identity,
 	focus_count:   int,
+	// Two elements with one identity in this frame: both would show the
+	// focus and take a press. The caller makes them two with identity_with.
+	identity_collisions: int,
+	// Elements after the first FOCUS_ORDER_CAPACITY that can take the focus:
+	// a press reaches them, Tab does not.
+	focus_overflow:      int,
 }
 
 // frame_begin clears the table and starts a frame. Tab and Shift+Tab move
@@ -160,9 +179,17 @@ Element_Kind :: enum u8 {
 element_interact :: proc "contextless" (frame: ^Frame, element: Element_Identity, area: Area, kind: Element_Kind) -> (result: Element_Result) {
 	state := frame.state
 	input := frame.input
+	for other in frame.focus_order[:frame.focus_count] {
+		if other == element {
+			frame.identity_collisions += 1
+			break
+		}
+	}
 	if frame.focus_count < FOCUS_ORDER_CAPACITY {
 		frame.focus_order[frame.focus_count] = element
 		frame.focus_count += 1
+	} else {
+		frame.focus_overflow += 1
 	}
 	if input.pointer_known && area_contains(area, input.pointer_x, input.pointer_y) {
 		result.under_pointer = true

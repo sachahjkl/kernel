@@ -77,7 +77,8 @@ Then `execute_in_rectangles` draws again, in each damage rectangle, each record 
 
 ### 2.3 Memory of the caller, errors as values
 
-- The caller gives the draw table (`records: []Draw_Record`, `text: []u8`) and the interface state. The package never allocates.
+- The caller gives the draw table (`records: []Draw_Record`, `text: []u8`) and the interface state. The package never allocates. Its core files make no kernel call; `window_drawing.odin` reads the events of a window and presents its surface.
+- On the surface of a program, each damage rectangle is painted with the background before the records draw again (`draw_damage_on_surface`), and a whole frame starts from the background: a record that a frame no longer has leaves no pixel, with no rule for the caller. The compositor draws its panels over other windows, so it draws the records only.
 - A table that is full stops taking records and keeps the flag `full`: the frame is drawn without the records that did not fit, the program can test the flag and write it on its log. No element fails in silence.
 - An element gives its result as a value (`Element_Result`): pressed, has the focus, changed. Nothing is hidden in a context.
 
@@ -92,7 +93,8 @@ Then `execute_in_rectangles` draws again, in each damage rectangle, each record 
 ## 4. Input and focus
 
 - The program gives each frame an `Input` record, filled from the `display.Event` records of the frame: the place of the pointer, a press and a release of the left button, and the keys pressed in this frame (at most 16).
-- **Element identity**: an element that takes input has an identity, a u64 that the caller makes from a text with `identity("launcher list")` (the 64-bit FNV-1a hash of the text). The identity must stay the same from one frame to the next for one element.
+- **Element identity**: an element that takes input has an identity, a u64 that the caller makes from a text with `identity("launcher list")` (the 64-bit FNV-1a hash of the text). The identity must stay the same from one frame to the next for one element. Two elements with one text have one identity: `identity_with(base, row)` and `identity_in(parent, name)` make them two, and `Frame.identity_collisions` counts the elements of a frame that repeat an identity (a host test).
+- The order of Tab holds 64 elements (`FOCUS_ORDER_CAPACITY`); an element after them takes a press but not Tab, and `Frame.focus_overflow` counts them.
 - **The interface state** (memory of the caller, 2 KiB) keeps between frames: the element that has the focus, the element under the pointer, the element pressed and not yet released, and the order of the elements that can take the focus in the last frame.
 - **The keyboard is a first path**: Tab and Shift+Tab move the focus in the order of the elements of the last frame; Enter and Space press the button that has the focus; up and down move the choice of a list that has the focus; a text input that has the focus takes the characters and Backspace. The launcher of the compositor is the model: each thing that the pointer does, a key does.
 - **The pointer**: an element under the pointer is "under the pointer" (the close button of a window is brighter); a press and a release on one element press it. A press on an element gives it the focus.

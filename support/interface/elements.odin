@@ -79,11 +79,11 @@ table_header :: proc "contextless" (frame: ^Frame, cells: []Area, titles: []stri
 // section 3). A value above 0 has a full part of 2 pixels at least.
 bar :: proc "contextless" (frame: ^Frame, area: Area, value, maximum: u64, color: graphics.Color) {
 	draw_rectangle(frame.table, area.x, area.y, area.width, area.height, graphics.COLOR_TRACK)
-	full := int(min(value, max(maximum, 1)) * u64(area.width) / max(maximum, 1))
+	full_width := int(min(value, max(maximum, 1)) * u64(area.width) / max(maximum, 1))
 	if value > 0 {
-		full = max(full, 2)
+		full_width = max(full_width, 2)
 	}
-	draw_vertical_gradient(frame.table, area.x, area.y, full, area.height, graphics.shade(color, 125), graphics.shade(color, 78))
+	draw_vertical_gradient(frame.table, area.x, area.y, full_width, area.height, graphics.shade(color, 125), graphics.shade(color, 78))
 }
 
 // bar_parts draws parts of one total side by side on a track, each in its
@@ -140,10 +140,10 @@ List_Options :: struct {
 list_with_choice :: proc "contextless" (frame: ^Frame, area: Area, element: Element_Identity, names: []string, choice: ^int, options: List_Options = {}) -> Element_Result {
 	result := element_interact(frame, element, area, .List)
 	rows := max(area.height / TABLE_LINE, 1)
+	before := choice^
 	if len(names) > 0 {
 		choice^ = clamp(choice^, 0, len(names) - 1)
 	}
-	before := choice^
 	if result.focused {
 		for &key in frame.input.keys[:frame.input.key_count] {
 			if key.taken || len(names) == 0 {
@@ -162,9 +162,13 @@ list_with_choice :: proc "contextless" (frame: ^Frame, area: Area, element: Elem
 	first := max(choice^ - rows + 1, 0)
 	// A press on a line chooses it.
 	input := frame.input
+	scroll_width := len(names) > rows ? 8 : 0
 	if result.under_pointer && input.pressed {
-		line := first + (input.pointer_y - area.y) / TABLE_LINE
-		if line < len(names) {
+		// A press on a line that the list shows chooses it; a press under
+		// the last line or on the bar at the right chooses nothing.
+		row := (input.pointer_y - area.y) / TABLE_LINE
+		line := first + row
+		if row < rows && line < len(names) && input.pointer_x < area.x + area.width - scroll_width {
 			choice^ = line
 		}
 		first = max(choice^ - rows + 1, 0)
@@ -173,7 +177,6 @@ list_with_choice :: proc "contextless" (frame: ^Frame, area: Area, element: Elem
 	if len(names) == 0 && options.empty_text != "" {
 		draw_text(frame.table, area.x + 8, area.y + 4, options.empty_text, graphics.COLOR_DIM)
 	}
-	scroll_width := len(names) > rows ? 8 : 0
 	for row in 0 ..< min(len(names) - first, rows) {
 		index := first + row
 		y := area.y + row * TABLE_LINE

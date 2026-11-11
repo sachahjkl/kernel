@@ -1,6 +1,7 @@
 package interface
 
 import "support:display"
+import "support:graphics"
 import "support:system"
 
 // What a program keeps to draw its window with the package, in its own
@@ -66,12 +67,13 @@ window_frame_end :: proc "contextless" (drawing: ^Window_Drawing, frame: ^Frame,
 	drawing.difference_time = measured - start
 	switch {
 	case whole:
+		graphics.clear(window.canvas, graphics.COLOR_BACKGROUND)
 		execute(&drawing.now, window.canvas)
 		display.present(window)
 		drawing.damage.rectangles[0] = {0, 0, window.canvas.width, window.canvas.height}
 		drawing.damage.count = 1
 	case drawing.damage.count > 0:
-		execute_in_rectangles(&drawing.now, window.canvas, drawing.damage.rectangles[:drawing.damage.count])
+		draw_damage_on_surface(&drawing.now, window.canvas, drawing.damage.rectangles[:drawing.damage.count])
 		bounds := damage_bounds(&drawing.damage)
 		display.present_rectangle(window, bounds.left, bounds.top, bounds.right - bounds.left, bounds.bottom - bounds.top)
 	}

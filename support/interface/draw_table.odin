@@ -2,7 +2,10 @@
 // again at each frame, and each call appends draw records to a draw table
 // in the memory of the program. The package finds the damage by a
 // comparison with the table of the frame before, and draws the records into
-// the surface of the program. It never allocates and makes no kernel call.
+// the surface of the program. It never allocates. The core files (the draw
+// table, its execution, the difference, the layout, the text, the input,
+// the elements) make no kernel call; window_drawing.odin does: it reads the
+// events of a window and presents its surface.
 package interface
 
 import "support:graphics"
@@ -88,7 +91,7 @@ draw_rectangle :: proc "contextless" (table: ^Draw_Table, x, y, width, height: i
 	if width <= 0 || height <= 0 {
 		return
 	}
-	record_append(table, {kind = .Rectangle, x = i32(x), y = i32(y), width = i32(width), height = i32(height), first_color = color, element = element})
+	record_append(table, {kind = .Rectangle, x = coordinate(x), y = coordinate(y), width = coordinate(width), height = coordinate(height), first_color = color, element = element})
 }
 
 // draw_vertical_gradient appends the block of the rules: from top, on the
@@ -97,7 +100,7 @@ draw_vertical_gradient :: proc "contextless" (table: ^Draw_Table, x, y, width, h
 	if width <= 0 || height <= 0 {
 		return
 	}
-	record_append(table, {kind = .Vertical_Gradient, x = i32(x), y = i32(y), width = i32(width), height = i32(height), first_color = top, second_color = bottom, element = element})
+	record_append(table, {kind = .Vertical_Gradient, x = coordinate(x), y = coordinate(y), width = coordinate(width), height = coordinate(height), first_color = top, second_color = bottom, element = element})
 }
 
 // draw_horizontal_gradient appends a rectangle whose color goes from left,
@@ -106,18 +109,18 @@ draw_horizontal_gradient :: proc "contextless" (table: ^Draw_Table, x, y, width,
 	if width <= 0 || height <= 0 {
 		return
 	}
-	record_append(table, {kind = .Horizontal_Gradient, x = i32(x), y = i32(y), width = i32(width), height = i32(height), first_color = left, second_color = right, element = element})
+	record_append(table, {kind = .Horizontal_Gradient, x = coordinate(x), y = coordinate(y), width = coordinate(width), height = coordinate(height), first_color = left, second_color = right, element = element})
 }
 
 // draw_point_grid appends the grid of points of the background.
 draw_point_grid :: proc "contextless" (table: ^Draw_Table, x, y, width, height: int) {
-	record_append(table, {kind = .Point_Grid, x = i32(x), y = i32(y), width = i32(width), height = i32(height), first_color = graphics.COLOR_POINT})
+	record_append(table, {kind = .Point_Grid, x = coordinate(x), y = coordinate(y), width = coordinate(width), height = coordinate(height), first_color = graphics.COLOR_POINT})
 }
 
 // draw_clip appends a clip: the next records are cut to the rectangle. A
 // width of 0 ends the cut.
 draw_clip :: proc "contextless" (table: ^Draw_Table, x, y, width, height: int) {
-	record_append(table, {kind = .Clip, x = i32(x), y = i32(y), width = i32(width), height = i32(height)})
+	record_append(table, {kind = .Clip, x = coordinate(x), y = coordinate(y), width = coordinate(width), height = coordinate(height)})
 }
 
 // draw_text appends a run of text at (x, y), the top left corner of its
@@ -135,13 +138,20 @@ draw_text :: proc "contextless" (table: ^Draw_Table, x, y: int, text: string, co
 	copy(table.text[start:], text)
 	table.text_count += len(text)
 	scale := font_scale(font)
-	record_append(table, {kind = .Text, text_scale = u8(scale), x = i32(x), y = i32(y), width = i32(width), height = i32(graphics.CELL_HEIGHT * scale), first_color = color, text_start = u32(start), text_count = u32(len(text)), element = element})
+	record_append(table, {kind = .Text, text_scale = u8(scale), x = coordinate(x), y = coordinate(y), width = coordinate(width), height = coordinate(graphics.CELL_HEIGHT * scale), first_color = color, text_start = u32(start), text_count = u32(len(text)), element = element})
 	return x + width
 }
 
 // draw_text_right appends a run of text that ends at right.
-draw_text_right :: proc "contextless" (table: ^Draw_Table, right, y: int, text: string, color: graphics.Color, font: Font = {}) {
-	draw_text(table, right - text_width(font, text), y, text, color, font)
+draw_text_right :: proc "contextless" (table: ^Draw_Table, right, y: int, text: string, color: graphics.Color, font: Font = {}, element: u32 = 0) {
+	draw_text(table, right - text_width(font, text), y, text, color, font, element)
+}
+
+// coordinate gives a place or a size as the i32 of a record: a value past
+// the i32 is cut to it.
+@(private)
+coordinate :: #force_inline proc "contextless" (value: int) -> i32 {
+	return i32(clamp(value, int(min(i32)), int(max(i32))))
 }
 
 // record_rectangle gives the rectangle that a record covers.

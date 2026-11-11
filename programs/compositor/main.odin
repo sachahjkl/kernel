@@ -872,6 +872,8 @@ launcher_key :: proc "contextless" (code: u32, character: u8, pressed: bool) -> 
 	switch {
 	case code == display.KEY_ESCAPE:
 		launcher_close("the key escape")
+	case code == interface.KEY_TAB:
+		// The text input keeps the focus: Tab does nothing in the launcher.
 	case code == display.KEY_UP || code == display.KEY_DOWN:
 		// The text input has the focus: the arrows move the choice of the list.
 		if match_count > 0 {
@@ -936,8 +938,8 @@ launcher_build :: proc "contextless" (input: ^interface.Input) -> interface.Elem
 	content := interface.card(&frame, {left, top, LAUNCHER_WIDTH, LAUNCHER_HEIGHT}, "LAUNCHER", "bar.names", graphics.COLOR_KERNEL, interface.text_of(&count))
 	result := interface.text_input(&frame, {content.x, top + LAUNCHER_INPUT, content.width, 24}, text_input_identity, typed[:], &typed_count, "type a part of a name")
 	names: [len(bar.names)]string
-	for index, line in matches[:match_count] {
-		names[line] = bar.names[index]
+	for name_index, line_number in matches[:match_count] {
+		names[line_number] = bar.names[name_index]
 	}
 	empty: interface.Text_Builder
 	interface.text_put(&empty, "no program has \"")

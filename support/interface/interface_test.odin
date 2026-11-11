@@ -386,3 +386,125 @@ damage_is_never_too_small_for_each_kind :: proc(t: ^testing.T) {
 	cases[6].build(&now, 1)
 	testing.expect(t, now.full)
 }
+
+// Review N1: more digits than a number can have.
+@(test)
+number_with_many_digits :: proc(t: ^testing.T) {
+	builder: Text_Builder
+	testing.expect_value(t, number_text(&builder, 7, 25), "00000000000000000007")
+}
+
+// Review N2: a negative height takes nothing.
+@(test)
+column_negative_height :: proc(t: ^testing.T) {
+	column := column_of({0, 0, 50, 100})
+	column_take(&column, 30)
+	testing.expect_value(t, column_take(&column, -20).height, 0)
+	testing.expect_value(t, column_take(&column, 10), Area{0, 30, 50, 10})
+}
+
+// Review N3: sizes that are negative, larger than the row, or so large that
+// a product overflows.
+@(test)
+row_split_checks_its_sizes :: proc(t: ^testing.T) {
+	columns: [3]Area
+	row_split({0, 0, 100, 24}, {pixels(-40), share(1), pixels(30)}, columns[:])
+	testing.expect_value(t, columns[0].width, 0)
+	testing.expect_value(t, columns[1].width, 70)
+	row_split({0, 0, 100, 24}, {pixels(300), share(1), characters(4)}, columns[:])
+	for column in columns {
+		testing.expect(t, column.width >= 0 && column.x + column.width <= 100, "each column is inside the row")
+	}
+	row_split({0, 0, 100, 24}, {share(max(int) / 2), share(max(int) / 2), share(-5)}, columns[:])
+	total := 0
+	for column in columns {
+		testing.expect(t, column.width >= 0)
+		total += column.width
+	}
+	testing.expect_value(t, total, 100)
+}
+
+// Review N4: a press under the last line or on the bar of the list chooses
+// nothing; a choice that the list cuts is reported as changed.
+@(test)
+list_press_and_cut_choice :: proc(t: ^testing.T) {
+	memory: Tables
+	table := table_of(&memory)
+	state: Interface_State
+	input: Input
+	names := []string{"a", "b", "c", "d", "e"}
+	choice := 0
+	// 3 lines of 24 and 10 pixels more: a press at y = 80 is under the last line.
+	input_add(&input, {kind = .Pointer, x = 10, y = 80, buttons = display.BUTTON_LEFT})
+	frame := frame_begin(&table, &state, &input)
+	result := list_with_choice(&frame, {0, 0, 200, 82}, identity("list"), names, &choice)
+	frame_end(&frame)
+	testing.expect_value(t, choice, 0)
+	testing.expect(t, !result.changed)
+	// A press on the bar at the right chooses nothing.
+	input_clear(&input)
+	input_add(&input, {kind = .Pointer, x = 199, y = 30, buttons = 0})
+	input_add(&input, {kind = .Pointer, x = 199, y = 30, buttons = display.BUTTON_LEFT})
+	frame = frame_begin(&table, &state, &input)
+	result = list_with_choice(&frame, {0, 0, 200, 82}, identity("list"), names, &choice)
+	frame_end(&frame)
+	testing.expect_value(t, choice, 0)
+	// The list has fewer names than the choice: the choice is cut, and changed.
+	choice = 4
+	input_clear(&input)
+	frame = frame_begin(&table, &state, &input)
+	result = list_with_choice(&frame, {0, 0, 200, 82}, identity("list"), names[:2], &choice)
+	frame_end(&frame)
+	testing.expect_value(t, choice, 1)
+	testing.expect(t, result.changed)
+}
+
+// Review N6: two elements with one identity in one frame are reported; a
+// row number makes them two.
+@(test)
+identity_collision :: proc(t: ^testing.T) {
+	memory: Tables
+	table := table_of(&memory)
+	state: Interface_State
+	input: Input
+	frame := frame_begin(&table, &state, &input)
+	button(&frame, {0, 0, 80, 24}, identity("delete"), "delete")
+	button(&frame, {0, 32, 80, 24}, identity("delete"), "delete")
+	testing.expect_value(t, frame.identity_collisions, 1)
+	frame_end(&frame)
+	frame = frame_begin(&table, &state, &input)
+	button(&frame, {0, 0, 80, 24}, identity_with(identity("delete"), 0), "delete")
+	button(&frame, {0, 32, 80, 24}, identity_with(identity("delete"), 1), "delete")
+	testing.expect_value(t, frame.identity_collisions, 0)
+	frame_end(&frame)
+}
+
+// Review N7: a place past the i32 of a record is cut to it.
+@(test)
+coordinates_are_cut_to_i32 :: proc(t: ^testing.T) {
+	memory: Tables
+	table := table_of(&memory)
+	draw_rectangle(&table, 1 << 40, -(1 << 40), 10, 10, 1)
+	testing.expect_value(t, table.records[0].x, max(i32))
+	testing.expect_value(t, table.records[0].y, min(i32))
+}
+
+// Review N9: a record that the frame no longer has leaves no pixel, even
+// when no record of the frame covers its place.
+@(test)
+a_gone_record_leaves_no_pixel :: proc(t: ^testing.T) {
+	first, second: Tables
+	before, now := table_of(&first), table_of(&second)
+	draw_rectangle(&before, 0, 0, 10, 10, graphics.COLOR_BACKGROUND)
+	draw_rectangle(&before, 50, 50, 20, 20, graphics.COLOR_FAILED)
+	draw_rectangle(&now, 0, 0, 10, 10, graphics.COLOR_BACKGROUND)
+	pixels := make([]graphics.Color, 320 * 200)
+	defer delete(pixels)
+	canvas := graphics.Canvas{pixels = raw_data(pixels), width = 320, height = 200, stride = 320}
+	graphics.clear(canvas, graphics.COLOR_BACKGROUND)
+	execute(&before, canvas)
+	damage: Damage
+	damage_by_difference(&before, &now, &damage)
+	draw_damage_on_surface(&now, canvas, damage.rectangles[:damage.count])
+	testing.expect_value(t, pixels[60 * 320 + 60], graphics.COLOR_BACKGROUND)
+}

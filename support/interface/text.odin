@@ -52,7 +52,8 @@ text_put :: proc "contextless" (builder: ^Text_Builder, part: string) {
 text_put_number :: proc "contextless" (builder: ^Text_Builder, value: u64, minimum_digits := 1) {
 	digits: [20]u8
 	count := 0
-	for rest := value; rest != 0 || count < minimum_digits; rest /= 10 {
+	least := min(minimum_digits, len(digits)) // A u64 has 20 digits at most.
+	for rest := value; rest != 0 || count < least; rest /= 10 {
 		digits[len(digits) - 1 - count] = u8('0' + rest % 10)
 		count += 1
 	}

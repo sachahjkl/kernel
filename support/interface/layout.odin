@@ -40,7 +40,7 @@ column_of :: proc "contextless" (area: Area, gap: int = 0) -> Column {
 column_take :: proc "contextless" (column: ^Column, height: int) -> Area {
 	top := column.used + (column.used > 0 ? column.gap : 0)
 	taken := clamp(height, 0, max(column.area.height - top, 0))
-	column.used = top + height
+	column.used = top + max(height, 0)
 	return {column.area.x, column.area.y + top, column.area.width, taken}
 }
 
@@ -75,41 +75,46 @@ share :: proc "contextless" (value: int = 1) -> Size {
 // size of each column before it draws in them. The columns go into the
 // memory of the caller. A Share column takes a part of the width that the
 // fixed sizes and the gaps leave; the last Share column takes what the
-// division leaves, so the columns fill the area.
+// division leaves, so the columns fill the area. A negative size is 0; the
+// fixed sizes are cut to the row; each column stays inside the row.
 row_split :: proc "contextless" (area: Area, sizes: []Size, columns: []Area, gap: int = 0) {
 	count := min(len(sizes), len(columns))
 	if count == 0 {
 		return
 	}
-	fixed := gap * (count - 1)
+	width := max(area.width, 0)
+	fixed_width :: proc "contextless" (size: Size) -> int {
+		switch size.kind {
+		case .Pixels:
+			return clamp(size.value, 0, 1 << 20)
+		case .Characters:
+			return clamp(size.value, 0, 1 << 16) * graphics.CELL_WIDTH
+		case .Share:
+		}
+		return 0
+	}
+	fixed := max(gap, 0) * (count - 1)
 	shares := 0
 	last_share := -1
 	for size, index in sizes[:count] {
-		switch size.kind {
-		case .Pixels:
-			fixed += size.value
-		case .Characters:
-			fixed += size.value * graphics.CELL_WIDTH
-		case .Share:
-			shares += size.value
+		fixed += fixed_width(size)
+		if size.kind == .Share {
+			shares += clamp(size.value, 0, 1 << 20)
 			last_share = index
 		}
 	}
-	free := max(area.width - fixed, 0)
+	free := max(width - fixed, 0)
 	given := 0
 	x := area.x
+	right := area.x + width
 	for size, index in sizes[:count] {
-		width := 0
-		switch size.kind {
-		case .Pixels:
-			width = size.value
-		case .Characters:
-			width = size.value * graphics.CELL_WIDTH
-		case .Share:
-			width = index == last_share ? free - given : free * size.value / max(shares, 1)
-			given += width
+		column_width := fixed_width(size)
+		if size.kind == .Share {
+			column_width = index == last_share ? free - given : free * clamp(size.value, 0, 1 << 20) / max(shares, 1)
+			given += column_width
 		}
-		columns[index] = {x, area.y, width, area.height}
-		x += width + gap
+		start := min(x, right)
+		columns[index] = {start, area.y, clamp(column_width, 0, right - start), area.height}
+		x += column_width + max(gap, 0)
 	}
 }
