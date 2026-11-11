@@ -93,6 +93,7 @@ region: [^]u8
 requests: ring.Ring // To the root service.
 request_tag: u32
 local_port: u64
+draw_logged: bool
 
 // The call requests that arrived and that wait: a place and its bytes.
 Waiting :: struct {
@@ -489,8 +490,15 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			// The window changes at most ten times in one second: a burst of
 			// calls does not wait for the drawing.
 			if dirty && now - drawn >= 100 {
+				start := system.nanoseconds()
 				draw(&window)
 				drawn, dirty = now, false
+				// The time of one picture, one time, when the window has calls
+				// to show (docs/DESIGN.md, section 7).
+				if !draw_logged && counts.calls >= 1000 {
+					draw_logged = true
+					system.log("remote: the window drew one picture in ", (system.nanoseconds() - start) / 1000, " us")
+				}
 			}
 		}
 		wait: system.Wait

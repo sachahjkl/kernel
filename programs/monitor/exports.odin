@@ -35,6 +35,13 @@ Count :: struct {
 	unit:  [16]u8,
 }
 
+// What the monitor did as a service: served().
+Served :: struct {
+	calls:    i64, // The calls that it executed.
+	callers:  i64, // The connections that it has now.
+	pictures: i64, // The pictures of its window.
+}
+
 ERROR_PERSON :: -1
 ERROR_REFUSED :: -2
 ERROR_ABSENT :: -3
@@ -49,6 +56,8 @@ state_names := [op.Program_State]string {
 }
 
 machine: system.Handle
+service: system.Service
+pictures: u64
 
 // person says if the caller of the export that runs acts for the person.
 // A call of the monitor itself has no caller: it acts for the person.
@@ -185,4 +194,10 @@ counts_read :: proc "contextless" (rows: ^[COUNT_CAPACITY]Count) -> (total: int,
 		copy(rows[index].unit[:len(rows[index].unit) - 1], item.unit)
 	}
 	return len(items), .Ok
+}
+
+// served gives what the monitor did as a service: the calls that it executed, the connections that it has now, and the pictures of its window. These are facts of the monitor itself: each caller sees them.
+@(export, link_name = "served")
+served :: proc "c" (result: ^Served) {
+	result^ = {calls = i64(service.calls), callers = i64(service.connected), pictures = i64(pictures)}
 }

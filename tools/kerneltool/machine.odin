@@ -230,7 +230,7 @@ scenario_network := [?]Step {
 	{kind = .Type, text = "grants(\"net\")"},
 	{kind = .Wait, text = "[console] net has: log, machine, network"},
 	{kind = .Type, text = "revoke(\"net\", \"network\")"},
-	{kind = .Wait, text = "root: revoked the grant network of net, endpoints changed: 1"},
+	{kind = .Wait, text = "root: revoked the grant network of net, endpoints changed: 1", any_order = true}, // The network service can write its line first.
 	{kind = .Wait, text = "network: the grant of the endpoint of net changed: none"},
 	{kind = .Front, text = "net"},
 	{kind = .Key, text = "spc"},
@@ -260,10 +260,13 @@ scenario_network := [?]Step {
 	{kind = .Call, text = "monitor.count(\"processors\")", expected = "4", repeat = 1000},
 	{kind = .Wait, text = "root: connected remote to the service monitor", any_order = true},
 	{kind = .Wait, text = "remote: connected to the service monitor"},
+	{kind = .Wait, text = "remote: the window drew one picture in ", any_order = true},
 	// A Table: the row of the remote service is there, and the count of the
 	// rows is the count that the monitor wrote on the log.
 	{kind = .Call, text = "monitor.programs()", expected = "remote", rows_logged = "monitor: programs: "},
 	{kind = .Call, text = "monitor.counts()", expected = "13 rows of Count"},
+	// A Record: the counts of the monitor itself, which each caller sees.
+	{kind = .Call, text = "monitor.served()", expected = "Served{calls = "},
 	// A result larger than one datagram.
 	{kind = .Call, text = "manual.modules()", expected = " rows of Module", parts = 2},
 	{kind = .Call, text = "manual.running()", expected = " rows of Running"},
@@ -286,6 +289,7 @@ scenario_network := [?]Step {
 	{kind = .Call, text = "manual.running()", outcome = .Failed, expected = "error: manual.running: the caller has no grant for this: to act for the person (-3)"},
 	{kind = .Call, text = "storage.stores()", expected = "no grant to see the stores"},
 	{kind = .Call, text = "manual.modules()", expected = " rows of Module"},
+	{kind = .Call, text = "monitor.served()", expected = "Served{calls = "},
 	{kind = .Front, text = "remote"},
 	{kind = .Shot, text = "remote"},
 	{kind = .Front, text = "console"},
@@ -869,7 +873,7 @@ scenario := [?]Step {
 	// The monitor serves its tables; its grant of the machine was revoked
 	// above, so the kernel refuses its reports.
 	{kind = .Type, text = "connect(\"monitor\")"},
-	{kind = .Wait, text = "[console] monitor: 3 commands of a service that runs"},
+	{kind = .Wait, text = "[console] monitor: 4 commands of a service that runs"},
 	{kind = .Type, text = "monitor.count(\"processors\")"},
 	{kind = .Wait, text = "[console] error: monitor.count: refused with the status "},
 	{kind = .Type, text = "help()"},
