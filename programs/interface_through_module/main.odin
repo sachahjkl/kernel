@@ -124,7 +124,7 @@ texts_of :: proc "contextless" (texts: ^Texts) {
 
 // build_through_module builds the frame with the exports of the module.
 build_through_module :: proc "contextless" (texts: ^Texts) {
-	drawn = {records = &records_now[0], count = 0, capacity = RECORD_CAPACITY}
+	drawn = {records = &records_now[0], count = 0, capacity = record_capacity_of_build}
 	text = {bytes = &text_now[0], count = 0, capacity = TEXT_CAPACITY}
 	calls = 0
 	whole := Area{0, 0, WIDTH, HEIGHT}
@@ -239,14 +239,26 @@ code_bytes :: proc "contextless" (file: []u8) -> (bytes: u64) {
 }
 
 drawn_before: bool
+
+// The capacity of the draw table of a build: RECORD_CAPACITY, or less for
+// the case of a frame that does not fit.
+record_capacity_of_build: u64 = RECORD_CAPACITY
+
+// kept_counts gives the records and the bytes of the frame that the tables
+// hold: a table that did not fit has a count larger than its capacity
+// (finding W5 of the hostile read: the program used the count as it was).
+kept_counts :: proc "contextless" () -> (records, bytes: u64) {
+	return min(drawn.count, drawn.capacity), min(text.count, text.capacity)
+}
 before_count, before_text_count: u64
 
 // present draws the frame through the module: the damage by difference
 // with the frame before, then the records in each damage rectangle.
 present :: proc "contextless" (window: ^display.Window) {
 	start := system.nanoseconds()
-	now_table := system.Table_To_Read(interface.Draw_Record){records = &records_now[0], count = drawn.count, capacity = drawn.count}
-	now_text := system.Bytes_To_Read{bytes = &text_now[0], count = text.count, capacity = text.count}
+	kept_records, kept_bytes := kept_counts()
+	now_table := system.Table_To_Read(interface.Draw_Record){records = &records_now[0], count = kept_records, capacity = kept_records}
+	now_text := system.Bytes_To_Read{bytes = &text_now[0], count = kept_bytes, capacity = kept_bytes}
 	rectangles: [interface.DAMAGE_CAPACITY]Damage_Rectangle
 	count: i64
 	if !drawn_before || window.two {
@@ -271,9 +283,9 @@ present :: proc "contextless" (window: ^display.Window) {
 		}
 		display.present_rectangle(window, int(left), int(top), int(right - left), int(bottom - top))
 	}
-	copy(records_before[:drawn.count], records_now[:drawn.count])
-	copy(text_before[:text.count], text_now[:text.count])
-	before_count, before_text_count = drawn.count, text.count
+	copy(records_before[:kept_records], records_now[:kept_records])
+	copy(text_before[:kept_bytes], text_now[:kept_bytes])
+	before_count, before_text_count = kept_records, kept_bytes
 	drawn_before = true
 }
 
@@ -311,6 +323,17 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	system.log("interface_through_module: one frame of ", shown.records, " draw records and ", shown.text_bytes, " text bytes in ", shown.calls, " element calls: ", shown.module_time, " ns through the module, ", shown.package_time, " ns with the package compiled in, the least of ", u64(BUILDS))
 	system.log("interface_through_module: the damage and the drawing through the module: ", shown.draw_time, " ns; interface_module has ", shown.module_code, " bytes of code")
+	// A frame that does not fit: a draw table of 16 places. The module gives
+	// the count of the full frame; the program draws the 16 records that it
+	// holds, and says it.
+	record_capacity_of_build = 16
+	build_through_module(&texts)
+	asked := drawn.count
+	present(&window)
+	system.log("interface_through_module: a draw table of 16 places: the frame did not fit, ", asked, " records asked, ", min(asked, 16), " drawn")
+	record_capacity_of_build = RECORD_CAPACITY
+	build_through_module(&texts)
+	present(&window)
 	if shown.equal && drawn.count <= RECORD_CAPACITY && shown.records > 0 {
 		system.log("interface_through_module: ok, the two draw tables are equal")
 	} else {
