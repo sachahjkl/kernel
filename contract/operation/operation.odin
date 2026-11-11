@@ -490,9 +490,10 @@ Lock_Kind :: enum u64 {
 	Origin  = 2, // The origin tree of the holdings.
 	Region  = 3, // One memory object: it gives a page on first use one frame.
 	Frame   = 4, // The page frames, the reserved pages, the pages of the budgets, the slots of the memory objects.
-	Log     = 5, // The serial port and the records of the log.
-	Wait    = 6, // One bucket of the wait table: the threads that wait on its words.
-	Run     = 7, // The run queue of one processor, and the scheduling state of its threads.
+	Cache   = 5, // The stack of free page frames of one processor (its frame cache).
+	Log     = 6, // The serial port and the records of the log.
+	Wait    = 7, // One bucket of the wait table: the threads that wait on its words.
+	Run     = 8, // The run queue of one processor, and the scheduling state of its threads.
 }
 
 LOCK_KIND_CAPACITY :: 12
@@ -504,6 +505,7 @@ LOCK_KIND_NAMES := [Lock_Kind]string {
 	.Origin  = "origin",
 	.Region  = "region",
 	.Frame   = "frame",
+	.Cache   = "cache",
 	.Log     = "log",
 	.Wait    = "wait",
 	.Run     = "run",

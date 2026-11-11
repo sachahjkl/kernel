@@ -585,8 +585,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			// One section of the frame lock: the free pages are the pages of
 			// the budgets and the reserved pages, at this moment.
 			lock_take(&frame_lock, .Frame)
-			report.free_pages = free_frames
-			report.reserved_pages = reserved_pages
+			report.free_pages, report.reserved_pages = frames_counted() // With the frame caches.
 			for budget in budgets {
 				report.budget_pages += budget.amounts.pages
 			}

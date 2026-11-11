@@ -344,17 +344,11 @@ region_cost :: proc "contextless" (page_count: u64, contiguous: bool) -> u64 {
 }
 
 // frame_take gives one page frame, not zero, for a page that a budget
-// reserved or paid. The kernel keeps free_frames >= reserved_pages + what
-// the caller paid, and any free frame serves: it cannot fail. The caller
-// holds the frame lock.
+// reserved or paid (memory.odin, frame_take_held): it cannot fail. The
+// caller holds the frame lock.
 @(private = "file")
 frame_take :: proc "contextless" () -> u64 {
-	frame := frames_take(1)
-	if frame == 0 {
-		log("kernel: no page frame for a reserved page")
-		machine_stop(1)
-	}
-	return frame
+	return frame_take_held()
 }
 
 // region_create makes a memory object. The budget pays for its pages and
@@ -382,6 +376,11 @@ region_create :: proc "contextless" (budget: u32, page_count: u64, contiguous :=
 	region^ = {page_count = page_count, budget = budget, contiguous = contiguous, serial = region.serial}
 	if contiguous {
 		region.physical = frames_take(page_count)
+		if region.physical == 0 {
+			// Frames in the stacks of the processors can make the run.
+			caches_drain()
+			region.physical = frames_take(page_count)
+		}
 		if region.physical == 0 {
 			region^ = {serial = region.serial}
 			lock_free(&frame_lock, .Frame)
@@ -482,10 +481,7 @@ region_frame :: proc "contextless" (region: ^Region, page: u64, give: bool) -> u
 	lock_take(&region_locks[index], .Region)
 	frame = intrinsics.atomic_load(slot)
 	if frame == 0 {
-		lock_take(&frame_lock, .Frame)
-		frame = frame_take()
-		reserved_pages -= 1
-		lock_free(&frame_lock, .Frame)
+		frame = frame_reserved_take()
 		frames_zero(frame, 1)
 		intrinsics.atomic_store(slot, frame)
 		intrinsics.atomic_add(&region.present, 1)

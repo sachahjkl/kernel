@@ -91,6 +91,22 @@ Interrupt_Gate :: struct {
 
 PROCESSOR_CAPACITY :: 64
 
+// The frame cache of a processor (memory.odin): a stack of free page
+// frames, under its cache lock.
+FRAME_CACHE_CAPACITY :: 64
+FRAME_CACHE_BATCH :: FRAME_CACHE_CAPACITY / 2
+
+Frame_Cache :: struct #align (64) {
+	lock:          Lock,
+	count:         u32, // The frames of the stack.
+	taken:         u64, // Reserved pages that the stack served, not yet subtracted from reserved_pages.
+	refills:       u64, // The takes that found the stack empty.
+	batches_taken: u64, // Batches that the stack took from the frame table.
+	batches_given: u64, // Batches that the stack gave back.
+	drains:        u64, // Drains that took frames from this stack.
+	frames:        [FRAME_CACHE_CAPACITY]u64,
+}
+
 // The record of one processor. The kernel has one stack per processor: a
 // kernel entry starts at the top of the stack and never continues an
 // earlier entry.
@@ -150,6 +166,7 @@ Processor :: struct {
 	stopped_thread, stopped_thread_serial: u32, // A thread that ran on another processor. 0: none.
 	stopped_programs: u64, // Bit n: program n had a thread on a processor.
 	stopped_serials:  [PROGRAM_CAPACITY]u32,
+	frame_cache:   Frame_Cache,
 	// Records too large for the kernel stack, for the operation that runs on
 	// this processor.
 	log_text:       [4096]u8,

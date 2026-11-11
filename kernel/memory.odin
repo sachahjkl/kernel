@@ -159,6 +159,193 @@ frames_free_held :: proc "contextless" (address: u64, count: u64) {
 	frame_hint = min(frame_hint, first)
 }
 
+// The frame cache of each processor (docs/ARCHITECTURE.md, "Locks of the
+// kernel", "The frame caches"). Each processor keeps a stack of at most
+// FRAME_CACHE_CAPACITY free frames in its processor record, under its cache
+// lock (after the frame lock in the lock order). A frame of a stack has its
+// bit set in frame_bits and is not in free_frames: it is free, and the
+// report adds it.
+//
+// The invariant, when the frame lock and the cache locks are free:
+//   free_frames + the frames of all stacks
+//     = the pages of all budgets + reserved_pages - the taken of all stacks.
+// A take from a stack moves 1 from its frames to its taken, in one section
+// of its cache lock: the sum frames + taken of a stack does not change.
+// That sum changes only under the frame lock and the cache lock together
+// (a batch, a give back, a fold of taken, a drain). So a reader that holds
+// the frame lock reads each stack under its cache lock, one after the
+// other, and gets the exact sums while the other processors take.
+//
+// A take that cannot fail (a reserved page, a list page, a page table) or
+// a contiguous object, with no free frame in the frame table, drains all
+// the stacks under the frame lock and takes again (caches_drain). A drain
+// always gets each stack: no processor waits for the frame lock while it
+// holds a cache lock (the order is frame, then cache). So no take fails
+// while frames sit in a stack.
+//
+// Frames on a stack are not zero: a page gets its zeros when it takes its
+// frame, after the locks (region_frame), as before the caches.
+
+// The test build checks the sums of the frames at each report and at each
+// drain, and drains all the stacks at each 64th refill of a stack, so that
+// the drain runs while the other processors take and put.
+FRAME_CACHE_CHECK :: #config(FRAME_CACHE_CHECK, true)
+
+// frame_reserved_take gives one page frame, not zero, for a reserved page:
+// from the stack of this processor; an empty stack takes the frame from the
+// frame table and a batch for the stack, in one section of the frame lock.
+// The caller holds no frame lock and no cache lock.
+frame_reserved_take :: proc "contextless" () -> u64 {
+	cache := &processor_self().frame_cache
+	lock_take(&cache.lock, .Cache)
+	if cache.count != 0 {
+		cache.count -= 1
+		frame := cache.frames[cache.count]
+		cache.taken += 1
+		lock_free(&cache.lock, .Cache)
+		return frame
+	}
+	lock_free(&cache.lock, .Cache)
+	lock_take(&frame_lock, .Frame)
+	frame := frame_take_held()
+	reserved_pages -= 1
+	cache_refill_held(cache)
+	lock_free(&frame_lock, .Frame)
+	return frame
+}
+
+// frame_take_held gives one page frame, not zero, for a page that a budget
+// reserved or paid. The kernel keeps the invariant above, so a frame
+// exists in the frame table or in a stack: it cannot fail. The caller holds
+// the frame lock and no cache lock.
+frame_take_held :: proc "contextless" () -> u64 {
+	frame := frames_take(1)
+	if frame == 0 {
+		caches_drain()
+		frame = frames_take(1)
+	}
+	if frame == 0 {
+		log("kernel: no page frame for a reserved page")
+		machine_stop(1)
+	}
+	return frame
+}
+
+// cache_refill_held gives an empty stack a batch from the frame table, and
+// subtracts its taken from reserved_pages. The caller holds the frame lock.
+@(private = "file")
+cache_refill_held :: proc "contextless" (cache: ^Frame_Cache) {
+	when FRAME_CACHE_CHECK {
+		// Only this processor writes refills: a read with no lock.
+		if (cache.refills + 1) % 64 == 0 {
+			caches_drain()
+		}
+	}
+	lock_take(&cache.lock, .Cache)
+	cache.refills += 1
+	reserved_pages -= cache.taken
+	cache.taken = 0
+	taken_before := cache.count
+	for cache.count < FRAME_CACHE_BATCH {
+		frame := frames_take(1)
+		if frame == 0 {
+			break
+		}
+		cache.frames[cache.count] = frame
+		cache.count += 1
+	}
+	if cache.count != taken_before {
+		cache.batches_taken += 1
+	}
+	lock_free(&cache.lock, .Cache)
+}
+
+// cache_put_held puts a free frame on a stack; a full stack gives a batch
+// back to the frame table first. The caller holds the frame lock and the
+// cache lock of the stack.
+cache_put_held :: proc "contextless" (cache: ^Frame_Cache, frame: u64) {
+	if cache.count == FRAME_CACHE_CAPACITY {
+		for _ in 0 ..< FRAME_CACHE_BATCH {
+			cache.count -= 1
+			frames_free_held(cache.frames[cache.count], 1)
+		}
+		cache.batches_given += 1
+	}
+	cache.frames[cache.count] = frame
+	cache.count += 1
+}
+
+// caches_drain moves the frames of each stack to the frame table, and the
+// taken of each stack to reserved_pages. The caller holds the frame lock
+// and no cache lock.
+caches_drain :: proc "contextless" () {
+	for cpu in processors[:processor_count] {
+		cache := &cpu.frame_cache
+		lock_take(&cache.lock, .Cache)
+		if cache.count != 0 {
+			cache.drains += 1
+		}
+		for frame in cache.frames[:cache.count] {
+			frames_free_held(frame, 1)
+		}
+		cache.count = 0
+		reserved_pages -= cache.taken
+		cache.taken = 0
+		lock_free(&cache.lock, .Cache)
+	}
+	when FRAME_CACHE_CHECK {
+		frames_check()
+	}
+}
+
+// frames_counted gives the free pages and the reserved pages of the
+// machine: the frame table and the stacks. The caller holds the frame lock,
+// so the sums are exact (see above).
+frames_counted :: proc "contextless" () -> (free: u64, reserved: u64) {
+	free, reserved = free_frames, reserved_pages
+	for cpu in processors[:processor_count] {
+		cache := &cpu.frame_cache
+		lock_take(&cache.lock, .Cache)
+		free += u64(cache.count)
+		reserved -= cache.taken
+		lock_free(&cache.lock, .Cache)
+	}
+	when FRAME_CACHE_CHECK {
+		frames_check()
+	}
+	return free, reserved
+}
+
+// frames_check stops the machine if the frames do not add up: the free bits
+// of frame_bits are free_frames, each frame of a stack has its bit set, and
+// the invariant above holds. The caller holds the frame lock.
+frames_check :: proc "contextless" () {
+	free_bits: u64
+	for word in frame_bits {
+		free_bits += 64 - u64(intrinsics.count_ones(word))
+	}
+	stacked, taken, budget_pages: u64
+	marked := true
+	for cpu in processors[:processor_count] {
+		cache := &cpu.frame_cache
+		lock_take(&cache.lock, .Cache)
+		stacked += u64(cache.count)
+		taken += cache.taken
+		for frame in cache.frames[:cache.count] {
+			marked &&= frame_used(frame / PAGE_SIZE)
+		}
+		lock_free(&cache.lock, .Cache)
+	}
+	for budget in budgets {
+		budget_pages += budget.amounts.pages
+	}
+	if free_bits != free_frames || !marked || free_frames + stacked != budget_pages + reserved_pages - taken {
+		intrinsics.atomic_store(&log_serial_only, true)
+		log("kernel: the frames do not add up: free bits ", free_bits, ", free frames ", free_frames, ", in stacks ", stacked, ", marked ", u64(marked), ", budgets ", budget_pages, ", reserved ", reserved_pages, ", taken ", taken)
+		machine_stop(3)
+	}
+}
+
 // page_entry gives the entry of the last level table for an address.
 // With create, it makes the tables that are missing: the budget pays. The
 // budget is the field of the program that names it: the frame lock reads it.
@@ -190,6 +377,10 @@ frame_paid :: proc "contextless" (budget_field: ^u32) -> u64 {
 	budget := budget_field^
 	if budgets[budget].live && budgets[budget].amounts.pages != 0 {
 		frame = frames_take(1)
+		if frame == 0 {
+			caches_drain()
+			frame = frames_take(1)
+		}
 		if frame != 0 {
 			budgets[budget].amounts.pages -= 1
 		}
