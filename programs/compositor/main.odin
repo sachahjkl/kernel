@@ -314,7 +314,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 						// The program can name the rectangle that changed; the
 						// numbers are its own: they are cut to the surface.
 						left, top := int(min(record.values[1], u64(client.surface.width))), int(min(record.values[2], u64(client.surface.height)))
-						changed_width, changed_height := client.surface.width, client.surface.height
+						// Width 0: from (left, top) to the end of the surface.
+						changed_width, changed_height := client.surface.width - left, client.surface.height - top
 						if record.values[3] != 0 {
 							changed_width = int(min(record.values[3], u64(client.surface.width - left)))
 							changed_height = int(min(record.values[4], u64(client.surface.height - top)))
