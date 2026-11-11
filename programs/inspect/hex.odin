@@ -1,5 +1,6 @@
 package inspect
 
+import module "contract:module"
 import op "contract:operation"
 import "support:graphics"
 import "support:system"
@@ -70,21 +71,21 @@ draw_hex :: proc "contextless" (canvas: graphics.Canvas) {
 	inspect_call(.Modules, own_slot, &own, size_of(own))
 	modules := own.modules[:min(own.count, op.PROGRAM_MODULE_CAPACITY)]
 	y := 0
-	// The first bytes of the code of the module of this program.
-	own_mappings := &call_mappings
-	inspect_call(.Program_Mappings, own_slot, own_mappings, size_of(own_mappings^))
+	// The first bytes of the code of the export entry of this program.
 	code := u64(0)
-	for &item in own_mappings.mappings[:min(own_mappings.count, op.MAPPING_REPORT_CAPACITY)] {
-		if .Execute in item.flags && len(modules) > 0 && item.address >= modules[0].base && item.address < modules[0].base + modules[0].size {
-			code = item.address
-			break
+	if len(modules) > 0 {
+		if file := module_file(modules[0].hash); file != nil {
+			head, _ := module.header(file)
+			if address, ok := module.export_address(file, uintptr(modules[0].base), head.entry_export); ok {
+				code = u64(address) &~ 15
+			}
 		}
 	}
 	if code != 0 {
 		base := code
 		present, _ := hex_present(base)
 		graphics.fill(inside, 0, y + 7, inside.width, 1, graphics.COLOR_TRACK)
-		text(inside, 0, y, graphics.COLOR_PROGRAM, "the code of the module inspect: ", present & 1 != 0 ? "it has a page frame" : "no page frame: not read")
+		text(inside, 0, y, graphics.COLOR_PROGRAM, "the code of the export entry of inspect: ", present & 1 != 0 ? "it has a page frame" : "no page frame: not read")
 		y += LINE
 		if present & 1 != 0 {
 			for row in 0 ..< 3 {
