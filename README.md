@@ -95,6 +95,10 @@ The system boots under QEMU to a graphical desktop with a console, a system tool
 
 ![TCP in the program: server holds a listen grant on the port 80 and serves one table of connections from one thread; the peer of the test drops, reorders and repeats frames, resets a connection and opens 16 at once; the table shows the state, the bytes, the round trip and the congestion window of each connection](docs/screenshots/server.png)
 
+![A developer tool: the address space of the console as a band scaled by pages, with each gap folded, the table of its mappings with the pages that have a frame, its modules, its threads with the state of the scheduler; a sample each 250 ms with its cost](docs/screenshots/inspect.png)
+
+![The same tool on a program that stopped on a fault: the stack trace as module + offset, near the export before it](docs/screenshots/inspect_stopped.png)
+
 ![Errors that diagnose: each case makes an error for real, and the line under it is the sentence of the error record that the kernel, the loader, a module or a service gave; the stack trace of a fault three calls deep](docs/screenshots/errors.png)
 
 ![The temple of Jon: a portrait of Jonathan Blow that turns](docs/screenshots/temple.png)
@@ -112,6 +116,7 @@ The system boots under QEMU to a graphical desktop with a console, a system tool
 - The storage service keeps a private store for each program on the data disk: each change is one commit, and a stop of the machine never shows a part of one. `notes` finds its state after a restart of the machine, after QEMU was ended during its commits, and after its last root block was cut.
 - The network: a frame service drives a virtio network device, and the network service gives a program an endpoint of UDP datagrams that reaches only the remote of its grant. The kernel has no network code.
 - `kerneltool call "monitor.programs()"` calls an export of a service of the running machine from the host, and prints the typed result: a table with its field names, a record, a text, or the sentence of its error record. The program `remote` relays the call; the root service decides which services it reaches, and the person revokes its grant with `revoke("remote", "person")`. The test reads the place of the pointer from the compositor before each press, and waits for log records with typed fields through `log.records()`.
+- `inspect` shows one program live: its address space, its modules, its threads with the state of the scheduler, the stop report of a program that faulted, and the bytes of its own memory, from reports of the kernel that give no byte of another program.
 - The compositor owns the framebuffer. Each program draws into a surface in shared memory.
 - The console is a normal program. A command is a typed function: `hash("abc")`, `start("life")`, `programs()`.
 - `load("math")` loads a module: its exports become commands. The module describes them: the tool makes each description from the source (parameter names, types, help).
@@ -139,6 +144,7 @@ The system boots under QEMU to a graphical desktop with a console, a system tool
 | `docs/ARCHITECTURE.md` | The key systems and how they connect |
 | `docs/MODULE_CONTRACT.md` | The module format, the loader and the call form |
 | `docs/FIRST_MILESTONE.md` | What the code does now, the choices made, the gaps |
+| `docs/TOOLS.md` | The developer tools, and what each one reads |
 | `docs/GLOSSARY.md` | The terms of the project. One term per concept |
 | `docs/DESIGN.md` | The design rules: how a program of the system looks. The boot display is the model |
 | `docs/DEMONSTRATIONS.md` | For each of the 21 properties: what the machine test shows, the picture, and what no test shows yet |

@@ -241,8 +241,12 @@ key :: proc "contextless" (event: display.Event) {
 		frozen = !frozen
 		system.log("inspect: the sample is ", frozen ? "frozen" : "live")
 	case event.code == display.KEY_BACKSPACE:
+		had := filter_count
 		filter_count = max(filter_count - 1, 0)
 		list_read()
+		if had == 1 {
+			system.log("inspect: the list shows all ", u64(shown_count), " programs")
+		}
 	case event.code == display.KEY_ENTER:
 		choose(0)
 	case event.character >= 'a' && event.character <= 'z' || event.character == '_' || event.character >= '0' && event.character <= '9':

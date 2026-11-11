@@ -128,7 +128,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 }
 
 draw_list :: proc "contextless" (canvas: graphics.Canvas) {
-	inside := card(canvas, LIST_X, LIST_Y, LIST_WIDTH, HEIGHT - 16, "PROGRAMS", "Program_Report", graphics.COLOR_PROGRAM)
+	inside := card(canvas, LIST_X, LIST_Y, LIST_WIDTH, HEIGHT - 16, "SLOTS", "Program_Report", graphics.COLOR_PROGRAM)
 	x := graphics.text(inside, 0, 0, "filter ", graphics.COLOR_DIM)
 	x = graphics.text(inside, x, 0, string(filter[:filter_count]), graphics.COLOR_TEXT)
 	graphics.fill(inside, x, 0, 8, 16, graphics.COLOR_TRACK)
@@ -182,6 +182,9 @@ draw_map :: proc "contextless" (canvas: graphics.Canvas) {
 	segments: [2 * op.MAPPING_REPORT_CAPACITY]addresses.Segment
 	count := addresses.band(mappings, inside.width, 16, 4, segments[:])
 	BAND_Y :: 24
+	if len(mappings) == 0 {
+		graphics.text(inside, 0, BAND_Y + 12, "no mapping: the kernel ended each mapping when the program stopped", graphics.COLOR_DIM)
+	}
 	for &segment in segments[:count] {
 		if segment.mapping < 0 {
 			graphics.fill(inside, segment.x, BAND_Y, segment.width, BAND_HEIGHT, graphics.COLOR_TRACK)
@@ -202,9 +205,8 @@ draw_map :: proc "contextless" (canvas: graphics.Canvas) {
 	x = 0
 	for kind in addresses.Kind {
 		graphics.fill(inside, x, 76, 8, 8, kind_color(kind))
-		x = graphics.text(inside, x + 12, 72, addresses.KIND_NAMES[kind], graphics.COLOR_DIM) + 16
+		x = graphics.text(inside, x + 12, 72, addresses.KIND_NAMES[kind], graphics.COLOR_DIM) + 8
 	}
-	graphics.text(inside, x, 72, "line: pages with a frame", graphics.COLOR_DIM)
 	// The table: one row for each mapping.
 	TABLE_Y :: 96
 	graphics.text(inside, 0, TABLE_Y, "address", graphics.COLOR_DIM)
