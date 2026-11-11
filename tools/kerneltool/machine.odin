@@ -314,10 +314,12 @@ scenario_network := [?]Step {
 	{kind = .Wait, text = "compositor: the launcher starts plasma"},
 	{kind = .Wait, text = "compositor: surface plasma"},
 	// The windows move from the one in front to the one at the back: no
-	// window covers the title bar of the next one. Then each comes to the
-	// front, from the back to the front.
+	// window covers the title bar of the next one. The console covers the
+	// title bar of monitor: monitor comes to the front first. Then each
+	// window comes to the front, from the back to the front.
 	{kind = .Move, text = "plasma", to_x = 440, to_y = 120},
 	{kind = .Move, text = "life", to_x = 8, to_y = 416},
+	{kind = .Front, text = "monitor"},
 	{kind = .Move, text = "monitor", to_x = 572, to_y = 384},
 	{kind = .Move, text = "console", to_x = 8, to_y = 40},
 	{kind = .Front, text = "life"},
