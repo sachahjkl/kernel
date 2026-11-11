@@ -7,4 +7,4 @@
 // newest release of CHANGELOG.md.
 package release
 
-RELEASE_NUMBER :: "0.58.0"
+RELEASE_NUMBER :: "0.59.0"

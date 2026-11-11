@@ -6,6 +6,20 @@ The project has steps, not separate releases. The merge of step N on `master` is
 
 What is not in a release yet is in `changelog.d/`, one fragment for each change. `kerneltool changelog release` writes a release from the fragments. Nobody edits this file by hand.
 
+## [0.59.0] - 2026-11-11
+
+### Added
+
+- `kerneltool repeat all <count>` builds every module and the boot program again and again, and gives one row for each: the count of distinct modules, LLVM IR files and objects. `kerneltool check` and `kerneltool repeat` keep each distinct result beside the first one.
+
+### Changed
+
+- The rewrite of the LLVM IR of 0.53.0, which fixed the names of static variables, is removed: the cause is corrected.
+
+### Fixed
+
+- **One source gives one module**: the Odin compiler started one worker thread beside its main thread also with `-thread-count:1`, and the two threads changed the order of the declarations. A module could differ from one build to the next (`host` in 1 build of 12 to 39, `console` with 3 distinct LLVM IR files in 60 builds). The flake applies a patch of 91 lines to the compiler: with `-thread-count:1` the main thread runs each task. `kerneltool repeat all 100` gave one module, one LLVM IR file and one object for each of the 61 modules and the boot program.
+
 ## [0.58.0] - 2026-11-11
 
 ### Added
