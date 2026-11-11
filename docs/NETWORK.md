@@ -171,7 +171,7 @@ Written on 2026-11-11 for QUIC (`docs/QUIC.md`, section 6), not run yet. A datag
 
 - The table of admitted remotes is the one of TCP (`network.Admitted`): 64 places, the oldest place with no traffic for 120 s serves again, `Release` forgets a remote.
 - A UDP listen port is not a port PORT_FIRST + n of a client grant, and no other UDP listen grant has it.
-- A Send goes only to an admitted remote, and keeps its place alive.
+- A Send goes only to an admitted remote. To a remote that the program did not validate, the network service sends at most 3 times the bytes that came from it (status `Amplification`, error kind `Over_Limit`); the command `Validate` lifts that limit for a remote that proved its address to the program (`docs/QUIC.md`, section 6, says what a program that validates every remote gains). A send does not keep a place alive: only a datagram of the remote does.
 - `Resolve` and `Echo` are refused, as for each listen grant: the program answers, but it does not reach.
 - The program releases a remote whose datagram it refused (a forged Initial, a datagram of no connection), so that a flood of many addresses does not hold the table.
 

@@ -129,7 +129,7 @@
     };
 
     devShells.${system}.default = pkgs.mkShell ({
-        packages = buildTools ++ [kerneltool pkgs.ffmpeg] ++ preCommitCheck.enabledPackages; # ffmpeg: the command "film" of kerneltool.
+        packages = buildTools ++ [kerneltool pkgs.ffmpeg pkgs.openssl] ++ preCommitCheck.enabledPackages; # ffmpeg: the command "film" of kerneltool. openssl: `kerneltool test quic-real`, a QUIC client of another project.
         inherit (preCommitCheck) shellHook;
       }
       // firmware

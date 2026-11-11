@@ -65,6 +65,7 @@ Step_Kind :: enum {
 	Http, // The TCP of the host runs the HTTP case text against `server` (web_host.odin, http_case_run); `expected` is the body that a page must have.
 	Quic_Key, // As Remember: the 64 hexadecimal digits after text, in the log after the last Wait, are the public key of a QUIC server, which the QUIC client of the peer pins (peer_quic.odin).
 	Peer_Quic, // The peer runs the QUIC case text (peer_quic.odin) and checks its answers.
+	Openssl_Quic, // QEMU user networking: `openssl s_client -quic` of the host sends the line text to quic_echo through the UDP forward, and must get it back, from the key that the step Quic_Key read (quic_real.odin).
 }
 
 Step :: struct {
@@ -2199,6 +2200,19 @@ log_wait :: proc(machine: ^Machine, text: string, any_order := false, limit := S
 	return false
 }
 
+// log_last_line gives the last line of the log of the machine that has a
+// text, from that text, or "" when none has it.
+log_last_line :: proc(machine: ^Machine, text: string) -> string {
+	log := log_read(machine)
+	at := strings.last_index(log, text)
+	if at < 0 {
+		return ""
+	}
+	rest := log[at:]
+	end := strings.index_byte(rest, '\n')
+	return strings.trim_right(end < 0 ? rest : rest[:end], "\r")
+}
+
 // screen_save saves the screen of the machine as a PNG file.
 screen_save :: proc(machine: ^Machine, name: string) -> bool {
 	time.sleep(400 * time.Millisecond) // The compositor shows the last change.
@@ -2300,7 +2314,12 @@ machine_test :: proc(steps: []Step, volume: string, output: string, exit_status:
 			fmt.eprintln("kerneltool: no port of the loopback for the TCP of QEMU")
 			return false
 		}
-		forward = {host_port = port, listener = &listener}
+		quic_port, quic_free := free_udp_port()
+		if !quic_free {
+			fmt.eprintln("kerneltool: no UDP port of the loopback for the QUIC of QEMU")
+			return false
+		}
+		forward = {host_port = port, quic_port = quic_port, listener = &listener}
 	}
 	defer listener_stop(&listener)
 	command, ok := machine_command(volume, output, data_disk, &peer, forward, processor_without_random)
@@ -2810,13 +2829,22 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				return false
 			}
 			fmt.printfln("kerneltool: the QUIC client of the peer pins the key %s", line)
-		case .Peer_Quic:
-			passed, result := peer_quic_case(machine.peer, step.text)
-			if !passed {
-				fmt.eprintfln("kerneltool: test failed: step %d: the QUIC case \"%s\" of the peer: %s", index + 1, step.text, result)
+		case .Openssl_Quic:
+			if !openssl_quic_run(machine, step.text) {
+				fmt.eprintfln("kerneltool: test failed: step %d: the QUIC client of OpenSSL", index + 1)
 				return false
 			}
-			fmt.printfln("kerneltool: test passed: the QUIC case \"%s\" of the peer: %s", step.text, result)
+		case .Peer_Quic:
+			passed, result := peer_quic_case(machine.peer, step.text)
+			// The counts of the server after the case: quic_echo writes them
+			// once in a second when they change.
+			time.sleep(1500 * time.Millisecond)
+			counts := log_last_line(machine, "quic_echo: accepted ")
+			if !passed {
+				fmt.eprintfln("kerneltool: test failed: step %d: the QUIC case \"%s\" of the peer: %s; the last counts of the server: %s", index + 1, step.text, result, counts)
+				return false
+			}
+			fmt.printfln("kerneltool: test passed: the QUIC case \"%s\" of the peer: %s; the last counts of the server: %s", step.text, result, counts)
 		case .Peer_Start:
 			peer_case_started = peer_case_start_from_the_tool(machine.peer, step.text)
 			fmt.printfln("kerneltool: the TCP case \"%s\" of the peer runs; the next steps run with it", step.text)

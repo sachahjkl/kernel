@@ -30,13 +30,14 @@ scenario_quic := [?]Step {
 	{kind = .Peer_Quic, text = "crowd"},
 	// A client that pins another key: it refuses the server.
 	{kind = .Peer_Quic, text = "wrong key"},
-	// 1000 forged Initials from 1000 addresses, one datagram of another
-	// version, and a real client at the same time: no forged datagram gets
-	// an answer, the real client gets its echo.
+	// 1000 forged Initials from 1000 addresses, 8 authentic Initials from 4
+	// forged addresses, one datagram of another version, and a real client
+	// at the same time: each Initial of the flood gets one Retry and no
+	// record, the other version one Version Negotiation packet, the real
+	// client its echo.
 	{kind = .Peer_Quic, text = "flood"},
-	{kind = .Wait, text = ", not authentic 1000, "},
-	// A client that sends its first Initial and vanishes: the handshake
-	// deadline ends its record.
+	// A client that takes its Retry, sends its Initial with the token, and
+	// vanishes: the handshake deadline ends its record.
 	{kind = .Peer_Quic, text = "vanish"},
 	{kind = .Wait, text = " ended (the handshake deadline)"},
 	{kind = .Front, text = "quic_echo"},

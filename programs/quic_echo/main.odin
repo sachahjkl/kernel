@@ -63,7 +63,8 @@ CALL_TAG :: 100_000 // Info and Release.
 // and a place is in one command at most; a Release follows a Send or a
 // datagram that arrived, and the releases of one pass are at most the
 // datagrams of the pass and the records that ended.
-HELD_CAPACITY :: PLACE_COUNT + RECEIVE_PLACES + CAPACITY
+// A Validate follows a datagram that arrived, as a Release does.
+HELD_CAPACITY :: PLACE_COUNT + 2 * RECEIVE_PLACES + CAPACITY
 
 LOG_LIMIT :: 50 // Lines of connections in one second at most: a client that opens many must not fill the log limit of the program.
 
@@ -95,7 +96,7 @@ listen_port: u16
 
 // The echo of each record: the bytes read and not yet written back.
 Echo :: struct {
-	started_at:     u64, // The start of the record that this echo belongs to.
+	generation:     u64, // The generation of the record that this echo belongs to.
 	start, end:     int,
 	finished:       bool,
 	finish_written: bool,
@@ -112,6 +113,12 @@ held_command_count: int
 log_second: u64
 log_count: u64
 counters_logged: quic.Server_Counters
+// The Sends that the network service refused (a remote no longer admitted,
+// the limit of 3 times for a remote that is not validated), and the status
+// of the last one: they are on the log with the counts.
+sends_refused: u64
+sends_refused_logged: u64
+send_refusal_last: datagram.Status
 counters_second: u64
 
 fail :: proc "contextless" (text: string) -> ! {
@@ -155,6 +162,13 @@ post :: proc "contextless" (place: u32) {
 
 send :: proc "contextless" (place: u32, length: int, remote: quic.Remote) {
 	command_push_or_hold(ring.Record{kind = u32(datagram.Command.Send), tag = SEND_TAG + place, values = {0 = u64(place) * PLACE_SIZE, 1 = u64(length), 2 = u64(remote.address), 3 = u64(remote.port)}})
+}
+
+// validate tells the network service that a remote proved its address: it
+// lifts the limit of 3 times the bytes that came from it. It goes before
+// the Sends of the record, which the ring keeps in order.
+validate :: proc "contextless" (remote: quic.Remote) {
+	command_push_or_hold(ring.Record{kind = u32(datagram.Command.Validate), tag = CALL_TAG, values = {0 = u64(remote.address), 1 = u64(remote.port)}})
 }
 
 // release asks the network service to forget a remote: after the Sends to
@@ -223,8 +237,8 @@ echo_work :: proc "contextless" () {
 			continue
 		}
 		echo := &echoes[place]
-		if echo.started_at != record.started_at {
-			echo^ = {started_at = record.started_at}
+		if echo.generation != record.generation {
+			echo^ = {generation = record.generation}
 			if log_allowed() {
 				text: [40]u8
 				system.log("quic_echo: a connection from ", address_text(text[:], record.remote))
@@ -273,35 +287,46 @@ counters_log :: proc "contextless" () {
 	// window, not on the log.
 	counters.datagrams = counters_logged.datagrams
 	counters.authenticity_checks = counters_logged.authenticity_checks
-	if counters == counters_logged {
+	if counters == counters_logged && sends_refused == sends_refused_logged {
 		return
 	}
 	counters_second = second
 	counters_logged = server.counters
-	system.log("quic_echo: accepted ", counters.accepted, ", ended ", counters.ended, ", not authentic ", counters.not_authentic, ", too small ", counters.too_small, ", Initials refused by a limit (each try of a client counts) ", counters.refused_remote_limit + counters.refused_handshake_limit, ", Initials refused with a full table ", counters.refused_full, ", version negotiations ", counters.version_negotiations)
+	sends_refused_logged = sends_refused
+	system.log("quic_echo: accepted ", counters.accepted, ", ended ", counters.ended, ", Retries ", counters.retries, ", tokens refused ", counters.tokens_refused + counters.tokens_expired, ", not authentic ", counters.not_authentic, ", too small ", counters.too_small, ", Initials refused by a limit (each try of a client counts) ", counters.refused_remote_limit + counters.refused_handshake_limit, ", Initials refused with a full table ", counters.refused_full, ", over the budget ", counters.over_budget, ", version negotiations ", counters.version_negotiations, ", Sends refused by the network service ", sends_refused, " (the last status ", u64(send_refusal_last), ")")
 }
 
 // exchange gives the server the datagrams that arrived, runs its timers,
 // writes back the streams, and sends what the connections have.
 exchange :: proc "contextless" (arrived: []ring.Record) -> (deadline: u64) {
 	now := now_microseconds()
-	for record in arrived {
-		bytes := place_bytes(record.tag)[:min(record.values[1], PLACE_SIZE)]
-		remote := quic.Remote{u32(record.values[2]), u16(record.values[3])}
-		answer_place, has_place := place_take()
-		answer: []u8
-		if has_place {
-			answer = place_bytes(answer_place)
-		}
-		outcome := quic.server_datagram_receive(&server, bytes, remote, answer, now)
-		if outcome.answer_length > 0 {
-			send(answer_place, outcome.answer_length, remote)
-		} else if has_place {
-			free_places[free_count] = answer_place
-			free_count += 1
-		}
-		if outcome.release_remote {
-			release(remote)
+	// The datagrams of known connections first: a flood of new identifiers
+	// never makes them wait behind its cryptography.
+	for known_pass in ([]bool{true, false}) {
+		for record in arrived {
+			bytes := place_bytes(record.tag)[:min(record.values[1], PLACE_SIZE)]
+			remote := quic.Remote{u32(record.values[2]), u16(record.values[3])}
+			if quic.server_datagram_is_known(&server, bytes, remote) != known_pass {
+				continue
+			}
+			answer_place, has_place := place_take()
+			answer: []u8
+			if has_place {
+				answer = place_bytes(answer_place)
+			}
+			outcome := quic.server_datagram_receive(&server, bytes, remote, answer, now)
+			if outcome.answer_length > 0 {
+				send(answer_place, outcome.answer_length, remote)
+			} else if has_place {
+				free_places[free_count] = answer_place
+				free_count += 1
+			}
+			if outcome.validate_remote {
+				validate(remote)
+			}
+			if outcome.release_remote {
+				release(remote)
+			}
 		}
 	}
 	quic.server_time_passes(&server, now)
@@ -447,6 +472,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			case record.tag >= SEND_TAG && record.tag < SEND_TAG + PLACE_COUNT:
 				free_places[free_count] = record.tag - SEND_TAG
 				free_count += 1
+				if datagram.Status(record.kind) != .Ok {
+					sends_refused += 1
+					send_refusal_last = datagram.Status(record.kind)
+				}
 			}
 		}
 		deadline := exchange(arrived[:count])

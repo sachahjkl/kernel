@@ -34,6 +34,19 @@ PEER_QUIC_FLOOD :: 1000 // The datagrams of the flood that no key opens.
 // full before quic_echo releases the remotes that it refused, and a forged
 // datagram is dropped before it reaches the program.
 PEER_QUIC_FLOOD_PER_TICK :: 5
+// The datagrams of the flood that may wait for their answer: the server
+// answers each Initial with a Retry, and the peer reads one frame of the
+// machine in each tick. With no bound, the answers pile up in the socket of
+// the peer faster than it reads them, and the host drops them: the count
+// of the answers then says nothing of the server. The flood goes on after
+// PEER_QUIC_FLOOD_STALL with no new answer: the network service may drop a
+// datagram of the flood, which is allowed.
+PEER_QUIC_FLOOD_WAITING :: 32
+PEER_QUIC_FLOOD_STALL :: 50 * time.Millisecond
+// The flood of the fourth independent read: authentic Initials (anyone can
+// make one) with no token, 2 from each of 4 forged addresses. With Retry,
+// each one gets a Retry to its forged address, and takes no record.
+PEER_QUIC_SPOOFED :: 8
 // The time after the last datagram of the flood in which an answer can
 // still come: the Version Negotiation packet, or an answer to a forged
 // Initial, which must not come.
@@ -65,10 +78,15 @@ Peer_Quic :: struct {
 	read:          [PEER_QUIC_CAPACITY]int,
 	finished:      [PEER_QUIC_CAPACITY]bool,
 	expect_failure: bool, // The case passes when the handshake fails with bad_certificate.
-	vanish:        bool, // The client sends its first datagram, then nothing.
+	vanish:        bool, // The client takes the Retry, sends its Initial with the token, then nothing.
+	vanish_after_bytes: u64, // The bytes that the client of the vanish case had sent when it took the Retry.
 	flood_sent:    int,
 	flood_ended_at: time.Tick, // The last datagram of the flood went.
-	flood_answers: int, // Datagrams of the server to an address of the flood that no key opens: there must be none.
+	flood_answers: int, // Datagrams of the server to an address of the flood that are not a Retry: there must be none.
+	retry_answers: int, // Retry packets to the addresses of the flood: at most one for each Initial of the flood.
+	answer_bytes:  [PEER_QUIC_FLOOD + PEER_QUIC_SPOOFED]int, // The bytes of the answers to each address of the flood: at most 3 times the 1200 that it sent.
+	most_answer_bytes: int,
+	last_answer_at: time.Tick, // The last answer to the flood: the flood waits for its answers.
 	negotiation_answers: int, // Version Negotiation packets that name version 1.
 	failure:       string,
 	// Between the threads: the tool writes `wanted`, the peer writes `done`.
@@ -184,7 +202,10 @@ peer_quic_case_start :: proc(peer: ^Peer, state: ^Peer_Quic) -> bool {
 	state.dropped, state.reordered, state.repeated = 0, 0, 0
 	state.written, state.read, state.finished = {}, {}, {}
 	state.expect_failure, state.vanish = false, false
-	state.flood_sent, state.flood_answers, state.negotiation_answers = 0, 0, 0
+	state.flood_sent, state.flood_answers, state.negotiation_answers, state.retry_answers = 0, 0, 0, 0
+	state.answer_bytes, state.most_answer_bytes = {}, 0
+	state.last_answer_at = time.tick_now()
+	state.vanish_after_bytes = 0
 	state.failure = ""
 	state.client_count = 1
 	state.total = 1 << 20
@@ -298,12 +319,30 @@ clone_bytes :: proc(bytes: []u8) -> []u8 {
 peer_quic_datagram :: proc(peer: ^Peer, destination: [4]u8, port: u16, data: []u8) {
 	state := peer.quic
 	if peer_quic_flood_address(destination) {
+		state.last_answer_at = time.tick_now()
+		// The bytes to each address: 198.18.x.y is the datagram x * 256 + y of
+		// the flood; 198.19.1.z the spoofed Initials of z.
+		slot := -1
+		if destination[1] == 18 {
+			slot = int(destination[2]) << 8 | int(destination[3])
+		} else if destination[2] == 1 {
+			slot = PEER_QUIC_FLOOD + 2 * int(destination[3]) + int(port) % 2
+		}
+		if slot >= 0 && slot < len(state.answer_bytes) {
+			state.answer_bytes[slot] += len(data)
+			state.most_answer_bytes = max(state.most_answer_bytes, state.answer_bytes[slot])
+		}
 		// A Version Negotiation packet (version 0) that lists version 1, to
 		// the address that asked for another version; any other datagram to
 		// the flood is an answer to a forged Initial.
-		if destination == ([4]u8{198, 19, 0, 1}) && len(data) >= 7 && data[0] & 0x80 != 0 && be16(data, 1) == 0 && be16(data, 3) == 0 && be16(data, len(data) - 4) == 0 && be16(data, len(data) - 2) == 1 {
+		switch {
+		case destination == ([4]u8{198, 19, 0, 1}) && len(data) >= 7 && data[0] & 0x80 != 0 && be16(data, 1) == 0 && be16(data, 3) == 0 && be16(data, len(data) - 4) == 0 && be16(data, len(data) - 2) == 1:
 			state.negotiation_answers += 1
-		} else {
+		case len(data) >= 5 && len(data) <= 3 * quic.MAX_DATAGRAM_SIZE && data[0] & 0xF0 == 0xF0 && be16(data, 1) == 0 && be16(data, 3) == 1:
+			// A Retry of version 1 (the form, the fixed bit, the type 3),
+			// within 3 times the datagram that it answers.
+			state.retry_answers += 1
+		case:
 			state.flood_answers += 1
 		}
 		return
@@ -314,7 +353,8 @@ peer_quic_datagram :: proc(peer: ^Peer, destination: [4]u8, port: u16, data: []u
 	}
 	for index in 0 ..< state.client_count {
 		if state.ports[index] == port {
-			if state.vanish && index == 0 {
+			// The client of the vanish case takes the Retry, then nothing.
+			if state.vanish && index == 0 && state.clients[0].retried {
 				return
 			}
 			error: errors.Error_Record
@@ -327,8 +367,47 @@ peer_quic_datagram :: proc(peer: ^Peer, destination: [4]u8, port: u16, data: []u
 // peer_quic_flood sends a part of the flood at each tick: datagrams of 1200
 // random bytes shaped as Initials of version 1, each from its own address
 // of 198.18.0.0/15, then one long header of another version.
+// peer_quic_authentic_initial builds an authentic Initial of 1200 bytes,
+// with a PING and no token, for a Destination Connection ID: anyone can
+// make it, because its keys come from that identifier.
+@(private = "file")
+peer_quic_authentic_initial :: proc(state: ^Peer_Quic, identifier: [quic.CONNECTION_ID_SIZE]u8) -> (datagram: [quic.MAX_DATAGRAM_SIZE]u8) {
+	client_keys, server_keys: quic.Packet_Keys
+	error: errors.Error_Record
+	destination := identifier
+	quic.initial_keys(&state.cryptography, destination[:], &client_keys, &server_keys, &error)
+	at := 0
+	datagram[at] = quic.LONG_HEADER_FORM | quic.FIXED_BIT | 0x03
+	at += 1
+	datagram[at], datagram[at + 1], datagram[at + 2], datagram[at + 3] = 0, 0, 0, 1
+	at += 4
+	datagram[at] = quic.CONNECTION_ID_SIZE
+	at += 1
+	at += copy(datagram[at:], destination[:])
+	datagram[at], datagram[at + 1] = 0, 0 // No Source Connection ID, no token.
+	at += 2
+	frames_length := quic.MAX_DATAGRAM_SIZE - (at + 2 + 4) - quic.TAG_SIZE
+	at += quic.variable_length_integer_write(datagram[:], at, u64(4 + frames_length + quic.TAG_SIZE), 2)
+	datagram[at + 4] = quic.FRAME_PING
+	quic.packet_seal(&state.cryptography, &client_keys, datagram[:], 0, at, frames_length, 0, &error)
+	return
+}
+
 @(private = "file")
 peer_quic_flood :: proc(peer: ^Peer, state: ^Peer_Quic) {
+	if state.flood_sent == 0 {
+		// The spoofed authentic Initials, 2 from each of 4 addresses.
+		for index in 0 ..< PEER_QUIC_SPOOFED {
+			identifier: [quic.CONNECTION_ID_SIZE]u8
+			identifier[0], identifier[1] = 0x5F, u8(index)
+			datagram := peer_quic_authentic_initial(state, identifier)
+			peer_send(peer, peer_quic_udp(peer, {198, 19, 1, u8(index / 2)}, u16(40000 + index), datagram[:]))
+		}
+	}
+	waiting := state.flood_sent - state.retry_answers - state.flood_answers
+	if waiting >= PEER_QUIC_FLOOD_WAITING && time.tick_since(state.last_answer_at) < PEER_QUIC_FLOOD_STALL {
+		return
+	}
 	for _ in 0 ..< PEER_QUIC_FLOOD_PER_TICK {
 		if state.flood_sent >= PEER_QUIC_FLOOD {
 			break
@@ -386,8 +465,12 @@ peer_quic_tick :: proc(peer: ^Peer) {
 	buffer: [quic.MAX_DATAGRAM_SIZE]u8
 	for index in 0 ..< state.client_count {
 		client := &state.clients[index]
-		if state.vanish && index == 0 && client.bytes_sent > 0 {
-			continue
+		if state.vanish && index == 0 && client.retried {
+			if state.vanish_after_bytes == 0 {
+				state.vanish_after_bytes = client.bytes_sent
+			} else if client.bytes_sent > state.vanish_after_bytes {
+				continue
+			}
 		}
 		for _ in 0 ..< 64 {
 			length := quic.connection_datagram_send(client, buffer[:], now)
@@ -463,10 +546,11 @@ peer_quic_check :: proc(state: ^Peer_Quic, wanted: int) {
 			return
 		}
 	case state.vanish:
-		// The client sent its first datagram; the server ends the record at
-		// its handshake deadline (the scenario reads the log).
-		if client.bytes_sent > 0 {
-			state.result = "a client sent its first Initial and vanished"
+		// The client took the Retry and sent its Initial with the token: the
+		// server took a record, which it ends at the handshake deadline (the
+		// scenario reads the log).
+		if client.retried && state.vanish_after_bytes > 0 && client.bytes_sent > state.vanish_after_bytes {
+			state.result = "a client sent its Initial with the token of the Retry, and vanished"
 			peer_quic_end(state, wanted, true)
 			return
 		}
@@ -482,11 +566,22 @@ peer_quic_check :: proc(state: ^Peer_Quic, wanted: int) {
 		}
 		if done {
 			if state.flood_answers != 0 {
-				state.failure = fmt.aprintf("the server answered %d datagrams of the flood that no key opens", state.flood_answers)
+				state.failure = fmt.aprintf("the server answered %d datagrams of the flood with something else than a Retry", state.flood_answers)
 				peer_quic_end(state, wanted, false)
 				return
 			}
-			if state.name == "flood" && state.negotiation_answers != 1 {
+			// What must hold under a flood, which may drop datagrams: no
+			// record answers a forged address (any answer that is not a
+			// Retry fails above), the server answers, at most one Retry for
+			// each Initial, never more than 3 times the 1200 bytes that an
+			// address sent, and the real client got its echo (done). The
+			// count of Retries is reported.
+			if state.name == "flood" && (state.retry_answers == 0 || state.retry_answers > PEER_QUIC_FLOOD + PEER_QUIC_SPOOFED || state.most_answer_bytes > 3 * quic.MAX_DATAGRAM_SIZE) {
+				state.failure = fmt.aprintf("%d Retry packets to the flood (at most %d), the most bytes to one address %d (at most %d)", state.retry_answers, PEER_QUIC_FLOOD + PEER_QUIC_SPOOFED, state.most_answer_bytes, 3 * quic.MAX_DATAGRAM_SIZE)
+				peer_quic_end(state, wanted, false)
+				return
+			}
+			if state.name == "flood" && state.negotiation_answers > 1 {
 				state.failure = fmt.aprintf("%d Version Negotiation packets for one datagram of another version, not 1, %v after the last datagram of the flood; %d datagrams of the flood sent, %d answers to the flood", state.negotiation_answers, time.tick_since(state.flood_ended_at), state.flood_sent, state.flood_answers)
 				peer_quic_end(state, wanted, false)
 				return
@@ -494,7 +589,7 @@ peer_quic_check :: proc(state: ^Peer_Quic, wanted: int) {
 			for index in 0 ..< state.client_count {
 				quic.connection_close(&state.clients[index], 0, peer_quic_now(state))
 			}
-			state.result = fmt.aprintf("%d clients, %d bytes each way, srtt %d us; %d datagrams lost, %d reordered, %d repeated; %d datagrams of a flood, no answer", state.client_count, state.total, client.smoothed_round_trip, state.dropped, state.reordered, state.repeated, min(state.flood_sent, PEER_QUIC_FLOOD))
+			state.result = fmt.aprintf("%d clients, %d bytes each way, srtt %d us; %d datagrams lost, %d reordered, %d repeated; %d datagrams of a flood and %d spoofed Initials, %d Retries to it (the most bytes to one address %d), %d Version Negotiation packet", state.client_count, state.total, client.smoothed_round_trip, state.dropped, state.reordered, state.repeated, min(state.flood_sent, PEER_QUIC_FLOOD), PEER_QUIC_SPOOFED, state.retry_answers, state.most_answer_bytes, state.negotiation_answers)
 			peer_quic_end(state, wanted, true)
 			return
 		}

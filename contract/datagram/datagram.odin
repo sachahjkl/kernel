@@ -14,7 +14,9 @@
 //                        remote that sent a datagram of LISTEN_FIRST_LEAST
 //                        bytes at least to that port, ADMITTED_CAPACITY at
 //                        most, until the program releases it (a QUIC
-//                        server: docs/QUIC.md, section 6).
+//                        server: docs/QUIC.md, section 6). To a remote that
+//                        the program did not validate, it sends at most 3
+//                        times the bytes that came from that remote.
 //   a segment endpoint   TCP: the program writes and reads whole segments
 //                        (support/tcp); the network service writes the IPv4
 //                        header and keeps no state of a connection. A client
@@ -134,6 +136,16 @@ Command :: enum u32 {
 	// refused until it is admitted again. The completion: values[0] 1 if the
 	// remote was admitted, else 0.
 	Release    = 8,
+	// A UDP listen grant: values[0], values[1]: the address and the port of
+	// an admitted remote that proved its address to the program (a QUIC
+	// server: a token of its Retry). Until then, the network service sends
+	// to that remote at most 3 times the bytes that came from it (status
+	// Amplification). A program that validates each remote removes that
+	// limit for the remotes that sent to it; it still reaches no address
+	// that did not send it a datagram, and a remote with no datagram for
+	// 120 s loses its place. The completion: values[0] 1 if the remote was
+	// admitted, else 0.
+	Validate   = 9,
 }
 
 // The status of a request: the kind of its completion record. When it is
@@ -154,6 +166,11 @@ Status :: enum u32 {
 	No_Answer    = 6, // No_Answer: value the address, limit the milliseconds waited, found what did not answer.
 	Link_Down    = 7, // Link_Down.
 	Busy         = 8, // Busy, unit Requests: too many requests of this kind in flight. limit: the most.
+	// Over_Limit, unit Bytes: a Send of a UDP listen grant to a remote that
+	// is not validated would pass 3 times the bytes that came from it.
+	// value: the bytes that the remote would have received; limit: 3 times
+	// the bytes that came from it.
+	Amplification = 9,
 }
 
 // The command of the control ring, from the root service to the network
@@ -282,6 +299,7 @@ COMMAND_NAMES := [Command]string {
 	.Statistics = "Statistics",
 	.Problems = "Problems",
 	.Release = "Release",
+	.Validate = "Validate",
 }
 
 command_name :: proc "contextless" (command: i64) -> string {
@@ -309,7 +327,7 @@ argument_name :: proc "contextless" (command: i64, argument: i64) -> string {
 	case .Problems:
 		names := [?]string{"place", "room"}
 		return argument <= len(names) ? names[argument - 1] : ""
-	case .Release:
+	case .Release, .Validate:
 		names := [?]string{"address", "port"}
 		return argument <= len(names) ? names[argument - 1] : ""
 	}

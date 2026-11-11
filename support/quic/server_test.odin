@@ -100,9 +100,9 @@ harness_seed :: proc(first: u8) -> (seed: [random.SEED_SIZE]u8) {
 // client, for the message of a failure.
 harness_describe :: proc(harness: ^Harness) -> string {
 	counters := harness.server.counters
-	text := fmt.tprintf("server: accepted %d, ended %d, datagrams %d, unreadable %d, not authentic %d, too small %d, refused by the limit of a remote %d, by the limit of the handshakes %d, table full %d, from another remote %d, of no connection %d, version negotiations %d; records in use %d; clients that did not start %d; clients:", counters.accepted, counters.ended, counters.datagrams, counters.unreadable, counters.not_authentic, counters.too_small, counters.refused_remote_limit, counters.refused_handshake_limit, counters.refused_full, counters.other_remote, counters.no_connection, counters.version_negotiations, server_connections_in_use(&harness.server), harness.clients_not_started)
+	text := fmt.tprintf("server: accepted %d, ended %d, datagrams %d, unreadable %d, Retries %d, tokens refused %d, tokens expired %d, not authentic %d, too small %d, refused by the limit of a remote %d, by the limit of the handshakes %d, table full %d, over the budget %d, from another remote %d, of no connection %d, version negotiations %d; records in use %d; clients that did not start %d; clients:", counters.accepted, counters.ended, counters.datagrams, counters.unreadable, counters.retries, counters.tokens_refused, counters.tokens_expired, counters.not_authentic, counters.too_small, counters.refused_remote_limit, counters.refused_handshake_limit, counters.refused_full, counters.over_budget, counters.other_remote, counters.no_connection, counters.version_negotiations, server_connections_in_use(&harness.server), harness.clients_not_started)
 	for &client, index in harness.clients {
-		text = fmt.tprintf("%s [%d: %v, closed with %x, by the handshake deadline %v, by the idle timeout %v, %d bytes sent, %d received]", text, index, client.state, client.close_error_code, client.closed_by_handshake_timeout, client.closed_by_idle_timeout, client.bytes_sent, client.bytes_received)
+		text = fmt.tprintf("%s [%d: %v, a Retry taken %v, closed with %x, by the handshake deadline %v, by the idle timeout %v, %d bytes sent, %d received]", text, index, client.state, client.retried, client.close_error_code, client.closed_by_handshake_timeout, client.closed_by_idle_timeout, client.bytes_sent, client.bytes_received)
 	}
 	return text
 }
@@ -273,7 +273,7 @@ forged_initial :: proc(state: ^u64) -> [MAX_DATAGRAM_SIZE]u8 {
 // An authentic Initial of 1200 bytes with a PING and no ClientHello, for a
 // Destination Connection ID: anyone can make it, because its keys come from
 // that identifier.
-authentic_initial :: proc(cryptography: ^Cryptography, destination: [CONNECTION_ID_SIZE]u8) -> [MAX_DATAGRAM_SIZE]u8 {
+authentic_initial :: proc(cryptography: ^Cryptography, destination: [CONNECTION_ID_SIZE]u8, token: []u8 = nil) -> [MAX_DATAGRAM_SIZE]u8 {
 	client_keys, server_keys: Packet_Keys
 	error: errors.Error_Record
 	identifier := destination
@@ -289,8 +289,8 @@ authentic_initial :: proc(cryptography: ^Cryptography, destination: [CONNECTION_
 	at += copy(datagram[at:], identifier[:])
 	datagram[at] = 0 // An empty Source Connection ID.
 	at += 1
-	datagram[at] = 0 // An empty token.
-	at += 1
+	at += variable_length_integer_write(datagram[:], at, u64(len(token)), variable_length_integer_size(u64(len(token))))
+	at += copy(datagram[at:], token)
 	frames_length := MAX_DATAGRAM_SIZE - (at + 2 + PACKET_NUMBER_SIZE) - TAG_SIZE
 	at += variable_length_integer_write(datagram[:], at, u64(PACKET_NUMBER_SIZE + frames_length + TAG_SIZE), 2)
 	datagram[at + PACKET_NUMBER_SIZE] = FRAME_PING // Then PADDING: zeros.
@@ -396,11 +396,9 @@ clients_of_one_address_wait_their_turn :: proc(t: ^testing.T) {
 }
 
 // A flood: 1000 datagrams shaped as Initials, from 1000 addresses, which no
-// key opens, and 5 authentic Initials (with no ClientHello) from each of 3
-// addresses. No forged datagram takes a record, and each one has its remote
-// released; the authentic ones take 2 records for each address, the limit
-// of the handshakes of one address. Then the real client connects, and the
-// handshake deadline frees the 6 records that wait.
+// key opens, and 15 authentic Initials from 3 addresses. None carries a
+// token: each one gets a Retry, and none takes a record or costs the open
+// of an Initial. Then the real client connects through its own Retry.
 @(test)
 a_flood_of_forged_initials :: proc(t: ^testing.T) {
 	harness := harness_make(1)
@@ -414,8 +412,6 @@ a_flood_of_forged_initials :: proc(t: ^testing.T) {
 		outcome := harness_server_receive(harness, remote, forged[:])
 		testing.expect(t, outcome.record < 0 && outcome.release_remote)
 	}
-	testing.expectf(t, harness.server.counters.not_authentic == 1000, "%v, not %v; %s", harness.server.counters.not_authentic, 1000, harness_describe(harness))
-	testing.expectf(t, server_connections_in_use(&harness.server) == 0, "%v, not %v; %s", server_connections_in_use(&harness.server), 0, harness_describe(harness))
 	for address in 0 ..< 3 {
 		for index in 0 ..< 5 {
 			identifier: [CONNECTION_ID_SIZE]u8
@@ -424,37 +420,77 @@ a_flood_of_forged_initials :: proc(t: ^testing.T) {
 			harness_server_receive(harness, {u32(0x0C00_0000 + address), u16(40_000 + index)}, datagram[:])
 		}
 	}
-	testing.expectf(t, server_connections_in_use(&harness.server) == 6, "%v, not %v; %s", server_connections_in_use(&harness.server), 6, harness_describe(harness))
-	testing.expectf(t, harness.server.counters.refused_remote_limit == 9, "%v, not %v; %s", harness.server.counters.refused_remote_limit, 9, harness_describe(harness))
-	testing.expectf(t, harness.server.counters.authenticity_checks == 1015, "%v, not %v; %s", harness.server.counters.authenticity_checks, 1015, harness_describe(harness))
+	testing.expectf(t, server_connections_in_use(&harness.server) == 0, "%s", harness_describe(harness))
+	testing.expectf(t, harness.server.counters.retries == 1015, "%s", harness_describe(harness))
+	testing.expectf(t, harness.server.counters.authenticity_checks == 0, "%s", harness_describe(harness))
 	start := harness.now
 	ended := harness_run(t, harness, 4096, 30_000_000)
 	testing.expectf(t, ended == 1, "%d clients ended their echo, not 1; %s", ended, harness_describe(harness))
-	// The 6 records of the authentic flood end at the handshake deadline.
-	for harness.now < start + 2 * HANDSHAKE_TIME_LIMIT && server_connections_in_use(&harness.server) > 1 {
-		harness_step(harness)
-	}
-	testing.expectf(t, server_connections_in_use(&harness.server) == 1, "%v, not %v; %s", server_connections_in_use(&harness.server), 1, harness_describe(harness))
-	testing.expectf(t, harness_was_released(harness, {0x0C00_0000, 40_000}), "%s", harness_describe(harness))
-	testing.expectf(t, harness.most_in_use <= 7, "%s", harness_describe(harness))
+	testing.expectf(t, harness.server.counters.accepted == 1 && harness.most_in_use == 1, "%s", harness_describe(harness))
+	testing.expectf(t, harness.now - start < 1_000_000, "the client connected after %d us; %s", harness.now - start, harness_describe(harness))
 }
 
-// A client that vanishes after its first datagram: the handshake deadline
-// ends its record, and its remote is released.
+// The flood of the fourth independent read: 8 authentic Initials, 2 from
+// each of 4 forged addresses, every 10 s. Each one gets a Retry to its
+// forged address, and no record. A real client that starts in the middle
+// of it, 15 s in, at the time of a new round, connects at once. Before
+// Retry, these 8 Initials held the 8 handshake places for ever.
+@(test)
+spoofed_authentic_initials_take_no_record :: proc(t: ^testing.T) {
+	harness := harness_make(1)
+	defer harness_free(harness)
+	testing.expectf(t, harness.clients_not_started == 0, "%s", harness_describe(harness))
+	// The client of harness_make waits: the real client starts later.
+	harness.vanished[0] = true
+	round := 0
+	attack :: proc(harness: ^Harness, round: int) {
+		for index in 0 ..< 8 {
+			identifier: [CONNECTION_ID_SIZE]u8
+			identifier[0], identifier[1] = u8(round), u8(index)
+			datagram := authentic_initial(&harness.cryptography, identifier)
+			harness_server_receive(harness, {u32(0x0D00_0000 + index / 2), u16(40_000 + index)}, datagram[:])
+		}
+	}
+	start := harness.now
+	for harness.now < start + 15_000_000 {
+		if harness.now >= start + u64(round) * 10_000_000 {
+			attack(harness, round)
+			round += 1
+		}
+		harness_step(harness)
+		testing.expectf(t, server_connections_in_use(&harness.server) == 0, "%s", harness_describe(harness))
+	}
+	harness.vanished[0] = false
+	clear(&harness.queue)
+	error: errors.Error_Record
+	testing.expect(t, connection_start_client(&harness.clients[0], &harness.client_configuration, &harness.cryptography, &harness.client_generators[0], harness.now, &error))
+	attack(harness, round)
+	connected_at := harness.now
+	ended := harness_run(t, harness, 4096, 30_000_000)
+	testing.expectf(t, ended == 1, "%d clients ended their echo, not 1; %s", ended, harness_describe(harness))
+	testing.expectf(t, harness.now - connected_at < 1_000_000, "the client ended its echo after %d us; %s", harness.now - connected_at, harness_describe(harness))
+	testing.expectf(t, harness.server.counters.retries >= 24 && harness.server.counters.accepted == 1 && harness.most_in_use == 1, "%s", harness_describe(harness))
+}
+
+// A client that vanishes after it came back with its token: its record
+// ends at the handshake deadline, and its remote is released.
 @(test)
 a_client_that_vanishes_in_the_handshake :: proc(t: ^testing.T) {
 	harness := harness_make(1)
 	defer harness_free(harness)
-	// Each client started: its generator took its seed.
 	testing.expectf(t, harness.clients_not_started == 0, "%s", harness_describe(harness))
-	harness_step(harness) // The first datagram of the client leaves.
+	for harness.server.counters.accepted == 0 && harness.now < 1_000_000 + HANDSHAKE_TIME_LIMIT {
+		harness_step(harness)
+	}
 	harness.vanished[0] = true
+	clear(&harness.queue)
 	for harness.now < 1_000_000 + 2 * HANDSHAKE_TIME_LIMIT && harness.server.counters.ended == 0 {
 		harness_step(harness)
 	}
-	testing.expectf(t, harness.server.counters.accepted == 1, "%v, not %v; %s", harness.server.counters.accepted, 1, harness_describe(harness))
-	testing.expectf(t, harness.server.counters.ended == 1, "%v, not %v; %s", harness.server.counters.ended, 1, harness_describe(harness))
-	testing.expectf(t, server_connections_in_use(&harness.server) == 0, "%v, not %v; %s", server_connections_in_use(&harness.server), 0, harness_describe(harness))
+	testing.expectf(t, harness.server.counters.retries == 1, "%s", harness_describe(harness))
+	testing.expectf(t, harness.server.counters.accepted == 1, "%s", harness_describe(harness))
+	testing.expectf(t, harness.server.counters.ended == 1, "%s", harness_describe(harness))
+	testing.expectf(t, server_connections_in_use(&harness.server) == 0, "%s", harness_describe(harness))
 	testing.expectf(t, harness_was_released(harness, harness.client_remotes[0]), "%s", harness_describe(harness))
 	testing.expectf(t, harness.connections[0].closed_by_handshake_timeout, "%s", harness_describe(harness))
 }

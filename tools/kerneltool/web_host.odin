@@ -31,6 +31,7 @@ GUEST_ADDRESS :: "10.0.2.100" // The address of the listener on the network of t
 
 Forward :: struct {
 	host_port: int, // hostfwd: this port of the loopback of the host is the port 80 of the machine.
+	quic_port: int, // hostfwd of UDP: this port of the loopback of the host is the UDP port 4433 of the machine (quic_real.odin).
 	listener:  ^Listener,
 }
 

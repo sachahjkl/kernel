@@ -102,6 +102,11 @@ peer_start :: proc(peer: ^Peer, call_port := 0) -> bool {
 	// The receive of the frames ends each 1 ms: the TCP case of the peer
 	// (peer_tcp.odin) runs its timers between two frames.
 	_ = net.set_option(socket, .Receive_Timeout, 1 * time.Millisecond)
+	// The machine can answer faster than the peer reads one frame in each
+	// tick (a flood of QUIC Initials gets one Retry each). The host may hold
+	// the buffer under this size (net.core.rmem_max): the QUIC flood also
+	// waits for its answers (peer_quic.odin).
+	_ = net.set_option(socket, .Receive_Buffer_Size, 4 << 20)
 	calls, calls_err := net.make_bound_udp_socket(net.IP4_Loopback, call_port)
 	if calls_err != nil {
 		fmt.eprintfln("kerneltool: the peer cannot receive call requests on 127.0.0.1 port %d: %v", call_port, calls_err)

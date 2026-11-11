@@ -62,7 +62,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 	interface.label_value_line(&frame, interface.column_take(&column, LINE), "public key", hex_text(key[:], public_key[:]), graphics.COLOR_TEXT, 120)
 	interface.label_value_line(&frame, interface.column_take(&column, LINE), "UDP port", number_text(&builder, u64(listen_port), ", Ed25519, a raw public key that a client pins"), graphics.COLOR_TEXT, 120)
 
-	content = interface.card(&frame, {8, 116, WIDTH - 16, 340}, "THE CONNECTIONS", "one stream each: each byte goes back", graphics.COLOR_MACHINE)
+	content = interface.card(&frame, {8, 116, WIDTH - 16, 284}, "THE CONNECTIONS", "one stream each: each byte goes back", graphics.COLOR_MACHINE)
 	column = interface.column_of(content)
 	cells: [5]interface.Area
 	sizes := [5]interface.Size{interface.characters(24), interface.characters(24), interface.share(), interface.share(), interface.characters(12)}
@@ -86,12 +86,14 @@ draw :: proc "contextless" (window: ^display.Window) {
 		interface.cell_text(&frame, cells[4], number_text(&builder, connection.smoothed_round_trip, " us"), graphics.COLOR_TEXT, .Right)
 	}
 
-	content = interface.card(&frame, {8, 464, WIDTH - 16, HEIGHT - 472}, "WHAT THE SERVER COUNTED", "since its start", graphics.COLOR_KERNEL)
+	content = interface.card(&frame, {8, 408, WIDTH - 16, HEIGHT - 416}, "WHAT THE SERVER COUNTED", "since its start", graphics.COLOR_KERNEL)
 	column = interface.column_of(content)
 	counters := server.counters
 	interface.label_value_line(&frame, interface.column_take(&column, LINE), "accepted", number_text(&builder, counters.accepted, " connections, each with an authentic Initial"), graphics.COLOR_TEXT, 200)
 	interface.label_value_line(&frame, interface.column_take(&column, LINE), "ended", number_text(&builder, counters.ended, " connections"), graphics.COLOR_TEXT, 200)
-	interface.label_value_line(&frame, interface.column_take(&column, LINE), "not authentic", number_text(&builder, counters.not_authentic, " Initials that no key opens: no record touched"), graphics.COLOR_TEXT, 200)
+	interface.label_value_line(&frame, interface.column_take(&column, LINE), "Retries", number_text(&builder, counters.retries, " Initials with no token: a Retry, no record kept"), graphics.COLOR_TEXT, 200)
+	interface.label_value_line(&frame, interface.column_take(&column, LINE), "refused tokens", number_text(&builder, counters.tokens_refused + counters.tokens_expired + counters.not_authentic, " Initials: a token of another address, too old, or a packet that does not open"), graphics.COLOR_TEXT, 200)
+	interface.label_value_line(&frame, interface.column_take(&column, LINE), "over the budget", number_text(&builder, counters.over_budget, " datagrams of new identifiers, dropped before any cryptography"), graphics.COLOR_TEXT, 200)
 	interface.label_value_line(&frame, interface.column_take(&column, LINE), "refused by a limit", number_text(&builder, counters.refused_remote_limit + counters.refused_handshake_limit + counters.refused_full, " Initials (each try of a client counts): one address, the handshakes, a full table"), graphics.COLOR_TEXT, 200)
 	interface.label_value_line(&frame, interface.column_take(&column, LINE), "datagrams", number_text(&builder, counters.datagrams, " received"), graphics.COLOR_TEXT, 200)
 	interface.window_frame_end(&drawing, &frame, window)

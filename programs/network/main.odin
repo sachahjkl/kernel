@@ -358,10 +358,16 @@ command :: proc "contextless" (endpoint: ^Endpoint, index: int, record: ring.Rec
 			return true
 		}
 		if !endpoint.tcp && endpoint.grant.listen {
-			// A UDP listen grant answers only an admitted remote, and keeps
-			// its place alive.
-			if !network.admitted_find(&endpoint.admitted, u32(values[2]), u16(values[3]), now) {
+			// A UDP listen grant answers only an admitted remote, and sends to
+			// a remote that did not prove its address at most 3 times the
+			// bytes that came from it. A send does not keep a place alive.
+			allowed, admitted, send_limit, would_send := network.admitted_send_allowed(&endpoint.admitted, u32(values[2]), u16(values[3]), count)
+			if !admitted {
 				complete(endpoint, tag, .Not_Granted, not_granted(kind, 3, u32(values[2]), u16(values[3]), 0))
+				return true
+			}
+			if !allowed {
+				complete(endpoint, tag, .Amplification, errors.ring_fail(kind, .Over_Limit, .Bytes, 2, i64(min(would_send, 1 << 62)), i64(min(send_limit, 1 << 62))))
 				return true
 			}
 		} else if !endpoint.tcp && !granted(endpoint, tag, values[2], values[3], true, kind, 3) {
@@ -471,6 +477,13 @@ command :: proc "contextless" (endpoint: ^Endpoint, index: int, record: ring.Rec
 		}
 		released := network.admitted_release(&endpoint.admitted, u32(values[0]), u16(values[1]))
 		complete(endpoint, tag, .Ok, {0 = u64(released)})
+	case .Validate:
+		if !endpoint.grant.listen || endpoint.tcp {
+			complete(endpoint, tag, .Bad_Command, errors.ring_fail(kind, .Unsupported, .None, 0, i64(kind)))
+			return true
+		}
+		validated := network.admitted_validate(&endpoint.admitted, u32(values[0]), u16(values[1]))
+		complete(endpoint, tag, .Ok, {0 = u64(validated)})
 	case:
 		complete(endpoint, tag, .Bad_Command, errors.ring_fail(kind, .Unsupported, .None, 0, i64(kind)))
 	}
@@ -639,7 +652,7 @@ udp_endpoint_of :: proc "contextless" (port: u16) -> ^Endpoint {
 // a Receive waits for it: the rules of the TCP listen grant, with the size
 // in the place of the SYN.
 udp_remote_admitted :: proc "contextless" (endpoint: ^Endpoint, packet: network.Packet, now: u64) -> bool {
-	if network.admitted_find(&endpoint.admitted, packet.source_address, packet.source_port, now) {
+	if network.admitted_received(&endpoint.admitted, packet.source_address, packet.source_port, u64(len(packet.data)), now) {
 		return true
 	}
 	offset := u16(network.ETHERNET_HEADER + network.IPV4_HEADER)
@@ -657,6 +670,9 @@ udp_remote_admitted :: proc "contextless" (endpoint: ^Endpoint, packet: network.
 		network.problem_count(&endpoint.problems, {kind = .Full, layer = .Udp, offset = offset, value = u32(packet.source_port), limit = datagram.ADMITTED_CAPACITY}, .Endpoint)
 		return false
 	}
+	// The bytes of the first datagram count for the limit of what goes to
+	// this remote.
+	network.admitted_received(&endpoint.admitted, packet.source_address, packet.source_port, u64(len(packet.data)), now)
 	return true
 }
 

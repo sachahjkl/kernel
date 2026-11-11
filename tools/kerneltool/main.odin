@@ -78,7 +78,7 @@ Command :: struct {
 COMMANDS :: [?]Command {
 	{name = "build", about = "the modules, the boot image and the boot program, as " + BOOT_PROGRAM + "; one process for each module, as many at once as the processors, or `build <processes>`", run = run_build},
 	{name = "module", about = "module <name> with_checks|without_checks measure_run|usual_run: build one module of the table (the parallel build runs this command)", run = run_module},
-	{name = "test", about = "build, start the machine under QEMU, act as the person, check the log, save pictures of the screen; `test network`, `test main`, `test power`, `test tcp`, `test quic`: one part only", run = run_test},
+	{name = "test", about = "build, start the machine under QEMU, act as the person, check the log, save pictures of the screen; `test network`, `test main`, `test power`, `test tcp`, `test quic`, `test quic-real`: one part only", run = run_test},
 	{name = "run", about = "build, then start the machine under QEMU, with the log of the kernel on this terminal; `run without_checks`: the measure build", run = run_machine},
 	{name = "screenshots", about = "test, then copy the pictures to " + DOCUMENT_SCREENSHOT_FOLDER + " and to a new folder of " + DEVELOPMENT_LOG_FOLDER, run = run_screenshots},
 	{name = "measure", about = "build, start the machine, run the measures of the locks of the kernel with no other program, and stop: the numbers are in " + TEST_OUTPUT_MEASURE + "; `measure scheduler N`: the program scheduler N times; `measure windows`: each window that the interface package draws, alone, and a table of the time of its pictures; `measure without_checks ...`: the measure build, with no check in the kernel (no lock order check, no check of the frames)", run = run_measure},
@@ -267,6 +267,12 @@ run_test :: proc(args: []string) -> int {
 	// `test quic`: the machine of QUIC through the network service only.
 	if len(args) == 1 && args[0] == "quic" {
 		return quic_tests_run() ? 0 : EXIT_FAILURE
+	}
+	// `test quic-real`: the QUIC client of OpenSSL against quic_echo, through
+	// QEMU user networking. Not in the whole test until a first run settled
+	// the two points that quic_real.odin names.
+	if len(args) == 1 && args[0] == "quic-real" {
+		return quic_real_tests_run() ? 0 : EXIT_FAILURE
 	}
 	if !machine_test(scenario_fails[:], BOOT_VOLUME_FAILS, TEST_OUTPUT_FAILS, 0) || !machine_test(scenario_shortage[:], BOOT_VOLUME_SHORTAGE, TEST_OUTPUT_SHORTAGE, MACHINE_STOP_OK, TEST_DATA_DISK) || !self_tests_run() || !machine_test(scenario[:], BOOT_VOLUME, TEST_OUTPUT, MACHINE_STOP_OK, TEST_DATA_DISK) || !machine_test(scenario_network[:], BOOT_VOLUME, TEST_OUTPUT_NETWORK, MACHINE_STOP_OK, TEST_DATA_DISK) || !tcp_tests_run() || !quic_tests_run() || !random_tests_run() || !cryptography_tests_run() || !persistence_run() || !power_loss_run() || !test_modules() || !test_descriptions() {
 		return EXIT_FAILURE
@@ -482,7 +488,7 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 		"-net",
 		"none", // No other network device than the one below.
 		"-netdev",
-		forward.host_port != 0 ? fmt.tprintf("user,id=network,restrict=on,hostfwd=tcp:127.0.0.1:%d-10.0.2.15:80,guestfwd=tcp:%s:80-tcp:127.0.0.1:%d", forward.host_port, GUEST_ADDRESS, forward.listener.port) : fmt.tprintf("dgram,id=network,remote.type=inet,remote.host=127.0.0.1,remote.port=%d,local.type=inet,local.host=127.0.0.1,local.port=%d", peer.port, peer.machine.port),
+		forward.host_port != 0 ? fmt.tprintf("user,id=network,restrict=on,hostfwd=tcp:127.0.0.1:%d-10.0.2.15:80,hostfwd=udp:127.0.0.1:%d-10.0.2.15:%d,guestfwd=tcp:%s:80-tcp:127.0.0.1:%d", forward.host_port, forward.quic_port, QUIC_SERVER_PORT, GUEST_ADDRESS, forward.listener.port) : fmt.tprintf("dgram,id=network,remote.type=inet,remote.host=127.0.0.1,remote.port=%d,local.type=inet,local.host=127.0.0.1,local.port=%d", peer.port, peer.machine.port),
 	)
 	if forward.host_port != 0 {
 		// Each frame of the device, with its time, for the tool after the run

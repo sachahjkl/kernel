@@ -138,3 +138,42 @@ admitted_remote_at_the_longest_gap_of_tcp :: proc(t: ^testing.T) {
 	// A time before the time of a place (a clock that went back) takes no place.
 	testing.expect(t, !admitted_add(&table, 0x0A000204, 40000, 500))
 }
+
+// A UDP listen grant sends to a remote that did not prove its address at
+// most 3 times the bytes that came from it; a send keeps no place alive; a
+// remote that the program validated has no such limit. Before, a send to
+// an admitted remote had no limit and kept its place for ever.
+@(test)
+admitted_remote_amplification_limit :: proc(t: ^testing.T) {
+	table: Admitted
+	testing.expect(t, admitted_add(&table, 0x0A000202, 40000, 1000))
+	testing.expect(t, admitted_received(&table, 0x0A000202, 40000, 1200, 1000))
+	allowed, admitted, limit, _ := admitted_send_allowed(&table, 0x0A000202, 40000, 3000)
+	testing.expect(t, allowed && admitted && limit == 3600)
+	allowed, admitted, limit, _ = admitted_send_allowed(&table, 0x0A000202, 40000, 601)
+	testing.expect(t, !allowed && admitted)
+	allowed, _, _, _ = admitted_send_allowed(&table, 0x0A000202, 40000, 600)
+	testing.expect(t, allowed)
+	// A second datagram of the remote: 3 times more.
+	testing.expect(t, admitted_received(&table, 0x0A000202, 40000, 100, 1000))
+	allowed, _, _, _ = admitted_send_allowed(&table, 0x0A000202, 40000, 300)
+	testing.expect(t, allowed)
+	allowed, _, _, _ = admitted_send_allowed(&table, 0x0A000202, 40000, 1)
+	testing.expect(t, !allowed)
+	// Validated: no limit.
+	testing.expect(t, admitted_validate(&table, 0x0A000202, 40000))
+	allowed, _, _, _ = admitted_send_allowed(&table, 0x0A000202, 40000, 1_000_000)
+	testing.expect(t, allowed)
+	testing.expect(t, !admitted_validate(&table, 0x0A000203, 40000))
+	_, admitted, _, _ = admitted_send_allowed(&table, 0x0A000203, 40000, 1)
+	testing.expect(t, !admitted)
+	// Sends do not keep a place: with the table full, the place of this
+	// remote, whose last datagram came at 1000, serves again after
+	// ADMITTED_IDLE, though the program sent to it later.
+	for index in 1 ..< datagram.ADMITTED_CAPACITY {
+		testing.expect(t, admitted_add(&table, 0x0A000204, u16(index), 1000 + ADMITTED_IDLE))
+	}
+	admitted_send_allowed(&table, 0x0A000202, 40000, 1)
+	testing.expect(t, admitted_add(&table, 0x0A000205, 1, 1000 + ADMITTED_IDLE + 1))
+	testing.expect(t, !admitted_received(&table, 0x0A000202, 40000, 1, 1000 + ADMITTED_IDLE + 1))
+}
