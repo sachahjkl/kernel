@@ -113,9 +113,8 @@ module_path :: proc(name: string) -> string {
 }
 
 build_modules :: proc() -> bool {
-	for build in module_builds {
-		build_module(build) or_return
-	}
+	// One process for each module, several at once (parallel_build.odin).
+	build_modules_in_parallel() or_return
 	// The pointer themes: the resources of the boot image (pointers.odin).
 	resources := build_pointer_themes(os.get_env(POINTER_THEME_SOURCE_VARIABLE, context.temp_allocator), false) or_return
 	// The glyph cache of the default font: one more resource (vector_fonts.odin).

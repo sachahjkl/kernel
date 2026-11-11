@@ -165,11 +165,14 @@ free_results :: proc(results: ^Distinct_Results) {
 // of each output.
 run_repeat :: proc(args: []string) -> int {
 	count, parsed := 0, false
-	if len(args) == 2 {
+	if len(args) == 2 || (len(args) == 3 && args[0] == "all") {
 		count, parsed = strconv.parse_int(args[1])
 	}
+	if len(args) == 3 && parsed {
+		parsed = parse_module_build_processes(args[2])
+	}
 	if !parsed || count < 2 {
-		fmt.eprintln("kerneltool: repeat <module> <count>, or repeat all <count>, with a count of 2 or more")
+		fmt.eprintln("kerneltool: repeat <module> <count>, or repeat all <count> [processes], with a count of 2 or more")
 		return EXIT_USAGE
 	}
 	if args[0] == "all" {

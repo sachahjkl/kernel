@@ -74,7 +74,8 @@ Command :: struct {
 }
 
 COMMANDS :: [?]Command {
-	{name = "build", about = "the modules, the boot image and the boot program, as " + BOOT_PROGRAM, run = run_build},
+	{name = "build", about = "the modules, the boot image and the boot program, as " + BOOT_PROGRAM + "; one process for each module, as many at once as the processors, or `build <processes>`", run = run_build},
+	{name = "module", about = "module <name> with_checks|without_checks: build one module of the table (the parallel build runs this command)", run = run_module},
 	{name = "test", about = "build, start the machine under QEMU, act as the person, check the log, save pictures of the screen; `test network`, `test main`, `test power`: one part only", run = run_test},
 	{name = "run", about = "build, then start the machine under QEMU, with the log of the kernel on this terminal; `run without_checks`: the measure build", run = run_machine},
 	{name = "screenshots", about = "test, then copy the pictures to " + DOCUMENT_SCREENSHOT_FOLDER + " and to a new folder of " + DEVELOPMENT_LOG_FOLDER, run = run_screenshots},
@@ -85,7 +86,7 @@ COMMANDS :: [?]Command {
 	{name = "vector_fonts", about = "subset the vector font candidates of " + VECTOR_FONT_SOURCES_VARIABLE + " to " + VECTOR_FONT_FOLDER + " and draw " + CANDIDATES_PICTURE, run = run_vector_fonts},
 	{name = "portrait", about = "convert " + PORTRAIT_SOURCE + " to " + PORTRAIT_OUTPUT, run = run_portrait},
 	{name = "call", about = "call \"service.export(arguments)\": call an export of a service of the machine that `run` started, through the program remote, and print the typed result", run = run_call},
-	{name = "repeat", about = "repeat <module> <count>: build one module again and again, with no machine, and count the distinct modules, LLVM IR files and objects; `repeat all <count>`: every module and the boot program, one row each", run = run_repeat},
+	{name = "repeat", about = "repeat <module> <count>: build one module again and again, with no machine, and count the distinct modules, LLVM IR files and objects; `repeat all <count> [processes]`: every module and the boot program, one row each", run = run_repeat},
 	{name = "cryptography-take", about = "cryptography-take <file under the root of Odin> <file of the repository>: copy a file of core:crypto with the listed import changes, and print its line of the manifest", run = run_cryptography_take},
 	{name = "cryptography-origin", about = "check that each file of " + CRYPTOGRAPHY_MANIFEST + " is its origin in Odin with the listed changes only", run = run_cryptography_origin},
 	{name = "check", about = "odin check -vet and odin test of the host code, then test", run = run_check},
@@ -127,6 +128,11 @@ usage :: proc() {
 // which contains the kernel module and a boot image. It builds a second
 // boot program for the test of a start that fails.
 run_build :: proc(args: []string) -> int {
+	// `build <processes>`: the count of module processes at once.
+	if len(args) > 1 || (len(args) == 1 && !parse_module_build_processes(args[0])) {
+		fmt.eprintln("kerneltool: build [processes]")
+		return EXIT_USAGE
+	}
 	if !build_modules() || !build_boot_program("boot_fails.image", BOOT_VOLUME_FAILS, 0) {
 		return EXIT_FAILURE
 	}
