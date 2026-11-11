@@ -204,7 +204,8 @@ golden_glyph_cache :: proc(t: ^testing.T) {
 	for size_entry, index in cache.sizes {
 		hash: u64 = 0xCBF2_9CE4_8422_2325
 		for glyph in cache.glyphs[size_entry.first_glyph:][:cache.header.character_count] {
-			words := cache.words[glyph.word_offset:][:int(glyph.row_count) * int(size_entry.cell_width)]
+			testing.expect(t, glyph.left == 0 && glyph.width == size_entry.cell_width) // A monospace cache: each glyph is its cell.
+			words := cache.words[glyph.word_offset:][:int(glyph.row_count) * int(glyph.width)]
 			hash = (hash ~ u64(glyph.first_row) << 16 ~ u64(glyph.row_count)) * 0x0000_0100_0000_01B3
 			for word in words {
 				hash = (hash ~ u64(word)) * 0x0000_0100_0000_01B3

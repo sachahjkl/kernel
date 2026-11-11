@@ -40,6 +40,7 @@ Font_File :: struct {
 	hmtx, loca, glyf:    Table,
 	character_map:       Table, // The cmap subtable of format 4.
 	name, os2, post:     Table, // Read by the tool only.
+	kern:                Table, // The pair adjustments; absent in many fonts (spacing.odin).
 }
 
 Table :: struct {
@@ -145,6 +146,8 @@ font_open :: proc "contextless" (bytes: []u8, directory: int = 0) -> (font: Font
 			font.os2 = table
 		case "post":
 			font.post = table
+		case "kern":
+			font.kern = table
 		}
 	}
 	for table in ([?]Table{font.head, font.hhea, font.maxp, font.hmtx, font.loca, font.glyf, font.character_map}) {
@@ -164,7 +167,12 @@ font_open :: proc "contextless" (bytes: []u8, directory: int = 0) -> (font: Font
 	font.descender = read_i16(hhea, 6) or_else 0
 	font.horizontal_metrics = read_u16(hhea, 34) or_else 0
 	font.glyph_count = read_u16(bytes[font.maxp.offset:][:font.maxp.length], 4) or_else 0
-	if font.horizontal_metrics == 0 || font.horizontal_metrics * 4 > font.hmtx.length {
+	// hmtx: one advance and one left side for each of the first
+	// horizontal_metrics glyphs, then one left side for each other glyph.
+	if font.horizontal_metrics == 0 || font.horizontal_metrics > font.glyph_count {
+		return font, .Unknown_Format
+	}
+	if font.horizontal_metrics * 4 + (font.glyph_count - font.horizontal_metrics) * 2 > font.hmtx.length {
 		return font, .Too_Short
 	}
 	// The subtable of format 4 of the cmap (Unicode, the basic plane).

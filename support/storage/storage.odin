@@ -17,6 +17,7 @@
 package storage
 
 import "contract:errors"
+import "contract:fixed_addresses"
 import "contract:isolated"
 import module "contract:module"
 import "contract:ring"
@@ -26,7 +27,7 @@ GRANT_RING :: 7 // Memory: the call ring.
 GRANT_REGION :: 8 // Memory: the call region.
 GRANT_SERVICE :: 9 // The storage service, with the right Read: its state.
 VALUE_FILE_SIZE :: 3 // The size of the file of the storage service.
-FILE_ADDRESS :: 0x0000_3100_0000_0000 // Where the root service maps that file.
+FILE_ADDRESS :: fixed_addresses.STORAGE_FILE_ADDRESS // Where the root service maps that file.
 
 // The answer of an export of the storage service that is not a generation
 // or a size: one of these numbers. The error record of the call says more

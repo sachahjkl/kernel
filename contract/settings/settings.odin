@@ -27,12 +27,13 @@
 package settings
 
 import "base:intrinsics"
+import "contract:fixed_addresses"
 import op "contract:operation"
 
-PAGE_ADDRESS :: 0x0000_3200_0000_0000
-GLYPH_CACHE_ADDRESS :: 0x0000_3300_0000_0000
-GLYPH_CACHE_WITHOUT_GRID_FIT_ADDRESS :: 0x0000_3400_0000_0000
-GLYPH_CACHE_BOLD_ADDRESS :: 0x0000_3500_0000_0000
+PAGE_ADDRESS :: fixed_addresses.SETTINGS_PAGE_ADDRESS
+GLYPH_CACHE_ADDRESS :: fixed_addresses.GLYPH_CACHE_ADDRESS
+GLYPH_CACHE_WITHOUT_GRID_FIT_ADDRESS :: fixed_addresses.GLYPH_CACHE_WITHOUT_GRID_FIT_ADDRESS
+GLYPH_CACHE_BOLD_ADDRESS :: fixed_addresses.GLYPH_CACHE_BOLD_ADDRESS
 VALUE_PAGE :: 13 // The value of the context with the address of the page. The system fixes it for each program (contract:operation, Context).
 GRANT_PAGE :: 12 // The handle of the context of the program `settings`: the page, with Read and Write.
 VALUE_BOOT_PASS :: op.CONTEXT_VALUE_SETTINGS_BOOT_PASS // The program `settings`: 1 for the pass at boot (read the kept record, write the page, stop).

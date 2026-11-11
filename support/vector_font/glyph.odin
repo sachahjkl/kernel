@@ -36,7 +36,9 @@ CELL_HEIGHT_LIMIT :: 48
 // The thirds of a pixel on each side of a cell that the filter reads: ink
 // that passes the side of a cell gives its color to the pixel at the side.
 STRIPE_MARGIN :: 6
-STRIPE_ROW_LIMIT :: 3 * CELL_WIDTH_LIMIT + 2 * STRIPE_MARGIN
+// The work row of a glyph of a proportional font is wider than a cell
+// (placed.odin): the memory holds the wider one.
+STRIPE_ROW_LIMIT :: 3 * PLACED_WIDTH_LIMIT + 2 * STRIPE_MARGIN
 
 // Render_Memory: the memory of the caller for the work on one glyph.
 Render_Memory :: struct {
@@ -45,6 +47,7 @@ Render_Memory :: struct {
 	cells:    [(STRIPE_ROW_LIMIT + 1) * CELL_HEIGHT_LIMIT]i32,
 	thirds:   [STRIPE_ROW_LIMIT * CELL_HEIGHT_LIMIT]u8,
 	filtered: [STRIPE_ROW_LIMIT]u8,
+	placed:   [PLACED_WIDTH_LIMIT * CELL_HEIGHT_LIMIT]u32, // The words of a glyph of a proportional font, before its box is cut.
 }
 
 // Placement: where the points of an outline go, in subunits, y down.

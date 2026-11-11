@@ -74,6 +74,7 @@
 package isolated
 
 import "contract:errors"
+import "contract:fixed_addresses"
 import module "contract:module"
 import "base:intrinsics"
 
@@ -90,13 +91,14 @@ VALUE_FILE_SIZE :: 1 // The size of the files, in bytes, from FILE_ADDRESS.
 VALUE_REPLACEMENT_OFFSET :: 2 // The offset of the replacement records, from FILE_ADDRESS.
 VALUE_REPLACEMENT_COUNT :: 3
 
-FILE_ADDRESS :: 0x0000_3000_0000_0000 // Where a caller maps the files of the module in the call host.
+FILE_ADDRESS :: fixed_addresses.MODULE_FILES_ADDRESS // Where a caller maps the files of the module in the call host.
 // Where a receiver maps the memory object of table parameter n for the
 // time of one export: TABLE_ADDRESS + n * TABLE_SPAN. The same addresses at
 // each call: the kernel gives a new address to each mapping that does not
 // choose one, and each new range of addresses costs page tables.
-TABLE_ADDRESS :: 0x0000_3800_0000_0000
+TABLE_ADDRESS :: fixed_addresses.MODULE_TABLES_ADDRESS
 TABLE_SPAN :: u64(16) << 30 // The most bytes of one table in a memory object: 16 GiB.
+#assert(module.PARAMETER_CAPACITY * TABLE_SPAN <= fixed_addresses.MODULE_TABLES_SPAN)
 REGION_PAGES :: 16
 
 // A service that serves its own exports receives calls in the same form. It

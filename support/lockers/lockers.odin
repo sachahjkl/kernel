@@ -4,6 +4,8 @@
 // `start` to the time `end`, writes what it counted, and waits again.
 package lockers
 
+import "contract:fixed_addresses"
+
 // The roles of the context of a locker.
 GRANT_BOARD :: 0 // Memory, with Read and Write: the board, one page that `locks` also maps.
 GRANT_PEER :: 1 // ROLE_CHURN: a program, with the right Control, that this one stops. 0: none.
@@ -25,7 +27,8 @@ LOCKER_CAPACITY :: 4
 FAULT_PAGES :: 256 // The pages of one memory object in the measure of the pages on first use.
 // The locker maps each such object at this address: the page tables of the
 // range exist after the first one, and the budget pays for them one time.
-FAULT_ADDRESS :: 0x0000_3000_0000_0000
+// It is outside the band of the addresses that the system fixes.
+FAULT_ADDRESS :: fixed_addresses.OWN_CHOICE_START + 0x0000_0600_0000_0000
 
 Mode :: enum u32 {
 	Wait    = 0, // Do nothing until the next command.

@@ -48,8 +48,8 @@ text_speed_parts :: proc(t: ^testing.T) {
 	zero, full, partial, outside: int
 	for index in 0 ..< len(speed_sample) {
 		size, entry, _ := glyph_cache.glyph(&cache, speed_sample[index], 1)
-		outside += (int(size.cell_height) - int(entry.row_count)) * int(size.cell_width)
-		for word in cache.words[entry.word_offset:][:int(entry.row_count) * int(size.cell_width)] {
+		outside += (int(size.cell_height) - int(entry.row_count)) * int(entry.width)
+		for word in cache.words[entry.word_offset:][:int(entry.row_count) * int(entry.width)] {
 			switch {
 			case word == 0:
 				zero += 1
@@ -74,8 +74,8 @@ text_speed_parts :: proc(t: ^testing.T) {
 		data := (^Speed_Data)(raw)
 		sum: u32
 		for index in 0 ..< SPEED_GLYPHS {
-			size, entry, _ := glyph_cache.glyph(data.cache, speed_sample[index], 1)
-			for word in data.cache.words[entry.word_offset:][:int(entry.row_count) * int(size.cell_width)] {
+			_, entry, _ := glyph_cache.glyph(data.cache, speed_sample[index], 1)
+			for word in data.cache.words[entry.word_offset:][:int(entry.row_count) * int(entry.width)] {
 				sum += word
 			}
 		}

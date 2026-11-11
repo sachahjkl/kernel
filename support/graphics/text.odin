@@ -190,20 +190,23 @@ character_vector :: #force_inline proc "contextless" (canvas: Canvas, x, y: int,
 // character_vector_with draws one character with the fast blend: the same
 // pixels as character_vector_reference.
 character_vector_with :: proc "contextless" (cache: ^glyph_cache.Cache, square_root: ^[4096]u8, tables: ^Blend_Tables, order: Subpixel_Order, canvas: Canvas, x, y: int, value: u8, color: Color, scale: int) #no_bounds_check {
-	size, entry, found := glyph_cache.glyph(cache, value, scale)
+	_, entry, found := glyph_cache.glyph(cache, value, scale)
 	if !found || entry.row_count == 0 {
 		return
 	}
-	width := int(size.cell_width)
-	first_column := max(0, -x)
-	last_column := min(width, canvas.width - x)
+	// The words of a row start at the column left of the cell: 0, and the
+	// width of the cell, in the cache of a monospace font.
+	column_x := x + int(entry.left)
+	width := int(entry.width)
+	first_column := max(0, -column_x)
+	last_column := min(width, canvas.width - column_x)
 	first_row := max(0, -(y + int(entry.first_row)))
 	last_row := min(int(entry.row_count), canvas.height - y - int(entry.first_row))
 	if first_column >= last_column || first_row >= last_row {
 		return
 	}
 	words := raw_data(cache.words[entry.word_offset:])
-	blend_glyph_rows(canvas.pixels[(y + int(entry.first_row)) * canvas.stride + x:], canvas.stride, words, width, first_row, last_row, first_column, last_column, color, order, square_root, tables)
+	blend_glyph_rows(canvas.pixels[(y + int(entry.first_row)) * canvas.stride + column_x:], canvas.stride, words, width, first_row, last_row, first_column, last_column, color, order, square_root, tables)
 }
 
 // character_vector_reference draws one character of a glyph cache that
@@ -211,13 +214,16 @@ character_vector_with :: proc "contextless" (cache: ^glyph_cache.Cache, square_r
 // file, so the loop has no bounds check (the rows and the columns are cut
 // to the canvas here).
 character_vector_reference :: proc "contextless" (cache: ^glyph_cache.Cache, square_root: ^[4096]u8, order: Subpixel_Order, canvas: Canvas, x, y: int, value: u8, color: Color, scale: int) #no_bounds_check {
-	size, entry, found := glyph_cache.glyph(cache, value, scale)
+	_, entry, found := glyph_cache.glyph(cache, value, scale)
 	if !found || entry.row_count == 0 {
 		return
 	}
-	width := int(size.cell_width)
-	first_column := max(0, -x)
-	last_column := min(width, canvas.width - x)
+	// The words of a row start at the column left of the cell: 0, and the
+	// width of the cell, in the cache of a monospace font.
+	column_x := x + int(entry.left)
+	width := int(entry.width)
+	first_column := max(0, -column_x)
+	last_column := min(width, canvas.width - column_x)
 	first_row := max(0, -(y + int(entry.first_row)))
 	last_row := min(int(entry.row_count), canvas.height - y - int(entry.first_row))
 	if first_column >= last_column || first_row >= last_row {
@@ -225,7 +231,7 @@ character_vector_reference :: proc "contextless" (cache: ^glyph_cache.Cache, squ
 	}
 	words := raw_data(cache.words[entry.word_offset:])
 	for row in first_row ..< last_row {
-		line := canvas.pixels[(y + int(entry.first_row) + row) * canvas.stride + x:]
+		line := canvas.pixels[(y + int(entry.first_row) + row) * canvas.stride + column_x:]
 		blend_coverage_row(line, words[row * width:], first_column, last_column, color, order, square_root)
 	}
 }

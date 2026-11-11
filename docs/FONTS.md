@@ -78,7 +78,18 @@ A picture of the screen holds the colored edges of each glyph: enlarged, each le
 
 ## 5. The glyph cache
 
-A table of drawn glyphs: for each scale (1, 2, 3) and each character 32 to 126 (the subpixel position bucket is always 0 for text on the grid of 8; the fractional position stays in the draw record of `support/interface` for a later proportional font). Format: `contract/glyph_cache` (a header of 128 bytes, a size entry of 16 bytes for each scale, a glyph entry of 8 bytes for each character and scale, then the words; a glyph keeps only its rows with ink). Fixed capacity: 3 sizes, 95 characters; no replacement rule is needed, because the table holds every glyph that the grid can draw. All zero is valid: a program with no cache draws Spleen.
+A table of drawn glyphs: for each scale (1, 2, 3) and each character 32 to 126. Format: `contract/glyph_cache`, version 2: a header of 128 bytes, a size entry of 16 bytes for each scale, a glyph entry of 12 bytes for each character, position and scale, the advance of each character and scale, the pairs of each scale, then the words; a glyph keeps only its rows with ink. Fixed capacity: 3 sizes, 95 characters, 3 positions, 9 025 pairs; no replacement rule is needed, because the table holds every glyph that the grid can draw. All zero is valid: a program with no cache draws Spleen.
+
+**One format for the two kinds of font** (version 2, section 12.4). The tool writes every cache again, so no reader keeps version 1:
+
+| | A monospace cache (Paper Mono) | A proportional cache (B612) |
+|---|---|---|
+| Positions of each scale | 1 | 3 at scale 1, 1 at the scales 2 and 3; 3 for the bold weight at scale 1 |
+| A glyph | its full cell: `left` 0, `width` the width of the cell | the box of its ink: `left` from the origin (it can be negative), `width` its columns |
+| The advance of each character | the width of the cell, in 1/64 of a pixel | the advance of the font, in 1/64 of a pixel |
+| Pairs | none | the pairs of `kern` between two characters of the cache, in 1/64 of a pixel, sorted |
+
+`validate` checks each new part as hostile input, as the rest: the positions (1 to 3), the first glyph of each scale (after the glyphs of the scale before), the width (at most 64) and the left side (-16 to 64) of each glyph with its words inside the file, each advance (0 to 64 pixels), and each pair (two characters of the cache, sorted with no pair twice, at most 64 pixels). The draw of a cell (`graphics.character_vector_with`) reads `left` and `width` of the glyph in place of the width of the cell: the same pixels for a monospace cache.
 
 ### Where it lives: three places weighed
 
@@ -230,7 +241,7 @@ The console stays fast: the producer writes into the terminal ring, and the term
 1. **The font file**: decided: Paper Mono (section 6). Another candidate is one line, `DEFAULT_VECTOR_FONT`.
 2. **The grid fit by default**: on (now) or off. It is now a setting of the person (both caches are in the boot image); the decision is only which value is 0.
 3. **The order of the stripes by default**: `rgb` (now), or `none` until the system can know the panel.
-4. **The interface font**: the size of B612 (an em of 13.33 pixels: capitals of 10 rows), and the positions of its cache (3 at scale 1 and 1 at the scales 2 and 3: 575 KB with the Bold titles; or 3 everywhere: 2.45 MB), section 12.
+4. **The interface font**: the size of B612 (an em of 13.33 pixels: capitals of 10 rows), and the positions of its cache (3 at scale 1 and 1 at the scales 2 and 3: 509 340 bytes measured with the Bold titles; or 3 everywhere: about 2.45 MB, estimated), section 12.
 5. **The scheduling strategy across a stop**: a record that the root service reads at boot, or none (section 7).
 
 ## 12. The interface font and the text shaping module (design, not built)
@@ -246,24 +257,38 @@ Decided by the owner: "Go b612", and "Il nous faudra un module de text shaping/k
 | Advances of ASCII 32 to 126 | 19 different values from 400 to 2000 units, the mean 1148; the space 700; `i` and `I` 600; `m`, `M` 1800; `W` 1900 | the same advances |
 | Digits | each 1300: digits are tabular, a column of numbers aligns | the same |
 | Ascender, descender (`hhea`, typo of `OS/2`) | 1930, -500; the ink of ASCII from -517 to 1720 | 1930, -500 |
-| x-height, cap height | 1100, 1500 | 1100, 1500 |
+| x-height, cap height (`OS/2` sxHeight, sCapHeight) | 1100, 1500. The flat tops of E, T, Z are at 1500; the stems of H, I, L end with an angle at 1520, and `x` reaches 1117 | 1100, 1500; the top of H is 1527 |
 | Ink beyond the advance box | at most 61 units left of the origin (`j`), none past the advance | 126 left (`j`), 52 past the advance (`K`) |
 | Pair adjustment | `kern` version 0, one subtable of format 0: 1017 pairs; `GPOS` with one lookup of type 2 (pair adjustment, subtables of format 1 and 2), feature `kern` | `kern`: 1061 pairs; `GPOS` the same form |
 | Substitution | `GSUB` with no feature: no ligature, no contextual form | the same |
 | Box drawing | none | none |
 
-- **For ASCII, `kern` and `GPOS` give the same pairs**: 232 pairs in Regular and 239 in Bold whose two glyphs are ASCII, each with the same value in both tables, none in one table only (read on the files with a script of the agent, not with code of the system). The values are -200 to +100 units, in steps of 100: at the size below, -1.33 to +0.67 pixel.
+- **For ASCII, `kern` and `GPOS` give the same pairs**: 232 pairs in Regular and 239 in Bold whose two glyphs are ASCII, each with the same value in both tables, none in one table only (read on the files with a script of the agent, not with code of the system). The values are -200, -150, -100 and +100 units in Regular, and also -50 and +50 in Bold: at the size below, -1.33 to +0.67 pixel. Examples: "To", "LT", "Ty" -100; "LV" -150; "Wa" -100 in Bold only. **"AV" has no pair** in either weight: B612 spaces "A" and "V" by their advances alone.
 - So the first version reads `hmtx` and `kern` format 0 only. It reads no `GPOS` and no `GSUB`, and has no ligature and no other script. A font whose pairs are only in `GPOS` needs the `GPOS` reader later, behind the same contract.
 
 ### 12.2 The size on the grid
 
 - The line stays 16 pixels at scale 1 (32, 48 at the scales 2 and 3), so a label sits in a line of the grid as text does now.
-- The em of B612 at scale 1 is 13.33 pixels (2000 units to 13.33 pixels, one unit is 1/150 of a pixel): its cap height is then 10 pixels and its x-height 7.33 (the grid fit of section 2 gives 7). Its ink, from -517 to 1720 units, is 14.9 pixels: inside 16 rows, with the baseline on row 12.
+- The em of B612 at scale 1 is 13.33 pixels (2000 units to 13.33 pixels, one unit is 1/150 of a pixel): its cap height is then 10 pixels and its x-height 7.33 (the grid fit of section 2 gives 7). The cap height and the x-height are the values that the font states in `OS/2` (1500 and 1100), not the tops of the outlines of `H` and `x` (1520 and 1117 in Regular, 1527 and 1124 in Bold), which the monospace path uses (section 2): the flat tops of the capitals must sit on whole rows, and both weights get one scale. A host test checks that E, T and Z have ink on rows 2 to 11 exactly. Its ink, from -517 to 1720 units, is 14.9 pixels: inside 16 rows, with the baseline on row 12.
 - Its mean advance in ASCII is 7.65 pixels: a label in B612 is about as wide as in Paper Mono (8 pixels), narrower for lowercase text, wider for capitals (`M` 12 pixels).
 
 ### 12.3 The text shaping module
 
-A module (the owner's word; property 10: shared code with exports), with batch exports whose parameters are tables (`MODULE_CONTRACT.md`, "Tables and bytes as parameters"). Its name: `text_shaping`.
+A module (the owner's word; property 10: shared code with exports), with batch exports whose parameters are tables (`MODULE_CONTRACT.md`, "Tables and bytes as parameters"). Its name: `text_shaping`. Written (step 3 of 12.8): the package `support/text_shaping` for a direct call, and the module `modules/text_shaping` over it, as `support/interface` and `interface_module`.
+
+**As written:**
+
+| Export | Parameters | Result |
+|---|---|---|
+| `shape_text` | the advances (Read, 95 records of an `i32`), the pairs (Read, `glyph_cache.Pair_Entry`), the text (Bytes, Read), the placed glyphs (Append), the error record | the count of placed glyphs of the full answer, or -1 |
+| `measure_texts` | the advances, the pairs, one table of bytes (Read), the ranges (Change: `start`, `count`, and `width` that the export writes) | the count of ranges, or -1 |
+
+- **The spacing is two tables of the caller**, the advances and the pairs of one scale of its glyph cache (`text_shaping.spacing_of`). So the module holds no font and no state: an isolated call receives them in the call region like the text.
+- **Hostile tables**: the counts are checked (95 advances, at most 9 025 pairs, a text of at most 65 536 bytes, a table of at most 2^40 records). The caller can change its tables during the call, so no value is checked once and used later: each advance, pair, byte and range is read once, and kept in its limits at that read (an advance 0 to 64 pixels, an adjustment -64 to 64 pixels). Pairs out of order give wrong numbers, never a read out of the table. The x of each glyph then holds in an `i32`.
+- **A character outside the cache** (a control character, a byte above 126) is placed as `?`, so a person sees that the font does not draw it.
+- **The widths in a table of ranges**: the width is a field of each range record, which the export writes (the direction Change), as `sum` in the records of `sample.sum_words`. So `measure_texts` has five parameters, and a sixth (the table of error details of `master`, `MODULE_CONTRACT.md` section 8) fits after the merge.
+
+**The design before the code:**
 
 - **Input**: the font (a record: its kind, its scale, its weight) and a table of characters: the bytes of a text, ASCII 32 to 126 in the first version.
 - **Output**: a table of placed glyphs, one for each character, in memory of the caller. A placed glyph is 16 bytes: the glyph (its index in the glyph cache), x (its origin from the origin of the run, in 1/64 of a pixel), the advance in 1/64 of a pixel (with the pair adjustment that follows it), and 4 bytes that are zero (a cluster number for a full shaper later).
@@ -276,8 +301,10 @@ A module (the owner's word; property 10: shared code with exports), with batch e
 ### 12.4 The glyph cache with subpixel positions
 
 - **Positions**: a glyph of a proportional font does not start on a whole pixel. With the subpixel bands, the finest step that the screen shows is one third of a pixel: the cache keeps each glyph at 3 positions, 0, 1/3 and 2/3 of a pixel. The draw rounds the x of a placed glyph (in 1/64) to the nearest third, so the error is at most 1/6 of a pixel; the shaper keeps the exact sum, so errors do not add up along a run.
-- **The cell of a glyph** is its ink box, not the cell of the grid: its width is the ink width plus the spread of the filter (two thirds of a pixel on each side) plus the position, its left side at a stated bearing from the origin. The glyph entry gains this width and this bearing (version 2 of `contract/glyph_cache`; version 1 stays for the monospace caches).
-- **Size**, estimated from the boxes of the glyphs in the font files (not built; the estimate gives 344 KB for Paper Mono with one position, against 390 624 bytes for the real cache of JetBrains Mono, so it is within about 15 %):
+- **The cell of a glyph** is its ink box, not the cell of the grid: its width is the ink width plus the spread of the filter (two thirds of a pixel on each side) plus the position, its left side at a stated bearing from the origin. The glyph entry gains this width and this bearing (`left`, `width`). Written: one format, version 2 of `contract/glyph_cache`, for the monospace caches too (section 5): fewer paths than two formats, and the tool writes every cache again.
+- **The renderer** (`vector_font.glyph_render_placed`): the glyph is drawn in a work row of 64 pixels with its origin at column 4 plus the position (one third of a pixel for each step), then cut to the box of its ink. A glyph whose ink reaches a side of the work row is refused. The size on the grid: the cap height is 10 rows at scale 1 (`PROPORTIONAL_CAP_HEIGHT_ROWS`), so 1 200 units of B612 are the 8 pixels of a cell (the stated cap height of 1 500 units times 8 / 10). The advances and the pairs are scaled the same way and rounded to 1/64 of a pixel, each on its own, to the nearest integer, a half toward plus infinity, the same rule for a negative value: "A" 1 300 units is 554.67, so 555/64 of a pixel at scale 1; "To" -100 units is -42.67, so -43/64; "LV" -150 units is -64/64 exactly.
+- **The rule of the sum**: the cache keeps the rounded advance and the rounded adjustment, and the shaper adds these integers. So the advance of a glyph followed by a pair is round(advance) + round(adjustment), not round(advance + adjustment): "T" before "o" is 512 - 43 = 469. The two rules can differ by 1/64 of a pixel for one pair; the x of each glyph is the exact sum of the integers before it, so no error adds up along a text beyond the rounding of each term (at most 1/128 of a pixel each).
+- **Size, measured** (`kerneltool vector_fonts`, 2026-11-11): B612 Regular with 3 positions at scale 1 and 1 at the scales 2 and 3, **408 524 bytes**; B612 Bold at scale 1 with 3 positions, **100 816 bytes**; together **509 340 bytes**. These two were measured with the cap height taken from `H` (1 520 units), before the correction above: with 1 500 the glyphs are 1.3 % larger on each axis, so the next run gives a few percent more. The table below is the estimate from the boxes of the glyphs, made before the build; it was 10 % (Regular) and 18 % (Bold) above the measures:
 
 | Cache | 1 position | 3 positions at each scale | 3 positions at scale 1, 1 at the scales 2 and 3 |
 |---|---|---|---|
@@ -286,7 +313,7 @@ A module (the owner's word; property 10: shared code with exports), with batch e
 | B612 Bold, scale 1 only (the titles) | 39 KB | 123 KB | 123 KB |
 | Today: the cache of the monospace font | 390 624 bytes | | |
 
-- **Recommended**: B612 Regular with 3 positions at scale 1 and 1 position at the scales 2 and 3 (452 KB), and B612 Bold at scale 1 with 3 positions (123 KB): 575 KB more in the boot image. At the scales 2 and 3 a glyph on a whole pixel is at most half a pixel from its place in a glyph of 26 to 40 pixels. With 3 positions everywhere, 2.45 MB.
+- **Recommended, and built**: B612 Regular with 3 positions at scale 1 and 1 position at the scales 2 and 3, and B612 Bold at scale 1 with 3 positions: 509 340 bytes measured (575 KB estimated) more in the boot image, when they become resources. At the scales 2 and 3 a glyph on a whole pixel is at most half a pixel from its place in a glyph of 26 to 40 pixels. With 3 positions everywhere, 2.45 MB.
 
 ### 12.5 What changes in `support/interface`
 
@@ -312,6 +339,8 @@ A rule that a program can follow:
 
 ### 12.8 The steps, each one working
 
+Steps 1 to 3 are written (2026-11-11); step 2 also writes the two caches of B612 in `build/fonts` at each `kerneltool vector_fonts`, which are not yet resources of the boot image.
+
 1. **The shaping data in the tool**: `kerneltool vector_fonts` subsets B612 Regular and Bold (ASCII, simple glyphs, `kern` format 0 kept as a sorted pair table) to `resources/fonts`; host tests: the advances and the pairs of the subset against the font file, and the pairs of `kern` against those of `GPOS` (the check of 12.1, as code).
 2. **The glyph cache version 2**: a glyph entry with its box width, its bearing and its positions; the advances and the pair table of each scale; its validation; the builder in `support/vector_font`; host tests: the bit-for-bit test of each position against a render at that offset, the golden hashes, damaged fields.
 3. **The shaping module** `text_shaping` with its exports over a validated cache; host tests: a run of each pair of ASCII gives the advances plus the pairs; the measure is the sum; many runs in one call give the same as one run at a time.
@@ -323,7 +352,7 @@ A rule that a program can follow:
 
 ### 12.9 Where this design is least sure
 
-- The size estimates of 12.4 come from the glyph boxes, not from a build (within about 15 % on the one case that could be compared).
+- The sizes of 12.4 of the two caches that are built are measured; the other columns of its table are estimates from the glyph boxes, which were 10 % to 18 % above the measures.
 - The cost of 12.7 is an estimate; the fast blend tables need two pixel colors at the two ends of a row of a glyph, which holds for a label on a card, not for a title bar with a gradient across (the reference blend there, as today).
 - `kern` and `GPOS` agree for ASCII in B612 1.008; a later version of the font, or another interface font, can have pairs in `GPOS` only.
 - 3 positions and not 4: the step of the stripes is a third; a finer step is invisible with the subpixel bands and costs one more copy of each glyph.

@@ -4,6 +4,7 @@ import "core:fmt"
 import "core:os"
 import "core:slice"
 import "core:strings"
+import "contract:glyph_cache"
 import "support:vector_font"
 
 // The vector fonts of the system (docs/FONTS.md).
@@ -30,6 +31,8 @@ GLYPH_CACHE_WITHOUT_GRID_FIT_RESOURCE :: "glyph_cache_no_grid_fit"
 GLYPH_CACHE_BOLD_OUTPUT :: VECTOR_FONT_BUILD_FOLDER + "/glyph_cache_bold.bin"
 GLYPH_CACHE_BOLD_RESOURCE :: "glyph_cache_bold"
 CANDIDATES_PICTURE :: VECTOR_FONT_BUILD_FOLDER + "/candidates.png"
+INTERFACE_GLYPH_CACHE_OUTPUT :: VECTOR_FONT_BUILD_FOLDER + "/interface_glyph_cache.bin"
+INTERFACE_GLYPH_CACHE_BOLD_OUTPUT :: VECTOR_FONT_BUILD_FOLDER + "/interface_glyph_cache_bold.bin"
 
 // The default font of the system: one line to change (docs/FONTS.md, "The
 // font file").
@@ -63,6 +66,16 @@ vector_font_emphasis := [?]Vector_Font_Candidate {
 }
 EMPHASIS_VECTOR_FONT :: "paper_mono_semibold"
 
+// The interface font (docs/FONTS.md, section 12): proportional, its two
+// weights. Not a candidate of the picture: the grid of cells is not its
+// place.
+vector_font_interface := [?]Vector_Font_Candidate {
+	{"b612", "B612 ASCII", "SIL OFL 1.1, no Reserved Font Name", "OFL.txt"},
+	{"b612_bold", "B612 ASCII Bold", "SIL OFL 1.1, no Reserved Font Name", "OFL.txt"},
+}
+INTERFACE_VECTOR_FONT :: "b612"
+INTERFACE_EMPHASIS_VECTOR_FONT :: "b612_bold"
+
 run_vector_fonts :: proc(args: []string) -> int {
 	sources := os.get_env(VECTOR_FONT_SOURCES_VARIABLE, context.temp_allocator)
 	if sources == "" {
@@ -71,11 +84,25 @@ run_vector_fonts :: proc(args: []string) -> int {
 	}
 	make_folder(VECTOR_FONT_FOLDER)
 	make_folder(VECTOR_FONT_BUILD_FOLDER)
-	fmt.printfln("%-18s %10s %8s %10s %8s %8s %8s", "font", "source", "subset", "composite", "advance", "x-height", "cap")
-	all := make([dynamic]Vector_Font_Candidate, context.temp_allocator)
-	append(&all, ..vector_font_candidates[:])
-	append(&all, ..vector_font_emphasis[:])
-	for candidate in all {
+	fmt.printfln("%-18s %10s %8s %10s %8s %8s %8s %6s", "font", "source", "subset", "composite", "advance", "x-height", "cap", "pairs")
+	// proportional: each character has its own advance; the subset keeps
+	// the pair adjustments of kern.
+	Subset_Request :: struct {
+		candidate:    Vector_Font_Candidate,
+		proportional: bool,
+	}
+	all := make([dynamic]Subset_Request, context.temp_allocator)
+	for candidate in vector_font_candidates {
+		append(&all, Subset_Request{candidate, false})
+	}
+	for candidate in vector_font_emphasis {
+		append(&all, Subset_Request{candidate, false})
+	}
+	for candidate in vector_font_interface {
+		append(&all, Subset_Request{candidate, true})
+	}
+	for request in all {
+		candidate := request.candidate
 		path := ""
 		rest := sources
 		for item in strings.split_iterator(&rest, ";") {
@@ -91,7 +118,7 @@ run_vector_fonts :: proc(args: []string) -> int {
 		if !read {
 			return EXIT_FAILURE
 		}
-		subset, report, ok := font_subset(source, candidate)
+		subset, report, ok := font_subset(source, candidate, request.proportional)
 		if !ok {
 			fmt.eprintfln("kerneltool: %s: %s", path, report.problem)
 			return EXIT_FAILURE
@@ -106,9 +133,9 @@ run_vector_fonts :: proc(args: []string) -> int {
 			fmt.eprintfln("kerneltool: cannot write %s: %v", license_path, err)
 			return EXIT_FAILURE
 		}
-		fmt.printfln("%-18s %10d %8d %10d %8d %8d %8d", candidate.name, len(source), len(subset), report.composites, report.measures.advance, report.measures.x_height, report.measures.cap_height)
+		fmt.printfln("%-18s %10d %8d %10d %8d %8d %8d %6d", candidate.name, len(source), len(subset), report.composites, report.measures.advance, report.measures.x_height, report.measures.cap_height, report.pairs)
 	}
-	if !candidates_picture_write() {
+	if !candidates_picture_write() || !interface_glyph_caches_write() {
 		return EXIT_FAILURE
 	}
 	fmt.printfln("kerneltool: the subsets are in %s, the picture of the choice is %s", VECTOR_FONT_FOLDER, CANDIDATES_PICTURE)
@@ -118,6 +145,7 @@ run_vector_fonts :: proc(args: []string) -> int {
 Subset_Report :: struct {
 	problem:      string,
 	composites:   int, // Glyphs made of glyphs, made simple.
+	pairs:        int, // The pair adjustments of the characters 32 to 126 that the subset keeps.
 	measures:     vector_font.Font_Measures,
 	license_text: string,
 }
@@ -127,7 +155,7 @@ SUBSET_GLYPHS :: 96
 
 // font_subset writes a TrueType file with the characters 32 to 126 of a
 // font, from the first face of a collection.
-font_subset :: proc(source: []u8, candidate: Vector_Font_Candidate) -> (subset: []u8, report: Subset_Report, ok: bool) {
+font_subset :: proc(source: []u8, candidate: Vector_Font_Candidate, proportional: bool) -> (subset: []u8, report: Subset_Report, ok: bool) {
 	face, face_problem := vector_font.collection_face_offset(source, 0)
 	font, problem := vector_font.font_open(source, face)
 	if face_problem != .None || problem != .None {
@@ -136,9 +164,27 @@ font_subset :: proc(source: []u8, candidate: Vector_Font_Candidate) -> (subset: 
 	}
 	memory := new(vector_font.Render_Memory, context.temp_allocator)
 	report.measures, problem = vector_font.font_measures(&font, memory)
-	if problem != .None || !report.measures.monospace {
+	if problem != .None || !report.measures.monospace && !proportional {
 		report.problem = problem != .None ? vector_font.font_problem_names[problem] : "the font is not monospace"
 		return nil, report, false
+	}
+	// The pair adjustments, read from the source as hostile input: each
+	// pair of two characters of the subset, by the glyphs of the subset.
+	kern: []u8
+	if proportional {
+		// The measures that the glyph cache uses: the stated cap height and
+		// x-height, and the units of one cell in place of an advance.
+		report.measures, problem = vector_font.proportional_measures(&font, report.measures)
+		if problem != .None {
+			report.problem = vector_font.font_problem_names[problem]
+			return nil, report, false
+		}
+		pair_table, pair_problem := vector_font.pair_table_open(&font)
+		if pair_problem != .None {
+			report.problem = fmt.tprintf("the table kern: %s", vector_font.font_problem_names[pair_problem])
+			return nil, report, false
+		}
+		kern, report.pairs = kern_table_write(&font, &pair_table)
 	}
 	// The glyphs, each as a simple glyph.
 	glyphs := make([dynamic]u8, context.temp_allocator)
@@ -191,7 +237,7 @@ font_subset :: proc(source: []u8, candidate: Vector_Font_Candidate) -> (subset: 
 	put_u16(head, 50, 1) // Long offsets in loca.
 	append(&tables, Subset_Table{"head", head})
 	hhea := slice.clone(source[font.hhea.offset:][:36], context.temp_allocator)
-	put_u16(hhea, 10, advances[1]) // advanceWidthMax: the advance of a monospace font.
+	put_u16(hhea, 10, slice.max(advances[:])) // advanceWidthMax.
 	put_u16(hhea, 34, SUBSET_GLYPHS)
 	append(&tables, Subset_Table{"hhea", hhea})
 	metrics := make([]u8, 4 * SUBSET_GLYPHS, context.temp_allocator)
@@ -200,6 +246,9 @@ font_subset :: proc(source: []u8, candidate: Vector_Font_Candidate) -> (subset: 
 		put_u16(metrics, 4 * index + 2, u16(left_sides[index]))
 	}
 	append(&tables, Subset_Table{"hmtx", metrics})
+	if len(kern) > 0 {
+		append(&tables, Subset_Table{"kern", kern})
+	}
 	loca := make([]u8, 4 * (SUBSET_GLYPHS + 1), context.temp_allocator)
 	for offset, index in offsets {
 		put_u32(loca, 4 * index, offset)
@@ -221,15 +270,56 @@ font_subset :: proc(source: []u8, candidate: Vector_Font_Candidate) -> (subset: 
 	if font.post.length >= 32 {
 		copy(post[4:16], source[font.post.offset + 4:][:12]) // The angle and the underline.
 	}
-	put_u32(post, 12, 1) // A monospace font.
+	put_u32(post, 12, proportional ? 0 : 1) // isFixedPitch.
 	append(&tables, Subset_Table{"post", post})
 	subset = sfnt_write(tables[:])
 	report.license_text = fmt.aprintf(
-		"%s\n\nThis file is a subset of %s, made by \"kerneltool vector_fonts\" (docs/FONTS.md):\nthe characters 32 to 126 and the glyph .notdef, each glyph a simple glyph\n(%d glyphs made of glyphs were made simple), no hinting instructions, no\nOpenType layout tables. The subset carries the name \"%s\".\nLicense of the source: %s.\n\nThe text of the license in the source font file:\n\n%s\n\nURL of the license: %s\nThe full text of the license: %s, in this folder.\n",
-		copyright, candidate.name, report.composites, candidate.family, candidate.license, license, license_place, candidate.license_file,
+		"%s\n\nThis file is a subset of %s, made by \"kerneltool vector_fonts\" (docs/FONTS.md):\nthe characters 32 to 126 and the glyph .notdef, each glyph a simple glyph\n(%d glyphs made of glyphs were made simple), no hinting instructions, no\nOpenType layout tables%s. The subset carries the name \"%s\".\nLicense of the source: %s.\n\nThe text of the license in the source font file:\n\n%s\n\nURL of the license: %s\nThe full text of the license: %s, in this folder.\n",
+		copyright, candidate.name, report.composites, proportional ? fmt.tprintf("; the %d pair adjustments of its table kern between\nthese characters", report.pairs) : "", candidate.family, candidate.license, license, license_place, candidate.license_file,
 		allocator = context.temp_allocator,
 	)
 	return subset, report, true
+}
+
+// kern_table_write gives a kern table of version 0 with one subtable of
+// format 0: the pairs of the characters 32 to 126 whose adjustment is not
+// 0, by the glyphs of the subset (character c is glyph c - 31). The loops
+// go in the order of the glyphs, so the pairs are sorted.
+@(private = "file")
+kern_table_write :: proc(font: ^vector_font.Font_File, pair_table: ^vector_font.Pair_Table) -> (table: []u8, count: int) {
+	pairs := make([dynamic]u8, context.temp_allocator)
+	for left in rune(32) ..= 126 {
+		for right in rune(32) ..= 126 {
+			adjustment := vector_font.character_pair_adjustment(font, pair_table, left, right)
+			if adjustment != 0 {
+				append_u16(&pairs, u16(left - 31))
+				append_u16(&pairs, u16(right - 31))
+				append_u16(&pairs, u16(i16(adjustment)))
+				count += 1
+			}
+		}
+	}
+	if count == 0 {
+		return nil, 0
+	}
+	out := make([dynamic]u8, context.temp_allocator)
+	append_u16(&out, 0) // version
+	append_u16(&out, 1) // one subtable
+	append_u16(&out, 0) // the version of the subtable
+	append_u16(&out, u16(vector_font.KERN_SUBTABLE_HEADER_SIZE + len(pairs)))
+	append_u16(&out, 0x0001) // format 0, horizontal
+	append_u16(&out, u16(count))
+	power := 1
+	exponent := 0
+	for power * 2 <= count {
+		power *= 2
+		exponent += 1
+	}
+	append_u16(&out, u16(vector_font.KERN_PAIR_SIZE * power)) // searchRange
+	append_u16(&out, u16(exponent)) // entrySelector
+	append_u16(&out, u16(vector_font.KERN_PAIR_SIZE * (count - power))) // rangeShift
+	append(&out, ..pairs[:])
+	return out[:], count
 }
 
 // is_composite says if a glyph is made of other glyphs.
@@ -510,4 +600,45 @@ build_glyph_caches :: proc() -> (resources: [3]Resource_File, ok: bool) {
 		resources[index] = {name = build.name, path = build.output}
 	}
 	return resources, true
+}
+
+// The subpixel positions of the caches of the interface font, for each
+// scale (docs/FONTS.md, section 12.4): three at scale 1, one at the scales
+// 2 and 3; the bold weight at scale 1 only, for the titles.
+INTERFACE_POSITIONS := [3]int{3, 1, 1}
+INTERFACE_BOLD_POSITIONS := [1]int{3}
+
+// interface_glyph_caches_write draws the two glyph caches of the interface
+// font from its subsets, checks them with the reader of the programs, and
+// writes their sizes. They are not yet resources of the boot image.
+interface_glyph_caches_write :: proc() -> bool {
+	builds := [2]struct {
+		font, output: string,
+		positions:    []int,
+	}{{INTERFACE_VECTOR_FONT, INTERFACE_GLYPH_CACHE_OUTPUT, INTERFACE_POSITIONS[:]}, {INTERFACE_EMPHASIS_VECTOR_FONT, INTERFACE_GLYPH_CACHE_BOLD_OUTPUT, INTERFACE_BOLD_POSITIONS[:]}}
+	for build in builds {
+		font_bytes := read_file(join(VECTOR_FONT_FOLDER, "/", build.font, ".ttf")) or_return
+		font, problem := vector_font.font_open(font_bytes)
+		memory := new(vector_font.Render_Memory, context.temp_allocator)
+		words := make([]u64, vector_font.PROPORTIONAL_GLYPH_CACHE_LIMIT / 8, context.temp_allocator)
+		out := ([^]u8)(raw_data(words))[:vector_font.PROPORTIONAL_GLYPH_CACHE_LIMIT]
+		size := 0
+		if problem == .None {
+			size, problem = vector_font.glyph_cache_build_proportional(&font, font_bytes, build.font, true, memory, out, build.positions)
+		}
+		if problem != .None {
+			fmt.eprintfln("kerneltool: the interface font %s: %s", build.font, vector_font.font_problem_names[problem])
+			return false
+		}
+		if _, refused := glyph_cache.validate(out[:size]); refused.kind != .None {
+			fmt.eprintfln("kerneltool: the glyph cache of %s is refused: %s", build.font, glyph_cache.problem_sentences[refused.kind])
+			return false
+		}
+		if err := os.write_entire_file(build.output, out[:size]); err != nil {
+			fmt.eprintfln("kerneltool: cannot write %s: %v", build.output, err)
+			return false
+		}
+		fmt.printfln("kerneltool: the glyph cache of %s with the positions %v: %d bytes, in %s", build.font, build.positions, size, build.output)
+	}
+	return true
 }
