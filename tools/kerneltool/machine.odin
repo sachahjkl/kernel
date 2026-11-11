@@ -56,6 +56,8 @@ Step_Kind :: enum {
 	Call, // Call an export of a service from the host (call.odin), through the remote service: what the tool prints has `expected`. With `rows_call`, that call gives the count of rows of the Table. With `repeat`, the tool also measures the round trip and the calls in one second.
 	Peer, // The peer runs the TCP case text (peer_tcp.odin) and checks its answers.
 	Point, // Move the pointer to (x, y) with no press, then read compositor.pointer(): its shape must be the name text (docs/POINTERS.md). With inside_window, (x, y) are from the corner of that window, its title bar included; a negative x is from its right side. It needs the confirmation of the pointer (a Call with pointer before it).
+	Remember, // The rest of the line after the text, in the log after the last Wait, is kept for the step Distinct (a value that the machine drew).
+	Distinct, // Each value that Remember kept in this test part differs from each other one; text names them.
 	Peer_Start, // The peer starts the TCP case text; the next steps run while it runs.
 	Peer_Result, // The end of the case of the last Peer_Start: it must pass. text is its name.
 	Fetch, // The TCP of the host fetches the page text of `server` through QEMU user networking (web_host.odin).
@@ -372,7 +374,7 @@ scenario_network := [?]Step {
 	{kind = .Move, text = "plasma", to_x = 440, to_y = 120},
 	{kind = .Move, text = "life", to_x = 8, to_y = 416},
 	{kind = .Front, text = "monitor"},
-	{kind = .Move, text = "monitor", to_x = 572, to_y = 384},
+	{kind = .Move, text = "monitor", to_x = 576, to_y = 384},
 	{kind = .Move, text = "console", to_x = 8, to_y = 40},
 	{kind = .Front, text = "life"},
 	{kind = .Front, text = "monitor"},
@@ -611,16 +613,16 @@ scenario := [?]Step {
 	{kind = .Shot, text = "console"},
 
 	// The desktop: start programs from the launcher, and move the windows.
-	{kind = .Drag, x = 172, y = 92, to_x = 100, to_y = 420}, // life
+	{kind = .Move, text = "life", to_x = 24, to_y = 408},
 	{kind = .Launch, text = "monitor"},
 	{kind = .Wait, text = "compositor: surface monitor"},
-	{kind = .Drag, x = 172, y = 122, to_x = 610, to_y = 50},
+	{kind = .Move, text = "monitor", to_x = 568, to_y = 40},
 	{kind = .Launch, text = "paint"},
 	{kind = .Wait, text = "compositor: surface paint"},
-	{kind = .Drag, x = 208, y = 152, to_x = 560, to_y = 420},
-	{kind = .Click, x = 582, y = 446}, // The red color.
+	{kind = .Move, text = "paint", to_x = 520, to_y = 408},
+	{kind = .Click, x = 60, y = 10, inside_window = "paint"}, // The red color.
 	{kind = .Drag, x = 560, y = 520, to_x = 760, to_y = 700},
-	{kind = .Click, x = 662, y = 446}, // The blue color.
+	{kind = .Click, x = 140, y = 10, inside_window = "paint"}, // The blue color.
 	{kind = .Drag, x = 760, y = 520, to_x = 560, to_y = 700},
 	{kind = .Drag, x = 800, y = 600, to_x = 960, to_y = 600},
 	// The launcher: the key super opens it, the typed part narrows the
@@ -634,7 +636,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "compositor: the launcher starts plasma"},
 	{kind = .Wait, text = "plasma: ok", any_order = true},
 	{kind = .Wait, text = "compositor: surface plasma"},
-	{kind = .Drag, x = 250, y = 182, to_x = 276, to_y = 150},
+	{kind = .Move, text = "plasma", to_x = 232, to_y = 144},
 	{kind = .Shot, text = "desktop_moved"},
 	// The menu of the programs: the button of the bar opens and closes it.
 	{kind = .Click, x = 116, y = 14},
@@ -653,7 +655,7 @@ scenario := [?]Step {
 	{kind = .Launch, text = "fault"},
 	{kind = .Wait, text = "stopped: page fault"},
 	{kind = .Wait, text = "root: fault stopped"},
-	{kind = .Click, x = 540, y = 152}, // The close button of plasma.
+	{kind = .Close, text = "plasma"},
 	{kind = .Wait, text = "root: plasma stopped"},
 
 	// Back to the console: the system tools, then stop the machine.
@@ -787,7 +789,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[console] error: the program hostile_exports stopped: page fault"},
 	// The root service ends one grant of a program that runs. The window of
 	// monitor goes below the console for the picture, then back.
-	{kind = .Drag, x = 900, y = 50, to_x = 900, to_y = 560},
+	{kind = .Move, text = "monitor", to_x = 568, to_y = 552},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "grants(\"monitor\")"},
 	{kind = .Wait, text = "[console] monitor has: log, machine"},
@@ -803,7 +805,7 @@ scenario := [?]Step {
 	{kind = .Type, text = "revoke(\"monitor\", \"keys\")"},
 	{kind = .Wait, text = "[console] error: no grant has the name keys"},
 	{kind = .Shot, text = "revocation"},
-	{kind = .Drag, x = 900, y = 570, to_x = 900, to_y = 60},
+	{kind = .Move, text = "monitor", to_x = 568, to_y = 40},
 	{kind = .Front, text = "console"},
 	// The same descriptions serve a direct call. The module is then in the
 	// console: it has the handles of the console, and kept gives 0.
@@ -835,7 +837,7 @@ scenario := [?]Step {
 	// six rings. A stopped program takes no record: the records wait.
 	{kind = .Launch, text = "rings"},
 	{kind = .Wait, text = "rings: ok, 6 programs, 6 rings, 5 records"},
-	{kind = .Drag, x = 600, y = 243, to_x = 500, to_y = 71},
+	{kind = .Move, text = "rings", to_x = 176, to_y = 32},
 	{kind = .Type, text = "aaa"},
 	{kind = .Shot, text = "rings"},
 	{kind = .Type, text = "4"},
@@ -861,7 +863,7 @@ scenario := [?]Step {
 	{kind = .Launch, text = "workers"},
 	{kind = .Wait, text = "workers: the lock lost no addition"},
 	{kind = .Wait, text = "workers: ok, 4 threads computed 140 tiles: "},
-	{kind = .Drag, x = 400, y = 62, to_x = 640, to_y = 340},
+	{kind = .Move, text = "workers", to_x = 304, to_y = 328},
 	{kind = .Shot, text = "workers"},
 
 	// The calls of the host (docs/MODULE_CONTRACT.md, "A call from the
@@ -993,7 +995,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "boot: ok, 7 stages, "},
 	{kind = .Shot, text = "boot"},
 	// The window covers the screen: move it down, away from the console.
-	{kind = .Move, text = "boot", to_x = 60, to_y = 742},
+	{kind = .Move, text = "boot", to_x = 64, to_y = 744},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "stop(\"boot\")"},
 	{kind = .Wait, text = "root: boot stopped"},
@@ -1008,7 +1010,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "pages: ok, the page tables keep the rules"},
 	{kind = .Wait, text = "pages: the processor refuses the memory of programs to the kernel"},
 	{kind = .Shot, text = "pages"},
-	{kind = .Move, text = "pages", to_x = 168, to_y = 742}, // The window covers the console.
+	{kind = .Move, text = "pages", to_x = 168, to_y = 744}, // The window covers the console.
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "stop(\"pages\")"},
 	{kind = .Wait, text = "root: pages stopped"},
@@ -1032,7 +1034,7 @@ scenario := [?]Step {
 	// program, and each export is a command.
 	{kind = .Launch, text = "paint"},
 	{kind = .Wait, text = "compositor: surface paint"},
-	{kind = .Move, text = "paint", to_x = 516, to_y = 408}, // Below the console, at the right.
+	{kind = .Move, text = "paint", to_x = 520, to_y = 408}, // Below the console, at the right.
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "clear()"},
 	{kind = .Type, text = "connect(\"paint\")"},
@@ -1072,7 +1074,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "error: no service runs with the name paint"},
 	{kind = .Launch, text = "paint"},
 	{kind = .Wait, text = "compositor: surface paint"},
-	{kind = .Move, text = "paint", to_x = 460, to_y = 688}, // The window covers the console: move it down.
+	{kind = .Move, text = "paint", to_x = 464, to_y = 688}, // The window covers the console: move it down.
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "paint.lines()"},
 	{kind = .Wait, text = "root: connected console to the service paint"},
@@ -1086,7 +1088,7 @@ scenario := [?]Step {
 	{kind = .Launch, text = "tally"},
 	{kind = .Wait, text = "tally: ok", any_order = true}, // The compositor can write the line of the surface first.
 	{kind = .Wait, text = "compositor: surface tally"},
-	{kind = .Move, text = "tally", to_x = 616, to_y = 530}, // Under the console, at the right.
+	{kind = .Move, text = "tally", to_x = 616, to_y = 528}, // Under the console, at the right.
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "clear()"},
 	{kind = .Type, text = "connect(\"tally\")"},
@@ -1127,7 +1129,7 @@ scenario := [?]Step {
 	// their exports, and one reverse question.
 	{kind = .Wait, text = "manual: information: ", any_order = true},
 	{kind = .Wait, text = "manual: ok, "},
-	{kind = .Move, text = "manual", to_x = 204, to_y = 742},
+	{kind = .Move, text = "manual", to_x = 208, to_y = 744},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "connect(\"manual\")"},
 	{kind = .Wait, text = "[console] manual: 16 commands of a service that runs"},
@@ -1139,7 +1141,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[console] -1"},
 	{kind = .Type, text = "manual.show(\"tally\")"},
 	{kind = .Wait, text = "manual: tally: a program, 5 exports, "},
-	{kind = .Move, text = "manual", to_x = 76, to_y = 60},
+	{kind = .Move, text = "manual", to_x = 80, to_y = 64},
 	{kind = .Shot, text = "manual"},
 	// The keys of the manual: the next module of the boot image, then the one before.
 	{kind = .Key, text = "down"},
@@ -1147,7 +1149,7 @@ scenario := [?]Step {
 	{kind = .Key, text = "pgdn"},
 	{kind = .Key, text = "up"},
 	{kind = .Wait, text = "manual: tally: a program, 5 exports, "},
-	{kind = .Move, text = "manual", to_x = 204, to_y = 742},
+	{kind = .Move, text = "manual", to_x = 208, to_y = 744},
 	{kind = .Front, text = "console"},
 
 	// A module with imports: agenda imports calendar. The loader finds an
@@ -1207,7 +1209,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "imports: a call through an import slot: "},
 	{kind = .Wait, text = "imports: the bind of agenda: "},
 	{kind = .Wait, text = "imports: two programs import calendar at two places: one copy of its code, "},
-	{kind = .Move, text = "imports", to_x = 132, to_y = 300},
+	{kind = .Move, text = "imports", to_x = 136, to_y = 304},
 	{kind = .Shot, text = "imports"},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "clear()"},
@@ -1256,14 +1258,14 @@ scenario := [?]Step {
 	{kind = .Type, text = "manual.overview()"},
 	{kind = .Wait, text = "manual: overview: "},
 	{kind = .Front, text = "manual"},
-	{kind = .Move, text = "manual", to_x = 76, to_y = 60},
+	{kind = .Move, text = "manual", to_x = 80, to_y = 64},
 	{kind = .Shot, text = "modules"},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "manual.show(\"calendar_fixed\")"},
 	{kind = .Wait, text = "manual: calendar_fixed: no entry, "},
 	{kind = .Front, text = "manual"},
 	{kind = .Shot, text = "module_information"},
-	{kind = .Move, text = "manual", to_x = 204, to_y = 742},
+	{kind = .Move, text = "manual", to_x = 208, to_y = 744},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "unload(\"agenda\")"},
 	{kind = .Wait, text = "[console] agenda: 3 commands removed, its sandboxed program stops"},
@@ -1282,7 +1284,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = " 0 lost, "},
 	{kind = .Shot, text = "log"},
 	// The window covers the console: move it down.
-	{kind = .Move, text = "log", to_x = 96, to_y = 742},
+	{kind = .Move, text = "log", to_x = 96, to_y = 744},
 	// The log records as a table with typed fields, through the remote
 	// service: from here on some checks read the program, the channel and
 	// the level of a record (step Record), not only a line of text.
@@ -1374,7 +1376,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "flood: ok", any_order = true},
 	{kind = .Wait, text = "terminal: ok, flood writes in a ring of 4096 records", any_order = true},
 	{kind = .Wait, text = "root: started flood, with a terminal"},
-	{kind = .Move, text = "flood", to_x = 158, to_y = 104}, // The place of the pictures and of the clicks below.
+	{kind = .Move, text = "flood", to_x = 160, to_y = 104}, // The place of the pictures and of the clicks below.
 	{kind = .Wait, text = "terminal: flood wrote "},
 	{kind = .Shot, text = "terminal"},
 	// The terminal keeps Page Up and Page Down: its view stays, the program continues.
@@ -1751,6 +1753,7 @@ Machine :: struct {
 	call_port:   int, // The peer receives the call requests of the host there.
 	peer:        ^Peer,
 	confirm:     bool, // The tool reads compositor.pointer() before each press: see pointer_confirm.
+	keys_confirmed: int, // Keys that the tool sent only after the compositor had the key before (key_send).
 	confirmations: [dynamic]time.Duration, // The time of each confirmation of a place.
 	corrected:   int, // The places that needed a correction.
 	record_next: i64, // The number of the log record where the next Record step searches.
@@ -1803,6 +1806,73 @@ key_name :: proc(character: u8) -> string {
 		return "slash"
 	}
 	return ""
+}
+
+// KEY_TAKEN_TIME: how long the tool waits for the machine to take one key.
+KEY_TAKEN_TIME :: 20 * time.Second
+
+// key_records_read gives the count of the key records that the compositor
+// received, through the remote service.
+key_records_read :: proc(machine: ^Machine) -> (count: i64, ok: bool) {
+	values := record_fields(&machine.client, "compositor.pointer()", {"keys"}) or_return
+	return values[0], true
+}
+
+// key_pause_without_confirmation gives the wait after a key when the tool
+// cannot ask the compositor if the key arrived (a scenario with no remote).
+// On a host with more runnable work than processors, the machine runs that
+// much later: the wait grows with the load of the host for each processor,
+// so that the machine reads each key before the next one fills its
+// keyboard (measured at a load of 60 on 16 processors with the fixed wait:
+// `connect("server")` arrived as `connect("`).
+key_pause_without_confirmation :: proc() -> time.Duration {
+	load, parsed := strconv.parse_f64(load_of_the_host())
+	if !parsed {
+		return KEY_PAUSE
+	}
+	late := max(load / f64(max(os.get_processor_core_count(), 1)), 1)
+	return time.Duration(f64(KEY_PAUSE) * min(late * late, 40))
+}
+
+// key_send presses and releases one key of the QEMU monitor ("a",
+// "shift-a", "ret"). When the tool can call the compositor (machine.confirm),
+// it waits until the compositor received the records of that key: a press
+// and a release for each part of the name. A loaded host runs the machine
+// late: the keyboard of the machine holds few scancodes, and a key sent
+// before the machine read the last ones is lost (measured: "start("fetch")"
+// arrived as "start("ETCH")": the release of shift and the f were lost).
+// With the wait, the tool never sends a key before the last one arrived.
+// Before remote runs, the tool waits a fixed time, as before.
+key_send :: proc(machine: ^Machine, name: string) -> bool {
+	if !machine.confirm {
+		monitor_send(machine, "sendkey ", name, " 20")
+		time.sleep(key_pause_without_confirmation())
+		return true
+	}
+	before, read := key_records_read(machine)
+	if !read {
+		// The person revoked the grant of remote, or remote stopped: the
+		// wait with no confirmation.
+		monitor_send(machine, "sendkey ", name, " 20")
+		time.sleep(key_pause_without_confirmation())
+		return true
+	}
+	wanted := before + 2 * i64(strings.count(name, "-") + 1)
+	monitor_send(machine, "sendkey ", name, " 20")
+	start := time.tick_now()
+	for time.tick_since(start) < KEY_TAKEN_TIME {
+		time.sleep(5 * time.Millisecond)
+		now, ok := key_records_read(machine)
+		if !ok {
+			time.sleep(KEY_PAUSE)
+			return true
+		}
+		if now >= wanted {
+			machine.keys_confirmed += 1
+			return true
+		}
+	}
+	return false
 }
 
 // POINTER_TRIES: the reads of the place before the tool says that the
@@ -1878,6 +1948,10 @@ WINDOW_CLOSE_Y :: 12
 // window_width gives the width of the surface of the last window with a
 // title: "compositor: surface title 480x320 at 276,232".
 window_width :: proc(machine: ^Machine, title: string) -> (width: int, ok: bool) {
+	if machine.confirm {
+		_, _, outer_width := window_of_compositor(machine, title) or_return
+		return outer_width - 2 * WINDOW_BORDER, true
+	}
 	text := log_read(machine)
 	mark := strings.concatenate({"compositor: surface ", title, " "}, context.temp_allocator)
 	made := strings.last_index(text, mark)
@@ -1893,6 +1967,10 @@ window_width :: proc(machine: ^Machine, title: string) -> (width: int, ok: bool)
 // window down: "compositor: surface title 480x320 at 276,232" and
 // "compositor: window title moved to 60,742".
 window_place :: proc(machine: ^Machine, title: string) -> (x, y: int, ok: bool) {
+	if machine.confirm {
+		x, y, _ = window_of_compositor(machine, title) or_return
+		return x, y, true
+	}
 	text := log_read(machine)
 	made := strings.last_index(text, strings.concatenate({"compositor: surface ", title, " "}, context.temp_allocator))
 	moved := strings.last_index(text, strings.concatenate({"compositor: window ", title, " moved to "}, context.temp_allocator))
@@ -1917,6 +1995,24 @@ window_place :: proc(machine: ^Machine, title: string) -> (x, y: int, ok: bool) 
 	x = strconv.parse_int(place[:comma]) or_return
 	y = strconv.parse_int(place[comma + 1:]) or_return
 	return x, y, true
+}
+
+// window_of_compositor gives the place and the outer width of the window
+// with a title, from compositor.windows(): the table of the compositor
+// itself. The tool reads it once it has the grant person (a step Call with
+// pointer); before that step, the places come from the log.
+window_of_compositor :: proc(machine: ^Machine, title: string) -> (x, y, width: int, ok: bool) {
+	table := table_call(&machine.client, "compositor.windows()") or_return
+	for row in 0 ..< len(table.rows) / table.size {
+		if table_value(&table, row, "title") != title {
+			continue
+		}
+		x = strconv.parse_int(table_value(&table, row, "x")) or_return
+		y = strconv.parse_int(table_value(&table, row, "y")) or_return
+		width = strconv.parse_int(table_value(&table, row, "width")) or_return
+		return x, y, width, true
+	}
+	return 0, 0, 0, false
 }
 
 // log_read gives the complete lines of the log of the machine. QEMU writes
@@ -2059,7 +2155,7 @@ png_encode :: proc(width, height: int, pixels: []u8) -> []u8 {
 
 // machine_test runs a scenario on a boot volume. It passes when each step
 // passes and QEMU ends with the status exit_status.
-machine_test :: proc(steps: []Step, volume: string, output: string, exit_status: int, data_disk: string = TEST_DATA_DISK, user_network := false, disk_server: ^Network_Block_Device = nil) -> bool {
+machine_test :: proc(steps: []Step, volume: string, output: string, exit_status: int, data_disk: string = TEST_DATA_DISK, user_network := false, disk_server: ^Network_Block_Device = nil, processor_without_random := false) -> bool {
 	peer: Peer
 	if !peer_start(&peer) {
 		return false
@@ -2076,7 +2172,7 @@ machine_test :: proc(steps: []Step, volume: string, output: string, exit_status:
 		forward = {host_port = port, listener = &listener}
 	}
 	defer listener_stop(&listener)
-	command, ok := machine_command(volume, output, data_disk, &peer, forward)
+	command, ok := machine_command(volume, output, data_disk, &peer, forward, processor_without_random)
 	if !ok {
 		return false
 	}
@@ -2104,6 +2200,9 @@ machine_test :: proc(steps: []Step, volume: string, output: string, exit_status:
 	if len(machine.confirmations) > 0 {
 		slice.sort(machine.confirmations[:])
 		fmt.printfln("kerneltool: test passed: the tool confirmed %d places of the pointer through compositor.pointer(), %d after a correction; one confirmation took %d us at least, %d us in the middle", len(machine.confirmations), machine.corrected, i64(machine.confirmations[0] / time.Microsecond), i64(machine.confirmations[len(machine.confirmations) / 2] / time.Microsecond))
+	}
+	if machine.keys_confirmed > 0 {
+		fmt.printfln("kerneltool: test passed: the tool sent %d keys, each one after the compositor had received the key before it", machine.keys_confirmed)
 	}
 	if machine.client_open {
 		call_client_close(&machine.client)
@@ -2143,6 +2242,10 @@ machine_test :: proc(steps: []Step, volume: string, output: string, exit_status:
 	return passed
 }
 
+// The values that the steps Remember kept, in one test part (several
+// machines): the step Distinct compares them.
+remembered_values: [dynamic]string
+
 scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 	peer_case_started := 0 // The number of the case of the last step Peer_Start.
 	first_wait := true // The first Wait of the machine is its boot: BOOT_WAIT_TIMEOUT.
@@ -2177,16 +2280,22 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 					fmt.eprintfln("kerneltool: step %d: no key for '%c'", index + 1, step.text[i])
 					return false
 				}
-				monitor_send(machine, "sendkey ", name, " 20")
-				time.sleep(KEY_PAUSE)
+				if !key_send(machine, name) {
+					fmt.eprintfln("kerneltool: test failed: step %d: the machine did not take the key %s of \"%s\"", index + 1, name, step.text)
+					return false
+				}
 			}
 			if step.kind == .Type {
-				monitor_send(machine, "sendkey ret 20")
-				time.sleep(KEY_PAUSE)
+				if !key_send(machine, "ret") {
+					fmt.eprintfln("kerneltool: test failed: step %d: the machine did not take the key ret of \"%s\"", index + 1, step.text)
+					return false
+				}
 			}
 		case .Key:
-			monitor_send(machine, "sendkey ", step.text, " 20")
-			time.sleep(KEY_PAUSE)
+			if !key_send(machine, step.text) {
+				fmt.eprintfln("kerneltool: test failed: step %d: the machine did not take the key %s", index + 1, step.text)
+				return false
+			}
 		case .Point:
 			x, y := step.x, step.y
 			if step.inside_window != "" {
@@ -2516,6 +2625,26 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				}
 				fmt.printfln("kerneltool: test passed: the call %s from the host: the round trip %d us at least, %d us in the middle, over %d calls; %d calls in one second, one after the other", step.text, i64(least / time.Microsecond), i64(middle / time.Microsecond), step.repeat, per_second)
 			}
+		case .Remember:
+			if !log_wait(machine, step.text, false) {
+				fmt.eprintfln("kerneltool: test failed: step %d: the machine did not print \"%s\"", index + 1, step.text)
+				return false
+			}
+			log := log_read(machine)
+			rest := log[machine.seen:]
+			line := strings.trim_right(rest[:max(strings.index_byte(rest, '\n'), 0)], "\r")
+			append(&remembered_values, strings.clone(line))
+			fmt.printfln("kerneltool: the machine drew \"%s\" after \"%s\"", line, step.text)
+		case .Distinct:
+			for value, first in remembered_values {
+				for other in remembered_values[first + 1:] {
+					if value == other {
+						fmt.eprintfln("kerneltool: test failed: step %d: %s: the value \"%s\" came two times", index + 1, step.text, value)
+						return false
+					}
+				}
+			}
+			fmt.printfln("kerneltool: test passed: %s: %d values, each different", step.text, len(remembered_values))
 		case .Peer_Start:
 			peer_case_started = peer_case_start_from_the_tool(machine.peer, step.text)
 			fmt.printfln("kerneltool: the TCP case \"%s\" of the peer runs; the next steps run with it", step.text)
@@ -2583,4 +2712,106 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 		free_all(context.temp_allocator)
 	}
 	return true
+}
+
+// The windows that the interface package draws (docs/INTERFACE.md, "State
+// of the conversions"), for `kerneltool measure windows`. often: the program
+// draws a picture each second or more, so the log has the mean of 10.
+@(rodata)
+measured_windows := [?]struct {
+	name:  string,
+	often: bool,
+} {
+	{"clock", true},
+	{"life", true},
+	{"monitor", true},
+	{"inspect", true},
+	{"scheduler", true},
+	{"locks", false},
+	{"budget", false},
+	{"rights", false},
+	{"origin", false},
+	{"limits", false},
+	{"frames", false},
+	{"imports", false},
+	{"flow", false},
+	{"crowd", false},
+	{"tally", false},
+	{"manual", false},
+	{"errors", false},
+	{"interface_elements", true},
+}
+
+TEST_OUTPUT_MEASURE_WINDOWS :: BUILD_FOLDER + "/test_output_measure_windows.txt"
+
+// measure_windows starts each window of measured_windows alone, waits for
+// the time of its pictures, closes it, then prints one table. A measure is
+// valid when the load of the host is under 8: the table says the load.
+measure_windows :: proc() -> bool {
+	// Not in the temporary allocator: the scenario frees it after each step.
+	steps := make([dynamic]Step)
+	defer delete(steps)
+	texts := make([dynamic]string)
+	defer {
+		for text in texts {
+			delete(text)
+		}
+		delete(texts)
+	}
+	append(&steps, Step{kind = .Wait, text = "compositor: surface console"})
+	for window in measured_windows {
+		append(&steps, Step{kind = .Launch, text = window.name})
+		drew := strings.concatenate({"display: ", window.name, " drew one picture in "})
+		stopped := strings.concatenate({"root: ", window.name, " stopped"})
+		append(&texts, drew, stopped)
+		append(&steps, Step{kind = .Wait, text = drew})
+		if window.often {
+			append(&steps, Step{kind = .Wait, text = " the mean of 10"})
+		}
+		append(&steps, Step{kind = .Close, text = window.name})
+		append(&steps, Step{kind = .Wait, text = stopped})
+	}
+	append(&steps, Step{kind = .Front, text = "console"}, Step{kind = .Type, text = "shutdown()"}, Step{kind = .Wait, text = "kernel: the machine stops with code 0"})
+	// A copy outside the temporary allocator: the scenario frees it.
+	load_before := strings.clone(load_of_the_host())
+	defer delete(load_before)
+	if !machine_test(steps[:], BOOT_VOLUME, TEST_OUTPUT_MEASURE_WINDOWS, MACHINE_STOP_OK, TEST_DATA_DISK) {
+		return false
+	}
+	load_after := load_of_the_host()
+	log, _ := os.read_entire_file(TEST_OUTPUT_MEASURE_WINDOWS, context.temp_allocator)
+	highest := max(strconv.parse_f64(load_before) or_else 99, strconv.parse_f64(load_after) or_else 99)
+	fmt.printfln("kerneltool: the time of one picture of each window, us (the load of the host: %s at the start, %s at the end%s)", load_before, load_after, highest <= 8 ? "" : "; ABOVE 8: NOT VALID")
+	fmt.printfln("%-20s %12s %12s %12s", "window", "first", "mean of 3", "mean of 10")
+	for window in measured_windows {
+		mark := strings.concatenate({"display: ", window.name, " drew one picture in "}, context.temp_allocator)
+		values: [3]string = {"-", "-", "-"}
+		for line in strings.split_lines(string(log), context.temp_allocator) {
+			at := strings.index(line, mark)
+			if at < 0 {
+				continue
+			}
+			rest := line[at + len(mark):]
+			value := rest[:max(strings.index(rest, " us"), 0)]
+			switch {
+			case strings.has_suffix(strings.trim_space(line), "the mean of 1"):
+				values[0] = value
+			case strings.has_suffix(strings.trim_space(line), "the mean of 3"):
+				values[1] = value
+			case strings.has_suffix(strings.trim_space(line), "the mean of 10"):
+				values[2] = value
+			}
+		}
+		fmt.printfln("%-20s %12s %12s %12s", window.name, values[0], values[1], values[2])
+	}
+	return true
+}
+
+// load_of_the_host gives the load of the host over one minute, from /proc/loadavg.
+load_of_the_host :: proc() -> string {
+	text, err := os.read_entire_file("/proc/loadavg", context.temp_allocator)
+	if err != nil {
+		return "unknown"
+	}
+	return string(text[:max(strings.index_byte(string(text), ' '), 0)])
 }

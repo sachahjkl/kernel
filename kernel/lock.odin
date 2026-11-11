@@ -80,7 +80,7 @@ lock_order_check :: proc "contextless" (cpu: ^Processor, kind: op.Lock_Kind) {
 
 @(private = "file")
 lock_order_broken :: proc "contextless" (taken, held: op.Lock_Kind) -> ! {
-	intrinsics.atomic_store(&log_serial_only, true)
+	fault_report_begin()
 	log("kernel: the lock order is broken: a lock ", op.LOCK_KIND_NAMES[taken], " was taken while a lock ", op.LOCK_KIND_NAMES[held], " is held")
 	machine_stop(3)
 }

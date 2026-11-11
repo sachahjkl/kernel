@@ -7,6 +7,7 @@ import "contract:isolated"
 import op "contract:operation"
 import module "contract:module"
 import "contract:ring"
+import "support:random"
 import "support:system"
 import "base:intrinsics"
 
@@ -930,7 +931,7 @@ sandbox_start :: proc "contextless" (sandbox: ^Sandbox) -> system.Status {
 	}
 	status: system.Status
 	load_error = {}
-	sandbox.program, status = system.program_start(system.image_find(image, "host"), sandbox.name, grants, values, {pages = 512, programs = 1, threads = 1, processor = 500_000, log_records = 100}, mappings[:sandbox.file_count + 1], &prepared)
+	sandbox.program, status = system.program_start(system.image_find(image, "host"), sandbox.name, grants, random.values_with_seed(&program_generator, values), {pages = 512, programs = 1, threads = 1, processor = 500_000, log_records = 100}, mappings[:sandbox.file_count + 1], &prepared)
 	if status != .Ok {
 		return status
 	}
@@ -1196,7 +1197,7 @@ call_isolated :: proc "contextless" (item: ^Command, arguments: []Value) -> Valu
 			fault_print(&report)
 			return result
 		}
-		if intrinsics.volatile_load(&work.cancel) != 0 {
+		if intrinsics.atomic_load_explicit(&work.cancel, .Relaxed) != 0 {
 			sandbox_end(sandbox)
 			return fail("the person stopped the call of ", item.name, sandbox.service ? ": the console closed the connection to " : ": the console stopped the program ", sandbox.name)
 		}

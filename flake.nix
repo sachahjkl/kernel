@@ -16,8 +16,33 @@
 
     # The Odin compiler with one patch: -thread-count:1 gives one thread, so
     # one source gives one module (property 11). The reason is in the patch.
-    odin = pkgs.odin.overrideAttrs (old: {
-      patches = (old.patches or []) ++ [./tools/odin_compiler/thread_count_counts_the_main_thread.patch];
+    # The release of Odin is pinned here, not by Nixpkgs: Nixpkgs is months
+    # behind the releases of the compiler.
+    odinRelease = "dev-2026-11a";
+    odin = pkgs.odin.overrideAttrs (_: {
+      version = odinRelease;
+      src = pkgs.fetchFromGitHub {
+        owner = "odin-lang";
+        repo = "Odin";
+        tag = odinRelease;
+        hash = "sha256-LzvPcA6CA0p9DZi1cuFUizDPkVODMZ0OC9/y+NAO0Kc=";
+      };
+      # The patches of Nixpkgs are for raylib and for Darwin, which this
+      # system does not use; they do not apply to this release.
+      patches = [./tools/odin_compiler/thread_count_counts_the_main_thread.patch];
+      postPatch = "patchShebangs --build build_odin.sh";
+      # The compiler and its base and core libraries only: no vendor library
+      # is built, because no code of this system imports one.
+      installPhase = ''
+        runHook preInstall
+        mkdir -p $out/bin $out/share
+        cp odin $out/bin/odin
+        cp -r base core $out/share
+        wrapProgram $out/bin/odin \
+          --prefix PATH : ${pkgs.lib.makeBinPath (with pkgs.llvmPackages_18; [bintools llvm clang lld])} \
+          --set-default ODIN_ROOT $out/share
+        runHook postInstall
+      '';
     });
 
     # What tools/kerneltool needs on the path.
@@ -84,7 +109,7 @@
         name = "kernel-boot-test";
         src = inputs.nixpkgs.lib.fileset.toSource {
           root = ./.;
-          fileset = inputs.nixpkgs.lib.fileset.unions [./flake.nix ./boot ./contract ./kernel ./modules ./programs ./resources ./runtime ./support ./tools];
+          fileset = inputs.nixpkgs.lib.fileset.unions [./flake.nix ./CHANGELOG.md ./changelog.d ./boot ./contract ./kernel ./modules ./programs ./resources ./runtime ./support ./tools];
         };
         nativeBuildInputs = buildTools ++ [kerneltool];
         buildPhase = ''

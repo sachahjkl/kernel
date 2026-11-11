@@ -79,7 +79,7 @@ wait :: proc "contextless" (side: ^ring.Queue, for_room: bool) {
 write_records :: proc "c" (parameter: rawptr) -> ! {
 	side := &queue.commands
 	sequence: u64
-	for intrinsics.volatile_load(&stop) == 0 {
+	for intrinsics.atomic_load_explicit(&stop, .Relaxed) == 0 {
 		if system.send(side, ring.Record{kind = RECORD, values = {0 = sequence}}) {
 			sequence += 1
 		} else {

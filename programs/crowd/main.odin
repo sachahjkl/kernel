@@ -157,7 +157,7 @@ wait_start :: proc "contextless" () {
 write_records :: proc "c" (parameter: rawptr) -> ! {
 	member := (^Member)(parameter)
 	wait_start()
-	for intrinsics.volatile_load(&stop) == 0 {
+	for intrinsics.atomic_load_explicit(&stop, .Relaxed) == 0 {
 		put({kind = RECORD, values = {0 = u64(member.number), 1 = member.count}})
 		member.count += 1
 	}

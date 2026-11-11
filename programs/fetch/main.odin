@@ -15,6 +15,7 @@ import "contract:ring"
 import "support:display"
 import "support:graphics"
 import "support:network"
+import "support:random"
 import "support:system"
 import "support:tcp"
 import "support:web"
@@ -326,7 +327,7 @@ cases_run :: proc "contextless" () {
 	}
 	opened := connections[0].state == .Established
 	handshake := connections[0].established_at - connections[0].opened_at
-	note("the handshake with 10.0.2.100 port 80", opened && .Opened in seen, opened ? "established in " : "no answer", opened ? handshake : 0, opened ? " us, the MSS " : "", opened ? u64(connections[0].mss) : 0)
+	note("the handshake with 10.0.2.100 port 80", opened && .Opened in seen, opened ? "established in " : "no answer", opened ? handshake : u64(0), opened ? " us, the MSS " : "", opened ? u64(connections[0].mss) : u64(0))
 	if !opened {
 		return
 	}
@@ -402,8 +403,15 @@ draw :: proc "contextless" (window: ^display.Window) {
 	display.present(window)
 }
 
+// The random generator of this program, from the seed of its starter.
+program_generator: random.Generator
+
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
+	if !random.generator_from_context(&program_generator, ctx) {
+		system.log("fetch: no random seed in the context")
+		system.stop(1)
+	}
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "fetch")
 	if !ok {
 		system.stop(1)
@@ -427,9 +435,13 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.log("fetch: no memory for the buffers of the connections")
 		system.stop(1)
 	}
-	secret, from_processor := tcp.secret_make(system.cycles())
+	// The secret of the initial sequence numbers: 32 bytes of the generator
+	// of this program (docs/RANDOMNESS.md).
+	secret: [32]u8
+	random.fill(&program_generator, secret[:])
 	tcp.table_init(&table, connections[:], ([^]u8)(buffers)[:BUFFER_PAGES * system.PAGE_SIZE], SEND_SIZE, RECEIVE_SIZE, 0, secret)
-	system.log("fetch: the secret of the initial sequence numbers from ", from_processor ? "rdrand" : "the cycle counter")
+	secret = {}
+	system.log("fetch: the secret of the initial sequence numbers from the generator of the program")
 	for place in 0 ..< RECEIVE_PLACES {
 		post(u32(place))
 	}

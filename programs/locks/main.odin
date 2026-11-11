@@ -24,6 +24,7 @@ import "support:interface"
 import "support:lockers"
 import op "contract:operation"
 import "contract:ring"
+import "support:random"
 import "support:system"
 
 // The window is built with the interface package (docs/INTERFACE.md).
@@ -395,7 +396,7 @@ stress :: proc "contextless" (image: []u8, programs_free: u64) {
 				grants[lockers.GRANT_PEER] = {churners[index - 1], {.Control}}
 			}
 			status: system.Status
-			churner, status = system.program_start(file, "churn", grants, values, CHURN_AMOUNTS)
+			churner, status = system.program_start(file, "churn", grants, random.values_with_seed(&program_generator, values), CHURN_AMOUNTS)
 			if status == .Ok {
 				started += 1
 			}
@@ -536,8 +537,17 @@ stopper_run :: proc "c" (parameter: rawptr) -> ! {
 // check permits less than a quarter of that.
 STRESS_TABLES :: CHURN_ROUNDS * CHURN_COUNT / 4
 
+// The random generator of this program (support/random).
+program_generator: random.Generator
+
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
+	// The random generator of this program, from the seed that its starter
+	// gave: it gives the seed of each program that this one starts.
+	if !random.generator_from_context(&program_generator, ctx) {
+		system.log("locks: no random seed in the context")
+		system.stop(1)
+	}
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "locks")
 	if !ok {
 		system.stop(1)
@@ -564,7 +574,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		grants[lockers.GRANT_BOARD] = {memory, {.Read, .Write}}
 		values[lockers.VALUE_INDEX] = u64(index)
 		status: system.Status
-		if program, status = system.program_start(system.image_find(image, "locker"), names[index], grants, values, LOCKER_AMOUNTS); status != .Ok {
+		if program, status = system.program_start(system.image_find(image, "locker"), names[index], grants, random.values_with_seed(&program_generator, values), LOCKER_AMOUNTS); status != .Ok {
 			system.log("locks: cannot start a locker: status ", u64(status))
 			system.stop(1)
 		}

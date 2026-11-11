@@ -260,6 +260,8 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Interface package | `support/interface`: the code that builds the window of a program as a draw table each frame, lays it out on the grid, takes the pointer and the keys, finds the damage and draws (`docs/INTERFACE.md`) | toolkit, widget library, UI framework |
 | Draw record | One thing to draw, 40 bytes: a rectangle, a gradient, a run of text or a clip, with its place and its colors (`docs/INTERFACE.md`, section 2.1) | draw command, display list item, primitive |
 | Draw table | The draw records of one frame of a window, and the bytes of their texts, in the memory of the program | display list, command buffer, render tree |
+| Text grid | A grid of text cells of a program (a character, reverse, a color), drawn by one draw record; the difference compares its cells and damages only the rows spans that changed (`docs/INTERFACE.md`, section 2.4) | character matrix, screen buffer |
+| Picture record | A draw record that shows the pixels of a picture of the program, with a generation that changes when the pixels change | image node, bitmap item |
 | Element | A part of a window that one call of the interface package draws: a card, a line of a label and a value, a bar, a table, a button, a list with a choice, a text input | widget, control, component, view |
 | Element identity | A number that names one element from one frame to the next, made from a text: the focus and the pointer state follow it | id, key, handle (reserved for the kernel) |
 | Interface state | What the interface package keeps between frames, in the memory of the program: the element with the focus, the element under the pointer, the pressed element, the order of the focus | UI context, retained state |
@@ -290,6 +292,25 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Glyph cache | The glyphs of one font already drawn, for each character 32 to 126 and each scale of the grid: words of coverage, in one file (`contract/glyph_cache`). The kernel tool makes it at build time; it is a resource of the boot image | atlas, texture cache, glyph bitmap |
 | Setting | One choice of the person that changes how the system works for each program: the font, the order of the subpixel bands. The program `settings` changes it | preference, option, configuration |
 | Settings page | The one page of the settings of the person (`contract/settings`): the root service creates it; the program `settings` writes it; each program with a surface reads it | registry, config file, dconf |
+
+## Randomness
+
+| Term | Definition | Do not use |
+|---|---|---|
+| Random seed | 32 bytes from which a random generator starts. The starter of a program writes the seed of the program in its context values 9 to 12; the root service gathers its own (`docs/RANDOMNESS.md`) | entropy (for this), salt |
+| Random generator | The record of fixed size in the memory of a program that gives it random bytes: ChaCha20 with fast key erasure (`support/random`). A draw makes no kernel entry and no call | RNG, PRNG, CSPRNG (for this), /dev/urandom |
+| Entropy report | What the root service found when it gathered the seed of the system: the sources (rdseed, rdrand, the cycle counter), their good and refused values, and the seed strength | entropy estimate |
+| Seed strength | The strongest source that gave all its values to the seed of the system: entropy (rdseed), processor (rdrand), or weak (the cycle counter only, counted as 0 bits) | security level |
+| Compatibility layer | The packages of `support/cryptography` that give the code taken from Odin the helpers of its origin, over the primitives of this system (`docs/CRYPTOGRAPHY.md`) | shim, polyfill |
+
+## Project
+
+| Term | Definition | Do not use |
+|---|---|---|
+| Changelog | The file `CHANGELOG.md`: the releases of the system, newest first, in the format of Keep a Changelog 1.1.0. Each entry says what the system does since that release, for a reader of the system | release notes (for the file), history, news |
+| Release | One section of the changelog: a release number, a date, and the entries of the changes, in the parts Added, Changed, Deprecated, Removed, Fixed and Security. The merge of step N on `master` is one release | version (a stored object has versions), tag, build |
+| Release number | The number of a release, `<major>.<minor>.<patch>`: `0.N.0` for step N, `0.N.1` for a correction after it. `RELEASE_NUMBER` in `contract/release` is the newest one | version number, version |
+| Fragment | One file of `changelog.d/` with one change that is not in a release yet: its type and the text of its entry. `kerneltool changelog release` moves the fragments into a release | changeset, news file, entry (for the file) |
 
 ## Terms that the system does not have
 

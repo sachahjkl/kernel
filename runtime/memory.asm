@@ -2,6 +2,7 @@
 ;   copy_bytes_without_overlap (destination, source, count)
 ;   copy_bytes_with_overlap    (destination, source, count)
 ;   fill_bytes_with_value      (destination, value, count)
+;   erase_secret_bytes         (destination, count)
 ; Each gives the destination. The kernel tool links this file in every
 ; module, in the kernel and in the boot program, and builds them without
 ; -no-crt: with it, Odin gives its own functions, loops of one byte, two of
@@ -234,9 +235,30 @@ fill_bytes_with_value:
 	mov rax, r9
 	ret
 
+; erase_secret_bytes: rdi the destination, rsi the count. Writes 0 in each
+; byte, and gives rdi in rax. The compiler cannot remove it: the code of a
+; module calls it by its symbol, in an object that nasm made, and the
+; modules link with no link-time optimization; so LLVM does not see the
+; body, and must take the call as a read and a write of the memory that
+; the pointer reaches. A store of zeros that the compiler emits itself
+; (memset of a variable that is dead after it) can be removed: this one
+; cannot. The loop of bytes is enough: a secret has some hundred bytes.
+erase_secret_bytes:
+	mov rax, rdi
+	test rsi, rsi
+	jz .done
+.loop:
+	mov byte [rdi], 0
+	inc rdi
+	dec rsi
+	jnz .loop
+.done:
+	ret
+
 global copy_bytes_without_overlap
 global copy_bytes_with_overlap
 global fill_bytes_with_value
+global erase_secret_bytes
 
 ; Names that the compiler calls.
 %ifdef HOST

@@ -29,7 +29,10 @@ one :: #force_no_inline proc "contextless" (address: uintptr) {
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	system.log("fault: this program writes to address 0")
-	address := uintptr(ctx.values[len(ctx.values) - 1]) // 0; the compiler cannot know it.
+	// The value 14: 0, as no starter writes it; the compiler cannot know it.
+	// (The values 9 to 12 are the random seed of the program, 13 the
+	// settings page.)
+	address := uintptr(ctx.values[14])
 	one(address)
 	system.log("fault: the write did not stop the program")
 	system.stop(1)

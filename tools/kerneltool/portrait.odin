@@ -26,7 +26,7 @@ run_portrait :: proc(args: []string) -> int {
 		fmt.eprintfln("kerneltool: cannot decode %s: %v", PORTRAIT_SOURCE, err)
 		return EXIT_FAILURE
 	}
-	bytes := picture.pixels.buf[:]
+	bytes := picture.pixels[:]
 	pixels := make([]u32, PORTRAIT_WIDTH * PORTRAIT_HEIGHT, context.temp_allocator)
 	for y in 0 ..< PORTRAIT_HEIGHT {
 		for x in 0 ..< PORTRAIT_WIDTH {

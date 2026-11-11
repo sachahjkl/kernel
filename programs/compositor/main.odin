@@ -37,10 +37,13 @@ BORDER :: 2
 CLOSE_SIZE :: 24 // The close button: a square at the right end of the title bar.
 // A new window: the first one at (PLACE_X, PLACE_Y), each next one lower
 // and to the right, by PLACE_STEP_X and PLACE_STEP_Y.
-PLACE_X :: 60
-PLACE_Y :: 52
-PLACE_STEP_X :: 36
-PLACE_STEP_Y :: 30
+// The places of new windows. Each corner of a window is on the grid of 8
+// pixels (docs/DESIGN.md, section 6).
+PLACE_X :: 64
+PLACE_Y :: 56
+PLACE_STEP_X :: 40
+PLACE_STEP_Y :: 32
+GRID :: 8
 CLIENT_CAPACITY :: 32 // The root service starts 32 programs at most.
 DAMAGE_CAPACITY :: 8
 CLOCK_WIDTH :: 8 * 8 // "00:00:00"
@@ -291,6 +294,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		for record in system.receive(&input.commands) {
 			#partial switch display.Input(record.kind) {
 			case .Key:
+				key_records += 1
 				if !launcher_key(u32(record.values[0]), u8(record.values[1]), record.values[2] != 0) && order_count > 0 {
 					send(&clients[order[order_count - 1]], ring.Record{kind = u32(display.Event_Kind.Key), values = record.values})
 				}
@@ -434,8 +438,8 @@ surface_create :: proc "contextless" (index: int, record: ring.Record) {
 	client.x = PLACE_X + placed % 8 * PLACE_STEP_X
 	client.y = PLACE_Y + placed % 8 * PLACE_STEP_Y
 	// A large window moves up and left until the screen shows all of it.
-	client.x = max(min(client.x, screen.width - int(width) - 2 * BORDER), 0)
-	client.y = max(min(client.y, screen.height - int(height) - TITLE_HEIGHT - BORDER), BAR_HEIGHT)
+	client.x = max(grid_floor(min(client.x, screen.width - int(width) - 2 * BORDER)), 0)
+	client.y = max(grid_floor(min(client.y, screen.height - int(height) - TITLE_HEIGHT - BORDER)), BAR_HEIGHT)
 	placed += 1
 	damage_focus()
 	order[order_count] = index
@@ -487,8 +491,9 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32) 
 	if dragging >= 0 {
 		if buttons & display.BUTTON_LEFT != 0 {
 			damage_window(&clients[dragging])
-			clients[dragging].x = pointer_x - drag_x
-			clients[dragging].y = max(pointer_y - drag_y, BAR_HEIGHT)
+			// The window follows the pointer on the grid of 8.
+			clients[dragging].x = grid_floor(pointer_x - drag_x + GRID / 2)
+			clients[dragging].y = max(grid_floor(pointer_y - drag_y + GRID / 2), BAR_HEIGHT)
 			damage_window(&clients[dragging])
 		} else {
 			// The person put the window down: the log has its new place.
@@ -580,6 +585,7 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32) 
 // draw draws again each damage rectangle, then copies it to the screen.
 draw :: proc "contextless" (now: u64) {
 	start := system.nanoseconds()
+	screen_build(now)
 	for area in damage[:damage_count] {
 		draw_area(area, now)
 	}
@@ -609,71 +615,9 @@ draw_area :: proc "contextless" (area: Rectangle, now: u64) {
 	origin_x, origin_y := -area.left, -area.top // The corner of the screen, in the canvas.
 	graphics.copy(canvas, origin_x, origin_y, background)
 
-	for position in 0 ..< order_count {
-		client := &clients[order[position]]
-		outer_width := client.surface.width + 2 * BORDER
-		outer_height := client.surface.height + TITLE_HEIGHT + BORDER
-		if client.x >= area.right || client.y >= area.bottom || client.x + outer_width <= area.left || client.y + outer_height <= area.top {
-			continue
-		}
-		window_draw(canvas, client, client.x + origin_x, client.y + origin_y, position == order_count - 1)
-	}
-
-	// The bar: the name of the system, the two buttons, the time since boot.
-	if area.top < BAR_HEIGHT {
-		y := 8 + origin_y
-		graphics.block(canvas, origin_x, origin_y, frame.width, BAR_HEIGHT - 1, graphics.COLOR_CARD_TOP, graphics.COLOR_CARD_BOTTOM)
-		graphics.fill(canvas, origin_x, origin_y + BAR_HEIGHT - 1, frame.width, 1, graphics.COLOR_TRACK)
-		graphics.text(canvas, 16 + origin_x, y, "kernel", graphics.COLOR_TEXT)
-		left, top, button_width, button_height := bar.button()
-		button_draw(canvas, left + origin_x, top + origin_y, button_width, button_height, bar.LABEL, menu_open == .Programs)
-		left, top, button_width, button_height = bar.windows_button()
-		button_draw(canvas, left + origin_x, top + origin_y, button_width, button_height, bar.WINDOWS_LABEL, menu_open == .Windows)
-		hint_x := frame.width - CLOCK_WIDTH - 32 - graphics.text_width(LAUNCHER_HINT) + origin_x
-		graphics.text(canvas, graphics.text(canvas, hint_x, y, "launcher: ", graphics.COLOR_DIM), y, "super", graphics.COLOR_TEXT)
-		seconds := now / 1000
-		x := frame.width - CLOCK_WIDTH - 16 + origin_x
-		x = graphics.unsigned(canvas, x, y, seconds / 3600, graphics.COLOR_TEXT, 2)
-		x = graphics.text(canvas, x, y, ":", graphics.COLOR_DIM)
-		x = graphics.unsigned(canvas, x, y, seconds / 60 % 60, graphics.COLOR_TEXT, 2)
-		x = graphics.text(canvas, x, y, ":", graphics.COLOR_DIM)
-		graphics.unsigned(canvas, x, y, seconds % 60, graphics.COLOR_TEXT, 2)
-	}
-
-	// The menus of the bar, over the windows.
-	if menu_open == .Windows && order_count > 0 {
-		left, top, menu_width, menu_height := bar.windows_menu(order_count)
-		card_draw(canvas, left + origin_x, top + origin_y, menu_width, menu_height, "WINDOWS", "the client table", u64(order_count))
-		for line in 0 ..< order_count {
-			index := window_of_line(line)
-			if index < 0 {
-				break
-			}
-			x, y, line_width, line_height := bar.windows_line(line)
-			x, y = x + origin_x, y + origin_y
-			focus := index == order[order_count - 1]
-			if line == menu_line {
-				graphics.fill(canvas, x, y, line_width, line_height, graphics.COLOR_TITLE)
-			}
-			if focus {
-				// The window that has the focus: a square, and its title in white.
-				graphics.fill(canvas, x + 8, y + 8, 8, 8, line == menu_line ? graphics.COLOR_WHITE : graphics.COLOR_TITLE)
-			}
-			graphics.text(canvas, x + 24, y + 4, system.name_of(clients[index].title[:]), focus || line == menu_line ? graphics.COLOR_WHITE : graphics.COLOR_TEXT)
-		}
-	}
-	if menu_open == .Programs {
-		left, top, menu_width, menu_height := bar.menu()
-		card_draw(canvas, left + origin_x, top + origin_y, menu_width, menu_height, "PROGRAMS", "bar.names", len(bar.names))
-		for name, index in bar.names {
-			x, y, line_width, line_height := bar.line(index)
-			x, y = x + origin_x, y + origin_y
-			if index == menu_line {
-				graphics.fill(canvas, x, y, line_width, line_height, graphics.COLOR_TITLE)
-			}
-			graphics.text(canvas, x + bar.PADDING, y + 4, name, index == menu_line ? graphics.COLOR_WHITE : graphics.COLOR_TEXT)
-		}
-	}
+	// The windows, the bar and the menus: one draw table for the frame
+	// (screen_build), each record cut to this area.
+	interface.execute_in_rectangle(&screen_table, canvas, {area.left, area.top, area.right, area.bottom}, origin_x, origin_y)
 
 	if launcher_open {
 		interface.execute_in_rectangle(&launcher_now, canvas, {area.left, area.top, area.right, area.bottom}, origin_x, origin_y)
@@ -694,34 +638,34 @@ draw_area :: proc "contextless" (area: Rectangle, now: u64) {
 	}
 }
 
-// window_draw draws a window at (x, y) of the canvas: its frame, then its
-// surface. The title bar of the window that has the focus goes from the blue
-// of the title, at the left, to a darker blue, at the right; the title bar
-// of another window is quiet. The colors of one line of the title bar are
-// computed once, for the columns that the canvas shows, then copied to each
-// line.
-window_draw :: proc "contextless" (canvas: graphics.Canvas, client: ^Client, x, y: int, focus: bool) {
+// frame_records appends the frame of a window as draw records of the
+// interface package: the title bar with its gradient and its lighter top
+// line, the borders, the title, the close button (docs/DESIGN.md, section
+// 9). By hand the same frame of 800 x 600 took 8.5 us, as 9 records 8.9 us
+// (one measure run, docs/INTERFACE.md, section 12).
+frame_records :: proc "contextless" (table: ^interface.Draw_Table, client: ^Client, x, y: int, focus, pointer_over: bool) {
 	outer_width := client.surface.width + 2 * BORDER
 	outer_height := client.surface.height + TITLE_HEIGHT + BORDER
 	start := graphics.Color(focus ? graphics.COLOR_TITLE : graphics.COLOR_TITLE_QUIET)
 	end := graphics.Color(focus ? graphics.COLOR_TITLE_END : graphics.COLOR_TITLE_QUIET_END)
-	first := max(-x, 0)
-	last := min(outer_width, canvas.width - x)
-	if first < last {
-		row := title_row[first:last]
-		graphics.gradient(row, start, end, outer_width, first)
-		// The line at the top is lighter: the sign of depth of the rules.
-		graphics.gradient(title_light[first:last], graphics.shade(start, 125), graphics.shade(end, 125), outer_width, first)
-		graphics.copy(canvas, x + first, y, {pixels = raw_data(title_light[first:]), width = last - first, height = 1})
-		lines := graphics.Canvas{pixels = raw_data(row), width = last - first, height = TITLE_HEIGHT - 1} // Stride 0: each line is the row.
-		graphics.copy(canvas, x + first, y + 1, lines)
-		lines.height = BORDER
-		graphics.copy(canvas, x + first, y + outer_height - BORDER, lines)
+	interface.draw_horizontal_gradient(table, x, y, outer_width, 1, graphics.shade(start, 125), graphics.shade(end, 125))
+	interface.draw_horizontal_gradient(table, x, y + 1, outer_width, TITLE_HEIGHT - 1, start, end)
+	interface.draw_horizontal_gradient(table, x, y + outer_height - BORDER, outer_width, BORDER, start, end)
+	interface.draw_rectangle(table, x, y + TITLE_HEIGHT, BORDER, outer_height - TITLE_HEIGHT - BORDER, start)
+	interface.draw_rectangle(table, x + outer_width - BORDER, y + TITLE_HEIGHT, BORDER, outer_height - TITLE_HEIGHT - BORDER, end)
+	title := system.name_of(client.title[:])
+	shown := clamp((outer_width - CLOSE_SIZE - 16) / graphics.CELL_WIDTH, 0, len(title))
+	interface.draw_text(table, x + 8, y + 4, title[:shown], focus ? graphics.COLOR_WHITE : graphics.COLOR_DIM)
+	base := graphics.Color(graphics.COLOR_STOP_PROGRAM_QUIET)
+	mark := graphics.Color(graphics.COLOR_STOP_PROGRAM_QUIET_MARK)
+	if focus || pointer_over {
+		base = pointer_over ? graphics.COLOR_STOP_PROGRAM_POINTER_OVER : graphics.COLOR_STOP_PROGRAM
+		mark = graphics.COLOR_WHITE
 	}
-	graphics.fill(canvas, x, y + TITLE_HEIGHT, BORDER, outer_height - TITLE_HEIGHT - BORDER, start)
-	graphics.fill(canvas, x + outer_width - BORDER, y + TITLE_HEIGHT, BORDER, outer_height - TITLE_HEIGHT - BORDER, end)
-	title_draw(canvas, client, x, y, focus)
-	graphics.copy(canvas, x + BORDER, y + TITLE_HEIGHT, client.surface)
+	close_x := x + outer_width - BORDER - CLOSE_SIZE
+	interface.draw_vertical_gradient(table, close_x, y, CLOSE_SIZE, TITLE_HEIGHT, graphics.shade(base, 118), graphics.shade(base, 82))
+	interface.draw_rectangle(table, close_x, y, CLOSE_SIZE, 1, graphics.shade(base, 150))
+	interface.draw_character(table, close_x + (CLOSE_SIZE - graphics.CELL_WIDTH) / 2, y + (TITLE_HEIGHT - graphics.CELL_HEIGHT) / 2, 'x', mark)
 }
 
 // title_measure measures three forms of the title bar of the widest window
@@ -754,30 +698,6 @@ title_measure :: proc "contextless" () {
 	system.log_in("surfaces", .Info, "compositor: a title bar of ", u64(width), " pixels: one color ", times[0] / 1000, ".", times[0] / 100 % 10, " us, a mix for each pixel ", times[1] / 1000, ".", times[1] / 100 % 10, " us, one row of colors then copies ", times[2] / 1000, ".", times[2] / 100 % 10, " us")
 }
 
-// title_draw draws the title and the close button on a title bar.
-title_draw :: proc "contextless" (canvas: graphics.Canvas, client: ^Client, x, y: int, focus: bool) {
-	outer_width := client.surface.width + 2 * BORDER
-	title := system.name_of(client.title[:])
-	shown := clamp((outer_width - CLOSE_SIZE - 16) / graphics.CELL_WIDTH, 0, len(title))
-	graphics.text(canvas, x + 8, y + 4, title[:shown], focus ? graphics.COLOR_WHITE : graphics.COLOR_DIM)
-	close_button_draw(canvas, x + outer_width - BORDER - CLOSE_SIZE, y, focus, client == close_button_under_pointer())
-}
-
-// close_button_draw draws the close button of a window: the concept "stop a
-// program", a deep red with the sign of depth of the rules, brighter when
-// the pointer is over it, quiet on a window that is not in front.
-close_button_draw :: proc "contextless" (canvas: graphics.Canvas, x, y: int, focus, pointer_over: bool) {
-	base := graphics.Color(graphics.COLOR_STOP_PROGRAM_QUIET)
-	mark := graphics.Color(graphics.COLOR_STOP_PROGRAM_QUIET_MARK)
-	if focus || pointer_over {
-		base = pointer_over ? graphics.COLOR_STOP_PROGRAM_POINTER_OVER : graphics.COLOR_STOP_PROGRAM
-		mark = graphics.COLOR_WHITE
-	}
-	graphics.block(canvas, x, y, CLOSE_SIZE, TITLE_HEIGHT, graphics.shade(base, 118), graphics.shade(base, 82))
-	graphics.fill(canvas, x, y, CLOSE_SIZE, 1, graphics.shade(base, 150))
-	graphics.character(canvas, x + (CLOSE_SIZE - graphics.CELL_WIDTH) / 2, y + (TITLE_HEIGHT - graphics.CELL_HEIGHT) / 2, 'x', mark)
-}
-
 // close_button_under_pointer gives the client whose close button is under
 // the pointer, or nil: the button of the window in front at that place.
 close_button_under_pointer :: proc "contextless" () -> ^Client {
@@ -793,38 +713,6 @@ close_button_under_pointer :: proc "contextless" () -> ^Client {
 		return nil
 	}
 	return nil
-}
-
-// button_draw draws a button of the bar. The button of an open menu is blue.
-button_draw :: proc "contextless" (canvas: graphics.Canvas, x, y, width, height: int, label: string, open: bool) {
-	graphics.fill(canvas, x, y, width, height, open ? graphics.COLOR_TITLE : graphics.COLOR_TRACK)
-	graphics.text(canvas, x + bar.PADDING, y + (height - graphics.CELL_HEIGHT) / 2, label, open ? graphics.COLOR_WHITE : graphics.COLOR_TEXT)
-}
-
-// card_draw draws a card of the rules (docs/DESIGN.md, section 3): a border
-// of 1 pixel in the color of the kernel, the surface of a card, and the
-// title, the caption and the count of its lines. With a total, the count
-// reads "count of total".
-card_draw :: proc "contextless" (canvas: graphics.Canvas, x, y, width, height: int, title, caption: string, count: u64, total: u64 = 0) {
-	accent :: graphics.COLOR_KERNEL
-	graphics.block(canvas, x, y, width, height, graphics.shade(accent, 28), graphics.shade(accent, 14))
-	graphics.block(canvas, x + 1, y + 1, width - 2, height - 2, graphics.COLOR_CARD_TOP, graphics.COLOR_CARD_BOTTOM)
-	graphics.block(canvas, x + graphics.CARD_MARGIN, y + 12, 4, 16, graphics.shade(accent, 130), accent)
-	after := graphics.text(canvas, x + graphics.CARD_MARGIN + 12, y + 12, title, accent)
-	graphics.text(canvas, after + 16, y + 12, caption, graphics.COLOR_DIM)
-	digits :: proc "contextless" (value: u64) -> int {
-		count := 1
-		for rest := value / 10; rest != 0; rest /= 10 {
-			count += 1
-		}
-		return count
-	}
-	right := x + width - graphics.CARD_MARGIN
-	if total != 0 {
-		right -= graphics.text_width(" of ") + digits(total) * graphics.CELL_WIDTH
-		graphics.unsigned(canvas, graphics.text(canvas, right, y + 12, " of ", graphics.COLOR_DIM), y + 12, total, graphics.COLOR_TEXT)
-	}
-	graphics.unsigned(canvas, right - digits(count) * graphics.CELL_WIDTH, y + 12, count, graphics.COLOR_TEXT)
 }
 
 // The panel of the launcher, in the middle of the screen, on the grid.
@@ -1062,4 +950,92 @@ loop_copy :: proc "contextless" (to, from: [^]u8, count: int) {
 	for ; index < count; index += 1 {
 		to[index] = from[index]
 	}
+}
+
+// The draw table of the screen: for each window, from the back to the front,
+// its frame and its surface (a Picture record), then the bar and the menus.
+// The compositor builds it once for each frame and draws it in each damage
+// area. The launcher has its own table; the pointer is drawn after both.
+screen_records: [512]interface.Draw_Record
+screen_text: [8192]u8
+screen_pictures: [CLIENT_CAPACITY]graphics.Canvas
+screen_table := interface.Draw_Table{}
+
+screen_build :: proc "contextless" (now: u64) {
+	screen_table = {records = screen_records[:], text = screen_text[:], pictures = screen_pictures[:]}
+	table := &screen_table
+	pointer_close := close_button_under_pointer()
+	for position in 0 ..< order_count {
+		client := &clients[order[position]]
+		focus := position == order_count - 1
+		frame_records(table, client, client.x, client.y, focus, client == pointer_close)
+		screen_pictures[position] = client.surface
+		interface.draw_picture(table, client.x + BORDER, client.y + TITLE_HEIGHT, position, 0)
+	}
+
+	// The bar: the name of the system, the two buttons, the time since boot.
+	width := frame.width
+	interface.draw_vertical_gradient(table, 0, 0, width, BAR_HEIGHT - 1, graphics.COLOR_CARD_TOP, graphics.COLOR_CARD_BOTTOM)
+	interface.draw_rectangle(table, 0, BAR_HEIGHT - 1, width, 1, graphics.COLOR_TRACK)
+	interface.draw_text(table, 16, 8, "kernel", graphics.COLOR_TEXT)
+	bar_button_records :: proc "contextless" (table: ^interface.Draw_Table, x, y, width, height: int, label: string, open: bool) {
+		interface.draw_rectangle(table, x, y, width, height, open ? graphics.COLOR_TITLE : graphics.COLOR_TRACK)
+		interface.draw_text(table, x + bar.PADDING, y + (height - graphics.CELL_HEIGHT) / 2, label, open ? graphics.COLOR_WHITE : graphics.COLOR_TEXT)
+	}
+	left, top, button_width, button_height := bar.button()
+	bar_button_records(table, left, top, button_width, button_height, bar.LABEL, menu_open == .Programs)
+	left, top, button_width, button_height = bar.windows_button()
+	bar_button_records(table, left, top, button_width, button_height, bar.WINDOWS_LABEL, menu_open == .Windows)
+	hint_x := width - CLOCK_WIDTH - 32 - interface.text_width({}, LAUNCHER_HINT)
+	interface.draw_text(table, interface.draw_text(table, hint_x, 8, "launcher: ", graphics.COLOR_DIM), 8, "super", graphics.COLOR_TEXT)
+	seconds := now / 1000
+	x := width - CLOCK_WIDTH - 16
+	x = interface.draw_unsigned(table, x, 8, seconds / 3600, graphics.COLOR_TEXT, 2)
+	x = interface.draw_text(table, x, 8, ":", graphics.COLOR_DIM)
+	x = interface.draw_unsigned(table, x, 8, seconds / 60 % 60, graphics.COLOR_TEXT, 2)
+	x = interface.draw_text(table, x, 8, ":", graphics.COLOR_DIM)
+	interface.draw_unsigned(table, x, 8, seconds % 60, graphics.COLOR_TEXT, 2)
+
+	// The menus of the bar, as cards of the package.
+	card_frame := interface.Frame{table = table}
+	count: interface.Text_Builder
+	if menu_open == .Windows && order_count > 0 {
+		menu_left, menu_top, menu_width, menu_height := bar.windows_menu(order_count)
+		interface.card(&card_frame, {menu_left, menu_top, menu_width, menu_height}, "WINDOWS", "the client table", graphics.COLOR_KERNEL, interface.number_text(&count, u64(order_count)))
+		for line in 0 ..< order_count {
+			index := window_of_line(line)
+			if index < 0 {
+				break
+			}
+			line_x, line_y, line_width, line_height := bar.windows_line(line)
+			focus := index == order[order_count - 1]
+			if line == menu_line {
+				interface.draw_rectangle(table, line_x, line_y, line_width, line_height, graphics.COLOR_TITLE)
+			}
+			if focus {
+				// The window that has the focus: a square, and its title in white.
+				interface.draw_rectangle(table, line_x + 8, line_y + 8, 8, 8, line == menu_line ? graphics.COLOR_WHITE : graphics.COLOR_TITLE)
+			}
+			interface.draw_text(table, line_x + 24, line_y + 4, system.name_of(clients[index].title[:]), focus || line == menu_line ? graphics.COLOR_WHITE : graphics.COLOR_TEXT)
+		}
+	}
+	if menu_open == .Programs {
+		menu_left, menu_top, menu_width, menu_height := bar.menu()
+		interface.card(&card_frame, {menu_left, menu_top, menu_width, menu_height}, "PROGRAMS", "bar.names", graphics.COLOR_KERNEL, interface.number_text(&count, len(bar.names)))
+		for name, index in bar.names {
+			line_x, line_y, line_width, line_height := bar.line(index)
+			if index == menu_line {
+				interface.draw_rectangle(table, line_x, line_y, line_width, line_height, graphics.COLOR_TITLE)
+			}
+			interface.draw_text(table, line_x + bar.PADDING, line_y + 4, name, index == menu_line ? graphics.COLOR_WHITE : graphics.COLOR_TEXT)
+		}
+	}
+	if table.full {
+		system.log_in("surfaces", .Warning, "compositor: the draw table of the screen is full: records are missing")
+	}
+}
+
+// grid_floor gives the place on the grid of 8 at or before a place.
+grid_floor :: proc "contextless" (place: int) -> int {
+	return place - place %% GRID
 }

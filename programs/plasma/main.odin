@@ -3,6 +3,7 @@ package plasma
 
 import "support:display"
 import "support:graphics"
+import "support:interface"
 import "support:system"
 
 WIDTH :: 320
@@ -11,6 +12,12 @@ FRAME_INTERVAL :: 33
 
 sine: [256]i32 // One period, from -127 to 127.
 palette: [256]graphics.Color
+// The window is one picture of this program, shown with the interface
+// package (a Picture record): the animation draws into it.
+picture_pixels: [WIDTH * HEIGHT]graphics.Color
+pictures: [1]graphics.Canvas
+records_now, records_before: [2]interface.Draw_Record
+drawing: interface.Window_Drawing
 
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
@@ -32,19 +39,21 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		palette[i] = graphics.rgb(red, green, blue)
 	}
 
+	pictures[0] = {pixels = raw_data(picture_pixels[:]), width = WIDTH, height = HEIGHT, stride = WIDTH}
+	drawing = interface.window_drawing_of_picture(records_now[:], records_before[:], pictures[:])
 	frame: u64
 	next := system.time()
 	for {
 		t := int(frame)
 		for y in 0 ..< HEIGHT {
-			row := window.canvas.pixels[y * WIDTH:]
+			row := picture_pixels[y * WIDTH:]
 			a := sine[(y * 2 + t) & 255]
 			for x in 0 ..< WIDTH {
 				value := a + sine[(x + t * 2) & 255] + sine[(x + y + t) & 255] + sine[((x * x + y * y) >> 7 + t * 3) & 255]
 				row[x] = palette[(int(value) >> 1 + t) & 255]
 			}
 		}
-		display.present(&window)
+		interface.show_picture(&drawing, &window, u32(frame) + 1)
 		if frame == 0 {
 			system.log("plasma: ok")
 		}

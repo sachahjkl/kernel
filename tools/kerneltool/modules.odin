@@ -63,6 +63,7 @@ module_builds := [?]Module_Build {
 	{name = "tally", source = "programs/tally", image = true},
 	{name = "manual", source = "programs/manual", image = true},
 	{name = "clock", source = "programs/clock", image = true},
+	{name = "randomness", source = "programs/randomness", image = true},
 	{name = "terminal", source = "programs/terminal", image = true},
 	{name = "flood", source = "programs/flood", image = true},
 	{name = "processors", source = "programs/processors", image = true},
@@ -116,9 +117,8 @@ module_path :: proc(name: string) -> string {
 }
 
 build_modules :: proc() -> bool {
-	for build in module_builds {
-		build_module(build) or_return
-	}
+	// One process for each module, several at once (parallel_build.odin).
+	build_modules_in_parallel() or_return
 	// The pointer themes: the resources of the boot image (pointers.odin).
 	resources := build_pointer_themes(os.get_env(POINTER_THEME_SOURCE_VARIABLE, context.temp_allocator), false) or_return
 	// The glyph cache of the default font: one more resource (vector_fonts.odin).
@@ -155,6 +155,9 @@ files_with_suffix :: proc(folder, suffix: string) -> (paths: []string, ok: bool)
 // passes the two defines in each build: the defaults of the source never
 // decide.
 test_build_checks := true
+// A measure run of the windows: the programs write the time of their
+// pictures (display.MEASURE_RUN, `kerneltool measure windows`).
+measure_run := false
 
 // build_module compiles a package to objects, assembles its .asm files, links
 // all with lld into one position-independent object, and converts that
@@ -163,6 +166,8 @@ build_module :: proc(build: Module_Build) -> bool {
 	folder := join(MODULE_BUILD_FOLDER, "/", build.name)
 	objects := join(folder, "/objects")
 	reset_folder(objects) or_return
+	llvm_ir_folder := join(folder, "/llvm_ir")
+	reset_folder(llvm_ir_folder) or_return
 	compile := make([dynamic]string, context.temp_allocator)
 	append(
 		&compile,
@@ -190,7 +195,7 @@ build_module :: proc(build: Module_Build) -> bool {
 		// gives one thread in all (choice 189 and the choice that follows 359).
 		"-thread-count:1",
 		CONTRACT_LIBRARY,
-		join("-out:", folder, "/", build.name, ".ll"),
+		join("-out:", llvm_ir_folder),
 	)
 	if build.kernel {
 		append(&compile, "-disable-red-zone")
@@ -198,10 +203,19 @@ build_module :: proc(build: Module_Build) -> bool {
 		append(&compile, test_build_checks ? "-define:TEST_BUILD_CHECKS_FRAME_SUMS=true" : "-define:TEST_BUILD_CHECKS_FRAME_SUMS=false")
 	} else {
 		append(&compile, SUPPORT_LIBRARY) // The kernel has the contract library only.
+		if measure_run {
+			append(&compile, "-define:MEASURE_RUN=true")
+		}
 	}
 	run(compile[:]) or_return
-	// Odin writes the IR in the folder where it runs, with the name of -out.
-	if err := os.rename(join(build.name, ".ll"), join(folder, "/", build.name, ".ll")); err != nil {
+	// Odin writes the IR in the folder of -out, with the name of the first
+	// package of the module. The folder was empty: its one .ll file is the IR.
+	llvm_ir_files := files_with_suffix(llvm_ir_folder, ".ll") or_return
+	if len(llvm_ir_files) != 1 {
+		fmt.eprintfln("kerneltool: the compiler wrote %d LLVM IR files for %s; one module is one file", len(llvm_ir_files), build.name)
+		return false
+	}
+	if err := os.rename(llvm_ir_files[0], join(folder, "/", build.name, ".ll")); err != nil {
 		fmt.eprintfln("kerneltool: cannot move the LLVM IR of %s: %v", build.name, err)
 		return false
 	}

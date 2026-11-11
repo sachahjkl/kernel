@@ -10,7 +10,7 @@ package interface
 
 import "support:graphics"
 
-DRAW_RECORD_VERSION :: 2 // A new kind of record, or a new field, is a new version. 2: Folded_Gap, Picture.
+DRAW_RECORD_VERSION :: 3 // A new kind of record, or a new field, is a new version. 2: Folded_Gap, Picture. 3: Text_Grid.
 
 Draw_Kind :: enum u8 {
 	None                = 0,
@@ -28,6 +28,27 @@ Draw_Kind :: enum u8 {
 	// Draw_Table.pictures, text_count its generation (a new number when its
 	// pixels change). The picture is drawn at (x, y), cut to width x height.
 	Picture             = 8,
+	// A grid of text cells of the caller: text_start is its index in
+	// Draw_Table.grids. The cells are drawn on the background that the frame
+	// paints. The difference compares the cells one by one: a changed cell
+	// damages only its row span (docs/INTERFACE.md, section 2.4).
+	Text_Grid           = 9,
+}
+
+// One cell of a text grid: a character of the font of the system, in its
+// color, or in the color of the background on a cell of its color.
+Text_Grid_Cell :: struct {
+	character: u8, // 0 to 32: no character.
+	reverse:   bool,
+	color:     graphics.Color,
+}
+
+// A grid of text cells: rows lines of columns cells, a line each stride
+// cells. In the table of the frame now, the cells of the caller; in a table
+// before, the copy of the cells that the surface shows (draw_table_copy).
+Text_Grid :: struct {
+	cells:                  []Text_Grid_Cell,
+	columns, rows, stride: int,
 }
 
 // One thing to draw: 40 bytes, little-endian (docs/INTERFACE.md, section 2.1).
@@ -56,6 +77,7 @@ Draw_Table :: struct {
 	text_count:   int,
 	full:         bool,
 	pictures:     []graphics.Canvas, // The pictures that Picture records show.
+	grids:        []Text_Grid, // The grids that Text_Grid records show.
 }
 
 // A rectangle of the surface. right and bottom are not in it.
@@ -81,7 +103,36 @@ draw_table_copy :: proc "contextless" (target, source: ^Draw_Table) -> bool {
 	target.text_count = source.text_count
 	target.full = source.full
 	target.pictures = source.pictures
+	// The cells of each grid: the target keeps its own copy, in its memory.
+	if len(target.grids) < len(source.grids) {
+		return false
+	}
+	for grid, index in source.grids {
+		size := grid_size(grid)
+		if len(target.grids[index].cells) < size {
+			return false
+		}
+		copy(target.grids[index].cells[:size], grid.cells[:size])
+		target.grids[index].columns, target.grids[index].rows, target.grids[index].stride = grid.columns, grid.rows, grid.stride
+	}
 	return true
+}
+
+// grid_valid says if the cells of a grid hold each of its rows.
+grid_valid :: proc "contextless" (grid: Text_Grid) -> bool {
+	if grid.rows <= 0 || grid.columns <= 0 {
+		return grid.rows >= 0 && grid.columns >= 0
+	}
+	return grid.stride >= grid.columns && (grid.rows - 1) * grid.stride + grid.columns <= len(grid.cells)
+}
+
+// grid_size gives the count of cells from the first cell of a grid to its
+// last one.
+grid_size :: proc "contextless" (grid: Text_Grid) -> int {
+	if grid.rows <= 0 || grid.columns <= 0 {
+		return 0
+	}
+	return min((grid.rows - 1) * grid.stride + grid.columns, len(grid.cells))
 }
 
 // record_append appends one record and gives its address, or nil when the
@@ -145,6 +196,21 @@ draw_picture :: proc "contextless" (table: ^Draw_Table, x, y: int, index: int, g
 	}
 	picture := table.pictures[index]
 	record_append(table, {kind = .Picture, x = coordinate(x), y = coordinate(y), width = coordinate(picture.width), height = coordinate(picture.height), text_start = u32(index), text_count = generation, element = element})
+}
+
+// draw_text_grid appends the grid number index of the table at (x, y): one
+// cell of the font of the system for each cell of the grid.
+draw_text_grid :: proc "contextless" (table: ^Draw_Table, x, y: int, index: int, element: u32 = 0) {
+	if index < 0 || index >= len(table.grids) {
+		table.full = true
+		return
+	}
+	grid := table.grids[index]
+	if !grid_valid(grid) {
+		table.full = true
+		return
+	}
+	record_append(table, {kind = .Text_Grid, x = coordinate(x), y = coordinate(y), width = coordinate(grid.columns * graphics.CELL_WIDTH), height = coordinate(grid.rows * graphics.CELL_HEIGHT), text_start = u32(index), element = element})
 }
 
 // draw_clip appends a clip: the next records are cut to the rectangle. A

@@ -14,6 +14,7 @@
 package console
 
 import "support:display"
+import "support:random"
 import "support:system"
 import "support:terminal"
 import "base:intrinsics"
@@ -61,8 +62,17 @@ line_tone: terminal.Tone // The tone of the output line that the console writes 
 
 ctx: ^system.Context
 
+// The random generator of this program (support/random).
+program_generator: random.Generator
+
 @(export, link_name = "entry")
 entry :: proc "c" (start_context: ^system.Context) -> ! {
+	// The random generator of this program, from the seed that its starter
+	// gave: it gives the seed of each program that this one starts.
+	if !random.generator_from_context(&program_generator, start_context) {
+		system.log("console: no random seed in the context")
+		system.stop(1)
+	}
 	ctx = start_context
 	ok: bool
 	if output, ok = terminal.open(ctx); !ok {
@@ -79,7 +89,7 @@ entry :: proc "c" (start_context: ^system.Context) -> ! {
 	system.log(CONSOLE_MARK)
 
 	for {
-		seen := intrinsics.volatile_load(&changes)
+		seen := intrinsics.atomic_load_explicit(&changes, .Relaxed)
 		for {
 			pressed := terminal.key(&output) or_break
 			if !running {
@@ -93,7 +103,7 @@ entry :: proc "c" (start_context: ^system.Context) -> ! {
 				pending_count += 1
 			}
 		}
-		if running && intrinsics.volatile_load(&work.finished) == work.started {
+		if running && intrinsics.atomic_load_explicit(&work.finished, .Relaxed) == work.started {
 			running = false
 			// The keys that waited, until one of them starts a line.
 			taken := 0
@@ -118,7 +128,7 @@ run_lines :: proc "c" (parameter: rawptr) -> ! {
 	done: u32
 	for {
 		system.word_wait(&work.started, done)
-		if intrinsics.volatile_load(&work.started) == done {
+		if intrinsics.atomic_load_explicit(&work.started, .Relaxed) == done {
 			continue
 		}
 		done += 1

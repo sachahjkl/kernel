@@ -23,6 +23,7 @@ import "contract:ring"
 import "support:display"
 import "support:network"
 import "support:storage"
+import "support:random"
 import "support:system"
 import "support:tcp"
 
@@ -68,8 +69,7 @@ segments: [PLACE_COUNT - RECEIVE_PLACES]tcp.Outgoing
 events: [CAPACITY]tcp.Event
 local_address: u32
 listen_port: u16
-secret_source: string
-secret_weak: bool // No rdrand that works: the secret of the initial sequence numbers comes from the cycle counter.
+program_generator: random.Generator // The random generator of this program, from the seed of its starter.
 held_commands: [HELD_CAPACITY]ring.Record // Commands that the ring did not take.
 held_command_count: int
 held_release_count: int // The Releases among the held commands.
@@ -395,6 +395,10 @@ exchange :: proc "contextless" (incoming: []tcp.Incoming) -> (deadline: u64) {
 
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
+	if !random.generator_from_context(&program_generator, ctx) {
+		system.log("server: no random seed in the context")
+		system.stop(1)
+	}
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "server")
 	if !ok {
 		system.stop(1)
@@ -437,13 +441,15 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if memory_status != .Ok || buffers_status != .Ok {
 		fail("no memory for the buffers of the connections")
 	}
-	secret, from_processor := tcp.secret_make(system.cycles())
-	secret_source = from_processor ? "rdrand" : "the cycle counter (weak)"
-	secret_weak = !from_processor
+	// The secret of the initial sequence numbers (RFC 6528): 32 bytes of
+	// the generator of this program (docs/RANDOMNESS.md).
+	secret: [32]u8
+	random.fill(&program_generator, secret[:])
 	if error := tcp.table_init(&table, connections[:], ([^]u8)(buffers)[:BUFFER_PAGES * system.PAGE_SIZE], SEND_SIZE, RECEIVE_SIZE, local_address, secret); error.kind != 0 {
 		fail("the connection table refused its memory")
 	}
 	table.listen_port = listen_port
+	secret = {}
 	table.remote_limit = REMOTE_LIMIT
 	// The pages of the private store.
 	pages_load(ctx)
@@ -455,7 +461,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		free_count += 1
 	}
 	system.wake_reader(&endpoint.commands)
-	system.log("server: listening on the TCP port ", u64(listen_port), ", a table of ", u64(CAPACITY), " connections, the secret of the initial sequence numbers from ", secret_source)
+	system.log("server: listening on the TCP port ", u64(listen_port), ", a table of ", u64(CAPACITY), " connections, the secret of the initial sequence numbers from the generator of the program")
 
 	incoming: [RECEIVE_PLACES]tcp.Incoming
 	used: [RECEIVE_PLACES]u32

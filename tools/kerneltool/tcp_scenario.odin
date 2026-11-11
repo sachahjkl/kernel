@@ -21,7 +21,7 @@ scenario_tcp := [?]Step {
 	{kind = .Wait, text = "root: started network"},
 	{kind = .Wait, text = "network: an endpoint for server: TCP, the listen port 80, the remotes that send to it", any_order = true},
 	{kind = .Wait, text = "root: started server"},
-	{kind = .Wait, text = "server: listening on the TCP port 80, a table of 48 connections, the secret of the initial sequence numbers from "},
+	{kind = .Wait, text = "server: listening on the TCP port 80, a table of 48 connections, the secret of the initial sequence numbers from the generator of the program"},
 	// A page, and a close from the peer first.
 	{kind = .Peer, text = "page"},
 	{kind = .Wait, text = "server: 1 connections open at once"},

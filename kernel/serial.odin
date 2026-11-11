@@ -49,13 +49,68 @@ log_serial_only: bool // The kernel reports its own fault: it takes no lock, and
 // counter (docs/ARCHITECTURE.md, "Locks of the kernel").
 log_lock: Lock
 
+// The processor that reports a fault of the kernel: its identifier plus one,
+// or 0 when no processor reports.
+log_fault_reporter: u32
+
+// FAULT_REPORT_WAIT: how many times the reporter looks at the log lock
+// before it writes anyway. A line of the log is at most a few hundred
+// bytes: the wait ends long before this count on a machine that works.
+FAULT_REPORT_WAIT :: 50_000_000
+
+// fault_report_begin makes this processor the only writer of the serial
+// port, before the kernel reports its own fault. The report takes no lock,
+// because the processor can hold any lock. Without this, the report and a
+// line that another processor writes arrive as mixed bytes, and nobody can
+// read the fault.
+//   - A second processor that has a fault of its own stops: one report.
+//   - A processor that starts a line after this stops in log_take.
+//   - A processor that is in the middle of a line ends it: the reporter
+//     waits until the log lock has no holder and no waiter, a bounded time.
+//     It does not wait when it holds the log lock itself.
+fault_report_begin :: proc "contextless" () {
+	if !lock_ready {
+		// One processor, with no record yet: nobody else writes.
+		intrinsics.atomic_store(&log_serial_only, true)
+		return
+	}
+	self := apic_id() + 1
+	if _, first := intrinsics.atomic_compare_exchange_strong(&log_fault_reporter, 0, self); !first {
+		if intrinsics.atomic_load(&log_fault_reporter) != self {
+			processor_stop()
+		}
+		// A fault inside the report of this processor: write on.
+	}
+	intrinsics.atomic_store(&log_serial_only, true)
+	if processor_self().held[.Log] != 0 {
+		return
+	}
+	for _ in 0 ..< FAULT_REPORT_WAIT {
+		if intrinsics.atomic_load(&log_lock.serving) == intrinsics.atomic_load(&log_lock.next) {
+			return
+		}
+		intrinsics.cpu_relax()
+	}
+}
+
 // log_take takes the log lock, except before the first processor has its
-// record, and when the kernel reports its own fault.
+// record, and when the kernel reports its own fault: then only the reporter
+// writes, and each other processor stops here.
 log_take :: proc "contextless" () -> bool {
 	if intrinsics.atomic_load(&log_serial_only) {
+		if lock_ready && intrinsics.atomic_load(&log_fault_reporter) != apic_id() + 1 {
+			processor_stop()
+		}
 		return false
 	}
 	lock_take(&log_lock, .Log)
+	if intrinsics.atomic_load(&log_serial_only) {
+		// A report began between the look above and the take. The reporter
+		// writes now, or waits for this lock: free it, so that it does not
+		// wait for a processor that stops.
+		lock_free(&log_lock, .Log)
+		processor_stop()
+	}
 	return true
 }
 

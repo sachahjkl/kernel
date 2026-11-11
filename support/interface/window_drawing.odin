@@ -74,8 +74,18 @@ window_frame_end :: proc "contextless" (drawing: ^Window_Drawing, frame: ^Frame,
 	before := second ? &drawing.before_second : &drawing.before
 	drawn := second ? drawing.drawn_second : drawing.drawn
 	whole := !drawn || before.full || window.two && drawing.before_second.records == nil
+	// present: with two pictures, the screen shows the other one; its
+	// difference with now must reach the screen too.
+	present: Damage
 	if !whole {
-		damage_by_difference(before, &drawing.now, &drawing.damage)
+		if window.two {
+			shown := second ? &drawing.before : &drawing.before_second
+			shown_drawn := second ? drawing.drawn : drawing.drawn_second
+			damage_of_two_pictures(before, shown, shown_drawn && !shown.full, &drawing.now, &drawing.damage, &present)
+		} else {
+			damage_by_difference(before, &drawing.now, &drawing.damage)
+			present = drawing.damage
+		}
 	}
 	measured := system.nanoseconds()
 	drawing.difference_time = measured - start
@@ -86,10 +96,10 @@ window_frame_end :: proc "contextless" (drawing: ^Window_Drawing, frame: ^Frame,
 		display.present(window)
 		drawing.damage.rectangles[0] = {0, 0, window.canvas.width, window.canvas.height}
 		drawing.damage.count = 1
-	case drawing.damage.count > 0:
+	case present.count > 0:
 		draw_damage_on_surface(&drawing.now, window.canvas, drawing.damage.rectangles[:drawing.damage.count])
-		bounds := damage_bounds(&drawing.damage)
-		display.present_rectangle(window, bounds.left, bounds.top, bounds.right - bounds.left, bounds.bottom - bounds.top)
+		bounds := intersection(damage_bounds(&present), {0, 0, window.canvas.width, window.canvas.height})
+		display.present_rectangle(window, bounds.left, bounds.top, max(bounds.right - bounds.left, 0), max(bounds.bottom - bounds.top, 0))
 	case:
 		display.picture_end(window) // A frame with nothing to draw is a picture of the measure too.
 	}
@@ -101,4 +111,23 @@ window_frame_end :: proc "contextless" (drawing: ^Window_Drawing, frame: ^Frame,
 		drawing.drawn = copied
 	}
 	return drawing.damage.count
+}
+
+// show_picture draws a frame of a window that is one picture of the program
+// (drawing.now.pictures[0]): one Picture record at (0, 0). generation is a
+// new number when the pixels of the picture changed: with the same number,
+// the frame draws nothing.
+show_picture :: proc "contextless" (drawing: ^Window_Drawing, window: ^display.Window, generation: u32) {
+	frame := window_frame_begin(drawing, window)
+	draw_picture(frame.table, 0, 0, 0, generation)
+	window_frame_end(drawing, &frame, window)
+}
+
+// window_drawing_of_picture makes the drawing of a window that is one
+// picture of the program, with tables in the memory of the caller.
+window_drawing_of_picture :: proc "contextless" (records_now, records_before: []Draw_Record, pictures: []graphics.Canvas) -> Window_Drawing {
+	drawing := Window_Drawing{now = {records = records_now}, before = {records = records_before}}
+	drawing.now.pictures = pictures
+	drawing.before.pictures = pictures
+	return drawing
 }

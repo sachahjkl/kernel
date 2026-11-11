@@ -22,6 +22,7 @@ import "support:graphics"
 import op "contract:operation"
 import "support:relay"
 import "contract:ring"
+import "support:random"
 import "support:system"
 
 WIDTH :: 720
@@ -82,7 +83,7 @@ node_start :: proc "contextless" (index: int) -> bool {
 	values[relay.VALUE_WORK_TIME] = work_times[index]
 	name := [?]u8{'n', 'o', 'd', 'e', ' ', u8('1' + index)}
 	status: system.Status
-	node.program, status = system.program_start(system.image_find(image, "node"), string(name[:]), grants, values, {pages = 256, programs = 1, threads = 1, processor = 200_000, log_records = 100}, nil, &prepared)
+	node.program, status = system.program_start(system.image_find(image, "node"), string(name[:]), grants, random.values_with_seed(&program_generator, values), {pages = 256, programs = 1, threads = 1, processor = 200_000, log_records = 100}, nil, &prepared)
 	node.waiting_logged = false
 	return status == .Ok
 }
@@ -119,8 +120,17 @@ pending :: proc "contextless" (queue: ^ring.Queue) -> (first, count: u32) {
 	return queue.counters.read, ring.count(queue)
 }
 
+// The random generator of this program (support/random).
+program_generator: random.Generator
+
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
+	// The random generator of this program, from the seed that its starter
+	// gave: it gives the seed of each program that this one starts.
+	if !random.generator_from_context(&program_generator, ctx) {
+		system.log("rings: no random seed in the context")
+		system.stop(1)
+	}
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "rings")
 	if !ok {
 		fail("no surface")

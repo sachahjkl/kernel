@@ -32,6 +32,7 @@ package terminal_program
 
 import "support:display"
 import "support:graphics"
+import "support:interface"
 import "contract:ring"
 import "support:system"
 import "support:terminal"
@@ -152,11 +153,7 @@ Request :: struct {
 	code:    u32,
 }
 
-Cell :: struct {
-	character: u8,
-	reverse:   bool,
-	color:     graphics.Color,
-}
+Cell :: interface.Text_Grid_Cell
 
 View :: struct {
 	cells:   [ROWS_LIMIT][COLUMNS_LIMIT]Cell,
@@ -442,28 +439,43 @@ number :: proc "contextless" (buffer: ^[27]u8, value: u64) -> string {
 	return string(buffer[place:])
 }
 
-// large draws text at two times the size of the font.
-large :: proc "contextless" (canvas: graphics.Canvas, x, y: int, text: string, color: graphics.Color) {
-	graphics.text_scaled(canvas, x, y, text, color, 2)
+// The drawing of the window with the interface package: the cells of the
+// view are a text grid, so a frame damages only the cells that changed.
+// Each picture of the surface has its own table before, with its own copy
+// of the cells.
+records_now, records_before, records_second: [256]interface.Draw_Record
+text_now, text_before, text_second: [1024]u8
+cells_before, cells_second: [ROWS_LIMIT * COLUMNS_LIMIT]Cell
+grids_now, grids_before, grids_second: [1]interface.Text_Grid
+drawing: interface.Window_Drawing
+
+drawing_start :: proc "contextless" () {
+	drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:], records_second[:], text_second[:])
+	grids_now[0] = {cells = ([^]Cell)(&view.cells[0][0])[:ROWS_LIMIT * COLUMNS_LIMIT], columns = columns, rows = rows, stride = COLUMNS_LIMIT}
+	grids_before[0] = {cells = cells_before[:]}
+	grids_second[0] = {cells = cells_second[:]}
+	drawing.now.grids = grids_now[:]
+	drawing.before.grids = grids_before[:]
+	drawing.before_second.grids = grids_second[:]
 }
 
-tile :: proc "contextless" (canvas: graphics.Canvas, x: int, label: string, value: u64, color: graphics.Color) {
+tile :: proc "contextless" (table: ^interface.Draw_Table, x: int, label: string, value: u64, color: graphics.Color) {
 	buffer: [27]u8
-	graphics.text(canvas, x, 8, label, graphics.COLOR_DIM)
-	large(canvas, x, 28, number(&buffer, value), color)
+	interface.draw_text(table, x, 8, label, graphics.COLOR_DIM)
+	interface.draw_text(table, x, 28, number(&buffer, value), color, interface.FONT_MEDIUM)
 }
 
 draw :: proc "contextless" (window: ^display.Window, follow: bool) {
-	canvas := window.canvas
 	buffer: [27]u8
+	frame := interface.window_frame_begin(&drawing, window)
+	table := frame.table
 
-	graphics.fill(canvas, 0, 0, width, text_y, graphics.COLOR_BACKGROUND)
 	if measure {
 		// The head: the rates, and the graph of the lines in one second.
-		graphics.fill(canvas, 0, 0, width, HEAD_HEIGHT - 6, graphics.COLOR_CARD_TOP)
-		tile(canvas, 12, "lines in one second", rates.lines, COLOR_GRAPH)
-		tile(canvas, 196, "records in one second", rates.records, graphics.COLOR_TEXT)
-		tile(canvas, 388, "kernel entries, million records", rates.entries, COLOR_HELD)
+		interface.draw_rectangle(table, 0, 0, width, HEAD_HEIGHT - 6, graphics.COLOR_CARD_TOP)
+		tile(table, 12, "lines in one second", rates.lines, COLOR_GRAPH)
+		tile(table, 196, "records in one second", rates.records, graphics.COLOR_TEXT)
+		tile(table, 388, "kernel entries, million records", rates.entries, COLOR_HELD)
 		most: u64 = 1
 		for value in history {
 			most = max(most, value)
@@ -471,79 +483,73 @@ draw :: proc "contextless" (window: ^display.Window, follow: bool) {
 		for value, index in history {
 			bar_height := int(value * GRAPH_HEIGHT / most)
 			x := graph_x + index * GRAPH_BAR
-			graphics.fill(canvas, x, 9, GRAPH_BAR - 1, GRAPH_HEIGHT - bar_height, COLOR_GRAPH_DIM)
-			graphics.fill(canvas, x, 9 + GRAPH_HEIGHT - bar_height, GRAPH_BAR - 1, bar_height, COLOR_GRAPH)
+			interface.draw_rectangle(table, x, 9, GRAPH_BAR - 1, GRAPH_HEIGHT - bar_height, COLOR_GRAPH_DIM)
+			interface.draw_rectangle(table, x, 9 + GRAPH_HEIGHT - bar_height, GRAPH_BAR - 1, bar_height, COLOR_GRAPH)
 		}
 	}
 
-	// The text: only the rows of the window.
-	graphics.fill(canvas, 0, text_y, width, height - text_y, graphics.COLOR_BACKGROUND)
-	for &row, row_index in view.cells[:rows] {
-		y := text_y + row_index * CELL_HEIGHT
-		for cell, column in row[:columns] {
-			if cell.character <= ' ' && !cell.reverse {
-				continue
-			}
-			x := TEXT_X + column * CELL_WIDTH
-			if cell.reverse {
-				graphics.fill(canvas, x, y, CELL_WIDTH, CELL_HEIGHT, cell.color)
-				graphics.character(canvas, x, y, cell.character, graphics.COLOR_BACKGROUND)
-			} else {
-				graphics.character(canvas, x, y, cell.character, cell.color)
-			}
-		}
-	}
+	// The text: only the rows of the window, as one text grid.
+	interface.draw_text_grid(table, TEXT_X, text_y, 0)
 
 	// Where the view is in the lines that the terminal has.
-	graphics.fill(canvas, scroll_x, text_y, SCROLL_WIDTH, text_height, graphics.COLOR_TRACK)
+	interface.draw_rectangle(table, scroll_x, text_y, SCROLL_WIDTH, text_height, graphics.COLOR_TRACK)
 	kept := view.count - view.oldest
 	if kept > 0 && !view.gone {
 		thumb := max(int(min(u64(rows), kept) * u64(text_height) / kept), 12)
 		place := kept > u64(rows) ? int(min(view.top - view.oldest, kept - u64(rows)) * u64(text_height - thumb) / (kept - u64(rows))) : 0
-		graphics.fill(canvas, scroll_x, text_y + place, SCROLL_WIDTH, thumb, follow ? COLOR_THUMB : COLOR_HELD)
+		interface.draw_rectangle(table, scroll_x, text_y + place, SCROLL_WIDTH, thumb, follow ? COLOR_THUMB : COLOR_HELD)
 	}
 
 	// The status of the program: a text, and a value of a total. With the
 	// rates it has its own line. If not, it takes the place of the line count.
-	graphics.fill(canvas, 0, status_y - 4, width, 1, graphics.COLOR_TRACK)
+	interface.draw_rectangle(table, 0, status_y - 4, width, 1, graphics.COLOR_TRACK)
 	status := &view.status
 	has_status := status.total != 0
 	if has_status {
 		color := .Color in status.style.flags ? status.style.color & 0xFFFFFF : tone_colors[terminal.Tone(min(u8(status.style.tone), u8(max(terminal.Tone))))]
-		x := graphics.text(canvas, TEXT_X, status_y, string(status.text[:status.length]), graphics.COLOR_TEXT) + 12
+		x := interface.draw_text(table, TEXT_X, status_y, string(status.text[:status.length]), graphics.COLOR_TEXT) + 12
 		bar :: 240
-		graphics.fill(canvas, x, status_y + 4, bar, 8, graphics.COLOR_TRACK)
-		graphics.fill(canvas, x, status_y + 4, int(min(status.value, status.total) * bar / status.total), 8, color)
-		x = graphics.text(canvas, x + bar + 12, status_y, number(&buffer, status.value), graphics.COLOR_TEXT)
-		x = graphics.text(canvas, x, status_y, " of ", graphics.COLOR_DIM)
-		graphics.text(canvas, x, status_y, number(&buffer, status.total), graphics.COLOR_DIM)
+		interface.draw_rectangle(table, x, status_y + 4, bar, 8, graphics.COLOR_TRACK)
+		interface.draw_rectangle(table, x, status_y + 4, int(min(status.value, status.total) * bar / status.total), 8, color)
+		x = interface.draw_text(table, x + bar + 12, status_y, number(&buffer, status.value), graphics.COLOR_TEXT)
+		x = interface.draw_text(table, x, status_y, " of ", graphics.COLOR_DIM)
+		interface.draw_text(table, x, status_y, number(&buffer, status.total), graphics.COLOR_DIM)
 	} else if program == 0 && measure {
-		graphics.text(canvas, TEXT_X, status_y, "the program does not run", COLOR_STOPPED)
+		interface.draw_text(table, TEXT_X, status_y, "the program does not run", COLOR_STOPPED)
 	}
 	if measure {
 		// At the right: the frames of the terminal.
 		frames := number(&buffer, rates.frames)
 		x := width - MARGIN - (len(frames) + len(" pictures in one second")) * CELL_WIDTH
-		x = graphics.text(canvas, x, status_y, frames, graphics.COLOR_TEXT)
-		graphics.text(canvas, x, status_y, " pictures in one second", graphics.COLOR_DIM)
+		x = interface.draw_text(table, x, status_y, frames, graphics.COLOR_TEXT)
+		interface.draw_text(table, x, status_y, " pictures in one second", graphics.COLOR_DIM)
 	}
 
 	// The place of the view, and the keys.
+	hint_left := TEXT_X // Where the text at the left of the keys ends.
 	if measure || !has_status {
-		x := graphics.text(canvas, TEXT_X, hint_y, follow ? "line " : "held at line ", follow ? graphics.COLOR_DIM : COLOR_HELD)
-		x = graphics.text(canvas, x, hint_y, number(&buffer, view.top + 1), follow ? graphics.COLOR_TEXT : COLOR_HELD)
-		x = graphics.text(canvas, x, hint_y, " of ", graphics.COLOR_DIM)
-		x = graphics.text(canvas, x, hint_y, number(&buffer, view.count), graphics.COLOR_TEXT)
+		x := interface.draw_text(table, TEXT_X, hint_y, follow ? "line " : "held at line ", follow ? graphics.COLOR_DIM : COLOR_HELD)
+		x = interface.draw_text(table, x, hint_y, number(&buffer, view.top + 1), follow ? graphics.COLOR_TEXT : COLOR_HELD)
+		x = interface.draw_text(table, x, hint_y, " of ", graphics.COLOR_DIM)
+		x = interface.draw_text(table, x, hint_y, number(&buffer, view.count), graphics.COLOR_TEXT)
 		if view.gone {
-			x = graphics.text(canvas, x, hint_y, "  older than the lines kept", graphics.COLOR_DIM)
+			x = interface.draw_text(table, x, hint_y, "  older than the lines kept", graphics.COLOR_DIM)
 		}
 		if program == 0 && !measure {
-			graphics.text(canvas, x, hint_y, "  the program does not run", COLOR_STOPPED)
+			x = interface.draw_text(table, x, hint_y, "  the program does not run", COLOR_STOPPED)
 		}
+		hint_left = x
 	}
+	// The keys, at the right, when the text at the left leaves room for them.
 	hint :: "page up, page down: move  other keys: to the program"
-	graphics.text(canvas, width - MARGIN - len(hint) * CELL_WIDTH, hint_y, hint, graphics.COLOR_DIM)
-	display.present(window)
+	hint_x := width - MARGIN - len(hint) * CELL_WIDTH
+	if hint_left + 2 * CELL_WIDTH <= hint_x {
+		interface.draw_text(table, hint_x, hint_y, hint, graphics.COLOR_DIM)
+	}
+	interface.window_frame_end(&drawing, &frame, window)
+	if table.full {
+		system.log("terminal: the draw table is full: records are missing")
+	}
 }
 
 fail :: proc "contextless" (text: string) -> ! {
@@ -566,6 +572,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	// The surface is text: the pointer over it is the text shape.
 	display.pointer_shape_set(&window, .Text)
+	drawing_start()
 
 	// The areas of the lines.
 	area :: proc "contextless" (size: u64) -> rawptr {

@@ -14,6 +14,7 @@ import "contract:isolated"
 import module "contract:module"
 import op "contract:operation"
 import "contract:ring"
+import "support:random"
 import "support:system"
 import "support:terminal"
 import "contract:block"
@@ -380,6 +381,12 @@ fail :: proc "contextless" (text: string, status: system.Status) -> ! {
 	}
 }
 
+// The random generator of the root service: its seed comes from the
+// sources of the processor (support/random/entropy.odin), not from a
+// starter. It gives the seed of each program that root starts.
+program_generator: random.Generator
+entropy_report: random.Entropy_Report
+
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	machine = ctx.handles[op.ROOT_MACHINE]
@@ -390,6 +397,13 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	image = ([^]u8)(address)[:ctx.values[op.ROOT_VALUE_BOOT_IMAGE_SIZE]]
 	system.log(ROOT_MARK, ", ", u64(len(system.image_entries(image))), " modules in the boot image")
+	// The random seed of the system: before the first program starts.
+	{
+		seed := random.entropy_gather(random.sources_of_the_processor(), &entropy_report)
+		random.generator_seed(&program_generator, &seed)
+		report := &entropy_report
+		system.log("root: the random seed of the system, strength ", random.seed_strength_names[report.strength], ": rdseed ", report.rdseed_present ? "present" : "absent", ", ", u64(report.rdseed_good), " good values, ", u64(report.rdseed_refused), " refused; rdrand ", report.rdrand_present ? "present" : "absent", ", ", u64(report.rdrand_good), " good, ", u64(report.rdrand_refused), " refused; the cycle counter, ", u64(report.jitter_samples), " samples, ", u64(report.jitter_distinct), " distinct low bytes")
+	}
 	if pixels, map_status := system.memory_map(ctx.handles[op.ROOT_FRAMEBUFFER], {.Write}); map_status == .Ok {
 		screen = {
 			pixels = ([^]graphics.Color)(pixels),
@@ -435,7 +449,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		grants[2] = {device(.Interrupt, 1, 0), {.Read}}
 		grants[3] = {device(.Interrupt, 12, 0), {.Read}}
 		grants[op.CONTEXT_LOG] = log_grant("input")
-		_, status = system.program_start(system.image_find(image, "input"), "input", grants, {}, budget_of("input"), nil, &prepared)
+		_, status = system.program_start(system.image_find(image, "input"), "input", grants, random.values_with_seed(&program_generator, {}), budget_of("input"), nil, &prepared)
 		if status != .Ok {
 			fail("cannot start input", status)
 		}
@@ -493,7 +507,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			}
 		}
 		text_settings_give(mappings[:], &mapping_count, &values)
-		compositor, status = system.program_start(system.image_find(image, "compositor"), "compositor", grants, values, budget_of("compositor"), mappings[:mapping_count], &prepared)
+		compositor, status = system.program_start(system.image_find(image, "compositor"), "compositor", grants, random.values_with_seed(&program_generator, values), budget_of("compositor"), mappings[:mapping_count], &prepared)
 		if status != .Ok {
 			fail("cannot start the compositor", status)
 		}
@@ -736,6 +750,11 @@ start :: proc "contextless" (name: string) -> system.Status {
 		grants[.Network_Device in role ? frame.GRANT_RING : block.GRANT_RING] = {block_ring, {.Read, .Write}}
 	}
 	values: [op.CONTEXT_VALUES]u64
+	if name == "randomness" {
+		// The facts of the seed of the system, that only this service has:
+		// the program shows them (docs/RANDOMNESS.md). Facts, not the seed.
+		random.report_values_write(&entropy_report, &values)
+	}
 	grants[op.CONTEXT_LOG] = log_grant(name)
 	copy(slot.name[:len(slot.name) - 1], name) // The connection to the storage service names the program.
 	// The connection to the private store, in the context: the call ring, the
@@ -863,7 +882,7 @@ start :: proc "contextless" (name: string) -> system.Status {
 	}
 	load_error: module.Load_Error
 	if status == .Ok {
-		slot.program, status = system.program_start(file, name, grants, values, budget_of(name), mappings[:mapping_count], &prepared, load_source(), &load_error)
+		slot.program, status = system.program_start(file, name, grants, random.values_with_seed(&program_generator, values), budget_of(name), mappings[:mapping_count], &prepared, load_source(), &load_error)
 	}
 	if status != .Ok {
 		if load_error.stage != .None {
@@ -1072,7 +1091,7 @@ terminal_start :: proc "contextless" (view: ^Started, writer: ^Started, ring_mem
 	mappings: [2]system.Mapping
 	mapping_count := 0
 	text_settings_give(mappings[:], &mapping_count, &values)
-	program, status := system.program_start(system.image_find(image, "terminal"), "terminal", grants, values, budget_of("terminal"), mappings[:mapping_count], &prepared)
+	program, status := system.program_start(system.image_find(image, "terminal"), "terminal", grants, random.values_with_seed(&program_generator, values), budget_of("terminal"), mappings[:mapping_count], &prepared)
 	if status != .Ok {
 		system.send(&control.commands, ring.Record{kind = u32(display.Control.Client_Remove), values = {0 = u64(client)}})
 		return status
