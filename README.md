@@ -97,7 +97,9 @@ The system boots under QEMU to a graphical desktop with a console, a system tool
 
 ![A call from the host: kerneltool call "monitor.programs()" reaches the program remote through its endpoint, which makes the isolated call and sends the typed result back; the counts, the connections that the root service made, and the last calls](docs/screenshots/remote.png)
 
-![TCP in the program: server holds a listen grant on the port 80 and serves one table of connections from one thread; the peer of the test drops, reorders and repeats frames, resets a connection and opens 16 at once; the table shows the state, the bytes, the round trip and the congestion window of each connection](docs/screenshots/server.png)
+![TCP in the program: server holds a listen grant on the port 80 and serves one table of connections from one thread; the peer of the test drops, reorders and repeats frames, resets a connection, opens 16 at once, and keeps 32 connections with no progress, which the server ends; the table shows the state, the bytes, the round trip and the congestion window of each connection](docs/screenshots/server.png)
+
+![A simple HTTP/1.1 server: keep-alive, pipelining, HEAD and each refusal status, the pages of its private store that the console puts with server.put; the connections and the last requests, live](docs/screenshots/server_real.png)
 
 ![A developer tool: the address space of the console as a band scaled by pages, with each gap folded, the table of its mappings with the pages that have a frame, its modules, its threads with the state of the scheduler; a sample each 250 ms with its cost](docs/screenshots/inspect.png)
 

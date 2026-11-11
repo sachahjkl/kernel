@@ -152,6 +152,17 @@ A third network machine (`scenario_tcp`) has the peer of the tool on `-netdev dg
 - libslirp acknowledges the FIN of a connection of `guestfwd` and does not send its own: the connection of `fetch` stays in FIN-WAIT-2.
 - The measures are in choice 309 of `FIRST_MILESTONE.md`.
 
+## The HTTP server
+
+`server` is a simple HTTP/1.1 server (RFC 9110, RFC 9112), in the program as its TCP is: one thread, one table of 48 connections, one session of fixed size for each (its input of 8192 bytes, its answer), and no allocation.
+
+- **The reading of a head** is `support/web.request_read`, for hostile input: a bound for each part, and a problem with its status (400, 405, 408, 413, 414, 431, 501, 505) for each rule that a head breaks.
+- **Connections** stay open after an answer; "Connection: close" or HTTP/1.0 ends them. The bytes after a head stay in the input: they are the body, or the next request (pipelining). The answers go in the order of the requests.
+- **What it serves** comes from its grants (property 20): its own counts (`/`, `/counts.json`), and the pages of its private store (property 9). A person changes the pages from the console through its exports (property 19): `server.put`, `server.remove`, `server.pages`, `server.served`. PUT and DELETE over HTTP stay off: without TLS the network is not authenticated.
+- **Limits** against a client that makes no progress (an independent read found that one host could keep each record): 10 s with no request, 408 for a head after 10 s, a body under 4096 bytes in one second after 10 s, 10 s with no byte acknowledged, 24 connections for each remote address.
+- **No Date field**: the system has no clock of the day, and a server with no clock sends none (RFC 9110 6.6.1).
+- **No TLS** until the work of QUIC: the next section says what it needs.
+
 ## QUIC: what it reuses, and what it needs
 
 QUIC is the next step. It runs over UDP (RFC 9000), so it is a library in the program over a datagram endpoint, which exists.
