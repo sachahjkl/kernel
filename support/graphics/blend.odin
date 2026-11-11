@@ -258,7 +258,9 @@ blend_glyph_rows_in_order :: #force_inline proc "contextless" (canvas_row: [^]Co
 		row_words := words[row * width:]
 		under := line[first]
 		if line[last - 1] != under {
-			blend_coverage_row_in_order(line, row_words, first, last, color, ORDER, square_root)
+			// A row over a gradient across or a picture: no table holds it;
+			// the form of the target (SSE2 on amd64), the same bytes.
+			blend_coverage_row_in_form_of_target(line, row_words, first, last, color, ORDER, square_root)
 			continue
 		}
 		table := blend_table_of(tables, color, under)
@@ -291,6 +293,8 @@ blend_glyph_rows_in_order :: #force_inline proc "contextless" (canvas_row: [^]Co
 				continue
 			}
 			if line[column] != under {
+				// One pixel: the SSE2 form works on groups of four and
+				// gives a lone pixel to this scalar form anyway.
 				blend_coverage_row_in_order(line, row_words, column, column + 1, color, ORDER, square_root)
 				continue
 			}

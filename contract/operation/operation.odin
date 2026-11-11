@@ -802,6 +802,16 @@ CONTEXT_VALUE_SETTINGS_BOOT_PASS :: 17
 // compositor). The setting "pointer_theme" chooses between the two.
 CONTEXT_VALUE_SECOND_POINTER_THEME_ADDRESS :: 18
 CONTEXT_VALUE_SECOND_POINTER_THEME_SIZE :: 19
+// The values 20 to 22: the sizes of the three glyph caches that the root
+// service maps read-only into a program with a surface or a terminal (with
+// the grid fit, without it, the bold weight), 0 for a cache that it does
+// not map. Their addresses are fixed (contract:fixed_addresses). They are
+// values of the context, which only the starter writes, and not fields of
+// the settings page, which the program `settings` writes: a size that
+// another program chose could name memory that is not mapped.
+CONTEXT_VALUE_GLYPH_CACHE_SIZE :: 20
+CONTEXT_VALUE_GLYPH_CACHE_WITHOUT_GRID_FIT_SIZE :: 21
+CONTEXT_VALUE_GLYPH_CACHE_BOLD_SIZE :: 22
 CONTEXT_BUDGET :: 15 // The budget of the program.
 // The value that the root service fixes for each program that it starts
 // with a surface or a terminal: values[13] is the address of the settings

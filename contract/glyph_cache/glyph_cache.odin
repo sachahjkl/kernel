@@ -7,8 +7,10 @@
 // outline is read at run time.
 //
 // One format for a monospace font and for a proportional font. A monospace
-// cache has one position, each glyph the full width of the cell at its
-// left side, each advance the width of the cell, and no pair. A
+// cache (no FLAG_PROPORTIONAL) has one position, each glyph inside its cell
+// from its left side, each advance the width of the cell, and no pair:
+// validate checks it, because the damage of a grid of text cells depends
+// on a glyph that stays in its cell. A
 // proportional cache (the interface font, docs/FONTS.md, section 12) keeps
 // each glyph at position_count subpixel positions, each glyph as wide as
 // its ink, and the pairs.
@@ -64,7 +66,7 @@ Header :: struct #packed {
 	first_character:  u32, // 32.
 	character_count:  u32, // 95.
 	size_count:       u32, // One entry for each scale, in the order 1, 2, 3.
-	flags:            u32, // FLAG_GRID_FIT, and the filter in bits 8 to 15.
+	flags:            u32, // FLAG_GRID_FIT, FLAG_PROPORTIONAL, and the filter in bits 8 to 15 (FILTER_COUNT values).
 	word_offset:      u64, // From the start of the file; a multiple of 64.
 	word_count:       u64,
 	font_hash:        [32]u8, // BLAKE3 of the font file that the glyphs come from: the cache is named by what made it.
@@ -75,6 +77,10 @@ Header :: struct #packed {
 #assert(size_of(Header) == HEADER_SIZE)
 
 FLAG_GRID_FIT :: 1 // The baseline, the x-height and the cap height are on whole pixels.
+FLAG_PROPORTIONAL :: 2 // Each character has its own advance; glyphs are boxes of ink at their positions.
+FILTER_SHIFT :: 8
+FILTER_COUNT :: 3 // The filters of the color stripes of support/vector_font (Stripe_Filter).
+FLAGS_KNOWN :: FLAG_GRID_FIT | FLAG_PROPORTIONAL | 0xFF << FILTER_SHIFT
 
 Size_Entry :: struct #packed {
 	cell_width:     u16, // 8, 16, 24: the cell of the grid; the advance of every character of a monospace font.
@@ -122,6 +128,8 @@ Problem_Kind :: enum u8 {
 	Bad_Glyph, // A glyph has rows outside its line, a width or a left side out of the limits, or words outside the words.
 	Bad_Advance, // An advance is negative or above ADVANCE_LIMIT.
 	Bad_Pair, // A pair names a character outside the cache, is out of order or twice, or has an adjustment above ADVANCE_LIMIT.
+	Bad_Flags, // A flag that this reader does not know, or a filter past FILTER_COUNT.
+	Bad_Name, // font_name has a byte outside 32 to 126 before its end, no zero byte, or a byte after its end.
 }
 
 Problem :: struct {
@@ -143,6 +151,8 @@ problem_sentences := [Problem_Kind]string {
 	.Bad_Glyph   = "a glyph of the glyph cache has rows or columns outside its limits or words outside the file",
 	.Bad_Advance = "an advance of the glyph cache is out of its limits",
 	.Bad_Pair    = "a pair of the glyph cache names a character outside the cache, is out of order, or is out of its limits",
+	.Bad_Flags   = "the glyph cache has a flag or a filter that this reader does not know",
+	.Bad_Name    = "the name of the font of the glyph cache is not printable text with an end",
 }
 
 // Cache: a valid file, read in place.
@@ -181,6 +191,26 @@ validate :: proc "contextless" (bytes: []u8) -> (cache: Cache, problem: Problem)
 	if header.pair_count > PAIR_LIMIT {
 		return {}, {kind = .Bad_Count, value = u64(header.pair_count), limit = PAIR_LIMIT}
 	}
+	if header.flags & ~u32(FLAGS_KNOWN) != 0 || (header.flags >> FILTER_SHIFT) & 0xFF >= FILTER_COUNT {
+		return {}, {kind = .Bad_Flags, value = u64(header.flags), limit = u64(FLAGS_KNOWN)}
+	}
+	// The name: printable bytes, then at least one zero byte, then zeros.
+	ended := false
+	for byte, index in header.font_name {
+		if ended && byte != 0 || !ended && byte != 0 && (byte < 32 || byte > 126) {
+			return {}, {kind = .Bad_Name, index = u32(index), value = u64(byte)}
+		}
+		if byte == 0 {
+			ended = true
+		}
+	}
+	if !ended {
+		return {}, {kind = .Bad_Name, index = u32(len(header.font_name)), value = 0}
+	}
+	monospace := header.flags & FLAG_PROPORTIONAL == 0
+	if monospace && header.pair_count != 0 {
+		return {}, {kind = .Bad_Count, value = u64(header.pair_count), limit = 0}
+	}
 	size_count := int(header.size_count)
 	character_count := int(header.character_count)
 	if len(bytes) < HEADER_SIZE + size_count * SIZE_ENTRY_SIZE {
@@ -190,7 +220,7 @@ validate :: proc "contextless" (bytes: []u8) -> (cache: Cache, problem: Problem)
 	// The glyphs of each size follow those of the size before.
 	glyph_count := 0
 	for size, index in sizes {
-		if size.position_count == 0 || size.position_count > POSITION_LIMIT {
+		if size.position_count == 0 || size.position_count > POSITION_LIMIT || monospace && size.position_count != 1 {
 			return {}, {kind = .Bad_Count, index = u32(index), value = u64(size.position_count), limit = POSITION_LIMIT}
 		}
 		if int(size.first_glyph) != glyph_count {
@@ -223,12 +253,13 @@ validate :: proc "contextless" (bytes: []u8) -> (cache: Cache, problem: Problem)
 		for glyph, offset in cache.glyphs[size.first_glyph:][:int(size.position_count) * character_count] {
 			end_row := u64(glyph.first_row) + u64(glyph.row_count)
 			end_word := u64(glyph.word_offset) + u64(glyph.row_count) * u64(glyph.width)
-			if end_row > u64(size.cell_height) || glyph.width > GLYPH_WIDTH_LIMIT || glyph.left < -LEFT_LIMIT || glyph.left > GLYPH_WIDTH_LIMIT || end_word > header.word_count {
+			outside_cell := monospace && (glyph.left != 0 || glyph.width > size.cell_width)
+			if end_row > u64(size.cell_height) || glyph.width > GLYPH_WIDTH_LIMIT || glyph.left < -LEFT_LIMIT || glyph.left > GLYPH_WIDTH_LIMIT || outside_cell || end_word > header.word_count {
 				return {}, {kind = .Bad_Glyph, index = size.first_glyph + u32(offset), value = end_word, limit = header.word_count}
 			}
 		}
 		for advance, character in cache.advances[index * character_count:][:character_count] {
-			if advance < 0 || advance > ADVANCE_LIMIT {
+			if advance < 0 || advance > ADVANCE_LIMIT || monospace && advance != i32(size.cell_width) * SUBPIXEL {
 				return {}, {kind = .Bad_Advance, index = u32(index * character_count + character), value = u64(i64(advance)), limit = ADVANCE_LIMIT}
 			}
 		}

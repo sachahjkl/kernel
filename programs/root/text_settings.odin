@@ -25,7 +25,8 @@ GLYPH_CACHE_BOLD_RESOURCE :: "glyph_cache_bold"
 
 settings_memory: system.Handle
 settings_page: ^settings.Page
-glyph_cache_mappings: [3]system.Mapping // page_count 0: no such glyph cache.
+glyph_cache_mappings: [settings.Glyph_Cache]system.Mapping // page_count 0: no such glyph cache.
+glyph_cache_sizes: [settings.Glyph_Cache]u64 // In bytes; written in the context of each program that receives the mapping.
 // The boot pass of `settings` is the next start of that name: start() gives
 // it the value VALUE_BOOT_PASS.
 settings_boot_pass: bool
@@ -45,32 +46,28 @@ text_settings_create :: proc "contextless" () {
 	}
 	settings_page = (^settings.Page)(address)
 	if mapping, size, given := resource_mapping(GLYPH_CACHE_WITHOUT_GRID_FIT_RESOURCE, settings.GLYPH_CACHE_WITHOUT_GRID_FIT_ADDRESS, "each program with a surface"); given {
-		glyph_cache_mappings[1] = mapping
-		settings_page.glyph_cache_without_grid_fit_address = settings.GLYPH_CACHE_WITHOUT_GRID_FIT_ADDRESS
-		settings_page.glyph_cache_without_grid_fit_size = size
+		glyph_cache_mappings[.Without_Grid_Fit] = mapping
+		glyph_cache_sizes[.Without_Grid_Fit] = size
 	}
 	if mapping, size, given := resource_mapping(GLYPH_CACHE_BOLD_RESOURCE, settings.GLYPH_CACHE_BOLD_ADDRESS, "each program with a surface"); given {
-		glyph_cache_mappings[2] = mapping
-		settings_page.glyph_cache_bold_address = settings.GLYPH_CACHE_BOLD_ADDRESS
-		settings_page.glyph_cache_bold_size = size
+		glyph_cache_mappings[.Bold] = mapping
+		glyph_cache_sizes[.Bold] = size
 	}
 	mapping, size, given := resource_mapping(GLYPH_CACHE_RESOURCE, settings.GLYPH_CACHE_ADDRESS, "each program with a surface")
 	if !given {
 		system.log_in("programs", .Warning, "root: the boot image has no valid glyph cache: the text of the system is Spleen 8x16")
 		return
 	}
-	glyph_cache_mappings[0] = mapping
+	glyph_cache_mappings[.With_Grid_Fit] = mapping
+	glyph_cache_sizes[.With_Grid_Fit] = size
 	entry := system.image_resource_find(image, GLYPH_CACHE_RESOURCE)
-	settings_page.glyph_cache_address = settings.GLYPH_CACHE_ADDRESS
-	settings_page.glyph_cache_size = size
-	settings_page.glyph_cache_hash = entry.hash
 	// The boot display: the cache in the image that this service maps. The
 	// line of resource_mapping says that the hash is right; a refusal of the
 	// format has a line of its own.
 	if problem := graphics.text_cache_set(image[entry.offset:][:entry.size]); problem.kind != .None {
 		system.log_in("programs", .Warning, "root: the glyph cache is refused: problem ", u64(problem.kind), ", value ", problem.value, ": the boot display is Spleen 8x16")
 	}
-	if bold := system.image_resource_find(image, GLYPH_CACHE_BOLD_RESOURCE); bold != nil && glyph_cache_mappings[2].page_count != 0 {
+	if bold := system.image_resource_find(image, GLYPH_CACHE_BOLD_RESOURCE); bold != nil && glyph_cache_mappings[.Bold].page_count != 0 {
 		if cache, problem := glyph_cache.validate(image[bold.offset:][:bold.size]); problem.kind == .None {
 			graphics.text_bold_cache_use(cache)
 		}
@@ -79,17 +76,22 @@ text_settings_create :: proc "contextless" () {
 
 // text_settings_give adds the settings page and the glyph caches,
 // read-only, to the mappings of a program that has a surface or a terminal,
-// and the address of the page to its values.
+// and the address of the page and the size of each cache to its values. A
+// cache mapping has no flag: the right Read only, for every program, the
+// program `settings` included. The pages come from the boot image, whose
+// one handle (of this service) has no right Write.
 text_settings_give :: proc "contextless" (mappings: []system.Mapping, count: ^int, values: ^[op.CONTEXT_VALUES]u64) {
 	if settings_page == nil || count^ + 1 + len(glyph_cache_mappings) > len(mappings) {
 		return
 	}
 	mappings[count^] = {memory = settings_memory, address = settings.PAGE_ADDRESS, first = 0, page_count = 1}
 	count^ += 1
-	for mapping in glyph_cache_mappings {
+	for mapping, cache in glyph_cache_mappings {
 		if mapping.page_count != 0 {
 			mappings[count^] = mapping
+			mappings[count^].flags = {}
 			count^ += 1
+			values[settings.glyph_cache_places[cache].size_value] = glyph_cache_sizes[cache]
 		}
 	}
 	values[settings.VALUE_PAGE] = settings.PAGE_ADDRESS

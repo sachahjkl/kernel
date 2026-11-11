@@ -105,7 +105,7 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Kernel | The code that runs with processor privilege. It holds five systems: handle table, memory, scheduler, rings and wait, device grant | core, supervisor |
 | Kernel operation | One request that a program makes to the kernel (P1) | system call, syscall |
 | Boot program | The UEFI program that loads and measures the system, then starts the kernel (P17) | boot loader, bootloader |
-| Fixed range | An address and a span of the address space of a program where the system places one mapping that it gives: the settings page, a glyph cache, the date page, the files of a module. All are in one table (`contract/fixed_addresses`) and no two overlap; a mapping that a program places by its own choice is outside their band | well-known address, fixed mapping |
+| Fixed range | An address and a span of the address space of a program where the system places one mapping that it gives: the settings page, a glyph cache, the date page, the files of a module. Each is one member of the enumeration `Fixed_Range` of `contract/fixed_addresses`, one slot of the band from `BAND_START`, so no two overlap; a mapping that a program places by its own choice is outside the band, from `OWN_CHOICE_START` | well-known address, fixed mapping |
 
 ## Access
 
@@ -321,6 +321,7 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Subpixel band | One of the three color stripes of a pixel of the screen, red, green and blue, side by side; the vector font has a coverage for each one | subpixel, ClearType, LCD stripe |
 | Grid fit | The move of the baseline, the x-height and the cap height of a font onto whole pixels, so that the tops of the letters are sharp. The system has no other hinting | hinting (alone), autohint |
 | Glyph cache | The glyphs of one font already drawn, for each character 32 to 126 and each scale of the grid: words of coverage, in one file (`contract/glyph_cache`). The kernel tool makes it at build time; it is a resource of the boot image | atlas, texture cache, glyph bitmap |
+| Proportional cache | A glyph cache with `FLAG_PROPORTIONAL`: each character has its own advance, each glyph is the box of its ink at each subpixel position, and the cache has the pair adjustments. A cache with no such flag is monospace: one position, each glyph inside its cell, no pair (`contract/glyph_cache`, `validate`) | proportional font cache |
 | Setting | One choice of the person that changes how the system works for each program: the font, the order of the subpixel bands. The program `settings` changes it | preference, option, configuration |
 | Settings page | The one page of the settings of the person (`contract/settings`): the root service creates it; the program `settings` writes it; each program with a surface reads it | registry, config file, dconf |
 | Monospace font | A font whose characters all have one advance, so that a text is a row of equal cells: Paper Mono, and Spleen 8x16. The font of the terminal, the console, and each text that a person compares character by character (`docs/FONTS.md`, section 12.6) | fixed-width font (for this), terminal font |

@@ -200,6 +200,7 @@ a_damaged_proportional_glyph_cache :: proc(t: ^testing.T) {
 		{layout.pairs + 4, {0x01, 0x10, 0, 0}, 4, .Bad_Pair}, // an adjustment of 4097
 		{layout.pairs + 4, {0xFF, 0xEF, 0xFF, 0xFF}, 4, .Bad_Pair}, // an adjustment of -4097
 		{120, {0x42, 0x23, 0, 0}, 4, .Bad_Count}, // 9026 pairs
+		{36, {glyph_cache.FLAG_GRID_FIT, 0, 0, 0}, 1, .Bad_Count}, // no FLAG_PROPORTIONAL: a monospace cache cannot have pairs
 	}
 	for damage in damages {
 		copy(file[:size], good)

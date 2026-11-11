@@ -13,9 +13,10 @@ Font_Problem :: enum u8 {
 	Too_Short, // A read past the end of the file or of a table.
 	Missing_Table, // head, hhea, maxp, hmtx, loca, glyf or cmap is not there.
 	Unknown_Format, // No cmap of format 4, a loca format other than 0 and 1, or a glyph that breaks a rule of the format.
-	Composite_Too_Deep, // A glyph made of glyphs, more than COMPOSITE_DEPTH levels deep.
+	Composite_Too_Deep, // A glyph made of glyphs, more than COMPOSITE_DEPTH levels deep, or of more than COMPOSITE_PART_LIMIT parts in all its levels.
 	Too_Many_Points, // The glyph has more points or contours than the memory of the caller.
 	No_Glyph, // The character has no glyph.
+	No_Face, // A collection of fonts has no face of this number.
 }
 
 font_problem_names := [Font_Problem]string {
@@ -23,9 +24,10 @@ font_problem_names := [Font_Problem]string {
 	.Too_Short          = "a read passes the end of the file or of a table",
 	.Missing_Table      = "a table that the reader needs is not in the file",
 	.Unknown_Format     = "a table or a glyph has a form that the reader does not know",
-	.Composite_Too_Deep = "a glyph made of glyphs is too deep",
+	.Composite_Too_Deep = "a glyph made of glyphs is too deep or has too many parts",
 	.Too_Many_Points    = "a glyph has more points or contours than the memory of the caller",
 	.No_Glyph           = "the character has no glyph",
+	.No_Face            = "the collection of fonts has no face of this number",
 }
 
 // The tables of a font file, as offsets in the file.
@@ -65,6 +67,11 @@ Outline :: struct {
 
 // A glyph made of glyphs can name glyphs made of glyphs: at most this deep.
 COMPOSITE_DEPTH :: 4
+// The parts of one outline, in all its levels together. A part can be an
+// empty glyph, which adds no point, so the limit of points does not bound
+// the work: with no such limit, one glyph of 21 000 parts that name itself
+// gives 21 000 to the power 4 calls.
+COMPOSITE_PART_LIMIT :: 64
 // The flags of one simple glyph are read into a table of this size.
 POINT_LIMIT :: 1024
 
@@ -95,7 +102,7 @@ collection_face_offset :: proc "contextless" (bytes: []u8, face: int) -> (offset
 	if len(bytes) >= 4 && string(bytes[:4]) == "ttcf" {
 		count := read_u32(bytes, 8) or_else 0
 		if face < 0 || face >= count {
-			return 0, .No_Glyph
+			return 0, .No_Face
 		}
 		place, ok := read_u32(bytes, 12 + 4 * face)
 		if !ok {
@@ -277,7 +284,8 @@ glyph_outline :: proc "contextless" (font: ^Font_File, glyph: int, outline: ^Out
 		return .No_Glyph
 	}
 	outline.advance = glyph_advance(font, glyph)
-	return glyph_outline_add(font, glyph, outline, {65536, 0, 0, 65536, 0, 0}, 0)
+	parts := 0
+	return glyph_outline_add(font, glyph, outline, {65536, 0, 0, 65536, 0, 0}, 0, &parts)
 }
 
 // A transform of the points of a part of a composite: x' = a x + c y + e,
@@ -289,7 +297,7 @@ Part_Transform :: struct {
 }
 
 @(private)
-glyph_outline_add :: proc "contextless" (font: ^Font_File, glyph: int, outline: ^Outline, transform: Part_Transform, depth: int) -> Font_Problem {
+glyph_outline_add :: proc "contextless" (font: ^Font_File, glyph: int, outline: ^Outline, transform: Part_Transform, depth: int, parts: ^int) -> Font_Problem {
 	data := glyph_data(font, glyph) or_return
 	if len(data) == 0 {
 		return .None // A glyph with no outline: a space.
@@ -316,6 +324,10 @@ glyph_outline_add :: proc "contextless" (font: ^Font_File, glyph: int, outline: 
 	}
 	at := 10
 	for {
+		parts^ += 1
+		if parts^ > COMPOSITE_PART_LIMIT {
+			return .Composite_Too_Deep
+		}
 		flags := read_part(data, at, &short) & 0xFFFF
 		part := read_part(data, at + 2, &short) & 0xFFFF
 		at += 4
@@ -369,7 +381,7 @@ glyph_outline_add :: proc "contextless" (font: ^Font_File, glyph: int, outline: 
 			e = (transform.a * inner.e + transform.c * inner.f) / 65536 + transform.e,
 			f = (transform.b * inner.e + transform.d * inner.f) / 65536 + transform.f,
 		}
-		glyph_outline_add(font, part, outline, combined, depth + 1) or_return
+		glyph_outline_add(font, part, outline, combined, depth + 1, parts) or_return
 		if flags & 0x0020 == 0 {
 			break
 		}

@@ -98,7 +98,7 @@ FILE_ADDRESS :: fixed_addresses.MODULE_FILES_ADDRESS // Where a caller maps the 
 // choose one, and each new range of addresses costs page tables.
 TABLE_ADDRESS :: fixed_addresses.MODULE_TABLES_ADDRESS
 TABLE_SPAN :: u64(16) << 30 // The most bytes of one table in a memory object: 16 GiB.
-#assert(module.PARAMETER_CAPACITY * TABLE_SPAN <= fixed_addresses.MODULE_TABLES_SPAN)
+#assert(module.PARAMETER_CAPACITY * TABLE_SPAN <= fixed_addresses.RANGE_SPAN)
 REGION_PAGES :: 16
 
 // A service that serves its own exports receives calls in the same form. It

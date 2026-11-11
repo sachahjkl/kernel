@@ -158,7 +158,7 @@ POINTER_THEME_ADDRESS :: fixed_addresses.POINTER_THEMES_ADDRESS
 // The values of the context of the compositor for each pointer theme: the
 // second at the values that contract:operation names for it.
 COMPOSITOR_POINTER_THEME_VALUES := [2][2]int{{COMPOSITOR_VALUE_POINTER_THEME_ADDRESS, COMPOSITOR_VALUE_POINTER_THEME_SIZE}, {op.CONTEXT_VALUE_SECOND_POINTER_THEME_ADDRESS, op.CONTEXT_VALUE_SECOND_POINTER_THEME_SIZE}}
-POINTER_THEME_SPACING :: fixed_addresses.POINTER_THEMES_SPAN / 2 // The second theme is this far after the first.
+POINTER_THEME_SPACING :: fixed_addresses.RANGE_SPAN / 2 // The second theme is this far after the first.
 
 // may_connect says if a program can ask the root service for a connection
 // to the service with a name.

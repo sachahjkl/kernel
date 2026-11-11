@@ -265,17 +265,23 @@ draw :: proc "contextless" (window: ^display.Window) {
 	interface.draw_text(frame.table, sample.x, sample.y + 56, "EEVDF fair", graphics.COLOR_PROGRAM, interface.FONT_MEDIUM)
 	after := interface.large_number(&frame, sample.x, sample.y + 88, "12 345", graphics.COLOR_TEXT)
 	interface.draw_text(frame.table, after + 16, sample.y + 112, "wakes in one second", graphics.COLOR_DIM)
+	// The sizes of the caches are values of the context of this program,
+	// which the root service wrote; the hash is that of the font file, in
+	// the header of the cache that this program validated.
 	facts: interface.Text_Builder
-	if page.glyph_cache_size == 0 {
+	context_values := &system.context_record().values
+	_, with_grid_fit_size := settings.glyph_cache_place(context_values, .With_Grid_Fit)
+	_, without_grid_fit_size := settings.glyph_cache_place(context_values, .Without_Grid_Fit)
+	if with_grid_fit_size == 0 || !graphics.text_state.has_cache {
 		interface.text_put(&facts, "no glyph cache: the text is Spleen 8x16")
 	} else {
 		interface.text_put(&facts, "glyph caches ")
-		interface.text_put_number(&facts, page.glyph_cache_size)
+		interface.text_put_number(&facts, with_grid_fit_size)
 		interface.text_put(&facts, " and ")
-		interface.text_put_number(&facts, page.glyph_cache_without_grid_fit_size)
-		interface.text_put(&facts, " bytes, hash ")
+		interface.text_put_number(&facts, without_grid_fit_size)
+		interface.text_put(&facts, " bytes, font hash ")
 		hex := "0123456789abcdef"
-		for byte in page.glyph_cache_hash[:4] {
+		for byte in graphics.text_state.cache.header.font_hash[:4] {
 			interface.text_put(&facts, hex[byte >> 4:][:1])
 			interface.text_put(&facts, hex[byte & 15:][:1])
 		}

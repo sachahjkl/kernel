@@ -4,6 +4,7 @@ import "contract:blake3"
 import "contract:glyph_cache"
 
 FIRST_CHARACTER :: 32
+#assert(int(max(Stripe_Filter)) + 1 == glyph_cache.FILTER_COUNT)
 CHARACTER_COUNT :: glyph_cache.CHARACTER_LIMIT
 
 // The places of the tables of a glyph cache file (contract:glyph_cache).
@@ -53,7 +54,7 @@ cache_tables_of :: proc "contextless" (out: []u8, layout: Cache_Layout, size_cou
 }
 
 @(private)
-cache_header_write :: proc "contextless" (out: []u8, font_bytes: []u8, font_name: string, grid_fit: bool, layout: Cache_Layout, size_count, pair_count, word_count: int) -> int {
+cache_header_write :: proc "contextless" (out: []u8, font_bytes: []u8, font_name: string, grid_fit, proportional: bool, layout: Cache_Layout, size_count, pair_count, word_count: int) -> int {
 	header := (^glyph_cache.Header)(raw_data(out))
 	header^ = {
 		magic            = glyph_cache.MAGIC,
@@ -63,13 +64,18 @@ cache_header_write :: proc "contextless" (out: []u8, font_bytes: []u8, font_name
 		first_character  = FIRST_CHARACTER,
 		character_count  = CHARACTER_COUNT,
 		size_count       = u32(size_count),
-		flags            = (grid_fit ? glyph_cache.FLAG_GRID_FIT : 0) | u32(Stripe_Filter.Five_Taps) << 8,
+		flags            = (grid_fit ? glyph_cache.FLAG_GRID_FIT : 0) | (proportional ? glyph_cache.FLAG_PROPORTIONAL : 0) | u32(Stripe_Filter.Five_Taps) << glyph_cache.FILTER_SHIFT,
 		word_offset      = u64(layout.words),
 		word_count       = u64(word_count),
 		font_hash        = blake3.hash(font_bytes),
 		pair_count       = u32(pair_count),
 	}
-	copy(header.font_name[:31], font_name)
+	// Printable bytes and an end (validate checks it): another byte is a
+	// question mark.
+	for index in 0 ..< min(len(font_name), len(header.font_name) - 1) {
+		byte := font_name[index]
+		header.font_name[index] = byte >= 32 && byte <= 126 ? byte : '?'
+	}
 	return layout.words + 4 * word_count
 }
 
@@ -124,7 +130,7 @@ glyph_cache_build :: proc "contextless" (font: ^Font_File, font_bytes: []u8, fon
 			}
 		}
 	}
-	return cache_header_write(out, font_bytes, font_name, grid_fit, layout, scale_count, 0, word_count), .None
+	return cache_header_write(out, font_bytes, font_name, grid_fit, false, layout, scale_count, 0, word_count), .None
 }
 
 // glyph_cache_build_proportional draws the characters 32 to 126 of a
@@ -204,7 +210,7 @@ glyph_cache_build_proportional :: proc "contextless" (font: ^Font_File, font_byt
 		}
 		first_glyph += position_count * CHARACTER_COUNT
 	}
-	return cache_header_write(out, font_bytes, font_name, grid_fit, layout, scale_count, pair_count, word_count), .None
+	return cache_header_write(out, font_bytes, font_name, grid_fit, true, layout, scale_count, pair_count, word_count), .None
 }
 
 // GLYPH_CACHE_LIMIT: room for the glyph cache of one monospace font with

@@ -159,7 +159,7 @@ font_subset :: proc(source: []u8, candidate: Vector_Font_Candidate, proportional
 	face, face_problem := vector_font.collection_face_offset(source, 0)
 	font, problem := vector_font.font_open(source, face)
 	if face_problem != .None || problem != .None {
-		report.problem = vector_font.font_problem_names[problem]
+		report.problem = vector_font.font_problem_names[face_problem != .None ? face_problem : problem]
 		return nil, report, false
 	}
 	memory := new(vector_font.Render_Memory, context.temp_allocator)
@@ -573,6 +573,12 @@ glyph_cache_of :: proc(font_bytes: []u8, font_name: string, grid_fit: bool, scal
 	}
 	if problem != .None {
 		fmt.eprintfln("kerneltool: the font %s: %s", font_name, vector_font.font_problem_names[problem])
+		return nil, false
+	}
+	// The reader of the programs checks the cache here too: a cache that it
+	// refuses is found at the build, not at the boot.
+	if _, refused := glyph_cache.validate(out[:size]); refused.kind != .None {
+		fmt.eprintfln("kerneltool: the glyph cache of %s is refused: %s, value %d, limit %d", font_name, glyph_cache.problem_sentences[refused.kind], refused.value, refused.limit)
 		return nil, false
 	}
 	return out[:size], true

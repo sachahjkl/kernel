@@ -285,7 +285,7 @@ next_event :: proc "contextless" (window: ^Window) -> (event: Event, ok: bool) {
 // The settings page of this program (contract:settings), or nil.
 settings_page: ^settings.Page
 
-// The two glyph caches of the page, each validated once: with the grid fit
+// The two glyph caches of this program, each validated once: with the grid fit
 // and without it (the setting "grid_fit").
 glyph_caches: [settings.Grid_Fit]glyph_cache.Cache
 glyph_cache_valid: [settings.Grid_Fit]bool
@@ -295,23 +295,35 @@ glyph_cache_valid: [settings.Grid_Fit]bool
 // applies the choice of the person. With no page, or a cache that the
 // validation refuses, the text of the program is Spleen 8x16, with a line
 // on the log. The compositor calls it too.
+//
+// Why one validation is enough: the drawing code reads the counts and the
+// offsets of a cache again at each glyph, so the bytes must not change
+// after `validate`. They cannot. The address of each cache is a fixed range
+// (contract:fixed_addresses), not a value of the settings page, and its
+// size is a value of the context that the root service wrote; the root
+// service maps the cache from the boot image with the right Read only, for
+// every program; the one handle of the boot image, of the root service,
+// has no right Write. So no program can write the bytes of a cache, nor
+// point this program at other bytes. The settings page, which the program
+// `settings` writes, gives choices only.
 text_settings_open :: proc "contextless" (ctx: ^system.Context) {
 	address := ctx.values[settings.VALUE_PAGE]
 	if address == 0 || settings_page != nil {
 		return
 	}
 	settings_page = (^settings.Page)(uintptr(address))
-	places := [settings.Grid_Fit][2]u64 {
-		.On  = {settings_page.glyph_cache_address, settings_page.glyph_cache_size},
-		.Off = {settings_page.glyph_cache_without_grid_fit_address, settings_page.glyph_cache_without_grid_fit_size},
+	places := [settings.Grid_Fit]settings.Glyph_Cache {
+		.On  = .With_Grid_Fit,
+		.Off = .Without_Grid_Fit,
 	}
-	for place, grid_fit in places {
-		if place[1] == 0 {
+	for cache, grid_fit in places {
+		cache_address, cache_size := settings.glyph_cache_place(&ctx.values, cache)
+		if cache_size == 0 {
 			system.log_in("programs", .Warning, "display: no glyph cache with the grid fit ", settings.descriptions[.Grid_Fit].value_names[grid_fit], ": that text is Spleen 8x16")
 			continue
 		}
 		problem: glyph_cache.Problem
-		glyph_caches[grid_fit], problem = glyph_cache.validate(([^]u8)(uintptr(place[0]))[:place[1]])
+		glyph_caches[grid_fit], problem = glyph_cache.validate(([^]u8)(uintptr(cache_address))[:cache_size])
 		if problem.kind != .None {
 			system.log_in("programs", .Warning, "display: the glyph cache is refused: ", glyph_cache.problem_sentences[problem.kind], ", value ", problem.value, ", limit ", problem.limit, ": that text is Spleen 8x16")
 			continue
@@ -320,8 +332,8 @@ text_settings_open :: proc "contextless" (ctx: ^system.Context) {
 	}
 	// The bold weight of the titles: a text in the regular weight when it
 	// is absent or refused.
-	if settings_page.glyph_cache_bold_size != 0 {
-		bold, problem := glyph_cache.validate(([^]u8)(uintptr(settings_page.glyph_cache_bold_address))[:settings_page.glyph_cache_bold_size])
+	if bold_address, bold_size := settings.glyph_cache_place(&ctx.values, .Bold); bold_size != 0 {
+		bold, problem := glyph_cache.validate(([^]u8)(uintptr(bold_address))[:bold_size])
 		if problem.kind == .None {
 			graphics.text_bold_cache_use(bold)
 		} else {

@@ -9,9 +9,14 @@
 // (ZII): an all-zero page is the vector font with the grid fit, red green
 // blue, the pointer theme of the owner when the boot image has it.
 //
-// The page also names the three glyph caches of the vector font (with and
-// without the grid fit, and the bold weight at scale 1): the root service maps these resources of the boot
-// image read-only in the same programs, after it checked their hashes.
+// The page holds the choices only. The three glyph caches of the vector
+// font (with and without the grid fit, and the bold weight at scale 1) are
+// not on the page: the root service maps these resources of the boot image
+// read-only in the same programs, after it checked their hashes, at the
+// fixed addresses of contract:fixed_addresses, and writes their sizes in
+// the context of each program (glyph_cache_place). The program `settings`
+// writes the page, so a field of the page can only change a look: no
+// program reads an address or a size from it.
 //
 // A change: the writer makes change_count odd, writes the values, makes it
 // even again, and wakes the threads that wait on it (the compositor). The
@@ -92,17 +97,44 @@ descriptions := [Setting]Description {
 Page :: struct {
 	change_count:                     u32, // Even when the page is stable. Each change adds 2.
 	reserved:                         u32,
-	values:                           [SETTING_CAPACITY]u32, // By Setting.
-	// The root service writes the rest before any program starts.
-	glyph_cache_address:              u64, // 0: no glyph cache (the image has none, or its hash is wrong).
-	glyph_cache_size:                 u64,
-	glyph_cache_hash:                 [32]u8,
-	glyph_cache_without_grid_fit_address: u64,
-	glyph_cache_without_grid_fit_size:    u64,
-	glyph_cache_bold_address:             u64, // The bold weight, scale 1 only: the titles of the cards. 0: none, the titles are the regular weight.
-	glyph_cache_bold_size:                u64,
+	values:                           [SETTING_CAPACITY]u32, // By Setting. A reader keeps each value through `valid`.
 }
 #assert(size_of(Page) <= 4096)
+
+// The three glyph caches that a program with a surface or a terminal can
+// receive.
+Glyph_Cache :: enum u8 {
+	With_Grid_Fit,
+	Without_Grid_Fit,
+	Bold, // Scale 1 only: the titles of the cards. Absent: the titles are the regular weight.
+}
+
+Glyph_Cache_Place :: struct {
+	address:    u64, // A fixed range (contract:fixed_addresses).
+	span:       u64, // The most bytes that the range holds.
+	size_value: int, // The value of the context with its size.
+}
+
+glyph_cache_places := [Glyph_Cache]Glyph_Cache_Place {
+	.With_Grid_Fit    = {GLYPH_CACHE_ADDRESS, fixed_addresses.RANGE_SPAN, op.CONTEXT_VALUE_GLYPH_CACHE_SIZE},
+	.Without_Grid_Fit = {GLYPH_CACHE_WITHOUT_GRID_FIT_ADDRESS, fixed_addresses.RANGE_SPAN, op.CONTEXT_VALUE_GLYPH_CACHE_WITHOUT_GRID_FIT_SIZE},
+	.Bold             = {GLYPH_CACHE_BOLD_ADDRESS, fixed_addresses.RANGE_SPAN, op.CONTEXT_VALUE_GLYPH_CACHE_BOLD_SIZE},
+}
+
+// glyph_cache_place gives where a glyph cache is in this program: the
+// address of its fixed range, and the size that the root service wrote in
+// the context at the start, bounded by the span of the range. size 0: the
+// program has no such cache. The bytes there are pages of the boot image,
+// mapped read-only, that no program can write (docs/FONTS.md, section 5,
+// "Who can write a cache").
+glyph_cache_place :: proc "contextless" (values: ^[op.CONTEXT_VALUES]u64, cache: Glyph_Cache) -> (address: u64, size: u64) {
+	place := glyph_cache_places[cache]
+	size = values[place.size_value]
+	if size > place.span {
+		return place.address, 0
+	}
+	return place.address, size
+}
 
 // Choice: the values of a page, as one copy.
 Choice :: struct {
@@ -132,11 +164,20 @@ valid :: proc "contextless" (setting: Setting, value: u32) -> u32 {
 	return value < descriptions[setting].value_count ? value : 0
 }
 
+// READ_TRIES: the most reads of a page that changes, or that its writer
+// left in the middle of a change (change_count odd). A reader does not wait
+// for the writer.
+READ_TRIES :: 64
+
 // read copies the choice of a page that another program writes. It reads
-// again while the page changes.
+// again while the page changes, at most READ_TRIES times; then it gives the
+// defaults (all values 0) with the count that it saw, so a writer that
+// stops in a change, or changes the page with no end, changes the look of
+// the other programs and never stops them.
 read :: proc "contextless" (page: ^Page) -> Choice {
-	for {
-		before := intrinsics.atomic_load_explicit(&page.change_count, .Acquire)
+	before: u32
+	for _ in 0 ..< READ_TRIES {
+		before = intrinsics.atomic_load_explicit(&page.change_count, .Acquire)
 		if before & 1 != 0 {
 			continue
 		}
@@ -150,6 +191,7 @@ read :: proc "contextless" (page: ^Page) -> Choice {
 			return choice
 		}
 	}
+	return {change_count = before}
 }
 
 // write changes the values of the page. The one writer is the program

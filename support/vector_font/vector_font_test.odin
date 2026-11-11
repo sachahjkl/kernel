@@ -258,6 +258,19 @@ damaged_glyph_cache :: proc(t: ^testing.T) {
 		{glyph_cache.HEADER_SIZE + 4, 0, .Bad_Cell}, // a baseline of 0
 		{glyph_cache.HEADER_SIZE + 3 * glyph_cache.SIZE_ENTRY_SIZE + 2, 200, .Bad_Glyph}, // the rows of a glyph
 		{glyph_cache.HEADER_SIZE + 3 * glyph_cache.SIZE_ENTRY_SIZE + 7, 0x7F, .Bad_Glyph}, // the words of a glyph
+		// A monospace cache keeps each glyph in its cell, from its left side:
+		// the damage of a grid of text cells depends on it.
+		{glyph_cache.HEADER_SIZE + 3 * glyph_cache.SIZE_ENTRY_SIZE + 8, 1, .Bad_Glyph}, // a left side of 1
+		{glyph_cache.HEADER_SIZE + 3 * glyph_cache.SIZE_ENTRY_SIZE + 8, 0xFF, .Bad_Glyph}, // a left side of 255
+		{glyph_cache.HEADER_SIZE + 3 * glyph_cache.SIZE_ENTRY_SIZE + 10, 9, .Bad_Glyph}, // a width of 9 in a cell of 8
+		{glyph_cache.HEADER_SIZE + 6, 3, .Bad_Count}, // three positions
+		{glyph_cache.HEADER_SIZE + 3 * glyph_cache.SIZE_ENTRY_SIZE + 3 * 95 * glyph_cache.GLYPH_ENTRY_SIZE, 0x01, .Bad_Advance}, // an advance of 513 in a cell of 8
+		{120, 1, .Bad_Count}, // a pair
+		// The flags and the name.
+		{36, 0x04, .Bad_Flags}, // a flag that no reader knows
+		{37, 3, .Bad_Flags}, // a filter past the three
+		{88, 0x01, .Bad_Name}, // a control byte
+		{88 + 31, 'a', .Bad_Name}, // no end
 	}
 	for damage in damages {
 		copy(file[:size], good)
