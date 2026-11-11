@@ -38,26 +38,27 @@ Why, against a retained tree of widgets:
 - The output is data: a table of records of one size, in the memory of the caller (P14). A table can be compared, measured, sent to another rasterizer, or written to a file to test it.
 - A retained tree gives damage for free: a node that changed knows its rectangle. Immediate mode loses that. Section 2.2 gives it back without a tree.
 
-### 2.1 Draw record (format version 1)
+### 2.1 Draw record (format version 3)
 
 A draw record is 40 bytes. The fields are little-endian, in this order:
 
 | Offset | Field | Type | Meaning |
 |---|---|---|---|
-| 0 | `kind` | u8 | `None` 0, `Rectangle` 1, `Vertical_Gradient` 2, `Horizontal_Gradient` 3, `Text` 4, `Clip` 5 |
+| 0 | `kind` | u8 | `None` 0, `Rectangle` 1, `Vertical_Gradient` 2, `Horizontal_Gradient` 3, `Text` 4, `Clip` 5, `Point_Grid` 6, `Folded_Gap` 7 (version 2), `Picture` 8 (version 2), `Text_Grid` 9 (version 3) |
 | 1 | `text_scale` | u8 | Text: 1, 2 or 3 (DESIGN.md, section 5) |
 | 2 | `text_subpixel_x` | u8 | Text: the position after `x` in 1/64 of a pixel. 0 for Spleen 8x16, which places each glyph on a whole pixel |
 | 3 | `reserved` | u8 | 0 |
 | 4 | `x`, `y`, `width`, `height` | 4 x i32 | The rectangle of the record, in pixels of the surface. For text, the rectangle that the run covers |
 | 20 | `first_color` | u32 | `0x00RRGGBB`: the color of a rectangle or a text; the top or the left color of a gradient |
 | 24 | `second_color` | u32 | The bottom or the right color of a gradient |
-| 28 | `text_start`, `text_count` | 2 x u32 | Text: the bytes of the run in the text table of the draw table |
+| 28 | `text_start`, `text_count` | 2 x u32 | Text: the bytes of the run in the text table of the draw table. Picture: the index of the picture in `Draw_Table.pictures` and its generation. Text grid: the index of the grid in `Draw_Table.grids` |
 | 36 | `element` | u32 | The low 32 bits of the element identity that wrote the record, 0 for none: a tool can say which element changed |
 
 - `Clip` sets the rectangle that the next records are cut to, until the next `Clip`; a `Clip` of width 0 ends the cut.
-- A version number (`DRAW_RECORD_VERSION`, 1) is beside the format, as for the contracts. A new kind is a new version.
+- A version number (`DRAW_RECORD_VERSION`, 3) is beside the format, as for the contracts. A new kind is a new version.
 - The text of a run is in the text table of the draw table, not in the record: a record stays 40 bytes, and two runs with the same bytes compare equal.
-- Pictures (the surface of `plasma`, the cells of `life`) are not in version 1: those programs draw pixels, not an interface.
+- A `Picture` record shows the pixels of a picture of the caller. The program raises its generation when its pixels change; with the same generation the record compares equal and damages nothing. `life`, `paint`, `plasma`, `temple` and the surfaces of the windows in the compositor are pictures.
+- A `Text_Grid` record shows a grid of text cells of the caller (`Text_Grid_Cell`: a character, reverse, a color). Its 40 bytes do not change when its cells change: the difference compares the cells (section 2.4).
 
 ### 2.2 Damage by difference
 
@@ -71,7 +72,7 @@ The program keeps the draw table of the last frame that it drew (a second table,
 Then `execute_in_rectangles` draws again, in each damage rectangle, each record of the new table that touches it, cut to the rectangle. The program never tracks damage by hand.
 
 - **The limit of the index rule**: a record added in the middle of the table moves all the records after it, and they all compare as different: the damage is too large, never too small. It is right, and it costs only time. An element identity in each record (offset 36) allows a later rule that matches records by identity; it is not needed by the first users.
-- **Two pictures**: a surface with two pictures needs the table that was drawn in the picture that the program draws now, which is the table of two frames before. The caller keeps one table for each picture.
+- **Two pictures**: a surface with two pictures needs the table that was drawn in the picture that the program draws now, which is the table of two frames before. The caller keeps one table for each picture. The program draws the difference with its own picture, but it presents also the difference with the picture that the screen shows (`damage_of_two_pictures`): a frame equal to its own picture can differ from the screen. Without that rule the terminal showed rows of two different frames (host test `two_pictures_screen_is_each_frame`).
 - **Present with a rectangle**: `display.present_rectangle` gives the compositor the union of the damage: the compositor draws again only that part of the window (the protocol had a gap there: `Present` damaged the whole surface). A full rectangle stays the default of `display.present`.
 - **The cost**, measured by the program `interface_elements` on its window of 68 records (choice 328 of `FIRST_MILESTONE.md`): nothing changed, 0 rectangles in 0.8 us; one number changed, 3 rectangles in 0.8 us; everything moved, 1 rectangle in 1.8 us: about 13 ns for each record. The whole frame is drawn in 366 to 411 us, a frame in its damage in 89 to 120 us. `clock` draws one picture in 11.6 us against 109.2 us by hand.
 
@@ -81,6 +82,15 @@ Then `execute_in_rectangles` draws again, in each damage rectangle, each record 
 - On the surface of a program, each damage rectangle is painted with the background before the records draw again (`draw_damage_on_surface`), and a whole frame starts from the background: a record that a frame no longer has leaves no pixel, with no rule for the caller. The compositor draws its panels over other windows, so it draws the records only.
 - A table that is full stops taking records and keeps the flag `full`: the frame is drawn without the records that did not fit, the program can test the flag and write it on its log. No element fails in silence.
 - An element gives its result as a value (`Element_Result`): pressed, has the focus, changed. Nothing is hidden in a context.
+
+### 2.4 Text grid
+
+A text grid is the element of the terminal: up to 104 x 32 cells, which a program changes many times in one second.
+
+- The table of the frame now names the cells of the caller; each table before keeps its own copy of the cells that its picture shows (`draw_table_copy` copies them, about 26 KiB for each table of the terminal).
+- The difference damages, in each row, the span from the first changed cell to the last one; the rectangles merge as in section 2.2. A grid that changes its size is damaged whole.
+- The execution draws the cells of one color that follow each other as one text, so the text goes through `graphics.text_scaled` (and the glyph cache of the vector font) once for each run.
+- The console draws no pixels: it writes records into its terminal, so the text grid of the terminal is the drawing of the console too.
 
 ## 3. Layout
 
@@ -248,11 +258,28 @@ The package has 24 host tests (`support/interface/interface_test.odin`), the fon
 - `scheduler`, `locks`, `manual`, `life`: no fault seen.
 - `limits`, `crowd`, `origin`, `rights`, `disk`, `notes`: no clipped text and no column out of place. `crowd`: its header "kernel entries, one million records" ends 8 pixels from the right edge of the window. `notes`: an empty band between its status line and its keys.
 
+### The layers after the merge (step 59)
+
+Each layer is a commit that passed the main scenario; the last one passed the full check (789 checks).
+
+| Layer | Direct drawing calls before / after | Module before / after (bytes) | What holds it |
+|---|---|---|---|
+| The compositor: its windows (frame records and the surface as a Picture record), its bar and its two menus (cards) in one draw table for each frame | 42 / 7 (the pointer of `work/cursor`, the points of the background, the copy to the screen) | 125 723 / 121 979 | The main scenario (menus, moves, close buttons); one measure run: the frame of a window of 800 x 600 by hand 8.5 us, as 9 records 8.9 us (load 39 to 63: an indication only) |
+| The boot display: its five cards are the card of the package | the card by hand / `interface.card` | `boot` 69 632 / 77 824, `root` 172 032 / 180 224 | The pictures `boot`, `boot_fails`; the UEFI loader builds with the package (no kernel call in the core files) |
+| `paint`, `plasma`, `temple`: Picture records (`interface.show_picture` for one picture) | paint 13 / 5, plasma 0 / 0, temple 18 / 18: the remaining calls draw into the picture of the program, by design | paint 45 056 / 61 440, plasma 24 576 / 45 056, temple 212 992 / 229 376 | The pictures `desktop_moved`, `temple` |
+| The text grid (section 2.4) and `terminal` | terminal 29 / 0 | 49 152 / 65 536 | Host tests `text_grid_damage_for_each_cell`, `text_grid_draws_its_cells`, `two_pictures_present_what_the_screen_shows`, `two_pictures_screen_is_each_frame`; the pictures `terminal`, `terminal_held`, `terminal_keys`, `terminal_stopped` |
+| Window places on the grid of 8 | | | The compositor places each new window and each moved window with its corner on the grid; the scenarios move windows with steps `Move`; the tool reads places from `compositor.windows()` once it has the grant person; the full check |
+
+- Sizes are on `master` `b97fb08` against the branch; the boot image is 5 338 592 bytes against 5 531 104 (+192 512).
+- In this step the package grew by 401 lines (with 3 host tests and 1 simulation); the 16 changed files gained 844 lines and lost 273.
+- `flood`, lines in one second, as the terminal logs them: 3 492 315 before the text grid (load about 50), 4 651 133, 3 567 351 and 2 429 679 after (loads 15 to 23). Each is above a load of 8, so none is a valid measure; the text grid did not make the console slower in these runs. A frame of the terminal now draws only the rows that changed.
+- A fault found and corrected in the package: with two pictures, a frame presented only its difference with its own picture. The screen shows the other picture, so rows of two frames were mixed on the screen (seen in `terminal.png`, a row half of one line and half of another). The rule and a simulation of the screen are in section 2.2.
+- The pictures of this step (devlog `2026-11-11_150943_branch_desktop`): `desktop_moved` (plasma, paint, life, monitor on the grid), `temple`, `boot`, `rings`, `terminal`, `terminal_held`, `terminal_stopped`, `menu`, `windows`. Faults seen and corrected: the processor name of the boot display was cut in the middle of a word (a fact is now cut after its last whole word); the keys hint of the terminal ran over "older than the lines kept" (the hint is left out when the text at its left takes its room). No other clipped text, no misaligned column.
+
 ### Not converted, and why
 
-- `server`, `fetch`: another agent rewrites `server` now.
-- `console`, `terminal`: text grids; they need a text grid element with a damage for each cell (next step, with the lines per second of `flood` before and after).
-- `paint`, `plasma`, `temple`: pictures of pixels; the Picture record is proven by `life`; their conversion is the next step.
-- `processors`, `threads`, `workers`, `rings`: they draw into views (`graphics.view`) or lines at an angle; `rings` draws its ring as lines. Next step.
-- `log`, `pages`, `boot`, `twin`, `fault`: `log` and `pages` keep colors of their own meaning and a layout of their own; `boot` is the boot display (`support/bootscreen`), next step; `twin` and `fault` have no window.
-- The compositor: its bar, menus and window frames are drawn by hand; its launcher is a draw table (step 51). Next step, with the choice measured.
+- `server`, `fetch`: another agent rewrites `server`.
+- `console`: it draws no pixels; its terminal draws it (section 2.4).
+- `processors`, `threads`, `workers`, `rings`: they draw into views (`graphics.view`) or lines at an angle. A `Line` record is the next kind if the owner wants them converted.
+- `log`, `pages`: colors of their own meaning and a layout of their own. `twin` and `fault` have no window.
+- The pointer of the compositor: the branch `work/cursor` owns it.
