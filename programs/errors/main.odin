@@ -20,7 +20,9 @@ LINE :: 16
 TOP :: 8 + 2 * LINE + 8 // The first case.
 CASE_HEIGHT :: 2 * LINE
 CASE_CAPACITY :: 19
-HEIGHT :: TOP + CASE_CAPACITY * CASE_HEIGHT + 8 + 2 * LINE + 8
+// One case can have a sentence of two lines (a load error that names an
+// export and its difference): the window has one line for it.
+HEIGHT :: TOP + CASE_CAPACITY * CASE_HEIGHT + LINE + 8 + LINE + 8
 SENTENCE_CAPACITY :: 240
 SHOWN :: (WIDTH - 40) / 8 // The characters of a line of the window.
 
@@ -664,8 +666,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				}
 			case .Pointer:
 				down := event.buttons & 1 != 0
-				if down && !pressed && event.y >= TOP && (event.y - TOP) / CASE_HEIGHT < len(cases) {
-					chosen = (event.y - TOP) / CASE_HEIGHT
+				if down && !pressed {
+					chosen = case_at(event.y)
 				}
 				pressed = down
 			}
@@ -678,25 +680,63 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 }
 
+// sentence_cut gives where the first line of a sentence ends: all of it
+// if it fits, else the last space that fits.
+sentence_cut :: proc "contextless" (sentence: string) -> int {
+	if len(sentence) <= SHOWN {
+		return len(sentence)
+	}
+	for index := SHOWN; index > 0; index -= 1 {
+		if sentence[index] == ' ' {
+			return index
+		}
+	}
+	return SHOWN
+}
+
+case_height :: proc "contextless" (index: int) -> int {
+	return cases[index].count > SHOWN ? CASE_HEIGHT + LINE : CASE_HEIGHT
+}
+
+// case_at gives the case that is drawn at a height of the window, or -1.
+case_at :: proc "contextless" (at: int) -> int {
+	y := TOP
+	for index in 0 ..< len(cases) {
+		next := y + case_height(index)
+		if at >= y && at < next {
+			return index
+		}
+		y = next
+	}
+	return -1
+}
+
 draw :: proc "contextless" (window: ^display.Window) {
 	canvas := window.canvas
 	graphics.clear(canvas, COLOR_BACKGROUND)
 	graphics.text(canvas, 16, 8, "each case makes an error for real; under it, the sentence of its record: errors.Error_Record,", COLOR_DIM)
 	graphics.text(canvas, 16, 8 + LINE, "module.Load_Error, op.Stop_Report.frames. A key from a to s, or a click on a case, runs it again", COLOR_DIM)
+	y := TOP
 	for &item, index in cases {
-		y := TOP + index * CASE_HEIGHT
+		height := case_height(index)
 		if index % 2 == 0 {
-			graphics.fill(canvas, 8, y, WIDTH - 16, CASE_HEIGHT, COLOR_TRACK)
+			graphics.fill(canvas, 8, y, WIDTH - 16, height, COLOR_TRACK)
 		}
 		graphics.text(canvas, 16, y, key_names[index:index + 1], COLOR_DIM)
 		graphics.text(canvas, 32, y, item.text, COLOR_DIM)
 		graphics.text(canvas, 440, y, item.expected, COLOR_TEXT)
 		graphics.text(canvas, 640, y, item.right ? "the expected record" : "another answer", item.right ? COLOR_TEXT : COLOR_FAILED)
-		sentence := string(item.sentence[:min(item.count, SHOWN)])
-		graphics.text(canvas, 32, y + LINE, sentence, item.right ? COLOR_TEXT : COLOR_FAILED)
+		sentence := string(item.sentence[:item.count])
+		cut := sentence_cut(sentence)
+		color: u32 = item.right ? COLOR_TEXT : COLOR_FAILED
+		graphics.text(canvas, 32, y + LINE, sentence[:cut], color)
+		if cut < len(sentence) {
+			rest := sentence[sentence[cut] == ' ' ? cut + 1 : cut:]
+			graphics.text(canvas, 32, y + 2 * LINE, rest[:min(len(rest), SHOWN)], color)
+		}
+		y += height
 	}
-	y := TOP + len(cases) * CASE_HEIGHT + 8
-	line: [120]u8
-	graphics.text(canvas, 16, y, system.format(line[:], "kernel operation: ", kernel_good, " ns when it succeeds, ", kernel_failed, " ns when it fails with its error record"), COLOR_DIM)
-	graphics.text(canvas, 16, y + LINE, system.format(line[:], "direct call of an export: ", direct_good, " ns when it succeeds, ", direct_failed, " ns when it fails with its error record"), COLOR_DIM)
+	y += 8
+	line: [160]u8
+	graphics.text(canvas, 16, y, system.format(line[:], "with its error record, a failure takes ", kernel_failed, " ns in a kernel operation (", kernel_good, " ns for a success) and ", direct_failed, " ns in a direct call (", direct_good, " ns)"), COLOR_DIM)
 }
