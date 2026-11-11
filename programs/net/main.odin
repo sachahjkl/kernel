@@ -328,6 +328,22 @@ measure_round_trips :: proc "contextless" () {
 	system.log("net: the round trip of one datagram of ", u64(DATA_BYTES), " bytes: ", round_least, " us at least, ", round_middle, " us in the middle, over ", u64(ROUND_TRIPS))
 }
 
+// measure_refusals measures a request that the network service refuses
+// (a Send of 2000 bytes: Too_Large), from the command to its completion.
+measure_refusals :: proc "contextless" () {
+	REFUSALS :: 2000
+	start := system.cycles()
+	refused := 0
+	for _ in 0 ..< REFUSALS {
+		record, ok := call(.Send, {0 = 0, 1 = 2000, 2 = GATEWAY, 3 = ECHO_PORT})
+		if ok && datagram.Status(record.kind) == .Too_Large {
+			refused += 1
+		}
+	}
+	nanoseconds := microseconds(system.cycles() - start) * 1000 / REFUSALS
+	system.log("net: a refused request of the datagram ring (Send of 2000 bytes, Too_Large), from the command to its completion: ", nanoseconds, " ns, ", u64(refused), " of ", u64(REFUSALS), " refused")
+}
+
 // measure_burst keeps BURST_IN_FLIGHT datagrams in flight for one second:
 // each answer sends the next datagram.
 measure_burst :: proc "contextless" () {
@@ -464,6 +480,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.log("net: WRONG: ", u64(wrong), " of ", u64(case_count), " cases")
 	}
 	measure_round_trips()
+	measure_refusals()
 	measure_burst()
 	measured = true
 	system.log("net: the measures are done")

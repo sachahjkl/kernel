@@ -13,6 +13,8 @@ import "support:display"
 import "support:graphics"
 import "support:interface"
 import "support:storage"
+import "support:terminal"
+import "contract:ring"
 import "support:system"
 import "base:intrinsics"
 
@@ -261,6 +263,95 @@ math_load :: proc "contextless" () -> bool {
 	}
 	square_root = cast(proc "c" (value: i64, error: ^errors.Error_Record) -> i64)rawptr(address)
 	return true
+}
+
+// tally, loaded as a library: its export add, called directly.
+tally_space: system.Module_Space
+tally_add: proc "c" (amount: i64, note: ^string, error: ^errors.Error_Record) -> i64
+tally_add_export: u32
+tally_place: int
+
+tally_load :: proc "contextless" () -> bool {
+	tally_space = {source = {image = image}, next = op.MODULE_BASE + 0x2_0000_0000}
+	error: module.Load_Error
+	place, loaded := system.module_space_load(&tally_space, system.image_find(image, "tally"), &error)
+	if !loaded {
+		return false
+	}
+	tally_place = place
+	item := &tally_space.modules[place]
+	tally_add_export = module.export_find(item.file, "add")
+	address, found := module.export_address(item.file, uintptr(item.base), tally_add_export)
+	if !found {
+		return false
+	}
+	tally_add = cast(proc "c" (amount: i64, note: ^string, error: ^errors.Error_Record) -> i64)rawptr(address)
+	return true
+}
+
+requests: ring.Ring // To the root service: Connect only (the grant Connect), and callable_of gives this program no service.
+has_requests: bool
+request_tag: u32
+
+// root_connect asks the root service for a connection, and waits for its
+// completion.
+root_connect :: proc "contextless" (name: string) -> (completion: ring.Record, ok: bool) {
+	if !has_requests {
+		return {}, false
+	}
+	request_tag += 1
+	packed := system.name_pack(name)
+	if !system.send(&requests.commands, ring.Record{kind = u32(system.Root_Command.Connect), tag = request_tag, values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3]}}) {
+		return {}, false
+	}
+	limit := system.time() + 2000
+	for system.time() < limit {
+		for record in system.receive(&requests.completions) {
+			if record.tag == request_tag {
+				return record, true
+			}
+		}
+		wait: system.Wait
+		system.wait_records(&wait, &requests.completions)
+		system.wait_end(&wait, limit)
+	}
+	return {}, false
+}
+
+// The measures of a failed call of each family of section 8 of
+// MODULE_CONTRACT.md that is not a kernel operation: family_root in
+// nanoseconds, the two others in tenths of a nanosecond.
+family_wrapper, family_root, family_export: u64
+
+families_measure :: proc "contextless" (ctx: ^system.Context) {
+	WRAPPER_CALLS :: 1_000_000
+	error: errors.Error_Record
+	start := system.nanoseconds()
+	failed := 0
+	for _ in 0 ..< WRAPPER_CALLS {
+		if _, opened := terminal.open(ctx); !opened {
+			failed += 1
+		}
+	}
+	family_wrapper = (system.nanoseconds() - start) * 10 / WRAPPER_CALLS
+	ROOT_CALLS :: 2000
+	start = system.nanoseconds()
+	for _ in 0 ..< ROOT_CALLS {
+		if completion, answered := root_connect("storage"); answered && completion.kind != 0 {
+			failed += 1
+		}
+	}
+	family_root = (system.nanoseconds() - start) / ROOT_CALLS
+	if tally_add != nil {
+		EXPORT_CALLS :: 1_000_000
+		note := "a note of forty bytes, four more than 36"
+		start = system.nanoseconds()
+		for _ in 0 ..< EXPORT_CALLS {
+			tally_add(1, &note, &error)
+		}
+		family_export = (system.nanoseconds() - start) * 10 / EXPORT_CALLS
+	}
+	system.log("errors: a failed call of each family: a wrapper of support (terminal.open with no terminal): ", family_wrapper / 10, ".", family_wrapper % 10, " ns; a command of the root ring (Connect refused): ", family_root, " ns; an export (tally.add with a note of 40 bytes, direct): ", family_export / 10, ".", family_export % 10, " ns; ", u64(failed), " failures")
 }
 
 case_direct :: proc "contextless" (writer: ^system.Writer) -> bool {
@@ -670,6 +761,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	client, connected = storage.open(ctx)
 	math_load()
+	tally_load()
+	if ctx.handles[system.GRANT_ROOT] != 0 {
+		status: system.Status
+		requests, status = system.ring_open(ctx.handles[system.GRANT_ROOT])
+		has_requests = status == .Ok
+	}
 
 	wrong := 0
 	for &item, index in cases {
@@ -692,6 +789,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.log("errors: WRONG: the case under contention failed")
 	}
 	measure()
+	families_measure(ctx)
 	refusals(ctx)
 	system.log("errors: a kernel operation that succeeds: ", kernel_good, " ns; one that fails, with its error record: ", kernel_failed, " ns; a direct call that succeeds: ", direct_good, " ns; one that fails: ", direct_failed, " ns")
 
