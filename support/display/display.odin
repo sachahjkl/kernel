@@ -310,6 +310,16 @@ text_settings_open :: proc "contextless" (ctx: ^system.Context) {
 		}
 		glyph_cache_valid[grid_fit] = true
 	}
+	// The bold weight of the titles: a text in the regular weight when it
+	// is absent or refused.
+	if settings_page.glyph_cache_bold_size != 0 {
+		bold, problem := glyph_cache.validate(([^]u8)(uintptr(settings_page.glyph_cache_bold_address))[:settings_page.glyph_cache_bold_size])
+		if problem.kind == .None {
+			graphics.text_bold_cache_use(bold)
+		} else {
+			system.log_in("programs", .Warning, "display: the bold glyph cache is refused: ", glyph_cache.problem_sentences[problem.kind], ": the titles are the regular weight")
+		}
+	}
 	text_settings_apply()
 }
 

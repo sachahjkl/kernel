@@ -36,6 +36,9 @@ Text_State :: struct {
 	// The blend in linear light: square_root[i] is the 8-bit value whose
 	// square is nearest to (4096 i + 2048) / 255 (docs/FONTS.md, "Gamma").
 	square_root: [4096]u8,
+	// The bold weight at scale 1, for emphasis: the titles of the cards.
+	has_bold_cache: bool,
+	bold_cache:     glyph_cache.Cache,
 	// The blend tables of text over a flat color (blend.odin), 24 KiB.
 	blend_tables: Blend_Tables,
 }
@@ -64,6 +67,33 @@ text_cache_use :: proc "contextless" (cache: glyph_cache.Cache) {
 	if text_state.square_root[4095] == 0 {
 		square_root_table_fill(&text_state.square_root)
 	}
+}
+
+// text_bold_cache_use makes a cache that glyph_cache.validate accepted the
+// cache of the bold weight.
+text_bold_cache_use :: proc "contextless" (cache: glyph_cache.Cache) {
+	text_state.bold_cache = cache
+	text_state.has_bold_cache = true
+}
+
+// text_bold draws characters at scale 1 in the bold weight of the vector
+// font: the titles of the cards. With Spleen, or with no bold cache, it is
+// text. It gives the x after the last character.
+text_bold :: proc "contextless" (canvas: Canvas, x, y: int, characters: string, color: Color) -> int {
+	if !text_vector_drawn() || !text_state.has_bold_cache {
+		return text(canvas, x, y, characters, color)
+	}
+	at := x
+	for index in 0 ..< len(characters) {
+		if at >= canvas.width {
+			break
+		}
+		if at + CELL_WIDTH > 0 {
+			character_vector_with(&text_state.bold_cache, &text_state.square_root, &text_state.blend_tables, text_state.order, canvas, at, y, characters[index], color, 1)
+		}
+		at += CELL_WIDTH
+	}
+	return x + CELL_WIDTH * len(characters)
 }
 
 // square_root_table_fill makes the table of the blend in linear light:

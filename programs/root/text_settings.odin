@@ -1,5 +1,6 @@
 package root
 
+import "contract:glyph_cache"
 import "contract:settings"
 import "support:graphics"
 import "support:system"
@@ -19,10 +20,11 @@ import "support:system"
 
 GLYPH_CACHE_RESOURCE :: "glyph_cache"
 GLYPH_CACHE_WITHOUT_GRID_FIT_RESOURCE :: "glyph_cache_no_grid_fit"
+GLYPH_CACHE_BOLD_RESOURCE :: "glyph_cache_bold"
 
 settings_memory: system.Handle
 settings_page: ^settings.Page
-glyph_cache_mappings: [2]system.Mapping // page_count 0: no such glyph cache.
+glyph_cache_mappings: [3]system.Mapping // page_count 0: no such glyph cache.
 // The boot pass of `settings` is the next start of that name: start() gives
 // it the value VALUE_BOOT_PASS.
 settings_boot_pass: bool
@@ -46,6 +48,11 @@ text_settings_create :: proc "contextless" () {
 		settings_page.glyph_cache_without_grid_fit_address = settings.GLYPH_CACHE_WITHOUT_GRID_FIT_ADDRESS
 		settings_page.glyph_cache_without_grid_fit_size = size
 	}
+	if mapping, size, given := resource_mapping(GLYPH_CACHE_BOLD_RESOURCE, settings.GLYPH_CACHE_BOLD_ADDRESS, "each program with a surface"); given {
+		glyph_cache_mappings[2] = mapping
+		settings_page.glyph_cache_bold_address = settings.GLYPH_CACHE_BOLD_ADDRESS
+		settings_page.glyph_cache_bold_size = size
+	}
 	mapping, size, given := resource_mapping(GLYPH_CACHE_RESOURCE, settings.GLYPH_CACHE_ADDRESS, "each program with a surface")
 	if !given {
 		system.log_in("programs", .Warning, "root: the boot image has no valid glyph cache: the text of the system is Spleen 8x16")
@@ -61,6 +68,11 @@ text_settings_create :: proc "contextless" () {
 	// format has a line of its own.
 	if problem := graphics.text_cache_set(image[entry.offset:][:entry.size]); problem.kind != .None {
 		system.log_in("programs", .Warning, "root: the glyph cache is refused: problem ", u64(problem.kind), ", value ", problem.value, ": the boot display is Spleen 8x16")
+	}
+	if bold := system.image_resource_find(image, GLYPH_CACHE_BOLD_RESOURCE); bold != nil && glyph_cache_mappings[2].page_count != 0 {
+		if cache, problem := glyph_cache.validate(image[bold.offset:][:bold.size]); problem.kind == .None {
+			graphics.text_bold_cache_use(cache)
+		}
 	}
 }
 

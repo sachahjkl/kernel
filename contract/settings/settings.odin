@@ -9,8 +9,8 @@
 // (ZII): an all-zero page is the vector font with the grid fit, red green
 // blue, the pointer theme of the owner when the boot image has it.
 //
-// The page also names the two glyph caches of the vector font (with and
-// without the grid fit): the root service maps these resources of the boot
+// The page also names the three glyph caches of the vector font (with and
+// without the grid fit, and the bold weight at scale 1): the root service maps these resources of the boot
 // image read-only in the same programs, after it checked their hashes.
 //
 // A change: the writer makes change_count odd, writes the values, makes it
@@ -31,6 +31,7 @@ import "base:intrinsics"
 PAGE_ADDRESS :: 0x0000_3200_0000_0000
 GLYPH_CACHE_ADDRESS :: 0x0000_3300_0000_0000
 GLYPH_CACHE_WITHOUT_GRID_FIT_ADDRESS :: 0x0000_3400_0000_0000
+GLYPH_CACHE_BOLD_ADDRESS :: 0x0000_3500_0000_0000
 VALUE_PAGE :: 13 // The value of the context with the address of the page. The system fixes it for each program (contract:operation, Context).
 GRANT_PAGE :: 12 // The handle of the context of the program `settings`: the page, with Read and Write.
 VALUE_BOOT_PASS :: 15 // The program `settings` (the values 9 to 12 are its random seed): 1 for the pass at boot (read the kept record, write the page, stop).
@@ -96,6 +97,8 @@ Page :: struct {
 	glyph_cache_hash:                 [32]u8,
 	glyph_cache_without_grid_fit_address: u64,
 	glyph_cache_without_grid_fit_size:    u64,
+	glyph_cache_bold_address:             u64, // The bold weight, scale 1 only: the titles of the cards. 0: none, the titles are the regular weight.
+	glyph_cache_bold_size:                u64,
 }
 #assert(size_of(Page) <= 4096)
 

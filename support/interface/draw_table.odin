@@ -10,7 +10,7 @@ package interface
 
 import "support:graphics"
 
-DRAW_RECORD_VERSION :: 3 // A new kind of record, or a new field, is a new version. 2: Folded_Gap, Picture. 3: Text_Grid.
+DRAW_RECORD_VERSION :: 4 // A new kind of record, or a new field, is a new version. 2: Folded_Gap, Picture. 3: Text_Grid. 4: text_weight.
 
 Draw_Kind :: enum u8 {
 	None                = 0,
@@ -56,7 +56,7 @@ Draw_Record :: struct {
 	kind:            Draw_Kind,
 	text_scale:      u8, // Text: 1, 2 or 3.
 	text_subpixel_x: u8, // Text: the position after x, in 1/64 of a pixel. 0 on the grid of cells: the vector font and Spleen 8x16 (docs/FONTS.md).
-	reserved:        u8,
+	text_weight:     Font_Weight, // Text: Regular 0, Bold 1.
 	x, y:            i32,
 	width, height:   i32,
 	first_color:     u32,
@@ -234,7 +234,7 @@ draw_text :: proc "contextless" (table: ^Draw_Table, x, y: int, text: string, co
 	copy(table.text[start:], text)
 	table.text_count += len(text)
 	scale := font_scale(font)
-	record_append(table, {kind = .Text, text_scale = u8(scale), x = coordinate(x), y = coordinate(y), width = coordinate(width), height = coordinate(graphics.CELL_HEIGHT * scale), first_color = color, text_start = u32(start), text_count = u32(len(text)), element = element})
+	record_append(table, {kind = .Text, text_scale = u8(scale), text_weight = font.weight, x = coordinate(x), y = coordinate(y), width = coordinate(width), height = coordinate(graphics.CELL_HEIGHT * scale), first_color = color, text_start = u32(start), text_count = u32(len(text)), element = element})
 	return x + width
 }
 

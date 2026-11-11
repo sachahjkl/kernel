@@ -27,6 +27,8 @@ GLYPH_CACHE_OUTPUT :: VECTOR_FONT_BUILD_FOLDER + "/glyph_cache.bin"
 GLYPH_CACHE_RESOURCE :: "glyph_cache"
 GLYPH_CACHE_WITHOUT_GRID_FIT_OUTPUT :: VECTOR_FONT_BUILD_FOLDER + "/glyph_cache_no_grid_fit.bin"
 GLYPH_CACHE_WITHOUT_GRID_FIT_RESOURCE :: "glyph_cache_no_grid_fit"
+GLYPH_CACHE_BOLD_OUTPUT :: VECTOR_FONT_BUILD_FOLDER + "/glyph_cache_bold.bin"
+GLYPH_CACHE_BOLD_RESOURCE :: "glyph_cache_bold"
 CANDIDATES_PICTURE :: VECTOR_FONT_BUILD_FOLDER + "/candidates.png"
 
 // The default font of the system: one line to change (docs/FONTS.md, "The
@@ -52,6 +54,13 @@ vector_font_candidates := [?]Vector_Font_Candidate {
 	{"iosevka", "Iosevka ASCII", "SIL OFL 1.1, no Reserved Font Name", "OFL.txt"},
 }
 
+// The bold weight of the default font, for emphasis (the titles of the
+// cards): subset with the candidates, drawn at scale 1 only.
+vector_font_emphasis := [?]Vector_Font_Candidate {
+	{"jetbrains_mono_bold", "JetBrains Mono ASCII Bold", "SIL OFL 1.1, no Reserved Font Name", "OFL.txt"},
+}
+EMPHASIS_VECTOR_FONT :: "jetbrains_mono_bold"
+
 run_vector_fonts :: proc(args: []string) -> int {
 	sources := os.get_env(VECTOR_FONT_SOURCES_VARIABLE, context.temp_allocator)
 	if sources == "" {
@@ -61,7 +70,10 @@ run_vector_fonts :: proc(args: []string) -> int {
 	make_folder(VECTOR_FONT_FOLDER)
 	make_folder(VECTOR_FONT_BUILD_FOLDER)
 	fmt.printfln("%-18s %10s %8s %10s %8s %8s %8s", "font", "source", "subset", "composite", "advance", "x-height", "cap")
-	for candidate in vector_font_candidates {
+	all := make([dynamic]Vector_Font_Candidate, context.temp_allocator)
+	append(&all, ..vector_font_candidates[:])
+	append(&all, ..vector_font_emphasis[:])
+	for candidate in all {
 		path := ""
 		rest := sources
 		for item in strings.split_iterator(&rest, ";") {
@@ -458,14 +470,14 @@ append_u32 :: proc(out: ^[dynamic]u8, value: u32) {
 // glyph_cache_of draws the characters 32 to 126 of a font file at the three
 // scales of the grid, and gives the glyph cache file (contract/glyph_cache),
 // in memory aligned on 8 bytes.
-glyph_cache_of :: proc(font_bytes: []u8, font_name: string, grid_fit: bool) -> (cache: []u8, ok: bool) {
+glyph_cache_of :: proc(font_bytes: []u8, font_name: string, grid_fit: bool, scale_count := 3) -> (cache: []u8, ok: bool) {
 	font, problem := vector_font.font_open(font_bytes)
 	memory := new(vector_font.Render_Memory, context.temp_allocator)
 	words := make([]u64, vector_font.GLYPH_CACHE_LIMIT / 8, context.temp_allocator)
 	out := ([^]u8)(raw_data(words))[:vector_font.GLYPH_CACHE_LIMIT]
 	size := 0
 	if problem == .None {
-		size, problem = vector_font.glyph_cache_build(&font, font_bytes, font_name, grid_fit, memory, out)
+		size, problem = vector_font.glyph_cache_build(&font, font_bytes, font_name, grid_fit, memory, out, scale_count)
 	}
 	if problem != .None {
 		fmt.eprintfln("kerneltool: the font %s: %s", font_name, vector_font.font_problem_names[problem])
@@ -474,19 +486,21 @@ glyph_cache_of :: proc(font_bytes: []u8, font_name: string, grid_fit: bool) -> (
 	return out[:size], true
 }
 
-// build_glyph_caches writes the two glyph caches of the default font, with
-// the grid fit and without it, and gives them as resources of the boot
-// image. The setting "grid_fit" of the person chooses one at run time.
-build_glyph_caches :: proc() -> (resources: [2]Resource_File, ok: bool) {
-	path := join(VECTOR_FONT_FOLDER, "/", DEFAULT_VECTOR_FONT, ".ttf")
-	font := read_file(path) or_return
+// build_glyph_caches writes the glyph caches of the default font, with the
+// grid fit and without it, and of its bold weight at scale 1, and gives
+// them as resources of the boot image. The setting "grid_fit" of the
+// person chooses one of the first two at run time.
+build_glyph_caches :: proc() -> (resources: [3]Resource_File, ok: bool) {
 	make_folder(VECTOR_FONT_BUILD_FOLDER)
-	builds := [2]struct {
-		grid_fit:       bool,
-		output, name:   string,
-	}{{true, GLYPH_CACHE_OUTPUT, GLYPH_CACHE_RESOURCE}, {false, GLYPH_CACHE_WITHOUT_GRID_FIT_OUTPUT, GLYPH_CACHE_WITHOUT_GRID_FIT_RESOURCE}}
+	builds := [3]struct {
+		font:         string,
+		grid_fit:     bool,
+		scale_count:  int,
+		output, name: string,
+	}{{DEFAULT_VECTOR_FONT, true, 3, GLYPH_CACHE_OUTPUT, GLYPH_CACHE_RESOURCE}, {DEFAULT_VECTOR_FONT, false, 3, GLYPH_CACHE_WITHOUT_GRID_FIT_OUTPUT, GLYPH_CACHE_WITHOUT_GRID_FIT_RESOURCE}, {EMPHASIS_VECTOR_FONT, true, 1, GLYPH_CACHE_BOLD_OUTPUT, GLYPH_CACHE_BOLD_RESOURCE}}
 	for build, index in builds {
-		cache := glyph_cache_of(font, DEFAULT_VECTOR_FONT, build.grid_fit) or_return
+		font := read_file(join(VECTOR_FONT_FOLDER, "/", build.font, ".ttf")) or_return
+		cache := glyph_cache_of(font, build.font, build.grid_fit, build.scale_count) or_return
 		if err := os.write_entire_file(build.output, cache); err != nil {
 			fmt.eprintfln("kerneltool: cannot write %s: %v", build.output, err)
 			return {}, false

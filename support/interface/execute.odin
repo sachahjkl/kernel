@@ -79,7 +79,7 @@ execute_in_rectangle :: proc "contextless" (table: ^Draw_Table, canvas: graphics
 			start := int(record.text_start)
 			count := int(record.text_count)
 			if start + count <= table.text_count {
-				text_draw(view, x, y, string(table.text[start:start + count]), record.first_color, int(record.text_scale))
+				text_draw(view, x, y, string(table.text[start:start + count]), record.first_color, int(record.text_scale), record.text_weight)
 			}
 		case .Folded_Gap:
 			graphics.fill(view, x, y, width, height, record.second_color)
@@ -162,7 +162,11 @@ text_grid_draw :: proc "contextless" (canvas: graphics.Canvas, x, y: int, grid: 
 
 // text_draw draws characters of the font of the system, each pixel of the
 // font as a square of scale pixels.
-text_draw :: proc "contextless" (canvas: graphics.Canvas, x, y: int, text: string, color: graphics.Color, scale: int) {
+text_draw :: proc "contextless" (canvas: graphics.Canvas, x, y: int, text: string, color: graphics.Color, scale: int, weight: Font_Weight = .Regular) {
+	if weight == .Bold && scale <= 1 {
+		graphics.text_bold(canvas, x, y, text, color)
+		return
+	}
 	graphics.text_scaled(canvas, x, y, text, color, scale)
 }
 

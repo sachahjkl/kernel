@@ -53,6 +53,7 @@
       VECTOR_FONT_SOURCES = builtins.concatStringsSep ";" [
         "dejavu_sans_mono=${pkgs.dejavu_fonts}/share/fonts/truetype/DejaVuSansMono.ttf"
         "jetbrains_mono=${pkgs.jetbrains-mono}/share/fonts/truetype/JetBrainsMono-Regular.ttf"
+        "jetbrains_mono_bold=${pkgs.jetbrains-mono}/share/fonts/truetype/JetBrainsMono-Bold.ttf"
         "ibm_mono=${pkgs.ibm-plex}/share/fonts/truetype/IBMPlexMono-Regular.ttf"
         "fira_mono=${pkgs.fira-mono}/share/fonts/truetype/FiraMono-Regular.ttf"
         "commit_mono=${pkgs.commit-mono}/share/fonts/truetype/CommitMono-400-Regular.ttf"

@@ -469,7 +469,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		// The compositor is also a service (programs/compositor/exports.odin):
 		// a service ring and its own file, as start() gives to a service.
 		// Its values 0 to 3 are the screen, so the file is at values 4 and 5.
-		mappings: [6]system.Mapping
+		mappings: [7]system.Mapping
 		mapping_count := 0
 		served := &started[0]
 		served^ = {}
@@ -756,7 +756,7 @@ start :: proc "contextless" (name: string) -> system.Status {
 	copy(slot.name[:len(slot.name) - 1], name) // The connection to the storage service names the program.
 	// The connection to the private store, in the context: the call ring, the
 	// call region, the storage service with the right Read, and its file.
-	mappings: [6]system.Mapping
+	mappings: [7]system.Mapping
 	mapping_count := 0
 	// This service closes its handles of the connection after the start.
 	store_ring, store_region: system.Handle
@@ -1086,7 +1086,7 @@ terminal_start :: proc "contextless" (view: ^Started, writer: ^Started, ring_mem
 	measure: bool
 	values[terminal.VALUE_COLUMNS], values[terminal.VALUE_ROWS], measure = terminal_of(system.name_of(writer.name[:]))
 	values[terminal.VALUE_MEASURE] = u64(measure)
-	mappings: [3]system.Mapping
+	mappings: [4]system.Mapping
 	mapping_count := 0
 	text_settings_give(mappings[:], &mapping_count, &values)
 	program, status := system.program_start(system.image_find(image, "terminal"), "terminal", grants, random.values_with_seed(&program_generator, values), budget_of("terminal"), mappings[:mapping_count], &prepared)

@@ -15,9 +15,20 @@ Font_Kind :: enum u8 {
 // A font and a size. scale: 1, 2 or 3 times the native size (docs/DESIGN.md,
 // section 5); 0 means 1.
 Font :: struct {
-	kind:  Font_Kind,
-	scale: u8,
+	kind:   Font_Kind,
+	scale:  u8,
+	weight: Font_Weight,
 }
+
+// The weight of a text. Bold draws at scale 1 only (the titles of the
+// cards); at another scale, and with Spleen 8x16, it is the regular weight.
+// The width does not change: the cells are the same.
+Font_Weight :: enum u8 {
+	Regular,
+	Bold,
+}
+
+FONT_BOLD :: Font{weight = .Bold}
 
 FONT_LARGE :: Font{scale = 3} // The one number of a card.
 FONT_MEDIUM :: Font{scale = 2}

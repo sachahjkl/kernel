@@ -23,7 +23,7 @@ card :: proc "contextless" (frame: ^Frame, area: Area, title, caption: string, a
 	draw_vertical_gradient(table, area.x, area.y, area.width, area.height, graphics.shade(accent, 28), graphics.shade(accent, 14))
 	draw_vertical_gradient(table, area.x + 1, area.y + 1, area.width - 2, area.height - 2, graphics.COLOR_CARD_TOP, graphics.COLOR_CARD_BOTTOM)
 	draw_vertical_gradient(table, area.x + graphics.CARD_MARGIN, area.y + 12, 4, 16, graphics.shade(accent, 130), accent)
-	after := draw_text(table, area.x + graphics.CARD_MARGIN + 12, area.y + 12, title, accent)
+	after := draw_text(table, area.x + graphics.CARD_MARGIN + 12, area.y + 12, title, accent, FONT_BOLD)
 	// The caption takes the room between the title and the count: a narrow
 	// card cuts it, so it never runs past the border.
 	right := area.x + area.width - graphics.CARD_MARGIN
