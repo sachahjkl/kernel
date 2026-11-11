@@ -1,7 +1,7 @@
 A patch of the Odin compiler (tag dev-2026-05, the `odin` of the Nixpkgs of
 flake.nix). flake.nix applies it to the compiler of the development shell
 and of the checks. The reason: property 11 (one source gives one module) and
-choice NEW-1 of docs/FIRST_MILESTONE.md.
+choice 400 of docs/FIRST_MILESTONE.md.
 
 The fault. `-thread-count:1` does not give one thread. src/main.cpp,
 init_global_thread_pool, makes `worker_count = thread_count` workers beside
