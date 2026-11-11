@@ -209,14 +209,15 @@ answer_keep :: proc "contextless" (header: remote.Answer, result: []u8) {
 refuse :: proc "contextless" (number: u64, error: errors.Error_Record, service: string = "", hash: [32]u8 = {}) {
 	counts.refused += 1
 	error := error
+	// One sentence, for the log and for the window.
+	buffer: [256]u8
+	writer := system.Writer{buffer = buffer[:]}
+	field := ""
+	if error.argument >= 1 && error.argument <= len(remote.REQUEST_FIELD_NAMES) {
+		field = remote.REQUEST_FIELD_NAMES[error.argument - 1]
+	}
+	system.error_text(&writer, &error, "remote", field)
 	if counts.refused <= LOG_REFUSALS {
-		buffer: [256]u8
-		writer := system.Writer{buffer = buffer[:]}
-		field := ""
-		if error.argument >= 1 && error.argument <= len(remote.REQUEST_FIELD_NAMES) {
-			field = remote.REQUEST_FIELD_NAMES[error.argument - 1]
-		}
-		system.error_text(&writer, &error, "remote", field)
 		if counts.refused == LOG_REFUSALS {
 			system.log("remote: refused a request: ", system.written(&writer), "; the next refusals are counted only")
 		} else {
@@ -226,13 +227,6 @@ refuse :: proc "contextless" (number: u64, error: errors.Error_Record, service: 
 	answer := remote.Answer{status = .Refused, number = number, error = error, hash = hash}
 	answer_keep(answer, nil)
 	item := recent_add(service, 0, answer, 0, 0)
-	buffer: [256]u8
-	writer := system.Writer{buffer = buffer[:]}
-	field := ""
-	if error.argument >= 1 && error.argument <= len(remote.REQUEST_FIELD_NAMES) {
-		field = remote.REQUEST_FIELD_NAMES[error.argument - 1]
-	}
-	system.error_text(&writer, &error, "remote", field)
 	item.text_count = copy(item.text[:], system.written(&writer))
 }
 
@@ -382,6 +376,9 @@ serve :: proc "contextless" (bytes: []u8) {
 	service := remote.name_text(&request.service)
 	if request.number == last_number {
 		counts.repeated += 1
+		if counts.repeated <= LOG_REFUSALS {
+			system.log("remote: the request ", request.number & 0xFFFF, " came again: its answer went again, and the call did not run again; ", counts.repeated, " in all")
+		}
 		answer_send(last_answer, last_result[:last_total])
 		return
 	}

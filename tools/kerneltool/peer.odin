@@ -79,6 +79,8 @@ Peer :: struct {
 	malformed_sent:   int,
 	malformed_right:  int, // The answers of the remote service to the malformed requests that have the expected refusal.
 	malformed_wrong:  string,
+	lose:             int, // The next datagrams of the remote service to the host that the peer drops: the test of a lost datagram.
+	lost:             int,
 }
 
 // peer_start starts the peer. call_port: the port of the call requests on
@@ -516,6 +518,11 @@ peer_remote :: proc(peer: ^Peer, port: u16, data: []u8) {
 				}
 			}
 		}
+		return
+	}
+	if sync.atomic_load(&peer.lose) > 0 {
+		sync.atomic_sub(&peer.lose, 1)
+		peer.lost += 1
 		return
 	}
 	if has_client {

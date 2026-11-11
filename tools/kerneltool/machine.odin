@@ -7,6 +7,7 @@ import "core:hash"
 import "core:os"
 import "core:strconv"
 import "core:strings"
+import "core:sync"
 import "core:time"
 
 // The machine test: the tool starts the machine under QEMU, and it acts as
@@ -41,7 +42,7 @@ Step_Kind :: enum {
 	Film, // Save the screen 25 times in one second, for x milliseconds, as the next pictures of the film.
 	Quit, // End QEMU: the machine does not stop by itself.
 	Trace, // The log has text, after the text of the last Wait, then a stack trace to the end of the line: the tool names each frame from the linked file of its module, and the names start with `names`.
-	Call, // Call an export of a service from the host (call.odin), through the remote service: what the tool prints has `expected`. With `rows_logged`, the log has that text and then the count of rows of the Table. With `repeat`, the tool also measures the round trip and the calls in one second.
+	Call, // Call an export of a service from the host (call.odin), through the remote service: what the tool prints has `expected`. With `rows_call`, that call gives the count of rows of the Table. With `repeat`, the tool also measures the round trip and the calls in one second.
 }
 
 Step :: struct {
@@ -55,7 +56,9 @@ Step :: struct {
 	names:      string, // For Trace: the names of the functions of the first frames, separated by spaces.
 	expected:   string, // For Call: a part of what the tool prints.
 	outcome:    Call_Outcome, // For Call: Result, Failed or Refused.
-	rows_logged: string, // For Call: a text of the log that the count of rows follows.
+	rows_call:  string, // For Call: a call whose Integer result is the count of rows of the Table.
+	lose:       int, // For Call: the peer drops this many datagrams of the answer; the tool sends the request again, and monitor.served() shows that the call ran one time.
+	wrong_hash: bool, // For Call: the request names another hash of the module.
 	repeat:     int, // For Call: the calls of the measure of the round trip.
 	parts:      int, // For Call: the least count of datagrams of the answer.
 }
@@ -264,7 +267,16 @@ scenario_network := [?]Step {
 	{kind = .Wait, text = "remote: the window drew one picture in ", any_order = true},
 	// A Table: the row of the remote service is there, and the count of the
 	// rows is the count that the monitor wrote on the log.
-	{kind = .Call, text = "monitor.programs()", expected = "remote", rows_logged = "monitor: programs: "},
+	{kind = .Call, text = "monitor.programs()", expected = "remote", rows_call = "monitor.count(\"programs\")"},
+	// A lost datagram: the tool sends the request again, and the remote
+	// service sends the answer that it kept; the call runs one time.
+	{kind = .Call, text = "monitor.count(\"processors\")", expected = "4", lose = 1},
+	{kind = .Wait, text = "remote: the request "},
+	{kind = .Wait, text = " came again: its answer went again, and the call did not run again; 1 in all"},
+	// Another module than the one that runs: the remote service refuses it,
+	// and the tool names the two hashes.
+	{kind = .Call, text = "monitor.count(\"processors\")", outcome = .Refused, wrong_hash = true, expected = "the request named "},
+	{kind = .Wait, text = "remote: refused a request: remote: the argument hash has the value 0, which the call refuses"},
 	{kind = .Call, text = "monitor.counts()", expected = "13 rows of Count"},
 	// A Record: the counts of the monitor itself, which each caller sees.
 	{kind = .Call, text = "monitor.served()", expected = "Served{calls = "},
@@ -1368,6 +1380,7 @@ Machine :: struct {
 	pointer_known: bool, // The tool knows where the pointer is.
 	film_frames: int, // The pictures of the film that the tool asked for.
 	call_port:   int, // The peer receives the call requests of the host there.
+	peer:        ^Peer,
 	client:      Call_Client,
 	client_open: bool,
 }
@@ -1650,6 +1663,7 @@ machine_test :: proc(steps: []Step, volume: string, output: string, exit_status:
 		monitor   = monitor_write,
 		output    = output,
 		call_port = peer.call_port,
+		peer      = &peer,
 	}
 	passed := scenario_run(&machine, steps)
 	if machine.client_open {
@@ -1853,7 +1867,19 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				}
 				machine.client_open = true
 			}
+			served_before: i64
+			if step.lose > 0 {
+				before, has_before := record_field(&machine.client, "monitor.served()", "calls")
+				if !has_before {
+					fmt.eprintfln("kerneltool: test failed: step %d: monitor.served() gave no record", index + 1)
+					return false
+				}
+				served_before = before
+				sync.atomic_store(&machine.peer.lose, step.lose)
+			}
+			machine.client.wrong_hash = step.wrong_hash
 			result := call_run(&machine.client, step.text)
+			sends := machine.client.sends
 			printed := strings.join(result.lines[:], "\n", context.temp_allocator)
 			for line in result.lines {
 				fmt.printfln("kerneltool: call %s: %s", step.text, line)
@@ -1867,23 +1893,24 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				return false
 			}
 			fmt.printfln("kerneltool: test passed: the call %s printed \"%s\", in %d datagrams", step.text, step.expected, result.datagrams)
-			if step.rows_logged != "" {
-				// The service wrote the count of its rows on the log.
-				if !log_wait(machine, step.rows_logged) {
-					fmt.eprintfln("kerneltool: test failed: step %d: the machine did not print \"%s\"", index + 1, step.rows_logged)
+			if step.lose > 0 {
+				// The request went again; the service ran the call one time:
+				// served() counts the call of the step and its own call before.
+				after, has_after := record_field(&machine.client, "monitor.served()", "calls")
+				if sends < 2 || !has_after || after - served_before != 2 {
+					fmt.eprintfln("kerneltool: test failed: step %d: after %d lost datagrams the request went %d times, and the monitor ran %d calls, not 2", index + 1, step.lose, sends, after - served_before)
 					return false
 				}
-				rest := log_read(machine)[machine.seen:]
-				digits := 0
-				for digits < len(rest) && rest[digits] >= '0' && rest[digits] <= '9' {
-					digits += 1
-				}
-				logged, _ := strconv.parse_int(rest[:digits])
-				if digits == 0 || logged != result.rows {
-					fmt.eprintfln("kerneltool: test failed: step %d: the call gave %d rows, the log says %s", index + 1, result.rows, rest[:digits])
+				fmt.printfln("kerneltool: test passed: the peer dropped %d datagrams of the answer of %s; the tool sent the request %d times, and the monitor ran the call one time", step.lose, step.text, sends)
+			}
+			if step.rows_call != "" {
+				// Another call gives the count of the rows.
+				counted := call_run(&machine.client, step.rows_call)
+				if counted.outcome != .Result || counted.value != i64(result.rows) {
+					fmt.eprintfln("kerneltool: test failed: step %d: the call gave %d rows, %s gives %d", index + 1, result.rows, step.rows_call, counted.value)
 					return false
 				}
-				fmt.printfln("kerneltool: test passed: the call gave %d rows, as the log says", result.rows)
+				fmt.printfln("kerneltool: test passed: the call gave %d rows, and %s gives %d", result.rows, step.rows_call, counted.value)
 			}
 			if step.repeat > 0 {
 				least, middle, per_second, measured := call_measure(&machine.client, step.text, step.repeat)

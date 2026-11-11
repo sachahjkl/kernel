@@ -102,7 +102,6 @@ programs :: proc "c" (result: ^[]Program, error: ^errors.Error_Record) -> i64 {
 		}
 		total += 1
 	}
-	system.log("monitor: programs: ", u64(total), " rows")
 	return i64(total)
 }
 
@@ -118,7 +117,6 @@ counts :: proc "c" (result: ^[]Count, error: ^errors.Error_Record) -> i64 {
 		return errors.fail(error, ERROR_REFUSED, .Refused, .None, 0, 0, 0, i64(status))
 	}
 	copy(result^, rows[:total])
-	system.log("monitor: counts: ", u64(total), " rows")
 	return i64(total)
 }
 

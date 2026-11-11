@@ -65,6 +65,9 @@ Call_Client :: struct {
 	socket: net.UDP_Socket,
 	peer:   net.Endpoint,
 	number: u64, // The last request number.
+	sends:  int, // The times that the last call request went: 1, or more after a lost datagram.
+	wrong_hash: bool, // The next call request names another hash of the module: the test of the refusal.
+	last_hash:  [32]u8, // The hash that the last call request named.
 	region: []u8,
 	result: []u8,
 }
@@ -287,14 +290,22 @@ call_send :: proc(client: ^Call_Client, call: ^Prepared_Call) -> (answer: remote
 	client.number += 1
 	call.request.number = client.number
 	out: [remote.DATAGRAM_LIMIT]u8
-	bytes, written := remote.request_write(out[:], call.request, call.bytes)
+	header := call.request
+	if client.wrong_hash {
+		header.hash[0] ~= 0xFF
+		client.wrong_hash = false
+	}
+	client.last_hash = header.hash
+	bytes, written := remote.request_write(out[:], header, call.bytes)
 	if !written {
 		return {}, nil, 0, false
 	}
 	parts: [remote.PART_CAPACITY]bool
 	received, needed := 0, 0
 	start := time.tick_now()
+	client.sends = 0
 	for time.tick_since(start) < CALL_TIME_LIMIT {
+		client.sends += 1
 		if _, err := net.send_udp(client.socket, bytes, client.peer); err != nil {
 			return {}, nil, 0, false
 		}
@@ -363,7 +374,7 @@ call_run :: proc(client: ^Call_Client, text: string) -> (outcome: Call_Result) {
 		}
 		append(&outcome.lines, write_sentence("error: ", &answer.error, "remote", field))
 		if answer.error.argument == remote.FIELD_HASH {
-			append(&outcome.lines, fmt.tprintf("error: the machine runs %s %x; %s is %x: start the machine of this build", call.service, answer.hash[:8], module_path(call.service), call.request.hash[:8]))
+			append(&outcome.lines, fmt.tprintf("error: the machine runs %s %s; the request named %s (%s is %s): start the machine of this build", call.service, hex_of(answer.hash[:8]), hex_of(client.last_hash[:8]), module_path(call.service), hex_of(call.request.hash[:8])))
 		}
 		return outcome
 	case .Started:
@@ -426,6 +437,36 @@ call_run :: proc(client: ^Call_Client, text: string) -> (outcome: Call_Result) {
 		outcome.rows = table_print(&outcome.lines, call.file, described, result, answer.value)
 	}
 	return outcome
+}
+
+// hex_of gives bytes in hexadecimal.
+hex_of :: proc(bytes: []u8) -> string {
+	builder := strings.builder_make(context.temp_allocator)
+	for byte in bytes {
+		fmt.sbprintf(&builder, "%02x", byte)
+	}
+	return strings.to_string(builder)
+}
+
+// record_field calls an export with a Record result and no arguments, and
+// gives one Integer field of the record, by its name.
+record_field :: proc(client: ^Call_Client, text: string, name: string) -> (value: i64, ok: bool) {
+	call, problem := call_prepare(client, text)
+	if problem != "" || call.function.result != .Record {
+		return 0, false
+	}
+	answer, result, _, answered := call_send(client, &call)
+	if !answered || answer.status != .Ok {
+		return 0, false
+	}
+	described := module.record_type(call.file, call.function.result_detail) or_return
+	for number in 0 ..< described.field_count {
+		item := module.field(call.file, described, number) or_return
+		if module.string_at(call.file, item.name_offset, item.name_count) == name && item.type == .Integer && int(item.offset) + 8 <= len(result) {
+			return (^i64)(&result[item.offset])^, true
+		}
+	}
+	return 0, false
 }
 
 // field_value gives the text of one field of a record.
