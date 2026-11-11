@@ -1,0 +1,3 @@
+type: Added
+
+**Every program gets versions of its data.** The storage service keeps the state of an object before each change, with no save action and no code in the program: a program, or the person through the console or the host, lists the versions of an object, reads one, compares two, restores one (the state before the restore stays a version) and clones an object, which shares its blocks until one side changes. Each version is kept for 10 minutes, then one an hour for a day, then one a day; at the limit of a store the oldest versions go first, and a change that cannot fit with no version is refused. A disk of the earlier format is not read.
