@@ -4,7 +4,7 @@ Status: report of the correction of step 59 (choices 400 to 402 of `FIRST_MILEST
 
 ## 1. The cause
 
-The Odin compiler of the flake is the tag `dev-2026-05` of Nixpkgs. The line numbers below are of that source.
+The analysis below was made on the tag `dev-2026-05` of Odin, the compiler of the flake at that time; the line numbers are of that source. The flake now pins the release `dev-2026-11a` (section 6).
 
 - `src/main.cpp`, `init_global_thread_pool`: `worker_count = thread_count; // +1`. So `-thread-count:1` gives the main thread and one worker. A count of `/proc/PID/task` during a build gave 2 threads.
 - `src/checker.cpp`, `check_collect_entities_all`: one pool task for each file. Each task calls `add_entity_and_decl_info`, which adds the entities of its file to the shared queue `info.entity_queue` (`mpsc_enqueue`). The worker steals tasks of the main thread, so the order of that queue changes from one build to the next.
@@ -70,3 +70,14 @@ Not proved:
 - Another host, or another count of processors.
 - The wait for an `#soa` type with no worker. The small programs that I tried did not reach that case, and two of them crash the stock compiler too.
 - The tool `kerneltool` itself. With the default count of threads, 6 builds gave 6 distinct files. It is not a module, and property 11 does not cover it.
+
+## 6. The release dev-2026-11a of the compiler
+
+The owner asked for the newest release of Odin (2026-11-11). `flake.nix` pins the release itself, by its tag and its hash; Nixpkgs was six releases behind.
+
+What changed in the compiler for this subject, read in its release notes and in its source:
+
+- The fault of section 1 is still there: `init_global_thread_pool` makes `thread_count` workers beside the main thread. The patch is now one line (`worker_count = thread_count - 1`).
+- `wait_signal_until_available` has no caller left in the compiler, so the second part of the old patch (a thread that waits runs the tasks of its own queue) is gone.
+- The release notes of `dev-2026-10` say: the whole semantic checker runs on several threads, the check of the globals gives an order of the code that does not depend on the threads, and the polymorphic procedures were rewritten with corrections of races. The queues of the checker are now one queue for each thread. So the question of section 4 (a deterministic order with several threads) is open again with a better start: it must be measured with `kerneltool repeat all` and more than one thread before any wide patch is written.
+
