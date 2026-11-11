@@ -18,6 +18,7 @@
 // the window.
 package server
 
+import "contract:date"
 import "contract:datagram"
 import "contract:ring"
 import "support:display"
@@ -399,6 +400,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.log("server: no random seed in the context")
 		system.stop(1)
 	}
+	date_page = date.page_of(ctx)
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "server")
 	if !ok {
 		system.stop(1)

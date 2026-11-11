@@ -12,9 +12,9 @@ import "core:sync"
 import "core:time"
 import "support:storage_mount"
 
-// The loss of power (property 9: a stop of the machine never shows a part
-// of a commit). The tool serves the data disk itself (network_block_device.odin),
-// so it knows each write that a flush made durable, and each write after the
+// The loss of power: a stop of the machine never shows a part of a commit.
+// The tool serves the data disk itself (network_block_device.odin), so it
+// knows each write that a flush made durable, and each write after the
 // last flush. A machine runs `notes`, which makes one commit for each step
 // of its count; the tool ends QEMU at a seeded moment, with no warning.
 //

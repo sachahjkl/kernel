@@ -4,10 +4,11 @@
 //
 // Keys: a character adds to the note, Backspace removes the last one, Enter writes the note on the log. Tab counts 1000 more, one commit for each step.
 //
-// Versions (property 9): each key is one commit, and the storage service keeps the state before it as a version, so the program has undo to any earlier version with no code of its own to keep them. Up shows the version before the one shown, Down the one after; Enter restores the version shown (a new commit: nothing is lost); Escape goes back to the current note. The bar under the note has one mark for each version.
+// Versions: each key is one commit, and the storage service keeps the state before it as a version, so the program has undo to any earlier version with no code of its own to keep them. Up shows the version before the one shown, Down the one after; Enter restores the version shown (a new commit: nothing is lost); Escape goes back to the current note. The bar under the note has one mark for each version.
 package notes
 
 import "contract:errors"
+import "support:calendar"
 import "support:display"
 import "support:graphics"
 import "support:interface"
@@ -72,7 +73,8 @@ show :: proc "contextless" (place: int) {
 	shown = place
 	bytes, status := storage.version(&client, "note", history[place].generation, shown_text[:])
 	shown_count = status == .Ok ? len(bytes) : 0
-	system.log("notes: the version ", u64(place + 1), " of ", u64(history_count()), ", generation ", history[place].generation, ": \"", string(shown_text[:shown_count]), "\"")
+	date_text: [24]u8
+	system.log("notes: the version ", u64(place + 1), " of ", u64(history_count()), ", generation ", history[place].generation, history[place].date != 0 ? ", " : "", history[place].date != 0 ? calendar.iso_text(date_text[:], history[place].date) : "", ": \"", string(shown_text[:shown_count]), "\"")
 }
 
 // keep writes one object. It gives false when the store is gone or refuses.
@@ -186,7 +188,10 @@ draw :: proc "contextless" (window: ^display.Window) {
 	x = interface.draw_text(table, x, 196, system.format(buffer[:], max(history_total - 1, 0)), graphics.COLOR_TEXT)
 	if shown >= 0 {
 		x = interface.draw_text(table, x + 16, 196, "showing generation ", graphics.COLOR_DIM)
-		interface.draw_text(table, x, 196, system.format(buffer[:], history[shown].generation), COLOR_LIT)
+		x = interface.draw_text(table, x, 196, system.format(buffer[:], history[shown].generation), COLOR_LIT)
+		if history[shown].date != 0 {
+			interface.draw_text(table, x + 16, 196, calendar.iso_text(buffer[:], history[shown].date), graphics.COLOR_TEXT)
+		}
 	}
 	track := WIDTH - 24
 	interface.draw_rectangle(table, 12, 218, track, 4, graphics.COLOR_TRACK)

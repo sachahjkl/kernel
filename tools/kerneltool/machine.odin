@@ -37,6 +37,7 @@ MACHINE_STOP_OK :: 1
 
 Step_Kind :: enum {
 	Wait, // The log of the kernel has text, after the text of the last Wait.
+	Date, // As Wait; then the number after text is a date of the machine in seconds since 1970, and the host time must be within DATE_TOLERANCE_SECONDS of it.
 	Type, // Press the keys of text, then Enter.
 	Keys, // Press the keys of text, with no Enter.
 	Key, // Press one key: text is its QEMU name.
@@ -85,6 +86,37 @@ Step :: struct {
 	repeat:     int, // For Call: the calls of the measure of the round trip.
 	parts:      int, // For Call: the least count of datagrams of the answer.
 	inside_window: string, // For Click: (x, y) are inside the surface of the window with this title, as the log of the compositor places it. For Point: from the corner of the window.
+	date_after: string, // For Call: the number after this text in what the tool prints is a date of the machine in milliseconds since 1970: it must be within DATE_TOLERANCE_SECONDS of the host time.
+}
+
+DATE_TOLERANCE_SECONDS :: 5
+
+// date_check compares a date of the machine, in seconds since 1970, with
+// the time of the host. QEMU gives the machine the clock of the host as its
+// real-time clock (-rtc base=utc).
+date_check :: proc(index: int, machine_seconds: i64, what: string) -> bool {
+	host := time.time_to_unix(time.now())
+	apart := abs(host - machine_seconds)
+	if apart > DATE_TOLERANCE_SECONDS {
+		fmt.eprintfln("kerneltool: test failed: step %d: the date of the machine (%s) is %d, the host gives %d: %d s apart", index + 1, what, machine_seconds, host, apart)
+		return false
+	}
+	fmt.printfln("kerneltool: test passed: the date of the machine (%s) is %d s since 1970, the host gives %d: %d s apart", what, machine_seconds, host, apart)
+	return true
+}
+
+// number_after reads the decimal number after a text in another text.
+number_after :: proc(text: string, after: string) -> (value: i64, found: bool) {
+	at := strings.index(text, after)
+	if at < 0 {
+		return 0, false
+	}
+	rest := text[at + len(after):]
+	end := 0
+	for end < len(rest) && (rest[end] >= '0' && rest[end] <= '9' || end == 0 && rest[end] == '-') {
+		end += 1
+	}
+	return strconv.parse_i64(rest[:end])
 }
 
 // A start that fails: the boot image has no compositor. The boot display
@@ -587,6 +619,10 @@ scenario := [?]Step {
 	{kind = .Wait, text = "kernel: ok"},
 	{kind = .Wait, text = "root: ok"},
 	{kind = .Wait, text = "input: ok"},
+	// The date: the program `date` starts after the input service and reads the real-time clock of the machine,
+	// which QEMU takes from the clock of the host. The date must be within a
+	// few seconds of the host.
+	{kind = .Date, text = " UTC, seconds since 1970 ", any_order = true},
 	// The measure of the copy and the fill of runtime/memory.asm, at the start
 	// of the compositor, before its first frame.
 	{kind = .Wait, text = "compositor: copy_bytes_without_overlap, ns for 8 64 512 4096 65536 3145600 bytes, aligned: ", any_order = true},
@@ -1406,7 +1442,7 @@ scenario := [?]Step {
 	{kind = .Type, text = "grants(\"console\")"},
 	{kind = .Wait, text = "[console] console lost: store"},
 	{kind = .Shot, text = "storage"},
-	// Versions (property 9): notes commits each key, and the storage service
+	// Versions: notes commits each key, and the storage service
 	// keeps the state before each commit. The person steps back through the
 	// versions of the note and restores one; nothing is lost.
 	{kind = .Launch, text = "notes"},
@@ -1415,15 +1451,20 @@ scenario := [?]Step {
 	{kind = .Type, text = "versions"},
 	{kind = .Wait, text = "notes: the note is \"versions\", generation 11, 7 versions; one commit of the note: "},
 	{kind = .Key, text = "up"},
-	{kind = .Wait, text = "notes: the version 7 of 8, generation 10: \"version\""},
+	{kind = .Wait, text = "notes: the version 7 of 8, generation 10, 20"}, // A version has the date of its commit.
+	{kind = .Wait, text = ": \"version\""},
 	{kind = .Key, text = "up"},
-	{kind = .Wait, text = "notes: the version 6 of 8, generation 9: \"versio\""},
+	{kind = .Wait, text = "notes: the version 6 of 8, generation 9, "},
+	{kind = .Wait, text = ": \"versio\""},
 	{kind = .Shot, text = "notes_versions"},
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "notes: restored the version of generation 9: \"versio\", in the commit of generation 12 in "},
 	// The exports of the versions, from the host: the remote service acts
 	// for the person, so it names the store of notes.
 	{kind = .Call, text = "storage.versions(\"notes\", \"note\")", expected = "9 rows of Version"},
+	// The date of the machine, from the host, some minutes after its start:
+	// it advanced with the host.
+	{kind = .Call, text = "date.now()", expected = "Date{milliseconds = ", date_after = "milliseconds = "},
 	{kind = .Call, text = "storage.version(\"notes\", \"note\", 7)", expected = "vers"},
 	{kind = .Call, text = "storage.compare(\"notes\", \"note\", 6, 11)", expected = "1 rows of Byte_Range"},
 	{kind = .Call, text = "storage.version(\"notes\", \"note\", 99)", outcome = .Failed, expected = "error: storage.version: the argument generation: the object has no version of the generation 99 (-9)"},
@@ -2204,6 +2245,19 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				return false
 			}
 			fmt.printfln("kerneltool: test passed: the machine printed \"%s\"", step.text)
+		case .Date:
+			seen_before := machine.seen
+			if !log_wait(machine, step.text, step.any_order) {
+				fmt.eprintfln("kerneltool: test failed: step %d: the machine did not print \"%s\"", index + 1, step.text)
+				return false
+			}
+			log := log_read(machine)
+			value, found := number_after(log[seen_before:], step.text)
+			if !found {
+				fmt.eprintfln("kerneltool: test failed: step %d: no number after \"%s\"", index + 1, step.text)
+				return false
+			}
+			date_check(index, value, step.text) or_return
 		case .Trace:
 			if !log_wait(machine, step.text) {
 				fmt.eprintfln("kerneltool: test failed: step %d: the machine did not print \"%s\"", index + 1, step.text)
@@ -2543,6 +2597,14 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				return false
 			}
 			fmt.printfln("kerneltool: test passed: the call %s printed \"%s\", in %d datagrams", step.text, step.expected, result.datagrams)
+			if step.date_after != "" {
+				milliseconds, found := number_after(printed, step.date_after)
+				if !found {
+					fmt.eprintfln("kerneltool: test failed: step %d: no number after \"%s\" in the answer of %s", index + 1, step.date_after, step.text)
+					return false
+				}
+				date_check(index, milliseconds / 1000, step.text) or_return
+			}
 			if step.lose > 0 {
 				// The request went again; the service ran the call one time:
 				// served() counts the call of the step and its own call before.

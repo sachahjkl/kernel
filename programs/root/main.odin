@@ -19,6 +19,7 @@ import "support:system"
 import "support:terminal"
 import "contract:block"
 import "contract:datagram"
+import "contract:date"
 import "contract:errors"
 import "contract:frame"
 import "support:pci"
@@ -48,6 +49,7 @@ Grant :: enum {
 	Connect, // A ring to this service that serves Connect and Disconnect only, to the services of callable_of.
 	Schedule, // The machine, with the right Schedule: change the scheduling strategy of the machine.
 	Settings, // The settings page with Write (contract:settings): the one writer of the settings of the person.
+	Clock, // The date page with Write and the two ports of the real-time clock (contract:date): the one writer of the date.
 }
 
 grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
@@ -84,6 +86,8 @@ grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 		return {.Serve}
 	case "settings":
 		return {.Settings, .Serve} // It writes the settings of the person, and serves set() and get().
+	case "date":
+		return {.Clock, .Serve} // It reads the real-time clock, writes the date page, and serves now().
 	case "manual":
 		return {.Serve, .Image, .Replacements, .Inspect} // It reads the documentation of each module of the boot image, and the module records of each program.
 	case "disk":
@@ -124,7 +128,7 @@ callable_of :: proc "contextless" (name: string) -> []string {
 }
 
 @(rodata)
-remote_callable := [?]string{"compositor", "inspect", "log", "manual", "monitor", "settings", "storage"}
+remote_callable := [?]string{"compositor", "date", "inspect", "log", "manual", "monitor", "settings", "storage"}
 
 // The values of the context of the compositor that name its own file: 0 to
 // 3 are the screen.
@@ -405,6 +409,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	// The settings page and the glyph cache, before the first boot display.
 	text_settings_create()
+	date_page_create()
 	show("the root service starts input", .Running, .Input)
 	{
 		table: rawptr
@@ -467,7 +472,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		// The compositor is also a service (programs/compositor/exports.odin):
 		// a service ring and its own file, as start() gives to a service.
 		// Its values 0 to 3 are the screen, so the file is at values 4 and 5.
-		mappings: [4]system.Mapping
+		mappings: [5]system.Mapping
 		mapping_count := 0
 		served := &started[0]
 		served^ = {}
@@ -496,6 +501,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			}
 		}
 		text_settings_give(mappings[:], &mapping_count, &values)
+		date_page_give(mappings[:], &mapping_count, &values)
 		compositor, status = system.program_start(system.image_find(image, "compositor"), "compositor", grants, random.values_with_seed(&program_generator, values), budget_of("compositor"), mappings[:mapping_count], &prepared)
 		if status != .Ok {
 			fail("cannot start the compositor", status)
@@ -506,6 +512,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		copy(served.name[:len(served.name) - 1], "compositor")
 	}
 
+	// The date: the program `date` reads the real-time clock. The programs
+	// that start before it writes the page read no date until then.
+	if status = start("date"); status != .Ok {
+		system.log_in("programs", .Warning, "root: cannot start date: the system has no date")
+	}
 	if status = start("console"); status != .Ok {
 		fail("cannot start the console", status)
 	}
@@ -748,7 +759,7 @@ start :: proc "contextless" (name: string) -> system.Status {
 	copy(slot.name[:len(slot.name) - 1], name) // The connection to the storage service names the program.
 	// The connection to the private store, in the context: the call ring, the
 	// call region, the storage service with the right Read, and its file.
-	mappings: [4]system.Mapping
+	mappings: [6]system.Mapping
 	mapping_count := 0
 	// This service closes its handles of the connection after the start.
 	store_ring, store_region: system.Handle
@@ -855,6 +866,20 @@ start :: proc "contextless" (name: string) -> system.Status {
 	if .Settings in role {
 		grants[settings.GRANT_PAGE] = {settings_memory, {.Read, .Write}}
 	}
+	clock_ports: system.Handle
+	defer if clock_ports != 0 {
+		system.close(clock_ports)
+	}
+	if .Clock in role {
+		grants[date.GRANT_PAGE] = {date_memory, {.Read, .Write}}
+		results, ports_status := system.call(.Device_Create, u64(machine), u64(op.Device_Kind.Ports), 0x70, 2)
+		if ports_status == .Ok {
+			clock_ports = system.Handle(results[0])
+			grants[date.GRANT_PORTS] = {clock_ports, {}}
+		}
+	}
+	// Each program: the date page, read-only.
+	date_page_give(mappings[:], &mapping_count, &values)
 	// A program with a surface: the settings page and the glyph cache, read-only.
 	if .Terminal not_in role {
 		text_settings_give(mappings[:], &mapping_count, &values)

@@ -9,6 +9,8 @@ package compositor
 
 import "support:display"
 import "contract:settings"
+import "contract:date"
+import "support:calendar"
 import "support:graphics"
 import "support:interface"
 import "support:bar"
@@ -46,7 +48,7 @@ PLACE_STEP_Y :: 32
 GRID :: 8
 CLIENT_CAPACITY :: 32 // The root service starts 32 programs at most.
 DAMAGE_CAPACITY :: 8
-CLOCK_WIDTH :: 8 * 8 // "00:00:00"
+CLOCK_WIDTH :: 19 * 8 // "2026-11-11 16:30:05", or the time since boot "00:00:00" when the system has no date.
 LAUNCHER_HINT :: "launcher: super" // In the bar, at the left of the time.
 
 Client :: struct {
@@ -199,6 +201,26 @@ windows_log :: proc "contextless" () {
 	system.log_in("surfaces", .Info, "compositor: windows: ", string(buffer[:count]))
 }
 
+// The bar shows the date and the time of day in UTC (contract/date), or
+// the time since boot when the system has no date. second_of_bar gives the
+// second that it shows at the time `now` of the system, and
+// next_second_of_bar the time of the system when it changes.
+date_page: ^date.Page
+
+second_of_bar :: proc "contextless" (now: u64) -> u64 {
+	if milliseconds, known := date.milliseconds_now(date_page, now); known {
+		return u64(milliseconds / 1000)
+	}
+	return now / 1000
+}
+
+next_second_of_bar :: proc "contextless" (second: u64) -> u64 {
+	if milliseconds, known := date.milliseconds_now(date_page, 0); known {
+		return u64(i64(second + 1) * 1000 - milliseconds) // The date of the time 0 is `milliseconds`.
+	}
+	return (second + 1) * 1000
+}
+
 damage_clock :: proc "contextless" () {
 	damage_add(screen.width - CLOCK_WIDTH - 16, 8, CLOCK_WIDTH, graphics.CELL_HEIGHT)
 }
@@ -220,6 +242,7 @@ canvas_create :: proc "contextless" (width, height: int) -> graphics.Canvas {
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	width := int(ctx.values[VALUE_WIDTH])
 	height := int(ctx.values[VALUE_HEIGHT])
+	date_page = date.page_of(ctx)
 	address, status := system.memory_map(ctx.handles[GRANT_FRAMEBUFFER])
 	input_status, control_status: system.Status
 	input, input_status = system.ring_open(ctx.handles[GRANT_INPUT])
@@ -269,7 +292,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				system.wait_records(&wait, &client.ring.commands)
 			}
 		}
-		deadline := damage_count > 0 ? max(next_frame, 1) : (shown_second + 1) * 1000
+		deadline := damage_count > 0 ? max(next_frame, 1) : next_second_of_bar(shown_second)
 		if wake := pointer_wake(); wake != 0 {
 			deadline = min(deadline, wake) // An animated pointer shape shows.
 		}
@@ -336,8 +359,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			}
 		}
 		pointer_update(now) // After each change of what is under the pointer.
-		if now / 1000 != shown_second {
-			shown_second = now / 1000
+		if second_of_bar(now) != shown_second {
+			shown_second = second_of_bar(now)
 			damage_clock()
 		}
 		if damage_count > 0 && now >= next_frame {
@@ -973,7 +996,8 @@ screen_build :: proc "contextless" (now: u64) {
 		interface.draw_picture(table, client.x + BORDER, client.y + TITLE_HEIGHT, position, 0)
 	}
 
-	// The bar: the name of the system, the two buttons, the time since boot.
+	// The bar: the name of the system, the two buttons, the date and the time
+	// of day (the time since boot when the system has no date).
 	width := frame.width
 	interface.draw_vertical_gradient(table, 0, 0, width, BAR_HEIGHT - 1, graphics.COLOR_CARD_TOP, graphics.COLOR_CARD_BOTTOM)
 	interface.draw_rectangle(table, 0, BAR_HEIGHT - 1, width, 1, graphics.COLOR_TRACK)
@@ -990,11 +1014,17 @@ screen_build :: proc "contextless" (now: u64) {
 	interface.draw_text(table, interface.draw_text(table, hint_x, 8, "launcher: ", graphics.COLOR_DIM), 8, "super", graphics.COLOR_TEXT)
 	seconds := now / 1000
 	x := width - CLOCK_WIDTH - 16
-	x = interface.draw_unsigned(table, x, 8, seconds / 3600, graphics.COLOR_TEXT, 2)
-	x = interface.draw_text(table, x, 8, ":", graphics.COLOR_DIM)
-	x = interface.draw_unsigned(table, x, 8, seconds / 60 % 60, graphics.COLOR_TEXT, 2)
-	x = interface.draw_text(table, x, 8, ":", graphics.COLOR_DIM)
-	interface.draw_unsigned(table, x, 8, seconds % 60, graphics.COLOR_TEXT, 2)
+	if milliseconds, known := date.milliseconds_now(date_page, now); known {
+		date_text: [24]u8
+		interface.draw_text(table, x, 8, calendar.iso_text(date_text[:], milliseconds / 1000), graphics.COLOR_TEXT)
+	} else {
+		x += CLOCK_WIDTH - 8 * 8
+		x = interface.draw_unsigned(table, x, 8, seconds / 3600, graphics.COLOR_TEXT, 2)
+		x = interface.draw_text(table, x, 8, ":", graphics.COLOR_DIM)
+		x = interface.draw_unsigned(table, x, 8, seconds / 60 % 60, graphics.COLOR_TEXT, 2)
+		x = interface.draw_text(table, x, 8, ":", graphics.COLOR_DIM)
+		interface.draw_unsigned(table, x, 8, seconds % 60, graphics.COLOR_TEXT, 2)
+	}
 
 	// The menus of the bar, as cards of the package.
 	card_frame := interface.Frame{table = table}

@@ -7,6 +7,8 @@ package server
 // the requests). One answer at a time for each connection: the next head is
 // read when the answer before it is all in the send buffer.
 
+import "contract:date"
+import "support:calendar"
 import "support:system"
 import "support:tcp"
 import "support:web"
@@ -139,6 +141,14 @@ answer_start :: proc "contextless" (index: int, status: int, content_type: strin
 	text(&head, "\r\nContent-Type: ")
 	text(&head, content_type)
 	text(&head, "\r\n")
+	// RFC 9110 6.6.1: an origin server with a clock sends Date in each
+	// answer; with no date known it sends none.
+	if milliseconds, known := date.milliseconds_now(date_page, system.time()); known {
+		date_text: [32]u8
+		text(&head, "Date: ")
+		text(&head, calendar.http_text(date_text[:], milliseconds / 1000))
+		text(&head, "\r\n")
+	}
 	if allow != "" {
 		text(&head, "Allow: ")
 		text(&head, allow)
@@ -564,3 +574,6 @@ second_measure :: proc "contextless" (now: u64) {
 	second_requests = 0
 	second_connections = accepted
 }
+
+// The date page of this program (contract/date), for the field Date.
+date_page: ^date.Page

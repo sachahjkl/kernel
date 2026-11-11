@@ -2,6 +2,7 @@ package storage_service
 
 import "base:intrinsics"
 import "contract:block"
+import "contract:date"
 import "contract:errors"
 import "contract:ring"
 import format "contract:store"
@@ -84,8 +85,11 @@ time_now :: proc "contextless" () -> u64 {
 // date_now gives the date in seconds since 1970 (UTC), or 0 when the
 // system has no date.
 date_now :: proc "contextless" () -> u64 {
-	return 0
+	milliseconds, known := date.milliseconds_now(date_page, system.time())
+	return known ? u64(milliseconds / 1000) : 0
 }
+
+date_page: ^date.Page // contract/date: the date page of this program.
 
 slot :: #force_inline proc "contextless" (index: u64) -> []u8 {
 	return region[index * BLOCK_SIZE:][:BLOCK_SIZE]
@@ -772,7 +776,22 @@ retention :: proc "contextless" (object_index: int, now: u64) {
 			count += 1
 		}
 	}
-	if storage_retention.keeps(times[:count], now, keep[:count]) == 0 {
+	// With a date, the age of a version is its age in the date: the time
+	// since the format does not count the time when no machine ran. A
+	// version with no date keeps its age in that time.
+	rule_now := now
+	if date_seconds := date_now(); date_seconds != 0 {
+		rule_now = date_seconds * 1000
+		place := 0
+		for position in 0 ..< int(index.index.leaf_count) {
+			leaf := leaf_load(object_index, position)
+			for entry in leaf.leaf.entries[:leaf.leaf.count] {
+				times[place] = entry.date != 0 ? entry.date * 1000 : rule_now - min(now - min(entry.time, now), rule_now)
+				place += 1
+			}
+		}
+	}
+	if storage_retention.keeps(times[:count], rule_now, keep[:count]) == 0 {
 		return
 	}
 	at := 0
@@ -936,7 +955,7 @@ plan_commit :: proc "contextless" (error: ^errors.Error_Record) -> i64 {
 	}
 	if plan.full {
 		plan_drop()
-		return errors.fail(error, ERROR_FULL, .Full) // The disk, or a table of the commit: no number (P20).
+		return errors.fail(error, ERROR_FULL, .Full) // The disk, or a table of the commit: no number, because the free blocks are a fact of all the stores.
 	}
 	entry := &plan.next.stores[plan.store_index]
 	entry.used = u64(i64(entry.used) + plan.used_change)
@@ -1081,7 +1100,7 @@ change :: proc "contextless" (store: Store_Of, given: string, kind: Change_Kind,
 			}
 		}
 		if store_index < 0 {
-			return errors.fail(error, ERROR_FULL, .Full) // The disk: a fact of all the stores, with no number (P20).
+			return errors.fail(error, ERROR_FULL, .Full) // The disk: a fact of all the stores, so no number.
 		}
 		plan_reset(store_index)
 		plan.next.stores[store_index] = {}

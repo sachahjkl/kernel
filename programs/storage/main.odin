@@ -2,12 +2,13 @@
 //
 // The root service decides who has a store: it names the store of each connection, and its limit of blocks. A program reaches its own store only: the exports take the name of an object, never the name of a store. The root service names a program that it starts again with the same name, and the program finds its data.
 //
-// A change is one commit, on the disk when the call returns: the system has no save action. The state of an object before a change is a version: a program reads, compares, restores and clones versions with no code of its own (property 9). The disk always has the state of the last commit, or of the one before: a stop of the machine during a commit never shows a part of it. The checks of the blocks show each change that the service did not make.
+// A change is one commit, on the disk when the call returns: the system has no save action. The state of an object before a change is a version: a program reads, compares, restores and clones versions with no code of its own. The disk always has the state of the last commit, or of the one before: a stop of the machine during a commit never shows a part of it. The checks of the blocks show each change that the service did not make.
 //
 // The person sees all the stores with stores(), from a program that acts for the person: the console.
 package storage_service
 
 import "contract:block"
+import "contract:date"
 import "contract:errors"
 import "contract:isolated"
 import answers "support:storage"
@@ -436,6 +437,7 @@ service: system.Service
 
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
+	date_page = date.page_of(ctx)
 	ok: bool
 	if service, ok = system.service_open(ctx); !ok {
 		system.log_in("storage", .Error, "storage: no service ring")

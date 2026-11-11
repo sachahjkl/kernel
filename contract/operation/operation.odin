@@ -730,6 +730,9 @@ CONTEXT_BUDGET :: 15 // The budget of the program.
 // with a surface or a terminal: values[13] is the address of the settings
 // page (contract:settings, VALUE_PAGE), 0 for none. A program does not use
 // value 13 for another role.
+// The value that the root service fixes for each program that it starts:
+// values[15] is the address of the date page (contract:date, VALUE_PAGE), 0
+// for none. A program does not use value 15 for another role.
 
 // The roles of the first program (the root service).
 ROOT_MACHINE :: 0

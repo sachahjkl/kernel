@@ -102,6 +102,7 @@ module_builds := [?]Module_Build {
 	{name = "vector_glyphs", source = "programs/vector_glyphs", image = true},
 	{name = "pointers", source = "programs/pointers", image = true},
 	{name = "settings", source = "programs/settings", image = true},
+	{name = "date", source = "programs/date", image = true},
 }
 
 join :: proc(parts: ..string) -> string {
