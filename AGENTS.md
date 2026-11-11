@@ -24,4 +24,7 @@ The owner asked for this rule on 2026-11-10.
 - Names (owner, 2026-11-11): no esoteric, over-compressed name of a type, a function, a field or a file. Use long, descriptive names of complete words (`copy_bytes_without_overlap`, not `memcpy`).
 - Pictures (owner, 2026-11-11): each picture that you produce and view goes in `~/Projects/kernel-devlog`, in a dated folder. Never delete a folder of the devlog.
 - A full check is `kerneltool screenshots` AND `nix flake check` (the flake sees only the folders that `flake.nix` names: a new top-level folder must be added there).
+- Comments in code (owner, 2026-11-11): a comment in a source file gives the reason itself, in plain words. It names no number of a property, a choice, a step or a review finding, and no date of a decision. Those stay in the documents. A pointer to a document is allowed ("docs/MODULE_CONTRACT.md, section 4").
+- Forms (owner, 2026-11-11): rectangular forms are the preference, not an absolute rule. Lines at an angle are allowed; any geometry can be drawn, sparingly. Avoid a look where everything is a rounded blob.
+- Subagents (owner, 2026-11-11): a subagent that writes code only writes code. The coordinator reviews, builds, tests, commits and merges.
 - Never commit under an AI identity.

@@ -16,10 +16,10 @@ The rules live as one table of constants in `support/graphics/rules.odin`: the g
 
 ## 2. Forms
 
-- Each form is a rectangle. There is no round corner, no circle and no ellipse (owner, 2026-11-10).
+- Rectangular forms are the preference of the design, not an absolute rule (owner, 2026-11-11: "c'est pas une interdiction absolue de tirer que des rectangles, c'est juste que c'est la préférence tendancielle que je veux. Je veux pas que tout soit un blob arrondi en fait."). A form is a rectangle unless another form says more. Any geometry can be drawn, sparingly; a round form can be right in some cases. The look to avoid: everything is a rounded blob. This replaces the rule of 2026-11-10 ("no round corner, no circle and no ellipse").
 - A point or a mark is a square.
 - A line is a rectangle that is 1 or 2 pixels thick.
-- Lines at an angle are used for one meaning only: a part that has no measure on this scale (the firmware before the line of time).
+- Lines at an angle are allowed (owner, 2026-11-11: "évidemment, les traits obliques c'est autorisé"). The boot display keeps its own use of them: a part that has no measure on this scale (the firmware before the line of time).
 - There is no shadow and no transparency.
 
 ## 3. Surfaces
@@ -124,7 +124,7 @@ The owner asked for "a gradient from the current blue, as the start colour, to a
 ### Pointer
 
 - The pointer is an arrow of squares of 2 pixels, 8 squares wide and 11 high: black at the edge, white inside. Its point is the top left square. This arrow is the shape `arrow` of the pointer theme of the system (`resources/pointers/system.manifest`). Each other pointer shape of that theme has the same style: squares of 2 pixels, black and white.
-- **An exception to section 2 (2026-11-11).** The owner asked for the pointer theme that the owner uses on Linux, "Posy's Cursor" (`docs/POINTERS.md`). Its pointer pictures have smooth edges, curves and transparency: they are not rectangles. The request of the owner, in the words of the dictation: "si tu peux juste bah importer migrer ajuster les posies curseur c'est celui que j'utilise normalement sur Linux". The coordinator recorded this exception, as the nearest form that keeps the rule for the rest: the pointer picture is the one picture resource of the desktop that does not follow sections 2 and 7. It is drawn with a blend of premultiplied alpha. The windows, the bar, the menus, the launcher and each program keep "rectangles only, no round corners" and "no transparency". The owner can reverse this exception: then the theme of the system is the one theme. The same day the owner decided that the theme of the owner is a build input and the default pointer theme when the build has it (`HANDOFF.md` item 33): the exception follows from that decision.
+- **Not a rectangle (2026-11-11; since the rule on forms became a preference, this is no longer an exception).** The owner asked for the pointer theme that the owner uses on Linux, "Posy's Cursor" (`docs/POINTERS.md`). Its pointer pictures have smooth edges, curves and transparency: they are not rectangles. The request of the owner, in the words of the dictation: "si tu peux juste bah importer migrer ajuster les posies curseur c'est celui que j'utilise normalement sur Linux". The coordinator recorded this exception, as the nearest form that keeps the rule for the rest: the pointer picture is the one picture resource of the desktop that does not follow sections 2 and 7. It is drawn with a blend of premultiplied alpha. The windows, the bar, the menus, the launcher and each program keep "rectangles only, no round corners" and "no transparency". The owner can reverse this exception: then the theme of the system is the one theme. The same day the owner decided that the theme of the owner is a build input and the default pointer theme when the build has it (`HANDOFF.md` item 33): the exception follows from that decision.
 
 ### Launcher
 
