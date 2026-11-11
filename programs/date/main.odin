@@ -112,17 +112,11 @@ now :: proc "c" (result: ^Date) {
 	result^ = {milliseconds = milliseconds, year = value.year, month = i64(value.month), day = i64(value.day), hour = i64(value.hour), minute = i64(value.minute), second = i64(value.second), weekday = i64(value.weekday) + 1}
 }
 
-@(export, link_name = "entry")
-entry :: proc "c" (ctx: ^system.Context) -> ! {
-	service, _ := system.service_open(ctx)
-	address, status := system.memory_map(ctx.handles[date.GRANT_PAGE], {.Write})
-	if status != .Ok || ctx.handles[date.GRANT_PORTS] == 0 {
-		system.log_in("date", .Error, "date: no date page or no ports of the clock: the system has no date")
-		system.stop(1)
-	}
-	page = (^date.Page)(address)
-	// The edge of a second: the clock changes its second, and the time of
-	// the system at that moment gives the date of the time 0.
+RESYNC_MILLISECONDS :: 10_000 // The time between two reads of the clock.
+
+// synchronize waits for the clock to change its second (up to 2 seconds),
+// and gives the date of the time 0 of the system at that edge.
+synchronize :: proc "contextless" () -> (at_zero: i64, seconds: i64, edge_milliseconds: u64, valid: bool) {
 	started := system.nanoseconds()
 	first := stable_read()
 	reading := first
@@ -132,19 +126,59 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		reading = stable_read()
 		edge = system.nanoseconds()
 	}
-	seconds, valid := seconds_of_reading(reading)
+	seconds, valid = seconds_of_reading(reading)
 	if !valid || reading.second == first.second {
+		return 0, 0, 0, false
+	}
+	return seconds * 1000 - i64(edge / 1_000_000), seconds, edge / 1_000_000, true
+}
+
+@(export, link_name = "entry")
+entry :: proc "c" (ctx: ^system.Context) -> ! {
+	service, _ := system.service_open(ctx)
+	address, status := system.memory_map(ctx.handles[date.GRANT_PAGE], {.Write})
+	if status != .Ok || ctx.handles[date.GRANT_PORTS] == 0 {
+		system.log_in("date", .Error, "date: no date page or no ports of the clock: the system has no date")
+		system.stop(1)
+	}
+	page = (^date.Page)(address)
+	started := system.nanoseconds()
+	at_zero, seconds, edge, valid := synchronize()
+	if !valid {
 		system.log_in("date", .Error, "date: the real-time clock gives no valid date: the system has no date")
 	} else {
-		at_zero := seconds * 1000 - i64(edge / 1_000_000)
 		date.write(page, .Real_Time_Clock, at_zero)
 		text: [32]u8
-		system.log("date: ok, ", calendar.iso_text(text[:], seconds), " UTC, seconds since 1970 ", seconds, ", from the real-time clock at the time ", edge / 1_000_000, " ms of the system; the date of the time 0 in ", (system.nanoseconds() - started) / 1000, " us")
+		system.log("date: ok, ", calendar.iso_text(text[:], seconds), " UTC, seconds since 1970 ", seconds, ", from the real-time clock at the time ", edge, " ms of the system; the date of the time 0 in ", (system.nanoseconds() - started) / 1000, " us")
 	}
+	// The time of the system comes from the cycle counter, with a frequency
+	// that the kernel measured at boot: it can run faster or slower than the
+	// clock. The service reads the clock again at an interval and corrects the
+	// page, so the date never drifts more than the drift of one interval.
+	first_at_zero := at_zero
+	corrections: u64
+	next := system.time() + RESYNC_MILLISECONDS
 	for {
 		wait: system.Wait
 		system.service_wait(&wait, &service)
-		system.wait_end(&wait)
+		system.wait_end(&wait, next)
 		system.service_run(&service)
+		if system.time() < next {
+			continue
+		}
+		next = system.time() + RESYNC_MILLISECONDS
+		corrected, _, edge_now, corrected_valid := synchronize()
+		if !corrected_valid {
+			continue
+		}
+		_, known := date.milliseconds_now(page, 0)
+		before := page.milliseconds_at_time_zero
+		date.write(page, .Real_Time_Clock, corrected)
+		corrections += 1
+		if !known || corrections == 1 || corrections % 30 == 0 || abs(corrected - before) >= 1000 {
+			// The drift since the first read: what the time of the system lost
+			// or gained against the clock.
+			system.log("date: the clock read again at the time ", edge_now, " ms of the system: the date moved by ", corrected - before, " ms; ", corrected - first_at_zero, " ms since the start, ", corrections, corrections == 1 ? " read" : " reads", " after the first")
+		}
 	}
 }
