@@ -188,3 +188,16 @@ coordinate :: #force_inline proc "contextless" (value: int) -> i32 {
 record_rectangle :: proc "contextless" (record: Draw_Record) -> Rectangle {
 	return {int(record.x), int(record.y), int(record.x) + int(record.width), int(record.y) + int(record.height)}
 }
+
+// draw_unsigned appends a number in decimal, with at least minimum_digits
+// digits, and gives the x after it.
+draw_unsigned :: proc "contextless" (table: ^Draw_Table, x, y: int, value: u64, color: graphics.Color, minimum_digits := 1) -> int {
+	builder: Text_Builder
+	return draw_text(table, x, y, number_text(&builder, value, minimum_digits), color)
+}
+
+// draw_character appends one character, and gives the x after it.
+draw_character :: proc "contextless" (table: ^Draw_Table, x, y: int, character: u8, color: graphics.Color) -> int {
+	one := [1]u8{character}
+	return draw_text(table, x, y, string(one[:]), color)
+}

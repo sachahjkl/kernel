@@ -15,10 +15,16 @@ package flow
 
 import "support:display"
 import "support:graphics"
+import "support:interface"
 import op "contract:operation"
 import "contract:ring"
 import "support:system"
 import "base:intrinsics"
+
+// The window is built with the interface package (docs/INTERFACE.md).
+records_now, records_before: [512]interface.Draw_Record
+text_now, text_before: [8192]u8
+drawing: interface.Window_Drawing
 
 DURATION :: 1000 // Milliseconds of one measure.
 RECORD :: 1
@@ -142,44 +148,47 @@ run :: proc "contextless" (measure: ^Measure) -> bool {
 	return received != 0
 }
 
-bar :: proc "contextless" (canvas: graphics.Canvas, x, y: int, value, most: u64, color: graphics.Color) {
-	graphics.fill(canvas, x, y + 3, BAR_WIDTH, 10, graphics.COLOR_TRACK)
-	graphics.fill(canvas, x, y + 3, int(value * BAR_WIDTH / max(most, 1)), 10, color)
-	graphics.unsigned(canvas, x + BAR_WIDTH + 8, y, value, graphics.COLOR_TEXT)
+bar :: proc "contextless" (table: ^interface.Draw_Table, x, y: int, value, most: u64, color: graphics.Color) {
+	interface.draw_rectangle(table, x, y + 3, BAR_WIDTH, 10, graphics.COLOR_TRACK)
+	interface.draw_rectangle(table, x, y + 3, int(value * BAR_WIDTH / max(most, 1)), 10, color)
+	interface.draw_unsigned(table, x + BAR_WIDTH + 8, y, value, graphics.COLOR_TEXT)
 }
 
 draw :: proc "contextless" (window: ^display.Window) {
-	canvas := window.canvas
-	display.picture_begin(window) // The measure of a picture (display.present).
-	graphics.clear(canvas, graphics.COLOR_BACKGROUND)
+	if drawing.now.records == nil {
+		drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
+	}
+	frame := interface.window_frame_begin(&drawing, window)
+	table := frame.table
+	interface.draw_rectangle(table, 0, 0, WIDTH, HEIGHT, graphics.COLOR_BACKGROUND)
 	most_rate, most_entries: u64
 	for measure in measures {
 		most_rate, most_entries = max(most_rate, measure.rate), max(most_entries, measure.entries)
 	}
 	y := 12
-	graphics.text(canvas, 12, y, "one thread writes records in a ring, one thread reads them, for one second.", graphics.COLOR_DIM)
+	interface.draw_text(table, 12, y, "one thread writes records in a ring, one thread reads them, for one second.", graphics.COLOR_DIM)
 	y += LINE
-	graphics.text(canvas, 12, y, "a queue operation does not enter the kernel. a wait does.", graphics.COLOR_DIM)
+	interface.draw_text(table, 12, y, "a queue operation does not enter the kernel. a wait does.", graphics.COLOR_DIM)
 	y += LINE + LINE / 2
-	graphics.text(canvas, 12, y, "capacity  before a wait", graphics.COLOR_DIM)
-	graphics.text(canvas, RATE_X, y, "records in one second", graphics.COLOR_DIM)
-	graphics.text(canvas, ENTRIES_X, y, "kernel entries, one million records", graphics.COLOR_DIM)
+	interface.draw_text(table, 12, y, "capacity  before a wait", graphics.COLOR_DIM)
+	interface.draw_text(table, RATE_X, y, "records in one second", graphics.COLOR_DIM)
+	interface.draw_text(table, ENTRIES_X, y, "kernel entries, one million records", graphics.COLOR_DIM)
 	y += LINE
 	for measure, index in measures {
 		if index % 2 == 0 {
-			graphics.fill(canvas, 6, y - 4, WIDTH - 12, LINE, graphics.COLOR_CARD_TOP)
+			interface.draw_rectangle(table, 6, y - 4, WIDTH - 12, LINE, graphics.COLOR_CARD_TOP)
 		}
-		graphics.unsigned(canvas, 12, y, u64(measure.capacity), graphics.COLOR_TEXT)
-		graphics.text(canvas, 92, y, measure.spin ? "read counters" : "nothing", graphics.COLOR_TEXT)
+		interface.draw_unsigned(table, 12, y, u64(measure.capacity), graphics.COLOR_TEXT)
+		interface.draw_text(table, 92, y, measure.spin ? "read counters" : "nothing", graphics.COLOR_TEXT)
 		if measure.done {
-			bar(canvas, RATE_X, y, measure.rate, most_rate, measure.lost == 0 ? COLOR_RATE : graphics.COLOR_FAILED)
-			bar(canvas, ENTRIES_X, y, measure.entries, most_entries, COLOR_ENTRIES)
+			bar(table, RATE_X, y, measure.rate, most_rate, measure.lost == 0 ? COLOR_RATE : graphics.COLOR_FAILED)
+			bar(table, ENTRIES_X, y, measure.entries, most_entries, COLOR_ENTRIES)
 		} else {
-			graphics.text(canvas, RATE_X, y, "...", graphics.COLOR_DIM)
+			interface.draw_text(table, RATE_X, y, "...", graphics.COLOR_DIM)
 		}
 		y += LINE
 	}
-	display.present(window)
+	interface.window_frame_end(&drawing, &frame, window)
 }
 
 @(export, link_name = "entry")

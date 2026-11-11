@@ -8,8 +8,14 @@ package notes
 import "contract:errors"
 import "support:display"
 import "support:graphics"
+import "support:interface"
 import "support:storage"
 import "support:system"
+
+// The window is built with the interface package (docs/INTERFACE.md).
+records_now, records_before: [512]interface.Draw_Record
+text_now, text_before: [8192]u8
+drawing: interface.Window_Drawing
 
 WIDTH :: 560
 HEIGHT :: 238
@@ -102,31 +108,34 @@ restore :: proc "contextless" () {
 }
 
 draw :: proc "contextless" (window: ^display.Window) {
-	canvas := window.canvas
-	display.picture_begin(window) // The measure of a picture (display.present).
-	graphics.clear(canvas, graphics.COLOR_BACKGROUND)
+	if drawing.now.records == nil {
+		drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
+	}
+	frame := interface.window_frame_begin(&drawing, window)
+	table := frame.table
+	interface.draw_rectangle(table, 0, 0, WIDTH, HEIGHT, graphics.COLOR_BACKGROUND)
 	buffer: [32]u8
-	x := graphics.text(canvas, 12, 12, "note  ", graphics.COLOR_DIM)
-	x = graphics.text(canvas, x, 12, string(note[:note_count]), graphics.COLOR_TEXT)
-	graphics.fill(canvas, x + 1, 12, 2, 16, COLOR_LIT)
-	x = graphics.text(canvas, 12, 40, "count ", graphics.COLOR_DIM)
-	x = graphics.text(canvas, x, 40, system.format(buffer[:], count), COLOR_LIT)
+	x := interface.draw_text(table, 12, 12, "note  ", graphics.COLOR_DIM)
+	x = interface.draw_text(table, x, 12, string(note[:note_count]), graphics.COLOR_TEXT)
+	interface.draw_rectangle(table, x + 1, 12, 2, 16, COLOR_LIT)
+	x = interface.draw_text(table, 12, 40, "count ", graphics.COLOR_DIM)
+	x = interface.draw_text(table, x, 40, system.format(buffer[:], count), COLOR_LIT)
 	if generation > 0 { // The generation of the last commit of this program, after its first change.
-		x = graphics.text(canvas, x + 24, 40, "generation ", graphics.COLOR_DIM)
-		graphics.text(canvas, x, 40, system.format(buffer[:], generation), graphics.COLOR_TEXT)
+		x = interface.draw_text(table, x + 24, 40, "generation ", graphics.COLOR_DIM)
+		interface.draw_text(table, x, 40, system.format(buffer[:], generation), graphics.COLOR_TEXT)
 	}
 	// The drawing: one cell for each step of the count, 400 cells.
 	for cell in 0 ..< 400 {
 		cell_x := 12 + cell % 50 * 10
 		cell_y := 68 + cell / 50 * 10
-		graphics.fill(canvas, cell_x, cell_y, 8, 8, u64(cell) < count % 400 ? COLOR_LIT : graphics.COLOR_TRACK)
+		interface.draw_rectangle(table, cell_x, cell_y, 8, 8, u64(cell) < count % 400 ? COLOR_LIT : graphics.COLOR_TRACK)
 	}
-	graphics.text(canvas, 12, 156, restored, restored_good ? graphics.COLOR_PROGRAM : graphics.COLOR_FAILED)
+	interface.draw_text(table, 12, 156, restored, restored_good ? graphics.COLOR_PROGRAM : graphics.COLOR_FAILED)
 	if gone {
-		graphics.text(canvas, 12, 180, "the grant of the store ended: the program keeps nothing", graphics.COLOR_FAILED)
+		interface.draw_text(table, 12, 180, "the grant of the store ended: the program keeps nothing", graphics.COLOR_FAILED)
 	}
-	graphics.text(canvas, 12, HEIGHT - 26, "keys: a note; tab: count 1000, one commit each", graphics.COLOR_DIM)
-	display.present(window)
+	interface.draw_text(table, 12, HEIGHT - 26, "keys: a note; tab: count 1000, one commit each", graphics.COLOR_DIM)
+	interface.window_frame_end(&drawing, &frame, window)
 }
 
 @(export, link_name = "entry")

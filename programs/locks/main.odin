@@ -20,10 +20,16 @@ package locks
 import "base:intrinsics"
 import "support:display"
 import "support:graphics"
+import "support:interface"
 import "support:lockers"
 import op "contract:operation"
 import "contract:ring"
 import "support:system"
+
+// The window is built with the interface package (docs/INTERFACE.md).
+records_now, records_before: [1024]interface.Draw_Record
+text_now, text_before: [16384]u8
+drawing: interface.Window_Drawing
 
 MEASURE_TIME :: 300 // Milliseconds of one measure.
 PAIR_TIME :: 500 // Milliseconds of one measure of the word wait.
@@ -268,51 +274,61 @@ locks_text :: proc "contextless" (buffer: []u8, locks: [op.LOCK_KIND_CAPACITY]op
 	return system.written(&writer)
 }
 
-row :: proc "contextless" (canvas: graphics.Canvas, y: int, label: string, values: []u64) {
-	graphics.text(canvas, LEFT, y, label, graphics.COLOR_DIM)
+row :: proc "contextless" (table: ^interface.Draw_Table, y: int, label: string, values: []u64) {
+	interface.draw_text(table, LEFT, y, label, graphics.COLOR_DIM)
 	line: [48]u8
 	for value, index in values {
-		graphics.text(canvas, COLUMN_X + index * COLUMN_WIDTH, y, system.format(line[:], value), graphics.COLOR_TEXT)
+		interface.draw_text(table, COLUMN_X + index * COLUMN_WIDTH, y, system.format(line[:], value), graphics.COLOR_TEXT)
 	}
 }
 
-draw :: proc "contextless" (canvas: graphics.Canvas) {
-	graphics.clear(canvas, graphics.COLOR_BACKGROUND)
+// draw builds a frame of the window with the interface package.
+draw :: proc "contextless" (window: ^display.Window) {
+	if drawing.now.records == nil {
+		drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
+	}
+	frame := interface.window_frame_begin(&drawing, window)
+	draw_records(frame.table)
+	interface.window_frame_end(&drawing, &frame, window)
+}
+
+draw_records :: proc "contextless" (table: ^interface.Draw_Table) {
+	interface.draw_rectangle(table, 0, 0, WIDTH, HEIGHT, graphics.COLOR_BACKGROUND)
 	y := LEFT
-	graphics.text(canvas, LEFT, y, "each locker works on its own objects: it waits only if the kernel makes it wait.", graphics.COLOR_DIM)
+	interface.draw_text(table, LEFT, y, "each locker works on its own objects: it waits only if the kernel makes it wait.", graphics.COLOR_DIM)
 	y += LINE + GAP
-	graphics.text(canvas, LEFT, y, "in one second, all lockers", graphics.COLOR_DIM)
+	interface.draw_text(table, LEFT, y, "in one second, all lockers", graphics.COLOR_DIM)
 	for active, index in counts {
 		line: [24]u8
-		graphics.text(canvas, COLUMN_X + index * COLUMN_WIDTH, y, system.format(line[:], u64(active), active == 1 ? " locker" : " lockers"), graphics.COLOR_DIM)
+		interface.draw_text(table, COLUMN_X + index * COLUMN_WIDTH, y, system.format(line[:], u64(active), active == 1 ? " locker" : " lockers"), graphics.COLOR_DIM)
 	}
 	y += LINE
-	graphics.fill(canvas, GAP, y - 4, WIDTH - 2 * GAP, LINE, graphics.COLOR_CARD_TOP)
-	row(canvas, y, "kernel entries", entry_rates[:])
+	interface.draw_rectangle(table, GAP, y - 4, WIDTH - 2 * GAP, LINE, graphics.COLOR_CARD_TOP)
+	row(table, y, "kernel entries", entry_rates[:])
 	y += LINE
-	row(canvas, y, "pages on first use", fault_rates[:])
+	row(table, y, "pages on first use", fault_rates[:])
 	y += LINE + GAP
-	graphics.text(canvas, LEFT, y, "word wait, two threads", graphics.COLOR_DIM)
-	graphics.text(canvas, COLUMN_X, y, "alone", graphics.COLOR_DIM)
-	graphics.text(canvas, COLUMN_X + COLUMN_WIDTH, y, "2 lockers enter", graphics.COLOR_DIM)
+	interface.draw_text(table, LEFT, y, "word wait, two threads", graphics.COLOR_DIM)
+	interface.draw_text(table, COLUMN_X, y, "alone", graphics.COLOR_DIM)
+	interface.draw_text(table, COLUMN_X + COLUMN_WIDTH, y, "2 lockers enter", graphics.COLOR_DIM)
 	y += LINE
-	graphics.fill(canvas, GAP, y - 4, WIDTH - 2 * GAP, LINE, graphics.COLOR_CARD_TOP)
-	row(canvas, y, "wakes", {pairs_alone, pairs_loaded})
+	interface.draw_rectangle(table, GAP, y - 4, WIDTH - 2 * GAP, LINE, graphics.COLOR_CARD_TOP)
+	row(table, y, "wakes", {pairs_alone, pairs_loaded})
 	y += LINE + GAP
-	graphics.text(canvas, LEFT, y, "waits of takes", graphics.COLOR_DIM)
+	interface.draw_text(table, LEFT, y, "waits of takes", graphics.COLOR_DIM)
 	for name, index in ([3]string{"4 lockers, entries", "4 lockers, faults", "word wait"}) {
-		graphics.text(canvas, LOCK_X + index * LOCK_COLUMN_WIDTH, y, name, graphics.COLOR_DIM)
+		interface.draw_text(table, LOCK_X + index * LOCK_COLUMN_WIDTH, y, name, graphics.COLOR_DIM)
 	}
 	y += LINE
 	for kind in op.Lock_Kind {
 		if int(kind) % 2 == 0 {
-			graphics.fill(canvas, GAP, y - 4, WIDTH - 2 * GAP, LINE, graphics.COLOR_CARD_TOP)
+			interface.draw_rectangle(table, GAP, y - 4, WIDTH - 2 * GAP, LINE, graphics.COLOR_CARD_TOP)
 		}
-		graphics.text(canvas, LEFT, y, op.LOCK_KIND_NAMES[kind], graphics.COLOR_DIM)
+		interface.draw_text(table, LEFT, y, op.LOCK_KIND_NAMES[kind], graphics.COLOR_DIM)
 		line: [48]u8
 		for locks, index in ([3][op.LOCK_KIND_CAPACITY]op.Lock_Count{entry_locks, fault_locks, pair_locks}) {
 			count := locks[kind]
-			graphics.text(canvas, LOCK_X + index * LOCK_COLUMN_WIDTH, y, system.format(line[:], count.waits, " of ", count.takes), graphics.COLOR_TEXT)
+			interface.draw_text(table, LOCK_X + index * LOCK_COLUMN_WIDTH, y, system.format(line[:], count.waits, " of ", count.takes), graphics.COLOR_TEXT)
 		}
 		y += LINE
 	}
@@ -338,14 +354,14 @@ draw :: proc "contextless" (canvas: graphics.Canvas) {
 	}
 	y += GAP
 	line: [64]u8
-	graphics.text(canvas, LEFT, y, "programs stopped while they ran", graphics.COLOR_DIM)
-	graphics.text(canvas, COLUMN_X, y, system.format(line[:], stress_started), graphics.COLOR_TEXT)
+	interface.draw_text(table, LEFT, y, "programs stopped while they ran", graphics.COLOR_DIM)
+	interface.draw_text(table, COLUMN_X, y, system.format(line[:], stress_started), graphics.COLOR_TEXT)
 	y += LINE
 	if done {
 		right := entries_right && faults_right && pages_right && pairs_right && lost_wakes == 0 && stress_right
-		graphics.text(canvas, LEFT, y, right ? "the counts add up, no wake was lost, stopped programs returned all" : "a count is wrong", right ? graphics.COLOR_PROGRAM : graphics.COLOR_FAILED)
+		interface.draw_text(table, LEFT, y, right ? "the counts add up, no wake was lost, stopped programs returned all" : "a count is wrong", right ? graphics.COLOR_PROGRAM : graphics.COLOR_FAILED)
 	} else {
-		graphics.text(canvas, LEFT, y, "measures in progress", graphics.COLOR_DIM)
+		interface.draw_text(table, LEFT, y, "measures in progress", graphics.COLOR_DIM)
 	}
 }
 
@@ -526,10 +542,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if !ok {
 		system.stop(1)
 	}
-	canvas := window.canvas
-	display.picture_begin(&window) // The measure of a picture (display.present).
-	draw(canvas)
-	display.present(&window)
+	draw(&window)
 
 	machine = ctx.handles[system.GRANT_MACHINE]
 	at_start, _ := system.budget_read()
@@ -615,9 +628,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	} else {
 		system.log("locks: wrong: entries ", u64(entries_right), " faults ", u64(faults_right), " pages ", u64(pages_right), " wakes ", u64(pairs_right), " lost ", lost_wakes, " stress ", u64(stress_right), " frames ", u64(frames_stress_right))
 	}
-	display.picture_begin(&window) // The measure of a picture (display.present).
-	draw(canvas)
-	display.present(&window)
+	draw(&window)
 	for {
 		for _ in display.next_event(&window) {}
 		display.wait(&window, system.WAIT_FOREVER)

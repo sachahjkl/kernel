@@ -11,9 +11,15 @@ import module "contract:module"
 import op "contract:operation"
 import "support:display"
 import "support:graphics"
+import "support:interface"
 import "support:storage"
 import "support:system"
 import "base:intrinsics"
+
+// The window is built with the interface package (docs/INTERFACE.md).
+records_now, records_before: [1024]interface.Draw_Record
+text_now, text_before: [16384]u8
+drawing: interface.Window_Drawing
 
 WIDTH :: 1000
 LINE :: 16
@@ -658,7 +664,6 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	pressed := false
 	for {
 		draw(&window)
-		display.present(&window)
 		display.wait(&window)
 		for event in display.next_event(&window) {
 			chosen := -1
@@ -715,32 +720,36 @@ case_at :: proc "contextless" (at: int) -> int {
 }
 
 draw :: proc "contextless" (window: ^display.Window) {
-	canvas := window.canvas
-	display.picture_begin(window) // The measure of a picture (display.present).
-	graphics.clear(canvas, graphics.COLOR_BACKGROUND)
-	graphics.text(canvas, 16, 8, "each case makes an error for real; under it, the sentence of its record: errors.Error_Record,", graphics.COLOR_DIM)
-	graphics.text(canvas, 16, 8 + LINE, "module.Load_Error, op.Stop_Report.frames. A key from a to s, or a click on a case, runs it again", graphics.COLOR_DIM)
+	if drawing.now.records == nil {
+		drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
+	}
+	frame := interface.window_frame_begin(&drawing, window)
+	table := frame.table
+	interface.draw_rectangle(table, 0, 0, WIDTH, HEIGHT, graphics.COLOR_BACKGROUND)
+	interface.draw_text(table, 16, 8, "each case makes an error for real; under it, the sentence of its record: errors.Error_Record,", graphics.COLOR_DIM)
+	interface.draw_text(table, 16, 8 + LINE, "module.Load_Error, op.Stop_Report.frames. A key from a to s, or a click on a case, runs it again", graphics.COLOR_DIM)
 	y := TOP
 	for &item, index in cases {
 		height := case_height(index)
 		if index % 2 == 0 {
-			graphics.fill(canvas, 8, y, WIDTH - 16, height, graphics.COLOR_TRACK)
+			interface.draw_rectangle(table, 8, y, WIDTH - 16, height, graphics.COLOR_TRACK)
 		}
-		graphics.text(canvas, 16, y, key_names[index:index + 1], graphics.COLOR_DIM)
-		graphics.text(canvas, 32, y, item.text, graphics.COLOR_DIM)
-		graphics.text(canvas, 440, y, item.expected, graphics.COLOR_TEXT)
-		graphics.text(canvas, 640, y, item.right ? "the expected record" : "another answer", item.right ? graphics.COLOR_TEXT : graphics.COLOR_FAILED)
+		interface.draw_text(table, 16, y, key_names[index:index + 1], graphics.COLOR_DIM)
+		interface.draw_text(table, 32, y, item.text, graphics.COLOR_DIM)
+		interface.draw_text(table, 440, y, item.expected, graphics.COLOR_TEXT)
+		interface.draw_text(table, 640, y, item.right ? "the expected record" : "another answer", item.right ? graphics.COLOR_TEXT : graphics.COLOR_FAILED)
 		sentence := string(item.sentence[:item.count])
 		cut := sentence_cut(sentence)
 		color: u32 = item.right ? graphics.COLOR_TEXT : graphics.COLOR_FAILED
-		graphics.text(canvas, 32, y + LINE, sentence[:cut], color)
+		interface.draw_text(table, 32, y + LINE, sentence[:cut], color)
 		if cut < len(sentence) {
 			rest := sentence[sentence[cut] == ' ' ? cut + 1 : cut:]
-			graphics.text(canvas, 32, y + 2 * LINE, rest[:min(len(rest), SHOWN)], color)
+			interface.draw_text(table, 32, y + 2 * LINE, rest[:min(len(rest), SHOWN)], color)
 		}
 		y += height
 	}
 	y += 8
 	line: [160]u8
-	graphics.text(canvas, 16, y, system.format(line[:], "a failure with its error record: ", kernel_failed, " ns in a kernel operation (success: ", kernel_good, " ns), ", direct_failed, " ns in a direct call (success: ", direct_good, " ns)"), graphics.COLOR_DIM)
+	interface.draw_text(table, 16, y, system.format(line[:], "a failure with its error record: ", kernel_failed, " ns in a kernel operation (success: ", kernel_good, " ns), ", direct_failed, " ns in a direct call (success: ", direct_good, " ns)"), graphics.COLOR_DIM)
+	interface.window_frame_end(&drawing, &frame, window)
 }

@@ -13,9 +13,15 @@ package imports
 import "base:intrinsics"
 import "support:display"
 import "support:graphics"
+import "support:interface"
 import module "contract:module"
 import op "contract:operation"
 import "support:system"
+
+// The window is built with the interface package (docs/INTERFACE.md).
+records_now, records_before: [512]interface.Draw_Record
+text_now, text_before: [8192]u8
+drawing: interface.Window_Drawing
 
 foreign _ {
 	days_in_month :: proc "c" (month, year: i64) -> i64 ---
@@ -330,34 +336,37 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	system.log("imports: the bind of agenda: ", bind_whole, ".", bind_tenth, " ns, and ", checked_whole, ".", checked_tenth, " ns with the check of the replacement; the load of agenda and its import: ", load_whole / 1000, " us, and ", load_replaced_whole / 1000, " us")
 	system.log("imports: two programs import calendar at two places: one copy of its code, ", shared_pages, " pages, mapped ", shared_mappings, " times")
 
-	canvas := window.canvas
 	for {
-		display.picture_begin(&window) // The measure of a picture (display.present).
-		graphics.clear(canvas, graphics.COLOR_BACKGROUND)
+		if drawing.now.records == nil {
+			drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
+		}
+		frame := interface.window_frame_begin(&drawing, &window)
+		table := frame.table
+		interface.draw_rectangle(table, 0, 0, WIDTH, HEIGHT, graphics.COLOR_BACKGROUND)
 		y := 12
-		graphics.text(canvas, 12, y, "agenda imports calendar. calendar has a fault; calendar_fixed corrects it.", graphics.COLOR_DIM)
+		interface.draw_text(table, 12, y, "agenda imports calendar. calendar has a fault; calendar_fixed corrects it.", graphics.COLOR_DIM)
 		y += LINE
-		graphics.text(canvas, 12, y, "the loader gives a replacement only if each export that agenda uses is the same.", graphics.COLOR_DIM)
+		interface.draw_text(table, 12, y, "the loader gives a replacement only if each export that agenda uses is the same.", graphics.COLOR_DIM)
 		y += LINE + LINE / 2
-		graphics.text(canvas, 12, y, "the program asks the loader", graphics.COLOR_DIM)
-		graphics.text(canvas, ANSWER_X, y, "the answer", graphics.COLOR_DIM)
+		interface.draw_text(table, 12, y, "the program asks the loader", graphics.COLOR_DIM)
+		interface.draw_text(table, ANSWER_X, y, "the answer", graphics.COLOR_DIM)
 		y += LINE
 		for item, index in cases[:case_count] {
 			if index % 2 == 0 {
-				graphics.fill(canvas, 6, y - 3, WIDTH - 12, LINE, graphics.COLOR_CARD_TOP)
+				interface.draw_rectangle(table, 6, y - 3, WIDTH - 12, LINE, graphics.COLOR_CARD_TOP)
 			}
-			graphics.text(canvas, 12, y, item.text, graphics.COLOR_TEXT)
-			graphics.text(canvas, ANSWER_X, y, item.answer, item.right ? graphics.COLOR_PROGRAM : COLOR_WRONG)
+			interface.draw_text(table, 12, y, item.text, graphics.COLOR_TEXT)
+			interface.draw_text(table, ANSWER_X, y, item.answer, item.right ? graphics.COLOR_PROGRAM : COLOR_WRONG)
 			y += LINE
 		}
 		y += LINE / 2
 		line: [112]u8
-		graphics.text(canvas, 12, y, system.format(line[:], "a call through the slot: ", call_whole, ".", call_tenth, " ns to calendar, ", replaced_whole, ".", replaced_tenth, " ns to calendar_fixed"), graphics.COLOR_DIM)
+		interface.draw_text(table, 12, y, system.format(line[:], "a call through the slot: ", call_whole, ".", call_tenth, " ns to calendar, ", replaced_whole, ".", replaced_tenth, " ns to calendar_fixed"), graphics.COLOR_DIM)
 		y += LINE
-		graphics.text(canvas, 12, y, system.format(line[:], "the bind of agenda: ", bind_whole, ".", bind_tenth, " ns; with the check of the replacement: ", checked_whole, ".", checked_tenth, " ns"), graphics.COLOR_DIM)
+		interface.draw_text(table, 12, y, system.format(line[:], "the bind of agenda: ", bind_whole, ".", bind_tenth, " ns; with the check of the replacement: ", checked_whole, ".", checked_tenth, " ns"), graphics.COLOR_DIM)
 		y += LINE
-		graphics.text(canvas, 12, y, system.format(line[:], "the load of agenda and calendar: ", load_whole / 1000, " us; with the replacement: ", load_replaced_whole / 1000, " us"), graphics.COLOR_DIM)
-		display.present(&window)
+		interface.draw_text(table, 12, y, system.format(line[:], "the load of agenda and calendar: ", load_whole / 1000, " us; with the replacement: ", load_replaced_whole / 1000, " us"), graphics.COLOR_DIM)
+		interface.window_frame_end(&drawing, &frame, &window)
 		display.wait(&window)
 		for _ in display.next_event(&window) {
 		}

@@ -13,8 +13,14 @@ package limits
 import "base:intrinsics"
 import "support:display"
 import "support:graphics"
+import "support:interface"
 import op "contract:operation"
 import "support:system"
+
+// The window is built with the interface package (docs/INTERFACE.md).
+records_now, records_before: [512]interface.Draw_Record
+text_now, text_before: [8192]u8
+drawing: interface.Window_Drawing
 
 LINE :: 22
 WIDTH :: 640
@@ -105,7 +111,6 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	_, zero := system.budget_create({log_records = log_limit + 1})
 	rule_right := above == .No_Budget && zero == .No_Budget
 
-	canvas := window.canvas
 	sample := 0
 	// The kernel counts processor time with the cycle counter, so the
 	// interval is measured with it too. The milliseconds of the time page
@@ -136,36 +141,40 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			}
 		}
 
-		display.picture_begin(&window) // The measure of a picture (display.present).
-		graphics.clear(canvas, graphics.COLOR_BACKGROUND)
+		if drawing.now.records == nil {
+			drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
+		}
+		frame := interface.window_frame_begin(&drawing, &window)
+		table := frame.table
+		interface.draw_rectangle(table, 0, 0, WIDTH, HEIGHT, graphics.COLOR_BACKGROUND)
 		y := 12
-		graphics.text(canvas, 12, y, "a budget has a limit of processor time for each second.", graphics.COLOR_DIM)
+		interface.draw_text(table, 12, y, "a budget has a limit of processor time for each second.", graphics.COLOR_DIM)
 		y += LINE
-		graphics.text(canvas, 12, y, "each thread computes with no end: the kernel stops it at the limit.", graphics.COLOR_DIM)
+		interface.draw_text(table, 12, y, "each thread computes with no end: the kernel stops it at the limit.", graphics.COLOR_DIM)
 		y += LINE + LINE / 2
 		for row, index in rows {
-			graphics.fill(canvas, 6, y - 4, WIDTH - 12, 2 * LINE - 2, graphics.COLOR_CARD_TOP)
-			graphics.text(canvas, 12, y, row.name, graphics.COLOR_TEXT)
-			x := graphics.unsigned(canvas, BAR_X, y, row.used / 1000, sample > 1 && !within(row) ? COLOR_WRONG : graphics.COLOR_TEXT)
-			x = graphics.text(canvas, x, y, " ms used of ", graphics.COLOR_DIM)
-			x = graphics.unsigned(canvas, x, y, row.limit / 1000, graphics.COLOR_TEXT)
-			graphics.text(canvas, x, y, " ms in one second", graphics.COLOR_DIM)
+			interface.draw_rectangle(table, 6, y - 4, WIDTH - 12, 2 * LINE - 2, graphics.COLOR_CARD_TOP)
+			interface.draw_text(table, 12, y, row.name, graphics.COLOR_TEXT)
+			x := interface.draw_unsigned(table, BAR_X, y, row.used / 1000, sample > 1 && !within(row) ? COLOR_WRONG : graphics.COLOR_TEXT)
+			x = interface.draw_text(table, x, y, " ms used of ", graphics.COLOR_DIM)
+			x = interface.draw_unsigned(table, x, y, row.limit / 1000, graphics.COLOR_TEXT)
+			interface.draw_text(table, x, y, " ms in one second", graphics.COLOR_DIM)
 			y += LINE
-			graphics.fill(canvas, BAR_X, y, BAR_WIDTH, 10, graphics.COLOR_BACKGROUND)
-			graphics.fill(canvas, BAR_X, y, int(min(row.used, BAR_FULL) * BAR_WIDTH / BAR_FULL), 10, COLORS[index])
-			graphics.fill(canvas, BAR_X + int(min(row.limit, BAR_FULL) * BAR_WIDTH / BAR_FULL), y - 3, 2, 16, COLOR_LIMIT)
+			interface.draw_rectangle(table, BAR_X, y, BAR_WIDTH, 10, graphics.COLOR_BACKGROUND)
+			interface.draw_rectangle(table, BAR_X, y, int(min(row.used, BAR_FULL) * BAR_WIDTH / BAR_FULL), 10, COLORS[index])
+			interface.draw_rectangle(table, BAR_X + int(min(row.limit, BAR_FULL) * BAR_WIDTH / BAR_FULL), y - 3, 2, 16, COLOR_LIMIT)
 			y += LINE
 		}
 		y += LINE / 2
-		graphics.text(canvas, 12, y, "what the three budgets use counts in the budget of the program.", graphics.COLOR_DIM)
+		interface.draw_text(table, 12, y, "what the three budgets use counts in the budget of the program.", graphics.COLOR_DIM)
 		y += LINE
-		graphics.text(canvas, 12, y, "a new budget with a higher limit than the program:", graphics.COLOR_DIM)
-		graphics.text(canvas, 424, y, rule_right ? "refused: no budget" : "another answer", rule_right ? graphics.COLOR_PROGRAM : COLOR_WRONG)
+		interface.draw_text(table, 12, y, "a new budget with a higher limit than the program:", graphics.COLOR_DIM)
+		interface.draw_text(table, 424, y, rule_right ? "refused: no budget" : "another answer", rule_right ? graphics.COLOR_PROGRAM : COLOR_WRONG)
 		y += LINE
 		line: [96]u8
-		graphics.text(canvas, 12, y, system.format(line[:], "100 log records at once, ", log_limit, " for each second:"), graphics.COLOR_DIM)
-		graphics.text(canvas, 424, y, system.format(line[:], accepted, " written, ", refused, " refused"), log_right ? graphics.COLOR_PROGRAM : COLOR_WRONG)
-		display.present(&window)
+		interface.draw_text(table, 12, y, system.format(line[:], "100 log records at once, ", log_limit, " for each second:"), graphics.COLOR_DIM)
+		interface.draw_text(table, 424, y, system.format(line[:], accepted, " written, ", refused, " refused"), log_right ? graphics.COLOR_PROGRAM : COLOR_WRONG)
+		interface.window_frame_end(&drawing, &frame, &window)
 		for _ in display.next_event(&window) {}
 		system.sleep(system.time() + INTERVAL)
 	}

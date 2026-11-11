@@ -14,8 +14,14 @@ import op "contract:operation"
 import "contract:ring"
 import "support:display"
 import "support:graphics"
+import "support:interface"
 import "support:network"
 import "support:system"
+
+// The window is built with the interface package (docs/INTERFACE.md).
+records_now, records_before: [1024]interface.Draw_Record
+text_now, text_before: [16384]u8
+drawing: interface.Window_Drawing
 
 GATEWAY :: 0x0A000202 // 10.0.2.2: the gateway, and the echo server of the test.
 LOCAL :: 0x0A00020F // 10.0.2.15
@@ -367,23 +373,26 @@ measure_burst :: proc "contextless" () {
 }
 
 draw :: proc "contextless" (window: ^display.Window) {
-	canvas := window.canvas
-	display.picture_begin(window) // The measure of a picture (display.present).
-	graphics.clear(canvas, graphics.COLOR_BACKGROUND)
+	if drawing.now.records == nil {
+		drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
+	}
+	frame := interface.window_frame_begin(&drawing, window)
+	table := frame.table
+	interface.draw_rectangle(table, 0, 0, WIDTH, HEIGHT, graphics.COLOR_BACKGROUND)
 	y := 16
-	graphics.text(canvas, LEFT, y, "an endpoint of datagrams: the root service granted 10.0.2.2 port 7, and nothing else.", graphics.COLOR_DIM)
+	interface.draw_text(table, LEFT, y, "an endpoint of datagrams: the root service granted 10.0.2.2 port 7, and nothing else.", graphics.COLOR_DIM)
 	y += LINE
-	graphics.text(canvas, LEFT, y, "the program asks", graphics.COLOR_DIM)
-	graphics.text(canvas, ANSWER_X, y, "the network answers", graphics.COLOR_DIM)
+	interface.draw_text(table, LEFT, y, "the program asks", graphics.COLOR_DIM)
+	interface.draw_text(table, ANSWER_X, y, "the network answers", graphics.COLOR_DIM)
 	y += LINE
 	for &item, index in cases[:case_count] {
 		if index % 2 == 0 {
-			graphics.fill(canvas, 8, y - 4, WIDTH - 16, LINE, graphics.COLOR_CARD_TOP)
+			interface.draw_rectangle(table, 8, y - 4, WIDTH - 16, LINE, graphics.COLOR_CARD_TOP)
 		}
-		graphics.text(canvas, LEFT, y, item.text, graphics.COLOR_DIM)
-		end := graphics.text(canvas, ANSWER_X, y, string(item.answer[:item.count]), item.right ? graphics.COLOR_PROGRAM : graphics.COLOR_FAILED)
+		interface.draw_text(table, LEFT, y, item.text, graphics.COLOR_DIM)
+		end := interface.draw_text(table, ANSWER_X, y, string(item.answer[:item.count]), item.right ? graphics.COLOR_PROGRAM : graphics.COLOR_FAILED)
 		if !item.right {
-			graphics.text(canvas, end + 8, y, "not expected", graphics.COLOR_FAILED)
+			interface.draw_text(table, end + 8, y, "not expected", graphics.COLOR_FAILED)
 		}
 		y += LINE
 	}
@@ -410,11 +419,11 @@ draw :: proc "contextless" (window: ^display.Window) {
 		if item.name == "" {
 			continue
 		}
-		graphics.text(canvas, LEFT, y, item.name, graphics.COLOR_DIM)
-		graphics.text(canvas, ANSWER_X, y, item.value, measured ? graphics.COLOR_TEXT : graphics.COLOR_DIM)
+		interface.draw_text(table, LEFT, y, item.name, graphics.COLOR_DIM)
+		interface.draw_text(table, ANSWER_X, y, item.value, measured ? graphics.COLOR_TEXT : graphics.COLOR_DIM)
 		y += LINE
 	}
-	display.present(window)
+	interface.window_frame_end(&drawing, &frame, window)
 }
 
 @(export, link_name = "entry")

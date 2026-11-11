@@ -16,10 +16,16 @@ package crowd
 
 import "support:display"
 import "support:graphics"
+import "support:interface"
 import op "contract:operation"
 import "contract:ring"
 import "support:system"
 import "base:intrinsics"
+
+// The window is built with the interface package (docs/INTERFACE.md).
+records_now, records_before: [512]interface.Draw_Record
+text_now, text_before: [8192]u8
+drawing: interface.Window_Drawing
 
 DURATION :: 1000 // Milliseconds of one measure.
 CAPACITY :: 1024
@@ -256,46 +262,49 @@ run :: proc "contextless" (measure: ^Measure) -> bool {
 	return read != 0 && written == read && measure.together == u64(count)
 }
 
-bar :: proc "contextless" (canvas: graphics.Canvas, x, y: int, value, most: u64, color: graphics.Color) {
-	graphics.fill(canvas, x, y + 3, BAR_WIDTH, 10, graphics.COLOR_TRACK)
-	graphics.fill(canvas, x, y + 3, int(value * BAR_WIDTH / max(most, 1)), 10, color)
-	graphics.unsigned(canvas, x + BAR_WIDTH + 8, y, value, graphics.COLOR_TEXT)
+bar :: proc "contextless" (table: ^interface.Draw_Table, x, y: int, value, most: u64, color: graphics.Color) {
+	interface.draw_rectangle(table, x, y + 3, BAR_WIDTH, 10, graphics.COLOR_TRACK)
+	interface.draw_rectangle(table, x, y + 3, int(value * BAR_WIDTH / max(most, 1)), 10, color)
+	interface.draw_unsigned(table, x + BAR_WIDTH + 8, y, value, graphics.COLOR_TEXT)
 }
 
 draw :: proc "contextless" (window: ^display.Window) {
-	canvas := window.canvas
-	display.picture_begin(window) // The measure of a picture (display.present).
-	graphics.clear(canvas, graphics.COLOR_BACKGROUND)
+	if drawing.now.records == nil {
+		drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
+	}
+	frame := interface.window_frame_begin(&drawing, window)
+	table := frame.table
+	interface.draw_rectangle(table, 0, 0, WIDTH, HEIGHT, graphics.COLOR_BACKGROUND)
 	most_rate, most_entries: u64
 	for measure in measures {
 		most_rate, most_entries = max(most_rate, measure.rate), max(most_entries, measure.entries)
 	}
 	y := 12
-	graphics.text(canvas, 12, y, "several threads write records in one queue, several threads read them, for one second.", graphics.COLOR_DIM)
+	interface.draw_text(table, 12, y, "several threads write records in one queue, several threads read them, for one second.", graphics.COLOR_DIM)
 	y += LINE
-	graphics.text(canvas, 12, y, "one event starts the threads of a measure. no record is lost, none arrives two times.", graphics.COLOR_DIM)
+	interface.draw_text(table, 12, y, "one event starts the threads of a measure. no record is lost, none arrives two times.", graphics.COLOR_DIM)
 	y += LINE + LINE / 2
-	graphics.text(canvas, 12, y, "queue    writers  readers  wrong", graphics.COLOR_DIM)
-	graphics.text(canvas, RATE_X, y, "records in one second", graphics.COLOR_DIM)
-	graphics.text(canvas, ENTRIES_X, y, "kernel entries, one million records", graphics.COLOR_DIM)
+	interface.draw_text(table, 12, y, "queue    writers  readers  wrong", graphics.COLOR_DIM)
+	interface.draw_text(table, RATE_X, y, "records in one second", graphics.COLOR_DIM)
+	interface.draw_text(table, ENTRIES_X, y, "kernel entries, one million records", graphics.COLOR_DIM)
 	y += LINE
 	for measure, index in measures {
 		if index % 2 == 0 {
-			graphics.fill(canvas, 6, y - 4, WIDTH - 12, LINE, graphics.COLOR_CARD_TOP)
+			interface.draw_rectangle(table, 6, y - 4, WIDTH - 12, LINE, graphics.COLOR_CARD_TOP)
 		}
-		graphics.text(canvas, 12, y, measure.with_lock ? "lock" : "shared", measure.with_lock ? COLOR_LOCK : graphics.COLOR_TEXT)
-		graphics.unsigned(canvas, 84, y, u64(measure.writers), graphics.COLOR_TEXT)
-		graphics.unsigned(canvas, 156, y, u64(measure.readers), graphics.COLOR_TEXT)
+		interface.draw_text(table, 12, y, measure.with_lock ? "lock" : "shared", measure.with_lock ? COLOR_LOCK : graphics.COLOR_TEXT)
+		interface.draw_unsigned(table, 84, y, u64(measure.writers), graphics.COLOR_TEXT)
+		interface.draw_unsigned(table, 156, y, u64(measure.readers), graphics.COLOR_TEXT)
 		if measure.done {
-			graphics.unsigned(canvas, 228, y, measure.wrong, measure.wrong == 0 ? graphics.COLOR_DIM : graphics.COLOR_FAILED)
-			bar(canvas, RATE_X, y, measure.rate, most_rate, measure.wrong != 0 ? graphics.COLOR_FAILED : measure.with_lock ? COLOR_LOCK : COLOR_RATE)
-			bar(canvas, ENTRIES_X, y, measure.entries, most_entries, COLOR_ENTRIES)
+			interface.draw_unsigned(table, 228, y, measure.wrong, measure.wrong == 0 ? graphics.COLOR_DIM : graphics.COLOR_FAILED)
+			bar(table, RATE_X, y, measure.rate, most_rate, measure.wrong != 0 ? graphics.COLOR_FAILED : measure.with_lock ? COLOR_LOCK : COLOR_RATE)
+			bar(table, ENTRIES_X, y, measure.entries, most_entries, COLOR_ENTRIES)
 		} else {
-			graphics.text(canvas, RATE_X, y, "...", graphics.COLOR_DIM)
+			interface.draw_text(table, RATE_X, y, "...", graphics.COLOR_DIM)
 		}
 		y += LINE
 	}
-	display.present(window)
+	interface.window_frame_end(&drawing, &frame, window)
 }
 
 @(export, link_name = "entry")

@@ -8,8 +8,14 @@ package rights
 
 import "support:display"
 import "support:graphics"
+import "support:interface"
 import op "contract:operation"
 import "support:system"
+
+// The window is built with the interface package (docs/INTERFACE.md).
+records_now, records_before: [512]interface.Draw_Record
+text_now, text_before: [8192]u8
+drawing: interface.Window_Drawing
 
 LINE :: 22
 ANSWER_X :: 384
@@ -125,35 +131,38 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.log("rights: ok, ", allowed, " allowed, ", refused, " refused")
 	}
 
-	canvas := window.canvas
 	for {
-		display.picture_begin(&window) // The measure of a picture (display.present).
-		graphics.clear(canvas, graphics.COLOR_BACKGROUND)
+		if drawing.now.records == nil {
+			drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
+		}
+		frame := interface.window_frame_begin(&drawing, &window)
+		table := frame.table
+		interface.draw_rectangle(table, 0, 0, WIDTH, HEIGHT, graphics.COLOR_BACKGROUND)
 		y := 12
-		graphics.text(canvas, 12, y, "this program holds two handles from the root service:", graphics.COLOR_DIM)
+		interface.draw_text(table, 12, y, "this program holds two handles from the root service:", graphics.COLOR_DIM)
 		y += LINE
-		x := graphics.text(canvas, 28, y, "the machine, with the right ", graphics.COLOR_TEXT)
-		graphics.text(canvas, x, y, "Inspect", graphics.COLOR_PROGRAM)
+		x := interface.draw_text(table, 28, y, "the machine, with the right ", graphics.COLOR_TEXT)
+		interface.draw_text(table, x, y, "Inspect", graphics.COLOR_PROGRAM)
 		y += LINE
-		x = graphics.text(canvas, 28, y, "the boot image, with the right ", graphics.COLOR_TEXT)
-		graphics.text(canvas, x, y, "Read", graphics.COLOR_PROGRAM)
+		x = interface.draw_text(table, 28, y, "the boot image, with the right ", graphics.COLOR_TEXT)
+		interface.draw_text(table, x, y, "Read", graphics.COLOR_PROGRAM)
 		y += LINE + LINE / 2
-		graphics.text(canvas, 12, y, "the program asks", graphics.COLOR_DIM)
-		graphics.text(canvas, ANSWER_X, y, "the kernel answers", graphics.COLOR_DIM)
+		interface.draw_text(table, 12, y, "the program asks", graphics.COLOR_DIM)
+		interface.draw_text(table, ANSWER_X, y, "the kernel answers", graphics.COLOR_DIM)
 		y += LINE
 		for attempt, index in attempts[:attempt_count] {
 			if index % 2 == 0 {
-				graphics.fill(canvas, 6, y - 3, WIDTH - 12, LINE, graphics.COLOR_CARD_TOP)
+				interface.draw_rectangle(table, 6, y - 3, WIDTH - 12, LINE, graphics.COLOR_CARD_TOP)
 			}
-			graphics.text(canvas, 12, y, attempt.text, graphics.COLOR_TEXT)
+			interface.draw_text(table, 12, y, attempt.text, graphics.COLOR_TEXT)
 			color: graphics.Color = attempt.status == .Ok ? graphics.COLOR_PROGRAM : COLOR_REFUSED
 			if attempt.status != attempt.expected {
 				color = COLOR_WRONG
 			}
-			graphics.text(canvas, ANSWER_X, y, answer(attempt.status), color)
+			interface.draw_text(table, ANSWER_X, y, answer(attempt.status), color)
 			y += LINE
 		}
-		display.present(&window)
+		interface.window_frame_end(&drawing, &frame, &window)
 		display.wait(&window)
 		for _ in display.next_event(&window) {
 		}

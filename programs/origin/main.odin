@@ -9,8 +9,14 @@ package origin
 
 import "support:display"
 import "support:graphics"
+import "support:interface"
 import op "contract:operation"
 import "support:system"
+
+// The window is built with the interface package (docs/INTERFACE.md).
+records_now, records_before: [512]interface.Draw_Record
+text_now, text_before: [8192]u8
+drawing: interface.Window_Drawing
 
 LINE :: 22
 ANSWER_X :: 424
@@ -127,32 +133,35 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	copy_time = (system.time() - start) * 1_000_000 / CYCLES
 	system.log("origin: lend a handle and take it back: ", lend_time, " ns with 4 kernel entries; copy and close: ", copy_time, " ns with 2")
 
-	canvas := window.canvas
 	for {
-		display.picture_begin(&window) // The measure of a picture (display.present).
-		graphics.clear(canvas, graphics.COLOR_BACKGROUND)
+		if drawing.now.records == nil {
+			drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
+		}
+		frame := interface.window_frame_begin(&drawing, &window)
+		table := frame.table
+		interface.draw_rectangle(table, 0, 0, WIDTH, HEIGHT, graphics.COLOR_BACKGROUND)
 		y := 12
-		graphics.text(canvas, 12, y, "the kernel keeps the origin of each handle and of each mapping.", graphics.COLOR_DIM)
+		interface.draw_text(table, 12, y, "the kernel keeps the origin of each handle and of each mapping.", graphics.COLOR_DIM)
 		y += LINE
-		graphics.text(canvas, 12, y, "a program takes back what came from a handle that it holds.", graphics.COLOR_DIM)
+		interface.draw_text(table, 12, y, "a program takes back what came from a handle that it holds.", graphics.COLOR_DIM)
 		y += LINE + LINE / 2
-		graphics.text(canvas, 12, y, "the program does", graphics.COLOR_DIM)
-		graphics.text(canvas, ANSWER_X, y, "the kernel answers", graphics.COLOR_DIM)
+		interface.draw_text(table, 12, y, "the program does", graphics.COLOR_DIM)
+		interface.draw_text(table, ANSWER_X, y, "the kernel answers", graphics.COLOR_DIM)
 		y += LINE
 		for item, index in cases[:case_count] {
 			if index % 2 == 0 {
-				graphics.fill(canvas, 6, y - 3, WIDTH - 12, LINE, graphics.COLOR_CARD_TOP)
+				interface.draw_rectangle(table, 6, y - 3, WIDTH - 12, LINE, graphics.COLOR_CARD_TOP)
 			}
-			graphics.text(canvas, 12, y, item.text, graphics.COLOR_TEXT)
-			graphics.text(canvas, ANSWER_X, y, item.right ? item.answer : "another answer", item.right ? graphics.COLOR_PROGRAM : COLOR_WRONG)
+			interface.draw_text(table, 12, y, item.text, graphics.COLOR_TEXT)
+			interface.draw_text(table, ANSWER_X, y, item.right ? item.answer : "another answer", item.right ? graphics.COLOR_PROGRAM : COLOR_WRONG)
 			y += LINE
 		}
 		y += LINE / 2
 		line: [96]u8
-		graphics.text(canvas, 12, y, system.format(line[:], "lend a handle for a call, then take it back: ", lend_time, " ns, 4 kernel entries"), graphics.COLOR_DIM)
+		interface.draw_text(table, 12, y, system.format(line[:], "lend a handle for a call, then take it back: ", lend_time, " ns, 4 kernel entries"), graphics.COLOR_DIM)
 		y += LINE
-		graphics.text(canvas, 12, y, system.format(line[:], "copy a handle, then close the copy: ", copy_time, " ns, 2 kernel entries"), graphics.COLOR_DIM)
-		display.present(&window)
+		interface.draw_text(table, 12, y, system.format(line[:], "copy a handle, then close the copy: ", copy_time, " ns, 2 kernel entries"), graphics.COLOR_DIM)
+		interface.window_frame_end(&drawing, &frame, &window)
 		display.wait(&window)
 		for _ in display.next_event(&window) {
 		}

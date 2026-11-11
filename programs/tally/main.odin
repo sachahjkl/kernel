@@ -13,7 +13,13 @@ package tally
 
 import "support:display"
 import "support:graphics"
+import "support:interface"
 import "support:system"
+
+// The window is built with the interface package (docs/INTERFACE.md).
+records_now, records_before: [512]interface.Draw_Record
+text_now, text_before: [8192]u8
+drawing: interface.Window_Drawing
 
 WIDTH :: 400
 HEIGHT :: 214
@@ -81,31 +87,41 @@ COLOR_COUNT :: 0xF0C050
 COLOR_PLUS :: 0x58C878
 COLOR_MINUS :: 0xE06C60
 
-draw :: proc "contextless" (canvas: graphics.Canvas, service: ^system.Service) {
-	graphics.clear(canvas, graphics.COLOR_BACKGROUND)
+// draw builds a frame of the window with the interface package.
+draw :: proc "contextless" (window: ^display.Window, service: ^system.Service) {
+	if drawing.now.records == nil {
+		drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
+	}
+	frame := interface.window_frame_begin(&drawing, window)
+	draw_records(frame.table, service)
+	interface.window_frame_end(&drawing, &frame, window)
+}
+
+draw_records :: proc "contextless" (table: ^interface.Draw_Table, service: ^system.Service) {
+	interface.draw_rectangle(table, 0, 0, WIDTH, HEIGHT, graphics.COLOR_BACKGROUND)
 	buffer: [24]u8
-	x := graphics.text(canvas, 12, 10, "count ", graphics.COLOR_DIM)
-	x = graphics.text(canvas, x, 10, system.format(buffer[:], count), COLOR_COUNT)
-	x = graphics.text(canvas, x + 24, 10, "adds ", graphics.COLOR_DIM)
-	graphics.text(canvas, x, 10, system.format(buffer[:], calls), graphics.COLOR_TEXT)
-	graphics.fill(canvas, 12, 32, WIDTH - 24, 1, 0x30363C)
+	x := interface.draw_text(table, 12, 10, "count ", graphics.COLOR_DIM)
+	x = interface.draw_text(table, x, 10, system.format(buffer[:], count), COLOR_COUNT)
+	x = interface.draw_text(table, x + 24, 10, "adds ", graphics.COLOR_DIM)
+	interface.draw_text(table, x, 10, system.format(buffer[:], calls), graphics.COLOR_TEXT)
+	interface.draw_rectangle(table, 12, 32, WIDTH - 24, 1, 0x30363C)
 	// The notes, the last one first.
 	for row in 0 ..< min(calls, NOTE_CAPACITY) {
 		item := &notes[u64(calls - 1 - row) % NOTE_CAPACITY]
 		y := 40 + int(row) * 18
 		amount := system.format(buffer[:], item.amount)
 		if item.amount >= 0 {
-			graphics.text(canvas, 12, y, "+", COLOR_PLUS)
+			interface.draw_text(table, 12, y, "+", COLOR_PLUS)
 		}
-		graphics.text(canvas, item.amount >= 0 ? 20 : 12, y, amount, item.amount >= 0 ? COLOR_PLUS : COLOR_MINUS)
-		graphics.text(canvas, 92, y, string(item.text[:item.count]), row == 0 ? graphics.COLOR_TEXT : graphics.COLOR_DIM)
+		interface.draw_text(table, item.amount >= 0 ? 20 : 12, y, amount, item.amount >= 0 ? COLOR_PLUS : COLOR_MINUS)
+		interface.draw_text(table, 92, y, string(item.text[:item.count]), row == 0 ? graphics.COLOR_TEXT : graphics.COLOR_DIM)
 	}
-	graphics.fill(canvas, 12, HEIGHT - 30, WIDTH - 24, 1, 0x30363C)
-	x = graphics.text(canvas, 12, HEIGHT - 22, "space: add 1", graphics.COLOR_DIM)
-	x = graphics.text(canvas, x + 24, HEIGHT - 22, "callers ", graphics.COLOR_DIM)
-	x = graphics.text(canvas, x, HEIGHT - 22, system.format(buffer[:], u64(service.connected)), graphics.COLOR_TEXT)
-	x = graphics.text(canvas, x + 16, HEIGHT - 22, "calls ", graphics.COLOR_DIM)
-	graphics.text(canvas, x, HEIGHT - 22, system.format(buffer[:], service.calls), graphics.COLOR_TEXT)
+	interface.draw_rectangle(table, 12, HEIGHT - 30, WIDTH - 24, 1, 0x30363C)
+	x = interface.draw_text(table, 12, HEIGHT - 22, "space: add 1", graphics.COLOR_DIM)
+	x = interface.draw_text(table, x + 24, HEIGHT - 22, "callers ", graphics.COLOR_DIM)
+	x = interface.draw_text(table, x, HEIGHT - 22, system.format(buffer[:], u64(service.connected)), graphics.COLOR_TEXT)
+	x = interface.draw_text(table, x + 16, HEIGHT - 22, "calls ", graphics.COLOR_DIM)
+	interface.draw_text(table, x, HEIGHT - 22, system.format(buffer[:], service.calls), graphics.COLOR_TEXT)
 }
 
 @(export, link_name = "entry")
@@ -117,9 +133,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	system.log("tally: ok")
 	for {
-		display.picture_begin(&window) // The measure of a picture (display.present).
-		draw(window.canvas, &service)
-		display.present(&window)
+		draw(&window, &service)
 
 		wait: system.Wait
 		display.wait_events(&wait, &window)
