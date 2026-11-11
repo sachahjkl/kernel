@@ -54,7 +54,7 @@ The strength of the seed is the strongest source that gave all its values. The r
 
 **A machine with no `rdrand` and no `rdseed`.** The seed comes from the cycle counter only. Each program still starts and draws. The log and the window say "weak (the cycle counter only)" in the color of a failure. `kerneltool test random` runs such a machine (`-cpu max,-rdrand,-rdseed`).
 
-**Each program knows the strength of its seed.** The starter writes the strength of the seed of the system in the context value 8 (`op.CONTEXT_VALUE_SEED_STRENGTH`) with the seed: 1 weak, 2 processor, 3 entropy. A child's seed comes from its starter's stream, so it has the same strength. `random.seed_strength(generator)` gives it.
+**Each program knows the strength of its seed.** The starter writes the strength of the seed of the system in the context value 16 (`op.CONTEXT_VALUE_SEED_STRENGTH`) with the seed: 1 weak, 2 processor, 3 entropy. A child's seed comes from its starter's stream, so it has the same strength. `random.seed_strength(generator)` gives it.
 
 **Each program chooses the least strength that it accepts.** The decision of the owner, 2026-11-11, word for word: "je pense que les fonctions qu'on expose devrait permettre de choisir ce que le programme tolère et dans le cas où les requis que le programme attend ne sont pas satisfaits et ben dans ce cas là c'est une erreur c'est pas grave".
 - `random.fill_for_a_key(generator, output, least_strength, error)` gives bytes for a key, a nonce or another secret only when the seed of the program has `least_strength` at least.

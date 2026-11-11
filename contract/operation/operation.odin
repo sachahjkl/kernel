@@ -764,7 +764,12 @@ Program_Report :: struct {
 // The context: the one record that a program receives when it starts
 // (property 19). The address of the record is the parameter of the entry.
 CONTEXT_HANDLES :: 16
-CONTEXT_VALUES :: 16
+// The values 0 to 15 began as free values, and the roles of the system
+// took 9 to 15 one after the other until two roles wanted one number. The
+// values 16 to 23 are for the roles that the system fixes for every
+// program: a new role of the system takes a number there, never under 16.
+// A starter and its program use 0 to 8 for their own values.
+CONTEXT_VALUES :: 24
 
 // It holds no text: a program has nothing to parse.
 Context :: struct {
@@ -782,11 +787,11 @@ CONTEXT_LOG :: 14 // The log of the kernel.
 // not use the values 9 to 12 for another role.
 CONTEXT_VALUE_SEED :: 9
 CONTEXT_VALUE_SEED_COUNT :: 4
-// The value 8: the strength of the seed of the system, from which the seed
+// The value 16: the strength of the seed of the system, from which the seed
 // of the program comes (support/random, Seed_Strength): 1 weak (the cycle
 // counter only), 2 processor (rdrand), 3 entropy (rdseed). The starter
 // writes it with the seed.
-CONTEXT_VALUE_SEED_STRENGTH :: 8
+CONTEXT_VALUE_SEED_STRENGTH :: 16
 CONTEXT_BUDGET :: 15 // The budget of the program.
 // The value that the root service fixes for each program that it starts
 // with a surface or a terminal: values[13] is the address of the settings

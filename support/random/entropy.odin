@@ -2,6 +2,7 @@ package random
 
 import "base:intrinsics"
 import "contract:blake3"
+import op "contract:operation"
 import crypto "support:cryptography/compatibility_crypto"
 
 // The sources of entropy of the root service (docs/RANDOMNESS.md). The
@@ -219,7 +220,7 @@ entropy_gather :: proc "contextless" (sources: Entropy_Sources, report: ^Entropy
 // (the values 9 to 12 are the seed of the program).
 REPORT_VALUES :: 8
 
-report_values_write :: proc "contextless" (report: ^Entropy_Report, values: ^[16]u64) {
+report_values_write :: proc "contextless" (report: ^Entropy_Report, values: ^[op.CONTEXT_VALUES]u64) {
 	values[0] = u64(report.strength) | u64(report.rdseed_present) << 8 | u64(report.rdrand_present) << 9
 	values[1] = u64(report.rdseed_good)
 	values[2] = u64(report.rdseed_refused)
@@ -230,7 +231,7 @@ report_values_write :: proc "contextless" (report: ^Entropy_Report, values: ^[16
 	values[7] = u64(report.device_bytes)
 }
 
-report_values_read :: proc "contextless" (values: ^[16]u64) -> (report: Entropy_Report) {
+report_values_read :: proc "contextless" (values: ^[op.CONTEXT_VALUES]u64) -> (report: Entropy_Report) {
 	report.strength = Seed_Strength(min(values[0] & 0xFF, u64(max(Seed_Strength))))
 	report.rdseed_present = values[0] >> 8 & 1 != 0
 	report.rdrand_present = values[0] >> 9 & 1 != 0

@@ -156,7 +156,7 @@ reseed :: proc "contextless" (generator: ^Generator, fresh: []u8) {
 }
 
 // generator_from_context seeds the generator of a program with the seed of
-// its context (the values 9 to 12) and its strength (the value 8), and
+// its context (the values 9 to 12) and its strength (the value 16), and
 // erases the seed there. false: the context has no seed (the root service).
 generator_from_context :: proc "contextless" (generator: ^Generator, ctx: ^system.Context) -> bool {
 	seed: [SEED_SIZE]u8
