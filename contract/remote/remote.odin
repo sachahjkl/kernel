@@ -62,18 +62,25 @@ Request :: struct {
 	result_count: u32, // The bytes of that place.
 	result_unit:  u32, // The bytes that one unit of the integer result counts there: 1 for a Text, the size of a record for a Table, 0 for a Record (the whole place).
 	error_start:  u32, // The place of the error record (56 bytes). 0: the export has none.
+	// The table of error details: the offset of the end of its field
+	// (isolated.Table_Field, 32 bytes) in the argument record. 0: the export
+	// has none. The end and not the start, because a field at offset 0 is
+	// valid.
+	details_end:  u32,
+	_:            u32,
 }
-#assert(size_of(Request) == 104)
+#assert(size_of(Request) == 112)
 
 // The names of the fields of a Request, for the sentence of a refusal: the
 // argument of the error record is the index, from 1.
 @(rodata)
-REQUEST_FIELD_NAMES := [?]string{"kind", "export", "number", "service", "hash", "arguments", "record_size", "result_start", "result_count", "result_unit", "error_start"}
+REQUEST_FIELD_NAMES := [?]string{"kind", "export", "number", "service", "hash", "arguments", "record_size", "result_start", "result_count", "result_unit", "error_start", "details_end"}
 
 Status :: enum u32 {
 	// The call ran. call_status is the isolated.Status of the completion;
 	// value is the integer result. When value is negative and the export
-	// has an error record, error is the record that the service wrote.
+	// has an error record, error is the record that the service wrote, and
+	// the bytes of the answer are its error details (details_bytes).
 	Ok       = 0,
 	// The remote service refused the request, and no call ran: error says
 	// why. Its argument is the field of the Request (REQUEST_FIELD_NAMES).
@@ -93,7 +100,7 @@ Answer :: struct {
 	total:       u32, // The bytes of the whole result.
 	offset:      u32, // The place of this part in the result.
 	count:       u32, // The bytes of this part.
-	reserved:    u32,
+	details:     u32, // A call that failed: the count of its error details, of the full answer, at most the largest u32. The bytes of the answer are the details that fit.
 	hash:        [32]u8, // The hash of the module of the service that runs, when the remote service knows it.
 	error:       errors.Error_Record,
 }
@@ -129,6 +136,7 @@ FIELD_RESULT_START :: 8
 FIELD_RESULT_COUNT :: 9
 FIELD_RESULT_UNIT :: 10
 FIELD_ERROR_START :: 11
+FIELD_DETAILS_END :: 12
 
 // request_check reads the header of a call request in the bytes of one
 // datagram, and checks it against those bytes and a call region of
@@ -167,6 +175,9 @@ request_check :: proc "contextless" (bytes: []u8, region_size: u64) -> (request:
 		return request, nil, refuse(.Too_Long, .Bytes, FIELD_RESULT_UNIT, i64(request.result_unit), i64(request.result_count)), false
 	case request.error_start != 0 && (request.error_start % 8 != 0 || u64(request.error_start) > region_size - isolated.ERROR_RECORD_SIZE):
 		return request, nil, refuse(.Bad_Value, .Bytes, FIELD_ERROR_START, i64(request.error_start), i64(region_size - isolated.ERROR_RECORD_SIZE)), false
+	case request.details_end != 0 && (request.details_end % 8 != 0 || request.details_end < size_of(isolated.Table_Field) || request.details_end > request.record_size):
+		// The field of the table is inside the argument record.
+		return request, nil, refuse(.Bad_Value, .Bytes, FIELD_DETAILS_END, i64(request.details_end), i64(request.record_size)), false
 	}
 	return request, bytes[REQUEST_SIZE:][:request.arguments], {}, true
 }
@@ -184,6 +195,36 @@ result_bytes :: proc "contextless" (request: Request, value: i64) -> u64 {
 		return 0
 	}
 	return min(u64(value), u64(request.result_count / request.result_unit)) * u64(request.result_unit)
+}
+
+// details_bytes gives the error details of a call that failed, from the call
+// region after the call: the records that the service appended from the
+// start of the field of the table of error details (the caller gave a count
+// of 0, so the first record is at the start), and count, the count of the
+// full answer that the field holds. The service wrote the field: no number
+// of it is trusted, and the bytes are cut to the call region. A table in a
+// memory object has no bytes here.
+details_bytes :: proc "contextless" (request: Request, region: []u8) -> (bytes: []u8, count: u64) {
+	if request.details_end == 0 || u64(request.details_end) < size_of(isolated.Table_Field) || u64(request.details_end) > u64(len(region)) {
+		return nil, 0
+	}
+	field := read(region[u64(request.details_end) - size_of(isolated.Table_Field):], isolated.Table_Field)
+	if field.memory_handle != 0 || field.start > u64(len(region)) {
+		return nil, field.count
+	}
+	records := min(field.count, field.capacity, (u64(len(region)) - field.start) / isolated.ERROR_RECORD_SIZE)
+	return region[field.start:][:records * isolated.ERROR_RECORD_SIZE], field.count
+}
+
+// details_shown gives how many error details of an answer the host reads,
+// from the bytes of the answer of a failed call: whole records only, and at
+// most the count that the answer names. sound is false when the bytes are
+// not whole records, or are more records than the count: the answer lies,
+// and the host says so.
+details_shown :: proc "contextless" (answer: Answer, byte_count: u64) -> (shown: u64, sound: bool) {
+	records := byte_count / isolated.ERROR_RECORD_SIZE
+	shown = min(records, u64(answer.details))
+	return shown, byte_count % isolated.ERROR_RECORD_SIZE == 0 && records <= u64(answer.details)
 }
 
 // part_count gives the datagrams of a call answer with a result of total

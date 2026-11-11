@@ -265,9 +265,15 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	note("the check of number against fibonacci (math)", difference == .Parameter_Type && parameter == 1 && expected.type == .Text && given.type == .Integer, "parameter 1: Integer, not Text")
 
 	// 4. An import that is not in what the program was granted.
+	// With a table of error details: one load error for each import that is
+	// missing, and the record of the load is the first of them.
 	lonely := space_of(4, nil)
-	system.module_space_load(&lonely, system.image_find(image, "lonely"), &error)
-	note("lonely: its import is not in the boot image", error.stage == .Find && error.module.hash == hash_of("lonely") && error.imported.hash != {} && system.image_entry_of(image, error.imported.hash) == nil && used(&lonely) == 0, "refused: missing import")
+	lonely_detail_records: [4]module.Load_Error
+	lonely_details := system.Table_To_Append(module.Load_Error){records = &lonely_detail_records[0], count = 0, capacity = 4}
+	system.module_space_load(&lonely, system.image_find(image, "lonely"), &error, &lonely_details)
+	first_detail := &lonely_detail_records[0]
+	details_agree := lonely_details.count >= 1 && first_detail.stage == error.stage && first_detail.module.hash == error.module.hash && first_detail.imported.hash == error.imported.hash
+	note("lonely: its import is not in the boot image", error.stage == .Find && error.module.hash == hash_of("lonely") && error.imported.hash != {} && system.image_entry_of(image, error.imported.hash) == nil && used(&lonely) == 0 && details_agree, "refused: missing import; error details: ", lonely_details.count)
 
 	// 5. A replacement that makes a cycle.
 	cycled := space_of(5, cycle)

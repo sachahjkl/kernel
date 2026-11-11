@@ -6,6 +6,51 @@ The project has steps, not separate releases. The merge of step N on `master` is
 
 What is not in a release yet is in `changelog.d/`, one fragment for each change. `kerneltool changelog release` writes a release from the fragments. Nobody edits this file by hand.
 
+## [0.74.0] - 2026-11-11
+
+### Added
+
+- **The pointer theme and the grid fit are settings.** The window `settings` and `settings.set("pointer_theme", "system")` or `settings.set("grid_fit", "off")` change them while every program runs.
+- **Settings survive a stop.** The font, the order of the color stripes, the pointer theme and the grid fit of the text are kept in the store of the program `settings` and come back at the next boot; a loss of power gives the old settings or the new ones, never a mix.
+- **A module of text shaping, and the interface font B612 as data.** The module `text_shaping` places the characters of a text with the advances and the pair adjustments of a proportional font, and measures many texts in one call; the build makes the glyph caches of B612 Regular and Bold, which no window draws yet.
+
+### Changed
+
+- **The titles of the cards are bold.** Each card of a window and of the boot display draws its title in the SemiBold weight of the font of the system.
+- **Text on cards and in the console draws faster.** A glyph of the vector font over a plain background costs 109 ns in place of 181 ns on the host (the least of many runs), with the same pixels.
+- **Paper Mono is the font of the system.** The console, the terminal and every window draw their text in Paper Mono on the same grid of 8 x 16 pixels, in place of JetBrains Mono, and the titles of the cards in Paper Mono SemiBold.
+
+## [0.73.0] - 2026-11-11
+
+### Added
+
+- **A caret in the line of the console**: Left, Right, Home, End, Delete and Backspace edit the line at the caret, and a character goes in at the caret.
+- **A completion list in the console**: while the person types, a list under the line shows the commands, the exports, the services, the variables and the modules that match by a fuzzy match (`mcnt` finds `monitor.count`), the matched letters lit, each name with its signature; Tab or Enter takes one, and the line under the input shows the signature of the call at the caret.
+- **A longer line history in the console, with a search**: 256 lines in place of 8; Control-R opens a search over them with the same fuzzy match, Control-R and Control-S move to an older and a newer line, and Enter puts the line in the input.
+
+### Changed
+
+- **A terminal gives its program the modifiers of each key**, so that Control with a key reaches the console; a cell of the text grid of the interface package can have a fill color (draw record version 5).
+
+## [0.72.0] - 2026-11-11
+
+### Changed
+
+- **BLAKE3 hashes four chunks at a time**: in an input of more than 4096 bytes, the four chunks of each subtree of four chunks are compressed side by side in the SSE2 registers, with the same hash as before. The root service checks the hash of each module and resource at its start with it.
+- **The text of the vector font is blended four pixels at a time**: the blend of a glyph over a pixel, in linear light with the three subpixel bands, runs in the SSE2 registers and gives the same pixels as before.
+- **The pointer picture is blended four pixels at a time**, in the SSE2 registers, with the same pixels as before.
+
+## [0.71.0] - 2026-11-11
+
+### Added
+
+- **A table of error details**: an export can give each thing that went wrong, not only the first, in an optional table of error records that the caller gives. A caller with no table gets the one error record of before. `monitor.counts_named` names each row that names no count, and the console and `kerneltool call` print each detail on its own line after the error.
+- **A load names each missing import**: when `load` in the console fails because a module is missing or has the wrong hash, it prints a line for each import of the whole graph that is missing or wrong, not only the first.
+
+### Changed
+
+- **The call request of `remote` has 112 bytes**: it names the place of the table of error details, and the answer of a failed call carries the details and their count. The remote service refuses a request of a tool built before this change.
+
 ## [0.70.0] - 2026-11-11
 
 ### Added

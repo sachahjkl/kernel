@@ -35,6 +35,8 @@ Tables as parameters: one description, three ways to call (a direct call, a call
 
 ![A line runs in the second thread of the console: the console keeps the keys, and Escape stops the call](docs/screenshots/running.png)
 
+![The completion list of the console: "mcnt" matches monitor.count by a fuzzy match, the matched letters lit, each name with what it is and its signature](docs/screenshots/console_completion.png)
+
 | | |
 |---|---|
 | ![Six programs pass records through six rings](docs/screenshots/rings.png) | ![A stopped program takes no record: the records wait in the ring](docs/screenshots/rings_stopped.png) |
@@ -139,6 +141,7 @@ The same window with the pointer theme of the owner (Posy's Cursor, CC BY-NC 4.0
 - `inspect` shows one program live: its address space, its modules, its threads with the state of the scheduler, the stop report of a program that faulted, and the bytes of its own memory, from reports of the kernel that give no byte of another program.
 - The compositor owns the framebuffer. Each program draws into a surface in shared memory.
 - The console is a normal program. A command is a typed function: `hash("abc")`, `start("life")`, `programs()`.
+- The line of the console has a caret, a completion list that opens while the person types (a fuzzy match over the commands, the exports of the descriptions, the services, the variables, the modules), the signature of the call at the caret, and a history of 256 lines with Control-R and Control-S (`docs/CONSOLE.md`).
 - `load("math")` loads a module: its exports become commands. The module describes them: the tool makes each description from the source (parameter names, types, help).
 - `isolate("probe")` runs a module in a sandboxed program with no handle. The same calls go through a ring. A module that faults, loops or tries to stop the machine does not harm the console.
 - `rings` shows communication between programs: six programs pass records through six rings in shared memory. Stop one program: its records wait in the ring. Start it again: they continue.

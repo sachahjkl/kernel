@@ -38,7 +38,7 @@ Why, against a retained tree of widgets:
 - The output is data: a table of records of one size, in the memory of the caller (P14). A table can be compared, measured, sent to another rasterizer, or written to a file to test it.
 - A retained tree gives damage for free: a node that changed knows its rectangle. Immediate mode loses that. Section 2.2 gives it back without a tree.
 
-### 2.1 Draw record (format version 5)
+### 2.1 Draw record (format version 6)
 
 A draw record is 40 bytes. The fields are little-endian, in this order:
 
@@ -47,7 +47,7 @@ A draw record is 40 bytes. The fields are little-endian, in this order:
 | 0 | `kind` | u8 | `None` 0, `Rectangle` 1, `Vertical_Gradient` 2, `Horizontal_Gradient` 3, `Text` 4, `Clip` 5, `Point_Grid` 6, `Folded_Gap` 7 (version 2), `Picture` 8 (version 2), `Text_Grid` 9 (version 3), `Line` 10 (version 4) |
 | 1 | `text_scale` | u8 | Text: 1, 2 or 3 (DESIGN.md, section 5) |
 | 2 | `text_subpixel_x` | u8 | Text: the position after `x` in 1/64 of a pixel. 0 for Spleen 8x16, which places each glyph on a whole pixel |
-| 3 | `kind_detail` | u8 | Line: the thickness in pixels, 1 to 32 (version 4; it was `reserved`). Text: the weight, 0 regular, 1 bold (version 5: the titles of the cards; bold draws at scale 1 only). 0 for the other kinds |
+| 3 | `kind_detail` | u8 | Line: the thickness in pixels, 1 to 32 (version 4; it was `reserved`). Text: the weight, 0 regular, 1 bold (version 6: the titles of the cards; bold draws at scale 1 only). 0 for the other kinds |
 | 4 | `x`, `y`, `width`, `height` | 4 x i32 | The rectangle of the record, in pixels of the surface. For text, the rectangle that the run covers. For a line, the first end, and the second end minus the first: `width` and `height` can be negative |
 | 20 | `first_color` | u32 | `0x00RRGGBB`: the color of a rectangle or a text; the top or the left color of a gradient |
 | 24 | `second_color` | u32 | The bottom or the right color of a gradient |
@@ -59,10 +59,10 @@ A draw record is 40 bytes. The fields are little-endian, in this order:
 - **Places and sizes**: each edge of a record is cut to 2^30 pixels from the corner of the surface (`COORDINATE_LIMIT`), then the size is the difference of the two edges. A rectangle that covers the surface with places past the `i32` still covers it.
 - **`full` and `refused`**: `full` says that a record or a text did not fit in the table. The table is not the frame, so the next frame of that picture is drawn whole. `refused` says that a record could not be made: a picture or a grid that the table does not have, or a grid whose cells are fewer than its rows. That record is missing, and each other record is in the table, so the difference stays exact.
 - **Grids with large numbers**: `grid_valid` divides in place of a product, so a count of rows or a stride near the largest `int` cannot wrap and pass the check.
-- A version number (`DRAW_RECORD_VERSION`, 4) is beside the format, as for the contracts. A new kind is a new version.
+- A version number (`DRAW_RECORD_VERSION`, 6) is beside the format, as for the contracts. A new kind or a new field is a new version: 5 added the fill of a grid cell, 6 the weight of a text.
 - The text of a run is in the text table of the draw table, not in the record: a record stays 40 bytes, and two runs with the same bytes compare equal.
 - A `Picture` record shows the pixels of a picture of the caller. The program raises its generation when its pixels change; with the same generation the record compares equal and damages nothing. `life`, `paint`, `plasma`, `temple` and the surfaces of the windows in the compositor are pictures.
-- A `Text_Grid` record shows a grid of text cells of the caller (`Text_Grid_Cell`: a character, reverse, a color). Its 40 bytes do not change when its cells change: the difference compares the cells (section 2.4).
+- A `Text_Grid` record shows a grid of text cells of the caller (`Text_Grid_Cell`: a character, reverse, a color; or filled: a character in its color on a cell of a fill color, for a list drawn over text, 12 bytes for each cell). Its 40 bytes do not change when its cells change: the difference compares the cells (section 2.4).
 
 ### 2.2 Damage by difference
 

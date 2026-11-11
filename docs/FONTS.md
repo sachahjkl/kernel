@@ -134,6 +134,8 @@ Measured on the host, where the same code runs, with `-o:speed`, pinned to one c
 
 At scale 1, a glyph from the cache over a flat color or a card now costs 3.2 times a glyph of Spleen (5.4 times before). At the scales 2 and 3 the vector font costs 1.1 and 1.7 times the enlarged Spleen, for a glyph drawn from its outline at that size. The rest of the time is the 43 partial pixels: a cell has 43 blends that Spleen does not do. The target "the same order as Spleen" is near at scale 1 and met at the scales 2 and 3; the machine measures of this part were taken at a load of 28 to 31 and are not valid.
 
+The blend of a glyph now has an SSE2 form beside this scalar form, with the same bytes: `docs/SIMD.md`, sections 3 and 6, says what it computes in vectors and how to measure it against the numbers above.
+
 ## 6. The font file
 
 The owner did not choose one. Six candidates, each read from the build input of `flake.nix` (the packages of nixpkgs, pinned by `flake.lock`). Their license texts were read at the source on 2026-11-11.

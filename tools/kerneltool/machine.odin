@@ -336,7 +336,7 @@ scenario_network := [?]Step {
 	{kind = .Wait, text = "remote: ok, an endpoint with the grant 10.0.2.2 port 7100; the call requests of the host arrive there", any_order = true},
 	// The peer sends six malformed call requests when the remote service
 	// starts: each one has its error record, and no call runs.
-	{kind = .Wait, text = "remote: refused a request: remote: the call has 20 bytes; it must have at least 104 bytes"},
+	{kind = .Wait, text = "remote: refused a request: remote: the call has 20 bytes; it must have at least 112 bytes"},
 	{kind = .Wait, text = "remote: refused a request: remote: the argument kind has the value 9, which the call refuses; it takes at most 1"},
 	{kind = .Wait, text = "remote: refused a request: remote: the argument arguments has 400 bytes; it can have at most 16 bytes"},
 	{kind = .Wait, text = "remote: refused a request: remote: the argument result_count has 65536 bytes; it can have at most 65472 bytes"},
@@ -1667,6 +1667,8 @@ scenario := [?]Step {
 	// (callable_of("remote")).
 	{kind = .Call, text = "monitor.counts_named([(\"programs\"), (\"processors\")])", expected = "2 rows of Count"},
 	{kind = .Call, text = "monitor.counts_named([(\"programs\"), (\"nothing\")])", outcome = .Failed, expected = "names nothing that exists"},
+	// The table of error details: each row that names nothing, not only the first.
+	{kind = .Call, text = "monitor.counts_named([(\"nothing\"), (\"programs\"), (\"none\")])", outcome = .Failed, expected = "detail 2 of 2: monitor.counts_named: row 3 of the argument names"},
 	{kind = .Call, text = "sample.scale_values([(0, 0, 10, 10, 10)], 2)", outcome = .Wrong, expected = "error: the parameter readings of sample.scale_values is Table(Reading, Change): a call from the host gives tables to read only"},
 	{kind = .Call, text = "sample.sum_values([(0, 0, 10, 10, 10)])", outcome = .Refused, expected = "no grant"},
 	{kind = .Close, text = "inspect"},
@@ -1803,6 +1805,60 @@ scenario := [?]Step {
 	{kind = .Close, text = "interface_through_module"},
 	{kind = .Wait, text = "root: interface_through_module stopped"},
 	{kind = .Front, text = "console"},
+	// The line editor of the console. The console writes a log line only
+	// when the person asks (Tab, a take): the lines that the scenario types
+	// before this place add no record to the log.
+	// Fuzzy completion: "mcnt" holds the letters of monitor.count in their
+	// order. The list opens while the person types; Escape closes it, Tab
+	// opens it again, and Enter takes the first name, with its '('.
+	{kind = .Type, text = "clear()"},
+	{kind = .Keys, text = "mcnt"},
+	{kind = .Key, text = "esc"},
+	{kind = .Key, text = "tab"},
+	{kind = .Wait, text = "console: the completion list opens by Tab: "},
+	{kind = .Wait, text = " match \"mcnt\", the first is monitor.count; one ranking takes "},
+	{kind = .Shot, text = "console_completion"},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "console: the completion gave the line monitor.count("},
+	{kind = .Keys, text = "\"processors\")"},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "> monitor.count(\"processors\")"},
+	// The cursor inside the line: Home, Right, a character at the cursor,
+	// End, Left, Delete, Backspace. The printed text shows each change in
+	// its place: "acdf" becomes "abce".
+	{kind = .Keys, text = "\"acdf\""},
+	{kind = .Key, text = "home"},
+	{kind = .Key, text = "right"},
+	{kind = .Key, text = "right"},
+	{kind = .Keys, text = "b"},
+	{kind = .Key, text = "end"},
+	{kind = .Key, text = "left"},
+	{kind = .Key, text = "left"},
+	{kind = .Key, text = "delete"},
+	{kind = .Key, text = "backspace"},
+	{kind = .Keys, text = "e"},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "[console] abce"},
+	// The search of the history: Control-R opens it over the lines entered,
+	// the newest first; "leng" keeps the lines that start with "length",
+	// these two first (equal scores: the newest first). Control-R goes to
+	// the older one, Control-S back to the newer one; Enter puts the chosen
+	// line in the input, and a second Enter runs it.
+	{kind = .Type, text = "length(\"first search line\")"},
+	{kind = .Wait, text = "[console] 17"},
+	{kind = .Type, text = "length(\"second\")"},
+	{kind = .Wait, text = "[console] 6"},
+	{kind = .Key, text = "ctrl-r"},
+	{kind = .Keys, text = "leng"},
+	{kind = .Key, text = "ctrl-r"},
+	{kind = .Key, text = "ctrl-s"},
+	{kind = .Key, text = "ctrl-r"},
+	{kind = .Shot, text = "console_history_search"},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "console: the history search gave the line length(\"first search line\")"},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "> length(\"first search line\")"},
+	{kind = .Wait, text = "[console] 17"},
 	// Each page is free or paid, after all the starts and stops of this test.
 	{kind = .Type, text = "memory()"},
 	{kind = .Wait, text = " pages: all the free pages"},

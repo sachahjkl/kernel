@@ -10,7 +10,7 @@ package interface
 
 import "support:graphics"
 
-DRAW_RECORD_VERSION :: 5 // A new kind of record, or a new field, is a new version. 2: Folded_Gap, Picture. 3: Text_Grid. 4: Line, and the field line_thickness. 5: that byte is kind_detail, the weight of a text too.
+DRAW_RECORD_VERSION :: 6 // A new kind of record, or a new field, is a new version. 2: Folded_Gap, Picture. 3: Text_Grid. 4: Line, and the field line_thickness. 5: the fields filled and background of a cell of a text grid. 6: the byte line_thickness is kind_detail, the weight of a text too.
 
 Draw_Kind :: enum u8 {
 	None                = 0,
@@ -50,11 +50,16 @@ LINE_THICKNESS_LIMIT :: 32
 LINE_COORDINATE_LIMIT :: 1 << 15
 
 // One cell of a text grid: a character of the font of the system, in its
-// color, or in the color of the background on a cell of its color.
+// color; or, reverse, in the color of the background on a cell of its
+// color; or, filled, in its color on a cell of the color background (a
+// list drawn over the text, a row that is chosen). A filled cell costs 4
+// bytes more than a cell with no background: 12 bytes for each cell.
 Text_Grid_Cell :: struct {
-	character: u8, // 0 to 32: no character.
-	reverse:   bool,
-	color:     graphics.Color,
+	character:  u8, // 0 to 32: no character.
+	reverse:    bool,
+	filled:     bool,
+	color:      graphics.Color,
+	background: graphics.Color, // For a filled cell.
 }
 
 // A grid of text cells: rows lines of columns cells, a line each stride

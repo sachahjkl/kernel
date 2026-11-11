@@ -144,16 +144,33 @@ text_grid_draw :: proc "contextless" (canvas: graphics.Canvas, x, y: int, grid: 
 				column += 1
 				continue
 			}
+			if cell.filled {
+				// A run of filled cells of one color and one background:
+				// one fill, then one text. An empty cell is a space.
+				count := 0
+				for column + count < last_column && count < len(run) {
+					next := cells[column + count]
+					if next.reverse || !next.filled || next.color != cell.color || next.background != cell.background {
+						break
+					}
+					run[count] = max(next.character, ' ')
+					count += 1
+				}
+				graphics.fill(canvas, left, top, count * graphics.CELL_WIDTH, graphics.CELL_HEIGHT, cell.background)
+				text_draw(canvas, left, top, string(run[:count]), cell.color, 1)
+				column += count
+				continue
+			}
 			if cell.character <= ' ' {
 				column += 1
 				continue
 			}
 			// A run: the cells of this color, spaces too, up to a reverse
-			// cell, an empty cell or the end of the room.
+			// cell, a filled cell, an empty cell or the end of the room.
 			count := 0
 			for column + count < last_column && count < len(run) {
 				next := cells[column + count]
-				if next.reverse || next.character < ' ' || next.color != cell.color {
+				if next.reverse || next.filled || next.character < ' ' || next.color != cell.color {
 					break
 				}
 				run[count] = next.character
