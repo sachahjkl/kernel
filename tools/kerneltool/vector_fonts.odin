@@ -17,7 +17,7 @@ import "support:vector_font"
 // build/fonts/candidates.png, the picture of the choice, from the same
 // renderer as the system.
 //
-// The build makes the glyph cache of the default font (build_glyph_cache):
+// The build makes the two glyph caches of the default font (build_glyph_caches):
 // the boot image holds it as the resource "glyph_cache".
 
 VECTOR_FONT_SOURCES_VARIABLE :: "VECTOR_FONT_SOURCES"
@@ -25,14 +25,13 @@ VECTOR_FONT_FOLDER :: "resources/fonts"
 VECTOR_FONT_BUILD_FOLDER :: BUILD_FOLDER + "/fonts"
 GLYPH_CACHE_OUTPUT :: VECTOR_FONT_BUILD_FOLDER + "/glyph_cache.bin"
 GLYPH_CACHE_RESOURCE :: "glyph_cache"
+GLYPH_CACHE_WITHOUT_GRID_FIT_OUTPUT :: VECTOR_FONT_BUILD_FOLDER + "/glyph_cache_no_grid_fit.bin"
+GLYPH_CACHE_WITHOUT_GRID_FIT_RESOURCE :: "glyph_cache_no_grid_fit"
 CANDIDATES_PICTURE :: VECTOR_FONT_BUILD_FOLDER + "/candidates.png"
 
 // The default font of the system: one line to change (docs/FONTS.md, "The
 // font file").
 DEFAULT_VECTOR_FONT :: "jetbrains_mono"
-// The glyph cache puts the baseline, the x-height and the cap height on
-// whole pixels (docs/FONTS.md, "Hinting").
-GLYPH_CACHE_GRID_FIT :: true
 
 // The candidates, in the order of the picture. family: the name that the
 // subset carries. A font with a Reserved Font Name (SIL OFL 1.1) is renamed
@@ -475,16 +474,24 @@ glyph_cache_of :: proc(font_bytes: []u8, font_name: string, grid_fit: bool) -> (
 	return out[:size], true
 }
 
-// build_glyph_cache writes the glyph cache of the default font, and gives
-// it as a resource of the boot image.
-build_glyph_cache :: proc() -> (resource: Resource_File, ok: bool) {
+// build_glyph_caches writes the two glyph caches of the default font, with
+// the grid fit and without it, and gives them as resources of the boot
+// image. The setting "grid_fit" of the person chooses one at run time.
+build_glyph_caches :: proc() -> (resources: [2]Resource_File, ok: bool) {
 	path := join(VECTOR_FONT_FOLDER, "/", DEFAULT_VECTOR_FONT, ".ttf")
 	font := read_file(path) or_return
-	cache := glyph_cache_of(font, DEFAULT_VECTOR_FONT, GLYPH_CACHE_GRID_FIT) or_return
 	make_folder(VECTOR_FONT_BUILD_FOLDER)
-	if err := os.write_entire_file(GLYPH_CACHE_OUTPUT, cache); err != nil {
-		fmt.eprintfln("kerneltool: cannot write %s: %v", GLYPH_CACHE_OUTPUT, err)
-		return {}, false
+	builds := [2]struct {
+		grid_fit:       bool,
+		output, name:   string,
+	}{{true, GLYPH_CACHE_OUTPUT, GLYPH_CACHE_RESOURCE}, {false, GLYPH_CACHE_WITHOUT_GRID_FIT_OUTPUT, GLYPH_CACHE_WITHOUT_GRID_FIT_RESOURCE}}
+	for build, index in builds {
+		cache := glyph_cache_of(font, DEFAULT_VECTOR_FONT, build.grid_fit) or_return
+		if err := os.write_entire_file(build.output, cache); err != nil {
+			fmt.eprintfln("kerneltool: cannot write %s: %v", build.output, err)
+			return {}, false
+		}
+		resources[index] = {name = build.name, path = build.output}
 	}
-	return {name = GLYPH_CACHE_RESOURCE, path = GLYPH_CACHE_OUTPUT}, true
+	return resources, true
 }

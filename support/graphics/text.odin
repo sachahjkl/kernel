@@ -51,12 +51,19 @@ text_cache_set :: proc "contextless" (bytes: []u8) -> glyph_cache.Problem {
 		text_state.has_cache = false
 		return problem
 	}
+	text_cache_use(cache)
+	return {}
+}
+
+// text_cache_use makes a cache that glyph_cache.validate accepted the cache
+// of the vector font: a change of the setting "grid_fit" between two
+// caches that the program validated once.
+text_cache_use :: proc "contextless" (cache: glyph_cache.Cache) {
 	text_state.cache = cache
 	text_state.has_cache = true
 	if text_state.square_root[4095] == 0 {
 		square_root_table_fill(&text_state.square_root)
 	}
-	return {}
 }
 
 // square_root_table_fill makes the table of the blend in linear light:

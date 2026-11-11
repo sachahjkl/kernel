@@ -106,9 +106,12 @@ scenario_fails := [?]Step {
 // the commits, with no stop of the machine. The third one finds a store
 // that the checks accept, and a count of one commit: its three blocks agree.
 scenario_persist_first := [?]Step {
-	{kind = .Wait, text = "compositor: surface console"},
+	{kind = .Wait, text = "compositor: surface console", any_order = true},
+	// The storage service starts at boot, for the boot pass of settings.
+	{kind = .Wait, text = "root: started storage", any_order = true},
+	{kind = .Wait, text = "settings: the boot pass: no settings kept: the defaults", any_order = true},
+	{kind = .Wait, text = "root: settings stopped with code 0"},
 	{kind = .Launch, text = "notes"},
-	{kind = .Wait, text = "root: started storage"},
 	{kind = .Wait, text = "storage: ok, a new disk: generation 1, 16384 blocks", any_order = true},
 	{kind = .Wait, text = "root: started notes"},
 	{kind = .Wait, text = "notes: a new store: no note, the count 0", any_order = true},
@@ -117,26 +120,48 @@ scenario_persist_first := [?]Step {
 	{kind = .Wait, text = "notes: the note is \"kept across a restart\", generation 22"},
 	{kind = .Key, text = "tab"},
 	{kind = .Wait, text = "notes: count 1000, stopped: 1000 commits in "},
+	// A setting that the next machine finds (the boot pass of settings).
+	{kind = .Launch, text = "settings"},
+	{kind = .Wait, text = "compositor: surface settings", any_order = true},
+	{kind = .Wait, text = "settings: ok, "},
 	{kind = .Front, text = "console"},
+	{kind = .Type, text = "connect(\"settings\")"},
+	{kind = .Wait, text = "[console] settings: 3 commands of a service that runs"},
+	{kind = .Type, text = "settings.set(\"font\", \"spleen\")"},
+	{kind = .Wait, text = "settings: font spleen, subpixel order rgb, pointer theme owner, grid fit on; kept in the store"},
 	{kind = .Type, text = "shutdown()"},
 	{kind = .Wait, text = "kernel: the machine stops with code 0"},
 }
 
 scenario_persist_second := [?]Step {
-	{kind = .Wait, text = "compositor: surface console"},
+	{kind = .Wait, text = "compositor: surface console", any_order = true},
+	{kind = .Wait, text = "storage: ok, generation 1023: 2 stores, 3 objects, ", any_order = true},
+	// The setting of the machine before: the desktop draws in Spleen 8x16.
+	{kind = .Wait, text = "settings: the boot pass: the settings kept in the store: font spleen, subpixel order rgb, pointer theme owner, grid fit on; in ", any_order = true},
+	{kind = .Wait, text = "compositor: the settings changed: font spleen, subpixel order rgb, pointer theme owner, grid fit on; "},
 	{kind = .Launch, text = "notes"},
-	{kind = .Wait, text = "storage: ok, generation 1022: 1 stores, 2 objects, ", any_order = true},
 	{kind = .Wait, text = " blocks checked, 0 wrong, in ", any_order = true},
 	{kind = .Wait, text = "notes: restored the note \"kept across a restart\" and the count 1000, its 3 blocks agree", any_order = true},
 	{kind = .Wait, text = "compositor: surface notes"},
 	{kind = .Shot, text = "notes"},
+	// The vector font again, for the machines after this one.
+	{kind = .Launch, text = "settings"},
+	{kind = .Wait, text = "compositor: surface settings", any_order = true},
+	{kind = .Wait, text = "settings: ok, font spleen, subpixel order rgb, pointer theme owner, grid fit on"},
+	{kind = .Shot, text = "settings_kept"},
+	{kind = .Front, text = "console"},
+	{kind = .Type, text = "connect(\"settings\")"},
+	{kind = .Wait, text = "[console] settings: 3 commands of a service that runs"},
+	{kind = .Type, text = "settings.set(\"font\", \"vector\")"},
+	{kind = .Wait, text = "settings: font vector, subpixel order rgb, pointer theme owner, grid fit on; kept in the store"},
+	{kind = .Front, text = "notes"},
 	{kind = .Key, text = "tab"},
 	{kind = .Wait, text = "notes: count 1100"},
 	{kind = .Quit}, // In the middle of the commits: the machine does not stop.
 }
 
 scenario_persist_crash := [?]Step {
-	{kind = .Wait, text = "compositor: surface console"},
+	{kind = .Wait, text = "compositor: surface console", any_order = true},
 	{kind = .Launch, text = "notes"},
 	{kind = .Wait, text = "storage: ok, generation ", any_order = true},
 	{kind = .Wait, text = " blocks checked, 0 wrong, in ", any_order = true},
@@ -153,7 +178,7 @@ scenario_persist_crash := [?]Step {
 // count is whole. `notes` says that the note is damaged, and does not take
 // it for an empty note. A key writes a new note in place of it.
 scenario_persist_damaged := [?]Step {
-	{kind = .Wait, text = "compositor: surface console"},
+	{kind = .Wait, text = "compositor: surface console", any_order = true},
 	{kind = .Launch, text = "notes"},
 	{kind = .Wait, text = "storage: 1 blocks have a wrong check: 1 objects and 0 stores are damaged; the service serves the others", any_order = true},
 	{kind = .Wait, text = " blocks checked, 1 wrong, in ", any_order = true},
@@ -167,7 +192,7 @@ scenario_persist_damaged := [?]Step {
 
 // After the new note: no wrong block, and the note and the count.
 scenario_persist_replaced := [?]Step {
-	{kind = .Wait, text = "compositor: surface console"},
+	{kind = .Wait, text = "compositor: surface console", any_order = true},
 	{kind = .Launch, text = "notes"},
 	{kind = .Wait, text = " blocks checked, 0 wrong, in ", any_order = true},
 	{kind = .Wait, text = "notes: restored the note \"again\" and the count ", any_order = true},
@@ -179,7 +204,7 @@ scenario_persist_replaced := [?]Step {
 // whole on the disk. The root before it names no wrong block, so the
 // storage service uses it: the note is the note before its last letter.
 scenario_persist_older := [?]Step {
-	{kind = .Wait, text = "compositor: surface console"},
+	{kind = .Wait, text = "compositor: surface console", any_order = true},
 	{kind = .Launch, text = "notes"},
 	{kind = .Wait, text = "storage: the newest root names a block with a wrong check, and the root before it names none: the root before it is used", any_order = true},
 	{kind = .Wait, text = " blocks checked, 0 wrong, in ", any_order = true},
@@ -190,7 +215,7 @@ scenario_persist_older := [?]Step {
 // A format that a stop cut: a first root with a wrong check, and no commit
 // after it. The disk holds no object: the storage service formats again.
 scenario_persist_first_cut := [?]Step {
-	{kind = .Wait, text = "compositor: surface console"},
+	{kind = .Wait, text = "compositor: surface console", any_order = true},
 	{kind = .Launch, text = "notes"},
 	{kind = .Wait, text = "storage: the first root of the disk has a wrong check and no commit followed it", any_order = true},
 	{kind = .Wait, text = "storage: ok, a new disk: generation 1, 16384 blocks", any_order = true},
@@ -203,7 +228,7 @@ scenario_persist_first_cut := [?]Step {
 // did not finish. The storage service finds the wrong check and uses the
 // root before it: the count of the commit before.
 scenario_persist_cut := [?]Step {
-	{kind = .Wait, text = "compositor: surface console"},
+	{kind = .Wait, text = "compositor: surface console", any_order = true},
 	{kind = .Launch, text = "notes"},
 	{kind = .Wait, text = " has a wrong check: a write that a stop cut; the service uses the root before it", any_order = true},
 	{kind = .Wait, text = " blocks checked, 0 wrong, in ", any_order = true},
@@ -593,7 +618,12 @@ scenario := [?]Step {
 	{kind = .Wait, text = "compositor: the processor: ERMS ", any_order = true},
 	// The two come in an order that the system does not fix.
 	{kind = .Wait, text = "compositor: first frame", any_order = true},
-	{kind = .Wait, text = "compositor: surface console"},
+	{kind = .Wait, text = "compositor: surface console", any_order = true},
+	// The boot pass of settings: the storage service starts at boot, with
+	// the block service of the data disk; a new disk keeps no settings.
+	{kind = .Wait, text = "storage: ok, a new disk: generation 1, 16384 blocks", any_order = true},
+	{kind = .Wait, text = "settings: the boot pass: no settings kept: the defaults: font vector, subpixel order rgb, pointer theme owner, grid fit on; in ", any_order = true},
+	{kind = .Wait, text = "root: settings stopped with code 0"},
 
 	// The console: a language with typed commands.
 	{kind = .Type, text = "1 + 2 * 3"},
@@ -1362,14 +1392,12 @@ scenario := [?]Step {
 	{kind = .Close, text = "disk"},
 	{kind = .Record, program = "root", channel = "programs", level = "info", text = "root: disk stopped with code 0"},
 	{kind = .Record, program = "root", channel = "programs", level = "info", text = "root: block stopped with code 0"},
-	// The storage service starts when a program asks for it, with the block
-	// service of the data disk. The console has a private store of 4 blocks,
-	// by its name; it acts for the person, so it also sees all the stores.
+	// The storage service runs since the boot (the boot pass of settings
+	// needs it), with the block service of the data disk. The console has a
+	// private store of 4 blocks, by its name; it acts for the person, so it
+	// also sees all the stores.
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "connect(\"storage\")"},
-	{kind = .Record, program = "root", channel = "devices", level = "info", text = "root: started block for the device at the place 16 of the bus"},
-	{kind = .Record, program = "root", channel = "programs", level = "info", text = "root: started storage"},
-	{kind = .Record, program = "storage", level = "info", text = "storage: ok, a new disk: generation 1, 16384 blocks", any_order = true},
 	{kind = .Record, program = "root", channel = "calls", level = "info", text = "root: connected console to the service storage"},
 	{kind = .Type, text = "storage.write(\"greeting\", \"kept on the disk\")"},
 	{kind = .Wait, text = "[console] 2"},
@@ -1550,34 +1578,46 @@ scenario := [?]Step {
 	{kind = .Point, x = 400, y = 260, text = "text"}, // The input line of the launcher.
 	{kind = .Key, text = "meta_l"},
 	{kind = .Wait, text = "compositor: the launcher is closed by the key super"},
-	// The settings of the person: the font and the order of the stripes
-	// change while the programs run; each window draws again, with no code
-	// of its own for it.
+	// The settings of the person: the font, the order of the stripes, the
+	// pointer theme and the grid fit change while the programs run; each
+	// window draws again, with no code of its own for it. Each change is
+	// kept in the private store of settings.
 	{kind = .Launch, text = "settings"},
 	{kind = .Wait, text = "compositor: surface settings", any_order = true},
-	{kind = .Wait, text = "settings: ok, font vector, subpixel order rgb"},
-	{kind = .Move, text = "settings", to_x = 392, to_y = 40},
+	{kind = .Wait, text = "settings: ok, font vector, subpixel order rgb, pointer theme owner, grid fit on"},
 	{kind = .Front, text = "monitor"},
-	{kind = .Move, text = "monitor", to_x = 8, to_y = 400},
+	{kind = .Move, text = "monitor", to_x = 8, to_y = 412},
+	{kind = .Front, text = "settings"},
+	{kind = .Move, text = "settings", to_x = 456, to_y = 40},
 	{kind = .Shot, text = "font_vector"},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "connect(\"settings\")"},
-	{kind = .Wait, text = "[console] settings: 2 commands of a service that runs"},
+	{kind = .Wait, text = "[console] settings: 3 commands of a service that runs"},
 	{kind = .Type, text = "settings.set(\"font\", \"spleen\")"},
-	{kind = .Wait, text = "compositor: the settings changed: font spleen, subpixel order rgb; ", any_order = true},
-	{kind = .Wait, text = "settings: drawn with the font spleen, subpixel order rgb"},
+	{kind = .Wait, text = "compositor: the settings changed: font spleen, subpixel order rgb, pointer theme owner, grid fit on; ", any_order = true},
+	{kind = .Wait, text = "settings: drawn with font spleen, subpixel order rgb, pointer theme owner, grid fit on"},
 	{kind = .Front, text = "settings"},
 	{kind = .Shot, text = "font_spleen"},
 	{kind = .Call, text = "settings.get(\"font\")", expected = "spleen"},
 	{kind = .Call, text = "settings.set(\"font\", \"vector\")", expected = "1"},
-	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb; "},
+	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme owner, grid fit on; "},
+	{kind = .Call, text = "settings.set(\"grid_fit\", \"off\")", expected = "1"},
+	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme owner, grid fit off; "},
+	{kind = .Wait, text = "settings: drawn with font vector, subpixel order rgb, pointer theme owner, grid fit off"},
+	{kind = .Shot, text = "font_without_grid_fit"},
+	{kind = .Call, text = "settings.set(\"pointer_theme\", \"system\")", expected = "1"},
+	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme system, grid fit off; "},
+	{kind = .Wait, text = "compositor: the pointer theme in use: System"},
+	{kind = .Point, inside_window = "settings", x = 100, y = 12, text = "move"}, // The title bar, in the theme of the system.
 	{kind = .Call, text = "settings.set(\"subpixel_order\", \"bgr\")", expected = "1"},
-	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order bgr; "},
+	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order bgr, pointer theme system, grid fit off; "},
 	{kind = .Call, text = "settings.get(\"subpixel_order\")", expected = "bgr"},
 	{kind = .Call, text = "settings.set(\"font\", \"comic\")", outcome = .Failed, expected = "(-3)"},
 	{kind = .Call, text = "settings.set(\"colour\", \"red\")", outcome = .Failed, expected = "(-2)"},
 	{kind = .Call, text = "settings.set(\"subpixel_order\", \"rgb\")", expected = "1"},
-	{kind = .Wait, text = "settings: drawn with the font vector, subpixel order rgb"},
+	{kind = .Call, text = "settings.set(\"pointer_theme\", \"owner\")", expected = "1"},
+	{kind = .Call, text = "settings.set(\"grid_fit\", \"on\")", expected = "1"},
+	{kind = .Wait, text = "settings: drawn with font vector, subpixel order rgb, pointer theme owner, grid fit on"},
 	{kind = .Shot, text = "settings"},
 	{kind = .Close, text = "settings"},
 	{kind = .Wait, text = "root: settings stopped"},

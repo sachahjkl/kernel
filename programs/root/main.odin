@@ -83,7 +83,7 @@ grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 	case "paint", "life", "tally":
 		return {.Serve}
 	case "settings":
-		return {.Settings, .Serve} // It writes the settings of the person, and serves set() and get().
+		return {.Settings, .Serve, .Store} // It writes the settings of the person, keeps them in its private store, and serves set() and get().
 	case "manual":
 		return {.Serve, .Image, .Replacements, .Inspect} // It reads the documentation of each module of the boot image, and the module records of each program.
 	case "disk":
@@ -135,6 +135,10 @@ COMPOSITOR_VALUE_FILE_SIZE :: 5
 COMPOSITOR_VALUE_POINTER_THEME_ADDRESS :: 6
 COMPOSITOR_VALUE_POINTER_THEME_SIZE :: 7
 POINTER_THEME_ADDRESS :: 0x0000_3100_0000_0000
+// The values of the context of the compositor for each pointer theme: the
+// second at 14 and 15 (9 to 12 are the random seed, 13 the settings page).
+COMPOSITOR_POINTER_THEME_VALUES := [2][2]int{{COMPOSITOR_VALUE_POINTER_THEME_ADDRESS, COMPOSITOR_VALUE_POINTER_THEME_SIZE}, {14, 15}}
+POINTER_THEME_SPACING :: 0x0000_0080_0000_0000 // The second theme is this far after the first.
 
 // may_connect says if a program can ask the root service for a connection
 // to the service with a name.
@@ -465,7 +469,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		// The compositor is also a service (programs/compositor/exports.odin):
 		// a service ring and its own file, as start() gives to a service.
 		// Its values 0 to 3 are the screen, so the file is at values 4 and 5.
-		mappings: [4]system.Mapping
+		mappings: [6]system.Mapping
 		mapping_count := 0
 		served := &started[0]
 		served^ = {}
@@ -483,14 +487,18 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				served.hash = item.hash
 			}
 		}
-		// The pointer theme: a resource of the boot image, read-only.
-		for name in pointer_theme_choice() {
-			if mapping, size, given := resource_mapping(name, POINTER_THEME_ADDRESS, "compositor"); given {
-				values[COMPOSITOR_VALUE_POINTER_THEME_ADDRESS] = POINTER_THEME_ADDRESS
-				values[COMPOSITOR_VALUE_POINTER_THEME_SIZE] = size
+		// The pointer themes: resources of the boot image, read-only, each
+		// at its place in the list of pointer_theme_choice (the values 6 and
+		// 7, then 14 and 15). The setting "pointer_theme" of the person
+		// chooses one in the compositor.
+		for name, index in pointer_theme_choice() {
+			address := POINTER_THEME_ADDRESS + u64(index) * POINTER_THEME_SPACING
+			if mapping, size, given := resource_mapping(name, address, "compositor"); given {
+				places := COMPOSITOR_POINTER_THEME_VALUES[index]
+				values[places[0]] = address
+				values[places[1]] = size
 				mappings[mapping_count] = mapping
 				mapping_count += 1
-				break
 			}
 		}
 		text_settings_give(mappings[:], &mapping_count, &values)
@@ -507,6 +515,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if status = start("console"); status != .Ok {
 		fail("cannot start the console", status)
 	}
+	// The settings that the person kept (text_settings.odin).
+	settings_boot_pass_start()
 
 	for {
 		// The stop of a program is an event.
@@ -746,7 +756,7 @@ start :: proc "contextless" (name: string) -> system.Status {
 	copy(slot.name[:len(slot.name) - 1], name) // The connection to the storage service names the program.
 	// The connection to the private store, in the context: the call ring, the
 	// call region, the storage service with the right Read, and its file.
-	mappings: [4]system.Mapping
+	mappings: [6]system.Mapping
 	mapping_count := 0
 	// This service closes its handles of the connection after the start.
 	store_ring, store_region: system.Handle
@@ -852,6 +862,7 @@ start :: proc "contextless" (name: string) -> system.Status {
 	}
 	if .Settings in role {
 		grants[settings.GRANT_PAGE] = {settings_memory, {.Read, .Write}}
+		values[settings.VALUE_BOOT_PASS] = u64(settings_boot_pass)
 	}
 	// A program with a surface: the settings page and the glyph cache, read-only.
 	if .Terminal not_in role {
@@ -1075,7 +1086,7 @@ terminal_start :: proc "contextless" (view: ^Started, writer: ^Started, ring_mem
 	measure: bool
 	values[terminal.VALUE_COLUMNS], values[terminal.VALUE_ROWS], measure = terminal_of(system.name_of(writer.name[:]))
 	values[terminal.VALUE_MEASURE] = u64(measure)
-	mappings: [2]system.Mapping
+	mappings: [3]system.Mapping
 	mapping_count := 0
 	text_settings_give(mappings[:], &mapping_count, &values)
 	program, status := system.program_start(system.image_find(image, "terminal"), "terminal", grants, random.values_with_seed(&program_generator, values), budget_of("terminal"), mappings[:mapping_count], &prepared)
