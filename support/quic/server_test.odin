@@ -7,6 +7,7 @@
 package quic
 
 import "contract:errors"
+import "core:fmt"
 import "core:testing"
 import "support:random"
 
@@ -39,6 +40,7 @@ Harness :: struct {
 	now:                  u64,
 	released:             [dynamic]Remote, // Each remote that the server asked to release.
 	most_in_use:          int,
+	clients_not_started:  int, // A client whose start failed: a fault of the harness, which the failure messages say.
 	// The echo of each record.
 	echo_pending:         [][STREAM_BUFFER_SIZE]u8,
 	echo_start:           [HARNESS_RECORDS]int,
@@ -55,11 +57,10 @@ harness_make :: proc(client_count: int, client_address := u32(0)) -> ^Harness {
 	harness.records = make([]Server_Record, HARNESS_RECORDS)
 	harness.clients = make([]Connection, client_count)
 	harness.echo_pending = make([][STREAM_BUFFER_SIZE]u8, HARNESS_RECORDS)
-	seed: [random.SEED_SIZE]u8
-	for index in 0 ..< random.SEED_SIZE {
-		seed[index] = u8(41 + index)
-	}
-	random.generator_seed(&harness.server_generator, &seed, .Processor)
+	// generator_seed erases the seed that it takes: each generator gets a
+	// seed array of its own, made just before.
+	server_seed := harness_seed(0xA0)
+	random.generator_seed(&harness.server_generator, &server_seed, .Processor)
 	server_configuration := Connection_Configuration{idle_timeout_milliseconds = 30_000}
 	server_configuration.tls = {role = .Server, least_seed_strength = .Processor}
 	server_configuration.tls.application_protocol_length = text_into(server_configuration.tls.application_protocol[:], "kernel-remote")
@@ -73,14 +74,37 @@ harness_make :: proc(client_count: int, client_address := u32(0)) -> ^Harness {
 	harness.cryptography.ed25519_public_key(&secret, &result, &error)
 	server_init(&harness.server, harness.connections, harness.records, &server_configuration, &harness.cryptography, &harness.server_generator, SERVER_LIMITS_DEFAULT, &error)
 	for index in 0 ..< client_count {
-		seed[0] = u8(index)
-		random.generator_seed(&harness.client_generators[index], &seed, .Processor)
+		client_seed := harness_seed(u8(index))
+		random.generator_seed(&harness.client_generators[index], &client_seed, .Processor)
 		// One address for each client, unless the test gives one for all.
 		address := client_address != 0 ? client_address : u32(0x0A00_0300 + index)
 		harness.client_remotes[index] = {address, u16(50_000 + index)}
-		connection_start_client(&harness.clients[index], &harness.client_configuration, &harness.cryptography, &harness.client_generators[index], harness.now, &error)
+		if !connection_start_client(&harness.clients[index], &harness.client_configuration, &harness.cryptography, &harness.client_generators[index], harness.now, &error) {
+			harness.clients_not_started += 1
+		}
 	}
 	return harness
+}
+
+// harness_seed gives a seed that no other generator of the harness has:
+// its first byte names the generator, and no seed is all zeros.
+harness_seed :: proc(first: u8) -> (seed: [random.SEED_SIZE]u8) {
+	for index in 0 ..< random.SEED_SIZE {
+		seed[index] = u8(41 + index)
+	}
+	seed[0] = first
+	return
+}
+
+// harness_describe gives the counters of the server and the state of each
+// client, for the message of a failure.
+harness_describe :: proc(harness: ^Harness) -> string {
+	counters := harness.server.counters
+	text := fmt.tprintf("server: accepted %d, ended %d, datagrams %d, unreadable %d, not authentic %d, too small %d, refused by the limit of a remote %d, by the limit of the handshakes %d, table full %d, from another remote %d, of no connection %d, version negotiations %d; records in use %d; clients that did not start %d; clients:", counters.accepted, counters.ended, counters.datagrams, counters.unreadable, counters.not_authentic, counters.too_small, counters.refused_remote_limit, counters.refused_handshake_limit, counters.refused_full, counters.other_remote, counters.no_connection, counters.version_negotiations, server_connections_in_use(&harness.server), harness.clients_not_started)
+	for &client, index in harness.clients {
+		text = fmt.tprintf("%s [%d: %v, closed with %x, by the handshake deadline %v, by the idle timeout %v, %d bytes sent, %d received]", text, index, client.state, client.close_error_code, client.closed_by_handshake_timeout, client.closed_by_idle_timeout, client.bytes_sent, client.bytes_received)
+	}
+	return text
 }
 
 harness_free :: proc(harness: ^Harness) {
@@ -345,11 +369,14 @@ harness_run :: proc(t: ^testing.T, harness: ^Harness, total: int, clock_limit: u
 eight_clients_at_once :: proc(t: ^testing.T) {
 	harness := harness_make(8)
 	defer harness_free(harness)
-	testing.expect_value(t, harness_run(t, harness, 64 * 1024, 60_000_000), 8)
-	testing.expect_value(t, harness.server.counters.accepted, 8)
-	testing.expect(t, harness.most_in_use <= HARNESS_RECORDS)
+	// Each client started: its generator took its seed.
+	testing.expectf(t, harness.clients_not_started == 0, "%s", harness_describe(harness))
+	ended := harness_run(t, harness, 64 * 1024, 60_000_000)
+	testing.expectf(t, ended == 8, "%d clients ended their echo, not 8; %s", ended, harness_describe(harness))
+	testing.expectf(t, harness.server.counters.accepted == 8, "%v, not %v; %s", harness.server.counters.accepted, 8, harness_describe(harness))
+	testing.expectf(t, harness.most_in_use <= HARNESS_RECORDS, "%s", harness_describe(harness))
 	for client in harness.clients {
-		testing.expect_value(t, client.state, Connection_State.Connected)
+		testing.expectf(t, client.state == Connection_State.Connected, "%v, not %v; %s", client.state, Connection_State.Connected, harness_describe(harness))
 	}
 }
 
@@ -360,9 +387,12 @@ eight_clients_at_once :: proc(t: ^testing.T) {
 clients_of_one_address_wait_their_turn :: proc(t: ^testing.T) {
 	harness := harness_make(8, 0x0A00_0399)
 	defer harness_free(harness)
-	testing.expect_value(t, harness_run(t, harness, 4096, 60_000_000), 8)
-	testing.expect(t, harness.server.counters.refused_remote_limit > 0)
-	testing.expect_value(t, harness.server.counters.accepted, 8)
+	// Each client started: its generator took its seed.
+	testing.expectf(t, harness.clients_not_started == 0, "%s", harness_describe(harness))
+	ended := harness_run(t, harness, 4096, 60_000_000)
+	testing.expectf(t, ended == 8, "%d clients ended their echo, not 8; %s", ended, harness_describe(harness))
+	testing.expectf(t, harness.server.counters.refused_remote_limit > 0, "%s", harness_describe(harness))
+	testing.expectf(t, harness.server.counters.accepted == 8, "%v, not %v; %s", harness.server.counters.accepted, 8, harness_describe(harness))
 }
 
 // A flood: 1000 datagrams shaped as Initials, from 1000 addresses, which no
@@ -375,6 +405,8 @@ clients_of_one_address_wait_their_turn :: proc(t: ^testing.T) {
 a_flood_of_forged_initials :: proc(t: ^testing.T) {
 	harness := harness_make(1)
 	defer harness_free(harness)
+	// Each client started: its generator took its seed.
+	testing.expectf(t, harness.clients_not_started == 0, "%s", harness_describe(harness))
 	state: u64 = 0x464c_4f4f_4400_0001
 	for index in 0 ..< 1000 {
 		forged := forged_initial(&state)
@@ -382,8 +414,8 @@ a_flood_of_forged_initials :: proc(t: ^testing.T) {
 		outcome := harness_server_receive(harness, remote, forged[:])
 		testing.expect(t, outcome.record < 0 && outcome.release_remote)
 	}
-	testing.expect_value(t, harness.server.counters.not_authentic, 1000)
-	testing.expect_value(t, server_connections_in_use(&harness.server), 0)
+	testing.expectf(t, harness.server.counters.not_authentic == 1000, "%v, not %v; %s", harness.server.counters.not_authentic, 1000, harness_describe(harness))
+	testing.expectf(t, server_connections_in_use(&harness.server) == 0, "%v, not %v; %s", server_connections_in_use(&harness.server), 0, harness_describe(harness))
 	for address in 0 ..< 3 {
 		for index in 0 ..< 5 {
 			identifier: [CONNECTION_ID_SIZE]u8
@@ -392,18 +424,19 @@ a_flood_of_forged_initials :: proc(t: ^testing.T) {
 			harness_server_receive(harness, {u32(0x0C00_0000 + address), u16(40_000 + index)}, datagram[:])
 		}
 	}
-	testing.expect_value(t, server_connections_in_use(&harness.server), 6)
-	testing.expect_value(t, harness.server.counters.refused_remote_limit, 9)
-	testing.expect_value(t, harness.server.counters.authenticity_checks, 1015)
+	testing.expectf(t, server_connections_in_use(&harness.server) == 6, "%v, not %v; %s", server_connections_in_use(&harness.server), 6, harness_describe(harness))
+	testing.expectf(t, harness.server.counters.refused_remote_limit == 9, "%v, not %v; %s", harness.server.counters.refused_remote_limit, 9, harness_describe(harness))
+	testing.expectf(t, harness.server.counters.authenticity_checks == 1015, "%v, not %v; %s", harness.server.counters.authenticity_checks, 1015, harness_describe(harness))
 	start := harness.now
-	testing.expect_value(t, harness_run(t, harness, 4096, 30_000_000), 1)
+	ended := harness_run(t, harness, 4096, 30_000_000)
+	testing.expectf(t, ended == 1, "%d clients ended their echo, not 1; %s", ended, harness_describe(harness))
 	// The 6 records of the authentic flood end at the handshake deadline.
 	for harness.now < start + 2 * HANDSHAKE_TIME_LIMIT && server_connections_in_use(&harness.server) > 1 {
 		harness_step(harness)
 	}
-	testing.expect_value(t, server_connections_in_use(&harness.server), 1)
-	testing.expect(t, harness_was_released(harness, {0x0C00_0000, 40_000}))
-	testing.expect(t, harness.most_in_use <= 7)
+	testing.expectf(t, server_connections_in_use(&harness.server) == 1, "%v, not %v; %s", server_connections_in_use(&harness.server), 1, harness_describe(harness))
+	testing.expectf(t, harness_was_released(harness, {0x0C00_0000, 40_000}), "%s", harness_describe(harness))
+	testing.expectf(t, harness.most_in_use <= 7, "%s", harness_describe(harness))
 }
 
 // A client that vanishes after its first datagram: the handshake deadline
@@ -412,16 +445,18 @@ a_flood_of_forged_initials :: proc(t: ^testing.T) {
 a_client_that_vanishes_in_the_handshake :: proc(t: ^testing.T) {
 	harness := harness_make(1)
 	defer harness_free(harness)
+	// Each client started: its generator took its seed.
+	testing.expectf(t, harness.clients_not_started == 0, "%s", harness_describe(harness))
 	harness_step(harness) // The first datagram of the client leaves.
 	harness.vanished[0] = true
 	for harness.now < 1_000_000 + 2 * HANDSHAKE_TIME_LIMIT && harness.server.counters.ended == 0 {
 		harness_step(harness)
 	}
-	testing.expect_value(t, harness.server.counters.accepted, 1)
-	testing.expect_value(t, harness.server.counters.ended, 1)
-	testing.expect_value(t, server_connections_in_use(&harness.server), 0)
-	testing.expect(t, harness_was_released(harness, harness.client_remotes[0]))
-	testing.expect(t, harness.connections[0].closed_by_handshake_timeout)
+	testing.expectf(t, harness.server.counters.accepted == 1, "%v, not %v; %s", harness.server.counters.accepted, 1, harness_describe(harness))
+	testing.expectf(t, harness.server.counters.ended == 1, "%v, not %v; %s", harness.server.counters.ended, 1, harness_describe(harness))
+	testing.expectf(t, server_connections_in_use(&harness.server) == 0, "%v, not %v; %s", server_connections_in_use(&harness.server), 0, harness_describe(harness))
+	testing.expectf(t, harness_was_released(harness, harness.client_remotes[0]), "%s", harness_describe(harness))
+	testing.expectf(t, harness.connections[0].closed_by_handshake_timeout, "%s", harness_describe(harness))
 }
 
 // A long header of another version, in 1200 bytes: one Version Negotiation
@@ -440,16 +475,16 @@ version_negotiation_for_another_version :: proc(t: ^testing.T) {
 	copy(datagram[15:23], []u8{2, 2, 2, 2, 2, 2, 2, 2})
 	answer: [MAX_DATAGRAM_SIZE]u8
 	outcome := server_datagram_receive(&harness.server, datagram[:], {0x0A00_0302, 40_000}, answer[:], harness.now)
-	testing.expect_value(t, outcome.answer_length, 27)
-	testing.expect(t, outcome.release_remote)
+	testing.expectf(t, outcome.answer_length == 27, "%v, not %v; %s", outcome.answer_length, 27, harness_describe(harness))
+	testing.expectf(t, outcome.release_remote, "%s", harness_describe(harness))
 	testing.expect_value(t, hex_of(answer[:27]), "800000000008020202020202020208010101010101010100000001")
 	for _ in 0 ..< 20 {
 		server_datagram_receive(&harness.server, datagram[:], {0x0A00_0302, 40_000}, answer[:], harness.now)
 	}
-	testing.expect_value(t, harness.server.counters.version_negotiations, 16)
-	testing.expect_value(t, harness.server.counters.version_negotiations_dropped, 5)
+	testing.expectf(t, harness.server.counters.version_negotiations == 16, "%v, not %v; %s", harness.server.counters.version_negotiations, 16, harness_describe(harness))
+	testing.expectf(t, harness.server.counters.version_negotiations_dropped == 5, "%v, not %v; %s", harness.server.counters.version_negotiations_dropped, 5, harness_describe(harness))
 	outcome = server_datagram_receive(&harness.server, datagram[:100], {0x0A00_0302, 40_000}, answer[:], harness.now + 2_000_000)
-	testing.expect_value(t, outcome.answer_length, 0)
+	testing.expectf(t, outcome.answer_length == 0, "%v, not %v; %s", outcome.answer_length, 0, harness_describe(harness))
 }
 
 // A datagram with the identifier of a connection, from another remote, does
@@ -458,14 +493,17 @@ version_negotiation_for_another_version :: proc(t: ^testing.T) {
 a_known_identifier_from_another_remote_is_dropped :: proc(t: ^testing.T) {
 	harness := harness_make(1)
 	defer harness_free(harness)
-	testing.expect_value(t, harness_run(t, harness, 1024, 10_000_000), 1)
+	// Each client started: its generator took its seed.
+	testing.expectf(t, harness.clients_not_started == 0, "%s", harness_describe(harness))
+	ended := harness_run(t, harness, 1024, 10_000_000)
+	testing.expectf(t, ended == 1, "%d clients ended their echo, not 1; %s", ended, harness_describe(harness))
 	client := &harness.clients[0]
 	buffer: [MAX_DATAGRAM_SIZE]u8
 	connection_close(client, 0, harness.now)
 	length := connection_datagram_send(client, buffer[:], harness.now)
-	testing.expect(t, length > 0)
+	testing.expectf(t, length > 0, "%s", harness_describe(harness))
 	outcome := harness_server_receive(harness, {0x0A00_0399, 40_000}, buffer[:length])
-	testing.expect_value(t, outcome.record, -1)
-	testing.expect_value(t, harness.server.counters.other_remote, 1)
-	testing.expect_value(t, harness.connections[0].state, Connection_State.Connected)
+	testing.expectf(t, outcome.record == -1, "%v, not %v; %s", outcome.record, -1, harness_describe(harness))
+	testing.expectf(t, harness.server.counters.other_remote == 1, "%v, not %v; %s", harness.server.counters.other_remote, 1, harness_describe(harness))
+	testing.expectf(t, harness.connections[0].state == Connection_State.Connected, "%v, not %v; %s", harness.connections[0].state, Connection_State.Connected, harness_describe(harness))
 }

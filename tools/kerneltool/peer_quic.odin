@@ -29,6 +29,15 @@ PEER_QUIC_CAPACITY :: 8
 PEER_QUIC_PORT_FIRST :: 41000
 PEER_QUIC_TIME_LIMIT :: 120 * time.Second // On the clock of the host: it only ends a case that hangs.
 PEER_QUIC_FLOOD :: 1000 // The datagrams of the flood that no key opens.
+// The datagrams of the flood in one tick of the peer (1 ms or more): 1000 in
+// 200 ms. Faster, the 64 admitted remotes of the network service can be
+// full before quic_echo releases the remotes that it refused, and a forged
+// datagram is dropped before it reaches the program.
+PEER_QUIC_FLOOD_PER_TICK :: 5
+// The time after the last datagram of the flood in which an answer can
+// still come: the Version Negotiation packet, or an answer to a forged
+// Initial, which must not come.
+PEER_QUIC_FLOOD_SETTLE :: 2 * time.Second
 
 Peer_Quic :: struct {
 	cryptography:  quic.Cryptography,
@@ -58,6 +67,7 @@ Peer_Quic :: struct {
 	expect_failure: bool, // The case passes when the handshake fails with bad_certificate.
 	vanish:        bool, // The client sends its first datagram, then nothing.
 	flood_sent:    int,
+	flood_ended_at: time.Tick, // The last datagram of the flood went.
 	flood_answers: int, // Datagrams of the server to an address of the flood that no key opens: there must be none.
 	negotiation_answers: int, // Version Negotiation packets that name version 1.
 	failure:       string,
@@ -319,9 +329,9 @@ peer_quic_datagram :: proc(peer: ^Peer, destination: [4]u8, port: u16, data: []u
 // of 198.18.0.0/15, then one long header of another version.
 @(private = "file")
 peer_quic_flood :: proc(peer: ^Peer, state: ^Peer_Quic) {
-	for _ in 0 ..< 25 {
+	for _ in 0 ..< PEER_QUIC_FLOOD_PER_TICK {
 		if state.flood_sent >= PEER_QUIC_FLOOD {
-			return
+			break
 		}
 		datagram: [quic.MAX_DATAGRAM_SIZE]u8
 		for &byte in datagram {
@@ -346,6 +356,7 @@ peer_quic_flood :: proc(peer: ^Peer, state: ^Peer_Quic) {
 		datagram[14] = 8
 		peer_send(peer, peer_quic_udp(peer, {198, 19, 0, 1}, 40000, datagram[:]))
 		state.flood_sent += 1
+		state.flood_ended_at = time.tick_now()
 	}
 }
 
@@ -465,7 +476,9 @@ peer_quic_check :: proc(state: ^Peer_Quic, wanted: int) {
 			done = done && state.finished[index] && state.read[index] == state.total
 		}
 		if state.name == "flood" {
-			done = done && state.flood_sent > PEER_QUIC_FLOOD
+			// The answers of the server come after the flood: the check waits
+			// for them.
+			done = done && state.flood_sent > PEER_QUIC_FLOOD && time.tick_since(state.flood_ended_at) > PEER_QUIC_FLOOD_SETTLE
 		}
 		if done {
 			if state.flood_answers != 0 {
@@ -474,7 +487,7 @@ peer_quic_check :: proc(state: ^Peer_Quic, wanted: int) {
 				return
 			}
 			if state.name == "flood" && state.negotiation_answers != 1 {
-				state.failure = fmt.aprintf("%d Version Negotiation packets for one datagram of another version, not 1", state.negotiation_answers)
+				state.failure = fmt.aprintf("%d Version Negotiation packets for one datagram of another version, not 1, %v after the last datagram of the flood; %d datagrams of the flood sent, %d answers to the flood", state.negotiation_answers, time.tick_since(state.flood_ended_at), state.flood_sent, state.flood_answers)
 				peer_quic_end(state, wanted, false)
 				return
 			}
@@ -487,7 +500,7 @@ peer_quic_check :: proc(state: ^Peer_Quic, wanted: int) {
 		}
 	}
 	if elapsed > PEER_QUIC_TIME_LIMIT {
-		state.failure = fmt.aprintf("not done in %v: client 0 in the state %v, %d of %d bytes back", PEER_QUIC_TIME_LIMIT, client.state, state.read[0], state.total)
+		state.failure = fmt.aprintf("not done in %v: client 0 in the state %v (closed with %x), %d of %d bytes back; %d datagrams of the flood sent, %d Version Negotiation answers, %d answers to the flood", PEER_QUIC_TIME_LIMIT, client.state, client.close_error_code, state.read[0], state.total, state.flood_sent, state.negotiation_answers, state.flood_answers)
 		peer_quic_end(state, wanted, false)
 	}
 }

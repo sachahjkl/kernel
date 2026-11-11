@@ -62,6 +62,8 @@ Server_Counters :: struct {
 	unreadable:                   u64, // A datagram whose first header does not read.
 	not_authentic:                u64, // An Initial with an unknown identifier that does not open.
 	too_small:                    u64, // An Initial in a datagram under 1200 bytes, or with an identifier under 8 bytes.
+	// The Initials refused by a limit: each datagram counts, so a client
+	// that waits for its turn counts again at each try.
 	refused_remote_limit:         u64,
 	refused_handshake_limit:      u64,
 	refused_full:                 u64,

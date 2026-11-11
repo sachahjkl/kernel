@@ -3,7 +3,7 @@
 // connection has one stream; the server writes back each byte that it
 // reads, then ends the stream after the client ended it.
 //
-// What it can reach comes from its grants only (property 20):
+// What it can reach comes from its grants only:
 //   a datagram endpoint with a listen grant: the UDP port 4433, and the
 //       remotes that send a datagram of 1200 bytes to it;
 //   the module cryptography, through its import slots.
@@ -278,7 +278,7 @@ counters_log :: proc "contextless" () {
 	}
 	counters_second = second
 	counters_logged = server.counters
-	system.log("quic_echo: accepted ", counters.accepted, ", ended ", counters.ended, ", not authentic ", counters.not_authentic, ", too small ", counters.too_small, ", refused by a limit ", counters.refused_remote_limit + counters.refused_handshake_limit, ", table full ", counters.refused_full, ", version negotiations ", counters.version_negotiations)
+	system.log("quic_echo: accepted ", counters.accepted, ", ended ", counters.ended, ", not authentic ", counters.not_authentic, ", too small ", counters.too_small, ", Initials refused by a limit (each try of a client counts) ", counters.refused_remote_limit + counters.refused_handshake_limit, ", Initials refused with a full table ", counters.refused_full, ", version negotiations ", counters.version_negotiations)
 }
 
 // exchange gives the server the datagrams that arrived, runs its timers,
@@ -415,8 +415,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if !quic.server_init(&server, connections, records[:], &configuration, &cryptography, &program_generator, quic.SERVER_LIMITS_DEFAULT, &error) {
 		fail("the server refused its configuration")
 	}
-	// The server keeps its own copy of the key.
-	configuration.tls.server_private_key = {}
+	// The server keeps its own copy of the key. A plain store of zeros to a
+	// record that is not read again can be removed by the compiler.
+	quic.secret_erase(&configuration.tls.server_private_key, size_of(configuration.tls.server_private_key))
 	for place in 0 ..< RECEIVE_PLACES {
 		post(u32(place))
 	}

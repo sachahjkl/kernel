@@ -92,7 +92,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 	interface.label_value_line(&frame, interface.column_take(&column, LINE), "accepted", number_text(&builder, counters.accepted, " connections, each with an authentic Initial"), graphics.COLOR_TEXT, 200)
 	interface.label_value_line(&frame, interface.column_take(&column, LINE), "ended", number_text(&builder, counters.ended, " connections"), graphics.COLOR_TEXT, 200)
 	interface.label_value_line(&frame, interface.column_take(&column, LINE), "not authentic", number_text(&builder, counters.not_authentic, " Initials that no key opens: no record touched"), graphics.COLOR_TEXT, 200)
-	interface.label_value_line(&frame, interface.column_take(&column, LINE), "refused by a limit", number_text(&builder, counters.refused_remote_limit + counters.refused_handshake_limit + counters.refused_full, " Initials: one address, the handshakes, a full table"), graphics.COLOR_TEXT, 200)
+	interface.label_value_line(&frame, interface.column_take(&column, LINE), "refused by a limit", number_text(&builder, counters.refused_remote_limit + counters.refused_handshake_limit + counters.refused_full, " Initials (each try of a client counts): one address, the handshakes, a full table"), graphics.COLOR_TEXT, 200)
 	interface.label_value_line(&frame, interface.column_take(&column, LINE), "datagrams", number_text(&builder, counters.datagrams, " received"), graphics.COLOR_TEXT, 200)
 	interface.window_frame_end(&drawing, &frame, window)
 }
