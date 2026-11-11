@@ -14,10 +14,16 @@
     system = "x86_64-linux";
     pkgs = inputs.nixpkgs.legacyPackages.${system};
 
+    # The Odin compiler with one patch: -thread-count:1 gives one thread, so
+    # one source gives one module (property 11). The reason is in the patch.
+    odin = pkgs.odin.overrideAttrs (old: {
+      patches = (old.patches or []) ++ [./tools/odin_compiler/thread_count_counts_the_main_thread.patch];
+    });
+
     # What tools/kerneltool needs on the path.
     # llc comes from the LLVM of the Odin compiler (18): Odin writes LLVM IR, and
     # llc makes each object with frame pointers.
-    buildTools = [pkgs.odin pkgs.llvmPackages_18.llvm pkgs.llvmPackages.lld pkgs.nasm pkgs.qemu pkgs.coreutils];
+    buildTools = [odin pkgs.llvmPackages_18.llvm pkgs.llvmPackages.lld pkgs.nasm pkgs.qemu pkgs.coreutils];
 
     # The pointer theme of the owner (docs/POINTERS.md): "Posy's Cursor", the
     # package of nixpkgs, pinned by flake.lock. Its license is CC-BY-NC-4.0,

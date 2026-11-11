@@ -1,0 +1,91 @@
+A patch of the Odin compiler (tag dev-2026-05, the `odin` of the Nixpkgs of
+flake.nix). flake.nix applies it to the compiler of the development shell
+and of the checks. The reason: property 11 (one source gives one module) and
+choice NEW-1 of docs/FIRST_MILESTONE.md.
+
+The fault. `-thread-count:1` does not give one thread. src/main.cpp,
+init_global_thread_pool, makes `worker_count = thread_count` workers beside
+the main thread ("// +1"). With `-thread-count:1` the pool has two threads,
+and the worker steals the tasks that the main thread puts in its queue. Two
+threads then run tasks of the checker at the same time:
+check_collect_entities_all (src/checker.cpp) puts one task for each file,
+and each task adds the entities of its file to the shared queue
+`info.entity_queue` (mpsc_enqueue in add_entity_and_decl_info).
+The order of that queue becomes the order of `info.entities`
+(check_add_entities_from_queues), and the checker checks the global
+entities in that order (check_all_global_entities, then
+check_unchecked_bodies). The order of the checks decides the order of the
+instances of polymorphic procedures and of the types in the LLVM module, and
+the inlining of `-o:speed` follows that order. So rare builds of the same
+source give other machine code. The entity id (`global_entity_id`) also
+changes, and with it the name of each static variable of a procedure
+(`.name-<id>`, src/llvm_backend_stmt.cpp, lb_build_static_variables).
+Measured with the stock compiler, the process pinned to one processor:
+`console` gave 3 distinct LLVM IR files in 60 builds, `host` 2 in 60.
+`-no-threaded-checker` changes only check_procedure_bodies: the other
+phases still use the pool.
+
+The correction. `-thread-count:N` means N threads in all: the main thread and
+N-1 workers, as the backend already counts (lb_generate_code,
+lb_init_generator). With `-thread-count:1` no worker exists: the main
+thread runs each task in thread_pool_wait, in one order. With no worker, a
+thread that waits for a signal (wait_signal_until_available: the fields of
+an #soa type that a queued task completes) runs the tasks of its own queue,
+because no other thread runs them. With workers, that wait does not change.
+Measured with this patch: `console` and `host` 60 builds each, one LLVM IR
+file each, and one thread in each compiler process.
+
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -14,10 +14,30 @@
+ #include "build_settings.cpp"
+ gb_global ThreadPool global_thread_pool;
+ gb_internal void init_global_thread_pool(void) {
++	// -thread-count:N means N threads in all: the main thread and N-1 workers,
++	// as in the backend (lb_generate_code). With -thread-count:1 no worker
++	// exists, the main thread runs each task, and the order of the work is the
++	// same at each build: the same source gives the same output.
+ 	isize thread_count = gb_max(build_context.thread_count, 1);
+-	isize worker_count = thread_count; // +1
++	isize worker_count = thread_count - 1;
+ 	thread_pool_init(&global_thread_pool, worker_count, "ThreadPoolWorker");
+ }
++// run_one_queued_task_of_this_thread runs one task of the queue of the calling
++// thread, if the pool has no worker and the queue has a task. With no worker,
++// no other thread runs the tasks of a thread that waits for a signal
++// (wait_signal_until_available). With workers, nothing changes.
++gb_internal bool run_one_queued_task_of_this_thread(void) {
++	if (current_thread == nullptr || global_thread_pool.threads.count > 1) {
++		return false;
++	}
++	WorkerTask task;
++	if (thread_pool_queue_take(current_thread, &task) != Grab_Success) {
++		return false;
++	}
++	task.do_work(task.data);
++	global_thread_pool.tasks_left.fetch_sub(1, std::memory_order_release);
++	return true;
++}
+ gb_internal bool thread_pool_add_task(WorkerTaskProc *proc, void *data) {
+ 	return thread_pool_add_task(&global_thread_pool, proc, data);
+ }
+--- a/src/threading.cpp
++++ b/src/threading.cpp
+@@ -123,9 +123,15 @@
+ 	Futex futex;
+ };
+ 
++gb_internal bool run_one_queued_task_of_this_thread(void);
++
+ gb_internal void wait_signal_until_available(Wait_Signal *ws) {
+-	if (ws->futex.load() == 0) {
+-		futex_wait(&ws->futex, 0);
++	// With no worker, the task that sets the signal can be in the queue of
++	// this thread (an #soa type that completes later): run it, then sleep.
++	while (ws->futex.load() == 0) {
++		if (!run_one_queued_task_of_this_thread()) {
++			futex_wait(&ws->futex, 0);
++		}
+ 	}
+ }
+ 
