@@ -53,6 +53,9 @@ Spinner :: struct #align (64) {
 Result :: struct {
 	measured:    bool,
 	wakes:       u64, // In one second.
+	// During the case of the two threads: the turns that a wake ended on the
+	// processor of the waker and by an interrupt, and the moves.
+	pair_local, pair_interrupts, pair_moves: u64,
 	median:      u64, // Microseconds.
 	worst:       u64,
 	shares:      [EQUAL_COUNT]u64, // Tenths of a percent of the work of the spinners.
@@ -276,10 +279,15 @@ measure :: proc "contextless" (index: int, processors: u64) {
 	}
 	system.sleep(system.time() + WARM_TIME)
 	start_rounds := intrinsics.atomic_load(&pair.rounds[0])
+	pair_before := counts(processors)
 	start := system.nanoseconds()
 	system.sleep(system.time() + PAIR_TIME)
 	rounds := intrinsics.atomic_load(&pair.rounds[0]) - start_rounds
 	elapsed := max(system.nanoseconds() - start, 1)
+	pair_after := counts(processors)
+	result.pair_interrupts = pair_after.interrupt_preemptions - pair_before.interrupt_preemptions
+	result.pair_local = pair_after.preemptions - pair_before.preemptions - result.pair_interrupts
+	result.pair_moves = pair_after.moves - pair_before.moves
 	result.wakes = rounds * 1_000_000_000 / elapsed
 	pair_stop()
 	spinners_stop(0, int(processors))
@@ -385,13 +393,19 @@ log_result :: proc "contextless" (index: int) {
 	for share in result.shares {
 		least, most = min(least, share), max(most, share)
 	}
-	buffer: [640]u8
+	buffer: [800]u8
 	writer := system.Writer{buffer = buffer[:]}
 	system.write_part(&writer, "scheduler: ")
 	system.write_part(&writer, op.STRATEGY_NAMES[strategies[index]])
 	system.write_part(&writer, ": two threads that wake each other, a spinner on each processor: ")
 	system.write_unsigned(&writer, result.wakes)
-	system.write_part(&writer, " wakes in one second; a thread that sleeps 2 ms among 8 spinners: late by ")
+	system.write_part(&writer, " wakes in one second (")
+	system.write_unsigned(&writer, result.pair_local)
+	system.write_part(&writer, " turns ended on the processor of the waker, ")
+	system.write_unsigned(&writer, result.pair_interrupts)
+	system.write_part(&writer, " by an interrupt, ")
+	system.write_unsigned(&writer, result.pair_moves)
+	system.write_part(&writer, " moves); a thread that sleeps 2 ms among 8 spinners: late by ")
 	system.write_unsigned(&writer, result.median)
 	system.write_part(&writer, " us in the middle, ")
 	system.write_unsigned(&writer, result.worst)
@@ -416,7 +430,9 @@ log_result :: proc "contextless" (index: int) {
 	system.write_part(&writer, " ns, one preemption by an interrupt ")
 	system.write_unsigned(&writer, result.interrupt_preemption)
 	system.write_part(&writer, " ns in the kernel")
-	system.log(system.written(&writer))
+	// Longer than the buffer of system.log (512 bytes): one Log of the whole text.
+	text := system.written(&writer)
+	system.call(.Log, u64(system.context_record().handles[op.CONTEXT_LOG]), u64(uintptr(raw_data(text))), u64(len(text)), u64(op.Log_Level.Info), 0, 0)
 }
 
 // The stress case: a thread changes the strategy CHANGES times while 8
@@ -760,7 +776,7 @@ draw :: proc "contextless" (canvas: graphics.Canvas, report: op.System_Report, p
 	top += processors_height + MARGIN
 	last := card(canvas, MARGIN, top, WIDTH - 2 * MARGIN, HEIGHT - top - MARGIN, "CHANGES WHILE THREADS RUN", "Strategy_Set, 100 times")
 	if stress_done {
-		text := system.format(line[:], stress_changes, " changes while ", stress_churned, " threads started and ended; one change ", change_least / 1000, " to ", change_worst / 1000, " us, middle ", change_middle / 1000)
+		text := system.format(line[:], stress_changes, " changes while ", stress_churned, " threads started and ended; one change ", change_least / 1000, " to ", change_worst / 1000, " us, middle ", change_middle / 1000, " us")
 		graphics.text(last, 0, 0, text, stress_right ? graphics.COLOR_TEXT : graphics.COLOR_FAILED)
 	} else {
 		graphics.text(last, 0, 0, "not measured yet", graphics.COLOR_DIM)

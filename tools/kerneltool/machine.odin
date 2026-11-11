@@ -1479,6 +1479,23 @@ scenario_measure := [?]Step {
 	{kind = .Wait, text = "kernel: the machine stops with code 0"},
 }
 
+// The scheduling strategies with only the desktop (`kerneltool measure
+// scheduler N`).
+@(rodata)
+scenario_measure_scheduler := [?]Step {
+	{kind = .Wait, text = "boot program: ok"},
+	{kind = .Wait, text = "kernel: ok"},
+	{kind = .Wait, text = "root: ok"},
+	{kind = .Wait, text = "compositor: first frame", any_order = true},
+	{kind = .Wait, text = "compositor: surface console"},
+	{kind = .Launch, text = "scheduler"},
+	{kind = .Wait, text = "scheduler: stress: 100 changes of strategy while "},
+	{kind = .Wait, text = "scheduler: the window took "},
+	{kind = .Front, text = "console"},
+	{kind = .Type, text = "shutdown()"},
+	{kind = .Wait, text = "kernel: the machine stops with code 0"},
+}
+
 // The film of the terminal: the program flood writes lines, the person
 // holds the view, moves in the lines, then stops the lines with a key and
 // starts them again.

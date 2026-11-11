@@ -77,7 +77,7 @@ COMMANDS :: [?]Command {
 	{name = "run", about = "build, then start the machine under QEMU, with the log of the kernel on this terminal", run = run_machine},
 	{name = "test", about = "build, start the machine under QEMU, act as the person, check the log, save pictures of the screen; `test network`, `test main`: one machine only", run = run_test},
 	{name = "screenshots", about = "test, then copy the pictures to " + DOCUMENT_SCREENSHOT_FOLDER + " and to a new folder of " + DEVELOPMENT_LOG_FOLDER, run = run_screenshots},
-	{name = "measure", about = "build, start the machine, run the measures of the locks of the kernel with no other program, and stop: the numbers are in " + TEST_OUTPUT_MEASURE, run = run_measure},
+	{name = "measure", about = "build, start the machine, run the measures of the locks of the kernel with no other program, and stop: the numbers are in " + TEST_OUTPUT_MEASURE + "; `measure scheduler N`: the program scheduler N times", run = run_measure},
 	{name = "film", about = "build, start the machine, film the terminal, and write " + FILM_OUTPUT + " and a copy in " + DEVELOPMENT_LOG_FOLDER + " (needs ffmpeg)", run = run_film},
 	{name = "font", about = "convert the BDF file of the font to " + FONT_OUTPUT, run = run_font},
 	{name = "portrait", about = "convert " + PORTRAIT_SOURCE + " to " + PORTRAIT_OUTPUT, run = run_portrait},
@@ -268,11 +268,38 @@ TEST_OUTPUT_MEASURE :: BUILD_FOLDER + "/test_output_measure.txt"
 // run_measure runs the measures of the program `locks` on a machine where
 // only the desktop runs: the numbers have no load of the other programs of
 // the test. The program checks its counts; the tool does not check a speed.
+// `measure scheduler N`: N machines that run only the program scheduler
+// with the desktop; the numbers are in build/test_output_scheduler_<n>.txt.
 run_measure :: proc(args: []string) -> int {
 	if code := run_build(nil); code != 0 {
 		return code
 	}
-	if !make_folder(SCREENSHOT_FOLDER) || !disk_prepare(TEST_DATA_DISK, DATA_DISK_SIZE, true) || !machine_test(scenario_measure[:], BOOT_VOLUME, TEST_OUTPUT_MEASURE, MACHINE_STOP_OK, TEST_DATA_DISK) {
+	if !make_folder(SCREENSHOT_FOLDER) || !disk_prepare(TEST_DATA_DISK, DATA_DISK_SIZE, true) {
+		return EXIT_FAILURE
+	}
+	if len(args) >= 1 && args[0] == "scheduler" {
+		count := 1
+		if len(args) == 2 {
+			count = 0
+			for character in args[1] {
+				if character < '0' || character > '9' {
+					fmt.eprintln("kerneltool: measure scheduler <count>: the count is a number")
+					return EXIT_FAILURE
+				}
+				count = count * 10 + int(character - '0')
+			}
+		}
+		for run in 1 ..= count {
+			// Not in the temporary allocator: the scenario frees it after each step.
+			output := fmt.aprintf("%s/test_output_scheduler_%d.txt", BUILD_FOLDER, run)
+			defer delete(output)
+			if !machine_test(scenario_measure_scheduler[:], BOOT_VOLUME, output, MACHINE_STOP_OK, TEST_DATA_DISK) {
+				return EXIT_FAILURE
+			}
+		}
+		return 0
+	}
+	if !machine_test(scenario_measure[:], BOOT_VOLUME, TEST_OUTPUT_MEASURE, MACHINE_STOP_OK, TEST_DATA_DISK) {
 		return EXIT_FAILURE
 	}
 	return 0
