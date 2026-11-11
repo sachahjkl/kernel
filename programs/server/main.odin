@@ -203,16 +203,24 @@ connection_log_second: u64
 connection_log_count: u64
 connections_not_logged: u64
 
+// connection_log_second_end writes, after a second, how many ends of
+// connections were not on the log in it. Each pass calls it, so the line
+// does not wait for the next end of a connection.
+connection_log_second_end :: proc "contextless" () {
+	second := system.time() / 1000
+	if second == connection_log_second {
+		return
+	}
+	if connections_not_logged > 0 {
+		system.log("server: ", connections_not_logged, " ends of connections in one second are not on the log (the limit is 50)")
+	}
+	connection_log_second, connection_log_count, connections_not_logged = second, 0, 0
+}
+
 // connection_log_allowed says if one more line of the end of a connection
 // goes on the log in this second.
 connection_log_allowed :: proc "contextless" () -> bool {
-	second := system.time() / 1000
-	if second != connection_log_second {
-		if connections_not_logged > 0 {
-			system.log("server: ", connections_not_logged, " ends of connections in one second are not on the log (the limit is 50)")
-		}
-		connection_log_second, connection_log_count, connections_not_logged = second, 0, 0
-	}
+	connection_log_second_end()
 	if connection_log_count < CONNECTION_LOG_LIMIT {
 		connection_log_count += 1
 		return true
@@ -375,9 +383,11 @@ exchange :: proc "contextless" (incoming: []tcp.Incoming) -> (deadline: u64) {
 	table.reclaimed_remote_count = 0
 	// After the Sends of this pass: the releases.
 	releases_send_now()
-	// The limits of the open connections and the measure of each second
-	// need a time even when no segment and no timer of TCP comes.
-	if tcp.open_count(&table) > 0 || second_requests > 0 {
+	connection_log_second_end()
+	// The limits of the open connections, the measure of each second and
+	// the line of the ends that were not logged need a time even when no
+	// segment and no timer of TCP comes.
+	if tcp.open_count(&table) > 0 || second_requests > 0 || connections_not_logged > 0 {
 		deadline = min(deadline, now + 1_000_000)
 	}
 	return deadline
