@@ -1,6 +1,7 @@
 #+build !freestanding
 package random
 
+import "contract:errors"
 import "core:testing"
 import "support:system"
 import op "contract:operation"
@@ -186,4 +187,50 @@ a_draw_leaves_the_generator_free :: proc(t: ^testing.T) {
 	testing.expect(t, !generator.in_use)
 	fill(&generator, drawn[:10])
 	testing.expect(t, !generator.in_use)
+}
+
+// A key is drawn only when the seed has the strength that the caller asks:
+// a weaker seed gives Seed_Too_Weak and no byte (the owner's rule: the
+// program chooses what it accepts, and an unmet requirement is an error).
+@(test)
+a_key_asks_for_a_least_seed_strength :: proc(t: ^testing.T) {
+	Case :: struct {
+		seed:     Seed_Strength,
+		asked:    Seed_Strength,
+		accepted: bool,
+	}
+	cases := []Case {
+		{.Weak, .Weak, true},
+		{.Weak, .Processor, false},
+		{.Weak, .Entropy, false},
+		{.Processor, .Weak, true},
+		{.Processor, .Processor, true},
+		{.Processor, .Entropy, false},
+		{.Entropy, .Processor, true},
+		{.Entropy, .Entropy, true},
+	}
+	for item in cases {
+		seed := seed_of(9)
+		generator: Generator
+		generator_seed(&generator, &seed, item.seed)
+		key: [32]u8
+		error: errors.Error_Record
+		accepted := fill_for_a_key(&generator, key[:], item.asked, &error)
+		testing.expectf(t, accepted == item.accepted, "a seed %v, a key that asks for %v", item.seed, item.asked)
+		if accepted {
+			testing.expect(t, key != [32]u8{})
+		} else {
+			testing.expect(t, key == [32]u8{})
+			testing.expect_value(t, error.kind, i64(errors.Kind.Seed_Too_Weak))
+			testing.expect_value(t, error.value, i64(item.seed))
+			testing.expect_value(t, error.limit, i64(item.asked))
+			testing.expect_value(t, generator.served, 0)
+		}
+	}
+	// A generator with no seed gives the error, not a stop of the program.
+	empty: Generator
+	key: [32]u8
+	error: errors.Error_Record
+	testing.expect(t, !fill_for_a_key(&empty, key[:], .Weak, &error))
+	testing.expect_value(t, error.kind, i64(errors.Kind.Seed_Too_Weak))
 }

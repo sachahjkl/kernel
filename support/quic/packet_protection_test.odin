@@ -79,6 +79,12 @@ module_cryptography :: proc() -> Cryptography {
 		hkdf_sha256_expand                   = cryptography_module.hkdf_sha256_expand,
 		header_protection_mask_with_aes_128  = cryptography_module.header_protection_mask_with_aes_128,
 		header_protection_mask_with_chacha20 = cryptography_module.header_protection_mask_with_chacha20,
+		sha256                               = cryptography_module.sha256,
+		hmac_sha256                          = cryptography_module.hmac_sha256,
+		x25519                               = cryptography_module.x25519_export,
+		ed25519_public_key                   = cryptography_module.ed25519_public_key,
+		ed25519_sign                         = cryptography_module.ed25519_sign,
+		ed25519_verify                       = cryptography_module.ed25519_verify,
 	}
 }
 

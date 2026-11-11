@@ -22,6 +22,14 @@ Cryptography :: struct {
 	hkdf_sha256_expand:                  proc "c" (key, info: ^string, length: i64, result: ^[]u8, error: ^errors.Error_Record) -> i64,
 	header_protection_mask_with_aes_128: Mask_Procedure,
 	header_protection_mask_with_chacha20: Mask_Procedure,
+	// TLS 1.3 (tls_handshake.odin): the transcript hash, Finished, the key
+	// exchange and the signature of the server.
+	sha256:                              proc "c" (text: ^string, result: ^[]u8) -> i64,
+	hmac_sha256:                         proc "c" (key, text: ^string, result: ^[]u8) -> i64,
+	x25519:                              proc "c" (scalar, point: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64,
+	ed25519_public_key:                  proc "c" (secret: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64,
+	ed25519_sign:                        proc "c" (secret, message: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64,
+	ed25519_verify:                      proc "c" (public, message, signature: ^string, error: ^errors.Error_Record) -> i64,
 }
 
 Aead_Procedure :: #type proc "c" (key, nonce, additional, text: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64

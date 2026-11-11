@@ -14,6 +14,7 @@
 package random
 
 import "base:intrinsics"
+import "contract:errors"
 import op "contract:operation"
 import "support:system"
 import "support:cryptography/chacha20"
@@ -108,6 +109,20 @@ fill :: proc "contextless" (generator: ^Generator, output: []u8) {
 	}
 	generator.served += u64(len(output))
 	intrinsics.atomic_store(&generator.in_use, false)
+}
+
+// fill_for_a_key writes random bytes in output for a key, a nonce or
+// another secret, when the seed of this generator has least_strength at
+// least. Each program chooses what it accepts; a seed that is weaker gives
+// the error Seed_Too_Weak and writes no byte. A plain draw with no
+// requirement is fill.
+fill_for_a_key :: proc "contextless" (generator: ^Generator, output: []u8, least_strength: Seed_Strength, error: ^errors.Error_Record) -> bool {
+	if !generator.seeded || generator.strength < least_strength {
+		errors.fail(error, -1, .Seed_Too_Weak, .None, 3, i64(generator.strength), i64(least_strength))
+		return false
+	}
+	fill(generator, output)
+	return true
 }
 
 // next_u64 gives a random number of 64 bits.

@@ -57,6 +57,7 @@ Kind :: enum i64 {
 	Out_Of_Range      = 30, // The argument names units past the end. value: the end of what it names (its first unit and its count); limit: the units that exist.
 	Reserved          = 31, // The argument names a program of the system that the call does not act on: it starts at boot, or it is a device service.
 	Not_Authentic     = 32, // The bytes of the argument do not prove what they must: the tag of a sealed text, or a signature, does not verify. No byte of the result is given.
+	Seed_Too_Weak     = 33, // The random seed of the program is weaker than the least strength that the caller accepts. value: the strength of the seed; limit: the least strength asked (1 weak, 2 processor, 3 entropy). Nothing is made.
 }
 
 // What value, limit and found count.

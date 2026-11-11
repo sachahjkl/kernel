@@ -86,18 +86,56 @@ So no byte is checked in one place and used from another, and the result of each
 
 The values of appendix A were copied from the text of the RFC by a script that is not in the repository; none was typed by hand.
 
-## 4. The next layers (designed, not built)
+## 4. TLS 1.3 for QUIC (the second layer, built)
 
-1. **TLS 1.3 for QUIC** (RFC 8446, RFC 9001):
-   - the key schedule;
-   - ClientHello, ServerHello, EncryptedExtensions, Certificate, CertificateVerify and Finished in CRYPTO frames;
-   - the transport parameters extension and ALPN.
+`support/quic/tls_key_schedule.odin` and `tls_handshake.odin`: both sides of the handshake as one state machine over bytes in memory of the caller, with no allocation. QUIC carries the messages in CRYPTO frames at their encryption level; there is no record layer (RFC 9001, section 4).
 
-   Authentication by raw public keys (RFC 7250) with Ed25519: no X.509 is read.
-   - The kernel tool makes the key pair of the host at build time.
-   - The root service gives the public key of the host to `remote` as a grant, which the person can read and revoke.
-   - The host knows the public key of the machine.
-2. **The transport**:
+**What it does, and nothing more:**
+- the group X25519 only, the signature Ed25519 only;
+- TLS_CHACHA20_POLY1305_SHA256 first, TLS_AES_128_GCM_SHA256 also (the client offers both, the server takes ChaCha20-Poly1305 when it is offered);
+- one application protocol (ALPN, which RFC 9001 section 8.1 makes required);
+- the `quic_transport_parameters` extension of each side, carried as bytes, checked for its form (each parameter an identifier, a length and its bytes), kept for the transport;
+- no session resumption, no 0-RTT, no HelloRetryRequest (the client sends its one key share; a HelloRetryRequest gives handshake_failure), no client certificate, no KeyUpdate (QUIC forbids it).
+
+**How a peer is known: a raw public key, pinned by the caller** (RFC 7250).
+- The client offers `server_certificate_type` with the one type RawPublicKey. The server answers with that type in EncryptedExtensions; its Certificate holds one entry, the SubjectPublicKeyInfo of its Ed25519 key: 12 fixed bytes (RFC 8410) and the 32 bytes of the key. No other DER is read, and no X.509 certificate is read.
+- The client compares the key with `Tls_Configuration.server_public_key`, the key that its caller pinned. Another key gives bad_certificate. Then CertificateVerify proves that the server holds the private key of that key, over the transcript (RFC 8446, section 4.4.3).
+- So there is no certificate authority, no name and no date: a client trusts one key, given by its caller. For `remote`, the root service gives the key as a grant (the next layers).
+
+**Who holds the private key.** The server program holds its Ed25519 private key in `Tls_Configuration.server_private_key`, in its own memory; the module `cryptography` runs in the same program, so the key never crosses a ring. The handshake erases its copy, its X25519 private key and its secrets when it fails (`tls_handshake_erase_secrets`); the X25519 private key is erased as soon as the shared secret is made.
+
+**Randomness.** The client random, the server random and each X25519 private key come from the generator of the program through `random.fill_for_a_key`, with the least seed strength of the configuration: QUIC asks for `processor` at least (`docs/RANDOMNESS.md`).
+
+**Hostile input.** Each message of the peer:
+- has each length checked before a byte is read (`Reader`);
+- may come in parts (the side waits for the rest), but over 4096 bytes is refused;
+- must have the type that the state waits for, at its level: else unexpected_message;
+- may hold an extension that the side does not know: it is skipped in a ClientHello, and refused with unsupported_extension where the side did not offer it (ServerHello, EncryptedExtensions);
+- may not hold one extension type two times (illegal_parameter);
+- gives, at a failure, the alert of TLS in `Tls_Handshake.alert` (QUIC sends it as the error code 0x100 + alert) and an error record whose `found` field is the alert.
+
+**Keys for QUIC.** `tls_packet_keys(handshake, level, sending, keys, error)` gives the packet keys of the Handshake or the Application level, from the traffic secrets, through `packet_keys_from_secret`.
+
+**Tests** (`support/quic/tls_handshake_test.odin`, host):
+- The key schedule against the trace "Simple 1-RTT Handshake" of RFC 8448, section 3:
+  - the X25519 exchange;
+  - the hashes of the transcript after the two Hello messages and after the Finished of the server (from the messages of the trace: its Certificate is RSA, which this handshake does not read, but its bytes go into the hash);
+  - the early, handshake and master secrets, the two derived secrets, the four traffic secrets;
+  - an HkdfLabel with a context;
+  - the two finished keys and the two Finished values.
+- A whole handshake of a client against a server in memory: both connected with ChaCha20-Poly1305, the same keys in each direction, the transport parameters of the other side, the X25519 private keys erased.
+- The refusals: a server key that is not the pinned key (bad_certificate), a protocol that the server does not speak (no_application_protocol), a weak seed (Seed_Too_Weak, nothing sent).
+- Hostile messages:
+  - each message cut at each length, with its length field set to the cut (the side fails) and left as it was (the side waits);
+  - one bit of each byte of each message changed (the two sides never both connect);
+  - each server message in the place of another, a message at a level where it does not go (unexpected_message);
+  - 20 000 random messages (none traps, none connects a side).
+
+The values of RFC 8448, RFC 8446 (the Random of a HelloRetryRequest) and RFC 8410 (the prefix of an Ed25519 SubjectPublicKeyInfo) were copied from the text of the RFCs by a script that is not in the repository, with the size of each one checked. The two byte arrays in `tls_handshake.odin` were written from that output, and a test compares them with it.
+
+## 5. The next layers (designed, not built)
+
+1. **The transport**:
    - packet number spaces, ACK frames and loss detection with the PTO of RFC 9002;
    - congestion control, from the ideas and the tests of the Reno of `support/tcp`;
    - bidirectional streams with flow control per stream and per connection;
@@ -105,13 +143,13 @@ The values of appendix A were copied from the text of the RFC by a script that i
    - Version Negotiation and Retry;
    - the 3x amplification limit before address validation (a MUST of RFC 9000, section 8);
    - the idle timeout, CONNECTION_CLOSE and the stateless reset.
-3. **The endpoint**: a listen grant for datagrams. The service admits a remote on its first datagram to the listen port, with the limits of the TCP table of admitted remotes (64 places, a place idle for 120 s serves again). The amplification limit and Retry of QUIC protect the server; the service keeps checking the port and the size.
-4. **The users**, in order:
+2. **The endpoint**: a listen grant for datagrams. The service admits a remote on its first datagram to the listen port, with the limits of the TCP table of admitted remotes (64 places, a place idle for 120 s serves again). The amplification limit and Retry of QUIC protect the server; the service keeps checking the port and the size.
+3. **The users**, in order:
    - an echo between the tool and a test program, with loss through the peer;
    - a stack that this project did not write, over QEMU user networking;
-   - `remote` over QUIC with mutual authentication.
+   - `remote` over QUIC with mutual authentication: a client certificate of the host (a raw public key too), whose key the root service gives to `remote` as a grant that the person can read and revoke; the host pins the key of the machine.
 
-## 5. What is not built, and will not be in version 1 of this library
+## 6. What is not built, and will not be in version 1 of this library
 
 - Connection migration.
 - 0-RTT.
@@ -119,4 +157,5 @@ The values of appendix A were copied from the text of the RFC by a script that i
 - ECN.
 - The datagram extension (RFC 9221).
 - HTTP/3.
+- X.509 certificates, session resumption, HelloRetryRequest, the groups and signatures other than X25519 and Ed25519.
 - AES-256-GCM and AES-128-CCM: the suites of TLS 1.3 that this library does not offer.
