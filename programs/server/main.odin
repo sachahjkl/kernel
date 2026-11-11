@@ -23,7 +23,21 @@ import "support:system"
 import "support:tcp"
 import "support:web"
 
-CAPACITY :: 32 // Connections at one time, with the ones in TIME-WAIT.
+CAPACITY :: 48 // Connections at one time, with the ones in TIME-WAIT.
+REMOTE_LIMIT :: 24 // The open connections of one remote address: half the table (tcp.Table.remote_limit).
+
+// The limits of a connection that makes no progress (milliseconds). One
+// host must not keep a record for ever (an independent read of the step,
+// B2). 10 s is long for a request on a link of the machine, where a round
+// trip is under 1 ms, and short against 48 records: a host that opens 24
+// connections and sends nothing frees them in 10 s.
+IDLE_LIMIT :: 10_000 // No byte of a request on an open connection.
+HEAD_TIME :: 10_000 // A head that started and is not whole: 408.
+PROGRESS_LIMIT :: 10_000 // A request in progress with no byte read and no byte acknowledged (a zero window for ever).
+BODY_GRACE :: 10_000 // After it, a body must come at BODY_RATE bytes in one second at least.
+BODY_RATE :: 4096
+SINK_LIMIT :: 16 << 20 // The largest body: 413 over it.
+HELD_CAPACITY :: 512 // Commands that the ring did not take: they go at the next pass.
 SEND_SIZE :: 64 * 1024
 RECEIVE_SIZE :: 32 * 1024
 BUFFER_PAGES :: CAPACITY * (SEND_SIZE + RECEIVE_SIZE) / system.PAGE_SIZE
@@ -44,6 +58,8 @@ Page :: enum u8 {
 	Sink,
 	Missing,
 	Bad,
+	Timeout, // 408: the head did not come in HEAD_TIME.
+	Too_Large, // 413: a body over SINK_LIMIT.
 }
 
 // The HTTP side of one connection: the record with the same index as its
@@ -71,6 +87,10 @@ Session :: struct {
 	closing:        bool,
 	logged:         bool, // The end of the connection is on the log and in the history.
 	requests:       int,
+	progress_at:    u64, // Milliseconds: the last byte read, or acknowledged.
+	acknowledged:   u64, // bytes_sent of the connection at progress_at.
+	head_at:        u64, // Milliseconds: the first byte of the head.
+	body_at:        u64, // Milliseconds: the head of a body.
 }
 
 // A connection that ended, as the window shows it.
@@ -95,6 +115,12 @@ events: [CAPACITY]tcp.Event
 local_address: u32
 listen_port: u16
 secret_source: string
+secret_weak: bool // No rdrand that works: the secret of the initial sequence numbers comes from the cycle counter.
+held: [HELD_CAPACITY]ring.Record // Commands that the ring did not take (F3).
+held_count: int
+held_lost: u64 // Commands lost because held was full: 0 in each test.
+aborted_count: u64 // Connections that this server ended for a limit.
+released_strays: u64 // Remotes released because a segment of theirs had no record.
 
 // Totals and measures.
 accepted: u64
@@ -122,8 +148,32 @@ place_bytes :: proc "contextless" (place: u32) -> []u8 {
 	return region[int(place) * PLACE_SIZE:][:PLACE_SIZE]
 }
 
+// command puts a command in the ring. A full ring keeps it in `held`, for
+// the next pass: a Send, a Receive or a Release is never lost, so no place
+// and no admitted remote leaks.
+command_push_or_hold :: proc "contextless" (record: ring.Record) {
+	if held_count == 0 && ring.push(&endpoint.commands, record) {
+		return
+	}
+	if held_count == HELD_CAPACITY {
+		held_lost += 1
+		return
+	}
+	held[held_count] = record
+	held_count += 1
+}
+
+held_commands_push :: proc "contextless" () {
+	done := 0
+	for done < held_count && ring.push(&endpoint.commands, held[done]) {
+		done += 1
+	}
+	copy(held[:], held[done:held_count])
+	held_count -= done
+}
+
 post :: proc "contextless" (place: u32) {
-	ring.push(&endpoint.commands, ring.Record{kind = u32(datagram.Command.Receive), tag = place, values = {0 = u64(place) * PLACE_SIZE, 1 = PLACE_SIZE}})
+	command_push_or_hold(ring.Record{kind = u32(datagram.Command.Receive), tag = place, values = {0 = u64(place) * PLACE_SIZE, 1 = PLACE_SIZE}})
 }
 
 address_text :: proc "contextless" (buffer: []u8, address: u32, port: u16) -> string {
@@ -152,6 +202,7 @@ session_reset :: proc "contextless" (session: ^Session) {
 	session.written = keep_written
 	session.requests = keep_requests
 	session.closing = keep_closing
+	session.progress_at = system.time() // The idle time of the next request starts now.
 }
 
 // answer_start makes the head of the answer of a request.
@@ -180,6 +231,16 @@ answer_start :: proc "contextless" (index: int) {
 	case .Bad, .None:
 		status = "400 Bad Request"
 		text = "a request that this server cannot read\n"
+		length = len(text)
+		session.close_after = true
+	case .Timeout:
+		status = "408 Request Timeout"
+		text = "the head of the request did not come in time\n"
+		length = len(text)
+		session.close_after = true
+	case .Too_Large:
+		status = "413 Content Too Large"
+		text = "the body is over the limit of this server\n"
 		length = len(text)
 		session.close_after = true
 	}
@@ -244,6 +305,9 @@ request_take :: proc "contextless" (index: int, now: u64) {
 			room = min(room, session.body_left)
 		}
 		count, _ := tcp.read(&table, index, chunk[:room])
+		if count > 0 {
+			session.progress_at = system.time()
+		}
 		if count == 0 {
 			if session.page == .None && session.head_length == len(session.head) {
 				session.page = .Bad // A head longer than HEAD_LIMIT.
@@ -263,6 +327,7 @@ request_take :: proc "contextless" (index: int, now: u64) {
 		}
 		if session.head_length == 0 {
 			session.request_start = system.nanoseconds()
+			session.head_at = system.time()
 		}
 		copy(session.head[session.head_length:], chunk[:count])
 		session.head_length += count
@@ -280,11 +345,14 @@ request_take :: proc "contextless" (index: int, now: u64) {
 			session.page = .Root
 		case head.method == .Get && web.path(&head) == "/large":
 			session.page = .Large
+		case head.method == .Post && web.path(&head) == "/sink" && head.content_length > SINK_LIMIT:
+			session.page = .Too_Large
 		case head.method == .Post && web.path(&head) == "/sink" && head.content_length >= 0:
 			session.page = .Sink
 			session.body_left = head.content_length
 			session.body_hash = web.FNV_START
 			session.body_start = system.nanoseconds()
+			session.body_at = system.time()
 			taken := min(len(rest), session.body_left)
 			session.body_hash = web.fnv(session.body_hash, rest[:taken])
 			session.body_bytes = taken
@@ -353,16 +421,97 @@ ended_log :: proc "contextless" (index: int, how: string) {
 }
 
 // ended takes the end of a connection: the record is free after this
-// event, and the network service forgets its remote.
+// event, and the network service forgets its remote. A passive open that
+// never reached Established (a SYN, then a RST or no ACK) is not on the
+// log: one host can send many.
 ended :: proc "contextless" (index: int, how: string) {
 	connection := &connections[index]
-	ended_log(index, how)
-	release(connection.remote_address, connection.remote_port)
+	if connection.established_at != 0 {
+		ended_log(index, how)
+	}
+	release(connection.remote_address, connection.remote_port, index)
 	sessions[index] = {}
 }
 
-release :: proc "contextless" (address: u32, port: u16) {
-	ring.push(&endpoint.commands, ring.Record{kind = u32(datagram.Command.Release), tag = CALL_TAG, values = {0 = u64(address), 1 = u64(port)}})
+// aborted ends a connection for a limit of this server: a RST, the log, and
+// the release of the remote. tcp.abort gives no event.
+aborted :: proc "contextless" (index: int, how: string) {
+	aborted_count += 1
+	tcp.abort(&table, index)
+	ended(index, how)
+}
+
+// release asks the network service to forget a remote, after the RST or
+// the last segment of its connection: a Release before them makes the
+// service refuse them. So a release waits in `releases_waiting` until the
+// Sends of the pass are in the ring, and until its record has no RST to
+// send (connection -1: no record).
+Release_Waiting :: struct {
+	address:    u32,
+	port:       u16,
+	connection: int,
+}
+releases_waiting: [2 * CAPACITY + RECEIVE_PLACES]Release_Waiting
+releases_waiting_count: int
+
+release :: proc "contextless" (address: u32, port: u16, connection := -1) {
+	if releases_waiting_count == len(releases_waiting) {
+		releases_send_now()
+	}
+	if releases_waiting_count < len(releases_waiting) {
+		releases_waiting[releases_waiting_count] = {address, port, connection}
+		releases_waiting_count += 1
+	}
+}
+
+// releases_send_now sends each release whose record sent its RST.
+releases_send_now :: proc "contextless" () {
+	kept := 0
+	for item in releases_waiting[:releases_waiting_count] {
+		if item.connection >= 0 && connections[item.connection].reset_pending {
+			releases_waiting[kept] = item
+			kept += 1
+			continue
+		}
+		command_push_or_hold(ring.Record{kind = u32(datagram.Command.Release), tag = CALL_TAG, values = {0 = u64(item.address), 1 = u64(item.port)}})
+	}
+	releases_waiting_count = kept
+}
+
+// limits ends what makes no progress on an open connection (B2).
+limits :: proc "contextless" (index: int, now: u64) {
+	session := &sessions[index]
+	connection := &connections[index]
+	if connection.bytes_sent != session.acknowledged {
+		session.acknowledged = connection.bytes_sent
+		session.progress_at = now
+	}
+	if session.closing {
+		return
+	}
+	switch {
+	case session.page == .None && session.head_length == 0:
+		if now - session.progress_at >= IDLE_LIMIT {
+			who: [32]u8
+			system.log("server: ", address_text(who[:], connection.remote_address, connection.remote_port), ": no request in 10 s, closed")
+			session.closing = true
+			tcp.close(&table, index)
+		}
+	case session.page == .None:
+		if now - session.head_at >= HEAD_TIME {
+			session.page = .Timeout
+			answer_start(index)
+		}
+	case session.page == .Sink && session.body_left > 0:
+		elapsed := now - session.body_at
+		if elapsed > BODY_GRACE && u64(session.body_bytes) * 1000 < (elapsed - BODY_GRACE) * BODY_RATE {
+			aborted(index, "aborted: a body under 4096 bytes in one second")
+		}
+	case:
+		if now - session.progress_at >= PROGRESS_LIMIT {
+			aborted(index, "aborted: no byte acknowledged in 10 s")
+		}
+	}
 }
 
 event_take :: proc "contextless" (event: tcp.Event, now: u64) {
@@ -371,6 +520,7 @@ event_take :: proc "contextless" (event: tcp.Event, now: u64) {
 	if .Accepted in event.kinds {
 		accepted += 1
 		sessions[index] = {}
+		sessions[index].progress_at = system.time()
 		handshake_last = connection.established_at - connection.opened_at
 		handshake_least = handshake_least == 0 ? handshake_last : min(handshake_least, handshake_last)
 		open := tcp.open_count(&table)
@@ -393,8 +543,11 @@ event_take :: proc "contextless" (event: tcp.Event, now: u64) {
 		return
 	}
 	if .Peer_Closed in event.kinds {
+		// No byte comes after a FIN: a request that is not whole never will
+		// be. Close now, or after the answer in progress.
 		session := &sessions[index]
-		if session.page == .None && session.head_length == 0 && !session.closing {
+		answering := session.page != .None && session.body_left == 0
+		if !answering && !session.closing {
 			session.closing = true
 			tcp.close(&table, index)
 		} else {
@@ -426,6 +579,9 @@ exchange :: proc "contextless" (incoming: []tcp.Incoming) -> (deadline: u64) {
 					answered(index)
 				}
 				request_take(index, now)
+				if connection.state != .Closed && round == 0 {
+					limits(index, system.time())
+				}
 			}
 		}
 		more := tcp.Output{memory = region, place_size = PLACE_SIZE, places = free_places[output.count:free_count], segments = segments[output.count:]}
@@ -445,7 +601,7 @@ exchange :: proc "contextless" (incoming: []tcp.Incoming) -> (deadline: u64) {
 	}
 	// Send each segment: the ring takes them, then one wake.
 	for item in segments[:output.count] {
-		ring.push(&endpoint.commands, ring.Record{kind = u32(datagram.Command.Send), tag = SEND_TAG + item.place, values = {0 = u64(item.place) * PLACE_SIZE, 1 = u64(item.length), 2 = u64(item.remote_address), 3 = u64(item.remote_port)}})
+		command_push_or_hold(ring.Record{kind = u32(datagram.Command.Send), tag = SEND_TAG + item.place, values = {0 = u64(item.place) * PLACE_SIZE, 1 = u64(item.length), 2 = u64(item.remote_address), 3 = u64(item.remote_port)}})
 		// A RST for a segment of no connection: no connection will release
 		// this remote, so it is released after the RST.
 		if item.connection < 0 {
@@ -455,6 +611,25 @@ exchange :: proc "contextless" (incoming: []tcp.Incoming) -> (deadline: u64) {
 	// The places that the step used are not free until their Send completes.
 	free_count -= output.count
 	copy(free_places[:free_count], free_places[output.count:output.count + free_count])
+	// A segment whose connection has no record (a RST or an ACK of a
+	// connection that ended, a segment that the library refused): no event
+	// will release its remote, so it is released now (B1).
+	for item in incoming {
+		header, read := tcp.header_read(item.segment)
+		if !read || tcp.find(&table, item.remote_address, header.destination_port, header.source_port) < 0 {
+			if len(item.segment) >= 4 {
+				released_strays += 1
+				release(item.remote_address, tcp.read_16(item.segment, 0))
+			}
+		}
+	}
+	// After the Sends of this pass: the releases.
+	releases_send_now()
+	// The limits of the open connections need a time even when no segment
+	// and no timer of TCP comes: one pass each second at least.
+	if tcp.open_count(&table) > 0 {
+		deadline = min(deadline, now + 1_000_000)
+	}
 	return deadline
 }
 
@@ -502,11 +677,13 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		fail("no memory for the buffers of the connections")
 	}
 	secret, from_processor := tcp.secret_make(system.cycles())
-	secret_source = from_processor ? "rdrand" : "the cycle counter"
+	secret_source = from_processor ? "rdrand" : "the cycle counter (weak)"
+	secret_weak = !from_processor
 	if error := tcp.table_init(&table, connections[:], ([^]u8)(buffers)[:BUFFER_PAGES * system.PAGE_SIZE], SEND_SIZE, RECEIVE_SIZE, local_address, secret); error.kind != 0 {
 		fail("the connection table refused its memory")
 	}
 	table.listen_port = listen_port
+	table.remote_limit = REMOTE_LIMIT
 	for place in 0 ..< RECEIVE_PLACES {
 		post(u32(place))
 	}
@@ -523,6 +700,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	changed := true
 	for {
 		wait := system.wait_begin()
+		held_commands_push()
 		count := 0
 		for record in system.receive(&endpoint.completions) {
 			switch {

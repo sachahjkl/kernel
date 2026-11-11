@@ -206,7 +206,11 @@ draw :: proc "contextless" (window: ^display.Window) {
 	fact(inside, 40, "/large, best", send_best == 0 ? "" : megabytes(buffer[:], send_best), graphics.COLOR_MACHINE)
 	fact(inside, 60, "/sink, best", receive_best == 0 ? "" : megabytes(buffer[:], receive_best), graphics.COLOR_MACHINE)
 	fact(inside, 80, "one draw", draw_time == 0 ? "" : time_text(buffer[:], draw_time), graphics.COLOR_TEXT)
-	fact(inside, 100, "ISN secret", secret_source, graphics.COLOR_TEXT)
+	if secret_weak {
+		fact(inside, 100, "ISN secret", "weak: the cycle counter", graphics.COLOR_FAILED)
+	} else {
+		fact(inside, 100, "ISN secret", secret_source, graphics.COLOR_TEXT)
+	}
 
 	// The connection table, live, then the connections that ended.
 	inside = card(canvas, 8, 192, 960, 472, "CONNECTIONS", "tcp.Table.connections, then the ones that ended", graphics.COLOR_PROGRAM)

@@ -424,6 +424,14 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 		"none", // No other network device than the one below.
 		"-netdev",
 		forward.host_port != 0 ? fmt.tprintf("user,id=network,restrict=on,hostfwd=tcp:127.0.0.1:%d-10.0.2.15:80,guestfwd=tcp:%s:80-tcp:127.0.0.1:%d", forward.host_port, GUEST_ADDRESS, forward.listener.port) : fmt.tprintf("dgram,id=network,remote.type=inet,remote.host=127.0.0.1,remote.port=%d,local.type=inet,local.host=127.0.0.1,local.port=%d", peer.port, peer.machine.port),
+	)
+	if forward.host_port != 0 {
+		// Each frame of the device, with its time, for the tool after the run
+		// (web_host.odin, frames_of_the_fetch_report).
+		append(&list, "-object", "filter-dump,id=frames,netdev=network,file=" + FRAMES_OF_USER_NETWORK)
+	}
+	append(
+		&list,
 		"-device",
 		fmt.tprintf("virtio-net-pci,netdev=network,disable-legacy=on,mac=%s,addr=0x%x", MACHINE_HARDWARE, pci.NETWORK_DEVICE),
 		"-drive",

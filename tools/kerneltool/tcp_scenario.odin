@@ -21,7 +21,7 @@ scenario_tcp := [?]Step {
 	{kind = .Wait, text = "root: started network"},
 	{kind = .Wait, text = "network: an endpoint for server: TCP, the listen port 80, the remotes that send to it", any_order = true},
 	{kind = .Wait, text = "root: started server"},
-	{kind = .Wait, text = "server: listening on the TCP port 80, a table of 32 connections, the secret of the initial sequence numbers from "},
+	{kind = .Wait, text = "server: listening on the TCP port 80, a table of 48 connections, the secret of the initial sequence numbers from "},
 	// A page, and a close from the peer first.
 	{kind = .Peer, text = "page"},
 	{kind = .Wait, text = "server: 1 connections open at once"},
@@ -49,6 +49,14 @@ scenario_tcp := [?]Step {
 	{kind = .Wait, text = " 2 challenges"},
 	{kind = .Peer, text = "crowd"},
 	{kind = .Wait, text = "server: 16 connections open at once"},
+	// B1: segments that must not fill the admitted remotes, then a page.
+	{kind = .Peer, text = "leak"},
+	// B2: 32 connections of one host that make no progress: 8 refused by
+	// the limit for each remote, each other one ended by a limit, then a page.
+	{kind = .Peer, text = "slow"},
+	{kind = .Wait, text = ": no request in 10 s, closed", any_order = true},
+	{kind = .Wait, text = " aborted: a body under 4096 bytes in one second: in ", any_order = true},
+	{kind = .Wait, text = " aborted: no byte acknowledged in 10 s: in "},
 	{kind = .Shot, text = "server"},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "grants(\"server\")"},
@@ -96,5 +104,9 @@ scenario_tcp_real := [?]Step {
 }
 
 tcp_tests_run :: proc() -> bool {
-	return machine_test(scenario_tcp[:], BOOT_VOLUME, TEST_OUTPUT_TCP, MACHINE_STOP_OK, TEST_DATA_DISK) && machine_test(scenario_tcp_real[:], BOOT_VOLUME, TEST_OUTPUT_TCP_REAL, MACHINE_STOP_OK, TEST_DATA_DISK, user_network = true)
+	if !machine_test(scenario_tcp[:], BOOT_VOLUME, TEST_OUTPUT_TCP, MACHINE_STOP_OK, TEST_DATA_DISK) || !machine_test(scenario_tcp_real[:], BOOT_VOLUME, TEST_OUTPUT_TCP_REAL, MACHINE_STOP_OK, TEST_DATA_DISK, user_network = true) {
+		return false
+	}
+	frames_of_the_fetch_report()
+	return true
 }

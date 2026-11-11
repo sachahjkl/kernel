@@ -18,7 +18,7 @@ import "support:web"
 // reorders and repeats the same frames. It reads each frame of the machine
 // with its own checks (peer.odin), also the TCP checksum.
 
-PEER_TCP_CAPACITY :: 24
+PEER_TCP_CAPACITY :: 96
 PEER_TCP_SEND :: 64 * 1024
 PEER_TCP_RECEIVE :: 32 * 1024
 PEER_TCP_PLACES :: 64
@@ -27,6 +27,19 @@ MACHINE_TCP_ADDRESS :: 0x0A00020F
 PEER_TCP_ADDRESS :: 0x0A000202
 SERVER_PORT :: 80
 CASE_TIME_LIMIT :: 60 * time.Second
+
+// The connections of a host that wants to keep the records of the server
+// (case "slow"; an independent read of the step, B2).
+Attack :: enum {
+	None,
+	Idle, // A handshake, then nothing.
+	Half_Head, // Half a head, then nothing.
+	Trickle, // A body of 1 000 000 bytes at one byte in one second.
+	No_Fin, // A request that the server refuses, then no FIN after the FIN of the server.
+	Half_Head_Fin, // Half a head, then a FIN.
+	Zero_Window, // /large, and a window of 0 for ever.
+	Huge, // A Content-Length of 999 999 999 999.
+}
 
 Client_Phase :: enum {
 	Connect,
@@ -64,6 +77,12 @@ Client :: struct {
 	challenged:   int,
 	again:        bool, // After the challenges, one more request.
 	failure:      string,
+	attack:       Attack,
+	delayed:      bool, // The client connects when each attack ended.
+	refused:      bool, // The server answered the SYN with a RST.
+	ended_at:     time.Duration, // The server ended the connection: the time from the start of the case.
+	trickle_at:   time.Tick,
+	attempts:     int,
 }
 
 Peer_Tcp :: struct {
@@ -92,6 +111,11 @@ Peer_Tcp :: struct {
 	stray_reset: bool, // The RST of the server for the segment of no connection.
 	stray_sent:  bool,
 	acks_seen:   int, // ACKs that arrived for a connection in a challenge.
+	seen_by:     [PEER_TCP_CAPACITY]tcp.Event_Kinds, // The events of each record in the case.
+	raw:         [dynamic][]u8, // Segments that the case sends by hand, a few at each tick.
+	raw_sent:    int,
+	raw_time:    time.Duration, // The last segment by hand went: the time from the start of the case.
+	fetch_at:    time.Duration, // The page came: the time from the start of the case.
 	// Between the threads: the tool writes `wanted`, the peer writes `done`.
 	wanted:      int,
 	started_case: int, // The number of the case that peer_case_start prepared.
@@ -163,6 +187,21 @@ client_sink :: proc() -> Client {
 	return {request = fmt.aprintf("POST /sink HTTP/1.1\r\nHost: 10.0.2.15\r\nContent-Length: %d\r\nConnection: close\r\n\r\n", web.LARGE_SIZE), body = web.LARGE_SIZE, expect_text = fmt.aprintf("received %d bytes, fnv1a64 %016x", web.LARGE_SIZE, web.pattern_hash(web.LARGE_SIZE))}
 }
 
+// segment_by_hand_add adds a segment to send by hand, from a port of the peer to
+// the port 80 of the machine.
+segment_by_hand_add :: proc(state: ^Peer_Tcp, port: u16, sequence: u32, flags: tcp.Flags, bad_option := false) {
+	length := bad_option ? tcp.HEADER_MSS : tcp.HEADER
+	segment := make([]u8, length)
+	header := tcp.Header{source_port = port, destination_port = SERVER_PORT, sequence = sequence, acknowledgment = 777, flags = flags, window = 8192, mss = bad_option ? 1460 : 0}
+	tcp.header_write(segment, PEER_TCP_ADDRESS, MACHINE_TCP_ADDRESS, header, length)
+	if bad_option {
+		segment[21] = 0 // An option of length 0: the library refuses the segment.
+		tcp.write_16(segment, 16, 0)
+		tcp.write_16(segment, 16, tcp.checksum(PEER_TCP_ADDRESS, MACHINE_TCP_ADDRESS, segment))
+	}
+	append(&state.raw, segment)
+}
+
 // peer_case_start prepares the clients of a case.
 peer_case_start :: proc(state: ^Peer_Tcp, name: string) -> bool {
 	state.client_count = 0
@@ -170,6 +209,13 @@ peer_case_start :: proc(state: ^Peer_Tcp, name: string) -> bool {
 	state.dropped, state.reordered, state.repeated = 0, 0, 0
 	state.stray_reset, state.stray_sent = false, false
 	state.acks_seen = 0
+	state.seen_by = {}
+	for segment in state.raw {
+		delete(segment)
+	}
+	clear(&state.raw)
+	state.raw_sent = 0
+	state.fetch_at = 0
 	state.random = 0x9E37_79B9_7F4A_7C15 ~ u64(len(name)) * 0x1234_5678
 	add :: proc(state: ^Peer_Tcp, client: Client) {
 		state.clients[state.client_count] = client
@@ -213,18 +259,54 @@ peer_case_start :: proc(state: ^Peer_Tcp, name: string) -> bool {
 		for _ in 0 ..< 16 {
 			add(state, client_page(true))
 		}
+	case "leak":
+		// B1: 64 ports each of a bare RST, a bare ACK, a SYN then a RST at
+		// its exact sequence, and a SYN with an option that the library
+		// refuses. With the old admission, 64 of them fill the admitted
+		// remotes and each later SYN is refused. Then a page.
+		for index in 0 ..< 64 {
+			segment_by_hand_add(state, u16(30000 + index), 1000, {.Rst})
+			segment_by_hand_add(state, u16(31000 + index), 1000, {.Ack})
+			segment_by_hand_add(state, u16(32000 + index), 5000, {.Syn})
+			segment_by_hand_add(state, u16(32000 + index), 5001, {.Rst})
+			segment_by_hand_add(state, u16(33000 + index), 1000, {.Syn}, bad_option = true)
+		}
+		client := client_page(true)
+		client.delayed = true
+		add(state, client)
+	case "slow":
+		// B2: 32 connections of one host, 7 kinds in turn, then a page.
+		for index in 0 ..< 32 {
+			add(state, {attack = Attack(1 + index % 7)})
+		}
+		client := client_page(true)
+		client.delayed = true
+		add(state, client)
 	case:
 		return false
 	}
 	for &client in state.clients[:state.client_count] {
-		index, error := tcp.connect(&state.table, MACHINE_TCP_ADDRESS, SERVER_PORT, peer_tcp_now(state))
-		if error.kind != 0 {
+		client.connection = -1
+		if client.delayed {
+			continue
+		}
+		if !client_connect(state, &client) {
 			return false
 		}
-		client.connection = index
-		client.hash = web.FNV_START
 	}
 	state.started = time.tick_now()
+	return true
+}
+
+client_connect :: proc(state: ^Peer_Tcp, client: ^Client) -> bool {
+	index, error := tcp.connect(&state.table, MACHINE_TCP_ADDRESS, SERVER_PORT, peer_tcp_now(state))
+	if error.kind != 0 {
+		return false
+	}
+	state.seen_by[index] = {}
+	client.connection = index
+	client.hash = web.FNV_START
+	client.attempts += 1
 	return true
 }
 
@@ -247,13 +329,24 @@ peer_tcp_tick :: proc(peer: ^Peer, incoming: []tcp.Incoming) {
 	}
 	output := tcp.Output{memory = state.memory, place_size = PEER_TCP_PLACE_SIZE, places = state.places[:], segments = state.segments[:]}
 	_, event_count := tcp.step(&state.table, incoming, now, &output, state.events[:])
-	_ = event_count
+	for event in state.events[:event_count] {
+		state.seen_by[event.connection] += event.kinds
+	}
 	if running {
+		// The segments by hand: 8 at each tick, so that the receive places
+		// of the machine keep up.
+		for count := 0; count < 8 && state.raw_sent < len(state.raw); count += 1 {
+			peer_tcp_send(peer, state.raw[state.raw_sent], false)
+			state.raw_sent += 1
+		}
 		for &client in state.clients[:state.client_count] {
 			client_run(peer, state, &client, now)
 		}
 		output_more := tcp.Output{memory = state.memory, place_size = PEER_TCP_PLACE_SIZE, places = state.places[output.count:], segments = state.segments[output.count:]}
-		tcp.step(&state.table, nil, now, &output_more, state.events[:])
+		_, more_events := tcp.step(&state.table, nil, now, &output_more, state.events[:])
+		for event in state.events[:more_events] {
+			state.seen_by[event.connection] += event.kinds
+		}
 		output.count += output_more.count
 	}
 	for item in state.segments[:output.count] {
@@ -292,8 +385,12 @@ peer_tcp_tick :: proc(peer: ^Peer, incoming: []tcp.Incoming) {
 	if time.tick_since(state.started) > CASE_TIME_LIMIT {
 		phases := strings.builder_make(context.temp_allocator)
 		for &client in state.clients[:state.client_count] {
+			if client.connection < 0 {
+				fmt.sbprintf(&phases, " [%v %v not connected]", client.attack, client.phase)
+				continue
+			}
 			c := &state.connections[client.connection]
-			fmt.sbprintf(&phases, " [%v %v body %d/%d]", client.phase, c.state, client.bytes, client.response.content_length)
+			fmt.sbprintf(&phases, " [%v %v %v body %d/%d]", client.attack, client.phase, c.state, client.bytes, client.response.content_length)
 		}
 		peer_case_end(state, wanted, false, fmt.aprintf("case %s: no end after %v:%s", state.name, CASE_TIME_LIMIT, strings.to_string(phases)))
 	}
@@ -316,6 +413,9 @@ peer_case_end :: proc(state: ^Peer_Tcp, serial: int, passed: bool, result: strin
 peer_case_summary :: proc(state: ^Peer_Tcp) -> string {
 	retransmitted, outside: u64
 	for &client in state.clients[:state.client_count] {
+		if client.connection < 0 {
+			continue
+		}
 		c := &state.connections[client.connection]
 		retransmitted += c.retransmissions
 		outside += c.duplicates
@@ -329,12 +429,65 @@ peer_case_summary :: proc(state: ^Peer_Tcp) -> string {
 		return "the peer sent a RST after 100 KiB of /large"
 	case "crowd":
 		return fmt.aprintf("%d connections at once, each with GET / and a close from the peer", state.client_count)
+	case "leak":
+		return fmt.aprintf("%d segments by hand from 256 ports: a bare RST, a bare ACK, a SYN then a RST, a SYN that the library refuses; then a page came in %.1f ms", len(state.raw), time.duration_milliseconds(state.fetch_at - state.raw_time))
+	case "slow":
+		accepted, refused, latest := 0, 0, time.Duration(0)
+		for &client in state.clients[:state.client_count] {
+			if client.attack == .None {
+				continue
+			}
+			if client.refused {
+				refused += 1
+			} else {
+				accepted += 1
+				latest = max(latest, client.ended_at)
+			}
+		}
+		return fmt.aprintf("32 connections of one host in 7 kinds: %d accepted, %d refused with a RST (24 for each remote); the server ended the last one after %.1f s; then a page came after %.1f s", accepted, refused, time.duration_seconds(latest), time.duration_seconds(state.fetch_at))
 	}
 	return fmt.aprintf("%d connections, the frames: %d dropped, %d reordered, %d repeated; the peer sent %d segments again", state.client_count, state.dropped, state.reordered, state.repeated, retransmitted)
 }
 
+@(rodata)
+attack_texts := [Attack]string {
+	.None          = "",
+	.Idle          = "",
+	.Half_Head     = "GET / HTTP/1.1\r\nHo",
+	.Trickle       = "POST /sink HTTP/1.1\r\nHost: 10.0.2.15\r\nContent-Length: 1000000\r\n\r\n",
+	.No_Fin        = "x\r\n\r\n",
+	.Half_Head_Fin = "GET / HT",
+	.Zero_Window   = "GET /large HTTP/1.1\r\nHost: 10.0.2.15\r\n\r\n",
+	.Huge          = "POST /sink HTTP/1.1\r\nHost: 10.0.2.15\r\nContent-Length: 999999999999\r\n\r\n",
+}
+
+each_attack_ended :: proc(state: ^Peer_Tcp) -> bool {
+	for &client in state.clients[:state.client_count] {
+		if client.attack != .None && client.phase != .Done {
+			return false
+		}
+	}
+	return true
+}
+
 // client_run moves one client of a case.
 client_run :: proc(peer: ^Peer, state: ^Peer_Tcp, client: ^Client, now: u64) {
+	if client.connection < 0 {
+		// A delayed client: it connects when each attack ended and each
+		// segment by hand went, 100 ms later, then each second after a RST.
+		if !client.delayed || !each_attack_ended(state) || state.raw_sent < len(state.raw) {
+			return
+		}
+		if len(state.raw) > 0 && state.raw_time == 0 {
+			state.raw_time = time.tick_since(state.started)
+			client.trickle_at = time.tick_now()
+		}
+		wait := client.attempts == 0 ? 100 * time.Millisecond : time.Second
+		if client.trickle_at == {} || time.tick_since(client.trickle_at) >= wait {
+			client_connect(state, client)
+		}
+		return
+	}
 	index := client.connection
 	connection := &state.connections[index]
 	fail :: proc(client: ^Client, text: string) {
@@ -347,9 +500,30 @@ client_run :: proc(peer: ^Peer, state: ^Peer_Tcp, client: ^Client, now: u64) {
 		case .Established:
 			client.phase = .Request
 		case .Closed:
-			fail(client, "the server did not accept the connection")
+			switch {
+			case client.attack != .None && .Refused in state.seen_by[index]:
+				client.refused = true
+				client.phase = .Done
+			case client.delayed && .Refused in state.seen_by[index]:
+				client.connection = -1 // Again in one second.
+				client.trickle_at = time.tick_now()
+			case:
+				fail(client, "the server did not accept the connection")
+			}
 		}
 	case .Request:
+		if client.attack != .None {
+			text := attack_texts[client.attack]
+			if len(text) > 0 {
+				tcp.write(&state.table, index, transmute([]u8)text)
+			}
+			if client.attack == .Half_Head_Fin {
+				tcp.close(&state.table, index)
+			}
+			client.trickle_at = time.tick_now()
+			client.phase = .Response
+			return
+		}
 		if connection.state != .Established {
 			fail(client, fmt.aprintf("the connection is %v before the request was sent", connection.state))
 			return
@@ -373,6 +547,33 @@ client_run :: proc(peer: ^Peer, state: ^Peer_Tcp, client: ^Client, now: u64) {
 		}
 		client.phase = .Response
 	case .Response:
+		if client.attack != .None {
+			// The server must end the connection: a RST, or its FIN.
+			kinds := state.seen_by[index]
+			if connection.state == .Closed || .Reset in kinds || .Peer_Closed in kinds || .Timed_Out in kinds {
+				client.ended_at = time.tick_since(state.started)
+				client.phase = .Done
+				return
+			}
+			#partial switch client.attack {
+			case .Trickle:
+				if time.tick_since(client.trickle_at) >= time.Second {
+					tcp.write(&state.table, index, {'x'})
+					client.trickle_at = time.tick_now()
+				}
+			case .Zero_Window:
+			// It never reads: its window goes to 0 and stays there.
+			case:
+				chunk: [4096]u8
+				for {
+					count, _ := tcp.read(&state.table, index, chunk[:])
+					if count == 0 {
+						break
+					}
+				}
+			}
+			return
+		}
 		if client.paused {
 			if time.tick_since(client.paused_at) < client.pause_time {
 				return
@@ -483,6 +684,9 @@ client_run :: proc(peer: ^Peer, state: ^Peer_Tcp, client: ^Client, now: u64) {
 		// the peer answers its FIN and ends with LAST-ACK, then Closed.
 		if client.close_first && connection.state == .Time_Wait {
 			client.phase = .Done
+			if client.delayed {
+				state.fetch_at = time.tick_since(state.started)
+			}
 		} else if !client.close_first && connection.state == .Close_Wait {
 			tcp.close(&state.table, index)
 		} else if !client.close_first && connection.state == .Closed {
@@ -501,8 +705,9 @@ peer_inject :: proc(peer: ^Peer, state: ^Peer_Tcp, connection: ^tcp.Connection, 
 	peer_tcp_send(peer, segment[:], false)
 }
 
-// peer_stray sends an ACK from a port with no connection: the server must
-// answer with a RST.
+// peer_stray sends an ACK from a port with no connection. The network
+// service admits a remote on a SYN only, so the segment does not reach the
+// server, and nothing answers it (B1): after 1 s, no RST came.
 peer_stray :: proc(peer: ^Peer, state: ^Peer_Tcp, serial: int) {
 	if !state.stray_sent {
 		state.stray_sent = true
@@ -514,11 +719,11 @@ peer_stray :: proc(peer: ^Peer, state: ^Peer_Tcp, serial: int) {
 		return
 	}
 	if state.stray_reset {
-		peer_case_end(state, serial, true, "an ACK of no connection from the port 45000: the server answered with a RST at the sequence 777777")
+		peer_case_end(state, serial, false, "a RST came for an ACK of a remote that sent no SYN: the network service gave the segment to the server")
 		return
 	}
-	if time.tick_since(state.started) > 5 * time.Second {
-		peer_case_end(state, serial, false, "no RST for a segment of no connection")
+	if time.tick_since(state.started) > time.Second {
+		peer_case_end(state, serial, true, "an ACK of no connection from the port 45000: the network service did not give it to the server (a remote is admitted on a SYN only), and no RST came in 1 s")
 	}
 }
 

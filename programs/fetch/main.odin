@@ -80,14 +80,39 @@ place_bytes :: proc "contextless" (place: u32) -> []u8 {
 	return region[int(place) * PLACE_SIZE:][:PLACE_SIZE]
 }
 
+// queue puts a command in the ring; a full ring keeps it for the next
+// pass, so that no Send and no Receive is lost with its place.
+held: [256]ring.Record
+held_count: int
+
+command_push_or_hold :: proc "contextless" (record: ring.Record) {
+	if held_count == 0 && ring.push(&endpoint.commands, record) {
+		return
+	}
+	if held_count < len(held) {
+		held[held_count] = record
+		held_count += 1
+	}
+}
+
+held_commands_push :: proc "contextless" () {
+	done := 0
+	for done < held_count && ring.push(&endpoint.commands, held[done]) {
+		done += 1
+	}
+	copy(held[:], held[done:held_count])
+	held_count -= done
+}
+
 post :: proc "contextless" (place: u32) {
-	ring.push(&endpoint.commands, ring.Record{kind = u32(datagram.Command.Receive), tag = place, values = {0 = u64(place) * PLACE_SIZE, 1 = PLACE_SIZE}})
+	command_push_or_hold(ring.Record{kind = u32(datagram.Command.Receive), tag = place, values = {0 = u64(place) * PLACE_SIZE, 1 = PLACE_SIZE}})
 }
 
 // pump reads the completions, runs one step of the table and sends its
 // segments; it waits until something happens or until the next timer.
 pump :: proc "contextless" () {
 	wait := system.wait_begin()
+	held_commands_push()
 	incoming: [RECEIVE_PLACES]tcp.Incoming
 	used: [RECEIVE_PLACES]u32
 	count := 0
@@ -120,7 +145,7 @@ pump :: proc "contextless" () {
 		}
 	}
 	for item in segments[:output.count] {
-		ring.push(&endpoint.commands, ring.Record{kind = u32(datagram.Command.Send), tag = SEND_TAG + item.place, values = {0 = u64(item.place) * PLACE_SIZE, 1 = u64(item.length), 2 = u64(item.remote_address), 3 = u64(item.remote_port)}})
+		command_push_or_hold(ring.Record{kind = u32(datagram.Command.Send), tag = SEND_TAG + item.place, values = {0 = u64(item.place) * PLACE_SIZE, 1 = u64(item.length), 2 = u64(item.remote_address), 3 = u64(item.remote_port)}})
 	}
 	free_count -= output.count
 	copy(free_places[:free_count], free_places[output.count:output.count + free_count])
@@ -142,7 +167,8 @@ pump :: proc "contextless" () {
 // call sends one command and waits for its completion.
 call :: proc "contextless" (command: datagram.Command, tag: u32, values: [7]u64) -> (record: ring.Record, ok: bool) {
 	call_count = 0
-	system.send(&endpoint.commands, ring.Record{kind = u32(command), tag = tag, values = values})
+	command_push_or_hold(ring.Record{kind = u32(command), tag = tag, values = values})
+	system.wake_reader(&endpoint.commands)
 	deadline := system.time() + 2000
 	for system.time() < deadline {
 		for item in calls[:call_count] {

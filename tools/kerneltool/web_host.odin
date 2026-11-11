@@ -2,6 +2,7 @@ package kerneltool
 
 import "core:fmt"
 import "core:net"
+import "core:os"
 import "core:strings"
 import "core:sync"
 import "core:thread"
@@ -250,4 +251,72 @@ forward_fetch :: proc(forward: Forward, path: string) -> bool {
 		fmt.printfln("kerneltool: test passed: the TCP of the host fetched %s from server through libslirp: %d bytes in %.2f ms: \"%s\"", path, len(content), time.duration_milliseconds(took), strings.trim_space(strings.split_lines(string(content), context.temp_allocator)[0]))
 	}
 	return true
+}
+
+FRAMES_OF_USER_NETWORK :: BUILD_FOLDER + "/frames_of_user_network.pcap"
+
+// frames_of_the_fetch_report reads the frames that QEMU wrote for the
+// machine with libslirp (filter-dump, the pcap format) and prints the frames
+// of `GET /hello` of `fetch`: from its request to the end of the answer,
+// each with its time after the request, its direction, its flags and its
+// bytes of data. It is a measure, not a check.
+frames_of_the_fetch_report :: proc() {
+	bytes, err := os.read_entire_file(FRAMES_OF_USER_NETWORK, context.temp_allocator)
+	if err != nil || len(bytes) < 24 {
+		fmt.println("kerneltool: no frames of the machine with libslirp")
+		return
+	}
+	read_32_little :: proc(bytes: []u8, offset: int) -> u64 {
+		return u64(bytes[offset]) | u64(bytes[offset + 1]) << 8 | u64(bytes[offset + 2]) << 16 | u64(bytes[offset + 3]) << 24
+	}
+	start: u64
+	printed := 0
+	after_answer := -1
+	for offset := 24; offset + 16 <= len(bytes) && printed < 24; {
+		time_of_frame := read_32_little(bytes, offset) * 1_000_000 + read_32_little(bytes, offset + 4)
+		length := int(read_32_little(bytes, offset + 8))
+		frame := bytes[offset + 16:][:min(length, len(bytes) - offset - 16)]
+		offset += 16 + length
+		if len(frame) < 54 || frame[12] != 0x08 || frame[13] != 0x00 || frame[23] != 6 {
+			continue
+		}
+		ip := frame[14:]
+		header := int(ip[0] & 15) * 4
+		total := int(ip[2]) << 8 | int(ip[3])
+		segment := ip[header:min(total, len(ip))]
+		if len(segment) < 20 {
+			continue
+		}
+		data := segment[int(segment[12] >> 4) * 4:]
+		from_machine := ip[12] == 10 && ip[15] == 15
+		other := from_machine ? ip[19] : ip[15]
+		if other != 100 {
+			continue // Only the connection of fetch to 10.0.2.100.
+		}
+		if start == 0 {
+			if !from_machine || !strings.has_prefix(string(data), "GET /hello") {
+				continue
+			}
+			start = time_of_frame
+		}
+		flags := segment[13]
+		names := [6]string{"FIN", "SYN", "RST", "PSH", "ACK", "URG"}
+		text := strings.builder_make(context.temp_allocator)
+		for name, bit in names {
+			if flags >> uint(bit) & 1 != 0 {
+				strings.write_string(&text, name)
+				strings.write_byte(&text, ' ')
+			}
+		}
+		fmt.printfln("kerneltool: a frame of GET /hello through libslirp: +%d us, %s, %s%d bytes of data%s", time_of_frame - start, from_machine ? "fetch to libslirp" : "libslirp to fetch", strings.to_string(text), len(data), strings.has_prefix(string(data), "HTTP/1.1") ? " (the answer)" : "")
+		printed += 1
+		if !from_machine && strings.has_prefix(string(data), "HTTP/1.1") {
+			after_answer = 2
+		} else if after_answer > 0 {
+			after_answer -= 1
+		}
+		if after_answer == 0 {
+			break
+		}
+	}
 }
