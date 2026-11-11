@@ -21,7 +21,7 @@ package date
 import "base:intrinsics"
 import op "contract:operation"
 
-PAGE_ADDRESS :: 0x0000_3400_0000_0000
+PAGE_ADDRESS :: 0x0000_3600_0000_0000
 VALUE_PAGE :: 15 // The value of the context with the address of the page, for each program that the root service starts.
 GRANT_PAGE :: 6 // The handle of the context of the program `date`: the page, with Read and Write.
 GRANT_PORTS :: 7 // The handle of the context of the program `date`: the ports 0x70 and 0x71 of the real-time clock.
