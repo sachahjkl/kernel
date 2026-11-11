@@ -1041,7 +1041,7 @@ scenario := [?]Step {
 	{kind = .Type, text = "help()"},
 	{kind = .Wait, text = "paint.write(x: Integer, y: Integer, text: Text, color: Integer)"},
 	// One line for three calls: each result is a line of the log, and the
-	// check of the log below needs each record since the boot (1023 places).
+	// check of the log below needs each record since the boot.
 	{kind = .Type, text = "paint.line(40, 30, 440, 250, 1) + paint.line(40, 250, 440, 30, 3) + paint.write(150, 20, \"drawn by isolated calls\", 0)"},
 	{kind = .Wait, text = "[console] 26"}, // 1 and 2 lines, and 23 bytes of text.
 	{kind = .Type, text = "paint.lines()"},
@@ -1278,9 +1278,9 @@ scenario := [?]Step {
 	// the level of a record (step Record), not only a line of text.
 	{kind = .Call, text = "log.records(0)", expected = " rows of Record"},
 	{kind = .Front, text = "console"},
-	// The steps of the console that come after the check of the log: the
-	// log keeps 1023 records, and the check needs each record from the
-	// boot (" 0 lost").
+	// The refusals of the console come after the check of the log, which
+	// needs each record since the boot (" 0 lost"): the lines before it stay
+	// few.
 	// The refusals of the root service give an error record: the console
 	// writes its sentence.
 	{kind = .Type, text = "start(\"nothing\")"},

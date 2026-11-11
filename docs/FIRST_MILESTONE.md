@@ -714,7 +714,6 @@ Performance:
 Input:
 
 - The keyboard layout is US only.
-- The log before the program `log` starts: the main machine writes 1021 of the 1023 records of the log before the step that checks " 0 lost" (each record since the boot). The error records of the console steps and the results of the new Integer exports of `paint` pushed it over 1023: the steps of the console that refuse moved after that check, and three calls of `paint` are one typed line. One more line of the console before `log` breaks that check: the margin is 2 records.
 - The error records of the other calls: the frame ring has no machine case that refuses (its one client, the network service, sends right requests); the block ring has one (`disk`). `errors` has no datagram case: it has no endpoint; `net` and `fetch` show the datagram refusals. A record of an isolated call, a ring completion included, comes from another program: the caller checks its kind and its unit, and cannot prove its values.
 
 ## Next steps
