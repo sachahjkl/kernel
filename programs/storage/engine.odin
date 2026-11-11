@@ -6,6 +6,7 @@ import "contract:errors"
 import "contract:ring"
 import format "contract:store"
 import answers "support:storage"
+import "support:storage_mount"
 import "support:system"
 
 // The format of the disk, and the one rule that keeps it whole (copy on
@@ -205,127 +206,40 @@ read_checked :: proc "contextless" (pointers: []Pointer, first_slot: u64) -> (wr
 	return wrong, wrong == 0 ? .Good : .Wrong
 }
 
-Mount :: struct {
-	generation:      u64,
-	stores:          u64,
-	objects:         u64,
-	checked:         u64, // Blocks read and compared with their check.
-	wrong:           u64,
-	damaged_objects: u64,
-	damaged_stores:  u64,
-	formatted:       bool,
-	first_cut:       bool, // The disk had only a first root with a wrong check: a format that a stop cut.
-	older:           bool, // The newest root named a wrong block and the root before it names none: the root before it is used.
-	cut:             u64, // Not 0: the generation that a root with a wrong check gives; the service does not use it.
-	failed:          bool, // No root is usable, or the block service reported an error: the service does not serve.
-}
+Mount :: storage_mount.Mount
 
-// walk reads each block that a root names, checks it, and marks it in use.
-// A wrong block does not end the walk: its object, or its store for a
-// table, is damaged. The blocks that a wrong table or a wrong list named
-// are not known, so they are free. It gives false when the block service
-// reported an error.
-walk :: proc "contextless" (candidate: ^Root, result: ^Mount) -> bool {
-	in_use = {}
-	in_use_count = 0
-	mark(0, true)
-	mark(1, true)
-	tables = {}
-	damaged = {}
-	store_damaged = {}
-	result.stores, result.objects, result.checked, result.wrong = 0, 0, 0, 0
-	result.damaged_objects, result.damaged_stores = 0, 0
-	for &store, index in candidate.stores {
-		if store.name[0] == 0 {
-			continue
+// The open of the disk: the same code as the check of the kernel tool on
+// the host (support/storage_mount). The service keeps a copy of what it
+// found in its own tables.
+opened: storage_mount.State
+
+// read_through_block_service reads blocks for the open: through the data
+// region, REGION_BLOCKS at a time.
+read_through_block_service :: proc "contextless" (reader: ^storage_mount.Block_Reader, numbers: []u64, into: []u8) -> bool {
+	for first := 0; first < len(numbers); first += REGION_BLOCKS {
+		part := numbers[first:min(first + REGION_BLOCKS, len(numbers))]
+		requests: [REGION_BLOCKS]Request
+		for number, index in part {
+			requests[index] = {number = number, slot = u64(index)}
 		}
-		result.stores += 1
-		wrong, state := read_checked({store.table}, 0)
-		result.checked += 1
-		if state == .Device {
+		if !transfer(.Read, requests[:len(part)]) {
 			return false
 		}
-		mark(store.table.block, true)
-		if state == .Wrong {
-			result.wrong += wrong
-			result.damaged_stores += 1
-			store_damaged[index] = true
-			continue
-		}
-		intrinsics.mem_copy_non_overlapping(&tables[index], raw_data(slot(0)), BLOCK_SIZE)
-		for &object, object_index in tables[index].objects {
-			if object.name[0] == 0 {
-				continue
-			}
-			result.objects += 1
-			if object.list.block == 0 {
-				continue
-			}
-			wrong, state = read_checked({object.list}, 0)
-			result.checked += 1
-			if state == .Device {
-				return false
-			}
-			mark(object.list.block, true)
-			count := (object.size + BLOCK_SIZE - 1) / BLOCK_SIZE
-			if state == .Wrong || count > OBJECT_BLOCKS_LIMIT {
-				result.wrong += max(wrong, 1)
-				result.damaged_objects += 1
-				damaged[index] |= 1 << uint(object_index)
-				continue
-			}
-			list := (^List)(raw_data(slot(0)))^
-			part := list.data[:count]
-			wrong, state = read_checked(part, 1)
-			result.checked += count
-			if state == .Device {
-				return false
-			}
-			if state == .Wrong {
-				result.wrong += wrong
-				result.damaged_objects += 1
-				damaged[index] |= 1 << uint(object_index)
-			}
-			for pointer in part {
-				mark(pointer.block, true)
-			}
-		}
+		intrinsics.mem_copy_non_overlapping(raw_data(into[first * BLOCK_SIZE:]), region, len(part) * BLOCK_SIZE)
 	}
 	return true
 }
 
-// mount finds the root, reads and checks each block that it names, and
-// formats a disk that has never had a commit.
-//
-// Which root: the valid root with the highest generation, when it names no
-// wrong block. If it names one, and the valid root before it names none,
-// the root before it: the last commit was not whole on the disk (a device
-// that did not keep what a Flush promised). If each valid root names a
-// wrong block, the newest one, with its damage: a block that both name was
-// changed after its commit, and no root is better.
+// mount opens the disk (storage_mount.mount), and formats a disk that has
+// never had a commit: the first root goes to block 1.
 mount :: proc "contextless" (disk_blocks: u64) -> (result: Mount) {
-	disk_size = min(disk_blocks, DISK_BLOCKS_LIMIT)
-	candidates: [2]Root
-	requests := [2]Request{{0, 0}, {1, 1}}
-	if !transfer(.Read, requests[:]) {
-		result.failed = true
+	reader := storage_mount.Block_Reader{read = read_through_block_service}
+	result = storage_mount.mount(&opened, &reader, disk_blocks)
+	disk_size = opened.disk_size
+	if result.failed {
 		return result
 	}
-	zero := [2]bool{true, true}
-	for index in 0 ..< 2 {
-		bytes := slot(u64(index))
-		for byte in bytes {
-			if byte != 0 {
-				zero[index] = false
-			}
-		}
-		intrinsics.mem_copy_non_overlapping(&candidates[index], raw_data(bytes), BLOCK_SIZE)
-	}
-	// The first root goes to block 1, and the first commit to block 0. So
-	// block 0 of zero bytes says that no commit followed the first root:
-	// the disk holds no object. A first root with a wrong check is then a
-	// format that a stop cut, and the service formats again.
-	if zero[0] && (zero[1] || !format.root_valid(&candidates[1], disk_size)) {
+	if result.needs_format {
 		root = {magic = ROOT_MAGIC, generation = 1, disk_blocks = disk_size}
 		root.check = root_check(&root)
 		intrinsics.mem_copy_non_overlapping(raw_data(slot(0)), &root, BLOCK_SIZE)
@@ -339,50 +253,15 @@ mount :: proc "contextless" (disk_blocks: u64) -> (result: Mount) {
 		mark(0, true)
 		mark(1, true)
 		result.generation = 1
-		result.formatted = true
-		result.first_cut = !zero[1]
 		return result
 	}
-	// The valid roots, the newest first.
-	order := [2]int{0, 1}
-	if candidates[1].generation > candidates[0].generation {
-		order = {1, 0}
-	}
-	first, walked := -1, -1
-	for index in order {
-		if !format.root_valid(&candidates[index], disk_size) {
-			if candidates[index].magic == ROOT_MAGIC {
-				result.cut = candidates[index].generation
-			}
-			continue
-		}
-		if first < 0 {
-			first = index
-		}
-		if !walk(&candidates[index], &result) {
-			result.failed = true
-			return result
-		}
-		walked = index
-		if result.wrong == 0 {
-			break
-		}
-	}
-	if first < 0 {
-		result.failed = true
-		return result
-	}
-	if result.wrong != 0 && walked != first {
-		if !walk(&candidates[first], &result) {
-			result.failed = true
-			return result
-		}
-		walked = first
-	}
-	result.older = walked != first
-	root = candidates[walked]
-	root_place = u64(walked)
-	result.generation = root.generation
+	root = opened.root
+	root_place = opened.root_place
+	tables = opened.tables
+	in_use = opened.in_use
+	in_use_count = opened.in_use_count
+	damaged = opened.damaged
+	store_damaged = opened.store_damaged
 	return result
 }
 

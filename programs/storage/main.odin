@@ -194,7 +194,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	case mounted.failed:
 		system.log_in("storage", .Error, "storage: no valid root on the disk: the service keeps the disk as it is, and serves nothing")
 		system.stop(1)
-	case mounted.formatted:
+	case mounted.needs_format:
 		if mounted.first_cut {
 			system.log_in("storage", .Warning, "storage: the first root of the disk has a wrong check and no commit followed it: a format that a stop cut; the service formats again")
 		}
@@ -208,6 +208,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 		if mounted.wrong != 0 {
 			system.log_in("storage", .Warning, "storage: ", mounted.wrong, " blocks have a wrong check: ", mounted.damaged_objects, " objects and ", mounted.damaged_stores, " stores are damaged; the service serves the others, and a write or a remove replaces a damaged object")
+		}
+		if mounted.named_twice != 0 || mounted.stores_with_wrong_count != 0 {
+			system.log_in("storage", .Error, "storage: a fault of the engine: ", mounted.named_twice, " blocks named two times, ", mounted.stores_with_wrong_count, " stores whose count of blocks is not what their table names")
 		}
 		system.log("storage: ok, generation ", mounted.generation, ": ", mounted.stores, " stores, ", mounted.objects, " objects, ", in_use_count, " blocks in use, ", mounted.checked, " blocks checked, ", mounted.wrong, " wrong, in ", elapsed, " ms")
 	}
