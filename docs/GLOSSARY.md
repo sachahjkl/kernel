@@ -42,6 +42,8 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Problem | The error value that a reader of input that nobody checked gives for a rule that the input breaks: the kind, where (the table and the record of a module, or the layer of a frame), the byte, the bad value and its limit. An information function gives one for a module (`information.Problem`); the network service gives one for a frame (`datagram.Problem`) | exception, errno, error code |
 | Boot image | The one block of data that the boot program loads with the kernel. It holds the modules of the first programs, each with its name | initrd, ramdisk |
 | Position-independent | Code that runs correctly at any address with no change to its bytes | relocatable, PIC, PIE |
+| Scalar form | The form of a procedure that computes one value with one instruction, in the general registers. It is the reference of each vector form of the same procedure, and the code of a target with no vectors (`docs/SIMD.md`) | plain C version, fallback (for this), slow path |
+| Vector form | A form of a procedure that computes several values with one instruction, in the 128-bit registers of SSE2, and gives the same bytes as its scalar form for every input (`docs/SIMD.md`) | SIMD version, kernel (for this), fast path, intrinsics version |
 
 ## Running code
 

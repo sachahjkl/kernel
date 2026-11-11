@@ -1,7 +1,7 @@
 package graphics
 
-// The blends of support/graphics: one family, two forms of what a pixel
-// over the canvas covers.
+// The blends of support/graphics: one family, two kinds of cover of a pixel
+// of the canvas.
 //
 // - blend_premultiplied_alpha: a picture with one alpha for each pixel,
 //   premultiplied (the pointer pictures, docs/POINTERS.md). It blends in
@@ -12,6 +12,12 @@ package graphics
 //
 // Both use integers only, keep the pixel where nothing covers it and copy
 // the source where it covers all.
+//
+// Each blend has two forms (docs/SIMD.md): the scalar form here, the
+// reference, and an SSE2 form in blend_vectors_amd64.odin that gives the
+// same bytes for every input. On amd64 the public procedure runs the SSE2
+// form; the scalar form is the code of another target, and of the last
+// columns of a row that do not fill a group of four pixels.
 
 // blend_premultiplied_alpha draws source over canvas at (x, y), cut to the
 // canvas. Each pixel of source is 0xAARRGGBB with premultiplied alpha (the
@@ -34,26 +40,41 @@ blend_premultiplied_alpha :: proc "contextless" (canvas: Canvas, x, y: int, sour
 		return
 	}
 	for line in y0 ..< y1 {
-		to := canvas.pixels[line * canvas.stride:]
-		from := source.pixels[(line - y) * source.stride + (x0 - x):]
-		for column in x0 ..< x1 {
-			value := from[column - x0]
-			alpha := value >> 24
-			if alpha == 0 {
-				continue
-			}
-			if alpha == 255 {
-				to[column] = value & 0xFFFFFF
-				continue
-			}
-			inverse := 255 - alpha
-			destination := to[column]
-			red_blue := (destination & 0xFF00FF) * inverse + 0x800080
-			red_blue = (red_blue + (red_blue >> 8 & 0xFF00FF)) >> 8 & 0xFF00FF
-			green := (destination & 0x00FF00) * inverse + 0x008000
-			green = (green + (green >> 8 & 0x00FF00)) >> 8 & 0x00FF00
-			to[column] = red_blue + green + (value & 0xFFFFFF)
+		blend_premultiplied_alpha_row(canvas.pixels[line * canvas.stride + x0:], source.pixels[(line - y) * source.stride + (x0 - x):], x1 - x0)
+	}
+}
+
+// blend_premultiplied_alpha_row blends one row in the form of the target.
+@(private)
+blend_premultiplied_alpha_row :: #force_inline proc "contextless" (to: [^]Color, from: [^]u32, count: int) {
+	when ODIN_ARCH == .amd64 {
+		blend_premultiplied_alpha_row_sse2(to, from, count)
+	} else {
+		blend_premultiplied_alpha_row_scalar(to, from, count)
+	}
+}
+
+// blend_premultiplied_alpha_row_scalar is the scalar form of one row: count
+// pixels of from over the pixels of to. The two rows must not overlap.
+@(private)
+blend_premultiplied_alpha_row_scalar :: proc "contextless" (to: [^]Color, from: [^]u32, count: int) {
+	for column in 0 ..< count {
+		value := from[column]
+		alpha := value >> 24
+		if alpha == 0 {
+			continue
 		}
+		if alpha == 255 {
+			to[column] = value & 0xFFFFFF
+			continue
+		}
+		inverse := 255 - alpha
+		destination := to[column]
+		red_blue := (destination & 0xFF00FF) * inverse + 0x800080
+		red_blue = (red_blue + (red_blue >> 8 & 0xFF00FF)) >> 8 & 0xFF00FF
+		green := (destination & 0x00FF00) * inverse + 0x008000
+		green = (green + (green >> 8 & 0x00FF00)) >> 8 & 0x00FF00
+		to[column] = red_blue + green + (value & 0xFFFFFF)
 	}
 }
 
@@ -79,23 +100,37 @@ blend_premultiplied_alpha :: proc "contextless" (canvas: Canvas, x, y: int, sour
 blend_coverage_row :: proc "contextless" (line: [^]Color, words: [^]u32, first, last: int, color: Color, order: Subpixel_Order, square_root: ^[4096]u8) {
 	switch order {
 	case .Red_Green_Blue:
-		blend_coverage_row_in_order(line, words, first, last, color, .Red_Green_Blue, square_root)
+		blend_coverage_row_in_form_of_target(line, words, first, last, color, .Red_Green_Blue, square_root)
 	case .Blue_Green_Red:
-		blend_coverage_row_in_order(line, words, first, last, color, .Blue_Green_Red, square_root)
+		blend_coverage_row_in_form_of_target(line, words, first, last, color, .Blue_Green_Red, square_root)
 	case .None:
-		blend_coverage_row_in_order(line, words, first, last, color, .None, square_root)
+		blend_coverage_row_in_form_of_target(line, words, first, last, color, .None, square_root)
 	}
 }
 
-// blend_coverage_row_in_order is the loop for one order of the stripes, a
-// constant: no test of the order for each pixel. The squares of the last
-// pixel that is not covered whole stay: on a plain background, each pixel
-// has the same.
+// blend_coverage_row_in_form_of_target blends one row in the form of the
+// target, for one order of the stripes.
+@(private)
+blend_coverage_row_in_form_of_target :: #force_inline proc "contextless" (line: [^]Color, words: [^]u32, first, last: int, color: Color, $ORDER: Subpixel_Order, square_root: ^[4096]u8) {
+	when ODIN_ARCH == .amd64 {
+		blend_coverage_row_sse2(line, words, first, last, color, ORDER, square_root)
+	} else {
+		blend_coverage_row_in_order(line, words, first, last, color, ORDER, square_root)
+	}
+}
+
+// blend_coverage_row_in_order is the scalar form, for one order of the
+// stripes, a constant: no test of the order for each pixel. The channels of
+// the last pixel that is not covered whole stay: on a plain background,
+// each pixel has the same.
 @(private)
 blend_coverage_row_in_order :: #force_inline proc "contextless" (line: [^]Color, words: [^]u32, first, last: int, color: Color, $ORDER: Subpixel_Order, square_root: ^[4096]u8) #no_bounds_check {
 	color_red, color_green, color_blue := color >> 16 & 0xFF, color >> 8 & 0xFF, color & 0xFF
 	red_square, green_square, blue_square := color_red * color_red, color_green * color_green, color_blue * color_blue
-	previous: Color = 0xFFFFFFFF // No pixel has this value: the squares are not known yet.
+	// The channels of previous are known only after the first pixel: a
+	// pixel can have any value, so no value of previous can mean "none".
+	previous_known := false
+	previous: Color
 	under_red, under_green, under_blue: u32
 	// A channel with no coverage keeps the pixel, a full one is the color:
 	// the table rounds only the values between.
@@ -127,7 +162,8 @@ blend_coverage_row_in_order :: #force_inline proc "contextless" (line: [^]Color,
 			continue
 		}
 		destination := line[column]
-		if destination != previous {
+		if !previous_known || destination != previous {
+			previous_known = true
 			previous = destination
 			under_red, under_green, under_blue = destination >> 16 & 0xFF, destination >> 8 & 0xFF, destination & 0xFF
 		}
