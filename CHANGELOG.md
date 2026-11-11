@@ -6,6 +6,45 @@ The project has steps, not separate releases. The merge of step N on `master` is
 
 What is not in a release yet is in `changelog.d/`, one fragment for each change. `kerneltool changelog release` writes a release from the fragments. Nobody edits this file by hand.
 
+## [0.62.0] - 2026-11-11
+
+### Added
+
+- **The changelog**: `CHANGELOG.md` lists what each release of the system brings, from the first milestone (0.0.0) to step 59 (0.59.0). A branch adds one fragment in `changelog.d/` for each change; `kerneltool changelog new`, `check`, `assemble`, `release` and `notes` write, check and release them, and `kerneltool release_number` prints the release number.
+
+### Changed
+
+- **`kerneltool build` builds the modules in parallel**: one process of the tool for each module, each with one compiler on one thread, as many at once as the processors. The modules and the boot image are the same bytes as with one process.
+
+### Fixed
+
+- **The kernel reports its own fault as whole lines**: the report took no lock, and a line of another processor arrived mixed with it on the serial port, so nobody could read the fault. The processor that reports is now the only writer.
+- The machine test lost typed keys on a loaded host (`start("fetch")` arrived as `start("ETCH")`). The tool now sends a key only after the compositor received the key before it.
+
+## [0.61.0] - 2026-11-11
+
+### Added
+
+- `kerneltool measure windows` starts each window of the interface package alone and prints the time of its pictures with the load of the host; above a load of 8 it says that the table is not valid.
+
+### Changed
+
+- **The compositor draws its screen as one draw table** of the interface package: the frame of each window, its surface, the bar and the menus. The terminal draws its view as one text grid, and `paint`, `plasma`, `temple` and the boot display use the package too.
+- **Windows sit on the grid of 8 pixels**: a new window, and a window that the person moves, has its corner on the grid.
+
+### Fixed
+
+- The terminal showed rows of two frames: with two pictures, a frame presented only its difference with its own picture, and the screen showed the other one.
+- A card cuts its caption to the room between its title and its count, and the boot display cuts a fact after its last whole word.
+
+## [0.60.0] - 2026-11-11
+
+### Added
+
+- **Each program has a random generator**: ChaCha20 with fast key erasure, in the memory of the program. A draw makes no kernel entry and no call. The starter of a program writes its seed of 32 bytes in the context values 9 to 12, and a start with a seed of zeros is refused.
+- **The seed of the system**: the root service gathers it at its start from `rdseed`, `rdrand` and samples of the cycle counter, mixed with BLAKE3, and logs its strength: "entropy", "processor" or "weak". A machine with neither instruction starts and says "weak". The program `randomness` shows these facts.
+- **ChaCha20 from `core:crypto` of Odin**, copied into `support/cryptography` with only its imports changed. `kerneltool cryptography-origin`, which the check runs, proves that each copied file is its origin, pinned by its hash, with the listed changes only.
+
 ## [0.59.0] - 2026-11-11
 
 ### Added

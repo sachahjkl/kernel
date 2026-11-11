@@ -1728,6 +1728,22 @@ key_records_read :: proc(machine: ^Machine) -> (count: i64, ok: bool) {
 	return values[0], true
 }
 
+// key_pause_without_confirmation gives the wait after a key when the tool
+// cannot ask the compositor if the key arrived (a scenario with no remote).
+// On a host with more runnable work than processors, the machine runs that
+// much later: the wait grows with the load of the host for each processor,
+// so that the machine reads each key before the next one fills its
+// keyboard (measured at a load of 60 on 16 processors with the fixed wait:
+// `connect("server")` arrived as `connect("`).
+key_pause_without_confirmation :: proc() -> time.Duration {
+	load, parsed := strconv.parse_f64(load_of_the_host())
+	if !parsed {
+		return KEY_PAUSE
+	}
+	late := max(load / f64(max(os.get_processor_core_count(), 1)), 1)
+	return time.Duration(f64(KEY_PAUSE) * min(late * late, 40))
+}
+
 // key_send presses and releases one key of the QEMU monitor ("a",
 // "shift-a", "ret"). When the tool can call the compositor (machine.confirm),
 // it waits until the compositor received the records of that key: a press
@@ -1740,15 +1756,15 @@ key_records_read :: proc(machine: ^Machine) -> (count: i64, ok: bool) {
 key_send :: proc(machine: ^Machine, name: string) -> bool {
 	if !machine.confirm {
 		monitor_send(machine, "sendkey ", name, " 20")
-		time.sleep(KEY_PAUSE)
+		time.sleep(key_pause_without_confirmation())
 		return true
 	}
 	before, read := key_records_read(machine)
 	if !read {
 		// The person revoked the grant of remote, or remote stopped: the
-		// fixed wait.
+		// wait with no confirmation.
 		monitor_send(machine, "sendkey ", name, " 20")
-		time.sleep(KEY_PAUSE)
+		time.sleep(key_pause_without_confirmation())
 		return true
 	}
 	wanted := before + 2 * i64(strings.count(name, "-") + 1)
