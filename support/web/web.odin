@@ -62,7 +62,15 @@ pattern_hash :: proc "contextless" (count: int) -> u64 {
 // head_end gives the bytes of a head: up to the empty line, with it. 0:
 // the empty line is not there yet.
 head_end :: proc "contextless" (bytes: []u8) -> int {
-	for index in 3 ..< len(bytes) {
+	return head_end_from(bytes, 0)
+}
+
+// head_end_from is head_end for bytes whose first scanned_length bytes were
+// scanned before with no end: the scan starts at the first place where an
+// end can be (an independent read, notes: a head that comes one byte at a
+// time cost each byte again on each read).
+head_end_from :: proc "contextless" (bytes: []u8, scanned_length: int) -> int {
+	for index in max(scanned_length, 3) ..< len(bytes) {
 		if bytes[index - 3] == '\r' && bytes[index - 2] == '\n' && bytes[index - 1] == '\r' && bytes[index] == '\n' {
 			return index + 1
 		}

@@ -10,6 +10,7 @@ REQUEST_HEAD_LIMIT :: 8192 // The bytes of a request head, with its empty line: 
 REQUEST_FIELD_LIMIT :: 64 // Header fields of one request: 431 over it.
 REQUEST_TARGET_LIMIT :: 1024 // The bytes of the target: 414 over it.
 CONTENT_LENGTH_DIGITS_LIMIT :: 15 // A Content-Length of 15 digits at most: a larger one is 413 for each server of this system.
+LEADING_EMPTY_LINES_LIMIT :: 2 // Empty lines before the request line that are ignored (RFC 9112 2.2).
 
 Request_Method :: enum u8 {
 	None    = 0,
@@ -122,6 +123,31 @@ request_method_name :: proc "contextless" (method: Request_Method) -> string {
 	return request_method_names[method] if method <= max(Request_Method) else ""
 }
 
+// path_of_absolute_target gives the path and the query of a target of the
+// absolute form "http://authority/path?query": the bytes after the
+// authority. absolute is false for each other form, and for an empty
+// authority.
+@(private)
+path_of_absolute_target :: proc "contextless" (target: []u8) -> (path: []u8, absolute: bool) {
+	rest: []u8
+	switch {
+	case len(target) > 7 && same_text_without_case(target[:7], "http://"):
+		rest = target[7:]
+	case len(target) > 8 && same_text_without_case(target[:8], "https://"):
+		rest = target[8:]
+	case:
+		return nil, false
+	}
+	authority_end := 0
+	for authority_end < len(rest) && rest[authority_end] != '/' && rest[authority_end] != '?' {
+		authority_end += 1
+	}
+	if authority_end == 0 {
+		return nil, false
+	}
+	return rest[authority_end:], true
+}
+
 // A token character of RFC 9110 section 5.6.2.
 @(private)
 token_character :: proc "contextless" (byte: u8) -> bool {
@@ -166,9 +192,15 @@ trim_spaces :: proc "contextless" (bytes: []u8) -> []u8 {
 // body or to the next request.
 request_read :: proc "contextless" (bytes: []u8) -> (request: Request, complete: bool) {
 	request.content_length = -1
-	scanned := bytes[:min(len(bytes), REQUEST_HEAD_LIMIT)]
-	request.head_size = head_end(scanned)
-	if request.head_size == 0 {
+	// Empty lines before the request line: RFC 9112 2.2 says that a server
+	// SHOULD ignore at least one. Two are ignored; a third is a bad line.
+	leading := 0
+	for leading < 2 * LEADING_EMPTY_LINES_LIMIT && len(bytes) >= leading + 2 && bytes[leading] == '\r' && bytes[leading + 1] == '\n' {
+		leading += 2
+	}
+	scanned := bytes[leading:min(len(bytes), REQUEST_HEAD_LIMIT)]
+	end_of_head := head_end(scanned)
+	if end_of_head == 0 {
 		if len(bytes) >= REQUEST_HEAD_LIMIT {
 			request.problem = .Head_Too_Large
 			request.problem_offset = REQUEST_HEAD_LIMIT
@@ -176,7 +208,8 @@ request_read :: proc "contextless" (bytes: []u8) -> (request: Request, complete:
 		}
 		return request, false
 	}
-	head := bytes[:request.head_size - 2] // Each line with its CRLF; the empty line removed.
+	request.head_size = leading + end_of_head
+	head := bytes[leading:request.head_size - 2] // Each line with its CRLF; the empty line removed.
 	position := 0
 	line_end :: proc "contextless" (head: []u8, start: int) -> int {
 		for index in start ..< len(head) - 1 {
@@ -216,10 +249,12 @@ request_read :: proc "contextless" (bytes: []u8) -> (request: Request, complete:
 	if len(version) != 8 || string(version[:5]) != "HTTP/" || version[6] != '.' || version[5] < '0' || version[5] > '9' || version[7] < '0' || version[7] > '9' {
 		return fail(&request, .Bad_Request_Line, target_end + 1)
 	}
-	if version[5] != '1' || version[7] > '1' {
+	if version[5] != '1' {
 		return fail(&request, .Version_Not_Supported, target_end + 1)
 	}
-	request.minor_version = version[7] - '0'
+	// A higher minor version is read as HTTP/1.1, the highest that this
+	// server speaks (RFC 9110 2.5).
+	request.minor_version = min(version[7] - '0', 1)
 	method_text := line[:method_end]
 	for name, method in request_method_names {
 		if method != .None && string(method_text) == name {
@@ -232,10 +267,24 @@ request_read :: proc "contextless" (bytes: []u8) -> (request: Request, complete:
 	if target_end - target_start > REQUEST_TARGET_LIMIT {
 		return fail(&request, .Target_Too_Long, target_start)
 	}
-	if line[target_start] != '/' {
-		return fail(&request, .Target_Not_Origin, target_start)
+	target := line[target_start:target_end]
+	if target[0] != '/' {
+		// The absolute form (RFC 9112 3.2.2: a server MUST accept it): the
+		// scheme http or https and the authority go; the path stays, "/"
+		// when it is empty. Host stays required, and is not used.
+		path, absolute := path_of_absolute_target(target)
+		if !absolute {
+			return fail(&request, .Target_Not_Origin, target_start)
+		}
+		if len(path) == 0 || path[0] == '?' {
+			request.target[0] = '/'
+			request.target_length = 1 + copy(request.target[1:], path)
+		} else {
+			request.target_length = copy(request.target[:], path)
+		}
+	} else {
+		request.target_length = copy(request.target[:], target)
 	}
-	request.target_length = copy(request.target[:], line[target_start:target_end])
 	// The fields: name ":" OWS value OWS (RFC 9112 section 5).
 	keep_alive := false
 	position = end + 2
@@ -375,4 +424,97 @@ status_text :: proc "contextless" (status: int) -> string {
 		return "HTTP Version Not Supported"
 	}
 	return "Unknown"
+}
+
+// The pages that a server serves by name, from its private store: the
+// rules of their names, and the index object that lists them. The store is
+// hostile input too: an index that the server reads back can have each byte.
+PAGE_NAME_LIMIT :: 39 // The names of the storage service have 39 bytes at most.
+PAGE_INDEX_NAME :: "pages.index"
+PAGE_INDEX_ENTRY_SIZE :: 40 // One name in the index, ended by a zero byte.
+
+// page_name_valid: 1 to 39 bytes of letters, digits, ".", "-" and "_", not
+// the name of the index. A name is the target of a request: no "/".
+// bad_byte is the place of the first byte that breaks the rule, or -1.
+page_name_valid :: proc "contextless" (name: string) -> (ok: bool, bad_byte: int) {
+	if len(name) == 0 || len(name) > PAGE_NAME_LIMIT {
+		return false, -1
+	}
+	for index in 0 ..< len(name) {
+		switch name[index] {
+		case 'a' ..= 'z', 'A' ..= 'Z', '0' ..= '9', '.', '-', '_':
+		case:
+			return false, index
+		}
+	}
+	return name != PAGE_INDEX_NAME, -1
+}
+
+// page_index_entry gives the name in the entry `place` of an index object.
+// An empty entry gives "" and ok. ok is false for an entry outside the
+// index, an entry with no zero byte, a name that breaks page_name_valid,
+// and a name that an entry before it has.
+page_index_entry :: proc "contextless" (index: []u8, place: int) -> (name: string, ok: bool) {
+	entry_name :: proc "contextless" (index: []u8, place: int) -> (name: string, ended: bool) {
+		entry := index[place * PAGE_INDEX_ENTRY_SIZE:][:PAGE_INDEX_ENTRY_SIZE]
+		for length in 0 ..< PAGE_INDEX_ENTRY_SIZE {
+			if entry[length] == 0 {
+				return string(entry[:length]), true
+			}
+		}
+		return "", false
+	}
+	if place < 0 || (place + 1) * PAGE_INDEX_ENTRY_SIZE > len(index) {
+		return "", false
+	}
+	ended: bool
+	if name, ended = entry_name(index, place); !ended {
+		return "", false
+	}
+	if len(name) == 0 {
+		return "", true
+	}
+	if valid, _ := page_name_valid(name); !valid {
+		return "", false
+	}
+	for earlier in 0 ..< place {
+		if other, other_ended := entry_name(index, earlier); other_ended && other == name {
+			return "", false
+		}
+	}
+	return name, true
+}
+
+// html_text_escape writes text into destination with the five characters
+// of HTML markup escaped, and gives the bytes written. An escape that does
+// not fit is not written in part: the text stops before it.
+html_text_escape :: proc "contextless" (destination: []u8, text: string) -> int {
+	count := 0
+	for index in 0 ..< len(text) {
+		replacement: string
+		switch text[index] {
+		case '<':
+			replacement = "&lt;"
+		case '>':
+			replacement = "&gt;"
+		case '&':
+			replacement = "&amp;"
+		case '"':
+			replacement = "&quot;"
+		case '\'':
+			replacement = "&#39;"
+		case:
+			if count == len(destination) {
+				return count
+			}
+			destination[count] = text[index]
+			count += 1
+			continue
+		}
+		if count + len(replacement) > len(destination) {
+			return count
+		}
+		count += copy(destination[count:], replacement)
+	}
+	return count
 }

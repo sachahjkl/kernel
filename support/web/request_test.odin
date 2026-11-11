@@ -46,10 +46,11 @@ request_problems :: proc(t: ^testing.T) {
 		{" GET / HTTP/1.1\r\nHost: a\r\n\r\n", .Bad_Request_Line, 400},
 		{"GET /\x01 HTTP/1.1\r\nHost: a\r\n\r\n", .Bad_Request_Line, 400},
 		{"GET / HTTP/2.0\r\nHost: a\r\n\r\n", .Version_Not_Supported, 505},
-		{"GET / HTTP/1.2\r\nHost: a\r\n\r\n", .Version_Not_Supported, 505},
+		{"GET ftp://a/ HTTP/1.1\r\nHost: a\r\n\r\n", .Target_Not_Origin, 400},
+		{"GET http:/a HTTP/1.1\r\nHost: a\r\n\r\n", .Target_Not_Origin, 400},
+		{"\r\n\r\n\r\nGET / HTTP/1.1\r\nHost: a\r\n\r\n", .Bad_Request_Line, 400},
 		{"GET / HTTX/1.1\r\nHost: a\r\n\r\n", .Bad_Request_Line, 400},
 		{"BREW / HTTP/1.1\r\nHost: a\r\n\r\n", .Unknown_Method, 501},
-		{"GET http://a/ HTTP/1.1\r\nHost: a\r\n\r\n", .Target_Not_Origin, 400},
 		{"GET / HTTP/1.1\r\nHost : a\r\n\r\n", .Bad_Field, 400},
 		{"GET / HTTP/1.1\r\nHost: a\r\nNo colon\r\n\r\n", .Bad_Field, 400},
 		{"GET / HTTP/1.1\r\nHost: a\r\n folded\r\n\r\n", .Bad_Field, 400},
@@ -126,4 +127,92 @@ content_types_by_name :: proc(t: ^testing.T) {
 	testing.expect_value(t, content_type_of_name("counts.json"), "application/json")
 	testing.expect_value(t, content_type_of_name("a.tar"), "application/octet-stream")
 	testing.expect_value(t, content_type_of_name("html"), "application/octet-stream")
+}
+
+// Three forms that a server must take (an independent read, notes):
+// the absolute form of a target (RFC 9112 3.2.2: a server MUST accept it),
+// a higher minor version (RFC 9110 2.5: it is read as HTTP/1.1), and empty
+// lines before the request line (RFC 9112 2.2: a server SHOULD ignore at
+// least one).
+@(test)
+request_forms_that_a_server_must_accept :: proc(t: ^testing.T) {
+	Case :: struct {
+		text:   string,
+		target: string,
+	}
+	cases := []Case {
+		{"GET http://10.0.2.15/index.html?a=b HTTP/1.1\r\nHost: 10.0.2.15\r\n\r\n", "/index.html?a=b"},
+		{"GET HTTP://10.0.2.15 HTTP/1.1\r\nHost: 10.0.2.15\r\n\r\n", "/"},
+		{"GET https://a:8080/b HTTP/1.1\r\nHost: a\r\n\r\n", "/b"},
+		{"GET http://a?x HTTP/1.1\r\nHost: a\r\n\r\n", "/?x"},
+	}
+	for item in cases {
+		request, complete := read_text(item.text)
+		testing.expectf(t, complete && request.problem == .None, "%q: %v", item.text, request.problem)
+		testing.expectf(t, request_target(&request) == item.target, "%q: the target %q", item.text, request_target(&request))
+	}
+	request, _ := read_text("GET / HTTP/1.2\r\nHost: a\r\n\r\n")
+	testing.expect_value(t, request.problem, Request_Problem.None)
+	testing.expect_value(t, request.minor_version, 1)
+	text := "\r\n\r\nGET / HTTP/1.1\r\nHost: a\r\n\r\nGET"
+	complete: bool
+	request, complete = read_text(text)
+	testing.expect(t, complete)
+	testing.expect_value(t, request.problem, Request_Problem.None)
+	testing.expect_value(t, request.head_size, len(text) - 3)
+	_, complete = read_text("\r\n")
+	testing.expect(t, !complete)
+}
+
+// head_end_from finds the same end as head_end, from where the last scan
+// stopped: a head that comes one byte at a time costs each byte once.
+@(test)
+head_end_from_where_the_scan_stopped :: proc(t: ^testing.T) {
+	text := transmute([]u8)string("GET / HTTP/1.1\r\nHost: a\r\n\r\nbody")
+	for length in 0 ..= len(text) {
+		for start in 0 ..= length {
+			testing.expectf(t, head_end_from(text[:length], start) == head_end(text[:length]) || head_end(text[:length]) - 4 < max(start - 3, 0), "length %d, start %d", length, start)
+		}
+	}
+	testing.expect_value(t, head_end_from(text, len("GET / HTTP/1.1\r\nHost: a\r\n\r")), head_end(text))
+}
+
+// The pages of a store are hostile input too: a name that breaks the
+// rules, an entry with no end, or a name that came before is refused; a
+// name goes into HTML only escaped (an independent read, W9).
+@(test)
+page_index_entries :: proc(t: ^testing.T) {
+	index: [6 * PAGE_INDEX_ENTRY_SIZE]u8
+	put :: proc(index: []u8, place: int, name: string) {
+		copy(index[place * PAGE_INDEX_ENTRY_SIZE:][:PAGE_INDEX_ENTRY_SIZE], name)
+	}
+	put(index[:], 0, "hello.html")
+	put(index[:], 1, "<script>")
+	put(index[:], 2, "pages.index")
+	put(index[:], 3, "hello.html")
+	for &byte in index[4 * PAGE_INDEX_ENTRY_SIZE:][:PAGE_INDEX_ENTRY_SIZE] {
+		byte = 'a'
+	}
+	name, ok := page_index_entry(index[:], 0)
+	testing.expect(t, ok && name == "hello.html")
+	for place in 1 ..= 4 {
+		_, ok = page_index_entry(index[:], place)
+		testing.expectf(t, !ok, "the entry %d", place)
+	}
+	name, ok = page_index_entry(index[:], 5)
+	testing.expect(t, ok && name == "")
+	_, ok = page_index_entry(index[:], 6)
+	testing.expect(t, !ok)
+	valid, bad := page_name_valid("a-b_c.d9")
+	testing.expect(t, valid && bad == -1)
+	valid, bad = page_name_valid("a/b")
+	testing.expect(t, !valid && bad == 1)
+	escaped: [64]u8
+	count := html_text_escape(escaped[:], "<a href=\"x\">&'")
+	testing.expect_value(t, string(escaped[:count]), "&lt;a href=&quot;x&quot;&gt;&amp;&#39;")
+	// An escape that does not fit is not cut in its middle.
+	count = html_text_escape(escaped[:5], "a<b")
+	testing.expect_value(t, string(escaped[:count]), "a&lt;")
+	count = html_text_escape(escaped[:4], "a<b")
+	testing.expect_value(t, string(escaped[:count]), "a")
 }
