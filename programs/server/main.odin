@@ -94,7 +94,7 @@ fail :: proc "contextless" (text: string) -> ! {
 	system.stop(1)
 }
 
-now_us :: proc "contextless" () -> u64 {
+now_microseconds :: proc "contextless" () -> u64 {
 	return system.nanoseconds() / 1000
 }
 
@@ -143,8 +143,8 @@ address_text :: proc "contextless" (buffer: []u8, address: u32, port: u16) -> st
 	return system.written(&writer)
 }
 
-// rate gives kilobytes in one second.
-rate :: proc "contextless" (bytes: u64, nanoseconds: u64) -> u64 {
+// kilobytes_per_second gives kilobytes in one second.
+kilobytes_per_second :: proc "contextless" (bytes: u64, nanoseconds: u64) -> u64 {
 	return bytes * 1_000_000 / max(nanoseconds, 1)
 }
 
@@ -302,7 +302,7 @@ event_take :: proc "contextless" (event: tcp.Event) {
 // exchange runs one step of the table: the segments that arrived, the
 // events, the requests and the answers, and the segments to send.
 exchange :: proc "contextless" (incoming: []tcp.Incoming) -> (deadline: u64) {
-	now := now_us()
+	now := now_microseconds()
 	output := tcp.Output{memory = region, place_size = PLACE_SIZE, places = free_places[:free_count], segments = segments[:]}
 	count: int
 	deadline, count = tcp.step(&table, incoming, now, &output, events[:])

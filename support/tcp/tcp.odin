@@ -132,8 +132,8 @@ Connection :: struct {
 	backoff:               u32, // Timeouts in a row.
 	probe_backoff:         u32,
 	probes_unanswered:     u32, // Probes of a zero window with no segment of the remote after them.
-	answers:               u32, // Answers to segments out of the window in the period that starts at answers_at.
-	answers_at:            u64,
+	out_of_window_answers: u32, // Answers to segments out of the window in the period that starts at out_of_window_answers_period_start.
+	out_of_window_answers_period_start: u64,
 	rtt_samples:           u32,
 
 	// What happened, for the program and for a person.
@@ -523,14 +523,14 @@ rtt_sample :: proc "contextless" (connection: ^Connection, measured: u64) {
 // attacker of the traffic of the others: CVE-2016-5696).
 @(private)
 answer_out_of_window_allowed :: proc "contextless" (connection: ^Connection, now: u64) -> bool {
-	if now - connection.answers_at >= ANSWER_PERIOD {
-		connection.answers_at = now
-		connection.answers = 0
+	if now - connection.out_of_window_answers_period_start >= ANSWER_PERIOD {
+		connection.out_of_window_answers_period_start = now
+		connection.out_of_window_answers = 0
 	}
-	if connection.answers >= ANSWER_LIMIT {
+	if connection.out_of_window_answers >= ANSWER_LIMIT {
 		return false
 	}
-	connection.answers += 1
+	connection.out_of_window_answers += 1
 	connection.ack_now = true
 	return true
 }
@@ -975,7 +975,7 @@ listen :: proc "contextless" (table: ^Table, remote_address: u32, header: Header
 		// none, a RST tells the remote at once.
 		oldest := -1
 		for &item, place in table.connections {
-			if item.state == .Time_Wait && item.events == {} && (oldest < 0 || before_time(item.end_at, table.connections[oldest].end_at)) {
+			if item.state == .Time_Wait && item.events == {} && (oldest < 0 || item.end_at < table.connections[oldest].end_at) {
 				oldest = place
 			}
 		}
@@ -1004,11 +1004,6 @@ listen :: proc "contextless" (table: ^Table, remote_address: u32, header: Header
 	connection.send_window_most = u32(header.window)
 	connection.window_sequence = header.sequence
 	window_offer(table, connection)
-}
-
-@(private)
-before_time :: #force_inline proc "contextless" (a, b: u64) -> bool {
-	return a < b
 }
 
 // syn_sent reads a segment in the state Syn_Sent (RFC 9293 3.10.7.3).
