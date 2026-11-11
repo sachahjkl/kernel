@@ -315,6 +315,12 @@ exchange :: proc "contextless" (incoming: []tcp.Incoming) -> (deadline: u64) {
 			}
 		}
 	}
+	// The remotes of records in TIME-WAIT that a SYN took: no Closed event
+	// comes for them.
+	for remote in table.reclaimed_remotes[:table.reclaimed_remote_count] {
+		release(remote.address, remote.port)
+	}
+	table.reclaimed_remote_count = 0
 	// After the Sends of this pass: the releases.
 	releases_send_now()
 	// The limits of the open connections and the measure of each second

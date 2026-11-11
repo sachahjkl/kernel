@@ -208,8 +208,8 @@ remote_limit :: proc(t: ^testing.T) {
 }
 
 // A SYN to a full table: a RST, so that the remote knows at once; with a
-// record in TIME-WAIT, the oldest one ends, and the SYN that comes again
-// takes it.
+// record in TIME-WAIT, the SYN takes the oldest one, and its remote goes to
+// reclaimed_remotes.
 @(test)
 syn_to_a_full_table :: proc(t: ^testing.T) {
 	link := link_make(31)
@@ -226,14 +226,15 @@ syn_to_a_full_table :: proc(t: ^testing.T) {
 	link_run(link, 1_000_000, proc(link: ^Link) -> bool {return link.sides[0].connections[1].state == .Close_Wait})
 	close(&link.sides[0].table, 1)
 	link_run(link, 1_000_000, proc(link: ^Link) -> bool {return link.sides[1].connections[1].state == .Time_Wait})
+	old_port := link.sides[1].connections[1].remote_port
+	link.block = true // A must not answer the SYN, ACK with a RST.
 	inject(link, {source_port = 42001, destination_port = PORT_B, sequence = 9000, flags = {.Syn}, window = 8192})
-	wait(link, 1000)
-	testing.expect(t, available(&link.sides[1].connections[1]))
-	testing.expect(t, .Closed in link.sides[1].seen_by[1])
-	inject(link, {source_port = 42001, destination_port = PORT_B, sequence = 9000, flags = {.Syn}, window = 8192})
-	wait(link, 100) // Before the SYN, ACK reaches A, which knows no such connection.
-	testing.expect_value(t, link.sides[1].connections[1].state, State.Syn_Received)
-	testing.expect_value(t, link.sides[1].connections[1].remote_port, 42001)
+	wait(link, 100)
+	b := &link.sides[1]
+	testing.expect_value(t, b.connections[1].state, State.Syn_Received)
+	testing.expect_value(t, b.connections[1].remote_port, 42001)
+	testing.expect_value(t, b.table.reclaimed_remote_count, 1)
+	testing.expect_value(t, b.table.reclaimed_remotes[0].port, old_port)
 }
 
 // A simultaneous open: each side sends a SYN to the other.

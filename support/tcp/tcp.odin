@@ -176,9 +176,22 @@ Table :: struct {
 	// Segments that no connection took.
 	resets_sent:      u64,
 	refused_syns:     u64, // A SYN to the listen port when no record is free, or over remote_limit.
-	reclaimed:        u64, // Records in TIME-WAIT that a SYN ended early, when no record was free.
+	reclaimed:        u64, // Records in TIME-WAIT that a SYN took, when no record was free.
+	// The remotes of the records in TIME-WAIT that a SYN took: their record
+	// gives no Closed event, so the program reads them here after each step
+	// (to release them) and sets the count to 0.
+	reclaimed_remotes:      [RECLAIMED_CAPACITY]Remote,
+	reclaimed_remote_count: int,
 	unknown_segments: u64,
 	malformed:        u64,
+}
+
+RECLAIMED_CAPACITY :: 64
+
+// A remote address and port.
+Remote :: struct {
+	address: u32,
+	port:    u16,
 }
 
 // Incoming is one segment that arrived, from a remote address.
@@ -956,24 +969,27 @@ listen :: proc "contextless" (table: ^Table, remote_address: u32, header: Header
 		}
 	}
 	if index < 0 {
-		// No SYN cookies. A record in TIME-WAIT only waits for old
-		// segments: the oldest one ends now, and the SYN is dropped; the
-		// remote sends it again in 1 s and takes the record. With none, a
-		// RST tells the remote at once.
+		// No SYN cookies. A record in TIME-WAIT only waits for old segments:
+		// the SYN takes the oldest one (RFC 6191 takes a SYN in TIME-WAIT too),
+		// and its remote goes to reclaimed_remotes for the program. With
+		// none, a RST tells the remote at once.
 		oldest := -1
 		for &item, place in table.connections {
-			if item.state == .Time_Wait && (oldest < 0 || before_time(item.end_at, table.connections[oldest].end_at)) {
+			if item.state == .Time_Wait && item.events == {} && (oldest < 0 || before_time(item.end_at, table.connections[oldest].end_at)) {
 				oldest = place
 			}
 		}
-		if oldest >= 0 {
-			table.reclaimed += 1
-			connection_end(&table.connections[oldest], now, {.Closed})
+		if oldest < 0 || table.reclaimed_remote_count == RECLAIMED_CAPACITY {
+			table.refused_syns += 1
+			reset_answer(table, output, remote_address, header)
 			return
 		}
-		table.refused_syns += 1
-		reset_answer(table, output, remote_address, header)
-		return
+		old := &table.connections[oldest]
+		table.reclaimed_remotes[table.reclaimed_remote_count] = {old.remote_address, old.remote_port}
+		table.reclaimed_remote_count += 1
+		table.reclaimed += 1
+		old^ = {}
+		index = oldest
 	}
 	connection := &table.connections[index]
 	connection_start(table, connection, remote_address, header.destination_port, header.source_port, now)
