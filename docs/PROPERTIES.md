@@ -174,7 +174,7 @@ Status: Decided.
 
 Status: Decided. On 2026-11-09 the owner chose the engine: do not fork bcachefs; write a new engine under MIT that reuses its ideas. The first version is SQLite on the raw block device.
 
-State on 2026-11-10 (steps 30 to 32), with the decision of the owner of the same day: SQLite is removed. The engine is the storage service in Odin, about 800 lines: copy on write, two places for the root block, a check of each block in the pointer that names it (choice 150 of `FIRST_MILESTONE.md`). The sentence above about a first version on SQLite is no longer a rule. Not done from the rules below: objects have names in a store, not identifiers; no clone, no snapshot, no versions.
+State on 2026-11-10 (steps 30 to 32), with the decision of the owner of the same day: SQLite is removed. The engine is the storage service in Odin, about 800 lines: copy on write, two places for the root block, a check of each block in the pointer that names it (choice 150 of `FIRST_MILESTONE.md`). The sentence above about a first version on SQLite is no longer a rule. Not done from the rules below: objects have names in a store, not identifiers. On 2026-11-11 (step of the versions, `FIRST_MILESTONE.md`, 38d): each commit keeps the state before it as a version, with a retention rule and thinning at the limit of the store; clones share their blocks; a snapshot is the versions of a store at one generation.
 
 - **Rule**: Storage is a transactional object store in user space. Objects have identifiers, not paths. A directory is an optional index, not the base structure.
 - **Rule**: Each program gets a private store. A copy-on-write clone is the way to give a copy of an object. A snapshot gives versions of a store.
@@ -195,7 +195,7 @@ Status: Decided by the owner on 2026-11-09.
 - **Why it is cheap**: A copy-on-write store writes new blocks and keeps the old ones. The earlier versions exist already. The system exposes them and does not discard them.
 - **Result**: Protection against lost work and a history are supplied one time, by the system, to all programs. A program writes no code for them.
 - **Cost**: Disk space. A retention rule deletes old versions, for example: keep all versions for one day, then one per hour, then one per day.
-- **Open**: the retention rule and who sets it. How a program groups small changes into one step that the person can undo. A later option above this model is a program whose full state returns after a restart.
+- **Open**: who sets the retention rule (the service applies one fixed rule since 2026-11-11: each version for 10 minutes, then one an hour for a day, then one a day). How a program groups small changes into one step that the person can undo. A later option above this model is a program whose full state returns after a restart.
 
 ## 10. One code module
 
