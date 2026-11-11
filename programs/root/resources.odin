@@ -11,10 +11,10 @@ import "support:system"
 
 // resource_mapping finds the resource with this name, checks the hash of
 // its bytes against its entry, and gives the read-only mapping of its pages
-// at an address of the program, with its size. It gives false, with a line
-// on the log, for a resource that the image does not have or whose hash is
-// wrong.
-resource_mapping :: proc "contextless" (name: string, address: u64) -> (mapping: system.Mapping, size: u64, ok: bool) {
+// at an address of the program that receives it, with its size. It gives
+// false for a resource that the image does not have, and false with a line
+// on the log for a resource whose hash is wrong.
+resource_mapping :: proc "contextless" (name: string, address: u64, receiver: string) -> (mapping: system.Mapping, size: u64, ok: bool) {
 	entry := system.image_resource_find(image, name)
 	if entry == nil {
 		return {}, 0, false
@@ -25,7 +25,7 @@ resource_mapping :: proc "contextless" (name: string, address: u64) -> (mapping:
 		return {}, 0, false
 	}
 	spent := system.nanoseconds() - start
-	system.log("root: the resource ", name, ", ", entry.size, " bytes, its hash checked in ", spent / 1000, " us")
+	system.log("root: the resource ", name, " (", entry.size, " bytes, its hash checked in ", spent / 1000, " us) is given to ", receiver, ", read-only")
 	// No flag: the mapping has the right Read only.
 	return {memory = image_memory, address = address, first = entry.offset / system.PAGE_SIZE, page_count = (entry.size + system.PAGE_SIZE - 1) / system.PAGE_SIZE}, entry.size, true
 }

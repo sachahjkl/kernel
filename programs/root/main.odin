@@ -464,12 +464,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 		// The pointer theme: a resource of the boot image, read-only.
 		for name in pointer_theme_choice() {
-			if mapping, size, given := resource_mapping(name, POINTER_THEME_ADDRESS); given {
+			if mapping, size, given := resource_mapping(name, POINTER_THEME_ADDRESS, "compositor"); given {
 				values[COMPOSITOR_VALUE_POINTER_THEME_ADDRESS] = POINTER_THEME_ADDRESS
 				values[COMPOSITOR_VALUE_POINTER_THEME_SIZE] = size
 				mappings[mapping_count] = mapping
 				mapping_count += 1
-				system.log("root: the compositor has the pointer theme ", name)
 				break
 			}
 		}
