@@ -32,10 +32,6 @@ WORKER_COUNT :: 4
 ITERATIONS :: 600
 ADD_TIME :: 150 // Milliseconds: each thread adds for this time.
 
-COLOR_BACKGROUND :: 0x10151C
-COLOR_PANEL :: 0x18202A
-COLOR_TEXT :: 0xD8E0E8
-COLOR_DIM :: 0x7A8794
 COLOR_WAITS :: 0xE0B040
 
 // The queue of work: the threads share it, the lock keeps it correct.
@@ -164,8 +160,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if !ok {
 		system.stop(1)
 	}
-	graphics.clear(window.canvas, COLOR_BACKGROUND)
-	graphics.text(window.canvas, MARGIN, 8, "One queue of tiles, one lock, four threads.", COLOR_TEXT)
+	graphics.clear(window.canvas, graphics.COLOR_BACKGROUND)
+	graphics.text(window.canvas, MARGIN, 8, "One queue of tiles, one lock, four threads.", graphics.COLOR_TEXT)
 	display.present(&window)
 
 	made_locked = add_with_threads(true)
@@ -225,29 +221,29 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 
 		x := 2 * MARGIN + PICTURE_WIDTH
 		y := HEADER + MARGIN
-		graphics.fill(window.canvas, x, y, PANEL, PICTURE_HEIGHT, COLOR_PANEL)
-		after := graphics.text(window.canvas, x + 8, y + 8, "picture ", COLOR_TEXT)
-		graphics.unsigned(window.canvas, after, y + 8, pictures, COLOR_TEXT)
-		after = graphics.text(window.canvas, x + 8, y + 28, "tiles   ", COLOR_DIM)
-		after = graphics.unsigned(window.canvas, after, y + 28, u64(done), COLOR_DIM)
-		after = graphics.text(window.canvas, after, y + 28, "/", COLOR_DIM)
-		graphics.unsigned(window.canvas, after, y + 28, COLUMNS * ROWS, COLOR_DIM)
+		graphics.fill(window.canvas, x, y, PANEL, PICTURE_HEIGHT, graphics.COLOR_CARD_TOP)
+		after := graphics.text(window.canvas, x + 8, y + 8, "picture ", graphics.COLOR_TEXT)
+		graphics.unsigned(window.canvas, after, y + 8, pictures, graphics.COLOR_TEXT)
+		after = graphics.text(window.canvas, x + 8, y + 28, "tiles   ", graphics.COLOR_DIM)
+		after = graphics.unsigned(window.canvas, after, y + 28, u64(done), graphics.COLOR_DIM)
+		after = graphics.text(window.canvas, after, y + 28, "/", graphics.COLOR_DIM)
+		graphics.unsigned(window.canvas, after, y + 28, COLUMNS * ROWS, graphics.COLOR_DIM)
 		for &worker, index in workers {
 			line := y + 60 + index * 44
 			after = graphics.text(window.canvas, x + 8, line, "thread ", tint_color(index, 255))
 			after = graphics.unsigned(window.canvas, after, line, u64(index + 1), tint_color(index, 255))
-			graphics.unsigned(window.canvas, after + 16, line, u64(worker.share), COLOR_TEXT)
+			graphics.unsigned(window.canvas, after + 16, line, u64(worker.share), graphics.COLOR_TEXT)
 			// The part of the tiles of this picture that the thread took.
-			graphics.fill(window.canvas, x + 8, line + 20, PANEL - 16, 8, COLOR_BACKGROUND)
+			graphics.fill(window.canvas, x + 8, line + 20, PANEL - 16, 8, graphics.COLOR_BACKGROUND)
 			graphics.fill(window.canvas, x + 8, line + 20, int(worker.share) * (PANEL - 16) / (COLUMNS * ROWS), 8, tint_color(index, 255))
 		}
 		line := y + 60 + WORKER_COUNT * 44 + 4
 		after = graphics.text(window.canvas, x + 8, line, "lock waits ", COLOR_WAITS)
 		graphics.unsigned(window.canvas, after, line, u64(queue.lock.waits), COLOR_WAITS)
-		graphics.text(window.canvas, x + 8, line + 24, "4 threads, 1 number", COLOR_DIM)
-		after = graphics.text(window.canvas, x + 8, line + 42, "lock:    lost ", COLOR_TEXT)
-		graphics.unsigned(window.canvas, after, line + 42, made_locked - sum_locked, COLOR_TEXT)
-		after = graphics.text(window.canvas, x + 8, line + 60, "no lock: lost ", COLOR_TEXT)
+		graphics.text(window.canvas, x + 8, line + 24, "4 threads, 1 number", graphics.COLOR_DIM)
+		after = graphics.text(window.canvas, x + 8, line + 42, "lock:    lost ", graphics.COLOR_TEXT)
+		graphics.unsigned(window.canvas, after, line + 42, made_locked - sum_locked, graphics.COLOR_TEXT)
+		after = graphics.text(window.canvas, x + 8, line + 60, "no lock: lost ", graphics.COLOR_TEXT)
 		graphics.unsigned(window.canvas, after, line + 60, made_free - sum_free, COLOR_WAITS)
 		display.present(&window)
 		display.wait(&window, now + FRAME_TIME)

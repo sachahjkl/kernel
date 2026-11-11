@@ -28,15 +28,9 @@ PART_PAGES :: 256
 FIRST_PAGES :: 200
 SECOND_PAGES :: 100
 
-COLOR_BACKGROUND :: 0x10151C
-COLOR_PANEL :: 0x18202A
-COLOR_TEXT :: 0xD8E0E8
-COLOR_DIM :: 0x7A8794
-COLOR_DONE :: 0x58D878
 COLOR_REFUSED :: 0xF06060
 COLOR_WRONG :: 0xE0B040
 COLOR_BAR :: 0x4A90E0
-COLOR_BAR_BACK :: 0x232C38
 
 // One step of the program: what it asked, the answer of the kernel, and
 // the pages that the budget holds after the step.
@@ -152,29 +146,29 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 
 	canvas := window.canvas
 	for {
-		graphics.clear(canvas, COLOR_BACKGROUND)
+		graphics.clear(canvas, graphics.COLOR_BACKGROUND)
 		y := 12
-		graphics.text(canvas, 12, y, "no object comes from nothing: a budget pays for each page,", COLOR_DIM)
+		graphics.text(canvas, 12, y, "no object comes from nothing: a budget pays for each page,", graphics.COLOR_DIM)
 		y += LINE
-		graphics.text(canvas, 12, y, "each program and each thread. what ends returns to its budget.", COLOR_DIM)
+		graphics.text(canvas, 12, y, "each program and each thread. what ends returns to its budget.", graphics.COLOR_DIM)
 		y += LINE + LINE / 2
-		graphics.text(canvas, 12, y, "the program asks", COLOR_DIM)
-		graphics.text(canvas, ANSWER_X, y, "the kernel answers", COLOR_DIM)
-		graphics.text(canvas, BAR_X, y, "pages of the budget", COLOR_DIM)
+		graphics.text(canvas, 12, y, "the program asks", graphics.COLOR_DIM)
+		graphics.text(canvas, ANSWER_X, y, "the kernel answers", graphics.COLOR_DIM)
+		graphics.text(canvas, BAR_X, y, "pages of the budget", graphics.COLOR_DIM)
 		y += LINE
 		for &row, index in rows[:row_count] {
 			if index % 2 == 0 {
-				graphics.fill(canvas, 6, y - 3, WIDTH - 12, LINE, COLOR_PANEL)
+				graphics.fill(canvas, 6, y - 3, WIDTH - 12, LINE, graphics.COLOR_CARD_TOP)
 			}
-			graphics.text(canvas, 12, y, row.text, COLOR_TEXT)
-			color: graphics.Color = row.refused ? COLOR_REFUSED : COLOR_DONE
+			graphics.text(canvas, 12, y, row.text, graphics.COLOR_TEXT)
+			color: graphics.Color = row.refused ? COLOR_REFUSED : graphics.COLOR_PROGRAM
 			if !row.correct {
 				color = COLOR_WRONG
 			}
 			graphics.text(canvas, ANSWER_X, y, string(row.buffer[:row.count]), color)
-			graphics.fill(canvas, BAR_X, y + 2, BAR_WIDTH, 10, COLOR_BAR_BACK)
+			graphics.fill(canvas, BAR_X, y + 2, BAR_WIDTH, 10, graphics.COLOR_TRACK)
 			graphics.fill(canvas, BAR_X, y + 2, int(row.pages * BAR_WIDTH / max(start.pages, 1)), 10, COLOR_BAR)
-			graphics.unsigned(canvas, BAR_X + BAR_WIDTH + 8, y, row.pages, COLOR_TEXT)
+			graphics.unsigned(canvas, BAR_X + BAR_WIDTH + 8, y, row.pages, graphics.COLOR_TEXT)
 			y += LINE
 		}
 		display.present(&window)

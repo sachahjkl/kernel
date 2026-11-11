@@ -17,10 +17,6 @@ LINE :: 20
 BAR_X :: 190
 PAGES_X :: 122
 BAR_WIDTH :: 190
-COLOR_BACKGROUND :: 0x14181E
-COLOR_TEXT :: 0xD8E0E8
-COLOR_DIM :: 0x8090A0
-COLOR_BAR_BACK :: 0x283038
 COLOR_BAR :: 0x48B0E0
 
 PROGRAM_SLOTS :: 64
@@ -42,9 +38,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	for {
 		report: op.System_Report
 		_, status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.System), 0, u64(uintptr(&report)), size_of(report))
-		graphics.clear(canvas, COLOR_BACKGROUND)
+		graphics.clear(canvas, graphics.COLOR_BACKGROUND)
 		if status != .Ok {
-			graphics.text(canvas, 10, 10, "no grant to inspect the machine", COLOR_TEXT)
+			graphics.text(canvas, 10, 10, "no grant to inspect the machine", graphics.COLOR_TEXT)
 			if !lost {
 				system.log("monitor: no grant to inspect the machine")
 				lost = true
@@ -55,22 +51,22 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			used := report.page_count - report.free_pages
 
 			y := 10
-			x := graphics.text(canvas, 10, y, "memory ", COLOR_DIM)
-			x = graphics.unsigned(canvas, x, y, used * system.PAGE_SIZE >> 20, COLOR_TEXT)
-			x = graphics.text(canvas, x, y, " / ", COLOR_TEXT)
-			x = graphics.unsigned(canvas, x, y, report.page_count * system.PAGE_SIZE >> 20, COLOR_TEXT)
-			x = graphics.text(canvas, x, y, " MiB, reserved ", COLOR_TEXT)
-			x = graphics.unsigned(canvas, x, y, report.reserved_pages * system.PAGE_SIZE >> 20, COLOR_TEXT)
-			graphics.text(canvas, x, y, " MiB", COLOR_TEXT)
+			x := graphics.text(canvas, 10, y, "memory ", graphics.COLOR_DIM)
+			x = graphics.unsigned(canvas, x, y, used * system.PAGE_SIZE >> 20, graphics.COLOR_TEXT)
+			x = graphics.text(canvas, x, y, " / ", graphics.COLOR_TEXT)
+			x = graphics.unsigned(canvas, x, y, report.page_count * system.PAGE_SIZE >> 20, graphics.COLOR_TEXT)
+			x = graphics.text(canvas, x, y, " MiB, reserved ", graphics.COLOR_TEXT)
+			x = graphics.unsigned(canvas, x, y, report.reserved_pages * system.PAGE_SIZE >> 20, graphics.COLOR_TEXT)
+			graphics.text(canvas, x, y, " MiB", graphics.COLOR_TEXT)
 			y += LINE
-			graphics.fill(canvas, 10, y, WIDTH - 20, 10, COLOR_BAR_BACK)
+			graphics.fill(canvas, 10, y, WIDTH - 20, 10, graphics.COLOR_TRACK)
 			graphics.fill(canvas, 10, y, int(u64(WIDTH - 20) * used / max(report.page_count, 1)), 10, COLOR_BAR)
 			y += LINE
-			x = graphics.text(canvas, 10, y, "kernel entries ", COLOR_DIM)
-			graphics.unsigned(canvas, x, y, report.entries, COLOR_TEXT)
+			x = graphics.text(canvas, 10, y, "kernel entries ", graphics.COLOR_DIM)
+			graphics.unsigned(canvas, x, y, report.entries, graphics.COLOR_TEXT)
 			y += LINE
-			x = graphics.text(canvas, 10, y, "interrupts ", COLOR_DIM)
-			graphics.unsigned(canvas, x, y, report.interrupts, COLOR_TEXT)
+			x = graphics.text(canvas, 10, y, "interrupts ", graphics.COLOR_DIM)
+			graphics.unsigned(canvas, x, y, report.interrupts, graphics.COLOR_TEXT)
 			y += LINE
 			// The locks of the kernel: the waits of all kinds, and the kind
 			// that waited most.
@@ -84,17 +80,17 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					most, most_kind = count.waits, kind
 				}
 			}
-			x = graphics.text(canvas, 10, y, "kernel locks ", COLOR_DIM)
-			x = graphics.unsigned(canvas, x, y, waits, COLOR_TEXT)
-			x = graphics.text(canvas, x, y, " waits of ", COLOR_DIM)
-			x = graphics.unsigned(canvas, x, y, takes, COLOR_TEXT)
+			x = graphics.text(canvas, 10, y, "kernel locks ", graphics.COLOR_DIM)
+			x = graphics.unsigned(canvas, x, y, waits, graphics.COLOR_TEXT)
+			x = graphics.text(canvas, x, y, " waits of ", graphics.COLOR_DIM)
+			x = graphics.unsigned(canvas, x, y, takes, graphics.COLOR_TEXT)
 			if most != 0 {
-				x = graphics.text(canvas, x, y, ", most: ", COLOR_DIM)
-				graphics.text(canvas, x, y, op.LOCK_KIND_NAMES[most_kind], COLOR_TEXT)
+				x = graphics.text(canvas, x, y, ", most: ", graphics.COLOR_DIM)
+				graphics.text(canvas, x, y, op.LOCK_KIND_NAMES[most_kind], graphics.COLOR_TEXT)
 			}
 			y += LINE + 6
-			graphics.text(canvas, 10, y, "program       pages", COLOR_DIM)
-			graphics.text(canvas, BAR_X, y, "processor", COLOR_DIM)
+			graphics.text(canvas, 10, y, "program       pages", graphics.COLOR_DIM)
+			graphics.text(canvas, BAR_X, y, "processor", graphics.COLOR_DIM)
 			y += LINE
 
 			for slot in 1 ..< min(report.program_slots, PROGRAM_SLOTS) {
@@ -106,12 +102,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				}
 				share := min((program.run_time - min(previous_run_time[slot], program.run_time)) * 100 / elapsed, 100)
 				previous_run_time[slot] = program.run_time
-				graphics.text(canvas, 10, y, system.name_of(program.name[:]), COLOR_TEXT)
-				graphics.unsigned(canvas, PAGES_X, y, program.present_pages, COLOR_TEXT)
-				graphics.fill(canvas, BAR_X, y + 2, BAR_WIDTH, 10, COLOR_BAR_BACK)
+				graphics.text(canvas, 10, y, system.name_of(program.name[:]), graphics.COLOR_TEXT)
+				graphics.unsigned(canvas, PAGES_X, y, program.present_pages, graphics.COLOR_TEXT)
+				graphics.fill(canvas, BAR_X, y + 2, BAR_WIDTH, 10, graphics.COLOR_TRACK)
 				graphics.fill(canvas, BAR_X, y + 2, int(share) * BAR_WIDTH / 100, 10, COLOR_BAR)
-				x = graphics.unsigned(canvas, BAR_X + BAR_WIDTH + 8, y, share, COLOR_TEXT)
-				graphics.text(canvas, x, y, "%", COLOR_TEXT)
+				x = graphics.unsigned(canvas, BAR_X + BAR_WIDTH + 8, y, share, graphics.COLOR_TEXT)
+				graphics.text(canvas, x, y, "%", graphics.COLOR_TEXT)
 				y += LINE
 			}
 		}

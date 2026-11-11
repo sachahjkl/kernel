@@ -32,12 +32,8 @@ START_RECORDS :: 5
 CELL :: 8 // The side of a record in the picture.
 SHOWN_RECORDS :: 9 // Records of a ring that the picture shows as squares.
 
-COLOR_BACKGROUND :: 0x10151C
-COLOR_TEXT :: 0xD8E0E8
-COLOR_DIM :: 0x7A8794
 COLOR_RING :: 0x3A4654
 COLOR_NODE :: 0x1B2530
-COLOR_RUNNING :: 0x58C878
 COLOR_BLOCKED :: 0xF0A040
 COLOR_STOPPED :: 0xD05050
 
@@ -225,9 +221,9 @@ watch :: proc "contextless" () {
 }
 
 draw :: proc "contextless" (canvas: graphics.Canvas, now: u64) {
-	graphics.clear(canvas, COLOR_BACKGROUND)
-	graphics.text(canvas, 12, 8, "Each square is a program. Each line is a ring in shared memory.", COLOR_TEXT)
-	graphics.text(canvas, 12, HEIGHT - 22, "left button or a: add a record    right button or 1-6: stop or start a program", COLOR_DIM)
+	graphics.clear(canvas, graphics.COLOR_BACKGROUND)
+	graphics.text(canvas, 12, 8, "Each square is a program. Each line is a ring in shared memory.", graphics.COLOR_TEXT)
+	graphics.text(canvas, 12, HEIGHT - 22, "left button or a: add a record    right button or 1-6: stop or start a program", graphics.COLOR_DIM)
 
 	// The rings, under the nodes.
 	for &node, index in nodes {
@@ -244,13 +240,13 @@ draw :: proc "contextless" (canvas: graphics.Canvas, now: u64) {
 			along := 256 - (NODE_SIZE / 2 + 10 + int(position) * (CELL + 3)) * 256 * 3 / (length * 2)
 			x := from.x + (to.x - from.x) * along / 256
 			y := from.y + (to.y - from.y) * along / 256
-			graphics.fill(canvas, x - CELL / 2 - 1, y - CELL / 2 - 1, CELL + 2, CELL + 2, COLOR_BACKGROUND)
+			graphics.fill(canvas, x - CELL / 2 - 1, y - CELL / 2 - 1, CELL + 2, CELL + 2, graphics.COLOR_BACKGROUND)
 			graphics.fill(canvas, x - CELL / 2, y - CELL / 2, CELL, CELL, graphics.Color(record.values[0]) & 0xFFFFFF)
 		}
 		// The number of records in the ring, beside the middle of the line.
 		middle_x := (from.x + to.x) / 2 + (to.y - from.y) / 7 - 20
 		middle_y := (from.y + to.y) / 2 - (to.x - from.x) / 7 - 8
-		color: graphics.Color = count == ring.CAPACITY ? COLOR_BLOCKED : COLOR_DIM
+		color: graphics.Color = count == ring.CAPACITY ? COLOR_BLOCKED : graphics.COLOR_DIM
 		x := graphics.unsigned(canvas, middle_x, middle_y, u64(count), color)
 		graphics.text(canvas, x, middle_y, "/32", color)
 	}
@@ -259,7 +255,7 @@ draw :: proc "contextless" (canvas: graphics.Canvas, now: u64) {
 		center := centers[index]
 		x, y := center.x - NODE_SIZE / 2, center.y - NODE_SIZE / 2
 		state := node.state^ // One copy: the node writes this record.
-		border: graphics.Color = COLOR_RUNNING
+		border: graphics.Color = graphics.COLOR_PROGRAM
 		status := "waits"
 		switch {
 		case node.program == 0:
@@ -271,8 +267,8 @@ draw :: proc "contextless" (canvas: graphics.Canvas, now: u64) {
 		}
 		graphics.fill(canvas, x, y, NODE_SIZE, NODE_SIZE, COLOR_NODE)
 		graphics.outline(canvas, x, y, NODE_SIZE, NODE_SIZE, 2, border)
-		after := graphics.text(canvas, x + 8, y + 6, "node ", COLOR_TEXT)
-		graphics.unsigned(canvas, after, y + 6, u64(index + 1), COLOR_TEXT)
+		after := graphics.text(canvas, x + 8, y + 6, "node ", graphics.COLOR_TEXT)
+		graphics.unsigned(canvas, after, y + 6, u64(index + 1), graphics.COLOR_TEXT)
 		graphics.text(canvas, x + 8, y + 24, status, border)
 		if state.holding != 0 {
 			// The record, and the part of the work that is done.
@@ -282,8 +278,8 @@ draw :: proc "contextless" (canvas: graphics.Canvas, now: u64) {
 			graphics.fill(canvas, x + 28, y + 50, NODE_SIZE - 36, 6, COLOR_RING)
 			graphics.fill(canvas, x + 28, y + 50, int(done * (NODE_SIZE - 36) / span), 6, graphics.Color(state.color) & 0xFFFFFF)
 		}
-		graphics.unsigned(canvas, x + 8, y + NODE_SIZE - 22, state.passed, COLOR_DIM)
-		graphics.unsigned(canvas, x + NODE_SIZE - 8 - 5 * graphics.CELL_WIDTH, y + NODE_SIZE - 22, work_times[index], COLOR_DIM, 3)
-		graphics.text(canvas, x + NODE_SIZE - 8 - 2 * graphics.CELL_WIDTH, y + NODE_SIZE - 22, "ms", COLOR_DIM)
+		graphics.unsigned(canvas, x + 8, y + NODE_SIZE - 22, state.passed, graphics.COLOR_DIM)
+		graphics.unsigned(canvas, x + NODE_SIZE - 8 - 5 * graphics.CELL_WIDTH, y + NODE_SIZE - 22, work_times[index], graphics.COLOR_DIM, 3)
+		graphics.text(canvas, x + NODE_SIZE - 8 - 2 * graphics.CELL_WIDTH, y + NODE_SIZE - 22, "ms", graphics.COLOR_DIM)
 	}
 }

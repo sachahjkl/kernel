@@ -73,11 +73,6 @@ HISTORY :: 48 // The measures that the graph shows.
 GRAPH_BAR :: 4
 GRAPH_HEIGHT :: 48
 
-COLOR_BACKGROUND :: 0x0C1016
-COLOR_HEAD :: 0x141B24
-COLOR_TEXT :: 0xD8E0E8
-COLOR_DIM :: 0x6C7986
-COLOR_RULE :: 0x232C38
 COLOR_GRAPH :: 0x58D878
 COLOR_GRAPH_DIM :: 0x1C3A28
 COLOR_THUMB :: 0x5A6878
@@ -343,7 +338,7 @@ view_make :: proc "contextless" () {
 			}
 		}
 		if int(line.length) > columns {
-			row[columns - 1] = {'>', true, COLOR_DIM} // The line continues after the window.
+			row[columns - 1] = {'>', true, graphics.COLOR_DIM} // The line continues after the window.
 		}
 	}
 }
@@ -466,7 +461,7 @@ large :: proc "contextless" (canvas: graphics.Canvas, x, y: int, text: string, c
 
 tile :: proc "contextless" (canvas: graphics.Canvas, x: int, label: string, value: u64, color: graphics.Color) {
 	buffer: [27]u8
-	graphics.text(canvas, x, 8, label, COLOR_DIM)
+	graphics.text(canvas, x, 8, label, graphics.COLOR_DIM)
 	large(canvas, x, 28, number(&buffer, value), color)
 }
 
@@ -474,12 +469,12 @@ draw :: proc "contextless" (window: ^display.Window, follow: bool) {
 	canvas := window.canvas
 	buffer: [27]u8
 
-	graphics.fill(canvas, 0, 0, width, text_y, COLOR_BACKGROUND)
+	graphics.fill(canvas, 0, 0, width, text_y, graphics.COLOR_BACKGROUND)
 	if measure {
 		// The head: the rates, and the graph of the lines in one second.
-		graphics.fill(canvas, 0, 0, width, HEAD_HEIGHT - 6, COLOR_HEAD)
+		graphics.fill(canvas, 0, 0, width, HEAD_HEIGHT - 6, graphics.COLOR_CARD_TOP)
 		tile(canvas, 12, "lines in one second", rates.lines, COLOR_GRAPH)
-		tile(canvas, 196, "records in one second", rates.records, COLOR_TEXT)
+		tile(canvas, 196, "records in one second", rates.records, graphics.COLOR_TEXT)
 		tile(canvas, 388, "kernel entries, million records", rates.entries, COLOR_HELD)
 		most: u64 = 1
 		for value in history {
@@ -494,7 +489,7 @@ draw :: proc "contextless" (window: ^display.Window, follow: bool) {
 	}
 
 	// The text: only the rows of the window.
-	graphics.fill(canvas, 0, text_y, width, height - text_y, COLOR_BACKGROUND)
+	graphics.fill(canvas, 0, text_y, width, height - text_y, graphics.COLOR_BACKGROUND)
 	for &row, row_index in view.cells[:rows] {
 		y := text_y + row_index * CELL_HEIGHT
 		for cell, column in row[:columns] {
@@ -504,7 +499,7 @@ draw :: proc "contextless" (window: ^display.Window, follow: bool) {
 			x := TEXT_X + column * CELL_WIDTH
 			if cell.reverse {
 				graphics.fill(canvas, x, y, CELL_WIDTH, CELL_HEIGHT, cell.color)
-				graphics.character(canvas, x, y, cell.character, COLOR_BACKGROUND)
+				graphics.character(canvas, x, y, cell.character, graphics.COLOR_BACKGROUND)
 			} else {
 				graphics.character(canvas, x, y, cell.character, cell.color)
 			}
@@ -512,7 +507,7 @@ draw :: proc "contextless" (window: ^display.Window, follow: bool) {
 	}
 
 	// Where the view is in the lines that the terminal has.
-	graphics.fill(canvas, scroll_x, text_y, SCROLL_WIDTH, text_height, COLOR_RULE)
+	graphics.fill(canvas, scroll_x, text_y, SCROLL_WIDTH, text_height, graphics.COLOR_TRACK)
 	kept := view.count - view.oldest
 	if kept > 0 && !view.gone {
 		thumb := max(int(min(u64(rows), kept) * u64(text_height) / kept), 12)
@@ -522,18 +517,18 @@ draw :: proc "contextless" (window: ^display.Window, follow: bool) {
 
 	// The status of the program: a text, and a value of a total. With the
 	// rates it has its own line. If not, it takes the place of the line count.
-	graphics.fill(canvas, 0, status_y - 4, width, 1, COLOR_RULE)
+	graphics.fill(canvas, 0, status_y - 4, width, 1, graphics.COLOR_TRACK)
 	status := &view.status
 	has_status := status.total != 0
 	if has_status {
 		color := .Color in status.style.flags ? status.style.color & 0xFFFFFF : tone_colors[terminal.Tone(min(u8(status.style.tone), u8(max(terminal.Tone))))]
-		x := graphics.text(canvas, TEXT_X, status_y, string(status.text[:status.length]), COLOR_TEXT) + 12
+		x := graphics.text(canvas, TEXT_X, status_y, string(status.text[:status.length]), graphics.COLOR_TEXT) + 12
 		bar :: 240
-		graphics.fill(canvas, x, status_y + 4, bar, 8, COLOR_RULE)
+		graphics.fill(canvas, x, status_y + 4, bar, 8, graphics.COLOR_TRACK)
 		graphics.fill(canvas, x, status_y + 4, int(min(status.value, status.total) * bar / status.total), 8, color)
-		x = graphics.text(canvas, x + bar + 12, status_y, number(&buffer, status.value), COLOR_TEXT)
-		x = graphics.text(canvas, x, status_y, " of ", COLOR_DIM)
-		graphics.text(canvas, x, status_y, number(&buffer, status.total), COLOR_DIM)
+		x = graphics.text(canvas, x + bar + 12, status_y, number(&buffer, status.value), graphics.COLOR_TEXT)
+		x = graphics.text(canvas, x, status_y, " of ", graphics.COLOR_DIM)
+		graphics.text(canvas, x, status_y, number(&buffer, status.total), graphics.COLOR_DIM)
 	} else if program == 0 && measure {
 		graphics.text(canvas, TEXT_X, status_y, "the program does not run", COLOR_STOPPED)
 	}
@@ -541,25 +536,25 @@ draw :: proc "contextless" (window: ^display.Window, follow: bool) {
 		// At the right: the frames of the terminal.
 		frames := number(&buffer, rates.frames)
 		x := width - MARGIN - (len(frames) + len(" pictures in one second")) * CELL_WIDTH
-		x = graphics.text(canvas, x, status_y, frames, COLOR_TEXT)
-		graphics.text(canvas, x, status_y, " pictures in one second", COLOR_DIM)
+		x = graphics.text(canvas, x, status_y, frames, graphics.COLOR_TEXT)
+		graphics.text(canvas, x, status_y, " pictures in one second", graphics.COLOR_DIM)
 	}
 
 	// The place of the view, and the keys.
 	if measure || !has_status {
-		x := graphics.text(canvas, TEXT_X, hint_y, follow ? "line " : "held at line ", follow ? COLOR_DIM : COLOR_HELD)
-		x = graphics.text(canvas, x, hint_y, number(&buffer, view.top + 1), follow ? COLOR_TEXT : COLOR_HELD)
-		x = graphics.text(canvas, x, hint_y, " of ", COLOR_DIM)
-		x = graphics.text(canvas, x, hint_y, number(&buffer, view.count), COLOR_TEXT)
+		x := graphics.text(canvas, TEXT_X, hint_y, follow ? "line " : "held at line ", follow ? graphics.COLOR_DIM : COLOR_HELD)
+		x = graphics.text(canvas, x, hint_y, number(&buffer, view.top + 1), follow ? graphics.COLOR_TEXT : COLOR_HELD)
+		x = graphics.text(canvas, x, hint_y, " of ", graphics.COLOR_DIM)
+		x = graphics.text(canvas, x, hint_y, number(&buffer, view.count), graphics.COLOR_TEXT)
 		if view.gone {
-			x = graphics.text(canvas, x, hint_y, "  older than the lines kept", COLOR_DIM)
+			x = graphics.text(canvas, x, hint_y, "  older than the lines kept", graphics.COLOR_DIM)
 		}
 		if program == 0 && !measure {
 			graphics.text(canvas, x, hint_y, "  the program does not run", COLOR_STOPPED)
 		}
 	}
 	hint :: "page up, page down: move  other keys: to the program"
-	graphics.text(canvas, width - MARGIN - len(hint) * CELL_WIDTH, hint_y, hint, COLOR_DIM)
+	graphics.text(canvas, width - MARGIN - len(hint) * CELL_WIDTH, hint_y, hint, graphics.COLOR_DIM)
 	display.present(window)
 }
 

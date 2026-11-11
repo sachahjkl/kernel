@@ -29,11 +29,7 @@ ROWS :: 33
 WIDTH :: LIST_WIDTH + 2 * MARGIN + COLUMNS * CELL_WIDTH
 HEIGHT :: ROWS * CELL_HEIGHT + 2 * MARGIN + CELL_HEIGHT + 8
 
-COLOR_PAPER :: 0x14181C
-COLOR_LIST :: 0x1C2228
 COLOR_SELECTED :: 0x2C3A4C
-COLOR_TEXT :: 0xD0D4D8
-COLOR_DIM :: 0x7C848C
 COLOR_TITLE :: 0xF0C050
 COLOR_HEADING :: 0x6CB4F0
 COLOR_EXPORT :: 0x7CD890
@@ -202,7 +198,7 @@ page_build :: proc "contextless" () {
 	file := file_of(entry)
 	if file == nil {
 		put_built(0, COLOR_TITLE, name)
-		put("This file is not a valid module.", 0, COLOR_TEXT)
+		put("This file is not a valid module.", 0, graphics.COLOR_TEXT)
 		return
 	}
 	head, _ := module.header(file)
@@ -212,37 +208,37 @@ page_build :: proc "contextless" () {
 	imports := int(max(module.count(file, .Imports), 1)) - 1
 
 	put_built(0, COLOR_TITLE, name)
-	put_paragraph(about, 0, COLOR_TEXT)
+	put_paragraph(about, 0, graphics.COLOR_TEXT)
 	put("", 0, 0)
 	hash: [16]u8
 	digits := system.HEX_DIGITS
 	for b, index in entry.hash[:8] {
 		hash[2 * index], hash[2 * index + 1] = digits[b >> 4], digits[b & 0xF]
 	}
-	put_built(0, COLOR_DIM, "file      ", entry.size, " bytes, hash ", string(hash[:]), "...")
-	put_built(0, COLOR_DIM, "memory    ", head.memory_size >> 10, " KiB when loaded, ", u64(max(module.count(file, .Segments), 1) - 1), " segments, ", u64(imports), " imports")
-	put_built(0, COLOR_DIM, "exports   ", u64(exports), has_entry ? ", and an entry" : ", and no entry")
+	put_built(0, graphics.COLOR_DIM, "file      ", entry.size, " bytes, hash ", string(hash[:]), "...")
+	put_built(0, graphics.COLOR_DIM, "memory    ", head.memory_size >> 10, " KiB when loaded, ", u64(max(module.count(file, .Segments), 1) - 1), " segments, ", u64(imports), " imports")
+	put_built(0, graphics.COLOR_DIM, "exports   ", u64(exports), has_entry ? ", and an entry" : ", and no entry")
 	put("", 0, 0)
 
 	put("HOW TO USE IT", 0, COLOR_HEADING)
 	if has_entry {
 		put_built(2, COLOR_CODE, "start(\"", name, "\")")
-		put("a program: the module has an entry", 24, COLOR_TEXT)
+		put("a program: the module has an entry", 24, graphics.COLOR_TEXT)
 		line_join()
 	}
 	if exports > 0 && has_entry {
 		put_built(2, COLOR_CODE, "connect(\"", name, "\")")
-		put("a service: calls to the program that runs, if it serves", 24, COLOR_TEXT)
+		put("a service: calls to the program that runs, if it serves", 24, graphics.COLOR_TEXT)
 		line_join()
 	}
 	if exports > 0 {
 		put_built(2, COLOR_CODE, "load(\"", name, "\")")
-		put("a library: direct calls, in the memory of the caller", 24, COLOR_TEXT)
+		put("a library: direct calls, in the memory of the caller", 24, graphics.COLOR_TEXT)
 		line_join()
 	}
 	if exports > 0 {
 		put_built(2, COLOR_CODE, "isolate(\"", name, "\")")
-		put("a sandboxed program: calls through a ring, no handle", 24, COLOR_TEXT)
+		put("a sandboxed program: calls through a ring, no handle", 24, graphics.COLOR_TEXT)
 		line_join()
 	}
 	put("", 0, 0)
@@ -280,7 +276,7 @@ page_build :: proc "contextless" () {
 
 	information_page(entry.hash)
 	put("DOCUMENTATION", 0, COLOR_HEADING)
-	put_text(text, 0, COLOR_TEXT)
+	put_text(text, 0, graphics.COLOR_TEXT)
 	if exports == 0 {
 		return
 	}
@@ -297,7 +293,7 @@ page_build :: proc "contextless" () {
 		write_signature(&writer, file, function)
 		built_count += writer.count
 		put(system.written(&writer), 0, COLOR_EXPORT)
-		put_text(module.string_at(file, function.text_offset, function.text_count), 4, COLOR_TEXT)
+		put_text(module.string_at(file, function.text_offset, function.text_count), 4, graphics.COLOR_TEXT)
 		put("", 0, 0)
 	}
 	// The records that the exports use: the name, the size, and each field.
@@ -323,7 +319,7 @@ page_build :: proc "contextless" () {
 			system.write_part(&writer, ", at byte ")
 			system.write_part(&writer, u64(item.offset))
 			built_count += writer.count
-			put(system.written(&writer), 4, COLOR_TEXT)
+			put(system.written(&writer), 4, graphics.COLOR_TEXT)
 		}
 		put("", 0, 0)
 	}
@@ -346,8 +342,8 @@ rows :: proc "contextless" () -> (count: int) {
 }
 
 draw :: proc "contextless" (canvas: graphics.Canvas) {
-	graphics.clear(canvas, COLOR_PAPER)
-	graphics.fill(canvas, 0, 0, LIST_WIDTH, HEIGHT, COLOR_LIST)
+	graphics.clear(canvas, graphics.COLOR_BACKGROUND)
+	graphics.fill(canvas, 0, 0, LIST_WIDTH, HEIGHT, graphics.COLOR_CARD_TOP)
 	entries := system.image_entries(image)
 	list_rows := (HEIGHT - 8) / CELL_HEIGHT
 	list_first := clamp(selected - list_rows / 2, 0, max(len(entries) - list_rows, 0))
@@ -360,20 +356,20 @@ draw :: proc "contextless" (canvas: graphics.Canvas) {
 		file := file_of(entry)
 		head, _ := module.header(file)
 		exports := described_exports(file)
-		color := graphics.Color(COLOR_DIM)
+		color := graphics.Color(graphics.COLOR_DIM)
 		switch {
 		case exports > 0 && head.entry_export != 0:
 			color = COLOR_EXPORT
 		case exports > 0:
 			color = COLOR_TITLE
 		case head.entry_export != 0:
-			color = COLOR_TEXT
+			color = graphics.COLOR_TEXT
 		}
 		graphics.text(canvas, 8, y, system.name_of(entry.name[:]), color)
 		if exports > 0 {
 			buffer: [8]u8
 			count := system.format(buffer[:], u64(exports))
-			graphics.text(canvas, LIST_WIDTH - 8 - len(count) * CELL_WIDTH, y, count, COLOR_DIM)
+			graphics.text(canvas, LIST_WIDTH - 8 - len(count) * CELL_WIDTH, y, count, graphics.COLOR_DIM)
 		}
 	}
 
@@ -393,11 +389,11 @@ draw :: proc "contextless" (canvas: graphics.Canvas) {
 	}
 	bottom := HEIGHT - CELL_HEIGHT - 6
 	graphics.fill(canvas, LIST_WIDTH, bottom - 4, WIDTH - LIST_WIDTH, 1, 0x30363C)
-	x := graphics.text(canvas, left, bottom, "up, down: module   page up, page down: text", COLOR_DIM)
+	x := graphics.text(canvas, left, bottom, "up, down: module   page up, page down: text", graphics.COLOR_DIM)
 	buffer: [64]u8
 	total := rows()
 	place := system.format(buffer[:], "rows ", u64(min(first_line + 1, total)), " to ", u64(min(first_line + ROWS, total)), " of ", u64(total))
-	graphics.text(canvas, max(x + 16, WIDTH - MARGIN - len(place) * CELL_WIDTH), bottom, place, COLOR_DIM)
+	graphics.text(canvas, max(x + 16, WIDTH - MARGIN - len(place) * CELL_WIDTH), bottom, place, graphics.COLOR_DIM)
 }
 
 select :: proc "contextless" (index: int) {

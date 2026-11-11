@@ -17,11 +17,6 @@ WIDTH :: 544
 ATTEMPT_CAPACITY :: 9
 HEIGHT :: 12 + 5 * LINE + ATTEMPT_CAPACITY * LINE + 12
 
-COLOR_BACKGROUND :: 0x10151C
-COLOR_PANEL :: 0x18202A
-COLOR_TEXT :: 0xD8E0E8
-COLOR_DIM :: 0x7A8794
-COLOR_ALLOWED :: 0x58D878
 COLOR_REFUSED :: 0xF06060
 COLOR_WRONG :: 0xE0B040
 
@@ -132,25 +127,25 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 
 	canvas := window.canvas
 	for {
-		graphics.clear(canvas, COLOR_BACKGROUND)
+		graphics.clear(canvas, graphics.COLOR_BACKGROUND)
 		y := 12
-		graphics.text(canvas, 12, y, "this program holds two handles from the root service:", COLOR_DIM)
+		graphics.text(canvas, 12, y, "this program holds two handles from the root service:", graphics.COLOR_DIM)
 		y += LINE
-		x := graphics.text(canvas, 28, y, "the machine, with the right ", COLOR_TEXT)
-		graphics.text(canvas, x, y, "Inspect", COLOR_ALLOWED)
+		x := graphics.text(canvas, 28, y, "the machine, with the right ", graphics.COLOR_TEXT)
+		graphics.text(canvas, x, y, "Inspect", graphics.COLOR_PROGRAM)
 		y += LINE
-		x = graphics.text(canvas, 28, y, "the boot image, with the right ", COLOR_TEXT)
-		graphics.text(canvas, x, y, "Read", COLOR_ALLOWED)
+		x = graphics.text(canvas, 28, y, "the boot image, with the right ", graphics.COLOR_TEXT)
+		graphics.text(canvas, x, y, "Read", graphics.COLOR_PROGRAM)
 		y += LINE + LINE / 2
-		graphics.text(canvas, 12, y, "the program asks", COLOR_DIM)
-		graphics.text(canvas, ANSWER_X, y, "the kernel answers", COLOR_DIM)
+		graphics.text(canvas, 12, y, "the program asks", graphics.COLOR_DIM)
+		graphics.text(canvas, ANSWER_X, y, "the kernel answers", graphics.COLOR_DIM)
 		y += LINE
 		for attempt, index in attempts[:attempt_count] {
 			if index % 2 == 0 {
-				graphics.fill(canvas, 6, y - 3, WIDTH - 12, LINE, COLOR_PANEL)
+				graphics.fill(canvas, 6, y - 3, WIDTH - 12, LINE, graphics.COLOR_CARD_TOP)
 			}
-			graphics.text(canvas, 12, y, attempt.text, COLOR_TEXT)
-			color: graphics.Color = attempt.status == .Ok ? COLOR_ALLOWED : COLOR_REFUSED
+			graphics.text(canvas, 12, y, attempt.text, graphics.COLOR_TEXT)
+			color: graphics.Color = attempt.status == .Ok ? graphics.COLOR_PROGRAM : COLOR_REFUSED
 			if attempt.status != attempt.expected {
 				color = COLOR_WRONG
 			}

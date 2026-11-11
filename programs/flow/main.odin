@@ -31,14 +31,8 @@ ENTRIES_X :: RATE_X + BAR_WIDTH + 110
 WIDTH :: ENTRIES_X + BAR_WIDTH + 96
 HEIGHT :: 12 + 3 * LINE + len(measures) * LINE + LINE + 12
 
-COLOR_BACKGROUND :: 0x10151C
-COLOR_PANEL :: 0x18202A
-COLOR_TEXT :: 0xD8E0E8
-COLOR_DIM :: 0x7A8794
 COLOR_RATE :: 0x58D878
 COLOR_ENTRIES :: 0xE0A040
-COLOR_BAR_BACK :: 0x232C38
-COLOR_WRONG :: 0xF06060
 
 Measure :: struct {
 	capacity: u32,
@@ -149,38 +143,38 @@ run :: proc "contextless" (measure: ^Measure) -> bool {
 }
 
 bar :: proc "contextless" (canvas: graphics.Canvas, x, y: int, value, most: u64, color: graphics.Color) {
-	graphics.fill(canvas, x, y + 3, BAR_WIDTH, 10, COLOR_BAR_BACK)
+	graphics.fill(canvas, x, y + 3, BAR_WIDTH, 10, graphics.COLOR_TRACK)
 	graphics.fill(canvas, x, y + 3, int(value * BAR_WIDTH / max(most, 1)), 10, color)
-	graphics.unsigned(canvas, x + BAR_WIDTH + 8, y, value, COLOR_TEXT)
+	graphics.unsigned(canvas, x + BAR_WIDTH + 8, y, value, graphics.COLOR_TEXT)
 }
 
 draw :: proc "contextless" (window: ^display.Window) {
 	canvas := window.canvas
-	graphics.clear(canvas, COLOR_BACKGROUND)
+	graphics.clear(canvas, graphics.COLOR_BACKGROUND)
 	most_rate, most_entries: u64
 	for measure in measures {
 		most_rate, most_entries = max(most_rate, measure.rate), max(most_entries, measure.entries)
 	}
 	y := 12
-	graphics.text(canvas, 12, y, "one thread writes records in a ring, one thread reads them, for one second.", COLOR_DIM)
+	graphics.text(canvas, 12, y, "one thread writes records in a ring, one thread reads them, for one second.", graphics.COLOR_DIM)
 	y += LINE
-	graphics.text(canvas, 12, y, "a queue operation does not enter the kernel. a wait does.", COLOR_DIM)
+	graphics.text(canvas, 12, y, "a queue operation does not enter the kernel. a wait does.", graphics.COLOR_DIM)
 	y += LINE + LINE / 2
-	graphics.text(canvas, 12, y, "capacity  before a wait", COLOR_DIM)
-	graphics.text(canvas, RATE_X, y, "records in one second", COLOR_DIM)
-	graphics.text(canvas, ENTRIES_X, y, "kernel entries, one million records", COLOR_DIM)
+	graphics.text(canvas, 12, y, "capacity  before a wait", graphics.COLOR_DIM)
+	graphics.text(canvas, RATE_X, y, "records in one second", graphics.COLOR_DIM)
+	graphics.text(canvas, ENTRIES_X, y, "kernel entries, one million records", graphics.COLOR_DIM)
 	y += LINE
 	for measure, index in measures {
 		if index % 2 == 0 {
-			graphics.fill(canvas, 6, y - 4, WIDTH - 12, LINE, COLOR_PANEL)
+			graphics.fill(canvas, 6, y - 4, WIDTH - 12, LINE, graphics.COLOR_CARD_TOP)
 		}
-		graphics.unsigned(canvas, 12, y, u64(measure.capacity), COLOR_TEXT)
-		graphics.text(canvas, 92, y, measure.spin ? "read counters" : "nothing", COLOR_TEXT)
+		graphics.unsigned(canvas, 12, y, u64(measure.capacity), graphics.COLOR_TEXT)
+		graphics.text(canvas, 92, y, measure.spin ? "read counters" : "nothing", graphics.COLOR_TEXT)
 		if measure.done {
-			bar(canvas, RATE_X, y, measure.rate, most_rate, measure.lost == 0 ? COLOR_RATE : COLOR_WRONG)
+			bar(canvas, RATE_X, y, measure.rate, most_rate, measure.lost == 0 ? COLOR_RATE : graphics.COLOR_FAILED)
 			bar(canvas, ENTRIES_X, y, measure.entries, most_entries, COLOR_ENTRIES)
 		} else {
-			graphics.text(canvas, RATE_X, y, "...", COLOR_DIM)
+			graphics.text(canvas, RATE_X, y, "...", graphics.COLOR_DIM)
 		}
 		y += LINE
 	}

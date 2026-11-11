@@ -26,9 +26,6 @@ FRAME_TIME :: 33
 WORKER_COUNT :: 4
 ITERATIONS :: 28
 
-COLOR_BACKGROUND :: 0x10151C
-COLOR_TEXT :: 0xD8E0E8
-COLOR_DIM :: 0x7A8794
 COLOR_STOPPED :: 0xD05050
 
 // The parameter record of one thread. The thread writes `frames`; the first
@@ -121,7 +118,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	system.log("threads: a thread added the numbers to 1000: ", sum.result)
 
-	graphics.clear(window.canvas, COLOR_BACKGROUND)
+	graphics.clear(window.canvas, graphics.COLOR_BACKGROUND)
 	for &worker, index in workers {
 		x := MARGIN + (index % 2) * (SQUARE + MARGIN)
 		y := HEADER + MARGIN + (index / 2) * (SQUARE + LABEL + MARGIN)
@@ -150,17 +147,17 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			}
 		}
 		drawn := 0
-		graphics.fill(window.canvas, 0, 0, WIDTH, HEADER + MARGIN, COLOR_BACKGROUND)
-		graphics.text(window.canvas, MARGIN, 8, "One program. Each square is one thread.", COLOR_TEXT)
+		graphics.fill(window.canvas, 0, 0, WIDTH, HEADER + MARGIN, graphics.COLOR_BACKGROUND)
+		graphics.text(window.canvas, MARGIN, 8, "One program. Each square is one thread.", graphics.COLOR_TEXT)
 		for &worker, index in workers {
 			x := MARGIN + (index % 2) * (SQUARE + MARGIN)
 			y := HEADER + MARGIN + (index / 2) * (SQUARE + LABEL + MARGIN) + SQUARE
-			graphics.fill(window.canvas, x, y, SQUARE, LABEL, COLOR_BACKGROUND)
-			after := graphics.text(window.canvas, x, y + 3, "thread ", COLOR_TEXT)
-			after = graphics.unsigned(window.canvas, after, y + 3, u64(index + 1), COLOR_TEXT)
+			graphics.fill(window.canvas, x, y, SQUARE, LABEL, graphics.COLOR_BACKGROUND)
+			after := graphics.text(window.canvas, x, y + 3, "thread ", graphics.COLOR_TEXT)
+			after = graphics.unsigned(window.canvas, after, y + 3, u64(index + 1), graphics.COLOR_TEXT)
 			if worker.runs {
-				after = graphics.text(window.canvas, after, y + 3, "  frame ", COLOR_DIM)
-				graphics.unsigned(window.canvas, after, y + 3, worker.frames, COLOR_DIM)
+				after = graphics.text(window.canvas, after, y + 3, "  frame ", graphics.COLOR_DIM)
+				graphics.unsigned(window.canvas, after, y + 3, worker.frames, graphics.COLOR_DIM)
 			} else {
 				graphics.text(window.canvas, after, y + 3, "  stopped", COLOR_STOPPED)
 			}

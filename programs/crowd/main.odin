@@ -34,15 +34,9 @@ ENTRIES_X :: RATE_X + BAR_WIDTH + 110
 WIDTH :: ENTRIES_X + BAR_WIDTH + 96
 HEIGHT :: 12 + 3 * LINE + len(measures) * LINE + LINE + 12
 
-COLOR_BACKGROUND :: 0x10151C
-COLOR_PANEL :: 0x18202A
-COLOR_TEXT :: 0xD8E0E8
-COLOR_DIM :: 0x7A8794
 COLOR_RATE :: 0x58D878
 COLOR_LOCK :: 0x5890E0
 COLOR_ENTRIES :: 0xE0A040
-COLOR_BAR_BACK :: 0x232C38
-COLOR_WRONG :: 0xF06060
 
 Measure :: struct {
 	writers:   int,
@@ -263,40 +257,40 @@ run :: proc "contextless" (measure: ^Measure) -> bool {
 }
 
 bar :: proc "contextless" (canvas: graphics.Canvas, x, y: int, value, most: u64, color: graphics.Color) {
-	graphics.fill(canvas, x, y + 3, BAR_WIDTH, 10, COLOR_BAR_BACK)
+	graphics.fill(canvas, x, y + 3, BAR_WIDTH, 10, graphics.COLOR_TRACK)
 	graphics.fill(canvas, x, y + 3, int(value * BAR_WIDTH / max(most, 1)), 10, color)
-	graphics.unsigned(canvas, x + BAR_WIDTH + 8, y, value, COLOR_TEXT)
+	graphics.unsigned(canvas, x + BAR_WIDTH + 8, y, value, graphics.COLOR_TEXT)
 }
 
 draw :: proc "contextless" (window: ^display.Window) {
 	canvas := window.canvas
-	graphics.clear(canvas, COLOR_BACKGROUND)
+	graphics.clear(canvas, graphics.COLOR_BACKGROUND)
 	most_rate, most_entries: u64
 	for measure in measures {
 		most_rate, most_entries = max(most_rate, measure.rate), max(most_entries, measure.entries)
 	}
 	y := 12
-	graphics.text(canvas, 12, y, "several threads write records in one queue, several threads read them, for one second.", COLOR_DIM)
+	graphics.text(canvas, 12, y, "several threads write records in one queue, several threads read them, for one second.", graphics.COLOR_DIM)
 	y += LINE
-	graphics.text(canvas, 12, y, "one event starts the threads of a measure. no record is lost, none arrives two times.", COLOR_DIM)
+	graphics.text(canvas, 12, y, "one event starts the threads of a measure. no record is lost, none arrives two times.", graphics.COLOR_DIM)
 	y += LINE + LINE / 2
-	graphics.text(canvas, 12, y, "queue    writers  readers  wrong", COLOR_DIM)
-	graphics.text(canvas, RATE_X, y, "records in one second", COLOR_DIM)
-	graphics.text(canvas, ENTRIES_X, y, "kernel entries, one million records", COLOR_DIM)
+	graphics.text(canvas, 12, y, "queue    writers  readers  wrong", graphics.COLOR_DIM)
+	graphics.text(canvas, RATE_X, y, "records in one second", graphics.COLOR_DIM)
+	graphics.text(canvas, ENTRIES_X, y, "kernel entries, one million records", graphics.COLOR_DIM)
 	y += LINE
 	for measure, index in measures {
 		if index % 2 == 0 {
-			graphics.fill(canvas, 6, y - 4, WIDTH - 12, LINE, COLOR_PANEL)
+			graphics.fill(canvas, 6, y - 4, WIDTH - 12, LINE, graphics.COLOR_CARD_TOP)
 		}
-		graphics.text(canvas, 12, y, measure.with_lock ? "lock" : "shared", measure.with_lock ? COLOR_LOCK : COLOR_TEXT)
-		graphics.unsigned(canvas, 84, y, u64(measure.writers), COLOR_TEXT)
-		graphics.unsigned(canvas, 156, y, u64(measure.readers), COLOR_TEXT)
+		graphics.text(canvas, 12, y, measure.with_lock ? "lock" : "shared", measure.with_lock ? COLOR_LOCK : graphics.COLOR_TEXT)
+		graphics.unsigned(canvas, 84, y, u64(measure.writers), graphics.COLOR_TEXT)
+		graphics.unsigned(canvas, 156, y, u64(measure.readers), graphics.COLOR_TEXT)
 		if measure.done {
-			graphics.unsigned(canvas, 228, y, measure.wrong, measure.wrong == 0 ? COLOR_DIM : COLOR_WRONG)
-			bar(canvas, RATE_X, y, measure.rate, most_rate, measure.wrong != 0 ? COLOR_WRONG : measure.with_lock ? COLOR_LOCK : COLOR_RATE)
+			graphics.unsigned(canvas, 228, y, measure.wrong, measure.wrong == 0 ? graphics.COLOR_DIM : graphics.COLOR_FAILED)
+			bar(canvas, RATE_X, y, measure.rate, most_rate, measure.wrong != 0 ? graphics.COLOR_FAILED : measure.with_lock ? COLOR_LOCK : COLOR_RATE)
 			bar(canvas, ENTRIES_X, y, measure.entries, most_entries, COLOR_ENTRIES)
 		} else {
-			graphics.text(canvas, RATE_X, y, "...", COLOR_DIM)
+			graphics.text(canvas, RATE_X, y, "...", graphics.COLOR_DIM)
 		}
 		y += LINE
 	}

@@ -26,14 +26,8 @@ ENTRIES_X :: RATE_X + BAR_WIDTH + 120
 WIDTH :: ENTRIES_X + 320
 HEIGHT :: 12 + 9 * LINE + 12
 
-COLOR_BACKGROUND :: 0x10151C
-COLOR_PANEL :: 0x18202A
-COLOR_TEXT :: 0xD8E0E8
-COLOR_DIM :: 0x7A8794
 COLOR_PAGE :: 0x58D878
 COLOR_ENTRY :: 0x5890E0
-COLOR_BAR_BACK :: 0x232C38
-COLOR_WRONG :: 0xF06060
 
 Measure :: struct {
 	name:    string,
@@ -102,23 +96,23 @@ clock_text :: proc "contextless" (canvas: graphics.Canvas, x, y: int, millisecon
 }
 
 bar :: proc "contextless" (canvas: graphics.Canvas, x, y: int, value, most: u64, color: graphics.Color) {
-	graphics.fill(canvas, x, y + 3, BAR_WIDTH, 10, COLOR_BAR_BACK)
+	graphics.fill(canvas, x, y + 3, BAR_WIDTH, 10, graphics.COLOR_TRACK)
 	graphics.fill(canvas, x, y + 3, int(value * BAR_WIDTH / max(most, 1)), 10, color)
-	graphics.unsigned(canvas, x + BAR_WIDTH + 8, y, value, COLOR_TEXT)
+	graphics.unsigned(canvas, x + BAR_WIDTH + 8, y, value, graphics.COLOR_TEXT)
 }
 
 draw :: proc "contextless" (window: ^display.Window) {
 	canvas := window.canvas
-	graphics.clear(canvas, COLOR_BACKGROUND)
+	graphics.clear(canvas, graphics.COLOR_BACKGROUND)
 	y := 12
-	graphics.text(canvas, 12, y, "the kernel writes the time in one page. each program reads it: no kernel entry.", COLOR_DIM)
+	graphics.text(canvas, 12, y, "the kernel writes the time in one page. each program reads it: no kernel entry.", graphics.COLOR_DIM)
 	y += LINE + LINE / 2
-	graphics.text(canvas, 12, y, "since boot", COLOR_DIM)
-	clock_text(canvas, RATE_X, y, system.time(), COLOR_TEXT)
+	graphics.text(canvas, 12, y, "since boot", graphics.COLOR_DIM)
+	clock_text(canvas, RATE_X, y, system.time(), graphics.COLOR_TEXT)
 	y += LINE + LINE / 2
-	graphics.text(canvas, 12, y, "way", COLOR_DIM)
-	graphics.text(canvas, RATE_X, y, "reads of the time in one second", COLOR_DIM)
-	graphics.text(canvas, ENTRIES_X, y, "kernel entries, one million reads", COLOR_DIM)
+	graphics.text(canvas, 12, y, "way", graphics.COLOR_DIM)
+	graphics.text(canvas, RATE_X, y, "reads of the time in one second", graphics.COLOR_DIM)
+	graphics.text(canvas, ENTRIES_X, y, "kernel entries, one million reads", graphics.COLOR_DIM)
 	y += LINE
 	most: u64
 	for measure in measures {
@@ -126,34 +120,34 @@ draw :: proc "contextless" (window: ^display.Window) {
 	}
 	for measure, index in measures {
 		if index % 2 == 0 {
-			graphics.fill(canvas, 6, y - 4, WIDTH - 12, LINE, COLOR_PANEL)
+			graphics.fill(canvas, 6, y - 4, WIDTH - 12, LINE, graphics.COLOR_CARD_TOP)
 		}
 		graphics.text(canvas, 12, y, measure.name, index == 0 ? COLOR_PAGE : COLOR_ENTRY)
 		if measure.done {
 			bar(canvas, RATE_X, y, measure.rate, most, index == 0 ? COLOR_PAGE : COLOR_ENTRY)
-			graphics.unsigned(canvas, ENTRIES_X, y, measure.entries, COLOR_TEXT)
+			graphics.unsigned(canvas, ENTRIES_X, y, measure.entries, graphics.COLOR_TEXT)
 		} else {
-			graphics.text(canvas, RATE_X, y, "...", COLOR_DIM)
+			graphics.text(canvas, RATE_X, y, "...", graphics.COLOR_DIM)
 		}
 		y += LINE
 	}
 	y += LINE / 2
 	if checked {
-		x := graphics.text(canvas, 12, y, "the time went back ", COLOR_DIM)
-		x = graphics.unsigned(canvas, x, y, went_back, went_back == 0 ? COLOR_TEXT : COLOR_WRONG)
-		x = graphics.text(canvas, x, y, " times. the two ways are ", COLOR_DIM)
-		x = graphics.unsigned(canvas, x, y, apart, apart <= 1 ? COLOR_TEXT : COLOR_WRONG)
-		graphics.text(canvas, x, y, " ms apart at most.", COLOR_DIM)
+		x := graphics.text(canvas, 12, y, "the time went back ", graphics.COLOR_DIM)
+		x = graphics.unsigned(canvas, x, y, went_back, went_back == 0 ? graphics.COLOR_TEXT : graphics.COLOR_FAILED)
+		x = graphics.text(canvas, x, y, " times. the two ways are ", graphics.COLOR_DIM)
+		x = graphics.unsigned(canvas, x, y, apart, apart <= 1 ? graphics.COLOR_TEXT : graphics.COLOR_FAILED)
+		graphics.text(canvas, x, y, " ms apart at most.", graphics.COLOR_DIM)
 		y += LINE
-		x = graphics.text(canvas, 12, y, "against the cycle counter, the page was ", COLOR_DIM)
-		x = graphics.unsigned(canvas, x, y, least, least <= LEAST_LIMIT ? COLOR_TEXT : COLOR_WRONG)
-		x = graphics.text(canvas, x, y, " to ", COLOR_DIM)
-		x = graphics.unsigned(canvas, x, y, behind, COLOR_TEXT)
-		x = graphics.text(canvas, x, y, " ms behind and ", COLOR_DIM)
-		x = graphics.unsigned(canvas, x, y, ahead, ahead <= AHEAD_LIMIT ? COLOR_TEXT : COLOR_WRONG)
-		graphics.text(canvas, x, y, " ms ahead.", COLOR_DIM)
+		x = graphics.text(canvas, 12, y, "against the cycle counter, the page was ", graphics.COLOR_DIM)
+		x = graphics.unsigned(canvas, x, y, least, least <= LEAST_LIMIT ? graphics.COLOR_TEXT : graphics.COLOR_FAILED)
+		x = graphics.text(canvas, x, y, " to ", graphics.COLOR_DIM)
+		x = graphics.unsigned(canvas, x, y, behind, graphics.COLOR_TEXT)
+		x = graphics.text(canvas, x, y, " ms behind and ", graphics.COLOR_DIM)
+		x = graphics.unsigned(canvas, x, y, ahead, ahead <= AHEAD_LIMIT ? graphics.COLOR_TEXT : graphics.COLOR_FAILED)
+		graphics.text(canvas, x, y, " ms ahead.", graphics.COLOR_DIM)
 		y += LINE
-		graphics.text(canvas, 12, y, refused ? "the kernel refuses to remove the time page of this program." : "the kernel removed the time page.", refused ? COLOR_DIM : COLOR_WRONG)
+		graphics.text(canvas, 12, y, refused ? "the kernel refuses to remove the time page of this program." : "the kernel removed the time page.", refused ? graphics.COLOR_DIM : graphics.COLOR_FAILED)
 	}
 	display.present(window)
 }

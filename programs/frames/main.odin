@@ -29,11 +29,6 @@ SMALL_BUDGET :: 100 // The pages of a budget that this program makes for one cas
 TWIN_COUNT :: 4
 TWIN_AMOUNTS :: system.Budget_Amounts{pages = 256, programs = 1, threads = 1, processor = 100_000, log_records = 10}
 
-COLOR_BACKGROUND :: 0x10151C
-COLOR_PANEL :: 0x18202A
-COLOR_TEXT :: 0xD8E0E8
-COLOR_DIM :: 0x7A8794
-COLOR_RIGHT :: 0x58D878
 COLOR_WRONG :: 0xE0B040
 
 // One case: what the program did, and what the kernel answered.
@@ -285,30 +280,30 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 
 	canvas := window.canvas
 	for {
-		graphics.clear(canvas, COLOR_BACKGROUND)
+		graphics.clear(canvas, graphics.COLOR_BACKGROUND)
 		y := 12
-		graphics.text(canvas, 12, y, "a page gets its frame at its first use; the budget paid at creation.", COLOR_DIM)
+		graphics.text(canvas, 12, y, "a page gets its frame at its first use; the budget paid at creation.", graphics.COLOR_DIM)
 		y += LINE
-		graphics.text(canvas, 12, y, "programs of one module map one memory object for its code.", COLOR_DIM)
+		graphics.text(canvas, 12, y, "programs of one module map one memory object for its code.", graphics.COLOR_DIM)
 		y += LINE + LINE / 2
-		graphics.text(canvas, 12, y, "the program does", COLOR_DIM)
-		graphics.text(canvas, ANSWER_X, y, "the kernel answers", COLOR_DIM)
+		graphics.text(canvas, 12, y, "the program does", graphics.COLOR_DIM)
+		graphics.text(canvas, ANSWER_X, y, "the kernel answers", graphics.COLOR_DIM)
 		y += LINE
 		for item, index in cases[:case_count] {
 			if index % 2 == 0 {
-				graphics.fill(canvas, 6, y - 3, WIDTH - 12, LINE, COLOR_PANEL)
+				graphics.fill(canvas, 6, y - 3, WIDTH - 12, LINE, graphics.COLOR_CARD_TOP)
 			}
-			graphics.text(canvas, 12, y, item.text, COLOR_TEXT)
-			graphics.text(canvas, ANSWER_X, y, item.right ? item.answer : "another answer", item.right ? COLOR_RIGHT : COLOR_WRONG)
+			graphics.text(canvas, 12, y, item.text, graphics.COLOR_TEXT)
+			graphics.text(canvas, ANSWER_X, y, item.right ? item.answer : "another answer", item.right ? graphics.COLOR_PROGRAM : COLOR_WRONG)
 			y += LINE
 		}
 		y += LINE / 2
 		line: [96]u8
-		graphics.text(canvas, 12, y, system.format(line[:], "create and map 8192 pages: ", create_now, " us with the frames, ", create_first_use, " us without"), COLOR_DIM)
+		graphics.text(canvas, 12, y, system.format(line[:], "create and map 8192 pages: ", create_now, " us with the frames, ", create_first_use, " us without"), graphics.COLOR_DIM)
 		y += LINE
-		graphics.text(canvas, 12, y, system.format(line[:], "first use of a page: ", first_use, " ns; a write to a page with its frame: ", write_present, " ns"), COLOR_DIM)
+		graphics.text(canvas, 12, y, system.format(line[:], "first use of a page: ", first_use, " ns; a write to a page with its frame: ", write_present, " ns"), graphics.COLOR_DIM)
 		y += LINE
-		graphics.text(canvas, 12, y, system.format(line[:], "start a twin: ", start_own, " us with a copy of the module, ", start_shared, " us with the shared code"), COLOR_DIM)
+		graphics.text(canvas, 12, y, system.format(line[:], "start a twin: ", start_own, " us with a copy of the module, ", start_shared, " us with the shared code"), graphics.COLOR_DIM)
 		display.present(&window)
 		display.wait(&window)
 		for _ in display.next_event(&window) {

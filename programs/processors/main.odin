@@ -33,14 +33,8 @@ PROCESSOR_ROWS :: 8 // The panel shows at most this number of processors.
 ITERATIONS :: 4000
 LINE :: 20
 
-COLOR_BACKGROUND :: 0x10151C
-COLOR_PANEL :: 0x18202A
-COLOR_TEXT :: 0xD8E0E8
-COLOR_DIM :: 0x7A8794
-COLOR_DONE :: 0x58D878
 COLOR_WAITS :: 0xE0B040
 COLOR_BAR :: 0x4A90E0
-COLOR_BAR_BACK :: 0x232C38
 
 // One picture to compute: the threads share it, the lock keeps it correct.
 Job :: struct {
@@ -191,8 +185,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.stop(1)
 	}
 	canvas := window.canvas
-	graphics.clear(canvas, COLOR_BACKGROUND)
-	graphics.text(canvas, MARGIN, 8, "One picture, computed by 1, 2 and 4 threads.", COLOR_TEXT)
+	graphics.clear(canvas, graphics.COLOR_BACKGROUND)
+	graphics.text(canvas, MARGIN, 8, "One picture, computed by 1, 2 and 4 threads.", graphics.COLOR_TEXT)
 	display.present(&window)
 
 	machine = ctx.handles[system.GRANT_MACHINE]
@@ -243,7 +237,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		if done == PICTURE_HEIGHT && now >= complete_at + (phase < 0 ? 0 : PICTURE_PAUSE) {
 			// A new picture: all the rows are free again.
 			phase = (phase + 1) % len(thread_counts)
-			graphics.clear(picture, COLOR_PANEL)
+			graphics.clear(picture, graphics.COLOR_CARD_TOP)
 			for &worker in workers {
 				worker.rows = 0
 			}
@@ -266,25 +260,25 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 
 		x := 2 * MARGIN + PICTURE_WIDTH
 		y := HEADER + MARGIN
-		graphics.fill(canvas, x, y, PANEL, PICTURE_HEIGHT, COLOR_PANEL)
+		graphics.fill(canvas, x, y, PANEL, PICTURE_HEIGHT, graphics.COLOR_CARD_TOP)
 		x += 8
 		y += 8
-		after := graphics.unsigned(canvas, x, y, processor_count, COLOR_TEXT)
-		after = graphics.text(canvas, after, y, " processors, at one time ", COLOR_TEXT)
-		graphics.unsigned(canvas, after, y, together, COLOR_DONE)
+		after := graphics.unsigned(canvas, x, y, processor_count, graphics.COLOR_TEXT)
+		after = graphics.text(canvas, after, y, " processors, at one time ", graphics.COLOR_TEXT)
+		graphics.unsigned(canvas, after, y, together, graphics.COLOR_PROGRAM)
 		y += LINE + 4
 		for &processor, index in processors[:min(processor_count, PROCESSOR_ROWS)] {
-			graphics.unsigned(canvas, x, y, u64(index), COLOR_DIM)
-			graphics.fill(canvas, x + 20, y + 3, 80, 10, COLOR_BAR_BACK)
+			graphics.unsigned(canvas, x, y, u64(index), graphics.COLOR_DIM)
+			graphics.fill(canvas, x + 20, y + 3, 80, 10, graphics.COLOR_TRACK)
 			graphics.fill(canvas, x + 20, y + 3, int(processor.load) * 80 / 100, 10, COLOR_BAR)
-			graphics.text(canvas, x + 108, y, system.name_of(processor.name[:]), COLOR_TEXT)
+			graphics.text(canvas, x + 108, y, system.name_of(processor.name[:]), graphics.COLOR_TEXT)
 			y += LINE
 		}
 		y += 8
-		graphics.text(canvas, x, y, "threads  time of the picture", COLOR_DIM)
+		graphics.text(canvas, x, y, "threads  time of the picture", graphics.COLOR_DIM)
 		y += LINE
 		for count, index in thread_counts {
-			color := graphics.Color(index == phase ? COLOR_TEXT : COLOR_DIM)
+			color := graphics.Color(index == phase ? graphics.COLOR_TEXT : graphics.COLOR_DIM)
 			graphics.unsigned(canvas, x, y, u64(count), color)
 			if times[index] != 0 {
 				after = graphics.unsigned(canvas, x + 72, y, times[index], color)
@@ -294,11 +288,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			y += LINE
 		}
 		y += 8
-		graphics.text(canvas, x, y, "thread   rows of this picture", COLOR_DIM)
+		graphics.text(canvas, x, y, "thread   rows of this picture", graphics.COLOR_DIM)
 		y += LINE
 		for &worker, index in workers {
 			graphics.unsigned(canvas, x, y, u64(index + 1), tint_color(index, 255))
-			graphics.unsigned(canvas, x + 72, y, u64(worker.rows), COLOR_TEXT)
+			graphics.unsigned(canvas, x + 72, y, u64(worker.rows), graphics.COLOR_TEXT)
 			graphics.fill(canvas, x + 112, y + 3, int(worker.rows) * 128 / PICTURE_HEIGHT, 10, tint_color(index, 255))
 			y += LINE
 		}

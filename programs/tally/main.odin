@@ -77,20 +77,17 @@ reset :: proc "c" () -> i64 {
 	return before
 }
 
-COLOR_PAPER :: 0x14181C
-COLOR_TEXT :: 0xD8DCE0
-COLOR_DIM :: 0x7C848C
 COLOR_COUNT :: 0xF0C050
 COLOR_PLUS :: 0x58C878
 COLOR_MINUS :: 0xE06C60
 
 draw :: proc "contextless" (canvas: graphics.Canvas, service: ^system.Service) {
-	graphics.clear(canvas, COLOR_PAPER)
+	graphics.clear(canvas, graphics.COLOR_BACKGROUND)
 	buffer: [24]u8
-	x := graphics.text(canvas, 12, 10, "count ", COLOR_DIM)
+	x := graphics.text(canvas, 12, 10, "count ", graphics.COLOR_DIM)
 	x = graphics.text(canvas, x, 10, system.format(buffer[:], count), COLOR_COUNT)
-	x = graphics.text(canvas, x + 24, 10, "adds ", COLOR_DIM)
-	graphics.text(canvas, x, 10, system.format(buffer[:], calls), COLOR_TEXT)
+	x = graphics.text(canvas, x + 24, 10, "adds ", graphics.COLOR_DIM)
+	graphics.text(canvas, x, 10, system.format(buffer[:], calls), graphics.COLOR_TEXT)
 	graphics.fill(canvas, 12, 32, WIDTH - 24, 1, 0x30363C)
 	// The notes, the last one first.
 	for row in 0 ..< min(calls, NOTE_CAPACITY) {
@@ -101,14 +98,14 @@ draw :: proc "contextless" (canvas: graphics.Canvas, service: ^system.Service) {
 			graphics.text(canvas, 12, y, "+", COLOR_PLUS)
 		}
 		graphics.text(canvas, item.amount >= 0 ? 20 : 12, y, amount, item.amount >= 0 ? COLOR_PLUS : COLOR_MINUS)
-		graphics.text(canvas, 92, y, string(item.text[:item.count]), row == 0 ? COLOR_TEXT : COLOR_DIM)
+		graphics.text(canvas, 92, y, string(item.text[:item.count]), row == 0 ? graphics.COLOR_TEXT : graphics.COLOR_DIM)
 	}
 	graphics.fill(canvas, 12, HEIGHT - 30, WIDTH - 24, 1, 0x30363C)
-	x = graphics.text(canvas, 12, HEIGHT - 22, "space: add 1", COLOR_DIM)
-	x = graphics.text(canvas, x + 24, HEIGHT - 22, "callers ", COLOR_DIM)
-	x = graphics.text(canvas, x, HEIGHT - 22, system.format(buffer[:], u64(service.connected)), COLOR_TEXT)
-	x = graphics.text(canvas, x + 16, HEIGHT - 22, "calls ", COLOR_DIM)
-	graphics.text(canvas, x, HEIGHT - 22, system.format(buffer[:], service.calls), COLOR_TEXT)
+	x = graphics.text(canvas, 12, HEIGHT - 22, "space: add 1", graphics.COLOR_DIM)
+	x = graphics.text(canvas, x + 24, HEIGHT - 22, "callers ", graphics.COLOR_DIM)
+	x = graphics.text(canvas, x, HEIGHT - 22, system.format(buffer[:], u64(service.connected)), graphics.COLOR_TEXT)
+	x = graphics.text(canvas, x + 16, HEIGHT - 22, "calls ", graphics.COLOR_DIM)
+	graphics.text(canvas, x, HEIGHT - 22, system.format(buffer[:], service.calls), graphics.COLOR_TEXT)
 }
 
 @(export, link_name = "entry")

@@ -26,11 +26,6 @@ HEIGHT :: 12 + 3 * LINE + ROW_COUNT * 2 * LINE + 4 * LINE + 12
 INTERVAL :: 1000
 BURST :: 100
 
-COLOR_BACKGROUND :: 0x10151C
-COLOR_PANEL :: 0x18202A
-COLOR_TEXT :: 0xD8E0E8
-COLOR_DIM :: 0x7A8794
-COLOR_RIGHT :: 0x58D878
 COLOR_WRONG :: 0xE0B040
 COLOR_LIMIT :: 0xF06060
 COLORS := [ROW_COUNT]graphics.Color{0x4898F0, 0xF09040, 0x58D878, 0xC070E0}
@@ -141,34 +136,34 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			}
 		}
 
-		graphics.clear(canvas, COLOR_BACKGROUND)
+		graphics.clear(canvas, graphics.COLOR_BACKGROUND)
 		y := 12
-		graphics.text(canvas, 12, y, "a budget has a limit of processor time for each second.", COLOR_DIM)
+		graphics.text(canvas, 12, y, "a budget has a limit of processor time for each second.", graphics.COLOR_DIM)
 		y += LINE
-		graphics.text(canvas, 12, y, "each thread computes with no end: the kernel stops it at the limit.", COLOR_DIM)
+		graphics.text(canvas, 12, y, "each thread computes with no end: the kernel stops it at the limit.", graphics.COLOR_DIM)
 		y += LINE + LINE / 2
 		for row, index in rows {
-			graphics.fill(canvas, 6, y - 4, WIDTH - 12, 2 * LINE - 2, COLOR_PANEL)
-			graphics.text(canvas, 12, y, row.name, COLOR_TEXT)
-			x := graphics.unsigned(canvas, BAR_X, y, row.used / 1000, sample > 1 && !within(row) ? COLOR_WRONG : COLOR_TEXT)
-			x = graphics.text(canvas, x, y, " ms used of ", COLOR_DIM)
-			x = graphics.unsigned(canvas, x, y, row.limit / 1000, COLOR_TEXT)
-			graphics.text(canvas, x, y, " ms in one second", COLOR_DIM)
+			graphics.fill(canvas, 6, y - 4, WIDTH - 12, 2 * LINE - 2, graphics.COLOR_CARD_TOP)
+			graphics.text(canvas, 12, y, row.name, graphics.COLOR_TEXT)
+			x := graphics.unsigned(canvas, BAR_X, y, row.used / 1000, sample > 1 && !within(row) ? COLOR_WRONG : graphics.COLOR_TEXT)
+			x = graphics.text(canvas, x, y, " ms used of ", graphics.COLOR_DIM)
+			x = graphics.unsigned(canvas, x, y, row.limit / 1000, graphics.COLOR_TEXT)
+			graphics.text(canvas, x, y, " ms in one second", graphics.COLOR_DIM)
 			y += LINE
-			graphics.fill(canvas, BAR_X, y, BAR_WIDTH, 10, COLOR_BACKGROUND)
+			graphics.fill(canvas, BAR_X, y, BAR_WIDTH, 10, graphics.COLOR_BACKGROUND)
 			graphics.fill(canvas, BAR_X, y, int(min(row.used, BAR_FULL) * BAR_WIDTH / BAR_FULL), 10, COLORS[index])
 			graphics.fill(canvas, BAR_X + int(min(row.limit, BAR_FULL) * BAR_WIDTH / BAR_FULL), y - 3, 2, 16, COLOR_LIMIT)
 			y += LINE
 		}
 		y += LINE / 2
-		graphics.text(canvas, 12, y, "what the three budgets use counts in the budget of the program.", COLOR_DIM)
+		graphics.text(canvas, 12, y, "what the three budgets use counts in the budget of the program.", graphics.COLOR_DIM)
 		y += LINE
-		graphics.text(canvas, 12, y, "a new budget with a higher limit than the program:", COLOR_DIM)
-		graphics.text(canvas, 424, y, rule_right ? "refused: no budget" : "another answer", rule_right ? COLOR_RIGHT : COLOR_WRONG)
+		graphics.text(canvas, 12, y, "a new budget with a higher limit than the program:", graphics.COLOR_DIM)
+		graphics.text(canvas, 424, y, rule_right ? "refused: no budget" : "another answer", rule_right ? graphics.COLOR_PROGRAM : COLOR_WRONG)
 		y += LINE
 		line: [96]u8
-		graphics.text(canvas, 12, y, system.format(line[:], "100 log records at once, ", log_limit, " for each second:"), COLOR_DIM)
-		graphics.text(canvas, 424, y, system.format(line[:], accepted, " written, ", refused, " refused"), log_right ? COLOR_RIGHT : COLOR_WRONG)
+		graphics.text(canvas, 12, y, system.format(line[:], "100 log records at once, ", log_limit, " for each second:"), graphics.COLOR_DIM)
+		graphics.text(canvas, 424, y, system.format(line[:], accepted, " written, ", refused, " refused"), log_right ? graphics.COLOR_PROGRAM : COLOR_WRONG)
 		display.present(&window)
 		for _ in display.next_event(&window) {}
 		system.sleep(system.time() + INTERVAL)
