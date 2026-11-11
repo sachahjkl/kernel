@@ -13,6 +13,7 @@ import "support:interface"
 import "support:bar"
 import "contract:ring"
 import "support:system"
+import "contract:pointer_pictures"
 import "base:intrinsics"
 
 // The context of this service.
@@ -41,9 +42,6 @@ PLACE_STEP_X :: 36
 PLACE_STEP_Y :: 30
 CLIENT_CAPACITY :: 32 // The root service starts 32 programs at most.
 DAMAGE_CAPACITY :: 8
-POINTER_CELL :: 2 // The pointer is drawn with squares of 2 pixels.
-POINTER_WIDTH :: 8 * POINTER_CELL
-POINTER_HEIGHT :: 11 * POINTER_CELL
 CLOCK_WIDTH :: 8 * 8 // "00:00:00"
 LAUNCHER_HINT :: "launcher: super" // In the bar, at the left of the time.
 
@@ -55,28 +53,12 @@ Client :: struct {
 	picture_count: u64,
 	x, y:        int,
 	title:       system.Name,
+	pointer_shape: pointer_pictures.Pointer_Shape, // The shape that the program asked for over its surface (pointer_picture.odin).
 }
 
 // A rectangle of the screen. right and bottom are not in the rectangle.
 Rectangle :: struct {
 	left, top, right, bottom: int,
-}
-
-// The pointer: X is a black square, . a white one. The point of the
-// pointer is the top left square.
-@(rodata)
-pointer_shape := [?]string {
-	"X       ",
-	"XX      ",
-	"X.X     ",
-	"X..X    ",
-	"X...X   ",
-	"X....X  ",
-	"X.....X ",
-	"X......X",
-	"X..XXXXX",
-	"X.X     ",
-	"XX      ",
 }
 
 screen: graphics.Canvas // The framebuffer of the machine.
@@ -258,6 +240,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	launcher_before = {records = launcher_records_before[:], text = launcher_text_before[:]}
 	memory_measure()
 	title_measure()
+	pointer_theme_open(ctx) // pointer_picture.odin
 	damage_add(0, 0, width, height)
 	full_measure = true
 	system.log("compositor: ok ", u64(width), "x", u64(height))
@@ -275,7 +258,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				system.wait_records(&wait, &client.ring.commands)
 			}
 		}
-		now := system.wait_end(&wait, damage_count > 0 ? max(next_frame, 1) : (shown_second + 1) * 1000)
+		deadline := damage_count > 0 ? max(next_frame, 1) : (shown_second + 1) * 1000
+		if wake := pointer_wake(); wake != 0 {
+			deadline = min(deadline, wake) // An animated pointer shape shows.
+		}
+		now := system.wait_end(&wait, deadline)
 		for record in system.receive(&control.commands) {
 			#partial switch display.Control(record.kind) {
 			case .Client_Add:
@@ -322,9 +309,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 						}
 						damage_add(client.x + BORDER + left, client.y + TITLE_HEIGHT + top, changed_width, changed_height)
 					}
+				case .Pointer_Shape:
+					pointer_shape_request(&client, record) // pointer_picture.odin
 				}
 			}
 		}
+		pointer_update(now) // After each change of what is under the pointer.
 		if now / 1000 != shown_second {
 			shown_second = now / 1000
 			damage_clock()
@@ -437,11 +427,9 @@ inside :: proc "contextless" (x, y, left, top, width, height: int) -> bool {
 }
 
 pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32) {
-	damage_add(pointer_x, pointer_y, POINTER_WIDTH, POINTER_HEIGHT)
 	close_before := close_button_under_pointer()
 	pointer_x = clamp(pointer_x + motion_x, 0, screen.width - 1)
 	pointer_y = clamp(pointer_y + motion_y, 0, screen.height - 1)
-	damage_add(pointer_x, pointer_y, POINTER_WIDTH, POINTER_HEIGHT)
 	// The close button under the pointer is brighter: draw again the
 	// button that the pointer leaves and the one that it reaches.
 	if close_after := close_button_under_pointer(); close_after != close_before {
@@ -573,6 +561,7 @@ draw :: proc "contextless" (now: u64) {
 		move_time += spent
 		move_longest = max(move_longest, spent)
 	}
+	pointer_frame_end()
 	if full_measure {
 		full_measure = false
 		system.log_in("surfaces", .Info, "compositor: a full frame of ", u64(screen.width), "x", u64(screen.height), " with ", u64(order_count), " windows in ", spent / 1000, " us")
@@ -657,20 +646,7 @@ draw_area :: proc "contextless" (area: Rectangle, now: u64) {
 		interface.execute_in_rectangle(&launcher_now, canvas, {area.left, area.top, area.right, area.bottom}, origin_x, origin_y)
 	}
 
-	for row, y in pointer_shape {
-		for column in 0 ..< len(row) {
-			color: graphics.Color
-			switch row[column] {
-			case 'X':
-				color = graphics.COLOR_BLACK
-			case '.':
-				color = graphics.COLOR_WHITE
-			case:
-				continue
-			}
-			graphics.fill(canvas, pointer_x + column * POINTER_CELL + origin_x, pointer_y + y * POINTER_CELL + origin_y, POINTER_CELL, POINTER_CELL, color)
-		}
-	}
+	pointer_draw(canvas, origin_x, origin_y) // pointer_picture.odin
 
 	target := graphics.view(screen, area.left, area.top, width, height)
 	if !red_first {

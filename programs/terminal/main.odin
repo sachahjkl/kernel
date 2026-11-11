@@ -576,6 +576,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if !ok {
 		fail("no surface")
 	}
+	// The surface is text: the pointer over it is the text shape.
+	display.pointer_shape_set(&window, .Text)
 
 	// The areas of the lines.
 	area :: proc "contextless" (size: u64) -> rawptr {

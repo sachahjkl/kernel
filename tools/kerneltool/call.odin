@@ -551,6 +551,28 @@ record_fields :: proc(client: ^Call_Client, text: string, names: []string) -> (v
 	return values, found == len(names)
 }
 
+// record_text_field calls an export with a Record or a Table result, and
+// gives the Text field with this name of the first record, without its
+// zero bytes.
+record_text_field :: proc(client: ^Call_Client, text: string, name: string) -> (value: string, ok: bool) {
+	call, problem := call_prepare(client, text)
+	if problem != "" || (call.function.result != .Record && call.function.result != .Table) {
+		return "", false
+	}
+	answer, result, _, answered := call_send(client, &call)
+	if !answered || answer.status != .Ok || isolated.Status(answer.call_status) != .Ok || (call.function.result == .Table && answer.value < 1) {
+		return "", false
+	}
+	described := module.record_type(call.file, call.function.result_detail) or_return
+	for number in 0 ..< described.field_count {
+		item := module.field(call.file, described, number) or_return
+		if module.string_at(call.file, item.name_offset, item.name_count) == name && item.type == .Text {
+			return strings.clone(module.field_text(result, item), context.temp_allocator), true
+		}
+	}
+	return "", false
+}
+
 // field_value gives the text of one field of a record.
 field_value :: proc(record: []u8, item: module.Field) -> string {
 	#partial switch item.type {

@@ -2,6 +2,7 @@ package compositor
 
 import "contract:errors"
 import "contract:isolated"
+import "contract:pointer_pictures"
 import "support:system"
 
 // The compositor is also a service: its exports give the place of the
@@ -27,6 +28,7 @@ Pointer :: struct {
 	moves:   i64, // The pointer records that the input service sent since the start.
 	menu:    [16]u8, // The menu of the bar that is open: "programs", "windows", or empty.
 	launcher: i64, // 1: the launcher is open, and it takes the keys.
+	shape:    [32]u8, // The name of the pointer shape on the screen: "arrow", "move", "text", ... (docs/POINTERS.md).
 }
 
 // One row for each window, the front one first: windows().
@@ -63,7 +65,7 @@ person :: proc "contextless" () -> bool {
 	return caller == nil || caller.grant & isolated.CALLER_PERSON != 0
 }
 
-// pointer gives the place of the pointer on the screen, its buttons, the menu of the bar that is open, and whether the launcher is open, as one row. The result is 1, or a negative number with an error record. The error kind: No_Grant (-1, the caller does not act for the person).
+// pointer gives the place of the pointer on the screen, its buttons, the menu of the bar that is open, whether the launcher is open, and the name of the pointer shape, as one row. The result is 1, or a negative number with an error record. The error kind: No_Grant (-1, the caller does not act for the person).
 @(export, link_name = "pointer")
 pointer :: proc "c" (result: ^[]Pointer, error: ^errors.Error_Record) -> i64 {
 	if !person() {
@@ -71,6 +73,7 @@ pointer :: proc "c" (result: ^[]Pointer, error: ^errors.Error_Record) -> i64 {
 	}
 	if len(result^) > 0 {
 		result[0] = {x = i64(pointer_x), y = i64(pointer_y), buttons = i64(buttons), moves = i64(pointer_moves), launcher = launcher_open ? 1 : 0}
+		copy(result[0].shape[:len(result[0].shape) - 1], pointer_pictures.SHAPE_NAMES[pointer_shape_under()])
 		#partial switch menu_open {
 		case .Programs:
 			copy(result[0].menu[:], "programs")

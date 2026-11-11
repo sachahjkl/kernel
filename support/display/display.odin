@@ -14,12 +14,14 @@ package display
 
 import "support:graphics"
 import "contract:ring"
+import "contract:pointer_pictures"
 import "support:system"
 
 Command :: enum u32 {
 	None           = 0,
 	Surface_Create = 1, // values: memory handle (in the compositor), width, height, title (4 values)
 	Present        = 2, // The pixels of the surface changed. values: the picture to show (0 or 1), then the rectangle that changed: x, y, width, height (width 0: the whole surface)
+	Pointer_Shape  = 3, // The pointer shape over this surface (docs/POINTERS.md). values: a number of pointer_pictures.Pointer_Shape
 }
 
 Event_Kind :: enum u32 {
@@ -191,6 +193,15 @@ present_rectangle :: proc "contextless" (window: ^Window, x, y, width, height: i
 	window.presented = window.ring.commands.counters.write
 	window.picture = 1 - window.picture
 	window.canvas = window.pictures[window.picture]
+}
+
+// pointer_shape_set asks the compositor for a pointer shape over the
+// surface of the window. The compositor shows it while the pointer is over
+// this surface and the surface is in front at that place, never over
+// another surface, the bar or a frame (property 20). The shape stays until
+// the next request; the shape of a new surface is the arrow.
+pointer_shape_set :: proc "contextless" (window: ^Window, shape: pointer_pictures.Pointer_Shape) {
+	system.send(&window.ring.commands, ring.Record{kind = u32(Command.Pointer_Shape), values = {0 = u64(shape)}})
 }
 
 // canvas_free says if the program can draw in window.canvas. With two

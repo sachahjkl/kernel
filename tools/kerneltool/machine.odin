@@ -47,6 +47,7 @@ Step_Kind :: enum {
 	Agree, // The program `text`: the mapped pages and the threads that inspect.mappings() and inspect.threads() give are the ones that monitor.programs() gives (two tools, two reports of the kernel).
 	Call, // Call an export of a service from the host (call.odin), through the remote service: what the tool prints has `expected`. With `rows_call`, that call gives the count of rows of the Table. With `repeat`, the tool also measures the round trip and the calls in one second.
 	Peer, // The peer runs the TCP case text (peer_tcp.odin) and checks its answers.
+	Point, // Move the pointer to (x, y) with no press, then read compositor.pointer(): its shape must be the name text (docs/POINTERS.md). With inside_window, (x, y) are from the corner of that window, its title bar included; a negative x is from its right side. It needs the confirmation of the pointer (a Call with pointer before it).
 	Fetch, // The TCP of the host fetches the page text of `server` through QEMU user networking (web_host.odin).
 	Http, // The TCP of the host runs the HTTP case text against `server` (web_host.odin, http_case_run); `expected` is the body that a page must have.
 }
@@ -71,7 +72,7 @@ Step :: struct {
 	pointer:    bool, // For Call: when the call has its result, the tool confirms each place of the pointer from now on (pointer_confirm).
 	repeat:     int, // For Call: the calls of the measure of the round trip.
 	parts:      int, // For Call: the least count of datagrams of the answer.
-	inside_window: string, // For Click: (x, y) are inside the surface of the window with this title, as the log of the compositor places it.
+	inside_window: string, // For Click: (x, y) are inside the surface of the window with this title, as the log of the compositor places it. For Point: from the corner of the window.
 }
 
 // A start that fails: the boot image has no compositor. The boot display
@@ -1461,6 +1462,37 @@ scenario := [?]Step {
 	{kind = .Shot, text = "vector_glyphs"},
 	{kind = .Close, text = "vector_glyphs"},
 	{kind = .Wait, text = "root: vector_glyphs stopped"},
+	// The pointer pictures (docs/POINTERS.md): the shape that the compositor
+	// chooses for what is under the pointer, and the shape that a program
+	// asks for over its own surface. The window of pointers shows each
+	// shape of the theme of the owner, then of the theme of the system.
+	{kind = .Launch, text = "pointers"},
+	{kind = .Wait, text = "pointers: ok, ", any_order = true},
+	{kind = .Wait, text = "compositor: surface pointers"},
+	{kind = .Point, inside_window = "pointers", x = 100, y = 12, text = "move"}, // The title bar.
+	{kind = .Point, inside_window = "pointers", x = -14, y = 12, text = "pointing_hand"}, // The close button.
+	{kind = .Point, inside_window = "pointers", x = 1, y = 300, text = "arrow"}, // The left border.
+	{kind = .Point, inside_window = "pointers", x = 2 + 208 + 60, y = 24 + 368 + 60, text = "wait"}, // The tile of wait (programs/pointers, tile_area(6)): the request of the program.
+	{kind = .Wait, text = "compositor: pointers asks for the pointer shape wait over its surface"},
+	{kind = .Shot, text = "pointers"},
+	{kind = .Point, inside_window = "pointers", x = 2 + 16 + 60, y = 24 + 216 + 60, text = "arrow"}, // The tile of arrow.
+	{kind = .Point, inside_window = "pointers", x = 2 + 592 + 60, y = 24 + 216 + 60, text = "move"}, // The tile of move.
+	{kind = .Click, inside_window = "pointers", x = 300, y = 60}, // The second button: the theme of the system.
+	{kind = .Wait, text = "pointers: the theme pointers_system is shown"},
+	{kind = .Point, inside_window = "pointers", x = 2 + 784 + 60, y = 24 + 368 + 60, text = "help"}, // The tile of help, in the theme of the system.
+	{kind = .Shot, text = "pointers_system"},
+	{kind = .Close, text = "pointers"},
+	{kind = .Wait, text = "root: pointers stopped"},
+	{kind = .Point, x = 116, y = 14, text = "pointing_hand"}, // The button of the programs in the bar.
+	{kind = .Point, x = 600, y = 16, text = "arrow"}, // The bar.
+	{kind = .Front, text = "console"},
+	{kind = .Point, inside_window = "console", x = 200, y = 120, text = "text"}, // The surface of the terminal: its request.
+	{kind = .Shot, text = "pointer_text"},
+	{kind = .Key, text = "meta_l"},
+	{kind = .Wait, text = "compositor: the launcher is open"},
+	{kind = .Point, x = 400, y = 260, text = "text"}, // The input line of the launcher.
+	{kind = .Key, text = "meta_l"},
+	{kind = .Wait, text = "compositor: the launcher is closed by the key super"},
 	{kind = .Front, text = "console"},
 	// Each page is free or paid, after all the starts and stops of this test.
 	{kind = .Type, text = "memory()"},
@@ -1970,6 +2002,44 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 		case .Key:
 			monitor_send(machine, "sendkey ", step.text, " 20")
 			time.sleep(KEY_PAUSE)
+		case .Point:
+			x, y := step.x, step.y
+			if step.inside_window != "" {
+				window_x, window_y, placed := window_place(machine, step.inside_window)
+				width, sized := window_width(machine, step.inside_window)
+				if !placed || !sized {
+					fmt.eprintfln("kerneltool: test failed: step %d: the log does not have the place of the window %s", index + 1, step.inside_window)
+					return false
+				}
+				x = step.x < 0 ? window_x + width + 2 * WINDOW_BORDER + step.x : window_x + step.x
+				y = window_y + step.y
+			}
+			if !machine.confirm {
+				fmt.eprintfln("kerneltool: test failed: step %d: a step Point reads compositor.pointer(): the tool does not confirm the pointer yet", index + 1)
+				return false
+			}
+			if !pointer_move(machine, x, y) {
+				fmt.eprintfln("kerneltool: test failed: step %d: the pointer did not reach its place", index + 1)
+				return false
+			}
+			// The compositor chooses the shape after the input record and after
+			// a request of a program: read it until it is the expected one.
+			shape: string
+			for start := time.now(); time.since(start) < STEP_TIMEOUT; {
+				read, ok := record_text_field(&machine.client, "compositor.pointer()", "shape")
+				if ok {
+					shape = read
+				}
+				if shape == step.text {
+					break
+				}
+				time.sleep(50 * time.Millisecond)
+			}
+			if shape != step.text {
+				fmt.eprintfln("kerneltool: test failed: step %d: the pointer at %d,%d has the shape \"%s\", not \"%s\"", index + 1, x, y, shape, step.text)
+				return false
+			}
+			fmt.printfln("kerneltool: test passed: the pointer at %d,%d has the shape %s", x, y, step.text)
 		case .Click, .Drag, .Launch, .Move, .Close, .Front:
 			step := step
 			moved_title: string
