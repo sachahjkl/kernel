@@ -48,6 +48,7 @@ Session :: struct {
 	answer_head_done:   int,
 	answer_body:        Answer_Body,
 	answer_page:        int,
+	answer_page_generation: u64, // The generation of the page when its answer started.
 	answer_left:        int, // Bytes of a body of Large or Page still to write.
 	answer_offset:      int,
 	answer_status:      int,
@@ -176,6 +177,16 @@ answer_write :: proc "contextless" (index: int) -> bool {
 			web.pattern_fill(chunk[:part], session.answer_offset)
 			bytes = chunk[:part]
 		case .Page:
+			// The page that the answer started with, or nothing: a put or a
+			// remove of its place during the answer ends the connection (an
+			// independent read, B2: before, the answer read the live page
+			// memory: a shorter page stopped the program, a page of the
+			// same length gave mixed bytes under the first Content-Length).
+			page := &pages[session.answer_page]
+			if !page.used || page.generation != session.answer_page_generation || session.answer_offset + part > page.length {
+				aborted(index, "aborted: the page changed during its answer")
+				return false
+			}
 			bytes = page_bytes(session.answer_page)[session.answer_offset:][:part]
 		case .None:
 			session.answer_left = 0
@@ -242,6 +253,7 @@ request_route :: proc "contextless" (index: int) {
 		pages[found].served += 1
 		answer_start(index, 200, web.content_type_of_name(page_name(found)), "", .Page, pages[found].length)
 		session.answer_page = found
+		session.answer_page_generation = pages[found].generation
 	}
 }
 

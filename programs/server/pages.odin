@@ -36,9 +36,10 @@ ERROR_STORE :: -6
 Page_Entry :: struct {
 	name:        [40]u8,
 	name_length: int,
-	length:      int, // 0 with no name: the place is free.
-	used:        bool,
+	length:      int, // The bytes of the page.
+	used:        bool, // false: the place is free.
 	served:      u64,
+	generation:  u64, // Changes at each put and remove of the place: an answer of an older generation ends (an independent read, B2).
 }
 
 // One row of server.pages().
@@ -65,6 +66,13 @@ Served :: struct {
 
 pages: [PAGE_CAPACITY]Page_Entry
 page_memory: []u8
+page_generation_last: u64 // The generation that the last put or remove gave.
+
+// page_generation_new gives a generation that no place had: never 0.
+page_generation_new :: proc "contextless" () -> u64 {
+	page_generation_last += 1
+	return page_generation_last
+}
 
 page_bytes :: proc "contextless" (index: int) -> []u8 {
 	return page_memory[index * PAGE_SIZE_LIMIT:][:pages[index].length]
@@ -131,7 +139,7 @@ pages_load :: proc "contextless" (ctx: ^system.Context) {
 		if page_status != .Ok || !page_found {
 			continue
 		}
-		pages[place] = {name = name, name_length = length, length = len(text), used = true}
+		pages[place] = {name = name, name_length = length, length = len(text), used = true, generation = page_generation_new()}
 		loaded += 1
 	}
 	system.log("server: ", u64(loaded), " pages read from the private store")
@@ -204,7 +212,7 @@ put :: proc "c" (name: ^string, text: ^string, error: ^errors.Error_Record) -> i
 		return errors.fail(error, ERROR_STORE, .Refused, .Store, 0, 0, 0, i64(status))
 	}
 	was_used := pages[place].used
-	pages[place] = {length = length, used = true, name_length = name_length}
+	pages[place] = {length = length, used = true, name_length = name_length, generation = page_generation_new()}
 	copy(pages[place].name[:], key)
 	if !was_used && !index_write() {
 		return errors.fail(error, ERROR_STORE, .Refused, .Store)
@@ -226,7 +234,7 @@ remove :: proc "c" (name: ^string, error: ^errors.Error_Record) -> i64 {
 	if place < 0 || len(name^) > PAGE_NAME_LIMIT {
 		return errors.fail(error, ERROR_ABSENT, .Absent, .Objects, 1)
 	}
-	pages[place] = {}
+	pages[place] = {generation = page_generation_new()}
 	arguments := [1]isolated.Argument{{text = name_copy[:name_length]}}
 	_, _, status := storage.call(&store_client, "remove", arguments[:])
 	if status != .Ok || !index_write() {
