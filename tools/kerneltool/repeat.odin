@@ -12,7 +12,8 @@ import "core:strconv"
 // that Odin wrote, and the object that llc made. One build must give one
 // hash (property 11). On a difference, the first module stays beside the
 // last one as <module>.first, and the tool names the part of the file where
-// the first different byte is.
+// the first different byte is. The first IR that differs stays with the IR
+// of build 1 (<module>.ll.first and <module>.ll.different).
 
 run_repeat :: proc(args: []string) -> int {
 	if len(args) != 2 {
@@ -55,6 +56,12 @@ run_repeat :: proc(args: []string) -> int {
 				continue
 			}
 			different[index] += 1
+			if index == 1 && different[1] == 1 {
+				// The IR files of the two builds, to compare them with diff.
+				_ = os.write_entire_file(join(path, ".first"), first[1])
+				_ = os.write_entire_file(join(path, ".different"), bytes)
+				fmt.printfln("kerneltool: repeat: the LLVM IR of build %d of %s differs: %s.first and %s.different", number + 1, build.name, path, path)
+			}
 			if index == 0 && different[0] == 1 {
 				kept := join(path, ".first")
 				_ = os.write_entire_file(kept, first[0])
