@@ -417,6 +417,22 @@ field_integer :: proc "contextless" (record: []u8, item: Field) -> i64 {
 	return i64(bits)
 }
 
+// field_integer_fits says if an Integer field holds a value: a signed field
+// of n bytes holds -2^(8n-1) ..< 2^(8n-1), an unsigned one 0 ..< 2^(8n). An
+// unsigned field of 8 bytes holds each value as its bits. A caller that
+// writes a value of a person refuses one that does not fit.
+field_integer_fits :: proc "contextless" (item: Field, value: i64) -> bool {
+	size := field_size(item.type, item.detail)
+	if item.type != .Integer || size == 0 || size == 8 {
+		return item.type == .Integer && size == 8
+	}
+	bits := 8 * u64(size)
+	if item.unsigned {
+		return value >= 0 && u64(value) < u64(1) << bits
+	}
+	return value >= -(i64(1) << (bits - 1)) && value < i64(1) << (bits - 1)
+}
+
 // field_integer_set writes the low bytes of a value in an Integer field
 // of a record.
 field_integer_set :: proc "contextless" (record: []u8, item: Field, value: i64) {

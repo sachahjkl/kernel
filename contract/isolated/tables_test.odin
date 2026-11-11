@@ -542,3 +542,22 @@ tables_return_changes_nothing_on_a_problem :: proc(t: ^testing.T) {
 	problem, parameter = tables_return(file, broken, arguments[:], region[:], offset)
 	testing.expect_value(t, problem, Return_Problem.Bad_Description)
 }
+
+// A value that an Integer field of its size does not hold (N4 of the
+// hostile read): field_integer_fits says so, so that a caller refuses it
+// with a sentence and does not cut it (300 in a u8 was 44).
+@(test)
+field_integer_fits_its_size :: proc(t: ^testing.T) {
+	storage: [1024]u8
+	file := two_records_file(&storage)
+	described, _ := module.record_type(file, 1)
+	sensor, _ := module.field(file, described, 0) // Unsigned(4)
+	level, _ := module.field(file, described, 1) // Integer(4)
+	value, _ := module.field(file, described, 2) // Integer
+	testing.expect(t, module.field_integer_fits(sensor, 0xFFFF_FFFF))
+	testing.expect(t, !module.field_integer_fits(sensor, 0x1_0000_0000))
+	testing.expect(t, !module.field_integer_fits(sensor, -1))
+	testing.expect(t, module.field_integer_fits(level, -0x8000_0000))
+	testing.expect(t, !module.field_integer_fits(level, 0x8000_0000))
+	testing.expect(t, module.field_integer_fits(value, min(i64)))
+}

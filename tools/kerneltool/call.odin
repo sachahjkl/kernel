@@ -270,6 +270,12 @@ table_bytes :: proc(file: []u8, detail: u32, rows: [][]Call_Argument) -> (bytes:
 				if value.is_text || value.is_table {
 					return nil, fmt.tprintf("row %d: the field %s is an Integer", number + 1, module.string_at(file, item.name_offset, item.name_count))
 				}
+				if !module.field_integer_fits(item, value.integer) {
+					buffer := make([]u8, 32, context.temp_allocator)
+					writer := sentence.Writer{buffer = buffer}
+					sentence.write_field_type(&writer, file, item)
+					return nil, fmt.tprintf("row %d: the field %s is %s, it does not hold %d", number + 1, module.string_at(file, item.name_offset, item.name_count), sentence.written(&writer), value.integer)
+				}
 				module.field_integer_set(record, item, value.integer)
 			case .Text:
 				if !value.is_text || len(value.text) > int(item.detail) {

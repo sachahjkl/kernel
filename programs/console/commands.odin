@@ -712,6 +712,16 @@ callable_by_console :: proc "contextless" (file: []u8, function: module.Function
 	return isolated.directions_valid(function)
 }
 
+// type_text_of_field gives the type of a field: "Unsigned(1)", "Integer(4)".
+type_text_of_field :: proc "contextless" (file: []u8, field: module.Field) -> string {
+	writer := system.Writer {
+		buffer = scratch[scratch_count:],
+	}
+	system.write_field_type(&writer, file, field)
+	scratch_count += writer.count
+	return system.written(&writer)
+}
+
 // record_build makes a Record value: one argument for each field, in the
 // order of the description.
 record_build :: proc "contextless" (item: ^Command, arguments: []Value) -> Value {
@@ -727,6 +737,9 @@ record_build :: proc "contextless" (item: ^Command, arguments: []Value) -> Value
 		} else if field.type == .Handle {
 			(^u32)(&bytes[field.offset])^ = u32(argument.integer)
 		} else {
+			if !module.field_integer_fits(field, argument.integer) {
+				return fail(item.name, ": the field ", module.string_at(item.file, field.name_offset, field.name_count), " is ", type_text_of_field(item.file, field), ", it does not hold ", argument.integer)
+			}
 			module.field_integer_set(bytes, field, argument.integer)
 		}
 	}
