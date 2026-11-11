@@ -7,7 +7,9 @@
 // kernel entries of each way.
 //
 // It checks that the time never goes back, that the two ways give the same
-// time, and that the kernel refuses to remove the time page.
+// time, that the milliseconds of the page follow the cycle counter (the
+// kernel writes them from it at each tick: a late tick loses no time), and
+// that the kernel refuses to remove the time page.
 package clock
 
 import "support:display"
@@ -22,7 +24,7 @@ BAR_WIDTH :: 240
 RATE_X :: 132
 ENTRIES_X :: RATE_X + BAR_WIDTH + 120
 WIDTH :: ENTRIES_X + 320
-HEIGHT :: 12 + 8 * LINE + 12
+HEIGHT :: 12 + 9 * LINE + 12
 
 COLOR_BACKGROUND :: 0x10151C
 COLOR_PANEL :: 0x18202A
@@ -43,6 +45,11 @@ Measure :: struct {
 measures := [2]Measure{{name = "time page"}, {name = "kernel entry"}}
 went_back: u64 // The reads that gave a time before the time of the last read.
 apart: u64 // The most milliseconds between the two ways.
+// The milliseconds of the page against system.nanoseconds(), which reads
+// the cycle counter: the most that the page was behind, and ahead.
+behind, ahead, compared: u64
+BEHIND_LIMIT :: 20 // A tick of 1 ms that comes late, on a machine under another system.
+AHEAD_LIMIT :: 1 // The cycle counters of two processors can differ a little.
 refused: bool // The kernel refused to remove the time page.
 checked: bool
 
@@ -133,6 +140,12 @@ draw :: proc "contextless" (window: ^display.Window) {
 		x = graphics.unsigned(canvas, x, y, apart, apart <= 1 ? COLOR_TEXT : COLOR_WRONG)
 		graphics.text(canvas, x, y, " ms apart at most.", COLOR_DIM)
 		y += LINE
+		x = graphics.text(canvas, 12, y, "against the cycle counter, the page was at most ", COLOR_DIM)
+		x = graphics.unsigned(canvas, x, y, behind, behind <= BEHIND_LIMIT ? COLOR_TEXT : COLOR_WRONG)
+		x = graphics.text(canvas, x, y, " ms behind and ", COLOR_DIM)
+		x = graphics.unsigned(canvas, x, y, ahead, ahead <= AHEAD_LIMIT ? COLOR_TEXT : COLOR_WRONG)
+		graphics.text(canvas, x, y, " ms ahead.", COLOR_DIM)
+		y += LINE
 		graphics.text(canvas, 12, y, refused ? "the kernel refuses to remove the time page of this program." : "the kernel removed the time page.", refused ? COLOR_DIM : COLOR_WRONG)
 	}
 	display.present(window)
@@ -168,12 +181,22 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		page := system.time()
 		apart = max(apart, max(entered, page) - min(entered, page))
 	}
+	// The page follows the cycle counter: for half a second, each read of
+	// the page is compared with the time that the cycle counter gives now.
+	for begin := system.time(); system.time() < begin + DURATION / 2; {
+		page := system.time()
+		fine := system.nanoseconds() / 1_000_000
+		behind = max(behind, fine > page ? fine - page : 0)
+		ahead = max(ahead, page > fine ? page - fine : 0)
+		compared += 1
+	}
+	system.log("clock: the time page and the cycle counter: in ", compared, " reads the page was at most ", behind, " ms behind and ", ahead, " ms ahead")
 	refused = system.memory_unmap(rawptr(uintptr(op.TIME_ADDRESS))) != .Ok && system.time() != 0
 	checked = true
-	if slot != 0 && went_back == 0 && apart <= 1 && refused && measures[0].entries == 0 {
+	if slot != 0 && went_back == 0 && apart <= 1 && behind <= BEHIND_LIMIT && ahead <= AHEAD_LIMIT && refused && measures[0].entries == 0 {
 		system.log("clock: ok, the time never went back, the page and the kernel give the same time, the kernel refuses to remove the time page")
 	} else {
-		system.log("clock: wrong: the time went back ", went_back, " times, the two ways are ", apart, " ms apart, the kernel ", refused ? "refuses" : "does not refuse", " to remove the time page")
+		system.log("clock: wrong: the time went back ", went_back, " times, the two ways are ", apart, " ms apart, the page is ", behind, " ms behind and ", ahead, " ms ahead of the cycle counter, the kernel ", refused ? "refuses" : "does not refuse", " to remove the time page")
 	}
 	deadline := system.time()
 	for {

@@ -243,7 +243,11 @@ threads: [THREAD_TABLE_CAPACITY]Thread
 interrupt_owner: [INTERRUPT_CAPACITY]u32 // A program.
 interrupt_pending: [INTERRUPT_CAPACITY]u32
 interrupt_references: [INTERRUPT_CAPACITY]u32 // Handles. A message interrupt with none is free.
-ticks: u64
+// The milliseconds since the kernel made the time page. The tick of the
+// first processor writes it, from the cycle counter: a tick that comes late
+// loses no time. It never goes back.
+time_milliseconds: u64
+cycle_start: u64 // The cycle counter at the time 0.
 time_region: u32 // The memory object of the time page. It is in each program.
 time_record: ^op.Time_Record
 
@@ -862,6 +866,8 @@ time_page_create :: proc "contextless" () -> bool {
 	time_record = direct(physical, op.Time_Record)
 	direct(physical, [PAGE_SIZE]u8)^ = {}
 	time_record.cycle_frequency = cycle_frequency // timer_calibrate measured it.
+	cycle_start = cycles_now()
+	time_record.cycle_start = cycle_start
 	return true
 }
 
@@ -1301,8 +1307,8 @@ kernel_interrupt :: proc "c" (frame: ^Frame) {
 		}
 		// The first processor counts the time.
 		if cpu.index == 0 {
-			now := ticks + 1
-			intrinsics.atomic_store(&ticks, now)
+			now := max(time_milliseconds, milliseconds_now())
+			intrinsics.atomic_store(&time_milliseconds, now)
 			intrinsics.volatile_store(&time_record.milliseconds, now)
 			budget_period(now)
 			// The deadlines: read with no lock, then checked under the run

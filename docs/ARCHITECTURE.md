@@ -232,7 +232,7 @@ Paths: **op** a kernel operation; **tick** the timer of a processor; **dev** a d
 | Origin table, `revoke_lost`, `revoking` | **op**, **revoke**, **stop** | **op** (map, unmap, give, close), **revoke**, **stop** | origin lock | each holding with links is a live holding |
 | Interrupt objects: `interrupt_owner`, `interrupt_references` | **dev** | **op** (create, close) | control lock; **dev** reads `interrupt_owner` with no lock | |
 | Interrupt objects: `interrupt_pending` | **op** (`Interrupt_Read`) | **dev** | atomic | |
-| `ticks`, the time page | all paths | the tick of the first processor | atomic | |
+| `time_milliseconds`, the time page; `period_time` (the first processor only) | all paths | the tick of the first processor | atomic | |
 | Log: the serial port, the log records, `written` | readers in programs | **op** (`Log`), kernel messages | log lock | |
 | `machine_stopping` | all processors | `machine_stop` | atomic | |
 

@@ -282,7 +282,7 @@ read_log_count :: proc "contextless" (program: ^Program) -> (logged, limit: u64,
 		return 0, 0, false
 	}
 	word := intrinsics.atomic_load(&budgets[budget].logged)
-	second := intrinsics.atomic_load(&ticks) / LOG_PERIOD
+	second := intrinsics.atomic_load(&time_milliseconds) / LOG_PERIOD
 	logged = word >> 32 == second ? word & 0xFFFF_FFFF : 0
 	return logged, budgets[budget].amounts.log_records, true
 }

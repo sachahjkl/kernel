@@ -730,6 +730,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "clock: the time page: "},
 	{kind = .Wait, text = " reads in one second, 0 kernel entries for one million reads"},
 	{kind = .Wait, text = "clock: a kernel entry: "},
+	{kind = .Wait, text = "clock: the time page and the cycle counter: in "},
 	{kind = .Wait, text = "clock: ok, the time never went back, the page and the kernel give the same time, the kernel refuses to remove the time page"},
 	{kind = .Shot, text = "clock"},
 
@@ -1146,7 +1147,7 @@ scenario := [?]Step {
 	{kind = .Trace, text = "errors: stack of fault: ", names = "fault::three fault::two fault::one entry"},
 	{kind = .Wait, text = "errors: ok, 19 cases, each with the expected error record"},
 	{kind = .Wait, text = "errors: under contention: "},
-	{kind = .Wait, text = " handles; 0 records contradict their status"},
+	{kind = .Wait, text = " handles; 0 records contradict their status, "},
 	{kind = .Wait, text = " refused Memory_Create: "},
 	{kind = .Wait, text = "errors: a kernel operation that succeeds: "},
 	{kind = .Front, text = "errors"},

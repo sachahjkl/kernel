@@ -570,7 +570,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 				return .Bad_Address
 			}
 			report := op.System_Report {
-				time          = intrinsics.atomic_load(&ticks),
+				time          = intrinsics.atomic_load(&time_milliseconds),
 				page_count    = frame_count,
 				program_slots = PROGRAM_CAPACITY,
 				processors    = u64(processor_count),

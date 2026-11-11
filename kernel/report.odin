@@ -37,6 +37,16 @@ cycles_now :: #force_inline proc "contextless" () -> u64 {
 	return u64(intrinsics.read_cycle_counter())
 }
 
+// milliseconds_now gives the milliseconds since the time 0, from the cycle
+// counter. The seconds and the rest are divided apart: no product overflows.
+milliseconds_now :: proc "contextless" () -> u64 {
+	if cycle_frequency == 0 {
+		return 0
+	}
+	cycles := cycles_now() - cycle_start
+	return cycles / cycle_frequency * 1000 + cycles % cycle_frequency * 1000 / cycle_frequency
+}
+
 // microseconds gives the time of a number of cycles. It is 0 before the
 // kernel measured the cycle counter.
 microseconds :: proc "contextless" (cycles: u64) -> u64 {

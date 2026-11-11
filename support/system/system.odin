@@ -108,6 +108,17 @@ cycle_frequency :: proc "contextless" () -> u64 {
 	return record.cycle_frequency
 }
 
+// nanoseconds gives the nanoseconds since boot, from the cycle counter and
+// the two constants of the time page: it does not enter the kernel, and it
+// does not wait for a tick. The same time 0 as time().
+nanoseconds :: proc "contextless" () -> u64 {
+	record := (^op.Time_Record)(uintptr(op.TIME_ADDRESS))
+	passed := cycles() - record.cycle_start
+	frequency := max(record.cycle_frequency, 1)
+	// The seconds and the rest are divided apart: no product overflows.
+	return passed / frequency * 1_000_000_000 + passed % frequency * 1_000_000_000 / frequency
+}
+
 // time_entered gives the milliseconds since boot with a kernel entry. The
 // kernel also does the commands in the kernel ring of the thread.
 time_entered :: proc "contextless" () -> u64 {

@@ -38,12 +38,17 @@ USER_END :: 0x0000_8000_0000_0000
 // The record at TIME_ADDRESS. A program reads `milliseconds` with one load
 // of 64 bits: the value is always complete.
 Time_Record :: struct {
-	milliseconds: u64, // Since the kernel started its timer. It never goes back.
+	// Since the kernel made the time page. It never goes back. The kernel
+	// writes it at each tick of its timer, from the cycle counter: a tick
+	// that comes late loses no time, and the value is at most one tick old.
+	milliseconds: u64,
 	// Cycles of the cycle counter in one second. It does not change after
-	// boot. The milliseconds count the ticks of the timer, and a tick can
-	// come late on a machine that runs under another system: a program that
-	// measures an interval reads the cycle counter and divides by this.
+	// boot.
 	cycle_frequency: u64,
+	// The cycle counter at the time 0. It does not change after boot. A
+	// program that needs a time finer than one millisecond reads the cycle
+	// counter, subtracts this, and divides by the frequency.
+	cycle_start: u64,
 }
 
 Handle :: distinct u32 // 0 names no object.

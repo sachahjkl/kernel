@@ -23,7 +23,8 @@ import "base:intrinsics"
 // period, it has less in the next period: over many periods the limit is
 // exact.
 //
-// A period is 100 ticks, and a tick can come late: a machine that runs
+// A period starts at the first tick that is 100 ms or more after the start
+// of the period before, and a tick can come late: a machine that runs
 // under another system loses time. The kernel measures the true length of
 // each period with the cycle counter. A budget has its part of the true
 // length: a late tick takes time from no budget.
@@ -33,8 +34,8 @@ import "base:intrinsics"
 // reads the chain of budgets with no lock: `parent` changes only when a
 // budget ends, and the slot of a budget that ended is used again only after
 // processor_sync to all processors (budget_create).
-LIMIT_PERIOD :: 100 // Ticks.
-LOG_PERIOD :: 1000 // Ticks.
+LIMIT_PERIOD :: 100 // Milliseconds.
+LOG_PERIOD :: 1000 // Milliseconds.
 
 // budget_charge counts the time of the thread of a processor, up to now.
 budget_charge :: proc "contextless" (cpu: ^Processor) {
@@ -51,6 +52,7 @@ budget_charge :: proc "contextless" (cpu: ^Processor) {
 }
 
 period_start: u64 // The cycle counter at the start of this period.
+period_time: u64 // The milliseconds at the start of this period. Only the first processor reads and writes it.
 
 // The cycles of this period that a budget can use: its part of the length
 // of a period, or of the true length when the period is longer.
@@ -58,7 +60,7 @@ period_start: u64 // The cycle counter at the start of this period.
 allowance :: proc "contextless" (budget: ^Budget) -> u64 {
 	now := cycles_now()
 	start := intrinsics.atomic_load(&period_start)
-	length := max(cycle_frequency * LIMIT_PERIOD / TICKS_PER_SECOND, now > start ? now - start : 0)
+	length := max(cycle_frequency * LIMIT_PERIOD / 1000, now > start ? now - start : 0)
 	// A whole day in one period does not overflow, with 64 processors.
 	return budget.amounts.processor * (length / 1000) / 1000
 }
@@ -78,7 +80,8 @@ budget_spent :: proc "contextless" (index: u32) -> bool {
 // Only this processor subtracts from `spent`; the others only add. So
 // `spent` is at least the value read when the subtraction happens.
 budget_period :: proc "contextless" (now: u64) {
-	if now % LIMIT_PERIOD == 0 {
+	if now - period_time >= LIMIT_PERIOD {
+		period_time = now
 		refreshed := false
 		for &budget in budgets[1:] {
 			part := allowance(&budget)
@@ -104,7 +107,7 @@ budget_period :: proc "contextless" (now: u64) {
 // refusal takes back the counts that this record added, in the same second
 // only. So no budget accepts more records than its limit in one second.
 budget_log :: proc "contextless" (index: u32) -> bool {
-	second := intrinsics.atomic_load(&ticks) / LOG_PERIOD
+	second := intrinsics.atomic_load(&time_milliseconds) / LOG_PERIOD
 	counted: [BUDGET_CAPACITY]u32
 	depth := 0
 	accepted := true

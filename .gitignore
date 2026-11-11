@@ -2,3 +2,5 @@
 result
 .direnv/
 build/
+# Odin writes the LLVM IR of a module in the folder where it runs; the tool moves it to build/ at once.
+/*.ll

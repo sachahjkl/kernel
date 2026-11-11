@@ -384,19 +384,21 @@ measure :: proc "contextless" () {
 	if square_root == nil {
 		return
 	}
+	// A failed call takes a few nanoseconds: the cycle counter gives the
+	// time (system.nanoseconds), not the milliseconds of the time page.
 	DIRECT :: 2_000_000
 	error: errors.Error_Record
 	sum: i64
-	start := system.time()
+	start := system.nanoseconds()
 	for index in 0 ..< DIRECT {
 		sum += square_root(i64(index & 0xFF), &error)
 	}
-	direct_good = (system.time() - start) * 1_000_000 / DIRECT
-	start = system.time()
+	direct_good = (system.nanoseconds() - start) / DIRECT
+	start = system.nanoseconds()
 	for index in 0 ..< DIRECT {
 		sum += square_root(-1 - i64(index & 0xFF), &error)
 	}
-	direct_failed = (system.time() - start) * 1_000_000 / DIRECT
+	direct_failed = (system.nanoseconds() - start) / DIRECT
 	if sum == 0 {
 		system.log("errors: the sum of the calls is 0")
 	}
@@ -493,6 +495,7 @@ Contention :: struct {
 	budgets:  [SHARED_HANDLES]u32, // Budgets of 2 pages: 64 pages fail.
 	stop:     u32,
 	failures: [2]u64,
+	refused:  [2]u64, // Records of the kind Refused: the cause was gone when the kernel read the state again.
 	wrong:    [2]u64, // Records that contradict their status.
 	made:     u64, // Handles that the third thread closed and made again.
 	source:   system.Handle, // The memory object of the copies.
@@ -543,6 +546,9 @@ failing :: proc "c" (parameter: rawptr) -> ! {
 			continue
 		}
 		contention.failures[number] += 1
+		if errors.Kind(record.kind) == .Refused {
+			contention.refused[number] += 1
+		}
 		if !explains(&record, status) {
 			contention.wrong[number] += 1
 		}
@@ -592,8 +598,11 @@ contend :: proc "contextless" () -> bool {
 	system.close(contention.source)
 	failures := contention.failures[0] + contention.failures[1]
 	wrong := contention.wrong[0] + contention.wrong[1]
-	system.log("errors: under contention: ", failures, " failures from 2 threads while a third thread closed and made ", contention.made, " handles; ", wrong, " records contradict their status")
-	return started == 3 && failures > 0 && contention.made > 0 && wrong == 0
+	refused := contention.refused[0] + contention.refused[1]
+	system.log("errors: under contention: ", failures, " failures from 2 threads while a third thread closed and made ", contention.made, " handles; ", wrong, " records contradict their status, ", refused, " records name no cause (Refused)")
+	// A record with no cause is right only when the state changed between
+	// the failure and the read: most records must name their cause.
+	return started == 3 && failures > 0 && contention.made > 0 && wrong == 0 && refused * 2 < failures
 }
 
 @(rodata)

@@ -342,7 +342,7 @@ run :: proc "contextless" (cpu: ^Processor, thread: ^Thread) -> ! {
 	cpu.fpu_area = &thread.fpu
 	if thread.in_enter {
 		thread.in_enter = false
-		thread.frame.rax = intrinsics.atomic_load(&ticks)
+		thread.frame.rax = intrinsics.atomic_load(&time_milliseconds)
 	}
 	resume(&thread.frame)
 }
