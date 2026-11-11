@@ -59,6 +59,7 @@ Kind :: enum i64 {
 	Not_Payer         = 32, // value: the handle of a budget that does not pay for the memory object of the call. It says nothing of the budget.
 	Object_Shared     = 33, // value: the handle of a memory object, or 0; the call needs an object that only this program names, with one mapping at most.
 	Object_Marked     = 34, // value: the handle of a memory object; found: its pages with a protection of their own. The object is not mapped again and not given.
+	Not_Multiple      = 36, // value: the argument; limit: the number that it must be a multiple of; found: the rest.
 	Whole_Only        = 35, // value: an address; limit: the bytes of the range. The range is a part of a mapping whose protection changes only whole (device memory, large pages), or of an area that the system keeps (a thread area).
 }
 

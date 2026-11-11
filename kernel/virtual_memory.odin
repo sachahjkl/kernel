@@ -188,12 +188,14 @@ decommit_wake_waiters :: proc "contextless" (program: ^Program, region: ^Region,
 	words: [WAITING_WORD_CAPACITY]Waiting_Word
 	count := 0
 	index := index_of_program(program)
+	// Each thread with words: it waits, or it registered them and does not
+	// wait yet (finding F1' of the second read).
 	for &thread, slot in threads[1:] {
-		if thread.program != index || intrinsics.atomic_load(&thread.state) != .Waiting {
+		if thread.program != index || thread.word_count == 0 {
 			continue
 		}
 		if count + int(thread.word_count) > WAITING_WORD_CAPACITY {
-			thread_wake(&thread)
+			thread_words_wake(&thread)
 			continue
 		}
 		for word in thread.words[:thread.word_count] {
@@ -204,17 +206,38 @@ decommit_wake_waiters :: proc "contextless" (program: ^Program, region: ^Region,
 	if count == 0 {
 		return
 	}
+	// Sorted by frame: one binary search for each page, not a pass over
+	// the words (finding W5 of the second read).
+	for at in 1 ..< count {
+		for back := at; back > 0 && words[back - 1].page > words[back].page; back -= 1 {
+			words[back - 1], words[back] = words[back], words[back - 1]
+		}
+	}
+	remaining := count
 	for range in ranges {
 		for page in range.first ..< range.first + range.page_count {
 			frame := intrinsics.atomic_load(region_slot(region, page)) & PAGE_ADDRESS
 			if frame == 0 {
 				continue
 			}
-			for &item in words[:count] {
-				if item.page == frame && item.thread != 0 {
-					thread_wake(&threads[item.thread])
-					item.thread = 0
+			low, high := 0, count
+			for low < high {
+				middle := (low + high) / 2
+				if words[middle].page < frame {
+					low = middle + 1
+				} else {
+					high = middle
 				}
+			}
+			for at := low; at < count && words[at].page == frame; at += 1 {
+				if words[at].thread != 0 {
+					thread_words_wake(&threads[words[at].thread])
+					words[at].thread = 0
+					remaining -= 1
+				}
+			}
+			if remaining == 0 {
+				return
 			}
 		}
 	}
@@ -284,6 +307,18 @@ protect_check :: proc "contextless" (program: ^Program, ranges: []op.Address_Ran
 		}
 		mappings[index] = u8(found)
 	}
+	// One table that names one mapping whole and in part: the parts are
+	// checked against the protection before the change of the whole (note
+	// of the second read): refused.
+	for range, index in ranges {
+		mapping := &program.mappings[mappings[index]]
+		whole := range.address == mapping.address && range.page_count == mapping.page_count
+		for other, other_index in ranges {
+			if other_index != index && mappings[other_index] == mappings[index] && whole != (other.address == mapping.address && other.page_count == mapping.page_count) {
+				return mappings, .Bad_Operation
+			}
+		}
+	}
 	return mappings, .Ok
 }
 
@@ -292,6 +327,18 @@ protect_check :: proc "contextless" (program: ^Program, ranges: []op.Address_Ran
 // old translations: one processor_sync for the table.
 memory_protect :: proc "contextless" (program: ^Program, ranges: []op.Address_Range, flags: op.Map_Flags) -> (changed: u64, status: op.Status) {
 	places := protect_check(program, ranges, flags) or_return
+	// The limit counts what the kernel walks: one entry for each large page
+	// (finding F4 of the second read: a whole large mapping of 1 GiB is 512
+	// entries, not 262144 pages). A whole mapping of 4 KiB pages above the
+	// limit is refused; a program that names its object alone changes it in
+	// parts.
+	walked: u64
+	for range, index in ranges {
+		walked += program.mappings[places[index]].large ? range.page_count / op.LARGE_PAGE_PAGES : range.page_count
+	}
+	if walked > op.RANGE_TABLE_PAGE_LIMIT {
+		return 0, .Bad_Operation
+	}
 	self := processor_self()
 	for range, index in ranges {
 		mapping := &program.mappings[places[index]]

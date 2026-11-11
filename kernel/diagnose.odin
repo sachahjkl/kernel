@@ -345,9 +345,17 @@ read_commit_needed :: proc "contextless" (program: ^Program, handle: u64, ranges
 	if !region.uncommitted {
 		return
 	}
-	for index in 0 ..< count {
+	walked: u64
+	for index in 0 ..< min(count, op.RANGE_TABLE_CAPACITY) {
 		range: op.Page_Range
 		if !read_user(program, ranges_address + index * size_of(op.Page_Range), &range, size_of(range)) || range.first >= region.page_count || range.page_count > region.page_count - range.first {
+			return
+		}
+		// At most RANGE_TABLE_PAGE_LIMIT pages read: the table is memory of
+		// the program, which can grow it after the call failed (finding W6
+		// of the second read).
+		walked += range.page_count
+		if walked > op.RANGE_TABLE_PAGE_LIMIT {
 			return
 		}
 		for page in range.first ..< range.first + range.page_count {
@@ -416,7 +424,7 @@ kind_explains :: proc "contextless" (kind: errors.Kind, status: op.Status) -> bo
 	case .Bad_State:
 		return kind == .State || kind == .Object_Shared || kind == .Object_Marked
 	case .Bad_Operation:
-		return kind == .Bad_Flags || kind == .Bad_Value || kind == .Too_Small || kind == .Too_Long || kind == .Unknown_Operation
+		return kind == .Bad_Flags || kind == .Bad_Value || kind == .Too_Small || kind == .Too_Long || kind == .Unknown_Operation || kind == .Not_Multiple
 	}
 	return false
 }
@@ -921,6 +929,13 @@ state_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Pro
 		// An object with pages of their own protection is not mapped again
 		// and not given (finding F3 of the read of the virtual memory).
 		memory_argument := operation == .Memory_Map ? 0 : 1
+		// A target program that stopped is the cause first; the marks after.
+		if operation == .Memory_Map && v[1] != 0 {
+			if _, state, held := read_program_state(program, v[1]); held && (state == .Stopped || state == .None) {
+				record_set(record, .State, .None, 2, v[1], 0, u64(state))
+				return true
+			}
+		}
 		if marked := read_marked_pages(program, v[memory_argument]); marked != 0 {
 			record_set(record, .Object_Marked, .Pages, memory_argument + 1, v[memory_argument], 0, marked)
 			return true
@@ -982,7 +997,7 @@ value_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Pro
 		case .Uncommitted in flags && flags != {.Uncommitted}:
 			record_set(record, .Bad_Flags, .None, 3, v[2], 1 << u64(op.Memory_Flag.Uncommitted), 0) // Uncommitted goes alone.
 		case .Large_Pages in flags && v[1] % op.LARGE_PAGE_PAGES != 0:
-			record_set(record, .Bad_Value, .Pages, 2, v[1], 0, v[1] % op.LARGE_PAGE_PAGES) // Whole large pages of 512 pages: found is the rest.
+			record_set(record, .Not_Multiple, .Pages, 2, v[1], op.LARGE_PAGE_PAGES, v[1] % op.LARGE_PAGE_PAGES) // Whole large pages of 512 pages.
 		case v[1] == 0:
 			record_set(record, .Too_Small, .Pages, 2, 0, 1, 0)
 		case:

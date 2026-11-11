@@ -309,6 +309,16 @@ error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record,
 		write_part(writer, " names a memory object with ")
 		write_part(writer, record.found)
 		write_part(writer, " pages with a protection of their own: it is not mapped again and not given until they have the protection of their mapping")
+	case .Not_Multiple:
+		subject(writer, record, argument)
+		write_part(writer, " has the value ")
+		write_part(writer, record.value)
+		write_part(writer, ", which is not a multiple of ")
+		write_part(writer, record.limit)
+		if record.unit != 0 {
+			write_part(writer, " ")
+			write_part(writer, unit)
+		}
 	case .Whole_Only:
 		subject(writer, record, argument)
 		write_part(writer, ", ")

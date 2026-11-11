@@ -468,6 +468,11 @@ region_create :: proc "contextless" (budget: u32, page_count: u64, contiguous :=
 		}
 		if !uncommitted {
 			reserved_pages += page_count
+		} else {
+			// The page that an Uncommitted object with no list page pays
+			// (uncommitted_base_cost) has no frame: it is a reserved page,
+			// so the sums of the frames hold (finding B1 of the second read).
+			reserved_pages += cost - lists
 		}
 	}
 	budgets[budget].amounts.pages -= cost
@@ -633,6 +638,7 @@ region_release :: proc "contextless" (index: u32) {
 		}
 		reserved_pages -= paid - region.present
 		base := region.uncommitted ? uncommitted_base_cost(region.page_count) : list_pages(region.page_count)
+		reserved_pages -= base - list_pages(region.page_count) // The page with no frame of a small Uncommitted object.
 		budgets[region.budget].amounts.pages += base + paid
 	}
 	region^ = {serial = region.serial}
@@ -778,7 +784,16 @@ map_region :: proc "contextless" (program: ^Program, region_index: u32, address:
 	address := address
 	chosen := address == 0
 	if chosen {
-		address = chosen_address(program, count)
+		// An object of large pages, mapped by whole large pages, gets an
+		// address on 2 MiB (finding W7 of the second read).
+		alignment := u64(PAGE_SIZE)
+		if region.large_pages && first % op.LARGE_PAGE_PAGES == 0 && count % op.LARGE_PAGE_PAGES == 0 {
+			alignment = LARGE_PAGE_SIZE
+		}
+		address = chosen_address(program, count, alignment)
+		if address == 0 {
+			return 0, .No_Slot // No gap below MODULE_BASE.
+		}
 	}
 	size := count * PAGE_SIZE
 	if address % PAGE_SIZE != 0 || address < PAGE_SIZE || address >= USER_END || size > USER_END - address {
@@ -886,8 +901,11 @@ map_region :: proc "contextless" (program: ^Program, region_index: u32, address:
 // at each call keeps the same tables (before, each mapping took a new range
 // and new tables until the budget refused). At most MAPPING_CAPACITY passes
 // over the 128 mappings. The caller holds the program lock.
-chosen_address :: proc "contextless" (program: ^Program, count: u64) -> u64 {
-	candidate := u64(op.CHOSEN_BASE)
+chosen_address :: proc "contextless" (program: ^Program, count: u64, alignment: u64 = PAGE_SIZE) -> u64 {
+	align_up :: #force_inline proc "contextless" (value, alignment: u64) -> u64 {
+		return (value + alignment - 1) / alignment * alignment
+	}
+	candidate := align_up(u64(op.CHOSEN_BASE), alignment)
 	size := count * PAGE_SIZE
 	for _ in 0 ..= MAPPING_CAPACITY {
 		moved := false
@@ -897,13 +915,17 @@ chosen_address :: proc "contextless" (program: ^Program, count: u64) -> u64 {
 			}
 			end := mapping.address + mapping.page_count * PAGE_SIZE
 			if candidate < end + PAGE_SIZE && mapping.address < candidate + size + PAGE_SIZE {
-				candidate = end + PAGE_SIZE
+				candidate = align_up(end + PAGE_SIZE, alignment)
 				moved = true
 			}
 		}
 		if !moved {
 			break
 		}
+	}
+	// The range of the chosen addresses ends where the modules start.
+	if candidate + size > op.MODULE_BASE {
+		return 0
 	}
 	return candidate
 }
@@ -948,6 +970,19 @@ unmap :: proc "contextless" (program: ^Program, mapping: ^Mapping) {
 		if walked_present_pages != mapping.present_page_count {
 			present_count_broken(mapping, walked_present_pages)
 		}
+	}
+	// The marks of protection of the pages end with the one mapping that
+	// has them (finding F3' of the second read): the object can be mapped
+	// and given again.
+	if region := &regions[mapping.region]; intrinsics.atomic_load(&region.marked_pages) != 0 && !region.contiguous {
+		lock := &region_locks[mapping.region]
+		lock_take(lock, .Region)
+		for page in mapping.first ..< mapping.first + mapping.page_count {
+			slot := region_slot(region, page)
+			intrinsics.atomic_store(slot, intrinsics.atomic_load(slot) &~ SLOT_MARKS)
+		}
+		intrinsics.atomic_store(&region.marked_pages, 0)
+		lock_free(lock, .Region)
 	}
 	program.mapped_pages -= mapping.page_count
 	region_release(mapping.region)

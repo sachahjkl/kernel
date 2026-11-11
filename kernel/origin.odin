@@ -186,13 +186,15 @@ holding_end :: proc "contextless" (holding: Holding, changes: u64) -> End {
 		// frames. A thread that waits on a word of it wakes; it runs again
 		// after the unmap, under this program lock.
 		region := &regions[mapping.region]
+		// A thread that registered its words and does not wait yet counts
+		// too (finding F1' of the second read of the virtual memory).
 		for &thread in threads[1:] {
-			if thread.program != index || intrinsics.atomic_load(&thread.state) != .Waiting {
+			if thread.program != index || thread.word_count == 0 {
 				continue
 			}
 			for word in thread.words[:thread.word_count] {
 				if region_has_frame(region, word &~ (PAGE_SIZE - 1)) {
-					thread_wake(&thread)
+					thread_words_wake(&thread)
 					break
 				}
 			}

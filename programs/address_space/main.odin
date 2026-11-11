@@ -37,7 +37,8 @@ GIGABYTE_PAGES :: 262144 // 1 GiB of pages of 4 KiB.
 ARENA_PAGES :: 4096 // The pages that the arena commits for each size of batch.
 SPARSE_PAGES :: 1024
 PROTECT_PAGES :: 256
-PROTECT_CALLS :: 200
+PROTECT_CALLS :: 40 // One batch.
+PROTECT_BATCHES :: 5
 LARGE_OBJECT_PAGES :: 16384 // 64 MiB.
 LARGE_ADDRESS :: 0x0000_4000_0000_0000 // Aligned on 2 MiB: the mapping of large pages.
 SMALL_ADDRESS :: 0x0000_4100_0000_1000 // Not aligned: the same object with pages of 4 KiB.
@@ -59,7 +60,10 @@ sparse_committed, sparse_present: u64
 decommit_returned, decommit_expected: u64
 decommit_microseconds: u64
 recommit_zero: bool
-shootdown_nanoseconds: [3]u64 // The middle of PROTECT_CALLS, with 1, 2 and 4 processors running the program.
+// The middle of one batch of PROTECT_CALLS, with 1, 2 and 4 processors
+// running the program: the least and the most of PROTECT_BATCHES batches.
+// The program cannot know the load of the host: it shows the spread.
+shootdown_least, shootdown_most: [3]u64
 guard_address, guard_vector: u64
 guard_right: bool
 large_nanoseconds, small_nanoseconds: u64 // One random read.
@@ -290,22 +294,27 @@ protection :: proc "contextless" () {
 			started += 1
 		}
 		system.sleep(system.time() + 20)
-		times: [PROTECT_CALLS]u64
-		for &time, call in times {
-			start := system.nanoseconds()
-			_, protect := system.memory_protect(part[:], call % 2 == 0 ? {} : {.Write})
-			time = system.nanoseconds() - start
-			if protect != .Ok {
-				fail("the protection: a change was refused")
-				return
+		shootdown_least[row] = max(u64)
+		for _ in 0 ..< PROTECT_BATCHES {
+			times: [PROTECT_CALLS]u64
+			for &time, call in times {
+				start := system.nanoseconds()
+				_, protect := system.memory_protect(part[:], call % 2 == 0 ? {} : {.Write})
+				time = system.nanoseconds() - start
+				if protect != .Ok {
+					fail("the protection: a change was refused")
+					return
+				}
 			}
-		}
-		for at in 1 ..< len(times) {
-			for back := at; back > 0 && times[back - 1] > times[back]; back -= 1 {
-				times[back - 1], times[back] = times[back], times[back - 1]
+			for at in 1 ..< len(times) {
+				for back := at; back > 0 && times[back - 1] > times[back]; back -= 1 {
+					times[back - 1], times[back] = times[back], times[back - 1]
+				}
 			}
+			middle := times[PROTECT_CALLS / 2]
+			shootdown_least[row] = min(shootdown_least[row], middle)
+			shootdown_most[row] = max(shootdown_most[row], middle)
 		}
-		shootdown_nanoseconds[row] = times[PROTECT_CALLS / 2]
 	}
 	for index in 0 ..< started {
 		intrinsics.atomic_store(&runners[index].stop, 1)
@@ -444,8 +453,8 @@ refuse :: proc "contextless" () {
 // The findings of the independent read of the kernel part (each a case
 // that failed before its correction). Each one logs a line and sets a bit
 // of review_right.
-REVIEW_CASES :: 6
-review_names := [REVIEW_CASES]string{"F1 a decommit wakes a thread that waits on a word of the page", "F2 a word in the second 4 KiB of a large page is its own word", "F3 an object with protection marks is not mapped again", "W2 a small uncommitted object costs a page", "W4 a part cannot get more than its mapping", "a page that is not committed stops with its own code"}
+REVIEW_CASES :: 10
+review_names := [REVIEW_CASES]string{"B1 an uncommitted object of 1 page keeps the sums of the frames", "F3' an unmap ends the marks: the object is mapped again", "W7 large pages at an address that the kernel chooses", "a table that names one mapping whole and in part is refused", "F1 a decommit wakes a thread that waits on a word of the page", "F2 a word in the second 4 KiB of a large page is its own word", "F3 an object with protection marks is not mapped again", "W2 a small uncommitted object costs a page", "W4 a part cannot get more than its mapping", "a page that is not committed stops with its own code"}
 review_results: [REVIEW_CASES]bool
 
 Waiter :: struct #align (64) {
@@ -496,7 +505,7 @@ review :: proc "contextless" (ctx: ^system.Context) {
 			system.sleep(system.time() + 1)
 		}
 		system.thread_wait(thread)
-		review_results[0] = waiter.woke_at - start < 1000
+		review_results[4] = waiter.woke_at - start < 1000
 		system.memory_unmap(address)
 		system.close(memory)
 	}
@@ -513,7 +522,7 @@ review :: proc "contextless" (ctx: ^system.Context) {
 		intrinsics.atomic_add(second, 1)
 		woken := system.word_wake(second)
 		system.thread_wait(thread)
-		review_results[1] = wrong == 0 && woken == 1
+		review_results[5] = wrong == 0 && woken == 1
 		system.memory_unmap(address)
 		system.close(memory)
 	}
@@ -535,7 +544,7 @@ review :: proc "contextless" (ctx: ^system.Context) {
 		if allowed == .Ok {
 			system.memory_unmap(third)
 		}
-		review_results[2] = refused == .Bad_State && record.kind != i64(errors.Kind.Refused) && allowed == .Ok
+		review_results[6] = refused == .Bad_State && record.kind != i64(errors.Kind.Refused) && allowed == .Ok
 		system.memory_unmap(address)
 		system.close(memory)
 	}
@@ -548,7 +557,7 @@ review :: proc "contextless" (ctx: ^system.Context) {
 			system.close(memory)
 		}
 		system.close(empty)
-		review_results[3] = status == .No_Budget
+		review_results[7] = status == .No_Budget
 	}
 	// W4: the whole mapping becomes read only; a part of it cannot become
 	// writable alone: refused, not a success that changes nothing.
@@ -560,13 +569,63 @@ review :: proc "contextless" (ctx: ^system.Context) {
 		system.memory_protect(whole[:], {})
 		record: errors.Error_Record
 		_, status := system.memory_protect(part[:], {.Write}, &record)
-		review_results[4] = status == .Bad_Operation && record.kind != i64(errors.Kind.Refused)
+		review_results[8] = status == .Bad_Operation && record.kind != i64(errors.Kind.Refused)
 		system.memory_unmap(address)
 		system.close(memory)
 	}
 	// A child touches a page of an uncommitted object that is not committed:
 	// it stops with the code of a page that is not committed.
-	review_results[5] = child_stop_code(ctx, 3) == op.STOP_CODE_NOT_COMMITTED
+	review_results[9] = child_stop_code(ctx, 3) == op.STOP_CODE_NOT_COMMITTED
+	// B1: an Uncommitted object of 1 page, then a report: the test build
+	// checks the sums of the frames at each report (it stopped the machine
+	// before the correction), and the free pages less the reserved pages
+	// are the pages of the budgets.
+	{
+		memory, _ := system.memory_create(1, flags = {.Uncommitted})
+		report: op.System_Report
+		system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.System), 0, u64(uintptr(&report)), size_of(report))
+		system.close(memory)
+		after: op.System_Report
+		system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.System), 0, u64(uintptr(&after)), size_of(after))
+		review_results[0] = report.free_pages - report.reserved_pages == report.budget_pages && after.free_pages - after.reserved_pages == after.budget_pages
+	}
+	// F3': a part of the only mapping gets No_Access, the mapping ends, and
+	// the object is mapped again.
+	{
+		memory, _ := system.memory_create(8)
+		address, _ := system.memory_map(memory)
+		part := [1]op.Address_Range{{address = u64(uintptr(address)), page_count = 2}}
+		system.memory_protect(part[:], {.No_Access})
+		system.memory_unmap(address)
+		again, status := system.memory_map(memory)
+		if status == .Ok {
+			bytes := ([^]u8)(again)
+			bytes[0] = 1 // The page has no mark: no fault.
+			system.memory_unmap(again)
+		}
+		review_results[1] = status == .Ok
+		system.close(memory)
+	}
+	// W7: an object of large pages at an address that the kernel chooses.
+	{
+		memory, _ := system.memory_create(op.LARGE_PAGE_PAGES, flags = {.Large_Pages})
+		address, status := system.memory_map(memory)
+		report := own_mappings()
+		mapping := mapping_at(&report, u64(uintptr(address)))
+		review_results[2] = status == .Ok && mapping != nil && .Large in mapping.flags
+		system.memory_unmap(address)
+		system.close(memory)
+	}
+	// One table: the whole mapping read only, and a part of it writable.
+	{
+		memory, _ := system.memory_create(8)
+		address, _ := system.memory_map(memory)
+		ranges := [2]op.Address_Range{{address = u64(uintptr(address)), page_count = 8}, {address = u64(uintptr(address)), page_count = 2}}
+		_, status := system.memory_protect(ranges[:], {.Write})
+		review_results[3] = status == .Bad_Operation
+		system.memory_unmap(address)
+		system.close(memory)
+	}
 	for name, index in review_names {
 		system.log("address_space: review: ", name, ": ", review_results[index] ? "right" : "WRONG")
 		if !review_results[index] {
@@ -847,10 +906,11 @@ build :: proc "contextless" (frame: ^interface.Frame) {
 	interface.background(frame, {0, 0, WIDTH, HEIGHT})
 	left := interface.card(frame, {8, 8, WIDTH / 2 - 12, HEIGHT - 16}, "RESERVE AND COMMIT", "Memory_Commit", graphics.COLOR_MEMORY)
 	column := interface.column_of(left, 4)
-	line(frame, &column, "arena: addresses", u64(GIGABYTE_PAGES / 256), " MiB, one mapping")
+	line(frame, &column, "arena: addresses", "1 GiB, one mapping")
 	line(frame, &column, "  frame list paid", arena_list_pages, " pages")
 	line(frame, &column, "  mapped in", arena_map_microseconds, " us")
-	interface.cell_text(frame, interface.column_take(&column, 16), "  committed and used, and kernel entries for 1000:", graphics.COLOR_DIM)
+	interface.cell_text(frame, interface.column_take(&column, 16), "  pages committed and used in one second,", graphics.COLOR_DIM)
+	interface.cell_text(frame, interface.column_take(&column, 16), "  and kernel entries for 1000 pages:", graphics.COLOR_DIM)
 	for batch, row in batch_sizes {
 		buffer: [48]u8
 		label := system.format(buffer[:], "  ", batch, batch == 1 ? " range" : " ranges", " / entry")
@@ -878,13 +938,17 @@ build :: proc "contextless" (frame: ^interface.Frame) {
 	}
 	right_card := interface.card(frame, {WIDTH / 2 + 4, 8, WIDTH / 2 - 12, HEIGHT - 16}, "PROTECT, GUARD, LARGE PAGES", "Memory_Protect", graphics.COLOR_KERNEL)
 	column = interface.column_of(right_card, 4)
-	interface.cell_text(frame, interface.column_take(&column, 16), "a part of a mapping read only, then writable:", graphics.COLOR_DIM)
-	interface.cell_text(frame, interface.column_take(&column, 16), "one call with its shoot-down, in the middle of 200", graphics.COLOR_DIM)
-	most := max(shootdown_nanoseconds[0], shootdown_nanoseconds[1], shootdown_nanoseconds[2], 1)
+	interface.cell_text(frame, interface.column_take(&column, 16), "64 pages read only, then writable: the middle", graphics.COLOR_DIM)
+	interface.cell_text(frame, interface.column_take(&column, 16), "of 40 calls, least and most of 5 batches:", graphics.COLOR_DIM)
+	most := max(shootdown_most[0], shootdown_most[1], shootdown_most[2], 1)
 	for processors, row in ([3]u64{1, 2, 4}) {
 		buffer: [48]u8
-		line(frame, &column, system.format(buffer[:], processors, processors == 1 ? " processor" : " processors"), shootdown_nanoseconds[row], " ns")
-		interface.bar(frame, interface.column_take(&column, 8), shootdown_nanoseconds[row], most, graphics.COLOR_KERNEL)
+		line(frame, &column, system.format(buffer[:], processors, processors == 1 ? " processor" : " processors"), shootdown_least[row] == max(u64) ? 0 : shootdown_least[row], " to ", shootdown_most[row], " ns")
+		// The track, the spread from the least to the most, and the least.
+		area := interface.column_take(&column, 8)
+		interface.bar(frame, area, shootdown_most[row], most, graphics.shade(graphics.COLOR_KERNEL, 50))
+		least := shootdown_least[row] == max(u64) ? 0 : shootdown_least[row]
+		interface.bar(frame, {area.x, area.y, int(least * u64(area.width) / most), area.height}, 1, 1, graphics.COLOR_KERNEL)
 	}
 	interface.column_take(&column, 8)
 	interface.cell_text(frame, interface.column_take(&column, 16), "a child writes down its stack into a guard page:", graphics.COLOR_DIM)
@@ -912,9 +976,9 @@ build :: proc "contextless" (frame: ^interface.Frame) {
 	marks := interface.column_take(&column, 16)
 	for step in 1 ..= DELEGATION_CASES {
 		color: graphics.Color = delegation_line_counts[step] == 0 ? graphics.COLOR_TRACK : delegation_right[step] ? graphics.COLOR_PROGRAM : graphics.COLOR_FAILED
-		interface.mark(frame, marks.x + (step - 1) * 24, marks.y + 4, 8, color)
+		interface.mark(frame, marks.x + (step - 1) * 16, marks.y + 4, 8, color)
 	}
-	interface.cell_text(frame, {marks.x + 248, marks.y, marks.width - 248, 16}, system.format(cases_line[:], cases_right, " of 10 cases as expected"), graphics.COLOR_TEXT)
+	interface.cell_text(frame, {marks.x + 168, marks.y, marks.width - 168, 16}, system.format(cases_line[:], cases_right, " of 10 as expected"), graphics.COLOR_TEXT)
 	review_count: u64
 	for result in review_results {
 		review_count += result ? 1 : 0
@@ -957,7 +1021,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	sparse()
 	system.log("address_space: sparse table: ", sparse_committed, " pages committed of ", u64(GIGABYTE_PAGES), ", ", sparse_present, " with a frame; decommit: ", decommit_returned, " pages back in the budget at once, in ", decommit_microseconds, " us; a page committed again is zero: ", u64(recommit_zero))
 	protection()
-	system.log("address_space: protection of 64 pages, one call with its shoot-down, in the middle of 200: ", shootdown_nanoseconds[0], " ns with 1 processor running the program, ", shootdown_nanoseconds[1], " ns with 2, ", shootdown_nanoseconds[2], " ns with 4")
+	system.log("address_space: protection of 64 pages, one call with its shoot-down, the middle of 40 calls, least and most of 5 batches: ", shootdown_least[0], " to ", shootdown_most[0], " ns with 1 processor running the program, ", shootdown_least[1], " to ", shootdown_most[1], " ns with 2, ", shootdown_least[2], " to ", shootdown_most[2], " ns with 4")
 	guard_page(ctx)
 	system.log("address_space: guard page: the child stopped with vector ", guard_vector, " at ", system.Hex(guard_address), ", in its guard page: ", u64(guard_right))
 	large_pages()

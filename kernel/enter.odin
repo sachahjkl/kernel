@@ -835,13 +835,6 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		table := &processor_self().range_table
 		user_copy(table, rawptr(uintptr(v[0])), v[1] * size_of(op.Address_Range))
 		ranges := ([^]op.Address_Range)(&table[0])[:v[1]]
-		counts: [op.RANGE_TABLE_CAPACITY]u64
-		for range, index in ranges {
-			counts[index] = range.page_count
-		}
-		if table_pages(counts[:v[1]]) > op.RANGE_TABLE_PAGE_LIMIT {
-			return .Bad_Operation
-		}
 		changed := memory_protect(program, ranges, flags) or_return
 		results[0] = changed
 		return .Ok
