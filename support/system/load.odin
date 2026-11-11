@@ -831,8 +831,14 @@ load_error_text :: proc "contextless" (writer: ^Writer, error: ^module.Load_Erro
 		case .Record:
 			write_part(writer, "the record ")
 			write_part(writer, module.name_get(&value.record))
+		case .Table:
+			write_part(writer, "Table(")
+			write_part(writer, module.name_get(&value.record))
+			write_part(writer, ", ")
+			write_part(writer, direction_name(value.direction))
+			write_part(writer, ")")
 		case:
-			write_type(writer, nil, value.type, value.detail)
+			write_parameter_type(writer, nil, value.type, value.detail, value.direction)
 		}
 	}
 	// The module that the stage concerns: the import, or the module itself.
@@ -890,7 +896,7 @@ load_error_text :: proc "contextless" (writer: ^Writer, error: ^module.Load_Erro
 			name(writer, &error.imported)
 			write_part(writer, " has ")
 			write_part(writer, u64(error.expected.detail))
-		case .Parameter_Type, .Parameter_Detail:
+		case .Parameter_Type, .Parameter_Detail, .Parameter_Direction:
 			write_part(writer, "parameter ")
 			write_part(writer, u64(error.parameter))
 			write_part(writer, " is ")

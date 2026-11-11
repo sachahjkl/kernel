@@ -67,6 +67,8 @@ write_type :: proc "contextless" (writer: ^Writer, file: []u8, type: module.Type
 		write_part(writer, "Table(")
 		write_type(writer, file, .Record, detail)
 		write_part(writer, ")")
+	case .Bytes:
+		write_part(writer, "Bytes")
 	case .Record:
 		if described, ok := module.record_type(file, detail); ok {
 			write_part(writer, module.string_at(file, described.name_offset, described.name_count))
@@ -82,5 +84,56 @@ write_type :: proc "contextless" (writer: ^Writer, file: []u8, type: module.Type
 		}
 	case:
 		write_part(writer, "?")
+	}
+}
+
+@(rodata)
+direction_names := [module.Direction]string {
+	.Read   = "Read",
+	.Change = "Change",
+	.Append = "Append",
+}
+
+// direction_name gives the name of a direction: "?" for a value out of
+// the enumeration (a description is input that nobody checked).
+direction_name :: proc "contextless" (direction: module.Direction) -> string {
+	return direction <= max(module.Direction) ? direction_names[direction] : "?"
+}
+
+// write_parameter_type writes the type of a parameter: as write_type, and
+// for a Table or Bytes parameter its direction too: "Table(Reading,
+// Change)", "Bytes(Read)". One form in the manual, the console and the
+// errors.
+write_parameter_type :: proc "contextless" (writer: ^Writer, file: []u8, type: module.Type, detail: u32, direction: module.Direction) {
+	name := direction_name(direction)
+	#partial switch type {
+	case .Table:
+		write_part(writer, "Table(")
+		write_type(writer, file, .Record, detail)
+		write_part(writer, ", ")
+		write_part(writer, name)
+		write_part(writer, ")")
+	case .Bytes:
+		write_part(writer, "Bytes(")
+		write_part(writer, name)
+		write_part(writer, ")")
+	case:
+		write_type(writer, file, type, detail)
+	}
+}
+
+// write_field_type writes the type of a field of a record: as write_type,
+// and the size of an Integer that does not have 8 bytes: "Integer(4)",
+// "Unsigned(1)", "Unsigned" for an unsigned Integer of 8 bytes.
+write_field_type :: proc "contextless" (writer: ^Writer, file: []u8, item: module.Field) {
+	if item.type != .Integer {
+		write_type(writer, file, item.type, item.detail)
+		return
+	}
+	write_part(writer, item.unsigned ? "Unsigned" : "Integer")
+	if item.detail != 0 && item.detail != 8 {
+		write_part(writer, "(")
+		write_part(writer, u64(item.detail))
+		write_part(writer, ")")
 	}
 }

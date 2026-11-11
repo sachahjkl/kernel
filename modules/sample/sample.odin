@@ -1,10 +1,15 @@
-// A module of commands that take a record or a handle (property 19). A
-// record is bytes with described fields: the caller and the module read the
-// same layout. A handle is lent for the time of one call, with the rights
-// that the description names and no other right.
-// The console calls it with load("sample") or isolate("sample").
+// A module of commands that take a record, a handle or a table (property
+// 19). A record is bytes with described fields: the caller and the module
+// read the same layout. A handle is lent for the time of one call, with the
+// rights that the description names and no other right. A table is records
+// of one description in memory of the caller, with a direction: Read,
+// Change or Append.
+// The console calls it with load("sample"), isolate("sample") or
+// connect("sample"): the module has an entry, so the same module also runs
+// as a program that serves its exports.
 package sample
 
+import "contract:errors"
 import op "contract:operation"
 import "support:system"
 
@@ -144,4 +149,125 @@ hold :: proc "c" (memory: system.Lent({.Read})) -> i64 {
 @(export, link_name = "look")
 look :: proc "c" () -> i64 {
 	return len(view) == 0 ? -1 : i64(view[0])
+}
+
+// A reading of a sensor: one record of 40 bytes of a table.
+Reading :: struct {
+	sensor:  i64,
+	time:    i64,
+	value:   i64,
+	minimum: i64,
+	maximum: i64,
+}
+
+// readings gives a table of `count` readings: sensor n, time n, value 10 * (n + 1). The result is a Table of the readings that fit in the memory of the caller, and its count is `count`.
+@(export, link_name = "readings")
+readings :: proc "c" (count: i64, result: ^[]Reading) -> i64 {
+	for number in 0 ..< max(count, 0) {
+		if int(number) < len(result) {
+			value := 10 * (number + 1)
+			result[number] = {sensor = number, time = number, value = value, minimum = value, maximum = value}
+		}
+	}
+	return max(count, 0)
+}
+
+// sum_values gives the sum of the values of a table of readings. The export reads the table: the direction Read.
+@(export, link_name = "sum_values")
+sum_values :: proc "c" (readings: ^system.Table_To_Read(Reading)) -> i64 {
+	sum: i64
+	for reading in system.table_records(readings) {
+		sum += reading.value
+	}
+	return sum
+}
+
+// scale_values multiplies the value, the minimum and the maximum of each reading by a factor, in the memory of the caller (the direction Change), and gives the count of readings.
+@(export, link_name = "scale_values")
+scale_values :: proc "c" (readings: ^system.Table_To_Change(Reading), factor: i64) -> i64 {
+	for &reading in system.table_changed_records(readings) {
+		reading.value *= factor
+		reading.minimum *= factor
+		reading.maximum *= factor
+	}
+	return i64(readings.count)
+}
+
+// append_readings appends `count` readings after those of the table (the direction Append): sensor n, time n, value first_value + n. It writes those that fit before the capacity, and adds `count` to the count of the table: a count larger than the capacity says that they did not all fit. The result is the count of readings that it wrote.
+@(export, link_name = "append_readings")
+append_readings :: proc "c" (count: i64, first_value: i64, readings: ^system.Table_To_Append(Reading)) -> i64 {
+	written: i64
+	for number in 0 ..< max(count, 0) {
+		value := first_value + number
+		reading := Reading{sensor = i64(readings.count), time = number, value = value, minimum = value, maximum = value}
+		written += system.table_append(readings, reading) ? 1 : 0
+	}
+	return written
+}
+
+// A word of a text: the record names its bytes by offset in another
+// parameter; it holds no address.
+Word :: struct {
+	start: u32, // The first byte of the word in the text.
+	count: u32, // Its bytes.
+	sum:   i64, // Written by the export: the sum of its bytes.
+}
+
+// sum_words writes in each word the sum of the bytes of the text that the word names, and gives the sum of all. A word that names bytes after the end of the text is an error, not a fault: the result is -1 with an error record of the kind Outside (the number of the word, the end of its bytes, the count of bytes of the text).
+@(export, link_name = "sum_words")
+sum_words :: proc "c" (words: ^system.Table_To_Change(Word), text: ^system.Bytes_To_Read, error: ^errors.Error_Record) -> i64 {
+	total: i64
+	for &word, number in system.table_changed_records(words) {
+		end := u64(word.start) + u64(word.count)
+		if end > text.count {
+			return errors.fail(error, -1, .Outside, .Bytes, 1, i64(end), i64(text.count), i64(number + 1))
+		}
+		word.sum = 0
+		for b in text.bytes[word.start:end] {
+			word.sum += i64(b)
+		}
+		total += word.sum
+	}
+	return total
+}
+
+// upper_case changes each letter of a range of bytes to upper case, in the memory of the caller (Bytes with the direction Change), and gives the count of letters that it changed.
+@(export, link_name = "upper_case")
+upper_case :: proc "c" (text: ^system.Bytes_To_Change) -> i64 {
+	changed: i64
+	for &b in text.bytes[:text.count] {
+		if b >= 'a' && b <= 'z' {
+			b -= 'a' - 'A'
+			changed += 1
+		}
+	}
+	return changed
+}
+
+// append_past_capacity writes 4 readings after the capacity of the table, against the rule of the direction Append: a test of the caller. In a direct call the caller and the module share one address space, and the caller has no protection. In an isolated call the caller copies back the readings up to the capacity only.
+@(export, link_name = "append_past_capacity")
+append_past_capacity :: proc "c" (readings: ^system.Table_To_Append(Reading)) -> i64 {
+	for number in readings.capacity ..< readings.capacity + 4 {
+		readings.records[number] = {sensor = -1, time = -1, value = -1, minimum = -1, maximum = -1}
+	}
+	readings.count = readings.capacity + 4
+	return 4
+}
+
+// The same module as a program: a service that serves the exports above.
+// An export needs nothing from the entry.
+@(export, link_name = "entry")
+entry :: proc "c" (ctx: ^system.Context) -> ! {
+	service, ok := system.service_open(ctx)
+	if !ok {
+		system.log("sample: no service ring")
+		system.stop(1)
+	}
+	system.log("sample: serves its exports")
+	for {
+		wait: system.Wait
+		system.service_wait(&wait, &service)
+		system.wait_end(&wait)
+		system.service_run(&service)
+	}
 }

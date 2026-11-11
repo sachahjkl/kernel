@@ -39,6 +39,9 @@
 //             (Handle_State) and closes it when the export returns. 0 is
 //             "no handle".
 //
+//   Table, Bytes  32 bytes: a Table_Field (tables.odin): the records in the
+//             call region, or in a lent memory object.
+//
 // An export with a Record result has one more field after the parameters:
 // the offset of the place of the result in the call region. The export
 // writes the record in private memory of the receiver, and the receiver
@@ -140,6 +143,7 @@ Argument :: struct {
 	integer: u64, // An Integer. A Handle: the handle, as the receiver names it.
 	text:    []u8,
 	record:  []u8, // The bytes of a Record: the size of its description.
+	table:   Table_Argument, // A Table or Bytes.
 }
 
 // A handle that the caller lent for a call, as the argument record names
@@ -159,7 +163,14 @@ Call :: struct {
 	lent_count: int,
 	result:     Slice, // A Record result: its place in the call region, as offsets.
 	error:      Slice, // The place of the error record in the call region, as offsets. count 0: the export has none.
+	places:        [module.PARAMETER_CAPACITY]module.Table_Place, // places[n]: the table place of a Table or Bytes, in memory of the receiver.
+	count_places:  [module.PARAMETER_CAPACITY]u64, // An Append place: the offset of its count in the call region.
+	mappings:      [module.PARAMETER_CAPACITY]Table_Mapping, // The memory objects to map before the call.
+	mapping_count: int,
 }
+
+// The largest argument record: 6 table fields, a buffer and an error record.
+ARGUMENT_RECORD_LIMIT :: module.PARAMETER_CAPACITY * size_of(Table_Field) + size_of(Slice) + 8
 
 ERROR_RECORD_SIZE :: 56 // contract/errors: Error_Record.
 
@@ -169,7 +180,9 @@ field_size :: proc "contextless" (type: module.Type) -> u64 {
 		return 8
 	case .Text:
 		return size_of(Slice)
-	case .None, .Table: // A Table is a result only.
+	case .Table, .Bytes:
+		return size_of(Table_Field)
+	case .None:
 	}
 	return 0
 }
@@ -178,7 +191,7 @@ field_size :: proc "contextless" (type: module.Type) -> u64 {
 // ok is false when the description has a type that this code does not know.
 record_size :: proc "contextless" (function: module.Function) -> (size: u64, ok: bool) {
 	function := function
-	if function.parameter_count > module.PARAMETER_CAPACITY {
+	if function.parameter_count > module.PARAMETER_CAPACITY || !directions_valid(function) {
 		return 0, false
 	}
 	for type in function.parameters[:function.parameter_count] {
@@ -237,6 +250,8 @@ load :: proc "contextless" (region: []u8, offset: u64, $T: typeid) -> (value: T)
 // For an export with an error record, `error` names its place, after the
 // result: encode writes zero bytes there. The caller reads it when the
 // integer result is negative.
+// A Table or Bytes argument: see table_encode. encode writes region_start
+// in the argument: keep the arguments for tables_return.
 encode :: proc "contextless" (file: []u8, function: module.Function, arguments: []Argument, region: []u8) -> (offset, size: u64, result: Slice, error: Slice, ok: bool) {
 	function := function
 	size = record_size(function) or_return
@@ -272,6 +287,8 @@ encode :: proc "contextless" (file: []u8, function: module.Function, arguments: 
 				return 0, 0, {}, {}, false
 			}
 			store(region, field, arguments[index].integer)
+		case .Table, .Bytes:
+			next = table_encode(file, type, function.parameter_details[index], function.parameter_directions[index], &arguments[index].table, region, field, next) or_return
 		}
 		field += field_size(type)
 	}
@@ -374,20 +391,10 @@ decode :: proc "contextless" (file: []u8, function: module.Function, offset, siz
 		return false
 	}
 	call.lent_count = 0
+	call.mapping_count = 0
 	call.result = {}
-	lend :: proc "contextless" (call: ^Call, handle: u64, rights: u32) -> bool {
-		if handle == 0 {
-			return true
-		}
-		if handle >> 32 != 0 || call.lent_count == len(call.lent) {
-			return false
-		}
-		call.lent[call.lent_count] = {u32(handle), rights}
-		call.lent_count += 1
-		return true
-	}
 	// One copy: the other program can change the call region at any time.
-	record: [(module.PARAMETER_CAPACITY + 2) * size_of(Slice)]u8
+	record: [ARGUMENT_RECORD_LIMIT]u8
 	intrinsics.mem_copy_non_overlapping(&record, raw_data(region[offset:]), int(size))
 	field := u64(0)
 	for type, index in function.parameters[:function.parameter_count] {
@@ -423,6 +430,8 @@ decode :: proc "contextless" (file: []u8, function: module.Function, offset, siz
 		case .Handle:
 			call.registers[index] = load(record[:], field, u64)
 			lend(call, call.registers[index], function.parameter_details[index]) or_return
+		case .Table, .Bytes:
+			table_decode(file, type, function.parameter_details[index], function.parameter_directions[index], index, load(record[:], field, Table_Field), offset + field, region, call) or_return
 		}
 		field += field_size(type)
 	}
@@ -473,6 +482,21 @@ decode :: proc "contextless" (file: []u8, function: module.Function, offset, siz
 		registers := u64(function.parameter_count) + u64(function.result == .Text || function.result == .Table)
 		call.registers[registers] = u64(uintptr(raw_data(region))) + start
 	}
+	return true
+}
+
+// lend adds a handle of the argument record to the handles that the
+// receiver proves before the call and closes after it.
+@(private)
+lend :: proc "contextless" (call: ^Call, handle: u64, rights: u32) -> bool {
+	if handle == 0 {
+		return true
+	}
+	if handle >> 32 != 0 || call.lent_count == len(call.lent) {
+		return false
+	}
+	call.lent[call.lent_count] = {u32(handle), rights}
+	call.lent_count += 1
 	return true
 }
 

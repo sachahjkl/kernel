@@ -542,8 +542,8 @@ record_fields :: proc(client: ^Call_Client, text: string, names: []string) -> (v
 	for name, index in names {
 		for number in 0 ..< described.field_count {
 			item := module.field(call.file, described, number) or_return
-			if module.string_at(call.file, item.name_offset, item.name_count) == name && item.type == .Integer && int(item.offset) + 8 <= len(result) {
-				values[index] = (^i64)(&result[item.offset])^
+			if module.string_at(call.file, item.name_offset, item.name_count) == name && item.type == .Integer && int(item.offset) + int(module.field_size(item.type, item.detail)) <= len(result) {
+				values[index] = module.field_integer(result, item)
 				found += 1
 			}
 		}
@@ -577,8 +577,8 @@ record_text_field :: proc(client: ^Call_Client, text: string, name: string) -> (
 field_value :: proc(record: []u8, item: module.Field) -> string {
 	#partial switch item.type {
 	case .Integer:
-		if u64(item.offset) + 8 <= u64(len(record)) {
-			return fmt.tprintf("%d", (^i64)(&record[item.offset])^)
+		if u64(item.offset) + u64(module.field_size(item.type, item.detail)) <= u64(len(record)) {
+			return fmt.tprintf("%d", module.field_integer(record, item))
 		}
 	case .Handle:
 		if u64(item.offset) + 4 <= u64(len(record)) {

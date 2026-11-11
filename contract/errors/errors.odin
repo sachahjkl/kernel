@@ -56,6 +56,11 @@ Kind :: enum i64 {
 	Busy              = 29, // Too many requests are in flight. value: the requests in flight, or 0 when the receiver does not count them; limit: the most.
 	Out_Of_Range      = 30, // The argument names units past the end. value: the end of what it names (its first unit and its count); limit: the units that exist.
 	Reserved          = 31, // The argument names a program of the system that the call does not act on: it starts at boot, or it is a device service.
+	// A record of a table argument names bytes outside another argument
+	// (docs/MODULE_CONTRACT.md, "Tables and bytes as parameters"). value:
+	// the end of the bytes that it names; limit: the count of bytes of the
+	// other argument; found: the number of the record, from 1.
+	Outside           = 32,
 }
 
 // What value, limit and found count.

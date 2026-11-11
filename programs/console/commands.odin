@@ -180,7 +180,7 @@ help :: proc "contextless" (arguments: []Value) -> Value {
 			if kind == .None {
 				system.write_part(&writer, "Value") // Any kind: the command checks it.
 			}
-			system.write_type(&writer, item.file, module.Type(kind), item.function.parameter_details[index])
+			system.write_parameter_type(&writer, item.file, module.Type(kind), item.function.parameter_details[index], item.function.parameter_directions[index])
 		}
 		system.write_part(&writer, ")")
 		if item.result != .None {
@@ -687,17 +687,29 @@ callable_by_console :: proc "contextless" (file: []u8, function: module.Function
 		}
 	}
 	for type, index in function.parameters[:function.parameter_count] {
+		direction := function.parameter_directions[index]
 		#partial switch type {
 		case .Integer, .Text, .Handle:
 		case .Record:
 			if _, ok := module.record_type(file, function.parameter_details[index]); !ok {
 				return false
 			}
+		case .Table:
+			// A Read or Change table is a Table value. An Append table is a
+			// second result, which the language does not have.
+			if _, _, ok := isolated.table_record(file, type, function.parameter_details[index]); !ok || direction == .Append {
+				return false
+			}
+		case .Bytes:
+			// A Text value: read only.
+			if direction != .Read {
+				return false
+			}
 		case:
 			return false
 		}
 	}
-	return true
+	return isolated.directions_valid(function)
 }
 
 // record_build makes a Record value: one argument for each field, in the
@@ -715,7 +727,7 @@ record_build :: proc "contextless" (item: ^Command, arguments: []Value) -> Value
 		} else if field.type == .Handle {
 			(^u32)(&bytes[field.offset])^ = u32(argument.integer)
 		} else {
-			(^i64)(&bytes[field.offset])^ = argument.integer
+			module.field_integer_set(bytes, field, argument.integer)
 		}
 	}
 	return {kind = .Record, record = bytes, file = item.file, detail = item.record}
@@ -728,7 +740,19 @@ record_build :: proc "contextless" (item: ^Command, arguments: []Value) -> Value
 // of the console, and the rights of a description limit nothing here.
 call_export :: proc "contextless" (item: ^Command, arguments: []Value) -> Value {
 	integers: [system.CALL_INTEGERS]u64
+	// A Table or Bytes parameter: the address of a table place over the
+	// memory of the value. A Change table changes it in place: a variable
+	// holds the changed rows after the call.
+	places: [ARGUMENT_CAPACITY]module.Table_Place
 	for &argument, index in arguments {
+		if index < int(item.parameter_count) && (item.parameters[index] == .Table || item.parameters[index] == .Bytes) {
+			bytes := argument.kind == .Text ? transmute([]u8)argument.text : argument.record
+			size, _, _ := isolated.table_record(item.file, module.Type(item.parameters[index]), item.function.parameter_details[index])
+			count := u64(len(bytes)) / max(size, 1)
+			places[index] = {address = u64(uintptr(raw_data(bytes))), count = count, capacity = count}
+			integers[index] = u64(uintptr(&places[index]))
+			continue
+		}
 		#partial switch argument.kind {
 		case .Text:
 			integers[index] = u64(uintptr(&argument.text))
@@ -1038,6 +1062,13 @@ call_isolated :: proc "contextless" (item: ^Command, arguments: []Value) -> Valu
 	encoded: [ARGUMENT_CAPACITY]isolated.Argument
 	for argument, index in arguments {
 		encoded[index] = {integer = u64(argument.integer), text = transmute([]u8)argument.text, record = argument.record}
+		// A Table or Bytes parameter: the records go into the call region,
+		// and those of a Change table come back.
+		if item.parameters[index] == .Table || item.parameters[index] == .Bytes {
+			bytes := argument.kind == .Text ? transmute([]u8)argument.text : argument.record
+			size, _, _ := isolated.table_record(item.file, module.Type(item.parameters[index]), item.function.parameter_details[index])
+			encoded[index].table = {records = bytes, count = u64(len(bytes)) / max(size, 1)}
+		}
 	}
 	// The handles: the other program receives a copy of each one, with the
 	// rights of the description, through the call ring.
@@ -1055,6 +1086,9 @@ call_isolated :: proc "contextless" (item: ^Command, arguments: []Value) -> Valu
 	}
 	offset, size, buffer, error_place, ok := isolated.encode(item.file, item.function, encoded[:len(arguments)], sandbox.region)
 	if !ok {
+		if missing := isolated.room_missing(item.file, item.function, encoded[:len(arguments)], u64(len(sandbox.region))); missing.parameter != 0 {
+			return fail("the table ", item.parameter_names[missing.parameter - 1], " of ", item.name, " has ", missing.needed, " bytes; the call region has ", missing.free, " bytes free for it")
+		}
 		return fail("the arguments of ", item.name, " do not fit in the call region")
 	}
 	sandbox.calls += 1
@@ -1077,6 +1111,10 @@ call_isolated :: proc "contextless" (item: ^Command, arguments: []Value) -> Valu
 			}
 			switch isolated.Status(completion.kind) {
 			case .Ok:
+				// The rows of a Change table come back into the memory of the value.
+				if problem, parameter := isolated.tables_return(item.file, item.function, encoded[:len(arguments)], sandbox.region, offset); problem != .None {
+					return fail("the program ", sandbox.name, " gave a wrong count for the table ", item.parameter_names[parameter - 1])
+				}
 				// A failure: the other program wrote the error record, values
 				// only, in the place that encode chose.
 				if error_place.count != 0 && i64(completion.values[0]) < 0 {

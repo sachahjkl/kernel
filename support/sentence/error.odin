@@ -298,6 +298,15 @@ error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record,
 		write_part(writer, "refused with the status ")
 		write_part(writer, record.found)
 		write_part(writer, ", and no more detail")
+	case .Outside:
+		write_part(writer, "record ")
+		write_part(writer, record.found)
+		write_part(writer, " of ")
+		subject(writer, record, argument)
+		write_part(writer, " names bytes up to offset ")
+		write_part(writer, record.value)
+		write_part(writer, "; the bytes have ")
+		amount(writer, record.limit, "bytes")
 	}
 }
 

@@ -17,6 +17,7 @@ Problem_Kind :: enum u32 {
 	Record    = 9, // A record description has a field outside the record, a field of no type, or more than 256 bytes.
 	Slot      = 10, // A slot names no import.
 	Refused   = 11, // The kernel refused a report: `value` is the status. The machine handle needs the right Inspect.
+	Direction = 12, // A direction of a parameter is not Read, Change or Append, or a parameter that is not a Table or Bytes has one.
 }
 
 @(rodata)
@@ -33,6 +34,7 @@ problem_names := [Problem_Kind]string {
 	.Record    = "record",
 	.Slot      = "slot",
 	.Refused   = "refused",
+	.Direction = "direction",
 }
 
 @(rodata)
@@ -109,6 +111,7 @@ problem_texts := [Problem_Kind]string {
 	.Record    = "the record description has a bad field",
 	.Slot      = "the slot names no import",
 	.Refused   = "the kernel refused the report",
+	.Direction = "a parameter has a direction that its type does not take",
 }
 
 // place gives the byte of the file where a field of record `index` of a
@@ -234,16 +237,29 @@ function_check :: proc "contextless" (file: []u8, index: u32, function: module.F
 		if value, limit, inside := text_inside(file, function.parameter_names[number], u32(function.parameter_name_counts[number])); !inside {
 			return {kind = .Text, table = .Functions, index = index, offset = at + u64(offset_of(module.Function, parameter_names)) + 4 * u64(number), value = value, limit = limit + 1}
 		}
-		if type == .None || type > .Handle {
-			return {kind = .Function, table = .Functions, index = index, offset = field, value = u64(type), limit = u64(module.Type.Handle) + 1}
+		if type == .None || type > .Bytes {
+			return {kind = .Function, table = .Functions, index = index, offset = field, value = u64(type), limit = u64(module.Type.Bytes) + 1}
 		}
-		if type == .Record {
-			if _, valid := module.record_type(file, function.parameter_details[number]); !valid {
-				return {kind = .Function, table = .Functions, index = index, offset = at + u64(offset_of(module.Function, parameter_details)) + 4 * u64(number), value = u64(function.parameter_details[number]), limit = u64(max(module.count(file, .Records), 1))}
+		detail_at := at + u64(offset_of(module.Function, parameter_details)) + 4 * u64(number)
+		if type == .Record || type == .Table {
+			described, valid := module.record_type(file, function.parameter_details[number])
+			if !valid {
+				return {kind = .Function, table = .Functions, index = index, offset = detail_at, value = u64(function.parameter_details[number]), limit = u64(max(module.count(file, .Records), 1))}
+			}
+			// A record of a table has no handle: one call lends at most 16.
+			if type == .Table && module.record_has_handle(file, described) {
+				return {kind = .Function, table = .Functions, index = index, offset = detail_at, value = u64(function.parameter_details[number])}
 			}
 		}
+		if type == .Bytes && function.parameter_details[number] != 0 {
+			return {kind = .Function, table = .Functions, index = index, offset = detail_at, value = u64(function.parameter_details[number]), limit = 1}
+		}
+		direction := function.parameter_directions[number]
+		if direction > max(module.Direction) || direction != .Read && type != .Table && type != .Bytes {
+			return {kind = .Direction, table = .Functions, index = index, offset = at + u64(offset_of(module.Function, parameter_directions)) + u64(number), value = u64(direction), limit = type == .Table || type == .Bytes ? u64(max(module.Direction)) + 1 : 1}
+		}
 	}
-	if function.result > .Table {
+	if function.result > .Table || function.result == .Bytes {
 		return {kind = .Function, table = .Functions, index = index, offset = at + u64(offset_of(module.Function, result)), value = u64(function.result), limit = u64(module.Type.Table) + 1}
 	}
 	if function.result == .Record || function.result == .Table {
@@ -286,6 +302,10 @@ record_check :: proc "contextless" (file: []u8, index: u32) -> Problem {
 		}
 		if u64(item.offset) + u64(size) > u64(described.size) {
 			return {kind = .Record, table = .Fields, index = field, offset = field_at + u64(offset_of(module.Field, offset)), value = u64(item.offset) + u64(size), limit = u64(described.size) + 1}
+		}
+		// An Integer is at a multiple of its size.
+		if item.type == .Integer && item.offset % size != 0 {
+			return {kind = .Record, table = .Fields, index = field, offset = field_at + u64(offset_of(module.Field, offset)), value = u64(item.offset), limit = u64(size)}
 		}
 	}
 	return {}

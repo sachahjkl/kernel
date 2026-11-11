@@ -216,10 +216,33 @@ export_serve :: proc "contextless" (file: []u8, base: u64, region: []u8, ring_me
 		completion.kind = u32(isolated.Status.Bad_Handle)
 		return completion
 	}
+	// A table in a memory object (form iii): map it for the time of the
+	// export, Write only for Change and Append, and check that the records
+	// are inside it.
+	mapped: [module.PARAMETER_CAPACITY]rawptr
+	defer for address_of_mapping in mapped {
+		if address_of_mapping != nil {
+			memory_unmap(address_of_mapping)
+		}
+	}
+	for item, index in prepared.mappings[:prepared.mapping_count] {
+		memory := Handle(item.handle)
+		start, status := memory_map(memory, item.write ? {.Write} : {})
+		object_size := memory_size(memory) * PAGE_SIZE
+		if status == .Ok {
+			mapped[index] = start
+		}
+		if status != .Ok || item.start > object_size || item.size > object_size - item.start {
+			completion.kind = u32(isolated.Status.Bad_Arguments)
+			return completion
+		}
+		prepared.places[item.parameter].address = u64(uintptr(start)) + item.start
+	}
 	floats: [CALL_FLOATS]u64
 	out: [CALL_RESULTS]u64
 	export_call(address, &prepared.registers, &floats, &out)
 	isolated.result_store(function, &prepared, region)
+	isolated.counts_store(function, &prepared, region)
 	// A failure: the error record names the export. The export does not
 	// know its own number.
 	if prepared.error.count != 0 && i64(out[0]) < 0 {
@@ -241,8 +264,9 @@ Lending :: struct {
 }
 
 // lend prepares the handles of the arguments of an isolated call: the
-// caller side of module.Type.Handle. For each Handle argument, and for each
-// Handle field of each Record argument, it makes a copy of the handle in
+// caller side of module.Type.Handle. For each Handle argument, for each
+// Handle field of each Record argument, and for the memory object of each
+// table argument that names one (Table_Argument.memory), it makes a copy of the handle in
 // this program with the rights of the description, and gives the receiver
 // a handle that comes from the copy, through the call ring. It writes the
 // handle of the receiver in place of the handle of the caller: give it
@@ -286,6 +310,17 @@ lend :: proc "contextless" (file: []u8, function: module.Function, arguments: []
 				break each
 			}
 			arguments[index].integer = u64(result)
+		case .Table, .Bytes:
+			// A table in a memory object: the rights of the copy are the
+			// direction (property 20).
+			if arguments[index].table.memory != 0 {
+				result: Handle
+				result, status = one(ring_memory, Handle(arguments[index].table.memory), isolated.direction_rights(function.parameter_directions[index]), lending)
+				if status != .Ok {
+					break each
+				}
+				arguments[index].table.memory = u64(result)
+			}
 		case .Record:
 			described, ok := module.record_type(file, function.parameter_details[index])
 			if !ok || len(arguments[index].record) != int(described.size) {

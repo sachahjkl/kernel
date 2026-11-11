@@ -98,6 +98,7 @@ module_builds := [?]Module_Build {
 	{name = "imports", source = "programs/imports", imports = {"calendar"}, image = true},
 	{name = "errors", source = "programs/errors", image = true},
 	{name = "interface_elements", source = "programs/interface_elements", image = true},
+	{name = "tables", source = "programs/tables", image = true},
 	{name = "vector_glyphs", source = "programs/vector_glyphs", image = true},
 	{name = "pointers", source = "programs/pointers", image = true},
 	{name = "settings", source = "programs/settings", image = true},
@@ -386,6 +387,7 @@ test_descriptions :: proc() -> bool {
 		.Record  = "Record",
 		.Handle  = "Handle",
 		.Table   = "Table",
+		.Bytes   = "Bytes",
 	}
 	for build in module_builds {
 		file := read_file(module_path(build.name)) or_return
@@ -418,6 +420,7 @@ test_descriptions :: proc() -> bool {
 				parameter_name := module.string_at(file, function.parameter_names[parameter], u32(function.parameter_name_counts[parameter]))
 				agree &&= function.parameters[parameter] == description.parameters[parameter] && parameter_name == description.names[parameter]
 				agree &&= function.parameter_details[parameter] == description.details[parameter]
+				agree &&= function.parameter_directions[parameter] == description.directions[parameter]
 				fmt.sbprintf(&last, "%s%s: %s", parameter > 0 ? ", " : "", parameter_name, type_names[function.parameters[parameter]])
 			}
 			fmt.sbprintf(&last, ") -> %s", type_names[description.result])
@@ -438,7 +441,7 @@ test_descriptions :: proc() -> bool {
 			fmt.sbprintf(&layout, "%s {{", item.name)
 			for field, number in (agree ? item.fields : nil) {
 				stored, _ := module.field(file, record, u32(number))
-				agree &&= module.string_at(file, stored.name_offset, stored.name_count) == field.name && stored.offset == field.offset && stored.type == field.type && stored.detail == field.detail
+				agree &&= module.string_at(file, stored.name_offset, stored.name_count) == field.name && stored.offset == field.offset && stored.type == field.type && stored.detail == field.detail && stored.unsigned == field.unsigned
 				fmt.sbprintf(&layout, "%s%s: %s at %d", number > 0 ? ", " : "", field.name, type_names[field.type], field.offset)
 			}
 			if !agree {
