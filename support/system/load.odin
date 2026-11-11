@@ -724,6 +724,15 @@ program_start :: proc "contextless" (file: []u8, name: string, grants: [op.CONTE
 	if len(file) == 0 || module.validate(file) != .None || grants[op.CONTEXT_BUDGET].handle != 0 {
 		return 0, .Bad_Operation
 	}
+	// Each program has a random seed from its starter (docs/RANDOMNESS.md):
+	// a starter that forgot it does not start a program with no seed.
+	seed_given: u64
+	for index in 0 ..< op.CONTEXT_VALUE_SEED_COUNT {
+		seed_given |= values[op.CONTEXT_VALUE_SEED + index]
+	}
+	if seed_given == 0 {
+		return 0, .Bad_Operation
+	}
 	head, _ := module.header(file)
 	entry, has_entry := module.export_address(file, op.PROGRAM_BASE, head.entry_export)
 	if !has_entry {

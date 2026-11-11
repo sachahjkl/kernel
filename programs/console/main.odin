@@ -14,6 +14,7 @@
 package console
 
 import "support:display"
+import "support:random"
 import "support:system"
 import "support:terminal"
 import "base:intrinsics"
@@ -61,8 +62,17 @@ line_tone: terminal.Tone // The tone of the output line that the console writes 
 
 ctx: ^system.Context
 
+// The random generator of this program (support/random).
+program_generator: random.Generator
+
 @(export, link_name = "entry")
 entry :: proc "c" (start_context: ^system.Context) -> ! {
+	// The random generator of this program, from the seed that its starter
+	// gave: it gives the seed of each program that this one starts.
+	if !random.generator_from_context(&program_generator, start_context) {
+		system.log("console: no random seed in the context")
+		system.stop(1)
+	}
 	ctx = start_context
 	ok: bool
 	if output, ok = terminal.open(ctx); !ok {

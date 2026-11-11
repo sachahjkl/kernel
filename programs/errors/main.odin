@@ -15,6 +15,7 @@ import "support:interface"
 import "support:storage"
 import "support:terminal"
 import "contract:ring"
+import "support:random"
 import "support:system"
 import "base:intrinsics"
 
@@ -468,7 +469,7 @@ last_fault: system.Handle // The program fault of the last run of its case.
 // calls deep, and reads its stop report: the stack trace.
 case_fault :: proc "contextless" (writer: ^system.Writer) -> bool {
 	error: module.Load_Error
-	program, status := system.program_start(system.image_find(image, "fault"), "fault", {}, {}, {pages = 256, programs = 1, threads = 1, processor = 100_000, log_records = 10}, nil, nil, {image = image}, &error)
+	program, status := system.program_start(system.image_find(image, "fault"), "fault", {}, random.values_with_seed(&program_generator, {}), {pages = 256, programs = 1, threads = 1, processor = 100_000, log_records = 10}, nil, nil, {image = image}, &error)
 	if status != .Ok {
 		system.write_part(writer, "the program fault did not start")
 		return false
@@ -659,7 +660,7 @@ refusals :: proc "contextless" (ctx: ^system.Context) {
 	mappings := [1]system.Mapping{{memory = memory, address = MEASURE_ADDRESS, flags = {.Write}}}
 	control, frame := lock_takes(machine)
 	error: module.Load_Error
-	program, status := system.program_start(system.image_find(image, "errors"), "errors child", grants, values, {pages = 256, programs = 1, threads = 1, processor = 1_000_000, log_records = 0}, mappings[:], nil, {image = image}, &error)
+	program, status := system.program_start(system.image_find(image, "errors"), "errors child", grants, random.values_with_seed(&program_generator, values), {pages = 256, programs = 1, threads = 1, processor = 1_000_000, log_records = 0}, mappings[:], nil, {image = image}, &error)
 	if status == .Ok {
 		for intrinsics.atomic_load(&page.done) == 0 {
 			if state, _ := system.program_state(program); state == .Stopped {
@@ -811,8 +812,17 @@ contend :: proc "contextless" () -> bool {
 key_names := "abcdefghijklmnopqrstuvwxyz0123456789"
 FAULT_CASE :: 18
 
+// The random generator of this program (support/random).
+program_generator: random.Generator
+
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
+	// The random generator of this program, from the seed that its starter
+	// gave: it gives the seed of each program that this one starts.
+	if !random.generator_from_context(&program_generator, ctx) {
+		system.log("errors: no random seed in the context")
+		system.stop(1)
+	}
 	if ctx.values[VALUE_CHILD] != 0 {
 		child(ctx)
 	}

@@ -15,6 +15,7 @@ import "support:display"
 import "support:graphics"
 import "support:interface"
 import op "contract:operation"
+import "support:random"
 import "support:system"
 import "support:twins"
 
@@ -105,7 +106,7 @@ twin_start :: proc "contextless" (name: string, mode: u64, table: ^system.Prepar
 	if page != 0 {
 		grants[twins.GRANT_PAGE] = {page, {.Read, .Write}}
 	}
-	return system.program_start(system.image_find(image, "twin"), name, grants, values, TWIN_AMOUNTS, nil, table)
+	return system.program_start(system.image_find(image, "twin"), name, grants, random.values_with_seed(&program_generator, values), TWIN_AMOUNTS, nil, table)
 }
 
 // stop_code waits until a program stops, at most 5 seconds, and gives its code.
@@ -256,8 +257,17 @@ shared_code_cases :: proc "contextless" () {
 	system.log("frames: 4 twins: ", own_paid, " pages with a copy of the module each, ", shared_paid, " pages with the shared code (", shared_pages, " pages of the module, once)")
 }
 
+// The random generator of this program (support/random).
+program_generator: random.Generator
+
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
+	// The random generator of this program, from the seed that its starter
+	// gave: it gives the seed of each program that this one starts.
+	if !random.generator_from_context(&program_generator, ctx) {
+		system.log("frames: no random seed in the context")
+		system.stop(1)
+	}
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "frames")
 	if !ok {
 		system.stop(1)

@@ -16,6 +16,7 @@ import "support:graphics"
 import "support:interface"
 import module "contract:module"
 import op "contract:operation"
+import "support:random"
 import "support:system"
 
 // The window is built with the interface package (docs/INTERFACE.md).
@@ -185,8 +186,17 @@ own_replaced :: proc "contextless" () -> (replaced: bool, found: bool) {
 }
 module_report: op.Module_Report
 
+// The random generator of this program (support/random).
+program_generator: random.Generator
+
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
+	// The random generator of this program, from the seed that its starter
+	// gave: it gives the seed of each program that this one starts.
+	if !random.generator_from_context(&program_generator, ctx) {
+		system.log("imports: no random seed in the context")
+		system.stop(1)
+	}
 	// A program that this program started to share calendar: it waits.
 	if ctx.values[VALUE_CHILD] != 0 {
 		for {
@@ -285,8 +295,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		values[VALUE_CHILD] = 1
 		amounts := system.Budget_Amounts{pages = 256, programs = 1, threads = 1, processor = 10_000, log_records = 10}
 		own := system.image_find(image, "imports")
-		first_program, first_status := system.program_start(own, "imports child", {}, values, amounts, nil, &table, {image = image}, &error)
-		second_program, second_status := system.program_start(agenda, "agenda", {}, {}, amounts, nil, &table, {image = image}, &error)
+		first_program, first_status := system.program_start(own, "imports child", {}, random.values_with_seed(&program_generator, values), amounts, nil, &table, {image = image}, &error)
+		second_program, second_status := system.program_start(agenda, "agenda", {}, random.values_with_seed(&program_generator, {}), amounts, nil, &table, {image = image}, &error)
 		copies, mappings, pages: u64
 		for &item in table.modules {
 			if item.memory != 0 && item.hash == hash_of("calendar") && item.part == .Code {

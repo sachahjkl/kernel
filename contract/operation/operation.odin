@@ -719,6 +719,11 @@ Context :: struct {
 // The two roles that the system fixes for each program. A handle that the
 // program was not granted is 0.
 CONTEXT_LOG :: 14 // The log of the kernel.
+// The values 12 to 15: the random seed of the program, 32 bytes, that its
+// starter writes (docs/RANDOMNESS.md). A start with a seed of zeros is
+// refused. The root service has none: it gathers its own.
+CONTEXT_VALUE_SEED :: 12
+CONTEXT_VALUE_SEED_COUNT :: 4
 CONTEXT_BUDGET :: 15 // The budget of the program.
 // The value that the root service fixes for each program that it starts
 // with a surface or a terminal: values[13] is the address of the settings

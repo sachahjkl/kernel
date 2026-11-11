@@ -226,11 +226,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 	fact(inside, 40, "new connections", best_new_connection_rate == 0 ? "" : system.format(buffer[:], best_new_connection_rate, " requests in 1 s, the best"), graphics.COLOR_MACHINE, MEASURES_VALUE_COLUMN)
 	fact(inside, 60, "one second", best_second_requests == 0 ? "" : system.format(buffer[:], best_second_requests, " requests at most"), graphics.COLOR_MACHINE, MEASURES_VALUE_COLUMN)
 	fact(inside, 80, "one draw", draw_time == 0 ? "" : time_text(buffer[:], draw_time), graphics.COLOR_TEXT, MEASURES_VALUE_COLUMN)
-	if secret_weak {
-		fact(inside, 100, "ISN secret", "weak: the cycle counter", graphics.COLOR_FAILED, MEASURES_VALUE_COLUMN)
-	} else {
-		fact(inside, 100, "ISN secret", secret_source, graphics.COLOR_TEXT, MEASURES_VALUE_COLUMN)
-	}
+	fact(inside, 100, "ISN secret", system.format(buffer[:], "support/random, ", program_generator.served, " bytes drawn"), graphics.COLOR_TEXT, MEASURES_VALUE_COLUMN)
 
 	// The connection table, live, then the connections that ended.
 	inside = card(canvas, 8, 176, 536, 488, "CONNECTIONS", "tcp.Connection", graphics.COLOR_PROGRAM)
