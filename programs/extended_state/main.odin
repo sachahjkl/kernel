@@ -29,9 +29,9 @@ import "support:system"
 LINE :: interface.TABLE_LINE
 WIDTH :: 1024
 HEIGHT :: 720
-WORKER_CAPACITY :: 18 // The budget of the program has 19 threads: the main thread and these.
+WORKER_CAPACITY :: 31 // A program has 32 threads at most: the main thread and these. Its budget has 32.
 RUN_MILLISECONDS :: 3000 // How long the threads hold their registers.
-ROUNDS :: 16 // Kernel entries in one pass.
+ROUNDS :: 16 // Kernel entries in one pass: above the round where the x87 control word changes alone (registers.asm).
 SPINS :: 20_000 // Loops between two entries: the timer interrupts some of them.
 MEASURE_ENTRIES :: 100_000
 LOG_WRONG_LIMIT :: 16 // Lines of wrong registers on the log, for all threads.
@@ -39,28 +39,36 @@ LOG_WRONG_LIMIT :: 16 // Lines of wrong registers on the log, for all threads.
 // The registers of one pass: the layout of registers.asm.
 Register_Image :: struct #align (64) {
 	vectors:     [32][64]u8, // Register n at n * 64: xmm uses 16 bytes, ymm 32, zmm 64.
-	opmasks:     [8]u64, // kmovw: the low 16 bits.
+	opmasks:     [8]u64, // kmovw: the low 16 bits; kmovq: all 64.
 	x87:         [8]i64, // In the order of the loads: the last is the top of the stack.
-	x87_control: u16,
-	padding:     u16,
-	mxcsr:       u32,
+	// The x87 control word and MXCSR: the first values are loaded at the
+	// start of a pass; in the middle of the pass each one changes alone to
+	// its second value, which is the one expected at the end.
+	x87_control:       u16,
+	x87_control_first: u16,
+	mxcsr:             u32,
+	mxcsr_first:       u32,
 }
 #assert(offset_of(Register_Image, opmasks) == 2048)
 #assert(offset_of(Register_Image, x87) == 2112)
 #assert(offset_of(Register_Image, x87_control) == 2176)
+#assert(offset_of(Register_Image, x87_control_first) == 2178)
 #assert(offset_of(Register_Image, mxcsr) == 2180)
+#assert(offset_of(Register_Image, mxcsr_first) == 2184)
 
 Level :: enum u64 {
 	Sse     = 0, // xmm0 to xmm15
 	Avx     = 1, // ymm0 to ymm15
-	Avx_512 = 2, // zmm0 to zmm31, k0 to k7
+	Avx_512 = 2, // zmm0 to zmm31, k0 to k7 (16 bits of each: AVX-512 F)
+	Avx_512_With_Wide_Opmasks = 3, // The same, 64 bits of each opmask (AVX-512 BW)
 }
 
 @(rodata)
 level_names := [Level]string {
 	.Sse     = "xmm0 to xmm15",
 	.Avx     = "ymm0 to ymm15",
-	.Avx_512 = "zmm0 to zmm31 and k0 to k7",
+	.Avx_512 = "zmm0 to zmm31 and k0 to k7 (16 bits)",
+	.Avx_512_With_Wide_Opmasks = "zmm0 to zmm31 and k0 to k7 (64 bits)",
 }
 
 foreign _ {
@@ -133,7 +141,7 @@ pattern_fill :: proc "contextless" (image: ^Register_Image, thread: u32, pass: u
 		}
 	}
 	for &value, index in image.opmasks {
-		value = mix(seed ~ 0x1_0000 ~ u64(index)) & 0xFFFF
+		value = mix(seed ~ 0x1_0000 ~ u64(index))
 	}
 	for &value, index in image.x87 {
 		value = i64(mix(seed ~ 0x2_0000 ~ u64(index)))
@@ -143,8 +151,11 @@ pattern_fill :: proc "contextless" (image: ^Register_Image, thread: u32, pass: u
 	}
 	turn := u64(thread) + pass
 	// Only the rounding control changes: every exception stays masked.
-	image.x87_control = 0x037F | u16(turn & 3) << 10
-	image.mxcsr = 0x1F80 | u32(turn & 3) << 13 | u32(thread & 1) << 15 // Rounding control; flush to zero.
+	image.x87_control_first = 0x037F | u16(turn & 3) << 10
+	image.mxcsr_first = 0x1F80 | u32(turn & 3) << 13 | u32(thread & 1) << 15 // Rounding control; flush to zero.
+	// The second values: another rounding control, the rest the same.
+	image.x87_control = image.x87_control_first ~ 1 << 10
+	image.mxcsr = image.mxcsr_first ~ 1 << 13
 }
 
 vector_width :: proc "contextless" (level: Level) -> int {
@@ -153,21 +164,27 @@ vector_width :: proc "contextless" (level: Level) -> int {
 		return 16
 	case .Avx:
 		return 32
-	case .Avx_512:
+	case .Avx_512, .Avx_512_With_Wide_Opmasks:
 		return 64
 	}
 	return 16
 }
 
 vector_count :: proc "contextless" (level: Level) -> int {
-	return level == .Avx_512 ? 32 : 16
+	return level >= .Avx_512 ? 32 : 16
+}
+
+// opmask_mask gives the bits of each opmask register that the test moves:
+// kmovw moves 16, kmovq 64.
+opmask_mask :: proc "contextless" () -> u64 {
+	return held_level == .Avx_512_With_Wide_Opmasks ? max(u64) : 0xFFFF
 }
 
 register_name :: proc "contextless" (builder: ^interface.Text_Builder, kind: Register_Kind, index: int) -> string {
 	builder.count = 0
 	switch kind {
 	case .Vector:
-		interface.text_put(builder, held_level == .Avx_512 ? "zmm" : (held_level == .Avx ? "ymm" : "xmm"))
+		interface.text_put(builder, held_level >= .Avx_512 ? "zmm" : (held_level == .Avx ? "ymm" : "xmm"))
 		interface.text_put_number(builder, u64(index))
 	case .Opmask:
 		interface.text_put(builder, "k")
@@ -213,10 +230,11 @@ pass_compare :: proc "contextless" (worker: ^Worker, pass: u64) {
 			}
 		}
 	}
-	if held_level == .Avx_512 {
+	if held_level >= .Avx_512 {
+		mask := opmask_mask()
 		for index in 0 ..< 8 {
-			if expected.opmasks[index] & 0xFFFF != seen.opmasks[index] & 0xFFFF {
-				wrong_note(worker, .Opmask, index, pass, expected.opmasks[index] & 0xFFFF, seen.opmasks[index] & 0xFFFF, "pass")
+			if expected.opmasks[index] & mask != seen.opmasks[index] & mask {
+				wrong_note(worker, .Opmask, index, pass, expected.opmasks[index] & mask, seen.opmasks[index] & mask, "pass")
 			}
 		}
 	}
@@ -246,7 +264,7 @@ start_state_check :: proc "contextless" (worker: ^Worker) {
 		}
 	}
 	for &value in seen.opmasks {
-		value = 0xA5A5
+		value = 0xA5A5_A5A5_A5A5_A5A5
 	}
 	registers_store(seen, held_level)
 	wrong: u64
@@ -265,9 +283,9 @@ start_state_check :: proc "contextless" (worker: ^Worker) {
 			}
 		}
 	}
-	if held_level == .Avx_512 {
+	if held_level >= .Avx_512 {
 		for index in 0 ..< 8 {
-			if value := seen.opmasks[index] & 0xFFFF; value != 0 {
+			if value := seen.opmasks[index] & opmask_mask(); value != 0 {
 				note(worker, &wrong, .Opmask, index, 0, value)
 			}
 		}
@@ -309,7 +327,8 @@ entry_measure :: proc "contextless" () {
 	image: Register_Image
 	pattern_fill(&image, 99, 1)
 	for measured in Level {
-		if measured > held_level {
+		// The wide opmasks are the same state component: no other measure.
+		if measured > held_level || measured == .Avx_512_With_Wide_Opmasks {
 			break
 		}
 		before := system.nanoseconds()
@@ -343,9 +362,9 @@ components_text :: proc "contextless" (builder: ^interface.Text_Builder, compone
 	if sets.AVX_512_COMPONENTS <= components {
 		interface.text_put(builder, ", AVX-512")
 	}
-	interface.text_put(builder, "; ")
+	interface.text_put(builder, "; one save writes at most ")
 	interface.text_put_number(builder, u64(facts.saved_area_size))
-	interface.text_put(builder, " bytes for each thread")
+	interface.text_put(builder, " bytes")
 	return interface.text_of(builder)
 }
 
@@ -372,17 +391,23 @@ draw :: proc "contextless" (window: ^display.Window) {
 	interface.text_put(&builder, ", the x87 stack and MXCSR")
 	content = interface.card(&frame, {8, 168, WIDTH - 16, 384}, "EACH REGISTER OF EACH THREAD", interface.text_of(&builder), graphics.COLOR_PROGRAM)
 	column = interface.column_of(content)
-	SQUARE :: 10
-	ROW :: 16
+	// A row of 16 pixels has room for a line of text. More threads than
+	// 21 (a machine with more than 19 processors) get rows of 11 pixels
+	// with the squares only; the log has their counts.
+	with_text := worker_count * 16 <= content.height - LINE
+	row_height := with_text ? 16 : 11
+	square_size := with_text ? 10 : 8
 	for &worker, index in workers[:worker_count] {
-		if index * ROW >= content.height - ROW {
+		if (index + 1) * row_height > content.height - LINE {
 			break
 		}
-		row := interface.column_take(&column, ROW)
-		builder.count = 0
-		interface.text_put(&builder, "thread ")
-		interface.text_put_number(&builder, u64(worker.number))
-		interface.draw_text(frame.table, row.x, row.y, interface.text_of(&builder), graphics.COLOR_DIM)
+		row := interface.column_take(&column, row_height)
+		if with_text {
+			builder.count = 0
+			interface.text_put(&builder, "thread ")
+			interface.text_put_number(&builder, u64(worker.number))
+			interface.draw_text(frame.table, row.x, row.y, interface.text_of(&builder), graphics.COLOR_DIM)
+		}
 		done := intrinsics.atomic_load(&worker.done)
 		x := row.x + 96
 		for register in 0 ..< 32 {
@@ -390,18 +415,21 @@ draw :: proc "contextless" (window: ^display.Window) {
 			if register < vector_count(held_level) {
 				color = worker.wrong_vectors & (1 << u32(register)) != 0 ? graphics.COLOR_FAILED : (done ? graphics.COLOR_PROGRAM : graphics.COLOR_TRACK)
 			}
-			interface.mark(&frame, x + register * (SQUARE + 2), row.y + 2, SQUARE, color)
+			interface.mark(&frame, x + register * (square_size + 2), row.y + 2, square_size, color)
 		}
-		x += 32 * (SQUARE + 2) + 8
+		x += 32 * (square_size + 2) + 8
 		others := [?]Register_Kind{.Opmask, .X87, .X87_Control, .Mxcsr}
 		for kind, place in others {
 			color: graphics.Color = graphics.COLOR_NOT_USABLE
-			if kind != .Opmask || held_level == .Avx_512 {
+			if kind != .Opmask || held_level >= .Avx_512 {
 				color = worker.wrong_others & (1 << u8(kind)) != 0 ? graphics.COLOR_FAILED : (done ? graphics.COLOR_PROGRAM : graphics.COLOR_TRACK)
 			}
-			interface.mark(&frame, x + place * (SQUARE + 2), row.y + 2, SQUARE, color)
+			interface.mark(&frame, x + place * (square_size + 2), row.y + 2, square_size, color)
 		}
-		x += 4 * (SQUARE + 2) + 16
+		x += 4 * (square_size + 2) + 16
+		if !with_text {
+			continue
+		}
 		builder.count = 0
 		interface.text_put_number(&builder, intrinsics.atomic_load(&worker.passes))
 		interface.text_put(&builder, " passes, ")
@@ -418,6 +446,9 @@ draw :: proc "contextless" (window: ^display.Window) {
 	content = interface.card(&frame, {8, 560, WIDTH - 16, HEIGHT - 568}, "ONE EMPTY KERNEL ENTRY", "a syscall with no command and no wait, 100000 times, after the test", graphics.COLOR_MACHINE)
 	column = interface.column_of(content)
 	for measured in Level {
+		if measured == .Avx_512_With_Wide_Opmasks {
+			continue
+		}
 		builder.count = 0
 		if entry_nanoseconds[measured] == 0 {
 			interface.text_put(&builder, measured > held_level ? "not usable here" : "not measured yet")
@@ -449,6 +480,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if .Avx512_F in usable {
 		held_level = .Avx_512
 	}
+	if .Avx512_Bw in usable {
+		held_level = .Avx_512_With_Wide_Opmasks
+	}
 	builder, second_builder, third_builder: interface.Text_Builder
 	system.log("extended_state: the kernel saves ", components_text(&builder, sets.saved_components(facts)))
 	system.log("extended_state: the usable instruction sets: ", sets_text(&builder, usable, .Sse, .Pclmulqdq), "; ", sets_text(&second_builder, usable, .Avx, .Avx512_Vl), "; ", sets_text(&third_builder, usable, .Popcnt, .Bmi2))
@@ -458,6 +492,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 
 	processor_count = max(system.thread_record().processors, 1)
 	worker_count = min(int(processor_count) + 2, WORKER_CAPACITY)
+	if worker_count < int(processor_count) + 2 {
+		// A program has 32 threads: on a larger machine some processors run
+		// no thread of the test, and the threads still move at each wait.
+		system.log("extended_state: ", u64(processor_count), " processors: ", u64(worker_count), " threads, the most that a program can have, fewer than the processors plus two")
+	}
 	start_time = system.time()
 	for index in 0 ..< worker_count {
 		worker := &workers[index]

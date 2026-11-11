@@ -44,19 +44,33 @@ HEADER_OFFSET :: 512 // XSTATE_BV, then XCOMP_BV, then reserved bytes.
 X87_CONTROL_START :: 0x037F // Every exception masked, 64-bit precision, round to nearest.
 MXCSR_START :: 0x1F80 // Every exception masked, round to nearest.
 
+// How the entry from a program and the resume save and restore the
+// extended state. processor.asm reads it in the processor record.
+Extended_State_Form :: enum u8 {
+	Fxsave                  = 0, // fxsave64 and fxrstor64: the processor has no xsave or no xsaveopt.
+	Xsaveopt                = 1, // xsaveopt64 and xrstor64.
+	// The same, and vzeroupper after the save: the kernel's own SSE code
+	// then does not run with the high halves of a program's ymm registers
+	// in use, which costs a transition or a false dependency on each
+	// legacy SSE instruction. The high halves are saved already.
+	Xsaveopt_And_Vzeroupper = 2,
+}
+
 foreign _ {
-	// 1: the entry and the resume use xsaveopt64 and xrstor64; 0: fxsave64
-	// and fxrstor64. The first processor writes it before any program runs.
-	extended_state_uses_xsave: u8
 	// xsetbv: XCR0 when register is 0. CR4.OSXSAVE must be set before.
 	extended_control_register_write :: proc "c" (register: u32, value: u64) ---
 	// The same save and restore as the entry and the resume, for the
-	// proof of the start state at boot.
+	// proofs at boot. They read the form through the gs register.
 	extended_state_save :: proc "c" (area: ^Extended_State_Area) ---
 	extended_state_restore :: proc "c" (area: ^Extended_State_Area) ---
+	// The restore of the entry, then a read of the x87 control word, MXCSR,
+	// the low 8 bytes of xmm0 and, with with_avx, bytes 16 to 23 of ymm0, in
+	// that order, at read: one routine, so no compiled code runs between.
+	extended_state_restore_and_read :: proc "c" (area: ^Extended_State_Area, read: ^[4]u64, with_avx: bool) ---
 }
 
 // What the first processor chose. Read-only after its setup.
+extended_state_form: Extended_State_Form
 extended_state_components: Extended_State_Components
 extended_state_size: u64 // The bytes of the area that a save writes at most.
 // The offset and the size of each component above SSE, from CPUID leaf 0xD:
@@ -113,7 +127,7 @@ extended_state_first_setup :: proc "contextless" () {
 	extended_state_size = LEGACY_AREA_SIZE
 	if !with_xsave {
 		cr4_write(cr4 &~ CR4_OSXSAVE)
-		extended_state_uses_xsave = 0
+		extended_state_form = .Fxsave
 		return
 	}
 	cr4_write(cr4 | CR4_OSXSAVE)
@@ -129,7 +143,7 @@ extended_state_first_setup :: proc "contextless" () {
 		}
 	}
 	extended_state_layout = extended_state_layout_read(extended_state_components)
-	extended_state_uses_xsave = 1
+	extended_state_form = .Avx in extended_state_components ? Extended_State_Form.Xsaveopt_And_Vzeroupper : Extended_State_Form.Xsaveopt
 }
 
 // extended_state_other_setup sets on another processor the control
@@ -137,7 +151,7 @@ extended_state_first_setup :: proc "contextless" () {
 // save the same components in the same form, and must not run threads.
 extended_state_other_setup :: proc "contextless" () -> bool {
 	cr4 := cr4_read() | CR4_OSFXSR | CR4_OSXMMEXCPT
-	if extended_state_uses_xsave == 0 {
+	if extended_state_form == .Fxsave {
 		cr4_write(cr4 &~ CR4_OSXSAVE)
 		return true
 	}
@@ -165,37 +179,74 @@ extended_state_start :: proc "contextless" (area: ^Extended_State_Area) {
 	(^u64)(&area.bytes[HEADER_OFFSET])^ = transmute(u64)LEGACY_COMPONENTS
 }
 
-// The two areas of the proof of the start state. Only the first processor
-// uses them, once, before any program runs.
+// The areas of the proofs at boot. Only the first processor uses them,
+// once, before any program runs.
 start_state_proof: [2]Extended_State_Area
 
-// extended_state_prove restores the start state on the first processor and
-// saves it again. A start state that the processor refuses faults here, at
-// boot, not at the first resume of a program; a start state that the
-// processor reads otherwise stops the machine with a sentence.
-// xsaveopt does not write a component in its init state, and the x87 and
-// SSE parts of the start state are their init state: so the save goes over
-// a copy of the start state, and what it writes must be the same.
+// Values that are not the init state, for the proof of the offsets.
+PROOF_X87_CONTROL :: 0x027F // 53-bit precision: every exception masked.
+PROOF_MXCSR :: 0x3F80 // Round down: every exception masked, no reserved bit.
+PROOF_XMM0 :: 0x0123_4567_89AB_CDEF
+PROOF_YMM0_HIGH :: 0xFEDC_BA98_7654_3210
+XMM0_OFFSET :: 160
+
+// extended_state_prove runs two proofs on the first processor, after its
+// setup and before any program runs. A failed proof stops the machine with
+// a sentence; a restore that the processor refuses faults here, at boot.
+//
+// 1. The offsets: it restores an area with an x87 control word, an MXCSR,
+// xmm0 and the high half of ymm0 that are not their init state, and reads
+// the registers back. So the processor reads these places where the start
+// state writes them.
+// 2. The start state: it restores the start state and saves it again. This
+// shows that the start state does not fault and that the header that the
+// save writes has no bit outside XCR0. It does not show the values: x87 and
+// SSE in the start state are their init state, and xsaveopt does not write
+// a component in its init state; the save goes over a copy of the start
+// state, so the bytes that it does not write are the right ones.
 extended_state_prove :: proc "contextless" () {
-	start := &start_state_proof[0]
-	saved := &start_state_proof[1]
-	extended_state_start(start)
-	extended_state_start(saved)
-	extended_state_restore(start)
-	extended_state_save(saved)
-	control := (^u16)(&saved.bytes[X87_CONTROL_OFFSET])^
-	mxcsr := (^u32)(&saved.bytes[MXCSR_OFFSET])^
-	header := (^u64)(&saved.bytes[HEADER_OFFSET])^
-	if control != X87_CONTROL_START || mxcsr != MXCSR_START || (extended_state_uses_xsave != 0 && header &~ transmute(u64)extended_state_components != 0) {
+	first := &start_state_proof[0]
+	second := &start_state_proof[1]
+
+	with_avx := .Avx in extended_state_components
+	extended_state_start(first)
+	(^u16)(&first.bytes[X87_CONTROL_OFFSET])^ = PROOF_X87_CONTROL
+	(^u32)(&first.bytes[MXCSR_OFFSET])^ = PROOF_MXCSR
+	(^u64)(&first.bytes[XMM0_OFFSET])^ = PROOF_XMM0
+	if with_avx {
+		// The high half of ymm0 is at the start of the AVX component.
+		avx_offset := extended_state_layout[int(Extended_State_Component.Avx)][0]
+		(^u64)(&first.bytes[avx_offset])^ = PROOF_YMM0_HIGH
+		(^u64)(&first.bytes[HEADER_OFFSET])^ = transmute(u64)(LEGACY_COMPONENTS + {.Avx})
+	}
+	read: [4]u64
+	extended_state_restore_and_read(first, &read, with_avx)
+	extended_state_start(first)
+	extended_state_restore(first) // The registers of the kernel go back to the start state.
+	if read[0] & 0xFFFF != PROOF_X87_CONTROL || read[1] & 0xFFFF_FFFF != PROOF_MXCSR || read[2] != PROOF_XMM0 || (with_avx && read[3] != PROOF_YMM0_HIGH) {
+		log("kernel: extended state: the processor does not read the area where the kernel writes it: x87 control ", Hex(read[0] & 0xFFFF), ", MXCSR ", Hex(read[1] & 0xFFFF_FFFF), ", xmm0 ", Hex(read[2]), ", ymm0 high ", Hex(read[3]))
+		machine_stop(1)
+	}
+
+	extended_state_start(first)
+	extended_state_start(second)
+	extended_state_restore(first)
+	extended_state_save(second)
+	control := (^u16)(&second.bytes[X87_CONTROL_OFFSET])^
+	mxcsr := (^u32)(&second.bytes[MXCSR_OFFSET])^
+	header := (^u64)(&second.bytes[HEADER_OFFSET])^
+	if control != X87_CONTROL_START || mxcsr != MXCSR_START || (extended_state_form != .Fxsave && header &~ transmute(u64)extended_state_components != 0) {
 		log("kernel: extended state: the processor does not give back the start state of a thread: x87 control ", Hex(u64(control)), ", MXCSR ", Hex(u64(mxcsr)), ", XSTATE_BV ", Hex(header))
 		machine_stop(1)
 	}
 }
 
-// extended_state_log writes what the first processor chose.
+// extended_state_log writes what the first processor chose: the
+// components, what one save writes at most, and the fixed area of each
+// thread entry.
 extended_state_log :: proc "contextless" () {
 	avx := .Avx in extended_state_components ? ", AVX" : ""
 	avx_512 := AVX_512_COMPONENTS <= extended_state_components ? ", AVX-512" : ""
-	how := extended_state_uses_xsave != 0 ? " bytes for each thread, saved with xsaveopt" : " bytes for each thread, saved with fxsave: the processor has no xsave or no xsaveopt"
-	log("kernel: extended state: x87, SSE", avx, avx_512, ", ", extended_state_size, how)
+	how := extended_state_form == .Fxsave ? "fxsave: the processor has no xsave or no xsaveopt" : "xsaveopt"
+	log("kernel: extended state: x87, SSE", avx, avx_512, "; one save writes at most ", extended_state_size, " bytes, in an area of ", u64(EXTENDED_STATE_CAPACITY), " bytes in each thread entry; saved with ", how)
 }

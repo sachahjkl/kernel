@@ -6,20 +6,29 @@ bits 64
 default rel
 
 IMAGE_VECTORS     equ 0              ; 32 registers of 64 bytes: register n at n * 64
-IMAGE_OPMASKS     equ 2048           ; 8 values of 8 bytes: k0 to k7 (16 bits used)
+IMAGE_OPMASKS     equ 2048           ; 8 values of 8 bytes: k0 to k7 (16 bits, or 64 with the wide opmasks)
 IMAGE_X87         equ 2112           ; 8 integers of 8 bytes, in the order of the loads
-IMAGE_X87_CONTROL equ 2176           ; 2 bytes
-IMAGE_MXCSR       equ 2180           ; 4 bytes
+IMAGE_X87_CONTROL equ 2176           ; 2 bytes: the value after CONTROL_ROUND, and the value stored at the end
+IMAGE_X87_CONTROL_FIRST equ 2178     ; 2 bytes: the value loaded at the start
+IMAGE_MXCSR       equ 2180           ; 4 bytes: the value after MXCSR_ROUND, and the value stored at the end
+IMAGE_MXCSR_FIRST equ 2184           ; 4 bytes: the value loaded at the start
 
 LEVEL_SSE         equ 0              ; xmm0 to xmm15
 LEVEL_AVX         equ 1              ; ymm0 to ymm15
-LEVEL_AVX_512     equ 2              ; zmm0 to zmm31 and k0 to k7
+LEVEL_AVX_512     equ 2              ; zmm0 to zmm31 and k0 to k7, 16 bits of each (kmovw: AVX-512 F)
+LEVEL_AVX_512_WIDE_OPMASKS equ 3     ; the same, 64 bits of each opmask (kmovq: AVX-512 BW)
+
+; The rounds of a pass where one control register changes alone, before
+; the kernel entry of that round: a save must keep it although no other
+; register of its component changed since the last restore.
+MXCSR_ROUND       equ 5
+CONTROL_ROUND     equ 10
 
 section .text
 
 %macro LOAD_VECTORS 1                ; %1: the base register of the image
 	cmp r13, LEVEL_AVX_512
-	je %%zmm
+	jae %%zmm
 	cmp r13, LEVEL_AVX
 	je %%ymm
 %assign n 0
@@ -41,9 +50,18 @@ section .text
 	vmovdqu64 zmm %+ n, [%1 + IMAGE_VECTORS + n * 64]
 %assign n n + 1
 %endrep
+	cmp r13, LEVEL_AVX_512_WIDE_OPMASKS
+	je %%wide
 %assign n 0
 %rep 8
 	kmovw k %+ n, [%1 + IMAGE_OPMASKS + n * 8]
+%assign n n + 1
+%endrep
+	jmp %%done
+%%wide:
+%assign n 0
+%rep 8
+	kmovq k %+ n, [%1 + IMAGE_OPMASKS + n * 8]
 %assign n n + 1
 %endrep
 %%done:
@@ -51,7 +69,7 @@ section .text
 
 %macro STORE_VECTORS 1               ; %1: the base register of the image
 	cmp r13, LEVEL_AVX_512
-	je %%zmm
+	jae %%zmm
 	cmp r13, LEVEL_AVX
 	je %%ymm
 %assign n 0
@@ -73,9 +91,18 @@ section .text
 	vmovdqu64 [%1 + IMAGE_VECTORS + n * 64], zmm %+ n
 %assign n n + 1
 %endrep
+	cmp r13, LEVEL_AVX_512_WIDE_OPMASKS
+	je %%wide
 %assign n 0
 %rep 8
 	kmovw [%1 + IMAGE_OPMASKS + n * 8], k %+ n
+%assign n n + 1
+%endrep
+	jmp %%done
+%%wide:
+%assign n 0
+%rep 8
+	kmovq [%1 + IMAGE_OPMASKS + n * 8], k %+ n
 %assign n n + 1
 %endrep
 %%done:
@@ -113,12 +140,15 @@ section .text
 %endmacro
 
 ; registers_hold(expected, seen: ^Register_Image, level, rounds, spins: u64)
-; Loads every register of the level, the x87 stack, the x87 control word
-; and MXCSR from expected. Then, for each round: a spin of `spins` loops
-; (the timer interrupts it), then one kernel entry: on an even round an
-; entry that returns at once, on an odd round a wait for a deadline that
-; has passed, so the thread leaves its processor until the next tick and
-; can come back on another one. Then it stores every register in seen.
+; Loads every register of the level, the x87 stack, and the first x87
+; control word and MXCSR from expected. Then, for each round: a spin of
+; `spins` loops (the timer interrupts it), then one kernel entry: on an
+; even round an entry that returns at once, on an odd round a wait for a
+; deadline that has passed, so the thread leaves its processor until the
+; next tick and can come back on another one. Before the entry of round
+; MXCSR_ROUND it loads the second MXCSR alone, and before the entry of
+; round CONTROL_ROUND the second x87 control word alone. Then it stores
+; every register in seen. rounds must be above CONTROL_ROUND.
 global registers_hold
 registers_hold:
 	SAVE_CALLEE_REGISTERS
@@ -128,13 +158,13 @@ registers_hold:
 	mov r14, rcx                 ; rounds
 	mov r15, r8                  ; spins
 	fninit
-	fldcw [rbx + IMAGE_X87_CONTROL]
+	fldcw [rbx + IMAGE_X87_CONTROL_FIRST]
 %assign n 0
 %rep 8
 	fild qword [rbx + IMAGE_X87 + n * 8]
 %assign n n + 1
 %endrep
-	ldmxcsr [rbx + IMAGE_MXCSR]
+	ldmxcsr [rbx + IMAGE_MXCSR_FIRST]
 	LOAD_VECTORS rbx
 	xor ebp, ebp                 ; the round
 .round:
@@ -144,6 +174,14 @@ registers_hold:
 .spin:
 	dec rcx
 	jnz .spin
+	cmp rbp, MXCSR_ROUND
+	jne .not_mxcsr_round
+	ldmxcsr [rbx + IMAGE_MXCSR]
+.not_mxcsr_round:
+	cmp rbp, CONTROL_ROUND
+	jne .not_control_round
+	fldcw [rbx + IMAGE_X87_CONTROL]
+.not_control_round:
 	mov rdi, rbp
 	and edi, 1                   ; 0: no wait; 1: the deadline of the millisecond 1 of the machine, long passed
 	syscall                      ; The kernel gives the time in rax; rcx and r11 change. No other register.

@@ -5,6 +5,11 @@ default rel
 extern kernel_interrupt
 
 KERNEL_ENTER_VECTOR equ 128
+; Processor.extended_state_form (kernel/processor.odin) and its values
+; (Extended_State_Form in kernel/extended_state.odin).
+EXTENDED_STATE_FORM equ 32
+FORM_FXSAVE equ 0
+FORM_XSAVEOPT_AND_VZEROUPPER equ 2
 STUB_COUNT equ 80
 
 section .text
@@ -144,11 +149,12 @@ page_flush:                      ; (address)
 ;   gs:8   the stack of the program, during a kernel entry
 ;   gs:16  the extended state area of the thread that the processor resumed
 ;   gs:24  the address of the record
+;   gs:32  the form of the save of the extended state (one byte)
 ;
 ; The extended state (docs/ARCHITECTURE.md, "The extended state of the
 ; processor"): with xsave, edx:eax is all ones, so the save and the restore
 ; take every component that XCR0 enables. The general registers are on the
-; stack already, so rax, rcx and rdx are free here.
+; stack already, so rax, rcx, rdx and r8 are free here.
 interrupt_common:
 	PUSH_REGISTERS
 	cmp byte [user_access_guard], 0
@@ -160,11 +166,15 @@ interrupt_common:
 	swapgs
 interrupt_from_program:
 	mov rcx, [gs:abs 16]
-	cmp byte [extended_state_uses_xsave], 0
+	movzx r8d, byte [gs:abs EXTENDED_STATE_FORM]
+	cmp r8d, FORM_FXSAVE
 	je .with_fxsave
 	mov eax, -1
 	mov edx, -1
 	xsaveopt64 [rcx]
+	cmp r8d, FORM_XSAVEOPT_AND_VZEROUPPER
+	jne interrupt_call
+	vzeroupper                   ; Saved already: the kernel's SSE code runs with no high half in use.
 	jmp interrupt_call
 .with_fxsave:
 	fxsave64 [rcx]
@@ -198,7 +208,7 @@ global resume
 resume:                          ; (frame: ^Frame) -> !: run a program
 	mov rsp, rdi
 	mov rcx, [gs:abs 16]
-	cmp byte [extended_state_uses_xsave], 0
+	cmp byte [gs:abs EXTENDED_STATE_FORM], FORM_FXSAVE
 	je .with_fxrstor
 	mov eax, -1
 	mov edx, -1
@@ -265,10 +275,11 @@ extended_control_register_write: ; (register: u32, value: u64): xsetbv
 	ret
 
 ; The save and the restore of the entry and of the resume, as functions:
-; the kernel proves the start state of a thread with them at boot.
+; the kernel proves the start state of a thread with them at boot, after
+; the setup of the first processor wrote its form.
 global extended_state_save
 extended_state_save:             ; (area: ^Extended_State_Area)
-	cmp byte [extended_state_uses_xsave], 0
+	cmp byte [gs:abs EXTENDED_STATE_FORM], FORM_FXSAVE
 	je .with_fxsave
 	mov eax, -1
 	mov edx, -1
@@ -280,7 +291,7 @@ extended_state_save:             ; (area: ^Extended_State_Area)
 
 global extended_state_restore
 extended_state_restore:          ; (area: ^Extended_State_Area)
-	cmp byte [extended_state_uses_xsave], 0
+	cmp byte [gs:abs EXTENDED_STATE_FORM], FORM_FXSAVE
 	je .with_fxrstor
 	mov eax, -1
 	mov edx, -1
@@ -288,6 +299,34 @@ extended_state_restore:          ; (area: ^Extended_State_Area)
 	ret
 .with_fxrstor:
 	fxrstor64 [rdi]
+	ret
+
+; The restore, then the registers as the processor took them from the area:
+; the x87 control word, MXCSR, the low 8 bytes of xmm0 and, with with_avx,
+; bytes 16 to 23 of ymm0. No compiled code runs between the two.
+global extended_state_restore_and_read
+extended_state_restore_and_read: ; (area: ^Extended_State_Area, read: ^[4]u64, with_avx: bool)
+	mov r8, rdi
+	mov r9, rsi
+	movzx r10d, dl
+	cmp byte [gs:abs EXTENDED_STATE_FORM], FORM_FXSAVE
+	je .with_fxrstor
+	mov eax, -1
+	mov edx, -1
+	xrstor64 [r8]
+	jmp .read
+.with_fxrstor:
+	fxrstor64 [r8]
+.read:
+	fnstcw [r9]
+	stmxcsr [r9 + 8]
+	movq [r9 + 16], xmm0
+	test r10d, r10d
+	jz .done
+	vextractf128 xmm1, ymm0, 1
+	movq [r9 + 24], xmm1
+	vzeroupper
+.done:
 	ret
 
 %assign vector 0
@@ -305,9 +344,6 @@ section .data
 
 global user_access_guard
 user_access_guard: db 0          ; 1: the processors refuse the memory of programs to the kernel (SMAP)
-
-global extended_state_uses_xsave
-extended_state_uses_xsave: db 0  ; 1: xsaveopt64 and xrstor64; 0: fxsave64 and fxrstor64 (kernel/extended_state.odin)
 
 align 8
 global interrupt_stubs

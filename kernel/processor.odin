@@ -107,11 +107,15 @@ Frame_Cache :: struct #align (64) {
 // kernel entry starts at the top of the stack and never continues an
 // earlier entry.
 Processor :: struct {
-	// processor.asm reads these four fields through the gs register.
+	// processor.asm reads these five fields through the gs register.
 	stack_top:     u64, // The top of the kernel stack (paging.odin).
 	user_stack:    u64,
 	extended_state_area: ^Extended_State_Area, // The area of the thread that the processor resumed: the next entry from a program saves there.
 	self:          ^Processor,
+	// How the entry and the resume save and restore the extended state. It
+	// is in the cache line of extended_state_area, which each entry reads
+	// already, and only its own processor writes it, once, at its setup.
+	extended_state_form: Extended_State_Form,
 	index:         u32,
 	apic_id:       u32,
 	current:       u32, // The thread that runs. 0: none. Another processor writes 0 here to take the thread away.
@@ -181,6 +185,10 @@ Processor :: struct {
 	segments:      [7]u64,
 	task_state:    Task_State,
 }
+
+#assert(offset_of(Processor, extended_state_area) == 16)
+#assert(offset_of(Processor, self) == 24)
+#assert(offset_of(Processor, extended_state_form) == 32) // EXTENDED_STATE_FORM in processor.asm
 
 processors: [PROCESSOR_CAPACITY]^Processor
 processor_count: u32
@@ -280,6 +288,9 @@ processor_setup :: proc "contextless" (cpu: ^Processor) {
 	descriptor = {size_of(gates) - 1, u64(uintptr(&gates))}
 	idt_load(&descriptor)
 	msr_write(MSR_GS_BASE, u64(uintptr(cpu)))
+	// The extended state setup of this processor ran before: the form is
+	// the choice of the first processor.
+	cpu.extended_state_form = extended_state_form
 	msr_write(MSR_KERNEL_GS_BASE, 0)
 
 	// The syscall instruction.
