@@ -24,10 +24,15 @@ card :: proc "contextless" (frame: ^Frame, area: Area, title, caption: string, a
 	draw_vertical_gradient(table, area.x + 1, area.y + 1, area.width - 2, area.height - 2, graphics.COLOR_CARD_TOP, graphics.COLOR_CARD_BOTTOM)
 	draw_vertical_gradient(table, area.x + graphics.CARD_MARGIN, area.y + 12, 4, 16, graphics.shade(accent, 130), accent)
 	after := draw_text(table, area.x + graphics.CARD_MARGIN + 12, area.y + 12, title, accent)
-	draw_text(table, after + 16, area.y + 12, caption, graphics.COLOR_DIM)
+	// The caption takes the room between the title and the count: a narrow
+	// card cuts it, so it never runs past the border.
+	right := area.x + area.width - graphics.CARD_MARGIN
 	if count != "" {
+		right -= text_width({}, count) + 16
 		draw_text_right(table, area.x + area.width - graphics.CARD_MARGIN, area.y + 12, count, graphics.COLOR_TEXT)
 	}
+	room := max(right - (after + 16), 0) / graphics.CELL_WIDTH
+	draw_text(table, after + 16, area.y + 12, caption[:min(len(caption), room)], graphics.COLOR_DIM)
 	return {area.x + graphics.CARD_MARGIN, area.y + graphics.CARD_TITLE, area.width - 2 * graphics.CARD_MARGIN, area.height - graphics.CARD_TITLE - 8}
 }
 

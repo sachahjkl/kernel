@@ -535,3 +535,19 @@ picture_and_folded_gap :: proc(t: ^testing.T) {
 	draw_picture(&now, 0, 0, 3, 1)
 	testing.expect(t, now.full, "a picture that the table does not have is refused")
 }
+
+// A narrow card cuts its caption: no text record passes its right border.
+@(test)
+card_caption_stays_inside :: proc(t: ^testing.T) {
+	memory: Tables
+	table := table_of(&memory)
+	state: Interface_State
+	input: Input
+	frame := frame_begin(&table, &state, &input)
+	card(&frame, {8, 8, 200, 100}, "SLOTS", "Program_Report and a long caption", graphics.COLOR_PROGRAM, "34")
+	for record in table.records[:table.record_count] {
+		if record.kind == .Text {
+			testing.expectf(t, int(record.x + record.width) <= 8 + 200 - 16 + 1, "a text ends at %d, past the border", record.x + record.width)
+		}
+	}
+}
