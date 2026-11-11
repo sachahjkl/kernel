@@ -53,7 +53,7 @@ Connection :: struct {
 	count:         u64, // The calls through this connection.
 }
 
-CONNECTION_CAPACITY :: 4
+CONNECTION_CAPACITY :: 8 // The services of callable_of("remote") in the root service, and room for more.
 
 connections: [CONNECTION_CAPACITY]Connection
 

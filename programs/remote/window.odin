@@ -13,7 +13,7 @@ import "support:system"
 // color "failed", with a text that says the same.
 
 WIDTH :: 720
-HEIGHT :: 480
+HEIGHT :: 512
 
 // The colors, the grid and the helpers are the table of support/graphics
 // (rules.odin).
@@ -120,7 +120,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 	graphics.text(inside, x + 24, BAR_Y + 12, system.format(buffer[:], counts.refused, " refused"), graphics.COLOR_FAILED)
 
 	// The connections that the root service made.
-	inside = card(canvas, 8, 168, WIDTH - 16, 112, "CONNECTIONS", "root: Connect, a call ring and a call region of 64 KiB", graphics.COLOR_MEMORY)
+	inside = card(canvas, 8, 168, WIDTH - 16, 144, "CONNECTIONS", "root: Connect, a call ring and a call region of 64 KiB", graphics.COLOR_MEMORY)
 	shown := 0
 	for &connection in connections {
 		if connection.name[0] == 0 {
@@ -144,7 +144,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 	}
 
 	// The last calls, the last one first.
-	inside = card(canvas, 8, 288, WIDTH - 16, 184, "LAST CALLS", "remote.Answer: status, value, bytes, time in this program", graphics.COLOR_PROGRAM)
+	inside = card(canvas, 8, 320, WIDTH - 16, 184, "LAST CALLS", "remote.Answer: status, value, bytes, time in this program", graphics.COLOR_PROGRAM)
 	for row in 0 ..< min(recent_count, RECENT_CAPACITY) {
 		item := &recent[(recent_count - 1 - row) % RECENT_CAPACITY]
 		y := int(row) * LINE
