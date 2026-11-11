@@ -75,7 +75,7 @@ The run queue, the run lock, the balance between processors and the budgets stay
 
 Property 20: a program can lower or split its own share, never raise it. The weight of a thread is at most the full weight, which each thread has now. So a program can give one thread less than another, and cannot take more than a thread with no weight. The processor limit of the budget stays above any weight: a strategy only orders the time that the budget gives. The request does not change the share: it moves the deadline. A short request can cost more switches; the cost is in the time of the thread itself, which its budget pays.
 
-A weight is for a thread, not for a program or a budget: a program with many threads still has more share than a program with one thread, as with round robin today. A share for each budget (the groups of Linux) is a later step: see section 4.
+A weight is for a thread, not for a program or a budget: a program with many threads still has more share than a program with one thread, as with round robin today. A share for each budget (the groups of Linux) is a later step: see section 5.
 
 ### The change of strategy is a kernel operation with a right
 
@@ -89,7 +89,7 @@ The change does not stop the machine and loses no thread: each run queue changes
 
 The fields that a pick and a wake read are in the first 64 bytes of the thread record: state, home, the links of the queue, processor, budget, weight, request, virtual time, virtual deadline, lag, queued, placed. `Thread` is aligned on 64 bytes, so the line is one cache line. The run queue is one line too: the lock, the head, the tail, the counts, the strategy of the queue, the sum of the weights, the queue clock.
 
-A pick touches: the line of the queue, and one line for each thread of the queue (round robin: the first thread whose budget has time), plus the lines of the budgets of these threads (`budget_spent` walks the chain of budgets). A pick of EEVDF reads each thread of the queue two times: one pass for `V`, one for the deadline. The second pass reads lines that the first pass brought into the cache.
+A pick touches: the line of the queue, and one line for each thread of the queue (round robin: the first thread whose budget has time), plus the lines of the budgets of these threads (`budget_spent` walks the chain of budgets). A pick of EEVDF reads each thread of the queue three times: one pass keeps each thread within its bound, one computes `V`, one finds the deadline. The second and the third pass read lines that the first pass brought into the cache.
 
 ### A scan, not a tree
 
@@ -113,13 +113,21 @@ Why the zero values are fair enough: the state of a strategy is a history of sha
 
 The interleavings are in `ARCHITECTURE.md`, "Locks of the kernel", "The change of strategy".
 
+### The time slice is the longest turn
+
+Each strategy ends a turn after the time slice of 10 ticks at most, as round robin does. At the end of a turn the processor passes through the balance (`schedule_pick`), where it takes a thread from a queue with more load. Without this rule, a thread alone in its queue under EEVDF kept its processor while threads waited in another queue: the first full check of this step failed on it ("processors: at most 3 of 4 processors ran the program at the same time").
+
 ### Wake preemption, also on another processor
 
 A woken thread goes to the queue of its home. As before, if the processor of the home is idle, the waker sends it an interrupt; else, if another processor is idle, the waker sends one to it, and that processor takes the thread. New: if no processor is idle, the waker asks the strategy of the home queue, under its run lock, if the woken thread preempts the thread that runs there. If yes, the waker sets `preempt` in the processor record of the home and sends an interrupt; when the home processor receives it from a program, it ends the turn of its thread. If the home is the processor of the waker, the waker ends the turn itself, with no interrupt. The tick of the first processor wakes threads at their deadlines through the same path.
 
 The round robin has no wake preemption. The fair strategy and EEVDF have it.
 
-## 4. What this system refuses, and why
+## 4. Measured
+
+The program `scheduler` runs the same cases under each strategy, in one run of the machine test (QEMU with KVM, 4 processors, a host loaded by other tests). The numbers of one run are in `FIRST_MILESTONE.md` (choice NEW-14). In short: two threads that wake each other while a spinner runs on each processor make 83 wakes in one second under round robin, 498 800 under the fair strategy and 320 219 under EEVDF; a thread that sleeps 2 ms among 8 spinners runs 18.5 ms late in the middle under round robin, 0.32 ms under the fair strategy and 0.34 ms under EEVDF; with the weights 1, 2 and 4, one spinner of each weight gets 4.0, 7.4 and 13.4 % under EEVDF, and 8.2, 8.6 and 8.0 % under round robin. One pick takes 43 ns (fair), 84 ns (EEVDF) and 117 ns (round robin, with more picks from another queue).
+
+## 5. What this system refuses, and why
 
 - **A tree for the queue** (CFS, EEVDF): refused for now. A scan of a small queue in one table is fewer lines (property 13); a measure decides when a queue becomes large.
 - **The nice value**: refused. A weight is a number from 1 to 1024 that a program can only lower (property 20), not a level that a privileged program raises.

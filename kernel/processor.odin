@@ -108,7 +108,7 @@ Processor :: struct {
 	pending:       u32, // Not 0: another processor waits in processor_sync.
 	idle:          bool, // The processor waits for an interrupt, with no thread. Another processor clears it to wake it (kick).
 	table:         u64, // The page table that the processor uses. Only this processor writes it; others read it (unmap).
-	slice_left:    u64, // Ticks of the time slice of round robin; 0: the turn ends (strategy.odin).
+	slice_left:    u64, // Ticks left of the time slice, the longest turn under each strategy; 0: the turn ends (strategy.odin).
 	charged_from:  u64, // The cycle counter when the kernel last counted the time of the current thread (limit.odin).
 	turn_start:    u64, // The cycle counter when the processor picked its current thread.
 	// The scheduler (strategy.odin): counts of this processor only.

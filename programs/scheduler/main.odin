@@ -529,7 +529,7 @@ COLOR_FAILED :: 0xF06060
 COLOR_STARTING :: 0xE0A040
 
 @(rodata)
-strategy_shades := [STRATEGY_COUNT]u32{60, 100, 150}
+strategy_shades := [STRATEGY_COUNT]u32{75, 100, 150}
 
 mix :: proc "contextless" (first, second: graphics.Color, level: u32) -> graphics.Color {
 	part :: proc "contextless" (a, b, level: u32) -> u32 {
@@ -623,7 +623,7 @@ draw :: proc "contextless" (canvas: graphics.Canvas, report: op.System_Report, p
 	line: [96]u8
 
 	// The head: the strategy in use.
-	head := card(canvas, MARGIN, MARGIN, WIDTH - 2 * MARGIN, HEAD_HEIGHT, "SCHEDULER", "System_Report.strategy; Strategy_Set, right Schedule")
+	head := card(canvas, MARGIN, MARGIN, WIDTH - 2 * MARGIN, HEAD_HEIGHT, "SCHEDULER", "System_Report.strategy")
 	in_use := -1
 	for strategy, index in strategies {
 		if strategy == report.strategy {
@@ -634,7 +634,7 @@ draw :: proc "contextless" (canvas: graphics.Canvas, report: op.System_Report, p
 	after := large(head, 0, 0, name, 2, in_use >= 0 ? strategy_color(in_use) : COLOR_DIM)
 	graphics.text(head, after + 16, 0, "in use", COLOR_DIM)
 	graphics.text(head, after + 16, 16, system.format(line[:], u64(report.strategy_changes), " changes since boot"), COLOR_DIM)
-	graphics.text(canvas, TILE_X, MARGIN + 12, "keys 1 2 3, or a click:", COLOR_DIM)
+	graphics.text(canvas, TILE_X, MARGIN + 12, "Strategy_Set: a key 1 2 3, or a click", COLOR_DIM)
 	for index in 0 ..< STRATEGY_COUNT {
 		x := TILE_X + index * (TILE_WIDTH + MARGIN)
 		color := strategy_color(index)

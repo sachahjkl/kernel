@@ -172,6 +172,13 @@ strategy_clear :: proc "contextless" (thread: ^Thread) {
 // strategy_tick charges the time of the thread that runs on this processor
 // to its strategy, under the run lock of the processor: the home of a
 // thread that runs is its processor. true: the turn ends.
+//
+// The time slice (TIME_SLICE ticks) is the longest turn under each
+// strategy: at its end the processor passes through schedule_pick, where
+// it takes a thread from a queue with more load. Without it, a thread
+// alone in its queue under EEVDF keeps its processor while threads wait in
+// another queue: measured, "at most 3 of 4 processors ran the program at
+// the same time" (program processors).
 strategy_tick :: proc "contextless" (cpu: ^Processor, thread: ^Thread, cycles: u64) -> bool {
 	queue := &run_queues[cpu.index]
 	lock_take(&queue.lock, .Run)
@@ -181,12 +188,13 @@ strategy_tick :: proc "contextless" (cpu: ^Processor, thread: ^Thread, cycles: u
 	}
 	ended := strategy.tick(queue, cpu, thread, cycles)
 	lock_free(&queue.lock, .Run)
-	return ended
+	cpu.slice_left -= min(cpu.slice_left, 1)
+	return ended || cpu.slice_left == 0
 }
 
 // The round robin: the queue in its order, a time slice of TIME_SLICE
-// ticks, no wake preemption. The behavior of the kernel before the
-// strategies.
+// ticks (strategy_tick), no wake preemption. The behavior of the kernel
+// before the strategies.
 ROUND_ROBIN :: Strategy_Table {
 	ready         = round_robin_ready,
 	pick          = round_robin_pick,
@@ -210,8 +218,7 @@ round_robin_pick :: proc "contextless" (queue: ^Run_Queue, home: u32) -> ^Thread
 }
 
 round_robin_tick :: proc "contextless" (queue: ^Run_Queue, cpu: ^Processor, thread: ^Thread, cycles: u64) -> bool {
-	cpu.slice_left -= min(cpu.slice_left, 1)
-	return cpu.slice_left == 0
+	return false
 }
 
 round_robin_stopping :: proc "contextless" (queue: ^Run_Queue, cpu: ^Processor, thread: ^Thread, cycles: u64, waits: bool) {}
