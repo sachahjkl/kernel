@@ -182,3 +182,77 @@ Refused:
 - **Floating point, transforms, round corners, shadows, themes** (its `draw` layer): the rules of this system are integer rectangles on a grid.
 - **Allocation by the toolkit** (its frame allocator and maps): the caller gives each table.
 - **A font stack of a host system** (DirectWrite, Fontations, HarfRust): the system has its own font.
+
+## 12. State of the conversions (2026-11-11)
+
+This section is the report of steps 52 to 54 (the conversions), written after the merge.
+
+### The findings of the independent read (`/tmp/review_interface.md`)
+
+| Finding | What was done | What holds it |
+|---|---|---|
+| F1: `line_add` of the vector font wrote one cell past its row (a vertical segment on the last column; a coverage of width 1) | Corrected. `support/vector_font/raster.odin:34`: `if start_y == end_y \|\| target.width < 2 { return }`; line 60: `if left_index < 0 \|\| left_index + 1 >= target.width \|\| right_index >= target.width` before the clamp | Host test `segments_at_the_edges_stay_in_their_rows`: it failed before (an index out of its row), it passes after |
+| W1: a `Present` for the whole surface with a place of its own damaged up to one surface past the window | Corrected. `programs/compositor/main.odin:317-318`: `changed_width, changed_height := client.surface.width - left, client.surface.height - top` | The compositor does not run on the host: no host test. The rectangle stays inside the surface in each case by its two lines; the machine test draws each window |
+| W2: Enter was taken before the characters of the same frame | Corrected: a text input takes Enter in the order of its keys and stops there; `element_interact` takes no Enter for a text input | Host test `text_input_keys_in_their_order` (keys `l s Enter x` give "ls", activated, `x` not taken): failed before, passes |
+| W3: key 17 and later of one frame were dropped | Corrected: `window_events` stops when the input has 16 keys, the other events wait in the ring | Host test `a_full_input_says_so` (the reading itself needs a ring: no host test of it) |
+| W4: the partial-frame test missed cases | Added: a clip that changes, horizontal gradients, text at the scales 1 to 3, records outside the surface, records of one line, more than 8 rectangles (the merge), a full table, pictures | Host tests `damage_is_never_too_small_for_each_kind`, `picture_and_folded_gap` |
+| N1: more than 20 digits indexed `digits[-1]` | Corrected: `min(minimum_digits, 20)` | Host test `number_with_many_digits`: failed before |
+| N2: a negative height of a column made `used` smaller | Corrected: `top + max(height, 0)` | Host test `column_negative_height`: failed before |
+| N3: `row_split` did not check its sizes | Corrected: negative sizes are 0, fixed sizes are cut, each column stays in the row, no overflow | Host test `row_split_checks_its_sizes`: failed before |
+| N4: a press under the last line or on the bar of a list chose a line; a cut choice was not reported | Corrected | Host test `list_press_and_cut_choice`: failed before |
+| N5: Tab in the launcher moved the focus to the list for one build | Corrected: the launcher ignores Tab | The compositor does not run on the host; the launcher steps of the machine test |
+| N6: two elements with one identity; elements past 64 not reachable by Tab | `identity_in` and `identity_with`; `Frame.identity_collisions` and `Frame.focus_overflow` count them; section 4 says the limit | Host test `identity_collision` (did not compile before: the count did not exist) |
+| N7: `draw_text_right` lost the element; `int` cut to `i32` with no check | Corrected: the element passes; each place and size is clamped to `i32` | Host test `coordinates_are_cut_to_i32` |
+| N8: "makes no kernel call" was false for `window_drawing.odin` | The claim is kept to the core files (`draw_table.odin`, section 2.3) | Read |
+| N9: a table that does not cover its surface kept stale pixels | Corrected with no rule for the caller: each damage rectangle of a surface is painted with the background first (`draw_damage_on_surface`), a whole frame starts from the background | Host test `a_gone_record_leaves_no_pixel` |
+| Names | `raster.odin`: `start_x`, `signed_height`, `width_inverse`, `first_x`, ...; `parse.odin`: `start_read`, `end_read`, `glyph_bytes`; `vector_glyphs`: `pixel_x`, `pixel_y`; `bar`: `full_width`; the launcher: `name_index`, `line_number`. The TrueType tags stay | Read |
+
+The package has 24 host tests (`support/interface/interface_test.odin`), the font prototype 4.
+
+### The converted windows
+
+"Calls" are the direct drawing calls of `support/graphics` (`fill`, `text`, `block`, `unsigned`, `character`, `clear`, `line`, `outline`) in the program before the conversion (`859f078`) and after. "Module" is the size of the module file, in bytes, on `master` `c909390` and on the branch of the conversions: the package is compiled in each program.
+
+| Program | Calls before | Calls after | Module before | Module after |
+|---|---|---|---|---|
+| inspect | 58 | 0 | 81 920 | 90 112 |
+| scheduler | 50 | 0 | 61 440 | 73 728 |
+| monitor | 29 | 0 | 49 152 | 61 440 |
+| locks | 20 | 0 | 86 016 | 98 304 |
+| disk | 19 | 0 | 35 284 | 45 124 |
+| limits | 17 | 0 | 28 129 | 42 225 |
+| crowd | 15 | 0 | 28 672 | 45 056 |
+| tally | 15 | 0 | 36 864 | 49 152 |
+| flow | 13 | 0 | 28 672 | 40 960 |
+| budget | 12 | 0 | 28 672 | 40 960 |
+| notes | 12 | 0 | 53 248 | 65 536 |
+| errors | 11 | 0 | 134 113 | 144 609 |
+| rights | 11 | 0 | 24 576 | 40 960 |
+| frames | 11 | 0 | 73 728 | 90 112 |
+| imports | 11 | 0 | 81 920 | 94 208 |
+| net | 10 | 0 | 50 179 | 64 515 |
+| origin | 10 | 0 | 24 576 | 40 960 |
+| manual | 10 | 0 | 114 688 | 126 976 |
+| life | 2 | 2 (its own board picture, by design: the Picture record) | 32 768 | 51 148 |
+| clock, remote, the launcher (step 51) | 32, 31, 48 lines | 0 | | |
+| Sum of the 19 programs above | 346 | 2 | | |
+
+- Each converted module grows by 8 to 16 KiB (2 to 4 pages): the package is in each one. `processors`, which is not converted, grows by 4 KiB from the measure of pictures of `display`. This is the measured argument for the package as one shared module (section 7): about 230 KiB in all for these programs, today paid once for each.
+- The boot image: 3 284 753 bytes on `master` `c909390`, 3 566 097 bytes with the conversions (+281 344).
+- Lines: in the 19 programs, 865 lines added and 494 removed (+371), against 1 242 lines of the package (and 537 of its host tests). A conversion replaces each drawing call by one record and adds the tables of the program and the frame: it does not make the programs shorter. It removes the five private copies of `card` and of large text in the converted programs, it gives each window the damage by difference and the keyboard, and one change of the rules now changes every converted window.
+- The times of the pictures are not published: the host had a load of 17 to 62 during each run of this step, and a measure above a load of 8 is not valid. `kerneltool measure windows` (in the form of `kerneltool measure scheduler N`) starts each converted window alone in a measure build and prints one table of the time of the first picture and of the mean of 3 and of 10, with the load of the host. The coordinator runs it on a quiet host; to measure "before", the same command on the commit "display measures the time of a picture" (the programs before the conversion with the marks of the measure).
+
+### What the pictures of the last run show (devlog `2026-11-11_121254_branch_desktop`)
+
+- `inspect`: the caption "Program_Report" of the narrow SLOTS card touched its right border; the columns "weight" and "req us" of the threads read as one. Corrected: a card cuts its caption to the room between its title and its count (host test `card_caption_stays_inside`), and the columns of the threads have room. Both faults were there before the conversion.
+- `scheduler`, `locks`, `manual`, `life`: no fault seen.
+- `limits`, `crowd`, `origin`, `rights`, `disk`, `notes`: no clipped text and no column out of place. `crowd`: its header "kernel entries, one million records" ends 8 pixels from the right edge of the window. `notes`: an empty band between its status line and its keys.
+
+### Not converted, and why
+
+- `server`, `fetch`: another agent rewrites `server` now.
+- `console`, `terminal`: text grids; they need a text grid element with a damage for each cell (next step, with the lines per second of `flood` before and after).
+- `paint`, `plasma`, `temple`: pictures of pixels; the Picture record is proven by `life`; their conversion is the next step.
+- `processors`, `threads`, `workers`, `rings`: they draw into views (`graphics.view`) or lines at an angle; `rings` draws its ring as lines. Next step.
+- `log`, `pages`, `boot`, `twin`, `fault`: `log` and `pages` keep colors of their own meaning and a layout of their own; `boot` is the boot display (`support/bootscreen`), next step; `twin` and `fault` have no window.
+- The compositor: its bar, menus and window frames are drawn by hand; its launcher is a draw table (step 51). Next step, with the choice measured.
