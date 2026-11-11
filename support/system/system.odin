@@ -190,6 +190,37 @@ memory_unmap :: proc "contextless" (address: rawptr, program: Handle = 0, error:
 	return status
 }
 
+// memory_commit commits the pages of a table of ranges of an object made
+// with the flag Uncommitted: the budget pays one page for each page that
+// was not committed. The budget (0: the budget of this program) must be the
+// budget of the object, with the right Commit or Spend. It gives the pages
+// that changed. The ranges are in increasing order and do not overlap
+// (op.RANGE_TABLE_CAPACITY ranges and op.RANGE_TABLE_PAGE_LIMIT pages at most).
+memory_commit :: proc "contextless" (memory: Handle, ranges: []op.Page_Range, budget: Handle = 0, error: ^errors.Error_Record = nil) -> (changed: u64, status: Status) {
+	results: [7]u64
+	results, status = call_with_error(error, .Memory_Commit, u64(memory), u64(budget == 0 ? own_budget() : budget), u64(uintptr(raw_data(ranges))), u64(len(ranges)), 0)
+	return results[0], status
+}
+
+// memory_decommit takes back the committed pages of a table of ranges: the
+// frames and the pages return to the budget at once; the addresses stay,
+// and a page committed again is zero. The object must be mapped once, by
+// this program only.
+memory_decommit :: proc "contextless" (memory: Handle, ranges: []op.Page_Range, error: ^errors.Error_Record = nil) -> (changed: u64, status: Status) {
+	results: [7]u64
+	results, status = call_with_error(error, .Memory_Commit, u64(memory), 0, u64(uintptr(raw_data(ranges))), u64(len(ranges)), transmute(u64)op.Commit_Flags{.Decommit})
+	return results[0], status
+}
+
+// memory_protect sets the protection of the pages of a table of ranges of
+// addresses of this program: {} is read only, {.Write}, {.Execute}, or
+// {.No_Access}. It can only take away what each mapping has.
+memory_protect :: proc "contextless" (ranges: []op.Address_Range, flags: op.Map_Flags, error: ^errors.Error_Record = nil) -> (changed: u64, status: Status) {
+	results: [7]u64
+	results, status = call_with_error(error, .Memory_Protect, u64(uintptr(raw_data(ranges))), u64(len(ranges)), transmute(u64)flags)
+	return results[0], status
+}
+
 // memory_physical gives the physical address of the first page of a memory
 // object: its pages follow each other. The machine handle needs the right
 // Physical.
@@ -369,6 +400,11 @@ Thread :: struct {
 	stack:  rawptr,
 }
 
+// A thread that calls the module cryptography or draws random bytes needs
+// 24 KiB of stack at least: the 16 KiB that erase_stack_below_the_caller
+// erases below its frame, and its frames (runtime/memory.asm). With less, the
+// thread stops at the guard page under its stack, and no other memory is
+// written.
 THREAD_STACK_PAGES :: 16
 
 // thread_start starts a new thread of this program at entry. The threads of

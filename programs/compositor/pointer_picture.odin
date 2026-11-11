@@ -10,6 +10,7 @@ package compositor
 // there. An animated shape wakes the compositor at the time of its next
 // frame, and only while it shows.
 
+import op "contract:operation"
 import "contract:pointer_pictures"
 import "contract:ring"
 import "contract:settings"
@@ -21,9 +22,8 @@ import "support:system"
 VALUE_POINTER_THEME_ADDRESS :: 6
 VALUE_POINTER_THEME_SIZE :: 7
 // The places of the address and the size of each theme: the second one is
-// at 14 and 15, because the values 9 to 12 are the random seed and 13 the
-// settings page.
-POINTER_THEME_VALUES := [2][2]int{{VALUE_POINTER_THEME_ADDRESS, VALUE_POINTER_THEME_SIZE}, {14, 15}}
+// at the values that contract:operation names for it.
+POINTER_THEME_VALUES := [2][2]int{{VALUE_POINTER_THEME_ADDRESS, VALUE_POINTER_THEME_SIZE}, {op.CONTEXT_VALUE_SECOND_POINTER_THEME_ADDRESS, op.CONTEXT_VALUE_SECOND_POINTER_THEME_SIZE}}
 // The nominal size that the compositor asks: the smallest size of the theme
 // that is at least this one. 24 for the theme of the system, 32 for the
 // theme of the owner (the smallest size that it has).
@@ -67,7 +67,8 @@ pointer_frame_time: u64
 pointer_themes: [len(pointer_pictures.RESOURCE_PREFERENCE)][]u8
 
 // pointer_theme_open maps nothing: the root service mapped the files, the
-// first one at the values 6 and 7, the second at 14 and 15. It validates
+// first one at the values 6 and 7, the second at the values that
+// contract:operation names for it. It validates
 // each file once; a file that is not valid is not used.
 pointer_theme_open :: proc "contextless" (ctx: ^system.Context) {
 	for &theme, index in pointer_themes {
@@ -160,7 +161,8 @@ pointer_shape_under :: proc "contextless" () -> pointer_pictures.Pointer_Shape {
 			return .Move
 		case inside(pointer_x, pointer_y, client.x + BORDER, client.y + TITLE_HEIGHT, client.surface.width, client.surface.height):
 			// The surface of the window in front at this place: the shape that
-			// its program asked for (property 20: over its own surface only).
+			// its program asked for, over its own surface only: a program must not
+// change the pointer over the window of another program.
 			return client.pointer_shape
 		}
 		return .Arrow // The border.

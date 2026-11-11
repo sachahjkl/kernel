@@ -1,5 +1,6 @@
-The SIL Open Font License, Version 1.1: the license of the fonts jetbrains_mono,
-ibm_mono, fira_mono, commit_mono and iosevka in this folder. The copyright of
+The SIL Open Font License, Version 1.1: the license of the fonts paper_mono,
+paper_mono_semibold, jetbrains_mono, ibm_mono, fira_mono, commit_mono and
+iosevka in this folder. The copyright of
 each font is in its .license file, and in the name table of its .ttf file.
 
 -----------------------------------------------------------

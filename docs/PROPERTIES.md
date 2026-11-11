@@ -174,7 +174,7 @@ Status: Decided.
 
 Status: Decided. On 2026-11-09 the owner chose the engine: do not fork bcachefs; write a new engine under MIT that reuses its ideas. The first version is SQLite on the raw block device.
 
-State on 2026-11-10 (steps 30 to 32), with the decision of the owner of the same day: SQLite is removed. The engine is the storage service in Odin, about 800 lines: copy on write, two places for the root block, a check of each block in the pointer that names it (choice 150 of `FIRST_MILESTONE.md`). The sentence above about a first version on SQLite is no longer a rule. Not done from the rules below: objects have names in a store, not identifiers; no clone, no snapshot, no versions.
+State on 2026-11-10 (steps 30 to 32), with the decision of the owner of the same day: SQLite is removed. The engine is the storage service in Odin, about 800 lines: copy on write, two places for the root block, a check of each block in the pointer that names it (choice 150 of `FIRST_MILESTONE.md`). The sentence above about a first version on SQLite is no longer a rule. Not done from the rules below: objects have names in a store, not identifiers. On 2026-11-11 (step of the versions, `FIRST_MILESTONE.md`, 38d): each commit keeps the state before it as a version, with a retention rule and thinning at the limit of the store; clones share their blocks; a snapshot is the versions of a store at one generation.
 
 - **Rule**: Storage is a transactional object store in user space. Objects have identifiers, not paths. A directory is an optional index, not the base structure.
 - **Rule**: Each program gets a private store. A copy-on-write clone is the way to give a copy of an object. A snapshot gives versions of a store.
@@ -195,7 +195,7 @@ Status: Decided by the owner on 2026-11-09.
 - **Why it is cheap**: A copy-on-write store writes new blocks and keeps the old ones. The earlier versions exist already. The system exposes them and does not discard them.
 - **Result**: Protection against lost work and a history are supplied one time, by the system, to all programs. A program writes no code for them.
 - **Cost**: Disk space. A retention rule deletes old versions, for example: keep all versions for one day, then one per hour, then one per day.
-- **Open**: the retention rule and who sets it. How a program groups small changes into one step that the person can undo. A later option above this model is a program whose full state returns after a restart.
+- **Open**: who sets the retention rule (the service applies one fixed rule since 2026-11-11: each version for 10 minutes, then one an hour for a day, then one a day). How a program groups small changes into one step that the person can undo. A later option above this model is a program whose full state returns after a restart.
 
 ## 10. One code module
 
@@ -233,7 +233,7 @@ Status: Decided. Changed by the owner on 2026-11-10: SQLite is removed from the 
 
 - **Rule**: The metadata of a module is a set of flat tables inside the module: arrays of fixed-size records at known offsets, valid when zero. They hold the symbols, the interfaces, the dependencies, the origin of each bundled module and the debug information. The flat tables are the source of truth, and the only format.
 - **Rule**: The loader reads the flat tables directly.
-- **Rule** (owner, 2026-11-10): A rich and descriptive set of functions gives the information of the modules: clear functions with documentation, that a program and the console call. A question across many modules is a function that reads the tables in a line. The results are tables of records, so that the functions combine. No query language exists in the system.
+- **Rule** (owner, 2026-11-10): A rich and descriptive set of functions gives the information of the modules: clear functions with documentation, that a program and the console call. A question across many modules is a function that reads the tables in a line. The results are tables of records, so that the functions combine. Since 2026-11-11 a table also goes into a function as a parameter (property 19, "State"). No query language exists in the system.
 - **Why**: The owner judged that a language and an engine to maintain cost far more than good functions. The tables of a machine are small, and a linear read of flat tables is the data-oriented way (P13). One format has no copy to keep equal to its source.
 - **Cost**: A new kind of question needs a new function, or a combination of functions in the console.
 - **Not forbidden**: a program can bring SQLite as its own module. The system does not need it and does not serve it.
@@ -375,7 +375,8 @@ Status: Decided by the owner on 2026-11-09. The detail below is proposed.
 - **Cost**: The type description becomes a permanent contract of the system. Its design must come before the first modules.
 - **Cost**: Streams of data with no known end (logs, audio, large results) need a typed stream form above rings, not one return value.
 - **Prior art to study**: PowerShell (objects in pipelines), Nushell (typed tables), Lisp machines and Oberon (commands are exported procedures), COM and WinRT metadata, the WebAssembly component model (language-independent interface types).
-- **Open**: the set of base types. How a function declares the handles that it needs (property 2), so that the console can ask the person before the call. Versioning of a function whose description changes.
+- **State (2026-11-11)**: a table of records and a range of bytes are parameters, each with a direction (Read, Change, Append), in memory of the caller (P14): the owner decided it on 2026-11-11 ("ok bah on le fait alors ?"). One description serves a direct call with no copy, a call host and a service; a table too large for the call region goes in a lent memory object whose rights are the direction (P20). The program `tables` shows the same answers in the three ways; `MODULE_CONTRACT.md`, "Tables and bytes as parameters".
+- **Open**: the set of base types (no float, no record in a record). How a function declares the handles that it needs (property 2), so that the console can ask the person before the call. Versioning of a function whose description changes.
 
 ## 20. No ambient access: the other holes to close
 

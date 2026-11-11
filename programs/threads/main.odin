@@ -1,8 +1,9 @@
 // A demonstration of threads (docs/ARCHITECTURE.md, decision 6).
 //
 // One program, one address space, five threads. Each square is drawn by its
-// own thread, directly in the surface of the program: the threads share all
-// the memory. The same procedure runs in the four threads; only the
+// own thread, in a picture that the threads share with the first thread:
+// the threads share all the memory. The first thread shows the pictures in
+// the window. The same procedure runs in the four threads; only the
 // parameter record differs. The kernel gives the processor to each thread in
 // turn: no thread calls another.
 //
@@ -14,7 +15,9 @@ package threads
 
 import "support:display"
 import "support:graphics"
+import "support:interface"
 import "support:system"
+import "base:intrinsics"
 
 SQUARE :: 176
 MARGIN :: 12
@@ -31,7 +34,7 @@ COLOR_STOPPED :: 0xD05050
 // The parameter record of one thread. The thread writes `frames`; the first
 // thread reads it.
 Worker :: struct {
-	canvas: graphics.Canvas, // The square of the thread, in the surface.
+	canvas: graphics.Canvas, // The square of the thread: its picture.
 	number: int,
 	frames: u64,
 	thread: system.Thread,
@@ -39,6 +42,16 @@ Worker :: struct {
 }
 
 workers: [WORKER_COUNT]Worker
+
+// The picture of each square, in the memory that the threads share. The
+// window shows each one with a picture record; the count of frames of its
+// thread is its generation, so a square that did not change is not copied
+// again.
+square_pixels: [WORKER_COUNT][SQUARE * SQUARE]graphics.Color
+square_pictures: [WORKER_COUNT]graphics.Canvas
+records_now, records_before: [64]interface.Draw_Record
+text_now, text_before: [512]u8
+drawing: interface.Window_Drawing
 
 // The center of the path of the constant of each Julia set, and its tint.
 @(rodata)
@@ -118,19 +131,21 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	system.log("threads: a thread added the numbers to 1000: ", sum.result)
 
-	display.picture_begin(&window) // The measure of a picture (display.present).
-	graphics.clear(window.canvas, graphics.COLOR_BACKGROUND)
+	drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
 	for &worker, index in workers {
-		x := MARGIN + (index % 2) * (SQUARE + MARGIN)
-		y := HEADER + MARGIN + (index / 2) * (SQUARE + LABEL + MARGIN)
+		// A square shows the background until its thread draws it.
+		square_pictures[index] = {pixels = raw_data(square_pixels[index][:]), width = SQUARE, height = SQUARE, stride = SQUARE}
+		graphics.clear(square_pictures[index], graphics.COLOR_BACKGROUND)
 		worker.number = index
-		worker.canvas = graphics.view(window.canvas, x, y, SQUARE, SQUARE)
+		worker.canvas = square_pictures[index]
 		if !worker_start(index) {
 			system.log("threads: cannot start a thread")
 			system.stop(1)
 		}
 	}
 
+	drawing.now.pictures = square_pictures[:]
+	drawing.before.pictures = square_pictures[:]
 	ready := false
 	for {
 		for event in display.next_event(&window) {
@@ -148,21 +163,26 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			}
 		}
 		drawn := 0
-		graphics.fill(window.canvas, 0, 0, WIDTH, HEADER + MARGIN, graphics.COLOR_BACKGROUND)
-		graphics.text(window.canvas, MARGIN, 8, "One program. Each square is one thread.", graphics.COLOR_TEXT)
+		frame := interface.window_frame_begin(&drawing, &window)
+		table := frame.table
+		interface.draw_text(table, MARGIN, 8, "One program. Each square is one thread.", graphics.COLOR_TEXT)
 		for &worker, index in workers {
 			x := MARGIN + (index % 2) * (SQUARE + MARGIN)
-			y := HEADER + MARGIN + (index / 2) * (SQUARE + LABEL + MARGIN) + SQUARE
-			graphics.fill(window.canvas, x, y, SQUARE, LABEL, graphics.COLOR_BACKGROUND)
-			after := graphics.text(window.canvas, x, y + 3, "thread ", graphics.COLOR_TEXT)
-			after = graphics.unsigned(window.canvas, after, y + 3, u64(index + 1), graphics.COLOR_TEXT)
+			y := HEADER + MARGIN + (index / 2) * (SQUARE + LABEL + MARGIN)
+			// The thread writes frames after a whole square: one read, so
+			// the generation and the label say the same count.
+			frames := intrinsics.volatile_load(&worker.frames)
+			interface.draw_picture(table, x, y, index, u32(frames))
+			y += SQUARE
+			after := interface.draw_text(table, x, y + 3, "thread ", graphics.COLOR_TEXT)
+			after = interface.draw_unsigned(table, after, y + 3, u64(index + 1), graphics.COLOR_TEXT)
 			if worker.runs {
-				after = graphics.text(window.canvas, after, y + 3, "  frame ", graphics.COLOR_DIM)
-				graphics.unsigned(window.canvas, after, y + 3, worker.frames, graphics.COLOR_DIM)
+				after = interface.draw_text(table, after, y + 3, "  frame ", graphics.COLOR_DIM)
+				interface.draw_unsigned(table, after, y + 3, frames, graphics.COLOR_DIM)
 			} else {
-				graphics.text(window.canvas, after, y + 3, "  stopped", COLOR_STOPPED)
+				interface.draw_text(table, after, y + 3, "  stopped", COLOR_STOPPED)
 			}
-			if worker.frames > 0 {
+			if frames > 0 {
 				drawn += 1
 			}
 		}
@@ -170,7 +190,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			ready = true
 			system.log("threads: ok, ", u64(WORKER_COUNT), " threads draw in one surface")
 		}
-		display.present(&window)
+		interface.window_frame_end(&drawing, &frame, &window)
 		display.wait(&window, system.time() + FRAME_TIME)
 	}
 }

@@ -117,6 +117,33 @@ wait_entry_wake :: proc "contextless" (thread: ^Thread, serial: u32) -> bool {
 	return counted
 }
 
+// thread_words_wake ends the wait of a thread for its words, whatever its
+// serial: a thread that waits becomes ready; a thread that registered its
+// words and does not wait yet gets `woken`, and its wait_end does not wait.
+// For a thread whose words name a frame that leaves its program (a
+// decommit, a revocation): the caller holds the program lock of the thread,
+// so no word is added meanwhile (a word is registered in the kernel entry,
+// under that lock). The words can still be dropped at the start of the next
+// entry of the thread (wait_begin), with no program lock: then the caller
+// reads a word list that is ending, and at worst wakes a thread that waits
+// no more, which only reads its words again. A thread that registers again
+// later does it under the program lock, after the frames left, and finds
+// the page not committed.
+thread_words_wake :: proc "contextless" (thread: ^Thread) {
+	home := run_lock(thread)
+	queued, preempts := false, false
+	switch {
+	case thread.state == .Waiting:
+		queued, preempts = thread_ready_held(thread)
+	case thread.state == .Ready:
+		thread.woken = true
+	}
+	run_unlock(home)
+	if queued {
+		kick(home, preempts)
+	}
+}
+
 // wait_begin starts the registration of a kernel entry: the entries of the
 // last wait leave the table.
 wait_begin :: proc "contextless" (thread: ^Thread) {

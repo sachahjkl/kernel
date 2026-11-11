@@ -2,6 +2,7 @@ package kernel
 
 import "base:intrinsics"
 import "contract:errors"
+import op "contract:operation"
 
 // The origin tree: what came from which handle (property 13).
 //
@@ -185,18 +186,14 @@ holding_end :: proc "contextless" (holding: Holding, changes: u64) -> End {
 		// Before the unmap: the unmap can end the memory object and free its
 		// frames. A thread that waits on a word of it wakes; it runs again
 		// after the unmap, under this program lock.
+		// A thread that registered its words and does not wait yet counts
+		// too: its wait_end must not wait on a frame that leaves. One sorted
+		// search over the frames of the object, not one walk of the object
+		// for each word. Each frame of the object counts: the unmap can end
+		// the object, and then each of its frames leaves.
 		region := &regions[mapping.region]
-		for &thread in threads[1:] {
-			if thread.program != index || intrinsics.atomic_load(&thread.state) != .Waiting {
-				continue
-			}
-			for word in thread.words[:thread.word_count] {
-				if region_has_frame(region, word &~ (PAGE_SIZE - 1)) {
-					thread_wake(&thread)
-					break
-				}
-			}
-		}
+		whole := [1]op.Page_Range{{first = 0, page_count = region.page_count}}
+		waiters_on_frames_wake(program, region, whole[:])
 		unmap(program, mapping)
 	}
 	revoke_lost |= 1 << index

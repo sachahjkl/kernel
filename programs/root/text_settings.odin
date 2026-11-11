@@ -2,6 +2,7 @@ package root
 
 import "contract:glyph_cache"
 import "contract:settings"
+import op "contract:operation"
 import "support:graphics"
 import "support:system"
 
@@ -79,7 +80,7 @@ text_settings_create :: proc "contextless" () {
 // text_settings_give adds the settings page and the glyph caches,
 // read-only, to the mappings of a program that has a surface or a terminal,
 // and the address of the page to its values.
-text_settings_give :: proc "contextless" (mappings: []system.Mapping, count: ^int, values: ^[16]u64) {
+text_settings_give :: proc "contextless" (mappings: []system.Mapping, count: ^int, values: ^[op.CONTEXT_VALUES]u64) {
 	if settings_page == nil || count^ + 1 + len(glyph_cache_mappings) > len(mappings) {
 		return
 	}

@@ -315,8 +315,40 @@ record_type :: proc "contextless" (file: []u8, index: u32) -> (value: Record, ok
 		if size == 0 || item.offset > value.size || size > value.size - item.offset {
 			return {}, false
 		}
+		if item.type == .Integer && item.offset % size != 0 {
+			return {}, false
+		}
+	}
+	// The size is a multiple of the alignment: a record that follows
+	// another in a table keeps the alignment of its fields (N1 of the
+	// hostile read).
+	if value.size % record_alignment(file, value) != 0 {
+		return {}, false
 	}
 	return value, true
+}
+
+// record_has_handle says if a record has a Handle field: a record of a
+// table, and a record of a result, has none.
+record_has_handle :: proc "contextless" (file: []u8, of: Record) -> bool {
+	for number in 0 ..< of.field_count {
+		if item, ok := field(file, of, number); ok && item.type == .Handle {
+			return true
+		}
+	}
+	return false
+}
+
+// record_alignment gives the alignment of a record: the largest size of
+// its Integer and Handle fields, at least 1.
+record_alignment :: proc "contextless" (file: []u8, of: Record) -> (alignment: u32) {
+	alignment = 1
+	for number in 0 ..< of.field_count {
+		if item, ok := field(file, of, number); ok && item.type != .Text {
+			alignment = max(alignment, field_size(item.type, item.detail))
+		}
+	}
+	return alignment
 }
 
 // records_equal says if two descriptions of a record are equal: the same
@@ -352,13 +384,65 @@ field :: proc "contextless" (file: []u8, of: Record, number: u32) -> (value: Fie
 field_size :: proc "contextless" (type: Type, detail: u32) -> u32 {
 	#partial switch type {
 	case .Integer:
-		return 8
+		switch detail {
+		case 0:
+			return 8
+		case 1, 2, 4, 8:
+			return detail
+		}
+		return 0
 	case .Handle:
 		return 4
 	case .Text:
 		return detail <= RECORD_SIZE_LIMIT ? detail : 0
 	}
 	return 0
+}
+
+// field_integer gives the value of an Integer field of a record, as an
+// i64: an unsigned field of 8 bytes is its bits. record has the size of
+// the description. 0 for another field.
+field_integer :: proc "contextless" (record: []u8, item: Field) -> i64 {
+	size := field_size(item.type, item.detail)
+	if item.type != .Integer || u64(item.offset) > u64(len(record)) || u64(size) > u64(len(record)) - u64(item.offset) {
+		return 0
+	}
+	bits: u64
+	for index in 0 ..< size {
+		bits |= u64(record[item.offset + index]) << (8 * index)
+	}
+	if !item.unsigned && size < 8 && bits >> (8 * size - 1) & 1 != 0 {
+		bits |= ~u64(0) << (8 * size) // The sign.
+	}
+	return i64(bits)
+}
+
+// field_integer_fits says if an Integer field holds a value: a signed field
+// of n bytes holds -2^(8n-1) ..< 2^(8n-1), an unsigned one 0 ..< 2^(8n). An
+// unsigned field of 8 bytes holds each value as its bits. A caller that
+// writes a value of a person refuses one that does not fit.
+field_integer_fits :: proc "contextless" (item: Field, value: i64) -> bool {
+	size := field_size(item.type, item.detail)
+	if item.type != .Integer || size == 0 || size == 8 {
+		return item.type == .Integer && size == 8
+	}
+	bits := 8 * u64(size)
+	if item.unsigned {
+		return value >= 0 && u64(value) < u64(1) << bits
+	}
+	return value >= -(i64(1) << (bits - 1)) && value < i64(1) << (bits - 1)
+}
+
+// field_integer_set writes the low bytes of a value in an Integer field
+// of a record.
+field_integer_set :: proc "contextless" (record: []u8, item: Field, value: i64) {
+	size := field_size(item.type, item.detail)
+	if item.type != .Integer || u64(item.offset) > u64(len(record)) || u64(size) > u64(len(record)) - u64(item.offset) {
+		return
+	}
+	for index in 0 ..< size {
+		record[item.offset + index] = u8(u64(value) >> (8 * index))
+	}
 }
 
 // field_text gives the text of a Text field of a record: the bytes before

@@ -37,7 +37,10 @@ LINE :: 24
 BAR_WIDTH :: 200
 RATE_X :: 284
 ENTRIES_X :: RATE_X + BAR_WIDTH + 110
-WIDTH :: ENTRIES_X + BAR_WIDTH + 96
+ENTRIES_HEADER :: "kernel entries, one million records"
+// The widest text at the right is the header of the entries: the window
+// ends 12 pixels after it, the same margin as at the left.
+WIDTH :: ENTRIES_X + len(ENTRIES_HEADER) * graphics.CELL_WIDTH + 12
 HEIGHT :: 12 + 3 * LINE + len(measures) * LINE + LINE + 12
 
 COLOR_RATE :: 0x58D878
@@ -157,7 +160,7 @@ wait_start :: proc "contextless" () {
 write_records :: proc "c" (parameter: rawptr) -> ! {
 	member := (^Member)(parameter)
 	wait_start()
-	for intrinsics.volatile_load(&stop) == 0 {
+	for intrinsics.atomic_load_explicit(&stop, .Relaxed) == 0 {
 		put({kind = RECORD, values = {0 = u64(member.number), 1 = member.count}})
 		member.count += 1
 	}
@@ -286,7 +289,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 	y += LINE + LINE / 2
 	interface.draw_text(table, 12, y, "queue    writers  readers  wrong", graphics.COLOR_DIM)
 	interface.draw_text(table, RATE_X, y, "records in one second", graphics.COLOR_DIM)
-	interface.draw_text(table, ENTRIES_X, y, "kernel entries, one million records", graphics.COLOR_DIM)
+	interface.draw_text(table, ENTRIES_X, y, ENTRIES_HEADER, graphics.COLOR_DIM)
 	y += LINE
 	for measure, index in measures {
 		if index % 2 == 0 {

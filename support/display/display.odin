@@ -205,30 +205,36 @@ open :: proc "contextless" (ctx: ^system.Context, width, height: int, title: str
 OPEN_ARGUMENTS := [?]string{"ctx", "width", "height", "title", "two_pictures"}
 
 // present tells the compositor that the picture in window.canvas is
-// complete.
-present :: proc "contextless" (window: ^Window) {
-	present_rectangle(window, 0, 0, 0, 0)
+// complete. It gives false when the command ring was full: the compositor
+// did not get the present.
+present :: proc "contextless" (window: ^Window) -> bool {
+	return present_rectangle(window, 0, 0, 0, 0)
 }
 
 // present_rectangle tells the compositor that the picture in window.canvas
 // is complete, and that only one rectangle of it changed: the compositor
 // draws again only that part of the window. A width of 0 is the whole
-// surface.
-present_rectangle :: proc "contextless" (window: ^Window, x, y, width, height: int) {
+// surface. It gives false when the command ring was full: the compositor
+// did not get the present, and with two pictures the canvas stays the same.
+present_rectangle :: proc "contextless" (window: ^Window, x, y, width, height: int) -> bool {
 	picture_end(window)
 	record := ring.Record{kind = u32(Command.Present), values = {0 = u64(window.picture), 1 = u64(max(x, 0)), 2 = u64(max(y, 0)), 3 = u64(max(width, 0)), 4 = u64(max(height, 0))}}
-	if !system.send(&window.ring.commands, record) || !window.two {
-		return
+	if !system.send(&window.ring.commands, record) {
+		return false
 	}
-	window.presented = window.ring.commands.counters.write
-	window.picture = 1 - window.picture
-	window.canvas = window.pictures[window.picture]
+	if window.two {
+		window.presented = window.ring.commands.counters.write
+		window.picture = 1 - window.picture
+		window.canvas = window.pictures[window.picture]
+	}
+	return true
 }
 
 // pointer_shape_set asks the compositor for a pointer shape over the
 // surface of the window. The compositor shows it while the pointer is over
 // this surface and the surface is in front at that place, never over
-// another surface, the bar or a frame (property 20). The shape stays until
+// another surface, the bar or a frame: a program changes the pointer only
+// over its own window. The shape stays until
 // the next request; the shape of a new surface is the arrow.
 pointer_shape_set :: proc "contextless" (window: ^Window, shape: pointer_pictures.Pointer_Shape) {
 	system.send(&window.ring.commands, ring.Record{kind = u32(Command.Pointer_Shape), values = {0 = u64(shape)}})

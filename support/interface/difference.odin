@@ -1,5 +1,6 @@
 package interface
 
+import "base:intrinsics"
 import "support:graphics"
 
 DAMAGE_CAPACITY :: 8 // The rectangles that one frame keeps, as the compositor does.
@@ -49,15 +50,25 @@ damage_bounds :: proc "contextless" (damage: ^Damage) -> Rectangle {
 
 // records_equal says if two records draw the same thing: their 40 bytes are
 // equal, except the places of their texts in the two text tables, and the
-// bytes of their texts are equal.
+// bytes of their texts are equal. A text record whose range is not inside
+// its text table is equal to no record: its rectangle is damaged, and the
+// execution draws nothing for it. The check is on the records that it
+// receives, the copies that it compares.
 records_equal :: proc "contextless" (before: ^Draw_Table, old: Draw_Record, now: ^Draw_Table, new: Draw_Record) -> bool {
 	old_without_place, new_without_place := old, new
-	old_without_place.text_start, new_without_place.text_start = 0, 0
+	// Only a text has a place that can change with no change of what is
+	// drawn. For a picture or a text grid, the same field is its index.
+	if old.kind == .Text && new.kind == .Text {
+		old_without_place.text_start, new_without_place.text_start = 0, 0
+	}
 	if (transmute([size_of(Draw_Record)]u8)old_without_place) != (transmute([size_of(Draw_Record)]u8)new_without_place) {
 		return false
 	}
 	if old.kind != .Text {
 		return true
+	}
+	if u64(old.text_start) + u64(old.text_count) > u64(before.text_count) || u64(new.text_start) + u64(new.text_count) > u64(now.text_count) {
+		return false
 	}
 	return string(before.text[old.text_start:][:old.text_count]) == string(now.text[new.text_start:][:new.text_count])
 }
@@ -71,8 +82,10 @@ records_equal :: proc "contextless" (before: ^Draw_Table, old: Draw_Record, now:
 damage_by_difference :: proc "contextless" (before, now: ^Draw_Table, damage: ^Damage) {
 	shared := min(before.record_count, now.record_count)
 	for index in 0 ..< shared {
-		old := before.records[index]
-		new := now.records[index]
+		// One copy of each record: a table can be in memory that another
+		// program writes during the call (the interface as a module).
+		old := intrinsics.volatile_load(&before.records[index])
+		new := intrinsics.volatile_load(&now.records[index])
 		if records_equal(before, old, now, new) {
 			if new.kind == .Text_Grid {
 				grid_damage(before, now, new, damage)
@@ -150,14 +163,15 @@ grid_damage :: proc "contextless" (before, now: ^Draw_Table, record: Draw_Record
 // the table own_before; the screen shows the other picture, with the table
 // shown. draw: the difference with own_before, the pixels of this picture
 // to make again. present: draw and the difference with shown, because the
-// screen must change wherever it shows something other than now.
-damage_of_two_pictures :: proc "contextless" (own_before, shown: ^Draw_Table, shown_drawn: bool, now: ^Draw_Table, draw, present: ^Damage) {
+// screen must change wherever it shows something other than now. When the
+// table of the shown picture is not known, the screen can show anything
+// that an older frame drew, also where the frame now draws nothing: present
+// is then the whole surface.
+damage_of_two_pictures :: proc "contextless" (own_before, shown: ^Draw_Table, shown_drawn: bool, now: ^Draw_Table, surface: Rectangle, draw, present: ^Damage) {
 	damage_by_difference(own_before, now, draw)
 	present^ = draw^
 	if !shown_drawn {
-		for record in now.records[:now.record_count] {
-			damage_add(present, record_rectangle(record))
-		}
+		damage_add(present, surface)
 		return
 	}
 	shown_damage: Damage

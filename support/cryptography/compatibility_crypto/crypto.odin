@@ -43,7 +43,7 @@ compare_byte_ptrs_constant_time :: proc "contextless" (a, b: ^byte, n: int) -> i
 	for i in 0 ..< n {
 		v |= x[i] ~ y[i]
 	}
-	return subtle.eq(0, v)
+	return int(subtle.eq(0, v))
 }
 
 // is_zero_constant_time gives 1 when each byte of b is 0, else 0.
@@ -52,5 +52,19 @@ is_zero_constant_time :: proc "contextless" (b: []byte) -> int {
 	for b_ in b {
 		v |= b_
 	}
-	return subtle.byte_eq(0, v)
+	return int(subtle.byte_eq(0, v))
+}
+
+// COMPACT_IMPLS: the origin chooses smaller tables with it; false, as in the
+// origin by default.
+COMPACT_IMPLS :: false
+
+// HAS_RAND_BYTES: the origin asks the operating system for entropy. A
+// program of this system draws from its own generator (support/random) and
+// gives the bytes: so the procedures of the origin that draw by themselves
+// (ed25519.private_key_generate) say false.
+HAS_RAND_BYTES :: false
+
+rand_bytes :: proc "contextless" (dst: []byte) {
+	ensure_contextless(false, "cryptography: no system entropy source here: draw from support/random")
 }

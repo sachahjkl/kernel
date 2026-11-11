@@ -37,6 +37,7 @@ MACHINE_STOP_OK :: 1
 
 Step_Kind :: enum {
 	Wait, // The log of the kernel has text, after the text of the last Wait.
+	Date, // As Wait; then the number after text is a date of the machine in seconds since 1970, and the host time must be within DATE_TOLERANCE_SECONDS of it.
 	Type, // Press the keys of text, then Enter.
 	Keys, // Press the keys of text, with no Enter.
 	Key, // Press one key: text is its QEMU name.
@@ -85,6 +86,37 @@ Step :: struct {
 	repeat:     int, // For Call: the calls of the measure of the round trip.
 	parts:      int, // For Call: the least count of datagrams of the answer.
 	inside_window: string, // For Click: (x, y) are inside the surface of the window with this title, as the log of the compositor places it. For Point: from the corner of the window.
+	date_after: string, // For Call: the number after this text in what the tool prints is a date of the machine in milliseconds since 1970: it must be within DATE_TOLERANCE_SECONDS of the host time.
+}
+
+DATE_TOLERANCE_SECONDS :: 5
+
+// date_check compares a date of the machine, in seconds since 1970, with
+// the time of the host. QEMU gives the machine the clock of the host as its
+// real-time clock (-rtc base=utc).
+date_check :: proc(index: int, machine_seconds: i64, what: string) -> bool {
+	host := time.time_to_unix(time.now())
+	apart := abs(host - machine_seconds)
+	if apart > DATE_TOLERANCE_SECONDS {
+		fmt.eprintfln("kerneltool: test failed: step %d: the date of the machine (%s) is %d, the host gives %d: %d s apart", index + 1, what, machine_seconds, host, apart)
+		return false
+	}
+	fmt.printfln("kerneltool: test passed: the date of the machine (%s) is %d s since 1970, the host gives %d: %d s apart", what, machine_seconds, host, apart)
+	return true
+}
+
+// number_after reads the decimal number after a text in another text.
+number_after :: proc(text: string, after: string) -> (value: i64, found: bool) {
+	at := strings.index(text, after)
+	if at < 0 {
+		return 0, false
+	}
+	rest := text[at + len(after):]
+	end := 0
+	for end < len(rest) && (rest[end] >= '0' && rest[end] <= '9' || end == 0 && rest[end] == '-') {
+		end += 1
+	}
+	return strconv.parse_i64(rest[:end])
 }
 
 // A start that fails: the boot image has no compositor. The boot display
@@ -120,6 +152,7 @@ scenario_persist_first := [?]Step {
 	{kind = .Wait, text = "notes: the note is \"kept across a restart\", generation 22"},
 	{kind = .Key, text = "tab"},
 	{kind = .Wait, text = "notes: count 1000, stopped: 1000 commits in "},
+	{kind = .Wait, text = "notes: the versions of the count: 1000 rows in "},
 	// A setting that the next machine finds (the boot pass of settings).
 	{kind = .Launch, text = "settings"},
 	{kind = .Wait, text = "compositor: surface settings", any_order = true},
@@ -611,6 +644,10 @@ scenario := [?]Step {
 	{kind = .Wait, text = "kernel: ok"},
 	{kind = .Wait, text = "root: ok"},
 	{kind = .Wait, text = "input: ok"},
+	// The date: the program `date` starts after the input service and reads the real-time clock of the machine,
+	// which QEMU takes from the clock of the host. The date must be within a
+	// few seconds of the host.
+	{kind = .Date, text = " UTC, seconds since 1970 ", any_order = true},
 	// The measure of the copy and the fill of runtime/memory.asm, at the start
 	// of the compositor, before its first frame.
 	{kind = .Wait, text = "compositor: copy_bytes_without_overlap, ns for 8 64 512 4096 65536 3145600 bytes, aligned: ", any_order = true},
@@ -777,6 +814,10 @@ scenario := [?]Step {
 	{kind = .Type, text = "clear()"},
 	{kind = .Type, text = "isolate(\"sample\")"},
 	{kind = .Wait, text = "[console] sample: 10 commands in a sandboxed program"},
+	// The exports that are wrong on purpose are in a module of their own,
+	// which no service holds.
+	{kind = .Type, text = "isolate(\"hostile_exports\")"},
+	{kind = .Wait, text = "[console] hostile_exports: 4 commands in a sandboxed program"},
 	{kind = .Type, text = "r = Rectangle(1, 2, 30, 4)"},
 	{kind = .Type, text = "area(r)"},
 	{kind = .Wait, text = "[console] 120"},
@@ -812,7 +853,7 @@ scenario := [?]Step {
 	{kind = .Type, text = "hold(b)"},
 	{kind = .Wait, text = "[console] 3"},
 	{kind = .Type, text = "look()"},
-	{kind = .Wait, text = "[console] error: the program sample stopped: page fault"},
+	{kind = .Wait, text = "[console] error: the program hostile_exports stopped: page fault"},
 	// The root service ends one grant of a program that runs. The window of
 	// monitor goes below the console for the picture, then back.
 	{kind = .Move, text = "monitor", to_x = 568, to_y = 552},
@@ -837,14 +878,20 @@ scenario := [?]Step {
 	// console: it has the handles of the console, and kept gives 0.
 	{kind = .Type, text = "unload(\"sample\")"},
 	{kind = .Wait, text = "[console] sample: 10 commands removed, its sandboxed program stops"},
+	{kind = .Type, text = "unload(\"hostile_exports\")"},
+	{kind = .Wait, text = "[console] hostile_exports: 4 commands removed"},
 	{kind = .Type, text = "clear()"},
 	{kind = .Type, text = "load(\"sample\")"},
 	{kind = .Wait, text = "[console] sample: 10 commands, hash"},
+	{kind = .Type, text = "load(\"hostile_exports\")"},
+	{kind = .Wait, text = "[console] hostile_exports: 4 commands, hash"},
 	{kind = .Type, text = "g = grow(r, 5)"},
 	{kind = .Type, text = "g.width * g.height + keep(b) + kept()"},
 	{kind = .Wait, text = "[console] 12848"},
 	{kind = .Type, text = "unload(\"sample\")"},
 	{kind = .Wait, text = "[console] sample: 10 commands removed, the module left the memory of the console"},
+	{kind = .Type, text = "unload(\"hostile_exports\")"},
+	{kind = .Wait, text = "[console] hostile_exports: 4 commands removed, the module left the memory of the console"},
 	{kind = .Type, text = "release(b)"},
 
 	// The temple of Jon, then back to the console.
@@ -1009,6 +1056,21 @@ scenario := [?]Step {
 	{kind = .Type, text = "stop(\"scheduler\")"},
 	{kind = .Wait, text = "root: scheduler stopped"},
 
+	// A program drives its own virtual memory: an arena and a sparse table
+	// of 1 GiB of addresses, commit and decommit, a protection change with
+	// its shoot-down, a guard page, large pages, the refusals.
+	{kind = .Launch, text = "address_space"},
+	{kind = .Wait, text = "address_space: arena: 1 GiB of addresses in one mapping, "},
+	{kind = .Wait, text = "address_space: sparse table: 1024 pages committed of 262144, 1024 with a frame; decommit: 1024 pages back in the budget at once"},
+	{kind = .Wait, text = "address_space: protection of 64 pages, one call with its shoot-down, the middle of 40 calls"},
+	{kind = .Wait, text = "address_space: guard page: the child stopped with vector 14 at "},
+	{kind = .Wait, text = "address_space: large pages: one random read over 64 MiB: "},
+	{kind = .Wait, text = "address_space: ok, the arena and the sparse table paid only what they used, the decommit gave each page back, the protection changed with its shoot-down, the guard page stopped the child, the large pages are in the report, each refusal has its error record"},
+	{kind = .Shot, text = "address_space"},
+	{kind = .Front, text = "console"},
+	{kind = .Type, text = "stop(\"address_space\")"},
+	{kind = .Wait, text = "root: address_space stopped"},
+
 	// The boot display in a window: how the machine started, with the
 	// records that the kernel has now.
 	{kind = .Launch, text = "boot"},
@@ -1067,7 +1129,7 @@ scenario := [?]Step {
 	// The monitor serves its tables; its grant of the machine was revoked
 	// above, so the kernel refuses its reports.
 	{kind = .Type, text = "connect(\"monitor\")"},
-	{kind = .Wait, text = "[console] monitor: 4 commands of a service that runs"},
+	{kind = .Wait, text = "[console] monitor: 5 commands of a service that runs"},
 	{kind = .Type, text = "monitor.count(\"processors\")"},
 	{kind = .Wait, text = "[console] error: monitor.count: refused with the status "},
 	{kind = .Type, text = "help()"},
@@ -1338,6 +1400,55 @@ scenario := [?]Step {
 	{kind = .Wait, text = "error: paint.line: the argument color has the value 9, which the call refuses; it takes at most 5"},
 	{kind = .Type, text = "stop(\"paint\")"},
 	{kind = .Wait, text = "root: paint stopped"},
+	// (After the check of the log: these lines do not push the boot
+	// records out of the log.)
+	{kind = .Type, text = "load(\"sample\")"},
+	{kind = .Wait, text = "[console] sample: 10 commands, hash"},
+	// A table goes into a direct call: the export reads and changes the
+	// memory of the variable, with no copy. A table from where() goes in;
+	// a table from columns() has another record, and the console refuses it.
+	{kind = .Type, text = "clear()"},
+	{kind = .Type, text = "t = readings(4)"},
+	{kind = .Type, text = "sum_values(t)"},
+	{kind = .Wait, text = "[console] 100"},
+	{kind = .Type, text = "scale_values(t, 7)"},
+	{kind = .Type, text = "t"},
+	{kind = .Wait, text = "4 rows of Reading"},
+	{kind = .Type, text = "sum_values(where(t, \"sensor\", 2))"},
+	{kind = .Wait, text = "[console] 210"},
+	{kind = .Type, text = "sum_values(columns(t, \"sensor value\"))"},
+	{kind = .Wait, text = "[console] error: sum_values: argument 1 is Table(Reading, Read), not Table(Reading)"},
+	{kind = .Shot, text = "table_argument"},
+	{kind = .Type, text = "unload(\"sample\")"},
+	{kind = .Wait, text = "[console] sample: 10 commands removed, the module left the memory of the console"},
+	// A table goes into an isolated call: the rows go into the call
+	// region, and the rows of a Change table come back.
+	{kind = .Type, text = "isolate(\"sample\")"},
+	{kind = .Wait, text = "[console] sample: 10 commands in a sandboxed program"},
+	{kind = .Type, text = "t = readings(4)"},
+	{kind = .Type, text = "scale_values(t, 3)"},
+	{kind = .Type, text = "sum_values(t)"},
+	{kind = .Wait, text = "[console] 300"},
+	{kind = .Type, text = "unload(\"sample\")"},
+	{kind = .Wait, text = "[console] sample: 10 commands removed, its sandboxed program stops"},
+	// The signature of an export with a table and bytes: one form in the
+	// manual, the console and the errors.
+	{kind = .Type, text = "start(\"manual\")"},
+	{kind = .Wait, text = "root: started manual"},
+	{kind = .Wait, text = "manual: ok, "},
+	{kind = .Front, text = "console"},
+	{kind = .Type, text = "manual.signature(\"sample\", 11)"},
+	{kind = .Wait, text = "[console] sum_words(words: Table(Word, Change), text: Bytes(Read)) -> Integer"},
+	{kind = .Type, text = "manual.show(\"sample\")"},
+	{kind = .Wait, text = "manual: sample: a program, "},
+	{kind = .Front, text = "manual"},
+	{kind = .Key, text = "pgdn"},
+	{kind = .Key, text = "pgdn"},
+	{kind = .Shot, text = "manual_tables"},
+	{kind = .Front, text = "console"},
+	{kind = .Type, text = "stop(\"manual\")"},
+	{kind = .Wait, text = "root: manual stopped"},
+	{kind = .Type, text = "clear()"},
 	// The terminal: a program gives text as records with a style, in a ring
 	// of 4096 records. The terminal reads them in one thread and draws in
 	// another: the display does not slow the program.
@@ -1405,16 +1516,21 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[console] kept on the disk"},
 	// The limit of the store: one more object needs two more blocks.
 	{kind = .Type, text = "storage.write(\"second\", \"one block more\")"},
-	{kind = .Wait, text = "[console] error: storage.write: the call needs 5 blocks in all; the limit is 4 blocks (-2)"},
+	{kind = .Wait, text = "[console] error: storage.write: the call needs 5 blocks in all, with no earlier version kept; the limit is 4 blocks (-2)"},
+	// A change of the object at the limit: the version of its state before
+	// does not fit, and the same commit thins it.
+	{kind = .Type, text = "storage.write(\"greeting\", \"changed at the limit\")"},
+	{kind = .Wait, text = "[console] 3"},
+	{kind = .Record, program = "storage", level = "info", text = "storage: the store console is at its limit of 4 blocks: the commit of generation 3 thinned 1 version, the oldest of the store first", any_order = true},
 	// An error of a service is a record: the console writes it as a sentence.
 	{kind = .Type, text = "storage.write(\"\", \"x\")"},
 	{kind = .Wait, text = "[console] error: storage.write: the argument name is empty; it must have 1 to 39 bytes (-3)"},
 	{kind = .Type, text = "storage.read(\"nothing\")"},
 	{kind = .Wait, text = "[console] error: storage.read: the argument name: the store has no object with this name (-7)"},
 	{kind = .Type, text = "storage.objects()"},
-	{kind = .Wait, text = "[console] greeting 16 bytes, generation 2"},
+	{kind = .Wait, text = "[console] greeting 20 bytes, generation 3"},
 	{kind = .Type, text = "storage.stores()"},
-	{kind = .Wait, text = "; console: 1 objects, 3 of 4 blocks, 1 connection"},
+	{kind = .Wait, text = "[console] console: 1 objects, 0 versions, 3 of 4 blocks, 0 shared, 1 connection"},
 	// The person sees the grant and revokes it: the store stays on the disk,
 	// and the console cannot reach it.
 	{kind = .Type, text = "grants(\"console\")"},
@@ -1424,10 +1540,44 @@ scenario := [?]Step {
 	{kind = .Type, text = "storage.write(\"greeting\", \"changed\")"},
 	{kind = .Wait, text = "[console] error: storage.write: the caller has no grant for this: a private store (-1)"},
 	{kind = .Type, text = "storage.stores()"},
-	{kind = .Wait, text = "; console: 1 objects, 3 of 4 blocks, 0 connections"},
+	{kind = .Wait, text = "[console] console: 1 objects, 0 versions, 3 of 4 blocks, 0 shared, 0 connections"},
 	{kind = .Type, text = "grants(\"console\")"},
 	{kind = .Wait, text = "[console] console lost: store"},
 	{kind = .Shot, text = "storage"},
+	// Versions: notes commits each key, and the storage service
+	// keeps the state before each commit. The person steps back through the
+	// versions of the note and restores one; nothing is lost.
+	{kind = .Launch, text = "notes"},
+	{kind = .Wait, text = "notes: a new store: no note, the count 0", any_order = true},
+	{kind = .Wait, text = "compositor: surface notes"},
+	{kind = .Type, text = "versions"},
+	{kind = .Wait, text = "notes: the note is \"versions\", generation 11, 7 versions; one commit of the note: "},
+	{kind = .Key, text = "up"},
+	{kind = .Wait, text = "notes: the version 7 of 8, generation 10, 20"}, // A version has the date of its commit.
+	{kind = .Wait, text = ": \"version\""},
+	{kind = .Key, text = "up"},
+	{kind = .Wait, text = "notes: the version 6 of 8, generation 9, "},
+	{kind = .Wait, text = ": \"versio\""},
+	{kind = .Shot, text = "notes_versions"},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "notes: restored the version of generation 9: \"versio\", in the commit of generation 12 in "},
+	// The exports of the versions, from the host: the remote service acts
+	// for the person, so it names the store of notes.
+	{kind = .Call, text = "storage.versions(\"notes\", \"note\")", expected = "9 rows of Version"},
+	// The date of the machine, from the host, some minutes after its start:
+	// it advanced with the host.
+	{kind = .Call, text = "date.now()", expected = "Date{milliseconds = ", date_after = "milliseconds = "},
+	{kind = .Call, text = "storage.version(\"notes\", \"note\", 7)", expected = "vers"},
+	{kind = .Call, text = "storage.compare(\"notes\", \"note\", 6, 11)", expected = "1 rows of Byte_Range"},
+	{kind = .Call, text = "storage.version(\"notes\", \"note\", 99)", outcome = .Failed, expected = "error: storage.version: the argument generation: the object has no version of the generation 99 (-9)"},
+	{kind = .Call, text = "storage.restore(\"notes\", \"note\", 11)", expected = "13"},
+	{kind = .Call, text = "storage.clone(\"notes\", \"note\", \"copy\")", expected = "14"},
+	{kind = .Front, text = "console"},
+	{kind = .Type, text = "storage.stores()"},
+	{kind = .Wait, text = "[console] notes: 2 objects, 9 versions, "},
+	{kind = .Shot, text = "storage_versions"},
+	{kind = .Type, text = "stop(\"notes\")"},
+	{kind = .Wait, text = "root: notes stopped"},
 	// Errors that diagnose: each case makes an error for real, and the
 	// window shows the sentence of its error record. The program fault
 	// stops three calls deep: the tool names the functions of its stack
@@ -1511,6 +1661,14 @@ scenario := [?]Step {
 	{kind = .Call, text = "inspect.threads(\"threads\")", expected = " rows of Thread"},
 	{kind = .Call, text = "inspect.modules(\"console\")", expected = "console "},
 	{kind = .Call, text = "inspect.mappings(\"nothing\")", outcome = .Failed, expected = "error: inspect.mappings: the argument program names none of the programs (-2)"},
+	// A table from the host: rows of field values go into the call region
+	// of the monitor. A Change table is refused by the tool: its rows would
+	// not come back. The service sample is not reachable from the network
+	// (callable_of("remote")).
+	{kind = .Call, text = "monitor.counts_named([(\"programs\"), (\"processors\")])", expected = "2 rows of Count"},
+	{kind = .Call, text = "monitor.counts_named([(\"programs\"), (\"nothing\")])", outcome = .Failed, expected = "names nothing that exists"},
+	{kind = .Call, text = "sample.scale_values([(0, 0, 10, 10, 10)], 2)", outcome = .Wrong, expected = "error: the parameter readings of sample.scale_values is Table(Reading, Change): a call from the host gives tables to read only"},
+	{kind = .Call, text = "sample.sum_values([(0, 0, 10, 10, 10)])", outcome = .Refused, expected = "no grant"},
 	{kind = .Close, text = "inspect"},
 	{kind = .Close, text = "errors"},
 	{kind = .Record, program = "root", channel = "programs", level = "info", text = "root: errors stopped with code 0"},
@@ -1539,7 +1697,7 @@ scenario := [?]Step {
 	{kind = .Shot, text = "interface_damage"},
 	{kind = .Close, text = "interface_elements"},
 	{kind = .Wait, text = "root: interface_elements stopped"},
-	// The vector font of the system (docs/FONTS.md): the six candidates,
+	// The vector font of the system (docs/FONTS.md): the seven candidates,
 	// each from a glyph cache that the program builds, beside Spleen 8x16.
 	{kind = .Launch, text = "vector_glyphs"},
 	{kind = .Wait, text = "vector_glyphs: one glyph from its outline, in fixed point"},
@@ -1621,6 +1779,29 @@ scenario := [?]Step {
 	{kind = .Shot, text = "settings"},
 	{kind = .Close, text = "settings"},
 	{kind = .Wait, text = "root: settings stopped"},
+	// Tables and bytes as parameters: one description, three ways to call
+	// (docs/MODULE_CONTRACT.md). The program loads sample, starts a call
+	// host of it, and connects to the service sample, which the root
+	// service starts: the same module, the same arguments, the same answers.
+	{kind = .Launch, text = "tables"},
+	{kind = .Wait, text = "compositor: surface tables", any_order = true},
+	{kind = .Wait, text = "tables: the ways: direct ready, call host ready, service ready"},
+	{kind = .Wait, text = "tables: sum_values, direct call: "},
+	{kind = .Wait, text = "tables: ok, 8 cases in 3 ways and 8 hostile cases"},
+	{kind = .Shot, text = "tables"},
+	{kind = .Close, text = "tables"},
+	{kind = .Wait, text = "root: tables stopped"},
+	// The interface package as a module for one program: the same frame
+	// through the exports of interface_module and with the package compiled
+	// in gives the same draw table.
+	{kind = .Launch, text = "interface_through_module"},
+	{kind = .Wait, text = "compositor: surface interface_through_module", any_order = true},
+	{kind = .Wait, text = "interface_through_module: one frame of "},
+	{kind = .Wait, text = " records asked, 16 drawn, the count of the full frame"},
+	{kind = .Wait, text = "interface_through_module: ok, the two draw tables are equal"},
+	{kind = .Shot, text = "interface_module"},
+	{kind = .Close, text = "interface_through_module"},
+	{kind = .Wait, text = "root: interface_through_module stopped"},
 	{kind = .Front, text = "console"},
 	// Each page is free or paid, after all the starts and stops of this test.
 	{kind = .Type, text = "memory()"},
@@ -1645,6 +1826,42 @@ scenario_measure := [?]Step {
 	{kind = .Wait, text = "locks: frame caches after the measures (frames now, batches taken, batches given, drains): processor 0: "},
 	{kind = .Wait, text = "locks: ok, the kernel counted each entry, each page returned, no wake was lost, each stopped program returned its pages, its slot and its threads"},
 	{kind = .Shot, text = "locks_alone"},
+	{kind = .Front, text = "console"},
+	{kind = .Type, text = "shutdown()"},
+	{kind = .Wait, text = "kernel: the machine stops with code 0"},
+}
+
+// The shortage of frames: a machine whose boot image has no desktop; the
+// root service gives nearly all its pages to the program shortage, which
+// takes all the frames, drains the stacks, frees all, and stops the machine
+// (`kerneltool test shortage`, `kerneltool measure without_checks shortage`).
+@(rodata)
+scenario_shortage := [?]Step {
+	{kind = .Wait, text = "boot program: ok"},
+	{kind = .Wait, text = "kernel: ok"},
+	{kind = .Wait, text = "root: started shortage with "},
+	{kind = .Wait, text = "shortage: full: "},
+	{kind = .Wait, text = "shortage: ok, the stacks were drained for takes that cannot fail, a new object failed only when its budget could pay no page, and each frame returned"},
+	{kind = .Wait, text = "kernel: the machine stops with code 0"},
+}
+
+// The virtual memory of a program with only the desktop (`kerneltool
+// measure address_space`).
+@(rodata)
+scenario_measure_address_space := [?]Step {
+	{kind = .Wait, text = "boot program: ok"},
+	{kind = .Wait, text = "kernel: ok"},
+	{kind = .Wait, text = "root: ok"},
+	{kind = .Wait, text = "compositor: first frame", any_order = true},
+	{kind = .Wait, text = "compositor: surface console"},
+	{kind = .Launch, text = "address_space"},
+	{kind = .Wait, text = "address_space: arena: 1 GiB of addresses in one mapping, "},
+	{kind = .Wait, text = "address_space: sparse table: 1024 pages committed of 262144, 1024 with a frame; decommit: 1024 pages back in the budget at once"},
+	{kind = .Wait, text = "address_space: protection of 64 pages, one call with its shoot-down, the middle of 40 calls"},
+	{kind = .Wait, text = "address_space: guard page: the child stopped with vector 14 at "},
+	{kind = .Wait, text = "address_space: large pages: one random read over 64 MiB: "},
+	{kind = .Wait, text = "address_space: ok, the arena and the sparse table paid only what they used, the decommit gave each page back, the protection changed with its shoot-down, the guard page stopped the child, the large pages are in the report, each refusal has its error record"},
+	{kind = .Shot, text = "address_space"},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "shutdown()"},
 	{kind = .Wait, text = "kernel: the machine stops with code 0"},
@@ -2209,6 +2426,19 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				return false
 			}
 			fmt.printfln("kerneltool: test passed: the machine printed \"%s\"", step.text)
+		case .Date:
+			seen_before := machine.seen
+			if !log_wait(machine, step.text, step.any_order) {
+				fmt.eprintfln("kerneltool: test failed: step %d: the machine did not print \"%s\"", index + 1, step.text)
+				return false
+			}
+			log := log_read(machine)
+			value, found := number_after(log[seen_before:], step.text)
+			if !found {
+				fmt.eprintfln("kerneltool: test failed: step %d: no number after \"%s\"", index + 1, step.text)
+				return false
+			}
+			date_check(index, value, step.text) or_return
 		case .Trace:
 			if !log_wait(machine, step.text) {
 				fmt.eprintfln("kerneltool: test failed: step %d: the machine did not print \"%s\"", index + 1, step.text)
@@ -2548,6 +2778,14 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				return false
 			}
 			fmt.printfln("kerneltool: test passed: the call %s printed \"%s\", in %d datagrams", step.text, step.expected, result.datagrams)
+			if step.date_after != "" {
+				milliseconds, found := number_after(printed, step.date_after)
+				if !found {
+					fmt.eprintfln("kerneltool: test failed: step %d: no number after \"%s\" in the answer of %s", index + 1, step.date_after, step.text)
+					return false
+				}
+				date_check(index, milliseconds / 1000, step.text) or_return
+			}
 			if step.lose > 0 {
 				// The request went again; the service ran the call one time:
 				// served() counts the call of the step and its own call before.

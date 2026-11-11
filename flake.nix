@@ -14,10 +14,33 @@
     system = "x86_64-linux";
     pkgs = inputs.nixpkgs.legacyPackages.${system};
 
-    # The Odin compiler with one patch: -thread-count:1 gives one thread, so
-    # one source gives one module (property 11). The reason is in the patch.
-    odin = pkgs.odin.overrideAttrs (old: {
-      patches = (old.patches or []) ++ [./tools/odin_compiler/thread_count_counts_the_main_thread.patch];
+    # The release of Odin is pinned here, not by Nixpkgs: Nixpkgs is months
+    # behind the releases of the compiler.
+    odinRelease = "dev-2026-11a";
+    odin = pkgs.odin.overrideAttrs (_: {
+      version = odinRelease;
+      src = pkgs.fetchFromGitHub {
+        owner = "odin-lang";
+        repo = "Odin";
+        tag = odinRelease;
+        hash = "sha256-LzvPcA6CA0p9DZi1cuFUizDPkVODMZ0OC9/y+NAO0Kc=";
+      };
+      # The compiler as its release gives it: no patch. The patches of
+      # Nixpkgs are for raylib and for Darwin, which this system does not use.
+      patches = [];
+      postPatch = "patchShebangs --build build_odin.sh";
+      # The compiler and its base and core libraries only: no vendor library
+      # is built, because no code of this system imports one.
+      installPhase = ''
+        runHook preInstall
+        mkdir -p $out/bin $out/share
+        cp odin $out/bin/odin
+        cp -r base core $out/share
+        wrapProgram $out/bin/odin \
+          --prefix PATH : ${pkgs.lib.makeBinPath (with pkgs.llvmPackages_18; [bintools llvm clang lld])} \
+          --set-default ODIN_ROOT $out/share
+        runHook postInstall
+      '';
     });
 
     # What tools/kerneltool needs on the path.
@@ -49,11 +72,19 @@
     # The vector font candidates, for the command "vector_fonts" of kerneltool
     # (docs/FONTS.md): name=file, separated by ";". Only the development shell
     # has them: the build reads the subsets in resources/fonts.
+    # Paper Mono is not in nixpkgs: its two files come from its repository,
+    # at one commit, each checked by its hash.
+    paperMonoFile = name: hash:
+      pkgs.fetchurl {
+        url = "https://raw.githubusercontent.com/paper-design/paper-mono/74fc5537cc1f7b39aa8cccfa7dd3822e17143cca/fonts/ttf/${name}";
+        inherit hash;
+      };
     vectorFontSources = {
       VECTOR_FONT_SOURCES = builtins.concatStringsSep ";" [
+        "paper_mono=${paperMonoFile "PaperMono-Regular.ttf" "sha256-Ew4aCbZLTxUNNMk6a3vVLWxcNRN2HR+8e+QtaDmLjBA="}"
+        "paper_mono_semibold=${paperMonoFile "PaperMono-SemiBold.ttf" "sha256-Gx5gctnLUz5DBacHayRKoSEnElaJyTSf25d1c6Naxl4="}"
         "dejavu_sans_mono=${pkgs.dejavu_fonts}/share/fonts/truetype/DejaVuSansMono.ttf"
         "jetbrains_mono=${pkgs.jetbrains-mono}/share/fonts/truetype/JetBrainsMono-Regular.ttf"
-        "jetbrains_mono_bold=${pkgs.jetbrains-mono}/share/fonts/truetype/JetBrainsMono-Bold.ttf"
         "ibm_mono=${pkgs.ibm-plex}/share/fonts/truetype/IBMPlexMono-Regular.ttf"
         "fira_mono=${pkgs.fira-mono}/share/fonts/truetype/FiraMono-Regular.ttf"
         "commit_mono=${pkgs.commit-mono}/share/fonts/truetype/CommitMono-400-Regular.ttf"

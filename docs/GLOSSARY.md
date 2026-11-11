@@ -33,6 +33,10 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Stack trace | The return addresses of the calls that led to the instruction of a fault, from the frame pointers, each with the module record that holds it. Part of a stop report | backtrace, call stack (for this), unwind |
 | Module record | What the kernel keeps of one module in a program: its addresses, its hash, and the hash that a replacement put it in place of. The loader writes it; the kernel does not read the module. The module records of a program that runs are its identity | link map entry, loaded image list |
 | Table | Records of one record description that follow each other in memory, and their count. A Table result is written by the callee in memory of the caller, with the count of the full table (P12, P19). The console holds a table as one value | list, array (for this), result set, rowset, data frame |
+| Table parameter | A parameter of an export of the type Table: a table of records of one description in memory of the caller, with a direction. The callee works in that memory in a direct call; an isolated call carries the records in the call region or in a lent memory object (`MODULE_CONTRACT.md`, "Tables and bytes as parameters") | array argument, buffer argument, list parameter |
+| Bytes | A parameter type: bytes with no description (not only UTF-8), in memory of the caller, with a direction. It is a table parameter whose record is one byte. A Text is the read-only form for a person | blob, buffer, byte array, binary |
+| Direction | What the callee does with the memory of a table parameter or of a Bytes parameter: Read (it reads the count records), Change (it reads and writes the count records, the count stays), Append (it writes after the count, and gives the new count). The rights of a lent memory object are the direction: Read, or Read and Write | mode, access, in/out, intent |
+| Table place | The record of 24 bytes `{address, count, capacity}` in memory of the caller that names the memory of a table parameter or of a Bytes parameter in a direct call; the callee receives its address. Count and capacity are in records (in bytes for Bytes) | descriptor, span, fat pointer, buffer record (for this) |
 | Information function | A function that reads the flat tables of modules, the module records of the kernel or the replacement table, and fills a table in memory of the caller (`support/information`). It allocates nothing and keeps no state (P12) | query, reflection API, introspection |
 | Catalog | The input of an information function: the modules that a program can see, and the replacements of the machine. Today: the boot image that the program was granted, and the records of the replacement table | registry, repository, package database, index |
 | Problem | The error value that a reader of input that nobody checked gives for a rule that the input breaks: the kind, where (the table and the record of a module, or the layer of a frame), the byte, the bad value and its limit. An information function gives one for a module (`information.Problem`); the network service gives one for a frame (`datagram.Problem`) | exception, errno, error code |
@@ -105,9 +109,16 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Handle | An index and a generation in the handle table of a program. It names one object with a set of rights. Handle 0 names no object (P2) | file descriptor, capability, token, reference |
 | Memory object | Pages that the kernel names by handle. Each page has a page frame, or gets one at its first use. Programs map it; two programs that map the same one share it | region, shared memory segment, buffer |
 | Page on first use | A page of a memory object that gets its page frame at the first read or write, by a program (a page fault) or by the kernel. The frame is all zero. The budget paid for the page when the memory object was created | lazy allocation, demand paging, demand-zero page |
+| Uncommitted object | A memory object made with the flag `Uncommitted`: its budget pays only its frame list; each page is paid when it is committed. Its mapping holds a range of addresses with no memory behind it | reserved object, reservation, VirtualAlloc(MEM_RESERVE), mmap(PROT_NONE) |
+| Committed page | A page of a memory object that its budget paid for: it gets a frame at its first use. Each page of an object that is not uncommitted is committed | committed memory |
+| Decommit | The act of `Memory_Commit` with the flag `Decommit`: the pages of an uncommitted object are no longer paid; their frames and their pages return at once; the addresses stay reserved, and a page committed again is zero | madvise(DONTNEED), VirtualFree(MEM_DECOMMIT), discard |
+| Page protection | What a page of a mapping lets a program do: read, read and write, read and execute, or nothing (`No_Access`). `Memory_Protect` can only take away what the mapping has | mprotect, page rights |
+| Shoot-down | The step where each other processor that uses the page table of a program forgets its old translations (`processor_sync`), after the kernel cleared or reduced page table entries | TLB flush, TLB shootdown (for this) |
+| Large page | A page of 2 MiB: one entry of the second level of a page table. Only for an object made with `Large_Pages` | huge page, superpage |
+| Fault ring | A ring where the kernel writes a fault of a thread of a program, for another thread that commits or protects and lets it continue (designed, not built) | signal, SIGSEGV handler, userfaultfd, exception handler |
 | Reserved page | A page that a budget paid for and that has no page frame yet. The kernel keeps one free frame for each reserved page, so an access never fails for lack of memory | overcommit |
 | Frame list | The record of the page frames of one memory object: in the kernel record of the object for at most 4 pages, else in list pages that the budget pays for | page list, radix tree |
-| Right | One permitted kind of operation on the object of a handle. The rights are Give, Read, Write, Execute, Control, Inspect, Devices, Stop, Spend and Physical. A grant can remove rights and cannot add one | permission, privilege, mode |
+| Right | One permitted kind of operation on the object of a handle. The rights are Give, Read, Write, Execute, Control, Inspect, Devices, Stop, Spend, Physical, Schedule and Commit (pay pages of an object that the budget already pays for, and nothing else). A grant can remove rights and cannot add one | permission, privilege, mode |
 | Budget | An object that holds pages, programs and threads, and that has two limits: processor time and log records. It pays for each object that a program creates. A program moves a part of its budget to a new budget. What ends returns to the budget that paid (P20) | quota, limit, cgroup, job |
 | Limit | A property of a budget for time: the microseconds of processor time, or the log records, that the budget can use in each second. A limit holds for the budget and for each budget that came from it. A limit does not move as pages do: a new budget has a limit that is not above the limit of the budget that it came from (P20) | quota, cap, bandwidth, rate limit |
 | Period | The 100 ms in which the kernel applies the processor limit of a budget. A thread of a budget that used its part of the period does not run until the next period | window, slice |
@@ -134,6 +145,9 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Source library | A named folder of source packages that a module compiles in. An import names the library and the package: `contract:ring`. The project has two: `contract` (what two parties agree on; no kernel operation) and `support` (what a program compiles in to use the contracts). A source library is not a module: it has no file and no hash of its own | collection, SDK, libc, static library |
 | Documentation | The text that a module carries in its file for a person: one line that says what the module is, a text for the module, and a text for each export. The build tool takes it from the source. With the description of each export, it is all that a person needs to use the module | man page, help file, docstring, README |
 | Time page | One page that the kernel writes and that each program can only read, at a fixed address. It holds the milliseconds since boot. A program reads the time with one load from memory, with no kernel entry | vDSO, vsyscall, clock system call |
+| Real-time clock | The clock of the machine that keeps the date when the machine is off (on a PC: the CMOS clock, ports 0x70 and 0x71). The program `date` reads it at its start and each 10 s | RTC (in text), hardware clock, BIOS clock |
+| Date | The count of milliseconds since 1970-01-01 00:00:00 UTC. Leap seconds are not counted: a day has 86400 seconds | timestamp, wall clock, epoch time, Unix time (in text) |
+| Date page | One page that the root service creates and maps read-only into each program that it starts. The program `date` writes there the date of the time 0 of the system, so a program reads the date with no kernel entry: that date plus the milliseconds of the time page | wall-clock page, vDSO, clock page |
 | Terminal ring | The ring between a program and its terminal. In the command queue, a record from the program has a kind (text, status, clear, edit line), a count of bytes and a style. It has no place on the screen. In the completion queue, a record from the terminal is a key record | escape sequence, control character, stream |
 | Key record | A record from a terminal to its program: the code of one key that the person pressed, and its character | standard input, character device, raw mode, cooked mode |
 | Edit line | The one line that a program changes: the line of input of the person with a cursor, or a line that says what the program does now. The program sends its text and the place of the cursor; the terminal shows it after the last line. The program owns the editing | line discipline, readline, cursor addressing, prompt |
@@ -222,7 +236,16 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Term | Definition | Do not use |
 |---|---|---|
 | Object | One named piece of stored data with its versions, held by the storage service and reached by handle (P9) | file, blob, inode |
-| Version | The content of an object at one earlier time. The storage service keeps versions (P9) | snapshot (when it means one object), backup, revision |
+| Version | The state of one object at one commit: its bytes, its size, the generation and the time of that commit. Each commit that changes an object keeps the state before it as a version, in the version index of the object. The storage service keeps versions (P9) | snapshot (when it means one object), backup, revision, undo step |
+| Current version | The state of an object that its last commit made: what a read gives. It is not in the version index | head, working copy, latest revision |
+| Version index | The blocks of one object that list its versions: an index block, which names leaf blocks, which hold the version entries, the oldest first | history file, journal, log |
+| Shared block | A block that two lists or two versions name: an unchanged block of an object, or the blocks of a clone. The storage service counts it one time in the blocks of the store | deduplicated block, extent reference |
+| Reference count | For each block in use, the count of what names it: list entries for a block of data, versions and objects for a list. The storage service frees a block when its count goes to 0 | link count, refcount (in text) |
+| Thinning | A commit that removes versions of an object: by the retention rule, or the oldest version of the store when a change does not fit in the limit of the store. Its blocks that no other version names become free | garbage collection, pruning, cleanup, compaction |
+| Retention rule | Which versions the storage service keeps: each version for 10 minutes, then one for each hour for one day, then one for each day | backup policy, history limit |
+| Clone | A new object whose list is the list of another object: the two share each block until one of them changes (P9) | copy (for this), hard link, reflink |
+| Restore | A commit that makes a version the current version again. The current version before it becomes a version: nothing is lost | revert, rollback, undo |
+| Time since the format | The milliseconds of the storage service since the format of the disk: the root block keeps it at each commit. It is the time of a version until the system has a date | uptime, timestamp |
 | Snapshot | The state of a whole private store at one time | checkpoint, backup |
 | Private store | The set of objects that belongs to one program. No other program sees it (P8, P9) | home directory, app data, container |
 | Document | An object that belongs to the person and not to one program. The document service grants it (P8) | file, user file |
@@ -258,6 +281,7 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Draw table | The draw records of one frame of a window, and the bytes of their texts, in the memory of the program | display list, command buffer, render tree |
 | Text grid | A grid of text cells of a program (a character, reverse, a color), drawn by one draw record; the difference compares its cells and damages only the rows spans that changed (`docs/INTERFACE.md`, section 2.4) | character matrix, screen buffer |
 | Picture record | A draw record that shows the pixels of a picture of the program, with a generation that changes when the pixels change | image node, bitmap item |
+| Line record | A draw record of a straight line between two points, with a thickness and a color; a line and its reverse are one record (`docs/INTERFACE.md`, section 2.5) | stroke, path, polyline |
 | Element | A part of a window that one call of the interface package draws: a card, a line of a label and a value, a bar, a table, a button, a list with a choice, a text input | widget, control, component, view |
 | Element identity | A number that names one element from one frame to the next, made from a text: the focus and the pointer state follow it | id, key, handle (reserved for the kernel) |
 | Interface state | What the interface package keeps between frames, in the memory of the program: the element with the focus, the element under the pointer, the pressed element, the order of the focus | UI context, retained state |
@@ -288,6 +312,13 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Glyph cache | The glyphs of one font already drawn, for each character 32 to 126 and each scale of the grid: words of coverage, in one file (`contract/glyph_cache`). The kernel tool makes it at build time; it is a resource of the boot image | atlas, texture cache, glyph bitmap |
 | Setting | One choice of the person that changes how the system works for each program: the font, the order of the subpixel bands. The program `settings` changes it | preference, option, configuration |
 | Settings page | The one page of the settings of the person (`contract/settings`): the root service creates it; the program `settings` writes it; each program with a surface reads it | registry, config file, dconf |
+| Monospace font | A font whose characters all have one advance, so that a text is a row of equal cells: Paper Mono, and Spleen 8x16. The font of the terminal, the console, and each text that a person compares character by character (`docs/FONTS.md`, section 12.6) | fixed-width font (for this), terminal font |
+| Interface font | The proportional font of the titles, the labels, the buttons, the menus and the bar: B612 (designed, not built; `docs/FONTS.md`, section 12) | UI font, system font (for this), sans |
+| Advance | The distance from the origin of a glyph to the origin of the next one, before any pair adjustment | width (for this), pitch |
+| Pair adjustment | The change of the advance that a font gives for one pair of glyphs that follow each other (`kern` format 0, or a pair lookup of `GPOS`) | kerning pair (for this) |
+| Text shaping | The step that turns the characters of a text into placed glyphs with a font: here the advances and the pair adjustments only; no ligature, no other script (`docs/FONTS.md`, section 12.3) | layout (for this), typesetting |
+| Placed glyph | A record of 16 bytes that text shaping gives for one character: the glyph, its x from the origin of the run and its advance, in 1/64 of a pixel | positioned glyph, glyph run entry |
+| Subpixel position | The fraction of a pixel where a glyph starts. The glyph cache of a proportional font keeps each glyph at three: 0, 1/3 and 2/3 of a pixel | subpixel offset, bucket |
 | Boot pass | The start of the program `settings` that the root service makes at boot, with no window: it reads the settings kept in its private store, writes the settings page, and stops | init script, startup hook |
 | Blend table | The results of the blend in linear light of one text color over one pixel color, for each coverage of each channel, kept in the memory of a program (`graphics.Blend_Tables`) | lookup table (alone), LUT |
 
@@ -299,7 +330,40 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Random generator | The record of fixed size in the memory of a program that gives it random bytes: ChaCha20 with fast key erasure (`support/random`). A draw makes no kernel entry and no call | RNG, PRNG, CSPRNG (for this), /dev/urandom |
 | Entropy report | What the root service found when it gathered the seed of the system: the sources (rdseed, rdrand, the cycle counter), their good and refused values, and the seed strength | entropy estimate |
 | Seed strength | The strongest source that gave all its values to the seed of the system: entropy (rdseed), processor (rdrand), or weak (the cycle counter only, counted as 0 bits) | security level |
+| Cryptography module | The module `cryptography`: the primitives that the system took from Odin's `core:crypto`, as exports with the memory of the caller and error records (`docs/CRYPTOGRAPHY.md`) | crypto library, libcrypto |
+| Not authentic | The error kind of a sealed text whose tag, or of a message whose signature, does not verify. The call gives no byte | MAC failure, bad tag |
 | Compatibility layer | The packages of `support/cryptography` that give the code taken from Odin the helpers of its origin, over the primitives of this system (`docs/CRYPTOGRAPHY.md`) | shim, polyfill |
+
+## QUIC
+
+| Term | Definition | Do not use |
+|---|---|---|
+| Connection identifier | The bytes (0 to 20) by which a QUIC endpoint names a connection in each packet, independent of the addresses (RFC 9000, section 5.1). Each side chooses the identifiers that the other side sends to it | connection ID (in prose), CID |
+| Packet protection | The AEAD that encrypts the payload of a QUIC packet and authenticates its header, with the key and the iv of one direction of one encryption level (RFC 9001, section 5.3) | encryption (for this), record protection |
+| Header protection | The mask that hides the low bits of the first byte and the packet number of a QUIC packet, made from a sample of the protected payload (RFC 9001, section 5.4) | header encryption |
+| Encryption level | One of the sets of keys of a QUIC connection: Initial (from the connection identifier), Handshake, 0-RTT and 1-RTT (from TLS). Each packet type uses one level | epoch, key phase (for this) |
+| Packet number space | The sequence of packet numbers that one encryption level uses (Initial, Handshake, application data); a packet number is unique in its space | sequence number (for this) |
+| Initial packet | The first packets of a QUIC connection, protected with keys that any observer can compute from the connection identifier: they carry the start of the TLS handshake | handshake packet (for this) |
+| Raw public key | A public key that a TLS peer sends in its Certificate message alone, with no certificate around it: the SubjectPublicKeyInfo of the key (RFC 7250). The other side trusts it when it is the key that its caller pinned | self-signed certificate (for this) |
+| Pinned key | The one public key that the caller of a TLS client gives it as the key of the server: any other key is refused | trust anchor, root certificate |
+| Transcript | The handshake messages of TLS, in order, whose hash the key schedule and the Finished messages use | handshake hash (for the bytes) |
+| Key schedule | The secrets of TLS 1.3, each one from the one before with HKDF and a transcript hash: early, handshake, master, and the traffic secrets of each side (RFC 8446, section 7.1) | key derivation (for the whole) |
+| Alert | The reason of a failure of TLS, one byte (RFC 8446, section 6). QUIC sends it as the error code 0x100 + alert | TLS error (for this) |
+| Frame | One unit of the payload of a QUIC packet: a type, then its fields (RFC 9000, section 19). A packet carries one frame or more | message (for this), chunk |
+| Ack-eliciting packet | A packet with a frame other than PADDING, ACK and CONNECTION_CLOSE: the peer must acknowledge it | reliable packet |
+| Probe timeout | The time after which a side that has no acknowledgement sends one or two probe packets, from the round-trip time and its variation (RFC 9002, section 6.2). It doubles at each timeout without an acknowledgement | retransmission timeout, RTO (for this) |
+| Congestion window | The most bytes of ack-eliciting packets that a side has in flight. This layer keeps it fixed at 12 000 bytes | send window (for this) |
+| Flow control limit | The largest offset of data that a side allows the peer to send, for one stream (MAX_STREAM_DATA) and for the connection (MAX_DATA). Data past it closes the connection with FLOW_CONTROL_ERROR | receive window (for this) |
+| Anti-amplification limit | A server that did not validate the address of a client sends at most 3 times the bytes that it received from it (RFC 9000, section 8.1) | |
+| Address validation | The proof that a client receives at its address: here, a Handshake packet of the client, which needs the keys of the server's flight | |
+| Handshake confirmed | The point after which a side drops its Handshake keys: a server when the handshake completes, a client when HANDSHAKE_DONE comes (RFC 9001, section 4.1.2) | handshake done (for the state) |
+| Handshake deadline | The time after which a connection whose handshake did not complete ends: 10 s from the start of a client, or from the first authentic Initial at a server | handshake timeout (for the value) |
+| Packet number floor | The packet number below which a side refuses each packet of a space, because its set of received numbers forgot those ranges | replay window |
+| Idle timeout | The time with no packet of the peer after which a side ends a connection with no packet: the smaller of the two that the sides give, and 3 probe timeouts at least | keep-alive |
+| Closing state | The state of a side that sent CONNECTION_CLOSE: it answers each packet with it, for 3 probe timeouts | |
+| Draining state | The state of a side that received CONNECTION_CLOSE: it sends nothing, for 3 probe timeouts | |
+| Transport parameters | The values that each side of QUIC gives the other in the handshake of TLS: its limits, its timeouts, and the connection identifiers that it used (RFC 9000, section 18) | settings |
+| Retry packet | A packet of a server that asks the client to send its Initial packet again with a token, to prove its address; its integrity tag uses a fixed key | redirect |
 
 ## Project
 

@@ -195,7 +195,7 @@ case_name :: proc "contextless" (writer: ^system.Writer) -> bool {
 
 case_flags :: proc "contextless" (writer: ^system.Writer) -> bool {
 	record: errors.Error_Record
-	memory, status := system.memory_create(1, 0, transmute(op.Memory_Flags)u64(0x4), &record)
+	memory, status := system.memory_create(1, 0, transmute(op.Memory_Flags)u64(0x100) /* A bit that no flag has: 0x4 became Uncommitted. */, &record)
 	return kernel_text(writer, &record, status, .Bad_Flags) && memory == 0
 }
 

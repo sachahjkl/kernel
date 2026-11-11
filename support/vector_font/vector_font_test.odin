@@ -181,8 +181,9 @@ filters_measured :: proc(t: ^testing.T) {
 	}
 }
 
-// The glyph cache of the default font of the system: its words at each
-// scale have a known hash, so that a change of the renderer is seen. A
+// The glyph cache of one fixed font, JetBrains Mono (a candidate, not the
+// default: a test of the renderer must not change when the default
+// changes): its words at each scale have a known hash, so that a change of the renderer is seen. A
 // change that is wanted gives new hashes here and a new RENDERER_VERSION.
 @(test)
 golden_glyph_cache :: proc(t: ^testing.T) {

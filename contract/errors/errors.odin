@@ -38,24 +38,31 @@ Kind :: enum i64 {
 	Handle_Rights     = 11, // value: the handle; limit: the rights that the call needs; found: the rights of the handle (op.Rights).
 	Budget            = 12, // value: the handle of the budget; limit: what the call asks; found: what the budget holds.
 	Budget_Hidden     = 13, // value: the handle of the budget; limit: what the call asks. The handle has no right Read: the budget is not described.
-	Over_Limit        = 14, // value: what the call makes; limit: the limit.
+	Over_Limit        = 14, // value: what the call makes; limit: the limit. Unit Blocks (the storage service): the blocks of the current objects with the change, with no earlier version kept.
 	Full              = 15, // A table has no free place. limit: its capacity.
 	State             = 16, // value: the handle; found: the op.Program_State of its object, or 0 when the handle has no right Read.
-	Absent            = 17, // No object has the name or the number of the argument.
+	Absent            = 17, // No object has the name or the number of the argument. found: 0, or the number from 1 of the row of a table argument that names it.
 	Damaged           = 18, // The object of the argument exists, and a block of it has a wrong check.
 	Device            = 19, // A device reported an error. found: the status of the device.
 	No_Grant          = 20, // The caller has no grant for this call: the unit says which grant.
 	Malformed         = 21, // The module of the argument breaks a rule of the module format. value: the kind of the problem; found: the byte of the file.
 	No_Target         = 22, // value: the handle of a memory object that names no one other program to receive the handle.
-	Overlap           = 23, // value: an address; limit: the count of bytes. They overlap something that the program has.
+	Overlap           = 23, // value: an address, or with the unit Region an offset in the call region of an isolated call; limit: the count of bytes. They overlap something that the program has, or another argument of the call that is written.
 	Unknown_Operation = 24, // value: the number of the operation.
 	Refused           = 25, // The call refused, and gives no more detail. found: the status (op.Status for the kernel).
 	No_Answer         = 26, // No answer before the time limit. value: the IPv4 address that did not answer, or 0; limit: the milliseconds waited; found: what did not answer: 1 its hardware address (ARP), 2 the echo, 3 the device.
 	Unsupported       = 27, // The receiver does not do this command. value: the command, or the field that it does not do.
 	Link_Down         = 28, // The link of the network device is down.
 	Busy              = 29, // Too many requests are in flight. value: the requests in flight, or 0 when the receiver does not count them; limit: the most.
-	Out_Of_Range      = 30, // The argument names units past the end. value: the end of what it names (its first unit and its count); limit: the units that exist.
+	Out_Of_Range      = 30, // The argument names units past the end. value: the end of what it names (its first unit and its count); limit: the units that exist; found: 0, or the number from 1 of the record of a table argument that names them (a record that names bytes of another argument by an offset, docs/MODULE_CONTRACT.md, "Tables and bytes as parameters").
 	Reserved          = 31, // The argument names a program of the system that the call does not act on: it starts at boot, or it is a device service.
+	Not_Payer         = 32, // value: the handle of a budget that does not pay for the memory object of the call. It says nothing of the budget.
+	Object_Shared     = 33, // value: the handle of a memory object, or 0; the call needs an object that only this program names, with one mapping at most.
+	Object_Marked     = 34, // value: the handle of a memory object; found: its pages with a protection of their own. The object is not mapped again and not given.
+	Whole_Only        = 35, // value: an address; limit: the bytes of the range. The range is a part of a mapping whose protection changes only whole (device memory, large pages), or of an area that the system keeps (a thread area).
+	Not_Multiple      = 36, // value: the argument; limit: the number that it must be a multiple of; found: the rest.
+	Not_Authentic     = 37, // The bytes of the argument do not prove what they must: the tag of a sealed text, or a signature, does not verify. No byte of the result is given.
+	Seed_Too_Weak     = 38, // The random seed of the program is weaker than the least strength that the caller accepts. value: the strength of the seed; limit: the least strength asked (1 weak, 2 processor, 3 entropy). Nothing is made.
 }
 
 // What value, limit and found count.
@@ -86,12 +93,17 @@ Unit :: enum i64 {
 	Tcp_Ports   = 23, // The local TCP ports of a client grant.
 	Requests    = 24, // Requests in flight.
 	Endpoint    = 25, // A remote of the network: an IPv4 address and a port, in one value (endpoint_pack). No_Grant: value the remote that the call names, limit the remote of the grant (0: none), found the local port when it is not a port of the endpoint.
-	Region      = 26, // Absent: the data region of a ring.
+	Region      = 26, // Absent: the data region of a ring. Overlap: bytes of the call region of an isolated call; value is their offset, limit their count.
 	Root_Commands = 27, // No_Grant: the commands of the root ring that change other programs.
 	Services    = 28, // Services that run.
 	Grants      = 29, // The grants of a program (system.Root_Grant).
 	Display     = 30, // No_Grant: a surface on the screen (the ring to the compositor).
 	Terminal    = 31, // No_Grant: a terminal (the terminal ring and the text region).
+	Lent_Handles = 32, // Handle_Absent: the handle did not come through the call ring for this call (an isolated call).
+	Versions    = 33, // Absent: the versions of an object (value: the generation that the argument named).
+	Counts      = 34, // Damaged: the counts of the blocks of a store are not trusted after a fault of the service; it makes no change in the store.
+	References  = 35, // Over_Limit: the names of one block, which a count holds.
+	Commit_Blocks = 36, // Full: the blocks that one commit can change or write.
 }
 
 // How a handle ended (Handle_Ended).
@@ -159,6 +171,11 @@ UNIT_NAMES := [Unit]string {
 	.Grants      = "grants of the program",
 	.Display     = "a surface on the screen",
 	.Terminal    = "a terminal",
+	.Lent_Handles = "handles lent for this call",
+	.Versions    = "versions of the object",
+	.Counts      = "the counts of the blocks of the store",
+	.References  = "names of one block",
+	.Commit_Blocks = "blocks that one commit can change",
 }
 
 // A ring completion (contract/ring) has the status of the contract of its

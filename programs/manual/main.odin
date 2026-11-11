@@ -119,7 +119,7 @@ write_signature :: proc "contextless" (writer: ^system.Writer, file: []u8, funct
 		system.write_part(writer, parameter > 0 ? ", " : "")
 		system.write_part(writer, module.string_at(file, function.parameter_names[parameter], u32(function.parameter_name_counts[parameter])))
 		system.write_part(writer, ": ")
-		system.write_type(writer, file, type, function.parameter_details[parameter])
+		system.write_parameter_type(writer, file, type, function.parameter_details[parameter], function.parameter_directions[parameter])
 	}
 	system.write_part(writer, ")")
 	if function.result != .None {
@@ -321,7 +321,7 @@ page_build :: proc "contextless" () {
 			}
 			system.write_part(&writer, module.string_at(file, item.name_offset, item.name_count))
 			system.write_part(&writer, ": ")
-			system.write_type(&writer, file, item.type, item.detail)
+			system.write_field_type(&writer, file, item)
 			system.write_part(&writer, ", at byte ")
 			system.write_part(&writer, u64(item.offset))
 			built_count += writer.count
@@ -532,6 +532,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		changed |= system.service_run(&service) > 0
 		for event in display.next_event(&window) {
 			#partial switch event.kind {
+			case .Settings_Changed:
+				// A new font: each record is the same, each pixel of text is
+				// not. The next frame of each picture is whole.
+				interface.draw_whole_window_next(&drawing)
+				changed = true
 			case .Key:
 				if !event.pressed {
 					continue

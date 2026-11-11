@@ -33,7 +33,7 @@ CANDIDATES_PICTURE :: VECTOR_FONT_BUILD_FOLDER + "/candidates.png"
 
 // The default font of the system: one line to change (docs/FONTS.md, "The
 // font file").
-DEFAULT_VECTOR_FONT :: "jetbrains_mono"
+DEFAULT_VECTOR_FONT :: "paper_mono"
 
 // The candidates, in the order of the picture. family: the name that the
 // subset carries. A font with a Reserved Font Name (SIL OFL 1.1) is renamed
@@ -46,6 +46,7 @@ Vector_Font_Candidate :: struct {
 }
 
 vector_font_candidates := [?]Vector_Font_Candidate {
+	{"paper_mono", "Paper Mono ASCII", "SIL OFL 1.1, no Reserved Font Name", "OFL.txt"},
 	{"dejavu_sans_mono", "DejaVu Sans Mono ASCII", "Bitstream Vera license; DejaVu changes in the public domain", "BITSTREAM_VERA_LICENSE.txt"},
 	{"jetbrains_mono", "JetBrains Mono ASCII", "SIL OFL 1.1, no Reserved Font Name", "OFL.txt"},
 	{"ibm_mono", "IBM Mono ASCII", "SIL OFL 1.1, Reserved Font Name Plex: renamed", "OFL.txt"},
@@ -54,12 +55,13 @@ vector_font_candidates := [?]Vector_Font_Candidate {
 	{"iosevka", "Iosevka ASCII", "SIL OFL 1.1, no Reserved Font Name", "OFL.txt"},
 }
 
-// The bold weight of the default font, for emphasis (the titles of the
-// cards): subset with the candidates, drawn at scale 1 only.
+// The weight of the default font for emphasis (the titles of the cards):
+// subset with the candidates, drawn at scale 1 only. Paper Mono has a
+// SemiBold and no Bold: the SemiBold is the emphasis.
 vector_font_emphasis := [?]Vector_Font_Candidate {
-	{"jetbrains_mono_bold", "JetBrains Mono ASCII Bold", "SIL OFL 1.1, no Reserved Font Name", "OFL.txt"},
+	{"paper_mono_semibold", "Paper Mono ASCII SemiBold", "SIL OFL 1.1, no Reserved Font Name", "OFL.txt"},
 }
-EMPHASIS_VECTOR_FONT :: "jetbrains_mono_bold"
+EMPHASIS_VECTOR_FONT :: "paper_mono_semibold"
 
 run_vector_fonts :: proc(args: []string) -> int {
 	sources := os.get_env(VECTOR_FONT_SOURCES_VARIABLE, context.temp_allocator)

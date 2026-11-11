@@ -9,6 +9,8 @@ package compositor
 
 import "support:display"
 import "contract:settings"
+import "contract:date"
+import "support:calendar"
 import "support:graphics"
 import "support:interface"
 import "support:bar"
@@ -43,10 +45,9 @@ PLACE_X :: 64
 PLACE_Y :: 56
 PLACE_STEP_X :: 40
 PLACE_STEP_Y :: 32
-GRID :: 8
 CLIENT_CAPACITY :: 32 // The root service starts 32 programs at most.
 DAMAGE_CAPACITY :: 8
-CLOCK_WIDTH :: 8 * 8 // "00:00:00"
+CLOCK_WIDTH :: 19 * 8 // "2026-11-11 16:30:05", or the time since boot "00:00:00" when the system has no date.
 LAUNCHER_HINT :: "launcher: super" // In the bar, at the left of the time.
 
 Client :: struct {
@@ -199,6 +200,29 @@ windows_log :: proc "contextless" () {
 	system.log_in("surfaces", .Info, "compositor: windows: ", string(buffer[:count]))
 }
 
+// The bar shows the date and the time of day in UTC (contract/date), or
+// the time since boot when the system has no date. second_of_bar gives the
+// second that it shows at the time `now` of the system, and
+// next_second_of_bar the time of the system when it changes after `now`:
+// always later than `now`, and at most one second later, also when the date
+// first appears between two frames (the second shown then jumps from the
+// time since boot to the date, and the next frame shows it).
+date_page: ^date.Page
+
+second_of_bar :: proc "contextless" (now: u64) -> u64 {
+	if milliseconds, known := date.milliseconds_now(date_page, now); known {
+		return u64(milliseconds / 1000)
+	}
+	return now / 1000
+}
+
+next_second_of_bar :: proc "contextless" (now: u64) -> u64 {
+	if milliseconds, known := date.milliseconds_now(date_page, now); known {
+		return now + u64(1000 - milliseconds % 1000) // milliseconds_now gives a date after 1970 only: positive.
+	}
+	return (now / 1000 + 1) * 1000
+}
+
 damage_clock :: proc "contextless" () {
 	damage_add(screen.width - CLOCK_WIDTH - 16, 8, CLOCK_WIDTH, graphics.CELL_HEIGHT)
 }
@@ -220,6 +244,7 @@ canvas_create :: proc "contextless" (width, height: int) -> graphics.Canvas {
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	width := int(ctx.values[VALUE_WIDTH])
 	height := int(ctx.values[VALUE_HEIGHT])
+	date_page = date.page_of(ctx)
 	address, status := system.memory_map(ctx.handles[GRANT_FRAMEBUFFER])
 	input_status, control_status: system.Status
 	input, input_status = system.ring_open(ctx.handles[GRANT_INPUT])
@@ -272,7 +297,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				system.wait_records(&wait, &client.ring.commands)
 			}
 		}
-		deadline := damage_count > 0 ? max(next_frame, 1) : (shown_second + 1) * 1000
+		deadline := damage_count > 0 ? max(next_frame, 1) : next_second_of_bar(system.time())
 		if wake := pointer_wake(); wake != 0 {
 			deadline = min(deadline, wake) // An animated pointer shape shows.
 		}
@@ -339,8 +364,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			}
 		}
 		pointer_update(now) // After each change of what is under the pointer.
-		if now / 1000 != shown_second {
-			shown_second = now / 1000
+		if second_of_bar(now) != shown_second {
+			shown_second = second_of_bar(now)
 			damage_clock()
 		}
 		if damage_count > 0 && now >= next_frame {
@@ -428,19 +453,29 @@ client_remove :: proc "contextless" (memory: system.Handle) {
 
 surface_create :: proc "contextless" (index: int, record: ring.Record) {
 	client := &clients[index]
+	// The program wrote the number of the handle: it can name any handle of
+	// the compositor, among them the surface or the ring of another client.
+	// The kernel proves that this program gave the handle through its own
+	// ring (support/system, handle_state). A number with no proof is not a
+	// gift of this program: the compositor neither uses it nor closes it.
 	memory := system.Handle(record.values[0])
+	kind, rights, through := system.handle_state(memory, client.ring_memory)
+	// No log line: a program could send this command without end.
+	if !through {
+		return
+	}
+	// The handle is a gift of this program: each return below closes it.
+	defer system.close(memory)
 	width, height := record.values[1], record.values[2]
 	// The program chose these numbers: check them against the memory itself.
-	if client.surface.pixels != nil || width == 0 || height == 0 || width > display.SURFACE_LIMIT || height > display.SURFACE_LIMIT {
+	if kind != .Memory || .Read not_in rights || client.surface.pixels != nil || width == 0 || height == 0 || width > display.SURFACE_LIMIT || height > display.SURFACE_LIMIT {
 		return
 	}
 	size := system.memory_size(memory) * system.PAGE_SIZE
 	if size < width * height * size_of(graphics.Color) {
-		system.close(memory)
 		return
 	}
 	address, status := system.memory_map(memory, {}) // Read only.
-	system.close(memory)
 	if status != .Ok {
 		return
 	}
@@ -450,9 +485,9 @@ surface_create :: proc "contextless" (index: int, record: ring.Record) {
 	client.title = system.name_unpack({record.values[3], record.values[4], record.values[5], record.values[6]})
 	client.x = PLACE_X + placed % 8 * PLACE_STEP_X
 	client.y = PLACE_Y + placed % 8 * PLACE_STEP_Y
-	// A large window moves up and left until the screen shows all of it.
-	client.x = max(grid_floor(min(client.x, screen.width - int(width) - 2 * BORDER)), 0)
-	client.y = max(grid_floor(min(client.y, screen.height - int(height) - TITLE_HEIGHT - BORDER)), BAR_HEIGHT)
+	// A large window moves up and left until the screen shows all of it; a
+	// window wider than the screen keeps its close button on the screen.
+	client.x, client.y = bar.new_window_place(client.x, client.y, window_frame_of(client), int(height), screen.width, screen.height)
 	placed += 1
 	damage_focus()
 	order[order_count] = index
@@ -504,9 +539,9 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32) 
 	if dragging >= 0 {
 		if buttons & display.BUTTON_LEFT != 0 {
 			damage_window(&clients[dragging])
-			// The window follows the pointer on the grid of 8.
-			clients[dragging].x = grid_floor(pointer_x - drag_x + GRID / 2)
-			clients[dragging].y = max(grid_floor(pointer_y - drag_y + GRID / 2), BAR_HEIGHT)
+			// The window follows the pointer on the grid of 8, and a part
+			// of its title stays on the screen at each edge.
+			clients[dragging].x, clients[dragging].y = bar.dragged_window_place(pointer_x, pointer_y, drag_x, drag_y, window_frame_of(&clients[dragging]), screen.width, screen.height)
 			damage_window(&clients[dragging])
 		} else {
 			// The person put the window down: the log has its new place.
@@ -986,7 +1021,8 @@ screen_build :: proc "contextless" (now: u64) {
 		interface.draw_picture(table, client.x + BORDER, client.y + TITLE_HEIGHT, position, 0)
 	}
 
-	// The bar: the name of the system, the two buttons, the time since boot.
+	// The bar: the name of the system, the two buttons, the date and the time
+	// of day (the time since boot when the system has no date).
 	width := frame.width
 	interface.draw_vertical_gradient(table, 0, 0, width, BAR_HEIGHT - 1, graphics.COLOR_CARD_TOP, graphics.COLOR_CARD_BOTTOM)
 	interface.draw_rectangle(table, 0, BAR_HEIGHT - 1, width, 1, graphics.COLOR_TRACK)
@@ -1003,11 +1039,17 @@ screen_build :: proc "contextless" (now: u64) {
 	interface.draw_text(table, interface.draw_text(table, hint_x, 8, "launcher: ", graphics.COLOR_DIM), 8, "super", graphics.COLOR_TEXT)
 	seconds := now / 1000
 	x := width - CLOCK_WIDTH - 16
-	x = interface.draw_unsigned(table, x, 8, seconds / 3600, graphics.COLOR_TEXT, 2)
-	x = interface.draw_text(table, x, 8, ":", graphics.COLOR_DIM)
-	x = interface.draw_unsigned(table, x, 8, seconds / 60 % 60, graphics.COLOR_TEXT, 2)
-	x = interface.draw_text(table, x, 8, ":", graphics.COLOR_DIM)
-	interface.draw_unsigned(table, x, 8, seconds % 60, graphics.COLOR_TEXT, 2)
+	if milliseconds, known := date.milliseconds_now(date_page, now); known {
+		date_text: [24]u8
+		interface.draw_text(table, x, 8, calendar.iso_text(date_text[:], milliseconds / 1000), graphics.COLOR_TEXT)
+	} else {
+		x += CLOCK_WIDTH - 8 * 8
+		x = interface.draw_unsigned(table, x, 8, seconds / 3600, graphics.COLOR_TEXT, 2)
+		x = interface.draw_text(table, x, 8, ":", graphics.COLOR_DIM)
+		x = interface.draw_unsigned(table, x, 8, seconds / 60 % 60, graphics.COLOR_TEXT, 2)
+		x = interface.draw_text(table, x, 8, ":", graphics.COLOR_DIM)
+		interface.draw_unsigned(table, x, 8, seconds % 60, graphics.COLOR_TEXT, 2)
+	}
 
 	// The menus of the bar, as cards of the package.
 	card_frame := interface.Frame{table = table}
@@ -1048,7 +1090,8 @@ screen_build :: proc "contextless" (now: u64) {
 	}
 }
 
-// grid_floor gives the place on the grid of 8 at or before a place.
-grid_floor :: proc "contextless" (place: int) -> int {
-	return place - place %% GRID
+// window_frame_of gives the frame that the compositor draws around the
+// surface of a client, for the places of support/bar.
+window_frame_of :: proc "contextless" (client: ^Client) -> bar.Window_Frame {
+	return {outer_width = client.surface.width + 2 * BORDER, border = BORDER, close_size = CLOSE_SIZE, title_height = TITLE_HEIGHT}
 }

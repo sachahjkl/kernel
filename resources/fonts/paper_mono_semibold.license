@@ -1,9 +1,9 @@
-Copyright 2020 The JetBrains Mono Project Authors (https://github.com/JetBrains/JetBrainsMono)
+Copyright 2025 The Paper Mono Project Authors (https://github.com/paper-design/paper-mono)
 
-This file is a subset of jetbrains_mono_bold, made by "kerneltool vector_fonts" (docs/FONTS.md):
+This file is a subset of paper_mono_semibold, made by "kerneltool vector_fonts" (docs/FONTS.md):
 the characters 32 to 126 and the glyph .notdef, each glyph a simple glyph
-(4 glyphs made of glyphs were made simple), no hinting instructions, no
-OpenType layout tables. The subset carries the name "JetBrains Mono ASCII Bold".
+(2 glyphs made of glyphs were made simple), no hinting instructions, no
+OpenType layout tables. The subset carries the name "Paper Mono ASCII SemiBold".
 License of the source: SIL OFL 1.1, no Reserved Font Name.
 
 The text of the license in the source font file:

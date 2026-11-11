@@ -505,15 +505,16 @@ draw :: proc "contextless" (window: ^display.Window, follow: bool) {
 	interface.draw_rectangle(table, 0, status_y - 4, width, 1, graphics.COLOR_TRACK)
 	status := &view.status
 	has_status := status.total != 0
+	status_end := TEXT_X // Where the text of the status ends: the keys at the right must not run over it.
 	if has_status {
 		color := .Color in status.style.flags ? status.style.color & 0xFFFFFF : tone_colors[terminal.Tone(min(u8(status.style.tone), u8(max(terminal.Tone))))]
 		x := interface.draw_text(table, TEXT_X, status_y, string(status.text[:status.length]), graphics.COLOR_TEXT) + 12
 		bar :: 240
 		interface.draw_rectangle(table, x, status_y + 4, bar, 8, graphics.COLOR_TRACK)
-		interface.draw_rectangle(table, x, status_y + 4, int(min(status.value, status.total) * bar / status.total), 8, color)
+		interface.draw_rectangle(table, x, status_y + 4, status_bar_length(status.value, status.total, bar), 8, color)
 		x = interface.draw_text(table, x + bar + 12, status_y, number(&buffer, status.value), graphics.COLOR_TEXT)
 		x = interface.draw_text(table, x, status_y, " of ", graphics.COLOR_DIM)
-		interface.draw_text(table, x, status_y, number(&buffer, status.total), graphics.COLOR_DIM)
+		status_end = interface.draw_text(table, x, status_y, number(&buffer, status.total), graphics.COLOR_DIM)
 	} else if program == 0 && measure {
 		interface.draw_text(table, TEXT_X, status_y, "the program does not run", COLOR_STOPPED)
 	}
@@ -526,7 +527,9 @@ draw :: proc "contextless" (window: ^display.Window, follow: bool) {
 	}
 
 	// The place of the view, and the keys.
-	hint_left := TEXT_X // Where the text at the left of the keys ends.
+	// Where the text at the left of the keys ends. With no rates, the status
+	// is on the line of the keys.
+	hint_left := measure ? TEXT_X : status_end
 	if measure || !has_status {
 		x := interface.draw_text(table, TEXT_X, hint_y, follow ? "line " : "held at line ", follow ? graphics.COLOR_DIM : COLOR_HELD)
 		x = interface.draw_text(table, x, hint_y, number(&buffer, view.top + 1), follow ? graphics.COLOR_TEXT : COLOR_HELD)
@@ -550,6 +553,21 @@ draw :: proc "contextless" (window: ^display.Window, follow: bool) {
 	if table.full {
 		system.log("terminal: the draw table is full: records are missing")
 	}
+}
+
+// status_bar_length gives the pixels of the bar of a status: value of total
+// on length pixels. The program that writes chooses both numbers: a
+// product value x length can pass the largest u64, so a large total is
+// divided first. The bar is never longer than length.
+status_bar_length :: proc "contextless" (value, total: u64, length: int) -> int {
+	if total == 0 {
+		return 0
+	}
+	shown := min(value, total)
+	if total <= max(u64) / u64(length) {
+		return int(shown * u64(length) / total)
+	}
+	return int(min(shown / (total / u64(length)), u64(length)))
 }
 
 fail :: proc "contextless" (text: string) -> ! {
@@ -637,6 +655,13 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			now = display.wait(&window, next_frame)
 		}
 		for event in display.next_event(&window) {
+			// A new font: each record of the frame is the same, each pixel
+			// of text is not. The next frame of each picture is whole.
+			if event.kind == .Settings_Changed {
+				interface.draw_whole_window_next(&drawing)
+				dirty = true
+				continue
+			}
 			if event.kind != .Key || !event.pressed {
 				continue
 			}

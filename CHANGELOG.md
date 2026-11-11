@@ -6,6 +6,106 @@ The project has steps, not separate releases. The merge of step N on `master` is
 
 What is not in a release yet is in `changelog.d/`, one fragment for each change. `kerneltool changelog release` writes a release from the fragments. Nobody edits this file by hand.
 
+## [0.70.0] - 2026-11-11
+
+### Added
+
+- **A cryptography module**: the module `cryptography` gives ChaCha20-Poly1305, AES-128-GCM, SHA-256, HMAC, HKDF, X25519 and Ed25519 to each program, from the code of Odin's `core:crypto` with a check that proves each changed line; a tag or a signature that does not verify is an error with no byte given, and the program `cryptography_vectors` runs the published vectors through it and shows the speed of each primitive.
+- **QUIC packet protection**: the library `support/quic` reads QUIC version 1 packet headers as hostile input, derives the Initial keys of a connection, and seals and opens packets with header protection, with AES-128-GCM or ChaCha20-Poly1305 from the module `cryptography`; it gives the packets of RFC 9001 appendix A byte for byte.
+- **A program chooses how strong its random seed must be**: a key drawn with `random.fill_for_a_key` names the least seed strength that the program accepts (weak, processor or entropy), and a weaker seed gives the error "the random seed of this program has the strength ..." with nothing made; QUIC and TLS ask for processor at least.
+- **TLS 1.3 for QUIC with raw public keys**: `support/quic` runs the handshake of TLS 1.3 for a client and a server, with X25519, Ed25519 and ChaCha20-Poly1305, and a client accepts the server only when it proves the public key that its caller pinned; no certificate authority and no X.509 are used.
+- **A QUIC connection over memory**: `support/quic` runs one connection of QUIC with acknowledgements, loss detection, the probe timeout, flow control, one bidirectional stream, the idle timeout, the anti-amplification limit and the close, with the TLS 1.3 handshake inside; a test sends 1 MiB each way through a channel that loses 5 % of the datagrams.
+
+### Changed
+
+- **The context of a program has 24 values**: the values 16 to 23 are for the roles that the system fixes for every program, and the strength of the random seed is the value 16. The 16 values before were full, and two roles wanted one number.
+- **TLS for QUIC refuses a configuration that would accept a weak seed or that pins no key, and takes a large ClientHello**: a least seed strength under processor, or a client pinned key of zeros, stops the start with an error; the transcript holds 8192 bytes; handshake bytes left at a level whose keys were replaced close the connection.
+
+### Fixed
+
+- **A QUIC packet no longer stops the program with its header protection sample**: a ChaCha20 sample that starts with `ff ff ff ff` gives its mask, and an Initial packet with a token of up to 2008 bytes is sealed and opened.
+- **A thread with a short stack stops at its guard page**: the erasure of the stack after a cryptographic call writes from the top down, so no memory under the stack is written first; a thread that calls the module `cryptography` or draws random bytes needs 24 KiB of stack.
+- **A QUIC connection no longer stops for ever when its data has many holes, and a forged Initial no longer takes a server**: data that had no place is not acknowledged, so the peer sends it again; a server takes a client only with an Initial that opens, and a handshake that does not complete within 10 s ends; an old packet whose number was forgotten is refused; a peer cannot move a timer into the past.
+
+### Security
+
+- **One datagram could stop a program that uses ChaCha20 for QUIC header protection**: the ChaCha20 code taken from Odin refused the block with the last counter, and the sender of a packet chooses that counter. The taken file has the correction as listed adjustments, and the correction is offered to Odin. No program used this path yet.
+
+## [0.69.0] - 2026-11-11
+
+### Added
+
+- **A line in the draw table**: a straight line between two points with a thickness of 1 to 32 pixels. `rings`, `threads`, `workers` and `processors` now draw through the interface package.
+
+### Fixed
+
+- The window of `crowd` has the same margin at its right as at its left.
+- **A dragged window stays reachable**: a window dragged to an edge of the screen keeps 8 pixels of its title on the screen, so a person can always take it again. Before, a drag to the right or bottom edge could put the whole window off the screen. A window wider than the screen now opens with its close button on the screen.
+- **A new font reaches every window**: after a change of the font in `settings`, the terminal, the console and the manual draw their whole window again. Before, these windows mixed the old font and the new one.
+- **The status line of a terminal stays readable**: in a terminal with no rates, the keys hint no longer runs over the status of the program, and a status with a very large total no longer gives a wrong bar.
+- **No old pixels after a full command ring**: when a window cannot send its picture to the compositor, its next picture is drawn whole, so the screen never keeps the old pixels of that part.
+
+### Security
+
+- **The compositor takes only a surface that the program gave**: a program could name, in its command to create a surface, a handle that the compositor holds for another program. The compositor then showed the memory of the other program and closed its handle. The compositor now asks the kernel to prove that the handle came through the ring of the program, and closes each handle that it was given, also when it refuses the command.
+
+## [0.68.0] - 2026-11-11
+
+### Fixed
+
+- A build in an empty folder could fail: two module processes of the parallel build made the same folder at the same time, and one of them stopped with "cannot create ... Exist".
+- The report of a fault of the kernel no longer reads through the `gs` register (with the `gs` of a program that read faulted again, with no end and no report), a fault inside the report stops the machine with one line, and the wait for a line of another processor is bounded in time, not in loops.
+
+### Security
+
+- **One program could stop the machine**: a thread made with a first instruction that is not an address of a program made the processor fault in the kernel when the thread first ran, and the kernel stopped the machine. The kernel now refuses such a thread, and such a stack.
+
+## [0.67.0] - 2026-11-11
+
+### Added
+
+- **Every program gets versions of its data.** The storage service keeps the state of an object before each change, with no save action and no code in the program: a program, or the person through the console or the host, lists the versions of an object, reads one, compares two, restores one (the state before the restore stays a version) and clones an object, which shares its blocks until one side changes. Each version is kept for 10 minutes, then one an hour for a day, then one a day, by the smaller of its age by the date and its age in running time, so a clock that was wrong on one start thins nothing; at the limit of a store the oldest versions go first, and a change that cannot fit with no version is refused. A version that a damaged block makes unreadable is dropped at the next change of its object, which still works. A disk of the earlier format is not read.
+- **Undo to any earlier note in notes.** Up and Down step through the versions of the note, with the date of each, Enter restores the version shown, and Escape goes back to the current note.
+- **The system knows the date.** The bar shows the date and the time of day in UTC, the HTTP server sends the field Date, and each version keeps the date of its change. The date comes from the clock of the machine, read again each 10 seconds; the service date gives it to a caller with now(). The clock gives the years 2020 to 2099; a clock with an empty battery, or a reading that is not a date, gives no date, and the bar then shows the time since the start.
+
+## [0.66.0] - 2026-11-11
+
+### Added
+
+- **A program drives its own virtual memory**: a memory object made `Uncommitted` holds a range of addresses (1 GiB in one mapping) and its budget pays only for the pages that the program commits; `Memory_Commit` commits and decommits tables of ranges, and a decommit gives the pages back to the budget at once; `Memory_Protect` changes the protection of pages, with `No_Access` for a guard page; an object made `Large_Pages` is mapped with pages of 2 MiB. The program `address_space` shows each case with its numbers.
+- **A test of the real shortage of page frames**: a machine of the test gives one program nearly all the memory; its four threads take every frame, the kernel takes back the frames that sit in the stacks of the processors, and every frame returns.
+
+### Changed
+
+- **Two new kernel operations and a narrow right on budgets**: the kernel has 29 operations (`Memory_Commit` 28, `Memory_Protect` 29). A commit names the budget that pays for the object; the new right `Commit` on a budget handle lets another program commit pages of that object and nothing else, so a program can let another one grow its object without letting it create objects on its budget.
+
+### Fixed
+
+- **A program that maps and unmaps no longer grows its page tables**: a mapping with no address takes the first free range between the mappings of the program; before, each such mapping took a new range and new page tables until the budget refused (a call host refused its 61st call).
+
+## [0.65.0] - 2026-11-11
+
+### Added
+
+- **Tables and bytes as parameters**: an export takes a table of records or a run of bytes, to read, to change or to append to, in memory of the caller. The same description works in a direct call, in a call host and in a service; the console, `kerneltool call` and `remote` take a table as an argument. A table of 65536 records can pass as a memory object, with no copy.
+- **The interface package as a module**: `interface_module` gives the elements of the interface through exports that append to the draw table of the caller, and `interface_through_module` draws its window with it.
+
+### Fixed
+
+- A picture or a text grid that changed its index in the draw table, with the same size, was not drawn again.
+
+## [0.64.0] - 2026-11-11
+
+### Changed
+
+- **The compiler runs on all its threads, with no patch**: with the release dev-2026-11a of Odin, the same source gives the same module for any count of compiler threads (20 builds of each of the 64 modules, one result each). The patch of 0.59.0 and the option `-thread-count:1` are removed.
+
+## [0.63.0] - 2026-11-11
+
+### Changed
+
+- **The compiler is Odin dev-2026-11a**, pinned by the flake itself: the system used the release of May through Nixpkgs. The instructions `rdrand` and `rdseed` are `asm` templates of the new compiler, inline in the code, and the copied ChaCha20 is taken again from the new release.
+
 ## [0.62.0] - 2026-11-11
 
 ### Added

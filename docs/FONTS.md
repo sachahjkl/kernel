@@ -142,13 +142,39 @@ The owner did not choose one. Six candidates, each read from the build input of 
 - **The subset command**: `kerneltool vector_fonts` reads `VECTOR_FONT_SOURCES` (the development shell sets it), writes for each candidate the characters 32 to 126 and `.notdef` as simple glyphs with no instructions (a glyph made of glyphs is made simple with its offsets and its scale in integers), the tables `OS/2` (of the source), `cmap` (one segment), `glyf`, `head`, `hhea`, `hmtx`, `loca`, `maxp`, `name`, `post`, with their checksums. It uses no time and no random value: the same input gives the same bytes. The subsets are in the repository, as the output of `kerneltool font` is: a build needs no build input.
 - **A wider range** costs at most 4 bytes for each pixel of a cell, at three scales: 4 x (8 x 16 + 16 x 32 + 24 x 48) = 7 168 bytes for each character with ink in each row; about 4 100 bytes for each character on the mean with only the rows with ink. The 96 characters of Latin-1 would add about 390 KB; the subset grows by about 150 bytes for each character.
 
-**The default: JetBrains Mono** (`DEFAULT_VECTOR_FONT` in `tools/kerneltool/vector_fonts.odin`: one line). Why: at 8 x 16 its zero has a dot and its `O` does not, `1`, `l` and `I` differ, its x-height (550 of 1000) gives 7 rows like Spleen, its stems are even at the three scales, and the OFL with no Reserved Font Name lets the subset keep its name. DejaVu Sans Mono is close; Iosevka has the largest letters (its advance is half its em, so its em is 16 pixels) and the most condensed forms; Fira Mono is the heaviest; IBM Plex Mono needs a new name.
+**The first default: JetBrains Mono** (`DEFAULT_VECTOR_FONT` in `tools/kerneltool/vector_fonts.odin`: one line). Why: at 8 x 16 its zero has a dot and its `O` does not, `1`, `l` and `I` differ, its x-height (550 of 1000) gives 7 rows like Spleen, its stems are even at the three scales, and the OFL with no Reserved Font Name lets the subset keep its name. DejaVu Sans Mono is close; Iosevka has the largest letters (its advance is half its em, so its em is 16 pixels) and the most condensed forms; Fira Mono is the heaviest; IBM Plex Mono needs a new name.
+
+### Paper Mono, the font of the system
+
+Decided by the owner: "Paper mono très bien pour monospace". Paper Mono (<https://github.com/paper-design/paper-mono>, SIL OFL 1.1, no Reserved Font Name: "Copyright 2025 The Paper-Mono.Git Project Authors [...] This Font Software is licensed under the SIL Open Font License, Version 1.1", read in `OFL.txt` of the repository; its name table says the same) is the default vector font in the place of JetBrains Mono: the console, the terminal, and every window until the interface font of section 12 exists. Its SemiBold takes the place of the bold weight of the titles. `DEFAULT_VECTOR_FONT` is `paper_mono`, `EMPHASIS_VECTOR_FONT` is `paper_mono_semibold`. JetBrains Mono stays a candidate; the host tests of the renderer keep it, so that a change of the default changes no golden hash.
+
+The source: Paper Mono is not in nixpkgs. `flake.nix` fetches `fonts/ttf/PaperMono-Regular.ttf` and `PaperMono-SemiBold.ttf` at the commit `74fc5537cc1f7b39aa8cccfa7dd3822e17143cca`, each with its hash (106 088 and 106 900 bytes; the same bytes as the copies that the owner gave).
+
+What its tables say, read on its files, against JetBrains Mono:
+
+| | Paper Mono Regular and SemiBold | JetBrains Mono |
+|---|---|---|
+| Outlines | `glyf` (TrueType), 800 glyphs | `glyf` |
+| Units for one em | 1000 | 1000 |
+| Advance of each ASCII character | 606: one for all, monospace | 600 |
+| The scale on the grid of 8 | 8 / 606: an em of 13.2 pixels | 8 / 600: 13.3 pixels |
+| Ascender, descender (`hhea`, also the typo values of `OS/2`) | 955, -245 | 1020, -300 |
+| Ink of ASCII 33 to 126, top and bottom | 803, -194: 13.2 pixels of height, in 16 rows | |
+| Baseline (`glyph_style_of`) | row 12: the ink from about row 1.4 to row 14.6 | row 12 |
+| x-height, cap height | 509, 710: 6.7 and 9.4 pixels; the grid fit gives 7 and 9 rows | 550, 730: 7 and 10 rows |
+| Glyphs of ASCII made of glyphs | `i` and `j` (a stem and the dot glyph 559, placed by x and y offsets, flags `ROUND_XY_TO_GRID` and `USE_MY_METRICS`): the reader takes them, and the subset makes them simple | 4 |
+| Pair spacing | `GPOS` only (3.9 KB), no `kern`: a monospace font on the grid uses none | `GPOS` |
+| Box drawing U+2500 to 257F, block elements U+2580 to 259F | all 128 and all 32 | |
+
+- Its capitals are one row shorter than those of JetBrains Mono at scale 1 (9 rows against 10) and its letters are 1 % narrower in the em. Its line is the same 16 rows.
+- **Not in this step: the box-drawing characters.** The glyph cache holds ASCII 32 to 126; the console and the terminal send ASCII only. Paper Mono has each box-drawing and block character, so a wider cache (section 6, "a wider range") can take them later: about 4 100 bytes for each character with ink at the three scales.
+- Not measured yet: the size of its glyph cache and of its SemiBold cache, and its look on the screen: the coordinator runs the tool (the commands are in the report of this step), and `build/fonts/candidates.png` and the picture `font_candidates` show it beside the others.
 
 The picture of the choice: `font_candidates` (the program `vector_glyphs`: the same line in Spleen and in the six fonts, the large number at scale 2, a word enlarged 4 times; each candidate from a cache that the program builds), and `build/fonts/candidates.png` (`kerneltool vector_fonts`: the same lines at scales 1, 2 and 3 in each candidate and in Spleen, the default with and without the grid fit, a word of each enlarged 5 times; drawn on the host by the same `support/graphics`).
 
 ### A bold weight for the titles
 
-The titles of the cards (the card of `support/interface` and of the boot display) are drawn in JetBrains Mono Bold. Its ASCII subset is 14 212 bytes (`resources/fonts/jetbrains_mono_bold.ttf`, the same license as the regular weight); its glyph cache has the scale 1 only, 30 720 bytes (all three scales: 391 936 bytes), a resource of the boot image mapped like the others. The draw record of the interface package is version 4: the byte `text_weight` (0 regular, 1 bold). Bold at another scale, with Spleen, or with no bold cache, is the regular weight; the width of a text does not change.
+The titles of the cards (the card of `support/interface` and of the boot display) are drawn in the emphasis weight of the font of the system: Paper Mono SemiBold (`resources/fonts/paper_mono_semibold.ttf`; Paper Mono has no Bold). With JetBrains Mono Bold, the first form, the ASCII subset was 14 212 bytes and its glyph cache at scale 1 only 30 720 bytes (all three scales: 391 936 bytes); the SemiBold has the same cells. The cache is a resource of the boot image mapped like the others. The draw record of the interface package is version 5: the byte `kind_detail` is the weight of a text (0 regular, 1 bold) and the thickness of a line. Bold at another scale, with Spleen, or with no bold cache, is the regular weight; the width of a text does not change.
 
 ## 7. The setting
 
@@ -157,11 +183,11 @@ The system had no settings menu. The smallest form that keeps the properties:
 - **Where it lives**: one page, the settings page (`contract/settings`). The root service creates it at start and writes the place, the size and the hash of the glyph cache in it. The program `settings` receives it with Write (the role `Settings` of the root service: the one writer). Each program with a surface, each terminal and the compositor receive it read-only at a fixed address, with its address in the value 13 of their context (P20: a grant of the root service, read-only; P9: no shared file). All zero is valid: the vector font, `rgb`.
 - **A change while programs run**: `settings` writes the page (the change count is odd during the write) and wakes the threads that wait on the change count. The compositor waits on it: it gives the new choice to its own text, draws its whole screen again, and sends the display event `Settings_Changed` to each window. `support/display` gives the new font to `support/graphics` when the program reads the event, between two frames; `support/interface` draws the whole window at the next frame (each draw record is the same, each pixel of text is not). A program draws again as it does for any event.
 - **The settings** (one value of the page and one row of `settings.descriptions` each; the window, the exports and the kept record read the same table): `font` (`vector`, `spleen`), `subpixel_order` (`rgb`, `bgr`, `none`), `pointer_theme` (`owner`, `system`) and `grid_fit` (`on`, `off`). Value 0 of each is its default.
-  - **The pointer theme**: the root service gives the compositor both pointer theme files of the boot image (`pointer_theme_choice` in `programs/root/resources.odin` is still the one place of their order: the values 6 and 7, then 14 and 15); the compositor validates each once and the setting chooses one live (`pointer_theme_choose`, a log line "the pointer theme in use").
+  - **The pointer theme**: the root service gives the compositor both pointer theme files of the boot image (`pointer_theme_choice` in `programs/root/resources.odin` is still the one place of their order: the values 6 and 7, then 18 and 19); the compositor validates each once and the setting chooses one live (`pointer_theme_choose`, a log line "the pointer theme in use").
   - **The grid fit**: two glyph caches of the default font are resources of the boot image (390 624 bytes with the fit, 397 344 without: +397 344 bytes in the image); each program validates both once and the setting chooses one. The picture `font_without_grid_fit`.
   - **The scheduling strategy is not a setting.** The right `Schedule` belongs to `scheduler` (choice 276). The settings service must not get a kernel right to pass it on (P20: a service does not combine its own access with the request of a caller), and asking `scheduler` would need `scheduler` to run as a service at boot with that right. The person changes the strategy in `scheduler`, the program that holds the right. A strategy that survives a stop needs the root service, which holds the machine with each right, to read a record at boot: a later step, with its own grant decision.
 - **The program `settings`**: a window of the interface package: each setting as a row of buttons (the pointer and the keyboard: Tab, then Enter), the text of the system at its three sizes, the facts of the glyph cache (size, hash, valid or not used). Exports with descriptions (P19): `settings.set(name, value)` (1, or an error record: `No_Grant` -1 for a caller that does not act for the person, `Absent` -2 for a name, `Bad_Value` -3 for a value) and `settings.get(name)` (a text), and `settings.repeat(count)` (count records kept, one commit each: the case of the loss of power). The console calls them after `connect("settings")`; `kerneltool call` calls them through `remote`.
-- **The settings survive a stop** (2026-11-11, second part). `settings` keeps the values as one record of 48 bytes (`Kept_Settings`: a magic, a version, a count, 8 values) in one object of its private store (P9): a change writes the record (one commit) first, then the page. At boot the root service starts `settings` for a **boot pass** (the context value 15): it reads the record, writes the page, wakes the compositor and stops, with no window. The storage service and the block service of the data disk now start at boot for it (they started at the first use before). A record of another version, or none, gives the defaults.
+- **The settings survive a stop** (2026-11-11, second part). `settings` keeps the values as one record of 48 bytes (`Kept_Settings`: a magic, a version, a count, 8 values) in one object of its private store (P9): a change writes the record (one commit) first, then the page. At boot the root service starts `settings` for a **boot pass** (the context value 17): it reads the record, writes the page, wakes the compositor and stops, with no window. The storage service and the block service of the data disk now start at boot for it (they started at the first use before). A record of another version, or none, gives the defaults.
 - **The boot display uses the defaults**: it is drawn by the root service before the storage service runs, and reading the store earlier would need a reader of the store in the root service. The simplest right form: the defaults (the vector font, `rgb`) until the boot pass; then the compositor sees the change of the page and each window draws again with the kept settings (its first loop compares with a change count of 0, so a window that read the page before the boot pass is told too). The boot pass takes 23 ms in the machine test with a new disk.
 - **A loss of power** (`kerneltool test power`, the case `power_loss_settings_run`): `settings.repeat(1000)` writes 1000 records, and the disk loses its power at the write of a root. Each of 306 images that a loss can leave (72 with a torn write) gives the durable record or the record in flight, never a mix, and each record is valid; the second machine starts on the hard image and its boot pass writes the durable record on the page.
 
@@ -201,7 +227,103 @@ The console stays fast: the producer writes into the terminal ring, and the term
 
 ## 11. Decisions that the owner must make
 
-1. **The font file**: JetBrains Mono (the default), or another candidate of section 6: one line, `DEFAULT_VECTOR_FONT`.
+1. **The font file**: decided: Paper Mono (section 6). Another candidate is one line, `DEFAULT_VECTOR_FONT`.
 2. **The grid fit by default**: on (now) or off. It is now a setting of the person (both caches are in the boot image); the decision is only which value is 0.
 3. **The order of the stripes by default**: `rgb` (now), or `none` until the system can know the panel.
-4. **The scheduling strategy across a stop**: a record that the root service reads at boot, or none (section 7).
+4. **The interface font**: the size of B612 (an em of 13.33 pixels: capitals of 10 rows), and the positions of its cache (3 at scale 1 and 1 at the scales 2 and 3: 575 KB with the Bold titles; or 3 everywhere: 2.45 MB), section 12.
+5. **The scheduling strategy across a stop**: a record that the root service reads at boot, or none (section 7).
+
+## 12. The interface font and the text shaping module (design, not built)
+
+Decided by the owner: "Go b612", and "Il nous faudra un module de text shaping/kerning". B612 (<https://github.com/polarsys/b612>, version 1.008, the package `b612` of nixpkgs; SIL OFL 1.1 with no Reserved Font Name: "Copyright 2012 The B612 Project Authors [...] This Font Software is licensed under the SIL Open Font License, Version 1.1", read in `OFL.txt` of its repository) becomes the font of the interface: the titles, the bar, the menus, the labels, the cards. It is proportional. Paper Mono stays the font of the text that is monospace (section 6). This section is the design; no code exists yet.
+
+### 12.1 What B612 has, read in its files
+
+| | B612 Regular | B612 Bold |
+|---|---|---|
+| Outlines | `glyf` (TrueType), 593 glyphs; no glyph of ASCII is made of glyphs | the same |
+| Units for one em | 2000 | 2000 |
+| Advances of ASCII 32 to 126 | 19 different values from 400 to 2000 units, the mean 1148; the space 700; `i` and `I` 600; `m`, `M` 1800; `W` 1900 | the same advances |
+| Digits | each 1300: digits are tabular, a column of numbers aligns | the same |
+| Ascender, descender (`hhea`, typo of `OS/2`) | 1930, -500; the ink of ASCII from -517 to 1720 | 1930, -500 |
+| x-height, cap height | 1100, 1500 | 1100, 1500 |
+| Ink beyond the advance box | at most 61 units left of the origin (`j`), none past the advance | 126 left (`j`), 52 past the advance (`K`) |
+| Pair adjustment | `kern` version 0, one subtable of format 0: 1017 pairs; `GPOS` with one lookup of type 2 (pair adjustment, subtables of format 1 and 2), feature `kern` | `kern`: 1061 pairs; `GPOS` the same form |
+| Substitution | `GSUB` with no feature: no ligature, no contextual form | the same |
+| Box drawing | none | none |
+
+- **For ASCII, `kern` and `GPOS` give the same pairs**: 232 pairs in Regular and 239 in Bold whose two glyphs are ASCII, each with the same value in both tables, none in one table only (read on the files with a script of the agent, not with code of the system). The values are -200 to +100 units, in steps of 100: at the size below, -1.33 to +0.67 pixel.
+- So the first version reads `hmtx` and `kern` format 0 only. It reads no `GPOS` and no `GSUB`, and has no ligature and no other script. A font whose pairs are only in `GPOS` needs the `GPOS` reader later, behind the same contract.
+
+### 12.2 The size on the grid
+
+- The line stays 16 pixels at scale 1 (32, 48 at the scales 2 and 3), so a label sits in a line of the grid as text does now.
+- The em of B612 at scale 1 is 13.33 pixels (2000 units to 13.33 pixels, one unit is 1/150 of a pixel): its cap height is then 10 pixels and its x-height 7.33 (the grid fit of section 2 gives 7). Its ink, from -517 to 1720 units, is 14.9 pixels: inside 16 rows, with the baseline on row 12.
+- Its mean advance in ASCII is 7.65 pixels: a label in B612 is about as wide as in Paper Mono (8 pixels), narrower for lowercase text, wider for capitals (`M` 12 pixels).
+
+### 12.3 The text shaping module
+
+A module (the owner's word; property 10: shared code with exports), with batch exports whose parameters are tables (`MODULE_CONTRACT.md`, "Tables and bytes as parameters"). Its name: `text_shaping`.
+
+- **Input**: the font (a record: its kind, its scale, its weight) and a table of characters: the bytes of a text, ASCII 32 to 126 in the first version.
+- **Output**: a table of placed glyphs, one for each character, in memory of the caller. A placed glyph is 16 bytes: the glyph (its index in the glyph cache), x (its origin from the origin of the run, in 1/64 of a pixel), the advance in 1/64 of a pixel (with the pair adjustment that follows it), and 4 bytes that are zero (a cluster number for a full shaper later).
+- **The measure of a text** is the sum of its advances: one export `text_width` that gives it with no output table, for the layout.
+- **Many texts in one call**: a second form takes a table of runs (each a start and a count in one table of bytes) and fills one table of placed glyphs and one table of widths: a window measures all its labels in one call.
+- **What it reads**: not the font file. The kernel tool writes the advances and the pairs into the glyph cache of the font (version 2 of the format, below): for each scale, the advance of each character in 1/64 of a pixel, and the pairs of ASCII with their adjustment in 1/64 of a pixel (232 pairs, sorted, 8 bytes each). The module works over a cache that the program already validated: no parse at run time, the same rule as the glyph cache.
+- **The work for one character**: one load of its advance, one search of the pair with the next character in a sorted table of 232 (8 compares), or one load of a table of 95 x 95 adjustments (9 025 bytes for each scale, which the tool can write in place of the list).
+- **The same contract takes a full shaper later**: characters in, placed glyphs out. A shaper with ligatures gives fewer glyphs than characters and uses the cluster number; the callers already read the count of the output.
+
+### 12.4 The glyph cache with subpixel positions
+
+- **Positions**: a glyph of a proportional font does not start on a whole pixel. With the subpixel bands, the finest step that the screen shows is one third of a pixel: the cache keeps each glyph at 3 positions, 0, 1/3 and 2/3 of a pixel. The draw rounds the x of a placed glyph (in 1/64) to the nearest third, so the error is at most 1/6 of a pixel; the shaper keeps the exact sum, so errors do not add up along a run.
+- **The cell of a glyph** is its ink box, not the cell of the grid: its width is the ink width plus the spread of the filter (two thirds of a pixel on each side) plus the position, its left side at a stated bearing from the origin. The glyph entry gains this width and this bearing (version 2 of `contract/glyph_cache`; version 1 stays for the monospace caches).
+- **Size**, estimated from the boxes of the glyphs in the font files (not built; the estimate gives 344 KB for Paper Mono with one position, against 390 624 bytes for the real cache of JetBrains Mono, so it is within about 15 %):
+
+| Cache | 1 position | 3 positions at each scale | 3 positions at scale 1, 1 at the scales 2 and 3 |
+|---|---|---|---|
+| B612 Regular, scales 1 to 3 | 376 KB | 1 165 KB | 452 KB |
+| B612 Bold, scales 1 to 3 | 415 KB | 1 288 KB | 497 KB |
+| B612 Bold, scale 1 only (the titles) | 39 KB | 123 KB | 123 KB |
+| Today: the cache of the monospace font | 390 624 bytes | | |
+
+- **Recommended**: B612 Regular with 3 positions at scale 1 and 1 position at the scales 2 and 3 (452 KB), and B612 Bold at scale 1 with 3 positions (123 KB): 575 KB more in the boot image. At the scales 2 and 3 a glyph on a whole pixel is at most half a pixel from its place in a glyph of 26 to 40 pixels. With 3 positions everywhere, 2.45 MB.
+
+### 12.5 What changes in `support/interface`
+
+- **A font kind**: `Font_Kind` gains `Interface` (B612), beside `Cells_8x16` (the monospace font). The weight stays the byte `kind_detail`.
+- **The text record**: its x is the origin of the run, its `text_subpixel_x` the fraction of the origin in 1/64 of a pixel (the field exists since the first format), its width the width that the caller measured with the shaping module. Its rectangle for the damage is the measured box widened by a margin of the font on each side: 2 pixels for B612 (its ink passes the box by at most 126 units, 0.84 pixel, and the filter by two thirds of a pixel). So the damage stays exact with no new field.
+- **The draw**: `execute` asks the module for the placed glyphs of the run, then draws each glyph from the cache at its third of a pixel. The glyphs of one run can overlap by their margins: the blend reads the pixel under, so an overlap is drawn right.
+- **The grid of 8 stays for the places of the elements**, not for the letters: a card, a button, a line of a table start on the grid; the text inside starts at the inner place of the element, and its width is what it is. A size of a column that came from a count of characters (`characters(n)`) stays n times 8 for the monospace font; a new size `measured(text)` gives the width of a text in the interface font, rounded up to the grid.
+- **Elements that change**: the title and the caption of a card, a label of `label_value_line`, a button, a line of a list, the bar and the menus of the compositor, the title bar of a window. The values of `label_value_line` that are numbers stay monospace (the rule below).
+
+### 12.6 Which text stays monospace
+
+A rule that a program can follow:
+
+- **Monospace (Paper Mono)**: each text that is a grid of cells (the terminal, the console, `Text_Grid` records); each text that a person compares character by character or copies (hashes, addresses, names of exports, code, the text of a log record); the columns of a table whose values align by character.
+- **Interface (B612)**: each text that names or explains: titles, captions, labels, buttons, menus, the bar, the title of a window, sentences of help.
+- **Numbers**: in either. The digits of B612 are tabular (1300 units each), so a column of numbers aligns in B612 too, at the right of its column (`DESIGN.md`, section 5).
+
+### 12.7 The cost for each glyph, against today (estimated, not measured)
+
+- **Shaping**: one advance and one pair for each character: a few nanoseconds, against 0 today (the advance of a monospace font is a constant).
+- **Drawing**: the box of a glyph at scale 1 holds about 100 words with 3 positions, against about 64 words in the rows with ink of a cell today; the partial pixels are about the same (the ink is the same). Expected about 1.2 times the fast blend of today (109 ns on the host at scale 1 over a flat color).
+- **The measure of a label**: one call of the module for all the labels of a frame; today `text_width` is a multiplication.
+
+### 12.8 The steps, each one working
+
+1. **The shaping data in the tool**: `kerneltool vector_fonts` subsets B612 Regular and Bold (ASCII, simple glyphs, `kern` format 0 kept as a sorted pair table) to `resources/fonts`; host tests: the advances and the pairs of the subset against the font file, and the pairs of `kern` against those of `GPOS` (the check of 12.1, as code).
+2. **The glyph cache version 2**: a glyph entry with its box width, its bearing and its positions; the advances and the pair table of each scale; its validation; the builder in `support/vector_font`; host tests: the bit-for-bit test of each position against a render at that offset, the golden hashes, damaged fields.
+3. **The shaping module** `text_shaping` with its exports over a validated cache; host tests: a run of each pair of ASCII gives the advances plus the pairs; the measure is the sum; many runs in one call give the same as one run at a time.
+4. **`graphics.text_placed`**: draw a table of placed glyphs with the fast blend at thirds of a pixel; host tests bit for bit against the reference blend; the measure of section 5 for B612.
+5. **The resources and the settings page**: the two B612 caches as resources of the boot image, mapped like the others; a fallback to the monospace font when they are absent or refused.
+6. **`support/interface`**: the font kind `Interface`, the text record with its origin fraction and its margin, `measured(text)`; the card, the label, the button, the list in B612; the damage tests with overlapping glyphs.
+7. **The compositor**: the bar, the menus, the title bars, the launcher in B612.
+8. **`DESIGN.md`, section 5**: the rule of the two fonts of 12.6 replaces "one font at a time, on the grid of cells" (a change of a design rule: written when step 6 lands).
+
+### 12.9 Where this design is least sure
+
+- The size estimates of 12.4 come from the glyph boxes, not from a build (within about 15 % on the one case that could be compared).
+- The cost of 12.7 is an estimate; the fast blend tables need two pixel colors at the two ends of a row of a glyph, which holds for a label on a card, not for a title bar with a gradient across (the reference blend there, as today).
+- `kern` and `GPOS` agree for ASCII in B612 1.008; a later version of the font, or another interface font, can have pairs in `GPOS` only.
+- 3 positions and not 4: the step of the stripes is a third; a finer step is invisible with the subpixel bands and costs one more copy of each glyph.

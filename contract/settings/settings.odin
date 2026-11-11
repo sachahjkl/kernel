@@ -27,6 +27,7 @@
 package settings
 
 import "base:intrinsics"
+import op "contract:operation"
 
 PAGE_ADDRESS :: 0x0000_3200_0000_0000
 GLYPH_CACHE_ADDRESS :: 0x0000_3300_0000_0000
@@ -34,7 +35,7 @@ GLYPH_CACHE_WITHOUT_GRID_FIT_ADDRESS :: 0x0000_3400_0000_0000
 GLYPH_CACHE_BOLD_ADDRESS :: 0x0000_3500_0000_0000
 VALUE_PAGE :: 13 // The value of the context with the address of the page. The system fixes it for each program (contract:operation, Context).
 GRANT_PAGE :: 12 // The handle of the context of the program `settings`: the page, with Read and Write.
-VALUE_BOOT_PASS :: 15 // The program `settings` (the values 9 to 12 are its random seed): 1 for the pass at boot (read the kept record, write the page, stop).
+VALUE_BOOT_PASS :: op.CONTEXT_VALUE_SETTINGS_BOOT_PASS // The program `settings`: 1 for the pass at boot (read the kept record, write the page, stop).
 KEPT_OBJECT_NAME :: "settings" // The object of the private store of `settings` that holds Kept_Settings.
 
 // The settings, in the order of the page and of the window.

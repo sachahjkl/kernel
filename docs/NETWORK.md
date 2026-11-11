@@ -166,6 +166,8 @@ A third network machine (`scenario_tcp`) has the peer of the tool on `-netdev dg
 
 ## QUIC: what it reuses, and what it needs
 
+The design of QUIC and its first layer, packet protection, are in `docs/QUIC.md`. The text below was written before them, and stays as the list of what QUIC reuses; the list of what it needs is now answered: TLS 1.3 and its primitives (`docs/CRYPTOGRAPHY.md`), randomness (`docs/RANDOMNESS.md`), and raw public keys in place of certificates and a date (`docs/QUIC.md`, section 4).
+
 QUIC is the next step. It runs over UDP (RFC 9000), so it is a library in the program over a datagram endpoint, which exists.
 
 It reuses from this step:
@@ -179,5 +181,5 @@ It needs what the system does not have:
 
 - TLS 1.3 (RFC 8446, RFC 9001): the key exchange (X25519), AEAD (AES-GCM or ChaCha20-Poly1305), HKDF, certificates and their check. No such code exists in the system.
 - A random service: keys need a secret that an attacker cannot guess. `rdrand` in each program is not a service of the system.
-- A time of the day, to check a certificate: the time page has no date.
+- A time of the day, to check a certificate: the date page has the date of the real-time clock, read one time; a certificate needs a date that an attacker cannot set (the clock of the machine is not one).
 - A way to give a program the trusted certificates, as a grant.
