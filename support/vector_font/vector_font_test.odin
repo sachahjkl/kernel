@@ -84,3 +84,20 @@ square_coverage :: proc(t: ^testing.T) {
 	testing.expect_value(t, result[3 * 5 + 1], 128)
 	testing.expect_value(t, result[4 * 5 + 1], 0)
 }
+
+// A vertical segment on the last column, and a coverage of width 1, write
+// nothing outside their rows (review F1).
+@(test)
+segments_at_the_edges_stay_in_their_rows :: proc(t: ^testing.T) {
+	cells: [5 * 3 + 1]f32
+	result: [5 * 3]u8
+	target := Coverage{cells = cells[:5 * 3], coverage = result[:], width = 5, height = 3}
+	line_add(&target, 4, 0, 4, 3)
+	line_add(&target, 5, 0, 5, 3)
+	testing.expect_value(t, cells[5 * 3], 0) // The cell after the last row is not touched.
+	narrow_cells: [3]f32
+	narrow_result: [3]u8
+	narrow := Coverage{cells = narrow_cells[:], coverage = narrow_result[:], width = 1, height = 3}
+	line_add(&narrow, 0.5, 0, 0.5, 3)
+	coverage_finish(&narrow)
+}

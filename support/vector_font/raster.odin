@@ -27,62 +27,64 @@ ceil_of :: #force_inline proc "contextless" (value: f32) -> f32 {
 	return whole < value ? whole + 1 : whole
 }
 
-// line_add adds the signed area of one line segment, in pixels, y down.
-line_add :: proc "contextless" (target: ^Coverage, x0, y0, x1, y1: f32) {
-	if y0 == y1 {
+// line_add adds the signed area of one line segment, in pixels, y down. A
+// segment outside the coverage is cut to it: the cells of a row are never
+// written past the row (a font file is hostile input).
+line_add :: proc "contextless" (target: ^Coverage, start_x, start_y, end_x, end_y: f32) {
+	if start_y == end_y || target.width < 2 {
 		return
 	}
 	direction: f32 = 1
-	from_x, from_y, to_x, to_y := x0, y0, x1, y1
-	if from_y > to_y {
+	top_x, top_y, bottom_x, bottom_y := start_x, start_y, end_x, end_y
+	if top_y > bottom_y {
 		direction = -1
-		from_x, from_y, to_x, to_y = x1, y1, x0, y0
+		top_x, top_y, bottom_x, bottom_y = end_x, end_y, start_x, start_y
 	}
-	slope := (to_x - from_x) / (to_y - from_y)
-	x := from_x
-	if from_y < 0 {
-		x -= from_y * slope
+	slope := (bottom_x - top_x) / (bottom_y - top_y)
+	x := top_x
+	if top_y < 0 {
+		x -= top_y * slope
 	}
-	first := max(int(floor_of(from_y)), 0)
-	last := min(int(ceil_of(to_y)), target.height)
-	for y in first ..< last {
+	first_row := max(int(floor_of(top_y)), 0)
+	last_row := min(int(ceil_of(bottom_y)), target.height)
+	for y in first_row ..< last_row {
 		row := target.cells[y * target.width:][:target.width]
-		dy := min(f32(y + 1), to_y) - max(f32(y), from_y)
-		x_next := x + slope * dy
-		d := dy * direction
+		height_in_row := min(f32(y + 1), bottom_y) - max(f32(y), top_y)
+		x_next := x + slope * height_in_row
+		signed_height := height_in_row * direction
 		left, right := min(x, x_next), max(x, x_next)
 		left_floor := floor_of(left)
 		left_index := int(left_floor)
 		right_ceil := ceil_of(right)
 		right_index := int(right_ceil)
-		if left_index < 0 || right_index >= target.width {
-			// The prototype keeps the outline inside its box: a point outside is cut.
+		if left_index < 0 || left_index + 1 >= target.width || right_index >= target.width {
+			// The prototype keeps the outline inside its box: a part outside is cut.
 			left_index = clamp(left_index, 0, target.width - 2)
 			right_index = clamp(right_index, left_index + 1, target.width - 1)
 		}
 		if right_index <= left_index + 1 {
 			middle := 0.5 * (x + x_next) - left_floor
-			row[left_index] += d - d * middle
-			row[left_index + 1] += d * middle
+			row[left_index] += signed_height - signed_height * middle
+			row[left_index + 1] += signed_height * middle
 		} else {
-			inverse := 1 / (right - left)
-			left_part := left - left_floor
-			first_area := 0.5 * inverse * (1 - left_part) * (1 - left_part)
-			right_part := right - right_ceil + 1
-			last_area := 0.5 * inverse * right_part * right_part
-			row[left_index] += d * first_area
+			width_inverse := 1 / (right - left)
+			left_fraction := left - left_floor
+			first_area := 0.5 * width_inverse * (1 - left_fraction) * (1 - left_fraction)
+			right_fraction := right - right_ceil + 1
+			last_area := 0.5 * width_inverse * right_fraction * right_fraction
+			row[left_index] += signed_height * first_area
 			if right_index == left_index + 2 {
-				row[left_index + 1] += d * (1 - first_area - last_area)
+				row[left_index + 1] += signed_height * (1 - first_area - last_area)
 			} else {
-				step_area := inverse * (1.5 - left_part)
-				row[left_index + 1] += d * (step_area - first_area)
+				second_area := width_inverse * (1.5 - left_fraction)
+				row[left_index + 1] += signed_height * (second_area - first_area)
 				for index in left_index + 2 ..< right_index - 1 {
-					row[index] += d * inverse
+					row[index] += signed_height * width_inverse
 				}
-				before_last := step_area + f32(right_index - left_index - 3) * inverse
-				row[right_index - 1] += d * (1 - before_last - last_area)
+				before_last := second_area + f32(right_index - left_index - 3) * width_inverse
+				row[right_index - 1] += signed_height * (1 - before_last - last_area)
 			}
-			row[right_index] += d * last_area
+			row[right_index] += signed_height * last_area
 		}
 		x = x_next
 	}
@@ -90,17 +92,17 @@ line_add :: proc "contextless" (target: ^Coverage, x0, y0, x1, y1: f32) {
 
 // quadratic_add adds a quadratic curve as line segments: more segments for
 // a curve that bends more, from 1 to 16.
-quadratic_add :: proc "contextless" (target: ^Coverage, x0, y0, control_x, control_y, x1, y1: f32) {
-	bend_x := x0 - 2 * control_x + x1
-	bend_y := y0 - 2 * control_y + y1
+quadratic_add :: proc "contextless" (target: ^Coverage, start_x, start_y, control_x, control_y, end_x, end_y: f32) {
+	bend_x := start_x - 2 * control_x + end_x
+	bend_y := start_y - 2 * control_y + end_y
 	bend := abs(bend_x) + abs(bend_y)
 	count := clamp(int(bend * 2) + 1, 1, 16)
-	previous_x, previous_y := x0, y0
+	previous_x, previous_y := start_x, start_y
 	for step in 1 ..= count {
 		t := f32(step) / f32(count)
-		u := 1 - t
-		x := u * u * x0 + 2 * u * t * control_x + t * t * x1
-		y := u * u * y0 + 2 * u * t * control_y + t * t * y1
+		rest := 1 - t
+		x := rest * rest * start_x + 2 * rest * t * control_x + t * t * end_x
+		y := rest * rest * start_y + 2 * rest * t * control_y + t * t * end_y
 		line_add(target, previous_x, previous_y, x, y)
 		previous_x, previous_y = x, y
 	}
@@ -136,9 +138,9 @@ outline_add :: proc "contextless" (target: ^Coverage, outline: ^Outline, placeme
 		}
 		start_x, start_y: f32
 		if start == count {
-			a_x, a_y := place(points[0], placement)
-			b_x, b_y := place(points[1], placement)
-			start_x, start_y = (a_x + b_x) / 2, (a_y + b_y) / 2
+			first_x, first_y := place(points[0], placement)
+			second_x, second_y := place(points[1], placement)
+			start_x, start_y = (first_x + second_x) / 2, (first_y + second_y) / 2
 			start = 0
 		} else {
 			start_x, start_y = place(points[start], placement)

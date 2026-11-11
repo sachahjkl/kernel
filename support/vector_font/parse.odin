@@ -194,23 +194,23 @@ glyph_outline :: proc "contextless" (font: ^Font_File, glyph: int, outline: ^Out
 	outline.advance = read_u16(metrics, 4 * metric) or_else 0
 	loca := font.bytes[font.loca.offset:][:font.loca.length]
 	start, end: int
-	ok_start, ok_end: bool
+	start_read, end_read: bool
 	if font.long_offsets {
-		start, ok_start = read_u32(loca, 4 * glyph)
-		end, ok_end = read_u32(loca, 4 * glyph + 4)
+		start, start_read = read_u32(loca, 4 * glyph)
+		end, end_read = read_u32(loca, 4 * glyph + 4)
 	} else {
-		start, ok_start = read_u16(loca, 2 * glyph)
-		end, ok_end = read_u16(loca, 2 * glyph + 2)
+		start, start_read = read_u16(loca, 2 * glyph)
+		end, end_read = read_u16(loca, 2 * glyph + 2)
 		start, end = start * 2, end * 2
 	}
-	if !ok_start || !ok_end || start > end || end > font.glyf.length {
+	if !start_read || !end_read || start > end || end > font.glyf.length {
 		return .Too_Short
 	}
 	if start == end {
 		return .None // A glyph with no outline: a space.
 	}
-	data := font.bytes[font.glyf.offset + start:][:end - start]
-	contours, ok := read_i16(data, 0)
+	glyph_bytes := font.bytes[font.glyf.offset + start:][:end - start]
+	contours, ok := read_i16(glyph_bytes, 0)
 	if !ok {
 		return .Too_Short
 	}
@@ -222,7 +222,7 @@ glyph_outline :: proc "contextless" (font: ^Font_File, glyph: int, outline: ^Out
 	}
 	points := 0
 	for contour in 0 ..< contours {
-		last, read := read_u16(data, 10 + 2 * contour)
+		last, read := read_u16(glyph_bytes, 10 + 2 * contour)
 		if !read {
 			return .Too_Short
 		}
@@ -235,7 +235,7 @@ glyph_outline :: proc "contextless" (font: ^Font_File, glyph: int, outline: ^Out
 	if points > len(outline.points) {
 		return .Too_Many_Points
 	}
-	instructions, read := read_u16(data, 10 + 2 * contours)
+	instructions, read := read_u16(glyph_bytes, 10 + 2 * contours)
 	if !read {
 		return .Too_Short
 	}
@@ -246,17 +246,17 @@ glyph_outline :: proc "contextless" (font: ^Font_File, glyph: int, outline: ^Out
 		return .Too_Many_Points
 	}
 	for index := 0; index < points; {
-		if at >= len(data) {
+		if at >= len(glyph_bytes) {
 			return .Too_Short
 		}
-		flag := data[at]
+		flag := glyph_bytes[at]
 		at += 1
 		repeat := 1
 		if flag & 8 != 0 {
-			if at >= len(data) {
+			if at >= len(glyph_bytes) {
 				return .Too_Short
 			}
-			repeat += int(data[at])
+			repeat += int(glyph_bytes[at])
 			at += 1
 		}
 		for _ in 0 ..< repeat {
@@ -276,14 +276,14 @@ glyph_outline :: proc "contextless" (font: ^Font_File, glyph: int, outline: ^Out
 			flag := flags[index]
 			switch {
 			case flag & short_bit != 0:
-				if at >= len(data) {
+				if at >= len(glyph_bytes) {
 					return .Too_Short
 				}
-				step := int(data[at])
+				step := int(glyph_bytes[at])
 				at += 1
 				value += flag & same_bit != 0 ? step : -step
 			case flag & same_bit == 0:
-				step, step_read := read_i16(data, at)
+				step, step_read := read_i16(glyph_bytes, at)
 				if !step_read {
 					return .Too_Short
 				}

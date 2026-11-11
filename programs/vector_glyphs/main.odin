@@ -65,11 +65,11 @@ glyph_draw :: proc "contextless" (canvas: graphics.Canvas, x: f32, y: int, chara
 	}
 	for row in 0 ..< height {
 		for column in 0 ..< width {
-			px, py := left + column, y + row
-			if px < 0 || py < 0 || px >= canvas.width || py >= canvas.height {
+			pixel_x, pixel_y := left + column, y + row
+			if pixel_x < 0 || pixel_y < 0 || pixel_x >= canvas.width || pixel_y >= canvas.height {
 				continue
 			}
-			under := canvas.pixels[py * canvas.stride + px]
+			under := canvas.pixels[pixel_y * canvas.stride + pixel_x]
 			result: graphics.Color
 			for channel in 0 ..< 3 {
 				shift := uint(16 - 8 * channel)
@@ -78,7 +78,7 @@ glyph_draw :: proc "contextless" (canvas: graphics.Canvas, x: f32, y: int, chara
 				front := color >> shift & 0xFF
 				result |= (back * (255 - level) + front * level) / 255 << shift
 			}
-			canvas.pixels[py * canvas.stride + px] = result
+			canvas.pixels[pixel_y * canvas.stride + pixel_x] = result
 		}
 	}
 	return advance
@@ -125,11 +125,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	rows := [?]Row {
 		{"Spleen 8x16, the font of the system", 0, 0, .Grayscale, true},
-		{"13 px, grayscale, exact place", 48, 13.3, .Grayscale, false},
-		{"13 px, grayscale, whole pixel", 96, 13.3, .Whole_Pixel, false},
-		{"13 px, color stripes", 144, 13.3, .Color_Stripes, false},
-		{"16 px, grayscale", 192, 16, .Grayscale, false},
-		{"32 px, grayscale", 248, 32, .Grayscale, false},
+		{"13 pixel_x, grayscale, exact place", 48, 13.3, .Grayscale, false},
+		{"13 pixel_x, grayscale, whole pixel", 96, 13.3, .Whole_Pixel, false},
+		{"13 pixel_x, color stripes", 144, 13.3, .Color_Stripes, false},
+		{"16 pixel_x, grayscale", 192, 16, .Grayscale, false},
+		{"32 pixel_x, grayscale", 248, 32, .Grayscale, false},
 	}
 	for row in rows {
 		interface.draw_text(frame.table, content.x, content.y + row.y, row.name, graphics.COLOR_DIM)
@@ -137,7 +137,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			interface.draw_text(frame.table, content.x, content.y + row.y + 20, SAMPLE, graphics.COLOR_TEXT)
 		}
 	}
-	interface.draw_text(frame.table, content.x, content.y + 320, "a glyph at 13 px, enlarged 8 times: grayscale, then color stripes", graphics.COLOR_DIM)
+	interface.draw_text(frame.table, content.x, content.y + 320, "a glyph at 13 pixel_x, enlarged 8 times: grayscale, then color stripes", graphics.COLOR_DIM)
 	interface.window_frame_end(&drawing, &frame, &window)
 
 	// The vector rows, over the frame.
@@ -171,7 +171,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	spleen := (system.nanoseconds() - spleen_start) / 1000
 	display.present(&window)
-	system.log("vector_glyphs: one glyph: Spleen 8x16 ", spleen, " ns; 13 px from its outline: grayscale ", times[.Grayscale], " ns, whole pixel ", times[.Whole_Pixel], " ns, color stripes ", times[.Color_Stripes], " ns")
+	system.log("vector_glyphs: one glyph: Spleen 8x16 ", spleen, " ns; 13 pixel_x from its outline: grayscale ", times[.Grayscale], " ns, whole pixel ", times[.Whole_Pixel], " ns, color stripes ", times[.Color_Stripes], " ns")
 	system.log("vector_glyphs: ok, ", u64(font.glyph_count), " glyphs in the font, ", u64(len(font_bytes)), " bytes")
 	for {
 		display.wait(&window)
