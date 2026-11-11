@@ -391,7 +391,7 @@ diagnose :: proc "contextless" (program_index: u32, command: ring.Record, status
 	case .Bad_State:
 		explained = state_explain(&record, program, operation, v)
 	case .Bad_Operation:
-		explained = value_explain(&record, operation, v)
+		explained = value_explain(&record, program, operation, v)
 	}
 	if !explained || !kind_explains(errors.Kind(record.kind), status) {
 		record = {operation = record.operation}
@@ -629,16 +629,7 @@ address_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^P
 	case .Inspect:
 		kind := op.Inspect_Kind(v[1])
 		size := kind <= max(op.Inspect_Kind) ? INSPECT_SIZES[kind] : 0
-		page_report: op.Page_Report
-		if kind == .Pages && v[2] != 0 {
-			// Pages gives the pages of the program that asks only: index 0.
-			record_set(record, .Bad_Value, .None, 3, v[2], 0, 0)
-		} else if kind == .Pages && v[4] >= size && read_user(program, v[3], &page_report, size_of(page_report)) && (page_report.address & (PAGE_SIZE - 1) != 0 || page_report.address >= USER_END || op.PAGE_REPORT_CAPACITY * PAGE_SIZE > USER_END - page_report.address) {
-			// The first page that the report at the argument address names:
-			// aligned, and its 64 pages in the user half. The record gives that
-			// first page, and the last first page that the call takes.
-			record_set(record, .Bad_Value, .None, 4, page_report.address, USER_END - op.PAGE_REPORT_CAPACITY * PAGE_SIZE, 0)
-		} else if v[4] < size {
+		if v[4] < size {
 			record_set(record, .Too_Small, .Bytes, 5, v[4], size, 0)
 		} else if !read_range(program, v[3], size, true) {
 			record_set(record, .Bad_Address, .Bytes, 4, v[3], size, 1)
@@ -785,9 +776,26 @@ state_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Pro
 }
 
 @(private = "file")
-value_explain :: proc "contextless" (record: ^errors.Error_Record, operation: op.Operation, v: [7]u64) -> bool {
+value_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Program, operation: op.Operation, v: [7]u64) -> bool {
 	form := &op.OPERATIONS[operation]
 	#partial switch operation {
+	case .Inspect:
+		if op.Inspect_Kind(v[1]) != .Pages {
+			break
+		}
+		page_report: op.Page_Report
+		switch {
+		case v[2] != 0:
+			// Pages gives the pages of the program that asks only: index 0.
+			record_set(record, .Bad_Value, .None, 3, v[2], 0, 0)
+			return true
+		case v[4] >= size_of(op.Page_Report) && read_user(program, v[3], &page_report, size_of(page_report)) && (page_report.address & (PAGE_SIZE - 1) != 0 || page_report.address >= USER_END || op.PAGE_REPORT_CAPACITY * PAGE_SIZE > USER_END - page_report.address):
+			// The first page that the report at the argument address names:
+			// aligned, and its 64 pages in the user half. The record gives that
+			// first page, and the last first page that the call takes.
+			record_set(record, .Bad_Value, .None, 4, page_report.address, USER_END - op.PAGE_REPORT_CAPACITY * PAGE_SIZE, 0)
+			return true
+		}
 	case .Memory_Create:
 		switch {
 		case v[2] & ~u64(0b11) != 0:
