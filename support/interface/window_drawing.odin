@@ -9,7 +9,12 @@ import "support:system"
 // its surface, the interface state and the input of the next frame.
 Window_Drawing :: struct {
 	now:    Draw_Table,
-	before: Draw_Table, // What the surface shows. Empty before the first frame.
+	before: Draw_Table, // What the surface shows (its first picture). Empty before the first frame.
+	// A surface with two pictures: the table of its second picture. The
+	// program draws in one picture while the compositor shows the other, so
+	// each picture shows its own older frame.
+	before_second: Draw_Table,
+	drawn_second:  bool,
 	state:  Interface_State,
 	input:  Input,
 	drawn:  bool, // The surface shows the table before.
@@ -21,8 +26,8 @@ Window_Drawing :: struct {
 
 // window_drawing_of makes the drawing of a window with tables in the
 // memory of the caller.
-window_drawing_of :: proc "contextless" (records_now, records_before: []Draw_Record, text_now, text_before: []u8) -> Window_Drawing {
-	return {now = {records = records_now, text = text_now}, before = {records = records_before, text = text_before}}
+window_drawing_of :: proc "contextless" (records_now, records_before: []Draw_Record, text_now, text_before: []u8, records_second: []Draw_Record = nil, text_second: []u8 = nil) -> Window_Drawing {
+	return {now = {records = records_now, text = text_now}, before = {records = records_before, text = text_before}, before_second = {records = records_second, text = text_second}}
 }
 
 // window_events takes the events of a window into the input of the next
@@ -50,18 +55,22 @@ window_frame_begin :: proc "contextless" (drawing: ^Window_Drawing, window: ^dis
 
 // window_frame_end ends the frame: it finds the damage by difference with
 // the frame on the surface, draws the records again in the damage
-// rectangles, and presents only that part. A surface with two pictures is
-// drawn whole: its other picture shows an older frame. It gives the count
-// of damage rectangles.
+// rectangles, and presents only that part. A surface with two pictures
+// compares with the table of the picture that the program draws now, and
+// is drawn whole when the caller gave no memory for that second table. It
+// gives the count of damage rectangles.
 window_frame_end :: proc "contextless" (drawing: ^Window_Drawing, frame: ^Frame, window: ^display.Window) -> int {
 	frame_end(frame)
 	input_clear(&drawing.input)
 	start := system.nanoseconds()
 	drawing.build_time = start - drawing.build_start
 	drawing.damage = {}
-	whole := !drawing.drawn || window.two || drawing.before.full
+	second := window.two && window.picture == 1
+	before := second ? &drawing.before_second : &drawing.before
+	drawn := second ? drawing.drawn_second : drawing.drawn
+	whole := !drawn || before.full || window.two && drawing.before_second.records == nil
 	if !whole {
-		damage_by_difference(&drawing.before, &drawing.now, &drawing.damage)
+		damage_by_difference(before, &drawing.now, &drawing.damage)
 	}
 	measured := system.nanoseconds()
 	drawing.difference_time = measured - start
@@ -76,11 +85,15 @@ window_frame_end :: proc "contextless" (drawing: ^Window_Drawing, frame: ^Frame,
 		draw_damage_on_surface(&drawing.now, window.canvas, drawing.damage.rectangles[:drawing.damage.count])
 		bounds := damage_bounds(&drawing.damage)
 		display.present_rectangle(window, bounds.left, bounds.top, bounds.right - bounds.left, bounds.bottom - bounds.top)
-	}
-	if !whole && drawing.damage.count == 0 {
+	case:
 		display.picture_end(window) // A frame with nothing to draw is a picture of the measure too.
 	}
 	drawing.draw_time = system.nanoseconds() - measured
-	drawing.drawn = draw_table_copy(&drawing.before, &drawing.now)
+	copied := draw_table_copy(before, &drawing.now)
+	if second {
+		drawing.drawn_second = copied
+	} else {
+		drawing.drawn = copied
+	}
 	return drawing.damage.count
 }

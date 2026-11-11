@@ -15,9 +15,15 @@ package manual
 
 import "support:display"
 import "support:graphics"
+import "support:interface"
 import info "contract:boot_info"
 import module "contract:module"
 import "support:system"
+
+// The window is built with the interface package (docs/INTERFACE.md).
+records_now, records_before, records_second: [512]interface.Draw_Record
+text_now, text_before, text_second: [8192]u8 // The second: the table of the second picture of the surface.
+drawing: interface.Window_Drawing
 
 CELL_WIDTH :: graphics.CELL_WIDTH
 CELL_HEIGHT :: graphics.CELL_HEIGHT
@@ -341,9 +347,19 @@ rows :: proc "contextless" () -> (count: int) {
 	return count
 }
 
-draw :: proc "contextless" (canvas: graphics.Canvas) {
-	graphics.clear(canvas, graphics.COLOR_BACKGROUND)
-	graphics.fill(canvas, 0, 0, LIST_WIDTH, HEIGHT, graphics.COLOR_CARD_TOP)
+// draw builds a frame of the window with the interface package.
+draw :: proc "contextless" (window: ^display.Window) {
+	if drawing.now.records == nil {
+		drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:], records_second[:], text_second[:])
+	}
+	frame := interface.window_frame_begin(&drawing, window)
+	draw_records(frame.table)
+	interface.window_frame_end(&drawing, &frame, window)
+}
+
+draw_records :: proc "contextless" (table: ^interface.Draw_Table) {
+	interface.draw_rectangle(table, 0, 0, WIDTH, HEIGHT, graphics.COLOR_BACKGROUND)
+	interface.draw_rectangle(table, 0, 0, LIST_WIDTH, HEIGHT, graphics.COLOR_CARD_TOP)
 	entries := system.image_entries(image)
 	list_rows := (HEIGHT - 8) / CELL_HEIGHT
 	list_first := clamp(selected - list_rows / 2, 0, max(len(entries) - list_rows, 0))
@@ -351,7 +367,7 @@ draw :: proc "contextless" (canvas: graphics.Canvas) {
 		entry := &entries[index]
 		y := 4 + (index - list_first) * CELL_HEIGHT
 		if index == selected && !showing_overview {
-			graphics.fill(canvas, 0, y, LIST_WIDTH, CELL_HEIGHT, COLOR_SELECTED)
+			interface.draw_rectangle(table, 0, y, LIST_WIDTH, CELL_HEIGHT, COLOR_SELECTED)
 		}
 		file := file_of(entry)
 		head, _ := module.header(file)
@@ -365,11 +381,11 @@ draw :: proc "contextless" (canvas: graphics.Canvas) {
 		case head.entry_export != 0:
 			color = graphics.COLOR_TEXT
 		}
-		graphics.text(canvas, 8, y, system.name_of(entry.name[:]), color)
+		interface.draw_text(table, 8, y, system.name_of(entry.name[:]), color)
 		if exports > 0 {
 			buffer: [8]u8
 			count := system.format(buffer[:], u64(exports))
-			graphics.text(canvas, LIST_WIDTH - 8 - len(count) * CELL_WIDTH, y, count, graphics.COLOR_DIM)
+			interface.draw_text(table, LIST_WIDTH - 8 - len(count) * CELL_WIDTH, y, count, graphics.COLOR_DIM)
 		}
 	}
 
@@ -378,22 +394,22 @@ draw :: proc "contextless" (canvas: graphics.Canvas) {
 	for &line in lines[:line_count] {
 		if line.indent < 0 {
 			if row - 1 >= 0 && row - 1 < ROWS {
-				graphics.text(canvas, left - line.indent * CELL_WIDTH, MARGIN + (row - 1) * CELL_HEIGHT, line.text, line.color)
+				interface.draw_text(table, left - line.indent * CELL_WIDTH, MARGIN + (row - 1) * CELL_HEIGHT, line.text, line.color)
 			}
 			continue
 		}
 		if row >= 0 && row < ROWS {
-			graphics.text(canvas, left + line.indent * CELL_WIDTH, MARGIN + row * CELL_HEIGHT, line.text, line.color)
+			interface.draw_text(table, left + line.indent * CELL_WIDTH, MARGIN + row * CELL_HEIGHT, line.text, line.color)
 		}
 		row += 1
 	}
 	bottom := HEIGHT - CELL_HEIGHT - 6
-	graphics.fill(canvas, LIST_WIDTH, bottom - 4, WIDTH - LIST_WIDTH, 1, 0x30363C)
-	x := graphics.text(canvas, left, bottom, "up, down: module   page up, page down: text", graphics.COLOR_DIM)
+	interface.draw_rectangle(table, LIST_WIDTH, bottom - 4, WIDTH - LIST_WIDTH, 1, 0x30363C)
+	x := interface.draw_text(table, left, bottom, "up, down: module   page up, page down: text", graphics.COLOR_DIM)
 	buffer: [64]u8
 	total := rows()
 	place := system.format(buffer[:], "rows ", u64(min(first_line + 1, total)), " to ", u64(min(first_line + ROWS, total)), " of ", u64(total))
-	graphics.text(canvas, max(x + 16, WIDTH - MARGIN - len(place) * CELL_WIDTH), bottom, place, graphics.COLOR_DIM)
+	interface.draw_text(table, max(x + 16, WIDTH - MARGIN - len(place) * CELL_WIDTH), bottom, place, graphics.COLOR_DIM)
 }
 
 select :: proc "contextless" (index: int) {
@@ -505,8 +521,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	pressed := false
 	for {
 		if changed && display.canvas_free(&window) {
-			draw(window.canvas)
-			display.present(&window)
+			draw(&window)
 			changed = false
 		}
 		wait: system.Wait
