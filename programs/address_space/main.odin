@@ -455,8 +455,8 @@ refuse :: proc "contextless" () {
 // The edge cases of the virtual memory: each one is a case where the
 // kernel did something wrong once, and that must stay right. Each one logs
 // a line and sets its result.
-EDGE_CASES :: 12
-edge_case_names := [EDGE_CASES]string{"a small object with no frame keeps the sums of the frames", "an unmap ends the protection of parts: the object is mapped again", "large pages at an address that the kernel chooses", "a table that names one mapping whole and in part is refused", "a decommit wakes a thread that waits on a word of the page", "a word in the second 4 KiB of a large page is its own word", "an object with parts of their own protection is not mapped again", "a small uncommitted object costs a page", "a part cannot get more than its mapping", "a page that is not committed stops with its own code", "a revocation of a large uncommitted mapping wakes its waiter", "an uncommitted object of 1 GiB ends with few pages walked"}
+EDGE_CASES :: 13
+edge_case_names := [EDGE_CASES]string{"a small object with no frame keeps the sums of the frames", "an unmap ends the protection of parts: the object is mapped again", "large pages at an address that the kernel chooses", "a table that names one mapping whole and in part is refused", "a decommit wakes a thread that waits on a word of the page", "a word in the second 4 KiB of a large page is its own word", "an object with parts of their own protection is not mapped again", "a small uncommitted object costs a page", "a part cannot get more than its mapping", "a page that is not committed stops with its own code", "a revocation of a large uncommitted mapping wakes its waiter", "an uncommitted object of 1 GiB ends with few pages walked", "a thread whose first instruction is not an address of a program is refused"}
 edge_case_results: [EDGE_CASES]bool
 
 Waiter :: struct #align (64) {
@@ -631,6 +631,14 @@ edge_cases :: proc "contextless" (ctx: ^system.Context) {
 	}
 	edge_case_results[10] = revocation_wakes_waiter(ctx)
 	edge_case_results[11] = large_object_ends_quickly()
+	{
+		// An address that is not canonical, then one in the half of the
+		// kernel: the kernel refuses each, and the machine goes on.
+		_, not_canonical := system.call_with_error(nil, .Thread_Create, u64(system.own_budget()), 0x0000_8000_0000_0000, op.USER_END, 0)
+		_, of_the_kernel := system.call_with_error(nil, .Thread_Create, u64(system.own_budget()), 0xFFFF_FFFF_8000_0000, op.USER_END, 0)
+		_, stack_past_the_end := system.call_with_error(nil, .Thread_Create, u64(system.own_budget()), op.USER_END - 4096, 0x0000_9000_0000_0000, 0)
+		edge_case_results[12] = not_canonical == .Bad_Address && of_the_kernel == .Bad_Address && stack_past_the_end == .Bad_Address
+	}
 	for name, index in edge_case_names {
 		system.log("address_space: edge case: ", name, ": ", edge_case_results[index] ? "right" : "WRONG")
 		if !edge_case_results[index] {

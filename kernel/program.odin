@@ -1202,6 +1202,14 @@ thread_free :: proc "contextless" (thread: ^Thread) {
 // request are checked by the caller; 0 gives the full weight and the
 // default request (docs/SCHEDULING.md). The caller holds the control lock.
 thread_create :: proc "contextless" (program_index: u32, budget: u32, entry, stack, parameter: u64, weight: u64 = 0, request: u64 = 0) -> (index: u32, status: op.Status) {
+	// The first instruction and the stack are in the half of the addresses
+	// of a program. The processor refuses to return to an address that is
+	// not canonical, and it refuses in the kernel, after the kernel loaded
+	// the state of the program: the fault would be a fault of the kernel,
+	// and one program would stop the machine.
+	if entry >= USER_END || stack > USER_END || stack < 8 {
+		return 0, .Bad_Address
+	}
 	program := &programs[program_index]
 	taken := program_lock(program_index)
 	defer program_unlock(program_index, taken)
