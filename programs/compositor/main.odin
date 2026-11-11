@@ -246,6 +246,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 	}
 	pointer_x, pointer_y = width / 2, height / 2
+	memory_measure()
 	title_measure()
 	damage_add(0, 0, width, height)
 	full_measure = true
@@ -913,4 +914,79 @@ launcher_draw :: proc "contextless" (canvas: graphics.Canvas, origin_x, origin_y
 		graphics.fill(canvas, inner_x + inner_width + 6, list_y + first * track_height / match_count, 2, LAUNCHER_ROWS * track_height / match_count, graphics.COLOR_DIM)
 	}
 	graphics.text(canvas, inner_x, list_y + LAUNCHER_ROWS * bar.LINE_HEIGHT + 8, "up down: choose   enter: start   esc: close", graphics.COLOR_DIM)
+}
+
+// memory_measure measures memcpy and memset (runtime/memory.asm) on the two
+// canvases of the screen, before the first frame, for the sizes where the
+// forms change, aligned and 3 bytes after an alignment of 64; and a loop of
+// 16 bytes written in Odin, the form that graphics.copy had before. The log
+// has the time of one call in nanoseconds, and what the processor says of
+// its string instructions (CPUID leaf 7: ERMS, FSRM).
+memory_measure :: proc "contextless" () {
+	SIZES :: [?]int{8, 64, 512, 4096, 65536, 3 << 20}
+	to := ([^]u8)(frame.pixels)
+	from := ([^]u8)(background.pixels)
+	limit := min(frame.width * frame.height, background.width * background.height) * size_of(graphics.Color)
+	intrinsics.mem_zero(to, limit) // The first use of each page, before the measure.
+	Form :: enum {
+		Copy,
+		Copy_Unaligned,
+		Loop,
+		Loop_Unaligned,
+		Fill,
+		Fill_Unaligned,
+	}
+	tenths: [Form][len(SIZES)]u64 // Tenths of a nanosecond for one call.
+	for form in Form {
+		for size, index in SIZES {
+			offset := form == .Copy_Unaligned || form == .Loop_Unaligned || form == .Fill_Unaligned ? 3 : 0
+			count := min(size, limit - 64)
+			rounds := clamp(64 << 20 / max(count, 64), 8, 100_000)
+			start := system.nanoseconds()
+			for _ in 0 ..< rounds {
+				switch form {
+				case .Copy, .Copy_Unaligned:
+					intrinsics.mem_copy_non_overlapping(&to[offset], &from[64 + offset], count)
+				case .Loop, .Loop_Unaligned:
+					loop_copy(&to[offset], &from[64 + offset], count)
+				case .Fill, .Fill_Unaligned:
+					intrinsics.mem_zero(&to[offset], count) // A call of memset with 0.
+				}
+			}
+			tenths[form][index] = (system.nanoseconds() - start) * 10 / u64(rounds)
+		}
+	}
+	names := [Form]string {
+		.Copy           = "compositor: memcpy, ns for 8 64 512 4096 65536 3145728 bytes, aligned:",
+		.Copy_Unaligned = "compositor: memcpy, not aligned:",
+		.Loop           = "compositor: a loop of 16 bytes, aligned:",
+		.Loop_Unaligned = "compositor: a loop of 16 bytes, not aligned:",
+		.Fill           = "compositor: memset, aligned:",
+		.Fill_Unaligned = "compositor: memset, not aligned:",
+	}
+	for form in Form {
+		line: [256]u8
+		count := copy(line[:], names[form])
+		for value in tenths[form] {
+			count += len(system.format(line[count:], " ", value / 10, ".", value % 10))
+		}
+		system.log_in("surfaces", .Info, string(line[:count]))
+	}
+	_, ebx, _, edx := intrinsics.x86_cpuid(7, 0)
+	system.log_in("surfaces", .Info, "compositor: the processor: ERMS ", ebx >> 9 & 1 != 0 ? "yes" : "no", ", FSRM ", edx >> 4 & 1 != 0 ? "yes" : "no")
+}
+
+// loop_copy copies count bytes 16 at a time, with no call of memcpy: the
+// form of graphics.copy before runtime/memory.asm, kept for the measure.
+// The store is volatile, so that the compiler does not make the loop a
+// call of memcpy.
+loop_copy :: proc "contextless" (to, from: [^]u8, count: int) {
+	Block :: #simd[16]u8
+	index := 0
+	for ; index + 16 <= count; index += 16 {
+		intrinsics.volatile_store((^[16]u8)(&to[index]), transmute([16]u8)intrinsics.unaligned_load((^Block)(&from[index])))
+	}
+	for ; index < count; index += 1 {
+		to[index] = from[index]
+	}
 }
