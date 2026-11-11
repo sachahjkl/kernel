@@ -103,6 +103,12 @@ drag_x, drag_y: int
 damage: [DAMAGE_CAPACITY]Rectangle // The parts of the screen that the next frame draws again.
 damage_count: int
 frames: u64
+// The measures of the time of a frame (docs/DESIGN.md, section 7). A full
+// frame draws the whole screen: the first frame, and the frame after a
+// person puts a window down. The frames of a move are the frames while a
+// person drags a window.
+full_measure: bool // The next frame draws the whole screen, and the log has its time.
+move_frames, move_time, move_longest: u64 // Nanoseconds.
 
 // damage_add records that a rectangle of the screen changed. Rectangles that
 // touch become one rectangle. If there is no room, the new rectangle joins
@@ -230,6 +236,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	pointer_x, pointer_y = width / 2, height / 2
 	damage_add(0, 0, width, height)
+	full_measure = true
 	system.log("compositor: ok ", u64(width), "x", u64(height))
 
 	next_frame: u64
@@ -411,7 +418,11 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32) 
 			// The person put the window down: the log has its new place.
 			client := &clients[dragging]
 			system.log_in("surfaces", .Info, "compositor: window ", system.name_of(client.title[:]), " moved to ", u64(max(client.x, 0)), ",", u64(client.y))
+			system.log_in("surfaces", .Info, "compositor: the move of ", system.name_of(client.title[:]), ": ", move_frames, " frames, ", move_time / max(move_frames, 1) / 1000, " us per frame, ", move_longest / 1000, " us the longest")
+			move_frames, move_time, move_longest = 0, 0, 0
 			dragging = -1
+			damage_add(0, 0, screen.width, screen.height)
+			full_measure = true
 		}
 		return
 	}
@@ -492,10 +503,21 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32) 
 
 // draw draws again each damage rectangle, then copies it to the screen.
 draw :: proc "contextless" (now: u64) {
+	start := system.nanoseconds()
 	for area in damage[:damage_count] {
 		draw_area(area, now)
 	}
 	damage_count = 0
+	spent := system.nanoseconds() - start
+	if dragging >= 0 {
+		move_frames += 1
+		move_time += spent
+		move_longest = max(move_longest, spent)
+	}
+	if full_measure {
+		full_measure = false
+		system.log_in("surfaces", .Info, "compositor: a full frame of ", u64(screen.width), "x", u64(screen.height), " with ", u64(order_count), " windows in ", spent / 1000, " us")
+	}
 }
 
 // draw_area draws all that is in one rectangle of the screen. The canvas is

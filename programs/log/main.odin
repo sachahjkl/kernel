@@ -26,10 +26,7 @@ WIDTH :: 2 * MARGIN + COLUMN_TEXT + TEXT_CHARACTERS * 8
 TOP_LINES :: 4
 HEIGHT :: 2 * MARGIN + (TOP_LINES + ROWS) * LINE
 
-COLOR_BACKGROUND :: 0x0B1018
 COLOR_PANEL :: 0x131B26
-COLOR_TEXT :: 0xDCE4EC
-COLOR_DIM :: 0x7C8A99
 COLOR_ACCENT :: 0x4A9CF0
 
 @(rodata)
@@ -83,13 +80,13 @@ take :: proc "contextless" (record: ^system.Log_Record) {
 }
 
 draw :: proc "contextless" (canvas: graphics.Canvas) {
-	graphics.clear(canvas, COLOR_BACKGROUND)
+	graphics.clear(canvas, graphics.COLOR_BACKGROUND)
 	graphics.fill(canvas, MARGIN, MARGIN - 4, WIDTH - 2 * MARGIN, 2, COLOR_ACCENT)
 	x := graphics.text(canvas, MARGIN, MARGIN, "the log  ", COLOR_ACCENT)
-	x = graphics.unsigned(canvas, x, MARGIN, row_count, COLOR_TEXT)
-	x = graphics.text(canvas, x, MARGIN, " records read, ", COLOR_DIM)
-	x = graphics.unsigned(canvas, x, MARGIN, lost, lost == 0 ? COLOR_TEXT : level_colors[.Error])
-	x = graphics.text(canvas, x, MARGIN, " lost    ", COLOR_DIM)
+	x = graphics.unsigned(canvas, x, MARGIN, row_count, graphics.COLOR_TEXT)
+	x = graphics.text(canvas, x, MARGIN, " records read, ", graphics.COLOR_DIM)
+	x = graphics.unsigned(canvas, x, MARGIN, lost, lost == 0 ? graphics.COLOR_TEXT : level_colors[.Error])
+	x = graphics.text(canvas, x, MARGIN, " lost    ", graphics.COLOR_DIM)
 	for count, level in level_counts {
 		names := [system.Log_Level]string {
 			.Info    = "info ",
@@ -98,12 +95,12 @@ draw :: proc "contextless" (canvas: graphics.Canvas) {
 			.Error   = "error ",
 		}
 		graphics.fill(canvas, x, MARGIN + 4, 8, 8, level_colors[level])
-		x = graphics.text(canvas, x + 12, MARGIN, names[level], COLOR_DIM)
-		x = graphics.unsigned(canvas, x, MARGIN, count, COLOR_TEXT) + 16
+		x = graphics.text(canvas, x + 12, MARGIN, names[level], graphics.COLOR_DIM)
+		x = graphics.unsigned(canvas, x, MARGIN, count, graphics.COLOR_TEXT) + 16
 	}
 
 	// The channels, with the count of records of each one.
-	x = graphics.text(canvas, MARGIN, MARGIN + LINE, "channels ", COLOR_DIM)
+	x = graphics.text(canvas, MARGIN, MARGIN + LINE, "channels ", graphics.COLOR_DIM)
 	y := MARGIN + LINE
 	for &channel in channels[:channel_count] {
 		name := system.name_of(channel.name[:])
@@ -116,16 +113,16 @@ draw :: proc "contextless" (canvas: graphics.Canvas) {
 			y += LINE
 		}
 		graphics.fill(canvas, x - 4, y, width - 8, LINE, COLOR_PANEL)
-		after := graphics.text(canvas, x, y, name, COLOR_TEXT)
+		after := graphics.text(canvas, x, y, name, graphics.COLOR_TEXT)
 		graphics.unsigned(canvas, after + 8, y, channel.count, COLOR_ACCENT)
 		x += width
 	}
 
 	top := MARGIN + TOP_LINES * LINE
-	graphics.text(canvas, MARGIN, top - LINE, "time (s)", COLOR_DIM)
-	graphics.text(canvas, MARGIN + COLUMN_PROGRAM, top - LINE, "program", COLOR_DIM)
-	graphics.text(canvas, MARGIN + COLUMN_CHANNEL, top - LINE, "channel", COLOR_DIM)
-	graphics.text(canvas, MARGIN + COLUMN_TEXT, top - LINE, "text", COLOR_DIM)
+	graphics.text(canvas, MARGIN, top - LINE, "time (s)", graphics.COLOR_DIM)
+	graphics.text(canvas, MARGIN + COLUMN_PROGRAM, top - LINE, "program", graphics.COLOR_DIM)
+	graphics.text(canvas, MARGIN + COLUMN_CHANNEL, top - LINE, "channel", graphics.COLOR_DIM)
+	graphics.text(canvas, MARGIN + COLUMN_TEXT, top - LINE, "text", graphics.COLOR_DIM)
 	shown := min(row_count, ROWS)
 	for line in 0 ..< shown {
 		record := &rows[(row_count - shown + line) % ROWS]
@@ -135,14 +132,14 @@ draw :: proc "contextless" (canvas: graphics.Canvas) {
 		}
 		graphics.fill(canvas, MARGIN - 4, y, 3, LINE, level_colors[record.level])
 		milliseconds := record.time / 1000
-		x = graphics.unsigned(canvas, MARGIN + 4, y, milliseconds / 1000, COLOR_DIM, 4)
-		x = graphics.text(canvas, x, y, ".", COLOR_DIM)
-		graphics.unsigned(canvas, x, y, milliseconds % 1000, COLOR_DIM, 3)
+		x = graphics.unsigned(canvas, MARGIN + 4, y, milliseconds / 1000, graphics.COLOR_DIM, 4)
+		x = graphics.text(canvas, x, y, ".", graphics.COLOR_DIM)
+		graphics.unsigned(canvas, x, y, milliseconds % 1000, graphics.COLOR_DIM, 3)
 		name := system.name_of(record.name[:])
-		graphics.text(canvas, MARGIN + COLUMN_PROGRAM, y, name[:min(len(name), 12)], record.program == 0 ? COLOR_TEXT : program_colors[record.program % len(program_colors)])
-		graphics.text(canvas, MARGIN + COLUMN_CHANNEL, y, system.name_of(record.channel[:10]), COLOR_DIM)
+		graphics.text(canvas, MARGIN + COLUMN_PROGRAM, y, name[:min(len(name), 12)], record.program == 0 ? graphics.COLOR_TEXT : program_colors[record.program % len(program_colors)])
+		graphics.text(canvas, MARGIN + COLUMN_CHANNEL, y, system.name_of(record.channel[:10]), graphics.COLOR_DIM)
 		text := string(record.text[:min(int(record.text_count), TEXT_CHARACTERS)])
-		graphics.text(canvas, MARGIN + COLUMN_TEXT, y, text, record.level == .Error ? level_colors[.Error] : COLOR_TEXT)
+		graphics.text(canvas, MARGIN + COLUMN_TEXT, y, text, record.level == .Error ? level_colors[.Error] : graphics.COLOR_TEXT)
 	}
 }
 

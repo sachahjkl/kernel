@@ -69,12 +69,6 @@ WIDTH :: 864
 CASE_CAPACITY :: 11
 HEIGHT :: 16 + 2 * LINE + CASE_CAPACITY * LINE + 4 * LINE + 16
 
-COLOR_BACKGROUND :: 0x0B1018
-COLOR_BAND :: 0x17212E // A card, as a band under one case of two.
-COLOR_TEXT :: 0xDCE4EC
-COLOR_DIM :: 0x7C8A99
-COLOR_RIGHT :: 0x58D878 // Program: the case has the expected answer.
-COLOR_WRONG :: 0xF06060 // Failed.
 
 Case :: struct {
 	text:   string,
@@ -374,21 +368,21 @@ measure_burst :: proc "contextless" () {
 
 draw :: proc "contextless" (window: ^display.Window) {
 	canvas := window.canvas
-	graphics.clear(canvas, COLOR_BACKGROUND)
+	graphics.clear(canvas, graphics.COLOR_BACKGROUND)
 	y := 16
-	graphics.text(canvas, LEFT, y, "an endpoint of datagrams: the root service granted 10.0.2.2 port 7, and nothing else.", COLOR_DIM)
+	graphics.text(canvas, LEFT, y, "an endpoint of datagrams: the root service granted 10.0.2.2 port 7, and nothing else.", graphics.COLOR_DIM)
 	y += LINE
-	graphics.text(canvas, LEFT, y, "the program asks", COLOR_DIM)
-	graphics.text(canvas, ANSWER_X, y, "the network answers", COLOR_DIM)
+	graphics.text(canvas, LEFT, y, "the program asks", graphics.COLOR_DIM)
+	graphics.text(canvas, ANSWER_X, y, "the network answers", graphics.COLOR_DIM)
 	y += LINE
 	for &item, index in cases[:case_count] {
 		if index % 2 == 0 {
-			graphics.fill(canvas, 8, y - 4, WIDTH - 16, LINE, COLOR_BAND)
+			graphics.fill(canvas, 8, y - 4, WIDTH - 16, LINE, graphics.COLOR_CARD_TOP)
 		}
-		graphics.text(canvas, LEFT, y, item.text, COLOR_DIM)
-		end := graphics.text(canvas, ANSWER_X, y, string(item.answer[:item.count]), item.right ? COLOR_RIGHT : COLOR_WRONG)
+		graphics.text(canvas, LEFT, y, item.text, graphics.COLOR_DIM)
+		end := graphics.text(canvas, ANSWER_X, y, string(item.answer[:item.count]), item.right ? graphics.COLOR_PROGRAM : graphics.COLOR_FAILED)
 		if !item.right {
-			graphics.text(canvas, end + 8, y, "not expected", COLOR_WRONG)
+			graphics.text(canvas, end + 8, y, "not expected", graphics.COLOR_FAILED)
 		}
 		y += LINE
 	}
@@ -415,8 +409,8 @@ draw :: proc "contextless" (window: ^display.Window) {
 		if item.name == "" {
 			continue
 		}
-		graphics.text(canvas, LEFT, y, item.name, COLOR_DIM)
-		graphics.text(canvas, ANSWER_X, y, item.value, measured ? COLOR_TEXT : COLOR_DIM)
+		graphics.text(canvas, LEFT, y, item.name, graphics.COLOR_DIM)
+		graphics.text(canvas, ANSWER_X, y, item.value, measured ? graphics.COLOR_TEXT : graphics.COLOR_DIM)
 		y += LINE
 	}
 	display.present(window)

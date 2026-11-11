@@ -67,24 +67,8 @@ Data :: struct {
 	red_first:       bool, // The pixels of the canvas have red in the low byte.
 }
 
-COLOR_BACKGROUND :: 0x0B1018
-COLOR_PANEL :: 0x111822
-COLOR_PANEL_TOP :: 0x17212E
-COLOR_POINT :: 0x18212D
-COLOR_TRACK :: 0x1C2633
-COLOR_TEXT :: 0xDCE4EC
-COLOR_DIM :: 0x7C8A99
-COLOR_FIRMWARE :: 0x8E7CC3
-COLOR_BOOT_PROGRAM :: 0xE0A040
-COLOR_KERNEL :: 0x4A9CF0
-COLOR_PROGRAM :: 0x58D878
-COLOR_MEMORY :: 0x38C0B0
-COLOR_MACHINE :: 0xD070B0
-COLOR_FAILED :: 0xF06060
-COLOR_RESERVED :: 0x4A5563
-
-LINE :: 16
-MARGIN :: 8
+LINE :: graphics.LINE_HEIGHT
+MARGIN :: graphics.CARD_GAP
 
 @(private)
 red_first: bool
@@ -200,22 +184,6 @@ show_right :: proc "contextless" (canvas: graphics.Canvas, x, y: int, text: ^Tex
 	show(canvas, x - text.count * 8, y, text, color)
 }
 
-// mix gives a color between two colors: level 0 is the first, 255 the second.
-@(private)
-mix :: proc "contextless" (first, second: graphics.Color, level: u32) -> graphics.Color {
-	part :: proc "contextless" (a, b, level: u32) -> u32 {
-		return (a * (255 - level) + b * level) / 255
-	}
-	return graphics.rgb(part(first >> 16 & 0xFF, second >> 16 & 0xFF, level), part(first >> 8 & 0xFF, second >> 8 & 0xFF, level), part(first & 0xFF, second & 0xFF, level))
-}
-
-// shade gives a color nearer to black (percent under 100) or nearer to
-// white (percent from 100 to 200).
-@(private)
-shade :: proc "contextless" (color: graphics.Color, percent: u32) -> graphics.Color {
-	return percent <= 100 ? mix(0x000000, color, percent * 255 / 100) : mix(color, 0xFFFFFF, (min(percent, 200) - 100) * 255 / 100)
-}
-
 // hue_color gives one color of the circle of colors, of middle strength.
 @(private)
 hue_color :: proc "contextless" (hue: u8) -> graphics.Color {
@@ -244,7 +212,7 @@ hue_color :: proc "contextless" (hue: u8) -> graphics.Color {
 @(private)
 block :: proc "contextless" (canvas: graphics.Canvas, x, y, width, height: int, top, bottom: graphics.Color) {
 	for row in 0 ..< height {
-		fill(canvas, x, y + row, width, 1, mix(top, bottom, u32(row * 255 / max(height - 1, 1))))
+		fill(canvas, x, y + row, width, 1, graphics.mix(top, bottom, u32(row * 255 / max(height - 1, 1))))
 	}
 }
 
@@ -270,28 +238,28 @@ write_large :: proc "contextless" (canvas: graphics.Canvas, x, y: int, character
 	return at
 }
 
-CARD_TITLE :: 40 // The height of the title of a card.
-CARD_MARGIN :: 16
+CARD_TITLE :: graphics.CARD_TITLE
+CARD_MARGIN :: graphics.CARD_MARGIN
 
 // card draws the frame of one part of the display, and gives the place of
 // its content. The caption says which record the card shows.
 @(private)
 card :: proc "contextless" (canvas: graphics.Canvas, x, y, width, height: int, title, caption: string, accent: graphics.Color) -> graphics.Canvas {
-	block(canvas, x, y, width, height, shade(accent, 28), shade(accent, 14))
-	block(canvas, x + 1, y + 1, width - 2, height - 2, COLOR_PANEL_TOP, COLOR_PANEL)
-	block(canvas, x + CARD_MARGIN, y + 13, 4, 16, shade(accent, 130), accent)
+	block(canvas, x, y, width, height, graphics.shade(accent, 28), graphics.shade(accent, 14))
+	block(canvas, x + 1, y + 1, width - 2, height - 2, graphics.COLOR_CARD_TOP, graphics.COLOR_CARD_BOTTOM)
+	block(canvas, x + CARD_MARGIN, y + 13, 4, 16, graphics.shade(accent, 130), accent)
 	after := write(canvas, x + CARD_MARGIN + 12, y + 13, title, accent)
-	write(canvas, after + 16, y + 13, caption, COLOR_DIM)
+	write(canvas, after + 16, y + 13, caption, graphics.COLOR_DIM)
 	return graphics.view(canvas, x + CARD_MARGIN, y + CARD_TITLE, width - 2 * CARD_MARGIN, height - CARD_TITLE - 10)
 }
 
 // fact draws one line "name value".
 @(private)
-fact :: proc "contextless" (canvas: graphics.Canvas, y: int, name: string, value: ^Text, color: graphics.Color = COLOR_TEXT) {
-	write(canvas, 0, y, name, COLOR_DIM)
+fact :: proc "contextless" (canvas: graphics.Canvas, y: int, name: string, value: ^Text, color: graphics.Color = graphics.COLOR_TEXT) {
+	write(canvas, 0, y, name, graphics.COLOR_DIM)
 	if value.count == 0 {
 		put(value, "not known yet")
-		show(canvas, FACT_VALUE, y, value, COLOR_DIM)
+		show(canvas, FACT_VALUE, y, value, graphics.COLOR_DIM)
 		return
 	}
 	show(canvas, FACT_VALUE, y, value, color)
@@ -331,11 +299,11 @@ stage_color :: proc "contextless" (name: []u8, index: int) -> graphics.Color {
 	shades := [4]u32{118, 92, 136, 76}
 	switch name[0] {
 	case 'f':
-		return COLOR_FIRMWARE
+		return graphics.COLOR_FIRMWARE
 	case 'b':
-		return shade(COLOR_BOOT_PROGRAM, shades[index & 3])
+		return graphics.shade(graphics.COLOR_BOOT_PROGRAM, shades[index & 3])
 	}
-	return shade(COLOR_KERNEL, shades[index & 3])
+	return graphics.shade(graphics.COLOR_KERNEL, shades[index & 3])
 }
 
 @(private, rodata)
@@ -386,30 +354,30 @@ draw :: proc "contextless" (canvas: graphics.Canvas, data: ^Data) {
 	text: Text
 	boot := &data.boot
 	HEADER :: 72
-	fill(canvas, 0, HEADER, canvas.width, canvas.height - HEADER, COLOR_BACKGROUND)
+	fill(canvas, 0, HEADER, canvas.width, canvas.height - HEADER, graphics.COLOR_BACKGROUND)
 	// A grid of points under the cards.
 	for y := HEADER + 12; y < HEIGHT; y += 24 {
 		for x := 12; x < WIDTH; x += 24 {
-			fill(canvas, x, y, 2, 2, COLOR_POINT)
+			fill(canvas, x, y, 2, 2, graphics.COLOR_POINT)
 		}
 	}
 
 	// The head: the name of the system, what the machine does now, the time.
 	for column in 0 ..< WIDTH {
 		level := u32(column * 255 / WIDTH)
-		top := mix(0x24509A, 0x0C1830, level)
+		top := graphics.mix(0x24509A, 0x0C1830, level)
 		for row := 0; row < HEADER; row += 8 {
-			fill(canvas, column, row, 1, 8, mix(top, shade(top, 62), u32(row * 255 / HEADER)))
+			fill(canvas, column, row, 1, 8, graphics.mix(top, graphics.shade(top, 62), u32(row * 255 / HEADER)))
 		}
 	}
-	write_large(canvas, 20, 12, "kernel", 3, 0xFFFFFF)
-	state_color := graphics.Color(COLOR_BOOT_PROGRAM)
+	write_large(canvas, 20, 12, "kernel", 3, graphics.COLOR_WHITE)
+	state_color := graphics.Color(graphics.COLOR_BOOT_PROGRAM)
 	switch data.state {
 	case .Running:
 	case .Ready:
-		state_color = COLOR_PROGRAM
+		state_color = graphics.COLOR_PROGRAM
 	case .Failed:
-		state_color = COLOR_FAILED
+		state_color = graphics.COLOR_FAILED
 	}
 	// The steps of the start as a path: a point for each step. A step that
 	// is done is full, the step of now has a ring, a step to come is empty.
@@ -421,15 +389,15 @@ draw :: proc "contextless" (canvas: graphics.Canvas, data: ^Data) {
 		for step in 0 ..< len(Step) {
 			x := PATH_X + step * PATH_STEP
 			if step != 0 {
-				fill(canvas, x - PATH_STEP + 8, PATH_Y - 1, PATH_STEP - 16, 2, step <= now ? shade(COLOR_PROGRAM, 80) : 0x33507C)
+				fill(canvas, x - PATH_STEP + 8, PATH_Y - 1, PATH_STEP - 16, 2, step <= now ? graphics.shade(graphics.COLOR_PROGRAM, 80) : 0x33507C)
 			}
 			switch {
 			case step < now:
-				block(canvas, x - 5, PATH_Y - 5, 10, 10, shade(COLOR_PROGRAM, 130), COLOR_PROGRAM)
+				block(canvas, x - 5, PATH_Y - 5, 10, 10, graphics.shade(graphics.COLOR_PROGRAM, 130), graphics.COLOR_PROGRAM)
 			case step == now:
-				block(canvas, x - 8, PATH_Y - 8, 16, 16, shade(state_color, 140), state_color)
+				block(canvas, x - 8, PATH_Y - 8, 16, 16, graphics.shade(state_color, 140), state_color)
 				block(canvas, x - 5, PATH_Y - 5, 10, 10, 0x10203C, 0x10203C)
-				block(canvas, x - 2, PATH_Y - 2, 4, 4, shade(state_color, 140), state_color)
+				block(canvas, x - 2, PATH_Y - 2, 4, 4, graphics.shade(state_color, 140), state_color)
 			case:
 				block(canvas, x - 5, PATH_Y - 5, 10, 10, 0x33507C, 0x33507C)
 				block(canvas, x - 3, PATH_Y - 3, 6, 6, 0x162C54, 0x162C54)
@@ -439,24 +407,24 @@ draw :: proc "contextless" (canvas: graphics.Canvas, data: ^Data) {
 		put(&text, "/")
 		put_number(&text, len(Step))
 		after_count := show(canvas, PATH_X - 8, 44, &text, 0x9CB8E0)
-		write(canvas, after_count + 12, 44, data.message, shade(state_color, 135))
+		write(canvas, after_count + 12, 44, data.message, graphics.shade(state_color, 135))
 	}
 	if boot.time != 0 {
 		put_duration(&text, boot.time)
-		write_large(canvas, WIDTH - 20 - text.count * 16, 8, string(text.bytes[:text.count]), 2, 0xFFFFFF)
+		write_large(canvas, WIDTH - 20 - text.count * 16, 8, string(text.bytes[:text.count]), 2, graphics.COLOR_WHITE)
 		text.count = 0
 		put(&text, "since the machine started")
 		show_right(canvas, WIDTH - 20, 46, &text, 0x9CB8E0)
 	}
 	// A line of the color of the state, that fades to the right.
 	for column := 0; column < WIDTH; column += 4 {
-		fill(canvas, column, HEADER, 4, 2, mix(state_color, COLOR_BACKGROUND, u32(column * 255 / WIDTH)))
+		fill(canvas, column, HEADER, 4, 2, graphics.mix(state_color, graphics.COLOR_BACKGROUND, u32(column * 255 / WIDTH)))
 	}
 
 	// The stages, on one line of time. The line starts with the boot
 	// program: the firmware before it takes most of the time.
 	{
-		area := card(canvas, MARGIN, 84, WIDTH - 2 * MARGIN, 246, "THE LINE OF TIME", "Boot_Report.stages, Program_Report.start_time: the cycle counter", COLOR_KERNEL)
+		area := card(canvas, MARGIN, 84, WIDTH - 2 * MARGIN, 246, "THE LINE OF TIME", "Boot_Report.stages, Program_Report.start_time: the cycle counter", graphics.COLOR_KERNEL)
 		origin := boot.stage_count > 1 ? boot.stages[1].start : 0
 		last := origin
 		for stage in boot.stages[:boot.stage_count] {
@@ -477,7 +445,7 @@ draw :: proc "contextless" (canvas: graphics.Canvas, data: ^Data) {
 		// The time from the boot program to the last program, in large digits.
 		if boot.stage_count != 0 {
 			put_duration(&text, span)
-			write_large(canvas, WIDTH - MARGIN - CARD_MARGIN - text.count * 16, 84 + 6, string(text.bytes[:text.count]), 2, COLOR_TEXT)
+			write_large(canvas, WIDTH - MARGIN - CARD_MARGIN - text.count * 16, 84 + 6, string(text.bytes[:text.count]), 2, graphics.COLOR_TEXT)
 			text.count = 0
 		}
 
@@ -488,32 +456,32 @@ draw :: proc "contextless" (canvas: graphics.Canvas, data: ^Data) {
 		track_x := FIRMWARE_WIDTH + 8
 		track_width := area.width - track_x
 		inner := track_width - 8
-		block(area, 0, TUBE_Y, FIRMWARE_WIDTH, TUBE_HEIGHT, shade(COLOR_FIRMWARE, 46), shade(COLOR_FIRMWARE, 30))
+		block(area, 0, TUBE_Y, FIRMWARE_WIDTH, TUBE_HEIGHT, graphics.shade(graphics.COLOR_FIRMWARE, 46), graphics.shade(graphics.COLOR_FIRMWARE, 30))
 		for line := 8; line < FIRMWARE_WIDTH - 8; line += 8 {
 			for step in 0 ..< TUBE_HEIGHT - 16 {
-				fill(area, line + step / 4, TUBE_Y + 8 + step, 2, 1, shade(COLOR_FIRMWARE, 78))
+				fill(area, line + step / 4, TUBE_Y + 8 + step, 2, 1, graphics.shade(graphics.COLOR_FIRMWARE, 78))
 			}
 		}
-		block(area, track_x, TUBE_Y, track_width, TUBE_HEIGHT, COLOR_TRACK, shade(COLOR_TRACK, 80))
+		block(area, track_x, TUBE_Y, track_width, TUBE_HEIGHT, graphics.COLOR_TRACK, graphics.shade(graphics.COLOR_TRACK, 80))
 		if boot.stage_count == 0 {
-			write(area, track_x + 16, TUBE_Y + 12, "The kernel does not run yet: it measures the stages.", COLOR_DIM)
+			write(area, track_x + 16, TUBE_Y + 12, "The kernel does not run yet: it measures the stages.", graphics.COLOR_DIM)
 			// Until the stages have a time, the steps of the start, as a list.
 			for name, step in step_names {
 				x := int(step) / 5 * (area.width / 2)
 				y := 92 + int(step) % 5 * LINE
 				switch {
 				case step < data.step:
-					block(area, x, y + 3, 10, 10, shade(COLOR_PROGRAM, 130), COLOR_PROGRAM)
-					write(area, x + 18, y, name, COLOR_TEXT)
-					write(area, x + 200, y, "done", COLOR_PROGRAM)
+					block(area, x, y + 3, 10, 10, graphics.shade(graphics.COLOR_PROGRAM, 130), graphics.COLOR_PROGRAM)
+					write(area, x + 18, y, name, graphics.COLOR_TEXT)
+					write(area, x + 200, y, "done", graphics.COLOR_PROGRAM)
 				case step == data.step:
-					block(area, x, y + 3, 10, 10, shade(state_color, 140), state_color)
-					block(area, x + 3, y + 6, 4, 4, COLOR_PANEL, COLOR_PANEL)
-					write(area, x + 18, y, name, shade(state_color, 135))
-					write(area, x + 200, y, data.state == .Failed ? "failed" : "now", shade(state_color, 135))
+					block(area, x, y + 3, 10, 10, graphics.shade(state_color, 140), state_color)
+					block(area, x + 3, y + 6, 4, 4, graphics.COLOR_CARD_BOTTOM, graphics.COLOR_CARD_BOTTOM)
+					write(area, x + 18, y, name, graphics.shade(state_color, 135))
+					write(area, x + 200, y, data.state == .Failed ? "failed" : "now", graphics.shade(state_color, 135))
 				case:
-					block(area, x, y + 3, 10, 10, COLOR_TRACK, COLOR_TRACK)
-					write(area, x + 18, y, name, COLOR_DIM)
+					block(area, x, y + 3, 10, 10, graphics.COLOR_TRACK, graphics.COLOR_TRACK)
+					write(area, x + 18, y, name, graphics.COLOR_DIM)
 				}
 			}
 		}
@@ -525,10 +493,10 @@ draw :: proc "contextless" (canvas: graphics.Canvas, data: ^Data) {
 			left := place(stage.start, origin, span, inner)
 			right := place(stage.start + stage.duration, origin, span, inner)
 			width := max(right - left - 1, 2)
-			block(area, track_x + 4 + left, TUBE_Y + 4, width, TUBE_HEIGHT - 8, shade(color, 125), shade(color, 78))
+			block(area, track_x + 4 + left, TUBE_Y + 4, width, TUBE_HEIGHT - 8, graphics.shade(color, 125), graphics.shade(color, 78))
 			put_duration(&text, stage.duration)
 			if text.count * 8 + 8 <= width {
-				show(area, track_x + 4 + left + (width - text.count * 8) / 2, TUBE_Y + 12, &text, 0x0B1018)
+				show(area, track_x + 4 + left + (width - text.count * 8) / 2, TUBE_Y + 12, &text, graphics.COLOR_BACKGROUND)
 			}
 			text.count = 0
 		}
@@ -539,7 +507,7 @@ draw :: proc "contextless" (canvas: graphics.Canvas, data: ^Data) {
 				continue
 			}
 			x := track_x + 4 + min(place(program.report.start_time, origin, span, inner), inner - 2)
-			color := shade(COLOR_PROGRAM, u32(130 - 14 * (marks & 3)))
+			color := graphics.shade(graphics.COLOR_PROGRAM, u32(130 - 14 * (marks & 3)))
 			fill(area, x, TUBE_Y - 4, 2, TUBE_HEIGHT + 8, color)
 			block(area, x - 3, TUBE_Y - 12, 8, 8, color, color)
 			marks += 1
@@ -556,18 +524,18 @@ draw :: proc "contextless" (canvas: graphics.Canvas, data: ^Data) {
 			}
 			for time := u64(0); time <= span; time += step {
 				x := track_x + 4 + int(time * u64(inner) / span)
-				fill(area, x, TUBE_Y + TUBE_HEIGHT + 4, 1, 5, COLOR_DIM)
+				fill(area, x, TUBE_Y + TUBE_HEIGHT + 4, 1, 5, graphics.COLOR_DIM)
 				if time == 0 {
-					write(area, x - 3, TUBE_Y + TUBE_HEIGHT + 10, "0", COLOR_DIM)
+					write(area, x - 3, TUBE_Y + TUBE_HEIGHT + 10, "0", graphics.COLOR_DIM)
 				} else {
 					put_duration(&text, time)
 					if x + text.count * 4 <= area.width {
-						show(area, x - text.count * 4, TUBE_Y + TUBE_HEIGHT + 10, &text, COLOR_DIM)
+						show(area, x - text.count * 4, TUBE_Y + TUBE_HEIGHT + 10, &text, graphics.COLOR_DIM)
 					}
 					text.count = 0
 				}
 			}
-			write(area, 0, TUBE_Y + TUBE_HEIGHT + 10, "firmware", COLOR_DIM)
+			write(area, 0, TUBE_Y + TUBE_HEIGHT + 10, "firmware", graphics.COLOR_DIM)
 		}
 
 		// The names: each stage and each program of the start, with its
@@ -583,9 +551,9 @@ draw :: proc "contextless" (canvas: graphics.Canvas, data: ^Data) {
 			x := entry / NAME_ROWS * column_width
 			y := NAMES_Y + entry % NAME_ROWS * LINE
 			color := stage_color(stage.name[:], index)
-			block(area, x, y + 3, 10, 10, shade(color, 125), shade(color, 78))
+			block(area, x, y + 3, 10, 10, graphics.shade(color, 125), graphics.shade(color, 78))
 			put_name(&text, stage.name[:])
-			show(area, x + 18, y, &text, COLOR_TEXT)
+			show(area, x + 18, y, &text, graphics.COLOR_TEXT)
 			put_duration(&text, stage.duration)
 			show_right(area, x + column_width - 24, y, &text, color)
 			entry += 1
@@ -595,7 +563,7 @@ draw :: proc "contextless" (canvas: graphics.Canvas, data: ^Data) {
 			if program.report.start_time > kernel_end + 1_000_000 {
 				continue
 			}
-			color := shade(COLOR_PROGRAM, u32(130 - 14 * (marks & 3)))
+			color := graphics.shade(graphics.COLOR_PROGRAM, u32(130 - 14 * (marks & 3)))
 			marks += 1
 			if entry >= 2 * NAME_ROWS {
 				continue
@@ -606,7 +574,7 @@ draw :: proc "contextless" (canvas: graphics.Canvas, data: ^Data) {
 			put(&text, "program ")
 			put_name(&text, program.report.name[:])
 			put(&text, ": created")
-			show(area, x + 18, y, &text, COLOR_TEXT)
+			show(area, x + 18, y, &text, graphics.COLOR_TEXT)
 			put(&text, "at ")
 			put_duration(&text, program.report.start_time - min(origin, program.report.start_time))
 			show_right(area, x + column_width - 24, y, &text, color)
@@ -619,7 +587,7 @@ draw :: proc "contextless" (canvas: graphics.Canvas, data: ^Data) {
 	MIDDLE_Y :: 338
 	MIDDLE_HEIGHT :: 178
 	{
-		area := card(canvas, MARGIN, MIDDLE_Y, LEFT_WIDTH, MIDDLE_HEIGHT, "MEMORY", "Boot_Report.ranges, System_Report", COLOR_MEMORY)
+		area := card(canvas, MARGIN, MIDDLE_Y, LEFT_WIDTH, MIDDLE_HEIGHT, "MEMORY", "Boot_Report.ranges, System_Report", graphics.COLOR_MEMORY)
 		top: u64
 		totals: [3]u64
 		for range in boot.ranges[:boot.range_count] {
@@ -627,9 +595,9 @@ draw :: proc "contextless" (canvas: graphics.Canvas, data: ^Data) {
 				top = max(top, range.start + range.page_count * info.PAGE_SIZE)
 			}
 		}
-		colors := [3]graphics.Color{COLOR_RESERVED, COLOR_MEMORY, COLOR_BOOT_PROGRAM}
+		colors := [3]graphics.Color{graphics.COLOR_NOT_USABLE, graphics.COLOR_MEMORY, graphics.COLOR_BOOT_PROGRAM}
 		BAND :: 26
-		block(area, 0, 0, area.width, BAND, COLOR_TRACK, shade(COLOR_TRACK, 80))
+		block(area, 0, 0, area.width, BAND, graphics.COLOR_TRACK, graphics.shade(graphics.COLOR_TRACK, 80))
 		inner := area.width - 8
 		for range in boot.ranges[:boot.range_count] {
 			if range.start >= top || range.kind > 2 {
@@ -639,32 +607,32 @@ draw :: proc "contextless" (canvas: graphics.Canvas, data: ^Data) {
 			left := int(range.start * u64(inner) / top)
 			right := int(min(range.start + range.page_count * info.PAGE_SIZE, top) * u64(inner) / top)
 			color := colors[range.kind]
-			block(area, 4 + left, 4, max(right - left, 1), BAND - 8, shade(color, 120), shade(color, 78))
+			block(area, 4 + left, 4, max(right - left, 1), BAND - 8, graphics.shade(color, 120), graphics.shade(color, 78))
 		}
-		write(area, 0, BAND + 4, "address 0", COLOR_DIM)
+		write(area, 0, BAND + 4, "address 0", graphics.COLOR_DIM)
 		put_hex(&text, top, 12)
-		show_right(area, area.width, BAND + 4, &text, COLOR_DIM)
+		show_right(area, area.width, BAND + 4, &text, graphics.COLOR_DIM)
 		names := [3]string{"not usable", "free", "boot program"}
 		x := 0
 		if boot.range_count == 0 {
-			write(area, 0, BAND + 28, "ranges: not known yet", COLOR_DIM)
+			write(area, 0, BAND + 28, "ranges: not known yet", graphics.COLOR_DIM)
 		}
 		for kind in ([3]int{1, 2, 0}) {
 			if boot.range_count == 0 {
 				break
 			}
-			block(area, x, BAND + 28 + 3, 10, 10, shade(colors[kind], 120), shade(colors[kind], 78))
+			block(area, x, BAND + 28 + 3, 10, 10, graphics.shade(colors[kind], 120), graphics.shade(colors[kind], 78))
 			put(&text, names[kind])
 			put(&text, " ")
 			put_size(&text, totals[kind])
-			x = show(area, x + 16, BAND + 28, &text, COLOR_TEXT) + 20
+			x = show(area, x + 16, BAND + 28, &text, graphics.COLOR_TEXT) + 20
 		}
 		// Now: the page frames of the kernel.
 		y := BAND + 52
-		block(area, 0, y, area.width, 8, COLOR_TRACK, COLOR_TRACK)
+		block(area, 0, y, area.width, 8, graphics.COLOR_TRACK, graphics.COLOR_TRACK)
 		if data.machine.page_count != 0 {
 			used := data.machine.page_count - data.machine.free_pages
-			block(area, 0, y, max(int(used * u64(area.width) / data.machine.page_count), 8), 8, shade(COLOR_KERNEL, 125), COLOR_KERNEL)
+			block(area, 0, y, max(int(used * u64(area.width) / data.machine.page_count), 8), 8, graphics.shade(graphics.COLOR_KERNEL, 125), graphics.COLOR_KERNEL)
 			put(&text, "now: ")
 			put_size(&text, used * info.PAGE_SIZE)
 			put(&text, " of ")
@@ -674,9 +642,9 @@ draw :: proc "contextless" (canvas: graphics.Canvas, data: ^Data) {
 			put(&text, " objects, budgets ")
 			put_number(&text, data.machine.budget_pages)
 			put(&text, " pages")
-			show(area, 0, y + 12, &text, COLOR_TEXT)
+			show(area, 0, y + 12, &text, graphics.COLOR_TEXT)
 		} else {
-			write(area, 0, y + 12, "now: not known yet", COLOR_DIM)
+			write(area, 0, y + 12, "now: not known yet", graphics.COLOR_DIM)
 		}
 		if boot.range_count != 0 {
 			put_number(&text, boot.firmware_ranges)
@@ -687,18 +655,18 @@ draw :: proc "contextless" (canvas: graphics.Canvas, data: ^Data) {
 				put(&text, ", direct map ")
 				put_size(&text, boot.direct_map_size)
 			}
-			show(area, 0, y + 12 + LINE, &text, COLOR_DIM)
+			show(area, 0, y + 12 + LINE, &text, graphics.COLOR_DIM)
 		}
 	}
 
 	// The machine.
 	RIGHT_X :: 2 * MARGIN + LEFT_WIDTH
 	{
-		area := card(canvas, RIGHT_X, MIDDLE_Y, WIDTH - RIGHT_X - MARGIN, MIDDLE_HEIGHT, "MACHINE", "Boot_Report, cpuid", COLOR_MACHINE)
+		area := card(canvas, RIGHT_X, MIDDLE_Y, WIDTH - RIGHT_X - MARGIN, MIDDLE_HEIGHT, "MACHINE", "Boot_Report, cpuid", graphics.COLOR_MACHINE)
 		// One square for each processor that runs, with its number.
-		write(area, 0, 2, "processors", COLOR_DIM)
+		write(area, 0, 2, "processors", graphics.COLOR_DIM)
 		if data.machine.processors == 0 {
-			write(area, FACT_VALUE, 2, "not known yet", COLOR_DIM)
+			write(area, FACT_VALUE, 2, "not known yet", graphics.COLOR_DIM)
 		}
 		SQUARES :: 10
 		for processor, index in data.processors[:min(data.machine.processors, PROCESSOR_ROWS)] {
@@ -706,12 +674,12 @@ draw :: proc "contextless" (canvas: graphics.Canvas, data: ^Data) {
 			if index >= SQUARES {
 				put(&text, "+")
 				put_number(&text, data.machine.processors - SQUARES)
-				show(area, x, 2, &text, COLOR_MACHINE)
+				show(area, x, 2, &text, graphics.COLOR_MACHINE)
 				break
 			}
-			block(area, x, 0, 20, 20, shade(COLOR_MACHINE, 112), shade(COLOR_MACHINE, 66))
+			block(area, x, 0, 20, 20, graphics.shade(graphics.COLOR_MACHINE, 112), graphics.shade(graphics.COLOR_MACHINE, 66))
 			put_number(&text, processor.apic_id)
-			show(area, x + 10 - text.count * 4, 2, &text, 0x0B1018)
+			show(area, x + 10 - text.count * 4, 2, &text, graphics.COLOR_BACKGROUND)
 		}
 		FACTS :: 28
 		put_name(&text, boot.firmware_vendor[:])
@@ -756,7 +724,7 @@ draw :: proc "contextless" (canvas: graphics.Canvas, data: ^Data) {
 	BOTTOM_Y :: MIDDLE_Y + MIDDLE_HEIGHT + MARGIN
 	BOTTOM_HEIGHT :: HEIGHT - BOTTOM_Y - MARGIN
 	{
-		area := card(canvas, MARGIN, BOTTOM_Y, LEFT_WIDTH, BOTTOM_HEIGHT, "BOOT IMAGE", "Image_Entry: a tile is a module", COLOR_BOOT_PROGRAM)
+		area := card(canvas, MARGIN, BOTTOM_Y, LEFT_WIDTH, BOTTOM_HEIGHT, "BOOT IMAGE", "Image_Entry: a tile is a module", graphics.COLOR_BOOT_PROGRAM)
 		entries: []info.Image_Entry
 		if len(data.image) >= size_of(info.Image_Header) {
 			header := (^info.Image_Header)(raw_data(data.image))
@@ -765,7 +733,7 @@ draw :: proc "contextless" (canvas: graphics.Canvas, data: ^Data) {
 			}
 		}
 		if entries == nil {
-			write(area, 0, 0, "not known yet", COLOR_DIM)
+			write(area, 0, 0, "not known yet", graphics.COLOR_DIM)
 		}
 		total: u64 = 1
 		for &entry in entries {
@@ -789,29 +757,29 @@ draw :: proc "contextless" (canvas: graphics.Canvas, data: ^Data) {
 			}
 			color := hue_color(entry.hash[0])
 			y := row * (TILE_HEIGHT + TILE_GAP)
-			block(area, x, y, tile, TILE_HEIGHT, shade(color, 70), shade(color, 40))
+			block(area, x, y, tile, TILE_HEIGHT, graphics.shade(color, 70), graphics.shade(color, 40))
 			fill(area, x + 3, y + TILE_HEIGHT - 3, tile - 6, 1, color)
 			put_name(&text, entry.name[:])
 			text.count = min(text.count, (tile - 6) / 8)
-			show(area, x + 4, y + 1, &text, shade(color, 175))
+			show(area, x + 4, y + 1, &text, graphics.shade(color, 175))
 			x += tile + TILE_GAP
 		}
 		if len(entries) != 0 {
 			put_number(&text, u64(len(entries)))
 			put(&text, " modules, ")
 			put_size(&text, u64(len(data.image)))
-			show_right(canvas, MARGIN + LEFT_WIDTH - CARD_MARGIN, BOTTOM_Y + 13, &text, COLOR_TEXT)
+			show_right(canvas, MARGIN + LEFT_WIDTH - CARD_MARGIN, BOTTOM_Y + 13, &text, graphics.COLOR_TEXT)
 		}
 	}
 
 	// The programs.
 	{
-		area := card(canvas, RIGHT_X, BOTTOM_Y, WIDTH - RIGHT_X - MARGIN, BOTTOM_HEIGHT, "PROGRAMS", "threads, pages, created", COLOR_PROGRAM)
+		area := card(canvas, RIGHT_X, BOTTOM_Y, WIDTH - RIGHT_X - MARGIN, BOTTOM_HEIGHT, "PROGRAMS", "threads, pages, created", graphics.COLOR_PROGRAM)
 		if data.program_count == 0 {
-			write(area, 0, 0, "No program runs yet.", COLOR_DIM)
+			write(area, 0, 0, "No program runs yet.", graphics.COLOR_DIM)
 		} else {
 			put_number(&text, u64(data.program_total))
-			show_right(canvas, WIDTH - MARGIN - CARD_MARGIN, BOTTOM_Y + 13, &text, COLOR_TEXT)
+			show_right(canvas, WIDTH - MARGIN - CARD_MARGIN, BOTTOM_Y + 13, &text, graphics.COLOR_TEXT)
 		}
 		most: u64 = 1
 		for &program in data.programs[:data.program_count] {
@@ -823,19 +791,19 @@ draw :: proc "contextless" (canvas: graphics.Canvas, data: ^Data) {
 			}
 			y := index * LINE
 			put_number(&text, program.slot)
-			show_right(area, 16, y, &text, COLOR_DIM)
+			show_right(area, 16, y, &text, graphics.COLOR_DIM)
 			put_name(&text, program.report.name[:])
 			text.count = min(text.count, 12)
-			show(area, 28, y, &text, program.report.state == .Stopped ? COLOR_FAILED : COLOR_TEXT)
+			show(area, 28, y, &text, program.report.state == .Stopped ? graphics.COLOR_FAILED : graphics.COLOR_TEXT)
 			put_number(&text, program.report.thread_count)
-			show_right(area, 150, y, &text, COLOR_TEXT)
+			show_right(area, 150, y, &text, graphics.COLOR_TEXT)
 			// The pages of the program, as a bar against the largest program.
-			block(area, 162, y + 5, 56, 6, COLOR_TRACK, COLOR_TRACK)
-			block(area, 162, y + 5, max(int(program.report.mapped_pages * 56 / most), 4), 6, shade(COLOR_PROGRAM, 120), shade(COLOR_PROGRAM, 80))
+			block(area, 162, y + 5, 56, 6, graphics.COLOR_TRACK, graphics.COLOR_TRACK)
+			block(area, 162, y + 5, max(int(program.report.mapped_pages * 56 / most), 4), 6, graphics.shade(graphics.COLOR_PROGRAM, 120), graphics.shade(graphics.COLOR_PROGRAM, 80))
 			put_number(&text, program.report.mapped_pages)
-			show_right(area, 264, y, &text, COLOR_TEXT)
+			show_right(area, 264, y, &text, graphics.COLOR_TEXT)
 			put_duration(&text, program.report.start_time)
-			show_right(area, area.width, y, &text, COLOR_PROGRAM)
+			show_right(area, area.width, y, &text, graphics.COLOR_PROGRAM)
 		}
 	}
 }
@@ -849,9 +817,9 @@ draw_screen :: proc "contextless" (screen: graphics.Canvas, data: ^Data) {
 	red_first = data.red_first
 	x := (screen.width - WIDTH) / 2
 	y := (screen.height - HEIGHT) / 2
-	fill(screen, 0, 0, screen.width, y, COLOR_BACKGROUND)
-	fill(screen, 0, y + HEIGHT, screen.width, screen.height - y - HEIGHT, COLOR_BACKGROUND)
-	fill(screen, 0, y, x, HEIGHT, COLOR_BACKGROUND)
-	fill(screen, x + WIDTH, y, screen.width - x - WIDTH, HEIGHT, COLOR_BACKGROUND)
+	fill(screen, 0, 0, screen.width, y, graphics.COLOR_BACKGROUND)
+	fill(screen, 0, y + HEIGHT, screen.width, screen.height - y - HEIGHT, graphics.COLOR_BACKGROUND)
+	fill(screen, 0, y, x, HEIGHT, graphics.COLOR_BACKGROUND)
+	fill(screen, x + WIDTH, y, screen.width - x - WIDTH, HEIGHT, graphics.COLOR_BACKGROUND)
 	draw(graphics.view(screen, x, y, WIDTH, HEIGHT), data)
 }
