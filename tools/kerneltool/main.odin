@@ -525,12 +525,20 @@ disk_prepare :: proc(path: string, size: int, fresh: bool) -> bool {
 	return true
 }
 
+// make_folder makes a folder and each folder above it. Two processes of the
+// parallel build can make the same folder above theirs at the same time:
+// the one that loses gets "exists" for that folder before its own folder is
+// made, so it tries again.
 make_folder :: proc(path: string) -> bool {
-	if err := os.make_directory_all(path); err != nil && !os.exists(path) {
-		fmt.eprintfln("kerneltool: cannot create %s: %v", path, err)
-		return false
+	err: os.Error
+	for _ in 0 ..< 4 {
+		err = os.make_directory_all(path)
+		if err == nil || os.exists(path) {
+			return true
+		}
 	}
-	return true
+	fmt.eprintfln("kerneltool: cannot create %s: %v", path, err)
+	return false
 }
 
 reset_folder :: proc(path: string) -> bool {

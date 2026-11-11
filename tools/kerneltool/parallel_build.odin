@@ -92,6 +92,9 @@ build_modules_in_parallel :: proc() -> bool {
 		fmt.eprintfln("kerneltool: cannot find the file of the tool: %v", path_error)
 		return false
 	}
+	// The folder that every module process writes under exists before the
+	// first process starts.
+	make_folder(MODULE_BUILD_FOLDER) or_return
 	outcomes := make([]Module_Build_Outcome, len(module_builds))
 	defer {
 		for outcome in outcomes {
