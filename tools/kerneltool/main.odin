@@ -36,7 +36,7 @@ BUILD_FOLDER :: "build"
 // flake.nix gives the same two flags to the compiler when it builds this tool.
 CONTRACT_LIBRARY :: "-collection:contract=contract"
 SUPPORT_LIBRARY :: "-collection:support=support"
-CONTRACT_PACKAGES :: []string{"blake3", "block", "boot_info", "datagram", "errors", "frame", "glyph_cache", "isolated", "module", "operation", "pointer_pictures", "remote", "ring", "settings", "store"}
+CONTRACT_PACKAGES :: []string{"blake3", "block", "boot_info", "datagram", "errors", "frame", "glyph_cache", "isolated", "module", "operation", "pointer_pictures", "release", "remote", "ring", "settings", "store"}
 BOOT_OBJECT_FOLDER :: BUILD_FOLDER + "/boot"
 BOOT_PROGRAM :: BOOT_OBJECT_FOLDER + "/BOOTX64.EFI"
 BOOT_VOLUME :: BUILD_FOLDER + "/boot_volume.img"
@@ -89,7 +89,9 @@ COMMANDS :: [?]Command {
 	{name = "repeat", about = "repeat <module> <count>: build one module again and again, with no machine, and count the distinct modules, LLVM IR files and objects; `repeat all <count> [processes]`: every module and the boot program, one row each", run = run_repeat},
 	{name = "cryptography-take", about = "cryptography-take <file under the root of Odin> <file of the repository>: copy a file of core:crypto with the listed import changes, and print its line of the manifest", run = run_cryptography_take},
 	{name = "cryptography-origin", about = "check that each file of " + CRYPTOGRAPHY_MANIFEST + " is its origin in Odin with the listed changes only", run = run_cryptography_origin},
-	{name = "check", about = "odin check -vet and odin test of the host code, then test", run = run_check},
+	{name = "changelog", about = "new <type> <subject> \"<text>\" | check | assemble | release <release number> | notes <release number>: the fragments of " + FRAGMENT_FOLDER + " and the releases of " + CHANGELOG_FILE, run = run_changelog},
+	{name = "release_number", about = "print the release number of the system: the newest release of " + CHANGELOG_FILE, run = run_release_number},
+	{name = "check", about = "odin check -vet and odin test of the host code, changelog check, then test", run = run_check},
 }
 
 main :: proc() {
@@ -120,7 +122,7 @@ usage :: proc() {
 	fmt.println("kerneltool <command>")
 	commands := COMMANDS
 	for c in commands {
-		fmt.printfln("  %-11s %s", c.name, c.about)
+		fmt.printfln("  %-14s %s", c.name, c.about)
 	}
 }
 
@@ -396,6 +398,9 @@ run_check :: proc(args: []string) -> int {
 		}
 	}
 	if !cryptography_origin_check() {
+		return EXIT_FAILURE
+	}
+	if !changelog_check() {
 		return EXIT_FAILURE
 	}
 	if run_test(nil) != 0 {
