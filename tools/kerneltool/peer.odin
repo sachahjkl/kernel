@@ -81,6 +81,8 @@ Peer :: struct {
 	malformed_wrong:  string,
 	lose:             int, // The next datagrams of the remote service to the host that the peer drops: the test of a lost datagram.
 	lost:             int,
+	tcp:          ^Peer_Tcp, // The peer as a TCP client (peer_tcp.odin).
+	tcp_segments: int, // TCP segments of the machine.
 }
 
 // peer_start starts the peer. call_port: the port of the call requests on
@@ -96,7 +98,9 @@ peer_start :: proc(peer: ^Peer, call_port := 0) -> bool {
 		net.close(socket)
 		return false
 	}
-	_ = net.set_option(socket, .Receive_Timeout, 100 * time.Millisecond)
+	// The receive of the frames ends each 1 ms: the TCP case of the peer
+	// (peer_tcp.odin) runs its timers between two frames.
+	_ = net.set_option(socket, .Receive_Timeout, 1 * time.Millisecond)
 	calls, calls_err := net.make_bound_udp_socket(net.IP4_Loopback, call_port)
 	if calls_err != nil {
 		fmt.eprintfln("kerneltool: the peer cannot receive call requests on 127.0.0.1 port %d: %v", call_port, calls_err)
@@ -105,7 +109,20 @@ peer_start :: proc(peer: ^Peer, call_port := 0) -> bool {
 	}
 	calls_bound, _ := net.bound_endpoint(calls)
 	_ = net.set_option(calls, .Receive_Timeout, 100 * time.Millisecond)
-	peer^ = {socket = socket, port = bound.port, call_socket = calls, call_port = calls_bound.port}
+	// The port where QEMU receives the frames for the machine: the peer
+	// chooses it, so that it can send the first frame (a SYN).
+	machine_socket, machine_err := net.make_bound_udp_socket(net.IP4_Loopback, 0)
+	if machine_err != nil {
+		net.close(socket)
+		net.close(calls)
+		return false
+	}
+	machine_bound, _ := net.bound_endpoint(machine_socket)
+	net.close(machine_socket)
+	peer^ = {socket = socket, port = bound.port, call_socket = calls, call_port = calls_bound.port, machine = machine_bound}
+	peer.tcp = peer_tcp_make()
+	hardware_of_machine := [6]u8{0x52, 0x54, 0x00, 0x12, 0x34, 0x56}
+	peer.hardware = hardware_of_machine
 	peer.thread = thread.create_and_start_with_poly_data(peer, peer_run)
 	peer.call_thread = thread.create_and_start_with_poly_data(peer, peer_calls)
 	return true
@@ -123,6 +140,8 @@ peer_stop :: proc(peer: ^Peer) {
 	net.close(peer.socket)
 	net.close(peer.call_socket)
 	peer.thread = nil
+	peer_tcp_free(peer.tcp)
+	peer.tcp = nil
 }
 
 // peer_check says if the peer saw only correct frames, and if the network
@@ -137,7 +156,7 @@ peer_check :: proc(peer: ^Peer) -> bool {
 		return false
 	}
 	if peer.frames != 0 {
-		fmt.printfln("kerneltool: test passed: the peer received %d frames from the network service, 0 wrong: %d ARP, %d echo and %d UDP answered, %d echo replies of the machine; %d frames of the firmware before it", peer.frames, peer.arp_answers, peer.echo_answers, peer.udp_answers, peer.ping_replies, peer.firmware)
+		fmt.printfln("kerneltool: test passed: the peer received %d frames from the network service, 0 wrong: %d ARP, %d echo and %d UDP answered, %d echo replies of the machine, %d TCP segments; %d frames of the firmware before it", peer.frames, peer.arp_answers, peer.echo_answers, peer.udp_answers, peer.ping_replies, peer.tcp_segments, peer.firmware)
 	}
 	if peer.remote_starts != 0 {
 		if peer.malformed_right != len(remote_malformed) {
@@ -149,12 +168,10 @@ peer_check :: proc(peer: ^Peer) -> bool {
 	return true
 }
 
-@(private = "file")
 be16 :: proc(bytes: []u8, offset: int) -> int {
 	return int(bytes[offset]) << 8 | int(bytes[offset + 1])
 }
 
-@(private = "file")
 put16 :: proc(bytes: []u8, offset: int, value: int) {
 	bytes[offset] = u8(value >> 8)
 	bytes[offset + 1] = u8(value)
@@ -162,7 +179,6 @@ put16 :: proc(bytes: []u8, offset: int, value: int) {
 
 // internet_sum is the checksum of RFC 1071 over bytes, with a start value:
 // the 16 bits that the field must hold.
-@(private = "file")
 internet_sum :: proc(start: u32, bytes: []u8) -> int {
 	total := start
 	for index := 0; index < len(bytes); index += 2 {
@@ -178,15 +194,17 @@ internet_sum :: proc(start: u32, bytes: []u8) -> int {
 	return int(~u16(total))
 }
 
-@(private = "file")
-pseudo_sum :: proc(source, destination: []u8, length: int) -> u32 {
-	return u32(be16(source, 0) + be16(source, 2) + be16(destination, 0) + be16(destination, 2) + 17 + length)
+pseudo_sum :: proc(source, destination: []u8, length: int, protocol := 17) -> u32 {
+	return u32(be16(source, 0) + be16(source, 2) + be16(destination, 0) + be16(destination, 2) + protocol + length)
 }
 
 peer_run :: proc(peer: ^Peer) {
 	buffer: [2048]u8
 	for !sync.atomic_load(&peer.stop) {
 		count, from, err := net.recv_udp(peer.socket, buffer[:])
+		// The TCP case of the tool, if one runs: its timers and its clients.
+		peer_tcp_tick(peer, nil)
+		free_all(context.temp_allocator)
 		if err != nil || count == 0 {
 			continue
 		}
@@ -208,7 +226,6 @@ peer_run :: proc(peer: ^Peer) {
 	}
 }
 
-@(private = "file")
 peer_wrong :: proc(peer: ^Peer, text: string) {
 	if peer.wrong == 0 {
 		peer.first_wrong = text
@@ -216,7 +233,6 @@ peer_wrong :: proc(peer: ^Peer, text: string) {
 	peer.wrong += 1
 }
 
-@(private = "file")
 peer_send :: proc(peer: ^Peer, frame: []u8) {
 	sync.mutex_lock(&peer.lock)
 	machine := peer.machine
@@ -333,6 +349,10 @@ peer_frame :: proc(peer: ^Peer, frame: []u8) {
 			put16(reply, 40, value == 0 ? 0xFFFF : value)
 			peer_send(peer, peer_pad(reply))
 			peer.udp_answers += 1
+		case 6:
+			if incoming, ok := peer_tcp_frame(peer, ip, payload); ok {
+				peer_tcp_tick(peer, {incoming})
+			}
 		case:
 			peer_wrong(peer, "an IPv4 packet of another protocol")
 		}
@@ -344,7 +364,6 @@ peer_frame :: proc(peer: ^Peer, frame: []u8) {
 
 // peer_ipv4 writes the headers of Ethernet and IPv4 of a frame from the
 // peer to the machine.
-@(private = "file")
 peer_ipv4 :: proc(frame: []u8, destination: []u8, payload: int, protocol: u8) {
 	copy(frame[0:6], destination)
 	copy(frame[6:12], PEER_HARDWARE[:])

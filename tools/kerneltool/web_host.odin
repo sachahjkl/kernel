@@ -1,0 +1,253 @@
+package kerneltool
+
+import "core:fmt"
+import "core:net"
+import "core:strings"
+import "core:sync"
+import "core:thread"
+import "core:time"
+import "support:web"
+
+// The test of TCP against a stack that this project did not write
+// (docs/NETWORK.md). The machine has QEMU user networking: its TCP talks
+// to the TCP of libslirp, which comes from 4.4BSD. Two ways:
+//
+//   hostfwd   a port of the loopback of the host goes to the port 80 of the
+//             machine: the tool connects with core:net (the TCP of the host)
+//             and fetches the pages of `server` (forward_fetch).
+//   guestfwd  the address 10.0.2.100 port 80 of the network of the machine
+//             goes to a port where the tool listens with core:net: the
+//             program `fetch` connects to it (Listener).
+//
+// The listener answers as `server` does: GET /hello, GET /large, and POST
+// /sink, which gives the length and the hash of the body.
+
+GUEST_ADDRESS :: "10.0.2.100" // The address of the listener on the network of the machine.
+
+Forward :: struct {
+	host_port: int, // hostfwd: this port of the loopback of the host is the port 80 of the machine.
+	listener:  ^Listener,
+}
+
+Listener :: struct {
+	socket:     net.TCP_Socket,
+	client:     net.TCP_Socket, // The connection that the listener serves; 0: none.
+	port:       int,
+	thread:     ^thread.Thread,
+	stop:       bool,
+	requests:   int,
+	sink_bytes: int,
+	failure:    string,
+}
+
+// free_port gives a port of the loopback that no socket holds now. Another
+// program can take it before QEMU: the tests run one at a time.
+free_port :: proc() -> (port: int, ok: bool) {
+	socket, err := net.listen_tcp({net.IP4_Loopback, 0})
+	if err != nil {
+		return 0, false
+	}
+	defer net.close(socket)
+	bound, bound_err := net.bound_endpoint(socket)
+	return bound.port, bound_err == nil
+}
+
+listener_start :: proc(listener: ^Listener) -> bool {
+	socket, err := net.listen_tcp({net.IP4_Loopback, 0})
+	if err != nil {
+		fmt.eprintfln("kerneltool: the listener has no TCP socket: %v", err)
+		return false
+	}
+	bound, bound_err := net.bound_endpoint(socket)
+	if bound_err != nil {
+		net.close(socket)
+		return false
+	}
+	listener^ = {socket = socket, port = bound.port}
+	listener.thread = thread.create_and_start_with_poly_data(listener, listener_run)
+	return true
+}
+
+listener_stop :: proc(listener: ^Listener) {
+	if listener.thread == nil {
+		return
+	}
+	sync.atomic_store(&listener.stop, true)
+	// A shutdown ends a receive that waits, and the accept.
+	if client := net.TCP_Socket(sync.atomic_load((^int)(&listener.client))); client != 0 {
+		_ = net.shutdown(client, .Both)
+	}
+	_ = net.shutdown(listener.socket, .Both)
+	net.close(listener.socket)
+	thread.join(listener.thread)
+	thread.destroy(listener.thread)
+	listener.thread = nil
+}
+
+listener_run :: proc(listener: ^Listener) {
+	for !sync.atomic_load(&listener.stop) {
+		client, _, err := net.accept_tcp(listener.socket)
+		if err != nil {
+			return
+		}
+		// QEMU connects when it starts, long before `fetch` sends a request:
+		// the receive waits with no time limit.
+		sync.atomic_store((^int)(&listener.client), int(client))
+		listener_serve(listener, client)
+		sync.atomic_store((^int)(&listener.client), 0)
+		net.close(client)
+	}
+}
+
+// send_all sends each byte, or says that it could not.
+send_all :: proc(socket: net.TCP_Socket, bytes: []u8) -> bool {
+	for sent := 0; sent < len(bytes); {
+		count, err := net.send_tcp(socket, bytes[sent:])
+		if err != nil || count <= 0 {
+			return false
+		}
+		sent += count
+	}
+	return true
+}
+
+// listener_serve answers the requests of one connection until its end.
+listener_serve :: proc(listener: ^Listener, client: net.TCP_Socket) {
+	buffer: [65536]u8
+	length := 0
+	for !sync.atomic_load(&listener.stop) {
+		if web.head_end(buffer[:length]) == 0 {
+			count, err := net.recv_tcp(client, buffer[length:])
+			if err != nil || count == 0 {
+				return
+			}
+			length += count
+			continue
+		}
+		head, ok := web.head_read(buffer[:length])
+		rest := buffer[head.size:length]
+		if !ok {
+			listener.failure = "a request that the listener cannot read"
+			return
+		}
+		path := web.path(&head)
+		answer: string
+		switch {
+		case head.method == .Get && path == "/hello":
+			answer = "hello from the host\n"
+		case head.method == .Get && path == "/large":
+			head_text := fmt.tprintf("HTTP/1.1 200 OK\r\nContent-Length: %d\r\n\r\n", web.LARGE_SIZE)
+			if !send_all(client, transmute([]u8)head_text) {
+				return
+			}
+			chunk: [16384]u8
+			for offset := 0; offset < web.LARGE_SIZE; offset += len(chunk) {
+				web.pattern_fill(chunk[:], offset)
+				if !send_all(client, chunk[:min(len(chunk), web.LARGE_SIZE - offset)]) {
+					return
+				}
+			}
+			sync.atomic_add(&listener.requests, 1)
+			length = copy(buffer[:], rest)
+			continue
+		case head.method == .Post && path == "/sink" && head.content_length >= 0:
+			hash := u64(web.FNV_START)
+			taken := min(len(rest), head.content_length)
+			hash = web.fnv(hash, rest[:taken])
+			received := taken
+			for received < head.content_length {
+				count, err := net.recv_tcp(client, buffer[:min(len(buffer), head.content_length - received)])
+				if err != nil || count == 0 {
+					listener.failure = "the body of /sink ended early"
+					return
+				}
+				hash = web.fnv(hash, buffer[:count])
+				received += count
+			}
+			listener.sink_bytes = received
+			answer = fmt.tprintf("received %d bytes, fnv1a64 %016x\n", received, hash)
+			rest = nil
+		case:
+			answer = "no such page\n"
+		}
+		text := fmt.tprintf("HTTP/1.1 200 OK\r\nContent-Length: %d\r\n\r\n%s", len(answer), answer)
+		if !send_all(client, transmute([]u8)text) {
+			return
+		}
+		sync.atomic_add(&listener.requests, 1)
+		length = copy(buffer[:], rest)
+		free_all(context.temp_allocator)
+	}
+}
+
+// forward_fetch fetches a page of `server` through hostfwd, with the TCP of
+// the host. "/sink" sends a body of LARGE_SIZE bytes. It prints one line
+// with the result, and says if the result is the expected one.
+forward_fetch :: proc(forward: Forward, path: string) -> bool {
+	socket, err := net.dial_tcp(net.Endpoint{net.IP4_Loopback, forward.host_port})
+	if err != nil {
+		fmt.eprintfln("kerneltool: test failed: the host cannot connect to the port %d (hostfwd to the port 80 of the machine): %v", forward.host_port, err)
+		return false
+	}
+	defer net.close(socket)
+	_ = net.set_option(socket, .Receive_Timeout, 20 * time.Second)
+	start := time.tick_now()
+	request: string
+	body := path == "/sink"
+	if body {
+		request = fmt.tprintf("POST /sink HTTP/1.1\r\nHost: 10.0.2.15\r\nContent-Length: %d\r\nConnection: close\r\n\r\n", web.LARGE_SIZE)
+	} else {
+		request = fmt.tprintf("GET %s HTTP/1.1\r\nHost: 10.0.2.15\r\nConnection: close\r\n\r\n", path)
+	}
+	if !send_all(socket, transmute([]u8)request) {
+		fmt.eprintln("kerneltool: test failed: the host could not send its request")
+		return false
+	}
+	if body {
+		chunk: [16384]u8
+		for offset := 0; offset < web.LARGE_SIZE; offset += len(chunk) {
+			web.pattern_fill(chunk[:], offset)
+			if !send_all(socket, chunk[:]) {
+				fmt.eprintln("kerneltool: test failed: the host could not send the body of /sink")
+				return false
+			}
+		}
+	}
+	// The response, to the end of the connection: the server closes it.
+	response := make([dynamic]u8, context.temp_allocator)
+	buffer: [65536]u8
+	for {
+		count, recv_err := net.recv_tcp(socket, buffer[:])
+		if recv_err != nil || count == 0 {
+			break
+		}
+		append(&response, ..buffer[:count])
+	}
+	took := time.tick_since(start)
+	head, ok := web.head_read(response[:])
+	if !ok || head.status != 200 || len(response) - head.size != head.content_length {
+		fmt.eprintfln("kerneltool: test failed: the host fetched %s and read %d bytes, the status %d and the Content-Length %d", path, len(response), head.status, head.content_length)
+		return false
+	}
+	content := response[head.size:]
+	speed := f64(max(len(content), body ? web.LARGE_SIZE : 0)) / max(time.duration_seconds(took), 1e-9) / 1e6
+	switch path {
+	case "/large":
+		hash := web.fnv(web.FNV_START, content)
+		if len(content) != web.LARGE_SIZE || hash != web.pattern_hash(web.LARGE_SIZE) {
+			fmt.eprintfln("kerneltool: test failed: /large from the machine has %d bytes and the hash %016x", len(content), hash)
+			return false
+		}
+		fmt.printfln("kerneltool: test passed: the TCP of the host fetched /large from server through libslirp: %d bytes, fnv1a64 %016x as expected, %.1f MB/s", len(content), hash, speed)
+	case "/sink":
+		wanted := fmt.tprintf("received %d bytes, fnv1a64 %016x", web.LARGE_SIZE, web.pattern_hash(web.LARGE_SIZE))
+		if !strings.has_prefix(string(content), wanted) {
+			fmt.eprintfln("kerneltool: test failed: server answered \"%s\" to /sink, not \"%s\"", string(content), wanted)
+			return false
+		}
+		fmt.printfln("kerneltool: test passed: the TCP of the host sent 1 MiB to server through libslirp, and server gave the same hash, %.1f MB/s", speed)
+	case:
+		fmt.printfln("kerneltool: test passed: the TCP of the host fetched %s from server through libslirp: %d bytes in %.2f ms: \"%s\"", path, len(content), time.duration_milliseconds(took), strings.trim_space(strings.split_lines(string(content), context.temp_allocator)[0]))
+	}
+	return true
+}

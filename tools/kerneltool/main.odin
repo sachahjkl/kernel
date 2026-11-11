@@ -196,7 +196,7 @@ run_machine :: proc(args: []string) -> int {
 		return EXIT_FAILURE
 	}
 	defer peer_stop(&peer)
-	command, ok := machine_command(BOOT_VOLUME, "", DATA_DISK, peer.port)
+	command, ok := machine_command(BOOT_VOLUME, "", DATA_DISK, &peer)
 	if !ok {
 		return EXIT_FAILURE
 	}
@@ -222,7 +222,11 @@ run_test :: proc(args: []string) -> int {
 	if len(args) == 1 && args[0] == "network" {
 		return machine_test(scenario_network[:], BOOT_VOLUME, TEST_OUTPUT_NETWORK, MACHINE_STOP_OK, TEST_DATA_DISK) ? 0 : EXIT_FAILURE
 	}
-	if !machine_test(scenario_fails[:], BOOT_VOLUME_FAILS, TEST_OUTPUT_FAILS, 0) || !self_tests_run() || !machine_test(scenario[:], BOOT_VOLUME, TEST_OUTPUT, MACHINE_STOP_OK, TEST_DATA_DISK) || !machine_test(scenario_network[:], BOOT_VOLUME, TEST_OUTPUT_NETWORK, MACHINE_STOP_OK, TEST_DATA_DISK) || !persistence_run() || !test_modules() || !test_descriptions() {
+	// `test tcp`: the two machines of TCP only.
+	if len(args) == 1 && args[0] == "tcp" {
+		return tcp_tests_run() ? 0 : EXIT_FAILURE
+	}
+	if !machine_test(scenario_fails[:], BOOT_VOLUME_FAILS, TEST_OUTPUT_FAILS, 0) || !self_tests_run() || !machine_test(scenario[:], BOOT_VOLUME, TEST_OUTPUT, MACHINE_STOP_OK, TEST_DATA_DISK) || !machine_test(scenario_network[:], BOOT_VOLUME, TEST_OUTPUT_NETWORK, MACHINE_STOP_OK, TEST_DATA_DISK) || !tcp_tests_run() || !persistence_run() || !test_modules() || !test_descriptions() {
 		return EXIT_FAILURE
 	}
 	fmt.println("kerneltool: all tests passed")
@@ -320,7 +324,7 @@ run_check :: proc(args: []string) -> int {
 		}
 		fmt.printfln("kerneltool: test passed: contract:%s compiles with the contract library only", name)
 	}
-	for folder in ([]string{"contract/blake3", "contract/isolated", "contract/remote", "support/bar", "support/information", "support/network", "tools/kerneltool"}) {
+	for folder in ([]string{"contract/blake3", "contract/isolated", "contract/remote", "support/bar", "support/information", "support/network", "support/tcp", "support/web", "tools/kerneltool"}) {
 		name, _ := strings.replace_all(folder, "/", "_", context.temp_allocator)
 		if !run({"odin", "test", folder, "-vet", CONTRACT_LIBRARY, SUPPORT_LIBRARY, strings.concatenate({"-out:" + BUILD_FOLDER + "/test_", name}, context.temp_allocator)}) {
 			return EXIT_FAILURE
@@ -370,7 +374,9 @@ modules_same_again :: proc() -> bool {
 // test_output is a path, the machine has no window and writes its log there.
 // The network device sends each frame to the peer (peer.odin) on the
 // loopback of the host, at peer_port, as one UDP datagram.
-machine_command :: proc(volume: string, test_output: string, data_disk: string, peer_port: int) -> (command: []string, ok: bool) {
+// The network device goes to the peer (`-netdev dgram`), or, when forward
+// has a port, to QEMU user networking with its TCP (web_host.odin).
+machine_command :: proc(volume: string, test_output: string, data_disk: string, peer: ^Peer, forward: Forward = {}) -> (command: []string, ok: bool) {
 	if !disk_prepare(SCRATCH_DISK, SCRATCH_DISK_SIZE, false) {
 		return nil, false
 	}
@@ -410,7 +416,7 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 		"-net",
 		"none", // No other network device than the one below.
 		"-netdev",
-		fmt.tprintf("dgram,id=network,remote.type=inet,remote.host=127.0.0.1,remote.port=%d,local.type=inet,local.host=127.0.0.1,local.port=0", peer_port),
+		forward.host_port != 0 ? fmt.tprintf("user,id=network,restrict=on,hostfwd=tcp:127.0.0.1:%d-10.0.2.15:80,guestfwd=tcp:%s:80-tcp:127.0.0.1:%d", forward.host_port, GUEST_ADDRESS, forward.listener.port) : fmt.tprintf("dgram,id=network,remote.type=inet,remote.host=127.0.0.1,remote.port=%d,local.type=inet,local.host=127.0.0.1,local.port=%d", peer.port, peer.machine.port),
 		"-device",
 		fmt.tprintf("virtio-net-pci,netdev=network,disable-legacy=on,mac=%s,addr=0x%x", MACHINE_HARDWARE, pci.NETWORK_DEVICE),
 		"-drive",

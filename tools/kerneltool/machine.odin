@@ -45,6 +45,8 @@ Step_Kind :: enum {
 	Trace, // The log has text, after the text of the last Wait, then a stack trace to the end of the line: the tool names each frame from the linked file of its module, and the names start with `names`.
 	Record, // A log record with the program `program`, the channel `channel`, the level `level` and a text that has `text`, after the record of the last Record step: the tool reads log.records() through the remote service (call.odin). With any_order, the next Record step searches from the same place.
 	Call, // Call an export of a service from the host (call.odin), through the remote service: what the tool prints has `expected`. With `rows_call`, that call gives the count of rows of the Table. With `repeat`, the tool also measures the round trip and the calls in one second.
+	Peer, // The peer runs the TCP case text (peer_tcp.odin) and checks its answers.
+	Fetch, // The TCP of the host fetches the page text of `server` through QEMU user networking (web_host.odin).
 }
 
 Step :: struct {
@@ -1416,6 +1418,7 @@ Machine :: struct {
 	record_next: i64, // The number of the log record where the next Record step searches.
 	client:      Call_Client,
 	client_open: bool,
+	forward:     Forward, // QEMU user networking: the port of hostfwd and the listener of guestfwd.
 }
 
 monitor_send :: proc(machine: ^Machine, parts: ..string) {
@@ -1715,13 +1718,24 @@ png_encode :: proc(width, height: int, pixels: []u8) -> []u8 {
 
 // machine_test runs a scenario on a boot volume. It passes when each step
 // passes and QEMU ends with the status exit_status.
-machine_test :: proc(steps: []Step, volume: string, output: string, exit_status: int, data_disk: string = TEST_DATA_DISK) -> bool {
+machine_test :: proc(steps: []Step, volume: string, output: string, exit_status: int, data_disk: string = TEST_DATA_DISK, user_network := false) -> bool {
 	peer: Peer
 	if !peer_start(&peer) {
 		return false
 	}
 	defer peer_stop(&peer)
-	command, ok := machine_command(volume, output, data_disk, peer.port)
+	listener: Listener
+	forward: Forward
+	if user_network {
+		port, free := free_port()
+		if !free || !listener_start(&listener) {
+			fmt.eprintln("kerneltool: no port of the loopback for the TCP of QEMU")
+			return false
+		}
+		forward = {host_port = port, listener = &listener}
+	}
+	defer listener_stop(&listener)
+	command, ok := machine_command(volume, output, data_disk, &peer, forward)
 	if !ok {
 		return false
 	}
@@ -1742,6 +1756,7 @@ machine_test :: proc(steps: []Step, volume: string, output: string, exit_status:
 		output    = output,
 		call_port = peer.call_port,
 		peer      = &peer,
+		forward   = forward,
 	}
 	passed := scenario_run(&machine, steps)
 	if len(machine.confirmations) > 0 {
@@ -2053,6 +2068,17 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 					return false
 				}
 				fmt.printfln("kerneltool: test passed: the call %s from the host: the round trip %d us at least, %d us in the middle, over %d calls; %d calls in one second, one after the other", step.text, i64(least / time.Microsecond), i64(middle / time.Microsecond), step.repeat, per_second)
+			}
+		case .Peer:
+			passed, result := peer_case(machine.peer, step.text)
+			if !passed {
+				fmt.eprintfln("kerneltool: test failed: step %d: the TCP case \"%s\" of the peer: %s", index + 1, step.text, result)
+				return false
+			}
+			fmt.printfln("kerneltool: test passed: the TCP case \"%s\" of the peer: %s", step.text, result)
+		case .Fetch:
+			if !forward_fetch(machine.forward, step.text) {
+				return false
 			}
 		case .Quit:
 			monitor_send(machine, "quit")
