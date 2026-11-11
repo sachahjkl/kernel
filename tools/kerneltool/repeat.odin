@@ -242,7 +242,7 @@ repeat_all :: proc(count: int) -> int {
 		free_all(context.temp_allocator)
 	}
 	fmt.printfln("kerneltool: repeat: %d builds of each of %d modules and of the boot program", count, len(module_builds))
-	fmt.printfln("%-14s %8s %16s %12s %10s", "module", "builds", "distinct files", "distinct IR", "distinct objects")
+	fmt.printfln("%-20s %8s %16s %12s %17s", "module", "builds", "distinct files", "distinct IR", "distinct objects")
 	same := true
 	for index := 0; index < len(all); {
 		owner := all[index].owner
@@ -264,7 +264,7 @@ repeat_all :: proc(count: int) -> int {
 			free_results(&all[index])
 			index += 1
 		}
-		fmt.printfln("%-14s %8d %16s %12s %10s", owner, count, row[0], row[1], row[2])
+		fmt.printfln("%-20s %8s %16s %12s %17s", owner, fmt.tprintf("%d", count), row[0], row[1], row[2])
 	}
 	return same ? 0 : EXIT_FAILURE
 }

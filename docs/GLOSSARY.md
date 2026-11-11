@@ -228,6 +228,7 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Document | An object that belongs to the person and not to one program. The document service grants it (P8) | file, user file |
 | Module store | The set of all modules and system data, each identified by content hash (P11) | package store, repository, the Nix store |
 | System description | The list of hashes that defines one version of the whole system (P11) | image, generation, manifest, profile |
+| Distinct result | One content of one output of a build (a module, its LLVM IR, its object, the boot program) among the contents that several builds of the same source gave. One source must give one distinct result for each output (P11). `kerneltool repeat` counts them, and `check` and `repeat` keep each one in `build/different_builds/` | variant (except in the names of the kept files), version |
 | Storage service | The service that owns the block device and gives objects, versions and private stores (P9) | file system |
 | Root block | The block of the data disk that names the private stores. The disk has two places for it; the storage service takes the valid one with the highest generation | superblock, uberblock, meta page |
 | Commit | One change of the stores: the storage service writes new blocks, then a new root block. A commit is on the disk completely or not at all | transaction (for this), save, sync |

@@ -201,7 +201,7 @@ kerneltool run
 | `pointers` | Convert the pointer manifests of `resources/pointers/` to pointer theme files in `build/pointers/`, and print a table of each theme (`build` does it too) |
 | `vector_fonts` | Subset the candidate vector fonts to `resources/fonts/`, and draw the picture of the choice `build/fonts/candidates.png` |
 | `portrait` | Convert `programs/temple/portrait.jpg` to `programs/temple/portrait.pixels` |
-| `repeat` | `repeat <module> <count>`: build one module again and again and compare the module, the LLVM IR and the object with the first build |
+| `repeat` | `repeat <module> <count>`: build one module again and again, and count the distinct modules, LLVM IR files and objects; `repeat all <count>`: every module and the boot program, one row each. Each distinct result is kept in `build/different_builds/` |
 | `check` | `odin check -vet` and `odin test` of the host code, then `test` |
 
 `nix flake check` runs the formatting hooks and `check`.

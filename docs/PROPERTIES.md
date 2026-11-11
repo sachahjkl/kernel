@@ -225,6 +225,7 @@ Status: Decided by the owner on 2026-11-09. The detail below is proposed.
 - **Cost**: A build must be deterministic for the hash to mean something. The compiler and the linker must not write times, host names or random identifiers. Old modules need garbage collection.
 - **Reuse**: The Nix store model and its closure concept. Content-addressed derivations in Nix.
 - **Open**: the hash function. BLAKE3 is the proposal. How names for people map to hashes; the proposal is a signed table in the system description.
+- **State (2026-11-11)**: the build is deterministic for the compiler of the flake. The stock Odin compiler ran two threads with `-thread-count:1`, and a rare build gave other code; the flake patches it (choice NEW-1 of `FIRST_MILESTONE.md`). Measured: 100 builds of each of the 61 modules and of the boot program, under a host load of 9.5 to 62, gave one module, one LLVM IR file and one object each. Each full check builds everything two times and compares the three.
 
 ## 12. Module metadata in flat tables, read through functions
 
