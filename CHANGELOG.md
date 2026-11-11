@@ -6,6 +6,24 @@ The project has steps, not separate releases. The merge of step N on `master` is
 
 What is not in a release yet is in `changelog.d/`, one fragment for each change. `kerneltool changelog release` writes a release from the fragments. Nobody edits this file by hand.
 
+## [0.69.0] - 2026-11-11
+
+### Added
+
+- **A line in the draw table**: a straight line between two points with a thickness of 1 to 32 pixels. `rings`, `threads`, `workers` and `processors` now draw through the interface package.
+
+### Fixed
+
+- The window of `crowd` has the same margin at its right as at its left.
+- **A dragged window stays reachable**: a window dragged to an edge of the screen keeps 8 pixels of its title on the screen, so a person can always take it again. Before, a drag to the right or bottom edge could put the whole window off the screen. A window wider than the screen now opens with its close button on the screen.
+- **A new font reaches every window**: after a change of the font in `settings`, the terminal, the console and the manual draw their whole window again. Before, these windows mixed the old font and the new one.
+- **The status line of a terminal stays readable**: in a terminal with no rates, the keys hint no longer runs over the status of the program, and a status with a very large total no longer gives a wrong bar.
+- **No old pixels after a full command ring**: when a window cannot send its picture to the compositor, its next picture is drawn whole, so the screen never keeps the old pixels of that part.
+
+### Security
+
+- **The compositor takes only a surface that the program gave**: a program could name, in its command to create a surface, a handle that the compositor holds for another program. The compositor then showed the memory of the other program and closed its handle. The compositor now asks the kernel to prove that the handle came through the ring of the program, and closes each handle that it was given, also when it refuses the command.
+
 ## [0.68.0] - 2026-11-11
 
 ### Fixed
