@@ -18,6 +18,7 @@ import op "contract:operation"
 import "contract:ring"
 import "support:display"
 import "support:graphics"
+import "support:random"
 import "support:system"
 
 // The records of sample, as this program declares them: the layout is the
@@ -548,8 +549,16 @@ draw :: proc "contextless" (canvas: graphics.Canvas) {
 	}
 }
 
+// The random generator of this program: it gives the seed of each call
+// host that this program starts.
+program_generator: random.Generator
+
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
+	if !random.generator_from_context(&program_generator, ctx) {
+		system.log("tables: no random seed in the context")
+		system.stop(1)
+	}
 	window, opened := display.open(ctx, WIDTH, HEIGHT, "tables")
 	if !opened {
 		system.stop(1)
@@ -569,7 +578,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	// The call host: the module in a program of its own.
 	status: system.Status
-	if host, status = system.call_host_start(image, image_memory, sample_file, "sample host", &load_error); status == .Ok {
+	if host, status = system.call_host_start(image, image_memory, sample_file, "sample host", random.values_with_seed(&program_generator, {}), &load_error); status == .Ok {
 		ways_ready[.Call_Host] = true
 	} else {
 		buffer: [256]u8
@@ -591,7 +600,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		hostile_base = space.modules[place].base
 		hostile_ready[.Direct] = true
 	}
-	if hostile_host, status = system.call_host_start(image, image_memory, hostile_file, "hostile host", &load_error); status == .Ok {
+	if hostile_host, status = system.call_host_start(image, image_memory, hostile_file, "hostile host", random.values_with_seed(&program_generator, {}), &load_error); status == .Ok {
 		hostile_ready[.Call_Host] = true
 	}
 	system.log("tables: the ways: direct ", ways_ready[.Direct] ? "ready" : "refused", ", call host ", ways_ready[.Call_Host] ? "ready" : "refused", ", service ", ways_ready[.Service] ? "ready" : "refused")

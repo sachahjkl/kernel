@@ -219,9 +219,11 @@ call_isolated :: proc "contextless" (connection: ^Call_Connection, file: []u8, e
 // image) for one module, and maps the file of the module and of its
 // imports in it, read-only: the call host has the call ring and the call
 // region, and no other handle. image_memory is the handle of the boot
-// image. On a failure of the load, load_error has the record that the call
-// host wrote.
-call_host_start :: proc "contextless" (image: []u8, image_memory: Handle, file: []u8, name: string, load_error: ^module.Load_Error) -> (connection: Call_Connection, status: Status) {
+// image. values_with_seed has the random seed of the call host, which the
+// caller draws from its own generator (random.values_with_seed of no
+// values): a program does not start with no seed. On a failure of the load,
+// load_error has the record that the call host wrote.
+call_host_start :: proc "contextless" (image: []u8, image_memory: Handle, file: []u8, name: string, values_with_seed: [op.CONTEXT_VALUES]u64, load_error: ^module.Load_Error) -> (connection: Call_Connection, status: Status) {
 	files: [MODULE_SPACE_CAPACITY + IMPORT_CAPACITY]^info.Image_Entry
 	source := Load_Source {
 		image = image,
@@ -259,7 +261,7 @@ call_host_start :: proc "contextless" (image: []u8, image_memory: Handle, file: 
 	region_address := memory_map(connection.region_memory) or_return
 	connection.region = ([^]u8)(region_address)[:isolated.REGION_PAGES * PAGE_SIZE]
 	grants: [op.CONTEXT_HANDLES]Grant
-	values: [op.CONTEXT_VALUES]u64
+	values := values_with_seed
 	grants[isolated.GRANT_RING] = {connection.ring_memory, {.Read, .Write}}
 	grants[isolated.GRANT_REGION] = {connection.region_memory, {.Read, .Write}}
 	values[isolated.VALUE_FILE_ADDRESS] = isolated.FILE_ADDRESS
