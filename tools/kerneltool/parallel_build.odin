@@ -7,13 +7,12 @@ import "core:sync"
 import "core:thread"
 
 // The parallel build of the modules. Each module is built by its own
-// process of this tool (the command `module`), and each such process runs
-// one compiler on one thread: one source still gives one module, because
-// the compiler is deterministic only with one thread
-// (docs/REPRODUCIBLE_BUILD.md).
-// The tool runs at most `module_build_processes` of them at once, keeps the
-// output of each one, prints it whole in the order of the module table,
-// and assembles the boot image in that order.
+// process of this tool (the command `module`), which runs one compiler.
+// The compiler uses its own threads too: its output does not depend on
+// their count (docs/REPRODUCIBLE_BUILD.md, section 7). The tool runs at
+// most `module_build_processes` processes at once, keeps the output of
+// each one, prints it whole in the order of the module table, and
+// assembles the boot image in that order.
 //
 // A module needs the files of its imports only at its conversion (their
 // hashes go into its import table). So the modules are built in levels: a
