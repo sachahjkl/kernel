@@ -979,6 +979,21 @@ scenario := [?]Step {
 	{kind = .Type, text = "stop(\"scheduler\")"},
 	{kind = .Wait, text = "root: scheduler stopped"},
 
+	// A program drives its own virtual memory: an arena and a sparse table
+	// of 1 GiB of addresses, commit and decommit, a protection change with
+	// its shoot-down, a guard page, large pages, the refusals.
+	{kind = .Launch, text = "address_space"},
+	{kind = .Wait, text = "address_space: arena: 1 GiB of addresses in one mapping, "},
+	{kind = .Wait, text = "address_space: sparse table: 1024 pages committed of 262144, 1024 with a frame; decommit: 1024 pages back in the budget at once"},
+	{kind = .Wait, text = "address_space: protection of 64 pages, one call with its shoot-down"},
+	{kind = .Wait, text = "address_space: guard page: the child stopped with vector 14 at "},
+	{kind = .Wait, text = "address_space: large pages: one random read over 64 MiB: "},
+	{kind = .Wait, text = "address_space: ok, the arena and the sparse table paid only what they used, the decommit gave each page back, the protection changed with its shoot-down, the guard page stopped the child, the large pages are in the report, each refusal has its error record"},
+	{kind = .Shot, text = "address_space"},
+	{kind = .Front, text = "console"},
+	{kind = .Type, text = "stop(\"address_space\")"},
+	{kind = .Wait, text = "root: address_space stopped"},
+
 	// The boot display in a window: how the machine started, with the
 	// records that the kernel has now.
 	{kind = .Launch, text = "boot"},
@@ -1621,6 +1636,28 @@ scenario_shortage := [?]Step {
 	{kind = .Wait, text = "root: started shortage with "},
 	{kind = .Wait, text = "shortage: full: "},
 	{kind = .Wait, text = "shortage: ok, the stacks were drained for takes that cannot fail, a new object failed only when its budget could pay no page, and each frame returned"},
+	{kind = .Wait, text = "kernel: the machine stops with code 0"},
+}
+
+// The virtual memory of a program with only the desktop (`kerneltool
+// measure address_space`).
+@(rodata)
+scenario_measure_address_space := [?]Step {
+	{kind = .Wait, text = "boot program: ok"},
+	{kind = .Wait, text = "kernel: ok"},
+	{kind = .Wait, text = "root: ok"},
+	{kind = .Wait, text = "compositor: first frame", any_order = true},
+	{kind = .Wait, text = "compositor: surface console"},
+	{kind = .Launch, text = "address_space"},
+	{kind = .Wait, text = "address_space: arena: 1 GiB of addresses in one mapping, "},
+	{kind = .Wait, text = "address_space: sparse table: 1024 pages committed of 262144, 1024 with a frame; decommit: 1024 pages back in the budget at once"},
+	{kind = .Wait, text = "address_space: protection of 64 pages, one call with its shoot-down"},
+	{kind = .Wait, text = "address_space: guard page: the child stopped with vector 14 at "},
+	{kind = .Wait, text = "address_space: large pages: one random read over 64 MiB: "},
+	{kind = .Wait, text = "address_space: ok, the arena and the sparse table paid only what they used, the decommit gave each page back, the protection changed with its shoot-down, the guard page stopped the child, the large pages are in the report, each refusal has its error record"},
+	{kind = .Shot, text = "address_space"},
+	{kind = .Front, text = "console"},
+	{kind = .Type, text = "shutdown()"},
 	{kind = .Wait, text = "kernel: the machine stops with code 0"},
 }
 

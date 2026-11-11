@@ -900,7 +900,7 @@ value_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Pro
 		case .Uncommitted in flags && flags != {.Uncommitted}:
 			record_set(record, .Bad_Flags, .None, 3, v[2], 1 << u64(op.Memory_Flag.Uncommitted), 0) // Uncommitted goes alone.
 		case .Large_Pages in flags && v[1] % op.LARGE_PAGE_PAGES != 0:
-			record_set(record, .Bad_Value, .Pages, 2, v[1], op.LARGE_PAGE_PAGES, v[1] % op.LARGE_PAGE_PAGES) // Whole large pages.
+			record_set(record, .Bad_Value, .Pages, 2, v[1], 0, v[1] % op.LARGE_PAGE_PAGES) // Whole large pages of 512 pages: found is the rest.
 		case v[1] == 0:
 			record_set(record, .Too_Small, .Pages, 2, 0, 1, 0)
 		case:

@@ -78,6 +78,8 @@ grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 		return {.Inspect, .Image} // It reads its own page table, and starts its twins from the boot image.
 	case "locks":
 		return {.Inspect, .Image} // It reads the counts of the locks, and starts its lockers from the boot image.
+	case "address_space":
+		return {.Inspect, .Image} // It reads its own mappings, and starts its child from the boot image.
 	case "scheduler":
 		return {.Inspect, .Schedule} // It reads the counts of the scheduler, and changes the strategy.
 	case "paint", "life", "tally":
@@ -228,6 +230,8 @@ things_of :: proc "contextless" (name: string) -> system.Budget_Amounts {
 		return {pages = 2048, programs = 1, threads = 9}
 	case "locks":
 		return {pages = 9216, programs = 8, threads = 20} // 4 lockers of 1024 pages, then 3 at a time of the stress case.
+	case "address_space":
+		return {pages = 40960, programs = 2, threads = 6} // 64 MiB of large pages, two ranges of 1 GiB with their page tables, a child.
 	case "scheduler":
 		return {pages = 2048, programs = 1, threads = 24} // 12 spinners, two threads that wake each other, one that sleeps, a changer, a thread that starts threads.
 	case "flow":

@@ -316,6 +316,9 @@ run_measure :: proc(args: []string) -> int {
 	if len(args) == 1 && args[0] == "windows" {
 		return measure_windows() ? 0 : EXIT_FAILURE
 	}
+	if len(args) >= 1 && args[0] == "address_space" {
+		return machine_test(scenario_measure_address_space[:], BOOT_VOLUME, TEST_OUTPUT_MEASURE, MACHINE_STOP_OK, TEST_DATA_DISK) ? 0 : EXIT_FAILURE
+	}
 	if len(args) >= 1 && args[0] == "shortage" {
 		return machine_test(scenario_shortage[:], BOOT_VOLUME_SHORTAGE, TEST_OUTPUT_SHORTAGE, MACHINE_STOP_OK, TEST_DATA_DISK) ? 0 : EXIT_FAILURE
 	}
