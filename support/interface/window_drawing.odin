@@ -14,6 +14,7 @@ Window_Drawing :: struct {
 	drawn:  bool, // The surface shows the table before.
 	// The measures of the last frame, in nanoseconds.
 	build_time, difference_time, draw_time: u64,
+	build_start: u64, // When the frame that is built now started.
 	damage: Damage,
 }
 
@@ -36,7 +37,7 @@ window_events :: proc "contextless" (drawing: ^Window_Drawing, window: ^display.
 
 // window_frame_begin starts a frame of the window.
 window_frame_begin :: proc "contextless" (drawing: ^Window_Drawing) -> Frame {
-	drawing.build_time = system.nanoseconds()
+	drawing.build_start = system.nanoseconds()
 	return frame_begin(&drawing.now, &drawing.state, &drawing.input)
 }
 
@@ -49,7 +50,7 @@ window_frame_end :: proc "contextless" (drawing: ^Window_Drawing, frame: ^Frame,
 	frame_end(frame)
 	input_clear(&drawing.input)
 	start := system.nanoseconds()
-	drawing.build_time = start - drawing.build_time
+	drawing.build_time = start - drawing.build_start
 	drawing.damage = {}
 	whole := !drawing.drawn || window.two || drawing.before.full
 	if !whole {

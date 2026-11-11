@@ -4,7 +4,8 @@
 // choice, a text input, bars, lines of a label and a value, a table, the
 // large number of a card. A second card shows the draw table of the last
 // frame: its records, its bytes of text, its damage rectangles and the time
-// of each part. A button shows the damage rectangles over the window.
+// of each part. A button shows the damage rectangles of each frame over the
+// window, as records of the next frame.
 //
 // At its start the program measures the damage by difference on its own
 // window: a frame where nothing changed, a frame where one number changed,
@@ -120,23 +121,25 @@ build :: proc "contextless" (frame: ^interface.Frame, number: u64) {
 		system.log("interface_elements: the damage is ", show_damage ? "shown" : "hidden")
 	}
 	interface.cell_text(frame, interface.column_take(&column, 16), "a frame draws only its damage", graphics.COLOR_DIM)
+	// The damage of the last frame, as outlines of 2 pixels over the window.
+	// They are records: when the damage stays the same, they do not damage.
+	if show_damage {
+		for rectangle in last_damage.rectangles[:last_damage.count] {
+			width, height := rectangle.right - rectangle.left, rectangle.bottom - rectangle.top
+			interface.draw_rectangle(frame.table, rectangle.left, rectangle.top, width, 2, graphics.COLOR_MACHINE)
+			interface.draw_rectangle(frame.table, rectangle.left, rectangle.bottom - 2, width, 2, graphics.COLOR_MACHINE)
+			interface.draw_rectangle(frame.table, rectangle.left, rectangle.top, 2, height, graphics.COLOR_MACHINE)
+			interface.draw_rectangle(frame.table, rectangle.right - 2, rectangle.top, 2, height, graphics.COLOR_MACHINE)
+		}
+	}
 }
 
-// frame_draw builds and draws one frame. With the damage shown, the
-// rectangles of the frame are drawn over the window, and the next frame is
-// drawn whole: the outlines are not in the draw table.
+// frame_draw builds and draws one frame.
 frame_draw :: proc "contextless" (window: ^display.Window) {
 	frame := interface.window_frame_begin(&drawing)
 	build(&frame, frames)
 	interface.window_frame_end(&drawing, &frame, window)
 	last_damage = drawing.damage
-	if show_damage {
-		for rectangle in last_damage.rectangles[:last_damage.count] {
-			graphics.outline(window.canvas, rectangle.left, rectangle.top, rectangle.right - rectangle.left, rectangle.bottom - rectangle.top, 2, graphics.COLOR_MACHINE)
-		}
-		display.present(window)
-		drawing.drawn = false
-	}
 	frames += 1
 }
 
