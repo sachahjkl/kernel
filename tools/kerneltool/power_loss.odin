@@ -429,7 +429,7 @@ scenario_power_loss_early := [?]Step {
 }
 
 scenario_power_loss_thinning := [?]Step {
-	{kind = .Wait, text = "compositor: surface console"},
+	{kind = .Wait, text = "compositor: surface console", any_order = true}, // The storage service can start first, for the boot pass of settings.
 	{kind = .Launch, text = "notes"},
 	{kind = .Wait, text = "storage: ok, a new disk: generation 1, 16384 blocks", any_order = true},
 	{kind = .Wait, text = "notes: a new store: no note, the count 0", any_order = true},
