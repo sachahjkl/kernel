@@ -281,3 +281,18 @@ text_input_keys_in_their_order :: proc(t: ^testing.T) {
 	testing.expect_value(t, string(text[:count]), "ls")
 	testing.expect(t, !input.keys[3].taken, "the key after Enter stays for the next element")
 }
+
+// The input of a frame takes 16 keys; then it has no room, and the reader
+// of the events leaves the next ones for the next frame (review W3).
+@(test)
+a_full_input_says_so :: proc(t: ^testing.T) {
+	input: Input
+	for index in 0 ..< KEY_CAPACITY {
+		testing.expect(t, input_has_room(&input))
+		testing.expect(t, input_add(&input, {kind = .Key, code = u32(0x10 + index), character = 'a', pressed = true}))
+	}
+	testing.expect(t, !input_has_room(&input))
+	testing.expect(t, !input_add(&input, {kind = .Key, code = 0x30, character = 'b', pressed = true}))
+	input_clear(&input)
+	testing.expect(t, input_has_room(&input))
+}

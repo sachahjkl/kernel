@@ -69,6 +69,13 @@ input_add :: proc "contextless" (input: ^Input, event: display.Event) -> bool {
 	return false
 }
 
+// input_has_room says if the input of a frame can take one more key. When
+// it cannot, the caller leaves the next events in the ring of the window for
+// the next frame: no key is lost.
+input_has_room :: proc "contextless" (input: ^Input) -> bool {
+	return input.key_count < KEY_CAPACITY
+}
+
 // input_clear makes the input of the next frame: the pointer stays where it is.
 input_clear :: proc "contextless" (input: ^Input) {
 	input.pressed = false

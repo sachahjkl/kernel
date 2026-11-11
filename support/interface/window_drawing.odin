@@ -25,10 +25,13 @@ window_drawing_of :: proc "contextless" (records_now, records_before: []Draw_Rec
 }
 
 // window_events takes the events of a window into the input of the next
-// frame. It gives true if an event came.
+// frame, until the input has KEY_CAPACITY keys. It gives true if an event
+// came.
 window_events :: proc "contextless" (drawing: ^Window_Drawing, window: ^display.Window) -> bool {
 	came := false
-	for event in display.next_event(window) {
+	// A full input stops the reading: the other events wait in the ring.
+	for input_has_room(&drawing.input) {
+		event := display.next_event(window) or_break
 		input_add(&drawing.input, event)
 		came = true
 	}
