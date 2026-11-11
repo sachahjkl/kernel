@@ -6,7 +6,7 @@ The terms are in `GLOSSARY.md`, section "Randomness": random seed, random genera
 
 ## 1. Where a program gets random bytes
 
-A program draws random bytes from its own random generator, a record of fixed size in its own memory (property 14). A draw makes no kernel entry and no call. The generator starts from the random seed of the program: 32 bytes that its starter writes in the context values 12 to 15 (`op.CONTEXT_VALUE_SEED`).
+A program draws random bytes from its own random generator, a record of fixed size in its own memory (property 14). A draw makes no kernel entry and no call. The generator starts from the random seed of the program: 32 bytes that its starter writes in the context values 9 to 12 (`op.CONTEXT_VALUE_SEED`).
 
 - **The root service** has no starter. At its start, before it starts any program, it gathers its own seed from the sources of the processor (section 3).
 - **Each starter** (root, `console`, `errors`, `imports`, `frames`, `locks`, `rings`) gives each child 32 bytes of its own stream (`random.values_with_seed`). `system.program_start` refuses a start whose seed is 32 zero bytes: a starter cannot forget it.
@@ -22,7 +22,7 @@ The options that the coordinator gave, weighed against the properties:
 
 **What a starter knows.** The starter of a program knows its seed. A child has no secret from its starter, which already chooses its code and its grants. Two programs that one starter starts do not know the streams of each other.
 
-**The fault program reads value 11.** `fault` read its "zero" address from the value 15 of its context. That value is now part of the seed, so `fault` reads value 11, which no starter writes.
+**The fault program reads value 14.** `fault` read its "zero" address from the value 15 of its context. The seed first took the values 12 to 15; after the settings page took value 13 (step 58), the seed is in the values 9 to 12, and `fault` reads value 14, which no starter writes.
 
 ## 2. The generator
 
@@ -46,7 +46,7 @@ The root service hashes, with BLAKE3, each value of each source, each with its l
 | `rdrand` | 8 values, when CPUID 1 says the processor has it | The same | The generator of the processor, which the processor reseeds: strength `processor` |
 | The cycle counter | 2048 deltas of `rdtsc` around a short loop | None: its count of distinct low bytes is shown, as a sign of life only | 0 bits: this system does not measure its entropy. A seed from it alone has strength `weak` |
 
-The strength of the seed is the strongest source that gave all its values. The root service writes it on the log: "root: the random seed of the system, strength ...". It gives the facts of the gathering, never the seed, to the program `randomness` (its context values 0 to 9).
+The strength of the seed is the strongest source that gave all its values. The root service writes it on the log: "root: the random seed of the system, strength ...". It gives the facts of the gathering, never the seed, to the program `randomness` (its context values 0 to 7).
 
 **No claim beyond the sources.** The system does not test the output of `rdseed` or `rdrand` for quality. A processor whose generator is wrong or hostile gives a wrong seed, with no sign; the jitter of the cycle counter is mixed in so that such a processor alone does not fix the seed, but this system claims no bits from it.
 

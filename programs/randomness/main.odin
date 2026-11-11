@@ -2,10 +2,10 @@
 //
 // The root service gathers the seed of the system at its start, from the
 // sources of the processor, and gives this program the facts of that
-// gathering (the values 0 to 9 of its context): which sources were there,
+// gathering (the values 0 to 7 of its context): which sources were there,
 // how many values each one gave, how many it refused, and the strength
 // that the seed can claim. Like each program, this one has its own
-// generator, seeded by its starter (the values 12 to 15). The window shows
+// generator, seeded by its starter (the values 9 to 12). The window shows
 // both, a live draw of the stream, the counts of each byte value in 1 MiB,
 // and the speed of the generator.
 package randomness
@@ -97,7 +97,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 	// The generator of this program.
 	content = interface.card(&frame, {8, 212, WIDTH - 16, HEIGHT - 220}, "THE GENERATOR OF THIS PROGRAM", "random.Generator: ChaCha20, fast key erasure", graphics.COLOR_PROGRAM)
 	column = interface.column_of(content)
-	interface.label_value_line(&frame, interface.column_take(&column, LINE), "seed", "32 bytes from its starter (the context values 12 to 15), erased after", graphics.COLOR_TEXT, 168)
+	interface.label_value_line(&frame, interface.column_take(&column, LINE), "seed", "32 bytes from its starter (the context values 9 to 12), erased after", graphics.COLOR_TEXT, 168)
 	interface.label_value_line(&frame, interface.column_take(&column, LINE), "first bytes", hex_text(&builder, first_bytes[:]), graphics.COLOR_TEXT, 168)
 	interface.label_value_line(&frame, interface.column_take(&column, LINE), "now", hex_text(&builder, live_bytes[:]), graphics.COLOR_PROGRAM, 168)
 	builder.count = 0

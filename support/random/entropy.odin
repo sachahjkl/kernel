@@ -196,32 +196,31 @@ entropy_gather :: proc "contextless" (sources: Entropy_Sources, report: ^Entropy
 }
 
 // The values of the context of a program that shows the seed of the system
-// (`randomness`): the root service writes its report in the values 0 to 9.
-REPORT_VALUES :: 10
+// (`randomness`): the root service writes its report in the values 0 to 7
+// (the values 9 to 12 are the seed of the program).
+REPORT_VALUES :: 8
 
 report_values_write :: proc "contextless" (report: ^Entropy_Report, values: ^[16]u64) {
-	values[0] = u64(report.strength)
-	values[1] = u64(report.rdseed_present)
-	values[2] = u64(report.rdseed_good)
-	values[3] = u64(report.rdseed_refused)
-	values[4] = u64(report.rdrand_present)
-	values[5] = u64(report.rdrand_good)
-	values[6] = u64(report.rdrand_refused)
-	values[7] = u64(report.jitter_samples)
-	values[8] = u64(report.jitter_distinct)
-	values[9] = u64(report.device_bytes)
+	values[0] = u64(report.strength) | u64(report.rdseed_present) << 8 | u64(report.rdrand_present) << 9
+	values[1] = u64(report.rdseed_good)
+	values[2] = u64(report.rdseed_refused)
+	values[3] = u64(report.rdrand_good)
+	values[4] = u64(report.rdrand_refused)
+	values[5] = u64(report.jitter_samples)
+	values[6] = u64(report.jitter_distinct)
+	values[7] = u64(report.device_bytes)
 }
 
 report_values_read :: proc "contextless" (values: ^[16]u64) -> (report: Entropy_Report) {
-	report.strength = Seed_Strength(min(values[0], u64(max(Seed_Strength))))
-	report.rdseed_present = values[1] != 0
-	report.rdseed_good = u32(values[2])
-	report.rdseed_refused = u32(values[3])
-	report.rdrand_present = values[4] != 0
-	report.rdrand_good = u32(values[5])
-	report.rdrand_refused = u32(values[6])
-	report.jitter_samples = u32(values[7])
-	report.jitter_distinct = u32(values[8])
-	report.device_bytes = u32(values[9])
+	report.strength = Seed_Strength(min(values[0] & 0xFF, u64(max(Seed_Strength))))
+	report.rdseed_present = values[0] >> 8 & 1 != 0
+	report.rdrand_present = values[0] >> 9 & 1 != 0
+	report.rdseed_good = u32(values[1])
+	report.rdseed_refused = u32(values[2])
+	report.rdrand_good = u32(values[3])
+	report.rdrand_refused = u32(values[4])
+	report.jitter_samples = u32(values[5])
+	report.jitter_distinct = u32(values[6])
+	report.device_bytes = u32(values[7])
 	return
 }
