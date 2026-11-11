@@ -68,6 +68,7 @@ Call_Client :: struct {
 	sends:  int, // The times that the last call request went: 1, or more after a lost datagram.
 	wrong_hash: bool, // The next call request names another hash of the module: the test of the refusal.
 	last_hash:  [32]u8, // The hash that the last call request named.
+	modules:    [dynamic]Read_Module, // The module files that the client read, with their hashes: a call reads and hashes a file one time.
 	region: []u8,
 	result: []u8,
 }
@@ -93,6 +94,39 @@ call_client_close :: proc(client: ^Call_Client) {
 	net.close(client.socket)
 	delete(client.region)
 	delete(client.result)
+	for item in client.modules {
+		delete(item.file)
+		delete(item.service)
+	}
+	delete(client.modules)
+}
+
+Read_Module :: struct {
+	service: string,
+	file:    []u8,
+	hash:    [32]u8,
+}
+
+// module_read gives the module file of a service and its hash. The client
+// reads each file one time.
+module_read :: proc(client: ^Call_Client, service: string) -> (file: []u8, hash: [32]u8, problem: string) {
+	for &item in client.modules {
+		if item.service == service {
+			return item.file, item.hash, ""
+		}
+	}
+	path := module_path(service)
+	bytes, err := os.read_entire_file(path, context.allocator)
+	if err != nil {
+		return nil, {}, fmt.tprintf("no module %s in %s: build it, or name a service of the build (%v)", service, path, err)
+	}
+	if module.validate(bytes) != .None {
+		delete(bytes)
+		return nil, {}, fmt.tprintf("%s is not a valid module", path)
+	}
+	item := Read_Module{service = strings.clone(service), file = bytes, hash = blake3.hash(bytes)}
+	append(&client.modules, item)
+	return item.file, item.hash, ""
 }
 
 // Parsed argument of the text of a call.
@@ -188,13 +222,9 @@ call_prepare :: proc(client: ^Call_Client, text: string) -> (call: Prepared_Call
 	if parse_problem != "" {
 		return {}, parse_problem
 	}
-	path := module_path(service)
-	file, err := os.read_entire_file(path, context.temp_allocator)
-	if err != nil {
-		return {}, fmt.tprintf("no module %s in %s: build it, or name a service of the build (%v)", service, path, err)
-	}
-	if module.validate(file) != .None {
-		return {}, fmt.tprintf("%s is not a valid module", path)
+	file, hash, read_problem := module_read(client, service)
+	if read_problem != "" {
+		return {}, read_problem
 	}
 	index := module.export_find(file, export)
 	head, _ := module.header(file)
@@ -279,7 +309,7 @@ call_prepare :: proc(client: ^Call_Client, text: string) -> (call: Prepared_Call
 		request.result_start, request.result_count = 0, 0
 	}
 	remote.name_set(&request.service, service)
-	request.hash = blake3.hash(file)
+	request.hash = hash
 	return {service = service, export = export, file = file, function = function, index = index, request = request, bytes = client.region[:end]}, ""
 }
 
