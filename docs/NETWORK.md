@@ -1,6 +1,6 @@
 # The network: TCP as a library in the program
 
-Status: done on 2026-11-11 (choices NEW-1 to NEW-15 of `FIRST_MILESTONE.md`). The first layer of the network (step 40, choices 191 to 209 of `FIRST_MILESTONE.md`) is the base: the frame service, the network service, endpoints of datagrams. `GLOSSARY.md` defines the terms.
+Status: done on 2026-11-11 (choices 295 to 309 of `FIRST_MILESTONE.md`). The first layer of the network (step 40, choices 191 to 209 of `FIRST_MILESTONE.md`) is the base: the frame service, the network service, endpoints of datagrams. `GLOSSARY.md` defines the terms.
 
 ## What the owner decided
 
@@ -147,10 +147,10 @@ A third network machine (`scenario_tcp`) has the peer of the tool on `-netdev dg
 
 ### What the tests found
 
-- With batches of segments, a receiver must still send one duplicate ACK for each segment after a hole; with one ACK for a batch, no fast retransmit started (choice NEW-8).
+- With batches of segments, a receiver must still send one duplicate ACK for each segment after a hole; with one ACK for a batch, no fast retransmit started (choice 302).
 - 1 MiB with 5 % loss in each direction, on the host link of the tests: 5 to 10 s with Reno and NewReno, 1.5 to 2.7 s with Limited Transmit. The timeouts that remain come mostly from a retransmission that the link dropped too: SACK would remove more of them.
 - libslirp acknowledges the FIN of a connection of `guestfwd` and does not send its own: the connection of `fetch` stays in FIN-WAIT-2.
-- The measures are in choice NEW-15 of `FIRST_MILESTONE.md`.
+- The measures are in choice 309 of `FIRST_MILESTONE.md`.
 
 ## QUIC: what it reuses, and what it needs
 
