@@ -68,9 +68,11 @@ right :: proc "contextless" (canvas: graphics.Canvas, x, y: int, text: string, c
 }
 
 // fact draws "name   value" on one line of a card.
-fact :: proc "contextless" (canvas: graphics.Canvas, y: int, name: string, value: string, color: graphics.Color = graphics.COLOR_TEXT) {
+// A name and its value. The value starts at value_column: one character of
+// 8 pixels after the longest name of its card.
+fact :: proc "contextless" (canvas: graphics.Canvas, y: int, name: string, value: string, color: graphics.Color = graphics.COLOR_TEXT, value_column := 120) {
 	graphics.text(canvas, 0, y, name, graphics.COLOR_DIM)
-	graphics.text(canvas, 120, y, value, value == "" ? graphics.COLOR_DIM : color)
+	graphics.text(canvas, value_column, y, value, value == "" ? graphics.COLOR_DIM : color)
 }
 
 size_text :: proc "contextless" (buffer: []u8, bytes: u64) -> string {
@@ -123,6 +125,8 @@ state_color :: proc "contextless" (state: tcp.State) -> graphics.Color {
 
 // The columns of the table of connections (a card 536 pixels wide).
 COLUMN_STATE :: 120
+// "new connections", the longest name of MEASURES, has 15 characters.
+MEASURES_VALUE_COLUMN :: 136
 COLUMN_IN :: 288 // Right edges.
 COLUMN_OUT :: 368
 COLUMN_RTT :: 440
@@ -232,15 +236,15 @@ draw :: proc "contextless" (window: ^display.Window) {
 
 	// The measures, with the cycle counter.
 	inside = card(canvas, 512, 8, 456, 160, "MEASURES", "system.nanoseconds", graphics.COLOR_MACHINE)
-	fact(inside, 0, "handshake", handshake_last == 0 ? "" : system.format(buffer[:], time_text(other[:], handshake_last), ", least ", handshake_least, " us"), graphics.COLOR_MACHINE)
-	fact(inside, 20, "one connection", best_keep_alive_rate == 0 ? "" : system.format(buffer[:], best_keep_alive_rate, " requests in 1 s, the best"), graphics.COLOR_MACHINE)
-	fact(inside, 40, "new connections", best_new_connection_rate == 0 ? "" : system.format(buffer[:], best_new_connection_rate, " requests in 1 s, the best"), graphics.COLOR_MACHINE)
-	fact(inside, 60, "one second", best_second_requests == 0 ? "" : system.format(buffer[:], best_second_requests, " requests at most"), graphics.COLOR_MACHINE)
-	fact(inside, 80, "one draw", draw_time == 0 ? "" : time_text(buffer[:], draw_time), graphics.COLOR_TEXT)
+	fact(inside, 0, "handshake", handshake_last == 0 ? "" : system.format(buffer[:], time_text(other[:], handshake_last), ", least ", handshake_least, " us"), graphics.COLOR_MACHINE, MEASURES_VALUE_COLUMN)
+	fact(inside, 20, "one connection", best_keep_alive_rate == 0 ? "" : system.format(buffer[:], best_keep_alive_rate, " requests in 1 s, the best"), graphics.COLOR_MACHINE, MEASURES_VALUE_COLUMN)
+	fact(inside, 40, "new connections", best_new_connection_rate == 0 ? "" : system.format(buffer[:], best_new_connection_rate, " requests in 1 s, the best"), graphics.COLOR_MACHINE, MEASURES_VALUE_COLUMN)
+	fact(inside, 60, "one second", best_second_requests == 0 ? "" : system.format(buffer[:], best_second_requests, " requests at most"), graphics.COLOR_MACHINE, MEASURES_VALUE_COLUMN)
+	fact(inside, 80, "one draw", draw_time == 0 ? "" : time_text(buffer[:], draw_time), graphics.COLOR_TEXT, MEASURES_VALUE_COLUMN)
 	if secret_weak {
-		fact(inside, 100, "ISN secret", "weak: the cycle counter", graphics.COLOR_FAILED)
+		fact(inside, 100, "ISN secret", "weak: the cycle counter", graphics.COLOR_FAILED, MEASURES_VALUE_COLUMN)
 	} else {
-		fact(inside, 100, "ISN secret", secret_source, graphics.COLOR_TEXT)
+		fact(inside, 100, "ISN secret", secret_source, graphics.COLOR_TEXT, MEASURES_VALUE_COLUMN)
 	}
 
 	// The connection table, live, then the connections that ended.
