@@ -738,5 +738,5 @@ draw :: proc "contextless" (window: ^display.Window) {
 	}
 	y += 8
 	line: [160]u8
-	graphics.text(canvas, 16, y, system.format(line[:], "with its error record, a failure takes ", kernel_failed, " ns in a kernel operation (", kernel_good, " ns for a success) and ", direct_failed, " ns in a direct call (", direct_good, " ns)"), COLOR_DIM)
+	graphics.text(canvas, 16, y, system.format(line[:], "a failure with its error record: ", kernel_failed, " ns in a kernel operation (success: ", kernel_good, " ns), ", direct_failed, " ns in a direct call (success: ", direct_good, " ns)"), COLOR_DIM)
 }
