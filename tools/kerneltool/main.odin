@@ -320,7 +320,7 @@ run_check :: proc(args: []string) -> int {
 		}
 		fmt.printfln("kerneltool: test passed: contract:%s compiles with the contract library only", name)
 	}
-	for folder in ([]string{"contract/blake3", "contract/isolated", "contract/remote", "support/information", "support/network", "tools/kerneltool"}) {
+	for folder in ([]string{"contract/blake3", "contract/isolated", "contract/remote", "support/bar", "support/information", "support/network", "tools/kerneltool"}) {
 		name, _ := strings.replace_all(folder, "/", "_", context.temp_allocator)
 		if !run({"odin", "test", folder, "-vet", CONTRACT_LIBRARY, SUPPORT_LIBRARY, strings.concatenate({"-out:" + BUILD_FOLDER + "/test_", name}, context.temp_allocator)}) {
 			return EXIT_FAILURE

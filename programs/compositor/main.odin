@@ -44,6 +44,7 @@ POINTER_CELL :: 2 // The pointer is drawn with squares of 2 pixels.
 POINTER_WIDTH :: 8 * POINTER_CELL
 POINTER_HEIGHT :: 11 * POINTER_CELL
 CLOCK_WIDTH :: 8 * 8 // "00:00:00"
+LAUNCHER_HINT :: "launcher: super" // In the bar, at the left of the time.
 
 Client :: struct {
 	ring_memory: system.Handle, // 0: the slot is free.
@@ -109,6 +110,14 @@ frames: u64
 // person drags a window.
 full_measure: bool // The next frame draws the whole screen, and the log has its time.
 move_frames, move_time, move_longest: u64 // Nanoseconds.
+// The launcher: the panel that the key super opens (docs/DESIGN.md, section 9).
+launcher_open: bool
+typed: [bar.TYPED_CAPACITY]u8 // The part of a name that the person typed.
+typed_count: int
+matches: [len(bar.names)]int // Indexes in bar.names: the names that contain the typed part.
+match_count: int
+choice: int // The chosen line: an index in matches.
+kept_key: u32 // A key that the launcher took when it was pressed: its release goes to no program.
 // The colors of one line of a title bar, and of its lighter top line.
 title_row, title_light: [display.SURFACE_LIMIT + 2 * BORDER]graphics.Color
 
@@ -265,7 +274,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		for record in system.receive(&input.commands) {
 			#partial switch display.Input(record.kind) {
 			case .Key:
-				if order_count > 0 {
+				if !launcher_key(u32(record.values[0]), u8(record.values[1]), record.values[2] != 0) && order_count > 0 {
 					send(&clients[order[order_count - 1]], ring.Record{kind = u32(display.Event_Kind.Key), values = record.values})
 				}
 			case .Pointer:
@@ -411,6 +420,14 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32) 
 	held := buttons != 0 || new_buttons != 0
 	buttons = new_buttons
 
+	if launcher_open {
+		// Any press closes the launcher. The pointer does nothing else
+		// while the launcher is open.
+		if pressed {
+			launcher_close("a press of the pointer")
+		}
+		return
+	}
 	if dragging >= 0 {
 		if buttons & display.BUTTON_LEFT != 0 {
 			damage_window(&clients[dragging])
@@ -551,6 +568,8 @@ draw_area :: proc "contextless" (area: Rectangle, now: u64) {
 		button_draw(canvas, left + origin_x, top + origin_y, button_width, button_height, bar.LABEL, menu_open == .Programs)
 		left, top, button_width, button_height = bar.windows_button()
 		button_draw(canvas, left + origin_x, top + origin_y, button_width, button_height, bar.WINDOWS_LABEL, menu_open == .Windows)
+		hint_x := frame.width - CLOCK_WIDTH - 32 - graphics.text_width(LAUNCHER_HINT) + origin_x
+		graphics.text(canvas, graphics.text(canvas, hint_x, y, "launcher: ", graphics.COLOR_DIM), y, "super", graphics.COLOR_TEXT)
 		seconds := now / 1000
 		x := frame.width - CLOCK_WIDTH - 16 + origin_x
 		x = graphics.unsigned(canvas, x, y, seconds / 3600, graphics.COLOR_TEXT, 2)
@@ -593,6 +612,10 @@ draw_area :: proc "contextless" (area: Rectangle, now: u64) {
 			}
 			graphics.text(canvas, x + bar.PADDING, y + 4, name, index == menu_line ? graphics.COLOR_WHITE : graphics.COLOR_TEXT)
 		}
+	}
+
+	if launcher_open {
+		launcher_draw(canvas, origin_x, origin_y)
 	}
 
 	for row, y in pointer_shape {
@@ -702,17 +725,187 @@ button_draw :: proc "contextless" (canvas: graphics.Canvas, x, y, width, height:
 
 // card_draw draws a card of the rules (docs/DESIGN.md, section 3): a border
 // of 1 pixel in the color of the kernel, the surface of a card, and the
-// title, the caption and the count of its lines.
-card_draw :: proc "contextless" (canvas: graphics.Canvas, x, y, width, height: int, title, caption: string, count: u64) {
+// title, the caption and the count of its lines. With a total, the count
+// reads "count of total".
+card_draw :: proc "contextless" (canvas: graphics.Canvas, x, y, width, height: int, title, caption: string, count: u64, total: u64 = 0) {
 	accent :: graphics.COLOR_KERNEL
 	graphics.block(canvas, x, y, width, height, graphics.shade(accent, 28), graphics.shade(accent, 14))
 	graphics.block(canvas, x + 1, y + 1, width - 2, height - 2, graphics.COLOR_CARD_TOP, graphics.COLOR_CARD_BOTTOM)
 	graphics.block(canvas, x + graphics.CARD_MARGIN, y + 12, 4, 16, graphics.shade(accent, 130), accent)
 	after := graphics.text(canvas, x + graphics.CARD_MARGIN + 12, y + 12, title, accent)
 	graphics.text(canvas, after + 16, y + 12, caption, graphics.COLOR_DIM)
-	digits := 1
-	for rest := count / 10; rest != 0; rest /= 10 {
-		digits += 1
+	digits :: proc "contextless" (value: u64) -> int {
+		count := 1
+		for rest := value / 10; rest != 0; rest /= 10 {
+			count += 1
+		}
+		return count
 	}
-	graphics.unsigned(canvas, x + width - graphics.CARD_MARGIN - digits * graphics.CELL_WIDTH, y + 12, count, graphics.COLOR_TEXT)
+	right := x + width - graphics.CARD_MARGIN
+	if total != 0 {
+		right -= graphics.text_width(" of ") + digits(total) * graphics.CELL_WIDTH
+		graphics.unsigned(canvas, graphics.text(canvas, right, y + 12, " of ", graphics.COLOR_DIM), y + 12, total, graphics.COLOR_TEXT)
+	}
+	graphics.unsigned(canvas, right - digits(count) * graphics.CELL_WIDTH, y + 12, count, graphics.COLOR_TEXT)
+}
+
+// The panel of the launcher, in the middle of the screen, on the grid.
+LAUNCHER_WIDTH :: 384
+LAUNCHER_ROWS :: 10 // The lines of the list that the panel shows.
+LAUNCHER_INPUT :: graphics.CARD_TITLE // The top of the input line, in the panel.
+LAUNCHER_LIST :: LAUNCHER_INPUT + 24 + 8 // The top of the list.
+LAUNCHER_HEIGHT :: LAUNCHER_LIST + LAUNCHER_ROWS * bar.LINE_HEIGHT + 8 + graphics.LINE_HEIGHT + graphics.CARD_MARGIN
+
+launcher_place :: proc "contextless" () -> (x, y: int) {
+	return (screen.width - LAUNCHER_WIDTH) / 2 / graphics.GRID * graphics.GRID, (screen.height - LAUNCHER_HEIGHT) / 2 / graphics.GRID * graphics.GRID
+}
+
+damage_launcher :: proc "contextless" () {
+	x, y := launcher_place()
+	damage_add(x, y, LAUNCHER_WIDTH, LAUNCHER_HEIGHT)
+}
+
+// launcher_key takes a key for the launcher. It gives true if the key is
+// for the launcher, and false if it goes to the window that has the focus.
+// The key super opens and closes the launcher. While the launcher is open,
+// it takes each key: a character adds to the typed part, backspace removes
+// the last one, up and down move the choice, enter starts the chosen
+// program, escape closes the launcher.
+launcher_key :: proc "contextless" (code: u32, character: u8, pressed: bool) -> bool {
+	if !pressed {
+		if code == kept_key {
+			kept_key = 0
+			return true
+		}
+		return launcher_open || code == display.KEY_SUPER
+	}
+	if code == display.KEY_SUPER {
+		if launcher_open {
+			launcher_close("the key super")
+		} else {
+			launcher_open = true
+			typed_count = 0
+			if menu_open != .None {
+				menu_open = .None
+				menu_line = -1
+				damage_menu()
+			}
+			launcher_filter()
+			system.log_in("surfaces", .Info, "compositor: the launcher is open")
+		}
+		return true
+	}
+	if !launcher_open {
+		return false
+	}
+	kept_key = code
+	switch {
+	case code == display.KEY_ESCAPE:
+		launcher_close("the key escape")
+	case code == display.KEY_ENTER:
+		if match_count == 0 {
+			system.log_in("surfaces", .Info, "compositor: the launcher has no program to start")
+			return true
+		}
+		name := bar.names[matches[choice]]
+		packed := system.name_pack(name)
+		system.send(&control.completions, ring.Record{kind = u32(display.Control.Start), values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3]}})
+		system.log_in("surfaces", .Info, "compositor: the launcher starts ", name)
+		launcher_close("")
+	case code == display.KEY_UP || code == display.KEY_DOWN:
+		if match_count > 0 {
+			choice = (choice + (code == display.KEY_UP ? match_count - 1 : 1)) % match_count
+			system.log_in("surfaces", .Info, "compositor: the launcher chooses ", bar.names[matches[choice]])
+			damage_launcher()
+		}
+	case code == display.KEY_BACKSPACE:
+		if typed_count > 0 {
+			typed_count -= 1
+			launcher_filter()
+		}
+	case character > ' ' && character <= '~':
+		if typed_count < len(typed) {
+			typed[typed_count] = character
+			typed_count += 1
+			launcher_filter()
+		}
+	}
+	return true
+}
+
+// launcher_filter makes the list again from the typed part, and writes it
+// on the log: "compositor: the launcher lists 2 of 31 for "lo": log, locks".
+launcher_filter :: proc "contextless" () {
+	match_count = bar.filter(string(typed[:typed_count]), matches[:])
+	choice = 0
+	buffer: [len(bar.names) * 16]u8
+	count := 0
+	for index in matches[:match_count] {
+		if count > 0 {
+			count += copy(buffer[count:], ", ")
+		}
+		count += copy(buffer[count:], bar.names[index])
+	}
+	system.log_in("surfaces", .Info, "compositor: the launcher lists ", u64(match_count), " of ", u64(len(bar.names)), " for \"", string(typed[:typed_count]), "\": ", string(buffer[:count]))
+	damage_launcher()
+}
+
+launcher_close :: proc "contextless" (cause: string) {
+	launcher_open = false
+	damage_launcher()
+	if cause != "" {
+		system.log_in("surfaces", .Info, "compositor: the launcher is closed by ", cause)
+	}
+}
+
+// launcher_draw draws the panel of the launcher: a card with the count of
+// the names that match, the input line with the typed part and a caret, the
+// list with the chosen line in blue, and the keys of the launcher.
+launcher_draw :: proc "contextless" (canvas: graphics.Canvas, origin_x, origin_y: int) {
+	left, top := launcher_place()
+	x, y := left + origin_x, top + origin_y
+	card_draw(canvas, x, y, LAUNCHER_WIDTH, LAUNCHER_HEIGHT, "LAUNCHER", "bar.names", u64(match_count), len(bar.names))
+	inner_x := x + graphics.CARD_MARGIN
+	inner_width := LAUNCHER_WIDTH - 2 * graphics.CARD_MARGIN
+
+	// The input line: the typed part, then the caret.
+	input_y := y + LAUNCHER_INPUT
+	graphics.fill(canvas, inner_x, input_y, inner_width, 24, graphics.COLOR_TRACK)
+	graphics.fill(canvas, inner_x, input_y + 22, inner_width, 2, graphics.COLOR_TITLE)
+	after := graphics.text(canvas, inner_x + 8, input_y + 4, string(typed[:typed_count]), graphics.COLOR_WHITE)
+	graphics.fill(canvas, after + 1, input_y + 4, 2, graphics.CELL_HEIGHT, graphics.COLOR_TITLE)
+	if typed_count == 0 {
+		graphics.text(canvas, after + 8, input_y + 4, "type a part of a name", graphics.COLOR_DIM)
+	}
+
+	// The list. The first line shown keeps the choice on the panel.
+	list_y := y + LAUNCHER_LIST
+	if match_count == 0 {
+		end := graphics.text(canvas, inner_x + 8, list_y + 4, "no program has \"", graphics.COLOR_DIM)
+		end = graphics.text(canvas, end, list_y + 4, string(typed[:typed_count]), graphics.COLOR_TEXT)
+		graphics.text(canvas, end, list_y + 4, "\" in its name", graphics.COLOR_DIM)
+	}
+	first := max(choice - LAUNCHER_ROWS + 1, 0)
+	for row in 0 ..< min(match_count - first, LAUNCHER_ROWS) {
+		index := first + row
+		name := bar.names[matches[index]]
+		line_y := list_y + row * bar.LINE_HEIGHT
+		chosen := index == choice
+		if chosen {
+			graphics.fill(canvas, inner_x, line_y, inner_width, bar.LINE_HEIGHT, graphics.COLOR_TITLE)
+			graphics.text(canvas, inner_x + inner_width - 8 - graphics.text_width("enter: start"), line_y + 4, "enter: start", graphics.COLOR_TEXT)
+		}
+		graphics.text(canvas, inner_x + 8, line_y + 4, name, chosen ? graphics.COLOR_WHITE : graphics.COLOR_TEXT)
+		// The typed part in the name: a line of 2 pixels under it.
+		if at := bar.find(name, string(typed[:typed_count])); typed_count > 0 && at >= 0 {
+			graphics.fill(canvas, inner_x + 8 + at * graphics.CELL_WIDTH, line_y + 20, typed_count * graphics.CELL_WIDTH, 2, chosen ? graphics.COLOR_WHITE : graphics.COLOR_KERNEL)
+		}
+	}
+	if match_count > LAUNCHER_ROWS {
+		// More names than lines: a bar at the right says which part the list shows.
+		track_height := LAUNCHER_ROWS * bar.LINE_HEIGHT
+		graphics.fill(canvas, inner_x + inner_width + 6, list_y, 2, track_height, graphics.COLOR_TRACK)
+		graphics.fill(canvas, inner_x + inner_width + 6, list_y + first * track_height / match_count, 2, LAUNCHER_ROWS * track_height / match_count, graphics.COLOR_DIM)
+	}
+	graphics.text(canvas, inner_x, list_y + LAUNCHER_ROWS * bar.LINE_HEIGHT + 8, "up down: choose   enter: start   esc: close", graphics.COLOR_DIM)
 }

@@ -56,6 +56,7 @@ KEY_HOME :: KEY_EXTENDED | 0x47
 KEY_END :: KEY_EXTENDED | 0x4F
 KEY_PAGE_UP :: KEY_EXTENDED | 0x49
 KEY_PAGE_DOWN :: KEY_EXTENDED | 0x51
+KEY_SUPER :: KEY_EXTENDED | 0x5B // The left key with the logo. The compositor keeps it: it opens the launcher.
 
 MODIFIER_SHIFT :: 1
 MODIFIER_CONTROL :: 2

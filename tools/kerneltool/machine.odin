@@ -29,6 +29,7 @@ MACHINE_STOP_OK :: 1
 Step_Kind :: enum {
 	Wait, // The log of the kernel has text, after the text of the last Wait.
 	Type, // Press the keys of text, then Enter.
+	Keys, // Press the keys of text, with no Enter.
 	Key, // Press one key: text is its QEMU name.
 	Click, // Press the left button at (x, y).
 	Launch, // Open the menu of the programs, and press the line of the program text.
@@ -292,6 +293,58 @@ scenario_network := [?]Step {
 	{kind = .Call, text = "monitor.served()", expected = "Served{calls = "},
 	{kind = .Front, text = "remote"},
 	{kind = .Shot, text = "remote"},
+	// The desktop: the person closes remote and manual, the launcher starts
+	// two programs, and the person places four windows. The title bar of
+	// the window in front goes from blue to a darker blue; the other title
+	// bars are quiet.
+	{kind = .Close, text = "remote"},
+	{kind = .Wait, text = "root: remote stopped"},
+	{kind = .Close, text = "manual"},
+	{kind = .Wait, text = "root: manual stopped"},
+	{kind = .Key, text = "meta_l"},
+	{kind = .Wait, text = "compositor: the launcher is open"},
+	{kind = .Keys, text = "lif"},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "compositor: the launcher starts life"},
+	{kind = .Wait, text = "compositor: surface life"},
+	{kind = .Key, text = "meta_l"},
+	{kind = .Wait, text = "compositor: the launcher is open"},
+	{kind = .Keys, text = "pla"},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "compositor: the launcher starts plasma"},
+	{kind = .Wait, text = "compositor: surface plasma"},
+	// The windows move from the one in front to the one at the back: no
+	// window covers the title bar of the next one. Then each comes to the
+	// front, from the back to the front.
+	{kind = .Move, text = "plasma", to_x = 440, to_y = 120},
+	{kind = .Move, text = "life", to_x = 8, to_y = 416},
+	{kind = .Move, text = "monitor", to_x = 572, to_y = 384},
+	{kind = .Move, text = "console", to_x = 8, to_y = 40},
+	{kind = .Front, text = "life"},
+	{kind = .Front, text = "monitor"},
+	{kind = .Front, text = "plasma"},
+	{kind = .Shot, text = "desktop"},
+	// The list narrows at each key: the names that start with the typed
+	// part come first. The arrows move the choice.
+	{kind = .Key, text = "meta_l"},
+	{kind = .Wait, text = "compositor: the launcher is open"},
+	{kind = .Keys, text = "p"},
+	{kind = .Wait, text = " for \"p\": pages, plasma, paint, processors, "},
+	{kind = .Key, text = "down"},
+	{kind = .Wait, text = "compositor: the launcher chooses plasma"},
+	{kind = .Shot, text = "launcher"},
+	{kind = .Key, text = "esc"},
+	{kind = .Wait, text = "compositor: the launcher is closed by the key escape"},
+	// A part that no name has: the list is empty, and Enter starts nothing.
+	{kind = .Key, text = "meta_l"},
+	{kind = .Wait, text = "compositor: the launcher is open"},
+	{kind = .Keys, text = "xyz"},
+	{kind = .Wait, text = "compositor: the launcher lists 0 of "},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "compositor: the launcher has no program to start"},
+	{kind = .Shot, text = "launcher_empty"},
+	{kind = .Key, text = "meta_l"},
+	{kind = .Wait, text = "compositor: the launcher is closed by the key super"},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "memory()"},
 	{kind = .Wait, text = " pages: all the free pages"},
@@ -511,11 +564,19 @@ scenario := [?]Step {
 	{kind = .Click, x = 662, y = 446}, // The blue color.
 	{kind = .Drag, x = 760, y = 520, to_x = 560, to_y = 700},
 	{kind = .Drag, x = 800, y = 600, to_x = 960, to_y = 600},
-	{kind = .Launch, text = "plasma"},
+	// The launcher: the key super opens it, the typed part narrows the
+	// list, and Enter starts the chosen program.
+	{kind = .Key, text = "meta_l"},
+	{kind = .Wait, text = "compositor: the launcher is open"},
+	{kind = .Keys, text = "pla"},
+	{kind = .Wait, text = "compositor: the launcher lists 1 of "},
+	{kind = .Wait, text = " for \"pla\": plasma"},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "compositor: the launcher starts plasma"},
 	{kind = .Wait, text = "plasma: ok", any_order = true},
 	{kind = .Wait, text = "compositor: surface plasma"},
 	{kind = .Drag, x = 250, y = 182, to_x = 276, to_y = 150},
-	{kind = .Shot, text = "desktop"},
+	{kind = .Shot, text = "desktop_moved"},
 	// The menu of the programs: the button of the bar opens and closes it.
 	{kind = .Click, x = 116, y = 14},
 	{kind = .Shot, text = "menu"},
@@ -1627,7 +1688,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				return false
 			}
 			fmt.printfln("kerneltool: test passed: the stack trace after \"%s\" names the functions %s", step.text, found)
-		case .Type:
+		case .Type, .Keys:
 			for i in 0 ..< len(step.text) {
 				name := key_name(step.text[i])
 				if name == "" {
@@ -1637,8 +1698,10 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				monitor_send(machine, "sendkey ", name, " 20")
 				time.sleep(KEY_PAUSE)
 			}
-			monitor_send(machine, "sendkey ret 20")
-			time.sleep(KEY_PAUSE)
+			if step.kind == .Type {
+				monitor_send(machine, "sendkey ret 20")
+				time.sleep(KEY_PAUSE)
+			}
 		case .Key:
 			monitor_send(machine, "sendkey ", step.text, " 20")
 			time.sleep(KEY_PAUSE)
