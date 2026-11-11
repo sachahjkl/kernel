@@ -1,4 +1,4 @@
-package system
+package sentence
 
 import module "contract:module"
 import op "contract:operation"
@@ -7,7 +7,7 @@ import op "contract:operation"
 // types of an export (module.Function).
 
 @(rodata)
-right_names := [Right]string {
+right_names := [op.Right]string {
 	.Give    = "Give",
 	.Read    = "Read",
 	.Write   = "Write",
@@ -34,9 +34,9 @@ object_names := [op.Object_Kind]string {
 }
 
 // write_rights writes the names of rights, with a text between two names.
-write_rights :: proc "contextless" (writer: ^Writer, rights: Rights, between: string) {
+write_rights :: proc "contextless" (writer: ^Writer, rights: op.Rights, between: string) {
 	first := true
-	for right in Right {
+	for right in op.Right {
 		if right in rights {
 			write_part(writer, first ? "" : between)
 			write_part(writer, right_names[right])
@@ -74,7 +74,7 @@ write_type :: proc "contextless" (writer: ^Writer, file: []u8, type: module.Type
 		}
 	case .Handle:
 		write_part(writer, "Handle")
-		if rights := transmute(Rights)detail; rights != {} {
+		if rights := transmute(op.Rights)detail; rights != {} {
 			write_part(writer, "(")
 			write_rights(writer, rights, ", ")
 			write_part(writer, ")")

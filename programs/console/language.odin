@@ -1,6 +1,7 @@
 package console
 
 import module "contract:module"
+import "support:sentence"
 import "support:system"
 
 // The language of the console.
@@ -130,7 +131,7 @@ print_value :: proc "contextless" (value: Value, nested := false) {
 				buffer = buffer[:],
 			}
 			system.write_rights(&writer, rights, ", ")
-			print(": ", system.object_names[kind])
+			print(": ", sentence.object_names[kind])
 			if kind != .None {
 				print(" (", system.written(&writer), ")")
 			}

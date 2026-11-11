@@ -4,6 +4,7 @@ import "contract:errors"
 import "contract:isolated"
 import "support:graphics"
 import "support:information"
+import "support:sentence"
 import "support:system"
 
 // The manual is also the service of the information of the modules
@@ -98,7 +99,7 @@ described :: proc "c" (words: ^string, result: ^[]information.Export) -> i64 {
 // handles gives the exports, in each module of the boot image, that take a handle with a right: Read, Write, Control, and the other rights of the kernel. The result is the count of rows, or a negative number with an error record. The error kind: Absent (-1, no right has this name).
 @(export, link_name = "handles")
 handles :: proc "c" (right: ^string, result: ^[]information.Export, error: ^errors.Error_Record) -> i64 {
-	for name, which in system.right_names {
+	for name, which in sentence.right_names {
 		if name == right^ {
 			return i64(information.handles(catalog(), which, result^))
 		}

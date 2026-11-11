@@ -35,7 +35,7 @@ BUILD_FOLDER :: "build"
 // flake.nix gives the same two flags to the compiler when it builds this tool.
 CONTRACT_LIBRARY :: "-collection:contract=contract"
 SUPPORT_LIBRARY :: "-collection:support=support"
-CONTRACT_PACKAGES :: []string{"blake3", "block", "boot_info", "datagram", "errors", "frame", "isolated", "module", "operation", "ring", "store"}
+CONTRACT_PACKAGES :: []string{"blake3", "block", "boot_info", "datagram", "errors", "frame", "isolated", "module", "operation", "remote", "ring", "store"}
 BOOT_OBJECT_FOLDER :: BUILD_FOLDER + "/boot"
 BOOT_PROGRAM :: BOOT_OBJECT_FOLDER + "/BOOTX64.EFI"
 BOOT_VOLUME :: BUILD_FOLDER + "/boot_volume.img"
@@ -314,7 +314,7 @@ run_check :: proc(args: []string) -> int {
 		}
 		fmt.printfln("kerneltool: test passed: contract:%s compiles with the contract library only", name)
 	}
-	for folder in ([]string{"contract/blake3", "contract/isolated", "support/information", "support/network", "tools/kerneltool"}) {
+	for folder in ([]string{"contract/blake3", "contract/isolated", "contract/remote", "support/information", "support/network", "tools/kerneltool"}) {
 		name, _ := strings.replace_all(folder, "/", "_", context.temp_allocator)
 		if !run({"odin", "test", folder, "-vet", CONTRACT_LIBRARY, SUPPORT_LIBRARY, strings.concatenate({"-out:" + BUILD_FOLDER + "/test_", name}, context.temp_allocator)}) {
 			return EXIT_FAILURE

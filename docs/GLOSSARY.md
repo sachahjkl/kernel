@@ -181,7 +181,12 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Datagram region | The memory of an endpoint where the program writes the data of a datagram to send, and where the network service writes the data of a datagram that arrives. The root service makes it with the datagram ring | socket buffer, send buffer, receive buffer |
 | Neighbor | An address of the link and its hardware address, that the network service learned from an answer to its own ARP request. The network service keeps 16 | ARP cache entry, neighbour entry |
 | Gateway | The machine of the link that carries IPv4 packets to other networks: 10.0.2.2 on the first machine | router, default route |
-| Peer | The part of the kernel tool that is the gateway and the echo server of the network of the test machine. QEMU gives it each frame as a UDP datagram on the loopback of the host. It reads each frame with its own code | mock, fake server, simulator |
+| Peer | The part of the kernel tool that is the gateway and the echo server of the network of the test machine. QEMU gives it each frame as a UDP datagram on the loopback of the host. It reads each frame with its own code. It also carries the call requests of the host to the remote service, and their call answers back | mock, fake server, simulator |
+| Host | The computer that runs QEMU and the kernel tool. The system does not run on it. For the network of the machine, the host is at the address of the gateway, 10.0.2.2 | build machine (for this), remote (for this) |
+| Remote service | The program `remote`. It holds one endpoint whose grant names the host, and the connections to the services that the root service lets it call. It receives call requests, makes each one as an isolated call, and sends the call answer. It does not read the descriptions of the exports: it checks places and sizes only (`programs/remote`, `contract/remote`) | RPC server, debug agent, gdbstub |
+| Call request | One datagram from the host to the remote service: a fixed header (`remote.Request`) that names the service, the hash of its module, the export, the places of the result and of the error record, then the bytes of the call region from offset 0 | RPC request, message, packet |
+| Call answer | The datagrams of the remote service for one call request: each one has a fixed header (`remote.Answer`) with the status, the integer result and the error record, then a part of the bytes of the result | response, reply |
+| Request number | The number that the host gives to a call request; each datagram of its call answer has it. A call request with the number of the last call answer gets that call answer again: the call does not run two times. 0 is no request | sequence number, request id, transaction id |
 
 ## Storage
 
