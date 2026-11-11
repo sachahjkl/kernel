@@ -83,13 +83,19 @@ Draw_Record :: struct {
 #assert(size_of(Draw_Record) == 40)
 
 // The draw records of one frame and the bytes of their texts, in the memory
-// of the program. full: a record or a text did not fit, and is not drawn.
+// of the program. full: a record or a text did not fit, and is not drawn:
+// the table is not the frame, so the next frame is drawn whole. refused: a
+// record that the caller asked for could not be made (a picture or a grid
+// that the table does not have, a grid whose cells are fewer than its
+// size). That record is missing, and each other record is in the table, so
+// the difference with the next frame stays exact.
 Draw_Table :: struct {
 	records:      []Draw_Record,
 	record_count: int,
 	text:         []u8,
 	text_count:   int,
 	full:         bool,
+	refused:      bool,
 	pictures:     []graphics.Canvas, // The pictures that Picture records show.
 	grids:        []Text_Grid, // The grids that Text_Grid records show.
 }
@@ -103,6 +109,7 @@ draw_table_clear :: proc "contextless" (table: ^Draw_Table) {
 	table.record_count = 0
 	table.text_count = 0
 	table.full = false
+	table.refused = false
 }
 
 // draw_table_copy makes target a copy of source: the table of the frame
@@ -116,6 +123,7 @@ draw_table_copy :: proc "contextless" (target, source: ^Draw_Table) -> bool {
 	target.record_count = source.record_count
 	target.text_count = source.text_count
 	target.full = source.full
+	target.refused = source.refused
 	target.pictures = source.pictures
 	// The cells of each grid: the target keeps its own copy, in its memory.
 	if len(target.grids) < len(source.grids) {
@@ -132,21 +140,30 @@ draw_table_copy :: proc "contextless" (target, source: ^Draw_Table) -> bool {
 	return true
 }
 
-// grid_valid says if the cells of a grid hold each of its rows.
+// grid_valid says if the cells of a grid hold each of its rows. The
+// numbers come from the caller: the check divides, so a large count of
+// rows or a large stride cannot wrap the product and pass.
 grid_valid :: proc "contextless" (grid: Text_Grid) -> bool {
-	if grid.rows <= 0 || grid.columns <= 0 {
-		return grid.rows >= 0 && grid.columns >= 0
+	if grid.rows < 0 || grid.columns < 0 || grid.stride < 0 {
+		return false
 	}
-	return grid.stride >= grid.columns && (grid.rows - 1) * grid.stride + grid.columns <= len(grid.cells)
+	if grid.rows == 0 || grid.columns == 0 {
+		return true
+	}
+	if grid.stride < grid.columns || grid.columns > len(grid.cells) {
+		return false
+	}
+	// (rows - 1) * stride + columns <= len(cells), with no product.
+	return grid.rows - 1 <= (len(grid.cells) - grid.columns) / grid.stride
 }
 
 // grid_size gives the count of cells from the first cell of a grid to its
-// last one.
+// last one, or 0 for a grid that grid_valid refuses.
 grid_size :: proc "contextless" (grid: Text_Grid) -> int {
-	if grid.rows <= 0 || grid.columns <= 0 {
+	if !grid_valid(grid) || grid.rows == 0 || grid.columns == 0 {
 		return 0
 	}
-	return min((grid.rows - 1) * grid.stride + grid.columns, len(grid.cells))
+	return (grid.rows - 1) * grid.stride + grid.columns
 }
 
 // record_append appends one record and gives its address, or nil when the
@@ -166,7 +183,7 @@ draw_rectangle :: proc "contextless" (table: ^Draw_Table, x, y, width, height: i
 	if width <= 0 || height <= 0 {
 		return
 	}
-	record_append(table, {kind = .Rectangle, x = coordinate(x), y = coordinate(y), width = coordinate(width), height = coordinate(height), first_color = color, element = element})
+	record_append(table, with_place({kind = .Rectangle, first_color = color, element = element}, x, y, width, height))
 }
 
 // draw_vertical_gradient appends the block of the rules: from top, on the
@@ -175,7 +192,7 @@ draw_vertical_gradient :: proc "contextless" (table: ^Draw_Table, x, y, width, h
 	if width <= 0 || height <= 0 {
 		return
 	}
-	record_append(table, {kind = .Vertical_Gradient, x = coordinate(x), y = coordinate(y), width = coordinate(width), height = coordinate(height), first_color = top, second_color = bottom, element = element})
+	record_append(table, with_place({kind = .Vertical_Gradient, first_color = top, second_color = bottom, element = element}, x, y, width, height))
 }
 
 // draw_horizontal_gradient appends a rectangle whose color goes from left,
@@ -184,12 +201,12 @@ draw_horizontal_gradient :: proc "contextless" (table: ^Draw_Table, x, y, width,
 	if width <= 0 || height <= 0 {
 		return
 	}
-	record_append(table, {kind = .Horizontal_Gradient, x = coordinate(x), y = coordinate(y), width = coordinate(width), height = coordinate(height), first_color = left, second_color = right, element = element})
+	record_append(table, with_place({kind = .Horizontal_Gradient, first_color = left, second_color = right, element = element}, x, y, width, height))
 }
 
 // draw_point_grid appends the grid of points of the background.
 draw_point_grid :: proc "contextless" (table: ^Draw_Table, x, y, width, height: int) {
-	record_append(table, {kind = .Point_Grid, x = coordinate(x), y = coordinate(y), width = coordinate(width), height = coordinate(height), first_color = graphics.COLOR_POINT})
+	record_append(table, with_place({kind = .Point_Grid, first_color = graphics.COLOR_POINT}, x, y, width, height))
 }
 
 // draw_folded_gap appends a part with no measure on this scale.
@@ -197,7 +214,7 @@ draw_folded_gap :: proc "contextless" (table: ^Draw_Table, x, y, width, height: 
 	if width <= 0 || height <= 0 {
 		return
 	}
-	record_append(table, {kind = .Folded_Gap, x = coordinate(x), y = coordinate(y), width = coordinate(width), height = coordinate(height), first_color = graphics.COLOR_DIM, second_color = graphics.COLOR_TRACK, element = element})
+	record_append(table, with_place({kind = .Folded_Gap, first_color = graphics.COLOR_DIM, second_color = graphics.COLOR_TRACK, element = element}, x, y, width, height))
 }
 
 // draw_picture appends the pixels of picture number index of the table, at
@@ -205,26 +222,26 @@ draw_folded_gap :: proc "contextless" (table: ^Draw_Table, x, y, width, height: 
 // difference sees the change.
 draw_picture :: proc "contextless" (table: ^Draw_Table, x, y: int, index: int, generation: u32, element: u32 = 0) {
 	if index < 0 || index >= len(table.pictures) {
-		table.full = true
+		table.refused = true
 		return
 	}
 	picture := table.pictures[index]
-	record_append(table, {kind = .Picture, x = coordinate(x), y = coordinate(y), width = coordinate(picture.width), height = coordinate(picture.height), text_start = u32(index), text_count = generation, element = element})
+	record_append(table, with_place({kind = .Picture, text_start = u32(index), text_count = generation, element = element}, x, y, picture.width, picture.height))
 }
 
 // draw_text_grid appends the grid number index of the table at (x, y): one
 // cell of the font of the system for each cell of the grid.
 draw_text_grid :: proc "contextless" (table: ^Draw_Table, x, y: int, index: int, element: u32 = 0) {
 	if index < 0 || index >= len(table.grids) {
-		table.full = true
+		table.refused = true
 		return
 	}
 	grid := table.grids[index]
 	if !grid_valid(grid) {
-		table.full = true
+		table.refused = true
 		return
 	}
-	record_append(table, {kind = .Text_Grid, x = coordinate(x), y = coordinate(y), width = coordinate(grid.columns * graphics.CELL_WIDTH), height = coordinate(grid.rows * graphics.CELL_HEIGHT), text_start = u32(index), element = element})
+	record_append(table, with_place({kind = .Text_Grid, text_start = u32(index), element = element}, x, y, grid.columns * graphics.CELL_WIDTH, grid.rows * graphics.CELL_HEIGHT))
 }
 
 // draw_line appends a straight line from one point to another, with a
@@ -306,7 +323,7 @@ line_rectangle :: proc "contextless" (record: Draw_Record) -> Rectangle {
 // draw_clip appends a clip: the next records are cut to the rectangle. A
 // width of 0 ends the cut.
 draw_clip :: proc "contextless" (table: ^Draw_Table, x, y, width, height: int) {
-	record_append(table, {kind = .Clip, x = coordinate(x), y = coordinate(y), width = coordinate(width), height = coordinate(height)})
+	record_append(table, with_place({kind = .Clip}, x, y, width, height))
 }
 
 // draw_text appends a run of text at (x, y), the top left corner of its
@@ -324,7 +341,7 @@ draw_text :: proc "contextless" (table: ^Draw_Table, x, y: int, text: string, co
 	copy(table.text[start:], text)
 	table.text_count += len(text)
 	scale := font_scale(font)
-	record_append(table, {kind = .Text, text_scale = u8(scale), x = coordinate(x), y = coordinate(y), width = coordinate(width), height = coordinate(graphics.CELL_HEIGHT * scale), first_color = color, text_start = u32(start), text_count = u32(len(text)), element = element})
+	record_append(table, with_place({kind = .Text, text_scale = u8(scale), first_color = color, text_start = u32(start), text_count = u32(len(text)), element = element}, x, y, width, graphics.CELL_HEIGHT * scale))
 	return x + width
 }
 
@@ -333,11 +350,41 @@ draw_text_right :: proc "contextless" (table: ^Draw_Table, right, y: int, text: 
 	draw_text(table, right - text_width(font, text), y, text, color, font, element)
 }
 
-// coordinate gives a place or a size as the i32 of a record: a value past
-// the i32 is cut to it.
+// The places of a record stay inside this distance of the corner of the
+// surface. Inside it, a size is the difference of two places and fits the
+// i32 of a record. A surface is far smaller.
+COORDINATE_LIMIT :: 1 << 30
+
+// with_place gives a record with the place and the size of a rectangle,
+// cut to COORDINATE_LIMIT. Each edge is cut, then the size is the
+// difference of the two edges: a cut place with its own cut size would move
+// the other edge, so a rectangle that covers the surface could draw
+// nothing.
 @(private)
-coordinate :: #force_inline proc "contextless" (value: int) -> i32 {
-	return i32(clamp(value, int(min(i32)), int(max(i32))))
+with_place :: proc "contextless" (record: Draw_Record, x, y, width, height: int) -> Draw_Record {
+	placed := record
+	left, right := cut_edges(x, width)
+	top, bottom := cut_edges(y, height)
+	placed.x, placed.width = i32(left), i32(right - left)
+	placed.y, placed.height = i32(top), i32(bottom - top)
+	return placed
+}
+
+// cut_edges gives the two edges of a place and a size, each cut to
+// COORDINATE_LIMIT. The sum of the two numbers cannot pass the int.
+@(private)
+cut_edges :: proc "contextless" (place, size: int) -> (start, end: int) {
+	switch {
+	case size >= 0 && place > max(int) - size:
+		end = max(int)
+	case size < 0 && place < min(int) - size:
+		end = min(int)
+	case:
+		end = place + size
+	}
+	start = clamp(place, -COORDINATE_LIMIT, COORDINATE_LIMIT - 1)
+	end = clamp(end, -COORDINATE_LIMIT, COORDINATE_LIMIT - 1)
+	return
 }
 
 // record_rectangle gives the rectangle that a record covers.
