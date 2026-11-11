@@ -81,6 +81,17 @@ execute_in_rectangle :: proc "contextless" (table: ^Draw_Table, canvas: graphics
 			if start + count <= table.text_count {
 				text_draw(view, x, y, string(table.text[start:start + count]), record.first_color, int(record.text_scale))
 			}
+		case .Folded_Gap:
+			graphics.fill(view, x, y, width, height, record.second_color)
+			// Two lines at an angle, from the bottom left up to the right.
+			graphics.line(view, x + 2, y + height - 4, x + width - 4, y + 4, 1, record.first_color)
+			graphics.line(view, x + 6, y + height - 4, x + width, y + 8, 1, record.first_color)
+		case .Picture:
+			index := int(record.text_start)
+			if index < len(table.pictures) {
+				picture := table.pictures[index]
+				graphics.copy(view, x, y, {pixels = picture.pixels, width = min(picture.width, width), height = min(picture.height, height), stride = picture.stride})
+			}
 		case .Point_Grid:
 			// The points are at 12 + 24 n of the surface, so that two areas
 			// of one surface show one grid. A point that starts before the

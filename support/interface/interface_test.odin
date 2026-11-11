@@ -508,3 +508,30 @@ a_gone_record_leaves_no_pixel :: proc(t: ^testing.T) {
 	draw_damage_on_surface(&now, canvas, damage.rectangles[:damage.count])
 	testing.expect_value(t, pixels[60 * 320 + 60], graphics.COLOR_BACKGROUND)
 }
+
+// A picture record: the difference sees a new generation, and the frame in
+// its damage equals the whole frame; a folded gap draws like the others.
+@(test)
+picture_and_folded_gap :: proc(t: ^testing.T) {
+	first, second: Tables
+	before, now := table_of(&first), table_of(&second)
+	cells: [16 * 8]graphics.Color
+	for &cell, index in cells {
+		cell = graphics.Color(index * 0x010203)
+	}
+	pictures := []graphics.Canvas{{pixels = raw_data(cells[:]), width = 16, height = 8, stride = 16}}
+	before.pictures, now.pictures = pictures, pictures
+	draw_rectangle(&before, 0, 0, 320, 200, graphics.COLOR_BACKGROUND)
+	draw_picture(&before, 40, 40, 0, 1)
+	draw_folded_gap(&before, 100, 100, 40, 24)
+	draw_rectangle(&now, 0, 0, 320, 200, graphics.COLOR_BACKGROUND)
+	draw_picture(&now, 40, 40, 0, 2)
+	draw_folded_gap(&now, 100, 100, 40, 24)
+	damage: Damage
+	damage_by_difference(&before, &now, &damage)
+	testing.expect_value(t, damage.count, 1)
+	testing.expect_value(t, damage.rectangles[0], Rectangle{40, 40, 56, 48})
+	partial_equals_whole(t, &before, &now, "a picture")
+	draw_picture(&now, 0, 0, 3, 1)
+	testing.expect(t, now.full, "a picture that the table does not have is refused")
+}

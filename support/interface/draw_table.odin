@@ -10,7 +10,7 @@ package interface
 
 import "support:graphics"
 
-DRAW_RECORD_VERSION :: 1 // A new kind of record, or a new field, is a new version.
+DRAW_RECORD_VERSION :: 2 // A new kind of record, or a new field, is a new version. 2: Folded_Gap, Picture.
 
 Draw_Kind :: enum u8 {
 	None                = 0,
@@ -20,6 +20,14 @@ Draw_Kind :: enum u8 {
 	Text                = 4, // The bytes text_start ..< text_start + text_count of the text table, in first_color.
 	Clip                = 5, // The next records are cut to this rectangle. Width 0: no cut.
 	Point_Grid          = 6, // The grid of points of the background (docs/DESIGN.md, section 3), in first_color.
+	// A part with no measure on this scale: the track with two lines at an
+	// angle in first_color, the one meaning of such lines (docs/DESIGN.md,
+	// section 2).
+	Folded_Gap          = 7,
+	// The pixels of a picture of the caller: text_start is its index in
+	// Draw_Table.pictures, text_count its generation (a new number when its
+	// pixels change). The picture is drawn at (x, y), cut to width x height.
+	Picture             = 8,
 }
 
 // One thing to draw: 40 bytes, little-endian (docs/INTERFACE.md, section 2.1).
@@ -47,6 +55,7 @@ Draw_Table :: struct {
 	text:         []u8,
 	text_count:   int,
 	full:         bool,
+	pictures:     []graphics.Canvas, // The pictures that Picture records show.
 }
 
 // A rectangle of the surface. right and bottom are not in it.
@@ -71,6 +80,7 @@ draw_table_copy :: proc "contextless" (target, source: ^Draw_Table) -> bool {
 	target.record_count = source.record_count
 	target.text_count = source.text_count
 	target.full = source.full
+	target.pictures = source.pictures
 	return true
 }
 
@@ -115,6 +125,26 @@ draw_horizontal_gradient :: proc "contextless" (table: ^Draw_Table, x, y, width,
 // draw_point_grid appends the grid of points of the background.
 draw_point_grid :: proc "contextless" (table: ^Draw_Table, x, y, width, height: int) {
 	record_append(table, {kind = .Point_Grid, x = coordinate(x), y = coordinate(y), width = coordinate(width), height = coordinate(height), first_color = graphics.COLOR_POINT})
+}
+
+// draw_folded_gap appends a part with no measure on this scale.
+draw_folded_gap :: proc "contextless" (table: ^Draw_Table, x, y, width, height: int, element: u32 = 0) {
+	if width <= 0 || height <= 0 {
+		return
+	}
+	record_append(table, {kind = .Folded_Gap, x = coordinate(x), y = coordinate(y), width = coordinate(width), height = coordinate(height), first_color = graphics.COLOR_DIM, second_color = graphics.COLOR_TRACK, element = element})
+}
+
+// draw_picture appends the pixels of picture number index of the table, at
+// (x, y). generation is a new number each time its pixels change: the
+// difference sees the change.
+draw_picture :: proc "contextless" (table: ^Draw_Table, x, y: int, index: int, generation: u32, element: u32 = 0) {
+	if index < 0 || index >= len(table.pictures) {
+		table.full = true
+		return
+	}
+	picture := table.pictures[index]
+	record_append(table, {kind = .Picture, x = coordinate(x), y = coordinate(y), width = coordinate(picture.width), height = coordinate(picture.height), text_start = u32(index), text_count = generation, element = element})
 }
 
 // draw_clip appends a clip: the next records are cut to the rectangle. A
