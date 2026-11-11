@@ -45,3 +45,21 @@ hostile_records_are_refused :: proc(t: ^testing.T) {
 	drawn = {records = &memory[0], count = 0, capacity = 4}
 	testing.expect_value(t, draw_background(&drawn, &area), 2)
 }
+
+// A table that did not fit stays "did not fit" through the next calls,
+// also a call that appends nothing (W5: a frame of 17 records in 16 places
+// gave a count of 16).
+@(test)
+a_table_that_did_not_fit_stays_so :: proc(t: ^testing.T) {
+	memory: [2]interface.Draw_Record
+	drawn := system.Table_To_Append(interface.Draw_Record){records = &memory[0], count = 0, capacity = 2}
+	text_memory: [16]u8
+	text := system.Bytes_To_Append{bytes = &text_memory[0], count = 0, capacity = 16}
+	area := Area{0, 0, 8, 8}
+	draw_background(&drawn, &area) // 2 records: full.
+	draw_background(&drawn, &area) // Did not fit.
+	testing.expect_value(t, drawn.count, 3)
+	empty := ""
+	draw_cell_text(&drawn, &text, &area, &empty, 0, 0) // Appends nothing.
+	testing.expect(t, drawn.count > drawn.capacity, "the table still did not fit")
+}

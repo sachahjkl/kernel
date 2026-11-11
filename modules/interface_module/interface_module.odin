@@ -90,6 +90,9 @@ frame_over_caller_tables :: proc "contextless" (over: ^Frame_Over_Caller_Tables,
 	if text != nil {
 		over.table.text, over.table.text_count = text.bytes[:text.capacity], int(min(text.count, text.capacity))
 	}
+	// A table that did not fit in a call before stays so: a count larger
+	// than its capacity on entry is the mark (W5 of the hostile read).
+	over.table.full = drawn.count > drawn.capacity || text != nil && text.count > text.capacity
 	over.frame = {table = &over.table, state = &no_state, input = &no_input}
 	return true
 }
@@ -99,13 +102,14 @@ frame_over_caller_tables :: proc "contextless" (over: ^Frame_Over_Caller_Tables,
 // capacity: "did not fit".
 @(private)
 counts_write_back :: proc "contextless" (over: ^Frame_Over_Caller_Tables, drawn: ^Draw_Records_To_Append, text: ^system.Bytes_To_Append) -> i64 {
+	entry_count := drawn.count
 	drawn.count = u64(over.table.record_count)
 	if text != nil {
 		text.count = u64(over.table.text_count)
 	}
 	if over.table.full {
 		if over.table.record_count >= len(over.table.records) {
-			drawn.count = drawn.capacity + 1
+			drawn.count = max(drawn.capacity + 1, min(entry_count, TABLE_LIMIT))
 		} else if text != nil {
 			text.count = text.capacity + 1
 		}
