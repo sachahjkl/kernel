@@ -110,6 +110,10 @@ post :: proc "contextless" (place: u32) {
 
 // pump reads the completions, runs one step of the table and sends its
 // segments; it waits until something happens or until the next timer.
+// The times of one exchange, in nanoseconds: where the time of a request
+// goes (the program, the services and the device before the wire, or after).
+exchange_started_at, first_segment_sent_at, first_segment_received_at, first_data_received_at: u64
+
 pump :: proc "contextless" () {
 	wait := system.wait_begin()
 	held_commands_push()
@@ -136,6 +140,14 @@ pump :: proc "contextless" () {
 			}
 		}
 	}
+	if count > 0 && first_segment_received_at == 0 {
+		first_segment_received_at = system.nanoseconds()
+	}
+	for item in incoming[:count] {
+		if first_data_received_at == 0 && len(item.segment) > tcp.HEADER {
+			first_data_received_at = system.nanoseconds()
+		}
+	}
 	now := system.nanoseconds() / 1000
 	output := tcp.Output{memory = region, place_size = PLACE_SIZE, places = free_places[:free_count], segments = segments[:]}
 	deadline, event_count := tcp.step(&table, incoming[:count], now, &output, events[:])
@@ -143,6 +155,9 @@ pump :: proc "contextless" () {
 		if event.connection == 0 {
 			seen += event.kinds
 		}
+	}
+	if output.count > 0 && first_segment_sent_at == 0 {
+		first_segment_sent_at = system.nanoseconds()
 	}
 	for item in segments[:output.count] {
 		command_push_or_hold(ring.Record{kind = u32(datagram.Command.Send), tag = SEND_TAG + item.place, values = {0 = u64(item.place) * PLACE_SIZE, 1 = u64(item.length), 2 = u64(item.remote_address), 3 = u64(item.remote_port)}})
@@ -193,6 +208,8 @@ Response :: struct {
 // pattern when body > 0, and reads the response.
 exchange :: proc "contextless" (request: string, body: int) -> (response: Response, ok: bool) {
 	deadline := system.time() + WAIT_LIMIT
+	exchange_started_at = system.nanoseconds()
+	first_segment_sent_at, first_segment_received_at, first_data_received_at = 0, 0, 0
 	written := 0
 	for written < len(request) {
 		count, error := tcp.write(&table, 0, transmute([]u8)request[written:])
@@ -228,6 +245,13 @@ exchange :: proc "contextless" (request: string, body: int) -> (response: Respon
 				copy(response.body[:], rest)
 				response.hash = web.fnv(response.hash, rest)
 				response.bytes = len(rest)
+				// The head and the whole body can come in one segment: the
+				// answer is whole now, with no wait for the next timer (that
+				// wait gave 40 ms to GET /hello, the time of the delayed ACK).
+				if response.bytes >= response.head.content_length {
+					return response, true
+				}
+				continue
 			}
 		} else if response.head.size != 0 {
 			for {
@@ -304,6 +328,7 @@ cases_run :: proc "contextless" () {
 		body = body[:len(body) - 1]
 	}
 	note("GET /hello", ok && response.head.status == 200, "status ", u64(response.head.status), ", \"", body, "\" in ", took, " us")
+	system.log("fetch: GET /hello: the request went to the network service after ", (first_segment_sent_at - exchange_started_at) / 1000, " us, the first segment came after ", (first_segment_received_at - exchange_started_at) / 1000, " us, the first segment with data after ", (first_data_received_at - exchange_started_at) / 1000, " us")
 
 	// 6. The large page: 1 MiB from the remote.
 	start = system.nanoseconds()

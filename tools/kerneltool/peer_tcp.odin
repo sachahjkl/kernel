@@ -1,6 +1,7 @@
 package kerneltool
 
 import "core:fmt"
+import "core:os"
 import "core:strings"
 import "core:sync"
 import "core:time"
@@ -83,6 +84,9 @@ Client :: struct {
 	ended_at:     time.Duration, // The server ended the connection: the time from the start of the case.
 	trickle_at:   time.Tick,
 	attempts:     int,
+	first_byte_at: time.Tick, // The first byte of the body of the answer, at the peer.
+	last_byte_at:  time.Tick,
+	written_at:    time.Tick, // The request and its body were in the send buffer of the peer.
 }
 
 Peer_Tcp :: struct {
@@ -224,9 +228,9 @@ peer_case_start :: proc(state: ^Peer_Tcp, name: string) -> bool {
 	switch name {
 	case "page":
 		add(state, client_page(true))
-	case "large":
+	case "large", "large again":
 		add(state, client_large())
-	case "sink":
+	case "sink", "sink again":
 		add(state, client_sink())
 	case "loss":
 		state.loss = 50
@@ -429,6 +433,10 @@ peer_case_summary :: proc(state: ^Peer_Tcp) -> string {
 		return "the peer sent a RST after 100 KiB of /large"
 	case "crowd":
 		return fmt.aprintf("%d connections at once, each with GET / and a close from the peer", state.client_count)
+	case "large", "large again":
+		client := &state.clients[0]
+		took := time.tick_diff(client.first_byte_at, client.last_byte_at)
+		return fmt.aprintf("1 MiB from the server, at the peer: %.1f ms from its first byte to its last one, %.1f MB/s; the load of the host %s", time.duration_milliseconds(took), f64(web.LARGE_SIZE) / max(time.duration_seconds(took), 1e-9) / 1e6, host_load())
 	case "leak":
 		return fmt.aprintf("%d segments by hand from 256 ports: a bare RST, a bare ACK, a SYN then a RST, a SYN that the library refuses; then a page came in %.1f ms", len(state.raw), time.duration_milliseconds(state.fetch_at - state.raw_time))
 	case "slow":
@@ -468,6 +476,18 @@ each_attack_ended :: proc(state: ^Peer_Tcp) -> bool {
 		}
 	}
 	return true
+}
+
+// host_load gives the load average of the host over one minute, from
+// /proc/loadavg: the measures of the tests run while other machines run.
+host_load :: proc() -> string {
+	bytes, err := os.read_entire_file("/proc/loadavg", context.temp_allocator)
+	if err != nil || len(bytes) == 0 {
+		return "not known"
+	}
+	text := string(bytes)
+	end := strings.index_byte(text, ' ')
+	return strings.clone(text[:max(end, 0)])
 }
 
 // client_run moves one client of a case.
@@ -614,6 +634,12 @@ client_run :: proc(peer: ^Peer, state: ^Peer_Tcp, client: ^Client, now: u64) {
 			}
 			if client.bytes < len(client.content) {
 				copy(client.content[client.bytes:], bytes)
+			}
+			if len(bytes) > 0 {
+				if client.first_byte_at == {} {
+					client.first_byte_at = time.tick_now()
+				}
+				client.last_byte_at = time.tick_now()
 			}
 			client.hash = web.fnv(client.hash, bytes)
 			client.bytes += len(bytes)

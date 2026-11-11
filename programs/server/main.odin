@@ -91,6 +91,7 @@ Session :: struct {
 	acknowledged:   u64, // bytes_sent of the connection at progress_at.
 	head_at:        u64, // Milliseconds: the first byte of the head.
 	body_at:        u64, // Milliseconds: the head of a body.
+	last_byte_sent_at: u64, // Nanoseconds: the last byte of the answer left this program (the ACK can wait for a delayed ACK of the remote).
 }
 
 // A connection that ended, as the window shows it.
@@ -380,9 +381,13 @@ answered :: proc "contextless" (index: int) {
 	speed: [24]u8
 	#partial switch session.page {
 	case .Large:
-		send_rate = rate(u64(web.LARGE_SIZE), took)
+		// The rate is to the time when the last byte left this program: the
+		// ACK of the last byte can wait 40 ms for the delayed ACK of the
+		// remote, which is not the speed of the transfer.
+		sent := max(session.last_byte_sent_at, session.request_start) - session.request_start
+		send_rate = rate(u64(web.LARGE_SIZE), sent)
 		send_best = max(send_best, send_rate)
-		system.log("server: sent /large to ", remote, ": ", u64(web.LARGE_SIZE), " bytes in ", took / 1000, " us, ", megabytes(speed[:], send_rate), ", ", connection.retransmissions, " retransmissions, ", connection.probes, " probes")
+		system.log("server: sent /large to ", remote, ": ", u64(web.LARGE_SIZE), " bytes, the last one left after ", sent / 1000, " us, ", megabytes(speed[:], send_rate), ", acknowledged after ", took / 1000, " us, ", connection.retransmissions, " retransmissions, ", connection.probes, " probes")
 	case .Sink:
 		receive_rate = rate(u64(session.body_bytes), system.nanoseconds() - session.body_start)
 		receive_best = max(receive_best, receive_rate)
@@ -575,6 +580,9 @@ exchange :: proc "contextless" (incoming: []tcp.Incoming) -> (deadline: u64) {
 			}
 			if connection.state == .Established || connection.state == .Close_Wait {
 				session := &sessions[index]
+				if session.wait_ack && session.last_byte_sent_at == 0 && connection.send_next - connection.send_unacknowledged >= connection.send_length {
+					session.last_byte_sent_at = system.nanoseconds()
+				}
 				if session.wait_ack && connection.bytes_sent >= session.acked_at {
 					answered(index)
 				}

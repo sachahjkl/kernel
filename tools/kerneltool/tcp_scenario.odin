@@ -49,6 +49,13 @@ scenario_tcp := [?]Step {
 	{kind = .Wait, text = " 2 challenges"},
 	{kind = .Peer, text = "crowd"},
 	{kind = .Wait, text = "server: 16 connections open at once"},
+	// Three more rounds of 1 MiB each way: the spread of the measure.
+	{kind = .Peer, text = "large again"},
+	{kind = .Peer, text = "sink again"},
+	{kind = .Peer, text = "large again"},
+	{kind = .Peer, text = "sink again"},
+	{kind = .Peer, text = "large again"},
+	{kind = .Peer, text = "sink again"},
 	// B1: segments that must not fill the admitted remotes, then a page.
 	{kind = .Peer, text = "leak"},
 	// B2: 32 connections of one host that make no progress: 8 refused by
