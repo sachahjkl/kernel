@@ -135,5 +135,5 @@ The owner asked for "a gradient from the current blue, as the start colour, to a
 
 - The boot display follows all rules.
 - The desktop (the compositor: background, bar, menus, windows, pointer, launcher) follows all rules, with one exception: the places of new windows are not on the grid. The main scenario of the machine test presses fixed places in windows at these places; to move them to the grid is to measure each of these places again.
-- `errors`, `locks` and `net` take all their colors from `support/graphics`. `log` and `pages` take the background, the text and the dim color from it.
+- `errors`, `locks`, `net` and `remote` take all their colors from `support/graphics`. `log` and `pages` take the background, the text and the dim color from it.
 - These programs still have their own colors, which are not the colors of the rules: `budget`, `clock`, `crowd`, `disk`, `flow`, `frames`, `imports`, `limits`, `manual`, `monitor`, `notes`, `origin`, `processors`, `rights`, `rings`, `tally`, `temple`, `terminal`, `threads`, `workers`, and `paint` (one color). `log` keeps a panel color `0x131B26` and colors for the levels and the programs; `pages` keeps a panel color and its colors of execute, write, read and guard pages. To bring each one to the rules is a change of its layout, not only of its constants: it is a later step.
