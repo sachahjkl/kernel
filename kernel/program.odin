@@ -859,7 +859,7 @@ page_give :: proc "contextless" (program: ^Program, address: u64, write: bool, e
 // present_count_broken stops the machine of the test when the count of the
 // present pages of a mapping is not what its page table holds.
 present_count_broken :: proc "contextless" (mapping: ^Mapping, walked: u64) -> ! {
-	intrinsics.atomic_store(&log_serial_only, true)
+	fault_report_begin()
 	log("kernel: the count of the present pages of a mapping is ", mapping.present_page_count, ", its page table holds ", walked)
 	machine_stop(3)
 }
@@ -1324,7 +1324,7 @@ kernel_interrupt :: proc "c" (frame: ^Frame) {
 		// The processor can hold any lock: it takes none.
 		name := EXCEPTION_NAMES[frame.vector]
 		address := cr2_read()
-		intrinsics.atomic_store(&log_serial_only, true)
+		fault_report_begin()
 		log("kernel: exception in the kernel: ", name, " vector ", frame.vector, " error ", Hex(frame.error), " at ", Hex(frame.rip), " address ", Hex(address), ": ", fault_reason(frame, address))
 		machine_stop(2)
 	}

@@ -351,7 +351,7 @@ frames_check :: proc "contextless" () {
 		budget_pages += budget.amounts.pages
 	}
 	if free_bits != free_frames || !marked || free_frames + stacked != budget_pages + reserved_pages - taken {
-		intrinsics.atomic_store(&log_serial_only, true)
+		fault_report_begin()
 		log("kernel: the frames do not add up: free bits ", free_bits, ", free frames ", free_frames, ", in stacks ", stacked, ", marked ", u64(marked), ", budgets ", budget_pages, ", reserved ", reserved_pages, ", taken ", taken)
 		machine_stop(3)
 	}
