@@ -1606,8 +1606,8 @@ scenario := [?]Step {
 	{kind = .Wait, text = "settings: drawn with font vector, subpixel order rgb, pointer theme owner, grid fit off"},
 	{kind = .Shot, text = "font_without_grid_fit"},
 	{kind = .Call, text = "settings.set(\"pointer_theme\", \"system\")", expected = "1"},
+	{kind = .Wait, text = "compositor: the pointer theme in use: System", any_order = true}, // Written before the line of the change.
 	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme system, grid fit off; "},
-	{kind = .Wait, text = "compositor: the pointer theme in use: System"},
 	{kind = .Point, inside_window = "settings", x = 100, y = 12, text = "move"}, // The title bar, in the theme of the system.
 	{kind = .Call, text = "settings.set(\"subpixel_order\", \"bgr\")", expected = "1"},
 	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order bgr, pointer theme system, grid fit off; "},
