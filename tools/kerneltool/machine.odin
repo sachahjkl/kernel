@@ -109,10 +109,10 @@ scenario_persist_first := [?]Step {
 	{kind = .Wait, text = "compositor: surface console", any_order = true},
 	// The storage service starts at boot, for the boot pass of settings.
 	{kind = .Wait, text = "root: started storage", any_order = true},
+	{kind = .Wait, text = "storage: ok, a new disk: generation 1, 16384 blocks", any_order = true},
 	{kind = .Wait, text = "settings: the boot pass: no settings kept: the defaults", any_order = true},
 	{kind = .Wait, text = "root: settings stopped with code 0"},
 	{kind = .Launch, text = "notes"},
-	{kind = .Wait, text = "storage: ok, a new disk: generation 1, 16384 blocks", any_order = true},
 	{kind = .Wait, text = "root: started notes"},
 	{kind = .Wait, text = "notes: a new store: no note, the count 0", any_order = true},
 	{kind = .Wait, text = "compositor: surface notes"},
