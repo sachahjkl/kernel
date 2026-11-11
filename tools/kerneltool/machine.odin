@@ -1045,7 +1045,7 @@ scenario := [?]Step {
 	// The monitor serves its tables; its grant of the machine was revoked
 	// above, so the kernel refuses its reports.
 	{kind = .Type, text = "connect(\"monitor\")"},
-	{kind = .Wait, text = "[console] monitor: 4 commands of a service that runs"},
+	{kind = .Wait, text = "[console] monitor: 5 commands of a service that runs"},
 	{kind = .Type, text = "monitor.count(\"processors\")"},
 	{kind = .Wait, text = "[console] error: monitor.count: refused with the status "},
 	{kind = .Type, text = "help()"},
