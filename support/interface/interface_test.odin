@@ -296,3 +296,93 @@ a_full_input_says_so :: proc(t: ^testing.T) {
 	input_clear(&input)
 	testing.expect(t, input_has_room(&input))
 }
+
+// partial_equals_whole draws the table before whole, then the table now in
+// its damage only, and compares the result with the table now drawn whole.
+@(private = "file")
+partial_equals_whole :: proc(t: ^testing.T, before, now: ^Draw_Table, name: string) {
+	partial := make([]graphics.Color, 320 * 200)
+	defer delete(partial)
+	whole := make([]graphics.Color, 320 * 200)
+	defer delete(whole)
+	draw_whole(before, partial)
+	damage: Damage
+	damage_by_difference(before, now, &damage)
+	canvas := graphics.Canvas{pixels = raw_data(partial), width = 320, height = 200, stride = 320}
+	execute_in_rectangles(now, canvas, damage.rectangles[:damage.count])
+	draw_whole(now, whole)
+	testing.expectf(t, string(transmute([]u8)partial) == string(transmute([]u8)whole), "%s: the frame in its damage differs from the whole frame", name)
+}
+
+@(private = "file")
+Case_Builder :: proc(table: ^Draw_Table, variant: int)
+
+// Each kind of record and each path of the difference (review W4).
+@(test)
+damage_is_never_too_small_for_each_kind :: proc(t: ^testing.T) {
+	cases := [?]struct {
+		name:  string,
+		build: Case_Builder,
+	} {
+		{"a clip that changes", proc(table: ^Draw_Table, variant: int) {
+				draw_rectangle(table, 0, 0, 320, 200, graphics.COLOR_BACKGROUND)
+				draw_clip(table, 10, 10, variant == 0 ? 100 : 60, 50)
+				draw_rectangle(table, 0, 0, 200, 100, graphics.COLOR_KERNEL)
+				draw_clip(table, 0, 0, 0, 0)
+				draw_rectangle(table, 150, 150, 20, 20, graphics.COLOR_PROGRAM)
+			}},
+		{"horizontal gradients", proc(table: ^Draw_Table, variant: int) {
+				draw_rectangle(table, 0, 0, 320, 200, graphics.COLOR_BACKGROUND)
+				draw_horizontal_gradient(table, 5, 5, 300, 24, graphics.COLOR_TITLE, variant == 0 ? graphics.COLOR_TITLE_END : graphics.COLOR_FAILED)
+				draw_horizontal_gradient(table, -40, 60, 700, 3, graphics.COLOR_TEXT, graphics.COLOR_DIM)
+			}},
+		{"text at the scales 1, 2 and 3", proc(table: ^Draw_Table, variant: int) {
+				draw_rectangle(table, 0, 0, 320, 200, graphics.COLOR_BACKGROUND)
+				draw_text(table, 4, 4, variant == 0 ? "one" : "two", graphics.COLOR_TEXT)
+				draw_text(table, 4, 30, variant == 0 ? "12" : "13", graphics.COLOR_TEXT, FONT_MEDIUM)
+				draw_text(table, 4, 70, variant == 0 ? "45" : "46", graphics.COLOR_TEXT, FONT_LARGE)
+			}},
+		{"records outside the surface", proc(table: ^Draw_Table, variant: int) {
+				draw_rectangle(table, 0, 0, 320, 200, graphics.COLOR_BACKGROUND)
+				draw_rectangle(table, -50 + variant * 7, -20, 80, 60, graphics.COLOR_MEMORY)
+				draw_rectangle(table, 300, 190 - variant * 3, 100, 100, graphics.COLOR_MACHINE)
+				draw_text(table, -12 + variant, 190, "edge", graphics.COLOR_TEXT)
+				draw_point_grid(table, -30, -30, 400, 300)
+			}},
+		{"a record of one line", proc(table: ^Draw_Table, variant: int) {
+				draw_rectangle(table, 0, 0, 320, 200, graphics.COLOR_BACKGROUND)
+				draw_rectangle(table, 10, 100 + variant, 300, 1, graphics.COLOR_TEXT)
+				draw_vertical_gradient(table, 10, 120, 300, 1, graphics.COLOR_KERNEL, graphics.COLOR_FAILED)
+			}},
+		{"more than 8 rectangles of damage", proc(table: ^Draw_Table, variant: int) {
+				draw_rectangle(table, 0, 0, 320, 200, graphics.COLOR_BACKGROUND)
+				for index in 0 ..< 12 {
+					draw_rectangle(table, (index % 4) * 80 + 4, (index / 4) * 64 + 4, 10, 10, variant == 0 ? graphics.COLOR_KERNEL : graphics.Color(graphics.COLOR_PROGRAM + u32(index)))
+				}
+			}},
+		{"a table that is full", proc(table: ^Draw_Table, variant: int) {
+				draw_rectangle(table, 0, 0, 320, 200, graphics.COLOR_BACKGROUND)
+				for index in 0 ..< 400 {
+					draw_rectangle(table, index % 300, (index * 7) % 190, 4, 4, graphics.Color(index * 977 + variant))
+				}
+			}},
+	}
+	for item in cases {
+		first, second: Tables
+		before, now := table_of(&first), table_of(&second)
+		item.build(&before, 0)
+		item.build(&now, 1)
+		partial_equals_whole(t, &before, &now, item.name)
+	}
+	// The merge path: 12 changes far apart give at most 8 rectangles.
+	first, second: Tables
+	before, now := table_of(&first), table_of(&second)
+	cases[5].build(&before, 0)
+	cases[5].build(&now, 1)
+	damage: Damage
+	damage_by_difference(&before, &now, &damage)
+	testing.expect(t, damage.count <= DAMAGE_CAPACITY)
+	// The full table: 256 records fit, the others are dropped, and it says so.
+	cases[6].build(&now, 1)
+	testing.expect(t, now.full)
+}
