@@ -22,8 +22,8 @@ import "support:web"
 
 PAGE_CAPACITY :: 16
 PAGE_SIZE_LIMIT :: 60 * 1024 // Bytes of one page: the call region of a connection has 64 KiB.
-PAGE_NAME_LIMIT :: 39 // The names of the storage service have 39 bytes at most.
-PAGE_INDEX_NAME :: "pages.index"
+PAGE_NAME_LIMIT :: web.PAGE_NAME_LIMIT
+PAGE_INDEX_NAME :: web.PAGE_INDEX_NAME
 PAGE_MEMORY_PAGES :: PAGE_CAPACITY * PAGE_SIZE_LIMIT / system.PAGE_SIZE
 
 ERROR_PERSON :: -1
@@ -66,6 +66,11 @@ Served :: struct {
 
 pages: [PAGE_CAPACITY]Page_Entry
 page_memory: []u8
+// The bytes of a put, and of a page that the start reads: the store takes
+// them from here, and the page memory changes only when the store took them
+// (an independent read, F5). One byte over the limit shows a page that is
+// too large.
+page_staging: [PAGE_SIZE_LIMIT + 1]u8
 page_generation_last: u64 // The generation that the last put or remove gave.
 
 // page_generation_new gives a generation that no place had: never 0.
@@ -91,22 +96,6 @@ page_find :: proc "contextless" (name: string) -> int {
 	return -1
 }
 
-// page_name_valid: 1 to 39 bytes of letters, digits, ".", "-" and "_", not
-// the name of the index. A name is the target of a request: no "/".
-page_name_valid :: proc "contextless" (name: []u8) -> (ok: bool, bad_byte: int) {
-	if len(name) == 0 || len(name) > PAGE_NAME_LIMIT {
-		return false, -1
-	}
-	for byte, index in name {
-		switch byte {
-		case 'a' ..= 'z', 'A' ..= 'Z', '0' ..= '9', '.', '-', '_':
-		case:
-			return false, index
-		}
-	}
-	return string(name) != PAGE_INDEX_NAME, -1
-}
-
 // pages_load opens the private store and reads the pages into memory.
 pages_load :: proc "contextless" (ctx: ^system.Context) {
 	memory, memory_status := system.memory_create(PAGE_MEMORY_PAGES)
@@ -120,38 +109,46 @@ pages_load :: proc "contextless" (ctx: ^system.Context) {
 		system.log("server: no private store: it serves no page of a store")
 		return
 	}
-	index: [PAGE_CAPACITY][40]u8
-	bytes, found, status := storage.read(&store_client, PAGE_INDEX_NAME, ([^]u8)(&index)[:size_of(index)])
+	index: [PAGE_CAPACITY * web.PAGE_INDEX_ENTRY_SIZE]u8
+	bytes, found, status := storage.read(&store_client, PAGE_INDEX_NAME, index[:])
 	if status != .Ok || !found || len(bytes) != size_of(index) {
 		system.log("server: a new store: no page")
 		return
 	}
-	loaded := 0
-	for &name, place in index {
-		length := 0
-		for length < len(name) && name[length] != 0 {
-			length += 1
-		}
-		if length == 0 {
+	// The store is hostile input too (an independent read, W9): each name
+	// must follow the rules and come once, each page must fit.
+	loaded, refused := 0, 0
+	for place in 0 ..< PAGE_CAPACITY {
+		name, name_ok := web.page_index_entry(index[:], place)
+		if !name_ok {
+			refused += 1
 			continue
 		}
-		text, page_found, page_status := storage.read(&store_client, string(name[:length]), page_memory[place * PAGE_SIZE_LIMIT:][:PAGE_SIZE_LIMIT])
+		if len(name) == 0 {
+			continue
+		}
+		text, page_found, page_status := storage.read(&store_client, name, page_staging[:])
 		if page_status != .Ok || !page_found {
 			continue
 		}
-		pages[place] = {name = name, name_length = length, length = len(text), used = true, generation = page_generation_new()}
+		if len(text) > PAGE_SIZE_LIMIT {
+			refused += 1
+			continue
+		}
+		copy(page_memory[place * PAGE_SIZE_LIMIT:][:PAGE_SIZE_LIMIT], text)
+		pages[place] = {name_length = copy(pages[place].name[:], name), length = len(text), used = true, generation = page_generation_new()}
 		loaded += 1
 	}
-	system.log("server: ", u64(loaded), " pages read from the private store")
+	system.log("server: ", u64(loaded), " pages read from the private store, ", u64(refused), " refused")
 }
 
 // index_write writes the names of the pages in the store.
 @(private = "file")
 index_write :: proc "contextless" () -> bool {
-	index: [PAGE_CAPACITY][40]u8
+	index: [PAGE_CAPACITY * web.PAGE_INDEX_ENTRY_SIZE]u8
 	for &item, place in pages {
 		if item.used {
-			index[place] = item.name
+			copy(index[place * web.PAGE_INDEX_ENTRY_SIZE:][:web.PAGE_INDEX_ENTRY_SIZE - 1], page_name(place))
 		}
 	}
 	_, status := storage.write(&store_client, PAGE_INDEX_NAME, ([^]u8)(&index)[:size_of(index)])
@@ -183,7 +180,7 @@ put :: proc "c" (name: ^string, text: ^string, error: ^errors.Error_Record) -> i
 	if len(name^) > PAGE_NAME_LIMIT {
 		return errors.fail(error, ERROR_NAME, .Too_Long, .Bytes, 1, i64(len(name^)), PAGE_NAME_LIMIT)
 	}
-	if ok, bad := page_name_valid(name_copy[:name_length]); !ok {
+	if ok, bad := web.page_name_valid(string(name_copy[:name_length])); !ok {
 		return errors.fail(error, ERROR_NAME, .Bad_Byte, .Bytes, 1, i64(max(bad, 0)), 0, bad >= 0 ? i64(name_copy[bad]) : 0)
 	}
 	if len(text^) > PAGE_SIZE_LIMIT {
@@ -205,16 +202,28 @@ put :: proc "c" (name: ^string, text: ^string, error: ^errors.Error_Record) -> i
 	if place < 0 {
 		return errors.fail(error, ERROR_FULL, .Full, .Records, 0, 0, PAGE_CAPACITY)
 	}
-	// The bytes go to memory first (the call region can change), then to
-	// the store: the page that the store keeps is the page that is served.
-	length := copy(page_memory[place * PAGE_SIZE_LIMIT:][:PAGE_SIZE_LIMIT], text^)
-	if _, status := storage.write(&store_client, key, page_memory[place * PAGE_SIZE_LIMIT:][:length]); status != .Ok {
+	// The bytes go to the staging buffer first (the call region can
+	// change), then to the store, then to the page memory: the page that is
+	// served changes only when the store took it.
+	length := copy(page_staging[:PAGE_SIZE_LIMIT], text^)
+	if _, status := storage.write(&store_client, key, page_staging[:length]); status != .Ok {
+		system.log("server: the store refused the page /", key, ": the page that is served did not change")
 		return errors.fail(error, ERROR_STORE, .Refused, .Store, 0, 0, 0, i64(status))
 	}
 	was_used := pages[place].used
-	pages[place] = {length = length, used = true, name_length = name_length, generation = page_generation_new()}
+	// A page that changes keeps its count of answers.
+	served := was_used ? pages[place].served : 0
+	copy(page_memory[place * PAGE_SIZE_LIMIT:][:PAGE_SIZE_LIMIT], page_staging[:length])
+	pages[place] = {length = length, used = true, name_length = name_length, served = served, generation = page_generation_new()}
 	copy(pages[place].name[:], key)
 	if !was_used && !index_write() {
+		// The index does not name the page: the page goes out again, so
+		// that the store and what is served stay the same (an independent
+		// read, W8).
+		pages[place] = {generation = page_generation_new()}
+		arguments := [1]isolated.Argument{{text = name_copy[:name_length]}}
+		storage.call(&store_client, "remove", arguments[:])
+		system.log("server: the store refused the index of the pages: /", key, " is not served")
 		return errors.fail(error, ERROR_STORE, .Refused, .Store)
 	}
 	system.log("server: the page /", key, " is in the store: ", u64(length), " bytes")
@@ -234,11 +243,20 @@ remove :: proc "c" (name: ^string, error: ^errors.Error_Record) -> i64 {
 	if place < 0 || len(name^) > PAGE_NAME_LIMIT {
 		return errors.fail(error, ERROR_ABSENT, .Absent, .Objects, 1)
 	}
-	pages[place] = {generation = page_generation_new()}
+	// The store first: a page that the store keeps stays served (an
+	// independent read, W8: before, a refused remove gave 404 until the
+	// next start of the server, and then the page again).
 	arguments := [1]isolated.Argument{{text = name_copy[:name_length]}}
 	_, _, status := storage.call(&store_client, "remove", arguments[:])
-	if status != .Ok || !index_write() {
+	if status != .Ok {
+		system.log("server: the store refused the removal of /", string(name_copy[:name_length]), ": the page is still served")
 		return errors.fail(error, ERROR_STORE, .Refused, .Store, 0, 0, 0, i64(status))
+	}
+	pages[place] = {generation = page_generation_new()}
+	if !index_write() {
+		// The object is out of the store; the index still names it, and the
+		// next start skips a name with no object.
+		system.log("server: the store refused the index of the pages after the removal of /", string(name_copy[:name_length]))
 	}
 	system.log("server: the page /", string(name_copy[:name_length]), " is out of the store")
 	return 0
@@ -313,7 +331,11 @@ counts_html :: proc "contextless" (buffer: []u8) -> string {
 	text(&writer, "</table>\n<p>pages:")
 	for &item, index in pages {
 		if item.used {
-			text(&writer, " <a href=\"/", page_name(index), "\">", page_name(index), "</a>")
+			// The names follow the rules of web.page_name_valid; they are
+			// escaped anyway (an independent read, W9).
+			escaped: [6 * PAGE_NAME_LIMIT]u8
+			name := string(escaped[:web.html_text_escape(escaped[:], page_name(index))])
+			text(&writer, " <a href=\"/", name, "\">", name, "</a>")
 		}
 	}
 	text(&writer, "</p>\n</body></html>\n")
