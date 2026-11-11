@@ -126,11 +126,13 @@ The values of appendix A were copied from the text of the RFC by a script that i
 
 **Who holds the private key.** The server program holds its Ed25519 private key in `Tls_Configuration.server_private_key`, in its own memory; the module `cryptography` runs in the same program, so the key never crosses a ring. The handshake erases its copy, its X25519 private key and its secrets when it fails (`tls_handshake_erase_secrets`); the X25519 private key is erased as soon as the shared secret is made.
 
-**Randomness.** The client random, the server random and each X25519 private key come from the generator of the program through `random.fill_for_a_key`, with the least seed strength of the configuration: QUIC asks for `processor` at least (`docs/RANDOMNESS.md`).
+**Randomness.** The client random, the server random and each X25519 private key come from the generator of the program through `random.fill_for_a_key`, with the least seed strength of the configuration: QUIC asks for `processor` at least (`docs/RANDOMNESS.md`). `tls_start` refuses a configuration whose least strength is under `processor` (a field left at its zero value would accept a weak seed), and a client whose pinned key is 32 zero bytes (no key was pinned).
 
 **Hostile input.** Each message of the peer:
 - has each length checked before a byte is read (`Reader`);
 - may come in parts (the side waits for the rest), but over 4096 bytes is refused;
+- goes into the transcript, which holds 8192 bytes: a ClientHello of up to 4092 bytes (a peer with large key shares and padding) and the flight of the server. A handshake costs about 33 KiB;
+- must come at the level of the keys in use: bytes of a level left when the next keys take its place, or bytes of an earlier level that come later, fail the handshake, and QUIC closes with PROTOCOL_VIOLATION (RFC 9001, section 4.1.3);
 - must have the type that the state waits for, at its level: else unexpected_message;
 - may hold an extension that the side does not know: it is skipped in a ClientHello, and refused with unsupported_extension where the side did not offer it (ServerHello, EncryptedExtensions);
 - may not hold one extension type two times (illegal_parameter);
@@ -157,7 +159,9 @@ The values of RFC 8448, RFC 8446 (the Random of a HelloRetryRequest) and RFC 841
 
 ## 5. The transport of one connection (the third layer, built)
 
-`support/quic`, files `connection.odin`, `connection_receive.odin`, `connection_send.odin`, `recovery.odin`, `frames.odin`, `transport_parameters.odin`, `ranges.odin`. One `Connection` record in memory of the caller holds all of the state: no allocation, no kernel call. It has about 210 KiB, most of it the two stream buffers of 64 KiB.
+`support/quic`, files `connection.odin`, `connection_receive.odin`, `connection_send.odin`, `recovery.odin`, `frames.odin`, `transport_parameters.odin`, `ranges.odin`. One `Connection` record in memory of the caller holds all of the state: no allocation, no kernel call. It has about 214 KiB, most of it the two stream buffers of 64 KiB.
+
+**Where a `Connection` record lives.** Never on a stack: the main thread of a program has 256 KiB of stack, and a record there leaves too little room for the frames of the module `cryptography` and the 16 KiB that it erases below them. A record goes in the global memory of the program or in a mapping that the program owns. No check enforces this: on the host the heap and the stacks of threads are both mappings, so an address test would refuse good records, and a program of the system has no call that gives the bounds of its stack.
 
 **The calls of the caller:**
 - `connection_start_client`, `connection_start_server`: a server starts its handshake at the first Initial packet of the client.
@@ -169,7 +173,8 @@ The values of RFC 8448, RFC 8446 (the Random of a HelloRetryRequest) and RFC 841
 
 **What it does:**
 - **The three packet number spaces**, each with its keys, its packet numbers, its ACK ranges and its packets in flight. The Initial keys go when the client sends its first Handshake packet and when the server opens one; the Handshake keys go when the handshake is confirmed (RFC 9001, section 4.9).
-- **The handshake**: the bytes of TLS go in CRYPTO frames at their level, 4096 bytes at most for each level and direction. The keys of each level are installed when TLS gives them; the secrets of TLS are erased once the 1-RTT keys are installed. A failure of TLS closes the connection with the code 0x100 + alert.
+- **The handshake**: the bytes of TLS go in CRYPTO frames at their level, 4096 bytes at most for each level and direction. The keys of each level are installed when TLS gives them; the secrets of TLS are erased once the 1-RTT keys are installed. A failure of TLS closes the connection with the code 0x100 + alert. The 4096 bytes of the 1-RTT level hold every NewSessionTicket of the life of a connection: a server that sends more gives CRYPTO_BUFFER_EXCEEDED. The servers of this system send none.
+- **A server takes a client only with an authentic Initial**: the keys of the first Initial come from its Destination Connection ID into local records, and the record of the connection takes that identifier and those keys only when the packet opens. Anyone can make an authentic Initial (its keys come from a public value), so a handshake that does not complete within 10 s (`HANDSHAKE_TIME_LIMIT`) ends the record, whatever the idle timeout; a client has the same limit. A listening program keeps one record for each Destination Connection ID of a client, with a limit on the count of records (the endpoint, section 6).
 - **Transport parameters**: each side sends its limits and its connection identifiers. The values of the peer are checked (RFC 9000, section 18.2): a repeated parameter, a value out of its range, a parameter that only a server sends, or an identifier that is not the one that the packets carried, gives TRANSPORT_PARAMETER_ERROR.
 - **Acknowledgements**: an ACK frame of up to 16 ranges. In the Initial and Handshake spaces it goes at once; in the 1-RTT space after 2 ack-eliciting packets or 25 ms.
 - **Loss detection** (RFC 9002, section 6):
@@ -181,7 +186,10 @@ The values of RFC 8448, RFC 8446 (the Random of a HelloRetryRequest) and RFC 841
 - **Flow control**: 64 KiB for the stream and for the connection, moved forward when the application read half of it. Data past the limit is FLOW_CONTROL_ERROR.
 - **One bidirectional stream**, stream 0, which the client opens with its first write. A server allows one bidirectional stream of the client, a client none of the server; unidirectional streams are not allowed.
 - **The idle timeout**: the smaller of the two values, 3 probe timeouts at least. The connection ends with no packet.
-- **The anti-amplification limit**: before a Handshake packet of the client came, a server sends at most 3 times the bytes that it received, and its timer stops when it cannot send.
+- **The anti-amplification limit**: before a Handshake packet of the client came, a server sends at most 3 times the bytes that it received, and its timer stops when it cannot send. A server counts only the datagrams that it processed: stricter than RFC 9000 section 8.1, and safe; such a server can wait for one more datagram before it sends.
+- **A range set with no place.** The sets of received bytes, of bytes to send again and of acknowledged bytes have 32 ranges each. A packet of the peer whose data has no place is not recorded and not acknowledged, so the peer declares it lost and sends the data again (its other frames have the same effect when they come again). A sent packet whose data has no place stays in flight, and loss detection tries again.
+- **Packet numbers that were forgotten**: the set of received packet numbers keeps 32 ranges. When it drops its lowest range, the numbers below the end of that range are refused from then on, before the open, so that no packet is processed two times (RFC 9000, section 12.3).
+- **Times that cannot wrap**: the sums and products of times saturate at the largest value, the ack delay of the peer is at most its max_ack_delay in each state, and the round-trip sample is adjusted with a subtraction that cannot wrap. A peer cannot move a deadline into the past.
 - **Datagrams of 1200 bytes**: a datagram with an Initial packet of the client, or an ack-eliciting Initial packet of the server, is padded to 1200 bytes. A server drops a client Initial in a smaller datagram, or with a Destination Connection ID under 8 bytes; a client drops a server Initial with a token.
 - **The close**: a side that closes sends CONNECTION_CLOSE and answers each later datagram with it, for 3 probe timeouts (closing). A side that receives it sends nothing for 3 probe timeouts (draining). An application close before the 1-RTT keys goes as APPLICATION_ERROR, with no code of the application.
 
@@ -212,7 +220,7 @@ The values of RFC 8448, RFC 8446 (the Random of a HelloRetryRequest) and RFC 841
 - A key update: a 1-RTT packet with the next key phase is dropped.
 - A packet number shorter than 4 bytes on the wire.
 - Packets of a level whose keys are not ready are dropped, not kept: the peer sends them again.
-- A server takes the first Initial packet that comes as the start of its connection, before the packet opens: a datagram that a third party sends first can spoil it. The endpoint (section 6) gives each remote its own connection.
+- A STREAM frame of the peer may write over bytes that came and were not read yet, with other bytes: RFC 9000 allows PROTOCOL_VIOLATION there, and this layer takes the new bytes. Only the authenticated peer can do it, and it can send any bytes at a new offset anyway.
 
 **Tests** (`support/quic/transport_test.odin`, host): two connections in memory, joined by a channel that the test controls (loss, reorder by delay, duplicates, a delay of 10 ms one way), with a fake clock and fixed seeds:
 - a handshake: both connected with ChaCha20-Poly1305, the client confirmed, the Initial and Handshake keys dropped, the parameters applied;
@@ -224,7 +232,16 @@ The values of RFC 8448, RFC 8446 (the Random of a HelloRetryRequest) and RFC 841
 - **hostile frames**:
   - each frame type whole, and cut at each length (FRAME_ENCODING_ERROR);
   - lengths near 2^62, an ACK of a packet never sent, STREAM data one byte past the window, streams that may not be, final sizes that change, a frame at the wrong level, each with its error code;
-  - **50 000 random packets that pass the AEAD** (sealed with the 1-RTT keys of the client of the test) and carry random frames, to a connected server that answers each one: none may trap.
+  - **50 000 random packets that pass the AEAD** (sealed with the 1-RTT keys of the client of the test) and carry random frames, to a connected server that answers each one: none may trap;
+- the corrections of the third read, each with a test that failed before it:
+  - STREAM data in 40 islands: the 8 past the 32nd are not acknowledged, and once the holes and those 8 come, the 8000 bytes are read once, in order; the same for CRYPTO data;
+  - a sent packet whose data has no place stays in flight;
+  - a random datagram shaped as an Initial does not take the server, and the real client connects after it;
+  - an authentic Initial alone ends at the handshake deadline, with no idle timeout;
+  - a replayed packet whose number was forgotten is refused;
+  - the round-trip time, the probe timeout and the idle deadline with values near 2^64;
+  - a least seed strength left at zero, and a client with no pinned key, are refused;
+  - a ClientHello of 3900 bytes is taken; bytes left at the Initial level after the ServerHello fail the handshake.
 
 ## 6. The next layers (designed, not built)
 

@@ -46,11 +46,12 @@ acknowledgement_receive :: proc "contextless" (connection: ^Connection, level: E
 			// The delay of the peer, in microseconds, at most its
 			// max_ack_delay (RFC 9002, section 5.3). The Initial and
 			// Handshake spaces have no delay.
+			// It is at most the max_ack_delay of the peer in every state:
+			// before the handshake is confirmed too, so that a large value
+			// cannot move the round-trip time.
 			exponent := uint(connection.peer_ack_delay_exponent)
 			ack_delay = encoded_ack_delay > (max(u64) >> exponent) ? max(u64) : encoded_ack_delay << exponent
-			if connection.handshake_confirmed {
-				ack_delay = min(ack_delay, connection.peer_max_ack_delay)
-			}
+			ack_delay = min(ack_delay, connection.peer_max_ack_delay)
 		}
 		round_trip_update(connection, now - largest_time_sent, ack_delay)
 	}
@@ -73,14 +74,22 @@ ranges_contain :: proc "contextless" (ranges: []Acknowledged_Range, value: u64) 
 	return false
 }
 
+// sent_packet_acknowledged notes the data of a packet as acknowledged and
+// removes the packet. When a range set has no place for its data, the
+// packet stays: loss detection then sends its data again, and a later
+// acknowledgement notes it.
 @(private)
 sent_packet_acknowledged :: proc "contextless" (connection: ^Connection, level: Encryption_Level, packet: ^Sent_Packet) {
 	space := &connection.spaces[level]
-	if packet.crypto_length > 0 {
-		range_set_insert(&space.crypto.send_acknowledged, packet.crypto_offset, packet.crypto_offset + packet.crypto_length)
+	noted := true
+	if packet.crypto_length > 0 && !range_set_insert(&space.crypto.send_acknowledged, packet.crypto_offset, packet.crypto_offset + packet.crypto_length) {
+		noted = false
 	}
-	if packet.stream_length > 0 {
-		range_set_insert(&connection.stream.send_acknowledged, packet.stream_offset, packet.stream_offset + packet.stream_length)
+	if packet.stream_length > 0 && !range_set_insert(&connection.stream.send_acknowledged, packet.stream_offset, packet.stream_offset + packet.stream_length) {
+		noted = false
+	}
+	if !noted {
+		return
 	}
 	if packet.stream_finish {
 		connection.stream.finish_acknowledged = true
@@ -98,10 +107,14 @@ sent_packet_remove :: proc "contextless" (connection: ^Connection, space: ^Packe
 // sent_packet_lost puts what a lost packet carried back to be sent: its
 // data, and its control frames with their current values. A PATH_RESPONSE
 // is not sent again (RFC 9000, section 13.3).
+// When a range set has no place for its data, the packet stays in flight:
+// the next loss detection or probe tries again.
 @(private)
 sent_packet_lost :: proc "contextless" (connection: ^Connection, level: Encryption_Level, packet: ^Sent_Packet) {
 	space := &connection.spaces[level]
-	sent_packet_send_again(connection, level, packet)
+	if !sent_packet_send_again(connection, level, packet) {
+		return
+	}
 	if packet.stream_finish && !connection.stream.finish_acknowledged {
 		connection.stream.finish_sent = false
 	}
@@ -111,15 +124,18 @@ sent_packet_lost :: proc "contextless" (connection: ^Connection, level: Encrypti
 
 // sent_packet_send_again puts the data of a packet back to be sent: when it
 // is lost, and for a probe.
+// It gives false when a range set had no place for the data.
 @(private)
-sent_packet_send_again :: proc "contextless" (connection: ^Connection, level: Encryption_Level, packet: ^Sent_Packet) {
+sent_packet_send_again :: proc "contextless" (connection: ^Connection, level: Encryption_Level, packet: ^Sent_Packet) -> bool {
 	space := &connection.spaces[level]
-	if packet.crypto_length > 0 {
-		range_set_insert(&space.crypto.send_again, packet.crypto_offset, packet.crypto_offset + packet.crypto_length)
+	placed := true
+	if packet.crypto_length > 0 && !range_set_insert(&space.crypto.send_again, packet.crypto_offset, packet.crypto_offset + packet.crypto_length) {
+		placed = false
 	}
-	if packet.stream_length > 0 {
-		range_set_insert(&connection.stream.send_again, packet.stream_offset, packet.stream_offset + packet.stream_length)
+	if packet.stream_length > 0 && !range_set_insert(&connection.stream.send_again, packet.stream_offset, packet.stream_offset + packet.stream_length) {
+		placed = false
 	}
+	return placed
 }
 
 // round_trip_update takes one sample (RFC 9002, section 5.3).
@@ -135,12 +151,14 @@ round_trip_update :: proc "contextless" (connection: ^Connection, latest: u64, a
 	}
 	connection.min_round_trip = min(connection.min_round_trip, latest)
 	adjusted := latest
-	if latest >= connection.min_round_trip + ack_delay {
+	// min_round_trip <= latest: the subtraction cannot wrap, where the sum
+	// min_round_trip + ack_delay could.
+	if latest - connection.min_round_trip >= ack_delay {
 		adjusted = latest - ack_delay
 	}
 	difference := connection.smoothed_round_trip > adjusted ? connection.smoothed_round_trip - adjusted : adjusted - connection.smoothed_round_trip
-	connection.round_trip_variation = (3 * connection.round_trip_variation + difference) / 4
-	connection.smoothed_round_trip = (7 * connection.smoothed_round_trip + adjusted) / 8
+	connection.round_trip_variation = saturating_add(saturating_multiply(3, connection.round_trip_variation), difference) / 4
+	connection.smoothed_round_trip = saturating_add(saturating_multiply(7, connection.smoothed_round_trip), adjusted) / 8
 }
 
 // loss_detect declares lost each packet below the largest acknowledged one
@@ -154,16 +172,16 @@ loss_detect :: proc "contextless" (connection: ^Connection, level: Encryption_Le
 		return
 	}
 	round_trip := max(connection.latest_round_trip, connection.has_round_trip_sample ? connection.smoothed_round_trip : INITIAL_ROUND_TRIP_TIME)
-	loss_delay := max(round_trip * TIME_THRESHOLD_NUMERATOR / TIME_THRESHOLD_DENOMINATOR, GRANULARITY)
+	loss_delay := max(saturating_multiply(round_trip, TIME_THRESHOLD_NUMERATOR) / TIME_THRESHOLD_DENOMINATOR, GRANULARITY)
 	for &packet in space.sent {
 		if !packet.in_use || packet.packet_number > space.largest_acknowledged {
 			continue
 		}
-		if now >= packet.time_sent + loss_delay || space.largest_acknowledged >= packet.packet_number + PACKET_THRESHOLD {
+		when_lost := saturating_add(packet.time_sent, loss_delay)
+		if now >= when_lost || space.largest_acknowledged >= packet.packet_number + PACKET_THRESHOLD {
 			sent_packet_lost(connection, level, &packet)
 			continue
 		}
-		when_lost := packet.time_sent + loss_delay
 		if space.loss_time == 0 || when_lost < space.loss_time {
 			space.loss_time = when_lost
 		}
@@ -186,11 +204,29 @@ peer_completed_address_validation :: proc "contextless" (connection: ^Connection
 probe_timeout_duration :: proc "contextless" (connection: ^Connection, level: Encryption_Level) -> u64 {
 	smoothed := connection.has_round_trip_sample ? connection.smoothed_round_trip : INITIAL_ROUND_TRIP_TIME
 	variation := connection.has_round_trip_sample ? connection.round_trip_variation : INITIAL_ROUND_TRIP_TIME / 2
-	duration := smoothed + max(4 * variation, GRANULARITY)
+	duration := saturating_add(smoothed, max(saturating_multiply(4, variation), GRANULARITY))
 	if level == .Application {
-		duration += connection.peer_max_ack_delay
+		duration = saturating_add(duration, connection.peer_max_ack_delay)
 	}
-	return duration << min(connection.probe_timeout_count, 16)
+	backoff := uint(min(connection.probe_timeout_count, 16))
+	if duration > max(u64) >> backoff {
+		return max(u64)
+	}
+	return duration << backoff
+}
+
+// The sums and products of times saturate at the largest value, which is
+// NO_DEADLINE: a value that the peer chose cannot wrap a deadline into the
+// past.
+saturating_add :: proc "contextless" (left, right: u64) -> u64 {
+	return left > max(u64) - right ? max(u64) : left + right
+}
+
+saturating_multiply :: proc "contextless" (left, right: u64) -> u64 {
+	if left != 0 && right > max(u64) / left {
+		return max(u64)
+	}
+	return left * right
 }
 
 // amplification_budget gives the bytes that a server may still send to an
@@ -235,7 +271,7 @@ loss_detection_deadline :: proc "contextless" (connection: ^Connection) -> (dead
 		if connection.spaces[level].discarded {
 			return NO_DEADLINE, .Initial, false
 		}
-		return connection.last_sent_time + probe_timeout_duration(connection, level), level, true
+		return saturating_add(connection.last_sent_time, probe_timeout_duration(connection, level)), level, true
 	}
 	for &space, space_level in connection.spaces {
 		if space.ack_eliciting_in_flight == 0 {
@@ -244,7 +280,7 @@ loss_detection_deadline :: proc "contextless" (connection: ^Connection) -> (dead
 		if space_level == .Application && !connection.handshake_confirmed {
 			continue
 		}
-		when_probe := space.last_ack_eliciting_sent_time + probe_timeout_duration(connection, space_level)
+		when_probe := saturating_add(space.last_ack_eliciting_sent_time, probe_timeout_duration(connection, space_level))
 		if when_probe < deadline {
 			deadline, level = when_probe, space_level
 		}

@@ -110,7 +110,11 @@ Tls_State :: enum u8 {
 APPLICATION_PROTOCOL_LIMIT :: 255 // One protocol name of ALPN (RFC 7301).
 TRANSPORT_PARAMETERS_LIMIT :: 512 // The quic_transport_parameters of one side.
 LEVEL_BUFFER_SIZE :: 4096 // The handshake bytes of one level that wait, in each direction.
-TRANSCRIPT_LIMIT :: 4096 // The handshake messages to the Finished of the client: they are under 2 KiB here.
+// The handshake messages to the Finished of the client. Those of this
+// system have under 2 KiB; a ClientHello of a peer can have up to 4092 bytes
+// (a large key share and padding), and the flight of the server about 600
+// bytes more.
+TRANSCRIPT_LIMIT :: 8192
 MESSAGE_HEADER_SIZE :: 4 // The type and a length of 24 bits.
 EXTENSION_TYPES_LIMIT :: 48 // Extensions of one block: more is refused.
 ED25519_KEY_SIZE :: 32
@@ -171,6 +175,22 @@ Tls_Handshake :: struct {
 	server_public_key:             [ED25519_KEY_SIZE]u8, // The server: its own public key; the client: the key that the server proved.
 	handshake_keys_ready:          bool,
 	application_keys_ready:        bool,
+	// Bytes of the peer came at a level after the keys of the next level
+	// were in use: a PROTOCOL_VIOLATION of QUIC (RFC 9001, section 4.1.3),
+	// not an alert of TLS.
+	bytes_after_key_change:        bool,
+}
+
+// tls_receive_level gives the level at which the peer sends in a state: the
+// bytes of an earlier level after that are refused.
+tls_receive_level :: proc "contextless" (state: Tls_State) -> Encryption_Level {
+	#partial switch state {
+	case .Client_Waits_For_Encrypted_Extensions, .Client_Waits_For_Certificate, .Client_Waits_For_Certificate_Verify, .Client_Waits_For_Finished, .Server_Waits_For_Finished:
+		return .Handshake
+	case .Connected:
+		return .Application
+	}
+	return .Initial
 }
 
 // tls_fail ends a handshake with an alert and an error record (argument:
@@ -446,6 +466,17 @@ shared_secret_and_handshake_keys :: proc "contextless" (handshake: ^Tls_Handshak
 // configuration asks.
 tls_start :: proc "contextless" (handshake: ^Tls_Handshake, configuration: ^Tls_Configuration, cryptography: ^Cryptography, generator: ^random.Generator, error: ^errors.Error_Record) -> bool {
 	handshake^ = {configuration = configuration^, cryptography = cryptography, generator = generator}
+	// QUIC asks for a seed of the processor at least: a configuration that
+	// leaves the field at its zero value would accept a weak seed for its
+	// keys.
+	if configuration.least_seed_strength < .Processor {
+		return tls_fail(handshake, error, .Internal_Error, .Bad_Value, int(configuration.least_seed_strength))
+	}
+	// A client with no pinned key (32 zeros, a point of small order) could
+	// never verify a server: it is refused here, with its own reason.
+	if configuration.role == .Client && configuration.server_public_key == ([ED25519_KEY_SIZE]u8{}) {
+		return tls_fail(handshake, error, .Internal_Error, .Empty)
+	}
 	if configuration.application_protocol_length < 1 || configuration.application_protocol_length > APPLICATION_PROTOCOL_LIMIT || configuration.transport_parameters_length < 0 || configuration.transport_parameters_length > TRANSPORT_PARAMETERS_LIMIT {
 		return tls_fail(handshake, error, .Internal_Error, .Bad_Value)
 	}
@@ -608,6 +639,10 @@ tls_receive :: proc "contextless" (handshake: ^Tls_Handshake, level: Encryption_
 	if level > .Application {
 		return tls_fail(handshake, error, .Internal_Error, .Bad_Value, int(level))
 	}
+	if level < tls_receive_level(handshake.state) && len(bytes) > 0 {
+		handshake.bytes_after_key_change = true
+		return tls_fail(handshake, error, .Unexpected_Message, .State, int(level))
+	}
 	input := &handshake.received[level]
 	if len(bytes) > LEVEL_BUFFER_SIZE - input.length {
 		return tls_fail(handshake, error, .Unexpected_Message, .Too_Long, len(bytes))
@@ -629,6 +664,12 @@ tls_receive :: proc "contextless" (handshake: ^Tls_Handshake, level: Encryption_
 		rest := input.length - len(message)
 		copy(input.bytes[:], input.bytes[len(message):input.length])
 		input.length = rest
+		if rest > 0 && tls_receive_level(handshake.state) > level {
+			// The message moved the handshake to the keys of the next
+			// level, and bytes of this level are left.
+			handshake.bytes_after_key_change = true
+			return tls_fail(handshake, error, .Unexpected_Message, .State, rest)
+		}
 	}
 	return true
 }

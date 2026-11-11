@@ -42,6 +42,12 @@ ACK_RANGES_SEND_LIMIT :: 16 // The ranges of one ACK frame that this side sends.
 ACK_RANGES_READ_LIMIT :: 64 // The ranges of one ACK frame of the peer that this side acts on; the others are read and skipped.
 PROBE_PACKETS :: 2 // RFC 9002, section 6.2.4: one or two probes at a probe timeout.
 NO_DEADLINE :: max(u64)
+// Microseconds from the start of a client, or from the first authentic
+// Initial at a server, to the end of the handshake. Anyone can make an
+// authentic Initial (its keys come from a public value), so a record that
+// waits for a handshake that never ends is freed at this deadline, whatever
+// the idle timeout.
+HANDSHAKE_TIME_LIMIT :: 10_000_000
 
 Connection_State :: enum u8 {
 	Idle, // Not started.
@@ -113,6 +119,9 @@ Packet_Number_Space :: struct {
 	loss_time:                     u64, // 0: no packet waits for the time threshold.
 	last_ack_eliciting_sent_time:  u64,
 	probes:                        int, // Probe packets to send after a probe timeout.
+	// The numbers below this one are refused: the set of received numbers
+	// forgot their ranges, and such a packet may have been processed.
+	packet_number_floor:           u64,
 	crypto:                        Crypto_Stream,
 }
 
@@ -201,6 +210,11 @@ Connection :: struct {
 	close_is_application:              bool,
 	closed_by_peer:                    bool,
 	closed_by_idle_timeout:            bool,
+	closed_by_handshake_timeout:       bool,
+	handshake_deadline:                u64,
+	// Set while the frames of one packet are read: data of the packet had no
+	// place in a range set, so the packet is not acknowledged.
+	packet_data_dropped:               bool,
 	close_to_send:                     bool,
 	close_deadline:                    u64,
 	// Private memory: the copy of a datagram that came, and the frames of
@@ -217,6 +231,11 @@ connection_start_client :: proc "contextless" (connection: ^Connection, configur
 	connection_reset(connection, configuration, cryptography, generator, now)
 	connection.configuration.tls.role = .Client
 	connection.address_validated = true
+	connection.handshake_deadline = saturating_add(now, HANDSHAKE_TIME_LIMIT)
+	if !connection_seed_strength_check(configuration, error) {
+		connection.state = .Closed
+		return false
+	}
 	least := configuration.tls.least_seed_strength
 	if !random.fill_for_a_key(generator, connection.local_connection_id[:], least, error) || !random.fill_for_a_key(generator, connection.original_destination_connection_id[:CONNECTION_ID_SIZE], least, error) {
 		connection.state = .Closed
@@ -238,8 +257,25 @@ connection_start_client :: proc "contextless" (connection: ^Connection, configur
 connection_start_server :: proc "contextless" (connection: ^Connection, configuration: ^Connection_Configuration, cryptography: ^Cryptography, generator: ^random.Generator, now: u64, error: ^errors.Error_Record) -> bool {
 	connection_reset(connection, configuration, cryptography, generator, now)
 	connection.configuration.tls.role = .Server
+	if !connection_seed_strength_check(configuration, error) {
+		connection.state = .Closed
+		return false
+	}
 	if !random.fill_for_a_key(generator, connection.local_connection_id[:], configuration.tls.least_seed_strength, error) {
 		connection.state = .Closed
+		return false
+	}
+	return true
+}
+
+// connection_seed_strength_check refuses a configuration whose least seed
+// strength is under processor: a field left at its zero value would accept a
+// weak seed for the keys (tls_start refuses it too, but a server starts TLS
+// only at the first Initial).
+@(private)
+connection_seed_strength_check :: proc "contextless" (configuration: ^Connection_Configuration, error: ^errors.Error_Record) -> bool {
+	if configuration.tls.least_seed_strength < .Processor {
+		errors.fail(error, -1, .Bad_Value, .None, 1, i64(configuration.tls.least_seed_strength), i64(random.Seed_Strength.Processor), 0)
 		return false
 	}
 	return true
@@ -253,7 +289,7 @@ connection_reset :: proc "contextless" (connection: ^Connection, configuration: 
 	connection.generator = generator
 	connection.state = .Handshake
 	connection.last_activity = now
-	connection.idle_timeout = configuration.idle_timeout_milliseconds * 1000
+	connection.idle_timeout = saturating_multiply(configuration.idle_timeout_milliseconds, 1000)
 	connection.receive_max_data = STREAM_BUFFER_SIZE
 	connection.stream.receive_limit = STREAM_BUFFER_SIZE
 	connection.peer_max_ack_delay = 25_000
@@ -350,7 +386,7 @@ connection_tls_progress :: proc "contextless" (connection: ^Connection, now: u64
 		space.keys_installed = true
 	}
 	if tls.state == .Failed {
-		connection_fail(connection, CRYPTO_ERROR_BASE + u64(tls.alert), FRAME_CRYPTO, now)
+		connection_fail(connection, tls_failure_code(connection), FRAME_CRYPTO, now)
 		return
 	}
 	if !connection.peer_parameters_applied && connection_peer_parameters_are_known(connection) {
@@ -370,6 +406,17 @@ connection_tls_progress :: proc "contextless" (connection: ^Connection, now: u64
 			connection_space_discard(connection, .Handshake)
 		}
 	}
+}
+
+// tls_failure_code gives the error code of a CONNECTION_CLOSE for a failure
+// of TLS: 0x100 + its alert, or PROTOCOL_VIOLATION for handshake bytes at a
+// level whose keys were replaced (RFC 9001, section 4.1.3).
+@(private)
+tls_failure_code :: proc "contextless" (connection: ^Connection) -> u64 {
+	if connection.tls.bytes_after_key_change {
+		return u64(Transport_Error.Protocol_Violation)
+	}
+	return CRYPTO_ERROR_BASE + u64(connection.tls.alert)
 }
 
 // The transport parameters of the peer come in its ClientHello, or in the
@@ -417,7 +464,7 @@ connection_peer_parameters_apply :: proc "contextless" (connection: ^Connection,
 	connection.peer_ack_delay_exponent = parameters.ack_delay_exponent
 	// The idle timeout is the smaller of the two that are not 0 (RFC 9000,
 	// section 10.1).
-	peer_idle := parameters.max_idle_timeout * 1000
+	peer_idle := saturating_multiply(parameters.max_idle_timeout, 1000)
 	if peer_idle != 0 && (connection.idle_timeout == 0 || peer_idle < connection.idle_timeout) {
 		connection.idle_timeout = peer_idle
 	}
@@ -467,7 +514,7 @@ connection_close :: proc "contextless" (connection: ^Connection, application_err
 connection_enter_closing :: proc "contextless" (connection: ^Connection, now: u64) {
 	connection.state = .Closing
 	connection.close_to_send = true
-	connection.close_deadline = now + 3 * probe_timeout_duration(connection, .Application)
+	connection.close_deadline = saturating_add(now, saturating_multiply(3, probe_timeout_duration(connection, .Application)))
 	tls_handshake_erase_secrets(&connection.tls)
 }
 
@@ -479,7 +526,7 @@ connection_enter_draining :: proc "contextless" (connection: ^Connection, code: 
 	connection.close_is_application = application
 	connection.state = .Draining
 	connection.close_to_send = false
-	connection.close_deadline = now + 3 * probe_timeout_duration(connection, .Application)
+	connection.close_deadline = saturating_add(now, saturating_multiply(3, probe_timeout_duration(connection, .Application)))
 	tls_handshake_erase_secrets(&connection.tls)
 }
 
@@ -530,9 +577,16 @@ connection_deadline :: proc "contextless" (connection: ^Connection) -> u64 {
 		return connection.close_deadline
 	case .Handshake, .Connected:
 	}
+	if !connection.tls_started {
+		// A server that waits for its first Initial has no timer.
+		return NO_DEADLINE
+	}
 	deadline := connection_idle_deadline(connection)
 	loss, _, _ := loss_detection_deadline(connection)
 	deadline = min(deadline, loss)
+	if connection.state == .Handshake {
+		deadline = min(deadline, connection.handshake_deadline)
+	}
 	application := &connection.spaces[.Application]
 	if application.ack_needed && application.ack_deadline < deadline {
 		deadline = application.ack_deadline
@@ -547,7 +601,7 @@ connection_idle_deadline :: proc "contextless" (connection: ^Connection) -> u64 
 	}
 	// At least three probe timeouts, so that a loss does not end a
 	// connection that works (RFC 9000, section 10.1).
-	return connection.last_activity + max(connection.idle_timeout, 3 * probe_timeout_duration(connection, .Application))
+	return saturating_add(connection.last_activity, max(connection.idle_timeout, saturating_multiply(3, probe_timeout_duration(connection, .Application))))
 }
 
 // connection_time_passes acts on each deadline that passed.
@@ -561,6 +615,14 @@ connection_time_passes :: proc "contextless" (connection: ^Connection, now: u64)
 		}
 		return
 	case .Handshake, .Connected:
+	}
+	if !connection.tls_started {
+		return
+	}
+	if connection.state == .Handshake && now >= connection.handshake_deadline {
+		connection.closed_by_handshake_timeout = true
+		connection_end(connection)
+		return
 	}
 	if now >= connection_idle_deadline(connection) {
 		// The idle timeout ends the connection with no packet (RFC 9000,

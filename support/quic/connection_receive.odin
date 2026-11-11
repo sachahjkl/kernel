@@ -101,9 +101,6 @@ packet_receive :: proc "contextless" (connection: ^Connection, datagram: []u8, h
 			if len(datagram) < SMALLEST_MAX_UDP_PAYLOAD_SIZE {
 				return fail_at(error, .Too_Small, 1, len(datagram), SMALLEST_MAX_UDP_PAYLOAD_SIZE)
 			}
-			if !connection.tls_started && !server_first_initial(connection, header, now, error) {
-				return false
-			}
 		} else if header.token_length > 0 {
 			// A server Initial carries no token (RFC 9000, section 17.2.2).
 			return fail_at(error, .Bad_Value, 1, header.token_offset)
@@ -114,7 +111,24 @@ packet_receive :: proc "contextless" (connection: ^Connection, datagram: []u8, h
 		return fail_at(error, .Bad_Value, 1, header.start)
 	}
 	space := &connection.spaces[level]
-	if !space.keys_installed || space.discarded {
+	// The first Initial of a client: its keys come from its Destination
+	// Connection ID, into local records. The record of the connection takes
+	// them, and that identifier, only when the packet is authentic.
+	first_initial := role == .Server && header.type == .Initial && !connection.tls_started
+	first_client_keys, first_server_keys: Packet_Keys
+	defer secret_erase(&first_client_keys, size_of(first_client_keys))
+	defer secret_erase(&first_server_keys, size_of(first_server_keys))
+	receive_keys := &space.receive_keys
+	if first_initial {
+		if header.destination_connection_id_length < CONNECTION_ID_SIZE {
+			// RFC 9000, section 7.2: 8 bytes at least in the first Initial.
+			return fail_at(error, .Too_Small, 1, header.destination_connection_id_length, CONNECTION_ID_SIZE)
+		}
+		if !initial_keys(connection.cryptography, header.destination_connection_id[:header.destination_connection_id_length], &first_client_keys, &first_server_keys, error) {
+			return false
+		}
+		receive_keys = &first_client_keys
+	} else if !space.keys_installed || space.discarded {
 		return fail_at(error, .State, 1, header.start, 0, int(level))
 	}
 	if level == .Application && role == .Server && connection.state != .Connected {
@@ -123,7 +137,7 @@ packet_receive :: proc "contextless" (connection: ^Connection, datagram: []u8, h
 		return fail_at(error, .State, 1, header.start, 0, int(level))
 	}
 	unprotected: Unprotected_Header
-	if !header_protection_remove(connection.cryptography, &space.receive_keys, datagram, header, space.largest_received, &unprotected, error) {
+	if !header_protection_remove(connection.cryptography, receive_keys, datagram, header, space.largest_received, &unprotected, error) {
 		return false
 	}
 	if unprotected.key_phase {
@@ -131,16 +145,23 @@ packet_receive :: proc "contextless" (connection: ^Connection, datagram: []u8, h
 		// not open with the keys of this phase.
 		return fail_at(error, .Unsupported, 1, header.start, 0, 1)
 	}
-	if range_set_contains(&space.received, unprotected.packet_number) {
+	number := unprotected.packet_number
+	// A number below the floor belongs to a range that the set forgot: it
+	// may have been processed already, so it is refused (RFC 9000, section
+	// 12.3).
+	if number < space.packet_number_floor || range_set_contains(&space.received, number) {
 		return fail_at(error, .Bad_Value, 1, header.start)
 	}
 	opened: Opened_Packet
-	if !packet_payload_open(connection.cryptography, &space.receive_keys, datagram, header, &unprotected, &opened, error) {
-		if error.kind == i64(errors.Kind.Bad_Value) {
+	if !packet_payload_open(connection.cryptography, receive_keys, datagram, header, &unprotected, &opened, error) {
+		if error.kind == i64(errors.Kind.Bad_Value) && !first_initial {
 			// Reserved bits that are not 0 in an authentic packet (RFC
 			// 9000, section 17.2).
 			connection_fail(connection, u64(Transport_Error.Protocol_Violation), 0, now)
 		}
+		return false
+	}
+	if first_initial && !server_first_initial(connection, header, &first_client_keys, &first_server_keys, now, error) {
 		return false
 	}
 	if role == .Client && header.type == .Initial && !connection.peer_connection_id_known {
@@ -150,12 +171,22 @@ packet_receive :: proc "contextless" (connection: ^Connection, datagram: []u8, h
 		connection.peer_connection_id_known = true
 	}
 	payload := datagram[opened.payload_offset:][:opened.payload_length]
+	connection.packet_data_dropped = false
 	ack_eliciting, frames_ok := frames_process(connection, level, payload, now)
 	if !frames_ok {
 		return true
 	}
-	number := opened.packet_number
+	connection.last_activity = now
+	connection.ack_eliciting_sent_since_receive = false
+	if connection.packet_data_dropped {
+		// Data of this packet had no place: the packet is not recorded and
+		// not acknowledged, so the peer declares it lost and sends its data
+		// again. Its other frames were taken; each one has the same effect
+		// when it comes again.
+		return true
+	}
 	if !range_set_insert(&space.received, number, number + 1) {
+		space.packet_number_floor = max(space.packet_number_floor, space.received.ends[0])
 		range_set_drop_lowest(&space.received)
 		range_set_insert(&space.received, number, number + 1)
 	}
@@ -166,7 +197,7 @@ packet_receive :: proc "contextless" (connection: ^Connection, datagram: []u8, h
 	}
 	if ack_eliciting {
 		if !space.ack_needed {
-			space.ack_deadline = now + MAX_ACK_DELAY_OF_THIS_SIDE
+			space.ack_deadline = saturating_add(now, MAX_ACK_DELAY_OF_THIS_SIDE)
 		}
 		space.ack_needed = true
 		space.ack_eliciting_unacknowledged += 1
@@ -178,27 +209,24 @@ packet_receive :: proc "contextless" (connection: ^Connection, datagram: []u8, h
 		connection.address_validated = true
 		connection_space_discard(connection, .Initial)
 	}
-	connection.last_activity = now
-	connection.ack_eliciting_sent_since_receive = false
 	return true
 }
 
-// server_first_initial starts the handshake of a server at the first
-// Initial packet of the client: the Destination Connection ID of the client
-// gives the Initial keys, and its Source Connection ID is where the server
-// sends.
+// server_first_initial gives the record of a server to a client, at the
+// first Initial packet of the client that opened: the Destination
+// Connection ID of the client gave the Initial keys, and its Source
+// Connection ID is where the server sends. The handshake must complete
+// before the handshake deadline, or the record ends.
 @(private)
-server_first_initial :: proc "contextless" (connection: ^Connection, header: ^Packet_Header, now: u64, error: ^errors.Error_Record) -> bool {
-	if header.destination_connection_id_length < CONNECTION_ID_SIZE {
-		// RFC 9000, section 7.2: 8 bytes at least in the first Initial.
-		return fail_at(error, .Too_Small, 1, header.destination_connection_id_length, CONNECTION_ID_SIZE)
-	}
+server_first_initial :: proc "contextless" (connection: ^Connection, header: ^Packet_Header, client_keys, server_keys: ^Packet_Keys, now: u64, error: ^errors.Error_Record) -> bool {
 	connection.original_destination_connection_id_length = copy(connection.original_destination_connection_id[:], header.destination_connection_id[:header.destination_connection_id_length])
 	connection.peer_connection_id_length = copy(connection.peer_connection_id[:], header.source_connection_id[:header.source_connection_id_length])
 	connection.peer_connection_id_known = true
-	if !connection_initial_keys_install(connection, error) {
-		return false
-	}
+	space := &connection.spaces[.Initial]
+	space.send_keys, space.receive_keys = server_keys^, client_keys^
+	space.keys_installed = true
+	connection.handshake_deadline = saturating_add(now, HANDSHAKE_TIME_LIMIT)
+	connection.last_activity = now
 	if !connection_tls_start(connection, error) {
 		connection_tls_progress(connection, now)
 		return false
@@ -582,7 +610,13 @@ stream_data_receive :: proc "contextless" (connection: ^Connection, offset: u64,
 	// The bytes that were read already are not written again; the limit
 	// above keeps each other byte inside the ring.
 	from := max(offset, stream.read_offset)
-	if from < end && range_set_insert(&stream.received, from, end) {
+	if from < end {
+		if !range_set_insert(&stream.received, from, end) {
+			// No place to note the data: it is dropped, and its packet is
+			// not acknowledged (packet_receive).
+			connection.packet_data_dropped = true
+			return true
+		}
 		ring_write(stream.receive[:], from, data[int(from - offset):])
 	}
 	return true
@@ -619,7 +653,13 @@ crypto_frame_receive :: proc "contextless" (connection: ^Connection, level: Encr
 	}
 	crypto := &connection.spaces[level].crypto
 	from := max(offset, crypto.delivered)
-	if from < end && range_set_insert(&crypto.received, from, end) {
+	if from < end {
+		if !range_set_insert(&crypto.received, from, end) {
+			// No place to note the data: it is dropped, and its packet is
+			// not acknowledged (packet_receive).
+			connection.packet_data_dropped = true
+			return true
+		}
 		copy(crypto.receive[int(from):int(end)], data[int(from - offset):])
 	}
 	ready := range_set_prefix(&crypto.received)
@@ -630,7 +670,7 @@ crypto_frame_receive :: proc "contextless" (connection: ^Connection, level: Encr
 	crypto.delivered = ready
 	error: errors.Error_Record
 	if !tls_receive(&connection.tls, level, bytes, &error) {
-		return connection_fail(connection, CRYPTO_ERROR_BASE + u64(connection.tls.alert), FRAME_CRYPTO, now)
+		return connection_fail(connection, tls_failure_code(connection), FRAME_CRYPTO, now)
 	}
 	return true
 }

@@ -347,6 +347,8 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Anti-amplification limit | A server that did not validate the address of a client sends at most 3 times the bytes that it received from it (RFC 9000, section 8.1) | |
 | Address validation | The proof that a client receives at its address: here, a Handshake packet of the client, which needs the keys of the server's flight | |
 | Handshake confirmed | The point after which a side drops its Handshake keys: a server when the handshake completes, a client when HANDSHAKE_DONE comes (RFC 9001, section 4.1.2) | handshake done (for the state) |
+| Handshake deadline | The time after which a connection whose handshake did not complete ends: 10 s from the start of a client, or from the first authentic Initial at a server | handshake timeout (for the value) |
+| Packet number floor | The packet number below which a side refuses each packet of a space, because its set of received numbers forgot those ranges | replay window |
 | Idle timeout | The time with no packet of the peer after which a side ends a connection with no packet: the smaller of the two that the sides give, and 3 probe timeouts at least | keep-alive |
 | Closing state | The state of a side that sent CONNECTION_CLOSE: it answers each packet with it, for 3 probe timeouts | |
 | Draining state | The state of a side that received CONNECTION_CLOSE: it sends nothing, for 3 probe timeouts | |

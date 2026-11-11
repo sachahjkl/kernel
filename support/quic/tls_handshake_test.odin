@@ -452,3 +452,76 @@ random_messages_never_trap :: proc(t: ^testing.T) {
 		testing.expect(t, receiver.state != .Connected)
 	}
 }
+
+// client_hello_with_padding gives the ClientHello of a client with a
+// padding extension (21, which the server does not know and skips) that
+// makes it total bytes long.
+client_hello_with_padding :: proc(hello: []u8, total: int) -> []u8 {
+	// The fields before the extensions: the header, legacy_version, random,
+	// legacy_session_id, cipher_suites, legacy_compression_methods.
+	position := MESSAGE_HEADER_SIZE + 2 + 32
+	position += 1 + int(hello[position])
+	position += 2 + (int(hello[position]) << 8 | int(hello[position + 1]))
+	position += 1 + int(hello[position])
+	extensions_length := int(hello[position]) << 8 | int(hello[position + 1])
+	padding_length := total - len(hello) - 4
+	larger := make([]u8, total, context.temp_allocator)
+	copy(larger, hello)
+	at := len(hello)
+	larger[at], larger[at + 1] = 0, 21
+	larger[at + 2], larger[at + 3] = u8(padding_length >> 8), u8(padding_length)
+	extensions_length += 4 + padding_length
+	larger[position], larger[position + 1] = u8(extensions_length >> 8), u8(extensions_length)
+	body := total - MESSAGE_HEADER_SIZE
+	larger[1], larger[2], larger[3] = u8(body >> 16), u8(body >> 8), u8(body)
+	return larger
+}
+
+// A ClientHello of 3900 bytes (a peer with large key shares and padding):
+// with the flight of the server, the transcript passes 4096 bytes, and the
+// server takes it. Before the correction (a transcript of 4096 bytes), the
+// server failed with internal_error.
+@(test)
+a_large_client_hello_is_taken :: proc(t: ^testing.T) {
+	pair := new(Test_Pair)
+	defer free(pair)
+	pair_make(pair)
+	error: errors.Error_Record
+	testing.expect(t, tls_start(&pair.server, &pair.server_configuration, &pair.cryptography, &pair.server_generator, &error))
+	testing.expect(t, tls_start(&pair.client, &pair.client_configuration, &pair.cryptography, &pair.client_generator, &error))
+	hello := client_hello_with_padding(tls_bytes_to_send(&pair.client, .Initial), 3900)
+	testing.expectf(t, tls_receive(&pair.server, .Initial, hello, &error), "%v %v", pair.server.alert, error)
+	testing.expect_value(t, pair.server.state, Tls_State.Server_Waits_For_Finished)
+	testing.expect(t, pair.server.transcript_length > 4096)
+}
+
+// Bytes of the Initial level left after the ServerHello, whose keys replace
+// the Initial keys, and bytes of the Initial level that come later: both
+// fail the handshake, as a PROTOCOL_VIOLATION of QUIC (RFC 9001, section
+// 4.1.3). Before the correction, the left bytes waited for ever and the
+// handshake went on.
+@(test)
+bytes_after_a_change_of_keys :: proc(t: ^testing.T) {
+	for later in ([]bool{false, true}) {
+		pair := new(Test_Pair, context.temp_allocator)
+		pair_make(pair)
+		error: errors.Error_Record
+		tls_start(&pair.server, &pair.server_configuration, &pair.cryptography, &pair.server_generator, &error)
+		tls_start(&pair.client, &pair.client_configuration, &pair.cryptography, &pair.client_generator, &error)
+		tls_receive(&pair.server, .Initial, tls_bytes_to_send(&pair.client, .Initial), &error)
+		server_hello := tls_bytes_to_send(&pair.server, .Initial)
+		if later {
+			testing.expect(t, tls_receive(&pair.client, .Initial, server_hello, &error))
+			testing.expect_value(t, pair.client.state, Tls_State.Client_Waits_For_Encrypted_Extensions)
+			testing.expect(t, !tls_receive(&pair.client, .Initial, []u8{0x08}, &error))
+		} else {
+			// The ServerHello and 3 bytes of a message after it.
+			with_rest := make([]u8, len(server_hello) + 3, context.temp_allocator)
+			copy(with_rest, server_hello)
+			with_rest[len(server_hello)] = 0x08
+			testing.expect(t, !tls_receive(&pair.client, .Initial, with_rest, &error))
+		}
+		testing.expect_value(t, pair.client.state, Tls_State.Failed)
+		testing.expect(t, pair.client.bytes_after_key_change)
+	}
+}

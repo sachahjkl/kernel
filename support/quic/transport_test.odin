@@ -329,7 +329,8 @@ anti_amplification_limit :: proc(t: ^testing.T) {
 	endpoints := endpoints_make()
 	defer free(endpoints)
 	endpoints.channel.drop_to_server_from = 1
-	end := endpoints.now + 30_000_000
+	// Under the handshake deadline, at which the record of the server ends.
+	end := endpoints.now + HANDSHAKE_TIME_LIMIT - 1_000_000
 	for endpoints.now < end {
 		endpoints_step(endpoints)
 		testing.expect(t, endpoints.server.bytes_sent <= 3 * endpoints.server.bytes_received)
@@ -659,4 +660,315 @@ transport_parameters_of_a_peer :: proc(t: ^testing.T) {
 	testing.expect_value(t, read.max_idle_timeout, 30_000)
 	testing.expect_value(t, read.initial_source_connection_id_length, 8)
 	testing.expect_value(t, read.original_destination_connection_id_length, 8)
+}
+
+// authentic_packet_receive seals frames in a 1-RTT packet with the keys of
+// the client of the test, gives it to a server, and gives the sealed
+// packet.
+authentic_packet_receive :: proc(endpoints: ^Test_Endpoints, server: ^Connection, keys: ^Packet_Keys, packet_number: u64, frames: []u8, now: u64) -> (sealed: []u8, processed: bool) {
+	packet := make([]u8, 1 + CONNECTION_ID_SIZE + PACKET_NUMBER_SIZE + len(frames) + TAG_SIZE, context.temp_allocator)
+	packet[0] = FIXED_BIT | u8(PACKET_NUMBER_SIZE - 1)
+	copy(packet[1:], server.local_connection_id[:])
+	number_offset := 1 + CONNECTION_ID_SIZE
+	copy(packet[number_offset + PACKET_NUMBER_SIZE:], frames)
+	error: errors.Error_Record
+	end, ok := packet_seal(&endpoints.cryptography, keys, packet, 0, number_offset, len(frames), packet_number, &error)
+	assert(ok)
+	sealed = packet[:end]
+	processed = connection_datagram_receive(server, sealed, now, &error)
+	return
+}
+
+// A STREAM frame of stream 0 with an offset of 4 bytes and a length of 2
+// bytes, with the bytes of the pattern at that offset.
+stream_frame_of_the_pattern :: proc(offset: int, length: int) -> []u8 {
+	frame := make([]u8, 1 + 1 + 4 + 2 + length, context.temp_allocator)
+	frame[0] = FRAME_STREAM | FRAME_STREAM_FLAG_OFFSET | FRAME_STREAM_FLAG_LENGTH
+	frame[1] = 0
+	variable_length_integer_write(frame, 2, u64(offset), 4)
+	variable_length_integer_write(frame, 6, u64(length), 2)
+	for index in 0 ..< length {
+		frame[8 + index] = pattern_byte(offset + index)
+	}
+	return frame
+}
+
+// Data with more than 32 holes: the islands past the 32nd have no place in
+// the set of the stream, so their packets are not acknowledged. The test
+// sends again, as a peer does, the data of each packet that was not
+// acknowledged, after the holes. Every byte comes once, in order. Before
+// the correction, each packet was acknowledged, the dropped islands never
+// came again, and the read stopped at the 33rd island (6500 bytes of 8000).
+@(test)
+data_with_no_place_is_not_acknowledged :: proc(t: ^testing.T) {
+	endpoints := connected_endpoints()
+	defer free(endpoints)
+	server := new(Connection)
+	defer free(server)
+	server^ = endpoints.server
+	keys := endpoints.client.spaces[.Application].send_keys
+	number := endpoints.client.spaces[.Application].next_packet_number + 10
+	now := endpoints.now
+	UNIT :: 100
+	UNITS :: 80
+	numbers: [UNITS]u64
+	// The odd units: 40 islands.
+	for unit := 1; unit < UNITS; unit += 2 {
+		numbers[unit] = number
+		_, processed := authentic_packet_receive(endpoints, server, &keys, number, stream_frame_of_the_pattern(unit * UNIT, UNIT), now)
+		testing.expect(t, processed)
+		number += 1
+	}
+	not_acknowledged := make([dynamic]int, context.temp_allocator)
+	for unit := 1; unit < UNITS; unit += 2 {
+		if !range_set_contains(&server.spaces[.Application].received, numbers[unit]) {
+			append(&not_acknowledged, unit)
+		}
+	}
+	testing.expect_value(t, len(not_acknowledged), 8)
+	// The holes, then the islands that were not acknowledged.
+	for unit := 0; unit < UNITS; unit += 2 {
+		authentic_packet_receive(endpoints, server, &keys, number, stream_frame_of_the_pattern(unit * UNIT, UNIT), now)
+		number += 1
+	}
+	for unit in not_acknowledged {
+		authentic_packet_receive(endpoints, server, &keys, number, stream_frame_of_the_pattern(unit * UNIT, UNIT), now)
+		number += 1
+	}
+	testing.expect_value(t, server.state, Connection_State.Connected)
+	read := 0
+	buffer: [UNITS * UNIT]u8
+	for {
+		count, _, _ := stream_read(server, buffer[read:])
+		if count == 0 {
+			break
+		}
+		read += count
+	}
+	testing.expect_value(t, read, UNITS * UNIT)
+	for index in 0 ..< read {
+		if buffer[index] != pattern_byte(index) {
+			testing.expectf(t, false, "the byte %d came changed", index)
+			break
+		}
+	}
+}
+
+// The same for CRYPTO data: past 32 islands, a packet whose data had no
+// place is not acknowledged. Before the correction, all 40 were.
+@(test)
+crypto_data_with_no_place_is_not_acknowledged :: proc(t: ^testing.T) {
+	endpoints := connected_endpoints()
+	defer free(endpoints)
+	server := new(Connection)
+	defer free(server)
+	server^ = endpoints.server
+	keys := endpoints.client.spaces[.Application].send_keys
+	number := endpoints.client.spaces[.Application].next_packet_number + 10
+	not_acknowledged := 0
+	for island in 0 ..< 40 {
+		frame: [1 + 2 + 1 + 10]u8
+		frame[0] = FRAME_CRYPTO
+		variable_length_integer_write(frame[:], 1, u64(20 * island + 10), 2)
+		frame[3] = 10
+		authentic_packet_receive(endpoints, server, &keys, number, frame[:], endpoints.now)
+		if !range_set_contains(&server.spaces[.Application].received, number) {
+			not_acknowledged += 1
+		}
+		number += 1
+	}
+	testing.expect_value(t, not_acknowledged, 8)
+	testing.expect_value(t, server.state, Connection_State.Connected)
+}
+
+// On the send side: a lost packet whose data has no place in the set of the
+// bytes to send again stays in flight, and so does an acknowledged packet
+// whose data has no place in the set of acknowledged bytes. Before the
+// correction, both were removed: the data of the first was never sent
+// again, and the second never counted as acknowledged.
+@(test)
+sent_data_with_no_place_stays_in_flight :: proc(t: ^testing.T) {
+	connection := new(Connection)
+	defer free(connection)
+	space := &connection.spaces[.Application]
+	stream := &connection.stream
+	for index in u64(0) ..< RANGE_SET_LIMIT {
+		range_set_insert(&stream.send_again, 10 * index + 2, 10 * index + 5)
+		range_set_insert(&stream.send_acknowledged, 10 * index + 2, 10 * index + 5)
+	}
+	packet := &space.sent[0]
+	packet^ = {in_use = true, packet_number = 3, size = 1200, stream_offset = 1000, stream_length = 5}
+	space.ack_eliciting_in_flight = 1
+	connection.bytes_in_flight = 1200
+	sent_packet_lost(connection, .Application, packet)
+	testing.expect(t, packet.in_use)
+	testing.expect_value(t, connection.bytes_in_flight, 1200)
+	sent_packet_acknowledged(connection, .Application, packet)
+	testing.expect(t, packet.in_use)
+	// With a place, the packet goes, and its data waits to be sent again.
+	stream.send_again = {}
+	sent_packet_lost(connection, .Application, packet)
+	testing.expect(t, !packet.in_use)
+	testing.expect_value(t, connection.bytes_in_flight, 0)
+	testing.expect(t, range_set_contains(&stream.send_again, 1000))
+}
+
+// A datagram of random bytes shaped as an Initial packet of version 1 does
+// not take the record of a server: the real client connects after it.
+// Before the correction, the server took the Destination Connection ID of
+// the random datagram, and refused the real client.
+@(test)
+a_forged_initial_does_not_take_the_server :: proc(t: ^testing.T) {
+	endpoints := endpoints_make()
+	defer free(endpoints)
+	forged: [MAX_DATAGRAM_SIZE]u8
+	state: u64 = 0x464f_5247_4544_0001
+	for &byte in forged {
+		state ~= state << 13
+		state ~= state >> 7
+		state ~= state << 17
+		byte = u8(state)
+	}
+	forged[0] = LONG_HEADER_FORM | FIXED_BIT | u8(PACKET_NUMBER_SIZE - 1)
+	forged[1], forged[2], forged[3], forged[4] = 0, 0, 0, 1
+	forged[5] = CONNECTION_ID_SIZE // Then 8 random bytes.
+	forged[14] = 0 // An empty Source Connection ID.
+	forged[15] = 0 // An empty token.
+	variable_length_integer_write(forged[:], 16, MAX_DATAGRAM_SIZE - 18, 2)
+	error: errors.Error_Record
+	testing.expect(t, !connection_datagram_receive(&endpoints.server, forged[:], endpoints.now, &error))
+	testing.expect(t, !endpoints.server.tls_started)
+	testing.expect(t, !endpoints.server.spaces[.Initial].keys_installed)
+	testing.expect(t, endpoints_connect(endpoints))
+}
+
+// An authentic Initial with no ClientHello takes the record of a server
+// (anyone can make one: its keys come from a public value). With no idle
+// timeout, the handshake deadline still ends the record. Before the
+// correction, the record waited for ever.
+@(test)
+an_initial_alone_ends_at_the_handshake_deadline :: proc(t: ^testing.T) {
+	endpoints := endpoints_make(idle_timeout_milliseconds = 0)
+	defer free(endpoints)
+	client_keys, server_keys: Packet_Keys
+	error: errors.Error_Record
+	initial_keys(&endpoints.cryptography, bytes_of(ORIGINAL_DESTINATION_CONNECTION_ID), &client_keys, &server_keys, &error)
+	// 23 bytes of header, a PING and PADDING, 16 bytes of tag: 1200.
+	frames: [MAX_DATAGRAM_SIZE - 23 - TAG_SIZE]u8
+	frames[0] = FRAME_PING
+	datagram: [MAX_DATAGRAM_SIZE]u8
+	end, ok := long_packet_write(&endpoints.cryptography, &client_keys, datagram[:], 0, .Initial, nil, frames[:], 0, 0, &error)
+	testing.expectf(t, ok && end == MAX_DATAGRAM_SIZE, "%v %d", error, end)
+	start := endpoints.now
+	testing.expect(t, connection_datagram_receive(&endpoints.server, datagram[:end], start, &error))
+	testing.expect(t, endpoints.server.tls_started)
+	server := &endpoints.server
+	out: [MAX_DATAGRAM_SIZE]u8
+	for now := start; now < start + 2 * HANDSHAKE_TIME_LIMIT && server.state != .Closed; now += 100_000 {
+		for connection_datagram_send(server, out[:], now) > 0 {}
+		if connection_deadline(server) <= now {
+			connection_time_passes(server, now)
+		}
+	}
+	testing.expect_value(t, server.state, Connection_State.Closed)
+	testing.expect(t, server.closed_by_handshake_timeout)
+}
+
+// A packet whose number was in a range that the set forgot is refused, even
+// when it is authentic: a replay. Before the correction, it was opened and
+// its frames were taken a second time (here, a PATH_CHALLENGE answered
+// again).
+@(test)
+a_forgotten_packet_number_is_refused :: proc(t: ^testing.T) {
+	endpoints := connected_endpoints()
+	defer free(endpoints)
+	server := new(Connection)
+	defer free(server)
+	server^ = endpoints.server
+	keys := endpoints.client.spaces[.Application].send_keys
+	base := endpoints.client.spaces[.Application].next_packet_number + 10
+	challenge := []u8{FRAME_PATH_CHALLENGE, 1, 2, 3, 4, 5, 6, 7, 8}
+	first, processed := authentic_packet_receive(endpoints, server, &keys, base, challenge, endpoints.now)
+	testing.expect(t, processed)
+	replay := make([]u8, len(first))
+	defer delete(replay)
+	copy(replay, first)
+	// 40 more numbers with a hole between each two: 41 ranges.
+	for index in u64(1) ..= 40 {
+		authentic_packet_receive(endpoints, server, &keys, base + 2 * index, []u8{FRAME_PING}, endpoints.now)
+	}
+	testing.expect(t, server.spaces[.Application].packet_number_floor > base)
+	server.pending_controls = {}
+	error: errors.Error_Record
+	testing.expect(t, !connection_datagram_receive(server, replay, endpoints.now, &error))
+	testing.expect(t, .Path_Response not_in server.pending_controls)
+}
+
+// The arithmetic of the round-trip time and of the deadlines with values
+// that the peer chooses. Before the correction: an ack_delay of 2^64 -
+// min_round_trip wrapped min_round_trip + ack_delay to 0, and made the
+// adjusted sample larger than the sample itself; a large smoothed time
+// wrapped the probe timeout, and a large idle timeout the idle deadline,
+// into small values.
+@(test)
+round_trip_arithmetic_cannot_wrap :: proc(t: ^testing.T) {
+	connection := new(Connection)
+	defer free(connection)
+	connection.has_round_trip_sample = true
+	connection.min_round_trip = 10_000
+	connection.smoothed_round_trip = 30_000
+	connection.round_trip_variation = 0
+	round_trip_update(connection, 30_000, max(u64) - 10_000 + 1)
+	testing.expect_value(t, connection.smoothed_round_trip, 30_000)
+	testing.expect_value(t, connection.round_trip_variation, 0)
+
+	connection.smoothed_round_trip = max(u64) / 4
+	connection.probe_timeout_count = 16
+	testing.expect_value(t, probe_timeout_duration(connection, .Application), max(u64))
+
+	connection.tls_started = true
+	connection.last_activity = 1_000_000
+	connection.idle_timeout = max(u64) - 10
+	testing.expect_value(t, connection_idle_deadline(connection), max(u64))
+
+	// An idle timeout of 2^62 - 1 milliseconds from the peer.
+	parameters := transport_parameters_default()
+	parameters.max_idle_timeout = VARIABLE_LENGTH_INTEGER_LARGEST
+	testing.expect_value(t, saturating_multiply(parameters.max_idle_timeout, 1000), max(u64))
+}
+
+// A configuration that leaves the least seed strength at its zero value is
+// refused, by the connection and by TLS; and so is a client with no pinned
+// key. Before the correction, both started, and the first one could make
+// keys from a weak seed.
+@(test)
+configurations_that_are_refused :: proc(t: ^testing.T) {
+	cryptography := module_cryptography()
+	generator: random.Generator
+	seed: [random.SEED_SIZE]u8
+	random.generator_seed(&generator, &seed, .Weak)
+	configuration: Connection_Configuration
+	configuration.tls.application_protocol_length = text_into(configuration.tls.application_protocol[:], "kernel-remote")
+	configuration.tls.server_public_key[0] = 1
+	connection := new(Connection)
+	defer free(connection)
+	error: errors.Error_Record
+	testing.expect(t, !connection_start_server(connection, &configuration, &cryptography, &generator, 0, &error))
+	testing.expect_value(t, error.kind, i64(errors.Kind.Bad_Value))
+	testing.expect(t, !connection_start_client(connection, &configuration, &cryptography, &generator, 0, &error))
+	testing.expect_value(t, error.kind, i64(errors.Kind.Bad_Value))
+	handshake := new(Tls_Handshake)
+	defer free(handshake)
+	tls_configuration := configuration.tls
+	tls_configuration.role = .Client
+	testing.expect(t, !tls_start(handshake, &tls_configuration, &cryptography, &generator, &error))
+	testing.expect_value(t, error.kind, i64(errors.Kind.Bad_Value))
+	tls_configuration.least_seed_strength = .Processor
+	tls_configuration.server_public_key = {}
+	testing.expect(t, !tls_start(handshake, &tls_configuration, &cryptography, &generator, &error))
+	testing.expect_value(t, error.kind, i64(errors.Kind.Empty))
+	// A failure of TLS for bytes after a change of keys closes with
+	// PROTOCOL_VIOLATION, not with an alert.
+	connection.tls.bytes_after_key_change = true
+	testing.expect_value(t, tls_failure_code(connection), u64(Transport_Error.Protocol_Violation))
 }

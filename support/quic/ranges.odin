@@ -15,8 +15,10 @@ Range_Set :: struct {
 
 // range_set_insert adds [start, end) and merges the ranges that it touches.
 // If the result would need more than RANGE_SET_LIMIT ranges, the set does not
-// change and the call gives false: the caller drops what it inserts (a peer
-// that sends data with many holes gets it acknowledged later).
+// change and the call gives false. The caller then acts as if the numbers
+// never came: a packet whose data had no place is not acknowledged, so the
+// peer sends the data again; a sent packet whose data had no place stays in
+// flight.
 range_set_insert :: proc "contextless" (set: ^Range_Set, start, end: u64) -> bool {
 	if start >= end {
 		return true
