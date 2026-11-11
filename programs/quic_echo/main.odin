@@ -229,6 +229,17 @@ end_reason :: proc "contextless" (connection: ^quic.Connection) -> string {
 	return "closed by this server"
 }
 
+// printable_text copies the bytes of a text of the network into place,
+// each byte that is not printable ASCII as '?': a log line stays one line.
+printable_text :: proc "contextless" (place: []u8, bytes: []u8) -> string {
+	count := min(len(place), len(bytes))
+	for index in 0 ..< count {
+		character := bytes[index]
+		place[index] = character >= 0x20 && character < 0x7F ? character : '?'
+	}
+	return string(place[:count])
+}
+
 // echo_work writes back what each connection read, and logs each new
 // connection and each end.
 echo_work :: proc "contextless" () {
@@ -269,7 +280,12 @@ echo_work :: proc "contextless" () {
 			echo.logged = true
 			if log_allowed() {
 				text: [40]u8
-				system.log("quic_echo: ", address_text(text[:], record.remote), " ended (", end_reason(connection), "): in ", connection.stream.read_offset, " bytes, out ", connection.stream.send_length, " bytes, srtt ", connection.smoothed_round_trip, " us")
+				// The code, the frame type and the reason of the close tell
+				// why a client of another stack failed: the code of a TLS
+				// alert is 0x100 plus the alert.
+				reason: [quic.CLOSE_REASON_KEPT]u8
+				reason_text := printable_text(reason[:], connection.close_reason_of_peer[:connection.close_reason_of_peer_length])
+				system.log("quic_echo: ", address_text(text[:], record.remote), " ended (", end_reason(connection), ", the code ", system.Hex(connection.close_error_code), connection.close_is_application ? " of the application" : "", ", the frame type ", system.Hex(connection.close_frame_type), ", the reason of the client \"", reason_text, "\"): in ", connection.stream.read_offset, " bytes, out ", connection.stream.send_length, " bytes, srtt ", connection.smoothed_round_trip, " us")
 			}
 		}
 	}

@@ -1,7 +1,6 @@
 package kerneltool
 
 import "core:fmt"
-import "core:net"
 import "core:os"
 import "core:strings"
 import "core:sync"
@@ -9,8 +8,11 @@ import "core:sync"
 // QUIC against a stack that this project did not write (docs/QUIC.md,
 // section 6): the QUIC client of OpenSSL (`openssl s_client -quic`, OpenSSL
 // 3.2 and later; the development shell has the OpenSSL of nixpkgs). The
-// network device goes to QEMU user networking, which forwards a UDP port of
-// the loopback of the host to the UDP port 4433 of the machine (hostfwd).
+// network device of the machine goes to the peer of the tool, and s_client
+// reaches the UDP port 4433 of the machine through the UDP relay of the
+// peer (peer_relay.odin), on the loopback of the host. QEMU user networking
+// is not used: with restrict=on, libslirp drops each UDP datagram that the
+// machine sends.
 //
 // What the manual and apps/s_client.c (tag openssl-3.6.0) say, and what the
 // step relies on:
@@ -52,21 +54,7 @@ scenario_quic_real := [?]Step {
 
 // quic_real_tests_run runs the machine of `kerneltool test quic-real`.
 quic_real_tests_run :: proc() -> bool {
-	return machine_test(scenario_quic_real[:], BOOT_VOLUME, TEST_OUTPUT_QUIC_REAL, MACHINE_STOP_OK, TEST_DATA_DISK, user_network = true)
-}
-
-// free_udp_port gives a UDP port of the loopback that no socket holds now.
-free_udp_port :: proc() -> (port: int, ok: bool) {
-	socket, err := net.make_bound_udp_socket(net.IP4_Loopback, 0)
-	if err != nil {
-		return 0, false
-	}
-	defer net.close(socket)
-	bound, bound_err := net.bound_endpoint(socket)
-	if bound_err != nil {
-		return 0, false
-	}
-	return bound.port, true
+	return machine_test(scenario_quic_real[:], BOOT_VOLUME, TEST_OUTPUT_QUIC_REAL, MACHINE_STOP_OK, TEST_DATA_DISK)
 }
 
 // openssl_quic_command gives the command of the step: the line, then {fin}
@@ -76,7 +64,11 @@ free_udp_port :: proc() -> (port: int, ok: bool) {
 // manual of OpenSSL 3.6; not -trace, which needs a build option of
 // OpenSSL.
 openssl_quic_command :: proc(line: string, port: int, diagnostics := false) -> []string {
-	script := fmt.tprintf("printf '%%s\\n{fin}\\n' '%s' | timeout %d openssl s_client -quic -alpn kernel-remote -enable_server_rpk -groups X25519 -sigalgs ed25519 -ciphersuites TLS_CHACHA20_POLY1305_SHA256 -adv%s -connect 127.0.0.1:%d 2>&1", line, OPENSSL_WAIT_SECONDS, diagnostics ? " -msg -debug -state" : "", port)
+	// The input stays open for 3 s after the line: s_client ends at the end
+	// of its input, before it prints what the server sent back.
+	// The text {fin} is an argument: a brace in the format of fmt starts a
+	// field of the format.
+	script := fmt.tprintf("(printf '%%s\\n%s\\n' '%s'; sleep 3) | timeout %d openssl s_client -quic -alpn kernel-remote -enable_server_rpk -groups X25519 -sigalgs ed25519 -ciphersuites TLS_CHACHA20_POLY1305_SHA256 -adv%s -connect 127.0.0.1:%d 2>&1", "{fin}", line, OPENSSL_WAIT_SECONDS, diagnostics ? " -msg -debug -state" : "", port)
 	command := make([]string, 3, context.temp_allocator)
 	command[0], command[1], command[2] = "sh", "-c", script
 	return command
@@ -118,15 +110,16 @@ printed_key :: proc(output: string) -> (key: [32]u8, ok: bool) {
 	return key, false
 }
 
-// openssl_quic_run runs s_client against quic_echo through the UDP forward
-// of QEMU, and checks what it printed: the raw public key negotiated, the
-// key that the machine printed, and the line back.
+// openssl_quic_run runs s_client against quic_echo through the UDP relay
+// of the peer, and checks what it printed: the raw public key negotiated,
+// the key that the machine printed, and the line back.
 openssl_quic_run :: proc(machine: ^Machine, line: string) -> bool {
-	if machine.forward.quic_port == 0 {
-		fmt.eprintln("kerneltool: test failed: the step Openssl_Quic needs QEMU user networking (machine_test with user_network)")
+	relay_port := machine.peer.relay.port
+	if relay_port == 0 {
+		fmt.eprintln("kerneltool: test failed: the step Openssl_Quic needs the UDP relay of the peer")
 		return false
 	}
-	command := openssl_quic_command(line, machine.forward.quic_port)
+	command := openssl_quic_command(line, relay_port)
 	fmt.printfln("kerneltool: runs %s", command[2])
 	state, standard_output, standard_error, err := os.process_exec({command = command}, context.allocator)
 	defer delete(standard_output)
@@ -136,15 +129,17 @@ openssl_quic_run :: proc(machine: ^Machine, line: string) -> bool {
 		return false
 	}
 	output := string(standard_output)
-	// On a failure: what openssl printed, the frames of the UDP port 4433
-	// that QEMU captured, the last counts of quic_echo, and a second attempt
-	// with the diagnostics of openssl.
+	// On a failure: all that openssl printed (with its error queue and the
+	// close code and reason of either side), the datagrams that the relay
+	// carried, the last counts of quic_echo and its last line on a closed
+	// connection, and a second attempt with the diagnostics of openssl.
 	print_output :: proc(output: string, machine: ^Machine, line: string) {
 		fmt.eprintln("kerneltool: what openssl printed:")
 		fmt.eprintln(output)
-		quic_frames_report()
+		peer_relay_trace_print(machine.peer)
 		fmt.eprintfln("kerneltool: the last counts of quic_echo: %s", log_last_line(machine, "quic_echo: accepted "))
-		command := openssl_quic_command(line, machine.forward.quic_port, diagnostics = true)
+		fmt.eprintfln("kerneltool: the last close that quic_echo logged: %s", log_last_line(machine, " ended ("))
+		command := openssl_quic_command(line, machine.peer.relay.port, diagnostics = true)
 		fmt.eprintfln("kerneltool: a second attempt, with the diagnostics of openssl: %s", command[2])
 		_, again, again_error, err := os.process_exec({command = command}, context.allocator)
 		defer delete(again)
@@ -152,7 +147,6 @@ openssl_quic_run :: proc(machine: ^Machine, line: string) -> bool {
 		if err == nil {
 			fmt.eprintln(string(again))
 		}
-		quic_frames_report()
 	}
 	if !strings.contains(output, "Server-to-client raw public key negotiated") {
 		fmt.eprintfln("kerneltool: test failed: openssl did not negotiate a raw public key of the server (exit %v)", state.exit_code)
@@ -177,48 +171,4 @@ openssl_quic_run :: proc(machine: ^Machine, line: string) -> bool {
 	}
 	fmt.printfln("kerneltool: test passed: openssl s_client -quic connected to quic_echo with the raw public key of the log, and its line came back")
 	return true
-}
-
-// quic_frames_report prints the UDP frames of the port 4433 that QEMU wrote
-// for the machine with libslirp (filter-dump, the pcap format): the
-// direction, the ports, the length of the data, and the bytes of each short
-// datagram (a Retry has about 100 bytes). It shows whether a Retry left the
-// machine, and its bytes.
-quic_frames_report :: proc() {
-	bytes, err := os.read_entire_file(FRAMES_OF_USER_NETWORK, context.temp_allocator)
-	if err != nil || len(bytes) < 24 {
-		fmt.eprintln("kerneltool: no frames of the machine with libslirp")
-		return
-	}
-	read_32_little :: proc(bytes: []u8, offset: int) -> int {
-		return int(bytes[offset]) | int(bytes[offset + 1]) << 8 | int(bytes[offset + 2]) << 16 | int(bytes[offset + 3]) << 24
-	}
-	printed := 0
-	for offset := 24; offset + 16 <= len(bytes) && printed < 60; {
-		length := read_32_little(bytes, offset + 8)
-		frame := bytes[offset + 16:][:min(length, len(bytes) - offset - 16)]
-		offset += 16 + length
-		if len(frame) < 42 || frame[12] != 0x08 || frame[13] != 0x00 || frame[23] != 17 {
-			continue
-		}
-		ip := frame[14:]
-		header := int(ip[0] & 15) * 4
-		total := int(ip[2]) << 8 | int(ip[3])
-		datagram := ip[header:min(total, len(ip))]
-		if len(datagram) < 8 {
-			continue
-		}
-		source_port := int(datagram[0]) << 8 | int(datagram[1])
-		destination_port := int(datagram[2]) << 8 | int(datagram[3])
-		if source_port != QUIC_SERVER_PORT && destination_port != QUIC_SERVER_PORT {
-			continue
-		}
-		data := datagram[8:]
-		shown := data[:min(len(data), 160)]
-		fmt.eprintfln("kerneltool: a UDP frame: %d.%d.%d.%d port %d to %d.%d.%d.%d port %d, %d bytes of data: %x%s", ip[12], ip[13], ip[14], ip[15], source_port, ip[16], ip[17], ip[18], ip[19], destination_port, len(data), shown, len(data) > len(shown) ? "..." : "")
-		printed += 1
-	}
-	if printed == 0 {
-		fmt.eprintln("kerneltool: no UDP frame of the port 4433 in the capture")
-	}
 }

@@ -22,10 +22,13 @@ scenario_quic := [?]Step {
 	// 1 MiB each way, through the network service.
 	{kind = .Peer_Quic, text = "echo"},
 	{kind = .Wait, text = "quic_echo: a connection from 10.0.2.2 port "},
-	{kind = .Wait, text = " ended (closed by the client): in 1048576 bytes, out 1048576 bytes"},
+	{kind = .Wait, text = " ended (closed by the client, the code 0000000000000000 of the application, the frame type 0000000000000000, the reason of the client \"\"): in 1048576 bytes, out 1048576 bytes"},
 	// The same with 5 % of the datagrams lost, 10 % reordered, 10 % repeated.
 	{kind = .Peer_Quic, text = "loss"},
-	{kind = .Wait, text = " ended (closed by the client): in 1048576 bytes, out 1048576 bytes"},
+	// With loss, the one datagram that carries the close of the client can be
+	// lost: the server then ends the connection at its idle timeout of 30 s. Either
+	// end is right; the bytes each way are what this step requires.
+	{kind = .Wait, text = "): in 1048576 bytes, out 1048576 bytes", seconds = 45},
 	// 8 clients at once, from one address: 2 in the handshake at once.
 	{kind = .Peer_Quic, text = "crowd"},
 	// A client that pins another key: it refuses the server.
@@ -39,7 +42,7 @@ scenario_quic := [?]Step {
 	// A client that takes its Retry, sends its Initial with the token, and
 	// vanishes: the handshake deadline ends its record.
 	{kind = .Peer_Quic, text = "vanish"},
-	{kind = .Wait, text = " ended (the handshake deadline)"},
+	{kind = .Wait, text = " ended (the handshake deadline, "},
 	{kind = .Front, text = "quic_echo"},
 	{kind = .Shot, text = "quic_echo"},
 	{kind = .Front, text = "console"},

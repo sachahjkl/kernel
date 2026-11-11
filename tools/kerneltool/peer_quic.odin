@@ -251,8 +251,8 @@ peer_quic_case_start :: proc(peer: ^Peer, state: ^Peer_Quic) -> bool {
 }
 
 // peer_quic_udp builds a frame of a UDP datagram from an address of the
-// peer to the QUIC server of the machine.
-@(private = "file")
+// peer to the QUIC server of the machine. The relay (peer_relay.odin)
+// builds its frames with it too.
 peer_quic_udp :: proc(peer: ^Peer, source: [4]u8, port: u16, data: []u8) -> []u8 {
 	length := 8 + len(data)
 	frame := make([]u8, max(42 + len(data), 60), context.temp_allocator)

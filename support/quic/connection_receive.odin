@@ -542,11 +542,12 @@ frame_process :: proc "contextless" (connection: ^Connection, level: Encryption_
 			frame_type = frame_read_integer(reader)
 		}
 		reason_length := frame_read_integer(reader)
-		frame_read_bytes(reader, reason_length)
+		reason := frame_read_bytes(reader, reason_length)
 		if reader.failed {
 			return encoding_error(connection, type, now)
 		}
 		connection_enter_draining(connection, code, frame_type, type == FRAME_CONNECTION_CLOSE_APPLICATION, now)
+		connection.close_reason_of_peer_length = copy(connection.close_reason_of_peer[:], reason)
 	case FRAME_HANDSHAKE_DONE:
 		if role == .Server {
 			return connection_fail(connection, u64(Transport_Error.Protocol_Violation), type, now)

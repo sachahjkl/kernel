@@ -363,17 +363,57 @@ Before this round, each forged Initial cost the 11 exports (about 30 us), with n
 - `s_client` goes on after any check of the key (it is a test tool): the test compares the printed key with the key on the log of the machine. That is the pinning.
 - With `-adv`, the line `{fin}` ends the stream.
 
-The machine of `test quic-real` has QEMU user networking, which forwards a UDP port of the loopback of the host to the UDP port 4433 of the machine (`hostfwd=udp:127.0.0.1:<port>-10.0.2.15:4433`, next to the forward of TCP). The machine starts `quic_echo`; the step Quic_Key reads its key; the step Openssl_Quic runs:
+The network device of the machine of `test quic-real` goes to the peer of the tool (`-netdev dgram`), as in `test quic`. `s_client` reaches `quic_echo` through the UDP relay of the peer (`tools/kerneltool/peer_relay.odin`):
+- the relay has one UDP socket on the loopback of the host, at a port that the system chooses;
+- a datagram of a client of the host becomes a frame from 10.0.2.2 to 10.0.2.15 port 4433, from a port that the relay gives that client (42000 + its place in a table of 16; a new client takes a free place, or the place whose last datagram is the oldest);
+- a datagram of the machine to 10.0.2.2 at one of those ports goes back to its client from the socket of the relay;
+- a datagram over 1472 bytes (the UDP data of a frame of 1500 bytes), from either side, is dropped and counted; the relay prints its counts when the peer stops.
+
+The thread of the peer runs the relay. `peer_run` reads each frame of the machine that waits, and runs the ticks of the cases and of the relay when no frame waits, or after 1 ms of frames: the answers of the machine never wait in the socket of the peer behind the next sends. The socket of the relay does not block; each tick takes 64 datagrams at most. The test needs no network of the host but its loopback.
+
+The machine starts `quic_echo`; the step Quic_Key reads its key; the step Openssl_Quic runs:
 ```
-printf '%s\n{fin}\n' 'an echo through QUIC, from the OpenSSL of the host' | timeout 20 openssl s_client -quic -alpn kernel-remote -enable_server_rpk -groups X25519 -sigalgs ed25519 -ciphersuites TLS_CHACHA20_POLY1305_SHA256 -adv -connect 127.0.0.1:<port> 2>&1
+printf '%s\n{fin}\n' 'an echo through QUIC, from the OpenSSL of the host' | timeout 20 openssl s_client -quic -alpn kernel-remote -enable_server_rpk -groups X25519 -sigalgs ed25519 -ciphersuites TLS_CHACHA20_POLY1305_SHA256 -adv -connect 127.0.0.1:<port of the relay> 2>&1
 ```
-The output must have "Server-to-client raw public key negotiated", the key of the log in the 64 hexadecimal digits after "pub:", and the line back. On a failure, the step prints what OpenSSL printed, each UDP frame of the port 4433 in the capture of QEMU (`filter-dump`: its addresses, its ports, and the bytes of each short datagram, so the bytes of a Retry), the last counts of `quic_echo` (with the Sends that the network service refused, and the status of the last one), and the output of a second attempt with `-msg -debug -state`.
+The output must have "Server-to-client raw public key negotiated", the key of the log in the 64 hexadecimal digits after "pub:", and the line back. On a failure, the step prints:
+- all that OpenSSL printed, with its error queue;
+- the first 60 datagrams that the relay carried: the direction, the port, the length, and the first 160 bytes;
+- the last counts of `quic_echo` (with the Sends that the network service refused, and the status of the last one);
+- the last end of a connection that `quic_echo` logged: its cause, the error code and the frame type of the close, and the first 48 bytes of the reason phrase of the client (each byte that is not printable ASCII as "?");
+- the output of a second attempt with `-msg -debug -state`.
 
 **The first run (2026-11-11): OpenSSL never came back with the token.** `quic_echo` sent a Retry for each of its Initials (5 in 20 s); no Initial carried a token. What the source of OpenSSL 3.6.0 says, read after the run:
 - its client of one connection uses a connection identifier of 0 bytes (`quic_impl.c`: the port of a client has `is_multi_conn` 0, so `rx_short_dcid_len` is 0 in `quic_port.c`). The Retry of `quic_echo` then has an empty Destination Connection ID. No test of this system had sent one: the client of this system always has 8 bytes. A host test now checks that Retry, byte for byte, with the tag computed by the rule of RFC 9001, section 5.8, for an original identifier of 8 and of 20 bytes;
 - its port finds the connection by that empty identifier; its decoder takes a Retry with a zero-length Destination Connection ID; it checks the tag over its first identifier by the same rule (`quic_wire_pkt.c`), and takes one Retry before any encrypted packet (`quic_channel.c`).
 
-So nothing in the source refuses the Retry of `quic_echo`; the next run shows, from the capture, whether the Retry left the machine and reached the host. The client of OpenSSL also meets the Retry of the server, as each client does now.
+So nothing in the source refuses the Retry of `quic_echo`.
+
+**The second run (2026-11-11): the cause was QEMU user networking.** The capture had the Initial of OpenSSL (Source Connection ID of 0 bytes) and the Retry of `quic_echo` (93 bytes, its tag right by a computation outside this code, its UDP and IP checksums right); `quic_echo` refused no Send; OpenSSL with `-debug` received no datagram. libslirp drops each UDP datagram that the machine sends when the user network has `restrict=on` (`src/udp.c`, `udp_input`), before it looks for a forward; TCP answers pass, so the HTTP tests through `hostfwd` worked. `restrict=on` stays: the machine must not reach the network of the host for one test. The step now goes through the UDP relay of the peer, and the `hostfwd=udp` part is gone. The same run showed that the text `{fin}` in the format of `fmt` broke the command (a brace starts a field of the format); it is now an argument.
+
+**A client with an empty identifier, after the Retry** (read of the server path, then a host test). Every packet that the server sends to that client has a Destination Connection ID of 0 bytes:
+- a long header has 1 + 4 + 1 + 0 + 1 + 8 bytes before its token and Length, and a short header 1 + 0 bytes before its packet number. Both writers take the length of the identifier of the peer, so no size is fixed to 8;
+- the sample of header protection is 4 bytes after the start of the packet number, whatever the identifier: a packet number of 4 bytes and a tag of 16 bytes always cover it;
+- the client sends to the identifier of the record (8 bytes), and the server finds the record by that identifier and the remote; the empty Source Connection ID of each later long header must stay empty, and does;
+- the transport parameters of the client name an empty `initial_source_connection_id`, which equals the empty Source Connection ID of its packets.
+
+The host test `a_handshake_with_a_client_with_an_empty_identifier` (`support/quic/server_test.odin`) builds a real ClientHello with an empty `initial_source_connection_id`, sends it after the Retry in an Initial with an empty Source Connection ID and the token, and checks:
+- the record stays in the handshake;
+- the first datagram of the server has 1200 bytes, an Initial and a Handshake packet, each with an empty Destination Connection ID and the identifier of the record as its source;
+- the Initial opens with the keys of the identifier of the Retry.
+
+What the server sends to OpenSSL, against what its client requires (`quic_channel.c`, `ssl/statem`):
+- the transport parameters: `original_destination_connection_id` (the first identifier of the client, before the Retry), `retry_source_connection_id`, and `initial_source_connection_id` (the identifier of the record, which is the Source Connection ID of the Initial of the server);
+- EncryptedExtensions: ALPN, `server_certificate_type` with the one value 2, which a server sends only when the client offered it (this server requires that offer), and the transport parameters;
+- Certificate: one entry, the 44 bytes of the SubjectPublicKeyInfo of the Ed25519 key; CertificateVerify with ed25519;
+- HANDSHAKE_DONE in the first 1-RTT packet after the Finished of the client;
+- an empty legacy session ID is required of the ClientHello: OpenSSL clears its middlebox compatibility mode for QUIC (`quic_tls.c`), so its ClientHello has one.
+
+Where this code is stricter than RFC 9000 and RFC 9001, and why none of them refuses OpenSSL in this test:
+- **A key update of the peer is not followed.** A 1-RTT packet with the next key phase is dropped (no close). RFC 9001, section 6 requires an endpoint to follow one. OpenSSL starts one by itself at half the limit of its AEAD: for ChaCha20-Poly1305 that is about 2^61 packets.
+- **A server sends no HelloRetryRequest.** A ClientHello without a key share of X25519 fails with handshake_failure; RFC 8446 asks for a HelloRetryRequest. `-groups X25519` makes OpenSSL send that key share.
+- **A NEW_CONNECTION_ID with Retire Prior To above 0 closes the connection** (PROTOCOL_VIOLATION): this side has no other identifier of the peer to move to. A client with an empty identifier sends no NEW_CONNECTION_ID (RFC 9000, section 19.15).
+- **The server requires `server_certificate_type` with the raw public key, ed25519, X25519 and ALPN `kernel-remote`.** These are choices of this protocol, not of QUIC.
+What is not stricter, read in the code: a ClientHello with GREASE values or extensions that this side does not know (skipped); PING and PADDING at each level; ACK and ACK_ECN with ranges and the delay exponent of the peer; NEW_TOKEN at a client (dropped); a coalesced datagram of Initial, Handshake and 1-RTT packets (each packet in order, with the keys that the packet before made ready); zero bytes after the last packet of a datagram (the rest is dropped); a packet with keys that this side does not have yet, or a 1-RTT packet before the server completed its handshake (dropped, the peer sends it again; never a close).
 
 Two points that no run has settled, which the first run reports:
 1. Whether `s_client` waits for the echo and the end of the stream of the server before it ends, when its input ends. The step gives it 20 s (`timeout 20`) and reads what it printed in that time.
@@ -387,7 +427,7 @@ The part stays out of the whole test until a first run settles both.
 
 **What changes.**
 - `remote` becomes a QUIC server, as `quic_echo`: a listen grant of UDP in the place of its grant of the host, its key made at its start, its public key on its log and in its window.
-- The host tool pins that key (the step Quic_Key), and connects through the peer, or through `hostfwd=udp` with a stack of the host.
+- The host tool pins that key (the step Quic_Key), and connects through the peer, or through the UDP relay of the peer with a stack of the host.
 - Each call rides one bidirectional stream of its own: the request (the header of 112 bytes and its arguments) then the end of the stream; the answer (its header, its result, its error record) then the end of the stream. The limit of one datagram for an answer, and the answers in parts, go away. This needs more than the one stream of the transport today: the next part of the transport.
 - The tool sends a new call on a new stream; a lost datagram is the work of QUIC, not of the tool.
 

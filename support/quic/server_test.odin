@@ -543,3 +543,114 @@ a_known_identifier_from_another_remote_is_dropped :: proc(t: ^testing.T) {
 	testing.expectf(t, harness.server.counters.other_remote == 1, "%v, not %v; %s", harness.server.counters.other_remote, 1, harness_describe(harness))
 	testing.expectf(t, harness.connections[0].state == Connection_State.Connected, "%v, not %v; %s", harness.connections[0].state, Connection_State.Connected, harness_describe(harness))
 }
+
+// A client like the one of OpenSSL, whose own connection identifier has 0
+// bytes, comes back after the Retry with its token and a real ClientHello
+// whose transport parameters name that empty identifier. The client of this
+// library always has 8 bytes, so the test writes the Initial itself. The
+// server must take a record, keep the handshake going (the empty
+// initial_source_connection_id matches the empty Source Connection ID of
+// the packets), and send its first datagram to the empty identifier: an
+// Initial and a Handshake packet, each with a Destination Connection ID of
+// 0 bytes and the identifier of the record as its source, the Initial open
+// with the keys of the identifier of the Retry, in 1200 bytes.
+@(test)
+a_handshake_with_a_client_with_an_empty_identifier :: proc(t: ^testing.T) {
+	harness := harness_make(1)
+	defer harness_free(harness)
+	error: errors.Error_Record
+	remote := Remote{0x0A00_0202, 42_000}
+	// The first Initial, with no token: the answer is a Retry.
+	first := authentic_initial(&harness.cryptography, {0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xA6, 0xA7})
+	answer: [MAX_DATAGRAM_SIZE]u8
+	outcome := server_datagram_receive(&harness.server, first[:], remote, answer[:], harness.now)
+	if !testing.expectf(t, outcome.answer_length > 0 && outcome.record < 0, "%s", harness_describe(harness)) {
+		return
+	}
+	retry := answer[:outcome.answer_length]
+	retry_header: Packet_Header
+	if !testing.expectf(t, header_read(retry, 0, 0, &retry_header, &error) && retry_header.type == .Retry, "%v", error) {
+		return
+	}
+	retry_source := retry_header.source_connection_id[:retry_header.source_connection_id_length]
+	testing.expect_value(t, len(retry_source), CONNECTION_ID_SIZE)
+	token := retry[retry_header.token_offset:][:retry_header.token_length]
+	// The ClientHello of a client whose transport parameters name an empty
+	// identifier.
+	parameters := transport_parameters_default()
+	parameters.initial_max_data = STREAM_BUFFER_SIZE
+	parameters.initial_max_stream_data_bidirectional_local = STREAM_BUFFER_SIZE
+	parameters.initial_max_stream_data_bidirectional_remote = STREAM_BUFFER_SIZE
+	parameters.has_initial_source_connection_id = true
+	parameters.initial_source_connection_id_length = 0
+	configuration := harness.client_configuration.tls
+	configuration.transport_parameters_length = transport_parameters_write(&parameters, .Client, configuration.transport_parameters[:])
+	testing.expect(t, configuration.transport_parameters_length > 0)
+	client := new(Tls_Handshake)
+	defer free(client)
+	if !testing.expectf(t, tls_start(client, &configuration, &harness.cryptography, &harness.client_generators[0], &error), "%v", error) {
+		return
+	}
+	hello := tls_bytes_to_send(client, .Initial)
+	testing.expect(t, len(hello) > 0)
+	// The Initial of the client: to the identifier of the Retry, from an
+	// empty identifier, with the token, a CRYPTO frame with the ClientHello,
+	// then PADDING to 1200 bytes.
+	client_keys, server_keys: Packet_Keys
+	testing.expect(t, initial_keys(&harness.cryptography, retry_source, &client_keys, &server_keys, &error))
+	datagram: [MAX_DATAGRAM_SIZE]u8
+	at := 0
+	datagram[at] = LONG_HEADER_FORM | FIXED_BIT | u8(PACKET_NUMBER_SIZE - 1)
+	at += 1
+	datagram[at], datagram[at + 1], datagram[at + 2], datagram[at + 3] = 0, 0, 0, 1
+	at += 4
+	datagram[at] = u8(len(retry_source))
+	at += 1
+	at += copy(datagram[at:], retry_source)
+	datagram[at] = 0 // The empty Source Connection ID.
+	at += 1
+	at += variable_length_integer_write(datagram[:], at, u64(len(token)), variable_length_integer_size(u64(len(token))))
+	at += copy(datagram[at:], token)
+	frames_length := MAX_DATAGRAM_SIZE - (at + 2 + PACKET_NUMBER_SIZE) - TAG_SIZE
+	at += variable_length_integer_write(datagram[:], at, u64(PACKET_NUMBER_SIZE + frames_length + TAG_SIZE), 2)
+	frames := datagram[at + PACKET_NUMBER_SIZE:][:frames_length]
+	frames[0] = FRAME_CRYPTO
+	frames[1] = 0 // The offset.
+	written := 2 + variable_length_integer_write(frames, 2, u64(len(hello)), 2)
+	copy(frames[written:], hello) // Then PADDING: zeros.
+	end, sealed := packet_seal(&harness.cryptography, &client_keys, datagram[:], 0, at, frames_length, 1, &error)
+	if !testing.expectf(t, sealed && end == MAX_DATAGRAM_SIZE, "%v", error) {
+		return
+	}
+	outcome = server_datagram_receive(&harness.server, datagram[:], remote, answer[:], harness.now)
+	if !testing.expectf(t, outcome.record >= 0, "%s", harness_describe(harness)) {
+		return
+	}
+	connection := &harness.connections[outcome.record]
+	testing.expectf(t, connection.state == .Handshake, "the record closed with the code %x, the frame type %x", connection.close_error_code, connection.close_frame_type)
+	testing.expect_value(t, connection.peer_connection_id_length, 0)
+	// The first datagram of the server.
+	buffer: [MAX_DATAGRAM_SIZE]u8
+	length, to := server_datagram_send(&harness.server, buffer[:], harness.now)
+	testing.expect(t, to == remote)
+	if !testing.expect_value(t, length, MAX_DATAGRAM_SIZE) {
+		return
+	}
+	sent := buffer[:length]
+	initial: Packet_Header
+	if !testing.expectf(t, header_read(sent, 0, 0, &initial, &error), "%v", error) {
+		return
+	}
+	testing.expect(t, initial.type == .Initial && initial.destination_connection_id_length == 0 && initial.token_length == 0)
+	testing.expect_value(t, hex_of(initial.source_connection_id[:initial.source_connection_id_length]), hex_of(connection.local_connection_id[:]))
+	handshake: Packet_Header
+	if !testing.expectf(t, header_read(sent, initial.end, 0, &handshake, &error), "%v", error) {
+		return
+	}
+	testing.expect(t, handshake.type == .Handshake && handshake.destination_connection_id_length == 0)
+	testing.expect_value(t, hex_of(handshake.source_connection_id[:handshake.source_connection_id_length]), hex_of(connection.local_connection_id[:]))
+	opened: Opened_Packet
+	testing.expectf(t, packet_open(&harness.cryptography, &server_keys, sent, &initial, 0, &opened, &error), "%v", error)
+	secret_erase(&client_keys, size_of(client_keys))
+	secret_erase(&server_keys, size_of(server_keys))
+}

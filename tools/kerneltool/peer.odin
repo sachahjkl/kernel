@@ -83,6 +83,7 @@ Peer :: struct {
 	lost:             int,
 	tcp:          ^Peer_Tcp, // The peer as a TCP client (peer_tcp.odin).
 	quic:         ^Peer_Quic, // The peer as QUIC clients (peer_quic.odin).
+	relay:        Peer_Relay, // UDP of programs of the host to the machine (peer_relay.odin).
 	tcp_segments: int, // TCP segments of the machine.
 }
 
@@ -102,10 +103,10 @@ peer_start :: proc(peer: ^Peer, call_port := 0) -> bool {
 	// The receive of the frames ends each 1 ms: the TCP case of the peer
 	// (peer_tcp.odin) runs its timers between two frames.
 	_ = net.set_option(socket, .Receive_Timeout, 1 * time.Millisecond)
-	// The machine can answer faster than the peer reads one frame in each
-	// tick (a flood of QUIC Initials gets one Retry each). The host may hold
-	// the buffer under this size (net.core.rmem_max): the QUIC flood also
-	// waits for its answers (peer_quic.odin).
+	// A margin for the bursts of the machine (a flood of QUIC Initials
+	// gets one Retry each). The host may hold the buffer under this size
+	// (net.core.rmem_max): peer_run reads every frame that waits before
+	// the next sends, and the QUIC flood waits for its answers.
 	_ = net.set_option(socket, .Receive_Buffer_Size, 4 << 20)
 	calls, calls_err := net.make_bound_udp_socket(net.IP4_Loopback, call_port)
 	if calls_err != nil {
@@ -128,6 +129,14 @@ peer_start :: proc(peer: ^Peer, call_port := 0) -> bool {
 	peer^ = {socket = socket, port = bound.port, call_socket = calls, call_port = calls_bound.port, machine = machine_bound}
 	peer.tcp = peer_tcp_make()
 	peer.quic = peer_quic_make()
+	if !peer_relay_start(&peer.relay) {
+		peer_tcp_free(peer.tcp)
+		peer_quic_free(peer.quic)
+		peer.tcp, peer.quic = nil, nil
+		net.close(socket)
+		net.close(calls)
+		return false
+	}
 	hardware_of_machine := [6]u8{0x52, 0x54, 0x00, 0x12, 0x34, 0x56}
 	peer.hardware = hardware_of_machine
 	peer.thread = thread.create_and_start_with_poly_data(peer, peer_run)
@@ -151,6 +160,8 @@ peer_stop :: proc(peer: ^Peer) {
 	peer.tcp = nil
 	peer_quic_free(peer.quic)
 	peer.quic = nil
+	peer_relay_report(&peer.relay)
+	peer_relay_stop(&peer.relay)
 }
 
 // peer_check says if the peer saw only correct frames, and if the network
@@ -207,14 +218,24 @@ pseudo_sum :: proc(source, destination: []u8, length: int, protocol := 17) -> u3
 	return u32(be16(source, 0) + be16(source, 2) + be16(destination, 0) + be16(destination, 2) + protocol + length)
 }
 
+// peer_run reads the frames of the machine, and runs the ticks of the cases
+// and of the relay when no frame waits, and at most once in a millisecond
+// while frames come: each frame that waits is read before the next sends of
+// the cases, so the answers of the machine never pile up in the socket.
 peer_run :: proc(peer: ^Peer) {
 	buffer: [2048]u8
+	last_tick := time.tick_now()
 	for !sync.atomic_load(&peer.stop) {
 		count, from, err := net.recv_udp(peer.socket, buffer[:])
-		// The TCP case of the tool, if one runs: its timers and its clients.
-		peer_tcp_tick(peer, nil)
-		// The QUIC case of the tool, if one runs.
-		peer_quic_tick(peer)
+		if err != nil || count == 0 || time.tick_since(last_tick) >= time.Millisecond {
+			// The TCP case of the tool, if one runs: its timers and its clients.
+			peer_tcp_tick(peer, nil)
+			// The QUIC case of the tool, if one runs.
+			peer_quic_tick(peer)
+			// The datagrams of programs of the host for the machine.
+			peer_relay_tick(peer)
+			last_tick = time.tick_now()
+		}
 		free_all(context.temp_allocator)
 		if err != nil || count == 0 {
 			continue
@@ -339,6 +360,10 @@ peer_frame :: proc(peer: ^Peer, frame: []u8) {
 				return
 			}
 			if be16(payload, 0) == QUIC_SERVER_PORT {
+				if address_at(ip, 16) == PEER_ADDRESS && peer_relay_datagram(peer, u16(be16(payload, 2)), payload[8:]) {
+					free_all(context.temp_allocator)
+					return
+				}
 				peer_quic_datagram(peer, address_at(ip, 16), u16(be16(payload, 2)), payload[8:])
 				free_all(context.temp_allocator)
 				return

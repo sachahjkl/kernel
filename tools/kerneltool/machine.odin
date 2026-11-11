@@ -65,7 +65,7 @@ Step_Kind :: enum {
 	Http, // The TCP of the host runs the HTTP case text against `server` (web_host.odin, http_case_run); `expected` is the body that a page must have.
 	Quic_Key, // As Remember: the 64 hexadecimal digits after text, in the log after the last Wait, are the public key of a QUIC server, which the QUIC client of the peer pins (peer_quic.odin).
 	Peer_Quic, // The peer runs the QUIC case text (peer_quic.odin) and checks its answers.
-	Openssl_Quic, // QEMU user networking: `openssl s_client -quic` of the host sends the line text to quic_echo through the UDP forward, and must get it back, from the key that the step Quic_Key read (quic_real.odin).
+	Openssl_Quic, // `openssl s_client -quic` of the host sends the line text to quic_echo through the UDP relay of the peer, and must get it back, from the key that the step Quic_Key read (quic_real.odin, peer_relay.odin).
 }
 
 Step :: struct {
@@ -76,6 +76,7 @@ Step :: struct {
 	// For Wait: the next Wait searches from the same place. Use it when two
 	// programs print in an order that the system does not fix.
 	any_order:  bool,
+	seconds:    int, // For Wait: the time allowed, when the line can come later than STEP_TIMEOUT.
 	names:      string, // For Trace: the names of the functions of the first frames, separated by spaces.
 	expected:   string, // For Call: a part of what the tool prints.
 	outcome:    Call_Outcome, // For Call: Result, Failed or Refused.
@@ -2314,12 +2315,7 @@ machine_test :: proc(steps: []Step, volume: string, output: string, exit_status:
 			fmt.eprintln("kerneltool: no port of the loopback for the TCP of QEMU")
 			return false
 		}
-		quic_port, quic_free := free_udp_port()
-		if !quic_free {
-			fmt.eprintln("kerneltool: no UDP port of the loopback for the QUIC of QEMU")
-			return false
-		}
-		forward = {host_port = port, quic_port = quic_port, listener = &listener}
+		forward = {host_port = port, listener = &listener}
 	}
 	defer listener_stop(&listener)
 	command, ok := machine_command(volume, output, data_disk, &peer, forward, processor_without_random)
@@ -2403,6 +2399,9 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 		switch step.kind {
 		case .Wait:
 			limit := first_wait ? BOOT_WAIT_TIMEOUT : STEP_TIMEOUT
+			if step.seconds > 0 {
+				limit = time.Duration(step.seconds) * time.Second
+			}
 			first_wait = false
 			if !log_wait(machine, step.text, step.any_order, limit) {
 				fmt.eprintfln("kerneltool: test failed: step %d: the machine did not print \"%s\"", index + 1, step.text)

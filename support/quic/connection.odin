@@ -23,6 +23,7 @@ package quic
 import "contract:errors"
 import "support:random"
 
+CLOSE_REASON_KEPT :: 48 // The bytes of the reason phrase of a close of the peer that a connection keeps.
 MAX_DATAGRAM_SIZE :: 1200 // The datagrams that this side sends: the size that every path of QUIC carries (RFC 9000, section 14).
 CONNECTION_ID_SIZE :: 8 // The connection identifiers that this side chooses.
 STREAM_BUFFER_SIZE :: 65536 // The bytes of the stream in each direction that wait: to be acknowledged, or to be read.
@@ -220,6 +221,10 @@ Connection :: struct {
 	close_error_code:                  u64,
 	close_frame_type:                  u64,
 	close_is_application:              bool,
+	// The first bytes of the reason phrase of the CONNECTION_CLOSE of the
+	// peer: a program logs them, to tell why a foreign stack closed.
+	close_reason_of_peer:              [CLOSE_REASON_KEPT]u8,
+	close_reason_of_peer_length:       int,
 	closed_by_peer:                    bool,
 	closed_by_idle_timeout:            bool,
 	closed_by_handshake_timeout:       bool,

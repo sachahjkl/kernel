@@ -257,8 +257,8 @@ a_retry_for_a_client_with_an_empty_identifier :: proc(t: ^testing.T) {
 		datagram[1], datagram[2], datagram[3], datagram[4] = 0, 0, 0, 1
 		datagram[5] = u8(original_length)
 		original := datagram[6:][:original_length]
-		for &byte, index in original {
-			byte = u8(0xA0 + index)
+		for &value, index in original {
+			value = u8(0xA0 + index)
 		}
 		at := 6 + original_length
 		datagram[at] = 0 // The Source Connection ID of the client: 0 bytes.

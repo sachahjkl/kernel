@@ -362,6 +362,7 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Draining state | The state of a side that received CONNECTION_CLOSE: it sends nothing, for 3 probe timeouts | |
 | Transport parameters | The values that each side of QUIC gives the other in the handshake of TLS: its limits, its timeouts, and the connection identifiers that it used (RFC 9000, section 18) | settings |
 | Retry packet | A packet of a server that asks the client to send its Initial packet again with a token, to prove its address; its integrity tag uses a fixed key | redirect |
+| UDP relay | The part of the peer of the tool that carries UDP datagrams between a program of the host, on a socket of the loopback, and the UDP port 4433 of the machine, as frames from 10.0.2.2 with a port for each client of the host | port forward, proxy, hostfwd (for this) |
 
 ## Project
 
