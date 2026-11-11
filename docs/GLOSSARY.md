@@ -65,7 +65,7 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Channel | The short name that a program gives to a log record, to group records of one subject | facility, tag, category, logger |
 | Level | How much a log record matters: Info, Debug, Warning or Error | severity, priority |
 | Lock of the kernel | A word that one processor holds at a time, to change one kind of kernel data. Each kind has a place in the lock order (`ARCHITECTURE.md`, "Locks of the kernel"). Not the lock of a program, which is a word of the program | spinlock, mutex (for this) |
-| Lock order | The order of the kinds of locks of the kernel: control, program, origin, region, frame, log, wait, run. A processor takes a lock only if it holds no lock of a later kind, so no deadlock exists | lock hierarchy, lock ranking |
+| Lock order | The order of the kinds of locks of the kernel: control, program, origin, region, frame, cache, log, wait, run. A processor takes a lock only if it holds no lock of a later kind, so no deadlock exists | lock hierarchy, lock ranking |
 | Control lock | The one lock of the kernel for the paths that cross programs or end objects that several programs name: start, stop, give to another program, revoke. Not on the paths of the work of a program | big kernel lock, giant lock, kernel lock |
 | Program lock | The lock of one program: its handles, its mappings and its page table | address space lock, mmap lock |
 | Frame lock | The lock of the page frames, the reserved pages, the pages of the budgets and the slots of the memory objects | zone lock, page allocator lock |
@@ -85,6 +85,8 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Serial | A number of a slot of a kernel table (a thread, a program, a memory object) that changes for each new object in the slot. A path that names a slot across a wait for a lock checks it: the slot can hold another object after the wait | generation (for handles only), epoch, version |
 | Wait table | The threads that wait on words, in buckets chosen by the physical address of the word, each with a wait lock | futex hash table |
 | Locker | A program that the program `locks` starts several times. It works only on its own objects, so a locker waits for another one only when the kernel makes it wait. The measures of the locks of the kernel count what the lockers do | load generator, stress worker |
+| Frame cache | The stack of at most 64 free page frames of one processor, in its processor record, with its cache lock. A page on first use takes its frame there; the end of a memory object puts its frames there; the stack takes and gives frames to the frame table by batches of 32, under the frame lock | per-CPU page list, magazine, pcp list |
+| Cache lock | The lock of the frame cache of one processor. Its processor takes it at each take and each put; another processor takes it only to read or empty the stack. It comes after the frame lock in the lock order | per-CPU lock |
 | Lock count | What the kernel counts for one kind of lock, on all the processors: the times that a processor took it, and the times that it had to wait for it (`Lock_Count` in `System_Report`) | lock statistics, contention counter |
 | Thread area | The memory that the kernel makes for one thread: the thread record, then the kernel ring of the thread | |
 | Service | A program that other programs call through rings. A service has no special privilege | daemon, server, driver |
