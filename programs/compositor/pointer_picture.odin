@@ -120,7 +120,8 @@ pointer_shape_under :: proc "contextless" () -> pointer_pictures.Pointer_Shape {
 			return .Move
 		case inside(pointer_x, pointer_y, client.x + BORDER, client.y + TITLE_HEIGHT, client.surface.width, client.surface.height):
 			// The surface of the window in front at this place: the shape that
-			// its program asked for (property 20: over its own surface only).
+			// its program asked for, over its own surface only: a program must not
+// change the pointer over the window of another program.
 			return client.pointer_shape
 		}
 		return .Arrow // The border.

@@ -38,24 +38,28 @@ Why, against a retained tree of widgets:
 - The output is data: a table of records of one size, in the memory of the caller (P14). A table can be compared, measured, sent to another rasterizer, or written to a file to test it.
 - A retained tree gives damage for free: a node that changed knows its rectangle. Immediate mode loses that. Section 2.2 gives it back without a tree.
 
-### 2.1 Draw record (format version 3)
+### 2.1 Draw record (format version 4)
 
 A draw record is 40 bytes. The fields are little-endian, in this order:
 
 | Offset | Field | Type | Meaning |
 |---|---|---|---|
-| 0 | `kind` | u8 | `None` 0, `Rectangle` 1, `Vertical_Gradient` 2, `Horizontal_Gradient` 3, `Text` 4, `Clip` 5, `Point_Grid` 6, `Folded_Gap` 7 (version 2), `Picture` 8 (version 2), `Text_Grid` 9 (version 3) |
+| 0 | `kind` | u8 | `None` 0, `Rectangle` 1, `Vertical_Gradient` 2, `Horizontal_Gradient` 3, `Text` 4, `Clip` 5, `Point_Grid` 6, `Folded_Gap` 7 (version 2), `Picture` 8 (version 2), `Text_Grid` 9 (version 3), `Line` 10 (version 4) |
 | 1 | `text_scale` | u8 | Text: 1, 2 or 3 (DESIGN.md, section 5) |
 | 2 | `text_subpixel_x` | u8 | Text: the position after `x` in 1/64 of a pixel. 0 for Spleen 8x16, which places each glyph on a whole pixel |
-| 3 | `reserved` | u8 | 0 |
-| 4 | `x`, `y`, `width`, `height` | 4 x i32 | The rectangle of the record, in pixels of the surface. For text, the rectangle that the run covers |
+| 3 | `line_thickness` | u8 | Line: the thickness in pixels, 1 to 32. 0 for the other kinds (version 4; it was `reserved`) |
+| 4 | `x`, `y`, `width`, `height` | 4 x i32 | The rectangle of the record, in pixels of the surface. For text, the rectangle that the run covers. For a line, the first end, and the second end minus the first: `width` and `height` can be negative |
 | 20 | `first_color` | u32 | `0x00RRGGBB`: the color of a rectangle or a text; the top or the left color of a gradient |
 | 24 | `second_color` | u32 | The bottom or the right color of a gradient |
 | 28 | `text_start`, `text_count` | 2 x u32 | Text: the bytes of the run in the text table of the draw table. Picture: the index of the picture in `Draw_Table.pictures` and its generation. Text grid: the index of the grid in `Draw_Table.grids` |
 | 36 | `element` | u32 | The low 32 bits of the element identity that wrote the record, 0 for none: a tool can say which element changed |
 
 - `Clip` sets the rectangle that the next records are cut to, until the next `Clip`; a `Clip` of width 0 ends the cut.
-- A version number (`DRAW_RECORD_VERSION`, 3) is beside the format, as for the contracts. A new kind is a new version.
+- **No stack of clips**: a `Clip` replaces the cut, and a `Clip` of width 0 removes each cut. An element that clips inside an area that is already clipped removes the outer clip. A caller that nests clips writes the intersection itself, and ends with the outer clip again.
+- **Places and sizes**: each edge of a record is cut to 2^30 pixels from the corner of the surface (`COORDINATE_LIMIT`), then the size is the difference of the two edges. A rectangle that covers the surface with places past the `i32` still covers it.
+- **`full` and `refused`**: `full` says that a record or a text did not fit in the table. The table is not the frame, so the next frame of that picture is drawn whole. `refused` says that a record could not be made: a picture or a grid that the table does not have, or a grid whose cells are fewer than its rows. That record is missing, and each other record is in the table, so the difference stays exact.
+- **Grids with large numbers**: `grid_valid` divides in place of a product, so a count of rows or a stride near the largest `int` cannot wrap and pass the check.
+- A version number (`DRAW_RECORD_VERSION`, 4) is beside the format, as for the contracts. A new kind is a new version.
 - The text of a run is in the text table of the draw table, not in the record: a record stays 40 bytes, and two runs with the same bytes compare equal.
 - A `Picture` record shows the pixels of a picture of the caller. The program raises its generation when its pixels change; with the same generation the record compares equal and damages nothing. `life`, `paint`, `plasma`, `temple` and the surfaces of the windows in the compositor are pictures.
 - A `Text_Grid` record shows a grid of text cells of the caller (`Text_Grid_Cell`: a character, reverse, a color). Its 40 bytes do not change when its cells change: the difference compares the cells (section 2.4).
@@ -73,6 +77,9 @@ Then `execute_in_rectangles` draws again, in each damage rectangle, each record 
 
 - **The limit of the index rule**: a record added in the middle of the table moves all the records after it, and they all compare as different: the damage is too large, never too small. It is right, and it costs only time. An element identity in each record (offset 36) allows a later rule that matches records by identity; it is not needed by the first users.
 - **Two pictures**: a surface with two pictures needs the table that was drawn in the picture that the program draws now, which is the table of two frames before. The caller keeps one table for each picture. The program draws the difference with its own picture, but it presents also the difference with the picture that the screen shows (`damage_of_two_pictures`): a frame equal to its own picture can differ from the screen. Without that rule the terminal showed rows of two different frames (host test `two_pictures_screen_is_each_frame`).
+- **The table of the shown picture is not known** (its copy failed, or it is full): the screen can show records of an older frame where the frame now draws nothing. The present is then the whole surface (host test `two_pictures_unknown_shown_table_presents_all`).
+- **A new font**: on `Settings_Changed`, each record stays the same and each pixel of text changes. `window_events` calls `draw_whole_window_next`, which makes the next frame of each picture whole. The terminal and the manual read their events by themselves and call it.
+- **A present that is lost**: `display.present_rectangle` gives false when the command ring is full. The picture then counts as not drawn, and its next frame is whole: with one picture, the next difference would see no change, and the screen would keep the old pixels.
 - **Present with a rectangle**: `display.present_rectangle` gives the compositor the union of the damage: the compositor draws again only that part of the window (the protocol had a gap there: `Present` damaged the whole surface). A full rectangle stays the default of `display.present`.
 - **The cost**, measured by the program `interface_elements` on its window of 68 records (choice 328 of `FIRST_MILESTONE.md`): nothing changed, 0 rectangles in 0.8 us; one number changed, 3 rectangles in 0.8 us; everything moved, 1 rectangle in 1.8 us: about 13 ns for each record. The whole frame is drawn in 366 to 411 us, a frame in its damage in 89 to 120 us. `clock` draws one picture in 11.6 us against 109.2 us by hand.
 
@@ -91,6 +98,29 @@ A text grid is the element of the terminal: up to 104 x 32 cells, which a progra
 - The difference damages, in each row, the span from the first changed cell to the last one; the rectangles merge as in section 2.2. A grid that changes its size is damaged whole.
 - The execution draws the cells of one color that follow each other as one text, so the text goes through `graphics.text_scaled` (and the glyph cache of the vector font) once for each run.
 - The console draws no pixels: it writes records into its terminal, so the text grid of the terminal is the drawing of the console too.
+
+### 2.5 Line
+
+A `Line` record draws a straight line between two points, with a thickness, in one color: `draw_line(table, from_x, from_y, to_x, to_y, thickness, color)`.
+
+- **The pixels**: the path of `graphics.line` (the line of Bresenham, integers only), with a square of the thickness at each point of the path. An even thickness starts one pixel before the point. The pixels are the same at each build and on each part of the surface: the execution in a damage rectangle walks the same path and cuts the squares.
+- **One order**: `draw_line` writes the left end first, or the top end when the two ends have one x. A line and its reverse are one record, so they draw the same pixels and compare equal.
+- **The damage**: the rectangle that holds each square of the path (`line_rectangle`). Pieces of the path would be tighter on a diagonal, but the damage list joins rectangles that touch (section 2.2), and the pieces of one line touch: the list would make them one rectangle again. A diagonal across a window damages its whole bounding rectangle.
+- **Hostile values**:
+  - A thickness of 0 or less gives no record. A thickness past 32 (`LINE_THICKNESS_LIMIT`) is cut to 32.
+  - An end past 32 768 pixels from the corner (`LINE_COORDINATE_LIMIT`) gives no record. A cut end would change the slope, so the record would be another line. The bound exists because the execution walks each point of the path.
+  - A record written by hand with a thickness of 0, a thickness past 32, or an end past the bound covers nothing: no pixel, no damage.
+  - A line of length 0 is one square of its thickness. A line fully outside the area is cut away like each record.
+- **The cost bound**: one execution walks at most 65 537 points and fills at most 32 x 32 pixels for each point inside the area.
+- **Limits**: no rounded ends, no antialiasing, no dashes. Lines at an angle are allowed, sparingly (DESIGN.md, section 2).
+- `draw_outline` appends the border of a rectangle as four rectangles, the same pixels as `graphics.outline`.
+
+### 2.6 Window places
+
+The compositor puts each window on the grid of 8 pixels (`support/bar/window_place.odin`, procedures with no state and their host test).
+
+- A window that a person drags goes to the nearest point of the grid, then stays where 8 pixels of its title are on the screen, under the bar. At the left, the end of the title is at 8 or more, so the close button is on the screen too. Without that bound, a window dragged past an edge could not come back: the menu of the windows only brings a window to the front.
+- A new window that fits stays at the place that the compositor chose, moved up and left until it fits. A window wider than the screen puts its close button at the right of the screen; a drag shows its left part. A window higher than the screen starts under the bar.
 
 ## 3. Layout
 
@@ -278,10 +308,21 @@ Each layer is a commit that passed the main scenario; the last one passed the fu
 - A fault found and corrected in the package: with two pictures, a frame presented only its difference with its own picture. The screen shows the other picture, so rows of two frames were mixed on the screen (seen in `terminal.png`, a row half of one line and half of another). The rule and a simulation of the screen are in section 2.2.
 - The pictures of this step (devlog `2026-11-11_150943_branch_desktop`): `desktop_moved` (plasma, paint, life, monitor on the grid), `temple`, `boot`, `rings`, `terminal`, `terminal_held`, `terminal_stopped`, `menu`, `windows`. Faults seen and corrected: the processor name of the boot display was cut in the middle of a word (a fact is now cut after its last whole word); the keys hint of the terminal ran over "older than the lines kept" (the hint is left out when the text at its left takes its room). No other clipped text, no misaligned column.
 
+### Lines and shared pictures (step 62)
+
+- `rings` draws its rings with `Line` records and its nodes with `draw_outline`: 0 direct drawing calls (19 before).
+- `threads`, `workers` and `processors` keep the pixels that their threads compute in a picture of the program, in the memory that the threads share. The window shows it with a `Picture` record. For `threads`, the generation of a square is the frame count of its thread. For `workers` and `processors`, the generation is the number of the picture times 1024, plus its complete tiles or rows. Direct drawing calls after the change:
+  - `threads`: 1 (9 before), the clear of each square picture to the background at the start.
+  - `workers`: 1 (21 before), the clear of its picture at the start.
+  - `processors`: 2 (22 before), the clear of its picture at the start and at each new picture.
+  - Each of these calls draws into a picture of the program, not into the surface. The threads write the pixels of the picture directly: that is the subject of these programs.
+- A frame of these windows copies the picture only when its generation changed. A picture can be copied while a thread writes it, as before when the threads wrote into the surface. The next generation copies it again.
+- `crowd`: the window ends 12 pixels after its widest header, the same margin as at the left (it ended 16 pixels after it, and the header passed its column).
+- `notes`: the line of the keys follows the status line, with no empty band. When the grant of the store ended, the line that says so takes the place of the keys. The window is 30 pixels shorter (208).
+
 ### Not converted, and why
 
 - `server`, `fetch`: another agent rewrites `server`.
 - `console`: it draws no pixels; its terminal draws it (section 2.4).
-- `processors`, `threads`, `workers`, `rings`: they draw into views (`graphics.view`) or lines at an angle. A `Line` record is the next kind if the owner wants them converted.
 - `log`, `pages`: colors of their own meaning and a layout of their own. `twin` and `fault` have no window.
 - The pointer of the compositor: the branch `work/cursor` owns it.

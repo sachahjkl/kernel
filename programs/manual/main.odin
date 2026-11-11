@@ -532,6 +532,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		changed |= system.service_run(&service) > 0
 		for event in display.next_event(&window) {
 			#partial switch event.kind {
+			case .Settings_Changed:
+				// A new font: each record is the same, each pixel of text is
+				// not. The next frame of each picture is whole.
+				interface.draw_whole_window_next(&drawing)
+				changed = true
 			case .Key:
 				if !event.pressed {
 					continue

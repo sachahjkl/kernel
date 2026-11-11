@@ -260,7 +260,8 @@ text_input_and_list :: proc(t: ^testing.T) {
 }
 
 // The keys of one frame act in their order: Enter after "ls" activates the
-// field with "ls", and the key after Enter is not taken (review W2).
+// field with "ls", and the key after Enter is not taken: Enter taken
+// before the characters of its frame would act on an empty field.
 @(test)
 text_input_keys_in_their_order :: proc(t: ^testing.T) {
 	memory: Tables
@@ -283,7 +284,7 @@ text_input_keys_in_their_order :: proc(t: ^testing.T) {
 }
 
 // The input of a frame takes 16 keys; then it has no room, and the reader
-// of the events leaves the next ones for the next frame (review W3).
+// of the events leaves the next ones for the next frame: no key is lost.
 @(test)
 a_full_input_says_so :: proc(t: ^testing.T) {
 	input: Input
@@ -317,7 +318,8 @@ partial_equals_whole :: proc(t: ^testing.T, before, now: ^Draw_Table, name: stri
 @(private = "file")
 Case_Builder :: proc(table: ^Draw_Table, variant: int)
 
-// Each kind of record and each path of the difference (review W4).
+// Each kind of record and each path of the difference: a damage too small
+// for one kind would leave old pixels on the screen.
 @(test)
 damage_is_never_too_small_for_each_kind :: proc(t: ^testing.T) {
 	cases := [?]struct {
@@ -387,14 +389,15 @@ damage_is_never_too_small_for_each_kind :: proc(t: ^testing.T) {
 	testing.expect(t, now.full)
 }
 
-// Review N1: more digits than a number can have.
+// More digits than a number can have: the table of digits must not be
+// indexed before its start.
 @(test)
 number_with_many_digits :: proc(t: ^testing.T) {
 	builder: Text_Builder
 	testing.expect_value(t, number_text(&builder, 7, 25), "00000000000000000007")
 }
 
-// Review N2: a negative height takes nothing.
+// A negative height takes nothing: the next element must not go up.
 @(test)
 column_negative_height :: proc(t: ^testing.T) {
 	column := column_of({0, 0, 50, 100})
@@ -403,7 +406,7 @@ column_negative_height :: proc(t: ^testing.T) {
 	testing.expect_value(t, column_take(&column, 10), Area{0, 30, 50, 10})
 }
 
-// Review N3: sizes that are negative, larger than the row, or so large that
+// Sizes that are negative, larger than the row, or so large that
 // a product overflows.
 @(test)
 row_split_checks_its_sizes :: proc(t: ^testing.T) {
@@ -424,7 +427,7 @@ row_split_checks_its_sizes :: proc(t: ^testing.T) {
 	testing.expect_value(t, total, 100)
 }
 
-// Review N4: a press under the last line or on the bar of the list chooses
+// A press under the last line or on the bar of the list chooses
 // nothing; a choice that the list cuts is reported as changed.
 @(test)
 list_press_and_cut_choice :: proc(t: ^testing.T) {
@@ -459,7 +462,7 @@ list_press_and_cut_choice :: proc(t: ^testing.T) {
 	testing.expect(t, result.changed)
 }
 
-// Review N6: two elements with one identity in one frame are reported; a
+// Two elements with one identity in one frame are reported; a
 // row number makes them two.
 @(test)
 identity_collision :: proc(t: ^testing.T) {
@@ -479,17 +482,17 @@ identity_collision :: proc(t: ^testing.T) {
 	frame_end(&frame)
 }
 
-// Review N7: a place past the i32 of a record is cut to it.
+// A place past the i32 of a record is cut to it.
 @(test)
 coordinates_are_cut_to_i32 :: proc(t: ^testing.T) {
 	memory: Tables
 	table := table_of(&memory)
 	draw_rectangle(&table, 1 << 40, -(1 << 40), 10, 10, 1)
-	testing.expect_value(t, table.records[0].x, max(i32))
-	testing.expect_value(t, table.records[0].y, min(i32))
+	testing.expect_value(t, int(table.records[0].x), COORDINATE_LIMIT - 1)
+	testing.expect_value(t, int(table.records[0].y), -COORDINATE_LIMIT)
 }
 
-// Review N9: a record that the frame no longer has leaves no pixel, even
+// A record that the frame no longer has leaves no pixel, even
 // when no record of the frame covers its place.
 @(test)
 a_gone_record_leaves_no_pixel :: proc(t: ^testing.T) {
@@ -533,13 +536,12 @@ picture_and_folded_gap :: proc(t: ^testing.T) {
 	testing.expect_value(t, damage.rectangles[0], Rectangle{40, 40, 56, 48})
 	partial_equals_whole(t, &before, &now, "a picture")
 	draw_picture(&now, 0, 0, 3, 1)
-	testing.expect(t, now.full, "a picture that the table does not have is refused")
+	testing.expect(t, now.refused && !now.full, "a picture that the table does not have is refused, and the table is not full")
 }
 
 // A text record whose range is past its text table (a table from another
 // program, through the interface module): the difference does not fault,
-// and the record differs, so its rectangle is damaged (finding W-new of the
-// second hostile read of work/tables).
+// and the record differs, so its rectangle is damaged.
 @(test)
 text_range_past_the_table_is_damaged :: proc(t: ^testing.T) {
 	text := [4]u8{'a', 'b', 'c', 'd'}
@@ -612,7 +614,7 @@ text_grid_damage_for_each_cell :: proc(t: ^testing.T) {
 	grids_now[0].rows = 4
 	draw_table_clear(&now)
 	draw_text_grid(&now, 0, 0, 0)
-	testing.expect(t, now.full && now.record_count == 0)
+	testing.expect(t, now.refused && !now.full && now.record_count == 0)
 }
 
 // A grid draws its characters and its reverse cells, cut to the canvas.
@@ -648,14 +650,16 @@ two_pictures_present_what_the_screen_shows :: proc(t: ^testing.T) {
 	draw_rectangle(&shown, 0, 0, 10, 10, 0x00FF00) // The frame just before.
 	draw_rectangle(&now, 0, 0, 10, 10, 0xFF0000) // Back to the color of two frames before.
 	draw, present: Damage
-	damage_of_two_pictures(&own, &shown, true, &now, &draw, &present)
+	damage_of_two_pictures(&own, &shown, true, &now, {0, 0, 40, 40}, &draw, &present)
 	testing.expect_value(t, draw.count, 0)
 	testing.expect_value(t, present.count, 1)
 	testing.expect_value(t, present.rectangles[0], Rectangle{0, 0, 10, 10})
-	// The other picture was never drawn: each record is presented.
+	// The table of the other picture is not known: the whole surface is
+	// presented, also where no record of now draws.
 	draw, present = {}, {}
-	damage_of_two_pictures(&own, &shown, false, &now, &draw, &present)
+	damage_of_two_pictures(&own, &shown, false, &now, {0, 0, 40, 40}, &draw, &present)
 	testing.expect_value(t, present.count, 1)
+	testing.expect_value(t, present.rectangles[0], Rectangle{0, 0, 40, 40})
 }
 
 // Two pictures and a screen, as display and the compositor do: each frame
@@ -718,7 +722,7 @@ two_pictures_screen_is_each_frame :: proc(t: ^testing.T) {
 			present = {0, 0, WIDTH, HEIGHT}
 		} else {
 			draw, presented: Damage
-			damage_of_two_pictures(own, &before[1 - picture], drawn[1 - picture], &now, &draw, &presented)
+			damage_of_two_pictures(own, &before[1 - picture], drawn[1 - picture], &now, {0, 0, WIDTH, HEIGHT}, &draw, &presented)
 			draw_damage_on_surface(&now, canvas, draw.rectangles[:draw.count])
 			present = intersection(damage_bounds(&presented), {0, 0, WIDTH, HEIGHT})
 		}
@@ -738,6 +742,236 @@ two_pictures_screen_is_each_frame :: proc(t: ^testing.T) {
 	}
 }
 
+@(private = "file")
+LINE_TEST_WIDTH :: 8
+@(private = "file")
+LINE_TEST_HEIGHT :: 6
+
+// line_rows draws one line in a canvas of 8 x 6 pixels and compares each
+// row with a row written by hand: '#' is a pixel of the line.
+@(private = "file")
+line_rows :: proc(t: ^testing.T, name: string, from_x, from_y, to_x, to_y, thickness: int, expected: [LINE_TEST_HEIGHT]string) {
+	pixels: [LINE_TEST_WIDTH * LINE_TEST_HEIGHT]graphics.Color
+	canvas := graphics.Canvas{pixels = raw_data(pixels[:]), width = LINE_TEST_WIDTH, height = LINE_TEST_HEIGHT, stride = LINE_TEST_WIDTH}
+	memory: Tables
+	table := table_of(&memory)
+	draw_line(&table, from_x, from_y, to_x, to_y, thickness, 0xFFFFFF)
+	testing.expectf(t, table.record_count == 1, "%s: one record, not %d", name, table.record_count)
+	execute(&table, canvas)
+	for row in 0 ..< LINE_TEST_HEIGHT {
+		found: [LINE_TEST_WIDTH]u8
+		for column in 0 ..< LINE_TEST_WIDTH {
+			found[column] = pixels[row * LINE_TEST_WIDTH + column] == 0xFFFFFF ? '#' : '.'
+		}
+		testing.expectf(t, string(found[:]) == expected[row], "%s, row %d: %s, not %s", name, row, string(found[:]), expected[row])
+	}
+}
+
+// The pixels of a line, against pixels written by hand.
+@(test)
+line_pixels_by_hand :: proc(t: ^testing.T) {
+	line_rows(t, "horizontal", 1, 1, 4, 1, 1, {
+		"........",
+		".####...",
+		"........",
+		"........",
+		"........",
+		"........",
+	})
+	line_rows(t, "vertical", 2, 0, 2, 3, 1, {
+		"..#.....",
+		"..#.....",
+		"..#.....",
+		"..#.....",
+		"........",
+		"........",
+	})
+	line_rows(t, "diagonal", 0, 0, 3, 3, 1, {
+		"#.......",
+		".#......",
+		"..#.....",
+		"...#....",
+		"........",
+		"........",
+	})
+	// Five columns for two rows: each row of the path is a run of two or
+	// three pixels.
+	line_rows(t, "shallow", 0, 0, 5, 2, 1, {
+		"##......",
+		"..##....",
+		"....##..",
+		"........",
+		"........",
+		"........",
+	})
+	// A thickness of 3: a square of 3 x 3 around each point.
+	line_rows(t, "thick", 1, 2, 4, 2, 3, {
+		"........",
+		"######..",
+		"######..",
+		"######..",
+		"........",
+		"........",
+	})
+	// An even thickness starts one pixel before the point.
+	line_rows(t, "even thickness", 2, 2, 4, 2, 2, {
+		"........",
+		".####...",
+		".####...",
+		"........",
+		"........",
+		"........",
+	})
+	// Length 0: one square.
+	line_rows(t, "length 0", 5, 4, 5, 4, 3, {
+		"........",
+		"........",
+		"........",
+		"....###.",
+		"....###.",
+		"....###.",
+	})
+}
+
+// A small generator of numbers for the tests: the same numbers at each run.
+@(private = "file")
+next_test_number :: proc(seed: ^u32, below: int) -> int {
+	seed^ = seed^ * 1103515245 + 12345
+	return int(seed^ >> 16) % below
+}
+
+// A line and its reverse are one record and draw the same pixels.
+@(test)
+line_and_its_reverse_are_one :: proc(t: ^testing.T) {
+	SIDE :: 40
+	seed: u32 = 11
+	for round in 0 ..< 300 {
+		from_x, from_y := next_test_number(&seed, 60) - 10, next_test_number(&seed, 60) - 10
+		to_x, to_y := next_test_number(&seed, 60) - 10, next_test_number(&seed, 60) - 10
+		thickness := 1 + next_test_number(&seed, 5)
+		forward_memory, backward_memory: Tables
+		forward, backward := table_of(&forward_memory), table_of(&backward_memory)
+		draw_line(&forward, from_x, from_y, to_x, to_y, thickness, 0xFFFFFF)
+		draw_line(&backward, to_x, to_y, from_x, from_y, thickness, 0xFFFFFF)
+		testing.expectf(t, forward.records[0] == backward.records[0], "round %d: two records", round)
+		forward_pixels, backward_pixels: [SIDE * SIDE]graphics.Color
+		execute(&forward, {pixels = raw_data(forward_pixels[:]), width = SIDE, height = SIDE, stride = SIDE})
+		execute(&backward, {pixels = raw_data(backward_pixels[:]), width = SIDE, height = SIDE, stride = SIDE})
+		if forward_pixels != backward_pixels {
+			testing.expectf(t, false, "round %d: (%d, %d) to (%d, %d) and its reverse differ", round, from_x, from_y, to_x, to_y)
+			return
+		}
+	}
+}
+
+// When lines change, the damage holds each pixel that changed, and the
+// surface drawn again in the damage is the new frame drawn whole.
+@(test)
+line_damage_holds_each_changed_pixel :: proc(t: ^testing.T) {
+	SIDE :: 64
+	seed: u32 = 5
+	whole_canvas :: proc(pixels: ^[SIDE * SIDE]graphics.Color) -> graphics.Canvas {
+		return {pixels = raw_data(pixels[:]), width = SIDE, height = SIDE, stride = SIDE}
+	}
+	for round in 0 ..< 200 {
+		before_memory, now_memory: Tables
+		before, now := table_of(&before_memory), table_of(&now_memory)
+		both := [2]^Draw_Table{&before, &now}
+		for table in both {
+			for _ in 0 ..< 1 + next_test_number(&seed, 3) {
+				draw_line(table, next_test_number(&seed, 100) - 18, next_test_number(&seed, 100) - 18, next_test_number(&seed, 100) - 18, next_test_number(&seed, 100) - 18, 1 + next_test_number(&seed, 6), graphics.Color(0x203040 + next_test_number(&seed, 3) * 0x402010))
+			}
+		}
+		// Some rounds keep the first line: equal records damage nothing.
+		if round % 3 == 0 {
+			now.records[0] = before.records[0]
+		}
+		before_pixels, now_pixels: [SIDE * SIDE]graphics.Color
+		graphics.clear(whole_canvas(&before_pixels), graphics.COLOR_BACKGROUND)
+		execute(&before, whole_canvas(&before_pixels))
+		graphics.clear(whole_canvas(&now_pixels), graphics.COLOR_BACKGROUND)
+		execute(&now, whole_canvas(&now_pixels))
+		damage: Damage
+		damage_by_difference(&before, &now, &damage)
+		for y in 0 ..< SIDE {
+			for x in 0 ..< SIDE {
+				if before_pixels[y * SIDE + x] == now_pixels[y * SIDE + x] {
+					continue
+				}
+				inside := false
+				for rectangle in damage.rectangles[:damage.count] {
+					if x >= rectangle.left && x < rectangle.right && y >= rectangle.top && y < rectangle.bottom {
+						inside = true
+					}
+				}
+				if !inside {
+					testing.expectf(t, false, "round %d: the pixel (%d, %d) changed outside the damage", round, x, y)
+					return
+				}
+			}
+		}
+		draw_damage_on_surface(&now, whole_canvas(&before_pixels), damage.rectangles[:damage.count])
+		testing.expectf(t, before_pixels == now_pixels, "round %d: the surface drawn in the damage is not the frame", round)
+	}
+}
+
+// Hostile lines: refused, cut, or drawn with no pixel outside their place.
+@(test)
+line_hostile_values :: proc(t: ^testing.T) {
+	memory: Tables
+	table := table_of(&memory)
+	// A thickness of 0 or less: no record.
+	draw_line(&table, 0, 0, 10, 10, 0, 0xFFFFFF)
+	draw_line(&table, 0, 0, 10, 10, -3, 0xFFFFFF)
+	testing.expect_value(t, table.record_count, 0)
+	// An end past the limit, or the smallest int: no record.
+	draw_line(&table, 0, 0, LINE_COORDINATE_LIMIT + 1, 0, 1, 0xFFFFFF)
+	draw_line(&table, min(int), 0, 4, 4, 1, 0xFFFFFF)
+	draw_line(&table, 0, max(int), 4, 4, 1, 0xFFFFFF)
+	testing.expect_value(t, table.record_count, 0)
+	// A thickness past the limit is cut to it.
+	draw_line(&table, 0, 0, 10, 0, 1000, 0xFFFFFF)
+	testing.expect_value(t, table.record_count, 1)
+	testing.expect_value(t, int(table.records[0].line_thickness), LINE_THICKNESS_LIMIT)
+	// The ends at the limit: a record, and only the pixels in the canvas.
+	draw_line(&table, -LINE_COORDINATE_LIMIT, 3, LINE_COORDINATE_LIMIT, 3, 1, 0xFFFFFF)
+	testing.expect_value(t, table.record_count, 2)
+
+	SIDE :: 16
+	pixels: [SIDE * SIDE]graphics.Color
+	canvas := graphics.Canvas{pixels = raw_data(pixels[:]), width = SIDE, height = SIDE, stride = SIDE}
+	draw_table_clear(&table)
+	draw_line(&table, -LINE_COORDINATE_LIMIT, 3, LINE_COORDINATE_LIMIT, 3, 1, 0xFFFFFF)
+	execute(&table, canvas)
+	for y in 0 ..< SIDE {
+		for x in 0 ..< SIDE {
+			testing.expectf(t, (pixels[y * SIDE + x] == 0xFFFFFF) == (y == 3), "the long line at (%d, %d)", x, y)
+		}
+	}
+
+	// Records written by hand that the execution refuses: no pixel, no damage.
+	pixels = {}
+	hostile := [?]Draw_Record {
+		{kind = .Line, line_thickness = 0, x = 1, y = 1, width = 5, height = 5, first_color = 0xFFFFFF},
+		{kind = .Line, line_thickness = 200, x = 1, y = 1, width = 5, height = 5, first_color = 0xFFFFFF},
+		{kind = .Line, line_thickness = 1, x = 1, y = 1, width = max(i32), height = 5, first_color = 0xFFFFFF},
+		{kind = .Line, line_thickness = 1, x = min(i32), y = min(i32), width = max(i32), height = max(i32), first_color = 0xFFFFFF},
+	}
+	for record in hostile {
+		testing.expect(t, empty(record_rectangle(record)), "a refused line covers nothing")
+	}
+	draw_table_clear(&table)
+	for record in hostile {
+		record_append(&table, record)
+	}
+	// A line fully outside the canvas.
+	draw_line(&table, -40, -40, -20, -10, 3, 0xFFFFFF)
+	draw_line(&table, SIDE + 4, 0, SIDE + 30, SIDE, 3, 0xFFFFFF)
+	execute(&table, canvas)
+	testing.expect(t, pixels == [SIDE * SIDE]graphics.Color{}, "no pixel from refused lines or lines outside")
+	testing.expect_value(t, record_rectangle(table.records[4]), Rectangle{-41, -41, -18, -8})
+}
+
 // A picture record that names another picture of the table, with the same
 // size and the same generation, is another thing to draw: it is damaged.
 @(test)
@@ -754,4 +988,300 @@ picture_index_that_changes_is_damaged :: proc(t: ^testing.T) {
 	damage = {}
 	damage_by_difference(&before, &now, &damage)
 	testing.expect_value(t, damage.count, 0)
+}
+
+// screen_after_damage draws the table before whole on a surface, then the
+// table now in its damage only, as window_frame_end does, and says if the
+// surface is the table now drawn whole.
+@(private = "file")
+screen_after_damage :: proc(before, now: ^Draw_Table) -> bool {
+	surface := make([]graphics.Color, 320 * 200)
+	defer delete(surface)
+	whole := make([]graphics.Color, 320 * 200)
+	defer delete(whole)
+	canvas := graphics.Canvas{pixels = raw_data(surface), width = 320, height = 200, stride = 320}
+	graphics.clear(canvas, graphics.COLOR_BACKGROUND)
+	execute(before, canvas)
+	damage: Damage
+	damage_by_difference(before, now, &damage)
+	draw_damage_on_surface(now, canvas, damage.rectangles[:damage.count])
+	whole_canvas := graphics.Canvas{pixels = raw_data(whole), width = 320, height = 200, stride = 320}
+	graphics.clear(whole_canvas, graphics.COLOR_BACKGROUND)
+	execute(now, whole_canvas)
+	return string(transmute([]u8)surface) == string(transmute([]u8)whole)
+}
+
+// Two tables with one grid each, in their own cells.
+@(private = "file")
+Grid_Tables :: struct {
+	records_before, records_now: [8]Draw_Record,
+	cells_before, cells_now:     [20 * 12]Text_Grid_Cell,
+	grids_before, grids_now:     [1]Text_Grid,
+	before, now:                 Draw_Table,
+}
+
+@(private = "file")
+grid_tables_make :: proc(tables: ^Grid_Tables, columns, rows, stride: int) {
+	for &cell, index in tables.cells_now {
+		cell = {u8('A' + index % 26), index % 7 == 0, graphics.Color(0x406080 + index % 3 * 0x203010)}
+	}
+	tables.grids_now[0] = {cells = tables.cells_now[:], columns = columns, rows = rows, stride = stride}
+	tables.grids_before[0] = {cells = tables.cells_before[:]}
+	tables.now = {records = tables.records_now[:], grids = tables.grids_now[:]}
+	tables.before = {records = tables.records_before[:], grids = tables.grids_before[:]}
+}
+
+// The grid of the frame before is the copy that draw_table_copy keeps; the
+// grid now changes its size, its stride, its place or some cells. In each
+// case the surface drawn again in the damage is the frame drawn whole.
+@(test)
+grid_damage_for_each_change :: proc(t: ^testing.T) {
+	Change :: enum {
+		Cells,
+		Columns,
+		Rows,
+		Stride,
+		Place,
+	}
+	for change in Change {
+		tables: Grid_Tables
+		grid_tables_make(&tables, 12, 6, 16)
+		// The frame before: its own copy of the cells.
+		before_grid := tables.grids_now[0]
+		draw_text_grid(&tables.now, 20, 30, 0)
+		testing.expect(t, draw_table_copy(&tables.before, &tables.now), "the copy fits")
+		testing.expect_value(t, tables.before.grids[0].columns, before_grid.columns)
+		draw_table_clear(&tables.now)
+		place_x := 20
+		switch change {
+		case .Cells:
+			tables.cells_now[2 * 16 + 5].character = '#'
+			tables.cells_now[4 * 16 + 11].reverse = !tables.cells_now[4 * 16 + 11].reverse
+		case .Columns:
+			tables.grids_now[0].columns = 9
+		case .Rows:
+			tables.grids_now[0].rows = 8
+		case .Stride:
+			tables.grids_now[0].stride = 13
+		case .Place:
+			place_x = 28
+		}
+		draw_text_grid(&tables.now, place_x, 30, 0)
+		testing.expect_value(t, tables.now.record_count, 1)
+		testing.expectf(t, screen_after_damage(&tables.before, &tables.now), "%v: the surface drawn in the damage is not the frame", change)
+	}
+}
+
+// A table before whose grid has fewer cells than its rows (a copy that a
+// caller made by hand) is damaged whole: no cell is read past its end.
+@(test)
+grid_damage_with_too_few_cells_before :: proc(t: ^testing.T) {
+	tables: Grid_Tables
+	grid_tables_make(&tables, 12, 6, 16)
+	draw_text_grid(&tables.now, 20, 30, 0)
+	tables.records_before[0] = tables.records_now[0]
+	tables.before.record_count = 1
+	tables.grids_before[0] = {cells = tables.cells_before[:10], columns = 12, rows = 6, stride = 16}
+	damage: Damage
+	damage_by_difference(&tables.before, &tables.now, &damage)
+	testing.expect_value(t, damage.count, 1)
+	testing.expect_value(t, damage.rectangles[0], record_rectangle(tables.records_now[0]))
+	// An index past the grids of the table before: the same.
+	tables.before.grids = nil
+	damage = {}
+	damage_by_difference(&tables.before, &tables.now, &damage)
+	testing.expect_value(t, damage.rectangles[0], record_rectangle(tables.records_now[0]))
+}
+
+// A grid drawn in damage rectangles that cut its cells, at negative places
+// and with rectangles smaller than a cell, gives the pixels of the whole
+// frame.
+@(test)
+text_grid_in_rectangles_equals_whole :: proc(t: ^testing.T) {
+	tables: Grid_Tables
+	grid_tables_make(&tables, 20, 12, 20)
+	draw_text_grid(&tables.now, -13, -21, 0)
+	whole := make([]graphics.Color, 320 * 200)
+	defer delete(whole)
+	parts := make([]graphics.Color, 320 * 200)
+	defer delete(parts)
+	whole_canvas := graphics.Canvas{pixels = raw_data(whole), width = 320, height = 200, stride = 320}
+	parts_canvas := graphics.Canvas{pixels = raw_data(parts), width = 320, height = 200, stride = 320}
+	graphics.clear(whole_canvas, graphics.COLOR_BACKGROUND)
+	execute(&tables.now, whole_canvas)
+	graphics.clear(parts_canvas, 0x123456)
+	// Rectangles of 5 x 7 pixels, smaller than a cell, that cover the surface.
+	for top := 0; top < 200; top += 7 {
+		for left := 0; left < 320; left += 5 {
+			rectangle := [1]Rectangle{{left, top, min(left + 5, 320), min(top + 7, 200)}}
+			draw_damage_on_surface(&tables.now, parts_canvas, rectangle[:])
+		}
+	}
+	testing.expect(t, string(transmute([]u8)whole) == string(transmute([]u8)parts), "the grid drawn in rectangles is the whole frame")
+}
+
+// draw_table_copy with too little room gives false: the caller draws the
+// next frame of that picture whole.
+@(test)
+draw_table_copy_with_too_little_room :: proc(t: ^testing.T) {
+	memory: Tables
+	source := table_of(&memory)
+	draw_rectangle(&source, 0, 0, 4, 4, 1)
+	draw_text(&source, 0, 0, "twelve bytes", 1)
+	few_records: [1]Draw_Record
+	enough_text: [64]u8
+	target := Draw_Table{records = few_records[:], text = enough_text[:]}
+	testing.expect(t, !draw_table_copy(&target, &source), "two records do not fit in one")
+	enough_records: [4]Draw_Record
+	few_bytes: [4]u8
+	target = {records = enough_records[:], text = few_bytes[:]}
+	testing.expect(t, !draw_table_copy(&target, &source), "twelve bytes do not fit in four")
+	target = {records = enough_records[:], text = enough_text[:]}
+	testing.expect(t, draw_table_copy(&target, &source))
+	testing.expect_value(t, target.record_count, 2)
+}
+
+// damage_add on random rectangles: at the end the rectangles are apart (no
+// two touch), there are at most DAMAGE_CAPACITY, and they cover each
+// rectangle that was added.
+@(test)
+damage_add_keeps_rectangles_apart_and_covers_each :: proc(t: ^testing.T) {
+	seed: u32 = 23
+	for round in 0 ..< 500 {
+		damage: Damage
+		added: [24]Rectangle
+		count := 1 + next_test_number(&seed, len(added))
+		for index in 0 ..< count {
+			left, top := next_test_number(&seed, 300), next_test_number(&seed, 180)
+			added[index] = {left, top, left + 1 + next_test_number(&seed, 40), top + 1 + next_test_number(&seed, 30)}
+			damage_add(&damage, added[index])
+		}
+		testing.expect(t, damage.count <= DAMAGE_CAPACITY)
+		for first in 0 ..< damage.count {
+			for second in first + 1 ..< damage.count {
+				a, b := damage.rectangles[first], damage.rectangles[second]
+				apart := a.left > b.right || b.left > a.right || a.top > b.bottom || b.top > a.bottom
+				if !apart {
+					testing.expectf(t, false, "round %d: the rectangles %v and %v touch", round, a, b)
+					return
+				}
+			}
+		}
+		for rectangle in added[:count] {
+			covered := false
+			for kept in damage.rectangles[:damage.count] {
+				if kept.left <= rectangle.left && kept.top <= rectangle.top && kept.right >= rectangle.right && kept.bottom >= rectangle.bottom {
+					covered = true
+				}
+			}
+			if !covered {
+				testing.expectf(t, false, "round %d: %v is not covered", round, rectangle)
+				return
+			}
+		}
+	}
+}
+
+// A clip that becomes another kind of record at the same index, and two
+// clips one after the other: each later record is damaged, and the surface
+// is the frame.
+@(test)
+clip_that_changes_kind :: proc(t: ^testing.T) {
+	first, second: Tables
+	before, now := table_of(&first), table_of(&second)
+	draw_clip(&before, 10, 10, 60, 40)
+	draw_rectangle(&before, 0, 0, 200, 100, graphics.COLOR_KERNEL)
+	draw_clip(&before, 0, 0, 0, 0)
+	draw_rectangle(&now, 10, 10, 60, 40, graphics.COLOR_PROGRAM)
+	draw_rectangle(&now, 0, 0, 200, 100, graphics.COLOR_KERNEL)
+	draw_clip(&now, 0, 0, 0, 0)
+	testing.expect(t, screen_after_damage(&before, &now), "a clip that becomes a rectangle")
+	testing.expect(t, screen_after_damage(&now, &before), "a rectangle that becomes a clip")
+	draw_table_clear(&before)
+	draw_table_clear(&now)
+	draw_clip(&before, 0, 0, 100, 100)
+	draw_clip(&before, 50, 50, 100, 100)
+	draw_rectangle(&before, 0, 0, 320, 200, graphics.COLOR_KERNEL)
+	draw_clip(&now, 0, 0, 100, 100)
+	draw_clip(&now, 20, 20, 100, 100)
+	draw_rectangle(&now, 0, 0, 320, 200, graphics.COLOR_KERNEL)
+	testing.expect(t, screen_after_damage(&before, &now), "the second of two clips changes")
+}
+
+// The table of the shown picture is not known, and the shown frame had a
+// record that the frame now does not have, far from each record of now:
+// the present covers it, because it is the whole surface.
+@(test)
+two_pictures_unknown_shown_table_presents_all :: proc(t: ^testing.T) {
+	records_own, records_shown, records_now: [4]Draw_Record
+	own := Draw_Table{records = records_own[:]}
+	shown := Draw_Table{records = records_shown[:]}
+	now := Draw_Table{records = records_now[:]}
+	draw_rectangle(&own, 0, 0, 10, 10, 0xFF0000)
+	draw_rectangle(&shown, 0, 0, 10, 10, 0xFF0000)
+	draw_rectangle(&shown, 200, 150, 20, 20, 0x00FF00) // Only the shown frame has it.
+	draw_rectangle(&now, 0, 0, 10, 10, 0xFF0000)
+	draw, present: Damage
+	damage_of_two_pictures(&own, &shown, false, &now, {0, 0, 320, 200}, &draw, &present)
+	testing.expect_value(t, draw.count, 0)
+	bounds := damage_bounds(&present)
+	testing.expect(t, bounds.left <= 200 && bounds.top <= 150 && bounds.right >= 220 && bounds.bottom >= 170, "the record that only the shown frame had is presented")
+}
+
+// Each edge of a record is cut to COORDINATE_LIMIT, then the size is the
+// difference: a rectangle that covers the surface with places past the i32
+// still covers it.
+@(test)
+coordinates_cut_by_their_edges :: proc(t: ^testing.T) {
+	memory: Tables
+	table := table_of(&memory)
+	draw_rectangle(&table, -3_000_000_000, -3_000_000_000, 5_000_000_000, 5_000_000_000, 1)
+	area := record_rectangle(table.records[0])
+	testing.expect(t, area.left <= 0 && area.top <= 0 && area.right >= 320 && area.bottom >= 200, "the rectangle still covers the surface")
+	testing.expect(t, table.records[0].width > 0 && table.records[0].height > 0)
+	// No sum passes the int.
+	draw_rectangle(&table, max(int) - 2, 0, max(int), 10, 1)
+	area = record_rectangle(table.records[1])
+	testing.expect_value(t, area.left, COORDINATE_LIMIT - 1)
+	testing.expect_value(t, area.right, COORDINATE_LIMIT - 1)
+	draw_text(&table, min(int) + 1, 0, "text", 1)
+	testing.expect_value(t, int(table.records[2].x), -COORDINATE_LIMIT)
+	// A rectangle inside the limit keeps its place and its size.
+	draw_rectangle(&table, -7, 12, 30, 5, 1)
+	testing.expect_value(t, record_rectangle(table.records[3]), Rectangle{-7, 12, 23, 17})
+}
+
+// Numbers of a grid that would wrap a product are refused, and the record
+// is refused with no change of full.
+@(test)
+grid_numbers_that_wrap_are_refused :: proc(t: ^testing.T) {
+	cells: [16]Text_Grid_Cell
+	wrapping := [?]Text_Grid {
+		{cells = cells[:], columns = 4, rows = max(int) / 2, stride = 4},
+		{cells = cells[:], columns = 4, rows = 3, stride = max(int) / 2 + 1},
+		{cells = cells[:], columns = 4, rows = 2, stride = -4},
+		{cells = cells[:], columns = 17, rows = 1, stride = 17},
+		{cells = cells[:], columns = -1, rows = 1, stride = 4},
+	}
+	for grid, index in wrapping {
+		testing.expectf(t, !grid_valid(grid), "grid %d is refused", index)
+		testing.expectf(t, grid_size(grid) == 0, "grid %d has no size", index)
+	}
+	testing.expect(t, grid_valid({cells = cells[:], columns = 4, rows = 4, stride = 4}))
+	testing.expect_value(t, grid_size({cells = cells[:], columns = 3, rows = 4, stride = 4}), 15)
+	grids := [1]Text_Grid{wrapping[0]}
+	records: [2]Draw_Record
+	table := Draw_Table{records = records[:], grids = grids[:]}
+	draw_text_grid(&table, 0, 0, 0)
+	testing.expect(t, table.refused && !table.full && table.record_count == 0)
+}
+
+// A new font makes the next frame of each picture whole: with two pictures,
+// the second one must not keep text in the old font.
+@(test)
+whole_window_next_forgets_each_picture :: proc(t: ^testing.T) {
+	drawing: Window_Drawing
+	drawing.drawn, drawing.drawn_second = true, true
+	draw_whole_window_next(&drawing)
+	testing.expect(t, !drawing.drawn && !drawing.drawn_second)
 }
