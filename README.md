@@ -107,7 +107,9 @@ The system boots under QEMU to a graphical desktop with a console, a system tool
 
 ![Errors that diagnose: each case makes an error for real, and the line under it is the sentence of the error record that the kernel, the loader, a module or a service gave; the stack trace of a fault three calls deep](docs/screenshots/errors.png)
 
-![The pointer pictures: each shape of the pointer theme of the owner, Posy's Cursor, at 32 and 64 pixels, with the lines of its hot spot, its frames, its license and its attribution; the pointer over the tile of wait is that shape, animated, because the program asked the compositor for it](docs/screenshots/pointers.png)
+![The pointer pictures: each shape of the pointer theme of the system, at 24 and 48 pixels, with the lines of its hot spot](docs/screenshots/pointers_system.png)
+
+The same window with the pointer theme of the owner (Posy's Cursor, CC BY-NC 4.0) is a picture of the devlog only: the repository holds no file of that theme.
 
 ![The temple of Jon: a portrait of Jonathan Blow that turns](docs/screenshots/temple.png)
 

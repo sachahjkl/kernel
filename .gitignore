@@ -4,3 +4,5 @@ result
 build/
 # Odin writes the LLVM IR of a module in the folder where it runs; the tool moves it to build/ at once.
 /*.ll
+# The picture of every shape of the pointer theme of the owner (CC BY-NC 4.0) stays in the devlog.
+/docs/screenshots/pointers.png
