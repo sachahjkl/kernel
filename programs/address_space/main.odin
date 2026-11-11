@@ -1062,7 +1062,7 @@ build :: proc "contextless" (frame: ^interface.Frame) {
 	most := max(shootdown_most[0], shootdown_most[1], shootdown_most[2], 1)
 	for processors, row in ([3]u64{1, 2, 4}) {
 		buffer: [48]u8
-		line(frame, &column, system.format(buffer[:], processors, processors == 1 ? " processor" : " processors"), shootdown_least[row] == max(u64) ? 0 : shootdown_least[row], " to ", shootdown_most[row], " ns")
+		line(frame, &column, system.format(buffer[:], processors, processors == 1 ? " processor" : " processors"), shootdown_least[row] == max(u64) ? u64(0) : shootdown_least[row], " to ", shootdown_most[row], " ns")
 		// The track, the spread from the least to the most, and the least.
 		area := interface.column_take(&column, 8)
 		interface.bar(frame, area, shootdown_most[row], most, graphics.shade(graphics.COLOR_KERNEL, 50))

@@ -31,6 +31,7 @@ Export_Description :: struct {
 	// a Record: the number of the record, from 1, in Module_Description.records;
 	// a Handle: the rights that the callee needs.
 	details:       []u32,
+	directions:    []module.Direction, // The direction of each Table or Bytes parameter (module.Function.parameter_directions).
 	result_detail: u32,
 	error_record:  u32, // Not 0: the export gives an error record, with this record (module.Function.error_record).
 }
@@ -45,8 +46,9 @@ Record_Description :: struct {
 Field_Description :: struct {
 	name:   string,
 	offset: u32,
-	type:   module.Type,
-	detail: u32, // A Handle: the rights that the callee needs. A Text: its size in bytes.
+	type:     module.Type,
+	detail:   u32, // An Integer: its size, 0 for 8. A Handle: the rights that the callee needs. A Text: its size in bytes.
+	unsigned: bool, // An unsigned Integer.
 }
 
 // The description of a module: what its source says to a person, and its exports.
@@ -229,6 +231,7 @@ convert :: proc(name: string, elf: []u8, description: Module_Description, import
 			}
 			copy(function.parameters[:], description.parameters)
 			copy(function.parameter_details[:], description.details)
+			copy(function.parameter_directions[:], description.directions)
 			function.result_detail = description.result_detail
 			function.error_record = description.error_record
 			append(&string_bytes, export_name)
@@ -352,7 +355,7 @@ convert :: proc(name: string, elf: []u8, description: Module_Description, import
 		append(&record_records, module.Record{name_offset = u32(len(string_bytes)), name_count = u32(len(item.name)), size = item.size, first_field = u32(len(field_records)), field_count = u32(len(item.fields))})
 		append(&string_bytes, item.name)
 		for field in item.fields {
-			append(&field_records, module.Field{name_offset = u32(len(string_bytes)), name_count = u32(len(field.name)), offset = field.offset, type = field.type, detail = field.detail})
+			append(&field_records, module.Field{name_offset = u32(len(string_bytes)), name_count = u32(len(field.name)), offset = field.offset, type = field.type, detail = field.detail, unsigned = field.unsigned})
 			append(&string_bytes, field.name)
 		}
 	}

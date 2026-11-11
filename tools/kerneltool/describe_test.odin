@@ -135,9 +135,9 @@ describe_reads_records_and_handles :: proc(t: ^testing.T) {
 	testing.expect_value(t, span.size, 24)
 	testing.expect_value(t, len(span.fields), 3)
 	if len(span.fields) == 3 {
-		testing.expect_value(t, span.fields[0], Field_Description{"memory", 0, .Handle, transmute(u32)op.Rights{.Read}})
-		testing.expect_value(t, span.fields[1], Field_Description{"first", 8, .Integer, 0})
-		testing.expect_value(t, span.fields[2], Field_Description{"count", 16, .Integer, 0})
+		testing.expect_value(t, span.fields[0], Field_Description{"memory", 0, .Handle, transmute(u32)op.Rights{.Read}, false})
+		testing.expect_value(t, span.fields[1], Field_Description{"first", 8, .Integer, 0, false})
+		testing.expect_value(t, span.fields[2], Field_Description{"count", 16, .Integer, 0, false})
 	}
 	swap, sum := list[0], list[1]
 	testing.expect_value(t, swap.result, module.Type.Record)
@@ -185,13 +185,79 @@ describe_reads_tables :: proc(t: ^testing.T) {
 	testing.expect_value(t, row.size, 40)
 	testing.expect_value(t, len(row.fields), 3)
 	if len(row.fields) == 3 {
-		testing.expect_value(t, row.fields[0], Field_Description{"name", 0, .Text, 20})
-		testing.expect_value(t, row.fields[1], Field_Description{"count", 24, .Integer, 0})
-		testing.expect_value(t, row.fields[2], Field_Description{"tag", 32, .Text, 3})
+		testing.expect_value(t, row.fields[0], Field_Description{"name", 0, .Text, 20, false})
+		testing.expect_value(t, row.fields[1], Field_Description{"count", 24, .Integer, 0, false})
+		testing.expect_value(t, row.fields[2], Field_Description{"tag", 32, .Text, 3, false})
 	}
 	testing.expect_value(t, list[0].result, module.Type.Table)
 	testing.expect_value(t, list[0].result_detail, 1)
 	testing.expect_value(t, len(list[0].parameters), 1)
+}
+
+@(private = "file")
+TABLE_PARAMETER_SOURCE :: `// Tables as parameters.
+package sample
+
+import "support:system"
+
+Kind :: enum u8 {
+	None = 0,
+	Box  = 1,
+}
+
+Draw :: struct {
+	kind:        Kind,
+	scale:       u8,
+	x, y:        i32,
+	color:       u32,
+	text_start:  u32,
+	text_count:  u32,
+	element:     u64,
+}
+
+// draw appends the draw records of a frame and their text.
+@(export)
+draw :: proc "c" (drawn: ^system.Table_To_Read(Draw), changed: ^system.Table_To_Change(Draw), added: ^system.Table_To_Append(Draw), text: ^system.Bytes_To_Append, from: ^system.Bytes_To_Read, packets: ^system.Bytes_To_Change) -> i64 {return 0}
+`
+
+// ^system.Table_To_Read(Name) and its forms are Tables with a direction;
+// ^system.Bytes_To_Read and its forms are Bytes. A field u8, i32, u32 or an
+// enum u8 is an Integer of its size, at its natural alignment.
+@(test)
+describe_reads_table_parameters :: proc(t: ^testing.T) {
+	list := make([dynamic]Export_Description, context.temp_allocator)
+	records: []Record_Description
+	testing.expect(t, describe_source("sample.odin", TABLE_PARAMETER_SOURCE, &list, nil, &records))
+	if len(list) != 1 || len(records) != 1 {
+		testing.expectf(t, false, "%d exports and %d records", len(list), len(records))
+		return
+	}
+	draw := records[0]
+	testing.expect_value(t, draw.size, 32)
+	expected := [?]Field_Description {
+		{"kind", 0, .Integer, 1, true},
+		{"scale", 1, .Integer, 1, true},
+		{"x", 4, .Integer, 4, false},
+		{"y", 8, .Integer, 4, false},
+		{"color", 12, .Integer, 4, true},
+		{"text_start", 16, .Integer, 4, true},
+		{"text_count", 20, .Integer, 4, true},
+		{"element", 24, .Integer, 0, true},
+	}
+	testing.expect_value(t, len(draw.fields), len(expected))
+	for item, index in expected[:min(len(expected), len(draw.fields))] {
+		testing.expect_value(t, draw.fields[index], item)
+	}
+	export := list[0]
+	testing.expect_value(t, len(export.parameters), 6)
+	types := [6]module.Type{.Table, .Table, .Table, .Bytes, .Bytes, .Bytes}
+	directions := [6]module.Direction{.Read, .Change, .Append, .Append, .Read, .Change}
+	details := [6]u32{1, 1, 1, 0, 0, 0}
+	for index in 0 ..< min(6, len(export.parameters)) {
+		testing.expect_value(t, export.parameters[index], types[index])
+		testing.expect_value(t, export.directions[index], directions[index])
+		testing.expect_value(t, export.details[index], details[index])
+	}
 }
 
 // The tool does not guess: a source that breaks a rule gives no description.
@@ -213,7 +279,7 @@ describe_rejects_what_has_no_description :: proc(t: ^testing.T) {
 		{"a Text result and six parameters", "package p\n// f gives x.\n@(export)\nf :: proc \"c\" (a, b, c, d, e, g: i64, result: ^[]u8) -> i64 {return 0}\n"},
 		{"a function that does not return", "package p\n// f gives x.\n@(export)\nf :: proc \"c\" (x: i64) -> ! {for {}}\n"},
 		{"an entry with two parameters", "package p\n@(export)\nentry :: proc \"c\" (a, b: rawptr) -> ! {for {}}\n"},
-		{"a record with a field of 32 bits", "package p\nR :: struct {a: u32}\n// f gives x.\n@(export)\nf :: proc \"c\" (r: ^R) -> i64 {return 0}\n"},
+		{"a record with a float field", "package p\nR :: struct {a: f32}\n// f gives x.\n@(export)\nf :: proc \"c\" (r: ^R) -> i64 {return 0}\n"},
 		{"a packed record", "package p\nR :: struct #packed {a: i64}\n// f gives x.\n@(export)\nf :: proc \"c\" (r: ^R) -> i64 {return 0}\n"},
 		{"a record that is too large", "package p\nR :: struct {a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p, q, r, s, t, u, v, w, x, y, z, aa, ab, ac, ad, ae, af, ag: i64}\n// f gives x.\n@(export)\nf :: proc \"c\" (r: ^R) -> i64 {return 0}\n"},
 		{"a result record with a handle", "package p\nR :: struct {h: Lent({.Read})}\n// f gives x.\n@(export)\nf :: proc \"c\" (x: i64, result: ^R) {}\n"},
@@ -227,6 +293,10 @@ describe_rejects_what_has_no_description :: proc(t: ^testing.T) {
 		{"a Table that is not the result", "package p\nR :: struct {a: i64}\n// f gives x.\n@(export)\nf :: proc \"c\" (rows: ^[]R, x: i64) -> i64 {return 0}\n"},
 		{"a Table of records with a handle", "package p\nR :: struct {h: Lent({.Read})}\n// f gives x.\n@(export)\nf :: proc \"c\" (result: ^[]R) -> i64 {return 0}\n"},
 		{"a Text field with a size that is not a number", "package p\nN :: 4\nR :: struct {a: [N]u8}\n// f gives x.\n@(export)\nf :: proc \"c\" (r: ^R) -> i64 {return 0}\n"},
+		{"a table parameter of records with a handle", "package p\nR :: struct {h: Lent({.Read})}\n// f gives x.\n@(export)\nf :: proc \"c\" (rows: ^Table_To_Read(R)) -> i64 {return 0}\n"},
+		{"a table parameter of a type that is not a record", "package p\n// f gives x.\n@(export)\nf :: proc \"c\" (rows: ^Table_To_Change(i64)) -> i64 {return 0}\n"},
+		{"a table parameter with two types", "package p\nR :: struct {a: i64}\n// f gives x.\n@(export)\nf :: proc \"c\" (rows: ^Table_To_Append(R, R)) -> i64 {return 0}\n"},
+		{"an integer field of an enum with no backing type", "package p\nK :: enum {A}\nR :: struct {k: K}\n// f gives x.\n@(export)\nf :: proc \"c\" (r: ^R) -> i64 {return 0}\n"},
 		{"a Text field of 300 bytes", "package p\nR :: struct {a: [300]u8}\n// f gives x.\n@(export)\nf :: proc \"c\" (r: ^R) -> i64 {return 0}\n"},
 	}
 	for item in cases {

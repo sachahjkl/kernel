@@ -43,7 +43,7 @@ compare_byte_ptrs_constant_time :: proc "contextless" (a, b: ^byte, n: int) -> i
 	for i in 0 ..< n {
 		v |= x[i] ~ y[i]
 	}
-	return subtle.eq(0, v)
+	return int(subtle.eq(0, v))
 }
 
 // is_zero_constant_time gives 1 when each byte of b is 0, else 0.
@@ -52,5 +52,5 @@ is_zero_constant_time :: proc "contextless" (b: []byte) -> int {
 	for b_ in b {
 		v |= b_
 	}
-	return subtle.byte_eq(0, v)
+	return int(subtle.byte_eq(0, v))
 }

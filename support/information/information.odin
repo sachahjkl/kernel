@@ -298,6 +298,7 @@ result_names := [module.Type]string {
 	.Record  = "Record",
 	.Handle  = "Handle",
 	.Table   = "Table",
+	.Bytes   = "Bytes",
 }
 
 @(private)
@@ -330,7 +331,7 @@ signature_write :: proc "contextless" (writer: ^system.Writer, file: []u8, funct
 		system.write_part(writer, parameter > 0 ? ", " : "")
 		system.write_part(writer, module.string_at(file, function.parameter_names[parameter], u32(function.parameter_name_counts[parameter])))
 		system.write_part(writer, ": ")
-		system.write_type(writer, file, type, function.parameter_details[parameter])
+		system.write_parameter_type(writer, file, type, function.parameter_details[parameter], function.parameter_directions[parameter])
 	}
 	system.write_part(writer, ")")
 	if function.result != .None {

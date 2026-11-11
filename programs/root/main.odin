@@ -82,8 +82,8 @@ grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 		return {.Inspect, .Image} // It reads its own mappings, and starts its child from the boot image.
 	case "scheduler":
 		return {.Inspect, .Schedule} // It reads the counts of the scheduler, and changes the strategy.
-	case "paint", "life", "tally":
-		return {.Serve}
+	case "paint", "life", "tally", "sample":
+		return {.Serve} // sample: the module of the tables, started as a program when a caller connects.
 	case "settings":
 		return {.Settings, .Serve} // It writes the settings of the person, and serves set() and get().
 	case "manual":
@@ -111,6 +111,13 @@ grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 		// connections to the services of callable_of, and the grant to act
 		// for the person (docs/MODULE_CONTRACT.md, "A call from the host").
 		return {.Connect, .Network, .Person}
+	case "interface_through_module":
+		return {.Image} // It reads the size of the code of interface_module.
+	case "tables":
+		// It loads sample, starts a call host of it from the boot image,
+		// and connects to the service sample (docs/MODULE_CONTRACT.md,
+		// "Tables and bytes as parameters").
+		return {.Image, .Connect}
 	}
 	return {}
 }
@@ -121,12 +128,16 @@ callable_of :: proc "contextless" (name: string) -> []string {
 	switch name {
 	case "remote":
 		return remote_callable[:]
+	case "tables":
+		return tables_callable[:]
 	}
 	return nil
 }
 
 @(rodata)
 remote_callable := [?]string{"compositor", "inspect", "log", "manual", "monitor", "settings", "storage"}
+@(rodata)
+tables_callable := [?]string{"sample"}
 
 // The values of the context of the compositor that name its own file: 0 to
 // 3 are the screen.
@@ -170,7 +181,7 @@ store_limit_of :: proc "contextless" (name: string) -> u64 {
 
 // A service that starts when a program asks for a connection to it.
 on_demand :: proc "contextless" (name: string) -> bool {
-	return name == "storage"
+	return name == "storage" || name == "sample"
 }
 
 // grant_for gives what a caller receives in a service (isolated.Service_Command).
@@ -252,6 +263,8 @@ things_of :: proc "contextless" (name: string) -> system.Budget_Amounts {
 		return {pages = 2048, programs = 3, threads = 4} // It starts fault and its child, and 3 threads under contention.
 	case "server":
 		return {pages = 4096, programs = 1, threads = 1} // A table of 32 connections with their buffers, and a large window.
+	case "tables":
+		return {pages = 4096, programs = 3, threads = 3} // A table of 65536 readings in a memory object (640 pages), and two call hosts (sample, hostile_exports) with their threads.
 	}
 	return {pages = 2048, programs = 1, threads = 1}
 }

@@ -15,7 +15,7 @@ What it means here:
 
 ## 2. The origin, and its license
 
-- **Origin**: Odin's `core:crypto`, from the compiler that the flake pins: the tag `dev-2026-05` of Odin (nixpkgs takes it from `https://github.com/odin-lang/Odin/archive/refs/tags/dev-2026-05.tar.gz`).
+- **Origin**: Odin's `core:crypto`, from the compiler that the flake pins: the release `dev-2026-11a` of Odin, which `flake.nix` fetches by its tag and its hash. The first files were taken from `dev-2026-05`; they were taken again from `dev-2026-11a` when the compiler changed (`kerneltool cryptography-take`), and the origin had corrected its ChaCha20 counter check and rewritten `_subtle` since.
 - **License of Odin, and of `core:crypto`** (its README: "This library is made available under the zlib license"): the zlib license, in `support/cryptography/LICENSE.odin.txt`. Its second clause, "Altered source versions must be plainly marked as such", is met by the first line of each file that is taken.
 - **fiat-crypto**: the field arithmetic of `core:crypto/_fiat` is a port of fiat-crypto, which gives three licenses. Odin chose BSD-1-Clause; its text is in `support/cryptography/LICENSE.fiat-crypto.txt`, with the first part that is taken.
 - **Review**: the README of `core:crypto` says that the packages "have not received independent third party review". The system relies on the RFC test vectors (section 5) and on the timing rules of the origin. It does not claim more.
@@ -41,7 +41,7 @@ What it means here:
 - the origin with the listed changes is the file of the repository, byte for byte.
 
 The listed changes, all in `tools/kerneltool/cryptography_origin.odin`:
-1. The first line: "// Altered source: Odin dev-2026-05, <origin path>; only its imports changed (...)".
+1. The first line: "// Altered source: Odin dev-2026-11a, <origin path>; only its imports changed (...)".
 2. `"core:crypto"` becomes `crypto "support:cryptography/compatibility_crypto"`.
 3. `"core:crypto/` becomes `"support:cryptography/`.
 4. `"core:encoding/endian"`, `"core:math/bits"` and `"core:bytes"` become the compatibility packages, with the name of the origin as their alias.

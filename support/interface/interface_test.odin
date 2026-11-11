@@ -536,6 +536,27 @@ picture_and_folded_gap :: proc(t: ^testing.T) {
 	testing.expect(t, now.full, "a picture that the table does not have is refused")
 }
 
+// A text record whose range is past its text table (a table from another
+// program, through the interface module): the difference does not fault,
+// and the record differs, so its rectangle is damaged (finding W-new of the
+// second hostile read of work/tables).
+@(test)
+text_range_past_the_table_is_damaged :: proc(t: ^testing.T) {
+	text := [4]u8{'a', 'b', 'c', 'd'}
+	records := [1]Draw_Record{{kind = .Text, x = 8, width = 8, height = 16, text_start = 2, text_count = 4}}
+	before := Draw_Table{records = records[:], record_count = 1, text = text[:], text_count = 4}
+	now := Draw_Table{records = records[:], record_count = 1, text = text[:], text_count = 4}
+	damage: Damage
+	damage_by_difference(&before, &now, &damage)
+	testing.expect_value(t, damage.count, 1)
+	testing.expect_value(t, damage.rectangles[0], Rectangle{8, 0, 16, 16})
+	// The same record inside its table: no damage.
+	records[0].text_start = 0
+	damage = {}
+	damage_by_difference(&before, &now, &damage)
+	testing.expect_value(t, damage.count, 0)
+}
+
 // A narrow card cuts its caption: no text record passes its right border.
 @(test)
 card_caption_stays_inside :: proc(t: ^testing.T) {
@@ -715,4 +736,22 @@ two_pictures_screen_is_each_frame :: proc(t: ^testing.T) {
 		}
 		picture = 1 - picture
 	}
+}
+
+// A picture record that names another picture of the table, with the same
+// size and the same generation, is another thing to draw: it is damaged.
+@(test)
+picture_index_that_changes_is_damaged :: proc(t: ^testing.T) {
+	record_before := [1]Draw_Record{{kind = .Picture, x = 8, y = 8, width = 16, height = 16, text_start = 0, text_count = 7}}
+	record_now := [1]Draw_Record{{kind = .Picture, x = 8, y = 8, width = 16, height = 16, text_start = 1, text_count = 7}}
+	before := Draw_Table{records = record_before[:], record_count = 1}
+	now := Draw_Table{records = record_now[:], record_count = 1}
+	damage: Damage
+	damage_by_difference(&before, &now, &damage)
+	testing.expect_value(t, damage.count, 1)
+	testing.expect_value(t, damage.rectangles[0], Rectangle{8, 8, 24, 24})
+	record_now[0].text_start = 0
+	damage = {}
+	damage_by_difference(&before, &now, &damage)
+	testing.expect_value(t, damage.count, 0)
 }

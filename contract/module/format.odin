@@ -129,15 +129,48 @@ Type :: enum u8 {
 	// bit set of rights (the kernel operations name the bits). The caller
 	// keeps its handle. In an isolated call, the receiver has a copy of the
 	// handle with these rights only, and closes it when the export returns.
-	Table   = 5, // A result only: records of one description that follow each other (a table).
-	// The detail of the result is the index of the description of the
-	// record, in the record table. The caller gives one more argument after
-	// the parameters, the address of a buffer record {address, capacity}:
-	// the capacity is a count of records. The callee writes the records
-	// that fit, and its integer result is the count of records of the full
+	Table   = 5, // Records of one description that follow each other (a table).
+	// The detail is the index of the description of the record, in the
+	// record table. A record of a table has no Handle field.
+	// A Table parameter: the address of a Table_Place in memory of the
+	// caller, with a Direction (Function.parameter_directions).
+	// A Table result: the caller gives one more argument after the
+	// parameters, the address of a buffer record {address, capacity}: the
+	// capacity is a count of records. The callee writes the records that
+	// fit, and its integer result is the count of records of the full
 	// table. A count larger than the capacity means "the table did not
-	// fit". A record of a Table result has no Handle field.
+	// fit". It is the case of an Append table from a count of 0 whose new
+	// count is the integer result.
+	Bytes   = 6, // A parameter only: bytes with no description, with a Direction.
+	// The address of a Table_Place in memory of the caller, where the
+	// count and the capacity are in bytes. The detail is 0.
 }
+
+// What the callee does with the memory of a Table or Bytes parameter
+// (docs/MODULE_CONTRACT.md, "Tables and bytes as parameters"). 0 is the
+// direction with the least power.
+Direction :: enum u8 {
+	Read   = 0, // It reads the records 0 ..< count, and writes nothing.
+	Change = 1, // It reads and writes the records 0 ..< count. The count stays.
+	// It writes the records count ..< capacity and reads none before count.
+	// The count is the count of the full answer, across calls: the callee
+	// adds the records of its answer, also those that did not fit. A count
+	// larger than the capacity means "the answer did not fit"; on entry it
+	// means that earlier calls did not fit, and the callee then writes
+	// nothing. It never writes a record at an index >= capacity.
+	Append = 2,
+}
+
+// The table place: the record that names the memory of a Table or Bytes
+// parameter in a direct call. The register of the parameter has its
+// address. address is aligned on the alignment of the record. count and
+// capacity are in records (in bytes for Bytes).
+Table_Place :: struct {
+	address:  u64,
+	count:    u64,
+	capacity: u64,
+}
+#assert(size_of(Table_Place) == 24)
 
 PARAMETER_CAPACITY :: 6 // The integer registers of the call form.
 
@@ -164,8 +197,14 @@ Function :: struct {
 	// the address of the record. The export writes it when it fails, and only
 	// then: it fails when its integer result is negative.
 	error_record:          u32,
+	// Added on 2026-11-11 at the end of the record (the growth rule of the
+	// table directory): the direction of each Table or Bytes parameter, 0
+	// (Read) for each other parameter. A file with records of 96 bytes has
+	// the direction Read for each parameter.
+	parameter_directions:  [PARAMETER_CAPACITY]Direction,
+	reserved3:             [2]u8,
 }
-#assert(size_of(Function) == 96)
+#assert(size_of(Function) == 104)
 
 RECORD_SIZE_LIMIT :: 256 // The bytes of a record that a call carries.
 HANDLE_CAPACITY :: 16 // The handles that one call lends: its Handle parameters, and the Handle fields of its Record parameters.
@@ -182,19 +221,21 @@ Record :: struct {
 }
 #assert(size_of(Record) == 24)
 
-// One field of a record. A field is an Integer (8 bytes), a Handle (4
-// bytes) or a Text (detail bytes). A Text field holds its bytes in the
-// record: UTF-8, and zero bytes after the text; the text ends at the first
-// zero byte or at the end of the field. It holds no address, so a record
-// still means the same in each program. The fields are in the order of
-// their offsets, and no two fields share a byte.
+// One field of a record. A field is an Integer (1, 2, 4 or 8 bytes), a
+// Handle (4 bytes) or a Text (detail bytes). An Integer is little-endian,
+// at an offset that is a multiple of its size. A Text field holds its
+// bytes in the record: UTF-8, and zero bytes after the text; the text ends
+// at the first zero byte or at the end of the field. It holds no address,
+// so a record still means the same in each program. The fields are in the
+// order of their offsets, and no two fields share a byte.
 Field :: struct {
 	name_offset: u32, // In the string table.
 	name_count:  u32,
 	offset:      u32, // From the start of the record, in bytes.
 	type:        Type,
-	reserved:    [3]u8,
-	detail:      u32, // A Handle: the rights that the callee needs. A Text: its size in bytes.
+	unsigned:    bool, // An Integer: true for an unsigned integer, false for a signed one.
+	reserved:    [2]u8,
+	detail:      u32, // An Integer: its size in bytes, 0 for 8. A Handle: the rights that the callee needs. A Text: its size in bytes.
 	reserved2:   u32,
 }
 #assert(size_of(Field) == 24)
