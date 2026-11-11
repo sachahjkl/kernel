@@ -193,6 +193,9 @@ build_module :: proc(build: Module_Build) -> bool {
 		fmt.eprintfln("kerneltool: cannot move the LLVM IR of %s: %v", build.name, err)
 		return false
 	}
+	if !static_variable_names_make_stable(join(folder, "/", build.name, ".ll")) {
+		return false
+	}
 	// The LLVM of the Odin compiler (18) makes the object. Each function keeps
 	// its frame pointer: the kernel walks them for the stack trace of a fault.
 	run({"llc", "-O3", "--frame-pointer=all", "-relocation-model=pic", "--function-sections", "--data-sections", "-filetype=obj", "-o", join(objects, "/", build.name, ".o"), join(folder, "/", build.name, ".ll")}) or_return
@@ -466,5 +469,82 @@ test_modules :: proc() -> bool {
 		hash[:4],
 		result,
 	)
+	return true
+}
+
+
+// static_variable_names_make_stable rewrites the LLVM IR of a module so that
+// the name of each static variable of a procedure is the same at each
+// build. The Odin compiler names such a variable
+// `package::procedure-.variable-N`, and N is a counter of the compiler that
+// changes from one build to the next (measured: the one such variable of
+// each module, `runtime::default_random_generator_proc-.state-N`, had 7400,
+// 7582, 8185 and 8437 in four builds of the same source, also with the
+// address layout of the compiler fixed). The name goes into the object
+// (a symbol, and a section with `--data-sections`), so each object differed
+// from the last one, and the module differed in rare builds: `console` one
+// time in about 13, `host` and `kernel` one time each (property 11). The
+// number becomes the order of the first use of the name in the file: 0, 1,
+// 2... Two variables that get the same name stop the build in llc (a name
+// defined two times), which is the right result.
+static_variable_names_make_stable :: proc(path: string) -> bool {
+	text, read_error := os.read_entire_file(path, context.allocator)
+	if read_error != nil {
+		fmt.eprintfln("kerneltool: cannot read the LLVM IR %s: %v", path, read_error)
+		return false
+	}
+	defer delete(text)
+	is_name_byte :: proc(character: u8) -> bool {
+		return character == '_' || character >= '0' && character <= '9' || character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z'
+	}
+	stable := strings.builder_make(context.allocator)
+	defer strings.builder_destroy(&stable)
+	seen := make(map[string]int, context.allocator)
+	defer delete(seen)
+	copied := 0
+	for index := 0; index + 1 < len(text); index += 1 {
+		// "-." then a name, then "-", then digits, then the closing quote.
+		if text[index] != '-' || text[index + 1] != '.' {
+			continue
+		}
+		name_end := index + 2
+		for name_end < len(text) && is_name_byte(text[name_end]) {
+			name_end += 1
+		}
+		if name_end == index + 2 || name_end >= len(text) || text[name_end] != '-' {
+			continue
+		}
+		digits_end := name_end + 1
+		for digits_end < len(text) && text[digits_end] >= '0' && text[digits_end] <= '9' {
+			digits_end += 1
+		}
+		if digits_end == name_end + 1 || digits_end >= len(text) || text[digits_end] != '"' {
+			continue
+		}
+		// The whole name, from its opening quote: two procedures can have a
+		// variable of the same name.
+		start := index
+		for start > 0 && text[start - 1] != '"' {
+			start -= 1
+		}
+		whole := string(text[start:digits_end])
+		number, known := seen[whole]
+		if !known {
+			number = len(seen)
+			seen[whole] = number
+		}
+		strings.write_bytes(&stable, text[copied:name_end + 1])
+		strings.write_int(&stable, number)
+		copied = digits_end
+		index = digits_end - 1
+	}
+	if len(seen) == 0 {
+		return true
+	}
+	strings.write_bytes(&stable, text[copied:])
+	if write_error := os.write_entire_file(path, stable.buf[:]); write_error != nil {
+		fmt.eprintfln("kerneltool: cannot write the LLVM IR %s: %v", path, write_error)
+		return false
+	}
 	return true
 }
