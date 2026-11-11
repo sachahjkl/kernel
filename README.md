@@ -123,7 +123,7 @@ The system boots under QEMU to a graphical desktop with a console, a system tool
 - `limits` shows the limits of a budget: processor time and log records for each second. The kernel counts the time with the cycle counter and stops a thread at the limit of its budget.
 - `processors` shows several processors: the kernel says that four processors run threads of one program at the same time, and the same picture takes less time with 2 and 4 threads.
 - `locks` shows the locks of the kernel, split by data: four programs that work on their own objects enter the kernel 3.5 times as often as one, and the window gives the waits of each lock.
-- `scheduler` shows the scheduling strategies, which the machine changes while it runs: two threads that wake each other on a busy machine make 83 wakes in one second under round robin and 320 219 under EEVDF, and the weights 1, 2 and 4 give shares of 4.0, 7.4 and 13.4 %.
+- `scheduler` shows the scheduling strategies, which the machine changes while it runs: two threads that wake each other on a busy machine make about 80 wakes in one second under round robin and more than 300 000 under EEVDF, and the weights 1, 2 and 4 give shares of about 4, 7.5 and 13.5 %.
 - `workers` shows the lock and the word wait: four threads take tiles from one queue. Four threads add to one number: with the lock no addition is lost, with no lock millions are lost.
 - A program that faults stops alone. The system continues.
 
