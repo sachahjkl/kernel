@@ -140,7 +140,9 @@ sample_take :: proc "contextless" () {
 		serial := selected_program_serial
 		if fresh.program.program_serial != serial || fresh.mappings.program_serial != serial || fresh.modules.program_serial != serial || fresh.threads.program_serial != serial || fresh.stop.program_serial != serial {
 			dropped_samples += 1
-			system.log("inspect: a sample mixed two programs of slot ", slot, ": dropped, ", dropped_samples, " in all")
+			if dropped_samples <= 4 {
+				system.log("inspect: a sample mixed two programs of slot ", slot, ": dropped, ", dropped_samples, " in all")
+			}
 			current.time = system.time()
 			return
 		}

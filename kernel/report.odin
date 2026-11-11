@@ -109,10 +109,15 @@ program_mappings_report :: proc "contextless" (report: ^op.Program_Mapping_Repor
 	about := &programs[index]
 	taken := program_lock(index)
 	defer program_unlock(index, taken)
-	if about.state == .None || about.table == 0 {
+	if about.state == .None {
 		return
 	}
+	// The serial also for a stopped program, which has no page table and no
+	// mapping now.
 	report.program_serial = u64(about.serial)
+	if about.table == 0 {
+		return
+	}
 	for &mapping in about.mappings {
 		if mapping.page_count == 0 || report.count == op.MAPPING_REPORT_CAPACITY {
 			continue
