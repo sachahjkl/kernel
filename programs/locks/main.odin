@@ -335,20 +335,20 @@ draw_records :: proc "contextless" (table: ^interface.Draw_Table) {
 	y += GAP
 	// The frame cache of each processor (Processor_Report): a stack of free
 	// frames that pages on first use take with no frame lock.
-	graphics.text(canvas, LEFT, y, "frame cache", graphics.COLOR_DIM)
+	interface.draw_text(table, LEFT, y, "frame cache", graphics.COLOR_DIM)
 	for name, index in ([4]string{"frames now", "batches taken", "batches given", "drains"}) {
-		graphics.text(canvas, LOCK_X + index * (LOCK_COLUMN_WIDTH * 3 / 4), y, name, graphics.COLOR_DIM)
+		interface.draw_text(table, LOCK_X + index * (LOCK_COLUMN_WIDTH * 3 / 4), y, name, graphics.COLOR_DIM)
 	}
 	y += LINE
 	for index in 0 ..< CACHE_ROWS {
 		cache := caches[index]
 		if index % 2 == 0 {
-			graphics.fill(canvas, GAP, y - 4, WIDTH - 2 * GAP, LINE, graphics.COLOR_CARD_TOP)
+			interface.draw_rectangle(table, GAP, y - 4, WIDTH - 2 * GAP, LINE, graphics.COLOR_CARD_TOP)
 		}
 		cache_line: [32]u8
-		graphics.text(canvas, LEFT, y, system.format(cache_line[:], "processor ", u64(index)), graphics.COLOR_DIM)
+		interface.draw_text(table, LEFT, y, system.format(cache_line[:], "processor ", u64(index)), graphics.COLOR_DIM)
 		for value, column in ([4]u64{cache.cache_frames, cache.cache_batches_taken, cache.cache_batches_given, cache.cache_drains}) {
-			graphics.text(canvas, LOCK_X + column * (LOCK_COLUMN_WIDTH * 3 / 4), y, system.format(cache_line[:], value), graphics.COLOR_TEXT)
+			interface.draw_text(table, LOCK_X + column * (LOCK_COLUMN_WIDTH * 3 / 4), y, system.format(cache_line[:], value), graphics.COLOR_TEXT)
 		}
 		y += LINE
 	}
