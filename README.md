@@ -107,6 +107,8 @@ The system boots under QEMU to a graphical desktop with a console, a system tool
 
 ![Errors that diagnose: each case makes an error for real, and the line under it is the sentence of the error record that the kernel, the loader, a module or a service gave; the stack trace of a fault three calls deep](docs/screenshots/errors.png)
 
+![The pointer pictures: each shape of the pointer theme of the owner, Posy's Cursor, at 32 and 64 pixels, with the lines of its hot spot, its frames, its license and its attribution; the pointer over the tile of wait is that shape, animated, because the program asked the compositor for it](docs/screenshots/pointers.png)
+
 ![The temple of Jon: a portrait of Jonathan Blow that turns](docs/screenshots/temple.png)
 
 `kerneltool screenshots` makes these pictures from the running machine.
@@ -138,6 +140,7 @@ The system boots under QEMU to a graphical desktop with a console, a system tool
 - `locks` shows the locks of the kernel, split by data: four programs that work on their own objects enter the kernel 3.5 times as often as one, and the window gives the waits of each lock and the frame cache of each processor (a stack of free frames that pages on first use take with no frame lock).
 - `scheduler` shows the scheduling strategies, which the machine changes while it runs: two threads that wake each other on a busy machine make about 80 wakes in one second under round robin and more than 300 000 under EEVDF, and the weights 1, 2 and 4 give shares of about 4, 7.5 and 13.5 %.
 - `workers` shows the lock and the word wait: four threads take tiles from one queue. Four threads add to one number: with the lock no addition is lost, with no lock millions are lost.
+- The pointer has pictures in a format of the system (`docs/POINTERS.md`): the tool converts the Xcursor theme of the owner, Posy's Cursor, from a build input, and a theme of the system drawn as grids of squares; each is a resource of the boot image with its hash. The compositor chooses the shape from what is under the pointer (a title bar, a close button, a text input) and blends its picture at its hot spot; a program asks for a shape over its own surface. `pointers` shows each theme.
 - A program that faults stops alone. The system continues.
 
 `docs/FIRST_MILESTONE.md` gives the details, the design choices and the gaps.
@@ -153,6 +156,7 @@ The system boots under QEMU to a graphical desktop with a console, a system tool
 | `docs/TOOLS.md` | The developer tools, and what each one reads |
 | `docs/GLOSSARY.md` | The terms of the project. One term per concept |
 | `docs/DESIGN.md` | The design rules: how a program of the system looks. The boot display is the model |
+| `docs/POINTERS.md` | The pointer pictures: Xcursor, hyprcursor and the others; the format and the manifest of the system; the license of the theme of the owner |
 | `docs/DEMONSTRATIONS.md` | For each of the 21 properties: what the machine test shows, the picture, and what no test shows yet |
 | `docs/HANDOFF.md` | Current state, rules of the owner, next steps |
 | `docs/research/` | Research notes with sources, and video transcripts |
@@ -164,9 +168,10 @@ The system boots under QEMU to a graphical desktop with a console, a system tool
 | `boot/` | The boot program (UEFI) |
 | `kernel/` | The kernel. It compiles with the contract library only |
 | `runtime/` | `memory.asm`: the copy and the fill of every module, of the kernel and of the boot program (`copy_bytes_without_overlap`, `copy_bytes_with_overlap`, `fill_bytes_with_value`), with its host tests |
-| `contract/` | The source library `contract:`: what two parties agree on. `operation` (the kernel operations), `boot_info` (the record from the boot program to the kernel), `module` (the module format and the loader code), `store` (the format of the data disk), `blake3` (the hash), `ring` (two queues in shared memory, and the shared queue), `isolated` (the isolated call) |
+| `contract/` | The source library `contract:`: what two parties agree on. `operation` (the kernel operations), `boot_info` (the record from the boot program to the kernel), `module` (the module format and the loader code), `store` (the format of the data disk), `pointer_pictures` (the pointer theme file and its validation), `blake3` (the hash), `ring` (two queues in shared memory, and the shared queue), `isolated` (the isolated call) |
 | `support/` | The source library `support:`: what a program compiles in. `system` (kernel operations, text, loader, grants, services), `graphics` (drawing, and the table of the design rules), `interface` (the elements of the windows as draw tables, the damage by difference), `vector_font` (a prototype of a vector font, research), `display` (the protocol of the compositor), `terminal` (the terminal ring), `bootscreen`, `bar` (the names of the programs and the places of the bar, its menus and the filter of the launcher), `relay` (the records of the `rings` demonstration), `twins` (the modes of the program `twin`) |
-| `programs/` | `root`, `input`, `compositor`, `console`, `host`, `monitor`, `plasma`, `life`, `paint`, `fault`, `temple`, `rings`, `node`, `threads`, `workers`, `rights`, `origin`, `budget`, `limits`, `processors`, `locks`, `locker`, `scheduler`, `boot`, `pages`, `frames`, `twin`, `log`, `flow`, `crowd`, `clock`, `tally`, `manual`, `terminal`, `flood` |
+| `programs/` | `root`, `input`, `compositor`, `console`, `host`, `monitor`, `plasma`, `life`, `paint`, `fault`, `temple`, `rings`, `node`, `threads`, `workers`, `rights`, `origin`, `budget`, `limits`, `processors`, `locks`, `locker`, `scheduler`, `boot`, `pages`, `frames`, `twin`, `log`, `flow`, `crowd`, `clock`, `tally`, `manual`, `terminal`, `flood`, `pointers` |
+| `resources/` | The sources of the resources of the boot image: the pointer manifests (`resources/pointers/`) |
 | `modules/` | Modules of commands (`math`, `probe`) and the test modules of the host load test |
 | `tools/kerneltool/` | The kernel tool: all the automation of the project |
 
@@ -187,6 +192,7 @@ kerneltool run
 | `screenshots` | `test`, then copy the pictures to `docs/screenshots/` |
 | `film` | Build, start the machine, film the terminal, write `build/film/terminal.mp4` (not a test) |
 | `font` | Convert the BDF file of the font to `support/graphics/font.odin` |
+| `pointers` | Convert the pointer manifests of `resources/pointers/` to pointer theme files in `build/pointers/`, and print a table of each theme (`build` does it too) |
 | `portrait` | Convert `programs/temple/portrait.jpg` to `programs/temple/portrait.pixels` |
 | `repeat` | `repeat <module> <count>`: build one module again and again and compare the module, the LLVM IR and the object with the first build |
 | `check` | `odin check -vet` and `odin test` of the host code, then `test` |
@@ -200,3 +206,5 @@ In the machine, type `help()` in the console. The button "programs" of the bar o
 The font is Spleen 8x16 by Frederic Cambus, BSD 2-Clause. See `support/graphics/FONT_LICENSE`.
 
 The portrait of the `temple` program is a public domain picture from Wikimedia Commons. See `programs/temple/PORTRAIT_LICENSE`.
+
+The default pointer theme, when the build has it, is "Posy's Cursor" by Michiel de Boer (Posy), http://www.michieldb.nl/other/cursors/, in the Linux port of simtrami, https://github.com/simtrami/posy-improved-cursor-linux (version 1.6, the package `posy-cursors` of nixpkgs), under CC BY-NC 4.0, https://creativecommons.org/licenses/by-nc/4.0/: non-commercial use only. The repository holds none of its files: the build fetches it and converts it (the sizes 32 and 64, no pixel changed). The program `pointers` shows the attribution. The pointer theme of the system (`resources/pointers/system.manifest`) is under the license of the repository.

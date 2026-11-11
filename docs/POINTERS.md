@@ -119,7 +119,8 @@ source    = file name                       a file of the Xcursor folder; the fi
 
 - **The theme of the system** (`resources/pointers/system.manifest`, under the license of the repository): the 15 shapes as grids of squares, in the style of the arrow of `DESIGN.md`, at the sizes 24 (squares of 2 pixels) and 48 (squares of 4 pixels, for a later screen with twice the pixels). `wait` and `busy_with_arrow` have 4 frames of 250 ms. It is always in the boot image, as the resource `pointers_system`.
 - **The theme of the owner** (`resources/pointers/posy.manifest`): "Posy's Cursor" from the build input `posy-cursors` of `flake.nix` (the package of nixpkgs, pinned by `flake.lock`). The flake gives its folder to the tool as `POINTER_THEME_SOURCE`. The tool converts it at each build into `build/pointers/posy.pointers`, which the boot image holds as the resource `pointers_posy`. No file of that theme and no file made from its pixels is in the repository (section 6). Sizes: 32 (the smallest size of the theme) and 64 for the later screen; the two animated shapes keep 32 only (77 frames: 315 KiB at 32, 1.26 MiB more at 64).
-- **The choice of the compositor**: `pointers_posy` when the boot image has it, else `pointers_system`. With no build input, the tool makes the theme of the system only, and the system works the same.
+- **The choice of the compositor** (decision of the owner, 2026-11-11, `HANDOFF.md` item 33): the theme of the owner is the default when the build has its input; the theme of the system is the fallback. The root service gives the compositor `pointers_posy` when the boot image has it, else `pointers_system` (`pointer_theme_choice` in `programs/root/resources.odin`: the one place of the choice, where a later setting of the person changes the order). With no build input, the tool makes the theme of the system only, and the system works the same.
+- **How a resource enters the boot image and reaches a program**: `docs/ARCHITECTURE.md`, U2b.
 
 ## 6. The license of the theme of the owner
 
@@ -132,8 +133,28 @@ Read on 2026-11-11:
 
 What follows for this repository: property 2 of the objective of `PROPERTIES.md` reuses what is "permissively licensed"; a NonCommercial license is not. So the repository holds the manifest and the tool, and the build makes the theme file from the input. The theme file carries the license `CC-BY-NC-4.0` and the attribution: "Posy's Cursor by Michiel de Boer (Posy), michieldb.nl/other/cursors; Linux port 1.6 by simtrami, github.com/simtrami/posy-improved-cursor-linux; CC BY-NC 4.0, creativecommons.org/licenses/by-nc/4.0; converted by kerneltool: the sizes 32 and 64, no pixel changed". The program `pointers` shows it with the theme.
 
-## 7. Decisions that the owner must make
+## 7. Decisions of the owner
 
-1. **The theme of the owner in the repository.** (a) Vendor the theme file in the repository under CC BY-NC 4.0, with its attribution: then the repository is not under one permissive license, and a commercial use of the system needs another theme. (b) Keep it as a build input, as now. (c) Ask Michiel de Boer for a permissive license for this system.
-2. **The default theme.** The theme of the owner when the build has it (now), or the theme of the system always, with the theme of the owner as a choice of the person.
-3. **The exception of `DESIGN.md`** (the pointer is the one picture with smooth edges): keep it, or reverse it.
+Decided on 2026-11-11 (`HANDOFF.md` item 33):
+
+1. **Posy's Cursor stays a build input.** The flake fetches it, the tool converts it at build time, and no file of the theme and no file made from its pixels enters the repository.
+2. **It is the default pointer theme when the build input is there.** The theme of the system is the fallback.
+3. The exception of `DESIGN.md` (the pointer is the one picture with smooth edges) follows from 1 and 2.
+
+What stays for the owner: a commercial use of the system needs another default theme (CC BY-NC 4.0, section 2(a)(1)), or a license from Michiel de Boer; a setting of the person that chooses the theme (the settings service does not exist yet).
+
+## 8. Measures
+
+From the full check of this step (one run, with a load of about 30 on the host: the rule of the project says that such numbers are not valid; they are an order of size):
+
+| What | Time |
+|---|---|
+| `kerneltool pointers`: the theme of the owner (122 names, 17 files read, 178 pictures, 883 008 bytes) | 34 to 87 ms |
+| the same for the theme of the system (15 grids, 42 pictures, 208 512 bytes) | 0.6 to 0.8 ms |
+| the root service: the hash of the theme of the owner | 1.4 to 1.8 ms |
+| the compositor: `validate` of the theme of the owner, once | 427 to 653 us |
+| the blend of the arrow of Posy, 32x32, 860 pixels transparent | 824 to 1008 ns |
+| a copy of 32x32, for comparison | 151 to 153 ns |
+| the pointer in one frame, the mean of 256 frames | 1926 to 2040 ns |
+| `pointers`: the hash and the validation of the theme of the owner | 2.3 ms |
+| `pointers`: the first frame of its window | 886 us |
