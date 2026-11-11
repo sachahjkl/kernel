@@ -9,8 +9,18 @@
 //
 //   root     the generation, and one Store_Entry for each private store
 //   table    one for each store: one Object_Entry for each object
-//   list     one for each object that has bytes: the Pointers of its data
+//   list     one for each state of an object that has bytes: the Pointers
+//            of its data
 //   data     the bytes of the object
+//   version index, version leaf
+//            for each object with versions: the index names the leaves,
+//            a leaf holds Version_Entry records, the oldest first
+//
+// Versions (docs/ARCHITECTURE.md, U5, "Versions"): each commit that
+// changes an object keeps its state before it as a version. A list or a
+// block of data can be named two times: by two versions, or by an object
+// and its clone (a shared block). A table, an index and a leaf are named
+// one time. A block is named from one store only.
 //
 // The rule (copy on write): a commit never writes a block that the root on
 // the disk names. It writes each changed block to a free block, then the
@@ -33,9 +43,9 @@ import "base:intrinsics"
 import "contract:blake3"
 
 BLOCK_SIZE :: 4096
-ROOT_MAGIC :: u64(0x31454741524F5453) // The bytes "STORAGE1".
+ROOT_MAGIC :: u64(0x32454741524F5453) // The bytes "STORAGE2": the format with versions.
 STORE_CAPACITY :: 60
-OBJECT_CAPACITY :: 48
+OBJECT_CAPACITY :: 39 // 39 entries of 104 bytes in one block.
 LIST_CAPACITY :: 255
 NAME_CAPACITY :: 32 // A name of a store: the name that the root service gives, with zero bytes after it.
 OBJECT_NAME_CAPACITY :: 40
@@ -58,7 +68,9 @@ Root :: struct {
 	magic:       u64,
 	generation:  u64,
 	disk_blocks: u64,
-	reserved:    [5]u64,
+	time:        u64, // The time since the format of the disk at this commit, in milliseconds.
+	date:        u64, // The date of this commit in seconds since 1970 (UTC). 0: not known.
+	reserved:    [3]u64,
 	stores:      [STORE_CAPACITY]Store_Entry,
 	padding:     [BLOCK_SIZE - 64 - STORE_CAPACITY * size_of(Store_Entry) - 8]u8,
 	check:       u64, // The hash of the bytes before it.
@@ -68,12 +80,44 @@ Object_Entry :: struct {
 	name:       [OBJECT_NAME_CAPACITY]u8, // All zero: the place is free.
 	size:       u64, // Bytes.
 	generation: u64, // The commit of its last change.
+	time:       u64, // The time since the format at that commit, in milliseconds.
+	date:       u64, // The date of that commit, in seconds since 1970 (UTC). 0: not known.
 	list:       Pointer, // No block for an object with no bytes.
+	versions:   Pointer, // The version index. No block: the object has no version.
 }
+#assert(size_of(Object_Entry) == 104)
 
 Table :: struct {
 	objects: [OBJECT_CAPACITY]Object_Entry,
 	padding: [BLOCK_SIZE - OBJECT_CAPACITY * size_of(Object_Entry)]u8,
+}
+
+// One version of an object: its state at the commit of `generation`.
+Version_Entry :: struct {
+	generation: u64,
+	size:       u64,
+	time:       u64, // The time since the format, in milliseconds.
+	date:       u64, // Seconds since 1970 (UTC). 0: not known.
+	list:       Pointer, // No block: the object had no bytes.
+}
+#assert(size_of(Version_Entry) == 48)
+
+VERSION_LEAF_CAPACITY :: 85
+VERSION_INDEX_CAPACITY :: 254
+VERSIONS_LIMIT :: VERSION_LEAF_CAPACITY * VERSION_INDEX_CAPACITY // 21590 versions of one object.
+
+Version_Leaf :: struct {
+	count:    u64,
+	reserved: u64,
+	entries:  [VERSION_LEAF_CAPACITY]Version_Entry, // The oldest first; count of them are used.
+}
+
+Version_Index :: struct {
+	leaf_count:     u64,
+	version_count:  u64, // The entries of all its leaves.
+	retention_time: u64, // The time since the format of the last application of the retention rule to this object.
+	reserved:       u64,
+	leaves:         [VERSION_INDEX_CAPACITY]Pointer, // The oldest leaf first; leaf_count of them are used. No leaf is empty.
 }
 
 List :: struct {
@@ -84,6 +128,8 @@ List :: struct {
 #assert(size_of(Root) == BLOCK_SIZE)
 #assert(size_of(Table) == BLOCK_SIZE)
 #assert(size_of(List) == BLOCK_SIZE)
+#assert(size_of(Version_Leaf) == BLOCK_SIZE)
+#assert(size_of(Version_Index) == BLOCK_SIZE)
 
 // check gives the check of a block: the first 8 bytes of its BLAKE3 hash.
 check :: proc "contextless" (bytes: []u8) -> u64 {

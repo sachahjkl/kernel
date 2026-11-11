@@ -164,7 +164,7 @@ error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record,
 	case .Over_Limit:
 		write_part(writer, "the call needs ")
 		amount(writer, record.value, unit)
-		write_part(writer, " in all; the limit is ")
+		write_part(writer, errors.Unit(record.unit) == .Blocks ? " in all, with no earlier version kept; the limit is " : " in all; the limit is ")
 		amount(writer, record.limit, unit)
 	case .Full:
 		if record.unit == 0 {
@@ -193,6 +193,9 @@ error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record,
 			write_part(writer, ", names nothing that the program has")
 		} else if errors.Unit(record.unit) == .Objects {
 			write_part(writer, ": the store has no object with this name")
+		} else if errors.Unit(record.unit) == .Versions {
+			write_part(writer, ": the object has no version of the generation ")
+			write_part(writer, record.value)
 		} else if record.unit != 0 {
 			write_part(writer, " names none of the ")
 			write_part(writer, unit)

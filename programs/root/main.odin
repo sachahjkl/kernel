@@ -162,6 +162,8 @@ store_limit_of :: proc "contextless" (name: string) -> u64 {
 		return 4 // A small limit: the test reaches it.
 	case "errors":
 		return 2 // One object is over the limit.
+	case "notes":
+		return 4500 // The versions of a run of 1000 commits of the count (4 blocks each), then thinning at the limit.
 	}
 	return 64
 }

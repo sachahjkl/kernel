@@ -222,7 +222,16 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Term | Definition | Do not use |
 |---|---|---|
 | Object | One named piece of stored data with its versions, held by the storage service and reached by handle (P9) | file, blob, inode |
-| Version | The content of an object at one earlier time. The storage service keeps versions (P9) | snapshot (when it means one object), backup, revision |
+| Version | The state of one object at one commit: its bytes, its size, the generation and the time of that commit. Each commit that changes an object keeps the state before it as a version, in the version index of the object. The storage service keeps versions (P9) | snapshot (when it means one object), backup, revision, undo step |
+| Current version | The state of an object that its last commit made: what a read gives. It is not in the version index | head, working copy, latest revision |
+| Version index | The blocks of one object that list its versions: an index block, which names leaf blocks, which hold the version entries, the oldest first | history file, journal, log |
+| Shared block | A block that two lists or two versions name: an unchanged block of an object, or the blocks of a clone. The storage service counts it one time in the blocks of the store | deduplicated block, extent reference |
+| Reference count | For each block in use, the count of what names it: list entries for a block of data, versions and objects for a list. The storage service frees a block when its count goes to 0 | link count, refcount (in text) |
+| Thinning | A commit that removes versions of an object: by the retention rule, or the oldest version of the store when a change does not fit in the limit of the store. Its blocks that no other version names become free | garbage collection, pruning, cleanup, compaction |
+| Retention rule | Which versions the storage service keeps: each version for 10 minutes, then one for each hour for one day, then one for each day | backup policy, history limit |
+| Clone | A new object whose list is the list of another object: the two share each block until one of them changes (P9) | copy (for this), hard link, reflink |
+| Restore | A commit that makes a version the current version again. The current version before it becomes a version: nothing is lost | revert, rollback, undo |
+| Time since the format | The milliseconds of the storage service since the format of the disk: the root block keeps it at each commit. It is the time of a version until the system has a date | uptime, timestamp |
 | Snapshot | The state of a whole private store at one time | checkpoint, backup |
 | Private store | The set of objects that belongs to one program. No other program sees it (P8, P9) | home directory, app data, container |
 | Document | An object that belongs to the person and not to one program. The document service grants it (P8) | file, user file |

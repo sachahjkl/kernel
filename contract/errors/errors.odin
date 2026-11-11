@@ -38,7 +38,7 @@ Kind :: enum i64 {
 	Handle_Rights     = 11, // value: the handle; limit: the rights that the call needs; found: the rights of the handle (op.Rights).
 	Budget            = 12, // value: the handle of the budget; limit: what the call asks; found: what the budget holds.
 	Budget_Hidden     = 13, // value: the handle of the budget; limit: what the call asks. The handle has no right Read: the budget is not described.
-	Over_Limit        = 14, // value: what the call makes; limit: the limit.
+	Over_Limit        = 14, // value: what the call makes; limit: the limit. Unit Blocks (the storage service): the blocks of the current objects with the change, with no earlier version kept.
 	Full              = 15, // A table has no free place. limit: its capacity.
 	State             = 16, // value: the handle; found: the op.Program_State of its object, or 0 when the handle has no right Read.
 	Absent            = 17, // No object has the name or the number of the argument.
@@ -92,6 +92,7 @@ Unit :: enum i64 {
 	Grants      = 29, // The grants of a program (system.Root_Grant).
 	Display     = 30, // No_Grant: a surface on the screen (the ring to the compositor).
 	Terminal    = 31, // No_Grant: a terminal (the terminal ring and the text region).
+	Versions    = 32, // Absent: the versions of an object (value: the generation that the argument named).
 }
 
 // How a handle ended (Handle_Ended).
@@ -159,6 +160,7 @@ UNIT_NAMES := [Unit]string {
 	.Grants      = "grants of the program",
 	.Display     = "a surface on the screen",
 	.Terminal    = "a terminal",
+	.Versions    = "versions of the object",
 }
 
 // A ring completion (contract/ring) has the status of the contract of its

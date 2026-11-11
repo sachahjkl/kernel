@@ -1377,7 +1377,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[console] kept on the disk"},
 	// The limit of the store: one more object needs two more blocks.
 	{kind = .Type, text = "storage.write(\"second\", \"one block more\")"},
-	{kind = .Wait, text = "[console] error: storage.write: the call needs 5 blocks in all; the limit is 4 blocks (-2)"},
+	{kind = .Wait, text = "[console] error: storage.write: the call needs 5 blocks in all, with no earlier version kept; the limit is 4 blocks (-2)"},
 	// An error of a service is a record: the console writes it as a sentence.
 	{kind = .Type, text = "storage.write(\"\", \"x\")"},
 	{kind = .Wait, text = "[console] error: storage.write: the argument name is empty; it must have 1 to 39 bytes (-3)"},
@@ -1386,7 +1386,7 @@ scenario := [?]Step {
 	{kind = .Type, text = "storage.objects()"},
 	{kind = .Wait, text = "[console] greeting 16 bytes, generation 2"},
 	{kind = .Type, text = "storage.stores()"},
-	{kind = .Wait, text = "; console: 1 objects, 3 of 4 blocks, 1 connection"},
+	{kind = .Wait, text = "; console: 1 objects, 0 versions, 3 of 4 blocks, 0 shared, 1 connection"},
 	// The person sees the grant and revokes it: the store stays on the disk,
 	// and the console cannot reach it.
 	{kind = .Type, text = "grants(\"console\")"},
@@ -1396,7 +1396,7 @@ scenario := [?]Step {
 	{kind = .Type, text = "storage.write(\"greeting\", \"changed\")"},
 	{kind = .Wait, text = "[console] error: storage.write: the caller has no grant for this: a private store (-1)"},
 	{kind = .Type, text = "storage.stores()"},
-	{kind = .Wait, text = "; console: 1 objects, 3 of 4 blocks, 0 connections"},
+	{kind = .Wait, text = "; console: 1 objects, 0 versions, 3 of 4 blocks, 0 shared, 0 connections"},
 	{kind = .Type, text = "grants(\"console\")"},
 	{kind = .Wait, text = "[console] console lost: store"},
 	{kind = .Shot, text = "storage"},
