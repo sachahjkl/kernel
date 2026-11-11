@@ -125,7 +125,7 @@ The MSL of RFC 9293 is 2 minutes. The library takes 5 s, as an MSL for one link:
 
 ### Randomness
 
-RFC 6528 needs a secret that an attacker cannot guess. The system has no random service: the kernel does not read the random generator of the firmware or of the TPM. The processor of the test machine has the instruction `rdrand`, which a program can run with no handle. `server` and `fetch` take their secret from `rdrand` when the processor has it; else from the cycle counter, which an attacker can guess. The log says which source. A random service of the system (the TPM, property 17) is a gap.
+RFC 6528 needs a secret that an attacker cannot guess. `server` and `fetch` take it from their random generator: each program has one, seeded by its starter from the seed that the root service gathers from the processor (`docs/RANDOMNESS.md`).
 
 ## The tests
 

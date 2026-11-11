@@ -287,6 +287,16 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Setting | One choice of the person that changes how the system works for each program: the font, the order of the subpixel bands. The program `settings` changes it | preference, option, configuration |
 | Settings page | The one page of the settings of the person (`contract/settings`): the root service creates it; the program `settings` writes it; each program with a surface reads it | registry, config file, dconf |
 
+## Randomness
+
+| Term | Definition | Do not use |
+|---|---|---|
+| Random seed | 32 bytes from which a random generator starts. The starter of a program writes the seed of the program in its context values 12 to 15; the root service gathers its own (`docs/RANDOMNESS.md`) | entropy (for this), salt |
+| Random generator | The record of fixed size in the memory of a program that gives it random bytes: ChaCha20 with fast key erasure (`support/random`). A draw makes no kernel entry and no call | RNG, PRNG, CSPRNG (for this), /dev/urandom |
+| Entropy report | What the root service found when it gathered the seed of the system: the sources (rdseed, rdrand, the cycle counter), their good and refused values, and the seed strength | entropy estimate |
+| Seed strength | The strongest source that gave all its values to the seed of the system: entropy (rdseed), processor (rdrand), or weak (the cycle counter only, counted as 0 bits) | security level |
+| Compatibility layer | The packages of `support/cryptography` that give the code taken from Odin the helpers of its origin, over the primitives of this system (`docs/CRYPTOGRAPHY.md`) | shim, polyfill |
+
 ## Terms that the system does not have
 
 These words name concepts that the system removed. Use them only to describe other systems.
