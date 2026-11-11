@@ -138,9 +138,9 @@ scenario_persist_second := [?]Step {
 	{kind = .Wait, text = "storage: ok, generation 1023: 2 stores, 3 objects, ", any_order = true},
 	// The setting of the machine before: the desktop draws in Spleen 8x16.
 	{kind = .Wait, text = "settings: the boot pass: the settings kept in the store: font spleen, subpixel order rgb, pointer theme owner, grid fit on; in ", any_order = true},
+	{kind = .Wait, text = " blocks checked, 0 wrong, in ", any_order = true},
 	{kind = .Wait, text = "compositor: the settings changed: font spleen, subpixel order rgb, pointer theme owner, grid fit on; "},
 	{kind = .Launch, text = "notes"},
-	{kind = .Wait, text = " blocks checked, 0 wrong, in ", any_order = true},
 	{kind = .Wait, text = "notes: restored the note \"kept across a restart\" and the count 1000, its 3 blocks agree", any_order = true},
 	{kind = .Wait, text = "compositor: surface notes"},
 	{kind = .Shot, text = "notes"},
