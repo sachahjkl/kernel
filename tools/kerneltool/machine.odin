@@ -955,6 +955,13 @@ scenario := [?]Step {
 	{kind = .Wait, text = "scheduler: the strategy is now round robin, it was EEVDF"},
 	{kind = .Key, text = "3"},
 	{kind = .Wait, text = "scheduler: the strategy is now EEVDF, it was round robin"},
+	// The tiles are buttons of the interface package: Tab gives the focus
+	// to the first tile, Enter chooses it.
+	{kind = .Key, text = "tab"},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "scheduler: the strategy is now round robin, it was EEVDF"},
+	{kind = .Key, text = "3"},
+	{kind = .Wait, text = "scheduler: the strategy is now EEVDF, it was round robin"},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "stop(\"scheduler\")"},
 	{kind = .Wait, text = "root: scheduler stopped"},
