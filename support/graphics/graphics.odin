@@ -82,7 +82,8 @@ line :: proc "contextless" (canvas: Canvas, from_x, from_y, to_x, to_y: int, thi
 	}
 }
 
-// copy draws all of source at (x, y) of canvas.
+// copy draws all of source at (x, y) of canvas. A source with stride 0
+// has one line, that each line of the result copies.
 copy :: proc "contextless" (canvas: Canvas, x, y: int, source: Canvas) {
 	x0 := max(x, 0)
 	y0 := max(y, 0)
@@ -92,11 +93,23 @@ copy :: proc "contextless" (canvas: Canvas, x, y: int, source: Canvas) {
 		return
 	}
 	for line in y0 ..< y1 {
-		intrinsics.mem_copy_non_overlapping(
-			&canvas.pixels[line * canvas.stride + x0],
-			&source.pixels[(line - y) * source.stride + (x0 - x)],
-			(x1 - x0) * size_of(Color),
-		)
+		copy_pixels(canvas.pixels[line * canvas.stride + x0:], source.pixels[(line - y) * source.stride + (x0 - x):], x1 - x0)
+	}
+}
+
+// copy_pixels copies count pixels, 16 bytes at a time. It does not call
+// memcpy: in a program of this system, memcpy is the one of the
+// freestanding Odin runtime, which copies one byte at a time and is not
+// optimized. The store is volatile, so that the compiler does not make the
+// loop a call of memcpy again.
+copy_pixels :: #force_inline proc "contextless" (to, from: [^]Color, count: int) {
+	Block :: #simd[4]u32
+	index := 0
+	for ; index + 4 <= count; index += 4 {
+		intrinsics.volatile_store((^[4]u32)(&to[index]), transmute([4]u32)intrinsics.unaligned_load((^Block)(&from[index])))
+	}
+	for ; index < count; index += 1 {
+		to[index] = from[index]
 	}
 }
 
