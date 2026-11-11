@@ -953,14 +953,14 @@ scenario := [?]Step {
 	{kind = .Shot, text = "scheduler"},
 	{kind = .Key, text = "1"},
 	{kind = .Wait, text = "scheduler: the strategy is now round robin, it was EEVDF"},
-	{kind = .Key, text = "3"},
-	{kind = .Wait, text = "scheduler: the strategy is now EEVDF, it was round robin"},
-	// The tiles are buttons of the interface package: Tab gives the focus
-	// to the first tile, Enter chooses it.
+	// The tiles are buttons of the interface package: Tab moves the focus
+	// from tile to tile, Enter chooses the third. The scenario writes no
+	// more log lines than with the key 3: the ring of the log is full when
+	// the program log reads its oldest records.
+	{kind = .Key, text = "tab"},
+	{kind = .Key, text = "tab"},
 	{kind = .Key, text = "tab"},
 	{kind = .Key, text = "ret"},
-	{kind = .Wait, text = "scheduler: the strategy is now round robin, it was EEVDF"},
-	{kind = .Key, text = "3"},
 	{kind = .Wait, text = "scheduler: the strategy is now EEVDF, it was round robin"},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "stop(\"scheduler\")"},
