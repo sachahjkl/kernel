@@ -77,19 +77,22 @@ table_append :: proc "contextless" (table: ^$T/Table_To_Append($R), record: R) -
 	if fits {
 		table.records[table.count] = record
 	}
-	table.count += 1
+	table.count = table.count == max(u64) ? max(u64) : table.count + 1
 	return fits
 }
 
 // bytes_append appends bytes: those that fit are written, and the count
-// grows by all of them. It gives the offset of the first byte.
+// grows by all of them. It gives the offset of the first byte. No sum
+// wraps: the index is compared with the free bytes, and the count stops at
+// the largest number (it stays larger than the capacity).
 bytes_append :: proc "contextless" (place: ^Bytes_To_Append, bytes: []u8) -> (start: u64) {
 	start = place.count
+	free := place.count < place.capacity ? place.capacity - place.count : 0
 	for b, index in bytes {
-		if place.count + u64(index) < place.capacity {
+		if u64(index) < free {
 			place.bytes[place.count + u64(index)] = b
 		}
 	}
-	place.count += u64(len(bytes))
+	place.count = place.count > max(u64) - u64(len(bytes)) ? max(u64) : place.count + u64(len(bytes))
 	return start
 }

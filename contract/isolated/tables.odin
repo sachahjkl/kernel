@@ -129,6 +129,11 @@ table_decode :: proc "contextless" (file: []u8, type: module.Type, detail: u32, 
 	if field.count > field.capacity && direction == .Append {
 		return false
 	}
+	// No count and no capacity times a size passes TABLE_SPAN, in each
+	// form: no product and no sum below wraps (finding F1 of the hostile read).
+	if field.count > TABLE_SPAN / size || field.capacity > TABLE_SPAN / size {
+		return false
+	}
 	// The records that the export can reach.
 	reached := direction == .Append ? field.capacity : field.count
 	place := &call.places[index]

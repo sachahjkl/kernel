@@ -393,3 +393,25 @@ decode_random_tables :: proc(t: ^testing.T) {
 	}
 	testing.expect(t, accepted > 1000, "the test must accept many records")
 }
+
+// An Append place near 2^64 (finding F1 of the hostile read): 8 free bytes
+// at the end of the call region, with a count and a capacity that do not
+// fit in TABLE_SPAN. decode refuses it: no count times a size wraps.
+@(test)
+decode_refuses_counts_near_the_end_of_the_numbers :: proc(t: ^testing.T) {
+	region := make([]u8, 65536, context.temp_allocator)
+	function: module.Function
+	function.parameter_count = 1
+	function.parameters[0] = .Bytes
+	function.parameter_directions[0] = .Append
+	store(region, 0, Table_Field{start = 65528, count = max(u64) - 9, capacity = max(u64) - 1})
+	call: Call
+	testing.expect(t, !decode(nil, function, 0, 32, region, &call), "a capacity of 2^64 - 1 bytes in the call region")
+	function.parameters[0], function.parameter_details[0] = .Table, 1
+	storage: [1024]u8
+	file := two_records_file(&storage)
+	store(region, 0, Table_Field{start = 65520, count = max(u64) / 16, capacity = max(u64) / 16 + 1})
+	testing.expect(t, !decode(file, function, 0, 32, region, &call), "a capacity of 2^60 records of 16 bytes in the call region")
+	store(region, 0, Table_Field{start = 65520, count = 0, capacity = 1})
+	testing.expect(t, decode(file, function, 0, 32, region, &call), "one record at the end of the call region")
+}
