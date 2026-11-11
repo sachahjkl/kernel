@@ -201,8 +201,19 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.log("clock: wrong: the time went back ", went_back, " times, the two ways are ", apart, " ms apart, the page is at least ", least, " ms behind and ", ahead, " ms ahead of the cycle counter, the kernel ", refused ? "refuses" : "does not refuse", " to remove the time page")
 	}
 	deadline := system.time()
+	// The time of one picture: the mean of ten pictures after the checks
+	// (docs/DESIGN.md, section 7).
+	drawn, drawn_time: u64
 	for {
+		start := system.nanoseconds()
 		draw(&window)
+		if drawn < 10 {
+			drawn_time += system.nanoseconds() - start
+			drawn += 1
+			if drawn == 10 {
+				system.log("clock: the window drew one picture in ", drawn_time / 10 / 1000, ".", drawn_time / 10 / 100 % 10, " us, the mean of 10")
+			}
+		}
 		deadline += 100
 		display.wait(&window, deadline)
 		for _ in display.next_event(&window) {

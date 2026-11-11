@@ -118,6 +118,7 @@ matches: [len(bar.names)]int // Indexes in bar.names: the names that contain the
 match_count: int
 choice: int // The chosen line: an index in matches.
 kept_key: u32 // A key that the launcher took when it was pressed: its release goes to no program.
+launcher_frames, launcher_time: u64 // The frames drawn while the launcher is open, and their time in nanoseconds.
 // The colors of one line of a title bar, and of its lighter top line.
 title_row, title_light: [display.SURFACE_LIMIT + 2 * BORDER]graphics.Color
 
@@ -545,6 +546,10 @@ draw :: proc "contextless" (now: u64) {
 	}
 	damage_count = 0
 	spent := system.nanoseconds() - start
+	if launcher_open {
+		launcher_frames += 1
+		launcher_time += spent
+	}
 	if dragging >= 0 {
 		move_frames += 1
 		move_time += spent
@@ -899,6 +904,8 @@ launcher_filter :: proc "contextless" () {
 launcher_close :: proc "contextless" (cause: string) {
 	launcher_open = false
 	damage_launcher()
+	system.log_in("surfaces", .Info, "compositor: the launcher was open for ", launcher_frames, " frames, ", launcher_time / max(launcher_frames, 1) / 1000, ".", launcher_time / max(launcher_frames, 1) / 100 % 10, " us per frame")
+	launcher_frames, launcher_time = 0, 0
 	if cause != "" {
 		system.log_in("surfaces", .Info, "compositor: the launcher is closed by ", cause)
 	}
