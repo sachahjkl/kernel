@@ -439,6 +439,41 @@ kernel_error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_
 	error_text(writer, record, name, argument)
 }
 
+// The table of error details (docs/MODULE_CONTRACT.md, section 8, "The table
+// of error details"): an error detail is an error record, so each sentence
+// above writes it. A reader writes one line for each detail:
+//
+//   detail 2 of 3: monitor.counts_named: the argument names, row 3 of it, names nothing that exists
+//
+// error_detail_number_text writes the start of such a line. count is the
+// count of the full answer.
+error_detail_number_text :: proc "contextless" (writer: ^Writer, number: u64, count: u64) {
+	write_part(writer, "detail ")
+	write_part(writer, number)
+	write_part(writer, " of ")
+	write_part(writer, count)
+	write_part(writer, ": ")
+}
+
+// export_error_detail_text writes the line of one error detail of an export,
+// number from 1.
+export_error_detail_text :: proc "contextless" (writer: ^Writer, file: []u8, export: u32, prefix: string, number: u64, count: u64, detail: ^errors.Error_Record) {
+	error_detail_number_text(writer, number, count)
+	export_error_text(writer, file, export, prefix, detail)
+}
+
+// error_details_rest_text writes the sentence of the error details that did
+// not fit in the table of the caller: shown is the count that the caller
+// read, count the count of the full answer. It writes nothing when each
+// detail fit.
+error_details_rest_text :: proc "contextless" (writer: ^Writer, shown: u64, count: u64) {
+	if count <= shown {
+		return
+	}
+	write_part(writer, count - shown)
+	write_part(writer, count - shown == 1 ? " more error detail did not fit in the table of error details" : " more error details did not fit in the table of error details")
+}
+
 // export_error_text writes the sentence of the error record of an export:
 // the names come from its description. prefix: the name of the service, or
 // "" for a module in this program.

@@ -272,6 +272,27 @@ Return_Problem :: enum u32 {
 // is its number, from 1, and no count and no record of the caller changes
 // (finding W7 of the hostile read).
 tables_return :: proc "contextless" (file: []u8, function: module.Function, arguments: []Argument, region: []u8, offset: u64) -> (problem: Return_Problem, parameter: int) {
+	return tables_return_of(file, function, arguments, region, offset, 0)
+}
+
+// error_details_return copies back the table of error details of an export
+// that failed (docs/MODULE_CONTRACT.md, section 8, "The table of error
+// details"), and no other table: the error record and the details are one
+// answer, and the other tables of a failed call stay as they were. It has
+// the checks of tables_return. An export with no table of error details:
+// nothing to do.
+error_details_return :: proc "contextless" (file: []u8, function: module.Function, arguments: []Argument, region: []u8, offset: u64) -> (problem: Return_Problem, parameter: int) {
+	index, has_details := module.error_details_parameter(file, function)
+	if !has_details {
+		return .None, 0
+	}
+	return tables_return_of(file, function, arguments, region, offset, index + 1)
+}
+
+// tables_return_of is tables_return for each table (only_parameter 0), or
+// for the parameter only_parameter only, from 1.
+@(private)
+tables_return_of :: proc "contextless" (file: []u8, function: module.Function, arguments: []Argument, region: []u8, offset: u64, only_parameter: int) -> (problem: Return_Problem, parameter: int) {
 	function := function
 	count_given_by_callee: [module.PARAMETER_CAPACITY]u64
 	for pass in 0 ..< 2 {
@@ -279,7 +300,7 @@ tables_return :: proc "contextless" (file: []u8, function: module.Function, argu
 		for type, index in function.parameters[:min(int(function.parameter_count), len(arguments))] {
 			defer field += field_size(type)
 			direction := function.parameter_directions[index]
-			if !is_table_or_bytes(type) || direction == .Read {
+			if !is_table_or_bytes(type) || direction == .Read || (only_parameter != 0 && index + 1 != only_parameter) {
 				continue
 			}
 			argument := &arguments[index].table

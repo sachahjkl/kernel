@@ -2,6 +2,7 @@
 package remote
 
 import "contract:errors"
+import "contract:isolated"
 import "core:math/rand"
 import "core:testing"
 
@@ -65,6 +66,9 @@ request_refusals :: proc(t: ^testing.T) {
 		{proc(request: ^Request) {request.result_count = 100; request.result_unit = 101}, FIELD_RESULT_UNIT, .Too_Long},
 		{proc(request: ^Request) {request.error_start = 12}, FIELD_ERROR_START, .Bad_Value},
 		{proc(request: ^Request) {request.error_start = REGION_SIZE - 48}, FIELD_ERROR_START, .Bad_Value},
+		{proc(request: ^Request) {request.details_end = 20}, FIELD_DETAILS_END, .Bad_Value},
+		{proc(request: ^Request) {request.details_end = 16}, FIELD_DETAILS_END, .Bad_Value},
+		{proc(request: ^Request) {request.details_end = 32}, FIELD_DETAILS_END, .Bad_Value}, // Past the argument record of 24 bytes.
 	}
 	out: [DATAGRAM_LIMIT]u8
 	arguments: [40]u8
@@ -88,6 +92,66 @@ request_refusals :: proc(t: ^testing.T) {
 	// The arguments must fit in a smaller call region too.
 	_, _, error, ok = request_check(bytes, 32)
 	testing.expect(t, !ok && error.argument == FIELD_ARGUMENTS && error.limit == 32)
+}
+
+// The table of error details: its field is inside the argument record; the
+// remote service reads the details from the call region after the call,
+// and trusts no number of the field; the host reads whole records only, and
+// at most the count that the answer names.
+@(test)
+error_details_of_an_answer :: proc(t: ^testing.T) {
+	out: [DATAGRAM_LIMIT]u8
+	arguments: [40]u8
+	request := request_make()
+	request.record_size = 40
+	request.details_end = 40 // The field is the bytes 8 ..< 40 of the argument record.
+	bytes, _ := request_write(out[:], request, arguments[:])
+	_, _, _, ok := request_check(bytes, REGION_SIZE)
+	testing.expect(t, ok, "a field of the table of error details inside the argument record")
+
+	region := make([]u8, REGION_SIZE, context.temp_allocator)
+	write(region[8:], isolated.Table_Field{start = 64, count = 3, capacity = 16})
+	for number in 0 ..< 3 {
+		write(region[64 + number * isolated.ERROR_RECORD_SIZE:], errors.error_make(.Absent, .None, 1, 0, 0, i64(number + 1)))
+	}
+	details, count := details_bytes(request, region)
+	testing.expect_value(t, count, 3)
+	testing.expect_value(t, len(details), 3 * isolated.ERROR_RECORD_SIZE)
+	testing.expect_value(t, read(details[2 * isolated.ERROR_RECORD_SIZE:], errors.Error_Record).found, 3)
+
+	// A count over the capacity: the capacity of records, and the count of
+	// the full answer.
+	write(region[8:], isolated.Table_Field{start = 64, count = 40, capacity = 16})
+	details, count = details_bytes(request, region)
+	testing.expect_value(t, count, 40)
+	testing.expect_value(t, len(details), 16 * isolated.ERROR_RECORD_SIZE)
+
+	// A field that the service changed to name bytes past the call region:
+	// cut to the region.
+	write(region[8:], isolated.Table_Field{start = REGION_SIZE - 100, count = 1 << 40, capacity = 1 << 40})
+	details, count = details_bytes(request, region)
+	testing.expect_value(t, len(details), isolated.ERROR_RECORD_SIZE)
+	write(region[8:], isolated.Table_Field{start = REGION_SIZE + 8, count = 2, capacity = 2})
+	details, count = details_bytes(request, region)
+	testing.expect_value(t, len(details), 0)
+	testing.expect_value(t, count, 2)
+	request.details_end = 0
+	details, count = details_bytes(request, region)
+	testing.expect(t, details == nil && count == 0, "no table of error details")
+
+	// The host: a count that lies.
+	answer := Answer{details = 3}
+	shown, sound := details_shown(answer, 3 * isolated.ERROR_RECORD_SIZE)
+	testing.expect(t, shown == 3 && sound, "three records and a count of 3")
+	answer.details = 1000
+	shown, sound = details_shown(answer, 2 * isolated.ERROR_RECORD_SIZE)
+	testing.expect(t, shown == 2 && sound, "a count larger than the records: the Append rule, the rest did not fit")
+	answer.details = 1
+	shown, sound = details_shown(answer, 5 * isolated.ERROR_RECORD_SIZE)
+	testing.expect(t, shown == 1 && !sound, "more records than the count: the host reads the count, and says that the answer lies")
+	answer.details = 4
+	shown, sound = details_shown(answer, 2 * isolated.ERROR_RECORD_SIZE + 10)
+	testing.expect(t, shown == 2 && !sound, "bytes that are not whole records")
 }
 
 // The bytes of a result come from the integer result, which the remote
