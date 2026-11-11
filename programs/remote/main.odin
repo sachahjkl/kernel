@@ -451,9 +451,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	for {
 		record, ok := system.receive(&datagrams.completions)
 		if ok && record.tag == SEND_TAG - 1 {
-			granted_address, granted_port, _ := datagram.grant_unpack(record.values[6])
+			grant := datagram.grant_unpack(record.values[6])
 			local_port = record.values[1]
-			system.log("remote: ok, an endpoint with the grant ", granted_address == GATEWAY ? "10.0.2.2" : "another address", " port ", u64(granted_port), "; the call requests of the host arrive there")
+			system.log("remote: ok, an endpoint with the grant ", grant.address == GATEWAY ? "10.0.2.2" : "another address", " port ", u64(grant.port), "; the call requests of the host arrive there")
 			break
 		}
 		wait: system.Wait

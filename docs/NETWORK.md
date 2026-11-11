@@ -1,6 +1,6 @@
 # The network: TCP as a library in the program
 
-Status: design of step 44, 2026-11-11. The first layer of the network (step 40, choices 191 to 209 of `FIRST_MILESTONE.md`) is the base: the frame service, the network service, endpoints of datagrams. `GLOSSARY.md` defines the terms.
+Status: done on 2026-11-11 (choices NEW-1 to NEW-15 of `FIRST_MILESTONE.md`). The first layer of the network (step 40, choices 191 to 209 of `FIRST_MILESTONE.md`) is the base: the frame service, the network service, endpoints of datagrams. `GLOSSARY.md` defines the terms.
 
 ## What the owner decided
 
@@ -75,7 +75,7 @@ So the note is right about the place of the protocol, and not complete about the
 
 The interface follows the owner's rule on data-oriented interfaces (`HANDOFF.md`, item 94):
 
-- A connection is one record of fixed size (`tcp.Connection`, 512 bytes). The caller gives the table of records and one block of memory for the buffers (property 14): each connection has a send buffer and a receive buffer at a place that its index gives. The library allocates nothing.
+- A connection is one record of fixed size (`tcp.Connection`, 400 bytes). The caller gives the table of records and one block of memory for the buffers (property 14): each connection has a send buffer and a receive buffer at a place that its index gives. The library allocates nothing.
 - One call does the work of a batch: `tcp.step` takes all the segments that arrived, the time, a table of places for the segments to send, and a table of events. It reads all the segments, runs the timers, and writes all the segments to send.
 - An event is a record of fixed size: the index of a connection and a set of kinds (Opened, Accepted, Readable, Writable, Peer_Closed, Closed, Reset, Timed_Out, Refused). One record for each connection that has news, so a table with one place for each connection is enough.
 - `tcp.step` gives the deadline of the next timer. The program waits on its rings with that deadline. No call blocks and no call has a callback.
@@ -99,12 +99,14 @@ The program owns each field. It reads the state, the windows, the round trip est
 | Retransmission timer | SRTT and RTTVAR from the round trips, in microseconds; one segment timed at a time; no sample from a segment sent two times (Karn); the timer doubles after each timeout | RFC 6298 |
 | Least RTO | 200 ms, not the 1 s of RFC 6298 2.4 | Choice of this step: the test link has round trips under 1 ms |
 | Retries | 8 timeouts in a row end the connection (event Timed_Out, a RST) | RFC 9293 3.8.3 |
-| Congestion control | Slow start, congestion avoidance, fast retransmit after 3 duplicate ACKs, fast recovery: Reno, with the partial ACK of NewReno | RFC 5681, RFC 6582 |
+| Congestion control | Slow start, congestion avoidance, fast retransmit after 3 duplicate ACKs, fast recovery: Reno, with the partial ACK of NewReno. The congestion window stops at the largest window of the remote | RFC 5681, RFC 6582 |
+| Limited Transmit | The first two duplicate ACKs each send one new segment | RFC 3042 |
+| Duplicate ACKs | One ACK at once for each segment after a hole, also when a batch has several | RFC 5681 4.2 |
 | Initial window | 3 segments of 1460 bytes | RFC 5681 3.1 |
 | Zero window | A persist timer sends a probe (one byte before `SND.UNA`, with no data) until the window opens; it doubles as the retransmission timer does | RFC 9293 3.8.6.1 |
 | Close | FIN in both directions: FIN-WAIT-1, FIN-WAIT-2, CLOSING, TIME-WAIT, CLOSE-WAIT, LAST-ACK | RFC 9293 3.6 |
 | TIME-WAIT | 10 s: 2 MSL with an MSL of 5 s | Choice of this step, see below |
-| RST | Sent for a segment of no connection, and by `abort`. A RST received ends the connection only if its sequence is exactly `RCV.NXT` | RFC 9293 3.10.7.1, RFC 5961 3 |
+| RST | Sent for a segment of no connection, for a SYN when the table is full, and by `abort`. A RST received ends the connection only if its sequence is exactly `RCV.NXT` | RFC 9293 3.10.7.1, RFC 5961 3 |
 | Challenge ACK | A RST in the window but not at `RCV.NXT`, a SYN in a synchronized state, and an ACK after `SND.NXT` get an ACK and change nothing | RFC 5961 3, 4, 5 |
 
 The MSL of RFC 9293 is 2 minutes. The library takes 5 s, as an MSL for one link: the TIME-WAIT of 10 s keeps a connection record for 10 s, not for 4 minutes. A program that serves many short connections needs records for them. The initial sequence numbers of RFC 6528 protect a new connection on the same ports.
@@ -115,7 +117,8 @@ The MSL of RFC 9293 is 2 minutes. The library takes 5 s, as an MSL for one link:
 - Selective acknowledgments (SACK, RFC 2018), timestamps (RFC 7323), TCP Fast Open (RFC 7413), ECN (RFC 3168), urgent data (the field is read and ignored).
 - The Nagle rule (RFC 9293 3.7.4): the library sends a small segment at once.
 - Keepalive (RFC 9293 3.8.4).
-- SYN cookies: a SYN takes a connection record. A table that is full drops a SYN.
+- SYN cookies: a SYN takes a connection record. A table that is full refuses a SYN with a RST.
+- A timer of FIN-WAIT-2: a remote that never sends its FIN keeps the record until the program aborts it.
 - Path MTU discovery: the MSS is 1460 at most, for one frame of Ethernet.
 - IPv6.
 - A RST from the network service for a segment to a port with no endpoint: the service drops it and counts it.
@@ -141,6 +144,13 @@ The peer uses `support/tcp` too: it tests the library against itself. So the tes
 ### With the controlled peer
 
 A third network machine (`scenario_tcp`) has the peer of the tool on `-netdev dgram`, as `scenario_network`. The tool tells the peer to run one case at a time. The peer is a TCP client of `server`, and it changes the frames between its library and the machine with a generator of numbers that the case seeds, so each run makes the same changes: 5 % loss, a reorder, duplicates, a zero window of its receive buffer.
+
+### What the tests found
+
+- With batches of segments, a receiver must still send one duplicate ACK for each segment after a hole; with one ACK for a batch, no fast retransmit started (choice NEW-8).
+- 1 MiB with 5 % loss in each direction, on the host link of the tests: 5 to 10 s with Reno and NewReno, 1.5 to 2.7 s with Limited Transmit. The timeouts that remain come mostly from a retransmission that the link dropped too: SACK would remove more of them.
+- libslirp acknowledges the FIN of a connection of `guestfwd` and does not send its own: the connection of `fetch` stays in FIN-WAIT-2.
+- The measures are in choice NEW-15 of `FIRST_MILESTONE.md`.
 
 ## QUIC: what it reuses, and what it needs
 

@@ -38,12 +38,12 @@ LINE :: 24
 HEIGHT :: 16 + 2 * LINE + CASE_CAPACITY * LINE + 16
 ANSWER_X :: 304
 
-COLOR_BACKGROUND :: 0x0B1018
-COLOR_BAND :: 0x17212E
-COLOR_TEXT :: 0xDCE4EC
-COLOR_DIM :: 0x7C8A99
-COLOR_RIGHT :: 0x58D878
-COLOR_WRONG :: 0xF06060
+// The colors of support/graphics/rules.odin: a band under one case of two,
+// an expected answer in the color of a program that runs, a wrong one in
+// the color "failed".
+COLOR_BAND :: graphics.COLOR_CARD_TOP
+COLOR_RIGHT :: graphics.COLOR_PROGRAM
+COLOR_WRONG :: graphics.COLOR_FAILED
 
 Case :: struct {
 	text:   string,
@@ -241,7 +241,7 @@ cases_run :: proc "contextless" () {
 	info, has_info := call(.Info, CALL_TAG + 1, {})
 	grant := datagram.grant_unpack(info.values[6])
 	first := u16(info.values[1])
-	block := u16(info.values[1] >> 16)
+	block := u16(grant.tcp && !grant.listen ? datagram.PORT_BLOCK : 1)
 	writer := system.Writer{buffer = text[:]}
 	network.address_write(&writer, grant.address)
 	note("the grant", has_info && grant.tcp && !grant.listen && grant.address == REMOTE && grant.port == REMOTE_PORT && block == datagram.PORT_BLOCK, "TCP to ", system.written(&writer), " port ", u64(grant.port), " only, from the local ports ", u64(first), " to ", u64(first) + u64(block) - 1)
@@ -321,18 +321,18 @@ megabytes :: proc "contextless" (buffer: []u8, kilobytes: u64) -> string {
 
 draw :: proc "contextless" (window: ^display.Window) {
 	canvas := window.canvas
-	graphics.clear(canvas, COLOR_BACKGROUND)
+	graphics.clear(canvas, graphics.COLOR_BACKGROUND)
 	y := 16
-	graphics.text(canvas, 16, y, "a segment endpoint with a client grant: TCP to 10.0.2.100 port 80, and nothing else.", COLOR_DIM)
+	graphics.text(canvas, 16, y, "a segment endpoint with a client grant: TCP to 10.0.2.100 port 80, and nothing else.", graphics.COLOR_DIM)
 	y += LINE
-	graphics.text(canvas, 16, y, "the program asks", COLOR_DIM)
-	graphics.text(canvas, ANSWER_X, y, "the answer", COLOR_DIM)
+	graphics.text(canvas, 16, y, "the program asks", graphics.COLOR_DIM)
+	graphics.text(canvas, ANSWER_X, y, "the answer", graphics.COLOR_DIM)
 	y += LINE
 	for &item, index in cases[:case_count] {
 		if index % 2 == 0 {
 			graphics.fill(canvas, 8, y - 4, WIDTH - 16, LINE, COLOR_BAND)
 		}
-		graphics.text(canvas, 16, y, item.text, COLOR_DIM)
+		graphics.text(canvas, 16, y, item.text, graphics.COLOR_DIM)
 		graphics.text(canvas, ANSWER_X, y, string(item.answer[:item.count]), item.right ? COLOR_RIGHT : COLOR_WRONG)
 		y += LINE
 	}

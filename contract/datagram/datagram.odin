@@ -71,8 +71,8 @@ SERVICE_CONTROL :: 12
 Command :: enum u32 {
 	None       = 0,
 	// The completion: values[0] the local address, values[1] the local
-	// port, and the count of local ports << 16 (1, or PORT_BLOCK for a
-	// client grant of TCP), values[2] the address of the gateway, values[3] the length of
+	// port (a client grant of TCP: the first of PORT_BLOCK ports), values[2]
+	// the address of the gateway, values[3] the length of
 	// the prefix of the network, values[4] the hardware address of the
 	// device (the first byte in the low bits), values[5] 1 if the link is
 	// up, values[6] the grant (grant_pack), with the right Inspect if it has it.

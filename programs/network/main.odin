@@ -318,7 +318,7 @@ command :: proc "contextless" (endpoint: ^Endpoint, index: int, record: ring.Rec
 		for byte, place in hardware {
 			hardware_value |= u64(byte) << (8 * uint(place))
 		}
-		complete(endpoint, tag, .Ok, {LOCAL_ADDRESS, u64(endpoint.local_port) | u64(endpoint.port_count) << 16, GATEWAY_ADDRESS, PREFIX, hardware_value, u64(link_up), datagram.grant_pack(endpoint.grant)})
+		complete(endpoint, tag, .Ok, {LOCAL_ADDRESS, u64(endpoint.local_port), GATEWAY_ADDRESS, PREFIX, hardware_value, u64(link_up), datagram.grant_pack(endpoint.grant)})
 	case .Send:
 		place, count := values[0], values[1]
 		if endpoint.region == nil {

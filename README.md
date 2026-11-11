@@ -93,6 +93,8 @@ The system boots under QEMU to a graphical desktop with a console, a system tool
 
 ![A call from the host: kerneltool call "monitor.programs()" reaches the program remote through its endpoint, which makes the isolated call and sends the typed result back; the counts, the connections that the root service made, and the last calls](docs/screenshots/remote.png)
 
+![TCP in the program: server holds a listen grant on the port 80 and serves one table of connections from one thread; the peer of the test drops, reorders and repeats frames, resets a connection and opens 16 at once; the table shows the state, the bytes, the round trip and the congestion window of each connection](docs/screenshots/server.png)
+
 ![Errors that diagnose: each case makes an error for real, and the line under it is the sentence of the error record that the kernel, the loader, a module or a service gave; the stack trace of a fault three calls deep](docs/screenshots/errors.png)
 
 ![The temple of Jon: a portrait of Jonathan Blow that turns](docs/screenshots/temple.png)

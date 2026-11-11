@@ -103,8 +103,9 @@ most_open: int
 bytes_in, bytes_out: u64
 retransmissions, resets, timeouts: u64
 handshake_last, handshake_least: u64 // Microseconds.
-request_last: u64 // Microseconds: the last answer of a small page, to its ACK.
+request_last, request_least: u64 // Microseconds: an answer of the page /, to the ACK of its last byte.
 send_rate, receive_rate: u64 // Kilobytes in one second: the last /large and the last /sink.
+send_best, receive_best: u64
 draw_time: u64
 start_time: u64
 
@@ -312,12 +313,15 @@ answered :: proc "contextless" (index: int) {
 	#partial switch session.page {
 	case .Large:
 		send_rate = rate(u64(web.LARGE_SIZE), took)
+		send_best = max(send_best, send_rate)
 		system.log("server: sent /large to ", remote, ": ", u64(web.LARGE_SIZE), " bytes in ", took / 1000, " us, ", megabytes(speed[:], send_rate), ", ", connection.retransmissions, " retransmissions, ", connection.probes, " probes")
 	case .Sink:
 		receive_rate = rate(u64(session.body_bytes), system.nanoseconds() - session.body_start)
+		receive_best = max(receive_best, receive_rate)
 		system.log("server: received /sink from ", remote, ": ", u64(session.body_bytes), " bytes, fnv1a64 ", system.Hex(session.body_hash), ", ", megabytes(speed[:], receive_rate))
 	case .Root:
 		request_last = took / 1000
+		request_least = request_least == 0 ? request_last : min(request_least, request_last)
 		system.log("server: GET / for ", remote, ": ", session.answer_bytes, " bytes, answered and acknowledged in ", request_last, " us")
 	case:
 		system.log("server: a refused request of ", remote, ": ", session.answer_bytes, " bytes")
