@@ -2520,3 +2520,105 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 	}
 	return true
 }
+
+// The windows that the interface package draws (docs/INTERFACE.md, "State
+// of the conversions"), for `kerneltool measure windows`. often: the program
+// draws a picture each second or more, so the log has the mean of 10.
+@(rodata)
+measured_windows := [?]struct {
+	name:  string,
+	often: bool,
+} {
+	{"clock", true},
+	{"life", true},
+	{"monitor", true},
+	{"inspect", true},
+	{"scheduler", true},
+	{"locks", false},
+	{"budget", false},
+	{"rights", false},
+	{"origin", false},
+	{"limits", false},
+	{"frames", false},
+	{"imports", false},
+	{"flow", false},
+	{"crowd", false},
+	{"tally", false},
+	{"manual", false},
+	{"errors", false},
+	{"interface_elements", true},
+}
+
+TEST_OUTPUT_MEASURE_WINDOWS :: BUILD_FOLDER + "/test_output_measure_windows.txt"
+
+// measure_windows starts each window of measured_windows alone, waits for
+// the time of its pictures, closes it, then prints one table. A measure is
+// valid when the load of the host is under 8: the table says the load.
+measure_windows :: proc() -> bool {
+	// Not in the temporary allocator: the scenario frees it after each step.
+	steps := make([dynamic]Step)
+	defer delete(steps)
+	texts := make([dynamic]string)
+	defer {
+		for text in texts {
+			delete(text)
+		}
+		delete(texts)
+	}
+	append(&steps, Step{kind = .Wait, text = "compositor: surface console"})
+	for window in measured_windows {
+		append(&steps, Step{kind = .Launch, text = window.name})
+		drew := strings.concatenate({"display: ", window.name, " drew one picture in "})
+		stopped := strings.concatenate({"root: ", window.name, " stopped"})
+		append(&texts, drew, stopped)
+		append(&steps, Step{kind = .Wait, text = drew})
+		if window.often {
+			append(&steps, Step{kind = .Wait, text = " the mean of 10"})
+		}
+		append(&steps, Step{kind = .Close, text = window.name})
+		append(&steps, Step{kind = .Wait, text = stopped})
+	}
+	append(&steps, Step{kind = .Front, text = "console"}, Step{kind = .Type, text = "shutdown()"}, Step{kind = .Wait, text = "kernel: the machine stops with code 0"})
+	// A copy outside the temporary allocator: the scenario frees it.
+	load_before := strings.clone(load_of_the_host())
+	defer delete(load_before)
+	if !machine_test(steps[:], BOOT_VOLUME, TEST_OUTPUT_MEASURE_WINDOWS, MACHINE_STOP_OK, TEST_DATA_DISK) {
+		return false
+	}
+	load_after := load_of_the_host()
+	log, _ := os.read_entire_file(TEST_OUTPUT_MEASURE_WINDOWS, context.temp_allocator)
+	highest := max(strconv.parse_f64(load_before) or_else 99, strconv.parse_f64(load_after) or_else 99)
+	fmt.printfln("kerneltool: the time of one picture of each window, us (the load of the host: %s at the start, %s at the end%s)", load_before, load_after, highest <= 8 ? "" : "; ABOVE 8: NOT VALID")
+	fmt.printfln("%-20s %12s %12s %12s", "window", "first", "mean of 3", "mean of 10")
+	for window in measured_windows {
+		mark := strings.concatenate({"display: ", window.name, " drew one picture in "}, context.temp_allocator)
+		values: [3]string = {"-", "-", "-"}
+		for line in strings.split_lines(string(log), context.temp_allocator) {
+			at := strings.index(line, mark)
+			if at < 0 {
+				continue
+			}
+			rest := line[at + len(mark):]
+			value := rest[:max(strings.index(rest, " us"), 0)]
+			switch {
+			case strings.has_suffix(strings.trim_space(line), "the mean of 1"):
+				values[0] = value
+			case strings.has_suffix(strings.trim_space(line), "the mean of 3"):
+				values[1] = value
+			case strings.has_suffix(strings.trim_space(line), "the mean of 10"):
+				values[2] = value
+			}
+		}
+		fmt.printfln("%-20s %12s %12s %12s", window.name, values[0], values[1], values[2])
+	}
+	return true
+}
+
+// load_of_the_host gives the load of the host over one minute, from /proc/loadavg.
+load_of_the_host :: proc() -> string {
+	text, err := os.read_entire_file("/proc/loadavg", context.temp_allocator)
+	if err != nil {
+		return "unknown"
+	}
+	return string(text[:max(strings.index_byte(string(text), ' '), 0)])
+}

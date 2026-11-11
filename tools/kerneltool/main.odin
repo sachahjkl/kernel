@@ -78,7 +78,7 @@ COMMANDS :: [?]Command {
 	{name = "test", about = "build, start the machine under QEMU, act as the person, check the log, save pictures of the screen; `test network`, `test main`, `test power`: one part only", run = run_test},
 	{name = "run", about = "build, then start the machine under QEMU, with the log of the kernel on this terminal; `run without_checks`: the measure build", run = run_machine},
 	{name = "screenshots", about = "test, then copy the pictures to " + DOCUMENT_SCREENSHOT_FOLDER + " and to a new folder of " + DEVELOPMENT_LOG_FOLDER, run = run_screenshots},
-	{name = "measure", about = "build, start the machine, run the measures of the locks of the kernel with no other program, and stop: the numbers are in " + TEST_OUTPUT_MEASURE + "; `measure scheduler N`: the program scheduler N times; `measure without_checks ...`: the measure build, with no check in the kernel (no lock order check, no check of the frames)", run = run_measure},
+	{name = "measure", about = "build, start the machine, run the measures of the locks of the kernel with no other program, and stop: the numbers are in " + TEST_OUTPUT_MEASURE + "; `measure scheduler N`: the program scheduler N times; `measure windows`: each window that the interface package draws, alone, and a table of the time of its pictures; `measure without_checks ...`: the measure build, with no check in the kernel (no lock order check, no check of the frames)", run = run_measure},
 	{name = "film", about = "build, start the machine, film the terminal, and write " + FILM_OUTPUT + " and a copy in " + DEVELOPMENT_LOG_FOLDER + " (needs ffmpeg)", run = run_film},
 	{name = "font", about = "convert the BDF file of the font to " + FONT_OUTPUT, run = run_font},
 	{name = "pointers", about = "convert the pointer manifests of resources/pointers to pointer theme files in " + POINTER_BUILD_FOLDER + ", with the Xcursor folder of " + POINTER_THEME_SOURCE_VARIABLE + " or of the path after the command; print a table of each theme", run = run_pointers},
@@ -286,6 +286,9 @@ TEST_OUTPUT_MEASURE :: BUILD_FOLDER + "/test_output_measure.txt"
 // with the desktop; the numbers are in build/test_output_scheduler_<n>.txt.
 run_measure :: proc(args: []string) -> int {
 	args := args
+	if len(args) == 1 && args[0] == "windows" {
+		measure_run = true
+	}
 	if len(args) >= 1 && args[0] == "without_checks" {
 		test_build_checks = false
 		args = args[1:]
@@ -295,6 +298,9 @@ run_measure :: proc(args: []string) -> int {
 	}
 	if !make_folder(SCREENSHOT_FOLDER) || !disk_prepare(TEST_DATA_DISK, DATA_DISK_SIZE, true) {
 		return EXIT_FAILURE
+	}
+	if len(args) == 1 && args[0] == "windows" {
+		return measure_windows() ? 0 : EXIT_FAILURE
 	}
 	if len(args) >= 1 && args[0] == "scheduler" {
 		count := 1

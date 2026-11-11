@@ -152,6 +152,9 @@ files_with_suffix :: proc(folder, suffix: string) -> (paths: []string, ok: bool)
 // passes the two defines in each build: the defaults of the source never
 // decide.
 test_build_checks := true
+// A measure run of the windows: the programs write the time of their
+// pictures (display.MEASURE_RUN, `kerneltool measure windows`).
+measure_run := false
 
 // build_module compiles a package to objects, assembles its .asm files, links
 // all with lld into one position-independent object, and converts that
@@ -195,6 +198,9 @@ build_module :: proc(build: Module_Build) -> bool {
 		append(&compile, test_build_checks ? "-define:TEST_BUILD_CHECKS_FRAME_SUMS=true" : "-define:TEST_BUILD_CHECKS_FRAME_SUMS=false")
 	} else {
 		append(&compile, SUPPORT_LIBRARY) // The kernel has the contract library only.
+		if measure_run {
+			append(&compile, "-define:MEASURE_RUN=true")
+		}
 	}
 	run(compile[:]) or_return
 	// Odin writes the IR in the folder where it runs, with the name of -out.
