@@ -448,25 +448,37 @@ hex_of :: proc(bytes: []u8) -> string {
 	return strings.to_string(builder)
 }
 
-// record_field calls an export with a Record result and no arguments, and
-// gives one Integer field of the record, by its name.
+// record_field calls an export with no arguments and a Record result, or
+// a Table result, and gives one Integer field of the record (of the first
+// row of the Table), by its name.
 record_field :: proc(client: ^Call_Client, text: string, name: string) -> (value: i64, ok: bool) {
+	values := record_fields(client, text, {name}) or_return
+	return values[0], true
+}
+
+// record_fields gives several Integer fields, from one call.
+record_fields :: proc(client: ^Call_Client, text: string, names: []string) -> (values: []i64, ok: bool) {
 	call, problem := call_prepare(client, text)
-	if problem != "" || call.function.result != .Record {
-		return 0, false
+	if problem != "" || (call.function.result != .Record && call.function.result != .Table) {
+		return nil, false
 	}
 	answer, result, _, answered := call_send(client, &call)
-	if !answered || answer.status != .Ok {
-		return 0, false
+	if !answered || answer.status != .Ok || isolated.Status(answer.call_status) != .Ok || (call.function.result == .Table && answer.value < 1) {
+		return nil, false
 	}
 	described := module.record_type(call.file, call.function.result_detail) or_return
-	for number in 0 ..< described.field_count {
-		item := module.field(call.file, described, number) or_return
-		if module.string_at(call.file, item.name_offset, item.name_count) == name && item.type == .Integer && int(item.offset) + 8 <= len(result) {
-			return (^i64)(&result[item.offset])^, true
+	values = make([]i64, len(names), context.temp_allocator)
+	found := 0
+	for name, index in names {
+		for number in 0 ..< described.field_count {
+			item := module.field(call.file, described, number) or_return
+			if module.string_at(call.file, item.name_offset, item.name_count) == name && item.type == .Integer && int(item.offset) + 8 <= len(result) {
+				values[index] = (^i64)(&result[item.offset])^
+				found += 1
+			}
 		}
 	}
-	return 0, false
+	return values, found == len(names)
 }
 
 // field_value gives the text of one field of a record.

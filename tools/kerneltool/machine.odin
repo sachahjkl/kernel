@@ -5,6 +5,7 @@ import "support:bar"
 import "core:fmt"
 import "core:hash"
 import "core:os"
+import "core:slice"
 import "core:strconv"
 import "core:strings"
 import "core:sync"
@@ -59,6 +60,7 @@ Step :: struct {
 	rows_call:  string, // For Call: a call whose Integer result is the count of rows of the Table.
 	lose:       int, // For Call: the peer drops this many datagrams of the answer; the tool sends the request again, and monitor.served() shows that the call ran one time.
 	wrong_hash: bool, // For Call: the request names another hash of the module.
+	pointer:    bool, // For Call: when the call has its result, the tool confirms each place of the pointer from now on (pointer_confirm).
 	repeat:     int, // For Call: the calls of the measure of the round trip.
 	parts:      int, // For Call: the least count of datagrams of the answer.
 }
@@ -260,6 +262,10 @@ scenario_network := [?]Step {
 	{kind = .Wait, text = "remote: refused a request: remote: the argument result_count has 65536 bytes; it can have at most 65472 bytes"},
 	{kind = .Wait, text = "remote: refused a request: remote: the argument error_start has the value 28, which the call refuses; it takes 1 to 65480"},
 	{kind = .Wait, text = "remote: refused a request: remote: the caller has no grant for this: a connection to this service"},
+	// The place of the pointer and the windows: each press from now on is
+	// confirmed.
+	{kind = .Call, text = "compositor.pointer()", expected = "1 rows of Pointer", pointer = true},
+	{kind = .Call, text = "compositor.windows()", expected = "rows of Window"},
 	// An Integer, with the measure of a small call.
 	{kind = .Call, text = "monitor.count(\"processors\")", expected = "4", repeat = 1000},
 	{kind = .Wait, text = "root: connected remote to the service monitor", any_order = true},
@@ -297,8 +303,11 @@ scenario_network := [?]Step {
 	{kind = .Type, text = "grants(\"remote\")"},
 	{kind = .Wait, text = "[console] remote has: log, network, person"},
 	{kind = .Type, text = "revoke(\"remote\", \"person\")"},
-	{kind = .Wait, text = "root: revoked the grant person of remote, connections changed: 3"},
+	{kind = .Wait, text = "root: revoked the grant person of remote, connections changed: 4"},
 	{kind = .Call, text = "monitor.programs()", outcome = .Failed, expected = "error: monitor.programs: the caller has no grant for this: to act for the person (-1)"},
+	// The place of the pointer is a fact of the screen of the person: the
+	// tool moves the pointer with no confirmation again.
+	{kind = .Call, text = "compositor.pointer()", outcome = .Failed, pointer = true, expected = "error: compositor.pointer: the caller has no grant for this: to act for the person (-1)"},
 	{kind = .Call, text = "manual.running()", outcome = .Failed, expected = "error: manual.running: the caller has no grant for this: to act for the person (-3)"},
 	{kind = .Call, text = "storage.stores()", expected = "no grant to see the stores"},
 	{kind = .Call, text = "manual.modules()", expected = " rows of Module"},
@@ -808,6 +817,18 @@ scenario := [?]Step {
 	{kind = .Wait, text = "workers: ok, 4 threads computed 140 tiles: "},
 	{kind = .Drag, x = 400, y = 62, to_x = 640, to_y = 340},
 	{kind = .Shot, text = "workers"},
+
+	// The calls of the host (docs/MODULE_CONTRACT.md, "A call from the
+	// host"). Here, after the steps that press at fixed places inside
+	// windows that the compositor placed: a new window moves the place of
+	// each window that comes after it. This launch is blind; from the next
+	// press on, the tool reads the place of the pointer from the compositor
+	// and corrects it before each press.
+	{kind = .Launch, text = "remote"},
+	{kind = .Wait, text = "root: started remote"},
+	{kind = .Wait, text = "remote: ok, an endpoint with the grant 10.0.2.2 port 7100; the call requests of the host arrive there", any_order = true},
+	{kind = .Call, text = "compositor.pointer()", expected = "1 rows of Pointer", pointer = true},
+	{kind = .Call, text = "compositor.windows()", expected = "remote"},
 
 	// Rights: a program with a part of the rights of two handles. The
 	// kernel refuses each operation that needs another right.
@@ -1381,6 +1402,9 @@ Machine :: struct {
 	film_frames: int, // The pictures of the film that the tool asked for.
 	call_port:   int, // The peer receives the call requests of the host there.
 	peer:        ^Peer,
+	confirm:     bool, // The tool reads compositor.pointer() before each press: see pointer_confirm.
+	confirmations: [dynamic]time.Duration, // The time of each confirmation of a place.
+	corrected:   int, // The places that needed a correction.
 	client:      Call_Client,
 	client_open: bool,
 }
@@ -1429,7 +1453,52 @@ key_name :: proc(character: u8) -> string {
 	return ""
 }
 
-pointer_move :: proc(machine: ^Machine, x, y: int) {
+// POINTER_TRIES: the reads of the place before the tool says that the
+// pointer is not where a step wants it.
+POINTER_TRIES :: 6
+
+// pointer_confirm reads the place of the pointer from the compositor, through
+// the remote service, and moves it again until it is (x, y): a loaded host
+// can lose a move of the QEMU monitor, and the press then lands elsewhere.
+// Before remote runs, the tool moves the pointer with no confirmation.
+pointer_confirm :: proc(machine: ^Machine, x, y: int) -> bool {
+	if !machine.confirm {
+		return true
+	}
+	start := time.tick_now()
+	found_x, found_y: i64
+	for try in 0 ..< POINTER_TRIES {
+		values, ok := record_fields(&machine.client, "compositor.pointer()", {"x", "y"})
+		if ok {
+			found_x, found_y = values[0], values[1]
+			if found_x == i64(x) && found_y == i64(y) {
+				machine.x, machine.y = x, y
+				append(&machine.confirmations, time.tick_since(start))
+				if try > 0 {
+					machine.corrected += 1
+				}
+				return true
+			}
+			// The pointer is where the compositor says: move from there.
+			machine.x, machine.y = int(found_x), int(found_y)
+			pointer_move_blind(machine, x, y)
+		}
+		time.sleep(MOUSE_PAUSE)
+	}
+	fmt.eprintfln("kerneltool: test failed: the pointer is at %d,%d after %d tries, not at %d,%d", found_x, found_y, POINTER_TRIES, x, y)
+	return false
+}
+
+// pointer_move moves the pointer to (x, y), and confirms the place when the
+// tool can read it.
+pointer_move :: proc(machine: ^Machine, x, y: int) -> bool {
+	pointer_move_blind(machine, x, y)
+	return pointer_confirm(machine, x, y)
+}
+
+// pointer_move_blind moves the pointer from the place that the tool
+// believes, with relative moves of the QEMU monitor.
+pointer_move_blind :: proc(machine: ^Machine, x, y: int) {
 	for machine.x != x || machine.y != y {
 		step_x := clamp(x - machine.x, -MOUSE_STEP, MOUSE_STEP)
 		step_y := clamp(y - machine.y, -MOUSE_STEP, MOUSE_STEP)
@@ -1666,6 +1735,10 @@ machine_test :: proc(steps: []Step, volume: string, output: string, exit_status:
 		peer      = &peer,
 	}
 	passed := scenario_run(&machine, steps)
+	if len(machine.confirmations) > 0 {
+		slice.sort(machine.confirmations[:])
+		fmt.printfln("kerneltool: test passed: the tool confirmed %d places of the pointer through compositor.pointer(), %d after a correction; one confirmation took %d us at least, %d us in the middle", len(machine.confirmations), machine.corrected, i64(machine.confirmations[0] / time.Microsecond), i64(machine.confirmations[len(machine.confirmations) / 2] / time.Microsecond))
+	}
 	if machine.client_open {
 		call_client_close(&machine.client)
 	}
@@ -1794,7 +1867,10 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 			}
 			if step.kind == .Launch {
 				menu_x, menu_y := bar.button_center()
-				pointer_move(machine, menu_x, menu_y)
+				if !pointer_move(machine, menu_x, menu_y) {
+					fmt.eprintfln("kerneltool: test failed: step %d: the pointer did not reach its place", index + 1)
+					return false
+				}
 				pointer_button(machine, true)
 				pointer_button(machine, false)
 				// The compositor writes that the menu is open: a press that
@@ -1814,7 +1890,10 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 			}
 			if step.kind == .Front {
 				menu_x, menu_y := bar.windows_button_center()
-				pointer_move(machine, menu_x, menu_y)
+				if !pointer_move(machine, menu_x, menu_y) {
+					fmt.eprintfln("kerneltool: test failed: step %d: the pointer did not reach its place", index + 1)
+					return false
+				}
 				pointer_button(machine, true)
 				pointer_button(machine, false)
 				line, found := windows_line(machine, step.text, before)
@@ -1824,10 +1903,16 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				}
 				step.x, step.y = bar.windows_line_center(line)
 			}
-			pointer_move(machine, step.x, step.y)
+			if !pointer_move(machine, step.x, step.y) {
+				fmt.eprintfln("kerneltool: test failed: step %d: the pointer did not reach its place", index + 1)
+				return false
+			}
 			pointer_button(machine, true)
 			if step.kind == .Drag {
-				pointer_move(machine, step.to_x, step.to_y)
+				if !pointer_move(machine, step.to_x, step.to_y) {
+					fmt.eprintfln("kerneltool: test failed: step %d: the pointer did not reach its place", index + 1)
+					return false
+				}
 			}
 			pointer_button(machine, false)
 			if step.kind == .Front {
@@ -1880,6 +1965,12 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 			machine.client.wrong_hash = step.wrong_hash
 			result := call_run(&machine.client, step.text)
 			sends := machine.client.sends
+			if step.pointer {
+				// A result: the tool confirms each place from now on. A
+				// refusal (the grant person was revoked): the blind way again.
+				machine.confirm = result.outcome == .Result
+				fmt.printfln("kerneltool: test passed: the tool %s the place of the pointer through compositor.pointer() from now on", machine.confirm ? "reads" : "no longer reads")
+			}
 			printed := strings.join(result.lines[:], "\n", context.temp_allocator)
 			for line in result.lines {
 				fmt.printfln("kerneltool: call %s: %s", step.text, line)

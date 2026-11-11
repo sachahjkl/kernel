@@ -108,7 +108,12 @@ callable_of :: proc "contextless" (name: string) -> []string {
 }
 
 @(rodata)
-remote_callable := [?]string{"manual", "monitor", "storage"}
+remote_callable := [?]string{"compositor", "manual", "monitor", "storage"}
+
+// The values of the context of the compositor that name its own file: 0 to
+// 3 are the screen.
+COMPOSITOR_VALUE_FILE_ADDRESS :: 4
+COMPOSITOR_VALUE_FILE_SIZE :: 5
 
 // may_connect says if a program can ask the root service for a connection
 // to the service with a name.
@@ -419,10 +424,35 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		values[1] = ctx.values[op.ROOT_VALUE_HEIGHT]
 		values[2] = ctx.values[op.ROOT_VALUE_PIXELS_PER_LINE]
 		values[3] = ctx.values[op.ROOT_VALUE_FORMAT]
-		compositor, status = system.program_start(system.image_find(image, "compositor"), "compositor", grants, values, budget_of("compositor"), nil, &prepared)
+		// The compositor is also a service (programs/compositor/exports.odin):
+		// a service ring and its own file, as start() gives to a service.
+		// Its values 0 to 3 are the screen, so the file is at values 4 and 5.
+		mappings: [1]system.Mapping
+		mapping_count := 0
+		served := &started[0]
+		served^ = {}
+		for &item in system.image_entries(image) {
+			if system.name_of(item.name[:]) == "compositor" && item.offset % system.PAGE_SIZE == 0 && item.offset <= u64(len(image)) && item.size <= u64(len(image)) - item.offset {
+				served.service_memory, served.service, status = system.ring_create()
+				if status != .Ok {
+					fail("cannot create a ring", status)
+				}
+				grants[system.GRANT_SERVICE] = {served.service_memory, {.Read, .Write}}
+				values[COMPOSITOR_VALUE_FILE_ADDRESS] = isolated.FILE_ADDRESS
+				values[COMPOSITOR_VALUE_FILE_SIZE] = item.size
+				mappings[0] = {memory = image_memory, address = isolated.FILE_ADDRESS, first = item.offset / system.PAGE_SIZE, page_count = (item.size + system.PAGE_SIZE - 1) / system.PAGE_SIZE}
+				mapping_count = 1
+				served.hash = item.hash
+			}
+		}
+		compositor, status = system.program_start(system.image_find(image, "compositor"), "compositor", grants, values, budget_of("compositor"), mappings[:mapping_count], &prepared)
 		if status != .Ok {
 			fail("cannot start the compositor", status)
 		}
+		// Its place in the table of the programs that this service started: a
+		// connection to it finds it there by its name.
+		served.program = compositor
+		copy(served.name[:len(served.name) - 1], "compositor")
 	}
 
 	if status = start("console"); status != .Ok {
@@ -489,7 +519,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				case .Stop:
 					result = .Bad_Handle
 					for &other in started {
-						if other.program != 0 && !other.is_terminal && system.name_of(other.name[:]) == system.name_of(name[:]) {
+						// The compositor is not a program that a person stops.
+						if other.program != 0 && other.program != compositor && !other.is_terminal && system.name_of(other.name[:]) == system.name_of(name[:]) {
 							system.call(.Program_Stop, u64(other.program), 0)
 							result = .Ok
 							break

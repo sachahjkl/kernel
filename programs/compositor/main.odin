@@ -250,6 +250,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	damage_add(0, 0, width, height)
 	full_measure = true
 	system.log("compositor: ok ", u64(width), "x", u64(height))
+	service_start(ctx) // exports.odin
 
 	next_frame: u64
 	shown_second: u64
@@ -257,6 +258,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		wait: system.Wait
 		system.wait_records(&wait, &control.commands)
 		system.wait_records(&wait, &input.commands)
+		system.service_wait(&wait, &service)
 		for &client in clients {
 			if client.ring.head != nil {
 				system.wait_records(&wait, &client.ring.commands)
@@ -279,8 +281,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				}
 			case .Pointer:
 				pointer_moved(int(i64(record.values[0])), int(i64(record.values[1])), u32(record.values[2]))
+				pointer_moves += 1
 			}
 		}
+		// The calls read the place of the pointer after the input records.
+		system.service_run(&service)
 		for &client, index in clients {
 			if client.ring.head == nil {
 				continue
