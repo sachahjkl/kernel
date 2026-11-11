@@ -451,7 +451,7 @@ second_measure :: proc "contextless" (now: u64) {
 	if now - second_start < 1000 {
 		return
 	}
-	if second_requests >= 100 {
+	if second_requests >= 50 {
 		best_second_requests = max(best_second_requests, second_requests)
 		new_connections := accepted - second_connections
 		if new_connections >= second_requests * 9 / 10 {
