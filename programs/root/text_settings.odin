@@ -40,15 +40,12 @@ text_settings_create :: proc "contextless" () {
 	settings_page.glyph_cache_address = settings.GLYPH_CACHE_ADDRESS
 	settings_page.glyph_cache_size = size
 	settings_page.glyph_cache_hash = entry.hash
-	// The boot display: the cache in the image that this service maps.
-	start := system.nanoseconds()
-	problem := graphics.text_cache_set(image[entry.offset:][:entry.size])
-	spent := system.nanoseconds() - start
-	if problem.kind != .None {
+	// The boot display: the cache in the image that this service maps. The
+	// line of resource_mapping says that the hash is right; a refusal of the
+	// format has a line of its own.
+	if problem := graphics.text_cache_set(image[entry.offset:][:entry.size]); problem.kind != .None {
 		system.log_in("programs", .Warning, "root: the glyph cache is refused: problem ", u64(problem.kind), ", value ", problem.value, ": the boot display is Spleen 8x16")
-		return
 	}
-	system.log("root: the glyph cache of the vector font is valid, ", size, " bytes, checked in ", spent / 1000, " us; the boot display draws with it")
 }
 
 // text_settings_give adds the settings page and the glyph cache, read-only,

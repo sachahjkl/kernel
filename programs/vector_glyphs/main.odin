@@ -152,37 +152,46 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if problem == .None {
 		measures, problem = vector_font.font_measures(&font, &render_memory)
 	}
-	outline_times: [3]u64
+	// Each measure is the least time of BATCHES short batches: a batch that
+	// the host stops in its middle does not count (a loaded host stops the
+	// processors of the machine).
+	BATCHES :: 50
+	outline_times: [3]u64 = max(u64)
 	pixels: [vector_font.CELL_WIDTH_LIMIT * vector_font.CELL_HEIGHT_LIMIT]u32
 	if problem == .None {
 		for scale in 1 ..= 3 {
 			style := vector_font.glyph_style_of(measures, 8 * scale, 16 * scale, true)
-			start := system.nanoseconds()
-			for character in u8(33) ..= 126 {
-				_ = vector_font.glyph_render(&font, measures, style, rune(character), &render_memory, pixels[:])
+			for _ in 0 ..< BATCHES / 5 {
+				start := system.nanoseconds()
+				for character in u8(33) ..= 126 {
+					_ = vector_font.glyph_render(&font, measures, style, rune(character), &render_memory, pixels[:])
+				}
+				outline_times[scale - 1] = min(outline_times[scale - 1], (system.nanoseconds() - start) / 94)
 			}
-			outline_times[scale - 1] = (system.nanoseconds() - start) / 94
 		}
 	}
-	REPEAT :: 2000
+	BATCH :: 64
 	sample := "Rag{0}%e"
+	least_of_batches :: proc "contextless" (canvas: graphics.Canvas, sample: string) -> u64 {
+		least := max(u64)
+		for _ in 0 ..< BATCHES {
+			start := system.nanoseconds()
+			for index in 0 ..< BATCH {
+				graphics.character(canvas, 0, 0, sample[index % len(sample)], graphics.COLOR_TEXT)
+			}
+			least = min(least, (system.nanoseconds() - start) / BATCH)
+		}
+		return least
+	}
 	cache_time, spleen_time: u64
 	if graphics.text_vector_drawn() {
-		start := system.nanoseconds()
-		for index in 0 ..< REPEAT {
-			graphics.character(scratch_canvas, 0, 0, sample[index % len(sample)], graphics.COLOR_TEXT)
-		}
-		cache_time = (system.nanoseconds() - start) / REPEAT
+		cache_time = least_of_batches(scratch_canvas, sample)
 	}
 	saved := graphics.text_state
 	graphics.text_choice_set(.Spleen, saved.order)
-	start := system.nanoseconds()
-	for index in 0 ..< REPEAT {
-		graphics.character(scratch_canvas, 0, 0, sample[index % len(sample)], graphics.COLOR_TEXT)
-	}
-	spleen_time = (system.nanoseconds() - start) / REPEAT
+	spleen_time = least_of_batches(scratch_canvas, sample)
 	graphics.text_state = saved
-	system.log("vector_glyphs: one glyph from its outline, in fixed point, with the stripes: scale 1 ", outline_times[0], " ns, scale 2 ", outline_times[1], " ns, scale 3 ", outline_times[2], " ns; from the glyph cache: ", cache_time, " ns; Spleen 8x16: ", spleen_time, " ns")
+	system.log("vector_glyphs: one glyph from its outline, in fixed point, with the stripes (the least of batches): scale 1 ", outline_times[0], " ns, scale 2 ", outline_times[1], " ns, scale 3 ", outline_times[2], " ns; from the glyph cache: ", cache_time, " ns; Spleen 8x16: ", spleen_time, " ns")
 
 	draw(&window)
 	for size, index in cache_sizes {
