@@ -166,7 +166,6 @@ build_boot_program :: proc(image: string, volume_path: string, self_test: int) -
 			"-disable-red-zone",
 			"-o:speed",
 			"-vet",
-			"-thread-count:1", // The same object at each build: see build_module.
 			"-source-code-locations:filename", // No path of the folder of the build in the program.
 			CONTRACT_LIBRARY,
 			SUPPORT_LIBRARY,
@@ -391,7 +390,7 @@ run_check :: proc(args: []string) -> int {
 	// compiler assembles runtime/memory_for_host_tests.asm itself and links
 	// its object by its path (a library found through `-L/` is refused by
 	// the linker of the Nix sandbox).
-	for folder in ([]string{"runtime", "contract/blake3", "contract/isolated", "contract/pointer_pictures", "contract/remote", "support/bar", "support/graphics", "support/interface", "support/addresses", "support/information", "support/vector_font", "support/network", "support/tcp", "support/web", "support/cryptography/chacha20", "support/random", "tools/kerneltool"}) {
+	for folder in ([]string{"runtime", "contract/blake3", "contract/isolated", "contract/pointer_pictures", "contract/remote", "modules/interface_module", "modules/sample", "support/system", "support/bar", "support/graphics", "support/interface", "support/addresses", "support/information", "support/vector_font", "support/network", "support/tcp", "support/web", "support/cryptography/chacha20", "support/random", "tools/kerneltool"}) {
 		name, _ := strings.replace_all(folder, "/", "_", context.temp_allocator)
 		if !run({"odin", "test", folder, "-vet", CONTRACT_LIBRARY, SUPPORT_LIBRARY, strings.concatenate({"-out:" + BUILD_FOLDER + "/test_", name}, context.temp_allocator)}) {
 			return EXIT_FAILURE
@@ -526,12 +525,20 @@ disk_prepare :: proc(path: string, size: int, fresh: bool) -> bool {
 	return true
 }
 
+// make_folder makes a folder and each folder above it. Two processes of the
+// parallel build can make the same folder above theirs at the same time:
+// the one that loses gets "exists" for that folder before its own folder is
+// made, so it tries again.
 make_folder :: proc(path: string) -> bool {
-	if err := os.make_directory_all(path); err != nil && !os.exists(path) {
-		fmt.eprintfln("kerneltool: cannot create %s: %v", path, err)
-		return false
+	err: os.Error
+	for _ in 0 ..< 4 {
+		err = os.make_directory_all(path)
+		if err == nil || os.exists(path) {
+			return true
+		}
 	}
-	return true
+	fmt.eprintfln("kerneltool: cannot create %s: %v", path, err)
+	return false
 }
 
 reset_folder :: proc(path: string) -> bool {

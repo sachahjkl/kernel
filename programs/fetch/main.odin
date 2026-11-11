@@ -327,7 +327,7 @@ cases_run :: proc "contextless" () {
 	}
 	opened := connections[0].state == .Established
 	handshake := connections[0].established_at - connections[0].opened_at
-	note("the handshake with 10.0.2.100 port 80", opened && .Opened in seen, opened ? "established in " : "no answer", opened ? handshake : 0, opened ? " us, the MSS " : "", opened ? u64(connections[0].mss) : 0)
+	note("the handshake with 10.0.2.100 port 80", opened && .Opened in seen, opened ? "established in " : "no answer", opened ? handshake : u64(0), opened ? " us, the MSS " : "", opened ? u64(connections[0].mss) : u64(0))
 	if !opened {
 		return
 	}

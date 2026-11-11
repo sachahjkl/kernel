@@ -115,7 +115,11 @@ error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record,
 		subject(writer, record, argument)
 		write_part(writer, ", ")
 		write_number(writer, u64(record.value))
-		write_part(writer, ", names no handle of this program")
+		if errors.Unit(record.unit) == .Lent_Handles {
+			write_part(writer, ", names no handle that the caller lent for this call through the call ring")
+		} else {
+			write_part(writer, ", names no handle of this program")
+		}
 	case .Handle_Ended:
 		handle(writer, record, argument)
 		switch errors.End(record.found) {
@@ -186,6 +190,11 @@ error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record,
 			write_part(writer, "the ring has no data region: send Attach first, with a memory handle that came through the ring")
 			return
 		}
+		if record.found > 0 {
+			write_part(writer, "row ")
+			write_part(writer, record.found)
+			write_part(writer, " of ")
+		}
 		subject(writer, record, argument)
 		if errors.Unit(record.unit) == .Bytes {
 			write_part(writer, ", ")
@@ -247,11 +256,20 @@ error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record,
 		write_part(writer, " names memory that no one other program maps or holds: the handle has no program to go to")
 	case .Overlap:
 		subject(writer, record, argument)
-		write_part(writer, ": the addresses from ")
-		write_number(writer, u64(record.value))
-		write_part(writer, ", ")
-		amount(writer, record.limit, "bytes")
-		write_part(writer, ", overlap what the program has")
+		if errors.Unit(record.unit) == .Region {
+			// An isolated call: an offset in the call region (isolated.decode).
+			write_part(writer, ": the bytes from offset ")
+			write_part(writer, record.value)
+			write_part(writer, " of the call region, ")
+			amount(writer, record.limit, "bytes")
+			write_part(writer, ", overlap another argument of the call, and one of the two is written")
+		} else {
+			write_part(writer, ": the addresses from ")
+			write_number(writer, u64(record.value))
+			write_part(writer, ", ")
+			amount(writer, record.limit, "bytes")
+			write_part(writer, ", overlap what the program has")
+		}
 	case .Unknown_Operation:
 		write_part(writer, "the kernel has no operation ")
 		write_part(writer, record.value)
@@ -289,6 +307,11 @@ error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record,
 		}
 		write_part(writer, record.limit)
 	case .Out_Of_Range:
+		if record.found > 0 {
+			write_part(writer, "record ")
+			write_part(writer, record.found)
+			write_part(writer, " of ")
+		}
 		subject(writer, record, argument)
 		write_part(writer, " reaches ")
 		amount(writer, record.value, unit)

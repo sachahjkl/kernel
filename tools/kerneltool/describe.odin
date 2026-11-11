@@ -34,6 +34,14 @@ import "core:strings"
 //     i64, the count of records, and the record has no Handle.
 //   - A parameter of type Lent({.Read, .Write}) is a Handle that the caller
 //     lends, with the rights that the callee needs (support/system).
+//   - A parameter of type ^Table_To_Read(Name), ^Table_To_Change(Name) or
+//     ^Table_To_Append(Name) is a Table of the record Name with the
+//     direction of its name; ^Bytes_To_Read, ^Bytes_To_Change and
+//     ^Bytes_To_Append are Bytes (support/system, docs/MODULE_CONTRACT.md
+//     "Tables and bytes as parameters"). A record of a table has no Handle.
+//   - A field of a record can also be an integer of 1, 2 or 4 bytes (u8,
+//     i8, u16, i16, u32, i32, u64), or an enum of the package with such a
+//     backing type: an Integer field of that size.
 //   - Each parameter has a name.
 //   - The comment before the export gives the line of help: its first
 //     sentence, without the name of the export.
@@ -94,6 +102,7 @@ Struct_Source :: struct {
 	type:   ^ast.Struct_Type,
 	path:   string,
 	source: string,
+	prefix: string, // "package." for a struct of an imported package: the names of its fields are in that package.
 }
 
 // What the tool keeps while it reads a package.
@@ -101,6 +110,7 @@ Describe_State :: struct {
 	structs: map[string]Struct_Source, // By name; a struct of an imported package by "package.Name".
 	imports: map[string]string, // The folder of each package that the files import, by the name that the files use.
 	read:    map[string]bool, // The imported packages whose structs are in `structs`.
+	enums:   map[string]string, // The backing type of each enum, by name as `structs`.
 	records: [dynamic]Record_Description, // The records that an export uses, each one time.
 }
 
@@ -158,15 +168,24 @@ structs_add :: proc(file: ^ast.File, prefix: string, state: ^Describe_State) {
 	if state.structs == nil {
 		state.structs = make(map[string]Struct_Source, context.temp_allocator)
 	}
+	if state.enums == nil {
+		state.enums = make(map[string]string, context.temp_allocator)
+	}
 	for statement in file.decls {
 		declaration, is_value := statement.derived.(^ast.Value_Decl)
 		if !is_value || len(declaration.names) != 1 || len(declaration.values) != 1 {
 			continue
 		}
 		identifier, has_name := declaration.names[0].derived.(^ast.Ident)
-		type, is_struct := declaration.values[0].derived.(^ast.Struct_Type)
-		if has_name && is_struct {
-			state.structs[strings.concatenate({prefix, identifier.name}, context.temp_allocator)] = {type, file.fullpath, file.src}
+		if !has_name {
+			continue
+		}
+		key := strings.concatenate({prefix, identifier.name}, context.temp_allocator)
+		if type, is_struct := declaration.values[0].derived.(^ast.Struct_Type); is_struct {
+			state.structs[key] = {type, file.fullpath, file.src, prefix}
+		}
+		if type, is_enum := declaration.values[0].derived.(^ast.Enum_Type); is_enum && type.base_type != nil {
+			state.enums[key] = type_text(file.src, type.base_type)
 		}
 	}
 }
@@ -281,6 +300,79 @@ table_of :: proc(state: ^Describe_State, type: ^ast.Expr) -> (number: u32, is_ta
 	return struct_record(state, slice.elem, true)
 }
 
+// table_parameter reads a type ^Table_To_Read(Name) and its forms, or
+// ^Bytes_To_Read and its forms. is_table is false for another type.
+table_parameter :: proc(state: ^Describe_State, type: ^ast.Expr) -> (kind: module.Type, number: u32, direction: module.Direction, is_table, ok: bool) {
+	pointer, is_pointer := type.derived.(^ast.Pointer_Type)
+	if !is_pointer {
+		return
+	}
+	name_of :: proc(expression: ^ast.Expr) -> string {
+		#partial switch named in expression.derived {
+		case ^ast.Ident:
+			return named.name
+		case ^ast.Selector_Expr:
+			return named.field.name
+		}
+		return ""
+	}
+	@(static, rodata)
+	forms := [3]string{"Read", "Change", "Append"}
+	if call, is_call := pointer.elem.derived.(^ast.Call_Expr); is_call {
+		name := name_of(call.expr)
+		for form, value in forms {
+			if name != strings.concatenate({"Table_To_", form}, context.temp_allocator) {
+				continue
+			}
+			if len(call.args) != 1 {
+				return .Table, 0, module.Direction(value), true, false
+			}
+			record, is_record, record_ok := struct_record(state, call.args[0], true)
+			return .Table, record, module.Direction(value), true, is_record && record_ok
+		}
+		return
+	}
+	name := name_of(pointer.elem)
+	for form, value in forms {
+		if name == strings.concatenate({"Bytes_To_", form}, context.temp_allocator) {
+			return .Bytes, 0, module.Direction(value), true, true
+		}
+	}
+	return
+}
+
+// integer_size reads the type of an Integer field: i64 and u64 (8 bytes),
+// i32, u32, i16, u16, i8, u8, or an enum with one of them as its backing
+// type. size is 0 for another type.
+@(private = "file")
+integer_size :: proc(state: ^Describe_State, prefix, text: string) -> (size: u32, unsigned: bool) {
+	switch text {
+	case "i64":
+		return 8, false
+	case "u64":
+		return 8, true
+	case "i32":
+		return 4, false
+	case "u32":
+		return 4, true
+	case "i16":
+		return 2, false
+	case "u16":
+		return 2, true
+	case "i8":
+		return 1, false
+	case "u8":
+		return 1, true
+	}
+	if base, is_enum := state.enums[strings.concatenate({prefix, text}, context.temp_allocator)]; is_enum {
+		return integer_size(state, prefix, base)
+	}
+	if base, is_enum := state.enums[text]; is_enum {
+		return integer_size(state, "", base)
+	}
+	return 0, false
+}
+
 // text_size reads a type [N]u8: a Text field of N bytes. is_text is false
 // for another type.
 @(private = "file")
@@ -332,15 +424,16 @@ struct_record :: proc(state: ^Describe_State, type: ^ast.Expr, result: bool) -> 
 				return 0, true, describe_fail(found.path, field, "the record %s: write the rights of a handle as Lent({{.Read, .Write}})", record_name)
 			}
 			item, field_size, field_alignment, has_handle = {type = .Handle, detail = transmute(u32)rights}, 4, 4, true
-		} else if type_text(found.source, field.type) == "i64" {
-			item, field_size, field_alignment = {type = .Integer}, 8, 8
+		} else if integer, unsigned := integer_size(state, found.prefix, type_text(found.source, field.type)); integer != 0 {
+			// 8 bytes keep the detail 0 of the fields before the sizes.
+			item, field_size, field_alignment = {type = .Integer, detail = integer == 8 ? 0 : integer, unsigned = unsigned}, integer, integer
 		} else if count, is_text, text_ok := text_size(field.type); is_text {
 			if !text_ok {
 				return 0, true, describe_fail(found.path, field, "the record %s: a Text field is [N]u8, with a number N from 1 to %d", record_name, module.RECORD_SIZE_LIMIT)
 			}
 			item, field_size, field_alignment = {type = .Text, detail = count}, count, 1
 		} else {
-			return 0, true, describe_fail(found.path, field, "the record %s: the type %s has no description. A field is an i64 (Integer), a Lent({{...}}) (Handle) or a [N]u8 (Text)", record_name, type_text(found.source, field.type))
+			return 0, true, describe_fail(found.path, field, "the record %s: the type %s has no description. A field is an integer (i64, u64, i32, u32, i16, u16, i8, u8, or an enum of one of them), a Lent({{...}}) (Handle) or a [N]u8 (Text)", record_name, type_text(found.source, field.type))
 		}
 		alignment = max(alignment, field_alignment)
 		for expression in field.names {
@@ -359,7 +452,7 @@ struct_record :: proc(state: ^Describe_State, type: ^ast.Expr, result: bool) -> 
 		return 0, true, describe_fail(found.path, declared, "the record %s has %d bytes: the limit is %d", record_name, size, module.RECORD_SIZE_LIMIT)
 	}
 	if result && has_handle {
-		return 0, true, describe_fail(found.path, declared, "the record %s is a result: a result has no handle", record_name)
+		return 0, true, describe_fail(found.path, declared, "the record %s is a result or the record of a table: it has no handle", record_name)
 	}
 	for item, index in state.records {
 		if item.name == record_name {
@@ -468,6 +561,7 @@ describe_file :: proc(file: ^ast.File, list: ^[dynamic]Export_Description, state
 		parameters := make([dynamic]module.Type, context.temp_allocator)
 		names := make([dynamic]string, context.temp_allocator)
 		details := make([dynamic]u32, context.temp_allocator)
+		directions := make([dynamic]module.Direction, context.temp_allocator)
 		// An error record: the last parameter, with the name `error`, after
 		// the buffer of a result too.
 		if count := len(fields); count > 0 && len(fields[count - 1].names) == 1 && fields[count - 1].type != nil {
@@ -487,6 +581,7 @@ describe_file :: proc(file: ^ast.File, list: ^[dynamic]Export_Description, state
 			}
 			kind: module.Type
 			detail: u32
+			direction: module.Direction
 			last := index == len(fields) - 1 && len(field.names) == 1
 			first_name, _ := field.names[0].derived.(^ast.Ident)
 			is_result := last && first_name != nil && first_name.name == "result"
@@ -507,6 +602,13 @@ describe_file :: proc(file: ^ast.File, list: ^[dynamic]Export_Description, state
 						return describe_fail(path, field, "%s: write the rights of a handle as Lent({{.Read, .Write}})", name)
 					}
 					kind, detail = .Handle, transmute(u32)rights
+					break
+				}
+				if table_kind, number, table_direction, is_parameter, parameter_ok := table_parameter(state, field.type); is_parameter {
+					if !parameter_ok {
+						return describe_fail(path, field, "%s: a table parameter is ^Table_To_Read(Name), ^Table_To_Change(Name) or ^Table_To_Append(Name), with Name a struct with no handle, or ^Bytes_To_Read, ^Bytes_To_Change or ^Bytes_To_Append", name)
+					}
+					kind, detail, direction = table_kind, number, table_direction
 					break
 				}
 				if number, is_table, table_ok := table_of(state, field.type); is_table {
@@ -533,7 +635,7 @@ describe_file :: proc(file: ^ast.File, list: ^[dynamic]Export_Description, state
 				return describe_fail(
 					path,
 					field,
-					"%s: the type %s has no description. Use i64 (Integer), ^string (Text), Lent({{...}}) (Handle), the address of a struct of the package (Record), a last parameter ^[]u8 (the buffer of a Text result), or a last parameter result: ^[]Name (the buffer of a Table result)",
+					"%s: the type %s has no description. Use i64 (Integer), ^string (Text), Lent({{...}}) (Handle), the address of a struct of the package (Record), ^Table_To_Read(Name) and its forms (Table), ^Bytes_To_Read and its forms (Bytes), a last parameter ^[]u8 (the buffer of a Text result), or a last parameter result: ^[]Name (the buffer of a Table result)",
 					name,
 					text,
 				)
@@ -546,6 +648,7 @@ describe_file :: proc(file: ^ast.File, list: ^[dynamic]Export_Description, state
 				append(&parameters, kind)
 				append(&names, parameter.name)
 				append(&details, detail)
+				append(&directions, direction)
 			}
 		}
 		switch {
@@ -573,6 +676,7 @@ describe_file :: proc(file: ^ast.File, list: ^[dynamic]Export_Description, state
 		description.parameters = parameters[:]
 		description.names = names[:]
 		description.details = details[:]
+		description.directions = directions[:]
 		handles := 0
 		for kind, index in parameters {
 			#partial switch kind {

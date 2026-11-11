@@ -1,4 +1,4 @@
-// Altered source: Odin dev-2026-05, core/crypto/chacha20/chacha20.odin; only its imports changed (support/cryptography/origin.manifest, docs/CRYPTOGRAPHY.md).
+// Altered source: Odin dev-2026-11a, core/crypto/chacha20/chacha20.odin; only its imports changed (support/cryptography/origin.manifest, docs/CRYPTOGRAPHY.md).
 /*
 `ChaCha20` and `XChaCha20` stream ciphers.
 

@@ -101,7 +101,7 @@ field_names :: proc "contextless" (table: Table) -> string {
 row_value :: proc "contextless" (row: []u8, item: module.Field) -> Value {
 	#partial switch item.type {
 	case .Integer:
-		return {kind = .Integer, integer = (^i64)(&row[item.offset])^}
+		return {kind = .Integer, integer = module.field_integer(row, item)}
 	case .Handle:
 		return {kind = .Handle, integer = i64((^u32)(&row[item.offset])^)}
 	case .Text:
@@ -209,9 +209,10 @@ table_sort :: proc "contextless" (arguments: []Value) -> Value {
 // from: a field of the left table (0) or of the right table (1).
 Column :: struct {
 	name:   string,
-	type:   module.Type,
-	detail: u32,
-	side:   int,
+	type:     module.Type,
+	detail:   u32,
+	unsigned: bool,
+	side:     int,
 	from:   u32, // The offset of the field in the record of its table.
 	offset: u32, // The offset of the field in the new record.
 }
@@ -227,7 +228,7 @@ description_make :: proc "contextless" (name: string, columns: []Column) -> (fil
 	}
 	alignment := u32(1)
 	for &column in columns {
-		column_alignment: u32 = column.type == .Integer ? 8 : column.type == .Handle ? 4 : 1
+		column_alignment: u32 = column.type == .Text ? 1 : module.field_size(column.type, column.detail)
 		size = (size + column_alignment - 1) / column_alignment * column_alignment
 		column.offset = size
 		size += module.field_size(column.type, column.detail)
@@ -270,6 +271,7 @@ description_make :: proc "contextless" (name: string, columns: []Column) -> (fil
 			offset     = column.offset,
 			type       = column.type,
 			detail     = column.detail,
+			unsigned   = column.unsigned,
 			name_count = u32(len(column.name)),
 		}
 		item.name_offset = text(file, strings, &text_count, column.name) or_return
@@ -299,7 +301,7 @@ columns_of :: proc "contextless" (table: Table, side: int, list: ^[COLUMN_CAPACI
 		if count^ == COLUMN_CAPACITY {
 			return false
 		}
-		list[count^] = {name = name, type = item.type, detail = item.detail, side = side, from = item.offset}
+		list[count^] = {name = name, type = item.type, detail = item.detail, unsigned = item.unsigned, side = side, from = item.offset}
 		count^ += 1
 	}
 	return true
@@ -391,7 +393,7 @@ table_columns :: proc "contextless" (arguments: []Value) -> Value {
 		if count == COLUMN_CAPACITY {
 			return fail("columns: more than ", i64(COLUMN_CAPACITY), " fields")
 		}
-		columns[count] = {name = name, type = item.type, detail = item.detail, from = item.offset}
+		columns[count] = {name = name, type = item.type, detail = item.detail, unsigned = item.unsigned, from = item.offset}
 		count += 1
 	}
 	if count == 0 {

@@ -105,11 +105,11 @@ capacity :: proc "contextless" (queue: ^Queue) -> u32 {
 
 // count gives the records that wait in a queue.
 count :: proc "contextless" (queue: ^Queue) -> u32 {
-	return min(intrinsics.volatile_load(&queue.counters.write) - intrinsics.volatile_load(&queue.counters.read), queue.mask + 1)
+	return min(intrinsics.atomic_load_explicit(&queue.counters.write, .Relaxed) - intrinsics.atomic_load_explicit(&queue.counters.read, .Relaxed), queue.mask + 1)
 }
 
 push :: proc "contextless" (queue: ^Queue, record: Record) -> bool {
-	write := intrinsics.volatile_load(&queue.counters.write)
+	write := intrinsics.atomic_load_explicit(&queue.counters.write, .Relaxed)
 	if write - intrinsics.atomic_load_explicit(&queue.counters.read, .Acquire) > queue.mask {
 		return false
 	}
@@ -120,7 +120,7 @@ push :: proc "contextless" (queue: ^Queue, record: Record) -> bool {
 }
 
 pop :: proc "contextless" (queue: ^Queue) -> (record: Record, ok: bool) {
-	read := intrinsics.volatile_load(&queue.counters.read)
+	read := intrinsics.atomic_load_explicit(&queue.counters.read, .Relaxed)
 	if intrinsics.atomic_load_explicit(&queue.counters.write, .Acquire) == read {
 		return {}, false
 	}
@@ -130,7 +130,7 @@ pop :: proc "contextless" (queue: ^Queue) -> (record: Record, ok: bool) {
 }
 
 empty :: proc "contextless" (queue: ^Queue) -> bool {
-	return intrinsics.volatile_load(&queue.counters.write) == intrinsics.volatile_load(&queue.counters.read)
+	return intrinsics.atomic_load_explicit(&queue.counters.write, .Relaxed) == intrinsics.atomic_load_explicit(&queue.counters.read, .Relaxed)
 }
 
 // complete makes the last store of a counter complete in memory, as each

@@ -18,6 +18,7 @@
 // refusals, the connections, and the last calls.
 package remote_service
 
+import "base:intrinsics"
 import "contract:datagram"
 import "contract:errors"
 import "contract:isolated"
@@ -328,7 +329,14 @@ connection_end :: proc "contextless" (connection: ^Connection, tell: bool) {
 // call makes the isolated call of a request through a connection, and gives
 // the completion. On a failure of the connection it gives an error record.
 call :: proc "contextless" (connection: ^Connection, request: remote.Request, arguments: []u8) -> (completion: ring.Record, error: errors.Error_Record, ok: bool) {
-	copy(connection.region, arguments)
+	// The bytes after the arguments are zero: a request that names a place
+	// of the result reads no byte of a call before it (N6 of the hostile read).
+	copied := copy(connection.region, arguments)
+	// One fill (fill_bytes_with_value of runtime/memory.asm), not one byte
+	// at a time (note 2 of the second hostile read).
+	if copied < len(connection.region) {
+		intrinsics.mem_zero(raw_data(connection.region[copied:]), len(connection.region) - copied)
+	}
 	connection.tag += 1
 	if !system.send(&connection.calls.commands, ring.Record{kind = request.export, tag = connection.tag, values = {0 = 0, 1 = u64(request.record_size)}}) {
 		return {}, errors.error_make(.Full, .Records, 0, 0, i64(ring.capacity(&connection.calls.commands))), false

@@ -90,6 +90,7 @@ module_builds := [?]Module_Build {
 	{name = "probe", source = "modules/probe", image = true},
 	{name = "math", source = "modules/math", image = true},
 	{name = "sample", source = "modules/sample", image = true},
+	{name = "hostile_exports", source = "modules/hostile_exports", image = true},
 	{name = "calendar", source = "modules/calendar", image = true},
 	{name = "calendar_fixed", source = "modules/calendar_fixed", image = true},
 	{name = "calendar_changed", source = "modules/calendar_changed", image = true},
@@ -99,6 +100,9 @@ module_builds := [?]Module_Build {
 	{name = "imports", source = "programs/imports", imports = {"calendar"}, image = true},
 	{name = "errors", source = "programs/errors", image = true},
 	{name = "interface_elements", source = "programs/interface_elements", image = true},
+	{name = "tables", source = "programs/tables", image = true},
+	{name = "interface_module", source = "modules/interface_module", image = true},
+	{name = "interface_through_module", source = "programs/interface_through_module", imports = {"interface_module"}, image = true},
 	{name = "vector_glyphs", source = "programs/vector_glyphs", image = true},
 	{name = "pointers", source = "programs/pointers", image = true},
 	{name = "settings", source = "programs/settings", image = true},
@@ -162,6 +166,8 @@ build_module :: proc(build: Module_Build) -> bool {
 	folder := join(MODULE_BUILD_FOLDER, "/", build.name)
 	objects := join(folder, "/objects")
 	reset_folder(objects) or_return
+	llvm_ir_folder := join(folder, "/llvm_ir")
+	reset_folder(llvm_ir_folder) or_return
 	compile := make([dynamic]string, context.temp_allocator)
 	append(
 		&compile,
@@ -180,16 +186,8 @@ build_module :: proc(build: Module_Build) -> bool {
 		// The file name and the line in a message of a check, not the full path:
 		// the hash of a module does not depend on the folder of the build.
 		"-source-code-locations:filename",
-		// One thread: with two or more, the order in which the compiler
-		// checks the declarations changes from one build to the next, and
-		// with it the order and the inlining of the code, and so the hash of
-		// the module. The stock compiler starts a worker thread beside the
-		// main thread even with "-thread-count:1": the flake applies the patch
-		// tools/odin_compiler/thread_count_counts_the_main_thread.patch, which
-		// gives one thread in all (choice 189 and the choice that follows 359).
-		"-thread-count:1",
 		CONTRACT_LIBRARY,
-		join("-out:", folder, "/", build.name, ".ll"),
+		join("-out:", llvm_ir_folder),
 	)
 	if build.kernel {
 		append(&compile, "-disable-red-zone")
@@ -202,8 +200,14 @@ build_module :: proc(build: Module_Build) -> bool {
 		}
 	}
 	run(compile[:]) or_return
-	// Odin writes the IR in the folder where it runs, with the name of -out.
-	if err := os.rename(join(build.name, ".ll"), join(folder, "/", build.name, ".ll")); err != nil {
+	// Odin writes the IR in the folder of -out, with the name of the first
+	// package of the module. The folder was empty: its one .ll file is the IR.
+	llvm_ir_files := files_with_suffix(llvm_ir_folder, ".ll") or_return
+	if len(llvm_ir_files) != 1 {
+		fmt.eprintfln("kerneltool: the compiler wrote %d LLVM IR files for %s; one module is one file", len(llvm_ir_files), build.name)
+		return false
+	}
+	if err := os.rename(llvm_ir_files[0], join(folder, "/", build.name, ".ll")); err != nil {
 		fmt.eprintfln("kerneltool: cannot move the LLVM IR of %s: %v", build.name, err)
 		return false
 	}
@@ -392,6 +396,7 @@ test_descriptions :: proc() -> bool {
 		.Record  = "Record",
 		.Handle  = "Handle",
 		.Table   = "Table",
+		.Bytes   = "Bytes",
 	}
 	for build in module_builds {
 		file := read_file(module_path(build.name)) or_return
@@ -424,6 +429,7 @@ test_descriptions :: proc() -> bool {
 				parameter_name := module.string_at(file, function.parameter_names[parameter], u32(function.parameter_name_counts[parameter]))
 				agree &&= function.parameters[parameter] == description.parameters[parameter] && parameter_name == description.names[parameter]
 				agree &&= function.parameter_details[parameter] == description.details[parameter]
+				agree &&= function.parameter_directions[parameter] == description.directions[parameter]
 				fmt.sbprintf(&last, "%s%s: %s", parameter > 0 ? ", " : "", parameter_name, type_names[function.parameters[parameter]])
 			}
 			fmt.sbprintf(&last, ") -> %s", type_names[description.result])
@@ -444,7 +450,7 @@ test_descriptions :: proc() -> bool {
 			fmt.sbprintf(&layout, "%s {{", item.name)
 			for field, number in (agree ? item.fields : nil) {
 				stored, _ := module.field(file, record, u32(number))
-				agree &&= module.string_at(file, stored.name_offset, stored.name_count) == field.name && stored.offset == field.offset && stored.type == field.type && stored.detail == field.detail
+				agree &&= module.string_at(file, stored.name_offset, stored.name_count) == field.name && stored.offset == field.offset && stored.type == field.type && stored.detail == field.detail && stored.unsigned == field.unsigned
 				fmt.sbprintf(&layout, "%s%s: %s at %d", number > 0 ? ", " : "", field.name, type_names[field.type], field.offset)
 			}
 			if !agree {

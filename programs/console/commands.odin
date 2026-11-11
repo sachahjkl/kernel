@@ -181,7 +181,7 @@ help :: proc "contextless" (arguments: []Value) -> Value {
 			if kind == .None {
 				system.write_part(&writer, "Value") // Any kind: the command checks it.
 			}
-			system.write_type(&writer, item.file, module.Type(kind), item.function.parameter_details[index])
+			system.write_parameter_type(&writer, item.file, module.Type(kind), item.function.parameter_details[index], item.function.parameter_directions[index])
 		}
 		system.write_part(&writer, ")")
 		if item.result != .None {
@@ -688,17 +688,39 @@ callable_by_console :: proc "contextless" (file: []u8, function: module.Function
 		}
 	}
 	for type, index in function.parameters[:function.parameter_count] {
+		direction := function.parameter_directions[index]
 		#partial switch type {
 		case .Integer, .Text, .Handle:
 		case .Record:
 			if _, ok := module.record_type(file, function.parameter_details[index]); !ok {
 				return false
 			}
+		case .Table:
+			// A Read or Change table is a Table value. An Append table is a
+			// second result, which the language does not have.
+			if _, _, ok := isolated.table_record(file, type, function.parameter_details[index]); !ok || direction == .Append {
+				return false
+			}
+		case .Bytes:
+			// A Text value: read only.
+			if direction != .Read {
+				return false
+			}
 		case:
 			return false
 		}
 	}
-	return true
+	return isolated.directions_valid(function)
+}
+
+// type_text_of_field gives the type of a field: "Unsigned(1)", "Integer(4)".
+type_text_of_field :: proc "contextless" (file: []u8, field: module.Field) -> string {
+	writer := system.Writer {
+		buffer = scratch[scratch_count:],
+	}
+	system.write_field_type(&writer, file, field)
+	scratch_count += writer.count
+	return system.written(&writer)
 }
 
 // record_build makes a Record value: one argument for each field, in the
@@ -716,7 +738,10 @@ record_build :: proc "contextless" (item: ^Command, arguments: []Value) -> Value
 		} else if field.type == .Handle {
 			(^u32)(&bytes[field.offset])^ = u32(argument.integer)
 		} else {
-			(^i64)(&bytes[field.offset])^ = argument.integer
+			if !module.field_integer_fits(field, argument.integer) {
+				return fail(item.name, ": the field ", module.string_at(item.file, field.name_offset, field.name_count), " is ", type_text_of_field(item.file, field), ", it does not hold ", argument.integer)
+			}
+			module.field_integer_set(bytes, field, argument.integer)
 		}
 	}
 	return {kind = .Record, record = bytes, file = item.file, detail = item.record}
@@ -729,7 +754,19 @@ record_build :: proc "contextless" (item: ^Command, arguments: []Value) -> Value
 // of the console, and the rights of a description limit nothing here.
 call_export :: proc "contextless" (item: ^Command, arguments: []Value) -> Value {
 	integers: [system.CALL_INTEGERS]u64
+	// A Table or Bytes parameter: the address of a table place over the
+	// memory of the value. A Change table changes it in place: a variable
+	// holds the changed rows after the call.
+	places: [ARGUMENT_CAPACITY]module.Table_Place
 	for &argument, index in arguments {
+		if index < int(item.parameter_count) && (item.parameters[index] == .Table || item.parameters[index] == .Bytes) {
+			bytes := argument.kind == .Text ? transmute([]u8)argument.text : argument.record
+			size, _, _ := isolated.table_record(item.file, module.Type(item.parameters[index]), item.function.parameter_details[index])
+			count := u64(len(bytes)) / max(size, 1)
+			places[index] = {address = u64(uintptr(raw_data(bytes))), count = count, capacity = count}
+			integers[index] = u64(uintptr(&places[index]))
+			continue
+		}
 		#partial switch argument.kind {
 		case .Text:
 			integers[index] = u64(uintptr(&argument.text))
@@ -1039,6 +1076,13 @@ call_isolated :: proc "contextless" (item: ^Command, arguments: []Value) -> Valu
 	encoded: [ARGUMENT_CAPACITY]isolated.Argument
 	for argument, index in arguments {
 		encoded[index] = {integer = u64(argument.integer), text = transmute([]u8)argument.text, record = argument.record}
+		// A Table or Bytes parameter: the records go into the call region,
+		// and those of a Change table come back.
+		if item.parameters[index] == .Table || item.parameters[index] == .Bytes {
+			bytes := argument.kind == .Text ? transmute([]u8)argument.text : argument.record
+			size, _, _ := isolated.table_record(item.file, module.Type(item.parameters[index]), item.function.parameter_details[index])
+			encoded[index].table = {records = bytes, count = u64(len(bytes)) / max(size, 1)}
+		}
 	}
 	// The handles: the other program receives a copy of each one, with the
 	// rights of the description, through the call ring.
@@ -1056,6 +1100,9 @@ call_isolated :: proc "contextless" (item: ^Command, arguments: []Value) -> Valu
 	}
 	offset, size, buffer, error_place, ok := isolated.encode(item.file, item.function, encoded[:len(arguments)], sandbox.region)
 	if !ok {
+		if missing := isolated.room_missing(item.file, item.function, encoded[:len(arguments)], u64(len(sandbox.region))); missing.parameter != 0 {
+			return fail("the table ", item.parameter_names[missing.parameter - 1], " of ", item.name, " has ", missing.needed, " bytes; the call region has ", missing.free, " bytes free for it")
+		}
 		return fail("the arguments of ", item.name, " do not fit in the call region")
 	}
 	sandbox.calls += 1
@@ -1078,6 +1125,10 @@ call_isolated :: proc "contextless" (item: ^Command, arguments: []Value) -> Valu
 			}
 			switch isolated.Status(completion.kind) {
 			case .Ok:
+				// The rows of a Change table come back into the memory of the value.
+				if problem, parameter := isolated.tables_return(item.file, item.function, encoded[:len(arguments)], sandbox.region, offset); problem != .None {
+					return fail("the program ", sandbox.name, " gave a wrong count for the table ", item.parameter_names[parameter - 1])
+				}
 				// A failure: the other program wrote the error record, values
 				// only, in the place that encode chose.
 				if error_place.count != 0 && i64(completion.values[0]) < 0 {
@@ -1125,10 +1176,14 @@ call_isolated :: proc "contextless" (item: ^Command, arguments: []Value) -> Valu
 				return {}
 			case .Bad_Export:
 				return fail("the program ", sandbox.name, " has no export ", item.name)
-			case .Bad_Arguments:
+			case .Bad_Arguments, .Bad_Handle:
+				// The values of a refusal hold its error record: the argument and why.
+				refusal := transmute(errors.Error_Record)completion.values
+				if refusal.kind != 0 {
+					refusal.operation = i64(item.export)
+					return export_failure(item, &refusal, i64(completion.kind))
+				}
 				return fail("the program ", sandbox.name, " refused the arguments of ", item.name)
-			case .Bad_Handle:
-				return fail("the program ", sandbox.name, " refused a handle of ", item.name)
 			case .Load_Failed:
 				return fail("the program ", sandbox.name, " gave the status of a load for a call")
 			case:
@@ -1142,7 +1197,7 @@ call_isolated :: proc "contextless" (item: ^Command, arguments: []Value) -> Valu
 			fault_print(&report)
 			return result
 		}
-		if intrinsics.volatile_load(&work.cancel) != 0 {
+		if intrinsics.atomic_load_explicit(&work.cancel, .Relaxed) != 0 {
 			sandbox_end(sandbox)
 			return fail("the person stopped the call of ", item.name, sandbox.service ? ": the console closed the connection to " : ": the console stopped the program ", sandbox.name)
 		}

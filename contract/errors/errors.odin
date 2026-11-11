@@ -41,20 +41,20 @@ Kind :: enum i64 {
 	Over_Limit        = 14, // value: what the call makes; limit: the limit.
 	Full              = 15, // A table has no free place. limit: its capacity.
 	State             = 16, // value: the handle; found: the op.Program_State of its object, or 0 when the handle has no right Read.
-	Absent            = 17, // No object has the name or the number of the argument.
+	Absent            = 17, // No object has the name or the number of the argument. found: 0, or the number from 1 of the row of a table argument that names it.
 	Damaged           = 18, // The object of the argument exists, and a block of it has a wrong check.
 	Device            = 19, // A device reported an error. found: the status of the device.
 	No_Grant          = 20, // The caller has no grant for this call: the unit says which grant.
 	Malformed         = 21, // The module of the argument breaks a rule of the module format. value: the kind of the problem; found: the byte of the file.
 	No_Target         = 22, // value: the handle of a memory object that names no one other program to receive the handle.
-	Overlap           = 23, // value: an address; limit: the count of bytes. They overlap something that the program has.
+	Overlap           = 23, // value: an address, or with the unit Region an offset in the call region of an isolated call; limit: the count of bytes. They overlap something that the program has, or another argument of the call that is written.
 	Unknown_Operation = 24, // value: the number of the operation.
 	Refused           = 25, // The call refused, and gives no more detail. found: the status (op.Status for the kernel).
 	No_Answer         = 26, // No answer before the time limit. value: the IPv4 address that did not answer, or 0; limit: the milliseconds waited; found: what did not answer: 1 its hardware address (ARP), 2 the echo, 3 the device.
 	Unsupported       = 27, // The receiver does not do this command. value: the command, or the field that it does not do.
 	Link_Down         = 28, // The link of the network device is down.
 	Busy              = 29, // Too many requests are in flight. value: the requests in flight, or 0 when the receiver does not count them; limit: the most.
-	Out_Of_Range      = 30, // The argument names units past the end. value: the end of what it names (its first unit and its count); limit: the units that exist.
+	Out_Of_Range      = 30, // The argument names units past the end. value: the end of what it names (its first unit and its count); limit: the units that exist; found: 0, or the number from 1 of the record of a table argument that names them (a record that names bytes of another argument by an offset, docs/MODULE_CONTRACT.md, "Tables and bytes as parameters").
 	Reserved          = 31, // The argument names a program of the system that the call does not act on: it starts at boot, or it is a device service.
 }
 
@@ -86,12 +86,13 @@ Unit :: enum i64 {
 	Tcp_Ports   = 23, // The local TCP ports of a client grant.
 	Requests    = 24, // Requests in flight.
 	Endpoint    = 25, // A remote of the network: an IPv4 address and a port, in one value (endpoint_pack). No_Grant: value the remote that the call names, limit the remote of the grant (0: none), found the local port when it is not a port of the endpoint.
-	Region      = 26, // Absent: the data region of a ring.
+	Region      = 26, // Absent: the data region of a ring. Overlap: bytes of the call region of an isolated call; value is their offset, limit their count.
 	Root_Commands = 27, // No_Grant: the commands of the root ring that change other programs.
 	Services    = 28, // Services that run.
 	Grants      = 29, // The grants of a program (system.Root_Grant).
 	Display     = 30, // No_Grant: a surface on the screen (the ring to the compositor).
 	Terminal    = 31, // No_Grant: a terminal (the terminal ring and the text region).
+	Lent_Handles = 32, // Handle_Absent: the handle did not come through the call ring for this call (an isolated call).
 }
 
 // How a handle ended (Handle_Ended).
@@ -159,6 +160,7 @@ UNIT_NAMES := [Unit]string {
 	.Grants      = "grants of the program",
 	.Display     = "a surface on the screen",
 	.Terminal    = "a terminal",
+	.Lent_Handles = "handles lent for this call",
 }
 
 // A ring completion (contract/ring) has the status of the contract of its
