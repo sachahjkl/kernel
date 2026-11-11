@@ -24,6 +24,9 @@ entry :: proc "c" (boot: ^info.Boot_Info) -> ! {
 	stage_end(.Kernel_Memory)
 	processor_start()
 	stage_end(.Kernel_Processor)
+	// The strategy of each run queue, and the lengths in cycles, before
+	// another processor reads them (timer_calibrate measured the frequency).
+	strategy_start()
 	processors_start(boot)
 	stage_end(.Kernel_Processors)
 	log("kernel: ", u64(processor_count), " processors")
@@ -80,7 +83,6 @@ root_start :: proc "contextless" (boot: ^info.Boot_Info) {
 		fail("no memory for the time page")
 	}
 	// The one budget that comes from nothing: all the free memory, all the slots.
-	strategy_start()
 	ROOT_BUDGET :: 1
 	budgets[ROOT_BUDGET] = {
 		live = true,

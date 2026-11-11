@@ -60,6 +60,7 @@ Result :: struct {
 	weighted:    [3]u64, // Tenths of a percent: the mean share of a spinner of each weight.
 	weighted_least: u64, // The least share of the 12, tenths of a percent.
 	preemptions: u64,
+	interrupt_preemption: u64, // Nanoseconds in the kernel for one wake preemption by an interrupt.
 	pick:        u64, // Nanoseconds for one pick.
 	moves:       u64,
 }
@@ -98,7 +99,7 @@ processor_report :: proc "contextless" (index: u64) -> (report: op.Processor_Rep
 
 // Counts of all the processors.
 Counts :: struct {
-	picks, preemptions, moves, pick_cycles: u64,
+	picks, preemptions, moves, pick_cycles, interrupt_preemptions, preempt_cycles: u64,
 }
 
 counts :: proc "contextless" (processors: u64) -> (sum: Counts) {
@@ -108,6 +109,8 @@ counts :: proc "contextless" (processors: u64) -> (sum: Counts) {
 		sum.preemptions += report.preemptions
 		sum.moves += report.moves
 		sum.pick_cycles += report.pick_cycles
+		sum.interrupt_preemptions += report.interrupt_preemptions
+		sum.preempt_cycles += report.preempt_cycles
 	}
 	return sum
 }
@@ -364,6 +367,8 @@ measure :: proc "contextless" (index: int, processors: u64) {
 	result.moves = after.moves - before.moves
 	picks := max(after.picks - before.picks, 1)
 	result.pick = (after.pick_cycles - before.pick_cycles) * 1_000_000_000 / max(system.cycle_frequency(), 1) / picks
+	interrupts := max(after.interrupt_preemptions - before.interrupt_preemptions, 1)
+	result.interrupt_preemption = (after.preempt_cycles - before.preempt_cycles) * 1_000_000_000 / max(system.cycle_frequency(), 1) / interrupts
 	result.measured = true
 }
 
@@ -408,7 +413,9 @@ log_result :: proc "contextless" (index: int) {
 	system.write_unsigned(&writer, result.moves)
 	system.write_part(&writer, " moves, one pick ")
 	system.write_unsigned(&writer, result.pick)
-	system.write_part(&writer, " ns")
+	system.write_part(&writer, " ns, one preemption by an interrupt ")
+	system.write_unsigned(&writer, result.interrupt_preemption)
+	system.write_part(&writer, " ns in the kernel")
 	system.log(system.written(&writer))
 }
 
@@ -419,13 +426,20 @@ Changer :: struct {
 	ended:   u32,
 	changes: u64,
 	refused: u64,
+	times:   [CHANGES]u64, // Nanoseconds of each Strategy_Set, with its kernel entry.
 }
+
+// The time of one Strategy_Set over the changes: least, middle, worst.
+change_least, change_middle, change_worst: u64
 
 changer: Changer
 
 change_run :: proc "c" (parameter: rawptr) -> ! {
 	for index in 0 ..< CHANGES {
-		if _, status := system.strategy_set(machine, strategies[index % STRATEGY_COUNT]); status == .Ok {
+		start := system.nanoseconds()
+		_, status := system.strategy_set(machine, strategies[index % STRATEGY_COUNT])
+		changer.times[index] = system.nanoseconds() - start
+		if status == .Ok {
 			changer.changes += 1
 		} else {
 			changer.refused += 1
@@ -485,11 +499,19 @@ stress :: proc "contextless" () {
 		system.sleep(system.time() + 10)
 	}
 	stress_changes = changer.changes
+	sorted := changer.times
+	for at in 1 ..< len(sorted) {
+		for back := at; back > 0 && sorted[back - 1] > sorted[back]; back -= 1 {
+			sorted[back - 1], sorted[back] = sorted[back], sorted[back - 1]
+		}
+	}
+	change_least, change_middle, change_worst = sorted[0], sorted[CHANGES / 2], sorted[CHANGES - 1]
 	stress_right = ran && changer.changes == CHANGES && changer.refused == 0 && after.threads == at_start.threads
 	if !stress_right {
 		fail("the stress case")
 	}
 	stress_done = true
+	system.log("scheduler: one Strategy_Set, with its kernel entry: ", change_least, " ns at least, ", change_middle, " ns in the middle, ", change_worst, " ns at worst")
 	system.log("scheduler: stress: ", changer.changes, " changes of strategy while ", stress_churned, " threads started and stopped, two threads woke each other ", stress_wakes, " times and 8 spinners ran and moved; after the last change each thread ran: ", u64(ran), "; thread slots ", after.threads, " of ", at_start.threads)
 }
 
@@ -733,6 +755,11 @@ draw :: proc "contextless" (canvas: graphics.Canvas, report: op.System_Report, p
 	number_row(inside, y, "turns ended by a wake", values(proc "contextless" (result: ^Result) -> u64 {return result.preemptions}), 0, "")
 	y += ROW
 	number_row(inside, y, "one pick", values(proc "contextless" (result: ^Result) -> u64 {return result.pick}), 0, " ns")
+	for index in 0 ..< STRATEGY_COUNT {
+		if results[index].measured && results[index].interrupt_preemption != 0 {
+			graphics.text(inside, LABEL_WIDTH + index * COLUMN_WIDTH + 96, y, system.format(line[:], "preempt ", results[index].interrupt_preemption, " ns"), COLOR_DIM)
+		}
+	}
 
 	// The processors: the strategy of each queue and its counts.
 	top += height + MARGIN
@@ -764,7 +791,7 @@ draw :: proc "contextless" (canvas: graphics.Canvas, report: op.System_Report, p
 	top += processors_height + MARGIN
 	last := card(canvas, MARGIN, top, WIDTH - 2 * MARGIN, HEIGHT - top - MARGIN, "CHANGES WHILE THREADS RUN", "Strategy_Set, 100 times")
 	if stress_done {
-		text := system.format(line[:], stress_changes, " changes while ", stress_churned, " threads started and ended, two threads woke ", stress_wakes, " times")
+		text := system.format(line[:], stress_changes, " changes while ", stress_churned, " threads started and ended; one change ", change_least / 1000, " to ", change_worst / 1000, " us, middle ", change_middle / 1000)
 		graphics.text(last, 0, 0, text, stress_right ? COLOR_TEXT : COLOR_FAILED)
 	} else {
 		graphics.text(last, 0, 0, "not measured yet", COLOR_DIM)

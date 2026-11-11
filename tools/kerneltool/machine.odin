@@ -886,6 +886,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "scheduler: round robin: two threads that wake each other, a spinner on each processor: "},
 	{kind = .Wait, text = "scheduler: fair: two threads that wake each other, a spinner on each processor: "},
 	{kind = .Wait, text = "scheduler: EEVDF: two threads that wake each other, a spinner on each processor: "},
+	{kind = .Wait, text = "scheduler: one Strategy_Set, with its kernel entry: "},
 	{kind = .Wait, text = "scheduler: stress: 100 changes of strategy while "},
 	{kind = .Wait, text = "scheduler: ok, no spinner starved under 3 strategies, EEVDF woke "},
 	{kind = .Wait, text = "scheduler: the window took "},

@@ -108,7 +108,7 @@ Thread :: struct #align (64) {
 	// is valid for each strategy: the thread is not placed.
 	virtual:          u64, // The virtual time.
 	virtual_deadline: u64, // EEVDF.
-	lag:              i64, // EEVDF: the lag at the last wait.
+	lag:              i64, // At the last wait: EEVDF, the lag; fair, the distance to the queue clock.
 	queued:           bool,
 	placed:           bool, // The strategy placed the thread: virtual means something.
 	frame:        Frame,
@@ -1341,10 +1341,16 @@ kernel_interrupt :: proc "c" (frame: ^Frame) {
 		apic_write(APIC_END, 0)
 	case frame.vector == VECTOR_WAKE || frame.vector == VECTOR_SYNC:
 		// A thread that woke on another processor preempts the thread
-		// that runs here (kick). Idle: no turn to end.
+		// that runs here (kick). Interrupts are off in the kernel, so this
+		// interrupt arrives either when the processor returns to a program
+		// (from_program) or while it waits idle with no thread: then no
+		// turn is to end, and the processor picks a thread anyway. A flag
+		// for a thread that left its processor before the interrupt ends
+		// the turn of the next thread (one more pass through schedule).
 		if intrinsics.atomic_exchange(&cpu.preempt, false) && from_program {
 			cpu.slice_left = 0
 			cpu.preemptions += 1
+			cpu.preempt_from = cycles_now()
 		}
 		apic_write(APIC_END, 0)
 	case frame.vector == VECTOR_SPURIOUS:

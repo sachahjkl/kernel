@@ -380,7 +380,7 @@ System_Report :: struct {
 	reserved_pages:   u64, // Pages that a budget paid for and that have no page frame yet: pages on first use.
 	first_use_faults: u64, // Page faults of programs after which the page was present.
 	locks:            [LOCK_KIND_CAPACITY]Lock_Count, // By Lock_Kind.
-	strategy:         Strategy, // The scheduling strategy of the machine (Strategy_Set).
+	strategy:         Strategy, // The scheduling strategy of the machine (Strategy_Set): the new one as soon as a change starts, before each run queue converted (Processor_Report.strategy).
 	strategy_changes: u32, // The calls of Strategy_Set since boot.
 }
 
@@ -431,6 +431,8 @@ Processor_Report :: struct {
 	preemptions: u64, // Turns that a wake preemption ended.
 	moves:       u64, // Threads that the processor took from the queue of another processor.
 	pick_cycles: u64, // Cycles of the cycle counter in all the picks.
+	interrupt_preemptions: u64, // Wake preemptions by an interrupt from another processor.
+	preempt_cycles: u64, // Their cycles in the kernel: from the handler of the interrupt to the next thread.
 }
 
 // The log: records in channels.

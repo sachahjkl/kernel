@@ -703,6 +703,8 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 				report.preemptions = intrinsics.volatile_load(&cpu.preemptions)
 				report.moves = intrinsics.volatile_load(&cpu.moves)
 				report.pick_cycles = intrinsics.volatile_load(&cpu.pick_cycles)
+				report.interrupt_preemptions = intrinsics.volatile_load(&cpu.interrupt_preemptions)
+				report.preempt_cycles = intrinsics.volatile_load(&cpu.preempt_cycles)
 				if cpu.current != 0 {
 					report.program = u64(threads[cpu.current].program)
 					report.same = u64(programs[report.program].table == program.table)

@@ -278,13 +278,25 @@ FAIR :: Strategy_Table {
 	move          = fair_move,
 }
 
+// A thread that is placed (new, or placed again after a change of
+// strategy: the two cases are one, so each thread of a change starts equal)
+// starts one least turn, weighted, after the queue clock: a program that
+// creates threads all the time does not get a turn before each other thread.
+//
+// A thread that waits keeps its position relative to the queue clock
+// (`lag`, written by fair_stopping), not its virtual time: the clock can
+// move by any amount during a wait, and an absolute virtual time compared
+// after 2^63 weighted cycles would look ahead. A thread does not move while
+// it waits (a move takes a thread from a list), so its home and its clock
+// are the ones of fair_stopping. A thread that is Back is in the list: the
+// next pick keeps it within the credit under the clock (fair_pick).
 fair_ready :: proc "contextless" (queue: ^Run_Queue, home: u32, thread: ^Thread, kind: Ready_Kind) {
 	switch {
 	case !thread.placed || kind == .New:
-		thread.virtual = queue.virtual
+		thread.virtual = queue.virtual + weighted(fair_least_turn, thread.weight)
 		thread.placed = true
 	case kind == .Woken:
-		floor_to(thread, queue.virtual - fair_credit)
+		thread.virtual = queue.virtual + u64(thread.lag)
 	}
 }
 
@@ -317,8 +329,13 @@ fair_tick :: proc "contextless" (queue: ^Run_Queue, cpu: ^Processor, thread: ^Th
 	return cycles_now() - cpu.turn_start >= turn
 }
 
+// A thread that waits keeps its distance to the queue clock, at most the
+// credit under it and at most KEY_LIMIT above it.
 fair_stopping :: proc "contextless" (queue: ^Run_Queue, cpu: ^Processor, thread: ^Thread, cycles: u64, waits: bool) {
 	charge(thread, cycles)
+	if waits {
+		thread.lag = clamp(i64(thread.virtual - queue.virtual), -i64(fair_credit), KEY_LIMIT)
+	}
 }
 
 fair_wake_preempts :: proc "contextless" (queue: ^Run_Queue, home: u32, running: ^Thread, woken: ^Thread) -> bool {

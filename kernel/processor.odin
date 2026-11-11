@@ -119,6 +119,19 @@ Processor :: struct {
 	// Another processor sets it: a thread that woke preempts the thread
 	// that runs here (kick). The processor clears it (atomic).
 	preempt:       bool,
+	// Another processor that wakes this idle processor stores 1 + the queue
+	// of the thread that woke: schedule_pick looks there first. The
+	// processor clears it (atomic).
+	look_first:    u32,
+	// 1 + time_milliseconds of the last wake preemption of this processor
+	// by a thread of another program (thread_ready_held). Run lock of this
+	// processor.
+	preempted_at:  u64,
+	// The cost of the preemptions by interrupt: from the handler of the
+	// interrupt to the resume of the next thread (run). Its processor only.
+	preempt_from:  u64,
+	interrupt_preemptions: u64,
+	preempt_cycles: u64,
 	busy_time:     u64, // Ticks with a thread.
 	// Counts of this processor only: no other processor writes them, and
 	// the reports add the counts of all processors.

@@ -201,8 +201,18 @@ kick :: proc "contextless" (home: u32, preempts := false) {
 		apic_send(target.apic_id, VECTOR_WAKE)
 		return
 	}
+	// The idle processor that the waker wakes gets the queue of the thread
+	// as a hint (look_first), after the exchange of `idle` and before the
+	// interrupt: the idle protocol (push, then exchange) does not change.
+	// If the processor woke by itself (it saw `pushes` change) before the
+	// store, it picks as before, and the hint stays for its next pick,
+	// where it serves only if that queue has a thread. Two wakers cannot
+	// win the exchange of one idle processor; a hint that a later one
+	// replaces before the pick is lost, and the pick is the one of before
+	// (the busiest queue).
 	for cpu in processors[:processor_count] {
 		if intrinsics.atomic_exchange(&cpu.idle, false) {
+			intrinsics.atomic_store(&cpu.look_first, home + 1)
 			apic_send(cpu.apic_id, VECTOR_WAKE)
 			return
 		}
@@ -244,8 +254,22 @@ thread_ready_held :: proc "contextless" (thread: ^Thread) -> (queued: bool, pree
 	}
 	queue_ready(thread, .Woken)
 	queue := &run_queues[thread.home]
-	if running := processors[thread.home].current; running != 0 {
-		preempts = strategy_of(queue).wake_preempts(queue, thread.home, &threads[running], thread)
+	home := processors[thread.home]
+	if running := home.current; running != 0 {
+		// At most one wake preemption of a processor in each millisecond
+		// by a thread of another program (P20): the interrupt and the pass
+		// through schedule are paid by the thread that runs there. A
+		// thread of the same program preempts with no limit: its program
+		// pays. With no preemption the woken thread waits at most for a
+		// tick, where its strategy ends the turn when it says so.
+		other := threads[running].program != thread.program
+		now := intrinsics.atomic_load(&time_milliseconds) + 1
+		if !other || home.preempted_at != now {
+			preempts = strategy_of(queue).wake_preempts(queue, thread.home, &threads[running], thread)
+			if preempts && other {
+				home.preempted_at = now
+			}
+		}
 	}
 	return true, preempts
 }
@@ -288,6 +312,12 @@ thread_queue :: proc "contextless" (thread: ^Thread) {
 // are ready move to the processors that have less, and each one gets its
 // turn on all the processors, as with one queue. 0: none.
 schedule_pick :: proc "contextless" (cpu: ^Processor) -> u32 {
+	// The queue of a thread that woke this processor from idle (kick).
+	if hint := intrinsics.atomic_exchange(&cpu.look_first, 0); hint != 0 && hint - 1 != cpu.index && intrinsics.atomic_load(&run_queues[hint - 1].count) != 0 {
+		if index := queue_move(hint - 1, cpu); index != 0 {
+			return index
+		}
+	}
 	own := intrinsics.atomic_load(&run_queues[cpu.index].count)
 	if busiest, load := busiest_queue(cpu); load > own {
 		if index := queue_move(busiest, cpu); index != 0 {
@@ -377,6 +407,7 @@ schedule :: proc "contextless" () -> ! {
 		// an interrupt. The flag is set before the last look at the queues.
 		// A queue can keep threads whose budget has no time in this period:
 		// the start of the next period wakes the idle processors (kick_all).
+		cpu.preempt_from = 0 // No next thread: the preemption that ended the last turn is not counted.
 		intrinsics.atomic_store(&cpu.idle, true)
 		if queue_pushes() != pushes {
 			intrinsics.atomic_store(&cpu.idle, false)
@@ -396,6 +427,11 @@ schedule :: proc "contextless" () -> ! {
 // run gives the processor to its current thread. The program of the
 // thread stays while the thread is on this processor (`holds`).
 run :: proc "contextless" (cpu: ^Processor, thread: ^Thread) -> ! {
+	if cpu.preempt_from != 0 {
+		cpu.preempt_cycles += cycles_now() - cpu.preempt_from
+		cpu.interrupt_preemptions += 1
+		cpu.preempt_from = 0
+	}
 	program := &programs[thread.program]
 	ports_switch(cpu, intrinsics.atomic_load(&program.has_ports) ? thread.program : 0)
 	if cpu.table != program.table {
