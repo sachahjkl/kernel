@@ -436,6 +436,7 @@ scenario_power_loss_thinning := [?]Step {
 	{kind = .Key, text = "tab"},
 	{kind = .Wait, text = "notes: count 1000, stopped: 1000 commits in "},
 	{kind = .Key, text = "tab"},
+	{kind = .Wait, text = "storage: the store notes is at its limit of 4500 blocks: the commit of generation ", any_order = true},
 	{kind = .Wait, text = "notes: count 1200"},
 	{kind = .Power_Loss},
 }

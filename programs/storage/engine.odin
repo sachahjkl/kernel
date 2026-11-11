@@ -1173,6 +1173,7 @@ change :: proc "contextless" (store: Store_Of, given: string, kind: Change_Kind,
 		retention(object_index, now)
 	}
 	// At the limit: the oldest versions of the store go, in this commit.
+	thinned_before := plan.thinned
 	for !plan.full && !plan.device && projected() > i64(store.limit) {
 		oldest, found := oldest_object()
 		if !found {
@@ -1180,6 +1181,7 @@ change :: proc "contextless" (store: Store_Of, given: string, kind: Change_Kind,
 		}
 		version_remove_first(oldest)
 	}
+	at_limit := plan.thinned - thinned_before
 	plan_finish()
 	if !plan.full && !plan.device && i64(entry.used) + plan.used_change > i64(store.limit) {
 		plan_drop()
@@ -1188,9 +1190,17 @@ change :: proc "contextless" (store: Store_Of, given: string, kind: Change_Kind,
 	generation := plan_commit(error)
 	if generation > 0 {
 		damaged[store_index] &~= 1 << uint(object_index)
+		if at_limit != 0 && !limit_reached[store_index] {
+			// One line for each store and each start of the service: the
+			// later commits at the limit thin the same way.
+			limit_reached[store_index] = true
+			system.log("storage: the store ", store.name, " is at its limit of ", store.limit, " blocks: the commit of generation ", generation, " thinned ", at_limit, at_limit == 1 ? " version" : " versions", ", the oldest of the store first")
+		}
 	}
 	return generation
 }
+
+limit_reached: [STORE_CAPACITY]bool
 
 // plan_finish_object_removed frees the place of a removed object and
 // writes the rest of the plan.

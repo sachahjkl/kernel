@@ -119,7 +119,7 @@ objects :: proc "c" (result: ^[]u8) -> i64 {
 	return i64(writer.count)
 }
 
-// stores gives each store of the disk, with its objects, its versions, its blocks (a shared block counted one time), the blocks that two names share, its limit, the count of connections that hold its grant now, and its damage. Only a caller that acts for the person sees them.
+// stores gives each store of the disk, one line for each, with its objects, its versions, its blocks (a shared block counted one time), the blocks that two names share, its limit, the count of connections that hold its grant now, and its damage. Only a caller that acts for the person sees them.
 @(export, link_name = "stores")
 stores :: proc "c" (result: ^[]u8) -> i64 {
 	_, _, person := caller_store()
@@ -148,7 +148,7 @@ stores :: proc "c" (result: ^[]u8) -> i64 {
 				holders += 1
 			}
 		}
-		line := [?]system.Part{"; ", system.name_of(store.name[:]), ": ", object_count, " objects, ", opened.store_versions[index], " versions, ", store.used, " of ", store.limit, " blocks, ", opened.store_shared[index], " shared, ", holders, holders == 1 ? " connection" : " connections"}
+		line := [?]system.Part{"\n", system.name_of(store.name[:]), ": ", object_count, " objects, ", opened.store_versions[index], " versions, ", store.used, " of ", store.limit, " blocks, ", opened.store_shared[index], " shared, ", holders, holders == 1 ? " connection" : " connections"}
 		for part in line {
 			system.write_part(&writer, part)
 		}

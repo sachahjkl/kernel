@@ -117,6 +117,7 @@ scenario_persist_first := [?]Step {
 	{kind = .Wait, text = "notes: the note is \"kept across a restart\", generation 22"},
 	{kind = .Key, text = "tab"},
 	{kind = .Wait, text = "notes: count 1000, stopped: 1000 commits in "},
+	{kind = .Wait, text = "notes: the versions of the count: 1000 rows in "},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "shutdown()"},
 	{kind = .Wait, text = "kernel: the machine stops with code 0"},
@@ -1378,15 +1379,20 @@ scenario := [?]Step {
 	// The limit of the store: one more object needs two more blocks.
 	{kind = .Type, text = "storage.write(\"second\", \"one block more\")"},
 	{kind = .Wait, text = "[console] error: storage.write: the call needs 5 blocks in all, with no earlier version kept; the limit is 4 blocks (-2)"},
+	// A change of the object at the limit: the version of its state before
+	// does not fit, and the same commit thins it.
+	{kind = .Type, text = "storage.write(\"greeting\", \"changed at the limit\")"},
+	{kind = .Wait, text = "[console] 3"},
+	{kind = .Record, program = "storage", level = "info", text = "storage: the store console is at its limit of 4 blocks: the commit of generation 3 thinned 1 version, the oldest of the store first", any_order = true},
 	// An error of a service is a record: the console writes it as a sentence.
 	{kind = .Type, text = "storage.write(\"\", \"x\")"},
 	{kind = .Wait, text = "[console] error: storage.write: the argument name is empty; it must have 1 to 39 bytes (-3)"},
 	{kind = .Type, text = "storage.read(\"nothing\")"},
 	{kind = .Wait, text = "[console] error: storage.read: the argument name: the store has no object with this name (-7)"},
 	{kind = .Type, text = "storage.objects()"},
-	{kind = .Wait, text = "[console] greeting 16 bytes, generation 2"},
+	{kind = .Wait, text = "[console] greeting 20 bytes, generation 3"},
 	{kind = .Type, text = "storage.stores()"},
-	{kind = .Wait, text = "; console: 1 objects, 0 versions, 3 of 4 blocks, 0 shared, 1 connection"},
+	{kind = .Wait, text = "[console] console: 1 objects, 0 versions, 3 of 4 blocks, 0 shared, 1 connection"},
 	// The person sees the grant and revokes it: the store stays on the disk,
 	// and the console cannot reach it.
 	{kind = .Type, text = "grants(\"console\")"},
@@ -1396,10 +1402,39 @@ scenario := [?]Step {
 	{kind = .Type, text = "storage.write(\"greeting\", \"changed\")"},
 	{kind = .Wait, text = "[console] error: storage.write: the caller has no grant for this: a private store (-1)"},
 	{kind = .Type, text = "storage.stores()"},
-	{kind = .Wait, text = "; console: 1 objects, 0 versions, 3 of 4 blocks, 0 shared, 0 connections"},
+	{kind = .Wait, text = "[console] console: 1 objects, 0 versions, 3 of 4 blocks, 0 shared, 0 connections"},
 	{kind = .Type, text = "grants(\"console\")"},
 	{kind = .Wait, text = "[console] console lost: store"},
 	{kind = .Shot, text = "storage"},
+	// Versions (property 9): notes commits each key, and the storage service
+	// keeps the state before each commit. The person steps back through the
+	// versions of the note and restores one; nothing is lost.
+	{kind = .Launch, text = "notes"},
+	{kind = .Wait, text = "notes: a new store: no note, the count 0", any_order = true},
+	{kind = .Wait, text = "compositor: surface notes"},
+	{kind = .Type, text = "versions"},
+	{kind = .Wait, text = "notes: the note is \"versions\", generation 11, 7 versions; one commit of the note: "},
+	{kind = .Key, text = "up"},
+	{kind = .Wait, text = "notes: the version 7 of 8, generation 10: \"version\""},
+	{kind = .Key, text = "up"},
+	{kind = .Wait, text = "notes: the version 6 of 8, generation 9: \"versio\""},
+	{kind = .Shot, text = "notes_versions"},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "notes: restored the version of generation 9: \"versio\", in the commit of generation 12 in "},
+	// The exports of the versions, from the host: the remote service acts
+	// for the person, so it names the store of notes.
+	{kind = .Call, text = "storage.versions(\"notes\", \"note\")", expected = "9 rows of Version"},
+	{kind = .Call, text = "storage.version(\"notes\", \"note\", 7)", expected = "vers"},
+	{kind = .Call, text = "storage.compare(\"notes\", \"note\", 6, 11)", expected = "1 rows of Byte_Range"},
+	{kind = .Call, text = "storage.version(\"notes\", \"note\", 99)", outcome = .Failed, expected = "error: storage.version: the argument generation: the object has no version of the generation 99 (-9)"},
+	{kind = .Call, text = "storage.restore(\"notes\", \"note\", 11)", expected = "13"},
+	{kind = .Call, text = "storage.clone(\"notes\", \"note\", \"copy\")", expected = "14"},
+	{kind = .Front, text = "console"},
+	{kind = .Type, text = "storage.stores()"},
+	{kind = .Wait, text = "[console] notes: 2 objects, 9 versions, "},
+	{kind = .Shot, text = "storage_versions"},
+	{kind = .Type, text = "stop(\"notes\")"},
+	{kind = .Wait, text = "root: notes stopped"},
 	// Errors that diagnose: each case makes an error for real, and the
 	// window shows the sentence of its error record. The program fault
 	// stops three calls deep: the tool names the functions of its stack
