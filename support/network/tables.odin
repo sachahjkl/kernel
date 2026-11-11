@@ -51,38 +51,56 @@ problem_rows :: proc "contextless" (own: ^Problem_Table, machine: ^Problem_Table
 	return count
 }
 
-// The admitted remotes of a listen grant: each remote that sent a segment
-// to the listen port, until the program releases it. A segment to send goes
-// out only to an admitted remote (docs/NETWORK.md).
+// The admitted remotes of a listen grant: a remote that sent a SYN to the
+// listen port. A segment to send goes out only to an admitted remote
+// (docs/NETWORK.md). Each place has the time of its last segment, in or
+// out: when the table is full, the oldest place with no segment for
+// ADMITTED_IDLE serves again, so that a program that forgets a Release
+// cannot close its own port.
+ADMITTED_IDLE :: 60_000 // Milliseconds: more than each timer of support/tcp and of `server`.
+
 Admitted_Remote :: struct {
 	address: u32,
 	port:    u16,
 	used:    bool,
+	time:    u64, // Milliseconds: the last segment of this remote, in or out.
 }
 
 Admitted :: [datagram.ADMITTED_CAPACITY]Admitted_Remote
 
-admitted_find :: proc "contextless" (table: ^Admitted, address: u32, port: u16) -> bool {
+// admitted_find says if a remote is admitted, and takes now as the time of
+// its last segment.
+admitted_find :: proc "contextless" (table: ^Admitted, address: u32, port: u16, now: u64) -> bool {
 	for &item in table {
 		if item.used && item.address == address && item.port == port {
+			item.time = now
 			return true
 		}
 	}
 	return false
 }
 
-// admitted_add admits a remote. false: the table is full.
-admitted_add :: proc "contextless" (table: ^Admitted, address: u32, port: u16) -> bool {
-	if admitted_find(table, address, port) {
+// admitted_add admits a remote: a free place, else the oldest place with no
+// segment for ADMITTED_IDLE. false: each place had a segment in that time.
+admitted_add :: proc "contextless" (table: ^Admitted, address: u32, port: u16, now: u64) -> bool {
+	if admitted_find(table, address, port, now) {
 		return true
 	}
-	for &item in table {
+	oldest := -1
+	for &item, index in table {
 		if !item.used {
-			item = {address = address, port = port, used = true}
+			item = {address = address, port = port, used = true, time = now}
 			return true
 		}
+		if now - item.time >= ADMITTED_IDLE && (oldest < 0 || item.time < table[oldest].time) {
+			oldest = index
+		}
 	}
-	return false
+	if oldest < 0 {
+		return false
+	}
+	table[oldest] = {address = address, port = port, used = true, time = now}
+	return true
 }
 
 // admitted_release forgets a remote. It says if the remote was admitted.
@@ -94,6 +112,21 @@ admitted_release :: proc "contextless" (table: ^Admitted, address: u32, port: u1
 		}
 	}
 	return false
+}
+
+// source_valid says if an address can be the source of a segment that the
+// network service admits: not 0, not a broadcast (all ones, or the subnet
+// broadcast), not multicast (224.0.0.0/4), not the local address.
+source_valid :: proc "contextless" (address: u32, local: u32, mask: u32) -> bool {
+	switch {
+	case address == 0, address == 0xFFFF_FFFF, address == local:
+		return false
+	case address >> 28 == 0xE:
+		return false
+	case address & mask == local & mask && address | mask == 0xFFFF_FFFF:
+		return false
+	}
+	return true
 }
 
 ARP_CAPACITY :: 16

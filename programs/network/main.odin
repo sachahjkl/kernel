@@ -46,6 +46,9 @@ PORT_FIRST :: 49152 // The local UDP port of endpoint n is PORT_FIRST + n.
 TCP_PORT_FIRST :: 50176 // A client grant of endpoint n: the local TCP ports from TCP_PORT_FIRST + n * datagram.PORT_BLOCK.
 ECHO_IDENTIFIER :: 0x6E00 // The identifier of an echo request of endpoint n is ECHO_IDENTIFIER + n.
 ANSWER_TIME :: 1000 // Milliseconds for an answer of ARP or of an echo.
+TCP_SYN :: 0x02 // Flags of the byte 13 of a TCP header.
+TCP_RST :: 0x04
+TCP_ACK :: 0x10
 PENDING_CAPACITY :: 64
 
 // The tags of the frame ring: a place for Receive and Send.
@@ -286,7 +289,7 @@ granted :: proc "contextless" (endpoint: ^Endpoint, tag: u32, address: u64, port
 // segment_granted checks a segment to send, in the copy that this service
 // made: its local port is a port of the endpoint, and its remote is the
 // remote of a client grant, or an admitted remote of a listen grant.
-segment_granted :: proc "contextless" (endpoint: ^Endpoint, tag: u32, address: u32, segment: []u8) -> (port: u16, ok: bool) {
+segment_granted :: proc "contextless" (endpoint: ^Endpoint, tag: u32, address: u32, segment: []u8, now: u64) -> (port: u16, ok: bool) {
 	local := network.read_16(segment, 0)
 	port = network.read_16(segment, 2)
 	grant := endpoint.grant
@@ -295,7 +298,7 @@ segment_granted :: proc "contextless" (endpoint: ^Endpoint, tag: u32, address: u
 	case !in_block:
 		complete(endpoint, tag, .Not_Granted, {0 = u64(address), 1 = u64(port), 2 = u64(grant.address), 3 = u64(grant.port), 4 = u64(local), 5 = u64(endpoint.local_port), 6 = u64(endpoint.port_count)})
 	case grant.listen:
-		if network.admitted_find(&endpoint.admitted, address, port) {
+		if network.admitted_find(&endpoint.admitted, address, port, now) {
 			return port, true
 		}
 		complete(endpoint, tag, .Not_Granted, {0 = u64(address), 1 = u64(port), 2 = 0, 3 = u64(grant.port)})
@@ -355,7 +358,7 @@ command :: proc "contextless" (endpoint: ^Endpoint, index: int, record: ring.Rec
 		remote_port := u16(values[3])
 		if endpoint.tcp {
 			copy(place_bytes(send_place)[network.IPV4_DATA:], endpoint.region[place:][:count])
-			port, allowed := segment_granted(endpoint, tag, u32(values[2]), place_bytes(send_place)[network.IPV4_DATA:][:count])
+			port, allowed := segment_granted(endpoint, tag, u32(values[2]), place_bytes(send_place)[network.IPV4_DATA:][:count], now)
 			if !allowed {
 				send_place_free(send_place)
 				return true
@@ -539,7 +542,26 @@ arrived :: proc "contextless" (place: int, length: int, now: u64) {
 		offset := u16(network.ETHERNET_HEADER + network.IPV4_HEADER)
 		switch {
 		case grant.listen:
-			if !network.admitted_add(&endpoint.admitted, packet.source_address, packet.source_port) {
+			if network.admitted_find(&endpoint.admitted, packet.source_address, packet.source_port, now) {
+				break
+			}
+			// A remote is admitted on a SYN only (no ACK, no RST): a stray
+			// segment of an unknown remote takes no place, and the program
+			// does not see it. And only from an address that can answer, and
+			// only when a Receive waits for the SYN.
+			if packet.tcp_flags & (TCP_SYN | TCP_RST | TCP_ACK) != TCP_SYN {
+				network.problem_count(&endpoint.problems, {kind = .Not_Granted, layer = .Tcp, offset = offset, value = u32(packet.source_port), limit = u32(grant.port)}, .Endpoint)
+				return
+			}
+			if !network.source_valid(packet.source_address, LOCAL_ADDRESS, NETWORK_MASK) {
+				network.problem_count(&endpoint.problems, {kind = .Bad_Header, layer = .Ipv4, offset = network.ETHERNET_HEADER + 12, value = packet.source_address}, .Endpoint)
+				return
+			}
+			if endpoint.posted_count == 0 {
+				endpoint.dropped += 1
+				return
+			}
+			if !network.admitted_add(&endpoint.admitted, packet.source_address, packet.source_port, now) {
 				network.problem_count(&endpoint.problems, {kind = .Full, layer = .Tcp, offset = offset, value = u32(packet.source_port), limit = datagram.ADMITTED_CAPACITY}, .Endpoint)
 				return
 			}
@@ -711,7 +733,15 @@ controlled :: proc "contextless" (record: ring.Record) {
 		result = .Bad_Command
 		for &item in endpoints {
 			if item.ring_memory != 0 && item.ring_memory == handle {
-				item.grant = datagram.grant_unpack(record.values[1])
+				// A grant changes to none (a revocation), or to a grant of the
+				// same form and the same local ports: the local ports and their
+				// check of overlap come from Endpoint_Add only.
+				new_grant := datagram.grant_unpack(record.values[1])
+				same_form := new_grant.tcp == item.tcp && new_grant.listen == item.grant.listen && (!new_grant.listen || new_grant.port == item.local_port)
+				if datagram.granted(new_grant) && !same_form {
+					break
+				}
+				item.grant = new_grant
 				item.admitted = {}
 				system.log("network: the grant of the endpoint of ", system.name_of(item.name[:]), " changed: ", datagram.granted(item.grant) ? "a new remote" : "none")
 				result = .Ok

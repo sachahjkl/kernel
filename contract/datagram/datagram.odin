@@ -155,7 +155,9 @@ Control :: enum u32 {
 	Endpoint_Add    = 1,
 	// values[0]: the datagram ring. values[1]: the new grant (grant_pack);
 	// 0 ends the grant (a revocation): each request that names a remote
-	// gives Not_Granted, and no datagram arrives.
+	// gives Not_Granted, and no datagram arrives. A new grant has the form
+	// of the old one (UDP or TCP, client or listen, the same listen port):
+	// else Bad_Command, because the local ports come from Endpoint_Add.
 	Endpoint_Grant  = 2,
 	// values[0]: the datagram ring. The network service ends the endpoint,
 	// and closes the ring and the region.

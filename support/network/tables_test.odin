@@ -83,19 +83,40 @@ neighbors_full_table :: proc(t: ^testing.T) {
 }
 
 // The admitted remotes of a listen grant: a remote is admitted one time,
-// a full table refuses a new remote, and a release frees its place.
+// a full table refuses a new remote while each place had a segment in the
+// last ADMITTED_IDLE, a release frees its place, and the oldest idle place
+// serves again.
 @(test)
 admitted_remotes :: proc(t: ^testing.T) {
 	table: Admitted
 	for index in 0 ..< datagram.ADMITTED_CAPACITY {
-		testing.expect(t, admitted_add(&table, 0x0A000202, u16(40000 + index)))
+		testing.expect(t, admitted_add(&table, 0x0A000202, u16(40000 + index), u64(1000 + index)))
 	}
-	testing.expect(t, admitted_add(&table, 0x0A000202, 40000)) // Already admitted.
-	testing.expect(t, !admitted_add(&table, 0x0A000203, 40000))
-	testing.expect(t, admitted_find(&table, 0x0A000202, 40001))
-	testing.expect(t, !admitted_find(&table, 0x0A000203, 40001))
+	testing.expect(t, admitted_add(&table, 0x0A000202, 40000, 2000)) // Already admitted.
+	testing.expect(t, !admitted_add(&table, 0x0A000203, 40000, 3000))
+	testing.expect(t, admitted_find(&table, 0x0A000202, 40001, 3000))
+	testing.expect(t, !admitted_find(&table, 0x0A000203, 40001, 3000))
 	testing.expect(t, admitted_release(&table, 0x0A000202, 40001))
 	testing.expect(t, !admitted_release(&table, 0x0A000202, 40001))
-	testing.expect(t, !admitted_find(&table, 0x0A000202, 40001))
-	testing.expect(t, admitted_add(&table, 0x0A000203, 40000))
+	testing.expect(t, !admitted_find(&table, 0x0A000202, 40001, 3000))
+	testing.expect(t, admitted_add(&table, 0x0A000203, 40000, 3000))
+	// Full again. 60 s later each place is idle but 40000 (time 2000) and
+	// the new one (3000): the oldest idle place is the port 40002 (time 1002).
+	testing.expect(t, !admitted_add(&table, 0x0A000204, 1, 4000))
+	testing.expect(t, admitted_add(&table, 0x0A000204, 1, 1002 + ADMITTED_IDLE))
+	testing.expect(t, !admitted_find(&table, 0x0A000202, 40002, 70_000))
+	testing.expect(t, admitted_find(&table, 0x0A000202, 40003, 70_000))
+}
+
+@(test)
+sources_that_are_refused :: proc(t: ^testing.T) {
+	LOCAL :: 0x0A00020F
+	MASK :: 0xFFFF_FF00
+	testing.expect(t, source_valid(0x0A000202, LOCAL, MASK))
+	testing.expect(t, source_valid(0x08080808, LOCAL, MASK))
+	testing.expect(t, !source_valid(0, LOCAL, MASK))
+	testing.expect(t, !source_valid(0xFFFF_FFFF, LOCAL, MASK))
+	testing.expect(t, !source_valid(0x0A0002FF, LOCAL, MASK)) // The subnet broadcast.
+	testing.expect(t, !source_valid(LOCAL, LOCAL, MASK))
+	testing.expect(t, !source_valid(0xE000_0001, LOCAL, MASK))
 }
