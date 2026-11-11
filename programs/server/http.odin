@@ -42,6 +42,7 @@ Answer_Body :: enum u8 {
 Session :: struct {
 	input:              [web.REQUEST_HEAD_LIMIT]u8, // Bytes read and not used yet: a head, a body, the next request.
 	input_length:       int,
+	head_scanned:       int, // Bytes of the input that the search for the end of a head saw: the next search starts there.
 	request:            web.Request,
 	has_request:        bool, // A head was read; its answer is not all written.
 	reading_body:       bool,
@@ -145,7 +146,15 @@ answer_start :: proc "contextless" (index: int, status: int, content_type: strin
 	}
 	if session.close_after {
 		text(&head, "Connection: close\r\n")
+	} else if request.minor_version == 0 {
+		// HTTP/1.0 closes after each answer unless the answer says keep-alive.
+		text(&head, "Connection: keep-alive\r\n")
 	}
+	// Each page has the origin of / and /counts.json: no browser guesses a
+	// type that runs (a text page read as HTML). The pages of the store run
+	// script on this origin by design: the origin holds no secret, no
+	// cookie and no authority (docs/NETWORK.md, "The HTTP server").
+	text(&head, "X-Content-Type-Options: nosniff\r\n")
 	// No Date field: this system has no clock of the day, and RFC 9110
 	// 6.6.1 says that a server with no clock does not send one.
 	text(&head, "\r\n")
@@ -399,6 +408,12 @@ http_connection_work :: proc "contextless" (index: int) {
 		if session.input_length == 0 {
 			return
 		}
+		// A head that comes in small parts: each byte is searched once.
+		if session.input_length < len(session.input) && web.head_end_from(session.input[:session.input_length], session.head_scanned) == 0 {
+			session.head_scanned = session.input_length
+			return // More bytes are needed.
+		}
+		session.head_scanned = 0
 		request, complete := web.request_read(session.input[:session.input_length])
 		if !complete {
 			if session.input_length < len(session.input) {
@@ -507,6 +522,7 @@ http_limits :: proc "contextless" (index: int, now: u64) {
 		if session.head_at != 0 && now - session.head_at >= HEAD_TIME_LIMIT {
 			session.request = {}
 			session.input_length = 0
+			session.head_scanned = 0
 			answer_start(index, 408, "text/plain; charset=utf-8", "the head of the request did not come in 10 s\n")
 		}
 	}
