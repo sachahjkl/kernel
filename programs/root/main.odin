@@ -110,6 +110,8 @@ grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 		return {.Network, .Serve, .Store} // A listen grant, its exports for the console, and its pages in its private store.
 	case "fetch":
 		return {.Network}
+	case "quic_echo":
+		return {.Network} // A listen grant of UDP: QUIC in the program, the module cryptography through its imports.
 	case "network":
 		return {.Network_Device}
 	case "remote":
@@ -276,6 +278,11 @@ things_of :: proc "contextless" (name: string) -> system.Budget_Amounts {
 		return {pages = 2048, programs = 3, threads = 4} // It starts fault and its child, and 3 threads under contention.
 	case "server":
 		return {pages = 4096, programs = 1, threads = 1} // A table of 32 connections with their buffers, and a large window.
+	case "quic_echo":
+		// 16 QUIC connections of about 214 KiB each and their echo buffers
+		// of 64 KiB: about 1112 pages, in one mapping of the program
+		// (docs/QUIC.md, section 6).
+		return {pages = 2048, programs = 1, threads = 1}
 	case "tables":
 		return {pages = 4096, programs = 3, threads = 3} // A table of 65536 readings in a memory object (640 pages), and two call hosts (sample, hostile_exports) with their threads.
 	}

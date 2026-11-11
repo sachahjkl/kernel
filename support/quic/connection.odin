@@ -333,6 +333,10 @@ connection_tls_start :: proc "contextless" (connection: ^Connection, error: ^err
 	parameters.initial_source_connection_id_length = copy(parameters.initial_source_connection_id[:], connection.local_connection_id[:])
 	parameters.has_initial_source_connection_id = true
 	if connection.configuration.tls.role == .Server {
+		// A server of this library finds a connection by its identifier and
+		// by the address and port of its client: the client must not move
+		// to another address (RFC 9000, section 9).
+		parameters.disable_active_migration = true
 		parameters.original_destination_connection_id_length = copy(parameters.original_destination_connection_id[:], connection.original_destination_connection_id[:connection.original_destination_connection_id_length])
 		parameters.has_original_destination_connection_id = true
 	}

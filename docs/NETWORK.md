@@ -16,6 +16,7 @@ Status: done on 2026-11-11 (choices 295 to 309 of `FIRST_MILESTONE.md`). The fir
 | Network service | `programs/network` | Gives each program with the grant one endpoint. For a segment endpoint: it checks each segment against the grant, writes and checks the IPv4 header, checks the TCP checksum of a segment that arrives, and copies the segment one time. It keeps no state of a connection |
 | Server | `programs/server` | A program with a listen grant on the TCP port 80. One thread serves all its connections from one connection table. It speaks a small HTTP/1.1 |
 | Client | `programs/fetch` | A program with a segment grant of one remote. It fetches pages and measures |
+| QUIC server | `programs/quic_echo` | A program with a listen grant of UDP on the port 4433: QUIC in the program (`docs/QUIC.md`, section 6) |
 | Peer | `tools/kerneltool/peer.odin` | The gateway of the test machine. It is also a TCP client that the tool drives, with loss, reorder and duplicates that the tool chooses |
 
 The kernel has no network code. It did not change in this step.
@@ -164,6 +165,18 @@ A third network machine (`scenario_tcp`) has the peer of the tool on `-netdev dg
 - **No Date field**: the system has no clock of the day, and a server with no clock sends none (RFC 9110 6.6.1).
 - **No TLS** until the work of QUIC: the next section says what it needs.
 
+## The listen grant of UDP
+
+Written on 2026-11-11 for QUIC (`docs/QUIC.md`, section 6), not run yet. A datagram endpoint can have a listen grant: one local UDP port that the root service names, and the remotes that came to it. Its rules are the ones of the listen grant of TCP above, with one change: a new remote is admitted on a datagram of 1200 bytes at least (`datagram.LISTEN_FIRST_LEAST`), where TCP admits it on a SYN. 1200 bytes is the least first datagram of a QUIC client (RFC 9000, section 14.1), so a stray small datagram of an unknown remote takes no place.
+
+- The table of admitted remotes is the one of TCP (`network.Admitted`): 64 places, the oldest place with no traffic for 120 s serves again, `Release` forgets a remote.
+- A UDP listen port is not a port PORT_FIRST + n of a client grant, and no other UDP listen grant has it.
+- A Send goes only to an admitted remote, and keeps its place alive.
+- `Resolve` and `Echo` are refused, as for each listen grant: the program answers, but it does not reach.
+- The program releases a remote whose datagram it refused (a forged Initial, a datagram of no connection), so that a flood of many addresses does not hold the table.
+
+The kernel did not change. The network service does for a datagram of a listen grant what it does for each datagram: it checks the headers and the checksum, finds the endpoint by the local port, checks the remote, and copies the datagram one time.
+
 ## QUIC: what it reuses, and what it needs
 
 The design of QUIC and its first layer, packet protection, are in `docs/QUIC.md`. The text below was written before them, and stays as the list of what QUIC reuses; the list of what it needs is now answered: TLS 1.3 and its primitives (`docs/CRYPTOGRAPHY.md`), randomness (`docs/RANDOMNESS.md`), and raw public keys in place of certificates and a date (`docs/QUIC.md`, section 4).
@@ -172,7 +185,7 @@ QUIC is the next step. It runs over UDP (RFC 9000), so it is a library in the pr
 
 It reuses from this step:
 
-- The endpoint and its grant: a client grant of one remote, and the listen grant with its admitted remotes, for UDP in place of TCP. The table of admitted remotes moves to the datagram endpoint unchanged.
+- The endpoint and its grant: a client grant of one remote, and the listen grant with its admitted remotes, for UDP in place of TCP. The table of admitted remotes moves to the datagram endpoint unchanged (done: the section above).
 - The form of the interface: a table of connection records and buffers of the caller, one `step` for a batch of datagrams, a table of events, the deadline of the next timer.
 - The ideas of loss and congestion: RFC 9002 takes the round trip estimate of RFC 6298, and its congestion control is NewReno. The code of the estimate and of the congestion window can be shared, as a package that both libraries import.
 - The tests: the peer with loss, reorder and duplicates, and a machine with libslirp for UDP.

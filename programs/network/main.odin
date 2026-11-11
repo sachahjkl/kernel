@@ -8,7 +8,8 @@
 // address (10.0.2.15/24, the gateway 10.0.2.2: the network of QEMU).
 //
 // The root service names the grant of each endpoint. A datagram endpoint
-// reaches one remote address and one remote UDP port. A segment endpoint
+// reaches one remote address and one remote UDP port, or listens on one
+// local UDP port and answers the remotes that came to it. A segment endpoint
 // (TCP) has a client grant (one remote, from a block of local TCP ports) or
 // a listen grant (one local TCP port, and the remotes that sent a segment
 // to it). A request to another remote is refused with the detail of the
@@ -356,7 +357,14 @@ command :: proc "contextless" (endpoint: ^Endpoint, index: int, record: ring.Rec
 			complete(endpoint, tag, .Bad_Command, errors.ring_fail(kind, .Too_Small, .Bytes, 2, i64(count), datagram.SEGMENT_LEAST))
 			return true
 		}
-		if !endpoint.tcp && !granted(endpoint, tag, values[2], values[3], true, kind, 3) {
+		if !endpoint.tcp && endpoint.grant.listen {
+			// A UDP listen grant answers only an admitted remote, and keeps
+			// its place alive.
+			if !network.admitted_find(&endpoint.admitted, u32(values[2]), u16(values[3]), now) {
+				complete(endpoint, tag, .Not_Granted, not_granted(kind, 3, u32(values[2]), u16(values[3]), 0))
+				return true
+			}
+		} else if !endpoint.tcp && !granted(endpoint, tag, values[2], values[3], true, kind, 3) {
 			return true
 		}
 		if !link_up {
@@ -534,14 +542,18 @@ arrived :: proc "contextless" (place: int, length: int, now: u64) {
 		if packet.destination_address != LOCAL_ADDRESS {
 			return
 		}
-		port := int(packet.destination_port) - PORT_FIRST
-		if port < 0 || port >= ENDPOINT_CAPACITY || endpoints[port].ring_memory == 0 || endpoints[port].tcp {
+		endpoint := udp_endpoint_of(packet.destination_port)
+		if endpoint == nil {
 			problem({kind = .No_Endpoint, layer = .Udp, offset = network.ETHERNET_HEADER + network.IPV4_HEADER + 2, value = u32(packet.destination_port)})
 			return
 		}
-		endpoint := &endpoints[port]
 		grant := endpoint.grant
-		if grant.address == 0 || packet.source_address != grant.address || packet.source_port != grant.port {
+		switch {
+		case grant.listen:
+			if !udp_remote_admitted(endpoint, packet, now) {
+				return
+			}
+		case grant.address == 0 || packet.source_address != grant.address || packet.source_port != grant.port:
 			network.problem_count(&endpoint.problems, {kind = .Not_Granted, layer = .Udp, offset = network.ETHERNET_HEADER + network.IPV4_HEADER, value = u32(packet.source_port), limit = u32(grant.port)}, .Endpoint)
 			return
 		}
@@ -599,6 +611,53 @@ arrived :: proc "contextless" (place: int, length: int, now: u64) {
 		}
 		deliver(endpoint, packet)
 	}
+}
+
+// udp_endpoint_of gives the datagram endpoint of a local UDP port: the port
+// PORT_FIRST + n of a client grant, or the port of a UDP listen grant. nil:
+// no endpoint has it.
+udp_endpoint_of :: proc "contextless" (port: u16) -> ^Endpoint {
+	index := int(port) - PORT_FIRST
+	if index >= 0 && index < ENDPOINT_CAPACITY {
+		item := &endpoints[index]
+		if item.ring_memory != 0 && !item.tcp && !item.grant.listen {
+			return item
+		}
+	}
+	for &item in endpoints {
+		if item.ring_memory != 0 && !item.tcp && item.grant.listen && item.local_port == port {
+			return &item
+		}
+	}
+	return nil
+}
+
+// udp_remote_admitted says if a datagram reaches a UDP listen endpoint: its
+// remote is admitted, or it is admitted now. A new remote is admitted on a
+// datagram of datagram.LISTEN_FIRST_LEAST bytes at least (a stray small
+// datagram takes no place), from an address that can answer, and only when
+// a Receive waits for it: the rules of the TCP listen grant, with the size
+// in the place of the SYN.
+udp_remote_admitted :: proc "contextless" (endpoint: ^Endpoint, packet: network.Packet, now: u64) -> bool {
+	if network.admitted_find(&endpoint.admitted, packet.source_address, packet.source_port, now) {
+		return true
+	}
+	offset := u16(network.ETHERNET_HEADER + network.IPV4_HEADER)
+	switch {
+	case len(packet.data) < datagram.LISTEN_FIRST_LEAST:
+		network.problem_count(&endpoint.problems, {kind = .Bad_Length, layer = .Udp, offset = offset + 4, value = u32(len(packet.data)), limit = datagram.LISTEN_FIRST_LEAST}, .Endpoint)
+		return false
+	case !network.source_valid(packet.source_address, LOCAL_ADDRESS, NETWORK_MASK):
+		network.problem_count(&endpoint.problems, {kind = .Bad_Header, layer = .Ipv4, offset = network.ETHERNET_HEADER + 12, value = packet.source_address}, .Endpoint)
+		return false
+	case endpoint.posted_count == 0:
+		endpoint.dropped += 1
+		return false
+	case !network.admitted_add(&endpoint.admitted, packet.source_address, packet.source_port, now):
+		network.problem_count(&endpoint.problems, {kind = .Full, layer = .Udp, offset = offset, value = u32(packet.source_port), limit = datagram.ADMITTED_CAPACITY}, .Endpoint)
+		return false
+	}
+	return true
 }
 
 // deliver gives a datagram or a segment to the first Receive of an endpoint.
@@ -696,14 +755,24 @@ controlled :: proc "contextless" (record: ring.Record) {
 				break
 			}
 		}
-		// A listen port is one TCP port of one endpoint: not a port that
-		// another segment endpoint has, and not in a block of client ports.
+		// A listen port is one port of one endpoint: a TCP port that no other
+		// segment endpoint has and not in a block of client ports; a UDP port
+		// that no other UDP listen grant has and not a port PORT_FIRST + n of
+		// a client grant.
 		asked := datagram.grant_unpack(record.values[2])
 		taken := false
 		if asked.tcp && asked.listen {
 			taken = asked.port >= TCP_PORT_FIRST && asked.port < TCP_PORT_FIRST + ENDPOINT_CAPACITY * datagram.PORT_BLOCK
 			for &item in endpoints {
 				if item.ring_memory != 0 && item.tcp && asked.port >= item.local_port && asked.port - item.local_port < item.port_count {
+					taken = true
+				}
+			}
+		}
+		if !asked.tcp && asked.listen {
+			taken = asked.port >= PORT_FIRST && asked.port < PORT_FIRST + ENDPOINT_CAPACITY
+			for &item in endpoints {
+				if item.ring_memory != 0 && !item.tcp && item.grant.listen && item.local_port == asked.port {
 					taken = true
 				}
 			}
@@ -758,6 +827,9 @@ controlled :: proc "contextless" (record: ring.Record) {
 			case grant.tcp && grant.listen:
 				endpoint.local_port = grant.port
 				system.log("network: an endpoint for ", system.name_of(name[:]), ": TCP, the listen port ", u64(grant.port), ", the remotes that send to it")
+			case grant.listen:
+				endpoint.local_port = grant.port
+				system.log("network: an endpoint for ", system.name_of(name[:]), ": UDP, the listen port ", u64(grant.port), ", the remotes that send 1200 bytes to it")
 			case grant.tcp:
 				endpoint.local_port = u16(TCP_PORT_FIRST + free * datagram.PORT_BLOCK)
 				endpoint.port_count = datagram.PORT_BLOCK

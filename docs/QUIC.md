@@ -1,6 +1,6 @@
 # QUIC
 
-Status: the design of QUIC version 1 in this system, and its first three layers (packet protection, TLS 1.3, the transport of one connection), written on 2026-11-11 (branch `work/tcp`). The owner has not reviewed it. The terms are in `GLOSSARY.md`, section "QUIC".
+Status: the design of QUIC version 1 in this system, its first three layers (packet protection, TLS 1.3, the transport of one connection), and the fourth (a server of several connections over a listen grant of UDP, `quic_echo`), written on 2026-11-11 (branch `work/tcp`). The owner has not reviewed it. The terms are in `GLOSSARY.md`, section "QUIC".
 
 QUIC (RFC 9000) carries the streams of a connection over UDP, and protects each packet with keys that a TLS 1.3 handshake gives (RFC 9001). The purpose here: the service `remote` gets an authentication (a host program that sends UDP to its port acts for the person today), and `server` gets a second transport.
 
@@ -8,13 +8,13 @@ QUIC (RFC 9000) carries the streams of a connection over UDP, and protects each 
 
 | Part | Where | Why |
 |---|---|---|
-| The datagrams | An endpoint of the network service, as for UDP today. A server needs datagrams from any remote on one port: a listen grant for datagrams, with admitted remotes, as for TCP (section 6) | The service multiplexes the one pair of queues of the device (the note of property 5 in `PROPERTIES.md`) |
+| The datagrams | An endpoint of the network service, as for UDP today. A server needs datagrams from any remote on one port: a listen grant of UDP, with admitted remotes, as for TCP (section 6) | The service multiplexes the one pair of queues of the device (the note of property 5 in `PROPERTIES.md`) |
 | QUIC: packets, keys, streams, loss, congestion | `support/quic`, a library in the program that holds the connection | QUIC is a library in the program; its state is memory of the program |
 | TLS 1.3 | `support/quic` too: QUIC carries the handshake in CRYPTO frames, with no record layer | One library for one connection |
 | The primitives | The module `cryptography`, loaded in the program through its import slots | Proven code, one module, named by its hash (`docs/CRYPTOGRAPHY.md`) |
 | The keys | The memory of the program that holds the connection, and nowhere else | A key never crosses a ring: the module runs in the program |
 
-**No kernel change is needed.** QUIC uses the operations that UDP uses today (rings, memory, waits). The changes are in the network service and its contract (a listen grant for datagrams, section 6), not in the kernel.
+**No kernel change is needed.** QUIC uses the operations that UDP uses today (rings, memory, waits). The changes are in the network service and its contract (a listen grant of UDP, section 6), not in the kernel.
 
 ## 2. The form of the library
 
@@ -174,7 +174,7 @@ The values of RFC 8448, RFC 8446 (the Random of a HelloRetryRequest) and RFC 841
 **What it does:**
 - **The three packet number spaces**, each with its keys, its packet numbers, its ACK ranges and its packets in flight. The Initial keys go when the client sends its first Handshake packet and when the server opens one; the Handshake keys go when the handshake is confirmed (RFC 9001, section 4.9).
 - **The handshake**: the bytes of TLS go in CRYPTO frames at their level, 4096 bytes at most for each level and direction. The keys of each level are installed when TLS gives them; the secrets of TLS are erased once the 1-RTT keys are installed. A failure of TLS closes the connection with the code 0x100 + alert. The 4096 bytes of the 1-RTT level hold every NewSessionTicket of the life of a connection: a server that sends more gives CRYPTO_BUFFER_EXCEEDED. The servers of this system send none.
-- **A server takes a client only with an authentic Initial**: the keys of the first Initial come from its Destination Connection ID into local records, and the record of the connection takes that identifier and those keys only when the packet opens. Anyone can make an authentic Initial (its keys come from a public value), so a handshake that does not complete within 10 s (`HANDSHAKE_TIME_LIMIT`) ends the record, whatever the idle timeout; a client has the same limit. A listening program keeps one record for each Destination Connection ID of a client, with a limit on the count of records (the endpoint, section 6).
+- **A server takes a client only with an authentic Initial**: the keys of the first Initial come from its Destination Connection ID into local records, and the record of the connection takes that identifier and those keys only when the packet opens. Anyone can make an authentic Initial (its keys come from a public value), so a handshake that does not complete within 10 s (`HANDSHAKE_TIME_LIMIT`) ends the record, whatever the idle timeout; a client has the same limit. A listening program keeps one record for each Destination Connection ID of a client, with a limit on the count of records (the server of several connections, section 6).
 - **Transport parameters**: each side sends its limits and its connection identifiers. The values of the peer are checked (RFC 9000, section 18.2): a repeated parameter, a value out of its range, a parameter that only a server sends, or an identifier that is not the one that the packets carried, gives TRANSPORT_PARAMETER_ERROR.
 - **Acknowledgements**: an ACK frame of up to 16 ranges. In the Initial and Handshake spaces it goes at once; in the 1-RTT space after 2 ack-eliciting packets or 25 ms.
 - **Loss detection** (RFC 9002, section 6):
@@ -216,7 +216,7 @@ The values of RFC 8448, RFC 8446 (the Random of a HelloRetryRequest) and RFC 841
 - NewReno: the congestion window does not grow and does not shrink after a loss; there is no persistent congestion.
 - Pacing, ECN, and a path MTU larger than 1200 bytes.
 - More than one stream, and unidirectional streams.
-- Version Negotiation, Retry and the stateless reset: a datagram of these kinds is dropped.
+- Version Negotiation, Retry and the stateless reset: a connection drops a datagram of these kinds (the server of section 6 answers another version).
 - A key update: a 1-RTT packet with the next key phase is dropped.
 - A packet number shorter than 4 bytes on the wire.
 - Packets of a level whose keys are not ready are dropped, not kept: the peer sends them again.
@@ -243,18 +243,110 @@ The values of RFC 8448, RFC 8446 (the Random of a HelloRetryRequest) and RFC 841
   - a least seed strength left at zero, and a client with no pinned key, are refused;
   - a ClientHello of 3900 bytes is taken; bytes left at the Initial level after the ServerHello fail the handshake.
 
-## 6. The next layers (designed, not built)
+## 6. QUIC on the network (the fourth layer, written on 2026-11-11, not run yet)
+
+**Where it runs.** QUIC runs in the program, as TCP does in `server` and `fetch`: `support/quic` over a datagram endpoint of the network service. The network service sees UDP datagrams; it reads no QUIC header and keeps no QUIC state.
+
+**What the datagram contract lacked, and what changed.** The contract had a listen grant for TCP only: a UDP endpoint named one remote, and the network service dropped each datagram of another remote. A QUIC server needs datagrams from any client on one port. So the listen grant now has a UDP form (`contract/datagram`, `programs/network`), with the rules of the TCP form:
+
+| Rule | TCP listen grant | UDP listen grant |
+|---|---|---|
+| The port | One local TCP port that the root service names | One local UDP port that the root service names |
+| A new remote is admitted on | A SYN (no ACK, no RST) | A datagram of 1200 bytes at least (`LISTEN_FIRST_LEAST`): the size of the first datagram of a QUIC client (RFC 9000, section 14.1) |
+| And only | From an address that can answer, when a Receive waits | The same |
+| The table | 64 admitted remotes, each with the time of its last segment in or out | The same table, the same code (`network.Admitted`) |
+| When it is full | The oldest place with no traffic for 120 s serves again; else the new remote is dropped and counted (`Full`) | The same |
+| A Send | Only to an admitted remote | The same |
+| The program forgets a remote | `Release`, after the last segment | `Release`, after the last datagram, and at once for a datagram that the program refused |
+
+The root service names the grant by the name of the program: `quic_echo` has the UDP port 4433 (`programs/root/network.odin`). The person reads it with `grants` and revokes it with `revoke`, as for the other endpoints.
+
+**What the kernel does: nothing new.** No kernel code changed. The endpoint uses the rings, the memory objects and the waits that UDP uses today.
+
+**The records.** A server has a table of `quic.Connection` records (connection records) in memory of the program: one mapping, never a stack (section 5). `quic_echo` has 16 records of about 214 KiB, and 16 echo buffers of 64 KiB: about 1112 pages (4.3 MiB) in one mapping, within its budget of 2048 pages (`programs/root/main.odin`).
+
+**The server of several connections** (`support/quic/server.odin`, `quic.Server`). The caller gives each datagram with its remote address and port; the server chooses the record:
+
+1. A packet whose Destination Connection ID is the identifier of a record goes to that record. In an Initial, the identifier that the client chose first also names its record. The same identifier from another remote is dropped: the server sends `disable_active_migration`, and a client does not move.
+2. An Initial with an unknown identifier takes a free record only when it is authentic: the server opens a copy of the packet with the Initial keys of its identifier first. A forged datagram never touches a record; its cost is one HKDF and one AES-GCM open of 1200 bytes, on a copy.
+3. Then the limits. A datagram over a limit gets no answer.
+4. A long header of another version, in 1200 bytes at least, gets one Version Negotiation packet that lists version 1.
+5. Each datagram that the server keeps nothing of (refused, not authentic, of no record) has its remote released at once, so that a flood does not fill the admitted remotes of the network service.
+
+| Limit | Value | Why |
+|---|---|---|
+| Records | 16 | 16 × 214 KiB and their echo fit the budget of the program |
+| Connections of one remote address | 8 | Half the table: one host cannot take all of it |
+| Connections in the handshake of one remote address | 2 | A host with authentic Initials of its own holds 2 records for 10 s at most |
+| Connections in the handshake at once | 8 | Half the table stays for connections that completed |
+| Handshake deadline | 10 s | Anyone can make an authentic Initial; the record is free again after this time |
+| Version Negotiation packets | 16 in one second | Each one has 51 bytes at most for a datagram of 1200 bytes: far under the anti-amplification limit; the count bounds the work |
+| Idle timeout | 30 s | The value of `quic_echo` |
+| The first datagram of a remote | 1200 bytes | The network service admits no remote with less |
+| Admitted remotes | 64 | The table of the network service (unchanged) |
+
+**What a client over a limit gets: nothing.** A CONNECTION_CLOSE would need an Initial packet built outside a record, for a client whose identity no one checked; an attacker that fills the table would learn when it is full. A real client tries again at its probe timeout, and ends at its own handshake deadline.
+
+**Version negotiation: one packet, within a count.** RFC 9000, section 6.1, says a server SHOULD answer a version that it does not speak. The answer is small (51 bytes at most for 1200 received), and 16 in one second bound the work. A Version Negotiation packet of this server has no authentication; a client of this system speaks only version 1 and never needs one.
+
+**The stateless reset: not done.** A server that restarts forgets its connections; their clients end at their idle timeout.
+
+**Retry: not done.** It would make a client prove its address before the server keeps a record. Without it, a host with its own authentic Initials holds 2 records for each of its addresses, 8 at most, for 10 s.
+
+**The key of a server.** `quic_echo` makes an Ed25519 key at its start from its own generator (`random.fill_for_a_key`, the strength "processor" at least). The private key stays in the memory of the program: in the configuration of its `quic.Server`, which copies it into each handshake, and each handshake erases its copy. The public key goes on the log ("quic_echo: the public key of this server: " and 64 hexadecimal digits) and in the window; a client pins it. A new start makes a new key, which the client must pin again: a key that lasts needs a store of the program and a grant, a later step.
+
+**A weak seed.** A seed weaker than "processor" makes no key (`Seed_Too_Weak`): `quic_echo` writes "the random seed of this program is weak: it makes no key of a server, and listens on nothing" on the log and in its window, and opens no endpoint. This is the rule of the owner (`docs/RANDOMNESS.md`): the program chooses what it accepts.
+
+**The programs.**
+- `programs/quic_echo`: the server. Each connection has one stream; each byte goes back, then the end of the stream after the end of the client. Its window shows its public key, its connections (remote, state, bytes in and out, smoothed round-trip time) and its counts (accepted, ended, not authentic, refused by a limit). It writes each new connection and each end on the log (50 lines in one second at most), and its counts once in a second when they change.
+- The client: the peer of the tool on the host (`tools/kerneltool/peer_quic.odin`). It links `support/quic` and the module `cryptography` compiled for the host, and pins the key that the machine printed. It sends its datagrams as the gateway 10.0.2.2, through the network device of the machine, so the network service of the machine is on the path. A client inside the machine would need a second program with a client grant of UDP to the local address; the network service sends no datagram to its own address (no loopback), so this is not possible today.
+
+**The tests.**
+- On the host (`support/quic/server_test.odin`): 8 clients at once from 8 addresses, each with an echo of 64 KiB; 8 clients of one address, which wait their turn; a flood of 1000 forged Initials from 1000 addresses and 15 authentic Initials from 3 addresses, then the real client connects, and the deadline frees the records of the flood; a client that vanishes in its handshake; a Version Negotiation packet, byte for byte, and its count in one second; a known identifier from another remote.
+- On the machine (`kerneltool test quic`, `tools/kerneltool/quic_scenario.odin`): 1 MiB each way; the same with 5 % lost, 10 % reordered and 10 % repeated; 8 clients at once; a client that pins another key (it refuses the server: bad_certificate); a flood of 1000 forged Initials from addresses of 198.18.0.0/15, a datagram of another version (one Version Negotiation packet), and a real client at the same time; a client that vanishes (the server ends its record at the handshake deadline). The machine of the weak seed starts `quic_echo` too (`random_scenario.odin`).
+
+**A stack that this project did not write: designed for the next round.** OpenSSL has a QUIC client since 3.2, with raw public keys of a server (`openssl s_client -quic`, `-enable_server_rpk`); the nixpkgs of the flake has OpenSSL 3.6.5. What the manual and the source of `apps/s_client.c` (tag openssl-3.6.0) say:
+- `-quic` needs `-alpn`.
+- `-enable_server_rpk` offers the server certificate types {raw public key, X.509}; this server accepts a list that has the raw public key.
+- After the handshake, `s_client` prints "Server-to-client raw public key negotiated", then "Server raw public key" and the key (`EVP_PKEY_print_public`).
+- `s_client` goes on after any check of the key (it is a test tool): the test compares the printed key with the key on the log of the machine. That is the pinning.
+- With `-adv`, the line `{fin}` ends the stream.
+
+The steps:
+1. QEMU user networking forwards a UDP port of the host to the port 4433 of the machine: add `hostfwd=udp:127.0.0.1:<port>-10.0.2.15:4433` to the `-netdev user` of `tools/kerneltool/main.odin`, next to the forward of TCP.
+2. The machine starts `quic_echo`; the tool reads its key with the step Quic_Key.
+3. The tool runs:
+   ```
+   printf 'an echo through QUIC\n{fin}\n' | nix shell nixpkgs#openssl -c openssl s_client -quic -alpn kernel-remote -enable_server_rpk -groups X25519 -sigalgs ed25519 -ciphersuites TLS_CHACHA20_POLY1305_SHA256 -adv -connect 127.0.0.1:<port>
+   ```
+4. The output must have "Server-to-client raw public key negotiated", the key of the log under "Server raw public key", and the echo of the line.
+
+What is not known before a run: whether `s_client` waits for the end of the stream from the server before it ends at the end of its input (else `-ign_eof` and a time limit), and the exact form of the printed key (`EVP_PKEY_print_public` of an Ed25519 key: "pub:" and the bytes in hexadecimal with colons). The next round runs it and records both.
+
+## 7. `remote` over QUIC (designed, not built)
+
+**Today.** The service `remote` has a datagram endpoint whose grant names the host (10.0.2.2, port `remote.HOST_PORT`), and the grant to act for the person. A call is one UDP datagram with a request header of 112 bytes (`contract/remote`) and its arguments; an answer comes in one or more datagrams. Nothing is encrypted and nothing is authenticated: whoever can send a datagram from the address and port of the host calls as the person.
+
+**What changes.**
+- `remote` becomes a QUIC server, as `quic_echo`: a listen grant of UDP in the place of its grant of the host, its key made at its start, its public key on its log and in its window.
+- The host tool pins that key (the step Quic_Key), and connects through the peer, or through `hostfwd=udp` with a stack of the host.
+- Each call rides one bidirectional stream of its own: the request (the header of 112 bytes and its arguments) then the end of the stream; the answer (its header, its result, its error record) then the end of the stream. The limit of one datagram for an answer, and the answers in parts, go away. This needs more than the one stream of the transport today: the next part of the transport.
+- The tool sends a new call on a new stream; a lost datagram is the work of QUIC, not of the tool.
+
+**What is protected, and what is not.**
+- Protected: the host knows that it speaks to the machine whose key it pinned, and not to another one on the path. No one on the path reads a call or an answer, changes one, or plays one again.
+- Not protected: the machine does not know who the client is. Any program that can send UDP to the port of `remote` can make a connection and call as the person, as today. QUIC adds nothing there.
+- What would protect it: the host proves a key of its own (a client certificate of TLS, a raw public key too), and the root service gives that key to `remote` as a grant that the person reads and revokes. That is a principal of property 21, which is not built. Until then, the guard of the person stays the grant of `remote` and the closed network of the test.
+
+## 8. The next layers (designed, not built)
 
 1. **The transport, second part**:
    - NewReno congestion control, from the ideas and the tests of the Reno of `support/tcp`;
-   - more streams, connection identifiers, Version Negotiation, Retry, the stateless reset.
-2. **The endpoint**: a listen grant for datagrams. The service admits a remote on its first datagram to the listen port, with the limits of the TCP table of admitted remotes (64 places, a place idle for 120 s serves again). The amplification limit and Retry of QUIC protect the server; the service keeps checking the port and the size.
-3. **The users**, in order:
-   - an echo between the tool and a test program, with loss through the peer;
-   - a stack that this project did not write, over QEMU user networking;
-   - `remote` over QUIC with mutual authentication: a client certificate of the host (a raw public key too), whose key the root service gives to `remote` as a grant that the person can read and revoke; the host pins the key of the machine.
+   - more streams (for `remote`), connection identifiers, Retry, the stateless reset.
+2. **A stack that this project did not write** (section 6, with its commands).
+3. **`remote` over QUIC** (section 7), then mutual authentication when principals exist.
 
-## 7. What is not built, and will not be in version 1 of this library
+## 9. What is not built, and will not be in version 1 of this library
 
 - Connection migration.
 - 0-RTT.

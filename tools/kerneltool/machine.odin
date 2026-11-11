@@ -63,6 +63,8 @@ Step_Kind :: enum {
 	Peer_Result, // The end of the case of the last Peer_Start: it must pass. text is its name.
 	Fetch, // The TCP of the host fetches the page text of `server` through QEMU user networking (web_host.odin).
 	Http, // The TCP of the host runs the HTTP case text against `server` (web_host.odin, http_case_run); `expected` is the body that a page must have.
+	Quic_Key, // As Remember: the 64 hexadecimal digits after text, in the log after the last Wait, are the public key of a QUIC server, which the QUIC client of the peer pins (peer_quic.odin).
+	Peer_Quic, // The peer runs the QUIC case text (peer_quic.odin) and checks its answers.
 }
 
 Step :: struct {
@@ -2795,6 +2797,26 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				}
 			}
 			fmt.printfln("kerneltool: test passed: %s: %d values, each different", step.text, len(remembered_values))
+		case .Quic_Key:
+			if !log_wait(machine, step.text, false) {
+				fmt.eprintfln("kerneltool: test failed: step %d: the machine did not print \"%s\"", index + 1, step.text)
+				return false
+			}
+			log := log_read(machine)
+			rest := log[machine.seen:]
+			line := strings.trim_right(rest[:max(strings.index_byte(rest, '\n'), 0)], "\r")
+			if !peer_quic_pin(machine.peer, line) {
+				fmt.eprintfln("kerneltool: test failed: step %d: \"%s\" is not a public key of 64 hexadecimal digits", index + 1, line)
+				return false
+			}
+			fmt.printfln("kerneltool: the QUIC client of the peer pins the key %s", line)
+		case .Peer_Quic:
+			passed, result := peer_quic_case(machine.peer, step.text)
+			if !passed {
+				fmt.eprintfln("kerneltool: test failed: step %d: the QUIC case \"%s\" of the peer: %s", index + 1, step.text, result)
+				return false
+			}
+			fmt.printfln("kerneltool: test passed: the QUIC case \"%s\" of the peer: %s", step.text, result)
 		case .Peer_Start:
 			peer_case_started = peer_case_start_from_the_tool(machine.peer, step.text)
 			fmt.printfln("kerneltool: the TCP case \"%s\" of the peer runs; the next steps run with it", step.text)

@@ -84,6 +84,9 @@ transport_parameters_write :: proc "contextless" (parameters: ^Transport_Paramet
 	integer(&writer, PARAMETER_INITIAL_MAX_STREAM_DATA_BIDIRECTIONAL_REMOTE, parameters.initial_max_stream_data_bidirectional_remote)
 	integer(&writer, PARAMETER_INITIAL_MAX_STREAMS_BIDIRECTIONAL, parameters.initial_max_streams_bidirectional)
 	bytes(&writer, PARAMETER_INITIAL_SOURCE_CONNECTION_ID, parameters.initial_source_connection_id[:parameters.initial_source_connection_id_length])
+	if parameters.disable_active_migration {
+		bytes(&writer, PARAMETER_DISABLE_ACTIVE_MIGRATION, nil)
+	}
 	if writer.failed {
 		return 0
 	}

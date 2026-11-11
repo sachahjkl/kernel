@@ -94,6 +94,7 @@ module_builds := [?]Module_Build {
 	{name = "math", source = "modules/math", image = true},
 	{name = "cryptography", source = "modules/cryptography", image = true},
 	{name = "cryptography_vectors", source = "programs/cryptography_vectors", imports = {"cryptography"}, image = true},
+	{name = "quic_echo", source = "programs/quic_echo", imports = {"cryptography"}, image = true},
 	{name = "sample", source = "modules/sample", image = true},
 	{name = "hostile_exports", source = "modules/hostile_exports", image = true},
 	{name = "calendar", source = "modules/calendar", image = true},
