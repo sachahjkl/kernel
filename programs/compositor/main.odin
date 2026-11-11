@@ -419,9 +419,19 @@ inside :: proc "contextless" (x, y, left, top, width, height: int) -> bool {
 
 pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32) {
 	damage_add(pointer_x, pointer_y, POINTER_WIDTH, POINTER_HEIGHT)
+	close_before := close_button_under_pointer()
 	pointer_x = clamp(pointer_x + motion_x, 0, screen.width - 1)
 	pointer_y = clamp(pointer_y + motion_y, 0, screen.height - 1)
 	damage_add(pointer_x, pointer_y, POINTER_WIDTH, POINTER_HEIGHT)
+	// The close button under the pointer is brighter: draw again the
+	// button that the pointer leaves and the one that it reaches.
+	if close_after := close_button_under_pointer(); close_after != close_before {
+		for client in ([2]^Client{close_before, close_after}) {
+			if client != nil {
+				damage_add(client.x + client.surface.width + BORDER - CLOSE_SIZE, client.y, CLOSE_SIZE, TITLE_HEIGHT)
+			}
+		}
+	}
 	pressed := new_buttons & display.BUTTON_LEFT != 0 && buttons & display.BUTTON_LEFT == 0
 	held := buttons != 0 || new_buttons != 0
 	buttons = new_buttons
@@ -678,7 +688,7 @@ window_draw :: proc "contextless" (canvas: graphics.Canvas, client: ^Client, x, 
 	}
 	graphics.fill(canvas, x, y + TITLE_HEIGHT, BORDER, outer_height - TITLE_HEIGHT - BORDER, start)
 	graphics.fill(canvas, x + outer_width - BORDER, y + TITLE_HEIGHT, BORDER, outer_height - TITLE_HEIGHT - BORDER, end)
-	title_draw(canvas, client, x, y, focus, end)
+	title_draw(canvas, client, x, y, focus)
 	graphics.copy(canvas, x + BORDER, y + TITLE_HEIGHT, client.surface)
 }
 
@@ -713,14 +723,44 @@ title_measure :: proc "contextless" () {
 }
 
 // title_draw draws the title and the close button on a title bar.
-title_draw :: proc "contextless" (canvas: graphics.Canvas, client: ^Client, x, y: int, focus: bool, end: graphics.Color) {
+title_draw :: proc "contextless" (canvas: graphics.Canvas, client: ^Client, x, y: int, focus: bool) {
 	outer_width := client.surface.width + 2 * BORDER
 	title := system.name_of(client.title[:])
 	shown := clamp((outer_width - CLOSE_SIZE - 16) / graphics.CELL_WIDTH, 0, len(title))
 	graphics.text(canvas, x + 8, y + 4, title[:shown], focus ? graphics.COLOR_WHITE : graphics.COLOR_DIM)
-	close_x := x + outer_width - BORDER - CLOSE_SIZE
-	graphics.fill(canvas, close_x, y, CLOSE_SIZE, TITLE_HEIGHT, graphics.shade(end, 70))
-	graphics.character(canvas, close_x + (CLOSE_SIZE - graphics.CELL_WIDTH) / 2, y + (TITLE_HEIGHT - graphics.CELL_HEIGHT) / 2, 'x', focus ? graphics.COLOR_WHITE : graphics.COLOR_DIM)
+	close_button_draw(canvas, x + outer_width - BORDER - CLOSE_SIZE, y, focus, client == close_button_under_pointer())
+}
+
+// close_button_draw draws the close button of a window: the concept "stop a
+// program", a deep red with the sign of depth of the rules, brighter when
+// the pointer is over it, quiet on a window that is not in front.
+close_button_draw :: proc "contextless" (canvas: graphics.Canvas, x, y: int, focus, pointer_over: bool) {
+	base := graphics.Color(graphics.COLOR_STOP_PROGRAM_QUIET)
+	mark := graphics.Color(graphics.COLOR_STOP_PROGRAM_QUIET_MARK)
+	if focus || pointer_over {
+		base = pointer_over ? graphics.COLOR_STOP_PROGRAM_POINTER_OVER : graphics.COLOR_STOP_PROGRAM
+		mark = graphics.COLOR_WHITE
+	}
+	graphics.block(canvas, x, y, CLOSE_SIZE, TITLE_HEIGHT, graphics.shade(base, 118), graphics.shade(base, 82))
+	graphics.fill(canvas, x, y, CLOSE_SIZE, 1, graphics.shade(base, 150))
+	graphics.character(canvas, x + (CLOSE_SIZE - graphics.CELL_WIDTH) / 2, y + (TITLE_HEIGHT - graphics.CELL_HEIGHT) / 2, 'x', mark)
+}
+
+// close_button_under_pointer gives the client whose close button is under
+// the pointer, or nil: the button of the window in front at that place.
+close_button_under_pointer :: proc "contextless" () -> ^Client {
+	for position := order_count - 1; position >= 0; position -= 1 {
+		client := &clients[order[position]]
+		outer_width := client.surface.width + 2 * BORDER
+		if !inside(pointer_x, pointer_y, client.x, client.y, outer_width, client.surface.height + TITLE_HEIGHT + BORDER) {
+			continue
+		}
+		if inside(pointer_x, pointer_y, client.x + outer_width - BORDER - CLOSE_SIZE, client.y, CLOSE_SIZE, TITLE_HEIGHT) {
+			return client
+		}
+		return nil
+	}
+	return nil
 }
 
 // button_draw draws a button of the bar. The button of an open menu is blue.

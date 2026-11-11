@@ -39,6 +39,14 @@ COLOR_TITLE :: 0x3F7CC4 // The blue of the title bar before the rules.
 COLOR_TITLE_END :: 0x162C45 // graphics.shade(COLOR_TITLE, 36).
 COLOR_TITLE_QUIET :: 0x2A3442
 COLOR_TITLE_QUIET_END :: 0x161D27
+// The concept "stop a program": the close button of a window (owner,
+// 2026-11-11: "et ce serait bien que les x de fermeture soit rouge, riche").
+// A deep red, not the coral of COLOR_FAILED: to stop a program is not a
+// failure.
+COLOR_STOP_PROGRAM :: 0xB82232 // On the window that has the focus.
+COLOR_STOP_PROGRAM_POINTER_OVER :: 0xE0343F // The pointer is over the button.
+COLOR_STOP_PROGRAM_QUIET :: 0x4E2229 // On a window that is not in front.
+COLOR_STOP_PROGRAM_QUIET_MARK :: 0xC09098 // The x on the quiet button.
 COLOR_BLACK :: 0x000000
 COLOR_WHITE :: 0xFFFFFF
 

@@ -49,6 +49,7 @@ One color is one concept, as one term is one concept.
 | Memory | `0x38C0B0` |
 | Machine | `0xD070B0` |
 | Failed | `0xF06060` |
+| Stop a program | `0xB82232` (owner, 2026-11-11: "et ce serait bien que les x de fermeture soit rouge, riche") |
 | Not usable | `0x4A5563` |
 | Text | `0xDCE4EC` |
 | Dim text | `0x7C8A99` |
@@ -113,7 +114,7 @@ The owner asked for "a gradient from the current blue, as the start colour, to a
 - A window is a title bar of 24 pixels over the surface of its program, with a border of 2 pixels at the left, the right and the bottom. There is no shadow.
 - The title bar of the window that has the focus goes from `COLOR_TITLE` (`0x3F7CC4`, the blue of the title bar before the rules) at its left column to `COLOR_TITLE_END` (`0x162C45`, the same blue at 36 %) at its right column. Its top line is 125 % of these colors: the sign of depth of section 3. The bottom border has the colors of the title bar; the left border is the start color, the right border the end color.
 - The title bar of another window is quiet: it goes from `COLOR_TITLE_QUIET` (`0x2A3442`) to `COLOR_TITLE_QUIET_END` (`0x161D27`), and its title is in the dim color. So the gradient also says which window has the keyboard. Its title also says it: a title in white has the focus.
-- The close button is a square of 24 x 24 pixels at the right end of the title bar, in the end color of the title bar at 70 %, with the character `x`. It is not red: red is the color "failed", and to close a window is not a failure.
+- The close button is a square of 24 x 24 pixels at the right end of the title bar, with the character `x` of the font in white. Its color is the concept "stop a program" (2026-11-11): a deep red `COLOR_STOP_PROGRAM` (`0xB82232`), not the coral of "failed", because to close a window is not a failure. It has the sign of depth of the rules: a block from 118 % of the red at the top to 82 % at the bottom, and a top line at 150 %. When the pointer is over it, the red is brighter (`0xE0343F`). On a window that is not in front, the red is quiet (`0x4E2229`) and the `x` is a dim pink (`0xC09098`). A cross of squares of 2 pixels was tried beside the character `x`: its two lines do not meet on one square at the centre, and it does not match the title; the character stays.
 - The compositor places a new window at (60, 52), and each next one 36 pixels to the right and 30 pixels lower, for 8 windows. These numbers are not on the grid: the machine test presses places in windows at these numbers (see "State").
 - Cost: the compositor computes the colors of one line of a title bar once, for the columns that the frame shows, then copies them to each line. Choice 265 of `docs/FIRST_MILESTONE.md` has the measures.
 
