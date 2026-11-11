@@ -629,7 +629,10 @@ address_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^P
 	case .Inspect:
 		kind := op.Inspect_Kind(v[1])
 		size := kind <= max(op.Inspect_Kind) ? INSPECT_SIZES[kind] : 0
-		if v[4] < size {
+		if kind == .Pages && v[2] != 0 {
+			// Pages gives the pages of the program that asks only: index 0.
+			record_set(record, .Bad_Value, .None, 3, v[2], 0, 0)
+		} else if v[4] < size {
 			record_set(record, .Too_Small, .Bytes, 5, v[4], size, 0)
 		} else if !read_range(program, v[3], size, true) {
 			record_set(record, .Bad_Address, .Bytes, 4, v[3], size, 1)

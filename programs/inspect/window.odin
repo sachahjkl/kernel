@@ -138,11 +138,12 @@ draw_list :: proc "contextless" (canvas: graphics.Canvas) {
 		if y + LINE > inside.height - 80 {
 			break
 		}
-		if item.name == selected {
+		chosen := item.slot == selected_slot && item.program_serial == selected_program_serial
+		if chosen {
 			graphics.fill(inside, -8, y, inside.width + 8, LINE, graphics.COLOR_TRACK)
 			graphics.fill(inside, -8, y, 4, LINE, graphics.COLOR_PROGRAM)
 		}
-		graphics.text(inside, 0, y, system.name_of(item.name[:]), item.name == selected ? graphics.COLOR_WHITE : graphics.COLOR_TEXT)
+		graphics.text(inside, 0, y, system.name_of(item.name[:]), chosen ? graphics.COLOR_WHITE : graphics.COLOR_TEXT)
 		graphics.fill(inside, inside.width - 32, y + 5, 6, 6, state_color(item.state))
 		right(inside, inside.width, y, graphics.COLOR_DIM, item.slot)
 	}
@@ -330,6 +331,10 @@ draw_stop :: proc "contextless" (canvas: graphics.Canvas) {
 	writer := system.Writer{buffer = buffer[:]}
 	system.write_part(&writer, stop.vector == 14 ? "page fault: the address " : "fault: the address ")
 	system.write_number(&writer, stop.address)
+	if stop.hidden_value_count != 0 {
+		system.write_part(&writer, "; values hidden: ")
+		system.write_part(&writer, stop.hidden_value_count)
+	}
 	graphics.text(inside, 0, 0, system.written(&writer), graphics.COLOR_FAILED)
 	graphics.text(inside, 0, LINE + 8, "the stack trace, from the frame pointers:", graphics.COLOR_DIM)
 	for &frame, number in stop.frames[:min(stop.frame_count, op.STOP_FRAME_CAPACITY)] {
@@ -339,7 +344,11 @@ draw_stop :: proc "contextless" (canvas: graphics.Canvas) {
 		}
 		text(inside, 0, y, graphics.COLOR_DIM, u64(number))
 		line := system.Writer{buffer = buffer[:]}
-		address_write(&line, frame.address, true)
+		if frame.address == 0 {
+			system.write_part(&line, "not code: the kernel gives no value of this frame")
+		} else {
+			address_write(&line, frame.address, true)
+		}
 		graphics.fill(inside, 24, y + 4, 8, 8, frame.base != 0 ? hash_color(frame.hash) : graphics.COLOR_NOT_USABLE)
 		graphics.text(inside, 40, y, system.written(&line), number == 0 ? graphics.COLOR_FAILED : graphics.COLOR_TEXT)
 	}

@@ -98,8 +98,9 @@ boot_report :: proc "contextless" (report: ^op.Boot_Report) {
 
 // program_mappings_report writes the mappings of program slot `index`, in
 // the order of their addresses. The caller holds the control lock; this
-// procedure takes the program lock of the program, and the present pages
-// come from its page table (as present_pages reads it).
+// procedure takes the program lock of the program. The present pages are
+// the count that each mapping keeps (Mapping.present_page_count): one read
+// for each mapping, no walk of the page table.
 program_mappings_report :: proc "contextless" (report: ^op.Program_Mapping_Report, index: u32) {
 	report^ = {}
 	if index == 0 || index >= PROGRAM_CAPACITY {
@@ -111,6 +112,7 @@ program_mappings_report :: proc "contextless" (report: ^op.Program_Mapping_Repor
 	if about.state == .None || about.table == 0 {
 		return
 	}
+	report.program_serial = u64(about.serial)
 	for &mapping in about.mappings {
 		if mapping.page_count == 0 || report.count == op.MAPPING_REPORT_CAPACITY {
 			continue
@@ -119,16 +121,7 @@ program_mappings_report :: proc "contextless" (report: ^op.Program_Mapping_Repor
 			address    = mapping.address,
 			page_count = mapping.page_count,
 			first      = mapping.first,
-		}
-		for page := u64(0); page < mapping.page_count; {
-			address := mapping.address + page * PAGE_SIZE
-			run := min(512 - (address >> 12 & 511), mapping.page_count - page)
-			if entry := page_entry(about.table, address, false); entry != nil {
-				for value in ([^]u64)(entry)[:run] {
-					item.present += value & PAGE_PRESENT
-				}
-			}
-			page += run
+			present    = mapping.present_page_count,
 		}
 		if mapping.bits & PAGE_WRITE != 0 {
 			item.flags += {.Write}
@@ -168,6 +161,50 @@ program_mappings_report :: proc "contextless" (report: ^op.Program_Mapping_Repor
 	}
 }
 
+// stop_report_for_inspect writes the stop report of program slot `index`
+// for a holder of the machine with Inspect (op.Inspect_Kind.Stop): only the
+// frames that a module record of the program holds, and the address of the
+// fault only in the first page or in such a record. The other values can be
+// words of the memory of the program. The caller holds the control lock.
+stop_report_for_inspect :: proc "contextless" (report: ^op.Stop_Report, index: u32) {
+	report^ = {}
+	if index == 0 || index >= PROGRAM_CAPACITY {
+		return
+	}
+	about := &programs[index]
+	taken := program_lock(index)
+	defer program_unlock(index, taken)
+	if about.state == .None {
+		return // A free slot keeps the stop of its old program: not given.
+	}
+	report^ = about.stop
+	report.program_serial = u64(about.serial)
+	in_module :: proc "contextless" (about: ^Program, address: u64) -> bool {
+		for record in about.modules {
+			if record.size != 0 && address >= record.base && address - record.base < record.size {
+				return true
+			}
+		}
+		return false
+	}
+	if report.address >= PAGE_SIZE && !in_module(about, report.address) {
+		report.address = 0
+		report.hidden_value_count += 1
+	}
+	if report.instruction != 0 && !in_module(about, report.instruction) {
+		report.instruction = 0
+		report.hidden_value_count += 1
+	}
+	for &frame in report.frames[:min(report.frame_count, op.STOP_FRAME_CAPACITY)] {
+		if frame.base == 0 || !in_module(about, frame.address) {
+			if frame.address != 0 {
+				report.hidden_value_count += 1
+			}
+			frame = {}
+		}
+	}
+}
+
 // threads_report writes the threads of program slot `index`. The caller
 // holds the control lock: no thread of the program starts or ends. The
 // fields of the scheduler are read with no run lock, each one whole.
@@ -176,6 +213,7 @@ threads_report :: proc "contextless" (report: ^op.Thread_Table_Report, index: u3
 	if index == 0 || index >= PROGRAM_CAPACITY || programs[index].state == .None {
 		return
 	}
+	report.program_serial = u64(programs[index].serial)
 	for &thread in threads[1:] {
 		state := intrinsics.atomic_load(&thread.state)
 		if state == .None || thread.program != index || report.count == op.THREAD_REPORT_CAPACITY {
@@ -200,16 +238,12 @@ threads_report :: proc "contextless" (report: ^op.Thread_Table_Report, index: u3
 	}
 }
 
-// pages_report writes which of 64 pages of program slot `index` have a
-// frame, from its page table: it gives no frame to a page.
-pages_report :: proc "contextless" (report: ^op.Page_Report, index: u32) {
+// pages_report writes which of 64 pages of the program that asks have a
+// frame, from its page table: it gives no frame to a page. The caller holds
+// the program lock of that program (execute_locked), and checked the
+// address: aligned, and its 64 pages in the user half.
+pages_report :: proc "contextless" (report: ^op.Page_Report, about: ^Program) {
 	report.present, report.mapped = 0, 0
-	if index == 0 || index >= PROGRAM_CAPACITY || report.address & (PAGE_SIZE - 1) != 0 {
-		return
-	}
-	about := &programs[index]
-	taken := program_lock(index)
-	defer program_unlock(index, taken)
 	if about.state == .None || about.table == 0 {
 		return
 	}

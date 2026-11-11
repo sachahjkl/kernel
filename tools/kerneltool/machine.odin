@@ -70,6 +70,7 @@ Step :: struct {
 	pointer:    bool, // For Call: when the call has its result, the tool confirms each place of the pointer from now on (pointer_confirm).
 	repeat:     int, // For Call: the calls of the measure of the round trip.
 	parts:      int, // For Call: the least count of datagrams of the answer.
+	inside_window: string, // For Click: (x, y) are inside the surface of the window with this title, as the log of the compositor places it.
 }
 
 // A start that fails: the boot image has no compositor. The boot display
@@ -306,11 +307,19 @@ scenario_network := [?]Step {
 	{kind = .Call, text = "monitor.count(4)", outcome = .Wrong, expected = "error: the parameter name of monitor.count is a Text, the argument is an Integer"},
 	// The person sees the grant, and revokes it: the services refuse what
 	// they give only to a caller that acts for the person.
+	// The developer tool serves its tables to a caller that acts for the
+	// person: the remote service, until the revocation below.
+	{kind = .Launch, text = "inspect"},
+	{kind = .Wait, text = "inspect: ok, "},
+	{kind = .Call, text = "inspect.mappings(\"remote\")", expected = " rows of Mapping"},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "grants(\"remote\")"},
 	{kind = .Wait, text = "[console] remote has: log, network, person"},
 	{kind = .Type, text = "revoke(\"remote\", \"person\")"},
-	{kind = .Wait, text = "root: revoked the grant person of remote, connections changed: 4"},
+	{kind = .Wait, text = "root: revoked the grant person of remote, connections changed: 5"},
+	{kind = .Call, text = "inspect.mappings(\"remote\")", outcome = .Failed, expected = "error: inspect.mappings: the caller has no grant for this: to act for the person (-1)"},
+	{kind = .Call, text = "inspect.threads(\"remote\")", outcome = .Failed, expected = "error: inspect.threads: the caller has no grant for this: to act for the person (-1)"},
+	{kind = .Call, text = "inspect.modules(\"remote\")", outcome = .Failed, expected = "error: inspect.modules: the caller has no grant for this: to act for the person (-1)"},
 	{kind = .Call, text = "monitor.programs()", outcome = .Failed, expected = "error: monitor.programs: the caller has no grant for this: to act for the person (-1)"},
 	// The place of the pointer is a fact of the screen of the person: the
 	// tool moves the pointer with no confirmation again.
@@ -1384,6 +1393,13 @@ scenario := [?]Step {
 	{kind = .Wait, text = "inspect: the sample is frozen"},
 	{kind = .Key, text = "spc"},
 	{kind = .Wait, text = "inspect: the sample is live"},
+	// A click on the list: "rk" keeps workers and network; the click on the
+	// second line chooses network.
+	{kind = .Type, text = "rk"},
+	{kind = .Wait, text = "inspect: workers: "},
+	{kind = .Click, inside_window = "inspect", x = 48, y = 96}, // The second line of the list: programs/inspect, LIST_ROWS_Y + 16 + 8.
+	{kind = .Wait, text = "inspect: network: "},
+	{kind = .Key, text = "backspace"}, {kind = .Key, text = "backspace"},
 	{kind = .Type, text = "fault"},
 	{kind = .Wait, text = "inspect: fault stopped: page fault at 0x0; stack: fault + "},
 	{kind = .Shot, text = "inspect_stopped"},
@@ -1580,6 +1596,7 @@ WINDOW_GRAB_Y :: 12
 // The close button of a window, as the compositor draws it: its center, from
 // the right side and from the top of the window.
 WINDOW_BORDER :: 2
+WINDOW_TITLE_HEIGHT :: 24 // The title bar of a window, above its surface.
 WINDOW_CLOSE_RIGHT :: 14
 WINDOW_CLOSE_Y :: 12
 
@@ -1893,6 +1910,15 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 			moved_title: string
 			moved_x, moved_y: int
 			before := len(log_read(machine))
+			if step.kind == .Click && step.inside_window != "" {
+				window_x, window_y, placed := window_place(machine, step.inside_window)
+				if !placed {
+					fmt.eprintfln("kerneltool: test failed: step %d: the log does not have the place of the window %s", index + 1, step.inside_window)
+					return false
+				}
+				step.x += window_x + WINDOW_BORDER
+				step.y += window_y + WINDOW_TITLE_HEIGHT
+			}
 			if step.kind == .Close {
 				x, y, found := window_place(machine, step.text)
 				width, sized := window_width(machine, step.text)

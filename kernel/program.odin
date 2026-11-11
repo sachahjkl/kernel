@@ -85,6 +85,12 @@ Mapping :: struct {
 	first:      u64, // The first page of the memory object.
 	bits:       u64, // The protection bits of each page table entry of the mapping.
 	region:     u32,
+	// The pages of the mapping whose entry is present. Written only where an
+	// entry of the mapping becomes present or the mapping ends, each time
+	// under the program lock: map_region, page_give, unmap. A report reads it
+	// in place of a walk of the page table (its cost is one read for each
+	// mapping, not one for each page).
+	present_page_count: u64,
 }
 
 // A thread: one flow of execution in a program. It is a register state and
@@ -712,6 +718,7 @@ map_region :: proc "contextless" (program: ^Program, region_index: u32, address:
 	if !origin_attach(holding, origin) {
 		return 0, STATUS_RETRY
 	}
+	present_page_count: u64
 	for page in 0 ..< count {
 		entry := page_entry(program.table, address + page * PAGE_SIZE, true, &program.budget)
 		if entry == nil {
@@ -733,8 +740,12 @@ map_region :: proc "contextless" (program: ^Program, region_index: u32, address:
 		// with no frame keeps an entry of 0 until its first use.
 		frame := region_frame(region, first + page, false)
 		entry^ = frame == 0 ? 0 : frame | bits
+		present_page_count += frame == 0 ? 0 : 1
 	}
-	mapping^ = {address = address, page_count = count, first = first, bits = bits, region = region_index}
+	// Under the program lock of the program: each caller of map_region holds
+	// it (Memory_Map through target_lock in enter.odin, program_create and
+	// thread_create in this file, the start of the root service in main.odin).
+	mapping^ = {address = address, page_count = count, first = first, bits = bits, region = region_index, present_page_count = present_page_count}
 	if chosen {
 		program.next_address += (count + 1) * PAGE_SIZE
 	}
@@ -749,10 +760,12 @@ map_region :: proc "contextless" (program: ^Program, region_index: u32, address:
 unmap :: proc "contextless" (program: ^Program, mapping: ^Mapping) {
 	origin_detach(holding_of_mapping(program, mapping))
 	self := processor_self()
+	walked_present_pages: u64
 	for page in 0 ..< mapping.page_count {
 		address := mapping.address + page * PAGE_SIZE
 		entry := page_entry(program.table, address, false)
 		if entry != nil {
+			walked_present_pages += entry^ & PAGE_PRESENT
 			entry^ = 0
 			if self.table == program.table {
 				page_flush(address)
@@ -763,9 +776,16 @@ unmap :: proc "contextless" (program: ^Program, mapping: ^Mapping) {
 	// processor that loads the table after the read sees the 0 entries.
 	intrinsics.atomic_thread_fence(.Seq_Cst)
 	processor_sync(processors_with_table(program.table))
+	// The test build checks the count of the present pages against the
+	// walk that this loop made anyway: one comparison, no other walk.
+	when LOCK_ORDER_CHECK {
+		if walked_present_pages != mapping.present_page_count {
+			present_count_broken(mapping, walked_present_pages)
+		}
+	}
 	program.mapped_pages -= mapping.page_count
 	region_release(mapping.region)
-	mapping^ = {}
+	mapping^ = {} // The count of the present pages ends with the mapping (under the program lock: the caller holds it).
 }
 
 // all_other_processors gives the set of the processors but this one.
@@ -821,25 +841,24 @@ page_give :: proc "contextless" (program: ^Program, address: u64, write: bool, e
 	}
 	if entry^ & PAGE_PRESENT == 0 {
 		entry^ = region_frame(&regions[mapping.region], mapping.first + page, true) | mapping.bits
+		mapping.present_page_count += 1 // Under the program lock: the caller holds it (see above).
 	}
 	return true
+}
+
+// present_count_broken stops the machine of the test when the count of the
+// present pages of a mapping is not what its page table holds.
+present_count_broken :: proc "contextless" (mapping: ^Mapping, walked: u64) -> ! {
+	intrinsics.atomic_store(&log_serial_only, true)
+	log("kernel: the count of the present pages of a mapping is ", mapping.present_page_count, ", its page table holds ", walked)
+	machine_stop(3)
 }
 
 // present_pages gives the pages of the mappings of a program that have a
 // page frame.
 present_pages :: proc "contextless" (program: ^Program) -> (count: u64) {
 	for mapping in program.mappings {
-		// One walk of the tables for each last level table.
-		for page := u64(0); page < mapping.page_count; {
-			address := mapping.address + page * PAGE_SIZE
-			run := min(512 - (address >> 12 & 511), mapping.page_count - page)
-			if entry := page_entry(program.table, address, false); entry != nil {
-				for value in ([^]u64)(entry)[:run] {
-					count += value & PAGE_PRESENT
-				}
-			}
-			page += run
-		}
+		count += mapping.present_page_count
 	}
 	return count
 }

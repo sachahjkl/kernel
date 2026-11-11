@@ -623,6 +623,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 					name         = about.name,
 					mapped_pages = about.mapped_pages,
 					present_pages = about.state == .None || about.table == 0 ? 0 : present_pages(about),
+					program_serial = u64(about.serial),
 					run_time     = about.run_time,
 					start_time   = about.start_time,
 					entries      = about.entries,
@@ -670,6 +671,9 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			if v[2] != 0 && v[2] < PROGRAM_CAPACITY {
 				about_taken := program_lock(u32(v[2]))
 				defer program_unlock(u32(v[2]), about_taken)
+				if programs[v[2]].state != .None {
+					report.program_serial = u64(programs[v[2]].serial)
+				}
 				// In the order of the addresses: the module of the program first.
 				for item in programs[v[2]].modules {
 					if item.size == 0 {
@@ -733,12 +737,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 				threads_report(&cpu.thread_table_report, u32(min(v[2], PROGRAM_CAPACITY)))
 				source = &cpu.thread_table_report
 			case:
-				cpu.stop_report = {}
-				if v[2] != 0 && v[2] < PROGRAM_CAPACITY {
-					taken := program_lock(u32(v[2]))
-					cpu.stop_report = programs[v[2]].stop
-					program_unlock(u32(v[2]), taken)
-				}
+				stop_report_for_inspect(&cpu.stop_report, u32(min(v[2], PROGRAM_CAPACITY)))
 				source = &cpu.stop_report
 			}
 			user_copy(rawptr(uintptr(v[3])), source, size)
@@ -747,13 +746,17 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			if v[4] < size_of(op.Page_Report) || !user_range(program, v[3], size_of(op.Page_Report), true) {
 				return .Bad_Address
 			}
-			if need_control() {
-				return STATUS_RETRY
+			// The program that asks only: another program is not watched page
+			// by page. Its program lock is held (execute_locked).
+			if v[2] != 0 {
+				return .Bad_Operation
 			}
 			report: op.Page_Report
 			user_copy(&report, rawptr(uintptr(v[3])), size_of(report))
-			// Slot 0: the program that asks.
-			pages_report(&report, v[2] == 0 ? u32(intrinsics.ptr_sub(program, &programs[0])) : u32(min(v[2], PROGRAM_CAPACITY)))
+			if report.address & (PAGE_SIZE - 1) != 0 || report.address >= op.USER_END || op.PAGE_REPORT_CAPACITY * PAGE_SIZE > op.USER_END - report.address {
+				return .Bad_Operation
+			}
+			pages_report(&report, program)
 			user_copy(rawptr(uintptr(v[3])), &report, size_of(report))
 			results[0] = size_of(op.Page_Report)
 		case .None:

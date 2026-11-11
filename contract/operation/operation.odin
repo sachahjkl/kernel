@@ -203,6 +203,10 @@ Stop_Report :: struct {
 	// return address of a call, from the frame pointers of the thread.
 	frame_count: u64,
 	frames:      [STOP_FRAME_CAPACITY]Stop_Frame,
+	// Inspect_Kind.Stop only: the serial of the program of the slot, and the
+	// values that the kernel took out (see Inspect_Kind.Stop).
+	program_serial: u64,
+	hidden_value_count: u64,
 }
 
 STOP_FRAME_CAPACITY :: 16
@@ -220,6 +224,7 @@ Stop_Frame :: struct {
 Module_Report :: struct {
 	count:   u64,
 	modules: [PROGRAM_MODULE_CAPACITY]Module_Record,
+	program_serial: u64, // The serial of the program of the slot: a reader drops reports of two programs.
 }
 
 // A budget: what its holders can still create. No operation creates an
@@ -365,12 +370,26 @@ Inspect_Kind :: enum u64 {
 	Mappings  = 5, // Mapping_Report. index 0: the kernel half of the addresses. 1: the half of the program that asks.
 	Modules   = 6, // Module_Report of program slot `index`
 	// The reports of a developer tool (docs/TOOLS.md): what one program has,
-	// read with the right Inspect. None gives a byte of the memory of the
-	// program: the counts, the places and the states only (property 20).
+	// read with the right Inspect: counts, places and states (property 20).
+	// Each one has the serial of the program, so that a reader drops a
+	// sample of two programs in one slot.
 	Program_Mappings = 7, // Program_Mapping_Report of program slot `index`.
 	Threads          = 8, // Thread_Table_Report of program slot `index`.
-	Stop             = 9, // Stop_Report of program slot `index`: zero when it did not stop on a fault.
-	Pages            = 10, // Page_Report of program slot `index` (0: the program that asks), for the address that the caller writes in the Page_Report.
+	// Stop_Report of program slot `index`: zero when it did not stop on a
+	// fault, or when the slot has no program. A frame of a stack trace comes
+	// from the stack of the program, and a corrupt chain of frame pointers
+	// gives values of its memory; the address of a page fault can be a
+	// value too. So the kernel gives a frame only when a module record of
+	// the program holds its address (else the frame is all zero), and the
+	// address of the fault only in the first page or in a module record
+	// (else 0). hidden_value_count counts what it took out. The holder of the
+	// program handle with Read still reads the whole report (Program_State).
+	Stop             = 9,
+	// Page_Report of the program that asks, for the address that it writes
+	// in the Page_Report: which of the 64 pages from it have a frame. Index
+	// must be 0: a page that gets a frame in another program is a fact that
+	// it can watch page by page (a side channel), so no slot but its own.
+	Pages            = 10,
 }
 
 // One mapping of a program: Program_Mapping_Report.
@@ -400,6 +419,7 @@ MAPPING_REPORT_CAPACITY :: 128 // MAPPING_CAPACITY of the kernel.
 
 // The mappings of one program, in the order of their addresses.
 Program_Mapping_Report :: struct {
+	program_serial: u64,
 	count:    u64,
 	mappings: [MAPPING_REPORT_CAPACITY]Program_Mapping,
 }
@@ -427,6 +447,7 @@ Thread_Report :: struct {
 THREAD_REPORT_CAPACITY :: 32 // The thread areas of one program.
 
 Thread_Table_Report :: struct {
+	program_serial: u64,
 	count:   u64,
 	threads: [THREAD_REPORT_CAPACITY]Thread_Report,
 }
@@ -667,6 +688,7 @@ Program_Report :: struct {
 	start_time:   u64, // Microseconds since the machine started.
 	budget:       Budget_Amounts, // What the budget that pays for the program still holds.
 	present_pages: u64, // The mapped pages that have a page frame.
+	program_serial: u64, // A number that changes for each new program in the slot: two reports with the same serial are of one program.
 }
 
 // The context: the one record that a program receives when it starts

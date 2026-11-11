@@ -27,9 +27,10 @@ FILTER_CAPACITY :: 24
 PROGRAM_SLOTS :: 64 // The program slots of the kernel (System_Report.program_slots).
 
 Entry :: struct {
-	slot:  u64,
-	name:  [32]u8,
-	state: op.Program_State,
+	slot:           u64,
+	program_serial: u64, // The program in the slot: a new program in the slot has another serial.
+	name:           [32]u8,
+	state:          op.Program_State,
 }
 
 // One sample: the reports of the kernel at one time.
@@ -53,12 +54,18 @@ shown: [PROGRAM_SLOTS]int // The indexes in entries that the filter keeps.
 shown_count: int
 filter: [FILTER_CAPACITY]u8
 filter_count: int
-selected: [32]u8 // The name of the chosen program: it stays chosen when its slot changes.
+// The chosen program: its slot and its serial, not its name (two programs
+// can have one name). When it ends, nothing is chosen.
+selected_slot: u64
+selected_program_serial: u64
+fresh: Sample // The reports of a sample before the check of their serials.
+dropped_samples: u64 // Samples whose reports came from two programs of one slot.
 current, previous: Sample
 frozen: bool
 hex_view: bool
 samples: u64
-logged_slot: u64 // The program whose counts the log has.
+logged_slot: u64 // The program whose counts the log has: its slot and its serial.
+logged_program_serial: u64
 
 inspect_call :: proc "contextless" (kind: op.Inspect_Kind, index: u64, record: rawptr, size: int) -> bool {
 	_, status := system.call(.Inspect, u64(machine), u64(kind), index, u64(uintptr(record)), u64(size))
@@ -85,7 +92,7 @@ list_read :: proc "contextless" () {
 		if !inspect_call(.Program, slot, &report, size_of(report)) || report.state == .None {
 			continue
 		}
-		entries[entry_count] = {slot = slot, name = report.name, state = report.state}
+		entries[entry_count] = {slot = slot, program_serial = report.program_serial, name = report.name, state = report.state}
 		entry_count += 1
 	}
 	shown_count = 0
@@ -114,28 +121,38 @@ contains :: proc "contextless" (text, part: string) -> bool {
 sample_take :: proc "contextless" () {
 	start := system.nanoseconds()
 	before := system.kernel_entries()
-	previous = current
 	list_read()
 	slot := u64(0)
 	for &entry in entries[:entry_count] {
-		if entry.name == selected {
+		if entry.slot == selected_slot && entry.program_serial == selected_program_serial {
 			slot = entry.slot
 		}
 	}
-	current.slot = slot
+	fresh = {slot = slot}
 	if slot != 0 {
-		inspect_call(.Program, slot, &current.program, size_of(current.program))
-		inspect_call(.Program_Mappings, slot, &current.mappings, size_of(current.mappings))
-		inspect_call(.Modules, slot, &current.modules, size_of(current.modules))
-		inspect_call(.Threads, slot, &current.threads, size_of(current.threads))
-		inspect_call(.Stop, slot, &current.stop, size_of(current.stop))
+		inspect_call(.Program, slot, &fresh.program, size_of(fresh.program))
+		inspect_call(.Program_Mappings, slot, &fresh.mappings, size_of(fresh.mappings))
+		inspect_call(.Modules, slot, &fresh.modules, size_of(fresh.modules))
+		inspect_call(.Threads, slot, &fresh.threads, size_of(fresh.threads))
+		inspect_call(.Stop, slot, &fresh.stop, size_of(fresh.stop))
+		// A new program in the slot between two reports: the sample mixes two
+		// programs, and the window keeps the sample before.
+		serial := selected_program_serial
+		if fresh.program.program_serial != serial || fresh.mappings.program_serial != serial || fresh.modules.program_serial != serial || fresh.threads.program_serial != serial || fresh.stop.program_serial != serial {
+			dropped_samples += 1
+			system.log("inspect: a sample mixed two programs of slot ", slot, ": dropped, ", dropped_samples, " in all")
+			current.time = system.time()
+			return
+		}
 	}
+	previous = current
+	current = fresh
 	current.nanoseconds = system.nanoseconds() - start
 	current.entries = system.kernel_entries() - before
 	current.time = system.time()
 	samples += 1
-	if slot != 0 && slot != logged_slot {
-		logged_slot = slot
+	if slot != 0 && (slot != logged_slot || selected_program_serial != logged_program_serial) {
+		logged_slot, logged_program_serial = slot, selected_program_serial
 		sample_log()
 	}
 }
@@ -206,7 +223,15 @@ stop_write :: proc "contextless" (writer: ^system.Writer, stop: ^op.Stop_Report)
 	system.write_part(writer, "; stack: ")
 	for &frame, number in stop.frames[:min(stop.frame_count, op.STOP_FRAME_CAPACITY)] {
 		system.write_part(writer, number == 0 ? "" : ", ")
-		address_write(writer, frame.address, true)
+		if frame.address == 0 {
+			system.write_part(writer, "not code")
+		} else {
+			address_write(writer, frame.address, true)
+		}
+	}
+	if stop.hidden_value_count != 0 {
+		system.write_part(writer, "; values hidden by the kernel: ")
+		system.write_part(writer, stop.hidden_value_count)
 	}
 }
 
@@ -214,14 +239,15 @@ choose :: proc "contextless" (position: int) {
 	if position < 0 || position >= shown_count {
 		return
 	}
-	selected = entries[shown[position]].name
+	selected_slot = entries[shown[position]].slot
+	selected_program_serial = entries[shown[position]].program_serial
 	frozen = false
 	sample_take()
 }
 
 position_of_selected :: proc "contextless" () -> int {
 	for position in 0 ..< shown_count {
-		if entries[shown[position]].name == selected {
+		if entries[shown[position]].slot == selected_slot && entries[shown[position]].program_serial == selected_program_serial {
 			return position
 		}
 	}
@@ -236,7 +262,7 @@ key :: proc "contextless" (event: display.Event) {
 		choose(min(position_of_selected() + 1, shown_count - 1))
 	case event.code == KEY_TAB:
 		hex_view = !hex_view
-		system.log("inspect: ", hex_view ? "the bytes of the memory of inspect" : "the reports of ", hex_view ? "" : system.name_of(selected[:]))
+		system.log("inspect: ", hex_view ? "the bytes of the memory of inspect" : "the reports of ", hex_view ? "" : system.name_of(current.program.name[:]))
 	case event.character == ' ':
 		frozen = !frozen
 		system.log("inspect: the sample is ", frozen ? "frozen" : "live")
@@ -274,7 +300,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	service, _ = system.service_open(ctx)
 	hex_start()
 	// The first program: this one, until the person chooses.
-	copy(selected[:], "inspect")
+	list_read()
+	for &item in entries[:entry_count] {
+		if system.name_of(item.name[:]) == "inspect" {
+			selected_slot, selected_program_serial = item.slot, item.program_serial
+		}
+	}
 	sample_take()
 	system.log("inspect: ok, ", u64(entry_count), " programs; up, down, letters: choose; space: freeze; tab: the bytes of its own memory")
 	for {

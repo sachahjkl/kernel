@@ -50,6 +50,7 @@ Module :: struct {
 
 ERROR_PERSON :: -1
 ERROR_ABSENT :: -2
+ERROR_CHANGED :: -3 // The program of the slot changed during the call, three times.
 
 service: system.Service
 // The reports of a call: memory of this program, not of the window.
@@ -75,15 +76,25 @@ program_find :: proc "contextless" (name: ^string, error: ^errors.Error_Record) 
 	return slot, 0
 }
 
-// mappings gives one row for each mapping of the program with this name, in the order of the addresses: the address, the module and the offset when a module holds it, the pages, the pages with a page frame, the kind, the rights, the memory object and how many handles and mappings name it. The result is the count of rows, or a negative number with an error record. The error kinds: No_Grant (-1, the caller does not act for the person); Absent (-2, no program has this name).
+// mappings gives one row for each mapping of the program with this name, in the order of the addresses: the address, the module and the offset when a module holds it, the pages, the pages with a page frame, the kind, the rights, the memory object and how many handles and mappings name it. The result is the count of rows, or a negative number with an error record. The error kinds: No_Grant (-1, the caller does not act for the person); Absent (-2, no program has this name); Absent (-3, a new program took the slot during the call, three times).
 @(export, link_name = "mappings")
 mappings :: proc "c" (program: ^string, result: ^[]Mapping, error: ^errors.Error_Record) -> i64 {
 	slot, failure := program_find(program, error)
 	if slot == 0 {
 		return failure
 	}
-	inspect_call(.Program_Mappings, slot, &call_mappings, size_of(call_mappings))
-	inspect_call(.Modules, slot, &call_modules, size_of(call_modules))
+	// Two reports: read them again when a new program took the slot between
+	// them (their serials differ).
+	for _ in 0 ..< 3 {
+		inspect_call(.Program_Mappings, slot, &call_mappings, size_of(call_mappings))
+		inspect_call(.Modules, slot, &call_modules, size_of(call_modules))
+		if call_mappings.program_serial == call_modules.program_serial {
+			break
+		}
+	}
+	if call_mappings.program_serial != call_modules.program_serial {
+		return errors.fail(error, ERROR_CHANGED, .Absent, .Programs, 1) // The program of that name is not there at one instant.
+	}
 	modules := call_modules.modules[:min(call_modules.count, op.PROGRAM_MODULE_CAPACITY)]
 	count := int(min(call_mappings.count, op.MAPPING_REPORT_CAPACITY))
 	for &item, number in call_mappings.mappings[:count] {
