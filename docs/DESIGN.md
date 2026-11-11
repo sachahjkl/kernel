@@ -62,6 +62,7 @@ One color is one concept, as one term is one concept.
 ## 5. Text
 
 - One font: Spleen 8x16. Three sizes: 1, 2 and 3 times. No other size.
+- **Changed by the owner on 2026-11-11** ("par défaut il faut une police vectorielle"): the default font becomes a vector font, drawn with bands of color for each subpixel; Spleen 8x16 stays as the fallback and as an option of a settings menu. Until the step of the vector font is merged, the line above is the state of the code.
 - The title of a card is in capital letters, in the accent of the card, after a bar of 4 x 16 pixels in the same accent.
 - A name is in the dim color. A value is in the text color. A measure of a concept is in the color of that concept.
 - A card has at most one number in the large size: the number that the card is about.
