@@ -452,12 +452,12 @@ refuse :: proc "contextless" () {
 	refusal(&refusals[3], "large pages of 100 pages", .Bad_Operation, status, record)
 }
 
-// The findings of the independent read of the kernel part (each a case
-// that failed before its correction). Each one logs a line and sets a bit
-// of review_right.
-REVIEW_CASES :: 10
-review_names := [REVIEW_CASES]string{"B1 an uncommitted object of 1 page keeps the sums of the frames", "F3' an unmap ends the marks: the object is mapped again", "W7 large pages at an address that the kernel chooses", "a table that names one mapping whole and in part is refused", "F1 a decommit wakes a thread that waits on a word of the page", "F2 a word in the second 4 KiB of a large page is its own word", "F3 an object with protection marks is not mapped again", "W2 a small uncommitted object costs a page", "W4 a part cannot get more than its mapping", "a page that is not committed stops with its own code"}
-review_results: [REVIEW_CASES]bool
+// The edge cases of the virtual memory: each one is a case where the
+// kernel did something wrong once, and that must stay right. Each one logs
+// a line and sets its result.
+EDGE_CASES :: 12
+edge_case_names := [EDGE_CASES]string{"a small object with no frame keeps the sums of the frames", "an unmap ends the protection of parts: the object is mapped again", "large pages at an address that the kernel chooses", "a table that names one mapping whole and in part is refused", "a decommit wakes a thread that waits on a word of the page", "a word in the second 4 KiB of a large page is its own word", "an object with parts of their own protection is not mapped again", "a small uncommitted object costs a page", "a part cannot get more than its mapping", "a page that is not committed stops with its own code", "a revocation of a large uncommitted mapping wakes its waiter", "an uncommitted object of 1 GiB ends with few pages walked"}
+edge_case_results: [EDGE_CASES]bool
 
 Waiter :: struct #align (64) {
 	word:   ^u32,
@@ -490,8 +490,8 @@ waiter_start :: proc "contextless" (word: ^u32) -> system.Thread {
 	return thread
 }
 
-review :: proc "contextless" (ctx: ^system.Context) {
-	// F1: a thread waits on a word of a committed page; the page is
+edge_cases :: proc "contextless" (ctx: ^system.Context) {
+	// A thread waits on a word of a committed page; the page is
 	// decommitted: the waiter must wake at once, not at its deadline.
 	{
 		memory, _ := system.memory_create(16, flags = {.Uncommitted})
@@ -507,11 +507,11 @@ review :: proc "contextless" (ctx: ^system.Context) {
 			system.sleep(system.time() + 1)
 		}
 		system.thread_wait(thread)
-		review_results[4] = waiter.woke_at - start < 1000
+		edge_case_results[4] = waiter.woke_at - start < 1000
 		system.memory_unmap(address)
 		system.close(memory)
 	}
-	// F2: one thread waits on a word in the second 4 KiB of a large page; a
+	// One thread waits on a word in the second 4 KiB of a large page; a
 	// wake of the word at the same offset of the first 4 KiB wakes nobody,
 	// a wake of its own word wakes it.
 	{
@@ -524,11 +524,11 @@ review :: proc "contextless" (ctx: ^system.Context) {
 		intrinsics.atomic_add(second, 1)
 		woken := system.word_wake(second)
 		system.thread_wait(thread)
-		review_results[5] = wrong == 0 && woken == 1
+		edge_case_results[5] = wrong == 0 && woken == 1
 		system.memory_unmap(address)
 		system.close(memory)
 	}
-	// F3: a part of a mapping is made No_Access; the object cannot be
+	// A part of a mapping is made No_Access; the object cannot be
 	// mapped a second time while it has marks; after the part has the
 	// protection of its mapping again, it can.
 	{
@@ -546,11 +546,11 @@ review :: proc "contextless" (ctx: ^system.Context) {
 		if allowed == .Ok {
 			system.memory_unmap(third)
 		}
-		review_results[6] = refused == .Bad_State && record.kind != i64(errors.Kind.Refused) && allowed == .Ok
+		edge_case_results[6] = refused == .Bad_State && record.kind != i64(errors.Kind.Refused) && allowed == .Ok
 		system.memory_unmap(address)
 		system.close(memory)
 	}
-	// W2: a budget with no page cannot hold a slot of the table of memory
+	// A budget with no page cannot hold a slot of the table of memory
 	// objects with an uncommitted object of 4 pages.
 	{
 		empty, _ := system.budget_create({pages = 0})
@@ -559,9 +559,9 @@ review :: proc "contextless" (ctx: ^system.Context) {
 			system.close(memory)
 		}
 		system.close(empty)
-		review_results[7] = status == .No_Budget
+		edge_case_results[7] = status == .No_Budget
 	}
-	// W4: the whole mapping becomes read only; a part of it cannot become
+	// The whole mapping becomes read only; a part of it cannot become
 	// writable alone: refused, not a success that changes nothing.
 	{
 		memory, _ := system.memory_create(8)
@@ -571,16 +571,17 @@ review :: proc "contextless" (ctx: ^system.Context) {
 		system.memory_protect(whole[:], {})
 		record: errors.Error_Record
 		_, status := system.memory_protect(part[:], {.Write}, &record)
-		review_results[8] = status == .Bad_Operation && record.kind != i64(errors.Kind.Refused)
+		edge_case_results[8] = status == .Bad_Operation && record.kind != i64(errors.Kind.Refused)
 		system.memory_unmap(address)
 		system.close(memory)
 	}
 	// A child touches a page of an uncommitted object that is not committed:
 	// it stops with the code of a page that is not committed.
-	review_results[9] = child_stop_code(ctx, 3) == op.STOP_CODE_NOT_COMMITTED
-	// B1: an Uncommitted object of 1 page, then a report: the test build
-	// checks the sums of the frames at each report (it stopped the machine
-	// before the correction), and the free pages less the reserved pages
+	edge_case_results[9] = child_stop_code(ctx, 3) == op.STOP_CODE_NOT_COMMITTED
+	// An Uncommitted object of 1 page, then a report: the test build
+	// checks the sums of the frames at each report (a page that such an
+	// object pays and that no count names stops the machine), and the free
+	// pages less the reserved pages
 	// are the pages of the budgets.
 	{
 		memory, _ := system.memory_create(1, flags = {.Uncommitted})
@@ -589,9 +590,9 @@ review :: proc "contextless" (ctx: ^system.Context) {
 		system.close(memory)
 		after: op.System_Report
 		system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.System), 0, u64(uintptr(&after)), size_of(after))
-		review_results[0] = report.free_pages - report.reserved_pages == report.budget_pages && after.free_pages - after.reserved_pages == after.budget_pages
+		edge_case_results[0] = report.free_pages - report.reserved_pages == report.budget_pages && after.free_pages - after.reserved_pages == after.budget_pages
 	}
-	// F3': a part of the only mapping gets No_Access, the mapping ends, and
+	// A part of the only mapping gets No_Access, the mapping ends, and
 	// the object is mapped again.
 	{
 		memory, _ := system.memory_create(8)
@@ -605,16 +606,16 @@ review :: proc "contextless" (ctx: ^system.Context) {
 			bytes[0] = 1 // The page has no mark: no fault.
 			system.memory_unmap(again)
 		}
-		review_results[1] = status == .Ok
+		edge_case_results[1] = status == .Ok
 		system.close(memory)
 	}
-	// W7: an object of large pages at an address that the kernel chooses.
+	// An object of large pages at an address that the kernel chooses.
 	{
 		memory, _ := system.memory_create(op.LARGE_PAGE_PAGES, flags = {.Large_Pages})
 		address, status := system.memory_map(memory)
 		report := own_mappings()
 		mapping := mapping_at(&report, u64(uintptr(address)))
-		review_results[2] = status == .Ok && mapping != nil && .Large in mapping.flags
+		edge_case_results[2] = status == .Ok && mapping != nil && .Large in mapping.flags
 		system.memory_unmap(address)
 		system.close(memory)
 	}
@@ -624,16 +625,132 @@ review :: proc "contextless" (ctx: ^system.Context) {
 		address, _ := system.memory_map(memory)
 		ranges := [2]op.Address_Range{{address = u64(uintptr(address)), page_count = 8}, {address = u64(uintptr(address)), page_count = 2}}
 		_, status := system.memory_protect(ranges[:], {.Write})
-		review_results[3] = status == .Bad_Operation
+		edge_case_results[3] = status == .Bad_Operation
 		system.memory_unmap(address)
 		system.close(memory)
 	}
-	for name, index in review_names {
-		system.log("address_space: review: ", name, ": ", review_results[index] ? "right" : "WRONG")
-		if !review_results[index] {
-			fail("a case of the review")
+	edge_case_results[10] = revocation_wakes_waiter(ctx)
+	edge_case_results[11] = large_object_ends_quickly()
+	for name, index in edge_case_names {
+		system.log("address_space: edge case: ", name, ": ", edge_case_results[index] ? "right" : "WRONG")
+		if !edge_case_results[index] {
+			fail("an edge case")
 		}
 	}
+}
+
+// A child waits on a word of a mapping of 1 GiB of an Uncommitted object of
+// this program; this program revokes the object in the child. The kernel
+// wakes the waiter before the frames of the object leave the child: the
+// revocation looks for the frames of the words with one sorted search over
+// the frames of the object, not with one walk of the object for each word,
+// so it ends quickly with an object of 1 GiB. The time of the revocation is
+// logged; the check is only that the waiter woke before its deadline.
+REVOCATION_WORD_PAGE :: 100
+REVOCATION_DEADLINE :: 3000 // Milliseconds: the wait of the child.
+GRANT_REVOCATION_OBJECT :: 0
+GRANT_REVOCATION_BOARD :: 1
+
+Revocation_Board :: struct {
+	ready:   u32, // The child maps the object and is about to wait.
+	woken:   u32, // The child woke.
+	woke_at: u64, // Milliseconds.
+}
+
+// child_waits_on_object is the child of the role 4.
+child_waits_on_object :: proc "contextless" (ctx: ^system.Context) -> ! {
+	board_address, _ := system.memory_map(ctx.handles[GRANT_REVOCATION_BOARD])
+	board := (^Revocation_Board)(board_address)
+	object, _ := system.memory_map(ctx.handles[GRANT_REVOCATION_OBJECT])
+	word := (^u32)(uintptr(object) + REVOCATION_WORD_PAGE * system.PAGE_SIZE)
+	value := intrinsics.atomic_load(word)
+	intrinsics.atomic_store(&board.ready, 1)
+	system.word_wake(&board.ready)
+	system.word_wait(word, value, system.time() + REVOCATION_DEADLINE)
+	board.woke_at = system.time()
+	intrinsics.atomic_store(&board.woken, 1)
+	system.word_wake(&board.woken)
+	for {
+		system.sleep(system.time() + 1000)
+	}
+}
+
+revocation_wakes_waiter :: proc "contextless" (ctx: ^system.Context) -> bool {
+	object, created := system.memory_create(GIGABYTE_PAGES, flags = {.Uncommitted})
+	if created != .Ok {
+		return false
+	}
+	defer system.close(object)
+	one := [1]op.Page_Range{{first = REVOCATION_WORD_PAGE, page_count = 1}}
+	system.memory_commit(object, one[:])
+	board_memory, _ := system.memory_create(1)
+	defer system.close(board_memory)
+	board_address, _ := system.memory_map(board_memory)
+	defer system.memory_unmap(board_address)
+	board := (^Revocation_Board)(board_address)
+	image_address, status := system.memory_map(ctx.handles[system.GRANT_IMAGE], {})
+	if status != .Ok {
+		return false
+	}
+	image := ([^]u8)(image_address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]
+	grants: [op.CONTEXT_HANDLES]system.Grant
+	grants[GRANT_REVOCATION_OBJECT] = {object, {.Read, .Write}}
+	grants[GRANT_REVOCATION_BOARD] = {board_memory, {.Read, .Write}}
+	values: [op.CONTEXT_VALUES]u64
+	values[VALUE_ROLE] = 4
+	program, start := system.program_start(system.image_find(image, "address_space"), "address_space waiter", grants, random.values_with_seed(&program_generator, values), {pages = 2048, programs = 1, threads = 1, processor = 100_000, log_records = 10})
+	if start != .Ok {
+		return false
+	}
+	defer system.close(program)
+	for deadline := system.time() + 2000; intrinsics.atomic_load(&board.ready) == 0 && system.time() < deadline; {
+		system.word_wait(&board.ready, 0, system.time() + 100)
+	}
+	system.sleep(system.time() + 50) // The child enters its wait.
+	began := system.time()
+	revoke_start := system.nanoseconds()
+	system.handle_revoke(object, program)
+	revoke_time := system.nanoseconds() - revoke_start
+	for deadline := system.time() + REVOCATION_DEADLINE + 1000; intrinsics.atomic_load(&board.woken) == 0 && system.time() < deadline; {
+		system.word_wait(&board.woken, 0, system.time() + 100)
+	}
+	woke := intrinsics.atomic_load(&board.woken) != 0 && board.woke_at - began < REVOCATION_DEADLINE / 2
+	system.log("address_space: a revocation of a mapping of 1 GiB with a thread that waits on a word of it: ", revoke_time / 1000, " us; the waiter woke ", woke ? "at once" : "at its deadline, or not")
+	system.call(.Program_Stop, u64(program), 0)
+	return woke
+}
+
+// An Uncommitted object of 1 GiB with 4 pages that have a frame ends: the
+// unmap clears the present entries and stops after the last of them; the
+// release gives the frames back and stops after the last frame. The time
+// is logged; the check is that each page returned to the budget.
+large_object_ends_quickly :: proc "contextless" () -> bool {
+	before, _ := system.budget_read()
+	object, created := system.memory_create(GIGABYTE_PAGES, flags = {.Uncommitted})
+	if created != .Ok {
+		return false
+	}
+	first := [1]op.Page_Range{{first = 0, page_count = 4}}
+	system.memory_commit(object, first[:])
+	address, status := system.memory_map(object)
+	if status != .Ok {
+		system.close(object)
+		return false
+	}
+	bytes := ([^]u8)(address)
+	for page in 0 ..< 4 {
+		bytes[page * system.PAGE_SIZE] = 1
+	}
+	start := system.nanoseconds()
+	system.memory_unmap(address)
+	system.close(object)
+	ended := system.nanoseconds() - start
+	after, _ := system.budget_read()
+	// The page tables of the mapping stay with the program (Memory_Unmap
+	// does not give back a table that became empty): 513 pages for 1 GiB.
+	tables := before.pages - after.pages
+	system.log("address_space: an Uncommitted object of 1 GiB with 4 frames: unmap and close in ", ended / 1000, " us; pages kept for page tables: ", tables)
+	return tables <= 520
 }
 
 // child_stop_code starts the child with a role and gives its stop code.
@@ -981,11 +1098,11 @@ build :: proc "contextless" (frame: ^interface.Frame) {
 		interface.mark(frame, marks.x + (step - 1) * 16, marks.y + 4, 8, color)
 	}
 	interface.cell_text(frame, {marks.x + 168, marks.y, marks.width - 168, 16}, system.format(cases_line[:], cases_right, " of 10 as expected"), graphics.COLOR_TEXT)
-	review_count: u64
-	for result in review_results {
-		review_count += result ? 1 : 0
+	edge_count: u64
+	for result in edge_case_results {
+		edge_count += result ? 1 : 0
 	}
-	line(frame, &column, "review findings", review_count, " of ", u64(REVIEW_CASES), " tested right")
+	line(frame, &column, "edge cases", edge_count, " of ", u64(EDGE_CASES), " right")
 	interface.column_take(&column, 8)
 	status_text := done ? (right ? "ok: each check holds" : problem) : "the cases run"
 	interface.cell_text(frame, interface.column_take(&column, 16), status_text, done ? (right ? graphics.COLOR_PROGRAM : graphics.COLOR_FAILED) : graphics.COLOR_BOOT_PROGRAM)
@@ -1001,6 +1118,9 @@ frame_draw :: proc "contextless" (window: ^display.Window) {
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if ctx.values[VALUE_ROLE] == 1 {
 		child()
+	}
+	if ctx.values[VALUE_ROLE] == 4 {
+		child_waits_on_object(ctx)
 	}
 	if ctx.values[VALUE_ROLE] == 3 {
 		child_not_committed()
@@ -1030,7 +1150,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	large_pages()
 	system.log("address_space: large pages: one random read over 64 MiB: ", large_nanoseconds / 10, ".", large_nanoseconds % 10, " ns through large pages of 2 MiB, ", small_nanoseconds / 10, ".", small_nanoseconds % 10, " ns through pages of 4 KiB of the same object; the report says Large: ", u64(large_flags_right))
 	refuse()
-	review(ctx)
+	edge_cases(ctx)
 	delegation(ctx)
 	addresses_reused()
 	system.log("address_space: addresses: one object mapped and unmapped 100000 times: the budget holds ", reuse_pages_last, " pages after, ", reuse_pages_first, " after the first time")

@@ -122,8 +122,13 @@ wait_entry_wake :: proc "contextless" (thread: ^Thread, serial: u32) -> bool {
 // words and does not wait yet gets `woken`, and its wait_end does not wait.
 // For a thread whose words name a frame that leaves its program (a
 // decommit, a revocation): the caller holds the program lock of the thread,
-// so its words do not change meanwhile (they change in its kernel entry,
-// under that lock).
+// so no word is added meanwhile (a word is registered in the kernel entry,
+// under that lock). The words can still be dropped at the start of the next
+// entry of the thread (wait_begin), with no program lock: then the caller
+// reads a word list that is ending, and at worst wakes a thread that waits
+// no more, which only reads its words again. A thread that registers again
+// later does it under the program lock, after the frames left, and finds
+// the page not committed.
 thread_words_wake :: proc "contextless" (thread: ^Thread) {
 	home := run_lock(thread)
 	queued, preempts := false, false

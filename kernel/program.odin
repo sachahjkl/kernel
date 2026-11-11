@@ -577,25 +577,28 @@ region_frame :: proc "contextless" (region: ^Region, page: u64, give: bool) -> u
 // The lock of each memory object: it gives a page on first use one frame.
 region_locks: [REGION_CAPACITY]Lock
 
-// region_has_frame says if a page frame is a frame of a memory object.
-region_has_frame :: proc "contextless" (region: ^Region, frame: u64) -> bool {
-	if region.contiguous {
-		return frame >= region.physical && frame - region.physical < region.page_count * PAGE_SIZE
-	}
-	for page in 0 ..< region.page_count {
-		if region_frame(region, page, false) == frame {
-			return true
-		}
-	}
-	return false
-}
-
 region_release :: proc "contextless" (index: u32) {
 	region := &regions[index]
 	if intrinsics.atomic_sub(&region.references, 1) != 1 {
 		return
 	}
 	// No handle and no mapping names the object: no other processor uses it.
+	// The test build checks the committed pages before the frame lock: the
+	// walk of each slot of a large object does not hold the lock that each
+	// processor needs to take a frame.
+	when TEST_BUILD_CHECKS_FRAME_SUMS {
+		if region.uncommitted {
+			committed_slots: u64
+			for page in 0 ..< region.page_count {
+				committed_slots += intrinsics.atomic_load(region_slot(region, page)) & SLOT_COMMITTED
+			}
+			if committed_slots != region.committed {
+				intrinsics.atomic_store(&log_serial_only, true)
+				log("kernel: the committed pages of a memory object do not add up: slots ", committed_slots, ", count ", region.committed)
+				machine_stop(3)
+			}
+		}
+	}
 	lock_take(&frame_lock, .Frame)
 	switch {
 	case region.device:
@@ -605,11 +608,17 @@ region_release :: proc "contextless" (index: u32) {
 	case:
 		// The frames go to the stack of this processor: its next pages on
 		// first use take them with no frame lock (memory.odin).
+		// The walk ends at the last frame (`present`): an object of 1 GiB
+		// with few frames is not walked to its end under the frame lock. The
+		// bound that stays: an object whose last page has a frame is one
+		// pass over its slots (262 144 for 1 GiB, 2 MiB read in order).
 		cache := &processor_self().frame_cache
 		lock_take(&cache.lock, .Cache)
-		for page in 0 ..< region.page_count {
+		found: u64
+		for page := u64(0); page < region.page_count && found < region.present; page += 1 {
 			if frame := region_frame(region, page, false); frame != 0 {
 				cache_put_held(cache, frame)
+				found += 1
 			}
 		}
 		lock_free(&cache.lock, .Cache)
@@ -623,19 +632,6 @@ region_release :: proc "contextless" (index: u32) {
 		// The pages that the budget paid: all, or the committed ones; each
 		// paid page with no frame is a reserved page.
 		paid := region.uncommitted ? region.committed : region.page_count
-		when TEST_BUILD_CHECKS_FRAME_SUMS {
-			if region.uncommitted {
-				committed_slots: u64
-				for page in 0 ..< region.page_count {
-					committed_slots += intrinsics.atomic_load(region_slot(region, page)) & SLOT_COMMITTED
-				}
-				if committed_slots != region.committed {
-					intrinsics.atomic_store(&log_serial_only, true)
-					log("kernel: the committed pages of a memory object do not add up: slots ", committed_slots, ", count ", region.committed)
-					machine_stop(3)
-				}
-			}
-		}
 		reserved_pages -= paid - region.present
 		base := region.uncommitted ? uncommitted_base_cost(region.page_count) : list_pages(region.page_count)
 		reserved_pages -= base - list_pages(region.page_count) // The page with no frame of a small Uncommitted object.
@@ -950,16 +946,33 @@ unmap :: proc "contextless" (program: ^Program, mapping: ^Mapping) {
 			}
 		}
 	}
-	for page in 0 ..< (mapping.large ? 0 : mapping.page_count) {
-		address := mapping.address + page * PAGE_SIZE
-		entry := page_entry(program.table, address, false)
-		if entry != nil {
-			walked_present_pages += entry^ & PAGE_PRESENT
-			entry^ = 0
-			if self.table == program.table {
-				page_flush(address)
+	// One table of the last level at a time (one walk of the upper levels
+	// for 512 pages); a range with no table is skipped. The entries that are
+	// not present are already 0, so the walk ends when it has cleared each
+	// present entry of the mapping (`present_page_count`): a mapping of
+	// 1 GiB with few pages that have a frame is not walked to its end. The
+	// test build walks the whole mapping, to compare the count with the walk.
+	for page := u64(0); page < (mapping.large ? 0 : mapping.page_count); {
+		when !TEST_BUILD_CHECKS_LOCK_ORDER {
+			if walked_present_pages == mapping.present_page_count {
+				break
 			}
 		}
+		address := mapping.address + page * PAGE_SIZE
+		run := min(512 - (address >> 12 & 511), mapping.page_count - page)
+		if entry := page_entry(program.table, address, false); entry != nil {
+			entries := ([^]u64)(entry)
+			for at in 0 ..< run {
+				if entries[at] & PAGE_PRESENT != 0 {
+					walked_present_pages += 1
+					entries[at] = 0
+					if self.table == program.table {
+						page_flush(address + at * PAGE_SIZE)
+					}
+				}
+			}
+		}
+		page += run
 	}
 	// The entries are 0 before the read of the tables of the processors: a
 	// processor that loads the table after the read sees the 0 entries.

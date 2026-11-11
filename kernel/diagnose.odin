@@ -304,6 +304,30 @@ read_protect_range :: proc "contextless" (program: ^Program, address: u64, page_
 	return false, false
 }
 
+// read_protect_walk gives what a table of address ranges of a protection
+// change costs, as memory_protect counts it (protect_walk_count). A range
+// that no mapping covers counts its pages.
+@(private = "file")
+read_protect_walk :: proc "contextless" (program: ^Program, address: u64, count: u64) -> (walked: u64) {
+	at, taken := caller_lock(program)
+	defer program_unlock(at, taken)
+	for index in 0 ..< min(count, op.RANGE_TABLE_CAPACITY) {
+		range: op.Address_Range
+		if !read_user(program, address + index * size_of(op.Address_Range), &range, size_of(range)) {
+			return 0
+		}
+		cost := min(range.page_count, op.RANGE_TABLE_PAGE_LIMIT + 1)
+		for &mapping in program.mappings {
+			if mapping.page_count != 0 && range.address >= mapping.address && (range.address - mapping.address) / PAGE_SIZE + range.page_count <= mapping.page_count {
+				cost = protect_walk_count(&mapping, range)
+				break
+			}
+		}
+		walked += cost
+	}
+	return walked
+}
+
 // read_marked_pages gives the pages with a protection of their own of the
 // memory object of a handle; 0 for another handle.
 @(private = "file")
@@ -1032,7 +1056,9 @@ value_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Pro
 		case v[2] & ~u64(0b111) != 0:
 			record_set(record, .Bad_Flags, .None, 3, v[2], 0b111, 0)
 		case:
-			if pages := read_table_pages(program, v[0], v[1], size_of(op.Address_Range), offset_of(op.Address_Range, page_count)); pages > op.RANGE_TABLE_PAGE_LIMIT {
+			// The entries that the call changes, as the kernel counts them:
+			// one for each large page, the present pages of a whole mapping.
+			if pages := read_protect_walk(program, v[0], v[1]); pages > op.RANGE_TABLE_PAGE_LIMIT {
 				record_set(record, .Too_Long, .Pages, 1, pages, op.RANGE_TABLE_PAGE_LIMIT, 0)
 			} else {
 				// Write and Execute together; No_Access with another flag;

@@ -142,9 +142,10 @@ memory_commit :: proc "contextless" (program: ^Program, region_index: u32, range
 	// A thread of the program that waits on a word of a page whose frame
 	// returns wakes now, before the frame can serve another program: its
 	// wait names the frame, so a later wake through a new frame of the page
-	// would not reach it, and a wake by the next owner of the frame would. Only this program names the object, and the program lock keeps
-	// its threads from a new wait meanwhile. It runs again and reads its words.
-	decommit_wake_waiters(program, region, ranges)
+	// would not reach it, and a wake by the next user of the frame would.
+	// Only this program names the object, and the program lock keeps its
+	// threads from a new wait meanwhile. It runs again and reads its words.
+	waiters_on_frames_wake(program, region, ranges)
 	lock_take(&frame_lock, .Frame)
 	defer lock_free(&frame_lock, .Frame)
 	cache := &self.frame_cache
@@ -172,14 +173,24 @@ memory_commit :: proc "contextless" (program: ^Program, region_index: u32, range
 	return changed, .Ok
 }
 
-// decommit_wake_waiters wakes each thread of a program that waits on a word
-// of a frame of the committed pages of the ranges. The caller holds the
-// program lock and the region lock of the object. A thread that waits on
-// more words than this table holds wakes anyway: a wake that was not needed
-// is allowed (the thread reads its words again).
+// waiters_on_frames_wake wakes each thread of a program that has a word
+// in a frame of the pages of the ranges of a memory object: a thread that
+// waits, or one that registered its words and does not wait yet. A decommit
+// and a revocation call it before the frames leave the program. The caller
+// holds the program lock of the program, so the words of its threads do
+// not grow meanwhile. A thread with more words than this table holds wakes
+// anyway: a wake that was not needed is allowed (the thread reads its words
+// again).
+//
+// The cost: the words (at most 256) are sorted once; then the slots of the
+// pages are read in order, with one binary search for each slot that has a
+// frame, and the walk ends when each word is matched or when it has seen
+// each frame of the object (`present`). So an object of 1 GiB with few
+// frames is not walked to its end, unless its last page has a frame: then
+// one pass over its 262 144 slots, 2 MiB read in order.
 WAITING_WORD_CAPACITY :: 256
 
-decommit_wake_waiters :: proc "contextless" (program: ^Program, region: ^Region, ranges: []op.Page_Range) {
+waiters_on_frames_wake :: proc "contextless" (program: ^Program, region: ^Region, ranges: []op.Page_Range) {
 	Waiting_Word :: struct {
 		page:   u64, // The frame of the word.
 		thread: u32,
@@ -187,8 +198,6 @@ decommit_wake_waiters :: proc "contextless" (program: ^Program, region: ^Region,
 	words: [WAITING_WORD_CAPACITY]Waiting_Word
 	count := 0
 	index := index_of_program(program)
-	// Each thread with words: it waits, or it registered them and does not
-	// wait yet.
 	for &thread, slot in threads[1:] {
 		if thread.program != index || thread.word_count == 0 {
 			continue
@@ -205,20 +214,21 @@ decommit_wake_waiters :: proc "contextless" (program: ^Program, region: ^Region,
 	if count == 0 {
 		return
 	}
-	// Sorted by frame: one binary search for each page, not a pass over
-	// the words.
 	for at in 1 ..< count {
 		for back := at; back > 0 && words[back - 1].page > words[back].page; back -= 1 {
 			words[back - 1], words[back] = words[back], words[back - 1]
 		}
 	}
 	remaining := count
+	frames_seen: u64
+	frames := intrinsics.atomic_load(&region.present)
 	for range in ranges {
 		for page in range.first ..< range.first + range.page_count {
-			frame := intrinsics.atomic_load(region_slot(region, page)) & PAGE_ADDRESS
+			frame := region.contiguous ? region.physical + page * PAGE_SIZE : intrinsics.atomic_load(region_slot(region, page)) & PAGE_ADDRESS
 			if frame == 0 {
 				continue
 			}
+			frames_seen += 1
 			low, high := 0, count
 			for low < high {
 				middle := (low + high) / 2
@@ -235,12 +245,13 @@ decommit_wake_waiters :: proc "contextless" (program: ^Program, region: ^Region,
 					remaining -= 1
 				}
 			}
-			if remaining == 0 {
+			if remaining == 0 || !region.contiguous && frames_seen >= frames {
 				return
 			}
 		}
 	}
 }
+
 
 // protection_bits gives the bits of the mappings of a protection.
 protection_bits :: proc "contextless" (mapping: ^Mapping, flags: op.Map_Flags) -> u64 {
@@ -321,19 +332,67 @@ protect_check :: proc "contextless" (program: ^Program, ranges: []op.Address_Ran
 	return mappings, .Ok
 }
 
+// protect_entries_change gives the present entries of pages of a mapping
+// the protection of their mapping and of their slot. One table of the last
+// level at a time; a range with no table is skipped; the walk ends when it
+// has seen each present entry of the mapping (the entries that are not
+// present take their protection at their first use, in page_give).
+protect_entries_change :: proc "contextless" (program: ^Program, mapping: ^Mapping, region: ^Region, first, count: u64, self: ^Processor) {
+	seen: u64
+	present := mapping.present_page_count
+	for page := first; page < first + count && seen < present; {
+		address := mapping.address + page * PAGE_SIZE
+		run := min(512 - (address >> 12 & 511), first + count - page)
+		if entry := page_entry(program.table, address, false); entry != nil {
+			entries := ([^]u64)(entry)
+			for at in 0 ..< run {
+				if entries[at] & PAGE_PRESENT == 0 {
+					continue
+				}
+				seen += 1
+				bits := page_bits(mapping, region_page_state(region, mapping.first + page + at))
+				if bits == 0 {
+					entries[at] = 0
+					mapping.present_page_count -= 1
+				} else {
+					entries[at] = entries[at] & PAGE_ADDRESS | bits
+				}
+				if self.table == program.table {
+					page_flush(address + at * PAGE_SIZE)
+				}
+			}
+		}
+		page += run
+	}
+}
+
+// protect_walk_count gives what a protection change of a range costs, for
+// the limit of one call: the entries that the kernel changes. A large page
+// is one entry. A whole mapping of 4 KiB pages changes only its present
+// entries, and its walk ends at the last of them (protect_entries_change),
+// so it counts its present pages: a mapping of 1 GiB of an object that
+// several programs name can change its protection whole, as long as it has
+// at most RANGE_TABLE_PAGE_LIMIT pages with a frame. A part counts each of
+// its pages: its marks are written in each slot.
+protect_walk_count :: proc "contextless" (mapping: ^Mapping, range: op.Address_Range) -> u64 {
+	whole := range.address == mapping.address && range.page_count == mapping.page_count
+	switch {
+	case mapping.large:
+		return range.page_count / op.LARGE_PAGE_PAGES
+	case whole && intrinsics.atomic_load(&regions[mapping.region].marked_pages) == 0:
+		return mapping.present_page_count
+	}
+	return range.page_count
+}
+
 // memory_protect changes the protection of the pages of the ranges, then
 // makes each processor that uses the page table of the program forget the
 // old translations: one processor_sync for the table.
 memory_protect :: proc "contextless" (program: ^Program, ranges: []op.Address_Range, flags: op.Map_Flags) -> (changed: u64, status: op.Status) {
 	places := protect_check(program, ranges, flags) or_return
-	// The limit counts what the kernel walks: one entry for each large page
-	// (a whole large mapping of 1 GiB is 512
-	// entries, not 262144 pages). A whole mapping of 4 KiB pages above the
-	// limit is refused; a program that names its object alone changes it in
-	// parts.
 	walked: u64
 	for range, index in ranges {
-		walked += program.mappings[places[index]].large ? range.page_count / op.LARGE_PAGE_PAGES : range.page_count
+		walked += protect_walk_count(&program.mappings[places[index]], range)
 	}
 	if walked > op.RANGE_TABLE_PAGE_LIMIT {
 		return 0, .Bad_Operation
@@ -404,23 +463,7 @@ memory_protect :: proc "contextless" (program: ^Program, ranges: []op.Address_Ra
 			changed += count
 			continue
 		}
-		for page in first ..< first + count {
-			address := mapping.address + page * PAGE_SIZE
-			entry := page_entry(program.table, address, false)
-			if entry == nil || entry^ & PAGE_PRESENT == 0 {
-				continue // A page with no entry takes its protection at its first use (page_give).
-			}
-			bits := page_bits(mapping, region_page_state(region, mapping.first + page))
-			if bits == 0 {
-				entry^ = 0
-				mapping.present_page_count -= 1
-			} else {
-				entry^ = entry^ & PAGE_ADDRESS | bits
-			}
-			if self.table == program.table {
-				page_flush(address)
-			}
-		}
+		protect_entries_change(program, mapping, region, first, count, self)
 		changed += count
 	}
 	intrinsics.atomic_thread_fence(.Seq_Cst)
