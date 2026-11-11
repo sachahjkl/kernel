@@ -68,9 +68,13 @@ The strength of the seed is the strongest source that gave all its values. The r
   - The first 16 bytes of the stream of the 4 programs all differ: two programs give different streams, and a restart gives different streams.
 - `server` and `fetch` take the secret of the initial sequence numbers of TCP from their generator (`kerneltool test tcp`).
 
-## 5. The TCP secret before this step was weaker than the window said
+## 5. The TCP secret before step 60: checked, and not weaker than the window said
 
-Recorded on 2026-11-11 (the review row of step 60). Up to step 59, `tcp.secret_make` read `rdrand` in a loop with inline asm that had no `#side_effects`. LLVM took the instruction as a pure function and kept one value for the loop: the four values of the secret were the same value (the machine test of this step saw the same fault: "rdrand present, 1 good, 255 refused"). The check "two equal values" then refused the secret, so `server` and `fetch` took it from the cycle counter, which an attacker can guess. The window of `server` and the log said "rdrand" or "the cycle counter (weak)" by the result of that check; where the compiler kept one value, the source was the cycle counter. Since step 60 the secret is 32 bytes of the generator of the program.
+Checked on 2026-11-11, after the review row of step 60 asked whether the missing `#side_effects` made the TCP secret of the earlier steps weaker than the window said. The answer is no, by the machine code:
+
+- `tcp.secret_make` of step 52 (`8d8d077`), built again with the same flake, and disassembled (`llvm-objdump -d` of `server.o` and `fetch.o`): each of the four values of the secret runs its own `rdrand` instruction (20 `rdrand` in each object: a loop of up to 10 tries for each value), and the check of equal values compares the four results. LLVM did not merge the four reads: each read is in another iteration of a loop whose result goes to memory.
+- So, on a processor with `rdrand`, the secret came from `rdrand`, and the window of `server` said "rdrand"; a refusal (a value of 0, all ones, or two equal values) gave "the cycle counter (weak)" in the color of a failure. The window said the truth.
+- The fault that `#side_effects` corrects was in the new code of `support/random` (`processor_values` through a procedure value): there LLVM kept one value, and the first machine test of this step showed "rdrand present, 1 good, 255 refused". It never reached a TCP secret: it was found and corrected before the commit that moved the secret to the generator.
 
 ## 6. What is not built
 
