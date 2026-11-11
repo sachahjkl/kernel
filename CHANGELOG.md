@@ -6,6 +6,17 @@ The project has steps, not separate releases. The merge of step N on `master` is
 
 What is not in a release yet is in `changelog.d/`, one fragment for each change. `kerneltool changelog release` writes a release from the fragments. Nobody edits this file by hand.
 
+## [0.68.0] - 2026-11-11
+
+### Fixed
+
+- A build in an empty folder could fail: two module processes of the parallel build made the same folder at the same time, and one of them stopped with "cannot create ... Exist".
+- The report of a fault of the kernel no longer reads through the `gs` register (with the `gs` of a program that read faulted again, with no end and no report), a fault inside the report stops the machine with one line, and the wait for a line of another processor is bounded in time, not in loops.
+
+### Security
+
+- **One program could stop the machine**: a thread made with a first instruction that is not an address of a program made the processor fault in the kernel when the thread first ran, and the kernel stopped the machine. The kernel now refuses such a thread, and such a stack.
+
 ## [0.67.0] - 2026-11-11
 
 ### Added
