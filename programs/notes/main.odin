@@ -18,7 +18,7 @@ text_now, text_before: [8192]u8
 drawing: interface.Window_Drawing
 
 WIDTH :: 560
-HEIGHT :: 238
+HEIGHT :: 208
 NOTE_CAPACITY :: 60
 COUNT_BLOCKS :: 3
 COUNT_WORDS :: COUNT_BLOCKS * 512
@@ -131,10 +131,14 @@ draw :: proc "contextless" (window: ^display.Window) {
 		interface.draw_rectangle(table, cell_x, cell_y, 8, 8, u64(cell) < count % 400 ? COLOR_LIT : graphics.COLOR_TRACK)
 	}
 	interface.draw_text(table, 12, 156, restored, restored_good ? graphics.COLOR_PROGRAM : graphics.COLOR_FAILED)
+	// The last line follows the status line with no empty band. When the
+	// store is gone, the keys write nothing that stays: the line says that
+	// in their place.
 	if gone {
 		interface.draw_text(table, 12, 180, "the grant of the store ended: the program keeps nothing", graphics.COLOR_FAILED)
+	} else {
+		interface.draw_text(table, 12, 180, "keys: a note; tab: count 1000, one commit each", graphics.COLOR_DIM)
 	}
-	interface.draw_text(table, 12, HEIGHT - 26, "keys: a note; tab: count 1000, one commit each", graphics.COLOR_DIM)
 	interface.window_frame_end(&drawing, &frame, window)
 }
 

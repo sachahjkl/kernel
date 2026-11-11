@@ -716,3 +716,233 @@ two_pictures_screen_is_each_frame :: proc(t: ^testing.T) {
 		picture = 1 - picture
 	}
 }
+
+@(private = "file")
+LINE_TEST_WIDTH :: 8
+@(private = "file")
+LINE_TEST_HEIGHT :: 6
+
+// line_rows draws one line in a canvas of 8 x 6 pixels and compares each
+// row with a row written by hand: '#' is a pixel of the line.
+@(private = "file")
+line_rows :: proc(t: ^testing.T, name: string, from_x, from_y, to_x, to_y, thickness: int, expected: [LINE_TEST_HEIGHT]string) {
+	pixels: [LINE_TEST_WIDTH * LINE_TEST_HEIGHT]graphics.Color
+	canvas := graphics.Canvas{pixels = raw_data(pixels[:]), width = LINE_TEST_WIDTH, height = LINE_TEST_HEIGHT, stride = LINE_TEST_WIDTH}
+	memory: Tables
+	table := table_of(&memory)
+	draw_line(&table, from_x, from_y, to_x, to_y, thickness, 0xFFFFFF)
+	testing.expectf(t, table.record_count == 1, "%s: one record, not %d", name, table.record_count)
+	execute(&table, canvas)
+	for row in 0 ..< LINE_TEST_HEIGHT {
+		found: [LINE_TEST_WIDTH]u8
+		for column in 0 ..< LINE_TEST_WIDTH {
+			found[column] = pixels[row * LINE_TEST_WIDTH + column] == 0xFFFFFF ? '#' : '.'
+		}
+		testing.expectf(t, string(found[:]) == expected[row], "%s, row %d: %s, not %s", name, row, string(found[:]), expected[row])
+	}
+}
+
+// The pixels of a line, against pixels written by hand.
+@(test)
+line_pixels_by_hand :: proc(t: ^testing.T) {
+	line_rows(t, "horizontal", 1, 1, 4, 1, 1, {
+		"........",
+		".####...",
+		"........",
+		"........",
+		"........",
+		"........",
+	})
+	line_rows(t, "vertical", 2, 0, 2, 3, 1, {
+		"..#.....",
+		"..#.....",
+		"..#.....",
+		"..#.....",
+		"........",
+		"........",
+	})
+	line_rows(t, "diagonal", 0, 0, 3, 3, 1, {
+		"#.......",
+		".#......",
+		"..#.....",
+		"...#....",
+		"........",
+		"........",
+	})
+	// Five columns for two rows: each row of the path is a run of two or
+	// three pixels.
+	line_rows(t, "shallow", 0, 0, 5, 2, 1, {
+		"##......",
+		"..##....",
+		"....##..",
+		"........",
+		"........",
+		"........",
+	})
+	// A thickness of 3: a square of 3 x 3 around each point.
+	line_rows(t, "thick", 1, 2, 4, 2, 3, {
+		"........",
+		"######..",
+		"######..",
+		"######..",
+		"........",
+		"........",
+	})
+	// An even thickness starts one pixel before the point.
+	line_rows(t, "even thickness", 2, 2, 4, 2, 2, {
+		"........",
+		".####...",
+		".####...",
+		"........",
+		"........",
+		"........",
+	})
+	// Length 0: one square.
+	line_rows(t, "length 0", 5, 4, 5, 4, 3, {
+		"........",
+		"........",
+		"........",
+		"....###.",
+		"....###.",
+		"....###.",
+	})
+}
+
+// A small generator of numbers for the tests: the same numbers at each run.
+@(private = "file")
+next_test_number :: proc(seed: ^u32, below: int) -> int {
+	seed^ = seed^ * 1103515245 + 12345
+	return int(seed^ >> 16) % below
+}
+
+// A line and its reverse are one record and draw the same pixels.
+@(test)
+line_and_its_reverse_are_one :: proc(t: ^testing.T) {
+	SIDE :: 40
+	seed: u32 = 11
+	for round in 0 ..< 300 {
+		from_x, from_y := next_test_number(&seed, 60) - 10, next_test_number(&seed, 60) - 10
+		to_x, to_y := next_test_number(&seed, 60) - 10, next_test_number(&seed, 60) - 10
+		thickness := 1 + next_test_number(&seed, 5)
+		forward_memory, backward_memory: Tables
+		forward, backward := table_of(&forward_memory), table_of(&backward_memory)
+		draw_line(&forward, from_x, from_y, to_x, to_y, thickness, 0xFFFFFF)
+		draw_line(&backward, to_x, to_y, from_x, from_y, thickness, 0xFFFFFF)
+		testing.expectf(t, forward.records[0] == backward.records[0], "round %d: two records", round)
+		forward_pixels, backward_pixels: [SIDE * SIDE]graphics.Color
+		execute(&forward, {pixels = raw_data(forward_pixels[:]), width = SIDE, height = SIDE, stride = SIDE})
+		execute(&backward, {pixels = raw_data(backward_pixels[:]), width = SIDE, height = SIDE, stride = SIDE})
+		if forward_pixels != backward_pixels {
+			testing.expectf(t, false, "round %d: (%d, %d) to (%d, %d) and its reverse differ", round, from_x, from_y, to_x, to_y)
+			return
+		}
+	}
+}
+
+// When lines change, the damage holds each pixel that changed, and the
+// surface drawn again in the damage is the new frame drawn whole.
+@(test)
+line_damage_holds_each_changed_pixel :: proc(t: ^testing.T) {
+	SIDE :: 64
+	seed: u32 = 5
+	whole_canvas :: proc(pixels: ^[SIDE * SIDE]graphics.Color) -> graphics.Canvas {
+		return {pixels = raw_data(pixels[:]), width = SIDE, height = SIDE, stride = SIDE}
+	}
+	for round in 0 ..< 200 {
+		before_memory, now_memory: Tables
+		before, now := table_of(&before_memory), table_of(&now_memory)
+		both := [2]^Draw_Table{&before, &now}
+		for table in both {
+			for _ in 0 ..< 1 + next_test_number(&seed, 3) {
+				draw_line(table, next_test_number(&seed, 100) - 18, next_test_number(&seed, 100) - 18, next_test_number(&seed, 100) - 18, next_test_number(&seed, 100) - 18, 1 + next_test_number(&seed, 6), graphics.Color(0x203040 + next_test_number(&seed, 3) * 0x402010))
+			}
+		}
+		// Some rounds keep the first line: equal records damage nothing.
+		if round % 3 == 0 {
+			now.records[0] = before.records[0]
+		}
+		before_pixels, now_pixels: [SIDE * SIDE]graphics.Color
+		graphics.clear(whole_canvas(&before_pixels), graphics.COLOR_BACKGROUND)
+		execute(&before, whole_canvas(&before_pixels))
+		graphics.clear(whole_canvas(&now_pixels), graphics.COLOR_BACKGROUND)
+		execute(&now, whole_canvas(&now_pixels))
+		damage: Damage
+		damage_by_difference(&before, &now, &damage)
+		for y in 0 ..< SIDE {
+			for x in 0 ..< SIDE {
+				if before_pixels[y * SIDE + x] == now_pixels[y * SIDE + x] {
+					continue
+				}
+				inside := false
+				for rectangle in damage.rectangles[:damage.count] {
+					if x >= rectangle.left && x < rectangle.right && y >= rectangle.top && y < rectangle.bottom {
+						inside = true
+					}
+				}
+				if !inside {
+					testing.expectf(t, false, "round %d: the pixel (%d, %d) changed outside the damage", round, x, y)
+					return
+				}
+			}
+		}
+		draw_damage_on_surface(&now, whole_canvas(&before_pixels), damage.rectangles[:damage.count])
+		testing.expectf(t, before_pixels == now_pixels, "round %d: the surface drawn in the damage is not the frame", round)
+	}
+}
+
+// Hostile lines: refused, cut, or drawn with no pixel outside their place.
+@(test)
+line_hostile_values :: proc(t: ^testing.T) {
+	memory: Tables
+	table := table_of(&memory)
+	// A thickness of 0 or less: no record.
+	draw_line(&table, 0, 0, 10, 10, 0, 0xFFFFFF)
+	draw_line(&table, 0, 0, 10, 10, -3, 0xFFFFFF)
+	testing.expect_value(t, table.record_count, 0)
+	// An end past the limit, or the smallest int: no record.
+	draw_line(&table, 0, 0, LINE_COORDINATE_LIMIT + 1, 0, 1, 0xFFFFFF)
+	draw_line(&table, min(int), 0, 4, 4, 1, 0xFFFFFF)
+	draw_line(&table, 0, max(int), 4, 4, 1, 0xFFFFFF)
+	testing.expect_value(t, table.record_count, 0)
+	// A thickness past the limit is cut to it.
+	draw_line(&table, 0, 0, 10, 0, 1000, 0xFFFFFF)
+	testing.expect_value(t, table.record_count, 1)
+	testing.expect_value(t, int(table.records[0].line_thickness), LINE_THICKNESS_LIMIT)
+	// The ends at the limit: a record, and only the pixels in the canvas.
+	draw_line(&table, -LINE_COORDINATE_LIMIT, 3, LINE_COORDINATE_LIMIT, 3, 1, 0xFFFFFF)
+	testing.expect_value(t, table.record_count, 2)
+
+	SIDE :: 16
+	pixels: [SIDE * SIDE]graphics.Color
+	canvas := graphics.Canvas{pixels = raw_data(pixels[:]), width = SIDE, height = SIDE, stride = SIDE}
+	draw_table_clear(&table)
+	draw_line(&table, -LINE_COORDINATE_LIMIT, 3, LINE_COORDINATE_LIMIT, 3, 1, 0xFFFFFF)
+	execute(&table, canvas)
+	for y in 0 ..< SIDE {
+		for x in 0 ..< SIDE {
+			testing.expectf(t, (pixels[y * SIDE + x] == 0xFFFFFF) == (y == 3), "the long line at (%d, %d)", x, y)
+		}
+	}
+
+	// Records written by hand that the execution refuses: no pixel, no damage.
+	pixels = {}
+	hostile := [?]Draw_Record {
+		{kind = .Line, line_thickness = 0, x = 1, y = 1, width = 5, height = 5, first_color = 0xFFFFFF},
+		{kind = .Line, line_thickness = 200, x = 1, y = 1, width = 5, height = 5, first_color = 0xFFFFFF},
+		{kind = .Line, line_thickness = 1, x = 1, y = 1, width = max(i32), height = 5, first_color = 0xFFFFFF},
+		{kind = .Line, line_thickness = 1, x = min(i32), y = min(i32), width = max(i32), height = max(i32), first_color = 0xFFFFFF},
+	}
+	for record in hostile {
+		testing.expect(t, empty(record_rectangle(record)), "a refused line covers nothing")
+	}
+	draw_table_clear(&table)
+	for record in hostile {
+		record_append(&table, record)
+	}
+	// A line fully outside the canvas.
+	draw_line(&table, -40, -40, -20, -10, 3, 0xFFFFFF)
+	draw_line(&table, SIDE + 4, 0, SIDE + 30, SIDE, 3, 0xFFFFFF)
+	execute(&table, canvas)
+	testing.expect(t, pixels == [SIDE * SIDE]graphics.Color{}, "no pixel from refused lines or lines outside")
+	testing.expect_value(t, record_rectangle(table.records[4]), Rectangle{-41, -41, -18, -8})
+}

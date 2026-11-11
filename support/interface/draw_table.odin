@@ -10,7 +10,7 @@ package interface
 
 import "support:graphics"
 
-DRAW_RECORD_VERSION :: 3 // A new kind of record, or a new field, is a new version. 2: Folded_Gap, Picture. 3: Text_Grid.
+DRAW_RECORD_VERSION :: 4 // A new kind of record, or a new field, is a new version. 2: Folded_Gap, Picture. 3: Text_Grid. 4: Line, and the field line_thickness.
 
 Draw_Kind :: enum u8 {
 	None                = 0,
@@ -33,7 +33,21 @@ Draw_Kind :: enum u8 {
 	// paints. The difference compares the cells one by one: a changed cell
 	// damages only its row span (docs/INTERFACE.md, section 2.4).
 	Text_Grid           = 9,
+	// A straight line in first_color: from (x, y) to (x + width, y + height),
+	// so width and height can be negative here; line_thickness is the side
+	// of the square drawn at each point of the path (docs/INTERFACE.md,
+	// section 2.5).
+	Line                = 10,
 }
+
+// The largest thickness of a line: past it, the squares of a long line
+// cost too much to draw again in each damage rectangle.
+LINE_THICKNESS_LIMIT :: 32
+
+// The ends of a line stay inside this distance of the corner of the
+// surface: the drawing walks each point of the path, so a line of a
+// billion points would stop the program. A surface is far smaller.
+LINE_COORDINATE_LIMIT :: 1 << 15
 
 // One cell of a text grid: a character of the font of the system, in its
 // color, or in the color of the background on a cell of its color.
@@ -56,7 +70,7 @@ Draw_Record :: struct {
 	kind:            Draw_Kind,
 	text_scale:      u8, // Text: 1, 2 or 3.
 	text_subpixel_x: u8, // Text: the position after x, in 1/64 of a pixel. 0 on the grid of cells: the vector font and Spleen 8x16 (docs/FONTS.md).
-	reserved:        u8,
+	line_thickness:  u8, // Line: 1 to LINE_THICKNESS_LIMIT pixels. 0 for the other kinds.
 	x, y:            i32,
 	width, height:   i32,
 	first_color:     u32,
@@ -213,6 +227,82 @@ draw_text_grid :: proc "contextless" (table: ^Draw_Table, x, y: int, index: int,
 	record_append(table, {kind = .Text_Grid, x = coordinate(x), y = coordinate(y), width = coordinate(grid.columns * graphics.CELL_WIDTH), height = coordinate(grid.rows * graphics.CELL_HEIGHT), text_start = u32(index), element = element})
 }
 
+// draw_line appends a straight line from one point to another, with a
+// thickness in pixels. The record always goes from the left end (the top
+// end when the two ends have one x), so a line and its reverse are one
+// record and draw the same pixels. A thickness of 0 or less draws nothing;
+// a thickness past LINE_THICKNESS_LIMIT is cut to it. A line with an end
+// past LINE_COORDINATE_LIMIT is refused: no record. A line of length 0 is
+// one square of its thickness.
+draw_line :: proc "contextless" (table: ^Draw_Table, from_x, from_y, to_x, to_y: int, thickness: int, color: graphics.Color, element: u32 = 0) {
+	if thickness <= 0 {
+		return
+	}
+	if !inside_line_limit(from_x) || !inside_line_limit(from_y) || !inside_line_limit(to_x) || !inside_line_limit(to_y) {
+		return
+	}
+	start_x, start_y, end_x, end_y := line_ends_in_order(from_x, from_y, to_x, to_y)
+	record_append(table, {kind = .Line, line_thickness = u8(min(thickness, LINE_THICKNESS_LIMIT)), x = i32(start_x), y = i32(start_y), width = i32(end_x - start_x), height = i32(end_y - start_y), first_color = color, element = element})
+}
+
+// draw_outline appends the border of a rectangle, thickness pixels wide
+// inside it, as four rectangles.
+draw_outline :: proc "contextless" (table: ^Draw_Table, x, y, width, height, thickness: int, color: graphics.Color, element: u32 = 0) {
+	side := min(thickness, width / 2, height / 2)
+	if side <= 0 {
+		return
+	}
+	draw_rectangle(table, x, y, width, side, color, element)
+	draw_rectangle(table, x, y + height - side, width, side, color, element)
+	draw_rectangle(table, x, y + side, side, height - 2 * side, color, element)
+	draw_rectangle(table, x + width - side, y + side, side, height - 2 * side, color, element)
+}
+
+// inside_line_limit says if a place can be an end of a line. A comparison,
+// not abs: abs of the smallest int is still negative.
+inside_line_limit :: proc "contextless" (value: int) -> bool {
+	return value >= -LINE_COORDINATE_LIMIT && value <= LINE_COORDINATE_LIMIT
+}
+
+// line_ends_in_order gives the two ends of a line with the left end first,
+// or the top end first when the two ends have one x. The path of the line
+// depends on its first end: one order gives one path in both directions.
+line_ends_in_order :: proc "contextless" (from_x, from_y, to_x, to_y: int) -> (start_x, start_y, end_x, end_y: int) {
+	if to_x < from_x || to_x == from_x && to_y < from_y {
+		return to_x, to_y, from_x, from_y
+	}
+	return from_x, from_y, to_x, to_y
+}
+
+// line_record_valid says if the execution draws a line record: a record
+// written by a caller with no draw_line can have any bytes.
+line_record_valid :: proc "contextless" (record: Draw_Record) -> bool {
+	thickness := int(record.line_thickness)
+	if thickness < 1 || thickness > LINE_THICKNESS_LIMIT {
+		return false
+	}
+	start_x, start_y := int(record.x), int(record.y)
+	end_x, end_y := start_x + int(record.width), start_y + int(record.height)
+	return inside_line_limit(start_x) && inside_line_limit(start_y) && inside_line_limit(end_x) && inside_line_limit(end_y)
+}
+
+// line_rectangle gives the rectangle that holds each pixel of a line: the
+// path stays between the x and the y of its two ends, and the square of
+// each point starts half a thickness before the point. The rectangle is
+// the damage of the line. Pieces of the path would be tighter, but the
+// damage list joins rectangles that touch, and the pieces of one line
+// touch. A line that the execution refuses covers nothing.
+line_rectangle :: proc "contextless" (record: Draw_Record) -> Rectangle {
+	if !line_record_valid(record) {
+		return {}
+	}
+	thickness := int(record.line_thickness)
+	before := thickness / 2
+	start_x, start_y := int(record.x), int(record.y)
+	end_x, end_y := start_x + int(record.width), start_y + int(record.height)
+	return {min(start_x, end_x) - before, min(start_y, end_y) - before, max(start_x, end_x) - before + thickness, max(start_y, end_y) - before + thickness}
+}
+
 // draw_clip appends a clip: the next records are cut to the rectangle. A
 // width of 0 ends the cut.
 draw_clip :: proc "contextless" (table: ^Draw_Table, x, y, width, height: int) {
@@ -252,6 +342,9 @@ coordinate :: #force_inline proc "contextless" (value: int) -> i32 {
 
 // record_rectangle gives the rectangle that a record covers.
 record_rectangle :: proc "contextless" (record: Draw_Record) -> Rectangle {
+	if record.kind == .Line {
+		return line_rectangle(record)
+	}
 	return {int(record.x), int(record.y), int(record.x) + int(record.width), int(record.y) + int(record.height)}
 }
 
