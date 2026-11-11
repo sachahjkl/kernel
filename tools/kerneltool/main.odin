@@ -166,7 +166,6 @@ build_boot_program :: proc(image: string, volume_path: string, self_test: int) -
 			"-disable-red-zone",
 			"-o:speed",
 			"-vet",
-			"-thread-count:1", // The same object at each build: see build_module.
 			"-source-code-locations:filename", // No path of the folder of the build in the program.
 			CONTRACT_LIBRARY,
 			SUPPORT_LIBRARY,

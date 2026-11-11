@@ -186,14 +186,6 @@ build_module :: proc(build: Module_Build) -> bool {
 		// The file name and the line in a message of a check, not the full path:
 		// the hash of a module does not depend on the folder of the build.
 		"-source-code-locations:filename",
-		// One thread: with two or more, the order in which the compiler
-		// checks the declarations changes from one build to the next, and
-		// with it the order and the inlining of the code, and so the hash of
-		// the module. The stock compiler starts a worker thread beside the
-		// main thread even with "-thread-count:1": the flake applies the patch
-		// tools/odin_compiler/thread_count_counts_the_main_thread.patch, which
-		// gives one thread in all (choice 189 and the choice that follows 359).
-		"-thread-count:1",
 		CONTRACT_LIBRARY,
 		join("-out:", llvm_ir_folder),
 	)

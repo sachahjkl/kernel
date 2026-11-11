@@ -14,8 +14,6 @@
     system = "x86_64-linux";
     pkgs = inputs.nixpkgs.legacyPackages.${system};
 
-    # The Odin compiler with one patch: -thread-count:1 gives one thread, so
-    # one source gives one module (property 11). The reason is in the patch.
     # The release of Odin is pinned here, not by Nixpkgs: Nixpkgs is months
     # behind the releases of the compiler.
     odinRelease = "dev-2026-11a";
@@ -27,9 +25,9 @@
         tag = odinRelease;
         hash = "sha256-LzvPcA6CA0p9DZi1cuFUizDPkVODMZ0OC9/y+NAO0Kc=";
       };
-      # The patches of Nixpkgs are for raylib and for Darwin, which this
-      # system does not use; they do not apply to this release.
-      patches = [./tools/odin_compiler/thread_count_counts_the_main_thread.patch];
+      # The compiler as its release gives it: no patch. The patches of
+      # Nixpkgs are for raylib and for Darwin, which this system does not use.
+      patches = [];
       postPatch = "patchShebangs --build build_odin.sh";
       # The compiler and its base and core libraries only: no vendor library
       # is built, because no code of this system imports one.

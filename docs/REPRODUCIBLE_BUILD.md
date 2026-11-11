@@ -4,7 +4,7 @@ Status: report of the correction of step 59 (choices 400 to 402 of `FIRST_MILEST
 
 ## 1. The cause
 
-The analysis below was made on the tag `dev-2026-05` of Odin, the compiler of the flake at that time; the line numbers are of that source. The flake now pins the release `dev-2026-11a` (section 6).
+The analysis below was made on the tag `dev-2026-05` of Odin, the compiler of the flake at that time; the line numbers are of that source. The flake now pins the release `dev-2026-11a`, with no patch and on all its threads (sections 6 and 7).
 
 - `src/main.cpp`, `init_global_thread_pool`: `worker_count = thread_count; // +1`. So `-thread-count:1` gives the main thread and one worker. A count of `/proc/PID/task` during a build gave 2 threads.
 - `src/checker.cpp`, `check_collect_entities_all`: one pool task for each file. Each task calls `add_entity_and_decl_info`, which adds the entities of its file to the shared queue `info.entity_queue` (`mpsc_enqueue`). The worker steals tasks of the main thread, so the order of that queue changes from one build to the next.
@@ -80,4 +80,15 @@ What changed in the compiler for this subject, read in its release notes and in 
 - The fault of section 1 is still there: `init_global_thread_pool` makes `thread_count` workers beside the main thread. The patch is now one line (`worker_count = thread_count - 1`).
 - `wait_signal_until_available` has no caller left in the compiler, so the second part of the old patch (a thread that waits runs the tasks of its own queue) is gone.
 - The release notes of `dev-2026-10` say: the whole semantic checker runs on several threads, the check of the globals gives an order of the code that does not depend on the threads, and the polymorphic procedures were rewritten with corrections of races. The queues of the checker are now one queue for each thread. So the question of section 4 (a deterministic order with several threads) is open again with a better start: it must be measured with `kerneltool repeat all` and more than one thread before any wide patch is written.
+
+## 7. The compiler with no patch, on all its threads (2026-11-11)
+
+The owner asked to remove `-thread-count:1` once the measure allowed it ("Letsgo !!"). Two measures, with the release `dev-2026-11a`:
+
+- 30 builds each of `console`, `host`, `root` and `compositor` with `-thread-count` 1, 4 and 16, the patch of one line applied: one LLVM IR for each module, and the same one for the three counts (90 builds, 1 hash, four times).
+- `kerneltool repeat all 20` with the compiler as its release gives it (no patch), with no `-thread-count` (the compiler takes one thread for each processor, 16 here), one module process for each processor, a host load of 24 to 42: 64 modules with 1 distinct module, 1 distinct LLVM IR and 1 distinct object each, and the boot program with 1 distinct file and 1 distinct object.
+
+So the flake applies no patch, `tools/odin_compiler` is gone, and no build passes `-thread-count`. Sections 1 to 5 are the history of the fault with the release of May. The check of each full check stays: it builds two times and compares each output, so a compiler that loses this property is caught at the next check.
+
+Limits: one host, one release, 20 builds of each module. `kerneltool repeat all 100` on a quiet host stays to do.
 
