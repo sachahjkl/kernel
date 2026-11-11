@@ -34,7 +34,7 @@ Draw_Kind :: enum u8 {
 Draw_Record :: struct {
 	kind:            Draw_Kind,
 	text_scale:      u8, // Text: 1, 2 or 3.
-	text_subpixel_x: u8, // Text: the position after x, in 1/64 of a pixel. 0 for Spleen 8x16.
+	text_subpixel_x: u8, // Text: the position after x, in 1/64 of a pixel. 0 on the grid of cells: the vector font and Spleen 8x16 (docs/FONTS.md).
 	reserved:        u8,
 	x, y:            i32,
 	width, height:   i32,
