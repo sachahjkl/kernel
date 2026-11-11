@@ -28,6 +28,8 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Load error | The record of a load that failed (`module.Load_Error`): the stage, the module that was being loaded, the import, a replacement on the path, the export, and the two descriptions that differ. The caller owns it. Zero is no error. It is the error record of the loader, larger because it holds names | exception, errno, error message |
 | Stop report | The record that the kernel keeps of a program that stopped on a fault: the stop code, the instruction, the address, the module record of the module that ran, and the stack trace. The holder of the program handle reads it | core dump, crash report, signal info |
 | Error record | The record that a call that failed gives back to its caller (`errors.Error_Record`, 56 bytes, seven Integer fields): the error kind, the unit, the operation or export, the number of the argument, the value that it had, the limit, and what the system found. A kernel operation gives it in its completion record, and so does a ring of a service (the values of a completion whose status is not 0); an export writes it at an address that the caller gives. It holds values only. Zero is no error (`MODULE_CONTRACT.md`, section 8) | errno, exception, error code, detail record, error message |
+| Error detail | One thing that a call that failed has to say, as one record of the error form of the call: an error record for an export, a load error for the loader. A call gives its error details in a table of error details that the caller gives; the error record of the call is the first error detail (`MODULE_CONTRACT.md`, section 8, "The table of error details") | sub-error, cause, inner error, error list, diagnostic |
+| Table of error details | An optional Append table parameter of error details, in memory of the caller: the last parameter of an export that has an error record, with the record of the error record. With no table (`nil`) the call gives its error record only; the count of the table is the count of all the error details, also those that did not fit | error list, error buffer, error stack, error chain |
 | Error kind | What an error record says is wrong: an empty argument, a handle that was revoked, a budget that cannot pay, ... (`errors.Kind`). The documentation of an export names the kinds that it gives | error code, errno value, exception type |
 | Frame pointer | The register `rbp` of a function: the address of the frame of the function on the stack, where the frame pointer and the return address of its caller are. Each module keeps it (rule 8 of `MODULE_CONTRACT.md`) | base pointer, frame record |
 | Stack trace | The return addresses of the calls that led to the instruction of a fault, from the frame pointers, each with the module record that holds it. Part of a stop report | backtrace, call stack (for this), unwind |
@@ -283,6 +285,7 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Draw table | The draw records of one frame of a window, and the bytes of their texts, in the memory of the program | display list, command buffer, render tree |
 | Text grid | A grid of text cells of a program (a character, reverse, a color), drawn by one draw record; the difference compares its cells and damages only the rows spans that changed (`docs/INTERFACE.md`, section 2.4) | character matrix, screen buffer |
 | Picture record | A draw record that shows the pixels of a picture of the program, with a generation that changes when the pixels change | image node, bitmap item |
+| Line record | A draw record of a straight line between two points, with a thickness and a color; a line and its reverse are one record (`docs/INTERFACE.md`, section 2.5) | stroke, path, polyline |
 | Element | A part of a window that one call of the interface package draws: a card, a line of a label and a value, a bar, a table, a button, a list with a choice, a text input | widget, control, component, view |
 | Element identity | A number that names one element from one frame to the next, made from a text: the focus and the pointer state follow it | id, key, handle (reserved for the kernel) |
 | Interface state | What the interface package keeps between frames, in the memory of the program: the element with the focus, the element under the pointer, the pressed element, the order of the focus | UI context, retained state |
@@ -322,7 +325,40 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Random generator | The record of fixed size in the memory of a program that gives it random bytes: ChaCha20 with fast key erasure (`support/random`). A draw makes no kernel entry and no call | RNG, PRNG, CSPRNG (for this), /dev/urandom |
 | Entropy report | What the root service found when it gathered the seed of the system: the sources (rdseed, rdrand, the cycle counter), their good and refused values, and the seed strength | entropy estimate |
 | Seed strength | The strongest source that gave all its values to the seed of the system: entropy (rdseed), processor (rdrand), or weak (the cycle counter only, counted as 0 bits) | security level |
+| Cryptography module | The module `cryptography`: the primitives that the system took from Odin's `core:crypto`, as exports with the memory of the caller and error records (`docs/CRYPTOGRAPHY.md`) | crypto library, libcrypto |
+| Not authentic | The error kind of a sealed text whose tag, or of a message whose signature, does not verify. The call gives no byte | MAC failure, bad tag |
 | Compatibility layer | The packages of `support/cryptography` that give the code taken from Odin the helpers of its origin, over the primitives of this system (`docs/CRYPTOGRAPHY.md`) | shim, polyfill |
+
+## QUIC
+
+| Term | Definition | Do not use |
+|---|---|---|
+| Connection identifier | The bytes (0 to 20) by which a QUIC endpoint names a connection in each packet, independent of the addresses (RFC 9000, section 5.1). Each side chooses the identifiers that the other side sends to it | connection ID (in prose), CID |
+| Packet protection | The AEAD that encrypts the payload of a QUIC packet and authenticates its header, with the key and the iv of one direction of one encryption level (RFC 9001, section 5.3) | encryption (for this), record protection |
+| Header protection | The mask that hides the low bits of the first byte and the packet number of a QUIC packet, made from a sample of the protected payload (RFC 9001, section 5.4) | header encryption |
+| Encryption level | One of the sets of keys of a QUIC connection: Initial (from the connection identifier), Handshake, 0-RTT and 1-RTT (from TLS). Each packet type uses one level | epoch, key phase (for this) |
+| Packet number space | The sequence of packet numbers that one encryption level uses (Initial, Handshake, application data); a packet number is unique in its space | sequence number (for this) |
+| Initial packet | The first packets of a QUIC connection, protected with keys that any observer can compute from the connection identifier: they carry the start of the TLS handshake | handshake packet (for this) |
+| Raw public key | A public key that a TLS peer sends in its Certificate message alone, with no certificate around it: the SubjectPublicKeyInfo of the key (RFC 7250). The other side trusts it when it is the key that its caller pinned | self-signed certificate (for this) |
+| Pinned key | The one public key that the caller of a TLS client gives it as the key of the server: any other key is refused | trust anchor, root certificate |
+| Transcript | The handshake messages of TLS, in order, whose hash the key schedule and the Finished messages use | handshake hash (for the bytes) |
+| Key schedule | The secrets of TLS 1.3, each one from the one before with HKDF and a transcript hash: early, handshake, master, and the traffic secrets of each side (RFC 8446, section 7.1) | key derivation (for the whole) |
+| Alert | The reason of a failure of TLS, one byte (RFC 8446, section 6). QUIC sends it as the error code 0x100 + alert | TLS error (for this) |
+| Frame | One unit of the payload of a QUIC packet: a type, then its fields (RFC 9000, section 19). A packet carries one frame or more | message (for this), chunk |
+| Ack-eliciting packet | A packet with a frame other than PADDING, ACK and CONNECTION_CLOSE: the peer must acknowledge it | reliable packet |
+| Probe timeout | The time after which a side that has no acknowledgement sends one or two probe packets, from the round-trip time and its variation (RFC 9002, section 6.2). It doubles at each timeout without an acknowledgement | retransmission timeout, RTO (for this) |
+| Congestion window | The most bytes of ack-eliciting packets that a side has in flight. This layer keeps it fixed at 12 000 bytes | send window (for this) |
+| Flow control limit | The largest offset of data that a side allows the peer to send, for one stream (MAX_STREAM_DATA) and for the connection (MAX_DATA). Data past it closes the connection with FLOW_CONTROL_ERROR | receive window (for this) |
+| Anti-amplification limit | A server that did not validate the address of a client sends at most 3 times the bytes that it received from it (RFC 9000, section 8.1) | |
+| Address validation | The proof that a client receives at its address: here, a Handshake packet of the client, which needs the keys of the server's flight | |
+| Handshake confirmed | The point after which a side drops its Handshake keys: a server when the handshake completes, a client when HANDSHAKE_DONE comes (RFC 9001, section 4.1.2) | handshake done (for the state) |
+| Handshake deadline | The time after which a connection whose handshake did not complete ends: 10 s from the start of a client, or from the first authentic Initial at a server | handshake timeout (for the value) |
+| Packet number floor | The packet number below which a side refuses each packet of a space, because its set of received numbers forgot those ranges | replay window |
+| Idle timeout | The time with no packet of the peer after which a side ends a connection with no packet: the smaller of the two that the sides give, and 3 probe timeouts at least | keep-alive |
+| Closing state | The state of a side that sent CONNECTION_CLOSE: it answers each packet with it, for 3 probe timeouts | |
+| Draining state | The state of a side that received CONNECTION_CLOSE: it sends nothing, for 3 probe timeouts | |
+| Transport parameters | The values that each side of QUIC gives the other in the handshake of TLS: its limits, its timeouts, and the connection identifiers that it used (RFC 9000, section 18) | settings |
+| Retry packet | A packet of a server that asks the client to send its Initial packet again with a token, to prove its address; its integrity tag uses a fixed key | redirect |
 
 ## Project
 

@@ -26,7 +26,15 @@ Command :: struct {
 	function:        module.Function, // The description of the export: the details of its types.
 	file:            []u8, // The module of the description.
 	record:          u32, // Not 0: the command makes a record with this description of file, from its fields.
+	// Not 0: the number, from 1, of the parameter of the export that is its
+	// table of error details. The console gives the table; the person does
+	// not write it, so parameter_count does not count it.
+	details_parameter: int,
 }
+
+// The places of the table of error details that the console gives to an
+// export (docs/MODULE_CONTRACT.md, section 8, "The table of error details").
+ERROR_DETAILS_CAPACITY :: 16
 
 // A program that executes the isolated calls of the console. It is a call
 // host with a module (a sandboxed program that the console starts), or a
@@ -395,6 +403,7 @@ add_module :: proc "contextless" (name: string, isolate: bool) -> Value {
 			if !sandbox_create(sandbox, file) {
 				sandbox^ = {}
 				if load_error.stage != .None {
+					load_details.count = 0 // A call host gives no details of its load.
 					return fail_load("cannot isolate ", name)
 				}
 				return fail("cannot start a sandboxed program for ", name)
@@ -404,7 +413,8 @@ add_module :: proc "contextless" (name: string, isolate: bool) -> Value {
 			// console cannot choose it.
 			space.source = source_now()
 			ok: bool
-			if place, ok = system.module_space_load(&space, file, &load_error); !ok {
+			load_details = {records = &load_detail_records[0], count = 0, capacity = ERROR_DETAILS_CAPACITY}
+			if place, ok = system.module_space_load(&space, file, &load_error, &load_details); !ok {
 				return fail_load("cannot load ", name)
 			}
 			base = space.modules[place].base
@@ -550,6 +560,12 @@ commands_add :: proc "contextless" (file: []u8, prefix: string, sandbox: int, ba
 			item.parameters[parameter] = Kind(type)
 			item.parameter_names[parameter] = module.string_at(file, function.parameter_names[parameter], u32(function.parameter_name_counts[parameter]))
 		}
+		// The table of error details is the last parameter: the console
+		// gives it, and the command shows the parameters before it.
+		if details_index, has_details := module.error_details_parameter(file, function); has_details {
+			item.details_parameter = details_index + 1
+			item.parameter_count = details_index
+		}
 		command_count += 1
 	}
 }
@@ -687,6 +703,7 @@ callable_by_console :: proc "contextless" (file: []u8, function: module.Function
 			return false
 		}
 	}
+	details_index, has_details := module.error_details_parameter(file, function)
 	for type, index in function.parameters[:function.parameter_count] {
 		direction := function.parameter_directions[index]
 		#partial switch type {
@@ -697,8 +714,9 @@ callable_by_console :: proc "contextless" (file: []u8, function: module.Function
 			}
 		case .Table:
 			// A Read or Change table is a Table value. An Append table is a
-			// second result, which the language does not have.
-			if _, _, ok := isolated.table_record(file, type, function.parameter_details[index]); !ok || direction == .Append {
+			// second result, which the language does not have; the table of
+			// error details is the one Append table: the console gives it.
+			if _, _, ok := isolated.table_record(file, type, function.parameter_details[index]); !ok || (direction == .Append && !(has_details && index == details_index)) {
 				return false
 			}
 		case .Bytes:
@@ -776,6 +794,16 @@ call_export :: proc "contextless" (item: ^Command, arguments: []Value) -> Value 
 			integers[index] = u64(argument.integer)
 		}
 	}
+	// The table of error details: the last parameter, after those of the
+	// person. The export appends to it only when it fails.
+	parameter_total := len(arguments)
+	details: [ERROR_DETAILS_CAPACITY]errors.Error_Record
+	details_place: module.Table_Place
+	if item.details_parameter != 0 {
+		details_place = {address = u64(uintptr(&details[0])), count = 0, capacity = ERROR_DETAILS_CAPACITY}
+		integers[parameter_total] = u64(uintptr(&details_place))
+		parameter_total += 1
+	}
 	// A Record result: the export writes it in the memory of the line.
 	record: []u8
 	if item.result == .Record {
@@ -784,32 +812,34 @@ call_export :: proc "contextless" (item: ^Command, arguments: []Value) -> Value 
 		if record == nil {
 			return fail("the line has too many records")
 		}
-		integers[len(arguments)] = u64(uintptr(raw_data(record)))
+		integers[parameter_total] = u64(uintptr(raw_data(record)))
 	}
 	// A Text result: the buffer is the free part of the memory of the line.
 	buffer := scratch[scratch_count:]
 	if item.result == .Text {
-		integers[len(arguments)] = u64(uintptr(&buffer))
+		integers[parameter_total] = u64(uintptr(&buffer))
 	}
 	// A Table result: the buffer is the free part of the memory of the
 	// tables of the line, with a capacity in records.
 	table: Table_Buffer
 	if item.result == .Table {
 		table = table_buffer(item.file, item.function.result_detail)
-		integers[len(arguments)] = u64(uintptr(&table.slice))
+		integers[parameter_total] = u64(uintptr(&table.slice))
 	}
 	// An error record: one more argument, after the buffer of a result. The
 	// export writes it when it fails.
 	error: errors.Error_Record
 	if item.function.error_record != 0 {
-		integers[len(arguments) + int(item.result == .Text || item.result == .Table)] = u64(uintptr(&error))
+		integers[parameter_total + int(item.result == .Text || item.result == .Table)] = u64(uintptr(&error))
 	}
 	floats: [system.CALL_FLOATS]u64
 	results: [system.CALL_RESULTS]u64
 	system.export_call(item.address, &integers, &floats, &results)
 	if item.function.error_record != 0 && i64(results[0]) < 0 {
 		error.operation = i64(item.export)
-		return export_failure(item, &error, i64(results[0]))
+		failure := export_failure(item, &error, i64(results[0]))
+		error_details_print(item, details[:], details_place.count)
+		return failure
 	}
 	#partial switch item.result {
 	case .Integer:
@@ -974,24 +1004,51 @@ sandbox_start :: proc "contextless" (sandbox: ^Sandbox) -> system.Status {
 // it; the loader, or a call host through the call region, fills it.
 load_error: module.Load_Error
 
+// The error details of the last load in this program that failed: one load
+// error for each import that is missing or has the wrong hash. A call host
+// gives none: the count is 0.
+load_detail_records: [ERROR_DETAILS_CAPACITY]module.Load_Error
+load_details: system.Table_To_Append(module.Load_Error)
+
 // fail_load writes a load error: the first line says what failed, and the
-// lines of the record follow. Each line starts with "error".
+// lines of the record follow. Each line starts with "error". When the load
+// gave more than one error detail, the lines of each one follow, after its
+// number: the record is the first detail.
 fail_load :: proc "contextless" (what: string, name: string) -> Value {
 	result := fail(what, name)
-	buffer: [768]u8
-	writer := system.Writer {
-		buffer = buffer[:],
-	}
-	system.load_error_text(&writer, &load_error)
-	text := system.written(&writer)
-	for len(text) > 0 {
-		end := 0
-		for end < len(text) && text[end] != '\n' {
-			end += 1
+	load_error_lines :: proc "contextless" (record: ^module.Load_Error, number: u64, count: u64) {
+		buffer: [768]u8
+		writer := system.Writer {
+			buffer = buffer[:],
 		}
-		print("error: ", text[:end], "\n")
-		text = text[min(end + 1, len(text)):]
+		if number != 0 {
+			system.error_detail_number_text(&writer, number, count)
+		}
+		system.load_error_text(&writer, record)
+		text := system.written(&writer)
+		for len(text) > 0 {
+			end := 0
+			for end < len(text) && text[end] != '\n' {
+				end += 1
+			}
+			print("error: ", text[:end], "\n")
+			text = text[min(end + 1, len(text)):]
+		}
 	}
+	load_error_lines(&load_error, 0, 0)
+	if load_details.count >= 2 {
+		shown := min(load_details.count, load_details.capacity)
+		for &detail, index in load_detail_records[:shown] {
+			load_error_lines(&detail, u64(index + 1), load_details.count)
+		}
+		buffer: [128]u8
+		writer := system.Writer{buffer = buffer[:]}
+		system.error_details_rest_text(&writer, shown, load_details.count)
+		if rest := system.written(&writer); rest != "" {
+			print("error: ", rest, "\n")
+		}
+	}
+	load_details.count = 0
 	return result
 }
 
@@ -1038,6 +1095,35 @@ export_failure :: proc "contextless" (item: ^Command, error: ^errors.Error_Recor
 	return fail(system.written(&writer), " (", answer, ")")
 }
 
+// error_details_print prints the error details of an export that failed,
+// one line each, after the line of its error record. count is the count of
+// the full answer; details holds the places of the table of the console.
+// The error record is the first detail: with one detail, the line of the
+// record says all of it.
+error_details_print :: proc "contextless" (item: ^Command, details: []errors.Error_Record, count: u64) {
+	if count < 2 {
+		return
+	}
+	shown := min(u64(len(details)), count)
+	for &detail, index in details[:shown] {
+		argument := ""
+		if detail.argument >= 1 && detail.argument <= i64(item.parameter_count) {
+			argument = item.parameter_names[detail.argument - 1]
+		}
+		buffer: [240]u8
+		writer := system.Writer{buffer = buffer[:]}
+		system.error_detail_number_text(&writer, u64(index + 1), count)
+		system.error_text(&writer, &detail, item.name, argument)
+		print("error: ", system.written(&writer), "\n")
+	}
+	if count > shown {
+		buffer: [128]u8
+		writer := system.Writer{buffer = buffer[:]}
+		system.error_details_rest_text(&writer, shown, count)
+		print("error: ", system.written(&writer), "\n")
+	}
+}
+
 // stop_reason gives the text of the code of a stopped program.
 stop_reason :: proc "contextless" (code: u32) -> string {
 	switch code {
@@ -1069,6 +1155,7 @@ call_isolated :: proc "contextless" (item: ^Command, arguments: []Value) -> Valu
 	}
 	if sandbox.program == 0 && sandbox_start(sandbox) != .Ok {
 		if !sandbox.service && load_error.stage != .None {
+			load_details.count = 0 // A call host gives no details of its load.
 			return fail_load("cannot start a sandboxed program for ", sandbox.name)
 		}
 		return fail(sandbox.service ? "no service runs with the name " : "cannot start a sandboxed program for ", sandbox.name)
@@ -1084,12 +1171,21 @@ call_isolated :: proc "contextless" (item: ^Command, arguments: []Value) -> Valu
 			encoded[index].table = {records = bytes, count = u64(len(bytes)) / max(size, 1)}
 		}
 	}
+	// The table of error details: the last parameter, after those of the
+	// person. Its places are reserved in the call region; the details come
+	// back when the export fails.
+	parameter_total := len(arguments)
+	details: [ERROR_DETAILS_CAPACITY]errors.Error_Record
+	if item.details_parameter != 0 {
+		encoded[parameter_total] = {table = {records = ([^]u8)(&details[0])[:size_of(details)], count = 0}}
+		parameter_total += 1
+	}
 	// The handles: the other program receives a copy of each one, with the
 	// rights of the description, through the call ring.
 	// At the end of the call the console revokes the copies: the kernel ends what the other program kept.
 	lending: system.Lending
 	defer system.lend_end(&lending)
-	#partial switch system.lend(item.file, item.function, encoded[:len(arguments)], sandbox.ring_memory, &lending) {
+	#partial switch system.lend(item.file, item.function, encoded[:parameter_total], sandbox.ring_memory, &lending) {
 	case .Ok:
 	case .Bad_Handle:
 		return fail(item.name, ": an argument names no handle of the console")
@@ -1098,9 +1194,9 @@ call_isolated :: proc "contextless" (item: ^Command, arguments: []Value) -> Valu
 	case:
 		return fail(item.name, ": the program ", sandbox.name, " has no room for one more handle")
 	}
-	offset, size, buffer, error_place, ok := isolated.encode(item.file, item.function, encoded[:len(arguments)], sandbox.region)
+	offset, size, buffer, error_place, ok := isolated.encode(item.file, item.function, encoded[:parameter_total], sandbox.region)
 	if !ok {
-		if missing := isolated.room_missing(item.file, item.function, encoded[:len(arguments)], u64(len(sandbox.region))); missing.parameter != 0 {
+		if missing := isolated.room_missing(item.file, item.function, encoded[:parameter_total], u64(len(sandbox.region))); missing.parameter != 0 {
 			return fail("the table ", item.parameter_names[missing.parameter - 1], " of ", item.name, " has ", missing.needed, " bytes; the call region has ", missing.free, " bytes free for it")
 		}
 		return fail("the arguments of ", item.name, " do not fit in the call region")
@@ -1126,14 +1222,19 @@ call_isolated :: proc "contextless" (item: ^Command, arguments: []Value) -> Valu
 			switch isolated.Status(completion.kind) {
 			case .Ok:
 				// The rows of a Change table come back into the memory of the value.
-				if problem, parameter := isolated.tables_return(item.file, item.function, encoded[:len(arguments)], sandbox.region, offset); problem != .None {
-					return fail("the program ", sandbox.name, " gave a wrong count for the table ", item.parameter_names[parameter - 1])
+				if problem, parameter := isolated.tables_return(item.file, item.function, encoded[:parameter_total], sandbox.region, offset); problem != .None {
+					name := parameter >= 1 && parameter <= item.parameter_count ? item.parameter_names[parameter - 1] : "of error details"
+					return fail("the program ", sandbox.name, " gave a wrong count for the table ", name)
 				}
 				// A failure: the other program wrote the error record, values
-				// only, in the place that encode chose.
+				// only, in the place that encode chose, and the error details.
 				if error_place.count != 0 && i64(completion.values[0]) < 0 {
 					error := (^errors.Error_Record)(raw_data(sandbox.region[error_place.start:]))^
-					return export_failure(item, &error, i64(completion.values[0]))
+					failure := export_failure(item, &error, i64(completion.values[0]))
+					if item.details_parameter != 0 {
+						error_details_print(item, details[:], encoded[item.details_parameter - 1].table.count)
+					}
+					return failure
 				}
 				#partial switch item.result {
 				case .Integer:

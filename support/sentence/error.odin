@@ -305,6 +305,15 @@ error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record,
 	case .Unsupported:
 		write_part(writer, "the receiver does not do the command ")
 		write_part(writer, record.value)
+	case .Seed_Too_Weak:
+		write_part(writer, "the random seed of this program has the strength ")
+		write_part(writer, seed_strength_name(record.value))
+		write_part(writer, ", and the call asks for ")
+		write_part(writer, seed_strength_name(record.limit))
+		write_part(writer, " at least: it made nothing")
+	case .Not_Authentic:
+		subject(writer, record, argument)
+		write_part(writer, " is not authentic: its tag or its signature does not verify, and the call gives no byte of it")
 	case .Reserved:
 		subject(writer, record, argument)
 		write_part(writer, " names a program of the system: it starts at boot, or it is a device service, and the call does not act on it")
@@ -439,6 +448,41 @@ kernel_error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_
 	error_text(writer, record, name, argument)
 }
 
+// The table of error details (docs/MODULE_CONTRACT.md, section 8, "The table
+// of error details"): an error detail is an error record, so each sentence
+// above writes it. A reader writes one line for each detail:
+//
+//   detail 2 of 3: monitor.counts_named: the argument names, row 3 of it, names nothing that exists
+//
+// error_detail_number_text writes the start of such a line. count is the
+// count of the full answer.
+error_detail_number_text :: proc "contextless" (writer: ^Writer, number: u64, count: u64) {
+	write_part(writer, "detail ")
+	write_part(writer, number)
+	write_part(writer, " of ")
+	write_part(writer, count)
+	write_part(writer, ": ")
+}
+
+// export_error_detail_text writes the line of one error detail of an export,
+// number from 1.
+export_error_detail_text :: proc "contextless" (writer: ^Writer, file: []u8, export: u32, prefix: string, number: u64, count: u64, detail: ^errors.Error_Record) {
+	error_detail_number_text(writer, number, count)
+	export_error_text(writer, file, export, prefix, detail)
+}
+
+// error_details_rest_text writes the sentence of the error details that did
+// not fit in the table of the caller: shown is the count that the caller
+// read, count the count of the full answer. It writes nothing when each
+// detail fit.
+error_details_rest_text :: proc "contextless" (writer: ^Writer, shown: u64, count: u64) {
+	if count <= shown {
+		return
+	}
+	write_part(writer, count - shown)
+	write_part(writer, count - shown == 1 ? " more error detail did not fit in the table of error details" : " more error details did not fit in the table of error details")
+}
+
 // export_error_text writes the sentence of the error record of an export:
 // the names come from its description. prefix: the name of the service, or
 // "" for a module in this program.
@@ -456,4 +500,19 @@ export_error_text :: proc "contextless" (writer: ^Writer, file: []u8, export: u3
 		}
 	}
 	error_text(writer, record, name, argument)
+}
+
+// seed_strength_name gives the name of a strength of a random seed
+// (support/random, Seed_Strength), for a sentence.
+@(private)
+seed_strength_name :: proc "contextless" (strength: i64) -> string {
+	switch strength {
+	case 1:
+		return "weak (the cycle counter only)"
+	case 2:
+		return "processor (rdrand)"
+	case 3:
+		return "entropy (rdseed)"
+	}
+	return "none"
 }

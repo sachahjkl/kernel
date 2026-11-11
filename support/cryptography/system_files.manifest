@@ -1,0 +1,20 @@
+# The files of support/cryptography that the system wrote itself: the
+# compatibility layer, the files in the place of a hardware dispatch of the
+# origin, and the tests (docs/CRYPTOGRAPHY.md, section 3). Each line: the
+# file, the BLAKE3 hash of the file. `kerneltool cryptography-origin` (also in
+# `kerneltool check`) checks each hash, and that each .odin file of
+# support/cryptography is in this list or in origin.manifest. After a review
+# of a change, `kerneltool cryptography-system-hashes` prints the new lines.
+support/cryptography/_aes/hw/no_hardware.odin 22e079d0522e4f77547c8d4e3c7b17a67a7c49227ee3515eacf80612de73efcf
+support/cryptography/aes/aes_implementation_portable.odin 1d60197764d33da67000a7770e6322a1e9abb84ae3f0fb448f774f5128909eec
+support/cryptography/chacha20/chacha20_implementation_portable.odin 94e606cf374e05f0e39aee42af3839bbe3da49bafaf6e50f35c18ac7fcaefa23
+support/cryptography/chacha20/vectors_test.odin d8ae048ad6dd91968136e81b604dc0a35135f17499d853e4611660e690568083
+support/cryptography/compatibility_bits/bits.odin 68b32dbad1d122c1ed930a5937edc8f8179a07b7d7288cb25ebb6425db377cee
+support/cryptography/compatibility_bytes/bytes.odin 9864ff03522356bfe4c67e650a2216a156ca5ac03adae442408e463a7e3b9ad0
+support/cryptography/compatibility_crypto/crypto.odin fbb6b376a3216654ae651436e2c546d82029e195041718de51ea4bfff7a66bad
+support/cryptography/compatibility_crypto/erase_in_a_module.odin dea6cacc3085179cb70a9e8f02ba3d62b151b0ce216d86c7621adfcfc342922c
+support/cryptography/compatibility_crypto/erase_on_the_host.odin 5c688f4ca4a62fdf13f8e0aaa4f8a51c3ff4bebefb7a8e13a3a0a2460703f836
+support/cryptography/compatibility_endian/endian.odin 014708d2739fc12ca562869640c114b3289a10bee0e316b3d53c3303541fac8c
+support/cryptography/compatibility_hash/hash.odin b886dac11d456c95600bb044be412b03cf940752d196228333b01860428f1c20
+support/cryptography/sha2/sha256_implementation_portable.odin 89fed452402008c9030bb773386266de1b4baa7986f56781b991cf0243d04d8b
+support/cryptography/vectors/vectors_test.odin 96b0e91aba53cfed1b1fe63e73633d8ac65ad5a018a7a59184a2f69c1a14801d

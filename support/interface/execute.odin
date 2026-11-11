@@ -97,6 +97,11 @@ execute_in_rectangle :: proc "contextless" (table: ^Draw_Table, canvas: graphics
 			if index < len(table.grids) {
 				text_grid_draw(view, x, y, table.grids[index])
 			}
+		case .Line:
+			// (x, y) is the first end in the view; the path is the one of
+			// graphics.line from the end that line_ends_in_order puts first.
+			start_x, start_y, end_x, end_y := line_ends_in_order(x, y, x + width, y + height)
+			graphics.line(view, start_x, start_y, end_x, end_y, int(record.line_thickness), record.first_color)
 		case .Point_Grid:
 			// The points are at 12 + 24 n of the surface, so that two areas
 			// of one surface show one grid. A point that starts before the

@@ -163,14 +163,15 @@ grid_damage :: proc "contextless" (before, now: ^Draw_Table, record: Draw_Record
 // the table own_before; the screen shows the other picture, with the table
 // shown. draw: the difference with own_before, the pixels of this picture
 // to make again. present: draw and the difference with shown, because the
-// screen must change wherever it shows something other than now.
-damage_of_two_pictures :: proc "contextless" (own_before, shown: ^Draw_Table, shown_drawn: bool, now: ^Draw_Table, draw, present: ^Damage) {
+// screen must change wherever it shows something other than now. When the
+// table of the shown picture is not known, the screen can show anything
+// that an older frame drew, also where the frame now draws nothing: present
+// is then the whole surface.
+damage_of_two_pictures :: proc "contextless" (own_before, shown: ^Draw_Table, shown_drawn: bool, now: ^Draw_Table, surface: Rectangle, draw, present: ^Damage) {
 	damage_by_difference(own_before, now, draw)
 	present^ = draw^
 	if !shown_drawn {
-		for record in now.records[:now.record_count] {
-			damage_add(present, record_rectangle(record))
-		}
+		damage_add(present, surface)
 		return
 	}
 	shown_damage: Damage

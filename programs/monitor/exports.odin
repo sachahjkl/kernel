@@ -151,9 +151,9 @@ count :: proc "c" (name: ^string, error: ^errors.Error_Record) -> i64 {
 	return errors.fail(error, ERROR_ABSENT, .Absent, .None, 1)
 }
 
-// counts_named gives the counts of the machine that a table of names names, in the order of the table: many counts in one call. The result is the count of rows, or a negative number with an error record. The error kinds: No_Grant (-1, the caller does not act for the person); Refused (-2, the kernel refused the report to the monitor); Absent (-3, a name names no count: found is the number of its row, from 1).
+// counts_named gives the counts of the machine that a table of names names, in the order of the table: many counts in one call. The result is the count of rows, or a negative number with an error record. The error kinds: No_Grant (-1, the caller does not act for the person); Refused (-2, the kernel refused the report to the monitor); Absent (-3, a name names no count: found is the number of its row, from 1). With a table of error details, it gives one Absent detail for each row that names no count, in the order of the rows; the error record is the first of them.
 @(export, link_name = "counts_named")
-counts_named :: proc "c" (names: ^system.Table_To_Read(Count_Name), result: ^[]Count, error: ^errors.Error_Record) -> i64 {
+counts_named :: proc "c" (names: ^system.Table_To_Read(Count_Name), details: ^system.Table_To_Append(errors.Error_Record), result: ^[]Count, error: ^errors.Error_Record) -> i64 {
 	if !person() {
 		return errors.fail(error, ERROR_PERSON, .No_Grant, .Person)
 	}
@@ -162,6 +162,8 @@ counts_named :: proc "c" (names: ^system.Table_To_Read(Count_Name), result: ^[]C
 	if status != .Ok {
 		return errors.fail(error, ERROR_REFUSED, .Refused, .None, 0, 0, 0, i64(status))
 	}
+	first_absent: errors.Error_Record
+	absent_count := 0
 	for number in 0 ..< names.count {
 		// One copy of the record: the caller can change the call region
 		// during the call (docs/MODULE_CONTRACT.md: an export copies a
@@ -174,11 +176,28 @@ counts_named :: proc "c" (names: ^system.Table_To_Read(Count_Name), result: ^[]C
 			}
 		}
 		if found < 0 {
-			return errors.fail(error, ERROR_ABSENT, .Absent, .None, 1, 0, 0, i64(number + 1))
+			absent := errors.error_make(.Absent, .None, 1, 0, 0, i64(number + 1))
+			if absent_count == 0 {
+				first_absent = absent
+			}
+			absent_count += 1
+			// With no table of error details the first row is the whole
+			// answer: stop, as a call with no table always did.
+			if details == nil {
+				break
+			}
+			system.error_detail_append(details, absent)
+			continue
 		}
 		if number < u64(len(result^)) {
 			result[number] = rows[found]
 		}
+	}
+	if absent_count > 0 {
+		if error != nil {
+			error^ = first_absent
+		}
+		return ERROR_ABSENT
 	}
 	return i64(names.count)
 }

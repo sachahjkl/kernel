@@ -121,7 +121,8 @@ call_direct :: proc "contextless" (file: []u8, address: uintptr, function: modul
 // arguments, writes the argument record, waits for the answer, and copies
 // the answer of each Change and Append table back into the memory of the
 // caller. An export that fails gives a negative result and its error
-// record at `error`.
+// record at `error`; of the tables, only its table of error details comes
+// back then.
 //
 // The seam of the three forms: a table argument with a memory object
 // (Table_Argument.memory_handle) goes into the call region when it fits there, and
@@ -193,6 +194,15 @@ call_isolated :: proc "contextless" (connection: ^Call_Connection, file: []u8, e
 			if error_place.count != 0 && result < 0 {
 				if error != nil {
 					intrinsics.mem_copy_non_overlapping(error, raw_data(connection.region[error_place.start:]), size_of(errors.Error_Record))
+				}
+				// The error details come back with the error record: one
+				// answer. A wrong count of the callee keeps the count of the
+				// caller, and the record says it.
+				if problem, parameter := isolated.error_details_return(file, function, arguments, connection.region, offset); problem != .None {
+					if error != nil {
+						error^ = errors.error_make(.Bad_Value, .Records, i64(parameter), i64(problem))
+					}
+					return result, .Wrong_Answer
 				}
 				return result, .Failed
 			}

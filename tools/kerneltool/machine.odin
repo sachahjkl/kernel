@@ -311,7 +311,7 @@ scenario_network := [?]Step {
 	{kind = .Wait, text = "remote: ok, an endpoint with the grant 10.0.2.2 port 7100; the call requests of the host arrive there", any_order = true},
 	// The peer sends six malformed call requests when the remote service
 	// starts: each one has its error record, and no call runs.
-	{kind = .Wait, text = "remote: refused a request: remote: the call has 20 bytes; it must have at least 104 bytes"},
+	{kind = .Wait, text = "remote: refused a request: remote: the call has 20 bytes; it must have at least 112 bytes"},
 	{kind = .Wait, text = "remote: refused a request: remote: the argument kind has the value 9, which the call refuses; it takes at most 1"},
 	{kind = .Wait, text = "remote: refused a request: remote: the argument arguments has 400 bytes; it can have at most 16 bytes"},
 	{kind = .Wait, text = "remote: refused a request: remote: the argument result_count has 65536 bytes; it can have at most 65472 bytes"},
@@ -1639,6 +1639,8 @@ scenario := [?]Step {
 	// (callable_of("remote")).
 	{kind = .Call, text = "monitor.counts_named([(\"programs\"), (\"processors\")])", expected = "2 rows of Count"},
 	{kind = .Call, text = "monitor.counts_named([(\"programs\"), (\"nothing\")])", outcome = .Failed, expected = "names nothing that exists"},
+	// The table of error details: each row that names nothing, not only the first.
+	{kind = .Call, text = "monitor.counts_named([(\"nothing\"), (\"programs\"), (\"none\")])", outcome = .Failed, expected = "detail 2 of 2: monitor.counts_named: row 3 of the argument names"},
 	{kind = .Call, text = "sample.scale_values([(0, 0, 10, 10, 10)], 2)", outcome = .Wrong, expected = "error: the parameter readings of sample.scale_values is Table(Reading, Change): a call from the host gives tables to read only"},
 	{kind = .Call, text = "sample.sum_values([(0, 0, 10, 10, 10)])", outcome = .Refused, expected = "no grant"},
 	{kind = .Close, text = "inspect"},

@@ -5,6 +5,7 @@
 // Run from the root of the repository (the include names runtime/memory.asm).
 package memory
 
+import "base:intrinsics"
 import "core:testing"
 
 foreign import memory "memory_for_host_tests.asm"
@@ -15,6 +16,7 @@ foreign memory {
 	copy_bytes_with_overlap :: proc(destination, source: rawptr, count: int) -> rawptr ---
 	fill_bytes_with_value :: proc(destination: rawptr, value: i32, count: int) -> rawptr ---
 	erase_secret_bytes :: proc(destination: rawptr, count: int) -> rawptr ---
+	erase_stack_below_the_caller :: proc() ---
 }
 
 AREA :: 4096
@@ -164,4 +166,44 @@ erase_each_size :: proc(t: ^testing.T) {
 			}
 		}
 	}
+}
+
+// fill_a_frame_with_a_pattern writes a pattern in a local area of 4 KiB and
+// gives its address: after the return, the area is below the stack pointer
+// of the caller, where a secret of a callee stays.
+@(private = "file")
+fill_a_frame_with_a_pattern :: #force_no_inline proc "contextless" () -> uintptr {
+	area: [4096]u8
+	for &value in area {
+		value = 0xA5
+	}
+	intrinsics.volatile_store(&area[0], 0xA5)
+	return uintptr(&area[0])
+}
+
+// erase_stack_below_the_caller writes 0 in the frames below the stack
+// pointer of its caller: the frame of a procedure that returned is zero
+// after it. The bytes are read by a loop with no call, so that no frame
+// takes the area again before the count.
+@(test)
+erase_the_stack_below_the_caller :: proc(t: ^testing.T) {
+	address := fill_a_frame_with_a_pattern()
+	pattern_before := 0
+	for index in 0 ..< 4096 {
+		if intrinsics.volatile_load((^u8)(address + uintptr(index))) == 0xA5 {
+			pattern_before += 1
+		}
+	}
+	address = fill_a_frame_with_a_pattern()
+	erase_stack_below_the_caller()
+	nonzero_after := 0
+	for index in 0 ..< 4096 {
+		if intrinsics.volatile_load((^u8)(address + uintptr(index))) != 0 {
+			nonzero_after += 1
+		}
+	}
+	// The pattern was there before (the test proves itself), and no byte
+	// of it is left after the erasure.
+	testing.expect(t, pattern_before > 3000)
+	testing.expect_value(t, nonzero_after, 0)
 }

@@ -179,6 +179,9 @@ draw :: proc "contextless" (window: ^display.Window) {
 		interface.draw_rectangle(table, cell_x, cell_y, 8, 8, u64(cell) < count % 400 ? COLOR_LIT : graphics.COLOR_TRACK)
 	}
 	interface.draw_text(table, 12, 156, restored, restored_good ? graphics.COLOR_PROGRAM : graphics.COLOR_FAILED)
+	// The last line follows the status line with no empty band. When the
+	// store is gone, the keys write nothing that stays: the line says that
+	// in their place.
 	if gone {
 		interface.draw_text(table, 12, 172, "the grant of the store ended: the program keeps nothing", graphics.COLOR_FAILED)
 	}

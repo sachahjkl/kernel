@@ -92,6 +92,8 @@ module_builds := [?]Module_Build {
 	{name = "host", source = "programs/host", image = true},
 	{name = "probe", source = "modules/probe", image = true},
 	{name = "math", source = "modules/math", image = true},
+	{name = "cryptography", source = "modules/cryptography", image = true},
+	{name = "cryptography_vectors", source = "programs/cryptography_vectors", imports = {"cryptography"}, image = true},
 	{name = "sample", source = "modules/sample", image = true},
 	{name = "hostile_exports", source = "modules/hostile_exports", image = true},
 	{name = "calendar", source = "modules/calendar", image = true},
@@ -213,7 +215,7 @@ build_module :: proc(build: Module_Build) -> bool {
 		fmt.eprintfln("kerneltool: the compiler wrote %d LLVM IR files for %s; one module is one file", len(llvm_ir_files), build.name)
 		return false
 	}
-	if err := os.rename(llvm_ir_files[0], join(folder, "/", build.name, ".ll")); err != nil {
+	if err := file_move(llvm_ir_files[0], join(folder, "/", build.name, ".ll")); err != nil {
 		fmt.eprintfln("kerneltool: cannot move the LLVM IR of %s: %v", build.name, err)
 		return false
 	}
@@ -503,4 +505,17 @@ test_modules :: proc() -> bool {
 		result,
 	)
 	return true
+}
+
+// file_move renames a file, or copies it and removes the source when the
+// two paths are on two file systems (build/ can be a link to another disk:
+// /tmp/disk, when the memory file system of the computer is full).
+file_move :: proc(source, destination: string) -> os.Error {
+	if err := os.rename(source, destination); err == nil {
+		return nil
+	}
+	if err := os.copy_file(destination, source); err != nil {
+		return err
+	}
+	return os.remove(source)
 }
