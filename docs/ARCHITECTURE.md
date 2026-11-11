@@ -305,18 +305,18 @@ Interrupts are off in the kernel, so a processor never takes a lock again in an 
 
 ## The virtual memory of a program
 
-Status: design and implementation of 2026-11-11 (owner, 2026-11-10: "a program drives its own virtual memory", "use paging and virtual memory as a design tool"). The terms are in `GLOSSARY.md`: reserved object, committed page, decommit, page protection, shoot-down, large page, fault ring.
+Status: design and implementation of 2026-11-11 (owner, 2026-11-10: "a program drives its own virtual memory", "use paging and virtual memory as a design tool"). The terms are in `GLOSSARY.md`: uncommitted object, committed page, decommit, page protection, shoot-down, large page, fault ring.
 
 ### What a program can do, and with which operation
 
 | Need | Form | Why this form |
 |---|---|---|
-| Reserve a range of addresses with no memory behind it | `Memory_Create` with the new flag `Reserve`, then `Memory_Map` | A reserved object pays only its frame list; its pages are paid when they are committed. The reservation of addresses is the mapping of it: one mapping for a range of any size, so the 128 mappings of a program are not spent by parts of an arena or of a table. No new operation: an object with pages that are not paid yet is a kind of memory object |
+| Reserve a range of addresses with no memory behind it | `Memory_Create` with the new flag `Uncommitted`, then `Memory_Map` | An uncommitted object pays only its frame list; its pages are paid when they are committed. The reservation of addresses is the mapping of it: one mapping for a range of any size, so the 128 mappings of a program are not spent by parts of an arena or of a table. No new operation: an object with pages that are not paid yet is a kind of memory object |
 | Commit and decommit pages | the new operation `Memory_Commit` (memory, address of a table of `Page_Range`, count, flags): the flag `Decommit` takes pages back | A new operation: the existing ones create an object, map it, unmap it; none changes what the budget pays for some pages of an object that lives. One operation for the two ways, as `Handle_Give` and `Handle_Close` are not one: here the two ways change the same three counts (budget, reserved pages, frames) in opposite directions over the same table |
 | Change the protection of pages | the new operation `Memory_Protect` (address of a table of `Address_Range`, count, `Map_Flags`) | The protection of a mapping is set by `Memory_Map` for all its pages; changing it for some pages of a mapping that lives is a new act. The flag `No_Access` is new in `Map_Flags` |
 | Large pages | `Memory_Create` with the new flag `Large_Pages` (contiguous, a whole number of 2 MiB, aligned on 2 MiB); `Memory_Map` uses large pages for each 2 MiB that is aligned in the mapping | No new operation: the program asks for an object whose frames can be large pages; the kernel uses them where the mapping allows it |
 | A fault that the program answers | the fault ring: designed below, not built in this step | |
-| What the program reads about itself | `Program_Mapping` has the committed pages and the flags `Reserve`, `Large`, `Protected` | |
+| What the program reads about itself | `Program_Mapping` has the committed pages and the flags `Uncommitted`, `Large`, `Protected` | |
 
 Batches: `Memory_Commit` and `Memory_Protect` take a table of ranges in memory of the caller, at most 256 ranges, in one command. The kernel ring already batches 32 commands in one entry, but each command takes the program lock again, checks its handle again, and a protection change does its own shoot-down; a table of ranges in one command takes the lock once, checks the handle once, and does one shoot-down for all the ranges (property 13: many records in one call; property 14: the table is memory of the caller).
 
@@ -324,7 +324,7 @@ Batches: `Memory_Commit` and `Memory_Protect` take a table of ranges in memory o
 
 The frame list of an object that is not contiguous has one slot of 8 bytes for each page. A frame is aligned on 4096 bytes, so the low 12 bits of a slot are free; the kernel keeps there the state of the page that is not a frame:
 
-- bit 0, `committed`: only for a reserved object. A page of a reserved object is committed when its budget paid for it; a page of another object is always committed. A page that is not committed has no frame, and an access to it is a fault.
+- bit 0, `committed`: only for an uncommitted object. A page of an uncommitted object is committed when its budget paid for it; a page of another object is always committed. A page that is not committed has no frame, and an access to it is a fault.
 - bit 1, `deny write`, and bit 2, `deny execute`: the protection of the page is the protection of its mapping less what these bits deny.
 - bit 3, `no access`: any access is a fault.
 
@@ -332,7 +332,7 @@ The frame of the slot is `slot & PAGE_ADDRESS`; 0 is no frame. A slot changes un
 
 ### Commit and decommit
 
-- **Commit** of a range of a reserved object: under the program lock of the caller, the region lock of the object and the frame lock, in one section for the table: the budget of the object pays one page for each page that is not committed, `reserved_pages` grows by as much, the bit `committed` is set. A budget that cannot pay the whole table refuses the whole table (`No_Budget`, its error record names the range): no table is half done.
+- **Commit** of a range of an uncommitted object: under the program lock of the caller, the region lock of the object and the frame lock, in one section for the table: the budget of the object pays one page for each page that is not committed, `reserved_pages` grows by as much, the bit `committed` is set. A budget that cannot pay the whole table refuses the whole table (`No_Budget`, its error record names the range): no table is half done.
 - **Decommit**: the same locks. For each committed page: the bit is cleared; a page with a frame loses its page table entry (the shoot-down below), its frame goes to the frame cache of this processor (in the section of the frame lock, as the end of an object does), `present` of the object falls by one; a page with no frame gives back its reserved page; the budget receives one page for each page. The content of a page that is committed again is zero (a new frame at its first use: P20, ZII).
 - Decommit and a protection change of a part of a mapping need an object that only this program maps, with one mapping (the references of the object are the handles of this program to it and this one mapping): its pages have no page table entry in another program, so the shoot-down is the one of this program. Another object gives `Bad_State` with its error record.
 - The sums of the frames (`TEST_BUILD_CHECKS_FRAME_SUMS`) hold at each step: a commit moves pages from a budget to `reserved_pages`, a decommit moves them back, or moves a frame to a stack and a page to the budget.
