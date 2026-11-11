@@ -17,9 +17,15 @@ import "support:web"
 // against 48 records.
 IDLE_LIMIT :: 10_000 // No byte of a request on an open connection: a close.
 HEAD_TIME_LIMIT :: 10_000 // A head that started and is not whole: 408.
-PROGRESS_LIMIT :: 10_000 // A request in progress with no byte read and no byte acknowledged (a zero window for ever): a RST.
-BODY_GRACE :: 10_000 // After it, a body must come at BODY_RATE bytes in one second at least: else a RST.
-BODY_RATE :: 4096
+PROGRESS_LIMIT :: 10_000 // Bytes to send, and no byte read and no byte acknowledged (a zero window for ever): a RST.
+BODY_SILENCE_LIMIT :: 10_000 // No byte of a body that is not whole: a RST.
+// A body, and the bytes that this server sends, must move TRANSFER_RATE_LEAST
+// bytes in one second over each period of TRANSFER_PERIOD: else a RST. A
+// rate over each period, not an average from the start (an independent
+// read, W6: 1 MiB at once then nothing held a record for 68 minutes, and one
+// byte acknowledged each 9 s held an answer for days).
+TRANSFER_PERIOD :: 10_000
+TRANSFER_RATE_LEAST :: 4096
 SINK_LIMIT :: 16 << 20 // The largest body of /sink: 413 over it.
 ANSWER_HEAD_CAPACITY :: 6144 // The head of an answer, and a body that the server makes (a page of counts).
 
@@ -42,7 +48,11 @@ Session :: struct {
 	body_left:          i64,
 	body_bytes:         i64,
 	body_hash:          u64,
-	body_at:            u64, // Milliseconds: the head of a body.
+	body_last_byte_at:  u64, // Milliseconds: the last byte of the body that came.
+	body_period_start:  u64, // Milliseconds: the start of the period of the body rate.
+	body_period_bytes:  i64, // body_bytes at body_period_start.
+	send_period_start:  u64, // Milliseconds: the start of the period of the send rate; 0: nothing to send.
+	send_period_acknowledged: u64, // bytes_sent of the connection at send_period_start.
 	answer_head:        [ANSWER_HEAD_CAPACITY]u8,
 	answer_head_length: int,
 	answer_head_done:   int,
@@ -229,7 +239,9 @@ request_route :: proc "contextless" (index: int) {
 		session.body_left = max(request.content_length, 0)
 		session.body_bytes = 0
 		session.body_hash = web.FNV_START
-		session.body_at = system.time()
+		session.body_last_byte_at = system.time()
+		session.body_period_start = session.body_last_byte_at
+		session.body_period_bytes = 0
 		session.has_request = true
 		return
 	case !reading:
@@ -354,6 +366,9 @@ http_connection_work :: proc "contextless" (index: int) {
 			session.body_hash = web.fnv(session.body_hash, session.input[:taken])
 			session.body_bytes += i64(taken)
 			session.body_left -= i64(taken)
+			if taken > 0 {
+				session.body_last_byte_at = system.time()
+			}
 			copy(session.input[:], session.input[taken:session.input_length])
 			session.input_length -= taken
 			if session.body_left > 0 {
@@ -413,7 +428,10 @@ http_remote_closed :: proc "contextless" (index: int) {
 	}
 }
 
-// http_limits ends what makes no progress on an open connection.
+// http_limits ends what makes no progress on a connection: an open one,
+// and one that this server closed with bytes still to send (an independent
+// read, F3: a closed connection had no limit, and a remote that answers
+// each probe with a zero window held it for ever).
 http_limits :: proc "contextless" (index: int, now: u64) {
 	session := &sessions[index]
 	connection := &connections[index]
@@ -421,23 +439,55 @@ http_limits :: proc "contextless" (index: int, now: u64) {
 		session.acknowledged = connection.bytes_sent
 		session.progress_at = now
 	}
+	// The bytes that this server sends: an answer in progress, or bytes in
+	// the send buffer that the remote did not acknowledge.
+	sending := (session.has_request && !session.reading_body) || connection.send_length > 0
+	if !sending {
+		session.send_period_start = 0
+	} else {
+		if now - session.progress_at >= PROGRESS_LIMIT {
+			aborted(index, "aborted: no byte acknowledged in 10 s")
+			return
+		}
+		if session.send_period_start == 0 {
+			session.send_period_start = now
+			session.send_period_acknowledged = connection.bytes_sent
+		} else if now - session.send_period_start >= TRANSFER_PERIOD {
+			moved := connection.bytes_sent - session.send_period_acknowledged
+			if moved * 1000 < TRANSFER_PERIOD * TRANSFER_RATE_LEAST {
+				aborted(index, "aborted: an answer under 4096 bytes in one second")
+				return
+			}
+			session.send_period_start = now
+			session.send_period_acknowledged = connection.bytes_sent
+		}
+	}
 	if session.closing {
 		return
 	}
 	switch {
 	case session.reading_body:
-		elapsed := now - session.body_at
-		if elapsed > BODY_GRACE && u64(session.body_bytes) * 1000 < (elapsed - BODY_GRACE) * BODY_RATE {
-			aborted(index, "aborted: a body under 4096 bytes in one second")
+		if now - session.body_last_byte_at >= BODY_SILENCE_LIMIT {
+			aborted(index, "aborted: no byte of the body in 10 s")
+			return
+		}
+		if now - session.body_period_start >= TRANSFER_PERIOD {
+			moved := session.body_bytes - session.body_period_bytes
+			if u64(moved) * 1000 < TRANSFER_PERIOD * TRANSFER_RATE_LEAST {
+				aborted(index, "aborted: a body under 4096 bytes in one second")
+				return
+			}
+			session.body_period_start = now
+			session.body_period_bytes = session.body_bytes
 		}
 	case session.has_request:
-		if now - session.progress_at >= PROGRESS_LIMIT {
-			aborted(index, "aborted: no byte acknowledged in 10 s")
-		}
+	// The answer: the rules of sending above.
 	case session.input_length == 0:
-		if now - session.progress_at >= IDLE_LIMIT {
-			who: [32]u8
-			system.log("server: ", address_text(who[:], connection.remote_address, connection.remote_port), ": no request in 10 s, closed")
+		if now - session.progress_at >= IDLE_LIMIT && !sending {
+			if connection_log_allowed() {
+				remote_text: [32]u8
+				system.log("server: ", address_text(remote_text[:], connection.remote_address, connection.remote_port), ": no request in 10 s, closed")
+			}
 			session.closing = true
 			tcp.close(&table, index)
 		}

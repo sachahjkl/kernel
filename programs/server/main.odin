@@ -178,6 +178,33 @@ releases_send_now :: proc "contextless" () {
 	releases_waiting_count = kept
 }
 
+// The log lines of the ends of connections, in one second at most: a remote
+// that opens and closes connections must not fill the log limit of the
+// program (an independent read, W10). The others are counted, and one line
+// says how many.
+CONNECTION_LOG_LIMIT :: 50
+connection_log_second: u64
+connection_log_count: u64
+connections_not_logged: u64
+
+// connection_log_allowed says if one more line of the end of a connection
+// goes on the log in this second.
+connection_log_allowed :: proc "contextless" () -> bool {
+	second := system.time() / 1000
+	if second != connection_log_second {
+		if connections_not_logged > 0 {
+			system.log("server: ", connections_not_logged, " ends of connections in one second are not on the log (the limit is 50)")
+		}
+		connection_log_second, connection_log_count, connections_not_logged = second, 0, 0
+	}
+	if connection_log_count < CONNECTION_LOG_LIMIT {
+		connection_log_count += 1
+		return true
+	}
+	connections_not_logged += 1
+	return false
+}
+
 // ended_log writes the end of a connection on the log and in the history:
 // when it ends, or when it enters TIME-WAIT (this side closed first: the
 // record stays 10 s more, and has nothing more to say).
@@ -193,8 +220,12 @@ ended_log :: proc "contextless" (index: int, how: string) {
 	bytes_in += connection.bytes_received
 	bytes_out += connection.bytes_sent
 	retransmissions += connection.retransmissions
-	who: [32]u8
-	system.log("server: ", address_text(who[:], connection.remote_address, connection.remote_port), " ", how, ": ", u64(session.requests), " requests, in ", connection.bytes_received, ", out ", connection.bytes_sent, ", srtt ", connection.smoothed_rtt, " us, ", connection.retransmissions, " retransmissions, ", connection.probes, " probes, ", connection.challenges, " challenges")
+	if !connection_log_allowed() {
+		keep_alive_measure(index)
+		return
+	}
+	remote_text: [32]u8
+	system.log("server: ", address_text(remote_text[:], connection.remote_address, connection.remote_port), " ", how, ": ", u64(session.requests), " requests, in ", connection.bytes_received, ", out ", connection.bytes_sent, ", srtt ", connection.smoothed_rtt, " us, ", connection.retransmissions, " retransmissions, ", connection.probes, " probes, ", connection.challenges, " challenges")
 	keep_alive_measure(index)
 }
 
@@ -271,7 +302,12 @@ exchange :: proc "contextless" (incoming: []tcp.Incoming) -> (deadline: u64) {
 			}
 			if connection.state == .Established || connection.state == .Close_Wait {
 				http_connection_work(index)
-				if connection.state != .Closed && round == 0 {
+			}
+			// The limits: also after this server closed, while it has bytes
+			// to send (FIN-WAIT-1, CLOSING, LAST-ACK).
+			#partial switch connection.state {
+			case .Established, .Close_Wait, .Fin_Wait_1, .Fin_Wait_2, .Closing, .Last_Ack:
+				if round == 0 {
 					http_limits(index, system.time())
 				}
 			}
