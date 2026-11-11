@@ -25,10 +25,12 @@ WIDTH :: 1000
 LINE :: 16
 TOP :: 8 + 2 * LINE + 8 // The first case.
 CASE_HEIGHT :: 2 * LINE
-CASE_CAPACITY :: 19
+CASE_CAPACITY :: 21
+CASES_ON_A_PAGE :: 19 // The window shows one page of cases; Tab shows the other one.
+PAGE_COUNT :: (CASE_CAPACITY + CASES_ON_A_PAGE - 1) / CASES_ON_A_PAGE
 // One case can have a sentence of two lines (a load error that names an
 // export and its difference): the window has one line for it.
-HEIGHT :: TOP + CASE_CAPACITY * CASE_HEIGHT + LINE + 8 + LINE + 8
+HEIGHT :: TOP + CASES_ON_A_PAGE * CASE_HEIGHT + LINE + 8 + LINE + 8
 SENTENCE_CAPACITY :: 240
 SHOWN :: (WIDTH - 40) / 8 // The characters of a line of the window.
 
@@ -67,7 +69,13 @@ cases := [CASE_CAPACITY]Case {
 	{text = "storage.write over the limit", expected = "Over_Limit"},
 	{text = "storage.size(\"nothing\")", expected = "Absent"},
 	{text = "a fault three calls deep", expected = "stack trace"},
+	// The second page.
+	{text = "the pages of another program (Inspect, Pages)", expected = "Bad_Value"},
+	{text = "the pages past the end of the user half", expected = "Bad_Value"},
 }
+
+shown_page: int // The page of cases that the window shows.
+machine: system.Handle
 
 image: []u8
 image_memory: system.Handle
@@ -88,6 +96,27 @@ kernel_good, kernel_failed, direct_good, direct_failed: u64
 kernel_text :: proc "contextless" (writer: ^system.Writer, record: ^errors.Error_Record, status: system.Status, expected: errors.Kind) -> bool {
 	system.kernel_error_text(writer, record)
 	return status != .Ok && errors.Kind(record.kind) == expected
+}
+
+// The pages of another program: Inspect_Kind.Pages answers for the program
+// that asks only (a side channel otherwise): the slot 1, the root service,
+// is refused with the argument index.
+case_pages_of_another_program :: proc "contextless" (writer: ^system.Writer) -> bool {
+	record: errors.Error_Record
+	report: op.Page_Report
+	_, status := system.call_with_error(&record, .Inspect, u64(machine), u64(op.Inspect_Kind.Pages), 1, u64(uintptr(&report)), size_of(report))
+	right := kernel_text(writer, &record, status, .Bad_Value)
+	return right && status == .Bad_Operation && record.argument == 3 && record.value == 1
+}
+
+// The pages past the end of the user half: the 64 pages from the first page
+// of the report must be addresses of programs.
+case_pages_past_the_user_half :: proc "contextless" (writer: ^system.Writer) -> bool {
+	record: errors.Error_Record
+	report := op.Page_Report{address = op.USER_END - system.PAGE_SIZE}
+	_, status := system.call_with_error(&record, .Inspect, u64(machine), u64(op.Inspect_Kind.Pages), 0, u64(uintptr(&report)), size_of(report))
+	right := kernel_text(writer, &record, status, .Bad_Value)
+	return right && status == .Bad_Operation && record.argument == 4 && u64(record.value) == op.USER_END - system.PAGE_SIZE
 }
 
 case_rights :: proc "contextless" (writer: ^system.Writer) -> bool {
@@ -362,6 +391,10 @@ case_run :: proc "contextless" (index: int, writer: ^system.Writer) -> bool {
 		return case_size(writer)
 	case 18:
 		return case_fault(writer)
+	case 19:
+		return case_pages_of_another_program(writer)
+	case 20:
+		return case_pages_past_the_user_half(writer)
 	}
 	return false
 }
@@ -456,7 +489,7 @@ child :: proc "contextless" (ctx: ^system.Context) -> ! {
 // refusals measures the two refusals; the machine handle reads the counts of
 // the locks.
 refusals :: proc "contextless" (ctx: ^system.Context) {
-	machine := ctx.handles[system.GRANT_MACHINE]
+	// The machine handle: the global `machine` (entry sets it).
 	memory, _ := system.memory_create(1)
 	defer system.close(memory)
 	address, _ := system.memory_map(memory)
@@ -617,7 +650,7 @@ contend :: proc "contextless" () -> bool {
 }
 
 @(rodata)
-key_names := "abcdefghijklmnopqrs"
+key_names := "abcdefghijklmnopqrstuvwxyz0123456789"
 FAULT_CASE :: 18
 
 @(export, link_name = "entry")
@@ -630,6 +663,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.stop(1)
 	}
 	ctx_log = ctx.handles[op.CONTEXT_LOG]
+	machine = ctx.handles[system.GRANT_MACHINE]
 	image_memory = ctx.handles[system.GRANT_IMAGE]
 	if address, status := system.memory_map(image_memory, {}); status == .Ok {
 		image = ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]
@@ -669,8 +703,15 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			chosen := -1
 			#partial switch event.kind {
 			case .Key:
-				if event.pressed && event.character >= 'a' && int(event.character - 'a') < len(cases) {
-					chosen = int(event.character - 'a')
+				if event.pressed && event.code == KEY_TAB {
+					shown_page = (shown_page + 1) % PAGE_COUNT
+					system.log("errors: the window shows the page ", u64(shown_page + 1), " of the cases")
+				} else if event.pressed {
+					for index in 0 ..< len(cases) {
+						if key_names[index] == event.character {
+							chosen = index
+						}
+					}
 				}
 			case .Pointer:
 				down := event.buttons & 1 != 0
@@ -706,10 +747,12 @@ case_height :: proc "contextless" (index: int) -> int {
 	return cases[index].count > SHOWN ? CASE_HEIGHT + LINE : CASE_HEIGHT
 }
 
+KEY_TAB :: 0x0F
+
 // case_at gives the case that is drawn at a height of the window, or -1.
 case_at :: proc "contextless" (at: int) -> int {
 	y := TOP
-	for index in 0 ..< len(cases) {
+	for index in shown_page * CASES_ON_A_PAGE ..< min((shown_page + 1) * CASES_ON_A_PAGE, len(cases)) {
 		next := y + case_height(index)
 		if at >= y && at < next {
 			return index
@@ -727,11 +770,15 @@ draw :: proc "contextless" (window: ^display.Window) {
 	table := frame.table
 	interface.draw_rectangle(table, 0, 0, WIDTH, HEIGHT, graphics.COLOR_BACKGROUND)
 	interface.draw_text(table, 16, 8, "each case makes an error for real; under it, the sentence of its record: errors.Error_Record,", graphics.COLOR_DIM)
-	interface.draw_text(table, 16, 8 + LINE, "module.Load_Error, op.Stop_Report.frames. A key from a to s, or a click on a case, runs it again", graphics.COLOR_DIM)
+	interface.draw_text(table, 16, 8 + LINE, "module.Load_Error, op.Stop_Report.frames. Its key or a click runs a case again; tab: the other page", graphics.COLOR_DIM)
+	page_text: [32]u8
+	interface.draw_text(table, WIDTH - 120, 8 + LINE, system.format(page_text[:], "page ", u64(shown_page + 1), " of ", u64(PAGE_COUNT)), graphics.COLOR_TEXT)
 	y := TOP
-	for &item, index in cases {
+	first := shown_page * CASES_ON_A_PAGE
+	for &item, place in cases[first:min(first + CASES_ON_A_PAGE, len(cases))] {
+		index := first + place
 		height := case_height(index)
-		if index % 2 == 0 {
+		if place % 2 == 0 {
 			interface.draw_rectangle(table, 8, y, WIDTH - 16, height, graphics.COLOR_TRACK)
 		}
 		interface.draw_text(table, 16, y, key_names[index:index + 1], graphics.COLOR_DIM)

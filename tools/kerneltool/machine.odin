@@ -1375,8 +1375,13 @@ scenario := [?]Step {
 	// after any case.
 	{kind = .Wait, text = "compositor: surface errors", any_order = true},
 	{kind = .Trace, text = "errors: stack of fault: ", names = "fault::three fault::two fault::one entry"},
-	{kind = .Wait, text = "errors: ok, 19 cases, each with the expected error record"},
+	{kind = .Wait, text = "errors: t the pages of another program (Inspect, Pages): Inspect: the argument index has the value 1, which the call refuses"},
+	{kind = .Wait, text = "errors: u the pages past the end of the user half: Inspect: the argument address has the value 140737488351232, which the call refuses; it takes 1 to 140737488093184"},
+	{kind = .Wait, text = "errors: ok, 21 cases, each with the expected error record"},
 	{kind = .Wait, text = "errors: under contention: "},
+	// A text longer than one row of log.records (160 bytes): its end is in
+	// the next row, and the tool joins the rows.
+	{kind = .Record, program = "errors", level = "info", text = " records name no cause (Refused)", any_order = true},
 	{kind = .Wait, text = " handles; 0 records contradict their status, "},
 	{kind = .Wait, text = " refused Memory_Create: "},
 	{kind = .Wait, text = "errors: a kernel operation that succeeds: "},
@@ -2205,17 +2210,33 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				table, ok := table_call(&machine.client, fmt.tprintf("log.records(%d)", from))
 				reads += 1
 				rows := ok ? len(table.rows) / table.size : 0
-				for row in 0 ..< rows {
+				// A text goes on in the next row when its row says so
+				// (log.records: a row has 160 bytes of text): the rows of one
+				// text are joined before the comparison.
+				for row := 0; row < rows; {
+					last := row
+					for last < rows - 1 && table_value(&table, last, "continues") == "1" {
+						last += 1
+					}
+					if table_value(&table, last, "continues") == "1" {
+						break // The rest of the text is after the rows of this call: read again from it.
+					}
+					joined := strings.builder_make(context.temp_allocator)
+					for part in row ..= last {
+						strings.write_string(&joined, table_value(&table, part, "text"))
+					}
 					number, _ := strconv.parse_i64(table_value(&table, row, "number"))
-					if table_value(&table, row, "program") == step.program && table_value(&table, row, "channel") == step.channel && table_value(&table, row, "level") == step.level && strings.contains(table_value(&table, row, "text"), step.text) {
+					last_number, _ := strconv.parse_i64(table_value(&table, last, "number"))
+					if table_value(&table, row, "program") == step.program && table_value(&table, row, "channel") == step.channel && table_value(&table, row, "level") == step.level && strings.contains(strings.to_string(joined), step.text) {
 						found = true
 						if !step.any_order {
-							machine.record_next = number + 1
+							machine.record_next = last_number + 1
 						}
-						fmt.printfln("kerneltool: test passed: the log record %d of %s, channel \"%s\", level %s, has \"%s\" (%d calls of log.records)", number, step.program, step.channel, step.level, step.text, reads)
+						fmt.printfln("kerneltool: test passed: the log record %d of %s, channel \"%s\", level %s, has \"%s\" (%d calls of log.records, %d rows)", number, step.program, step.channel, step.level, step.text, reads, last - row + 1)
 						break
 					}
-					from = number + 1
+					from = last_number + 1
+					row = last + 1
 				}
 				if !found && rows == 0 {
 					time.sleep(50 * time.Millisecond)

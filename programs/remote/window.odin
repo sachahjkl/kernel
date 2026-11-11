@@ -7,6 +7,13 @@ import "support:graphics"
 import "support:interface"
 import "support:system"
 
+// An answer with an error record: the call ran, and the service gave its
+// error as a value. Not the color "failed" (no call failed to run), and not
+// the color of a result: the amber that the program log gives to the level
+// Warning, the color of a failure that the caller can act on. A refusal by
+// remote itself (no call ran) and by the service keep the color "failed".
+COLOR_ERROR_RECORD :: graphics.COLOR_BOOT_PROGRAM
+
 // The window follows docs/DESIGN.md: rectangles only, the grid of 8 pixels,
 // three cards with a title in the accent of their concept and a caption
 // that names their record, names in the dim color, values in the text
@@ -71,10 +78,10 @@ draw :: proc "contextless" (window: ^display.Window) {
 	// One bar: the width of each part is its count of requests.
 	BAR_Y :: 96
 	parts := [3]u64{counts.calls - counts.failed, counts.failed, counts.refused}
-	colors := [3]graphics.Color{graphics.COLOR_PROGRAM, graphics.shade(graphics.COLOR_PROGRAM, 60), graphics.COLOR_FAILED}
+	colors := [3]graphics.Color{graphics.COLOR_PROGRAM, COLOR_ERROR_RECORD, graphics.COLOR_FAILED}
 	interface.bar_parts(&frame, {inside.x, inside.y + BAR_Y, inside.width, 8}, parts[:], colors[:], max(counts.requests, 1))
 	x := interface.draw_text(table, inside.x, inside.y + BAR_Y + 12, system.format(buffer[:], counts.calls - counts.failed, " gave a result"), graphics.COLOR_PROGRAM)
-	x = interface.draw_text(table, x + 24, inside.y + BAR_Y + 12, system.format(buffer[:], counts.failed, " gave an error record"), graphics.shade(graphics.COLOR_PROGRAM, 70))
+	x = interface.draw_text(table, x + 24, inside.y + BAR_Y + 12, system.format(buffer[:], counts.failed, " gave an error record"), COLOR_ERROR_RECORD)
 	interface.draw_text(table, x + 24, inside.y + BAR_Y + 12, system.format(buffer[:], counts.refused, " refused"), graphics.COLOR_FAILED)
 
 	// The connections that the root service made.
@@ -110,11 +117,11 @@ draw :: proc "contextless" (window: ^display.Window) {
 		state, color := "ok", graphics.Color(graphics.COLOR_PROGRAM)
 		switch {
 		case item.status == .Refused:
-			state, color = "refused", graphics.COLOR_FAILED
+			state, color = "refused by remote", graphics.COLOR_FAILED
 		case isolated.Status(item.call_status) != .Ok:
 			state, color = "refused by the service", graphics.COLOR_FAILED
 		case item.error != 0:
-			state, color = "error record", graphics.shade(graphics.COLOR_PROGRAM, 70)
+			state, color = "error record", COLOR_ERROR_RECORD
 		}
 		if item.status != .Refused {
 			interface.draw_text(table, inside.x + 96, y, system.format(buffer[:], "export ", u64(item.export)), graphics.COLOR_DIM)
