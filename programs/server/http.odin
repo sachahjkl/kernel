@@ -45,6 +45,8 @@ Session :: struct {
 	request:            web.Request,
 	has_request:        bool, // A head was read; its answer is not all written.
 	reading_body:       bool,
+	body_taken:         bool, // The route reads the body of this request (/sink).
+	peer_closed:        bool, // The FIN of the remote came: the requests in the input are the last ones.
 	body_left:          i64,
 	body_bytes:         i64,
 	body_hash:          u64,
@@ -111,9 +113,13 @@ answer_start :: proc "contextless" (index: int, status: int, content_type: strin
 	session := &sessions[index]
 	request := &session.request
 	length := body_source == .None ? len(body) : body_length
-	if status >= 400 && request.content_length > 0 && !session.reading_body {
-		// A body that the server does not read: the bytes after the head are
-		// not a next request, so the connection ends after the answer.
+	if request.content_length > 0 && !session.body_taken {
+		// A body that the server does not read, with each status: its bytes
+		// are not a next request (RFC 9112 6.3; an independent read, F4: a
+		// body that held a request was read as one: with a proxy before the
+		// server, request smuggling). The connection ends after the answer.
+		// A close, not a read of the body that drops it: no new state, and
+		// a GET with a body has no meaning (RFC 9110 9.3.1).
 		session.close_after = true
 	}
 	if request.close || request.problem != .None || status == 408 {
@@ -236,6 +242,7 @@ request_route :: proc "contextless" (index: int) {
 		// RFC 9112 6.3: a request with no Content-Length and no
 		// Transfer-Encoding has no body.
 		session.reading_body = true
+		session.body_taken = true
 		session.body_left = max(request.content_length, 0)
 		session.body_bytes = 0
 		session.body_hash = web.FNV_START
@@ -315,6 +322,7 @@ request_finish :: proc "contextless" (index: int) {
 	// The next request starts clean; the bytes after this head stay.
 	session.has_request = false
 	session.reading_body = false
+	session.body_taken = false
 	session.request = {}
 	session.answer_head_length = 0
 	session.answer_head_done = 0
@@ -328,6 +336,12 @@ request_finish :: proc "contextless" (index: int) {
 		session.request_started_at = system.nanoseconds()
 	} else {
 		session.head_at = 0
+	}
+	// After the FIN of the remote, the connection ends when no whole
+	// request waits in the input (an independent read, W7: before, a FIN
+	// after three whole requests gave one answer).
+	if session.peer_closed && web.head_end(session.input[:session.input_length]) == 0 {
+		close_after = true
 	}
 	if close_after {
 		session.closing = true
@@ -405,27 +419,25 @@ http_connection_work :: proc "contextless" (index: int) {
 }
 
 // http_remote_closed takes the FIN of the remote: no byte comes after it,
-// so a request that is not whole never will be. The connection closes now,
-// or after the answer in progress.
+// so a request that is not whole never will be. The whole requests in the
+// input are answered, in order; then the connection closes (request_finish).
 http_remote_closed :: proc "contextless" (index: int) {
 	session := &sessions[index]
 	if session.closing {
 		return
 	}
+	session.peer_closed = true
 	if session.has_request && !session.reading_body {
-		session.close_after = true
-		return
+		return // The answer in progress, then request_finish.
 	}
-	// The whole requests that wait in the input are answered first.
 	http_connection_work(index)
-	if session.has_request && !session.reading_body {
-		session.close_after = true
+	if session.closing || (session.has_request && !session.reading_body) {
 		return
 	}
-	if !session.closing {
-		session.closing = true
-		tcp.close(&table, index)
-	}
+	// No answer in progress: nothing whole is left (a body or a head that
+	// is not whole never will be).
+	session.closing = true
+	tcp.close(&table, index)
 }
 
 // http_limits ends what makes no progress on a connection: an open one,
