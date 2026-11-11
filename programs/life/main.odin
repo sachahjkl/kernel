@@ -7,6 +7,7 @@ package life
 
 import "support:display"
 import "support:graphics"
+import "support:interface"
 import "support:system"
 
 COLUMNS :: 96
@@ -58,6 +59,36 @@ glider :: proc "c" (column, row: i64) {
 	for cell in shape {
 		cells[shown][u64(row + cell[1]) % ROWS][u64(column + cell[0]) % COLUMNS] = 1
 	}
+	board_generation += 1
+}
+
+// The window is built with the interface package (docs/INTERFACE.md): the
+// board is a picture of pixels of this program, and the window shows it
+// with one Picture record. Its generation changes when a cell changes, so
+// a frame with no change draws nothing.
+board_pixels: [COLUMNS * CELL * ROWS * CELL]graphics.Color
+board_generation: u32
+board_drawn_generation: u32 = max(u32) // The generation that the board pixels show.
+records_now, records_before: [4]interface.Draw_Record
+text_now, text_before: [16]u8
+pictures: [1]graphics.Canvas
+drawing: interface.Window_Drawing
+
+// board_draw draws the cells into the board picture, when they changed.
+board_draw :: proc "contextless" () {
+	if board_drawn_generation == board_generation {
+		return
+	}
+	board := pictures[0]
+	graphics.clear(board, 0x0C1210)
+	for y in 0 ..< ROWS {
+		for x in 0 ..< COLUMNS {
+			if cells[shown][y][x] != 0 {
+				graphics.fill(board, x * CELL, y * CELL, CELL - 1, CELL - 1, 0x60E090)
+			}
+		}
+	}
+	board_drawn_generation = board_generation
 }
 
 @(export, link_name = "entry")
@@ -67,6 +98,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if !ok {
 		system.stop(1)
 	}
+	pictures[0] = {pixels = raw_data(board_pixels[:]), width = COLUMNS * CELL, height = ROWS * CELL, stride = COLUMNS * CELL}
+	drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
+	drawing.now.pictures = pictures[:]
+	drawing.before.pictures = pictures[:]
 	random_state = system.time() * 0x9E3779B97F4A7C15 + 0x1234567
 	fill_random()
 	paused := false
@@ -83,32 +118,30 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 						paused = !paused
 					case 'r':
 						fill_random()
+						board_generation += 1
 					case 'c':
 						empty()
+						board_generation += 1
 					}
 				}
 			case .Pointer:
 				x, y := event.x / CELL, event.y / CELL
 				if event.buttons & display.BUTTON_LEFT != 0 && event.x >= 0 && event.y >= 0 && x < COLUMNS && y < ROWS {
 					cells[shown][y][x] = 1
+					board_generation += 1
 				}
 			}
 		}
 		now := system.time()
 		if !paused && now >= next {
 			step()
+			board_generation += 1
 			next = now + STEP_INTERVAL
 		}
-		display.picture_begin(&window) // The measure of a picture (display.present).
-		graphics.clear(window.canvas, 0x0C1210)
-		for y in 0 ..< ROWS {
-			for x in 0 ..< COLUMNS {
-				if cells[shown][y][x] != 0 {
-					graphics.fill(window.canvas, x * CELL, y * CELL, CELL - 1, CELL - 1, 0x60E090)
-				}
-			}
-		}
-		display.present(&window)
+		board_draw()
+		frame := interface.window_frame_begin(&drawing, &window)
+		interface.draw_picture(frame.table, 0, 0, 0, board_generation)
+		interface.window_frame_end(&drawing, &frame, &window)
 		if !logged {
 			system.log("life: ok")
 			logged = true
