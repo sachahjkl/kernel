@@ -40,7 +40,7 @@ The root service names the grant by the name of the program, as for UDP (`endpoi
 
 A client grant has 64 local ports, because a closed connection stays in TIME-WAIT (below) and one local port serves one connection at a time to one remote. The program chooses a port of its block for each connection.
 
-A listen grant is narrow in another way: the program answers, but it does not reach. The network service keeps one table of admitted remotes for each listen grant: an address and a TCP port that sent a segment to the listen port. A segment to send goes out only to an admitted remote. So a program with a listen grant cannot open a connection to a machine that did not come to it, and cannot send a segment to it. The table has 64 places. The program releases a remote (command `Release`) when its connection ended; a remote that sends a segment again is admitted again. When the table is full, a segment from a new remote is dropped and counted in the problems of the endpoint (kind `Full`).
+A listen grant is narrow in another way: the program answers, but it does not reach. The network service keeps one table of admitted remotes for each listen grant: an address and a TCP port that sent a SYN (no ACK, no RST) to the listen port, when a Receive of the endpoint waited for it, from an address that can answer (not 0, a broadcast or multicast address, or the local address). A segment of a remote that is not admitted does not reach the program. A segment to send goes out only to an admitted remote. So a program with a listen grant cannot open a connection to a machine that did not come to it, and cannot send a segment to it. The table has 64 places, each with the time of its last segment in or out. The program releases a remote (command `Release`) when its connection ended, after its last segment. When the table is full, the oldest place with no segment for 60 s serves again; with none, a SYN from a new remote is dropped and counted in the problems of the endpoint (kind `Full`). A program that forgets a `Release` loses only places with no traffic (an independent read found the leak of the first form, choice NEW-1 of the corrections).
 
 This table is the one state of TCP in the network service: addresses and ports, with no sequence number and no window. It is the port table that the coordinator asked for, with the remotes of a server.
 
@@ -104,7 +104,8 @@ The program owns each field. It reads the state, the windows, the round trip est
 | Duplicate ACKs | One ACK at once for each segment after a hole, also when a batch has several | RFC 5681 4.2 |
 | Initial window | 3 segments of 1460 bytes | RFC 5681 3.1 |
 | Zero window | A persist timer sends a probe (one byte before `SND.UNA`, with no data) until the window opens; it doubles as the retransmission timer does | RFC 9293 3.8.6.1 |
-| Close | FIN in both directions: FIN-WAIT-1, FIN-WAIT-2, CLOSING, TIME-WAIT, CLOSE-WAIT, LAST-ACK | RFC 9293 3.6 |
+| Close | FIN in both directions: FIN-WAIT-1, FIN-WAIT-2, CLOSING, TIME-WAIT, CLOSE-WAIT, LAST-ACK. A FIN is taken only before the FIN of the remote. FIN-WAIT-2 ends after 20 s with a RST | RFC 9293 3.6 |
+| Limits against a remote that does not answer | A passive open ends after 3 timeouts (15 s); 8 probes of a zero window with no answer end a connection; the ACKs that answer segments out of the window, and the challenge ACKs, are 10 in one second for each connection | RFC 5961 7, CVE-2016-5696 |
 | TIME-WAIT | 10 s: 2 MSL with an MSL of 5 s | Choice of this step, see below |
 | RST | Sent for a segment of no connection, for a SYN when the table is full, and by `abort`. A RST received ends the connection only if its sequence is exactly `RCV.NXT` | RFC 9293 3.10.7.1, RFC 5961 3 |
 | Challenge ACK | A RST in the window but not at `RCV.NXT`, a SYN in a synchronized state, and an ACK after `SND.NXT` get an ACK and change nothing | RFC 5961 3, 4, 5 |
@@ -117,8 +118,7 @@ The MSL of RFC 9293 is 2 minutes. The library takes 5 s, as an MSL for one link:
 - Selective acknowledgments (SACK, RFC 2018), timestamps (RFC 7323), TCP Fast Open (RFC 7413), ECN (RFC 3168), urgent data (the field is read and ignored).
 - The Nagle rule (RFC 9293 3.7.4): the library sends a small segment at once.
 - Keepalive (RFC 9293 3.8.4).
-- SYN cookies: a SYN takes a connection record. A table that is full refuses a SYN with a RST.
-- A timer of FIN-WAIT-2: a remote that never sends its FIN keeps the record until the program aborts it.
+- SYN cookies: a SYN takes a connection record. A table that is full ends its oldest record in TIME-WAIT and drops the SYN (the remote sends it again), else refuses the SYN with a RST. `Table.remote_limit` limits the open connections of one remote address.
 - Path MTU discovery: the MSS is 1460 at most, for one frame of Ethernet.
 - IPv6.
 - A RST from the network service for a segment to a port with no endpoint: the service drops it and counts it.
