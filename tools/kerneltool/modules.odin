@@ -70,6 +70,7 @@ module_builds := [?]Module_Build {
 	{name = "frame", source = "programs/frame", image = true},
 	{name = "network", source = "programs/network", image = true},
 	{name = "net", source = "programs/net", image = true},
+	{name = "remote", source = "programs/remote", image = true},
 	{name = "disk", source = "programs/disk", image = true},
 	{name = "storage", source = "programs/storage", image = true},
 	{name = "notes", source = "programs/notes", image = true},

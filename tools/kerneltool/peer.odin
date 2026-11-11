@@ -1,5 +1,7 @@
 package kerneltool
 
+import "contract:errors"
+import "contract:remote"
 import "core:fmt"
 import "core:net"
 import "core:sync"
@@ -20,6 +22,16 @@ import "core:time"
 // network service must refuse (peer_refused), then one echo request to the
 // machine. The order of the frames is kept, so the network service reads
 // them before the answer of that first datagram.
+//
+// The peer is also the host for the remote service (docs/MODULE_CONTRACT.md,
+// "A call from the host"): it receives call requests on a UDP socket of the
+// loopback (call_port), writes each one in a datagram from 10.0.2.2 port
+// remote.HOST_PORT to the endpoint of the remote service, and gives each
+// datagram of the remote service to the program that sent the last call
+// request. It learns the port of the endpoint from the first datagram of
+// the remote service (the status Started), and then sends the malformed
+// call requests of remote_malformed: the remote service must refuse each
+// one with its error record.
 
 @(rodata)
 PEER_HARDWARE := [6]u8{0x52, 0x55, 0x0A, 0x00, 0x02, 0x02}
@@ -32,6 +44,7 @@ PEER_ECHO_PORT :: 7
 PEER_PING_IDENTIFIER :: 0x7065
 
 Peer :: struct {
+	call_thread:  ^thread.Thread, // It receives the call requests of the host.
 	socket:       net.UDP_Socket,
 	port:         int, // QEMU sends the frames of the machine to this port.
 	thread:       ^thread.Thread,
@@ -54,9 +67,23 @@ Peer :: struct {
 	echo_answers: int,
 	udp_answers:  int,
 	ping_replies: int, // Echo replies of the machine to the echo request of the peer.
+	// The host of the remote service.
+	call_socket:      net.UDP_Socket,
+	call_port:        int, // The call requests arrive on 127.0.0.1 at this port.
+	lock:             sync.Mutex, // The fields below, and machine and hardware: two threads read them.
+	client:           net.Endpoint, // Where the last call request came from.
+	has_client:       bool,
+	remote_port:      u16, // The local port of the endpoint of the remote service. 0: not known yet.
+	remote_starts:    int,
+	remote_datagrams: int, // Datagrams of the remote service, to the host.
+	malformed_sent:   int,
+	malformed_right:  int, // The answers of the remote service to the malformed requests that have the expected refusal.
+	malformed_wrong:  string,
 }
 
-peer_start :: proc(peer: ^Peer) -> bool {
+// peer_start starts the peer. call_port: the port of the call requests on
+// the loopback; 0 lets the system choose it.
+peer_start :: proc(peer: ^Peer, call_port := 0) -> bool {
 	socket, err := net.make_bound_udp_socket(net.IP4_Loopback, 0)
 	if err != nil {
 		fmt.eprintfln("kerneltool: the peer has no UDP socket: %v", err)
@@ -68,8 +95,17 @@ peer_start :: proc(peer: ^Peer) -> bool {
 		return false
 	}
 	_ = net.set_option(socket, .Receive_Timeout, 100 * time.Millisecond)
-	peer^ = {socket = socket, port = bound.port}
+	calls, calls_err := net.make_bound_udp_socket(net.IP4_Loopback, call_port)
+	if calls_err != nil {
+		fmt.eprintfln("kerneltool: the peer cannot receive call requests on 127.0.0.1 port %d: %v", call_port, calls_err)
+		net.close(socket)
+		return false
+	}
+	calls_bound, _ := net.bound_endpoint(calls)
+	_ = net.set_option(calls, .Receive_Timeout, 100 * time.Millisecond)
+	peer^ = {socket = socket, port = bound.port, call_socket = calls, call_port = calls_bound.port}
 	peer.thread = thread.create_and_start_with_poly_data(peer, peer_run)
+	peer.call_thread = thread.create_and_start_with_poly_data(peer, peer_calls)
 	return true
 }
 
@@ -80,7 +116,10 @@ peer_stop :: proc(peer: ^Peer) {
 	sync.atomic_store(&peer.stop, true)
 	thread.join(peer.thread)
 	thread.destroy(peer.thread)
+	thread.join(peer.call_thread)
+	thread.destroy(peer.call_thread)
 	net.close(peer.socket)
+	net.close(peer.call_socket)
 	peer.thread = nil
 }
 
@@ -97,6 +136,13 @@ peer_check :: proc(peer: ^Peer) -> bool {
 	}
 	if peer.frames != 0 {
 		fmt.printfln("kerneltool: test passed: the peer received %d frames from the network service, 0 wrong: %d ARP, %d echo and %d UDP answered, %d echo replies of the machine; %d frames of the firmware before it", peer.frames, peer.arp_answers, peer.echo_answers, peer.udp_answers, peer.ping_replies, peer.firmware)
+	}
+	if peer.remote_starts != 0 {
+		if peer.malformed_right != len(remote_malformed) {
+			fmt.eprintfln("kerneltool: test failed: the remote service refused %d of the %d malformed call requests with the expected error record; the first other answer: %s", peer.malformed_right, len(remote_malformed), peer.malformed_wrong)
+			return false
+		}
+		fmt.printfln("kerneltool: test passed: the remote service started %d times, sent %d datagrams to the host, and refused each of the %d malformed call requests with the expected error record", peer.remote_starts, peer.remote_datagrams, len(remote_malformed))
 	}
 	return true
 }
@@ -142,7 +188,9 @@ peer_run :: proc(peer: ^Peer) {
 		if err != nil || count == 0 {
 			continue
 		}
+		sync.mutex_lock(&peer.lock)
 		peer.machine = from
+		sync.mutex_unlock(&peer.lock)
 		frame := buffer[:count]
 		if !peer.started {
 			// An ARP frame (kind 0x0806) whose sender address is 10.0.2.15.
@@ -168,7 +216,10 @@ peer_wrong :: proc(peer: ^Peer, text: string) {
 
 @(private = "file")
 peer_send :: proc(peer: ^Peer, frame: []u8) {
-	_, _ = net.send_udp(peer.socket, frame, peer.machine)
+	sync.mutex_lock(&peer.lock)
+	machine := peer.machine
+	sync.mutex_unlock(&peer.lock)
+	_, _ = net.send_udp(peer.socket, frame, machine)
 }
 
 @(private = "file")
@@ -181,7 +232,9 @@ peer_frame :: proc(peer: ^Peer, frame: []u8) {
 		peer_wrong(peer, "a frame shorter than 60 bytes")
 		return
 	}
+	sync.mutex_lock(&peer.lock)
 	copy(peer.hardware[:], frame[6:12])
+	sync.mutex_unlock(&peer.lock)
 	if fmt.tprintf("%02x:%02x:%02x:%02x:%02x:%02x", frame[6], frame[7], frame[8], frame[9], frame[10], frame[11]) != MACHINE_HARDWARE {
 		peer_wrong(peer, "a frame from another hardware address")
 		return
@@ -253,8 +306,13 @@ peer_frame :: proc(peer: ^Peer, frame: []u8) {
 				peer_wrong(peer, "a UDP datagram with a wrong length or checksum")
 				return
 			}
+			if be16(payload, 2) == remote.HOST_PORT {
+				peer_remote(peer, u16(be16(payload, 0)), payload[8:])
+				free_all(context.temp_allocator)
+				return
+			}
 			if be16(payload, 2) != PEER_ECHO_PORT {
-				peer_wrong(peer, "a UDP datagram to another port than 7")
+				peer_wrong(peer, "a UDP datagram to another port than 7 and than the port of the host")
 				return
 			}
 			if !peer.refused_sent {
@@ -317,7 +375,10 @@ peer_pad :: proc(frame: []u8) -> []u8 {
 peer_udp :: proc(peer: ^Peer, from, to: int, data: string) -> []u8 {
 	length := 8 + len(data)
 	frame := make([]u8, max(42 + len(data), 60), context.temp_allocator)
-	peer_ipv4(frame, peer.hardware[:], length, 17)
+	sync.mutex_lock(&peer.lock)
+	hardware := peer.hardware
+	sync.mutex_unlock(&peer.lock)
+	peer_ipv4(frame, hardware[:], length, 17)
 	put16(frame, 34, from)
 	put16(frame, 36, to)
 	put16(frame, 38, length)
@@ -404,4 +465,124 @@ peer_refused :: proc(peer: ^Peer) {
 address_at :: proc(bytes: []u8, offset: int) -> (address: [4]u8) {
 	copy(address[:], bytes[offset:][:4])
 	return address
+}
+
+// The malformed call requests that the peer sends to the remote service
+// when it starts, and the refusal that each one must have: the field of the
+// request (the argument of the error record) and the error kind.
+Malformed :: struct {
+	number:   u64, // The number of the request; the answer has it. 0: the request is too short to have one.
+	argument: i64,
+	kind:     errors.Kind,
+}
+
+@(rodata)
+remote_malformed := [?]Malformed {
+	{0, 0, .Too_Small}, // 20 bytes: shorter than the header.
+	{remote.PEER_NUMBERS | 2, remote.FIELD_KIND, .Bad_Value}, // An unknown kind.
+	{remote.PEER_NUMBERS | 3, remote.FIELD_ARGUMENTS, .Too_Long}, // More bytes of arguments than the datagram has.
+	{remote.PEER_NUMBERS | 4, remote.FIELD_RESULT_COUNT, .Too_Long}, // A result past the end of the call region.
+	{remote.PEER_NUMBERS | 5, remote.FIELD_ERROR_START, .Bad_Value}, // An error record that is not aligned on 8.
+	{remote.PEER_NUMBERS | 6, remote.FIELD_SERVICE, .No_Grant}, // A service that the root service does not let it call.
+}
+
+// peer_remote takes a datagram of the remote service to the host.
+@(private = "file")
+peer_remote :: proc(peer: ^Peer, port: u16, data: []u8) {
+	sync.mutex_lock(&peer.lock)
+	peer.remote_port = port
+	peer.remote_datagrams += 1
+	client, has_client := peer.client, peer.has_client
+	sync.mutex_unlock(&peer.lock)
+	header, _, ok := remote.answer_check(data)
+	if !ok {
+		peer_wrong(peer, "a datagram of the remote service that is not a call answer")
+		return
+	}
+	if header.status == .Started {
+		peer.remote_starts += 1
+		if peer.malformed_sent == 0 {
+			peer_malformed(peer)
+		}
+		return
+	}
+	if header.number & remote.PEER_NUMBERS != 0 || (header.number == 0 && header.status == .Refused) {
+		for item in remote_malformed {
+			if item.number == header.number {
+				if header.status == .Refused && header.error.argument == item.argument && header.error.kind == i64(item.kind) {
+					peer.malformed_right += 1
+				} else if peer.malformed_wrong == "" {
+					peer.malformed_wrong = fmt.aprintf("request %x: status %v, argument %d, kind %d", header.number, header.status, header.error.argument, header.error.kind)
+				}
+			}
+		}
+		return
+	}
+	if has_client {
+		_, _ = net.send_udp(peer.call_socket, data, client)
+	}
+}
+
+// peer_malformed sends the malformed call requests of remote_malformed.
+@(private = "file")
+peer_malformed :: proc(peer: ^Peer) {
+	peer.malformed_sent = len(remote_malformed)
+	send :: proc(peer: ^Peer, bytes: []u8) {
+		sync.mutex_lock(&peer.lock)
+		port := peer.remote_port
+		sync.mutex_unlock(&peer.lock)
+		peer_send(peer, peer_udp(peer, remote.HOST_PORT, int(port), string(bytes)))
+	}
+	short: [20]u8
+	send(peer, short[:])
+	arguments: [16]u8
+	out: [remote.DATAGRAM_LIMIT]u8
+	for item in remote_malformed[1:] {
+		request := remote.Request {
+			kind         = .Call,
+			number       = item.number,
+			export       = 1,
+			record_size  = 8,
+			result_start = 64,
+			result_count = 64,
+			result_unit  = 1,
+			error_start  = 24,
+		}
+		remote.name_set(&request.service, "manual")
+		switch item.argument {
+		case remote.FIELD_KIND:
+			request.kind = remote.Request_Kind(9)
+		case remote.FIELD_RESULT_COUNT:
+			request.result_count = remote.REGION_SIZE
+		case remote.FIELD_ERROR_START:
+			request.error_start = 28
+		case remote.FIELD_SERVICE:
+			remote.name_set(&request.service, "console")
+		}
+		bytes, _ := remote.request_write(out[:], request, arguments[:])
+		if item.argument == remote.FIELD_ARGUMENTS {
+			(^remote.Request)(&out[0]).arguments = 400
+		}
+		send(peer, bytes)
+	}
+}
+
+// peer_calls receives the call requests of the host on the loopback, and
+// gives each one to the remote service.
+peer_calls :: proc(peer: ^Peer) {
+	buffer: [remote.DATAGRAM_LIMIT + 1]u8
+	for !sync.atomic_load(&peer.stop) {
+		count, from, err := net.recv_udp(peer.call_socket, buffer[:])
+		if err != nil || count == 0 || count > remote.DATAGRAM_LIMIT {
+			continue
+		}
+		sync.mutex_lock(&peer.lock)
+		peer.client, peer.has_client = from, true
+		port := peer.remote_port
+		sync.mutex_unlock(&peer.lock)
+		if port != 0 {
+			peer_send(peer, peer_udp(peer, remote.HOST_PORT, int(port), string(buffer[:count])))
+		}
+		free_all(context.temp_allocator)
+	}
 }

@@ -42,6 +42,7 @@ Grant :: enum {
 	Replace, // Change the replacement table of the machine (Root_Command.Replace).
 	Network, // An endpoint of datagrams in the network service, with the remote of endpoint_of.
 	Network_Device, // The frame service of the network device and its frame ring, and a control ring from this service.
+	Connect, // A ring to this service that serves Connect and Disconnect only, to the services of callable_of.
 }
 
 grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
@@ -50,7 +51,9 @@ grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 		return {.Root_Ring, .Inspect, .Stop, .Image, .Terminal, .Store, .Person, .Replacements, .Replace}
 	case "flood":
 		return {.Terminal}
-	case "monitor", "processors", "pages", "flow", "crowd", "clock":
+	case "monitor":
+		return {.Inspect, .Serve} // It serves programs() and counts() to a caller that acts for the person.
+	case "processors", "pages", "flow", "crowd", "clock":
 		return {.Inspect}
 	case "rights":
 		return {.Inspect, .Image} // It shows what the kernel refuses.
@@ -82,8 +85,44 @@ grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 		return {.Inspect, .Network} // It measures with the cycle counter.
 	case "network":
 		return {.Network_Device}
+	case "remote":
+		// The calls of the host: an endpoint whose grant names the host,
+		// connections to the services of callable_of, and the grant to act
+		// for the person (docs/MODULE_CONTRACT.md, "A call from the host").
+		return {.Connect, .Network, .Person}
 	}
 	return {}
+}
+
+// callable_of gives the services that a program with the grant Connect can
+// connect to. A program with the grant Root_Ring connects to each service.
+callable_of :: proc "contextless" (name: string) -> []string {
+	switch name {
+	case "remote":
+		return remote_callable[:]
+	}
+	return nil
+}
+
+@(rodata)
+remote_callable := [?]string{"manual", "monitor", "storage"}
+
+// may_connect says if a program can ask the root service for a connection
+// to the service with a name.
+may_connect :: proc "contextless" (caller: string, service: string) -> bool {
+	role := grants_of(caller)
+	if .Root_Ring in role {
+		return true
+	}
+	if .Connect not_in role {
+		return false
+	}
+	for name in callable_of(caller) {
+		if name == service {
+			return true
+		}
+	}
+	return false
 }
 
 // store_limit_of gives the blocks of the private store of a program with
@@ -113,7 +152,7 @@ grant_for :: proc "contextless" (caller: ^Started, service: ^Started) -> (grant:
 	if .Store in role && .Store not_in caller.revoked && system.name_of(service.name[:]) == "storage" {
 		grant = store_limit_of(name)
 	}
-	if .Person in role {
+	if .Person in role && .Person not_in caller.revoked {
 		grant |= isolated.CALLER_PERSON
 	}
 	return grant
@@ -411,7 +450,14 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				completion := ring.Record {
 					tag = record.tag,
 				}
-				#partial switch system.Root_Command(record.kind) {
+				// A program with the grant Connect only: Connect to the
+				// services of callable_of, and Disconnect.
+				command := system.Root_Command(record.kind)
+				if .Root_Ring not_in grants_of(system.name_of(item.name[:])) && command != .Disconnect && (command != .Connect || !may_connect(system.name_of(item.name[:]), system.name_of(name[:]))) {
+					command = .None
+					result = .No_Right
+				}
+				#partial switch command {
 				case .Connect:
 					result = connect(&item, system.name_of(name[:]), &completion.values)
 				case .Disconnect:
@@ -595,7 +641,7 @@ start :: proc "contextless" (name: string) -> system.Status {
 		grants[system.GRANT_DISPLAY] = {shared[0], {.Read, .Write}}
 	}
 	status := system.Status.Ok
-	if .Root_Ring in role {
+	if .Root_Ring in role || .Connect in role {
 		slot.requests_memory, slot.requests, status = system.ring_create()
 		grants[system.GRANT_ROOT] = {slot.requests_memory, {.Read, .Write}}
 	}
@@ -679,6 +725,9 @@ start :: proc "contextless" (name: string) -> system.Status {
 	if .Network in role {
 		slot.granted += {.Network}
 	}
+	if .Person in role {
+		slot.granted += {.Person}
+	}
 	copy(slot.name[:len(slot.name) - 1], name)
 	if view != nil {
 		if status = terminal_start(view, slot, shared[0], shared[1]); status != .Ok {
@@ -740,6 +789,25 @@ revoke :: proc "contextless" (name: string, grant: u64, values: ^[7]u64) -> syst
 		item.revoked += {which}
 		values[0] = count
 		system.log_in("programs", .Info, "root: revoked the grant store of ", name, ", connections changed: ", count)
+		return .Ok
+	case .Person:
+		// The grant is data of each service that the program is connected
+		// to: the root service tells each one that the grant of the
+		// connection changed. A new connection has no grant to act for the
+		// person either (grant_for).
+		item.granted -= {which}
+		item.revoked += {which}
+		count: u64
+		for &connection in connections {
+			if connection.caller != item {
+				continue
+			}
+			if system.send(&connection.service.service.commands, ring.Record{kind = u32(isolated.Service_Command.Grant), values = {0 = u64(connection.ring), 6 = grant_for(item, connection.service)}}) {
+				count += 1
+			}
+		}
+		values[0] = count
+		system.log_in("programs", .Info, "root: revoked the grant person of ", name, ", connections changed: ", count)
 		return .Ok
 	case .Network:
 		// The endpoint is data of the network service, as a store is data of

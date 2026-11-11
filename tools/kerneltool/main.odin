@@ -75,12 +75,13 @@ Command :: struct {
 COMMANDS :: [?]Command {
 	{name = "build", about = "the modules, the boot image and the boot program, as " + BOOT_PROGRAM, run = run_build},
 	{name = "run", about = "build, then start the machine under QEMU, with the log of the kernel on this terminal", run = run_machine},
-	{name = "test", about = "build, start the machine under QEMU, act as the person, check the log, save pictures of the screen", run = run_test},
+	{name = "test", about = "build, start the machine under QEMU, act as the person, check the log, save pictures of the screen; `test network`: the machine of the network only", run = run_test},
 	{name = "screenshots", about = "test, then copy the pictures to " + DOCUMENT_SCREENSHOT_FOLDER + " and to a new folder of " + DEVELOPMENT_LOG_FOLDER, run = run_screenshots},
 	{name = "measure", about = "build, start the machine, run the measures of the locks of the kernel with no other program, and stop: the numbers are in " + TEST_OUTPUT_MEASURE, run = run_measure},
 	{name = "film", about = "build, start the machine, film the terminal, and write " + FILM_OUTPUT + " and a copy in " + DEVELOPMENT_LOG_FOLDER + " (needs ffmpeg)", run = run_film},
 	{name = "font", about = "convert the BDF file of the font to " + FONT_OUTPUT, run = run_font},
 	{name = "portrait", about = "convert " + PORTRAIT_SOURCE + " to " + PORTRAIT_OUTPUT, run = run_portrait},
+	{name = "call", about = "call \"service.export(arguments)\": call an export of a service of the machine that `run` started, through the program remote, and print the typed result", run = run_call},
 	{name = "repeat", about = "repeat <module> <count>: build one module again and again, with no machine, and compare each build with the first one", run = run_repeat},
 	{name = "check", about = "odin check -vet and odin test of the host code, then test", run = run_check},
 }
@@ -189,8 +190,9 @@ run_machine :: proc(args: []string) -> int {
 	if !disk_prepare(DATA_DISK, DATA_DISK_SIZE, false) {
 		return EXIT_FAILURE
 	}
+	// The peer receives the call requests of `kerneltool call` at CALL_PORT.
 	peer: Peer
-	if !peer_start(&peer) {
+	if !peer_start(&peer, CALL_PORT) {
 		return EXIT_FAILURE
 	}
 	defer peer_stop(&peer)
@@ -215,6 +217,10 @@ run_test :: proc(args: []string) -> int {
 	// A start that fails ends when the tool ends QEMU: status 0.
 	if !disk_prepare(TEST_DATA_DISK, DATA_DISK_SIZE, true) {
 		return EXIT_FAILURE
+	}
+	// `test network`: the machine of the network only, for the work on it.
+	if len(args) == 1 && args[0] == "network" {
+		return machine_test(scenario_network[:], BOOT_VOLUME, TEST_OUTPUT_NETWORK, MACHINE_STOP_OK, TEST_DATA_DISK) ? 0 : EXIT_FAILURE
 	}
 	if !machine_test(scenario_fails[:], BOOT_VOLUME_FAILS, TEST_OUTPUT_FAILS, 0) || !self_tests_run() || !machine_test(scenario[:], BOOT_VOLUME, TEST_OUTPUT, MACHINE_STOP_OK, TEST_DATA_DISK) || !machine_test(scenario_network[:], BOOT_VOLUME, TEST_OUTPUT_NETWORK, MACHINE_STOP_OK, TEST_DATA_DISK) || !persistence_run() || !test_modules() || !test_descriptions() {
 		return EXIT_FAILURE

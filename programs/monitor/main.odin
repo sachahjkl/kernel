@@ -1,5 +1,8 @@
 // A system tool: the memory of the machine and the programs that run, as a
 // picture that changes twice per second. It needs the grant to inspect the machine.
+//
+// It is also a service: programs() and counts() give the same facts as
+// tables of records (exports.odin).
 package monitor
 
 import "support:display"
@@ -31,7 +34,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.stop(1)
 	}
 	canvas := window.canvas
-	machine := ctx.handles[system.GRANT_MACHINE]
+	machine = ctx.handles[system.GRANT_MACHINE]
+	service, _ := system.service_open(ctx)
 	previous_time: u64
 	logged := false
 	lost := false
@@ -117,6 +121,18 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			logged = true
 		}
 		for _ in display.next_event(&window) {}
-		system.sleep(system.time() + INTERVAL)
+		// The calls run while the monitor waits for its next picture.
+		next := system.time() + INTERVAL
+		for {
+			wait: system.Wait
+			display.wait_events(&wait, &window)
+			system.service_wait(&wait, &service)
+			now := system.wait_end(&wait, next)
+			system.service_run(&service)
+			for _ in display.next_event(&window) {}
+			if now >= next {
+				break
+			}
+		}
 	}
 }

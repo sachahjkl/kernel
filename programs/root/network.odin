@@ -1,6 +1,7 @@
 package root
 
 import "contract:datagram"
+import "contract:remote"
 import "contract:ring"
 import "support:system"
 
@@ -18,12 +19,14 @@ import "support:system"
 // right Inspect: it reads the facts of all programs already (property 20).
 
 // endpoint_of gives the grant of the endpoint of a program: the one remote
-// address and remote port that it can reach. Today one program has the
-// grant: `net` reaches the echo server of the test, at the gateway.
+// address and remote port that it can reach. `net` reaches the echo server
+// of the test, at the gateway. `remote` reaches the host, at the gateway.
 endpoint_of :: proc "contextless" (name: string) -> (address: u32, port: u16) {
 	switch name {
 	case "net":
 		return 0x0A000202, 7 // 10.0.2.2, port 7 (echo).
+	case "remote":
+		return 0x0A000202, remote.HOST_PORT // 10.0.2.2: the host.
 	}
 	return 0, 0
 }

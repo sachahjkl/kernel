@@ -74,6 +74,8 @@ Unit :: enum i64 {
 	Store       = 17, // No_Grant: a private store.
 	Person      = 18, // No_Grant: to act for the person.
 	Records     = 19,
+	Connection  = 20, // No_Grant: a connection to the service.
+	Milliseconds = 21,
 }
 
 // How a handle ended (Handle_Ended).
@@ -129,4 +131,6 @@ UNIT_NAMES := [Unit]string {
 	.Store       = "a private store",
 	.Person      = "to act for the person",
 	.Records     = "records",
+	.Connection  = "a connection to this service",
+	.Milliseconds = "milliseconds",
 }

@@ -121,6 +121,7 @@ Root_Grant :: enum u32 {
 	Log_Records = 3, // Read the records of the log.
 	Store       = 4, // A private store in the storage service.
 	Network     = 5, // An endpoint of datagrams in the network service, with one remote.
+	Person      = 6, // To act for the person in each service that the program is connected to (isolated.CALLER_PERSON).
 }
 Root_Grants :: bit_set[Root_Grant;u64]
 
@@ -131,6 +132,7 @@ root_grant_names := [Root_Grant]string {
 	.Log_Records = "log_records",
 	.Store       = "store",
 	.Network     = "network",
+	.Person      = "person",
 }
 
 Name :: [32]u8

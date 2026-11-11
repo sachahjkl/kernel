@@ -40,6 +40,7 @@ Step_Kind :: enum {
 	Film, // Save the screen 25 times in one second, for x milliseconds, as the next pictures of the film.
 	Quit, // End QEMU: the machine does not stop by itself.
 	Trace, // The log has text, after the text of the last Wait, then a stack trace to the end of the line: the tool names each frame from the linked file of its module, and the names start with `names`.
+	Call, // Call an export of a service from the host (call.odin), through the remote service: what the tool prints has `expected`. With `rows_logged`, the log has that text and then the count of rows of the Table. With `repeat`, the tool also measures the round trip and the calls in one second.
 }
 
 Step :: struct {
@@ -51,6 +52,11 @@ Step :: struct {
 	// programs print in an order that the system does not fix.
 	any_order:  bool,
 	names:      string, // For Trace: the names of the functions of the first frames, separated by spaces.
+	expected:   string, // For Call: a part of what the tool prints.
+	outcome:    Call_Outcome, // For Call: Result, Failed or Refused.
+	rows_logged: string, // For Call: a text of the log that the count of rows follows.
+	repeat:     int, // For Call: the calls of the measure of the round trip.
+	parts:      int, // For Call: the least count of datagrams of the answer.
 }
 
 // A start that fails: the boot image has no compositor. The boot display
@@ -232,6 +238,56 @@ scenario_network := [?]Step {
 	{kind = .Close, text = "net"},
 	{kind = .Wait, text = "root: net stopped with code 0"},
 	{kind = .Wait, text = "network: the endpoint of net ended: "},
+	// The calls of the host (docs/MODULE_CONTRACT.md, "A call from the
+	// host"). The remote service holds an endpoint whose grant names the
+	// host, and connects to the services that the root service names for it.
+	{kind = .Launch, text = "monitor"},
+	{kind = .Wait, text = "compositor: surface monitor"},
+	{kind = .Launch, text = "manual"},
+	{kind = .Wait, text = "compositor: surface manual"},
+	{kind = .Launch, text = "remote"},
+	{kind = .Wait, text = "root: started remote"},
+	{kind = .Wait, text = "remote: ok, an endpoint with the grant 10.0.2.2 port 7100; the call requests of the host arrive there", any_order = true},
+	// The peer sends six malformed call requests when the remote service
+	// starts: each one has its error record, and no call runs.
+	{kind = .Wait, text = "remote: refused a request: remote: the call has 20 bytes; it must have at least 104 bytes"},
+	{kind = .Wait, text = "remote: refused a request: remote: the argument kind has the value 9, which the call refuses; it takes 1 to 1"},
+	{kind = .Wait, text = "remote: refused a request: remote: the argument arguments has 400 bytes; it can have at most 16 bytes"},
+	{kind = .Wait, text = "remote: refused a request: remote: the argument result_count has 65536 bytes; it can have at most 65472 bytes"},
+	{kind = .Wait, text = "remote: refused a request: remote: the argument error_start has the value 28, which the call refuses; it takes 1 to 65480"},
+	{kind = .Wait, text = "remote: refused a request: remote: the caller has no grant for this: a connection to this service"},
+	// An Integer, with the measure of a small call.
+	{kind = .Call, text = "monitor.count(\"processors\")", expected = "4", repeat = 1000},
+	{kind = .Wait, text = "root: connected remote to the service monitor", any_order = true},
+	{kind = .Wait, text = "remote: connected to the service monitor"},
+	// A Table: the row of the remote service is there, and the count of the
+	// rows is the count that the monitor wrote on the log.
+	{kind = .Call, text = "monitor.programs()", expected = "remote", rows_logged = "monitor: programs: "},
+	{kind = .Call, text = "monitor.counts()", expected = "13 rows of Count"},
+	// A result larger than one datagram.
+	{kind = .Call, text = "manual.modules()", expected = " rows of Module", parts = 2},
+	{kind = .Call, text = "manual.running()", expected = " rows of Running"},
+	// A Text, from a service that starts at the first connection.
+	{kind = .Call, text = "storage.stores()", expected = " blocks in use"},
+	// Failures: the sentence of the error record of the service.
+	{kind = .Call, text = "monitor.count(\"nothing\")", outcome = .Failed, expected = "error: monitor.count: the argument name names nothing that exists (-3)"},
+	{kind = .Call, text = "storage.size(\"note\")", outcome = .Failed, expected = "error: storage.size: the caller has no grant for this: a private store (-1)"},
+	{kind = .Call, text = "manual.exports(\"nothing\")", outcome = .Failed, expected = "error: manual.exports: the argument name names none of the modules (-1)"},
+	// The tool checks the arguments against the description before it sends.
+	{kind = .Call, text = "monitor.count(4)", outcome = .Wrong, expected = "error: the parameter name of monitor.count is a Text, the argument is an Integer"},
+	// The person sees the grant, and revokes it: the services refuse what
+	// they give only to a caller that acts for the person.
+	{kind = .Front, text = "console"},
+	{kind = .Type, text = "grants(\"remote\")"},
+	{kind = .Wait, text = "[console] remote has: log, network, person"},
+	{kind = .Type, text = "revoke(\"remote\", \"person\")"},
+	{kind = .Wait, text = "root: revoked the grant person of remote, connections changed: 3"},
+	{kind = .Call, text = "monitor.programs()", outcome = .Failed, expected = "error: monitor.programs: the caller has no grant for this: to act for the person (-1)"},
+	{kind = .Call, text = "manual.running()", outcome = .Failed, expected = "error: manual.running: the caller has no grant for this: to act for the person (-3)"},
+	{kind = .Call, text = "storage.stores()", expected = "no grant to see the stores"},
+	{kind = .Call, text = "manual.modules()", expected = " rows of Module"},
+	{kind = .Front, text = "remote"},
+	{kind = .Shot, text = "remote"},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "memory()"},
 	{kind = .Wait, text = " pages: all the free pages"},
@@ -808,8 +864,14 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[console] paint: 4 commands of a service that runs"},
 	{kind = .Type, text = "connect(\"life\")"},
 	{kind = .Wait, text = "[console] life: 3 commands of a service that runs"},
+	{kind = .Type, text = "connect(\"plasma\")"},
+	{kind = .Wait, text = "error: cannot connect to plasma: no service runs with this name"},
+	// The monitor serves its tables; its grant of the machine was revoked
+	// above, so the kernel refuses its reports.
 	{kind = .Type, text = "connect(\"monitor\")"},
-	{kind = .Wait, text = "error: cannot connect to monitor: no service runs with this name"},
+	{kind = .Wait, text = "[console] monitor: 3 commands of a service that runs"},
+	{kind = .Type, text = "monitor.count(\"processors\")"},
+	{kind = .Wait, text = "[console] error: monitor.count: refused with the status "},
 	{kind = .Type, text = "help()"},
 	{kind = .Wait, text = "paint.write(x: Integer, y: Integer, text: Text, color: Integer)"},
 	{kind = .Type, text = "paint.line(40, 30, 440, 250, 1)"},
@@ -1126,7 +1188,7 @@ scenario := [?]Step {
 	// The person sees the grant and revokes it: the store stays on the disk,
 	// and the console cannot reach it.
 	{kind = .Type, text = "grants(\"console\")"},
-	{kind = .Wait, text = "[console] console has: log, machine, image, store"},
+	{kind = .Wait, text = "[console] console has: log, machine, image, store, person"},
 	{kind = .Type, text = "revoke(\"console\", \"store\")"},
 	{kind = .Wait, text = "root: revoked the grant store of console, connections changed: 1"},
 	{kind = .Type, text = "storage.write(\"greeting\", \"changed\")"},
@@ -1217,6 +1279,9 @@ Machine :: struct {
 	x, y:      int, // The pointer.
 	pointer_known: bool, // The tool knows where the pointer is.
 	film_frames: int, // The pictures of the film that the tool asked for.
+	call_port:   int, // The peer receives the call requests of the host there.
+	client:      Call_Client,
+	client_open: bool,
 }
 
 monitor_send :: proc(machine: ^Machine, parts: ..string) {
@@ -1493,11 +1558,15 @@ machine_test :: proc(steps: []Step, volume: string, output: string, exit_status:
 		return false
 	}
 	machine := Machine {
-		process = process,
-		monitor = monitor_write,
-		output  = output,
+		process   = process,
+		monitor   = monitor_write,
+		output    = output,
+		call_port = peer.call_port,
 	}
 	passed := scenario_run(&machine, steps)
+	if machine.client_open {
+		call_client_close(&machine.client)
+	}
 	state: os.Process_State
 	if passed {
 		wait_err: os.Error
@@ -1686,6 +1755,53 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 					fmt.eprintfln("kerneltool: test failed: step %d: the window %s is not at %d,%d", index + 1, moved_title, moved_x, moved_y)
 					return false
 				}
+			}
+		case .Call:
+			if !machine.client_open {
+				if !call_client_open(&machine.client, machine.call_port) {
+					return false
+				}
+				machine.client_open = true
+			}
+			result := call_run(&machine.client, step.text)
+			printed := strings.join(result.lines[:], "\n", context.temp_allocator)
+			for line in result.lines {
+				fmt.printfln("kerneltool: call %s: %s", step.text, line)
+			}
+			if result.outcome != step.outcome || !strings.contains(printed, step.expected) {
+				fmt.eprintfln("kerneltool: test failed: step %d: the call %s gave %v, not %v with \"%s\"", index + 1, step.text, result.outcome, step.outcome, step.expected)
+				return false
+			}
+			if result.datagrams < step.parts {
+				fmt.eprintfln("kerneltool: test failed: step %d: the answer of %s came in %d datagrams, not %d or more", index + 1, step.text, result.datagrams, step.parts)
+				return false
+			}
+			fmt.printfln("kerneltool: test passed: the call %s printed \"%s\", in %d datagrams", step.text, step.expected, result.datagrams)
+			if step.rows_logged != "" {
+				// The service wrote the count of its rows on the log.
+				if !log_wait(machine, step.rows_logged) {
+					fmt.eprintfln("kerneltool: test failed: step %d: the machine did not print \"%s\"", index + 1, step.rows_logged)
+					return false
+				}
+				rest := log_read(machine)[machine.seen:]
+				digits := 0
+				for digits < len(rest) && rest[digits] >= '0' && rest[digits] <= '9' {
+					digits += 1
+				}
+				logged, _ := strconv.parse_int(rest[:digits])
+				if digits == 0 || logged != result.rows {
+					fmt.eprintfln("kerneltool: test failed: step %d: the call gave %d rows, the log says %s", index + 1, result.rows, rest[:digits])
+					return false
+				}
+				fmt.printfln("kerneltool: test passed: the call gave %d rows, as the log says", result.rows)
+			}
+			if step.repeat > 0 {
+				least, middle, per_second, measured := call_measure(&machine.client, step.text, step.repeat)
+				if !measured {
+					fmt.eprintfln("kerneltool: test failed: step %d: the measure of %s had a call with no answer", index + 1, step.text)
+					return false
+				}
+				fmt.printfln("kerneltool: test passed: the call %s from the host: the round trip %d us at least, %d us in the middle, over %d calls; %d calls in one second, one after the other", step.text, i64(least / time.Microsecond), i64(middle / time.Microsecond), step.repeat, per_second)
 			}
 		case .Quit:
 			monitor_send(machine, "quit")

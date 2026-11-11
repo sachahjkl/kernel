@@ -1233,7 +1233,7 @@ revoke :: proc "contextless" (arguments: []Value) -> Value {
 		}
 		return fail("the root service refused: no program has the name ", name)
 	}
-	return fail("no grant has the name ", arguments[1].text, ": the grants are log, machine, image, log_records, store")
+	return fail("no grant has the name ", arguments[1].text, ": the grants are log, machine, image, log_records, store, network, person")
 }
 
 // replace asks the root service to give a module where a module imports
