@@ -102,3 +102,22 @@ window_frame_end :: proc "contextless" (drawing: ^Window_Drawing, frame: ^Frame,
 	}
 	return drawing.damage.count
 }
+
+// show_picture draws a frame of a window that is one picture of the program
+// (drawing.now.pictures[0]): one Picture record at (0, 0). generation is a
+// new number when the pixels of the picture changed: with the same number,
+// the frame draws nothing.
+show_picture :: proc "contextless" (drawing: ^Window_Drawing, window: ^display.Window, generation: u32) {
+	frame := window_frame_begin(drawing, window)
+	draw_picture(frame.table, 0, 0, 0, generation)
+	window_frame_end(drawing, &frame, window)
+}
+
+// window_drawing_of_picture makes the drawing of a window that is one
+// picture of the program, with tables in the memory of the caller.
+window_drawing_of_picture :: proc "contextless" (records_now, records_before: []Draw_Record, pictures: []graphics.Canvas) -> Window_Drawing {
+	drawing := Window_Drawing{now = {records = records_now}, before = {records = records_before}}
+	drawing.now.pictures = pictures
+	drawing.before.pictures = pictures
+	return drawing
+}

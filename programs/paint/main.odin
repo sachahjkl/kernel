@@ -9,6 +9,7 @@ package paint
 import "contract:errors"
 import "support:display"
 import "support:graphics"
+import "support:interface"
 import "support:system"
 
 WIDTH :: 480
@@ -20,12 +21,22 @@ COLOR_PAPER :: 0xF4F1EA
 @(rodata)
 colors := [?]graphics.Color{0x202428, 0xD03838, 0x2E9E4A, 0x2F6FD0, 0xE0A020, 0x9040C0}
 
-canvas: graphics.Canvas
 drawn: i64 // The lines that calls drew.
 
-// The part of the canvas under the palette.
+// The paper is a picture of this program (a Picture record of the interface
+// package). paper_generation changes with each change of its pixels. The
+// palette and the top line are records.
+PAPER_HEIGHT :: HEIGHT - PALETTE_HEIGHT
+paper_pixels: [WIDTH * PAPER_HEIGHT]graphics.Color
+paper_generation: u32
+pictures: [1]graphics.Canvas
+records_now, records_before: [32]interface.Draw_Record
+text_now, text_before: [128]u8
+window_drawing: interface.Window_Drawing
+
 paper :: proc "contextless" () -> graphics.Canvas {
-	return {pixels = canvas.pixels[PALETTE_HEIGHT * canvas.stride:], width = canvas.width, height = canvas.height - PALETTE_HEIGHT, stride = canvas.stride}
+	paper_generation += 1
+	return {pixels = raw_data(paper_pixels[:]), width = WIDTH, height = PAPER_HEIGHT, stride = WIDTH}
 }
 
 // line draws a line on the paper, with a color of the palette (0 to 5). A point off the paper is fine: the paper shows the part of the line on it. The result is the count of lines that calls drew since the last clear. It fails with -1 and an error record: Bad_Value when the color is not 0 to 5.
@@ -75,30 +86,41 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if !ok {
 		system.stop(1)
 	}
-	canvas = window.canvas
-	graphics.clear(canvas, COLOR_PAPER)
+	pictures[0] = paper()
+	graphics.clear(pictures[0], COLOR_PAPER)
+	window_drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
+	window_drawing.now.pictures = pictures[:]
+	window_drawing.before.pictures = pictures[:]
 	color := colors[0]
 	last_x, last_y := 0, 0
 	drawing := false
 	system.log("paint: ok")
 	for {
+		frame := interface.window_frame_begin(&window_drawing, &window)
+		table := frame.table
 		for index in 0 ..< len(colors) {
-			graphics.fill(canvas, index * PALETTE_CELL, 0, PALETTE_CELL, PALETTE_HEIGHT, colors[index])
+			interface.draw_rectangle(table, index * PALETTE_CELL, 0, PALETTE_CELL, PALETTE_HEIGHT, colors[index])
 			if colors[index] == color {
-				graphics.outline(canvas, index * PALETTE_CELL, 0, PALETTE_CELL, PALETTE_HEIGHT, 3, 0xFFFFFF)
+				// The chosen color: a white border of 3 pixels.
+				left := index * PALETTE_CELL
+				interface.draw_rectangle(table, left, 0, PALETTE_CELL, 3, 0xFFFFFF)
+				interface.draw_rectangle(table, left, PALETTE_HEIGHT - 3, PALETTE_CELL, 3, 0xFFFFFF)
+				interface.draw_rectangle(table, left, 3, 3, PALETTE_HEIGHT - 6, 0xFFFFFF)
+				interface.draw_rectangle(table, left + PALETTE_CELL - 3, 3, 3, PALETTE_HEIGHT - 6, 0xFFFFFF)
 			}
 		}
 		// The rest of the top line: the keys, and the calls that this program served.
 		x := len(colors) * PALETTE_CELL
-		graphics.fill(canvas, x, 0, WIDTH - x, PALETTE_HEIGHT, COLOR_PAPER)
-		x = graphics.text(canvas, x + 10, 4, "c: clear", 0x606468)
+		interface.draw_rectangle(table, x, 0, WIDTH - x, PALETTE_HEIGHT, COLOR_PAPER)
+		x = interface.draw_text(table, x + 10, 4, "c: clear", 0x606468)
 		if service.connected != 0 || service.calls != 0 {
-			x = graphics.text(canvas, x + 16, 4, "callers ", 0x606468)
-			x = graphics.unsigned(canvas, x, 4, u64(service.connected), 0x2F6FD0)
-			x = graphics.text(canvas, x + 8, 4, "calls ", 0x606468)
-			graphics.unsigned(canvas, x, 4, service.calls, 0x2F6FD0)
+			x = interface.draw_text(table, x + 16, 4, "callers ", 0x606468)
+			x = interface.draw_unsigned(table, x, 4, u64(service.connected), 0x2F6FD0)
+			x = interface.draw_text(table, x + 8, 4, "calls ", 0x606468)
+			interface.draw_unsigned(table, x, 4, service.calls, 0x2F6FD0)
 		}
-		display.present(&window)
+		interface.draw_picture(table, 0, PALETTE_HEIGHT, 0, paper_generation)
+		interface.window_frame_end(&window_drawing, &frame, &window)
 
 		wait: system.Wait
 		display.wait_events(&wait, &window)
@@ -125,7 +147,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				erase := event.buttons & display.BUTTON_RIGHT != 0
 				y := max(event.y, PALETTE_HEIGHT + 2)
 				if drawing {
-					graphics.line(canvas, last_x, last_y, event.x, y, erase ? 12 : 3, erase ? COLOR_PAPER : color)
+					graphics.line(paper(), last_x, last_y - PALETTE_HEIGHT, event.x, y - PALETTE_HEIGHT, erase ? 12 : 3, erase ? COLOR_PAPER : color)
 				}
 				last_x, last_y, drawing = event.x, y, true
 			}

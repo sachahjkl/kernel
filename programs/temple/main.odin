@@ -5,6 +5,7 @@ package temple
 
 import "support:display"
 import "support:graphics"
+import "support:interface"
 import "support:system"
 
 WIDTH :: 440
@@ -32,6 +33,12 @@ angles: [WIDTH * HEIGHT]u8 // The direction of each pixel from the light, 256 pe
 glows: [WIDTH * HEIGHT]u8 // The strength of the light at each pixel.
 light_colors: [256]graphics.Color
 strip: [PORTRAIT_HEIGHT][3]i32 // One column of the portrait, as red, green, blue.
+// The window is one picture of this program, shown with the interface
+// package (a Picture record): the scene draws into it.
+picture_pixels: [WIDTH * HEIGHT]graphics.Color
+pictures: [1]graphics.Canvas
+records_now, records_before: [2]interface.Draw_Record
+drawing: interface.Window_Drawing
 
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
@@ -40,6 +47,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.stop(1)
 	}
 	prepare()
+	pictures[0] = {pixels = raw_data(picture_pixels[:]), width = WIDTH, height = HEIGHT, stride = WIDTH}
+	drawing = interface.window_drawing_of_picture(records_now[:], records_before[:], pictures[:])
 
 	start := system.time()
 	next := start
@@ -49,10 +58,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		elapsed := now - start
 		// The first frame shows the portrait a little before it faces the person.
 		turn := f32((elapsed + TURN_TIME - TURN_TIME / 16) % TURN_TIME) / TURN_TIME
-		draw_light(window.canvas, int(elapsed / RAY_TIME))
-		draw_temple(window.canvas)
-		draw_portrait(window.canvas, turn)
-		display.present(&window)
+		draw_light(pictures[0], int(elapsed / RAY_TIME))
+		draw_temple(pictures[0])
+		draw_portrait(pictures[0], turn)
+		interface.show_picture(&drawing, &window, u32(frame) + 1)
 		if frame == 0 {
 			system.log("temple: ok")
 		}
