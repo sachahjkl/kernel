@@ -95,7 +95,9 @@ grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 	case "errors":
 		return {.Store, .Image, .Inspect, .Connect} // It makes errors in its store, loads modules and starts fault from the boot image, counts the locks, and asks for connections that the root service refuses (callable_of gives it none).
 	case "imports":
-		return {.Inspect, .Image} // It loads modules of the boot image, and measures with the cycle counter.
+		return {.Inspect, .Image}
+	case "cryptography_vectors":
+		return {.Image} // It reads the hash of the module cryptography in the boot image. // It loads modules of the boot image, and measures with the cycle counter.
 	case "net":
 		return {.Inspect, .Network} // It measures with the cycle counter.
 	case "server":

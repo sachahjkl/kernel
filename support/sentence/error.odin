@@ -275,6 +275,9 @@ error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record,
 	case .Unsupported:
 		write_part(writer, "the receiver does not do the command ")
 		write_part(writer, record.value)
+	case .Not_Authentic:
+		subject(writer, record, argument)
+		write_part(writer, " is not authentic: its tag or its signature does not verify, and the call gives no byte of it")
 	case .Reserved:
 		subject(writer, record, argument)
 		write_part(writer, " names a program of the system: it starts at boot, or it is a device service, and the call does not act on it")

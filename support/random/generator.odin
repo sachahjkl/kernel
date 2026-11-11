@@ -1,7 +1,7 @@
 // The random generator of a program (docs/RANDOMNESS.md): ChaCha20 with
 // fast key erasure (D. J. Bernstein, "Fast-key-erasure random-number
 // generators", 2017). Its state is a record of fixed size in the memory of
-// the program (property 14); a draw makes no kernel entry and no call.
+// the program; a draw makes no kernel entry and no call.
 //
 // Each refill runs ChaCha20 with the key and the nonce 0 for 13 blocks: the
 // first 32 bytes are the next key, the next 800 bytes are served in order.
@@ -13,7 +13,6 @@
 // (support/cryptography, docs/CRYPTOGRAPHY.md), checked against RFC 8439.
 package random
 
-import "base:runtime"
 import op "contract:operation"
 import "support:system"
 import "support:cryptography/chacha20"
@@ -52,7 +51,10 @@ generator_seed :: proc "contextless" (generator: ^Generator, seed: ^[SEED_SIZE]u
 // refill makes the next 800 bytes and the next key.
 @(private)
 refill :: proc "contextless" (generator: ^Generator) {
-	context = runtime.default_context()
+	// All zero: runtime.default_context() stores the default random
+	// generator of the runtime, whose state is thread-local (a module has
+	// none). The code of ChaCha20 needs no allocator.
+	context = {}
 	nonce: [12]u8
 	block: [REFILL_SIZE]u8
 	cipher: chacha20.Context

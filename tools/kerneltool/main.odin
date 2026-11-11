@@ -235,6 +235,10 @@ run_test :: proc(args: []string) -> int {
 	if len(args) == 1 && args[0] == "network" {
 		return machine_test(scenario_network[:], BOOT_VOLUME, TEST_OUTPUT_NETWORK, MACHINE_STOP_OK, TEST_DATA_DISK) ? 0 : EXIT_FAILURE
 	}
+	// `test crypto`: the machine of the module cryptography only.
+	if len(args) == 1 && args[0] == "crypto" {
+		return cryptography_tests_run() ? 0 : EXIT_FAILURE
+	}
 	// `test random`: the three machines of the randomness only.
 	if len(args) == 1 && args[0] == "random" {
 		return random_tests_run() ? 0 : EXIT_FAILURE
@@ -243,7 +247,7 @@ run_test :: proc(args: []string) -> int {
 	if len(args) == 1 && args[0] == "tcp" {
 		return tcp_tests_run() ? 0 : EXIT_FAILURE
 	}
-	if !machine_test(scenario_fails[:], BOOT_VOLUME_FAILS, TEST_OUTPUT_FAILS, 0) || !self_tests_run() || !machine_test(scenario[:], BOOT_VOLUME, TEST_OUTPUT, MACHINE_STOP_OK, TEST_DATA_DISK) || !machine_test(scenario_network[:], BOOT_VOLUME, TEST_OUTPUT_NETWORK, MACHINE_STOP_OK, TEST_DATA_DISK) || !tcp_tests_run() || !random_tests_run() || !persistence_run() || !power_loss_run() || !test_modules() || !test_descriptions() {
+	if !machine_test(scenario_fails[:], BOOT_VOLUME_FAILS, TEST_OUTPUT_FAILS, 0) || !self_tests_run() || !machine_test(scenario[:], BOOT_VOLUME, TEST_OUTPUT, MACHINE_STOP_OK, TEST_DATA_DISK) || !machine_test(scenario_network[:], BOOT_VOLUME, TEST_OUTPUT_NETWORK, MACHINE_STOP_OK, TEST_DATA_DISK) || !tcp_tests_run() || !random_tests_run() || !cryptography_tests_run() || !persistence_run() || !power_loss_run() || !test_modules() || !test_descriptions() {
 		return EXIT_FAILURE
 	}
 	fmt.println("kerneltool: all tests passed")
