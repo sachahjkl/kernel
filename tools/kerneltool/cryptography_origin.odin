@@ -26,6 +26,7 @@ CRYPTOGRAPHY_ORIGIN_RELEASE :: "dev-2026-05" // The tag of Odin in nixpkgs: http
 @(rodata)
 cryptography_import_changes := [?][2]string {
 	{"\"core:crypto\"", "crypto \"support:cryptography/compatibility_crypto\""},
+	{"\"core:crypto/hash\"", "hash \"support:cryptography/compatibility_hash\""},
 	{"\"core:crypto/", "\"support:cryptography/"},
 	{"\"core:encoding/endian\"", "endian \"support:cryptography/compatibility_endian\""},
 	{"\"core:math/bits\"", "bits \"support:cryptography/compatibility_bits\""},
