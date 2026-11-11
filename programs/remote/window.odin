@@ -42,7 +42,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 	buffer: [64]u8
 
 	// The calls of the host, with the large number of the card.
-	inside := interface.card(&frame, {8, 8, WIDTH - 16, 152}, "CALLS FROM THE HOST", "remote.Request -> isolated call -> remote.Answer", graphics.COLOR_PROGRAM)
+	inside := interface.card(&frame, {8, 8, WIDTH - 16, 168}, "CALLS FROM THE HOST", "remote.Request -> isolated call -> remote.Answer", graphics.COLOR_PROGRAM)
 	interface.large_number(&frame, inside.x, inside.y, system.format(buffer[:], counts.calls), graphics.COLOR_PROGRAM)
 	interface.draw_text(table, inside.x, inside.y + 56, "calls that ran", graphics.COLOR_DIM)
 	COLUMN :: 232
