@@ -19,7 +19,7 @@ import "support:system"
 Command :: enum u32 {
 	None           = 0,
 	Surface_Create = 1, // values: memory handle (in the compositor), width, height, title (4 values)
-	Present        = 2, // The pixels of the surface changed. values: the picture to show (0 or 1)
+	Present        = 2, // The pixels of the surface changed. values: the picture to show (0 or 1), then the rectangle that changed: x, y, width, height (width 0: the whole surface)
 }
 
 Event_Kind :: enum u32 {
@@ -140,7 +140,16 @@ open :: proc "contextless" (ctx: ^system.Context, width, height: int, title: str
 // present tells the compositor that the picture in window.canvas is
 // complete.
 present :: proc "contextless" (window: ^Window) {
-	if !system.send(&window.ring.commands, ring.Record{kind = u32(Command.Present), values = {0 = u64(window.picture)}}) || !window.two {
+	present_rectangle(window, 0, 0, 0, 0)
+}
+
+// present_rectangle tells the compositor that the picture in window.canvas
+// is complete, and that only one rectangle of it changed: the compositor
+// draws again only that part of the window. A width of 0 is the whole
+// surface.
+present_rectangle :: proc "contextless" (window: ^Window, x, y, width, height: int) {
+	record := ring.Record{kind = u32(Command.Present), values = {0 = u64(window.picture), 1 = u64(max(x, 0)), 2 = u64(max(y, 0)), 3 = u64(max(width, 0)), 4 = u64(max(height, 0))}}
+	if !system.send(&window.ring.commands, record) || !window.two {
 		return
 	}
 	window.presented = window.ring.commands.counters.write

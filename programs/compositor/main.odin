@@ -9,6 +9,7 @@ package compositor
 
 import "support:display"
 import "support:graphics"
+import "support:interface"
 import "support:bar"
 import "contract:ring"
 import "support:system"
@@ -119,6 +120,12 @@ match_count: int
 choice: int // The chosen line: an index in matches.
 kept_key: u32 // A key that the launcher took when it was pressed: its release goes to no program.
 launcher_frames, launcher_time: u64 // The frames drawn while the launcher is open, and their time in nanoseconds.
+// The panel of the launcher, built with the interface package: the table of
+// now, the table that the screen shows, the interface state.
+launcher_records_now, launcher_records_before: [128]interface.Draw_Record
+launcher_text_now, launcher_text_before: [2048]u8
+launcher_now, launcher_before: interface.Draw_Table
+launcher_state: interface.Interface_State
 // The colors of one line of a title bar, and of its lighter top line.
 title_row, title_light: [display.SURFACE_LIMIT + 2 * BORDER]graphics.Color
 
@@ -247,6 +254,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 	}
 	pointer_x, pointer_y = width / 2, height / 2
+	launcher_now = {records = launcher_records_now[:], text = launcher_text_now[:]}
+	launcher_before = {records = launcher_records_before[:], text = launcher_text_before[:]}
 	memory_measure()
 	title_measure()
 	damage_add(0, 0, width, height)
@@ -302,7 +311,15 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 						if record.values[0] < client.picture_count {
 							client.surface.pixels = client.pictures[int(record.values[0]) * client.surface.width * client.surface.height:]
 						}
-						damage_add(client.x + BORDER, client.y + TITLE_HEIGHT, client.surface.width, client.surface.height)
+						// The program can name the rectangle that changed; the
+						// numbers are its own: they are cut to the surface.
+						left, top := int(min(record.values[1], u64(client.surface.width))), int(min(record.values[2], u64(client.surface.height)))
+						changed_width, changed_height := client.surface.width, client.surface.height
+						if record.values[3] != 0 {
+							changed_width = int(min(record.values[3], u64(client.surface.width - left)))
+							changed_height = int(min(record.values[4], u64(client.surface.height - top)))
+						}
+						damage_add(client.x + BORDER + left, client.y + TITLE_HEIGHT + top, changed_width, changed_height)
 					}
 				}
 			}
@@ -636,7 +653,7 @@ draw_area :: proc "contextless" (area: Rectangle, now: u64) {
 	}
 
 	if launcher_open {
-		launcher_draw(canvas, origin_x, origin_y)
+		interface.execute_in_rectangle(&launcher_now, canvas, {area.left, area.top, area.right, area.bottom}, origin_x, origin_y)
 	}
 
 	for row, y in pointer_shape {
@@ -842,6 +859,7 @@ launcher_key :: proc "contextless" (code: u32, character: u8, pressed: bool) -> 
 				damage_menu()
 			}
 			launcher_filter()
+			launcher_refresh(nil)
 			system.log_in("surfaces", .Info, "compositor: the launcher is open")
 		}
 		return true
@@ -853,35 +871,81 @@ launcher_key :: proc "contextless" (code: u32, character: u8, pressed: bool) -> 
 	switch {
 	case code == display.KEY_ESCAPE:
 		launcher_close("the key escape")
-	case code == display.KEY_ENTER:
+	case code == display.KEY_UP || code == display.KEY_DOWN:
+		// The text input has the focus: the arrows move the choice of the list.
+		if match_count > 0 {
+			choice = (choice + (code == display.KEY_UP ? match_count - 1 : 1)) % match_count
+			system.log_in("surfaces", .Info, "compositor: the launcher chooses ", bar.names[matches[choice]])
+			launcher_refresh(nil)
+		}
+	case:
+		// A character, Backspace and Enter go to the text input of the panel.
+		input: interface.Input
+		input.keys[0] = {code = code, character = character}
+		input.key_count = 1
+		typed_result := launcher_refresh(&input)
+		if !typed_result.activated {
+			break
+		}
 		if match_count == 0 {
 			system.log_in("surfaces", .Info, "compositor: the launcher has no program to start")
-			return true
+			break
 		}
 		name := bar.names[matches[choice]]
 		packed := system.name_pack(name)
 		system.send(&control.completions, ring.Record{kind = u32(display.Control.Start), values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3]}})
 		system.log_in("surfaces", .Info, "compositor: the launcher starts ", name)
 		launcher_close("")
-	case code == display.KEY_UP || code == display.KEY_DOWN:
-		if match_count > 0 {
-			choice = (choice + (code == display.KEY_UP ? match_count - 1 : 1)) % match_count
-			system.log_in("surfaces", .Info, "compositor: the launcher chooses ", bar.names[matches[choice]])
-			damage_launcher()
-		}
-	case code == display.KEY_BACKSPACE:
-		if typed_count > 0 {
-			typed_count -= 1
-			launcher_filter()
-		}
-	case character > ' ' && character <= '~':
-		if typed_count < len(typed) {
-			typed[typed_count] = character
-			typed_count += 1
-			launcher_filter()
-		}
 	}
 	return true
+}
+
+// launcher_refresh builds the panel again with the input of one key, and
+// with the list of the new typed part when the text changed. The damage is
+// the difference with the panel on the screen. It gives what the input did
+// to the text input.
+launcher_refresh :: proc "contextless" (input: ^interface.Input) -> interface.Element_Result {
+	nothing: interface.Input
+	result := launcher_build(input != nil ? input : &nothing)
+	if result.changed {
+		launcher_filter()
+		launcher_build(&nothing)
+	}
+	launcher_damage: interface.Damage
+	interface.damage_by_difference(&launcher_before, &launcher_now, &launcher_damage)
+	for rectangle in launcher_damage.rectangles[:launcher_damage.count] {
+		damage_add(rectangle.left, rectangle.top, rectangle.right - rectangle.left, rectangle.bottom - rectangle.top)
+	}
+	interface.draw_table_copy(&launcher_before, &launcher_now)
+	return result
+}
+
+// launcher_build builds the panel of the launcher with the elements of the
+// interface package: a card with the count of the names that match, the
+// text input with the typed part, the list with the chosen line, the keys.
+launcher_build :: proc "contextless" (input: ^interface.Input) -> interface.Element_Result {
+	text_input_identity := interface.identity("launcher text input")
+	launcher_state.focus = text_input_identity // The text input always has the focus.
+	frame := interface.frame_begin(&launcher_now, &launcher_state, input)
+	left, top := launcher_place()
+	count: interface.Text_Builder
+	interface.text_put_number(&count, u64(match_count))
+	interface.text_put(&count, " of ")
+	interface.text_put_number(&count, len(bar.names))
+	content := interface.card(&frame, {left, top, LAUNCHER_WIDTH, LAUNCHER_HEIGHT}, "LAUNCHER", "bar.names", graphics.COLOR_KERNEL, interface.text_of(&count))
+	result := interface.text_input(&frame, {content.x, top + LAUNCHER_INPUT, content.width, 24}, text_input_identity, typed[:], &typed_count, "type a part of a name")
+	names: [len(bar.names)]string
+	for index, line in matches[:match_count] {
+		names[line] = bar.names[index]
+	}
+	empty: interface.Text_Builder
+	interface.text_put(&empty, "no program has \"")
+	interface.text_put(&empty, string(typed[:typed_count]))
+	interface.text_put(&empty, "\" in its name")
+	interface.list_with_choice(&frame, {content.x, top + LAUNCHER_LIST, content.width, LAUNCHER_ROWS * interface.TABLE_LINE}, interface.identity("launcher list"), names[:match_count], &choice, {marked = string(typed[:typed_count]), chosen_hint = "enter: start", empty_text = interface.text_of(&empty)})
+	interface.draw_text(frame.table, content.x, top + LAUNCHER_LIST + LAUNCHER_ROWS * interface.TABLE_LINE + 8, "up down: choose   enter: start   esc: close", graphics.COLOR_DIM)
+	interface.frame_end(&frame)
+	return result
 }
 
 // launcher_filter makes the list again from the typed part, and writes it
@@ -898,12 +962,12 @@ launcher_filter :: proc "contextless" () {
 		count += copy(buffer[count:], bar.names[index])
 	}
 	system.log_in("surfaces", .Info, "compositor: the launcher lists ", u64(match_count), " of ", u64(len(bar.names)), " for \"", string(typed[:typed_count]), "\": ", string(buffer[:count]))
-	damage_launcher()
 }
 
 launcher_close :: proc "contextless" (cause: string) {
 	launcher_open = false
 	damage_launcher()
+	interface.draw_table_clear(&launcher_before)
 	system.log_in("surfaces", .Info, "compositor: the launcher was open for ", launcher_frames, " frames, ", launcher_time / max(launcher_frames, 1) / 1000, ".", launcher_time / max(launcher_frames, 1) / 100 % 10, " us per frame")
 	launcher_frames, launcher_time = 0, 0
 	if cause != "" {
@@ -911,57 +975,6 @@ launcher_close :: proc "contextless" (cause: string) {
 	}
 }
 
-// launcher_draw draws the panel of the launcher: a card with the count of
-// the names that match, the input line with the typed part and a caret, the
-// list with the chosen line in blue, and the keys of the launcher.
-launcher_draw :: proc "contextless" (canvas: graphics.Canvas, origin_x, origin_y: int) {
-	left, top := launcher_place()
-	x, y := left + origin_x, top + origin_y
-	card_draw(canvas, x, y, LAUNCHER_WIDTH, LAUNCHER_HEIGHT, "LAUNCHER", "bar.names", u64(match_count), len(bar.names))
-	inner_x := x + graphics.CARD_MARGIN
-	inner_width := LAUNCHER_WIDTH - 2 * graphics.CARD_MARGIN
-
-	// The input line: the typed part, then the caret.
-	input_y := y + LAUNCHER_INPUT
-	graphics.fill(canvas, inner_x, input_y, inner_width, 24, graphics.COLOR_TRACK)
-	graphics.fill(canvas, inner_x, input_y + 22, inner_width, 2, graphics.COLOR_TITLE)
-	after := graphics.text(canvas, inner_x + 8, input_y + 4, string(typed[:typed_count]), graphics.COLOR_WHITE)
-	graphics.fill(canvas, after + 1, input_y + 4, 2, graphics.CELL_HEIGHT, graphics.COLOR_TITLE)
-	if typed_count == 0 {
-		graphics.text(canvas, after + 8, input_y + 4, "type a part of a name", graphics.COLOR_DIM)
-	}
-
-	// The list. The first line shown keeps the choice on the panel.
-	list_y := y + LAUNCHER_LIST
-	if match_count == 0 {
-		end := graphics.text(canvas, inner_x + 8, list_y + 4, "no program has \"", graphics.COLOR_DIM)
-		end = graphics.text(canvas, end, list_y + 4, string(typed[:typed_count]), graphics.COLOR_TEXT)
-		graphics.text(canvas, end, list_y + 4, "\" in its name", graphics.COLOR_DIM)
-	}
-	first := max(choice - LAUNCHER_ROWS + 1, 0)
-	for row in 0 ..< min(match_count - first, LAUNCHER_ROWS) {
-		index := first + row
-		name := bar.names[matches[index]]
-		line_y := list_y + row * bar.LINE_HEIGHT
-		chosen := index == choice
-		if chosen {
-			graphics.fill(canvas, inner_x, line_y, inner_width, bar.LINE_HEIGHT, graphics.COLOR_TITLE)
-			graphics.text(canvas, inner_x + inner_width - 8 - graphics.text_width("enter: start"), line_y + 4, "enter: start", graphics.COLOR_TEXT)
-		}
-		graphics.text(canvas, inner_x + 8, line_y + 4, name, chosen ? graphics.COLOR_WHITE : graphics.COLOR_TEXT)
-		// The typed part in the name: a line of 2 pixels under it.
-		if at := bar.find(name, string(typed[:typed_count])); typed_count > 0 && at >= 0 {
-			graphics.fill(canvas, inner_x + 8 + at * graphics.CELL_WIDTH, line_y + 20, typed_count * graphics.CELL_WIDTH, 2, chosen ? graphics.COLOR_WHITE : graphics.COLOR_KERNEL)
-		}
-	}
-	if match_count > LAUNCHER_ROWS {
-		// More names than lines: a bar at the right says which part the list shows.
-		track_height := LAUNCHER_ROWS * bar.LINE_HEIGHT
-		graphics.fill(canvas, inner_x + inner_width + 6, list_y, 2, track_height, graphics.COLOR_TRACK)
-		graphics.fill(canvas, inner_x + inner_width + 6, list_y + first * track_height / match_count, 2, LAUNCHER_ROWS * track_height / match_count, graphics.COLOR_DIM)
-	}
-	graphics.text(canvas, inner_x, list_y + LAUNCHER_ROWS * bar.LINE_HEIGHT + 8, "up down: choose   enter: start   esc: close", graphics.COLOR_DIM)
-}
 
 // memory_measure measures copy_bytes_without_overlap and fill_bytes_with_value
 // (runtime/memory.asm; the compiler calls them as memcpy and memset) on the two
