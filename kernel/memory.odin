@@ -157,7 +157,7 @@ frames_take_aligned :: proc "contextless" (count: u64, alignment: u64) -> u64 {
 		for frame in first ..< first + count {
 			if frame_used(frame) {
 				// The next candidate is the multiple of the alignment above
-				// the used frame (finding W3: not the next multiple only).
+				// the used frame, not the next multiple only.
 				first = (frame / alignment + 1) * alignment
 				continue search
 			}

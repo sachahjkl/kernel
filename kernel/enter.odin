@@ -381,7 +381,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			return .Bad_State
 		}
 		// An object with marks of protection of a part is not given: the marks
-		// would reach the mapping of the other program (finding F3).
+		// would reach the mapping of the other program.
 		if given.kind == .Memory && to != program && intrinsics.atomic_load(&regions[given.object].marked_pages) != 0 {
 			return .Bad_State
 		}
@@ -794,7 +794,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		flags := transmute(op.Commit_Flags)v[4]
 		decommit := .Decommit in flags
 		// The payer: a handle to the budget of the object, with Commit or
-		// Spend (owner, 2026-11-11). A decommit gives pages back to it, and
+		// Spend (docs/ARCHITECTURE.md, "Who pays a commit"). A decommit gives pages back to it, and
 		// reads no budget handle.
 		if !decommit {
 			budget := handle_find(program, v[1], .Budget) or_return

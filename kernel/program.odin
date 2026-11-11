@@ -202,7 +202,7 @@ word_address :: proc "contextless" (program: ^Program, address: u64) -> u64 {
 	}
 	entry := page_entry(program.table, address, false)^
 	// A large page: its frame is 2 MiB, and the bits 12 to 20 of the
-	// address are in the page (finding F2 of the read of the virtual memory).
+	// address are in the page.
 	if entry & PAGE_LARGE != 0 {
 		return entry & PAGE_ADDRESS &~ u64(LARGE_PAGE_SIZE - 1) | address & (LARGE_PAGE_SIZE - 1)
 	}
@@ -422,7 +422,7 @@ region_create :: proc "contextless" (budget: u32, page_count: u64, contiguous :=
 	}
 	// An uncommitted object pays its frame list only, and at least one page:
 	// no budget holds a slot of the table of memory objects for nothing
-	// (finding W2).
+	// for nothing.
 	cost := uncommitted ? uncommitted_base_cost(page_count) : region_cost(page_count, contiguous)
 	// One section of the frame lock: the budget pays, the slot is taken, the
 	// frames of a contiguous object or of the frame list are taken, the pages
@@ -471,7 +471,7 @@ region_create :: proc "contextless" (budget: u32, page_count: u64, contiguous :=
 		} else {
 			// The page that an Uncommitted object with no list page pays
 			// (uncommitted_base_cost) has no frame: it is a reserved page,
-			// so the sums of the frames hold (finding B1 of the second read).
+			// so the sums of the frames hold.
 			reserved_pages += cost - lists
 		}
 	}
@@ -770,7 +770,8 @@ handle_close :: proc "contextless" (program: ^Program, slot: ^Handle_Slot) {
 // the memory handle that a program mapped (origin.odin), or 0.
 map_region :: proc "contextless" (program: ^Program, region_index: u32, address: u64, flags: op.Map_Flags, first: u64, count: u64, origin: Holding = 0) -> (result: u64, status: op.Status) {
 	region := &regions[region_index]
-	// An object with marks of protection is mapped once (finding F3).
+	// An object with marks of protection is mapped once: the marks are of
+	// the object, and would reach a second mapping.
 	if intrinsics.atomic_load(&region.marked_pages) != 0 {
 		return 0, .Bad_State
 	}
@@ -785,7 +786,7 @@ map_region :: proc "contextless" (program: ^Program, region_index: u32, address:
 	chosen := address == 0
 	if chosen {
 		// An object of large pages, mapped by whole large pages, gets an
-		// address on 2 MiB (finding W7 of the second read).
+		// address on 2 MiB.
 		alignment := u64(PAGE_SIZE)
 		if region.large_pages && first % op.LARGE_PAGE_PAGES == 0 && count % op.LARGE_PAGE_PAGES == 0 {
 			alignment = LARGE_PAGE_SIZE
@@ -972,7 +973,7 @@ unmap :: proc "contextless" (program: ^Program, mapping: ^Mapping) {
 		}
 	}
 	// The marks of protection of the pages end with the one mapping that
-	// has them (finding F3' of the second read): the object can be mapped
+	// has them: the object can be mapped
 	// and given again.
 	if region := &regions[mapping.region]; intrinsics.atomic_load(&region.marked_pages) != 0 && !region.contiguous {
 		lock := &region_locks[mapping.region]
@@ -1038,7 +1039,7 @@ page_give :: proc "contextless" (program: ^Program, address: u64, write: bool, e
 	// Each page of a large mapping with access is present. A fault there
 	// that the entry permits now came through an old translation, before the
 	// shoot-down of a protection change: the instruction runs again
-	// (finding W1).
+	// with no stop of the program.
 	if mapping.large {
 		entry := page_directory_entry(program.table, address &~ u64(LARGE_PAGE_SIZE - 1), false)
 		return entry != nil && entry^ & PAGE_PRESENT != 0 && (!write || entry^ & PAGE_WRITE != 0) && (!execute || entry^ & PAGE_NO_EXECUTE == 0)

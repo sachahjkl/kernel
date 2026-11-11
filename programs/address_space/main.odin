@@ -669,7 +669,7 @@ child_not_committed :: proc "contextless" () -> ! {
 	system.stop(0)
 }
 
-// The delegation of a commit (owner, 2026-11-11, "budget delegation"): this
+// The delegation of a commit (docs/ARCHITECTURE.md, "Who pays a commit"): this
 // program A makes a child budget and an uncommitted object on it, and gives
 // a second program B the object (Read, Write) and the child budget with the
 // right Commit only. B runs the cases of the amendment of the read, one at

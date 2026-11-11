@@ -352,8 +352,8 @@ read_commit_needed :: proc "contextless" (program: ^Program, handle: u64, ranges
 			return
 		}
 		// At most RANGE_TABLE_PAGE_LIMIT pages read: the table is memory of
-		// the program, which can grow it after the call failed (finding W6
-		// of the second read).
+		// the program, which can grow it after the call failed, and the
+		// sum runs with the program lock held.
 		walked += range.page_count
 		if walked > op.RANGE_TABLE_PAGE_LIMIT {
 			return
@@ -554,7 +554,7 @@ handles_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^P
 	}
 	// The payer of a commit: a handle of the budget of the object, with
 	// Commit or Spend. The record says nothing of a budget that is not the
-	// payer (P20, the rule of the budgets of choice 231).
+	// payer: a program sees only what its handles let it see.
 	if operation == .Memory_Commit && transmute(op.Commit_Flags)v[4] & {.Decommit} == {} {
 		if v[1] == 0 {
 			record_set(record, .Handle_Absent, .None, 2, 0, 0, 0)
@@ -605,7 +605,7 @@ budget_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Pr
 	}
 	if operation == .Memory_Commit {
 		// The pages that the table asks against what the budget holds; what
-		// it holds only with the right Read on the budget handle (choice 231).
+		// it holds only with the right Read on the budget handle.
 		needed, pages, held := read_commit_needed(program, v[0], v[2], v[3])
 		if !held || needed <= pages {
 			return false
@@ -927,7 +927,7 @@ state_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Pro
 	#partial switch operation {
 	case .Memory_Map, .Handle_Give:
 		// An object with pages of their own protection is not mapped again
-		// and not given (finding F3 of the read of the virtual memory).
+		// and not given: the marks would reach the other mapping.
 		memory_argument := operation == .Memory_Map ? 0 : 1
 		// A target program that stopped is the cause first; the marks after.
 		if operation == .Memory_Map && v[1] != 0 {

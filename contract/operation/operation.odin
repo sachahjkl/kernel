@@ -161,7 +161,7 @@ Operation :: enum u32 {
 	Memory_Commit = 28, // (memory, budget or 0, address of a table of Page_Range, count, Commit_Flags) -> pages changed.
 	// The pages of the ranges of an object made with Uncommitted become committed: the budget pays one page for each,
 	// and each gets a frame at its first use. The budget handle must name the budget of the object, with the right
-	// Commit or Spend (owner, 2026-11-11: the right Write on the object does not spend the budget of its maker; to let
+	// Commit or Spend (the right Write on the object does not spend the budget of its maker; to let
 	// another program commit, give it the object and a budget handle with Commit only). With Decommit, the committed
 	// pages of the ranges are no longer paid: their frames and their pages return at once to the budget of the object,
 	// and a page committed again is zero; the budget argument is not read. The ranges are in increasing order and do not

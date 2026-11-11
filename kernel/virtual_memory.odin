@@ -50,7 +50,7 @@ ranges_valid :: proc "contextless" (ranges: []op.Page_Range, page_count: u64) ->
 }
 
 // table_pages gives the pages of a table of ranges, at most the limit plus
-// one: a table above op.RANGE_TABLE_PAGE_LIMIT is refused (finding W3: the
+// one: a table above op.RANGE_TABLE_PAGE_LIMIT is refused (the
 // sections of one call walk each page with interrupts off).
 table_pages :: proc "contextless" (counts: []u64) -> (sum: u64) {
 	for count in counts {
@@ -140,10 +140,9 @@ memory_commit :: proc "contextless" (program: ^Program, region_index: u32, range
 	intrinsics.atomic_thread_fence(.Seq_Cst)
 	processor_sync(processors_with_table(program.table))
 	// A thread of the program that waits on a word of a page whose frame
-	// returns wakes now, before the frame can serve another program (finding
-	// F1): its wait names the frame, so a later wake through a new frame of
-	// the page would not reach it, and a wake by the next owner of the frame
-	// would. Only this program names the object, and the program lock keeps
+	// returns wakes now, before the frame can serve another program: its
+	// wait names the frame, so a later wake through a new frame of the page
+	// would not reach it, and a wake by the next owner of the frame would. Only this program names the object, and the program lock keeps
 	// its threads from a new wait meanwhile. It runs again and reads its words.
 	decommit_wake_waiters(program, region, ranges)
 	lock_take(&frame_lock, .Frame)
@@ -189,7 +188,7 @@ decommit_wake_waiters :: proc "contextless" (program: ^Program, region: ^Region,
 	count := 0
 	index := index_of_program(program)
 	// Each thread with words: it waits, or it registered them and does not
-	// wait yet (finding F1' of the second read).
+	// wait yet.
 	for &thread, slot in threads[1:] {
 		if thread.program != index || thread.word_count == 0 {
 			continue
@@ -207,7 +206,7 @@ decommit_wake_waiters :: proc "contextless" (program: ^Program, region: ^Region,
 		return
 	}
 	// Sorted by frame: one binary search for each page, not a pass over
-	// the words (finding W5 of the second read).
+	// the words.
 	for at in 1 ..< count {
 		for back := at; back > 0 && words[back - 1].page > words[back].page; back -= 1 {
 			words[back - 1], words[back] = words[back], words[back - 1]
@@ -292,7 +291,7 @@ protect_check :: proc "contextless" (program: ^Program, ranges: []op.Address_Ran
 		}
 		whole := address == mapping.address && count == mapping.page_count
 		// A part takes away from the protection of its mapping now: it
-		// cannot get more than it (finding W4: a part that asked for more
+		// cannot get more than it (a part that asked for more
 		// changed nothing and succeeded).
 		if !whole && .No_Access not_in flags && (mapping.bits == 0 || .Write in flags && mapping.bits & PAGE_WRITE == 0 || .Execute in flags && mapping.bits & PAGE_NO_EXECUTE != 0) {
 			return mappings, .Bad_Operation
@@ -308,8 +307,8 @@ protect_check :: proc "contextless" (program: ^Program, ranges: []op.Address_Ran
 		mappings[index] = u8(found)
 	}
 	// One table that names one mapping whole and in part: the parts are
-	// checked against the protection before the change of the whole (note
-	// of the second read): refused.
+	// checked against the protection before the change of the whole:
+	// refused.
 	for range, index in ranges {
 		mapping := &program.mappings[mappings[index]]
 		whole := range.address == mapping.address && range.page_count == mapping.page_count
@@ -328,7 +327,7 @@ protect_check :: proc "contextless" (program: ^Program, ranges: []op.Address_Ran
 memory_protect :: proc "contextless" (program: ^Program, ranges: []op.Address_Range, flags: op.Map_Flags) -> (changed: u64, status: op.Status) {
 	places := protect_check(program, ranges, flags) or_return
 	// The limit counts what the kernel walks: one entry for each large page
-	// (finding F4 of the second read: a whole large mapping of 1 GiB is 512
+	// (a whole large mapping of 1 GiB is 512
 	// entries, not 262144 pages). A whole mapping of 4 KiB pages above the
 	// limit is refused; a program that names its object alone changes it in
 	// parts.
@@ -354,7 +353,7 @@ memory_protect :: proc "contextless" (program: ^Program, ranges: []op.Address_Ra
 		// take away from the protection of the mapping now: a part that gets
 		// the protection of its mapping has no mark. A whole mapping loses
 		// the marks of its pages. While an object has marks it is not mapped
-		// again and not given (finding F3): the marks are of the object, so
+		// again and not given: the marks are of the object, so
 		// they would reach another mapping.
 		whole := first == 0 && count == mapping.page_count
 		if !region.contiguous && (!whole || intrinsics.atomic_load(&region.marked_pages) != 0) {

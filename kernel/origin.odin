@@ -187,7 +187,7 @@ holding_end :: proc "contextless" (holding: Holding, changes: u64) -> End {
 		// after the unmap, under this program lock.
 		region := &regions[mapping.region]
 		// A thread that registered its words and does not wait yet counts
-		// too (finding F1' of the second read of the virtual memory).
+		// too: its wait_end must not wait on a frame that leaves.
 		for &thread in threads[1:] {
 			if thread.program != index || thread.word_count == 0 {
 				continue
