@@ -81,11 +81,15 @@ records :: proc "c" (after: i64, result: ^[]Record, error: ^errors.Error_Record)
 			continue
 		}
 		parts := rows_of(&record)
-		if count + parts > len(result^) {
-			break // The rows of one log record go together.
+		if count == len(result^) {
+			break
 		}
+		// Each place of the result has a row (a Table result: the caller
+		// reads min(count, capacity) rows). A record whose second row does not
+		// fit gives its first row, which says that it continues: the caller
+		// reads again from that record.
 		text_count := min(int(record.text_count), len(record.text))
-		for part in 0 ..< parts {
+		for part in 0 ..< min(parts, len(result^) - count) {
 			row := &result[count]
 			row^ = {number = i64(record.sequence), time = i64(record.time), slot = i64(record.program)}
 			copy(row.program[:len(row.program) - 1], system.name_of(record.name[:]))

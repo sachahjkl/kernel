@@ -2213,10 +2213,15 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 			found := false
 			from := machine.record_next
 			reads := 0
+			last_rows, last_total := 0, i64(0)
+			last_ok := false
+			last_table: Call_Table
 			for start := time.now(); !found && time.since(start) < STEP_TIMEOUT; {
 				table, ok := table_call(&machine.client, fmt.tprintf("log.records(%d)", from))
 				reads += 1
 				rows := ok ? len(table.rows) / table.size : 0
+				last_rows, last_total, last_ok = rows, table.total, ok
+				last_table = table
 				// A text goes on in the next row when its row says so
 				// (log.records: a row has 160 bytes of text): the rows of one
 				// text are joined before the comparison.
@@ -2250,7 +2255,12 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				}
 			}
 			if !found {
-				fmt.eprintfln("kerneltool: test failed: step %d: no log record of %s, channel \"%s\", level %s, has \"%s\"", index + 1, step.program, step.channel, step.level, step.text)
+				fmt.eprintfln("kerneltool: test failed: step %d: no log record of %s, channel \"%s\", level %s, has \"%s\" (%d calls of log.records, the last one from %d: %v, %d rows of %d)", index + 1, step.program, step.channel, step.level, step.text, reads, from, last_ok, last_rows, last_total)
+				compact := strings.builder_make(context.temp_allocator)
+				for row in 0 ..< last_rows {
+					fmt.sbprintf(&compact, "%s:%s ", table_value(&last_table, row, "number"), table_value(&last_table, row, "continues"))
+				}
+				fmt.eprintfln("kerneltool:     the rows (number:continues): %s", strings.to_string(compact))
 				return false
 			}
 		case .Agree:
