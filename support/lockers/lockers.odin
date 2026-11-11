@@ -31,7 +31,10 @@ Mode :: enum u32 {
 	Wait    = 0, // Do nothing until the next command.
 	Entries = 1, // Enter the kernel with one cheap operation on an own object, as often as possible.
 	Faults  = 2, // Create a memory object, map it, write one byte in each page, unmap it, close it; again.
+	Large   = 3, // Create a memory object of LARGE_PAGES pages (more than one list page) and close it; again.
 }
+
+LARGE_PAGES :: 600 // Three list pages: the kernel takes the frames of the list when it creates the object.
 
 // One place of the board. `locks` writes the command, then adds 1 to
 // `command`; the locker writes the result, then adds 1 to `done`.

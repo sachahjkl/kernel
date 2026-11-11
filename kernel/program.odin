@@ -388,11 +388,17 @@ region_create :: proc "contextless" (budget: u32, page_count: u64, contiguous :=
 		}
 		region.present = page_count
 	} else {
-		// The budget has the cost: free frames for the list exist, and
-		// after the payment free_frames stays >= reserved_pages.
+		// The budget has the cost: free frames for the list exist. Each
+		// list page is taken in this section, so that the sums of the frames
+		// hold whenever the frame lock is free (memory.odin): a second
+		// section took the other list pages before, and a report or a drain
+		// between the two saw the budget paid for frames not yet taken.
 		lists := list_pages(page_count)
 		if lists != 0 {
 			region.frames[0] = frame_take()
+			for list in 1 ..< lists {
+				direct(region.frames[0], [LIST_ENTRIES]u64)[list - 1] = frame_take()
+			}
 		}
 		reserved_pages += page_count
 	}
@@ -401,15 +407,18 @@ region_create :: proc "contextless" (budget: u32, page_count: u64, contiguous :=
 	if contiguous {
 		frames_zero(region.physical, page_count)
 	} else if lists := list_pages(page_count); lists != 0 {
-		frames_zero(region.frames[0], 1)
-		if lists > 1 {
-			lock_take(&frame_lock, .Frame)
-			for list in 1 ..< lists {
-				direct(region.frames[0], [LIST_ENTRIES]u64)[list - 1] = frame_take()
-			}
-			lock_free(&frame_lock, .Frame)
-			for list in 1 ..< lists {
-				frames_zero(direct(region.frames[0], [LIST_ENTRIES]u64)[list - 1], 1)
+		// The top page holds the frames of the other list pages: they are
+		// zero filled first, then the top page keeps their frames.
+		for list in 1 ..< lists {
+			frames_zero(direct(region.frames[0], [LIST_ENTRIES]u64)[list - 1], 1)
+		}
+		if lists == 1 {
+			frames_zero(region.frames[0], 1)
+		} else {
+			// The top page: zero after its first lists - 1 entries.
+			top := direct(region.frames[0], [LIST_ENTRIES]u64)
+			for &entry in top[lists - 1:] {
+				entry = 0
 			}
 		}
 	}

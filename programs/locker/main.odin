@@ -126,6 +126,13 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			count = entries(own, end)
 		case .Faults:
 			count = faults(end)
+		case .Large:
+			for system.time() < end {
+				if memory, made := system.memory_create(lockers.LARGE_PAGES); made == .Ok {
+					system.close(memory)
+					count += 1
+				}
+			}
 		}
 		after, _ := system.budget_read()
 		slot.count = count

@@ -76,8 +76,10 @@ COMMANDS :: [?]Command {
 	{name = "build", about = "the modules, the boot image and the boot program, as " + BOOT_PROGRAM, run = run_build},
 	{name = "run", about = "build, then start the machine under QEMU, with the log of the kernel on this terminal", run = run_machine},
 	{name = "test", about = "build, start the machine under QEMU, act as the person, check the log, save pictures of the screen; `test network`, `test main`: one machine only", run = run_test},
+	{name = "run", about = "build, then start the machine under QEMU, with the log of the kernel on this terminal; `run unchecked`: the measure build", run = run_machine},
+	{name = "test", about = "build, start the machine under QEMU, act as the person, check the log, save pictures of the screen; `test network`: the machine of the network only", run = run_test},
 	{name = "screenshots", about = "test, then copy the pictures to " + DOCUMENT_SCREENSHOT_FOLDER + " and to a new folder of " + DEVELOPMENT_LOG_FOLDER, run = run_screenshots},
-	{name = "measure", about = "build, start the machine, run the measures of the locks of the kernel with no other program, and stop: the numbers are in " + TEST_OUTPUT_MEASURE + "; `measure scheduler N`: the program scheduler N times", run = run_measure},
+	{name = "measure", about = "build, start the machine, run the measures of the locks of the kernel with no other program, and stop: the numbers are in " + TEST_OUTPUT_MEASURE + "; `measure scheduler N`: the program scheduler N times; `measure unchecked ...`: the measure build, with no check in the kernel (no lock order check, no check of the frames)", run = run_measure},
 	{name = "film", about = "build, start the machine, film the terminal, and write " + FILM_OUTPUT + " and a copy in " + DEVELOPMENT_LOG_FOLDER + " (needs ffmpeg)", run = run_film},
 	{name = "font", about = "convert the BDF file of the font to " + FONT_OUTPUT, run = run_font},
 	{name = "portrait", about = "convert " + PORTRAIT_SOURCE + " to " + PORTRAIT_OUTPUT, run = run_portrait},
@@ -184,6 +186,9 @@ build_boot_program :: proc(image: string, volume_path: string, self_test: int) -
 }
 
 run_machine :: proc(args: []string) -> int {
+	if len(args) >= 1 && args[0] == "unchecked" {
+		kernel_checks = false
+	}
 	if code := run_build(nil); code != 0 {
 		return code
 	}
@@ -271,6 +276,11 @@ TEST_OUTPUT_MEASURE :: BUILD_FOLDER + "/test_output_measure.txt"
 // `measure scheduler N`: N machines that run only the program scheduler
 // with the desktop; the numbers are in build/test_output_scheduler_<n>.txt.
 run_measure :: proc(args: []string) -> int {
+	args := args
+	if len(args) >= 1 && args[0] == "unchecked" {
+		kernel_checks = false
+		args = args[1:]
+	}
 	if code := run_build(nil); code != 0 {
 		return code
 	}

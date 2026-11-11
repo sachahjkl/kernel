@@ -174,7 +174,15 @@ frames_free_held :: proc "contextless" (address: u64, count: u64) {
 // That sum changes only under the frame lock and the cache lock together
 // (a batch, a give back, a fold of taken, a drain). So a reader that holds
 // the frame lock reads each stack under its cache lock, one after the
-// other, and gets the exact sums while the other processors take.
+// other, and gets the exact difference free - reserved (the invariant)
+// while the other processors take. The free pages alone and the reserved
+// pages alone are not values of one instant: a take from a stack after
+// the reader read it is in neither sum, a take before is in both.
+//
+// taken folds into reserved_pages only at a refill and at a drain: a
+// processor that frees as much as it takes never refills, and its taken
+// grows with no end. That is harmless: the report and the check subtract
+// it, and a u64 does not wrap in the life of a machine.
 //
 // A take that cannot fail (a reserved page, a list page, a page table) or
 // a contiguous object, with no free frame in the frame table, drains all
@@ -194,7 +202,10 @@ FRAME_CACHE_CHECK :: #config(FRAME_CACHE_CHECK, true)
 // frame_reserved_take gives one page frame, not zero, for a reserved page:
 // from the stack of this processor; an empty stack takes the frame from the
 // frame table and a batch for the stack, in one section of the frame lock.
-// The caller holds no frame lock and no cache lock.
+// The caller holds no frame lock and no cache lock. It runs only for a
+// page on first use of a memory object of a program, so after the first
+// processor has its record (processor_self): the first memory object that
+// is not contiguous is made in root_start, after processor_start.
 frame_reserved_take :: proc "contextless" () -> u64 {
 	cache := &processor_self().frame_cache
 	lock_take(&cache.lock, .Cache)

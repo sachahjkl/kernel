@@ -439,6 +439,56 @@ stress :: proc "contextless" (image: []u8, programs_free: u64) {
 stress_right: bool
 stress_started: u64
 
+// The stress case of the frames: two lockers make and close memory objects
+// of 600 pages (three list pages each), two lockers fault pages on first
+// use, and this program reads System_Report with no pause. The kernel checks
+// its sums of the frames at each report and at each drain (in the test
+// build); this program checks that the free pages less the reserved pages
+// are the pages of the budgets in each report. The lockers and this program
+// are different programs: no program lock orders their kernel entries.
+FRAMES_STRESS_TIME :: 500 // Milliseconds.
+
+frames_stress_right: bool
+
+frames_stress :: proc "contextless" () {
+	modes := [lockers.LOCKER_CAPACITY]lockers.Mode{.Large, .Large, .Faults, .Faults}
+	seen: [lockers.LOCKER_CAPACITY]u32
+	start := system.time() + 20
+	end := start + FRAMES_STRESS_TIME
+	for index in 0 ..< lockers.LOCKER_CAPACITY {
+		slot := &board.slots[index]
+		seen[index] = intrinsics.atomic_load(&slot.done)
+		slot.mode = modes[index]
+		slot.start = start
+		slot.end = end
+		intrinsics.atomic_add(&slot.command, 1)
+		system.word_wake(&slot.command, system.WAKE_ALL)
+	}
+	reports, wrong: u64
+	for system.time() < end + 5 {
+		read := report()
+		reports += 1
+		if read.budget_pages + read.reserved_pages != read.free_pages {
+			wrong += 1
+		}
+	}
+	answered := true
+	for index in 0 ..< lockers.LOCKER_CAPACITY {
+		slot := &board.slots[index]
+		for intrinsics.atomic_load(&slot.done) == seen[index] {
+			if system.time() > end + 5000 {
+				answered = false
+				break
+			}
+			system.word_wait(&slot.done, seen[index], system.time() + 100)
+		}
+	}
+	made := board.slots[0].count + board.slots[1].count
+	faulted := board.slots[2].count + board.slots[3].count
+	frames_stress_right = answered && made != 0 && faulted != 0 && wrong == 0
+	system.log("locks: frames: ", made, " objects of 600 pages made and closed by two lockers while two lockers faulted ", faulted, " pages and this program read ", reports, " reports; reports where the free pages less the reserved pages were not the pages of the budgets: ", wrong)
+}
+
 // The second thread of the stress case: it stops the program that the
 // first thread names in `stop_target`, while the first thread closes its
 // last handle to it.
@@ -524,6 +574,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	system.log("locks: lock waits of takes, 4 lockers, kernel entries: ", locks_text(text[:], entry_locks))
 	system.log("locks: lock waits of takes, 4 lockers, pages on first use: ", locks_text(text[:], fault_locks))
 	system.log("locks: lock waits of takes, word wait with 2 lockers: ", locks_text(text[:], pair_locks))
+	frames_stress()
 	for program in programs {
 		system.close(program)
 	}
@@ -558,10 +609,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.log(system.written(&writer))
 	}
 	done = true
-	if entries_right && faults_right && pages_right && pairs_right && lost_wakes == 0 && stress_right {
+	if entries_right && faults_right && pages_right && pairs_right && lost_wakes == 0 && stress_right && frames_stress_right {
 		system.log("locks: ok, the kernel counted each entry, each page returned, no wake was lost, each stopped program returned its pages, its slot and its threads")
 	} else {
-		system.log("locks: wrong: entries ", u64(entries_right), " faults ", u64(faults_right), " pages ", u64(pages_right), " wakes ", u64(pairs_right), " lost ", lost_wakes, " stress ", u64(stress_right))
+		system.log("locks: wrong: entries ", u64(entries_right), " faults ", u64(faults_right), " pages ", u64(pages_right), " wakes ", u64(pairs_right), " lost ", lost_wakes, " stress ", u64(stress_right), " frames ", u64(frames_stress_right))
 	}
 	draw(canvas)
 	display.present(&window)

@@ -466,12 +466,14 @@ Page_Report :: struct {
 System_Report :: struct {
 	time:          u64, // Milliseconds since boot.
 	page_count:    u64, // Pages of memory that the kernel manages.
-	free_pages:    u64,
+	free_pages:    u64, // The free frames: in the frame table and in the frame caches of the processors.
 	program_slots: u64,
 	region_count:  u64, // Memory objects in use.
 	entries:       u64, // Kernel entries since boot.
 	interrupts:    u64,
-	budget_pages:  u64, // The pages of all the budgets. With reserved_pages, it is always free_pages: each page is free or paid.
+	budget_pages:  u64, // The pages of all the budgets. free_pages - reserved_pages is always budget_pages, exactly: each page is free or paid.
+	// free_pages and reserved_pages alone are not values of one instant: the processors take frames from their
+	// caches while the kernel reads them; their difference is exact (docs/ARCHITECTURE.md, "The frame caches").
 	processors:    u64, // The processors that run threads.
 	reserved_pages:   u64, // Pages that a budget paid for and that have no page frame yet: pages on first use.
 	first_use_faults: u64, // Page faults of programs after which the page was present.
