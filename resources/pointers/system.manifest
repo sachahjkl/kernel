@@ -1,0 +1,286 @@
+# The pointer theme of the system (docs/POINTERS.md, section 5), under the
+# license of the repository. Each shape is a grid of squares, in the style of
+# the arrow of docs/DESIGN.md: "X" a black square, "." a white one, " "
+# nothing. A square is size / 12 pixels: 2 at the size 24, 4 at 48. The
+# option "hot" is in squares; the hot spot is the middle of its square.
+theme System
+license MIT
+attribution The pointer theme of the system, drawn as grids of squares in resources/pointers/system.manifest.
+
+sizes 24 48
+
+shape arrow hot 0 0
+|X
+|XX
+|X.X
+|X..X
+|X...X
+|X....X
+|X.....X
+|X......X
+|X..XXXXX
+|X.X
+|XX
+
+shape text hot 3 6
+|XXX XXX
+|X..X..X
+|XXX.XXX
+|  X.X
+|  X.X
+|  X.X
+|  X.X
+|  X.X
+|  X.X
+|XXX.XXX
+|X..X..X
+|XXX XXX
+
+shape pointing_hand hot 3 0
+|  XXXX
+|  X..X
+|  X..X
+|  X..X
+|  X..XXXXXXX
+|XXX..X..X..X
+|X..........X
+|X..........X
+|X..........X
+|X..........X
+|XX........XX
+| XXXXXXXXXX
+
+shape move hot 5 5
+|    XXX
+|   XX.XX
+|   X...X
+| XXXX.XXXX
+|XX.XX.XX.XX
+|X.........X
+|XX.XX.XX.XX
+| XXXX.XXXX
+|   X...X
+|   XX.XX
+|    XXX
+
+shape grab hot 5 6
+|   XXXX
+|XXXX..XXXX
+|X..X..X..X
+|X..X..X..X
+|X..X..X..XXX
+|X..X..X..X.X
+|X..........X
+|X..........X
+|X.........XX
+|X.........X
+|XX.......XX
+| XXXXXXXXX
+
+shape grabbing hot 5 4
+|XXXXXXXXXX
+|X..X..X..XX
+|X.........X
+|X.........X
+|X.........X
+|X.........X
+|X.........X
+|XX.......XX
+| XXXXXXXXX
+
+shape wait hot 5 6
+frame 250
+|XXXXXXXXXXX
+|X.........X
+| X.XXXXX.X
+|  X.XXX.X
+|   X.X.X
+|    X.X
+|    X.X
+|   X...X
+|  X.....X
+| X.......X
+|X.........X
+|XXXXXXXXXXX
+frame 250
+|XXXXXXXXXXX
+|X.........X
+| X.......X
+|  X.XXX.X
+|   X.X.X
+|    XXX
+|    XXX
+|   X...X
+|  X.....X
+| X.......X
+|X..XXXXX..X
+|XXXXXXXXXXX
+frame 250
+|XXXXXXXXXXX
+|X.........X
+| X.......X
+|  X.....X
+|   X.X.X
+|    XXX
+|    XXX
+|   X...X
+|  X.....X
+| X..XXX..X
+|X.XXXXXXX.X
+|XXXXXXXXXXX
+frame 250
+|XXXXXXXXXXX
+|X.........X
+| X.......X
+|  X.....X
+|   X...X
+|    X.X
+|    X.X
+|   X...X
+|  X..X..X
+| X.XXXXX.X
+|X.XXXXXXX.X
+|XXXXXXXXXXX
+
+shape busy_with_arrow hot 0 0
+frame 250
+|X
+|XX
+|X.X
+|X..X
+|X...X
+|X....X
+|X..XXX
+|X.X    XXXXX
+|XX     X.X.X
+|X      X.X.X
+|       X.X.X
+|       XXXXX
+frame 250
+|X
+|XX
+|X.X
+|X..X
+|X...X
+|X....X
+|X..XXX
+|X.X    XXXXX
+|XX     X..XX
+|X      X.X.X
+|       XX..X
+|       XXXXX
+frame 250
+|X
+|XX
+|X.X
+|X..X
+|X...X
+|X....X
+|X..XXX
+|X.X    XXXXX
+|XX     X...X
+|X      XXXXX
+|       X...X
+|       XXXXX
+frame 250
+|X
+|XX
+|X.X
+|X..X
+|X...X
+|X....X
+|X..XXX
+|X.X    XXXXX
+|XX     XX..X
+|X      X.X.X
+|       X..XX
+|       XXXXX
+
+shape forbidden hot 5 5
+|   XXXXX
+| XX.....XX
+| XXX.....X
+|X..XX.....X
+|X...XX....X
+|X....XX...X
+|X.....XX..X
+|X......XX.X
+| X......XX
+| XX.....XX
+|   XXXXX
+
+shape help hot 0 0
+|X
+|XX
+|X.X
+|X..X    XXX
+|X...X  X...X
+|X....X X.X.X
+|X..XXX XXX.X
+|X.X     X.XX
+|XX      X.X
+|X       XXX
+|        X.X
+|        XXX
+
+shape crosshair hot 5 5
+|    XXX
+|    X.X
+|    X.X
+|    X.X
+|XXXXXXXXXXX
+|X...X.X...X
+|XXXXXXXXXXX
+|    X.X
+|    X.X
+|    X.X
+|    XXX
+
+shape resize_left_right hot 5 3
+|  XXX  XXX
+| XX.X  X.XX
+|XX..XXXX..XX
+|X..........X
+|XX..XXXX..XX
+| XX.X  X.XX
+|  XXX  XXX
+
+shape resize_up_down hot 3 5
+|  XXX
+| XX.XX
+|XX...XX
+|X.....X
+|XXX.XXX
+|  X.X
+|  X.X
+|XXX.XXX
+|X.....X
+|XX...XX
+| XX.XX
+|  XXX
+
+shape resize_top_left_bottom_right hot 5 5
+|XXXXX
+|X...X
+|X..XX
+|X.X.XX
+|XXXX.XX
+|   XX.XX
+|    XX.XXXX
+|     XX.X.X
+|      XX..X
+|      X...X
+|      XXXXX
+
+shape resize_top_right_bottom_left hot 5 5
+|      XXXXX
+|      X...X
+|      XX..X
+|     XX.X.X
+|    XX.XXXX
+|   XX.XX
+|XXXX.XX
+|X.X.XX
+|X..XX
+|X...X
+|XXXXX
