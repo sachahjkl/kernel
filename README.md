@@ -3,6 +3,8 @@
 A new kernel and operating system, written in Odin.
 The system boots under QEMU to a graphical desktop with a console, a system tool and demo programs.
 
+[`CHANGELOG.md`](CHANGELOG.md) lists what each release brings. The merge of step N is the release 0.N.0; `kerneltool release_number` prints the newest one (0.59.0 when this line was written).
+
 ![The desktop: console, life, monitor and plasma. The title bar of the window in front goes from blue to a darker blue; the others are quiet](docs/screenshots/desktop.png)
 
 ![The launcher: the key super opens it, the list narrows at each typed key, Enter starts the chosen program](docs/screenshots/launcher.png)
@@ -164,6 +166,7 @@ The same window with the pointer theme of the owner (Posy's Cursor, CC BY-NC 4.0
 | `docs/DESIGN.md` | The design rules: how a program of the system looks. The boot display is the model |
 | `docs/POINTERS.md` | The pointer pictures: Xcursor, hyprcursor and the others; the format and the manifest of the system; the license of the theme of the owner |
 | `docs/DEMONSTRATIONS.md` | For each of the 21 properties: what the machine test shows, the picture, and what no test shows yet |
+| `CHANGELOG.md` | What each release brings, newest first. `changelog.d/` holds the changes that are not in a release yet |
 | `docs/HANDOFF.md` | Current state, rules of the owner, next steps |
 | `docs/research/` | Research notes with sources, and video transcripts |
 
