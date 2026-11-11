@@ -76,6 +76,8 @@ Unit :: enum i64 {
 	Records     = 19,
 	Connection  = 20, // No_Grant: a connection to the service.
 	Milliseconds = 21,
+	Connections = 22, // The records of a TCP connection table (support/tcp).
+	Tcp_Ports   = 23, // The local TCP ports of a client grant.
 }
 
 // How a handle ended (Handle_Ended).
@@ -133,4 +135,6 @@ UNIT_NAMES := [Unit]string {
 	.Records     = "records",
 	.Connection  = "a connection to this service",
 	.Milliseconds = "milliseconds",
+	.Connections = "connections",
+	.Tcp_Ports   = "local TCP ports",
 }

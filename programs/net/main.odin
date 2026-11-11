@@ -196,9 +196,9 @@ cases_run :: proc "contextless" () {
 	// 1. The link and the address.
 	info, has_info := call(.Info)
 	link := has_info && datagram.Status(info.kind) == .Ok
-	granted_address, granted_port, has_inspect := datagram.grant_unpack(info.values[6])
-	inspect = has_inspect
-	note("the link and the address", link && info.values[0] == LOCAL && info.values[3] == 24 && info.values[5] == 1 && granted_address == GATEWAY && granted_port == ECHO_PORT, address_text(text[:], u32(info.values[0])), "/24, the link is ", info.values[5] == 1 ? "up, " : "down, ", hardware_text(other[:], info.values[4]))
+	grant := datagram.grant_unpack(info.values[6])
+	inspect = grant.inspect
+	note("the link and the address", link && info.values[0] == LOCAL && info.values[3] == 24 && info.values[5] == 1 && grant.address == GATEWAY && grant.port == ECHO_PORT && !grant.tcp, address_text(text[:], u32(info.values[0])), "/24, the link is ", info.values[5] == 1 ? "up, " : "down, ", hardware_text(other[:], info.values[4]))
 
 	// 2. The hardware address of the gateway (ARP).
 	start := system.cycles()

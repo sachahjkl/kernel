@@ -112,7 +112,7 @@ malformed_frames :: proc(t: ^testing.T) {
 		{"total length in the header", proc(frame: []u8) -> int {write_16(frame, 16, 12); fix_ipv4(frame); return 60}, .Bad_Length, .Ipv4, 16, 12, 20},
 		{"header checksum", proc(frame: []u8) -> int {frame[24] ~= 0xFF; return 60}, .Bad_Checksum, .Ipv4, 24, 0, 0},
 		{"a fragment", proc(frame: []u8) -> int {write_16(frame, 20, 0x2000); fix_ipv4(frame); return 60}, .Unsupported, .Ipv4, 20, 0x2000, 0},
-		{"protocol TCP", proc(frame: []u8) -> int {frame[23] = 6; fix_ipv4(frame); return 60}, .Unsupported, .Ipv4, 23, 6, 0},
+		{"protocol 99", proc(frame: []u8) -> int {frame[23] = 99; fix_ipv4(frame); return 60}, .Unsupported, .Ipv4, 23, 99, 0},
 		{"UDP of 4 bytes", proc(frame: []u8) -> int {write_16(frame, 16, 24); fix_ipv4(frame); return 60}, .Too_Short, .Udp, 34, 4, 8},
 		{"UDP length after the datagram", proc(frame: []u8) -> int {write_16(frame, 38, 300); return 60}, .Bad_Length, .Udp, 38, 300, 18},
 		{"UDP length under the header", proc(frame: []u8) -> int {write_16(frame, 38, 3); return 60}, .Bad_Length, .Udp, 38, 3, 8},
@@ -203,4 +203,64 @@ problem_sentence :: proc(t: ^testing.T) {
 	writer.count = 0
 	problem_write(&writer, {kind = Problem_Kind(200), layer = Layer(77)})
 	testing.expect_value(t, system.written(&writer), "frame, byte 0: an unknown problem")
+}
+
+// tcp_example writes a frame with a segment from the gateway to this
+// machine: 20 bytes of header, then data, with its checksum.
+@(private = "file")
+tcp_example :: proc(frame: []u8, data: string) -> int {
+	segment := frame[IPV4_DATA:][:TCP_HEADER + len(data)]
+	write_16(segment, 0, 80)
+	write_16(segment, 2, 49200)
+	write_32(segment, 4, 1000)
+	write_32(segment, 8, 2000)
+	segment[12] = 5 << 4
+	segment[13] = 0x18 // PSH, ACK.
+	write_16(segment, 14, 8192)
+	copy(segment[TCP_HEADER:], data)
+	write_16(segment, 16, checksum(sum(pseudo(GATEWAY_ADDRESS, LOCAL_ADDRESS, PROTOCOL_TCP, len(segment)), segment)))
+	return ipv4_frame(frame, LOCAL, GATEWAY, GATEWAY_ADDRESS, LOCAL_ADDRESS, PROTOCOL_TCP, len(segment), 7)
+}
+
+@(test)
+tcp_segment_read :: proc(t: ^testing.T) {
+	frame: [128]u8
+	length := tcp_example(frame[:], "GET / HTTP/1.1")
+	packet, problem := parse(frame[:length])
+	testing.expect_value(t, problem.kind, Problem_Kind.None)
+	testing.expect_value(t, packet.kind, Packet_Kind.Tcp)
+	testing.expect_value(t, packet.source_port, 80)
+	testing.expect_value(t, packet.destination_port, 49200)
+	testing.expect_value(t, packet.tcp_flags, 0x18)
+	testing.expect_value(t, len(packet.data), TCP_HEADER + 14)
+	testing.expect_value(t, string(packet.data[TCP_HEADER:]), "GET / HTTP/1.1")
+}
+
+@(test)
+tcp_malformed :: proc(t: ^testing.T) {
+	Case :: struct {
+		name:   string,
+		change: proc(frame: []u8) -> int,
+		kind:   Problem_Kind,
+		offset: u16,
+		value:  u32,
+		limit:  u32,
+	}
+	cases := []Case {
+		{"a segment of 10 bytes", proc(frame: []u8) -> int {write_16(frame, 16, 30); fix_ipv4(frame); return 60}, .Too_Short, 34, 10, 20},
+		{"a data offset of 16 bytes", proc(frame: []u8) -> int {frame[46] = 4 << 4; return 74}, .Bad_Header, 46, 4, 5},
+		{"a data offset after the segment", proc(frame: []u8) -> int {frame[46] = 15 << 4; return 74}, .Bad_Length, 46, 60, 40},
+		{"the checksum", proc(frame: []u8) -> int {frame[60] ~= 1; return 74}, .Bad_Checksum, 50, 0, 0},
+	}
+	for item in cases {
+		frame: [128]u8
+		tcp_example(frame[:], "twenty bytes of data")
+		length := item.change(frame[:])
+		packet, problem := parse(frame[:length])
+		testing.expectf(t, problem.kind == item.kind && problem.layer == .Tcp && problem.offset == item.offset, "%s: %v", item.name, problem)
+		if item.kind != .Bad_Checksum {
+			testing.expectf(t, problem.value == item.value && problem.limit == item.limit, "%s: %v", item.name, problem)
+		}
+		testing.expectf(t, packet.kind == .None, "%s: a packet from a malformed frame", item.name)
+	}
 }

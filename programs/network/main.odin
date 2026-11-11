@@ -7,10 +7,15 @@
 // and output, the library reads and writes the frames. It has one static
 // address (10.0.2.15/24, the gateway 10.0.2.2: the network of QEMU).
 //
-// The root service names the grant of each endpoint: one remote address and
-// one remote port. A request to another remote is refused with the detail
-// of the grant; a datagram from another remote does not reach the program.
-// The program does not choose its local port (property 20).
+// The root service names the grant of each endpoint. A datagram endpoint
+// reaches one remote address and one remote UDP port. A segment endpoint
+// (TCP) has a client grant (one remote, from a block of local TCP ports) or
+// a listen grant (one local TCP port, and the remotes that sent a segment
+// to it). A request to another remote is refused with the detail of the
+// grant; a datagram or a segment from another remote does not reach the
+// program. TCP itself is in the program (support/tcp): this service checks
+// the IPv4 header, the TCP checksum and the ports of each segment, and
+// keeps no state of a connection (docs/NETWORK.md).
 //
 // One thread. It waits on the completions of the frame ring, on the
 // control ring of the root service, and on the command queue of each
@@ -37,7 +42,8 @@ REGION_PAGES :: PLACE_COUNT * frame.PLACE_SIZE / system.PAGE_SIZE
 
 ENDPOINT_CAPACITY :: 8
 RECEIVE_CAPACITY :: 128 // The Receive requests of one endpoint that wait at the same time.
-PORT_FIRST :: 49152 // The local port of endpoint n is PORT_FIRST + n.
+PORT_FIRST :: 49152 // The local UDP port of endpoint n is PORT_FIRST + n.
+TCP_PORT_FIRST :: 50176 // A client grant of endpoint n: the local TCP ports from TCP_PORT_FIRST + n * datagram.PORT_BLOCK.
 ECHO_IDENTIFIER :: 0x6E00 // The identifier of an echo request of endpoint n is ECHO_IDENTIFIER + n.
 ANSWER_TIME :: 1000 // Milliseconds for an answer of ARP or of an echo.
 PENDING_CAPACITY :: 64
@@ -83,9 +89,11 @@ Endpoint :: struct {
 	datagram_ring:   ring.Ring,
 	region_memory:   system.Handle,
 	region:          []u8,
-	remote_address:  u32, // The grant. 0 and 0: no grant.
-	remote_port:     u16,
-	local_port:      u16,
+	grant:           datagram.Grant, // All zero: no grant (a revocation).
+	tcp:             bool, // A segment endpoint. It stays after a revocation.
+	local_port:      u16, // The first local port.
+	port_count:      u16, // 1, or datagram.PORT_BLOCK for a client grant of TCP.
+	admitted:        network.Admitted, // A listen grant: the remotes that sent a segment to its port.
 	name:            system.Name,
 	posted:          [RECEIVE_CAPACITY]Posted,
 	posted_first:    int,
@@ -94,7 +102,6 @@ Endpoint :: struct {
 	held:            ring.Record, // A Send that waits for a free send place.
 	has_held:        bool,
 	changed:         bool, // A completion was written: wake the program.
-	inspect:         bool, // The right Inspect of the grant: the facts of the machine.
 	sent:            u64,
 	received:        u64,
 	dropped:         u64,
@@ -232,11 +239,17 @@ problem :: proc "contextless" (found: datagram.Problem) {
 	network.problem_count(&machine_problems, found, .Machine)
 }
 
-// udp_send builds the frame of a datagram whose data is in the send place,
-// for a next hop with a known hardware address, and sends it.
-udp_send :: proc "contextless" (endpoint: ^Endpoint, place: int, destination: network.Hardware, address: u32, port: u16, length: int) {
+// payload_send builds the frame of a datagram or a segment that is in the
+// send place, for a next hop with a known hardware address, and sends it.
+// A datagram gets its UDP header; a segment has its TCP header already.
+payload_send :: proc "contextless" (endpoint: ^Endpoint, place: int, destination: network.Hardware, address: u32, port: u16, length: int) {
 	bytes := place_bytes(place)
-	total := network.udp_frame(bytes, destination, hardware, LOCAL_ADDRESS, address, endpoint.local_port, port, length, next_identification())
+	total: int
+	if endpoint.tcp {
+		total = network.ipv4_frame(bytes, destination, hardware, LOCAL_ADDRESS, address, network.PROTOCOL_TCP, length, next_identification())
+	} else {
+		total = network.udp_frame(bytes, destination, hardware, LOCAL_ADDRESS, address, endpoint.local_port, port, length, next_identification())
+	}
 	frame_send(place, total)
 	endpoint.sent += 1
 }
@@ -259,13 +272,39 @@ region_range :: proc "contextless" (endpoint: ^Endpoint, place, count: u64) -> b
 }
 
 // granted checks a remote against the grant of an endpoint, and completes
-// the command with the detail of a refusal.
+// the command with the detail of a refusal. A listen grant names no remote:
+// a segment goes to an admitted remote only (segment_granted).
 granted :: proc "contextless" (endpoint: ^Endpoint, tag: u32, address: u64, port: u64, check_port: bool) -> bool {
-	if endpoint.remote_address != 0 && address == u64(endpoint.remote_address) && (!check_port || port == u64(endpoint.remote_port)) {
+	grant := endpoint.grant
+	if !grant.listen && grant.address != 0 && address == u64(grant.address) && (!check_port || port == u64(grant.port)) {
 		return true
 	}
-	complete(endpoint, tag, .Not_Granted, {0 = address, 1 = port, 2 = u64(endpoint.remote_address), 3 = u64(endpoint.remote_port)})
+	complete(endpoint, tag, .Not_Granted, {0 = address, 1 = port, 2 = u64(grant.address), 3 = u64(grant.port)})
 	return false
+}
+
+// segment_granted checks a segment to send, in the copy that this service
+// made: its local port is a port of the endpoint, and its remote is the
+// remote of a client grant, or an admitted remote of a listen grant.
+segment_granted :: proc "contextless" (endpoint: ^Endpoint, tag: u32, address: u32, segment: []u8) -> (port: u16, ok: bool) {
+	local := network.read_16(segment, 0)
+	port = network.read_16(segment, 2)
+	grant := endpoint.grant
+	in_block := local >= endpoint.local_port && local - endpoint.local_port < endpoint.port_count
+	switch {
+	case !in_block:
+		complete(endpoint, tag, .Not_Granted, {0 = u64(address), 1 = u64(port), 2 = u64(grant.address), 3 = u64(grant.port), 4 = u64(local), 5 = u64(endpoint.local_port), 6 = u64(endpoint.port_count)})
+	case grant.listen:
+		if network.admitted_find(&endpoint.admitted, address, port) {
+			return port, true
+		}
+		complete(endpoint, tag, .Not_Granted, {0 = u64(address), 1 = u64(port), 2 = 0, 3 = u64(grant.port)})
+	case grant.address != 0 && address == grant.address && port == grant.port:
+		return port, true
+	case:
+		complete(endpoint, tag, .Not_Granted, {0 = u64(address), 1 = u64(port), 2 = u64(grant.address), 3 = u64(grant.port)})
+	}
+	return port, false
 }
 
 // command does one command of an endpoint. false: the command waits for a
@@ -279,7 +318,7 @@ command :: proc "contextless" (endpoint: ^Endpoint, index: int, record: ring.Rec
 		for byte, place in hardware {
 			hardware_value |= u64(byte) << (8 * uint(place))
 		}
-		complete(endpoint, tag, .Ok, {LOCAL_ADDRESS, u64(endpoint.local_port), GATEWAY_ADDRESS, PREFIX, hardware_value, u64(link_up), datagram.grant_pack(endpoint.remote_address, endpoint.remote_port, endpoint.inspect)})
+		complete(endpoint, tag, .Ok, {LOCAL_ADDRESS, u64(endpoint.local_port) | u64(endpoint.port_count) << 16, GATEWAY_ADDRESS, PREFIX, hardware_value, u64(link_up), datagram.grant_pack(endpoint.grant)})
 	case .Send:
 		place, count := values[0], values[1]
 		if endpoint.region == nil {
@@ -290,11 +329,16 @@ command :: proc "contextless" (endpoint: ^Endpoint, index: int, record: ring.Rec
 			complete(endpoint, tag, .Out_Of_Range, {0 = place, 1 = count, 2 = u64(len(endpoint.region))})
 			return true
 		}
-		if count > datagram.DATA_LIMIT {
-			complete(endpoint, tag, .Too_Large, {0 = count, 1 = datagram.DATA_LIMIT})
+		limit := u64(endpoint.tcp ? datagram.SEGMENT_LIMIT : datagram.DATA_LIMIT)
+		if count > limit {
+			complete(endpoint, tag, .Too_Large, {0 = count, 1 = limit})
 			return true
 		}
-		if !granted(endpoint, tag, values[2], values[3], true) {
+		if endpoint.tcp && count < datagram.SEGMENT_LEAST {
+			complete(endpoint, tag, .Bad_Command, {0 = count, 1 = datagram.SEGMENT_LEAST})
+			return true
+		}
+		if !endpoint.tcp && !granted(endpoint, tag, values[2], values[3], true) {
 			return true
 		}
 		if !link_up {
@@ -305,15 +349,28 @@ command :: proc "contextless" (endpoint: ^Endpoint, index: int, record: ring.Rec
 		if !ok {
 			return false
 		}
-		// The one copy: from the region of the program to the frame.
-		copy(place_bytes(send_place)[network.UDP_DATA:], endpoint.region[place:][:count])
+		// The one copy: from the region of the program to the frame. The
+		// ports of a segment are checked in the copy, which the program
+		// cannot change.
+		remote_port := u16(values[3])
+		if endpoint.tcp {
+			copy(place_bytes(send_place)[network.IPV4_DATA:], endpoint.region[place:][:count])
+			port, allowed := segment_granted(endpoint, tag, u32(values[2]), place_bytes(send_place)[network.IPV4_DATA:][:count])
+			if !allowed {
+				send_place_free(send_place)
+				return true
+			}
+			remote_port = port
+		} else {
+			copy(place_bytes(send_place)[network.UDP_DATA:], endpoint.region[place:][:count])
+		}
 		hop := next_hop(u32(values[2]))
 		if destination, known := neighbor_of(hop); known {
-			udp_send(endpoint, send_place, destination, u32(values[2]), u16(values[3]), int(count))
+			payload_send(endpoint, send_place, destination, u32(values[2]), remote_port, int(count))
 			complete(endpoint, tag, .Ok)
 			return true
 		}
-		if !pending_add({kind = .Send, endpoint = index, tag = tag, address = hop, target = u32(values[2]), deadline = now + ANSWER_TIME, start = now, place = send_place, length = int(count), port = u16(values[3])}) {
+		if !pending_add({kind = .Send, endpoint = index, tag = tag, address = hop, target = u32(values[2]), deadline = now + ANSWER_TIME, start = now, place = send_place, length = int(count), port = remote_port}) {
 			send_place_free(send_place)
 			complete(endpoint, tag, .Busy, {0 = PENDING_CAPACITY})
 			return true
@@ -379,8 +436,15 @@ command :: proc "contextless" (endpoint: ^Endpoint, index: int, record: ring.Rec
 			return true
 		}
 		rows := ([^]datagram.Problem_Row)(raw_data(endpoint.region[values[0]:]))[:room]
-		count := network.problem_rows(&endpoint.problems, &machine_problems, endpoint.inspect, rows)
+		count := network.problem_rows(&endpoint.problems, &machine_problems, endpoint.grant.inspect, rows)
 		complete(endpoint, tag, .Ok, {0 = u64(count)})
+	case .Release:
+		if !endpoint.grant.listen {
+			complete(endpoint, tag, .Bad_Command)
+			return true
+		}
+		released := network.admitted_release(&endpoint.admitted, u32(values[0]), u16(values[1]))
+		complete(endpoint, tag, .Ok, {0 = u64(released)})
 	case:
 		complete(endpoint, tag, .Bad_Command)
 	}
@@ -440,31 +504,70 @@ arrived :: proc "contextless" (place: int, length: int, now: u64) {
 			return
 		}
 		port := int(packet.destination_port) - PORT_FIRST
-		if port < 0 || port >= ENDPOINT_CAPACITY || endpoints[port].ring_memory == 0 {
+		if port < 0 || port >= ENDPOINT_CAPACITY || endpoints[port].ring_memory == 0 || endpoints[port].tcp {
 			problem({kind = .No_Endpoint, layer = .Udp, offset = network.ETHERNET_HEADER + network.IPV4_HEADER + 2, value = u32(packet.destination_port)})
 			return
 		}
 		endpoint := &endpoints[port]
-		if endpoint.remote_address == 0 || packet.source_address != endpoint.remote_address || packet.source_port != endpoint.remote_port {
-			network.problem_count(&endpoint.problems, {kind = .Not_Granted, layer = .Udp, offset = network.ETHERNET_HEADER + network.IPV4_HEADER, value = u32(packet.source_port), limit = u32(endpoint.remote_port)}, .Endpoint)
+		grant := endpoint.grant
+		if grant.address == 0 || packet.source_address != grant.address || packet.source_port != grant.port {
+			network.problem_count(&endpoint.problems, {kind = .Not_Granted, layer = .Udp, offset = network.ETHERNET_HEADER + network.IPV4_HEADER, value = u32(packet.source_port), limit = u32(grant.port)}, .Endpoint)
 			return
 		}
-		if endpoint.posted_count == 0 {
-			endpoint.dropped += 1
+		deliver(endpoint, packet)
+	case .Tcp:
+		if packet.destination_address != LOCAL_ADDRESS {
 			return
 		}
-		posted := endpoint.posted[endpoint.posted_first]
-		endpoint.posted_first = (endpoint.posted_first + 1) % RECEIVE_CAPACITY
-		endpoint.posted_count -= 1
-		// The one copy: from the frame to the region of the program. The
-		// place was checked when it was posted.
-		count := min(u64(len(packet.data)), posted.room)
-		if region_range(endpoint, posted.place, count) {
-			copy(endpoint.region[posted.place:][:count], packet.data[:count])
+		// The endpoint of the local TCP port: a listen port, or a port of
+		// the block of a client grant.
+		endpoint: ^Endpoint
+		for &item in endpoints {
+			if item.ring_memory == 0 || !item.tcp {
+				continue
+			}
+			if packet.destination_port >= item.local_port && packet.destination_port - item.local_port < item.port_count {
+				endpoint = &item
+				break
+			}
 		}
-		endpoint.received += 1
-		complete_taken(endpoint, posted.tag, .Ok, {0 = posted.place, 1 = count, 2 = u64(packet.source_address), 3 = u64(packet.source_port)})
+		if endpoint == nil {
+			problem({kind = .No_Endpoint, layer = .Tcp, offset = network.ETHERNET_HEADER + network.IPV4_HEADER + 2, value = u32(packet.destination_port)})
+			return
+		}
+		grant := endpoint.grant
+		offset := u16(network.ETHERNET_HEADER + network.IPV4_HEADER)
+		switch {
+		case grant.listen:
+			if !network.admitted_add(&endpoint.admitted, packet.source_address, packet.source_port) {
+				network.problem_count(&endpoint.problems, {kind = .Full, layer = .Tcp, offset = offset, value = u32(packet.source_port), limit = datagram.ADMITTED_CAPACITY}, .Endpoint)
+				return
+			}
+		case grant.address == 0 || packet.source_address != grant.address || packet.source_port != grant.port:
+			network.problem_count(&endpoint.problems, {kind = .Not_Granted, layer = .Tcp, offset = offset, value = u32(packet.source_port), limit = u32(grant.port)}, .Endpoint)
+			return
+		}
+		deliver(endpoint, packet)
 	}
+}
+
+// deliver gives a datagram or a segment to the first Receive of an endpoint.
+deliver :: proc "contextless" (endpoint: ^Endpoint, packet: network.Packet) {
+	if endpoint.posted_count == 0 {
+		endpoint.dropped += 1
+		return
+	}
+	posted := endpoint.posted[endpoint.posted_first]
+	endpoint.posted_first = (endpoint.posted_first + 1) % RECEIVE_CAPACITY
+	endpoint.posted_count -= 1
+	// The one copy: from the frame to the region of the program. The place
+	// was checked when it was posted.
+	count := min(u64(len(packet.data)), posted.room)
+	if region_range(endpoint, posted.place, count) {
+		copy(endpoint.region[posted.place:][:count], packet.data[:count])
+	}
+	endpoint.received += 1
+	complete_taken(endpoint, posted.tag, .Ok, {0 = posted.place, 1 = count, 2 = u64(packet.source_address), 3 = u64(packet.source_port), 4 = u64(packet.destination_port)})
 }
 
 // resolved continues each request that waited for the hardware address of
@@ -477,7 +580,7 @@ resolved :: proc "contextless" (address: u32, found: network.Hardware, now: u64)
 		endpoint := &endpoints[item.endpoint]
 		#partial switch item.kind {
 		case .Send:
-			udp_send(endpoint, item.place, found, item.target, item.port, item.length)
+			payload_send(endpoint, item.place, found, item.target, item.port, item.length)
 			complete_taken(endpoint, item.tag, .Ok)
 			item = {}
 		case .Resolve:
@@ -542,6 +645,21 @@ controlled :: proc "contextless" (record: ring.Record) {
 				break
 			}
 		}
+		// A listen port is one TCP port of one endpoint: not a port that
+		// another segment endpoint has, and not in a block of client ports.
+		asked := datagram.grant_unpack(record.values[2])
+		taken := false
+		if asked.tcp && asked.listen {
+			taken = asked.port >= TCP_PORT_FIRST && asked.port < TCP_PORT_FIRST + ENDPOINT_CAPACITY * datagram.PORT_BLOCK
+			for &item in endpoints {
+				if item.ring_memory != 0 && item.tcp && asked.port >= item.local_port && asked.port - item.local_port < item.port_count {
+					taken = true
+				}
+			}
+		}
+		if taken {
+			free = -1
+		}
 		region_address: rawptr
 		region_status := system.Status.Bad_Handle
 		needed := system.Rights{.Read, .Write}
@@ -553,7 +671,10 @@ controlled :: proc "contextless" (record: ring.Record) {
 		if kind == .Memory && through && free >= 0 && region_status == .Ok {
 			opened, ring_status = system.ring_open(handle)
 		}
-		if free < 0 {
+		if taken {
+			result = .Busy
+			values[0] = u64(asked.port)
+		} else if free < 0 {
 			result = .Busy
 			values[0] = ENDPOINT_CAPACITY
 		} else if region_status != .Ok || ring_status != .Ok {
@@ -568,20 +689,31 @@ controlled :: proc "contextless" (record: ring.Record) {
 		} else {
 			endpoint := &endpoints[free]
 			name := system.name_unpack({record.values[3], record.values[4], record.values[5], record.values[6]})
-			remote_address, remote_port, inspect := datagram.grant_unpack(record.values[2])
-			endpoint^ = {ring_memory = handle, datagram_ring = opened, region_memory = region_handle, region = ([^]u8)(region_address)[:datagram.REGION_PAGES * system.PAGE_SIZE], remote_address = remote_address, remote_port = remote_port, inspect = inspect, local_port = u16(PORT_FIRST + free), name = name}
-			values[0] = u64(endpoint.local_port)
+			grant := datagram.grant_unpack(record.values[2])
+			endpoint^ = {ring_memory = handle, datagram_ring = opened, region_memory = region_handle, region = ([^]u8)(region_address)[:datagram.REGION_PAGES * system.PAGE_SIZE], grant = grant, tcp = grant.tcp, local_port = u16(PORT_FIRST + free), port_count = 1, name = name}
 			text: [32]u8
 			writer := system.Writer{buffer = text[:]}
-			network.address_write(&writer, endpoint.remote_address)
-			system.log("network: an endpoint for ", system.name_of(name[:]), ": the local port ", u64(endpoint.local_port), ", the grant ", system.written(&writer), " port ", u64(endpoint.remote_port))
+			network.address_write(&writer, grant.address)
+			switch {
+			case grant.tcp && grant.listen:
+				endpoint.local_port = grant.port
+				system.log("network: an endpoint for ", system.name_of(name[:]), ": TCP, the listen port ", u64(grant.port), ", the remotes that send to it")
+			case grant.tcp:
+				endpoint.local_port = u16(TCP_PORT_FIRST + free * datagram.PORT_BLOCK)
+				endpoint.port_count = datagram.PORT_BLOCK
+				system.log("network: an endpoint for ", system.name_of(name[:]), ": TCP, the local ports ", u64(endpoint.local_port), " to ", u64(endpoint.local_port) + datagram.PORT_BLOCK - 1, ", the grant ", system.written(&writer), " port ", u64(grant.port))
+			case:
+				system.log("network: an endpoint for ", system.name_of(name[:]), ": the local port ", u64(endpoint.local_port), ", the grant ", system.written(&writer), " port ", u64(grant.port))
+			}
+			values[0] = u64(endpoint.local_port)
 		}
 	case .Endpoint_Grant:
 		result = .Bad_Command
 		for &item in endpoints {
 			if item.ring_memory != 0 && item.ring_memory == handle {
-				item.remote_address, item.remote_port, item.inspect = datagram.grant_unpack(record.values[1])
-				system.log("network: the grant of the endpoint of ", system.name_of(item.name[:]), " changed: ", item.remote_address == 0 ? "none" : "a new remote")
+				item.grant = datagram.grant_unpack(record.values[1])
+				item.admitted = {}
+				system.log("network: the grant of the endpoint of ", system.name_of(item.name[:]), " changed: ", datagram.granted(item.grant) ? "a new remote" : "none")
 				result = .Ok
 			}
 		}
@@ -711,7 +843,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					if item.kind == .Statistics {
 						endpoint := &endpoints[item.endpoint]
 						values := [7]u64{0 = endpoint.sent, 1 = endpoint.received, 4 = endpoint.problems.count, 6 = endpoint.dropped}
-						if endpoint.inspect {
+						if endpoint.grant.inspect {
 							values[2], values[3], values[5] = system.kernel_entries(), record.values[2], answered
 							values[4] += machine_problems.count
 						}

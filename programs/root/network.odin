@@ -18,17 +18,25 @@ import "support:system"
 // the two services) goes only to a program that holds the machine with the
 // right Inspect: it reads the facts of all programs already (property 20).
 
-// endpoint_of gives the grant of the endpoint of a program: the one remote
-// address and remote port that it can reach. `net` reaches the echo server
-// of the test, at the gateway. `remote` reaches the host, at the gateway.
-endpoint_of :: proc "contextless" (name: string) -> (address: u32, port: u16) {
+// endpoint_of gives the grant of the endpoint of a program (docs/NETWORK.md):
+//   net     a datagram endpoint: the echo server of the test, 10.0.2.2 port 7.
+//   remote  a datagram endpoint: the host, at the gateway.
+//   server  a segment endpoint with a listen grant: the TCP port 80, and the
+//           remotes that send a segment to it.
+//   fetch   a segment endpoint with a client grant: 10.0.2.100 port 80, the
+//           web server of the test (the tool behind QEMU user networking).
+endpoint_of :: proc "contextless" (name: string) -> datagram.Grant {
 	switch name {
 	case "net":
-		return 0x0A000202, 7 // 10.0.2.2, port 7 (echo).
+		return {address = 0x0A000202, port = 7}
 	case "remote":
-		return 0x0A000202, remote.HOST_PORT // 10.0.2.2: the host.
+		return {address = 0x0A000202, port = remote.HOST_PORT} // 10.0.2.2: the host.
+	case "server":
+		return {port = 80, tcp = true, listen = true}
+	case "fetch":
+		return {address = 0x0A000264, port = 80, tcp = true}
 	}
-	return 0, 0
+	return {}
 }
 
 // network_service gives the network service that runs, or starts it.
@@ -64,9 +72,10 @@ endpoint_open :: proc "contextless" (slot: ^Started, name: string) -> (ring_memo
 	if status == .Ok {
 		given[1], status = system.give(service.network_memory, region_memory, {.Read, .Write})
 	}
-	address, port := endpoint_of(name)
+	grant := endpoint_of(name)
+	grant.inspect = .Inspect in grants_of(name)
 	packed := system.name_pack(name)
-	if status == .Ok && !system.send(&service.network.commands, ring.Record{kind = u32(datagram.Control.Endpoint_Add), values = {0 = u64(given[0]), 1 = u64(given[1]), 2 = datagram.grant_pack(address, port, .Inspect in grants_of(name)), 3 = packed[0], 4 = packed[1], 5 = packed[2], 6 = packed[3]}}) {
+	if status == .Ok && !system.send(&service.network.commands, ring.Record{kind = u32(datagram.Control.Endpoint_Add), values = {0 = u64(given[0]), 1 = u64(given[1]), 2 = datagram.grant_pack(grant), 3 = packed[0], 4 = packed[1], 5 = packed[2], 6 = packed[3]}}) {
 		status = .No_Slot
 	}
 	if status != .Ok {

@@ -2,12 +2,25 @@
 // The network service is the one client of the frame service of the network
 // device; it gives each program that has the grant one endpoint.
 //
-// An endpoint is UDP over IPv4 for one program, with a grant: the one
-// remote address and remote port that the program can reach. The root
-// service names the grant; the program cannot choose another one, and it
-// cannot choose its local port: the network service gives it (property 20,
-// lines 3 and 11: no ambient network, no global port names). A datagram from
-// another remote does not reach the endpoint.
+// An endpoint is UDP or TCP over IPv4 for one program, with a grant. The
+// root service names the grant; the program cannot choose another one
+// (property 20, lines 3 and 11: no ambient network, no global port names).
+//
+//   a datagram endpoint  UDP: the one remote address and remote UDP port
+//                        that the program reaches. The network service
+//                        gives the local port and writes the UDP header.
+//   a segment endpoint   TCP: the program writes and reads whole segments
+//                        (support/tcp); the network service writes the IPv4
+//                        header and keeps no state of a connection. A client
+//                        grant names one remote, and the network service
+//                        gives a block of PORT_BLOCK local TCP ports. A
+//                        listen grant names one local TCP port, and answers
+//                        only the admitted remotes: each remote that sent a
+//                        segment to that port, ADMITTED_CAPACITY at most,
+//                        until the program releases it (docs/NETWORK.md).
+//
+// A datagram or a segment from a remote that the grant does not name does
+// not reach the endpoint.
 //
 // The program and the network service share two memory objects:
 //
@@ -41,6 +54,10 @@ package datagram
 
 RING_CAPACITY :: 256 // The capacity of the datagram ring.
 DATA_LIMIT :: 1472 // The bytes of one datagram: one frame of Ethernet, no fragment.
+SEGMENT_LIMIT :: 1480 // The bytes of one segment, with its TCP header: one frame of Ethernet, no fragment.
+SEGMENT_LEAST :: 20 // A TCP header with no option.
+PORT_BLOCK :: 64 // The local TCP ports of a client grant.
+ADMITTED_CAPACITY :: 64 // The admitted remotes of a listen grant.
 
 REGION_PAGES :: 128 // The datagram region: 512 KiB.
 
@@ -54,7 +71,8 @@ SERVICE_CONTROL :: 12
 Command :: enum u32 {
 	None       = 0,
 	// The completion: values[0] the local address, values[1] the local
-	// port, values[2] the address of the gateway, values[3] the length of
+	// port, and the count of local ports << 16 (1, or PORT_BLOCK for a
+	// client grant of TCP), values[2] the address of the gateway, values[3] the length of
 	// the prefix of the network, values[4] the hardware address of the
 	// device (the first byte in the low bits), values[5] 1 if the link is
 	// up, values[6] the grant (grant_pack), with the right Inspect if it has it.
@@ -62,12 +80,15 @@ Command :: enum u32 {
 	// values[0]: the place of the data in the region. values[1]: its count of
 	// bytes, DATA_LIMIT at most. values[2], values[3]: the remote address and
 	// port. The completion comes when the network service has copied the
-	// data: the place is free again.
+	// data: the place is free again. A segment endpoint: the place holds a
+	// whole segment, SEGMENT_LEAST to SEGMENT_LIMIT bytes, with its checksum;
+	// the ports are the ones of its header, and values[3] is not read.
 	Send       = 2,
 	// values[0]: the place in the region. values[1]: the room there. The
 	// completion comes when a datagram arrives: values[0] the place,
 	// values[1] its count of bytes (the data that did not fit is lost),
-	// values[2], values[3] the remote address and port.
+	// values[2], values[3] the remote address and port. A segment endpoint:
+	// a whole segment, whose TCP checksum the network service checked.
 	Receive    = 3,
 	// values[0]: an address. The network service asks its hardware address
 	// on the link (ARP) again, also when it knows it. The completion:
@@ -96,6 +117,11 @@ Command :: enum u32 {
 	// that no endpoint owns (scope Machine). It never gives a row of another
 	// endpoint. The completion has the count of the full table in values[0].
 	Problems   = 7,
+	// A listen grant: values[0], values[1]: the address and the TCP port of
+	// an admitted remote, whose connection ended. The network service
+	// forgets it: a segment to it is refused until it sends one again. The
+	// completion: values[0] 1 if the remote was admitted, else 0.
+	Release    = 8,
 }
 
 Status :: enum u32 {
@@ -144,6 +170,7 @@ Layer :: enum u8 {
 	Ipv4     = 3,
 	Icmp     = 4,
 	Udp      = 5,
+	Tcp      = 6,
 }
 
 Problem_Kind :: enum u8 {
@@ -155,6 +182,7 @@ Problem_Kind :: enum u8 {
 	Unsupported  = 5, // A field that names something that the network service does not do. value: the field.
 	No_Endpoint  = 6, // A datagram to a local port of no endpoint. value: the port.
 	Not_Granted  = 7, // A datagram from a remote that the grant of the endpoint does not name. value: the remote port; limit: the port of the grant.
+	Full         = 8, // A segment from a new remote when the admitted remotes of a listen grant are full. value: the remote port; limit: the capacity.
 }
 
 // The error of one frame: a record, not a number. Zero is no problem.
@@ -188,13 +216,39 @@ Problem_Row :: struct {
 // a program that holds the machine with the right Inspect, which reads the
 // facts of all programs already.
 GRANT_INSPECT :: u64(1) << 48
+GRANT_TCP :: u64(1) << 49 // A segment endpoint.
+GRANT_LISTEN :: u64(1) << 50 // A listen grant: the port is the local TCP port, and no remote is named.
 
-// grant_pack gives the grant of an endpoint in one value: the remote address
-// << 16 | the remote port, and GRANT_INSPECT. 0 is no grant.
-grant_pack :: proc "contextless" (address: u32, port: u16, inspect := false) -> u64 {
-	return u64(address) << 16 | u64(port) | (inspect ? GRANT_INSPECT : 0)
+// The grant of an endpoint.
+Grant :: struct {
+	address: u32, // The remote address. 0 with a listen grant.
+	port:    u16, // The remote port; with a listen grant, the local TCP port.
+	inspect: bool,
+	tcp:     bool,
+	listen:  bool,
 }
 
-grant_unpack :: proc "contextless" (value: u64) -> (address: u32, port: u16, inspect: bool) {
-	return u32(value >> 16), u16(value), value & GRANT_INSPECT != 0
+// grant_pack gives the grant of an endpoint in one value: the address << 16
+// | the port, and the flags above. 0 is no grant.
+grant_pack :: proc "contextless" (grant: Grant) -> u64 {
+	value := u64(grant.address) << 16 | u64(grant.port)
+	if grant.inspect {
+		value |= GRANT_INSPECT
+	}
+	if grant.tcp {
+		value |= GRANT_TCP
+	}
+	if grant.listen {
+		value |= GRANT_LISTEN
+	}
+	return value
+}
+
+grant_unpack :: proc "contextless" (value: u64) -> Grant {
+	return {address = u32(value >> 16), port = u16(value), inspect = value & GRANT_INSPECT != 0, tcp = value & GRANT_TCP != 0, listen = value & GRANT_LISTEN != 0}
+}
+
+// granted says if a grant names a remote: a revoked grant is all zero.
+granted :: proc "contextless" (grant: Grant) -> bool {
+	return grant.address != 0 || grant.listen
 }

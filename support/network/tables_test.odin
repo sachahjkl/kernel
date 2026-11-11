@@ -81,3 +81,21 @@ neighbors_full_table :: proc(t: ^testing.T) {
 	testing.expect_value(t, neighbor_learn(&table, 0x0A000300, OTHER_HARDWARE, 200, true, all[:]), Learned.Full)
 	testing.expect(t, before == table)
 }
+
+// The admitted remotes of a listen grant: a remote is admitted one time,
+// a full table refuses a new remote, and a release frees its place.
+@(test)
+admitted_remotes :: proc(t: ^testing.T) {
+	table: Admitted
+	for index in 0 ..< datagram.ADMITTED_CAPACITY {
+		testing.expect(t, admitted_add(&table, 0x0A000202, u16(40000 + index)))
+	}
+	testing.expect(t, admitted_add(&table, 0x0A000202, 40000)) // Already admitted.
+	testing.expect(t, !admitted_add(&table, 0x0A000203, 40000))
+	testing.expect(t, admitted_find(&table, 0x0A000202, 40001))
+	testing.expect(t, !admitted_find(&table, 0x0A000203, 40001))
+	testing.expect(t, admitted_release(&table, 0x0A000202, 40001))
+	testing.expect(t, !admitted_release(&table, 0x0A000202, 40001))
+	testing.expect(t, !admitted_find(&table, 0x0A000202, 40001))
+	testing.expect(t, admitted_add(&table, 0x0A000203, 40000))
+}

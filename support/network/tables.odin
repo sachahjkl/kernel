@@ -51,6 +51,51 @@ problem_rows :: proc "contextless" (own: ^Problem_Table, machine: ^Problem_Table
 	return count
 }
 
+// The admitted remotes of a listen grant: each remote that sent a segment
+// to the listen port, until the program releases it. A segment to send goes
+// out only to an admitted remote (docs/NETWORK.md).
+Admitted_Remote :: struct {
+	address: u32,
+	port:    u16,
+	used:    bool,
+}
+
+Admitted :: [datagram.ADMITTED_CAPACITY]Admitted_Remote
+
+admitted_find :: proc "contextless" (table: ^Admitted, address: u32, port: u16) -> bool {
+	for &item in table {
+		if item.used && item.address == address && item.port == port {
+			return true
+		}
+	}
+	return false
+}
+
+// admitted_add admits a remote. false: the table is full.
+admitted_add :: proc "contextless" (table: ^Admitted, address: u32, port: u16) -> bool {
+	if admitted_find(table, address, port) {
+		return true
+	}
+	for &item in table {
+		if !item.used {
+			item = {address = address, port = port, used = true}
+			return true
+		}
+	}
+	return false
+}
+
+// admitted_release forgets a remote. It says if the remote was admitted.
+admitted_release :: proc "contextless" (table: ^Admitted, address: u32, port: u16) -> bool {
+	for &item in table {
+		if item.used && item.address == address && item.port == port {
+			item = {}
+			return true
+		}
+	}
+	return false
+}
+
 ARP_CAPACITY :: 16
 
 // One address of the link and its hardware address.

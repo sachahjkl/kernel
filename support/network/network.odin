@@ -1,5 +1,6 @@
 // The protocols of the network service: Ethernet, ARP, IPv4, ICMP echo and
-// UDP. The functions read and write frames in memory that the caller gives;
+// UDP, and the checks of a TCP segment (its header and its checksum; TCP
+// itself is support/tcp, in the program). The functions read and write frames in memory that the caller gives;
 // they do no input or output, allocate nothing and keep no state, so the
 // host runs their tests (network_test.odin).
 //
@@ -22,12 +23,14 @@ BROADCAST :: Hardware{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}
 ETHERNET_HEADER :: 14
 IPV4_HEADER :: 20 // With no options: the header that this library writes.
 UDP_HEADER :: 8
+TCP_HEADER :: 20 // With no option.
 ICMP_HEADER :: 8
 ARP_SIZE :: 28
 FRAME_LEAST :: 60 // A shorter frame gets zero bytes at its end.
 MTU :: 1500 // The bytes of IPv4 in one frame.
 UDP_DATA :: ETHERNET_HEADER + IPV4_HEADER + UDP_HEADER // The place of the data of a UDP datagram that this library writes.
 ICMP_DATA :: ETHERNET_HEADER + IPV4_HEADER + ICMP_HEADER
+IPV4_DATA :: ETHERNET_HEADER + IPV4_HEADER // The place of a segment in a frame that this library writes.
 UDP_DATA_LIMIT :: MTU - IPV4_HEADER - UDP_HEADER // 1472: no fragment.
 ICMP_DATA_LIMIT :: MTU - IPV4_HEADER - ICMP_HEADER
 
@@ -35,6 +38,7 @@ KIND_IPV4 :: 0x0800
 KIND_ARP :: 0x0806
 PROTOCOL_ICMP :: 1
 PROTOCOL_UDP :: 17
+PROTOCOL_TCP :: 6
 ICMP_ECHO_REPLY :: 0
 ICMP_ECHO_REQUEST :: 8
 ARP_REQUEST :: 1
@@ -53,6 +57,7 @@ Packet_Kind :: enum u8 {
 	Arp  = 1,
 	Icmp = 2,
 	Udp  = 3,
+	Tcp  = 4,
 }
 
 // What parse found in a frame. data is a part of the frame.
@@ -74,10 +79,11 @@ Packet :: struct {
 	icmp_kind:        u8,
 	identifier:       u16,
 	sequence:         u16,
-	// UDP.
+	// UDP and TCP.
 	source_port:      u16,
 	destination_port: u16,
-	data:             []u8,
+	data:             []u8, // UDP: the data. TCP: the whole segment, with its header.
+	tcp_flags:        u8,
 }
 
 read_16 :: #force_inline proc "contextless" (bytes: []u8, offset: int) -> u16 {
@@ -231,6 +237,8 @@ ipv4_parse :: proc "contextless" (frame: []u8, packet: Packet) -> (Packet, Probl
 		return icmp_parse(payload, offset, packet)
 	case PROTOCOL_UDP:
 		return udp_parse(payload, offset, packet)
+	case PROTOCOL_TCP:
+		return tcp_parse(payload, offset, packet)
 	}
 	return packet, {kind = .Unsupported, layer = .Ipv4, offset = B + 9, value = u32(frame[B + 9])}
 }
@@ -283,6 +291,32 @@ udp_parse :: proc "contextless" (datagram: []u8, offset: int, packet: Packet) ->
 	packet.destination_port = read_16(datagram, 2)
 	packet.data = datagram[UDP_HEADER:length]
 	packet.kind = .Udp
+	return packet, {}
+}
+
+// tcp_parse checks a segment: its length, its data offset and its
+// checksum. The rest of the segment is for TCP in the program.
+@(private)
+tcp_parse :: proc "contextless" (segment: []u8, offset: int, packet: Packet) -> (Packet, Problem) {
+	packet := packet
+	if len(segment) < TCP_HEADER {
+		return packet, {kind = .Too_Short, layer = .Tcp, offset = u16(offset), value = u32(len(segment)), limit = TCP_HEADER}
+	}
+	header := int(segment[12] >> 4) * 4
+	if header < TCP_HEADER {
+		return packet, {kind = .Bad_Header, layer = .Tcp, offset = u16(offset + 12), value = u32(header / 4), limit = TCP_HEADER / 4}
+	}
+	if header > len(segment) {
+		return packet, {kind = .Bad_Length, layer = .Tcp, offset = u16(offset + 12), value = u32(header), limit = u32(len(segment))}
+	}
+	if ok, expected := checked(segment, 16, pseudo(packet.source_address, packet.destination_address, PROTOCOL_TCP, len(segment))); !ok {
+		return packet, {kind = .Bad_Checksum, layer = .Tcp, offset = u16(offset + 16), value = u32(read_16(segment, 16)), limit = u32(expected)}
+	}
+	packet.source_port = read_16(segment, 0)
+	packet.destination_port = read_16(segment, 2)
+	packet.tcp_flags = segment[13]
+	packet.data = segment
+	packet.kind = .Tcp
 	return packet, {}
 }
 
@@ -362,6 +396,19 @@ udp_frame :: proc "contextless" (frame: []u8, destination, source: Hardware, sou
 	return pad(frame, UDP_DATA + data_length)
 }
 
+// ipv4_frame writes the headers of Ethernet and IPv4 of a frame whose
+// payload of payload bytes is already at frame[IPV4_DATA:]: a segment that
+// the program wrote with its checksum. It gives the length of the frame, or
+// 0 when the payload is too large.
+ipv4_frame :: proc "contextless" (frame: []u8, destination, source: Hardware, source_address, destination_address: u32, protocol: u8, payload: int, identification: u16) -> int {
+	if payload < 0 || payload > MTU - IPV4_HEADER || len(frame) < max(IPV4_DATA + payload, FRAME_LEAST) {
+		return 0
+	}
+	ethernet_write(frame, destination, source, KIND_IPV4)
+	ipv4_write(frame, source_address, destination_address, protocol, payload, identification)
+	return pad(frame, IPV4_DATA + payload)
+}
+
 // echo_frame writes the headers of an ICMP echo request or reply whose
 // data_length bytes are already at frame[ICMP_DATA:]. It gives the length
 // of the frame, or 0.
@@ -410,6 +457,7 @@ layer_names := [Layer]string {
 	.Ipv4     = "ipv4",
 	.Icmp     = "icmp",
 	.Udp      = "udp",
+	.Tcp      = "tcp",
 }
 
 @(rodata)
@@ -422,6 +470,7 @@ problem_names := [Problem_Kind]string {
 	.Unsupported  = "not supported",
 	.No_Endpoint  = "no endpoint",
 	.Not_Granted  = "not granted",
+	.Full         = "full",
 }
 
 // problem_name gives the short name of a kind of problem, also for a value
@@ -479,6 +528,11 @@ problem_write :: proc "contextless" (writer: ^system.Writer, problem: Problem) {
 		put(writer, "the remote port ")
 		system.write_unsigned(writer, u64(problem.value))
 		put(writer, " is not the port of the grant, ")
+		system.write_unsigned(writer, u64(problem.limit))
+	case .Full:
+		put(writer, "the remote port ")
+		system.write_unsigned(writer, u64(problem.value))
+		put(writer, " is new, and the admitted remotes are full, ")
 		system.write_unsigned(writer, u64(problem.limit))
 	case:
 		put(writer, "an unknown problem")

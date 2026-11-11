@@ -40,7 +40,7 @@ Grant :: enum {
 	Scratch_Disk, // A block service of the disk of the measures, and its block ring.
 	Replacements, // Read the replacement table of the machine.
 	Replace, // Change the replacement table of the machine (Root_Command.Replace).
-	Network, // An endpoint of datagrams in the network service, with the remote of endpoint_of.
+	Network, // An endpoint in the network service, with the grant of endpoint_of: datagrams, or segments of TCP.
 	Network_Device, // The frame service of the network device and its frame ring, and a control ring from this service.
 	Connect, // A ring to this service that serves Connect and Disconnect only, to the services of callable_of.
 	Schedule, // The machine, with the right Schedule: change the scheduling strategy of the machine.
@@ -86,6 +86,8 @@ grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 		return {.Inspect, .Image} // It loads modules of the boot image, and measures with the cycle counter.
 	case "net":
 		return {.Inspect, .Network} // It measures with the cycle counter.
+	case "server", "fetch":
+		return {.Network}
 	case "network":
 		return {.Network_Device}
 	case "remote":
@@ -225,6 +227,8 @@ things_of :: proc "contextless" (name: string) -> system.Budget_Amounts {
 		return {pages = 2048, programs = 3, threads = 3} // Two programs that import calendar.
 	case "errors":
 		return {pages = 2048, programs = 3, threads = 4} // It starts fault and its child, and 3 threads under contention.
+	case "server":
+		return {pages = 4096, programs = 1, threads = 1} // A table of 32 connections with their buffers, and a large window.
 	}
 	return {pages = 2048, programs = 1, threads = 1}
 }
