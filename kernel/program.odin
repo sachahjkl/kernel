@@ -519,11 +519,16 @@ region_release :: proc "contextless" (index: u32) {
 		frames_free_held(region.physical, region.page_count)
 		budgets[region.budget].amounts.pages += region.page_count
 	case:
+		// The frames go to the stack of this processor: its next pages on
+		// first use take them with no frame lock (memory.odin).
+		cache := &processor_self().frame_cache
+		lock_take(&cache.lock, .Cache)
 		for page in 0 ..< region.page_count {
 			if frame := region_frame(region, page, false); frame != 0 {
-				frames_free_held(frame, 1)
+				cache_put_held(cache, frame)
 			}
 		}
+		lock_free(&cache.lock, .Cache)
 		lists := list_pages(region.page_count)
 		for list in 1 ..< lists {
 			frames_free_held(direct(region.frames[0], [LIST_ENTRIES]u64)[list - 1], 1)
