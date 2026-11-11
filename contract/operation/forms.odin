@@ -33,8 +33,8 @@ Operation_Form :: struct {
 OPERATIONS := [Operation]Operation_Form {
 	.None = {name = "None"},
 	.Log = {"Log", {{"log", .Handle, .Log, {.Write}, 0}, {"address", .Address, .None, {}, 0}, {"length", .Count, .None, {}, 4096}, {"level", .Choice, .None, {}, u64(max(Log_Level))}, {"channel", .Value, .None, {}, 0}, {"channel", .Value, .None, {}, 0}, {}}},
-	.Memory_Create = {"Memory_Create", {{"budget", .Handle, .Budget, {.Spend}, 0}, {"pages", .Count, .None, {}, MEMORY_PAGE_LIMIT}, {"flags", .Flags, .None, {}, 0b11}, {}, {}, {}, {}}},
-	.Memory_Map = {"Memory_Map", {{"memory", .Handle, .Memory, {.Read}, 0}, {"program", .Handle_Or_Zero, .Program, {.Control}, 0}, {"address", .Address, .None, {}, 0}, {"flags", .Flags, .None, {}, 0b11}, {"first", .Count, .None, {}, 0}, {"pages", .Count, .None, {}, 0}, {}}},
+	.Memory_Create = {"Memory_Create", {{"budget", .Handle, .Budget, {.Spend}, 0}, {"pages", .Count, .None, {}, MEMORY_PAGE_LIMIT}, {"flags", .Flags, .None, {}, 0b1111}, {}, {}, {}, {}}},
+	.Memory_Map = {"Memory_Map", {{"memory", .Handle, .Memory, {.Read}, 0}, {"program", .Handle_Or_Zero, .Program, {.Control}, 0}, {"address", .Address, .None, {}, 0}, {"flags", .Flags, .None, {}, 0b111}, {"first", .Count, .None, {}, 0}, {"pages", .Count, .None, {}, 0}, {}}},
 	.Memory_Unmap = {"Memory_Unmap", {{"program", .Handle_Or_Zero, .Program, {.Control}, 0}, {"address", .Address, .None, {}, 0}, {}, {}, {}, {}, {}}},
 	.Memory_Size = {"Memory_Size", {{"memory", .Handle, .Memory, {}, 0}, {}, {}, {}, {}, {}, {}}},
 	.Program_Create = {"Program_Create", {{"budget", .Handle, .Budget, {.Spend}, 0}, {"name", .Address, .None, {}, 0}, {"name_length", .Count, .None, {}, 31}, {}, {}, {}, {}}},
@@ -59,6 +59,8 @@ OPERATIONS := [Operation]Operation_Form {
 	.Memory_Physical = {"Memory_Physical", {{"machine", .Handle, .Machine, {.Physical}, 0}, {"memory", .Handle, .Memory, {.Read}, 0}, {}, {}, {}, {}, {}}},
 	.Program_Module = {"Program_Module", {{"program", .Handle_Or_Zero, .Program, {.Control}, 0}, {"record", .Address, .None, {}, 0}, {}, {}, {}, {}, {}}},
 	.Strategy_Set = {"Strategy_Set", {{"machine", .Handle, .Machine, {.Schedule}, 0}, {"strategy", .Choice, .None, {}, u64(max(Strategy))}, {}, {}, {}, {}, {}}},
+	.Memory_Commit = {"Memory_Commit", {{"memory", .Handle, .Memory, {.Write}, 0}, {"ranges", .Address, .None, {}, 0}, {"count", .Count, .None, {}, RANGE_TABLE_CAPACITY}, {"flags", .Flags, .None, {}, 0b1}, {}, {}, {}}},
+	.Memory_Protect = {"Memory_Protect", {{"ranges", .Address, .None, {}, 0}, {"count", .Count, .None, {}, RANGE_TABLE_CAPACITY}, {"flags", .Flags, .None, {}, 0b111}, {}, {}, {}, {}}},
 }
 
 @(rodata)

@@ -44,7 +44,34 @@ Region :: struct {
 	device:     bool, // The frames are not from the page frame table: a framebuffer, boot data, the registers of a device.
 	contiguous: bool,
 	uncached:   bool, // The registers of a device: a mapping uses no cache.
+	uncommitted: bool, // Made Uncommitted: a page is paid when it is committed (the bit SLOT_COMMITTED of its slot).
+	large_pages: bool, // Made Large_Pages: contiguous, aligned on 2 MiB, a whole number of large pages.
+	committed:  u64, // Uncommitted: the committed pages. Region lock and frame lock to change it.
 	serial:     u64, // A number that no other memory object has had: a slot of the table serves many objects in time.
+}
+
+// The state of a page in its slot of the frame list (docs/ARCHITECTURE.md,
+// "The virtual memory of a program", "The state of a page"): a frame is
+// aligned on 4096 bytes, so the low 12 bits of a slot hold the state.
+SLOT_COMMITTED :: u64(1) // Uncommitted objects only: the budget paid for the page.
+SLOT_DENY_WRITE :: u64(1) << 1
+SLOT_DENY_EXECUTE :: u64(1) << 2
+SLOT_NO_ACCESS :: u64(1) << 3
+SLOT_STATE :: u64(PAGE_SIZE - 1)
+
+// region_page_state gives the state bits of a page of an object with a
+// frame list; 0 for a contiguous object.
+region_page_state :: proc "contextless" (region: ^Region, page: u64) -> u64 {
+	if region.contiguous {
+		return 0
+	}
+	return intrinsics.atomic_load(region_slot(region, page)) & SLOT_STATE
+}
+
+// page_committed says if a page can have a frame: each page of an object
+// that is not Uncommitted, a committed page of one that is.
+page_committed :: #force_inline proc "contextless" (region: ^Region, state: u64) -> bool {
+	return !region.uncommitted || state & SLOT_COMMITTED != 0
 }
 
 region_serial: u64 // The serial of the last memory object.
@@ -91,7 +118,29 @@ Mapping :: struct {
 	// in place of a walk of the page table (its cost is one read for each
 	// mapping, not one for each page).
 	present_page_count: u64,
+	// The protection that the handle permitted when the program mapped the
+	// object: Memory_Protect can give back what `bits` lost, never more.
+	limit_bits: u64,
+	large:      bool, // Each 2 MiB of the mapping is one large page (an object made Large_Pages).
+	protected:  bool, // Memory_Protect changed the protection of pages of the mapping.
 }
+
+// page_bits gives the bits of a page table entry for a page of a mapping
+// with its state bits (region_page_state): 0 is no access.
+page_bits :: proc "contextless" (mapping: ^Mapping, state: u64) -> u64 {
+	if mapping.bits & PAGE_PRESENT == 0 || state & SLOT_NO_ACCESS != 0 {
+		return 0
+	}
+	bits := mapping.bits
+	if state & SLOT_DENY_WRITE != 0 {
+		bits &~= PAGE_WRITE
+	}
+	if state & SLOT_DENY_EXECUTE != 0 {
+		bits |= PAGE_NO_EXECUTE
+	}
+	return bits
+}
+
 
 // A thread: one flow of execution in a program. It is a register state and
 // a kernel ring. Its stack is memory of the program: the kernel does not
@@ -354,11 +403,12 @@ frame_take :: proc "contextless" () -> u64 {
 // region_create makes a memory object. The budget pays for its pages and
 // for its frame list. A contiguous object has all its frames now; another
 // one has its frames at first use, or now with `now`.
-region_create :: proc "contextless" (budget: u32, page_count: u64, contiguous := false, now := false) -> (index: u32, status: op.Status) {
+region_create :: proc "contextless" (budget: u32, page_count: u64, contiguous := false, now := false, uncommitted := false, large_pages := false) -> (index: u32, status: op.Status) {
 	if page_count == 0 || !contiguous && page_count > op.MEMORY_PAGE_LIMIT {
 		return 0, .Bad_Operation
 	}
-	cost := region_cost(page_count, contiguous)
+	// An uncommitted object pays its frame list only.
+	cost := uncommitted ? region_cost(page_count, false) - page_count : region_cost(page_count, contiguous)
 	// One section of the frame lock: the budget pays, the slot is taken, the
 	// frames of a contiguous object or of the frame list are taken, the pages
 	// are reserved. The frames are zero filled after the section.
@@ -373,13 +423,14 @@ region_create :: proc "contextless" (budget: u32, page_count: u64, contiguous :=
 		return 0, .No_Slot
 	}
 	region := &regions[index]
-	region^ = {page_count = page_count, budget = budget, contiguous = contiguous, serial = region.serial}
+	region^ = {page_count = page_count, budget = budget, contiguous = contiguous, serial = region.serial, uncommitted = uncommitted, large_pages = large_pages}
 	if contiguous {
-		region.physical = frames_take(page_count)
+		alignment := large_pages ? u64(op.LARGE_PAGE_PAGES) : 1
+		region.physical = frames_take_aligned(page_count, alignment)
 		if region.physical == 0 {
 			// Frames in the stacks of the processors can make the run.
 			caches_drain()
-			region.physical = frames_take(page_count)
+			region.physical = frames_take_aligned(page_count, alignment)
 		}
 		if region.physical == 0 {
 			region^ = {serial = region.serial}
@@ -400,7 +451,9 @@ region_create :: proc "contextless" (budget: u32, page_count: u64, contiguous :=
 				direct(region.frames[0], [LIST_ENTRIES]u64)[list - 1] = frame_take()
 			}
 		}
-		reserved_pages += page_count
+		if !uncommitted {
+			reserved_pages += page_count
+		}
 	}
 	budgets[budget].amounts.pages -= cost
 	lock_free(&frame_lock, .Frame)
@@ -460,7 +513,6 @@ region_device :: proc "contextless" (physical: u64, page_count: u64) -> u32 {
 
 // region_slot gives the place of the frame of one page in the frame list of
 // a memory object that is not contiguous.
-@(private = "file")
 region_slot :: proc "contextless" (region: ^Region, page: u64) -> ^u64 {
 	switch {
 	case region.page_count <= REGION_INLINE_PAGES:
@@ -480,19 +532,22 @@ region_frame :: proc "contextless" (region: ^Region, page: u64, give: bool) -> u
 		return region.physical + page * PAGE_SIZE
 	}
 	slot := region_slot(region, page)
-	frame := intrinsics.atomic_load(slot)
-	if frame != 0 || !give {
-		return frame
+	value := intrinsics.atomic_load(slot)
+	frame := value & PAGE_ADDRESS
+	if frame != 0 || !give || !page_committed(region, value) {
+		return frame // A page that is not committed has no frame, and gets none.
 	}
 	// The region lock gives the page one frame, when two processors give it
-	// at one time. The frame is zero before the slot names it.
+	// at one time. The frame is zero before the slot names it. The state
+	// bits of the slot stay.
 	index := u32(intrinsics.ptr_sub(region, &regions[0]))
 	lock_take(&region_locks[index], .Region)
-	frame = intrinsics.atomic_load(slot)
-	if frame == 0 {
+	value = intrinsics.atomic_load(slot)
+	frame = value & PAGE_ADDRESS
+	if frame == 0 && page_committed(region, value) {
 		frame = frame_reserved_take()
 		frames_zero(frame, 1)
-		intrinsics.atomic_store(slot, frame)
+		intrinsics.atomic_store(slot, frame | value & SLOT_STATE)
 		intrinsics.atomic_add(&region.present, 1)
 	}
 	lock_free(&region_locks[index], .Region)
@@ -545,8 +600,24 @@ region_release :: proc "contextless" (index: u32) {
 		if lists != 0 {
 			frames_free_held(region.frames[0], 1)
 		}
-		reserved_pages -= region.page_count - region.present
-		budgets[region.budget].amounts.pages += region_cost(region.page_count, false)
+		// The pages that the budget paid: all, or the committed ones; each
+		// paid page with no frame is a reserved page.
+		paid := region.uncommitted ? region.committed : region.page_count
+		when TEST_BUILD_CHECKS_FRAME_SUMS {
+			if region.uncommitted {
+				committed_slots: u64
+				for page in 0 ..< region.page_count {
+					committed_slots += intrinsics.atomic_load(region_slot(region, page)) & SLOT_COMMITTED
+				}
+				if committed_slots != region.committed {
+					intrinsics.atomic_store(&log_serial_only, true)
+					log("kernel: the committed pages of a memory object do not add up: slots ", committed_slots, ", count ", region.committed)
+					machine_stop(3)
+				}
+			}
+		}
+		reserved_pages -= paid - region.present
+		budgets[region.budget].amounts.pages += region_cost(region.page_count, false) - region.page_count + paid
 	}
 	region^ = {serial = region.serial}
 	lock_free(&frame_lock, .Frame)
@@ -712,16 +783,22 @@ map_region :: proc "contextless" (program: ^Program, region_index: u32, address:
 	if .Write in flags && .Execute in flags {
 		return 0, .Bad_Operation
 	}
-	bits := PAGE_PRESENT | PAGE_USER
+	limit_bits := PAGE_PRESENT | PAGE_USER
 	if .Write in flags {
-		bits |= PAGE_WRITE
+		limit_bits |= PAGE_WRITE
 	}
 	if .Execute not_in flags {
-		bits |= PAGE_NO_EXECUTE
+		limit_bits |= PAGE_NO_EXECUTE
 	}
 	if region.uncached {
-		bits |= PAGE_NO_CACHE
+		limit_bits |= PAGE_NO_CACHE
 	}
+	// No_Access: the mapping has its addresses and no access until
+	// Memory_Protect gives it some.
+	bits := .No_Access in flags ? 0 : limit_bits
+	// Large pages: an object made Large_Pages, and a mapping whose address,
+	// first page and size are whole large pages.
+	large := region.large_pages && address % LARGE_PAGE_SIZE == 0 && first % op.LARGE_PAGE_PAGES == 0 && count % op.LARGE_PAGE_PAGES == 0
 	// The origin first: during a revocation, a path with no control lock
 	// adds no holding, and runs again under the control lock.
 	holding := holding_of_mapping(program, mapping)
@@ -729,7 +806,27 @@ map_region :: proc "contextless" (program: ^Program, region_index: u32, address:
 		return 0, STATUS_RETRY
 	}
 	present_page_count: u64
-	for page in 0 ..< count {
+	if large {
+		for part in 0 ..< count / op.LARGE_PAGE_PAGES {
+			entry := page_directory_entry(program.table, address + part * LARGE_PAGE_SIZE, true, &program.budget)
+			if entry == nil {
+				for undo in 0 ..< part {
+					page_directory_entry(program.table, address + undo * LARGE_PAGE_SIZE, false)^ = 0
+				}
+				intrinsics.atomic_thread_fence(.Seq_Cst)
+				processor_sync(processors_with_table(program.table))
+				if self := processor_self(); intrinsics.atomic_load(&self.table) == program.table {
+					cr3_write(program.table)
+				}
+				origin_detach(holding)
+				return 0, budgets[program.budget].amounts.pages == 0 ? .No_Budget : .No_Memory
+			}
+			frame := region.physical + (first + part * op.LARGE_PAGE_PAGES) * PAGE_SIZE
+			entry^ = bits == 0 ? 0 : frame | bits | PAGE_LARGE
+			present_page_count += bits == 0 ? 0 : op.LARGE_PAGE_PAGES
+		}
+	}
+	for page in 0 ..< (large ? 0 : count) {
 		entry := page_entry(program.table, address + page * PAGE_SIZE, true, &program.budget)
 		if entry == nil {
 			// Another thread of the program can have used a page that was
@@ -749,13 +846,14 @@ map_region :: proc "contextless" (program: ^Program, region_index: u32, address:
 		// The tables exist now: a page fault never needs a table. A page
 		// with no frame keeps an entry of 0 until its first use.
 		frame := region_frame(region, first + page, false)
-		entry^ = frame == 0 ? 0 : frame | bits
-		present_page_count += frame == 0 ? 0 : 1
+		page_bits_now := frame == 0 ? 0 : page_bits(&Mapping{bits = bits}, region_page_state(region, first + page))
+		entry^ = page_bits_now == 0 ? 0 : frame | page_bits_now
+		present_page_count += page_bits_now == 0 ? 0 : 1
 	}
 	// Under the program lock of the program: each caller of map_region holds
 	// it (Memory_Map through target_lock in enter.odin, program_create and
 	// thread_create in this file, the start of the root service in main.odin).
-	mapping^ = {address = address, page_count = count, first = first, bits = bits, region = region_index, present_page_count = present_page_count}
+	mapping^ = {address = address, page_count = count, first = first, bits = bits, region = region_index, present_page_count = present_page_count, limit_bits = limit_bits, large = large}
 	if chosen {
 		program.next_address += (count + 1) * PAGE_SIZE
 	}
@@ -771,7 +869,19 @@ unmap :: proc "contextless" (program: ^Program, mapping: ^Mapping) {
 	origin_detach(holding_of_mapping(program, mapping))
 	self := processor_self()
 	walked_present_pages: u64
-	for page in 0 ..< mapping.page_count {
+	// A large page is one entry of the second level for 512 pages.
+	for part in 0 ..< (mapping.large ? mapping.page_count / op.LARGE_PAGE_PAGES : 0) {
+		address := mapping.address + part * LARGE_PAGE_SIZE
+		entry := page_directory_entry(program.table, address, false)
+		if entry != nil {
+			walked_present_pages += (entry^ & PAGE_PRESENT) * op.LARGE_PAGE_PAGES
+			entry^ = 0
+			if self.table == program.table {
+				page_flush(address)
+			}
+		}
+	}
+	for page in 0 ..< (mapping.large ? 0 : mapping.page_count) {
 		address := mapping.address + page * PAGE_SIZE
 		entry := page_entry(program.table, address, false)
 		if entry != nil {
@@ -841,16 +951,30 @@ mapping_at :: proc "contextless" (program: ^Program, address: u64) -> ^Mapping {
 // false: the program has no mapping there, or it does not permit the access.
 page_give :: proc "contextless" (program: ^Program, address: u64, write: bool, execute: bool) -> bool {
 	mapping := mapping_at(program, address)
-	if mapping == nil || write && mapping.bits & PAGE_WRITE == 0 || execute && mapping.bits & PAGE_NO_EXECUTE != 0 {
+	// Each page of a large mapping with access is present: a fault there is
+	// a fault of the program.
+	if mapping == nil || mapping.large {
 		return false
 	}
 	page := (address - mapping.address) / PAGE_SIZE
+	region := &regions[mapping.region]
+	state := region_page_state(region, mapping.first + page)
+	bits := page_bits(mapping, state)
+	// No access, a page that is not committed, or an access that the
+	// protection of the page refuses: a fault of the program.
+	if bits == 0 || !page_committed(region, state) || write && bits & PAGE_WRITE == 0 || execute && bits & PAGE_NO_EXECUTE != 0 {
+		return false
+	}
 	entry := page_entry(program.table, mapping.address + page * PAGE_SIZE, false)
 	if entry == nil {
 		return false // map_region made the tables: this does not happen.
 	}
 	if entry^ & PAGE_PRESENT == 0 {
-		entry^ = region_frame(&regions[mapping.region], mapping.first + page, true) | mapping.bits
+		frame := region_frame(region, mapping.first + page, true)
+		if frame == 0 {
+			return false
+		}
+		entry^ = frame | bits
 		mapping.present_page_count += 1 // Under the program lock: the caller holds it (see above).
 	}
 	return true

@@ -128,11 +128,23 @@ program_mappings_report :: proc "contextless" (report: ^op.Program_Mapping_Repor
 			first      = mapping.first,
 			present    = mapping.present_page_count,
 		}
-		if mapping.bits & PAGE_WRITE != 0 {
-			item.flags += {.Write}
+		// The protection of the mapping now; a part can have another one
+		// (Protected: the slots of its pages say it).
+		if mapping.bits & PAGE_PRESENT == 0 {
+			item.flags += {.No_Access}
+		} else {
+			if mapping.bits & PAGE_WRITE != 0 {
+				item.flags += {.Write}
+			}
+			if mapping.bits & PAGE_NO_EXECUTE == 0 {
+				item.flags += {.Execute}
+			}
 		}
-		if mapping.bits & PAGE_NO_EXECUTE == 0 {
-			item.flags += {.Execute}
+		if mapping.large {
+			item.flags += {.Large}
+		}
+		if mapping.protected {
+			item.flags += {.Protected}
 		}
 		if mapping.address >= op.THREAD_AREA_BASE {
 			item.flags += {.Thread_Area}
@@ -142,6 +154,12 @@ program_mappings_report :: proc "contextless" (report: ^op.Program_Mapping_Repor
 			item.region_pages = region.page_count
 			item.region_serial = region.serial
 			item.references = intrinsics.atomic_load(&region.references)
+			// Under the program lock: the committed pages change under the
+			// region lock and the frame lock; one word, read whole.
+			item.committed = region.uncommitted ? intrinsics.volatile_load(&region.committed) : region.page_count
+			if region.uncommitted {
+				item.flags += {.Uncommitted}
+			}
 			if region.uncached {
 				item.flags += {.Uncached}
 			}

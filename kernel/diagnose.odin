@@ -291,6 +291,49 @@ read_log_count :: proc "contextless" (program: ^Program) -> (logged, limit: u64,
 // Locks, in their order: the program lock (the handle), the frame lock (the
 // slot of the object).
 @(private = "file")
+// read_mapping_covers says if one mapping of the program holds a range of
+// pages from an address.
+read_mapping_covers :: proc "contextless" (program: ^Program, address: u64, page_count: u64) -> bool {
+	at, taken := caller_lock(program)
+	defer program_unlock(at, taken)
+	for mapping in program.mappings {
+		if mapping.page_count != 0 && address >= mapping.address && (address - mapping.address) / PAGE_SIZE + page_count <= mapping.page_count {
+			return true
+		}
+	}
+	return false
+}
+
+// read_commit_needed gives the pages that a commit of a table of ranges
+// asks (the pages that are not committed) and the pages that the budget of
+// the object holds; held is false when the record must not name them.
+read_commit_needed :: proc "contextless" (program: ^Program, handle: u64, ranges_address: u64, count: u64) -> (needed, pages: u64, held: bool) {
+	at, taken := caller_lock(program)
+	defer program_unlock(at, taken)
+	slot: Handle_Slot
+	ok: bool
+	if slot, ok = find(program, handle, .Memory, {}); !ok {
+		return
+	}
+	region := &regions[slot.object]
+	if !region.uncommitted {
+		return
+	}
+	for index in 0 ..< count {
+		range: op.Page_Range
+		if !read_user(program, ranges_address + index * size_of(op.Page_Range), &range, size_of(range)) || range.first >= region.page_count || range.page_count > region.page_count - range.first {
+			return
+		}
+		for page in range.first ..< range.first + range.page_count {
+			needed += 1 - intrinsics.atomic_load(region_slot(region, page)) & SLOT_COMMITTED
+		}
+	}
+	lock_take(&frame_lock, .Frame)
+	pages = budgets[region.budget].amounts.pages
+	lock_free(&frame_lock, .Frame)
+	return needed, pages, true
+}
+
 read_memory_pages :: proc "contextless" (program: ^Program, handle: u64) -> (pages: u64, ok: bool) {
 	at, taken := caller_lock(program)
 	defer program_unlock(at, taken)
@@ -494,6 +537,15 @@ budget_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Pr
 		record_set(record, .Over_Limit, .Log_Records, 0, logged + 1, limit, 0)
 		return true
 	}
+	if operation == .Memory_Commit {
+		// The pages that the table asks against what the budget of the object holds.
+		needed, pages, held := read_commit_needed(program, v[0], v[1], v[2])
+		if !held || needed <= pages {
+			return false
+		}
+		record_set(record, .Budget, .Pages, 1, v[0], needed, pages)
+		return true
+	}
 	if operation != .Memory_Create && operation != .Program_Create && operation != .Thread_Create && operation != .Budget_Create {
 		return false
 	}
@@ -654,6 +706,45 @@ address_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^P
 		case:
 			return false // In another program, whose mappings need its lock, or the overlap is gone.
 		}
+	case .Memory_Commit:
+		// The first range that is not in the object, or not after the one before.
+		pages, found := read_memory_pages(program, v[0])
+		if !found || !read_range(program, v[1], v[2] * size_of(op.Page_Range)) {
+			return false
+		}
+		end: u64
+		for index in 0 ..< v[2] {
+			range: op.Page_Range
+			if !read_user(program, v[1] + index * size_of(op.Page_Range), &range, size_of(range)) {
+				return false
+			}
+			switch {
+			case range.page_count == 0 || range.first >= pages || range.page_count > pages - range.first:
+				record_set(record, .Too_Long, .Pages, 2, range.first + range.page_count, pages, index)
+				return true
+			case range.first < end:
+				record_set(record, .Overlap, .Pages, 2, range.first, end, index)
+				return true
+			}
+			end = range.first + range.page_count
+		}
+		return false
+	case .Memory_Protect:
+		// The first range that is not inside one mapping of this program.
+		if !read_range(program, v[0], v[1] * size_of(op.Address_Range)) {
+			return false
+		}
+		for index in 0 ..< v[1] {
+			range: op.Address_Range
+			if !read_user(program, v[0] + index * size_of(op.Address_Range), &range, size_of(range)) {
+				return false
+			}
+			if range.address % PAGE_SIZE != 0 || range.page_count == 0 || !read_mapping_covers(program, range.address, range.page_count) {
+				record_set(record, .Absent, .Bytes, 1, range.address, range.page_count * PAGE_SIZE, index)
+				return true
+			}
+		}
+		return false
 	case .Memory_Unmap:
 		if v[0] != 0 || read_mapping_at(program, v[1]) {
 			return false
@@ -758,6 +849,11 @@ state_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Pro
 		argument = 2
 	case .Memory_Unmap, .Program_Start, .Program_Module, .Handle_Give:
 		argument = 1
+	case .Memory_Commit, .Memory_Protect:
+		// A decommit, or a protection of a part of a mapping, needs an object
+		// that only this program names, with one mapping.
+		record_set(record, .State, .None, 1, v[0], 1, 0)
+		return true
 	case:
 		return false
 	}
@@ -797,9 +893,14 @@ value_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Pro
 			return true
 		}
 	case .Memory_Create:
+		flags := transmute(op.Memory_Flags)v[2]
 		switch {
-		case v[2] & ~u64(0b11) != 0:
-			record_set(record, .Bad_Flags, .None, 3, v[2], 0b11, 0)
+		case v[2] & ~u64(0b1111) != 0:
+			record_set(record, .Bad_Flags, .None, 3, v[2], 0b1111, 0)
+		case .Uncommitted in flags && flags != {.Uncommitted}:
+			record_set(record, .Bad_Flags, .None, 3, v[2], 1 << u64(op.Memory_Flag.Uncommitted), 0) // Uncommitted goes alone.
+		case .Large_Pages in flags && v[1] % op.LARGE_PAGE_PAGES != 0:
+			record_set(record, .Bad_Value, .Pages, 2, v[1], op.LARGE_PAGE_PAGES, v[1] % op.LARGE_PAGE_PAGES) // Whole large pages.
 		case v[1] == 0:
 			record_set(record, .Too_Small, .Pages, 2, 0, 1, 0)
 		case:
@@ -808,6 +909,32 @@ value_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Pro
 		return true
 	case .Memory_Map:
 		record_set(record, .Bad_Value, .None, 4, v[3], 0, 0) // Write and Execute: no page is both.
+		return true
+	case .Memory_Commit:
+		switch {
+		case v[2] == 0:
+			record_set(record, .Too_Small, .Records, 3, 0, 1, 0)
+		case v[2] > op.RANGE_TABLE_CAPACITY:
+			record_set(record, .Too_Long, .Records, 3, v[2], op.RANGE_TABLE_CAPACITY, 0)
+		case v[3] & ~u64(1) != 0:
+			record_set(record, .Bad_Flags, .None, 4, v[3], 1, 0)
+		case:
+			record_set(record, .Bad_Value, .None, 1, v[0], 0, 0) // The memory object was not made Uncommitted.
+		}
+		return true
+	case .Memory_Protect:
+		flags := transmute(op.Map_Flags)v[2]
+		switch {
+		case v[1] == 0:
+			record_set(record, .Too_Small, .Records, 2, 0, 1, 0)
+		case v[1] > op.RANGE_TABLE_CAPACITY:
+			record_set(record, .Too_Long, .Records, 2, v[1], op.RANGE_TABLE_CAPACITY, 0)
+		case v[2] & ~u64(0b111) != 0:
+			record_set(record, .Bad_Flags, .None, 3, v[2], 0b111, 0)
+		case:
+			_ = flags
+			record_set(record, .Bad_Value, .None, 3, v[2], 0, 0) // Write and Execute: no page is both; No_Access goes alone.
+		}
 		return true
 	case .Thread_Create:
 		switch {
