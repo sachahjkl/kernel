@@ -725,7 +725,6 @@ Against the properties and the module contract:
 - The block service uses one queue of the device and one message interrupt. It does not ask the device to send fewer interrupts while many requests are in flight.
 - The crash test of the persistence machines ends QEMU at a time that the tool chooses from the log; the test of a loss of power (choices 382 to 384) ends it at the write of a root. The cut of a root block is made by the tool, not by a stop of the machine.
 - A revoked store: `notes` sees -1 at its next change and keeps nothing more; its window says it. The root service gives a store by the name of the program only.
-- The storage service keeps one version of each object: the root of the last commit and the one before. Property 9 asks for the versions of each object, read at an earlier time, with a retention rule: not done. No snapshot, no clone, no document.
 - A store has at most 48 objects, and an object at most 32 blocks (128 KiB); the call region of a connection (64 KiB) is the true limit of one write. The disk has at most 60 stores. The tables of all stores stay in the memory of the storage service.
 - The storage service does not encrypt the disk, and the TPM does not seal a key (P17).
 - A store is named by the name of the program, as the root service names it: two programs with one name have one store. Principals (P21) are not in the name yet.
