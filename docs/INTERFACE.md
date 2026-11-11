@@ -47,7 +47,7 @@ A draw record is 40 bytes. The fields are little-endian, in this order:
 | 0 | `kind` | u8 | `None` 0, `Rectangle` 1, `Vertical_Gradient` 2, `Horizontal_Gradient` 3, `Text` 4, `Clip` 5, `Point_Grid` 6, `Folded_Gap` 7 (version 2), `Picture` 8 (version 2), `Text_Grid` 9 (version 3) |
 | 1 | `text_scale` | u8 | Text: 1, 2 or 3 (DESIGN.md, section 5) |
 | 2 | `text_subpixel_x` | u8 | Text: the position after `x` in 1/64 of a pixel. 0 for Spleen 8x16, which places each glyph on a whole pixel |
-| 3 | `reserved` | u8 | 0 |
+| 3 | `text_weight` | u8 | Text: 0 regular, 1 bold (version 4: the titles of the cards). Bold draws at scale 1 only |
 | 4 | `x`, `y`, `width`, `height` | 4 x i32 | The rectangle of the record, in pixels of the surface. For text, the rectangle that the run covers |
 | 20 | `first_color` | u32 | `0x00RRGGBB`: the color of a rectangle or a text; the top or the left color of a gradient |
 | 24 | `second_color` | u32 | The bottom or the right color of a gradient |

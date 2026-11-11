@@ -104,6 +104,25 @@ The other two forms stay possible: `vector_glyphs` builds the cache of each cand
 
 On the host (`glyph_draw_cost`): 333 to 362 ns from the cache against 33 to 44 ns for Spleen. The target was "the same order as Spleen": a glyph from the cache costs 9 times a glyph of Spleen. The steps that brought it from 921 ns: a loop for each order of the stripes (a constant), no bounds check after the one validation of the cache, the squares of the pixel under kept from one pixel to the next, a shift in place of a division. What stays: about 40 pixels of a glyph have a partial coverage, and each needs three blends in linear light. Section 9 has the effect on whole frames, which is small.
 
+### Where the time goes, and the fast blend (2026-11-11, second part)
+
+Measured on the host, where the same code runs, with `-o:speed`, pinned to one core with `taskset`, each number the least of 3 000 batches of the line `compositor  12.4 ms  2 418 pages {fill} [rings] gi Rb 0O 1lI` (60 glyphs), and the least over four cores (host test `text_speed_parts`, `support/graphics/text_speed_test.odin`). Each batch draws over a fresh background, outside the time.
+
+- **The words of one cell** (128 pixels at scale 1), on the mean: 64.4 pixels in rows with no ink (never read), 19.2 words of zero coverage (skipped), 1.0 word of full coverage (a store), **43.4 words of partial coverage**. So the time is in the partial pixels: each needs three blends in linear light (two squares, a sum, a shift and a load of the table of square roots for each channel). A walk over the words alone costs 11.2 ns a glyph.
+- **The fast blend** (`graphics.blend_glyph_rows`, in `blend.odin`): for one text color over one pixel color, each channel of the result is a function of its coverage only. A **blend table** keeps the 3 x 256 results for one pair, in the memory of the program (`Blend_Tables`: 8 tables, 24 KiB, replaced in turn; a value is computed on first use with the formula of the reference, and a new table clears nothing: it takes a new generation in the high byte of each value). The choice is made for each row of a glyph: a row whose two end pixels have one color takes the table of that color, each pixel of that color in the row is three loads and a store; any other pixel takes the reference blend. Bit for bit: the host test `fast_blend_is_the_reference` draws each character at each scale, each order of the stripes, five colors, over a flat color, the gradient of a card, a gradient across and noise, two passes (the second over the first), and compares with the reference: 0 pixels differ.
+- **Not taken**: a run-length or a mask for each row in the cache (the zero words are skipped already, and the walk is 11 ns of 109); 16 bytes at a time (the partial pixels need three table loads each, which the processor does not gather); the tables filled whole when made (89 to 93 ns against 103 to 110 ns, but 768 square roots for each new pair of colors, which a gradient across pays at each row).
+
+| One glyph, the least on the host | Scale 1 | Scale 2 | Scale 3 |
+|---|---|---|---|
+| Spleen 8x16 (at scale 2 and 3: its pixels enlarged) | 33.8 ns | 253 ns | 286 ns |
+| The reference blend, over a flat color | 181 ns | 424 ns | 712 ns |
+| The fast blend, over a flat color (the console, the cards) | **109 ns** | 285 ns | 497 ns |
+| The fast blend, over the gradient of a card (top to bottom) | 110 ns | | |
+| The fast blend, over a gradient across (a title bar) | 178 ns (the reference: 188 ns) | | |
+| The fast blend, over noise (a picture) | 188 ns (the reference: 193 ns) | | |
+
+At scale 1, a glyph from the cache over a flat color or a card now costs 3.2 times a glyph of Spleen (5.4 times before). At the scales 2 and 3 the vector font costs 1.1 and 1.7 times the enlarged Spleen, for a glyph drawn from its outline at that size. The rest of the time is the 43 partial pixels: a cell has 43 blends that Spleen does not do. The target "the same order as Spleen" is near at scale 1 and met at the scales 2 and 3; the machine measures of this part were taken at a load of 28 to 31 and are not valid.
+
 ## 6. The font file
 
 The owner did not choose one. Six candidates, each read from the build input of `flake.nix` (the packages of nixpkgs, pinned by `flake.lock`). Their license texts were read at the source on 2026-11-11.
@@ -127,15 +146,24 @@ The owner did not choose one. Six candidates, each read from the build input of 
 
 The picture of the choice: `font_candidates` (the program `vector_glyphs`: the same line in Spleen and in the six fonts, the large number at scale 2, a word enlarged 4 times; each candidate from a cache that the program builds), and `build/fonts/candidates.png` (`kerneltool vector_fonts`: the same lines at scales 1, 2 and 3 in each candidate and in Spleen, the default with and without the grid fit, a word of each enlarged 5 times; drawn on the host by the same `support/graphics`).
 
+### A bold weight for the titles
+
+The titles of the cards (the card of `support/interface` and of the boot display) are drawn in JetBrains Mono Bold. Its ASCII subset is 14 212 bytes (`resources/fonts/jetbrains_mono_bold.ttf`, the same license as the regular weight); its glyph cache has the scale 1 only, 30 720 bytes (all three scales: 391 936 bytes), a resource of the boot image mapped like the others. The draw record of the interface package is version 4: the byte `text_weight` (0 regular, 1 bold). Bold at another scale, with Spleen, or with no bold cache, is the regular weight; the width of a text does not change.
+
 ## 7. The setting
 
 The system had no settings menu. The smallest form that keeps the properties:
 
 - **Where it lives**: one page, the settings page (`contract/settings`). The root service creates it at start and writes the place, the size and the hash of the glyph cache in it. The program `settings` receives it with Write (the role `Settings` of the root service: the one writer). Each program with a surface, each terminal and the compositor receive it read-only at a fixed address, with its address in the value 13 of their context (P20: a grant of the root service, read-only; P9: no shared file). All zero is valid: the vector font, `rgb`.
 - **A change while programs run**: `settings` writes the page (the change count is odd during the write) and wakes the threads that wait on the change count. The compositor waits on it: it gives the new choice to its own text, draws its whole screen again, and sends the display event `Settings_Changed` to each window. `support/display` gives the new font to `support/graphics` when the program reads the event, between two frames; `support/interface` draws the whole window at the next frame (each draw record is the same, each pixel of text is not). A program draws again as it does for any event.
-- **The first settings**: `font` (`vector`, `spleen`) and `subpixel_order` (`rgb`, `bgr`, `none`). Later: the pointer theme (`docs/POINTERS.md`: the order of `pointer_theme_choice`), the strategy of the scheduler.
-- **The program `settings`**: a window of the interface package: the two settings as buttons (the pointer and the keyboard: Tab, then Enter), the text of the system at its three sizes, the facts of the glyph cache (size, hash, valid or not used). Exports with descriptions (P19): `settings.set(name, value)` (1, or an error record: `No_Grant` -1 for a caller that does not act for the person, `Absent` -2 for a name, `Bad_Value` -3 for a value) and `settings.get(name)` (a text). The console calls them after `connect("settings")`; `kerneltool call` calls them through `remote`.
-- **Not built: the setting is not kept** when the machine stops. The right form: `settings` keeps the record in its private store (P9) and the root service starts it at boot as a service with no window, which writes the page before the first program. Until then a stored setting has no place to come from: the default holds at each boot.
+- **The settings** (one value of the page and one row of `settings.descriptions` each; the window, the exports and the kept record read the same table): `font` (`vector`, `spleen`), `subpixel_order` (`rgb`, `bgr`, `none`), `pointer_theme` (`owner`, `system`) and `grid_fit` (`on`, `off`). Value 0 of each is its default.
+  - **The pointer theme**: the root service gives the compositor both pointer theme files of the boot image (`pointer_theme_choice` in `programs/root/resources.odin` is still the one place of their order: the values 6 and 7, then 14 and 15); the compositor validates each once and the setting chooses one live (`pointer_theme_choose`, a log line "the pointer theme in use").
+  - **The grid fit**: two glyph caches of the default font are resources of the boot image (390 624 bytes with the fit, 397 344 without: +397 344 bytes in the image); each program validates both once and the setting chooses one. The picture `font_without_grid_fit`.
+  - **The scheduling strategy is not a setting.** The right `Schedule` belongs to `scheduler` (choice 276). The settings service must not get a kernel right to pass it on (P20: a service does not combine its own access with the request of a caller), and asking `scheduler` would need `scheduler` to run as a service at boot with that right. The person changes the strategy in `scheduler`, the program that holds the right. A strategy that survives a stop needs the root service, which holds the machine with each right, to read a record at boot: a later step, with its own grant decision.
+- **The program `settings`**: a window of the interface package: each setting as a row of buttons (the pointer and the keyboard: Tab, then Enter), the text of the system at its three sizes, the facts of the glyph cache (size, hash, valid or not used). Exports with descriptions (P19): `settings.set(name, value)` (1, or an error record: `No_Grant` -1 for a caller that does not act for the person, `Absent` -2 for a name, `Bad_Value` -3 for a value) and `settings.get(name)` (a text), and `settings.repeat(count)` (count records kept, one commit each: the case of the loss of power). The console calls them after `connect("settings")`; `kerneltool call` calls them through `remote`.
+- **The settings survive a stop** (2026-11-11, second part). `settings` keeps the values as one record of 48 bytes (`Kept_Settings`: a magic, a version, a count, 8 values) in one object of its private store (P9): a change writes the record (one commit) first, then the page. At boot the root service starts `settings` for a **boot pass** (the context value 15): it reads the record, writes the page, wakes the compositor and stops, with no window. The storage service and the block service of the data disk now start at boot for it (they started at the first use before). A record of another version, or none, gives the defaults.
+- **The boot display uses the defaults**: it is drawn by the root service before the storage service runs, and reading the store earlier would need a reader of the store in the root service. The simplest right form: the defaults (the vector font, `rgb`) until the boot pass; then the compositor sees the change of the page and each window draws again with the kept settings (its first loop compares with a change count of 0, so a window that read the page before the boot pass is told too). The boot pass takes 23 ms in the machine test with a new disk.
+- **A loss of power** (`kerneltool test power`, the case `power_loss_settings_run`): `settings.repeat(1000)` writes 1000 records, and the disk loses its power at the write of a root. Each of 306 images that a loss can leave (72 with a torn write) gives the durable record or the record in flight, never a mix, and each record is valid; the second machine starts on the hard image and its boot pass writes the durable record on the page.
 
 ## 8. Fallback
 
@@ -163,9 +191,10 @@ The console stays fast: the producer writes into the terminal ring, and the term
 
 ## 10. Gaps
 
-- The cache draw is 9 times Spleen for one glyph (section 5). A table of the blends for each pair of pixel and color (three times 256 bytes) would make a partial pixel three loads; it pays only where the pixel under does not change from one row to the next, which is not the case over the gradient of a card.
+- One glyph from the cache costs 3.2 times a glyph of Spleen at scale 1 over a flat color, and 5.3 to 5.6 times over a gradient across or a picture, where the blend tables do not apply (section 5).
 - No grid fit of each stem; no stem darkening (`gui_toolkit` thickens the stripes by 0.2 pixel; not tried here).
-- The setting is not kept across a stop of the machine (section 7).
+- The boot display and the first frames use the default settings until the boot pass of `settings` (section 7).
+- The scheduling strategy is not a setting and does not survive a stop (section 7).
 - A proportional font, kerning and the characters outside ASCII are not built: the cache has no glyph outside 32 to 126 and no subpixel position.
 - The order of the stripes of the screen is not detected: under QEMU it is the panel of the host, which the system cannot read.
 - The measures of section 9 were taken on a host with a load above 8.
@@ -173,6 +202,6 @@ The console stays fast: the producer writes into the terminal ring, and the term
 ## 11. Decisions that the owner must make
 
 1. **The font file**: JetBrains Mono (the default), or another candidate of section 6: one line, `DEFAULT_VECTOR_FONT`.
-2. **The grid fit**: on (the default; the tops of the letters on whole pixels, the shapes moved by up to half a pixel) or off (the shapes of the design; softer tops at 8 x 16): one line, `GLYPH_CACHE_GRID_FIT`. Both are defensible; the picture `build/fonts/candidates.png` shows both.
+2. **The grid fit by default**: on (now) or off. It is now a setting of the person (both caches are in the boot image); the decision is only which value is 0.
 3. **The order of the stripes by default**: `rgb` (now), or `none` until the system can know the panel.
-4. **A boot service for the settings** (section 7), so that a setting stays after a stop.
+4. **The scheduling strategy across a stop**: a record that the root service reads at boot, or none (section 7).
