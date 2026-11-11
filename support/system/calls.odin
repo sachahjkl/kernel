@@ -93,7 +93,15 @@ call_direct :: proc "contextless" (file: []u8, address: uintptr, function: modul
 // the answer of each Change and Append table back into the memory of the
 // caller. An export that fails gives a negative result and its error
 // record at `error`.
-call_isolated :: proc "contextless" (connection: ^Call_Connection, file: []u8, export: u32, arguments: []isolated.Argument, error: ^errors.Error_Record = nil) -> (result: i64, status: Call_Status) {
+//
+// The seam of the three forms: a table argument with a memory object
+// (Table_Argument.memory) goes into the call region when it fits there, and
+// through its memory object only when it does not: the measures of the
+// program tables give the call region the lower cost at each size that
+// fits (docs/MODULE_CONTRACT.md). keep_memory_objects lends each memory
+// object as given: for a measure, or for a table that the caller wants in
+// one place.
+call_isolated :: proc "contextless" (connection: ^Call_Connection, file: []u8, export: u32, arguments: []isolated.Argument, error: ^errors.Error_Record = nil, keep_memory_objects := false) -> (result: i64, status: Call_Status) {
 	function, described := module.function(file, export)
 	if !described {
 		return 0, .Refused
@@ -108,6 +116,19 @@ call_isolated :: proc "contextless" (connection: ^Call_Connection, file: []u8, e
 	}
 	defer for &argument, index in arguments[:min(len(arguments), module.PARAMETER_CAPACITY)] {
 		argument.integer, argument.table.memory = kept_integers[index], kept_memories[index]
+	}
+	if !keep_memory_objects {
+		for &argument in arguments[:min(len(arguments), module.PARAMETER_CAPACITY)] {
+			argument.table.memory = 0
+		}
+		// Each table that does not fit takes its memory object back.
+		for _ in 0 ..< module.PARAMETER_CAPACITY {
+			missing := isolated.room_missing(file, function, arguments, u64(len(connection.region)))
+			if missing.parameter == 0 || kept_memories[missing.parameter - 1] == 0 {
+				break
+			}
+			arguments[missing.parameter - 1].table.memory = kept_memories[missing.parameter - 1]
+		}
 	}
 	lending: Lending
 	defer lend_end(&lending)

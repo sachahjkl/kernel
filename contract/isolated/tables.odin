@@ -134,7 +134,7 @@ table_decode :: proc "contextless" (file: []u8, type: module.Type, detail: u32, 
 	place := &call.places[index]
 	place^ = {count = field.count, capacity = direction == .Append ? field.capacity : field.count}
 	if field.memory != 0 {
-		if field.memory >> 32 != 0 || call.mapping_count == len(call.mappings) || field.start % alignment != 0 || reached > max(u64) / size {
+		if field.memory >> 32 != 0 || call.mapping_count == len(call.mappings) || field.start % alignment != 0 || reached > TABLE_SPAN / size - 1 {
 			return false
 		}
 		call.mappings[call.mapping_count] = {parameter = index, handle = u32(field.memory), start = field.start, size = reached * size, write = direction != .Read}

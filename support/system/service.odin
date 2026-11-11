@@ -225,18 +225,28 @@ export_serve :: proc "contextless" (file: []u8, base: u64, region: []u8, ring_me
 			memory_unmap(address_of_mapping)
 		}
 	}
+	// Only the pages of the records, at the same address at each call.
 	for item, index in prepared.mappings[:prepared.mapping_count] {
 		memory := Handle(item.handle)
-		start, status := memory_map(memory, item.write ? {.Write} : {})
 		object_size := memory_size(memory) * PAGE_SIZE
-		if status == .Ok {
-			mapped[index] = start
-		}
-		if status != .Ok || item.start > object_size || item.size > object_size - item.start {
+		if item.start > object_size || item.size > object_size - item.start {
 			completion.kind = u32(isolated.Status.Bad_Arguments)
 			return completion
 		}
-		prepared.places[item.parameter].address = u64(uintptr(start)) + item.start
+		at := isolated.TABLE_ADDRESS + u64(item.parameter) * isolated.TABLE_SPAN
+		if item.size == 0 {
+			prepared.places[item.parameter].address = at // An empty table: nothing to reach.
+			continue
+		}
+		first := item.start / PAGE_SIZE
+		pages := (item.start + item.size + PAGE_SIZE - 1) / PAGE_SIZE - first
+		start, status := memory_map(memory, item.write ? {.Write} : {}, 0, at, first, pages)
+		if status != .Ok {
+			completion.kind = u32(isolated.Status.Bad_Arguments)
+			return completion
+		}
+		mapped[index] = start
+		prepared.places[item.parameter].address = u64(uintptr(start)) + item.start % PAGE_SIZE
 	}
 	floats: [CALL_FLOATS]u64
 	out: [CALL_RESULTS]u64

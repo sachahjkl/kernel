@@ -772,13 +772,6 @@ scenario := [?]Step {
 	{kind = .Type, text = "b"},
 	{kind = .Wait, text = ": Memory (Give, Read, Write, Execute)"},
 	{kind = .Shot, text = "records"},
-	// A table goes into an isolated call: the rows go into the call
-	// region, and the rows of a Change table come back.
-	{kind = .Type, text = "clear()"},
-	{kind = .Type, text = "t = readings(4)"},
-	{kind = .Type, text = "scale_values(t, 3)"},
-	{kind = .Type, text = "sum_values(t)"},
-	{kind = .Wait, text = "[console] 300"},
 
 	// Revocation. The console revokes what it lent at the end of each
 	// call: the mapping that the module kept is gone, and the next read
@@ -1334,6 +1327,16 @@ scenario := [?]Step {
 	{kind = .Shot, text = "table_argument"},
 	{kind = .Type, text = "unload(\"sample\")"},
 	{kind = .Wait, text = "[console] sample: 14 commands removed, the module left the memory of the console"},
+	// A table goes into an isolated call: the rows go into the call
+	// region, and the rows of a Change table come back.
+	{kind = .Type, text = "isolate(\"sample\")"},
+	{kind = .Wait, text = "[console] sample: 14 commands in a sandboxed program"},
+	{kind = .Type, text = "t = readings(4)"},
+	{kind = .Type, text = "scale_values(t, 3)"},
+	{kind = .Type, text = "sum_values(t)"},
+	{kind = .Wait, text = "[console] 300"},
+	{kind = .Type, text = "unload(\"sample\")"},
+	{kind = .Wait, text = "[console] sample: 14 commands removed, its sandboxed program stops"},
 	// The signature of an export with a table and bytes: one form in the
 	// manual, the console and the errors.
 	{kind = .Type, text = "start(\"manual\")"},
@@ -1345,6 +1348,8 @@ scenario := [?]Step {
 	{kind = .Type, text = "manual.show(\"sample\")"},
 	{kind = .Wait, text = "manual: sample: a program, "},
 	{kind = .Front, text = "manual"},
+	{kind = .Key, text = "pgdn"},
+	{kind = .Key, text = "pgdn"},
 	{kind = .Shot, text = "manual_tables"},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "stop(\"manual\")"},
@@ -1525,6 +1530,11 @@ scenario := [?]Step {
 	{kind = .Call, text = "inspect.threads(\"threads\")", expected = " rows of Thread"},
 	{kind = .Call, text = "inspect.modules(\"console\")", expected = "console "},
 	{kind = .Call, text = "inspect.mappings(\"nothing\")", outcome = .Failed, expected = "error: inspect.mappings: the argument program names none of the programs (-2)"},
+	// A table from the host: rows of field values go into the call region
+	// of the service sample, which the root service starts on demand. A
+	// Change table is refused: its rows would not come back.
+	{kind = .Call, text = "sample.sum_values([(0, 0, 10, 10, 10), (1, 1, 20, 20, 20), (2, 2, 30, 30, 30)])", expected = "60"},
+	{kind = .Call, text = "sample.scale_values([(0, 0, 10, 10, 10)], 2)", outcome = .Wrong, expected = "error: the parameter readings of sample.scale_values is Table(Reading, Change): a call from the host gives tables to read only"},
 	{kind = .Close, text = "inspect"},
 	{kind = .Close, text = "errors"},
 	{kind = .Record, program = "root", channel = "programs", level = "info", text = "root: errors stopped with code 0"},
@@ -1635,6 +1645,16 @@ scenario := [?]Step {
 	{kind = .Shot, text = "tables"},
 	{kind = .Close, text = "tables"},
 	{kind = .Wait, text = "root: tables stopped"},
+	// The interface package as a module for one program: the same frame
+	// through the exports of interface_module and with the package compiled
+	// in gives the same draw table.
+	{kind = .Launch, text = "interface_through_module"},
+	{kind = .Wait, text = "compositor: surface interface_through_module", any_order = true},
+	{kind = .Wait, text = "interface_through_module: one frame of "},
+	{kind = .Wait, text = "interface_through_module: ok, the two draw tables are equal"},
+	{kind = .Shot, text = "interface_module"},
+	{kind = .Close, text = "interface_through_module"},
+	{kind = .Wait, text = "root: interface_through_module stopped"},
 	{kind = .Front, text = "console"},
 	// Each page is free or paid, after all the starts and stops of this test.
 	{kind = .Type, text = "memory()"},

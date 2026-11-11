@@ -108,6 +108,8 @@ grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 		// connections to the services of callable_of, and the grant to act
 		// for the person (docs/MODULE_CONTRACT.md, "A call from the host").
 		return {.Connect, .Network, .Person}
+	case "interface_through_module":
+		return {.Image} // It reads the size of the code of interface_module.
 	case "tables":
 		// It loads sample, starts a call host of it from the boot image,
 		// and connects to the service sample (docs/MODULE_CONTRACT.md,

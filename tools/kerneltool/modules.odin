@@ -99,6 +99,8 @@ module_builds := [?]Module_Build {
 	{name = "errors", source = "programs/errors", image = true},
 	{name = "interface_elements", source = "programs/interface_elements", image = true},
 	{name = "tables", source = "programs/tables", image = true},
+	{name = "interface_module", source = "modules/interface_module", image = true},
+	{name = "interface_through_module", source = "programs/interface_through_module", imports = {"interface_module"}, image = true},
 	{name = "vector_glyphs", source = "programs/vector_glyphs", image = true},
 	{name = "pointers", source = "programs/pointers", image = true},
 	{name = "settings", source = "programs/settings", image = true},

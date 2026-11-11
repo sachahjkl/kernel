@@ -365,9 +365,12 @@ measure :: proc "contextless" () {
 			for _ in 0 ..< 3 {
 				start := system.nanoseconds()
 				ok := true
-				for _ in 0 ..< calls {
-					result, status := system.call_isolated(connection, sample_file, index, arguments[:])
+				for call_number in 0 ..< calls {
+					result, status := system.call_isolated(connection, sample_file, index, arguments[:], nil, way == .Memory_Object)
 					intrinsics.volatile_store(&sink, result)
+					if status != .Ok && ok {
+						system.log("tables: ", measure_names[way], ", ", u64(size), " rows: call ", u64(call_number), " gave the status ", u64(status))
+					}
 					ok &&= status == .Ok
 				}
 				if !ok {
@@ -389,6 +392,7 @@ LINE :: 24
 NAME_X :: 40 // The column of the names, in a card.
 ANSWER_X :: 312 // The first column of the answers.
 COLUMN_WIDTH :: 224
+HOSTILE_ANSWER_X :: 400
 
 card :: proc "contextless" (canvas: graphics.Canvas, x, y, width, height: int, title, caption: string, accent: graphics.Color) {
 	graphics.block(canvas, x, y, width, height, graphics.COLOR_CARD_TOP, graphics.COLOR_CARD_BOTTOM)
@@ -439,7 +443,7 @@ draw :: proc "contextless" (canvas: graphics.Canvas) {
 	for &item in hostile[:hostile_count] {
 		mark(canvas, NAME_X, row, item.answer.right)
 		graphics.text(canvas, NAME_X + 16, row, item.name, graphics.COLOR_TEXT)
-		graphics.text(canvas, ANSWER_X + 16, row, answer_text(&item.answer), item.answer.right ? graphics.COLOR_TEXT : graphics.COLOR_FAILED)
+		graphics.text(canvas, HOSTILE_ANSWER_X, row, answer_text(&item.answer), item.answer.right ? graphics.COLOR_TEXT : graphics.COLOR_FAILED)
 		row += LINE
 	}
 	// The measures.
