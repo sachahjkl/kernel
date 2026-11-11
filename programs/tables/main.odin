@@ -211,7 +211,7 @@ run_cases :: proc "contextless" () {
 		list[1] = {7, 9, 0}
 		error = {}
 		result, status = call(way, "sum_words", arguments[:2], &error)
-		answer_set(&outside.answers[way], status == .Failed && result == -1 && errors.Kind(error.kind) == .Outside && error.found == 2 && error.value == 16 && error.limit == 12, "Outside: word ", error.found, ", end ", error.value)
+		answer_set(&outside.answers[way], status == .Failed && result == -1 && errors.Kind(error.kind) == .Out_Of_Range && error.found == 2 && error.value == 16 && error.limit == 12, "Out_Of_Range: word ", error.found, ", ", error.value)
 
 		changed: [12]u8
 		copy(changed[:], "tables go in")

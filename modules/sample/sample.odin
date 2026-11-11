@@ -213,14 +213,14 @@ Word :: struct {
 	sum:   i64, // Written by the export: the sum of its bytes.
 }
 
-// sum_words writes in each word the sum of the bytes of the text that the word names, and gives the sum of all. A word that names bytes after the end of the text is an error, not a fault: the result is -1 with an error record of the kind Outside (the number of the word, the end of its bytes, the count of bytes of the text).
+// sum_words writes in each word the sum of the bytes of the text that the word names, and gives the sum of all. A word that names bytes after the end of the text is an error, not a fault: the result is -1 with an error record of the kind Out_Of_Range (the end of the bytes of the word, the count of bytes of the text, and the number of the word).
 @(export, link_name = "sum_words")
 sum_words :: proc "c" (words: ^system.Table_To_Change(Word), text: ^system.Bytes_To_Read, error: ^errors.Error_Record) -> i64 {
 	total: i64
 	for &word, number in system.table_changed_records(words) {
 		end := u64(word.start) + u64(word.count)
 		if end > text.count {
-			return errors.fail(error, -1, .Outside, .Bytes, 1, i64(end), i64(text.count), i64(number + 1))
+			return errors.fail(error, -1, .Out_Of_Range, .Bytes, 1, i64(end), i64(text.count), i64(number + 1))
 		}
 		word.sum = 0
 		for b in text.bytes[word.start:end] {
