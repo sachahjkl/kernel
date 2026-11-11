@@ -511,6 +511,8 @@ NEW-5. **`graphics.copy` is a plain copy again**, and the compositor measures at
 | A burst of `net`, datagrams in one second | 95 149 | 60 796 |
 | The boot program loads the kernel and the boot image | 19.5 / 20.1 ms | 22.6 / 23.2 ms |
 
+The last check after the rebase on `bec7cfa` (load 6 to 13) gave: the first use of a page 676 ns; 1.90 / 2.68 / 4.19 million pages on first use; the call of the host 170 us; the round trip of `net` 73 us; the burst 84 319. TCP, from `server` and the tool (before: the numbers of choice 309, 19.4 MB/s with the peer and 99 MB/s with libslirp): `server` received 1 MiB from the peer at 27.2, 1.3, 22.0 and 19.2 MB/s in one run; the host through libslirp fetched at 79.9 MB/s and sent at 90.8 MB/s. TCP did not gain a measurable part: it is bound by the network path, and one run gives values from 1.3 to 27.2 MB/s.
+
 The frames do not change: a frame is bound by the writes to the framebuffer of QEMU (3 MiB in about 1.7 ms), not by the copy in memory. The kernel gains on the first use of a page (14 %, 31 % more pages in one second with one locker). The network and the boot program measured worse in the run after, under a load of the host 5 times higher; in the run of the step before on the old `master` with this change and a low load, the round trip was 67 us, the burst 94 443, the call 148 us and the load of the boot program 15.6 to 23.5 ms on 17 machines. These four measures are not conclusive on one run each.
 NEW-6. **The palettes of the programs**: 20 programs take the colors that have a role of the rules from `support/graphics`; the others stay in the programs (`docs/DESIGN.md`, "State"). No layout changed. The places of new windows stay off the grid (see the gaps).
 
