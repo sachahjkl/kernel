@@ -36,6 +36,8 @@ Text_State :: struct {
 	// The blend in linear light: square_root[i] is the 8-bit value whose
 	// square is nearest to (4096 i + 2048) / 255 (docs/FONTS.md, "Gamma").
 	square_root: [4096]u8,
+	// The blend tables of text over a flat color (blend.odin), 24 KiB.
+	blend_tables: Blend_Tables,
 }
 
 text_state: Text_State
@@ -145,14 +147,33 @@ text_width :: proc "contextless" (characters: string) -> int {
 // glyph blends the color over the pixel of the canvas, one coverage for
 // each channel.
 character_vector :: #force_inline proc "contextless" (canvas: Canvas, x, y: int, value: u8, color: Color, scale: int) {
-	character_vector_with(&text_state.cache, &text_state.square_root, text_state.order, canvas, x, y, value, color, scale)
+	character_vector_with(&text_state.cache, &text_state.square_root, &text_state.blend_tables, text_state.order, canvas, x, y, value, color, scale)
 }
 
-// character_vector_with draws one character of a glyph cache that
+// character_vector_with draws one character with the fast blend: the same
+// pixels as character_vector_reference.
+character_vector_with :: proc "contextless" (cache: ^glyph_cache.Cache, square_root: ^[4096]u8, tables: ^Blend_Tables, order: Subpixel_Order, canvas: Canvas, x, y: int, value: u8, color: Color, scale: int) #no_bounds_check {
+	size, entry, found := glyph_cache.glyph(cache, value, scale)
+	if !found || entry.row_count == 0 {
+		return
+	}
+	width := int(size.cell_width)
+	first_column := max(0, -x)
+	last_column := min(width, canvas.width - x)
+	first_row := max(0, -(y + int(entry.first_row)))
+	last_row := min(int(entry.row_count), canvas.height - y - int(entry.first_row))
+	if first_column >= last_column || first_row >= last_row {
+		return
+	}
+	words := raw_data(cache.words[entry.word_offset:])
+	blend_glyph_rows(canvas.pixels[(y + int(entry.first_row)) * canvas.stride + x:], canvas.stride, words, width, first_row, last_row, first_column, last_column, color, order, square_root, tables)
+}
+
+// character_vector_reference draws one character of a glyph cache that
 // glyph_cache.validate accepted: each entry and each word is inside the
 // file, so the loop has no bounds check (the rows and the columns are cut
 // to the canvas here).
-character_vector_with :: proc "contextless" (cache: ^glyph_cache.Cache, square_root: ^[4096]u8, order: Subpixel_Order, canvas: Canvas, x, y: int, value: u8, color: Color, scale: int) #no_bounds_check {
+character_vector_reference :: proc "contextless" (cache: ^glyph_cache.Cache, square_root: ^[4096]u8, order: Subpixel_Order, canvas: Canvas, x, y: int, value: u8, color: Color, scale: int) #no_bounds_check {
 	size, entry, found := glyph_cache.glyph(cache, value, scale)
 	if !found || entry.row_count == 0 {
 		return
