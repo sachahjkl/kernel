@@ -1,5 +1,6 @@
 package kerneltool
 
+import "contract:settings"
 import format "contract:store"
 import "core:fmt"
 import "core:math/rand"
@@ -415,7 +416,7 @@ hard_image :: proc(durable: []u8, pending: []Pending_Write) -> (image: []u8, tor
 // keeps each version (4500 blocks of limit); at the count 1200, the store is
 // at its limit, and each commit thins the oldest versions of the store.
 scenario_power_loss_early := [?]Step {
-	{kind = .Wait, text = "compositor: surface console"},
+	{kind = .Wait, text = "compositor: surface console", any_order = true}, // The storage service can start first, for the boot pass of settings.
 	{kind = .Launch, text = "notes"},
 	{kind = .Wait, text = "storage: ok, a new disk: generation 1, 16384 blocks", any_order = true},
 	{kind = .Wait, text = "notes: a new store: no note, the count 0", any_order = true},
@@ -428,7 +429,7 @@ scenario_power_loss_early := [?]Step {
 }
 
 scenario_power_loss_thinning := [?]Step {
-	{kind = .Wait, text = "compositor: surface console"},
+	{kind = .Wait, text = "compositor: surface console", any_order = true}, // The storage service can start first, for the boot pass of settings.
 	{kind = .Launch, text = "notes"},
 	{kind = .Wait, text = "storage: ok, a new disk: generation 1, 16384 blocks", any_order = true},
 	{kind = .Wait, text = "notes: a new store: no note, the count 0", any_order = true},
@@ -505,7 +506,7 @@ power_loss_sequence :: proc(what: string, steps: []Step, output_number: int, thi
 	}
 	fmt.printfln("kerneltool: the second machine starts on the durable image%s: generation %d, %d versions", torn_root ? " with the write of a root torn" : "", durable_contents.mount.generation, version_count(&durable_contents))
 	second := make([dynamic]Step, context.temp_allocator)
-	append(&second, Step{kind = .Wait, text = "compositor: surface console"})
+	append(&second, Step{kind = .Wait, text = "compositor: surface console", any_order = true})
 	append(&second, Step{kind = .Launch, text = "notes"})
 	if torn_root {
 		append(&second, Step{kind = .Wait, text = "has a wrong check: a write that a stop cut; the service uses the root before it", any_order = true})
@@ -518,4 +519,104 @@ power_loss_sequence :: proc(what: string, steps: []Step, output_number: int, thi
 	}
 	append(&second, Step{kind = .Quit})
 	return machine_test(second[:], BOOT_VOLUME, self_test_file(TEST_OUTPUT_POWER_LOSS, output_number + 1), 0, TEST_POWER_LOSS_DISK)
+}
+
+// The settings through a loss of power (docs/FONTS.md, "The setting"): the
+// program settings keeps 1000 records, one commit each, and the disk loses
+// its power in the middle. Each image that a loss can leave gives the
+// record of the durable commit or the record in flight, never a mix (the
+// search above, on each object); the record of each image is a valid
+// record. The second machine starts on the hard image, and the boot pass of
+// settings writes the record of the durable commit on the page.
+scenario_power_loss_settings_first := [?]Step {
+	{kind = .Wait, text = "compositor: surface console", any_order = true},
+	{kind = .Wait, text = "settings: the boot pass: no settings kept: the defaults", any_order = true},
+	{kind = .Wait, text = "root: settings stopped with code 0"},
+	{kind = .Launch, text = "settings"},
+	{kind = .Wait, text = "compositor: surface settings", any_order = true},
+	{kind = .Wait, text = "settings: ok, "},
+	{kind = .Front, text = "console"},
+	{kind = .Type, text = "connect(\"settings\")"},
+	{kind = .Wait, text = "[console] settings: 3 commands of a service that runs"},
+	{kind = .Type, text = "settings.repeat(1000)"},
+	{kind = .Power_Loss},
+}
+
+// kept_settings_of gives the record of settings in the objects of an image,
+// as the text of the boot pass, or "" when the image has none.
+@(private = "file")
+kept_settings_of :: proc(contents: ^Disk_Contents) -> (text: string, found: bool, valid: bool) {
+	for &item in contents.objects {
+		if item.store != "settings" || item.name != settings.KEPT_OBJECT_NAME {
+			continue
+		}
+		values, ok := settings.kept_read(item.bytes)
+		if !ok {
+			return "", true, false
+		}
+		builder := strings.builder_make(context.temp_allocator)
+		for setting in settings.Setting {
+			description := settings.descriptions[setting]
+			fmt.sbprintf(&builder, "%s%s %s", setting == .Font ? "" : ", ", description.title, description.value_names[values[setting]])
+		}
+		return strings.to_string(builder), true, true
+	}
+	return "", false, true
+}
+
+power_loss_settings_run :: proc() -> bool {
+	fresh := make([]u8, DATA_DISK_SIZE)
+	defer delete(fresh)
+	server: Network_Block_Device
+	if !disk_server_start(&server, fresh) {
+		return false
+	}
+	defer disk_server_free(&server)
+	address := fmt.tprintf("nbd://127.0.0.1:%d", server.port)
+	ran := machine_test(scenario_power_loss_settings_first[:], BOOT_VOLUME, self_test_file(TEST_OUTPUT_POWER_LOSS, 3), 0, address, disk_server = &server)
+	disk_server_stop(&server)
+	if !ran {
+		return false
+	}
+	sync.mutex_lock(&server.lock)
+	pending := server.pending[:]
+	search := crash_images_check(server.durable, pending, POWER_LOSS_SEED)
+	if search.wrong != 0 {
+		fmt.eprintfln("kerneltool: test failed: the settings: %d of %d images of the disk after the loss of power are wrong; the first: %s", search.wrong, search.images, search.first_wrong)
+		return false
+	}
+	// The record of the durable commit, and of the commit in flight.
+	state := new(storage_mount.State)
+	defer free(state)
+	durable := disk_contents(server.durable, state)
+	durable_text, durable_found, durable_valid := kept_settings_of(&durable)
+	image := slice.clone(server.durable)
+	defer delete(image)
+	undo := make([dynamic]Undo, context.temp_allocator)
+	everything := make([dynamic]Image_Write, context.temp_allocator)
+	for index in 0 ..< len(pending) {
+		append(&everything, Image_Write{index = index})
+	}
+	image_apply(image, pending, everything[:], &undo)
+	in_flight := disk_contents(image, state)
+	in_flight_text, _, in_flight_valid := kept_settings_of(&in_flight)
+	if !durable_found || !durable_valid || !in_flight_valid {
+		fmt.eprintfln("kerneltool: test failed: the settings: the durable image has %s record of settings (valid: %v); the image with each write, valid: %v", durable_found ? "a" : "no", durable_valid, in_flight_valid)
+		return false
+	}
+	fmt.printfln("kerneltool: test passed: the settings: %d images of the disk after the loss of power, %d with a torn write: %d give the durable record (%s, generation %d), %d the record in flight (%s, generation %d), none a mix", search.images, search.torn_images, search.older_images, durable_text, durable.mount.generation, search.newer_images, in_flight_text, in_flight.mount.generation)
+	hard, _ := hard_image(server.durable, pending)
+	defer delete(hard)
+	sync.mutex_unlock(&server.lock)
+	if err := os.write_entire_file(TEST_POWER_LOSS_DISK, hard); err != nil {
+		fmt.eprintfln("kerneltool: cannot write %s: %v", TEST_POWER_LOSS_DISK, err)
+		return false
+	}
+	second := [?]Step {
+		{kind = .Wait, text = "compositor: surface console", any_order = true},
+		{kind = .Wait, text = fmt.aprintf("settings: the boot pass: the settings kept in the store: %s; in ", durable_text), any_order = true},
+		{kind = .Wait, text = "root: settings stopped with code 0"},
+		{kind = .Quit},
+	}
+	return machine_test(second[:], BOOT_VOLUME, self_test_file(TEST_OUTPUT_POWER_LOSS, 4), 0, TEST_POWER_LOSS_DISK)
 }

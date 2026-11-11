@@ -45,7 +45,6 @@ PLACE_X :: 64
 PLACE_Y :: 56
 PLACE_STEP_X :: 40
 PLACE_STEP_Y :: 32
-GRID :: 8
 CLIENT_CAPACITY :: 32 // The root service starts 32 programs at most.
 DAMAGE_CAPACITY :: 8
 CLOCK_WIDTH :: 19 * 8 // "2026-11-11 16:30:05", or the time since boot "00:00:00" when the system has no date.
@@ -279,8 +278,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// (contract:settings); a change of the settings wakes this loop.
 	display.text_settings_open(ctx)
 	settings_seen: u32
+	// settings_seen starts at 0: when the boot pass of settings wrote the page
+	// before this read, the first turn of the loop sees a change and tells
+	// each window, also the ones that read the page before the boot pass.
 	if display.settings_page != nil {
-		settings_seen = settings.read(display.settings_page).change_count
+		pointer_theme_choose(settings.pointer_theme_of(settings.read(display.settings_page)))
 	}
 
 	next_frame: u64
@@ -382,6 +384,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 // (support/display gives it the new font before the event).
 settings_changed :: proc "contextless" (choice: settings.Choice) {
 	display.text_settings_apply()
+	pointer_theme_choose(settings.pointer_theme_of(choice)) // pointer_picture.odin
 	told := 0
 	for &client in clients {
 		if client.ring.head != nil {
@@ -390,7 +393,16 @@ settings_changed :: proc "contextless" (choice: settings.Choice) {
 		}
 	}
 	damage_add(0, 0, screen.width, screen.height)
-	system.log("compositor: the settings changed: font ", settings.font_names[choice.font], ", subpixel order ", settings.subpixel_order_names[choice.subpixel_order], "; ", u64(told), " windows draw again")
+	buffer: [256]u8
+	writer := system.Writer{buffer = buffer[:]}
+	for setting in settings.Setting {
+		description := settings.descriptions[setting]
+		system.write_part(&writer, setting == .Font ? "" : ", ")
+		system.write_part(&writer, description.title)
+		system.write_part(&writer, " ")
+		system.write_part(&writer, description.value_names[choice.values[setting]])
+	}
+	system.log("compositor: the settings changed: ", system.written(&writer), "; ", u64(told), " windows draw again")
 }
 
 send :: proc "contextless" (client: ^Client, record: ring.Record) {
@@ -441,19 +453,29 @@ client_remove :: proc "contextless" (memory: system.Handle) {
 
 surface_create :: proc "contextless" (index: int, record: ring.Record) {
 	client := &clients[index]
+	// The program wrote the number of the handle: it can name any handle of
+	// the compositor, among them the surface or the ring of another client.
+	// The kernel proves that this program gave the handle through its own
+	// ring (support/system, handle_state). A number with no proof is not a
+	// gift of this program: the compositor neither uses it nor closes it.
 	memory := system.Handle(record.values[0])
+	kind, rights, through := system.handle_state(memory, client.ring_memory)
+	// No log line: a program could send this command without end.
+	if !through {
+		return
+	}
+	// The handle is a gift of this program: each return below closes it.
+	defer system.close(memory)
 	width, height := record.values[1], record.values[2]
 	// The program chose these numbers: check them against the memory itself.
-	if client.surface.pixels != nil || width == 0 || height == 0 || width > display.SURFACE_LIMIT || height > display.SURFACE_LIMIT {
+	if kind != .Memory || .Read not_in rights || client.surface.pixels != nil || width == 0 || height == 0 || width > display.SURFACE_LIMIT || height > display.SURFACE_LIMIT {
 		return
 	}
 	size := system.memory_size(memory) * system.PAGE_SIZE
 	if size < width * height * size_of(graphics.Color) {
-		system.close(memory)
 		return
 	}
 	address, status := system.memory_map(memory, {}) // Read only.
-	system.close(memory)
 	if status != .Ok {
 		return
 	}
@@ -463,9 +485,9 @@ surface_create :: proc "contextless" (index: int, record: ring.Record) {
 	client.title = system.name_unpack({record.values[3], record.values[4], record.values[5], record.values[6]})
 	client.x = PLACE_X + placed % 8 * PLACE_STEP_X
 	client.y = PLACE_Y + placed % 8 * PLACE_STEP_Y
-	// A large window moves up and left until the screen shows all of it.
-	client.x = max(grid_floor(min(client.x, screen.width - int(width) - 2 * BORDER)), 0)
-	client.y = max(grid_floor(min(client.y, screen.height - int(height) - TITLE_HEIGHT - BORDER)), BAR_HEIGHT)
+	// A large window moves up and left until the screen shows all of it; a
+	// window wider than the screen keeps its close button on the screen.
+	client.x, client.y = bar.new_window_place(client.x, client.y, window_frame_of(client), int(height), screen.width, screen.height)
 	placed += 1
 	damage_focus()
 	order[order_count] = index
@@ -517,9 +539,9 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32) 
 	if dragging >= 0 {
 		if buttons & display.BUTTON_LEFT != 0 {
 			damage_window(&clients[dragging])
-			// The window follows the pointer on the grid of 8.
-			clients[dragging].x = grid_floor(pointer_x - drag_x + GRID / 2)
-			clients[dragging].y = max(grid_floor(pointer_y - drag_y + GRID / 2), BAR_HEIGHT)
+			// The window follows the pointer on the grid of 8, and a part
+			// of its title stays on the screen at each edge.
+			clients[dragging].x, clients[dragging].y = bar.dragged_window_place(pointer_x, pointer_y, drag_x, drag_y, window_frame_of(&clients[dragging]), screen.width, screen.height)
 			damage_window(&clients[dragging])
 		} else {
 			// The person put the window down: the log has its new place.
@@ -1068,7 +1090,8 @@ screen_build :: proc "contextless" (now: u64) {
 	}
 }
 
-// grid_floor gives the place on the grid of 8 at or before a place.
-grid_floor :: proc "contextless" (place: int) -> int {
-	return place - place %% GRID
+// window_frame_of gives the frame that the compositor draws around the
+// surface of a client, for the places of support/bar.
+window_frame_of :: proc "contextless" (client: ^Client) -> bar.Window_Frame {
+	return {outer_width = client.surface.width + 2 * BORDER, border = BORDER, close_size = CLOSE_SIZE, title_height = TITLE_HEIGHT}
 }

@@ -36,7 +36,7 @@ BUILD_FOLDER :: "build"
 // flake.nix gives the same two flags to the compiler when it builds this tool.
 CONTRACT_LIBRARY :: "-collection:contract=contract"
 SUPPORT_LIBRARY :: "-collection:support=support"
-CONTRACT_PACKAGES :: []string{"blake3", "block", "boot_info", "datagram", "date", "errors", "frame", "glyph_cache", "isolated", "module", "operation", "pointer_pictures", "release", "remote", "ring", "settings", "store"}
+CONTRACT_PACKAGES :: []string{"blake3", "block", "boot_info", "datagram", "date", "errors", "fixed_addresses", "frame", "glyph_cache", "isolated", "module", "operation", "pointer_pictures", "release", "remote", "ring", "settings", "store"}
 BOOT_OBJECT_FOLDER :: BUILD_FOLDER + "/boot"
 BOOT_PROGRAM :: BOOT_OBJECT_FOLDER + "/BOOTX64.EFI"
 BOOT_VOLUME :: BUILD_FOLDER + "/boot_volume.img"
@@ -90,6 +90,7 @@ COMMANDS :: [?]Command {
 	{name = "call", about = "call \"service.export(arguments)\": call an export of a service of the machine that `run` started, through the program remote, and print the typed result", run = run_call},
 	{name = "repeat", about = "repeat <module> <count>: build one module again and again, with no machine, and count the distinct modules, LLVM IR files and objects; `repeat all <count> [processes]`: every module and the boot program, one row each", run = run_repeat},
 	{name = "cryptography-take", about = "cryptography-take <file under the root of Odin> <file of the repository>: copy a file of core:crypto with the listed import changes, and print its line of the manifest", run = run_cryptography_take},
+	{name = "cryptography-system-hashes", about = "print the line of " + CRYPTOGRAPHY_SYSTEM_FILES + " for each .odin file of support/cryptography that is not taken from Odin", run = run_cryptography_system_hashes},
 	{name = "cryptography-origin", about = "check that each file of " + CRYPTOGRAPHY_MANIFEST + " is its origin in Odin with the listed changes only", run = run_cryptography_origin},
 	{name = "changelog", about = "new <type> <subject> \"<text>\" (or - and the text on the standard input) | check | assemble | release <release number> | notes <release number>: the fragments of " + FRAGMENT_FOLDER + " and the releases of " + CHANGELOG_FILE, run = run_changelog},
 	{name = "release_number", about = "print the release number of the system: the newest release of " + CHANGELOG_FILE, run = run_release_number},
@@ -239,13 +240,17 @@ run_test :: proc(args: []string) -> int {
 		return tcp_tests_run() ? 0 : EXIT_FAILURE
 	}
 	if len(args) == 1 && args[0] == "power" {
-		return power_loss_run() ? 0 : EXIT_FAILURE
+		return power_loss_run() && power_loss_settings_run() ? 0 : EXIT_FAILURE
 	}
 	if len(args) == 1 && args[0] == "main" {
 		return machine_test(scenario[:], BOOT_VOLUME, TEST_OUTPUT, MACHINE_STOP_OK, TEST_DATA_DISK) ? 0 : EXIT_FAILURE
 	}
 	if len(args) == 1 && args[0] == "network" {
 		return machine_test(scenario_network[:], BOOT_VOLUME, TEST_OUTPUT_NETWORK, MACHINE_STOP_OK, TEST_DATA_DISK) ? 0 : EXIT_FAILURE
+	}
+	// `test crypto`: the machine of the module cryptography only.
+	if len(args) == 1 && args[0] == "crypto" {
+		return cryptography_tests_run() ? 0 : EXIT_FAILURE
 	}
 	// `test random`: the three machines of the randomness only.
 	if len(args) == 1 && args[0] == "random" {
@@ -263,7 +268,7 @@ run_test :: proc(args: []string) -> int {
 	if len(args) == 1 && args[0] == "tcp" {
 		return tcp_tests_run() ? 0 : EXIT_FAILURE
 	}
-	if !machine_test(scenario_fails[:], BOOT_VOLUME_FAILS, TEST_OUTPUT_FAILS, 0) || !machine_test(scenario_shortage[:], BOOT_VOLUME_SHORTAGE, TEST_OUTPUT_SHORTAGE, MACHINE_STOP_OK, TEST_DATA_DISK) || !self_tests_run() || !machine_test(scenario[:], BOOT_VOLUME, TEST_OUTPUT, MACHINE_STOP_OK, TEST_DATA_DISK) || !machine_test(scenario_network[:], BOOT_VOLUME, TEST_OUTPUT_NETWORK, MACHINE_STOP_OK, TEST_DATA_DISK) || !tcp_tests_run() || !random_tests_run() || !extended_state_tests_run() || !persistence_run() || !power_loss_run() || !test_modules() || !test_descriptions() {
+	if !machine_test(scenario_fails[:], BOOT_VOLUME_FAILS, TEST_OUTPUT_FAILS, 0) || !machine_test(scenario_shortage[:], BOOT_VOLUME_SHORTAGE, TEST_OUTPUT_SHORTAGE, MACHINE_STOP_OK, TEST_DATA_DISK) || !self_tests_run() || !machine_test(scenario[:], BOOT_VOLUME, TEST_OUTPUT, MACHINE_STOP_OK, TEST_DATA_DISK) || !machine_test(scenario_network[:], BOOT_VOLUME, TEST_OUTPUT_NETWORK, MACHINE_STOP_OK, TEST_DATA_DISK) || !tcp_tests_run() || !random_tests_run() || !cryptography_tests_run() || !extended_state_tests_run() || !persistence_run() || !power_loss_run() || !power_loss_settings_run() || !test_modules() || !test_descriptions() {
 		return EXIT_FAILURE
 	}
 	fmt.println("kerneltool: all tests passed")
@@ -409,7 +414,7 @@ run_check :: proc(args: []string) -> int {
 	// compiler assembles runtime/memory_for_host_tests.asm itself and links
 	// its object by its path (a library found through `-L/` is refused by
 	// the linker of the Nix sandbox).
-	for folder in ([]string{"runtime", "contract/blake3", "contract/isolated", "contract/pointer_pictures", "contract/remote", "contract/date", "support/storage_mount", "support/storage_retention", "support/calendar", "modules/interface_module", "modules/sample", "support/system", "support/bar", "support/graphics", "support/interface", "support/addresses", "support/information", "support/vector_font", "support/network", "support/tcp", "support/web", "support/cryptography/chacha20", "support/random", "support/instruction_sets", "tools/kerneltool"}) {
+	for folder in ([]string{"runtime", "contract/blake3", "contract/isolated", "contract/pointer_pictures", "contract/remote", "support/sentence", "support/cryptography/vectors", "modules/cryptography", "support/quic", "contract/date", "support/storage_mount", "support/storage_retention", "support/calendar", "support/line_editor", "modules/interface_module", "modules/sample", "support/system", "support/bar", "support/graphics", "support/interface", "support/addresses", "support/information", "support/vector_font", "support/network", "support/tcp", "support/web", "support/cryptography/chacha20", "support/random", "tools/kerneltool", "contract/fixed_addresses", "contract/settings", "modules/text_shaping", "support/text_shaping", "support/instruction_sets"}) {
 		name, _ := strings.replace_all(folder, "/", "_", context.temp_allocator)
 		if !run({"odin", "test", folder, "-vet", CONTRACT_LIBRARY, SUPPORT_LIBRARY, strings.concatenate({"-out:" + BUILD_FOLDER + "/test_", name}, context.temp_allocator)}) {
 			return EXIT_FAILURE

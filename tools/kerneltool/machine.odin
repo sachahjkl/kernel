@@ -138,10 +138,13 @@ scenario_fails := [?]Step {
 // the commits, with no stop of the machine. The third one finds a store
 // that the checks accept, and a count of one commit: its three blocks agree.
 scenario_persist_first := [?]Step {
-	{kind = .Wait, text = "compositor: surface console"},
-	{kind = .Launch, text = "notes"},
-	{kind = .Wait, text = "root: started storage"},
+	{kind = .Wait, text = "compositor: surface console", any_order = true},
+	// The storage service starts at boot, for the boot pass of settings.
+	{kind = .Wait, text = "root: started storage", any_order = true},
 	{kind = .Wait, text = "storage: ok, a new disk: generation 1, 16384 blocks", any_order = true},
+	{kind = .Wait, text = "settings: the boot pass: no settings kept: the defaults", any_order = true},
+	{kind = .Wait, text = "root: settings stopped with code 0"},
+	{kind = .Launch, text = "notes"},
 	{kind = .Wait, text = "root: started notes"},
 	{kind = .Wait, text = "notes: a new store: no note, the count 0", any_order = true},
 	{kind = .Wait, text = "compositor: surface notes"},
@@ -150,26 +153,48 @@ scenario_persist_first := [?]Step {
 	{kind = .Key, text = "tab"},
 	{kind = .Wait, text = "notes: count 1000, stopped: 1000 commits in "},
 	{kind = .Wait, text = "notes: the versions of the count: 1000 rows in "},
+	// A setting that the next machine finds (the boot pass of settings).
+	{kind = .Launch, text = "settings"},
+	{kind = .Wait, text = "compositor: surface settings", any_order = true},
+	{kind = .Wait, text = "settings: ok, "},
 	{kind = .Front, text = "console"},
+	{kind = .Type, text = "connect(\"settings\")"},
+	{kind = .Wait, text = "[console] settings: 3 commands of a service that runs"},
+	{kind = .Type, text = "settings.set(\"font\", \"spleen\")"},
+	{kind = .Wait, text = "settings: font spleen, subpixel order rgb, pointer theme owner, grid fit on; kept in the store"},
 	{kind = .Type, text = "shutdown()"},
 	{kind = .Wait, text = "kernel: the machine stops with code 0"},
 }
 
 scenario_persist_second := [?]Step {
-	{kind = .Wait, text = "compositor: surface console"},
-	{kind = .Launch, text = "notes"},
-	{kind = .Wait, text = "storage: ok, generation 1022: 1 stores, 2 objects, ", any_order = true},
+	{kind = .Wait, text = "compositor: surface console", any_order = true},
+	{kind = .Wait, text = "storage: ok, generation 1023: 2 stores, 3 objects, ", any_order = true},
+	// The setting of the machine before: the desktop draws in Spleen 8x16.
+	{kind = .Wait, text = "settings: the boot pass: the settings kept in the store: font spleen, subpixel order rgb, pointer theme owner, grid fit on; in ", any_order = true},
 	{kind = .Wait, text = " blocks checked, 0 wrong, in ", any_order = true},
+	{kind = .Wait, text = "compositor: the settings changed: font spleen, subpixel order rgb, pointer theme owner, grid fit on; "},
+	{kind = .Launch, text = "notes"},
 	{kind = .Wait, text = "notes: restored the note \"kept across a restart\" and the count 1000, its 3 blocks agree", any_order = true},
 	{kind = .Wait, text = "compositor: surface notes"},
 	{kind = .Shot, text = "notes"},
+	// The vector font again, for the machines after this one.
+	{kind = .Launch, text = "settings"},
+	{kind = .Wait, text = "compositor: surface settings", any_order = true},
+	{kind = .Wait, text = "settings: ok, font spleen, subpixel order rgb, pointer theme owner, grid fit on"},
+	{kind = .Shot, text = "settings_kept"},
+	{kind = .Front, text = "console"},
+	{kind = .Type, text = "connect(\"settings\")"},
+	{kind = .Wait, text = "[console] settings: 3 commands of a service that runs"},
+	{kind = .Type, text = "settings.set(\"font\", \"vector\")"},
+	{kind = .Wait, text = "settings: font vector, subpixel order rgb, pointer theme owner, grid fit on; kept in the store"},
+	{kind = .Front, text = "notes"},
 	{kind = .Key, text = "tab"},
 	{kind = .Wait, text = "notes: count 1100"},
 	{kind = .Quit}, // In the middle of the commits: the machine does not stop.
 }
 
 scenario_persist_crash := [?]Step {
-	{kind = .Wait, text = "compositor: surface console"},
+	{kind = .Wait, text = "compositor: surface console", any_order = true},
 	{kind = .Launch, text = "notes"},
 	{kind = .Wait, text = "storage: ok, generation ", any_order = true},
 	{kind = .Wait, text = " blocks checked, 0 wrong, in ", any_order = true},
@@ -186,7 +211,7 @@ scenario_persist_crash := [?]Step {
 // count is whole. `notes` says that the note is damaged, and does not take
 // it for an empty note. A key writes a new note in place of it.
 scenario_persist_damaged := [?]Step {
-	{kind = .Wait, text = "compositor: surface console"},
+	{kind = .Wait, text = "compositor: surface console", any_order = true},
 	{kind = .Launch, text = "notes"},
 	{kind = .Wait, text = "storage: 1 blocks have a wrong check: 1 objects and 0 stores are damaged; the service serves the others", any_order = true},
 	{kind = .Wait, text = " blocks checked, 1 wrong, in ", any_order = true},
@@ -200,7 +225,7 @@ scenario_persist_damaged := [?]Step {
 
 // After the new note: no wrong block, and the note and the count.
 scenario_persist_replaced := [?]Step {
-	{kind = .Wait, text = "compositor: surface console"},
+	{kind = .Wait, text = "compositor: surface console", any_order = true},
 	{kind = .Launch, text = "notes"},
 	{kind = .Wait, text = " blocks checked, 0 wrong, in ", any_order = true},
 	{kind = .Wait, text = "notes: restored the note \"again\" and the count ", any_order = true},
@@ -212,7 +237,7 @@ scenario_persist_replaced := [?]Step {
 // whole on the disk. The root before it names no wrong block, so the
 // storage service uses it: the note is the note before its last letter.
 scenario_persist_older := [?]Step {
-	{kind = .Wait, text = "compositor: surface console"},
+	{kind = .Wait, text = "compositor: surface console", any_order = true},
 	{kind = .Launch, text = "notes"},
 	{kind = .Wait, text = "storage: the newest root names a block with a wrong check, and the root before it names none: the root before it is used", any_order = true},
 	{kind = .Wait, text = " blocks checked, 0 wrong, in ", any_order = true},
@@ -223,7 +248,7 @@ scenario_persist_older := [?]Step {
 // A format that a stop cut: a first root with a wrong check, and no commit
 // after it. The disk holds no object: the storage service formats again.
 scenario_persist_first_cut := [?]Step {
-	{kind = .Wait, text = "compositor: surface console"},
+	{kind = .Wait, text = "compositor: surface console", any_order = true},
 	{kind = .Launch, text = "notes"},
 	{kind = .Wait, text = "storage: the first root of the disk has a wrong check and no commit followed it", any_order = true},
 	{kind = .Wait, text = "storage: ok, a new disk: generation 1, 16384 blocks", any_order = true},
@@ -236,7 +261,7 @@ scenario_persist_first_cut := [?]Step {
 // did not finish. The storage service finds the wrong check and uses the
 // root before it: the count of the commit before.
 scenario_persist_cut := [?]Step {
-	{kind = .Wait, text = "compositor: surface console"},
+	{kind = .Wait, text = "compositor: surface console", any_order = true},
 	{kind = .Launch, text = "notes"},
 	{kind = .Wait, text = " has a wrong check: a write that a stop cut; the service uses the root before it", any_order = true},
 	{kind = .Wait, text = " blocks checked, 0 wrong, in ", any_order = true},
@@ -311,7 +336,7 @@ scenario_network := [?]Step {
 	{kind = .Wait, text = "remote: ok, an endpoint with the grant 10.0.2.2 port 7100; the call requests of the host arrive there", any_order = true},
 	// The peer sends six malformed call requests when the remote service
 	// starts: each one has its error record, and no call runs.
-	{kind = .Wait, text = "remote: refused a request: remote: the call has 20 bytes; it must have at least 104 bytes"},
+	{kind = .Wait, text = "remote: refused a request: remote: the call has 20 bytes; it must have at least 112 bytes"},
 	{kind = .Wait, text = "remote: refused a request: remote: the argument kind has the value 9, which the call refuses; it takes at most 1"},
 	{kind = .Wait, text = "remote: refused a request: remote: the argument arguments has 400 bytes; it can have at most 16 bytes"},
 	{kind = .Wait, text = "remote: refused a request: remote: the argument result_count has 65536 bytes; it can have at most 65472 bytes"},
@@ -630,7 +655,12 @@ scenario := [?]Step {
 	{kind = .Wait, text = "compositor: the processor: ERMS ", any_order = true},
 	// The two come in an order that the system does not fix.
 	{kind = .Wait, text = "compositor: first frame", any_order = true},
-	{kind = .Wait, text = "compositor: surface console"},
+	{kind = .Wait, text = "compositor: surface console", any_order = true},
+	// The boot pass of settings: the storage service starts at boot, with
+	// the block service of the data disk; a new disk keeps no settings.
+	{kind = .Wait, text = "storage: ok, a new disk: generation 1, 16384 blocks", any_order = true},
+	{kind = .Wait, text = "settings: the boot pass: no settings kept: the defaults: font vector, subpixel order rgb, pointer theme owner, grid fit on; in ", any_order = true},
+	{kind = .Wait, text = "root: settings stopped with code 0"},
 
 	// The console: a language with typed commands.
 	{kind = .Type, text = "1 + 2 * 3"},
@@ -1473,14 +1503,12 @@ scenario := [?]Step {
 	{kind = .Close, text = "disk"},
 	{kind = .Record, program = "root", channel = "programs", level = "info", text = "root: disk stopped with code 0"},
 	{kind = .Record, program = "root", channel = "programs", level = "info", text = "root: block stopped with code 0"},
-	// The storage service starts when a program asks for it, with the block
-	// service of the data disk. The console has a private store of 4 blocks,
-	// by its name; it acts for the person, so it also sees all the stores.
+	// The storage service runs since the boot (the boot pass of settings
+	// needs it), with the block service of the data disk. The console has a
+	// private store of 4 blocks, by its name; it acts for the person, so it
+	// also sees all the stores.
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "connect(\"storage\")"},
-	{kind = .Record, program = "root", channel = "devices", level = "info", text = "root: started block for the device at the place 16 of the bus"},
-	{kind = .Record, program = "root", channel = "programs", level = "info", text = "root: started storage"},
-	{kind = .Record, program = "storage", level = "info", text = "storage: ok, a new disk: generation 1, 16384 blocks", any_order = true},
 	{kind = .Record, program = "root", channel = "calls", level = "info", text = "root: connected console to the service storage"},
 	{kind = .Type, text = "storage.write(\"greeting\", \"kept on the disk\")"},
 	{kind = .Wait, text = "[console] 2"},
@@ -1639,6 +1667,8 @@ scenario := [?]Step {
 	// (callable_of("remote")).
 	{kind = .Call, text = "monitor.counts_named([(\"programs\"), (\"processors\")])", expected = "2 rows of Count"},
 	{kind = .Call, text = "monitor.counts_named([(\"programs\"), (\"nothing\")])", outcome = .Failed, expected = "names nothing that exists"},
+	// The table of error details: each row that names nothing, not only the first.
+	{kind = .Call, text = "monitor.counts_named([(\"nothing\"), (\"programs\"), (\"none\")])", outcome = .Failed, expected = "detail 2 of 2: monitor.counts_named: row 3 of the argument names"},
 	{kind = .Call, text = "sample.scale_values([(0, 0, 10, 10, 10)], 2)", outcome = .Wrong, expected = "error: the parameter readings of sample.scale_values is Table(Reading, Change): a call from the host gives tables to read only"},
 	{kind = .Call, text = "sample.sum_values([(0, 0, 10, 10, 10)])", outcome = .Refused, expected = "no grant"},
 	{kind = .Close, text = "inspect"},
@@ -1669,7 +1699,7 @@ scenario := [?]Step {
 	{kind = .Shot, text = "interface_damage"},
 	{kind = .Close, text = "interface_elements"},
 	{kind = .Wait, text = "root: interface_elements stopped"},
-	// The vector font of the system (docs/FONTS.md): the six candidates,
+	// The vector font of the system (docs/FONTS.md): the seven candidates,
 	// each from a glyph cache that the program builds, beside Spleen 8x16.
 	{kind = .Launch, text = "vector_glyphs"},
 	{kind = .Wait, text = "vector_glyphs: one glyph from its outline, in fixed point"},
@@ -1708,34 +1738,46 @@ scenario := [?]Step {
 	{kind = .Point, x = 400, y = 260, text = "text"}, // The input line of the launcher.
 	{kind = .Key, text = "meta_l"},
 	{kind = .Wait, text = "compositor: the launcher is closed by the key super"},
-	// The settings of the person: the font and the order of the stripes
-	// change while the programs run; each window draws again, with no code
-	// of its own for it.
+	// The settings of the person: the font, the order of the stripes, the
+	// pointer theme and the grid fit change while the programs run; each
+	// window draws again, with no code of its own for it. Each change is
+	// kept in the private store of settings.
 	{kind = .Launch, text = "settings"},
 	{kind = .Wait, text = "compositor: surface settings", any_order = true},
-	{kind = .Wait, text = "settings: ok, font vector, subpixel order rgb"},
-	{kind = .Move, text = "settings", to_x = 392, to_y = 40},
+	{kind = .Wait, text = "settings: ok, font vector, subpixel order rgb, pointer theme owner, grid fit on"},
 	{kind = .Front, text = "monitor"},
-	{kind = .Move, text = "monitor", to_x = 8, to_y = 400},
+	{kind = .Move, text = "monitor", to_x = 8, to_y = 408},
+	{kind = .Front, text = "settings"},
+	{kind = .Move, text = "settings", to_x = 456, to_y = 40},
 	{kind = .Shot, text = "font_vector"},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "connect(\"settings\")"},
-	{kind = .Wait, text = "[console] settings: 2 commands of a service that runs"},
+	{kind = .Wait, text = "[console] settings: 3 commands of a service that runs"},
 	{kind = .Type, text = "settings.set(\"font\", \"spleen\")"},
-	{kind = .Wait, text = "compositor: the settings changed: font spleen, subpixel order rgb; ", any_order = true},
-	{kind = .Wait, text = "settings: drawn with the font spleen, subpixel order rgb"},
+	{kind = .Wait, text = "compositor: the settings changed: font spleen, subpixel order rgb, pointer theme owner, grid fit on; ", any_order = true},
+	{kind = .Wait, text = "settings: drawn with font spleen, subpixel order rgb, pointer theme owner, grid fit on"},
 	{kind = .Front, text = "settings"},
 	{kind = .Shot, text = "font_spleen"},
 	{kind = .Call, text = "settings.get(\"font\")", expected = "spleen"},
 	{kind = .Call, text = "settings.set(\"font\", \"vector\")", expected = "1"},
-	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb; "},
+	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme owner, grid fit on; "},
+	{kind = .Call, text = "settings.set(\"grid_fit\", \"off\")", expected = "1"},
+	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme owner, grid fit off; "},
+	{kind = .Wait, text = "settings: drawn with font vector, subpixel order rgb, pointer theme owner, grid fit off"},
+	{kind = .Shot, text = "font_without_grid_fit"},
+	{kind = .Call, text = "settings.set(\"pointer_theme\", \"system\")", expected = "1"},
+	{kind = .Wait, text = "compositor: the pointer theme in use: System", any_order = true}, // Written before the line of the change.
+	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme system, grid fit off; "},
+	{kind = .Point, inside_window = "settings", x = 100, y = 12, text = "move"}, // The title bar, in the theme of the system.
 	{kind = .Call, text = "settings.set(\"subpixel_order\", \"bgr\")", expected = "1"},
-	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order bgr; "},
+	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order bgr, pointer theme system, grid fit off; "},
 	{kind = .Call, text = "settings.get(\"subpixel_order\")", expected = "bgr"},
 	{kind = .Call, text = "settings.set(\"font\", \"comic\")", outcome = .Failed, expected = "(-3)"},
 	{kind = .Call, text = "settings.set(\"colour\", \"red\")", outcome = .Failed, expected = "(-2)"},
 	{kind = .Call, text = "settings.set(\"subpixel_order\", \"rgb\")", expected = "1"},
-	{kind = .Wait, text = "settings: drawn with the font vector, subpixel order rgb"},
+	{kind = .Call, text = "settings.set(\"pointer_theme\", \"owner\")", expected = "1"},
+	{kind = .Call, text = "settings.set(\"grid_fit\", \"on\")", expected = "1"},
+	{kind = .Wait, text = "settings: drawn with font vector, subpixel order rgb, pointer theme owner, grid fit on"},
 	{kind = .Shot, text = "settings"},
 	{kind = .Close, text = "settings"},
 	{kind = .Wait, text = "root: settings stopped"},
@@ -1763,6 +1805,60 @@ scenario := [?]Step {
 	{kind = .Close, text = "interface_through_module"},
 	{kind = .Wait, text = "root: interface_through_module stopped"},
 	{kind = .Front, text = "console"},
+	// The line editor of the console. The console writes a log line only
+	// when the person asks (Tab, a take): the lines that the scenario types
+	// before this place add no record to the log.
+	// Fuzzy completion: "mcnt" holds the letters of monitor.count in their
+	// order. The list opens while the person types; Escape closes it, Tab
+	// opens it again, and Enter takes the first name, with its '('.
+	{kind = .Type, text = "clear()"},
+	{kind = .Keys, text = "mcnt"},
+	{kind = .Key, text = "esc"},
+	{kind = .Key, text = "tab"},
+	{kind = .Wait, text = "console: the completion list opens by Tab: "},
+	{kind = .Wait, text = " match \"mcnt\", the first is monitor.count; one ranking takes "},
+	{kind = .Shot, text = "console_completion"},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "console: the completion gave the line monitor.count("},
+	{kind = .Keys, text = "\"processors\")"},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "> monitor.count(\"processors\")"},
+	// The cursor inside the line: Home, Right, a character at the cursor,
+	// End, Left, Delete, Backspace. The printed text shows each change in
+	// its place: "acdf" becomes "abce".
+	{kind = .Keys, text = "\"acdf\""},
+	{kind = .Key, text = "home"},
+	{kind = .Key, text = "right"},
+	{kind = .Key, text = "right"},
+	{kind = .Keys, text = "b"},
+	{kind = .Key, text = "end"},
+	{kind = .Key, text = "left"},
+	{kind = .Key, text = "left"},
+	{kind = .Key, text = "delete"},
+	{kind = .Key, text = "backspace"},
+	{kind = .Keys, text = "e"},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "[console] abce"},
+	// The search of the history: Control-R opens it over the lines entered,
+	// the newest first; "leng" keeps the lines that start with "length",
+	// these two first (equal scores: the newest first). Control-R goes to
+	// the older one, Control-S back to the newer one; Enter puts the chosen
+	// line in the input, and a second Enter runs it.
+	{kind = .Type, text = "length(\"first search line\")"},
+	{kind = .Wait, text = "[console] 17"},
+	{kind = .Type, text = "length(\"second\")"},
+	{kind = .Wait, text = "[console] 6"},
+	{kind = .Key, text = "ctrl-r"},
+	{kind = .Keys, text = "leng"},
+	{kind = .Key, text = "ctrl-r"},
+	{kind = .Key, text = "ctrl-s"},
+	{kind = .Key, text = "ctrl-r"},
+	{kind = .Shot, text = "console_history_search"},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "console: the history search gave the line length(\"first search line\")"},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "> length(\"first search line\")"},
+	{kind = .Wait, text = "[console] 17"},
 	// Each page is free or paid, after all the starts and stops of this test.
 	{kind = .Type, text = "memory()"},
 	{kind = .Wait, text = " pages: all the free pages"},

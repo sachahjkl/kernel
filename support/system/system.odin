@@ -400,6 +400,11 @@ Thread :: struct {
 	stack:  rawptr,
 }
 
+// A thread that calls the module cryptography or draws random bytes needs
+// 24 KiB of stack at least: the 16 KiB that erase_stack_below_the_caller
+// erases below its frame, and its frames (runtime/memory.asm). With less, the
+// thread stops at the guard page under its stack, and no other memory is
+// written.
 THREAD_STACK_PAGES :: 16
 
 // thread_start starts a new thread of this program at entry. The threads of

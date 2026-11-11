@@ -93,6 +93,8 @@ module_builds := [?]Module_Build {
 	{name = "host", source = "programs/host", image = true},
 	{name = "probe", source = "modules/probe", image = true},
 	{name = "math", source = "modules/math", image = true},
+	{name = "cryptography", source = "modules/cryptography", image = true},
+	{name = "cryptography_vectors", source = "programs/cryptography_vectors", imports = {"cryptography"}, image = true},
 	{name = "sample", source = "modules/sample", image = true},
 	{name = "hostile_exports", source = "modules/hostile_exports", image = true},
 	{name = "calendar", source = "modules/calendar", image = true},
@@ -107,6 +109,7 @@ module_builds := [?]Module_Build {
 	{name = "tables", source = "programs/tables", image = true},
 	{name = "interface_module", source = "modules/interface_module", image = true},
 	{name = "interface_through_module", source = "programs/interface_through_module", imports = {"interface_module"}, image = true},
+	{name = "text_shaping", source = "modules/text_shaping", image = true},
 	{name = "vector_glyphs", source = "programs/vector_glyphs", image = true},
 	{name = "pointers", source = "programs/pointers", image = true},
 	{name = "settings", source = "programs/settings", image = true},
@@ -126,11 +129,11 @@ build_modules :: proc() -> bool {
 	build_modules_in_parallel() or_return
 	// The pointer themes: the resources of the boot image (pointers.odin).
 	resources := build_pointer_themes(os.get_env(POINTER_THEME_SOURCE_VARIABLE, context.temp_allocator), false) or_return
-	// The glyph cache of the default font: one more resource (vector_fonts.odin).
-	glyph_cache_resource := build_glyph_cache() or_return
+	// The two glyph caches of the default font: two more resources (vector_fonts.odin).
+	glyph_caches := build_glyph_caches() or_return
 	all_resources := make([dynamic]Resource_File, context.temp_allocator)
 	append(&all_resources, ..resources)
-	append(&all_resources, glyph_cache_resource)
+	append(&all_resources, ..glyph_caches[:])
 	// The second boot image has no compositor: with it, the start fails.
 	// The third has no input service: the root service starts only the
 	// program shortage (the test of the shortage of frames).
@@ -214,7 +217,7 @@ build_module :: proc(build: Module_Build) -> bool {
 		fmt.eprintfln("kerneltool: the compiler wrote %d LLVM IR files for %s; one module is one file", len(llvm_ir_files), build.name)
 		return false
 	}
-	if err := os.rename(llvm_ir_files[0], join(folder, "/", build.name, ".ll")); err != nil {
+	if err := file_move(llvm_ir_files[0], join(folder, "/", build.name, ".ll")); err != nil {
 		fmt.eprintfln("kerneltool: cannot move the LLVM IR of %s: %v", build.name, err)
 		return false
 	}
@@ -504,4 +507,17 @@ test_modules :: proc() -> bool {
 		result,
 	)
 	return true
+}
+
+// file_move renames a file, or copies it and removes the source when the
+// two paths are on two file systems (build/ can be a link to another disk:
+// /tmp/disk, when the memory file system of the computer is full).
+file_move :: proc(source, destination: string) -> os.Error {
+	if err := os.rename(source, destination); err == nil {
+		return nil
+	}
+	if err := os.copy_file(destination, source); err != nil {
+		return err
+	}
+	return os.remove(source)
 }

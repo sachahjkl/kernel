@@ -1,7 +1,10 @@
 #+build !freestanding
 package random
 
+import "contract:errors"
 import "core:testing"
+import "support:system"
+import op "contract:operation"
 import "support:cryptography/chacha20"
 
 seed_of :: proc(first: u8) -> (seed: [SEED_SIZE]u8) {
@@ -19,7 +22,7 @@ generator_is_chacha20_with_fast_key_erasure :: proc(t: ^testing.T) {
 	seed := seed_of(1)
 	key := seed
 	generator: Generator
-	testing.expect(t, generator_seed(&generator, &seed))
+	testing.expect(t, generator_seed(&generator, &seed, .Entropy))
 	testing.expect(t, seed == [SEED_SIZE]u8{}) // The seed of the caller is erased.
 	drawn: [2 * BUFFER_SIZE]u8
 	fill(&generator, drawn[:])
@@ -42,7 +45,7 @@ generator_is_chacha20_with_fast_key_erasure :: proc(t: ^testing.T) {
 served_bytes_are_erased :: proc(t: ^testing.T) {
 	seed := seed_of(7)
 	generator: Generator
-	generator_seed(&generator, &seed)
+	generator_seed(&generator, &seed, .Entropy)
 	drawn: [100]u8
 	fill(&generator, drawn[:])
 	for byte in generator.buffer[:100] {
@@ -57,18 +60,18 @@ served_bytes_are_erased :: proc(t: ^testing.T) {
 seeds_and_children :: proc(t: ^testing.T) {
 	zero: [SEED_SIZE]u8
 	generator, other: Generator
-	testing.expect(t, !generator_seed(&generator, &zero))
+	testing.expect(t, !generator_seed(&generator, &zero, .Entropy))
 	testing.expect(t, !generator.seeded)
 	first, second := seed_of(1), seed_of(2)
-	generator_seed(&generator, &first)
-	generator_seed(&other, &second)
+	generator_seed(&generator, &first, .Entropy)
+	generator_seed(&other, &second, .Entropy)
 	testing.expect(t, next_u64(&generator) != next_u64(&other))
 	child := seed_for_a_child(&generator)
 	after: [SEED_SIZE]u8
 	fill(&generator, after[:])
 	testing.expect(t, child != after)
 	child_generator: Generator
-	testing.expect(t, generator_seed(&child_generator, &child))
+	testing.expect(t, generator_seed(&child_generator, &child, .Entropy))
 	testing.expect(t, next_u64(&child_generator) != next_u64(&generator))
 }
 
@@ -79,7 +82,7 @@ seeds_and_children :: proc(t: ^testing.T) {
 statistical_smoke_test :: proc(t: ^testing.T) {
 	seed := seed_of(42)
 	generator: Generator
-	generator_seed(&generator, &seed)
+	generator_seed(&generator, &seed, .Entropy)
 	SIZE :: 1 << 20
 	bytes := make([]u8, SIZE, context.temp_allocator)
 	fill(&generator, bytes)
@@ -140,4 +143,94 @@ gathering_and_its_fallbacks :: proc(t: ^testing.T) {
 	real := entropy_gather(sources_of_the_processor(), &report)
 	again := entropy_gather(sources_of_the_processor(), &report)
 	testing.expect(t, real != again)
+}
+
+// The strength of the seed of the system goes with each seed: a child that a
+// generator of strength weak seeds is weak too, and the context carries it in
+// the value 16 (op.CONTEXT_VALUE_SEED_STRENGTH).
+@(test)
+seed_strength_goes_with_the_seed :: proc(t: ^testing.T) {
+	seed := seed_of(3)
+	starter: Generator
+	testing.expect(t, generator_seed(&starter, &seed, .Weak))
+	testing.expect_value(t, seed_strength(&starter), Seed_Strength.Weak)
+	ctx: system.Context
+	ctx.values = values_with_seed(&starter, ctx.values)
+	testing.expect_value(t, ctx.values[op.CONTEXT_VALUE_SEED_STRENGTH], u64(Seed_Strength.Weak))
+	child: Generator
+	testing.expect(t, generator_from_context(&child, &ctx))
+	testing.expect_value(t, seed_strength(&child), Seed_Strength.Weak)
+	// The seed is erased from the context once it is read.
+	for index in 0 ..< op.CONTEXT_VALUE_SEED_COUNT {
+		testing.expect_value(t, ctx.values[op.CONTEXT_VALUE_SEED + index], 0)
+	}
+	// A value over the last strength reads as the last one, not as a
+	// value out of the enumeration.
+	ctx.values = values_with_seed(&starter, {})
+	ctx.values[op.CONTEXT_VALUE_SEED_STRENGTH] = 200
+	testing.expect(t, generator_from_context(&child, &ctx))
+	testing.expect_value(t, seed_strength(&child), Seed_Strength.Entropy)
+}
+
+// A draw and a reseed leave the generator free for the next draw: the check
+// of two draws at once refuses only a draw that overlaps another.
+@(test)
+a_draw_leaves_the_generator_free :: proc(t: ^testing.T) {
+	seed := seed_of(5)
+	generator: Generator
+	generator_seed(&generator, &seed, .Processor)
+	drawn: [2000]u8
+	fill(&generator, drawn[:])
+	testing.expect(t, !generator.in_use)
+	fresh := [4]u8{1, 2, 3, 4}
+	reseed(&generator, fresh[:])
+	testing.expect(t, !generator.in_use)
+	fill(&generator, drawn[:10])
+	testing.expect(t, !generator.in_use)
+}
+
+// A key is drawn only when the seed has the strength that the caller asks:
+// a weaker seed gives Seed_Too_Weak and no byte (the owner's rule: the
+// program chooses what it accepts, and an unmet requirement is an error).
+@(test)
+a_key_asks_for_a_least_seed_strength :: proc(t: ^testing.T) {
+	Case :: struct {
+		seed:     Seed_Strength,
+		asked:    Seed_Strength,
+		accepted: bool,
+	}
+	cases := []Case {
+		{.Weak, .Weak, true},
+		{.Weak, .Processor, false},
+		{.Weak, .Entropy, false},
+		{.Processor, .Weak, true},
+		{.Processor, .Processor, true},
+		{.Processor, .Entropy, false},
+		{.Entropy, .Processor, true},
+		{.Entropy, .Entropy, true},
+	}
+	for item in cases {
+		seed := seed_of(9)
+		generator: Generator
+		generator_seed(&generator, &seed, item.seed)
+		key: [32]u8
+		error: errors.Error_Record
+		accepted := fill_for_a_key(&generator, key[:], item.asked, &error)
+		testing.expectf(t, accepted == item.accepted, "a seed %v, a key that asks for %v", item.seed, item.asked)
+		if accepted {
+			testing.expect(t, key != [32]u8{})
+		} else {
+			testing.expect(t, key == [32]u8{})
+			testing.expect_value(t, error.kind, i64(errors.Kind.Seed_Too_Weak))
+			testing.expect_value(t, error.value, i64(item.seed))
+			testing.expect_value(t, error.limit, i64(item.asked))
+			testing.expect_value(t, generator.served, 0)
+		}
+	}
+	// A generator with no seed gives the error, not a stop of the program.
+	empty: Generator
+	key: [32]u8
+	error: errors.Error_Record
+	testing.expect(t, !fill_for_a_key(&empty, key[:], .Weak, &error))
+	testing.expect_value(t, error.kind, i64(errors.Kind.Seed_Too_Weak))
 }

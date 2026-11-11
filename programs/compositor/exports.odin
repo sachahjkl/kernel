@@ -6,12 +6,14 @@ import "contract:pointer_pictures"
 import "support:system"
 
 // The compositor is also a service: its exports give the place of the
-// pointer and the windows, as tables of records (property 19). The test
+// pointer and the windows, as tables of records that a caller in another
+// program reads with no code of the compositor. The test
 // tool reads them through the remote service before each press of the
 // pointer, so that a press lands where the scenario wants it.
 //
 // The place of the pointer and the windows are facts of the screen of the
-// person (property 20): the exports give them only to a caller that acts
+// person: another program must not learn where the person works. The
+// exports give them only to a caller that acts
 // for the person. A Record result cannot refuse (docs/MODULE_CONTRACT.md,
 // section 4: it has no error record), so pointer() is a Table of one row.
 

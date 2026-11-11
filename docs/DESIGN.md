@@ -65,7 +65,7 @@ One color is one concept, as one term is one concept.
 - Three sizes: cells of 1, 2 and 3 times 8 x 16. The vector font draws each size from its outline; Spleen enlarges its pixels. No other size.
 - The vector font is monospace: its advance is the width of a cell, so a layout in cells holds with either font. A glyph stays inside its cell.
 - An enlarged picture of the screen shows colored edges on each letter: the subpixel bands, not a fault. The setting `subpixel_order` `none` gives gray edges.
-- The title of a card is in capital letters, in the accent of the card, after a bar of 4 x 16 pixels in the same accent.
+- The title of a card is in capital letters, in the bold weight of the vector font, in the accent of the card, after a bar of 4 x 16 pixels in the same accent.
 - A name is in the dim color. A value is in the text color. A measure of a concept is in the color of that concept.
 - A card has at most one number in the large size: the number that the card is about.
 - Numbers of one column are aligned on the right, each with its unit.

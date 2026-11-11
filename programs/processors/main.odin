@@ -13,6 +13,7 @@ package processors
 
 import "support:display"
 import "support:graphics"
+import "support:interface"
 import op "contract:operation"
 import "support:system"
 import "base:intrinsics"
@@ -63,7 +64,12 @@ thread_counts := [?]u32{1, 2, 4}
 
 job: Job
 workers: [WORKER_COUNT]Worker
-picture: graphics.Canvas
+picture: graphics.Canvas // The picture that the threads compute, in the memory that they share.
+picture_pixels: [PICTURE_WIDTH * PICTURE_HEIGHT]graphics.Color
+pictures: [1]graphics.Canvas
+records_now, records_before: [128]interface.Draw_Record
+text_now, text_before: [1024]u8
+drawing: interface.Window_Drawing
 machine: system.Handle
 processor_count: u64
 processors: [PROCESSOR_ROWS]Processor
@@ -184,11 +190,19 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if !ok {
 		system.stop(1)
 	}
-	canvas := window.canvas
-	display.picture_begin(&window) // The measure of a picture (display.present).
-	graphics.clear(canvas, graphics.COLOR_BACKGROUND)
-	graphics.text(canvas, MARGIN, 8, "One picture, computed by 1, 2 and 4 threads.", graphics.COLOR_TEXT)
-	display.present(&window)
+	// The window shows the picture with a picture record: until the first
+	// rows, the picture is the background.
+	picture = {pixels = raw_data(picture_pixels[:]), width = PICTURE_WIDTH, height = PICTURE_HEIGHT, stride = PICTURE_WIDTH}
+	graphics.clear(picture, graphics.COLOR_BACKGROUND)
+	pictures[0] = picture
+	drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
+	drawing.now.pictures = pictures[:]
+	drawing.before.pictures = pictures[:]
+	{
+		frame := interface.window_frame_begin(&drawing, &window)
+		interface.draw_text(frame.table, MARGIN, 8, "One picture, computed by 1, 2 and 4 threads.", graphics.COLOR_TEXT)
+		interface.window_frame_end(&drawing, &frame, &window)
+	}
 
 	machine = ctx.handles[system.GRANT_MACHINE]
 	report: op.System_Report
@@ -205,7 +219,6 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.log("processors: at most ", together, " of ", processor_count, " processors ran the program at the same time")
 	}
 
-	picture = graphics.view(canvas, MARGIN, HEADER + MARGIN, PICTURE_WIDTH, PICTURE_HEIGHT)
 	job.next = PICTURE_HEIGHT
 	job.done = PICTURE_HEIGHT
 	for &worker, index in workers {
@@ -259,48 +272,55 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			measured_at = now
 		}
 
+		frame := interface.window_frame_begin(&drawing, &window)
+		table := frame.table
+		interface.draw_text(table, MARGIN, 8, "One picture, computed by 1, 2 and 4 threads.", graphics.COLOR_TEXT)
+		// The pixels change when a row is complete, and when a new picture
+		// clears them: the number of the picture and its complete rows are
+		// the generation.
+		interface.draw_picture(table, MARGIN, HEADER + MARGIN, 0, job.number * 1024 + done)
 		x := 2 * MARGIN + PICTURE_WIDTH
 		y := HEADER + MARGIN
-		graphics.fill(canvas, x, y, PANEL, PICTURE_HEIGHT, graphics.COLOR_CARD_TOP)
+		interface.draw_rectangle(table, x, y, PANEL, PICTURE_HEIGHT, graphics.COLOR_CARD_TOP)
 		x += 8
 		y += 8
-		after := graphics.unsigned(canvas, x, y, processor_count, graphics.COLOR_TEXT)
-		after = graphics.text(canvas, after, y, " processors, at one time ", graphics.COLOR_TEXT)
-		graphics.unsigned(canvas, after, y, together, graphics.COLOR_PROGRAM)
+		after := interface.draw_unsigned(table, x, y, processor_count, graphics.COLOR_TEXT)
+		after = interface.draw_text(table, after, y, " processors, at one time ", graphics.COLOR_TEXT)
+		interface.draw_unsigned(table, after, y, together, graphics.COLOR_PROGRAM)
 		y += LINE + 4
 		for &processor, index in processors[:min(processor_count, PROCESSOR_ROWS)] {
-			graphics.unsigned(canvas, x, y, u64(index), graphics.COLOR_DIM)
-			graphics.fill(canvas, x + 20, y + 3, 80, 10, graphics.COLOR_TRACK)
-			graphics.fill(canvas, x + 20, y + 3, int(processor.load) * 80 / 100, 10, COLOR_BAR)
-			graphics.text(canvas, x + 108, y, system.name_of(processor.name[:]), graphics.COLOR_TEXT)
+			interface.draw_unsigned(table, x, y, u64(index), graphics.COLOR_DIM)
+			interface.draw_rectangle(table, x + 20, y + 3, 80, 10, graphics.COLOR_TRACK)
+			interface.draw_rectangle(table, x + 20, y + 3, int(processor.load) * 80 / 100, 10, COLOR_BAR)
+			interface.draw_text(table, x + 108, y, system.name_of(processor.name[:]), graphics.COLOR_TEXT)
 			y += LINE
 		}
 		y += 8
-		graphics.text(canvas, x, y, "threads  time of the picture", graphics.COLOR_DIM)
+		interface.draw_text(table, x, y, "threads  time of the picture", graphics.COLOR_DIM)
 		y += LINE
 		for count, index in thread_counts {
 			color := graphics.Color(index == phase ? graphics.COLOR_TEXT : graphics.COLOR_DIM)
-			graphics.unsigned(canvas, x, y, u64(count), color)
+			interface.draw_unsigned(table, x, y, u64(count), color)
 			if times[index] != 0 {
-				after = graphics.unsigned(canvas, x + 72, y, times[index], color)
-				graphics.text(canvas, after, y, " ms", color)
-				graphics.fill(canvas, x + 152, y + 3, int(times[index] * 88 / max(times[0], times[index])), 10, COLOR_BAR)
+				after = interface.draw_unsigned(table, x + 72, y, times[index], color)
+				interface.draw_text(table, after, y, " ms", color)
+				interface.draw_rectangle(table, x + 152, y + 3, int(times[index] * 88 / max(times[0], times[index])), 10, COLOR_BAR)
 			}
 			y += LINE
 		}
 		y += 8
-		graphics.text(canvas, x, y, "thread   rows of this picture", graphics.COLOR_DIM)
+		interface.draw_text(table, x, y, "thread   rows of this picture", graphics.COLOR_DIM)
 		y += LINE
 		for &worker, index in workers {
-			graphics.unsigned(canvas, x, y, u64(index + 1), tint_color(index, 255))
-			graphics.unsigned(canvas, x + 72, y, u64(worker.rows), graphics.COLOR_TEXT)
-			graphics.fill(canvas, x + 112, y + 3, int(worker.rows) * 128 / PICTURE_HEIGHT, 10, tint_color(index, 255))
+			interface.draw_unsigned(table, x, y, u64(index + 1), tint_color(index, 255))
+			interface.draw_unsigned(table, x + 72, y, u64(worker.rows), graphics.COLOR_TEXT)
+			interface.draw_rectangle(table, x + 112, y + 3, int(worker.rows) * 128 / PICTURE_HEIGHT, 10, tint_color(index, 255))
 			y += LINE
 		}
 		y += 4
-		after = graphics.text(canvas, x, y, "lock waits ", COLOR_WAITS)
-		graphics.unsigned(canvas, after, y, u64(job.lock.waits), COLOR_WAITS)
-		display.present(&window)
+		after = interface.draw_text(table, x, y, "lock waits ", COLOR_WAITS)
+		interface.draw_unsigned(table, after, y, u64(job.lock.waits), COLOR_WAITS)
+		interface.window_frame_end(&drawing, &frame, &window)
 		for _ in display.next_event(&window) {}
 		display.wait(&window, now + FRAME_TIME)
 	}

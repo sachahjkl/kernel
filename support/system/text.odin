@@ -26,6 +26,9 @@ kernel_error_text :: sentence.kernel_error_text
 export_error_text :: sentence.export_error_text
 ring_error_text :: sentence.ring_error_text
 wrapper_error_text :: sentence.wrapper_error_text
+error_detail_number_text :: sentence.error_detail_number_text
+export_error_detail_text :: sentence.export_error_detail_text
+error_details_rest_text :: sentence.error_details_rest_text
 
 // log writes one line on the log of the kernel. A program with no handle to
 // the log writes nothing.

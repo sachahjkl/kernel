@@ -61,6 +61,8 @@ Kind :: enum i64 {
 	Object_Marked     = 34, // value: the handle of a memory object; found: its pages with a protection of their own. The object is not mapped again and not given.
 	Whole_Only        = 35, // value: an address; limit: the bytes of the range. The range is a part of a mapping whose protection changes only whole (device memory, large pages), or of an area that the system keeps (a thread area).
 	Not_Multiple      = 36, // value: the argument; limit: the number that it must be a multiple of; found: the rest.
+	Not_Authentic     = 37, // The bytes of the argument do not prove what they must: the tag of a sealed text, or a signature, does not verify. No byte of the result is given.
+	Seed_Too_Weak     = 38, // The random seed of the program is weaker than the least strength that the caller accepts. value: the strength of the seed; limit: the least strength asked (1 weak, 2 processor, 3 entropy). Nothing is made.
 }
 
 // What value, limit and found count.

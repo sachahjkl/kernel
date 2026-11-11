@@ -13,7 +13,7 @@ The system boots under QEMU to a graphical desktop with a console, a system tool
 
 ![The interface package: each element live, the draw table of the last frame, the damage by difference](docs/screenshots/interface_elements.png)
 
-![The text of the system is a vector font with subpixel bands (JetBrains Mono by default); the program settings changes it to Spleen 8x16 and back while every window runs](docs/screenshots/font_vector.png)
+![The text of the system is a vector font with subpixel bands (Paper Mono by default); the program settings changes it to Spleen 8x16 and back while every window runs](docs/screenshots/font_vector.png)
 
 ![Six candidate fonts beside Spleen 8x16, each from a glyph cache in fixed point, and a word of each enlarged](docs/screenshots/font_candidates.png)
 
@@ -34,6 +34,8 @@ Tables as parameters: one description, three ways to call (a direct call, a call
 ![Revocation: the console takes back what it lent, and the root service ends the machine grant of a program that runs](docs/screenshots/revocation.png)
 
 ![A line runs in the second thread of the console: the console keeps the keys, and Escape stops the call](docs/screenshots/running.png)
+
+![The completion list of the console: "mcnt" matches monitor.count by a fuzzy match, the matched letters lit, each name with what it is and its signature](docs/screenshots/console_completion.png)
 
 | | |
 |---|---|
@@ -141,6 +143,7 @@ The same window with the pointer theme of the owner (Posy's Cursor, CC BY-NC 4.0
 - `inspect` shows one program live: its address space, its modules, its threads with the state of the scheduler, the stop report of a program that faulted, and the bytes of its own memory, from reports of the kernel that give no byte of another program.
 - The compositor owns the framebuffer. Each program draws into a surface in shared memory.
 - The console is a normal program. A command is a typed function: `hash("abc")`, `start("life")`, `programs()`.
+- The line of the console has a caret, a completion list that opens while the person types (a fuzzy match over the commands, the exports of the descriptions, the services, the variables, the modules), the signature of the call at the caret, and a history of 256 lines with Control-R and Control-S (`docs/CONSOLE.md`).
 - `load("math")` loads a module: its exports become commands. The module describes them: the tool makes each description from the source (parameter names, types, help).
 - `isolate("probe")` runs a module in a sandboxed program with no handle. The same calls go through a ring. A module that faults, loops or tries to stop the machine does not harm the console.
 - `rings` shows communication between programs: six programs pass records through six rings in shared memory. Stop one program: its records wait in the ring. Start it again: they continue.
@@ -187,7 +190,7 @@ The same window with the pointer theme of the owner (Posy's Cursor, CC BY-NC 4.0
 | `contract/` | The source library `contract:`: what two parties agree on. `operation` (the kernel operations), `boot_info` (the record from the boot program to the kernel), `module` (the module format and the loader code), `store` (the format of the data disk), `pointer_pictures` (the pointer theme file and its validation), `blake3` (the hash), `ring` (two queues in shared memory, and the shared queue), `isolated` (the isolated call), `glyph_cache` (the drawn glyphs of the vector font), `settings` (the settings page of the person), `date` (the date page: the date of the time 0 of the system) |
 | `support/` | The source library `support:`: what a program compiles in. `system` (kernel operations, text, loader, grants, services), `graphics` (drawing, and the table of the design rules), `interface` (the elements of the windows as draw tables, the damage by difference), `vector_font` (the vector font: a reader of TrueType outlines, a rasterizer in fixed point with subpixel bands, the builder of the glyph cache), `display` (the protocol of the compositor), `terminal` (the terminal ring), `bootscreen`, `bar` (the names of the programs and the places of the bar, its menus and the filter of the launcher), `relay` (the records of the `rings` demonstration), `twins` (the modes of the program `twin`) |
 | `programs/` | `root`, `input`, `compositor`, `console`, `host`, `monitor`, `plasma`, `life`, `paint`, `fault`, `temple`, `rings`, `node`, `threads`, `workers`, `rights`, `origin`, `budget`, `limits`, `processors`, `locks`, `locker`, `scheduler`, `address_space`, `shortage`, `boot`, `pages`, `frames`, `twin`, `log`, `flow`, `crowd`, `clock`, `tally`, `manual`, `terminal`, `flood`, `pointers` |
-| `resources/` | The sources of the resources of the boot image: the pointer manifests (`resources/pointers/`), and the ASCII subsets of the six candidate vector fonts with their licenses (`resources/fonts/`, `docs/FONTS.md`) |
+| `resources/` | The sources of the resources of the boot image: the pointer manifests (`resources/pointers/`), and the ASCII subsets of the seven candidate vector fonts with their licenses (`resources/fonts/`, `docs/FONTS.md`) |
 | `modules/` | Modules of commands (`math`, `probe`) and the test modules of the host load test |
 | `tools/kerneltool/` | The kernel tool: all the automation of the project |
 
@@ -221,7 +224,7 @@ In the machine, type `help()` in the console. The button "programs" of the bar o
 
 ## Licences
 
-The default font is JetBrains Mono (SIL Open Font License 1.1), as an ASCII subset in `resources/fonts/`; the other candidates are there with their licenses (`OFL.txt`, `BITSTREAM_VERA_LICENSE.txt`, and a `.license` file for each). The fallback font is Spleen 8x16 by Frederic Cambus, BSD 2-Clause. See `support/graphics/FONT_LICENSE`.
+The default font is Paper Mono, with its SemiBold for the titles (SIL Open Font License 1.1), as ASCII subsets in `resources/fonts/`; the other candidates are there with their licenses (`OFL.txt`, `BITSTREAM_VERA_LICENSE.txt`, and a `.license` file for each). The fallback font is Spleen 8x16 by Frederic Cambus, BSD 2-Clause. See `support/graphics/FONT_LICENSE`.
 
 The portrait of the `temple` program is a public domain picture from Wikimedia Commons. See `programs/temple/PORTRAIT_LICENSE`.
 

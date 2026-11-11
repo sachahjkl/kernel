@@ -28,6 +28,8 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Load error | The record of a load that failed (`module.Load_Error`): the stage, the module that was being loaded, the import, a replacement on the path, the export, and the two descriptions that differ. The caller owns it. Zero is no error. It is the error record of the loader, larger because it holds names | exception, errno, error message |
 | Stop report | The record that the kernel keeps of a program that stopped on a fault: the stop code, the instruction, the address, the module record of the module that ran, and the stack trace. The holder of the program handle reads it | core dump, crash report, signal info |
 | Error record | The record that a call that failed gives back to its caller (`errors.Error_Record`, 56 bytes, seven Integer fields): the error kind, the unit, the operation or export, the number of the argument, the value that it had, the limit, and what the system found. A kernel operation gives it in its completion record, and so does a ring of a service (the values of a completion whose status is not 0); an export writes it at an address that the caller gives. It holds values only. Zero is no error (`MODULE_CONTRACT.md`, section 8) | errno, exception, error code, detail record, error message |
+| Error detail | One thing that a call that failed has to say, as one record of the error form of the call: an error record for an export, a load error for the loader. A call gives its error details in a table of error details that the caller gives; the error record of the call is the first error detail (`MODULE_CONTRACT.md`, section 8, "The table of error details") | sub-error, cause, inner error, error list, diagnostic |
+| Table of error details | An optional Append table parameter of error details, in memory of the caller: the last parameter of an export that has an error record, with the record of the error record. With no table (`nil`) the call gives its error record only; the count of the table is the count of all the error details, also those that did not fit | error list, error buffer, error stack, error chain |
 | Error kind | What an error record says is wrong: an empty argument, a handle that was revoked, a budget that cannot pay, ... (`errors.Kind`). The documentation of an export names the kinds that it gives | error code, errno value, exception type |
 | Frame pointer | The register `rbp` of a function: the address of the frame of the function on the stack, where the frame pointer and the return address of its caller are. Each module keeps it (rule 8 of `MODULE_CONTRACT.md`) | base pointer, frame record |
 | Stack trace | The return addresses of the calls that led to the instruction of a fault, from the frame pointers, each with the module record that holds it. Part of a stop report | backtrace, call stack (for this), unwind |
@@ -42,6 +44,8 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Problem | The error value that a reader of input that nobody checked gives for a rule that the input breaks: the kind, where (the table and the record of a module, or the layer of a frame), the byte, the bad value and its limit. An information function gives one for a module (`information.Problem`); the network service gives one for a frame (`datagram.Problem`) | exception, errno, error code |
 | Boot image | The one block of data that the boot program loads with the kernel. It holds the modules of the first programs, each with its name | initrd, ramdisk |
 | Position-independent | Code that runs correctly at any address with no change to its bytes | relocatable, PIC, PIE |
+| Scalar form | The form of a procedure that computes one value with one instruction, in the general registers. It is the reference of each vector form of the same procedure, and the code of a target with no vectors (`docs/SIMD.md`) | plain C version, fallback (for this), slow path |
+| Vector form | A form of a procedure that computes several values with one instruction, in the 128-bit registers of SSE2, and gives the same bytes as its scalar form for every input (`docs/SIMD.md`) | SIMD version, kernel (for this), fast path, intrinsics version |
 
 ## Running code
 
@@ -106,6 +110,7 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Kernel | The code that runs with processor privilege. It holds five systems: handle table, memory, scheduler, rings and wait, device grant | core, supervisor |
 | Kernel operation | One request that a program makes to the kernel (P1) | system call, syscall |
 | Boot program | The UEFI program that loads and measures the system, then starts the kernel (P17) | boot loader, bootloader |
+| Fixed range | An address and a span of the address space of a program where the system places one mapping that it gives: the settings page, a glyph cache, the date page, the files of a module. Each is one member of the enumeration `Fixed_Range` of `contract/fixed_addresses`, one slot of the band from `BAND_START`, so no two overlap; a mapping that a program places by its own choice is outside the band, from `OWN_CHOICE_START` | well-known address, fixed mapping |
 
 ## Access
 
@@ -153,9 +158,15 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Real-time clock | The clock of the machine that keeps the date when the machine is off (on a PC: the CMOS clock, ports 0x70 and 0x71). The program `date` reads it at its start and each 10 s | RTC (in text), hardware clock, BIOS clock |
 | Date | The count of milliseconds since 1970-01-01 00:00:00 UTC. Leap seconds are not counted: a day has 86400 seconds | timestamp, wall clock, epoch time, Unix time (in text) |
 | Date page | One page that the root service creates and maps read-only into each program that it starts. The program `date` writes there the date of the time 0 of the system, so a program reads the date with no kernel entry: that date plus the milliseconds of the time page | wall-clock page, vDSO, clock page |
-| Terminal ring | The ring between a program and its terminal. In the command queue, a record from the program has a kind (text, status, clear, edit line), a count of bytes and a style. It has no place on the screen. In the completion queue, a record from the terminal is a key record | escape sequence, control character, stream |
-| Key record | A record from a terminal to its program: the code of one key that the person pressed, and its character | standard input, character device, raw mode, cooked mode |
+| Terminal ring | The ring between a program and its terminal. In the command queue, a record from the program has a kind (text, status, clear, edit line, hint line, completion list), a count of bytes and a style. It has no place on the screen. In the completion queue, a record from the terminal is a key record | escape sequence, control character, stream |
+| Key record | A record from a terminal to its program: the code of one key that the person pressed, its character, and the modifiers that the person held (Shift, Control) | standard input, character device, raw mode, cooked mode |
 | Edit line | The one line that a program changes: the line of input of the person with a cursor, or a line that says what the program does now. The program sends its text and the place of the cursor; the terminal shows it after the last line. The program owns the editing | line discipline, readline, cursor addressing, prompt |
+| Line editor | The procedures of `support/line_editor` that change an edit line with keys: the caret, a character at the caret, Backspace, Delete. They have no state of their own: the line is a record of the program | readline, line discipline |
+| Hint line | One dim line that a program shows under its edit line: the signature of the call at the caret, or how to use the list that is open. A new one replaces the one before | tooltip, status (for this), echo area |
+| Completion list | The names that can take the place of the name at the caret, best first, with one chosen row. The program gives the rows; its terminal draws them over its text, at the edit line | dropdown, popup, autocomplete menu, suggestions |
+| Fuzzy match | A match where the characters of a query appear in a name in their order, with gaps allowed, lower and upper case equal. A score orders the names that match (`docs/CONSOLE.md`, section 3) | fuzzy search, subsequence search, filter (for this) |
+| Line history | The lines that the person entered in the console, in a ring of bytes in its memory, the newest first | history (alone), scrollback, command log |
+| History search | The completion list over the line history: Control-R opens it, and the fuzzy match orders the lines, the newest first for equal scores | reverse-i-search, incremental search |
 | Text region | The shared memory beside a terminal ring where the program writes the bytes of its text, in order. A record gives only a count of bytes: the terminal keeps its own place | scrollback (for this), pipe buffer |
 | Run | Bytes of text that have one style. A line is a list of runs | span, segment, chunk |
 | Style | What a run is, and how to show it: a tone, flags (end of the line, own color, reverse) and a color | attribute, SGR, escape code |
@@ -286,6 +297,7 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Draw table | The draw records of one frame of a window, and the bytes of their texts, in the memory of the program | display list, command buffer, render tree |
 | Text grid | A grid of text cells of a program (a character, reverse, a color), drawn by one draw record; the difference compares its cells and damages only the rows spans that changed (`docs/INTERFACE.md`, section 2.4) | character matrix, screen buffer |
 | Picture record | A draw record that shows the pixels of a picture of the program, with a generation that changes when the pixels change | image node, bitmap item |
+| Line record | A draw record of a straight line between two points, with a thickness and a color; a line and its reverse are one record (`docs/INTERFACE.md`, section 2.5) | stroke, path, polyline |
 | Element | A part of a window that one call of the interface package draws: a card, a line of a label and a value, a bar, a table, a button, a list with a choice, a text input | widget, control, component, view |
 | Element identity | A number that names one element from one frame to the next, made from a text: the focus and the pointer state follow it | id, key, handle (reserved for the kernel) |
 | Interface state | What the interface package keeps between frames, in the memory of the program: the element with the focus, the element under the pointer, the pressed element, the order of the focus | UI context, retained state |
@@ -314,8 +326,20 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Subpixel band | One of the three color stripes of a pixel of the screen, red, green and blue, side by side; the vector font has a coverage for each one | subpixel, ClearType, LCD stripe |
 | Grid fit | The move of the baseline, the x-height and the cap height of a font onto whole pixels, so that the tops of the letters are sharp. The system has no other hinting | hinting (alone), autohint |
 | Glyph cache | The glyphs of one font already drawn, for each character 32 to 126 and each scale of the grid: words of coverage, in one file (`contract/glyph_cache`). The kernel tool makes it at build time; it is a resource of the boot image | atlas, texture cache, glyph bitmap |
+| Proportional cache | A glyph cache with `FLAG_PROPORTIONAL`: each character has its own advance, each glyph is the box of its ink at each subpixel position, and the cache has the pair adjustments. A cache with no such flag is monospace: one position, each glyph inside its cell, no pair (`contract/glyph_cache`, `validate`) | proportional font cache |
 | Setting | One choice of the person that changes how the system works for each program: the font, the order of the subpixel bands. The program `settings` changes it | preference, option, configuration |
 | Settings page | The one page of the settings of the person (`contract/settings`): the root service creates it; the program `settings` writes it; each program with a surface reads it | registry, config file, dconf |
+| Monospace font | A font whose characters all have one advance, so that a text is a row of equal cells: Paper Mono, and Spleen 8x16. The font of the terminal, the console, and each text that a person compares character by character (`docs/FONTS.md`, section 12.6) | fixed-width font (for this), terminal font |
+| Interface font | The proportional font of the titles, the labels, the buttons, the menus and the bar: B612 (designed, not built; `docs/FONTS.md`, section 12) | UI font, system font (for this), sans |
+| Advance | The distance from the origin of a glyph to the origin of the next one, before any pair adjustment | width (for this), pitch |
+| Pair adjustment | The change of the advance that a font gives for one pair of glyphs that follow each other (`kern` format 0, or a pair lookup of `GPOS`) | kerning pair (for this) |
+| Text shaping | The step that turns the characters of a text into placed glyphs with a font: here the advances and the pair adjustments only; no ligature, no other script (`docs/FONTS.md`, section 12.3) | layout (for this), typesetting |
+| Placed glyph | A record of 16 bytes that text shaping gives for one character: the glyph, its x from the origin of the run and its advance, in 1/64 of a pixel | positioned glyph, glyph run entry |
+| Subpixel position | The fraction of a pixel where a glyph starts. The glyph cache of a proportional font keeps each glyph at three: 0, 1/3 and 2/3 of a pixel | subpixel offset, bucket |
+| Spacing | The advances of the characters 32 to 126 and the pair adjustments of one font at one scale, in 1/64 of a pixel: the two tables that text shaping reads, from a glyph cache (`support/text_shaping`, `Spacing`) | metrics (for this), kerning data |
+| Text range | A record that names one text in a table of bytes by its first byte and its count, with its width, which the measure writes (`text_shaping.Text_Range`) | span (for this), slice |
+| Boot pass | The start of the program `settings` that the root service makes at boot, with no window: it reads the settings kept in its private store, writes the settings page, and stops | init script, startup hook |
+| Blend table | The results of the blend in linear light of one text color over one pixel color, for each coverage of each channel, kept in the memory of a program (`graphics.Blend_Tables`) | lookup table (alone), LUT |
 
 ## Randomness
 
@@ -325,7 +349,40 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Random generator | The record of fixed size in the memory of a program that gives it random bytes: ChaCha20 with fast key erasure (`support/random`). A draw makes no kernel entry and no call | RNG, PRNG, CSPRNG (for this), /dev/urandom |
 | Entropy report | What the root service found when it gathered the seed of the system: the sources (rdseed, rdrand, the cycle counter), their good and refused values, and the seed strength | entropy estimate |
 | Seed strength | The strongest source that gave all its values to the seed of the system: entropy (rdseed), processor (rdrand), or weak (the cycle counter only, counted as 0 bits) | security level |
+| Cryptography module | The module `cryptography`: the primitives that the system took from Odin's `core:crypto`, as exports with the memory of the caller and error records (`docs/CRYPTOGRAPHY.md`) | crypto library, libcrypto |
+| Not authentic | The error kind of a sealed text whose tag, or of a message whose signature, does not verify. The call gives no byte | MAC failure, bad tag |
 | Compatibility layer | The packages of `support/cryptography` that give the code taken from Odin the helpers of its origin, over the primitives of this system (`docs/CRYPTOGRAPHY.md`) | shim, polyfill |
+
+## QUIC
+
+| Term | Definition | Do not use |
+|---|---|---|
+| Connection identifier | The bytes (0 to 20) by which a QUIC endpoint names a connection in each packet, independent of the addresses (RFC 9000, section 5.1). Each side chooses the identifiers that the other side sends to it | connection ID (in prose), CID |
+| Packet protection | The AEAD that encrypts the payload of a QUIC packet and authenticates its header, with the key and the iv of one direction of one encryption level (RFC 9001, section 5.3) | encryption (for this), record protection |
+| Header protection | The mask that hides the low bits of the first byte and the packet number of a QUIC packet, made from a sample of the protected payload (RFC 9001, section 5.4) | header encryption |
+| Encryption level | One of the sets of keys of a QUIC connection: Initial (from the connection identifier), Handshake, 0-RTT and 1-RTT (from TLS). Each packet type uses one level | epoch, key phase (for this) |
+| Packet number space | The sequence of packet numbers that one encryption level uses (Initial, Handshake, application data); a packet number is unique in its space | sequence number (for this) |
+| Initial packet | The first packets of a QUIC connection, protected with keys that any observer can compute from the connection identifier: they carry the start of the TLS handshake | handshake packet (for this) |
+| Raw public key | A public key that a TLS peer sends in its Certificate message alone, with no certificate around it: the SubjectPublicKeyInfo of the key (RFC 7250). The other side trusts it when it is the key that its caller pinned | self-signed certificate (for this) |
+| Pinned key | The one public key that the caller of a TLS client gives it as the key of the server: any other key is refused | trust anchor, root certificate |
+| Transcript | The handshake messages of TLS, in order, whose hash the key schedule and the Finished messages use | handshake hash (for the bytes) |
+| Key schedule | The secrets of TLS 1.3, each one from the one before with HKDF and a transcript hash: early, handshake, master, and the traffic secrets of each side (RFC 8446, section 7.1) | key derivation (for the whole) |
+| Alert | The reason of a failure of TLS, one byte (RFC 8446, section 6). QUIC sends it as the error code 0x100 + alert | TLS error (for this) |
+| Frame | One unit of the payload of a QUIC packet: a type, then its fields (RFC 9000, section 19). A packet carries one frame or more | message (for this), chunk |
+| Ack-eliciting packet | A packet with a frame other than PADDING, ACK and CONNECTION_CLOSE: the peer must acknowledge it | reliable packet |
+| Probe timeout | The time after which a side that has no acknowledgement sends one or two probe packets, from the round-trip time and its variation (RFC 9002, section 6.2). It doubles at each timeout without an acknowledgement | retransmission timeout, RTO (for this) |
+| Congestion window | The most bytes of ack-eliciting packets that a side has in flight. This layer keeps it fixed at 12 000 bytes | send window (for this) |
+| Flow control limit | The largest offset of data that a side allows the peer to send, for one stream (MAX_STREAM_DATA) and for the connection (MAX_DATA). Data past it closes the connection with FLOW_CONTROL_ERROR | receive window (for this) |
+| Anti-amplification limit | A server that did not validate the address of a client sends at most 3 times the bytes that it received from it (RFC 9000, section 8.1) | |
+| Address validation | The proof that a client receives at its address: here, a Handshake packet of the client, which needs the keys of the server's flight | |
+| Handshake confirmed | The point after which a side drops its Handshake keys: a server when the handshake completes, a client when HANDSHAKE_DONE comes (RFC 9001, section 4.1.2) | handshake done (for the state) |
+| Handshake deadline | The time after which a connection whose handshake did not complete ends: 10 s from the start of a client, or from the first authentic Initial at a server | handshake timeout (for the value) |
+| Packet number floor | The packet number below which a side refuses each packet of a space, because its set of received numbers forgot those ranges | replay window |
+| Idle timeout | The time with no packet of the peer after which a side ends a connection with no packet: the smaller of the two that the sides give, and 3 probe timeouts at least | keep-alive |
+| Closing state | The state of a side that sent CONNECTION_CLOSE: it answers each packet with it, for 3 probe timeouts | |
+| Draining state | The state of a side that received CONNECTION_CLOSE: it sends nothing, for 3 probe timeouts | |
+| Transport parameters | The values that each side of QUIC gives the other in the handshake of TLS: its limits, its timeouts, and the connection identifiers that it used (RFC 9000, section 18) | settings |
+| Retry packet | A packet of a server that asks the client to send its Initial packet again with a token, to prove its address; its integrity tag uses a fixed key | redirect |
 
 ## Project
 

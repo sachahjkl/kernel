@@ -32,6 +32,8 @@ The options that the coordinator gave, weighed against the properties:
 - The key that made a refill is overwritten at once. Each byte is erased (`erase_secret_bytes`) when it is served. So a copy of the state after a draw does not give the bytes before it.
 - `reseed` mixes new bytes into the key: the next key is BLAKE3 of a domain text, the old key and the new bytes.
 - A zero generator is not seeded: a draw from it stops the program, so that no program draws from a known key.
+- **One generator belongs to one thread.** Two threads that draw from one generator at once would get the same bytes (two equal nonces, two equal child seeds). A second thread gets its own generator, seeded with `seed_for_a_child` of the first. A draw or a reseed sets a flag of the generator with an atomic exchange; a second draw that finds it set stops the program with the sentence "random: two threads drew from one generator at once ...", instead of a bounds check later. The check costs one atomic exchange for each draw. It finds two draws that overlap, not a generator that two threads use one after the other (which gives no equal bytes).
+- **The stack is erased after a refill and after a hash of a key.** The frames of ChaCha20 under `refill` hold the words of the key that made the refill, and the frames of BLAKE3 under `key_derive` hold the old key and the chaining values. `fill` calls `erase_stack_below_the_caller` after each refill, and `reseed` and `entropy_gather` after `key_derive` (the same 16 KiB as in `docs/CRYPTOGRAPHY.md`, section 6). So "the key that made a refill is overwritten at once" holds for the record of the generator and for the stack below the draw.
 - The ChaCha20 is the code of Odin's `core:crypto` that the system took (`docs/CRYPTOGRAPHY.md`), checked against RFC 8439.
 
 **Speed**: 4 MiB in 12.4 to 38.7 ms in the program `randomness` (108 to 339 MB/s, host load 19 to 22). A draw of 32 bytes for a TCP secret costs about 0.1 to 0.3 us.
@@ -52,6 +54,15 @@ The strength of the seed is the strongest source that gave all its values. The r
 
 **A machine with no `rdrand` and no `rdseed`.** The seed comes from the cycle counter only. Each program still starts and draws. The log and the window say "weak (the cycle counter only)" in the color of a failure. `kerneltool test random` runs such a machine (`-cpu max,-rdrand,-rdseed`).
 
+**Each program knows the strength of its seed.** The starter writes the strength of the seed of the system in the context value 16 (`op.CONTEXT_VALUE_SEED_STRENGTH`) with the seed: 1 weak, 2 processor, 3 entropy. A child's seed comes from its starter's stream, so it has the same strength. `random.seed_strength(generator)` gives it.
+
+**Each program chooses the least strength that it accepts.** The decision of the owner, 2026-11-11, word for word: "je pense que les fonctions qu'on expose devrait permettre de choisir ce que le programme tolère et dans le cas où les requis que le programme attend ne sont pas satisfaits et ben dans ce cas là c'est une erreur c'est pas grave".
+- `random.fill_for_a_key(generator, output, least_strength, error)` gives bytes for a key, a nonce or another secret only when the seed of the program has `least_strength` at least.
+- If the seed is weaker, the call gives the error kind `Seed_Too_Weak` (value: the strength of the seed; limit: the strength asked), with the sentence "the random seed of this program has the strength weak (the cycle counter only), and the call asks for processor (rdrand) at least: it made nothing". It writes no byte.
+- The system does not refuse for the program, and a plain draw with no requirement (`random.fill`) stays as it is.
+- QUIC and TLS ask for `processor` at least (`Tls_Configuration.least_seed_strength`): on a machine with no `rdrand` and no `rdseed`, a handshake does not start, and the caller gets the error.
+- The exports of the module `cryptography` take each key as an argument and draw no random byte, so they have no such parameter.
+
 **The boot-time problem: who seeds root.** No program runs before the root service, so it cannot get a seed from a device program. It takes one from the processor at its start; a device program can add bytes later with `reseed` (section 5).
 
 ## 4. The tests
@@ -68,9 +79,13 @@ The strength of the seed is the strongest source that gave all its values. The r
   - The first 16 bytes of the stream of the 4 programs all differ: two programs give different streams, and a restart gives different streams.
 - `server` and `fetch` take the secret of the initial sequence numbers of TCP from their generator (`kerneltool test tcp`).
 
-## 5. The TCP secret before this step was weaker than the window said
+## 5. The TCP secret before step 60: checked, and not weaker than the window said
 
-Recorded on 2026-11-11 (the review row of step 60). Up to step 59, `tcp.secret_make` read `rdrand` in a loop with inline asm that had no `#side_effects`. LLVM took the instruction as a pure function and kept one value for the loop: the four values of the secret were the same value (the machine test of this step saw the same fault: "rdrand present, 1 good, 255 refused"). The check "two equal values" then refused the secret, so `server` and `fetch` took it from the cycle counter, which an attacker can guess. The window of `server` and the log said "rdrand" or "the cycle counter (weak)" by the result of that check; where the compiler kept one value, the source was the cycle counter. Since step 60 the secret is 32 bytes of the generator of the program.
+Checked on 2026-11-11, after the review row of step 60 asked whether the missing `#side_effects` made the TCP secret of the earlier steps weaker than the window said. The answer is no, by the machine code:
+
+- `tcp.secret_make` of step 52 (`8d8d077`), built again with the same flake, and disassembled (`llvm-objdump -d` of `server.o` and `fetch.o`): each of the four values of the secret runs its own `rdrand` instruction (20 `rdrand` in each object: a loop of up to 10 tries for each value), and the check of equal values compares the four results. LLVM did not merge the four reads: each read is in another iteration of a loop whose result goes to memory.
+- So, on a processor with `rdrand`, the secret came from `rdrand`, and the window of `server` said "rdrand"; a refusal (a value of 0, all ones, or two equal values) gave "the cycle counter (weak)" in the color of a failure. The window said the truth.
+- The fault that `#side_effects` corrects was in the new code of `support/random` (`processor_values` through a procedure value): there LLVM kept one value, and the first machine test of this step showed "rdrand present, 1 good, 255 refused". It never reached a TCP secret: it was found and corrected before the commit that moved the secret to the generator.
 
 ## 6. What is not built
 

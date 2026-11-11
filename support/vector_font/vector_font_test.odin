@@ -181,8 +181,9 @@ filters_measured :: proc(t: ^testing.T) {
 	}
 }
 
-// The glyph cache of the default font of the system: its words at each
-// scale have a known hash, so that a change of the renderer is seen. A
+// The glyph cache of one fixed font, JetBrains Mono (a candidate, not the
+// default: a test of the renderer must not change when the default
+// changes): its words at each scale have a known hash, so that a change of the renderer is seen. A
 // change that is wanted gives new hashes here and a new RENDERER_VERSION.
 @(test)
 golden_glyph_cache :: proc(t: ^testing.T) {
@@ -203,7 +204,8 @@ golden_glyph_cache :: proc(t: ^testing.T) {
 	for size_entry, index in cache.sizes {
 		hash: u64 = 0xCBF2_9CE4_8422_2325
 		for glyph in cache.glyphs[size_entry.first_glyph:][:cache.header.character_count] {
-			words := cache.words[glyph.word_offset:][:int(glyph.row_count) * int(size_entry.cell_width)]
+			testing.expect(t, glyph.left == 0 && glyph.width == size_entry.cell_width) // A monospace cache: each glyph is its cell.
+			words := cache.words[glyph.word_offset:][:int(glyph.row_count) * int(glyph.width)]
 			hash = (hash ~ u64(glyph.first_row) << 16 ~ u64(glyph.row_count)) * 0x0000_0100_0000_01B3
 			for word in words {
 				hash = (hash ~ u64(word)) * 0x0000_0100_0000_01B3
@@ -256,6 +258,19 @@ damaged_glyph_cache :: proc(t: ^testing.T) {
 		{glyph_cache.HEADER_SIZE + 4, 0, .Bad_Cell}, // a baseline of 0
 		{glyph_cache.HEADER_SIZE + 3 * glyph_cache.SIZE_ENTRY_SIZE + 2, 200, .Bad_Glyph}, // the rows of a glyph
 		{glyph_cache.HEADER_SIZE + 3 * glyph_cache.SIZE_ENTRY_SIZE + 7, 0x7F, .Bad_Glyph}, // the words of a glyph
+		// A monospace cache keeps each glyph in its cell, from its left side:
+		// the damage of a grid of text cells depends on it.
+		{glyph_cache.HEADER_SIZE + 3 * glyph_cache.SIZE_ENTRY_SIZE + 8, 1, .Bad_Glyph}, // a left side of 1
+		{glyph_cache.HEADER_SIZE + 3 * glyph_cache.SIZE_ENTRY_SIZE + 8, 0xFF, .Bad_Glyph}, // a left side of 255
+		{glyph_cache.HEADER_SIZE + 3 * glyph_cache.SIZE_ENTRY_SIZE + 10, 9, .Bad_Glyph}, // a width of 9 in a cell of 8
+		{glyph_cache.HEADER_SIZE + 6, 3, .Bad_Count}, // three positions
+		{glyph_cache.HEADER_SIZE + 3 * glyph_cache.SIZE_ENTRY_SIZE + 3 * 95 * glyph_cache.GLYPH_ENTRY_SIZE, 0x01, .Bad_Advance}, // an advance of 513 in a cell of 8
+		{120, 1, .Bad_Count}, // a pair
+		// The flags and the name.
+		{36, 0x04, .Bad_Flags}, // a flag that no reader knows
+		{37, 3, .Bad_Flags}, // a filter past the three
+		{88, 0x01, .Bad_Name}, // a control byte
+		{88 + 31, 'a', .Bad_Name}, // no end
 	}
 	for damage in damages {
 		copy(file[:size], good)
@@ -272,8 +287,8 @@ damaged_glyph_cache :: proc(t: ^testing.T) {
 }
 
 // A vertical segment on the last column, and a coverage of width 1, write
-// nothing outside their rows (review F1 of step 51, kept for the
-// rasterizer in fixed point): the cell after the accumulation stays 0.
+// nothing outside their rows: the cell after the accumulation stays 0. The
+// rasterizer in floating point that came before wrote there.
 @(test)
 segments_at_the_edges_stay_in_their_rows :: proc(t: ^testing.T) {
 	cells: [(5 + 1) * 3 + 1]i32

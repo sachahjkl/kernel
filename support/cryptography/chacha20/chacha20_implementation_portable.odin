@@ -22,7 +22,15 @@ init_impl :: proc(ctx: ^Context, impl: Implementation) {
 
 @(private)
 stream_blocks :: proc(ctx: ^Context, dst, src: []byte, nr_blocks: int) {
+	// The implementation increments the counter as a value of 64 bits. In
+	// the IETF form the counter has 32 bits, and the increment after the
+	// last block carries into the first word of the IV: put that word back,
+	// so that a seek after the last block gives the keystream of this IV.
+	first_word_of_the_iv := ctx._state._s[13]
 	ref.stream_blocks(&ctx._state, dst, src, nr_blocks)
+	if ctx._state._is_ietf_flavor {
+		ctx._state._s[13] = first_word_of_the_iv
+	}
 }
 
 @(private)

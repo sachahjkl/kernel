@@ -9,4 +9,5 @@ foreign import memory "../../../runtime/memory_for_host_tests.asm"
 @(default_calling_convention = "c")
 foreign memory {
 	erase_secret_bytes :: proc(destination: rawptr, count: int) -> rawptr ---
+	erase_stack_below_the_caller :: proc() ---
 }

@@ -23,6 +23,7 @@
 // and the boot image (its child).
 package address_space
 
+import "contract:fixed_addresses"
 import "base:intrinsics"
 import "contract:errors"
 import op "contract:operation"
@@ -44,6 +45,9 @@ LARGE_OBJECT_PAGES :: 16384 // 64 MiB.
 LARGE_ADDRESS :: 0x0000_4000_0000_0000 // Aligned on 2 MiB: the mapping of large pages.
 SMALL_ADDRESS :: 0x0000_4100_0000_1000 // Not aligned: the same object with pages of 4 KiB.
 GUARD_ADDRESS :: 0x0000_4200_0000_0000 // The stack of the child: the guard page, then 63 pages.
+// Places of this program's own choice: outside the band of the fixed
+// ranges of the system, which grows by its end.
+#assert(LARGE_ADDRESS >= fixed_addresses.OWN_CHOICE_START && SMALL_ADDRESS >= fixed_addresses.OWN_CHOICE_START && GUARD_ADDRESS >= fixed_addresses.OWN_CHOICE_START)
 GUARD_STACK_PAGES :: 64
 RANDOM_READS :: 4_000_000
 VALUE_ROLE :: 0 // The context of the child: 1.

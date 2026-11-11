@@ -424,6 +424,10 @@ serve :: proc "contextless" (bytes: []u8) {
 			// The service wrote it: values only, copied as values.
 			answer.error = (^errors.Error_Record)(raw_data(connection.region[request.error_start:]))^
 			counts.failed += 1
+			// The bytes of a failed call are its error details.
+			details, details_count := remote.details_bytes(request, connection.region[:remote.REGION_SIZE])
+			answer.details = u32(min(details_count, u64(max(u32))))
+			result = details
 		} else {
 			result = connection.region[request.result_start:][:remote.result_bytes(request, answer.value)]
 		}

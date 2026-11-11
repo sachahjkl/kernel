@@ -3,6 +3,7 @@ package system
 import "base:intrinsics"
 import "contract:blake3"
 import info "contract:boot_info"
+import "contract:fixed_addresses"
 import op "contract:operation"
 import module "contract:module"
 
@@ -174,12 +175,24 @@ cycles :: #force_inline proc "contextless" () -> u64 {
 // import, and not to the module that the caller names. On a failure, the
 // space is as it was before, and error has the stage and the modules of the
 // failure: the caller owns the record.
-module_space_load :: proc "contextless" (space: ^Module_Space, file: []u8, error: ^module.Load_Error) -> (index: int, ok: bool) {
+//
+// details: an optional table of error details (docs/MODULE_CONTRACT.md,
+// section 8, "The table of error details"). When the load fails because a
+// file of the load source is missing or is not the file of its hash, the
+// loader appends one load error for each such import of the whole graph,
+// not only the first (load_source_problems).
+module_space_load :: proc "contextless" (space: ^Module_Space, file: []u8, error: ^module.Load_Error, details: ^Table_To_Append(module.Load_Error) = nil) -> (index: int, ok: bool) {
 	error^ = {}
 	hash := blake3.hash(file)
 	if file_error := module.validate(file); len(file) == 0 || file_error != .None {
 		error^ = {stage = .Read, file_error = file_error, module = named_of(space.source, hash)}
+		if details != nil {
+			table_append(details, error^)
+		}
 		return -1, false
+	}
+	defer if !ok && details != nil && (error.stage == .Find || error.stage == .Read) {
+		load_source_problems(space.source, file, details)
 	}
 	before: [MODULE_SPACE_CAPACITY]u32
 	for item, number in space.modules {
@@ -224,6 +237,80 @@ module_space_release :: proc "contextless" (space: ^Module_Space, index: int, er
 		module_space_release(space, int(imports[number]), error)
 	}
 	return error.stage == .None
+}
+
+// load_source_problems appends one load error for each import of the graph
+// of a module that the load source does not have (the stage Find), or has
+// with another hash or with tables that are not valid (Read), in the order
+// in which a load meets them: the order of the imports, depth first. So the
+// first of them is the load error of a load that failed at such an import.
+// Each module of the graph is read one time. It loads nothing and calls no
+// kernel operation.
+load_source_problems :: proc "contextless" (source: Load_Source, file: []u8, details: ^Table_To_Append(module.Load_Error)) {
+	visited: Visited_Modules
+	import_problems(source, blake3.hash(file), file, {}, {}, details, &visited)
+}
+
+// The modules that load_source_problems read: a module that two modules
+// import is read one time, and a cycle of replacements ends.
+@(private = "file")
+Visited_Modules :: struct {
+	hashes: [MODULE_SPACE_CAPACITY][32]u8,
+	count:  int,
+}
+
+// import_problems appends the problems of the imports of one module, then
+// of their imports. replaced and replacement: the nearest replacement on
+// the path from the first module, as a load error names it.
+@(private = "file")
+import_problems :: proc "contextless" (source: Load_Source, importer: [32]u8, file: []u8, replaced, replacement: module.Named, details: ^Table_To_Append(module.Load_Error), visited: ^Visited_Modules) {
+	for hash in visited.hashes[:visited.count] {
+		if hash == importer {
+			return
+		}
+	}
+	// The space of a program holds no more modules: the walk ends there too.
+	if visited.count == len(visited.hashes) {
+		return
+	}
+	visited.hashes[visited.count] = importer
+	visited.count += 1
+	import_count := int(max(module.count(file, .Imports), 1)) - 1
+	for number in 0 ..< min(import_count, IMPORT_CAPACITY) {
+		record, _ := module.record(file, .Imports, u32(number + 1), module.Import)
+		hash := record.hash
+		nearest_replaced, nearest_replacement := replaced, replacement
+		replaces: [32]u8
+		for item in source.replacements {
+			if item.from == record.hash {
+				hash, replaces = item.to, record.hash
+				nearest_replaced, nearest_replacement = named_of(source, record.hash), named_of(source, item.to)
+				break
+			}
+		}
+		problem := module.Load_Error {
+			module      = named_of(source, importer),
+			imported    = named_of(source, record.hash),
+			replaced    = nearest_replaced,
+			replacement = nearest_replacement,
+		}
+		imported_file, stage, file_error := source_file(source, hash)
+		if stage != .None {
+			problem.stage, problem.file_error = stage, file_error
+			table_append(details, problem)
+			continue
+		}
+		// The names of the exports that the slots use are in the module that
+		// the import names: the load reads it too.
+		if replaces != {} {
+			if _, original_stage, original_error := source_file(source, replaces); original_stage != .None {
+				problem.stage, problem.file_error = original_stage, original_error
+				table_append(details, problem)
+				continue
+			}
+		}
+		import_problems(source, hash, imported_file, nearest_replaced, nearest_replacement, details, visited)
+	}
 }
 
 // named_of gives a hash with the name that the load source gives to it.
@@ -314,6 +401,11 @@ place :: proc "contextless" (space: ^Module_Space, named: [32]u8, first: []u8, i
 	head, _ := module.header(file)
 	import_count := int(max(module.count(file, .Imports), 1)) - 1
 	if import_count > IMPORT_CAPACITY {
+		return fail(space, error, .Room, importer, named, hash)
+	}
+	// The modules stay below the band of the fixed ranges, where the system
+	// maps the settings page, the glyph caches and the files of the modules.
+	if head.memory_size > fixed_addresses.BAND_START - PAGE_SIZE || space.next > fixed_addresses.BAND_START - PAGE_SIZE - head.memory_size {
 		return fail(space, error, .Room, importer, named, hash)
 	}
 	item := &space.modules[free]
@@ -953,7 +1045,7 @@ load_error_text :: proc "contextless" (writer: ^Writer, error: ^module.Load_Erro
 	case .Room:
 		write_part(writer, "no room for ")
 		name(writer, subject)
-		write_part(writer, ": a program has 16 modules at most, a module 8 imports, a table of prepared modules 64 parts\n")
+		write_part(writer, ": a program has 16 modules at most, a module 8 imports, a table of prepared modules 64 parts, and its modules fit below the fixed ranges of the system\n")
 	}
 	if error.replaced.hash != {} && error.stage != .Cycle {
 		write_part(writer, "on the path of the load, the replacement table gives ")

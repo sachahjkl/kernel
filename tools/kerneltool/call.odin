@@ -32,6 +32,7 @@ import "support:sentence"
 CALL_PORT :: 7101 // On 127.0.0.1: the peer of `kerneltool run` receives the call requests there.
 CALL_REPEAT_TIME :: 300 * time.Millisecond // With no complete answer, the request goes again.
 CALL_TIME_LIMIT :: 10 * time.Second
+CALL_ERROR_DETAILS :: 16 // The places of the table of error details that the tool gives to an export.
 
 // What a call gave, for the machine test.
 Call_Outcome :: enum {
@@ -321,10 +322,17 @@ call_prepare :: proc(client: ^Call_Client, text: string) -> (call: Prepared_Call
 	if index == 0 || !described || index == head.entry_export {
 		return {}, fmt.tprintf("the module %s has no export %s", service, export)
 	}
-	if int(function.parameter_count) != len(arguments) {
-		return {}, fmt.tprintf("%s.%s has %d parameters; the call gives %d", service, export, function.parameter_count, len(arguments))
+	// The table of error details is the last parameter: the tool gives it,
+	// the text of the call does not.
+	details_index, has_details := module.error_details_parameter(file, function)
+	written_parameters := has_details ? details_index : int(function.parameter_count)
+	if written_parameters != len(arguments) {
+		return {}, fmt.tprintf("%s.%s has %d parameters; the call gives %d", service, export, written_parameters, len(arguments))
 	}
-	encoded := make([]isolated.Argument, len(arguments), context.temp_allocator)
+	encoded := make([]isolated.Argument, function.parameter_count, context.temp_allocator)
+	if has_details {
+		encoded[details_index].table = {records = make([]u8, CALL_ERROR_DETAILS * size_of(errors.Error_Record), context.temp_allocator), count = 0}
+	}
 	for argument, number in arguments {
 		type := function.parameters[number]
 		name := module.string_at(file, function.parameter_names[number], u32(function.parameter_name_counts[number]))
@@ -379,7 +387,11 @@ call_prepare :: proc(client: ^Call_Client, text: string) -> (call: Prepared_Call
 	// buffer of a Text or a Table result is the rest of the region.
 	end := u64(size)
 	field := u64(0)
+	details_end := u64(0)
 	for type, number in function.parameters[:function.parameter_count] {
+		if has_details && number == details_index {
+			details_end = field + isolated.field_size(type)
+		}
 		#partial switch type {
 		case .Text:
 			slice_record := (^isolated.Slice)(&client.region[field])^
@@ -421,6 +433,7 @@ call_prepare :: proc(client: ^Call_Client, text: string) -> (call: Prepared_Call
 		result_count = u32(result.count),
 		result_unit  = unit,
 		error_start  = u32(error.start),
+		details_end  = u32(details_end),
 	}
 	if function.result == .Integer || function.result == .None {
 		request.result_start, request.result_count = 0, 0
@@ -561,6 +574,9 @@ call_run :: proc(client: ^Call_Client, text: string) -> (outcome: Call_Result) {
 		sentence.export_error_text(&writer, call.file, call.index, call.service, &answer.error)
 		sentence.write_part(&writer, fmt.tprintf(" (%d)", answer.value))
 		append(&outcome.lines, sentence.written(&writer))
+		if _, has_details := module.error_details_parameter(call.file, call.function); has_details {
+			error_details_lines(&outcome.lines, &call, answer, result)
+		}
 		return outcome
 	}
 	outcome.outcome = .Result
@@ -584,6 +600,35 @@ call_run :: proc(client: ^Call_Client, text: string) -> (outcome: Call_Result) {
 		outcome.rows = table_print(&outcome.lines, call.file, described, result, answer.value)
 	}
 	return outcome
+}
+
+// error_details_lines writes one line for each error detail of a call that
+// failed: the bytes of the answer. The answer comes from the network: the
+// tool reads whole records only, and at most the count that the answer
+// names; it says when the bytes do not agree with the count. The error
+// record is the first detail: with one detail, its line says all of it.
+error_details_lines :: proc(lines: ^[dynamic]string, call: ^Prepared_Call, answer: remote.Answer, bytes: []u8) {
+	count := u64(answer.details)
+	shown, sound := remote.details_shown(answer, u64(len(bytes)))
+	if count >= 2 {
+		for number in 0 ..< shown {
+			detail := (^errors.Error_Record)(raw_data(bytes[number * size_of(errors.Error_Record):]))^
+			buffer := make([]u8, 512, context.temp_allocator)
+			writer := sentence.Writer{buffer = buffer}
+			sentence.write_part(&writer, "error: ")
+			sentence.export_error_detail_text(&writer, call.file, call.index, call.service, number + 1, count, &detail)
+			append(lines, sentence.written(&writer))
+		}
+		buffer := make([]u8, 128, context.temp_allocator)
+		writer := sentence.Writer{buffer = buffer}
+		sentence.error_details_rest_text(&writer, shown, count)
+		if rest := sentence.written(&writer); rest != "" {
+			append(lines, fmt.tprintf("error: %s", rest))
+		}
+	}
+	if !sound {
+		append(lines, fmt.tprintf("error: the answer of remote has %d bytes of error details for a count of %d: the tool reads %d whole records, and no more", len(bytes), count, shown))
+	}
 }
 
 // A table that a call gave: the rows, and the description of a row.

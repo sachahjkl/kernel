@@ -6,6 +6,7 @@
 package errors_program
 
 import "contract:errors"
+import "contract:fixed_addresses"
 import "contract:isolated"
 import module "contract:module"
 import op "contract:operation"
@@ -614,7 +615,9 @@ measure :: proc "contextless" () {
 // writes its time in a page that the two map. The locks: System_Report.locks
 // before and after each loop, for all the processors.
 VALUE_CHILD :: 8
-MEASURE_ADDRESS :: 0x0000_3200_0000_0000
+// A page that this program places by its own choice: outside the band of
+// the addresses that the system fixes.
+MEASURE_ADDRESS :: fixed_addresses.OWN_CHOICE_START + 0x0000_0400_0000_0000
 REFUSALS :: 100_000
 
 Child_Page :: struct {
