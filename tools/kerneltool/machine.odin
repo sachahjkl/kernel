@@ -22,6 +22,12 @@ FILM_FRAME :: FILM_FOLDER + "/%05d.ppm"
 FILM_RATE :: 25 // Pictures in one second.
 FILM_FRAME_TIME :: time.Second / FILM_RATE
 STEP_TIMEOUT :: 20 * time.Second
+// The bound of the first Wait of each machine: its boot ("compositor:
+// surface console" and its like). A boot that is slow under the load of the
+// host says nothing about the system; a later step that is slow does, so it
+// keeps STEP_TIMEOUT (owner, 2026-11-11: a boot timed out at a host load of
+// 62 while eight agents ran on the computer).
+BOOT_WAIT_TIMEOUT :: 180 * time.Second
 KEY_PAUSE :: 45 * time.Millisecond
 MOUSE_PAUSE :: 25 * time.Millisecond
 MOUSE_STEP :: 40
@@ -1779,9 +1785,9 @@ windows_line :: proc(machine: ^Machine, title: string, from: int) -> (line: int,
 	return 0, false
 }
 
-log_wait :: proc(machine: ^Machine, text: string, any_order := false) -> bool {
+log_wait :: proc(machine: ^Machine, text: string, any_order := false, limit := STEP_TIMEOUT) -> bool {
 	start := time.now()
-	for time.since(start) < STEP_TIMEOUT {
+	for time.since(start) < limit {
 		log := log_read(machine)
 		if len(log) > machine.seen {
 			if index := strings.index(log[machine.seen:], text); index >= 0 {
@@ -1966,10 +1972,13 @@ machine_test :: proc(steps: []Step, volume: string, output: string, exit_status:
 
 scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 	peer_case_started := 0 // The number of the case of the last step Peer_Start.
+	first_wait := true // The first Wait of the machine is its boot: BOOT_WAIT_TIMEOUT.
 	for step, index in steps {
 		switch step.kind {
 		case .Wait:
-			if !log_wait(machine, step.text, step.any_order) {
+			limit := first_wait ? BOOT_WAIT_TIMEOUT : STEP_TIMEOUT
+			first_wait = false
+			if !log_wait(machine, step.text, step.any_order, limit) {
 				fmt.eprintfln("kerneltool: test failed: step %d: the machine did not print \"%s\"", index + 1, step.text)
 				return false
 			}
