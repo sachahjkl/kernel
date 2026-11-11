@@ -296,7 +296,15 @@ request_finish :: proc "contextless" (index: int) {
 	session.answer_head_done = 0
 	session.answer_left = 0
 	session.progress_at = system.time()
-	session.head_at = 0
+	// The bytes that stay in the input are the start of the next head (an
+	// independent read, B1): its time starts now, so that the limit of a
+	// head applies to it. Else the next head starts with its first byte.
+	if session.input_length > 0 {
+		session.head_at = system.time()
+		session.request_started_at = system.nanoseconds()
+	} else {
+		session.head_at = 0
+	}
 	if close_after {
 		session.closing = true
 		tcp.close(&table, index)
