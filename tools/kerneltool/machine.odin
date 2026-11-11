@@ -878,6 +878,26 @@ scenario := [?]Step {
 	{kind = .Type, text = "stop(\"locks\")"},
 	{kind = .Wait, text = "root: locks stopped"},
 
+	// The scheduling strategies: the same cases under round robin, the
+	// fair strategy and EEVDF, then 100 changes of strategy while threads
+	// start, stop, wake each other and move. The program checks what does
+	// not depend on the load of the host. Two keys change the strategy.
+	{kind = .Launch, text = "scheduler"},
+	{kind = .Wait, text = "scheduler: round robin: two threads that wake each other, a spinner on each processor: "},
+	{kind = .Wait, text = "scheduler: fair: two threads that wake each other, a spinner on each processor: "},
+	{kind = .Wait, text = "scheduler: EEVDF: two threads that wake each other, a spinner on each processor: "},
+	{kind = .Wait, text = "scheduler: stress: 100 changes of strategy while "},
+	{kind = .Wait, text = "scheduler: ok, no spinner starved under 3 strategies, EEVDF woke "},
+	{kind = .Wait, text = "scheduler: the window took "},
+	{kind = .Shot, text = "scheduler"},
+	{kind = .Key, text = "1"},
+	{kind = .Wait, text = "scheduler: the strategy is now round robin, it was EEVDF"},
+	{kind = .Key, text = "3"},
+	{kind = .Wait, text = "scheduler: the strategy is now EEVDF, it was round robin"},
+	{kind = .Front, text = "console"},
+	{kind = .Type, text = "stop(\"scheduler\")"},
+	{kind = .Wait, text = "root: scheduler stopped"},
+
 	// The boot display in a window: how the machine started, with the
 	// records that the kernel has now.
 	{kind = .Launch, text = "boot"},

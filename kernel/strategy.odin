@@ -58,8 +58,8 @@ STRATEGIES := [op.Strategy]Strategy_Table {
 	.Eevdf       = EEVDF,
 }
 
-// The strategy at boot.
-STRATEGY_START :: op.Strategy.Round_Robin
+// The strategy at boot: EEVDF, for its wake preemption (docs/SCHEDULING.md).
+STRATEGY_START :: op.Strategy.Eevdf
 
 // The strategy that the machine has: Strategy_Set writes it. Each queue has
 // its own word (Run_Queue.strategy), which changes under its run lock.

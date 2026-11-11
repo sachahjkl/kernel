@@ -43,6 +43,7 @@ Grant :: enum {
 	Network, // An endpoint of datagrams in the network service, with the remote of endpoint_of.
 	Network_Device, // The frame service of the network device and its frame ring, and a control ring from this service.
 	Connect, // A ring to this service that serves Connect and Disconnect only, to the services of callable_of.
+	Schedule, // The machine, with the right Schedule: change the scheduling strategy of the machine.
 }
 
 grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
@@ -67,6 +68,8 @@ grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 		return {.Inspect, .Image} // It reads its own page table, and starts its twins from the boot image.
 	case "locks":
 		return {.Inspect, .Image} // It reads the counts of the locks, and starts its lockers from the boot image.
+	case "scheduler":
+		return {.Inspect, .Schedule} // It reads the counts of the scheduler, and changes the strategy.
 	case "paint", "life", "tally":
 		return {.Serve}
 	case "manual":
@@ -199,6 +202,8 @@ things_of :: proc "contextless" (name: string) -> system.Budget_Amounts {
 		return {pages = 2048, programs = 1, threads = 9}
 	case "locks":
 		return {pages = 9216, programs = 8, threads = 20} // 4 lockers of 1024 pages, then 3 at a time of the stress case.
+	case "scheduler":
+		return {pages = 2048, programs = 1, threads = 24} // 12 spinners, two threads that wake each other, one that sleeps, a changer, a thread that starts threads.
 	case "flow":
 		return {pages = 2048, programs = 1, threads = 3}
 	case "crowd":
@@ -667,6 +672,9 @@ start :: proc "contextless" (name: string) -> system.Status {
 	}
 	if .Stop in role {
 		machine_rights += {.Stop}
+	}
+	if .Schedule in role {
+		machine_rights += {.Schedule}
 	}
 	if machine_rights != {} {
 		grants[system.GRANT_MACHINE] = {machine, machine_rights}
