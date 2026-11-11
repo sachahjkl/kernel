@@ -93,6 +93,9 @@ Unit :: enum i64 {
 	Display     = 30, // No_Grant: a surface on the screen (the ring to the compositor).
 	Terminal    = 31, // No_Grant: a terminal (the terminal ring and the text region).
 	Versions    = 32, // Absent: the versions of an object (value: the generation that the argument named).
+	Counts      = 33, // Damaged: the counts of the blocks of a store are not trusted after a fault of the service; it makes no change in the store.
+	References  = 34, // Over_Limit: the names of one block, which a count holds.
+	Commit_Blocks = 35, // Full: the blocks that one commit can change or write.
 }
 
 // How a handle ended (Handle_Ended).
@@ -161,6 +164,9 @@ UNIT_NAMES := [Unit]string {
 	.Display     = "a surface on the screen",
 	.Terminal    = "a terminal",
 	.Versions    = "versions of the object",
+	.Counts      = "the counts of the blocks of the store",
+	.References  = "names of one block",
+	.Commit_Blocks = "blocks that one commit can change",
 }
 
 // A ring completion (contract/ring) has the status of the contract of its

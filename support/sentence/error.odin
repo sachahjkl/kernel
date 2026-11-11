@@ -167,6 +167,11 @@ error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record,
 		write_part(writer, errors.Unit(record.unit) == .Blocks ? " in all, with no earlier version kept; the limit is " : " in all; the limit is ")
 		amount(writer, record.limit, unit)
 	case .Full:
+		if errors.Unit(record.unit) == .Commit_Blocks {
+			write_part(writer, "the call needs more blocks in one commit than one commit can change: ")
+			write_part(writer, record.limit)
+			return
+		}
 		if record.unit == 0 {
 			write_part(writer, "no free place for the call")
 		} else {
@@ -203,6 +208,10 @@ error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record,
 			write_part(writer, " names nothing that exists")
 		}
 	case .Damaged:
+		if errors.Unit(record.unit) == .Counts {
+			write_part(writer, "the counts of the blocks of the private store are not trusted after a fault of the storage service: it makes no change in the store until its next start; its objects can still be read")
+			return
+		}
 		if errors.Unit(record.unit) == .Stores {
 			write_part(writer, "the table of the private store is damaged: a block of it has a wrong check")
 		} else {

@@ -1,10 +1,12 @@
 // The date (docs/ARCHITECTURE.md, "The date"): one page that the root
 // service creates. The program `date` is its one writer: it reads the
-// real-time clock of the machine through two ports: a driver is a program, not a part
-// of the kernel and writes the date of the time 0 of the system. Each
-// program that the root service starts maps the page with the right Read
-// only, at PAGE_ADDRESS; the context value VALUE_PAGE says where it is (0:
-// the program has no page).
+// real-time clock of the machine through two ports (a driver is a program,
+// not a part of the kernel) and writes the date of the time 0 of the
+// system. Each program that the root service starts by its name, and the
+// compositor, map the page with the right Read only, at PAGE_ADDRESS; the
+// context value VALUE_PAGE says where it is (0: the program has no page). A
+// terminal has no page: it shows the text of another program, and needs no
+// date. A program that another program starts has none either.
 //
 // The date of now is milliseconds_at_time_zero + the milliseconds of the
 // time page (system.time()): no kernel entry. The date is in UTC; the time
@@ -42,27 +44,44 @@ page_of :: proc "contextless" (ctx: ^op.Context) -> ^Page {
 	return ctx.values[VALUE_PAGE] == PAGE_ADDRESS ? (^Page)(uintptr(PAGE_ADDRESS)) : nil
 }
 
+// The dates that a reader takes: from 1970 to the end of the year 9999. A
+// page with another date gives no date.
+DATE_MILLISECONDS_LIMIT :: i64(253402300800) * 1000
+
+// READ_TRIES is the most reads of a page that changes, or that a writer left
+// in the middle of a change (a writer stopped between its two stores): the
+// reader then gives no date, and never waits on another program.
+READ_TRIES :: 64
+
 // milliseconds_now gives the milliseconds since 1970 (UTC) at the time
 // `system_milliseconds` of the system (system.time()). known is false when
-// the program has no page or the page has no date.
+// the program has no page, when the page has no date, when the date is not
+// from 1970 to 9999, and when the page changed at each of READ_TRIES reads.
 milliseconds_now :: proc "contextless" (page: ^Page, system_milliseconds: u64) -> (milliseconds: i64, known: bool) {
 	if page == nil {
 		return 0, false
 	}
-	for {
+	for _ in 0 ..< READ_TRIES {
 		before := intrinsics.atomic_load_explicit(&page.change_count, .Acquire)
 		if before & 1 != 0 {
+			intrinsics.cpu_relax()
 			continue
 		}
 		source := Source(intrinsics.atomic_load_explicit((^u32)(&page.source), .Acquire))
 		at_zero := intrinsics.atomic_load_explicit(&page.milliseconds_at_time_zero, .Acquire)
-		if intrinsics.atomic_load_explicit(&page.change_count, .Acquire) == before {
-			if source == .None {
-				return 0, false
-			}
-			return at_zero + i64(system_milliseconds), true
+		if intrinsics.atomic_load_explicit(&page.change_count, .Acquire) != before {
+			continue
 		}
+		if source == .None || system_milliseconds > u64(DATE_MILLISECONDS_LIMIT) {
+			return 0, false
+		}
+		milliseconds = at_zero + i64(system_milliseconds)
+		if at_zero <= 0 || milliseconds <= 0 || milliseconds >= DATE_MILLISECONDS_LIMIT {
+			return 0, false
+		}
+		return milliseconds, true
 	}
+	return 0, false
 }
 
 // write sets the date of the time 0. The one writer is the program `date`.

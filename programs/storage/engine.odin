@@ -74,6 +74,10 @@ root_check :: format.root_check
 // the other stores are served.
 damaged: [STORE_CAPACITY]u64 // Bit n: the object n of the store is damaged.
 store_damaged: [STORE_CAPACITY]bool
+// A store whose counts are not trusted: the open found a fault of the engine
+// in it, or a commit would take a count below 0. The service gives its
+// objects and makes no change in it.
+store_faulty: [STORE_CAPACITY]bool
 
 // time_now gives the time since the format of the disk, in milliseconds:
 // the time of the root at the start, and the time that the service ran
@@ -86,7 +90,7 @@ time_now :: proc "contextless" () -> u64 {
 // system has no date.
 date_now :: proc "contextless" () -> u64 {
 	milliseconds, known := date.milliseconds_now(date_page, system.time())
-	return known ? u64(milliseconds / 1000) : 0
+	return known && milliseconds > 0 ? u64(milliseconds / 1000) : 0 // milliseconds_now gives no date before 1970.
 }
 
 date_page: ^date.Page // contract/date: the date page of this program.
@@ -342,7 +346,15 @@ mount :: proc "contextless" (disk_blocks: u64) -> (result: Mount) {
 	tables = opened.tables
 	damaged = opened.damaged
 	store_damaged = opened.store_damaged
+	store_faulty = opened.store_faulty
 	time_at_start = root.time
+	// The count of each store is the recount of the open: the next commit
+	// writes it in the root.
+	for &entry, index in root.stores {
+		if entry.name[0] != 0 && !store_damaged[index] {
+			entry.used = opened.store_recount[index]
+		}
+	}
 	return result
 }
 
@@ -419,9 +431,17 @@ blocks_of :: proc "contextless" (size: u64) -> u64 {
 // object. Nothing of the state of the service changes before the root is
 // on the disk; a refusal or a failure drops the plan.
 
-DELTA_CAPACITY :: 16384 // Power of 2: the blocks whose count one commit changes.
-WRITE_CAPACITY :: 320
-LEAF_WORK_CAPACITY :: 300
+// The capacities of one commit. A commit that needs more is refused with
+// Full and the unit Commit_Blocks, not with a full disk. Half of
+// DELTA_CAPACITY is the count of the blocks whose names one commit changes:
+// 65536, more than a store can hold today. The writes: the leaves of a whole
+// version index (a compaction or the retention rule), the data and the list
+// of an object, and the leaves and indexes that thinning at the limit
+// rewrites in other objects.
+DELTA_CAPACITY :: 1 << 17 // Power of 2.
+WRITE_CAPACITY :: 1024
+LEAF_WORK_CAPACITY :: 300 // More than the leaves of one index.
+REFERENCE_LIMIT :: storage_mount.REFERENCE_LIMIT
 
 Write :: struct {
 	number: u64,
@@ -463,8 +483,13 @@ Plan :: struct {
 	delta_places: [DELTA_CAPACITY]u32, // The places in use, for the walk and the reset.
 	delta_count:  int,
 	used_change:  i64, // The change of the distinct blocks of the store.
-	full:         bool, // A table of the plan had no room: the commit is refused.
+	full:         bool, // The disk has no free block: the commit is refused.
 	device:       bool, // A read of the plan failed on the device.
+	capacity_reached: bool, // A table of the plan had no room: the commit is refused.
+	capacity_limit:   int, // The capacity that it reached.
+	count_fault:      bool, // A count would go below 0: a fault of the engine.
+	count_overflow:   bool, // A count would pass REFERENCE_LIMIT.
+	dropped_versions: u64, // Version indexes and leaves with a wrong check that the plan drops.
 	index_work:   [OBJECT_CAPACITY]Index_Work,
 	leaf_work:    [LEAF_WORK_CAPACITY]Leaf_Work,
 	leaf_count:   int,
@@ -493,6 +518,9 @@ plan_reset :: proc "contextless" (store_index: int) {
 	plan.taken_count = 0
 	plan.used_change = 0
 	plan.full, plan.device = false, false
+	plan.capacity_reached, plan.capacity_limit = false, 0
+	plan.count_fault, plan.count_overflow = false, false
+	plan.dropped_versions = 0
 	plan.leaf_count = 0
 	plan.versions_change = 0
 	plan.thinned = 0
@@ -544,7 +572,7 @@ delta_add :: proc "contextless" (number: u64, change: i64) {
 	place, found := delta_place(number)
 	if !found {
 		if plan.delta_count >= DELTA_CAPACITY / 2 || plan.delta_blocks[place] != 0 {
-			plan.full = true
+			capacity_reached(DELTA_CAPACITY / 2)
 			return
 		}
 		plan.delta_blocks[place] = number
@@ -555,11 +583,31 @@ delta_add :: proc "contextless" (number: u64, change: i64) {
 	plan.delta_values[place] += i32(change)
 	after := before + change
 	plan.used_change += i64(after > 0) - i64(before > 0)
+	// A count below 0: the engine releases a name that it never counted.
+	// The commit is refused, and the store stops taking changes: its counts
+	// are not trusted.
+	if after < 0 {
+		plan.count_fault = true
+	}
+	if after > i64(REFERENCE_LIMIT) {
+		plan.count_overflow = true
+	}
+}
+
+// plan_refused says if the plan cannot commit: plan_commit refuses it with
+// the error of its cause.
+plan_refused :: proc "contextless" () -> bool {
+	return plan.full || plan.device || plan.capacity_reached || plan.count_fault || plan.count_overflow
+}
+
+capacity_reached :: proc "contextless" (capacity: int) {
+	plan.capacity_reached = true
+	plan.capacity_limit = capacity
 }
 
 plan_allocate :: proc "contextless" () -> u64 {
 	if plan.taken_count >= WRITE_CAPACITY {
-		plan.full = true
+		capacity_reached(WRITE_CAPACITY)
 		return 0
 	}
 	number := allocate()
@@ -575,9 +623,12 @@ plan_allocate :: proc "contextless" () -> u64 {
 
 // plan_write writes a block of the plan to a new block, and gives its Pointer.
 plan_write :: proc "contextless" (bytes: ^Block) -> Pointer {
+	if plan.write_count >= WRITE_CAPACITY {
+		capacity_reached(WRITE_CAPACITY)
+		return {}
+	}
 	number := plan_allocate()
-	if number == 0 || plan.write_count >= WRITE_CAPACITY {
-		plan.full = true
+	if number == 0 {
 		return {}
 	}
 	plan.writes[plan.write_count] = {number = number, bytes = bytes}
@@ -594,8 +645,11 @@ list_name :: proc "contextless" (list: Pointer) {
 
 // list_release counts one name less of a list of a state of `size` bytes.
 // When no name is left, its blocks of data lose one name each: the list is
-// read for that. A list with a wrong check gives its blocks no change: the
-// next start finds them free.
+// read for that. A list with a wrong check, or a size of more blocks than an
+// object has, gives its blocks no change: the open did not count them when
+// it found the list wrong, and a list that went wrong since keeps its
+// blocks in use until the next start, which counts again (the safe
+// direction: a block in use is never given to another name).
 list_release :: proc "contextless" (list: Pointer, size: u64) {
 	if list.block == 0 {
 		return
@@ -604,11 +658,15 @@ list_release :: proc "contextless" (list: Pointer, size: u64) {
 	if count_after(list.block) != 0 {
 		return
 	}
-	count := min(blocks_of(size), OBJECT_BLOCKS_LIMIT)
+	count := blocks_of(size)
+	if count > OBJECT_BLOCKS_LIMIT || storage_mount.wrong_block(&opened, list.block) {
+		return
+	}
 	switch read_single(list, &plan.list_read) {
 	case .Device:
 		plan.device = true
 	case .Wrong:
+		storage_mount.wrong_block_set(&opened, list.block)
 	case .Good:
 		data := (^List)(&plan.list_read)
 		for pointer in data.data[:count] {
@@ -632,11 +690,25 @@ index_load :: proc "contextless" (object_index: int) -> ^Index_Work {
 		case .Device:
 			plan.device = true
 		case .Wrong:
-			plan.full = true // The versions of the object are not known: no change of them.
+			index_drop(work)
 		case .Good:
+			if work.index.leaf_count > format.VERSION_INDEX_CAPACITY {
+				index_drop(work)
+			}
 		}
 	}
 	return work
+}
+
+// index_drop drops the versions of an object whose index has a wrong check
+// or a count that the format does not permit: they are not known. The
+// object keeps its current version, and a write or a remove of it works.
+// The leaves and the lists under the index are not released: the open did
+// not count them when it found the index wrong.
+index_drop :: proc "contextless" (work: ^Index_Work) {
+	work.index = {}
+	work.touched = true
+	plan.dropped_versions += 1
 }
 
 // leaf_load gives a leaf of the version work of an object.
@@ -646,8 +718,8 @@ leaf_load :: proc "contextless" (object_index: int, position: int) -> ^Leaf_Work
 			return &work
 		}
 	}
-	if plan.leaf_count >= LEAF_WORK_CAPACITY {
-		plan.full = true
+	if plan.leaf_count >= LEAF_WORK_CAPACITY || position < 0 || position >= format.VERSION_INDEX_CAPACITY {
+		capacity_reached(LEAF_WORK_CAPACITY)
 		return nil
 	}
 	index := index_load(object_index)
@@ -660,11 +732,23 @@ leaf_load :: proc "contextless" (object_index: int, position: int) -> ^Leaf_Work
 		case .Device:
 			plan.device = true
 		case .Wrong:
-			plan.full = true
+			leaf_drop(work)
 		case .Good:
+			if work.leaf.count == 0 || work.leaf.count > format.VERSION_LEAF_CAPACITY {
+				leaf_drop(work)
+			}
 		}
 	}
 	return work
+}
+
+// leaf_drop drops the versions of a leaf with a wrong check or a count that
+// the format does not permit, as index_drop does for an index: the plan
+// writes no leaf in its place, and its lists are not released.
+leaf_drop :: proc "contextless" (work: ^Leaf_Work) {
+	work.leaf = {}
+	work.changed = true
+	plan.dropped_versions += 1
 }
 
 // version_add adds a version at the end of the versions of an object.
@@ -679,9 +763,14 @@ version_add :: proc "contextless" (object_index: int, entry: Version_Entry) {
 	if position >= 0 {
 		leaf = leaf_load(object_index, position)
 	}
+	// A full index whose last leaf is full: the retention rule left a few
+	// entries in each leaf, so the entries move to the first leaves.
+	if leaf != nil && storage_mount.version_leaves_full(int(index.index.leaf_count), leaf.leaf.count) {
+		leaves_compact(object_index)
+	}
 	if leaf == nil || leaf.leaf.count >= format.VERSION_LEAF_CAPACITY {
 		if index.index.leaf_count >= format.VERSION_INDEX_CAPACITY {
-			plan.full = true
+			capacity_reached(format.VERSION_INDEX_CAPACITY)
 			return
 		}
 		position = int(index.index.leaf_count)
@@ -697,6 +786,32 @@ version_add :: proc "contextless" (object_index: int, entry: Version_Entry) {
 	leaf.changed = true
 	index.index.version_count += 1
 	plan.versions_change += 1
+}
+
+// The leaves of one object during a compaction.
+compaction: [format.VERSION_INDEX_CAPACITY]Version_Leaf
+
+// leaves_compact moves the versions of an object to its first leaves, in
+// their order (storage_mount.version_leaves_compact). Each leaf is written
+// again; a leaf left with no entry is dropped by plan_finish. The last leaf
+// of the index is then empty, and version_add puts the new version there:
+// plan_finish keeps the order of the positions.
+leaves_compact :: proc "contextless" (object_index: int) {
+	index := index_load(object_index)
+	count := int(index.index.leaf_count)
+	for position in 0 ..< count {
+		work := leaf_load(object_index, position)
+		if work == nil {
+			return
+		}
+		compaction[position] = work.leaf
+	}
+	storage_mount.version_leaves_compact(compaction[:count])
+	for position in 0 ..< count {
+		work := leaf_load(object_index, position)
+		work.leaf = compaction[position]
+		work.changed = true
+	}
 }
 
 // version_first gives the oldest version of an object in the plan.
@@ -765,6 +880,10 @@ retention :: proc "contextless" (object_index: int, now: u64) {
 	}
 	index.touched = true
 	index.index.retention_time = now
+	// The age of each version: the smaller of its age by the date and its
+	// age by the time that machines ran (storage_retention.age).
+	date_seconds := date_now()
+	rule_now := storage_retention.rule_now(now, date_seconds)
 	count := 0
 	for position in 0 ..< int(index.index.leaf_count) {
 		leaf := leaf_load(object_index, position)
@@ -772,23 +891,8 @@ retention :: proc "contextless" (object_index: int, now: u64) {
 			return
 		}
 		for entry in leaf.leaf.entries[:leaf.leaf.count] {
-			times[count] = entry.time
+			times[count] = rule_now - min(storage_retention.age(now, entry.time, date_seconds, entry.date), rule_now)
 			count += 1
-		}
-	}
-	// With a date, the age of a version is its age in the date: the time
-	// since the format does not count the time when no machine ran. A
-	// version with no date keeps its age in that time.
-	rule_now := now
-	if date_seconds := date_now(); date_seconds != 0 {
-		rule_now = date_seconds * 1000
-		place := 0
-		for position in 0 ..< int(index.index.leaf_count) {
-			leaf := leaf_load(object_index, position)
-			for entry in leaf.leaf.entries[:leaf.leaf.count] {
-				times[place] = entry.date != 0 ? entry.date * 1000 : rule_now - min(now - min(entry.time, now), rule_now)
-				place += 1
-			}
 		}
 	}
 	if storage_retention.keeps(times[:count], rule_now, keep[:count]) == 0 {
@@ -953,9 +1057,23 @@ plan_commit :: proc "contextless" (error: ^errors.Error_Record) -> i64 {
 		plan_drop()
 		return errors.fail(error, ERROR_DISK, .Device)
 	}
+	if plan.count_fault {
+		plan_drop()
+		store_faulty[plan.store_index] = true
+		system.log_in("storage", .Error, "storage: a fault of the engine: a commit would take a count of names of a block below 0; the service makes no change in the store ", system.name_of(plan.next.stores[plan.store_index].name[:]), " until its next start, which counts again")
+		return errors.fail(error, ERROR_DAMAGED, .Damaged, .Counts)
+	}
+	if plan.capacity_reached {
+		plan_drop()
+		return errors.fail(error, ERROR_FULL, .Full, .Commit_Blocks, 0, 0, i64(plan.capacity_limit))
+	}
+	if plan.count_overflow {
+		plan_drop()
+		return errors.fail(error, ERROR_FULL, .Over_Limit, .References, 0, i64(REFERENCE_LIMIT) + 1, i64(REFERENCE_LIMIT))
+	}
 	if plan.full {
 		plan_drop()
-		return errors.fail(error, ERROR_FULL, .Full) // The disk, or a table of the commit: no number, because the free blocks are a fact of all the stores.
+		return errors.fail(error, ERROR_FULL, .Full) // The disk: no number, because the free blocks are a fact of all the stores.
 	}
 	entry := &plan.next.stores[plan.store_index]
 	entry.used = u64(i64(entry.used) + plan.used_change)
@@ -997,12 +1115,15 @@ plan_commit :: proc "contextless" (error: ^errors.Error_Record) -> i64 {
 	commits += 1
 	blocks_written += u64(plan.write_count) + 1
 	opened.store_versions[plan.store_index] = u64(i64(opened.store_versions[plan.store_index]) + plan.versions_change)
+	if plan.dropped_versions != 0 {
+		system.log_in("storage", .Warning, "storage: the commit of generation ", root.generation, " dropped ", plan.dropped_versions, " version indexes or leaves with a wrong check in the store ", system.name_of(root.stores[plan.store_index].name[:]), ": those versions are lost, the objects stay")
+	}
 	owner := u8(plan.store_index + 1)
 	for place in plan.delta_places[:plan.delta_count] {
 		number := plan.delta_blocks[place]
 		before := i64(opened.references[number])
-		after := max(before + i64(plan.delta_values[place]), 0)
-		opened.references[number] = u16(min(after, i64(max(u16))))
+		after := before + i64(plan.delta_values[place]) // From 0 to REFERENCE_LIMIT: delta_add refused the commit else.
+		opened.references[number] = u32(after)
 		if before < 2 && after >= 2 {
 			opened.store_shared[plan.store_index] += 1
 		} else if before >= 2 && after < 2 {
@@ -1089,6 +1210,9 @@ change :: proc "contextless" (store: Store_Of, given: string, kind: Change_Kind,
 	if store_index >= 0 && store_damaged[store_index] {
 		return errors.fail(error, ERROR_DAMAGED, .Damaged, .Stores)
 	}
+	if store_index >= 0 && store_faulty[store_index] {
+		return errors.fail(error, ERROR_DAMAGED, .Damaged, .Counts)
+	}
 	if store_index < 0 {
 		if kind != .Write {
 			return errors.fail(error, ERROR_ABSENT, .Absent, .Objects, name_argument)
@@ -1161,8 +1285,16 @@ change :: proc "contextless" (store: Store_Of, given: string, kind: Change_Kind,
 		// The old list names the old data: a block whose bytes did not change
 		// is named again, not written again.
 		old_list: ^List
-		if old.list.block != 0 && read_single(old.list, &plan.list_read) == .Good {
-			old_list = (^List)(&plan.list_read)
+		if old.list.block != 0 {
+			switch read_single(old.list, &plan.list_read) {
+			case .Good:
+				old_list = (^List)(&plan.list_read)
+			case .Wrong:
+				// The state before is damaged: it is not kept as a version.
+				damaged[store_index] |= 1 << uint(object_index)
+			case .Device:
+				plan.device = true
+			}
 		}
 		new_list: List
 		old_count := min(blocks_of(old.size), OBJECT_BLOCKS_LIMIT)
@@ -1197,7 +1329,7 @@ change :: proc "contextless" (store: Store_Of, given: string, kind: Change_Kind,
 	}
 	// At the limit: the oldest versions of the store go, in this commit.
 	thinned_before := plan.thinned
-	for !plan.full && !plan.device && projected() > i64(store.limit) {
+	for !plan_refused() && projected() > i64(store.limit) {
 		oldest, found := oldest_object()
 		if !found {
 			break
@@ -1206,7 +1338,7 @@ change :: proc "contextless" (store: Store_Of, given: string, kind: Change_Kind,
 	}
 	at_limit := plan.thinned - thinned_before
 	plan_finish()
-	if !plan.full && !plan.device && i64(entry.used) + plan.used_change > i64(store.limit) {
+	if !plan_refused() && i64(entry.used) + plan.used_change > i64(store.limit) {
 		plan_drop()
 		return errors.fail(error, ERROR_NO_BUDGET, .Over_Limit, .Blocks, 2, i64(entry.used) + plan.used_change, i64(store.limit))
 	}
@@ -1217,7 +1349,7 @@ change :: proc "contextless" (store: Store_Of, given: string, kind: Change_Kind,
 			// One line for each store and each start of the service: the
 			// later commits at the limit thin the same way.
 			limit_reached[store_index] = true
-			system.log("storage: the store ", store.name, " is at its limit of ", store.limit, " blocks: the commit of generation ", generation, " thinned ", at_limit, at_limit == 1 ? " version" : " versions", ", the oldest of the store first")
+			system.log("storage: the store ", store.name, " is at its limit of ", store.limit, " blocks: the commit of generation ", generation, " thinned ", at_limit, at_limit == 1 ? string(" version") : string(" versions"), ", the oldest of the store first")
 		}
 	}
 	return generation
@@ -1348,8 +1480,11 @@ versions_list :: proc "contextless" (object: ^Object_Entry, error: ^errors.Error
 		return errors.fail(error, ERROR_DAMAGED, .Damaged, .Objects, 1)
 	case .Good:
 	}
+	if index.leaf_count > format.VERSION_INDEX_CAPACITY {
+		return errors.fail(error, ERROR_DAMAGED, .Damaged, .Objects, 1)
+	}
 	leaf: Version_Leaf
-	leaves := index.leaves[:min(index.leaf_count, format.VERSION_INDEX_CAPACITY)]
+	leaves := index.leaves[:index.leaf_count]
 	// The leaves, REGION_BLOCKS at a time: the cache holds the last ones.
 	for first := 0; first < len(leaves); first += REGION_BLOCKS {
 		part := leaves[first:min(first + REGION_BLOCKS, len(leaves))]
@@ -1363,7 +1498,10 @@ versions_list :: proc "contextless" (object: ^Object_Entry, error: ^errors.Error
 		}
 		for place in 0 ..< len(part) {
 			intrinsics.mem_copy_non_overlapping(&leaf, raw_data(slot(u64(place))), BLOCK_SIZE)
-			for entry in leaf.entries[:min(leaf.count, format.VERSION_LEAF_CAPACITY)] {
+			if leaf.count == 0 || leaf.count > format.VERSION_LEAF_CAPACITY {
+				return errors.fail(error, ERROR_DAMAGED, .Damaged, .Objects, 1)
+			}
+			for entry in leaf.entries[:leaf.count] {
 				if listed_count < len(listed) {
 					listed[listed_count] = entry
 					listed_count += 1

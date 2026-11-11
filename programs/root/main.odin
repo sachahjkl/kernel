@@ -246,6 +246,11 @@ things_of :: proc "contextless" (name: string) -> system.Budget_Amounts {
 		return {pages = 256, programs = 1, threads = 1}
 	case "block", "frame":
 		return {pages = 256, programs = 1, threads = 1}
+	case "storage":
+		// About 9 MB of tables: the count of names of each block of the disk,
+		// the changes of one commit, the leaves of one version index, and the
+		// versions of one object for versions().
+		return {pages = 4096, programs = 1, threads = 1}
 	case "disk":
 		return {pages = 2048, programs = 1, threads = 1}
 	case "imports":

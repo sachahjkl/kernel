@@ -1,8 +1,8 @@
-// The date of the machine: this service reads the real-time clock of the machine (the CMOS clock, ports 0x70 and 0x71) one time at its start, and writes in the date page the date of the time 0 of the system. Each program reads the date from the page and the time page, with no kernel entry and no call (contract/date).
+// The date of the machine: this service reads the real-time clock of the machine (the CMOS clock, ports 0x70 and 0x71) at its start and each 10 seconds, and writes in the date page the date of the time 0 of the system. Each program reads the date from the page and the time page, with no kernel entry and no call (contract/date).
 //
 // A driver of a clock is a program, not a part of the kernel: the root service gives this program the two ports and the page with the right Write, and nothing else.
 //
-// The clock gives whole seconds. The service waits for the clock to change its second, so the date of the time 0 is exact to about one millisecond. The clock of the machine keeps UTC (QEMU: -rtc base=utc). Leap seconds are not counted.
+// The clock gives whole seconds. The service waits for the clock to change its second, so the date of the time 0 is exact to about one millisecond. The clock of the machine keeps UTC (QEMU: -rtc base=utc). Leap seconds are not counted. The year has two digits: the dates are from 2020 to 2099 (support/calendar, clock_seconds).
 package date_service
 
 import "contract:date"
@@ -19,20 +19,29 @@ REGISTER_DAY :: 0x07
 REGISTER_MONTH :: 0x08
 REGISTER_YEAR :: 0x09
 REGISTER_STATUS_A :: 0x0A // Bit 7: the clock updates its registers now.
-REGISTER_STATUS_B :: 0x0B // Bit 2: binary values (else two decimal digits in a byte). Bit 1: 24 hours (else 12, with bit 7 of the hour for the afternoon).
-REGISTER_CENTURY :: 0x32 // The century, in the register that the ACPI table names on QEMU and on most machines.
+REGISTER_STATUS_B :: 0x0B // The mode of the values (calendar.CLOCK_STATUS_BINARY, CLOCK_STATUS_24_HOURS).
 
+// The bounds of the reads: a clock that never ends an update, or whose
+// registers change at each read, gives no date; the service then waits for
+// no clock.
+UPDATE_READS_LIMIT :: 10_000 // An update takes about 2 ms; one read of a port takes about 1 us.
+STABLE_READS_LIMIT :: 8
+
+// register_read reads one register of the clock. Bit 7 of the index is 0,
+// so the non-maskable interrupt stays on. The grant of the two ports lets
+// this program write any index and read any byte of the memory of the
+// clock: the processor gives a program a port, not a value of a port.
 register_read :: proc "contextless" (register: u8) -> u8 {
-	system.port_write_8(PORT_INDEX, register) // Bit 7 is 0: the non-maskable interrupt stays on.
+	system.port_write_8(PORT_INDEX, register)
 	return system.port_read_8(PORT_DATA)
 }
 
-Clock_Reading :: struct {
-	second, minute, hour, day, month, year, century: u8,
-}
-
-clock_read :: proc "contextless" () -> (reading: Clock_Reading) {
-	for register_read(REGISTER_STATUS_A) & 0x80 != 0 {
+// clock_read reads the registers of the date, after the end of an update.
+clock_read :: proc "contextless" () -> (reading: calendar.Clock_Reading, valid: bool) {
+	for reads := 0; register_read(REGISTER_STATUS_A) & 0x80 != 0; reads += 1 {
+		if reads >= UPDATE_READS_LIMIT {
+			return {}, false
+		}
 	}
 	reading.second = register_read(REGISTER_SECONDS)
 	reading.minute = register_read(REGISTER_MINUTES)
@@ -40,50 +49,27 @@ clock_read :: proc "contextless" () -> (reading: Clock_Reading) {
 	reading.day = register_read(REGISTER_DAY)
 	reading.month = register_read(REGISTER_MONTH)
 	reading.year = register_read(REGISTER_YEAR)
-	reading.century = register_read(REGISTER_CENTURY)
-	return reading
+	return reading, true
 }
 
 // stable_read reads the clock until two readings agree: an update between
 // two registers gives a wrong mix.
-stable_read :: proc "contextless" () -> Clock_Reading {
-	reading := clock_read()
-	for {
-		again := clock_read()
+stable_read :: proc "contextless" () -> (reading: calendar.Clock_Reading, valid: bool) {
+	reading = clock_read() or_return
+	for _ in 0 ..< STABLE_READS_LIMIT {
+		again := clock_read() or_return
 		if again == reading {
-			return reading
+			return reading, true
 		}
 		reading = again
 	}
+	return {}, false
 }
 
-// seconds_of_reading gives the seconds since 1970 of a reading.
-seconds_of_reading :: proc "contextless" (reading: Clock_Reading) -> (seconds: i64, valid: bool) {
-	status := register_read(REGISTER_STATUS_B)
-	binary := status & 0x04 != 0
-	hours_24 := status & 0x02 != 0
-	value :: proc "contextless" (byte: u8, binary: bool) -> int {
-		return binary ? int(byte) : calendar.from_binary_coded_decimal(byte)
-	}
-	afternoon := !hours_24 && reading.hour & 0x80 != 0
-	hour := value(reading.hour & 0x7F, binary)
-	if !hours_24 {
-		hour = hour % 12 + (afternoon ? 12 : 0)
-	}
-	century := value(reading.century, binary)
-	if century < 19 || century > 99 {
-		century = 20 // A clock with no century register.
-	}
-	civil := calendar.Civil {
-		year   = i64(century * 100 + value(reading.year, binary)),
-		month  = value(reading.month, binary),
-		day    = value(reading.day, binary),
-		hour   = hour,
-		minute = value(reading.minute, binary),
-		second = value(reading.second, binary),
-	}
-	valid = civil.month >= 1 && civil.month <= 12 && civil.day >= 1 && civil.day <= calendar.days_in_month(civil.year, civil.month) && civil.hour < 24 && civil.minute < 60 && civil.second < 60
-	return calendar.seconds_of(civil), valid
+// seconds_of_reading gives the seconds since 1970 of a reading, in the mode
+// of the clock (calendar.clock_seconds checks each field).
+seconds_of_reading :: proc "contextless" (reading: calendar.Clock_Reading) -> (seconds: i64, valid: bool) {
+	return calendar.clock_seconds(reading, register_read(REGISTER_STATUS_B))
 }
 
 // One answer of now().
@@ -118,12 +104,12 @@ RESYNC_MILLISECONDS :: 10_000 // The time between two reads of the clock.
 // and gives the date of the time 0 of the system at that edge.
 synchronize :: proc "contextless" () -> (at_zero: i64, seconds: i64, edge_milliseconds: u64, valid: bool) {
 	started := system.nanoseconds()
-	first := stable_read()
+	first := stable_read() or_return
 	reading := first
 	edge: u64
 	for reading.second == first.second && system.nanoseconds() - started < 2_000_000_000 {
 		system.sleep(system.time() + 1)
-		reading = stable_read()
+		reading = stable_read() or_return
 		edge = system.nanoseconds()
 	}
 	seconds, valid = seconds_of_reading(reading)
@@ -178,7 +164,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		if !known || corrections == 1 || corrections % 30 == 0 || abs(corrected - before) >= 1000 {
 			// The drift since the first read: what the time of the system lost
 			// or gained against the clock.
-			system.log("date: the clock read again at the time ", edge_now, " ms of the system: the date moved by ", corrected - before, " ms; ", corrected - first_at_zero, " ms since the start, ", corrections, corrections == 1 ? " read" : " reads", " after the first")
+			system.log("date: the clock read again at the time ", edge_now, " ms of the system: the date moved by ", corrected - before, " ms; ", corrected - first_at_zero, " ms since the start, ", corrections, corrections == 1 ? string(" read") : string(" reads"), " after the first")
 		}
 	}
 }

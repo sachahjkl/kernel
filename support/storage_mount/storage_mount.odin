@@ -41,11 +41,20 @@ State :: struct {
 	// The reference count of each block that the root names: for a block of
 	// data, the lists that name it; for a list, the objects and versions that
 	// name it; 1 for a table, an index and a leaf.
-	references:    [format.DISK_BLOCKS_LIMIT]u16,
+	references:    [format.DISK_BLOCKS_LIMIT]u32,
 	owner:         [format.DISK_BLOCKS_LIMIT]u8, // The store that names the block, plus 1.
 	wrong_blocks:  [format.DISK_BLOCKS_LIMIT / 64]u64, // Bit n: block n was read and has a wrong check.
 	store_versions: [format.STORE_CAPACITY]u64, // The versions of the objects of each store.
 	store_shared:  [format.STORE_CAPACITY]u64, // The blocks of each store with a reference count of 2 or more.
+	// The distinct blocks of each store that the walk counted: the count that
+	// the store has in memory. The blocks under a block with a wrong check
+	// are not counted, and they are free in memory too.
+	store_recount: [format.STORE_CAPACITY]u64,
+	// The walk found a fault of the engine in the store (a block of one name
+	// named two times, a block named from two stores, a count that does not
+	// fit its type): its counts are not trusted, and the service makes no
+	// change in it.
+	store_faulty:  [format.STORE_CAPACITY]bool,
 	damaged:       [format.STORE_CAPACITY]u64, // Bit n: the object n of the store has a wrong block.
 	store_damaged: [format.STORE_CAPACITY]bool, // The table of the store has a wrong check.
 	scratch:       [SCRATCH_BLOCKS * BLOCK_SIZE]u8,
@@ -73,8 +82,15 @@ Mount :: struct {
 	// its distinct blocks.
 	named_twice:          u64,
 	named_by_two_stores:  u64,
-	stores_with_wrong_count: u64,
+	stores_with_wrong_count: u64, // Stores walked whole whose count in the root is not the count of their distinct blocks.
+	reference_overflow:   u64, // Blocks with more names than a count holds.
+	stores_recounted:     u64, // Stores whose count in the root differs from the recount: the open takes the recount.
 }
+
+// REFERENCE_LIMIT is the most names of one block that a count holds. A disk
+// that the engine wrote cannot reach it: one store has at most
+// OBJECT_CAPACITY objects of VERSIONS_LIMIT versions.
+REFERENCE_LIMIT :: u64(max(u32))
 
 // reference counts one more name of a block, from a store. It gives true
 // for the first name: the caller reads and checks the block one time.
@@ -90,10 +106,17 @@ reference :: proc "contextless" (state: ^State, number: u64, store_index: int, r
 	}
 	if int(state.owner[number]) != store_index + 1 {
 		result.named_by_two_stores += 1
+		state.store_faulty[store_index] = true
+		if state.owner[number] != 0 {
+			state.store_faulty[int(state.owner[number]) - 1] = true
+		}
 	}
-	if state.references[number] < max(u16) {
-		state.references[number] += 1
+	if u64(state.references[number]) >= REFERENCE_LIMIT {
+		result.reference_overflow += 1
+		state.store_faulty[store_index] = true
+		return false
 	}
+	state.references[number] += 1
 	if state.references[number] == 2 {
 		state.store_shared[store_index] += 1
 		result.shared += 1
@@ -245,6 +268,8 @@ walk :: proc "contextless" (state: ^State, reader: ^Block_Reader, candidate: ^fo
 	state.wrong_blocks = {}
 	state.store_versions = {}
 	state.store_shared = {}
+	state.store_recount = {}
+	state.store_faulty = {}
 	mark(state, 0, true)
 	mark(state, 1, true)
 	state.tables = {}
@@ -253,10 +278,12 @@ walk :: proc "contextless" (state: ^State, reader: ^Block_Reader, candidate: ^fo
 	result.stores, result.objects, result.checked, result.wrong = 0, 0, 0, 0
 	result.damaged_objects, result.damaged_stores, result.named_twice, result.stores_with_wrong_count = 0, 0, 0, 0
 	result.versions, result.damaged_versions, result.shared, result.named_by_two_stores = 0, 0, 0, 0
+	result.reference_overflow, result.stores_recounted = 0, 0
 	// A block that only one name can have: a table, an index, a leaf.
 	single :: proc "contextless" (state: ^State, reader: ^Block_Reader, pointer: format.Pointer, store_index: int, result: ^Mount, named: ^u64) -> Read {
 		if !reference(state, pointer.block, store_index, result) {
 			result.named_twice += 1
+			state.store_faulty[store_index] = true
 		} else {
 			named^ += 1
 		}
@@ -312,7 +339,16 @@ walk :: proc "contextless" (state: ^State, reader: ^Block_Reader, candidate: ^fo
 				continue
 			}
 			version_index := (^format.Version_Index)(raw_data(scratch_block(state, 0)))^
-			for leaf_pointer in version_index.leaves[:min(version_index.leaf_count, format.VERSION_INDEX_CAPACITY)] {
+			// A count that the format does not permit is damage, as a wrong
+			// check: the engine then never reads past the leaves of an index.
+			if version_index.leaf_count > format.VERSION_INDEX_CAPACITY {
+				result.wrong += 1
+				wrong_block_set(state, object.versions.block)
+				result.damaged_versions += 1
+				complete = false
+				continue
+			}
+			for leaf_pointer in version_index.leaves[:version_index.leaf_count] {
 				outcome = single(state, reader, leaf_pointer, index, result, &named)
 				if outcome == .Device {
 					return false
@@ -323,7 +359,16 @@ walk :: proc "contextless" (state: ^State, reader: ^Block_Reader, candidate: ^fo
 					continue
 				}
 				leaf := (^format.Version_Leaf)(raw_data(scratch_block(state, 0)))^
-				for &entry in leaf.entries[:min(leaf.count, format.VERSION_LEAF_CAPACITY)] {
+				// The engine writes no empty leaf, and no leaf of more entries
+				// than it holds.
+				if leaf.count == 0 || leaf.count > format.VERSION_LEAF_CAPACITY {
+					result.wrong += 1
+					wrong_block_set(state, leaf_pointer.block)
+					result.damaged_versions += 1
+					complete = false
+					continue
+				}
+				for &entry in leaf.entries[:leaf.count] {
 					result.versions += 1
 					state.store_versions[index] += 1
 					switch reference_list(state, reader, entry.list, entry.size, index, result, &named) {
@@ -337,8 +382,16 @@ walk :: proc "contextless" (state: ^State, reader: ^Block_Reader, candidate: ^fo
 				}
 			}
 		}
-		if complete && named != store.used {
-			result.stores_with_wrong_count += 1
+		// The count of the store is its recount: the blocks under a wrong
+		// block are not counted in memory either, so they are free there and
+		// out of the limit of the store. A store walked whole whose root gives
+		// another count is a fault of the engine that wrote it.
+		state.store_recount[index] = named
+		if named != store.used {
+			result.stores_recounted += 1
+			if complete {
+				result.stores_with_wrong_count += 1
+			}
 		}
 	}
 	return true
@@ -479,4 +532,47 @@ versions_read :: proc "contextless" (state: ^State, reader: ^Block_Reader, versi
 		}
 	}
 	return count, true
+}
+
+// version_leaves_full says if an object can take no more version with no
+// compaction: its index has its last leaf, and that leaf is full.
+version_leaves_full :: proc "contextless" (leaf_count: int, last_leaf_count: u64) -> bool {
+	return leaf_count >= format.VERSION_INDEX_CAPACITY && last_leaf_count >= format.VERSION_LEAF_CAPACITY
+}
+
+// version_leaves_compact moves the entries of leaves to the first leaves,
+// each one full but the last, in their order (the oldest first). The
+// retention rule leaves a few entries in each leaf, so with no compaction
+// the index fills with nearly empty leaves. It gives the count of the
+// leaves that hold an entry; the leaves after them have no entry.
+version_leaves_compact :: proc "contextless" (leaves: []format.Version_Leaf) -> (used: int) {
+	to_leaf, to_place: int
+	for from_leaf in 0 ..< len(leaves) {
+		count := int(min(leaves[from_leaf].count, format.VERSION_LEAF_CAPACITY))
+		for from_place in 0 ..< count {
+			entry := leaves[from_leaf].entries[from_place]
+			leaves[to_leaf].entries[to_place] = entry
+			to_place += 1
+			if to_place == format.VERSION_LEAF_CAPACITY {
+				leaves[to_leaf].count = format.VERSION_LEAF_CAPACITY
+				to_leaf += 1
+				to_place = 0
+			}
+		}
+	}
+	// The writes above never pass the place that they read: to_leaf and
+	// to_place stay at or before from_leaf and from_place.
+	used = to_leaf
+	if to_place != 0 {
+		leaves[to_leaf].count = u64(to_place)
+		for place in to_place ..< format.VERSION_LEAF_CAPACITY {
+			leaves[to_leaf].entries[place] = {}
+		}
+		used += 1
+	}
+	for index in used ..< len(leaves) {
+		leaves[index].count = 0
+		leaves[index].entries = {}
+	}
+	return used
 }

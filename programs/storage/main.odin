@@ -27,7 +27,7 @@ caller_store :: proc "contextless" () -> (name: string, limit: u64, person: bool
 
 // write replaces the object with this name in the store of the caller, with the bytes of data, in one commit on the disk. The state before becomes a version. At the limit of the store, the oldest versions of the store are thinned in the same commit. The result is the generation of the commit, or a negative number with an error record.
 //
-// The error kinds: No_Grant (-1, the caller has no store); Over_Limit (-2, the current objects with the change need more blocks than the limit, with no earlier version kept); Empty, Too_Long or Bad_Byte (-3, the name has 1 to 39 bytes and no zero byte); Too_Long (-4, the data has more than 32 blocks); Full (-5, no place for one more object or store, or no free block); Device (-6, the block service reported an error); Damaged (-8, the table of the store has a wrong check).
+// The error kinds: No_Grant (-1, the caller has no store); Over_Limit (-2, the current objects with the change need more blocks than the limit, with no earlier version kept); Empty, Too_Long or Bad_Byte (-3, the name has 1 to 39 bytes and no zero byte); Too_Long (-4, the data has more than 32 blocks); Full (-5, no place for one more object or store, or no free block; with the unit Commit_Blocks, the commit changes more blocks than one commit can); Over_Limit with the unit References (-5, a block would have more names than a count holds); Device (-6, the block service reported an error); Damaged (-8, the table of the store has a wrong check; with the unit Counts, the counts of the blocks of the store are not trusted after a fault of the service, which makes no change in the store until its next start).
 @(export, link_name = "write")
 write :: proc "c" (name: ^string, data: ^string, error: ^errors.Error_Record) -> i64 {
 	store, limit, _ := caller_store()
@@ -149,7 +149,7 @@ stores :: proc "c" (result: ^[]u8) -> i64 {
 				holders += 1
 			}
 		}
-		line := [?]system.Part{"\n", system.name_of(store.name[:]), ": ", object_count, " objects, ", opened.store_versions[index], " versions, ", store.used, " of ", store.limit, " blocks, ", opened.store_shared[index], " shared, ", holders, holders == 1 ? " connection" : " connections"}
+		line := [?]system.Part{"\n", system.name_of(store.name[:]), ": ", object_count, " objects, ", opened.store_versions[index], " versions, ", store.used, " of ", store.limit, " blocks, ", opened.store_shared[index], " shared, ", holders, holders == 1 ? string(" connection") : string(" connections")}
 		for part in line {
 			system.write_part(&writer, part)
 		}
@@ -300,16 +300,28 @@ restore :: proc "c" (store: ^string, name: ^string, generation: i64, error: ^err
 	if !ok {
 		return store_refusal(error)
 	}
-	store_index, object_index, found := object_locate(named.name, name^, error, 2)
+	// The name is copied one time: the caller can change the bytes of the
+	// call region, and the object that is found must be the one that changes.
+	kept, name_ok := name_keep(name^, error, 2)
+	if !name_ok {
+		return ERROR_NAME
+	}
+	object_name := string(kept.bytes[:kept.count])
+	store_index, object_index, found := object_locate(named.name, object_name, error, 2)
 	if !found {
 		return i64(object_index)
 	}
 	object := tables[store_index].objects[object_index]
+	if generation == i64(object.generation) && damaged[store_index] >> uint(object_index) & 1 != 0 {
+		// The current version is damaged: a restore of it would keep the
+		// damage, and say that the object is whole.
+		return errors.fail(error, ERROR_DAMAGED, .Damaged, .Objects, 2)
+	}
 	state, refused := state_at(&object, generation, 3, error)
 	if refused < 0 {
 		return refused
 	}
-	return change(named, name^, .Restore, nil, state, error, 2)
+	return change(named, object_name, .Restore, nil, state, error, 2)
 }
 
 // clone makes the object new_name of a store a copy of the object name: the two name the same blocks until one of them changes. A state of new_name before becomes a version. The store is empty for the store of the caller; another store needs a caller that acts for the person. The result is the generation of the commit, or a negative number with an error record.
@@ -378,6 +390,12 @@ compare :: proc "c" (store: ^string, name: ^string, first: i64, second: i64, res
 		open_first^ = -1
 	}
 	sizes := [2]i64{i64(states[0].size), i64(states[1].size)}
+	for state, index in states {
+		if blocks_of(state.size) > OBJECT_BLOCKS_LIMIT {
+			// A size that no object has: a disk that the engine did not write.
+			return errors.fail(error, ERROR_DAMAGED, .Damaged, .Objects, 3 + i64(index))
+		}
+	}
 	block_count := max(blocks_of(states[0].size), blocks_of(states[1].size))
 	for index in 0 ..< block_count {
 		pointers: [2]Pointer
@@ -494,8 +512,15 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		if mounted.damaged_versions != 0 {
 			system.log_in("storage", .Warning, "storage: ", mounted.damaged_versions, " versions have a wrong block: a read of them gives Damaged")
 		}
-		if mounted.named_twice != 0 || mounted.named_by_two_stores != 0 || mounted.stores_with_wrong_count != 0 {
-			system.log_in("storage", .Error, "storage: a fault of the engine: ", mounted.named_twice, " blocks of one name named two times, ", mounted.named_by_two_stores, " blocks named from two stores, ", mounted.stores_with_wrong_count, " stores whose count of blocks is not the count of their distinct blocks")
+		if mounted.named_twice != 0 || mounted.named_by_two_stores != 0 || mounted.reference_overflow != 0 {
+			faulty: u64
+			for flag in opened.store_faulty {
+				faulty += u64(flag)
+			}
+			system.log_in("storage", .Error, "storage: a fault of the engine: ", mounted.named_twice, " blocks of one name named two times, ", mounted.named_by_two_stores, " blocks named from two stores, ", mounted.reference_overflow, " counts of names that pass their limit; the service makes no change in the ", faulty, faulty == 1 ? string(" store") : string(" stores"), " with such a block, and gives their objects")
+		}
+		if mounted.stores_recounted != 0 {
+			system.log_in("storage", .Warning, "storage: the root gives ", mounted.stores_recounted, " stores another count of blocks than the open counted; the service takes the count of the open (", mounted.stores_with_wrong_count, " of them have no damage: a fault of the engine that wrote the count)")
 		}
 		system.log("storage: ok, generation ", mounted.generation, ": ", mounted.stores, " stores, ", mounted.objects, " objects, ", mounted.versions, " versions, ", opened.in_use_count, " blocks in use, ", mounted.shared, " shared, ", mounted.checked, " blocks checked, ", mounted.wrong, " wrong, in ", elapsed, " ms")
 	}

@@ -172,3 +172,72 @@ from_binary_coded_decimal :: proc "contextless" (value: u8) -> int {
 }
 
 _ :: intrinsics
+
+// The real-time clock of a PC (the CMOS clock): the bytes of its registers,
+// as the program `date` reads them, and their meaning.
+Clock_Reading :: struct {
+	second, minute, hour, day, month, year: u8,
+}
+
+CLOCK_STATUS_BINARY :: 0x04 // Status register B: the values are binary, not two decimal digits in a byte.
+CLOCK_STATUS_24_HOURS :: 0x02 // Status register B: 24 hours, not 12 with bit 7 of the hour for the afternoon.
+CLOCK_HOUR_AFTERNOON :: 0x80
+
+// CLOCK_EARLIEST_YEAR is the first year that the clock gives. The year
+// register has two digits, and the century register is not read: only the
+// ACPI table FADT says if a machine has one, and where, and the program that
+// reads the clock does not read that table. So the two digits give a year
+// from 2020 to 2099, and the digits 00 to 19 give no date: a clock with an
+// empty battery starts again at 2000, and that is no date of now.
+CLOCK_EARLIEST_YEAR :: 2020
+
+// clock_byte gives the value of a register, or false when the byte is not a
+// value of its mode: in decimal mode each half of the byte is a digit.
+clock_byte :: proc "contextless" (byte: u8, binary: bool) -> (value: int, valid: bool) {
+	if binary {
+		return int(byte), true
+	}
+	if byte >> 4 > 9 || byte & 0x0F > 9 {
+		return 0, false
+	}
+	return from_binary_coded_decimal(byte), true
+}
+
+// clock_seconds gives the seconds since 1970 of a reading of the clock, with
+// the status register B. valid is false when a field is not a value of its
+// mode or of its range.
+clock_seconds :: proc "contextless" (reading: Clock_Reading, status: u8) -> (seconds: i64, valid: bool) {
+	binary := status & CLOCK_STATUS_BINARY != 0
+	hours_24 := status & CLOCK_STATUS_24_HOURS != 0
+	second := clock_byte(reading.second, binary) or_return
+	minute := clock_byte(reading.minute, binary) or_return
+	day := clock_byte(reading.day, binary) or_return
+	month := clock_byte(reading.month, binary) or_return
+	year_digits := clock_byte(reading.year, binary) or_return
+	hour_byte := reading.hour
+	afternoon := false
+	if !hours_24 {
+		afternoon = hour_byte & CLOCK_HOUR_AFTERNOON != 0
+		hour_byte &~= CLOCK_HOUR_AFTERNOON
+	}
+	hour := clock_byte(hour_byte, binary) or_return
+	if !hours_24 {
+		// 12 hours: 12 in the morning is 0, 12 in the afternoon is 12.
+		if hour < 1 || hour > 12 {
+			return 0, false
+		}
+		hour = hour % 12 + (afternoon ? 12 : 0)
+	}
+	if year_digits > 99 {
+		return 0, false
+	}
+	year := i64(2000 + year_digits)
+	if year < CLOCK_EARLIEST_YEAR {
+		return 0, false
+	}
+	value := Civil{year = year, month = month, day = day, hour = hour, minute = minute, second = second}
+	if month < 1 || month > 12 || day < 1 || day > days_in_month(year, month) || hour > 23 || minute > 59 || second > 59 {
+		return 0, false
+	}
+	return seconds_of(value), true
+}

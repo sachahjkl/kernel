@@ -40,3 +40,33 @@ keeps :: proc "contextless" (times: []u64, now: u64, keep: []bool) -> (thinned: 
 	}
 	return thinned
 }
+
+// DATE_SECONDS_LIMIT is the first second of the year 10000: a date at or
+// after it is no date that a clock gives, and it is not used.
+DATE_SECONDS_LIMIT :: u64(253402300800)
+
+// age gives the age of a version in milliseconds: the smaller of its age in
+// the time since the format and its age in the date. The time since the
+// format counts only the time when a machine ran, so it never makes a
+// version older than it is; the date counts the time when no machine ran,
+// but a clock can be wrong on one start and right on the next (an empty
+// battery), and then each version of the wrong start would look years old.
+// A date of 0 is no date. A version whose time or date is after now has
+// the age 0.
+//   now_time, version_time: milliseconds since the format.
+//   now_date, version_date: seconds since 1970 (UTC).
+age :: proc "contextless" (now_time, version_time: u64, now_date, version_date: u64) -> u64 {
+	by_time := now_time > version_time ? now_time - version_time : 0
+	if now_date == 0 || version_date == 0 || now_date >= DATE_SECONDS_LIMIT || version_date >= DATE_SECONDS_LIMIT {
+		return by_time
+	}
+	by_date := now_date > version_date ? (now_date - version_date) * 1000 : 0
+	return min(by_time, by_date)
+}
+
+// rule_now gives the time that keeps measures from: the date in
+// milliseconds when it is known, else the time since the format. The time
+// of a version for keeps is rule_now minus its age.
+rule_now :: proc "contextless" (now_time: u64, now_date: u64) -> u64 {
+	return now_date != 0 && now_date < DATE_SECONDS_LIMIT ? now_date * 1000 : now_time
+}

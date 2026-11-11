@@ -311,6 +311,8 @@ crash_images_check :: proc(durable: []u8, pending: []Pending_Write, seed: u64) -
 			problem = fmt.tprintf("%d blocks have a wrong check", contents.mount.wrong)
 		case contents.mount.named_twice != 0:
 			problem = fmt.tprintf("%d blocks are named two times", contents.mount.named_twice)
+		case contents.mount.reference_overflow != 0:
+			problem = fmt.tprintf("%d blocks have more names than a count holds", contents.mount.reference_overflow)
 		case contents.mount.named_by_two_stores != 0:
 			problem = fmt.tprintf("%d blocks are named from two stores", contents.mount.named_by_two_stores)
 		case contents.mount.damaged_versions != 0:

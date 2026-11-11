@@ -59,6 +59,7 @@ Status :: enum {
 	Refused, // The storage service refused the call: see isolated.Status.
 	Damaged, // The storage service has the object and cannot give its bytes: a block has a wrong check, or the disk gave an error.
 	Failed, // The export answered a negative number: the error record says why.
+	Too_Small, // The bytes do not fit in the buffer of the caller: the count of the bytes is the result.
 }
 
 open :: proc "contextless" (ctx: ^system.Context) -> (client: Client, ok: bool) {
@@ -255,14 +256,20 @@ versions :: proc "contextless" (client: ^Client, name: string, into: []Version, 
 }
 
 // version copies the bytes of an object at a generation (a version, or the
-// current version) into result.
+// current version) into result. Too_Small: result is smaller than the bytes.
 version :: proc "contextless" (client: ^Client, name: string, generation: i64, result: []u8, error: ^errors.Error_Record = nil) -> (bytes: []u8, status: Status) {
 	arguments := [3]isolated.Argument{{text = nil}, {text = transmute([]u8)name}, {integer = u64(generation)}}
 	size: i64
 	text: []u8
 	size, text, status = call(client, "version", arguments[:], error)
+	if status == .Refused && size > i64(len(result)) {
+		return nil, .Too_Small // The service gave the size, and no bytes that fit the call region.
+	}
 	if status != .Ok {
 		return nil, status
+	}
+	if size > i64(len(result)) {
+		return nil, .Too_Small
 	}
 	if i64(len(text)) != size {
 		return nil, .Damaged

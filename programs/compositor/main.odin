@@ -204,7 +204,10 @@ windows_log :: proc "contextless" () {
 // The bar shows the date and the time of day in UTC (contract/date), or
 // the time since boot when the system has no date. second_of_bar gives the
 // second that it shows at the time `now` of the system, and
-// next_second_of_bar the time of the system when it changes.
+// next_second_of_bar the time of the system when it changes after `now`:
+// always later than `now`, and at most one second later, also when the date
+// first appears between two frames (the second shown then jumps from the
+// time since boot to the date, and the next frame shows it).
 date_page: ^date.Page
 
 second_of_bar :: proc "contextless" (now: u64) -> u64 {
@@ -214,11 +217,11 @@ second_of_bar :: proc "contextless" (now: u64) -> u64 {
 	return now / 1000
 }
 
-next_second_of_bar :: proc "contextless" (second: u64) -> u64 {
-	if milliseconds, known := date.milliseconds_now(date_page, 0); known {
-		return u64(i64(second + 1) * 1000 - milliseconds) // The date of the time 0 is `milliseconds`.
+next_second_of_bar :: proc "contextless" (now: u64) -> u64 {
+	if milliseconds, known := date.milliseconds_now(date_page, now); known {
+		return now + u64(1000 - milliseconds % 1000) // milliseconds_now gives a date after 1970 only: positive.
 	}
-	return (second + 1) * 1000
+	return (now / 1000 + 1) * 1000
 }
 
 damage_clock :: proc "contextless" () {
@@ -292,7 +295,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				system.wait_records(&wait, &client.ring.commands)
 			}
 		}
-		deadline := damage_count > 0 ? max(next_frame, 1) : next_second_of_bar(shown_second)
+		deadline := damage_count > 0 ? max(next_frame, 1) : next_second_of_bar(system.time())
 		if wake := pointer_wake(); wake != 0 {
 			deadline = min(deadline, wake) // An animated pointer shape shows.
 		}
