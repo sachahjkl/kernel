@@ -59,7 +59,7 @@ grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 	case "rights":
 		return {.Inspect, .Image} // It shows what the kernel refuses.
 	case "log":
-		return {.Log_Records}
+		return {.Log_Records, .Serve} // It serves records() to a caller that acts for the person.
 	case "boot":
 		return {.Inspect, .Image} // It shows the modules of the boot image.
 	case "rings":
@@ -108,7 +108,7 @@ callable_of :: proc "contextless" (name: string) -> []string {
 }
 
 @(rodata)
-remote_callable := [?]string{"compositor", "manual", "monitor", "storage"}
+remote_callable := [?]string{"compositor", "log", "manual", "monitor", "storage"}
 
 // The values of the context of the compositor that name its own file: 0 to
 // 3 are the screen.

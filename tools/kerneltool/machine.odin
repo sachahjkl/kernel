@@ -43,6 +43,7 @@ Step_Kind :: enum {
 	Film, // Save the screen 25 times in one second, for x milliseconds, as the next pictures of the film.
 	Quit, // End QEMU: the machine does not stop by itself.
 	Trace, // The log has text, after the text of the last Wait, then a stack trace to the end of the line: the tool names each frame from the linked file of its module, and the names start with `names`.
+	Record, // A log record with the program `program`, the channel `channel`, the level `level` and a text that has `text`, after the record of the last Record step: the tool reads log.records() through the remote service (call.odin). With any_order, the next Record step searches from the same place.
 	Call, // Call an export of a service from the host (call.odin), through the remote service: what the tool prints has `expected`. With `rows_call`, that call gives the count of rows of the Table. With `repeat`, the tool also measures the round trip and the calls in one second.
 }
 
@@ -60,6 +61,9 @@ Step :: struct {
 	rows_call:  string, // For Call: a call whose Integer result is the count of rows of the Table.
 	lose:       int, // For Call: the peer drops this many datagrams of the answer; the tool sends the request again, and monitor.served() shows that the call ran one time.
 	wrong_hash: bool, // For Call: the request names another hash of the module.
+	program:    string, // For Record: the program that wrote the record.
+	channel:    string, // For Record: its channel ("" for none).
+	level:      string, // For Record: info, debug, warning or error.
 	pointer:    bool, // For Call: when the call has its result, the tool confirms each place of the pointer from now on (pointer_confirm).
 	repeat:     int, // For Call: the calls of the measure of the round trip.
 	parts:      int, // For Call: the least count of datagrams of the answer.
@@ -1227,6 +1231,10 @@ scenario := [?]Step {
 	{kind = .Shot, text = "log"},
 	// The window covers the console: move it down.
 	{kind = .Move, text = "log", to_x = 96, to_y = 742},
+	// The log records as a table with typed fields, through the remote
+	// service: from here on some checks read the program, the channel and
+	// the level of a record (step Record), not only a line of text.
+	{kind = .Call, text = "log.records(0)", expected = " rows of Record"},
 	{kind = .Front, text = "console"},
 	// The terminal: a program gives text as records with a style, in a ring
 	// of 4096 records. The terminal reads them in one thread and draws in
@@ -1266,30 +1274,30 @@ scenario := [?]Step {
 	// block service, and the block ring to its client. The device reads and
 	// writes the memory of the client.
 	{kind = .Launch, text = "disk"},
-	{kind = .Wait, text = "root: started block for the device at the place 17 of the bus"},
-	{kind = .Wait, text = "block: ok, 8192 blocks of 4096 bytes, a queue of ", any_order = true},
+	{kind = .Record, program = "root", channel = "devices", level = "info", text = "root: started block for the device at the place 17 of the bus"},
+	{kind = .Record, program = "block", level = "info", text = "block: ok, 8192 blocks of 4096 bytes, a queue of ", any_order = true},
 	{kind = .Wait, text = "disk: ok, the disk has 8192 blocks"},
 	{kind = .Wait, text = "disk: read, 1 block in each request, 1 in flight: "},
 	{kind = .Wait, text = "disk: read, 1 block in each request, 32 in flight: "},
 	{kind = .Wait, text = "disk: write, 1 block in each request, 1 in flight: "},
 	{kind = .Wait, text = "disk: write, 1 block in each request, 32 in flight: "},
 	{kind = .Wait, text = "disk: read, 16 blocks in each request, 8 in flight: "},
-	{kind = .Wait, text = "disk: ok, 5 measures, 0 errors, write then read back: 0 wrong"},
+	{kind = .Record, program = "disk", level = "info", text = "disk: ok, 5 measures, 0 errors, write then read back: 0 wrong"},
 	{kind = .Shot, text = "disk"},
 	// The client stops: its block service stops, and the device stops
 	// using memory.
 	{kind = .Close, text = "disk"},
-	{kind = .Wait, text = "root: disk stopped with code 0"},
-	{kind = .Wait, text = "root: block stopped with code 0"},
+	{kind = .Record, program = "root", channel = "programs", level = "info", text = "root: disk stopped with code 0"},
+	{kind = .Record, program = "root", channel = "programs", level = "info", text = "root: block stopped with code 0"},
 	// The storage service starts when a program asks for it, with the block
 	// service of the data disk. The console has a private store of 4 blocks,
 	// by its name; it acts for the person, so it also sees all the stores.
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "connect(\"storage\")"},
-	{kind = .Wait, text = "root: started block for the device at the place 16 of the bus"},
-	{kind = .Wait, text = "root: started storage"},
-	{kind = .Wait, text = "storage: ok, a new disk: generation 1, 16384 blocks", any_order = true},
-	{kind = .Wait, text = "root: connected console to the service storage"},
+	{kind = .Record, program = "root", channel = "devices", level = "info", text = "root: started block for the device at the place 16 of the bus"},
+	{kind = .Record, program = "root", channel = "programs", level = "info", text = "root: started storage"},
+	{kind = .Record, program = "storage", level = "info", text = "storage: ok, a new disk: generation 1, 16384 blocks", any_order = true},
+	{kind = .Record, program = "root", channel = "calls", level = "info", text = "root: connected console to the service storage"},
 	{kind = .Type, text = "storage.write(\"greeting\", \"kept on the disk\")"},
 	{kind = .Wait, text = "[console] 2"},
 	{kind = .Type, text = "storage.read(\"greeting\")"},
@@ -1311,7 +1319,7 @@ scenario := [?]Step {
 	{kind = .Type, text = "grants(\"console\")"},
 	{kind = .Wait, text = "[console] console has: log, machine, image, store, person"},
 	{kind = .Type, text = "revoke(\"console\", \"store\")"},
-	{kind = .Wait, text = "root: revoked the grant store of console, connections changed: 1"},
+	{kind = .Record, program = "root", channel = "programs", level = "info", text = "root: revoked the grant store of console, connections changed: 1"},
 	{kind = .Type, text = "storage.write(\"greeting\", \"changed\")"},
 	{kind = .Wait, text = "[console] error: storage.write: the caller has no grant for this: a private store (-1)"},
 	{kind = .Type, text = "storage.stores()"},
@@ -1339,7 +1347,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = " was revoked"},
 	{kind = .Shot, text = "errors"},
 	{kind = .Close, text = "errors"},
-	{kind = .Wait, text = "root: errors stopped"},
+	{kind = .Record, program = "root", channel = "programs", level = "info", text = "root: errors stopped with code 0"},
 	{kind = .Front, text = "console"},
 	// Each page is free or paid, after all the starts and stops of this test.
 	{kind = .Type, text = "memory()"},
@@ -1405,6 +1413,7 @@ Machine :: struct {
 	confirm:     bool, // The tool reads compositor.pointer() before each press: see pointer_confirm.
 	confirmations: [dynamic]time.Duration, // The time of each confirmation of a place.
 	corrected:   int, // The places that needed a correction.
+	record_next: i64, // The number of the log record where the next Record step searches.
 	client:      Call_Client,
 	client_open: bool,
 }
@@ -1944,6 +1953,40 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 					fmt.eprintfln("kerneltool: test failed: step %d: the window %s is not at %d,%d", index + 1, moved_title, moved_x, moved_y)
 					return false
 				}
+			}
+		case .Record:
+			if !machine.client_open {
+				if !call_client_open(&machine.client, machine.call_port) {
+					return false
+				}
+				machine.client_open = true
+			}
+			found := false
+			from := machine.record_next
+			reads := 0
+			for start := time.now(); !found && time.since(start) < STEP_TIMEOUT; {
+				table, ok := table_call(&machine.client, fmt.tprintf("log.records(%d)", from))
+				reads += 1
+				rows := ok ? len(table.rows) / table.size : 0
+				for row in 0 ..< rows {
+					number, _ := strconv.parse_i64(table_value(&table, row, "number"))
+					if table_value(&table, row, "program") == step.program && table_value(&table, row, "channel") == step.channel && table_value(&table, row, "level") == step.level && strings.contains(table_value(&table, row, "text"), step.text) {
+						found = true
+						if !step.any_order {
+							machine.record_next = number + 1
+						}
+						fmt.printfln("kerneltool: test passed: the log record %d of %s, channel \"%s\", level %s, has \"%s\" (%d calls of log.records)", number, step.program, step.channel, step.level, step.text, reads)
+						break
+					}
+					from = number + 1
+				}
+				if !found && rows == 0 {
+					time.sleep(50 * time.Millisecond)
+				}
+			}
+			if !found {
+				fmt.eprintfln("kerneltool: test failed: step %d: no log record of %s, channel \"%s\", level %s, has \"%s\"", index + 1, step.program, step.channel, step.level, step.text)
+				return false
 			}
 		case .Call:
 			if !machine.client_open {

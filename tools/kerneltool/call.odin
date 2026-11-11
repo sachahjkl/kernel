@@ -469,6 +469,46 @@ call_run :: proc(client: ^Call_Client, text: string) -> (outcome: Call_Result) {
 	return outcome
 }
 
+// A table that a call gave: the rows, and the description of a row.
+Call_Table :: struct {
+	file:      []u8,
+	described: module.Record,
+	rows:      []u8, // A copy, in the temporary memory.
+	size:      int, // The bytes of one row.
+	total:     i64, // The count of the full table, as the export gave it.
+}
+
+// table_call makes a call with a Table result, and gives its rows.
+table_call :: proc(client: ^Call_Client, text: string) -> (table: Call_Table, ok: bool) {
+	call, problem := call_prepare(client, text)
+	if problem != "" || call.function.result != .Table {
+		return {}, false
+	}
+	answer, result, _, answered := call_send(client, &call)
+	if !answered || answer.status != .Ok || isolated.Status(answer.call_status) != .Ok || answer.value < 0 {
+		return {}, false
+	}
+	table.described = module.record_type(call.file, call.function.result_detail) or_return
+	table.file = call.file
+	table.size = int(max(table.described.size, 1))
+	table.rows = slice.clone(result[:len(result) / table.size * table.size], context.temp_allocator)
+	table.total = answer.value
+	return table, true
+}
+
+// table_value gives the field with a name of row `row`, as text: an
+// Integer as decimal digits.
+table_value :: proc(table: ^Call_Table, row: int, name: string) -> string {
+	bytes := table.rows[row * table.size:][:table.size]
+	for number in 0 ..< table.described.field_count {
+		item, _ := module.field(table.file, table.described, number)
+		if module.string_at(table.file, item.name_offset, item.name_count) == name {
+			return field_value(bytes, item)
+		}
+	}
+	return ""
+}
+
 // hex_of gives bytes in hexadecimal.
 hex_of :: proc(bytes: []u8) -> string {
 	builder := strings.builder_make(context.temp_allocator)

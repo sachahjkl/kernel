@@ -7,7 +7,8 @@
 // records: the color of the mark is the level, and the color of the name
 // is the program.
 //
-// The program needs the grant to read the records of the log.
+// The program needs the grant to read the records of the log. It is also a
+// service: records() gives the records as a table (exports.odin).
 package log
 
 import "support:display"
@@ -154,11 +155,15 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.log_in("log", .Error, "log: cannot read the records of the log: status ", u64(status))
 		system.stop(1)
 	}
+	// The service reads the same memory object: exports.odin.
+	reader_head, reader_records = reader.head, reader.records
+	service, _ = system.service_open(ctx)
 	logged := false
 	for {
 		wait: system.Wait
 		display.wait_events(&wait, &window)
 		system.wait_log(&wait, &reader)
+		system.service_wait(&wait, &service)
 		changed := !logged
 		for {
 			record, late, has := system.log_next(&reader)
@@ -181,5 +186,6 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			continue
 		}
 		system.wait_end(&wait)
+		system.service_run(&service)
 	}
 }
