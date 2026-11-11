@@ -551,3 +551,168 @@ card_caption_stays_inside :: proc(t: ^testing.T) {
 		}
 	}
 }
+
+// A grid where one cell changed damages that cell only; a grid that the
+// table before does not have is damaged whole; the copy keeps the cells.
+@(test)
+text_grid_damage_for_each_cell :: proc(t: ^testing.T) {
+	cells_now: [3 * 8]Text_Grid_Cell
+	cells_drawn: [3 * 8]Text_Grid_Cell
+	for &cell, index in cells_now {
+		cell = {u8('a' + index % 26), false, 0xFFFFFF}
+	}
+	records_now, records_before: [4]Draw_Record
+	grids_now := [1]Text_Grid{{cells = cells_now[:], columns = 6, rows = 3, stride = 8}}
+	grids_before := [1]Text_Grid{{cells = cells_drawn[:]}}
+	now := Draw_Table{records = records_now[:], grids = grids_now[:]}
+	before := Draw_Table{records = records_before[:], grids = grids_before[:]}
+	draw_text_grid(&now, 10, 20, 0)
+	testing.expect(t, now.record_count == 1 && !now.full)
+	testing.expect(t, draw_table_copy(&before, &now))
+	damage: Damage
+	damage_by_difference(&before, &now, &damage)
+	testing.expect_value(t, damage.count, 0)
+	cells_now[1 * 8 + 4].character = 'Z'
+	damage_by_difference(&before, &now, &damage)
+	testing.expect_value(t, damage.count, 1)
+	testing.expect_value(t, damage.rectangles[0], Rectangle{10 + 4 * 8, 20 + 16, 10 + 5 * 8, 20 + 32})
+	// The cells past the columns of a row are not in the grid.
+	damage = {}
+	testing.expect(t, draw_table_copy(&before, &now))
+	cells_now[7].character = 'Q'
+	damage_by_difference(&before, &now, &damage)
+	testing.expect_value(t, damage.count, 0)
+	// A table before with no room for the cells cannot keep a copy.
+	small: [4]Text_Grid_Cell
+	grids_small := [1]Text_Grid{{cells = small[:]}}
+	before.grids = grids_small[:]
+	testing.expect(t, !draw_table_copy(&before, &now))
+	// Cells fewer than the rows of the grid: no record.
+	grids_now[0].rows = 4
+	draw_table_clear(&now)
+	draw_text_grid(&now, 0, 0, 0)
+	testing.expect(t, now.full && now.record_count == 0)
+}
+
+// A grid draws its characters and its reverse cells, cut to the canvas.
+@(test)
+text_grid_draws_its_cells :: proc(t: ^testing.T) {
+	pixels: [40 * 32]graphics.Color
+	canvas := graphics.Canvas{pixels = raw_data(pixels[:]), width = 40, height = 32, stride = 40}
+	cells := [2 * 6]Text_Grid_Cell{}
+	cells[0] = {'#', false, 0x00FF00}
+	cells[7] = {' ', true, 0xFF0000}
+	cells[5] = {'#', false, 0x0000FF} // Past the canvas: cut.
+	grid := Text_Grid{cells = cells[:], columns = 6, rows = 2, stride = 6}
+	text_grid_draw(canvas, 0, 0, grid)
+	green, red := 0, 0
+	for pixel in pixels {
+		green += int(pixel == 0x00FF00)
+		red += int(pixel == 0xFF0000)
+	}
+	testing.expect(t, green > 0, "the character of the first cell is drawn")
+	testing.expectf(t, red == graphics.CELL_WIDTH * graphics.CELL_HEIGHT, "the reverse cell fills its cell: %d pixels", red)
+}
+
+// Two pictures: a frame equal to the older frame of its own picture draws
+// nothing, but the screen shows the other picture, which differs: the
+// present covers that difference.
+@(test)
+two_pictures_present_what_the_screen_shows :: proc(t: ^testing.T) {
+	records_own, records_shown, records_now: [4]Draw_Record
+	own := Draw_Table{records = records_own[:]}
+	shown := Draw_Table{records = records_shown[:]}
+	now := Draw_Table{records = records_now[:]}
+	draw_rectangle(&own, 0, 0, 10, 10, 0xFF0000)
+	draw_rectangle(&shown, 0, 0, 10, 10, 0x00FF00) // The frame just before.
+	draw_rectangle(&now, 0, 0, 10, 10, 0xFF0000) // Back to the color of two frames before.
+	draw, present: Damage
+	damage_of_two_pictures(&own, &shown, true, &now, &draw, &present)
+	testing.expect_value(t, draw.count, 0)
+	testing.expect_value(t, present.count, 1)
+	testing.expect_value(t, present.rectangles[0], Rectangle{0, 0, 10, 10})
+	// The other picture was never drawn: each record is presented.
+	draw, present = {}, {}
+	damage_of_two_pictures(&own, &shown, false, &now, &draw, &present)
+	testing.expect_value(t, present.count, 1)
+}
+
+// Two pictures and a screen, as display and the compositor do: each frame
+// draws the damage of its own picture, presents a rectangle, and the screen
+// takes that rectangle of the picture. After each frame the screen must be
+// the frame drawn whole. The frames are those of the terminal: a grid that
+// scrolls, bars of the graph that come and go, a thumb that moves.
+@(test)
+two_pictures_screen_is_each_frame :: proc(t: ^testing.T) {
+	WIDTH :: 120
+	HEIGHT :: 120
+	COLUMNS :: 12
+	ROWS :: 5
+	pictures: [2][WIDTH * HEIGHT]graphics.Color
+	screen, whole: [WIDTH * HEIGHT]graphics.Color
+	canvas_of :: proc(pixels: ^[WIDTH * HEIGHT]graphics.Color) -> graphics.Canvas {
+		return {pixels = raw_data(pixels[:]), width = WIDTH, height = HEIGHT, stride = WIDTH}
+	}
+	cells: [ROWS * COLUMNS]Text_Grid_Cell
+	copies: [2][ROWS * COLUMNS]Text_Grid_Cell
+	records_now: [64]Draw_Record
+	records_before: [2][64]Draw_Record
+	text_now: [256]u8
+	text_before: [2][256]u8
+	grids_now := [1]Text_Grid{{cells = cells[:], columns = COLUMNS, rows = ROWS, stride = COLUMNS}}
+	grids_before := [2][1]Text_Grid{{{cells = copies[0][:]}}, {{cells = copies[1][:]}}}
+	now := Draw_Table{records = records_now[:], text = text_now[:], grids = grids_now[:]}
+	before := [2]Draw_Table{{records = records_before[0][:], text = text_before[0][:], grids = grids_before[0][:]}, {records = records_before[1][:], text = text_before[1][:], grids = grids_before[1][:]}}
+	drawn: [2]bool
+	picture := 0
+	seed: u32 = 7
+	for frame in 0 ..< 200 {
+		// The frame: bars, the grid, a thumb.
+		draw_table_clear(&now)
+		for bar in 0 ..< 6 {
+			seed = seed * 1103515245 + 12345
+			draw_rectangle(&now, bar * 6, 0, 5, int(seed >> 16) % 3 * 4, 0x30A050)
+		}
+		for &cell, index in cells {
+			cell = {u8('a' + (index / COLUMNS + frame * 3) % 26), (index + frame) % 17 == 0, 0xE0E0E0}
+			if (index + frame) % 5 == 0 {
+				cell.character = 0
+			}
+		}
+		draw_text_grid(&now, 4, 16, 0)
+		draw_rectangle(&now, 110, 16 + frame * 7 % 60, 6, 13, 0x5080C0)
+		draw_text(&now, 4, 100, frame % 2 == 0 ? "line 12" : "line 3", 0xFFFFFF)
+
+		// The reference: the frame drawn whole.
+		graphics.clear(canvas_of(&whole), graphics.COLOR_BACKGROUND)
+		execute(&now, canvas_of(&whole))
+
+		// The frame as window_frame_end draws it.
+		own := &before[picture]
+		canvas := canvas_of(&pictures[picture])
+		present: Rectangle
+		if !drawn[picture] {
+			graphics.clear(canvas, graphics.COLOR_BACKGROUND)
+			execute(&now, canvas)
+			present = {0, 0, WIDTH, HEIGHT}
+		} else {
+			draw, presented: Damage
+			damage_of_two_pictures(own, &before[1 - picture], drawn[1 - picture], &now, &draw, &presented)
+			draw_damage_on_surface(&now, canvas, draw.rectangles[:draw.count])
+			present = intersection(damage_bounds(&presented), {0, 0, WIDTH, HEIGHT})
+		}
+		testing.expect(t, draw_table_copy(own, &now))
+		drawn[picture] = true
+		for y in present.top ..< present.bottom {
+			for x in present.left ..< present.right {
+				screen[y * WIDTH + x] = pictures[picture][y * WIDTH + x]
+			}
+		}
+		testing.expectf(t, pictures[picture] == whole, "frame %d: the picture %d is not the frame", frame, picture)
+		if screen != whole {
+			testing.expectf(t, false, "frame %d: the screen is not the frame", frame)
+			return
+		}
+		picture = 1 - picture
+	}
+}

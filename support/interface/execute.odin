@@ -92,6 +92,11 @@ execute_in_rectangle :: proc "contextless" (table: ^Draw_Table, canvas: graphics
 				picture := table.pictures[index]
 				graphics.copy(view, x, y, {pixels = picture.pixels, width = min(picture.width, width), height = min(picture.height, height), stride = picture.stride})
 			}
+		case .Text_Grid:
+			index := int(record.text_start)
+			if index < len(table.grids) {
+				text_grid_draw(view, x, y, table.grids[index])
+			}
 		case .Point_Grid:
 			// The points are at 12 + 24 n of the surface, so that two areas
 			// of one surface show one grid. A point that starts before the
@@ -104,6 +109,53 @@ execute_in_rectangle :: proc "contextless" (table: ^Draw_Table, canvas: graphics
 					graphics.fill(view, point_x - area.left, point_y - area.top, graphics.POINT_SIZE, graphics.POINT_SIZE, record.first_color)
 				}
 			}
+		}
+	}
+}
+
+// text_grid_draw draws the cells of a grid that the view shows, with its
+// first cell at (x, y). The cells of one color that follow each other are
+// one text: the font draws each text once.
+text_grid_draw :: proc "contextless" (canvas: graphics.Canvas, x, y: int, grid: Text_Grid) {
+	if !grid_valid(grid) {
+		return
+	}
+	first_row := max(0, -y / graphics.CELL_HEIGHT)
+	last_row := min(grid.rows, (canvas.height - y + graphics.CELL_HEIGHT - 1) / graphics.CELL_HEIGHT)
+	first_column := max(0, -x / graphics.CELL_WIDTH)
+	last_column := min(grid.columns, (canvas.width - x + graphics.CELL_WIDTH - 1) / graphics.CELL_WIDTH)
+	run: [256]u8
+	for row in first_row ..< last_row {
+		cells := grid.cells[row * grid.stride:][:grid.columns]
+		top := y + row * graphics.CELL_HEIGHT
+		column := first_column
+		for column < last_column {
+			cell := cells[column]
+			left := x + column * graphics.CELL_WIDTH
+			if cell.reverse {
+				graphics.fill(canvas, left, top, graphics.CELL_WIDTH, graphics.CELL_HEIGHT, cell.color)
+				run[0] = max(cell.character, ' ')
+				text_draw(canvas, left, top, string(run[:1]), graphics.COLOR_BACKGROUND, 1)
+				column += 1
+				continue
+			}
+			if cell.character <= ' ' {
+				column += 1
+				continue
+			}
+			// A run: the cells of this color, spaces too, up to a reverse
+			// cell, an empty cell or the end of the room.
+			count := 0
+			for column + count < last_column && count < len(run) {
+				next := cells[column + count]
+				if next.reverse || next.character < ' ' || next.color != cell.color {
+					break
+				}
+				run[count] = next.character
+				count += 1
+			}
+			text_draw(canvas, left, top, string(run[:count]), cell.color, 1)
+			column += count
 		}
 	}
 }
