@@ -71,7 +71,12 @@ hex_text :: proc(bytes: []u8) -> string {
 
 // odin_files_of_a_folder gives each .odin file under a folder and its
 // subfolders: Odin compiles each .odin file of a package folder, so each one
-// must be in a list.
+// must be in a list. A symbolic link is refused (a folder of a copy that
+// points elsewhere would bring files that no list names), and so is a file
+// that is not a .odin file, a license or one of the two manifests (a #load
+// or a foreign import could read it, and its bytes have no hash). The lists
+// are a tripwire, not a proof of review: whoever changes a file of the
+// system also writes its new hash; the review reads the change.
 odin_files_of_a_folder :: proc(folder: string, files: ^[dynamic]string) -> bool {
 	entries, err := os.read_all_directory_by_path(folder, context.temp_allocator)
 	if err != nil {
@@ -80,10 +85,18 @@ odin_files_of_a_folder :: proc(folder: string, files: ^[dynamic]string) -> bool 
 	}
 	for entry in entries {
 		path := join(folder, "/", entry.name)
-		if entry.type == .Directory {
+		switch {
+		case entry.type == .Symlink:
+			fmt.eprintfln("kerneltool: test failed: %s is a symbolic link: the files of support/cryptography are in its folders", path)
+			return false
+		case entry.type == .Directory:
 			odin_files_of_a_folder(path, files) or_return
-		} else if strings.has_suffix(entry.name, ".odin") {
+		case strings.has_suffix(entry.name, ".odin"):
 			append(files, path)
+		case strings.has_prefix(entry.name, "LICENSE.") && folder == CRYPTOGRAPHY_FOLDER, path == CRYPTOGRAPHY_MANIFEST, path == CRYPTOGRAPHY_SYSTEM_FILES:
+		case:
+			fmt.eprintfln("kerneltool: test failed: %s is not a .odin file, a license or a manifest: no list can name it", path)
+			return false
 		}
 	}
 	return true

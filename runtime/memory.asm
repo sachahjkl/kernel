@@ -262,29 +262,43 @@ erase_secret_bytes:
 ; hold a key, an expanded key or a hash state. A cryptographic export calls
 ; it after its work, and the random generator after a refill and a reseed.
 ;
-; Why 16 KiB is enough: the largest frames below an export of the module
-; cryptography are its own copies (8160 bytes of HKDF output and 1024 bytes of
-; info, or 4096 bytes of a message to sign) and the frames of the code of the
-; origin under them: SHA-512 and HMAC states of some hundred bytes, the
-; points of edwards25519 (160 bytes each, a few at once), the counter blocks
-; of AES (ct64, 4 blocks of 16 bytes and the bitsliced state). Together they
-; stay under 12 KiB; 16 KiB leaves room. The area is in the stack of the
-; thread: the main stack has 256 KiB and a thread 64 KiB, and the exports
-; run near their top.
+; It writes from the top down, 8 bytes at a time: the first byte past the
+; bottom of the stack of the thread is in the unmapped page under the
+; stack, so the program stops there, before any byte of the mapping under
+; that page (a ring, a region that another program shares) is written. A
+; thread that calls the module cryptography or draws random bytes needs
+; STACK_ERASE_SIZE of stack below its frame at the call, and its own frames:
+; 24 KiB in all is the least (docs/CRYPTOGRAPHY.md, section 6); the threads
+; of the system have 64 KiB (system.THREAD_STACK_PAGES) and the main thread
+; 256 KiB. With less, the program stops at the guard page: no other memory
+; is written.
+;
+; Why 16 KiB: the largest frames below an export of the module cryptography
+; are its own copies (8160 bytes of HKDF output and 1024 bytes of info, or
+; 4096 bytes of a message to sign) and the frames of the code of the origin
+; under them: SHA-512 and HMAC states of some hundred bytes, the points of
+; edwards25519 (160 bytes each, a few at once), the counter blocks of AES
+; (ct64, 4 blocks of 16 bytes and the bitsliced state). A measure of the
+; deepest frame chooses the size in the end.
 ;
 ; Writing below the stack pointer is safe here: the interrupts and the
 ; kernel entries of a program use the kernel stack, so nothing lives below
-; the stack pointer of a program. The direction flag is clear at each call.
+; the stack pointer of a program. No string instruction is used, so the
+; direction flag is not changed.
 %ifndef STACK_ERASE_SIZE
 %define STACK_ERASE_SIZE 16384
 %endif
 erase_stack_below_the_caller:
 	; At the entry, rsp points to the return address: each byte below it is
-	; free.
-	lea rdi, [rsp - STACK_ERASE_SIZE]
-	mov rcx, STACK_ERASE_SIZE
+	; free. rdi goes from rsp - 8 down to rsp - STACK_ERASE_SIZE.
+	lea rdi, [rsp - 8]
+	lea rcx, [rsp - STACK_ERASE_SIZE]
 	xor eax, eax
-	rep stosb
+.erase:
+	mov [rdi], rax
+	sub rdi, 8
+	cmp rdi, rcx
+	jae .erase
 	ret
 
 global copy_bytes_without_overlap

@@ -270,12 +270,15 @@ ed25519_strict_verify :: proc(t: ^testing.T) {
 	testing.expect(t, !ed25519.verify(&public_key, nil, bytes_of("e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e065224901554c8c7872aa064e049dbb3013fbf29380d25bf5f0595bbe24655141438e7a101b")))
 	neutral := bytes_of("0100000000000000000000000000000000000000000000000000000000000000")
 	small_order_key: ed25519.Public_Key
-	if ed25519.public_key_set_bytes(&small_order_key, neutral) {
-		message := transmute([]byte)string("any message")
-		testing.expect(t, !ed25519.verify(&small_order_key, message, bytes_of("01000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")))
-		testing.expect(t, !ed25519.verify(&small_order_key, message, bytes_of("eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f0000000000000000000000000000000000000000000000000000000000000000")))
-	}
+	// The neutral point is a canonical encoding: the key is read, then
+	// refused at each verify as a key of small order.
+	testing.expect(t, ed25519.public_key_set_bytes(&small_order_key, neutral))
+	message := transmute([]byte)string("any message")
+	testing.expect(t, !ed25519.verify(&small_order_key, message, bytes_of("01000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")))
+	testing.expect(t, !ed25519.verify(&small_order_key, message, bytes_of("eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f0000000000000000000000000000000000000000000000000000000000000000")))
 }
+
+
 
 // The GCM specification of McGrew and Viega, test case 4 (AES-128).
 @(test)
@@ -317,4 +320,44 @@ aes_128_gcm_test_cases_1_and_2 :: proc(t: ^testing.T) {
 	aes.seal_gcm(&ctx, sealed[:], tag[:], iv[:12], nil, zeros[:])
 	testing.expect_value(t, hex_of(sealed[:]), "0388dace60b6a392f328c2b971b2fe78")
 	testing.expect_value(t, hex_of(tag[:]), "ab6e47d42cec13bdf53a67b21257bddf")
+}
+12
+// Taming the many EdDSAs, case 4 (github.com/novifinancial/ed25519-speccheck, cases.json).
+SPECCHECK_CASE_4_MESSAGE :: "e47d62c63f830dc7a6851a0b1f33ae4bb2f507fb6cffec4011eaccd55b53f56c"
+SPECCHECK_CASE_4_PUBLIC_KEY :: "cdb267ce40c5cd45306fa5d2f29731459387dbf9eb933b7bd5aed9a765b88d4d"
+SPECCHECK_CASE_4_SIGNATURE :: "160a1cb0dc9c0258cd0a7d23e94d8fa878bcb1925f2c64246b2dee1796bed5125ec6bc982a269b723e0668e540911a9a6a58921d6925e434ab10aa7940551a09"
+// Taming the many EdDSAs, case 8 (github.com/novifinancial/ed25519-speccheck, cases.json).
+SPECCHECK_CASE_8_MESSAGE :: "9bedc267423725d473888631ebf45988bad3db83851ee85c85e241a07d148b41"
+SPECCHECK_CASE_8_PUBLIC_KEY :: "f7badec5b8abeaf699583992219b7b223f1df3fbbea919844e3f7c554a43dd43"
+SPECCHECK_CASE_8_SIGNATURE :: "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff03be9678ac102edcd92b0210bb34d7428d12ffc5df5f37e359941266a4e35f0f"
+// Taming the many EdDSAs, case 9 (github.com/novifinancial/ed25519-speccheck, cases.json).
+SPECCHECK_CASE_9_MESSAGE :: "9bedc267423725d473888631ebf45988bad3db83851ee85c85e241a07d148b41"
+SPECCHECK_CASE_9_PUBLIC_KEY :: "f7badec5b8abeaf699583992219b7b223f1df3fbbea919844e3f7c554a43dd43"
+SPECCHECK_CASE_9_SIGNATURE :: "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffca8c5b64cd208982aa38d4936621a4775aa233aa0505711d8fdcfdaa943d4908"
+
+// The cases of "Taming the many EdDSAs" (Chalkias, Garillot, Nikolaenko,
+// 2020) that the strict verify of the origin ("Algorithm 2": a cofactored
+// equation, canonical A and R, no small-order A) decides one way:
+// - case 4: A and R of mixed order; the cofactored equation holds and the
+//   equation with no cofactor does not: accepted;
+// - cases 8 and 9: a key of mixed order (not small: the key is accepted)
+//   and a non-canonical R: refused.
+// The values were copied from cases.json by a script that is not in the
+// repository.
+@(test)
+ed25519_cofactored_and_non_canonical_r :: proc(t: ^testing.T) {
+	Case :: struct {
+		message, public, signature: string,
+		accepted:                   bool,
+	}
+	cases := []Case {
+		{SPECCHECK_CASE_4_MESSAGE, SPECCHECK_CASE_4_PUBLIC_KEY, SPECCHECK_CASE_4_SIGNATURE, true},
+		{SPECCHECK_CASE_8_MESSAGE, SPECCHECK_CASE_8_PUBLIC_KEY, SPECCHECK_CASE_8_SIGNATURE, false},
+		{SPECCHECK_CASE_9_MESSAGE, SPECCHECK_CASE_9_PUBLIC_KEY, SPECCHECK_CASE_9_SIGNATURE, false},
+	}
+	for item in cases {
+		public_key: ed25519.Public_Key
+		testing.expect(t, ed25519.public_key_set_bytes(&public_key, bytes_of(item.public)))
+		testing.expectf(t, ed25519.verify(&public_key, bytes_of(item.message), bytes_of(item.signature)) == item.accepted, "the message %s", item.message)
+	}
 }

@@ -44,9 +44,11 @@ TAG_SIZE :: 16
 NONCE_SIZE :: 12
 SEAL_LIMIT :: 64 * 1024 // The bytes of one text to seal or open: a QUIC packet has 1500 at most.
 // The additional data of an AEAD, copied into the module: the header of a
-// QUIC packet has 1 + 4 + 1 + 20 + 1 + 20 + 8 + 4 bytes at most (RFC 9000,
-// section 17.2), the header of a TLS 1.3 record 5.
-ADDITIONAL_LIMIT :: 1024
+// QUIC packet, with its token. An Initial packet carries the token of the
+// server whole (RFC 9000, section 17.2.2, sets no limit to it), and the
+// Retry Pseudo-Packet holds a Retry packet (RFC 9001, section 5.8): one
+// datagram of 2048 bytes at most (support/quic, DATAGRAM_LIMIT).
+ADDITIONAL_LIMIT :: 2048
 // A message that Ed25519 signs or verifies, copied into the module: the
 // content of a TLS 1.3 CertificateVerify has 64 + 34 + 48 bytes at most
 // (RFC 8446, section 4.4.3).

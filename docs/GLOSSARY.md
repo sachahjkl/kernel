@@ -314,6 +314,18 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Transcript | The handshake messages of TLS, in order, whose hash the key schedule and the Finished messages use | handshake hash (for the bytes) |
 | Key schedule | The secrets of TLS 1.3, each one from the one before with HKDF and a transcript hash: early, handshake, master, and the traffic secrets of each side (RFC 8446, section 7.1) | key derivation (for the whole) |
 | Alert | The reason of a failure of TLS, one byte (RFC 8446, section 6). QUIC sends it as the error code 0x100 + alert | TLS error (for this) |
+| Frame | One unit of the payload of a QUIC packet: a type, then its fields (RFC 9000, section 19). A packet carries one frame or more | message (for this), chunk |
+| Ack-eliciting packet | A packet with a frame other than PADDING, ACK and CONNECTION_CLOSE: the peer must acknowledge it | reliable packet |
+| Probe timeout | The time after which a side that has no acknowledgement sends one or two probe packets, from the round-trip time and its variation (RFC 9002, section 6.2). It doubles at each timeout without an acknowledgement | retransmission timeout, RTO (for this) |
+| Congestion window | The most bytes of ack-eliciting packets that a side has in flight. This layer keeps it fixed at 12 000 bytes | send window (for this) |
+| Flow control limit | The largest offset of data that a side allows the peer to send, for one stream (MAX_STREAM_DATA) and for the connection (MAX_DATA). Data past it closes the connection with FLOW_CONTROL_ERROR | receive window (for this) |
+| Anti-amplification limit | A server that did not validate the address of a client sends at most 3 times the bytes that it received from it (RFC 9000, section 8.1) | |
+| Address validation | The proof that a client receives at its address: here, a Handshake packet of the client, which needs the keys of the server's flight | |
+| Handshake confirmed | The point after which a side drops its Handshake keys: a server when the handshake completes, a client when HANDSHAKE_DONE comes (RFC 9001, section 4.1.2) | handshake done (for the state) |
+| Idle timeout | The time with no packet of the peer after which a side ends a connection with no packet: the smaller of the two that the sides give, and 3 probe timeouts at least | keep-alive |
+| Closing state | The state of a side that sent CONNECTION_CLOSE: it answers each packet with it, for 3 probe timeouts | |
+| Draining state | The state of a side that received CONNECTION_CLOSE: it sends nothing, for 3 probe timeouts | |
+| Transport parameters | The values that each side of QUIC gives the other in the handshake of TLS: its limits, its timeouts, and the connection identifiers that it used (RFC 9000, section 18) | settings |
 | Retry packet | A packet of a server that asks the client to send its Initial packet again with a token, to prove its address; its integrity tag uses a fixed key | redirect |
 
 ## Terms that the system does not have

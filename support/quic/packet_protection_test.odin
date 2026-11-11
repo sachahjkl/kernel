@@ -391,15 +391,19 @@ each_changed_byte_is_refused :: proc(t: ^testing.T) {
 	}
 }
 
-// 50 000 random datagrams: none traps, and none opens. Half of them start as
-// a long header of version 1 with an Initial type, so that the reading goes
-// past the first fields.
+// 50 000 random datagrams for each of two sets of keys (the Initial keys of
+// AES-128-GCM, the ChaCha20-Poly1305 keys of appendix A.5): none traps, and
+// none opens. A third of them start as a long header of version 1, a third as
+// a short header, so that the reading goes past the first fields; one in
+// five has a sample that starts with ff ff ff ff, the last block of the
+// ChaCha20 stream.
 @(test)
 random_datagrams_never_trap_and_never_open :: proc(t: ^testing.T) {
 	cryptography := module_cryptography()
 	error: errors.Error_Record
-	client, server: Packet_Keys
+	client, server, short: Packet_Keys
 	initial_keys(&cryptography, bytes_of(ORIGINAL_DESTINATION_CONNECTION_ID), &client, &server, &error)
+	packet_keys_from_secret(&cryptography, .ChaCha20_Poly1305_Sha256, bytes_of(SHORT_SECRET), &short, &error)
 	// A generator of the test, with a fixed seed: each run reads the same
 	// datagrams (xorshift64).
 	state: u64 = 0x5155_4943_2026_0001
@@ -409,33 +413,335 @@ random_datagrams_never_trap_and_never_open :: proc(t: ^testing.T) {
 		state^ ~= state^ << 17
 		return state^
 	}
-	read, opened_count := 0, 0
-	for round in 0 ..< 50_000 {
-		private_memory: [DATAGRAM_LIMIT]u8
-		length := int(next(&state) % 1300)
-		for index in 0 ..< length {
-			private_memory[index] = u8(next(&state))
+	for keys in ([]^Packet_Keys{&client, &short}) {
+		read, opened_count, last_block_count := 0, 0, 0
+		for round in 0 ..< 50_000 {
+			private_memory: [DATAGRAM_LIMIT]u8
+			length := int(next(&state) % 1300)
+			for index in 0 ..< length {
+				private_memory[index] = u8(next(&state))
+			}
+			if round % 3 == 0 && length >= 7 {
+				private_memory[0] = 0xC0 | (private_memory[0] & 0x3F)
+				private_memory[1], private_memory[2], private_memory[3], private_memory[4] = 0, 0, 0, 1
+				private_memory[5] = u8(next(&state) % 24)
+			} else if round % 3 == 1 && length >= 1 {
+				private_memory[0] = 0x40 | (private_memory[0] & 0x3F)
+			}
+			datagram := private_memory[:length]
+			header: Packet_Header
+			if !header_read(datagram, 0, int(next(&state) % 21), &header, &error) {
+				continue
+			}
+			read += 1
+			testing.expect(t, header.end <= len(datagram) && header.packet_number_offset <= header.end)
+			if header.packet_number_offset == 0 {
+				continue
+			}
+			if round % 5 == 0 {
+				for index in 0 ..< 4 {
+					datagram[header.packet_number_offset + 4 + index] = 0xFF
+				}
+				last_block_count += 1
+			}
+			opened: Opened_Packet
+			if packet_open(&cryptography, keys, datagram, &header, u64(next(&state) % (1 << 40)), &opened, &error) {
+				opened_count += 1
+			}
 		}
-		if round % 2 == 0 && length >= 7 {
-			private_memory[0] = 0xC0 | (private_memory[0] & 0x0F)
-			private_memory[1], private_memory[2], private_memory[3], private_memory[4] = 0, 0, 0, 1
-			private_memory[5] = u8(next(&state) % 24)
+		testing.expect_value(t, opened_count, 0)
+		testing.expect(t, read > 0, "no random header was read: the test reached nothing past the first fields")
+		testing.expect(t, last_block_count > 0)
+	}
+}
+
+// The header protection of ChaCha20 at the last counter: the first 4 bytes
+// of the sample are the counter (RFC 9001, section 5.4.4), and the sender
+// chooses them, so ff ff ff ff must give a mask and not stop the program.
+// With a key of zeros and the rest of the sample zeros, the mask is the first
+// 5 bytes of the block at the counter 0xffffffff, from an independent
+// implementation. Then a short packet whose sample starts with ff ff ff ff
+// is refused as not authentic.
+@(test)
+chacha20_mask_at_the_last_counter :: proc(t: ^testing.T) {
+	cryptography := module_cryptography()
+	error: errors.Error_Record
+	zero_key: [32]u8
+	sample: [SAMPLE_SIZE]u8
+	sample[0], sample[1], sample[2], sample[3] = 0xFF, 0xFF, 0xFF, 0xFF
+	key, sample_text := string(zero_key[:]), string(sample[:])
+	mask: [MASK_SIZE]u8
+	result := mask[:]
+	testing.expect_value(t, cryptography.header_protection_mask_with_chacha20(&key, &sample_text, &result, &error), MASK_SIZE)
+	testing.expect_value(t, hex_of(mask[:]), "ace4cd09e2")
+
+	keys: Packet_Keys
+	testing.expect(t, packet_keys_from_secret(&cryptography, .ChaCha20_Poly1305_Sha256, bytes_of(SHORT_SECRET), &keys, &error))
+	private_memory: [DATAGRAM_LIMIT]u8
+	datagram, _ := datagram_take(bytes_of(SHORT_PACKET), private_memory[:], &error)
+	header: Packet_Header
+	testing.expect(t, header_read(datagram, 0, 0, &header, &error))
+	for index in 0 ..< 4 {
+		datagram[header.packet_number_offset + 4 + index] = 0xFF
+	}
+	opened: Opened_Packet
+	testing.expect(t, !packet_open(&cryptography, &keys, datagram, &header, SHORT_PACKET_NUMBER - 1, &opened, &error))
+	testing.expect_value(t, error.kind, i64(errors.Kind.Not_Authentic))
+}
+
+// long_packet_write writes a long header packet of version 1 at start, with
+// its frames, and seals it. reserved goes into the 2 reserved bits of the
+// first byte. It gives the byte after the packet.
+long_packet_write :: proc(cryptography: ^Cryptography, keys: ^Packet_Keys, datagram: []u8, start: int, type: Packet_Type, token: []u8, frames: []u8, packet_number: u64, reserved: u8, error: ^errors.Error_Record) -> (end: int, ok: bool) {
+	number_length := 4
+	position := start
+	datagram[position] = 0xC0 | u8(type) << 4 | reserved << 2 | u8(number_length - 1)
+	position += 1
+	position += copy(datagram[position:], []u8{0, 0, 0, 1})
+	destination := bytes_of(ORIGINAL_DESTINATION_CONNECTION_ID)
+	datagram[position] = u8(len(destination))
+	position += 1
+	position += copy(datagram[position:], destination)
+	datagram[position] = 0 // An empty Source Connection ID.
+	position += 1
+	if type == .Initial {
+		position += variable_length_integer_write(datagram, position, u64(len(token)), 2)
+		position += copy(datagram[position:], token)
+	}
+	position += variable_length_integer_write(datagram, position, u64(number_length + len(frames) + TAG_SIZE), 2)
+	number_offset := position
+	copy(datagram[number_offset + number_length:], frames)
+	return packet_seal(cryptography, keys, datagram, start, number_offset, len(frames), packet_number, error)
+}
+
+// Two packets in one datagram (RFC 9000, section 12.2): an Initial, then a
+// Handshake packet with other keys. Each one opens with its keys. A second
+// packet whose Length runs past the datagram is refused, and the first one
+// still opens.
+@(test)
+coalesced_packets :: proc(t: ^testing.T) {
+	cryptography := module_cryptography()
+	error: errors.Error_Record
+	client, server, handshake: Packet_Keys
+	initial_keys(&cryptography, bytes_of(ORIGINAL_DESTINATION_CONNECTION_ID), &client, &server, &error)
+	packet_keys_from_secret(&cryptography, .ChaCha20_Poly1305_Sha256, bytes_of(SHORT_SECRET), &handshake, &error)
+	frames := []u8{0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00} // PING, then PADDING.
+	for lying in ([]bool{false, true}) {
+		buffer: [DATAGRAM_LIMIT]u8
+		first_end, first_ok := long_packet_write(&cryptography, &client, buffer[:], 0, .Initial, nil, frames, 0, 0, &error)
+		testing.expectf(t, first_ok, "%v", error)
+		second_end, second_ok := long_packet_write(&cryptography, &handshake, buffer[:], first_end, .Handshake, nil, frames, 0, 0, &error)
+		testing.expectf(t, second_ok, "%v", error)
+		datagram := buffer[:second_end]
+		if lying {
+			// The Length of the second packet (2 bytes before its packet
+			// number, after 1 + 4 + 1 + 8 + 1 bytes) as 16383.
+			length_offset := first_end + 15
+			datagram[length_offset], datagram[length_offset + 1] = 0x7F, 0xFF
 		}
-		datagram := private_memory[:length]
 		header: Packet_Header
-		if !header_read(datagram, 0, int(next(&state) % 21), &header, &error) {
-			continue
-		}
-		read += 1
-		testing.expect(t, header.end <= len(datagram) && header.packet_number_offset <= header.end)
-		if header.packet_number_offset == 0 {
-			continue
-		}
+		testing.expect(t, header_read(datagram, 0, 0, &header, &error))
+		testing.expect_value(t, header.type, Packet_Type.Initial)
+		testing.expect_value(t, header.end, first_end)
 		opened: Opened_Packet
-		if packet_open(&cryptography, &client, datagram, &header, 0, &opened, &error) {
-			opened_count += 1
+		testing.expectf(t, packet_open(&cryptography, &client, datagram, &header, 0, &opened, &error), "%v", error)
+		testing.expect_value(t, hex_of(datagram[opened.payload_offset:][:opened.payload_length]), hex_of(frames))
+		second: Packet_Header
+		read := header_read(datagram, header.end, 0, &second, &error)
+		if lying {
+			testing.expect(t, !read && error.kind == i64(errors.Kind.Out_Of_Range))
+			continue
+		}
+		testing.expect(t, read)
+		testing.expect_value(t, second.type, Packet_Type.Handshake)
+		testing.expect_value(t, second.end, len(datagram))
+		testing.expectf(t, packet_open(&cryptography, &handshake, datagram, &second, 0, &opened, &error), "%v", error)
+		testing.expect_value(t, hex_of(datagram[opened.payload_offset:][:opened.payload_length]), hex_of(frames))
+	}
+}
+
+// An authentic packet whose reserved bits are not 0 is refused after the
+// open (Bad_Value), for a long header and for a short header.
+@(test)
+authentic_packets_with_reserved_bits :: proc(t: ^testing.T) {
+	cryptography := module_cryptography()
+	error: errors.Error_Record
+	client, server, short: Packet_Keys
+	initial_keys(&cryptography, bytes_of(ORIGINAL_DESTINATION_CONNECTION_ID), &client, &server, &error)
+	packet_keys_from_secret(&cryptography, .ChaCha20_Poly1305_Sha256, bytes_of(SHORT_SECRET), &short, &error)
+	frames := []u8{0x01, 0x00, 0x00, 0x00}
+	for reserved in u8(1) ..= 3 {
+		buffer: [DATAGRAM_LIMIT]u8
+		end, ok := long_packet_write(&cryptography, &client, buffer[:], 0, .Initial, nil, frames, 7, reserved, &error)
+		testing.expectf(t, ok, "%v", error)
+		header: Packet_Header
+		testing.expect(t, header_read(buffer[:end], 0, 0, &header, &error))
+		opened: Opened_Packet
+		testing.expect(t, !packet_open(&cryptography, &client, buffer[:end], &header, 0, &opened, &error))
+		testing.expect_value(t, error.kind, i64(errors.Kind.Bad_Value))
+	}
+	// A short header: the reserved bits are 0x18.
+	for reserved in ([]u8{0x08, 0x10}) {
+		buffer: [64]u8
+		buffer[0] = 0x40 | reserved | 0x03
+		copy(buffer[1 + 4:], frames)
+		end, ok := packet_seal(&cryptography, &short, buffer[:], 0, 1, len(frames), 9, &error)
+		testing.expectf(t, ok, "%v", error)
+		header: Packet_Header
+		testing.expect(t, header_read(buffer[:end], 0, 0, &header, &error))
+		opened: Opened_Packet
+		testing.expect(t, !packet_open(&cryptography, &short, buffer[:end], &header, 0, &opened, &error))
+		testing.expect_value(t, error.kind, i64(errors.Kind.Bad_Value))
+	}
+}
+
+// The seal writes the packet number itself, and refuses a long header whose
+// Length does not end the packet after the tag.
+@(test)
+seal_writes_the_number_and_checks_the_length :: proc(t: ^testing.T) {
+	cryptography := module_cryptography()
+	error: errors.Error_Record
+	client, server: Packet_Keys
+	initial_keys(&cryptography, bytes_of(ORIGINAL_DESTINATION_CONNECTION_ID), &client, &server, &error)
+	// The header of appendix A.2 with a packet number of zeros: the seal
+	// writes 2 and gives the packet of the RFC.
+	header := bytes_of(CLIENT_UNPROTECTED_HEADER)
+	header[len(header) - 1] = 0
+	payload := client_payload()
+	packet := make([]u8, len(header) + len(payload) + TAG_SIZE, context.temp_allocator)
+	copy(packet, header)
+	copy(packet[len(header):], payload)
+	end, ok := packet_seal(&cryptography, &client, packet, 0, len(header) - 4, len(payload), 2, &error)
+	testing.expect(t, ok && end == len(packet))
+	testing.expect_value(t, hex_of(packet), CLIENT_PACKET)
+	// A Length of one byte less (0x449d) and one byte more (0x449f).
+	for wrong in ([]u8{0x9d, 0x9f}) {
+		copy(packet, header)
+		packet[len(header) - 5] = wrong
+		copy(packet[len(header):], payload)
+		_, wrong_ok := packet_seal(&cryptography, &client, packet, 0, len(header) - 4, len(payload), 2, &error)
+		testing.expect(t, !wrong_ok && error.kind == i64(errors.Kind.Bad_Value))
+	}
+	// A packet number past the largest.
+	copy(packet, header)
+	_, large_ok := packet_seal(&cryptography, &client, packet, 0, len(header) - 4, len(payload), PACKET_NUMBER_LARGEST + 1, &error)
+	testing.expect(t, !large_ok && error.kind == i64(errors.Kind.Out_Of_Range))
+}
+
+// The removal of header protection gives the key phase before the open, so
+// that the caller chooses the keys. A failed open erases the frames.
+@(test)
+header_protection_removal_then_open :: proc(t: ^testing.T) {
+	cryptography := module_cryptography()
+	error: errors.Error_Record
+	keys, other: Packet_Keys
+	packet_keys_from_secret(&cryptography, .ChaCha20_Poly1305_Sha256, bytes_of(SHORT_SECRET), &keys, &error)
+	packet_keys_from_secret(&cryptography, .ChaCha20_Poly1305_Sha256, bytes_of(CLIENT_INITIAL_SECRET), &other, &error)
+	private_memory: [DATAGRAM_LIMIT]u8
+	datagram, _ := datagram_take(bytes_of(SHORT_PACKET), private_memory[:], &error)
+	header: Packet_Header
+	testing.expect(t, header_read(datagram, 0, 0, &header, &error))
+	unprotected: Unprotected_Header
+	testing.expect(t, header_protection_remove(&cryptography, &keys, datagram, &header, SHORT_PACKET_NUMBER - 1, &unprotected, &error))
+	testing.expect_value(t, unprotected.packet_number, SHORT_PACKET_NUMBER)
+	testing.expect_value(t, unprotected.packet_number_length, 3)
+	testing.expect_value(t, unprotected.key_phase, false)
+	testing.expect_value(t, hex_of(datagram[:unprotected.payload_offset]), SHORT_UNPROTECTED_HEADER)
+	opened: Opened_Packet
+	testing.expectf(t, packet_payload_open(&cryptography, &keys, datagram, &header, &unprotected, &opened, &error), "%v", error)
+	testing.expect_value(t, hex_of(datagram[opened.payload_offset:][:opened.payload_length]), SHORT_PAYLOAD)
+	// The same packet, opened with keys of another phase: Not_Authentic,
+	// and the sealed frames are erased.
+	datagram, _ = datagram_take(bytes_of(SHORT_PACKET), private_memory[:], &error)
+	testing.expect(t, header_protection_remove(&cryptography, &keys, datagram, &header, SHORT_PACKET_NUMBER - 1, &unprotected, &error))
+	testing.expect(t, !packet_payload_open(&cryptography, &other, datagram, &header, &unprotected, &opened, &error))
+	testing.expect_value(t, error.kind, i64(errors.Kind.Not_Authentic))
+	for byte in datagram[unprotected.payload_offset:header.end - TAG_SIZE] {
+		testing.expect_value(t, byte, 0)
+	}
+}
+
+// A Retry with an empty token is refused (RFC 9000, section 17.2.5.2).
+// Version 0 is a Version Negotiation, another version is read up to its
+// connection identifiers, and a connection identifier over 20 bytes is
+// refused for any version: this library does not answer such a header,
+// though RFC 8999 allows 255 bytes outside version 1.
+@(test)
+versions_and_an_empty_retry_token :: proc(t: ^testing.T) {
+	error: errors.Error_Record
+	header: Packet_Header
+	retry := bytes_of(RETRY_PACKET)
+	// The Retry of appendix A.4 without its token "token": 5 bytes after
+	// the first byte, the version, an empty Destination Connection ID and a
+	// Source Connection ID of 8 bytes (from the byte 15).
+	empty_token := make([]u8, len(retry) - 5, context.temp_allocator)
+	copy(empty_token, retry[:15])
+	copy(empty_token[15:], retry[15 + 5:])
+	testing.expect(t, !header_read(empty_token, 0, 0, &header, &error) && error.kind == i64(errors.Kind.Empty))
+	testing.expect(t, header_read(retry, 0, 0, &header, &error) && header.token_length == 5)
+
+	negotiation := []u8{0x80, 0, 0, 0, 0, 1, 0xAA, 1, 0xBB, 0, 0, 0, 1}
+	testing.expect(t, header_read(negotiation, 0, 0, &header, &error))
+	testing.expect_value(t, header.type, Packet_Type.Version_Negotiation)
+	testing.expect_value(t, header.destination_connection_id_length, 1)
+	testing.expect_value(t, header.source_connection_id_length, 1)
+	unknown := []u8{0xC0, 0xFF, 0x00, 0x00, 0x1D, 2, 0xAA, 0xAA, 0, 0x99}
+	testing.expect(t, header_read(unknown, 0, 0, &header, &error))
+	testing.expect_value(t, header.type, Packet_Type.Unknown_Version)
+	testing.expect_value(t, header.version, 0xFF00001D)
+	for version in ([]u32{0, 0xFF00001D}) {
+		long_identifier := make([]u8, 1 + 4 + 1 + 21 + 1, context.temp_allocator)
+		long_identifier[0] = 0xC0
+		long_identifier[1], long_identifier[2], long_identifier[3], long_identifier[4] = u8(version >> 24), u8(version >> 16), u8(version >> 8), u8(version)
+		long_identifier[5] = 21
+		testing.expect(t, !header_read(long_identifier, 0, 0, &header, &error) && error.kind == i64(errors.Kind.Too_Long))
+	}
+}
+
+// packet_number_decode near 2^62: no value wraps, and a number past the
+// largest is not made by adding a window.
+@(test)
+packet_numbers_near_the_largest :: proc(t: ^testing.T) {
+	largest := u64(PACKET_NUMBER_LARGEST)
+	testing.expect_value(t, packet_number_decode(largest - 1, 0xFF, 8), largest)
+	// The expected number is the largest; the truncated 0 is the start of
+	// its window, and the next window would pass the largest.
+	testing.expect_value(t, packet_number_decode(largest - 1, 0x00, 8), largest + 1 - 256)
+	testing.expect_value(t, packet_number_decode(largest - 1, 0x00, 32), largest + 1 - (1 << 32))
+	// After the largest, a truncated number below the expected one goes
+	// back one window.
+	testing.expect_value(t, packet_number_decode(largest, 0xFF, 8), largest)
+	for truncated in u64(0) ..< 256 {
+		for distance in u64(1) ..< 300 {
+			decoded := packet_number_decode(largest - distance, truncated, 8)
+			testing.expect(t, decoded <= largest)
+			testing.expect_value(t, decoded & 0xFF, truncated)
 		}
 	}
-	testing.expect_value(t, opened_count, 0)
-	testing.expect(t, read > 0, "no random header was read: the test reached nothing past the first fields")
+}
+
+// An Initial packet with the longest token that a datagram of 2048 bytes
+// holds: its header (2031 bytes) is the additional data of the AEAD, which
+// the module takes.
+@(test)
+initial_with_the_longest_token :: proc(t: ^testing.T) {
+	cryptography := module_cryptography()
+	error: errors.Error_Record
+	client, server: Packet_Keys
+	initial_keys(&cryptography, bytes_of(ORIGINAL_DESTINATION_CONNECTION_ID), &client, &server, &error)
+	// 1 + 4 + 1 + 8 + 1 + 2 + token + 2 + 4 + 1 (PING) + 16 = 2048.
+	token := make([]u8, DATAGRAM_LIMIT - 40, context.temp_allocator)
+	for &byte, index in token {
+		byte = u8(index)
+	}
+	buffer: [DATAGRAM_LIMIT]u8
+	end, ok := long_packet_write(&cryptography, &client, buffer[:], 0, .Initial, token, []u8{0x01}, 0, 0, &error)
+	testing.expectf(t, ok, "%v", error)
+	testing.expect_value(t, end, DATAGRAM_LIMIT)
+	header: Packet_Header
+	testing.expect(t, header_read(buffer[:end], 0, 0, &header, &error))
+	testing.expect_value(t, header.token_length, len(token))
+	opened: Opened_Packet
+	testing.expectf(t, packet_open(&cryptography, &client, buffer[:end], &header, 0, &opened, &error), "%v", error)
+	testing.expect_value(t, opened.payload_length, 1)
 }

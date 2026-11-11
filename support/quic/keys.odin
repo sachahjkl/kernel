@@ -193,7 +193,11 @@ when ODIN_OS == .Freestanding {
 	}
 }
 
-RETRY_PSEUDO_PACKET_LIMIT :: 1 + CONNECTION_ID_LIMIT + 1500 // The original Destination Connection ID, then a Retry packet of one datagram.
+// The Retry Pseudo-Packet is the additional data of one call of the module,
+// which takes 2048 bytes at most (modules/cryptography, ADDITIONAL_LIMIT).
+// With an original Destination Connection ID of 20 bytes, a Retry of 2043
+// bytes with its tag fits: more than a datagram of a path of 1500 bytes.
+RETRY_PSEUDO_PACKET_LIMIT :: 2048
 
 // retry_integrity_tag gives the Retry Integrity Tag of a Retry packet
 // without its tag: AES-128-GCM with the fixed key and nonce of version 1,
@@ -215,7 +219,5 @@ retry_integrity_tag :: proc "contextless" (cryptography: ^Cryptography, original
 	key, nonce, empty := string(RETRY_KEY[:]), string(RETRY_NONCE[:]), ""
 	additional := string(pseudo_packet[:count])
 	result := tag[:]
-	// A pseudo-packet over the limit of the additional data of the module
-	// (1024 bytes) is refused there: a Retry token of this system is short.
 	return cryptography.seal_with_aes_128_gcm(&key, &nonce, &additional, &empty, &result, error) == TAG_SIZE
 }
