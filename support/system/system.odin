@@ -239,6 +239,24 @@ handle_revoke :: proc "contextless" (handle: Handle, program: Handle = 0, error:
 	return results[0], status
 }
 
+// region_refusal checks the handle of a data region that a client sent
+// with the command Attach of a device ring (contract/block, contract/frame):
+// memory, with Read and Write, that came through the ring. When it refuses,
+// it gives the values of the error record of the completion.
+region_refusal :: proc "contextless" (handle: Handle, ring_memory: Handle, command: u32) -> (values: [7]u64, refused: bool) {
+	kind, rights, through := handle_state(handle, ring_memory)
+	needed := Rights{.Read, .Write}
+	switch {
+	case kind != .Memory:
+		return errors.ring_fail(command, .Handle_Kind, .None, 1, i64(handle), i64(op.Object_Kind.Memory), i64(kind)), true
+	case !(needed <= rights):
+		return errors.ring_fail(command, .Handle_Rights, .None, 1, i64(handle), i64(transmute(u32)needed), i64(transmute(u32)rights)), true
+	case !through:
+		return errors.ring_fail(command, .Absent, .Region, 1), true
+	}
+	return {}, false
+}
+
 // handle_holdings gives the count of the handles and the mappings that
 // came from a handle, in each program.
 handle_holdings :: proc "contextless" (handle: Handle) -> u64 {
@@ -277,15 +295,22 @@ ring_create :: proc "contextless" (capacity: u32 = ring.CAPACITY) -> (memory: Ha
 
 // ring_open maps the memory of a ring in this program. The capacity of the
 // ring comes from the size of the memory, that the kernel gives.
-ring_open :: proc "contextless" (memory: Handle) -> (mapped: ring.Ring, status: Status) {
-	page_count := memory_size(memory)
+// error: the record of a refusal, if the caller gives one. The argument 1
+// is the memory.
+ring_open :: proc "contextless" (memory: Handle, error: ^errors.Error_Record = nil) -> (mapped: ring.Ring, status: Status) {
+	page_count := memory_size(memory, error)
+	if page_count == 0 {
+		return {}, .Bad_Handle // memory_size wrote the record of the kernel.
+	}
 	if page_count < ring.PAGE_COUNT || page_count > ring.pages(ring.CAPACITY_LIMIT) {
+		errors.fail(error, 0, .Bad_Value, .Pages, 1, i64(page_count), i64(ring.pages(ring.CAPACITY_LIMIT)))
 		return {}, .Bad_Handle
 	}
-	address := memory_map(memory) or_return
+	address := memory_map(memory, error = error) or_return
 	opened, ok := ring.open(address, page_count)
 	if !ok {
 		memory_unmap(address)
+		errors.fail(error, 0, .Malformed, .None, 1) // The header of the ring is not a header that ring.open takes.
 		return {}, .Bad_Handle
 	}
 	return opened, .Ok

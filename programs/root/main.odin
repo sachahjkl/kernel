@@ -18,6 +18,7 @@ import "support:system"
 import "support:terminal"
 import "contract:block"
 import "contract:datagram"
+import "contract:errors"
 import "contract:frame"
 import "support:pci"
 import "support:storage"
@@ -554,6 +555,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 						}
 					}
 				}
+				if result != .Ok {
+					completion.values = refusal(system.Root_Command(record.kind), system.name_of(name[:]), record.values[4], result)
+				}
 				completion.kind = u32(result)
 				system.send(&item.requests.completions, completion)
 			}
@@ -568,6 +572,79 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 		system.wait_end(&wait)
 	}
+}
+
+// refusal gives the error record of a command of the root ring that this
+// service refused, in the values of its completion. As the kernel does
+// (kernel/diagnose.odin), it reads the state again after the refusal, and
+// names a cause only when the state shows it now: else the record is
+// Refused, with the status. The record names the argument of the caller,
+// and no fact of another program that the status does not give.
+refusal :: proc "contextless" (command: system.Root_Command, name: string, value: u64, status: system.Status) -> [7]u64 {
+	kind := u32(command)
+	if command == .None || command > max(system.Root_Command) {
+		return errors.ring_fail(kind, .Unsupported, .None, 0, i64(kind))
+	}
+	if status == .No_Right {
+		if command == .Connect {
+			return errors.ring_fail(kind, .No_Grant, .Connection, 1)
+		}
+		return errors.ring_fail(kind, .No_Grant, .Root_Commands)
+	}
+	of_the_system := name == "root" || name == "input" || name == "compositor" || name == "terminal" || name == "block" || name == "frame"
+	#partial switch command {
+	case .Start:
+		if status == .Bad_Operation && of_the_system {
+			return errors.ring_fail(kind, .Reserved, .None, 1)
+		}
+		if status == .Bad_Operation && len(system.image_find(image, name)) == 0 {
+			return errors.ring_fail(kind, .Absent, .Modules, 1)
+		}
+	case .Stop:
+		if status == .Bad_Handle && (name == "compositor" || name == "terminal") {
+			return errors.ring_fail(kind, .Reserved, .None, 1)
+		}
+		if status == .Bad_Handle && find(name) == nil {
+			return errors.ring_fail(kind, .Absent, .Programs, 1)
+		}
+	case .Connect:
+		if status == .Bad_Handle {
+			return errors.ring_fail(kind, .Absent, .Services, 1)
+		}
+		if status == .No_Slot {
+			return errors.ring_fail(kind, .Full, .Connections, 0, 0, isolated.SERVICE_CONNECTION_CAPACITY)
+		}
+	case .Disconnect:
+		if status == .Bad_Handle {
+			return errors.ring_fail(kind, .Absent, .Connections, 1)
+		}
+	case .Grants:
+		if status == .Bad_Handle && find(name) == nil {
+			return errors.ring_fail(kind, .Absent, .Programs, 1)
+		}
+	case .Revoke:
+		switch {
+		case status == .Bad_Handle && find(name) == nil:
+			return errors.ring_fail(kind, .Absent, .Programs, 1)
+		case status == .Bad_Operation:
+			return errors.ring_fail(kind, .Bad_Value, .None, 2, i64(min(value, 1 << 62)), i64(max(system.Root_Grant)))
+		case status == .Bad_State:
+			return errors.ring_fail(kind, .Absent, .Grants, 2)
+		}
+	case .Replace:
+		entries := system.image_entries(image)
+		switch {
+		case status == .Bad_Handle && value > u64(len(entries)):
+			return errors.ring_fail(kind, .Bad_Value, .None, 2, i64(min(value, 1 << 62)), i64(len(entries)))
+		case status == .Bad_Handle && len(system.image_find(image, name)) == 0:
+			return errors.ring_fail(kind, .Absent, .Modules, 1)
+		case status == .Bad_Operation:
+			return errors.ring_fail(kind, .Bad_Value, .None, 2, i64(value)) // A module does not replace itself.
+		case status == .No_Slot:
+			return errors.ring_fail(kind, .Full, .Records, 0, 0, system.REPLACEMENT_CAPACITY)
+		}
+	}
+	return errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(status))
 }
 
 // start starts a program that shows a surface.

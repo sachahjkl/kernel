@@ -88,7 +88,7 @@ error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record,
 		write_part(writer, record.value)
 		write_part(writer, ", which the call refuses")
 		if record.limit != 0 {
-			write_part(writer, "; it takes 1 to ")
+			write_part(writer, "; it takes at most ")
 			write_part(writer, record.limit)
 		}
 	case .Bad_Flags:
@@ -182,6 +182,10 @@ error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record,
 			write_part(writer, "; the call needs a program that is created, and not started")
 		}
 	case .Absent:
+		if errors.Unit(record.unit) == .Region {
+			write_part(writer, "the ring has no data region: send Attach first, with a memory handle that came through the ring")
+			return
+		}
 		subject(writer, record, argument)
 		if errors.Unit(record.unit) == .Bytes {
 			write_part(writer, ", ")
@@ -205,7 +209,30 @@ error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record,
 		}
 	case .Device:
 		write_part(writer, "the device reported an error")
+		if record.found != 0 {
+			write_part(writer, ": the status ")
+			write_part(writer, record.found)
+		}
 	case .No_Grant:
+		if errors.Unit(record.unit) == .Endpoint && record.found != 0 {
+			write_part(writer, "the local port ")
+			write_part(writer, record.found)
+			write_part(writer, " of the segment is not a port of this endpoint")
+			return
+		}
+		if errors.Unit(record.unit) == .Endpoint {
+			subject(writer, record, argument)
+			write_part(writer, ", ")
+			endpoint_text(writer, record.value)
+			if record.limit == 0 {
+				write_part(writer, ", is refused: the grant names no remote (it was revoked, or the remote is not admitted)")
+			} else {
+				write_part(writer, ", is refused: the grant names ")
+				endpoint_text(writer, record.limit)
+				write_part(writer, " only")
+			}
+			return
+		}
 		write_part(writer, "the caller has no grant for this: ")
 		write_part(writer, unit)
 	case .Malformed:
@@ -228,11 +255,99 @@ error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record,
 	case .Unknown_Operation:
 		write_part(writer, "the kernel has no operation ")
 		write_part(writer, record.value)
+	case .No_Answer:
+		write_part(writer, "no answer")
+		if record.value != 0 {
+			write_part(writer, " from ")
+			address_text(writer, u32(record.value))
+		}
+		write_part(writer, " in ")
+		write_part(writer, record.limit)
+		write_part(writer, " ms")
+		switch record.found {
+		case 1:
+			write_part(writer, ": its hardware address is not known (ARP)")
+		case 2:
+			write_part(writer, ": no echo came back")
+		case 3:
+			write_part(writer, ": the device did not answer")
+		}
+	case .Unsupported:
+		write_part(writer, "the receiver does not do the command ")
+		write_part(writer, record.value)
+	case .Reserved:
+		subject(writer, record, argument)
+		write_part(writer, " names a program of the system: it starts at boot, or it is a device service, and the call does not act on it")
+	case .Link_Down:
+		write_part(writer, "the link of the network device is down")
+	case .Busy:
+		if record.value != 0 {
+			write_part(writer, record.value)
+			write_part(writer, " requests of this kind are in flight; the receiver takes at most ")
+		} else {
+			write_part(writer, "too many requests of this kind are in flight; the receiver takes at most ")
+		}
+		write_part(writer, record.limit)
+	case .Out_Of_Range:
+		subject(writer, record, argument)
+		write_part(writer, " reaches ")
+		amount(writer, record.value, unit)
+		write_part(writer, ", past the end: there are ")
+		amount(writer, record.limit, unit)
 	case .Refused:
 		write_part(writer, "refused with the status ")
 		write_part(writer, record.found)
 		write_part(writer, ", and no more detail")
 	}
+}
+
+// address_text writes an IPv4 address: "10.0.2.2".
+@(private = "file")
+address_text :: proc "contextless" (writer: ^Writer, address: u32) {
+	for shift := 24; shift >= 0; shift -= 8 {
+		write_part(writer, u64(address >> uint(shift) & 0xFF))
+		if shift != 0 {
+			write_part(writer, ".")
+		}
+	}
+}
+
+// endpoint_text writes a remote (errors.Unit.Endpoint): "10.0.2.2 port 9",
+// or "10.0.2.3" when the port is 0 (an echo names no port).
+@(private = "file")
+endpoint_text :: proc "contextless" (writer: ^Writer, value: i64) {
+	address, port := errors.endpoint_unpack(value)
+	address_text(writer, address)
+	if port != 0 {
+		write_part(writer, " port ")
+		write_part(writer, u64(port))
+	}
+}
+
+// ring_error_text writes the sentence of the error record of a completion
+// of a ring (errors.completion_record).
+//   contract: the name of the contract of the ring ("block", "datagram").
+//   command:  the name of the command; argument: the name of its value.
+ring_error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record, contract: string, command: string, argument: string) {
+	buffer: [64]u8
+	error_text(writer, record, format(buffer[:], contract, ".", command), argument)
+}
+
+// wrapper_error_text writes the sentence of the error record of a wrapper
+// of a library (display.open, terminal.open): the record of the kernel
+// operation that failed in it (its operation is not 0), or the record that
+// the wrapper wrote (operation 0).
+//   name:      the name of the wrapper ("display.open").
+//   arguments: the names of its arguments, from the argument 1.
+wrapper_error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record, name: string, arguments: []string) {
+	if record.operation != 0 {
+		write_part(writer, name)
+		write_part(writer, ": ")
+		kernel_error_text(writer, record)
+		return
+	}
+	argument := record.argument >= 1 && record.argument <= i64(len(arguments)) ? arguments[record.argument - 1] : ""
+	error_text(writer, record, name, argument)
 }
 
 // kernel_error_text writes the sentence of the error record of a kernel

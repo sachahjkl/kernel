@@ -124,22 +124,24 @@ Command :: enum u32 {
 	Release    = 8,
 }
 
+// The status of a request: the kind of its completion record. When it is
+// not Ok, the values of the completion are an error record
+// (errors.completion_record), with the kind and the values below.
 Status :: enum u32 {
 	Ok           = 0,
-	Bad_Command  = 1, // The command is not known, or a value is wrong.
-	Out_Of_Range = 2, // A byte is not in the region. values[0] the place, values[1] the count, values[2] the size of the region.
-	No_Region    = 3, // The endpoint has no datagram region.
-	// The remote is not the remote of the grant. values[0], values[1]: the
-	// address and the port that the request named; values[2], values[3]: the
-	// address and the port of the grant (0 and 0: the grant was revoked).
+	Bad_Command  = 1, // Unsupported: the command is not known, or not for this grant; Too_Small: a segment of fewer bytes than SEGMENT_LEAST.
+	Out_Of_Range = 2, // Out_Of_Range, unit Bytes: a byte is not in the region. value: the end of the place and its count; limit: the size of the region.
+	No_Region    = 3, // Absent, unit Region: the endpoint has no datagram region.
+	// No_Grant, unit Endpoint: the remote is not the remote of the grant.
+	// value: the remote that the request named (errors.endpoint_pack);
+	// limit: the remote of the grant, 0 when it names none (revoked, or a
+	// listen grant with no admitted remote); found: the local port of a
+	// segment, when it is not a port of the endpoint.
 	Not_Granted  = 4,
-	Too_Large    = 5, // values[0]: the count of bytes; values[1]: the limit.
-	// No answer before the time limit. values[0]: the address; values[1]:
-	// the milliseconds waited; values[2]: what did not answer, 1 the hardware
-	// address (ARP), 2 the echo.
-	No_Answer    = 6,
-	Link_Down    = 7,
-	Busy         = 8, // Too many requests of this kind in flight. values[0]: the limit.
+	Too_Large    = 5, // Too_Long, unit Bytes. value: the count of bytes; limit: the most.
+	No_Answer    = 6, // No_Answer: value the address, limit the milliseconds waited, found what did not answer.
+	Link_Down    = 7, // Link_Down.
+	Busy         = 8, // Busy, unit Requests: too many requests of this kind in flight. limit: the most.
 }
 
 // The command of the control ring, from the root service to the network
@@ -253,4 +255,79 @@ grant_unpack :: proc "contextless" (value: u64) -> Grant {
 // granted says if a grant names a remote: a revoked grant is all zero.
 granted :: proc "contextless" (grant: Grant) -> bool {
 	return grant.address != 0 || grant.listen
+}
+
+// The names of the commands and of their values, for the sentence of the
+// error record of a completion (errors.completion_record).
+@(rodata)
+COMMAND_NAMES := [Command]string {
+	.None = "None",
+	.Info = "Info",
+	.Send = "Send",
+	.Receive = "Receive",
+	.Resolve = "Resolve",
+	.Echo = "Echo",
+	.Statistics = "Statistics",
+	.Problems = "Problems",
+	.Release = "Release",
+}
+
+command_name :: proc "contextless" (command: i64) -> string {
+	return command >= 0 && command <= i64(max(Command)) ? COMMAND_NAMES[Command(command)] : "an unknown command"
+}
+
+// argument_name gives the name of a value of a command, from 1.
+argument_name :: proc "contextless" (command: i64, argument: i64) -> string {
+	if argument < 1 || argument > 7 {
+		return ""
+	}
+	#partial switch Command(command) {
+	case .Send:
+		names := [?]string{"place", "count", "address", "port"}
+		return argument <= len(names) ? names[argument - 1] : ""
+	case .Receive:
+		names := [?]string{"place", "room"}
+		return argument <= len(names) ? names[argument - 1] : ""
+	case .Resolve:
+		names := [?]string{"address"}
+		return argument <= len(names) ? names[argument - 1] : ""
+	case .Echo:
+		names := [?]string{"address", "sequence", "count"}
+		return argument <= len(names) ? names[argument - 1] : ""
+	case .Problems:
+		names := [?]string{"place", "room"}
+		return argument <= len(names) ? names[argument - 1] : ""
+	case .Release:
+		names := [?]string{"address", "port"}
+		return argument <= len(names) ? names[argument - 1] : ""
+	}
+	return ""
+}
+
+@(rodata)
+CONTROL_NAMES := [Control]string {
+	.None            = "None",
+	.Endpoint_Add    = "Endpoint_Add",
+	.Endpoint_Grant  = "Endpoint_Grant",
+	.Endpoint_Remove = "Endpoint_Remove",
+}
+
+control_name :: proc "contextless" (command: i64) -> string {
+	return command >= 0 && command <= i64(max(Control)) ? CONTROL_NAMES[Control(command)] : "an unknown command"
+}
+
+// control_argument_name gives the name of a value of a command of the
+// control ring, from 1.
+control_argument_name :: proc "contextless" (command: i64, argument: i64) -> string {
+	#partial switch Control(command) {
+	case .Endpoint_Add:
+		names := [?]string{"ring", "region", "grant"}
+		return argument >= 1 && argument <= len(names) ? names[argument - 1] : ""
+	case .Endpoint_Grant:
+		names := [?]string{"ring", "grant"}
+		return argument >= 1 && argument <= len(names) ? names[argument - 1] : ""
+	case .Endpoint_Remove:
+		return argument == 1 ? "ring" : ""
+	}
+	return ""
 }

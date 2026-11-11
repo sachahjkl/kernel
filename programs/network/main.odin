@@ -26,6 +26,7 @@
 package network_service
 
 import "contract:datagram"
+import "contract:errors"
 import "contract:frame"
 import "contract:ring"
 import "support:network"
@@ -277,35 +278,48 @@ region_range :: proc "contextless" (endpoint: ^Endpoint, place, count: u64) -> b
 // granted checks a remote against the grant of an endpoint, and completes
 // the command with the detail of a refusal. A listen grant names no remote:
 // a segment goes to an admitted remote only (segment_granted).
-granted :: proc "contextless" (endpoint: ^Endpoint, tag: u32, address: u64, port: u64, check_port: bool) -> bool {
+granted :: proc "contextless" (endpoint: ^Endpoint, tag: u32, address: u64, port: u64, check_port: bool, command: u32, argument: i64) -> bool {
 	grant := endpoint.grant
 	if !grant.listen && grant.address != 0 && address == u64(grant.address) && (!check_port || port == u64(grant.port)) {
 		return true
 	}
-	complete(endpoint, tag, .Not_Granted, {0 = address, 1 = port, 2 = u64(grant.address), 3 = u64(grant.port)})
+	complete(endpoint, tag, .Not_Granted, not_granted(command, argument, u32(address), u16(port), grant_remote(grant)))
 	return false
+}
+
+// grant_remote gives the remote of a grant (errors.Unit.Endpoint): 0 when
+// it names none.
+grant_remote :: proc "contextless" (grant: datagram.Grant) -> i64 {
+	return grant.listen || grant.address == 0 ? 0 : errors.endpoint_pack(grant.address, grant.port)
+}
+
+// not_granted gives the values of the error record of a remote that the
+// grant does not name.
+not_granted :: proc "contextless" (command: u32, argument: i64, address: u32, port: u16, granted: i64, local: u16 = 0) -> [7]u64 {
+	return errors.ring_fail(command, .No_Grant, .Endpoint, argument, errors.endpoint_pack(address, port), granted, i64(local))
 }
 
 // segment_granted checks a segment to send, in the copy that this service
 // made: its local port is a port of the endpoint, and its remote is the
 // remote of a client grant, or an admitted remote of a listen grant.
 segment_granted :: proc "contextless" (endpoint: ^Endpoint, tag: u32, address: u32, segment: []u8, now: u64) -> (port: u16, ok: bool) {
+	SEND :: u32(datagram.Command.Send)
 	local := network.read_16(segment, 0)
 	port = network.read_16(segment, 2)
 	grant := endpoint.grant
 	in_block := local >= endpoint.local_port && local - endpoint.local_port < endpoint.port_count
 	switch {
 	case !in_block:
-		complete(endpoint, tag, .Not_Granted, {0 = u64(address), 1 = u64(port), 2 = u64(grant.address), 3 = u64(grant.port), 4 = u64(local), 5 = u64(endpoint.local_port), 6 = u64(endpoint.port_count)})
+		complete(endpoint, tag, .Not_Granted, not_granted(SEND, 3, address, port, grant_remote(grant), local))
 	case grant.listen:
 		if network.admitted_find(&endpoint.admitted, address, port, now) {
 			return port, true
 		}
-		complete(endpoint, tag, .Not_Granted, {0 = u64(address), 1 = u64(port), 2 = 0, 3 = u64(grant.port)})
+		complete(endpoint, tag, .Not_Granted, not_granted(SEND, 3, address, port, 0))
 	case grant.address != 0 && address == grant.address && port == grant.port:
 		return port, true
 	case:
-		complete(endpoint, tag, .Not_Granted, {0 = u64(address), 1 = u64(port), 2 = u64(grant.address), 3 = u64(grant.port)})
+		complete(endpoint, tag, .Not_Granted, not_granted(SEND, 3, address, port, grant_remote(grant)))
 	}
 	return port, false
 }
@@ -315,6 +329,7 @@ segment_granted :: proc "contextless" (endpoint: ^Endpoint, tag: u32, address: u
 command :: proc "contextless" (endpoint: ^Endpoint, index: int, record: ring.Record, now: u64) -> bool {
 	values := record.values
 	tag := record.tag
+	kind := record.kind
 	#partial switch datagram.Command(record.kind) {
 	case .Info:
 		hardware_value: u64
@@ -325,27 +340,27 @@ command :: proc "contextless" (endpoint: ^Endpoint, index: int, record: ring.Rec
 	case .Send:
 		place, count := values[0], values[1]
 		if endpoint.region == nil {
-			complete(endpoint, tag, .No_Region)
+			complete(endpoint, tag, .No_Region, errors.ring_fail(kind, .Absent, .Region))
 			return true
 		}
 		if !region_range(endpoint, place, count) {
-			complete(endpoint, tag, .Out_Of_Range, {0 = place, 1 = count, 2 = u64(len(endpoint.region))})
+			complete(endpoint, tag, .Out_Of_Range, region_refusal(endpoint, kind, place, count))
 			return true
 		}
 		limit := u64(endpoint.tcp ? datagram.SEGMENT_LIMIT : datagram.DATA_LIMIT)
 		if count > limit {
-			complete(endpoint, tag, .Too_Large, {0 = count, 1 = limit})
+			complete(endpoint, tag, .Too_Large, errors.ring_fail(kind, .Too_Long, .Bytes, 2, i64(count), i64(limit)))
 			return true
 		}
 		if endpoint.tcp && count < datagram.SEGMENT_LEAST {
-			complete(endpoint, tag, .Bad_Command, {0 = count, 1 = datagram.SEGMENT_LEAST})
+			complete(endpoint, tag, .Bad_Command, errors.ring_fail(kind, .Too_Small, .Bytes, 2, i64(count), datagram.SEGMENT_LEAST))
 			return true
 		}
-		if !endpoint.tcp && !granted(endpoint, tag, values[2], values[3], true) {
+		if !endpoint.tcp && !granted(endpoint, tag, values[2], values[3], true, kind, 3) {
 			return true
 		}
 		if !link_up {
-			complete(endpoint, tag, .Link_Down)
+			complete(endpoint, tag, .Link_Down, errors.ring_fail(kind, .Link_Down))
 			return true
 		}
 		send_place, ok := send_place_take()
@@ -375,37 +390,37 @@ command :: proc "contextless" (endpoint: ^Endpoint, index: int, record: ring.Rec
 		}
 		if !pending_add({kind = .Send, endpoint = index, tag = tag, address = hop, target = u32(values[2]), deadline = now + ANSWER_TIME, start = now, place = send_place, length = int(count), port = remote_port}) {
 			send_place_free(send_place)
-			complete(endpoint, tag, .Busy, {0 = PENDING_CAPACITY})
+			complete(endpoint, tag, .Busy, busy(kind, PENDING_CAPACITY))
 			return true
 		}
 		endpoint.in_flight += 1
 		arp_request(hop)
 	case .Receive:
 		if endpoint.region == nil {
-			complete(endpoint, tag, .No_Region)
+			complete(endpoint, tag, .No_Region, errors.ring_fail(kind, .Absent, .Region))
 			return true
 		}
 		if !region_range(endpoint, values[0], values[1]) {
-			complete(endpoint, tag, .Out_Of_Range, {0 = values[0], 1 = values[1], 2 = u64(len(endpoint.region))})
+			complete(endpoint, tag, .Out_Of_Range, region_refusal(endpoint, kind, values[0], values[1]))
 			return true
 		}
 		if endpoint.posted_count == RECEIVE_CAPACITY {
-			complete(endpoint, tag, .Busy, {0 = RECEIVE_CAPACITY})
+			complete(endpoint, tag, .Busy, errors.ring_fail(kind, .Busy, .Requests, 0, RECEIVE_CAPACITY, RECEIVE_CAPACITY))
 			return true
 		}
 		endpoint.posted[(endpoint.posted_first + endpoint.posted_count) % RECEIVE_CAPACITY] = {tag = tag, place = values[0], room = values[1]}
 		endpoint.posted_count += 1
 		endpoint.in_flight += 1
 	case .Resolve, .Echo:
-		if !granted(endpoint, tag, values[0], 0, false) {
+		if !granted(endpoint, tag, values[0], 0, false, kind, 1) {
 			return true
 		}
 		if datagram.Command(record.kind) == .Echo && values[2] > network.ICMP_DATA_LIMIT {
-			complete(endpoint, tag, .Too_Large, {0 = values[2], 1 = network.ICMP_DATA_LIMIT})
+			complete(endpoint, tag, .Too_Large, errors.ring_fail(kind, .Too_Long, .Bytes, 3, i64(min(values[2], 1 << 62)), network.ICMP_DATA_LIMIT))
 			return true
 		}
 		if !link_up {
-			complete(endpoint, tag, .Link_Down)
+			complete(endpoint, tag, .Link_Down, errors.ring_fail(kind, .Link_Down))
 			return true
 		}
 		address := u32(values[0])
@@ -416,7 +431,7 @@ command :: proc "contextless" (endpoint: ^Endpoint, index: int, record: ring.Rec
 			item.kind = known ? .Echo_Sent : .Echo
 		}
 		if !pending_add(item) {
-			complete(endpoint, tag, .Busy, {0 = PENDING_CAPACITY})
+			complete(endpoint, tag, .Busy, busy(kind, PENDING_CAPACITY))
 			return true
 		}
 		endpoint.in_flight += 1
@@ -427,7 +442,7 @@ command :: proc "contextless" (endpoint: ^Endpoint, index: int, record: ring.Rec
 		}
 	case .Statistics:
 		if !pending_add({kind = .Statistics, endpoint = index, tag = tag, deadline = now + ANSWER_TIME}) {
-			complete(endpoint, tag, .Busy, {0 = PENDING_CAPACITY})
+			complete(endpoint, tag, .Busy, busy(kind, PENDING_CAPACITY))
 			return true
 		}
 		endpoint.in_flight += 1
@@ -435,7 +450,7 @@ command :: proc "contextless" (endpoint: ^Endpoint, index: int, record: ring.Rec
 	case .Problems:
 		room := values[1]
 		if room > u64(len(endpoint.region)) / size_of(datagram.Problem_Row) || !region_range(endpoint, values[0], room * size_of(datagram.Problem_Row)) {
-			complete(endpoint, tag, .Out_Of_Range, {0 = values[0], 1 = room, 2 = u64(len(endpoint.region))})
+			complete(endpoint, tag, .Out_Of_Range, region_refusal(endpoint, kind, values[0], min(room, 1 << 40) * size_of(datagram.Problem_Row)))
 			return true
 		}
 		rows := ([^]datagram.Problem_Row)(raw_data(endpoint.region[values[0]:]))[:room]
@@ -443,15 +458,28 @@ command :: proc "contextless" (endpoint: ^Endpoint, index: int, record: ring.Rec
 		complete(endpoint, tag, .Ok, {0 = u64(count)})
 	case .Release:
 		if !endpoint.grant.listen {
-			complete(endpoint, tag, .Bad_Command)
+			complete(endpoint, tag, .Bad_Command, errors.ring_fail(kind, .Unsupported, .None, 0, i64(kind)))
 			return true
 		}
 		released := network.admitted_release(&endpoint.admitted, u32(values[0]), u16(values[1]))
 		complete(endpoint, tag, .Ok, {0 = u64(released)})
 	case:
-		complete(endpoint, tag, .Bad_Command)
+		complete(endpoint, tag, .Bad_Command, errors.ring_fail(kind, .Unsupported, .None, 0, i64(kind)))
 	}
 	return true
+}
+
+// region_refusal gives the values of the error record of a place that is
+// not in the region of an endpoint.
+region_refusal :: proc "contextless" (endpoint: ^Endpoint, command: u32, place, count: u64) -> [7]u64 {
+	return errors.ring_fail(command, .Out_Of_Range, .Bytes, 1, i64(min(place, 1 << 62) + min(count, 1 << 62)), i64(len(endpoint.region)))
+}
+
+// busy gives the values of the error record of a full table of the
+// requests that wait for an answer: the requests of all the endpoints are
+// in it, so the record gives the capacity only (property 20).
+busy :: proc "contextless" (command: u32, capacity: int) -> [7]u64 {
+	return errors.ring_fail(command, .Busy, .Requests, 0, 0, i64(capacity))
 }
 
 // arrived reads one frame that the frame service received, in a receive place.
@@ -637,13 +665,14 @@ expire :: proc "contextless" (now: u64) -> (deadline: u64) {
 		case .None:
 		case .Send:
 			send_place_free(item.place)
-			complete_taken(endpoint, item.tag, .No_Answer, {0 = u64(item.address), 1 = now - item.start, 2 = 1})
+			complete_taken(endpoint, item.tag, .No_Answer, errors.ring_fail(u32(datagram.Command.Send), .No_Answer, .Milliseconds, 0, i64(item.address), i64(now - item.start), 1))
 		case .Resolve, .Echo:
-			complete_taken(endpoint, item.tag, .No_Answer, {0 = u64(item.address), 1 = now - item.start, 2 = 1})
+			command := item.kind == .Resolve ? datagram.Command.Resolve : datagram.Command.Echo
+			complete_taken(endpoint, item.tag, .No_Answer, errors.ring_fail(u32(command), .No_Answer, .Milliseconds, 0, i64(item.address), i64(now - item.start), 1))
 		case .Echo_Sent:
-			complete_taken(endpoint, item.tag, .No_Answer, {0 = u64(item.target), 1 = now - item.start, 2 = 2})
+			complete_taken(endpoint, item.tag, .No_Answer, errors.ring_fail(u32(datagram.Command.Echo), .No_Answer, .Milliseconds, 0, i64(item.target), i64(now - item.start), 2))
 		case .Statistics:
-			complete_taken(endpoint, item.tag, .No_Answer, {0 = 0, 1 = now - item.start, 2 = 3})
+			complete_taken(endpoint, item.tag, .No_Answer, errors.ring_fail(u32(datagram.Command.Statistics), .No_Answer, .Milliseconds, 0, 0, i64(now - item.start), 3))
 		}
 		item = {}
 	}
@@ -693,14 +722,23 @@ controlled :: proc "contextless" (record: ring.Record) {
 		if kind == .Memory && through && free >= 0 && region_status == .Ok {
 			opened, ring_status = system.ring_open(handle)
 		}
+		ADD :: u32(datagram.Control.Endpoint_Add)
 		if taken {
 			result = .Busy
-			values[0] = u64(asked.port)
+			values = errors.ring_fail(ADD, .Bad_Value, .None, 3, i64(asked.port)) // A listen port that another endpoint has.
 		} else if free < 0 {
 			result = .Busy
-			values[0] = ENDPOINT_CAPACITY
+			values = errors.ring_fail(ADD, .Full, .Records, 0, 0, ENDPOINT_CAPACITY)
 		} else if region_status != .Ok || ring_status != .Ok {
 			result = .No_Region
+			refused: bool
+			if values, refused = system.region_refusal(region_handle, control_memory, ADD); refused {
+				values[3] = 2 // The argument: the region.
+			} else if size := system.memory_size(region_handle); size != datagram.REGION_PAGES {
+				values = errors.ring_fail(ADD, .Bad_Value, .Pages, 2, i64(size), datagram.REGION_PAGES)
+			} else if values, refused = system.region_refusal(handle, control_memory, ADD); !refused {
+				values = errors.ring_fail(ADD, .Refused, .None, 0, 0, 0, i64(region_status != .Ok ? region_status : ring_status))
+			}
 		}
 		if result != .Ok {
 			if region_status == .Ok {
@@ -731,6 +769,7 @@ controlled :: proc "contextless" (record: ring.Record) {
 		}
 	case .Endpoint_Grant:
 		result = .Bad_Command
+		values = errors.ring_fail(record.kind, .Absent, .None, 1, i64(handle))
 		for &item in endpoints {
 			if item.ring_memory != 0 && item.ring_memory == handle {
 				// A grant changes to none (a revocation), or to a grant of the
@@ -739,16 +778,19 @@ controlled :: proc "contextless" (record: ring.Record) {
 				new_grant := datagram.grant_unpack(record.values[1])
 				same_form := new_grant.tcp == item.tcp && new_grant.listen == item.grant.listen && (!new_grant.listen || new_grant.port == item.local_port)
 				if datagram.granted(new_grant) && !same_form {
+					values = errors.ring_fail(record.kind, .Bad_Value, .None, 2, i64(record.values[1]))
 					break
 				}
 				item.grant = new_grant
 				item.admitted = {}
 				system.log("network: the grant of the endpoint of ", system.name_of(item.name[:]), " changed: ", datagram.granted(item.grant) ? "a new remote" : "none")
 				result = .Ok
+				values = {}
 			}
 		}
 	case .Endpoint_Remove:
 		result = .Bad_Command
+		values = errors.ring_fail(record.kind, .Absent, .None, 1, i64(handle))
 		for &item, index in endpoints {
 			if item.ring_memory == 0 || item.ring_memory != handle {
 				continue
@@ -770,9 +812,11 @@ controlled :: proc "contextless" (record: ring.Record) {
 			system.log("network: the endpoint of ", system.name_of(item.name[:]), " ended: ", item.sent, " datagrams sent, ", item.received, " received")
 			item = {}
 			result = .Ok
+			values = {}
 		}
 	case:
 		result = .Bad_Command
+		values = errors.ring_fail(record.kind, .Unsupported, .None, 0, i64(record.kind))
 	}
 	system.send(&control.completions, ring.Record{kind = u32(result), tag = record.tag, values = values})
 }

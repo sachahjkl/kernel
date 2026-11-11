@@ -15,6 +15,7 @@
 // frame: the client builds and checks each one.
 package frame_service
 
+import "contract:errors"
 import "contract:frame"
 import "contract:ring"
 import "support:pci"
@@ -147,17 +148,18 @@ room :: proc "contextless" () -> bool {
 
 // attach takes the frame region of the client. The handle must have come
 // through the frame ring.
-attach :: proc "contextless" (handle: system.Handle) -> frame.Status {
+// A refusal gives the values of its error record.
+attach :: proc "contextless" (handle: system.Handle) -> (frame.Status, [7]u64) {
+	ATTACH :: u32(frame.Command.Attach)
 	if in_flight != 0 {
-		return .Bad_Command
+		return .Bad_Command, errors.ring_fail(ATTACH, .Busy, .Requests, 0, i64(in_flight), 0)
 	}
-	kind, rights, through := system.handle_state(handle, ring_memory)
-	if kind != .Memory || !through || !(system.Rights{.Read, .Write} <= rights) {
-		return .No_Region
+	if values, refused := system.region_refusal(handle, ring_memory, ATTACH); refused {
+		return .No_Region, values
 	}
 	physical, status := system.memory_physical(machine, handle)
 	if status != .Ok {
-		return .No_Region
+		return .No_Region, errors.ring_fail(ATTACH, .Refused, .None, 1, i64(handle), 0, i64(status))
 	}
 	if region_memory != 0 {
 		system.close(region_memory)
@@ -165,7 +167,7 @@ attach :: proc "contextless" (handle: system.Handle) -> frame.Status {
 	region_memory = handle
 	region_physical = physical
 	region_size = system.memory_size(handle) * system.PAGE_SIZE
-	return .Ok
+	return .Ok, {}
 }
 
 Outcome :: enum {
@@ -174,19 +176,23 @@ Outcome :: enum {
 	Full, // No place is free: the command waits for a completion.
 }
 
-// submit gives one request to the device.
-submit :: proc "contextless" (command: ring.Record) -> (status: frame.Status, outcome: Outcome) {
+// submit gives one request to the device. A refusal gives the values of
+// its error record.
+submit :: proc "contextless" (command: ring.Record) -> (status: frame.Status, outcome: Outcome, values: [7]u64) {
 	kind := frame.Command(command.kind)
 	place, count := command.values[0], command.values[1]
 	if region_memory == 0 {
-		return .No_Region, .Done
+		return .No_Region, .Done, errors.ring_fail(command.kind, .Absent, .Region)
 	}
 	if place > region_size || count > region_size - place {
-		return .Out_Of_Range, .Done
+		return .Out_Of_Range, .Done, errors.ring_fail(command.kind, .Out_Of_Range, .Bytes, 1, i64(min(place, 1 << 62) + min(count, 1 << 62)), i64(region_size))
 	}
 	if kind == .Send {
-		if count < 14 || count > frame.FRAME_LIMIT {
-			return .Too_Large, .Done
+		if count < 14 {
+			return .Too_Large, .Done, errors.ring_fail(command.kind, .Too_Small, .Bytes, 2, i64(count), 14)
+		}
+		if count > frame.FRAME_LIMIT {
+			return .Too_Large, .Done, errors.ring_fail(command.kind, .Too_Long, .Bytes, 2, i64(count), frame.FRAME_LIMIT)
 		}
 		slot: u32 = SLOT_CAPACITY
 		for candidate in 0 ..< send_slot_count {
@@ -196,7 +202,7 @@ submit :: proc "contextless" (command: ring.Record) -> (status: frame.Status, ou
 			}
 		}
 		if slot == SLOT_CAPACITY {
-			return .Ok, .Full
+			return .Ok, .Full, {}
 		}
 		head := slot * 2
 		send_queue.descriptors[head + 1] = {address = region_physical + place, length = u32(count)}
@@ -204,11 +210,14 @@ submit :: proc "contextless" (command: ring.Record) -> (status: frame.Status, ou
 		in_flight += 1
 		bytes_sent += count
 		virtio.give(&send_queue, u16(head))
-		return .Ok, .Sent
+		return .Ok, .Sent, {}
 	}
 	// A Receive: room for a header of Ethernet at least.
-	if count < 14 || count > 1 << 16 {
-		return .Bad_Command, .Done
+	if count < 14 {
+		return .Bad_Command, .Done, errors.ring_fail(command.kind, .Too_Small, .Bytes, 2, i64(count), 14)
+	}
+	if count > 1 << 16 {
+		return .Bad_Command, .Done, errors.ring_fail(command.kind, .Too_Long, .Bytes, 2, i64(count), 1 << 16)
 	}
 	slot: u32 = SLOT_CAPACITY
 	for candidate in 0 ..< receive_slot_count {
@@ -218,14 +227,14 @@ submit :: proc "contextless" (command: ring.Record) -> (status: frame.Status, ou
 		}
 	}
 	if slot == SLOT_CAPACITY {
-		return .Too_Many, .Done
+		return .Too_Many, .Done, errors.ring_fail(command.kind, .Busy, .Requests, 0, i64(receive_slot_count), i64(receive_slot_count))
 	}
 	head := slot * 2
 	receive_queue.descriptors[head + 1] = {address = region_physical + place, length = u32(count), flags = virtio.DESCRIPTOR_DEVICE_WRITES}
 	receive_slots[slot] = {tag = command.tag, busy = true}
 	in_flight += 1
 	virtio.give(&receive_queue, u16(head))
-	return .Ok, .Sent
+	return .Ok, .Sent, {}
 }
 
 // harvest gives a completion to the client for each request that the device used.
@@ -247,7 +256,7 @@ harvest :: proc "contextless" () -> (count: int) {
 			continue
 		}
 		if used.length < HEADER_SIZE {
-			complete(receive_slots[slot].tag, .Device_Error)
+			complete(receive_slots[slot].tag, .Device_Error, errors.ring_fail(u32(frame.Command.Receive), .Device, .Bytes, 0, i64(used.length), HEADER_SIZE))
 		} else {
 			length := u64(used.length) - HEADER_SIZE
 			complete(receive_slots[slot].tag, .Ok, {0 = length})
@@ -301,7 +310,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			values: [7]u64
 			#partial switch frame.Command(command.kind) {
 			case .Attach:
-				result = attach(system.Handle(command.values[0]))
+				result, values = attach(system.Handle(command.values[0]))
 			case .Info:
 				values = {0 = hardware_address, 1 = u64(link_up()), 2 = frame.FRAME_LIMIT, 3 = u64(receive_slot_count), 4 = u64(send_slot_count)}
 			case .Statistics:
@@ -310,7 +319,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				values = {0 = frames_sent, 1 = frames_received, 2 = system.kernel_entries(), 3 = interrupts, 4 = bytes_sent, 5 = bytes_received}
 			case .Send, .Receive:
 				outcome: Outcome
-				result, outcome = submit(command)
+				result, outcome, values = submit(command)
 				if outcome == .Sent {
 					continue
 				}
@@ -319,6 +328,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				}
 			case:
 				result = .Bad_Command
+				values = errors.ring_fail(command.kind, .Unsupported, .None, 0, i64(command.kind))
 			}
 			if has_waiting {
 				break

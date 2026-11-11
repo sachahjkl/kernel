@@ -28,7 +28,7 @@ Kind :: enum i64 {
 	Empty             = 1, // A text argument has no byte. limit: the most that it can have.
 	Too_Long          = 2, // value: the size of the argument; limit: the most that it can have.
 	Too_Small         = 3, // value: the size of the argument; limit: the least that it must have.
-	Bad_Value         = 4, // value: a value that the call refuses; limit: the largest value that it takes, or 0.
+	Bad_Value         = 4, // value: a value that the call refuses; limit: the largest value that it takes, or 0 when the sentence gives no range.
 	Bad_Flags         = 5, // value: the flags; limit: the flags that the call knows.
 	Bad_Byte          = 6, // value: the offset of the byte in the text; found: the byte.
 	Bad_Address       = 7, // value: the address; limit: the count of bytes; found: 1 when the call writes there.
@@ -50,6 +50,12 @@ Kind :: enum i64 {
 	Overlap           = 23, // value: an address; limit: the count of bytes. They overlap something that the program has.
 	Unknown_Operation = 24, // value: the number of the operation.
 	Refused           = 25, // The call refused, and gives no more detail. found: the status (op.Status for the kernel).
+	No_Answer         = 26, // No answer before the time limit. value: the IPv4 address that did not answer, or 0; limit: the milliseconds waited; found: what did not answer: 1 its hardware address (ARP), 2 the echo, 3 the device.
+	Unsupported       = 27, // The receiver does not do this command. value: the command, or the field that it does not do.
+	Link_Down         = 28, // The link of the network device is down.
+	Busy              = 29, // Too many requests are in flight. value: the requests in flight, or 0 when the receiver does not count them; limit: the most.
+	Out_Of_Range      = 30, // The argument names units past the end. value: the end of what it names (its first unit and its count); limit: the units that exist.
+	Reserved          = 31, // The argument names a program of the system that the call does not act on: it starts at boot, or it is a device service.
 }
 
 // What value, limit and found count.
@@ -78,6 +84,14 @@ Unit :: enum i64 {
 	Milliseconds = 21,
 	Connections = 22, // The records of a TCP connection table (support/tcp).
 	Tcp_Ports   = 23, // The local TCP ports of a client grant.
+	Requests    = 24, // Requests in flight.
+	Endpoint    = 25, // A remote of the network: an IPv4 address and a port, in one value (endpoint_pack). No_Grant: value the remote that the call names, limit the remote of the grant (0: none), found the local port when it is not a port of the endpoint.
+	Region      = 26, // Absent: the data region of a ring.
+	Root_Commands = 27, // No_Grant: the commands of the root ring that change other programs.
+	Services    = 28, // Services that run.
+	Grants      = 29, // The grants of a program (system.Root_Grant).
+	Display     = 30, // No_Grant: a surface on the screen (the ring to the compositor).
+	Terminal    = 31, // No_Grant: a terminal (the terminal ring and the text region).
 }
 
 // How a handle ended (Handle_Ended).
@@ -137,4 +151,41 @@ UNIT_NAMES := [Unit]string {
 	.Milliseconds = "milliseconds",
 	.Connections = "connections",
 	.Tcp_Ports   = "local TCP ports",
+	.Requests    = "requests in flight",
+	.Endpoint    = "a remote address and port",
+	.Region      = "a data region",
+	.Root_Commands = "the commands of the root ring that change other programs",
+	.Services    = "services that run",
+	.Grants      = "grants of the program",
+	.Display     = "a surface on the screen",
+	.Terminal    = "a terminal",
+}
+
+// A ring completion (contract/ring) has the status of the contract of its
+// ring in its kind. When the status is not 0, its seven values are an error
+// record: the same 56 bytes as the values of a completion of the kernel.
+// operation: the command; argument: the number of the value of the command
+// that is wrong, from 1, or 0 for the command as a whole.
+completion_record :: proc "contextless" (values: [7]u64) -> Error_Record {
+	return transmute(Error_Record)values
+}
+
+completion_values :: proc "contextless" (record: Error_Record) -> [7]u64 {
+	return transmute([7]u64)record
+}
+
+// ring_fail gives the values of a completion that fails.
+ring_fail :: proc "contextless" (command: u32, kind: Kind, unit: Unit = .None, argument: i64 = 0, value: i64 = 0, limit: i64 = 0, found: i64 = 0) -> [7]u64 {
+	record := error_make(kind, unit, argument, value, limit, found)
+	record.operation = i64(command)
+	return completion_values(record)
+}
+
+// endpoint_pack gives the value of a remote (Unit.Endpoint).
+endpoint_pack :: proc "contextless" (address: u32, port: u16) -> i64 {
+	return i64(address) << 16 | i64(port)
+}
+
+endpoint_unpack :: proc "contextless" (value: i64) -> (address: u32, port: u16) {
+	return u32(u64(value) >> 16), u16(u64(value))
 }

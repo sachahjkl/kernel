@@ -10,6 +10,7 @@
 package disk
 
 import "contract:block"
+import "contract:errors"
 import "contract:ring"
 import "support:display"
 import "support:graphics"
@@ -177,6 +178,15 @@ check :: proc "contextless" () {
 	}
 }
 
+// refusal_text gives the sentence of the error record of a completion
+// that failed.
+refusal_text :: proc "contextless" (buffer: []u8, completion: ring.Record) -> string {
+	error := errors.completion_record(completion.values)
+	writer := system.Writer{buffer = buffer}
+	system.ring_error_text(&writer, &error, "block", block.command_name(error.operation), block.argument_name(error.operation, error.argument))
+	return system.written(&writer)
+}
+
 bar :: proc "contextless" (table: ^interface.Draw_Table, x, y: int, value, most: u64, color: graphics.Color) {
 	interface.draw_rectangle(table, x, y + 3, BAR_WIDTH, 10, graphics.COLOR_TRACK)
 	interface.draw_rectangle(table, x, y + 3, int(value * BAR_WIDTH / max(most, 1)), 10, color)
@@ -270,25 +280,33 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.stop(1)
 	}
 	if attached := call(.Attach, {0 = u64(given)}); block.Status(attached.kind) != .Ok {
-		system.log("disk: the block service refused the data region: status ", u64(attached.kind))
+		text: [240]u8
+		system.log("disk: the block service refused the data region: ", refusal_text(text[:], attached))
 		system.stop(1)
 	}
 	info := call(.Info)
 	disk_blocks = info.values[0]
 	system.log("disk: ok, the disk has ", disk_blocks, " blocks, ", info.values[1], " blocks in one request at most")
 	draw(&window)
-	errors: u64
+	error_count: u64
 	for &measure in measures {
 		run(&measure)
-		errors += measure.errors
+		error_count += measure.errors
 		draw(&window)
 	}
 	check()
 	checked = true
-	if errors == 0 && wrong == 0 {
+	// A request past the end of the disk: the completion holds its error
+	// record.
+	past := call(.Read, {0 = disk_blocks - 1, 1 = 2, 2 = 0})
+	past_error := errors.completion_record(past.values)
+	text: [240]u8
+	past_right := block.Status(past.kind) == .Out_Of_Range && errors.Kind(past_error.kind) == .Out_Of_Range && past_error.argument == 1 && u64(past_error.value) == disk_blocks + 1 && u64(past_error.limit) == disk_blocks
+	system.log("disk: a read of 2 blocks from the last block: ", past_right ? "" : "WRONG: ", refusal_text(text[:], past))
+	if error_count == 0 && wrong == 0 {
 		system.log("disk: ok, ", u64(len(measures)), " measures, 0 errors, write then read back: 0 wrong")
 	} else {
-		system.log("disk: wrong: ", errors, " errors, ", wrong, " wrong bytes")
+		system.log("disk: wrong: ", error_count, " errors, ", wrong, " wrong bytes")
 	}
 	for {
 		draw(&window)

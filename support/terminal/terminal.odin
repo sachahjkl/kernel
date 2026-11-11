@@ -34,6 +34,7 @@
 // that the terminal did not read.
 package terminal
 
+import "contract:errors"
 import "contract:ring"
 import "support:system"
 
@@ -133,17 +134,27 @@ Terminal :: struct {
 }
 
 // open gives the terminal of this program. false: the program that started
-// this one gave no terminal.
-open :: proc "contextless" (ctx: ^system.Context) -> (terminal: Terminal, ok: bool) {
-	if ctx.handles[GRANT_RING] == 0 || ctx.handles[GRANT_TEXT] == 0 || system.memory_size(ctx.handles[GRANT_TEXT]) != TEXT_PAGES {
+// this one gave no terminal (the record No_Grant, unit Terminal), or a
+// kernel operation failed (its record).
+// error: the record of a failure, if the caller gives one:
+// system.wrapper_error_text(writer, &error, "terminal.open", {"ctx"}).
+open :: proc "contextless" (ctx: ^system.Context, error: ^errors.Error_Record = nil) -> (terminal: Terminal, ok: bool) {
+	if ctx.handles[GRANT_RING] == 0 || ctx.handles[GRANT_TEXT] == 0 {
+		errors.fail(error, 0, .No_Grant, .Terminal)
+		return {}, false
+	}
+	if size := system.memory_size(ctx.handles[GRANT_TEXT], error); size != TEXT_PAGES {
+		if size != 0 {
+			errors.fail(error, 0, .Bad_Value, .Pages, 1, i64(size), TEXT_PAGES) // The text region of the grant has another size.
+		}
 		return {}, false
 	}
 	status: system.Status
-	if terminal.ring, status = system.ring_open(ctx.handles[GRANT_RING]); status != .Ok {
+	if terminal.ring, status = system.ring_open(ctx.handles[GRANT_RING], error); status != .Ok {
 		return {}, false
 	}
 	address: rawptr
-	if address, status = system.memory_map(ctx.handles[GRANT_TEXT]); status != .Ok {
+	if address, status = system.memory_map(ctx.handles[GRANT_TEXT], error = error); status != .Ok {
 		return {}, false
 	}
 	terminal.text = ([^]u8)(address)[:TEXT_SIZE]

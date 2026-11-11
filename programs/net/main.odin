@@ -10,6 +10,7 @@
 package net
 
 import "contract:datagram"
+import "contract:errors"
 import op "contract:operation"
 import "contract:ring"
 import "support:display"
@@ -78,7 +79,7 @@ HEIGHT :: 16 + 2 * LINE + CASE_CAPACITY * LINE + 4 * LINE + 16
 
 Case :: struct {
 	text:   string,
-	answer: [96]u8,
+	answer: [240]u8, // A sentence of an error record fits.
 	count:  int,
 	right:  bool,
 }
@@ -236,16 +237,25 @@ cases_run :: proc "contextless" () {
 
 	// 5. A port that the grant does not give.
 	copy(place_of(SEND_FIRST + 1), "not granted")
+	// The completion of a refusal holds its error record: the note shows
+	// its sentence.
+	sentence: [240]u8
 	refused, has_refused := call(.Send, {0 = (SEND_FIRST + 1) * PLACE_SIZE, 1 = 11, 2 = GATEWAY, 3 = OTHER_PORT})
-	note("UDP to 10.0.2.2 port 9", has_refused && datagram.Status(refused.kind) == .Not_Granted && refused.values[1] == OTHER_PORT && refused.values[2] == GATEWAY && refused.values[3] == ECHO_PORT, "refused: the grant gives ", address_text(text[:], u32(refused.values[2])), " port ", refused.values[3], " only")
+	refusal_writer := system.Writer{buffer = sentence[:]}
+	error := network.completion_error_text(&refusal_writer, refused)
+	note("UDP to 10.0.2.2 port 9", has_refused && datagram.Status(refused.kind) == .Not_Granted && errors.Kind(error.kind) == .No_Grant && error.argument == 3 && error.value == errors.endpoint_pack(GATEWAY, OTHER_PORT) && error.limit == errors.endpoint_pack(GATEWAY, ECHO_PORT), "refused: ", system.written(&refusal_writer))
 
 	// 6. An echo of another address.
 	refused, has_refused = call(.Echo, {0 = 0x0A000203, 1 = 2, 2 = 8})
-	note("ICMP echo to 10.0.2.3", has_refused && datagram.Status(refused.kind) == .Not_Granted && refused.values[0] == 0x0A000203, "refused: the grant names ", address_text(text[:], u32(refused.values[2])), " only")
+	refusal_writer = {buffer = sentence[:]}
+	error = network.completion_error_text(&refusal_writer, refused)
+	note("ICMP echo to 10.0.2.3", has_refused && datagram.Status(refused.kind) == .Not_Granted && errors.Kind(error.kind) == .No_Grant && error.value == errors.endpoint_pack(0x0A000203, 0), "refused: ", system.written(&refusal_writer))
 
 	// 7. A datagram larger than one frame.
 	refused, has_refused = call(.Send, {0 = 0, 1 = 2000, 2 = GATEWAY, 3 = ECHO_PORT})
-	note("UDP of 2000 bytes", has_refused && datagram.Status(refused.kind) == .Too_Large && refused.values[0] == 2000 && refused.values[1] == datagram.DATA_LIMIT, "refused: ", refused.values[0], " bytes, the limit is ", refused.values[1], ": no fragment")
+	refusal_writer = {buffer = sentence[:]}
+	error = network.completion_error_text(&refusal_writer, refused)
+	note("UDP of 2000 bytes", has_refused && datagram.Status(refused.kind) == .Too_Large && errors.Kind(error.kind) == .Too_Long && error.value == 2000 && error.limit == datagram.DATA_LIMIT, "refused, no fragment: ", system.written(&refusal_writer))
 
 	// 8 and 9. The frames that the network service refused. The peer sent
 	// them before its first answer, so they arrived before case 4. A row of
@@ -506,8 +516,11 @@ after_key :: proc "contextless" () {
 	case !has_sent:
 		item.count = len(system.format(item.answer[:], "no answer of the network service"))
 		item.right = false
-	case datagram.Status(sent.kind) == .Not_Granted && sent.values[2] == 0 && sent.values[3] == 0:
-		item.count = len(system.format(item.answer[:], "refused: the endpoint has no grant now"))
+	case datagram.Status(sent.kind) == .Not_Granted && errors.completion_record(sent.values).limit == 0:
+		writer := system.Writer{buffer = item.answer[:]}
+		system.write_part(&writer, "refused, the endpoint has no grant now: ")
+		network.completion_error_text(&writer, sent)
+		item.count = writer.count
 		item.right = true
 	case datagram.Status(sent.kind) == .Ok:
 		place, count, _, _, ok := datagram_wait(system.time() + 1000)
@@ -517,7 +530,10 @@ after_key :: proc "contextless" () {
 		item.count = len(system.format(item.answer[:], ok ? "sent, and " : "sent, and no ", "answer"))
 		item.right = ok && count == 11
 	case:
-		item.count = len(system.format(item.answer[:], "refused: status ", u64(sent.kind)))
+		writer := system.Writer{buffer = item.answer[:]}
+		system.write_part(&writer, "refused: ")
+		network.completion_error_text(&writer, sent)
+		item.count = writer.count
 		item.right = false
 	}
 	case_count = CASE_CAPACITY

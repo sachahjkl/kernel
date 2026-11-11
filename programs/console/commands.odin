@@ -572,9 +572,14 @@ connect_service :: proc "contextless" (arguments: []Value) -> Value {
 		name    = name,
 		service = true,
 	}
-	if status := service_connect(sandbox); status != .Ok {
+	refused: ring.Record
+	if status := service_connect(sandbox, &refused); status != .Ok {
 		sandbox^ = {}
-		return fail("cannot connect to ", name, ": ", connect_reason(status))
+		if refused.kind == 0 {
+			return fail("cannot connect to ", name, ": ", status == .Bad_State ? "the root service did not answer" : "the call ring or the call region does not map")
+		}
+		text: [240]u8
+		return fail("cannot connect to ", name, ": ", root_refusal_text(text[:], refused))
 	}
 	for &entry in system.image_entries(image) {
 		if entry.hash != sandbox.hash || entry.offset > u64(len(image)) || entry.size > u64(len(image)) - entry.offset {
@@ -600,26 +605,28 @@ connect_service :: proc "contextless" (arguments: []Value) -> Value {
 	return fail("the boot image has no file with the hash of the program ", name)
 }
 
-connect_reason :: proc "contextless" (status: system.Status) -> string {
-	#partial switch status {
-	case .Bad_Handle:
-		return "no service runs with this name"
-	case .No_Slot:
-		return "the service has no room for one more caller"
-	case .Bad_State:
-		return "the root service did not answer"
-	}
-	return "the root service refused"
+// root_refusal_text gives the sentence of the error record of a completion
+// of the root ring that failed.
+root_refusal_text :: proc "contextless" (buffer: []u8, completion: ring.Record) -> string {
+	error := errors.completion_record(completion.values)
+	writer := system.Writer{buffer = buffer}
+	system.ring_error_text(&writer, &error, "root", system.root_command_name(error.operation), system.root_argument_name(error.operation, error.argument))
+	return system.written(&writer)
 }
 
 // service_connect asks the root service for a connection to the service of
 // a sandbox, and maps the call ring and the call region that it gives.
-service_connect :: proc "contextless" (sandbox: ^Sandbox) -> system.Status {
+// refused: the completion of a refusal of the root service, if the caller
+// asks for it.
+service_connect :: proc "contextless" (sandbox: ^Sandbox, refused: ^ring.Record = nil) -> system.Status {
 	completion, answered := request_record(.Connect, sandbox.name)
 	if !answered {
 		return .Bad_State
 	}
 	if status := system.Status(completion.kind); status != .Ok {
+		if refused != nil {
+			refused^ = completion
+		}
 		return status
 	}
 	sandbox.program = system.Handle(completion.values[0])
@@ -1177,7 +1184,8 @@ request :: proc "contextless" (kind: system.Root_Command, name: string) -> Value
 		return fail(requests.head == nil ? "the console has no ring to the root service" : "the root service did not answer")
 	}
 	if system.Status(completion.kind) != .Ok {
-		return fail("the root service refused: ", kind == .Start ? "no module has the name " : "no program has the name ", name)
+		text: [240]u8
+		return fail(root_refusal_text(text[:], completion))
 	}
 	return {}
 }
@@ -1191,7 +1199,8 @@ grants :: proc "contextless" (arguments: []Value) -> Value {
 		return fail(requests.head == nil ? "the console has no ring to the root service" : "the root service did not answer")
 	}
 	if system.Status(completion.kind) != .Ok {
-		return fail("the root service refused: no program has the name ", name)
+		text: [240]u8
+		return fail(root_refusal_text(text[:], completion))
 	}
 	for set, pass in ([2]system.Root_Grants{transmute(system.Root_Grants)completion.values[0], transmute(system.Root_Grants)completion.values[1]}) {
 		if pass == 1 && set == {} {
@@ -1224,14 +1233,12 @@ revoke :: proc "contextless" (arguments: []Value) -> Value {
 		if !answered {
 			return fail(requests.head == nil ? "the console has no ring to the root service" : "the root service did not answer")
 		}
-		#partial switch system.Status(completion.kind) {
-		case .Ok:
+		if system.Status(completion.kind) == .Ok {
 			print(name, " lost the grant ", arguments[1].text, ", holdings ended: ", completion.values[0], "\n")
 			return {}
-		case .Bad_State:
-			return fail("the program ", name, " does not have the grant ", arguments[1].text)
 		}
-		return fail("the root service refused: no program has the name ", name)
+		text: [240]u8
+		return fail(root_refusal_text(text[:], completion))
 	}
 	return fail("no grant has the name ", arguments[1].text, ": the grants are log, machine, image, log_records, store, network, person")
 }

@@ -12,6 +12,7 @@
 // and Present names the picture that is complete.
 package display
 
+import "contract:errors"
 import "support:graphics"
 import "contract:ring"
 import "contract:pointer_pictures"
@@ -128,19 +129,37 @@ picture_end :: proc "contextless" (window: ^Window) {
 // With two_pictures, present changes window.canvas to the other picture:
 // the program draws each picture from nothing, and it calls canvas_free
 // before it draws.
-open :: proc "contextless" (ctx: ^system.Context, width, height: int, title: string, two_pictures := false) -> (window: Window, ok: bool) {
+//
+// error: the record of a failure, if the caller gives one. The record of a
+// kernel operation that failed has its operation; a record of open itself
+// has the operation 0 and the arguments of OPEN_ARGUMENTS (error_text).
+open :: proc "contextless" (ctx: ^system.Context, width, height: int, title: string, two_pictures := false, error: ^errors.Error_Record = nil) -> (window: Window, ok: bool) {
 	window.ring_memory = ctx.handles[system.GRANT_DISPLAY]
+	switch {
+	case window.ring_memory == 0:
+		errors.fail(error, 0, .No_Grant, .Display)
+		return {}, false
+	case width < 1 || width > SURFACE_LIMIT:
+		errors.fail(error, 0, .Bad_Value, .None, 2, i64(width), SURFACE_LIMIT)
+		return {}, false
+	case height < 1 || height > SURFACE_LIMIT:
+		errors.fail(error, 0, .Bad_Value, .None, 3, i64(height), SURFACE_LIMIT)
+		return {}, false
+	case len(title) > len(system.Name) - 1:
+		errors.fail(error, 0, .Too_Long, .Bytes, 4, i64(len(title)), len(system.Name) - 1)
+		return {}, false
+	}
 	status: system.Status
-	if window.ring, status = system.ring_open(window.ring_memory); status != .Ok {
+	if window.ring, status = system.ring_open(window.ring_memory, error); status != .Ok {
 		return {}, false
 	}
 	address: rawptr
 	pages := (u64(width * height * size_of(graphics.Color) * (two_pictures ? 2 : 1)) + system.PAGE_SIZE - 1) / system.PAGE_SIZE
-	window.surface, status = system.memory_create(pages)
+	window.surface, status = system.memory_create(pages, error = error)
 	if status != .Ok {
 		return {}, false
 	}
-	address, status = system.memory_map(window.surface)
+	address, status = system.memory_map(window.surface, error = error)
 	if status != .Ok {
 		return {}, false
 	}
@@ -155,12 +174,11 @@ open :: proc "contextless" (ctx: ^system.Context, width, height: int, title: str
 	// program. Until then, the grant has no receiver.
 	granted: system.Handle
 	for attempt in 0 ..< 200 {
-		granted, status = system.give(window.ring_memory, window.surface, {.Read}) // The compositor reads the surface.
+		granted, status = system.give(window.ring_memory, window.surface, {.Read}, attempt == 199 ? error : nil) // The compositor reads the surface.
 		if status == .Ok {
 			break
 		}
 		system.sleep(system.time() + 5)
-		_ = attempt
 	}
 	if status != .Ok {
 		return {}, false
@@ -173,6 +191,11 @@ open :: proc "contextless" (ctx: ^system.Context, width, height: int, title: str
 	system.send(&window.ring.commands, command)
 	return window, true
 }
+
+// The names of the arguments of open, for the sentence of a record that
+// open wrote: system.wrapper_error_text(writer, &error, "display.open", display.OPEN_ARGUMENTS[:]).
+@(rodata)
+OPEN_ARGUMENTS := [?]string{"ctx", "width", "height", "title", "two_pictures"}
 
 // present tells the compositor that the picture in window.canvas is
 // complete.

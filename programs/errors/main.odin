@@ -2,7 +2,7 @@
 //
 // The cases: kernel operations that the kernel refuses (a right, a handle that was revoked or closed, a budget that cannot pay, an address, a size, a flag); loads that fail (a missing import, a replacement that fails its check); a direct call of a module export that fails; isolated calls of the storage service that fail; and a program that faults three calls deep, with its stack trace.
 //
-// The program runs each case at its start. A key from a to s, or a click on a case, runs it again.
+// The program runs each case at its start. A key from a to y, or a click on a case, runs it again.
 package errors_program
 
 import "contract:errors"
@@ -27,7 +27,7 @@ WIDTH :: 1000
 LINE :: 16
 TOP :: 8 + 2 * LINE + 8 // The first case.
 CASE_HEIGHT :: 2 * LINE
-CASE_CAPACITY :: 21
+CASE_CAPACITY :: 25
 CASES_ON_A_PAGE :: 19 // The window shows one page of cases; Tab shows the other one.
 PAGE_COUNT :: (CASE_CAPACITY + CASES_ON_A_PAGE - 1) / CASES_ON_A_PAGE
 // One case can have a sentence of two lines (a load error that names an
@@ -74,6 +74,12 @@ cases := [CASE_CAPACITY]Case {
 	// The second page.
 	{text = "the pages of another program (Inspect, Pages)", expected = "Bad_Value"},
 	{text = "the pages past the end of the user half", expected = "Bad_Value"},
+	// One case for each family of calls that gave a status or a bool only
+	// (MODULE_CONTRACT.md, section 8, "The other calls").
+	{text = "a wrapper: display.open of 0 by 100 pixels", expected = "Bad_Value"},
+	{text = "a wrapper: terminal.open with no terminal", expected = "No_Grant"},
+	{text = "a ring: root.Connect(\"storage\"), not callable", expected = "No_Grant"},
+	{text = "an export: tally.add, a note of 40 bytes", expected = "Too_Long"},
 }
 
 shown_page: int // The page of cases that the window shows.
@@ -318,6 +324,59 @@ root_connect :: proc "contextless" (name: string) -> (completion: ring.Record, o
 	return {}, false
 }
 
+the_context: ^system.Context
+
+// case_display_open asks for a surface of 0 by 100 pixels: display.open
+// refuses it before any kernel operation.
+case_display_open :: proc "contextless" (writer: ^system.Writer) -> bool {
+	error: errors.Error_Record
+	if _, opened := display.open(the_context, 0, 100, "zero", false, &error); opened {
+		return false
+	}
+	system.wrapper_error_text(writer, &error, "display.open", display.OPEN_ARGUMENTS[:])
+	return errors.Kind(error.kind) == .Bad_Value && error.argument == 2 && error.value == 0
+}
+
+// case_terminal_open opens the terminal of a program that has none.
+case_terminal_open :: proc "contextless" (writer: ^system.Writer) -> bool {
+	error: errors.Error_Record
+	if _, opened := terminal.open(the_context, &error); opened {
+		return false
+	}
+	system.wrapper_error_text(writer, &error, "terminal.open", {"ctx"})
+	return errors.Kind(error.kind) == .No_Grant && errors.Unit(error.unit) == .Terminal
+}
+
+// case_root_connect asks the root service for a connection that the grant
+// Connect of this program does not give: the completion holds the record.
+case_root_connect :: proc "contextless" (writer: ^system.Writer) -> bool {
+	completion, answered := root_connect("storage")
+	if !answered {
+		system.write_part(writer, "the root service did not answer")
+		return false
+	}
+	error := errors.completion_record(completion.values)
+	system.ring_error_text(writer, &error, "root", system.root_command_name(error.operation), system.root_argument_name(error.operation, error.argument))
+	return system.Status(completion.kind) == .No_Right && errors.Kind(error.kind) == .No_Grant && errors.Unit(error.unit) == .Connection
+}
+
+// case_tally_add calls the export add of tally, loaded as a library, with a
+// note longer than it keeps.
+case_tally_add :: proc "contextless" (writer: ^system.Writer) -> bool {
+	if tally_add == nil {
+		system.write_part(writer, "the module tally did not load")
+		return false
+	}
+	error: errors.Error_Record
+	note := "a note of forty bytes, four more than 36"
+	if tally_add(1, &note, &error) >= 0 {
+		return false
+	}
+	error.operation = i64(tally_add_export) // The caller knows the export that it called.
+	system.export_error_text(writer, tally_space.modules[tally_place].file, tally_add_export, "tally", &error)
+	return errors.Kind(error.kind) == .Too_Long && error.value == 40 && error.limit == 36
+}
+
 // The measures of a failed call of each family of section 8 of
 // MODULE_CONTRACT.md that is not a kernel operation: family_root in
 // nanoseconds, the two others in tenths of a nanosecond.
@@ -329,7 +388,7 @@ families_measure :: proc "contextless" (ctx: ^system.Context) {
 	start := system.nanoseconds()
 	failed := 0
 	for _ in 0 ..< WRAPPER_CALLS {
-		if _, opened := terminal.open(ctx); !opened {
+		if _, opened := terminal.open(ctx, &error); !opened {
 			failed += 1
 		}
 	}
@@ -486,6 +545,14 @@ case_run :: proc "contextless" (index: int, writer: ^system.Writer) -> bool {
 		return case_pages_of_another_program(writer)
 	case 20:
 		return case_pages_past_the_user_half(writer)
+	case 21:
+		return case_display_open(writer)
+	case 22:
+		return case_terminal_open(writer)
+	case 23:
+		return case_root_connect(writer)
+	case 24:
+		return case_tally_add(writer)
 	}
 	return false
 }
@@ -754,6 +821,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.stop(1)
 	}
 	ctx_log = ctx.handles[op.CONTEXT_LOG]
+	the_context = ctx
 	machine = ctx.handles[system.GRANT_MACHINE]
 	image_memory = ctx.handles[system.GRANT_IMAGE]
 	if address, status := system.memory_map(image_memory, {}); status == .Ok {

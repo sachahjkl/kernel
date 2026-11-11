@@ -70,7 +70,9 @@ Command :: enum u32 {
 	Statistics = 5,
 }
 
-// The status of a request: the kind of its completion record.
+// The status of a request: the kind of its completion record. When it is
+// not Ok, the values of the completion are an error record
+// (errors.completion_record).
 Status :: enum u32 {
 	Ok           = 0,
 	Bad_Command  = 1, // The command is not known, or a value is wrong.
@@ -87,4 +89,39 @@ hardware :: proc "contextless" (value: u64) -> (address: [6]u8) {
 		byte = u8(value >> (8 * uint(index)))
 	}
 	return address
+}
+
+// The names of the commands and of their values, for the sentence of the
+// error record of a completion (errors.completion_record).
+@(rodata)
+COMMAND_NAMES := [Command]string {
+	.None = "None",
+	.Attach = "Attach",
+	.Info = "Info",
+	.Send = "Send",
+	.Receive = "Receive",
+	.Statistics = "Statistics",
+}
+
+command_name :: proc "contextless" (command: i64) -> string {
+	return command >= 0 && command <= i64(max(Command)) ? COMMAND_NAMES[Command(command)] : "an unknown command"
+}
+
+// argument_name gives the name of a value of a command, from 1.
+argument_name :: proc "contextless" (command: i64, argument: i64) -> string {
+	if argument < 1 || argument > 7 {
+		return ""
+	}
+	#partial switch Command(command) {
+	case .Attach:
+		names := [?]string{"region"}
+		return argument <= len(names) ? names[argument - 1] : ""
+	case .Send:
+		names := [?]string{"place", "count"}
+		return argument <= len(names) ? names[argument - 1] : ""
+	case .Receive:
+		names := [?]string{"place", "room"}
+		return argument <= len(names) ? names[argument - 1] : ""
+	}
+	return ""
 }

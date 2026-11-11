@@ -233,9 +233,9 @@ scenario_network := [?]Step {
 	{kind = .Wait, text = "net: ARP: who has 10.0.2.2: the gateway answered 52:55:0a:00:02:02 in "},
 	{kind = .Wait, text = "net: ICMP echo to 10.0.2.2, 56 bytes: the echo reply came in "},
 	{kind = .Wait, text = "net: UDP to 10.0.2.2 port 7, 41 bytes: the same 41 bytes came back from 10.0.2.2 port 7 in "},
-	{kind = .Wait, text = "net: UDP to 10.0.2.2 port 9: refused: the grant gives 10.0.2.2 port 7 only"},
-	{kind = .Wait, text = "net: ICMP echo to 10.0.2.3: refused: the grant names 10.0.2.2 only"},
-	{kind = .Wait, text = "net: UDP of 2000 bytes: refused: 2000 bytes, the limit is 1472: no fragment"},
+	{kind = .Wait, text = "net: UDP to 10.0.2.2 port 9: refused: datagram.Send: the argument address, 10.0.2.2 port 9, is refused: the grant names 10.0.2.2 port 7 only"},
+	{kind = .Wait, text = "net: ICMP echo to 10.0.2.3: refused: datagram.Echo: the argument address, 10.0.2.3, is refused: the grant names 10.0.2.2 port 7 only"},
+	{kind = .Wait, text = "net: UDP of 2000 bytes: refused, no fragment: datagram.Send: the argument count has 2000 bytes; it can have at most 1472 bytes"},
 	// The row of the endpoint names its own grant; the rows of the machine
 	// need the right Inspect, that `net` has with the machine.
 	{kind = .Wait, text = "net: refused for this endpoint: 1 x udp, byte 34: the remote port 9 is not the port of the grant, 7"},
@@ -260,7 +260,7 @@ scenario_network := [?]Step {
 	{kind = .Wait, text = "network: the grant of the endpoint of net changed: none"},
 	{kind = .Front, text = "net"},
 	{kind = .Key, text = "spc"},
-	{kind = .Wait, text = "net: a datagram to 10.0.2.2 port 7 after a key: refused: the endpoint has no grant now"},
+	{kind = .Wait, text = "net: a datagram to 10.0.2.2 port 7 after a key: refused, the endpoint has no grant now: datagram.Send: the argument address, 10.0.2.2 port 7, is refused: the grant names no remote"},
 	{kind = .Close, text = "net"},
 	{kind = .Wait, text = "root: net stopped with code 0"},
 	{kind = .Wait, text = "network: the endpoint of net ended: "},
@@ -277,10 +277,10 @@ scenario_network := [?]Step {
 	// The peer sends six malformed call requests when the remote service
 	// starts: each one has its error record, and no call runs.
 	{kind = .Wait, text = "remote: refused a request: remote: the call has 20 bytes; it must have at least 104 bytes"},
-	{kind = .Wait, text = "remote: refused a request: remote: the argument kind has the value 9, which the call refuses; it takes 1 to 1"},
+	{kind = .Wait, text = "remote: refused a request: remote: the argument kind has the value 9, which the call refuses; it takes at most 1"},
 	{kind = .Wait, text = "remote: refused a request: remote: the argument arguments has 400 bytes; it can have at most 16 bytes"},
 	{kind = .Wait, text = "remote: refused a request: remote: the argument result_count has 65536 bytes; it can have at most 65472 bytes"},
-	{kind = .Wait, text = "remote: refused a request: remote: the argument error_start has the value 28, which the call refuses; it takes 1 to 65480"},
+	{kind = .Wait, text = "remote: refused a request: remote: the argument error_start has the value 28, which the call refuses; it takes at most 65480"},
 	{kind = .Wait, text = "remote: refused a request: remote: the caller has no grant for this: a connection to this service"},
 	// The place of the pointer and the windows: each press from now on is
 	// confirmed.
@@ -795,7 +795,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[console] monitor has: log"},
 	{kind = .Wait, text = "[console] monitor lost: machine"},
 	{kind = .Type, text = "revoke(\"monitor\", \"machine\")"},
-	{kind = .Wait, text = "[console] error: the program monitor does not have the grant machine"},
+	{kind = .Wait, text = "[console] error: root.Revoke: the argument grant names none of the grants of the program"},
 	{kind = .Type, text = "revoke(\"monitor\", \"keys\")"},
 	{kind = .Wait, text = "[console] error: no grant has the name keys"},
 	{kind = .Shot, text = "revocation"},
@@ -1031,7 +1031,7 @@ scenario := [?]Step {
 	{kind = .Type, text = "connect(\"life\")"},
 	{kind = .Wait, text = "[console] life: 3 commands of a service that runs"},
 	{kind = .Type, text = "connect(\"plasma\")"},
-	{kind = .Wait, text = "error: cannot connect to plasma: no service runs with this name"},
+	{kind = .Wait, text = "error: cannot connect to plasma: root.Connect: the argument name names none of the services that run"},
 	// The monitor serves its tables; its grant of the machine was revoked
 	// above, so the kernel refuses its reports.
 	{kind = .Type, text = "connect(\"monitor\")"},
@@ -1040,9 +1040,10 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[console] error: monitor.count: refused with the status "},
 	{kind = .Type, text = "help()"},
 	{kind = .Wait, text = "paint.write(x: Integer, y: Integer, text: Text, color: Integer)"},
-	{kind = .Type, text = "paint.line(40, 30, 440, 250, 1)"},
-	{kind = .Type, text = "paint.line(40, 250, 440, 30, 3)"},
-	{kind = .Type, text = "paint.write(150, 20, \"drawn by isolated calls\", 0)"},
+	// One line for three calls: each result is a line of the log, and the
+	// check of the log below needs each record since the boot (1023 places).
+	{kind = .Type, text = "paint.line(40, 30, 440, 250, 1) + paint.line(40, 250, 440, 30, 3) + paint.write(150, 20, \"drawn by isolated calls\", 0)"},
+	{kind = .Wait, text = "[console] 26"}, // 1 and 2 lines, and 23 bytes of text.
 	{kind = .Type, text = "paint.lines()"},
 	{kind = .Wait, text = "[console] 2"},
 	{kind = .Type, text = "life.empty()"},
@@ -1277,6 +1278,34 @@ scenario := [?]Step {
 	// the level of a record (step Record), not only a line of text.
 	{kind = .Call, text = "log.records(0)", expected = " rows of Record"},
 	{kind = .Front, text = "console"},
+	// The steps of the console that come after the check of the log: the
+	// log keeps 1023 records, and the check needs each record from the
+	// boot (" 0 lost").
+	// The refusals of the root service give an error record: the console
+	// writes its sentence.
+	{kind = .Type, text = "start(\"nothing\")"},
+	{kind = .Wait, text = "[console] error: root.Start: the argument name names none of the modules"},
+	{kind = .Type, text = "stop(\"compositor\")"},
+	{kind = .Wait, text = "[console] error: root.Stop: the argument name names a program of the system: it starts at boot, or it is a device service, and the call does not act on it"},
+	{kind = .Type, text = "revoke(\"nobody\", \"log\")"},
+	{kind = .Wait, text = "[console] error: root.Revoke: the argument name names none of the programs"},
+	// An export that refuses: the console writes the sentence of its error
+	// record from the description of the export.
+	{kind = .Type, text = "load(\"tally\")"},
+	{kind = .Wait, text = "[console] tally: 5 commands, hash"},
+	{kind = .Type, text = "add(1, \"a note of forty bytes, four more than 36\")"},
+	{kind = .Wait, text = "the argument note has 40 bytes; it can have at most 36 bytes"},
+	{kind = .Type, text = "add(-6, \"below zero\")"},
+	{kind = .Wait, text = "the argument amount has -6; it must have at least 0"},
+	{kind = .Type, text = "unload(\"tally\")"},
+	{kind = .Wait, text = "[console] tally: 5 commands removed, the module left the memory of the console"},
+	{kind = .Launch, text = "paint"},
+	{kind = .Wait, text = "compositor: surface paint"},
+	{kind = .Front, text = "console"},
+	{kind = .Type, text = "paint.line(0, 0, 10, 10, 9)"},
+	{kind = .Wait, text = "error: paint.line: the argument color has the value 9, which the call refuses; it takes at most 5"},
+	{kind = .Type, text = "stop(\"paint\")"},
+	{kind = .Wait, text = "root: paint stopped"},
 	// The terminal: a program gives text as records with a style, in a ring
 	// of 4096 records. The terminal reads them in one thread and draws in
 	// another: the display does not slow the program.
@@ -1324,6 +1353,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "disk: write, 1 block in each request, 32 in flight: "},
 	{kind = .Wait, text = "disk: read, 16 blocks in each request, 8 in flight: "},
 	{kind = .Record, program = "disk", level = "info", text = "disk: ok, 5 measures, 0 errors, write then read back: 0 wrong"},
+	{kind = .Wait, text = "disk: a read of 2 blocks from the last block: block.Read: the argument first reaches 8193 blocks, past the end: there are 8192 blocks"},
 	{kind = .Shot, text = "disk"},
 	// The client stops: its block service stops, and the device stops
 	// using memory.
@@ -1378,13 +1408,18 @@ scenario := [?]Step {
 	{kind = .Wait, text = "compositor: surface errors", any_order = true},
 	{kind = .Trace, text = "errors: stack of fault: ", names = "fault::three fault::two fault::one entry"},
 	{kind = .Wait, text = "errors: t the pages of another program (Inspect, Pages): Inspect: the argument index has the value 1, which the call refuses"},
-	{kind = .Wait, text = "errors: u the pages past the end of the user half: Inspect: the argument address has the value 140737488351232, which the call refuses; it takes 1 to 140737488093184"},
-	{kind = .Wait, text = "errors: ok, 21 cases, each with the expected error record"},
+	{kind = .Wait, text = "errors: u the pages past the end of the user half: Inspect: the argument address has the value 140737488351232, which the call refuses; it takes at most 140737488093184"},
+	{kind = .Wait, text = "errors: v a wrapper: display.open of 0 by 100 pixels: display.open: the argument width has the value 0, which the call refuses; it takes at most 2048"},
+	{kind = .Wait, text = "errors: w a wrapper: terminal.open with no terminal: terminal.open: the caller has no grant for this: a terminal"},
+	{kind = .Wait, text = "errors: x a ring: root.Connect(\"storage\"), not callable: root.Connect: the caller has no grant for this: a connection to this service"},
+	{kind = .Wait, text = "errors: y an export: tally.add, a note of 40 bytes: tally.add: the argument note has 40 bytes; it can have at most 36 bytes"},
+	{kind = .Wait, text = "errors: ok, 25 cases, each with the expected error record"},
 	{kind = .Wait, text = "errors: under contention: "},
 	// A text longer than one row of log.records (160 bytes): its end is in
 	// the next row, and the tool joins the rows.
 	{kind = .Record, program = "errors", level = "info", text = " records name no cause (Refused)", any_order = true},
 	{kind = .Wait, text = " handles; 0 records contradict their status, "},
+	{kind = .Wait, text = "errors: a failed call of each family: a wrapper of support (terminal.open with no terminal): ", any_order = true},
 	{kind = .Wait, text = " refused Memory_Create: "},
 	{kind = .Wait, text = "errors: a kernel operation that succeeds: "},
 	{kind = .Front, text = "errors"},
@@ -1392,6 +1427,11 @@ scenario := [?]Step {
 	{kind = .Wait, text = "errors: case b again: Memory_Size: the argument memory, handle "},
 	{kind = .Wait, text = " was revoked"},
 	{kind = .Shot, text = "errors"},
+	{kind = .Key, text = "tab"},
+	{kind = .Wait, text = "errors: the window shows the page 2 of the cases"},
+	{kind = .Shot, text = "errors_families"},
+	{kind = .Key, text = "tab"},
+	{kind = .Wait, text = "errors: the window shows the page 1 of the cases"},
 	// A developer tool (docs/TOOLS.md): the memory and the execution of one
 	// program, from the reports of the kernel. errors still holds the
 	// program fault that stopped: its stop report stays.

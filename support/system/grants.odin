@@ -18,6 +18,8 @@ GRANT_VALUE_FILE_SIZE :: 2
 
 // The ring to the root service. The name of the program is in values[0..4].
 // The completion record has the tag of the command, and a Status as kind.
+// When the status is not Ok, its values are an error record
+// (errors.completion_record): the argument 1 is the name.
 Root_Command :: enum u32 {
 	None       = 0,
 	Start      = 1,
@@ -114,6 +116,40 @@ replacements_write :: proc "contextless" (table: ^Replacement_Table, from, to: [
 
 // The grants that the root service records for each program, and that it
 // can revoke while the program runs.
+// The names of the commands of the root ring and of their values, for the
+// sentence of the error record of a completion that failed: the value 1 is
+// the name (values[0..4]), the value 2 is values[4].
+@(rodata)
+root_command_names := [Root_Command]string {
+	.None       = "None",
+	.Start      = "Start",
+	.Stop       = "Stop",
+	.Connect    = "Connect",
+	.Disconnect = "Disconnect",
+	.Grants     = "Grants",
+	.Revoke     = "Revoke",
+	.Replace    = "Replace",
+}
+
+root_command_name :: proc "contextless" (command: i64) -> string {
+	return command >= 0 && command <= i64(max(Root_Command)) ? root_command_names[Root_Command(command)] : "an unknown command"
+}
+
+root_argument_name :: proc "contextless" (command: i64, argument: i64) -> string {
+	switch argument {
+	case 1:
+		return "name"
+	case 2:
+		#partial switch Root_Command(command) {
+		case .Revoke:
+			return "grant"
+		case .Replace:
+			return "by"
+		}
+	}
+	return ""
+}
+
 Root_Grant :: enum u32 {
 	Log         = 0, // Write on the log.
 	Machine     = 1, // The machine, with the rights of the role.

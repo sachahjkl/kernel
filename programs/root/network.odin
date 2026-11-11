@@ -1,6 +1,7 @@
 package root
 
 import "contract:datagram"
+import "contract:errors"
 import "contract:remote"
 import "contract:ring"
 import "support:system"
@@ -119,7 +120,11 @@ network_answers :: proc "contextless" (wait: ^system.Wait) {
 		}
 		for record in system.receive(&item.network.completions) {
 			if datagram.Status(record.kind) != .Ok {
-				system.log_in("programs", .Warning, "root: the network service refused a command of its control ring: status ", u64(record.kind))
+				error := errors.completion_record(record.values)
+				text: [240]u8
+				writer := system.Writer{buffer = text[:]}
+				system.ring_error_text(&writer, &error, "datagram", datagram.control_name(error.operation), datagram.control_argument_name(error.operation, error.argument))
+				system.log_in("programs", .Warning, "root: the network service refused a command of its control ring: ", system.written(&writer))
 			}
 		}
 		if wait != nil {

@@ -6,6 +6,7 @@
 // in the one thread of this program, between two input events.
 package paint
 
+import "contract:errors"
 import "support:display"
 import "support:graphics"
 import "support:system"
@@ -27,25 +28,31 @@ paper :: proc "contextless" () -> graphics.Canvas {
 	return {pixels = canvas.pixels[PALETTE_HEIGHT * canvas.stride:], width = canvas.width, height = canvas.height - PALETTE_HEIGHT, stride = canvas.stride}
 }
 
-palette_color :: proc "contextless" (color: i64) -> graphics.Color {
-	return colors[u64(color) % len(colors)]
-}
-
-// line draws a line on the paper, with a color of the palette (0 to 5).
+// line draws a line on the paper, with a color of the palette (0 to 5). A point off the paper is fine: the paper shows the part of the line on it. The result is the count of lines that calls drew since the last clear. It fails with -1 and an error record: Bad_Value when the color is not 0 to 5.
 @(export, link_name = "line")
-line :: proc "c" (from_x, from_y, to_x, to_y, color: i64) {
+line :: proc "c" (from_x, from_y, to_x, to_y, color: i64, error: ^errors.Error_Record) -> i64 {
+	if color < 0 || color >= i64(len(colors)) {
+		return errors.fail(error, -1, .Bad_Value, .None, 5, color, i64(len(colors) - 1))
+	}
 	limit :: 4096
-	graphics.line(paper(), int(clamp(from_x, -limit, limit)), int(clamp(from_y, -limit, limit)), int(clamp(to_x, -limit, limit)), int(clamp(to_y, -limit, limit)), 3, palette_color(color))
+	graphics.line(paper(), int(clamp(from_x, -limit, limit)), int(clamp(from_y, -limit, limit)), int(clamp(to_x, -limit, limit)), int(clamp(to_y, -limit, limit)), 3, colors[color])
 	drawn += 1
+	return drawn
 }
 
-// write draws a text on the paper, with a color of the palette (0 to 5).
+// write draws a text on the paper, with a color of the palette (0 to 5). The result is the count of bytes of the text. It fails with -1 and an error record: Bad_Value when x is not 0 to 480, when y is not 0 to 320, or when the color is not 0 to 5.
 @(export, link_name = "write")
-write :: proc "c" (x, y: i64, text: ^string, color: i64) {
-	if x < 0 || y < 0 || x > WIDTH || y > HEIGHT {
-		return
+write :: proc "c" (x, y: i64, text: ^string, color: i64, error: ^errors.Error_Record) -> i64 {
+	switch {
+	case x < 0 || x > WIDTH:
+		return errors.fail(error, -1, .Bad_Value, .None, 1, x, WIDTH)
+	case y < 0 || y > HEIGHT:
+		return errors.fail(error, -1, .Bad_Value, .None, 2, y, HEIGHT)
+	case color < 0 || color >= i64(len(colors)):
+		return errors.fail(error, -1, .Bad_Value, .None, 4, color, i64(len(colors) - 1))
 	}
-	graphics.text(paper(), int(x), int(y), text^, palette_color(color))
+	graphics.text(paper(), int(x), int(y), text^, colors[color])
+	return i64(len(text))
 }
 
 // clear erases the paper.

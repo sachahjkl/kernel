@@ -10,6 +10,7 @@
 package fetch
 
 import "contract:datagram"
+import "contract:errors"
 import "contract:ring"
 import "support:display"
 import "support:graphics"
@@ -47,7 +48,7 @@ COLOR_WRONG :: graphics.COLOR_FAILED
 
 Case :: struct {
 	text:   string,
-	answer: [112]u8,
+	answer: [240]u8, // A sentence of an error record fits.
 	count:  int,
 	right:  bool,
 }
@@ -304,11 +305,18 @@ cases_run :: proc "contextless" () {
 	table.port_count = block
 
 	// 2. A remote that the grant does not name.
+	// The completion of a refusal holds its error record: the note shows
+	// its sentence.
+	sentence: [240]u8
 	refused, has_refused := segment_refused(OTHER, first, CALL_TAG + 2)
-	note("a SYN to 10.0.2.2 port 80", has_refused && datagram.Status(refused.kind) == .Not_Granted && refused.values[2] == REMOTE && refused.values[3] == REMOTE_PORT, "refused by the network service: the grant names 10.0.2.100 port ", refused.values[3])
+	writer = {buffer = sentence[:]}
+	refusal := network.completion_error_text(&writer, refused)
+	note("a SYN to 10.0.2.2 port 80", has_refused && datagram.Status(refused.kind) == .Not_Granted && errors.Kind(refusal.kind) == .No_Grant && refusal.limit == errors.endpoint_pack(REMOTE, REMOTE_PORT) && refusal.found == 0, "refused by the network service: ", system.written(&writer))
 	// 3. A local port that is not in the block.
 	refused, has_refused = segment_refused(REMOTE, 1234, CALL_TAG + 3)
-	note("a SYN from the local port 1234", has_refused && datagram.Status(refused.kind) == .Not_Granted && refused.values[4] == 1234 && refused.values[5] == u64(first), "refused: the local ports are ", refused.values[5], " to ", refused.values[5] + refused.values[6] - 1)
+	writer = {buffer = sentence[:]}
+	refusal = network.completion_error_text(&writer, refused)
+	note("a SYN from the local port 1234", has_refused && datagram.Status(refused.kind) == .Not_Granted && errors.Kind(refusal.kind) == .No_Grant && refusal.found == 1234, "refused: ", system.written(&writer), " (its ports are ", u64(first), " to ", u64(first) + u64(block) - 1, ")")
 
 	// 4. The handshake.
 	start := system.nanoseconds()

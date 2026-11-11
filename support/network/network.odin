@@ -15,6 +15,8 @@
 package network
 
 import "contract:datagram"
+import "contract:errors"
+import "contract:ring"
 import "support:system"
 
 Hardware :: [6]u8 // A hardware address of Ethernet.
@@ -544,4 +546,12 @@ hardware_put :: proc "contextless" (bytes: []u8, offset: int, address: Hardware)
 	for byte, index in address {
 		bytes[offset + index] = byte
 	}
+}
+
+// completion_error_text writes the sentence of the error record of a
+// completion of the datagram ring that failed, and gives the record.
+completion_error_text :: proc "contextless" (writer: ^system.Writer, record: ring.Record) -> (error: errors.Error_Record) {
+	error = errors.completion_record(record.values)
+	system.ring_error_text(writer, &error, "datagram", datagram.command_name(error.operation), datagram.argument_name(error.operation, error.argument))
+	return error
 }

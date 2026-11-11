@@ -11,6 +11,7 @@
 // An export needs nothing from the entry: it reads and writes the data of the module only. That is the one rule for a module that has each role.
 package tally
 
+import "contract:errors"
 import "support:display"
 import "support:graphics"
 import "support:interface"
@@ -36,9 +37,18 @@ count: i64
 calls: i64 // The calls of add.
 notes: [NOTE_CAPACITY]Note // notes[(calls - 1) % NOTE_CAPACITY] is the last.
 
-// add adds an amount to the count, with a note that says why. The result is the new count. The module keeps the last 8 notes.
+// add adds an amount to the count, with a note that says why. The result is the new count, never negative. The module keeps the last 8 notes. It fails with -1 and an error record: Too_Long when the note has more than 36 bytes; Too_Small when the amount takes the count below 0; Bad_Value when the count passes the largest integer.
 @(export, link_name = "add")
-add :: proc "c" (amount: i64, note: ^string) -> i64 {
+add :: proc "c" (amount: i64, note: ^string, error: ^errors.Error_Record) -> i64 {
+	if len(note) > NOTE_SIZE {
+		return errors.fail(error, -1, .Too_Long, .Bytes, 2, i64(len(note)), NOTE_SIZE)
+	}
+	if amount < -count {
+		return errors.fail(error, -1, .Too_Small, .None, 1, amount, -count)
+	}
+	if amount > max(i64) - count {
+		return errors.fail(error, -1, .Bad_Value, .None, 1, amount, max(i64) - count)
+	}
 	item := &notes[u64(calls) % NOTE_CAPACITY]
 	item.amount = amount
 	item.count = min(len(note), NOTE_SIZE)
@@ -143,7 +153,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		for event in display.next_event(&window) {
 			if event.kind == .Key && event.pressed && event.character == ' ' {
 				note := "a key of the program"
-				add(1, &note)
+				add(1, &note, nil)
 			}
 		}
 	}
