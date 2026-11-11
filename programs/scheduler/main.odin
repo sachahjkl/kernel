@@ -535,52 +535,21 @@ refusals :: proc "contextless" () -> bool {
 WIDTH :: 976
 HEIGHT :: 704
 MARGIN :: 8
-CARD_TITLE :: 40
-CARD_INSIDE :: 16
-
-COLOR_BACKGROUND :: 0x0B1018
-COLOR_CARD_TOP :: 0x17212E
-COLOR_CARD_BOTTOM :: 0x111822
-COLOR_TRACK :: 0x1C2633
-COLOR_POINT :: 0x18212D
-COLOR_TEXT :: 0xDCE4EC
-COLOR_DIM :: 0x7C8A99
-COLOR_KERNEL :: 0x4A9CF0
-COLOR_PROGRAM :: 0x58D878
-COLOR_FAILED :: 0xF06060
-COLOR_STARTING :: 0xE0A040
+CARD_TITLE :: graphics.CARD_TITLE
+CARD_INSIDE :: graphics.CARD_MARGIN
 
 @(rodata)
 strategy_shades := [STRATEGY_COUNT]u32{75, 100, 150}
 
-mix :: proc "contextless" (first, second: graphics.Color, level: u32) -> graphics.Color {
-	part :: proc "contextless" (a, b, level: u32) -> u32 {
-		return (a * (255 - level) + b * level) / 255
-	}
-	return graphics.rgb(part(first >> 16 & 0xFF, second >> 16 & 0xFF, level), part(first >> 8 & 0xFF, second >> 8 & 0xFF, level), part(first & 0xFF, second & 0xFF, level))
-}
-
-// shade: nearer to black under 100 percent, nearer to white above.
-shade :: proc "contextless" (color: graphics.Color, percent: u32) -> graphics.Color {
-	return percent <= 100 ? mix(0, color, percent * 255 / 100) : mix(color, 0xFFFFFF, (min(percent, 200) - 100) * 255 / 100)
-}
-
 strategy_color :: proc "contextless" (index: int) -> graphics.Color {
-	return shade(COLOR_KERNEL, strategy_shades[index])
-}
-
-// block: a rectangle whose color goes from top to bottom.
-block :: proc "contextless" (canvas: graphics.Canvas, x, y, width, height: int, top, bottom: graphics.Color) {
-	for row in 0 ..< height {
-		graphics.fill(canvas, x, y + row, width, 1, mix(top, bottom, u32(row * 255 / max(height - 1, 1))))
-	}
+	return graphics.shade(graphics.COLOR_KERNEL, strategy_shades[index])
 }
 
 // bar: a full part of a bar, from 125 % of its color at the top to 78 % at
 // the bottom, on its track.
 bar :: proc "contextless" (canvas: graphics.Canvas, x, y, width, height, full: int, color: graphics.Color) {
-	graphics.fill(canvas, x, y, width, height, COLOR_TRACK)
-	block(canvas, x, y, clamp(full, 0, width), height, shade(color, 125), shade(color, 78))
+	graphics.fill(canvas, x, y, width, height, graphics.COLOR_TRACK)
+	graphics.block(canvas, x, y, clamp(full, 0, width), height, graphics.shade(color, 125), graphics.shade(color, 78))
 }
 
 large :: proc "contextless" (canvas: graphics.Canvas, x, y: int, characters: string, scale: int, color: graphics.Color) -> int {
@@ -603,11 +572,11 @@ large :: proc "contextless" (canvas: graphics.Canvas, x, y: int, characters: str
 }
 
 card :: proc "contextless" (canvas: graphics.Canvas, x, y, width, height: int, title, caption: string) -> graphics.Canvas {
-	block(canvas, x, y, width, height, shade(COLOR_KERNEL, 28), shade(COLOR_KERNEL, 14))
-	block(canvas, x + 1, y + 1, width - 2, height - 2, COLOR_CARD_TOP, COLOR_CARD_BOTTOM)
-	block(canvas, x + CARD_INSIDE, y + 12, 4, 16, shade(COLOR_KERNEL, 130), COLOR_KERNEL)
-	after := graphics.text(canvas, x + CARD_INSIDE + 12, y + 12, title, COLOR_KERNEL)
-	graphics.text(canvas, after + 16, y + 12, caption, COLOR_DIM)
+	graphics.block(canvas, x, y, width, height, graphics.shade(graphics.COLOR_KERNEL, 28), graphics.shade(graphics.COLOR_KERNEL, 14))
+	graphics.block(canvas, x + 1, y + 1, width - 2, height - 2, graphics.COLOR_CARD_TOP, graphics.COLOR_CARD_BOTTOM)
+	graphics.block(canvas, x + CARD_INSIDE, y + 12, 4, 16, graphics.shade(graphics.COLOR_KERNEL, 130), graphics.COLOR_KERNEL)
+	after := graphics.text(canvas, x + CARD_INSIDE + 12, y + 12, title, graphics.COLOR_KERNEL)
+	graphics.text(canvas, after + 16, y + 12, caption, graphics.COLOR_DIM)
 	return graphics.view(canvas, x + CARD_INSIDE, y + CARD_TITLE, width - 2 * CARD_INSIDE, height - CARD_TITLE - 8)
 }
 
@@ -636,10 +605,10 @@ HEAD_HEIGHT :: 96
 MEASURES_HEIGHT :: CARD_TITLE + 24 + 6 * ROW + 2 * CHART + 8
 
 draw :: proc "contextless" (canvas: graphics.Canvas, report: op.System_Report, processors: u64) {
-	graphics.clear(canvas, COLOR_BACKGROUND)
+	graphics.clear(canvas, graphics.COLOR_BACKGROUND)
 	for y := 0; y < HEIGHT; y += 24 {
 		for x := 0; x < WIDTH; x += 24 {
-			graphics.fill(canvas, x, y, 2, 2, COLOR_POINT)
+			graphics.fill(canvas, x, y, 2, 2, graphics.COLOR_POINT)
 		}
 	}
 	line: [96]u8
@@ -653,20 +622,20 @@ draw :: proc "contextless" (canvas: graphics.Canvas, report: op.System_Report, p
 		}
 	}
 	name := op.STRATEGY_NAMES[report.strategy]
-	after := large(head, 0, 0, name, 2, in_use >= 0 ? strategy_color(in_use) : COLOR_DIM)
-	graphics.text(head, after + 16, 0, "in use", COLOR_DIM)
-	graphics.text(head, after + 16, 16, system.format(line[:], u64(report.strategy_changes), " changes since boot"), COLOR_DIM)
-	graphics.text(canvas, TILE_X, MARGIN + 12, "Strategy_Set: a key 1 2 3, or a click", COLOR_DIM)
+	after := large(head, 0, 0, name, 2, in_use >= 0 ? strategy_color(in_use) : graphics.COLOR_DIM)
+	graphics.text(head, after + 16, 0, "in use", graphics.COLOR_DIM)
+	graphics.text(head, after + 16, 16, system.format(line[:], u64(report.strategy_changes), " changes since boot"), graphics.COLOR_DIM)
+	graphics.text(canvas, TILE_X, MARGIN + 12, "Strategy_Set: a key 1 2 3, or a click", graphics.COLOR_DIM)
 	for index in 0 ..< STRATEGY_COUNT {
 		x := TILE_X + index * (TILE_WIDTH + MARGIN)
 		color := strategy_color(index)
 		if index == in_use {
-			block(canvas, x, TILE_Y, TILE_WIDTH, TILE_HEIGHT, shade(color, 120), shade(color, 70))
-			graphics.text(canvas, x + 12, TILE_Y + 12, system.format(line[:], u64(index + 1), "  ", op.STRATEGY_NAMES[strategies[index]]), COLOR_BACKGROUND)
+			graphics.block(canvas, x, TILE_Y, TILE_WIDTH, TILE_HEIGHT, graphics.shade(color, 120), graphics.shade(color, 70))
+			graphics.text(canvas, x + 12, TILE_Y + 12, system.format(line[:], u64(index + 1), "  ", op.STRATEGY_NAMES[strategies[index]]), graphics.COLOR_BACKGROUND)
 		} else {
-			graphics.fill(canvas, x, TILE_Y, TILE_WIDTH, TILE_HEIGHT, COLOR_TRACK)
+			graphics.fill(canvas, x, TILE_Y, TILE_WIDTH, TILE_HEIGHT, graphics.COLOR_TRACK)
 			graphics.fill(canvas, x, TILE_Y + TILE_HEIGHT - 2, TILE_WIDTH, 2, color)
-			graphics.text(canvas, x + 12, TILE_Y + 12, system.format(line[:], u64(index + 1), "  ", op.STRATEGY_NAMES[strategies[index]]), COLOR_TEXT)
+			graphics.text(canvas, x + 12, TILE_Y + 12, system.format(line[:], u64(index + 1), "  ", op.STRATEGY_NAMES[strategies[index]]), graphics.COLOR_TEXT)
 		}
 	}
 
@@ -687,15 +656,15 @@ draw :: proc "contextless" (canvas: graphics.Canvas, report: op.System_Report, p
 	}
 	y := 24
 	number_row :: proc "contextless" (canvas: graphics.Canvas, y: int, label: string, values: [STRATEGY_COUNT]u64, most: u64, unit: string) {
-		graphics.text(canvas, 0, y, label, COLOR_DIM)
+		graphics.text(canvas, 0, y, label, graphics.COLOR_DIM)
 		line: [48]u8
 		for index in 0 ..< STRATEGY_COUNT {
 			x := LABEL_WIDTH + index * COLUMN_WIDTH
 			if !results[index].measured {
-				graphics.text(canvas, x, y, "not measured yet", COLOR_DIM)
+				graphics.text(canvas, x, y, "not measured yet", graphics.COLOR_DIM)
 				continue
 			}
-			graphics.text(canvas, x, y, system.format(line[:], values[index], unit), COLOR_TEXT)
+			graphics.text(canvas, x, y, system.format(line[:], values[index], unit), graphics.COLOR_TEXT)
 			if most != 0 {
 				bar(canvas, x, y + 18, BAR_WIDTH, 4, int(values[index] * BAR_WIDTH / most), strategy_color(index))
 			}
@@ -714,40 +683,40 @@ draw :: proc "contextless" (canvas: graphics.Canvas, report: op.System_Report, p
 	number_row(inside, y, "late wake, worst", values(proc "contextless" (result: ^Result) -> u64 {return result.worst}), most_worst, " us")
 	y += ROW
 	// The shares of the 8 spinners: one column each, the height is the share; the line is the equal part.
-	graphics.text(inside, 0, y, "8 spinners, one weight", COLOR_DIM)
-	graphics.text(inside, 0, y + 16, "share of each", COLOR_DIM)
+	graphics.text(inside, 0, y, "8 spinners, one weight", graphics.COLOR_DIM)
+	graphics.text(inside, 0, y + 16, "share of each", graphics.COLOR_DIM)
 	for index in 0 ..< STRATEGY_COUNT {
 		x := LABEL_WIDTH + index * COLUMN_WIDTH
 		if !results[index].measured {
-			graphics.text(inside, x, y, "not measured yet", COLOR_DIM)
+			graphics.text(inside, x, y, "not measured yet", graphics.COLOR_DIM)
 			continue
 		}
 		for share, spinner in results[index].shares {
 			full := int(min(share, 250) * 36 / 250) // 25 %: the full height.
-			graphics.fill(inside, x + spinner * 24, y, 16, 36, COLOR_TRACK)
-			block(inside, x + spinner * 24, y + 36 - full, 16, full, shade(strategy_color(index), 125), shade(strategy_color(index), 78))
+			graphics.fill(inside, x + spinner * 24, y, 16, 36, graphics.COLOR_TRACK)
+			graphics.block(inside, x + spinner * 24, y + 36 - full, 16, full, graphics.shade(strategy_color(index), 125), graphics.shade(strategy_color(index), 78))
 		}
-		graphics.fill(inside, x, y + 36 - 125 * 36 / 250, 8 * 24 - 8, 1, COLOR_TEXT) // 12.5 %: the equal part.
+		graphics.fill(inside, x, y + 36 - 125 * 36 / 250, 8 * 24 - 8, 1, graphics.COLOR_TEXT) // 12.5 %: the equal part.
 	}
 	y += CHART
-	graphics.text(inside, 0, y, "12 spinners, weights 1 2 4", COLOR_DIM)
-	graphics.text(inside, 0, y + 16, "share of one of each", COLOR_DIM)
+	graphics.text(inside, 0, y, "12 spinners, weights 1 2 4", graphics.COLOR_DIM)
+	graphics.text(inside, 0, y + 16, "share of one of each", graphics.COLOR_DIM)
 	for index in 0 ..< STRATEGY_COUNT {
 		x := LABEL_WIDTH + index * COLUMN_WIDTH
 		if !results[index].measured {
-			graphics.text(inside, x, y, "not measured yet", COLOR_DIM)
+			graphics.text(inside, x, y, "not measured yet", graphics.COLOR_DIM)
 			continue
 		}
 		for class in 0 ..< 3 {
 			share := results[index].weighted[class]
 			full := int(min(share, 200) * 36 / 200) // 20 %: the full height.
-			graphics.fill(inside, x + class * 48, y, 40, 36, COLOR_TRACK)
-			block(inside, x + class * 48, y + 36 - full, 40, full, shade(strategy_color(index), 125), shade(strategy_color(index), 78))
-			graphics.text(inside, x + class * 48 + 16, y + 20, class == 0 ? "1" : class == 1 ? "2" : "4", COLOR_BACKGROUND)
+			graphics.fill(inside, x + class * 48, y, 40, 36, graphics.COLOR_TRACK)
+			graphics.block(inside, x + class * 48, y + 36 - full, 40, full, graphics.shade(strategy_color(index), 125), graphics.shade(strategy_color(index), 78))
+			graphics.text(inside, x + class * 48 + 16, y + 20, class == 0 ? "1" : class == 1 ? "2" : "4", graphics.COLOR_BACKGROUND)
 		}
 		least := results[index].weighted_least
-		graphics.text(inside, x + 152, y + 20, system.format(line[:], least / 10, ".", least % 10, " %"), COLOR_DIM)
-		graphics.text(inside, x + 152, y + 4, "least", COLOR_DIM)
+		graphics.text(inside, x + 152, y + 20, system.format(line[:], least / 10, ".", least % 10, " %"), graphics.COLOR_DIM)
+		graphics.text(inside, x + 152, y + 4, "least", graphics.COLOR_DIM)
 	}
 	y += CHART
 	number_row(inside, y, "work, millions in 1 s", values(proc "contextless" (result: ^Result) -> u64 {return result.work / 1_000_000}), most_work / 1_000_000, "")
@@ -757,7 +726,7 @@ draw :: proc "contextless" (canvas: graphics.Canvas, report: op.System_Report, p
 	number_row(inside, y, "one pick", values(proc "contextless" (result: ^Result) -> u64 {return result.pick}), 0, " ns")
 	for index in 0 ..< STRATEGY_COUNT {
 		if results[index].measured && results[index].interrupt_preemption != 0 {
-			graphics.text(inside, LABEL_WIDTH + index * COLUMN_WIDTH + 96, y, system.format(line[:], "preempt ", results[index].interrupt_preemption, " ns"), COLOR_DIM)
+			graphics.text(inside, LABEL_WIDTH + index * COLUMN_WIDTH + 96, y, system.format(line[:], "preempt ", results[index].interrupt_preemption, " ns"), graphics.COLOR_DIM)
 		}
 	}
 
@@ -768,7 +737,7 @@ draw :: proc "contextless" (canvas: graphics.Canvas, report: op.System_Report, p
 	rows := card(canvas, MARGIN, top, WIDTH - 2 * MARGIN, processors_height, "PROCESSORS", "Processor_Report: the run queue of each processor, since boot")
 	headers := [6]string{"processor", "strategy", "queued", "picks", "preemptions", "moves"}
 	for header, column in headers {
-		graphics.text(rows, column * 152, 0, header, COLOR_DIM)
+		graphics.text(rows, column * 152, 0, header, graphics.COLOR_DIM)
 	}
 	for index in 0 ..< shown {
 		report_of := processor_report(index)
@@ -779,12 +748,12 @@ draw :: proc "contextless" (canvas: graphics.Canvas, report: op.System_Report, p
 				strategy_index = at
 			}
 		}
-		graphics.text(rows, 0, row_y, system.format(line[:], index), COLOR_TEXT)
-		graphics.text(rows, 152, row_y, op.STRATEGY_NAMES[report_of.strategy], strategy_index >= 0 ? strategy_color(strategy_index) : COLOR_DIM)
-		graphics.text(rows, 2 * 152, row_y, system.format(line[:], u64(report_of.queued)), COLOR_TEXT)
-		graphics.text(rows, 3 * 152, row_y, system.format(line[:], report_of.picks), COLOR_TEXT)
-		graphics.text(rows, 4 * 152, row_y, system.format(line[:], report_of.preemptions), COLOR_TEXT)
-		graphics.text(rows, 5 * 152, row_y, system.format(line[:], report_of.moves), COLOR_TEXT)
+		graphics.text(rows, 0, row_y, system.format(line[:], index), graphics.COLOR_TEXT)
+		graphics.text(rows, 152, row_y, op.STRATEGY_NAMES[report_of.strategy], strategy_index >= 0 ? strategy_color(strategy_index) : graphics.COLOR_DIM)
+		graphics.text(rows, 2 * 152, row_y, system.format(line[:], u64(report_of.queued)), graphics.COLOR_TEXT)
+		graphics.text(rows, 3 * 152, row_y, system.format(line[:], report_of.picks), graphics.COLOR_TEXT)
+		graphics.text(rows, 4 * 152, row_y, system.format(line[:], report_of.preemptions), graphics.COLOR_TEXT)
+		graphics.text(rows, 5 * 152, row_y, system.format(line[:], report_of.moves), graphics.COLOR_TEXT)
 	}
 
 	// The change under load, and the result.
@@ -792,18 +761,18 @@ draw :: proc "contextless" (canvas: graphics.Canvas, report: op.System_Report, p
 	last := card(canvas, MARGIN, top, WIDTH - 2 * MARGIN, HEIGHT - top - MARGIN, "CHANGES WHILE THREADS RUN", "Strategy_Set, 100 times")
 	if stress_done {
 		text := system.format(line[:], stress_changes, " changes while ", stress_churned, " threads started and ended; one change ", change_least / 1000, " to ", change_worst / 1000, " us, middle ", change_middle / 1000)
-		graphics.text(last, 0, 0, text, stress_right ? COLOR_TEXT : COLOR_FAILED)
+		graphics.text(last, 0, 0, text, stress_right ? graphics.COLOR_TEXT : graphics.COLOR_FAILED)
 	} else {
-		graphics.text(last, 0, 0, "not measured yet", COLOR_DIM)
+		graphics.text(last, 0, 0, "not measured yet", graphics.COLOR_DIM)
 	}
 	status_y := 20
 	switch {
 	case !done:
-		graphics.text(last, 0, status_y, "measures in progress", COLOR_STARTING)
+		graphics.text(last, 0, status_y, "measures in progress", graphics.COLOR_BOOT_PROGRAM)
 	case right:
-		graphics.text(last, 0, status_y, "ok: no thread starved, each thread ran after the changes, a change needs the right Schedule", COLOR_PROGRAM)
+		graphics.text(last, 0, status_y, "ok: no thread starved, each thread ran after the changes, a change needs the right Schedule", graphics.COLOR_PROGRAM)
 	case:
-		graphics.text(last, 0, status_y, system.format(line[:], "wrong: ", problem), COLOR_FAILED)
+		graphics.text(last, 0, status_y, system.format(line[:], "wrong: ", problem), graphics.COLOR_FAILED)
 	}
 }
 
