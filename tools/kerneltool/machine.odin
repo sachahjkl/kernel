@@ -324,6 +324,9 @@ scenario_network := [?]Step {
 	// The place of the pointer is a fact of the screen of the person: the
 	// tool moves the pointer with no confirmation again.
 	{kind = .Call, text = "compositor.pointer()", outcome = .Failed, pointer = true, expected = "error: compositor.pointer: the caller has no grant for this: to act for the person (-1)"},
+	// The window of inspect covers the windows under it: it closes now.
+	{kind = .Close, text = "inspect"},
+	{kind = .Wait, text = "root: inspect stopped with code 0"},
 	{kind = .Call, text = "manual.running()", outcome = .Failed, expected = "error: manual.running: the caller has no grant for this: to act for the person (-3)"},
 	{kind = .Call, text = "storage.stores()", expected = "no grant to see the stores"},
 	{kind = .Call, text = "manual.modules()", expected = " rows of Module"},
