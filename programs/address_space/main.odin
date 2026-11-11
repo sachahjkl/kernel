@@ -29,6 +29,7 @@ import op "contract:operation"
 import "support:display"
 import "support:graphics"
 import "support:interface"
+import "support:random"
 import "support:system"
 
 WIDTH :: 960
@@ -48,6 +49,7 @@ RANDOM_READS :: 4_000_000
 VALUE_ROLE :: 0 // The context of the child: 1.
 
 machine: system.Handle
+program_generator: random.Generator // The seeds of the children (docs/RANDOMNESS.md).
 self_index: u64 // The slot of this program, for its report of mappings.
 
 // The results of the cases, for the log and the window.
@@ -350,7 +352,7 @@ guard_page :: proc "contextless" (ctx: ^system.Context) {
 	grants: [op.CONTEXT_HANDLES]system.Grant
 	values: [op.CONTEXT_VALUES]u64
 	values[VALUE_ROLE] = 1
-	program, start := system.program_start(system.image_find(image, "address_space"), "address_space child", grants, values, {pages = 2048, programs = 1, threads = 1, processor = 100_000, log_records = 10})
+	program, start := system.program_start(system.image_find(image, "address_space"), "address_space child", grants, random.values_with_seed(&program_generator, values), {pages = 2048, programs = 1, threads = 1, processor = 100_000, log_records = 10})
 	if start != .Ok {
 		fail("the guard page: the child did not start")
 		return
@@ -644,7 +646,7 @@ child_stop_code :: proc "contextless" (ctx: ^system.Context, role: u64) -> u32 {
 	grants: [op.CONTEXT_HANDLES]system.Grant
 	values: [op.CONTEXT_VALUES]u64
 	values[VALUE_ROLE] = role
-	program, start := system.program_start(system.image_find(image, "address_space"), "address_space child", grants, values, {pages = 2048, programs = 1, threads = 1, processor = 100_000, log_records = 10})
+	program, start := system.program_start(system.image_find(image, "address_space"), "address_space child", grants, random.values_with_seed(&program_generator, values), {pages = 2048, programs = 1, threads = 1, processor = 100_000, log_records = 10})
 	if start != .Ok {
 		return 0
 	}
@@ -810,7 +812,7 @@ delegation :: proc "contextless" (ctx: ^system.Context) {
 	grants[GRANT_DELEGATION_SPEND] = {spend_budget, {.Spend}}
 	values: [op.CONTEXT_VALUES]u64
 	values[VALUE_ROLE] = 2
-	program, start := system.program_start(system.image_find(image, "address_space"), "address_space delegate", grants, values, {pages = 512, programs = 1, threads = 1, processor = 100_000, log_records = 50})
+	program, start := system.program_start(system.image_find(image, "address_space"), "address_space delegate", grants, random.values_with_seed(&program_generator, values), {pages = 512, programs = 1, threads = 1, processor = 100_000, log_records = 50})
 	if start != .Ok {
 		fail("the delegation: B did not start")
 		return
@@ -1006,6 +1008,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if ctx.values[VALUE_ROLE] == 2 {
 		child_delegate(ctx)
 	}
+	random.generator_from_context(&program_generator, ctx)
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "address_space")
 	if !ok {
 		system.stop(1)
