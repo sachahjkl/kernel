@@ -358,7 +358,7 @@ record_set :: proc "contextless" (record: ^errors.Error_Record, kind: errors.Kin
 // with a status.
 diagnose :: proc "contextless" (program_index: u32, command: ring.Record, status: op.Status) -> (record: errors.Error_Record) {
 	// It runs with no lock held: each read takes its locks in the lock order.
-	when LOCK_ORDER_CHECK {
+	when TEST_BUILD_CHECKS_LOCK_ORDER {
 		for kind in op.Lock_Kind {
 			if lock_ready && lock_held(kind) {
 				log("kernel: diagnose runs with a lock ", op.LOCK_KIND_NAMES[kind], " held")

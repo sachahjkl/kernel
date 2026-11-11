@@ -197,7 +197,7 @@ frames_free_held :: proc "contextless" (address: u64, count: u64) {
 // The test build checks the sums of the frames at each report and at each
 // drain, and drains all the stacks at each 64th refill of a stack, so that
 // the drain runs while the other processors take and put.
-FRAME_CACHE_CHECK :: #config(FRAME_CACHE_CHECK, true)
+TEST_BUILD_CHECKS_FRAME_SUMS :: #config(TEST_BUILD_CHECKS_FRAME_SUMS, true)
 
 // frame_reserved_take gives one page frame, not zero, for a reserved page:
 // from the stack of this processor; an empty stack takes the frame from the
@@ -246,7 +246,7 @@ frame_take_held :: proc "contextless" () -> u64 {
 // subtracts its taken from reserved_pages. The caller holds the frame lock.
 @(private = "file")
 cache_refill_held :: proc "contextless" (cache: ^Frame_Cache) {
-	when FRAME_CACHE_CHECK {
+	when TEST_BUILD_CHECKS_FRAME_SUMS {
 		// Only this processor writes refills: a read with no lock.
 		if (cache.refills + 1) % 64 == 0 {
 			caches_drain()
@@ -304,7 +304,7 @@ caches_drain :: proc "contextless" () {
 		cache.taken = 0
 		lock_free(&cache.lock, .Cache)
 	}
-	when FRAME_CACHE_CHECK {
+	when TEST_BUILD_CHECKS_FRAME_SUMS {
 		frames_check()
 	}
 }
@@ -321,7 +321,7 @@ frames_counted :: proc "contextless" () -> (free: u64, reserved: u64) {
 		reserved -= cache.taken
 		lock_free(&cache.lock, .Cache)
 	}
-	when FRAME_CACHE_CHECK {
+	when TEST_BUILD_CHECKS_FRAME_SUMS {
 		frames_check()
 	}
 	return free, reserved

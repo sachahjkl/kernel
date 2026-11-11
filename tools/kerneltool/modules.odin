@@ -134,14 +134,14 @@ files_with_suffix :: proc(folder, suffix: string) -> (paths: []string, ok: bool)
 	return list[:], true
 }
 
-// The checks of the kernel: the lock order at each take (LOCK_ORDER_CHECK)
+// The checks of the kernel: the lock order at each take (TEST_BUILD_CHECKS_LOCK_ORDER)
 // and the sums of the frames at each report and each drain, with a drain
-// of all the frame caches at each 64th refill (FRAME_CACHE_CHECK). The test
+// of all the frame caches at each 64th refill (TEST_BUILD_CHECKS_FRAME_SUMS). The test
 // build has them (`check`, `test`, `screenshots`, `measure`, `run`); the
-// measure build has none (`measure unchecked`, `run unchecked`). The tool
+// measure build has none (`measure without_checks`, `run without_checks`). The tool
 // passes the two defines in each build: the defaults of the source never
 // decide.
-kernel_checks := true
+test_build_checks := true
 
 // build_module compiles a package to objects, assembles its .asm files, links
 // all with lld into one position-independent object, and converts that
@@ -182,8 +182,8 @@ build_module :: proc(build: Module_Build) -> bool {
 	)
 	if build.kernel {
 		append(&compile, "-disable-red-zone")
-		append(&compile, kernel_checks ? "-define:LOCK_ORDER_CHECK=true" : "-define:LOCK_ORDER_CHECK=false")
-		append(&compile, kernel_checks ? "-define:FRAME_CACHE_CHECK=true" : "-define:FRAME_CACHE_CHECK=false")
+		append(&compile, test_build_checks ? "-define:TEST_BUILD_CHECKS_LOCK_ORDER=true" : "-define:TEST_BUILD_CHECKS_LOCK_ORDER=false")
+		append(&compile, test_build_checks ? "-define:TEST_BUILD_CHECKS_FRAME_SUMS=true" : "-define:TEST_BUILD_CHECKS_FRAME_SUMS=false")
 	} else {
 		append(&compile, SUPPORT_LIBRARY) // The kernel has the contract library only.
 	}

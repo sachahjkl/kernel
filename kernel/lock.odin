@@ -15,7 +15,7 @@ import op "contract:operation"
 // lock only if it holds no lock of a later kind. Each processor counts its
 // takes and its waits for each kind; System_Report gives the sums.
 
-LOCK_ORDER_CHECK :: #config(LOCK_ORDER_CHECK, true)
+TEST_BUILD_CHECKS_LOCK_ORDER :: #config(TEST_BUILD_CHECKS_LOCK_ORDER, true)
 
 Lock :: struct {
 	next:    u32, // The next ticket.
@@ -32,7 +32,7 @@ lock_take :: proc "contextless" (lock: ^Lock, kind: op.Lock_Kind) {
 		return
 	}
 	cpu := processor_self()
-	when LOCK_ORDER_CHECK {
+	when TEST_BUILD_CHECKS_LOCK_ORDER {
 		lock_order_check(cpu, kind)
 	}
 	ticket := intrinsics.atomic_add(&lock.next, 1)

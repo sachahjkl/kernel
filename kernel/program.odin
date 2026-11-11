@@ -788,7 +788,7 @@ unmap :: proc "contextless" (program: ^Program, mapping: ^Mapping) {
 	processor_sync(processors_with_table(program.table))
 	// The test build checks the count of the present pages against the
 	// walk that this loop made anyway: one comparison, no other walk.
-	when LOCK_ORDER_CHECK {
+	when TEST_BUILD_CHECKS_LOCK_ORDER {
 		if walked_present_pages != mapping.present_page_count {
 			present_count_broken(mapping, walked_present_pages)
 		}
