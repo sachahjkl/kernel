@@ -96,6 +96,7 @@ So the code that runs is the portable code of the origin: the bitsliced, constan
 | `hkdf_sha256_extract`, `hkdf_sha256_expand` | salt and input, or key, info and length; result, error | 32 bytes, or `length` bytes (1 to 8160) |
 | `x25519` | scalar, point, result, error | 32 bytes; a result of zeros (a point of small order) is `Not_Authentic` |
 | `ed25519_public_key`, `ed25519_sign`, `ed25519_verify` | private key or public key, message, signature, error | 32 bytes, 64 bytes, or 0 / `Not_Authentic` |
+| `header_protection_mask_with_aes_128`, `header_protection_mask_with_chacha20` | key (16 or 32 bytes), sample (16 bytes), result, error | The 5 bytes of the QUIC header protection mask (RFC 9001, sections 5.4.3 and 5.4.4; `docs/QUIC.md`) |
 
 **The forms of the system.**
 - **The caller supplies each byte.** A Text parameter is the bytes of the caller; the result is a buffer of the caller. For a seal, a hash or a key, a buffer that is too small gets no byte, and the count says the size that it needs (the rule of a Text result). For an open, a buffer that is too small is the error `Too_Small` with a negative count: a caller that reads a count of zero or more as a success must not read the old bytes of its buffer as an authentic text.

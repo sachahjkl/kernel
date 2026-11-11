@@ -299,6 +299,18 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Not authentic | The error kind of a sealed text whose tag, or of a message whose signature, does not verify. The call gives no byte | MAC failure, bad tag |
 | Compatibility layer | The packages of `support/cryptography` that give the code taken from Odin the helpers of its origin, over the primitives of this system (`docs/CRYPTOGRAPHY.md`) | shim, polyfill |
 
+## QUIC
+
+| Term | Definition | Do not use |
+|---|---|---|
+| Connection identifier | The bytes (0 to 20) by which a QUIC endpoint names a connection in each packet, independent of the addresses (RFC 9000, section 5.1). Each side chooses the identifiers that the other side sends to it | connection ID (in prose), CID |
+| Packet protection | The AEAD that encrypts the payload of a QUIC packet and authenticates its header, with the key and the iv of one direction of one encryption level (RFC 9001, section 5.3) | encryption (for this), record protection |
+| Header protection | The mask that hides the low bits of the first byte and the packet number of a QUIC packet, made from a sample of the protected payload (RFC 9001, section 5.4) | header encryption |
+| Encryption level | One of the sets of keys of a QUIC connection: Initial (from the connection identifier), Handshake, 0-RTT and 1-RTT (from TLS). Each packet type uses one level | epoch, key phase (for this) |
+| Packet number space | The sequence of packet numbers that one encryption level uses (Initial, Handshake, application data); a packet number is unique in its space | sequence number (for this) |
+| Initial packet | The first packets of a QUIC connection, protected with keys that any observer can compute from the connection identifier: they carry the start of the TLS handshake | handshake packet (for this) |
+| Retry packet | A packet of a server that asks the client to send its Initial packet again with a token, to prove its address; its integrity tag uses a fixed key | redirect |
+
 ## Terms that the system does not have
 
 These words name concepts that the system removed. Use them only to describe other systems.

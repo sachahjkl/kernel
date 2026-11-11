@@ -30,6 +30,7 @@ package cryptography
 import "base:runtime"
 import "contract:errors"
 import "support:cryptography/aes"
+import "support:cryptography/chacha20"
 import "support:cryptography/chacha20poly1305"
 import bytes "support:cryptography/compatibility_bytes"
 import crypto "support:cryptography/compatibility_crypto"
@@ -458,6 +459,69 @@ ed25519_verify_run :: #force_no_inline proc "contextless" (public_text, message_
 @(export, link_name = "ed25519_verify")
 ed25519_verify :: proc "c" (public, message, signature: ^string, error: ^errors.Error_Record) -> i64 {
 	count := ed25519_verify_run(public^, message^, signature^, error)
+	crypto.erase_stack_below_the_caller()
+	return count
+}
+
+HEADER_PROTECTION_SAMPLE_SIZE :: 16
+HEADER_PROTECTION_MASK_SIZE :: 5
+
+@(private)
+Header_Protection :: enum {
+	Aes_128,
+	ChaCha20,
+}
+
+@(private)
+header_protection_mask_run :: #force_no_inline proc "contextless" (kind: Header_Protection, key_text, sample_text: string, output: []u8, error: ^errors.Error_Record) -> i64 {
+	context = module_context()
+	key := transmute([]u8)key_text
+	sample := transmute([]u8)sample_text
+	if !size_check(key, kind == .Aes_128 ? 16 : 32, 1, error) || !size_check(sample, HEADER_PROTECTION_SAMPLE_SIZE, 2, error) {
+		return ERROR
+	}
+	if len(output) < HEADER_PROTECTION_MASK_SIZE {
+		return HEADER_PROTECTION_MASK_SIZE
+	}
+	key_copy: [32]u8
+	sample_copy, block: [HEADER_PROTECTION_SAMPLE_SIZE]u8
+	copy(key_copy[:], key)
+	copy(sample_copy[:], sample)
+	defer crypto.zero_explicit(&key_copy, size_of(key_copy))
+	switch kind {
+	case .Aes_128:
+		// RFC 9001, section 5.4.3: the mask is AES-ECB of the sample.
+		cipher: aes.Context_ECB
+		aes.init_ecb(&cipher, key_copy[:16])
+		aes.encrypt_ecb(&cipher, block[:], sample_copy[:])
+		aes.reset_ecb(&cipher)
+	case .ChaCha20:
+		// RFC 9001, section 5.4.4: the first 4 bytes of the sample are the
+		// block counter (little-endian), the other 12 the nonce; the mask is
+		// ChaCha20 over 5 zero bytes, its keystream.
+		counter := u64(sample_copy[0]) | u64(sample_copy[1]) << 8 | u64(sample_copy[2]) << 16 | u64(sample_copy[3]) << 24
+		cipher: chacha20.Context
+		chacha20.init(&cipher, key_copy[:32], sample_copy[4:16])
+		chacha20.seek(&cipher, counter)
+		chacha20.keystream_bytes(&cipher, block[:HEADER_PROTECTION_MASK_SIZE])
+		chacha20.reset(&cipher)
+	}
+	copy(output, block[:HEADER_PROTECTION_MASK_SIZE])
+	return HEADER_PROTECTION_MASK_SIZE
+}
+
+// header_protection_mask_with_aes_128 gives the 5 bytes of the QUIC header protection mask of a sample of 16 bytes with a key of 16 bytes: AES-128 of the sample (RFC 9001, section 5.4.3). The result is 5, or a negative number with an error record for a key or a sample of another size.
+@(export, link_name = "header_protection_mask_with_aes_128")
+header_protection_mask_with_aes_128 :: proc "c" (key, sample: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 {
+	count := header_protection_mask_run(.Aes_128, key^, sample^, result^, error)
+	crypto.erase_stack_below_the_caller()
+	return count
+}
+
+// header_protection_mask_with_chacha20 gives the 5 bytes of the QUIC header protection mask of a sample of 16 bytes with a key of 32 bytes: the ChaCha20 keystream at the counter and the nonce that the sample gives (RFC 9001, section 5.4.4). The result is 5, or a negative number with an error record for a key or a sample of another size.
+@(export, link_name = "header_protection_mask_with_chacha20")
+header_protection_mask_with_chacha20 :: proc "c" (key, sample: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 {
+	count := header_protection_mask_run(.ChaCha20, key^, sample^, result^, error)
 	crypto.erase_stack_below_the_caller()
 	return count
 }
