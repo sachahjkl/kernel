@@ -86,8 +86,8 @@ Window :: struct {
 	two:         bool, // The surface has two pictures.
 	presented:   u32, // The count of commands after the last Present.
 	// The measure of the time of a picture (docs/DESIGN.md, section 7):
-	// picture_begin marks the start, present the end; after 1, 3 and 10
-	// pictures the log has their mean.
+	// picture_begin marks the start, present the end; after 10 pictures the
+	// log has their mean.
 	title:              [32]u8,
 	title_count:        int,
 	picture_started:    u64,
@@ -96,6 +96,7 @@ Window :: struct {
 }
 
 PICTURES_MEASURED :: 10
+PICTURES_MEASURED_EARLY :: #config(PICTURES_MEASURED_EARLY, false)
 
 // picture_begin marks the start of a picture, for the measure of present.
 picture_begin :: proc "contextless" (window: ^Window) {
@@ -108,8 +109,10 @@ picture_end :: proc "contextless" (window: ^Window) {
 	if window.picture_started != 0 && window.picture_count < PICTURES_MEASURED {
 		window.picture_time += system.nanoseconds() - window.picture_started
 		window.picture_count += 1
-		// After 1, 3 and 10 pictures: a program that draws few pictures has a measure too.
-		if count := window.picture_count; count == 1 || count == 3 || count == PICTURES_MEASURED {
+		// One line, after 10 pictures: the ring of the log keeps 1023 records,
+		// and the scenario reads old records of it. A measure run of the
+		// kernel tool asks for the lines after 1 and 3 pictures too.
+		if count := window.picture_count; count == PICTURES_MEASURED || PICTURES_MEASURED_EARLY && (count == 1 || count == 3) {
 			mean := window.picture_time / count
 			system.log("display: ", string(window.title[:window.title_count]), " drew one picture in ", mean / 1000, ".", mean / 100 % 10, " us, the mean of ", count)
 		}
