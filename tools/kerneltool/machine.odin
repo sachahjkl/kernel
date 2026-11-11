@@ -1357,6 +1357,13 @@ scenario := [?]Step {
 	// A developer tool (docs/TOOLS.md): the memory and the execution of one
 	// program, from the reports of the kernel. errors still holds the
 	// program fault that stopped: its stop report stays.
+	// The machine grant of monitor was revoked above: a new monitor has it
+	// again, so that the test compares two tools on two reports.
+	{kind = .Front, text = "console"},
+	{kind = .Type, text = "stop(\"monitor\")"},
+	{kind = .Record, program = "root", channel = "programs", level = "info", text = "root: monitor stopped with code"},
+	{kind = .Type, text = "start(\"monitor\")"},
+	{kind = .Record, program = "monitor", level = "info", text = "monitor: ok"},
 	{kind = .Launch, text = "inspect"},
 	{kind = .Wait, text = "inspect: ok, "},
 	{kind = .Type, text = "threads"},
