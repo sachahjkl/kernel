@@ -69,43 +69,68 @@ blend_premultiplied_alpha :: proc "contextless" (canvas: Canvas, x, y: int, sour
 //
 //   result = sqrt((d * d * (255 - a) + c * c * a) / 255)
 //
-// with integers only: the sum is at most 255 * 255 * 255, under 2^24; its
-// sixteenth part indexes square_root (4096 entries). docs/FONTS.md gives
+// with integers only: the sum is at most 255 * 255 * 255, under 2^24; the
+// sum shifted right by 12 bits indexes square_root (4096 entries): no
+// division. docs/FONTS.md gives
 // the error of the approximation against sRGB.
-blend_coverage_row :: proc "contextless" (line: [^]Color, words: []u32, first, last: int, color: Color, order: Subpixel_Order, square_root: ^[4096]u8) {
+//
+// No bounds check: the caller cuts first and last to the row, and an index
+// of square_root is at most 255 * 255 * 255 >> 12 = 4048.
+blend_coverage_row :: proc "contextless" (line: [^]Color, words: [^]u32, first, last: int, color: Color, order: Subpixel_Order, square_root: ^[4096]u8) {
+	switch order {
+	case .Red_Green_Blue:
+		blend_coverage_row_in_order(line, words, first, last, color, .Red_Green_Blue, square_root)
+	case .Blue_Green_Red:
+		blend_coverage_row_in_order(line, words, first, last, color, .Blue_Green_Red, square_root)
+	case .None:
+		blend_coverage_row_in_order(line, words, first, last, color, .None, square_root)
+	}
+}
+
+// blend_coverage_row_in_order is the loop for one order of the stripes, a
+// constant: no test of the order for each pixel. The squares of the last
+// pixel that is not covered whole stay: on a plain background, each pixel
+// has the same.
+@(private)
+blend_coverage_row_in_order :: #force_inline proc "contextless" (line: [^]Color, words: [^]u32, first, last: int, color: Color, $ORDER: Subpixel_Order, square_root: ^[4096]u8) #no_bounds_check {
 	color_red, color_green, color_blue := color >> 16 & 0xFF, color >> 8 & 0xFF, color & 0xFF
 	red_square, green_square, blue_square := color_red * color_red, color_green * color_green, color_blue * color_blue
+	previous: Color = 0xFFFFFFFF // No pixel has this value: the squares are not known yet.
+	under_red, under_green, under_blue: u32
 	// A channel with no coverage keeps the pixel, a full one is the color:
 	// the table rounds only the values between.
-	channel :: #force_inline proc "contextless" (destination, color, color_square, coverage: u32, square_root: ^[4096]u8) -> u32 {
+	channel :: #force_inline proc "contextless" (destination, destination_square, color, color_square, coverage: u32, square_root: ^[4096]u8) -> u32 #no_bounds_check {
 		switch coverage {
 		case 0:
 			return destination
 		case 255:
 			return color
 		}
-		return u32(square_root[(destination * destination * (255 - coverage) + color_square * coverage) / 4080])
+		return u32(square_root[(destination_square * (255 - coverage) + color_square * coverage) >> 12])
 	}
 	for column in first ..< last {
 		word := words[column]
+		if word == 0 {
+			continue
+		}
 		red, green, blue: u32
-		switch order {
-		case .Red_Green_Blue:
+		when ORDER == .Red_Green_Blue {
 			red, green, blue = word >> 16 & 0xFF, word >> 8 & 0xFF, word & 0xFF
-		case .Blue_Green_Red:
+		} else when ORDER == .Blue_Green_Red {
 			red, green, blue = word & 0xFF, word >> 8 & 0xFF, word >> 16 & 0xFF
-		case .None:
+		} else {
 			red = word >> 24
 			green, blue = red, red
-		}
-		if red | green | blue == 0 {
-			continue
 		}
 		if red & green & blue == 255 {
 			line[column] = color
 			continue
 		}
 		destination := line[column]
-		line[column] = channel(destination >> 16 & 0xFF, color_red, red_square, red, square_root) << 16 | channel(destination >> 8 & 0xFF, color_green, green_square, green, square_root) << 8 | channel(destination & 0xFF, color_blue, blue_square, blue, square_root)
+		if destination != previous {
+			previous = destination
+			under_red, under_green, under_blue = destination >> 16 & 0xFF, destination >> 8 & 0xFF, destination & 0xFF
+		}
+		line[column] = channel(under_red, under_red * under_red, color_red, red_square, red, square_root) << 16 | channel(under_green, under_green * under_green, color_green, green_square, green, square_root) << 8 | channel(under_blue, under_blue * under_blue, color_blue, blue_square, blue, square_root)
 	}
 }
