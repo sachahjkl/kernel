@@ -97,6 +97,7 @@ module_builds := [?]Module_Build {
 	{name = "lonely", source = "modules/lonely", imports = {"test_callee"}, image = true},
 	{name = "imports", source = "programs/imports", imports = {"calendar"}, image = true},
 	{name = "errors", source = "programs/errors", image = true},
+	{name = "interface_elements", source = "programs/interface_elements", image = true},
 }
 
 join :: proc(parts: ..string) -> string {
