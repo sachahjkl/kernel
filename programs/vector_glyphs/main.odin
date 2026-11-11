@@ -113,7 +113,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	// The frame of the window, with the interface package.
 	drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
-	frame := interface.window_frame_begin(&drawing)
+	frame := interface.window_frame_begin(&drawing, &window)
 	interface.background(&frame, {0, 0, WIDTH, HEIGHT})
 	content := interface.card(&frame, {8, 8, WIDTH - 16, HEIGHT - 16}, "A VECTOR FONT, PROTOTYPE", "DejaVu Sans Mono, glyf outlines; Spleen 8x16 stays", graphics.COLOR_MACHINE)
 	Row :: struct {

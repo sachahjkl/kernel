@@ -185,6 +185,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.stop(1)
 	}
 	canvas := window.canvas
+	display.picture_begin(&window) // The measure of a picture (display.present).
 	graphics.clear(canvas, graphics.COLOR_BACKGROUND)
 	graphics.text(canvas, MARGIN, 8, "One picture, computed by 1, 2 and 4 threads.", graphics.COLOR_TEXT)
 	display.present(&window)

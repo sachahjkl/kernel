@@ -118,6 +118,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	system.log("threads: a thread added the numbers to 1000: ", sum.result)
 
+	display.picture_begin(&window) // The measure of a picture (display.present).
 	graphics.clear(window.canvas, graphics.COLOR_BACKGROUND)
 	for &worker, index in workers {
 		x := MARGIN + (index % 2) * (SQUARE + MARGIN)

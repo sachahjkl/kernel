@@ -129,6 +129,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 
 	canvas := window.canvas
 	for {
+		display.picture_begin(&window) // The measure of a picture (display.present).
 		graphics.clear(canvas, graphics.COLOR_BACKGROUND)
 		y := 12
 		graphics.text(canvas, 12, y, "the kernel keeps the origin of each handle and of each mapping.", graphics.COLOR_DIM)

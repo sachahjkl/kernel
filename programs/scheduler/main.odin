@@ -824,6 +824,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		if results[index].measured {
 			log_result(index)
 		}
+		display.picture_begin(&window) // The measure of a picture (display.present).
 		draw(canvas, system_report(), processors)
 		display.present(&window)
 	}
@@ -842,6 +843,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.log("scheduler: wrong: ", problem)
 	}
 	start := system.nanoseconds()
+	display.picture_begin(&window) // The measure of a picture (display.present).
 	draw(canvas, system_report(), processors)
 	drawn := system.nanoseconds() - start
 	display.present(&window)
@@ -856,6 +858,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			}
 		}
 		// The counts of the processors change: the window shows them each 500 ms.
+		display.picture_begin(&window) // The measure of a picture (display.present).
 		draw(canvas, system_report(), processors)
 		display.present(&window)
 		display.wait(&window, system.time() + 500)

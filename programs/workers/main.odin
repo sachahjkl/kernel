@@ -160,6 +160,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if !ok {
 		system.stop(1)
 	}
+	display.picture_begin(&window) // The measure of a picture (display.present).
 	graphics.clear(window.canvas, graphics.COLOR_BACKGROUND)
 	graphics.text(window.canvas, MARGIN, 8, "One queue of tiles, one lock, four threads.", graphics.COLOR_TEXT)
 	display.present(&window)

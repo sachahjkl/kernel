@@ -190,6 +190,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 		now := system.time()
 		watch()
+		display.picture_begin(&window) // The measure of a picture (display.present).
 		draw(window.canvas, now)
 		display.present(&window)
 		display.wait(&window, now + FRAME_TIME)

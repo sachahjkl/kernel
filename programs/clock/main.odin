@@ -117,7 +117,7 @@ sentence :: proc "contextless" (frame: ^interface.Frame, area: interface.Area, p
 // draw builds the window with the interface package: a card, the time since
 // boot, a table of the two ways with their bars, the checks.
 draw :: proc "contextless" (window: ^display.Window) {
-	frame := interface.window_frame_begin(&drawing)
+	frame := interface.window_frame_begin(&drawing, window)
 	interface.background(&frame, {0, 0, WIDTH, HEIGHT})
 	content := interface.card(&frame, {8, 8, WIDTH - 16, HEIGHT - 16}, "THE TIME PAGE", "Time_Record: one page that each program reads", graphics.COLOR_KERNEL)
 	column := interface.column_of(content)

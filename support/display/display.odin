@@ -85,6 +85,36 @@ Window :: struct {
 	picture:     int, // The index of canvas in pictures.
 	two:         bool, // The surface has two pictures.
 	presented:   u32, // The count of commands after the last Present.
+	// The measure of the time of a picture (docs/DESIGN.md, section 7):
+	// picture_begin marks the start, present the end; after 1, 3 and 10
+	// pictures the log has their mean.
+	title:              [32]u8,
+	title_count:        int,
+	picture_started:    u64,
+	picture_count:      u64,
+	picture_time:       u64,
+}
+
+PICTURES_MEASURED :: 10
+
+// picture_begin marks the start of a picture, for the measure of present.
+picture_begin :: proc "contextless" (window: ^Window) {
+	window.picture_started = system.nanoseconds()
+}
+
+// picture_end ends the measure of a picture: present calls it, and a
+// program that draws nothing in a frame (no damage) calls it.
+picture_end :: proc "contextless" (window: ^Window) {
+	if window.picture_started != 0 && window.picture_count < PICTURES_MEASURED {
+		window.picture_time += system.nanoseconds() - window.picture_started
+		window.picture_count += 1
+		// After 1, 3 and 10 pictures: a program that draws few pictures has a measure too.
+		if count := window.picture_count; count == 1 || count == 3 || count == PICTURES_MEASURED {
+			mean := window.picture_time / count
+			system.log("display: ", string(window.title[:window.title_count]), " drew one picture in ", mean / 1000, ".", mean / 100 % 10, " us, the mean of ", count)
+		}
+	}
+	window.picture_started = 0
 }
 
 // open creates a surface and shows it. The program draws in window.canvas,
@@ -109,6 +139,7 @@ open :: proc "contextless" (ctx: ^system.Context, width, height: int, title: str
 		return {}, false
 	}
 	window.two = two_pictures
+	window.title_count = copy(window.title[:], title)
 	for &picture, index in window.pictures {
 		picture = {pixels = ([^]graphics.Color)(address)[index * width * height:], width = width, height = height, stride = width}
 	}
@@ -148,6 +179,7 @@ present :: proc "contextless" (window: ^Window) {
 // draws again only that part of the window. A width of 0 is the whole
 // surface.
 present_rectangle :: proc "contextless" (window: ^Window, x, y, width, height: int) {
+	picture_end(window)
 	record := ring.Record{kind = u32(Command.Present), values = {0 = u64(window.picture), 1 = u64(max(x, 0)), 2 = u64(max(y, 0)), 3 = u64(max(width, 0)), 4 = u64(max(height, 0))}}
 	if !system.send(&window.ring.commands, record) || !window.two {
 		return

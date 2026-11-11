@@ -136,7 +136,7 @@ build :: proc "contextless" (frame: ^interface.Frame, number: u64) {
 
 // frame_draw builds and draws one frame.
 frame_draw :: proc "contextless" (window: ^display.Window) {
-	frame := interface.window_frame_begin(&drawing)
+	frame := interface.window_frame_begin(&drawing, window)
 	build(&frame, frames)
 	interface.window_frame_end(&drawing, &frame, window)
 	last_damage = drawing.damage

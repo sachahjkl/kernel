@@ -368,6 +368,7 @@ measure_burst :: proc "contextless" () {
 
 draw :: proc "contextless" (window: ^display.Window) {
 	canvas := window.canvas
+	display.picture_begin(window) // The measure of a picture (display.present).
 	graphics.clear(canvas, graphics.COLOR_BACKGROUND)
 	y := 16
 	graphics.text(canvas, LEFT, y, "an endpoint of datagrams: the root service granted 10.0.2.2 port 7, and nothing else.", graphics.COLOR_DIM)

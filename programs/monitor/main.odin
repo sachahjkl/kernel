@@ -38,6 +38,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	for {
 		report: op.System_Report
 		_, status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.System), 0, u64(uintptr(&report)), size_of(report))
+		display.picture_begin(&window) // The measure of a picture (display.present).
 		graphics.clear(canvas, graphics.COLOR_BACKGROUND)
 		if status != .Ok {
 			graphics.text(canvas, 10, 10, "no grant to inspect the machine", graphics.COLOR_TEXT)

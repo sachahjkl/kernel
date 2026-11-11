@@ -332,6 +332,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 
 	canvas := window.canvas
 	for {
+		display.picture_begin(&window) // The measure of a picture (display.present).
 		graphics.clear(canvas, graphics.COLOR_BACKGROUND)
 		y := 12
 		graphics.text(canvas, 12, y, "agenda imports calendar. calendar has a fault; calendar_fixed corrects it.", graphics.COLOR_DIM)

@@ -716,6 +716,7 @@ case_at :: proc "contextless" (at: int) -> int {
 
 draw :: proc "contextless" (window: ^display.Window) {
 	canvas := window.canvas
+	display.picture_begin(window) // The measure of a picture (display.present).
 	graphics.clear(canvas, graphics.COLOR_BACKGROUND)
 	graphics.text(canvas, 16, 8, "each case makes an error for real; under it, the sentence of its record: errors.Error_Record,", graphics.COLOR_DIM)
 	graphics.text(canvas, 16, 8 + LINE, "module.Load_Error, op.Stop_Report.frames. A key from a to s, or a click on a case, runs it again", graphics.COLOR_DIM)

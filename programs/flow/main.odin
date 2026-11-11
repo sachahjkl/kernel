@@ -150,6 +150,7 @@ bar :: proc "contextless" (canvas: graphics.Canvas, x, y: int, value, most: u64,
 
 draw :: proc "contextless" (window: ^display.Window) {
 	canvas := window.canvas
+	display.picture_begin(window) // The measure of a picture (display.present).
 	graphics.clear(canvas, graphics.COLOR_BACKGROUND)
 	most_rate, most_entries: u64
 	for measure in measures {

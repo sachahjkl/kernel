@@ -117,6 +117,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	system.log("tally: ok")
 	for {
+		display.picture_begin(&window) // The measure of a picture (display.present).
 		draw(window.canvas, &service)
 		display.present(&window)
 

@@ -99,6 +99,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			step()
 			next = now + STEP_INTERVAL
 		}
+		display.picture_begin(&window) // The measure of a picture (display.present).
 		graphics.clear(window.canvas, 0x0C1210)
 		for y in 0 ..< ROWS {
 			for x in 0 ..< COLUMNS {

@@ -136,6 +136,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			}
 		}
 
+		display.picture_begin(&window) // The measure of a picture (display.present).
 		graphics.clear(canvas, graphics.COLOR_BACKGROUND)
 		y := 12
 		graphics.text(canvas, 12, y, "a budget has a limit of processor time for each second.", graphics.COLOR_DIM)

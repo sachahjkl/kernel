@@ -103,6 +103,7 @@ restore :: proc "contextless" () {
 
 draw :: proc "contextless" (window: ^display.Window) {
 	canvas := window.canvas
+	display.picture_begin(window) // The measure of a picture (display.present).
 	graphics.clear(canvas, graphics.COLOR_BACKGROUND)
 	buffer: [32]u8
 	x := graphics.text(canvas, 12, 12, "note  ", graphics.COLOR_DIM)

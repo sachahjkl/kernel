@@ -101,6 +101,7 @@ list_place :: proc "contextless" (x, y: int) -> (position: int, inside: bool) {
 
 draw :: proc "contextless" (window: ^display.Window) {
 	canvas := window.canvas
+	display.picture_begin(window) // The measure of a picture (display.present).
 	graphics.clear(canvas, graphics.COLOR_BACKGROUND)
 	for y := 12; y < HEIGHT; y += graphics.POINT_STEP {
 		for x := 12; x < WIDTH; x += graphics.POINT_STEP {

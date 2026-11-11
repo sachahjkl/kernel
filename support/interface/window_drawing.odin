@@ -36,8 +36,11 @@ window_events :: proc "contextless" (drawing: ^Window_Drawing, window: ^display.
 }
 
 // window_frame_begin starts a frame of the window.
-window_frame_begin :: proc "contextless" (drawing: ^Window_Drawing) -> Frame {
+window_frame_begin :: proc "contextless" (drawing: ^Window_Drawing, window: ^display.Window = nil) -> Frame {
 	drawing.build_start = system.nanoseconds()
+	if window != nil {
+		display.picture_begin(window)
+	}
 	return frame_begin(&drawing.now, &drawing.state, &drawing.input)
 }
 
@@ -68,6 +71,9 @@ window_frame_end :: proc "contextless" (drawing: ^Window_Drawing, frame: ^Frame,
 		execute_in_rectangles(&drawing.now, window.canvas, drawing.damage.rectangles[:drawing.damage.count])
 		bounds := damage_bounds(&drawing.damage)
 		display.present_rectangle(window, bounds.left, bounds.top, bounds.right - bounds.left, bounds.bottom - bounds.top)
+	}
+	if !whole && drawing.damage.count == 0 {
+		display.picture_end(window) // A frame with nothing to draw is a picture of the measure too.
 	}
 	drawing.draw_time = system.nanoseconds() - measured
 	drawing.drawn = draw_table_copy(&drawing.before, &drawing.now)

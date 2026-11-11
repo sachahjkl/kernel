@@ -527,6 +527,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.stop(1)
 	}
 	canvas := window.canvas
+	display.picture_begin(&window) // The measure of a picture (display.present).
 	draw(canvas)
 	display.present(&window)
 
@@ -614,6 +615,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	} else {
 		system.log("locks: wrong: entries ", u64(entries_right), " faults ", u64(faults_right), " pages ", u64(pages_right), " wakes ", u64(pairs_right), " lost ", lost_wakes, " stress ", u64(stress_right), " frames ", u64(frames_stress_right))
 	}
+	display.picture_begin(&window) // The measure of a picture (display.present).
 	draw(canvas)
 	display.present(&window)
 	for {

@@ -36,7 +36,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 	if drawing.now.records == nil {
 		drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
 	}
-	frame := interface.window_frame_begin(&drawing)
+	frame := interface.window_frame_begin(&drawing, window)
 	table := frame.table
 	interface.background(&frame, {0, 0, WIDTH, HEIGHT})
 	buffer: [64]u8
