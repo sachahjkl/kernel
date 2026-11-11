@@ -55,11 +55,11 @@ Canvas_Shape :: struct {
 	stride: i64, // Pixels from one line to the next.
 }
 
-Drawn :: system.Table_To_Append(interface.Draw_Record)
+Draw_Records_To_Append :: system.Table_To_Append(interface.Draw_Record)
 
 // A frame of the package over the tables of the caller.
 @(private)
-Over_Tables :: struct {
+Frame_Over_Caller_Tables :: struct {
 	table: interface.Draw_Table,
 	frame: interface.Frame,
 }
@@ -73,19 +73,32 @@ no_state: interface.Interface_State
 @(private)
 no_input: interface.Input
 
+// The most records or bytes of a table of a caller: an int of the package
+// holds each count, and no count times a size wraps.
 @(private)
-over :: proc "contextless" (over: ^Over_Tables, drawn: ^Drawn, text: ^system.Bytes_To_Append) {
+TABLE_LIMIT :: u64(1) << 40
+
+// frame_over_caller_tables makes a frame of the package over the tables of
+// the caller. It gives false for a table that the package cannot hold: a
+// capacity over TABLE_LIMIT (a capacity of 2^63 is a negative int).
+@(private)
+frame_over_caller_tables :: proc "contextless" (over: ^Frame_Over_Caller_Tables, drawn: ^Draw_Records_To_Append, text: ^system.Bytes_To_Append) -> bool {
+	if drawn.capacity > TABLE_LIMIT || text != nil && text.capacity > TABLE_LIMIT {
+		return false
+	}
 	over.table = {records = drawn.records[:drawn.capacity], record_count = int(min(drawn.count, drawn.capacity))}
 	if text != nil {
 		over.table.text, over.table.text_count = text.bytes[:text.capacity], int(min(text.count, text.capacity))
 	}
 	over.frame = {table = &over.table, state = &no_state, input = &no_input}
+	return true
 }
 
-// back writes the counts of the package table into the two places. A table
-// that is full gives a count larger than its capacity: "did not fit".
+// counts_write_back writes the counts of the package table into the two
+// table places. A table that is full gives a count larger than its
+// capacity: "did not fit".
 @(private)
-back :: proc "contextless" (over: ^Over_Tables, drawn: ^Drawn, text: ^system.Bytes_To_Append) -> i64 {
+counts_write_back :: proc "contextless" (over: ^Frame_Over_Caller_Tables, drawn: ^Draw_Records_To_Append, text: ^system.Bytes_To_Append) -> i64 {
 	drawn.count = u64(over.table.record_count)
 	if text != nil {
 		text.count = u64(over.table.text_count)
@@ -105,72 +118,100 @@ area_of :: proc "contextless" (area: Area) -> interface.Area {
 	return {int(area.x), int(area.y), int(area.width), int(area.height)}
 }
 
-// draw_background appends the background of the rules on an area: one color and the grid of points. The result is the count of draw records.
+// draw_background appends the background of the rules on an area: one color and the grid of points. The result is the count of draw records, or -1 for a table over 2^40 records or bytes.
 @(export, link_name = "draw_background")
-draw_background :: proc "c" (drawn: ^system.Table_To_Append(interface.Draw_Record), area: ^Area) -> i64 {
-	frame: Over_Tables
-	over(&frame, drawn, nil)
+draw_background :: proc "c" (drawn: ^Draw_Records_To_Append, area: ^Area) -> i64 {
+	frame: Frame_Over_Caller_Tables
+	if !frame_over_caller_tables(&frame, drawn, nil) {
+		return -1
+	}
 	interface.background(&frame.frame, area_of(area^))
-	return back(&frame, drawn, nil)
+	return counts_write_back(&frame, drawn, nil)
 }
 
-// draw_card appends the frame of one subject: its border, its surface, its title in the accent and its caption. It writes the area of its content in the one row of `area`. The result is the count of draw records.
+// draw_card appends the frame of one subject: its border, its surface, its title in the accent and its caption. It writes the area of its content in the one row of `area`. The result is the count of draw records, or -1 for a table over 2^40 records or bytes.
 @(export, link_name = "draw_card")
-draw_card :: proc "c" (drawn: ^system.Table_To_Append(interface.Draw_Record), text: ^system.Bytes_To_Append, area: ^system.Table_To_Change(Area), title: ^string, caption: ^string, accent: i64) -> i64 {
-	frame: Over_Tables
-	over(&frame, drawn, text)
+draw_card :: proc "c" (drawn: ^Draw_Records_To_Append, text: ^system.Bytes_To_Append, area: ^system.Table_To_Change(Area), title: ^string, caption: ^string, accent: i64) -> i64 {
+	frame: Frame_Over_Caller_Tables
+	if !frame_over_caller_tables(&frame, drawn, text) {
+		return -1
+	}
 	if area.count == 1 {
 		content := interface.card(&frame.frame, area_of(area.records[0]), title^, caption^, graphics.Color(accent))
 		area.records[0] = {i64(content.x), i64(content.y), i64(content.width), i64(content.height)}
 	}
-	return back(&frame, drawn, text)
+	return counts_write_back(&frame, drawn, text)
 }
 
-// draw_cell_text appends a text in a cell of a line, at the left, or at the right when `right` is not 0. The result is the count of draw records.
+// draw_cell_text appends a text in a cell of a line, at the left, or at the right when `right` is not 0. The result is the count of draw records, or -1 for a table over 2^40 records or bytes.
 @(export, link_name = "draw_cell_text")
-draw_cell_text :: proc "c" (drawn: ^system.Table_To_Append(interface.Draw_Record), text: ^system.Bytes_To_Append, cell: ^Area, words: ^string, color: i64, right: i64) -> i64 {
-	frame: Over_Tables
-	over(&frame, drawn, text)
+draw_cell_text :: proc "c" (drawn: ^Draw_Records_To_Append, text: ^system.Bytes_To_Append, cell: ^Area, words: ^string, color: i64, right: i64) -> i64 {
+	frame: Frame_Over_Caller_Tables
+	if !frame_over_caller_tables(&frame, drawn, text) {
+		return -1
+	}
 	interface.cell_text(&frame.frame, area_of(cell^), words^, graphics.Color(color), right != 0 ? .Right : .Left)
-	return back(&frame, drawn, text)
+	return counts_write_back(&frame, drawn, text)
 }
 
-// draw_label_value_line appends a name in the dim color and its value. The result is the count of draw records.
+// draw_label_value_line appends a name in the dim color and its value. The result is the count of draw records, or -1 for a table over 2^40 records or bytes.
 @(export, link_name = "draw_label_value_line")
-draw_label_value_line :: proc "c" (drawn: ^system.Table_To_Append(interface.Draw_Record), text: ^system.Bytes_To_Append, line: ^Label_Value, label: ^string, value: ^string) -> i64 {
-	frame: Over_Tables
-	over(&frame, drawn, text)
+draw_label_value_line :: proc "c" (drawn: ^Draw_Records_To_Append, text: ^system.Bytes_To_Append, line: ^Label_Value, label: ^string, value: ^string) -> i64 {
+	frame: Frame_Over_Caller_Tables
+	if !frame_over_caller_tables(&frame, drawn, text) {
+		return -1
+	}
 	interface.label_value_line(&frame.frame, {int(line.x), int(line.y), int(line.width), int(line.height)}, label^, value^, graphics.Color(line.color), int(line.value_x))
-	return back(&frame, drawn, text)
+	return counts_write_back(&frame, drawn, text)
 }
 
-// draw_table_band appends the band under line `index` of a table: every second line has the surface of a card. The result is the count of draw records.
+// draw_table_band appends the band under line `index` of a table: every second line has the surface of a card. The result is the count of draw records, or -1 for a table over 2^40 records or bytes.
 @(export, link_name = "draw_table_band")
-draw_table_band :: proc "c" (drawn: ^system.Table_To_Append(interface.Draw_Record), area: ^Area, index: i64) -> i64 {
-	frame: Over_Tables
-	over(&frame, drawn, nil)
+draw_table_band :: proc "c" (drawn: ^Draw_Records_To_Append, area: ^Area, index: i64) -> i64 {
+	frame: Frame_Over_Caller_Tables
+	if !frame_over_caller_tables(&frame, drawn, nil) {
+		return -1
+	}
 	interface.table_band(&frame.frame, area_of(area^), int(index))
-	return back(&frame, drawn, nil)
+	return counts_write_back(&frame, drawn, nil)
 }
 
-// draw_bar appends a value against a maximum: the track and the full part. The result is the count of draw records.
+// draw_bar appends a value against a maximum: the track and the full part. The result is the count of draw records, or -1 for a table over 2^40 records or bytes.
 @(export, link_name = "draw_bar")
-draw_bar :: proc "c" (drawn: ^system.Table_To_Append(interface.Draw_Record), bar: ^Bar_Value) -> i64 {
-	frame: Over_Tables
-	over(&frame, drawn, nil)
+draw_bar :: proc "c" (drawn: ^Draw_Records_To_Append, bar: ^Bar_Value) -> i64 {
+	frame: Frame_Over_Caller_Tables
+	if !frame_over_caller_tables(&frame, drawn, nil) {
+		return -1
+	}
 	interface.bar(&frame.frame, {int(bar.x), int(bar.y), int(bar.width), int(bar.height)}, u64(max(bar.value, 0)), u64(max(bar.maximum, 0)), graphics.Color(bar.color))
-	return back(&frame, drawn, nil)
+	return counts_write_back(&frame, drawn, nil)
 }
 
+// draw_table_to_read_of makes a draw table of the package over a Read
+// table and its text. ok is false when a count passes TABLE_LIMIT or a text
+// record names bytes past the text: the callee checks each offset, and
+// gives a refusal, never a fault (finding W4 of the hostile read).
 @(private)
-table_of :: proc "contextless" (records: ^system.Table_To_Read(interface.Draw_Record), text: ^system.Bytes_To_Read) -> interface.Draw_Table {
-	return {records = records.records[:records.count], record_count = int(records.count), text = text.bytes[:text.count], text_count = int(text.count)}
+draw_table_to_read_of :: proc "contextless" (records: ^system.Table_To_Read(interface.Draw_Record), text: ^system.Bytes_To_Read) -> (table: interface.Draw_Table, ok: bool) {
+	if records.count > TABLE_LIMIT || text.count > TABLE_LIMIT {
+		return {}, false
+	}
+	for record in system.table_records(records) {
+		if record.kind == .Text && u64(record.text_start) + u64(record.text_count) > text.count {
+			return {}, false
+		}
+	}
+	return {records = records.records[:records.count], record_count = int(records.count), text = text.bytes[:text.count], text_count = int(text.count)}, true
 }
 
-// damage_by_difference gives the rectangles of the surface that differ between the draw table before and the draw table now. The result is a Table of at most 8 rectangles.
+// damage_by_difference gives the rectangles of the surface that differ between the draw table before and the draw table now. The result is a Table of at most 8 rectangles, or -1 for a text record that names bytes past its text table.
 @(export, link_name = "damage_by_difference")
 damage_by_difference :: proc "c" (before: ^system.Table_To_Read(interface.Draw_Record), before_text: ^system.Bytes_To_Read, now: ^system.Table_To_Read(interface.Draw_Record), now_text: ^system.Bytes_To_Read, result: ^[]Damage_Rectangle) -> i64 {
-	before_table, now_table := table_of(before, before_text), table_of(now, now_text)
+	before_table, before_ok := draw_table_to_read_of(before, before_text)
+	now_table, now_ok := draw_table_to_read_of(now, now_text)
+	if !before_ok || !now_ok {
+		return -1
+	}
 	damage: interface.Damage
 	interface.damage_by_difference(&before_table, &now_table, &damage)
 	for rectangle, index in damage.rectangles[:damage.count] {
@@ -181,13 +222,18 @@ damage_by_difference :: proc "c" (before: ^system.Table_To_Read(interface.Draw_R
 	return i64(damage.count)
 }
 
-// execute_in_rectangles draws the records of a draw table into the pixels of a canvas, in each rectangle, cut to it. The pixels are the memory of the caller: no copy in a direct call. The result is the count of rectangles.
+// execute_in_rectangles draws the records of a draw table into the pixels of a canvas, in each rectangle, cut to it. The pixels are the memory of the caller: no copy in a direct call. The result is the count of rectangles, or -1 for a canvas shape that the pixels do not hold or a text record that names bytes past its text table.
 @(export, link_name = "execute_in_rectangles")
 execute_in_rectangles :: proc "c" (now: ^system.Table_To_Read(interface.Draw_Record), now_text: ^system.Bytes_To_Read, rectangles: ^system.Table_To_Read(Damage_Rectangle), pixels: ^system.Bytes_To_Change, shape: ^Canvas_Shape) -> i64 {
-	if shape.width <= 0 || shape.height <= 0 || shape.stride < shape.width || u64(shape.stride) * u64(shape.height) * 4 > pixels.count {
+	// No product wraps (finding F2 of the hostile read): the stride is
+	// compared with the pixels of one line that the bytes hold.
+	if shape.width <= 0 || shape.height <= 0 || shape.stride < shape.width || u64(shape.stride) > pixels.count / 4 / u64(shape.height) {
 		return -1
 	}
-	table := table_of(now, now_text)
+	table, ok := draw_table_to_read_of(now, now_text)
+	if !ok || rectangles.count > TABLE_LIMIT {
+		return -1
+	}
 	canvas := graphics.Canvas{pixels = ([^]graphics.Color)(pixels.bytes), width = int(shape.width), height = int(shape.height), stride = int(shape.stride)}
 	for rectangle in system.table_records(rectangles) {
 		interface.execute_in_rectangle(&table, canvas, {int(rectangle.left), int(rectangle.top), int(rectangle.right), int(rectangle.bottom)})
