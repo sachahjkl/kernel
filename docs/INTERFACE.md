@@ -24,6 +24,8 @@ Counted on 2026-11-11 (`master` `cbe3c0e`) with `grep` over `programs/*/` and `s
 | Programs that react to the pointer | 7; to the keys: 9. Each one tests rectangles by hand |
 | Programs that track damage | 1: the compositor. Each other program draws its whole surface for each change, and `Present` damages the whole surface |
 
+After this count, the developer tool `inspect` came (step 50): a list with a filter and a choice, a band, tables and a hex view, all by hand. It is the next user in the order of the next steps.
+
 Each card, bar, table and list is drawn again in each program, with its own numbers of pixels. A change of the rules (the close button of 2026-11-11, the colors of step 50) touches each program.
 
 ## 2. The model: an immediate pass over flat tables
@@ -71,7 +73,7 @@ Then `execute_in_rectangles` draws again, in each damage rectangle, each record 
 - **The limit of the index rule**: a record added in the middle of the table moves all the records after it, and they all compare as different: the damage is too large, never too small. It is right, and it costs only time. An element identity in each record (offset 36) allows a later rule that matches records by identity; it is not needed by the first users.
 - **Two pictures**: a surface with two pictures needs the table that was drawn in the picture that the program draws now, which is the table of two frames before. The caller keeps one table for each picture.
 - **Present with a rectangle**: `display.present_rectangle` gives the compositor the union of the damage: the compositor draws again only that part of the window (the protocol had a gap there: `Present` damaged the whole surface). A full rectangle stays the default of `display.present`.
-- **The cost**, measured by the program `interface_elements` and written on the log: the comparison of two tables of N records, and a frame where nothing changed, where one number changed, and where everything changed (choice NEW-4 of `FIRST_MILESTONE.md`).
+- **The cost**, measured by the program `interface_elements` on its window of 68 records (choice NEW-4 of `FIRST_MILESTONE.md`): nothing changed, 0 rectangles in 0.8 us; one number changed, 3 rectangles in 0.8 us; everything moved, 1 rectangle in 1.8 us: about 13 ns for each record. The whole frame is drawn in 366 to 411 us, a frame in its damage in 89 to 120 us. `clock` draws one picture in 11.6 us against 109.2 us by hand.
 
 ### 2.3 Memory of the caller, errors as values
 
@@ -145,7 +147,8 @@ Slug (Eric Lengyel, JCGT 6(2), 2017, <https://jcgt.org/published/0006/02/02/>) d
 
 - This system draws with the processor (property 18, step 1). Slug is a GPU method: the bands and the root solvers save work for thousands of pixels in parallel. On the processor, the same exact coverage comes cheaper from a scanline rasterizer: each line segment of the outline adds its signed area to an accumulation row, and one prefix sum gives the coverage of each pixel (the method of font-rs and of stb_truetype 2). The quadratic curves are cut into line segments within a tolerance.
 - **The prototype** (`support/vector_font`, the program `vector_glyphs`): a parser of a subset of TrueType (`head`, `hhea`, `maxp`, `cmap` format 4, `hmtx`, `loca`, `glyf` with simple glyphs) that checks each offset and each count against the length of the file (a font is hostile input); a rasterizer with exact area coverage, a horizontal position in 1/64 of a pixel, and an option of coverage per color stripe (three samples per pixel, then the 5-tap filter 8, 77, 86, 77, 8 / 256 against color fringes).
-- **The measures** are in choice NEW-9 of `FIRST_MILESTONE.md`: the time of one glyph at 16 pixels against a bitmap glyph of Spleen.
+- **The measures** (choice NEW-9 of `FIRST_MILESTONE.md`): one glyph of Spleen 8x16, 32 ns; one glyph of 13 pixels from its outline, 2939 ns in grayscale, 2396 ns on a whole pixel, 5502 ns with color stripes: about 90 times more, with no cache of the coverage of a glyph. The picture `vector_glyphs` shows the same text in the two fonts, and one glyph enlarged 8 times in grayscale and with color stripes.
+- **What the picture shows** (2026-11-11): at 13 pixels the outline font has the shapes of its design and even spaces (an advance of 7.8 pixels), and its stems are softer than the stems of Spleen, which sit on whole pixels; the color stripes give sharper sides with faint colors at the edges. Spleen is sharper at its one size.
 - **The font**: a font needs a license that allows embedding in a program of the system. Candidates: DejaVu Sans Mono (Bitstream Vera license, DejaVu changes in the public domain; TrueType outlines), Noto Sans and Noto Sans Mono, Inter, IBM Plex, JetBrains Mono, Source Code Pro (SIL Open Font License 1.1: embedding allowed, no sale of the font alone). The prototype uses DejaVu Sans Mono, a monospace font like Spleen, with its license beside it.
 - **The rules**: a vector font keeps the grid: one size for the text of the interface (a cap height that is a whole number of pixels, as the reference of Slug advises), a large size for the one number of a card; the line height stays 16 or 24.
 
@@ -154,7 +157,7 @@ Slug (Eric Lengyel, JCGT 6(2), 2017, <https://jcgt.org/published/0006/02/02/>) d
 1. The model: immediate mode over draw tables, damage by difference (sections 2 and 2.2).
 2. The form: a `support` package now, a module when the contract describes a table as a parameter (section 7). The other way: extend the contract first.
 3. The font: Spleen 8x16 stays, or a vector font (which one, which sizes, and grayscale or coverage per color stripe), after the picture of `vector_glyphs`.
-4. The order of the next conversions (section 11 of `FIRST_MILESTONE.md`, "Next steps" of this work).
+4. The order of the next conversions (`FIRST_MILESTONE.md`, "Next steps", item 13).
 
 ## 11. What was taken from `gui_toolkit`, and what was not
 

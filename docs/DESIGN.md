@@ -132,10 +132,29 @@ The owner asked for "a gradient from the current blue, as the start colour, to a
 - With no match, the list says `no program has "xyz" in its name`, and Enter starts nothing.
 - The launcher lists what the menu of the programs lists, from the same table, and starts a program as the menu does: the compositor sends `Start` with the name to the root service. It has no other power.
 
+
+## 10. Elements
+
+The interface package (`support/interface`, `docs/INTERFACE.md`) draws these elements. A program that uses them follows the rules of this file with no number of its own.
+
+| Element | The rule |
+|---|---|
+| Background | `COLOR_BACKGROUND` and the grid of points of section 3, at 12 + 24 n of the surface |
+| Card | A border of 1 pixel in its accent (28 % to 14 %), the surface of a card, a bar of 4 x 16 pixels and the title in the accent, the caption of its record in the dim color, a count at the right in the text color. Its content starts 40 pixels under its top and 16 pixels inside its sides |
+| Line of a label and a value | The label in the dim color; the value in the text color (or in the color of its concept), at the right of its area for a number |
+| Table | The titles of the columns in the dim color; lines of 24 pixels; every second line, from the first, on a band of `COLOR_CARD_TOP`; numbers at the right of their column |
+| Bar | The track in `COLOR_TRACK`; the full part from 125 % of its color at the top to 78 % at the bottom; 2 pixels at least for a value above 0 |
+| Button | A rectangle of the track with its label in the text color; blue (`COLOR_TITLE`) at 60 % when it has the focus or the pointer is over it, full blue with a white label when it is open or both |
+| List with a choice | Lines of 24 pixels; the chosen line in `COLOR_TITLE` with its name in white; a line of 2 pixels under a searched part of each name; a bar of 2 pixels at the right when the lines do not fit |
+| Text input | A field of the track with a line of 2 pixels at its bottom (`COLOR_TITLE` with the focus, `COLOR_NOT_USABLE` without); the text in white; a caret of 2 x 16 pixels in `COLOR_TITLE` with the focus; the placeholder in the dim color |
+| Large number | The font at 3 times its size: the one number of a card (section 5) |
+
+- An element that takes input can take the focus, and the keyboard reaches it: Tab, Enter, Space, the arrows (`docs/INTERFACE.md`, section 4).
+
 ## State
 
 - The boot display follows all rules.
 - The desktop (the compositor: background, bar, menus, windows, pointer, launcher) follows all rules, with one exception: the places of new windows are not on the grid. The main scenario of the machine test presses fixed places in windows at these places; to move them to the grid is to measure each of these places again.
-- `errors`, `locks`, `net` and `remote` take all their colors from `support/graphics`. `log` and `pages` take the background, the text and the dim color from it.
+- `clock`, the window of `remote`, the launcher of the compositor, `interface_elements` and `vector_glyphs` are built with the interface package (section 10). `errors`, `locks` and `net` take all their colors from `support/graphics`. `log` and `pages` take the background, the text and the dim color from it.
 - Each other program takes from `support/graphics` the colors that have a role of the rules: the background, the card (a panel or a band), the text, the dim color, the track (the empty part of a bar), an expected answer (`COLOR_PROGRAM`) and a failure (`COLOR_FAILED`), where its own color had that role. The colors that mean something of one program stay in it: a refusal that the program expects, an answer that is not the expected one (`0xE0B040` in eight programs), the measures of `flow`, `crowd`, `disk` and `clock`, the bars of `budget` and `processors`, the states of `rings`, `threads` and `terminal`, the headings of `manual`, the count of `tally`, the marble of `temple`, the paper of `paint`, the levels of `log`, the kinds of pages of `pages`. Some of them have the value of a rule color with another meaning (`0xE0A040` for kernel entries): a color of the rules for them is a change of meaning, a later step.
 - The windows below the level of the boot display, `remote` and `scheduler` (2026-11-11), from the farthest: `temple` (marble and ink, no rule color), `paint` (a light paper), `manual` (its own colors for headings, no cards), `monitor` (one list, no cards), the tables of `budget`, `rights`, `origin`, `limits`, `frames`, `imports`, `processors` (one size of text, bands but no cards and no captions), the measures of `clock`, `crowd`, `flow`, `disk`, then `rings`, `threads`, `workers`, `tally`, `notes`, `life`, and the text of `console` and `terminal`.
