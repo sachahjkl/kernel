@@ -1443,6 +1443,14 @@ scenario := [?]Step {
 	{kind = .Shot, text = "interface_damage"},
 	{kind = .Close, text = "interface_elements"},
 	{kind = .Wait, text = "root: interface_elements stopped"},
+	// A vector font, as research (docs/INTERFACE.md, section 9): the same
+	// text in Spleen 8x16 and from the outlines of DejaVu Sans Mono.
+	{kind = .Launch, text = "vector_glyphs"},
+	{kind = .Wait, text = "vector_glyphs: one glyph: Spleen 8x16 "},
+	{kind = .Wait, text = "vector_glyphs: ok, "},
+	{kind = .Shot, text = "vector_glyphs"},
+	{kind = .Close, text = "vector_glyphs"},
+	{kind = .Wait, text = "root: vector_glyphs stopped"},
 	{kind = .Front, text = "console"},
 	// Each page is free or paid, after all the starts and stops of this test.
 	{kind = .Type, text = "memory()"},
