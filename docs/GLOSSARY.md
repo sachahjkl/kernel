@@ -268,9 +268,23 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Pointer theme file | One pointer theme in the format of the system (`contract/pointer_pictures`): a header, a table of shapes, a table of pictures, the pixels. A program maps it and reads it with no parse, after one validation | cursor file, .cur, Xcursor file (for this) |
 | Pointer manifest | A text file of the repository that says how the tool makes a pointer theme file: for each pointer shape, the files of an Xcursor theme or grids of squares, and the adjustments (`docs/POINTERS.md`, "The manifest") | config, recipe, index.theme |
 | Premultiplied alpha | A form of a pixel whose red, green and blue are already multiplied by its alpha. A blend is then `result = source + destination * (255 - alpha) / 255` for each channel | straight alpha (for this) |
-| Resource | A file of the boot image that is not a module: a pointer theme file today. It has a name and the hash of its bytes, in the resource table of the boot image. The root service gives a program a read-only mapping of it | asset, data file, blob |
+| Resource | A file of the boot image that is not a module: a pointer theme file or the glyph cache of the vector font. It has a name and the hash of its bytes, in the resource table of the boot image. The root service gives a program a read-only mapping of it | asset, data file, blob |
 | Caret | The mark in a text input of the place where the next typed character goes. Not the pointer | cursor, text cursor, insertion point |
 | Picker | The surface of the document service where the person chooses a document. Its result is a grant | file dialog, powerbox |
+
+## Text
+
+| Term | Definition | Do not use |
+|---|---|---|
+| Font | A set of glyphs of one design, with the measures that place them. The system has two: the vector font of the glyph cache (the default) and Spleen 8x16 (the fallback) (`docs/FONTS.md`) | typeface (for this), font face |
+| Glyph | The form of one character in one font | character (for the form), symbol |
+| Outline | The closed contours of line segments and quadratic curves that bound a glyph, in units of its font (TrueType `glyf`) | path, vector shape, Bézier |
+| Coverage | The part of a pixel, or of a third of a pixel, that a glyph covers: 0 to 255 | alpha (for this), opacity, mask |
+| Subpixel band | One of the three color stripes of a pixel of the screen, red, green and blue, side by side; the vector font has a coverage for each one | subpixel, ClearType, LCD stripe |
+| Grid fit | The move of the baseline, the x-height and the cap height of a font onto whole pixels, so that the tops of the letters are sharp. The system has no other hinting | hinting (alone), autohint |
+| Glyph cache | The glyphs of one font already drawn, for each character 32 to 126 and each scale of the grid: words of coverage, in one file (`contract/glyph_cache`). The kernel tool makes it at build time; it is a resource of the boot image | atlas, texture cache, glyph bitmap |
+| Setting | One choice of the person that changes how the system works for each program: the font, the order of the subpixel bands. The program `settings` changes it | preference, option, configuration |
+| Settings page | The one page of the settings of the person (`contract/settings`): the root service creates it; the program `settings` writes it; each program with a surface reads it | registry, config file, dconf |
 
 ## Terms that the system does not have
 

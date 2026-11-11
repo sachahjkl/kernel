@@ -101,9 +101,10 @@ Then `execute_in_rectangles` draws again, in each damage rectangle, each record 
 
 ## 5. Text
 
-- **The interface of the text** is two functions and one record: `Font` (`kind`, `scale`), `text_width(font, text) -> pixels` and the record `Text` of section 2.1 with `text_scale` and `text_subpixel_x`. Today `kind` has one value, `Spleen_8x16` (owner, 2026-11-10: the bitmap font at its native size), with the scales 1, 2 and 3.
-- A vector font later is a second `kind`: it fills `text_subpixel_x`, and its rasterizer reads it. The callers do not change: they measure with `text_width` and append text records.
-- The research on a vector font, with a prototype, is in section 9.
+- **The interface of the text** is two functions and one record: `Font` (`kind`, `scale`), `text_width(font, text) -> pixels` and the record `Text` of section 2.1 with `text_scale` and `text_subpixel_x`, with the scales 1, 2 and 3.
+- **The font of the system** (2026-11-11, `docs/FONTS.md`): the vector font by default, from the glyph cache that the root service maps, with a coverage for each subpixel band; Spleen 8x16 as the fallback and as the other value of the setting `font`. Both are monospace on cells of 8 x 16, so `text_width` and the layout do not change with the setting, and `text_subpixel_x` stays 0 on the grid. `execute` draws a text record with `graphics.text_scaled`: the package does not know which font draws.
+- **A change of the setting** comes as the display event `Settings_Changed`: `window_events` marks the window as not drawn, and the next frame draws it whole (each draw record is the same, each pixel of text is not).
+- A proportional font later is a second `kind`: it fills `text_subpixel_x`, and its glyph cache has subpixel positions. The callers do not change.
 
 ## 6. The output and its execution
 
@@ -133,7 +134,7 @@ The module is the right form: the interface is shared code, as P10 and P11 say. 
 
 ## 9. Text: a vector font, research note and prototype
 
-Spleen 8x16 stays the font of the system in this step (decision of 2026-11-10). This section prepares the decision of the owner.
+This section is the research of step 51. The owner decided on 2026-11-11: a vector font by default, with subpixel bands, Spleen 8x16 as the fallback. The design that was built is `docs/FONTS.md`: a rasterizer in fixed point, a glyph cache made at build time, JetBrains Mono by default. The prototype below (floating point, no cache) is replaced.
 
 ### What Slug does
 
@@ -158,7 +159,7 @@ Slug (Eric Lengyel, JCGT 6(2), 2017, <https://jcgt.org/published/0006/02/02/>) d
 
 1. The model: immediate mode over draw tables, damage by difference (sections 2 and 2.2).
 2. The form: a `support` package now, a module when the contract describes a table as a parameter (section 7). The other way: extend the contract first.
-3. The font: Spleen 8x16 stays, or a vector font (which one, which sizes, and grayscale or coverage per color stripe), after the picture of `vector_glyphs`.
+3. The font: decided on 2026-11-11 (a vector font by default, subpixel bands, Spleen as the fallback). The decisions that remain (the font file, the grid fit) are in `docs/FONTS.md`, section 11.
 4. The order of the next conversions (`FIRST_MILESTONE.md`, "Next steps", item 13).
 
 ## 11. What was taken from `gui_toolkit`, and what was not

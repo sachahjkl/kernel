@@ -11,7 +11,9 @@ The system boots under QEMU to a graphical desktop with a console, a system tool
 
 ![The interface package: each element live, the draw table of the last frame, the damage by difference](docs/screenshots/interface_elements.png)
 
-![A vector font as research: DejaVu Sans Mono from its outlines beside Spleen 8x16](docs/screenshots/vector_glyphs.png)
+![The text of the system is a vector font with subpixel bands (JetBrains Mono by default); the program settings changes it to Spleen 8x16 and back while every window runs](docs/screenshots/font_vector.png)
+
+![Six candidate fonts beside Spleen 8x16, each from a glyph cache in fixed point, and a word of each enlarged](docs/screenshots/font_candidates.png)
 
 ![The menu of the windows: a press on a line brings the window to the front](docs/screenshots/windows.png)
 
@@ -172,10 +174,10 @@ The same window with the pointer theme of the owner (Posy's Cursor, CC BY-NC 4.0
 | `boot/` | The boot program (UEFI) |
 | `kernel/` | The kernel. It compiles with the contract library only |
 | `runtime/` | `memory.asm`: the copy and the fill of every module, of the kernel and of the boot program (`copy_bytes_without_overlap`, `copy_bytes_with_overlap`, `fill_bytes_with_value`), with its host tests |
-| `contract/` | The source library `contract:`: what two parties agree on. `operation` (the kernel operations), `boot_info` (the record from the boot program to the kernel), `module` (the module format and the loader code), `store` (the format of the data disk), `pointer_pictures` (the pointer theme file and its validation), `blake3` (the hash), `ring` (two queues in shared memory, and the shared queue), `isolated` (the isolated call) |
-| `support/` | The source library `support:`: what a program compiles in. `system` (kernel operations, text, loader, grants, services), `graphics` (drawing, and the table of the design rules), `interface` (the elements of the windows as draw tables, the damage by difference), `vector_font` (a prototype of a vector font, research), `display` (the protocol of the compositor), `terminal` (the terminal ring), `bootscreen`, `bar` (the names of the programs and the places of the bar, its menus and the filter of the launcher), `relay` (the records of the `rings` demonstration), `twins` (the modes of the program `twin`) |
+| `contract/` | The source library `contract:`: what two parties agree on. `operation` (the kernel operations), `boot_info` (the record from the boot program to the kernel), `module` (the module format and the loader code), `store` (the format of the data disk), `pointer_pictures` (the pointer theme file and its validation), `blake3` (the hash), `ring` (two queues in shared memory, and the shared queue), `isolated` (the isolated call), `glyph_cache` (the drawn glyphs of the vector font), `settings` (the settings page of the person) |
+| `support/` | The source library `support:`: what a program compiles in. `system` (kernel operations, text, loader, grants, services), `graphics` (drawing, and the table of the design rules), `interface` (the elements of the windows as draw tables, the damage by difference), `vector_font` (the vector font: a reader of TrueType outlines, a rasterizer in fixed point with subpixel bands, the builder of the glyph cache), `display` (the protocol of the compositor), `terminal` (the terminal ring), `bootscreen`, `bar` (the names of the programs and the places of the bar, its menus and the filter of the launcher), `relay` (the records of the `rings` demonstration), `twins` (the modes of the program `twin`) |
 | `programs/` | `root`, `input`, `compositor`, `console`, `host`, `monitor`, `plasma`, `life`, `paint`, `fault`, `temple`, `rings`, `node`, `threads`, `workers`, `rights`, `origin`, `budget`, `limits`, `processors`, `locks`, `locker`, `scheduler`, `boot`, `pages`, `frames`, `twin`, `log`, `flow`, `crowd`, `clock`, `tally`, `manual`, `terminal`, `flood`, `pointers` |
-| `resources/` | The sources of the resources of the boot image: the pointer manifests (`resources/pointers/`) |
+| `resources/` | The sources of the resources of the boot image: the pointer manifests (`resources/pointers/`), and the ASCII subsets of the six candidate vector fonts with their licenses (`resources/fonts/`, `docs/FONTS.md`) |
 | `modules/` | Modules of commands (`math`, `probe`) and the test modules of the host load test |
 | `tools/kerneltool/` | The kernel tool: all the automation of the project |
 
@@ -197,6 +199,7 @@ kerneltool run
 | `film` | Build, start the machine, film the terminal, write `build/film/terminal.mp4` (not a test) |
 | `font` | Convert the BDF file of the font to `support/graphics/font.odin` |
 | `pointers` | Convert the pointer manifests of `resources/pointers/` to pointer theme files in `build/pointers/`, and print a table of each theme (`build` does it too) |
+| `vector_fonts` | Subset the candidate vector fonts to `resources/fonts/`, and draw the picture of the choice `build/fonts/candidates.png` |
 | `portrait` | Convert `programs/temple/portrait.jpg` to `programs/temple/portrait.pixels` |
 | `repeat` | `repeat <module> <count>`: build one module again and again and compare the module, the LLVM IR and the object with the first build |
 | `check` | `odin check -vet` and `odin test` of the host code, then `test` |
@@ -207,7 +210,7 @@ In the machine, type `help()` in the console. The button "programs" of the bar o
 
 ## Licences
 
-The font is Spleen 8x16 by Frederic Cambus, BSD 2-Clause. See `support/graphics/FONT_LICENSE`.
+The default font is JetBrains Mono (SIL Open Font License 1.1), as an ASCII subset in `resources/fonts/`; the other candidates are there with their licenses (`OFL.txt`, `BITSTREAM_VERA_LICENSE.txt`, and a `.license` file for each). The fallback font is Spleen 8x16 by Frederic Cambus, BSD 2-Clause. See `support/graphics/FONT_LICENSE`.
 
 The portrait of the `temple` program is a public domain picture from Wikimedia Commons. See `programs/temple/PORTRAIT_LICENSE`.
 

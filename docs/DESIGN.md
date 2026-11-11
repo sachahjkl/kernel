@@ -61,8 +61,10 @@ One color is one concept, as one term is one concept.
 
 ## 5. Text
 
-- One font: Spleen 8x16. Three sizes: 1, 2 and 3 times. No other size.
-- **Changed by the owner on 2026-11-11** ("par défaut il faut une police vectorielle"): the default font becomes a vector font, drawn with bands of color for each subpixel; Spleen 8x16 stays as the fallback and as an option of a settings menu. Until the step of the vector font is merged, the line above is the state of the code.
+- One font at a time, on the grid of cells of 8 x 16 pixels: the vector font by default, drawn with a coverage for each subpixel band (owner, 2026-11-11: "par défaut il faut une police vectorielle", "Bandes sous-pixel"); Spleen 8x16 as the fallback and as the other value of the setting `font` (`docs/FONTS.md`). Before 2026-11-11 the rule was "One font: Spleen 8x16".
+- Three sizes: cells of 1, 2 and 3 times 8 x 16. The vector font draws each size from its outline; Spleen enlarges its pixels. No other size.
+- The vector font is monospace: its advance is the width of a cell, so a layout in cells holds with either font. A glyph stays inside its cell.
+- An enlarged picture of the screen shows colored edges on each letter: the subpixel bands, not a fault. The setting `subpixel_order` `none` gives gray edges.
 - The title of a card is in capital letters, in the accent of the card, after a bar of 4 x 16 pixels in the same accent.
 - A name is in the dim color. A value is in the text color. A measure of a concept is in the color of that concept.
 - A card has at most one number in the large size: the number that the card is about.
@@ -77,7 +79,7 @@ One color is one concept, as one term is one concept.
 
 ## 7. Cost
 
-- Drawing is `fill` of rectangles with integer arithmetic. No floating point and no image file.
+- Drawing is `fill` of rectangles with integer arithmetic. No floating point and no image file. The one drawn data is the glyph cache of the vector font: the kernel tool makes it at build time from the outlines, in integers, and a text draw blends its words (`docs/FONTS.md`).
 - A display does not wait so that a person can see it. A display that fails stays.
 - Each display has a measured draw time in its choice in `docs/FIRST_MILESTONE.md`.
 
@@ -149,7 +151,7 @@ The interface package (`support/interface`, `docs/INTERFACE.md`) draws these ele
 | Button | A rectangle of the track with its label in the text color; blue (`COLOR_TITLE`) at 60 % when it has the focus or the pointer is over it, full blue with a white label when it is open or both |
 | List with a choice | Lines of 24 pixels; the chosen line in `COLOR_TITLE` with its name in white; a line of 2 pixels under a searched part of each name; a bar of 2 pixels at the right when the lines do not fit |
 | Text input | A field of the track with a line of 2 pixels at its bottom (`COLOR_TITLE` with the focus, `COLOR_NOT_USABLE` without); the text in white; a caret of 2 x 16 pixels in `COLOR_TITLE` with the focus; the placeholder in the dim color |
-| Large number | The font at 3 times its size: the one number of a card (section 5) |
+| Large number | The font at 3 times its size, drawn from its outline at 24 x 48: the one number of a card (section 5) |
 
 - An element that takes input can take the focus, and the keyboard reaches it: Tab, Enter, Space, the arrows (`docs/INTERFACE.md`, section 4).
 
@@ -157,6 +159,6 @@ The interface package (`support/interface`, `docs/INTERFACE.md`) draws these ele
 
 - The boot display follows all rules.
 - The desktop (the compositor: background, bar, menus, windows, pointer, launcher) follows all rules, with one exception: the places of new windows are not on the grid. The main scenario of the machine test presses fixed places in windows at these places; to move them to the grid is to measure each of these places again.
-- `clock`, the window of `remote`, the launcher of the compositor, `interface_elements` and `vector_glyphs` are built with the interface package (section 10). `errors`, `locks` and `net` take all their colors from `support/graphics`. `log` and `pages` take the background, the text and the dim color from it.
+- `clock`, the window of `remote`, the launcher of the compositor, `interface_elements`, `vector_glyphs` and `settings` are built with the interface package (section 10). `errors`, `locks` and `net` take all their colors from `support/graphics`. `log` and `pages` take the background, the text and the dim color from it.
 - Each other program takes from `support/graphics` the colors that have a role of the rules: the background, the card (a panel or a band), the text, the dim color, the track (the empty part of a bar), an expected answer (`COLOR_PROGRAM`) and a failure (`COLOR_FAILED`), where its own color had that role. The colors that mean something of one program stay in it: a refusal that the program expects, an answer that is not the expected one (`0xE0B040` in eight programs), the measures of `flow`, `crowd`, `disk` and `clock`, the bars of `budget` and `processors`, the states of `rings`, `threads` and `terminal`, the headings of `manual`, the count of `tally`, the marble of `temple`, the paper of `paint`, the levels of `log`, the kinds of pages of `pages`. Some of them have the value of a rule color with another meaning (`0xE0A040` for kernel entries): a color of the rules for them is a change of meaning, a later step.
 - The windows below the level of the boot display, `remote` and `scheduler` (2026-11-11), from the farthest: `temple` (marble and ink, no rule color), `paint` (a light paper), `manual` (its own colors for headings, no cards), `monitor` (one list, no cards), the tables of `budget`, `rights`, `origin`, `limits`, `frames`, `imports`, `processors` (one size of text, bands but no cards and no captions), the measures of `clock`, `crowd`, `flow`, `disk`, then `rings`, `threads`, `workers`, `tally`, `notes`, `life`, and the text of `console` and `terminal`.

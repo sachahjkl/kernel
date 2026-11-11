@@ -2,11 +2,14 @@ package interface
 
 import "support:graphics"
 
-// The fonts that the package can measure and draw. A vector font later is a
-// new kind: the callers measure with text_width and append text records, so
-// they do not change (docs/INTERFACE.md, section 5).
+// The fonts that the package can measure. The kind is the grid of the
+// font: cells of 8 x 16 pixels at scale 1. The vector font of the system and
+// Spleen 8x16 both draw on it (docs/FONTS.md); the setting of the person
+// chooses which one draws, and the measure does not change. A proportional
+// font later is a new kind: the callers measure with text_width and append
+// text records, so they do not change (docs/INTERFACE.md, section 5).
 Font_Kind :: enum u8 {
-	Spleen_8x16, // The font of the system (owner, 2026-11-10), at its native size.
+	Cells_8x16,
 }
 
 // A font and a size. scale: 1, 2 or 3 times the native size (docs/DESIGN.md,
@@ -26,7 +29,7 @@ font_scale :: proc "contextless" (font: Font) -> int {
 // text_width gives the width of a text in pixels.
 text_width :: proc "contextless" (font: Font, text: string) -> int {
 	switch font.kind {
-	case .Spleen_8x16:
+	case .Cells_8x16:
 	}
 	return len(text) * graphics.CELL_WIDTH * font_scale(font)
 }
