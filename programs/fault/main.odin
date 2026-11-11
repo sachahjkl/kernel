@@ -6,6 +6,7 @@
 // two, one and entry (program `errors`).
 package fault
 
+import op "contract:operation"
 import "support:system"
 import "base:intrinsics"
 
@@ -29,7 +30,9 @@ one :: #force_no_inline proc "contextless" (address: uintptr) {
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	system.log("fault: this program writes to address 0")
-	address := uintptr(ctx.values[len(ctx.values) - 1]) // 0; the compiler cannot know it.
+	// The value 11: 0, as no starter writes it; the compiler cannot know it.
+	// (The values 12 to 15 are the random seed of the program.)
+	address := uintptr(ctx.values[op.CONTEXT_VALUE_SEED - 1])
 	one(address)
 	system.log("fault: the write did not stop the program")
 	system.stop(1)
