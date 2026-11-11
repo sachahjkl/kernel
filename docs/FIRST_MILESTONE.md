@@ -697,6 +697,8 @@ NEW-1. **The table of error details** (owner: "l'idée d'une table de détails c
 
 ## Gaps
 
+- **A fault at the return to a program is a fault of the kernel** (Review 10): the kernel refuses the one known cause (a thread whose entry or stack is not an address of a program), but any other state of a thread that the processor refuses at `iretq` would stop the machine. To do: treat a fault at that instruction as a fault of the program.
+
 Against the properties and the module contract:
 
 - Property 19 is not complete: the description has no floats, no text of a variable size in a record, no record in a record, and no handle in a result.
