@@ -75,7 +75,7 @@ Command :: struct {
 COMMANDS :: [?]Command {
 	{name = "build", about = "the modules, the boot image and the boot program, as " + BOOT_PROGRAM, run = run_build},
 	{name = "run", about = "build, then start the machine under QEMU, with the log of the kernel on this terminal", run = run_machine},
-	{name = "test", about = "build, start the machine under QEMU, act as the person, check the log, save pictures of the screen; `test network`: the machine of the network only", run = run_test},
+	{name = "test", about = "build, start the machine under QEMU, act as the person, check the log, save pictures of the screen; `test network`, `test main`: one machine only", run = run_test},
 	{name = "screenshots", about = "test, then copy the pictures to " + DOCUMENT_SCREENSHOT_FOLDER + " and to a new folder of " + DEVELOPMENT_LOG_FOLDER, run = run_screenshots},
 	{name = "measure", about = "build, start the machine, run the measures of the locks of the kernel with no other program, and stop: the numbers are in " + TEST_OUTPUT_MEASURE, run = run_measure},
 	{name = "film", about = "build, start the machine, film the terminal, and write " + FILM_OUTPUT + " and a copy in " + DEVELOPMENT_LOG_FOLDER + " (needs ffmpeg)", run = run_film},
@@ -218,7 +218,10 @@ run_test :: proc(args: []string) -> int {
 	if !disk_prepare(TEST_DATA_DISK, DATA_DISK_SIZE, true) {
 		return EXIT_FAILURE
 	}
-	// `test network`: the machine of the network only, for the work on it.
+	// `test network`, `test main`: one machine only, for the work on it.
+	if len(args) == 1 && args[0] == "main" {
+		return machine_test(scenario[:], BOOT_VOLUME, TEST_OUTPUT, MACHINE_STOP_OK, TEST_DATA_DISK) ? 0 : EXIT_FAILURE
+	}
 	if len(args) == 1 && args[0] == "network" {
 		return machine_test(scenario_network[:], BOOT_VOLUME, TEST_OUTPUT_NETWORK, MACHINE_STOP_OK, TEST_DATA_DISK) ? 0 : EXIT_FAILURE
 	}
@@ -328,7 +331,7 @@ run_check :: proc(args: []string) -> int {
 	// compiler assembles runtime/memory_for_host_tests.asm itself and links
 	// its object by its path (a library found through `-L/` is refused by
 	// the linker of the Nix sandbox).
-	for folder in ([]string{"runtime", "contract/blake3", "contract/isolated", "contract/remote", "support/bar", "support/information", "support/network", "support/tcp", "support/web", "tools/kerneltool"}) {
+	for folder in ([]string{"runtime", "contract/blake3", "contract/isolated", "contract/remote", "support/bar", "support/addresses", "support/information", "support/network", "support/tcp", "support/web", "tools/kerneltool"}) {
 		name, _ := strings.replace_all(folder, "/", "_", context.temp_allocator)
 		if !run({"odin", "test", folder, "-vet", CONTRACT_LIBRARY, SUPPORT_LIBRARY, strings.concatenate({"-out:" + BUILD_FOLDER + "/test_", name}, context.temp_allocator)}) {
 			return EXIT_FAILURE

@@ -81,6 +81,7 @@ module_builds := [?]Module_Build {
 	{name = "remote", source = "programs/remote", image = true},
 	{name = "server", source = "programs/server", image = true},
 	{name = "fetch", source = "programs/fetch", image = true},
+	{name = "inspect", source = "programs/inspect", image = true},
 	{name = "disk", source = "programs/disk", image = true},
 	{name = "storage", source = "programs/storage", image = true},
 	{name = "notes", source = "programs/notes", image = true},

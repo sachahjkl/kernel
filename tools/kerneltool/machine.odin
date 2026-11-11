@@ -44,6 +44,7 @@ Step_Kind :: enum {
 	Quit, // End QEMU: the machine does not stop by itself.
 	Trace, // The log has text, after the text of the last Wait, then a stack trace to the end of the line: the tool names each frame from the linked file of its module, and the names start with `names`.
 	Record, // A log record with the program `program`, the channel `channel`, the level `level` and a text that has `text`, after the record of the last Record step: the tool reads log.records() through the remote service (call.odin). With any_order, the next Record step searches from the same place.
+	Agree, // The program `text`: the mapped pages and the threads that inspect.mappings() and inspect.threads() give are the ones that monitor.programs() gives (two tools, two reports of the kernel).
 	Call, // Call an export of a service from the host (call.odin), through the remote service: what the tool prints has `expected`. With `rows_call`, that call gives the count of rows of the Table. With `repeat`, the tool also measures the round trip and the calls in one second.
 	Peer, // The peer runs the TCP case text (peer_tcp.odin) and checks its answers.
 	Fetch, // The TCP of the host fetches the page text of `server` through QEMU user networking (web_host.odin).
@@ -1353,6 +1354,40 @@ scenario := [?]Step {
 	{kind = .Wait, text = "errors: case b again: Memory_Size: the argument memory, handle "},
 	{kind = .Wait, text = " was revoked"},
 	{kind = .Shot, text = "errors"},
+	// A developer tool (docs/TOOLS.md): the memory and the execution of one
+	// program, from the reports of the kernel. errors still holds the
+	// program fault that stopped: its stop report stays.
+	{kind = .Launch, text = "inspect"},
+	{kind = .Wait, text = "inspect: ok, "},
+	{kind = .Type, text = "threads"},
+	{kind = .Wait, text = "inspect: threads: "},
+	{kind = .Wait, text = "inspect: one sample of threads took "},
+	{kind = .Agree, text = "threads"},
+	{kind = .Key, text = "backspace"}, {kind = .Key, text = "backspace"}, {kind = .Key, text = "backspace"}, {kind = .Key, text = "backspace"},
+	{kind = .Key, text = "backspace"}, {kind = .Key, text = "backspace"}, {kind = .Key, text = "backspace"},
+	{kind = .Type, text = "console"},
+	{kind = .Wait, text = "inspect: console: "},
+	{kind = .Agree, text = "console"},
+	{kind = .Shot, text = "inspect"},
+	{kind = .Key, text = "spc"},
+	{kind = .Wait, text = "inspect: the sample is frozen"},
+	{kind = .Key, text = "spc"},
+	{kind = .Wait, text = "inspect: the sample is live"},
+	{kind = .Key, text = "backspace"}, {kind = .Key, text = "backspace"}, {kind = .Key, text = "backspace"}, {kind = .Key, text = "backspace"},
+	{kind = .Key, text = "backspace"}, {kind = .Key, text = "backspace"}, {kind = .Key, text = "backspace"},
+	{kind = .Type, text = "fault"},
+	{kind = .Wait, text = "inspect: fault stopped: page fault at 0x0; stack: fault + "},
+	{kind = .Shot, text = "inspect_stopped"},
+	{kind = .Key, text = "tab"},
+	{kind = .Wait, text = "inspect: the bytes of the memory of inspect"},
+	{kind = .Shot, text = "inspect_hex"},
+	{kind = .Key, text = "tab"},
+	// The same facts as tables, from the host.
+	{kind = .Call, text = "inspect.mappings(\"console\")", expected = " rows of Mapping"},
+	{kind = .Call, text = "inspect.threads(\"threads\")", expected = " rows of Thread"},
+	{kind = .Call, text = "inspect.modules(\"console\")", expected = "console "},
+	{kind = .Call, text = "inspect.mappings(\"nothing\")", outcome = .Failed, expected = "error: inspect.mappings: the argument program names none of the programs (-2)"},
+	{kind = .Close, text = "inspect"},
 	{kind = .Close, text = "errors"},
 	{kind = .Record, program = "root", channel = "programs", level = "info", text = "root: errors stopped with code 0"},
 	{kind = .Front, text = "console"},
@@ -2008,6 +2043,32 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				fmt.eprintfln("kerneltool: test failed: step %d: no log record of %s, channel \"%s\", level %s, has \"%s\"", index + 1, step.program, step.channel, step.level, step.text)
 				return false
 			}
+		case .Agree:
+			// The program list of the monitor, and the reports of inspect.
+			monitor, has_monitor := table_call(&machine.client, "monitor.programs()")
+			mapped, threads_count := -1, -1
+			if has_monitor {
+				for row in 0 ..< len(monitor.rows) / monitor.size {
+					if table_value(&monitor, row, "name") == step.text {
+						mapped, _ = strconv.parse_int(table_value(&monitor, row, "mapped"))
+						threads_count, _ = strconv.parse_int(table_value(&monitor, row, "threads"))
+					}
+				}
+			}
+			mappings, has_mappings := table_call(&machine.client, fmt.tprintf("inspect.mappings(%q)", step.text))
+			threads, has_threads := table_call(&machine.client, fmt.tprintf("inspect.threads(%q)", step.text))
+			pages := 0
+			if has_mappings {
+				for row in 0 ..< len(mappings.rows) / mappings.size {
+					value, _ := strconv.parse_int(table_value(&mappings, row, "pages"))
+					pages += value
+				}
+			}
+			if !has_monitor || !has_mappings || !has_threads || mapped < 0 || pages != mapped || int(threads.total) != threads_count {
+				fmt.eprintfln("kerneltool: test failed: step %d: %s: monitor.programs() gives %d mapped pages and %d threads, inspect gives %d pages in %d mappings and %d threads", index + 1, step.text, mapped, threads_count, pages, mappings.total, threads.total)
+				return false
+			}
+			fmt.printfln("kerneltool: test passed: %s: inspect gives %d pages in %d mappings and %d threads, as monitor.programs() gives", step.text, pages, mappings.total, threads.total)
 		case .Call:
 			if !machine.client_open {
 				if !call_client_open(&machine.client, machine.call_port) {

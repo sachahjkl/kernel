@@ -52,6 +52,10 @@ grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 		return {.Root_Ring, .Inspect, .Stop, .Image, .Terminal, .Store, .Person, .Replacements, .Replace}
 	case "flood":
 		return {.Terminal}
+	case "inspect":
+		// A developer tool: it reads the reports of the machine and the names
+		// of the modules, and serves the same facts (docs/TOOLS.md).
+		return {.Inspect, .Image, .Serve}
 	case "monitor":
 		return {.Inspect, .Serve} // It serves programs() and counts() to a caller that acts for the person.
 	case "processors", "pages", "flow", "crowd", "clock":
@@ -110,7 +114,7 @@ callable_of :: proc "contextless" (name: string) -> []string {
 }
 
 @(rodata)
-remote_callable := [?]string{"compositor", "log", "manual", "monitor", "storage"}
+remote_callable := [?]string{"compositor", "inspect", "log", "manual", "monitor", "storage"}
 
 // The values of the context of the compositor that name its own file: 0 to
 // 3 are the screen.
