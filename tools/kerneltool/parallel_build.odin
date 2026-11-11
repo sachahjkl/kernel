@@ -6,10 +6,11 @@ import "core:strconv"
 import "core:sync"
 import "core:thread"
 
-// The parallel build of the modules (owner, 2026-11-11, HANDOFF item 43:
-// "multithread, collect, order"). Each module is built by its own process
-// of this tool (the command `module`), and each such process runs one
-// compiler on one thread: one source still gives one module (property 11).
+// The parallel build of the modules. Each module is built by its own
+// process of this tool (the command `module`), and each such process runs
+// one compiler on one thread: one source still gives one module, because
+// the compiler is deterministic only with one thread
+// (docs/REPRODUCIBLE_BUILD.md).
 // The tool runs at most `module_build_processes` of them at once, keeps the
 // output of each one, prints it whole in the order of the module table,
 // and assembles the boot image in that order.
@@ -144,7 +145,10 @@ module_build_worker :: proc(data: rawptr) {
 			return
 		}
 		index := level.module_indexes[place]
-		command := [?]string{level.tool_path, "module", module_builds[index].name, test_build_checks ? "with_checks" : "without_checks"}
+		// Each setting of the build that this process holds goes to the
+		// module process as an argument: a setting that stays here gives a
+		// module of another build, with no error.
+		command := [?]string{level.tool_path, "module", module_builds[index].name, test_build_checks ? "with_checks" : "without_checks", measure_run ? "measure_run" : "usual_run"}
 		state, standard_output, standard_error, error := os.process_exec({command = command[:]}, context.allocator)
 		output := make([]u8, len(standard_output) + len(standard_error))
 		copy(output, standard_output)
@@ -166,11 +170,12 @@ module_build_worker :: proc(data: rawptr) {
 // The command module: build one module of the table in this process. The
 // parallel build runs it; a person can run it to build one module.
 run_module :: proc(args: []string) -> int {
-	if len(args) != 2 || (args[1] != "with_checks" && args[1] != "without_checks") {
-		fmt.eprintln("kerneltool: module <name> with_checks|without_checks")
+	if len(args) != 3 || (args[1] != "with_checks" && args[1] != "without_checks") || (args[2] != "measure_run" && args[2] != "usual_run") {
+		fmt.eprintln("kerneltool: module <name> with_checks|without_checks measure_run|usual_run")
 		return EXIT_USAGE
 	}
 	test_build_checks = args[1] == "with_checks"
+	measure_run = args[2] == "measure_run"
 	for build in module_builds {
 		if build.name == args[0] {
 			return build_module(build) ? 0 : EXIT_FAILURE

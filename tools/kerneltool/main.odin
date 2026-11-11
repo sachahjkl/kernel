@@ -75,7 +75,7 @@ Command :: struct {
 
 COMMANDS :: [?]Command {
 	{name = "build", about = "the modules, the boot image and the boot program, as " + BOOT_PROGRAM + "; one process for each module, as many at once as the processors, or `build <processes>`", run = run_build},
-	{name = "module", about = "module <name> with_checks|without_checks: build one module of the table (the parallel build runs this command)", run = run_module},
+	{name = "module", about = "module <name> with_checks|without_checks measure_run|usual_run: build one module of the table (the parallel build runs this command)", run = run_module},
 	{name = "test", about = "build, start the machine under QEMU, act as the person, check the log, save pictures of the screen; `test network`, `test main`, `test power`: one part only", run = run_test},
 	{name = "run", about = "build, then start the machine under QEMU, with the log of the kernel on this terminal; `run without_checks`: the measure build", run = run_machine},
 	{name = "screenshots", about = "test, then copy the pictures to " + DOCUMENT_SCREENSHOT_FOLDER + " and to a new folder of " + DEVELOPMENT_LOG_FOLDER, run = run_screenshots},
