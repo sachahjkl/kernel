@@ -1,7 +1,7 @@
 package kerneltool
 
 import "contract:store"
-import "support:launcher"
+import "support:bar"
 import "core:fmt"
 import "core:hash"
 import "core:os"
@@ -31,7 +31,7 @@ Step_Kind :: enum {
 	Type, // Press the keys of text, then Enter.
 	Key, // Press one key: text is its QEMU name.
 	Click, // Press the left button at (x, y).
-	Launch, // Open the menu of the launcher, and press the line of the program text.
+	Launch, // Open the menu of the programs, and press the line of the program text.
 	Drag, // Hold the left button from (x, y) to (to_x, to_y).
 	Shot, // Save the screen as text.png.
 	Move, // Drag the window with the title text to the place (to_x, to_y). The tool reads the place of the window in the log, before and after.
@@ -516,9 +516,9 @@ scenario := [?]Step {
 	{kind = .Wait, text = "compositor: surface plasma"},
 	{kind = .Drag, x = 250, y = 182, to_x = 276, to_y = 150},
 	{kind = .Shot, text = "desktop"},
-	// The menu of the launcher: the button of the bar opens and closes it.
+	// The menu of the programs: the button of the bar opens and closes it.
 	{kind = .Click, x = 116, y = 14},
-	{kind = .Shot, text = "launcher"},
+	{kind = .Shot, text = "menu"},
 	{kind = .Click, x = 116, y = 14},
 	// The menu of the windows: a press on a line brings the window to the
 	// front.
@@ -1678,9 +1678,9 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 			}
 			if step.kind == .Launch {
 				found: bool
-				step.x, step.y, found = launcher.center(step.text)
+				step.x, step.y, found = bar.center(step.text)
 				if !found {
-					fmt.eprintfln("error: the launcher does not have the program %s", step.text)
+					fmt.eprintfln("error: the menu of the programs does not have the program %s", step.text)
 					return false
 				}
 			}
@@ -1693,7 +1693,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				}
 			}
 			if step.kind == .Launch {
-				menu_x, menu_y := launcher.button_center()
+				menu_x, menu_y := bar.button_center()
 				pointer_move(machine, menu_x, menu_y)
 				pointer_button(machine, true)
 				pointer_button(machine, false)
@@ -1713,7 +1713,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				}
 			}
 			if step.kind == .Front {
-				menu_x, menu_y := launcher.windows_button_center()
+				menu_x, menu_y := bar.windows_button_center()
 				pointer_move(machine, menu_x, menu_y)
 				pointer_button(machine, true)
 				pointer_button(machine, false)
@@ -1722,7 +1722,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 					fmt.eprintfln("kerneltool: test failed: step %d: the menu of the windows does not have %s", index + 1, step.text)
 					return false
 				}
-				step.x, step.y = launcher.windows_line_center(line)
+				step.x, step.y = bar.windows_line_center(line)
 			}
 			pointer_move(machine, step.x, step.y)
 			pointer_button(machine, true)

@@ -1,39 +1,55 @@
-// The launcher: the menu of the bar that starts the programs, and the menu
-// of the bar that brings a window to the front. This table holds the names
-// of the programs and the place of each button and of each line of the two
-// menus. The compositor draws them; the kernel tool clicks them in the
-// machine test. The two read this one table.
-package launcher
+// The bar of the desktop: the names of the programs, and the place of each
+// button of the bar and of each line of its two menus, the menu of the
+// programs and the menu of the windows. The compositor draws them; the
+// kernel tool clicks them in the machine test. The two read this one table.
+// The launcher (launcher.odin) lists the same names.
+package bar
 
 @(rodata)
 names := [?]string{"boot", "pages", "log", "console", "monitor", "plasma", "life", "paint", "fault", "temple", "rings", "threads", "workers", "rights", "origin", "budget", "limits", "processors", "flow", "crowd", "clock", "flood", "tally", "manual", "frames", "disk", "notes", "imports", "net", "remote", "locks", "errors"}
 
-LABEL :: "programs" // The text of the button that opens the menu.
+// The bar is on the grid of docs/DESIGN.md: 8 pixels.
+LABEL :: "programs" // The text of the button that opens the menu of the programs.
 CHARACTER_WIDTH :: 8 // The font of the system.
-START :: 76 // After the name of the system.
+START :: 80 // After the name of the system.
 PADDING :: 8
-BAR_HEIGHT :: 28
-LINE_HEIGHT :: 22 // One line of the menu.
+HEIGHT :: 32 // The height of the bar.
+BUTTON_Y :: 4
+BUTTON_HEIGHT :: 24
+LINE_HEIGHT :: 24 // One line of a menu.
 BORDER :: 1
+TITLE :: 40 // The title of a menu, as the title of a card.
+COLUMNS :: 2 // The menu of the programs has two columns of names.
+COLUMN_LEAST :: 120 // The title of the menu fits.
 
-// button gives the place of the button of the bar that opens the menu.
-button :: proc "contextless" () -> (x, y, width, height: int) {
-	return START, 3, len(LABEL) * CHARACTER_WIDTH + 2 * PADDING, BAR_HEIGHT - 6
+// rows gives the lines of one column of the menu of the programs.
+rows :: proc "contextless" () -> int {
+	return (len(names) + COLUMNS - 1) / COLUMNS
 }
 
-// menu gives the place of the menu, under the button.
-menu :: proc "contextless" () -> (x, y, width, height: int) {
+// button gives the place of the button of the bar that opens the menu of the programs.
+button :: proc "contextless" () -> (x, y, width, height: int) {
+	return START, BUTTON_Y, len(LABEL) * CHARACTER_WIDTH + 2 * PADDING, BUTTON_HEIGHT
+}
+
+// column_width gives the width of one column of the menu of the programs.
+column_width :: proc "contextless" () -> int {
 	longest := len(LABEL)
 	for name in names {
 		longest = max(longest, len(name))
 	}
-	return START, BAR_HEIGHT, longest * CHARACTER_WIDTH + 2 * PADDING + 2 * BORDER, len(names) * LINE_HEIGHT + 2 * BORDER
+	return max((longest * CHARACTER_WIDTH + 2 * PADDING + 7) / 8 * 8, COLUMN_LEAST)
+}
+
+// menu gives the place of the menu of the programs, under its button.
+menu :: proc "contextless" () -> (x, y, width, height: int) {
+	return START, HEIGHT, COLUMNS * column_width() + 2 * BORDER, TITLE + rows() * LINE_HEIGHT + 2 * BORDER
 }
 
 // line gives the place of the line of names[index] in the menu.
 line :: proc "contextless" (index: int) -> (x, y, width, height: int) {
-	left, top, menu_width, _ := menu()
-	return left + BORDER, top + BORDER + index * LINE_HEIGHT, menu_width - 2 * BORDER, LINE_HEIGHT
+	left, top, _, _ := menu()
+	return left + BORDER + index / rows() * column_width(), top + BORDER + TITLE + index % rows() * LINE_HEIGHT, column_width(), LINE_HEIGHT
 }
 
 // line_at gives the index of the line of the menu at a point, or -1.
@@ -54,7 +70,7 @@ button_center :: proc "contextless" () -> (center_x, center_y: int) {
 }
 
 // center gives the middle of the line of a program in the menu. ok is
-// false if the launcher does not have the program.
+// false if the menu does not have the program.
 center :: proc "contextless" (program: string) -> (center_x, center_y: int, ok: bool) {
 	for name, index in names {
 		if name == program {
@@ -80,13 +96,13 @@ windows_button :: proc "contextless" () -> (x, y, width, height: int) {
 // windows_menu gives the place of the menu of count windows, under its button.
 windows_menu :: proc "contextless" (count: int) -> (x, y, width, height: int) {
 	left, _, _, _ := windows_button()
-	return left, BAR_HEIGHT, WINDOWS_CHARACTERS * CHARACTER_WIDTH + 2 * PADDING + 2 * BORDER, count * LINE_HEIGHT + 2 * BORDER
+	return left, HEIGHT, WINDOWS_CHARACTERS * CHARACTER_WIDTH + 2 * PADDING + 2 * BORDER, TITLE + count * LINE_HEIGHT + 2 * BORDER
 }
 
 // windows_line gives the place of a line of the menu of the windows.
 windows_line :: proc "contextless" (index: int) -> (x, y, width, height: int) {
 	left, top, menu_width, _ := windows_menu(0)
-	return left + BORDER, top + BORDER + index * LINE_HEIGHT, menu_width - 2 * BORDER, LINE_HEIGHT
+	return left + BORDER, top + BORDER + TITLE + index * LINE_HEIGHT, menu_width - 2 * BORDER, LINE_HEIGHT
 }
 
 // windows_line_at gives the index of the line of the menu of count windows
