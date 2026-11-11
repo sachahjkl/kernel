@@ -916,7 +916,8 @@ launcher_draw :: proc "contextless" (canvas: graphics.Canvas, origin_x, origin_y
 	graphics.text(canvas, inner_x, list_y + LAUNCHER_ROWS * bar.LINE_HEIGHT + 8, "up down: choose   enter: start   esc: close", graphics.COLOR_DIM)
 }
 
-// memory_measure measures memcpy and memset (runtime/memory.asm) on the two
+// memory_measure measures copy_bytes_without_overlap and fill_bytes_with_value
+// (runtime/memory.asm; the compiler calls them as memcpy and memset) on the two
 // canvases of the screen, before the first frame, for the sizes where the
 // forms change, aligned and 3 bytes after an alignment of 64; and a loop of
 // 16 bytes written in Odin, the form that graphics.copy had before. The log
@@ -957,12 +958,12 @@ memory_measure :: proc "contextless" () {
 		}
 	}
 	names := [Form]string {
-		.Copy           = "compositor: memcpy, ns for 8 64 512 4096 65536 3145600 bytes, aligned:",
-		.Copy_Unaligned = "compositor: memcpy, not aligned:",
+		.Copy           = "compositor: copy_bytes_without_overlap, ns for 8 64 512 4096 65536 3145600 bytes, aligned:",
+		.Copy_Unaligned = "compositor: copy_bytes_without_overlap, not aligned:",
 		.Loop           = "compositor: a loop of 16 bytes, aligned:",
 		.Loop_Unaligned = "compositor: a loop of 16 bytes, not aligned:",
-		.Fill           = "compositor: memset, aligned:",
-		.Fill_Unaligned = "compositor: memset, not aligned:",
+		.Fill           = "compositor: fill_bytes_with_value, aligned:",
+		.Fill_Unaligned = "compositor: fill_bytes_with_value, not aligned:",
 	}
 	for form in Form {
 		line: [256]u8

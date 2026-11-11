@@ -1,8 +1,7 @@
 #+build !freestanding
 // The tests of runtime/memory.asm on the host. The kernel tool assembles
 // the file with -DHOST into build/runtime_host.o before `odin test`: the
-// functions are runtime_copy, runtime_move and runtime_fill, so the host
-// keeps its own memcpy.
+// file then has the long names only, so the host keeps its own memcpy.
 package memory
 
 import "core:testing"
@@ -11,9 +10,9 @@ foreign import memory "../build/runtime_host.o"
 
 @(default_calling_convention = "c")
 foreign memory {
-	runtime_copy :: proc(destination, source: rawptr, count: int) -> rawptr ---
-	runtime_move :: proc(destination, source: rawptr, count: int) -> rawptr ---
-	runtime_fill :: proc(destination: rawptr, value: i32, count: int) -> rawptr ---
+	copy_bytes_without_overlap :: proc(destination, source: rawptr, count: int) -> rawptr ---
+	copy_bytes_with_overlap :: proc(destination, source: rawptr, count: int) -> rawptr ---
+	fill_bytes_with_value :: proc(destination: rawptr, value: i32, count: int) -> rawptr ---
 }
 
 AREA :: 4096
@@ -50,7 +49,7 @@ copy_each_size_and_alignment :: proc(t: ^testing.T) {
 				pattern(result, 2)
 				pattern(expected, 2)
 				copy(expected[64 + to:][:count], source[64 + from:][:count])
-				given := runtime_copy(&result[64 + to], &source[64 + from], count)
+				given := copy_bytes_without_overlap(&result[64 + to], &source[64 + from], count)
 				if given != rawptr(&result[64 + to]) || string(result) != string(expected) {
 					testing.expectf(t, false, "copy: count %d, destination %d, source %d", count, to, from)
 					return
@@ -76,7 +75,7 @@ move_each_size_alignment_and_overlap :: proc(t: ^testing.T) {
 				pattern(area, count + alignment)
 				pattern(expected, count + alignment)
 				move_by_bytes(expected, destination, source, count)
-				given := runtime_move(&area[destination], &area[source], count)
+				given := copy_bytes_with_overlap(&area[destination], &area[source], count)
 				if given != rawptr(&area[destination]) || string(area) != string(expected) {
 					testing.expectf(t, false, "move: count %d, alignment %d, distance %d", count, alignment, distance)
 					return
@@ -100,7 +99,7 @@ fill_each_size_and_alignment :: proc(t: ^testing.T) {
 				for &byte in expected[64 + to:][:count] {
 					byte = value
 				}
-				given := runtime_fill(&area[64 + to], i32(value) | 0x7700, count) // Only the low byte counts.
+				given := fill_bytes_with_value(&area[64 + to], i32(value) | 0x7700, count) // Only the low byte counts.
 				if given != rawptr(&area[64 + to]) || string(area) != string(expected) {
 					testing.expectf(t, false, "fill: count %d, destination %d, value %d", count, to, value)
 					return
@@ -126,11 +125,11 @@ large_sizes :: proc(t: ^testing.T) {
 			pattern(area, count)
 			pattern(expected, count)
 			move_by_bytes(expected, destination, source, count)
-			runtime_move(&area[destination], &area[source], count)
+			copy_bytes_with_overlap(&area[destination], &area[source], count)
 			testing.expectf(t, string(area) == string(expected), "move: count %d, distance %d", count, distance)
 			if distance == count + 64 || distance == -(count + 64) {
 				pattern(area, count)
-				runtime_copy(&area[destination], &area[source], count)
+				copy_bytes_without_overlap(&area[destination], &area[source], count)
 				testing.expectf(t, string(area) == string(expected), "copy: count %d, distance %d", count, distance)
 			}
 		}
@@ -139,7 +138,7 @@ large_sizes :: proc(t: ^testing.T) {
 		for &byte in expected[5:][:count] {
 			byte = 0x3C
 		}
-		runtime_fill(&area[5], 0x3C, count)
+		fill_bytes_with_value(&area[5], 0x3C, count)
 		testing.expectf(t, string(area) == string(expected), "fill: count %d", count)
 	}
 }

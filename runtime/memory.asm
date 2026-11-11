@@ -1,15 +1,22 @@
-; The functions that the compiler calls to copy, move and fill memory:
-; memcpy, memmove, memset. Odin gives them only with -no-crt, as loops of
-; one byte, and memcpy and memmove with no optimization (optnone). The
-; kernel tool builds every module and the kernel without -no-crt and links
-; this file in each of them, and in the boot program (docs/FIRST_MILESTONE.md,
-; the choices of the fast copy). One source, three forms:
-;   (none)   memcpy, memmove, memset with the System V calling convention: the
-;            modules and the kernel.
-;   WIN64    the same names with the Microsoft x64 calling convention: the boot
-;            program (UEFI).
-;   HOST     runtime_copy, runtime_move, runtime_fill with the System V
-;            convention, for the tests of the kernel tool on the host.
+; The functions of the system that copy and fill memory:
+;   copy_bytes_without_overlap (destination, source, count)
+;   copy_bytes_with_overlap    (destination, source, count)
+;   fill_bytes_with_value      (destination, value, count)
+; Each gives the destination. The kernel tool links this file in every
+; module, in the kernel and in the boot program, and builds them without
+; -no-crt: with it, Odin gives its own functions, loops of one byte, two of
+; them with no optimization (optnone).
+;
+; The compiler (LLVM) calls three functions with the names of the C library
+; when it copies a record or fills memory: memcpy, memmove, memset. The part
+; "Names that the compiler calls" at the end gives these names to the three
+; functions above, and nothing else. Code of the system uses the long names.
+;
+; One source, three forms:
+;   (none)   the System V calling convention: the modules and the kernel.
+;   WIN64    the Microsoft x64 calling convention: the boot program (UEFI).
+;   HOST     the System V convention, the long names only, for the tests of
+;            the kernel tool on the host (the host keeps its own memcpy).
 ;
 ; The forms were chosen by measure (the compositor writes the table at its
 ; start). Under 16 bytes: general registers. 16 to 64 bytes: two or four
@@ -43,9 +50,9 @@ default rel
 
 section .text
 
-; copy_core: rdi the destination, rsi the source, rdx the count. Gives rdi
+; copy_bytes_without_overlap: rdi the destination, rsi the source, rdx the count. Gives rdi
 ; in rax. The two parts must not overlap, except for 64 bytes or less.
-copy_core:
+copy_bytes_without_overlap:
 	mov rax, rdi
 	cmp rdx, 16
 	ja .over16
@@ -128,10 +135,10 @@ copy_core:
 	movdqu [r10 + 48], xmm3
 	ret
 
-; move_core: as copy_core, and the two parts can overlap.
-move_core:
+; copy_bytes_with_overlap: as copy_bytes_without_overlap, and the two parts can overlap.
+copy_bytes_with_overlap:
 	cmp rdx, 64
-	jbe copy_core                ; Reads all, then writes.
+	jbe copy_bytes_without_overlap                ; Reads all, then writes.
 	mov rcx, rdi
 	sub rcx, rsi                 ; The destination after the source, in the count: copy down.
 	cmp rcx, rdx
@@ -139,7 +146,7 @@ move_core:
 	mov rcx, rsi
 	sub rcx, rdi                 ; The destination before the source, in the count: rep movsb goes up byte after byte.
 	cmp rcx, rdx
-	jae copy_core
+	jae copy_bytes_without_overlap
 	mov rax, rdi
 	mov rcx, rdx
 	rep movsb
@@ -158,8 +165,8 @@ move_core:
 	movdqu [rdi], xmm4
 	ret
 
-; fill_core: rdi the destination, esi the byte, rdx the count. Gives rdi in rax.
-fill_core:
+; fill_bytes_with_value: rdi the destination, esi the byte, rdx the count. Gives rdi in rax.
+fill_bytes_with_value:
 	mov r9, rdi
 	movzx ecx, sil
 	mov r8, 0x0101010101010101
@@ -227,14 +234,13 @@ fill_core:
 	mov rax, r9
 	ret
 
+global copy_bytes_without_overlap
+global copy_bytes_with_overlap
+global fill_bytes_with_value
+
+; Names that the compiler calls.
 %ifdef HOST
 
-global runtime_copy
-runtime_copy equ copy_core
-global runtime_move
-runtime_move equ move_core
-global runtime_fill
-runtime_fill equ fill_core
 section .note.GNU-stack noalloc noexec nowrite progbits
 
 %elifdef WIN64
@@ -247,7 +253,7 @@ memcpy:
 	mov rdi, rcx
 	mov rsi, rdx
 	mov rdx, r8
-	call copy_core
+	call copy_bytes_without_overlap
 	pop rsi
 	pop rdi
 	ret
@@ -259,7 +265,7 @@ memmove:
 	mov rdi, rcx
 	mov rsi, rdx
 	mov rdx, r8
-	call move_core
+	call copy_bytes_with_overlap
 	pop rsi
 	pop rdi
 	ret
@@ -271,7 +277,7 @@ memset:
 	mov rdi, rcx
 	mov esi, edx
 	mov rdx, r8
-	call fill_core
+	call fill_bytes_with_value
 	pop rsi
 	pop rdi
 	ret
@@ -279,10 +285,10 @@ memset:
 %else
 
 global memcpy
-memcpy equ copy_core
+memcpy equ copy_bytes_without_overlap
 global memmove
-memmove equ move_core
+memmove equ copy_bytes_with_overlap
 global memset
-memset equ fill_core
+memset equ fill_bytes_with_value
 
 %endif

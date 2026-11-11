@@ -14,10 +14,12 @@ MODULE_BUILD_FOLDER :: BUILD_FOLDER + "/modules"
 BOOT_IMAGE :: BUILD_FOLDER + "/boot.image"
 BOOT_IMAGE_FAILS :: BUILD_FOLDER + "/boot_fails.image"
 SYSTEM_LIBRARY_FOLDER :: "support/system"
-// memcpy, memmove and memset of every module, of the kernel and of the boot
-// program. The builds do not use -no-crt: with it, the Odin runtime gives
-// these functions as loops of one byte, memcpy and memmove with no
-// optimization, and a symbol of another object cannot replace them.
+// The copy and the fill of every module, of the kernel and of the boot
+// program: copy_bytes_without_overlap, copy_bytes_with_overlap,
+// fill_bytes_with_value, and the names that the compiler calls (memcpy,
+// memmove, memset). The builds do not use -no-crt: with it, the Odin runtime
+// gives its own functions under these names (loops of one byte, two with no
+// optimization), and a symbol of another object cannot replace them.
 RUNTIME_MEMORY :: "runtime/memory.asm"
 
 // The modules of the project, each one after its imports.
