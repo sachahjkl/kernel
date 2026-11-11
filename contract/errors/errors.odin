@@ -38,7 +38,7 @@ Kind :: enum i64 {
 	Handle_Rights     = 11, // value: the handle; limit: the rights that the call needs; found: the rights of the handle (op.Rights).
 	Budget            = 12, // value: the handle of the budget; limit: what the call asks; found: what the budget holds.
 	Budget_Hidden     = 13, // value: the handle of the budget; limit: what the call asks. The handle has no right Read: the budget is not described.
-	Over_Limit        = 14, // value: what the call makes; limit: the limit.
+	Over_Limit        = 14, // value: what the call makes; limit: the limit. Unit Blocks (the storage service): the blocks of the current objects with the change, with no earlier version kept.
 	Full              = 15, // A table has no free place. limit: its capacity.
 	State             = 16, // value: the handle; found: the op.Program_State of its object, or 0 when the handle has no right Read.
 	Absent            = 17, // No object has the name or the number of the argument. found: 0, or the number from 1 of the row of a table argument that names it.
@@ -56,6 +56,11 @@ Kind :: enum i64 {
 	Busy              = 29, // Too many requests are in flight. value: the requests in flight, or 0 when the receiver does not count them; limit: the most.
 	Out_Of_Range      = 30, // The argument names units past the end. value: the end of what it names (its first unit and its count); limit: the units that exist; found: 0, or the number from 1 of the record of a table argument that names them (a record that names bytes of another argument by an offset, docs/MODULE_CONTRACT.md, "Tables and bytes as parameters").
 	Reserved          = 31, // The argument names a program of the system that the call does not act on: it starts at boot, or it is a device service.
+	Not_Payer         = 32, // value: the handle of a budget that does not pay for the memory object of the call. It says nothing of the budget.
+	Object_Shared     = 33, // value: the handle of a memory object, or 0; the call needs an object that only this program names, with one mapping at most.
+	Object_Marked     = 34, // value: the handle of a memory object; found: its pages with a protection of their own. The object is not mapped again and not given.
+	Whole_Only        = 35, // value: an address; limit: the bytes of the range. The range is a part of a mapping whose protection changes only whole (device memory, large pages), or of an area that the system keeps (a thread area).
+	Not_Multiple      = 36, // value: the argument; limit: the number that it must be a multiple of; found: the rest.
 }
 
 // What value, limit and found count.
@@ -93,6 +98,10 @@ Unit :: enum i64 {
 	Display     = 30, // No_Grant: a surface on the screen (the ring to the compositor).
 	Terminal    = 31, // No_Grant: a terminal (the terminal ring and the text region).
 	Lent_Handles = 32, // Handle_Absent: the handle did not come through the call ring for this call (an isolated call).
+	Versions    = 33, // Absent: the versions of an object (value: the generation that the argument named).
+	Counts      = 34, // Damaged: the counts of the blocks of a store are not trusted after a fault of the service; it makes no change in the store.
+	References  = 35, // Over_Limit: the names of one block, which a count holds.
+	Commit_Blocks = 36, // Full: the blocks that one commit can change or write.
 }
 
 // How a handle ended (Handle_Ended).
@@ -161,6 +170,10 @@ UNIT_NAMES := [Unit]string {
 	.Display     = "a surface on the screen",
 	.Terminal    = "a terminal",
 	.Lent_Handles = "handles lent for this call",
+	.Versions    = "versions of the object",
+	.Counts      = "the counts of the blocks of the store",
+	.References  = "names of one block",
+	.Commit_Blocks = "blocks that one commit can change",
 }
 
 // A ring completion (contract/ring) has the status of the contract of its

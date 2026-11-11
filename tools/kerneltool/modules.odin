@@ -13,6 +13,7 @@ import "core:sys/linux"
 MODULE_BUILD_FOLDER :: BUILD_FOLDER + "/modules"
 BOOT_IMAGE :: BUILD_FOLDER + "/boot.image"
 BOOT_IMAGE_FAILS :: BUILD_FOLDER + "/boot_fails.image"
+BOOT_IMAGE_SHORTAGE :: BUILD_FOLDER + "/boot_shortage.image"
 SYSTEM_LIBRARY_FOLDER :: "support/system"
 // The copy and the fill of every module, of the kernel and of the boot
 // program: copy_bytes_without_overlap, copy_bytes_with_overlap,
@@ -72,7 +73,9 @@ module_builds := [?]Module_Build {
 	{name = "frames", source = "programs/frames", image = true},
 	{name = "twin", source = "programs/twin", image = true},
 	{name = "locks", source = "programs/locks", image = true},
+	{name = "shortage", source = "programs/shortage", image = true},
 	{name = "scheduler", source = "programs/scheduler", image = true},
+	{name = "address_space", source = "programs/address_space", image = true},
 	{name = "locker", source = "programs/locker", image = true},
 	{name = "log", source = "programs/log", image = true},
 	{name = "block", source = "programs/block", image = true},
@@ -106,6 +109,7 @@ module_builds := [?]Module_Build {
 	{name = "vector_glyphs", source = "programs/vector_glyphs", image = true},
 	{name = "pointers", source = "programs/pointers", image = true},
 	{name = "settings", source = "programs/settings", image = true},
+	{name = "date", source = "programs/date", image = true},
 }
 
 join :: proc(parts: ..string) -> string {
@@ -127,7 +131,9 @@ build_modules :: proc() -> bool {
 	append(&all_resources, ..resources)
 	append(&all_resources, glyph_cache_resource)
 	// The second boot image has no compositor: with it, the start fails.
-	return build_boot_image(BOOT_IMAGE, "", all_resources[:]) && build_boot_image(BOOT_IMAGE_FAILS, "compositor", all_resources[:])
+	// The third has no input service: the root service starts only the
+	// program shortage (the test of the shortage of frames).
+	return build_boot_image(BOOT_IMAGE, "", all_resources[:]) && build_boot_image(BOOT_IMAGE_FAILS, "compositor", all_resources[:]) && build_boot_image(BOOT_IMAGE_SHORTAGE, "input", all_resources[:])
 }
 
 // files_with_suffix gives the paths of the files of a folder that end with suffix.

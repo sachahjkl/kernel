@@ -53,43 +53,71 @@ log_lock: Lock
 // or 0 when no processor reports.
 log_fault_reporter: u32
 
-// FAULT_REPORT_WAIT: how many times the reporter looks at the log lock
-// before it writes anyway. A line of the log is at most a few hundred
-// bytes: the wait ends long before this count on a machine that works.
-FAULT_REPORT_WAIT :: 50_000_000
+// FAULT_REPORT_WAIT_MILLISECONDS: how long the reporter waits for a line
+// that another processor writes. The longest line is a Log operation of
+// 4096 bytes, about 360 ms at 115200 baud.
+FAULT_REPORT_WAIT_MILLISECONDS :: 1000
+
+// The count of the reports that began: 1 is a report; 2 or more is a fault
+// inside the report of a fault.
+log_fault_report_depth: u32
 
 // fault_report_begin makes this processor the only writer of the serial
 // port, before the kernel reports its own fault. The report takes no lock,
-// because the processor can hold any lock. Without this, the report and a
-// line that another processor writes arrive as mixed bytes, and nobody can
-// read the fault.
+// because the processor can hold any lock, and it reads nothing through
+// the gs register: a fault of the kernel can arrive with the gs of a
+// program, and a read through it would be a second fault, with no end.
+// Without this procedure, the report and a line that another processor
+// writes arrive as mixed bytes, and nobody can read the fault.
 //   - A second processor that has a fault of its own stops: one report.
 //   - A processor that starts a line after this stops in log_take.
 //   - A processor that is in the middle of a line ends it: the reporter
 //     waits until the log lock has no holder and no waiter, a bounded time.
-//     It does not wait when it holds the log lock itself.
+//     When the reporter holds the log lock itself, or when the wait ends by
+//     its bound, the report starts on a new line and says so.
+//   - A fault inside the report: one fixed line, and the machine stops.
 fault_report_begin :: proc "contextless" () {
 	if !lock_ready {
 		// One processor, with no record yet: nobody else writes.
 		intrinsics.atomic_store(&log_serial_only, true)
 		return
 	}
-	self := apic_id() + 1
+	identifier := apic_id()
+	self := identifier + 1
 	if _, first := intrinsics.atomic_compare_exchange_strong(&log_fault_reporter, 0, self); !first {
 		if intrinsics.atomic_load(&log_fault_reporter) != self {
 			processor_stop()
 		}
-		// A fault inside the report of this processor: write on.
 	}
 	intrinsics.atomic_store(&log_serial_only, true)
-	if processor_self().held[.Log] != 0 {
-		return
+	if intrinsics.atomic_add(&log_fault_report_depth, 1) != 0 {
+		log_bytes(transmute([]u8)string("\r\nkernel: a fault inside the report of a fault of the kernel\r\n"))
+		machine_stop(2)
 	}
-	for _ in 0 ..< FAULT_REPORT_WAIT {
-		if intrinsics.atomic_load(&log_lock.serving) == intrinsics.atomic_load(&log_lock.next) {
-			return
+	// The record of this processor, by its identifier and not by gs.
+	holds_the_log_lock := false
+	for cpu in processors[:min(processor_count, PROCESSOR_CAPACITY)] {
+		if cpu != nil && cpu.apic_id == identifier {
+			holds_the_log_lock = cpu.held[.Log] != 0
 		}
-		intrinsics.cpu_relax()
+	}
+	line_is_whole := false
+	if !holds_the_log_lock {
+		limit := cycles_now() + cycle_frequency / 1000 * FAULT_REPORT_WAIT_MILLISECONDS
+		for {
+			if intrinsics.atomic_load(&log_lock.serving) == intrinsics.atomic_load(&log_lock.next) {
+				line_is_whole = true
+				break
+			}
+			// Before the timer is measured the frequency is 0: no wait.
+			if cycles_now() >= limit {
+				break
+			}
+			intrinsics.cpu_relax()
+		}
+	}
+	if !line_is_whole {
+		log_bytes(transmute([]u8)string("\r\nkernel: the line above is cut: the report of a fault of the kernel starts here\r\n"))
 	}
 }
 

@@ -162,10 +162,16 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 	case .Memory_Create:
 		budget := handle_find(program, v[0], .Budget, {.Spend}) or_return
 		flags := transmute(op.Memory_Flags)v[2]
-		if flags - {.Frames_Now, .Contiguous} != {} {
+		if flags - {.Frames_Now, .Contiguous, .Uncommitted, .Large_Pages} != {} {
 			return .Bad_Operation
 		}
-		region := region_create(budget.object, v[1], contiguous = .Contiguous in flags, now = .Frames_Now in flags) or_return
+		// An uncommitted object has its pages paid later: no frame now, and
+		// a frame list. A large-page object is contiguous, of whole large pages.
+		if .Uncommitted in flags && flags != {.Uncommitted} || .Large_Pages in flags && v[1] % op.LARGE_PAGE_PAGES != 0 {
+			return .Bad_Operation
+		}
+		large_pages := .Large_Pages in flags
+		region := region_create(budget.object, v[1], contiguous = .Contiguous in flags || large_pages, now = .Frames_Now in flags, uncommitted = .Uncommitted in flags, large_pages = large_pages) or_return
 		handle := handle_insert(program, {kind = .Memory, rights = RIGHTS_MEMORY, object = region})
 		if handle == 0 {
 			regions[region].references = 1
@@ -372,6 +378,11 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		to_taken := program_lock(index_of_program(to))
 		defer program_unlock(index_of_program(to), to_taken)
 		if to.state == .None || to.state == .Stopped {
+			return .Bad_State
+		}
+		// An object with marks of protection of a part is not given: the marks
+		// would reach the mapping of the other program.
+		if given.kind == .Memory && to != program && intrinsics.atomic_load(&regions[given.object].marked_pages) != 0 {
 			return .Bad_State
 		}
 		copy := given^
@@ -776,6 +787,56 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			return .Bad_Operation // Its frames come at first use, from anywhere: no one address names them.
 		}
 		results[0] = regions[slot.object].physical
+		return .Ok
+
+	case .Memory_Commit:
+		memory := handle_find(program, v[0], .Memory, {.Write}) or_return
+		flags := transmute(op.Commit_Flags)v[4]
+		decommit := .Decommit in flags
+		// The payer: a handle to the budget of the object, with Commit or
+		// Spend (docs/ARCHITECTURE.md, "Who pays a commit"). A decommit gives pages back to it, and
+		// reads no budget handle.
+		if !decommit {
+			budget := handle_find(program, v[1], .Budget) or_return
+			if budget.rights & {.Commit, .Spend} == {} {
+				return .No_Right
+			}
+			if budget.object != intrinsics.atomic_load(&regions[memory.object].budget) {
+				return .Bad_Handle
+			}
+		}
+		if v[3] == 0 || v[3] > op.RANGE_TABLE_CAPACITY || flags - {.Decommit} != {} {
+			return .Bad_Operation
+		}
+		if !user_range(program, v[2], v[3] * size_of(op.Page_Range), false) {
+			return .Bad_Address
+		}
+		table := &processor_self().range_table
+		user_copy(table, rawptr(uintptr(v[2])), v[3] * size_of(op.Page_Range))
+		counts: [op.RANGE_TABLE_CAPACITY]u64
+		for range, index in table[:v[3]] {
+			counts[index] = range.page_count
+		}
+		if table_pages(counts[:v[3]]) > op.RANGE_TABLE_PAGE_LIMIT {
+			return .Bad_Operation
+		}
+		changed := memory_commit(program, memory.object, table[:v[3]], decommit) or_return
+		results[0] = changed
+		return .Ok
+
+	case .Memory_Protect:
+		flags := transmute(op.Map_Flags)v[2]
+		if v[1] == 0 || v[1] > op.RANGE_TABLE_CAPACITY || flags - {.Write, .Execute, .No_Access} != {} {
+			return .Bad_Operation
+		}
+		if !user_range(program, v[0], v[1] * size_of(op.Address_Range), false) {
+			return .Bad_Address
+		}
+		table := &processor_self().range_table
+		user_copy(table, rawptr(uintptr(v[0])), v[1] * size_of(op.Address_Range))
+		ranges := ([^]op.Address_Range)(&table[0])[:v[1]]
+		changed := memory_protect(program, ranges, flags) or_return
+		results[0] = changed
 		return .Ok
 
 	case .Strategy_Set:

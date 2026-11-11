@@ -68,6 +68,9 @@ Right :: enum u32 {
 	Spend   = 8, // Budget: create objects with it, and take a part of it for a new budget.
 	Physical = 9, // Machine: read the physical address of a memory object (Memory_Physical).
 	Schedule = 10, // Machine: change the scheduling strategy of the machine (Strategy_Set).
+	// Budget: pay pages of a memory object that this budget already pays for (Memory_Commit), and nothing else: no
+	// object, thread, program or budget is created with it. The narrow form of Spend, to give to another program.
+	Commit = 11,
 }
 Rights :: bit_set[Right;u32]
 
@@ -154,6 +157,24 @@ Operation :: enum u32 {
 	Strategy_Set = 27, // (machine, Strategy) -> the strategy before. The scheduling strategy of the machine changes
 	// while it runs: no thread stops, none is lost. The state of the strategy of each thread starts from zero
 	// (docs/SCHEDULING.md). Needs the right Schedule on the machine.
+	// The virtual memory of a program (docs/ARCHITECTURE.md, "The virtual memory of a program").
+	Memory_Commit = 28, // (memory, budget or 0, address of a table of Page_Range, count, Commit_Flags) -> pages changed.
+	// The pages of the ranges of an object made with Uncommitted become committed: the budget pays one page for each,
+	// and each gets a frame at its first use. The budget handle must name the budget of the object, with the right
+	// Commit or Spend (the right Write on the object does not spend the budget of its maker; to let
+	// another program commit, give it the object and a budget handle with Commit only). With Decommit, the committed
+	// pages of the ranges are no longer paid: their frames and their pages return at once to the budget of the object,
+	// and a page committed again is zero; the budget argument is not read. The ranges are in increasing order and do not
+	// overlap; at most RANGE_TABLE_CAPACITY, and RANGE_TABLE_PAGE_LIMIT pages. Needs the right Write on the object.
+	// Decommit needs an object that only this program names, with one mapping at most. A table that the budget cannot
+	// pay changes nothing.
+	Memory_Protect = 29, // (address of a table of Address_Range, count, Map_Flags) -> pages changed. The protection of
+	// the pages of mappings of this program: Read only (no flag), Write, Execute, or No_Access. It can only take away
+	// what the mapping was made with (Bad_Operation); Write and Execute together are refused. A range inside a mapping,
+	// not its whole, takes away from the protection of the mapping now (it cannot get more: Bad_Operation), and needs
+	// an object with a frame list that only this program names, with one mapping; while a part has its own protection,
+	// the object is not mapped again and not given (Bad_State). At most RANGE_TABLE_PAGE_LIMIT pages. Each processor
+	// that runs a thread of the program forgets the old translations before the operation returns (one shoot-down).
 }
 
 // The scheduling strategy of the machine (docs/SCHEDULING.md): the rule that
@@ -326,18 +347,49 @@ Memory_Flag :: enum u64 {
 	// not move: memory that a device reads and writes (Memory_Physical). The budget pays for no frame
 	// list. It can give No_Memory when the budget can pay: no free run is long enough.
 	Contiguous = 1,
+	// The pages are not paid at the creation: the budget pays the frame list only. Memory_Commit pays pages
+	// and makes them usable; a page that is not committed has no frame, and an access to it is a fault.
+	Uncommitted = 2,
+	// Contiguous, in one run aligned on 2 MiB, and the page count is a multiple of LARGE_PAGE_PAGES: a mapping
+	// uses a large page for each 2 MiB whose address and first page are aligned.
+	Large_Pages = 3,
 }
 Memory_Flags :: bit_set[Memory_Flag;u64]
+
+LARGE_PAGE_PAGES :: 512 // The pages of 4096 bytes of one large page (2 MiB).
+RANGE_TABLE_CAPACITY :: 256 // The ranges of one Memory_Commit or Memory_Protect.
+// The pages of all the ranges of one Memory_Commit or Memory_Protect (256 MiB): the kernel walks each page with
+// interrupts off; a larger change is several calls.
+RANGE_TABLE_PAGE_LIMIT :: 65536
+
+// A range of pages of a memory object (Memory_Commit).
+Page_Range :: struct {
+	first:      u64, // The first page of the object.
+	page_count: u64,
+}
+
+// A range of addresses of the program (Memory_Protect).
+Address_Range :: struct {
+	address:    u64, // A multiple of PAGE_SIZE.
+	page_count: u64,
+}
+
+Commit_Flag :: enum u64 {
+	Decommit = 0,
+}
+Commit_Flags :: bit_set[Commit_Flag;u64]
 
 Map_Flag :: enum u64 {
 	Write   = 0,
 	Execute = 1,
+	No_Access = 2, // Memory_Map: a mapping whose pages fault until Memory_Protect gives them access. Memory_Protect: no access.
 }
 Map_Flags :: bit_set[Map_Flag;u64]
 
 // The code of a program that the kernel stopped.
 STOP_CODE_FAULT :: 0x100 // Add the number of the processor exception: 14 is a page fault.
 STOP_CODE_NO_HANDLE :: 0x200 // The last handle to the program closed.
+STOP_CODE_NOT_COMMITTED :: 0x300 // A page fault on a page of an Uncommitted object that is not committed.
 
 // The state of a program or of a thread. A program is Ready when one of
 // its threads is Ready.
@@ -401,6 +453,10 @@ Program_Mapping_Flag :: enum u32 {
 	Contiguous  = 4,
 	Shared      = 5, // Another mapping or another handle names the memory object.
 	Thread_Area = 6, // The thread record and the kernel ring of a thread.
+	Uncommitted = 7, // An object made with Uncommitted: `committed` says which part its budget pays.
+	Large       = 8, // The mapping uses large pages of 2 MiB.
+	Protected   = 9, // Memory_Protect changed the protection of pages of the mapping.
+	No_Access   = 10, // The protection of the mapping is No_Access now.
 }
 
 Program_Mapping :: struct {
@@ -412,8 +468,9 @@ Program_Mapping :: struct {
 	region_serial: u64, // The memory object: two mappings with one serial map one object.
 	flags:         bit_set[Program_Mapping_Flag;u32],
 	references:    u32, // The handles and the mappings that name the memory object, in all programs.
+	committed:     u64, // The committed pages of the memory object: all its pages, unless it was made Uncommitted.
 }
-#assert(size_of(Program_Mapping) == 56)
+#assert(size_of(Program_Mapping) == 64)
 
 MAPPING_REPORT_CAPACITY :: 128 // MAPPING_CAPACITY of the kernel.
 
@@ -730,6 +787,9 @@ CONTEXT_BUDGET :: 15 // The budget of the program.
 // with a surface or a terminal: values[13] is the address of the settings
 // page (contract:settings, VALUE_PAGE), 0 for none. A program does not use
 // value 13 for another role.
+// The value that the root service fixes for each program that it starts:
+// values[15] is the address of the date page (contract:date, VALUE_PAGE), 0
+// for none. A program does not use value 15 for another role.
 
 // The roles of the first program (the root service).
 ROOT_MACHINE :: 0

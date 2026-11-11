@@ -36,11 +36,13 @@ BUILD_FOLDER :: "build"
 // flake.nix gives the same two flags to the compiler when it builds this tool.
 CONTRACT_LIBRARY :: "-collection:contract=contract"
 SUPPORT_LIBRARY :: "-collection:support=support"
-CONTRACT_PACKAGES :: []string{"blake3", "block", "boot_info", "datagram", "errors", "frame", "glyph_cache", "isolated", "module", "operation", "pointer_pictures", "release", "remote", "ring", "settings", "store"}
+CONTRACT_PACKAGES :: []string{"blake3", "block", "boot_info", "datagram", "date", "errors", "frame", "glyph_cache", "isolated", "module", "operation", "pointer_pictures", "release", "remote", "ring", "settings", "store"}
 BOOT_OBJECT_FOLDER :: BUILD_FOLDER + "/boot"
 BOOT_PROGRAM :: BOOT_OBJECT_FOLDER + "/BOOTX64.EFI"
 BOOT_VOLUME :: BUILD_FOLDER + "/boot_volume.img"
 BOOT_VOLUME_FAILS :: BUILD_FOLDER + "/boot_volume_fails.img"
+BOOT_VOLUME_SHORTAGE :: BUILD_FOLDER + "/boot_volume_shortage.img"
+TEST_OUTPUT_SHORTAGE :: BUILD_FOLDER + "/test_output_shortage.txt"
 BOOT_VOLUME_SELF_TEST :: BUILD_FOLDER + "/boot_volume_self_test_%d.img"
 // The path where the firmware looks for the boot program of a disk.
 BOOT_PROGRAM_PATH :: "EFI/BOOT/BOOTX64.EFI"
@@ -76,7 +78,7 @@ Command :: struct {
 COMMANDS :: [?]Command {
 	{name = "build", about = "the modules, the boot image and the boot program, as " + BOOT_PROGRAM + "; one process for each module, as many at once as the processors, or `build <processes>`", run = run_build},
 	{name = "module", about = "module <name> with_checks|without_checks measure_run|usual_run: build one module of the table (the parallel build runs this command)", run = run_module},
-	{name = "test", about = "build, start the machine under QEMU, act as the person, check the log, save pictures of the screen; `test network`, `test main`, `test power`: one part only", run = run_test},
+	{name = "test", about = "build, start the machine under QEMU, act as the person, check the log, save pictures of the screen; `test network`, `test main`, `test power`, `test tcp`: one part only", run = run_test},
 	{name = "run", about = "build, then start the machine under QEMU, with the log of the kernel on this terminal; `run without_checks`: the measure build", run = run_machine},
 	{name = "screenshots", about = "test, then copy the pictures to " + DOCUMENT_SCREENSHOT_FOLDER + " and to a new folder of " + DEVELOPMENT_LOG_FOLDER, run = run_screenshots},
 	{name = "measure", about = "build, start the machine, run the measures of the locks of the kernel with no other program, and stop: the numbers are in " + TEST_OUTPUT_MEASURE + "; `measure scheduler N`: the program scheduler N times; `measure windows`: each window that the interface package draws, alone, and a table of the time of its pictures; `measure without_checks ...`: the measure build, with no check in the kernel (no lock order check, no check of the frames)", run = run_measure},
@@ -135,7 +137,7 @@ run_build :: proc(args: []string) -> int {
 		fmt.eprintln("kerneltool: build [processes]")
 		return EXIT_USAGE
 	}
-	if !build_modules() || !build_boot_program("boot_fails.image", BOOT_VOLUME_FAILS, 0) {
+	if !build_modules() || !build_boot_program("boot_fails.image", BOOT_VOLUME_FAILS, 0) || !build_boot_program("boot_shortage.image", BOOT_VOLUME_SHORTAGE, 0) {
 		return EXIT_FAILURE
 	}
 	// One boot program for each test of the kernel on itself.
@@ -232,7 +234,10 @@ run_test :: proc(args: []string) -> int {
 	if !disk_prepare(TEST_DATA_DISK, DATA_DISK_SIZE, true) {
 		return EXIT_FAILURE
 	}
-	// `test network`, `test main`, `test power`: one part only, for the work on it.
+	// `test network`, `test main`, `test power`, `test tcp`: one part only, for the work on it.
+	if len(args) == 1 && args[0] == "tcp" {
+		return tcp_tests_run() ? 0 : EXIT_FAILURE
+	}
 	if len(args) == 1 && args[0] == "power" {
 		return power_loss_run() ? 0 : EXIT_FAILURE
 	}
@@ -246,11 +251,15 @@ run_test :: proc(args: []string) -> int {
 	if len(args) == 1 && args[0] == "random" {
 		return random_tests_run() ? 0 : EXIT_FAILURE
 	}
+	// `test shortage`: the machine of the shortage of frames only.
+	if len(args) == 1 && args[0] == "shortage" {
+		return machine_test(scenario_shortage[:], BOOT_VOLUME_SHORTAGE, TEST_OUTPUT_SHORTAGE, MACHINE_STOP_OK, TEST_DATA_DISK) ? 0 : EXIT_FAILURE
+	}
 	// `test tcp`: the two machines of TCP only.
 	if len(args) == 1 && args[0] == "tcp" {
 		return tcp_tests_run() ? 0 : EXIT_FAILURE
 	}
-	if !machine_test(scenario_fails[:], BOOT_VOLUME_FAILS, TEST_OUTPUT_FAILS, 0) || !self_tests_run() || !machine_test(scenario[:], BOOT_VOLUME, TEST_OUTPUT, MACHINE_STOP_OK, TEST_DATA_DISK) || !machine_test(scenario_network[:], BOOT_VOLUME, TEST_OUTPUT_NETWORK, MACHINE_STOP_OK, TEST_DATA_DISK) || !tcp_tests_run() || !random_tests_run() || !persistence_run() || !power_loss_run() || !test_modules() || !test_descriptions() {
+	if !machine_test(scenario_fails[:], BOOT_VOLUME_FAILS, TEST_OUTPUT_FAILS, 0) || !machine_test(scenario_shortage[:], BOOT_VOLUME_SHORTAGE, TEST_OUTPUT_SHORTAGE, MACHINE_STOP_OK, TEST_DATA_DISK) || !self_tests_run() || !machine_test(scenario[:], BOOT_VOLUME, TEST_OUTPUT, MACHINE_STOP_OK, TEST_DATA_DISK) || !machine_test(scenario_network[:], BOOT_VOLUME, TEST_OUTPUT_NETWORK, MACHINE_STOP_OK, TEST_DATA_DISK) || !tcp_tests_run() || !random_tests_run() || !persistence_run() || !power_loss_run() || !test_modules() || !test_descriptions() {
 		return EXIT_FAILURE
 	}
 	fmt.println("kerneltool: all tests passed")
@@ -308,6 +317,12 @@ run_measure :: proc(args: []string) -> int {
 	}
 	if len(args) == 1 && args[0] == "windows" {
 		return measure_windows() ? 0 : EXIT_FAILURE
+	}
+	if len(args) >= 1 && args[0] == "address_space" {
+		return machine_test(scenario_measure_address_space[:], BOOT_VOLUME, TEST_OUTPUT_MEASURE, MACHINE_STOP_OK, TEST_DATA_DISK) ? 0 : EXIT_FAILURE
+	}
+	if len(args) >= 1 && args[0] == "shortage" {
+		return machine_test(scenario_shortage[:], BOOT_VOLUME_SHORTAGE, TEST_OUTPUT_SHORTAGE, MACHINE_STOP_OK, TEST_DATA_DISK) ? 0 : EXIT_FAILURE
 	}
 	if len(args) >= 1 && args[0] == "scheduler" {
 		count := 1
@@ -390,7 +405,7 @@ run_check :: proc(args: []string) -> int {
 	// compiler assembles runtime/memory_for_host_tests.asm itself and links
 	// its object by its path (a library found through `-L/` is refused by
 	// the linker of the Nix sandbox).
-	for folder in ([]string{"runtime", "contract/blake3", "contract/isolated", "contract/pointer_pictures", "contract/remote", "modules/interface_module", "modules/sample", "support/system", "support/bar", "support/graphics", "support/interface", "support/addresses", "support/information", "support/vector_font", "support/network", "support/tcp", "support/web", "support/cryptography/chacha20", "support/random", "tools/kerneltool"}) {
+	for folder in ([]string{"runtime", "contract/blake3", "contract/isolated", "contract/pointer_pictures", "contract/remote", "contract/date", "support/storage_mount", "support/storage_retention", "support/calendar", "modules/interface_module", "modules/sample", "support/system", "support/bar", "support/graphics", "support/interface", "support/addresses", "support/information", "support/vector_font", "support/network", "support/tcp", "support/web", "support/cryptography/chacha20", "support/random", "tools/kerneltool"}) {
 		name, _ := strings.replace_all(folder, "/", "_", context.temp_allocator)
 		if !run({"odin", "test", folder, "-vet", CONTRACT_LIBRARY, SUPPORT_LIBRARY, strings.concatenate({"-out:" + BUILD_FOLDER + "/test_", name}, context.temp_allocator)}) {
 			return EXIT_FAILURE
@@ -454,6 +469,7 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 		"-device",
 		"isa-debug-exit,iobase=0xf4,iosize=0x04",
 		"-no-reboot",
+		"-rtc", "base=utc", // The real-time clock of the machine is the clock of the host, in UTC: the test of the date compares the two.
 		"-net",
 		"none", // No other network device than the one below.
 		"-netdev",

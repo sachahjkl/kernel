@@ -168,9 +168,14 @@ error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record,
 	case .Over_Limit:
 		write_part(writer, "the call needs ")
 		amount(writer, record.value, unit)
-		write_part(writer, " in all; the limit is ")
+		write_part(writer, errors.Unit(record.unit) == .Blocks ? " in all, with no earlier version kept; the limit is " : " in all; the limit is ")
 		amount(writer, record.limit, unit)
 	case .Full:
+		if errors.Unit(record.unit) == .Commit_Blocks {
+			write_part(writer, "the call needs more blocks in one commit than one commit can change: ")
+			write_part(writer, record.limit)
+			return
+		}
 		if record.unit == 0 {
 			write_part(writer, "no free place for the call")
 		} else {
@@ -202,6 +207,9 @@ error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record,
 			write_part(writer, ", names nothing that the program has")
 		} else if errors.Unit(record.unit) == .Objects {
 			write_part(writer, ": the store has no object with this name")
+		} else if errors.Unit(record.unit) == .Versions {
+			write_part(writer, ": the object has no version of the generation ")
+			write_part(writer, record.value)
 		} else if record.unit != 0 {
 			write_part(writer, " names none of the ")
 			write_part(writer, unit)
@@ -209,6 +217,10 @@ error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record,
 			write_part(writer, " names nothing that exists")
 		}
 	case .Damaged:
+		if errors.Unit(record.unit) == .Counts {
+			write_part(writer, "the counts of the blocks of the private store are not trusted after a fault of the storage service: it makes no change in the store until its next start; its objects can still be read")
+			return
+		}
 		if errors.Unit(record.unit) == .Stores {
 			write_part(writer, "the table of the private store is damaged: a block of it has a wrong check")
 		} else {
@@ -317,6 +329,38 @@ error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record,
 		amount(writer, record.value, unit)
 		write_part(writer, ", past the end: there are ")
 		amount(writer, record.limit, unit)
+	case .Not_Payer:
+		handle(writer, record, argument)
+		write_part(writer, " is not the budget that pays for the memory object; the call needs the budget of the object, with the right Commit or Spend")
+	case .Object_Shared:
+		if record.value != 0 {
+			handle(writer, record, argument)
+		} else {
+			subject(writer, record, argument)
+		}
+		write_part(writer, " names a memory object that another program or another mapping also names; the call needs an object that only this program names, with one mapping at most")
+	case .Object_Marked:
+		handle(writer, record, argument)
+		write_part(writer, " names a memory object with ")
+		write_part(writer, record.found)
+		write_part(writer, " pages with a protection of their own: it is not mapped again and not given until they have the protection of their mapping")
+	case .Not_Multiple:
+		subject(writer, record, argument)
+		write_part(writer, " has the value ")
+		write_part(writer, record.value)
+		write_part(writer, ", which is not a multiple of ")
+		write_part(writer, record.limit)
+		if record.unit != 0 {
+			write_part(writer, " ")
+			write_part(writer, unit)
+		}
+	case .Whole_Only:
+		subject(writer, record, argument)
+		write_part(writer, ", ")
+		write_number(writer, u64(record.value))
+		write_part(writer, " with ")
+		write_part(writer, record.limit)
+		write_part(writer, " bytes, is a part of a mapping whose protection changes only whole (device memory, large pages), or of a thread area")
 	case .Refused:
 		write_part(writer, "refused with the status ")
 		write_part(writer, record.found)

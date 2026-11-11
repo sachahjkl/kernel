@@ -1,5 +1,9 @@
 package kerneltool
 
+import "core:strconv"
+
+import "support:calendar"
+
 import "core:fmt"
 import "core:net"
 import "core:os"
@@ -231,6 +235,21 @@ forward_fetch :: proc(forward: Forward, path: string) -> bool {
 		return false
 	}
 	content := response[head.size:]
+	// RFC 9110 6.6.1: the server sends the date of the machine.
+	head_text := string(response[:head.size])
+	date_at := strings.index(head_text, "\r\nDate: ")
+	if date_at < 0 {
+		fmt.eprintfln("kerneltool: test failed: the answer of server to %s has no field Date", path)
+		return false
+	}
+	date_line := head_text[date_at + 8:]
+	date_line = date_line[:max(strings.index(date_line, "\r\n"), 0)]
+	date_seconds, date_ok := http_date_parse(date_line)
+	if !date_ok {
+		fmt.eprintfln("kerneltool: test failed: the field Date of server is \"%s\": not the form of RFC 9110 5.6.7", date_line)
+		return false
+	}
+	date_check(-1, date_seconds, fmt.tprintf("the field Date \"%s\" of the answer to %s", date_line, path)) or_return
 	speed := f64(max(len(content), body ? web.LARGE_SIZE : 0)) / max(time.duration_seconds(took), 1e-9) / 1e6
 	switch path {
 	case "/large":
@@ -319,4 +338,29 @@ frames_of_the_fetch_report :: proc() {
 			break
 		}
 	}
+}
+
+// http_date_parse reads an IMF-fixdate (RFC 9110 5.6.7):
+// "Sun, 06 Nov 1994 08:49:37 GMT".
+http_date_parse :: proc(text: string) -> (seconds: i64, ok: bool) {
+	if len(text) != 29 || text[3] != ',' || text[25:] != " GMT" {
+		return 0, false
+	}
+	month := 0
+	for name, index in calendar.MONTH_SHORT_NAMES {
+		if text[8:11] == name {
+			month = index + 1
+		}
+	}
+	day, day_ok := strconv.parse_int(text[5:7])
+	year, year_ok := strconv.parse_i64(text[12:16])
+	hour, hour_ok := strconv.parse_int(text[17:19])
+	minute, minute_ok := strconv.parse_int(text[20:22])
+	second, second_ok := strconv.parse_int(text[23:25])
+	if month == 0 || !day_ok || !year_ok || !hour_ok || !minute_ok || !second_ok {
+		return 0, false
+	}
+	value := calendar.Civil{year = year, month = month, day = day, hour = hour, minute = minute, second = second}
+	seconds = calendar.seconds_of(value)
+	return seconds, calendar.WEEKDAY_SHORT_NAMES[calendar.civil(seconds).weekday] == text[:3]
 }
