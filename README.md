@@ -105,6 +105,8 @@ The system boots under QEMU to a graphical desktop with a console, a system tool
 
 ![The same tool on a program that stopped on a fault: the stack trace as module + offset, near the export before it](docs/screenshots/inspect_stopped.png)
 
+![After a loss of power during the write of a root: the storage service takes the root before it, and notes finds its note and its count](docs/screenshots/power_loss.png)
+
 ![Errors that diagnose: each case makes an error for real, and the line under it is the sentence of the error record that the kernel, the loader, a module or a service gave; the stack trace of a fault three calls deep](docs/screenshots/errors.png)
 
 ![The pointer pictures: each shape of the pointer theme of the system, at 24 and 48 pixels, with the lines of its hot spot](docs/screenshots/pointers_system.png)

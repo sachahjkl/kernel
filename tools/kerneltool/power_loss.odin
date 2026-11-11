@@ -312,7 +312,7 @@ power_loss_run :: proc() -> bool {
 	}
 	defer disk_server_free(&server)
 	address := fmt.tprintf("nbd://127.0.0.1:%d", server.port)
-	ran := machine_test(scenario_power_loss_first[:], BOOT_VOLUME, self_test_file(TEST_OUTPUT_POWER_LOSS, 1), 0, address)
+	ran := machine_test(scenario_power_loss_first[:], BOOT_VOLUME, self_test_file(TEST_OUTPUT_POWER_LOSS, 1), 0, address, disk_server = &server)
 	disk_server_stop(&server)
 	if !ran {
 		return false
@@ -326,20 +326,19 @@ power_loss_run :: proc() -> bool {
 		return false
 	}
 	fmt.printfln("kerneltool: test passed: %d images of the disk after the loss of power, %d of them with a torn write, each one checked with the code of the storage service on the host in %d ms: %d give the durable commit, %d the commit in flight, none a mix", search.images, search.torn_images, i64(search.elapsed / time.Millisecond), search.older_images, search.newer_images)
-	// The flushes: two for each commit (its blocks, then its root), one for
-	// the format of the new disk.
+	// The flushes: two for each durable commit (its blocks, then its root),
+	// one for the format of the new disk.
 	state := new(storage_mount.State)
 	defer free(state)
-	reached := disk_contents(server.current, state)
-	commits := int(reached.mount.generation) - 1
+	durable_contents := disk_contents(server.durable, state)
+	commits := int(durable_contents.mount.generation) - 1
 	if server.flushes < 2 * commits + 1 {
-		fmt.eprintfln("kerneltool: test failed: %d commits and %d flushes reached the disk: a commit needs two", commits, server.flushes)
+		fmt.eprintfln("kerneltool: test failed: %d durable commits and %d flushes reached the disk: a commit needs two", commits, server.flushes)
 		return false
 	}
-	fmt.printfln("kerneltool: test passed: %d commits, and %d flushes reached the disk: the block service passes each flush of the storage service to the device", commits, server.flushes)
+	fmt.printfln("kerneltool: test passed: %d durable commits, and %d flushes reached the disk: the block service passes each flush of the storage service to the device", commits, server.flushes)
 	image, torn_root := hard_image(server.durable, pending)
 	defer delete(image)
-	durable_contents := disk_contents(server.durable, state)
 	sync.mutex_unlock(&server.lock)
 	if err := os.write_entire_file(TEST_POWER_LOSS_DISK, image); err != nil {
 		fmt.eprintfln("kerneltool: cannot write %s: %v", TEST_POWER_LOSS_DISK, err)

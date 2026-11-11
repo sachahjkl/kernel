@@ -70,6 +70,13 @@ Network_Block_Device :: struct {
 	flushes:  int,
 	reads:    int,
 	failure:  string, // A request that the protocol does not permit.
+	// The loss of power: at the first write of a root (blocks 0 and 1 of
+	// the data disk, contract/store) from the write with this number (from
+	// 1) on, the disk answers nothing more, as a disk whose power went off
+	// during that write. The write of a root is the hardest moment: the
+	// blocks of the commit are durable, its root is not. 0: never.
+	power_off_after_write: int,
+	powered_off:           bool,
 }
 
 // disk_server_start serves an image: `image` is the disk at the start, and
@@ -289,7 +296,12 @@ disk_server_serve :: proc(server: ^Network_Block_Device, client: net.TCP_Socket)
 					append(&server.pending, Pending_Write{offset = offset, bytes = clone_bytes(data[:length])})
 				}
 				server.writes += 1
+				off := server.power_off_after_write != 0 && server.writes >= server.power_off_after_write && offset < 2 * 4096 && flags & NBD_COMMAND_FLAG_FUA == 0
 				sync.mutex_unlock(&server.lock)
+				if off {
+					sync.atomic_store(&server.powered_off, true)
+					return // No reply: the machine waits for a disk that has no power.
+				}
 			}
 			if !send_all(client, reply[:]) {
 				return

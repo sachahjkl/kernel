@@ -52,7 +52,7 @@ Step_Kind :: enum {
 	Trace, // The log has text, after the text of the last Wait, then a stack trace to the end of the line: the tool names each frame from the linked file of its module, and the names start with `names`.
 	Record, // A log record with the program `program`, the channel `channel`, the level `level` and a text that has `text`, after the record of the last Record step: the tool reads log.records() through the remote service (call.odin). With any_order, the next Record step searches from the same place.
 	Agree, // The program `text`: the mapped pages and the threads that inspect.mappings() and inspect.threads() give are the ones that monitor.programs() gives (two tools, two reports of the kernel).
-	Power_Loss, // End QEMU with no warning at a seeded moment (0 to 200 ms after the step before): the disk keeps what was durable (power_loss.odin).
+	Power_Loss, // The disk that the tool serves loses its power at the first write of a root after a seeded count of writes (1 to 40 after this step): it answers nothing more, and the tool ends QEMU with no warning (power_loss.odin).
 	Call, // Call an export of a service from the host (call.odin), through the remote service: what the tool prints has `expected`. With `rows_call`, that call gives the count of rows of the Table. With `repeat`, the tool also measures the round trip and the calls in one second.
 	Peer, // The peer runs the TCP case text (peer_tcp.odin) and checks its answers.
 	Point, // Move the pointer to (x, y) with no press, then read compositor.pointer(): its shape must be the name text (docs/POINTERS.md). With inside_window, (x, y) are from the corner of that window, its title bar included; a negative x is from its right side. It needs the confirmation of the pointer (a Call with pointer before it).
@@ -1594,6 +1594,7 @@ Machine :: struct {
 	corrected:   int, // The places that needed a correction.
 	record_next: i64, // The number of the log record where the next Record step searches.
 	powered_off: bool, // A step Power_Loss ended QEMU: the machine has no exit status.
+	disk_server: ^Network_Block_Device, // The data disk, when the tool serves it.
 	client:      Call_Client,
 	client_open: bool,
 	forward:     Forward, // QEMU user networking: the port of hostfwd and the listener of guestfwd.
@@ -1897,7 +1898,7 @@ png_encode :: proc(width, height: int, pixels: []u8) -> []u8 {
 
 // machine_test runs a scenario on a boot volume. It passes when each step
 // passes and QEMU ends with the status exit_status.
-machine_test :: proc(steps: []Step, volume: string, output: string, exit_status: int, data_disk: string = TEST_DATA_DISK, user_network := false) -> bool {
+machine_test :: proc(steps: []Step, volume: string, output: string, exit_status: int, data_disk: string = TEST_DATA_DISK, user_network := false, disk_server: ^Network_Block_Device = nil) -> bool {
 	peer: Peer
 	if !peer_start(&peer) {
 		return false
@@ -1936,6 +1937,7 @@ machine_test :: proc(steps: []Step, volume: string, output: string, exit_status:
 		call_port = peer.call_port,
 		peer      = &peer,
 		forward   = forward,
+		disk_server = disk_server,
 	}
 	passed := scenario_run(&machine, steps)
 	if len(machine.confirmations) > 0 {
@@ -2372,14 +2374,28 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 		case .Quit:
 			monitor_send(machine, "quit")
 		case .Power_Loss:
+			server := machine.disk_server
+			if server == nil {
+				fmt.eprintfln("kerneltool: test failed: step %d: the tool does not serve the data disk", index + 1)
+				return false
+			}
 			generator := rand.create_u64(POWER_LOSS_SEED)
-			delay := rand.int_max(200, rand.default_random_generator(&generator))
-			time.sleep(time.Duration(delay) * time.Millisecond)
-			// A kill: QEMU writes nothing more, and closes the connection of
-			// the disk. The tool knows what was durable at that moment.
+			after := 1 + rand.int_max(40, rand.default_random_generator(&generator))
+			sync.mutex_lock(&server.lock)
+			server.power_off_after_write = server.writes + after
+			sync.mutex_unlock(&server.lock)
+			for start := time.now(); !sync.atomic_load(&server.powered_off) && time.since(start) < STEP_TIMEOUT; {
+				time.sleep(time.Millisecond)
+			}
+			// A kill: QEMU writes nothing more. The tool knows what was
+			// durable when the disk lost its power.
 			_ = os.process_kill(machine.process)
 			machine.powered_off = true
-			fmt.printfln("kerneltool: the power of the machine went off %d ms after the step before (seed %d)", delay, POWER_LOSS_SEED)
+			if !sync.atomic_load(&server.powered_off) {
+				fmt.eprintfln("kerneltool: test failed: step %d: the machine made no write for %d writes", index + 1, after)
+				return false
+			}
+			fmt.printfln("kerneltool: the power of the disk went off at its write %d, the write of a root, %d writes or more after the step before (seed %d)", server.writes, after, POWER_LOSS_SEED)
 		case .Shot:
 			if !screen_save(machine, step.text) {
 				return false
