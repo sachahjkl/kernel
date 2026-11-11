@@ -80,6 +80,15 @@ COLOR_THUMB :: 0x5A6878
 COLOR_STOPPED :: 0xF07060
 COLOR_HELD :: 0xF0C050
 COLOR_CURSOR :: 0x7FC8FF
+// The completion list: a card over the text, its chosen row in the blue of
+// the title bar, the matched characters in the accent, a border of one
+// pixel in the color of the kernel as the menus of the bar.
+COLOR_LIST :: graphics.COLOR_CARD_TOP
+COLOR_LIST_CHOSEN :: graphics.COLOR_TITLE
+COLOR_LIST_BORDER :: graphics.COLOR_KERNEL
+COLOR_MATCH_ON_CHOSEN_ROW :: 0xA8E0FF // The accent is too close to the blue of the chosen row.
+COLOR_ABOUT_ON_CHOSEN_ROW :: 0xB8C8DC
+LIST_WIDTH_LEAST :: 16 // Cells: a list of short names stays wide enough to read.
 
 // The color of each tone.
 @(rodata)
@@ -144,6 +153,35 @@ Edit_Line :: struct {
 }
 edit_line: Edit_Line
 
+// The line under the edit line (terminal.Kind.Hint).
+Hint_Line :: struct {
+	text:         [terminal.RUN_LIMIT]u8,
+	length:       int,
+	marked_start: int,
+	marked_count: int,
+	style:        terminal.Style,
+}
+hint_line: Hint_Line
+
+// The completion list (terminal.Kind.List_Row, terminal.Kind.List). The
+// rows of the next list come first; the List record shows them.
+List_Row :: struct {
+	text:        [terminal.RUN_LIMIT]u8,
+	length:      int,
+	name_length: int,
+	matched:     [2]u64,
+}
+Completion_List :: struct {
+	rows:      [terminal.LIST_ROWS]List_Row,
+	row_count: int,
+	chosen:    int, // -1: no row is chosen.
+	first:     int, // The place of the first row in all the names.
+	total:     int, // All the names: more than row_count shows a scroll mark.
+	anchor:    int, // The byte of the edit line where the name starts.
+}
+list_rows_next: [terminal.LIST_ROWS]List_Row
+completion_list: Completion_List
+
 // ---- What the drawer asks, and the view that the reader gives.
 
 Request :: struct {
@@ -164,6 +202,9 @@ View :: struct {
 	records: u64,
 	bytes:   u64,
 	status:  Status_Line,
+	// The cells of the completion list, for its border: list_columns 0 is
+	// no list.
+	list_left, list_top, list_columns, list_rows: int,
 }
 
 request: Request
@@ -253,7 +294,115 @@ apply :: proc "contextless" (record: ring.Record) {
 			edit_line.has_cursor = true
 			edit_line.cursor = int(min(record.values[1], u64(edit_line.length)))
 		}
+	case .Hint:
+		first, second := take(record.tag)
+		hint_line = {style = transmute(terminal.Style)record.values[0]}
+		hint_line.length = copy(hint_line.text[:], first)
+		hint_line.length += copy(hint_line.text[hint_line.length:], second)
+		hint_line.marked_start = int(min(record.values[1], u64(hint_line.length)))
+		hint_line.marked_count = int(min(record.values[2], u64(hint_line.length - hint_line.marked_start)))
+	case .List_Row:
+		// The values come from the program: each one is brought inside the
+		// row before it is used.
+		first, second := take(record.tag)
+		if record.values[0] >= terminal.LIST_ROWS {
+			return
+		}
+		row := &list_rows_next[record.values[0]]
+		row.length = copy(row.text[:], first)
+		row.length += copy(row.text[row.length:], second)
+		row.name_length = int(min(record.values[1], u64(row.length)))
+		row.matched = {record.values[2], record.values[3]}
+	case .List:
+		completion_list.rows = list_rows_next
+		completion_list.row_count = int(min(record.values[0], terminal.LIST_ROWS))
+		completion_list.chosen = record.values[1] < u64(completion_list.row_count) ? int(record.values[1]) : -1
+		completion_list.total = int(min(max(record.values[3], u64(completion_list.row_count)), 1 << 20))
+		completion_list.first = int(min(record.values[2], u64(completion_list.total - completion_list.row_count)))
+		completion_list.anchor = int(min(record.values[4], terminal.RUN_LIMIT))
 	}
+}
+
+// shown_character gives the byte that a cell shows for a byte of a list or
+// a hint: the font draws 32 to 126, and these texts come from the
+// descriptions of other programs.
+shown_character :: proc "contextless" (character: u8) -> u8 {
+	return character >= ' ' && character <= '~' ? character : '?'
+}
+
+// list_fill writes the cells of the completion list over the rows of the
+// view, at the edit line: under it when the rows below hold the list, if
+// not above it, and if neither holds it, on the larger side with fewer
+// rows. edit_top is the row of the view of the first row of the edit line,
+// below the first row under the edit line and its hint.
+list_fill :: proc "contextless" (edit_top, below: int) {
+	view.list_columns = 0
+	if completion_list.row_count == 0 || edit_top < 0 || edit_top >= rows {
+		return
+	}
+	shown_rows := completion_list.row_count
+	space_below := max(rows - below, 0)
+	space_above := edit_top
+	top: int
+	switch {
+	case space_below >= shown_rows:
+		top = below
+	case space_above >= shown_rows:
+		top = edit_top - shown_rows
+	case space_below >= space_above:
+		top, shown_rows = below, space_below
+	case:
+		top, shown_rows = 0, space_above
+	}
+	if shown_rows <= 0 {
+		return
+	}
+	// The rows shown keep the chosen row in view.
+	offset := completion_list.chosen >= shown_rows ? completion_list.chosen - shown_rows + 1 : 0
+	scroll := completion_list.total > completion_list.row_count || shown_rows < completion_list.row_count ? 1 : 0
+	longest := 0
+	for &row in completion_list.rows[offset:][:shown_rows] {
+		about := row.length - row.name_length
+		longest = max(longest, row.name_length + (about > 0 ? 2 + about : 0))
+	}
+	list_width := min(max(longest + 2 + scroll, LIST_WIDTH_LEAST), columns)
+	anchor := min(completion_list.anchor, edit_line.length)
+	left := min(anchor % columns, columns - list_width)
+	inner := list_width - 2 - scroll
+	// The scroll mark: a track, and a thumb at the place of the rows shown
+	// in all the names.
+	shown_first := completion_list.first + offset
+	thumb_rows := max(shown_rows * shown_rows / max(completion_list.total, 1), 1)
+	thumb_top := min(shown_first * shown_rows / max(completion_list.total, 1), shown_rows - thumb_rows)
+	for index in 0 ..< shown_rows {
+		row := &completion_list.rows[offset + index]
+		chosen := offset + index == completion_list.chosen
+		background: graphics.Color = chosen ? COLOR_LIST_CHOSEN : COLOR_LIST
+		name_color: graphics.Color = chosen ? graphics.COLOR_WHITE : graphics.COLOR_TEXT
+		match_color: graphics.Color = chosen ? COLOR_MATCH_ON_CHOSEN_ROW : tone_colors[.Accent]
+		about_color: graphics.Color = chosen ? COLOR_ABOUT_ON_CHOSEN_ROW : tone_colors[.Dim]
+		cells := view.cells[top + index][left:][:list_width]
+		for &cell in cells {
+			cell = {character = ' ', filled = true, color = name_color, background = background}
+		}
+		name_shown := min(row.name_length, inner)
+		for place in 0 ..< name_shown {
+			matched := row.matched[place / 64] & (1 << u64(place % 64)) != 0
+			cells[1 + place] = {character = shown_character(row.text[place]), filled = true, color = matched ? match_color : name_color, background = background}
+		}
+		// What the name is, at the right, cut at its end when the room is short.
+		about_room := inner - name_shown - 2
+		about_shown := about_room > 0 ? min(row.length - row.name_length, about_room) : 0
+		about_left := 1 + inner - about_shown
+		for place in 0 ..< about_shown {
+			cells[about_left + place] = {character = shown_character(row.text[row.name_length + place]), filled = true, color = about_color, background = background}
+		}
+		if scroll == 1 {
+			thumb := index >= thumb_top && index < thumb_top + thumb_rows
+			cells[list_width - 1] = {character = ' ', filled = true, background = thumb ? COLOR_THUMB : graphics.COLOR_TRACK}
+		}
+	}
+	view.list_left, view.list_top, view.list_columns, view.list_rows = left, top, list_width, shown_rows
 }
 
 forget :: proc "contextless" () {
@@ -278,6 +427,8 @@ view_make :: proc "contextless" () {
 		note("-- ", program_name, " stopped with code ", u64(request.code), " after ", lines_written, " lines --")
 		status_line.total = 0
 		edit_line = {}
+		hint_line = {}
+		completion_list.row_count = 0
 	}
 	count := lines_written
 	if lines[lines_written & (LINE_CAPACITY - 1)].run_count != 0 {
@@ -286,7 +437,9 @@ view_make :: proc "contextless" () {
 	// The line that the program changes takes rows after the last line.
 	edit_cells := edit_line.length + int(edit_line.has_cursor)
 	edit_rows := u64(min((edit_cells + columns - 1) / columns, rows))
-	total := count + edit_rows
+	// The hint takes one row under the edit line, only with an edit line.
+	hint_rows: u64 = edit_rows > 0 && hint_line.length > 0 ? 1 : 0
+	total := count + edit_rows + hint_rows
 	top := request.top
 	if request.follow || top + u64(rows) > total {
 		top = total > u64(rows) ? total - u64(rows) : 0
@@ -296,6 +449,7 @@ view_make :: proc "contextless" () {
 	// keeps its cells.
 	view.gone = !request.follow && top == view.top && top < oldest
 	if view.gone {
+		view.list_columns = 0
 		return
 	}
 	top = max(top, oldest)
@@ -309,11 +463,19 @@ view_make :: proc "contextless" () {
 			for column in 0 ..< columns {
 				place := first + column
 				if place < edit_line.length {
-					row[column] = {edit_line.text[place], false, edit_color}
+					row[column] = {character = edit_line.text[place], color = edit_color}
 				}
 				if edit_line.has_cursor && place == edit_line.cursor {
-					row[column] = {max(row[column].character, ' '), true, COLOR_CURSOR}
+					row[column] = {character = max(row[column].character, ' '), reverse = true, color = COLOR_CURSOR}
 				}
+			}
+			continue
+		}
+		if hint_rows == 1 && number == count + edit_rows {
+			hint_color := .Color in hint_line.style.flags ? hint_line.style.color & 0xFFFFFF : tone_colors[terminal.Tone(min(u8(hint_line.style.tone), u8(max(terminal.Tone))))]
+			for place in 0 ..< min(hint_line.length, columns) {
+				marked := place >= hint_line.marked_start && place < hint_line.marked_start + hint_line.marked_count
+				row[place] = {character = shown_character(hint_line.text[place]), color = marked ? tone_colors[.Accent] : hint_color}
 			}
 			continue
 		}
@@ -330,14 +492,16 @@ view_make :: proc "contextless" () {
 				if column == columns {
 					break
 				}
-				row[column] = {bytes[(run.start + offset) & (BYTE_CAPACITY - 1)], reverse, color}
+				row[column] = {character = bytes[(run.start + offset) & (BYTE_CAPACITY - 1)], reverse = reverse, color = color}
 				column += 1
 			}
 		}
 		if int(line.length) > columns {
-			row[columns - 1] = {'>', true, graphics.COLOR_DIM} // The line continues after the window.
+			row[columns - 1] = {character = '>', reverse = true, color = graphics.COLOR_DIM} // The line continues after the window.
 		}
 	}
+	edit_top := int(i64(count) - i64(top))
+	list_fill(edit_top, edit_top + int(edit_rows + hint_rows))
 }
 
 BATCH :: 1024 // The records that the reader reads between two looks at the request.
@@ -549,6 +713,19 @@ draw :: proc "contextless" (window: ^display.Window, follow: bool) {
 	if hint_left + 2 * CELL_WIDTH <= hint_x {
 		interface.draw_text(table, hint_x, hint_y, hint, graphics.COLOR_DIM)
 	}
+	// The border of the completion list, one pixel outside its cells. It
+	// comes last, so that the records before keep their places in the
+	// table when the list opens or closes: the damage stays small.
+	if view.list_columns > 0 {
+		x := TEXT_X + view.list_left * CELL_WIDTH - 1
+		y := text_y + view.list_top * CELL_HEIGHT - 1
+		list_width := view.list_columns * CELL_WIDTH + 2
+		list_height := view.list_rows * CELL_HEIGHT + 2
+		interface.draw_rectangle(table, x, y, list_width, 1, COLOR_LIST_BORDER)
+		interface.draw_rectangle(table, x, y + list_height - 1, list_width, 1, COLOR_LIST_BORDER)
+		interface.draw_rectangle(table, x, y, 1, list_height, COLOR_LIST_BORDER)
+		interface.draw_rectangle(table, x + list_width - 1, y, 1, list_height, COLOR_LIST_BORDER)
+	}
 	interface.window_frame_end(&drawing, &frame, window)
 	if table.full {
 		system.log("terminal: the draw table is full: records are missing")
@@ -676,7 +853,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				// The key goes to the program. The terminal never waits for
 				// the program: if the queue is full, the key is lost.
 				if program != 0 {
-					if system.send(&source.completions, ring.Record{kind = u32(terminal.Input.Key), tag = event.code, values = {0 = u64(event.character)}}) {
+					if system.send(&source.completions, ring.Record{kind = u32(terminal.Input.Key), tag = event.code, values = {0 = u64(event.character), 1 = u64(event.modifiers)}}) {
 						keys_sent += 1
 						if keys_sent == 1 {
 							system.log("terminal: the first key goes to ", program_name)

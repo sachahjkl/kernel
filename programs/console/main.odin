@@ -5,7 +5,9 @@
 //
 // The console has no surface. It writes records to its terminal, and reads
 // the keys of the person from it (support/terminal). It owns the line that
-// the person edits, and the lines before: the terminal draws them.
+// the person edits, with a caret inside it (support/line_editor), the
+// history of the lines, and the completion list (completion.odin): the
+// terminal draws them.
 //
 // The console has two threads. The first thread reads the keys. The second
 // thread runs the lines. During a line, the first thread keeps the keys
@@ -14,6 +16,7 @@
 package console
 
 import "support:display"
+import "support:line_editor"
 import "support:random"
 import "support:system"
 import "support:terminal"
@@ -21,8 +24,7 @@ import "base:intrinsics"
 
 CONSOLE_MARK :: "console: ready"
 
-LINE_CAPACITY :: 120
-HISTORY_CAPACITY :: 8
+LINE_CAPACITY :: line_editor.LINE_CAPACITY
 PROMPT :: "> "
 PENDING_CAPACITY :: 128
 STATUS_INTERVAL :: 100 // Milliseconds between two texts of the time of a line.
@@ -50,12 +52,13 @@ changes: u32
 output_lock: system.Lock
 
 output: terminal.Terminal
-line: [LINE_CAPACITY]u8
-line_count: int
-history: [HISTORY_CAPACITY][LINE_CAPACITY]u8
-history_counts: [HISTORY_CAPACITY]int
-history_next: int // Lines entered so far.
-history_shown: int
+line: line_editor.Line
+// The lines entered so far. Up and Down walk them: history_place 0 is the
+// line that the person types (kept in draft while an older line shows),
+// n the line of age n - 1.
+history: line_editor.History
+history_place: int
+draft: line_editor.Line
 log_line: [192]u8 // The output line that goes to the log of the kernel when it ends.
 log_count: int
 line_tone: terminal.Tone // The tone of the output line that the console writes now.
@@ -98,7 +101,8 @@ entry :: proc "c" (start_context: ^system.Context) -> ! {
 				system.log("console: Escape stops the line after ", system.time() - work.since, " ms; keys that wait: ", u64(pending_count))
 				intrinsics.atomic_store(&work.cancel, 1)
 				system.word_wake(&work.cancel)
-			} else if pending_count < PENDING_CAPACITY && (pressed.code == display.KEY_ENTER || pressed.code == display.KEY_BACKSPACE || pressed.character >= ' ' && pressed.character <= '~') {
+			} else if pending_count < PENDING_CAPACITY {
+				// Each key but Escape waits for the end of the line, in order.
 				pending[pending_count] = pressed
 				pending_count += 1
 			}
@@ -146,46 +150,71 @@ change :: proc "contextless" () {
 }
 
 key :: proc "contextless" (pressed: Key) {
+	if completion_key(pressed) {
+		return
+	}
 	switch {
 	case pressed.code == display.KEY_ENTER:
-		// The line becomes a line of the terminal.
-		system.lock(&output_lock)
-		terminal.line(&output, {PROMPT, {tone = .Accent}}, {string(line[:line_count]), {tone = .Strong}})
-		system.unlock(&output_lock)
-		if line_count > 0 {
-			slot := history_next % HISTORY_CAPACITY
-			history[slot] = line
-			history_counts[slot] = line_count
-			history_next += 1
-			system.log(PROMPT, string(line[:line_count]))
-			work.text, work.count = line, line_count
-			work.since = system.time()
-			intrinsics.atomic_store(&work.cancel, 0)
-			running = true
-			intrinsics.atomic_add(&work.started, 1)
-			system.word_wake(&work.started)
-		}
-		history_shown = history_next
-		line_count = 0
-	case pressed.code == display.KEY_BACKSPACE:
-		line_count = max(line_count - 1, 0)
-	case pressed.code == display.KEY_UP || pressed.code == display.KEY_DOWN:
-		shown := history_shown + (pressed.code == display.KEY_UP ? -1 : 1)
-		if shown < 0 || shown < history_next - HISTORY_CAPACITY || shown > history_next {
-			return
-		}
-		history_shown = shown
-		line_count = 0
-		if shown < history_next {
-			line = history[shown % HISTORY_CAPACITY]
-			line_count = history_counts[shown % HISTORY_CAPACITY]
-		}
-	case pressed.character >= ' ' && pressed.character <= '~':
-		if line_count < LINE_CAPACITY {
-			line[line_count] = pressed.character
-			line_count += 1
+		line_enter()
+	case pressed.code == display.KEY_TAB:
+		completion_tab()
+	case pressed.code == display.KEY_UP:
+		history_walk(1)
+	case pressed.code == display.KEY_DOWN:
+		history_walk(-1)
+	case pressed.modifiers & display.MODIFIER_CONTROL != 0:
+		// Control with a key that no list takes: the character is not typed.
+	case:
+		edit_key := edit_key_of(pressed)
+		if line_editor.line_key(&line, edit_key, pressed.character) {
+			completion_after_edit(edit_key)
 		}
 	}
+}
+
+// line_enter makes the line a line of the terminal, and gives it to the
+// second thread.
+line_enter :: proc "contextless" () {
+	text := line_editor.line_text(&line)
+	system.lock(&output_lock)
+	terminal.line(&output, {PROMPT, {tone = .Accent}}, {text, {tone = .Strong}})
+	system.unlock(&output_lock)
+	if len(text) > 0 {
+		line_editor.history_add(&history, text)
+		system.log(PROMPT, text)
+		work.count = copy(work.text[:], text)
+		work.since = system.time()
+		intrinsics.atomic_store(&work.cancel, 0)
+		running = true
+		intrinsics.atomic_add(&work.started, 1)
+		system.word_wake(&work.started)
+	}
+	history_place = 0
+	line_editor.line_clear(&line)
+	completion_close()
+}
+
+// history_walk shows an older line (step 1) or a newer one (step -1). The
+// line that the person typed comes back after the newest line.
+history_walk :: proc "contextless" (step: int) {
+	place := history_place + step
+	if place < 0 {
+		return
+	}
+	if place == 0 {
+		line = draft
+		history_place = 0
+		return
+	}
+	text, ok := line_editor.history_line(&history, place - 1)
+	if !ok {
+		return
+	}
+	if history_place == 0 {
+		draft = line
+	}
+	history_place = place
+	line_editor.line_set(&line, text)
 }
 
 // edit_show gives to the terminal the line that it shows after the last
@@ -194,6 +223,7 @@ key :: proc "contextless" (pressed: Key) {
 // text changes.
 shown: [terminal.RUN_LIMIT]u8
 shown_count := -1
+shown_cursor: u64
 
 edit_show :: proc "contextless" () {
 	buffer: [terminal.RUN_LIMIT]u8
@@ -210,23 +240,35 @@ edit_show :: proc "contextless" () {
 		system.write_part(&writer, elapsed / 100 % 10)
 		system.write_part(&writer, " s. Escape stops an isolated call. Keys that wait: ")
 		for waiting in pending[:pending_count] {
-			character := [1]u8{waiting.code == display.KEY_ENTER ? '|' : waiting.code == display.KEY_BACKSPACE ? '<' : waiting.character}
+			shown_key: u8 = '^' // A key with no character: an arrow key, Control with a key.
+			switch {
+			case waiting.code == display.KEY_ENTER:
+				shown_key = '|'
+			case waiting.code == display.KEY_BACKSPACE:
+				shown_key = '<'
+			case waiting.code == display.KEY_TAB:
+				shown_key = '>'
+			case waiting.modifiers & display.MODIFIER_CONTROL == 0 && line_editor.printable(waiting.character):
+				shown_key = waiting.character
+			}
+			character := [1]u8{shown_key}
 			system.write_part(&writer, string(character[:]))
 		}
 		style.tone = .Warning
 	} else {
 		system.write_part(&writer, PROMPT)
-		system.write_part(&writer, string(line[:line_count]))
-		cursor = u64(writer.count)
+		system.write_part(&writer, line_editor.line_text(&line))
+		cursor = u64(len(PROMPT) + line.caret)
 	}
 	text := system.written(&writer)
-	if shown_count == len(text) && string(shown[:max(shown_count, 0)]) == text {
-		return
-	}
-	shown_count = copy(shown[:], text)
 	system.lock(&output_lock)
-	terminal.edit(&output, text, cursor, style)
-	system.unlock(&output_lock)
+	defer system.unlock(&output_lock)
+	if shown_count != len(text) || string(shown[:max(shown_count, 0)]) != text || cursor != shown_cursor {
+		shown_count = copy(shown[:], text)
+		shown_cursor = cursor
+		terminal.edit(&output, text, cursor, style)
+	}
+	completion_show()
 }
 
 // print writes output: runs of text on the terminal, and each full line on

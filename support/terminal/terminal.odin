@@ -73,19 +73,49 @@ RUN_LIMIT :: 256 // The bytes of the text of one record.
 //           Style. values[1]: the place of the cursor, in bytes from the
 //           start of the text, or NO_CURSOR. No text and no cursor: the
 //           terminal shows no such line.
+//   Hint    One line under the edit line, in the dim color: what the
+//           program says about the line (the signature of the call at the
+//           cursor). A new one replaces the one before; no text removes
+//           it. tag: the count of bytes of its text. values[0]: a Style.
+//           values[1], values[2]: the first byte and the count of bytes of
+//           the part that the terminal marks.
+//   List_Row One row of the next completion list. tag: the count of bytes
+//           of its text: the name, then what the name is. values[0]: the
+//           number of the row, below LIST_ROWS. values[1]: the bytes of the
+//           name. values[2], values[3]: the places of the name that matched
+//           what the person typed (bit n: byte n of the name; values[2]
+//           holds bytes 0 to 63).
+//   List    The completion list that the terminal shows over its text, at
+//           the edit line: the rows that List_Row gave before. values[0]:
+//           the count of rows, at most LIST_ROWS; 0 removes the list.
+//           values[1]: the row that is chosen, or NO_CHOICE. values[2]: the
+//           place of the first row in all the names of the program, and
+//           values[3] their count: with more names than rows, the list
+//           shows a scroll mark. values[4]: the byte of the edit line where
+//           the name starts: the list starts at its column.
+// The terminal draws each byte of a list or a hint that is not a character
+// of the font (under 32, over 126) as '?': the text of these records comes
+// from the descriptions of other programs.
 Kind :: enum u32 {
-	None   = 0,
-	Text   = 1,
-	Status = 2,
-	Clear  = 3,
-	Edit   = 4,
+	None     = 0,
+	Text     = 1,
+	Status   = 2,
+	Clear    = 3,
+	Edit     = 4,
+	Hint     = 5,
+	List_Row = 6,
+	List     = 7,
 }
 
 NO_CURSOR :: max(u64)
+NO_CHOICE :: max(u64)
+LIST_ROWS :: 8 // The rows of a completion list.
 
 // The kind of a completion record: what the terminal gives to the program.
 //   Key     The person pressed a key. tag: the code of the key
-//           (display.KEY_*). values[0]: its character, or 0.
+//           (display.KEY_*). values[0]: its character, or 0. values[1]:
+//           the modifiers that the person held (display.MODIFIER_*).
+//           Control-R gives the character 'r' with MODIFIER_CONTROL.
 // The terminal keeps the keys Page Up and Page Down: they move its view.
 // If the program does not read and the queue is full, the newest keys are
 // lost: the terminal never waits for a program.
@@ -97,6 +127,7 @@ Input :: enum u32 {
 Key :: struct {
 	code:      u32,
 	character: u8,
+	modifiers: u32,
 }
 
 // What a run of text is. The terminal chooses the color of each tone.
@@ -233,6 +264,35 @@ edit :: proc "contextless" (terminal: ^Terminal, text: string, cursor: u64 = NO_
 	system.wake_reader(&terminal.ring.commands)
 }
 
+// hint sets the line under the edit line, with a marked part (start and
+// count in bytes) and a style. A text of 0 bytes removes it.
+hint :: proc "contextless" (terminal: ^Terminal, text: string, marked_start: int, marked_count: int, style: Style) {
+	part := text[:min(len(text), RUN_LIMIT)]
+	append(terminal, part)
+	push(terminal, ring.Record{kind = u32(Kind.Hint), tag = u32(len(part)), values = {0 = transmute(u64)style, 1 = u64(max(marked_start, 0)), 2 = u64(max(marked_count, 0))}})
+	system.wake_reader(&terminal.ring.commands)
+}
+
+// list_row gives one row of the next completion list: a name, what it is,
+// and the places of the name that matched. A name and its text are cut to
+// RUN_LIMIT bytes together, the name first.
+list_row :: proc "contextless" (terminal: ^Terminal, row: int, name: string, about: string, matched: [2]u64) {
+	name_part := name[:min(len(name), RUN_LIMIT)]
+	about_part := about[:min(len(about), RUN_LIMIT - len(name_part))]
+	append(terminal, name_part)
+	append(terminal, about_part)
+	push(terminal, ring.Record{kind = u32(Kind.List_Row), tag = u32(len(name_part) + len(about_part)), values = {0 = u64(row), 1 = u64(len(name_part)), 2 = matched[0], 3 = matched[1]}})
+}
+
+// list_show shows the rows that list_row gave: row_count rows, the chosen
+// one (NO_CHOICE: none), the place of the first row in all the names and
+// their count, and the byte of the edit line where the name starts.
+// list_show(terminal, 0, ...) removes the list.
+list_show :: proc "contextless" (terminal: ^Terminal, row_count: int, chosen: u64, first: int, total: int, anchor: int) {
+	push(terminal, ring.Record{kind = u32(Kind.List), values = {0 = u64(clamp(row_count, 0, LIST_ROWS)), 1 = chosen, 2 = u64(max(first, 0)), 3 = u64(max(total, 0)), 4 = u64(max(anchor, 0))}})
+	system.wake_reader(&terminal.ring.commands)
+}
+
 // key gives the next key that the person pressed. false: no key waits.
 // A program waits for a key with system.wait_records on
 // terminal.ring.completions.
@@ -240,7 +300,7 @@ key :: proc "contextless" (terminal: ^Terminal) -> (pressed: Key, ok: bool) {
 	for {
 		record := system.receive(&terminal.ring.completions) or_return
 		if Input(record.kind) == .Key {
-			return {code = record.tag, character = u8(record.values[0])}, true
+			return {code = record.tag, character = u8(record.values[0]), modifiers = u32(record.values[1])}, true
 		}
 	}
 }

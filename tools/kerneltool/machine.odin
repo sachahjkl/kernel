@@ -1765,6 +1765,60 @@ scenario := [?]Step {
 	{kind = .Close, text = "interface_through_module"},
 	{kind = .Wait, text = "root: interface_through_module stopped"},
 	{kind = .Front, text = "console"},
+	// The line editor of the console. The console writes a log line only
+	// when the person asks (Tab, a take): the lines that the scenario types
+	// before this place add no record to the log.
+	// Fuzzy completion: "mcnt" holds the letters of monitor.count in their
+	// order. The list opens while the person types; Escape closes it, Tab
+	// opens it again, and Enter takes the first name, with its '('.
+	{kind = .Type, text = "clear()"},
+	{kind = .Keys, text = "mcnt"},
+	{kind = .Key, text = "esc"},
+	{kind = .Key, text = "tab"},
+	{kind = .Wait, text = "console: the completion list opens by Tab: "},
+	{kind = .Wait, text = " match \"mcnt\", the first is monitor.count; one ranking takes "},
+	{kind = .Shot, text = "console_completion"},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "console: the completion gave the line monitor.count("},
+	{kind = .Keys, text = "\"processors\")"},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "> monitor.count(\"processors\")"},
+	// The cursor inside the line: Home, Right, a character at the cursor,
+	// End, Left, Delete, Backspace. The printed text shows each change in
+	// its place: "acdf" becomes "abce".
+	{kind = .Keys, text = "\"acdf\""},
+	{kind = .Key, text = "home"},
+	{kind = .Key, text = "right"},
+	{kind = .Key, text = "right"},
+	{kind = .Keys, text = "b"},
+	{kind = .Key, text = "end"},
+	{kind = .Key, text = "left"},
+	{kind = .Key, text = "left"},
+	{kind = .Key, text = "delete"},
+	{kind = .Key, text = "backspace"},
+	{kind = .Keys, text = "e"},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "[console] abce"},
+	// The search of the history: Control-R opens it over the lines entered,
+	// the newest first; "leng" keeps the lines that start with "length",
+	// these two first (equal scores: the newest first). Control-R goes to
+	// the older one, Control-S back to the newer one; Enter puts the chosen
+	// line in the input, and a second Enter runs it.
+	{kind = .Type, text = "length(\"first search line\")"},
+	{kind = .Wait, text = "[console] 17"},
+	{kind = .Type, text = "length(\"second\")"},
+	{kind = .Wait, text = "[console] 6"},
+	{kind = .Key, text = "ctrl-r"},
+	{kind = .Keys, text = "leng"},
+	{kind = .Key, text = "ctrl-r"},
+	{kind = .Key, text = "ctrl-s"},
+	{kind = .Key, text = "ctrl-r"},
+	{kind = .Shot, text = "console_history_search"},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "console: the history search gave the line length(\"first search line\")"},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "> length(\"first search line\")"},
+	{kind = .Wait, text = "[console] 17"},
 	// Each page is free or paid, after all the starts and stops of this test.
 	{kind = .Type, text = "memory()"},
 	{kind = .Wait, text = " pages: all the free pages"},
