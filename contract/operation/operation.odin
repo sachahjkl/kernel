@@ -67,6 +67,7 @@ Right :: enum u32 {
 	Stop    = 7, // Machine: stop the machine.
 	Spend   = 8, // Budget: create objects with it, and take a part of it for a new budget.
 	Physical = 9, // Machine: read the physical address of a memory object (Memory_Physical).
+	Schedule = 10, // Machine: change the scheduling strategy of the machine (Strategy_Set).
 }
 Rights :: bit_set[Right;u32]
 
@@ -150,6 +151,9 @@ Operation :: enum u32 {
 	// loader put in the program. A record with the base of a record that exists replaces it; with the size 0
 	// it removes it. The kernel does not read the module: the record is what the loader asserts. The kernel
 	// names the module of the address of a fault with it, and Inspect gives the records (Module_Report).
+	Strategy_Set = 27, // (machine, Strategy) -> the strategy before. The scheduling strategy of the machine changes
+	// while it runs: no thread stops, none is lost. The state of the strategy of each thread starts from zero
+	// (docs/SCHEDULING.md). Needs the right Schedule on the machine.
 }
 
 // The scheduling strategy of the machine (docs/SCHEDULING.md): the rule that
@@ -376,6 +380,8 @@ System_Report :: struct {
 	reserved_pages:   u64, // Pages that a budget paid for and that have no page frame yet: pages on first use.
 	first_use_faults: u64, // Page faults of programs after which the page was present.
 	locks:            [LOCK_KIND_CAPACITY]Lock_Count, // By Lock_Kind.
+	strategy:         Strategy, // The scheduling strategy of the machine (Strategy_Set).
+	strategy_changes: u32, // The calls of Strategy_Set since boot.
 }
 
 // The locks of the kernel, by the data that each one protects
@@ -418,6 +424,13 @@ Processor_Report :: struct {
 	busy_time: u64, // Milliseconds with a thread.
 	same:      u64, // 1: the program is the program that asks.
 	apic_id:   u64, // The number that the machine gives to the processor.
+	// The scheduler (docs/SCHEDULING.md), since boot.
+	strategy:    Strategy, // The strategy of the run queue of the processor.
+	queued:      u32, // The threads in the run queue now.
+	picks:       u64, // Threads that a pick gave to the processor.
+	preemptions: u64, // Turns that a wake preemption ended.
+	moves:       u64, // Threads that the processor took from the queue of another processor.
+	pick_cycles: u64, // Cycles of the cycle counter in all the picks.
 }
 
 // The log: records in channels.

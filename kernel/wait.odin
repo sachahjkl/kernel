@@ -99,12 +99,12 @@ word_wake :: proc "contextless" (word: u64, count: u64) -> (woken: u64) {
 @(private = "file")
 wait_entry_wake :: proc "contextless" (thread: ^Thread, serial: u32) -> bool {
 	home := run_lock(thread)
-	counted, queued := false, false
+	counted, queued, preempts := false, false, false
 	switch {
 	case thread.wait_serial != serial:
 	// A leftover of a wait that ended.
 	case thread.state == .Waiting:
-		queued = thread_ready_held(thread)
+		queued, preempts = thread_ready_held(thread)
 		counted = true
 	case thread.state == .Ready && !thread.woken:
 		thread.woken = true
@@ -112,7 +112,7 @@ wait_entry_wake :: proc "contextless" (thread: ^Thread, serial: u32) -> bool {
 	}
 	run_unlock(home)
 	if queued {
-		kick(home)
+		kick(home, preempts)
 	}
 	return counted
 }

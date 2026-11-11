@@ -47,7 +47,7 @@ OPERATIONS := [Operation]Operation_Form {
 	.Device_Create = {"Device_Create", {{"machine", .Handle, .Machine, {.Devices}, 0}, {"kind", .Choice, .None, {}, u64(max(Device_Kind))}, {"a", .Value, .None, {}, 0}, {"b", .Value, .None, {}, 0}, {}, {}, {}}},
 	.Inspect = {"Inspect", {{"machine", .Handle, .Machine, {.Inspect}, 0}, {"kind", .Choice, .None, {}, u64(max(Inspect_Kind))}, {"index", .Value, .None, {}, 0}, {"address", .Address, .None, {}, 0}, {"size", .Count, .None, {}, 0}, {}, {}}},
 	.Machine_Stop = {"Machine_Stop", {{"machine", .Handle, .Machine, {.Stop}, 0}, {"code", .Value, .None, {}, 0}, {}, {}, {}, {}, {}}},
-	.Thread_Create = {"Thread_Create", {{"budget", .Handle, .Budget, {.Spend}, 0}, {"entry", .Address, .None, {}, 0}, {"stack", .Address, .None, {}, 0}, {"parameter", .Value, .None, {}, 0}, {}, {}, {}}},
+	.Thread_Create = {"Thread_Create", {{"budget", .Handle, .Budget, {.Spend}, 0}, {"entry", .Address, .None, {}, 0}, {"stack", .Address, .None, {}, 0}, {"parameter", .Value, .None, {}, 0}, {"weight", .Count, .None, {}, WEIGHT_FULL}, {"request", .Count, .None, {}, REQUEST_LIMIT}, {}}},
 	.Thread_Stop = {"Thread_Stop", {{"thread", .Handle_Or_Zero, .Thread, {.Control}, 0}, {}, {}, {}, {}, {}, {}}},
 	.Thread_State = {"Thread_State", {{"thread", .Handle, .Thread, {.Read}, 0}, {}, {}, {}, {}, {}, {}}},
 	.Word_Wait = {"Word_Wait", {{"words", .Address, .None, {}, 0}, {"count", .Count, .None, {}, WORD_WAIT_CAPACITY}, {}, {}, {}, {}, {}}},
@@ -58,6 +58,7 @@ OPERATIONS := [Operation]Operation_Form {
 	.Handle_Revoke = {"Handle_Revoke", {{"handle", .Handle, .None, {}, 0}, {"program", .Handle_Or_Zero, .Program, {.Control}, 0}, {}, {}, {}, {}, {}}},
 	.Memory_Physical = {"Memory_Physical", {{"machine", .Handle, .Machine, {.Physical}, 0}, {"memory", .Handle, .Memory, {.Read}, 0}, {}, {}, {}, {}, {}}},
 	.Program_Module = {"Program_Module", {{"program", .Handle_Or_Zero, .Program, {.Control}, 0}, {"record", .Address, .None, {}, 0}, {}, {}, {}, {}, {}}},
+	.Strategy_Set = {"Strategy_Set", {{"machine", .Handle, .Machine, {.Schedule}, 0}, {"strategy", .Choice, .None, {}, u64(max(Strategy))}, {}, {}, {}, {}, {}}},
 }
 
 @(rodata)

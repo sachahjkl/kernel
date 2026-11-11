@@ -18,6 +18,7 @@ right_names := [op.Right]string {
 	.Stop    = "Stop",
 	.Spend   = "Spend",
 	.Physical = "Physical",
+	.Schedule = "Schedule",
 }
 
 @(rodata)

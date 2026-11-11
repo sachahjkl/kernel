@@ -65,7 +65,7 @@ RIGHTS_PROGRAM :: op.Rights{.Give, .Read, .Control}
 RIGHTS_THREAD :: op.Rights{.Give, .Read, .Control}
 RIGHTS_PORTS :: op.Rights{.Give}
 RIGHTS_INTERRUPT :: op.Rights{.Give, .Read}
-RIGHTS_MACHINE :: op.Rights{.Give, .Inspect, .Devices, .Stop, .Physical}
+RIGHTS_MACHINE :: op.Rights{.Give, .Inspect, .Devices, .Stop, .Physical, .Schedule}
 RIGHTS_BUDGET :: op.Rights{.Give, .Read, .Spend}
 RIGHTS_LOG :: op.Rights{.Give, .Write}
 
@@ -1340,6 +1340,12 @@ kernel_interrupt :: proc "c" (frame: ^Frame) {
 		}
 		apic_write(APIC_END, 0)
 	case frame.vector == VECTOR_WAKE || frame.vector == VECTOR_SYNC:
+		// A thread that woke on another processor preempts the thread
+		// that runs here (kick). Idle: no turn to end.
+		if intrinsics.atomic_exchange(&cpu.preempt, false) && from_program {
+			cpu.slice_left = 0
+			cpu.preemptions += 1
+		}
 		apic_write(APIC_END, 0)
 	case frame.vector == VECTOR_SPURIOUS:
 	case frame.vector >= VECTOR_INTERRUPT_BASE && frame.vector < VECTOR_INTERRUPT_BASE + INTERRUPT_LINES:

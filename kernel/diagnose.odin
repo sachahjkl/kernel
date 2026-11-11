@@ -788,6 +788,16 @@ value_explain :: proc "contextless" (record: ^errors.Error_Record, operation: op
 	case .Memory_Map:
 		record_set(record, .Bad_Value, .None, 4, v[3], 0, 0) // Write and Execute: no page is both.
 		return true
+	case .Thread_Create:
+		switch {
+		case v[4] > op.WEIGHT_FULL:
+			record_set(record, .Bad_Value, .None, 5, v[4], op.WEIGHT_FULL, 0)
+		case v[5] > op.REQUEST_LIMIT:
+			record_set(record, .Bad_Value, .None, 6, v[5], op.REQUEST_LIMIT, 0)
+		case:
+			return false
+		}
+		return true
 	}
 	for parameter, n in form.parameters {
 		if parameter.form == .Choice && (v[n] > parameter.limit || v[n] == 0 && operation != .Log) {

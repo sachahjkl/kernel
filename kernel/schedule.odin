@@ -189,8 +189,13 @@ queue_pushes :: proc "contextless" () -> (sum: u32) {
 
 // kick makes a processor look at the queues: the home of a thread that
 // became ready if it is idle, else another idle processor, which takes the
-// thread.
-kick :: proc "contextless" (home: u32) {
+// thread. With no idle processor, a thread that preempts (the strategy of
+// its home said so, under its run lock) ends the turn of the thread that
+// runs on its home: on this processor at once, on another one by `preempt`
+// and an interrupt (the case VECTOR_WAKE of kernel_interrupt). The thread
+// that runs there can have changed since the decision: then the turn of
+// another thread ends, which costs one pass through schedule.
+kick :: proc "contextless" (home: u32, preempts := false) {
 	target := processors[home]
 	if intrinsics.atomic_exchange(&target.idle, false) {
 		apic_send(target.apic_id, VECTOR_WAKE)
@@ -202,6 +207,18 @@ kick :: proc "contextless" (home: u32) {
 			return
 		}
 	}
+	if !preempts {
+		return
+	}
+	if self := processor_self(); target == self {
+		if self.current != 0 {
+			self.slice_left = 0
+			self.preemptions += 1
+		}
+		return
+	}
+	intrinsics.atomic_store(&target.preempt, true)
+	apic_send(target.apic_id, VECTOR_WAKE)
 }
 
 // kick_all makes each idle processor look at the queues.
@@ -215,17 +232,22 @@ kick_all :: proc "contextless" () {
 
 // thread_ready_held ends the wait of a thread: it becomes Ready, in the
 // queue of its home if no processor runs it. The entries of its wait become
-// leftovers. The caller holds the run lock of the home. true: the thread is
-// in the queue now.
-thread_ready_held :: proc "contextless" (thread: ^Thread) -> bool {
+// leftovers. The caller holds the run lock of the home. queued: the thread
+// is in the queue now. preempts: the strategy of the queue says that it
+// preempts the thread that runs on its home.
+thread_ready_held :: proc "contextless" (thread: ^Thread) -> (queued: bool, preempts: bool) {
 	thread.state = .Ready
 	intrinsics.atomic_store(&thread.deadline, 0)
 	intrinsics.atomic_add(&thread.wait_serial, 1)
-	if thread.processor == 0 {
-		queue_ready(thread, .Woken)
-		return true
+	if thread.processor != 0 {
+		return false, false
 	}
-	return false
+	queue_ready(thread, .Woken)
+	queue := &run_queues[thread.home]
+	if running := processors[thread.home].current; running != 0 {
+		preempts = strategy_of(queue).wake_preempts(queue, thread.home, &threads[running], thread)
+	}
+	return true, preempts
 }
 
 // thread_wake ends the wait of a thread that waits. With a time, only a
@@ -233,10 +255,13 @@ thread_ready_held :: proc "contextless" (thread: ^Thread) -> bool {
 thread_wake :: proc "contextless" (thread: ^Thread, deadline_before := max(u64)) -> bool {
 	home := run_lock(thread)
 	woken := thread.state == .Waiting && thread.deadline <= deadline_before
-	queued := woken && thread_ready_held(thread)
+	queued, preempts: bool
+	if woken {
+		queued, preempts = thread_ready_held(thread)
+	}
 	run_unlock(home)
 	if queued {
-		kick(home)
+		kick(home, preempts)
 	}
 	return woken
 }

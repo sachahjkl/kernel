@@ -260,7 +260,11 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			return STATUS_RETRY
 		}
 		budget := handle_find(program, v[0], .Budget, {.Spend}) or_return
-		created := thread_create(program_index, budget.object, v[1], v[2], v[3]) or_return
+		// A weight above the full weight would raise the share (P20).
+		if v[4] > op.WEIGHT_FULL || v[5] > op.REQUEST_LIMIT {
+			return .Bad_Operation
+		}
+		created := thread_create(program_index, budget.object, v[1], v[2], v[3], v[4], v[5]) or_return
 		handle := handle_insert(program, {kind = .Thread, rights = RIGHTS_THREAD, object = created})
 		if handle == 0 {
 			thread_stop(created)
@@ -575,6 +579,8 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 				program_slots = PROGRAM_CAPACITY,
 				processors    = u64(processor_count),
 				locks         = lock_counts_sum(),
+				strategy      = intrinsics.atomic_load(&strategy_chosen),
+				strategy_changes = u32(intrinsics.atomic_load(&strategy_changes)),
 			}
 			// One section of the frame lock: the free pages are the pages of
 			// the budgets and the reserved pages, at this moment.
@@ -689,6 +695,14 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 				cpu := processors[v[2]]
 				report.busy_time = cpu.busy_time
 				report.apic_id = u64(cpu.apic_id)
+				// Counts that the processor writes alone, and two words of
+				// its queue: read with no lock, each one whole.
+				report.strategy = intrinsics.atomic_load(&run_queues[cpu.index].strategy)
+				report.queued = intrinsics.atomic_load(&run_queues[cpu.index].count)
+				report.picks = intrinsics.volatile_load(&cpu.picks)
+				report.preemptions = intrinsics.volatile_load(&cpu.preemptions)
+				report.moves = intrinsics.volatile_load(&cpu.moves)
+				report.pick_cycles = intrinsics.volatile_load(&cpu.pick_cycles)
 				if cpu.current != 0 {
 					report.program = u64(threads[cpu.current].program)
 					report.same = u64(programs[report.program].table == program.table)
@@ -710,6 +724,14 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			return .Bad_Operation // Its frames come at first use, from anywhere: no one address names them.
 		}
 		results[0] = regions[slot.object].physical
+		return .Ok
+
+	case .Strategy_Set:
+		_ = handle_find(program, v[0], .Machine, {.Schedule}) or_return
+		if v[1] == 0 || v[1] > u64(max(op.Strategy)) {
+			return .Bad_Operation
+		}
+		results[0] = u64(strategy_change(op.Strategy(v[1])))
 		return .Ok
 
 	case .Machine_Stop:

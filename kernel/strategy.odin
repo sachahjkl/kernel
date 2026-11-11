@@ -1,5 +1,6 @@
 package kernel
 
+import "base:intrinsics"
 import op "contract:operation"
 
 // The scheduling strategies (docs/SCHEDULING.md). A strategy is a table of
@@ -53,8 +54,8 @@ Strategy_Table :: struct {
 STRATEGIES := [op.Strategy]Strategy_Table {
 	.None        = ROUND_ROBIN,
 	.Round_Robin = ROUND_ROBIN,
-	.Fair        = ROUND_ROBIN,
-	.Eevdf       = ROUND_ROBIN,
+	.Fair        = FAIR,
+	.Eevdf       = EEVDF,
 }
 
 // The strategy at boot.
@@ -65,12 +66,91 @@ STRATEGY_START :: op.Strategy.Round_Robin
 strategy_chosen: op.Strategy
 strategy_changes: u64
 
+// The lengths of the strategies, in cycles of the cycle counter: the
+// kernel measured its frequency before (timer_calibrate).
+fair_latency, fair_least_turn, fair_wake, fair_credit, tick_cycles: u64
+
+FAIR_LATENCY :: 6000 // Microseconds: the time in which each thread of a queue runs one time.
+FAIR_LEAST_TURN :: 750 // Microseconds: the shortest turn.
+FAIR_WAKE :: 1000 // Microseconds: a woken thread preempts if its virtual time is less by more than this.
+FAIR_CREDIT :: 3000 // Microseconds: a woken thread is at most this much under the queue clock.
+
 // strategy_start gives each run queue the strategy of the boot, before the
 // first thread.
 strategy_start :: proc "contextless" () {
+	fair_latency = microseconds_to_cycles(FAIR_LATENCY)
+	fair_least_turn = microseconds_to_cycles(FAIR_LEAST_TURN)
+	fair_wake = microseconds_to_cycles(FAIR_WAKE)
+	fair_credit = microseconds_to_cycles(FAIR_CREDIT)
+	tick_cycles = cycle_frequency / TICKS_PER_SECOND
 	strategy_chosen = STRATEGY_START
 	for &queue in run_queues {
 		queue.strategy = STRATEGY_START
+	}
+}
+
+// microseconds_to_cycles: at most 10^5 microseconds (REQUEST_LIMIT) times
+// a frequency below 2^40: no overflow.
+microseconds_to_cycles :: #force_inline proc "contextless" (value: u64) -> u64 {
+	return value * cycle_frequency / 1_000_000
+}
+
+// strategy_change gives the machine a new strategy while it runs
+// (docs/SCHEDULING.md, "The change at run time"; docs/ARCHITECTURE.md,
+// "The change of strategy"). It writes the word of the machine, then
+// visits each run queue under its run lock, one at a time, and converts the
+// queue to the strategy that the word holds at that moment. It holds no
+// other lock: the caller holds at most its program lock (lock order:
+// program before run). It gives the strategy that the machine had.
+//
+// Why the last change wins on each queue: let B be the operation whose
+// write of the word is the last one. B visits each queue after its write;
+// at its visit the word holds B's strategy, so the queue gets it; a later
+// visit of another operation reads the same word. So after the last
+// operation returns, each queue has the strategy of the word.
+strategy_change :: proc "contextless" (target: op.Strategy) -> op.Strategy {
+	before := intrinsics.atomic_exchange(&strategy_chosen, target)
+	intrinsics.atomic_add(&strategy_changes, 1)
+	for cpu in processors[:processor_count] {
+		queue := &run_queues[cpu.index]
+		lock_take(&queue.lock, .Run)
+		queue_convert(queue, cpu.index, intrinsics.atomic_load(&strategy_chosen))
+		lock_free(&queue.lock, .Run)
+	}
+	return before
+}
+
+// queue_convert gives a queue a strategy. The caller holds its run lock.
+//
+// It changes no list, no state, no home and no processor: each thread that
+// was in the queue stays in it, in its order, and each thread that ran
+// still runs. It clears the strategy fields of each thread whose home is
+// this queue and whose fields the old strategy wrote: a thread in the
+// list, the thread on the processor, a thread that waits. These fields are
+// under this run lock: the home of a thread changes only under the run
+// lock of the old home and of the new one. A thread that is Ready, in no
+// list and on no processor is a new thread whose creation writes its
+// fields with no lock: it is skipped; its fields are zero, and it enters
+// the list (thread_queue) under this lock, after the conversion or before
+// it. Then each thread of the list is placed by the new strategy (New);
+// the thread on the processor is placed at its next tick or when it
+// leaves (not placed); a thread that waits is placed when it wakes.
+queue_convert :: proc "contextless" (queue: ^Run_Queue, home: u32, target: op.Strategy) {
+	if queue.strategy == target {
+		return
+	}
+	for &thread in threads[1:] {
+		if intrinsics.atomic_load(&thread.home) != home {
+			continue
+		}
+		state := intrinsics.atomic_load(&thread.state)
+		if state == .Waiting || state == .Ready && (thread.queued || thread.processor != 0) {
+			strategy_clear(&thread)
+		}
+	}
+	intrinsics.atomic_store(&queue.strategy, target) // A report reads it with no lock.
+	for index := queue.head; index != 0; index = threads[index].queue_next {
+		strategy_of(queue).ready(queue, home, &threads[index], .New)
 	}
 }
 
@@ -142,3 +222,263 @@ round_robin_wake_preempts :: proc "contextless" (queue: ^Run_Queue, home: u32, r
 
 round_robin_move :: proc "contextless" (from: ^Run_Queue, from_home: u32, to: ^Run_Queue, to_home: u32, thread: ^Thread) {}
 
+
+// Arithmetic of the virtual times (docs/SCHEDULING.md, "Integer arithmetic
+// and the overflow argument"). A virtual time is a u64 that can wrap: two
+// of them compare by the sign of their difference.
+
+CHARGE_LIMIT :: u64(1) << 32 // Cycles: the longest charge.
+KEY_LIMIT :: i64(1) << 44 // Weighted cycles: the largest distance to the queue clock in an average.
+
+before :: #force_inline proc "contextless" (a, b: u64) -> bool {
+	return i64(a - b) < 0
+}
+
+// weighted gives the virtual time of a run: cycles * WEIGHT_FULL / weight.
+weighted :: #force_inline proc "contextless" (cycles: u64, weight: u32) -> u64 {
+	return min(cycles, CHARGE_LIMIT) * op.WEIGHT_FULL / u64(max(weight, 1))
+}
+
+// charge adds a run to the virtual time of a thread.
+charge :: #force_inline proc "contextless" (thread: ^Thread, cycles: u64) {
+	thread.virtual += weighted(cycles, thread.weight)
+}
+
+// floor_to keeps a thread at most at a distance under a virtual time.
+floor_to :: #force_inline proc "contextless" (thread: ^Thread, floor: u64) {
+	if before(thread.virtual, floor) {
+		thread.virtual = floor
+	}
+}
+
+// clock_advance moves the queue clock up to a virtual time, never back.
+clock_advance :: #force_inline proc "contextless" (queue: ^Run_Queue, virtual: u64) {
+	if before(queue.virtual, virtual) {
+		queue.virtual = virtual
+	}
+}
+
+// The fair strategy: the idea of CFS. The least virtual time runs. A turn
+// is the target latency divided by weight, at least the least turn. A
+// woken thread is at most the credit under the queue clock, and preempts
+// when its virtual time is less by more than the wake granularity.
+FAIR :: Strategy_Table {
+	ready         = fair_ready,
+	pick          = fair_pick,
+	tick          = fair_tick,
+	stopping      = fair_stopping,
+	wake_preempts = fair_wake_preempts,
+	move          = fair_move,
+}
+
+fair_ready :: proc "contextless" (queue: ^Run_Queue, home: u32, thread: ^Thread, kind: Ready_Kind) {
+	switch {
+	case !thread.placed || kind == .New:
+		thread.virtual = queue.virtual
+		thread.placed = true
+	case kind == .Woken:
+		floor_to(thread, queue.virtual - fair_credit)
+	}
+}
+
+// One pass over the list: each thread is kept within the credit under the
+// clock; the least virtual time among the threads that a budget lets run.
+fair_pick :: proc "contextless" (queue: ^Run_Queue, home: u32) -> ^Thread {
+	best: ^Thread
+	floor := queue.virtual - fair_credit
+	for index := queue.head; index != 0; index = threads[index].queue_next {
+		thread := &threads[index]
+		floor_to(thread, floor)
+		if !budget_spent(thread.budget) && (best == nil || before(thread.virtual, best.virtual)) {
+			best = thread
+		}
+	}
+	if best != nil {
+		clock_advance(queue, best.virtual)
+	}
+	return best
+}
+
+fair_tick :: proc "contextless" (queue: ^Run_Queue, cpu: ^Processor, thread: ^Thread, cycles: u64) -> bool {
+	charge(thread, cycles)
+	if queue.count == 0 {
+		clock_advance(queue, thread.virtual)
+		return false
+	}
+	// The weights are at most 2^10 each, 2^18 for the 256 threads.
+	turn := max(fair_least_turn, fair_latency * u64(thread.weight) / u64(thread.weight + queue.weight))
+	return cycles_now() - cpu.turn_start >= turn
+}
+
+fair_stopping :: proc "contextless" (queue: ^Run_Queue, cpu: ^Processor, thread: ^Thread, cycles: u64, waits: bool) {
+	charge(thread, cycles)
+}
+
+fair_wake_preempts :: proc "contextless" (queue: ^Run_Queue, home: u32, running: ^Thread, woken: ^Thread) -> bool {
+	return running.placed && before(woken.virtual + weighted(fair_wake, woken.weight), running.virtual)
+}
+
+// A move keeps the distance of the thread to the queue clock.
+fair_move :: proc "contextless" (from: ^Run_Queue, from_home: u32, to: ^Run_Queue, to_home: u32, thread: ^Thread) {
+	thread.virtual = thread.virtual - from.virtual + to.virtual
+}
+
+// EEVDF: the average virtual time V of the queue, with the thread that runs
+// on its processor; a thread is eligible when its virtual time is not
+// above V; among the eligible threads, the earliest virtual deadline runs.
+// The deadline is the virtual time plus the request in weighted cycles.
+// The lag (V minus the virtual time) is kept across a wait, within two
+// requests (at least one tick), and across a move.
+EEVDF :: Strategy_Table {
+	ready         = eevdf_ready,
+	pick          = eevdf_pick,
+	tick          = eevdf_tick,
+	stopping      = eevdf_stopping,
+	wake_preempts = eevdf_wake_preempts,
+	move          = eevdf_move,
+}
+
+// eevdf_slice gives the request of a thread in weighted cycles: at most
+// 2^39 (REQUEST_LIMIT at 5 GHz, weight 1).
+eevdf_slice :: #force_inline proc "contextless" (thread: ^Thread) -> u64 {
+	return weighted(microseconds_to_cycles(u64(thread.request)), thread.weight)
+}
+
+// eevdf_bound gives the largest lag of a thread: two requests, at least
+// one tick. At most 2^40.
+eevdf_bound :: #force_inline proc "contextless" (thread: ^Thread) -> u64 {
+	return max(2 * eevdf_slice(thread), weighted(tick_cycles, thread.weight))
+}
+
+// eevdf_average gives V for a queue: the threads of the list that a budget
+// lets run, and the thread that runs on the processor of the queue, each
+// with its weight; and the sum of their weights. A thread that is not
+// placed does not count. The keys are clamped (KEY_LIMIT): a product is at
+// most 2^54, the sum of 256 threads at most 2^62.
+eevdf_average :: proc "contextless" (queue: ^Run_Queue, home: u32) -> (average: u64, weight: i64) {
+	clock := queue.virtual
+	sum: i64
+	add :: #force_inline proc "contextless" (thread: ^Thread, clock: u64, sum: ^i64, weight: ^i64) {
+		if thread.placed {
+			key := clamp(i64(thread.virtual - clock), -KEY_LIMIT, KEY_LIMIT)
+			sum^ += i64(thread.weight) * key
+			weight^ += i64(thread.weight)
+		}
+	}
+	for index := queue.head; index != 0; index = threads[index].queue_next {
+		if !budget_spent(threads[index].budget) {
+			add(&threads[index], clock, &sum, &weight)
+		}
+	}
+	if running := processors[home].current; running != 0 {
+		add(&threads[running], clock, &sum, &weight)
+	}
+	if weight == 0 {
+		return clock, 0
+	}
+	return clock + u64(sum / weight), weight
+}
+
+// eevdf_place puts a thread that is not in the list at V minus its lag,
+// scaled by (W + w) / W so that V does not move when the thread joins: a
+// lag of at most 2^40 times at most 2^18 + 2^10. Its deadline is one
+// request after.
+eevdf_place :: proc "contextless" (queue: ^Run_Queue, home: u32, thread: ^Thread, lag: i64) {
+	average, total := eevdf_average(queue, home)
+	scaled := lag
+	if total != 0 {
+		scaled = lag * (total + i64(thread.weight)) / total
+	}
+	thread.virtual = average - u64(scaled)
+	thread.virtual_deadline = thread.virtual + eevdf_slice(thread)
+	thread.placed = true
+}
+
+// eevdf_lag gives the lag of a thread against an average, within its bound.
+eevdf_lag :: #force_inline proc "contextless" (thread: ^Thread, average: u64) -> i64 {
+	bound := i64(eevdf_bound(thread))
+	return clamp(i64(average - thread.virtual), -bound, bound)
+}
+
+eevdf_ready :: proc "contextless" (queue: ^Run_Queue, home: u32, thread: ^Thread, kind: Ready_Kind) {
+	switch {
+	case !thread.placed || kind == .New:
+		eevdf_place(queue, home, thread, 0)
+	case kind == .Woken:
+		eevdf_place(queue, home, thread, thread.lag)
+	}
+}
+
+// Three passes over the list: each thread is kept within its lag bound
+// under the clock; V; the earliest deadline among the eligible threads.
+// The second and the third read lines that the first brought.
+eevdf_pick :: proc "contextless" (queue: ^Run_Queue, home: u32) -> ^Thread {
+	for index := queue.head; index != 0; index = threads[index].queue_next {
+		thread := &threads[index]
+		floor_to(thread, queue.virtual - eevdf_bound(thread))
+	}
+	average, _ := eevdf_average(queue, home)
+	best, least: ^Thread
+	for index := queue.head; index != 0; index = threads[index].queue_next {
+		thread := &threads[index]
+		if budget_spent(thread.budget) {
+			continue
+		}
+		if least == nil || before(thread.virtual, least.virtual) {
+			least = thread
+		}
+		if !before(average, thread.virtual) && (best == nil || before(thread.virtual_deadline, best.virtual_deadline)) {
+			best = thread
+		}
+	}
+	if least != nil {
+		clock_advance(queue, least.virtual)
+	}
+	// With the thread that runs in V, the least of the list can be above
+	// V: it runs, as the least virtual time.
+	return best != nil ? best : least
+}
+
+// A thread that used its request gets a new deadline; its turn ends if
+// another thread waits in the queue.
+eevdf_tick :: proc "contextless" (queue: ^Run_Queue, cpu: ^Processor, thread: ^Thread, cycles: u64) -> bool {
+	charge(thread, cycles)
+	if queue.count == 0 {
+		clock_advance(queue, thread.virtual)
+	}
+	if before(thread.virtual, thread.virtual_deadline) {
+		return false
+	}
+	thread.virtual_deadline = thread.virtual + eevdf_slice(thread)
+	return queue.count != 0
+}
+
+// A thread that waits keeps its lag: V is taken while the thread is still
+// the thread that runs on its home.
+eevdf_stopping :: proc "contextless" (queue: ^Run_Queue, cpu: ^Processor, thread: ^Thread, cycles: u64, waits: bool) {
+	charge(thread, cycles)
+	if waits {
+		average, _ := eevdf_average(queue, cpu.index)
+		thread.lag = eevdf_lag(thread, average)
+	}
+}
+
+// A woken thread preempts when it is eligible and its deadline is earlier,
+// or when the thread that runs is not eligible.
+eevdf_wake_preempts :: proc "contextless" (queue: ^Run_Queue, home: u32, running: ^Thread, woken: ^Thread) -> bool {
+	if !running.placed {
+		return false
+	}
+	average, _ := eevdf_average(queue, home)
+	if before(average, woken.virtual) {
+		return false
+	}
+	return before(woken.virtual_deadline, running.virtual_deadline) || before(average, running.virtual)
+}
+
+// A move keeps the lag: V of the old queue (the thread is still in its
+// list), then a place in the new one.
+eevdf_move :: proc "contextless" (from: ^Run_Queue, from_home: u32, to: ^Run_Queue, to_home: u32, thread: ^Thread) {
+	average, _ := eevdf_average(from, from_home)
+	eevdf_place(to, to_home, thread, eevdf_lag(thread, average))
+}

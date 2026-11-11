@@ -350,19 +350,31 @@ THREAD_STACK_PAGES :: 16
 // a program share all its memory and all its handles. The stack is new
 // memory; the page under it has no memory.
 // The entry never returns: it calls thread_stop. The budget (0: the budget
-// of this program) pays for the thread and gives its processor time.
-thread_start :: proc "contextless" (entry: proc "c" (parameter: rawptr) -> !, parameter: rawptr, stack_pages: u64 = THREAD_STACK_PAGES, budget: Handle = 0, error: ^errors.Error_Record = nil) -> (thread: Thread, status: Status) {
+// of this program) pays for the thread and gives its processor time. The
+// weight (1 to op.WEIGHT_FULL, 0: the full weight) and the request in
+// microseconds (0: op.REQUEST_DEFAULT) are for the scheduling strategies
+// that use them (docs/SCHEDULING.md).
+thread_start :: proc "contextless" (entry: proc "c" (parameter: rawptr) -> !, parameter: rawptr, stack_pages: u64 = THREAD_STACK_PAGES, budget: Handle = 0, weight: u64 = 0, request: u64 = 0, error: ^errors.Error_Record = nil) -> (thread: Thread, status: Status) {
 	memory := memory_create(stack_pages, 0, {}, error) or_return
 	defer close(memory)
 	thread.stack = memory_map(memory, error = error) or_return
 	results: [7]u64
-	results, status = call_with_error(error, .Thread_Create, u64(budget == 0 ? own_budget() : budget), u64(uintptr(rawptr(entry))), u64(uintptr(thread.stack)) + stack_pages * PAGE_SIZE, u64(uintptr(parameter)))
+	results, status = call_with_error(error, .Thread_Create, u64(budget == 0 ? own_budget() : budget), u64(uintptr(rawptr(entry))), u64(uintptr(thread.stack)) + stack_pages * PAGE_SIZE, u64(uintptr(parameter)), weight, request)
 	if status != .Ok {
 		memory_unmap(thread.stack)
 		return {}, status
 	}
 	thread.handle = Handle(results[0])
 	return thread, .Ok
+}
+
+// strategy_set changes the scheduling strategy of the machine while it
+// runs, and gives the strategy before. The machine handle needs the right
+// Schedule.
+strategy_set :: proc "contextless" (machine: Handle, strategy: op.Strategy, error: ^errors.Error_Record = nil) -> (before: op.Strategy, status: Status) {
+	results: [7]u64
+	results, status = call_with_error(error, .Strategy_Set, u64(machine), u64(strategy))
+	return op.Strategy(results[0]), status
 }
 
 // thread_stop ends the thread that calls it.
