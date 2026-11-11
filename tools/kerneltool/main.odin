@@ -324,10 +324,10 @@ run_check :: proc(args: []string) -> int {
 		}
 		fmt.printfln("kerneltool: test passed: contract:%s compiles with the contract library only", name)
 	}
-	// The tests of runtime/memory.asm link the form of the host.
-	if !run({"nasm", "-f", "elf64", "-DHOST", "-o", BUILD_FOLDER + "/runtime_host.o", RUNTIME_MEMORY}) {
-		return EXIT_FAILURE
-	}
+	// The tests of runtime/memory.asm link the form of the host: the
+	// compiler assembles runtime/memory_for_host_tests.asm itself and links
+	// its object by its path (a library found through `-L/` is refused by
+	// the linker of the Nix sandbox).
 	for folder in ([]string{"runtime", "contract/blake3", "contract/isolated", "contract/remote", "support/bar", "support/information", "support/network", "support/tcp", "support/web", "tools/kerneltool"}) {
 		name, _ := strings.replace_all(folder, "/", "_", context.temp_allocator)
 		if !run({"odin", "test", folder, "-vet", CONTRACT_LIBRARY, SUPPORT_LIBRARY, strings.concatenate({"-out:" + BUILD_FOLDER + "/test_", name}, context.temp_allocator)}) {

@@ -1,12 +1,13 @@
 #+build !freestanding
-// The tests of runtime/memory.asm on the host. The kernel tool assembles
-// the file with -DHOST into build/runtime_host.o before `odin test`: the
-// file then has the long names only, so the host keeps its own memcpy.
+// The tests of runtime/memory.asm on the host. The compiler assembles
+// memory_for_host_tests.asm, which includes the file with HOST defined: the
+// object then has the long names only, so the host keeps its own memcpy.
+// Run from the root of the repository (the include names runtime/memory.asm).
 package memory
 
 import "core:testing"
 
-foreign import memory "../build/runtime_host.o"
+foreign import memory "memory_for_host_tests.asm"
 
 @(default_calling_convention = "c")
 foreign memory {

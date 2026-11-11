@@ -1039,7 +1039,7 @@ scenario := [?]Step {
 	// library in the memory of the console, and a sandboxed program. Each
 	// program that runs the module has its own count.
 	{kind = .Launch, text = "tally"},
-	{kind = .Wait, text = "tally: ok"},
+	{kind = .Wait, text = "tally: ok", any_order = true}, // The compositor can write the line of the surface first.
 	{kind = .Wait, text = "compositor: surface tally"},
 	{kind = .Move, text = "tally", to_x = 616, to_y = 530}, // Under the console, at the right.
 	{kind = .Front, text = "console"},
