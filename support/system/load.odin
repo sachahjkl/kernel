@@ -22,6 +22,33 @@ image_entries :: proc "contextless" (image: []u8) -> []info.Image_Entry {
 	return ([^]info.Image_Entry)(raw_data(image[size_of(info.Image_Header):]))[:header.count]
 }
 
+// image_resources gives the entries of the resources of the boot image:
+// the table after the table of the modules.
+image_resources :: proc "contextless" (image: []u8) -> []info.Image_Entry {
+	modules := image_entries(image)
+	if modules == nil {
+		return nil
+	}
+	header := (^info.Image_Header)(raw_data(image))
+	first := size_of(info.Image_Header) + len(modules) * size_of(info.Image_Entry)
+	if first + int(header.resource_count) * size_of(info.Image_Entry) > len(image) {
+		return nil
+	}
+	return ([^]info.Image_Entry)(raw_data(image[first:]))[:header.resource_count]
+}
+
+// image_resource_find gives the entry of the resource with this name, or
+// nil. The entry is inside the image and starts on a page. The caller
+// checks the hash of the bytes.
+image_resource_find :: proc "contextless" (image: []u8, name: string) -> ^info.Image_Entry {
+	for &entry in image_resources(image) {
+		if name_of(entry.name[:]) == name && entry.offset % PAGE_SIZE == 0 && entry.offset <= u64(len(image)) && entry.size <= u64(len(image)) - entry.offset {
+			return &entry
+		}
+	}
+	return nil
+}
+
 // image_find gives the module file with this name. The result is empty when
 // the image has no such module.
 image_find :: proc "contextless" (image: []u8, name: string) -> []u8 {

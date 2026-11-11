@@ -368,7 +368,7 @@ run_check :: proc(args: []string) -> int {
 	// compiler assembles runtime/memory_for_host_tests.asm itself and links
 	// its object by its path (a library found through `-L/` is refused by
 	// the linker of the Nix sandbox).
-	for folder in ([]string{"runtime", "contract/blake3", "contract/isolated", "contract/pointer_pictures", "contract/remote", "support/bar", "support/interface", "support/addresses", "support/information", "support/vector_font", "support/network", "support/tcp", "support/web", "tools/kerneltool"}) {
+	for folder in ([]string{"runtime", "contract/blake3", "contract/isolated", "contract/pointer_pictures", "contract/remote", "support/bar", "support/graphics", "support/interface", "support/addresses", "support/information", "support/vector_font", "support/network", "support/tcp", "support/web", "tools/kerneltool"}) {
 		name, _ := strings.replace_all(folder, "/", "_", context.temp_allocator)
 		if !run({"odin", "test", folder, "-vet", CONTRACT_LIBRARY, SUPPORT_LIBRARY, strings.concatenate({"-out:" + BUILD_FOLDER + "/test_", name}, context.temp_allocator)}) {
 			return EXIT_FAILURE
@@ -384,7 +384,11 @@ run_check :: proc(args: []string) -> int {
 // module file with the file of the first build: the hash of a module is
 // the identity of its source, not of one build (property 11).
 modules_same_again :: proc() -> bool {
-	paths := files_with_suffix(MODULE_BUILD_FOLDER, ".module") or_return
+	module_paths := files_with_suffix(MODULE_BUILD_FOLDER, ".module") or_return
+	// The pointer theme files are resources of the boot image: the same
+	// input gives the same bytes.
+	theme_paths := files_with_suffix(POINTER_BUILD_FOLDER, ".pointers") or_return
+	paths := slice.concatenate([][]string{module_paths, theme_paths}, context.temp_allocator)
 	first := make([][]u8, len(paths), context.temp_allocator)
 	for path, index in paths {
 		bytes, err := os.read_entire_file(path, context.allocator)
@@ -409,7 +413,7 @@ modules_same_again :: proc() -> bool {
 	if different != 0 {
 		return false
 	}
-	fmt.printfln("kerneltool: test passed: %d modules are the same bytes after a second build", len(paths))
+	fmt.printfln("kerneltool: test passed: %d modules and %d pointer theme files are the same bytes after a second build", len(module_paths), len(theme_paths))
 	return true
 }
 

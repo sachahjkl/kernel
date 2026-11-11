@@ -113,8 +113,10 @@ build_modules :: proc() -> bool {
 	for build in module_builds {
 		build_module(build) or_return
 	}
+	// The pointer themes: the resources of the boot image (pointers.odin).
+	resources := build_pointer_themes(os.get_env(POINTER_THEME_SOURCE_VARIABLE, context.temp_allocator), false) or_return
 	// The second boot image has no compositor: with it, the start fails.
-	return build_boot_image(BOOT_IMAGE, "") && build_boot_image(BOOT_IMAGE_FAILS, "compositor")
+	return build_boot_image(BOOT_IMAGE, "", resources) && build_boot_image(BOOT_IMAGE_FAILS, "compositor", resources)
 }
 
 // files_with_suffix gives the paths of the files of a folder that end with suffix.
@@ -260,9 +262,11 @@ build_module :: proc(build: Module_Build) -> bool {
 	return true
 }
 
-// build_boot_image writes the modules that have `image` set into one block
-// (boot_info/boot_info.odin). It leaves out the module `without`.
-build_boot_image :: proc(path: string, without: string) -> bool {
+// build_boot_image writes the modules that have `image` set, then the
+// resources, into one block (boot_info/boot_info.odin). It leaves out the
+// module `without`. A resource has its name and the hash of its bytes, as a
+// module (property 11).
+build_boot_image :: proc(path: string, without: string, resources: []Resource_File) -> bool {
 	entries := make([dynamic]info.Image_Entry, context.temp_allocator)
 	files := make([dynamic][]u8, context.temp_allocator)
 	for build in module_builds {
@@ -275,6 +279,14 @@ build_boot_image :: proc(path: string, without: string) -> bool {
 		append(&entries, entry)
 		append(&files, file)
 	}
+	module_count := len(entries)
+	for resource in resources {
+		file := read_file(resource.path) or_return
+		entry := info.Image_Entry{hash = blake3.hash(file), size = u64(len(file))}
+		copy(entry.name[:info.IMAGE_NAME_SIZE - 1], resource.name)
+		append(&entries, entry)
+		append(&files, file)
+	}
 	image := make([dynamic]u8, context.temp_allocator)
 	resize(&image, size_of(info.Image_Header) + len(entries) * size_of(info.Image_Entry))
 	for file, index in files {
@@ -282,7 +294,7 @@ build_boot_image :: proc(path: string, without: string) -> bool {
 		entries[index].offset = u64(len(image))
 		append(&image, ..file)
 	}
-	header := info.Image_Header{magic = info.IMAGE_MAGIC, count = u32(len(entries))}
+	header := info.Image_Header{magic = info.IMAGE_MAGIC, count = u32(module_count), resource_count = u32(len(entries) - module_count)}
 	mem.copy(&image[0], &header, size_of(header))
 	if len(entries) > 0 {
 		mem.copy(&image[size_of(header)], &entries[0], len(entries) * size_of(info.Image_Entry))

@@ -35,8 +35,8 @@ Pointer_Theme_Build :: struct {
 }
 
 pointer_theme_builds := [?]Pointer_Theme_Build {
-	{resource = "pointers_posy", manifest = "resources/pointers/posy.manifest", output = POINTER_BUILD_FOLDER + "/posy.pointers", needs_source = true},
-	{resource = "pointers_system", manifest = "resources/pointers/system.manifest", output = POINTER_BUILD_FOLDER + "/system.pointers"},
+	{resource = pointer_pictures.RESOURCE_OF_THE_OWNER, manifest = "resources/pointers/posy.manifest", output = POINTER_BUILD_FOLDER + "/posy.pointers", needs_source = true},
+	{resource = pointer_pictures.RESOURCE_OF_THE_SYSTEM, manifest = "resources/pointers/system.manifest", output = POINTER_BUILD_FOLDER + "/system.pointers"},
 }
 
 // A theme file that the build made: a resource of the boot image.

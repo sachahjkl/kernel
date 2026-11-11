@@ -62,6 +62,8 @@ grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 		return {.Inspect}
 	case "rights":
 		return {.Inspect, .Image} // It shows what the kernel refuses.
+	case "pointers":
+		return {.Image} // It reads the pointer themes in the resource table of the boot image.
 	case "log":
 		return {.Log_Records, .Serve} // It serves records() to a caller that acts for the person.
 	case "boot":
@@ -122,6 +124,11 @@ remote_callable := [?]string{"compositor", "inspect", "log", "manual", "monitor"
 // 3 are the screen.
 COMPOSITOR_VALUE_FILE_ADDRESS :: 4
 COMPOSITOR_VALUE_FILE_SIZE :: 5
+// The pointer theme file of the compositor (docs/POINTERS.md): a resource
+// of the boot image, mapped read-only (resources.odin).
+COMPOSITOR_VALUE_POINTER_THEME_ADDRESS :: 6
+COMPOSITOR_VALUE_POINTER_THEME_SIZE :: 7
+POINTER_THEME_ADDRESS :: 0x0000_3100_0000_0000
 
 // may_connect says if a program can ask the root service for a connection
 // to the service with a name.
@@ -437,7 +444,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		// The compositor is also a service (programs/compositor/exports.odin):
 		// a service ring and its own file, as start() gives to a service.
 		// Its values 0 to 3 are the screen, so the file is at values 4 and 5.
-		mappings: [1]system.Mapping
+		mappings: [2]system.Mapping
 		mapping_count := 0
 		served := &started[0]
 		served^ = {}
@@ -453,6 +460,17 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				mappings[0] = {memory = image_memory, address = isolated.FILE_ADDRESS, first = item.offset / system.PAGE_SIZE, page_count = (item.size + system.PAGE_SIZE - 1) / system.PAGE_SIZE}
 				mapping_count = 1
 				served.hash = item.hash
+			}
+		}
+		// The pointer theme: a resource of the boot image, read-only.
+		for name in pointer_theme_choice() {
+			if mapping, size, given := resource_mapping(name, POINTER_THEME_ADDRESS); given {
+				values[COMPOSITOR_VALUE_POINTER_THEME_ADDRESS] = POINTER_THEME_ADDRESS
+				values[COMPOSITOR_VALUE_POINTER_THEME_SIZE] = size
+				mappings[mapping_count] = mapping
+				mapping_count += 1
+				system.log("root: the compositor has the pointer theme ", name)
+				break
 			}
 		}
 		compositor, status = system.program_start(system.image_find(image, "compositor"), "compositor", grants, values, budget_of("compositor"), mappings[:mapping_count], &prepared)

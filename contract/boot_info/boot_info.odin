@@ -85,18 +85,24 @@ physical_slice :: #force_inline proc "contextless" (address: u64, count: u64, $T
 	return ([^]T)(DIRECT_MAP_BASE + uintptr(address))[:count]
 }
 
-// The boot image: the module files that the first program needs, in one block.
+// The boot image: the module files that the first program needs, and the
+// resources (files that are not modules: the pointer theme files), in one
+// block.
 //
 //   Image_Header
-//   Image_Entry, header.count times
+//   Image_Entry, header.count times: the modules
+//   Image_Entry, header.resource_count times: the resources
 //   the files; each one starts on a page boundary of the image
+//
+// A reader of modules reads the first table only: a resource is never
+// taken for a module.
 IMAGE_MAGIC :: u64(0x4547414D49544F42) // The bytes "BOTIMAGE".
 IMAGE_NAME_SIZE :: 32
 
 Image_Header :: struct {
-	magic:    u64,
-	count:    u32,
-	reserved: u32,
+	magic:          u64,
+	count:          u32, // The modules.
+	resource_count: u32, // The resources, after the modules. 0: none.
 }
 
 Image_Entry :: struct {

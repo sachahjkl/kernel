@@ -30,6 +30,14 @@ DELAY_LIMIT :: 60_000 // Milliseconds: the longest frame of an animation.
 SHAPE_COUNT_LIMIT :: 256
 PICTURE_COUNT_LIMIT :: 1 << 16
 
+// The names of the pointer theme files in the resource table of the boot
+// image (kerneltool pointers). The compositor takes the first one that the
+// boot image has: the theme of the owner when the build had its input.
+RESOURCE_OF_THE_OWNER :: "pointers_posy"
+RESOURCE_OF_THE_SYSTEM :: "pointers_system"
+@(rodata)
+RESOURCE_PREFERENCE := [?]string{RESOURCE_OF_THE_OWNER, RESOURCE_OF_THE_SYSTEM}
+
 // The pointer shapes of the system. Zero is the arrow: a zero record asks
 // for the default. A new shape is a new number at the end.
 Pointer_Shape :: enum u32 {
