@@ -259,7 +259,7 @@ function_check :: proc "contextless" (file: []u8, index: u32, function: module.F
 			return {kind = .Direction, table = .Functions, index = index, offset = at + u64(offset_of(module.Function, parameter_directions)) + u64(number), value = u64(direction), limit = type == .Table || type == .Bytes ? u64(max(module.Direction)) + 1 : 1}
 		}
 	}
-	if function.result > .Table || function.result == .Bytes {
+	if function.result > .Table { // Bytes (6) is a parameter only.
 		return {kind = .Function, table = .Functions, index = index, offset = at + u64(offset_of(module.Function, result)), value = u64(function.result), limit = u64(module.Type.Table) + 1}
 	}
 	if function.result == .Record || function.result == .Table {

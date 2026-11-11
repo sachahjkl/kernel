@@ -1162,10 +1162,14 @@ call_isolated :: proc "contextless" (item: ^Command, arguments: []Value) -> Valu
 				return {}
 			case .Bad_Export:
 				return fail("the program ", sandbox.name, " has no export ", item.name)
-			case .Bad_Arguments:
+			case .Bad_Arguments, .Bad_Handle:
+				// The values of a refusal hold its error record: the argument and why.
+				refusal := transmute(errors.Error_Record)completion.values
+				if refusal.kind != 0 {
+					refusal.operation = i64(item.export)
+					return export_failure(item, &refusal, i64(completion.kind))
+				}
 				return fail("the program ", sandbox.name, " refused the arguments of ", item.name)
-			case .Bad_Handle:
-				return fail("the program ", sandbox.name, " refused a handle of ", item.name)
 			case .Load_Failed:
 				return fail("the program ", sandbox.name, " gave the status of a load for a call")
 			case:

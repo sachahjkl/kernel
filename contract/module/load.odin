@@ -319,6 +319,12 @@ record_type :: proc "contextless" (file: []u8, index: u32) -> (value: Record, ok
 			return {}, false
 		}
 	}
+	// The size is a multiple of the alignment: a record that follows
+	// another in a table keeps the alignment of its fields (N1 of the
+	// hostile read).
+	if value.size % record_alignment(file, value) != 0 {
+		return {}, false
+	}
 	return value, true
 }
 

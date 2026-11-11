@@ -120,7 +120,7 @@ area_of :: proc "contextless" (area: Area) -> interface.Area {
 
 // draw_background appends the background of the rules on an area: one color and the grid of points. The result is the count of draw records, or -1 for a table over 2^40 records or bytes.
 @(export, link_name = "draw_background")
-draw_background :: proc "c" (drawn: ^Draw_Records_To_Append, area: ^Area) -> i64 {
+draw_background :: proc "c" (drawn: ^system.Table_To_Append(interface.Draw_Record), area: ^Area) -> i64 {
 	frame: Frame_Over_Caller_Tables
 	if !frame_over_caller_tables(&frame, drawn, nil) {
 		return -1
@@ -131,7 +131,7 @@ draw_background :: proc "c" (drawn: ^Draw_Records_To_Append, area: ^Area) -> i64
 
 // draw_card appends the frame of one subject: its border, its surface, its title in the accent and its caption. It writes the area of its content in the one row of `area`. The result is the count of draw records, or -1 for a table over 2^40 records or bytes.
 @(export, link_name = "draw_card")
-draw_card :: proc "c" (drawn: ^Draw_Records_To_Append, text: ^system.Bytes_To_Append, area: ^system.Table_To_Change(Area), title: ^string, caption: ^string, accent: i64) -> i64 {
+draw_card :: proc "c" (drawn: ^system.Table_To_Append(interface.Draw_Record), text: ^system.Bytes_To_Append, area: ^system.Table_To_Change(Area), title: ^string, caption: ^string, accent: i64) -> i64 {
 	frame: Frame_Over_Caller_Tables
 	if !frame_over_caller_tables(&frame, drawn, text) {
 		return -1
@@ -145,7 +145,7 @@ draw_card :: proc "c" (drawn: ^Draw_Records_To_Append, text: ^system.Bytes_To_Ap
 
 // draw_cell_text appends a text in a cell of a line, at the left, or at the right when `right` is not 0. The result is the count of draw records, or -1 for a table over 2^40 records or bytes.
 @(export, link_name = "draw_cell_text")
-draw_cell_text :: proc "c" (drawn: ^Draw_Records_To_Append, text: ^system.Bytes_To_Append, cell: ^Area, words: ^string, color: i64, right: i64) -> i64 {
+draw_cell_text :: proc "c" (drawn: ^system.Table_To_Append(interface.Draw_Record), text: ^system.Bytes_To_Append, cell: ^Area, words: ^string, color: i64, right: i64) -> i64 {
 	frame: Frame_Over_Caller_Tables
 	if !frame_over_caller_tables(&frame, drawn, text) {
 		return -1
@@ -156,7 +156,7 @@ draw_cell_text :: proc "c" (drawn: ^Draw_Records_To_Append, text: ^system.Bytes_
 
 // draw_label_value_line appends a name in the dim color and its value. The result is the count of draw records, or -1 for a table over 2^40 records or bytes.
 @(export, link_name = "draw_label_value_line")
-draw_label_value_line :: proc "c" (drawn: ^Draw_Records_To_Append, text: ^system.Bytes_To_Append, line: ^Label_Value, label: ^string, value: ^string) -> i64 {
+draw_label_value_line :: proc "c" (drawn: ^system.Table_To_Append(interface.Draw_Record), text: ^system.Bytes_To_Append, line: ^Label_Value, label: ^string, value: ^string) -> i64 {
 	frame: Frame_Over_Caller_Tables
 	if !frame_over_caller_tables(&frame, drawn, text) {
 		return -1
@@ -167,7 +167,7 @@ draw_label_value_line :: proc "c" (drawn: ^Draw_Records_To_Append, text: ^system
 
 // draw_table_band appends the band under line `index` of a table: every second line has the surface of a card. The result is the count of draw records, or -1 for a table over 2^40 records or bytes.
 @(export, link_name = "draw_table_band")
-draw_table_band :: proc "c" (drawn: ^Draw_Records_To_Append, area: ^Area, index: i64) -> i64 {
+draw_table_band :: proc "c" (drawn: ^system.Table_To_Append(interface.Draw_Record), area: ^Area, index: i64) -> i64 {
 	frame: Frame_Over_Caller_Tables
 	if !frame_over_caller_tables(&frame, drawn, nil) {
 		return -1
@@ -178,7 +178,7 @@ draw_table_band :: proc "c" (drawn: ^Draw_Records_To_Append, area: ^Area, index:
 
 // draw_bar appends a value against a maximum: the track and the full part. The result is the count of draw records, or -1 for a table over 2^40 records or bytes.
 @(export, link_name = "draw_bar")
-draw_bar :: proc "c" (drawn: ^Draw_Records_To_Append, bar: ^Bar_Value) -> i64 {
+draw_bar :: proc "c" (drawn: ^system.Table_To_Append(interface.Draw_Record), bar: ^Bar_Value) -> i64 {
 	frame: Frame_Over_Caller_Tables
 	if !frame_over_caller_tables(&frame, drawn, nil) {
 		return -1

@@ -39,9 +39,10 @@ Call_Status :: enum u32 {
 	No_Room      = 2, // The arguments do not fit in the call region: isolated.room_missing says which table.
 	Ring_Full    = 3,
 	Stopped      = 4, // The other program stopped during the call.
-	Refused      = 5, // The other program gave a status that is not Ok: Bad_Export, Bad_Arguments, Bad_Handle.
-	Wrong_Answer = 6, // The other program gave a count of a table that is smaller than the count on entry.
+	Refused      = 5, // The other program gave a status that is not Ok: Bad_Export, Bad_Arguments, Bad_Handle. The error record has its refusal.
+	Wrong_Answer = 6, // The other program gave a count of a table that is smaller than the count on entry. The error record names the parameter.
 	Failed       = 7, // The export failed: its integer result is negative, and the error record is filled.
+	Not_Done     = 8, // call_direct does not do this description: a result that is not an Integer, a record of a table that is not valid. The error record says which.
 }
 
 // call_direct calls an export of a module that is in this program, with
@@ -51,8 +52,25 @@ Call_Status :: enum u32 {
 // works in that memory: a Change table and an Append table are changed in
 // place, and the count of an Append table is its new count. An export with
 // an error record writes it at `error`.
-call_direct :: proc "contextless" (file: []u8, address: uintptr, function: module.Function, arguments: []isolated.Argument, error: ^errors.Error_Record = nil) -> (result: i64) {
+// It does the descriptions with an Integer result or none; another result
+// gives Not_Done (finding W6 of the hostile read: it gave the address of the
+// error record where the export reads its buffer). It checks the
+// description as the receiver of an isolated call does (record_size), and
+// the record of each table.
+call_direct :: proc "contextless" (file: []u8, address: uintptr, function: module.Function, arguments: []isolated.Argument, error: ^errors.Error_Record = nil) -> (result: i64, status: Call_Status) {
 	function := function
+	not_done :: proc "contextless" (error: ^errors.Error_Record, argument: int, value: u64) -> (i64, Call_Status) {
+		if error != nil {
+			error^ = errors.error_make(.Bad_Value, .None, i64(argument), i64(value))
+		}
+		return 0, .Not_Done
+	}
+	if _, described := isolated.record_size(function); !described || len(arguments) != int(function.parameter_count) {
+		return not_done(error, 0, u64(len(arguments)))
+	}
+	if function.result != .Integer && function.result != .None {
+		return not_done(error, 0, u64(function.result))
+	}
 	integers: [CALL_INTEGERS]u64
 	places: [module.PARAMETER_CAPACITY]module.Table_Place
 	slices: [module.PARAMETER_CAPACITY]isolated.Slice
@@ -65,13 +83,21 @@ call_direct :: proc "contextless" (file: []u8, address: uintptr, function: modul
 		case .Record:
 			integers[index] = u64(uintptr(raw_data(argument.record)))
 		case .Table, .Bytes:
-			size, _, _ := isolated.table_record(file, type, function.parameter_details[index])
-			places[index] = {address = u64(uintptr(raw_data(argument.table.records))), count = argument.table.count, capacity = u64(len(argument.table.records)) / max(size, 1)}
+			size, _, valid := isolated.table_record(file, type, function.parameter_details[index])
+			if !valid {
+				return not_done(error, index + 1, u64(function.parameter_details[index]))
+			}
+			capacity := u64(len(argument.table.records)) / size
+			if argument.table.count > capacity {
+				return not_done(error, index + 1, argument.table.count)
+			}
+			places[index] = {address = u64(uintptr(raw_data(argument.table.records))), count = argument.table.count, capacity = capacity}
 			integers[index] = u64(uintptr(&places[index]))
 		case:
 			integers[index] = argument.integer
 		}
 	}
+	// record_size checked that a register is free for it.
 	local_error: errors.Error_Record
 	if function.error_record != 0 {
 		integers[function.parameter_count] = u64(uintptr(error != nil ? error : &local_error))
@@ -80,11 +106,12 @@ call_direct :: proc "contextless" (file: []u8, address: uintptr, function: modul
 	out: [CALL_RESULTS]u64
 	export_call(address, &integers, &floats, &out)
 	for type, index in function.parameters[:min(int(function.parameter_count), len(arguments))] {
-		if isolated.is_table(type) && function.parameter_directions[index] == .Append {
+		if isolated.is_table_or_bytes(type) && function.parameter_directions[index] == .Append {
 			arguments[index].table.count = places[index].count
 		}
 	}
-	return i64(out[0])
+	result = i64(out[0])
+	return result, function.error_record != 0 && result < 0 ? .Failed : .Ok
 }
 
 // call_isolated calls an export of a module in another program, through a
@@ -95,7 +122,7 @@ call_direct :: proc "contextless" (file: []u8, address: uintptr, function: modul
 // record at `error`.
 //
 // The seam of the three forms: a table argument with a memory object
-// (Table_Argument.memory) goes into the call region when it fits there, and
+// (Table_Argument.memory_handle) goes into the call region when it fits there, and
 // through its memory object only when it does not: the measures of the
 // program tables give the call region the lower cost at each size that
 // fits (docs/MODULE_CONTRACT.md). keep_memory_objects lends each memory
@@ -112,14 +139,14 @@ call_isolated :: proc "contextless" (connection: ^Call_Connection, file: []u8, e
 	kept_integers: [module.PARAMETER_CAPACITY]u64
 	kept_memories: [module.PARAMETER_CAPACITY]u64
 	for argument, index in arguments[:min(len(arguments), module.PARAMETER_CAPACITY)] {
-		kept_integers[index], kept_memories[index] = argument.integer, argument.table.memory
+		kept_integers[index], kept_memories[index] = argument.integer, argument.table.memory_handle
 	}
 	defer for &argument, index in arguments[:min(len(arguments), module.PARAMETER_CAPACITY)] {
-		argument.integer, argument.table.memory = kept_integers[index], kept_memories[index]
+		argument.integer, argument.table.memory_handle = kept_integers[index], kept_memories[index]
 	}
 	if !keep_memory_objects {
 		for &argument in arguments[:min(len(arguments), module.PARAMETER_CAPACITY)] {
-			argument.table.memory = 0
+			argument.table.memory_handle = 0
 		}
 		// Each table that does not fit takes its memory object back.
 		for _ in 0 ..< module.PARAMETER_CAPACITY {
@@ -127,7 +154,7 @@ call_isolated :: proc "contextless" (connection: ^Call_Connection, file: []u8, e
 			if missing.parameter == 0 || kept_memories[missing.parameter - 1] == 0 {
 				break
 			}
-			arguments[missing.parameter - 1].table.memory = kept_memories[missing.parameter - 1]
+			arguments[missing.parameter - 1].table.memory_handle = kept_memories[missing.parameter - 1]
 		}
 	}
 	lending: Lending
@@ -154,6 +181,10 @@ call_isolated :: proc "contextless" (connection: ^Call_Connection, file: []u8, e
 				continue
 			}
 			if isolated.Status(completion.kind) != .Ok {
+				// The values of a refusal hold its error record.
+				if error != nil {
+					error^ = transmute(errors.Error_Record)completion.values
+				}
 				return 0, .Refused
 			}
 			result = i64(completion.values[0])
@@ -163,7 +194,10 @@ call_isolated :: proc "contextless" (connection: ^Call_Connection, file: []u8, e
 				}
 				return result, .Failed
 			}
-			if problem, _ := isolated.tables_return(file, function, arguments, connection.region, offset); problem != .None {
+			if problem, parameter := isolated.tables_return(file, function, arguments, connection.region, offset); problem != .None {
+				if error != nil {
+					error^ = errors.error_make(.Bad_Value, .Records, i64(parameter), i64(problem))
+				}
 				return result, .Wrong_Answer
 			}
 			return result, .Ok

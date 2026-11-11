@@ -1,6 +1,7 @@
 #+build !freestanding
 package isolated
 
+import "contract:errors"
 import module "contract:module"
 import op "contract:operation"
 import "core:math/rand"
@@ -45,7 +46,7 @@ Reading :: struct {
 }
 
 @(private = "file")
-table_of :: proc(directions: ..module.Direction) -> (function: module.Function) {
+table_description_of :: proc(directions: ..module.Direction) -> (function: module.Function) {
 	function.parameter_count = u8(len(directions))
 	for direction, index in directions {
 		function.parameters[index] = .Table
@@ -95,7 +96,7 @@ read_table_round_trip :: proc(t: ^testing.T) {
 	file := two_records_file(&storage)
 	rows := [4]Reading{{1, -1, 10}, {2, -2, 20}, {3, -3, 30}, {}}
 	region: [256]u8
-	function := table_of(.Read)
+	function := table_description_of(.Read)
 	function.result = .Integer
 	arguments := [1]Argument{{table = {records = bytes_of(&rows, 64), count = 3}}}
 	offset, size, _, _, encoded := encode(file, function, arguments[:], region[:])
@@ -129,7 +130,7 @@ change_table_round_trip :: proc(t: ^testing.T) {
 		b = GUARD
 	}
 	region: [256]u8
-	function := table_of(.Change)
+	function := table_description_of(.Change)
 	arguments := [1]Argument{{table = {records = bytes_of(&memory, 64), count = 2}}}
 	offset, size, _, _, encoded := encode(file, function, arguments[:], region[:])
 	testing.expect(t, encoded)
@@ -169,7 +170,7 @@ append_table_round_trip :: proc(t: ^testing.T) {
 	for answer in ([]u64{4, 5, 9}) {
 		region: [256]u8
 		memory[2], memory[3], memory[4] = {}, {}, {}
-		function := table_of(.Append)
+		function := table_description_of(.Append)
 		function.result = .Integer
 		arguments := [1]Argument{{table = {records = bytes_of(&memory, 80), count = 2}}}
 		offset, size, _, _, encoded := encode(file, function, arguments[:], region[:])
@@ -210,7 +211,7 @@ append_count_smaller :: proc(t: ^testing.T) {
 	file := two_records_file(&storage)
 	memory: [4]Reading
 	region: [256]u8
-	function := table_of(.Append)
+	function := table_description_of(.Append)
 	arguments := [1]Argument{{table = {records = bytes_of(&memory, 64), count = 2}}}
 	offset, size, _, _, _ := encode(file, function, arguments[:], region[:])
 	call: Call
@@ -229,7 +230,7 @@ append_capacity_zero :: proc(t: ^testing.T) {
 	storage: [1024]u8
 	file := two_records_file(&storage)
 	region: [64]u8
-	function := table_of(.Append)
+	function := table_description_of(.Append)
 	arguments := [1]Argument{{table = {}}}
 	offset, size, _, _, encoded := encode(file, function, arguments[:], region[:])
 	testing.expect(t, encoded)
@@ -286,20 +287,20 @@ memory_object_table :: proc(t: ^testing.T) {
 	storage: [1024]u8
 	file := two_records_file(&storage)
 	region: [128]u8
-	function := table_of(.Read, .Change)
-	arguments := [2]Argument{{table = {records = make([]u8, 65536 * 16, context.temp_allocator), count = 65536, memory = 0x20005, memory_start = 4096}}, {table = {records = make([]u8, 64, context.temp_allocator), count = 4, memory = 0x20006}}}
+	function := table_description_of(.Read, .Change)
+	arguments := [2]Argument{{table = {records = make([]u8, 65536 * 16, context.temp_allocator), count = 65536, memory_handle = 0x20005, memory_start = 4096}}, {table = {records = make([]u8, 64, context.temp_allocator), count = 4, memory_handle = 0x20006}}}
 	offset, size, _, _, encoded := encode(file, function, arguments[:], region[:])
 	testing.expect(t, encoded, "a table of 1 MiB in a memory object needs no room in the call region")
 	call: Call
 	testing.expect(t, decode(file, function, offset, size, region[:], &call))
 	testing.expect_value(t, call.mapping_count, 2)
-	testing.expect_value(t, call.mappings[0], Table_Mapping{parameter = 0, handle = 0x20005, start = 4096, size = 65536 * 16, write = false})
-	testing.expect_value(t, call.mappings[1].write, true)
+	testing.expect_value(t, call.mappings[0], Table_Mapping{parameter = 0, handle = 0x20005, start = 4096, size = 65536 * 16, writable = false})
+	testing.expect_value(t, call.mappings[1].writable, true)
 	testing.expect_value(t, call.lent_count, 2)
 	testing.expect_value(t, transmute(op.Rights)call.lent[0].rights, op.Rights{.Read})
 	testing.expect_value(t, transmute(op.Rights)call.lent[1].rights, op.Rights{.Read, .Write})
 	// Without the memory object, the table does not fit: room_missing says how much.
-	arguments[0].table.memory = 0
+	arguments[0].table.memory_handle = 0
 	_, _, _, _, encoded = encode(file, function, arguments[:], region[:])
 	testing.expect(t, !encoded)
 	missing := room_missing(file, function, arguments[:], 65536)
@@ -333,11 +334,11 @@ decode_refuses_tables :: proc(t: ^testing.T) {
 		{field = {start = 32, count = 1}, detail = 2, about = "a record with a Handle field"},
 		{field = {start = 32, count = 1}, detail = 7, about = "a record that does not exist"},
 		{direction = module.Direction(3), field = {start = 32, count = 1}, detail = 1, about = "a direction out of the enumeration"},
-		{field = {start = 32, count = 1, memory = 1 << 32}, detail = 1, about = "a memory handle of more than 32 bits"},
+		{field = {start = 32, count = 1, memory_handle = 1 << 32}, detail = 1, about = "a memory handle of more than 32 bits"},
 	}
 	for item in cases {
 		region: [256]u8
-		function := table_of(item.direction)
+		function := table_description_of(item.direction)
 		function.parameter_details[0] = item.detail
 		store(region[:], 0, item.field)
 		call: Call
@@ -414,4 +415,130 @@ decode_refuses_counts_near_the_end_of_the_numbers :: proc(t: ^testing.T) {
 	testing.expect(t, !decode(file, function, 0, 32, region, &call), "a capacity of 2^60 records of 16 bytes in the call region")
 	store(region, 0, Table_Field{start = 65520, count = 0, capacity = 1})
 	testing.expect(t, decode(file, function, 0, 32, region, &call), "one record at the end of the call region")
+}
+
+// Ranges of the call region that overlap, where one of them is written
+// (finding W3 of the hostile read): decode refuses them, with an error
+// record of the kind Overlap. Two ranges that are only read can overlap.
+@(test)
+decode_refuses_ranges_that_overlap :: proc(t: ^testing.T) {
+	storage: [1024]u8
+	file := two_records_file(&storage)
+	Case :: struct {
+		directions: [2]module.Direction,
+		first:      Table_Field,
+		second:     Table_Field,
+		ok:         bool,
+		about:      string,
+	}
+	cases := [?]Case {
+		{{.Read, .Read}, {start = 64, count = 2}, {start = 64, count = 2}, true, "two Read tables on the same bytes"},
+		{{.Change, .Change}, {start = 64, count = 2}, {start = 64, count = 2}, false, "two Change tables on the same bytes"},
+		{{.Read, .Append}, {start = 80, count = 1}, {start = 64, count = 0, capacity = 3}, false, "a Read table inside an Append table"},
+		{{.Change, .Read}, {start = 0, count = 2}, {start = 64, count = 1}, false, "a Change table over the argument record"},
+		{{.Change, .Change}, {start = 64, count = 2}, {start = 96, count = 2}, true, "two Change tables side by side"},
+	}
+	for item in cases {
+		region: [256]u8
+		function := table_description_of(item.directions[0], item.directions[1])
+		store(region[:], 0, item.first)
+		store(region[:], 32, item.second)
+		call: Call
+		refusal: errors.Error_Record
+		accepted := decode(file, function, 0, 64, region[:], &call, &refusal)
+		testing.expectf(t, accepted == item.ok, "%s", item.about)
+		if !item.ok {
+			testing.expectf(t, errors.Kind(refusal.kind) == .Overlap, "%s: the kind %v", item.about, refusal.kind)
+		}
+	}
+	// A Change table over the place of the error record.
+	region: [256]u8
+	function := table_description_of(.Change)
+	function.result = .Integer
+	function.error_record = 1
+	store(region[:], 0, Table_Field{start = 48, count = 2})
+	store(region[:], 32, u64(48))
+	call: Call
+	testing.expect(t, !decode(file, function, 0, 40, region[:], &call), "a Change table over the error record")
+}
+
+// A refusal of decode says which argument and why (finding W8).
+@(test)
+decode_refusal_is_an_error_record :: proc(t: ^testing.T) {
+	storage: [1024]u8
+	file := two_records_file(&storage)
+	region: [256]u8
+	function := table_description_of(.Read, .Read)
+	store(region[:], 0, Table_Field{start = 64, count = 1})
+	store(region[:], 32, Table_Field{start = 64, count = 15})
+	call: Call
+	refusal: errors.Error_Record
+	testing.expect(t, !decode(file, function, 0, 64, region[:], &call, &refusal))
+	testing.expect_value(t, errors.Kind(refusal.kind), errors.Kind.Out_Of_Range)
+	testing.expect_value(t, refusal.argument, 2)
+	testing.expect_value(t, refusal.value, 64 + 15 * 16)
+	testing.expect_value(t, refusal.limit, 256)
+	store(region[:], 32, Table_Field{start = 68, count = 1})
+	refusal = {}
+	testing.expect(t, !decode(file, function, 0, 64, region[:], &call, &refusal))
+	testing.expect_value(t, refusal.argument, 2)
+	testing.expect_value(t, errors.Kind(refusal.kind), errors.Kind.Bad_Value)
+}
+
+// A table in a memory object reaches at most TABLE_SPAN less one page: the
+// mapping of its pages never enters the span of the next parameter (N2).
+@(test)
+memory_object_table_stays_in_its_span :: proc(t: ^testing.T) {
+	region: [128]u8
+	function: module.Function
+	function.parameter_count = 1
+	function.parameters[0] = .Bytes
+	store(region[:], 0, Table_Field{start = 4095, count = TABLE_SPAN - 1, memory_handle = 0x20005})
+	call: Call
+	testing.expect(t, !decode(nil, function, 0, 32, region[:], &call), "16 GiB less one byte from the last byte of a page")
+	store(region[:], 0, Table_Field{start = 4095, count = TABLE_SPAN - module.PAGE_SIZE, memory_handle = 0x20005})
+	testing.expect(t, decode(nil, function, 0, 32, region[:], &call), "16 GiB less one page")
+}
+
+// A record whose size is not a multiple of its alignment is not valid (N1).
+@(test)
+record_size_is_a_multiple_of_its_alignment :: proc(t: ^testing.T) {
+	storage: [1024]u8
+	file := two_records_file(&storage)
+	_, valid := module.record_type(file, 1)
+	testing.expect(t, valid, "16 bytes, alignment 8")
+	directory_place := size_of(module.Header) + int(module.Table_Kind.Records) * size_of(module.Table_Entry)
+	records_offset := (^module.Table_Entry)(&file[directory_place]).offset
+	(^module.Record)(&file[records_offset + size_of(module.Record)]).size = 20
+	_, ok := module.record_type(file, 1)
+	testing.expect(t, !ok, "20 bytes, alignment 8")
+}
+
+// When the answer of the second table is wrong, the count of the first
+// table does not change either (finding W7).
+@(test)
+tables_return_changes_nothing_on_a_problem :: proc(t: ^testing.T) {
+	storage: [1024]u8
+	file := two_records_file(&storage)
+	first, second: [4]Reading
+	region: [512]u8
+	function := table_description_of(.Append, .Append)
+	arguments := [2]Argument{{table = {records = bytes_of(&first, 64), count = 1}}, {table = {records = bytes_of(&second, 64), count = 2}}}
+	offset, size, _, _, encoded := encode(file, function, arguments[:], region[:])
+	testing.expect(t, encoded)
+	call: Call
+	testing.expect(t, decode(file, function, offset, size, region[:], &call))
+	call.places[0].count = 3
+	call.places[1].count = 1 // Smaller than the count on entry.
+	counts_store(function, &call, region[:])
+	problem, parameter := tables_return(file, function, arguments[:], region[:], offset)
+	testing.expect_value(t, problem, Return_Problem.Count_Smaller)
+	testing.expect_value(t, parameter, 2)
+	testing.expect_value(t, arguments[0].table.count, 1)
+	testing.expect_value(t, arguments[1].table.count, 2)
+	// A record description that is not valid is its own problem.
+	broken := function
+	broken.parameter_details[1] = 9
+	problem, parameter = tables_return(file, broken, arguments[:], region[:], offset)
+	testing.expect_value(t, problem, Return_Problem.Bad_Description)
 }

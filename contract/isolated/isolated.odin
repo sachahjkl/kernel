@@ -73,6 +73,7 @@
 // This package allocates no memory and calls no kernel operation.
 package isolated
 
+import "contract:errors"
 import module "contract:module"
 import "base:intrinsics"
 
@@ -170,7 +171,7 @@ Call :: struct {
 	result:     Slice, // A Record result: its place in the call region, as offsets.
 	error:      Slice, // The place of the error record in the call region, as offsets. count 0: the export has none.
 	places:        [module.PARAMETER_CAPACITY]module.Table_Place, // places[n]: the table place of a Table or Bytes, in memory of the receiver.
-	count_places:  [module.PARAMETER_CAPACITY]u64, // An Append place: the offset of its count in the call region.
+	count_offsets: [module.PARAMETER_CAPACITY]u64, // An Append place: the offset of its count in the call region.
 	mappings:      [module.PARAMETER_CAPACITY]Table_Mapping, // The memory objects to map before the call.
 	mapping_count: int,
 }
@@ -387,57 +388,79 @@ result_table :: proc "contextless" (region: []u8, result: Slice, count: u64, siz
 //   of call.records of that place, all zero. After the call, result_store
 //   copies it to the call region.
 // file is the module of the export. ok is false when a part of the argument
-// record is not in the call region. Then the receiver must not call the
-// export.
-decode :: proc "contextless" (file: []u8, function: module.Function, offset, size: u64, region: []u8, call: ^Call) -> (ok: bool) {
+// record is not in the call region, or when two ranges of the call region
+// overlap and one of them is written. Then the receiver must not call the
+// export, and `refusal` (it can be nil) has an error record that says which
+// argument and why (finding W8 of the hostile read): the receiver gives it
+// to the caller in the completion record.
+decode :: proc "contextless" (file: []u8, function: module.Function, offset, size: u64, region: []u8, call: ^Call, refusal: ^errors.Error_Record = nil) -> (ok: bool) {
 	function := function
-	expected := record_size(function) or_return
+	expected, described := record_size(function)
+	if !described {
+		return refuse(refusal, .Bad_Value, .None, 0, 0, 0)
+	}
 	limit := u64(len(region))
-	if size != expected || offset > limit || size > limit - offset {
-		return false
+	if size != expected {
+		return refuse(refusal, .Bad_Value, .Bytes, 0, size, expected)
+	}
+	if offset > limit || size > limit - offset {
+		return refuse(refusal, .Out_Of_Range, .Bytes, 0, offset + min(size, limit), limit)
 	}
 	call.lent_count = 0
 	call.mapping_count = 0
 	call.result = {}
+	ranges: Region_Ranges
+	// The receiver writes the counts of Append places back into the
+	// argument record: no table of the call region overlaps it.
+	region_range_add(&ranges, {offset, offset + size, true, 0}, refusal) or_return
 	// One copy: the other program can change the call region at any time.
 	record: [ARGUMENT_RECORD_LIMIT]u8
 	intrinsics.mem_copy_non_overlapping(&record, raw_data(region[offset:]), int(size))
 	field := u64(0)
 	for type, index in function.parameters[:function.parameter_count] {
+		argument := i64(index + 1)
 		#partial switch type {
 		case .Integer:
 			call.registers[index] = load(record[:], field, u64)
 		case .Text:
 			slice := load(record[:], field, Slice)
 			if slice.start > limit || slice.count > limit - slice.start {
-				return false
+				return refuse(refusal, .Out_Of_Range, .Bytes, argument, slice.start + min(slice.count, limit), limit)
 			}
+			region_range_add(&ranges, {slice.start, slice.start + slice.count, false, argument}, refusal) or_return
 			call.slices[index] = {
 				start = u64(uintptr(raw_data(region))) + slice.start,
 				count = slice.count,
 			}
 			call.registers[index] = u64(uintptr(&call.slices[index]))
 		case .Record:
-			described := module.record_type(file, function.parameter_details[index]) or_return
+			described_record, valid := module.record_type(file, function.parameter_details[index])
+			if !valid {
+				return refuse(refusal, .Bad_Value, .None, argument, u64(function.parameter_details[index]), 0)
+			}
 			start := load(record[:], field, u64)
-			if start > limit || u64(described.size) > limit - start {
-				return false
+			if start > limit || u64(described_record.size) > limit - start {
+				return refuse(refusal, .Out_Of_Range, .Bytes, argument, start + min(u64(described_record.size), limit), limit)
 			}
 			call.records[index] = {}
-			intrinsics.mem_copy_non_overlapping(&call.records[index], raw_data(region[start:]), int(described.size))
-			for number in 0 ..< described.field_count {
-				item := module.field(file, described, number) or_return
-				if item.type == .Handle {
+			intrinsics.mem_copy_non_overlapping(&call.records[index], raw_data(region[start:]), int(described_record.size))
+			for number in 0 ..< described_record.field_count {
+				item, has_field := module.field(file, described_record, number)
+				if has_field && item.type == .Handle {
 					handle := (^u32)(uintptr(&call.records[index]) + uintptr(item.offset))^
-					lend(call, u64(handle), item.detail) or_return
+					if !lent_handle_add(call, u64(handle), item.detail) {
+						return refuse(refusal, .Full, .Handles, argument, 0, len(call.lent))
+					}
 				}
 			}
 			call.registers[index] = u64(uintptr(&call.records[index]))
 		case .Handle:
 			call.registers[index] = load(record[:], field, u64)
-			lend(call, call.registers[index], function.parameter_details[index]) or_return
+			if !lent_handle_add(call, call.registers[index], function.parameter_details[index]) {
+				return refuse(refusal, call.registers[index] >> 32 != 0 ? .Handle_Absent : .Full, .Handles, argument, call.registers[index], len(call.lent))
+			}
 		case .Table, .Bytes:
-			table_decode(file, type, function.parameter_details[index], function.parameter_directions[index], index, load(record[:], field, Table_Field), offset + field, region, call) or_return
+			table_decode(file, type, function.parameter_details[index], function.parameter_directions[index], index, load(record[:], field, Table_Field), offset + field, region, call, &ranges, refusal) or_return
 		}
 		field += field_size(type)
 	}
@@ -446,32 +469,41 @@ decode :: proc "contextless" (file: []u8, function: module.Function, offset, siz
 	case .Text:
 		slice := load(record[:], field, Slice)
 		if slice.start > limit || slice.count > limit - slice.start {
-			return false
+			return refuse(refusal, .Out_Of_Range, .Bytes, 0, slice.start + min(slice.count, limit), limit)
 		}
+		region_range_add(&ranges, {slice.start, slice.start + slice.count, true, 0}, refusal) or_return
 		call.slices[index] = {
 			start = u64(uintptr(raw_data(region))) + slice.start,
 			count = slice.count,
 		}
 		call.registers[index] = u64(uintptr(&call.slices[index]))
 	case .Table:
-		described := module.record_type(file, function.result_detail) or_return
+		described_record, valid := module.record_type(file, function.result_detail)
 		slice := load(record[:], field, Slice)
-		if described.size == 0 || slice.start > limit || slice.count > (limit - slice.start) / u64(described.size) {
-			return false
+		if !valid || described_record.size == 0 {
+			return refuse(refusal, .Bad_Value, .None, 0, u64(function.result_detail), 0)
 		}
+		if slice.start > limit || slice.count > (limit - slice.start) / u64(described_record.size) {
+			return refuse(refusal, .Out_Of_Range, .Records, 0, slice.count, (limit - min(slice.start, limit)) / u64(described_record.size))
+		}
+		region_range_add(&ranges, {slice.start, slice.start + slice.count * u64(described_record.size), true, 0}, refusal) or_return
 		call.slices[index] = {
 			start = u64(uintptr(raw_data(region))) + slice.start,
 			count = slice.count,
 		}
 		call.registers[index] = u64(uintptr(&call.slices[index]))
 	case .Record:
-		described := module.record_type(file, function.result_detail) or_return
-		start := load(record[:], field, u64)
-		if start > limit || u64(described.size) > limit - start {
-			return false
+		described_record, valid := module.record_type(file, function.result_detail)
+		if !valid {
+			return refuse(refusal, .Bad_Value, .None, 0, u64(function.result_detail), 0)
 		}
+		start := load(record[:], field, u64)
+		if start > limit || u64(described_record.size) > limit - start {
+			return refuse(refusal, .Out_Of_Range, .Bytes, 0, start + min(u64(described_record.size), limit), limit)
+		}
+		region_range_add(&ranges, {start, start + u64(described_record.size), true, 0}, refusal) or_return
 		call.records[index] = {}
-		call.result = {start = start, count = u64(described.size)}
+		call.result = {start = start, count = u64(described_record.size)}
 		call.registers[index] = u64(uintptr(&call.records[index]))
 	}
 	// The error record: the export writes it in the call region, at a place
@@ -482,8 +514,9 @@ decode :: proc "contextless" (file: []u8, function: module.Function, offset, siz
 		field += function.result == .Text || function.result == .Table ? size_of(Slice) : 0
 		start := load(record[:], field, u64)
 		if start > limit || ERROR_RECORD_SIZE > limit - start || start % 8 != 0 {
-			return false
+			return refuse(refusal, .Out_Of_Range, .Bytes, 0, start + min(u64(ERROR_RECORD_SIZE), limit), limit)
 		}
+		region_range_add(&ranges, {start, start + ERROR_RECORD_SIZE, true, 0}, refusal) or_return
 		call.error = {start = start, count = ERROR_RECORD_SIZE}
 		registers := u64(function.parameter_count) + u64(function.result == .Text || function.result == .Table)
 		call.registers[registers] = u64(uintptr(raw_data(region))) + start
@@ -491,10 +524,10 @@ decode :: proc "contextless" (file: []u8, function: module.Function, offset, siz
 	return true
 }
 
-// lend adds a handle of the argument record to the handles that the
-// receiver proves before the call and closes after it.
+// lent_handle_add adds a handle of the argument record to the handles
+// that the receiver proves before the call and closes after it.
 @(private)
-lend :: proc "contextless" (call: ^Call, handle: u64, rights: u32) -> bool {
+lent_handle_add :: proc "contextless" (call: ^Call, handle: u64, rights: u32) -> bool {
 	if handle == 0 {
 		return true
 	}

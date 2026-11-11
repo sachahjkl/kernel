@@ -1,5 +1,6 @@
 package isolated
 
+import "contract:errors"
 import module "contract:module"
 import op "contract:operation"
 import "base:intrinsics"
@@ -21,10 +22,10 @@ import "base:intrinsics"
 // records back into its own memory (tables_return).
 
 Table_Field :: struct {
-	start:    u64, // The offset of the records: in the call region, or in the memory object.
-	count:    u64,
-	capacity: u64,
-	memory:   u64, // 0: the call region. Else: a lent memory object, as the receiver names it.
+	start:         u64, // The offset of the records: in the call region, or in the memory object.
+	count:         u64,
+	capacity:      u64,
+	memory_handle: u64, // 0: the call region. Else: a lent memory object, as the receiver names it.
 }
 #assert(size_of(Table_Field) == 32)
 
@@ -34,7 +35,7 @@ Table_Argument :: struct {
 	// Read or Change table, the first count records are the table.
 	records:      []u8,
 	count:        u64, // In records. After tables_return: the count that the callee gave, for an Append table.
-	memory:       u64, // Not 0: the records are in this memory object, as the receiver names it (system.lend writes it), from memory_start.
+	memory_handle: u64, // Not 0: the records are in this memory object, as the receiver names it (system.lend writes it), from memory_start.
 	memory_start: u64,
 	region_start: u64, // Written by encode: the offset of the copy in the call region.
 }
@@ -46,11 +47,11 @@ Table_Mapping :: struct {
 	handle:    u32,
 	start:     u64, // The offset of the records in the object.
 	size:      u64, // The bytes of the records that the export can reach: the capacity, or the count of a Read or Change table.
-	write:     bool, // Change and Append.
+	writable:  bool, // Change and Append.
 }
 
 // is_table says if a parameter type is a Table or Bytes parameter.
-is_table :: proc "contextless" (type: module.Type) -> bool {
+is_table_or_bytes :: proc "contextless" (type: module.Type) -> bool {
 	return type == .Table || type == .Bytes
 }
 
@@ -81,7 +82,7 @@ directions_valid :: proc "contextless" (function: module.Function) -> bool {
 	function := function
 	for type, index in function.parameters[:min(int(function.parameter_count), module.PARAMETER_CAPACITY)] {
 		direction := function.parameter_directions[index]
-		if direction > max(module.Direction) || direction != .Read && !is_table(type) {
+		if direction > max(module.Direction) || direction != .Read && !is_table_or_bytes(type) {
 			return false
 		}
 	}
@@ -98,60 +99,126 @@ table_encode :: proc "contextless" (file: []u8, type: module.Type, detail: u32, 
 	if argument.count > capacity {
 		return 0, false
 	}
-	if argument.memory != 0 {
-		if argument.memory >> 32 != 0 {
+	if argument.memory_handle != 0 {
+		if argument.memory_handle >> 32 != 0 {
 			return 0, false
 		}
-		store(region, field, Table_Field{start = argument.memory_start, count = argument.count, capacity = capacity, memory = argument.memory})
+		store(region, field, Table_Field{start = argument.memory_start, count = argument.count, capacity = capacity, memory_handle = argument.memory_handle})
 		return next, true
 	}
 	start := (next + 7) &~ 7
-	carried := direction == .Append ? capacity - argument.count : argument.count
-	if start > u64(len(region)) || carried > (u64(len(region)) - start) / size {
+	records_in_region := direction == .Append ? capacity - argument.count : argument.count
+	if start > u64(len(region)) || records_in_region > (u64(len(region)) - start) / size {
 		return 0, false
 	}
 	if direction != .Append {
-		intrinsics.mem_copy_non_overlapping(raw_data(region[start:]), raw_data(argument.records), int(carried * size))
+		intrinsics.mem_copy_non_overlapping(raw_data(region[start:]), raw_data(argument.records), int(records_in_region * size))
 	}
 	argument.region_start = start
 	store(region, field, Table_Field{start = start, count = argument.count, capacity = capacity})
-	return start + carried * size, true
+	return start + records_in_region * size, true
+}
+
+// The ranges of the call region that one call reads or writes: decode
+// refuses two ranges that overlap when one of them is written (finding W3
+// of the hostile read): a Change table over another table, over the error
+// record, or over the argument record whose counts the receiver writes back.
+Region_Range :: struct {
+	start, end: u64, // end is not in the range.
+	written:    bool,
+	argument:   i64, // The number of the parameter, from 1; 0: a result, the error record or the argument record.
+}
+REGION_RANGE_CAPACITY :: module.PARAMETER_CAPACITY + 3 // The parameters, the argument record, a result and the error record.
+
+Region_Ranges :: struct {
+	ranges: [REGION_RANGE_CAPACITY]Region_Range,
+	count:  int,
+}
+
+// region_range_add adds a range, and gives false with an error record of
+// the kind Overlap when it overlaps a range before it and one of the two
+// is written. An empty range overlaps nothing.
+@(private)
+region_range_add :: proc "contextless" (ranges: ^Region_Ranges, item: Region_Range, refusal: ^errors.Error_Record) -> bool {
+	if item.start == item.end {
+		return true
+	}
+	for other in ranges.ranges[:ranges.count] {
+		if (item.written || other.written) && item.start < other.end && other.start < item.end {
+			return refuse(refusal, .Overlap, .Bytes, item.argument, item.start, item.end - item.start)
+		}
+	}
+	if ranges.count == len(ranges.ranges) {
+		return refuse(refusal, .Full, .None, item.argument, 0, REGION_RANGE_CAPACITY)
+	}
+	ranges.ranges[ranges.count] = item
+	ranges.count += 1
+	return true
+}
+
+// refuse writes the error record of a refusal of decode, and gives false.
+// refusal can be nil.
+@(private)
+refuse :: proc "contextless" (refusal: ^errors.Error_Record, kind: errors.Kind, unit: errors.Unit, argument: i64, value: u64, limit: u64) -> bool {
+	if refusal != nil {
+		refusal^ = errors.error_make(kind, unit, argument, i64(min(value, u64(max(i64)))), i64(min(limit, u64(max(i64)))))
+	}
+	return false
 }
 
 // table_decode reads the field of one table argument, checks it against
 // the call region, and gives the table place of the export. A table in a
 // memory object is listed in call.mappings: the receiver maps it, and sets
-// the address of the place.
+// the address of the place. A refusal writes its error record.
 @(private)
-table_decode :: proc "contextless" (file: []u8, type: module.Type, detail: u32, direction: module.Direction, index: int, field: Table_Field, field_offset: u64, region: []u8, call: ^Call) -> (ok: bool) {
-	size, alignment := table_record(file, type, detail) or_return
+table_decode :: proc "contextless" (file: []u8, type: module.Type, detail: u32, direction: module.Direction, index: int, field: Table_Field, field_offset: u64, region: []u8, call: ^Call, ranges: ^Region_Ranges, refusal: ^errors.Error_Record) -> (ok: bool) {
+	argument := i64(index + 1)
+	size, alignment, described := table_record(file, type, detail)
+	if !described {
+		return refuse(refusal, .Bad_Value, .None, argument, u64(detail), 0)
+	}
 	limit := u64(len(region))
 	if field.count > field.capacity && direction == .Append {
-		return false
+		return refuse(refusal, .Bad_Value, .Records, argument, field.count, field.capacity)
 	}
 	// No count and no capacity times a size passes TABLE_SPAN, in each
 	// form: no product and no sum below wraps (finding F1 of the hostile read).
 	if field.count > TABLE_SPAN / size || field.capacity > TABLE_SPAN / size {
-		return false
+		return refuse(refusal, .Too_Long, .Records, argument, max(field.count, field.capacity), TABLE_SPAN / size)
 	}
-	// The records that the export can reach.
-	reached := direction == .Append ? field.capacity : field.count
+	reachable_records := direction == .Append ? field.capacity : field.count
 	place := &call.places[index]
 	place^ = {count = field.count, capacity = direction == .Append ? field.capacity : field.count}
-	if field.memory != 0 {
-		if field.memory >> 32 != 0 || call.mapping_count == len(call.mappings) || field.start % alignment != 0 || reached > TABLE_SPAN / size - 1 {
-			return false
+	if field.memory_handle != 0 {
+		if field.memory_handle >> 32 != 0 {
+			return refuse(refusal, .Handle_Absent, .None, argument, field.memory_handle, 0)
 		}
-		call.mappings[call.mapping_count] = {parameter = index, handle = u32(field.memory), start = field.start, size = reached * size, write = direction != .Read}
+		if field.start % alignment != 0 {
+			return refuse(refusal, .Bad_Value, .Bytes, argument, field.start, 0)
+		}
+		// The pages of the records stay in the span of this parameter (N2).
+		if reachable_records * size > TABLE_SPAN - module.PAGE_SIZE {
+			return refuse(refusal, .Too_Long, .Bytes, argument, reachable_records * size, TABLE_SPAN - module.PAGE_SIZE)
+		}
+		if call.mapping_count == len(call.mappings) {
+			return refuse(refusal, .Full, .None, argument, 0, len(call.mappings))
+		}
+		call.mappings[call.mapping_count] = {parameter = index, handle = u32(field.memory_handle), start = field.start, size = reachable_records * size, writable = direction != .Read}
 		call.mapping_count += 1
-		lend(call, field.memory, transmute(u32)direction_rights(direction)) or_return
+		if !lent_handle_add(call, field.memory_handle, transmute(u32)direction_rights(direction)) {
+			return refuse(refusal, .Full, .Handles, argument, 0, len(call.lent))
+		}
 	} else {
 		// The region holds the records 0 ..< count of a Read or Change
 		// table, and the records count ..< capacity of an Append table.
-		carried := direction == .Append ? field.capacity - field.count : field.count
-		if field.start % 8 != 0 || field.start > limit || carried > (limit - field.start) / size {
-			return false
+		records_in_region := direction == .Append ? field.capacity - field.count : field.count
+		if field.start % 8 != 0 {
+			return refuse(refusal, .Bad_Value, .Bytes, argument, field.start, 0)
 		}
+		if field.start > limit || records_in_region > (limit - field.start) / size {
+			return refuse(refusal, .Out_Of_Range, .Bytes, argument, field.start + records_in_region * size, limit)
+		}
+		region_range_add(ranges, {field.start, field.start + records_in_region * size, direction != .Read, argument}, refusal) or_return
 		address := u64(uintptr(raw_data(region))) + field.start
 		if direction == .Append {
 			// Record `count` is the first reserved byte: the records before
@@ -161,7 +228,7 @@ table_decode :: proc "contextless" (file: []u8, type: module.Type, detail: u32, 
 		place.address = address
 	}
 	if direction == .Append {
-		call.count_places[index] = field_offset + u64(offset_of(Table_Field, count))
+		call.count_offsets[index] = field_offset + u64(offset_of(Table_Field, count))
 	}
 	call.registers[index] = u64(uintptr(place))
 	return true
@@ -173,8 +240,8 @@ table_decode :: proc "contextless" (file: []u8, type: module.Type, detail: u32, 
 counts_store :: proc "contextless" (function: module.Function, call: ^Call, region: []u8) {
 	function := function
 	for type, index in function.parameters[:function.parameter_count] {
-		if is_table(type) && function.parameter_directions[index] == .Append {
-			offset := call.count_places[index]
+		if is_table_or_bytes(type) && function.parameter_directions[index] == .Append {
+			offset := call.count_offsets[index]
 			if offset <= u64(len(region)) && 8 <= u64(len(region)) - offset {
 				store(region, offset, call.places[index].count)
 			}
@@ -184,9 +251,10 @@ counts_store :: proc "contextless" (function: module.Function, call: ^Call, regi
 
 // Return_Problem: what tables_return found wrong in the answer of the callee.
 Return_Problem :: enum u32 {
-	None          = 0,
-	Count_Smaller = 1, // An Append table: the callee gave a count smaller than the count on entry.
-	Bad_Region    = 2, // The argument record is not in the call region.
+	None            = 0,
+	Count_Smaller   = 1, // An Append table: the callee gave a count smaller than the count on entry.
+	Bad_Region      = 2, // The argument record is not in the call region.
+	Bad_Description = 3, // The record of a table parameter has no valid description.
 }
 
 // tables_return copies the answer of the callee back into the memory of
@@ -195,45 +263,51 @@ Return_Problem :: enum u32 {
 // sets to the new count. The caller never writes its memory at or after
 // the capacity. offset is the offset of the argument record that encode
 // gave. A memory object needs no copy: the callee wrote the memory of the
-// caller. On a problem, parameter is its number, from 1, and the counts of
-// the arguments do not change.
+// caller. It checks each answer first, then copies: on a problem, parameter
+// is its number, from 1, and no count and no record of the caller changes
+// (finding W7 of the hostile read).
 tables_return :: proc "contextless" (file: []u8, function: module.Function, arguments: []Argument, region: []u8, offset: u64) -> (problem: Return_Problem, parameter: int) {
 	function := function
-	field := offset
-	for type, index in function.parameters[:min(int(function.parameter_count), len(arguments))] {
-		defer field += field_size(type)
-		if !is_table(type) {
-			continue
-		}
-		direction := function.parameter_directions[index]
-		if direction == .Read {
-			continue
-		}
-		argument := &arguments[index].table
-		size, _, ok := table_record(file, type, function.parameter_details[index])
-		if !ok {
-			return .Bad_Region, index + 1
-		}
-		capacity := u64(len(argument.records)) / size
-		if direction == .Change {
-			if argument.memory == 0 {
-				intrinsics.mem_copy_non_overlapping(raw_data(argument.records), raw_data(region[argument.region_start:]), int(argument.count * size))
+	count_given_by_callee: [module.PARAMETER_CAPACITY]u64
+	for pass in 0 ..< 2 {
+		field := offset
+		for type, index in function.parameters[:min(int(function.parameter_count), len(arguments))] {
+			defer field += field_size(type)
+			direction := function.parameter_directions[index]
+			if !is_table_or_bytes(type) || direction == .Read {
+				continue
 			}
-			continue
+			argument := &arguments[index].table
+			size, _, ok := table_record(file, type, function.parameter_details[index])
+			if !ok {
+				return .Bad_Description, index + 1
+			}
+			capacity := u64(len(argument.records)) / size
+			if pass == 0 {
+				if direction == .Append {
+					count_offset := field + u64(offset_of(Table_Field, count))
+					if count_offset > u64(len(region)) || 8 > u64(len(region)) - count_offset {
+						return .Bad_Region, index + 1
+					}
+					count_given_by_callee[index] = load(region, count_offset, u64)
+					if count_given_by_callee[index] < argument.count {
+						return .Count_Smaller, index + 1
+					}
+				}
+				continue
+			}
+			if direction == .Change {
+				if argument.memory_handle == 0 {
+					intrinsics.mem_copy_non_overlapping(raw_data(argument.records), raw_data(region[argument.region_start:]), int(argument.count * size))
+				}
+				continue
+			}
+			if argument.memory_handle == 0 {
+				kept_records := min(count_given_by_callee[index], capacity)
+				intrinsics.mem_copy_non_overlapping(raw_data(argument.records[argument.count * size:]), raw_data(region[argument.region_start:]), int((kept_records - argument.count) * size))
+			}
+			argument.count = count_given_by_callee[index]
 		}
-		place := field + u64(offset_of(Table_Field, count))
-		if place > u64(len(region)) || 8 > u64(len(region)) - place {
-			return .Bad_Region, index + 1
-		}
-		answer := load(region, place, u64)
-		if answer < argument.count {
-			return .Count_Smaller, index + 1
-		}
-		if argument.memory == 0 {
-			kept := min(answer, capacity)
-			intrinsics.mem_copy_non_overlapping(raw_data(argument.records[argument.count * size:]), raw_data(region[argument.region_start:]), int((kept - argument.count) * size))
-		}
-		argument.count = answer
 	}
 	return .None, 0
 }
@@ -260,7 +334,7 @@ room_missing :: proc "contextless" (file: []u8, function: module.Function, argum
 			next = (next + 7) &~ 7 + u64(len(arguments[index].record))
 		case .Table, .Bytes:
 			argument := arguments[index].table
-			if argument.memory != 0 {
+			if argument.memory_handle != 0 {
 				continue
 			}
 			size, _, ok := table_record(file, type, function.parameter_details[index])
@@ -269,13 +343,13 @@ room_missing :: proc "contextless" (file: []u8, function: module.Function, argum
 			}
 			direction := function.parameter_directions[index]
 			capacity := u64(len(argument.records)) / size
-			carried := direction == .Append ? capacity - min(argument.count, capacity) : argument.count
+			records_in_region := direction == .Append ? capacity - min(argument.count, capacity) : argument.count
 			next = (next + 7) &~ 7
 			free := next < region_size ? region_size - next : 0
-			if carried > free / size {
-				return {parameter = index + 1, needed = carried * size, free = free}
+			if records_in_region > free / size {
+				return {parameter = index + 1, needed = records_in_region * size, free = free}
 			}
-			next += carried * size
+			next += records_in_region * size
 		}
 	}
 	return {}
