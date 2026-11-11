@@ -630,7 +630,13 @@ client_run :: proc(peer: ^Peer, state: ^Peer_Tcp, client: ^Client, now: u64) {
 					fail(client, fmt.aprintf("a response with the status %d", client.response.status))
 					return
 				}
-				bytes = client.head[client.response.size:client.head_length]
+				// The body: the bytes after the head in the head buffer, then
+				// the bytes of this read that did not go to the head buffer.
+				in_head := client.head[client.response.size:client.head_length]
+				joined := make([]u8, len(in_head) + count - taken, context.temp_allocator)
+				copy(joined, in_head)
+				copy(joined[len(in_head):], bytes[taken:])
+				bytes = joined
 			}
 			if client.bytes < len(client.content) {
 				copy(client.content[client.bytes:], bytes)
