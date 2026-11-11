@@ -330,7 +330,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	build_through_module(&texts)
 	asked := drawn.count
 	present(&window)
-	system.log("interface_through_module: a draw table of 16 places: the frame did not fit, ", asked, " records asked, ", min(asked, 16), " drawn")
+	// The count is the count of the full answer, across the element calls
+	// (docs/MODULE_CONTRACT.md, "Did not fit, across calls"): the records of
+	// the whole frame.
+	system.log("interface_through_module: a draw table of 16 places: the frame did not fit, ", asked, " records asked, ", min(asked, 16), " drawn, ", asked == shown.records ? "the count of the full frame" : "not the count of the full frame")
 	record_capacity_of_build = RECORD_CAPACITY
 	build_through_module(&texts)
 	present(&window)

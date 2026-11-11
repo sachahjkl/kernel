@@ -96,7 +96,11 @@ directions_valid :: proc "contextless" (function: module.Function) -> bool {
 table_encode :: proc "contextless" (file: []u8, type: module.Type, detail: u32, direction: module.Direction, argument: ^Table_Argument, region: []u8, field: u64, next: u64) -> (after: u64, ok: bool) {
 	size, _ := table_record(file, type, detail) or_return
 	capacity := u64(len(argument.records)) / size
-	if argument.count > capacity {
+	// An Append count can be over the capacity: earlier calls did not fit
+	// (docs/MODULE_CONTRACT.md, "Did not fit, across calls"). A Read or
+	// Change table holds its count. No count passes TABLE_SPAN: decode
+	// refuses it, so encode does too.
+	if direction != .Append && argument.count > capacity || argument.count > TABLE_SPAN / size {
 		return 0, false
 	}
 	if argument.memory_handle != 0 {
@@ -107,7 +111,7 @@ table_encode :: proc "contextless" (file: []u8, type: module.Type, detail: u32, 
 		return next, true
 	}
 	start := (next + 7) &~ 7
-	records_in_region := direction == .Append ? capacity - argument.count : argument.count
+	records_in_region := direction == .Append ? capacity - min(argument.count, capacity) : argument.count
 	if start > u64(len(region)) || records_in_region > (u64(len(region)) - start) / size {
 		return 0, false
 	}
@@ -145,7 +149,7 @@ region_range_add :: proc "contextless" (ranges: ^Region_Ranges, item: Region_Ran
 	}
 	for other in ranges.ranges[:ranges.count] {
 		if (item.written || other.written) && item.start < other.end && other.start < item.end {
-			return refuse(refusal, .Overlap, .Bytes, item.argument, item.start, item.end - item.start)
+			return refuse(refusal, .Overlap, .Region, item.argument, item.start, item.end - item.start)
 		}
 	}
 	if ranges.count == len(ranges.ranges) {
@@ -178,9 +182,9 @@ table_decode :: proc "contextless" (file: []u8, type: module.Type, detail: u32, 
 		return refuse(refusal, .Bad_Value, .None, argument, u64(detail), 0)
 	}
 	limit := u64(len(region))
-	if field.count > field.capacity && direction == .Append {
-		return refuse(refusal, .Bad_Value, .Records, argument, field.count, field.capacity)
-	}
+	// A Read or Change table: the records 0 ..< count, so count <= capacity
+	// by the form (the place has capacity = count). An Append count can be
+	// over the capacity (across calls).
 	// No count and no capacity times a size passes TABLE_SPAN, in each
 	// form: no product and no sum below wraps (finding F1 of the hostile read).
 	if field.count > TABLE_SPAN / size || field.capacity > TABLE_SPAN / size {
@@ -211,7 +215,7 @@ table_decode :: proc "contextless" (file: []u8, type: module.Type, detail: u32, 
 	} else {
 		// The region holds the records 0 ..< count of a Read or Change
 		// table, and the records count ..< capacity of an Append table.
-		records_in_region := direction == .Append ? field.capacity - field.count : field.count
+		records_in_region := direction == .Append ? field.capacity - min(field.count, field.capacity) : field.count
 		if field.start % 8 != 0 {
 			return refuse(refusal, .Bad_Value, .Bytes, argument, field.start, 0)
 		}
@@ -221,9 +225,10 @@ table_decode :: proc "contextless" (file: []u8, type: module.Type, detail: u32, 
 		region_range_add(ranges, {field.start, field.start + records_in_region * size, direction != .Read, argument}, refusal) or_return
 		address := u64(uintptr(raw_data(region))) + field.start
 		if direction == .Append {
-			// Record `count` is the first reserved byte: the records before
-			// it are not in the call.
-			address -= field.count * size
+			// Record min(count, capacity) is the first reserved byte: the
+			// records before it are not in the call. Both numbers are at most
+			// TABLE_SPAN / size (checked above): no product wraps.
+			address -= min(field.count, field.capacity) * size
 		}
 		place.address = address
 	}
@@ -303,8 +308,12 @@ tables_return :: proc "contextless" (file: []u8, function: module.Function, argu
 				continue
 			}
 			if argument.memory_handle == 0 {
+				// The records that came: from min(count on entry, capacity) to
+				// min(new count, capacity); none when the count on entry was
+				// at or over the capacity.
+				first_record := min(argument.count, capacity)
 				kept_records := min(count_given_by_callee[index], capacity)
-				intrinsics.mem_copy_non_overlapping(raw_data(argument.records[argument.count * size:]), raw_data(region[argument.region_start:]), int((kept_records - argument.count) * size))
+				intrinsics.mem_copy_non_overlapping(raw_data(argument.records[first_record * size:]), raw_data(region[argument.region_start:]), int((kept_records - first_record) * size))
 			}
 			argument.count = count_given_by_callee[index]
 		}

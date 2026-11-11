@@ -18,6 +18,7 @@
 // refusals, the connections, and the last calls.
 package remote_service
 
+import "base:intrinsics"
 import "contract:datagram"
 import "contract:errors"
 import "contract:isolated"
@@ -331,8 +332,10 @@ call :: proc "contextless" (connection: ^Connection, request: remote.Request, ar
 	// The bytes after the arguments are zero: a request that names a place
 	// of the result reads no byte of a call before it (N6 of the hostile read).
 	copied := copy(connection.region, arguments)
-	for &b in connection.region[copied:] {
-		b = 0
+	// One fill (fill_bytes_with_value of runtime/memory.asm), not one byte
+	// at a time (note 2 of the second hostile read).
+	if copied < len(connection.region) {
+		intrinsics.mem_zero(raw_data(connection.region[copied:]), len(connection.region) - copied)
 	}
 	connection.tag += 1
 	if !system.send(&connection.calls.commands, ring.Record{kind = request.export, tag = connection.tag, values = {0 = 0, 1 = u64(request.record_size)}}) {

@@ -328,7 +328,7 @@ decode_refuses_tables :: proc(t: ^testing.T) {
 		{field = {start = 36, count = 1}, detail = 1, about = "a start that is not a multiple of 8"},
 		{field = {start = 32, count = max(u64)}, detail = 1, about = "a count that wraps"},
 		{field = {start = max(u64) - 7, count = 1}, detail = 1, about = "a start that wraps"},
-		{direction = .Append, field = {start = 32, count = 3, capacity = 2}, detail = 1, about = "an Append count larger than its capacity"},
+		{direction = .Append, field = {start = 32, count = 3, capacity = 2}, detail = 1, ok = true, about = "an Append count larger than its capacity: earlier calls did not fit"},
 		{direction = .Append, field = {start = 32, count = 0, capacity = 15}, detail = 1, about = "an Append capacity larger than the call region"},
 		{direction = .Append, field = {start = 32, count = 10, capacity = 24}, detail = 1, ok = true, about = "an Append table whose free records fit"},
 		{field = {start = 32, count = 1}, detail = 2, about = "a record with a Handle field"},
@@ -384,8 +384,11 @@ decode_random_tables :: proc(t: ^testing.T) {
 		for type, index in function.parameters[:function.parameter_count] {
 			place := call.places[index]
 			record_bytes: u64 = type == .Table ? 16 : 1
-			first := place.address + (function.parameter_directions[index] == .Append ? place.count * record_bytes : 0)
-			reach := function.parameter_directions[index] == .Append ? place.capacity - place.count : place.count
+			// An Append count can be larger than the capacity (calls before
+			// did not fit): the callee then has no free place.
+			filled := min(place.count, place.capacity)
+			first := place.address + (function.parameter_directions[index] == .Append ? filled * record_bytes : 0)
+			reach := function.parameter_directions[index] == .Append ? place.capacity - filled : place.count
 			if first < low || first > high || reach * record_bytes > high - first {
 				testing.expectf(t, false, "a place is out of the call region: %v", place)
 				return
@@ -560,4 +563,71 @@ field_integer_fits_its_size :: proc(t: ^testing.T) {
 	testing.expect(t, module.field_integer_fits(level, -0x8000_0000))
 	testing.expect(t, !module.field_integer_fits(level, 0x8000_0000))
 	testing.expect(t, module.field_integer_fits(value, min(i64)))
+}
+
+// The Append rule across calls (decision of the coordinator after the
+// second hostile read): the same sequence of calls on one table that does
+// not fit gives the same counts and the same records in a direct call and
+// in an isolated call (a call host and a service use the same encode,
+// decode, counts_store and tables_return: the region form). The callee
+// appends 3 readings at each call; the table has 4 places; 3 calls.
+@(private = "file")
+append_three_readings :: proc(place: ^module.Table_Place) {
+	records := ([^]Reading)(uintptr(place.address))
+	for _ in 0 ..< 3 {
+		if place.count < place.capacity {
+			records[place.count] = {sensor = u32(place.count + 1), value = i64(place.count + 1) * 10}
+		}
+		place.count += 1
+	}
+}
+
+@(test)
+append_across_calls_is_the_same_in_each_way :: proc(t: ^testing.T) {
+	storage: [1024]u8
+	file := two_records_file(&storage)
+	function := table_description_of(.Append)
+	function.result = .Integer
+	direct_memory, isolated_memory: [6]Reading // 4 places, then a guard of 2 records.
+	guard_fill(bytes_of(&direct_memory[4], 32))
+	guard_fill(bytes_of(&isolated_memory[4], 32))
+	direct_place := module.Table_Place{address = u64(uintptr(&direct_memory[0])), count = 0, capacity = 4}
+	isolated_argument := [1]Argument{{table = {records = bytes_of(&isolated_memory, 4 * 16), count = 0}}}
+	expected_counts := [3]u64{3, 6, 9}
+	for call_number in 0 ..< 3 {
+		// The direct call: the callee works in the memory of the caller.
+		append_three_readings(&direct_place)
+		// The isolated call.
+		region: [512]u8
+		offset, size, _, _, encoded := encode(file, function, isolated_argument[:], region[:])
+		testing.expectf(t, encoded, "call %d: encode takes a count of %d over a capacity of 4", call_number + 1, isolated_argument[0].table.count)
+		call: Call
+		testing.expectf(t, decode(file, function, offset, size, region[:], &call), "call %d: decode", call_number + 1)
+		append_three_readings(&call.places[0])
+		counts_store(function, &call, region[:])
+		problem, _ := tables_return(file, function, isolated_argument[:], region[:], offset)
+		testing.expect_value(t, problem, Return_Problem.None)
+		testing.expect_value(t, direct_place.count, expected_counts[call_number])
+		testing.expect_value(t, isolated_argument[0].table.count, expected_counts[call_number])
+	}
+	testing.expect(t, (^[4]Reading)(&direct_memory[0])^ == (^[4]Reading)(&isolated_memory[0])^, "the same 4 records in the two ways")
+	testing.expect_value(t, isolated_memory[3].value, 40)
+	testing.expect(t, guard_holds_bytes(bytes_of(&direct_memory[4], 32)) && guard_holds_bytes(bytes_of(&isolated_memory[4], 32)), "no write at or after the capacity")
+}
+
+@(private = "file")
+guard_fill :: proc(bytes: []u8) {
+	for &b in bytes {
+		b = GUARD
+	}
+}
+
+@(private = "file")
+guard_holds_bytes :: proc(bytes: []u8) -> bool {
+	for b in bytes {
+		if b != GUARD {
+			return false
+		}
+	}
+	return true
 }

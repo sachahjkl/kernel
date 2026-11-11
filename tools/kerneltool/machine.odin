@@ -1664,7 +1664,7 @@ scenario := [?]Step {
 	{kind = .Launch, text = "interface_through_module"},
 	{kind = .Wait, text = "compositor: surface interface_through_module", any_order = true},
 	{kind = .Wait, text = "interface_through_module: one frame of "},
-	{kind = .Wait, text = "interface_through_module: a draw table of 16 places: the frame did not fit, 17 records asked, 16 drawn"},
+	{kind = .Wait, text = " records asked, 16 drawn, the count of the full frame"},
 	{kind = .Wait, text = "interface_through_module: ok, the two draw tables are equal"},
 	{kind = .Shot, text = "interface_module"},
 	{kind = .Close, text = "interface_through_module"},

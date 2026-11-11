@@ -14,8 +14,11 @@ import module "contract:module"
 // The callee of a Read table reads records[0 ..< count]. The callee of a
 // Change table reads and writes them; the count stays. The callee of an
 // Append table writes records[count ..< capacity], reads none before count,
-// and sets count to the count of the full answer: a count larger than the
-// capacity means that the answer did not fit (table_append does it).
+// and sets count to the count of the full answer, across calls: a count
+// larger than the capacity means that the answer did not fit; on entry it
+// means that earlier calls did not fit, and nothing more is written
+// (table_append and bytes_append do it, with a count that stops at the
+// largest number).
 
 Table_To_Read :: struct($Record: typeid) {
 	records:  [^]Record,

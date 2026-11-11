@@ -153,9 +153,11 @@ Direction :: enum u8 {
 	Read   = 0, // It reads the records 0 ..< count, and writes nothing.
 	Change = 1, // It reads and writes the records 0 ..< count. The count stays.
 	// It writes the records count ..< capacity and reads none before count.
-	// It sets count to the count on entry plus the records of its answer,
-	// also those that did not fit: a count larger than the capacity means
-	// "the answer did not fit". The caller gives count <= capacity.
+	// The count is the count of the full answer, across calls: the callee
+	// adds the records of its answer, also those that did not fit. A count
+	// larger than the capacity means "the answer did not fit"; on entry it
+	// means that earlier calls did not fit, and the callee then writes
+	// nothing. It never writes a record at an index >= capacity.
 	Append = 2,
 }
 

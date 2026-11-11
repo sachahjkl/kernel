@@ -210,17 +210,20 @@ export_serve :: proc "contextless" (file: []u8, base: u64, region: []u8, ring_me
 	if !isolated.decode(file, function, command.values[0], command.values[1], region, &prepared, &refusal) {
 		return refused(&completion, .Bad_Arguments, refusal)
 	}
-	if !memory_objects_allowed && prepared.mapping_count > 0 {
-		item := prepared.mappings[0]
-		return refused(&completion, .Bad_Arguments, errors.error_make(.Bad_Value, .None, i64(item.parameter + 1), i64(item.handle), 0))
-	}
+	// The proof of each handle, and the deferred close of each one that came
+	// through the call ring, come first: each refusal after this point
+	// closes them (note 1 of the second hostile read: the refusal of a
+	// memory object to a service left them open).
 	lent := prepared.lent[:prepared.lent_count]
 	came: [module.HANDLE_CAPACITY]bool
-	proven := true
+	first_unproven := -1
+	held_rights: Rights
 	for item, index in lent {
 		_, rights, through := handle_state(Handle(item.handle), ring_memory)
 		came[index] = through
-		proven &&= through && transmute(Rights)item.rights <= rights
+		if first_unproven < 0 && !(through && transmute(Rights)item.rights <= rights) {
+			first_unproven, held_rights = index, rights
+		}
 	}
 	// Close what the caller lent, after the call or in place of it.
 	defer for item, index in lent {
@@ -228,8 +231,18 @@ export_serve :: proc "contextless" (file: []u8, base: u64, region: []u8, ring_me
 			close(Handle(item.handle))
 		}
 	}
-	if !proven {
-		return refused(&completion, .Bad_Handle, errors.error_make(.Handle_Rights, .None, 0))
+	if !memory_objects_allowed && prepared.mapping_count > 0 {
+		item := prepared.mappings[0]
+		return refused(&completion, .Bad_Arguments, errors.error_make(.Bad_Value, .None, i64(item.parameter + 1), i64(item.handle), 0))
+	}
+	// A handle that did not come through the call ring was not lent for
+	// this call; one that came lacks a right of the description (note 4).
+	if first_unproven >= 0 {
+		item := lent[first_unproven]
+		if !came[first_unproven] {
+			return refused(&completion, .Bad_Handle, errors.error_make(.Handle_Absent, .Lent_Handles, 0, i64(item.handle)))
+		}
+		return refused(&completion, .Bad_Handle, errors.error_make(.Handle_Rights, .None, 0, i64(item.handle), i64(item.rights), i64(transmute(u32)held_rights)))
 	}
 	// A table names a memory object, not another kind of object (N3 of the
 	// hostile read).

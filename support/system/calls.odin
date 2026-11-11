@@ -88,7 +88,9 @@ call_direct :: proc "contextless" (file: []u8, address: uintptr, function: modul
 				return not_done(error, index + 1, u64(function.parameter_details[index]))
 			}
 			capacity := u64(len(argument.table.records)) / size
-			if argument.table.count > capacity {
+			// An Append count can be over the capacity: earlier calls did
+			// not fit (docs/MODULE_CONTRACT.md, "Did not fit, across calls").
+			if function.parameter_directions[index] != .Append && argument.table.count > capacity {
 				return not_done(error, index + 1, argument.table.count)
 			}
 			places[index] = {address = u64(uintptr(raw_data(argument.table.records))), count = argument.table.count, capacity = capacity}
