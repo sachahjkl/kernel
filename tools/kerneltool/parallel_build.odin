@@ -85,6 +85,14 @@ build_modules_in_parallel :: proc() -> bool {
 	if processes <= 0 {
 		processes = os.get_processor_core_count()
 	}
+	// The file of this process, not its first argument: the compiler that
+	// runs the tool gives only the name of the file there, and that name
+	// finds the wrapper of the shell, which builds the tool again.
+	tool_path, path_error := os.get_executable_path(context.temp_allocator)
+	if path_error != nil {
+		fmt.eprintfln("kerneltool: cannot find the file of the tool: %v", path_error)
+		return false
+	}
 	outcomes := make([]Module_Build_Outcome, len(module_builds))
 	defer {
 		for outcome in outcomes {
@@ -103,7 +111,7 @@ build_modules_in_parallel :: proc() -> bool {
 				append(&indexes, index)
 			}
 		}
-		level := Module_Build_Level{module_indexes = indexes[:], outcomes = outcomes, tool_path = os.args[0]}
+		level := Module_Build_Level{module_indexes = indexes[:], outcomes = outcomes, tool_path = tool_path}
 		workers := make([]^thread.Thread, min(processes, len(indexes)), context.temp_allocator)
 		for &worker in workers {
 			worker = thread.create_and_start_with_data(&level, module_build_worker)

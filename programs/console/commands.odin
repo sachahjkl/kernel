@@ -1142,7 +1142,7 @@ call_isolated :: proc "contextless" (item: ^Command, arguments: []Value) -> Valu
 			fault_print(&report)
 			return result
 		}
-		if intrinsics.volatile_load(&work.cancel) != 0 {
+		if intrinsics.atomic_load_explicit(&work.cancel, .Relaxed) != 0 {
 			sandbox_end(sandbox)
 			return fail("the person stopped the call of ", item.name, sandbox.service ? ": the console closed the connection to " : ": the console stopped the program ", sandbox.name)
 		}

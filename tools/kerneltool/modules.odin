@@ -162,6 +162,8 @@ build_module :: proc(build: Module_Build) -> bool {
 	folder := join(MODULE_BUILD_FOLDER, "/", build.name)
 	objects := join(folder, "/objects")
 	reset_folder(objects) or_return
+	llvm_ir_folder := join(folder, "/llvm_ir")
+	reset_folder(llvm_ir_folder) or_return
 	compile := make([dynamic]string, context.temp_allocator)
 	append(
 		&compile,
@@ -189,7 +191,7 @@ build_module :: proc(build: Module_Build) -> bool {
 		// gives one thread in all (choice 189 and the choice that follows 359).
 		"-thread-count:1",
 		CONTRACT_LIBRARY,
-		join("-out:", folder, "/", build.name, ".ll"),
+		join("-out:", llvm_ir_folder),
 	)
 	if build.kernel {
 		append(&compile, "-disable-red-zone")
@@ -202,8 +204,14 @@ build_module :: proc(build: Module_Build) -> bool {
 		}
 	}
 	run(compile[:]) or_return
-	// Odin writes the IR in the folder where it runs, with the name of -out.
-	if err := os.rename(join(build.name, ".ll"), join(folder, "/", build.name, ".ll")); err != nil {
+	// Odin writes the IR in the folder of -out, with the name of the first
+	// package of the module. The folder was empty: its one .ll file is the IR.
+	llvm_ir_files := files_with_suffix(llvm_ir_folder, ".ll") or_return
+	if len(llvm_ir_files) != 1 {
+		fmt.eprintfln("kerneltool: the compiler wrote %d LLVM IR files for %s; one module is one file", len(llvm_ir_files), build.name)
+		return false
+	}
+	if err := os.rename(llvm_ir_files[0], join(folder, "/", build.name, ".ll")); err != nil {
 		fmt.eprintfln("kerneltool: cannot move the LLVM IR of %s: %v", build.name, err)
 		return false
 	}

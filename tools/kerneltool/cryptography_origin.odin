@@ -14,7 +14,7 @@ import "contract:blake3"
 // here, not in a diff of each file.
 
 CRYPTOGRAPHY_MANIFEST :: "support/cryptography/origin.manifest"
-CRYPTOGRAPHY_ORIGIN_RELEASE :: "dev-2026-05" // The tag of Odin in nixpkgs: https://github.com/odin-lang/Odin/archive/refs/tags/dev-2026-05.tar.gz
+CRYPTOGRAPHY_ORIGIN_RELEASE :: "dev-2026-11a" // The tag of Odin in nixpkgs: https://github.com/odin-lang/Odin/archive/refs/tags/dev-2026-05.tar.gz
 
 // The only changes of a file that is taken: its imports go to the copies in
 // support/cryptography, and to the compatibility layer for the helpers of
