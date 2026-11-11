@@ -473,6 +473,46 @@ The owner did not review these. Each one can change.
 307. **The peer is a TCP client that the tool drives** (`tools/kerneltool/peer_tcp.odin`, step `Peer`). It runs `support/tcp` in its thread, between frames: its socket waits 1 ms at most. It chooses the UDP port where QEMU receives the frames of the machine (`local.port` of `-netdev dgram`), so it can send the first SYN before the machine sends a frame. It reads each TCP frame of the machine with its own code, also the checksum. The cases change frames with a generator that each case seeds: each run drops, reorders and repeats the same frames. The cost: the library tests itself in these cases; the machine with libslirp tests it against another implementation.
 308. **The independent stack is libslirp, through QEMU user networking** (`-netdev user,restrict=on`, a third network machine). `hostfwd` gives a free port of the loopback of the host to the port 80 of the machine; `guestfwd` gives 10.0.2.100 port 80 to a listener of the tool (a QEMU character device that connects when QEMU starts, so the listener reads with no time limit). The TCP of the machine talks to the one of libslirp; libslirp talks to the TCP of the host. A second network device on one machine was not needed: a second machine is one more start, and the frame service and the network service did not change. libslirp acknowledges the FIN of a connection of `guestfwd` and does not send its own: `fetch` stays in FIN-WAIT-2, and its case says it.
 309. **Measured** (the machine test after the rebase on the step 46, QEMU with KVM, 4 processors, while other machine tests ran on the host; one run unless said). Between the peer and `server`: 1 MiB from the server in 52.9 ms (19.8 MB/s), 1 MiB to the server at 20.2 MB/s; with 5 % loss in each direction 0.8 and 0.7 MB/s (48 segments sent again; 2.2 and 0.8 MB/s in an earlier run); with 10 % reordered 16.6 and 15.3 MB/s; with 10 % repeated 16.1 and 14.9 MB/s; a zero window of 1.5 s: 4 probes. The handshake seen by `server` (SYN to the ACK of its SYN, ACK): 61 to 135 us at least. `GET /` answered and acknowledged in 157 to 224 us. With libslirp: the host fetched 1 MiB at 58.6 to 64.9 MB/s and sent 1 MiB at 57.6 to 61.0 MB/s (the clock of the host); `server` measured 92.9 to 98.4 MB/s out and 81.9 to 90.4 MB/s in; `fetch` measured the handshake in 261 to 266 us, 1 MiB in at 105.3 to 140.7 MB/s, 1 MiB out at 11.4 to 11.9 MB/s, and `GET /hello` in 42.6 to 43.5 ms, a cause that this step did not find (the tool answers at once; the time is in QEMU, libslirp or the wait of `fetch`). In the case of 16 connections, the answers were acknowledged 0.2 to 30 ms after their request, in the order of the connections: the peer runs one step for each frame. The window of a connection is 32 KiB (the receive buffer), so one connection cannot exceed 32 KiB for each round trip. The test asserts no speed.
+NEW-1. **Where the copy and the fill came from.** With `-no-crt`, the Odin runtime (`base/runtime/procs.odin`) defines `memcpy`, `memmove`, `memset` and `bzero` with a strong linkage in the object of each module. `memcpy` and `memmove` are loops of one byte with the attributes `noinline optnone` in the LLVM IR: the code keeps its counter in memory. `memset` is a loop of one byte that LLVM makes a loop of 32 bytes. A symbol of another object cannot replace a strong symbol of the same link. The call sites in the linked modules, from the compiled code:
+
+| Module | `memcpy` | `memmove` | `memset` |
+|---|---|---|---|
+| compositor | 4 | 5 | 7 |
+| console | 35 | 30 | 79 |
+| kernel | 14 | 8 | 32 |
+| root | 22 | 9 | 16 |
+| storage | 24 | 7 | 21 |
+
+NEW-2. **The system has its own copy and fill** (`runtime/memory.asm`): `copy_bytes_without_overlap`, `copy_bytes_with_overlap`, `fill_bytes_with_value`. The kernel tool links the file in each module and in the kernel (`RUNTIME_MEMORY` in `tools/kerneltool/modules.odin`), and in the boot program (the Win64 form), and builds them without `-no-crt`. No program and no kernel file changed for it. The compiler calls the three functions by the names of the C library: these names are aliases in a part of their own, and the code of the system uses the long names (owner, 2026-11-11: no short names such as `memcpy`).
+NEW-3. **The form of each size, by measure** on the host (AMD Ryzen 7 5800X: ERMS and FSRM; the guest under KVM says the same, the compositor writes it), in ns for one call, the destination 3 bytes after an alignment:
+
+| Size | `rep movsb` | loop of 64 bytes | `rep stosb` | fill loop of 64 bytes |
+|---|---|---|---|---|
+| 512 | 13.1 | 8.5 | 26.9 | 7.3 |
+| 2048 | 27.5 | 31.0 | 37.1 | 28.1 |
+| 4096 | 48.4 | 64.0 | 51.0 | 61.1 |
+| 65536 | 986 | 1265 | 515 | 978 |
+| 524288 | 10109 | 11130 | 4438 | 8441 |
+| 1 MiB | 43463 | 21160 | 38593 | 16855 |
+
+The forms: under 16 bytes, general registers; 16 to 64 bytes, two or four moves of 16 bytes that overlap (all reads before all writes, so they also serve `copy_bytes_with_overlap`); then the loop of 64 bytes up to 2 KiB for the copy and 4 KiB for the fill; `rep movsb` and `rep stosb` up to 1 MiB; the loop again from 1 MiB. `copy_bytes_with_overlap` copies down in blocks of 16 bytes when the destination is after the source in the count, and uses `rep movsb` when it is before. The registers: xmm0 to xmm4, no AVX: `fxsave` does not save the upper halves of the ymm registers. The kernel uses these xmm registers in the file, as its compiled code already does: it saves the registers of a program at each entry (`fxsave`) and runs with the interrupts off, except in `idle_wait`. The rule of the direction flag is now in `docs/MODULE_CONTRACT.md`, section 4: clear at each call; the kernel clears it at `syscall` (`MSR_SFMASK`) and at each interrupt (`cld`).
+NEW-4. **Tests on the host**: the tool assembles the file with `-DHOST` (the long names only) and `odin test runtime` links it: each size 0 to 300, each alignment 0 to 15 of the source and of the destination, the moves with 33 distances both ways (0, 1 to 17, 31, 63 to 65, half the count, the count and one more), the sizes where the form changes (2047 to 2049, 4095 to 4097, 1 MiB less 1 to 1 MiB and 13), and the fill with three values. A fault put on purpose (no write of the first 16 bytes of a move down) fails the tests.
+NEW-5. **`graphics.copy` is a plain copy again**, and the compositor measures at its start, in the guest, ns for one call (8, 64, 512, 4096, 65536 bytes and a frame less 128 bytes, aligned): `copy_bytes_without_overlap` 1.5, 1.9, 9.9, 34.6, 923, 73765; the loop of 16 bytes of the step before 3.5, 19.6, 149, 1170, 19856, 956365; `fill_bytes_with_value` 2.8, 3.3, 7.6, 42.6, 502, 44292. Before and after on one `master` (`9cf18a6` before, the same with this step after; the load of the host was 3 to 15 during the run after):
+
+| Measure | Before | After |
+|---|---|---|
+| A title bar of 1024 pixels, one row then copies | 5.7 us | 1.7 us |
+| A full frame, 12 windows or more | 1648 us (5 frames) | 1679 us (13 frames) |
+| A frame of the move of `life` / `boot` | 269 / 1269 us | 250 / 1357 us |
+| The first use of a page (`frames`) | 830 ns | 713 ns |
+| Pages on first use in one second, 1 / 2 / 4 lockers (`locks`) | 1.24 / 2.32 / 3.47 million | 1.63 / 2.84 / 4.23 million |
+| A call of the host to `monitor.count`, in the middle | 189 us | 169 us |
+| The round trip of a datagram (`net`), in the middle | 83 us | 111 us |
+| A burst of `net`, datagrams in one second | 95 149 | 60 796 |
+| The boot program loads the kernel and the boot image | 19.5 / 20.1 ms | 22.6 / 23.2 ms |
+
+The frames do not change: a frame is bound by the writes to the framebuffer of QEMU (3 MiB in about 1.7 ms), not by the copy in memory. The kernel gains on the first use of a page (14 %, 31 % more pages in one second with one locker). The network and the boot program measured worse in the run after, under a load of the host 5 times higher; in the run of the step before on the old `master` with this change and a low load, the round trip was 67 us, the burst 94 443, the call 148 us and the load of the boot program 15.6 to 23.5 ms on 17 machines. These four measures are not conclusive on one run each.
+NEW-6. **The palettes of the programs**: 20 programs take the colors that have a role of the rules from `support/graphics`; the others stay in the programs (`docs/DESIGN.md`, "State"). No layout changed. The places of new windows stay off the grid (see the gaps).
 
 ## Gaps
 
@@ -555,7 +595,8 @@ Performance:
 
 - The desktop: the places of new windows are not on the grid of 8 (264). A title that is longer than its title bar is cut. The launcher lists only the programs of `bar.names`, not the modules of the boot image or of a store. The launcher is drawn by the compositor: it is not a program, and it has no picture of its own.
 - Programs that still have their own palette: `docs/DESIGN.md`, "State".
-- The `memcpy` and `memset` of the freestanding Odin runtime copy one byte at a time with no optimization, in each program (266). Only `graphics.copy` avoids them: each other copy of a large block in a program, and each copy of a structure that the compiler makes a call, still pays this cost. The kernel was not measured.
+- `runtime/memory.asm` has one form for each size range, chosen on one processor (AMD Ryzen 7 5800X, ERMS and FSRM): another processor can have other crossing points. The thresholds are constants of the file, not measured at the start.
+- The new places of windows are not on the grid of 8: 13 of the 19 fixed points that the main scenario presses depend on these places. With `compositor.windows()` (choice 289 and after) the tool can compute each point from the place of its window; then the places can move to the grid.
 - The damage rectangles, the cards, the layout of lines and the text are code of the compositor and of each program: the system has no module for the interface that the programs and the compositor share.
 - The compositor keeps at most 8 damage rectangles and draws only these for each frame. With `plasma` open it uses about 7 % of the processor under QEMU (60 % before, with a full redraw). A program cannot give the part of its surface that changed: `Present` damages the full surface.
 - The kernel saves and restores the floating-point state on every entry.
