@@ -374,7 +374,7 @@ scenario_network := [?]Step {
 	{kind = .Move, text = "plasma", to_x = 440, to_y = 120},
 	{kind = .Move, text = "life", to_x = 8, to_y = 416},
 	{kind = .Front, text = "monitor"},
-	{kind = .Move, text = "monitor", to_x = 572, to_y = 384},
+	{kind = .Move, text = "monitor", to_x = 576, to_y = 384},
 	{kind = .Move, text = "console", to_x = 8, to_y = 40},
 	{kind = .Front, text = "life"},
 	{kind = .Front, text = "monitor"},
@@ -613,16 +613,16 @@ scenario := [?]Step {
 	{kind = .Shot, text = "console"},
 
 	// The desktop: start programs from the launcher, and move the windows.
-	{kind = .Drag, x = 172, y = 92, to_x = 100, to_y = 420}, // life
+	{kind = .Move, text = "life", to_x = 24, to_y = 408},
 	{kind = .Launch, text = "monitor"},
 	{kind = .Wait, text = "compositor: surface monitor"},
-	{kind = .Drag, x = 172, y = 122, to_x = 610, to_y = 50},
+	{kind = .Move, text = "monitor", to_x = 568, to_y = 40},
 	{kind = .Launch, text = "paint"},
 	{kind = .Wait, text = "compositor: surface paint"},
-	{kind = .Drag, x = 208, y = 152, to_x = 560, to_y = 420},
-	{kind = .Click, x = 582, y = 446}, // The red color.
+	{kind = .Move, text = "paint", to_x = 520, to_y = 408},
+	{kind = .Click, x = 60, y = 10, inside_window = "paint"}, // The red color.
 	{kind = .Drag, x = 560, y = 520, to_x = 760, to_y = 700},
-	{kind = .Click, x = 662, y = 446}, // The blue color.
+	{kind = .Click, x = 140, y = 10, inside_window = "paint"}, // The blue color.
 	{kind = .Drag, x = 760, y = 520, to_x = 560, to_y = 700},
 	{kind = .Drag, x = 800, y = 600, to_x = 960, to_y = 600},
 	// The launcher: the key super opens it, the typed part narrows the
@@ -636,7 +636,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "compositor: the launcher starts plasma"},
 	{kind = .Wait, text = "plasma: ok", any_order = true},
 	{kind = .Wait, text = "compositor: surface plasma"},
-	{kind = .Drag, x = 250, y = 182, to_x = 276, to_y = 150},
+	{kind = .Move, text = "plasma", to_x = 232, to_y = 144},
 	{kind = .Shot, text = "desktop_moved"},
 	// The menu of the programs: the button of the bar opens and closes it.
 	{kind = .Click, x = 116, y = 14},
@@ -655,7 +655,7 @@ scenario := [?]Step {
 	{kind = .Launch, text = "fault"},
 	{kind = .Wait, text = "stopped: page fault"},
 	{kind = .Wait, text = "root: fault stopped"},
-	{kind = .Click, x = 540, y = 152}, // The close button of plasma.
+	{kind = .Close, text = "plasma"},
 	{kind = .Wait, text = "root: plasma stopped"},
 
 	// Back to the console: the system tools, then stop the machine.
@@ -785,7 +785,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[console] error: the program sample stopped: page fault"},
 	// The root service ends one grant of a program that runs. The window of
 	// monitor goes below the console for the picture, then back.
-	{kind = .Drag, x = 900, y = 50, to_x = 900, to_y = 560},
+	{kind = .Move, text = "monitor", to_x = 568, to_y = 552},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "grants(\"monitor\")"},
 	{kind = .Wait, text = "[console] monitor has: log, machine"},
@@ -801,7 +801,7 @@ scenario := [?]Step {
 	{kind = .Type, text = "revoke(\"monitor\", \"keys\")"},
 	{kind = .Wait, text = "[console] error: no grant has the name keys"},
 	{kind = .Shot, text = "revocation"},
-	{kind = .Drag, x = 900, y = 570, to_x = 900, to_y = 60},
+	{kind = .Move, text = "monitor", to_x = 568, to_y = 40},
 	{kind = .Front, text = "console"},
 	// The same descriptions serve a direct call. The module is then in the
 	// console: it has the handles of the console, and kept gives 0.
@@ -827,7 +827,7 @@ scenario := [?]Step {
 	// six rings. A stopped program takes no record: the records wait.
 	{kind = .Launch, text = "rings"},
 	{kind = .Wait, text = "rings: ok, 6 programs, 6 rings, 5 records"},
-	{kind = .Drag, x = 600, y = 243, to_x = 500, to_y = 71},
+	{kind = .Move, text = "rings", to_x = 176, to_y = 32},
 	{kind = .Type, text = "aaa"},
 	{kind = .Shot, text = "rings"},
 	{kind = .Type, text = "4"},
@@ -853,7 +853,7 @@ scenario := [?]Step {
 	{kind = .Launch, text = "workers"},
 	{kind = .Wait, text = "workers: the lock lost no addition"},
 	{kind = .Wait, text = "workers: ok, 4 threads computed 140 tiles: "},
-	{kind = .Drag, x = 400, y = 62, to_x = 640, to_y = 340},
+	{kind = .Move, text = "workers", to_x = 304, to_y = 328},
 	{kind = .Shot, text = "workers"},
 
 	// The calls of the host (docs/MODULE_CONTRACT.md, "A call from the
@@ -985,7 +985,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "boot: ok, 7 stages, "},
 	{kind = .Shot, text = "boot"},
 	// The window covers the screen: move it down, away from the console.
-	{kind = .Move, text = "boot", to_x = 60, to_y = 742},
+	{kind = .Move, text = "boot", to_x = 64, to_y = 744},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "stop(\"boot\")"},
 	{kind = .Wait, text = "root: boot stopped"},
@@ -1000,7 +1000,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "pages: ok, the page tables keep the rules"},
 	{kind = .Wait, text = "pages: the processor refuses the memory of programs to the kernel"},
 	{kind = .Shot, text = "pages"},
-	{kind = .Move, text = "pages", to_x = 168, to_y = 742}, // The window covers the console.
+	{kind = .Move, text = "pages", to_x = 168, to_y = 744}, // The window covers the console.
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "stop(\"pages\")"},
 	{kind = .Wait, text = "root: pages stopped"},
@@ -1024,7 +1024,7 @@ scenario := [?]Step {
 	// program, and each export is a command.
 	{kind = .Launch, text = "paint"},
 	{kind = .Wait, text = "compositor: surface paint"},
-	{kind = .Move, text = "paint", to_x = 516, to_y = 408}, // Below the console, at the right.
+	{kind = .Move, text = "paint", to_x = 520, to_y = 408}, // Below the console, at the right.
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "clear()"},
 	{kind = .Type, text = "connect(\"paint\")"},
@@ -1064,7 +1064,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "error: no service runs with the name paint"},
 	{kind = .Launch, text = "paint"},
 	{kind = .Wait, text = "compositor: surface paint"},
-	{kind = .Move, text = "paint", to_x = 460, to_y = 688}, // The window covers the console: move it down.
+	{kind = .Move, text = "paint", to_x = 464, to_y = 688}, // The window covers the console: move it down.
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "paint.lines()"},
 	{kind = .Wait, text = "root: connected console to the service paint"},
@@ -1078,7 +1078,7 @@ scenario := [?]Step {
 	{kind = .Launch, text = "tally"},
 	{kind = .Wait, text = "tally: ok", any_order = true}, // The compositor can write the line of the surface first.
 	{kind = .Wait, text = "compositor: surface tally"},
-	{kind = .Move, text = "tally", to_x = 616, to_y = 530}, // Under the console, at the right.
+	{kind = .Move, text = "tally", to_x = 616, to_y = 528}, // Under the console, at the right.
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "clear()"},
 	{kind = .Type, text = "connect(\"tally\")"},
@@ -1119,7 +1119,7 @@ scenario := [?]Step {
 	// their exports, and one reverse question.
 	{kind = .Wait, text = "manual: information: ", any_order = true},
 	{kind = .Wait, text = "manual: ok, "},
-	{kind = .Move, text = "manual", to_x = 204, to_y = 742},
+	{kind = .Move, text = "manual", to_x = 208, to_y = 744},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "connect(\"manual\")"},
 	{kind = .Wait, text = "[console] manual: 16 commands of a service that runs"},
@@ -1131,7 +1131,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[console] -1"},
 	{kind = .Type, text = "manual.show(\"tally\")"},
 	{kind = .Wait, text = "manual: tally: a program, 5 exports, "},
-	{kind = .Move, text = "manual", to_x = 76, to_y = 60},
+	{kind = .Move, text = "manual", to_x = 80, to_y = 64},
 	{kind = .Shot, text = "manual"},
 	// The keys of the manual: the next module of the boot image, then the one before.
 	{kind = .Key, text = "down"},
@@ -1139,7 +1139,7 @@ scenario := [?]Step {
 	{kind = .Key, text = "pgdn"},
 	{kind = .Key, text = "up"},
 	{kind = .Wait, text = "manual: tally: a program, 5 exports, "},
-	{kind = .Move, text = "manual", to_x = 204, to_y = 742},
+	{kind = .Move, text = "manual", to_x = 208, to_y = 744},
 	{kind = .Front, text = "console"},
 
 	// A module with imports: agenda imports calendar. The loader finds an
@@ -1199,7 +1199,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "imports: a call through an import slot: "},
 	{kind = .Wait, text = "imports: the bind of agenda: "},
 	{kind = .Wait, text = "imports: two programs import calendar at two places: one copy of its code, "},
-	{kind = .Move, text = "imports", to_x = 132, to_y = 300},
+	{kind = .Move, text = "imports", to_x = 136, to_y = 304},
 	{kind = .Shot, text = "imports"},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "clear()"},
@@ -1248,14 +1248,14 @@ scenario := [?]Step {
 	{kind = .Type, text = "manual.overview()"},
 	{kind = .Wait, text = "manual: overview: "},
 	{kind = .Front, text = "manual"},
-	{kind = .Move, text = "manual", to_x = 76, to_y = 60},
+	{kind = .Move, text = "manual", to_x = 80, to_y = 64},
 	{kind = .Shot, text = "modules"},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "manual.show(\"calendar_fixed\")"},
 	{kind = .Wait, text = "manual: calendar_fixed: no entry, "},
 	{kind = .Front, text = "manual"},
 	{kind = .Shot, text = "module_information"},
-	{kind = .Move, text = "manual", to_x = 204, to_y = 742},
+	{kind = .Move, text = "manual", to_x = 208, to_y = 744},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "unload(\"agenda\")"},
 	{kind = .Wait, text = "[console] agenda: 3 commands removed, its sandboxed program stops"},
@@ -1274,7 +1274,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = " 0 lost, "},
 	{kind = .Shot, text = "log"},
 	// The window covers the console: move it down.
-	{kind = .Move, text = "log", to_x = 96, to_y = 742},
+	{kind = .Move, text = "log", to_x = 96, to_y = 744},
 	// The log records as a table with typed fields, through the remote
 	// service: from here on some checks read the program, the channel and
 	// the level of a record (step Record), not only a line of text.
@@ -1317,7 +1317,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "flood: ok", any_order = true},
 	{kind = .Wait, text = "terminal: ok, flood writes in a ring of 4096 records", any_order = true},
 	{kind = .Wait, text = "root: started flood, with a terminal"},
-	{kind = .Move, text = "flood", to_x = 158, to_y = 104}, // The place of the pictures and of the clicks below.
+	{kind = .Move, text = "flood", to_x = 160, to_y = 104}, // The place of the pictures and of the clicks below.
 	{kind = .Wait, text = "terminal: flood wrote "},
 	{kind = .Shot, text = "terminal"},
 	// The terminal keeps Page Up and Page Down: its view stays, the program continues.
@@ -1790,6 +1790,10 @@ WINDOW_CLOSE_Y :: 12
 // window_width gives the width of the surface of the last window with a
 // title: "compositor: surface title 480x320 at 276,232".
 window_width :: proc(machine: ^Machine, title: string) -> (width: int, ok: bool) {
+	if machine.confirm {
+		_, _, outer_width := window_of_compositor(machine, title) or_return
+		return outer_width - 2 * WINDOW_BORDER, true
+	}
 	text := log_read(machine)
 	mark := strings.concatenate({"compositor: surface ", title, " "}, context.temp_allocator)
 	made := strings.last_index(text, mark)
@@ -1805,6 +1809,10 @@ window_width :: proc(machine: ^Machine, title: string) -> (width: int, ok: bool)
 // window down: "compositor: surface title 480x320 at 276,232" and
 // "compositor: window title moved to 60,742".
 window_place :: proc(machine: ^Machine, title: string) -> (x, y: int, ok: bool) {
+	if machine.confirm {
+		x, y, _ = window_of_compositor(machine, title) or_return
+		return x, y, true
+	}
 	text := log_read(machine)
 	made := strings.last_index(text, strings.concatenate({"compositor: surface ", title, " "}, context.temp_allocator))
 	moved := strings.last_index(text, strings.concatenate({"compositor: window ", title, " moved to "}, context.temp_allocator))
@@ -1829,6 +1837,24 @@ window_place :: proc(machine: ^Machine, title: string) -> (x, y: int, ok: bool) 
 	x = strconv.parse_int(place[:comma]) or_return
 	y = strconv.parse_int(place[comma + 1:]) or_return
 	return x, y, true
+}
+
+// window_of_compositor gives the place and the outer width of the window
+// with a title, from compositor.windows(): the table of the compositor
+// itself. The tool reads it once it has the grant person (a step Call with
+// pointer); before that step, the places come from the log.
+window_of_compositor :: proc(machine: ^Machine, title: string) -> (x, y, width: int, ok: bool) {
+	table := table_call(&machine.client, "compositor.windows()") or_return
+	for row in 0 ..< len(table.rows) / table.size {
+		if table_value(&table, row, "title") != title {
+			continue
+		}
+		x = strconv.parse_int(table_value(&table, row, "x")) or_return
+		y = strconv.parse_int(table_value(&table, row, "y")) or_return
+		width = strconv.parse_int(table_value(&table, row, "width")) or_return
+		return x, y, width, true
+	}
+	return 0, 0, 0, false
 }
 
 // log_read gives the complete lines of the log of the machine. QEMU writes

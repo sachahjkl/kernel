@@ -37,10 +37,13 @@ BORDER :: 2
 CLOSE_SIZE :: 24 // The close button: a square at the right end of the title bar.
 // A new window: the first one at (PLACE_X, PLACE_Y), each next one lower
 // and to the right, by PLACE_STEP_X and PLACE_STEP_Y.
-PLACE_X :: 60
-PLACE_Y :: 52
-PLACE_STEP_X :: 36
-PLACE_STEP_Y :: 30
+// The places of new windows. Each corner of a window is on the grid of 8
+// pixels (docs/DESIGN.md, section 6).
+PLACE_X :: 64
+PLACE_Y :: 56
+PLACE_STEP_X :: 40
+PLACE_STEP_Y :: 32
+GRID :: 8
 CLIENT_CAPACITY :: 32 // The root service starts 32 programs at most.
 DAMAGE_CAPACITY :: 8
 CLOCK_WIDTH :: 8 * 8 // "00:00:00"
@@ -434,8 +437,8 @@ surface_create :: proc "contextless" (index: int, record: ring.Record) {
 	client.x = PLACE_X + placed % 8 * PLACE_STEP_X
 	client.y = PLACE_Y + placed % 8 * PLACE_STEP_Y
 	// A large window moves up and left until the screen shows all of it.
-	client.x = max(min(client.x, screen.width - int(width) - 2 * BORDER), 0)
-	client.y = max(min(client.y, screen.height - int(height) - TITLE_HEIGHT - BORDER), BAR_HEIGHT)
+	client.x = max(grid_floor(min(client.x, screen.width - int(width) - 2 * BORDER)), 0)
+	client.y = max(grid_floor(min(client.y, screen.height - int(height) - TITLE_HEIGHT - BORDER)), BAR_HEIGHT)
 	placed += 1
 	damage_focus()
 	order[order_count] = index
@@ -487,8 +490,9 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32) 
 	if dragging >= 0 {
 		if buttons & display.BUTTON_LEFT != 0 {
 			damage_window(&clients[dragging])
-			clients[dragging].x = pointer_x - drag_x
-			clients[dragging].y = max(pointer_y - drag_y, BAR_HEIGHT)
+			// The window follows the pointer on the grid of 8.
+			clients[dragging].x = grid_floor(pointer_x - drag_x + GRID / 2)
+			clients[dragging].y = max(grid_floor(pointer_y - drag_y + GRID / 2), BAR_HEIGHT)
 			damage_window(&clients[dragging])
 		} else {
 			// The person put the window down: the log has its new place.
@@ -1028,4 +1032,9 @@ screen_build :: proc "contextless" (now: u64) {
 	if table.full {
 		system.log_in("surfaces", .Warning, "compositor: the draw table of the screen is full: records are missing")
 	}
+}
+
+// grid_floor gives the place on the grid of 8 at or before a place.
+grid_floor :: proc "contextless" (place: int) -> int {
+	return place - place %% GRID
 }
