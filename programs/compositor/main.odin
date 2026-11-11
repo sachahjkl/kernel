@@ -923,7 +923,7 @@ launcher_draw :: proc "contextless" (canvas: graphics.Canvas, origin_x, origin_y
 // has the time of one call in nanoseconds, and what the processor says of
 // its string instructions (CPUID leaf 7: ERMS, FSRM).
 memory_measure :: proc "contextless" () {
-	SIZES :: [?]int{8, 64, 512, 4096, 65536, 3 << 20}
+	SIZES :: [?]int{8, 64, 512, 4096, 65536, 3 << 20 - 128} // The last one: a frame, less the offsets of the measure.
 	to := ([^]u8)(frame.pixels)
 	from := ([^]u8)(background.pixels)
 	limit := min(frame.width * frame.height, background.width * background.height) * size_of(graphics.Color)
@@ -940,7 +940,7 @@ memory_measure :: proc "contextless" () {
 	for form in Form {
 		for size, index in SIZES {
 			offset := form == .Copy_Unaligned || form == .Loop_Unaligned || form == .Fill_Unaligned ? 3 : 0
-			count := min(size, limit - 64)
+			count := min(size, limit - 128)
 			rounds := clamp(64 << 20 / max(count, 64), 8, 100_000)
 			start := system.nanoseconds()
 			for _ in 0 ..< rounds {
@@ -957,7 +957,7 @@ memory_measure :: proc "contextless" () {
 		}
 	}
 	names := [Form]string {
-		.Copy           = "compositor: memcpy, ns for 8 64 512 4096 65536 3145728 bytes, aligned:",
+		.Copy           = "compositor: memcpy, ns for 8 64 512 4096 65536 3145600 bytes, aligned:",
 		.Copy_Unaligned = "compositor: memcpy, not aligned:",
 		.Loop           = "compositor: a loop of 16 bytes, aligned:",
 		.Loop_Unaligned = "compositor: a loop of 16 bytes, not aligned:",

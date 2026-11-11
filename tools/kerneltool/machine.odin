@@ -561,7 +561,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "input: ok"},
 	// The measure of memcpy and memset of runtime/memory.asm, at the start
 	// of the compositor, before its first frame.
-	{kind = .Wait, text = "compositor: memcpy, ns for 8 64 512 4096 65536 3145728 bytes, aligned: ", any_order = true},
+	{kind = .Wait, text = "compositor: memcpy, ns for 8 64 512 4096 65536 3145600 bytes, aligned: ", any_order = true},
 	{kind = .Wait, text = "compositor: memset, not aligned: ", any_order = true},
 	{kind = .Wait, text = "compositor: the processor: ERMS ", any_order = true},
 	// The two come in an order that the system does not fix.
