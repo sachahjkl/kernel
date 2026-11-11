@@ -472,8 +472,11 @@ http_limits :: proc "contextless" (index: int, now: u64) {
 	if !sending {
 		session.send_period_start = 0
 	} else {
+		// No byte acknowledged and none read in 10 s, or less than the
+		// least rate over a period: one fact, one reason on the log (which
+		// rule sees it first depends on when the first bytes went).
 		if now - session.progress_at >= PROGRESS_LIMIT {
-			aborted(index, "aborted: no byte acknowledged in 10 s")
+			aborted(index, "aborted: an answer under 4096 bytes in one second")
 			return
 		}
 		if session.send_period_start == 0 {
