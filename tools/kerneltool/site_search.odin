@@ -54,6 +54,7 @@ Site_Search_Kind :: enum u8 {
 	Release,
 	Gap,
 	License_Row,
+	Type,
 }
 
 site_search_kind_names := [Site_Search_Kind]string {
@@ -71,6 +72,7 @@ site_search_kind_names := [Site_Search_Kind]string {
 	.Release         = "release",
 	.Gap             = "gap",
 	.License_Row     = "license row",
+	.Type            = "type",
 }
 
 Site_Search_Entry :: struct {
@@ -262,6 +264,20 @@ site_search_entries :: proc(site: ^Site) -> []Site_Search_Entry {
 		if kind.number != 0 {
 			site_search_add(&entries, kind.name, site_page_file(SITE_ERRORS_FOLDER), strings.concatenate({"kind-", site_slug(kind.name)}, context.temp_allocator), .Error_Kind, kind.comment)
 		}
+	}
+	// Each type of the contract, by its name and by its name with its
+	// package: a reader looks for "Time_Record" as the code writes it.
+	types_page := site_page_file(SITE_TYPES_FOLDER)
+	for type in site.types {
+		text := type.description
+		if text == "" {
+			text = type.declaration
+		}
+		title := type.name
+		if type.package_name != "" {
+			title = strings.concatenate({type.package_name, ".", type.name}, context.temp_allocator)
+		}
+		site_search_add(&entries, title, types_page, type.id, .Type, text)
 	}
 	for command in site.reference.console_commands {
 		site_search_add(&entries, command.name, site_page_file(SITE_CONSOLE_FOLDER), strings.concatenate({"command-", site_slug(command.name)}, context.temp_allocator), .Console_Command, strings.concatenate({site_console_signature(command), ": ", command.about}, context.temp_allocator))
