@@ -51,8 +51,8 @@ frames_are_numbered_in_order :: proc(t: ^testing.T) {
 
 // Each animation starts at the still heron and ends at it: frame 0 is the
 // still heron, the first and the last frame move a few cells, and no step of
-// the play (still, the frames, still) changes more than FRAME_CHANGE_LIMIT
-// cells. No frame is further from the still heron than that limit either.
+// the play (still, the frames, still) changes more than the limit of its
+// animation. No frame is further from the still heron than that limit either.
 @(test)
 each_animation_starts_and_ends_at_the_still_heron :: proc(t: ^testing.T) {
 	still := still_cells()
@@ -69,15 +69,15 @@ each_animation_starts_and_ends_at_the_still_heron :: proc(t: ^testing.T) {
 			testing.expectf(t, found, "%v: no frame %d", animation, frame)
 			from_still := cells_differ_count(&cells, &still)
 			step := cells_differ_count(&cells, &previous)
-			testing.expectf(t, from_still <= FRAME_CHANGE_LIMIT, "%v frame %d: %d cells from the still heron; at most %d", animation, frame, from_still, FRAME_CHANGE_LIMIT)
-			testing.expectf(t, step <= FRAME_CHANGE_LIMIT, "%v frame %d: %d cells from the frame before; at most %d", animation, frame, step, FRAME_CHANGE_LIMIT)
+			testing.expectf(t, from_still <= animation_change_limits[animation], "%v frame %d: %d cells from the still heron; at most %d", animation, frame, from_still, animation_change_limits[animation])
+			testing.expectf(t, step <= animation_change_limits[animation], "%v frame %d: %d cells from the frame before; at most %d", animation, frame, step, animation_change_limits[animation])
 			if frame == 1 || frame == count {
 				testing.expectf(t, from_still > 0, "%v: the frame %d does not move", animation, frame)
 			}
 			previous = cells
 		}
 		back := cells_differ_count(&previous, &still)
-		testing.expectf(t, back <= FRAME_CHANGE_LIMIT, "%v: %d cells from the last frame back to the still heron; at most %d", animation, back, FRAME_CHANGE_LIMIT)
+		testing.expectf(t, back <= animation_change_limits[animation], "%v: %d cells from the last frame back to the still heron; at most %d", animation, back, animation_change_limits[animation])
 	}
 	// Pinned: the blink closes the eye, and nothing else.
 	blink, _ := animation_frame_cells(.Blink, 1)
@@ -171,4 +171,56 @@ a_frame_that_does_not_exist :: proc(t: ^testing.T) {
 	testing.expect(t, !found)
 	_, found = animation_frame_cells(.Dip, 1000)
 	testing.expect(t, !found)
+}
+
+// Each animation has its limit of changed cells in the data. Only the preen
+// is above the common limit, and its limit is stated.
+@(test)
+the_limit_of_each_animation :: proc(t: ^testing.T) {
+	for animation in Animation {
+		limit := animation_change_limits[animation]
+		if animation == .Preen {
+			testing.expect_value(t, limit, PREEN_FRAME_CHANGE_LIMIT)
+		} else {
+			testing.expectf(t, limit == FRAME_CHANGE_LIMIT, "%v has the limit %d, not the common %d", animation, limit, FRAME_CHANGE_LIMIT)
+		}
+	}
+}
+
+// Pinned frames of the preen and the scratch: the head on the back with the
+// beak in the feathers, a stroke, the scratch that starts from the pose of
+// the leg animation, and its foot on the row of the ground.
+@(test)
+preen_and_scratch_pinned_cells :: proc(t: ^testing.T) {
+	still := still_cells()
+	on_the_back, _ := animation_frame_cells(.Preen, 3)
+	testing.expect_value(t, on_the_back[9][11], u8('k')) // The eye, lower and to the left.
+	testing.expect_value(t, on_the_back[10][7], u8('y')) // The tip of the beak on the body.
+	testing.expect_value(t, on_the_back[2][17], u8('.')) // The place of the eye of the still heron is empty.
+	for column in 0 ..< HERON_GRID_SIZE {
+		testing.expectf(t, on_the_back[0][column] == '.' && on_the_back[6][column] == '.', "the column %d above the folded head is not empty", column)
+	}
+	testing.expect_value(t, cells_differ_count(&on_the_back, &still), 47)
+	stroke, _ := animation_frame_cells(.Preen, 4)
+	testing.expect_value(t, cells_differ_count(&stroke, &on_the_back), 2)
+	testing.expect_value(t, stroke[10][7], u8('.'))
+	testing.expect_value(t, stroke[10][6], u8('b'))
+	// The frames 5 and 7 repeat the frame 3, the frame 9 the frame 1.
+	repeated, _ := animation_frame_cells(.Preen, 7)
+	testing.expect_value(t, cells_differ_count(&repeated, &on_the_back), 0)
+	knee_in, _ := animation_frame_cells(.Leg, 2)
+	scratch_start, _ := animation_frame_cells(.Scratch, 1)
+	testing.expect_value(t, cells_differ_count(&scratch_start, &knee_in), 0)
+	forward, _ := animation_frame_cells(.Scratch, 2)
+	testing.expect_value(t, forward[22][14], u8('o'))
+	testing.expect_value(t, forward[22][15], u8('o'))
+	testing.expect_value(t, forward[22][12], u8('t')) // Water between the two feet.
+	back, _ := animation_frame_cells(.Scratch, 3)
+	testing.expect_value(t, back[22][13], u8('o'))
+	testing.expect_value(t, back[21][16], u8('t'))
+	testing.expect_value(t, animation_frame_count(.Preen), 9)
+	testing.expect_value(t, animation_frame_count(.Scratch), 8)
+	testing.expect_value(t, animation_duration(.Preen), 2090)
+	testing.expect_value(t, animation_duration(.Scratch), 1680)
+	testing.expect_value(t, len(play_order), 17)
 }
