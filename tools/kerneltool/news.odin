@@ -358,7 +358,7 @@ news_check :: proc() -> bool {
 		fmt.eprintfln("kerneltool: test failed: the news has %d problems", len(problems))
 		return false
 	}
-	fmt.printfln("kerneltool: test passed: %s has %d news entries, all well formed, each picture, release and guide present", NEWS_FOLDER, len(entries))
+	test_passed_print("%s has %d news entries, all well formed, each picture, release and guide present", NEWS_FOLDER, len(entries))
 	return true
 }
 

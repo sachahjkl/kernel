@@ -316,7 +316,7 @@ outputs_same_after_second_build :: proc() -> bool {
 		return false
 	}
 	same_bytes_line := fmt.tprintf("%d modules, their LLVM IR and their objects, %d pointer theme files, and the boot program and its object are the same bytes after a second build", len(module_builds), len(theme_paths))
-	fmt.printfln("kerneltool: test passed: %s", same_bytes_line)
+	test_passed_print("%s", same_bytes_line)
 	// The command `site` quotes this line.
 	if err := os.write_entire_file(REPRODUCIBLE_BUILD_RECORD, strings.concatenate({same_bytes_line, "\n"}, context.temp_allocator)); err != nil {
 		fmt.eprintfln("kerneltool: cannot write %s: %v", REPRODUCIBLE_BUILD_RECORD, err)

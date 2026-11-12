@@ -258,16 +258,16 @@ forward_fetch :: proc(forward: Forward, path: string) -> bool {
 			fmt.eprintfln("kerneltool: test failed: /large from the machine has %d bytes and the hash %016x", len(content), hash)
 			return false
 		}
-		fmt.printfln("kerneltool: test passed: the TCP of the host fetched /large from server through libslirp: %d bytes, fnv1a64 %016x as expected, %.1f MB/s", len(content), hash, speed)
+		test_passed_print("the TCP of the host fetched /large from server through libslirp: %d bytes, fnv1a64 %016x as expected, %.1f MB/s", len(content), hash, speed)
 	case "/sink":
 		wanted := fmt.tprintf("received %d bytes, fnv1a64 %016x", web.LARGE_SIZE, web.pattern_hash(web.LARGE_SIZE))
 		if !strings.has_prefix(string(content), wanted) {
 			fmt.eprintfln("kerneltool: test failed: server answered \"%s\" to /sink, not \"%s\"", string(content), wanted)
 			return false
 		}
-		fmt.printfln("kerneltool: test passed: the TCP of the host sent 1 MiB to server through libslirp, and server gave the same hash, %.1f MB/s", speed)
+		test_passed_print("the TCP of the host sent 1 MiB to server through libslirp, and server gave the same hash, %.1f MB/s", speed)
 	case:
-		fmt.printfln("kerneltool: test passed: the TCP of the host fetched %s from server through libslirp: %d bytes in %.2f ms: \"%s\"", path, len(content), time.duration_milliseconds(took), strings.trim_space(strings.split_lines(string(content), context.temp_allocator)[0]))
+		test_passed_print("the TCP of the host fetched %s from server through libslirp: %d bytes in %.2f ms: \"%s\"", path, len(content), time.duration_milliseconds(took), strings.trim_space(strings.split_lines(string(content), context.temp_allocator)[0]))
 	}
 	return true
 }

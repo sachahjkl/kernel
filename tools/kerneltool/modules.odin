@@ -519,13 +519,13 @@ test_descriptions :: proc() -> bool {
 				fmt.eprintfln("kerneltool: test failed: the record %s in %s does not agree with its source", item.name, build.name)
 				return false
 			}
-			fmt.printfln("kerneltool: test passed: the record %s}}, %d bytes, of %s comes from its source", strings.to_string(layout), item.size, build.name)
+			test_passed_print("the record %s}}, %d bytes, of %s comes from its source", strings.to_string(layout), item.size, build.name)
 		}
 		if build.name == "math" {
-			fmt.printfln("kerneltool: test passed: the documentation of %s comes from its source: \"%s\", and %d bytes of text", build.name, about, len(text))
+			test_passed_print("the documentation of %s comes from its source: \"%s\", and %d bytes of text", build.name, about, len(text))
 		}
 		if len(exports) > 1 {
-			fmt.printfln("kerneltool: test passed: the %d descriptions of %s come from its source; the last is %s", len(exports), build.name, strings.to_string(last))
+			test_passed_print("the %d descriptions of %s come from its source; the last is %s", len(exports), build.name, strings.to_string(last))
 		}
 	}
 	return true
@@ -551,8 +551,8 @@ test_modules :: proc() -> bool {
 		return false
 	}
 	hash := blake3.hash(callee.file)
-	fmt.printfln(
-		"kerneltool: test passed: test_caller called test_callee (%d bytes, %d rebase words, hash %x...) and got %d",
+	test_passed_print(
+		"test_caller called test_callee (%d bytes, %d rebase words, hash %x...) and got %d",
 		len(callee.file),
 		module.count(callee.file, .Rebases),
 		hash[:4],

@@ -119,6 +119,9 @@ Site :: struct {
 	step_count:   int,
 	changelog:    Changelog,
 	measured:     []Site_Measured,
+	measure_record: Site_Measure_Record, // The measure record of the work tree.
+	boot_stages:  []Site_Boot_Stage, // The stages of the start that the home shows.
+	boot_source:  Site_Measure_Source,
 	figures:      []Site_Figure,
 	boot_image:   []Site_Image_Entry,
 	licenses:     Site_Licenses,
@@ -543,11 +546,23 @@ site_build :: proc(address: string) -> bool {
 	}
 	site.figures = figures[:]
 
+	// The measured numbers and the stages of the start: from the logs of
+	// build/ when they are newer than the measure record, else from the
+	// record. A clean checkout has the record only.
+	measure_record_found, measure_record_problem := site_measure_record_read(MEASURE_RECORD_FILE)
+	if measure_record_problem != "" {
+		fmt.eprintfln("kerneltool: site: %s", measure_record_problem)
+		return false
+	}
+	site.measure_record = measure_record_found
 	measured := make([dynamic]Site_Measured, context.temp_allocator)
 	for measure in site_measures {
-		append(&measured, site_measure_read(measure))
+		append(&measured, site_measure_resolve(site_measure_read(measure), site.measure_record))
 	}
 	site.measured = measured[:]
+	boot_log: string
+	boot_log, site.boot_source = site_boot_log_choose(site.measure_record)
+	site.boot_stages = site_boot_stages(boot_log)
 	image_problem: string
 	site.boot_image, image_problem = site_boot_image_read(BOOT_IMAGE)
 	if image_problem != "" {
@@ -705,14 +720,28 @@ site_build :: proc(address: string) -> bool {
 		}
 	}
 	fmt.printfln("kerneltool: site: %d pictures of the repository, compressed: %d bytes, from %d bytes of their files", picture_count, written_picture_bytes, source_picture_bytes)
-	missing := 0
+	missing, from_record, from_build := 0, 0, 0
 	for number in site.measured {
-		if !number.found {
+		switch number.source {
+		case .None:
 			missing += 1
-			fmt.printfln("kerneltool: site: not measured in this build: %s (%s)", number.measure.sentence, number.missing)
+			fmt.printfln("kerneltool: site: not measured: %s (%s)", number.measure.sentence, number.missing)
+		case .Record:
+			from_record += 1
+		case .Build:
+			from_build += 1
 		}
 	}
-	fmt.printfln("kerneltool: site: %d of %d numbers measured", len(site.measured) - missing, len(site.measured))
+	fmt.printfln("kerneltool: site: %d of %d numbers measured: %d from %s, %d from the logs in %s/ that are newer", len(site.measured) - missing, len(site.measured), from_record, MEASURE_RECORD_FILE, from_build, BUILD_FOLDER)
+	if site.measure_record.present {
+		record := site.measure_record.record
+		fmt.printfln("kerneltool: site: %s: the full check of %s, on the tree of %s (%s), the release %s, %d checks passed", MEASURE_RECORD_FILE, record.time, site_short_commit(record.commit), measure_tree_state_names[record.tree], record.release, record.checks_passed)
+		if record.release != site.release {
+			fmt.printfln("kerneltool: site: %s is of the release %s, older than the release %s of the site", MEASURE_RECORD_FILE, record.release, site.release)
+		}
+	} else {
+		fmt.printfln("kerneltool: site: no %s", MEASURE_RECORD_FILE)
+	}
 	for cell in site.licenses.gaps {
 		fmt.printfln("kerneltool: site: a cell of the licenses is not recorded: %s", cell)
 	}

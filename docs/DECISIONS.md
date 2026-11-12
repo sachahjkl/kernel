@@ -28,7 +28,7 @@ This file is the record of the decisions of the project: who decided what, when,
 9. [The interface, the fonts, the mark and the design](#9-the-interface-the-fonts-the-mark-and-the-design): D-106 to D-141, D-192, D-193
 10. [The console and the tools](#10-the-console-and-the-tools): D-142 to D-148
 11. [The build and the compiler](#11-the-build-and-the-compiler): D-149 to D-162
-12. [The site and the publication](#12-the-site-and-the-publication): D-163 to D-185
+12. [The site and the publication](#12-the-site-and-the-publication): D-163 to D-185, D-194
 13. [The name and the repository](#13-the-name-and-the-repository): D-186 to D-189
 14. [Open questions for the owner](#open-questions-for-the-owner)
 15. [Conflicts](#conflicts)
@@ -1381,6 +1381,13 @@ This file is the record of the decisions of the project: who decided what, when,
 - State: in force.
 - Where: this file.
 
+### D-194 The site shows the numbers of the last full check
+- 2026-11-12. Decided by: the owner, on the published page of the numbers; the form was given by the coordinator.
+- Decision: the published site shows the measured numbers of the last full check of the commit that it is built from. The pass that commits the pictures (`kerneltool screenshots`) also commits the measure record, `docs/measures/measures.txt`. The site reads `build/` when its logs are newer than the record, else the record. This settles Q-12.
+- Words: "0 of 14 numbers are measured in this build" (the page that the owner saw); "The published site must show the numbers of the last full check of the commit that it is built from."
+- State: in force.
+- Where: `docs/SITE.md`, "The measure record"; `tools/kerneltool/measure_record.odin`.
+
 ## 13. The name and the repository
 
 ### D-186 The name is modus
@@ -1426,7 +1433,7 @@ Each question waits for an answer of the owner. The proposal is what holds until
 - **Q-09 The temple of Jon in a post.** Until the owner decides, it is not posted (D-136, D-183).
 - **Q-10 The token of Cloudflare.** The rules of the headers and the purge of the cache need a token with the rights "Transform Rules: Edit" and "Cache Purge" (D-171).
 - **Q-11 The next kernel operation past 32.** (D-073). Proposal: the coordinator raises the target with a recorded reason, as the owner delegated.
-- **Q-12 The machine tests in the site workflow.** The workflow runs no machine test, so the site online says "Not measured in this build." (D-170). The choices: the workflow runs `kerneltool test`, or each release commits its numbers.
+- **Q-12 The machine tests in the site workflow.** Settled by D-194: the full check commits its numbers in the measure record; the workflow runs no machine test.
 - **Q-13 The cache of the site workflow.** The cache of GitHub Actions now, or FlakeHub Cache (D-170).
 - **Q-14 The tone of the posts.** See conflict C-10.
 
