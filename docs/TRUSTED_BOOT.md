@@ -182,7 +182,7 @@ The test machine of the measure uses the firmware with a TPM driver (`OVMF_FULL_
 4. **The variable store of the test machine**: `virt-fw-vars` of the package `python3Packages.virt-firmware` writes a copy of `OVMF_FULL_VARS` with the certificate as PK, KEK and the one entry of `db`, and Secure Boot on (`--set-pk`, `--add-kek`, `--add-db`, `--secure-boot`). No certificate of a vendor is enrolled.
 5. **The machines** of `kerneltool test trusted_boot`: the signed boot program starts, its trust record says `Firmware_And_Boot_Program`, and PCR 11 holds the same value as with the unsigned boot program of the same system; the signed boot program with one byte changed does not start; the unsigned boot program does not start. For the last two, the tool waits for the line `BdsDxe: failed to load Boot` of the firmware, then checks that the log has no line `boot program: started`.
 
-The machines with this firmware run with one processor: each access of the firmware to its variables is a system management interrupt that each processor must enter, and on a loaded host the firmware with four processors did not reach the boot program within the bound of the tool.
+The machines with this firmware run with four processors, as every other machine. With one processor, the firmware of the test machine refuses the measure: `HashLogExtendEvent` gives a device error, and no extend of the register reaches the TPM. The first wait of such a machine is the line `boot program: started`, by name, with a bound of 600 seconds: this firmware starts slower than the usual one, and slower still on a loaded host. The tool prints the time of the first wait of each machine.
 
 ## 8. The costs
 
