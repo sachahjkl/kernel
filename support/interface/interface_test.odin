@@ -582,7 +582,7 @@ text_grid_damage_for_each_cell :: proc(t: ^testing.T) {
 	cells_now: [3 * 8]Text_Grid_Cell
 	cells_drawn: [3 * 8]Text_Grid_Cell
 	for &cell, index in cells_now {
-		cell = {u8('a' + index % 26), false, 0xFFFFFF}
+		cell = {character = u8('a' + index % 26), color = 0xFFFFFF}
 	}
 	records_now, records_before: [4]Draw_Record
 	grids_now := [1]Text_Grid{{cells = cells_now[:], columns = 6, rows = 3, stride = 8}}
@@ -623,9 +623,9 @@ text_grid_draws_its_cells :: proc(t: ^testing.T) {
 	pixels: [40 * 32]graphics.Color
 	canvas := graphics.Canvas{pixels = raw_data(pixels[:]), width = 40, height = 32, stride = 40}
 	cells := [2 * 6]Text_Grid_Cell{}
-	cells[0] = {'#', false, 0x00FF00}
-	cells[7] = {' ', true, 0xFF0000}
-	cells[5] = {'#', false, 0x0000FF} // Past the canvas: cut.
+	cells[0] = {character = '#', color = 0x00FF00}
+	cells[7] = {character = ' ', reverse = true, color = 0xFF0000}
+	cells[5] = {character = '#', color = 0x0000FF} // Past the canvas: cut.
 	grid := Text_Grid{cells = cells[:], columns = 6, rows = 2, stride = 6}
 	text_grid_draw(canvas, 0, 0, grid)
 	green, red := 0, 0
@@ -635,6 +635,32 @@ text_grid_draws_its_cells :: proc(t: ^testing.T) {
 	}
 	testing.expect(t, green > 0, "the character of the first cell is drawn")
 	testing.expectf(t, red == graphics.CELL_WIDTH * graphics.CELL_HEIGHT, "the reverse cell fills its cell: %d pixels", red)
+}
+
+// Filled cells: each one is filled with its background, an empty one too,
+// and its character has its own color on it.
+@(test)
+text_grid_draws_filled_cells :: proc(t: ^testing.T) {
+	pixels: [40 * 16]graphics.Color
+	canvas := graphics.Canvas{pixels = raw_data(pixels[:]), width = 40, height = 16, stride = 40}
+	cells := [5]Text_Grid_Cell{}
+	cells[0] = {character = '#', filled = true, color = 0x00FF00, background = 0x000080}
+	cells[1] = {character = 0, filled = true, color = 0x00FF00, background = 0x000080}
+	cells[2] = {character = '#', filled = true, color = 0xFF0000, background = 0x000080}
+	cells[3] = {character = ' ', filled = true, color = 0xFF0000, background = 0x804000}
+	grid := Text_Grid{cells = cells[:], columns = 5, rows = 1, stride = 5}
+	text_grid_draw(canvas, 0, 0, grid)
+	green, red, blue, brown := 0, 0, 0, 0
+	for pixel in pixels {
+		green += int(pixel == 0x00FF00)
+		red += int(pixel == 0xFF0000)
+		blue += int(pixel == 0x000080)
+		brown += int(pixel == 0x804000)
+	}
+	testing.expect(t, green > 0 && red > 0, "the characters of the filled cells are drawn in their colors")
+	testing.expectf(t, blue > 2 * graphics.CELL_WIDTH * graphics.CELL_HEIGHT && blue < 3 * graphics.CELL_WIDTH * graphics.CELL_HEIGHT, "three cells have the blue background under two characters: %d pixels", blue)
+	testing.expectf(t, brown == graphics.CELL_WIDTH * graphics.CELL_HEIGHT, "the filled space fills its cell: %d pixels", brown)
+	testing.expect(t, pixels[4 * graphics.CELL_WIDTH] == 0, "the last cell is not filled")
 }
 
 // Two pictures: a frame equal to the older frame of its own picture draws
@@ -699,7 +725,7 @@ two_pictures_screen_is_each_frame :: proc(t: ^testing.T) {
 			draw_rectangle(&now, bar * 6, 0, 5, int(seed >> 16) % 3 * 4, 0x30A050)
 		}
 		for &cell, index in cells {
-			cell = {u8('a' + (index / COLUMNS + frame * 3) % 26), (index + frame) % 17 == 0, 0xE0E0E0}
+			cell = {character = u8('a' + (index / COLUMNS + frame * 3) % 26), reverse = (index + frame) % 17 == 0, color = 0xE0E0E0}
 			if (index + frame) % 5 == 0 {
 				cell.character = 0
 			}
@@ -932,7 +958,7 @@ line_hostile_values :: proc(t: ^testing.T) {
 	// A thickness past the limit is cut to it.
 	draw_line(&table, 0, 0, 10, 0, 1000, 0xFFFFFF)
 	testing.expect_value(t, table.record_count, 1)
-	testing.expect_value(t, int(table.records[0].line_thickness), LINE_THICKNESS_LIMIT)
+	testing.expect_value(t, int(table.records[0].kind_detail), LINE_THICKNESS_LIMIT)
 	// The ends at the limit: a record, and only the pixels in the canvas.
 	draw_line(&table, -LINE_COORDINATE_LIMIT, 3, LINE_COORDINATE_LIMIT, 3, 1, 0xFFFFFF)
 	testing.expect_value(t, table.record_count, 2)
@@ -952,10 +978,10 @@ line_hostile_values :: proc(t: ^testing.T) {
 	// Records written by hand that the execution refuses: no pixel, no damage.
 	pixels = {}
 	hostile := [?]Draw_Record {
-		{kind = .Line, line_thickness = 0, x = 1, y = 1, width = 5, height = 5, first_color = 0xFFFFFF},
-		{kind = .Line, line_thickness = 200, x = 1, y = 1, width = 5, height = 5, first_color = 0xFFFFFF},
-		{kind = .Line, line_thickness = 1, x = 1, y = 1, width = max(i32), height = 5, first_color = 0xFFFFFF},
-		{kind = .Line, line_thickness = 1, x = min(i32), y = min(i32), width = max(i32), height = max(i32), first_color = 0xFFFFFF},
+		{kind = .Line, kind_detail = 0, x = 1, y = 1, width = 5, height = 5, first_color = 0xFFFFFF},
+		{kind = .Line, kind_detail = 200, x = 1, y = 1, width = 5, height = 5, first_color = 0xFFFFFF},
+		{kind = .Line, kind_detail = 1, x = 1, y = 1, width = max(i32), height = 5, first_color = 0xFFFFFF},
+		{kind = .Line, kind_detail = 1, x = min(i32), y = min(i32), width = max(i32), height = max(i32), first_color = 0xFFFFFF},
 	}
 	for record in hostile {
 		testing.expect(t, empty(record_rectangle(record)), "a refused line covers nothing")
@@ -1023,7 +1049,7 @@ Grid_Tables :: struct {
 @(private = "file")
 grid_tables_make :: proc(tables: ^Grid_Tables, columns, rows, stride: int) {
 	for &cell, index in tables.cells_now {
-		cell = {u8('A' + index % 26), index % 7 == 0, graphics.Color(0x406080 + index % 3 * 0x203010)}
+		cell = {character = u8('A' + index % 26), reverse = index % 7 == 0, color = graphics.Color(0x406080 + index % 3 * 0x203010)}
 	}
 	tables.grids_now[0] = {cells = tables.cells_now[:], columns = columns, rows = rows, stride = stride}
 	tables.grids_before[0] = {cells = tables.cells_before[:]}

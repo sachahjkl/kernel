@@ -1,0 +1,15 @@
+Copyright 2012 The B612 Project Authors (https://github.com/polarsys/b612)
+
+This file is a subset of b612_bold, made by "kerneltool vector_fonts" (docs/FONTS.md):
+the characters 32 to 126 and the glyph .notdef, each glyph a simple glyph
+(0 glyphs made of glyphs were made simple), no hinting instructions, no
+OpenType layout tables; the 239 pair adjustments of its table kern between
+these characters. The subset carries the name "B612 ASCII Bold".
+License of the source: SIL OFL 1.1, no Reserved Font Name.
+
+The text of the license in the source font file:
+
+This Font Software is licensed under the SIL Open Font License, Version 1.1. This license is available with a FAQ at: http://scripts.sil.org/OFL
+
+URL of the license: http://scripts.sil.org/OFL
+The full text of the license: OFL.txt, in this folder.

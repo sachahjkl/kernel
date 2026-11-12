@@ -44,6 +44,8 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Problem | The error value that a reader of input that nobody checked gives for a rule that the input breaks: the kind, where (the table and the record of a module, or the layer of a frame), the byte, the bad value and its limit. An information function gives one for a module (`information.Problem`); the network service gives one for a frame (`datagram.Problem`) | exception, errno, error code |
 | Boot image | The one block of data that the boot program loads with the kernel. It holds the modules of the first programs, each with its name | initrd, ramdisk |
 | Position-independent | Code that runs correctly at any address with no change to its bytes | relocatable, PIC, PIE |
+| Scalar form | The form of a procedure that computes one value with one instruction, in the general registers. It is the reference of each vector form of the same procedure, and the code of a target with no vectors (`docs/SIMD.md`) | plain C version, fallback (for this), slow path |
+| Vector form | A form of a procedure that computes several values with one instruction, in the 128-bit registers of SSE2, and gives the same bytes as its scalar form for every input (`docs/SIMD.md`) | SIMD version, kernel (for this), fast path, intrinsics version |
 
 ## Running code
 
@@ -103,6 +105,7 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Kernel | The code that runs with processor privilege. It holds five systems: handle table, memory, scheduler, rings and wait, device grant | core, supervisor |
 | Kernel operation | One request that a program makes to the kernel (P1) | system call, syscall |
 | Boot program | The UEFI program that loads and measures the system, then starts the kernel (P17) | boot loader, bootloader |
+| Fixed range | An address and a span of the address space of a program where the system places one mapping that it gives: the settings page, a glyph cache, the date page, the files of a module. Each is one member of the enumeration `Fixed_Range` of `contract/fixed_addresses`, one slot of the band from `BAND_START`, so no two overlap; a mapping that a program places by its own choice is outside the band, from `OWN_CHOICE_START` | well-known address, fixed mapping |
 
 ## Access
 
@@ -150,9 +153,15 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Real-time clock | The clock of the machine that keeps the date when the machine is off (on a PC: the CMOS clock, ports 0x70 and 0x71). The program `date` reads it at its start and each 10 s | RTC (in text), hardware clock, BIOS clock |
 | Date | The count of milliseconds since 1970-01-01 00:00:00 UTC. Leap seconds are not counted: a day has 86400 seconds | timestamp, wall clock, epoch time, Unix time (in text) |
 | Date page | One page that the root service creates and maps read-only into each program that it starts. The program `date` writes there the date of the time 0 of the system, so a program reads the date with no kernel entry: that date plus the milliseconds of the time page | wall-clock page, vDSO, clock page |
-| Terminal ring | The ring between a program and its terminal. In the command queue, a record from the program has a kind (text, status, clear, edit line), a count of bytes and a style. It has no place on the screen. In the completion queue, a record from the terminal is a key record | escape sequence, control character, stream |
-| Key record | A record from a terminal to its program: the code of one key that the person pressed, and its character | standard input, character device, raw mode, cooked mode |
+| Terminal ring | The ring between a program and its terminal. In the command queue, a record from the program has a kind (text, status, clear, edit line, hint line, completion list), a count of bytes and a style. It has no place on the screen. In the completion queue, a record from the terminal is a key record | escape sequence, control character, stream |
+| Key record | A record from a terminal to its program: the code of one key that the person pressed, its character, and the modifiers that the person held (Shift, Control) | standard input, character device, raw mode, cooked mode |
 | Edit line | The one line that a program changes: the line of input of the person with a cursor, or a line that says what the program does now. The program sends its text and the place of the cursor; the terminal shows it after the last line. The program owns the editing | line discipline, readline, cursor addressing, prompt |
+| Line editor | The procedures of `support/line_editor` that change an edit line with keys: the caret, a character at the caret, Backspace, Delete. They have no state of their own: the line is a record of the program | readline, line discipline |
+| Hint line | One dim line that a program shows under its edit line: the signature of the call at the caret, or how to use the list that is open. A new one replaces the one before | tooltip, status (for this), echo area |
+| Completion list | The names that can take the place of the name at the caret, best first, with one chosen row. The program gives the rows; its terminal draws them over its text, at the edit line | dropdown, popup, autocomplete menu, suggestions |
+| Fuzzy match | A match where the characters of a query appear in a name in their order, with gaps allowed, lower and upper case equal. A score orders the names that match (`docs/CONSOLE.md`, section 3) | fuzzy search, subsequence search, filter (for this) |
+| Line history | The lines that the person entered in the console, in a ring of bytes in its memory, the newest first | history (alone), scrollback, command log |
+| History search | The completion list over the line history: Control-R opens it, and the fuzzy match orders the lines, the newest first for equal scores | reverse-i-search, incremental search |
 | Text region | The shared memory beside a terminal ring where the program writes the bytes of its text, in order. A record gives only a count of bytes: the terminal keeps its own place | scrollback (for this), pipe buffer |
 | Run | Bytes of text that have one style. A line is a list of runs | span, segment, chunk |
 | Style | What a run is, and how to show it: a tone, flags (end of the line, own color, reverse) and a color | attribute, SGR, escape code |
@@ -312,8 +321,20 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Subpixel band | One of the three color stripes of a pixel of the screen, red, green and blue, side by side; the vector font has a coverage for each one | subpixel, ClearType, LCD stripe |
 | Grid fit | The move of the baseline, the x-height and the cap height of a font onto whole pixels, so that the tops of the letters are sharp. The system has no other hinting | hinting (alone), autohint |
 | Glyph cache | The glyphs of one font already drawn, for each character 32 to 126 and each scale of the grid: words of coverage, in one file (`contract/glyph_cache`). The kernel tool makes it at build time; it is a resource of the boot image | atlas, texture cache, glyph bitmap |
+| Proportional cache | A glyph cache with `FLAG_PROPORTIONAL`: each character has its own advance, each glyph is the box of its ink at each subpixel position, and the cache has the pair adjustments. A cache with no such flag is monospace: one position, each glyph inside its cell, no pair (`contract/glyph_cache`, `validate`) | proportional font cache |
 | Setting | One choice of the person that changes how the system works for each program: the font, the order of the subpixel bands. The program `settings` changes it | preference, option, configuration |
 | Settings page | The one page of the settings of the person (`contract/settings`): the root service creates it; the program `settings` writes it; each program with a surface reads it | registry, config file, dconf |
+| Monospace font | A font whose characters all have one advance, so that a text is a row of equal cells: Paper Mono, and Spleen 8x16. The font of the terminal, the console, and each text that a person compares character by character (`docs/FONTS.md`, section 12.6) | fixed-width font (for this), terminal font |
+| Interface font | The proportional font of the titles, the labels, the buttons, the menus and the bar: B612 (designed, not built; `docs/FONTS.md`, section 12) | UI font, system font (for this), sans |
+| Advance | The distance from the origin of a glyph to the origin of the next one, before any pair adjustment | width (for this), pitch |
+| Pair adjustment | The change of the advance that a font gives for one pair of glyphs that follow each other (`kern` format 0, or a pair lookup of `GPOS`) | kerning pair (for this) |
+| Text shaping | The step that turns the characters of a text into placed glyphs with a font: here the advances and the pair adjustments only; no ligature, no other script (`docs/FONTS.md`, section 12.3) | layout (for this), typesetting |
+| Placed glyph | A record of 16 bytes that text shaping gives for one character: the glyph, its x from the origin of the run and its advance, in 1/64 of a pixel | positioned glyph, glyph run entry |
+| Subpixel position | The fraction of a pixel where a glyph starts. The glyph cache of a proportional font keeps each glyph at three: 0, 1/3 and 2/3 of a pixel | subpixel offset, bucket |
+| Spacing | The advances of the characters 32 to 126 and the pair adjustments of one font at one scale, in 1/64 of a pixel: the two tables that text shaping reads, from a glyph cache (`support/text_shaping`, `Spacing`) | metrics (for this), kerning data |
+| Text range | A record that names one text in a table of bytes by its first byte and its count, with its width, which the measure writes (`text_shaping.Text_Range`) | span (for this), slice |
+| Boot pass | The start of the program `settings` that the root service makes at boot, with no window: it reads the settings kept in its private store, writes the settings page, and stops | init script, startup hook |
+| Blend table | The results of the blend in linear light of one text color over one pixel color, for each coverage of each channel, kept in the memory of a program (`graphics.Blend_Tables`) | lookup table (alone), LUT |
 
 ## Randomness
 
@@ -374,6 +395,8 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Release | One section of the changelog: a release number, a date, and the entries of the changes, in the parts Added, Changed, Deprecated, Removed, Fixed and Security. The merge of step N on `master` is one release | version (a stored object has versions), tag, build |
 | Release number | The number of a release, `<major>.<minor>.<patch>`: `0.N.0` for step N, `0.N.1` for a correction after it. `RELEASE_NUMBER` in `contract/release` is the newest one | version number, version |
 | Fragment | One file of `changelog.d/` with one change that is not in a release yet: its type and the text of its entry. `kerneltool changelog release` moves the fragments into a release | changeset, news file, entry (for the file) |
+| Mark | The picture that stands for the system: a heron on a grid of 24 by 24 square cells, each part filled with one gradient. `support/mark` holds it as data; `kerneltool logo` writes its files in `resources/logo` (`docs/DESIGN.md`, section 11) | logo, icon, emblem, mascot |
+| Name of the mark | The word "modus" in letters of square cells, 5 columns by 7 rows each, under the heron in the files of the mark that have a name | wordmark, logotype |
 
 ## Terms that the system does not have
 

@@ -28,7 +28,8 @@ Candidate :: struct {
 // The subsets that `kerneltool vector_fonts` writes, with their licenses
 // beside them in resources/fonts.
 candidates := [?]Candidate {
-	{"JetBrains Mono (default)", #load("../../resources/fonts/jetbrains_mono.ttf")},
+	{"Paper Mono (default)", #load("../../resources/fonts/paper_mono.ttf")},
+	{"JetBrains Mono", #load("../../resources/fonts/jetbrains_mono.ttf")},
 	{"DejaVu Sans Mono", #load("../../resources/fonts/dejavu_sans_mono.ttf")},
 	{"IBM Mono (Plex)", #load("../../resources/fonts/ibm_mono.ttf")},
 	{"Fira Mono", #load("../../resources/fonts/fira_mono.ttf")},
@@ -91,14 +92,14 @@ enlarged :: proc "contextless" (canvas: graphics.Canvas, x, y: int) {
 
 ROW_HEIGHT :: 40
 LIST_TOP :: 48
-ENLARGED_TOP :: LIST_TOP + 7 * ROW_HEIGHT + 16
+ENLARGED_TOP :: LIST_TOP + (len(candidates) + 1) * ROW_HEIGHT + 16
 
 // draw draws the whole window: the frame with the interface package, then
 // the lines of each candidate over it.
 draw :: proc "contextless" (window: ^display.Window) {
 	frame := interface.window_frame_begin(&drawing)
 	interface.background(&frame, {0, 0, WIDTH, HEIGHT})
-	content := interface.card(&frame, {8, 8, WIDTH - 16, HEIGHT - 16}, "THE FONT OF THE SYSTEM", "resources/fonts: six candidates, ASCII subsets, glyf outlines", graphics.COLOR_MACHINE)
+	content := interface.card(&frame, {8, 8, WIDTH - 16, HEIGHT - 16}, "THE FONT OF THE SYSTEM", "resources/fonts: seven candidates, ASCII subsets, glyf outlines", graphics.COLOR_MACHINE)
 	interface.draw_text(frame.table, content.x, content.y, "the same line in each font, at scale 1 (8 x 16 pixels), then a word enlarged 4 times", graphics.COLOR_DIM)
 	for index in 0 ..= len(candidates) {
 		y := content.y + LIST_TOP - 24 + index * ROW_HEIGHT

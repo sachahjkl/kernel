@@ -6,6 +6,78 @@ The project has steps, not separate releases. The merge of step N on `master` is
 
 What is not in a release yet is in `changelog.d/`, one fragment for each change. `kerneltool changelog release` writes a release from the fragments. Nobody edits this file by hand.
 
+## [0.76.0] - 2026-11-12
+
+### Added
+
+- **A QUIC server on the network**: `quic_echo` listens on the UDP port 4433 with QUIC in the program, writes back each stream, shows its public key, its connections and what it refused in its window, and makes no key when the random seed of the program is weak; `kerneltool test quic` runs a client of the host against it through the network service, with loss, many clients and a flood of forged packets.
+- **A program can listen on a UDP port**: the network service gives a listen grant of UDP, which answers only the remotes that sent a datagram of 1200 bytes at least to the port, as the listen grant of TCP does for a SYN.
+- **A test of QUIC against OpenSSL**: `kerneltool test quic-real` connects `openssl s_client -quic` of the host to `quic_echo` through QEMU user networking, pins the key that the machine printed, and checks the echo; the development shell has OpenSSL.
+
+### Changed
+
+- **`kerneltool test quic-real` reaches the machine through the peer of the tool**: QEMU user networking dropped every UDP datagram of the machine, so OpenSSL never received the Retry. The test now goes through a UDP relay of the peer on the loopback of the host, and on a failure prints each datagram that the relay carried and the close of the connection.
+- **`quic_echo` logs why a connection ended**: the error code and the frame type of the close, and the reason phrase that the client gave.
+- **`quic_echo` resists a flood of new connections better**: one host with a valid token can no longer stop the new clients of others, each token of a Retry takes a connection once, and the budgets of work for new connections refill continuously, so a burst at the turn of a second no longer gets twice the budget. Its log and its window count the Initials over the budget of one address and the tokens used again.
+
+### Fixed
+
+- **Two datagrams of a new QUIC connection that arrive together are both taken**: `quic_echo` lost the second one, and the client waited for its probe timeout. A connection whose client came back just after the server released it is now validated by the network service, so it is no longer held to 3 times the bytes that its client sent.
+
+### Security
+
+- **A QUIC server keeps nothing for a client that did not prove its address**: `quic_echo` answers a first Initial with a Retry and takes a connection only for a client that came back with its token, so forged source addresses no longer hold its handshake places; the work of new connections has a budget in each second.
+- **The network service limits what a UDP listen grant sends to an unproven address**: at most 3 times the bytes that came from the remote, until the program marks it validated with the new command `Validate`; a send no longer keeps a remote admitted.
+
+## [0.75.0] - 2026-11-12
+
+### Added
+
+- **The mark of the system**: a heron of square cells with one gradient in each part, and the name modus under it. `kerneltool logo` writes its files in `resources/logo` from the data of `support/mark`, at 1024 pixels on a dark and on a light background and at the sizes 24 to 768.
+
+### Changed
+
+- **Text over a gradient or a picture is drawn with the SSE2 blend.** The text of every window over a title bar or a picture takes the SSE2 form of the blend, with the same pixels as before.
+
+### Security
+
+- **No program chooses where another program reads its glyph caches.** The program `settings` could write the address and the size of the glyph caches on the settings page, and so make each program that started later read and draw memory that `settings` controlled; the caches are now at fixed addresses with their sizes in the context that the root service writes, mapped read-only for every program. A program also no longer waits for ever on a settings page left in the middle of a change.
+- **A hostile font file no longer stops the reader.** A glyph made of thousands of empty parts made the font reader run for an unbounded time; the reader now stops at 64 parts, and a glyph cache whose monospace glyphs leave their cells, or whose header has unknown flags or a name with no end, is refused.
+
+## [0.74.0] - 2026-11-11
+
+### Added
+
+- **The pointer theme and the grid fit are settings.** The window `settings` and `settings.set("pointer_theme", "system")` or `settings.set("grid_fit", "off")` change them while every program runs.
+- **Settings survive a stop.** The font, the order of the color stripes, the pointer theme and the grid fit of the text are kept in the store of the program `settings` and come back at the next boot; a loss of power gives the old settings or the new ones, never a mix.
+- **A module of text shaping, and the interface font B612 as data.** The module `text_shaping` places the characters of a text with the advances and the pair adjustments of a proportional font, and measures many texts in one call; the build makes the glyph caches of B612 Regular and Bold, which no window draws yet.
+
+### Changed
+
+- **The titles of the cards are bold.** Each card of a window and of the boot display draws its title in the SemiBold weight of the font of the system.
+- **Text on cards and in the console draws faster.** A glyph of the vector font over a plain background costs 109 ns in place of 181 ns on the host (the least of many runs), with the same pixels.
+- **Paper Mono is the font of the system.** The console, the terminal and every window draw their text in Paper Mono on the same grid of 8 x 16 pixels, in place of JetBrains Mono, and the titles of the cards in Paper Mono SemiBold.
+
+## [0.73.0] - 2026-11-11
+
+### Added
+
+- **A caret in the line of the console**: Left, Right, Home, End, Delete and Backspace edit the line at the caret, and a character goes in at the caret.
+- **A completion list in the console**: while the person types, a list under the line shows the commands, the exports, the services, the variables and the modules that match by a fuzzy match (`mcnt` finds `monitor.count`), the matched letters lit, each name with its signature; Tab or Enter takes one, and the line under the input shows the signature of the call at the caret.
+- **A longer line history in the console, with a search**: 256 lines in place of 8; Control-R opens a search over them with the same fuzzy match, Control-R and Control-S move to an older and a newer line, and Enter puts the line in the input.
+
+### Changed
+
+- **A terminal gives its program the modifiers of each key**, so that Control with a key reaches the console; a cell of the text grid of the interface package can have a fill color (draw record version 5).
+
+## [0.72.0] - 2026-11-11
+
+### Changed
+
+- **BLAKE3 hashes four chunks at a time**: in an input of more than 4096 bytes, the four chunks of each subtree of four chunks are compressed side by side in the SSE2 registers, with the same hash as before. The root service checks the hash of each module and resource at its start with it.
+- **The text of the vector font is blended four pixels at a time**: the blend of a glyph over a pixel, in linear light with the three subpixel bands, runs in the SSE2 registers and gives the same pixels as before.
+- **The pointer picture is blended four pixels at a time**, in the SSE2 registers, with the same pixels as before.
+
 ## [0.71.0] - 2026-11-11
 
 ### Added

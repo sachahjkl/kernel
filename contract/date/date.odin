@@ -19,9 +19,10 @@
 package date
 
 import "base:intrinsics"
+import "contract:fixed_addresses"
 import op "contract:operation"
 
-PAGE_ADDRESS :: 0x0000_3400_0000_0000
+PAGE_ADDRESS :: fixed_addresses.DATE_PAGE_ADDRESS
 VALUE_PAGE :: 15 // The value of the context with the address of the page, for each program that the root service starts.
 GRANT_PAGE :: 6 // The handle of the context of the program `date`: the page, with Read and Write.
 GRANT_PORTS :: 7 // The handle of the context of the program `date`: the ports 0x70 and 0x71 of the real-time clock.

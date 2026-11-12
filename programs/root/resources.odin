@@ -30,11 +30,12 @@ resource_mapping :: proc "contextless" (name: string, address: u64, receiver: st
 	return {memory = image_memory, address = address, first = entry.offset / system.PAGE_SIZE, page_count = (entry.size + system.PAGE_SIZE - 1) / system.PAGE_SIZE}, entry.size, true
 }
 
-// pointer_theme_choice gives the names of the pointer theme files, in the
-// order in which the compositor takes the first one that the image has:
-// the theme of the owner when the build had its input, else the theme of
-// the system (decision of the owner, 2026-11-11). A setting of the person
-// can change this order later: it is the one place of the choice.
+// pointer_theme_choice gives the names of the pointer theme files that the
+// compositor receives, in order: the theme of the owner when the build had
+// its input, then the theme of the system (docs/POINTERS.md, section 5).
+// The setting "pointer_theme" of the person (contract:settings)
+// chooses between them while the compositor runs: "owner" is the first one
+// that the image has, "system" the last.
 pointer_theme_choice :: proc "contextless" () -> []string {
 	return pointer_pictures.RESOURCE_PREFERENCE[:]
 }

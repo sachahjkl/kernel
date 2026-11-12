@@ -65,7 +65,7 @@ One color is one concept, as one term is one concept.
 - Three sizes: cells of 1, 2 and 3 times 8 x 16. The vector font draws each size from its outline; Spleen enlarges its pixels. No other size.
 - The vector font is monospace: its advance is the width of a cell, so a layout in cells holds with either font. A glyph stays inside its cell.
 - An enlarged picture of the screen shows colored edges on each letter: the subpixel bands, not a fault. The setting `subpixel_order` `none` gives gray edges.
-- The title of a card is in capital letters, in the accent of the card, after a bar of 4 x 16 pixels in the same accent.
+- The title of a card is in capital letters, in the bold weight of the vector font, in the accent of the card, after a bar of 4 x 16 pixels in the same accent.
 - A name is in the dim color. A value is in the text color. A measure of a concept is in the color of that concept.
 - A card has at most one number in the large size: the number that the card is about.
 - Numbers of one column are aligned on the right, each with its unit.
@@ -154,6 +154,29 @@ The interface package (`support/interface`, `docs/INTERFACE.md`) draws these ele
 | Large number | The font at 3 times its size, drawn from its outline at 24 x 48: the one number of a card (section 5) |
 
 - An element that takes input can take the focus, and the keyboard reaches it: Tab, Enter, Space, the arrows (`docs/INTERFACE.md`, section 4).
+
+## 11. The mark
+
+The mark is the picture that stands for the system (owner, 2026-11-12: "le heron A n°1 est le meilleur, nickel cest simple ! + le logo \"modus\" comme t'as fait super cool").
+
+- The form: a heron on a grid of 24 by 24 square cells. It stands on one leg in water. Its parts: the crest and the tail (one part, in the color of the firmware), the head and the neck (the text color), the eye, the beak and the legs (two parts, in the color of the boot program), the body (the kernel), the wing (`0x2F6FC0`), the water (memory). No line goes around it.
+- The data: `support/mark` holds the rows of the cells, the table of the parts with their colors and their boxes, and the letters of the name of the mark. Its procedures are pure: `mark_pixel(cell_size, x, y, on_light)` gives the color of one pixel of the heron, `name_pixel` one pixel of the name, `heron_size` and `name_size` their sizes.
+- The gradient: each part is filled with one linear gradient, from the top left corner of the box of the part (the color moved 30 % toward white) to its bottom right corner (the color moved 30 % toward black). A pixel takes the gradient at its centre. The eye is one flat color. The arithmetic is in integers, rounded to the nearest value, so that every machine gives the same pixels.
+- The two backgrounds: the background of the system `0x0B1018`, and the light background `0xF4F6F8` of a page of another program. On the light background the neck is darker (`0x9FB2C8`), and the name is in `0x0B1018` instead of the text color.
+- The name of the mark: "modus" in letters of 5 by 7 cells, 2 empty columns between two letters, one flat color.
+- The files: `kerneltool logo` writes them, and `kerneltool check` fails with "run kerneltool logo" when a file does not have the pixels of the data.
+
+| File | Size | What it shows |
+|---|---|---|
+| `resources/logo/modus.png` | 1024 x 1024 | The heron (cells of 24) and the name under it (cells of 20), on the dark background |
+| `resources/logo/modus_light.png` | 1024 x 1024 | The same on the light background |
+| `resources/logo/heron_768.png` | 768 x 768 | The heron alone, cells of 32, on a transparent background |
+| `resources/logo/heron_24.png`, `heron_48.png`, `heron_96.png`, `heron_192.png` | 24 to 192 | The heron alone with cells of 1, 2, 4 and 8 pixels, on a transparent background |
+| `.project/image.png` | 512 x 512 | The heron alone, cells of 16, centred on the dark background |
+
+- A transparent file keeps the colors of the dark background: its pale neck shows little on a white page. Use `modus_light.png` there.
+- The PNG writer of these files is the one of the Odin standard library: it compresses, and it writes an alpha channel. The writer of the pictures of the screen has neither.
+- A program of the system can draw the mark from the same data, at any whole cell size. No program does it yet: not the bar, not the boot display.
 
 ## State
 

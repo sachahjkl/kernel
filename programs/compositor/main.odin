@@ -278,8 +278,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// (contract:settings); a change of the settings wakes this loop.
 	display.text_settings_open(ctx)
 	settings_seen: u32
+	// settings_seen starts at 0: when the boot pass of settings wrote the page
+	// before this read, the first turn of the loop sees a change and tells
+	// each window, also the ones that read the page before the boot pass.
 	if display.settings_page != nil {
-		settings_seen = settings.read(display.settings_page).change_count
+		pointer_theme_choose(settings.pointer_theme_of(settings.read(display.settings_page)))
 	}
 
 	next_frame: u64
@@ -381,6 +384,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 // (support/display gives it the new font before the event).
 settings_changed :: proc "contextless" (choice: settings.Choice) {
 	display.text_settings_apply()
+	pointer_theme_choose(settings.pointer_theme_of(choice)) // pointer_picture.odin
 	told := 0
 	for &client in clients {
 		if client.ring.head != nil {
@@ -389,7 +393,16 @@ settings_changed :: proc "contextless" (choice: settings.Choice) {
 		}
 	}
 	damage_add(0, 0, screen.width, screen.height)
-	system.log("compositor: the settings changed: font ", settings.font_names[choice.font], ", subpixel order ", settings.subpixel_order_names[choice.subpixel_order], "; ", u64(told), " windows draw again")
+	buffer: [256]u8
+	writer := system.Writer{buffer = buffer[:]}
+	for setting in settings.Setting {
+		description := settings.descriptions[setting]
+		system.write_part(&writer, setting == .Font ? "" : ", ")
+		system.write_part(&writer, description.title)
+		system.write_part(&writer, " ")
+		system.write_part(&writer, description.value_names[choice.values[setting]])
+	}
+	system.log("compositor: the settings changed: ", system.written(&writer), "; ", u64(told), " windows draw again")
 }
 
 send :: proc "contextless" (client: ^Client, record: ring.Record) {

@@ -10,7 +10,7 @@ package interface
 
 import "support:graphics"
 
-DRAW_RECORD_VERSION :: 4 // A new kind of record, or a new field, is a new version. 2: Folded_Gap, Picture. 3: Text_Grid. 4: Line, and the field line_thickness.
+DRAW_RECORD_VERSION :: 6 // A new kind of record, or a new field, is a new version. 2: Folded_Gap, Picture. 3: Text_Grid. 4: Line, and the field line_thickness. 5: the fields filled and background of a cell of a text grid. 6: the byte line_thickness is kind_detail, the weight of a text too.
 
 Draw_Kind :: enum u8 {
 	None                = 0,
@@ -34,7 +34,7 @@ Draw_Kind :: enum u8 {
 	// damages only its row span (docs/INTERFACE.md, section 2.4).
 	Text_Grid           = 9,
 	// A straight line in first_color: from (x, y) to (x + width, y + height),
-	// so width and height can be negative here; line_thickness is the side
+	// so width and height can be negative here; kind_detail (the thickness) is the side
 	// of the square drawn at each point of the path (docs/INTERFACE.md,
 	// section 2.5).
 	Line                = 10,
@@ -50,11 +50,16 @@ LINE_THICKNESS_LIMIT :: 32
 LINE_COORDINATE_LIMIT :: 1 << 15
 
 // One cell of a text grid: a character of the font of the system, in its
-// color, or in the color of the background on a cell of its color.
+// color; or, reverse, in the color of the background on a cell of its
+// color; or, filled, in its color on a cell of the color background (a
+// list drawn over the text, a row that is chosen). A filled cell costs 4
+// bytes more than a cell with no background: 12 bytes for each cell.
 Text_Grid_Cell :: struct {
-	character: u8, // 0 to 32: no character.
-	reverse:   bool,
-	color:     graphics.Color,
+	character:  u8, // 0 to 32: no character.
+	reverse:    bool,
+	filled:     bool,
+	color:      graphics.Color,
+	background: graphics.Color, // For a filled cell.
 }
 
 // A grid of text cells: rows lines of columns cells, a line each stride
@@ -70,7 +75,7 @@ Draw_Record :: struct {
 	kind:            Draw_Kind,
 	text_scale:      u8, // Text: 1, 2 or 3.
 	text_subpixel_x: u8, // Text: the position after x, in 1/64 of a pixel. 0 on the grid of cells: the vector font and Spleen 8x16 (docs/FONTS.md).
-	line_thickness:  u8, // Line: 1 to LINE_THICKNESS_LIMIT pixels. 0 for the other kinds.
+	kind_detail:     u8, // Line: the thickness, 1 to LINE_THICKNESS_LIMIT pixels. Text: the weight (Font_Weight: 0 regular, 1 bold). 0 for the other kinds.
 	x, y:            i32,
 	width, height:   i32,
 	first_color:     u32,
@@ -259,7 +264,7 @@ draw_line :: proc "contextless" (table: ^Draw_Table, from_x, from_y, to_x, to_y:
 		return
 	}
 	start_x, start_y, end_x, end_y := line_ends_in_order(from_x, from_y, to_x, to_y)
-	record_append(table, {kind = .Line, line_thickness = u8(min(thickness, LINE_THICKNESS_LIMIT)), x = i32(start_x), y = i32(start_y), width = i32(end_x - start_x), height = i32(end_y - start_y), first_color = color, element = element})
+	record_append(table, {kind = .Line, kind_detail = u8(min(thickness, LINE_THICKNESS_LIMIT)), x = i32(start_x), y = i32(start_y), width = i32(end_x - start_x), height = i32(end_y - start_y), first_color = color, element = element})
 }
 
 // draw_outline appends the border of a rectangle, thickness pixels wide
@@ -294,7 +299,7 @@ line_ends_in_order :: proc "contextless" (from_x, from_y, to_x, to_y: int) -> (s
 // line_record_valid says if the execution draws a line record: a record
 // written by a caller with no draw_line can have any bytes.
 line_record_valid :: proc "contextless" (record: Draw_Record) -> bool {
-	thickness := int(record.line_thickness)
+	thickness := int(record.kind_detail)
 	if thickness < 1 || thickness > LINE_THICKNESS_LIMIT {
 		return false
 	}
@@ -313,7 +318,7 @@ line_rectangle :: proc "contextless" (record: Draw_Record) -> Rectangle {
 	if !line_record_valid(record) {
 		return {}
 	}
-	thickness := int(record.line_thickness)
+	thickness := int(record.kind_detail)
 	before := thickness / 2
 	start_x, start_y := int(record.x), int(record.y)
 	end_x, end_y := start_x + int(record.width), start_y + int(record.height)
@@ -341,7 +346,7 @@ draw_text :: proc "contextless" (table: ^Draw_Table, x, y: int, text: string, co
 	copy(table.text[start:], text)
 	table.text_count += len(text)
 	scale := font_scale(font)
-	record_append(table, with_place({kind = .Text, text_scale = u8(scale), first_color = color, text_start = u32(start), text_count = u32(len(text)), element = element}, x, y, width, graphics.CELL_HEIGHT * scale))
+	record_append(table, with_place({kind = .Text, text_scale = u8(scale), kind_detail = u8(font.weight), first_color = color, text_start = u32(start), text_count = u32(len(text)), element = element}, x, y, width, graphics.CELL_HEIGHT * scale))
 	return x + width
 }
 

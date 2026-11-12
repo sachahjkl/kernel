@@ -3,6 +3,7 @@ package system
 import "base:intrinsics"
 import "contract:blake3"
 import info "contract:boot_info"
+import "contract:fixed_addresses"
 import op "contract:operation"
 import module "contract:module"
 
@@ -400,6 +401,11 @@ place :: proc "contextless" (space: ^Module_Space, named: [32]u8, first: []u8, i
 	head, _ := module.header(file)
 	import_count := int(max(module.count(file, .Imports), 1)) - 1
 	if import_count > IMPORT_CAPACITY {
+		return fail(space, error, .Room, importer, named, hash)
+	}
+	// The modules stay below the band of the fixed ranges, where the system
+	// maps the settings page, the glyph caches and the files of the modules.
+	if head.memory_size > fixed_addresses.BAND_START - PAGE_SIZE || space.next > fixed_addresses.BAND_START - PAGE_SIZE - head.memory_size {
 		return fail(space, error, .Room, importer, named, hash)
 	}
 	item := &space.modules[free]
@@ -1039,7 +1045,7 @@ load_error_text :: proc "contextless" (writer: ^Writer, error: ^module.Load_Erro
 	case .Room:
 		write_part(writer, "no room for ")
 		name(writer, subject)
-		write_part(writer, ": a program has 16 modules at most, a module 8 imports, a table of prepared modules 64 parts\n")
+		write_part(writer, ": a program has 16 modules at most, a module 8 imports, a table of prepared modules 64 parts, and its modules fit below the fixed ranges of the system\n")
 	}
 	if error.replaced.hash != {} && error.stage != .Cycle {
 		write_part(writer, "on the path of the load, the replacement table gives ")

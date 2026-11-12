@@ -109,6 +109,7 @@ module_builds := [?]Module_Build {
 	{name = "tables", source = "programs/tables", image = true},
 	{name = "interface_module", source = "modules/interface_module", image = true},
 	{name = "interface_through_module", source = "programs/interface_through_module", imports = {"interface_module"}, image = true},
+	{name = "text_shaping", source = "modules/text_shaping", image = true},
 	{name = "vector_glyphs", source = "programs/vector_glyphs", image = true},
 	{name = "pointers", source = "programs/pointers", image = true},
 	{name = "settings", source = "programs/settings", image = true},
@@ -128,11 +129,11 @@ build_modules :: proc() -> bool {
 	build_modules_in_parallel() or_return
 	// The pointer themes: the resources of the boot image (pointers.odin).
 	resources := build_pointer_themes(os.get_env(POINTER_THEME_SOURCE_VARIABLE, context.temp_allocator), false) or_return
-	// The glyph cache of the default font: one more resource (vector_fonts.odin).
-	glyph_cache_resource := build_glyph_cache() or_return
+	// The two glyph caches of the default font: two more resources (vector_fonts.odin).
+	glyph_caches := build_glyph_caches() or_return
 	all_resources := make([dynamic]Resource_File, context.temp_allocator)
 	append(&all_resources, ..resources)
-	append(&all_resources, glyph_cache_resource)
+	append(&all_resources, ..glyph_caches[:])
 	// The second boot image has no compositor: with it, the start fails.
 	// The third has no input service: the root service starts only the
 	// program shortage (the test of the shortage of frames).

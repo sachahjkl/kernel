@@ -442,11 +442,11 @@ Where this code is stricter than RFC 9000 and RFC 9001, and why none of them ref
 - **The server requires `server_certificate_type` with the raw public key, ed25519, X25519 and ALPN `kernel-remote`.** These are choices of this protocol, not of QUIC.
 What is not stricter, read in the code: a ClientHello with GREASE values or extensions that this side does not know (skipped); PING and PADDING at each level; ACK and ACK_ECN with ranges and the delay exponent of the peer; NEW_TOKEN at a client (dropped); a coalesced datagram of Initial, Handshake and 1-RTT packets (each packet in order, with the keys that the packet before made ready); zero bytes after the last packet of a datagram (the rest is dropped); a packet with keys that this side does not have yet, or a 1-RTT packet before the server completed its handshake (dropped, the peer sends it again; never a close).
 
-Two points that no run has settled, which the first run reports:
-1. Whether `s_client` waits for the echo and the end of the stream of the server before it ends, when its input ends. The step gives it 20 s (`timeout 20`) and reads what it printed in that time.
-2. The exact form of the printed key: "pub:", then the bytes in hexadecimal with colons, on indented lines, by `EVP_PKEY_print_public` of an Ed25519 key. The step reads the first 64 hexadecimal digits after "pub:", whatever separates them.
+The runs settled the two points that the design left open:
+1. `s_client` ends at the end of its input, before it prints what the server sent back. The step keeps the input open for 3 s after the line.
+2. The printed key: "pub:", then the bytes in hexadecimal with colons, on indented lines. The step reads the first 64 hexadecimal digits after "pub:".
 
-The part stays out of the whole test until a first run settles both.
+The run passes: OpenSSL takes the Retry, completes the handshake with the raw public key that the machine logged, sends a line and reads it back. The part is in the whole test; it needs only the loopback of the host, and OpenSSL is a build tool of the flake.
 
 ## 7. `remote` over QUIC (designed, not built)
 
