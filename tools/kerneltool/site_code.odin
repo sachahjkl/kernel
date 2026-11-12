@@ -36,29 +36,25 @@ Site_Code_Class :: enum {
 }
 
 Site_Code_Class_Description :: struct {
-	name:          string, // The class "c-<name>".
-	title:         string,
-	color:         graphics.Color, // An accent of the design rules.
-	dark_percent:  u32, // graphics.shade of the accent on the block of code of the dark form.
-	light_percent: u32, // graphics.shade of the accent on the block of code of the light form.
+	name:  string, // The class "c-<name>".
+	title: string,
+	class: graphics.Code_Class, // Its color: the table of the colors of code of the system.
 }
 
-// The one table of the colors of the code: six tones and a quiet one, from
-// the accents of the design rules, each at least SITE_VALUE_CONTRAST_LEAST
-// on the background of a block of code (the track color) in both forms. The
-// kernel blue for the words of the language, the violet of the type kind
-// for types, the memory teal for values, the program green for what a
-// declaration names, the machine pink for directives, the dim color for
-// comments and, a little lighter, for punctuation.
+// The classes of the site and the classes of the colors of code of the
+// system (support/graphics/code_colors.odin): the terminal of the system
+// reads the same table, so a type or a literal has one color on the site
+// and in the console. Each color is at least SITE_VALUE_CONTRAST_LEAST on
+// the background of a block of code (the track color) in both forms.
 site_code_classes := [Site_Code_Class]Site_Code_Class_Description {
 	.None        = {},
-	.Keyword     = {name = "k", title = "Keyword", color = graphics.COLOR_KERNEL, dark_percent = 115, light_percent = 55},
-	.Type        = {name = "t", title = "Type", color = graphics.COLOR_FIRMWARE, dark_percent = 115, light_percent = 60},
-	.Literal     = {name = "l", title = "Literal, constant or member", color = graphics.COLOR_MEMORY, dark_percent = 100, light_percent = 50},
-	.Name        = {name = "n", title = "Name at its declaration", color = graphics.COLOR_PROGRAM, dark_percent = 100, light_percent = 45},
-	.Directive   = {name = "d", title = "Directive or attribute", color = graphics.COLOR_MACHINE, dark_percent = 115, light_percent = 55},
-	.Comment     = {name = "c", title = "Comment", color = graphics.COLOR_DIM, dark_percent = 125, light_percent = 60},
-	.Punctuation = {name = "p", title = "Operator and punctuation", color = graphics.COLOR_DIM, dark_percent = 140, light_percent = 50},
+	.Keyword     = {name = "k", title = "Keyword", class = .Keyword},
+	.Type        = {name = "t", title = "Type", class = .Type},
+	.Literal     = {name = "l", title = "Literal, constant or member", class = .Literal},
+	.Name        = {name = "n", title = "Name at its declaration", class = .Name},
+	.Directive   = {name = "d", title = "Directive or attribute", class = .Directive},
+	.Comment     = {name = "c", title = "Comment", class = .Comment},
+	.Punctuation = {name = "p", title = "Operator and punctuation", class = .Punctuation},
 	.Reference   = {},
 }
 
@@ -77,8 +73,7 @@ SITE_CODE_BUILT_IN_TYPES :: [?]string {
 
 // site_code_color gives the color of a class in one form.
 site_code_color :: proc(class: Site_Code_Class, light: bool) -> graphics.Color {
-	description := site_code_classes[class]
-	return graphics.shade(description.color, light ? description.light_percent : description.dark_percent)
+	return graphics.code_class_color(site_code_classes[class].class, light)
 }
 
 // site_code_rules gives the rules of the style sheet for the classes of the

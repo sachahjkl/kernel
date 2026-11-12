@@ -142,7 +142,7 @@ button :: proc "contextless" (frame: ^Frame, area: Area, element: Element_Identi
 	color := graphics.Color(graphics.COLOR_TRACK)
 	switch {
 	case open || result.focused && result.under_pointer:
-		color = graphics.COLOR_TITLE
+		color = graphics.COLOR_CHOSEN
 	case result.focused || result.under_pointer:
 		color = graphics.shade(graphics.COLOR_TITLE, 60)
 	}
@@ -223,9 +223,9 @@ list_with_choice :: proc "contextless" (frame: ^Frame, area: Area, element: Elem
 		chosen := index == choice^
 		name_room := line_width - 16
 		if chosen {
-			draw_rectangle(table, area.x, y, line_width, TABLE_LINE, graphics.COLOR_TITLE, u32(element))
+			draw_rectangle(table, area.x, y, line_width, TABLE_LINE, graphics.COLOR_CHOSEN, u32(element))
 			if options.chosen_hint != "" && hint_width <= line_width - 16 {
-				draw_text_right(table, area.x + line_width - 8, y + 4, options.chosen_hint, graphics.COLOR_TEXT, FONT_INTERFACE)
+				draw_text_right(table, area.x + line_width - 8, y + 4, options.chosen_hint, graphics.COLOR_WHITE, FONT_INTERFACE)
 				name_room -= hint_width + 8
 			}
 		}

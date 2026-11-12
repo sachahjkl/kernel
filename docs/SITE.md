@@ -574,7 +574,7 @@ What is not done: the types are not entries of the search; a type of a guide (a 
 
 ## The colors of the code
 
-The owner asked for it on 2026-11-12: "Un peu dommage aussi qu'on ait pas de coloration du code, peut-être avec Shiki, on peut, parce que là je vois du Odin qui est pas coloré." The code is `tools/kerneltool/site_code.odin`; its host tests are `site_code_test.odin`.
+The owner asked for it on 2026-11-12: "Un peu dommage aussi qu'on ait pas de coloration du code, peut-être avec Shiki, on peut, parce que là je vois du Odin qui est pas coloré." The code is `tools/kerneltool/site_code.odin`; its host tests are `site_code_test.odin`. The colors of the classes are the table of the colors of code of the system (`support/graphics/code_colors.odin`, `docs/DESIGN.md`, section 4), which the terminal of the system reads too: a type has one color on the site and in the console.
 
 The tool colors the code when it writes the pages: static markup, no script, no request, nothing new in the Content-Security-Policy. Not Shiki: it is a library of Node, and the automation of the repository is commands of the Odin tool, with no script of another language. Odin is read by the tokenizer of the compiler itself (`core:odin/tokenizer`), not by a grammar of regular expressions: a token is what the compiler sees.
 
