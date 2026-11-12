@@ -166,6 +166,20 @@ valid :: proc "contextless" (setting: Setting, value: u32) -> u32 {
 	return value < descriptions[setting].value_count ? value : 0
 }
 
+// values_differ tells whether two choices have different values. The count
+// of changes is not compared: the program `settings` can change the count
+// with no end and leave the values as they were, and a reader that acts on
+// each new count then does work for nothing (the compositor tells every
+// window, and a window ring that is full loses the keys of the person).
+values_differ :: proc "contextless" (first, second: Choice) -> bool {
+	for setting in Setting {
+		if first.values[setting] != second.values[setting] {
+			return true
+		}
+	}
+	return false
+}
+
 // READ_TRIES: the most reads of a page that changes, or that its writer
 // left in the middle of a change (change_count odd). A reader does not wait
 // for the writer.

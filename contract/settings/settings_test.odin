@@ -50,3 +50,20 @@ a_glyph_cache_that_is_not_mapped :: proc(t: ^testing.T) {
 		testing.expect_value(t, problem.kind, glyph_cache.Problem_Kind.Not_Mapped)
 	}
 }
+
+// Two choices with the same values and other counts do not differ; one
+// value changed makes them differ, for each setting.
+@(test)
+values_differ_compares_the_values_only :: proc(t: ^testing.T) {
+	first := Choice{values = {.Font = 1, .Subpixel_Order = 2, .Pointer_Theme = 0, .Grid_Fit = 1}, change_count = 2}
+	second := first
+	second.change_count = 1_000_002
+	testing.expect(t, !values_differ(first, second))
+	testing.expect(t, !values_differ(first, first))
+	for setting in Setting {
+		changed := first
+		changed.values[setting] += 1
+		testing.expectf(t, values_differ(first, changed), "a change of %v", setting)
+		testing.expectf(t, values_differ(changed, first), "a change of %v, in the other order", setting)
+	}
+}

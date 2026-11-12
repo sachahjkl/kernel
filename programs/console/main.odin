@@ -19,7 +19,7 @@ import "support:display"
 import "support:line_editor"
 import "support:random"
 import "support:system"
-import "support:terminal"
+import terminal "support:terminal"
 import "base:intrinsics"
 
 CONSOLE_MARK :: "console: ready"

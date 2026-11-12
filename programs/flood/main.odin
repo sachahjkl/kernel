@@ -10,7 +10,7 @@
 package flood
 
 import "support:system"
-import "support:terminal"
+import terminal "support:terminal"
 
 STATUS_LINES :: 1 << 16 // The lines between two statuses.
 KEY_LINES :: 256 // The lines between two looks at the keys.
