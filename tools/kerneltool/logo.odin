@@ -10,10 +10,8 @@ import "support:mark"
 // from it, and `check` verifies that the files of the repository have the
 // pixels that the data gives now.
 //
-// The PNG writer is the one of the Odin standard library (core:image/png):
-// it compresses the pixels and it writes an alpha channel. The writer of the
-// pictures of the screen (png_encode) has neither, and a mark of 1024 by 1024
-// pixels with no compression is 3 MiB in the repository.
+// The PNG writer is png_encode (picture_files.odin): it compresses the pixels,
+// and it writes an alpha channel for a transparent file.
 
 LOGO_FOLDER :: "resources/logo"
 PROJECT_IMAGE :: ".project/image.png"
@@ -129,21 +127,12 @@ logo_picture_pixels :: proc(picture: Logo_Picture) -> []u8 {
 }
 
 logo_picture_encode :: proc(picture: Logo_Picture) -> (file: []u8, ok: bool) {
-	pixels := logo_picture_pixels(picture)
-	image := png.Image {
-		width    = picture.size,
-		height   = picture.size,
-		channels = logo_picture_channels(picture),
-		depth    = 8,
-	}
-	image.pixels = make([dynamic]u8, len(pixels), len(pixels), context.temp_allocator)
-	copy(image.pixels[:], pixels)
-	output := make([dynamic]u8, context.temp_allocator)
-	if err := png.save_to_buffer(&output, &image, allocator = context.temp_allocator); err != nil {
-		fmt.eprintfln("kerneltool: cannot encode %s: %v", picture.path, err)
+	encoded, encode_error := png_encode(picture.size, picture.size, logo_picture_channels(picture), logo_picture_pixels(picture))
+	if encode_error != nil {
+		fmt.eprintfln("kerneltool: cannot encode %s: %v", picture.path, encode_error)
 		return nil, false
 	}
-	return output[:], true
+	return encoded, true
 }
 
 run_logo :: proc(args: []string) -> int {

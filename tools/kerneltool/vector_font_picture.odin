@@ -92,8 +92,13 @@ candidates_picture_write :: proc() -> bool {
 		rgb[3 * index + 1] = u8(color >> 8)
 		rgb[3 * index + 2] = u8(color)
 	}
-	if err := os.write_entire_file(CANDIDATES_PICTURE, png_encode(PICTURE_WIDTH, height, rgb)); err != nil {
-		fmt.eprintfln("kerneltool: cannot write %s: %v", CANDIDATES_PICTURE, err)
+	file, encode_error := png_encode(PICTURE_WIDTH, height, 3, rgb)
+	if encode_error != nil {
+		fmt.eprintfln("kerneltool: cannot encode %s: %v", CANDIDATES_PICTURE, encode_error)
+		return false
+	}
+	if write_error := os.write_entire_file(CANDIDATES_PICTURE, file); write_error != nil {
+		fmt.eprintfln("kerneltool: cannot write %s: %v", CANDIDATES_PICTURE, write_error)
 		return false
 	}
 	return true

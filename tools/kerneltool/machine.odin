@@ -4,7 +4,6 @@ import "contract:glyph_cache"
 import "contract:store"
 import "support:bar"
 import "core:fmt"
-import "core:hash"
 import "core:math/rand"
 import "core:os"
 import "core:slice"
@@ -2547,58 +2546,20 @@ screen_save :: proc(machine: ^Machine, name: string) -> bool {
 			continue
 		}
 		path := join(SCREENSHOT_FOLDER, "/", name, ".png")
-		if write_err := os.write_entire_file(path, png_encode(width, height, dump[position:][:width * height * 3])); err != nil {
-			fmt.eprintfln("kerneltool: cannot write %s: %v", path, write_err)
+		file, encode_error := png_encode(width, height, 3, dump[position:][:width * height * 3])
+		if encode_error != nil {
+			fmt.eprintfln("kerneltool: cannot encode %s: %v", path, encode_error)
 			return false
 		}
-		fmt.printfln("kerneltool: screen saved: %s (%dx%d)", path, width, height)
+		if write_error := os.write_entire_file(path, file); write_error != nil {
+			fmt.eprintfln("kerneltool: cannot write %s: %v", path, write_error)
+			return false
+		}
+		fmt.printfln("kerneltool: screen saved: %s (%dx%d, %d bytes)", path, width, height, len(file))
 		return true
 	}
 	fmt.eprintln("kerneltool: QEMU did not save the screen")
 	return false
-}
-
-// png_encode gives a PNG file of pixels that are 3 bytes each: red, green,
-// blue. The data is not compressed: the tool needs no compression library.
-png_encode :: proc(width, height: int, pixels: []u8) -> []u8 {
-	big_endian :: proc(out: ^[dynamic]u8, value: u32) {
-		append(out, u8(value >> 24), u8(value >> 16), u8(value >> 8), u8(value))
-	}
-	chunk :: proc(out: ^[dynamic]u8, kind: string, data: []u8) {
-		big_endian(out, u32(len(data)))
-		start := len(out)
-		append(out, kind)
-		append(out, ..data)
-		big_endian(out, hash.crc32(out[start:]))
-	}
-
-	// Each line: one filter byte (0: none), then the pixels.
-	line_size := 1 + width * 3
-	lines := make([]u8, height * line_size, context.temp_allocator)
-	for y in 0 ..< height {
-		copy(lines[y * line_size + 1:][:width * 3], pixels[y * width * 3:])
-	}
-	// A zlib stream of stored blocks.
-	stream := make([dynamic]u8, context.temp_allocator)
-	append(&stream, 0x78, 0x01)
-	BLOCK :: 65535
-	for start := 0; start < len(lines); start += BLOCK {
-		count := min(BLOCK, len(lines) - start)
-		append(&stream, u8(start + count == len(lines)), u8(count), u8(count >> 8), u8(~count), u8(~count >> 8))
-		append(&stream, ..lines[start:][:count])
-	}
-	big_endian(&stream, hash.adler32(lines))
-
-	out := make([dynamic]u8, context.temp_allocator)
-	append(&out, 0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n')
-	header := make([dynamic]u8, context.temp_allocator)
-	big_endian(&header, u32(width))
-	big_endian(&header, u32(height))
-	append(&header, 8, 2, 0, 0, 0) // 8 bits, red green blue.
-	chunk(&out, "IHDR", header[:])
-	chunk(&out, "IDAT", stream[:])
-	chunk(&out, "IEND", nil)
-	return out[:]
 }
 
 // machine_test runs a scenario on a boot volume. It passes when each step

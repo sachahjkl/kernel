@@ -65,6 +65,8 @@ DATA_DISK_SIZE :: 64 << 20
 SCRATCH_DISK_SIZE :: 32 << 20
 
 DOCUMENT_SCREENSHOT_FOLDER :: "docs/screenshots"
+// The pictures and other files of the repository that a build reads.
+RESOURCE_FOLDER :: "resources"
 // The development log: one folder of pictures per run of `screenshots`. It
 // is beside the repository, not in it: no run replaces the pictures of
 // another run.
@@ -80,7 +82,7 @@ COMMANDS :: [?]Command {
 	{name = "module", about = "module <name> with_checks|without_checks measure_run|usual_run: build one module of the table (the parallel build runs this command)", run = run_module},
 	{name = "test", about = "build, start the machine under QEMU, act as the person, check the log, save pictures of the screen; `test network`, `test main`, `test power`, `test tcp`, `test quic`, `test quic-real`, `test random`, `test extended_state`: one part only", run = run_test},
 	{name = "run", about = "build, then start the machine under QEMU, with the log of the kernel on this terminal; `run without_checks`: the measure build", run = run_machine},
-	{name = "screenshots", about = "test, then copy the pictures to " + DOCUMENT_SCREENSHOT_FOLDER + " and to a new folder of " + DEVELOPMENT_LOG_FOLDER, run = run_screenshots},
+	{name = "screenshots", about = "test, then copy the pictures to " + DOCUMENT_SCREENSHOT_FOLDER + " and to a new folder of " + DEVELOPMENT_LOG_FOLDER + "; `screenshots compress`: compress the PNG files of " + DOCUMENT_SCREENSHOT_FOLDER + " and " + RESOURCE_FOLDER + " whose data is stored, with no machine", run = run_screenshots},
 	{name = "measure", about = "build, start the machine, run the measures of the locks of the kernel with no other program, and stop: the numbers are in " + TEST_OUTPUT_MEASURE + "; `measure scheduler N`: the program scheduler N times; `measure windows`: each window that the interface package draws, alone, and a table of the time of its pictures; `measure without_checks ...`: the measure build, with no check in the kernel (no lock order check, no check of the frames)", run = run_measure},
 	{name = "film", about = "build, start the machine, film the terminal, and write " + FILM_OUTPUT + " and a copy in " + DEVELOPMENT_LOG_FOLDER + " (needs ffmpeg)", run = run_film},
 	{name = "font", about = "convert the BDF file of the font to " + FONT_OUTPUT, run = run_font},
@@ -287,7 +289,18 @@ run_test :: proc(args: []string) -> int {
 
 // run_screenshots runs the machine test and copies its pictures to the
 // documents and to a new folder of the development log.
+// `screenshots compress` runs no machine: it compresses each PNG file of
+// the documents and of the resources whose data is stored (picture_files.odin).
 run_screenshots :: proc(args: []string) -> int {
+	if len(args) == 1 && args[0] == "compress" {
+		count, compressed_all := pictures_compress([]string{DOCUMENT_SCREENSHOT_FOLDER, RESOURCE_FOLDER})
+		fmt.printfln("kerneltool: %d PNG files, %d compressed: %d bytes before, %d bytes after", count.picture_count, count.compressed_count, count.bytes_before, count.bytes_after)
+		return compressed_all ? 0 : EXIT_FAILURE
+	}
+	if len(args) != 0 {
+		fmt.eprintln("kerneltool: screenshots takes no argument, or `compress`")
+		return EXIT_USAGE
+	}
 	if code := run_test(nil); code != 0 {
 		return code
 	}
