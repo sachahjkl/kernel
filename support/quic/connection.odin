@@ -306,6 +306,11 @@ connection_reset :: proc "contextless" (connection: ^Connection, streams: []Stre
 	connection.idle_timeout = saturating_multiply(configuration.idle_timeout_milliseconds, 1000)
 	connection.streams = streams
 	for &stream in streams {
+		// A connection that ended with streams still open left their bytes:
+		// the next connection of the table never holds them.
+		if stream.in_use {
+			stream_buffers_erase(&stream)
+		}
 		stream.state = {}
 	}
 	// The window of the connection: the buffers of every stream, so the

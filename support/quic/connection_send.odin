@@ -416,8 +416,8 @@ stream_control_frames_write :: proc "contextless" (stream: ^Stream, writer: ^Fra
 		written += {.Max_Stream_Data}
 	}
 	if .Reset_Stream in stream.pending_controls && frame_room(writer) >= 1 + identifier_size + variable_length_integer_size(stream.reset_code) + variable_length_integer_size(stream.send_length) {
-		// The final size is every byte that the application wrote: the
-		// peer counts them for flow control.
+		// The final size is the largest offset sent: stream_reset_send set
+		// send_length to it. The peer counts it for flow control.
 		frame_write_integer(writer, FRAME_RESET_STREAM)
 		frame_write_integer(writer, stream.identifier)
 		frame_write_integer(writer, stream.reset_code)

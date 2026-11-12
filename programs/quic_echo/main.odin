@@ -294,6 +294,10 @@ echo_work :: proc "contextless" () {
 			}
 		}
 		connection := &connections[place]
+		// Each stream is read to its end, or to the reset of the client: a
+		// stream record is freed only when the application read that end
+		// (stream_read), so a stream left unread would keep its record, and
+		// the client would get no stream in its place.
 		for &stream, slot in connection.streams {
 			stream_echo := &echo.streams[slot]
 			if !stream.in_use {

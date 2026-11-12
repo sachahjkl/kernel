@@ -99,8 +99,9 @@ Test_Endpoints :: struct {
 
 // endpoints_make starts a client and a server with a fixed seed each, the
 // server key of the TLS tests, and the key of the server pinned by the
-// client.
-endpoints_make :: proc(idle_timeout_milliseconds: u64 = 30_000) -> ^Test_Endpoints {
+// client. The server has server_stream_count stream records: its window of
+// the connection is that count times STREAM_BUFFER_SIZE.
+endpoints_make :: proc(idle_timeout_milliseconds: u64 = 30_000, server_stream_count := TEST_STREAMS) -> ^Test_Endpoints {
 	endpoints := new(Test_Endpoints)
 	endpoints.cryptography = module_cryptography()
 	endpoints.channel.state = 0x5155_4943_2026_0d0d
@@ -124,7 +125,7 @@ endpoints_make :: proc(idle_timeout_milliseconds: u64 = 30_000) -> ^Test_Endpoin
 	secret := string(server_configuration.tls.server_private_key[:])
 	result := client_configuration.tls.server_public_key[:]
 	endpoints.cryptography.ed25519_public_key(&secret, &result, &error)
-	connection_start_server(&endpoints.server, endpoints.server_streams[:], &server_configuration, &endpoints.cryptography, &endpoints.server_generator, endpoints.now, &error)
+	connection_start_server(&endpoints.server, endpoints.server_streams[:server_stream_count], &server_configuration, &endpoints.cryptography, &endpoints.server_generator, endpoints.now, &error)
 	connection_start_client(&endpoints.client, endpoints.client_streams[:], &client_configuration, &endpoints.cryptography, &endpoints.client_generator, endpoints.now, &error)
 	return endpoints
 }

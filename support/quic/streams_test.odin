@@ -284,3 +284,132 @@ hostile_frames_that_name_streams :: proc(t: ^testing.T) {
 	_, server_opened := stream_open(server)
 	testing.expect(t, !server_opened)
 }
+
+// A reset of this side states the bytes that it sent, not the bytes that
+// the application wrote (RFC 9000, section 4.5). The server has 2 stream
+// records, so its window of the connection is 128 KiB. On each of two
+// streams the client writes 64 KiB, which the server never reads, then
+// 32 KiB more, which the limit of the stream (64 KiB) holds back. Then the
+// stream is reset: by the client (stream_reset), then by a STOP_SENDING of
+// the server.
+// - The final size that the server takes is 64 KiB, the bytes sent. With
+//   the bytes written (96 KiB) the server, which counts a final size
+//   against its limits, closed the connection with FLOW_CONTROL_ERROR.
+// - The two sides count the same bytes for the connection.
+// - The server gives back the room of the bytes that it never read: its
+//   limit grows to 256 KiB. The client then fills two new streams up to
+//   that limit exactly, and the server does not close.
+@(test)
+a_reset_states_the_bytes_sent :: proc(t: ^testing.T) {
+	endpoints := endpoints_make(server_stream_count = 2)
+	defer free(endpoints)
+	testing.expect(t, endpoints_connect(endpoints))
+	client, server := &endpoints.client, &endpoints.server
+	testing.expect_value(t, server.receive_window, u64(2 * STREAM_BUFFER_SIZE))
+	data := make([]u8, STREAM_BUFFER_SIZE)
+	defer delete(data)
+	for by_stop_sending in ([]bool{false, true}) {
+		identifier, opened := stream_open(client)
+		if !testing.expectf(t, opened, "the client opened no stream (by STOP_SENDING: %v)", by_stop_sending) {
+			return
+		}
+		testing.expect_value(t, stream_write(client, identifier, data, false), STREAM_BUFFER_SIZE)
+		// Each byte goes and is acknowledged: the ring is free again, and
+		// the limit of the stream is reached.
+		for _ in 0 ..< 20_000 {
+			sending := stream_of(client, identifier)
+			if sending == nil || range_set_prefix(&sending.send_acknowledged) == STREAM_BUFFER_SIZE {
+				break
+			}
+			endpoints_step(endpoints)
+		}
+		testing.expect_value(t, stream_write(client, identifier, data[:STREAM_BUFFER_SIZE / 2], false), STREAM_BUFFER_SIZE / 2)
+		held := stream_of(client, identifier)
+		testing.expect(t, held != nil && held.send_next == STREAM_BUFFER_SIZE && held.send_length == STREAM_BUFFER_SIZE + STREAM_BUFFER_SIZE / 2)
+		if by_stop_sending {
+			stream_stop_sending(server, identifier, 9)
+		} else {
+			stream_reset(client, identifier, 5)
+		}
+		for _ in 0 ..< 20_000 {
+			taken := stream_of(server, identifier)
+			if server.state != .Connected || (taken != nil && taken.reset_received) {
+				break
+			}
+			endpoints_step(endpoints)
+		}
+		if !testing.expectf(t, server.state == .Connected, "the server closed with the code %x (by STOP_SENDING: %v)", server.close_error_code, by_stop_sending) {
+			return
+		}
+		reset_stream := stream_of(server, identifier)
+		testing.expectf(t, reset_stream != nil && reset_stream.reset_received && reset_stream.final_size == STREAM_BUFFER_SIZE, "the final size is not the 65536 bytes sent (by STOP_SENDING: %v)", by_stop_sending)
+		testing.expect_value(t, client.data_sent_total, server.data_received_total)
+		// Both directions end: the server reads the reset and ends its own
+		// direction; the client reads that end.
+		stream_read(server, identifier, nil)
+		stream_write(server, identifier, nil, true)
+		for _ in 0 ..< 20_000 {
+			_, finished, _ := stream_read(client, identifier, data)
+			if finished || stream_of(client, identifier) == nil {
+				break
+			}
+			endpoints_step(endpoints)
+		}
+	}
+	// The acknowledgements of the ends, the limit of streams, the limit of
+	// the connection.
+	for _ in 0 ..< 2000 {
+		endpoints_step(endpoints)
+	}
+	testing.expect_value(t, server.data_received_total, u64(2 * STREAM_BUFFER_SIZE))
+	testing.expect_value(t, server.receive_max_data, u64(4 * STREAM_BUFFER_SIZE))
+	testing.expect_value(t, client.peer_max_data, u64(4 * STREAM_BUFFER_SIZE))
+	for _ in 0 ..< 2 {
+		identifier: u64
+		opened := false
+		for _ in 0 ..< 20_000 {
+			identifier, opened = stream_open(client)
+			if opened {
+				break
+			}
+			endpoints_step(endpoints)
+		}
+		if !testing.expect(t, opened) {
+			return
+		}
+		testing.expect_value(t, stream_write(client, identifier, data, false), STREAM_BUFFER_SIZE)
+	}
+	for _ in 0 ..< 20_000 {
+		if server.state != .Connected || server.data_received_total == 4 * STREAM_BUFFER_SIZE {
+			break
+		}
+		endpoints_step(endpoints)
+	}
+	testing.expectf(t, server.state == .Connected, "the server closed with the code %x", server.close_error_code)
+	testing.expect_value(t, server.data_received_total, u64(4 * STREAM_BUFFER_SIZE))
+	testing.expect_value(t, client.data_sent_total, server.data_received_total)
+	testing.expect_value(t, server.data_received_total, server.receive_max_data)
+}
+
+// The bytes of a stream are erased when its record is freed: the rings of
+// the record that held an echo are zero after the stream ended.
+@(test)
+the_rings_of_a_stream_that_ended_are_zero :: proc(t: ^testing.T) {
+	endpoints := endpoints_make()
+	defer free(endpoints)
+	testing.expect(t, endpoints_connect(endpoints))
+	streams: [1]Client_Stream_Echo
+	testing.expect_value(t, streams_echo_run(t, endpoints, streams[:], 5000, 10_000_000), 1)
+	for _ in 0 ..< 2000 {
+		endpoints_step(endpoints)
+	}
+	for side in ([]^Connection{&endpoints.client, &endpoints.server}) {
+		record := &side.streams[0]
+		testing.expect(t, !record.in_use)
+		zero := true
+		for index in 0 ..< 5000 {
+			zero = zero && record.send[index] == 0 && record.receive[index] == 0
+		}
+		testing.expectf(t, zero, "the record of the %v keeps bytes of the stream", side.configuration.tls.role)
+	}
+}

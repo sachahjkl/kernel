@@ -80,7 +80,8 @@ work_bucket_is_full :: proc "contextless" (bucket: ^Work_Bucket, per_second: int
 // asks less often than the rate. An address that keeps asking faster keeps
 // its place. A client that needed one check frees its place 1 s after it,
 // and any new address can then take it, the first one to ask. So while
-// more than SERVER_ADDRESS_BUDGETS real addresses keep asking, a new
+// SERVER_ADDRESS_BUDGETS real addresses keep asking (one for each place is
+// enough), a new
 // client gets a place only when it asks before them: the table bounds the
 // checks, not the wait of a new client.
 SERVER_ADDRESS_BUDGETS :: 1024

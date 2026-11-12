@@ -233,6 +233,13 @@ stream_stop_sending_receive :: proc "contextless" (stream: ^Stream, code: u64) {
 	stream_reset_send(stream, code)
 }
 
+// stream_reset_send ends the sending part of a stream with RESET_STREAM.
+// The final size of a reset is the largest offset that this side sent, not
+// the bytes that the application wrote (RFC 9000, section 4.5): the peer
+// counts it against its flow control. Bytes that flow control held back
+// were never counted by the peer, so the stream forgets them here: after
+// this, send_length is the final size, no byte is sent again, no end of the
+// stream (FIN) is sent, and stream_write takes no byte (it gives 0).
 @(private)
 stream_reset_send :: proc "contextless" (stream: ^Stream, code: u64) {
 	all_acknowledged := stream.finish_acknowledged && range_set_prefix(&stream.send_acknowledged) >= stream.send_length
@@ -242,6 +249,7 @@ stream_reset_send :: proc "contextless" (stream: ^Stream, code: u64) {
 	stream.reset_sent = true
 	stream.reset_code = code
 	stream.send_again = {}
+	stream.send_length = stream.send_next
 	stream.pending_controls += {.Reset_Stream}
 }
 
@@ -267,9 +275,28 @@ stream_release_when_ended :: proc "contextless" (connection: ^Connection, stream
 		return
 	}
 	stream.in_use = false
+	stream_buffers_erase(stream)
 	if stream_is_of_client(stream.identifier) == (connection.configuration.tls.role == .Server) {
 		connection.streams_limit_given += 1
 		connection.pending_controls += {.Max_Streams}
+	}
+}
+
+// stream_buffers_erase writes zeros over the bytes that a stream left in
+// its rings, so that a later stream of the record, or a fault, never holds
+// the bytes of an earlier peer. Only the part that the stream used is
+// written: the bytes before its largest offset, each ring at most once.
+// After a reset of this side, send_length no longer counts the bytes that
+// the application wrote, so the whole send ring is erased.
+@(private)
+stream_buffers_erase :: proc "contextless" (stream: ^Stream) {
+	received := int(min(stream.highest_received, STREAM_BUFFER_SIZE))
+	sent := stream.reset_sent ? STREAM_BUFFER_SIZE : int(min(stream.send_length, STREAM_BUFFER_SIZE))
+	if received > 0 {
+		secret_erase(&stream.receive[0], received)
+	}
+	if sent > 0 {
+		secret_erase(&stream.send[0], sent)
 	}
 }
 
@@ -321,6 +348,13 @@ stream_write :: proc "contextless" (connection: ^Connection, identifier: u64, by
 // stream that the peer reset gives no more bytes, and reset is true. After
 // the end was read, and this side ended its own direction, the stream
 // ends: a read of it then gives nothing.
+//
+// A record is freed only when the application read the end of the peer
+// here (finished or reset true), and this side's last byte or reset was
+// acknowledged. A program that never reads a stream to its end keeps the
+// record for the life of the connection, and a server then gives the
+// client no stream in its place: a program reads each stream to its end,
+// or resets it and reads the reset of the peer.
 stream_read :: proc "contextless" (connection: ^Connection, identifier: u64, buffer: []u8) -> (count: int, finished: bool, reset: bool) {
 	stream := stream_of(connection, identifier)
 	if stream == nil {
