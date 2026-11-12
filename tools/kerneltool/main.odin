@@ -7,8 +7,13 @@
 // program is run is written in one place.
 //
 // The development shell of flake.nix supplies what this tool needs:
-//   on the path: odin, lld-link, ld.lld, nasm, qemu-system-x86_64
+//   on the path: odin, lld-link, ld.lld, nasm, qemu-system-x86_64, swtpm
 //   OVMF_CODE, OVMF_VARS: the UEFI firmware image and its variable store
+//   OVMF_FULL_CODE, OVMF_FULL_VARS: the same firmware with a TPM driver and
+//     Secure Boot, for the machines of `test trusted_boot`
+//   SYSTEM_SIGNING_KEY (not set by the shell): the private key of the person
+//     who owns the machine, which signs the system description; with none,
+//     the test signing key of resources/keys (system_description.odin)
 //   FONT_SOURCE: the BDF file of the font, for the command "font"
 //   POINTER_THEME_SOURCE: the folder of the Xcursor theme of the owner (docs/POINTERS.md)
 //   VECTOR_FONT_SOURCES: the font files of the vector font candidates, for the command "vector_fonts"
@@ -36,7 +41,7 @@ BUILD_FOLDER :: "build"
 // flake.nix gives the same two flags to the compiler when it builds this tool.
 CONTRACT_LIBRARY :: "-collection:contract=contract"
 SUPPORT_LIBRARY :: "-collection:support=support"
-CONTRACT_PACKAGES :: []string{"blake3", "block", "boot_info", "datagram", "date", "errors", "fixed_addresses", "frame", "glyph_cache", "isolated", "module", "operation", "pointer_pictures", "release", "remote", "ring", "settings", "store", "cut_mark"}
+CONTRACT_PACKAGES :: []string{"blake3", "block", "boot_info", "datagram", "date", "errors", "fixed_addresses", "frame", "glyph_cache", "isolated", "module", "operation", "pointer_pictures", "release", "remote", "ring", "settings", "store", "cut_mark", "system_description"}
 BOOT_OBJECT_FOLDER :: BUILD_FOLDER + "/boot"
 BOOT_PROGRAM :: BOOT_OBJECT_FOLDER + "/BOOTX64.EFI"
 BOOT_VOLUME :: BUILD_FOLDER + "/boot_volume.img"
@@ -45,9 +50,17 @@ BOOT_VOLUME_SHORTAGE :: BUILD_FOLDER + "/boot_volume_shortage.img"
 BOOT_VOLUME_WITHOUT_RETURN_CHECK :: BUILD_FOLDER + "/boot_volume_without_return_check.img" // The kernel kernel_without_return_check: one machine of `test return_fault` only.
 TEST_OUTPUT_SHORTAGE :: BUILD_FOLDER + "/test_output_shortage.txt"
 BOOT_VOLUME_SELF_TEST :: BUILD_FOLDER + "/boot_volume_self_test_%d.img"
+// The volumes of `test trusted_boot` (trusted_boot_scenario.odin): one byte
+// of a module changed after the system description was made; one bit of the
+// description signature changed; one byte of a module changed before it was
+// made (another system, signed, measured).
+BOOT_VOLUME_CHANGED_MODULE :: BUILD_FOLDER + "/boot_volume_changed_module.img"
+BOOT_VOLUME_WRONG_SIGNATURE :: BUILD_FOLDER + "/boot_volume_wrong_signature.img"
+BOOT_VOLUME_OTHER_SYSTEM :: BUILD_FOLDER + "/boot_volume_other_system.img"
 // The path where the firmware looks for the boot program of a disk.
 BOOT_PROGRAM_PATH :: "EFI/BOOT/BOOTX64.EFI"
 FIRMWARE_VARIABLES :: BUILD_FOLDER + "/ovmf_vars.fd"
+FIRMWARE_FULL_VARIABLES :: BUILD_FOLDER + "/ovmf_full_vars.fd"
 TEST_OUTPUT :: BUILD_FOLDER + "/test_output.txt"
 TEST_OUTPUT_FAILS :: BUILD_FOLDER + "/test_output_fails.txt"
 TEST_OUTPUT_SELF_TEST :: BUILD_FOLDER + "/test_output_self_test_%d.txt"
@@ -81,7 +94,7 @@ Command :: struct {
 COMMANDS :: [?]Command {
 	{name = "build", about = "the modules, the boot image and the boot program, as " + BOOT_PROGRAM + "; one process for each module, as many at once as the processors, or `build <processes>`", run = run_build},
 	{name = "module", about = "module <name> with_checks|without_checks measure_run|usual_run: build one module of the table (the parallel build runs this command)", run = run_module},
-	{name = "test", about = "build, start the machine under QEMU, act as the person, check the log, save pictures of the screen; `test network`, `test main`, `test power`, `test tcp`, `test quic`, `test quic-real`, `test random`, `test extended_state`, `test return_fault`: one part only", run = run_test},
+	{name = "test", about = "build, start the machine under QEMU, act as the person, check the log, save pictures of the screen; `test network`, `test main`, `test power`, `test tcp`, `test quic`, `test quic-real`, `test random`, `test extended_state`, `test return_fault`, `test trusted_boot`: one part only", run = run_test},
 	{name = "run", about = "build, then start the machine under QEMU, with the log of the kernel on this terminal; `run without_checks`: the measure build", run = run_machine},
 	{name = "screenshots", about = "test, then copy the pictures to " + DOCUMENT_SCREENSHOT_FOLDER + " and to a new folder of " + DEVELOPMENT_LOG_FOLDER + "; `screenshots compress`: compress the PNG files of " + DOCUMENT_SCREENSHOT_FOLDER + " and " + RESOURCE_FOLDER + " whose data is stored, with no machine", run = run_screenshots},
 	{name = "measure", about = "build, start the machine, run the measures of the locks of the kernel with no other program, and stop: the numbers are in " + TEST_OUTPUT_MEASURE + "; `measure scheduler N`: the program scheduler N times; `measure windows`: each window that the interface package draws, alone, and a table of the time of its pictures; `measure without_checks ...`: the measure build, with no check in the kernel (no lock order check, no check of the frames)", run = run_measure},
@@ -101,6 +114,7 @@ COMMANDS :: [?]Command {
 	{name = "site", about = "write the site of the system in " + SITE_FOLDER + ": the pages from the documents, the code, the news, the pictures and the logs of the last machine tests, an index and one small script for the search, and the feed of the news; no request to another server", run = run_site},
 	{name = "release_number", about = "print the release number of the system: the newest release of " + CHANGELOG_FILE, run = run_release_number},
 	{name = "check", about = "odin check -vet and odin test of the host code, changelog check, news check, then test", run = run_check},
+	{name = "key", about = "key new <folder outside the repository>: write a new signing key of the system description (the private key, readable by its owner only, and the public key); `key show`: print the public key that the build uses (" + SIGNING_KEY_VARIABLE + ", or the test signing key)", run = run_key},
 }
 
 main :: proc() {
@@ -147,6 +161,11 @@ run_build :: proc(args: []string) -> int {
 	if !build_modules() || !build_boot_program("boot_fails.image", BOOT_VOLUME_FAILS, 0) || !build_boot_program("boot_shortage.image", BOOT_VOLUME_SHORTAGE, 0) || !build_boot_program("boot.image", BOOT_VOLUME_WITHOUT_RETURN_CHECK, 0, "kernel_without_return_check") {
 		return EXIT_FAILURE
 	}
+	// The volumes of the trusted boot that the boot program must refuse, and
+	// another system that it must accept and measure.
+	if !build_boot_program("boot.image", BOOT_VOLUME_CHANGED_MODULE, 0, change = {module_changed_after_description = CHANGED_MODULE}) || !build_boot_program("boot.image", BOOT_VOLUME_WRONG_SIGNATURE, 0, change = {signature_changed = true}) || !build_boot_program("boot.image", BOOT_VOLUME_OTHER_SYSTEM, 0, change = {module_changed_before_description = OTHER_SYSTEM_MODULE}) {
+		return EXIT_FAILURE
+	}
 	// One boot program for each test of the kernel on itself.
 	for test in self_tests {
 		if !build_boot_program("boot.image", self_test_file(BOOT_VOLUME_SELF_TEST, test.number), test.number) {
@@ -161,8 +180,12 @@ run_build :: proc(args: []string) -> int {
 
 // build_boot_program builds the boot program with a boot image and a kernel
 // module of the build folder, and writes a boot volume with it. BOOT_PROGRAM
-// is the last one.
-build_boot_program :: proc(image: string, volume_path: string, self_test: int, kernel := "kernel") -> bool {
+// is the last one. The boot image of the volume is a copy of the image of
+// the build with its system description and its description signature
+// (system_description.odin); change makes a volume for a test of a failure.
+build_boot_program :: proc(image: string, volume_path: string, self_test: int, kernel := "kernel", change: Image_Change = {}) -> bool {
+	signed_image := signed_image_path(volume_path)
+	boot_image_signed_write(strings.concatenate({BUILD_FOLDER, "/", image}, context.temp_allocator), kernel, signed_image, change) or_return
 	reset_folder(BOOT_OBJECT_FOLDER) or_return
 	run(
 		{
@@ -179,7 +202,8 @@ build_boot_program :: proc(image: string, volume_path: string, self_test: int, k
 			"-source-code-locations:filename", // No path of the folder of the build in the program.
 			CONTRACT_LIBRARY,
 			SUPPORT_LIBRARY,
-			strings.concatenate({"-define:BOOT_IMAGE=../build/", image}, context.temp_allocator),
+			strings.concatenate({"-define:BOOT_IMAGE=../", signed_image}, context.temp_allocator),
+			"-define:SYSTEM_PUBLIC_KEY=../" + SYSTEM_PUBLIC_KEY_FILE,
 			fmt.tprintf("-define:SELF_TEST=%d", self_test),
 			fmt.tprintf("-define:KERNEL_MODULE=../build/modules/%s.module", kernel),
 			"-out:" + BOOT_OBJECT_FOLDER + "/boot.obj",
@@ -243,7 +267,10 @@ run_test :: proc(args: []string) -> int {
 	if !disk_prepare(TEST_DATA_DISK, DATA_DISK_SIZE, true) {
 		return EXIT_FAILURE
 	}
-	// `test network`, `test main`, `test power`, `test tcp`, `test random`, `test extended_state`, `test return_fault`, `test fault_ring`, `test kernel_events`: one part only, for the work on it.
+	// `test network`, `test main`, `test power`, `test tcp`, `test random`, `test extended_state`, `test return_fault`, `test fault_ring`, `test kernel_events`, `test trusted_boot`: one part only, for the work on it.
+	if len(args) == 1 && args[0] == "trusted_boot" {
+		return trusted_boot_tests_run() ? 0 : EXIT_FAILURE
+	}
 	if len(args) == 1 && args[0] == "tcp" {
 		return tcp_tests_run() ? 0 : EXIT_FAILURE
 	}
@@ -297,7 +324,7 @@ run_test :: proc(args: []string) -> int {
 	if len(args) == 1 && args[0] == "quic-real" {
 		return quic_real_tests_run() ? 0 : EXIT_FAILURE
 	}
-	if !machine_test(scenario_fails[:], BOOT_VOLUME_FAILS, TEST_OUTPUT_FAILS, 0) || !machine_test(scenario_shortage[:], BOOT_VOLUME_SHORTAGE, TEST_OUTPUT_SHORTAGE, MACHINE_STOP_OK, TEST_DATA_DISK) || !self_tests_run() || !machine_test(scenario[:], BOOT_VOLUME, TEST_OUTPUT, MACHINE_STOP_OK, TEST_DATA_DISK) || !machine_test(scenario_network[:], BOOT_VOLUME, TEST_OUTPUT_NETWORK, MACHINE_STOP_OK, TEST_DATA_DISK) || !tcp_tests_run() || !quic_tests_run() || !quic_real_tests_run() || !random_tests_run() || !extended_state_tests_run() || !return_fault_tests_run() || !fault_ring_tests_run() || !kernel_events_tests_run() || !cryptography_tests_run() || !persistence_run() || !power_loss_run() || !power_loss_settings_run() || !test_modules() || !test_descriptions() {
+	if !machine_test(scenario_fails[:], BOOT_VOLUME_FAILS, TEST_OUTPUT_FAILS, 0) || !trusted_boot_tests_run() || !machine_test(scenario_shortage[:], BOOT_VOLUME_SHORTAGE, TEST_OUTPUT_SHORTAGE, MACHINE_STOP_OK, TEST_DATA_DISK) || !self_tests_run() || !machine_test(scenario[:], BOOT_VOLUME, TEST_OUTPUT, MACHINE_STOP_OK, TEST_DATA_DISK) || !machine_test(scenario_network[:], BOOT_VOLUME, TEST_OUTPUT_NETWORK, MACHINE_STOP_OK, TEST_DATA_DISK) || !tcp_tests_run() || !quic_tests_run() || !quic_real_tests_run() || !random_tests_run() || !extended_state_tests_run() || !return_fault_tests_run() || !fault_ring_tests_run() || !kernel_events_tests_run() || !cryptography_tests_run() || !persistence_run() || !power_loss_run() || !power_loss_settings_run() || !test_modules() || !test_descriptions() {
 		return EXIT_FAILURE
 	}
 	fmt.println("kerneltool: all tests passed")
@@ -454,7 +481,7 @@ run_check :: proc(args: []string) -> int {
 	// compiler assembles runtime/memory_for_host_tests.asm itself and links
 	// its object by its path (a library found through `-L/` is refused by
 	// the linker of the Nix sandbox).
-	for folder in ([]string{"runtime", "contract/blake3", "contract/isolated", "contract/pointer_pictures", "contract/remote", "support/sentence", "support/cryptography/vectors", "modules/cryptography", "support/quic", "contract/date", "support/storage_mount", "support/storage_retention", "support/calendar", "support/line_editor", "modules/interface_module", "modules/sample", "support/system", "support/bar", "support/graphics", "support/interface", "support/addresses", "support/information", "support/vector_font", "support/network", "support/tcp", "support/web", "support/cryptography/chacha20", "support/random", "tools/kerneltool", "contract/fixed_addresses", "contract/settings", "modules/text_shaping", "support/text_shaping", "support/mark", "support/terminal", "contract/cut_mark", "runtime/without_vector_registers", "support/instruction_sets"}) {
+	for folder in ([]string{"runtime", "contract/blake3", "contract/isolated", "contract/pointer_pictures", "contract/remote", "support/sentence", "support/cryptography/vectors", "modules/cryptography", "support/quic", "contract/date", "support/storage_mount", "support/storage_retention", "support/calendar", "support/line_editor", "modules/interface_module", "modules/sample", "support/system", "support/bar", "support/graphics", "support/interface", "support/addresses", "support/information", "support/vector_font", "support/network", "support/tcp", "support/web", "support/cryptography/chacha20", "support/random", "tools/kerneltool", "contract/fixed_addresses", "contract/settings", "modules/text_shaping", "support/text_shaping", "support/mark", "support/terminal", "contract/cut_mark", "runtime/without_vector_registers", "support/instruction_sets", "contract/system_description"}) {
 		name, _ := strings.replace_all(folder, "/", "_", context.temp_allocator)
 		if !run({"odin", "test", folder, "-vet", CONTRACT_LIBRARY, SUPPORT_LIBRARY, strings.concatenate({"-out:" + BUILD_FOLDER + "/test_", name}, context.temp_allocator)}) {
 			return EXIT_FAILURE
@@ -511,22 +538,26 @@ processor_models := [Processor_Model]string {
 // The network device goes to the peer (`-netdev dgram`), or, when forward
 // has a port, to QEMU user networking with its TCP (web_host.odin).
 // processor gives the processor of the machine (Processor_Model).
-machine_command :: proc(volume: string, test_output: string, data_disk: string, peer: ^Peer, forward: Forward = {}, processor: Processor_Model = .Maximum) -> (command: []string, ok: bool) {
+machine_command :: proc(volume: string, test_output: string, data_disk: string, peer: ^Peer, forward: Forward = {}, processor: Processor_Model = .Maximum, firmware: Machine_Firmware = .Usual) -> (command: []string, ok: bool) {
 	if !disk_prepare(SCRATCH_DISK, SCRATCH_DISK_SIZE, false) {
 		return nil, false
 	}
-	firmware_code := os.get_env("OVMF_CODE", context.temp_allocator)
-	firmware_variables := os.get_env("OVMF_VARS", context.temp_allocator)
+	code_variable, variables_variable, variables_copy := "OVMF_CODE", "OVMF_VARS", FIRMWARE_VARIABLES
+	if firmware == .With_Tpm {
+		code_variable, variables_variable, variables_copy = "OVMF_FULL_CODE", "OVMF_FULL_VARS", FIRMWARE_FULL_VARIABLES
+	}
+	firmware_code := os.get_env(code_variable, context.temp_allocator)
+	firmware_variables := os.get_env(variables_variable, context.temp_allocator)
 	if firmware_code == "" || firmware_variables == "" {
-		fmt.eprintln("kerneltool: OVMF_CODE and OVMF_VARS are not set. Use the development shell: nix develop")
+		fmt.eprintfln("kerneltool: %s and %s are not set. Use the development shell: nix develop", code_variable, variables_variable)
 		return nil, false
 	}
 	// The firmware writes its variables, so it gets a private copy.
-	if err := os.copy_file(FIRMWARE_VARIABLES, firmware_variables); err != nil {
+	if err := os.copy_file(variables_copy, firmware_variables); err != nil {
 		fmt.eprintfln("kerneltool: cannot copy %s: %v", firmware_variables, err)
 		return nil, false
 	}
-	if !run({"chmod", "u+w", FIRMWARE_VARIABLES}) {
+	if !run({"chmod", "u+w", variables_copy}) {
 		return nil, false
 	}
 	list := make([dynamic]string, context.temp_allocator)
@@ -534,7 +565,9 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 		&list,
 		"qemu-system-x86_64",
 		"-machine",
-		"q35",
+		// The firmware with Secure Boot needs the system management mode of
+		// the processor: its variables are written only there.
+		firmware == .With_Tpm ? "q35,smm=on" : "q35",
 		"-accel",
 		"kvm",
 		"-accel",
@@ -566,7 +599,7 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 		"-drive",
 		strings.concatenate({"if=pflash,format=raw,readonly=on,file=", firmware_code}, context.temp_allocator),
 		"-drive",
-		"if=pflash,format=raw,file=" + FIRMWARE_VARIABLES,
+		strings.concatenate({"if=pflash,format=raw,file=", variables_copy}, context.temp_allocator),
 		"-drive",
 		strings.concatenate({"if=none,id=boot,format=raw,file=", volume}, context.temp_allocator),
 		"-device",
@@ -580,6 +613,12 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 		"-device",
 		fmt.tprintf("virtio-blk-pci,drive=scratch,disable-legacy=on,addr=0x%x", pci.SCRATCH_DISK_DEVICE),
 	)
+	if firmware == .With_Tpm {
+		// The flash of the firmware is writable only in system management
+		// mode; the TPM is the software TPM that machine_test starts
+		// (trusted_boot_scenario.odin), through its socket.
+		append(&list, "-global", "driver=cfi.pflash01,property=secure,value=on", "-chardev", "socket,id=tpm_socket,path=" + TPM_SOCKET, "-tpmdev", "emulator,id=tpm,chardev=tpm_socket", "-device", "tpm-tis,tpmdev=tpm")
+	}
 	if test_output != "" {
 		// No window. The log of the kernel (the serial port) goes to a file.
 		// The QEMU monitor is on the standard input: the tool sends keys through it.

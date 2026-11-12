@@ -14,6 +14,8 @@
 //   rax   on return: the time, in milliseconds since boot.
 package operation
 
+import info "contract:boot_info"
+
 PAGE_SIZE :: 4096
 WAIT_FOREVER :: max(u64)
 
@@ -927,6 +929,7 @@ Boot_Report :: struct {
 	acpi_root:              u64,
 	cycle_frequency:        u64, // Cycles of the cycle counter per second.
 	timer_frequency:        u64, // Counts of the timer of a processor per second.
+	trust:                  info.Boot_Trust, // The trust record of the boot program, as it wrote it.
 }
 
 Program_Report :: struct {

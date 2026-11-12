@@ -145,6 +145,16 @@ So the module form costs nothing that matters next to the primitives.
 
 **The seam for batches.** The module contract describes a table as a parameter (`docs/MODULE_CONTRACT.md`, "Tables and bytes as parameters"). The module has no batch export yet: seal or open a table of packet records in one call. QUIC calls the exports one packet at a time, through one procedure table of its own (`support/quic`), so that a batch export later changes that one table only.
 
+## 6a. Ed25519 in the boot program
+
+The boot program verifies the description signature (`docs/TRUSTED_BOOT.md`) with `support/cryptography/ed25519`, linked into the boot program. It is the code that the module `cryptography` runs; the boot program calls it directly, because no loader runs before the kernel.
+
+- **What it links**: `ed25519`, `_edwards25519`, the fields of `_fiat`, `sha2` (SHA-512), `_subtle` and the compatibility layer. No allocator: the code of the origin runs with a zero `context`, as in the module. No system entropy: a verification draws nothing.
+- **The stack**: the stack of the firmware. The largest frame is the table of the double scalar multiplication, under 2 KiB. A frame larger than one page calls `__chkstk` (`boot/jump.asm`).
+- **The calling convention**: the boot program is built for the Microsoft x64 convention, and the compatibility layer calls `erase_secret_bytes` and `erase_stack_below_the_caller` of `runtime/memory.asm` as `"c"` procedures, which is that convention on this target. The form `WIN64` of `runtime/memory.asm` has a wrapper for each of the two: it keeps `rdi` and `rsi`, which belong to the caller in that convention, and passes `rcx` and `rdx` to the body of the System V form. With no wrapper, the erase writes at the address of a stale `rdi`.
+- **Vector registers**: the boot program is not the kernel. It runs before the kernel, with the state of the firmware, and its copies use `xmm0` to `xmm4` (`docs/ARCHITECTURE.md`, "The kernel has no vector code"). The portable code of the origin needs no vector instruction.
+- **No secret**: a verification uses a public key, a message and a signature. The boot program does not call `erase_stack_below_the_caller`.
+
 ## 7. What is not done
 
 - **No hardware AES or SHA.** AES-NI and the SHA extensions need the processor features; a device of the system can give them later.

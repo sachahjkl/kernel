@@ -39,7 +39,7 @@ Efi_Runtime_Services :: struct {
 	set_wakeup_time:               rawptr,
 	set_virtual_address_map:       rawptr,
 	convert_pointer:               rawptr,
-	get_variable:                  rawptr,
+	get_variable:                  proc "win64" (name: [^]u16, vendor: ^Efi_Guid, attributes: ^u32, data_size: ^uint, data: rawptr) -> Efi_Status,
 	get_next_variable_name:        rawptr,
 	set_variable:                  rawptr,
 	get_next_high_monotonic_count: rawptr,
@@ -108,7 +108,7 @@ Efi_Boot_Services :: struct {
 	exit_boot_services:     proc "win64" (image: rawptr, key: uint) -> Efi_Status,
 	get_next_count:         rawptr,
 	stall:                  rawptr,
-	set_watchdog_timer:     rawptr,
+	set_watchdog_timer:     proc "win64" (timeout: uint, code: u64, data_size: uint, data: [^]u16) -> Efi_Status,
 	connect_controller:     rawptr,
 	disconnect_controller:  rawptr,
 	open_protocol:          rawptr,
@@ -175,3 +175,34 @@ Efi_Graphics_Output :: struct {
 	blt:        rawptr,
 	mode:       ^Efi_Graphics_Mode,
 }
+
+// The variables of the UEFI specification ("SecureBoot").
+EFI_GLOBAL_VARIABLE_GUID :: Efi_Guid{0x8BE4DF61, 0x93CA, 0x11D2, {0xAA, 0x0D, 0x00, 0xE0, 0x98, 0x03, 0x2B, 0x8C}}
+
+// The TPM through the firmware: EFI_TCG2_PROTOCOL of the TCG EFI Protocol
+// Specification. The boot program talks to the TPM only through it: it has
+// no TPM driver.
+EFI_TCG2_GUID :: Efi_Guid{0x607F766C, 0x7455, 0x42BE, {0x93, 0x0B, 0xE4, 0xD7, 0x6D, 0xB2, 0x72, 0x0F}}
+
+Efi_Tcg2_Protocol :: struct {
+	get_capability:                     rawptr,
+	get_event_log:                      rawptr,
+	// The firmware hashes data with each active bank of the TPM, extends the
+	// register of the event with each hash, and writes the event in its log.
+	hash_log_extend_event:              proc "win64" (this: ^Efi_Tcg2_Protocol, flags: u64, data: u64, data_size: u64, event: rawptr) -> Efi_Status,
+	// One command of the TPM, in its own byte format (big-endian).
+	submit_command:                     proc "win64" (this: ^Efi_Tcg2_Protocol, input_size: u32, input: [^]u8, output_size: u32, output: [^]u8) -> Efi_Status,
+	get_active_pcr_banks:               rawptr,
+	set_active_pcr_banks:               rawptr,
+	get_result_of_set_active_pcr_banks: rawptr,
+}
+
+// EFI_TCG2_EVENT is packed: Size (4 bytes), then the header: HeaderSize
+// (4), HeaderVersion (2), PCRIndex (4), EventType (4), then the event data.
+// The boot program writes it byte by byte.
+EFI_TCG2_EVENT_HEADER_SIZE :: 14
+EFI_TCG2_EVENT_DATA_OFFSET :: 4 + EFI_TCG2_EVENT_HEADER_SIZE
+EFI_TCG2_EVENT_HEADER_VERSION :: 1
+// The event type of a stage of the boot that the boot program measures
+// (TCG PC Client Platform Firmware Profile).
+TCG_EVENT_IPL :: 0x0000_000D

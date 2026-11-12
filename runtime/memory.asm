@@ -319,7 +319,25 @@ fill_bytes_with_value:
 ; the pointer reaches. A store of zeros that the compiler emits itself
 ; (memset of a variable that is dead after it) can be removed: this one
 ; cannot. The loop of bytes is enough: a secret has some hundred bytes.
+%ifdef WIN64
+; The boot program calls the two erase functions with the Microsoft
+; convention: the destination in rcx and the count in rdx, and rdi and rsi
+; belong to the caller. Each one keeps rdi and rsi, then runs the body of
+; the System V form. With no wrapper, the code of the cryptography that
+; the boot program links erases at the address of a stale rdi.
 erase_secret_bytes:
+	push rdi
+	push rsi
+	mov rdi, rcx
+	mov rsi, rdx
+	call erase_secret_bytes_with_system_v_registers
+	pop rsi
+	pop rdi
+	ret
+erase_secret_bytes_with_system_v_registers:
+%else
+erase_secret_bytes:
+%endif
 	mov rax, rdi
 	test rsi, rsi
 	jz .done
@@ -363,7 +381,16 @@ erase_secret_bytes:
 %ifndef STACK_ERASE_SIZE
 %define STACK_ERASE_SIZE 16384
 %endif
+%ifdef WIN64
 erase_stack_below_the_caller:
+	push rdi
+	call erase_stack_below_the_caller_with_system_v_registers
+	pop rdi
+	ret
+erase_stack_below_the_caller_with_system_v_registers:
+%else
+erase_stack_below_the_caller:
+%endif
 	; At the entry, rsp points to the return address: each byte below it is
 	; free. rdi goes from rsp - 8 down to rsp - STACK_ERASE_SIZE.
 	lea rdi, [rsp - 8]

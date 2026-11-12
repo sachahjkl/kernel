@@ -327,6 +327,7 @@ Status: Decided. The detail below is proposed.
 - **Cost**: The system needs a key management story for the person who owns the machine: creation, enrolment in the firmware, backup, loss.
 - **Reuse**: UEFI firmware services. OVMF and a software TPM under QEMU give Secure Boot and a TPM 2.0 on the first machine. The TCG TPM 2.0 specification. A small permissive TPM command library, to be selected.
 - **Open**: the exact meaning of "rich boot". This text reads it as "do as much boot work as possible with UEFI services in a UEFI program". How much the boot program does before it leaves firmware services. Which registers hold which measurements.
+- **State**: the signed system description and the measure are built (`docs/TRUSTED_BOOT.md`). Before the kernel starts, the boot program verifies the description signature and the hash of the kernel and of each file of the boot image, then the firmware extends PCR 11 with the SHA-256 hash of the system description. Secure Boot is not built: nothing verifies the boot program yet.
 
 ## 18. One graphics interface: WebGPU with WGSL
 

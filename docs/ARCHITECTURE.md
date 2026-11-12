@@ -123,19 +123,21 @@ File systems, network protocols, device drivers, the module loader, the module s
 
 ### U1. Boot program
 
-A UEFI program (P17). It runs before the kernel.
+A UEFI program (P17). It runs before the kernel. It holds the kernel module, the boot image and the public key of the signing key.
 
-- Verifies and loads the kernel, the system description and the first modules.
-- Measures the system description into the TPM.
+- Verifies the description signature, then compares the kernel module and each module and resource of the boot image with the system description (`docs/TRUSTED_BOOT.md`). A failed check stops the boot: the boot display shows the file and the two hashes, and the kernel does not start.
+- Asks the firmware to measure the system description into PCR 11 of the TPM, and reads the register back.
+- Loads the kernel module.
 - Collects the memory map, the framebuffer and the device list.
-- Gives all of this to the kernel in one fixed structure, then leaves the firmware.
+- Gives all of this to the kernel in one fixed structure, with the trust record, then leaves the firmware.
+- Nothing verifies the boot program itself until Secure Boot is built: its checks find a damaged or swapped file, not an attacker who can write the boot volume.
 
 ### U2. Root service
 
 The first program. The kernel gives it every handle that exists at boot.
 
 - Starts the other services and gives each one only the handles that it needs.
-- Holds the system description and the grant records.
+- Holds the system description and the grant records. Before it starts the first program, it checks each module and resource of the boot image against the system description that the boot program verified (`docs/TRUSTED_BOOT.md`, claim 5).
 - Is the only program that can create access from nothing. All other access is a handle that came from it, directly or through a chain.
 
 ### U2b. Resources of the boot image
@@ -906,12 +908,14 @@ sequenceDiagram
   participant TPM
   participant K as Kernel
   participant R as Root service
-  FW->>BP: verify signature (Secure Boot), start
-  BP->>BP: load kernel, system description, first modules
-  BP->>TPM: extend with hash of system description
-  BP->>K: boot structure (memory map, framebuffer, devices, modules)
+  FW->>BP: start (Secure Boot verifies the boot program: not built)
+  BP->>BP: verify the description signature, then the hash of the kernel and of each file of the boot image
+  BP->>TPM: extend PCR 11 with the SHA-256 hash of the system description (through the firmware), read it back
+  BP->>BP: load the kernel module
+  BP->>K: boot structure (memory map, framebuffer, devices, boot image, trust record)
   K->>K: build tables, start processors
-  K->>R: start, with all boot handles
+  K->>R: start, with all boot handles and the boot image read-only
+  R->>R: check the boot image against the system description
   R->>R: start device services, storage, loader, compositor, shell
 ```
 

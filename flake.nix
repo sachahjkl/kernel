@@ -47,7 +47,8 @@
     # llc comes from the LLVM of the Odin compiler (18): Odin writes LLVM IR, and
     # llc makes each object with frame pointers.
     # openssl: its QUIC client is the peer of the test "quic-real" of kerneltool.
-    buildTools = [odin pkgs.llvmPackages_18.llvm pkgs.llvmPackages.lld pkgs.nasm pkgs.qemu pkgs.coreutils pkgs.openssl];
+    # swtpm: the software TPM of the machines of "test trusted_boot".
+    buildTools = [odin pkgs.llvmPackages_18.llvm pkgs.llvmPackages.lld pkgs.nasm pkgs.qemu pkgs.coreutils pkgs.openssl pkgs.swtpm];
 
     # The pointer theme of the owner (docs/POINTERS.md): "Posy's Cursor", the
     # package of nixpkgs, pinned by flake.lock. Its license is CC-BY-NC-4.0,
@@ -64,6 +65,11 @@
     firmware = {
       OVMF_CODE = "${pkgs.OVMF.fd}/FV/OVMF_CODE.fd";
       OVMF_VARS = "${pkgs.OVMF.fd}/FV/OVMF_VARS.fd";
+      # The same firmware with a TPM driver and Secure Boot (it needs the
+      # system management mode of QEMU), for the machines of the trusted
+      # boot. Its variable store has no key: Secure Boot stays off.
+      OVMF_FULL_CODE = "${pkgs.OVMFFull.fd}/FV/OVMF_CODE.fd";
+      OVMF_FULL_VARS = "${pkgs.OVMFFull.fd}/FV/OVMF_VARS.fd";
       # The source of the font, for the command "font" of kerneltool.
       FONT_SOURCE = "${pkgs.spleen}/share/fonts/misc/spleen-8x16.bdf";
       # The Xcursor folder of the pointer theme of the owner, for the build.

@@ -60,7 +60,54 @@ Boot_Info :: struct {
 	firmware_vendor:    [32]u8, // Zero bytes after the name.
 	firmware_revision:  u64,
 	self_test:          Self_Test,
+	trust:              Boot_Trust,
 }
+
+// The trust record (docs/TRUSTED_BOOT.md): what the boot program verified
+// and measured before it started the kernel. The kernel copies it into the
+// boot record and does not read it. All zero: nothing was verified.
+Boot_Trust :: struct {
+	verifier:         Verifier,
+	key_kind:         Signing_Key_Kind,
+	public_key:       [32]u8, // The Ed25519 public key that verified the description signature.
+	description_hash: [32]u8, // The BLAKE3 hash of the system description.
+	entry_count:      u64, // The entries of the system description, the kernel included.
+	check_cycles:     u64, // The cycles of the check of the signature and of every hash.
+	measure:          Measure_State,
+	measure_register: u64, // The register of the TPM that the boot program extended.
+	measure_value:    [32]u8, // The value of the register in the SHA-256 bank, read back from the TPM.
+	measure_status:   u64, // The status of the firmware, or the response code of the TPM, when measure is Refused or Not_Read.
+}
+
+// Who verified the system description. A boot program that the firmware
+// did not verify can be replaced by anyone who can write the boot volume,
+// so the record says which of the two cases holds.
+Verifier :: enum u64 {
+	None                      = 0, // Nothing verified the system description.
+	Boot_Program              = 1, // The boot program verified it. The firmware did not verify the boot program.
+	Firmware_And_Boot_Program = 2, // Secure Boot was on: the firmware verified the boot program, then the boot program verified the description.
+}
+
+Signing_Key_Kind :: enum u64 {
+	None   = 0,
+	Test   = 1, // The test signing key: its private key is published, so the system is not trusted.
+	Person = 2, // Any other key: the signing key of the person who owns the machine.
+}
+
+Measure_State :: enum u64 {
+	None     = 0, // The boot program did not try.
+	Measured = 1, // The register holds the measure; measure_value is its value.
+	No_Tpm   = 2, // The firmware has no TPM protocol.
+	Refused  = 3, // The firmware refused the extension.
+	Not_Read = 4, // The extension was done; the read of the register failed.
+}
+
+// The register of the measure: PCR 11. The rules of the TCG for PC
+// firmware leave PCR 8 to 15 to the operating system; the conventions of
+// Linux give PCR 11 to the whole system image that a boot stage measures
+// before the kernel starts, and the firmware of the first machine does not
+// write it (docs/TRUSTED_BOOT.md, "The measure").
+MEASURE_REGISTER :: 11
 
 // A test of the kernel on itself. The kernel does one thing that its page
 // tables must refuse, and the machine stops with the report of the fault.
@@ -110,4 +157,33 @@ Image_Entry :: struct {
 	hash:   [32]u8,
 	offset: u64, // From the start of the image.
 	size:   u64,
+}
+
+// image_tables gives the table of the modules and the table of the
+// resources of a boot image. valid is false when the header is wrong or
+// the tables do not fit in the image.
+image_tables :: proc "contextless" (image: []u8) -> (modules, resources: []Image_Entry, valid: bool) {
+	if len(image) < size_of(Image_Header) {
+		return
+	}
+	header := (^Image_Header)(raw_data(image))^
+	if header.magic != IMAGE_MAGIC {
+		return
+	}
+	total := int(header.count) + int(header.resource_count)
+	if size_of(Image_Header) + total * size_of(Image_Entry) > len(image) {
+		return
+	}
+	all := ([^]Image_Entry)(raw_data(image[size_of(Image_Header):]))[:total]
+	return all[:header.count], all[header.count:], true
+}
+
+// image_entry_bytes gives the bytes of the file of one entry. valid is
+// false when the entry points outside the image.
+image_entry_bytes :: proc "contextless" (image: []u8, entry: ^Image_Entry) -> (bytes: []u8, valid: bool) {
+	offset, size := entry.offset, entry.size
+	if offset > u64(len(image)) || size > u64(len(image)) - offset {
+		return nil, false
+	}
+	return image[offset:][:size], true
 }

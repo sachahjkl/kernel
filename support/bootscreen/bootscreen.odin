@@ -353,8 +353,9 @@ step_names := [Step]string {
 }
 
 // The boot image as tiles: one tile for each module. The width of a tile
-// is the size of the module, with a least width for its name.
-TILE_ROWS :: 5
+// is the size of the module, with a least width for its name. Three rows
+// leave room for the three facts of the trust record under them.
+TILE_ROWS :: 3
 TILE_HEIGHT :: 20
 TILE_GAP :: 2
 TILE_LEAST :: 36
@@ -772,7 +773,7 @@ draw :: proc "contextless" (canvas: graphics.Canvas, data: ^Data) {
 	BOTTOM_Y :: MIDDLE_Y + MIDDLE_HEIGHT + MARGIN
 	BOTTOM_HEIGHT :: HEIGHT - BOTTOM_Y - MARGIN
 	{
-		area := card(canvas, MARGIN, BOTTOM_Y, LEFT_WIDTH, BOTTOM_HEIGHT, "BOOT IMAGE", "Image_Entry: a tile is a module", graphics.COLOR_BOOT_PROGRAM)
+		area := card(canvas, MARGIN, BOTTOM_Y, LEFT_WIDTH, BOTTOM_HEIGHT, "BOOT IMAGE", "Image_Entry, Boot_Report.trust", graphics.COLOR_BOOT_PROGRAM)
 		entries: []info.Image_Entry
 		if len(data.image) >= size_of(info.Image_Header) {
 			header := (^info.Image_Header)(raw_data(data.image))
@@ -818,6 +819,7 @@ draw :: proc "contextless" (canvas: graphics.Canvas, data: ^Data) {
 			put_size(&text, u64(len(data.image)))
 			show_right(canvas, MARGIN + LEFT_WIDTH - CARD_MARGIN, BOTTOM_Y + 13, &text, graphics.COLOR_TEXT)
 		}
+		trust_facts(area, TILE_ROWS * (TILE_HEIGHT + TILE_GAP) + 6, data)
 	}
 
 	// The programs.
@@ -854,6 +856,71 @@ draw :: proc "contextless" (canvas: graphics.Canvas, data: ^Data) {
 			show_right(area, area.width, y, &text, graphics.COLOR_PROGRAM)
 		}
 	}
+}
+
+// put_hex_bytes adds two hexadecimal digits for each byte.
+put_hex_bytes :: proc "contextless" (text: ^Text, bytes: []u8) {
+	characters := "0123456789abcdef"
+	for value in bytes {
+		put(text, characters[value >> 4:][:1])
+		put(text, characters[value & 15:][:1])
+	}
+}
+
+// trust_facts draws the three facts of the trust record (docs/TRUSTED_BOOT.md):
+// which key signed the system description, what verified it, and the
+// measure. A test key and a boot program that nothing verified are said in
+// plain words: a reader must not take such a system for a trusted one.
+@(private)
+trust_facts :: proc "contextless" (area: graphics.Canvas, y: int, data: ^Data) {
+	trust := &data.boot.trust
+	text: Text
+	color := graphics.Color(graphics.COLOR_TEXT)
+	switch trust.key_kind {
+	case .None:
+	case .Test:
+		put(&text, "the TEST key: its private key is public")
+		color = graphics.COLOR_FAILED
+	case .Person:
+		put(&text, "the key ")
+		put_hex_bytes(&text, trust.public_key[:8])
+	}
+	fact(area, y, "signed by", &text, color)
+	color = graphics.COLOR_TEXT
+	switch trust.verifier {
+	case .None:
+		if data.state == .Failed && trust.key_kind != .None {
+			put(&text, "the check failed: see the line above")
+			color = graphics.COLOR_FAILED
+		}
+	case .Boot_Program:
+		put(&text, "the boot program, which the firmware did not verify")
+		color = graphics.COLOR_BOOT_PROGRAM
+	case .Firmware_And_Boot_Program:
+		put(&text, "the firmware (Secure Boot), then the boot program")
+		color = graphics.COLOR_PROGRAM
+	}
+	fact(area, y + LINE, "verified by", &text, color)
+	color = graphics.COLOR_TEXT
+	switch trust.measure {
+	case .None:
+	case .Measured:
+		put(&text, "PCR ")
+		put_number(&text, trust.measure_register)
+		put(&text, " = ")
+		put_hex_bytes(&text, trust.measure_value[:16])
+		color = graphics.COLOR_PROGRAM
+	case .No_Tpm:
+		put(&text, "no TPM: the system is not measured")
+		color = graphics.COLOR_BOOT_PROGRAM
+	case .Refused:
+		put(&text, "the firmware refused the measure")
+		color = graphics.COLOR_FAILED
+	case .Not_Read:
+		put(&text, "measured, but the register was not read")
+		color = graphics.COLOR_FAILED
+	}
+	fact(area, y + 2 * LINE, "measured", &text, color)
 }
 
 // draw_screen draws the display in the middle of a screen.

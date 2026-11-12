@@ -340,45 +340,56 @@ build_module :: proc(build: Module_Build) -> bool {
 // build_boot_image writes the modules that have `image` set, then the
 // resources, into one block (boot_info/boot_info.odin). It leaves out the
 // module `without`. A resource has its name and the hash of its bytes, as a
-// module (property 11).
+// module (property 11). This image has no system description: each boot
+// volume gets a copy with its own (system_description.odin).
 build_boot_image :: proc(path: string, without: string, resources: []Resource_File) -> bool {
-	entries := make([dynamic]info.Image_Entry, context.temp_allocator)
-	files := make([dynamic][]u8, context.temp_allocator)
+	files := make([dynamic]Image_File, context.temp_allocator)
 	for build in module_builds {
 		if !build.image || build.name == without {
 			continue
 		}
-		file := read_file(module_path(build.name)) or_return
-		entry := info.Image_Entry{hash = blake3.hash(file), size = u64(len(file))}
-		copy(entry.name[:info.IMAGE_NAME_SIZE - 1], build.name)
-		append(&entries, entry)
-		append(&files, file)
+		append(&files, Image_File{name = build.name, file = read_file(module_path(build.name)) or_return})
 	}
-	module_count := len(entries)
+	module_count := len(files)
 	for resource in resources {
-		file := read_file(resource.path) or_return
-		entry := info.Image_Entry{hash = blake3.hash(file), size = u64(len(file))}
-		copy(entry.name[:info.IMAGE_NAME_SIZE - 1], resource.name)
-		append(&entries, entry)
-		append(&files, file)
+		append(&files, Image_File{name = resource.name, file = read_file(resource.path) or_return})
 	}
-	image := make([dynamic]u8, context.temp_allocator)
-	resize(&image, size_of(info.Image_Header) + len(entries) * size_of(info.Image_Entry))
-	for file, index in files {
-		resize(&image, mem.align_forward_int(len(image), info.PAGE_SIZE))
-		entries[index].offset = u64(len(image))
-		append(&image, ..file)
-	}
-	header := info.Image_Header{magic = info.IMAGE_MAGIC, count = u32(module_count), resource_count = u32(len(entries) - module_count)}
-	mem.copy(&image[0], &header, size_of(header))
-	if len(entries) > 0 {
-		mem.copy(&image[size_of(header)], &entries[0], len(entries) * size_of(info.Image_Entry))
-	}
-	if err := os.write_entire_file(path, image[:]); err != nil {
+	image := boot_image_encode(files[:], module_count)
+	if err := os.write_entire_file(path, image); err != nil {
 		fmt.eprintfln("kerneltool: cannot write %s: %v", path, err)
 		return false
 	}
 	return true
+}
+
+// One file of a boot image: a module or a resource.
+Image_File :: struct {
+	name: string,
+	file: []u8,
+}
+
+// boot_image_encode gives the bytes of a boot image: the header, the table
+// of the first module_count files (the modules), the table of the others
+// (the resources), then each file on a page boundary, each entry with the
+// BLAKE3 hash of its file.
+boot_image_encode :: proc(files: []Image_File, module_count: int) -> []u8 {
+	entries := make([]info.Image_Entry, len(files), context.temp_allocator)
+	image := make([dynamic]u8, context.temp_allocator)
+	resize(&image, size_of(info.Image_Header) + len(files) * size_of(info.Image_Entry))
+	for item, index in files {
+		entries[index].hash = blake3.hash(item.file)
+		entries[index].size = u64(len(item.file))
+		copy(entries[index].name[:info.IMAGE_NAME_SIZE - 1], item.name)
+		resize(&image, mem.align_forward_int(len(image), info.PAGE_SIZE))
+		entries[index].offset = u64(len(image))
+		append(&image, ..item.file)
+	}
+	header := info.Image_Header{magic = info.IMAGE_MAGIC, count = u32(module_count), resource_count = u32(len(files) - module_count)}
+	mem.copy(&image[0], &header, size_of(header))
+	if len(entries) > 0 {
+		mem.copy(&image[size_of(header)], &entries[0], len(entries) * size_of(info.Image_Entry))
+	}
+	return image[:]
 }
 
 read_file :: proc(path: string) -> (data: []u8, ok: bool) {

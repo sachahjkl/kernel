@@ -77,6 +77,7 @@ boot_report :: proc "contextless" (report: ^op.Boot_Report) {
 		acpi_root           = boot.acpi_root,
 		cycle_frequency     = cycle_frequency,
 		timer_frequency     = u64(timer_count) * 16 * TICKS_PER_SECOND,
+		trust               = boot.trust,
 	}
 	start: u64
 	for stage in Stage {

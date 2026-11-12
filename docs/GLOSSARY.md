@@ -284,7 +284,7 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Private store | The set of objects that belongs to one program. No other program sees it (P8, P9) | home directory, app data, container |
 | Document | An object that belongs to the person and not to one program. The document service grants it (P8) | file, user file |
 | Module store | The set of all modules and system data, each identified by content hash (P11) | package store, repository, the Nix store |
-| System description | The list of hashes that defines one version of the whole system (P11) | image, generation, manifest, profile |
+| System description | The list of hashes that defines one version of the whole system (P11). Its file (`contract/system_description`) names the kernel and each module and resource of the boot image, with its kind, its size and its BLAKE3 hash, in the order of the boot image. The boot image holds it as the resource `system_description` | image, generation, manifest, profile, system list |
 | Distinct result | One content of one output of a build (a module, its LLVM IR, its object, the boot program) among the contents that several builds of the same source gave. One source must give one distinct result for each output (P11). `kerneltool repeat` counts them, and `check` and `repeat` keep each one in `build/different_builds/` | variant (except in the names of the kept files), version |
 | Storage service | The service that owns the block device and gives objects, versions and private stores (P9) | file system |
 | Root block | The block of the data disk that names the private stores. The disk has two places for it; the storage service takes the valid one with the highest generation | superblock, uberblock, meta page |
@@ -423,6 +423,19 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Budget of work | The most pieces of one kind of work that a QUIC server does for datagrams of unknown identifiers (Retries, token checks, Initial checks), as a token bucket. Over it, a datagram is dropped before any cryptography. Not a budget of memory of the kernel | rate limit (for this), quota |
 | Token bucket | A count of units that grows by a rate in each second up to a depth, and from which each piece of work takes one unit: a burst takes the depth, then the rate. The tokens of a bucket are not the tokens of Retry | leaky bucket, fixed window |
 | UDP relay | The part of the peer of the tool that carries UDP datagrams between a program of the host, on a socket of the loopback, and the UDP port 4433 of the machine, as frames from 10.0.2.2 with a port for each client of the host | port forward, proxy, hostfwd (for this) |
+
+## Trusted boot
+
+| Term | Definition | Do not use |
+|---|---|---|
+| Signing key | The Ed25519 key pair of the person who owns the machine, that signs the system description (P17). The private key is a file outside the repository, which the environment variable `SYSTEM_SIGNING_KEY` names; the boot program holds the public key | owner key, master key, release key, platform key (PK is a term of Secure Boot) |
+| Test signing key | The signing key of the tests: the key pair of RFC 8032, section 7.1, TEST 1, in `resources/keys`. Its private key is published, so a system that it signs is not trusted, and the boot display says so | development key, demo key |
+| Signed message | The 64 bytes that the signing key signs for one system description: the label `system description signature 1`, with zero bytes to 32 bytes, then the BLAKE3 hash of the description | payload, digest (for this) |
+| Description signature | The Ed25519 signature, 64 bytes, of the signed message of a system description: the resource `system_description_signature` of the boot image | certificate, manifest signature |
+| Trust record | The record `boot_info.Boot_Trust` that the boot program writes: what verified the system description, with which public key, the BLAKE3 hash of the description, and the measure. The kernel copies it into the boot record; the root service and the boot display read it | attestation, security state |
+| Measure | The extension of a register of the TPM with the SHA-256 hash of the system description, which the firmware does at the request of the boot program, before the kernel starts (P17) | attestation (for this), seal, measurement log (for this) |
+| Measure register | PCR 11 of the TPM: the register that holds the measure | slot, PCR (alone, for this register) |
+| Firmware signing key | The RSA-2048 key and its X.509 certificate of the person who owns the machine, that sign the boot program for Secure Boot. The firmware keeps the certificate in its variable `db` | db key (for the pair), Secure Boot key |
 
 ## Project
 

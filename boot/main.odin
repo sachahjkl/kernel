@@ -1,13 +1,17 @@
 // The boot program: a UEFI program (docs/PROPERTIES.md, property 17).
 //
-// It contains the kernel module and the boot image. It does this:
+// It contains the kernel module, the boot image and the public key of the
+// signing key. It does this:
 //   1. reads the framebuffer of the firmware;
-//   2. loads the kernel module with the loader of package module;
-//   3. builds page tables: all physical memory at DIRECT_MAP_BASE, the kernel
+//   2. verifies the system description and the hash of the kernel and of
+//      each file of the boot image, and asks the firmware to measure the
+//      description into the TPM (trust.odin);
+//   3. loads the kernel module with the loader of package module;
+//   4. builds page tables: all physical memory at DIRECT_MAP_BASE, the kernel
 //      at KERNEL_BASE, and the same physical memory at its own addresses for
 //      the moment of the jump;
-//   4. reads the memory map and leaves the firmware services;
-//   5. starts the entry of the kernel with a Boot_Info record.
+//   5. reads the memory map and leaves the firmware services;
+//   6. starts the entry of the kernel with a Boot_Info record.
 package boot
 
 import info "contract:boot_info"
@@ -71,6 +75,15 @@ efi_main :: proc "win64" (image: rawptr, system_table: ^Efi_System_Table) -> Efi
 		}
 	}
 
+	// The boot image goes to its own pages: the kernel gives it to the root
+	// service as memory. The checks read this copy, the one that the kernel
+	// receives.
+	image_copy := allocate((u64(len(boot_image)) + PAGE_SIZE - 1) / PAGE_SIZE)
+	intrinsics.mem_copy_non_overlapping(image_copy, raw_data(boot_image), len(boot_image))
+	image_bytes := ([^]u8)(image_copy)[:len(boot_image)]
+	description := trust_check(boot, image_bytes)
+	measure(boot, description)
+
 	// The kernel module.
 	if module.validate(kernel_file) != .None {
 		stop("boot program: the kernel module is not valid\r\n")
@@ -89,9 +102,6 @@ efi_main :: proc "win64" (image: rawptr, system_table: ^Efi_System_Table) -> Efi
 	boot.kernel_size = head.memory_size
 	boot.kernel_file = u64(uintptr(raw_data(kernel_file)))
 	boot.kernel_file_size = u64(len(kernel_file))
-	// The boot image goes to its own pages: the kernel gives it to the root service as memory.
-	image_copy := allocate((u64(len(boot_image)) + PAGE_SIZE - 1) / PAGE_SIZE)
-	intrinsics.mem_copy_non_overlapping(image_copy, raw_data(boot_image), len(boot_image))
 	boot.boot_image = u64(uintptr(image_copy))
 	boot.boot_image_size = u64(len(boot_image))
 	boot.cycles_loaded = u64(intrinsics.read_cycle_counter())
@@ -285,7 +295,7 @@ _tls_index: u32
 // display draws the boot display (package bootscreen) with what the boot
 // program knows. The kernel does not draw: the root service draws the
 // display again with the records of the kernel.
-display :: proc "contextless" (boot: ^info.Boot_Info, message: string) {
+display :: proc "contextless" (boot: ^info.Boot_Info, message: string, state := bootscreen.State.Running, step := bootscreen.Step.Kernel) {
 	screen := boot.framebuffer
 	if screen.address == 0 || screen.format == .None {
 		return
@@ -302,10 +312,12 @@ display :: proc "contextless" (boot: ^info.Boot_Info, message: string) {
 	data.boot.kernel_file_size = boot.kernel_file_size
 	data.boot.boot_image_size = boot.boot_image_size
 	data.boot.acpi_root = boot.acpi_root
+	data.boot.trust = boot.trust
 	data.image = boot_image
 	data.processor_name = bootscreen.processor_name()
 	data.message = message
-	data.step = .Kernel
+	data.state = state
+	data.step = step
 	data.red_first = screen.format == .Red_Green_Blue_X
 	bootscreen.draw_screen({pixels = ([^]graphics.Color)(uintptr(screen.address)), width = int(screen.width), height = int(screen.height), stride = int(screen.pixels_per_line)}, data)
 }

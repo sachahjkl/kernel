@@ -504,6 +504,20 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	image = ([^]u8)(address)[:ctx.values[op.ROOT_VALUE_BOOT_IMAGE_SIZE]]
 	system.log(ROOT_MARK, ", ", u64(len(system.image_entries(image))), " modules in the boot image")
+	// The screen first: a failure of the check below stays on it.
+	if pixels, map_status := system.memory_map(ctx.handles[op.ROOT_FRAMEBUFFER], {.Write}); map_status == .Ok {
+		screen = {
+			pixels = ([^]graphics.Color)(pixels),
+			width  = int(ctx.values[op.ROOT_VALUE_WIDTH]),
+			height = int(ctx.values[op.ROOT_VALUE_HEIGHT]),
+			stride = int(ctx.values[op.ROOT_VALUE_PIXELS_PER_LINE]),
+		}
+		screen_data.image = image
+		screen_data.red_first = ctx.values[op.ROOT_VALUE_FORMAT] == u64(info.Pixel_Format.Red_Green_Blue_X)
+	}
+	// The boot image against the system description, before any program
+	// starts (trust.odin).
+	trust_check()
 	// The random seed of the system: before the first program starts.
 	{
 		seed := random.entropy_gather(random.sources_of_the_processor(), &entropy_report)
@@ -520,16 +534,6 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// the program shortage and no input service, so no desktop.
 	if len(system.image_find(image, "input")) == 0 && len(system.image_find(image, "shortage")) != 0 {
 		shortage_start(ctx)
-	}
-	if pixels, map_status := system.memory_map(ctx.handles[op.ROOT_FRAMEBUFFER], {.Write}); map_status == .Ok {
-		screen = {
-			pixels = ([^]graphics.Color)(pixels),
-			width  = int(ctx.values[op.ROOT_VALUE_WIDTH]),
-			height = int(ctx.values[op.ROOT_VALUE_HEIGHT]),
-			stride = int(ctx.values[op.ROOT_VALUE_PIXELS_PER_LINE]),
-		}
-		screen_data.image = image
-		screen_data.red_first = ctx.values[op.ROOT_VALUE_FORMAT] == u64(info.Pixel_Format.Red_Green_Blue_X)
 	}
 	// The settings page and the glyph cache, before the first boot display.
 	text_settings_create()

@@ -171,10 +171,19 @@ number_after :: proc(text: string, after: string) -> (value: i64, found: bool) {
 
 // A start that fails: the boot image has no compositor. The boot display
 // stays on the screen with the failure, and the machine does not stop.
+// Before it, the trusted boot of a machine with no TPM: the boot program
+// verifies the system description and says that nothing verified it, and
+// the root service checks the boot image.
 scenario_fails := [?]Step {
+	// The test signing key, or the key of SYSTEM_SIGNING_KEY.
+	{kind = .Wait, text = "boot program: the signature is from the "},
+	{kind = .Wait, text = "boot program: verified by the boot program, which the firmware did not verify"},
+	{kind = .Wait, text = "boot program: the kernel and each module and resource have the hash of the system description"},
+	{kind = .Wait, text = "boot program: the firmware has no TPM protocol: the system description is not measured"},
 	{kind = .Wait, text = "boot program: ok"},
 	{kind = .Wait, text = "kernel: ok"},
 	{kind = .Wait, text = "root: ok"},
+	{kind = .Wait, text = "root: the boot image agrees with the system description that the boot program verified: "},
 	{kind = .Wait, text = "root: cannot start the compositor: status "},
 	{kind = .Wait, text = "root: the boot display shows the failure"},
 	{kind = .Shot, text = "boot_fails"},
@@ -2564,7 +2573,13 @@ screen_save :: proc(machine: ^Machine, name: string) -> bool {
 
 // machine_test runs a scenario on a boot volume. It passes when each step
 // passes and QEMU ends with the status exit_status.
-machine_test :: proc(steps: []Step, volume: string, output: string, exit_status: int, data_disk: string = TEST_DATA_DISK, user_network := false, disk_server: ^Network_Block_Device = nil, processor: Processor_Model = .Maximum) -> bool {
+machine_test :: proc(steps: []Step, volume: string, output: string, exit_status: int, data_disk: string = TEST_DATA_DISK, user_network := false, disk_server: ^Network_Block_Device = nil, processor: Processor_Model = .Maximum, firmware: Machine_Firmware = .Usual) -> bool {
+	// The software TPM runs before QEMU and ends after it.
+	tpm: Tpm_Process
+	if firmware == .With_Tpm && !tpm_start(&tpm) {
+		return false
+	}
+	defer tpm_stop(&tpm)
 	peer: Peer
 	if !peer_start(&peer) {
 		return false
@@ -2581,7 +2596,7 @@ machine_test :: proc(steps: []Step, volume: string, output: string, exit_status:
 		forward = {host_port = port, listener = &listener}
 	}
 	defer listener_stop(&listener)
-	command, ok := machine_command(volume, output, data_disk, &peer, forward, processor)
+	command, ok := machine_command(volume, output, data_disk, &peer, forward, processor, firmware)
 	if !ok {
 		return false
 	}
