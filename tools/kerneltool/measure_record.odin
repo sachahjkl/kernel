@@ -88,7 +88,9 @@ measure_time_text :: proc(moment: time.Time) -> string {
 // measure_run_facts_read reads the commit and the state of the tree. The
 // pass calls it first: it writes pictures and the record into the tree.
 measure_run_facts_read :: proc() -> Measure_Run_Facts {
-	facts := Measure_Run_Facts{started = time.now(), commit = site_git_commit()}
+	// The commit is kept in memory of its own: the pass frees the temporary
+	// memory many times before it writes the record.
+	facts := Measure_Run_Facts{started = time.now(), commit = strings.clone(site_git_commit())}
 	command := [?]string{"git", "status", "--porcelain"}
 	state, standard_output, _, error := os.process_exec({command = command[:]}, context.temp_allocator)
 	if error == nil && state.exited && state.success {

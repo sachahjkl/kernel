@@ -1,7 +1,7 @@
 measure record 1
 time 2026-11-12 15:39 UTC
 release 0.91.0
-commit ;001H[2J[001;001H[8;056;240t[2J[001
+commit 529fc530b48eccd99c5fd2061a5c8d08d19ac3f1
 tree clean
 host AMD Ryzen 7 5800X 8-Core Processor, 16 logical processors; QEMU with KVM
 checks 1163
