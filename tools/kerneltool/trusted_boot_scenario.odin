@@ -53,16 +53,11 @@ Machine_Firmware :: enum {
 	With_Tpm_And_Secure_Boot, // The same firmware, with SECURE_BOOT_VARIABLES: the certificate of the firmware signing key enrolled, and Secure Boot on.
 }
 
-// The processors of a machine with the firmware with system management
-// mode. Each access of the firmware to its variables is a system management
-// interrupt that every processor of the machine must enter and leave
-// together. The firmware makes many such accesses before it starts the boot
-// program, and on a loaded host a processor of the machine can wait for its
-// thread on the host at each of them: with 4 processors, the start of the
-// boot program came after the bound of the tool, or never, in two runs of
-// four. One processor has nothing to wait for. These machines test the
-// boot, not the scheduler.
-TPM_MACHINE_PROCESSORS :: "1"
+// The machines with the firmware that has a TPM driver run with the
+// processors of every other machine. With one processor, the firmware of
+// the test machine refuses to measure (HashLogExtendEvent gives a device
+// error, and no extend of the register reaches the TPM): seen in a run.
+TPM_MACHINE_PROCESSORS :: "4"
 
 // The first wait of a machine with that firmware: for "boot program:
 // started", by name, with its own bound. A boot that is slow under the load
