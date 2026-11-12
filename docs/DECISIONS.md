@@ -17,8 +17,8 @@ This file is the record of the decisions of the project: who decided what, when,
 
 ## Groups
 
-1. [The principles, the properties and the contracts](#1-the-principles-the-properties-and-the-contracts): D-001 to D-039, D-191, D-205, D-214
-2. [The way of working](#2-the-way-of-working): D-040 to D-070, D-190, D-202 to D-204, D-211 to D-213
+1. [The principles, the properties and the contracts](#1-the-principles-the-properties-and-the-contracts): D-001 to D-039, D-191, D-205, D-214 to D-217
+2. [The way of working](#2-the-way-of-working): D-040 to D-070, D-190, D-202 to D-204, D-211 to D-213, D-218
 3. [The kernel](#3-the-kernel): D-071 to D-083
 4. [Memory](#4-memory): D-084 to D-088
 5. [The scheduler](#5-the-scheduler): D-089 to D-091
@@ -320,7 +320,7 @@ This file is the record of the decisions of the project: who decided what, when,
 - 2026-11-12. Decided by: the coordinator, after a question of the owner. The owner can reverse it.
 - Decision: the owner of the machine signs the system description with a key that they keep. The key of the machine in its TPM can attest the measure later. The wording of property 21 on the signer is to be corrected.
 - Words: "je comprends pas. \"la personne\" ???" (to the question: the key of the person or the key of the machine in the TPM)
-- State: open: the owner has not objected and has not confirmed.
+- State: settled by D-217.
 - Where: `PROPERTIES.md`, property 21.
 
 ### D-214 Foreign systems run in a guest; the access to the GPU is the aim
@@ -329,6 +329,27 @@ This file is the record of the decisions of the project: who decided what, when,
 - Words: "je suis okay avec test propositions, (faire les choix  plus performant/modulaire possibles). pour nt je sais pas, va voir ce que fait librent (si c'est trop compliqué, on va pas faire une usine à gaz, si ça se trouve vouloir avoir une \"compat\" est con. pour moi l'important c'est de fournir un accès au gpu pour faire de l'accélération)" [test: tes; librent: not identified by the coordinator, asked]
 - State: in force; no code yet. The comparison with the properties is the report of the coordinator of 2026-11-12.
 - Where: `PROPERTIES.md`, "Objective", rule 3; `FIRST_MILESTONE.md`, "Next steps".
+
+### D-215 The order of the access to a GPU; no native work for NT
+- 2026-11-12. Decided by: the owner, on the report of the coordinator.
+- Decision: (1) The one graphics interface in software, in Odin; (2) under QEMU, a service of the virtual GPU with the Venus encoding of Vulkan; (3) the IOMMU, then guests; (4) a driver domain on a real GPU, as an opt-in test: the machine is a laptop with an Intel integrated GPU, not owned yet; (5) a measure; the native context form is wanted too, not only when Venus is slow; (6) a native driver later. The Venus test under QEMU on the development host is an opt-in test. Only the rendering goes through the guest; the compositor keeps the screen. Venus is enough at 80 % of the native speed. No native work for programs or drivers of NT: Wine inside the Linux guest serves the programs, and a driver of Windows needs a whole NT kernel around it (the graphics kernel of LiberNT alone has 128 555 lines).
+- Words: "aller ok pour ton ordre, c'est NICKEL ! (je pense qu'on fera le \"native context\" aussi. et pour tes questions, pour l'instant, j'ai pas de machine de rechange avec gpu amd ou intel intégré. enfin pas encore, j'aurais un pc portable avec intel intégré bientôt. le reste je suis ok"; then "on est ok"
+- State: in force; no code yet.
+- Where: `FIRST_MILESTONE.md`, "Next steps"; `PROPERTIES.md`, properties 7 and 18.
+
+### D-216 The principals come before the GPU; the word "person" leaves the system
+- 2026-11-12. Decided by: the owner.
+- Decision: the named principals, the sessions, the unlock by the TPM, the identity across machines and the principal in the name of a store are built after the three primitives and before the IOMMU, the guests and the GPU. The constant `CALLER_PERSON` gets a name without "person" (`CALLER_ACTS_FOR_PRINCIPAL`, proposed by the coordinator), with the first step of the principals.
+- Words: "\"CALLER_PERSON\" bizarre le terme \"personne\" par contre, va falloir le changer. mais oui il faut faire tout ça avant le mickmack gpu"
+- State: not done yet.
+- Where: `PROPERTIES.md`, property 21; `contract/isolated/isolated.odin`.
+
+### D-217 The TPM holds what a TPM holds; the publisher signs the system
+- 2026-11-12. Decided by: the owner; the wording was given by the coordinator.
+- Decision: the TPM measures the system, seals keys to the measure and keeps the key of the machine. The key that signs the system description is the key of the publisher of the system, and it is not in the TPM. Layer 2 of property 21 is corrected. The guides say "the publisher of the system", not "the person who owns the machine". This settles D-205.
+- Words: "je comprends pas ces délires de \"personnes\" faut arrêter, ce qui dois être dans le TPM NORMALEMENT y va et c'est tout"
+- State: done in the documents.
+- Where: `PROPERTIES.md`, properties 17 and 21; `TRUSTED_BOOT.md`; `GLOSSARY.md`, "Publisher".
 
 ## 2. The way of working
 
@@ -597,6 +618,13 @@ This file is the record of the decisions of the project: who decided what, when,
 - Words: "C'est bon. Fusionne." (to: "je fusionne les couches qui marchent et je sors les machines TPM du contrôle complet en attendant")
 - State: done; the cause of the lost answer: not found.
 - Where: `TRUSTED_BOOT.md`, "The machines of the TPM"; `tools/kerneltool/trusted_boot_scenario.odin`.
+
+### D-218 No test depends on the speed of the hardware
+- 2026-11-12. Decided by: the owner.
+- Decision: a test checks a condition. A time in a test only ends a hang: the bound is generous and the same everywhere. A test never asserts a speed or a duration; a speed is a measure, printed and opt-in.
+- Words: "les tests de timeout/performance, à moins qu'ils soient par soucis de \"profliage\" n'ont aucun sens. un test qui dépend de la perofmrnace du hardware est complétement con"
+- State: in force; the audit of the tests is in progress.
+- Where: `AGENTS.md`, "Work"; `TOOLS.md`.
 
 ## 3. The kernel
 

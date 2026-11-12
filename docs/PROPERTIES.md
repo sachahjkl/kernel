@@ -313,7 +313,7 @@ Status: Decided.
 Status: Decided. The detail below is proposed.
 
 - **Rule**: The boot stage is a UEFI program. It uses the firmware services before it gives control to the kernel: it reads the modules from the boot volume, gets the memory map, gets the framebuffer, gets random numbers, and talks to the TPM. The project writes no boot loader and no boot-time disk or display code.
-- **Rule**: Secure Boot verifies the boot program. The key of the person who owns the machine signs it. The firmware refuses a boot program that is not signed.
+- **Rule**: Secure Boot verifies the boot program. The key of the publisher of the system signs it. The firmware refuses a boot program that is not signed.
 - **Rule**: The boot is measured. The boot program extends a TPM register with the hash of the system description of property 11, before the kernel starts.
 - **Why property 11 makes this cheap**: A system is one list of hashes. One measurement of that list covers every module of the system. Current systems must measure a kernel, an initial disk image, a command line and many files separately.
 - **Uses of the TPM**:
@@ -323,8 +323,8 @@ Status: Decided. The detail below is proposed.
   4. Give a hardware source of random numbers at boot.
 - **Rule**: After boot, the TPM is a device like the others. A user-space service owns its queue. Programs reach it by handle (properties 2 and 7).
 - **Forbids**: an unsigned code path from firmware to kernel, a boot loader with a configuration language, kernel arguments as free text.
-- **Cost**: A key that is sealed to exact measurements becomes unreadable after each upgrade. The standard solution is to seal to a signed policy in place of exact values: the TPM releases the key to any system list that the key of the person who owns the machine signed. A rollback to an old signed list with a known defect must be prevented by a counter in the TPM.
-- **Cost**: The system needs a key management story for the person who owns the machine: creation, enrolment in the firmware, backup, loss.
+- **Cost**: A key that is sealed to exact measurements becomes unreadable after each upgrade. The standard solution is to seal to a signed policy in place of exact values: the TPM releases the key to any system list that the key of the publisher of the system signed. A rollback to an old signed list with a known defect must be prevented by a counter in the TPM.
+- **Cost**: The system needs a key management story for the publisher of the system: creation, enrolment in the firmware, backup, loss.
 - **Reuse**: UEFI firmware services. OVMF and a software TPM under QEMU give Secure Boot and a TPM 2.0 on the first machine. The TCG TPM 2.0 specification. A small permissive TPM command library, to be selected.
 - **Open**: the exact meaning of "rich boot". This text reads it as "do as much boot work as possible with UEFI services in a UEFI program". How much the boot program does before it leaves firmware services. Which registers hold which measurements.
 - **State**: the signed system description, the measure and Secure Boot are built (`docs/TRUSTED_BOOT.md`). Before the kernel starts, the boot program verifies the description signature and the hash of the kernel and of each file of the boot image, then the firmware extends PCR 11 with the SHA-256 hash of the system description. With Secure Boot on, the firmware verifies the boot program with the certificate of the firmware signing key, an RSA key: UEFI cannot verify Ed25519. Not built: the counter against an older signed system, a sealed key, the read of PCR 4 and PCR 7.
@@ -441,7 +441,7 @@ The "user" of current systems does six jobs. This system splits them:
   6. Removal of a user leaves data behind. Here the root handle is dropped and the whole tree goes with it.
 - **Layers** (grow in this order; the zero case follows ZII):
   1. No principal. The root service is the only source of grants.
-  2. Principal 0 is the machine. Its key is in the TPM. It signs the system description. A dedicated machine stops here: no login, and the TPM unlocks storage at boot.
+  2. Principal 0 is the machine. Its key is in the TPM and never leaves it: it proves to another machine which system runs. The TPM measures the system and seals the keys of storage to that measure. The publisher of the system signs the system description, with a key that is not in the TPM (property 17). A dedicated machine stops here: no login, and the TPM unlocks storage at boot. (2026-11-12: the layer said before that the key of the TPM signs the system description.)
   3. One human principal. The unlock decrypts its documents. The lock discards the key.
   4. Several principals on one machine: disjoint handle trees, no kernel change.
   5. One principal on several machines, and sharing between principals: the principal key signs each machine key; signed grants carry access between machines.

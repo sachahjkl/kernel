@@ -439,14 +439,15 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 
 | Term | Definition | Do not use |
 |---|---|---|
-| Signing key | The Ed25519 key pair of the person who owns the machine, that signs the system description (P17). The private key is a file outside the repository, which the environment variable `SYSTEM_SIGNING_KEY` names; the boot program holds the public key | owner key, master key, release key, platform key (PK is a term of Secure Boot) |
+| Publisher | Who builds a system and signs its system description: the maker of a release, or anyone who builds a system of their own and enrols their key in their machine. A machine starts only a system of a publisher whose key it holds (P17) | vendor, owner, person, administrator |
+| Signing key | The Ed25519 key pair of the publisher of the system, that signs the system description (P17). The private key is a file outside the repository, which the environment variable `SYSTEM_SIGNING_KEY` names; the boot program holds the public key | owner key, master key, release key, platform key (PK is a term of Secure Boot) |
 | Test signing key | The signing key of the tests: the key pair of RFC 8032, section 7.1, TEST 1, in `resources/keys`. Its private key is published, so a system that it signs is not trusted, and the boot display says so | development key, demo key |
 | Signed message | The 64 bytes that the signing key signs for one system description: the label `system description signature 1`, with zero bytes to 32 bytes, then the BLAKE3 hash of the description | payload, digest (for this) |
 | Description signature | The Ed25519 signature, 64 bytes, of the signed message of a system description: the resource `system_description_signature` of the boot image | certificate, manifest signature |
 | Trust record | The record `boot_info.Boot_Trust` that the boot program writes: what verified the system description, with which public key, the BLAKE3 hash of the description, and the measure. The kernel copies it into the boot record; the root service and the boot display read it | attestation, security state |
 | Measure | The extension of a register of the TPM with the SHA-256 hash of the system description, which the firmware does at the request of the boot program, before the kernel starts (P17) | attestation (for this), seal, measurement log (for this) |
 | Measure register | PCR 11 of the TPM: the register that holds the measure | slot, PCR (alone, for this register) |
-| Firmware signing key | The RSA-2048 key and its X.509 certificate of the person who owns the machine, that sign the boot program for Secure Boot. The firmware keeps the certificate in its variable `db` | db key (for the pair), Secure Boot key |
+| Firmware signing key | The RSA-2048 key and its X.509 certificate of the publisher of the system, that sign the boot program for Secure Boot. The firmware keeps the certificate in its variable `db` | db key (for the pair), Secure Boot key |
 | Test firmware signing key | The firmware signing key of the tests, in `resources/keys`. Its private key is published, so a boot program that it signed is not trusted | development certificate |
 
 ## Project

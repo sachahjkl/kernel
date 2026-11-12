@@ -508,7 +508,10 @@ power_loss_sequence :: proc(what: string, steps: []Step, output_number: int, thi
 		return false
 	}
 	fmt.printfln("kerneltool: the second machine starts on the durable image%s: generation %d, %d versions", torn_root ? " with the write of a root torn" : "", durable_contents.mount.generation, version_count(&durable_contents))
-	second := make([dynamic]Step, context.temp_allocator)
+	// The steps live in memory of their own: the run of a scenario frees the
+	// temporary memory after each step.
+	second := make([dynamic]Step)
+	defer delete(second)
 	append(&second, Step{kind = .Wait, text = "compositor: surface console", any_order = true})
 	append(&second, Step{kind = .Launch, text = "notes"})
 	if torn_root {

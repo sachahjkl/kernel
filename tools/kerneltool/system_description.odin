@@ -21,7 +21,7 @@ import "support:cryptography/sha2"
 // the signing key. The boot program holds the public key of the same key.
 //
 // The signing key is the file that SYSTEM_SIGNING_KEY names: the private
-// key of the person who owns the machine, outside the repository. With no
+// key of the publisher of the system, outside the repository. With no
 // such variable, the build signs with the test signing key of
 // resources/keys, whose private key is published: the machine then says
 // that it is not trusted. The private key never goes into the boot volume:
@@ -94,7 +94,7 @@ signing_key_read :: proc() -> (key: Signing_Key, ok: bool) {
 	if path == "" {
 		path = TEST_SIGNING_KEY_FILE
 	} else if path_inside_repository(path) {
-		fmt.eprintfln("kerneltool: %s names %s, inside the repository: the private key of the person who owns the machine stays outside it", SIGNING_KEY_VARIABLE, path)
+		fmt.eprintfln("kerneltool: %s names %s, inside the repository: the private key of the publisher of the system stays outside it", SIGNING_KEY_VARIABLE, path)
 		return
 	} else if !private_key_file_check(path) {
 		return
@@ -116,7 +116,7 @@ signing_key_read :: proc() -> (key: Signing_Key, ok: bool) {
 		signing_key_said = true
 		digits := system_description.hexadecimal(key.public_key)
 		if key.is_test {
-			fmt.printfln("kerneltool: the system is signed with the TEST signing key (%s): its private key is published, and the machine says that it is not trusted. Set %s to the private key of the person who owns the machine (`kerneltool key new <folder>`).", path, SIGNING_KEY_VARIABLE)
+			fmt.printfln("kerneltool: the system is signed with the TEST signing key (%s): its private key is published, and the machine says that it is not trusted. Set %s to the private key of the publisher of the system (`kerneltool key new <folder>`).", path, SIGNING_KEY_VARIABLE)
 		} else {
 			fmt.printfln("kerneltool: the system is signed with the key of %s, public key %s", path, string(digits[:]))
 		}
@@ -211,7 +211,7 @@ path_inside_repository :: proc(path: string) -> bool {
 
 // private_key_file_check refuses a private key file that another user owns,
 // or that the group or the others can read, write or run: such a key can be
-// copied by someone who is not the person who owns the machine.
+// copied by someone who is not the publisher of the system.
 private_key_file_check :: proc(path: string) -> bool {
 	information, stat_error := os.stat(path, context.temp_allocator)
 	if stat_error != nil {

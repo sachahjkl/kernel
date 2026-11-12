@@ -94,7 +94,7 @@ Verifier :: enum u64 {
 Signing_Key_Kind :: enum u64 {
 	None   = 0,
 	Test   = 1, // The test signing key: its private key is published, so the system is not trusted.
-	Person = 2, // Any other key: the signing key of the person who owns the machine.
+	Person = 2, // Any other key: the signing key of the publisher of the system.
 }
 
 Measure_State :: enum u64 {

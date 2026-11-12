@@ -398,7 +398,7 @@ A module names each import by its hash. The party that starts a program can give
 - **Bind by name, one time**: the slot of A holds an export index of B. The loader translates it to the index in B2 at load. The call stays one indirect call through a slot.
 - **What the check cannot prove**: that B2 behaves as B. The party that writes the table asserts it. Later, a signature of the table by a principal carries this assertion (P9).
 - **Visible**: the identity of a program that runs is the hash of its module and the replacements that the loader applied. `programs()` and the manual show them. A report of a fault names B2, not B.
-- **Cost**: "the exact versions that were built together" is then true only for a program with no replacement. This is the purpose: the person who owns the machine, not the author of A, has the last word on the code that runs.
+- **Cost**: "the exact versions that were built together" is then true only for a program with no replacement. This is the purpose: the publisher of the system, not the author of A, has the last word on the code that runs.
 
 #### As implemented
 
