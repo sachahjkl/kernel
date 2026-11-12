@@ -32,6 +32,11 @@ VECTOR_SYNC :: 50 // Another processor waits for this one: see processor_sync.
 VECTOR_SPURIOUS :: 63
 VECTOR_MESSAGE_BASE :: 64 // The message interrupts (operation.Device_Kind.Message): vectors 64 to 79.
 VECTOR_KERNEL_ENTER :: 128
+// Not a vector of the processor: interrupt_common writes it in the frame of
+// a program whose debug frame a second debug trap took the place of, after
+// int1 with a held trap. The frame has no instruction address and no stack
+// address: the program stops (kernel/processor.asm, interrupt_common).
+VECTOR_DEBUG_FRAME_LOST :: 255
 // The interrupt stacks of the task state, from 1 (0 in a gate: no stack of
 // its own).
 INTERRUPT_STACK_DOUBLE_FAULT :: 1
@@ -398,10 +403,14 @@ processor_setup :: proc "contextless" (cpu: ^Processor) {
 	descriptor := Table_Descriptor{size_of(cpu.segments) - 1, u64(uintptr(&cpu.segments))}
 	gdt_load(&descriptor)
 	task_register_load(SELECTOR_TASK)
-	descriptor = {size_of(gates) - 1, u64(uintptr(&gates))}
-	interrupt_table_load(&descriptor)
+	// The gs bases before the interrupt table: the load of the segment
+	// table cleared the gs base, and an NMI that came after the load of the
+	// table with that base would take, by the sign rule of interrupt_common,
+	// the value that the firmware left in MSR_KERNEL_GS_BASE.
 	model_specific_register_write(MSR_GS_BASE, u64(uintptr(cpu)))
 	model_specific_register_write(MSR_KERNEL_GS_BASE, 0)
+	descriptor = {size_of(gates) - 1, u64(uintptr(&gates))}
+	interrupt_table_load(&descriptor)
 
 	// The syscall instruction.
 	MSR_EFER :: 0xC000_0080
@@ -445,9 +454,9 @@ processor_setup :: proc "contextless" (cpu: ^Processor) {
 		}
 	}
 	control_register_4_write(cr4)
-	// No breakpoint that the firmware set stays on: a debug exception in
-	// the kernel stops the machine, except in the first instructions of the
-	// entry of syscall, where interrupt_common drops it.
+	// No breakpoint that the firmware set stays on: then each debug
+	// exception in the kernel is a trap of a program that came late, which
+	// interrupt_common drops.
 	debug_register_7_write(DR7_NO_BREAKPOINT)
 	debug_register_6_write(DR6_CLEAR)
 	apic_setup(cpu)

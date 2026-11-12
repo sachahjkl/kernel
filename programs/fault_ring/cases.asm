@@ -117,3 +117,54 @@ mov_ss_then_syscall:
 mov_ss_then_syscall_end:
 	pop rbx
 	ret
+
+; mov_ss_then_int3(): the trap flag set, then mov ss and int3 as the next
+; instruction. The breakpoint enters its gate at privilege 3; a processor
+; can then give the held trap of mov ss at the first instruction of the
+; stub of the kernel, which drops it there (docs/ARCHITECTURE.md, "The
+; windows of the entry and of the return"). The handler gets one
+; breakpoint record, at mov_ss_then_int3_instruction + 1, and each other
+; record must be a debug trap between mov_ss_then_int3 and
+; mov_ss_then_int3_end.
+global mov_ss_then_int3
+global mov_ss_then_int3_instruction
+global mov_ss_then_int3_end
+mov_ss_then_int3:
+	push rbx
+	mov bx, ss
+	pushfq
+	or qword [rsp], 0x100
+	popfq
+	mov ss, bx
+mov_ss_then_int3_instruction:
+	db 0xCC                      ; int3
+	pushfq
+	and qword [rsp], ~0x100
+	popfq
+mov_ss_then_int3_end:
+	pop rbx
+	ret
+
+; mov_ss_then_int1(): the same with int1 (the byte F1), whose gate is the
+; one of the debug exception, on its own interrupt stack. A processor that
+; gives the held trap at the first instruction of that stub puts its frame
+; where the frame of int1 was: the kernel then cannot return to the thread,
+; and stops the program with the stop code of a debug exception and the
+; instruction address 0. A processor that does not gives debug records
+; between mov_ss_then_int1 and mov_ss_then_int1_end.
+global mov_ss_then_int1
+global mov_ss_then_int1_end
+mov_ss_then_int1:
+	push rbx
+	mov bx, ss
+	pushfq
+	or qword [rsp], 0x100
+	popfq
+	mov ss, bx
+	db 0xF1                      ; int1
+	pushfq
+	and qword [rsp], ~0x100
+	popfq
+mov_ss_then_int1_end:
+	pop rbx
+	ret

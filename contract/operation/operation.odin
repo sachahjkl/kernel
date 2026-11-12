@@ -217,8 +217,8 @@ Operation :: enum u32 {
 	// or is revoked: the table lives while the right that made it lives.
 	// The control of a thread (docs/ARCHITECTURE.md, "The control of a thread").
 	Thread_Control = 33, // (thread handle or 0, thread number when the handle is 0, Thread_Control_Command, address,
-	// size) -> see Thread_Control_Command. The handle needs the rights of thread_control_rights: Inspect to stop, to
-	// resume and to read, Write to write. With the handle 0, the number names a live thread of this program
+	// size) -> see Thread_Control_Command. The handle needs the rights of thread_control_rights: Inspect for each
+	// command, and Write too for a write. With the handle 0, the number names a live thread of this program
 	// (Thread_Record.number, Fault_Record.thread; Bad_State if none); a thread of another program needs a handle.
 	// Stop and Resume change the stop count of the thread: it runs only while the count is 0. The registers are read
 	// and written only while the thread is held: its stop count is above 0, or it waits for an answer of the fault
@@ -531,14 +531,15 @@ Thread_Control_Command :: enum u64 {
 }
 
 // thread_control_rights gives the rights that a thread handle needs for a
-// command of Thread_Control. A write lets its holder choose the code that
-// the program of the thread runs, so it has its own right; a hold and a
-// read do not, so a profiler gets them with no write; Control, the right to
-// end a thread, gives neither.
+// command of Thread_Control: Inspect for each command, and Write too for a
+// write. A write lets its holder choose the code that the program of the
+// thread runs, so it has its own right; a hold and a read do not, so a
+// profiler gets them with no write. A writer also reads the frame before it
+// writes it. Control, the right to end a thread, gives none of them.
 thread_control_rights :: proc "contextless" (command: Thread_Control_Command) -> Rights {
 	#partial switch command {
 	case .Write_Registers, .Write_Extended_State:
-		return {.Write}
+		return {.Inspect, .Write}
 	}
 	return {.Inspect}
 }

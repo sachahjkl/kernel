@@ -117,45 +117,70 @@ gdt_load:                        ; (descriptor: rawptr): load the table and all 
 ;   itself (rip resume_return, vector 11, 12 or 13: the processor refused
 ;   the frame; kernel_interrupt makes it a fault of the thread), an NMI or a
 ;   machine check arrive there.
-; - from the kernel between the first instruction of a stub and the swapgs
-;   of .from_program below, for an interrupt from a program: the base of
-;   the program. Only an NMI or a machine check arrives there.
+; - from the kernel at a stub of an interrupt from a program, before the
+;   swapgs of .from_program below: the base of the program. An NMI or a
+;   machine check arrives there, and a debug trap that the processor held
+;   over the instruction that entered the gate: mov ss or pop ss, then int3,
+;   int1 or any instruction that faults, with the trap flag set. The trap
+;   then comes at the first instruction of the stub.
 ; - from the kernel anywhere else: the base of the kernel.
 ;
 ; So the stub decides:
-; - A debug trap and the faults of the iretq of resume, by the saved
-;   instruction address compared with the labels of the two windows: these
-;   come only there, and the value of the base does not tell the window.
-; - An NMI and a machine check, which can come at any instruction, by the
-;   sign of the base, as Linux does in paranoid_entry: the base of the
-;   kernel is an address of the kernel half; the base of a program is its
-;   thread record, below the kernel half, or 0 when the program loaded its
-;   gs register (each descriptor has the base 0). A program cannot write a
-;   base of the kernel half: the instruction wrgsbase is off (CR4.FSGSBASE
-;   is clear, an assert of kernel/processor.odin) and wrmsr is privileged.
+; - A debug trap from the kernel is always a trap of a program that came
+;   late: the kernel sets no breakpoint (DR7), and each gate and the mask of
+;   syscall clear the trap flag. It runs no compiled code, so it needs no gs:
+;   the stub clears DR6 and returns with iretq to the instruction where it
+;   came, which goes on with its own stack and gs (the entry of syscall, or
+;   a stub, whose frame of the program is intact on the kernel stack). The
+;   trap is dropped; the trap flag of the program is in that frame or in
+;   r11, so the program gets its next trap after its next instruction.
+;   One case differs: a held trap at the first instruction of stub_1, after
+;   int1 of a program. The two debug exceptions use one interrupt stack, and
+;   the second frame took the place of the first: the instruction address,
+;   the stack pointer and the flags of the program are lost; its general
+;   registers are not (no instruction ran between). No return is possible,
+;   so the program, which asked for it, stops: the stub takes the kernel's
+;   gs by the sign rule below, writes a frame of the program with the vector
+;   VECTOR_DEBUG_FRAME_LOST and no address, and goes on as from a program.
+; - The faults of the iretq of resume, by the saved instruction address
+;   compared with the labels of that window: they come only there.
+; - An NMI, a machine check and a double fault, which can come at any
+;   instruction, by the sign of the base, as Linux does in paranoid_entry:
+;   the base of the kernel is an address of the kernel half; the base of a
+;   program is its thread record, below the kernel half, or 0 when the
+;   program loaded its gs register (each descriptor has the base 0). A
+;   program cannot write a base of the kernel half: the instruction
+;   wrgsbase is off (CR4.FSGSBASE is clear, an assert of
+;   kernel/processor.odin) and wrmsr is privileged. A double fault takes
+;   that rule before the test of cs: the processor leaves its saved cs and
+;   rip undefined.
 ;
 ; Each path that takes the swap here never comes back to the iretq of this
-; stub: kernel_interrupt stops the machine for an NMI or a machine check in
-; the kernel, and ends the thread of a refused return. So no swap back is
-; needed. The base of the kernel stays in MSR_KERNEL_GS_BASE through each
-; window, so the swap gives it, whatever the program loaded.
+; stub: kernel_interrupt stops the machine for an NMI, a machine check and a
+; double fault, ends the thread of a refused return, and stops the program
+; of a lost debug frame. So no swap back is needed. The base of the kernel
+; stays in MSR_KERNEL_GS_BASE through each window, so the swap gives it,
+; whatever the program loaded.
 ;
-; A debug trap in the window of kernel_enter is not a fault of the kernel:
-; the program asked for the trap, and the syscall cleared the trap flag
-; for the kernel. The stub clears DR6 and returns to the entry, which goes
-; on; no compiled code runs on a gs that the stub did not choose. The trap
-; is dropped: the flags of the program in r11 keep its trap flag, so the
-; program gets its next trap after its first instruction after the return.
+; An NMI needs no guard against a second NMI on its stack: the processor
+; holds the next NMI until the next iretq, and the handler of an NMI never
+; runs one. It stops the machine, and a fault inside its report stops the
+; machine too. A handler that returned would need that guard.
+VECTOR_DEBUG_FRAME_LOST equ 255   ; VECTOR_DEBUG_FRAME_LOST in kernel/processor.odin.
 interrupt_common:
 	PUSH_REGISTERS
 	cmp byte [user_access_guard], 0
 	je .no_guard
 	clac                         ; The interrupted code could be in user_copy, or a program set the flag.
 .no_guard:
+	mov rax, [rsp + 15 * 8]      ; The vector. rax, rcx and rdx are on the stack: free here.
+	cmp rax, 8                   ; A double fault: its saved cs says nothing.
+	je .gs_by_its_sign
 	test byte [rsp + 18 * 8], 3  ; did the interrupt come from a program?
 	jnz .from_program
-	; From the kernel. rax, rcx and rdx are on the stack: free here.
-	mov rax, [rsp + 15 * 8]      ; The vector.
+	; From the kernel.
+	cmp rax, 1                   ; A debug trap.
+	je .debug_from_the_kernel
 	cmp rax, 2                   ; A non-maskable interrupt.
 	je .gs_by_its_sign
 	cmp rax, 18                  ; A machine check.
@@ -166,7 +191,7 @@ interrupt_common:
 	jb .not_in_entry
 	lea rcx, [rel kernel_enter_on_kernel_stack]
 	cmp rax, rcx
-	jb .in_entry
+	jb .gs_by_its_sign           ; Nothing else can come there; at kernel_enter the gs is the program's: the sign rule decides.
 .not_in_entry:
 	lea rcx, [rel resume_with_program_gs]
 	cmp rax, rcx
@@ -176,14 +201,32 @@ interrupt_common:
 	ja interrupt_call
 	swapgs                       ; Between the swapgs of resume and its iretq: the kernel's gs back.
 	jmp interrupt_call
-.in_entry:
-	cmp qword [rsp + 15 * 8], 1  ; The vector: a debug trap.
-	jne .gs_by_its_sign          ; Nothing else can come there: a fault of the kernel, with the kernel's gs.
+.debug_from_the_kernel:
 	mov eax, 0xFFFF0FF0          ; DR6 with no status (DR6_CLEAR in kernel/processor.odin).
 	mov dr6, rax
+	lea rcx, [rel stub_1]
+	cmp [rsp + 17 * 8], rcx
+	je .debug_frame_lost
 	POP_REGISTERS
 	add rsp, 16
-	iretq                        ; Back to the entry, on the stack and the gs that it had.
+	iretq                        ; Back where the trap came, on the stack and the gs that it had.
+.debug_frame_lost:
+	mov ecx, 0xC0000101          ; MSR_GS_BASE
+	rdmsr
+	test edx, edx
+	js .debug_frame_written
+	swapgs
+.debug_frame_written:
+	; The frame of a program with no instruction address and no stack
+	; address: the kernel writes no frame that a return could take.
+	mov qword [rsp + 15 * 8], VECTOR_DEBUG_FRAME_LOST
+	mov qword [rsp + 16 * 8], 0  ; The error code.
+	mov qword [rsp + 17 * 8], 0  ; rip
+	mov qword [rsp + 18 * 8], 0x23 ; cs: user code
+	mov qword [rsp + 19 * 8], 0x202 ; rflags: interrupts on
+	mov qword [rsp + 20 * 8], 0  ; rsp
+	mov qword [rsp + 21 * 8], 0x1B ; ss: user data
+	jmp .move_to_the_kernel_stack
 .gs_by_its_sign:
 	mov ecx, 0xC0000101          ; MSR_GS_BASE
 	rdmsr                        ; edx: bits 32 to 63 of the base.
@@ -193,15 +236,16 @@ interrupt_common:
 	jmp interrupt_call
 .from_program:
 	swapgs
-	; An exception with a stack of its own (debug, NMI, machine check)
-	; arrives on that stack also from a program. The kernel can then switch
-	; to another thread, wait, and reuse that stack for the next one: so the
-	; frame moves to the top of the kernel stack, where each entry from a
-	; program puts it, and the stack of the exception is free again.
+	; A debug trap arrives on its own stack also from a program. The kernel
+	; can then switch to another thread, wait, and reuse that stack for the
+	; next trap: so its frame moves to the top of the kernel stack, where
+	; each entry from a program puts it, and the stack is free again. An NMI
+	; and a machine check stay on their stacks: they stop the machine.
+	cmp qword [rsp + 15 * 8], 1
+	jne interrupt_from_program
+.move_to_the_kernel_stack:
 	mov rax, [gs:abs 0]
 	sub rax, 22 * 8
-	cmp rsp, rax
-	je interrupt_from_program
 	mov rsi, rsp
 	mov rdi, rax
 	mov ecx, 22

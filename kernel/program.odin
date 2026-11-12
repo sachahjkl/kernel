@@ -1723,6 +1723,19 @@ kernel_interrupt :: proc "c" (frame: ^Frame) {
 		thread.frame = frame^
 	}
 	switch {
+	case frame.vector == VECTOR_DEBUG_FRAME_LOST:
+		// The program ran int1 with a held debug trap, and the second trap
+		// took the place of the frame of the first on their one stack: the
+		// kernel does not know where the thread was, so it cannot return to
+		// it, and no fault handler could resume it. The program stops with
+		// the stop code of a debug exception and the instruction address 0;
+		// its general registers are its own, so the stack trace starts from
+		// its frame pointer.
+		frame.vector = VECTOR_DEBUG
+		program_fault(thread.program, frame, 0)
+		if event_wanted(cpu, OBSERVED_FAULT, .Fault, thread.program) {
+			event_record(cpu, .Fault, thread.program, thread.number, frame.vector, 0, u64(op.Event_Fault_Outcome.Stopped))
+		}
 	case frame.vector == VECTOR_KERNEL_ENTER:
 		cpu.entries += 1
 		enter(cpu, cpu.current)

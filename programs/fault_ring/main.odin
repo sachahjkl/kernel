@@ -59,14 +59,16 @@
 //  25. Two stops need two Resumes.
 //  26. The rights of a thread handle: with Read and Control (the right to
 //      end it), each command is refused; with Inspect only, a stop, a
-//      read and a resume are accepted, and a write is refused.
+//      read and a resume are accepted, and a write is refused; with Write
+//      only, a write is refused too: a write needs Inspect and Write.
 //  27. A divide error whose handler adds the length of the div to the
 //      instruction address and writes rax: Resume, refused before the
 //      write, is accepted after it, and the thread goes on.
 //  28. In its own child: no call names a thread of another program without
 //      a handle; the thread of the parent keeps running.
-// The entries to the gates and the debug trap (cases 29 to 33, one child
-// whose handler takes Debug, Breakpoint and General_Protection):
+// The entries to the gates and the debug trap (cases 29 to 34, one child
+// whose handler takes Debug, Breakpoint and General_Protection; case 35 in
+// its own child):
 //  29. int 3 in two bytes (CD 03): a breakpoint, at the address + 2.
 //  30. int 14 (CD 0E): a protection fault with the error code 0x72, never a
 //      page fault; the handler skips its two bytes.
@@ -78,6 +80,13 @@
 //      program, in its code. It does not show that the processor gave no
 //      trap at the first instruction of the kernel entry: the kernel drops
 //      such a trap there.
+//  34. mov ss, then int3, with the trap flag: one breakpoint record, and
+//      each other record is a debug trap in the code; a held trap at the
+//      stub of int3 is dropped by the kernel.
+//  35. mov ss, then int1, with the trap flag: either debug records in the
+//      code, or, on a processor that gives the held trap at the stub of
+//      int1, a stop of the child with the code of a debug exception and the
+//      instruction address 0. The line says which.
 package fault_ring
 
 import "base:intrinsics"
@@ -93,7 +102,7 @@ import "support:system"
 LINE :: interface.TABLE_LINE
 WIDTH :: 1024
 HEIGHT :: 604
-ROWS_IN_THE_FIRST_COLUMN :: 17
+ROWS_IN_THE_FIRST_COLUMN :: 18
 COLUMN_GAP :: 16
 VALUE_X :: 300 // Where the value of a row starts, in its column.
 PAGE :: system.PAGE_SIZE
@@ -134,6 +143,7 @@ Role :: enum u64 {
 	Controls              = 17,
 	Foreign_Thread        = 18,
 	Debug_Entries         = 19,
+	Debug_Frame_Lost      = 20,
 }
 
 // The routines of cases.asm, and the labels inside them.
@@ -150,6 +160,8 @@ foreign _ {
 	icebp :: proc "c" () ---
 	single_step_six :: proc "c" () ---
 	mov_ss_then_syscall :: proc "c" () ---
+	mov_ss_then_int3 :: proc "c" () ---
+	mov_ss_then_int1 :: proc "c" () ---
 	spin_loop_start: u8
 	spin_loop_end: u8
 	divide_instruction: u8
@@ -160,6 +172,9 @@ foreign _ {
 	single_step_first: u8
 	single_step_end: u8
 	mov_ss_then_syscall_end: u8
+	mov_ss_then_int3_instruction: u8
+	mov_ss_then_int3_end: u8
+	mov_ss_then_int1_end: u8
 }
 
 address_of :: #force_inline proc "contextless" (label: ^u8) -> u64 {
@@ -193,7 +208,10 @@ BREAKPOINT_ALL :: 0x3
 CONTROLS_CODE :: 0x1000
 CONTROLS_ALL :: 0xFF
 DEBUG_ENTRIES_CODE :: 0x2000
-DEBUG_ENTRIES_ALL :: 0x1F
+DEBUG_ENTRIES_ALL :: 0x3F
+// The child of case 35 stops with this code, plus 1 when each record is a
+// debug trap in its code, unless the kernel stops it first.
+DEBUG_FRAME_LOST_CODE :: 0x4000
 FOREIGN_THREAD_CODE :: 0x3000
 FOREIGN_THREAD_ALL :: 0x1
 WRITTEN_VALUE :: MAGIC | 0x7 // Case 21: the value written in r12.
@@ -271,8 +289,9 @@ Case :: struct {
 FIRST_CONTROL_ROW :: 19
 FOREIGN_THREAD_ROW :: 27
 FIRST_ENTRY_ROW :: 28
+DEBUG_FRAME_LOST_ROW :: 34
 
-cases := [33]Case {
+cases := [35]Case {
 	{name = "a read of a page that is not committed", role = .Repairs, bit = 1},
 	{name = "a write to a read-only page", role = .Repairs, bit = 2},
 	{name = "a stack that grows by 64 pages", role = .Repairs, bit = 4},
@@ -306,6 +325,8 @@ cases := [33]Case {
 	{name = "int1", role = .Debug_Entries, bit = 0x04},
 	{name = "the trap flag set with popfq", role = .Debug_Entries, bit = 0x08},
 	{name = "mov ss, then syscall, with the trap flag", role = .Debug_Entries, bit = 0x10},
+	{name = "mov ss, then int3, with the trap flag", role = .Debug_Entries, bit = 0x20},
+	{name = "mov ss, then int1, with the trap flag", role = .Debug_Frame_Lost},
 }
 
 program_generator: random.Generator
@@ -1047,12 +1068,16 @@ child_controls :: proc "contextless" () -> ! {
 	_, inspector_write := control(inspector, 0, .Write_Registers, &registers, size_of(registers))
 	_, inspector_resume := control(inspector, 0, .Resume)
 	inspector_right := inspector_given == .Ok && inspector_stop == .Ok && inspector_read == .Ok && inspector_write == .No_Right && inspector_resume == .Ok
+	// A write needs Inspect too: a handle with Write only is refused.
+	writer, writer_given := system.give(0, spinner.handle, {.Write})
+	_, writer_write := control(writer, 0, .Write_Registers, &registers, size_of(registers))
+	writer_right := writer_given == .Ok && writer_write == .No_Right
 	ran = grows(&control_cells.count)
-	right = ender_right && inspector_right && ran
+	right = ender_right && inspector_right && writer_right && ran
 	if right {
 		bits |= 0x40
 	}
-	system.log("fault_ring: the rights of a thread handle: with Read and Control, Stop got ", op.STATUS_NAMES[ender_stop], ", Read_Registers ", op.STATUS_NAMES[ender_read], ", Write_Registers ", op.STATUS_NAMES[ender_write], "; with Inspect only, Stop, Read_Registers and Resume got ", inspector_stop == .Ok && inspector_read == .Ok && inspector_resume == .Ok ? string("Ok") : string("an error"), ", Write_Registers ", op.STATUS_NAMES[inspector_write], "; the thread kept running", right ? string(": as it must") : string(": WRONG"))
+	system.log("fault_ring: the rights of a thread handle: with Read and Control, Stop got ", op.STATUS_NAMES[ender_stop], ", Read_Registers ", op.STATUS_NAMES[ender_read], ", Write_Registers ", op.STATUS_NAMES[ender_write], "; with Inspect only, Stop, Read_Registers and Resume got ", inspector_stop == .Ok && inspector_read == .Ok && inspector_resume == .Ok ? string("Ok") : string("an error"), ", Write_Registers ", op.STATUS_NAMES[inspector_write], "; with Write only, Write_Registers got ", op.STATUS_NAMES[writer_write], "; the thread kept running", right ? string(": as it must") : string(": WRONG"))
 
 	// 27. A divide error skipped by its handler.
 	handler_start(divide_handler)
@@ -1085,7 +1110,7 @@ child_foreign_thread :: proc "contextless" () -> ! {
 	system.stop(FOREIGN_THREAD_CODE | (refused == tried ? u32(FOREIGN_THREAD_ALL) : u32(0)))
 }
 
-// The cases 29 to 33: the entries to the gates and the debug trap. The
+// The cases 29 to 35: the entries to the gates and the debug trap. The
 // handler keeps each record, skips the two bytes of int 14, and answers
 // Resume to each record.
 entry_records: [64]op.Fault_Record
@@ -1198,7 +1223,44 @@ child_debug_entries :: proc "contextless" () -> ! {
 		bits |= 0x10
 	}
 	entry_line("mov ss, then syscall, with the trap flag", "on this processor the machine went on, and each record is a debug trap of this program, in its code", right)
+
+	// 34. mov ss, then int3, with the trap flag.
+	start = intrinsics.atomic_load(&entry_record_count)
+	mov_ss_then_int3()
+	records = entry_records_since(start)
+	breakpoints := 0
+	right = intrinsics.atomic_load(&entry_handler_failures) == 0
+	for record in records {
+		in_code := record.instruction > u64(uintptr(rawptr(mov_ss_then_int3))) && record.instruction <= address_of(&mov_ss_then_int3_end)
+		switch {
+		case record.kind == .Breakpoint && record.instruction == address_of(&mov_ss_then_int3_instruction) + 1:
+			breakpoints += 1
+		case record.kind != .Debug || !in_code:
+			right = false
+		}
+	}
+	right = right && breakpoints == 1
+	if right {
+		bits |= 0x20
+	}
+	entry_line("mov ss, then int3, with the trap flag", "on this processor the machine went on; one breakpoint record after the int3, and each other record is a debug trap of this program, in its code", right)
 	system.stop(DEBUG_ENTRIES_CODE | bits)
+}
+
+// Case 35, in its own child: on a processor that gives the held trap at the
+// first instruction of the stub of int1, the kernel stops this program, and
+// the child stops before its own stop below.
+child_debug_frame_lost :: proc "contextless" () -> ! {
+	handler_start(entries_handler)
+	mov_ss_then_int1()
+	records := entry_records_since(0)
+	right := len(records) >= 1 && intrinsics.atomic_load(&entry_handler_failures) == 0
+	for record in records {
+		if record.kind != .Debug || record.instruction <= u64(uintptr(rawptr(mov_ss_then_int1))) || record.instruction > address_of(&mov_ss_then_int1_end) {
+			right = false
+		}
+	}
+	system.stop(DEBUG_FRAME_LOST_CODE | (right ? u32(1) : u32(0)))
 }
 
 lazy_object :: proc "contextless" (pages: u64) {
@@ -1301,6 +1363,8 @@ child :: proc "contextless" (role: Role) -> ! {
 		child_foreign_thread()
 	case .Debug_Entries:
 		child_debug_entries()
+	case .Debug_Frame_Lost:
+		child_debug_frame_lost()
 	}
 	system.stop(30) // Not reached: each case above stops its program.
 }
@@ -1499,7 +1563,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		code, report, left, ran, page = child_run(item.role, item.name)
 		item.ran = true
 		switch item.role {
-		case .Parent, .Repairs, .Controls, .Foreign_Thread, .Debug_Entries:
+		case .Parent, .Repairs, .Controls, .Foreign_Thread, .Debug_Entries, .Debug_Frame_Lost:
 			// Not in these rows: the cases 1 to 4 ran above in one child, the
 			// cases from 20 run below.
 		case .Answer_Stop:
@@ -1567,13 +1631,31 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	draw(&window)
 
 	// The entries to the gates and the debug trap: one child for the cases
-	// 29 to 33.
+	// 29 to 34.
 	code, _, left, ran, _ = child_run(.Debug_Entries, "the entries and the debug trap")
-	for &item in cases[FIRST_ENTRY_ROW:] {
+	for &item in cases[FIRST_ENTRY_ROW:DEBUG_FRAME_LOST_ROW] {
 		item.ran = true
 		item.right = ran && code & ~u32(DEBUG_ENTRIES_ALL) == DEBUG_ENTRIES_CODE && code & item.bit != 0 && !left
 	}
 	system.log("fault_ring: the entries and the debug trap: the child stopped with the code ", system.Hex(u64(code)), code == DEBUG_ENTRIES_CODE | DEBUG_ENTRIES_ALL && !left ? string(": as it must") : string(": WRONG"))
+	draw(&window)
+
+	// Case 35: two outcomes, by what the processor does; each one is right,
+	// and the line says which one this processor gave.
+	lost_case := &cases[DEBUG_FRAME_LOST_ROW]
+	lost_report: op.Stop_Report
+	code, lost_report, left, ran, _ = child_run(.Debug_Frame_Lost, lost_case.name)
+	records_in_code := code == DEBUG_FRAME_LOST_CODE | 1
+	stopped_by_the_kernel := code == op.STOP_CODE_FAULT + u32(op.Fault_Kind.Debug) && lost_report.vector == u32(op.Fault_Kind.Debug) && lost_report.instruction == 0
+	lost_case.ran = true
+	lost_case.right = ran && (records_in_code || stopped_by_the_kernel) && !left
+	outcome := "neither outcome"
+	if records_in_code {
+		outcome = "the int1 and the trap came to the program as debug records in its code"
+	} else if stopped_by_the_kernel {
+		outcome = "the trap came at the stub of int1, and the kernel stopped the child with the code of a debug exception and the instruction address 0"
+	}
+	system.log("fault_ring: mov ss, then int1, with the trap flag: the machine went on and the child gave back every page and every thread; on this processor ", outcome, lost_case.right ? string(": as it must") : string(": WRONG"))
 	draw(&window)
 
 	right := 0
