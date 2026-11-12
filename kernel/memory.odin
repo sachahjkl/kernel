@@ -386,27 +386,19 @@ frames_check :: proc "contextless" () {
 	}
 }
 
-// page_entry gives the entry of the last level table for an address.
-// With create, it makes the tables that are missing: the budget pays. The
-// budget is the field of the program that names it: the frame lock reads it.
-page_entry :: proc "contextless" (table: u64, address: u64, create: bool, budget: ^u32 = nil) -> ^u64 {
+// page_entry gives the entry of the last level table for an address, or
+// nil when a table on the way is missing. It makes no table. A large page:
+// the entry of the second level is the entry of the address (an object made
+// Large_Pages).
+page_entry :: proc "contextless" (table: u64, address: u64) -> ^u64 {
 	current := table
 	for level := uint(3); level >= 1; level -= 1 {
 		entry := &direct(current, [512]u64)[address >> (12 + 9 * level) & 511]
-		// A large page: the entry of the second level is the entry of the
-		// address (an object made Large_Pages).
 		if level == 1 && entry^ & PAGE_LARGE != 0 {
 			return entry
 		}
 		if entry^ & PAGE_PRESENT == 0 {
-			if !create {
-				return nil
-			}
-			child := frame_paid(budget)
-			if child == 0 {
-				return nil
-			}
-			entry^ = child | PAGE_PRESENT | PAGE_WRITE | PAGE_USER
+			return nil
 		}
 		current = entry^ & PAGE_ADDRESS
 	}
@@ -414,50 +406,234 @@ page_entry :: proc "contextless" (table: u64, address: u64, create: bool, budget
 }
 
 // page_directory_entry gives the entry of the second level for an address
-// aligned on 2 MiB, present or not: the place of a large page. With create
-// it makes the tables above it that are missing (the budget pays); a table
-// of the last level that is there, with no present entry (a range that a
-// mapping left), returns to the budget. nil: no table, or the budget has
-// no page. The caller holds the program lock.
-page_directory_entry :: proc "contextless" (table: u64, address: u64, create: bool, budget: ^u32 = nil) -> ^u64 {
+// aligned on 2 MiB, present or not: the place of a large page. nil: a table
+// above it is missing. It makes no table.
+page_directory_entry :: proc "contextless" (table: u64, address: u64) -> ^u64 {
 	current := table
 	for level := uint(3); level >= 2; level -= 1 {
 		entry := &direct(current, [512]u64)[address >> (12 + 9 * level) & 511]
 		if entry^ & PAGE_PRESENT == 0 {
-			if !create {
-				return nil
-			}
-			child := frame_paid(budget)
-			if child == 0 {
-				return nil
-			}
-			entry^ = child | PAGE_PRESENT | PAGE_WRITE | PAGE_USER
+			return nil
 		}
 		current = entry^ & PAGE_ADDRESS
 	}
-	entry := &direct(current, [512]u64)[address >> 21 & 511]
-	if create && entry^ & PAGE_PRESENT != 0 && entry^ & PAGE_LARGE == 0 {
-		// No mapping is in these 2 MiB (map_region checked it): the table
-		// of the last level has no present entry. Its page returns, after
-		// each processor that uses this page table forgot the entry that
-		// names it (a processor can keep the entries of the upper levels).
-		old_table := entry^ & PAGE_ADDRESS
-		entry^ = 0
-		intrinsics.atomic_thread_fence(.Seq_Cst)
-		processor_sync(processors_with_table(table))
-		if self := processor_self(); intrinsics.atomic_load(&self.table) == table {
-			control_register_3_write(table)
+	return &direct(current, [512]u64)[address >> 21 & 511]
+}
+
+// The held entries of the page tables of a program (docs/ARCHITECTURE.md,
+// "The page tables of a program"). An entry is held while a mapping covers
+// it: a page of a mapping, present or not, a large page, or an entry that
+// names a table with held entries. A table with no held entry is freed at
+// once, and the budget that paid for it gets its page back; the top table
+// lives as long as the program.
+//
+// The count of the held entries of a table is in the entry that names the
+// table, in the bits 52 to 62. The processor ignores those bits in an entry
+// that names a table (the processor manual, Intel SDM volume 3A, the tables
+// of the formats of the entries of 4-level paging), and the kernel keeps no
+// record for each frame (a frame is one bit of frame_bits): so the count
+// costs no memory, and it lives and ends with the table. The top table has
+// no such entry and needs no count. An entry of a large page or of a page of
+// 4 KiB never has a count.
+//
+// The count changes with an atomic addition: a processor that walks the
+// table sets the bit Accessed of the same entry with a locked write, and a
+// plain write of the kernel could undo it. The program lock orders the
+// writers of the kernel.
+TABLE_HELD_SHIFT :: 52
+TABLE_HELD_ONE :: u64(1) << TABLE_HELD_SHIFT
+TABLE_HELD_MASK :: u64(0x7FF) << TABLE_HELD_SHIFT
+// The count never touches the address of the table or the bit No_Execute,
+// and 512, the most entries of a table, fits.
+#assert(TABLE_HELD_MASK & (PAGE_ADDRESS | PAGE_NO_EXECUTE) == 0)
+#assert(512 * TABLE_HELD_ONE <= TABLE_HELD_MASK)
+
+// table_held_count gives the count of the held entries of the table that an
+// entry names.
+table_held_count :: #force_inline proc "contextless" (entry: u64) -> u64 {
+	return (entry & TABLE_HELD_MASK) >> TABLE_HELD_SHIFT
+}
+
+// The tables that left a page table of a program and wait for the
+// shoot-down before their frames return (page_tables_free). They are linked
+// through their first entry: a physical address on 4096 bytes has the bit
+// Present clear, so a processor that still walks into such a table finds
+// nothing present there.
+Freed_Tables :: struct {
+	first: u64,
+	count: u64,
+}
+
+// tables_hold makes the tables that are missing on the way to the table
+// whose entries index an address at the level below lowest_level (1: the
+// table of the last level; 2: the table of the second level, for a large
+// page), adds count held entries to that table with one addition, and gives
+// the entry of the address: the first of the count entries, which the
+// caller keeps inside that one table. The budget
+// pays for each new table. nil: the budget has no page; a table made by this
+// call goes to freed, and the caller frees it after its shoot-down. The
+// caller holds the program lock.
+@(private = "file")
+tables_hold :: proc "contextless" (table: u64, address: u64, lowest_level: uint, count: u64, budget: ^u32, freed: ^Freed_Tables) -> ^u64 {
+	current := table
+	holder: ^u64 // The entry that names current; nil for the top table.
+	for level := uint(3); level >= lowest_level; level -= 1 {
+		entry := &direct(current, [512]u64)[address >> (12 + 9 * level) & 511]
+		if entry^ & PAGE_LARGE != 0 {
+			// map_region refused an overlap with the mapping of the large page.
+			page_table_count_broken("a large page is where a table is held")
 		}
-		lock_take(&frame_lock, .Frame)
-		frames_free_held(old_table, 1)
-		budgets[budget^].amounts.pages += 1
-		lock_free(&frame_lock, .Frame)
+		if entry^ & PAGE_PRESENT == 0 {
+			child := frame_paid(budget)
+			if child == 0 {
+				// The table current can be one that this call made, with no
+				// held entry: it leaves now.
+				if holder != nil {
+					page_entries_release(table, address, level + 1, 0, freed)
+				}
+				return nil
+			}
+			entry^ = child | PAGE_PRESENT | PAGE_WRITE | PAGE_USER
+			if holder != nil {
+				intrinsics.atomic_add(holder, TABLE_HELD_ONE)
+			}
+		}
+		holder = entry
+		current = entry^ & PAGE_ADDRESS
+	}
+	intrinsics.atomic_add(holder, count * TABLE_HELD_ONE)
+	return &direct(current, [512]u64)[address >> (12 + 9 * (lowest_level - 1)) & 511]
+}
+
+// page_entry_hold gives the entry of the last level table for an address of
+// a new mapping, and holds it and the count - 1 entries after it, in the
+// same table: map_region makes each table of a mapping, so a page fault
+// never needs a table. One addition for each table, not one for each page.
+// nil: the budget has no page.
+page_entry_hold :: proc "contextless" (table: u64, address: u64, count: u64, budget: ^u32, freed: ^Freed_Tables) -> ^u64 {
+	if count == 0 || count > 512 - (address >> 12 & 511) {
+		page_table_count_broken("a run of held entries passes the end of its table")
+	}
+	return tables_hold(table, address, 1, count, budget, freed)
+}
+
+// page_directory_entry_hold gives the entry of the second level for an
+// address aligned on 2 MiB of a new mapping of large pages, and holds it.
+// nil: the budget has no page.
+page_directory_entry_hold :: proc "contextless" (table: u64, address: u64, budget: ^u32, freed: ^Freed_Tables) -> ^u64 {
+	entry := tables_hold(table, address, 2, 1, budget, freed)
+	if entry != nil && entry^ & PAGE_PRESENT != 0 {
+		// map_region refused an overlap: no mapping holds these 2 MiB.
+		page_table_count_broken("the place of a large page is held")
 	}
 	return entry
 }
 
+// page_entries_release ends count held entries of one table: the table
+// named by the entry of holder_level on the way to an address (1: the table
+// of the last level; 2: the table of the second level, for a large page).
+// The caller cleared those entries first. A table whose count falls to 0
+// leaves its parent: its entry there becomes 0, the table goes to freed,
+// and the parent loses one held entry, up to the top table, which never
+// leaves. A count of 0 frees the table if it holds nothing (the undo of a
+// hold). The cost when the table keeps held entries: one walk of the upper
+// levels and one atomic subtraction. The caller holds the program lock, then
+// makes the shoot-down, then calls page_tables_free.
+page_entries_release :: proc "contextless" (table: u64, address: u64, holder_level: uint, count: u64, freed: ^Freed_Tables) {
+	holders: [4]^u64
+	current := table
+	for level := uint(3); level >= holder_level; level -= 1 {
+		entry := &direct(current, [512]u64)[address >> (12 + 9 * level) & 511]
+		if entry^ & PAGE_PRESENT == 0 || entry^ & PAGE_LARGE != 0 {
+			page_table_count_broken("a held entry has no table")
+		}
+		holders[level] = entry
+		current = entry^ & PAGE_ADDRESS
+	}
+	released := count
+	for level := holder_level; level <= 3; level += 1 {
+		holder := holders[level]
+		before := intrinsics.atomic_sub(holder, released * TABLE_HELD_ONE)
+		held := table_held_count(before)
+		if held < released {
+			page_table_count_broken("a table releases more entries than it holds")
+		}
+		if held != released {
+			return
+		}
+		emptied := before & PAGE_ADDRESS
+		intrinsics.atomic_store(holder, 0)
+		freed_tables_add(freed, emptied)
+		released = 1
+	}
+}
+
+// freed_tables_add links a table that left its page table. The test build
+// checks the count: no entry of the table is present.
+@(private = "file")
+freed_tables_add :: proc "contextless" (freed: ^Freed_Tables, table: u64) {
+	when TEST_BUILD_CHECKS_LOCK_ORDER {
+		for entry in direct(table, [512]u64) {
+			if entry & PAGE_PRESENT != 0 {
+				page_table_count_broken("a table with no held entry has a present entry")
+			}
+		}
+	}
+	direct(table, [512]u64)[0] = freed.first
+	freed.first = table
+	freed.count += 1
+}
+
+// page_tables_free gives the frames of the freed tables back, and the
+// budget of the program one page for each. The caller cleared the entries
+// that named them, then made the shoot-down (processor_sync to each other
+// processor whose table is this one: each reloads cr3).
+//
+// This processor reloads cr3 too, if it uses the table. The processor
+// manual (Intel SDM volume 3A, "Invalidation of TLBs and Paging-Structure
+// Caches") says that a processor can keep an entry of an upper level in its
+// paging-structure caches, even when no page under it is present, and that
+// such an entry stays until an invalidation that covers it. The flush of
+// one page (invlpg) removes the translations of that page; the manual asks
+// for it at least once for an entry of an upper level, and the kernel ran it
+// only for the present pages: a mapping with no present page ran none. A
+// write of cr3 removes every entry of the paging-structure caches of the
+// address space, with no condition. It runs once for each release that
+// freed a table, never for one that freed none. The caller holds the
+// program lock.
+page_tables_free :: proc "contextless" (table: u64, budget: ^u32, freed: ^Freed_Tables) {
+	if freed.count == 0 {
+		return
+	}
+	if self := processor_self(); intrinsics.atomic_load(&self.table) == table {
+		control_register_3_write(table)
+	}
+	lock_take(&frame_lock, .Frame)
+	for page := freed.first; page != 0; {
+		next := direct(page, [512]u64)[0]
+		frames_free_held(page, 1)
+		page = next
+	}
+	budgets[budget^].amounts.pages += freed.count
+	lock_free(&frame_lock, .Frame)
+	freed^ = {}
+}
+
+// page_table_count_broken stops the machine: a count of held entries is not
+// what the page table holds. Only the kernel writes the counts, so this is
+// a mistake of the kernel.
+page_table_count_broken :: proc "contextless" (what: string) -> ! {
+	fault_report_begin()
+	log("kernel: the page tables of a program do not keep their counts: ", what)
+	machine_stop(3)
+}
+
 // frame_paid takes one zero page frame that a budget pays for: a page
-// table. 0: the budget has no page. The end of a budget changes the field
+// table. 0: the budget has no page. A page table that an unmap empties
+// returns to the frame table, not to a reserve: a map, an unmap and a map at
+// the same address take the frame again, with one section of the frame
+// lock and one fill with zero, in the operation that already makes a
+// shoot-down. The end of a budget changes the field
 // under the frame lock (budget_release).
 frame_paid :: proc "contextless" (budget_field: ^u32) -> u64 {
 	lock_take(&frame_lock, .Frame)
@@ -490,22 +666,21 @@ address_space_create :: proc "contextless" (budget: ^u32) -> u64 {
 	return table
 }
 
-// address_space_free frees the tables of the program half, and the top
-// table. The budget receives the pages.
+// address_space_free frees the top table of a program with no mapping. The
+// budget receives the page. Each unmap freed the tables below that it
+// emptied, so no entry of the program half of the top table is present: a
+// table there would be a page that no count names, and the machine stops.
+// Only the bit Present counts: an entry that is not present names no table,
+// whatever its other bits hold.
 address_space_free :: proc "contextless" (table: u64, budget: ^u32) {
-	free_level :: proc "contextless" (table: u64, level: int, limit: int) -> (count: u64) {
-		for i in 0 ..< limit {
-			entry := direct(table, [512]u64)[i]
-			// A large page is not a table: its frames belong to its object.
-			if entry & PAGE_PRESENT != 0 && level > 1 && !(level == 2 && entry & PAGE_LARGE != 0) {
-				count += free_level(entry & PAGE_ADDRESS, level - 1, 512)
-			}
+	for entry in direct(table, [512]u64)^[:256] {
+		if entry & PAGE_PRESENT != 0 {
+			page_table_count_broken("a table outlived the mappings of its program")
 		}
-		frames_free_held(table, 1)
-		return count + 1
 	}
 	lock_take(&frame_lock, .Frame)
-	budgets[budget^].amounts.pages += free_level(table, 4, 256)
+	frames_free_held(table, 1)
+	budgets[budget^].amounts.pages += 1
 	lock_free(&frame_lock, .Frame)
 }
 
@@ -520,9 +695,9 @@ user_range :: proc "contextless" (program: ^Program, address: u64, size: u64, wr
 		return false
 	}
 	for page := address &~ (PAGE_SIZE - 1); page < address + size; page += PAGE_SIZE {
-		entry := page_entry(program.table, page, false)
+		entry := page_entry(program.table, page)
 		if (entry == nil || entry^ & PAGE_PRESENT == 0) && page_give(program, page, write, false) {
-			entry = page_entry(program.table, page, false)
+			entry = page_entry(program.table, page)
 		}
 		if entry == nil || entry^ & (PAGE_PRESENT | PAGE_USER) != PAGE_PRESENT | PAGE_USER {
 			return false

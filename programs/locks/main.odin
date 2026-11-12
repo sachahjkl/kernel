@@ -445,14 +445,14 @@ stress :: proc "contextless" (image: []u8, programs_free: u64) {
 	after: system.Budget_Amounts
 	for system.time() < deadline {
 		after, _ = system.budget_read()
-		if after.pages + STRESS_TABLES >= initial.pages && after.programs == initial.programs && after.threads == initial.threads {
+		if after.pages == initial.pages && after.programs == initial.programs && after.threads == initial.threads {
 			break
 		}
 		system.sleep(system.time() + 10)
 	}
 	stress_started = started
 	final := report()
-	stress_right = started == CHURN_ROUNDS * CHURN_COUNT && after.pages <= initial.pages && after.pages + STRESS_TABLES >= initial.pages && after.programs == initial.programs && after.threads == initial.threads && final.budget_pages + final.reserved_pages == final.free_pages
+	stress_right = started == CHURN_ROUNDS * CHURN_COUNT && after.pages == initial.pages && after.programs == initial.programs && after.threads == initial.threads && final.budget_pages + final.reserved_pages == final.free_pages
 	system.log("locks: stress: ", started, " programs started, ", stopped, " stopped by this program (some by a thread while another thread closed the last handle), ", closed - stopped, " only by the close of their last handle, while their threads ran and they stopped each other; budget: pages ", after.pages, " of ", initial.pages, ", programs ", after.programs, " of ", initial.programs, ", threads ", after.threads, " of ", initial.threads, "; free pages ", final.free_pages, ", in budgets ", final.budget_pages, ", reserved ", final.reserved_pages)
 }
 
@@ -537,13 +537,6 @@ stopper_run :: proc "c" (parameter: rawptr) -> ! {
 	}
 	system.thread_stop()
 }
-
-// The loader maps each module in this program at a new address to copy it,
-// and Memory_Unmap does not free a page table that became empty: the
-// budget of this program pays for some page tables. One page that a
-// stopped program did not return is one page for each of the 120: the
-// check permits less than a quarter of that.
-STRESS_TABLES :: CHURN_ROUNDS * CHURN_COUNT / 4
 
 // The random generator of this program (support/random).
 program_generator: random.Generator

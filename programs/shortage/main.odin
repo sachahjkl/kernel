@@ -147,14 +147,21 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.close(rest)
 	}
 	freed := system.nanoseconds() - began
-	after := system_report()
+	// Each unmap gave its page tables back: the budget holds what it held.
+	// A thread is Stopped for thread_wait before the kernel unmapped its
+	// thread area, so the last pages can come a little later: wait for
+	// them. The bound only ends a hang.
 	back, _ := system.budget_read()
-	// Memory_Unmap does not give back a page table that became empty
-	// (a gap of docs/FIRST_MILESTONE.md): the budget pays for them until
-	// the program stops.
-	tables := own.pages - back.pages
-	right := tables < 1024 && drains_full > drains_before && refused == .No_Budget && (refusal.kind == i64(errors.Kind.Budget) || refusal.kind == i64(errors.Kind.Budget_Hidden)) && empty.pages == 0 && payable == full.budget_pages && after.free_pages - after.reserved_pages + tables == start.free_pages - start.reserved_pages && after.budget_pages + after.reserved_pages == after.free_pages
-	system.log("shortage: freed in ", freed / 1_000_000, " ms; the budget holds ", back.pages, " pages of ", own.pages, " (", tables, " pages of page tables stay until the program stops); the free pages that budgets can pay: ", after.free_pages - after.reserved_pages, " of ", start.free_pages - start.reserved_pages)
+	for deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS; back.pages != own.pages && system.time() < deadline; {
+		system.sleep(system.time() + 10)
+		back, _ = system.budget_read()
+	}
+	// The report after the wait: the free pages and the budget are of the
+	// same state.
+	after := system_report()
+	kept := own.pages - back.pages
+	right := kept == 0 && drains_full > drains_before && refused == .No_Budget && (refusal.kind == i64(errors.Kind.Budget) || refusal.kind == i64(errors.Kind.Budget_Hidden)) && empty.pages == 0 && payable == full.budget_pages && after.free_pages - after.reserved_pages == start.free_pages - start.reserved_pages && after.budget_pages + after.reserved_pages == after.free_pages
+	system.log("shortage: freed in ", freed / 1_000_000, " ms; the budget holds ", back.pages, " pages of ", own.pages, " (", kept, " pages kept); the free pages that budgets can pay: ", after.free_pages - after.reserved_pages, " of ", start.free_pages - start.reserved_pages)
 	if right {
 		system.log("shortage: ok, the stacks were drained for takes that cannot fail, a new object failed only when its budget could pay no page, and each frame returned")
 	} else {
