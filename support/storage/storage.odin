@@ -190,6 +190,16 @@ write :: proc "contextless" (client: ^Client, name: string, data: []u8, error: ^
 	return generation, status
 }
 
+// remove removes an object and all its versions from the store, in one
+// commit. The result is the generation of the commit, or a negative number
+// with the status Failed and the error record (ERROR_ABSENT: no object with
+// this name).
+remove :: proc "contextless" (client: ^Client, name: string, error: ^errors.Error_Record = nil) -> (generation: i64, status: Status) {
+	arguments := [1]isolated.Argument{{text = transmute([]u8)name}}
+	generation, _, status = call(client, "remove", arguments[:], error)
+	return generation, status
+}
+
 // read copies the bytes of an object of the store into result. found is
 // false when the store has no such object. The status Damaged says that
 // the store has the object and that its bytes did not come: the caller

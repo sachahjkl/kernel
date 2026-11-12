@@ -169,6 +169,7 @@ commands_start :: proc "contextless" () {
 	command("variables", {}, .None, "list the variables", list_variables)
 	command("clear", {}, .None, "clear the console", clear)
 	command("shutdown", {}, .None, "stop the machine", shutdown)
+	command("history_clear", {}, .None, "forget the line history, in memory and in its store", history_clear)
 	command("measure_completion", {}, .None, "measure one key of the completion list", measure_completion)
 	tables_start()
 }
@@ -1319,14 +1320,14 @@ call_isolated :: proc "contextless" (item: ^Command, arguments: []Value) -> Valu
 
 // request_record sends one command to the root service and waits for its
 // completion. answered is false when the root service gave none.
-request_record :: proc "contextless" (kind: system.Root_Command, name: string, value: u64 = 0) -> (completion: ring.Record, answered: bool) {
+request_record :: proc "contextless" (kind: system.Root_Command, name: string, value: u64 = 0, time_limit: u64 = 3000) -> (completion: ring.Record, answered: bool) {
 	if requests.head == nil {
 		return {}, false
 	}
 	packed := system.name_pack(name)
 	request_count += 1
 	system.send(&requests.commands, ring.Record{kind = u32(kind), tag = request_count, values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3], 4 = value}})
-	limit := system.time() + 3000
+	limit := system.time() + time_limit
 	for {
 		// A completion with another tag answers a command that this
 		// program waits for no more.
@@ -1406,7 +1407,7 @@ revoke :: proc "contextless" (arguments: []Value) -> Value {
 		text: [240]u8
 		return fail(root_refusal_text(text[:], completion))
 	}
-	return fail("no grant has the name ", arguments[1].text, ": the grants are log, machine, image, log_records, store, network, person")
+	return fail("no grant has the name ", arguments[1].text, ": the grants are log, machine, image, log_records, store, network, person, history")
 }
 
 // replace asks the root service to give a module where a module imports
@@ -1468,6 +1469,11 @@ start_program :: proc "contextless" (arguments: []Value) -> Value {
 }
 
 stop_program :: proc "contextless" (arguments: []Value) -> Value {
+	// The console that stops itself keeps its line history first: the
+	// save after the line never comes.
+	if arguments[0].text == "console" {
+		history_save()
+	}
 	return request(.Stop, arguments[0].text)
 }
 
@@ -1556,6 +1562,8 @@ clear :: proc "contextless" (arguments: []Value) -> Value {
 }
 
 shutdown :: proc "contextless" (arguments: []Value) -> Value {
+	// The line history first: the machine stops in the call.
+	history_save()
 	_, status := system.call(.Machine_Stop, u64(machine), 0)
 	if status != .Ok {
 		return fail("the console has no grant to stop the machine")

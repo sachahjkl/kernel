@@ -169,7 +169,7 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Completion list | The names that can take the place of the name at the caret, best first, with one chosen row. The program gives the rows; its terminal draws them over its text, at the edit line | dropdown, popup, autocomplete menu, suggestions |
 | Fuzzy match | A match where the characters of a query appear in a name in their order, with gaps allowed, lower and upper case equal. A score orders the names that match (`docs/CONSOLE.md`, section 3) | fuzzy search, subsequence search, filter (for this) |
 | Line history | The lines that the person entered in the console, in a ring of bytes in its memory, the newest first | history (alone), scrollback, command log |
-| Line history file | The line history as bytes, to keep it in a store: a version, the lines, a BLAKE3 hash (`support/line_editor/history_file.odin`). A file that fails a check gives an empty history | history dump, .bash_history |
+| Line history file | The line history as bytes, kept in the history store: a version, the lines, a BLAKE3 hash (`support/line_editor/history_file.odin`). A file that fails a check gives an empty history | history dump, .bash_history |
 | History search | The completion list over the line history: Control-R opens it, and the fuzzy match orders the lines, the newest first for equal scores | reverse-i-search, incremental search |
 | Text region | The shared memory beside a terminal ring where the program writes the bytes of its text, in order. A record gives only a count of bytes: the terminal keeps its own place | scrollback (for this), pipe buffer |
 | Run | Bytes of text that have one style. A line is a list of runs | span, segment, chunk |
@@ -275,7 +275,9 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Storage service | The service that owns the block device and gives objects, versions and private stores (P9) | file system |
 | Root block | The block of the data disk that names the private stores. The disk has two places for it; the storage service takes the valid one with the highest generation | superblock, uberblock, meta page |
 | Commit | One change of the stores: the storage service writes new blocks, then a new root block. A commit is on the disk completely or not at all | transaction (for this), save, sync |
-| Generation | The number of a commit. Each commit has the generation of the one before plus 1 | epoch, transaction id, version (for this) |
+| Generation | The number of a commit. Each commit has the generation of the one before plus 1. It counts the commits of the whole disk, of each store | epoch, transaction id, version (for this) |
+| History store | The store of the line history of the console in the storage service, apart from its private store: named after the console with `.history`, a limit of 4 blocks, and no grant to act for the person. The root service gives the connection to it (`Root_Command.Connect_History`), with the grant `history` | shell history file, profile directory |
+| Base of the generations | In a machine test, the generation of one commit that a step `Generation` reads from the log: the steps after it name the generations that they wait for as the base and a count (`{generation+4}`), because other commits (the line history) come before | offset, delta |
 | Damaged object | An object with a block that a valid root block names and that does not have its check. The storage service does not give its bytes; a write or a remove replaces it. A private store with such a table is a damaged store | corrupt file, bad sector |
 | Check | The first 8 bytes of the BLAKE3 hash of a block, kept in the block that names it. A block that does not have its check is wrong, and the storage service does not use it | checksum, CRC, digest |
 

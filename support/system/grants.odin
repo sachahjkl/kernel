@@ -47,6 +47,16 @@ Root_Command :: enum u32 {
 	// replaced. The completion has Bad_State for a chain, No_Slot for a
 	// full table.
 	Replace    = 7,
+	// Connect_History makes the connection of the caller to the store of
+	// its line history in the storage service (docs/CONSOLE.md, section 6).
+	// The name of the command is "storage". It is a second connection to
+	// the storage service, apart from the private store of the caller: a
+	// store of its own, named after the caller with ".history", with a
+	// small limit of blocks and no grant to act for the person, so it
+	// reaches that store and no other one. The completion is the completion
+	// of Connect. The root service refuses it to a program that does not
+	// have the role, and after a revocation of the grant History.
+	Connect_History = 8,
 }
 
 // The replacement table of the machine. The root service writes it, and
@@ -129,6 +139,7 @@ root_command_names := [Root_Command]string {
 	.Grants     = "Grants",
 	.Revoke     = "Revoke",
 	.Replace    = "Replace",
+	.Connect_History = "Connect_History",
 }
 
 root_command_name :: proc "contextless" (command: i64) -> string {
@@ -158,6 +169,7 @@ Root_Grant :: enum u32 {
 	Store       = 4, // A private store in the storage service.
 	Network     = 5, // An endpoint of datagrams in the network service, with one remote.
 	Person      = 6, // To act for the person in each service that the program is connected to (isolated.CALLER_PERSON).
+	History     = 7, // The store of the line history of the console in the storage service (Root_Command.Connect_History).
 }
 Root_Grants :: bit_set[Root_Grant;u64]
 
@@ -169,6 +181,7 @@ root_grant_names := [Root_Grant]string {
 	.Store       = "store",
 	.Network     = "network",
 	.Person      = "person",
+	.History     = "history",
 }
 
 Name :: [32]u8

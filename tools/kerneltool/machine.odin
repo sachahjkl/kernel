@@ -59,6 +59,13 @@ Step_Kind :: enum {
 	Point, // Move the pointer to (x, y) with no press, then read compositor.pointer(): its shape must be the name text (docs/POINTERS.md). With inside_window, (x, y) are from the corner of that window, its title bar included; a negative x is from its right side. It needs the confirmation of the pointer (a Call with pointer before it).
 	Remember, // The rest of the line after the text, in the log after the last Wait, is kept for the step Distinct (a value that the machine drew).
 	Distinct, // Each value that Remember kept in this test part differs from each other one; text names them.
+	// As Wait; then the number after text is the base of the generations of
+	// the storage service for the steps after it: a later step names
+	// {generation} or {generation+N} in its text or its expected text. A
+	// generation counts the commits of the whole disk, and the console
+	// commits its line history after each line: a step counts from a base
+	// near it, not from the format of the disk.
+	Generation,
 	Peer_Start, // The peer starts the TCP case text; the next steps run while it runs.
 	Peer_Result, // The end of the case of the last Peer_Start: it must pass. text is its name.
 	Fetch, // The TCP of the host fetches the page text of `server` through QEMU user networking (web_host.odin).
@@ -107,6 +114,45 @@ date_check :: proc(index: int, machine_seconds: i64, what: string) -> bool {
 	}
 	fmt.printfln("kerneltool: test passed: the date of the machine (%s) is %d s since 1970, the host gives %d: %d s apart", what, machine_seconds, host, apart)
 	return true
+}
+
+// generation_expand writes the base of the generations in a text: each
+// {generation} is the base, and each {generation+N} the base and N. A mark
+// with no end, or an N that is not a number, stays as it is: the step then
+// waits for a text that the machine does not print, and fails.
+generation_expand :: proc(text: string, base: i64) -> string {
+	MARK :: "{generation"
+	if !strings.contains(text, MARK) {
+		return text
+	}
+	builder := strings.builder_make(context.temp_allocator)
+	rest := text
+	for {
+		at := strings.index(rest, MARK)
+		if at < 0 {
+			strings.write_string(&builder, rest)
+			break
+		}
+		strings.write_string(&builder, rest[:at])
+		after := rest[at + len(MARK):]
+		end := strings.index_byte(after, '}')
+		offset: i64
+		ok := end >= 0
+		if ok && end > 0 {
+			ok = after[0] == '+'
+			if ok {
+				offset, ok = strconv.parse_i64(after[1:end])
+			}
+		}
+		if !ok {
+			strings.write_string(&builder, MARK)
+			rest = after
+			continue
+		}
+		strings.write_i64(&builder, base + offset)
+		rest = after[end + 1:]
+	}
+	return strings.to_string(builder)
 }
 
 // number_after reads the decimal number after a text in another text.
@@ -169,13 +215,22 @@ scenario_persist_first := [?]Step {
 	{kind = .Wait, text = "[console] settings: 3 commands of a service that runs"},
 	{kind = .Type, text = "settings.set(\"font\", \"spleen\")"},
 	{kind = .Wait, text = "settings: font spleen, subpixel order rgb, pointer theme owner, grid fit on; kept in the store"},
+	// A line for the next machine: the console keeps its line history in
+	// its store, after each line and before shutdown().
+	{kind = .Type, text = "length(\"kept across a stop\")"},
+	{kind = .Wait, text = "[console] 18"},
 	{kind = .Type, text = "shutdown()"},
 	{kind = .Wait, text = "kernel: the machine stops with code 0"},
 }
 
 scenario_persist_second := [?]Step {
 	{kind = .Wait, text = "compositor: surface console", any_order = true},
-	{kind = .Wait, text = "storage: ok, generation 1023: 2 stores, 3 objects, ", any_order = true},
+	// 1 + 21 commits of the note, 1000 of the count, 1 of the settings, and
+	// 4 of the line history of the console: after connect, after set,
+	// after length, and before shutdown(). The stores of notes, settings
+	// and the history of the console; the history is one object.
+	{kind = .Wait, text = "storage: ok, generation 1027: 3 stores, 4 objects, ", any_order = true},
+	{kind = .Wait, text = "console: the line history: 4 lines kept from before the stop", any_order = true},
 	// The setting of the machine before: the desktop draws in Spleen 8x16.
 	{kind = .Wait, text = "settings: the boot pass: the settings kept in the store: font spleen, subpixel order rgb, pointer theme owner, grid fit on; in ", any_order = true},
 	{kind = .Wait, text = " blocks checked, 0 wrong, in ", any_order = true},
@@ -190,6 +245,21 @@ scenario_persist_second := [?]Step {
 	{kind = .Wait, text = "settings: ok, font spleen, subpixel order rgb, pointer theme owner, grid fit on"},
 	{kind = .Shot, text = "settings_kept"},
 	{kind = .Front, text = "console"},
+	// The line history of the machine before: Up gives shutdown(), a second
+	// Up the line before it; Enter runs it.
+	{kind = .Key, text = "up"},
+	{kind = .Key, text = "up"},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "> length(\"kept across a stop\")"},
+	{kind = .Wait, text = "[console] 18"},
+	// The search finds it too: Enter puts it in the input, a second Enter
+	// runs it.
+	{kind = .Key, text = "ctrl-r"},
+	{kind = .Keys, text = "kept"},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "console: the history search gave the line length(\"kept across a stop\")"},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "[console] 18"},
 	{kind = .Type, text = "connect(\"settings\")"},
 	{kind = .Wait, text = "[console] settings: 3 commands of a service that runs"},
 	{kind = .Type, text = "settings.set(\"font\", \"vector\")"},
@@ -666,6 +736,11 @@ scenario := [?]Step {
 	// The boot pass of settings: the storage service starts at boot, with
 	// the block service of the data disk; a new disk keeps no settings.
 	{kind = .Wait, text = "storage: ok, a new disk: generation 1, 16384 blocks", any_order = true},
+	// The console asks for the store of its line history at its start: the
+	// root service answers after the start of the boot pass, so the storage
+	// service runs.
+	{kind = .Wait, text = "root: connected console to the store of its line history in the service storage, 4 blocks", any_order = true},
+	{kind = .Wait, text = "console: no line history kept: the history starts empty", any_order = true},
 	{kind = .Wait, text = "settings: the boot pass: no settings kept: the defaults: font vector, subpixel order rgb, pointer theme owner, grid fit on; in ", any_order = true},
 	{kind = .Wait, text = "root: settings stopped with code 0"},
 
@@ -1527,7 +1602,10 @@ scenario := [?]Step {
 	{kind = .Type, text = "connect(\"storage\")"},
 	{kind = .Record, program = "root", channel = "calls", level = "info", text = "root: connected console to the service storage"},
 	{kind = .Type, text = "storage.write(\"greeting\", \"kept on the disk\")"},
-	{kind = .Wait, text = "[console] 2"},
+	// The generation of this commit is the base: the console committed its
+	// line history after each line before this one.
+	{kind = .Wait, text = "> storage.write(\"greeting\", \"kept on the disk\")"},
+	{kind = .Generation, text = "[console] "},
 	{kind = .Type, text = "storage.read(\"greeting\")"},
 	{kind = .Wait, text = "[console] kept on the disk"},
 	// The limit of the store: one more object needs two more blocks.
@@ -1535,16 +1613,19 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[console] error: storage.write: the call needs 5 blocks in all, with no earlier version kept; the limit is 4 blocks (-2)"},
 	// A change of the object at the limit: the version of its state before
 	// does not fit, and the same commit thins it.
+	// Each line commits the line history after it: the base and 1 after
+	// the line of the base, 2 after the read, 3 after the refused write;
+	// this write is the commit 4.
 	{kind = .Type, text = "storage.write(\"greeting\", \"changed at the limit\")"},
-	{kind = .Wait, text = "[console] 3"},
-	{kind = .Record, program = "storage", level = "info", text = "storage: the store console is at its limit of 4 blocks: the commit of generation 3 thinned 1 version, the oldest of the store first", any_order = true},
+	{kind = .Wait, text = "[console] {generation+4}"},
+	{kind = .Record, program = "storage", level = "info", text = "storage: the store console is at its limit of 4 blocks: the commit of generation {generation+4} thinned 1 version, the oldest of the store first", any_order = true},
 	// An error of a service is a record: the console writes it as a sentence.
 	{kind = .Type, text = "storage.write(\"\", \"x\")"},
 	{kind = .Wait, text = "[console] error: storage.write: the argument name is empty; it must have 1 to 39 bytes (-3)"},
 	{kind = .Type, text = "storage.read(\"nothing\")"},
 	{kind = .Wait, text = "[console] error: storage.read: the argument name: the store has no object with this name (-7)"},
 	{kind = .Type, text = "storage.objects()"},
-	{kind = .Wait, text = "[console] greeting 20 bytes, generation 3"},
+	{kind = .Wait, text = "[console] greeting 20 bytes, generation {generation+4}"},
 	{kind = .Type, text = "storage.stores()"},
 	{kind = .Wait, text = "[console] console: 1 objects, 0 versions, 3 of 4 blocks, 0 shared, 1 connection"},
 	// The person sees the grant and revokes it: the store stays on the disk,
@@ -1567,27 +1648,31 @@ scenario := [?]Step {
 	{kind = .Wait, text = "notes: a new store: no note, the count 0", any_order = true},
 	{kind = .Wait, text = "compositor: surface notes"},
 	{kind = .Type, text = "versions"},
-	{kind = .Wait, text = "notes: the note is \"versions\", generation 11, 7 versions; one commit of the note: "},
+	// The 13 lines of the console from the base each committed the history
+	// (the base and 14 at the last one); the 8 keys of the note are the
+	// commits 15 to 22.
+	{kind = .Wait, text = "notes: the note is \"versions\", generation {generation+22}, 7 versions; one commit of the note: "},
 	{kind = .Key, text = "up"},
-	{kind = .Wait, text = "notes: the version 7 of 8, generation 10, 20"}, // A version has the date of its commit.
+	{kind = .Wait, text = "notes: the version 7 of 8, generation {generation+21}, 20"}, // A version has the date of its commit.
 	{kind = .Wait, text = ": \"version\""},
 	{kind = .Key, text = "up"},
-	{kind = .Wait, text = "notes: the version 6 of 8, generation 9, "},
+	{kind = .Wait, text = "notes: the version 6 of 8, generation {generation+20}, "},
 	{kind = .Wait, text = ": \"versio\""},
 	{kind = .Shot, text = "notes_versions"},
 	{kind = .Key, text = "ret"},
-	{kind = .Wait, text = "notes: restored the version of generation 9: \"versio\", in the commit of generation 12 in "},
+	{kind = .Wait, text = "notes: restored the version of generation {generation+20}: \"versio\", in the commit of generation {generation+23} in "},
 	// The exports of the versions, from the host: the remote service acts
 	// for the person, so it names the store of notes.
 	{kind = .Call, text = "storage.versions(\"notes\", \"note\")", expected = "9 rows of Version"},
 	// The date of the machine, from the host, some minutes after its start:
 	// it advanced with the host.
 	{kind = .Call, text = "date.now()", expected = "Date{milliseconds = ", date_after = "milliseconds = "},
-	{kind = .Call, text = "storage.version(\"notes\", \"note\", 7)", expected = "vers"},
-	{kind = .Call, text = "storage.compare(\"notes\", \"note\", 6, 11)", expected = "1 rows of Byte_Range"},
-	{kind = .Call, text = "storage.version(\"notes\", \"note\", 99)", outcome = .Failed, expected = "error: storage.version: the argument generation: the object has no version of the generation 99 (-9)"},
-	{kind = .Call, text = "storage.restore(\"notes\", \"note\", 11)", expected = "13"},
-	{kind = .Call, text = "storage.clone(\"notes\", \"note\", \"copy\")", expected = "14"},
+	{kind = .Call, text = "storage.version(\"notes\", \"note\", {generation+18})", expected = "vers"},
+	{kind = .Call, text = "storage.compare(\"notes\", \"note\", {generation+17}, {generation+22})", expected = "1 rows of Byte_Range"},
+	// The generation 1 is the format of the disk: no object has it.
+	{kind = .Call, text = "storage.version(\"notes\", \"note\", 1)", outcome = .Failed, expected = "error: storage.version: the argument generation: the object has no version of the generation 1 (-9)"},
+	{kind = .Call, text = "storage.restore(\"notes\", \"note\", {generation+22})", expected = "{generation+24}"},
+	{kind = .Call, text = "storage.clone(\"notes\", \"note\", \"copy\")", expected = "{generation+25}"},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "storage.stores()"},
 	{kind = .Wait, text = "[console] notes: 2 objects, 9 versions, "},
@@ -2529,7 +2614,17 @@ remembered_values: [dynamic]string
 scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 	peer_case_started := 0 // The number of the case of the last step Peer_Start.
 	first_wait := true // The first Wait of the machine is its boot: BOOT_WAIT_TIMEOUT.
-	for step, index in steps {
+	generation_base: i64 = -1 // The number that the last step Generation read; -1: none.
+	for given_step, index in steps {
+		step := given_step
+		if strings.contains(step.text, "{generation") || strings.contains(step.expected, "{generation") {
+			if generation_base < 0 {
+				fmt.eprintfln("kerneltool: test failed: step %d names {generation} before a step Generation", index + 1)
+				return false
+			}
+			step.text = generation_expand(step.text, generation_base)
+			step.expected = generation_expand(step.expected, generation_base)
+		}
 		switch step.kind {
 		case .Wait:
 			limit := first_wait ? BOOT_WAIT_TIMEOUT : STEP_TIMEOUT
@@ -2555,6 +2650,20 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				return false
 			}
 			date_check(index, value, step.text) or_return
+		case .Generation:
+			seen_before := machine.seen
+			if !log_wait(machine, step.text, step.any_order) {
+				fmt.eprintfln("kerneltool: test failed: step %d: the machine did not print \"%s\"", index + 1, step.text)
+				return false
+			}
+			log := log_read(machine)
+			value, found := number_after(log[seen_before:], step.text)
+			if !found || value < 1 {
+				fmt.eprintfln("kerneltool: test failed: step %d: no generation after \"%s\"", index + 1, step.text)
+				return false
+			}
+			generation_base = value
+			fmt.printfln("kerneltool: the base of the generations is %d (after \"%s\")", value, step.text)
 		case .Trace:
 			if !log_wait(machine, step.text) {
 				fmt.eprintfln("kerneltool: test failed: step %d: the machine did not print \"%s\"", index + 1, step.text)

@@ -90,6 +90,10 @@ entry :: proc "c" (start_context: ^system.Context) -> ! {
 	print("kernel console. A command is a typed function: try help()\n")
 	edit_show()
 	system.log(CONSOLE_MARK)
+	// The line history of the run before. The second thread runs no line
+	// yet: the history has one user. The keys that come meanwhile wait in
+	// the terminal ring.
+	history_load()
 
 	for {
 		seen := intrinsics.atomic_load_explicit(&changes, .Relaxed)
@@ -138,6 +142,9 @@ run_lines :: proc "c" (parameter: rawptr) -> ! {
 		done += 1
 		services_check()
 		run_line(string(work.text[:work.count]))
+		// The line history goes to its store while the line still counts
+		// as running: the first thread adds no line to it meanwhile.
+		history_save()
 		intrinsics.atomic_store(&work.finished, done)
 		change()
 	}
