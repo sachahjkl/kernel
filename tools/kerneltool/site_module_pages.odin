@@ -338,7 +338,7 @@ site_tiles_write :: proc(site: ^Site, b: ^strings.Builder, page: string) {
 	}
 	strings.write_string(b, "</ul>\n")
 	if built {
-		fmt.sbprintf(b, "<p class=\"source\">%d modules, %d KiB, in <code>%s</code> of the last build. A tile is a module: its width is its size, and its color comes from its hash, as the boot display draws it.</p>\n", len(entries), (total - 1) / 1024, BOOT_IMAGE)
+		fmt.sbprintf(b, "<p class=\"source\">%d modules, %d KiB, in <code>%s</code> of the last build. A tile is a module: its width follows its size, and is at least the width of its name; its color comes from its hash, as the boot display draws it.</p>\n", len(entries), (total - 1) / 1024, BOOT_IMAGE)
 	} else {
 		fmt.sbprintf(b, "<p class=\"missing\">The boot image is not built: the tiles are the modules of <code>module_builds</code> that it holds, with no size and no color.</p>\n")
 	}

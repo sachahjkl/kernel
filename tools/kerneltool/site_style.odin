@@ -371,7 +371,9 @@ tr.padding td { color: var(--dim); }
 .home-head { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 32px; align-items: start; padding: 32px 0; margin-bottom: 16px; }
 .home-head picture { display: block; }
 .tiles { list-style: none; padding: 0; margin: 0 0 16px; display: flex; flex-wrap: wrap; gap: 2px; }
-.tiles li { margin: 0; flex: 1 1 96px; min-width: 48px; height: 24px; line-height: 20px; padding: 0 4px; overflow: hidden; white-space: nowrap; font-family: var(--mono); font-size: 12px; background: var(--track); border-bottom: 1px solid var(--dim); }
+/* A tile is never narrower than its name: a small module takes the width
+   of its name, and the others share the rest of the row by their sizes. */
+.tiles li { margin: 0; flex: 1 1 96px; min-width: max-content; height: 24px; line-height: 20px; padding: 0 4px; overflow: hidden; white-space: nowrap; font-family: var(--mono); font-size: 12px; background: var(--track); border-bottom: 1px solid var(--dim); }
 .tiles a { display: block; color: inherit; text-decoration: none; }
 .tiles a:hover { background: none; text-decoration: underline; }
 .mark { display: block; image-rendering: pixelated; }
