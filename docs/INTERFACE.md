@@ -38,20 +38,20 @@ Why, against a retained tree of widgets:
 - The output is data: a table of records of one size, in the memory of the caller (P14). A table can be compared, measured, sent to another rasterizer, or written to a file to test it.
 - A retained tree gives damage for free: a node that changed knows its rectangle. Immediate mode loses that. Section 2.2 gives it back without a tree.
 
-### 2.1 Draw record (format version 6)
+### 2.1 Draw record (format version 7)
 
 A draw record is 40 bytes. The fields are little-endian, in this order:
 
 | Offset | Field | Type | Meaning |
 |---|---|---|---|
-| 0 | `kind` | u8 | `None` 0, `Rectangle` 1, `Vertical_Gradient` 2, `Horizontal_Gradient` 3, `Text` 4, `Clip` 5, `Point_Grid` 6, `Folded_Gap` 7 (version 2), `Picture` 8 (version 2), `Text_Grid` 9 (version 3), `Line` 10 (version 4) |
-| 1 | `text_scale` | u8 | Text: 1, 2 or 3 (DESIGN.md, section 5) |
-| 2 | `text_subpixel_x` | u8 | Text: the position after `x` in 1/64 of a pixel. 0 for Spleen 8x16, which places each glyph on a whole pixel |
-| 3 | `kind_detail` | u8 | Line: the thickness in pixels, 1 to 32 (version 4; it was `reserved`). Text: the weight, 0 regular, 1 bold (version 6: the titles of the cards; bold draws at scale 1 only). 0 for the other kinds |
-| 4 | `x`, `y`, `width`, `height` | 4 x i32 | The rectangle of the record, in pixels of the surface. For text, the rectangle that the run covers. For a line, the first end, and the second end minus the first: `width` and `height` can be negative |
+| 0 | `kind` | u8 | `None` 0, `Rectangle` 1, `Vertical_Gradient` 2, `Horizontal_Gradient` 3, `Text` 4, `Clip` 5, `Point_Grid` 6, `Folded_Gap` 7 (version 2), `Picture` 8 (version 2), `Text_Grid` 9 (version 3), `Line` 10 (version 4), `Interface_Text` 11 (version 7) |
+| 1 | `text_scale` | u8 | Text, Interface_Text: 1, 2 or 3 (DESIGN.md, section 5) |
+| 2 | `text_origin_thirds` | u8 | Interface_Text: the origin of the text after `x` + the ink margin, in thirds of a pixel: 0, 1 or 2 (version 7; it was `text_subpixel_x`, which no reader used). 0 for the other kinds |
+| 3 | `kind_detail` | u8 | Line: the thickness in pixels, 1 to 32 (version 4; it was `reserved`). Text, Interface_Text: the weight, 0 regular, 1 bold (version 6: the titles of the cards; bold draws at scale 1 only). 0 for the other kinds |
+| 4 | `x`, `y`, `width`, `height` | 4 x i32 | The rectangle of the record, in pixels of the surface. For text, the rectangle that the run covers. For an Interface_Text, the box of its measure grown by its ink margin on each side: every pixel of its ink is in it. For a line, the first end, and the second end minus the first: `width` and `height` can be negative |
 | 20 | `first_color` | u32 | `0x00RRGGBB`: the color of a rectangle or a text; the top or the left color of a gradient |
-| 24 | `second_color` | u32 | The bottom or the right color of a gradient |
-| 28 | `text_start`, `text_count` | 2 x u32 | Text: the bytes of the run in the text table of the draw table. Picture: the index of the picture in `Draw_Table.pictures` and its generation. Text grid: the index of the grid in `Draw_Table.grids` |
+| 24 | `second_color` | u32 | The bottom or the right color of a gradient. Interface_Text: the ink margin in pixels, at most `INK_MARGIN_LIMIT` (16) |
+| 28 | `text_start`, `text_count` | 2 x u32 | Text, Interface_Text: the bytes of the run in the text table of the draw table. Picture: the index of the picture in `Draw_Table.pictures` and its generation. Text grid: the index of the grid in `Draw_Table.grids` |
 | 36 | `element` | u32 | The low 32 bits of the element identity that wrote the record, 0 for none: a tool can say which element changed |
 
 - `Clip` sets the rectangle that the next records are cut to, until the next `Clip`; a `Clip` of width 0 ends the cut.
@@ -59,7 +59,8 @@ A draw record is 40 bytes. The fields are little-endian, in this order:
 - **Places and sizes**: each edge of a record is cut to 2^30 pixels from the corner of the surface (`COORDINATE_LIMIT`), then the size is the difference of the two edges. A rectangle that covers the surface with places past the `i32` still covers it.
 - **`full` and `refused`**: `full` says that a record or a text did not fit in the table. The table is not the frame, so the next frame of that picture is drawn whole. `refused` says that a record could not be made: a picture or a grid that the table does not have, or a grid whose cells are fewer than its rows. That record is missing, and each other record is in the table, so the difference stays exact.
 - **Grids with large numbers**: `grid_valid` divides in place of a product, so a count of rows or a stride near the largest `int` cannot wrap and pass the check.
-- A version number (`DRAW_RECORD_VERSION`, 6) is beside the format, as for the contracts. A new kind or a new field is a new version: 5 added the fill of a grid cell, 6 the weight of a text.
+- A version number (`DRAW_RECORD_VERSION`, 7) is beside the format, as for the contracts. A new kind or a new field is a new version: 5 added the fill of a grid cell, 6 the weight of a text, 7 the kind `Interface_Text` and its byte `text_origin_thirds`.
+- **An `Interface_Text` record of a hostile caller** draws nothing when its range is outside the text table, its third is 3 or more, its ink margin passes `INK_MARGIN_LIMIT`, its scale is not 1 to 3, or it has more than `INTERFACE_TEXT_LIMIT` (256) bytes. The checks are on the one copy of the record that the execution reads; the sums are in 64 bits, so no margin or range wraps. A program with no interface font draws such a record in the font of the cells at its origin, cut to its rectangle.
 - The text of a run is in the text table of the draw table, not in the record: a record stays 40 bytes, and two runs with the same bytes compare equal.
 - A `Picture` record shows the pixels of a picture of the caller. The program raises its generation when its pixels change; with the same generation the record compares equal and damages nothing. `life`, `paint`, `plasma`, `temple` and the surfaces of the windows in the compositor are pictures.
 - A `Text_Grid` record shows a grid of text cells of the caller (`Text_Grid_Cell`: a character, reverse, a color; or filled: a character in its color on a cell of a fill color, for a list drawn over text, 12 bytes for each cell). Its 40 bytes do not change when its cells change: the difference compares the cells (section 2.4).
@@ -144,7 +145,10 @@ The compositor puts each window on the grid of 8 pixels (`support/bar/window_pla
 - **The interface of the text** is two functions and one record: `Font` (`kind`, `scale`), `text_width(font, text) -> pixels` and the record `Text` of section 2.1 with `text_scale` and `text_subpixel_x`, with the scales 1, 2 and 3.
 - **The font of the system** (2026-11-11, `docs/FONTS.md`): the vector font by default, from the glyph cache that the root service maps, with a coverage for each subpixel band; Spleen 8x16 as the fallback and as the other value of the setting `font`. Both are monospace on cells of 8 x 16, so `text_width` and the layout do not change with the setting, and `text_subpixel_x` stays 0 on the grid. `execute` draws a text record with `graphics.text_scaled`: the package does not know which font draws.
 - **A change of the setting** comes as the display event `Settings_Changed`: `window_events` marks the window as not drawn, and the next frame draws it whole (each draw record is the same, each pixel of text is not).
-- A proportional font later is a second `kind`: it fills `text_subpixel_x`, and its glyph cache has subpixel positions. The callers do not change.
+- **The interface font** (2026-11-12, `docs/FONTS.md` section 12): the second `kind`, `Interface`, beside `Cells_8x16`. A `Draw_Table` names the interface font of its program (`interface_font`: the caches that `display` validated at `open`; `nil`: none); `window_frame_begin` sets it, so a program that draws its window with the package takes it with no change of its code. A table that a program builds itself (the compositor, the measures) has none unless the program names it.
+- **A text is measured in the font that draws it**: `font_in_use` gives the font of a text of a table: the interface font only when the table has it, the setting is the vector font, and the text has at most 256 bytes; else the font of the cells. `text_measured_width`, `texts_measure` (many texts in one call: the lines of a list), `measured_size` (a column of a row, rounded up to the grid of 8) and `text_fit` (the longest start of a text that fits a room) all go through it.
+- **Which element takes which font** (the rule of `DESIGN.md`, section 5): a text that names or explains takes the interface font: the title (bold) and the caption of a card, the label of `label_value_line`, the name of a button, the lines, the hint and the empty text of a list, the titles of a table, the placeholder of a text input. A value keeps the font of the cells: the count of a card, the value of `label_value_line`, `cell_text` unless the caller names a font, the typed text of a text input, `large_number`, the text grid. Each element cuts each text to its box with `text_fit`, in either font.
+- **The damage of an interface text**: its record rectangle is its measured box grown by its ink margin, so the difference damages every pixel that it drew, and the execution of a damage rectangle draws again each record that touches it, in order, so an overlap of two neighbours is drawn as in the whole frame. The host test `damage_of_interface_text_equals_the_whole_frame` compares 200 pairs of frames, byte for byte.
 
 ## 6. The output and its execution
 

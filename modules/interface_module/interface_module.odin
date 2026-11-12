@@ -8,6 +8,9 @@
 package interface_module
 
 import "base:intrinsics"
+import "contract:glyph_cache"
+import "contract:settings"
+import "support:display"
 import "support:graphics"
 import "support:interface"
 import "support:system"
@@ -89,6 +92,48 @@ no_state: interface.Interface_State
 @(private)
 no_input: interface.Input
 
+// The interface font of the program that runs the module, validated once:
+// in a direct call the caller, whose starter maps the caches at their
+// fixed ranges; in an isolated call the call host, which has none, so its
+// elements draw in the font of the cells. The state: 0 not looked at yet,
+// 1 given, 2 none. Two threads that look at once validate the same caches
+// and write the same values.
+@(private)
+module_interface_font: display.Interface_Font
+@(private)
+module_interface_font_state: u32
+
+// A context with no bit set: what a host test reads, as it has no
+// context of a program.
+@(private)
+no_context: system.Context
+
+@(private)
+interface_font_of_program :: proc "contextless" () -> ^display.Interface_Font {
+	state := intrinsics.atomic_load_explicit(&module_interface_font_state, .Acquire)
+	if state == 0 {
+		context_record := &no_context
+		when ODIN_OS == .Freestanding {
+			context_record = system.context_record()
+		}
+		weights := [2]settings.Glyph_Cache{.Interface, .Interface_Bold}
+		caches: [2]glyph_cache.Cache
+		state = 1
+		for weight, index in weights {
+			problem: glyph_cache.Problem
+			caches[index], problem = settings.glyph_cache_open(&context_record.values, weight)
+			if problem.kind != .None || caches[index].header.flags & glyph_cache.FLAG_PROPORTIONAL == 0 {
+				state = 2
+			}
+		}
+		if state == 1 {
+			module_interface_font = {regular = caches[0], bold = caches[1]}
+		}
+		intrinsics.atomic_store_explicit(&module_interface_font_state, state, .Release)
+	}
+	return state == 1 ? &module_interface_font : nil
+}
+
 // The most records or bytes of a table of a caller, its count included: no
 // count times a size wraps, and a count holds in the i64 of the result.
 @(private)
@@ -101,7 +146,7 @@ element_frame_begin :: proc "contextless" (element: ^Element_Frame, drawn: ^Draw
 	if drawn.capacity > TABLE_LIMIT || drawn.count > TABLE_LIMIT || text != nil && (text.capacity > TABLE_LIMIT || text.count > TABLE_LIMIT) {
 		return false
 	}
-	element.table = {records = element.records[:], text = element.text[:]}
+	element.table = {records = element.records[:], text = element.text[:], interface_font = interface_font_of_program()}
 	element.frame = {table = &element.table, state = &no_state, input = &no_input}
 	return true
 }
@@ -126,7 +171,7 @@ element_frame_append_to_caller :: proc "contextless" (element: ^Element_Frame, d
 	}
 	for record in element.records[:element.table.record_count] {
 		placed := record
-		if placed.kind == .Text {
+		if interface.is_text_kind(placed.kind) {
 			placed.text_start += u32(text_base)
 		}
 		system.table_append(drawn, placed)
@@ -225,7 +270,7 @@ draw_table_to_read_of :: proc "contextless" (records: ^system.Table_To_Read(inte
 	if records.count > TABLE_LIMIT || text.count > TABLE_LIMIT {
 		return {}, false
 	}
-	return {records = records.records[:records.count], record_count = int(records.count), text = text.bytes[:text.count], text_count = int(text.count)}, true
+	return {records = records.records[:records.count], record_count = int(records.count), text = text.bytes[:text.count], text_count = int(text.count), interface_font = interface_font_of_program()}, true
 }
 
 // damage_by_difference gives the rectangles of the surface that differ between the draw table before and the draw table now. The result is a Table of at most 8 rectangles, or -1 for a table over 2^40 records or bytes. A text record that names bytes past its text table differs from each record: its rectangle is damaged.

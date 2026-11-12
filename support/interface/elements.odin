@@ -6,6 +6,14 @@ import "support:graphics"
 // The elements of the rules (docs/DESIGN.md, section 10). Each one appends
 // draw records to the table of the frame; an element that takes input
 // gives an Element_Result.
+//
+// The two fonts (docs/DESIGN.md, section 5; docs/FONTS.md, section 12.6):
+// a text that names or explains (a title, a caption, a label, the name of a
+// button, a line of a list, the title of a column) is in the interface
+// font; a value (a number, a hash, a text that a person types, the count of
+// a card, the cells of a table) is in the font of the cells, so values
+// align by character. Each element measures a text in the font that draws
+// it, and cuts it to its box: no text passes its element in either font.
 
 // background draws the background of the rules on an area: one color and
 // the grid of points.
@@ -23,16 +31,18 @@ card :: proc "contextless" (frame: ^Frame, area: Area, title, caption: string, a
 	draw_vertical_gradient(table, area.x, area.y, area.width, area.height, graphics.shade(accent, 28), graphics.shade(accent, 14))
 	draw_vertical_gradient(table, area.x + 1, area.y + 1, area.width - 2, area.height - 2, graphics.COLOR_CARD_TOP, graphics.COLOR_CARD_BOTTOM)
 	draw_vertical_gradient(table, area.x + graphics.CARD_MARGIN, area.y + 12, 4, 16, graphics.shade(accent, 130), accent)
-	after := draw_text(table, area.x + graphics.CARD_MARGIN + 12, area.y + 12, title, accent, FONT_BOLD)
-	// The caption takes the room between the title and the count: a narrow
-	// card cuts it, so it never runs past the border.
+	// The title, then the caption, take the room before the count: a
+	// narrow card cuts them, so they never run past the border.
+	title_left := area.x + graphics.CARD_MARGIN + 12
 	right := area.x + area.width - graphics.CARD_MARGIN
 	if count != "" {
-		right -= text_width({}, count) + 16
+		right -= text_measured_width(table, {}, count) + 16
+	}
+	after := draw_text(table, title_left, area.y + 12, text_fit(table, FONT_INTERFACE_BOLD, title, right - title_left), accent, FONT_INTERFACE_BOLD)
+	if count != "" {
 		draw_text_right(table, area.x + area.width - graphics.CARD_MARGIN, area.y + 12, count, graphics.COLOR_TEXT)
 	}
-	room := max(right - (after + 16), 0) / graphics.CELL_WIDTH
-	draw_text(table, after + 16, area.y + 12, caption[:min(len(caption), room)], graphics.COLOR_DIM)
+	draw_text(table, after + 16, area.y + 12, text_fit(table, FONT_INTERFACE, caption, right - (after + 16)), graphics.COLOR_DIM, FONT_INTERFACE)
 	return {area.x + graphics.CARD_MARGIN, area.y + graphics.CARD_TITLE, area.width - 2 * graphics.CARD_MARGIN, area.height - graphics.CARD_TITLE - 8}
 }
 
@@ -40,12 +50,18 @@ card :: proc "contextless" (frame: ^Frame, area: Area, title, caption: string, a
 // value_x from the left of the area, or at the right of the area (a number,
 // docs/DESIGN.md section 5) when value_x is 0.
 label_value_line :: proc "contextless" (frame: ^Frame, area: Area, label, value: string, value_color: graphics.Color = graphics.COLOR_TEXT, value_x := 0) {
+	table := frame.table
 	y := area.y + (area.height - LINE) / 2
-	draw_text(frame.table, area.x, y, label, graphics.COLOR_DIM)
+	// The value, in the font of the cells, takes its room first; the label
+	// takes what is left, with a gap of 8 pixels.
+	value_room := value_x == 0 ? area.width : area.width - value_x
+	shown_value := text_fit(table, {}, value, value_room)
+	label_room := value_x == 0 ? area.width - text_measured_width(table, {}, shown_value) - 8 : value_x - 8
+	draw_text(table, area.x, y, text_fit(table, FONT_INTERFACE, label, label_room), graphics.COLOR_DIM, FONT_INTERFACE)
 	if value_x == 0 {
-		draw_text_right(frame.table, area.x + area.width, y, value, value_color)
+		draw_text_right(table, area.x + area.width, y, shown_value, value_color)
 	} else {
-		draw_text(frame.table, area.x + value_x, y, value, value_color)
+		draw_text(table, area.x + value_x, y, shown_value, value_color)
 	}
 }
 
@@ -62,20 +78,24 @@ Alignment :: enum u8 {
 	Right, // Numbers, with their unit.
 }
 
-// cell_text draws a text in a cell of a line, in the middle of its height.
+// cell_text draws a text in a cell of a line, in the middle of its height,
+// cut to the width of the cell. Its font is the font of the cells unless
+// the caller names another: a cell of a table holds a value.
 cell_text :: proc "contextless" (frame: ^Frame, cell: Area, text: string, color: graphics.Color, alignment: Alignment = .Left, font: Font = {}) {
 	y := cell.y + (cell.height - line_height(font)) / 2
+	shown := text_fit(frame.table, font, text, cell.width)
 	if alignment == .Right {
-		draw_text_right(frame.table, cell.x + cell.width, y, text, color, font)
+		draw_text_right(frame.table, cell.x + cell.width, y, shown, color, font)
 	} else {
-		draw_text(frame.table, cell.x, y, text, color, font)
+		draw_text(frame.table, cell.x, y, shown, color, font)
 	}
 }
 
-// table_header draws the titles of the columns of a table, in the dim color.
+// table_header draws the titles of the columns of a table, in the dim color
+// and the interface font: a title names its column.
 table_header :: proc "contextless" (frame: ^Frame, cells: []Area, titles: []string, alignments: []Alignment = nil) {
 	for title, index in titles[:min(len(titles), len(cells))] {
-		cell_text(frame, cells[index], title, graphics.COLOR_DIM, index < len(alignments) ? alignments[index] : .Left)
+		cell_text(frame, cells[index], title, graphics.COLOR_DIM, index < len(alignments) ? alignments[index] : .Left, FONT_INTERFACE)
 	}
 }
 
@@ -127,9 +147,14 @@ button :: proc "contextless" (frame: ^Frame, area: Area, element: Element_Identi
 		color = graphics.shade(graphics.COLOR_TITLE, 60)
 	}
 	draw_rectangle(frame.table, area.x, area.y, area.width, area.height, color, u32(element))
-	draw_text(frame.table, area.x + 8, area.y + (area.height - LINE) / 2, label, color == graphics.COLOR_TRACK ? graphics.COLOR_TEXT : graphics.COLOR_WHITE, {}, u32(element))
+	shown := text_fit(frame.table, FONT_INTERFACE, label, area.width - 16)
+	draw_text(frame.table, area.x + 8, area.y + (area.height - LINE) / 2, shown, color == graphics.COLOR_TRACK ? graphics.COLOR_TEXT : graphics.COLOR_WHITE, FONT_INTERFACE, u32(element))
 	return result
 }
+
+// The lines of a list whose names are measured in one call; the lines past
+// it are measured one by one.
+LIST_MEASURE_CAPACITY :: 64
 
 // List_Options: what a list with a choice shows beside its names.
 List_Options :: struct {
@@ -179,23 +204,41 @@ list_with_choice :: proc "contextless" (frame: ^Frame, area: Area, element: Elem
 		first = max(choice^ - rows + 1, 0)
 	}
 	result.changed = choice^ != before
+	table := frame.table
 	if len(names) == 0 && options.empty_text != "" {
-		draw_text(frame.table, area.x + 8, area.y + 4, options.empty_text, graphics.COLOR_DIM)
+		draw_text(table, area.x + 8, area.y + 4, text_fit(table, FONT_INTERFACE, options.empty_text, area.width - 16), graphics.COLOR_DIM, FONT_INTERFACE)
 	}
-	for row in 0 ..< min(len(names) - first, rows) {
+	// The names of the lines that the list shows, measured in one call.
+	shown_count := max(min(len(names) - first, rows), 0)
+	widths: [LIST_MEASURE_CAPACITY]int
+	measured_count := min(shown_count, LIST_MEASURE_CAPACITY)
+	if measured_count > 0 {
+		texts_measure(table, FONT_INTERFACE, names[first:][:measured_count], widths[:measured_count])
+	}
+	line_width := area.width - scroll_width
+	hint_width := options.chosen_hint != "" ? text_measured_width(table, FONT_INTERFACE, options.chosen_hint) : 0
+	for row in 0 ..< shown_count {
 		index := first + row
 		y := area.y + row * TABLE_LINE
 		chosen := index == choice^
-		line_width := area.width - scroll_width
+		name_room := line_width - 16
 		if chosen {
-			draw_rectangle(frame.table, area.x, y, line_width, TABLE_LINE, graphics.COLOR_TITLE, u32(element))
-			if options.chosen_hint != "" {
-				draw_text_right(frame.table, area.x + line_width - 8, y + 4, options.chosen_hint, graphics.COLOR_TEXT)
+			draw_rectangle(table, area.x, y, line_width, TABLE_LINE, graphics.COLOR_TITLE, u32(element))
+			if options.chosen_hint != "" && hint_width <= line_width - 16 {
+				draw_text_right(table, area.x + line_width - 8, y + 4, options.chosen_hint, graphics.COLOR_TEXT, FONT_INTERFACE)
+				name_room -= hint_width + 8
 			}
 		}
-		draw_text(frame.table, area.x + 8, y + 4, names[index], chosen ? graphics.COLOR_WHITE : graphics.COLOR_TEXT)
-		if at := find_without_case(names[index], options.marked); len(options.marked) > 0 && at >= 0 {
-			draw_rectangle(frame.table, area.x + 8 + at * graphics.CELL_WIDTH, y + 20, len(options.marked) * graphics.CELL_WIDTH, 2, chosen ? graphics.COLOR_WHITE : graphics.COLOR_KERNEL)
+		name := names[index]
+		if row >= measured_count || widths[row] > name_room {
+			name = text_fit(table, FONT_INTERFACE, name, name_room)
+		}
+		draw_text(table, area.x + 8, y + 4, name, chosen ? graphics.COLOR_WHITE : graphics.COLOR_TEXT, FONT_INTERFACE)
+		// The marked part, measured in the font of the name.
+		if at := find_without_case(name, options.marked); len(options.marked) > 0 && at >= 0 {
+			start := text_measured_width(table, FONT_INTERFACE, name[:at])
+			end := text_measured_width(table, FONT_INTERFACE, name[:at + len(options.marked)])
+			draw_rectangle(table, area.x + 8 + start, y + 20, end - start, 2, chosen ? graphics.COLOR_WHITE : graphics.COLOR_KERNEL)
 		}
 	}
 	if scroll_width != 0 {
@@ -245,12 +288,19 @@ text_input :: proc "contextless" (frame: ^Frame, area: Area, element: Element_Id
 	draw_rectangle(table, area.x, area.y, area.width, area.height, graphics.COLOR_TRACK, u32(element))
 	draw_rectangle(table, area.x, area.y + area.height - 2, area.width, 2, result.focused ? graphics.COLOR_TITLE : graphics.COLOR_NOT_USABLE)
 	y := area.y + (area.height - LINE) / 2
-	after := draw_text(table, area.x + 8, y, string(text[:count^]), graphics.COLOR_WHITE)
+	// The typed text is a value, in the font of the cells: its end shows,
+	// with room for the caret, so it never passes the field.
+	visible := string(text[:count^])
+	keep := max(area.width - 16 - 3, 0) / graphics.CELL_WIDTH
+	if len(visible) > keep {
+		visible = visible[len(visible) - keep:]
+	}
+	after := draw_text(table, area.x + 8, y, visible, graphics.COLOR_WHITE)
 	if result.focused {
 		draw_rectangle(table, after + 1, y, 2, LINE, graphics.COLOR_TITLE)
 	}
 	if count^ == 0 && placeholder != "" {
-		draw_text(table, after + 8, y, placeholder, graphics.COLOR_DIM)
+		draw_text(table, after + 8, y, text_fit(table, FONT_INTERFACE, placeholder, area.x + area.width - 8 - (after + 8)), graphics.COLOR_DIM, FONT_INTERFACE)
 	}
 	return result
 }

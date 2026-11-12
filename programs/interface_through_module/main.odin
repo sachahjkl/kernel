@@ -301,7 +301,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		image := ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]
 		shown.module_code = code_bytes(system.image_find(image, "interface_module"))
 	}
-	package_table := interface.Draw_Table{records = package_records[:], text = package_text[:]}
+	// The module, in a direct call, finds the interface font of this
+	// program at its fixed ranges: the package compiled in takes the same
+	// font, so the two tables can be equal.
+	package_table := interface.Draw_Table{records = package_records[:], text = package_text[:], interface_font = display.interface_font_of()}
 	texts: Texts
 	// Three rounds: the measures of a round are the texts of the next.
 	for _ in 0 ..< 3 {

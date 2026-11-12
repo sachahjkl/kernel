@@ -57,22 +57,22 @@ build :: proc "contextless" (frame: ^interface.Frame, number: u64) {
 		system.log("interface_elements: the button was pressed ", presses, " times")
 	}
 	interface.label_value_line(frame, interface.column_take(&column, 16), "presses", interface.number_text(&builder, presses))
-	interface.cell_text(frame, interface.column_take(&column, 16), "a list with a choice", graphics.COLOR_DIM)
+	interface.cell_text(frame, interface.column_take(&column, 16), "a list with a choice", graphics.COLOR_DIM, .Left, interface.FONT_INTERFACE)
 	listed := interface.list_with_choice(frame, interface.column_take(&column, 3 * interface.TABLE_LINE), interface.identity("list"), names[:], &choice, {chosen_hint = "enter: start"})
 	if listed.changed {
 		system.log("interface_elements: the list chooses ", names[choice])
 	}
-	interface.cell_text(frame, interface.column_take(&column, 16), "a text input", graphics.COLOR_DIM)
+	interface.cell_text(frame, interface.column_take(&column, 16), "a text input", graphics.COLOR_DIM, .Left, interface.FONT_INTERFACE)
 	typed_result := interface.text_input(frame, interface.column_take(&column, 24), interface.identity("text"), typed[:], &typed_count, "type a text")
 	if typed_result.changed {
 		system.log("interface_elements: the text is \"", string(typed[:typed_count]), "\"")
 	}
-	interface.cell_text(frame, interface.column_take(&column, 16), "bars: a value against a maximum, parts of one total", graphics.COLOR_DIM)
+	interface.cell_text(frame, interface.column_take(&column, 16), "bars: a value against a maximum, parts of one total", graphics.COLOR_DIM, .Left, interface.FONT_INTERFACE)
 	interface.bar(frame, interface.column_take(&column, 8), number % 100, 100, graphics.COLOR_PROGRAM)
 	parts := [3]u64{number % 50 + 10, 20, 15}
 	colors := [3]graphics.Color{graphics.COLOR_KERNEL, graphics.COLOR_MEMORY, graphics.COLOR_FAILED}
 	interface.bar_parts(frame, interface.column_take(&column, 8), parts[:], colors[:], 100)
-	interface.cell_text(frame, interface.column_take(&column, 16), "a table", graphics.COLOR_DIM)
+	interface.cell_text(frame, interface.column_take(&column, 16), "a table", graphics.COLOR_DIM, .Left, interface.FONT_INTERFACE)
 	cells: [3]interface.Area
 	sizes := [3]interface.Size{interface.share(), interface.characters(10), interface.characters(10)}
 	interface.row_split(interface.column_take(&column, 24), sizes[:], cells[:], 16)
@@ -86,7 +86,7 @@ build :: proc "contextless" (frame: ^interface.Frame, number: u64) {
 		area := interface.column_take(&column, 24)
 		interface.table_band(frame, area, index)
 		interface.row_split({area.x + 8, area.y, area.width - 16, area.height}, sizes[:], cells[:], 16)
-		interface.cell_text(frame, cells[0], line.name, graphics.COLOR_TEXT)
+		interface.cell_text(frame, cells[0], line.name, graphics.COLOR_TEXT, .Left, interface.FONT_INTERFACE)
 		interface.cell_text(frame, cells[1], interface.number_text(&builder, line.records), graphics.COLOR_TEXT, .Right)
 		interface.cell_text(frame, cells[2], interface.number_text(&builder, line.records * size_of(interface.Draw_Record)), graphics.COLOR_TEXT, .Right)
 	}
@@ -95,7 +95,7 @@ build :: proc "contextless" (frame: ^interface.Frame, number: u64) {
 	content = interface.card(frame, {472 + offset, 8, WIDTH - 480, HEIGHT - 16}, "THE FRAME", "Draw_Table, Damage", graphics.COLOR_MACHINE)
 	column = interface.column_of(content, 8)
 	interface.large_number(frame, content.x, interface.column_take(&column, 48).y, interface.number_text(&builder, number), graphics.COLOR_MACHINE)
-	interface.cell_text(frame, interface.column_take(&column, 16), "frames", graphics.COLOR_DIM)
+	interface.cell_text(frame, interface.column_take(&column, 16), "frames", graphics.COLOR_DIM, .Left, interface.FONT_INTERFACE)
 	facts := [?]struct {
 		name:  string,
 		value: u64,
@@ -120,7 +120,7 @@ build :: proc "contextless" (frame: ^interface.Frame, number: u64) {
 		show_damage = !show_damage
 		system.log("interface_elements: the damage is ", show_damage ? "shown" : "hidden")
 	}
-	interface.cell_text(frame, interface.column_take(&column, 16), "a frame draws only its damage", graphics.COLOR_DIM)
+	interface.cell_text(frame, interface.column_take(&column, 16), "a frame draws only its damage", graphics.COLOR_DIM, .Left, interface.FONT_INTERFACE)
 	// The damage of the last frame, as outlines of 2 pixels over the window.
 	// They are records: when the damage stays the same, they do not damage.
 	if show_damage {
@@ -147,8 +147,8 @@ frame_draw :: proc "contextless" (window: ^display.Window) {
 // case: nothing changed, one number changed, or everything moved.
 measure :: proc "contextless" (name: string, number_before, number_now: u64, move: bool) {
 	ROUNDS :: 100
-	before := interface.Draw_Table{records = records_before[:], text = text_before[:]}
-	now := interface.Draw_Table{records = records_now[:], text = text_now[:]}
+	before := interface.Draw_Table{records = records_before[:], text = text_before[:], interface_font = display.interface_font_of()}
+	now := interface.Draw_Table{records = records_now[:], text = text_now[:], interface_font = display.interface_font_of()}
 	state: interface.Interface_State
 	input: interface.Input
 	difference, rectangles: u64
@@ -174,6 +174,40 @@ measure :: proc "contextless" (name: string, number_before, number_now: u64, mov
 	system.log("interface_elements: ", name, ": ", u64(now.record_count), " records, ", rectangles, " damage rectangles, ", area * 100 / (WIDTH * HEIGHT), " % of the window, the difference in ", difference / ROUNDS / 100 / 10, ".", difference / ROUNDS / 100 % 10, " us")
 }
 
+// measure_fonts gives the time of one whole frame of the window, built and
+// drawn into the window with no comparison, in the font of the cells and
+// in the interface font: the least of ROUNDS rounds, so that a round that
+// the host stops in its middle does not count. The window shows the frame
+// that frame_draw draws after it.
+measure_fonts :: proc "contextless" (window: ^display.Window) {
+	ROUNDS :: 20
+	interface_font := display.interface_font_of()
+	fonts := [2]^display.Interface_Font{nil, interface_font}
+	least := [2]u64{max(u64), max(u64)}
+	for font, index in fonts {
+		if index == 1 && font == nil {
+			break
+		}
+		for _ in 0 ..< ROUNDS {
+			table := interface.Draw_Table{records = records_now[:], text = text_now[:], interface_font = font}
+			state: interface.Interface_State
+			input: interface.Input
+			start := system.nanoseconds()
+			frame := interface.frame_begin(&table, &state, &input)
+			build(&frame, 7)
+			interface.frame_end(&frame)
+			graphics.clear(window.canvas, graphics.COLOR_BACKGROUND)
+			interface.execute(&table, window.canvas)
+			least[index] = min(least[index], system.nanoseconds() - start)
+		}
+	}
+	if interface_font == nil {
+		system.log("interface_elements: one whole frame, built and drawn (the least of 20): the font of the cells ", least[0] / 1000, " us; no interface font")
+		return
+	}
+	system.log("interface_elements: one whole frame, built and drawn (the least of 20): the font of the cells ", least[0] / 1000, " us, the interface font ", least[1] / 1000, " us")
+}
+
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "interface_elements")
@@ -183,6 +217,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	measure("nothing changed", 7, 7, false)
 	measure("one number changed", 7, 8, false)
 	measure("everything moved", 7, 7, true)
+	measure_fonts(&window)
 	drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
 	// The whole frame, drawn with no comparison, then a frame where only
 	// the counters changed, drawn in its damage.

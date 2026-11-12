@@ -63,6 +63,9 @@ window_frame_begin :: proc "contextless" (drawing: ^Window_Drawing, window: ^dis
 	if window != nil {
 		display.picture_begin(window)
 	}
+	// The elements of a window draw their names and titles in the
+	// interface font of the program, when its starter gave it one.
+	drawing.now.interface_font = display.interface_font_of()
 	return frame_begin(&drawing.now, &drawing.state, &drawing.input)
 }
 
