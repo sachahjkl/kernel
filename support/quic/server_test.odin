@@ -13,6 +13,7 @@ import "support:random"
 
 HARNESS_RECORDS :: 16
 HARNESS_CLIENT_LIMIT :: 16
+HARNESS_STREAMS :: 2 // The stream records of each record of the server and of each client.
 HARNESS_DELAY :: 5_000
 
 Harness_Datagram :: struct {
@@ -32,6 +33,8 @@ Harness :: struct {
 	connections:          []Connection,
 	records:              []Server_Record,
 	clients:              []Connection,
+	streams:              []Stream, // The stream records of the server.
+	client_streams:       []Stream, // HARNESS_STREAMS records for each client, in the order of the clients.
 	client_remotes:       [HARNESS_CLIENT_LIMIT]Remote,
 	client_configuration: Connection_Configuration,
 	vanished:             [HARNESS_CLIENT_LIMIT]bool, // A client whose datagrams are lost, both ways.
@@ -41,12 +44,8 @@ Harness :: struct {
 	released:             [dynamic]Remote, // Each remote that the server asked to release.
 	most_in_use:          int,
 	clients_not_started:  int, // A client whose start failed: a fault of the harness, which the failure messages say.
-	// The echo of each record.
-	echo_pending:         [][STREAM_BUFFER_SIZE]u8,
-	echo_start:           [HARNESS_RECORDS]int,
-	echo_end:             [HARNESS_RECORDS]int,
-	echo_finished:        [HARNESS_RECORDS]bool,
-	echo_finish_written:  [HARNESS_RECORDS]bool,
+	// The echo of each stream record of the server.
+	stream_echoes:        []Server_Stream_Echo,
 }
 
 harness_make :: proc(client_count: int, client_address := u32(0)) -> ^Harness {
@@ -56,7 +55,9 @@ harness_make :: proc(client_count: int, client_address := u32(0)) -> ^Harness {
 	harness.connections = make([]Connection, HARNESS_RECORDS)
 	harness.records = make([]Server_Record, HARNESS_RECORDS)
 	harness.clients = make([]Connection, client_count)
-	harness.echo_pending = make([][STREAM_BUFFER_SIZE]u8, HARNESS_RECORDS)
+	harness.streams = make([]Stream, HARNESS_RECORDS * HARNESS_STREAMS)
+	harness.client_streams = make([]Stream, max(client_count, 1) * HARNESS_STREAMS)
+	harness.stream_echoes = make([]Server_Stream_Echo, HARNESS_RECORDS * HARNESS_STREAMS)
 	// generator_seed erases the seed that it takes: each generator gets a
 	// seed array of its own, made just before.
 	server_seed := harness_seed(0xA0)
@@ -72,14 +73,14 @@ harness_make :: proc(client_count: int, client_address := u32(0)) -> ^Harness {
 	secret := string(server_configuration.tls.server_private_key[:])
 	result := harness.client_configuration.tls.server_public_key[:]
 	harness.cryptography.ed25519_public_key(&secret, &result, &error)
-	server_init(&harness.server, harness.connections, harness.records, &server_configuration, &harness.cryptography, &harness.server_generator, SERVER_LIMITS_DEFAULT, &error)
+	server_init(&harness.server, harness.connections, harness.records, harness.streams, &server_configuration, &harness.cryptography, &harness.server_generator, SERVER_LIMITS_DEFAULT, &error)
 	for index in 0 ..< client_count {
 		client_seed := harness_seed(u8(index))
 		random.generator_seed(&harness.client_generators[index], &client_seed, .Processor)
 		// One address for each client, unless the test gives one for all.
 		address := client_address != 0 ? client_address : u32(0x0A00_0300 + index)
 		harness.client_remotes[index] = {address, u16(50_000 + index)}
-		if !connection_start_client(&harness.clients[index], &harness.client_configuration, &harness.cryptography, &harness.client_generators[index], harness.now, &error) {
+		if !connection_start_client(&harness.clients[index], harness_client_streams(harness, index), &harness.client_configuration, &harness.cryptography, &harness.client_generators[index], harness.now, &error) {
 			harness.clients_not_started += 1
 		}
 	}
@@ -100,7 +101,7 @@ harness_seed :: proc(first: u8) -> (seed: [random.SEED_SIZE]u8) {
 // client, for the message of a failure.
 harness_describe :: proc(harness: ^Harness) -> string {
 	counters := harness.server.counters
-	text := fmt.tprintf("server: accepted %d, ended %d, datagrams %d, unreadable %d, Retries %d, tokens refused %d, tokens expired %d, not authentic %d, too small %d, refused by the limit of a remote %d, by the limit of the handshakes %d, table full %d, over the budget %d, over the budget of an address %d, tokens used again %d, used tokens forgotten %d, from another remote %d, of no connection %d, version negotiations %d; records in use %d; clients that did not start %d; clients:", counters.accepted, counters.ended, counters.datagrams, counters.unreadable, counters.retries, counters.tokens_refused, counters.tokens_expired, counters.not_authentic, counters.too_small, counters.refused_remote_limit, counters.refused_handshake_limit, counters.refused_full, counters.over_budget, counters.over_address_budget, counters.tokens_used_again, counters.used_tokens_forgotten, counters.other_remote, counters.no_connection, counters.version_negotiations, server_connections_in_use(&harness.server), harness.clients_not_started)
+	text := fmt.tprintf("server: accepted %d, ended %d, datagrams %d, unreadable %d, Retries %d, tokens refused %d, tokens expired %d, not authentic %d, too small %d, refused by the limit of a remote %d, by the limit of the handshakes %d, table full %d, over the budget %d, over the budget of an address %d, no place in the table of address budgets %d, tokens used again %d, used tokens forgotten %d, from another remote %d, of no connection %d, version negotiations %d; records in use %d; clients that did not start %d; clients:", counters.accepted, counters.ended, counters.datagrams, counters.unreadable, counters.retries, counters.tokens_refused, counters.tokens_expired, counters.not_authentic, counters.too_small, counters.refused_remote_limit, counters.refused_handshake_limit, counters.refused_full, counters.over_budget, counters.over_address_budget, counters.address_table_full, counters.tokens_used_again, counters.used_tokens_forgotten, counters.other_remote, counters.no_connection, counters.version_negotiations, server_connections_in_use(&harness.server), harness.clients_not_started)
 	for &client, index in harness.clients {
 		text = fmt.tprintf("%s [%d: %v, a Retry taken %v, closed with %x, by the handshake deadline %v, by the idle timeout %v, %d bytes sent, %d received]", text, index, client.state, client.retried, client.close_error_code, client.closed_by_handshake_timeout, client.closed_by_idle_timeout, client.bytes_sent, client.bytes_received)
 	}
@@ -111,7 +112,9 @@ harness_free :: proc(harness: ^Harness) {
 	delete(harness.connections)
 	delete(harness.records)
 	delete(harness.clients)
-	delete(harness.echo_pending)
+	delete(harness.streams)
+	delete(harness.client_streams)
+	delete(harness.stream_echoes)
 	delete(harness.queue)
 	delete(harness.due)
 	delete(harness.released)
@@ -151,33 +154,17 @@ harness_server_receive :: proc(harness: ^Harness, remote: Remote, bytes: []u8) -
 	return outcome
 }
 
-// harness_echo writes back on each record the bytes that it read, and the
-// end of the stream after the end of the client.
+// harness_client_streams gives the stream records of a client.
+harness_client_streams :: proc(harness: ^Harness, client: int) -> []Stream {
+	return harness.client_streams[client * HARNESS_STREAMS:][:HARNESS_STREAMS]
+}
+
+// harness_echo writes back on each stream of each record the bytes that it
+// read, and the end of the stream after the end of the client.
 harness_echo :: proc(harness: ^Harness) {
 	for record, place in harness.records {
-		if !record.in_use {
-			continue
-		}
-		connection := &harness.connections[place]
-		pending := harness.echo_pending[place][:]
-		for {
-			if harness.echo_start[place] < harness.echo_end[place] {
-				harness.echo_start[place] += stream_write(connection, pending[harness.echo_start[place]:harness.echo_end[place]], false)
-				if harness.echo_start[place] < harness.echo_end[place] {
-					break
-				}
-			}
-			harness.echo_start[place], harness.echo_end[place] = 0, 0
-			count, finished, _ := stream_read(connection, pending)
-			harness.echo_end[place] = count
-			harness.echo_finished[place] = harness.echo_finished[place] || finished
-			if count == 0 {
-				break
-			}
-		}
-		if harness.echo_finished[place] && harness.echo_start[place] == harness.echo_end[place] && !harness.echo_finish_written[place] {
-			stream_write(connection, nil, true)
-			harness.echo_finish_written[place] = true
+		if record.in_use {
+			server_streams_echo(&harness.connections[place], harness.stream_echoes[place * HARNESS_STREAMS:][:HARNESS_STREAMS])
 		}
 	}
 }
@@ -299,9 +286,12 @@ authentic_initial :: proc(cryptography: ^Cryptography, destination: [CONNECTION_
 	return datagram
 }
 
-// harness_run steps until each client that did not vanish ended its echo,
-// or the clock passed its limit. It gives the clients that ended.
+// harness_run steps until each client that did not vanish ended its echo
+// on a stream that it opens, or the clock passed its limit. It gives the
+// clients that ended.
 harness_run :: proc(t: ^testing.T, harness: ^Harness, total: int, clock_limit: u64) -> int {
+	identifiers: [HARNESS_CLIENT_LIMIT]u64
+	opened: [HARNESS_CLIENT_LIMIT]bool
 	written: [HARNESS_CLIENT_LIMIT]int
 	read: [HARNESS_CLIENT_LIMIT]int
 	finished: [HARNESS_CLIENT_LIMIT]bool
@@ -313,19 +303,22 @@ harness_run :: proc(t: ^testing.T, harness: ^Harness, total: int, clock_limit: u
 			if harness.vanished[index] {
 				continue
 			}
-			for written[index] < total {
+			if !opened[index] {
+				identifiers[index], opened[index] = stream_open(&client)
+			}
+			for opened[index] && written[index] < total {
 				count := min(len(chunk), total - written[index])
 				for place in 0 ..< count {
 					chunk[place] = pattern_byte(written[index] + place)
 				}
-				taken := stream_write(&client, chunk[:count], written[index] + count == total)
+				taken := stream_write(&client, identifiers[index], chunk[:count], written[index] + count == total)
 				written[index] += taken
 				if taken < count {
 					break
 				}
 			}
-			for {
-				count, ended, _ := stream_read(&client, chunk[:])
+			for opened[index] {
+				count, ended, _ := stream_read(&client, identifiers[index], chunk[:])
 				for place in 0 ..< count {
 					if chunk[place] != pattern_byte(read[index] + place) {
 						testing.expectf(t, false, "client %d: the byte %d came back changed", index, read[index] + place)
@@ -463,7 +456,7 @@ spoofed_authentic_initials_take_no_record :: proc(t: ^testing.T) {
 	harness.vanished[0] = false
 	clear(&harness.queue)
 	error: errors.Error_Record
-	testing.expect(t, connection_start_client(&harness.clients[0], &harness.client_configuration, &harness.cryptography, &harness.client_generators[0], harness.now, &error))
+	testing.expect(t, connection_start_client(&harness.clients[0], harness_client_streams(harness, 0), &harness.client_configuration, &harness.cryptography, &harness.client_generators[0], harness.now, &error))
 	attack(harness, round)
 	connected_at := harness.now
 	ended := harness_run(t, harness, 4096, 30_000_000)
@@ -675,7 +668,7 @@ retry_of :: proc(harness: ^Harness, remote: Remote, identifier: [CONNECTION_ID_S
 // each second with its valid token and the identifier of the Retry, each
 // with a changed byte, so that none opens. They pass the token check, but
 // the budget of Initial checks of that address refuses all of them after
-// its 4 at once and 4 in each second, before any open: the shared budget
+// its 4 at once and 1 in each second, before any open: the shared budget
 // is not spent. A real client that starts at the same time connects and
 // ends its echo.
 @(test)
@@ -704,10 +697,10 @@ one_address_with_a_valid_token_cannot_spend_the_budget_of_initial_checks :: proc
 	}
 	counters := harness.server.counters
 	testing.expectf(t, attacks >= 1000, "%d Initials of the attacker", attacks)
-	// 4 at once, then 4 in each second, for the attacker; the real client
+	// 4 at once, then 1 in each second, for the attacker; the real client
 	// needs one or a few.
-	testing.expectf(t, counters.authenticity_checks <= 4 + 2 * 4 + 4, "%d Initial checks; %s", counters.authenticity_checks, harness_describe(harness))
-	testing.expectf(t, counters.over_address_budget >= u64(attacks) - 4 - 2 * 4 - 1, "%s", harness_describe(harness))
+	testing.expectf(t, counters.authenticity_checks <= 4 + 2 * 1 + 4, "%d Initial checks; %s", counters.authenticity_checks, harness_describe(harness))
+	testing.expectf(t, counters.over_address_budget >= u64(attacks) - 4 - 2 * 1 - 1, "%s", harness_describe(harness))
 	testing.expectf(t, counters.over_budget == 0, "%s", harness_describe(harness))
 	testing.expectf(t, counters.accepted == 1 && harness.clients[0].state == .Connected, "the real client did not connect during the attack; %s", harness_describe(harness))
 	ended := harness_run(t, harness, 4096, 10_000_000)
@@ -809,4 +802,114 @@ a_record_asks_for_its_validation_until_it_is_confirmed :: proc(t: ^testing.T) {
 	server_validation_confirmed(&harness.server, place, generation, true)
 	outcome = again(harness, initial[:], remote)
 	testing.expect(t, outcome.record == place && !outcome.validate_remote)
+}
+
+// rotating_attack takes a token for each of address_count real addresses,
+// then sends Initials with those tokens that do not open, from the
+// addresses in turn, datagrams_per_second in all, for duration, while the
+// harness runs. Client 0 starts with the attack. Client 1 waits, and starts
+// late_start after the start of the attack. It gives the count of the
+// Initials of the attack.
+rotating_attack :: proc(t: ^testing.T, harness: ^Harness, address_count: int, datagrams_per_second: u64, duration: u64, late_start: u64) -> int {
+	harness.vanished[1] = true
+	garbage := make([][MAX_DATAGRAM_SIZE]u8, address_count)
+	defer delete(garbage)
+	for index in 0 ..< address_count {
+		identifier: [CONNECTION_ID_SIZE]u8
+		identifier[0], identifier[1], identifier[2] = 0x7A, u8(index >> 8), u8(index)
+		remote := Remote{u32(0x0C00_0000 + index), 40_000}
+		token, retry_source, has_retry := retry_of(harness, remote, identifier)
+		if !testing.expectf(t, has_retry, "no Retry for the address %d; %s", index, harness_describe(harness)) {
+			return 0
+		}
+		garbage[index] = authentic_initial(&harness.cryptography, retry_source, token[:])
+		garbage[index][MAX_DATAGRAM_SIZE - 1] ~= 0x01 // The tag: the Initial does not open.
+	}
+	// The budget of Retries refills before the attack: the real clients
+	// get their own Retry.
+	harness.now += 200_000
+	start := harness.now
+	interval := 1_000_000 / datagrams_per_second
+	next_attack := start
+	attacks := 0
+	late_started := false
+	for harness.now < start + duration {
+		if !late_started && harness.now >= start + late_start {
+			late_started = true
+			harness.vanished[1] = false
+			error: errors.Error_Record
+			testing.expect(t, connection_start_client(&harness.clients[1], harness_client_streams(harness, 1), &harness.client_configuration, &harness.cryptography, &harness.client_generators[1], harness.now, &error))
+		}
+		for next_attack <= harness.now {
+			index := attacks % address_count
+			harness_server_receive(harness, {u32(0x0C00_0000 + index), 40_000}, garbage[index][:])
+			attacks += 1
+			next_attack += interval
+		}
+		harness_echo(harness)
+		harness_step(harness)
+	}
+	return attacks
+}
+
+// 33 real addresses, each with a valid token, send 2000 Initials a second
+// in turn for 2 s, each one an Initial that does not open. Before, each
+// address found its place taken by the 32 others since, took the place
+// used the longest time ago with a full bucket, and spent the shared
+// budget: every new client was dropped. Now a place moves only when its
+// bucket is full again, so the 33 addresses get at most 33 buckets: 4
+// checks at once and 1 in each second each. The shared budget is never
+// spent, and a real client that starts with the attack and another that
+// starts 1 s into it both connect during the attack.
+@(test)
+thirty_three_addresses_that_rotate_get_bounded_checks :: proc(t: ^testing.T) {
+	harness := harness_make(2)
+	defer harness_free(harness)
+	testing.expectf(t, harness.clients_not_started == 0, "%s", harness_describe(harness))
+	attacks := rotating_attack(t, harness, 33, 2000, 2_000_000, 1_000_000)
+	counters := harness.server.counters
+	testing.expectf(t, attacks >= 3900, "%d Initials of the attack", attacks)
+	testing.expectf(t, counters.authenticity_checks <= 33 * (4 + 2) + 8, "%d Initial checks; %s", counters.authenticity_checks, harness_describe(harness))
+	testing.expectf(t, counters.over_budget == 0 && counters.address_table_full == 0, "%s", harness_describe(harness))
+	testing.expectf(t, counters.accepted == 2 && harness.clients[0].state == .Connected && harness.clients[1].state == .Connected, "the real clients did not connect during the attack; %s", harness_describe(harness))
+	ended := harness_run(t, harness, 4096, 10_000_000)
+	testing.expectf(t, ended == 2, "%d clients ended their echo, not 2; %s", ended, harness_describe(harness))
+}
+
+// 2000 real addresses, each with a valid token, send 2400 Initials a
+// second in turn for 2 s: each address comes back every 0.83 s.
+// - The bound: the table is 1024 buckets of 4 checks at once and 1 in each
+//   second, so the checks of the 2 s are at most 1024 × 4 + 1024 × 2, and
+//   each real client adds at most its own 4.
+// - The first 1024 addresses take the places. Each one takes a check at
+//   each visit, faster than its bucket refills, so its bucket never comes
+//   back to its depth, and its place never moves while the attack lasts.
+//   The other 976 addresses get no check (address_table_full).
+// - A real client that starts with the attack takes a place before the
+//   table is full, and connects. It then needs no more checks: its place
+//   is full again 1 s after its one check, and a refused address of the
+//   attack takes it within a millisecond, because those ask about 1200
+//   times a second.
+// - A real client that starts 1.5 s into the attack finds no place that
+//   can move, and gets no check until the attack stops. The design gives a
+//   new client no bound while more than 1024 real addresses keep the table:
+//   it gets a place only when one frees and it asks before the attack does.
+// - After the attack the places refill within 4 s, and that client connects.
+@(test)
+two_thousand_addresses_that_rotate_fill_the_table :: proc(t: ^testing.T) {
+	harness := harness_make(2)
+	defer harness_free(harness)
+	testing.expectf(t, harness.clients_not_started == 0, "%s", harness_describe(harness))
+	attacks := rotating_attack(t, harness, 2000, 2400, 2_000_000, 1_500_000)
+	counters := harness.server.counters
+	limits := SERVER_LIMITS_DEFAULT
+	attack_seconds := 2
+	bound := SERVER_ADDRESS_BUDGETS * (limits.initial_checks_per_address_depth + limits.initial_checks_per_address_per_second * attack_seconds) + 2 * limits.initial_checks_per_address_depth
+	testing.expectf(t, attacks >= 4700, "%d Initials of the attack", attacks)
+	testing.expectf(t, counters.authenticity_checks <= u64(bound), "%d Initial checks, over the bound %d; %s", counters.authenticity_checks, bound, harness_describe(harness))
+	testing.expectf(t, counters.address_table_full > 0, "%s", harness_describe(harness))
+	testing.expectf(t, harness.clients[0].state == .Connected, "the client that started with the attack did not connect; %s", harness_describe(harness))
+	testing.expectf(t, harness.clients[1].state == .Handshake, "the client that started in the full table: %v; %s", harness.clients[1].state, harness_describe(harness))
+	ended := harness_run(t, harness, 4096, 9_000_000)
+	testing.expectf(t, ended == 2, "%d clients ended their echo, not 2; %s", ended, harness_describe(harness))
 }

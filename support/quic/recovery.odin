@@ -77,7 +77,8 @@ ranges_contain :: proc "contextless" (ranges: []Acknowledged_Range, value: u64) 
 // sent_packet_acknowledged notes the data of a packet as acknowledged and
 // removes the packet. When a range set has no place for its data, the
 // packet stays: loss detection then sends its data again, and a later
-// acknowledgement notes it.
+// acknowledgement notes it. A stream that ended since the packet went has
+// nothing to note.
 @(private)
 sent_packet_acknowledged :: proc "contextless" (connection: ^Connection, level: Encryption_Level, packet: ^Sent_Packet) {
 	space := &connection.spaces[level]
@@ -85,16 +86,33 @@ sent_packet_acknowledged :: proc "contextless" (connection: ^Connection, level: 
 	if packet.crypto_length > 0 && !range_set_insert(&space.crypto.send_acknowledged, packet.crypto_offset, packet.crypto_offset + packet.crypto_length) {
 		noted = false
 	}
-	if packet.stream_length > 0 && !range_set_insert(&connection.stream.send_acknowledged, packet.stream_offset, packet.stream_offset + packet.stream_length) {
+	stream: ^Stream
+	if packet.stream_length > 0 || packet.stream_finish {
+		stream = stream_of(connection, packet.stream_identifier)
+	}
+	if stream != nil && packet.stream_length > 0 && !range_set_insert(&stream.send_acknowledged, packet.stream_offset, packet.stream_offset + packet.stream_length) {
 		noted = false
 	}
 	if !noted {
 		return
 	}
-	if packet.stream_finish {
-		connection.stream.finish_acknowledged = true
+	if stream != nil && packet.stream_finish {
+		stream.finish_acknowledged = true
+	}
+	controlled: ^Stream
+	if packet.stream_controls != {} {
+		controlled = stream_of(connection, packet.stream_controls_identifier)
+	}
+	if controlled != nil && .Reset_Stream in packet.stream_controls {
+		controlled.reset_acknowledged = true
 	}
 	sent_packet_remove(connection, space, packet)
+	if stream != nil {
+		stream_release_when_ended(connection, stream)
+	}
+	if controlled != nil {
+		stream_release_when_ended(connection, controlled)
+	}
 }
 
 @(private)
@@ -115,10 +133,23 @@ sent_packet_lost :: proc "contextless" (connection: ^Connection, level: Encrypti
 	if !sent_packet_send_again(connection, level, packet) {
 		return
 	}
-	if packet.stream_finish && !connection.stream.finish_acknowledged {
-		connection.stream.finish_sent = false
+	if packet.stream_finish {
+		if stream := stream_of(connection, packet.stream_identifier); stream != nil && !stream.finish_acknowledged {
+			stream.finish_sent = false
+		}
 	}
 	connection.pending_controls += packet.controls - {.Path_Response}
+	if packet.stream_controls != {} {
+		if controlled := stream_of(connection, packet.stream_controls_identifier); controlled != nil {
+			// Each frame goes again with the current value; a reset that
+			// was acknowledged by another packet does not.
+			again := packet.stream_controls
+			if controlled.reset_acknowledged {
+				again -= {.Reset_Stream}
+			}
+			controlled.pending_controls += again
+		}
+	}
 	sent_packet_remove(connection, space, packet)
 }
 
@@ -132,8 +163,11 @@ sent_packet_send_again :: proc "contextless" (connection: ^Connection, level: En
 	if packet.crypto_length > 0 && !range_set_insert(&space.crypto.send_again, packet.crypto_offset, packet.crypto_offset + packet.crypto_length) {
 		placed = false
 	}
-	if packet.stream_length > 0 && !range_set_insert(&connection.stream.send_again, packet.stream_offset, packet.stream_offset + packet.stream_length) {
-		placed = false
+	if packet.stream_length > 0 {
+		stream := stream_of(connection, packet.stream_identifier)
+		if stream != nil && !stream.reset_sent && !range_set_insert(&stream.send_again, packet.stream_offset, packet.stream_offset + packet.stream_length) {
+			placed = false
+		}
 	}
 	return placed
 }

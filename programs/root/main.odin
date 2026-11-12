@@ -284,10 +284,11 @@ things_of :: proc "contextless" (name: string) -> system.Budget_Amounts {
 	case "server":
 		return {pages = 4096, programs = 1, threads = 1} // A table of 32 connections with their buffers, and a large window.
 	case "quic_echo":
-		// 16 QUIC connections of about 214 KiB each and their echo buffers
-		// of 64 KiB: about 1112 pages, in one mapping of the program
-		// (docs/QUIC.md, section 6).
-		return {pages = 2048, programs = 1, threads = 1}
+		// 16 QUIC connections of about 85 KiB each, 4 streams of about
+		// 130 KiB for each, and an echo buffer of 16 KiB for each stream:
+		// about 2770 pages, in one mapping of the program (docs/QUIC.md,
+		// section 6).
+		return {pages = 4096, programs = 1, threads = 1}
 	case "tables":
 		return {pages = 4096, programs = 3, threads = 3} // A table of 65536 readings in a memory object (640 pages), and two call hosts (sample, hostile_exports) with their threads.
 	}

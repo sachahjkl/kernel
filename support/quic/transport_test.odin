@@ -82,12 +82,16 @@ channel_next_delivery :: proc(channel: ^Channel) -> u64 {
 	return next
 }
 
+TEST_STREAMS :: 4 // The stream records of each side of the tests.
+
 Test_Endpoints :: struct {
 	cryptography:     Cryptography,
 	client_generator: random.Generator,
 	server_generator: random.Generator,
 	client:           Connection,
 	server:           Connection,
+	client_streams:   [TEST_STREAMS]Stream,
+	server_streams:   [TEST_STREAMS]Stream,
 	channel:          Channel,
 	now:              u64,
 	buffer:           [MAX_DATAGRAM_SIZE]u8,
@@ -120,9 +124,26 @@ endpoints_make :: proc(idle_timeout_milliseconds: u64 = 30_000) -> ^Test_Endpoin
 	secret := string(server_configuration.tls.server_private_key[:])
 	result := client_configuration.tls.server_public_key[:]
 	endpoints.cryptography.ed25519_public_key(&secret, &result, &error)
-	connection_start_server(&endpoints.server, &server_configuration, &endpoints.cryptography, &endpoints.server_generator, endpoints.now, &error)
-	connection_start_client(&endpoints.client, &client_configuration, &endpoints.cryptography, &endpoints.client_generator, endpoints.now, &error)
+	connection_start_server(&endpoints.server, endpoints.server_streams[:], &server_configuration, &endpoints.cryptography, &endpoints.server_generator, endpoints.now, &error)
+	connection_start_client(&endpoints.client, endpoints.client_streams[:], &client_configuration, &endpoints.cryptography, &endpoints.client_generator, endpoints.now, &error)
 	return endpoints
+}
+
+// connection_copy gives a copy of a connection with copies of its stream
+// records: a test that changes the copy leaves the original as it was.
+connection_copy :: proc(source: ^Connection, allocator := context.allocator) -> ^Connection {
+	copy_of_the_connection := new(Connection, allocator)
+	copy_of_the_connection^ = source^
+	streams := make([]Stream, len(source.streams), allocator)
+	copy(streams, source.streams)
+	copy_of_the_connection.streams = streams
+	return copy_of_the_connection
+}
+
+// connection_copy_free frees a copy of connection_copy.
+connection_copy_free :: proc(copy_of_the_connection: ^Connection) {
+	delete(copy_of_the_connection.streams)
+	free(copy_of_the_connection)
 }
 
 // endpoints_step sends what each side has, delivers each datagram that is
@@ -196,10 +217,10 @@ handshake_over_the_transport :: proc(t: ^testing.T) {
 		testing.expect(t, connection.spaces[.Handshake].discarded)
 		testing.expect(t, connection.peer_parameters_applied)
 		testing.expect_value(t, connection.tls.suite, Cipher_Suite.ChaCha20_Poly1305_Sha256)
-		testing.expect_value(t, connection.peer_max_data, u64(STREAM_BUFFER_SIZE))
+		testing.expect_value(t, connection.peer_max_data, u64(TEST_STREAMS * STREAM_BUFFER_SIZE))
 		testing.expect_value(t, connection.idle_timeout, u64(30_000_000))
 	}
-	testing.expect_value(t, endpoints.client.peer_max_streams_bidirectional, 1)
+	testing.expect_value(t, endpoints.client.peer_max_streams_bidirectional, TEST_STREAMS)
 	testing.expect_value(t, endpoints.server.peer_max_streams_bidirectional, 0)
 	// Each datagram that carried an Initial packet of the client has 1200
 	// bytes; the server never sent more than 3 times what it received
@@ -207,9 +228,10 @@ handshake_over_the_transport :: proc(t: ^testing.T) {
 	testing.expect(t, endpoints.server.address_validated)
 }
 
-// echo_run sends total bytes from the client; the server writes back each
-// byte that it reads; the client checks each byte that comes back. It gives
-// the bytes that the client read, for the clock limit.
+// echo_run sends total bytes from the client on a stream that it opens;
+// the server writes back each byte that it reads; the client checks each
+// byte that comes back. It gives the bytes that the client read, for the
+// clock limit.
 echo_run :: proc(t: ^testing.T, endpoints: ^Test_Endpoints, total: int, clock_limit: u64) -> (client_read: int, server_read: int) {
 	pending := make([]u8, STREAM_BUFFER_SIZE)
 	defer delete(pending)
@@ -218,14 +240,19 @@ echo_run :: proc(t: ^testing.T, endpoints: ^Test_Endpoints, total: int, clock_li
 	written := 0
 	chunk: [4096]u8
 	end := endpoints.now + clock_limit
+	identifier: u64
+	opened := false
 	for endpoints.now < end && !client_finished {
+		if !opened {
+			identifier, opened = stream_open(&endpoints.client)
+		}
 		// The client writes its bytes.
-		for written < total {
+		for opened && written < total {
 			count := min(len(chunk), total - written)
 			for index in 0 ..< count {
 				chunk[index] = pattern_byte(written + index)
 			}
-			taken := stream_write(&endpoints.client, chunk[:count], written + count == total)
+			taken := stream_write(&endpoints.client, identifier, chunk[:count], written + count == total)
 			written += taken
 			if taken < count {
 				break
@@ -234,14 +261,14 @@ echo_run :: proc(t: ^testing.T, endpoints: ^Test_Endpoints, total: int, clock_li
 		// The server writes back what it read.
 		for {
 			if pending_start < pending_end {
-				taken := stream_write(&endpoints.server, pending[pending_start:pending_end], false)
+				taken := stream_write(&endpoints.server, identifier, pending[pending_start:pending_end], false)
 				pending_start += taken
 				if pending_start < pending_end {
 					break
 				}
 			}
 			pending_start, pending_end = 0, 0
-			count, finished, _ := stream_read(&endpoints.server, pending[:])
+			count, finished, _ := stream_read(&endpoints.server, identifier, pending[:])
 			server_read += count
 			pending_end = count
 			if finished {
@@ -252,12 +279,12 @@ echo_run :: proc(t: ^testing.T, endpoints: ^Test_Endpoints, total: int, clock_li
 			}
 		}
 		if server_finished && pending_start == pending_end && !server_finish_written {
-			stream_write(&endpoints.server, nil, true)
+			stream_write(&endpoints.server, identifier, nil, true)
 			server_finish_written = true
 		}
 		// The client checks what comes back.
 		for {
-			count, finished, _ := stream_read(&endpoints.client, chunk[:])
+			count, finished, _ := stream_read(&endpoints.client, identifier, chunk[:])
 			for index in 0 ..< count {
 				if chunk[index] != pattern_byte(client_read + index) {
 					testing.expectf(t, false, "the byte %d came back changed", client_read + index)
@@ -286,7 +313,9 @@ echo_with_no_loss :: proc(t: ^testing.T) {
 	client_read, server_read := echo_run(t, endpoints, 5000, 10_000_000)
 	testing.expect_value(t, server_read, 5000)
 	testing.expect_value(t, client_read, 5000)
-	testing.expect(t, endpoints.client.stream.finish_acknowledged || endpoints.client.stream.finish_sent)
+	// The stream of the client ended, or its last byte went.
+	stream := stream_of(&endpoints.client, 0)
+	testing.expect(t, stream == nil || stream.finish_sent)
 }
 
 // 1 MiB each way, with 5 % of the datagrams lost, 5 % delayed (so that
@@ -397,8 +426,7 @@ connected_endpoints :: proc() -> ^Test_Endpoints {
 // frames_on_a_copy gives the frames to a copy of a side at a level, and
 // gives the copy.
 frames_on_a_copy :: proc(side: ^Connection, level: Encryption_Level, frames: []u8) -> ^Connection {
-	copy_of_the_side := new(Connection, context.temp_allocator)
-	copy_of_the_side^ = side^
+	copy_of_the_side := connection_copy(side, context.temp_allocator)
 	frames_process(copy_of_the_side, level, frames, 2_000_000_000)
 	return copy_of_the_side
 }
@@ -502,7 +530,7 @@ hostile_frames_and_their_error_codes :: proc(t: ^testing.T) {
 		{"RESET_STREAM with a final size of 2^62 - 1", false, .Application, "040007" + largest, .Flow_Control_Error},
 		{"PING with a type of 2 bytes", false, .Application, "4001", .Protocol_Violation},
 		{"a frame type that does not exist", false, .Application, "21", .Frame_Encoding_Error},
-		{"STREAM 4: a second stream of the client", false, .Application, "0a040161", .Stream_Limit_Error},
+		{"STREAM 16: the fifth stream of the client, over the limit of 4", false, .Application, "0a100161", .Stream_Limit_Error},
 		{"STREAM 1: a stream of the server that it did not open", false, .Application, "0a010161", .Stream_State_Error},
 		{"STREAM 2: a unidirectional stream of the client", false, .Application, "0a020161", .Stream_Limit_Error},
 		{"STREAM 3: a unidirectional stream of the server", false, .Application, "0a030161", .Stream_State_Error},
@@ -531,7 +559,8 @@ hostile_frames_and_their_error_codes :: proc(t: ^testing.T) {
 	// One byte under the window is taken.
 	taken := frames_on_a_copy(server, .Application, bytes_of("0e008000ffff0161"))
 	testing.expect_value(t, taken.state, Connection_State.Connected)
-	testing.expect_value(t, taken.stream.highest_received, u64(STREAM_BUFFER_SIZE))
+	taken_stream := stream_of(taken, 0)
+	testing.expect(t, taken_stream != nil && taken_stream.highest_received == u64(STREAM_BUFFER_SIZE))
 }
 
 // 50 000 random packets that pass the AEAD (sealed with the 1-RTT keys of
@@ -543,12 +572,18 @@ hostile_frames_and_their_error_codes :: proc(t: ^testing.T) {
 random_authentic_packets_never_trap :: proc(t: ^testing.T) {
 	endpoints := connected_endpoints()
 	defer free(endpoints)
+	// The snapshot keeps the state of each stream, not its buffers: the
+	// test checks that nothing traps, not the bytes of the streams.
 	snapshot := new(Connection)
 	defer free(snapshot)
 	snapshot^ = endpoints.server
-	server := new(Connection)
-	defer free(server)
-	server^ = snapshot^
+	stream_states: [TEST_STREAMS]Stream_State
+	for stream, index in endpoints.server.streams {
+		stream_states[index] = stream.state
+	}
+	server := connection_copy(&endpoints.server)
+	defer connection_copy_free(server)
+	server_streams := server.streams
 	keys := endpoints.client.spaces[.Application].send_keys
 	state: u64 = 0x4652_414d_4553_0001
 	next :: proc(state: ^u64) -> u64 {
@@ -602,6 +637,10 @@ random_authentic_packets_never_trap :: proc(t: ^testing.T) {
 		if server.state != .Connected {
 			closed += 1
 			server^ = snapshot^
+			server.streams = server_streams
+			for &stream, index in server.streams {
+				stream.state = stream_states[index]
+			}
 		}
 	}
 	testing.expect(t, opened > 40_000, "the packets did not open: the test reached no frame")
@@ -703,9 +742,8 @@ stream_frame_of_the_pattern :: proc(offset: int, length: int) -> []u8 {
 data_with_no_place_is_not_acknowledged :: proc(t: ^testing.T) {
 	endpoints := connected_endpoints()
 	defer free(endpoints)
-	server := new(Connection)
-	defer free(server)
-	server^ = endpoints.server
+	server := connection_copy(&endpoints.server)
+	defer connection_copy_free(server)
 	keys := endpoints.client.spaces[.Application].send_keys
 	number := endpoints.client.spaces[.Application].next_packet_number + 10
 	now := endpoints.now
@@ -739,7 +777,7 @@ data_with_no_place_is_not_acknowledged :: proc(t: ^testing.T) {
 	read := 0
 	buffer: [UNITS * UNIT]u8
 	for {
-		count, _, _ := stream_read(server, buffer[read:])
+		count, _, _ := stream_read(server, 0, buffer[read:])
 		if count == 0 {
 			break
 		}
@@ -760,9 +798,8 @@ data_with_no_place_is_not_acknowledged :: proc(t: ^testing.T) {
 crypto_data_with_no_place_is_not_acknowledged :: proc(t: ^testing.T) {
 	endpoints := connected_endpoints()
 	defer free(endpoints)
-	server := new(Connection)
-	defer free(server)
-	server^ = endpoints.server
+	server := connection_copy(&endpoints.server)
+	defer connection_copy_free(server)
 	keys := endpoints.client.spaces[.Application].send_keys
 	number := endpoints.client.spaces[.Application].next_packet_number + 10
 	not_acknowledged := 0
@@ -790,8 +827,12 @@ crypto_data_with_no_place_is_not_acknowledged :: proc(t: ^testing.T) {
 sent_data_with_no_place_stays_in_flight :: proc(t: ^testing.T) {
 	connection := new(Connection)
 	defer free(connection)
+	streams := make([]Stream, 1)
+	defer delete(streams)
+	connection.streams = streams
 	space := &connection.spaces[.Application]
-	stream := &connection.stream
+	stream := &streams[0]
+	stream.state = {in_use = true, identifier = 0}
 	for index in u64(0) ..< RANGE_SET_LIMIT {
 		range_set_insert(&stream.send_again, 10 * index + 2, 10 * index + 5)
 		range_set_insert(&stream.send_acknowledged, 10 * index + 2, 10 * index + 5)
@@ -882,9 +923,8 @@ an_initial_alone_ends_at_the_handshake_deadline :: proc(t: ^testing.T) {
 a_forgotten_packet_number_is_refused :: proc(t: ^testing.T) {
 	endpoints := connected_endpoints()
 	defer free(endpoints)
-	server := new(Connection)
-	defer free(server)
-	server^ = endpoints.server
+	server := connection_copy(&endpoints.server)
+	defer connection_copy_free(server)
 	keys := endpoints.client.spaces[.Application].send_keys
 	base := endpoints.client.spaces[.Application].next_packet_number + 10
 	challenge := []u8{FRAME_PATH_CHALLENGE, 1, 2, 3, 4, 5, 6, 7, 8}
@@ -953,9 +993,9 @@ configurations_that_are_refused :: proc(t: ^testing.T) {
 	connection := new(Connection)
 	defer free(connection)
 	error: errors.Error_Record
-	testing.expect(t, !connection_start_server(connection, &configuration, &cryptography, &generator, 0, &error))
+	testing.expect(t, !connection_start_server(connection, nil, &configuration, &cryptography, &generator, 0, &error))
 	testing.expect_value(t, error.kind, i64(errors.Kind.Bad_Value))
-	testing.expect(t, !connection_start_client(connection, &configuration, &cryptography, &generator, 0, &error))
+	testing.expect(t, !connection_start_client(connection, nil, &configuration, &cryptography, &generator, 0, &error))
 	testing.expect_value(t, error.kind, i64(errors.Kind.Bad_Value))
 	handshake := new(Tls_Handshake)
 	defer free(handshake)
