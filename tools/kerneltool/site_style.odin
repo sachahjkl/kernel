@@ -17,6 +17,34 @@ site_color :: proc(color: graphics.Color) -> string {
 	return fmt.tprintf("#%06x", u32(color) & 0xFFFFFF)
 }
 
+// site_svg_data_address gives an SVG picture as a data address for the
+// style sheet, so that a page asks for no other file to draw it. The
+// characters that end the address or start a fragment or an escape are
+// percent-encoded, a double quote becomes a single one (the address is
+// inside url("...")), and a line feed is dropped.
+site_svg_data_address :: proc(svg: string) -> string {
+	b := strings.builder_make(context.temp_allocator)
+	strings.write_string(&b, "data:image/svg+xml,")
+	for index in 0 ..< len(svg) {
+		switch svg[index] {
+		case '%':
+			strings.write_string(&b, "%25")
+		case '<':
+			strings.write_string(&b, "%3C")
+		case '>':
+			strings.write_string(&b, "%3E")
+		case '#':
+			strings.write_string(&b, "%23")
+		case '"':
+			strings.write_byte(&b, '\'')
+		case '\n', '\r':
+		case:
+			strings.write_byte(&b, svg[index])
+		}
+	}
+	return strings.to_string(b)
+}
+
 site_variable :: proc(builder: ^strings.Builder, name: string, color: graphics.Color) {
 	strings.write_string(builder, "  --")
 	strings.write_string(builder, name)
@@ -196,12 +224,39 @@ blockquote { margin-left: 0; padding-left: 16px; border-left: 2px solid var(--li
    field. Two cards under it, the guides and the reference. */
 .docs-head { padding: 32px 0 8px; text-align: center; }
 .docs-head .lead { margin: 0 auto 16px; }
-.search.search-door { max-width: 720px; margin: 0 auto 8px; }
+.search.search-door { max-width: 720px; margin: 0 auto 32px; }
 .search-door input { box-sizing: border-box; width: 100%; height: 48px; padding: 0 16px; font-size: 18px; border-color: var(--line); }
 .search-door .search-panel { left: 0; right: 0; top: 52px; width: auto; max-width: none; }
-.docs-knows { max-width: 720px; margin: 0 auto 32px; text-align: center; color: var(--dim); font-size: 14px; }
-.docs-parts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-bottom: 16px; }
+.docs-parts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-bottom: 8px; }
 .docs-parts ol { padding-left: 24px; }
+/* The kind of a row of the list: its icon in the color of its kind, its
+   words dim, as the rest of the line. */
+span.search-kind.value-icon::before { margin-right: 4px; }
+/* The chart of what the search finds: a row for each kind, the icon, the
+   name, the bar and the count. The bars of all rows start at one place, so
+   the name has a column of one width. A bar is an SVG rect in the color of
+   its kind, with square corners; its length is an attribute. While the
+   field holds a text, a row is a button: the kind that the list keeps has
+   the band and the line of the chosen row of the list. */
+.search-chart { margin-bottom: 16px; }
+.search-chart-total { color: var(--dim); }
+.search-chart-rows { list-style: none; margin: 0; padding: 0; }
+.search-chart-rows li { margin: 0; }
+.search-chart-target { display: grid; grid-template-columns: 12px minmax(0, 11em) minmax(0, 1fr) 5em; grid-template-areas: "icon name bar count"; align-items: center; gap: 0 8px; padding: 2px 4px; color: var(--text); text-decoration: none; border-left: 2px solid transparent; }
+.search-chart-target > .value-icon { grid-area: icon; }
+.search-chart-name { grid-area: name; overflow-wrap: anywhere; }
+.search-chart-bar { grid-area: bar; display: block; width: 100%; height: 12px; }
+.search-chart-bar rect { fill: var(--value-color); transition: width 150ms ease-out; }
+.search-chart-count { grid-area: count; justify-self: end; font-variant-numeric: tabular-nums; }
+/* A count keeps the color of a number also in a row that is a link. */
+.search-chart-target .value { color: var(--value-color); }
+.search-chart-target[role="button"] { cursor: pointer; }
+.search-chart-target[aria-pressed="true"] { background: var(--track); border-left-color: var(--line); }
+.search-chart-none .search-chart-target { color: var(--dim); }
+.search-chart-none code.value { color: var(--dim); border-left-color: var(--dim); }
+@media (prefers-reduced-motion: reduce) {
+  .search-chart-bar rect { transition: none; }
+}
 .crumbs ol { list-style: none; margin: 16px auto 0; padding: 0; display: flex; flex-wrap: wrap; gap: 4px; color: var(--dim); }
 .crumbs li { margin: 0; }
 .crumbs li + li::before { content: "/"; margin-right: 4px; color: var(--dim); }
@@ -455,6 +510,9 @@ figcaption { padding-top: 8px; font-size: 14px; }
   /* The field of the home of the docs stays in the page, not in the menu. */
   .search-door input { height: 40px; }
   .docs-parts { grid-template-columns: minmax(0, 1fr); }
+  /* A row of the chart: the icon, the name and the count on one line, the
+     bar under the name. */
+  .search-chart-target { grid-template-columns: 12px minmax(0, 1fr) auto; grid-template-areas: "icon name count" ". bar bar"; row-gap: 2px; }
   /* The open menu scrolls on its own: on a documentation page it holds
      the tree under the sections and the search. */
   .bar-menu-content { max-height: calc(100vh - 48px); overflow-y: auto; }
@@ -536,6 +594,7 @@ h2:target, h3:target, li:target, p:target { box-sizing: border-box; border-left:
 @media (forced-colors: active) {
   /* The system colors: the icons, the marks of the values and the focus stay. */
   .value-icon::before { forced-color-adjust: none; background-color: CanvasText; }
+  .search-chart-bar rect { fill: CanvasText; }
   code.value, button.type-reference.value { border-left-color: CanvasText; }
   a:focus-visible, button:focus-visible, summary:focus-visible, input:focus-visible, [tabindex]:focus-visible { outline-color: Highlight; }
   .type-card { border-color: CanvasText; }
@@ -568,6 +627,12 @@ site_polish_variables :: proc(builder: ^strings.Builder, light: bool) {
 	strings.write_string(builder, "}\n")
 }
 
+// site_style_sheet_icon_count gives the count of the icons of the kinds of
+// values that a style sheet holds as data addresses.
+site_style_sheet_icon_count :: proc(sheet: string) -> int {
+	return strings.count(sheet, "--value-icon: url(\"data:image/svg+xml,")
+}
+
 // site_style_sheet gives the whole style sheet: the variables of the dark
 // form, the rules, the grid of points of the background, then the light form
 // for a reader whose system asks for it.
@@ -589,10 +654,10 @@ site_style_sheet :: proc(tile_rules: string) -> string {
 	// The grid of points of the background (docs/DESIGN.md, section 3): a
 	// square of 2 pixels each 24 pixels, at 12 + 24 n. A picture in the style
 	// sheet itself, so that the page asks for no other file.
-	point := site_color(graphics.COLOR_POINT)
-	strings.write_string(&builder, ".section-home {\n  background-image: url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24'%3E%3Crect width='2' height='2' fill='%23")
-	strings.write_string(&builder, point[1:])
-	strings.write_string(&builder, "'/%3E%3C/svg%3E\");\n  background-position: 12px 12px;\n}\n")
+	point := fmt.tprintf("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"24\" height=\"24\"><rect width=\"2\" height=\"2\" fill=\"%s\"/></svg>", site_color(graphics.COLOR_POINT))
+	strings.write_string(&builder, ".section-home {\n  background-image: url(\"")
+	strings.write_string(&builder, site_svg_data_address(point))
+	strings.write_string(&builder, "\");\n  background-position: 12px 12px;\n}\n")
 	strings.write_string(&builder, "@media (prefers-color-scheme: light) {\n")
 	site_colors_write(&builder, site_light_colors())
 	strings.write_string(&builder, site_value_rules(true))

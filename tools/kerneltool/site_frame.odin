@@ -33,6 +33,11 @@ SITE_GLOSSARY_FOLDER :: SITE_REFERENCE_FOLDER + "/glossary"
 SITE_COMMANDS_FOLDER :: SITE_REFERENCE_FOLDER + "/commands"
 SITE_NUMBERS_FOLDER :: SITE_REFERENCE_FOLDER + "/numbers"
 SITE_LICENSES_FOLDER :: SITE_REFERENCE_FOLDER + "/licenses"
+// The folders of the sections that are not docs: the table of the search
+// kinds names them too.
+SITE_STATUS_FOLDER :: "status"
+SITE_NEWS_FOLDER :: "news"
+SITE_RELEASES_FOLDER :: "releases"
 // The documents of docs/ that are working records of the project, not
 // guides: the site leaves them out. A link of a page to one of them names
 // the file in the repository.
@@ -74,9 +79,9 @@ site_section_folders := [Site_Section]string {
 	.Docs      = SITE_DOCS_FOLDER,
 	.Guides    = SITE_GUIDE_FOLDER,
 	.Reference = SITE_REFERENCE_FOLDER,
-	.Status    = "status",
-	.News      = "news",
-	.Releases  = "releases",
+	.Status    = SITE_STATUS_FOLDER,
+	.News      = SITE_NEWS_FOLDER,
+	.Releases  = SITE_RELEASES_FOLDER,
 }
 
 // The section above each section: the breadcrumbs follow it, and the bar
@@ -735,11 +740,12 @@ site_build :: proc(address: string) -> bool {
 		}
 		site_write_file(&site, target, data) or_return
 	}
-	site_write_file(&site, SITE_STYLE_SHEET, transmute([]u8)site_style_sheet(site.tile_rules)) or_return
+	// The style sheet holds the icons of the kinds of values: a page asks
+	// for no file to draw them.
+	style_sheet := site_style_sheet(site.tile_rules)
+	site_write_file(&site, SITE_STYLE_SHEET, transmute([]u8)style_sheet) or_return
 	site_write_file(&site, SITE_SEARCH_SCRIPT, transmute([]u8)site_search_script()) or_return
 	site_mark_animation_write(&site) or_return
-	// The icons of the kinds of values: the style sheet names them.
-	site_value_icons_write(&site) or_return
 	// The index of the search, from the same data as the pages. It is
 	// written before the pages, because each page names the version of its
 	// bytes; it is checked against the pages after them.
@@ -821,6 +827,7 @@ site_build :: proc(address: string) -> bool {
 	for generation in Site_Address_Generation {
 		fmt.printfln("kerneltool: site: %d redirect pages at the old addresses %s", site.redirect_counts[generation], site_address_generation_names[generation])
 	}
+	fmt.printfln("kerneltool: site: %s: %d bytes, with %d icons of the kinds of values inside", SITE_STYLE_SHEET, len(style_sheet), site_style_sheet_icon_count(style_sheet))
 	fmt.printfln("kerneltool: site: %s: %d entries of at most %d, %d bytes of at most %d; %s: %d bytes", SITE_SEARCH_INDEX, len(search_entries), SITE_SEARCH_ENTRY_LIMIT, len(search_index), SITE_SEARCH_INDEX_BYTE_LIMIT, SITE_SEARCH_SCRIPT, site.files[SITE_SEARCH_SCRIPT])
 	commit_text: string = site.commit != "" ? site.commit : "not readable (links to files go to master)"
 	fmt.printfln("kerneltool: site: %d guides, %d terms of the glossary, %d news entries, the commit %s, the release %s", len(site.guides), len(site.terms), len(site.news), commit_text, site.release)
