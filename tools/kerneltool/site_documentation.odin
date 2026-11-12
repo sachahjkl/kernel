@@ -101,18 +101,23 @@ site_tree_link :: proc(site: ^Site, b: ^strings.Builder, from_page, target, titl
 	strings.write_string(b, "</a>")
 }
 
-// site_tree_html writes the tree of the documentation: the guides in their
-// reading order, the reference pages, the modules in their groups, and the
-// status. It is generated from the pages that exist, so it is the same on
-// each documentation page but for the mark of the current page and the
-// group of modules that is open.
+// site_tree_html writes the tree of a documentation page. The guides and
+// the reference are two bodies of text that a reader uses apart, so each has
+// its own tree: a guide shows the guides in their reading order; a page of
+// the reference, of a module or of the status shows the reference pages,
+// every module under the heading of its group, and the status. The tree is
+// whole: nothing is folded, so a reader sees every page of the part at once.
 site_tree_html :: proc(site: ^Site, page: Site_Page) -> string {
 	b := strings.builder_make(context.temp_allocator)
 	strings.write_string(&b, SITE_TREE_OPEN)
 	strings.write_string(&b, "\n<ul class=\"tree-sections\">\n")
 
 	guides_page := site_section_page(.Guides)
-	if site_page_exists(site, guides_page) {
+	if page.section == .Guides {
+		if !site_page_exists(site, guides_page) {
+			strings.write_string(&b, "</ul>\n</nav>\n")
+			return strings.to_string(b)
+		}
 		strings.write_string(&b, "<li>")
 		site_tree_link(site, &b, page.path, guides_page, site_section_titles[.Guides], false)
 		strings.write_string(&b, "\n<ul>\n")
@@ -121,7 +126,8 @@ site_tree_html :: proc(site: ^Site, page: Site_Page) -> string {
 			site_tree_link(site, &b, page.path, guide.path, guide.title, false)
 			strings.write_string(&b, "</li>\n")
 		}
-		strings.write_string(&b, "</ul>\n</li>\n")
+		strings.write_string(&b, "</ul>\n</li>\n</ul>\n</nav>\n")
+		return strings.to_string(b)
 	}
 
 	modules_page := site_page_file(SITE_MODULES_FOLDER)
@@ -147,20 +153,15 @@ site_tree_html :: proc(site: ^Site, page: Site_Page) -> string {
 		strings.write_string(&b, "\n<ul class=\"tree-groups\">\n")
 		for group in Site_Module_Group {
 			count := 0
-			holds_current := false
 			for item in site.reference.modules {
 				if site_module_group(item) == group {
 					count += 1
-					holds_current ||= item.page == page.path
 				}
 			}
 			if count == 0 {
 				continue
 			}
-			// A group is closed unless it holds the current page: the tree
-			// stays short, and the page that the reader is on is in view.
-			open_attribute: string = holds_current ? " open" : ""
-			fmt.sbprintf(&b, "<li><details class=\"tree-group\"%s><summary>%s <span class=\"tree-count\">%d</span></summary>\n<ul>\n", open_attribute, site_module_group_titles[group], count)
+			fmt.sbprintf(&b, "<li><span class=\"tree-group\">%s <span class=\"tree-count\">%d</span></span>\n<ul>\n", site_module_group_titles[group], count)
 			for item in site.reference.modules {
 				if site_module_group(item) != group {
 					continue
@@ -169,7 +170,7 @@ site_tree_html :: proc(site: ^Site, page: Site_Page) -> string {
 				site_tree_link(site, &b, page.path, item.page, item.build.name, true)
 				strings.write_string(&b, "</li>\n")
 			}
-			strings.write_string(&b, "</ul>\n</details></li>\n")
+			strings.write_string(&b, "</ul>\n</li>\n")
 		}
 		strings.write_string(&b, "</ul>\n</li>\n")
 	}

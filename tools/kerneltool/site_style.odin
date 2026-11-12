@@ -221,7 +221,7 @@ blockquote { margin-left: 0; padding-left: 16px; border-left: 2px solid var(--li
 .tree-sections > li { margin-bottom: 16px; }
 .tree-sections > li > a { font-weight: 700; }
 .tree-sections ul ul a, .tree-groups ul a { padding-left: 24px; }
-.tree-group > summary { cursor: pointer; padding: 2px 8px; color: var(--dim); }
+.tree-group { display: block; padding: 6px 8px 2px; color: var(--dim); }
 .tree-count { font-family: var(--mono); font-size: 12px; }
 .outline { font-size: 14px; line-height: 20px; margin: 16px 0; }
 .outline > summary { cursor: pointer; color: var(--dim); }

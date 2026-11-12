@@ -741,7 +741,16 @@ site_documentation_layout_of_the_pages :: proc(t: ^testing.T) {
 			testing.expect_value(t, strings.count(tree_html, "aria-current=\"page\""), 1)
 			testing.expect(t, strings.contains(tree_html, "aria-current=\"page\">Guide A</a>"))
 			testing.expect(t, strings.contains(tree_html, ">Guide B</a>"))
-			testing.expect(t, strings.contains(tree_html, ">Licenses</a>"))
+			// The tree of a guide holds the guides only; the reference has its own.
+			testing.expect(t, !strings.contains(tree_html, ">Licenses</a>"))
+		}
+		licenses := written[site_page_file(SITE_LICENSES_FOLDER)]
+		if licenses_tree := strings.index(licenses, SITE_TREE_OPEN); licenses_tree >= 0 {
+			licenses_tree_html := licenses[licenses_tree:]
+			licenses_tree_html = licenses_tree_html[:strings.index(licenses_tree_html, "</nav>")]
+			testing.expect(t, strings.contains(licenses_tree_html, "aria-current=\"page\">Licenses</a>"))
+			testing.expect(t, !strings.contains(licenses_tree_html, ">Guide B</a>"))
+			testing.expect(t, !strings.contains(licenses_tree_html, "<details"))
 		}
 		home := written[SITE_PAGE]
 		testing.expect(t, !strings.contains(home, SITE_TREE_OPEN))
