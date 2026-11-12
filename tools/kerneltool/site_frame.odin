@@ -31,7 +31,7 @@ SITE_REFERENCE_FOLDER :: "reference"
 // The documents of docs/ that are working records of the project, not
 // guides: the site leaves them out. A link of a page to one of them names
 // the file in the repository.
-SITE_WORKING_RECORDS :: [?]string{"HANDOFF.md", "REVIEWS.md", "SITE.md", "FIRST_MILESTONE.md"}
+SITE_WORKING_RECORDS :: [?]string{"HANDOFF.md", "REVIEWS.md", "SITE.md", "FIRST_MILESTONE.md", "DECISIONS.md"}
 SITE_DESCRIPTION_LIMIT :: 160
 // The start of the refresh of a redirect page; the link to the new address
 // follows it.
