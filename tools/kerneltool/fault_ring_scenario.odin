@@ -37,6 +37,8 @@ scenario_fault_ring := [?]Step {
 	{kind = .Wait, text = "fault_ring: a new handler while a thread waits: the child stopped with the code 0000000000000500, the address 0000000000000000: as it must"},
 	{kind = .Wait, text = "fault_ring: an answer from another program: the parent answered for the thread 2 and the serial 1: refused with Bad_State; the thread still waited, and the answer of its own program resumed it: as it must"},
 	{kind = .Wait, text = "fault_ring: an answer from another program: the child stopped with the code 0000000000000037, the address 0000000000000000: as it must"},
+	// A Wait finds its text anywhere in the log: the line goes on with the
+	// time of the case (", in N ms"), which changes from run to run.
 	{kind = .Wait, text = "fault_ring: 10 000 answers given at once: 10000 faults resumed, 10000 values right, of 10000: as it must"},
 	{kind = .Wait, text = "fault_ring: 10 000 answers given at once: the child stopped with the code 0000000000000043, the address 0000000000000000: as it must"},
 	{kind = .Wait, text = "fault_ring: ok, 13 cases: each fault was repaired, or stopped its program with the report of today, and each child gave back every page and every thread"},
