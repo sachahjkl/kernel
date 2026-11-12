@@ -362,10 +362,18 @@ Fault_Record :: struct {
 	access:      u64, // A page fault: Fault_Access, what the access was. 0 for another kind.
 	// The address where the thread continues after Resume. A fault: the
 	// instruction that faulted, which runs again. A trap (Debug,
-	// Breakpoint): the instruction after the one that trapped.
+	// Breakpoint): the instruction after the one that trapped, so its
+	// length is not known here: int3 (CC) and int1 (F1) are one byte, int 3
+	// (CD 03) is two. A debugger that wrote CC subtracts 1.
 	instruction: u64,
 	kind:        Fault_Kind, // The processor exception.
-	error_code:  u64, // The error code that the processor gave with the exception, whole: a selector or 0 for General_Protection, Segment_Not_Present and Stack_Fault, the bits of the access for Page_Fault, 0 for a kind with no error code.
+	// The error code that the processor gave with the exception, whole.
+	// General_Protection: 0; a selector that the program loaded or named;
+	// or (n << 3) | 2 for an `int n` whose gate a program cannot use (0x72
+	// for int 14), which is never the exception n. Segment_Not_Present and
+	// Stack_Fault: 0 or a selector. Page_Fault: the bits of the access. 0
+	// for a kind with no error code.
+	error_code:  u64,
 	reserved:    u64,
 }
 #assert(size_of(Fault_Record) == 64)
@@ -383,10 +391,10 @@ Fault_Kind :: enum u64 {
 	Invalid_Opcode      = 6, // Fault. ud2, or an instruction that this processor does not have.
 	Segment_Not_Present = 11, // Fault. A load of a segment register with a selector whose descriptor is not present.
 	Stack_Fault         = 12, // Fault. A stack access at an address that is not canonical.
-	General_Protection  = 13, // Fault. A privileged instruction, an address that is not canonical, a bad selector.
+	General_Protection  = 13, // Fault. A privileged instruction, an address that is not canonical, a bad selector, `int n` for a vector other than 3; sgdt, sidt, sldt, smsw and str when the processor has UMIP.
 	Page_Fault          = 14, // Fault. An access that the page table refuses.
-	X87_Floating_Point  = 16, // Fault. An unmasked exception of the x87 unit, at the next x87 instruction.
-	Alignment_Check     = 17, // Fault. An access that is not aligned, with the flag AC set.
+	X87_Floating_Point  = 16, // Fault. An unmasked exception of the x87 unit, at the next x87 instruction (the kernel sets CR0.NE on each processor).
+	Alignment_Check     = 17, // Fault. An access that is not aligned, with the flag AC set (the kernel sets CR0.AM on each processor).
 	Simd_Floating_Point = 19, // Fault. An unmasked exception of an SSE or AVX instruction.
 }
 Fault_Kinds :: bit_set[Fault_Kind; u64]

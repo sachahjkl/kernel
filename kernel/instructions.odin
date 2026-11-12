@@ -122,6 +122,20 @@ control_register_0_read :: asm() -> (value: u64) [#volatile, #clobber memory, #c
 	mov value, %cr0
 }
 
+control_register_0_write :: asm(value: u64) [#volatile, #clobber memory, #clobber %flags] {
+	mov %cr0, value
+}
+
+// The debug registers 6 (the status of the last debug exception) and 7
+// (which breakpoints are on). Only the start of a processor writes them.
+debug_register_6_write :: asm(value: u64) [#volatile, #clobber memory, #clobber %flags] {
+	mov %dr6, value
+}
+
+debug_register_7_write :: asm(value: u64) [#volatile, #clobber memory, #clobber %flags] {
+	mov %dr7, value
+}
+
 control_register_2_read :: asm() -> (value: u64) [#volatile, #clobber memory, #clobber %flags] {
 	mov value, %cr2
 }

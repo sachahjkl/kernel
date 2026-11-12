@@ -20,7 +20,10 @@ SELECTOR_USER_CODE :: 0x20 | 3
 SELECTOR_TASK :: 0x28
 USER_FLAGS :: 0x202 // Interrupts on.
 
+VECTOR_NON_MASKABLE_INTERRUPT :: 2
+VECTOR_DOUBLE_FAULT :: 8
 VECTOR_PAGE_FAULT :: 14
+VECTOR_MACHINE_CHECK :: 18
 VECTOR_INTERRUPT_BASE :: 32 // The 16 lines of the 8259 are the vectors 32 to 47.
 VECTOR_TIMER :: 48 // The timer of the processor.
 VECTOR_WAKE :: 49 // Another processor made a thread ready.
@@ -289,6 +292,58 @@ processor_create :: proc "contextless" (index: u32, apic_id: u32) -> ^Processor 
 	return cpu
 }
 
+// The control registers that the kernel writes on each processor, the first
+// one and the others (docs/ARCHITECTURE.md, "The control registers of a
+// processor"). CR0 is one value, of the bits below; CR4 keeps the bits of
+// CR4_KEPT and adds those of CR4_FROM_FEATURES that the processor has.
+CR0_PROTECTED_MODE :: 1 << 0
+CR0_MONITOR_COPROCESSOR :: 1 << 1 // wait and fwait obey the flag task switched, which stays clear.
+CR0_EXTENSION_TYPE :: 1 << 4
+// An x87 error is the exception 16 of the thread, at its next x87
+// instruction. Without it, the error goes out on line 13 of the interrupt
+// controller, a device interrupt of the program that owns that line.
+CR0_NUMERIC_ERROR :: 1 << 5
+CR0_WRITE_PROTECT :: 1 << 16 // The kernel obeys read-only pages.
+// A program that sets the flag AC gets the exception 17 for an access that
+// is not aligned. Every 64-bit processor has it, and it acts at level 3
+// only: the kernel, and its stac and clac, are not changed.
+CR0_ALIGNMENT_MASK :: 1 << 18
+CR0_PAGING :: 1 << 31
+// Clear: emulation of the x87 (bit 2) and task switched (bit 3), so that
+// device not available never comes; not write-through (29) and cache
+// disabled (30), so that the caches work.
+CR0_OF_THE_KERNEL :: u64(CR0_PROTECTED_MODE | CR0_MONITOR_COPROCESSOR | CR0_EXTENSION_TYPE | CR0_NUMERIC_ERROR | CR0_WRITE_PROTECT | CR0_ALIGNMENT_MASK | CR0_PAGING)
+#assert(CR0_OF_THE_KERNEL == 0x8005_0033)
+
+CR4_PHYSICAL_ADDRESS_EXTENSION :: 1 << 5
+CR4_MACHINE_CHECK :: 1 << 6 // A machine check is the exception 18, which stops the machine with a line; without it the processor shuts down with no line.
+// sgdt, sidt, sldt, smsw and str of a program give a protection fault: a
+// program reads no address of a table of the kernel.
+CR4_USER_INSTRUCTION_PREVENTION :: 1 << 11
+CR4_FIVE_LEVEL_PAGING :: 1 << 12
+CR4_NO_EXECUTE_PROGRAM :: 1 << 20
+CR4_GUARD_PROGRAM :: 1 << 21
+// The bits of CR4 that the kernel keeps from the value before
+// processor_setup: long mode needs the physical address extension, the
+// count of levels of the page table cannot change in 64-bit mode, and the
+// setup of the extended state set the three others just before. Every
+// other bit that the firmware set is cleared.
+CR4_KEPT :: u64(CR4_PHYSICAL_ADDRESS_EXTENSION | CR4_FIVE_LEVEL_PAGING | CR4_OSFXSR | CR4_OSXMMEXCPT | CR4_OSXSAVE)
+#assert(CR4_KEPT == 0x4_1620)
+// The bits of CR4 that processor_setup adds when CPUID has them.
+CR4_FROM_FEATURES :: u64(CR4_MACHINE_CHECK | CR4_USER_INSTRUCTION_PREVENTION | CR4_NO_EXECUTE_PROGRAM | CR4_GUARD_PROGRAM)
+#assert(CR4_FROM_FEATURES == 0x30_0840)
+#assert(CR4_KEPT & CR4_FROM_FEATURES == 0)
+
+// DR7 with no breakpoint on (bit 10 is always 1), and DR6 with no status
+// (its reserved bits are 1).
+DR7_NO_BREAKPOINT :: 0x400
+DR6_CLEAR :: 0xFFFF_0FF0
+
+// The processors refuse sgdt, sidt, sldt, smsw and str to programs
+// (CR4_USER_INSTRUCTION_PREVENTION). Written by processor_setup.
+user_instruction_prevention: bool
+
 // processor_setup loads the registers of the processor that runs it.
 processor_setup :: proc "contextless" (cpu: ^Processor) {
 	descriptor := Table_Descriptor{size_of(cpu.segments) - 1, u64(uintptr(&cpu.segments))}
@@ -312,13 +367,21 @@ processor_setup :: proc "contextless" (cpu: ^Processor) {
 	// task. A program can set nested task with popfq; with it set in the
 	// kernel, the iretq of resume would fault in the kernel.
 	model_specific_register_write(MSR_SFMASK, 0x44700)
+	// The control registers are the kernel's own on each processor: a bit
+	// that the firmware left would decide what a program sees (an x87 error
+	// as a device interrupt, no alignment check, the addresses of the tables
+	// of the kernel). docs/ARCHITECTURE.md, "The control registers of a
+	// processor".
+	control_register_0_write(CR0_OF_THE_KERNEL)
+	cr4 := control_register_4_read() & CR4_KEPT
+	_, _, _, basic_features := intrinsics.x86_cpuid(1, 0)
+	if basic_features & (1 << 7) != 0 {
+		cr4 |= CR4_MACHINE_CHECK
+	}
 	// The kernel does not execute the memory of programs, and uses it only
 	// in user_copy, when the processor can refuse the rest (SMEP, SMAP).
-	CR4_NO_EXECUTE_PROGRAM :: 1 << 20
-	CR4_GUARD_PROGRAM :: 1 << 21
 	if highest, _, _, _ := intrinsics.x86_cpuid(0, 0); highest >= 7 {
-		_, features, _, _ := intrinsics.x86_cpuid(7, 0)
-		cr4 := control_register_4_read()
+		_, features, more_features, _ := intrinsics.x86_cpuid(7, 0)
 		if features & (1 << 7) != 0 {
 			cr4 |= CR4_NO_EXECUTE_PROGRAM
 			kernel_no_execute = true
@@ -327,8 +390,17 @@ processor_setup :: proc "contextless" (cpu: ^Processor) {
 			cr4 |= CR4_GUARD_PROGRAM
 			user_access_guard = 1
 		}
-		control_register_4_write(cr4)
+		if more_features & (1 << 2) != 0 {
+			cr4 |= CR4_USER_INSTRUCTION_PREVENTION
+			user_instruction_prevention = true
+		}
 	}
+	control_register_4_write(cr4)
+	// No breakpoint that the firmware set stays on: a debug exception in
+	// the kernel stops the machine, and its window before the stack of the
+	// kernel would run on the stack of a program.
+	debug_register_7_write(DR7_NO_BREAKPOINT)
+	debug_register_6_write(DR6_CLEAR)
 	apic_setup(cpu)
 }
 
@@ -378,9 +450,16 @@ processor_start :: proc "contextless" () {
 	extended_state_prove()
 	extended_state_log()
 	return_to_program_log()
+	control_registers_log()
 	performance_counters_log()
 	timer_calibrate()
 	timer_start()
+}
+
+// control_registers_log names, at boot, the control registers of the first
+// processor, and what a program can read of the tables of the kernel.
+control_registers_log :: proc "contextless" () {
+	log("kernel: control registers: cr0 ", Hex(control_register_0_read()), ", cr4 ", Hex(control_register_4_read()), user_instruction_prevention ? string("; UMIP on: sgdt, sidt, sldt, smsw and str of a program give a protection fault") : string("; no UMIP: a program reads with sgdt and sidt the addresses of the segment table and of the interrupt table of its processor"))
 }
 
 interrupt_end :: proc "contextless" (line: u64) {
