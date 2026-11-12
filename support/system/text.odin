@@ -52,6 +52,30 @@ log_in :: proc "contextless" (channel: string, level: op.Log_Level, parts: ..Par
 	call(.Log, u64(handle), u64(uintptr(raw_data(text))), u64(len(text)), u64(level), packed[0], packed[1])
 }
 
+// LOG_CALL_LIMIT is the bytes of text that the kernel takes in one Log call:
+// it writes them as one line, in as many log records as they need.
+LOG_CALL_LIMIT :: 4096
+
+// log_text writes a text on the log as it is, with no format and no buffer
+// of its own: a text of any length goes whole, as one line when it has at
+// most LOG_CALL_LIMIT bytes, and as several lines of that size when it is
+// longer. Nothing is cut.
+log_text :: proc "contextless" (text: string) {
+	handle := context_record().handles[op.CONTEXT_LOG]
+	if handle == 0 {
+		return
+	}
+	rest := text
+	for {
+		part := rest[:min(len(rest), LOG_CALL_LIMIT)]
+		rest = rest[len(part):]
+		call(.Log, u64(handle), u64(uintptr(raw_data(part))), u64(len(part)), u64(op.Log_Level.Info), 0, 0)
+		if len(rest) == 0 {
+			break
+		}
+	}
+}
+
 // name_of gives the text of a fixed array of bytes that ends with zero bytes.
 name_of :: proc "contextless" (bytes: []u8) -> string {
 	count := 0

@@ -59,7 +59,10 @@ line: line_editor.Line
 history: line_editor.History
 history_place: int
 draft: line_editor.Line
-log_line: [192]u8 // The output line that goes to the log of the kernel when it ends.
+// The output line that goes to the log of the kernel when it ends: one Log
+// call takes system.LOG_CALL_LIMIT bytes. A longer line goes to the log in
+// parts of that size, each one a line of the log: nothing is cut.
+log_line: [system.LOG_CALL_LIMIT]u8
 log_count: int
 line_tone: terminal.Tone // The tone of the output line that the console writes now.
 
@@ -280,11 +283,25 @@ edit_show :: proc "contextless" () {
 
 // print writes output: runs of text on the terminal, and each full line on
 // the log of the kernel. A line that starts with "error" has the tone Bad.
+// Each part goes whole, at any length: a Text part is written as it is,
+// with no buffer between, and a number is formatted on its own.
 print :: proc "contextless" (parts: ..system.Part) {
-	buffer: [256]u8
-	text := system.format(buffer[:], ..parts)
 	system.lock(&output_lock)
 	defer system.unlock(&output_lock)
+	for part in parts {
+		if text, is_text := part.(string); is_text {
+			print_text(text)
+			continue
+		}
+		number: [32]u8
+		print_text(system.format(number[:], part))
+	}
+}
+
+// print_text writes one text, in parts at each end of a line. The caller
+// holds output_lock.
+print_text :: proc "contextless" (given: string) {
+	text := given
 	for len(text) > 0 {
 		end := 0
 		for end < len(text) && text[end] != '\n' {
@@ -296,11 +313,21 @@ print :: proc "contextless" (parts: ..system.Part) {
 		if log_count == 0 && len(part) >= 5 && part[:5] == "error" {
 			line_tone = .Bad
 		}
-		log_count += copy(log_line[log_count:], part)
+		// The log: a line longer than one Log call goes in parts.
+		rest := part
+		for len(rest) > 0 {
+			taken := copy(log_line[log_count:], rest)
+			log_count += taken
+			rest = rest[taken:]
+			if log_count == len(log_line) {
+				system.log_text(string(log_line[:log_count]))
+				log_count = 0
+			}
+		}
 		terminal.write(&output, terminal.Run{part, {tone = line_tone, flags = ends ? {.End_Line} : {}}})
 		if ends {
 			if log_count > 0 {
-				system.log(string(log_line[:log_count]))
+				system.log_text(string(log_line[:log_count]))
 			}
 			log_count, line_tone = 0, .Default
 		}

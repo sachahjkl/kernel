@@ -1675,8 +1675,16 @@ scenario := [?]Step {
 	{kind = .Call, text = "storage.clone(\"notes\", \"note\", \"copy\")", expected = "{generation+25}"},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "storage.stores()"},
+	// The answer of stores() has one line for each store: with the store
+	// of the line history, more than 256 bytes. The console prints a
+	// result whole, at any length.
+	{kind = .Wait, text = "[console] console.history: 1 objects, ", any_order = true},
 	{kind = .Wait, text = "[console] notes: 2 objects, 9 versions, "},
 	{kind = .Shot, text = "storage_versions"},
+	// A result of 324 bytes on one line: before, the console cut it at 256
+	// bytes in the terminal and at 192 bytes in the log, with no sign.
+	{kind = .Type, text = "repeat(\"0123456789\", 30) + \"the end of a long result\""},
+	{kind = .Wait, text = "01234567890123456789the end of a long result"},
 	{kind = .Type, text = "stop(\"notes\")"},
 	{kind = .Wait, text = "root: notes stopped"},
 	// Errors that diagnose: each case makes an error for real, and the
