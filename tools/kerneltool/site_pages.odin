@@ -547,15 +547,7 @@ site_home_add :: proc(site: ^Site) {
 			wide := index == 0 && len(group) % 2 == 1
 			site_path := strings.concatenate({SITE_PICTURE_FOLDER, "/", figure.file_name}, context.temp_allocator)
 			strings.write_string(&b, wide ? "<figure class=\"wide\">" : "<figure>")
-			fmt.sbprintf(&b, "<a href=\"%s\"><img src=\"%s\" width=\"%d\" height=\"%d\"", site_path, site_path, figure.width, figure.height)
-			if figure.half_file_name != "" {
-				// The width of the place of the picture: the whole column of
-				// the page for a wide picture, half of it else, the whole
-				// screen under 720 pixels (the rules of the style sheet).
-				place: string = wide ? "(max-width: 719px) 100vw, 1120px" : "(max-width: 719px) 100vw, 556px"
-				fmt.sbprintf(&b, " srcset=\"%s/%s %dw, %s %dw\" sizes=\"%s\"", SITE_PICTURE_FOLDER, figure.half_file_name, figure.half_width, site_path, figure.width, place)
-			}
-			strings.write_string(&b, " loading=\"lazy\" decoding=\"async\" alt=\"")
+			fmt.sbprintf(&b, "<a href=\"%s\"><img src=\"%s\" width=\"%d\" height=\"%d\" loading=\"lazy\" decoding=\"async\" alt=\"", site_path, site_path, figure.width, figure.height)
 			site_plain(&b, figure.caption)
 			// The caption is the alt text: a screen reader reads it there once.
 			strings.write_string(&b, "\"></a>\n<figcaption aria-hidden=\"true\">")

@@ -56,6 +56,26 @@ site_mark_size :: proc(picture: Site_Mark_Picture) -> (width, height: int) {
 	return site_mark_drawing_size(picture)
 }
 
+// site_png_compress gives a PNG file with the same pixels as another, written
+// by the encoder of the standard library (core:image/png: a row filter
+// chosen for each row, then the deflate of core:compress/deflate at its
+// default level). The screen pictures of the repository are stored with no
+// compression, about 2.3 MB for 1024 by 768. The encoder reads no clock, no
+// random number and no thread, so the same pixels give the same bytes at
+// each build of the same compiler. Only 8 bits a channel: the pictures of
+// the repository have no other depth.
+site_png_compress :: proc(data: []u8) -> (compressed: []u8, ok: bool) {
+	source, load_error := png.load_from_bytes(data, allocator = context.temp_allocator)
+	if load_error != nil || source == nil || source.depth != 8 {
+		return nil, false
+	}
+	output := make([dynamic]u8, context.temp_allocator)
+	if save_error := png.save_to_buffer(&output, source, allocator = context.temp_allocator); save_error != nil {
+		return nil, false
+	}
+	return output[:], true
+}
+
 // site_mark_encode draws one picture of the mark and gives its PNG file.
 site_mark_encode :: proc(picture: Site_Mark_Picture) -> (file: []u8, ok: bool) {
 	width, height := site_mark_size(picture)

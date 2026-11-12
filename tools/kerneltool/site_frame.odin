@@ -338,7 +338,6 @@ site_build :: proc(address: string) -> bool {
 
 	// The pictures of the machine, with the captions of README.md.
 	figures := make([dynamic]Site_Figure, context.temp_allocator)
-	whole_picture_bytes, half_picture_bytes := 0, 0
 	for picture in site_pictures {
 		caption, has_caption := site.readme.captions[picture.path]
 		if !has_caption || caption == "" {
@@ -353,18 +352,7 @@ site_build :: proc(address: string) -> bool {
 		}
 		file_name := site_file_name(picture.path)
 		site.copies[strings.concatenate({SITE_PICTURE_FOLDER, "/", file_name}, context.temp_allocator)] = picture.path
-		figure := Site_Figure{group = picture.group, file_name = file_name, caption = caption, width = width, height = height}
-		// The picture at half its width, for a narrow screen: written only
-		// when it has fewer bytes than the whole picture.
-		if half, half_width, half_height, halved := site_png_half(data); halved && len(half) < len(data) {
-			figure.half_file_name = strings.concatenate({strings.trim_suffix(file_name, ".png"), SITE_HALF_PICTURE_SUFFIX}, context.temp_allocator)
-			figure.half_width = half_width
-			figure.half_height = half_height
-			site_write_file(&site, strings.concatenate({SITE_PICTURE_FOLDER, "/", figure.half_file_name}, context.temp_allocator), half) or_return
-			whole_picture_bytes += len(data)
-			half_picture_bytes += len(half)
-		}
-		append(&figures, figure)
+		append(&figures, Site_Figure{group = picture.group, file_name = file_name, caption = caption, width = width, height = height})
 	}
 	site.figures = figures[:]
 
@@ -403,8 +391,23 @@ site_build :: proc(address: string) -> bool {
 	site_write_file(&site, SITE_LANGUAGE_MODEL_INDEX, transmute([]u8)site_language_model_index(&site)) or_return
 
 	// The copies: the pictures of the machine and of the guides, the icons.
+	// A picture of the repository can be stored with no compression (the
+	// screen pictures of docs/screenshots are): each PNG file is written
+	// again with the same pixels through the compressing encoder.
+	source_picture_bytes, written_picture_bytes, picture_count := 0, 0, 0
 	for target, source in site.copies {
 		data := read_file(source) or_return
+		if strings.has_suffix(target, ".png") {
+			compressed, compressed_ok := site_png_compress(data)
+			if !compressed_ok {
+				fmt.eprintfln("kerneltool: site: %s is not a PNG file of 8 bits a channel that the encoder can write again", source)
+				return false
+			}
+			source_picture_bytes += len(data)
+			written_picture_bytes += len(compressed)
+			picture_count += 1
+			data = compressed
+		}
 		site_write_file(&site, target, data) or_return
 	}
 	site_write_file(&site, SITE_STYLE_SHEET, transmute([]u8)site_style_sheet(site.tile_rules)) or_return
@@ -476,9 +479,7 @@ site_build :: proc(address: string) -> bool {
 			fmt.printfln("kerneltool: site: the site is in a folder of its host: a crawler does not read %s there; the %s of the root of the host must have the line \"Sitemap: %s/%s\"", SITE_ROBOTS, SITE_ROBOTS, site.address, SITE_SITEMAP)
 		}
 	}
-	if whole_picture_bytes > 0 {
-		fmt.printfln("kerneltool: site: the pictures of the machine at half width: %d bytes for %d bytes of the whole pictures; a narrow screen saves %d bytes", half_picture_bytes, whole_picture_bytes, whole_picture_bytes - half_picture_bytes)
-	}
+	fmt.printfln("kerneltool: site: %d pictures of the repository, compressed: %d bytes, from %d bytes of their files", picture_count, written_picture_bytes, source_picture_bytes)
 	missing := 0
 	for number in site.measured {
 		if !number.found {

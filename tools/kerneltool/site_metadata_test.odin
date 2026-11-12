@@ -274,8 +274,7 @@ metadata_test_png :: proc(width, height, channels: int, pixels: []u8) -> []u8 {
 }
 
 @(test)
-site_pictures_opaque_and_half :: proc(t: ^testing.T) {
-	// 4 by 2, RGB: the left square is 0, 2, 4, 6 in red; the right one 100.
+site_pictures_opaque_and_compressed :: proc(t: ^testing.T) {
 	rgb := []u8 {
 		0, 0, 0, 2, 0, 0, 100, 0, 0, 100, 0, 0,
 		4, 0, 0, 6, 0, 0, 100, 0, 0, 100, 0, 0,
@@ -286,16 +285,45 @@ site_pictures_opaque_and_half :: proc(t: ^testing.T) {
 	testing.expect(t, !site_png_is_opaque(transparent))
 	testing.expect(t, !site_png_is_opaque([]u8{1, 2, 3}))
 
-	half, width, height, ok := site_png_half(opaque)
-	testing.expect(t, ok)
-	testing.expect_value(t, width, 2)
-	testing.expect_value(t, height, 1)
-	decoded, err := png.load_from_bytes(half, allocator = context.temp_allocator)
-	testing.expect(t, err == nil && decoded != nil)
-	if err == nil && decoded != nil && len(decoded.pixels) >= 6 {
-		testing.expect_value(t, decoded.pixels[0], 3) // (0 + 2 + 4 + 6 + 2) / 4
-		testing.expect_value(t, decoded.pixels[3], 100)
+	// A screen picture as the tool stores it, with no compression: bands
+	// and a gradient, as a screen has. The compressed file has the same
+	// pixels byte for byte, fewer bytes, and the same bytes a second time.
+	width, height := 160, 120
+	pixels := make([]u8, width * height * 3, context.temp_allocator)
+	for y in 0 ..< height {
+		for x in 0 ..< width {
+			pixel := pixels[(y * width + x) * 3:][:3]
+			pixel[0] = u8(x)
+			pixel[1] = y < 16 ? 0x20 : 0x0B
+			pixel[2] = u8((x / 8 + y / 8) % 2 * 200)
+		}
 	}
+	stored := png_encode(width, height, pixels)
+	stored_rgba := metadata_test_png(2, 2, 4, []u8{1, 2, 3, 255, 4, 5, 6, 0, 7, 8, 9, 128, 10, 11, 12, 255})
+	for source in ([][]u8{stored, stored_rgba, opaque}) {
+		compressed, compressed_ok := site_png_compress(source)
+		testing.expect(t, compressed_ok)
+		if !compressed_ok {
+			continue
+		}
+		again, again_ok := site_png_compress(source)
+		testing.expect(t, again_ok && string(again) == string(compressed))
+		before, before_error := png.load_from_bytes(source, allocator = context.temp_allocator)
+		after, after_error := png.load_from_bytes(compressed, allocator = context.temp_allocator)
+		testing.expect(t, before_error == nil && after_error == nil && before != nil && after != nil)
+		if before == nil || after == nil {
+			continue
+		}
+		testing.expect_value(t, after.width, before.width)
+		testing.expect_value(t, after.height, before.height)
+		testing.expect_value(t, after.channels, before.channels)
+		testing.expect_value(t, after.depth, before.depth)
+		testing.expect(t, string(after.pixels[:]) == string(before.pixels[:]))
+	}
+	compressed_screen, _ := site_png_compress(stored)
+	testing.expectf(t, len(compressed_screen) < len(stored) / 4, "the compressed picture has %d bytes, the stored one %d", len(compressed_screen), len(stored))
+	_, damaged_ok := site_png_compress([]u8{1, 2, 3})
+	testing.expect(t, !damaged_ok)
 
 	// The picture for other sites that the tool draws.
 	for picture in site_mark_pictures {

@@ -14,7 +14,6 @@ package kerneltool
 
 import "core:encoding/json"
 import "core:fmt"
-import "core:image/png"
 import "core:slice"
 import "core:strings"
 
@@ -34,8 +33,6 @@ SITE_STRUCTURED_DATA_OPEN :: "<script type=\"application/ld+json\">"
 SITE_SCRIPT_CLOSE :: "</script>"
 // A headline longer than this is cut by the readers of articles.
 SITE_HEADLINE_LIMIT :: 110
-// The suffix of a picture of the machine written again at half its width.
-SITE_HALF_PICTURE_SUFFIX :: "_half.png"
 
 // site_page_address gives the absolute address of a page. An index page
 // is named by its folder, the form that a host serves and that a person
@@ -759,48 +756,6 @@ site_png_is_opaque :: proc(data: []u8) -> bool {
 		offset += 12 + length
 	}
 	return true
-}
-
-// site_png_half gives a picture at half its width and height: each pixel
-// is the mean of a square of 2 by 2 pixels. Only 8 bits a channel; a last
-// odd row or column is dropped.
-site_png_half :: proc(data: []u8) -> (half: []u8, width, height: int, ok: bool) {
-	source, err := png.load_from_bytes(data, allocator = context.temp_allocator)
-	if err != nil || source == nil || source.depth != 8 || source.width < 2 || source.height < 2 {
-		return nil, 0, 0, false
-	}
-	channels := source.channels
-	if channels < 1 || channels > 4 || len(source.pixels) < source.width * source.height * channels {
-		return nil, 0, 0, false
-	}
-	width = source.width / 2
-	height = source.height / 2
-	result := png.Image {
-		width    = width,
-		height   = height,
-		channels = channels,
-		depth    = 8,
-	}
-	count := width * height * channels
-	result.pixels = make([dynamic]u8, count, count, context.temp_allocator)
-	for y in 0 ..< height {
-		for x in 0 ..< width {
-			for channel in 0 ..< channels {
-				sum := 0
-				for row in 0 ..< 2 {
-					for column in 0 ..< 2 {
-						sum += int(source.pixels[((2 * y + row) * source.width + 2 * x + column) * channels + channel])
-					}
-				}
-				result.pixels[(y * width + x) * channels + channel] = u8((sum + 2) / 4)
-			}
-		}
-	}
-	output := make([dynamic]u8, context.temp_allocator)
-	if save_error := png.save_to_buffer(&output, &result, allocator = context.temp_allocator); save_error != nil {
-		return nil, 0, 0, false
-	}
-	return output[:], width, height, true
 }
 
 // site_meta_content gives the value of the first "<meta property=...>" of
