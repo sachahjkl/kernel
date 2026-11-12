@@ -181,15 +181,19 @@ Operation :: enum u32 {
 	// the object is not mapped again and not given (Bad_State). At most RANGE_TABLE_PAGE_LIMIT pages. Each processor
 	// that runs a thread of the program forgets the old translations before the operation returns (one shoot-down).
 	// The fault ring (docs/ARCHITECTURE.md, "The fault ring").
-	Fault_Handler_Set = 30, // (thread handle with Control or 0 for the calling thread, 1 to end the delivery): the page
-	// faults of the other threads of this program, below THREAD_AREA_BASE, become records of the fault ring in the
-	// thread record of this thread, in place of a stop; the thread of a fault waits for Fault_Answer. Only a thread of
-	// this program. A new handler replaces the one before; its ring starts empty. A new handler, or the end of the
-	// delivery, while a thread waits for an answer ends the ring that holds its record: the program stops with
-	// STOP_CODE_FAULT_UNANSWERED, as when the handler thread ends.
+	Fault_Handler_Set = 30, // (thread handle with Control or 0 for the calling thread, 1 to end the delivery, Fault_Kinds
+	// or 0 for page faults only): the faults of these kinds of the other threads of this program become records of
+	// the fault ring in the thread record of this thread, in place of a stop; the thread of a fault waits for
+	// Fault_Answer. A page fault is delivered only below THREAD_AREA_BASE. A fault of a kind that the handler did not
+	// ask for stops the program as with no handler. Bad_Operation for a kind that the kernel never delivers
+	// (FAULT_KINDS_DELIVERED), and for kinds with the end of the delivery. Only a thread of this program. A new handler
+	// replaces the one before; its ring starts empty. A new handler, or the end of the delivery, while a thread waits
+	// for an answer ends the ring that holds its record: the program stops with STOP_CODE_FAULT_UNANSWERED, as when the
+	// handler thread ends.
 	Fault_Answer = 31, // (thread number, fault serial, Fault_Answer_Kind): the answer for a thread of this program that
 	// waits in the fault ring, by the two values of its record. Bad_State if no thread with that number waits for the
-	// fault of that serial: a wrong answer, a second answer, or an answer from another program.
+	// fault of that serial: a wrong answer, a second answer, or an answer from another program. Bad_State also for
+	// Resume after a fault kind that does not resume (fault_kind_resumes): the thread still waits, and Stop ends it.
 	// Kernel events (docs/ARCHITECTURE.md, "Kernel events").
 	Events_Set = 32, // (machine with Events, memory or 0, address of a table of Event_Rule, count, records in each ring)
 	// -> the bytes of one event ring, the count of processors. The event table of the machine: the kernel writes an
@@ -346,7 +350,7 @@ Thread_Record :: struct {
 }
 #assert(size_of(Thread_Record) <= PAGE_SIZE)
 
-// The fault ring: one record for each page fault that the kernel gave to the
+// The fault ring: one record for each fault that the kernel gave to the
 // fault handler of a program in place of a stop. The thread of the record
 // waits until a thread of the program answers (Fault_Answer).
 FAULT_RECORD_CAPACITY :: 16
@@ -354,12 +358,95 @@ FAULT_RECORD_CAPACITY :: 16
 Fault_Record :: struct {
 	thread:      u64, // The number of the thread in its program (Thread_Record.number).
 	serial:      u64, // The serial of the fault: a count of the faults of this program that went to a ring (the first is 1). Fault_Answer names it, so an answer for an earlier fault, or for an ended thread whose number serves again, is refused.
-	address:     u64, // The address of the access.
-	access:      u64, // Fault_Access: what the access was.
-	instruction: u64, // The address of the instruction. After Resume the thread runs it again.
-	reserved:    [3]u64,
+	address:     u64, // A page fault: the address of the access. 0 for another kind.
+	access:      u64, // A page fault: Fault_Access, what the access was. 0 for another kind.
+	// The address where the thread continues after Resume. A fault: the
+	// instruction that faulted, which runs again. A trap (Debug,
+	// Breakpoint): the instruction after the one that trapped.
+	instruction: u64,
+	kind:        Fault_Kind, // The processor exception.
+	error_code:  u64, // The error code that the processor gave with the exception, whole: a selector or 0 for General_Protection, Segment_Not_Present and Stack_Fault, the bits of the access for Page_Fault, 0 for a kind with no error code.
+	reserved:    u64,
 }
 #assert(size_of(Fault_Record) == 64)
+
+// The kind of a fault: the processor exception, named by its vector. These
+// are the kinds that the kernel delivers to a fault handler. A fault class
+// says where the thread continues after Resume.
+//   Fault: the instruction did not run; its address is in the frame, and it
+//          runs again.
+//   Trap:  the instruction ran; the frame holds the address of the next one.
+Fault_Kind :: enum u64 {
+	Divide_Error        = 0, // Fault. div or idiv by 0, or a quotient too large.
+	Debug               = 1, // Trap. The trap flag after an instruction, or int1. No debug register is set for a program, so no Debug is a fault.
+	Breakpoint          = 3, // Trap. int3.
+	Invalid_Opcode      = 6, // Fault. ud2, or an instruction that this processor does not have.
+	Segment_Not_Present = 11, // Fault. A load of a segment register with a selector whose descriptor is not present.
+	Stack_Fault         = 12, // Fault. A stack access at an address that is not canonical.
+	General_Protection  = 13, // Fault. A privileged instruction, an address that is not canonical, a bad selector.
+	Page_Fault          = 14, // Fault. An access that the page table refuses.
+	X87_Floating_Point  = 16, // Fault. An unmasked exception of the x87 unit, at the next x87 instruction.
+	Alignment_Check     = 17, // Fault. An access that is not aligned, with the flag AC set.
+	Simd_Floating_Point = 19, // Fault. An unmasked exception of an SSE or AVX instruction.
+}
+Fault_Kinds :: bit_set[Fault_Kind; u64]
+
+// The vectors of the kinds above: the kinds that Fault_Handler_Set takes.
+// The kernel never delivers the other vectors: the non-maskable interrupt
+// (2), the double fault (8) and the machine check (18) are not faults of an
+// instruction of a thread; overflow (4) and bound (5) are invalid
+// instructions in 64-bit mode, which give Invalid_Opcode; device not
+// available (7) and invalid task state (10) are mistakes of the kernel, which
+// keeps the extended state and the task state of each processor; the other
+// vectors below 32 are reserved or for modes that the kernel does not use.
+FAULT_KINDS_DELIVERED :: u64(1 << 0 | 1 << 1 | 1 << 3 | 1 << 6 | 1 << 11 | 1 << 12 | 1 << 13 | 1 << 14 | 1 << 16 | 1 << 17 | 1 << 19)
+// The kinds whose class is Trap.
+FAULT_KINDS_TRAPS :: u64(1 << 1 | 1 << 3)
+// The kinds after which Resume is accepted: a trap continues after its
+// instruction, and a handler changes what a page fault finds with
+// Memory_Commit and Memory_Protect. Each other fault would run the same
+// instruction on the same registers, and fault again with no end: no
+// operation changes the registers of a waiting thread.
+FAULT_KINDS_RESUMABLE :: FAULT_KINDS_TRAPS | u64(1) << 14
+
+// The class of a vector of the processor (fault_kind_class): Fault and Trap
+// as above; a vector that is not a Fault_Kind is never delivered.
+Fault_Class :: enum u8 {
+	Never_Delivered = 0,
+	Fault           = 1,
+	Trap            = 2,
+}
+
+// fault_kind_class gives the class of a vector of the processor.
+fault_kind_class :: proc "contextless" (vector: u64) -> Fault_Class {
+	if vector >= 64 || FAULT_KINDS_DELIVERED & (u64(1) << vector) == 0 {
+		return .Never_Delivered
+	}
+	if FAULT_KINDS_TRAPS & (u64(1) << vector) != 0 {
+		return .Trap
+	}
+	return .Fault
+}
+
+// fault_kind_resumes says if Fault_Answer accepts Resume for a fault of a
+// vector.
+fault_kind_resumes :: proc "contextless" (vector: u64) -> bool {
+	return vector < 64 && FAULT_KINDS_RESUMABLE & (u64(1) << vector) != 0
+}
+
+// fault_kinds_of_argument gives the kinds that the argument of
+// Fault_Handler_Set names, as a mask of vectors: 0 is page faults only, so
+// that a handler of pages never gets a kind that it does not know. ok is
+// false for a kind that the kernel never delivers.
+fault_kinds_of_argument :: proc "contextless" (argument: u64) -> (mask: u64, ok: bool) {
+	if argument & ~FAULT_KINDS_DELIVERED != 0 {
+		return 0, false
+	}
+	if argument == 0 {
+		return u64(1) << u64(Fault_Kind.Page_Fault), true
+	}
+	return argument, true
+}
 
 // What a faulting access was: the bits of the error code of the processor.
 Fault_Access_Bit :: enum u64 {
@@ -372,7 +459,7 @@ Fault_Access :: bit_set[Fault_Access_Bit; u64]
 // The answer for a thread that waits in the fault ring.
 Fault_Answer_Kind :: enum u64 {
 	None   = 0,
-	Resume = 1, // The thread runs the faulting instruction again.
+	Resume = 1, // The thread continues at the instruction of its record: the faulting instruction again, or the next one after a trap. Only for a kind of FAULT_KINDS_RESUMABLE.
 	Stop   = 2, // The program stops as if no handler were set: the stop code and the stop report of the fault.
 }
 

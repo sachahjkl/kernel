@@ -1,9 +1,10 @@
 // The fault ring (docs/ARCHITECTURE.md, "The fault ring"), case by case.
 //
-// A program names one of its threads as its fault handler. A page fault of
-// another thread then does not stop the program: the kernel writes a record
-// in the ring of the handler, and the thread waits; the handler repairs
-// with the operations of the virtual memory and answers. Each case of this
+// A program names one of its threads as its fault handler, with the fault
+// kinds that it takes. A fault of such a kind of another thread then does
+// not stop the program: the kernel writes a record in the ring of the
+// handler, and the thread waits; the handler repairs with the operations of
+// the virtual memory and answers. Each case of this
 // program runs in a child program (this module, with a role), so that a
 // case that stops its program stops only that child:
 //
@@ -31,6 +32,15 @@
 //  13. 10 000 faults, each answered at once by a handler that spins on
 //      another processor, while the faulting thread can still be on its way
 //      out of its processor: each one resumes once, with the right value.
+//  14. A divide error: one record of its kind; Resume is refused, Stop gives
+//      the stop report of the fault, at the instruction of the record.
+//  15. An invalid opcode (ud2): the same, with its kind.
+//  16. A breakpoint (int3), a trap: Resume lets the thread go on after it.
+//  17. A divide error with a handler of page faults only: no record, and the
+//      program stops as with no handler.
+//  18. A privileged instruction (cli): a protection fault, as in 14.
+//  19. The kinds never delivered: Fault_Handler_Set refuses them; a divide
+//      error of the handler itself stops the program.
 package fault_ring
 
 import "base:intrinsics"
@@ -45,7 +55,7 @@ import "support:system"
 
 LINE :: interface.TABLE_LINE
 WIDTH :: 960
-HEIGHT :: 460
+HEIGHT :: 604
 PAGE :: system.PAGE_SIZE
 
 // The value of the context that gives the role of a child: ROLE_TAG in the
@@ -75,6 +85,12 @@ Role :: enum u64 {
 	Handler_Changed    = 8,
 	Foreign_Answer     = 9,
 	Early_Answer       = 10,
+	Divide_Error       = 11,
+	Invalid_Opcode     = 12,
+	Breakpoint         = 13,
+	Page_Faults_Only   = 14,
+	General_Protection = 15,
+	Kinds_Never_Delivered = 16,
 }
 
 // The child that repairs stops with REPAIRS_CODE and one bit for each of
@@ -91,6 +107,10 @@ FOREIGN_ALL :: 0x7
 EARLY_CODE :: 0x40
 EARLY_ALL :: 0x3
 EARLY_FAULTS :: 10_000
+BREAKPOINT_CODE :: 0x50
+BREAKPOINT_ALL :: 0x3
+// Case 19: each one with the page faults, so that only the vector is wrong.
+NEVER_DELIVERED_VECTORS :: [?]u64{2, 4, 5, 7, 8, 9, 10, 15, 18, 20, 21, 31, 32, 63}
 FULL_RING_THREADS :: op.FAULT_RECORD_CAPACITY + 1
 // The budget of each child. The largest child needs about 300 pages (17
 // threads with their stacks and thread areas, its own stack of 64 pages,
@@ -126,6 +146,16 @@ Shared_Page :: struct {
 	// wake then give different lines.
 	progress:        u64,
 	answers:         u64,
+	// The cases 14 to 18: the last record that kinds_handler read, how
+	// many it read, and the status of its answer Resume, plus 1 (0: no
+	// answer yet).
+	records_seen:       u64,
+	record_kind:        u64,
+	record_error_code:  u64,
+	record_instruction: u64,
+	resume_status:      u32,
+	// Case 19: the arguments of Fault_Handler_Set that the kernel refused.
+	refused_arguments:  u64,
 }
 
 // One case of the parent: what its child gave.
@@ -139,7 +169,7 @@ Case :: struct {
 	value_length: int,
 }
 
-cases := [13]Case {
+cases := [19]Case {
 	{name = "a read of a page that is not committed", role = .Repairs, bit = 1},
 	{name = "a write to a read-only page", role = .Repairs, bit = 2},
 	{name = "a stack that grows by 64 pages", role = .Repairs, bit = 4},
@@ -153,6 +183,12 @@ cases := [13]Case {
 	{name = "a new handler while a thread waits", role = .Handler_Changed},
 	{name = "an answer from another program", role = .Foreign_Answer},
 	{name = "10 000 answers given at once", role = .Early_Answer},
+	{name = "a divide error, answered stop", role = .Divide_Error},
+	{name = "an invalid opcode, answered stop", role = .Invalid_Opcode},
+	{name = "a breakpoint, answered resume", role = .Breakpoint},
+	{name = "a divide error with a handler of pages", role = .Page_Faults_Only},
+	{name = "a privileged instruction, answered stop", role = .General_Protection},
+	{name = "the kinds never delivered", role = .Kinds_Never_Delivered},
 }
 
 program_generator: random.Generator
@@ -519,6 +555,135 @@ child_early_answer :: proc "contextless" () -> ! {
 	system.stop(EARLY_CODE | bits)
 }
 
+// The cases 14 to 19: faults that are not page faults. The handler takes
+// the kinds of kinds_wanted. To its first record it answers Resume: the
+// kernel accepts it for a breakpoint, and must refuse it for a fault that
+// would run the same instruction on the same registers; then it answers
+// Stop. A second record answers Stop at once: a Resume that the kernel took
+// by mistake ends there, and does not loop.
+kinds_wanted: op.Fault_Kinds
+
+kinds_handler :: proc "c" (_: rawptr) -> ! {
+	if system.fault_handler_set(kinds = kinds_wanted) != .Ok {
+		system.stop(21)
+	}
+	handler_record = system.thread_record()
+	intrinsics.atomic_store(&handler_ready, 1)
+	seen: u64
+	for {
+		record, ok := system.fault_record_next()
+		if !ok {
+			continue
+		}
+		seen += 1
+		shared := shared_page()
+		intrinsics.volatile_store(&shared.record_kind, u64(record.kind))
+		intrinsics.volatile_store(&shared.record_error_code, record.error_code)
+		intrinsics.volatile_store(&shared.record_instruction, record.instruction)
+		intrinsics.volatile_store(&shared.records_seen, seen)
+		if seen > 1 {
+			system.fault_answer(record, .Stop)
+			continue
+		}
+		resumed := system.fault_answer(record, .Resume)
+		intrinsics.atomic_store(&shared.resume_status, u32(resumed) + 1)
+		if resumed != .Ok {
+			system.fault_answer(record, .Stop)
+		}
+	}
+}
+
+// The divide error comes from the instruction div itself. A division that
+// the compiler writes is guarded: it tests the divisor first and runs an
+// invalid instruction for a zero, so the processor never sees the division.
+divide_in_registers :: asm(low: u64, high: u64, divisor: u64) -> (quotient: u64, remainder: u64) [
+	low -> quotient   = %rax,
+	high -> remainder = %rdx,
+	#volatile,
+	#clobber memory,
+	#clobber %flags,
+] {
+	div divisor
+}
+
+// The divisor is read from memory, so that no pass of the compiler folds
+// the call.
+zero_divisor: u64
+
+divide_by_zero :: proc "contextless" () {
+	_, _ = divide_in_registers(1000, 0, intrinsics.volatile_load(&zero_divisor))
+}
+
+// cli is privileged for a program (its I/O privilege level is 0): the
+// processor gives a protection fault with the error code 0.
+interrupts_off :: asm() [#volatile, #clobber memory, #clobber %flags] {
+	cli
+}
+
+// Case 16. The operand of the value that the thread computes after the
+// breakpoint.
+breakpoint_operand: u64 = 7
+
+child_breakpoint :: proc "contextless" () -> ! {
+	kinds_wanted = {.Breakpoint}
+	handler_start(kinds_handler)
+	intrinsics.debug_trap()
+	value := intrinsics.volatile_load(&breakpoint_operand) * 6
+	shared := shared_page()
+	// The handler stores its status after its answer returns: this thread
+	// can run before that store.
+	wait_for(&shared.resume_status, 1000)
+	bits: u32
+	if value == 42 {
+		bits |= 1
+	}
+	if intrinsics.volatile_load(&shared.records_seen) == 1 && intrinsics.volatile_load(&shared.record_kind) == u64(op.Fault_Kind.Breakpoint) && intrinsics.atomic_load(&shared.resume_status) == u32(system.Status.Ok) + 1 {
+		bits |= 2
+	}
+	system.log("fault_ring: a breakpoint, answered resume: ", intrinsics.volatile_load(&shared.records_seen), " record of the kind ", intrinsics.volatile_load(&shared.record_kind), "; the thread went on after the int3 and computed ", value, bits == BREAKPOINT_ALL ? string(": as it must") : string(": WRONG"))
+	system.stop(BREAKPOINT_CODE | bits)
+}
+
+// Case 19. Each argument with a vector that the kernel never delivers is
+// refused, and so are kinds with the end of the delivery. Then this thread
+// becomes the handler of divide errors: its own divide error is not
+// delivered, and the program stops as with no handler.
+child_kinds_never_delivered :: proc "contextless" () -> ! {
+	refused: u64
+	vectors := NEVER_DELIVERED_VECTORS
+	for vector in vectors {
+		if _, status := system.call(.Fault_Handler_Set, 0, 0, u64(1) << vector | u64(1) << u64(op.Fault_Kind.Page_Fault)); status == .Bad_Operation {
+			refused += 1
+		}
+	}
+	if _, status := system.call(.Fault_Handler_Set, 0, 1, u64(1) << u64(op.Fault_Kind.Divide_Error)); status == .Bad_Operation {
+		refused += 1
+	}
+	asked := u64(len(vectors)) + 1
+	intrinsics.volatile_store(&shared_page().refused_arguments, refused)
+	system.log("fault_ring: the kinds never delivered: Fault_Handler_Set refused ", refused, " arguments of ", asked, " with Bad_Operation", refused == asked ? string(": as it must") : string(": WRONG"))
+	if system.fault_handler_set(kinds = {.Divide_Error}) != .Ok {
+		system.stop(21)
+	}
+	divide_by_zero()
+	system.stop(30)
+}
+
+// kinds_case_right says if the child of a fault answered Stop stopped with
+// the report of its kind, after one record of that kind at the instruction
+// of the report, and Resume refused, and logs it.
+kinds_case_right :: proc "contextless" (item: ^Case, code: u32, report: ^op.Stop_Report, page: ^Shared_Page, kind: op.Fault_Kind) -> bool {
+	vector := u32(kind)
+	same_instruction := report.instruction != 0 && page.record_instruction == report.instruction
+	resume := "no answer"
+	if page.resume_status != 0 && page.resume_status - 1 <= u32(max(op.Status)) {
+		resume = op.STATUS_NAMES[op.Status(page.resume_status - 1)]
+	}
+	right := code == op.STOP_CODE_FAULT + vector && report.vector == vector && page.records_seen == 1 && page.record_kind == u64(kind) && page.record_error_code == 0 && same_instruction && page.resume_status == u32(system.Status.Bad_State) + 1
+	system.log("fault_ring: ", item.name, ": ", page.records_seen, " record of the kind ", page.record_kind, ", the error code ", page.record_error_code, ", ", same_instruction ? string("the instruction of the stop report") : string("not the instruction of the stop report"), "; Resume got ", resume, right ? string(": as it must") : string(": WRONG"))
+	return right
+}
+
 lazy_object :: proc "contextless" (pages: u64) {
 	status: system.Status
 	lazy_memory, status = system.memory_create(pages, flags = {.Uncommitted})
@@ -588,6 +753,27 @@ child :: proc "contextless" (role: Role) -> ! {
 		}
 	case .Early_Answer:
 		child_early_answer()
+	case .Divide_Error:
+		kinds_wanted = {.Divide_Error}
+		handler_start(kinds_handler)
+		divide_by_zero()
+	case .Invalid_Opcode:
+		kinds_wanted = {.Invalid_Opcode}
+		handler_start(kinds_handler)
+		intrinsics.trap()
+	case .Breakpoint:
+		child_breakpoint()
+	case .Page_Faults_Only:
+		// No kinds: page faults only.
+		kinds_wanted = {}
+		handler_start(kinds_handler)
+		divide_by_zero()
+	case .General_Protection:
+		kinds_wanted = {.General_Protection}
+		handler_start(kinds_handler)
+		interrupts_off()
+	case .Kinds_Never_Delivered:
+		child_kinds_never_delivered()
 	}
 	system.stop(30) // Not reached: each case above stops its program.
 }
@@ -704,7 +890,7 @@ child_run :: proc "contextless" (role: Role, name: string) -> (code: u32, report
 draw :: proc "contextless" (window: ^display.Window) {
 	frame := interface.window_frame_begin(&drawing, window)
 	interface.background(&frame, {0, 0, WIDTH, HEIGHT})
-	content := interface.card(&frame, {8, 8, WIDTH - 16, HEIGHT - 16}, "THE FAULT RING", "a page fault becomes a record for a handler thread of the program, in place of a stop", graphics.COLOR_KERNEL)
+	content := interface.card(&frame, {8, 8, WIDTH - 16, HEIGHT - 16}, "THE FAULT RING", "a fault of a thread becomes a record for a handler thread of the program, in place of a stop", graphics.COLOR_KERNEL)
 	column := interface.column_of(content)
 	for &item in cases {
 		value := "not run yet"
@@ -761,7 +947,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	draw(&window)
 	for &item in cases[4:] {
 		report: op.Stop_Report
-		code, report, left, ran, _ = child_run(item.role, item.name)
+		code, report, left, ran, page = child_run(item.role, item.name)
 		item.ran = true
 		switch item.role {
 		case .Parent, .Repairs:
@@ -784,6 +970,19 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			item.right = code == FOREIGN_CODE | FOREIGN_ALL && !left
 		case .Early_Answer:
 			item.right = code == EARLY_CODE | EARLY_ALL && !left
+		case .Divide_Error:
+			item.right = kinds_case_right(&item, code, &report, &page, .Divide_Error) && !left
+		case .Invalid_Opcode:
+			item.right = kinds_case_right(&item, code, &report, &page, .Invalid_Opcode) && !left
+		case .General_Protection:
+			item.right = kinds_case_right(&item, code, &report, &page, .General_Protection) && !left
+		case .Breakpoint:
+			item.right = code == BREAKPOINT_CODE | BREAKPOINT_ALL && !left
+		case .Page_Faults_Only:
+			item.right = code == op.STOP_CODE_FAULT + u32(op.Fault_Kind.Divide_Error) && report.vector == u32(op.Fault_Kind.Divide_Error) && page.records_seen == 0 && !left
+			system.log("fault_ring: ", item.name, ": the handler read ", page.records_seen, " records; the stop report names the vector ", u64(report.vector), item.right ? string(": as it must") : string(": WRONG"))
+		case .Kinds_Never_Delivered:
+			item.right = code == op.STOP_CODE_FAULT + u32(op.Fault_Kind.Divide_Error) && page.refused_arguments == u64(len(NEVER_DELIVERED_VECTORS)) + 1 && !left
 		}
 		item.right = item.right && ran
 		case_log(&item, code, report.address)

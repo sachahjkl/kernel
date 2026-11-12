@@ -1,8 +1,8 @@
 package kerneltool
 
 // The fault ring (docs/ARCHITECTURE.md, "The fault ring"): one machine. The
-// program fault_ring runs one child for each role; a page fault of a child
-// is a record for a handler thread of the child in place of a stop. The
+// program fault_ring runs one child for each role; a fault of a child is a
+// record for a handler thread of the child in place of a stop. The
 // child that repairs commits a page, gives Write back to a page, grows a
 // stack by 64 pages and sees a wrong serial refused; the other children stop
 // with the report of today (an answer Stop, a fault of the handler itself, a
@@ -11,6 +11,11 @@ package kerneltool
 // not wake a thread that waits for an answer; a new handler while a thread
 // waits stops the program; an answer from another program is refused;
 // 10 000 answers given at once from another processor each resume once.
+// Then the fault kinds that are not page faults: a divide error, an invalid
+// opcode and a privileged instruction each give one record of their kind,
+// Resume is refused and Stop gives their stop report; a breakpoint resumes
+// after its int3; a handler of page faults only does not get a divide
+// error; the vectors that the kernel never delivers are refused.
 // Each child gives back every page and every thread of its budget. The
 // time of one repaired fault is a line of the log and of the window.
 
@@ -41,7 +46,19 @@ scenario_fault_ring := [?]Step {
 	// time of the case (", in N ms"), which changes from run to run.
 	{kind = .Wait, text = "fault_ring: 10 000 answers given at once: 10000 faults resumed, 10000 values right, of 10000: as it must"},
 	{kind = .Wait, text = "fault_ring: 10 000 answers given at once: the child stopped with the code 0000000000000043, the address 0000000000000000: as it must"},
-	{kind = .Wait, text = "fault_ring: ok, 13 cases: each fault was repaired, or stopped its program with the report of today, and each child gave back every page and every thread"},
+	{kind = .Wait, text = "fault_ring: a divide error, answered stop: 1 record of the kind 0, the error code 0, the instruction of the stop report; Resume got Bad_State: as it must"},
+	{kind = .Wait, text = "fault_ring: a divide error, answered stop: the child stopped with the code 0000000000000100, the address 0000000000000000: as it must"},
+	{kind = .Wait, text = "fault_ring: an invalid opcode, answered stop: 1 record of the kind 6, the error code 0, the instruction of the stop report; Resume got Bad_State: as it must"},
+	{kind = .Wait, text = "fault_ring: an invalid opcode, answered stop: the child stopped with the code 0000000000000106, the address 0000000000000000: as it must"},
+	{kind = .Wait, text = "fault_ring: a breakpoint, answered resume: 1 record of the kind 3; the thread went on after the int3 and computed 42: as it must"},
+	{kind = .Wait, text = "fault_ring: a breakpoint, answered resume: the child stopped with the code 0000000000000053, the address 0000000000000000: as it must"},
+	{kind = .Wait, text = "fault_ring: a divide error with a handler of pages: the handler read 0 records; the stop report names the vector 0: as it must"},
+	{kind = .Wait, text = "fault_ring: a divide error with a handler of pages: the child stopped with the code 0000000000000100, the address 0000000000000000: as it must"},
+	{kind = .Wait, text = "fault_ring: a privileged instruction, answered stop: 1 record of the kind 13, the error code 0, the instruction of the stop report; Resume got Bad_State: as it must"},
+	{kind = .Wait, text = "fault_ring: a privileged instruction, answered stop: the child stopped with the code 000000000000010d, the address 0000000000000000: as it must"},
+	{kind = .Wait, text = "fault_ring: the kinds never delivered: Fault_Handler_Set refused 15 arguments of 15 with Bad_Operation: as it must"},
+	{kind = .Wait, text = "fault_ring: the kinds never delivered: the child stopped with the code 0000000000000100, the address 0000000000000000: as it must"},
+	{kind = .Wait, text = "fault_ring: ok, 19 cases: each fault was repaired, or stopped its program with the report of today, and each child gave back every page and every thread"},
 	{kind = .Front, text = "fault_ring"},
 	{kind = .Shot, text = "fault_ring"},
 	{kind = .Front, text = "console"},

@@ -1131,6 +1131,8 @@ stop_reason :: proc "contextless" (code: u32) -> string {
 	switch code {
 	case op.STOP_CODE_FAULT + 0:
 		return "division by zero"
+	case op.STOP_CODE_FAULT + 3:
+		return "breakpoint"
 	case op.STOP_CODE_FAULT + 6:
 		return "invalid instruction"
 	case op.STOP_CODE_FAULT + 13:

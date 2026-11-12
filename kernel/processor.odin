@@ -344,6 +344,11 @@ processor_start :: proc "contextless" () {
 		}
 	}
 	gates[8].stack = 1 // The double fault: stack 1 of the task state.
+	// int3 of a program reaches its gate only with the privilege level 3 in
+	// the gate; with 0 the processor gives a protection fault in its place,
+	// and a fault handler cannot tell a breakpoint. Every other gate keeps
+	// 0: no `int n` of a program can act as an exception or an interrupt.
+	gates[3].type = 0xEE
 
 	// The interrupt controller of the device lines (8259): lines 0 to 15
 	// become vectors 32 to 47. Line 0 (the 8254 timer) is off: each
