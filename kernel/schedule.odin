@@ -462,14 +462,14 @@ run :: proc "contextless" (cpu: ^Processor, thread: ^Thread) -> ! {
 		// The store comes before the load of the table: an unmap that does
 		// not see it cleared its entries before this load.
 		intrinsics.atomic_store(&cpu.table, program.table)
-		cr3_write(program.table)
+		control_register_3_write(program.table)
 	}
 	// Two programs have thread records at the same address. The test is on
 	// the thread, so a program that changes its gs register harms only itself.
 	if cpu.record_thread != cpu.current || cpu.record_serial != thread.serial {
 		cpu.record_thread = cpu.current
 		cpu.record_serial = thread.serial
-		msr_write(MSR_KERNEL_GS_BASE, thread.record)
+		model_specific_register_write(MSR_KERNEL_GS_BASE, thread.record)
 	}
 	if thread.in_enter {
 		thread.in_enter = false

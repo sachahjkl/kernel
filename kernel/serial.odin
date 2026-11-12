@@ -10,8 +10,9 @@ SERIAL_PORT :: 0x3F8
 DEBUG_EXIT_PORT :: 0xF4 // The isa-debug-exit device of QEMU: a write ends the machine.
 
 foreign _ {
-	port_write_8 :: proc "c" (port: u16, value: u8) ---
-	port_read_8 :: proc "c" (port: u16) -> u8 ---
+	// cli, then hlt in a loop. It stays in processor.asm: the compiler
+	// takes hlt as the end of the flow of a template, and a hlt continues
+	// after an NMI.
 	processor_stop :: proc "c" () -> ! ---
 }
 

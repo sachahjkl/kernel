@@ -82,7 +82,7 @@ memory_start :: proc "contextless" (boot: ^info.Boot_Info) {
 	for i in 256 ..< 512 {
 		direct(kernel_table, [512]u64)[i] = direct(boot.page_table, [512]u64)[i]
 	}
-	cr3_write(kernel_table)
+	control_register_3_write(kernel_table)
 	paging_start(boot)
 	log_start()
 }
@@ -446,7 +446,7 @@ page_directory_entry :: proc "contextless" (table: u64, address: u64, create: bo
 		intrinsics.atomic_thread_fence(.Seq_Cst)
 		processor_sync(processors_with_table(table))
 		if self := processor_self(); intrinsics.atomic_load(&self.table) == table {
-			cr3_write(table)
+			control_register_3_write(table)
 		}
 		lock_take(&frame_lock, .Frame)
 		frames_free_held(old_table, 1)

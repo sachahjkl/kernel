@@ -34,14 +34,14 @@ direct_map_size: u64
 
 apic_read :: proc "contextless" (register: u32) -> u32 {
 	if apic_msr {
-		return u32(msr_read(0x800 + register >> 4))
+		return u32(model_specific_register_read(0x800 + register >> 4))
 	}
 	return intrinsics.volatile_load((^u32)(apic_address + uintptr(register)))
 }
 
 apic_write :: proc "contextless" (register: u32, value: u32) {
 	if apic_msr {
-		msr_write(0x800 + register >> 4, u64(value))
+		model_specific_register_write(0x800 + register >> 4, u64(value))
 	} else {
 		intrinsics.volatile_store((^u32)(apic_address + uintptr(register)), value)
 	}
@@ -55,7 +55,7 @@ apic_id :: proc "contextless" () -> u32 {
 // value is a vector, or a start command.
 apic_send :: proc "contextless" (id: u32, value: u32) {
 	if apic_msr {
-		msr_write(0x800 + APIC_SEND_LOW >> 4, u64(id) << 32 | u64(value))
+		model_specific_register_write(0x800 + APIC_SEND_LOW >> 4, u64(id) << 32 | u64(value))
 		return
 	}
 	apic_write(APIC_SEND_HIGH, id << 24)
@@ -67,10 +67,10 @@ apic_send :: proc "contextless" (id: u32, value: u32) {
 
 // apic_start finds the registers. The first processor runs it once.
 apic_start :: proc "contextless" () {
-	base := msr_read(MSR_APIC_BASE)
+	base := model_specific_register_read(MSR_APIC_BASE)
 	if base & (1 << 11) == 0 {
 		base |= 1 << 11
-		msr_write(MSR_APIC_BASE, base)
+		model_specific_register_write(MSR_APIC_BASE, base)
 	}
 	apic_msr = base & (1 << 10) != 0
 	apic_address = info.DIRECT_MAP_BASE + uintptr(base & 0x000F_FFFF_FFFF_F000)
@@ -78,9 +78,9 @@ apic_start :: proc "contextless" () {
 
 // apic_setup prepares the controller of the processor that runs it.
 apic_setup :: proc "contextless" (cpu: ^Processor) {
-	base := msr_read(MSR_APIC_BASE)
+	base := model_specific_register_read(MSR_APIC_BASE)
 	if apic_msr && base & (1 << 10) == 0 {
-		msr_write(MSR_APIC_BASE, base | 1 << 10 | 1 << 11)
+		model_specific_register_write(MSR_APIC_BASE, base | 1 << 10 | 1 << 11)
 	}
 	apic_write(APIC_PRIORITY, 0)
 	apic_write(APIC_SPURIOUS, 0x100 | VECTOR_SPURIOUS)
@@ -275,10 +275,10 @@ processors_start :: proc "contextless" (boot: ^info.Boot_Info) {
 	intrinsics.mem_copy_non_overlapping(code, &ap_start_begin, code_size)
 	parameters := (^Ap_Parameters)(&code[code_size - size_of(Ap_Parameters)])
 	parameters.table = u32(table)
-	parameters.cr0 = u32(cr0_read())
-	parameters.efer = u32(msr_read(0xC000_0080)) &~ (1 << 10) // Not the bit "long mode is active": the processor sets it.
+	parameters.cr0 = u32(control_register_0_read())
+	parameters.efer = u32(model_specific_register_read(0xC000_0080)) &~ (1 << 10) // Not the bit "long mode is active": the processor sets it.
 	parameters.entry = u64(uintptr(rawptr(processor_entry)))
-	first_cr4 = cr4_read()
+	first_cr4 = control_register_4_read()
 
 	self := apic_id()
 	for id in ids[:count] {
@@ -326,11 +326,11 @@ processors_start :: proc "contextless" (boot: ^info.Boot_Info) {
 
 // processor_entry is where each other processor arrives from the start code.
 processor_entry :: proc "c" (cpu: ^Processor) -> ! {
-	cr3_write(kernel_table)
+	control_register_3_write(kernel_table)
 	// Not OSXSAVE: a processor with no xsave faults on it. The setup of the
 	// extended state sets it when this processor can save what the first
 	// processor saves.
-	cr4_write(first_cr4 &~ CR4_OSXSAVE)
+	control_register_4_write(first_cr4 &~ CR4_OSXSAVE)
 	if !extended_state_other_setup() {
 		// The first processor sees started_count move, reads the flag, logs
 		// it, and resets this processor.

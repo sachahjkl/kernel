@@ -848,7 +848,7 @@ map_region :: proc "contextless" (program: ^Program, region_index: u32, address:
 				intrinsics.atomic_thread_fence(.Seq_Cst)
 				processor_sync(processors_with_table(program.table))
 				if self := processor_self(); intrinsics.atomic_load(&self.table) == program.table {
-					cr3_write(program.table)
+					control_register_3_write(program.table)
 				}
 				origin_detach(holding)
 				return 0, budgets[program.budget].amounts.pages == 0 ? .No_Budget : .No_Memory
@@ -1474,7 +1474,7 @@ program_cleanup :: proc "contextless" (index: u32) {
 	self := processor_self()
 	if intrinsics.atomic_load(&self.table) == program.table {
 		intrinsics.atomic_store(&self.table, kernel_table)
-		cr3_write(kernel_table)
+		control_register_3_write(kernel_table)
 	}
 	processor_sync(processors_with_table(program.table))
 	for &mapping in program.mappings {
@@ -1560,7 +1560,7 @@ kernel_interrupt :: proc "c" (frame: ^Frame) {
 	if !from_program && frame.vector < VECTOR_INTERRUPT_BASE {
 		// The processor can hold any lock: it takes none.
 		name := EXCEPTION_NAMES[frame.vector]
-		address := cr2_read()
+		address := control_register_2_read()
 		fault_report_begin()
 		log("kernel: exception in the kernel: ", name, " vector ", frame.vector, " error ", Hex(frame.error), " at ", Hex(frame.rip), " address ", Hex(address), ": ", fault_reason(frame, address))
 		machine_stop(2)
@@ -1629,7 +1629,7 @@ kernel_interrupt :: proc "c" (frame: ^Frame) {
 		cpu.interrupts += 1
 		interrupt_signal(INTERRUPT_LINES + frame.vector - VECTOR_MESSAGE_BASE)
 		apic_write(APIC_END, 0)
-	case frame.vector == VECTOR_PAGE_FAULT && frame.error & FAULT_PRESENT == 0 && page_fault(thread.program, cr2_read(), frame.error):
+	case frame.vector == VECTOR_PAGE_FAULT && frame.error & FAULT_PRESENT == 0 && page_fault(thread.program, control_register_2_read(), frame.error):
 		// A page on first use, or a page that another thread made present
 		// while this one waited for the lock: the instruction runs again.
 		cpu.first_use_faults += 1
@@ -1683,9 +1683,9 @@ program_fault :: proc "contextless" (index: u32, frame: ^Frame) {
 	// code: the access went to addresses with no memory paid behind them.
 	code := op.STOP_CODE_FAULT + u32(frame.vector)
 	if frame.vector == VECTOR_PAGE_FAULT && program.table != 0 {
-		if mapping := mapping_at(program, cr2_read()); mapping != nil && mapping.region < REGION_CAPACITY {
+		if mapping := mapping_at(program, control_register_2_read()); mapping != nil && mapping.region < REGION_CAPACITY {
 			region := &regions[mapping.region]
-			page := mapping.first + (cr2_read() - mapping.address) / PAGE_SIZE
+			page := mapping.first + (control_register_2_read() - mapping.address) / PAGE_SIZE
 			if region.uncommitted && !page_committed(region, region_page_state(region, page)) {
 				code = op.STOP_CODE_NOT_COMMITTED
 				name = "page fault on a page that is not committed"
@@ -1695,18 +1695,18 @@ program_fault :: proc "contextless" (index: u32, frame: ^Frame) {
 	if first {
 		program.stop = {code = code, vector = u32(frame.vector), instruction = frame.rip}
 		if frame.vector == 14 {
-			program.stop.address = cr2_read()
+			program.stop.address = control_register_2_read()
 		}
 		if found != nil {
 			program.stop.module = found^
 		}
 	}
 	if found == nil {
-		log_in("fault", .Warning, "kernel: program ", program_name(program), " stopped: ", name, " vector ", frame.vector, " error ", Hex(frame.error), " at ", Hex(frame.rip), " address ", Hex(cr2_read()))
+		log_in("fault", .Warning, "kernel: program ", program_name(program), " stopped: ", name, " vector ", frame.vector, " error ", Hex(frame.error), " at ", Hex(frame.rip), " address ", Hex(control_register_2_read()))
 	} else if found.replaces == {} {
-		log_in("fault", .Warning, "kernel: program ", program_name(program), " stopped: ", name, " vector ", frame.vector, " at ", Hex(frame.rip), " address ", Hex(cr2_read()), ", in module ", hash_head(found.hash), " at offset ", Hex(frame.rip - found.base))
+		log_in("fault", .Warning, "kernel: program ", program_name(program), " stopped: ", name, " vector ", frame.vector, " at ", Hex(frame.rip), " address ", Hex(control_register_2_read()), ", in module ", hash_head(found.hash), " at offset ", Hex(frame.rip - found.base))
 	} else {
-		log_in("fault", .Warning, "kernel: program ", program_name(program), " stopped: ", name, " vector ", frame.vector, " at ", Hex(frame.rip), " address ", Hex(cr2_read()), ", in module ", hash_head(found.hash), " at offset ", Hex(frame.rip - found.base), ", which replaces ", hash_head(found.replaces))
+		log_in("fault", .Warning, "kernel: program ", program_name(program), " stopped: ", name, " vector ", frame.vector, " at ", Hex(frame.rip), " address ", Hex(control_register_2_read()), ", in module ", hash_head(found.hash), " at offset ", Hex(frame.rip - found.base), ", which replaces ", hash_head(found.replaces))
 	}
 	// The stack trace: the page table of the program is the one of this
 	// processor, and the program lock is held (user_range, user_copy).

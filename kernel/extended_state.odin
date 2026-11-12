@@ -60,8 +60,6 @@ Extended_State_Form :: enum u8 {
 }
 
 foreign _ {
-	// xsetbv: XCR0 when register is 0. CR4.OSXSAVE must be set before.
-	extended_control_register_write :: proc "c" (register: u32, value: u64) ---
 	// The save of a thread that a processor leaves, and the restore of a
 	// thread that a processor takes; also the proofs at boot.
 	extended_state_save :: proc "c" (area: ^Extended_State_Area, form: Extended_State_Form) ---
@@ -125,15 +123,15 @@ extended_state_layout_read :: proc "contextless" (components: Extended_State_Com
 // processors: the widest choice whose area fits the area of a thread.
 extended_state_first_setup :: proc "contextless" () {
 	with_xsave, supported := extended_state_supported()
-	cr4 := cr4_read() | CR4_OSFXSR | CR4_OSXMMEXCPT
+	cr4 := control_register_4_read() | CR4_OSFXSR | CR4_OSXMMEXCPT
 	extended_state_components = LEGACY_COMPONENTS
 	extended_state_size = LEGACY_AREA_SIZE
 	if !with_xsave {
-		cr4_write(cr4 &~ CR4_OSXSAVE)
+		control_register_4_write(cr4 &~ CR4_OSXSAVE)
 		extended_state_form = .Fxsave
 		return
 	}
-	cr4_write(cr4 | CR4_OSXSAVE)
+	control_register_4_write(cr4 | CR4_OSXSAVE)
 	candidates := [3]Extended_State_Components{supported, supported - AVX_512_COMPONENTS, LEGACY_COMPONENTS}
 	for candidate in candidates {
 		extended_control_register_write(0, transmute(u64)candidate)
@@ -153,9 +151,9 @@ extended_state_first_setup :: proc "contextless" () {
 // registers that the first processor chose. False: this processor cannot
 // save the same components in the same form, and must not run threads.
 extended_state_other_setup :: proc "contextless" () -> bool {
-	cr4 := cr4_read() | CR4_OSFXSR | CR4_OSXMMEXCPT
+	cr4 := control_register_4_read() | CR4_OSFXSR | CR4_OSXMMEXCPT
 	if extended_state_form == .Fxsave {
-		cr4_write(cr4 &~ CR4_OSXSAVE)
+		control_register_4_write(cr4 &~ CR4_OSXSAVE)
 		return true
 	}
 	with_xsave, supported := extended_state_supported()
@@ -165,7 +163,7 @@ extended_state_other_setup :: proc "contextless" () -> bool {
 	if extended_state_layout_read(extended_state_components) != extended_state_layout {
 		return false
 	}
-	cr4_write(cr4 | CR4_OSXSAVE)
+	control_register_4_write(cr4 | CR4_OSXSAVE)
 	extended_control_register_write(0, transmute(u64)extended_state_components)
 	_, size, _, _ := intrinsics.x86_cpuid(0xD, 0)
 	return u64(size) == extended_state_size

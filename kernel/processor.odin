@@ -39,20 +39,12 @@ MSR_KERNEL_GS_BASE :: 0xC000_0102 // In the kernel: the gs register of the progr
 TIME_SLICE :: 10 // Ticks that a program runs before another ready program gets the processor.
 
 foreign _ {
+	// sti, hlt, cli: wait for one interrupt. It stays in processor.asm: the
+	// compiler takes hlt as the end of the flow of a template.
 	idle_wait :: proc "c" () ---
+	// The load of the segment table also loads cs with a far return: it
+	// uses its own return address.
 	gdt_load :: proc "c" (descriptor: rawptr) ---
-	idt_load :: proc "c" (descriptor: rawptr) ---
-	task_load :: proc "c" (selector: u16) ---
-	msr_write :: proc "c" (index: u32, value: u64) ---
-	msr_read :: proc "c" (index: u32) -> u64 ---
-	cr2_read :: proc "c" () -> u64 ---
-	cr3_read :: proc "c" () -> u64 ---
-	cr3_write :: proc "c" (table: u64) ---
-	cr0_read :: proc "c" () -> u64 ---
-	cr4_read :: proc "c" () -> u64 ---
-	cr4_write :: proc "c" (value: u64) ---
-	processor_self :: proc "c" () -> ^Processor ---
-	page_flush :: proc "c" (address: u64) ---
 	kernel_enter :: proc "c" () ---
 	resume :: proc "c" (frame: ^Frame) -> ! ---
 	interrupt_stubs: [STUB_COUNT]u64
@@ -107,7 +99,8 @@ Frame_Cache :: struct #align (64) {
 // kernel entry starts at the top of the stack and never continues an
 // earlier entry.
 Processor :: struct {
-	// processor.asm reads these three fields through the gs register.
+	// These three fields are read through the gs register: the first two
+	// by processor.asm, self by processor_self (instructions.odin).
 	stack_top:     u64, // The top of the kernel stack (paging.odin).
 	user_stack:    u64,
 	self:          ^Processor,
@@ -186,7 +179,7 @@ Processor :: struct {
 }
 
 #assert(offset_of(Processor, user_stack) == 8)
-#assert(offset_of(Processor, self) == 16) // processor_self in processor.asm
+#assert(offset_of(Processor, self) == 16) // processor_self in instructions.odin
 
 processors: [PROCESSOR_CAPACITY]^Processor
 processor_count: u32
@@ -233,9 +226,9 @@ sync_acknowledge :: proc "contextless" (cpu: ^Processor) {
 	if intrinsics.atomic_load(&cpu.current) == 0 {
 		// No thread: the page table of the last program can end.
 		intrinsics.atomic_store(&cpu.table, kernel_table)
-		cr3_write(kernel_table)
+		control_register_3_write(kernel_table)
 	} else {
-		cr3_write(cr3_read())
+		control_register_3_write(control_register_3_read())
 	}
 	intrinsics.atomic_store(&cpu.pending, 0)
 }
@@ -282,32 +275,32 @@ processor_create :: proc "contextless" (index: u32, apic_id: u32) -> ^Processor 
 processor_setup :: proc "contextless" (cpu: ^Processor) {
 	descriptor := Table_Descriptor{size_of(cpu.segments) - 1, u64(uintptr(&cpu.segments))}
 	gdt_load(&descriptor)
-	task_load(SELECTOR_TASK)
+	task_register_load(SELECTOR_TASK)
 	descriptor = {size_of(gates) - 1, u64(uintptr(&gates))}
-	idt_load(&descriptor)
-	msr_write(MSR_GS_BASE, u64(uintptr(cpu)))
-	msr_write(MSR_KERNEL_GS_BASE, 0)
+	interrupt_table_load(&descriptor)
+	model_specific_register_write(MSR_GS_BASE, u64(uintptr(cpu)))
+	model_specific_register_write(MSR_KERNEL_GS_BASE, 0)
 
 	// The syscall instruction.
 	MSR_EFER :: 0xC000_0080
 	MSR_STAR :: 0xC000_0081
 	MSR_LSTAR :: 0xC000_0082
 	MSR_SFMASK :: 0xC000_0084
-	msr_write(MSR_EFER, msr_read(MSR_EFER) | 1)
-	msr_write(MSR_STAR, 0x0010_0008 << 32)
-	msr_write(MSR_LSTAR, u64(uintptr(rawptr(kernel_enter))))
+	model_specific_register_write(MSR_EFER, model_specific_register_read(MSR_EFER) | 1)
+	model_specific_register_write(MSR_STAR, 0x0010_0008 << 32)
+	model_specific_register_write(MSR_LSTAR, u64(uintptr(rawptr(kernel_enter))))
 	// The flags of the kernel at a syscall: the flags of the program with
 	// these cleared: interrupt, direction, trap, user access, and nested
 	// task. A program can set nested task with popfq; with it set in the
 	// kernel, the iretq of resume would fault in the kernel.
-	msr_write(MSR_SFMASK, 0x44700)
+	model_specific_register_write(MSR_SFMASK, 0x44700)
 	// The kernel does not execute the memory of programs, and uses it only
 	// in user_copy, when the processor can refuse the rest (SMEP, SMAP).
 	CR4_NO_EXECUTE_PROGRAM :: 1 << 20
 	CR4_GUARD_PROGRAM :: 1 << 21
 	if highest, _, _, _ := intrinsics.x86_cpuid(0, 0); highest >= 7 {
 		_, features, _, _ := intrinsics.x86_cpuid(7, 0)
-		cr4 := cr4_read()
+		cr4 := control_register_4_read()
 		if features & (1 << 7) != 0 {
 			cr4 |= CR4_NO_EXECUTE_PROGRAM
 			kernel_no_execute = true
@@ -316,7 +309,7 @@ processor_setup :: proc "contextless" (cpu: ^Processor) {
 			cr4 |= CR4_GUARD_PROGRAM
 			user_access_guard = 1
 		}
-		cr4_write(cr4)
+		control_register_4_write(cr4)
 	}
 	apic_setup(cpu)
 }

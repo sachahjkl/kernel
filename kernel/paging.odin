@@ -24,11 +24,9 @@ LARGE_PAGE_SIZE :: 2 << 20
 DIRECT_MAP_INDEX :: (u64(info.DIRECT_MAP_BASE) >> 39) & 511
 
 foreign _ {
+	// 1: the processors refuse the memory of programs to the kernel (SMAP).
+	// interrupt_common reads it too. user_copy is in instructions.odin.
 	user_access_guard: u8
-	// user_copy is the one place where the kernel uses the memory of a
-	// program at the addresses of the program. The caller checks the range
-	// first (user_range).
-	user_copy :: proc "c" (destination: rawptr, source: rawptr, count: u64) ---
 	stack_switch :: proc "c" (top: u64, entry: rawptr) -> ! ---
 }
 
@@ -99,7 +97,7 @@ paging_start :: proc "contextless" (boot: ^info.Boot_Info) {
 		log("kernel: no memory for the page tables of the kernel")
 		machine_stop(1)
 	}
-	cr3_write(kernel_table)
+	control_register_3_write(kernel_table)
 }
 
 // stacks_create gives a processor its kernel stack and its stack of the
@@ -300,11 +298,11 @@ self_test :: proc "contextless" (test: info.Self_Test, boot: ^info.Boot_Info) {
 		(cast(proc "c" ())rawptr(&test_code))()
 	case .Read_Program:
 		log("kernel: self test: read the memory of a program outside a copy")
-		cr3_write(programs[1].table)
+		control_register_3_write(programs[1].table)
 		_ = intrinsics.volatile_load((^u8)(uintptr(op.PROGRAM_BASE)))
 	case .Execute_Program:
 		log("kernel: self test: execute the code of a program")
-		cr3_write(programs[1].table)
+		control_register_3_write(programs[1].table)
 		(cast(proc "c" ())rawptr(uintptr(threads[1].frame.rip)))()
 	}
 	log("kernel: self test: the processor did not refuse")

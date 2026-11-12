@@ -1,4 +1,12 @@
-; Processor instructions that Odin cannot write. System V convention.
+; The code of the processor that owns the stack or the frame, and so
+; cannot be an instruction template of Odin: the entries of the kernel, the
+; return to a program, the stubs of the interrupts, the save and the restore
+; of the extended state, the load of the segment table (a far return), the
+; switch of the stack, the start code of the other processors, and the two
+; procedures with hlt, which the compiler takes as an end of the flow. The
+; other instructions of the kernel are templates in kernel/instructions.odin
+; (docs/ARCHITECTURE.md, "The instructions of the kernel"). System V
+; convention.
 bits 64
 default rel
 
@@ -8,20 +16,6 @@ KERNEL_ENTER_VECTOR equ 128
 STUB_COUNT equ 80
 
 section .text
-
-global port_write_8
-port_write_8:                    ; (port: u16, value: u8)
-	mov edx, edi
-	mov eax, esi
-	out dx, al
-	ret
-
-global port_read_8
-port_read_8:                     ; (port: u16) -> u8
-	mov edx, edi
-	xor eax, eax
-	in al, dx
-	ret
 
 global processor_stop
 processor_stop:                  ; () -> !
@@ -51,53 +45,6 @@ gdt_load:                        ; (descriptor: rawptr): load the table and all 
 	push 0x08
 	push rax
 	retfq
-
-global idt_load
-idt_load:                        ; (descriptor: rawptr)
-	lidt [rdi]
-	ret
-
-global task_load
-task_load:                       ; (selector: u16)
-	ltr di
-	ret
-
-global msr_write
-msr_write:                       ; (index: u32, value: u64)
-	mov ecx, edi
-	mov eax, esi
-	mov rdx, rsi
-	shr rdx, 32
-	wrmsr
-	ret
-
-global msr_read
-msr_read:                        ; (index: u32) -> u64
-	mov ecx, edi
-	rdmsr
-	shl rdx, 32
-	or rax, rdx
-	ret
-
-global cr2_read
-cr2_read:
-	mov rax, cr2
-	ret
-
-global cr3_read
-cr3_read:
-	mov rax, cr3
-	ret
-
-global cr3_write
-cr3_write:
-	mov cr3, rdi
-	ret
-
-global page_flush
-page_flush:                      ; (address)
-	invlpg [rdi]
-	ret
 
 ; The frame: 15 registers, the vector, the error code, then what the
 ; processor pushed. kernel/processor.odin has the same layout (Frame).
@@ -262,57 +209,12 @@ global resume_return
 resume_return:
 	iretq
 
-; user_copy(destination, source, count): the one place where the kernel
-; uses the memory of a program at the addresses of the program. With the
-; guard, the processor refuses such a use everywhere else.
-global user_copy
-user_copy:
-	mov rcx, rdx
-	cmp byte [user_access_guard], 0
-	je .copy
-	stac
-	rep movsb
-	clac
-	ret
-.copy:
-	rep movsb
-	ret
-
 global stack_switch
 stack_switch:                    ; (top: u64, entry: rawptr) -> !: continue on another stack
 	mov rsp, rdi
 	xor ebp, ebp
 	push 0                       ; a null return address: the entry does not return
 	jmp rsi
-
-global processor_self
-processor_self:                  ; () -> ^Processor
-	mov rax, [gs:abs 16]
-	ret
-
-global cr0_read
-cr0_read:
-	mov rax, cr0
-	ret
-
-global cr4_read
-cr4_read:
-	mov rax, cr4
-	ret
-
-global cr4_write
-cr4_write:
-	mov cr4, rdi
-	ret
-
-global extended_control_register_write
-extended_control_register_write: ; (register: u32, value: u64): xsetbv
-	mov ecx, edi
-	mov eax, esi
-	mov rdx, rsi
-	shr rdx, 32
-	xsetbv
-	ret
 
 ; The save and the restore of the extended state of a thread: the
 ; scheduler calls them when a processor leaves a thread for another one,
