@@ -136,6 +136,8 @@ Site :: struct {
 	type_keys:    map[string]int, // The key of each type ("operation.Fault_Record") to its place in types.
 	type_ids:     map[string]int, // The id of each type on the page of the types to its place in types.
 	type_names_without_card: int, // The places where a page shows a type that has no card: its name is plain.
+	code_blocks_not_colored: int, // The blocks of Odin that the tokenizer refused: written plain.
+	first_code_block_not_colored: string, // The place of the first of them, or "".
 }
 
 run_site :: proc(args: []string) -> int {
@@ -684,6 +686,13 @@ site_build :: proc(address: string) -> bool {
 	// A type that a page shows with no card is plain text: the count makes
 	// the gap visible.
 	fmt.printfln("kerneltool: site: %d types, %d type names with no card", len(site.types), site.type_names_without_card)
+	// A block of Odin that the tokenizer refused is plain: the count and the
+	// first one make it seen.
+	if site.code_blocks_not_colored > 0 {
+		fmt.printfln("kerneltool: site: %d code blocks not colored, the first: %s", site.code_blocks_not_colored, site.first_code_block_not_colored)
+	} else {
+		fmt.println("kerneltool: site: 0 code blocks not colored")
+	}
 	if site.address == "" {
 		fmt.println("kerneltool: site: no address (SITE_ADDRESS is empty): the pages have relative links only. Not written: the canonical addresses, Open Graph and the summary card, the JSON-LD graphs, " + SITE_SITEMAP + ", " + SITE_ROBOTS + ", and the link \"self\" of the feeds")
 		fmt.printfln("kerneltool: site: %s, %s and %s have relative links: a reader resolves them against the address that it fetched the file from", SITE_NEWS_FEED, SITE_RELEASES_FEED, SITE_LANGUAGE_MODEL_INDEX)

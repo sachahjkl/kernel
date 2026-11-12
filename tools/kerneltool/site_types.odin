@@ -1198,7 +1198,13 @@ site_type_symbol_write :: proc(site: ^Site, b: ^strings.Builder, type: Site_Type
 		site_table_end(&after, members_table)
 	}
 
-	site_symbol_write(site, b, Site_Symbol{id = type.id, name = type.name, signature = type.declaration, description = type.description, facts = facts[:], source = type.source, line = type.line, after_facts_html = strings.to_string(after)})
+	// The declaration in the colors of the code, each type of the contract
+	// inside it a reference to its card.
+	declaration_html := ""
+	if type.declaration != "" {
+		declaration_html = site_code_block_html(site, type.declaration, type.package_name, fmt.tprintf("%s:%d", type.source, type.line))
+	}
+	site_symbol_write(site, b, Site_Symbol{id = type.id, name = type.name, signature = type.declaration, signature_html = declaration_html, description = type.description, facts = facts[:], source = type.source, line = type.line, after_facts_html = strings.to_string(after)})
 }
 
 // site_types_page_add adds the page of the types and its line in the index

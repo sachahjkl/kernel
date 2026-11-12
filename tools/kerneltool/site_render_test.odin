@@ -45,7 +45,10 @@ site_render_each_construct :: proc(t: ^testing.T) {
 		"<th scope=\"col\" class=\"column-any\">B | C</th>",
 		"<div class=\"table\" role=\"region\" tabindex=\"0\" aria-label=\"A part\">",
 		"<blockquote>\n<p>quoted &lt;text&gt;</p>",
-		"<pre><code>x := 1 &lt; 2\n</code></pre>",
+		// A block marked odin is colored by the tokenizer of the compiler.
+		"<pre><code>x <span class=\"c-p\">:=</span> <span class=\"c-l\">1</span> <span class=\"c-p\">&lt;</span> <span class=\"c-l\">2</span>\n</code></pre>",
+		// The mermaid block is plain: only a block marked odin is colored.
+		"<pre><code>graph\n</code></pre>",
 	}
 	for part in expect {
 		testing.expectf(t, strings.contains(html, part), "the HTML has no %q:\n%s", part, html)

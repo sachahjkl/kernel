@@ -570,7 +570,65 @@ Why this form:
 
 The check of each page (`site_type_cards_problem`): each `popovertarget` and each `aria-describedby` names an id of the page, and no two cards have one id.
 
-What is not done: the types are not entries of the search; a type of a guide (a code span) is not a reference; the declaration on the page of the types is its text, with no references inside it.
+What is not done: the types are not entries of the search; a type of a guide (a code span) is not a reference.
+
+## The colors of the code
+
+The owner asked for it on 2026-11-12: "Un peu dommage aussi qu'on ait pas de coloration du code, peut-être avec Shiki, on peut, parce que là je vois du Odin qui est pas coloré." The code is `tools/kerneltool/site_code.odin`; its host tests are `site_code_test.odin`.
+
+The tool colors the code when it writes the pages: static markup, no script, no request, nothing new in the Content-Security-Policy. Not Shiki: it is a library of Node, and the automation of the repository is commands of the Odin tool, with no script of another language. Odin is read by the tokenizer of the compiler itself (`core:odin/tokenizer`), not by a grammar of regular expressions: a token is what the compiler sees.
+
+- `site_code_odin` writes each token in a `<span class="c-<class>">`, and each byte between two tokens (spaces, line feeds) as it is: the text of the output with its tags removed and its escapes undone is the source, byte for byte. The tokenizer gives the comments as tokens. Two tokens of one class with only spaces between share one span.
+- A text that the tokenizer refuses (an illegal character, a string or a comment with no end) is written plain, and `kerneltool site` prints "N code blocks not colored, the first: <place>". A fragment that is not a declaration is still tokens and is colored: the tokenizer does not parse.
+
+| Class | What | Accent of the design rules | Dark: shade, contrast on the block of code `0x1C2633` | Light: shade, contrast on the block of code `0xD6DBE0` |
+|---|---|---|---|---|
+| `c-k` | A keyword of the tokenizer | Kernel | 115 %, `0x64AAF2`, 6.24 | 55 %, `0x285583`, 5.55 |
+| `c-t` | A built-in type; a name with a capital in the place of a type; a reference to a card, in a block of code | Firmware | 115 %, `0x9E8FCB`, 5.27 | 60 %, `0x554A75`, 5.75 |
+| `c-l` | A number, a string, a rune, `true`, `false`, `nil`, a name in capitals, `.Member`, a member of an enum body | Memory | 100 %, `0x38C0B0`, 6.79 | 50 %, `0x1B5F57`, 5.34 |
+| `c-n` | A name before `::`: the name at its declaration | Program | 100 %, `0x58D878`, 8.37 | 45 %, `0x276035`, 5.36 |
+| `c-d` | `#` and the name after it, `@` and the first name of its attribute, a file tag | Machine | 115 %, `0xD785BB`, 5.79 | 55 %, `0x723D60`, 5.90 |
+| `c-c` | A comment | Dim | 125 %, `0x9CA6B2`, 6.19 | 60 %, `0x4A525B`, 5.69 |
+| `c-p` | An operator or punctuation: the quiet class | Dim | 140 %, `0xB0B8C1`, 7.62 | 50 %, `0x3D444C`, 7.08 |
+
+A host test computes each contrast; the bound is 4.5, as for the value kinds. A person who prints gets black text.
+
+The rule for the names of types, from the tokens only:
+
+- a name of the package of the text (the package of a declaration of the page of the types) that is a type of the contract, and `package.Name` of a documented package anywhere, is a reference to its card (see "The types");
+- a built-in type (`u64`, `bool`, `string`, `rawptr`, ...) is `c-t`;
+- another name with a capital is `c-t` only in the place of a type: after `:` (not `::`), `^`, `]`, `->` or `distinct`, or after `qualifier.` in that place. Elsewhere (`size_of(Pair)`, `in Kinds`) it stays plain: the tool does not guess.
+
+Where it applies: only a block that the tool knows to be Odin.
+
+- The declaration of each type on the page of the types, with each type of the contract inside it as a reference: this closes "the declaration has no references inside it".
+- The signatures of the kernel operations, of the exports and of the commands of the console: they are built from their parts, so each part takes its class with no tokenizer: the name `c-n`, the punctuation and the arrow `c-p`, each type a reference. The parameters of an operation are words of a comment, and stay plain.
+- The fenced blocks of the guides marked `odin`. A block with no language stays plain: the language is not guessed.
+
+The fenced blocks of `docs/*.md` on 2026-11-12: 15 blocks; 9 with no language, 5 `mermaid`, 1 `odin`. No block is marked `asm`, `sh`, `console`, `nix` or `yaml`, so the tool has no other lexer: a lexer for a language that no block names is code with no use. The 5 mermaid blocks stay plain, as before. The one block of Odin (`MODULE_CONTRACT.md`, the export `seal`) is colored.
+
+The size: the declarations of the page of the types are 963 lines, 53 KB of text, about 7 900 tokens; their spans and references add about 100 KB to that page (estimated, not measured). The guide of the module contract grows by about 1.5 KB; the other guides do not change.
+
+## The polish of the browser's parts
+
+The owner asked for it on 2026-11-12: "si tu peux styliser les scroll-bars, s'il te plaît, ce serait cool. Tu as tous les trucs de peaufinage en CSS là que tu peux mettre, genre la couleur de highlight, enfin tout ce bordel." In the design of the system: square, the colors of the palette, both color schemes, and nothing more. The rules are `SITE_POLISH_RULES` in `tools/kerneltool/site_style.odin`, after the colors, so that print and the forced colors win over them.
+
+- Scroll bars: `scrollbar-color` (the dim color on the track color) and `scrollbar-width: thin` on the page, the tree, "On this page", the table boxes, the blocks of code, the open menu, the list of the search and the cards of the types. The parts `::-webkit-scrollbar` only inside `@supports not (scrollbar-color: auto)`: a browser that has both ignores the standard one when the parts are styled. A square thumb of 8 pixels, the line color on hover. `scrollbar-gutter: stable` on the page.
+- `color-scheme: dark light` on the root; each page already has `<meta name="color-scheme" content="dark light">`.
+- `::selection`: the line color at 70 % (`0x2B5688`) under white text, 7.53 to 1, the same in both schemes (a host test). It is one rule for every element, so it holds in the blocks of code and on the values.
+- `accent-color` and `caret-color`: the line color. The placeholder of the search: the dim color at 115 % in the dark form (5.40 on the field; the dim color itself is 4.33), the dim color of the light form there (5.69).
+- The focus: a square outline of 2 pixels in the line color, offset 2 pixels, on links, buttons, summaries, fields and each element with `tabindex` (the table boxes). No rule removes an outline (a host test).
+- The marks of the lists: a square, in the dim color; the marks of a `summary` in the dim color. The bar menu has its own button and no mark.
+- `text-wrap: balance` on the headings and `pretty` on the paragraphs, the items, the definitions and the quotes; `tab-size: 4` in code; the links keep their thickness and offset. `hanging-punctuation` is not written: one browser has it, and it moves the first letter of a quote.
+- `scroll-behavior: smooth` only inside `@media (prefers-reduced-motion: no-preference)`.
+- The jump to an anchor: the bar of the site does not stay at the top, so `scroll-margin-top` and `scroll-padding-top` are 16 pixels: a little room above the target. A heading, an item or a paragraph that is the target has a line of 2 pixels at its left; a row of a table has the band of the track. No fade: the design rules have no animation.
+- `overscroll-behavior: contain` on the tree, "On this page" and the open menu; `touch-action: manipulation` on links, buttons and summaries; the tap highlight in the line color at 30 %; `text-size-adjust: 100%`.
+- `image-rendering: pixelated` on the mark of the home and the heron of the bar (already); the icons of the values are masks drawn at their size. The screen pictures are not pixelated: they are shown smaller than their pixels.
+- The card of a type has no veil: `::backdrop` is transparent; a card is not a modal.
+- Forced colors (`@media (forced-colors: active)`): the icons of the values in `CanvasText`, the marks of the values in `CanvasText`, the focus in `Highlight`, the border of a card in `CanvasText`.
+- Print: black text, no color of code or of a value, no card of a type, a block of code wraps.
+
+A host test checks that the style sheet holds each of these rules, has no `outline: none` and no `outline: 0`, and that each `border-radius` is 0.
 
 ## The tiles of the boot image
 

@@ -173,7 +173,7 @@ blockquote { margin-left: 0; padding-left: 16px; border-left: 2px solid var(--li
 .search[hidden], .search-panel[hidden] { display: none; }
 .search-label { position: absolute; left: -9999px; }
 .search input { width: 224px; height: 24px; padding: 0 8px; font-family: var(--mono); font-size: 14px; color: var(--text); background: var(--track); border: 1px solid var(--track); border-radius: 0; }
-.search input::placeholder { color: var(--dim); }
+.search input::placeholder { color: var(--placeholder); opacity: 1; }
 .search input:focus-visible { outline: 2px solid var(--line); outline-offset: 0; }
 .search-panel { position: absolute; right: 0; top: 32px; z-index: 10; width: 640px; max-width: calc(100vw - 32px); padding: 4px; background: var(--card-bottom); border: 1px solid var(--line); }
 .search-hint, .search-detail { margin: 0; padding: 0 4px; font-family: var(--mono); font-size: 12px; line-height: 20px; color: var(--dim); }
@@ -455,6 +455,94 @@ figcaption { padding-top: 8px; font-size: 14px; }
 }
 `
 
+// The polish of the parts of the browser (docs/SITE.md, "The polish of the
+// browser's parts"): the scroll bars, the selection, the focus, the marks
+// of the lists, the jump to an anchor, the forced colors. In the design of
+// the system: square, the colors of the palette, both forms. The variables
+// --selection, --selection-text and --placeholder are written for each
+// form by site_polish_variables.
+SITE_POLISH_RULES :: `
+:root {
+  color-scheme: dark light;
+  accent-color: var(--line);
+  scroll-padding-top: 16px;
+  -webkit-tap-highlight-color: color-mix(in srgb, var(--line) 30%, transparent);
+}
+/* A page with and without a scroll bar has the same width. */
+html { scrollbar-gutter: stable; }
+/* The scroll bars: thin, a thumb in the dim color on the track color. The
+   standard properties first; the parts of WebKit only for a browser with no
+   standard one, because a browser that has both ignores the standard one
+   when the parts are styled. */
+html, .tree, .outline, .table, pre, .bar-menu-content, .search-panel, .type-card { scrollbar-color: var(--dim) var(--track); scrollbar-width: thin; }
+@supports not (scrollbar-color: auto) {
+  ::-webkit-scrollbar { width: 8px; height: 8px; background: var(--track); }
+  ::-webkit-scrollbar-thumb { background: var(--dim); border: 0; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--line); }
+  ::-webkit-scrollbar-corner { background: var(--track); }
+}
+/* The scroll of the tree and of "On this page" stops at their end: it does
+   not move the page. */
+.tree, .outline, .bar-menu-content { overscroll-behavior: contain; }
+::selection { background: var(--selection); color: var(--selection-text); }
+.search input { caret-color: var(--line); }
+/* The focus: a square outline of 2 pixels in the line color, on each part
+   that the keyboard reaches. No rule removes an outline. */
+a:focus-visible, button:focus-visible, summary:focus-visible, input:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--line); outline-offset: 2px; }
+.search input:focus-visible { outline-offset: 0; }
+button, summary, a { touch-action: manipulation; }
+/* The marks of the lists: a square in the dim color; a number in the dim color. */
+ul { list-style-type: square; }
+li::marker, summary::marker { color: var(--dim); }
+h1, h2, h3, h4 { text-wrap: balance; }
+p, li, dd, blockquote { text-wrap: pretty; }
+pre, code { tab-size: 4; }
+@media (prefers-reduced-motion: no-preference) {
+  html { scroll-behavior: smooth; }
+}
+/* A jump to an anchor: the bar of the site does not stay at the top, so the
+   target keeps only a little room above it, and a line at its left marks
+   where the link landed. */
+[id] { scroll-margin-top: 16px; }
+h2:target, h3:target, li:target, p:target { box-sizing: border-box; border-left: 2px solid var(--line); padding-left: 8px; }
+.table tr:target > td { background: var(--track); }
+/* A card of a type is not a modal: no veil over the page. */
+.type-card::backdrop { background: transparent; }
+@media (forced-colors: active) {
+  /* The system colors: the icons, the marks of the values and the focus stay. */
+  .value-icon::before { forced-color-adjust: none; background-color: CanvasText; }
+  code.value, button.type-reference.value { border-left-color: CanvasText; }
+  a:focus-visible, button:focus-visible, summary:focus-visible, input:focus-visible, [tabindex]:focus-visible { outline-color: Highlight; }
+  .type-card { border-color: CanvasText; }
+}
+@media print {
+  /* Plain black text: no color of code or of a value, no card of a type. */
+  .type-cards { display: none; }
+  pre, code, .value, pre .type-reference, button.type-reference.value, [class^="c-"] { color: #000; }
+  pre { white-space: pre-wrap; }
+}
+`
+
+// The colors of the parts of the browser in one form: the selection (the
+// line color, darker, under white text: the same in both forms), and the
+// placeholder of the search field, on the track color.
+site_polish_colors :: proc(light: bool) -> (selection, selection_text, placeholder: graphics.Color) {
+	selection = graphics.shade(graphics.COLOR_TITLE, 70)
+	selection_text = graphics.COLOR_WHITE
+	placeholder = light ? site_light_colors().dim : graphics.shade(graphics.COLOR_DIM, 115)
+	return
+}
+
+// site_polish_variables writes the variables of the polish of one form.
+site_polish_variables :: proc(builder: ^strings.Builder, light: bool) {
+	selection, selection_text, placeholder := site_polish_colors(light)
+	strings.write_string(builder, ":root {\n")
+	site_variable(builder, "selection", selection)
+	site_variable(builder, "selection-text", selection_text)
+	site_variable(builder, "placeholder", placeholder)
+	strings.write_string(builder, "}\n")
+}
+
 // site_style_sheet gives the whole style sheet: the variables of the dark
 // form, the rules, the grid of points of the background, then the light form
 // for a reader whose system asks for it.
@@ -464,6 +552,12 @@ site_style_sheet :: proc(tile_rules: string) -> string {
 	strings.write_string(&builder, SITE_STYLE_RULES)
 	// The color and the icon of each kind of value, in the dark form.
 	strings.write_string(&builder, site_value_rules(false))
+	// The colors of the code and of the parts of the browser, in the dark
+	// form; the polish comes after the colors, so that print and the forced
+	// colors win over them.
+	strings.write_string(&builder, site_code_rules(false))
+	site_polish_variables(&builder, false)
+	strings.write_string(&builder, SITE_POLISH_RULES)
 	// The colors and the widths of the tiles of the boot image: they come
 	// from the image of the build, so they are not fixed rules.
 	strings.write_string(&builder, tile_rules)
@@ -477,7 +571,12 @@ site_style_sheet :: proc(tile_rules: string) -> string {
 	strings.write_string(&builder, "@media (prefers-color-scheme: light) {\n")
 	site_colors_write(&builder, site_light_colors())
 	strings.write_string(&builder, site_value_rules(true))
+	strings.write_string(&builder, site_code_rules(true))
+	site_polish_variables(&builder, true)
 	// The grid of points is a decoration of the dark background only.
 	strings.write_string(&builder, ".section-home { background-image: none; }\n}\n")
+	// Print is plain black text, also in the light form, whose colors of code
+	// come after the polish.
+	strings.write_string(&builder, "@media print {\n  pre, code, .value, pre .type-reference, button.type-reference.value, [class^=\"c-\"] { color: #000; }\n}\n")
 	return strings.to_string(builder)
 }

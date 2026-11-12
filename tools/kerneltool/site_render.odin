@@ -280,16 +280,25 @@ site_render_fence :: proc(renderer: ^Site_Renderer, lines: []string, start: int,
 	}
 	indent := strings.index(lines[start], "```")
 	index := start + 1
-	strings.write_string(b, "<pre><code>")
+	code_text := strings.builder_make(context.temp_allocator)
 	for index < len(lines) && strings.trim_space(lines[index]) != "```" {
 		code := lines[index]
 		// The code of a fence inside a list item has the indentation of the item.
 		if indent > 0 && len(code) >= indent && strings.trim_space(code[:indent]) == "" {
 			code = code[indent:]
 		}
-		site_escape(b, code)
-		strings.write_byte(b, '\n')
+		strings.write_string(&code_text, code)
+		strings.write_byte(&code_text, '\n')
 		index += 1
+	}
+	strings.write_string(b, "<pre><code>")
+	// Only a block that its document marks as Odin is colored: the language
+	// of a block with no mark is not guessed.
+	if language == "odin" && renderer.site != nil {
+		place := fmt.tprintf("%s:%d", renderer.source, start + first_line_number)
+		strings.write_string(b, site_code_block_html(renderer.site, strings.to_string(code_text), "", place))
+	} else {
+		site_escape(b, strings.to_string(code_text))
 	}
 	strings.write_string(b, "</code></pre>\n")
 	if index >= len(lines) {

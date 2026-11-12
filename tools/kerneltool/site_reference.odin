@@ -364,24 +364,30 @@ site_type_html :: proc(site: ^Site, module_name: string, description: Module_Des
 // site_export_signature_html gives the signature of an export as
 // site_export_signature writes it, with each type as a reference.
 site_export_signature_html :: proc(site: ^Site, module_name: string, description: Module_Description, export: Export_Description) -> string {
+	// Each part in the color of its role in the code: the name, the
+	// punctuation, and each type as a reference.
 	builder := strings.builder_make(context.temp_allocator)
-	site_escape(&builder, export.name)
-	strings.write_byte(&builder, '(')
+	site_code_span(&builder, .Name, export.name)
+	site_code_span(&builder, .Punctuation, "(")
 	for type, index in export.parameters {
 		if index > 0 {
-			strings.write_string(&builder, ", ")
+			site_code_span(&builder, .Punctuation, ",")
+			strings.write_byte(&builder, ' ')
 		}
 		if index < len(export.names) && export.names[index] != "" {
 			site_escape(&builder, export.names[index])
-			strings.write_string(&builder, ": ")
+			site_code_span(&builder, .Punctuation, ":")
+			strings.write_byte(&builder, ' ')
 		}
 		detail: u32 = index < len(export.details) ? export.details[index] : 0
 		direction: module.Direction = index < len(export.directions) ? export.directions[index] : .Read
 		strings.write_string(&builder, site_type_html(site, module_name, description, type, detail, direction, true))
 	}
-	strings.write_byte(&builder, ')')
+	site_code_span(&builder, .Punctuation, ")")
 	if export.result != .None {
-		strings.write_string(&builder, " -&gt; ")
+		strings.write_byte(&builder, ' ')
+		site_code_span(&builder, .Punctuation, "->")
+		strings.write_byte(&builder, ' ')
 		strings.write_string(&builder, site_type_html(site, module_name, description, export.result, export.result_detail, .Read, false))
 	}
 	return strings.to_string(builder)
@@ -394,13 +400,17 @@ site_operation_signature_html :: proc(site: ^Site, operation: Site_Operation) ->
 	if !strings.has_prefix(operation.member.comment, "(") {
 		return ""
 	}
+	// The parameters are words of a comment, not code: only the name, the
+	// parentheses, the arrow and the types have the colors of the code.
 	b := strings.builder_make(context.temp_allocator)
-	site_escape(&b, operation.member.name)
-	strings.write_byte(&b, '(')
+	site_code_span(&b, .Name, operation.member.name)
+	site_code_span(&b, .Punctuation, "(")
 	site_text_with_type_references(site, &b, operation.parameters, "operation")
-	strings.write_byte(&b, ')')
+	site_code_span(&b, .Punctuation, ")")
 	if operation.result != "" {
-		strings.write_string(&b, " -&gt; ")
+		strings.write_byte(&b, ' ')
+		site_code_span(&b, .Punctuation, "->")
+		strings.write_byte(&b, ' ')
 		site_text_with_type_references(site, &b, operation.result, "operation")
 	}
 	return strings.to_string(b)
@@ -411,17 +421,20 @@ site_operation_signature_html :: proc(site: ^Site, operation: Site_Operation) ->
 // a reference.
 site_console_signature_html :: proc(site: ^Site, command: Site_Console_Command) -> string {
 	b := strings.builder_make(context.temp_allocator)
-	site_escape(&b, command.name)
-	strings.write_byte(&b, '(')
+	site_code_span(&b, .Name, command.name)
+	site_code_span(&b, .Punctuation, "(")
 	for parameter, index in command.parameters {
 		if index > 0 {
-			strings.write_string(&b, ", ")
+			site_code_span(&b, .Punctuation, ",")
+			strings.write_byte(&b, ' ')
 		}
 		site_type_reference(site, &b, strings.concatenate({"wire.", parameter}, context.temp_allocator), parameter, false)
 	}
-	strings.write_byte(&b, ')')
+	site_code_span(&b, .Punctuation, ")")
 	if command.result != "None" {
-		strings.write_string(&b, " -&gt; ")
+		strings.write_byte(&b, ' ')
+		site_code_span(&b, .Punctuation, "->")
+		strings.write_byte(&b, ' ')
 		site_type_reference(site, &b, strings.concatenate({"wire.", command.result}, context.temp_allocator), command.result, false)
 	}
 	return strings.to_string(b)
