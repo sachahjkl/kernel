@@ -6,3 +6,5 @@ build/
 /*.ll
 # The picture of every shape of the pointer theme of the owner (CC BY-NC 4.0) stays in the devlog.
 /docs/screenshots/pointers.png
+# The binary of the host tests of the tool, when a person runs odin test with no -out.
+/kerneltool

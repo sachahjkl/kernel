@@ -179,6 +179,8 @@ The mark is the picture that stands for the system (owner, 2026-11-12: "le heron
 |---|---|---|
 | `resources/logo/modus.png` | 1024 x 1024 | The heron (cells of 24) and the name under it (cells of 20), on the dark background |
 | `resources/logo/modus_light.png` | 1024 x 1024 | The same on the light background |
+| `resources/logo/modus_transparent.png` | 1024 x 1024 | The heron and the name in the colors of the dark background, on a transparent background |
+| `resources/logo/modus_light_transparent.png` | 1024 x 1024 | The heron and the name in the colors of the light background (the darker neck, the dark name), on a transparent background |
 | `resources/logo/heron_768.png` | 768 x 768 | The heron alone, cells of 32, on a transparent background |
 | `resources/logo/heron_24.png`, `heron_48.png`, `heron_96.png`, `heron_192.png` | 24 to 192 | The heron alone with cells of 1, 2, 4 and 8 pixels, on a transparent background |
 | `.project/image.png` | 512 x 512 | The heron alone, cells of 16, centred on the dark background |
@@ -193,6 +195,28 @@ The mark is the picture that stands for the system (owner, 2026-11-12: "le heron
 | The head of the boot display | `support/bootscreen`: the boot program, the root service, the program `boot` | the heron, cells of 2 pixels (48 x 48) at (20, 12), and the name of the mark, cells of 3 pixels, at its right, in the place of the large word "kernel" | at each draw of the display: one call for each of the 2 304 pixels of the box of the heron and the 2 079 pixels of the box of the name, a few integer divisions each |
 
 - No file of the mark is in the boot image: each place draws from the data.
+
+### The animations
+
+The owner asked for it on 2026-11-12: "le Pixel art, le logo, on pourrait même en faire une version animée, en mode idle quoi. Et pourquoi pas même plusieurs animations parmi lesquelles on cyclerait. [...] le favicone soit animé. Évidemment, il faudrait que ça respecte les choix de l'utilisateur au niveau des animations. [...] Pas à tous les endroits, pas dans le header, mais seulement le gros logo sur la page d'accueil."
+
+- An animation of the mark moves a few cells of the still heron. It does not draw the bird again. The data is in `support/mark/animation.odin`, beside the table of the still heron, in the same cells and letters. A cell that moves takes the gradient of its part over the box of that part in the still heron.
+
+| Animation | Frames (duration, cells changed from the still heron) | Time | Weight |
+|---|---|---|---|
+| blink | the eye closes (150 ms, 1) | 150 ms | 6 |
+| look | the head and the beak one cell forward (800 ms, 11); still (250 ms, 0); one cell back (800 ms, 12) | 1850 ms | 3 |
+| leg | the knee of the raised leg half in (200 ms, 2); in (500 ms, 6); half in (200 ms, 2) | 900 ms | 2 |
+| ripple | one cell of water above the line at each side of the legs, two columns farther at each frame (4 frames of 180 ms, 2 each) | 720 ms | 3 |
+| dip | the head one row lower (300 ms, 23); the eye closed (250 ms, 22); open (350 ms, 23); a swallow down the front of the neck (3 frames of 220 ms, 1 each) | 1560 ms | 1 |
+
+- The order of play, which repeats (about 90 seconds): 4 s blink, 6.5 s ripple, 3 s blink, 5.5 s look, 7 s blink, 4.5 s leg, 3.5 s ripple, 6 s blink, 8 s dip, 4 s look, 5 s blink, 7.5 s ripple, 3.5 s leg, 4.5 s blink, 6 s look. Each time is the still time before the animation. No animation follows itself. No random number is used.
+- The bounds, which the host tests hold: a frame differs by at most 24 cells from the still heron and from the frame before it; a frame lasts 150 to 1000 ms, so the picture changes at most about 6 times each second; an animation lasts at most 3 s; a still time is 3 to 10 s.
+- Where it plays: the large heron of the head of the home of the site, and the icon of the tab of the home. Not the small mark of the bar of the site, and not the desktop of the system yet.
+- Reduced motion: when the browser says that the person asks for reduced motion, nothing moves, and the still picture stays. A change of that choice while the page is open stops or starts the play.
+- A hidden tab: the play stops, no timer runs, and the icon is the still icon again.
+- `kerneltool logo` writes `build/mark_animations.png`: each animation as a row of its frames at cells of 8 pixels, with the durations and the order of play, for a person to look at.
+- The desktop of the system can play the same data later: `animation_frame_cells` gives the cells of a frame, and `cells_draw` draws them. The compositor would need one picture of 24 x 24 pixels for each distinct frame, drawn at the start as the still heron is now, and one timer that changes the generation of the Picture record of the bar at the times of the order of play.
 
 ## State
 

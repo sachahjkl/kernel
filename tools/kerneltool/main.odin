@@ -89,7 +89,7 @@ COMMANDS :: [?]Command {
 	{name = "font", about = "convert the BDF file of the font to " + FONT_OUTPUT, run = run_font},
 	{name = "pointers", about = "convert the pointer manifests of resources/pointers to pointer theme files in " + POINTER_BUILD_FOLDER + ", with the Xcursor folder of " + POINTER_THEME_SOURCE_VARIABLE + " or of the path after the command; print a table of each theme", run = run_pointers},
 	{name = "vector_fonts", about = "subset the vector font candidates of " + VECTOR_FONT_SOURCES_VARIABLE + " to " + VECTOR_FONT_FOLDER + " and draw " + CANDIDATES_PICTURE, run = run_vector_fonts},
-	{name = "logo", about = "draw the files of the mark of the system from support/mark: " + LOGO_FOLDER + " and " + PROJECT_IMAGE + "; `check` verifies them", run = run_logo},
+	{name = "logo", about = "draw the files of the mark of the system from support/mark: " + LOGO_FOLDER + " and " + PROJECT_IMAGE + "; `check` verifies them; and " + MARK_ANIMATIONS_PICTURE + ", every frame of the animations of the mark", run = run_logo},
 	{name = "portrait", about = "convert " + PORTRAIT_SOURCE + " to " + PORTRAIT_OUTPUT, run = run_portrait},
 	{name = "call", about = "call \"service.export(arguments)\": call an export of a service of the machine that `run` started, through the program remote, and print the typed result", run = run_call},
 	{name = "repeat", about = "repeat <module> <count>: build one module again and again, with no machine, and count the distinct modules, LLVM IR files and objects; `repeat all <count> [processes]`: every module and the boot program, one row each", run = run_repeat},
@@ -97,8 +97,10 @@ COMMANDS :: [?]Command {
 	{name = "cryptography-system-hashes", about = "print the line of " + CRYPTOGRAPHY_SYSTEM_FILES + " for each .odin file of support/cryptography that is not taken from Odin", run = run_cryptography_system_hashes},
 	{name = "cryptography-origin", about = "check that each file of " + CRYPTOGRAPHY_MANIFEST + " is its origin in Odin with the listed changes only", run = run_cryptography_origin},
 	{name = "changelog", about = "new <type> <subject> \"<text>\" (or - and the text on the standard input) | check | assemble | release <release number> | notes <release number>: the fragments of " + FRAGMENT_FOLDER + " and the releases of " + CHANGELOG_FILE, run = run_changelog},
+	{name = "news", about = "new <subject> | check: the news entries of " + NEWS_FOLDER + ", dated reports in prose of what a person can now see or use, for the page of the news of the site", run = run_news},
+	{name = "site", about = "write the site of the system in " + SITE_FOLDER + ": the pages from the documents, the code, the news, the pictures and the logs of the last machine tests, an index and one small script for the search, and the feed of the news; no request to another server", run = run_site},
 	{name = "release_number", about = "print the release number of the system: the newest release of " + CHANGELOG_FILE, run = run_release_number},
-	{name = "check", about = "odin check -vet and odin test of the host code, changelog check, then test", run = run_check},
+	{name = "check", about = "odin check -vet and odin test of the host code, changelog check, news check, then test", run = run_check},
 }
 
 main :: proc() {
@@ -464,6 +466,9 @@ run_check :: proc(args: []string) -> int {
 	if !logo_check() {
 		return EXIT_FAILURE
 	}
+	if !readme_pictures_check() {
+		return EXIT_FAILURE
+	}
 	if !fixed_addresses_check() {
 		return EXIT_FAILURE
 	}
@@ -471,6 +476,9 @@ run_check :: proc(args: []string) -> int {
 		return EXIT_FAILURE
 	}
 	if !changelog_check() {
+		return EXIT_FAILURE
+	}
+	if !news_check() {
 		return EXIT_FAILURE
 	}
 	if run_test(nil) != 0 {

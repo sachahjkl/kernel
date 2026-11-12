@@ -139,12 +139,22 @@ mark_pixel :: proc "contextless" (cell_size, x, y: int, on_light: bool) -> (colo
 	if !found {
 		return 0, false
 	}
+	return part_pixel(index, cell_size, x, y, on_light), true
+}
+
+// part_pixel gives the color of the pixel (x, y) of the heron in a cell of
+// the part number index: its flat color, or its gradient over the box of the
+// part in the still heron. A frame of an animation colors its cells with the
+// same procedure, so a cell that moves keeps the gradient of its part. The
+// caller checks the cell size and keeps the pixel inside the heron.
+@(private)
+part_pixel :: proc "contextless" (index, cell_size, x, y: int, on_light: bool) -> u32 {
 	part := parts[index]
 	base := part.color_on_light if on_light else part.color_on_dark
 	if part.flat {
-		return base, true
+		return base
 	}
-	return gradient_color(base, part.box, cell_size, x, y), true
+	return gradient_color(base, part.box, cell_size, x, y)
 }
 
 // gradient_color gives the color of a linear gradient at the centre of the

@@ -1,0 +1,46 @@
+# The site of the system: kerneltool builds it, GitHub Pages serves it at
+# the domain that the settings of the repository name (docs/SITE.md, "How
+# the site is published"). Each step calls the tool or an action; the
+# workflow holds no logic of its own.
+name: site
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One publication at a time; a run that started is not cancelled, so that
+# no deployment stops halfway.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: DeterminateSystems/nix-installer-action@v23
+      - uses: DeterminateSystems/magic-nix-cache-action@v15
+      # The boot image gives the tiles of the home, the sizes of the module
+      # pages and the column "in the boot image" of the licenses.
+      - run: nix develop -c kerneltool build
+      - run: nix develop -c kerneltool site
+      - uses: actions/upload-pages-artifact@v5.0.0
+        with:
+          path: build/site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-24.04
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5.0.1

@@ -1,4 +1,4 @@
-<p align="center"><img src="resources/logo/modus.png" width="256" alt="The mark of modus: a heron of square pixels that stands on one leg in water, a blue body, a pale neck, an orange beak and a violet crest and tail, above the name modus in square letters, on a dark background"></p>
+<p align="center"><picture><source media="(prefers-color-scheme: light)" srcset="resources/logo/modus_light_transparent.png"><img src="resources/logo/modus_transparent.png" width="256" alt="The mark of modus: a heron of square pixels that stands on one leg in water, a blue body, a pale neck, an orange beak and a violet crest and tail, above the name modus in square letters"></picture></p>
 
 # Next-Gen Kernel
 
@@ -178,6 +178,7 @@ The same window with the pointer theme of the owner (Posy's Cursor, CC BY-NC 4.0
 | `docs/MODULE_CONTRACT.md` | The module format, the loader and the call form |
 | `docs/FIRST_MILESTONE.md` | What the code does now, the choices made, the gaps |
 | `docs/TOOLS.md` | The developer tools, and what each one reads |
+| `docs/SITE.md` | The site of the system: what `kerneltool site` writes, and where each part of the page comes from |
 | `docs/GLOSSARY.md` | The terms of the project. One term per concept |
 | `docs/DESIGN.md` | The design rules: how a program of the system looks. The boot display is the model |
 | `docs/POINTERS.md` | The pointer pictures: Xcursor, hyprcursor and the others; the format and the manifest of the system; the license of the theme of the owner |
@@ -223,6 +224,7 @@ kerneltool run
 | `portrait` | Convert `programs/temple/portrait.jpg` to `programs/temple/portrait.pixels` |
 | `repeat` | `repeat <module> <count>`: build one module again and again, and count the distinct modules, LLVM IR files and objects; `repeat all <count>`: every module and the boot program, one row each. Each distinct result is kept in `build/different_builds/` |
 | `check` | `odin check -vet` and `odin test` of the host code, then `test` |
+| `site` | Write the site of the system in `build/site/`: one page from the documents, the pictures and the logs of the last machine tests (`docs/SITE.md`) |
 
 `nix flake check` runs the formatting hooks and `check`.
 
