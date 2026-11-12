@@ -1711,6 +1711,14 @@ scenario := [?]Step {
 	{kind = .Shot, text = "font_candidates"},
 	{kind = .Close, text = "vector_glyphs"},
 	{kind = .Wait, text = "root: vector_glyphs stopped"},
+	// The interface font (docs/FONTS.md, section 12): B612 placed by
+	// support/text_shaping and drawn by graphics.text_proportional.
+	{kind = .Launch, text = "interface_font"},
+	{kind = .Wait, text = "interface_font: one line of "},
+	{kind = .Wait, text = "interface_font: ok, "},
+	{kind = .Shot, text = "interface_font"},
+	{kind = .Close, text = "interface_font"},
+	{kind = .Wait, text = "root: interface_font stopped"},
 	// The pointer pictures (docs/POINTERS.md): the shape that the compositor
 	// chooses for what is under the pointer, and the shape that a program
 	// asks for over its own surface. The window of pointers shows each

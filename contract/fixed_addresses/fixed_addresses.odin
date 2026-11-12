@@ -14,10 +14,15 @@
 // address written another way is not a fixed range. So two ranges cannot
 // overlap, and the compiler checks that the band holds every member.
 //
+// An address of the band has no other source than this table. No other
+// file computes an address from BAND_START or SLOT: `kerneltool check`
+// refuses a file of contract, support, programs or modules outside this
+// folder that names them (tools/kerneltool/fixed_addresses_check.odin).
+//
 // A mapping that a program places by its own choice goes outside the
 // band, at OWN_CHOICE_START or after. The modules that a program loads
-// stay below BAND_START: support/system (load.odin) refuses a module that
-// passes it.
+// end at MODULES_END or before: support/system (load.odin) refuses a
+// module that passes it.
 package fixed_addresses
 
 import op "contract:operation"
@@ -29,9 +34,15 @@ SLOT_COUNT :: 16
 BAND_END :: BAND_START + SLOT_COUNT * SLOT
 // The first address of a mapping that a program places by its own choice.
 OWN_CHOICE_START :: BAND_END
+// The end of the addresses where a program loads its modules, from
+// op.MODULE_BASE: the band starts there.
+MODULES_END :: BAND_START
 // The span of each range: one slot.
 RANGE_SPAN :: SLOT
 
+// The table of the fixed ranges: a new range is a new member, and its
+// address is its slot. A constant written by hand in the band, with no
+// member, is not a fixed range, and the check of the tool refuses it.
 Fixed_Range :: enum u8 {
 	Module_Files, // The files of a module and of its imports, in the program that runs the module (contract:isolated).
 	Pointer_Themes, // The pointer themes of the compositor, one after the other (programs/root).

@@ -298,14 +298,16 @@ glyph_cache_valid: [settings.Grid_Fit]bool
 //
 // Why one validation is enough: the drawing code reads the counts and the
 // offsets of a cache again at each glyph, so the bytes must not change
-// after `validate`. They cannot. The address of each cache is a fixed range
-// (contract:fixed_addresses), not a value of the settings page, and its
-// size is a value of the context that the root service wrote; the root
-// service maps the cache from the boot image with the right Read only, for
-// every program; the one handle of the boot image, of the root service,
-// has no right Write. So no program can write the bytes of a cache, nor
-// point this program at other bytes. The settings page, which the program
-// `settings` writes, gives choices only.
+// after `validate`. A program trusts its starter, which already chooses
+// its grants, its mappings and its budget: the starter writes the size of
+// each cache in the context and maps the memory at the fixed range of the
+// cache (contract:fixed_addresses), so a starter that keeps that memory
+// with Write could change it. The root service is the starter of each
+// program with a surface. It maps each cache from the boot image with the
+// right Read only, for every program, and the one handle of the boot image,
+// its own, has no right Write. So under the root service no program can
+// write the bytes of a cache, nor point this program at other bytes. The
+// settings page, which the program `settings` writes, gives choices only.
 text_settings_open :: proc "contextless" (ctx: ^system.Context) {
 	address := ctx.values[settings.VALUE_PAGE]
 	if address == 0 || settings_page != nil {
@@ -328,6 +330,10 @@ text_settings_open :: proc "contextless" (ctx: ^system.Context) {
 			system.log_in("programs", .Warning, "display: the glyph cache is refused: ", glyph_cache.problem_sentences[problem.kind], ", value ", problem.value, ", limit ", problem.limit, ": that text is Spleen 8x16")
 			continue
 		}
+		if refused := graphics.cell_cache_problem(&glyph_caches[grid_fit]); refused.kind != .None {
+			system.log_in("programs", .Warning, "display: the glyph cache is refused: ", glyph_cache.problem_sentences[refused.kind], ": that text is Spleen 8x16")
+			continue
+		}
 		glyph_cache_valid[grid_fit] = true
 	}
 	// The bold weight of the titles: a text in the regular weight when it
@@ -335,8 +341,9 @@ text_settings_open :: proc "contextless" (ctx: ^system.Context) {
 	if bold_address, bold_size := settings.glyph_cache_place(&ctx.values, .Bold); bold_size != 0 {
 		bold, problem := glyph_cache.validate(([^]u8)(uintptr(bold_address))[:bold_size])
 		if problem.kind == .None {
-			graphics.text_bold_cache_use(bold)
-		} else {
+			problem = graphics.text_bold_cache_use(bold)
+		}
+		if problem.kind != .None {
 			system.log_in("programs", .Warning, "display: the bold glyph cache is refused: ", glyph_cache.problem_sentences[problem.kind], ": the titles are the regular weight")
 		}
 	}

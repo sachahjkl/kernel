@@ -432,6 +432,9 @@ run_check :: proc(args: []string) -> int {
 	if !logo_check() {
 		return EXIT_FAILURE
 	}
+	if !fixed_addresses_check() {
+		return EXIT_FAILURE
+	}
 	if !changelog_check() {
 		return EXIT_FAILURE
 	}

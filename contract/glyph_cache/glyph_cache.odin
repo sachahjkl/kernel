@@ -130,6 +130,7 @@ Problem_Kind :: enum u8 {
 	Bad_Pair, // A pair names a character outside the cache, is out of order or twice, or has an adjustment above ADVANCE_LIMIT.
 	Bad_Flags, // A flag that this reader does not know, or a filter past FILTER_COUNT.
 	Bad_Name, // font_name has a byte outside 32 to 126 before its end, no zero byte, or a byte after its end.
+	Proportional, // A valid cache of a proportional font, where a reader needs the cache of a font of cells.
 }
 
 Problem :: struct {
@@ -153,6 +154,7 @@ problem_sentences := [Problem_Kind]string {
 	.Bad_Pair    = "a pair of the glyph cache names a character outside the cache, is out of order, or is out of its limits",
 	.Bad_Flags   = "the glyph cache has a flag or a filter that this reader does not know",
 	.Bad_Name    = "the name of the font of the glyph cache is not printable text with an end",
+	.Proportional = "the glyph cache is of a proportional font, not of a font of cells",
 }
 
 // Cache: a valid file, read in place.

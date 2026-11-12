@@ -111,6 +111,7 @@ module_builds := [?]Module_Build {
 	{name = "interface_through_module", source = "programs/interface_through_module", imports = {"interface_module"}, image = true},
 	{name = "text_shaping", source = "modules/text_shaping", image = true},
 	{name = "vector_glyphs", source = "programs/vector_glyphs", image = true},
+	{name = "interface_font", source = "programs/interface_font", image = true},
 	{name = "pointers", source = "programs/pointers", image = true},
 	{name = "settings", source = "programs/settings", image = true},
 	{name = "date", source = "programs/date", image = true},
