@@ -302,6 +302,9 @@ scenario_secure_boot_refused := [?]Step {
 // its TPM (docs/TRUSTED_BOOT.md, "The machines of the TPM"). A test that
 // fails for a fault of its machine proves nothing about the system.
 trusted_boot_tests_run :: proc(with_tpm := false) -> bool {
+	// The machines that reach the desktop write a store on the data disk of
+	// the tests. The machines after these expect a new disk.
+	defer disk_prepare(TEST_DATA_DISK, DATA_DISK_SIZE, true)
 	refused_machine_run(scenario_changed_module[:], BOOT_VOLUME_CHANGED_MODULE, TEST_OUTPUT_CHANGED_MODULE) or_return
 	refused_machine_run(scenario_wrong_signature[:], BOOT_VOLUME_WRONG_SIGNATURE, TEST_OUTPUT_WRONG_SIGNATURE) or_return
 	refused_machine_run(scenario_changed_kernel[:], BOOT_VOLUME_CHANGED_KERNEL, TEST_OUTPUT_CHANGED_KERNEL) or_return
