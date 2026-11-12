@@ -540,7 +540,7 @@ site_pictures_opaque_and_compressed :: proc(t: ^testing.T) {
 			pixel[2] = u8((x / 8 + y / 8) % 2 * 200)
 		}
 	}
-	stored := png_encode(width, height, pixels)
+	stored := test_picture_with_stored_data(width, height, 3, pixels)
 	stored_rgba := metadata_test_png(2, 2, 4, []u8{1, 2, 3, 255, 4, 5, 6, 0, 7, 8, 9, 128, 10, 11, 12, 255})
 	for source in ([][]u8{stored, stored_rgba, opaque}) {
 		compressed, compressed_ok := site_png_compress(source)
