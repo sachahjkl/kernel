@@ -362,7 +362,7 @@ guard_page :: proc "contextless" (ctx: ^system.Context) {
 		return
 	}
 	defer system.close(program)
-	for deadline := system.time() + 5000; system.time() < deadline; {
+	for deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS; system.time() < deadline; {
 		state, _ := system.program_state(program)
 		if state == .Stopped {
 			break
@@ -464,27 +464,29 @@ edge_case_names := [EDGE_CASES]string{"a small object with no frame keeps the su
 edge_case_results: [EDGE_CASES]bool
 
 Waiter :: struct #align (64) {
-	word:   ^u32,
-	value:  u32,
-	ended:  u32,
-	woke_at: u64,
+	word:     ^u32,
+	value:    u32,
+	ended:    u32,
+	woke_at:  u64,
+	deadline: u64, // The end of the wait: the bound of a hang. A wake before it came from a wake, not from the deadline.
 }
 waiter: Waiter
 
 wait_run :: proc "c" (parameter: rawptr) -> ! {
-	deadline := system.time() + 2000
+	deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS
+	waiter.deadline = deadline
 	system.word_wait(waiter.word, waiter.value, deadline)
 	waiter.woke_at = system.time()
 	intrinsics.atomic_store(&waiter.ended, 1)
 	system.thread_stop()
 }
 
-// waiter_start starts a thread that waits on a word, and gives it time to
-// wait (its state is Waiting).
+// waiter_start starts a thread that waits on a word, and waits until it
+// waits (its state is Waiting). The bound only ends a hang.
 waiter_start :: proc "contextless" (word: ^u32) -> system.Thread {
 	waiter = {word = word, value = intrinsics.atomic_load(word)}
 	thread, _ := system.thread_start(wait_run, nil)
-	for _ in 0 ..< 200 {
+	for deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS; system.time() < deadline; {
 		results, _ := system.call(.Thread_State, u64(thread.handle))
 		if op.Program_State(results[0]) == .Waiting {
 			break
@@ -496,7 +498,8 @@ waiter_start :: proc "contextless" (word: ^u32) -> system.Thread {
 
 edge_cases :: proc "contextless" (ctx: ^system.Context) {
 	// A thread waits on a word of a committed page; the page is
-	// decommitted: the waiter must wake at once, not at its deadline.
+	// decommitted: the waiter must wake by the decommit, before its
+	// deadline.
 	{
 		memory, _ := system.memory_create(16, flags = {.Uncommitted})
 		address, _ := system.memory_map(memory)
@@ -505,13 +508,12 @@ edge_cases :: proc "contextless" (ctx: ^system.Context) {
 		word := (^u32)(uintptr(address) + 3 * system.PAGE_SIZE + 64)
 		word^ = 7
 		thread := waiter_start(word)
-		start := system.time()
 		system.memory_decommit(memory, ranges[:])
 		for intrinsics.atomic_load(&waiter.ended) == 0 {
 			system.sleep(system.time() + 1)
 		}
 		system.thread_wait(thread)
-		edge_case_results[4] = waiter.woke_at - start < 1000
+		edge_case_results[4] = waiter.woke_at < waiter.deadline
 		system.memory_unmap(address)
 		system.close(memory)
 	}
@@ -657,16 +659,15 @@ edge_cases :: proc "contextless" (ctx: ^system.Context) {
 // revocation looks for the frames of the words with one sorted search over
 // the frames of the object, not with one walk of the object for each word,
 // so it ends quickly with an object of 1 GiB. The time of the revocation is
-// logged; the check is only that the waiter woke before its deadline.
+// logged; the check is only that the waiter woke: it waits with no deadline,
+// so only the revocation can wake it.
 REVOCATION_WORD_PAGE :: 100
-REVOCATION_DEADLINE :: 3000 // Milliseconds: the wait of the child.
 GRANT_REVOCATION_OBJECT :: 0
 GRANT_REVOCATION_BOARD :: 1
 
 Revocation_Board :: struct {
-	ready:   u32, // The child maps the object and is about to wait.
-	woken:   u32, // The child woke.
-	woke_at: u64, // Milliseconds.
+	ready: u32, // The child maps the object and is about to wait.
+	woken: u32, // The child woke.
 }
 
 // child_waits_on_object is the child of the role 4.
@@ -678,8 +679,7 @@ child_waits_on_object :: proc "contextless" (ctx: ^system.Context) -> ! {
 	value := intrinsics.atomic_load(word)
 	intrinsics.atomic_store(&board.ready, 1)
 	system.word_wake(&board.ready)
-	system.word_wait(word, value, system.time() + REVOCATION_DEADLINE)
-	board.woke_at = system.time()
+	system.word_wait(word, value)
 	intrinsics.atomic_store(&board.woken, 1)
 	system.word_wake(&board.woken)
 	for {
@@ -715,19 +715,26 @@ revocation_wakes_waiter :: proc "contextless" (ctx: ^system.Context) -> bool {
 		return false
 	}
 	defer system.close(program)
-	for deadline := system.time() + 2000; intrinsics.atomic_load(&board.ready) == 0 && system.time() < deadline; {
+	for deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS; intrinsics.atomic_load(&board.ready) == 0 && system.time() < deadline; {
 		system.word_wait(&board.ready, 0, system.time() + 100)
 	}
-	system.sleep(system.time() + 50) // The child enters its wait.
-	began := system.time()
+	// The revocation must find the child in its wait: its one thread is
+	// not Ready.
+	for deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS; system.time() < deadline; {
+		states, _ := system.call(.Program_State, u64(program))
+		if op.Program_State(states[0]) == .Waiting {
+			break
+		}
+		system.sleep(system.time() + 1)
+	}
 	revoke_start := system.nanoseconds()
 	system.handle_revoke(object, program)
 	revoke_time := system.nanoseconds() - revoke_start
-	for deadline := system.time() + REVOCATION_DEADLINE + 1000; intrinsics.atomic_load(&board.woken) == 0 && system.time() < deadline; {
+	for deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS; intrinsics.atomic_load(&board.woken) == 0 && system.time() < deadline; {
 		system.word_wait(&board.woken, 0, system.time() + 100)
 	}
-	woke := intrinsics.atomic_load(&board.woken) != 0 && board.woke_at - began < REVOCATION_DEADLINE / 2
-	system.log("address_space: a revocation of a mapping of 1 GiB with a thread that waits on a word of it: ", revoke_time / 1000, " us; the waiter woke ", woke ? "at once" : "at its deadline, or not")
+	woke := intrinsics.atomic_load(&board.woken) != 0
+	system.log("address_space: a revocation of a mapping of 1 GiB with a thread that waits on a word of it: ", revoke_time / 1000, " us; the waiter ", woke ? "woke" : "did not wake")
 	system.call(.Program_Stop, u64(program), 0)
 	return woke
 }
@@ -780,7 +787,7 @@ child_stop_code :: proc "contextless" (ctx: ^system.Context, role: u64) -> u32 {
 		return 0
 	}
 	defer system.close(program)
-	for deadline := system.time() + 5000; system.time() < deadline; {
+	for deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS; system.time() < deadline; {
 		if state, _ := system.program_state(program); state == .Stopped {
 			break
 		}
@@ -899,7 +906,7 @@ child_delegate :: proc "contextless" (ctx: ^system.Context) -> ! {
 delegation_run :: proc "contextless" (board: ^Delegation_Board, step: u32) -> ^Delegation_Result {
 	intrinsics.atomic_store(&board.step, step)
 	system.word_wake(&board.step)
-	for deadline := system.time() + 5000; intrinsics.atomic_load(&board.done) != step && system.time() < deadline; {
+	for deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS; intrinsics.atomic_load(&board.done) != step && system.time() < deadline; {
 		system.word_wait(&board.done, intrinsics.atomic_load(&board.done), system.time() + 100)
 	}
 	return &board.results[step]

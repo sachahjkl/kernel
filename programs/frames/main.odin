@@ -109,9 +109,10 @@ twin_start :: proc "contextless" (name: string, mode: u64, table: ^system.Prepar
 	return system.program_start(system.image_find(image, "twin"), name, grants, random.values_with_seed(&program_generator, values), TWIN_AMOUNTS, nil, table)
 }
 
-// stop_code waits until a program stops, at most 5 seconds, and gives its code.
+// stop_code waits until a program stops, and gives its code. The bound only
+// ends a hang.
 stop_code :: proc "contextless" (program: system.Handle) -> (code: u32, stopped: bool) {
-	deadline := system.time() + 5000
+	deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS
 	for system.time() < deadline {
 		wait := system.wait_begin()
 		state, stop := system.program_state(program)
@@ -206,7 +207,7 @@ first_use_cases :: proc "contextless" () {
 	address, _ = system.memory_map(page)
 	word := (^u32)(address)
 	twin, status := twin_start("twin", twins.MODE_WRITE_PAGE, &prepared, page)
-	deadline := system.time() + 5000
+	deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS
 	for status == .Ok && intrinsics.volatile_load(word) == 0 && system.time() < deadline {
 		system.word_wait(word, 0, deadline)
 	}

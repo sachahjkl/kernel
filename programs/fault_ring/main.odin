@@ -119,11 +119,10 @@ FULL_RING_THREADS :: op.FAULT_RECORD_CAPACITY + 1
 CHILD_PAGES :: 512
 CHILD_THREADS :: 20
 // The parent waits for the stop of a child while the child makes progress:
-// at most STALL_MILLISECONDS with no growth of Shared_Page.progress, and
-// OVERALL_MILLISECONDS in all. The time of a case that makes many round
-// trips grows with the load of the host; a stall does not.
-STALL_MILLISECONDS :: 10_000
-OVERALL_MILLISECONDS :: 120_000
+// at most system.TEST_HANG_BOUND_MILLISECONDS with no growth of
+// Shared_Page.progress, and system.TEST_PROGRESS_OVERALL_BOUND_MILLISECONDS
+// in all. The time of a case that makes many round trips grows with the
+// load of the host; a stall does not.
 STACK_PAGES :: 64
 LAZY_PAGES :: 16
 LAZY_PAGE :: 3 // The page of the lazy object that case 1 reads.
@@ -371,9 +370,9 @@ fault_on_a_page :: proc "c" (parameter: rawptr) -> ! {
 	system.thread_stop()
 }
 
-// wait_for waits until the word is not 0, at most a number of milliseconds.
-wait_for :: proc "contextless" (word: ^u32, milliseconds: u64) -> bool {
-	for deadline := system.time() + milliseconds; intrinsics.atomic_load(word) == 0; {
+// wait_for waits until the word is not 0. The bound only ends a hang.
+wait_for :: proc "contextless" (word: ^u32) -> bool {
+	for deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS; intrinsics.atomic_load(word) == 0; {
 		if system.time() >= deadline {
 			return false
 		}
@@ -397,13 +396,18 @@ word_base: u64
 waker_woke: u32
 leftover_quiet: bool // No second record, and the thread did not run, before the answer.
 leftover_answer: system.Status
+leftover_value: u64 // What the waiting thread read after its answer.
 
-// waker sets the word and wakes the main thread, once it waits.
-waker :: proc "c" (_: rawptr) -> ! {
-	system.sleep(system.time() + 50)
+// leftover_waiter makes one word wait, which the main thread ends: its
+// entry stays in the table of words until the next kernel entry of this
+// thread. The fault below comes first: no operation between the two.
+leftover_waiter :: proc "c" (_: rawptr) -> ! {
 	word := (^u32)(uintptr(word_base))
-	intrinsics.atomic_store(word, 1)
-	intrinsics.atomic_store(&waker_woke, u32(system.word_wake(word)))
+	for intrinsics.atomic_load(word) == 0 {
+		system.word_wait(word, 0)
+	}
+	intrinsics.volatile_store(&leftover_value, intrinsics.volatile_load((^u64)(uintptr(lazy_base))))
+	intrinsics.atomic_add(&resumed_threads, 1)
 	system.thread_stop()
 }
 
@@ -442,17 +446,25 @@ child_word_leftover :: proc "contextless" () -> ! {
 		system.stop(24)
 	}
 	handler_start(leftover_handler)
-	system.thread_start(waker, nil, 4)
-	// One word wait, ended by the waker: its entry stays in the table of
-	// words until the next kernel entry of this thread. The fault below
-	// comes first: no operation between the two.
-	word := (^u32)(uintptr(word_base))
-	for intrinsics.atomic_load(word) == 0 {
-		system.word_wait(word, 0)
+	waiter, waiter_started := system.thread_start(leftover_waiter, nil, 4)
+	if waiter_started != .Ok {
+		system.stop(20)
 	}
-	value := intrinsics.volatile_load((^u64)(uintptr(lazy_base)))
-	intrinsics.atomic_add(&resumed_threads, 1)
-	wait_for(&handler_done, 2000)
+	// The wake must find the thread in its word wait: a wake before it would
+	// end no wait, and leave no entry in the table of words.
+	for deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS; system.time() < deadline; {
+		states, _ := system.call(.Thread_State, u64(waiter.handle))
+		if op.Program_State(states[0]) == .Waiting {
+			break
+		}
+		system.sleep(system.time() + 1)
+	}
+	word := (^u32)(uintptr(word_base))
+	intrinsics.atomic_store(word, 1)
+	intrinsics.atomic_store(&waker_woke, u32(system.word_wake(word)))
+	wait_for(&resumed_threads)
+	wait_for(&handler_done)
+	value := intrinsics.volatile_load(&leftover_value)
 	bits: u32
 	if intrinsics.atomic_load(&waker_woke) == 1 {
 		bits |= 1
@@ -476,7 +488,7 @@ foreign_handler :: proc "c" (_: rawptr) -> ! {
 	intrinsics.volatile_store(&shared_page().waiting_serial, record.serial)
 	intrinsics.atomic_store(&shared_page().waiting, 1)
 	bits: u32
-	if wait_for(&shared_page().foreign_refused, 2000) && intrinsics.atomic_load(&shared_page().foreign_refused) == 1 {
+	if wait_for(&shared_page().foreign_refused) && intrinsics.atomic_load(&shared_page().foreign_refused) == 1 {
 		bits |= 1
 	}
 	// The answer of the parent did not resume the thread: it has not run,
@@ -486,7 +498,7 @@ foreign_handler :: proc "c" (_: rawptr) -> ! {
 		bits |= 2
 	}
 	lazy_page_repair(MAGIC)
-	if system.fault_answer(record, .Resume) == .Ok && wait_for(&resumed_threads, 1000) {
+	if system.fault_answer(record, .Resume) == .Ok && wait_for(&resumed_threads) {
 		bits |= 4
 	}
 	system.log("fault_ring: an answer from another program: the parent answered for the thread ", record.thread, " and the serial ", record.serial, ": ", intrinsics.atomic_load(&shared_page().foreign_refused) == 1 ? string("refused with Bad_State") : string("not refused"), "; the thread still waited, and the answer of its own program resumed it", bits == FOREIGN_ALL ? string(": as it must") : string(": WRONG"))
@@ -632,7 +644,7 @@ child_breakpoint :: proc "contextless" () -> ! {
 	shared := shared_page()
 	// The handler stores its status after its answer returns: this thread
 	// can run before that store.
-	wait_for(&shared.resume_status, 1000)
+	wait_for(&shared.resume_status)
 	bits: u32
 	if value == 42 {
 		bits |= 1
@@ -722,7 +734,11 @@ child :: proc "contextless" (role: Role) -> ! {
 		lazy_object(1)
 		handler_start(silent_handler)
 		system.thread_start(fault_on_a_page, nil, 4)
-		system.sleep(system.time() + 50)
+		// The stop comes while the thread waits: after its record, which is
+		// published after the thread waits.
+		for intrinsics.atomic_load(&handler_record.fault_written) == 0 {
+			system.sleep(system.time() + 1)
+		}
 		system.stop(STOP_WHILE_WAITING_CODE)
 	case .Handler_Ends:
 		lazy_object(1)
@@ -814,12 +830,13 @@ child_run :: proc "contextless" (role: Role, name: string) -> (code: u32, report
 	}
 	stopped := false
 	results: [7]u64
-	// A case that never writes its progress keeps a bound of
-	// STALL_MILLISECONDS from its start.
+	// A case that never writes its progress keeps the bound of a hang from
+	// its start.
 	started := system.time()
-	stall_deadline := started + STALL_MILLISECONDS
+	stall_deadline := started + system.TEST_HANG_BOUND_MILLISECONDS
+	overall_deadline := started + system.TEST_PROGRESS_OVERALL_BOUND_MILLISECONDS
 	progress_seen: u64
-	for now := started; now < stall_deadline && now < started + OVERALL_MILLISECONDS; now = system.time() {
+	for now := started; now < stall_deadline && now < overall_deadline; now = system.time() {
 		results, status = system.call(.Program_State, u64(program))
 		if status != .Ok {
 			system.log("fault_ring: ", name, ": Program_State failed: ", op.STATUS_NAMES[status])
@@ -842,7 +859,7 @@ child_run :: proc "contextless" (role: Role, name: string) -> (code: u32, report
 		}
 		if progress := intrinsics.volatile_load(&in_parent.progress); progress > progress_seen {
 			progress_seen = progress
-			stall_deadline = system.time() + STALL_MILLISECONDS
+			stall_deadline = system.time() + system.TEST_HANG_BOUND_MILLISECONDS
 		}
 		system.sleep(system.time() + 10)
 	}
@@ -852,12 +869,12 @@ child_run :: proc "contextless" (role: Role, name: string) -> (code: u32, report
 		answers := intrinsics.volatile_load(&in_parent.answers)
 		switch {
 		case role != .Early_Answer:
-			system.log("fault_ring: ", name, ": the child did not stop in 10 s")
-		case stall_deadline >= started + OVERALL_MILLISECONDS:
+			system.log("fault_ring: ", name, ": the child did not stop in ", u64(system.TEST_HANG_BOUND_MILLISECONDS), " ms")
+		case stall_deadline >= overall_deadline:
 			// The loop ends at the first of the two bounds: here, the overall one.
-			system.log("fault_ring: ", name, ": the child did not stop in 120 s: at step ", progress, " of ", u64(EARLY_FAULTS), ", ", answers, " answers, after ", elapsed, " ms")
+			system.log("fault_ring: ", name, ": the child did not stop in ", u64(system.TEST_PROGRESS_OVERALL_BOUND_MILLISECONDS), " ms: at step ", progress, " of ", u64(EARLY_FAULTS), ", ", answers, " answers, after ", elapsed, " ms")
 		case:
-			system.log("fault_ring: ", name, ": the child did not stop: no progress for 10 s at step ", progress, " of ", u64(EARLY_FAULTS), ", ", answers, " answers, after ", elapsed, " ms")
+			system.log("fault_ring: ", name, ": the child did not stop: no progress for ", u64(system.TEST_HANG_BOUND_MILLISECONDS), " ms at step ", progress, " of ", u64(EARLY_FAULTS), ", ", answers, " answers, after ", elapsed, " ms")
 		}
 		system.close(program)
 		return
@@ -870,9 +887,9 @@ child_run :: proc "contextless" (role: Role, name: string) -> (code: u32, report
 	}
 	system.close(program)
 	// The budget of a child returns when its last processor left it: wait
-	// for it, at most one second.
+	// for it. The bound only ends a hang: a loaded host can take long.
 	left_behind = true
-	for deadline := system.time() + 1000; left_behind && system.time() < deadline; {
+	for deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS; left_behind && system.time() < deadline; {
 		after, _ := system.budget_read()
 		left_behind = after.pages != before.pages || after.threads != before.threads || after.programs != before.programs
 		if left_behind {
@@ -880,7 +897,7 @@ child_run :: proc "contextless" (role: Role, name: string) -> (code: u32, report
 		}
 	}
 	if left_behind {
-		system.log("fault_ring: ", name, ": the budget of this program did not get back every page, thread and program of the child in 1 s")
+		system.log("fault_ring: ", name, ": the budget of this program did not get back every page, thread and program of the child in ", u64(system.TEST_HANG_BOUND_MILLISECONDS), " ms")
 	}
 	page = in_parent^
 	ran = true

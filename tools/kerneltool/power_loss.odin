@@ -437,10 +437,7 @@ scenario_power_loss_thinning := [?]Step {
 	{kind = .Type, text = "kept through a loss of power"},
 	{kind = .Wait, text = "notes: the note is \"kept through a loss of power\", generation "},
 	{kind = .Key, text = "tab"},
-	// 1000 commits to the disk take about 3 s on a quiet host, and several
-	// times that when other machines run beside this one: the step has its
-	// own time.
-	{kind = .Wait, text = "notes: count 1000, stopped: 1000 commits in ", seconds = 120},
+	{kind = .Wait, text = "notes: count 1000, stopped: 1000 commits in "},
 	{kind = .Key, text = "tab"},
 	{kind = .Wait, text = "storage: the store notes is at its limit of 4500 blocks: the commit of generation ", any_order = true},
 	{kind = .Wait, text = "notes: count 1200"},

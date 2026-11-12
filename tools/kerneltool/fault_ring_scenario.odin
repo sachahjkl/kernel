@@ -43,8 +43,10 @@ scenario_fault_ring := [?]Step {
 	{kind = .Wait, text = "fault_ring: an answer from another program: the parent answered for the thread 2 and the serial 1: refused with Bad_State; the thread still waited, and the answer of its own program resumed it: as it must"},
 	{kind = .Wait, text = "fault_ring: an answer from another program: the child stopped with the code 0000000000000037, the address 0000000000000000: as it must"},
 	// A Wait finds its text anywhere in the log: the line goes on with the
-	// time of the case (", in N ms"), which changes from run to run.
-	{kind = .Wait, text = "fault_ring: 10 000 answers given at once: 10000 faults resumed, 10000 values right, of 10000: as it must"},
+	// time of the case (", in N ms"), which changes from run to run. The
+	// case writes its progress, and its time grows with the load of the
+	// host: the step has the bound of such a case.
+	{kind = .Wait, text = "fault_ring: 10 000 answers given at once: 10000 faults resumed, 10000 values right, of 10000: as it must", seconds = PROGRESS_CASE_HANG_BOUND_SECONDS},
 	{kind = .Wait, text = "fault_ring: 10 000 answers given at once: the child stopped with the code 0000000000000043, the address 0000000000000000: as it must"},
 	{kind = .Wait, text = "fault_ring: a divide error, answered stop: 1 record of the kind 0, the error code 0, the instruction of the stop report; Resume got Bad_State: as it must"},
 	{kind = .Wait, text = "fault_ring: a divide error, answered stop: the child stopped with the code 0000000000000100, the address 0000000000000000: as it must"},

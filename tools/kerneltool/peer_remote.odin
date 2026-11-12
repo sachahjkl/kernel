@@ -39,17 +39,17 @@ import cryptography_module "../../modules/cryptography"
 
 PEER_REMOTE_PORT_FIRST :: 43000 // The local UDP port of the first connection of the peer to `remote`; one more for each next one.
 PEER_REMOTE_REUSE_LIMIT :: 20 * time.Second
-// On the clock of the host: the case "silence" waits at most this long for
-// a quiet connection; a quiet connection needs one round trip and the delay
-// of an acknowledgement (25 ms).
-PEER_REMOTE_QUIET_LIMIT :: 10 * time.Second
+// On the clock of the host: the case "silence" waits for a quiet connection,
+// which needs one round trip and the delay of an acknowledgement (25 ms).
+// The bound only ends a wait that hangs.
+PEER_REMOTE_QUIET_LIMIT :: HANG_BOUND
 // The calls that the peer holds at one time: the calls at once of one
 // connection, and the calls that wait for a stream.
 PEER_REMOTE_CALLS :: 2 * remote.CALLS_AT_ONCE
 // On the clock of the host: it only ends a call that hangs. The bounds of
 // `remote` are on the clock of the machine, and its log says if each one
 // held.
-PEER_REMOTE_CALL_LIMIT :: 60 * time.Second
+PEER_REMOTE_CALL_LIMIT :: HANG_BOUND
 // An address that the listen grant of `remote` does not admit (the range
 // TEST-NET-2 of RFC 5737): the network service routes an answer to it
 // through the gateway, which is the peer, so the peer would see one.

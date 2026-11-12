@@ -564,6 +564,9 @@ run_check :: proc(args: []string) -> int {
 	if !fixed_addresses_check() {
 		return EXIT_FAILURE
 	}
+	if !test_bound_check() {
+		return EXIT_FAILURE
+	}
 	if !text_cut_check() {
 		return EXIT_FAILURE
 	}

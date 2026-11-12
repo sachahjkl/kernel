@@ -22,13 +22,25 @@ FILM_FOLDER :: BUILD_FOLDER + "/film"
 FILM_FRAME :: FILM_FOLDER + "/%05d.ppm"
 FILM_RATE :: 25 // Pictures in one second.
 FILM_FRAME_TIME :: time.Second / FILM_RATE
-STEP_TIMEOUT :: 20 * time.Second
+// The one role of a time in a test of the tool: it ends a test that hangs.
+// A test checks a condition (a line, a value, a state), never a speed, so
+// this bound is generous and the same for each wait of the tool that has no
+// reason of its own: a loaded host runs the machine many times slower, and
+// that says nothing about the system. It is larger than the bound of a hang
+// in the checks of a program (TEST_HANG_BOUND_MILLISECONDS in
+// support/system, 60 s), so that the program writes its own report first.
+HANG_BOUND :: 120 * time.Second
+// The bound of a Wait for the line of a case that writes a count of its
+// progress, which the program reads: the program bounds a stall of the
+// count and the whole case (TEST_PROGRESS_OVERALL_BOUND_MILLISECONDS in
+// support/system, 600 s), and this bound is larger, so that the report of
+// the program comes first.
+PROGRESS_CASE_HANG_BOUND_SECONDS :: 660
 // The bound of the first Wait of each machine: its boot ("compositor:
-// surface console" and its like). A boot that is slow under the load of the
-// host says nothing about the system; a later step that is slow does, so it
-// keeps STEP_TIMEOUT (owner, 2026-11-11: a boot timed out at a host load of
-// 62 while eight agents ran on the computer).
-BOOT_WAIT_TIMEOUT :: 180 * time.Second
+// surface console" and its like). The boot runs the firmware and the start
+// of every service at once, the part of a machine test that a loaded host
+// slows the most.
+BOOT_HANG_BOUND :: 180 * time.Second
 KEY_PAUSE :: 45 * time.Millisecond
 MOUSE_PAUSE :: 25 * time.Millisecond
 MOUSE_STEP :: 40
@@ -37,7 +49,7 @@ MACHINE_STOP_OK :: 1
 
 Step_Kind :: enum {
 	Wait, // The log of the kernel has text, after the text of the last Wait.
-	Date, // As Wait; then the number after text is a date of the machine in seconds since 1970, and the host time must be within DATE_TOLERANCE_SECONDS of it.
+	Date, // As Wait; then the number after text is a date of the machine in seconds since 1970, which date_check checks by order against the clock of the host.
 	Type, // Press the keys of text, then Enter.
 	Keys, // Press the keys of text, with no Enter.
 	Key, // Press one key: text is its QEMU name.
@@ -86,7 +98,11 @@ Step :: struct {
 	// For Wait: the next Wait searches from the same place. Use it when two
 	// programs print in an order that the system does not fix.
 	any_order:  bool,
-	seconds:    int, // For Wait: the time allowed, when the line can come later than STEP_TIMEOUT.
+	// For Wait: the bound of a hang of this step in seconds, in place of
+	// HANG_BOUND, for a step with a reason of its own that is not speed. It
+	// is a named constant whose comment gives that reason: kerneltool check
+	// refuses a number here.
+	seconds:    int,
 	fails_on:   string, // For Wait: a text that ends the wait as a failure when the machine prints it first: the step names its two outcomes.
 	names:      string, // For Trace: the names of the functions of the first frames, separated by spaces.
 	expected:   string, // For Call: a part of what the tool prints.
@@ -101,22 +117,27 @@ Step :: struct {
 	repeat:     int, // For Call: the calls of the measure of the round trip.
 	least_answer_bytes: int, // For Call: the least bytes of the answer on its stream.
 	inside_window: string, // For Click: (x, y) are inside the surface of the window with this title, as the log of the compositor places it. For Point: from the corner of the window.
-	date_after: string, // For Call: the number after this text in what the tool prints is a date of the machine in milliseconds since 1970: it must be within DATE_TOLERANCE_SECONDS of the host time.
+	date_after: string, // For Call: the number after this text in what the tool prints is a date of the machine in milliseconds since 1970, which date_check checks by order against the clock of the host.
 }
 
+// The two clocks agree to whole seconds: the machine reads its real-time
+// clock in whole seconds, and a date can be rounded down on one side and up
+// on the other. It is not a bound on a delay: date_check checks by order.
 DATE_TOLERANCE_SECONDS :: 5
 
-// date_check compares a date of the machine, in seconds since 1970, with
-// the time of the host. QEMU gives the machine the clock of the host as its
-// real-time clock (-rtc base=utc).
-date_check :: proc(index: int, machine_seconds: i64, what: string) -> bool {
+// date_check checks a date of the machine, in seconds since 1970, by order
+// against the clock of the host: not before earliest, a date of the host
+// before the machine wrote it, and not after the date of the host now. QEMU
+// gives the machine the clock of the host as its real-time clock (-rtc
+// base=utc). The time between the two dates of the host is how late the
+// tool read the date, which a loaded host stretches: it is no fault.
+date_check :: proc(index: int, machine_seconds: i64, what: string, earliest: i64) -> bool {
 	host := time.time_to_unix(time.now())
-	apart := abs(host - machine_seconds)
-	if apart > DATE_TOLERANCE_SECONDS {
-		fmt.eprintfln("kerneltool: test failed: step %d: the date of the machine (%s) is %d, the host gives %d: %d s apart", index + 1, what, machine_seconds, host, apart)
+	if machine_seconds < earliest - DATE_TOLERANCE_SECONDS || machine_seconds > host + DATE_TOLERANCE_SECONDS {
+		fmt.eprintfln("kerneltool: test failed: step %d: the date of the machine (%s) is %d, not between %d and %d, the dates of the host before it was written and now", index + 1, what, machine_seconds, earliest, host)
 		return false
 	}
-	test_passed_print("the date of the machine (%s) is %d s since 1970, the host gives %d: %d s apart", what, machine_seconds, host, apart)
+	test_passed_print("the date of the machine (%s) is %d s since 1970, between %d and %d on the host", what, machine_seconds, earliest, host)
 	return true
 }
 
@@ -215,10 +236,7 @@ scenario_persist_first := [?]Step {
 	{kind = .Type, text = "kept across a restart"},
 	{kind = .Wait, text = "notes: the note is \"kept across a restart\", generation 22"},
 	{kind = .Key, text = "tab"},
-	// 1000 commits to the disk take about 3 s on a quiet host, and several
-	// times that when other machines run beside this one: the step has its
-	// own time.
-	{kind = .Wait, text = "notes: count 1000, stopped: 1000 commits in ", seconds = 120},
+	{kind = .Wait, text = "notes: count 1000, stopped: 1000 commits in "},
 	{kind = .Wait, text = "notes: the versions of the count: 1000 rows in "},
 	// A setting that the next machine finds (the boot pass of settings).
 	{kind = .Launch, text = "settings"},
@@ -484,7 +502,7 @@ scenario_network := [?]Step {
 	// The connection of the peer lost: remote ends it at its idle bound, in
 	// time of the machine, and the next call opens a new connection.
 	{kind = .Remote_Case, text = "silence"},
-	{kind = .Wait, text = ": the idle end held its bound: ", seconds = 120},
+	{kind = .Wait, text = ": the idle end held its bound: "},
 	{kind = .Remote_Case, text = "silence ends"},
 	// The person sees the grant, and revokes it: the services refuse what
 	// they give only to a caller that acts for the person.
@@ -2173,6 +2191,7 @@ Machine :: struct {
 	client_open: bool,
 	forward:     Forward, // QEMU user networking: the port of hostfwd and the listener of guestfwd.
 	started_at:  time.Tick, // When QEMU started: the first Wait says how long the boot took.
+	started_unix: i64, // When QEMU started, in seconds since 1970: no date that the machine prints is before it.
 }
 
 monitor_send :: proc(machine: ^Machine, parts: ..string) {
@@ -2218,9 +2237,6 @@ key_name :: proc(character: u8) -> string {
 	}
 	return ""
 }
-
-// KEY_TAKEN_TIME: how long the tool waits for the machine to take one key.
-KEY_TAKEN_TIME :: 20 * time.Second
 
 // key_records_read gives the count of the key records that the compositor
 // received, through the remote service.
@@ -2271,7 +2287,7 @@ key_send :: proc(machine: ^Machine, name: string) -> bool {
 	wanted := before + 2 * i64(strings.count(name, "-") + 1)
 	monitor_send(machine, "sendkey ", name, " 20")
 	start := time.tick_now()
-	for time.tick_since(start) < KEY_TAKEN_TIME {
+	for time.tick_since(start) < HANG_BOUND {
 		time.sleep(5 * time.Millisecond)
 		now, ok := key_records_read(machine)
 		if !ok {
@@ -2505,7 +2521,7 @@ log_read :: proc(machine: ^Machine) -> string {
 // log before the menu opened.
 windows_line :: proc(machine: ^Machine, title: string, from: int) -> (line: int, ok: bool) {
 	MARK :: "compositor: windows: "
-	for start := time.now(); time.since(start) < STEP_TIMEOUT; {
+	for start := time.now(); time.since(start) < HANG_BOUND; {
 		text := log_read(machine)
 		at := len(text) > from ? strings.index(text[from:], MARK) : -1
 		if at < 0 {
@@ -2524,7 +2540,7 @@ windows_line :: proc(machine: ^Machine, title: string, from: int) -> (line: int,
 	return 0, false
 }
 
-log_wait :: proc(machine: ^Machine, text: string, any_order := false, limit := STEP_TIMEOUT) -> bool {
+log_wait :: proc(machine: ^Machine, text: string, any_order := false, limit := HANG_BOUND) -> bool {
 	start := time.now()
 	for time.since(start) < limit {
 		log := log_read(machine)
@@ -2585,7 +2601,7 @@ screen_save :: proc(machine: ^Machine, name: string) -> bool {
 	time.sleep(400 * time.Millisecond) // The compositor shows the last change.
 	_ = os.remove(SCREEN_DUMP)
 	monitor_send(machine, "screendump ", SCREEN_DUMP)
-	for _ in 0 ..< 100 {
+	for dump_start := time.tick_now(); time.tick_since(dump_start) < HANG_BOUND; {
 		time.sleep(100 * time.Millisecond)
 		dump, err := os.read_entire_file(SCREEN_DUMP, context.temp_allocator)
 		if err != nil {
@@ -2670,6 +2686,7 @@ machine_test :: proc(steps: []Step, volume: string, output: string, exit_status:
 	}
 	machine := Machine {
 		started_at = time.tick_now(),
+		started_unix = time.time_to_unix(time.now()),
 		process   = process,
 		monitor   = monitor_write,
 		output    = output,
@@ -2695,10 +2712,10 @@ machine_test :: proc(steps: []Step, volume: string, output: string, exit_status:
 	}
 	state: os.Process_State
 	if passed && machine.powered_off {
-		state, _ = os.process_wait(process, STEP_TIMEOUT)
+		state, _ = os.process_wait(process, HANG_BOUND)
 	} else if passed {
 		wait_err: os.Error
-		state, wait_err = os.process_wait(process, STEP_TIMEOUT)
+		state, wait_err = os.process_wait(process, HANG_BOUND)
 		if wait_err != nil || !state.exited {
 			fmt.eprintln("kerneltool: test failed: the machine did not stop")
 			passed = false
@@ -2786,7 +2803,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 		return false
 	}
 	peer_case_started := 0 // The number of the case of the last step Peer_Start.
-	first_wait := true // The first Wait of the machine is its boot: BOOT_WAIT_TIMEOUT.
+	first_wait := true // The first Wait of the machine is its boot: BOOT_HANG_BOUND.
 	generation_base: i64 = -1 // The number that the last step Generation read; -1: none.
 	for given_step, index in steps {
 		step := given_step
@@ -2807,7 +2824,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 		}
 		switch step.kind {
 		case .Wait:
-			limit := first_wait ? BOOT_WAIT_TIMEOUT : STEP_TIMEOUT
+			limit := first_wait ? BOOT_HANG_BOUND : HANG_BOUND
 			if step.seconds > 0 {
 				limit = time.Duration(step.seconds) * time.Second
 			}
@@ -2845,7 +2862,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				fmt.eprintfln("kerneltool: test failed: step %d: no number after \"%s\"", index + 1, step.text)
 				return false
 			}
-			date_check(index, value, step.text) or_return
+			date_check(index, value, step.text, machine.started_unix) or_return
 		case .Generation:
 			seen_before := machine.seen
 			if !log_wait(machine, step.text, step.any_order) {
@@ -2920,7 +2937,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 			// The compositor chooses the shape after the input record and after
 			// a request of a program: read it until it is the expected one.
 			shape: string
-			for start := time.now(); time.since(start) < STEP_TIMEOUT; {
+			for start := time.now(); time.since(start) < HANG_BOUND; {
 				read, ok := record_text_field(&machine.client, "compositor.pointer()", "shape")
 				if ok {
 					shape = read
@@ -2964,7 +2981,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				// takes the title bar.
 				x, y: int
 				found: bool
-				for start := time.now(); !found && time.since(start) < STEP_TIMEOUT; {
+				for start := time.now(); !found && time.since(start) < HANG_BOUND; {
 					if x, y, found = window_place(machine, step.text); !found {
 						time.sleep(50 * time.Millisecond)
 					}
@@ -3022,7 +3039,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				// the machine did not receive is a failure of this step, with
 				// its cause, and not of a later one.
 				open := false
-				for start := time.now(); !open && time.since(start) < STEP_TIMEOUT; {
+				for start := time.now(); !open && time.since(start) < HANG_BOUND; {
 					text := log_read(machine)
 					if open = len(text) > before && strings.contains(text[before:], "compositor: the menu of the programs is open"); !open {
 						time.sleep(50 * time.Millisecond)
@@ -3064,7 +3081,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				// The compositor writes that the window is in front.
 				mark := strings.concatenate({"compositor: window ", step.text, " in front"}, context.temp_allocator)
 				arrived := false
-				for start := time.now(); !arrived && time.since(start) < STEP_TIMEOUT; {
+				for start := time.now(); !arrived && time.since(start) < HANG_BOUND; {
 					text := log_read(machine)
 					if arrived = len(text) > before && strings.contains(text[before:], mark); !arrived {
 						time.sleep(50 * time.Millisecond)
@@ -3079,7 +3096,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 			if moved_title != "" {
 				// The compositor writes the new place: the window did move.
 				arrived := false
-				for start := time.now(); !arrived && time.since(start) < STEP_TIMEOUT; {
+				for start := time.now(); !arrived && time.since(start) < HANG_BOUND; {
 					x, y, found := window_place(machine, moved_title)
 					if arrived = found && x == moved_x && y == moved_y; !arrived {
 						time.sleep(50 * time.Millisecond)
@@ -3103,7 +3120,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 			last_rows, last_total := 0, i64(0)
 			last_ok := false
 			last_table: Call_Table
-			for start := time.now(); !found && time.since(start) < STEP_TIMEOUT; {
+			for start := time.now(); !found && time.since(start) < HANG_BOUND; {
 				table, ok := table_call(&machine.client, fmt.tprintf("log.records(%d)", from))
 				reads += 1
 				rows := ok ? len(table.rows) / table.size : 0
@@ -3177,6 +3194,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 			}
 			test_passed_print("%s: inspect gives %d pages in %d mappings and %d threads, as monitor.programs() gives", step.text, pages, mappings.total, threads.total)
 		case .Call:
+			call_started_unix := time.time_to_unix(time.now()) // No date in the answer is before it.
 			if !machine.client_open {
 				if !call_client_open(&machine.client, machine.call_socket) {
 					return false
@@ -3221,7 +3239,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 					fmt.eprintfln("kerneltool: test failed: step %d: no number after \"%s\" in the answer of %s", index + 1, step.date_after, step.text)
 					return false
 				}
-				date_check(index, milliseconds / 1000, step.text) or_return
+				date_check(index, milliseconds / 1000, step.text, call_started_unix) or_return
 			}
 			if step.lose > 0 {
 				// QUIC sent the dropped datagrams again; the service ran the
@@ -3369,7 +3387,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 			sync.mutex_lock(&server.lock)
 			server.power_off_after_write = server.writes + after
 			sync.mutex_unlock(&server.lock)
-			for start := time.now(); !sync.atomic_load(&server.powered_off) && time.since(start) < STEP_TIMEOUT; {
+			for start := time.now(); !sync.atomic_load(&server.powered_off) && time.since(start) < HANG_BOUND; {
 				time.sleep(time.Millisecond)
 			}
 			// A kill: QEMU writes nothing more. The tool knows what was

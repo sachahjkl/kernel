@@ -197,6 +197,7 @@ forward_fetch :: proc(forward: Forward, path: string) -> bool {
 	defer net.close(socket)
 	_ = net.set_option(socket, .Receive_Timeout, HTTP_HOST_WAIT_LIMIT)
 	start := time.tick_now()
+	request_unix := time.time_to_unix(time.now()) // No date in the answer is before it.
 	request: string
 	body := path == "/sink"
 	if body {
@@ -249,7 +250,7 @@ forward_fetch :: proc(forward: Forward, path: string) -> bool {
 		fmt.eprintfln("kerneltool: test failed: the field Date of server is \"%s\": not the form of RFC 9110 5.6.7", date_line)
 		return false
 	}
-	date_check(-1, date_seconds, fmt.tprintf("the field Date \"%s\" of the answer to %s", date_line, path)) or_return
+	date_check(-1, date_seconds, fmt.tprintf("the field Date \"%s\" of the answer to %s", date_line, path), request_unix) or_return
 	speed := f64(max(len(content), body ? web.LARGE_SIZE : 0)) / max(time.duration_seconds(took), 1e-9) / 1e6
 	switch path {
 	case "/large":

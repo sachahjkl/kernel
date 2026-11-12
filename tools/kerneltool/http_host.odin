@@ -10,7 +10,7 @@ import "support:web"
 // the host connects through hostfwd and libslirp (web_host.odin), and the
 // tool checks each answer with its own reading of HTTP (support/web).
 
-HTTP_HOST_WAIT_LIMIT :: 120 * time.Second
+HTTP_HOST_WAIT_LIMIT :: HANG_BOUND // It only ends a wait that hangs.
 
 // An HTTP connection of the host: the bytes that came and were not used
 // yet, so that answers in one segment, or split, are read right.
