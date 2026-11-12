@@ -239,7 +239,7 @@ run_test :: proc(args: []string) -> int {
 	if !disk_prepare(TEST_DATA_DISK, DATA_DISK_SIZE, true) {
 		return EXIT_FAILURE
 	}
-	// `test network`, `test main`, `test power`, `test tcp`, `test random`, `test extended_state`, `test return_fault`: one part only, for the work on it.
+	// `test network`, `test main`, `test power`, `test tcp`, `test random`, `test extended_state`, `test return_fault`, `test fault_ring`: one part only, for the work on it.
 	if len(args) == 1 && args[0] == "tcp" {
 		return tcp_tests_run() ? 0 : EXIT_FAILURE
 	}
@@ -264,6 +264,10 @@ run_test :: proc(args: []string) -> int {
 	if len(args) == 1 && args[0] == "shortage" {
 		return machine_test(scenario_shortage[:], BOOT_VOLUME_SHORTAGE, TEST_OUTPUT_SHORTAGE, MACHINE_STOP_OK, TEST_DATA_DISK) ? 0 : EXIT_FAILURE
 	}
+	// `test fault_ring`: the machine of the fault ring only.
+	if len(args) == 1 && args[0] == "fault_ring" {
+		return fault_ring_tests_run() ? 0 : EXIT_FAILURE
+	}
 	// `test return_fault`: the machine of the return to a program only.
 	if len(args) == 1 && args[0] == "return_fault" {
 		return return_fault_tests_run() ? 0 : EXIT_FAILURE
@@ -285,7 +289,7 @@ run_test :: proc(args: []string) -> int {
 	if len(args) == 1 && args[0] == "quic-real" {
 		return quic_real_tests_run() ? 0 : EXIT_FAILURE
 	}
-	if !machine_test(scenario_fails[:], BOOT_VOLUME_FAILS, TEST_OUTPUT_FAILS, 0) || !machine_test(scenario_shortage[:], BOOT_VOLUME_SHORTAGE, TEST_OUTPUT_SHORTAGE, MACHINE_STOP_OK, TEST_DATA_DISK) || !self_tests_run() || !machine_test(scenario[:], BOOT_VOLUME, TEST_OUTPUT, MACHINE_STOP_OK, TEST_DATA_DISK) || !machine_test(scenario_network[:], BOOT_VOLUME, TEST_OUTPUT_NETWORK, MACHINE_STOP_OK, TEST_DATA_DISK) || !tcp_tests_run() || !quic_tests_run() || !quic_real_tests_run() || !random_tests_run() || !extended_state_tests_run() || !return_fault_tests_run() || !cryptography_tests_run() || !persistence_run() || !power_loss_run() || !power_loss_settings_run() || !test_modules() || !test_descriptions() {
+	if !machine_test(scenario_fails[:], BOOT_VOLUME_FAILS, TEST_OUTPUT_FAILS, 0) || !machine_test(scenario_shortage[:], BOOT_VOLUME_SHORTAGE, TEST_OUTPUT_SHORTAGE, MACHINE_STOP_OK, TEST_DATA_DISK) || !self_tests_run() || !machine_test(scenario[:], BOOT_VOLUME, TEST_OUTPUT, MACHINE_STOP_OK, TEST_DATA_DISK) || !machine_test(scenario_network[:], BOOT_VOLUME, TEST_OUTPUT_NETWORK, MACHINE_STOP_OK, TEST_DATA_DISK) || !tcp_tests_run() || !quic_tests_run() || !quic_real_tests_run() || !random_tests_run() || !extended_state_tests_run() || !return_fault_tests_run() || !fault_ring_tests_run() || !cryptography_tests_run() || !persistence_run() || !power_loss_run() || !power_loss_settings_run() || !test_modules() || !test_descriptions() {
 		return EXIT_FAILURE
 	}
 	fmt.println("kerneltool: all tests passed")

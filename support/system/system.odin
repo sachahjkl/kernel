@@ -221,6 +221,51 @@ memory_protect :: proc "contextless" (ranges: []op.Address_Range, flags: op.Map_
 	return results[0], status
 }
 
+// The fault ring (docs/ARCHITECTURE.md, "The fault ring").
+
+// fault_handler_set makes a thread of this program its fault handler (0:
+// the thread that calls it): the page faults of the other threads become
+// records of the ring in the thread record of the handler, and each
+// faulting thread waits for fault_answer.
+fault_handler_set :: proc "contextless" (thread: Handle = 0, error: ^errors.Error_Record = nil) -> Status {
+	_, status := call_with_error(error, .Fault_Handler_Set, u64(thread), 0)
+	return status
+}
+
+// fault_handler_end ends the delivery: a page fault stops the program again.
+// A thread that waits still gets its answer from fault_answer.
+fault_handler_end :: proc "contextless" () -> Status {
+	_, status := call(.Fault_Handler_Set, 0, 1)
+	return status
+}
+
+// fault_answer answers for the thread of a record: Resume runs the faulting
+// instruction again, Stop stops the program with the report of the fault.
+fault_answer :: proc "contextless" (record: op.Fault_Record, answer: op.Fault_Answer_Kind, error: ^errors.Error_Record = nil) -> Status {
+	_, status := call_with_error(error, .Fault_Answer, record.thread, record.serial, u64(answer))
+	return status
+}
+
+// fault_record_next gives the next record of the fault ring of the thread
+// that calls it, its fault handler. It waits until one comes, or until the
+// deadline (false).
+fault_record_next :: proc "contextless" (deadline: u64 = WAIT_FOREVER) -> (record: op.Fault_Record, ok: bool) {
+	own := thread_record()
+	for {
+		written := intrinsics.atomic_load(&own.fault_written)
+		read := intrinsics.atomic_load(&own.fault_read)
+		if written != read {
+			record = own.fault_records[read % op.FAULT_RECORD_CAPACITY]
+			// The place is free again for the kernel after this store.
+			intrinsics.atomic_store(&own.fault_read, read + 1)
+			return record, true
+		}
+		if word_wait(&own.fault_written, written, deadline) >= deadline {
+			return {}, false
+		}
+	}
+}
+
 // memory_physical gives the physical address of the first page of a memory
 // object: its pages follow each other. The machine handle needs the right
 // Physical.

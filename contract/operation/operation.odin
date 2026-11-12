@@ -175,6 +175,13 @@ Operation :: enum u32 {
 	// an object with a frame list that only this program names, with one mapping; while a part has its own protection,
 	// the object is not mapped again and not given (Bad_State). At most RANGE_TABLE_PAGE_LIMIT pages. Each processor
 	// that runs a thread of the program forgets the old translations before the operation returns (one shoot-down).
+	// The fault ring (docs/ARCHITECTURE.md, "The fault ring").
+	Fault_Handler_Set = 30, // (thread handle with Control or 0 for the calling thread, 1 to end the delivery): the page
+	// faults of the other threads of this program, below THREAD_AREA_BASE, become records of the fault ring in the
+	// thread record of this thread, in place of a stop; the thread of a fault waits for Fault_Answer. Only a thread of
+	// this program. A new handler replaces the one before; its ring starts empty.
+	Fault_Answer = 31, // (thread number, serial, Fault_Answer_Kind): the answer for a thread of this program that waits
+	// in the fault ring. Bad_State if no thread with that number and serial waits.
 }
 
 // The scheduling strategy of the machine (docs/SCHEDULING.md): the rule that
@@ -303,6 +310,51 @@ Thread_Record :: struct {
 	number:    u64, // The number of the thread in its program. The first thread is 0.
 	events:    u32, // The kernel adds 1 for each event: see Word_Wait.
 	processors: u32, // The processors that run threads: a thread that is alone on the machine does not spin.
+	// The fault ring of the program, when this thread is its fault handler
+	// (Fault_Handler_Set; docs/ARCHITECTURE.md, "The fault ring"). The kernel
+	// writes fault_records[n % FAULT_RECORD_CAPACITY] for the record n, then
+	// fault_written = n + 1, then wakes the threads that wait on
+	// fault_written. The handler reads the records from fault_read to
+	// fault_written and writes fault_read: a record is free again once
+	// fault_read passed it. A fault that finds FAULT_RECORD_CAPACITY records
+	// not read stops the program as a fault does with no handler, and the
+	// kernel adds 1 to fault_full.
+	fault_written: u32,
+	fault_read:    u32,
+	fault_full:    u32,
+	fault_reserved: u32,
+	fault_records: [FAULT_RECORD_CAPACITY]Fault_Record,
+}
+#assert(size_of(Thread_Record) <= PAGE_SIZE)
+
+// The fault ring: one record for each page fault that the kernel gave to the
+// fault handler of a program in place of a stop. The thread of the record
+// waits until a thread of the program answers (Fault_Answer).
+FAULT_RECORD_CAPACITY :: 16
+
+Fault_Record :: struct {
+	thread:      u64, // The number of the thread in its program (Thread_Record.number).
+	serial:      u64, // The serial of the thread: Fault_Answer names it, so an answer for an ended thread whose number serves again is refused.
+	address:     u64, // The address of the access.
+	access:      u64, // Fault_Access: what the access was.
+	instruction: u64, // The address of the instruction. After Resume the thread runs it again.
+	reserved:    [3]u64,
+}
+#assert(size_of(Fault_Record) == 64)
+
+// What a faulting access was: the bits of the error code of the processor.
+Fault_Access_Bit :: enum u64 {
+	Present = 0, // The page has a translation: the access was not permitted. Without it: the page has no frame (not committed, or no mapping).
+	Write   = 1,
+	Execute = 4,
+}
+Fault_Access :: bit_set[Fault_Access_Bit; u64]
+
+// The answer for a thread that waits in the fault ring.
+Fault_Answer_Kind :: enum u64 {
+	None   = 0,
+	Resume = 1, // The thread runs the faulting instruction again.
+	Stop   = 2, // The program stops as if no handler were set: the stop code and the stop report of the fault.
 }
 
 Status :: enum u32 {
@@ -391,6 +443,7 @@ STOP_CODE_FAULT :: 0x100 // Add the number of the processor exception: 14 is a p
 STOP_CODE_NO_HANDLE :: 0x200 // The last handle to the program closed.
 STOP_CODE_NOT_COMMITTED :: 0x300 // A page fault on a page of an Uncommitted object that is not committed.
 STOP_CODE_RETURN :: 0x400 // The kernel cannot return to a thread of the program: its instruction or stack address is not one that the processor takes (docs/ARCHITECTURE.md, "The return to a program"). The stop report has the address in `address`.
+STOP_CODE_FAULT_UNANSWERED :: 0x500 // The fault handler of the program ended while a thread waited for an answer in the fault ring.
 
 // The state of a program or of a thread. A program is Ready when one of
 // its threads is Ready.

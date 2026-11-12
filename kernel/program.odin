@@ -189,6 +189,15 @@ Thread :: struct #align (64) {
 	stop_requested: bool, // Another processor ends the thread: its processor ends it (atomic).
 	finished:     bool, // thread_finish ran: the thread area is free. Control lock.
 	serial:       u32, // Changes for each new thread in the slot (the record of the gs register).
+	// The thread record of the thread through the direct map: the kernel
+	// writes the fault ring there when this thread is the fault handler of
+	// its program. nil after thread_finish. Program lock.
+	record_in_kernel: ^op.Thread_Record,
+	// The thread waits in the fault ring for an answer (fault_ring.odin).
+	// Written under the program lock; the thread is Waiting with no deadline
+	// while it is true.
+	fault_waits:   bool,
+	fault_address: u64, // The address of the access of that fault. Program lock.
 }
 
 #assert(offset_of(Thread, placed) < 64)
@@ -235,6 +244,12 @@ Program :: struct {
 	ports_serial: u64, // Changes with each Ports handle of the program. It stays when the slot serves a new program.
 	cleaned:      bool, // program_cleanup ran: the slot can be free when no handle names it. Control lock.
 	serial:       u32, // Changes for each new program in the slot. It stays when the slot serves a new program.
+	// The fault ring (fault_ring.odin), under the program lock. 0: no fault
+	// handler, and a page fault stops the program.
+	fault_handler:        u32, // The thread whose thread record holds the fault ring.
+	fault_handler_serial: u32,
+	fault_written:        u32, // The records that the kernel wrote in that ring: the kernel's own count, not the one in memory of the program.
+	fault_full:           u32, // The faults that found the ring full.
 }
 
 HOLDS_STOPPED :: u64(1) << 32
@@ -1266,6 +1281,7 @@ thread_create :: proc "contextless" (program_index: u32, budget: u32, entry, sta
 	thread.ring = thread_ring
 	thread.record = record
 	thread.events = &direct(regions[region].physical, op.Thread_Record).events
+	thread.record_in_kernel = direct(regions[region].physical, op.Thread_Record)
 	thread.serial = serial
 	thread.wait_serial = wait_serial
 	thread.home = home
@@ -1334,7 +1350,15 @@ thread_finish :: proc "contextless" (index: u32, serial: u32) {
 	program := &programs[program_index]
 	taken := program_lock(program_index)
 	thread.events = nil
+	thread.record_in_kernel = nil
 	thread.ring = {}
+	// The thread record is unmapped below: a fault handler that ends ends
+	// the fault ring. A thread that waits for an answer then has no thread
+	// that can read its record: the program stops (after the lock).
+	handler_ended := program.fault_handler == index
+	if handler_ended {
+		program.fault_handler = 0
+	}
 	// Under the program lock: program_event, which holds only this lock,
 	// never reads this slot as a thread of the program again, also when a
 	// new thread of another program takes the slot.
@@ -1352,12 +1376,15 @@ thread_finish :: proc "contextless" (index: u32, serial: u32) {
 		program.thread_count -= 1
 		last = program.thread_count == 0
 	}
+	unanswered := handler_ended && running && fault_waiter_exists(program_index)
 	program_unlock(program_index, taken)
 	if intrinsics.atomic_load(&thread.references) == 0 {
 		thread_free(thread)
 	}
 	if last {
 		program_stop(program_index, 0)
+	} else if unanswered {
+		program_stop(program_index, op.STOP_CODE_FAULT_UNANSWERED)
 	} else if running {
 		program_event(program_index)
 	}
@@ -1633,8 +1660,11 @@ kernel_interrupt :: proc "c" (frame: ^Frame) {
 		// A page on first use, or a page that another thread made present
 		// while this one waited for the lock: the instruction runs again.
 		cpu.first_use_faults += 1
+	case frame.vector == VECTOR_PAGE_FAULT && fault_deliver(cpu.current, control_register_2_read()):
+		// A record of the fault ring: the thread is Waiting until a thread
+		// of its program answers, so the end below goes to schedule.
 	case:
-		program_fault(thread.program, frame)
+		program_fault(thread.program, frame, control_register_2_read())
 	}
 	if !from_program {
 		return // The processor was idle: it looks for a thread itself.
@@ -1667,9 +1697,19 @@ page_fault :: proc "contextless" (index: u32, address: u64, error: u64) -> bool 
 
 // program_fault stops the program of a thread that faulted. A fault in one
 // thread stops the program: the threads share all their memory.
-program_fault :: proc "contextless" (index: u32, frame: ^Frame) {
+program_fault :: proc "contextless" (index: u32, frame: ^Frame, address: u64) {
 	control_take()
 	defer control_free()
+	program_stop(index, program_fault_report(index, frame, address))
+}
+
+// program_fault_report writes the stop report and the line of the log of a
+// fault of a thread of a program, and gives the stop code. address is the
+// address of a page fault (the processor gives it in cr2). The caller holds
+// the control lock, and the page table of this processor is the one of the
+// program: the stack trace reads its memory. Then the caller stops the
+// program with the code.
+program_fault_report :: proc "contextless" (index: u32, frame: ^Frame, address: u64) -> (code: u32) {
 	program := &programs[index]
 	taken := program_lock(index)
 	name := frame.vector < 32 ? EXCEPTION_NAMES[frame.vector] : ""
@@ -1681,11 +1721,11 @@ program_fault :: proc "contextless" (index: u32, frame: ^Frame) {
 	first := program.state != .Stopped && program.state != .None
 	// A page of an Uncommitted object that is not committed has its own
 	// code: the access went to addresses with no memory paid behind them.
-	code := op.STOP_CODE_FAULT + u32(frame.vector)
+	code = op.STOP_CODE_FAULT + u32(frame.vector)
 	if frame.vector == VECTOR_PAGE_FAULT && program.table != 0 {
-		if mapping := mapping_at(program, control_register_2_read()); mapping != nil && mapping.region < REGION_CAPACITY {
+		if mapping := mapping_at(program, address); mapping != nil && mapping.region < REGION_CAPACITY {
 			region := &regions[mapping.region]
-			page := mapping.first + (control_register_2_read() - mapping.address) / PAGE_SIZE
+			page := mapping.first + (address - mapping.address) / PAGE_SIZE
 			if region.uncommitted && !page_committed(region, region_page_state(region, page)) {
 				code = op.STOP_CODE_NOT_COMMITTED
 				name = "page fault on a page that is not committed"
@@ -1695,18 +1735,18 @@ program_fault :: proc "contextless" (index: u32, frame: ^Frame) {
 	if first {
 		program.stop = {code = code, vector = u32(frame.vector), instruction = frame.rip}
 		if frame.vector == 14 {
-			program.stop.address = control_register_2_read()
+			program.stop.address = address
 		}
 		if found != nil {
 			program.stop.module = found^
 		}
 	}
 	if found == nil {
-		log_in("fault", .Warning, "kernel: program ", program_name(program), " stopped: ", name, " vector ", frame.vector, " error ", Hex(frame.error), " at ", Hex(frame.rip), " address ", Hex(control_register_2_read()))
+		log_in("fault", .Warning, "kernel: program ", program_name(program), " stopped: ", name, " vector ", frame.vector, " error ", Hex(frame.error), " at ", Hex(frame.rip), " address ", Hex(address))
 	} else if found.replaces == {} {
-		log_in("fault", .Warning, "kernel: program ", program_name(program), " stopped: ", name, " vector ", frame.vector, " at ", Hex(frame.rip), " address ", Hex(control_register_2_read()), ", in module ", hash_head(found.hash), " at offset ", Hex(frame.rip - found.base))
+		log_in("fault", .Warning, "kernel: program ", program_name(program), " stopped: ", name, " vector ", frame.vector, " at ", Hex(frame.rip), " address ", Hex(address), ", in module ", hash_head(found.hash), " at offset ", Hex(frame.rip - found.base))
 	} else {
-		log_in("fault", .Warning, "kernel: program ", program_name(program), " stopped: ", name, " vector ", frame.vector, " at ", Hex(frame.rip), " address ", Hex(control_register_2_read()), ", in module ", hash_head(found.hash), " at offset ", Hex(frame.rip - found.base), ", which replaces ", hash_head(found.replaces))
+		log_in("fault", .Warning, "kernel: program ", program_name(program), " stopped: ", name, " vector ", frame.vector, " at ", Hex(frame.rip), " address ", Hex(address), ", in module ", hash_head(found.hash), " at offset ", Hex(frame.rip - found.base), ", which replaces ", hash_head(found.replaces))
 	}
 	// The stack trace: the page table of the program is the one of this
 	// processor, and the program lock is held (user_range, user_copy).
@@ -1714,7 +1754,7 @@ program_fault :: proc "contextless" (index: u32, frame: ^Frame) {
 		stack_trace(program, frame, &program.stop)
 	}
 	program_unlock(index, taken)
-	program_stop(index, code)
+	return code
 }
 
 program_name :: proc "contextless" (program: ^Program) -> string {

@@ -14,7 +14,7 @@ Written on 2026-11-11, after step 47. A row changes when a step changes what the
 
 | # | Property | State | What the test shows | Picture | What no test shows |
 |---|---|---|---|---|---|
-| 1 | Small kernel with a small, counted interface | Shown | The kernel has 27 operations, and an unknown operation gives an error record that says so [34, case j]. `rights` asks for nine operations and reads each answer [18] | `rights`, `errors` | No check counts the operations against a number in a document: a new operation fails no test |
+| 1 | Small kernel with a small, counted interface | Shown | The kernel has 31 operations, and an unknown operation gives an error record that says so [34, case j]. `rights` asks for nine operations and reads each answer [18] | `rights`, `errors` | No check counts the operations against a number in a document: a new operation fails no test |
 | 2 | Sandbox by default | Shown | `probe` in a call host asks for the machine with three handle numbers: the kernel refuses each one [10]. `rights`: five refusals with `No_Right` [18]. `fault` stops alone [5] | `isolated`, `rights` | A program that tries each of the 27 operations with no grant |
 | 3 | No "everything is a file" | Shown in part | Each resource has its own handle kind: a handle of another kind is refused with the kind that the call needs [34, case d] | `errors` | The property is an absence. No test can show that no file interface exists |
 | 4 | Non-blocking command buffers | Shown | `rings`: six programs pass records through six rings [15]. `flow`: the records of one second and the kernel entries for one million records [20] | `rings`, `flow` | A full ring under a writer that never waits |

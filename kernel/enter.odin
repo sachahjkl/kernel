@@ -839,6 +839,48 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		results[0] = changed
 		return .Ok
 
+	case .Fault_Handler_Set:
+		// The fault ring (fault_ring.odin): the program names one of its
+		// own threads; a pager for another program is not in this step.
+		if v[1] > 1 {
+			return .Bad_Operation
+		}
+		if v[1] == 1 {
+			program.fault_handler = 0
+			return .Ok
+		}
+		handler := index
+		if v[0] != 0 {
+			slot := handle_find(program, v[0], .Thread, {.Control}) or_return
+			handler = slot.object
+		}
+		return fault_handler_set(program_index, handler)
+
+	case .Fault_Answer:
+		answer := op.Fault_Answer_Kind(v[2])
+		if answer != .Resume && answer != .Stop {
+			return .Bad_Operation
+		}
+		// A stop of the program on a fault takes the control lock.
+		if answer == .Stop && need_control() {
+			return STATUS_RETRY
+		}
+		waiter_index := fault_waiter_find(program_index, v[0], v[1])
+		if waiter_index == 0 {
+			return .Bad_State // No thread with that number and serial waits: an old answer, or a wrong one.
+		}
+		waiter := &threads[waiter_index]
+		waiter.fault_waits = false
+		if answer == .Resume {
+			thread_wake(waiter)
+			return .Ok
+		}
+		// The report of the fault, as with no handler: the frame of the
+		// waiting thread is the frame of its fault, and the page table of
+		// this processor is the one of the program (the stack trace).
+		program_stop(program_index, program_fault_report(program_index, &waiter.frame, waiter.fault_address))
+		return .Ok
+
 	case .Strategy_Set:
 		_ = handle_find(program, v[0], .Machine, {.Schedule}) or_return
 		if v[1] == 0 || v[1] > u64(max(op.Strategy)) {

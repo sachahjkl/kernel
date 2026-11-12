@@ -129,6 +129,8 @@ The same window with the pointer theme of the owner (Posy's Cursor, CC BY-NC 4.0
 
 ![The return to a program: five children give the kernel a thread that the processor would refuse at its return, or flags that it must not keep; the kernel stops each one as its own fault, and the machine goes on](docs/screenshots/return_fault.png)
 
+![The fault ring: a page fault of a thread becomes a record for a handler thread of the program, which commits the page or gives Write back and lets the thread go on; nine cases, each in its own child program](docs/screenshots/fault_ring.png)
+
 ![The temple of Jon: a portrait of Jonathan Blow that turns](docs/screenshots/temple.png)
 
 `kerneltool screenshots` makes these pictures from the running machine.
