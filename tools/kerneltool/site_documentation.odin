@@ -18,7 +18,7 @@ SITE_OUTLINE_LIST_OPEN :: "<nav class=\"outline-list\" aria-label=\"On this page
 // The files of the site whose bytes change between builds. A proxy keeps a
 // file for hours, so each link to one of them carries a version of its
 // bytes: the same bytes give the same address, new bytes a new address.
-SITE_VERSIONED_FILES :: [?]string{SITE_STYLE_SHEET, SITE_SEARCH_SCRIPT, SITE_MARK_ANIMATION_SCRIPT, SITE_SEARCH_INDEX}
+SITE_VERSIONED_FILES :: [?]string{SITE_STYLE_SHEET, SITE_SEARCH_SCRIPT, SITE_MARK_ANIMATION_SCRIPT, SITE_MODULE_GRAPH_SCRIPT, SITE_SEARCH_INDEX}
 // The bytes of the hash in a version: 8 bytes, 16 hexadecimal digits.
 SITE_VERSION_BYTES :: 8
 

@@ -874,6 +874,9 @@ site_style_sheet :: proc(tile_rules: string) -> string {
 	// The scroll bars, in the colors of the dark form.
 	site_scroll_variables(&builder, false)
 	strings.write_string(&builder, SITE_SCROLL_RULES)
+	// The colors of the kinds of the module graph, then its rules.
+	site_module_graph_variables(&builder, false)
+	strings.write_string(&builder, SITE_MODULE_GRAPH_RULES)
 	// The colors and the widths of the tiles of the boot image: they come
 	// from the image of the build, so they are not fixed rules.
 	strings.write_string(&builder, tile_rules)
@@ -890,6 +893,7 @@ site_style_sheet :: proc(tile_rules: string) -> string {
 	strings.write_string(&builder, site_code_rules(true))
 	site_polish_variables(&builder, true)
 	site_scroll_variables(&builder, true)
+	site_module_graph_variables(&builder, true)
 	// The grid of points is a decoration of the dark background only.
 	strings.write_string(&builder, ".section-home { background-image: none; }\n}\n")
 	// Print is plain black text, also in the light form, whose colors of code

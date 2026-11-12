@@ -82,6 +82,20 @@ Running :: struct {
 	size:     i64, // The bytes of addresses of the module.
 }
 
+// One row for each import edge of each program that runs: edges(). An
+// edge links a module that runs in a program to the module of the same
+// program that imports it. A module that no module of its program imports
+// has one row with `imported_by` empty: the module of the program, or a
+// module that the program loaded by its name.
+Edge :: struct {
+	program:     [32]u8, // The name of the program.
+	slot:        i64, // The place of the program in the kernel: programs() of the console shows it.
+	module:      [32]u8, // The module that runs: its name in the catalog, or the first 16 digits of its hash when the catalog has no module with this hash.
+	hash:        [64]u8, // The hash of the module that runs, in hexadecimal.
+	imported_by: [32]u8, // The module of the same program that imports it, named as `module`. Empty: no module of the program imports it.
+	replaces:    [32]u8, // The module that the import names and that a replacement changed to this one, named as `module`. Empty: no replacement.
+}
+
 // One row for each record of the replacement table of the machine:
 // replacements().
 Replacement :: struct {

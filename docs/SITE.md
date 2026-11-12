@@ -23,7 +23,7 @@ No page holds a text that a person must remember to update: each page is generat
   - no page holds code or style of its own: each `<script>` has a `src` and nothing inside, but the one `<script type="application/ld+json">` of the page graph, whose text has no `<`; no `<style>` element and no `style` attribute exists.
 - Then the command checks what other programs read (see "What other sites read"); a failure stops it in the same way.
 - After the checks of the pages, the command makes the index of the search and checks it against the pages (see "The search"); a failure stops it in the same way.
-- At its end the command prints: the pages and their bytes, the count of the redirect pages and the count of each generation of old addresses, the other files, the bytes of the style sheet and the count of the icons inside it, the entries and the bytes of the index of the search and the bytes of the script, the guides, the news entries, the terms of the glossary, the commit and the release, the numbers that are not measured, the cells of the licenses that are not recorded, the count of the document references and the first three whose labels found no heading (see "The references to documents"), the count of the declarations of the sources and of the files that the parser refused, and the count of the code spans that link to a declaration, that are ambiguous and that name no declaration, with the first five of the last two (see "The declarations of the sources"), each part of a guide that the renderer did not understand, the parts that it did not write with no site address (or, with one, the parts that it wrote), and the count of the pictures of the repository that it compressed, with their bytes before and after.
+- At its end the command prints: the pages and their bytes, the count of the redirect pages and the count of each generation of old addresses, the other files, the bytes of the style sheet and the count of the icons inside it, the entries and the bytes of the index of the search and the bytes of the script, the guides, the news entries, the terms of the glossary, the commit and the release, the numbers that are not measured, the cells of the licenses that are not recorded, the count of the document references and the first three whose labels found no heading (see "The references to documents"), the count of the declarations of the sources and of the files that the parser refused, and the count of the code spans that link to a declaration, that are ambiguous and that name no declaration, with the first five of the last two (see "The declarations of the sources"), the counts of the module graph and its modules with no entry that no module imports (see "The module graph"), each part of a guide that the renderer did not understand, the parts that it did not write with no site address (or, with one, the parts that it wrote), and the count of the pictures of the repository that it compressed, with their bytes before and after.
 - `kerneltool check` runs the host tests of the site (`tools/kerneltool/site_test.odin`, `site_render_test.odin`) and checks that each picture that `README.md` names is a file of the repository. It does not write the site.
 
 ## The pages
@@ -50,6 +50,7 @@ A page named by a folder (`news/`) is the `index.html` of that folder (see "The 
 | `status/` | See "The status page" |
 | `docs/reference/operations/`, `context/`, `errors/`, `grants/`, `fixed-ranges/`, `console/` | See "The reference tables" |
 | `docs/reference/modules/`, `docs/reference/modules/<name>/` | See "The module pages" |
+| `docs/reference/module-graph/` | See "The module graph" |
 | `docs/reference/types/` | See "The types" |
 
 Each page has the bar (the heron and the name at the left, the sections as buttons: Docs, Status, News, Releases; a section appears when its page exists; on a guide or a page of the reference, Docs is the current one), breadcrumbs on each page below the home (Home / Docs / Guides / <guide>; Home / Docs / Reference / <page>; Home / Docs / Reference / Modules / <module>; Home / Status), and a foot that first names the maker ("modus · by Froment Software": the mark of the maker at 16 pixels, `resources/site/froment_software.png`, and its name as a link to its site, on one line), then names the commit, the release and the time of the build, and the files that the page comes from, as links to the repository at that commit. A reference table names the files that it is read from.
@@ -91,7 +92,7 @@ The old addresses were public. Two generations of them exist, and each old addre
 - With a site address it also names the new address as its canonical address. With none it has no canonical address, as no page has one.
 - It is not a page of the site: it is not in the sitemap, the index of the search, `llms.txt` or the feeds, and the checks of the pages, of the page graph and of the search do not apply to it.
 - The check (`site_check_redirects`): its path is not the path of a page or of a file of the site, and its refresh and its link name a page that the command writes, never another redirect page.
-- The command prints the count of the redirect pages, and the count of each generation. With the pages of today (17 guides, 11 reference pages that are not index pages, 81 module pages, the three index pages of the guides, the reference and the modules, and the status, the news and the releases), it expects 112 of each: 224 redirect pages.
+- The command prints the count of the redirect pages, and the count of each generation. With the pages of today (17 guides, 12 reference pages that are not index pages, 81 module pages, the three index pages of the guides, the reference and the modules, and the status, the news and the releases), it expects 113 of each: 226 redirect pages. The page of the module graph has the redirect pages of the rule, though its old addresses were never public: the rule has no exception.
 - The host test `site_addresses_of_every_page` checks, with a site address and with none: every old path of both generations has its redirect page, which names its page; no old path is a page; a redirect to a page that is not written, to another redirect, or at the path of a file or a page fails the check; two pages with one old path fail; and the sitemap, the index of the search, `llms.txt` and the two feeds name no old address.
 
 ## The Markdown that the site renders
@@ -539,7 +540,7 @@ The legend: the reference index ends with the section "The kinds of values", a t
 
 ### The versions of the files
 
-The site is behind a proxy that keeps a file for hours. Each link to a file whose bytes change between builds carries its file version (`GLOSSARY.md`): `style.css?v=<16 hexadecimal digits>`, the first 8 bytes of the BLAKE3 hash of its bytes (`contract/blake3`). The files: `style.css`, `search.js`, `mark_animation.js` and `search.json` (`SITE_VERSIONED_FILES`). The same bytes give the same address. The index of the search is written before the pages, so that each page names its version: `search.js` reads it from the attribute `data-index` of its own `script` element, relative to its folder, with no inline script. The check of the links ignores the query. The icons and the pictures carry no version: their bytes come from the mark and the repository and change rarely.
+The site is behind a proxy that keeps a file for hours. Each link to a file whose bytes change between builds carries its file version (`GLOSSARY.md`): `style.css?v=<16 hexadecimal digits>`, the first 8 bytes of the BLAKE3 hash of its bytes (`contract/blake3`). The files: `style.css`, `search.js`, `mark_animation.js`, `module_graph.js` and `search.json` (`SITE_VERSIONED_FILES`). The same bytes give the same address. The index of the search is written before the pages, so that each page names its version: `search.js` reads it from the attribute `data-index` of its own `script` element, relative to its folder, with no inline script. The check of the links ignores the query. The icons and the pictures carry no version: their bytes come from the mark and the repository and change rarely.
 
 ## The mark on the site
 
@@ -631,7 +632,61 @@ What the tables cannot show:
 - its source folder, its size in the boot image of the last build (or that the image is not built), its build settings (the `defines` of its row, or "none"), its imports and the modules that import it;
 - its kind (its group);
 - its exports, a table then each one as a documented symbol (see "The reference tables"), each with its signature as the console prints it (`write(name: Text, data: Text) -> Integer`, `Handle(Read, Write)`, `Table(Rectangle, Change)`) and its line of help. They come from the same reader as the build: no module needs to be built;
-- for a program, its grants and its budget (pages, programs, threads) from `grants_of` and `things_of` of the root service, with the comments of those lines.
+- for a program, its grants and its budget (pages, programs, threads) from `grants_of` and `things_of` of the root service, with the comments of those lines;
+- its identity card (`GLOSSARY.md`), after its documentation: the same markup as on the page of the module graph (see "The module graph");
+- its neighbours, after its facts: a figure of the module, the modules that it imports at its left and the modules that import it at its right, drawn by the layout of the module graph on that part of the graph. The module itself is not a link. A module with no edge has one sentence, with a link to its row on the page of the graph.
+
+The index of the modules links to the page of the module graph.
+
+## The module graph
+
+The owner asked for it on 2026-11-12: "et on a de quoi faire du déboggage de modules ? (et pourquoi pas un outil de visualisation des \"dépendances\"/carte d'identité module(s) ?". The code is `tools/kerneltool/site_module_graph.odin`; its host tests are `site_module_graph_test.odin`. The same facts for what runs now are `manual.edges()` (`MODULE_CONTRACT.md`, "Replacement of an import").
+
+`docs/reference/module-graph/` draws the module graph (`GLOSSARY.md`) of the build. The reference index, the card of the reference of the docs home and the tree list it after the modules, and the index of the modules links to it.
+
+### What a node and an edge are
+
+- A node is a module of `module_builds`: each module and each program, the kernel and its test build too. A resource of the boot image is not a module: it imports nothing and no module imports it, so it is not a node.
+- An edge is an import of `module_builds`: the build writes the hash of the imported module into the import table of the importer, and a loader puts the imported module in the program of the importer. The direction is "A imports B".
+- An edge is not a library of `contract` or `support`: the build compiles it into each module, and no import names it. It is not a module that a program loads by its name (the console with `load`, the program `imports` with its own loader), not a connection to a service, and not a replacement: the machine decides a replacement when a program starts, and the build does not know it.
+- Imports are hashes, so the files of a build cannot hold a cycle, and `module_builds` lists each module after its imports. The layout still refuses a cycle, an import that names no module of the build, a module that imports itself and an import named twice: the command stops before any page with the reason (`site_reference_read`).
+
+### The layout
+
+`site_graph_layout` places every node and every edge in whole pixels, with no randomness and no clock: the same build gives the same picture, byte for byte.
+
+- The layer of a node is the depth of its imports: 0 for a module that imports nothing, else one more than the deepest of its imports. A layer is a column; the layer 0 is at the left. So each importer is at the right of each module that it imports, and a program is at the right of its imports.
+- A node with no edge is not in a layer: it is in the band under the layers, by kind (the kernel, the programs, the modules with no entry), then in the order of the build, in 2 columns, column by column. Most nodes of today have no edge: the band keeps the layers small.
+- In a layer, the nodes start in the order of the build. One pass from the left orders each layer by the mean place of the imports of its nodes; one pass from the right orders each layer by the mean place of their importers. A mean is a whole number in 1024ths of a row. A node with no such neighbour keeps its place, and two equal means keep their order. There is no other step against crossings.
+- A node is a rectangle of 16 pixels high, the bar, as long as the bytes of the module: 96 pixels for the largest module, 4 for the smallest, in proportion between. The name is at the right of the bar, whole, in the monospace font at 12 pixels. A column is as wide as the longest bar and the longest name, at 8 pixels for each character: no name is cut, and no name runs into the next column in a monospace font that advances up to 0.66 em.
+- The size and the hash come from the boot image of the last build; a module that is not in the image (the kernel, the test modules) takes them from its module file in `build/modules`. A module that is not built has an empty bar and no hash.
+- An edge is three straight segments: from the left end of the bar of the importer across to the gap at the right of the column of the imported module, then up or down, then across to the end of its name. Each edge has a lane of its own in that gap, 6 pixels apart, in the order of the place of the imported module, then of the importer; the gap is at least 48 pixels and grows with its lanes. An edge over more than one layer passes over the row of its importer in the columns between: no node of today has such an edge.
+- The color of a node is its kind, the kinds of the card of the boot image: a program (a module with an entry) in the color of a program, a module with no entry in the color of `COLOR_NO_ENTRY`, the kernel in the color of the kernel. Each color is a variable of the style sheet in each form, with a shade in the light form; a host test checks a contrast of 3 to 1 on the background and on the two colors of a card.
+- Each column has a heading in the dim color: "depth 0: imports none", "depth 1", ...; the band has "no edge: imports none, imported by none (N)".
+
+The command prints the count of the nodes, of the edges, the depth, the count of the nodes with no edge, and the modules with no entry that no module imports. The page lists them too. Such a module is not dead by itself: a program can load it by its name, or a replacement can put it in place of an import. The list is for a reader to check.
+
+### The page
+
+- The picture is an inline `<svg>` with its `width`, `height` and `viewBox` in pixels, in a box that scrolls sideways (`.graph-box`, a region that the keyboard reaches, as a table box): the picture keeps its pixels, so a name is never smaller than 12 pixels. No color, no style and no font is an attribute: the style sheet gives them by class.
+- Each node is a link to the page of its module (`<a>` of SVG), with the name, the kind and the size as its `aria-label`. Each line has `data-from` and `data-to`; each node has `data-card` (the id of its identity card) and `data-neighbours` (the names of the other ends of its edges, which the tool computes).
+- Under the picture, its legend: the color of each kind, what a line is, what a bar is.
+- The identity cards: one for each module, in one box (`#graph-cards`) with the attribute `hidden`.
+- Then the table "The edges": each module, its kind, what it imports and what imports it, each name a link to its page. It is the whole graph for a reader with no picture and for a screen reader.
+- Then the modules with no entry that no module imports.
+
+With no script the page is whole: the picture, its links, its legend and the table. The cards stay hidden.
+
+With the script (`module_graph.js`, loaded with `defer` by this page only, `Site_Page.script`):
+
+- A pointer on a node, or the focus of the keyboard, marks the node, its neighbours and its edges: the other nodes and edges take a quarter of their opacity, and a marked edge takes the color and the width of the line of a link. Nothing moves.
+- The identity card of the node shows in a box fixed at the bottom right of the window, 384 pixels wide. The script takes away the attribute `hidden` of the box and of the one card; a style is never set.
+- The pointer that leaves the node (when the node has no focus), the focus that leaves it, or Escape, takes the marks away and hides the card. A click opens the page of the module.
+- With `?selftest=1` in the address, the script checks each node: the other ends of its lines are the names of `data-neighbours`, and its card exists. It prints "module graph self test: N of N nodes agree" in the console of the browser, and sets the same line as the attribute `data-module-graph-self-test` of the root element. The host test `site_graph_markup` checks that the tool writes the neighbours of each node from its edges.
+
+### The identity card
+
+The identity card (`GLOSSARY.md`) of a module: its name (a link to its page, but on its own page), its kind, its hash (64 hexadecimal digits), its size, the count of its exports (the entry is not counted), of its imports and of the modules that import it, its license, and the first sentence of its documentation with no reference. Its license: the license of the system, then each row of the licenses whose place is in the source folder of the module (the portrait of `temple`), each a link to its row on the page of the licenses. One procedure writes it on the page of the graph and on the page of the module (`site_module_card_write`); one procedure gathers its facts (`site_module_card_of`).
 
 ## The references to documents
 
@@ -910,6 +965,7 @@ The work is in layers; each layer adds pages to a site that works.
 - (c) Done: the news (`news/`, `kerneltool news`), its page, its door on the home, its feed and its links from the releases.
 - (d) Done: the search: its index, its script, its box in the bar.
 - (e) Done: what other sites read (`tools/kerneltool/site_metadata.odin`): the canonical address, Open Graph, the summary card, the page graph, the manifest, `sitemap.xml`, `robots.txt`, `releases.xml`, `llms.txt`, the pictures of the repository compressed, and their checks. See "What other sites read".
+- Done: the module graph, the identity card and the neighbours of each module (see "The module graph").
 - (f) Done: one section Docs in the bar, the guides and the reference under `docs/`, the docs home with its own search field, and the redirect pages of the two generations of old addresses. See "The sections", "The redirect pages" and "The docs home".
 - The count of checks of `kerneltool check` on the site: the measure record counts the checks of `kerneltool screenshots` only (the machine tests and the second build), not the host tests of `kerneltool check`.
 - An embedded font: Paper Mono is under the SIL OFL 1.1 with no Reserved Font Name (`resources/fonts/paper_mono.license`): its ASCII subsets can be copied into the site with `OFL.txt` and their `.license` files and declared with `@font-face`. The site uses the fonts of the reader's system.

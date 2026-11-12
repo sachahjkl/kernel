@@ -132,6 +132,16 @@ running :: proc "c" (result: ^[]information.Running, error: ^errors.Error_Record
 	return table_count(count, problem, error)
 }
 
+// edges gives one row for each import edge of each program that runs: the program, a module that runs in it with its hash, the module of the same program that imports it, and the module that a replacement put it in place of. A module that no module of its program imports, as the module of the program, has one row with imported_by empty. The rows come from the module records of the kernel and the imports of the files of the boot image. The result is the count of rows, or a negative number with an error record. The error kinds: No_Grant (-3, the caller does not act for the principal); Refused (-3, the kernel refused the report to this program, with its status).
+@(export, link_name = "edges")
+edges :: proc "c" (result: ^[]information.Edge, error: ^errors.Error_Record) -> i64 {
+	if caller := system.service_caller(); caller != nil && caller.grant & isolated.CALLER_ACTS_FOR_PRINCIPAL == 0 {
+		return errors.fail(error, -3, .No_Grant, .Acts_For_Principal)
+	}
+	count, problem := information.edges(machine, catalog(), result^)
+	return table_count(count, problem, error)
+}
+
 // replacements gives one row for each record of the replacement table of the machine: where an import names the module `from`, a loader gives the module `to`. The result is the count of rows.
 @(export, link_name = "replacements")
 replacements :: proc "c" (result: ^[]information.Replacement) -> i64 {

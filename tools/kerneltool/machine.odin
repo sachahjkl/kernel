@@ -1388,7 +1388,7 @@ scenario := [?]Step {
 	{kind = .Move, text = "manual", to_x = 208, to_y = 744},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "connect(\"manual\")"},
-	{kind = .Wait, text = "[console] manual: 16 commands of a service that runs"},
+	{kind = .Wait, text = "[console] manual: 17 commands of a service that runs"},
 	{kind = .Type, text = "manual.about(\"math\")"},
 	{kind = .Wait, text = "[console] A module of commands: each command is a function"},
 	{kind = .Type, text = "manual.signature(\"tally\", 1)"},
@@ -1401,7 +1401,7 @@ scenario := [?]Step {
 	{kind = .Shot, text = "manual"},
 	// The keys of the manual: the next module of the boot image, then the one before.
 	{kind = .Key, text = "down"},
-	{kind = .Wait, text = "manual: manual: a program, 16 exports, "},
+	{kind = .Wait, text = "manual: manual: a program, 17 exports, "},
 	{kind = .Key, text = "pgdn"},
 	{kind = .Key, text = "up"},
 	{kind = .Wait, text = "manual: tally: a program, 5 exports, "},
@@ -1500,6 +1500,12 @@ scenario := [?]Step {
 	{kind = .Type, text = "columns(where(manual.running(), \"module\", \"calendar_fixed\"), \"program slot module replaces\")"},
 	{kind = .Wait, text = "[console] imports "},
 	{kind = .Wait, text = " of Running"},
+	// The graph of the modules as it runs: in the program imports, the
+	// module imports imports calendar_fixed, which a replacement put in
+	// place of calendar. The first column is the importer.
+	{kind = .Type, text = "columns(where(manual.edges(), \"replaces\", \"calendar\"), \"imported_by module replaces program\")"},
+	{kind = .Wait, text = "[console] imports      calendar_fixed  calendar  imports"},
+	{kind = .Wait, text = " of Edge"},
 	{kind = .Type, text = "sort(columns(manual.handles(\"Write\"), \"module name rights\"), \"name\")"},
 	{kind = .Wait, text = "[console] sample "},
 	{kind = .Wait, text = " of Export"},

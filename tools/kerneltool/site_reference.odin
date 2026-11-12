@@ -182,6 +182,17 @@ site_reference_read :: proc(site: ^Site) -> bool {
 		append(&modules, Site_Module{build = build, kind = kind, page = site_module_page(build.name), description = description})
 	}
 	reference.modules = modules[:]
+	// The module graph needs each import to name a module of the build, and
+	// no cycle: the command stops before any page otherwise.
+	{
+		graph_inputs := make([]Site_Graph_Input, len(modules), context.temp_allocator)
+		for item, index in modules {
+			graph_inputs[index] = {name = item.build.name, imports = item.build.imports}
+		}
+		if _, graph_problem := site_graph_layout(graph_inputs, SITE_GRAPH_BAND_COLUMNS); graph_problem != "" {
+			append(&problems, strings.concatenate({SITE_MODULES_FILE, ": the module graph: ", graph_problem}, context.temp_allocator))
+		}
+	}
 
 	if len(problems) > 0 {
 		for item in problems {

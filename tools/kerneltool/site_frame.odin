@@ -137,6 +137,9 @@ Site_Page :: struct {
 	// The page holds its own search field (the home of the docs), so the
 	// bar has none: a page has one search field.
 	search_in_page: bool,
+	// A script of this page alone, a file of the site, or "". The page is
+	// whole without it.
+	script: string,
 }
 
 // A guide: a document of docs/ as a page.
@@ -764,6 +767,7 @@ site_build :: proc(address: string) -> bool {
 	style_sheet := site_style_sheet(site.tile_rules)
 	site_write_file(&site, SITE_STYLE_SHEET, transmute([]u8)style_sheet) or_return
 	site_write_file(&site, SITE_SEARCH_SCRIPT, transmute([]u8)site_search_script()) or_return
+	site_write_file(&site, SITE_MODULE_GRAPH_SCRIPT, transmute([]u8)site_module_graph_script()) or_return
 	site_mark_animation_write(&site) or_return
 	// The index of the search, from the same data as the pages. It is
 	// written before the pages, because each page names the version of its
@@ -978,6 +982,9 @@ site_page_html :: proc(site: ^Site, page: Site_Page) -> string {
 	// address is relative to the folder of the script.
 	if page.section == .Home {
 		fmt.sbprintf(&b, "<script src=\"%s\" defer></script>\n", site_file_link(site, page.path, SITE_MARK_ANIMATION_SCRIPT))
+	}
+	if page.script != "" {
+		fmt.sbprintf(&b, "<script src=\"%s\" defer></script>\n", site_file_link(site, page.path, page.script))
 	}
 	fmt.sbprintf(&b, "<script src=\"%s\" data-index=\"%s\" defer></script>\n</head>\n<body class=\"section-%s layout-%s\">\n", site_file_link(site, page.path, SITE_SEARCH_SCRIPT), site_file_link(site, SITE_PAGE, SITE_SEARCH_INDEX), section_name, layout_name)
 	write(&b, "<a class=\"skip\" href=\"#content\">Skip to the content</a>\n")

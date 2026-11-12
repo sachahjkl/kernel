@@ -74,6 +74,10 @@ site_module_pages_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Ent
 	reference := &site.reference
 
 	modules_page := site_page_file(SITE_MODULES_FOLDER)
+	// The graph of the imports: its page, the identity card and the
+	// neighbours of each module. site_reference_read checked its layout.
+	graph_inputs := site_module_graph_inputs(site)
+	graph_layout, _ := site_graph_layout(graph_inputs, SITE_GRAPH_BAND_COLUMNS)
 	// The index.
 	{
 		b := strings.builder_make(context.temp_allocator)
@@ -82,6 +86,7 @@ site_module_pages_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Ent
 			in_image += item.build.image ? 1 : 0
 		}
 		fmt.sbprintf(&b, "<h1>Modules</h1>\n<p>The %d modules that the tool builds, %d of them in the boot image. A kernel runs in kernel mode; a program is a module whose source is in <code>programs/</code>; the others are modules that a program loads or calls. The purpose of each is the first sentence of the comment before <code>package</code> in its source.</p>\n", len(reference.modules), in_image)
+		fmt.sbprintf(&b, "<p>The <a href=\"%s\">module graph</a> shows who imports whom: %d imports between the %d modules.</p>\n", site_page_link(site, modules_page, site_page_file(SITE_MODULE_GRAPH_FOLDER)), len(graph_layout.edges), len(reference.modules))
 		// One table for each group, in the order of the tree of the documentation.
 		for group in Site_Module_Group {
 			count := 0
@@ -122,6 +127,7 @@ site_module_pages_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Ent
 		site_page_add(site, Site_Page{path = modules_page, is_index = true, title = "Modules", description = site_description_cut(fmt.tprintf("The %d modules and programs of %s, %d of them in the boot image, with their purpose, their exports and their imports.", len(reference.modules), SITE_SYSTEM_NAME, in_image)), section = .Reference, crumbs = site_crumbs(.Reference), body = strings.to_string(b), sources = site_sources(SITE_MODULES_FILE), layout = .Documentation})
 		append(entries, Site_Reference_Entry{path = modules_page, title = "Modules", what = "Each module and program, with a page for each: its documentation, its exports, its imports, and for a program its grants and its budget.", source = SITE_MODULES_FILE, count = len(reference.modules), kind = .Module})
 	}
+	site_module_graph_page_add(site, entries, graph_inputs, graph_layout)
 
 	// One page for each module. The list of the builds holds the comment
 	// above the row of a module with settings of its own.
@@ -147,6 +153,8 @@ site_module_pages_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Ent
 		// then the references to the documents that it names.
 		site_source_comment(site, &b, item.page, description.text, .Paragraphs)
 		strings.write_string(&b, "</div>\n")
+		// Its identity card: the same markup as on the page of the graph.
+		site_module_card_write(site, &b, item.page, site_module_card_of(site, item, graph_inputs, graph_layout), false)
 
 		// The facts of the build.
 		facts_table := site_table_start(&b, "Facts", {{"Fact", .Short}, {"Value", .Prose}})
@@ -217,6 +225,9 @@ site_module_pages_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Ent
 		}
 		strings.write_string(&b, "</td></tr>\n")
 		site_table_end(&b, facts_table)
+
+		// What it imports and what imports it, as a figure.
+		site_module_neighbours_write(site, &b, item.page, graph_inputs, build.name)
 
 		// The exports: a summary table, then each export as a documented
 		// symbol, as a package page of a programming language shows it.
