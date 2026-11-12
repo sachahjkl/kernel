@@ -14,6 +14,8 @@
 //     access, and the kernel stops it there;
 //   large pages: random reads over 64 MiB of one object, through a mapping
 //     of large pages and through a mapping of pages of 4 KiB;
+//   page tables: each table that a mapping made returns to the budget with
+//     its unmap, also while another thread uses a page of the same table;
 //   the refusals, each with its error record.
 // The window shows the numbers. The log has one line for each case and a
 // line "address_space: ok, ..." when each check holds. The checks do not
@@ -765,11 +767,10 @@ large_object_ends_quickly :: proc "contextless" () -> bool {
 	system.close(object)
 	ended := system.nanoseconds() - start
 	after, _ := system.budget_read()
-	// The page tables of the mapping stay with the program (Memory_Unmap
-	// does not give back a table that became empty): 513 pages for 1 GiB.
-	tables := before.pages - after.pages
-	system.log("address_space: an Uncommitted object of 1 GiB with 4 frames: unmap and close in ", ended / 1000, " us; pages kept for page tables: ", tables)
-	return tables <= 520
+	// The 513 page tables of the mapping return with the unmap.
+	kept := before.pages - after.pages
+	system.log("address_space: an Uncommitted object of 1 GiB with 4 frames: unmap and close in ", ended / 1000, " us; pages kept: ", kept)
+	return kept == 0
 }
 
 // child_stop_code starts the child with a role and gives its stop code.
@@ -1031,6 +1032,177 @@ addresses_reused :: proc "contextless" () {
 	}
 }
 
+// The page tables that a mapping made return to the budget with its unmap
+// (docs/ARCHITECTURE.md, "The page tables of a program"). The addresses are
+// SPREAD_STRIDE apart: 512 GiB, 1 GiB and 2 MiB, so each one has its own
+// entry of the top table, of the third level and of the second level, and a
+// mapping there needs three new tables. No other mapping of this program is
+// in that band.
+SPREAD_ADDRESS :: 0x0000_4400_0000_0000
+SPREAD_STRIDE :: 0x0000_0080_4020_0000
+SPREAD_COUNT :: 64
+#assert(SPREAD_ADDRESS >= fixed_addresses.OWN_CHOICE_START && SPREAD_ADDRESS > GUARD_ADDRESS)
+#assert(SPREAD_ADDRESS + (SPREAD_COUNT + 4) * SPREAD_STRIDE < op.THREAD_AREA_BASE &~ (512 << 30 - 1))
+#assert(SPREAD_STRIDE % (2 << 20) == 0) // Each address can hold a large page.
+NEIGHBOUR_ROUNDS :: 1000
+RESERVATION_PAGES :: 1024 // 4 MiB from an address on 2 MiB: two tables of the last level.
+
+Neighbour :: struct #align (64) {
+	word:    ^u64,
+	stop:    u32,
+	wrong:   u32,
+	touches: u64,
+}
+neighbour: Neighbour
+
+// neighbour_touch writes and reads a word of a page in the same table of the
+// last level as the pages that the other thread maps and unmaps. A fault
+// here stops this program: the line "ok" never comes.
+neighbour_touch :: proc "c" (parameter: rawptr) -> ! {
+	for intrinsics.atomic_load(&neighbour.stop) == 0 {
+		value := intrinsics.atomic_load(&neighbour.touches) + 1
+		intrinsics.volatile_store(neighbour.word, value)
+		if intrinsics.volatile_load(neighbour.word) != value {
+			intrinsics.atomic_store(&neighbour.wrong, 1)
+		}
+		intrinsics.atomic_store(&neighbour.touches, value)
+	}
+	system.thread_stop()
+}
+
+page_tables_line :: proc "contextless" (right_case: bool, parts: ..system.Part) {
+	buffer: [320]u8
+	system.log("address_space: page tables: ", system.format(buffer[:], ..parts), right_case ? string(": as it must") : string(": WRONG"))
+	if !right_case {
+		fail("a page table did not return to the budget")
+	}
+}
+
+page_tables_return :: proc "contextless" () {
+	// 1. One page at 64 addresses: three tables while it is mapped, none
+	// after.
+	{
+		memory, _ := system.memory_create(1)
+		before, _ := system.budget_read()
+		least_paid, most_paid, kept: u64 = max(u64), 0, 0
+		mapped_all := true
+		for index in u64(0) ..< SPREAD_COUNT {
+			address, status := system.memory_map(memory, {.Write}, 0, SPREAD_ADDRESS + index * SPREAD_STRIDE)
+			if status != .Ok {
+				mapped_all = false
+				break
+			}
+			intrinsics.volatile_store((^u64)(address), index)
+			during, _ := system.budget_read()
+			least_paid = min(least_paid, before.pages - during.pages)
+			most_paid = max(most_paid, before.pages - during.pages)
+			system.memory_unmap(address)
+			after, _ := system.budget_read()
+			kept = max(kept, before.pages - after.pages)
+		}
+		system.close(memory)
+		page_tables_line(mapped_all && least_paid == 3 && most_paid == 3 && kept == 0, u64(SPREAD_COUNT), " mappings of one page, each at its own entry of three levels: ", least_paid, " to ", most_paid, " pages of tables while mapped, ", kept, " pages kept after the unmap")
+	}
+	// 2. A reservation of 4 MiB: its four tables stay through a commit and a
+	// decommit (the mapping still holds its range, so a fault never needs a
+	// table), and return with the unmap.
+	{
+		memory, _ := system.memory_create(RESERVATION_PAGES, flags = {.Uncommitted})
+		before, _ := system.budget_read()
+		address, status := system.memory_map(memory, {.Write}, 0, SPREAD_ADDRESS)
+		mapped, _ := system.budget_read()
+		returned: u64
+		decommitted := mapped
+		if status == .Ok {
+			some := [1]op.Page_Range{{first = 500, page_count = 16}}
+			system.memory_commit(memory, some[:])
+			bytes := ([^]u8)(address)
+			for page in u64(500) ..< 516 {
+				intrinsics.volatile_store(&bytes[page * system.PAGE_SIZE], 1)
+			}
+			returned, _ = system.memory_decommit(memory, some[:])
+			decommitted, _ = system.budget_read()
+			system.memory_unmap(address)
+		}
+		after, _ := system.budget_read()
+		system.close(memory)
+		tables := before.pages - mapped.pages
+		page_tables_line(status == .Ok && returned == 16 && tables == 4 && decommitted.pages == mapped.pages && after.pages == before.pages, "a reservation of ", u64(RESERVATION_PAGES), " pages: ", tables, " pages of tables, ", decommitted.pages == mapped.pages ? string("the same") : string("not the same"), " after a commit and a decommit of 16 pages, ", before.pages - after.pages, " pages kept after the unmap")
+	}
+	// 3. A large page: two tables above it, both return.
+	{
+		memory, created := system.memory_create(op.LARGE_PAGE_PAGES, flags = {.Large_Pages})
+		before, _ := system.budget_read()
+		address, status := system.memory_map(memory, {.Write}, 0, SPREAD_ADDRESS + 2 * SPREAD_STRIDE)
+		mapped, _ := system.budget_read()
+		report := own_mappings()
+		mapping := mapping_at(&report, SPREAD_ADDRESS + 2 * SPREAD_STRIDE)
+		large := mapping != nil && .Large in mapping.flags
+		if status == .Ok {
+			intrinsics.volatile_store((^u64)(address), 1)
+			system.memory_unmap(address)
+		}
+		after, _ := system.budget_read()
+		system.close(memory)
+		tables := before.pages - mapped.pages
+		page_tables_line(created == .Ok && status == .Ok && large && tables == 2 && after.pages == before.pages, "a large page: ", tables, " pages of tables above it while mapped, ", before.pages - after.pages, " pages kept after the unmap")
+	}
+	// 4. Two threads: this one maps and unmaps a page in the table of the
+	// page of the other thread (the table stays: the other page holds it),
+	// and a page at its own entry of three levels (three tables leave at each
+	// unmap, while the other thread runs on the same page table).
+	{
+		near, _ := system.memory_create(1)
+		far, _ := system.memory_create(1)
+		watched, _ := system.memory_create(1)
+		word_address, watched_status := system.memory_map(watched, {.Write}, 0, SPREAD_ADDRESS + 3 * SPREAD_STRIDE)
+		if watched_status != .Ok {
+			system.close(near)
+			system.close(far)
+			system.close(watched)
+			page_tables_line(false, "the page of the other thread: no mapping")
+			return
+		}
+		neighbour = {word = (^u64)(word_address)}
+		thread, thread_status := system.thread_start(neighbour_touch, nil)
+		// The other thread runs before the rounds start. The bound only ends
+		// a hang.
+		for deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS; intrinsics.atomic_load(&neighbour.touches) == 0 && system.time() < deadline; {
+			system.sleep(system.time() + 1)
+		}
+		touches_before := intrinsics.atomic_load(&neighbour.touches)
+		before, _ := system.budget_read()
+		rounds_right: u64
+		for round in u64(0) ..< NEIGHBOUR_ROUNDS {
+			near_address, near_status := system.memory_map(near, {.Write}, 0, SPREAD_ADDRESS + 3 * SPREAD_STRIDE + system.PAGE_SIZE)
+			far_address, far_status := system.memory_map(far, {.Write}, 0, SPREAD_ADDRESS + 4 * SPREAD_STRIDE)
+			if near_status != .Ok || far_status != .Ok {
+				break
+			}
+			intrinsics.volatile_store((^u64)(near_address), round)
+			intrinsics.volatile_store((^u64)(far_address), round + 1)
+			if intrinsics.volatile_load((^u64)(near_address)) == round && intrinsics.volatile_load((^u64)(far_address)) == round + 1 {
+				rounds_right += 1
+			}
+			system.memory_unmap(near_address)
+			system.memory_unmap(far_address)
+		}
+		after, _ := system.budget_read()
+		touches_after := intrinsics.atomic_load(&neighbour.touches)
+		intrinsics.atomic_store(&neighbour.stop, 1)
+		if thread_status == .Ok {
+			system.thread_wait(thread)
+		}
+		value_right := intrinsics.atomic_load(&neighbour.wrong) == 0 && intrinsics.volatile_load(neighbour.word) == intrinsics.atomic_load(&neighbour.touches)
+		system.memory_unmap(word_address)
+		system.close(near)
+		system.close(far)
+		system.close(watched)
+		system.log("address_space: page tables: the other thread wrote and read its page ", touches_after - touches_before, " times during the rounds")
+		page_tables_line(thread_status == .Ok && rounds_right == NEIGHBOUR_ROUNDS && touches_before != 0 && touches_after > touches_before && value_right && after.pages == before.pages, u64(NEIGHBOUR_ROUNDS), " rounds of a map and an unmap beside a page that another thread writes and reads: ", rounds_right, " rounds right, the page of the other thread ", value_right ? string("stayed right") : string("changed"), ", ", before.pages - after.pages, " pages kept")
+	}
+}
+
 // The window: one card for each case, with the numbers.
 records_now, records_before: [1024]interface.Draw_Record
 text_now, text_before: [16384]u8
@@ -1174,10 +1346,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	delegation(ctx)
 	addresses_reused()
 	system.log("address_space: addresses: one object mapped and unmapped 100000 times: the budget holds ", reuse_pages_last, " pages after, ", reuse_pages_first, " after the first time")
+	page_tables_return()
 	for &item in refusals {
 		system.log("address_space: refused: ", item.name, ": ", string(item.sentence[:item.count]))
 	}
-	// Each page returned, except the page tables that Memory_Unmap keeps.
+	// Each page returned, except what this program still maps: the boot
+	// image, which each case that starts a child maps, and its page tables.
 	end_budget, _ := system.budget_read()
 	tables := start_budget.pages - end_budget.pages
 	if tables > 2048 {

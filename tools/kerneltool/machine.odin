@@ -1198,6 +1198,13 @@ scenario := [?]Step {
 	{kind = .Wait, text = "address_space: protection of 64 pages, one call with its shoot-down, the middle of 40 calls"},
 	{kind = .Wait, text = "address_space: guard page: the child stopped with vector 14 at "},
 	{kind = .Wait, text = "address_space: large pages: one random read over 64 MiB: "},
+	// Each page table that a mapping made returns to the budget with its
+	// unmap, at three levels, for a reservation, for a large page, and
+	// while another thread uses a page of the same table.
+	{kind = .Wait, text = "address_space: page tables: 64 mappings of one page, each at its own entry of three levels: 3 to 3 pages of tables while mapped, 0 pages kept after the unmap: as it must"},
+	{kind = .Wait, text = "address_space: page tables: a reservation of 1024 pages: 4 pages of tables, the same after a commit and a decommit of 16 pages, 0 pages kept after the unmap: as it must"},
+	{kind = .Wait, text = "address_space: page tables: a large page: 2 pages of tables above it while mapped, 0 pages kept after the unmap: as it must"},
+	{kind = .Wait, text = "address_space: page tables: 1000 rounds of a map and an unmap beside a page that another thread writes and reads: 1000 rounds right, the page of the other thread stayed right, 0 pages kept: as it must"},
 	{kind = .Wait, text = "address_space: ok, the arena and the sparse table paid only what they used, the decommit gave each page back, the protection changed with its shoot-down, the guard page stopped the child, the large pages are in the report, each refusal has its error record"},
 	{kind = .Shot, text = "address_space"},
 	{kind = .Front, text = "console"},
@@ -2121,6 +2128,13 @@ scenario_measure_address_space := [?]Step {
 	{kind = .Wait, text = "address_space: protection of 64 pages, one call with its shoot-down, the middle of 40 calls"},
 	{kind = .Wait, text = "address_space: guard page: the child stopped with vector 14 at "},
 	{kind = .Wait, text = "address_space: large pages: one random read over 64 MiB: "},
+	// Each page table that a mapping made returns to the budget with its
+	// unmap, at three levels, for a reservation, for a large page, and
+	// while another thread uses a page of the same table.
+	{kind = .Wait, text = "address_space: page tables: 64 mappings of one page, each at its own entry of three levels: 3 to 3 pages of tables while mapped, 0 pages kept after the unmap: as it must"},
+	{kind = .Wait, text = "address_space: page tables: a reservation of 1024 pages: 4 pages of tables, the same after a commit and a decommit of 16 pages, 0 pages kept after the unmap: as it must"},
+	{kind = .Wait, text = "address_space: page tables: a large page: 2 pages of tables above it while mapped, 0 pages kept after the unmap: as it must"},
+	{kind = .Wait, text = "address_space: page tables: 1000 rounds of a map and an unmap beside a page that another thread writes and reads: 1000 rounds right, the page of the other thread stayed right, 0 pages kept: as it must"},
 	{kind = .Wait, text = "address_space: ok, the arena and the sparse table paid only what they used, the decommit gave each page back, the protection changed with its shoot-down, the guard page stopped the child, the large pages are in the report, each refusal has its error record"},
 	{kind = .Shot, text = "address_space"},
 	{kind = .Front, text = "console"},

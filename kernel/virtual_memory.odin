@@ -128,7 +128,7 @@ memory_commit :: proc "contextless" (program: ^Program, region_index: u32, range
 				continue // Not in the mapping: no entry.
 			}
 			address := mapping.address + (page - mapping.first) * PAGE_SIZE
-			if entry := page_entry(program.table, address, false); entry != nil && entry^ & PAGE_PRESENT != 0 {
+			if entry := page_entry(program.table, address); entry != nil && entry^ & PAGE_PRESENT != 0 {
 				entry^ = 0
 				mapping.present_page_count -= 1
 				if self.table == program.table {
@@ -343,7 +343,7 @@ protect_entries_change :: proc "contextless" (program: ^Program, mapping: ^Mappi
 	for page := first; page < first + count && seen < present; {
 		address := mapping.address + page * PAGE_SIZE
 		run := min(512 - (address >> 12 & 511), first + count - page)
-		if entry := page_entry(program.table, address, false); entry != nil {
+		if entry := page_entry(program.table, address); entry != nil {
 			entries := ([^]u64)(entry)
 			for at in 0 ..< run {
 				if entries[at] & PAGE_PRESENT == 0 {
@@ -444,7 +444,7 @@ memory_protect :: proc "contextless" (program: ^Program, ranges: []op.Address_Ra
 		if mapping.large {
 			for part in 0 ..< mapping.page_count / op.LARGE_PAGE_PAGES {
 				address := mapping.address + part * LARGE_PAGE_SIZE
-				entry := page_directory_entry(program.table, address, false)
+				entry := page_directory_entry(program.table, address)
 				if entry == nil {
 					continue
 				}

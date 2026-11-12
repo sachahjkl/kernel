@@ -277,7 +277,7 @@ pages_report :: proc "contextless" (report: ^op.Page_Report, about: ^Program) {
 		for &mapping in about.mappings {
 			if mapping.page_count != 0 && address >= mapping.address && address - mapping.address < mapping.page_count * PAGE_SIZE {
 				report.mapped |= 1 << page
-				if entry := page_entry(about.table, address, false); entry != nil && entry^ & PAGE_PRESENT != 0 {
+				if entry := page_entry(about.table, address); entry != nil && entry^ & PAGE_PRESENT != 0 {
 					report.present |= 1 << page
 				}
 				break
