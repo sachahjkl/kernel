@@ -63,22 +63,53 @@ site_numbers_columns := [?]Site_Column {
 // A table that is being written: where it starts in the builder, and the
 // kind of each column.
 Site_Table :: struct {
-	start: int,
-	kinds: []Site_Column_Kind,
+	start:   int,
+	kinds:   []Site_Column_Kind,
+	classes: []string, // The class of the cells of each column: its kind, and the kind of its values.
+}
+
+// site_column_value_kind gives the kind of the values of a column: the one
+// that its writer states, else the number kind for a column of numbers and
+// the time kind for a column of dates. A column of names or of prose holds
+// no value of one kind.
+site_column_value_kind :: proc(column_kind: Site_Column_Kind, stated: Site_Value_Kind) -> Site_Value_Kind {
+	if stated != .None {
+		return stated
+	}
+	#partial switch column_kind {
+	case .Number:
+		return .Number
+	case .Date:
+		return .Time
+	}
+	return .None
 }
 
 // site_table_start writes the start of a table: its box, which scrolls
 // sideways when the table is wider than the page and which the keyboard
 // reaches (a region named by the name of the table), and its header cells,
-// each with the class of the kind of its column.
-site_table_start :: proc(b: ^strings.Builder, name: string, columns: []Site_Column) -> Site_Table {
-	table := Site_Table{start = strings.builder_len(b^), kinds = make([]Site_Column_Kind, len(columns), context.temp_allocator)}
+// each with the class of the kind of its column. A column whose values
+// are all of one kind (values, by the place of the column; .None for a
+// column of another sort) shows the icon of that kind once, in its head,
+// and its cells keep the font and the color of the kind: no row repeats
+// the icon (docs/SITE.md, "The kinds of values").
+site_table_start :: proc(b: ^strings.Builder, name: string, columns: []Site_Column, values: []Site_Value_Kind = nil) -> Site_Table {
+	table := Site_Table{start = strings.builder_len(b^), kinds = make([]Site_Column_Kind, len(columns), context.temp_allocator), classes = make([]string, len(columns), context.temp_allocator)}
 	strings.write_string(b, "<div class=\"table\" role=\"region\" tabindex=\"0\" aria-label=\"")
 	site_escape(b, name)
 	strings.write_string(b, "\"><table>\n<thead><tr>")
 	for column, index in columns {
 		table.kinds[index] = column.kind
-		fmt.sbprintf(b, "<th scope=\"col\" class=\"%s\">", site_column_classes[column.kind])
+		stated: Site_Value_Kind = index < len(values) ? values[index] : .None
+		value_kind := site_column_value_kind(column.kind, stated)
+		table.classes[index] = site_column_classes[column.kind]
+		head_class := site_column_classes[column.kind]
+		if value_kind != .None {
+			value_name := site_value_kinds[value_kind].name
+			table.classes[index] = strings.concatenate({site_column_classes[column.kind], " value value-", value_name}, context.temp_allocator)
+			head_class = strings.concatenate({site_column_classes[column.kind], " value-head value-icon value-", value_name}, context.temp_allocator)
+		}
+		fmt.sbprintf(b, "<th scope=\"col\" class=\"%s\">", head_class)
 		site_escape(b, column.header)
 		strings.write_string(b, "</th>")
 	}
@@ -98,13 +129,12 @@ site_table_end :: proc(b: ^strings.Builder, table: Site_Table) {
 	body_start += table.start
 	body := strings.clone(written[body_start:], context.temp_allocator)
 	resize(&b.buf, body_start)
-	strings.write_string(b, site_table_cells_classed(body, table.kinds))
+	strings.write_string(b, site_table_cells_with_classes(body, table.classes))
 }
 
-// site_table_cells_classed gives the body of a table with the class of its
-// column on each cell: the column of a cell is its place in its row. The
-// text of a cell is escaped, so a "<td" is always a tag.
-site_table_cells_classed :: proc(body: string, kinds: []Site_Column_Kind) -> string {
+// site_table_cells_with_classes gives the body of a table with the class
+// of its column on each cell, by the place of the cell in its row.
+site_table_cells_with_classes :: proc(body: string, classes: []string) -> string {
 	out := strings.builder_make(context.temp_allocator)
 	column := 0
 	index := 0
@@ -113,7 +143,7 @@ site_table_cells_classed :: proc(body: string, kinds: []Site_Column_Kind) -> str
 		if strings.has_prefix(rest, "<tr") && len(rest) > 3 && (rest[3] == '>' || rest[3] == ' ') {
 			column = 0
 		} else if (strings.has_prefix(rest, "<td") || strings.has_prefix(rest, "<th")) && len(rest) > 3 && (rest[3] == '>' || rest[3] == ' ') {
-			class := column < len(kinds) ? site_column_classes[kinds[column]] : ""
+			class := column < len(classes) ? classes[column] : ""
 			column += 1
 			if class != "" {
 				strings.write_string(&out, rest[:3])
@@ -335,7 +365,7 @@ site_guides_add :: proc(site: ^Site) -> bool {
 	guides_page := site_section_page(.Guides)
 	b := strings.builder_make(context.temp_allocator)
 	fmt.sbprintf(&b, "<h1>Guides</h1>\n<p>The documents of the repository: how each part of the system is designed, and why. The tables of what exists are in the <a href=\"%s\">reference</a>.</p>\n", site_page_link(site, guides_page, site_section_page(.Reference)))
-	guides_table := site_table_start(&b, "Guides", {{"Guide", .Prose}, {"What it holds", .Prose}, {"File", .Name}})
+	guides_table := site_table_start(&b, "Guides", {{"Guide", .Prose}, {"What it holds", .Prose}, {"File", .Name}}, {.None, .None, .File})
 	for guide in site.guides {
 		fmt.sbprintf(&b, "<tr><td><a href=\"%s\">", site_page_link(site, guides_page, guide.path))
 		site_escape(&b, guide.title)
@@ -395,7 +425,7 @@ site_reference_add :: proc(site: ^Site) -> bool {
 		main_lines := site_lines(main_text)
 		fmt.sbprintf(&b, "<h1>Commands of kerneltool</h1>\n<p>All the automation of the project is one program, <code>kerneltool</code>. Run a command with <code>nix develop -c kerneltool &lt;command&gt;</code>. %d commands.</p>\n<p>The table names each command; under it, each command has its text, as <code>COMMANDS</code> writes it, and a link to its line.</p>\n", len(commands))
 		site_source_line(site, &b, SITE_TOOL_MAIN_FILE)
-		commands_table := site_table_start(&b, "Commands of kerneltool", {{"Command", .Name}, {"What it does", .Prose}})
+		commands_table := site_table_start(&b, "Commands of kerneltool", {{"Command", .Name}, {"What it does", .Prose}}, {.Command, .None})
 		for command in commands {
 			fmt.sbprintf(&b, "<tr><td class=\"code name\"><a href=\"#tool-command-%s\"><code>", site_slug(command.name))
 			site_escape(&b, command.name)
@@ -495,7 +525,7 @@ site_reference_add :: proc(site: ^Site) -> bool {
 	reference_page := site_section_page(.Reference)
 	b := strings.builder_make(context.temp_allocator)
 	strings.write_string(&b, "<h1>Reference</h1>\n<p>Tables that the tool generates from the code and the files that define each thing. The guides explain why; these tables say what exists in this build.</p>\n")
-	reference_table := site_table_start(&b, "Reference tables", {{"Table", .Prose}, {"What it holds", .Prose}, {"Generated from", .Name}})
+	reference_table := site_table_start(&b, "Reference tables", {{"Table", .Prose}, {"What it holds", .Prose}, {"Generated from", .Name}}, {.None, .None, .File})
 	for entry in entries {
 		fmt.sbprintf(&b, "<tr><td><a href=\"%s\">", site_page_link(site, reference_page, entry.path))
 		site_escape(&b, entry.title)
@@ -505,6 +535,8 @@ site_reference_add :: proc(site: ^Site) -> bool {
 		strings.write_string(&b, "</tr>\n")
 	}
 	site_table_end(&b, reference_table)
+	// The legend of the kinds of values that the reference shows.
+	site_value_legend(&b)
 	site_page_add(site, Site_Page{path = reference_page, is_index = true, title = "Reference", description = site_description_cut(fmt.tprintf("The reference of %s: %d tables that the tool generates from the code and the files of the repository.", SITE_SYSTEM_NAME, len(entries))), section = .Reference, crumbs = site_crumbs(.Home), body = strings.to_string(b), layout = .Documentation})
 	// The tree of the documentation lists the reference pages in this order.
 	site.reference_entries = entries[:]
@@ -535,7 +567,7 @@ site_license_row_ids :: proc(licenses: Site_Licenses) -> (system_ids: []string, 
 
 // site_license_table writes the rows of one table of licenses.
 site_license_table :: proc(site: ^Site, b: ^strings.Builder, name: string, rows: []Site_License_Row, ids: []string) {
-	licenses_table := site_table_start(b, name, {{"What", .Prose}, {"Where", .Name}, {"License", .Short}, {"Author or origin", .Prose}, {"Version or pin", .Short}, {"In the boot image", .Short}})
+	licenses_table := site_table_start(b, name, {{"What", .Prose}, {"Where", .Name}, {"License", .Short}, {"Author or origin", .Prose}, {"Version or pin", .Short}, {"In the boot image", .Short}}, {.None, .File, .None, .None, .Version, .None})
 	for row, index in rows {
 		fmt.sbprintf(b, "<tr id=\"%s\" data-outline=\"", ids[index])
 		site_plain(b, row.what)

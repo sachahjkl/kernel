@@ -354,6 +354,7 @@ site_layout_problem :: proc(page: Site_Page, html: string, page_ids: map[string]
 Site_Symbol_Fact :: struct {
 	label: string,
 	html:  string,
+	kind:  Site_Value_Kind, // The kind of its values: the icon of the kind is before the label, once.
 }
 
 // A documented symbol: an operation of the kernel, a command, or an export
@@ -398,37 +399,28 @@ site_symbol_write :: proc(site: ^Site, b: ^strings.Builder, symbol: Site_Symbol)
 	if len(symbol.facts) > 0 || symbol.source != "" {
 		strings.write_string(b, "<dl class=\"symbol-facts\">\n")
 		for fact in symbol.facts {
-			strings.write_string(b, "<dt>")
+			if fact.kind != .None {
+				fmt.sbprintf(b, "<dt class=\"value-head value-icon value-%s\">", site_value_kinds[fact.kind].name)
+			} else {
+				strings.write_string(b, "<dt>")
+			}
 			site_escape(b, fact.label)
 			strings.write_string(b, "</dt><dd>")
 			strings.write_string(b, fact.html)
 			strings.write_string(b, "</dd>\n")
 		}
 		if symbol.source != "" {
-			strings.write_string(b, "<dt>Source</dt><dd><a href=\"")
+			strings.write_string(b, "<dt class=\"value-head value-icon value-file\">Source</dt><dd>")
 			if symbol.line > 0 {
-				site_escape(b, site_line_address(site, symbol.source, symbol.line))
-				strings.write_string(b, "\"><code>")
-				site_escape(b, fmt.tprintf("%s:%d", symbol.source, symbol.line))
+				site_value_link(b, .File, site_line_address(site, symbol.source, symbol.line), fmt.tprintf("%s:%d", symbol.source, symbol.line), false)
 			} else {
-				site_escape(b, site_repository_file(site, symbol.source))
-				strings.write_string(b, "\"><code>")
-				site_escape(b, symbol.source)
+				site_value_link(b, .File, site_repository_file(site, symbol.source), symbol.source, false)
 			}
-			strings.write_string(b, "</code></a></dd>\n")
+			strings.write_string(b, "</dd>\n")
 		}
 		strings.write_string(b, "</dl>\n")
 	}
 	strings.write_string(b, "</section>\n")
-}
-
-// site_code_html gives a text as escaped code, for a fact of a symbol.
-site_code_html :: proc(text: string) -> string {
-	b := strings.builder_make(context.temp_allocator)
-	strings.write_string(&b, "<code>")
-	site_escape(&b, text)
-	strings.write_string(&b, "</code>")
-	return strings.to_string(b)
 }
 
 // site_text_html gives a text as escaped HTML, for a fact of a symbol.

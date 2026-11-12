@@ -307,6 +307,20 @@ tbody tr:nth-child(odd) { background: var(--card-top); }
 td.name, td.name code { white-space: nowrap; overflow-wrap: normal; }
 a.reference { text-decoration-style: dashed; }
 
+/* The kinds of values (docs/SITE.md, "The kinds of values"): a value is in
+   the monospace font and in the color of its kind; a code element of a
+   value has a thin rule at its left, no filled background. The icon is a
+   mask of the file of its kind, in the color of the kind: a column head,
+   the label of a fact, or a value whose column does not say its kind. */
+.value { font-family: var(--mono); font-size: 14px; color: var(--value-color); }
+code.value { background: none; padding: 0 0 0 4px; border-left: 2px solid var(--value-color); }
+.value code, .value a, a .value { color: inherit; background: none; }
+td.value code { padding: 0; }
+.value.missing { color: var(--dim); }
+.value-head { color: var(--dim); }
+.value-icon::before { content: ""; display: inline-block; width: 12px; height: 12px; margin-right: 4px; vertical-align: -1px; background-color: var(--value-color); -webkit-mask: var(--value-icon) no-repeat center / 12px 12px; mask: var(--value-icon) no-repeat center / 12px 12px; }
+span.value-icon::before { margin-right: 0; }
+
 /* Cards: a border of 1 pixel in the accent, the bar of 4 by 16 pixels
    before the title. */
 .card { min-width: 0; padding: 16px; margin-bottom: 8px; background: linear-gradient(var(--card-top), var(--card-bottom)); border: 1px solid var(--border-top); border-image: linear-gradient(var(--border-top), var(--border-bottom)) 1; }
@@ -419,6 +433,8 @@ site_style_sheet :: proc(tile_rules: string) -> string {
 	builder := strings.builder_make(context.temp_allocator)
 	site_colors_write(&builder, site_dark_colors())
 	strings.write_string(&builder, SITE_STYLE_RULES)
+	// The color and the icon of each kind of value, in the dark form.
+	strings.write_string(&builder, site_value_rules(false))
 	// The colors and the widths of the tiles of the boot image: they come
 	// from the image of the build, so they are not fixed rules.
 	strings.write_string(&builder, tile_rules)
@@ -431,6 +447,7 @@ site_style_sheet :: proc(tile_rules: string) -> string {
 	strings.write_string(&builder, "'/%3E%3C/svg%3E\");\n  background-position: 12px 12px;\n}\n")
 	strings.write_string(&builder, "@media (prefers-color-scheme: light) {\n")
 	site_colors_write(&builder, site_light_colors())
+	strings.write_string(&builder, site_value_rules(true))
 	// The grid of points is a decoration of the dark background only.
 	strings.write_string(&builder, ".section-home { background-image: none; }\n}\n")
 	return strings.to_string(builder)

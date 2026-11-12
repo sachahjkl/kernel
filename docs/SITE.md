@@ -363,6 +363,54 @@ No column has a fixed least width but the tree and "On this page", and each grid
 
 Print shows the middle column only: the bar, the tree, "On this page", the breadcrumbs and the links to the guides before and after are hidden.
 
+### The kinds of values
+
+The owner asked for it on 2026-11-12: "que les valeurs techniques, comme par exemple le fait de dire handle ou les valeurs numériques, soient affichées en monospace, qu'elles aient une couleur [...] accompagnées d'un icône". The rule of the two fonts of the desktop holds (`DESIGN.md`, "Two fonts"): a name or an explanation in the reading font, a value in the monospace font. The code is `tools/kerneltool/site_values.odin`.
+
+One table, `site_value_kinds`, gives each value kind (`GLOSSARY.md`) its class `value-<name>`, its icon (12 by 12 cells, `#` a cell), an accent of `support/graphics/rules.odin` with a `graphics.shade` for each color scheme, and its meaning. The contrast is that of the text of a value on the two surfaces of a table: the background and the band of every second row (dark: `0x0B1018`, `0x17212E`; light: `0xF4F6F8`, white). A host test computes each one.
+
+| Kind | Icon | Accent | Dark: color, contrast | Light: shade, color, contrast |
+|---|---|---|---|---|
+| Number: a count, a place, an index, an address | A hash sign | Memory | `0x38C0B0`, 8.47 / 7.22 | 65 %, `0x247C71`, 4.62 / 5.00 |
+| Size: bytes or pages | Three stacked bars | Memory | 8.47 / 7.22 | 4.62 / 5.00 |
+| Time: a duration, a date, a time | A square with two hands | Boot program | `0xE0A040`, 8.42 / 7.17 | 65 %, `0x906729`, 4.66 / 5.05 |
+| Handle | A square ring on a stem | Kernel | `0x4A9CF0`, 6.63 / 5.65 | 73 %, `0x3571AF`, 4.69 / 5.08 |
+| Value: a value of the context, not a handle | One small square | Memory | 8.47 / 7.22 | 4.62 / 5.00 |
+| Grant | A check mark in steps | Machine | `0xD070B0`, 6.02 / 5.12 | 78 %, `0xA15688`, 4.61 / 5.00 |
+| Status: a status, an error kind, the state of a property | A flag | Failed | `0xF06060`, 5.94 / 5.06 | 78 %, `0xBA4A4A`, 4.65 / 5.04 |
+| Type of the module contract | Angle brackets `< >` | Firmware, at 115 % | `0x9E8FCB`, 6.58 / 5.60 | 83 %, `0x7566A1`, 4.65 / 5.03 |
+| Operation of the kernel | An arrow into a box | Kernel | 6.63 / 5.65 | 4.69 / 5.08 |
+| Command of the console or of the tool | A prompt `>_` | Program | `0x58D878`, 10.45 / 8.90 | 58 %, `0x327C45`, 4.72 / 5.12 |
+| Module | A block with a notch | Program | 10.45 / 8.90 | 4.72 / 5.12 |
+| File or folder of the repository | A page with a corner of steps | Dim | `0x7C8A99`, 5.40 / 4.60 | 82 %, `0x65717D`, 4.60 / 4.99 |
+| Version, release, commit, hash | A tag with a hole | Boot program | 8.42 / 7.17 | 4.66 / 5.05 |
+| Yes: a state that holds | A filled square | Program | 10.45 / 8.90 | 4.72 / 5.12 |
+| No: a state that does not hold | An empty square | Dim | 5.40 / 4.60 | 4.60 / 4.99 |
+
+The firmware violet at 100 % is 4.50 on the band of a row, at the bound: the type kind takes it at 115 %.
+
+The markup: a value is `<code class="value value-<name>">`, written by one procedure (`site_value`), in the monospace font and the color of its kind, with a rule of 2 pixels at its left and no filled background. A color is never the only sign: the monospace font, the icon in the head of its column or before the label of its fact, and the text carry the kind too.
+
+Who states the kind: the writer of each table gives the kind of each column (`site_table_start`, its last argument), and the writer of a symbol gives the kind of each fact (`Site_Symbol_Fact.kind`). No cell is classified by its text. The one rule of the column itself: a column of the kind Number is of the number kind, and a column of the kind Date of the time kind; their writers already state what they hold.
+
+Where it shows:
+
+- the reference tables: the statuses and the error kinds (status), the grants (grant), the operations (operation), the commands of the console and of the tool (command), the context roles (number; handle or value in each cell), the fixed ranges (number), the programs and their grants (module, grant), the licenses (file, version), the index of the guides and of the reference (file), the measured numbers (the date: time; a quoted line of a log stays as the log has it);
+- the module pages: the index (module, number, yes or no in each cell, the imports), the facts of a module (file, yes or no, size), the facts of each export (type);
+- the facts of each symbol: its number, its statuses, its parameters and its result, its source line (file);
+- the status page: the status of each property (status), the gaps and the next steps (number);
+- not the guides and not the glossary: a document of `docs/` keeps its code spans as Markdown marks them, and no kind is guessed in prose.
+
+The restraint:
+
+- At most one icon for each value, and the same kind always has the same color and the same icon.
+- A column whose cells are all of one kind shows the icon once, in its head, and its cells keep the font and the color only. A fact shows the icon once, before its label. A value has its own icon only in a column of mixed kinds (handle or value, yes or no) or in a cell of facts of several kinds.
+- No icon and no colored value in a heading (a check of the pages: `site_heading_value_problem`), and none in running prose.
+
+The icons: each one is an SVG file, `pictures/values/<name>.svg`, written by the tool from its cells (one `rect` for each run of cells of a row, `shape-rendering="crispEdges"`). The style sheet draws an icon as the `::before` of the element: a box of 12 by 12 pixels in the color of the kind, with the file as its `mask`. A mask is an image of the style sheet: `img-src 'self'` covers it, and the style sheet is `style-src 'self'`, so the Content-Security-Policy of the host does not change. One sprite with an external `<use href="...#handle">` was refused: whether `img-src` or `default-src` governs the fetch of an external `<use>` is not the same in each browser, and `default-src` is `'none'`. The icon has no text and no name: it is decoration, and the head, the label or the text says the kind.
+
+The legend: the reference index ends with the section "The kinds of values", a table of the icon, the kind and its meaning, from the same table.
+
 ### The versions of the files
 
 The site is behind a proxy that keeps a file for hours. Each link to a file whose bytes change between builds carries its file version (`GLOSSARY.md`): `style.css?v=<16 hexadecimal digits>`, the first 8 bytes of the BLAKE3 hash of its bytes (`contract/blake3`). The files: `style.css`, `search.js`, `mark_animation.js` and `search.json` (`SITE_VERSIONED_FILES`). The same bytes give the same address. The index of the search is written before the pages, so that each page names its version: `search.js` reads it from the attribute `data-index` of its own `script` element, relative to its folder, with no inline script. The check of the links ignores the query. The icons and the pictures carry no version: their bytes come from the mark and the repository and change rarely.

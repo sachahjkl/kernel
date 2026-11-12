@@ -174,7 +174,7 @@ site_status_add :: proc(site: ^Site) -> bool {
 
 	// The properties.
 	strings.write_string(&b, "<h2 id=\"properties\">Properties</h2>\n")
-	properties_table := site_table_start(&b, "Properties", {{"Property", .Prose}, {"Status", .Short}, {"Evidence items", .Prose}, {"Gaps", .Prose}})
+	properties_table := site_table_start(&b, "Properties", {{"Property", .Prose}, {"Status", .Short}, {"Evidence items", .Prose}, {"Gaps", .Prose}}, {.None, .Status, .None, .None})
 	for property in properties {
 		heading_id := ""
 		prefix := fmt.tprintf("%d. ", property.number)
@@ -242,7 +242,7 @@ site_status_add :: proc(site: ^Site) -> bool {
 
 	// The next steps.
 	strings.write_string(&b, "<h2 id=\"next-steps\">Next steps</h2>\n")
-	steps_table := site_table_start(&b, "Next steps", {{"Step", .Short}, {"What and its state", .Prose}})
+	steps_table := site_table_start(&b, "Next steps", {{"Step", .Short}, {"What and its state", .Prose}}, {.Number, .None})
 	for item in next_steps {
 		strings.write_string(&b, "<tr><td class=\"code\">")
 		site_item_links(site, &b, path, SITE_MILESTONE_FILE, []Site_List_Item{item})

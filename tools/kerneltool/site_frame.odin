@@ -600,6 +600,8 @@ site_build :: proc(address: string) -> bool {
 	site_write_file(&site, SITE_STYLE_SHEET, transmute([]u8)site_style_sheet(site.tile_rules)) or_return
 	site_write_file(&site, SITE_SEARCH_SCRIPT, transmute([]u8)site_search_script()) or_return
 	site_mark_animation_write(&site) or_return
+	// The icons of the kinds of values: the style sheet names them.
+	site_value_icons_write(&site) or_return
 	// The index of the search, from the same data as the pages. It is
 	// written before the pages, because each page names the version of its
 	// bytes; it is checked against the pages after them.
@@ -937,6 +939,9 @@ site_check_pages :: proc(pages: []Site_Page, written: map[string]string, files: 
 			rest = rest[start + end:]
 		}
 		if problem := site_inline_code_problem(html); problem != "" {
+			append(&problems, fmt.tprintf("%s: %s", page.path, problem))
+		}
+		if problem := site_heading_value_problem(html); problem != "" {
 			append(&problems, fmt.tprintf("%s: %s", page.path, problem))
 		}
 		if problem := site_layout_problem(page, html, ids[page.path]); problem != "" {

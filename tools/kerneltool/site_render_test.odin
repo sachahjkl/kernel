@@ -310,9 +310,9 @@ site_tables_with_kinds :: proc(t: ^testing.T) {
 	expect := [?]string {
 		"<p>before</p>\n<div class=\"table\" role=\"region\" tabindex=\"0\" aria-label=\"Measured &lt;numbers&gt;\"><table>",
 		"<th scope=\"col\" class=\"column-prose\">What</th><th scope=\"col\" class=\"column-line\">The line of the log</th>",
-		"<th scope=\"col\" class=\"column-date\">Written</th>",
-		"<tr id=\"one\"><td class=\"column-prose\">What</td><td class=\"column-line code\"><code>line</code></td><td class=\"column-prose\">log</td><td class=\"column-date\"><time datetime=\"2026-11-12T02:09Z\">2026-11-12 02:09 UTC</time></td></tr>",
-		"<tr><td class=\"column-prose\">Second</td><td class=\"column-line\"></td><td class=\"column-prose\"></td><td class=\"column-date\"></td></tr>",
+		"<th scope=\"col\" class=\"column-date value-head value-icon value-time\">Written</th>",
+		"<tr id=\"one\"><td class=\"column-prose\">What</td><td class=\"column-line code\"><code>line</code></td><td class=\"column-prose\">log</td><td class=\"column-date value value-time\"><time datetime=\"2026-11-12T02:09Z\">2026-11-12 02:09 UTC</time></td></tr>",
+		"<tr><td class=\"column-prose\">Second</td><td class=\"column-line\"></td><td class=\"column-prose\"></td><td class=\"column-date value value-time\"></td></tr>",
 		"</tbody></table></div>\n",
 	}
 	for part in expect {

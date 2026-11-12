@@ -25,9 +25,7 @@ site_module_by_name :: proc(site: ^Site, name: string) -> (item: Site_Module, fo
 // a page of the site.
 site_module_link :: proc(site: ^Site, b: ^strings.Builder, from_page, name: string) {
 	if item, found := site_module_by_name(site, name); found {
-		fmt.sbprintf(b, "<a href=\"%s\"><code>", site_page_link(site, from_page, item.page))
-		site_escape(b, name)
-		strings.write_string(b, "</code></a>")
+		site_value_link(b, .Module, site_page_link(site, from_page, item.page), name, false)
 		return
 	}
 	strings.write_string(b, "<code>")
@@ -94,15 +92,17 @@ site_module_pages_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Ent
 				continue
 			}
 			fmt.sbprintf(&b, "<h2 id=\"%s\">%s</h2>\n", site_module_group_ids[group], site_module_group_titles[group])
-			modules_table := site_table_start(&b, site_module_group_titles[group], {{"Module", .Name}, {"Boot image", .Short}, {"Exports", .Number}, {"Imports", .Prose}, {"Purpose", .Prose}})
+			modules_table := site_table_start(&b, site_module_group_titles[group], {{"Module", .Name}, {"Boot image", .Short}, {"Exports", .Number}, {"Imports", .Prose}, {"Purpose", .Prose}}, {.Module, .None, .None, .Module, .None})
 			for item in reference.modules {
 				if site_module_group(item) != group {
 					continue
 				}
 				fmt.sbprintf(&b, "<tr id=\"module-%s\"><td class=\"code name\">", site_slug(item.build.name))
 				site_module_link(site, &b, modules_page, item.build.name)
-				in_boot_image: string = item.build.image ? "yes" : "no"
-				fmt.sbprintf(&b, "</td><td>%s</td><td class=\"code\">%d</td><td class=\"code\">", in_boot_image, len(item.description.exports))
+				// A column of two states: each cell has the icon of its state.
+				strings.write_string(&b, "</td><td>")
+				site_value(&b, item.build.image ? Site_Value_Kind.Yes : Site_Value_Kind.No, item.build.image ? "yes" : "no", true)
+				fmt.sbprintf(&b, "</td><td>%d</td><td>", len(item.description.exports))
 				for name, index in item.build.imports {
 					if index > 0 {
 						strings.write_string(&b, ", ")
@@ -148,19 +148,24 @@ site_module_pages_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Ent
 		// The facts of the build.
 		facts_table := site_table_start(&b, "Facts", {{"Fact", .Short}, {"Value", .Prose}})
 		fmt.sbprintf(&b, "<tr><td>Kind</td><td><a href=\"%s#%s\">%s</a></td></tr>\n", site_page_link(site, item.page, modules_page), site_module_group_ids[site_module_group(item)], site_module_group_titles[site_module_group(item)])
-		strings.write_string(&b, "<tr><td>Source</td><td class=\"code name\"><a href=\"")
-		site_escape(&b, site_folder_address(site, build.source))
-		strings.write_string(&b, "\"><code>")
-		site_escape(&b, build.source)
-		strings.write_string(&b, "</code></a></td></tr>\n<tr><td>Boot image</td><td>")
+		// The facts hold values of several kinds: each value has its icon.
+		strings.write_string(&b, "<tr><td>Source</td><td class=\"name\">")
+		site_value_link(&b, .File, site_folder_address(site, build.source), build.source, true)
+		strings.write_string(&b, "</td></tr>\n<tr><td>Boot image</td><td>")
 		if !build.image {
-			strings.write_string(&b, "not in the boot image")
+			site_value(&b, .No, "no", true)
+			strings.write_string(&b, ": not in the boot image")
 		} else if entry, found := site_boot_image_entry(site, build.name); found {
-			fmt.sbprintf(&b, "in the boot image, %d bytes in this build", entry.size)
+			site_value(&b, .Yes, "yes", true)
+			strings.write_string(&b, ": in the boot image, ")
+			site_value(&b, .Size, fmt.tprintf("%d bytes", entry.size), true)
+			strings.write_string(&b, " in this build")
 		} else if len(site.boot_image) == 0 {
-			strings.write_string(&b, "in the boot image; the image is not built, so its size is not known")
+			site_value(&b, .Yes, "yes", true)
+			strings.write_string(&b, ": in the boot image; the image is not built, so its size is not known")
 		} else {
-			strings.write_string(&b, "in the list of the boot image, not in the image of the last build")
+			site_value(&b, .No, "no", true)
+			strings.write_string(&b, ": in the list of the boot image, not in the image of the last build")
 		}
 		strings.write_string(&b, "</td></tr>\n")
 		if build.kernel {
@@ -258,14 +263,14 @@ site_export_symbol_write :: proc(site: ^Site, b: ^strings.Builder, description: 
 			name := index < len(export.names) ? export.names[index] : ""
 			detail: u32 = index < len(export.details) ? export.details[index] : 0
 			direction: module.Direction = index < len(export.directions) ? export.directions[index] : .Read
-			strings.write_string(&parameters, site_code_html(strings.concatenate({name, ": ", site_type_text(description, type, detail, direction, true)}, context.temp_allocator)))
+			strings.write_string(&parameters, site_value_html(.Type, strings.concatenate({name, ": ", site_type_text(description, type, detail, direction, true)}, context.temp_allocator)))
 		}
 		if len(export.parameters) == 0 {
 			strings.write_string(&parameters, "none")
 		}
-		append(&facts, Site_Symbol_Fact{label = "Parameters", html = strings.to_string(parameters)})
+		append(&facts, Site_Symbol_Fact{label = "Parameters", kind = .Type, html = strings.to_string(parameters)})
 		result := export.result == .None ? "none" : site_type_text(description, export.result, export.result_detail, .Read, false)
-		append(&facts, Site_Symbol_Fact{label = "Result", html = site_code_html(result)})
+		append(&facts, Site_Symbol_Fact{label = "Result", kind = .Type, html = site_value_html(.Type, result)})
 		if export.error_record != 0 {
 			// The rule of the build: an export with an error record fails
 			// when its result is negative, and writes the record.
@@ -273,7 +278,7 @@ site_export_symbol_write :: proc(site: ^Site, b: ^strings.Builder, description: 
 			if int(export.error_record) <= len(description.records) {
 				record_name = description.records[export.error_record - 1].name
 			}
-			append(&facts, Site_Symbol_Fact{label = "When it fails", html = strings.concatenate({site_text_html("a negative result, and the error record "), site_code_html(record_name)}, context.temp_allocator)})
+			append(&facts, Site_Symbol_Fact{label = "When it fails", html = strings.concatenate({site_text_html("a negative result, and the error record "), site_value_html(.Type, record_name)}, context.temp_allocator)})
 		}
 	}
 	site_symbol_write(site, b, Site_Symbol{id = strings.concatenate({"export-", site_slug(export.name)}, context.temp_allocator), name = export.name, signature = site_export_signature(description, export), description = export.text, facts = facts[:], source = export.file, line = export.line})

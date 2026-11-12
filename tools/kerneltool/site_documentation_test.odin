@@ -79,7 +79,7 @@ site_documentation_symbol :: proc(t: ^testing.T) {
 	testing.expect(t, strings.contains(html, "<h3 id=\"operation-memory-map\" data-outline=\"Memory_Map\"><code>Memory_Map</code></h3>"))
 	testing.expect(t, strings.contains(html, "<pre class=\"signature\"><code>Memory_Map(memory) -&gt; address</code></pre>"))
 	testing.expect(t, strings.contains(html, "<p>Maps &lt;memory&gt;.</p>\n<p>A second paragraph.</p>"))
-	testing.expect(t, strings.contains(html, "/blob/master/contract/operation/operation.odin#L12\"><code>contract/operation/operation.odin:12</code></a>"))
+	testing.expect(t, strings.contains(html, "/blob/master/contract/operation/operation.odin#L12\"><code class=\"value value-file\">contract/operation/operation.odin:12</code></a>"))
 	testing.expect_value(t, site.symbol_count, 1)
 	testing.expect_value(t, site.symbols_without_description, 0)
 
