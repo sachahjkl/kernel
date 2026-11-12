@@ -38,6 +38,7 @@ Site_Value_Kind :: enum {
 	Module,
 	File,
 	Guide,
+	Term,
 	Version,
 	Yes,
 	No,
@@ -128,6 +129,14 @@ site_value_kinds := [Site_Value_Kind]Site_Value_Kind_Description {
 		name = "guide", title = "Guide", meaning = "A document of the site, a guide or the glossary, and the heading that a reference names; a working record is a file of the repository.",
 		color = graphics.COLOR_TEXT, dark_percent = 100, light_percent = 20,
 		cells = {"............", ".##########.", ".#........#.", ".#.######.#.", ".#........#.", ".#.######.#.", ".#........#.", ".#.####...#.", ".#........#.", ".##########.", "............", "............"},
+	},
+	// A term of the glossary is a name, not a value, as a document is: the
+	// kind gives the glossary and the terms of the search their icon and
+	// their color, so that a term does not look like a guide section.
+	.Term = {
+		name = "term", title = "Term", meaning = "A term of the glossary: one name for one concept.",
+		color = graphics.COLOR_MEMORY, dark_percent = 100, light_percent = 65,
+		cells = {"............", ".##########.", ".##########.", ".....##.....", ".....##.....", ".....##.....", ".....##.....", ".....##.....", ".....##.....", "....####....", "............", "............"},
 	},
 	.Version = {
 		name = "version", title = "Version", meaning = "A version, a release, a commit or a hash.",

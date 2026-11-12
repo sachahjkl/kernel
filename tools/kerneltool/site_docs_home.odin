@@ -1,7 +1,7 @@
 // The home of the docs (docs/SITE.md, "The docs home"): a door to the
 // guides and to the reference. Its large search field is the search of the
 // page, and the bar of the page has none. Under the field: a card for each
-// part of the docs, the chart of what the search finds, and a row of doors.
+// part of the docs, then the chart of what the search finds.
 // Every count comes from the data that the pages and the index of the
 // search show; no count is typed.
 package kerneltool
@@ -9,39 +9,54 @@ package kerneltool
 import "core:fmt"
 import "core:strings"
 
-// The guides that the card of the guides lists, the first in the reading
-// order of the page of the guides.
-SITE_DOCS_HOME_FIRST_GUIDES :: 6
-
-// One part of the reference on the home of the docs: its page, what it
-// holds, and the count of the things on it.
-Site_Docs_Reference_Part :: struct {
-	title:  string,
-	what:   string,
-	folder: string,
-	count:  int,
+// One row of a card of the docs home. The three cards (the guides, the
+// reference and the chart) share one form: a lead (a number of a reading
+// order or the icon of a kind), the name, then a description or a bar, and
+// a count at the right in a column of one width.
+Site_Docs_Row :: struct {
+	number:    int, // The place in a reading order, from 1, or 0 for an icon.
+	kind:      Site_Value_Kind, // The icon of the lead when number is 0.
+	name:      string,
+	address:   string, // The link of the name, or "".
+	about:     string, // Plain text, dim, after the name or under it; or "".
+	count:     int,
+	has_count: bool,
 }
 
-// site_docs_reference_parts gives the parts of the reference that a reader
-// looks for first, in the order of the card, each with the count of what
-// its page shows. The index of the reference lists every table.
-site_docs_reference_parts :: proc(site: ^Site) -> []Site_Docs_Reference_Part {
-	// The operation of number 0 is not an operation: its page and the
-	// search leave it out.
-	operation_count := 0
-	for operation in site.reference.operations {
-		operation_count += operation.member.number != 0 ? 1 : 0
+// site_docs_row_lead writes the lead of a row: its number, which the list
+// already says to a screen reader, or the icon of its kind.
+site_docs_row_lead :: proc(b: ^strings.Builder, number: int, kind: Site_Value_Kind) {
+	if number > 0 {
+		fmt.sbprintf(b, "<span class=\"docs-row-lead docs-row-number\" aria-hidden=\"true\">%d</span>", number)
+	} else {
+		fmt.sbprintf(b, "<span class=\"docs-row-lead value-icon value-%s\" aria-hidden=\"true\"></span>", site_value_kinds[kind].name)
 	}
-	tool_commands := COMMANDS
-	parts := make([dynamic]Site_Docs_Reference_Part, context.temp_allocator)
-	append(&parts, Site_Docs_Reference_Part{title = "Kernel operations", what = "What a program asks the kernel, with its parameters and its statuses.", folder = SITE_OPERATIONS_FOLDER, count = operation_count})
-	append(&parts, Site_Docs_Reference_Part{title = "Types", what = "The types of the contract and of the modules: the size, the alignment, the fields.", folder = SITE_TYPES_FOLDER, count = len(site.types)})
-	append(&parts, Site_Docs_Reference_Part{title = "Modules", what = "Each module and program: its exports, its imports, its documentation.", folder = SITE_MODULES_FOLDER, count = len(site.reference.modules)})
-	append(&parts, Site_Docs_Reference_Part{title = "Commands of the console", what = "The commands that the console has before it loads a module.", folder = SITE_CONSOLE_FOLDER, count = len(site.reference.console_commands)})
-	append(&parts, Site_Docs_Reference_Part{title = "Commands of kerneltool", what = "The commands of the one tool of the project.", folder = SITE_COMMANDS_FOLDER, count = len(tool_commands)})
-	append(&parts, Site_Docs_Reference_Part{title = "Glossary", what = "One term for each concept, with its definition.", folder = SITE_GLOSSARY_FOLDER, count = len(site.terms)})
-	append(&parts, Site_Docs_Reference_Part{title = "Measured numbers", what = "The numbers that the machine tests print, each with its log.", folder = SITE_NUMBERS_FOLDER, count = len(site.measured)})
-	return parts[:]
+}
+
+// site_docs_row writes one row of a card of the guides or of the
+// reference.
+site_docs_row :: proc(b: ^strings.Builder, row: Site_Docs_Row) {
+	strings.write_string(b, "<li class=\"docs-row\">")
+	site_docs_row_lead(b, row.number, row.kind)
+	strings.write_string(b, "<span class=\"docs-row-main\"><span class=\"docs-row-name\">")
+	if row.address != "" {
+		fmt.sbprintf(b, "<a href=\"%s\">", row.address)
+		site_escape(b, row.name)
+		strings.write_string(b, "</a>")
+	} else {
+		site_escape(b, row.name)
+	}
+	strings.write_string(b, "</span>")
+	if row.about != "" {
+		strings.write_string(b, "<span class=\"docs-row-about\">")
+		site_escape(b, row.about)
+		strings.write_string(b, "</span>")
+	}
+	strings.write_string(b, "</span>")
+	if row.has_count {
+		fmt.sbprintf(b, "<code class=\"value value-number docs-row-count\">%d</code>", row.count)
+	}
+	strings.write_string(b, "</li>\n")
 }
 
 // The least length of a bar of the chart, in pixels: a kind with one entry
@@ -111,19 +126,22 @@ site_search_chart :: proc(b: ^strings.Builder, site: ^Site, path: string, rows: 
 	}
 	strings.write_string(b, "<section class=\"card accent-program search-chart\" aria-labelledby=\"search-finds\">\n<h2 id=\"search-finds\">What the search finds</h2>\n")
 	fmt.sbprintf(b, "<p class=\"search-chart-total\"><span id=\"search-chart-matched\" hidden><code class=\"value value-number\" id=\"search-chart-matched-count\">0</code> of </span><code class=\"value value-number\">%d</code> <span id=\"search-chart-words\">entries in the index</span></p>\n", total)
-	fmt.sbprintf(b, "<ol class=\"search-chart-rows\" id=\"search-chart\" data-least=\"%d\">\n", SITE_SEARCH_CHART_LEAST_LENGTH)
+	fmt.sbprintf(b, "<ol class=\"docs-rows search-chart-rows\" id=\"search-chart\" data-least=\"%d\">\n", SITE_SEARCH_CHART_LEAST_LENGTH)
 	for row in rows {
 		description := site_search_kinds[row.kind]
 		value_name := site_value_kinds[description.value_kind].name
 		fmt.sbprintf(b, "<li class=\"search-chart-row\" data-kind=\"%d\" data-count=\"%d\" data-singular=\"%s\" data-plural=\"%s\">", int(row.kind), row.count, description.name, site_search_kind_words(row.kind, 2))
+		// The whole row is the target: a link, or a button while the field
+		// holds a text; so it carries the form of a row itself.
 		if row.page != "" {
-			fmt.sbprintf(b, "<a class=\"search-chart-target\" href=\"%s\">", site_page_link(site, path, row.page))
+			fmt.sbprintf(b, "<a class=\"docs-row search-chart-target\" href=\"%s\">", site_page_link(site, path, row.page))
 		} else {
-			strings.write_string(b, "<span class=\"search-chart-target\">")
+			strings.write_string(b, "<span class=\"docs-row search-chart-target\">")
 		}
-		fmt.sbprintf(b, "<span class=\"value-icon value-%s\" aria-hidden=\"true\"></span><span class=\"search-chart-name\">%s</span>", value_name, site_search_kind_words(row.kind, row.count))
-		fmt.sbprintf(b, "<svg class=\"search-chart-bar value-%s\" aria-hidden=\"true\" focusable=\"false\"><rect class=\"search-chart-length\" width=\"%s\" height=\"100%%\"/><rect class=\"search-chart-least\" width=\"%d\" height=\"100%%\"/></svg>", value_name, site_search_chart_length(row.count, largest), SITE_SEARCH_CHART_LEAST_LENGTH)
-		fmt.sbprintf(b, "<code class=\"value value-number search-chart-count\">%d</code>", row.count)
+		site_docs_row_lead(b, 0, description.value_kind)
+		fmt.sbprintf(b, "<span class=\"docs-row-main\"><span class=\"docs-row-name search-chart-name\">%s</span>", site_search_kind_words(row.kind, row.count))
+		fmt.sbprintf(b, "<svg class=\"docs-row-bar search-chart-bar value-%s\" aria-hidden=\"true\" focusable=\"false\"><rect class=\"search-chart-length\" width=\"%s\" height=\"100%%\"/><rect class=\"search-chart-least\" width=\"%d\" height=\"100%%\"/></svg></span>", value_name, site_search_chart_length(row.count, largest), SITE_SEARCH_CHART_LEAST_LENGTH)
+		fmt.sbprintf(b, "<code class=\"value value-number docs-row-count search-chart-count\">%d</code>", row.count)
 		strings.write_string(b, row.page != "" ? "</a></li>\n" : "</span></li>\n")
 	}
 	strings.write_string(b, "</ol>\n</section>\n")
@@ -151,7 +169,7 @@ site_docs_home_fill :: proc(site: ^Site, entries: []Site_Search_Entry) {
 
 // site_docs_home_body gives the text of the home of the docs: the heading,
 // the search field of the page, the card of the guides, the card of the
-// reference, the chart of what the search finds, and the doors.
+// reference, and the chart of what the search finds.
 site_docs_home_body :: proc(site: ^Site, path: string, entries: []Site_Search_Entry) -> string {
 	b := strings.builder_make(context.temp_allocator)
 	guides_page := site_section_page(.Guides)
@@ -163,61 +181,36 @@ site_docs_home_body :: proc(site: ^Site, path: string, entries: []Site_Search_En
 	// the cards under it carry the page.
 	strings.write_string(&b, site_search_field_html(.Docs_Home))
 
+	// The two cards list every guide and every table of the reference, one
+	// row each; the heading of a card is the link to its index.
 	strings.write_string(&b, "<div class=\"docs-parts\">\n")
 	if site_page_exists(site, guides_page) {
 		strings.write_string(&b, "<section class=\"card accent-kernel\" aria-labelledby=\"guides\">\n")
 		fmt.sbprintf(&b, "<h2 id=\"guides\"><a href=\"%s\">%s</a></h2>\n", site_page_link(site, path, guides_page), site_section_titles[.Guides])
-		fmt.sbprintf(&b, "<p>A guide is a document of the repository: how one part of %s is designed, and why. %d guides; the first ones in their reading order:</p>\n<ol>\n", SITE_SYSTEM_NAME, len(site.guides))
+		strings.write_string(&b, "<p>How each part is designed, and why, in reading order.</p>\n<ol class=\"docs-rows\">\n")
 		for guide, index in site.guides {
-			if index == SITE_DOCS_HOME_FIRST_GUIDES {
-				break
-			}
-			fmt.sbprintf(&b, "<li><a href=\"%s\">", site_page_link(site, path, guide.path))
-			site_escape(&b, guide.title)
-			strings.write_string(&b, "</a></li>\n")
+			// The line of the guide in the table of documents of README.md
+			// is its short description; a guide that has none shows its
+			// title alone.
+			site_docs_row(&b, Site_Docs_Row{number = index + 1, name = guide.title, address = site_page_link(site, path, guide.path), about = site_search_plain(guide.about)})
 		}
-		fmt.sbprintf(&b, "</ol>\n<p><a href=\"%s\">All %d guides</a></p>\n</section>\n", site_page_link(site, path, guides_page), len(site.guides))
+		strings.write_string(&b, "</ol>\n</section>\n")
 	}
+	// The second column: the reference, then the chart. The guides are the
+	// longer list, so the chart fills the column of the shorter one.
+	strings.write_string(&b, "<div class=\"docs-parts-column\">\n")
 	if site_page_exists(site, reference_page) {
 		strings.write_string(&b, "<section class=\"card accent-memory\" aria-labelledby=\"reference\">\n")
 		fmt.sbprintf(&b, "<h2 id=\"reference\"><a href=\"%s\">%s</a></h2>\n", site_page_link(site, path, reference_page), site_section_titles[.Reference])
-		strings.write_string(&b, "<p>What exists in this build, generated from the code and from the files that define each thing. Each row of a table links to its line in the source.</p>\n")
-		parts_table := site_table_start(&b, "What the reference holds", {{"Part", .Prose}, {"What it holds", .Prose}, {"Count", .Number}})
-		for part in site_docs_reference_parts(site) {
-			part_page := site_page_file(part.folder)
-			if !site_page_exists(site, part_page) {
-				continue
-			}
-			fmt.sbprintf(&b, "<tr><td><a href=\"%s\">", site_page_link(site, path, part_page))
-			site_escape(&b, part.title)
-			strings.write_string(&b, "</a></td><td>")
-			site_escape(&b, part.what)
-			fmt.sbprintf(&b, "</td><td>%d</td></tr>\n", part.count)
+		strings.write_string(&b, "<p>What exists in this build, generated from the code.</p>\n<ul class=\"docs-rows docs-rows-one-line\">\n")
+		for entry in site.reference_entries {
+			site_docs_row(&b, Site_Docs_Row{kind = entry.kind, name = entry.title, address = site_page_link(site, path, entry.path), about = entry.what, count = entry.count, has_count = true})
 		}
-		site_table_end(&b, parts_table)
-		fmt.sbprintf(&b, "<p><a href=\"%s\">All %d reference tables</a></p>\n</section>\n", site_page_link(site, path, reference_page), len(site.reference_entries))
+		strings.write_string(&b, "</ul>\n</section>\n")
 	}
-	strings.write_string(&b, "</div>\n")
+	// The bar gives the status, the news and the releases, and the cards
+	// every guide: the page has no row of doors.
 	site_search_chart(&b, site, path, site_search_chart_rows(site, entries))
-
-	// The doors: where a reader starts, and the pages of the state of the
-	// system that are not docs.
-	strings.write_string(&b, "<h2 id=\"start\">Where to start</h2>\n<ul class=\"doors\">\n")
-	if len(site.guides) > 0 {
-		fmt.sbprintf(&b, "<li><a href=\"%s\">Read first: ", site_page_link(site, path, site.guides[0].path))
-		site_escape(&b, site.guides[0].title)
-		strings.write_string(&b, "</a></li>\n")
-	}
-	if status_page := site_section_page(.Status); site_page_exists(site, status_page) {
-		fmt.sbprintf(&b, "<li><a href=\"%s\">The state of the %d properties</a></li>\n", site_page_link(site, path, status_page), len(site.principles.properties))
-	}
-	if releases_page := site_section_page(.Releases); site_page_exists(site, releases_page) {
-		release_link := strings.concatenate({releases_page, "#", site_release_id(site.release)}, context.temp_allocator)
-		fmt.sbprintf(&b, "<li><a href=\"%s\">The newest release, %s</a></li>\n", site_page_link(site, path, release_link), site.release)
-	}
-	if news_page := site_section_page(.News); site_page_exists(site, news_page) {
-		fmt.sbprintf(&b, "<li><a href=\"%s\">%s</a></li>\n", site_page_link(site, path, news_page), site_section_titles[.News])
-	}
-	fmt.sbprintf(&b, "<li><a href=\"%s\">The repository</a></li>\n</ul>\n", SITE_REPOSITORY_ADDRESS)
+	strings.write_string(&b, "</div>\n</div>\n")
 	return strings.to_string(b)
 }

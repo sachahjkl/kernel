@@ -28,7 +28,7 @@ This file is the record of the decisions of the project: who decided what, when,
 9. [The interface, the fonts, the mark and the design](#9-the-interface-the-fonts-the-mark-and-the-design): D-106 to D-141, D-192, D-193
 10. [The console and the tools](#10-the-console-and-the-tools): D-142 to D-148
 11. [The build and the compiler](#11-the-build-and-the-compiler): D-149 to D-162
-12. [The site and the publication](#12-the-site-and-the-publication): D-163 to D-185, D-194 to D-199
+12. [The site and the publication](#12-the-site-and-the-publication): D-163 to D-185, D-194 to D-201
 13. [The name and the repository](#13-the-name-and-the-repository): D-186 to D-189
 14. [Open questions for the owner](#open-questions-for-the-owner)
 15. [Conflicts](#conflicts)
@@ -1422,6 +1422,20 @@ This file is the record of the decisions of the project: who decided what, when,
 - Words: "cette liste rébarbative d'informations sans aucune mise en forme, aucune couleur sur les numéros, les symboles, les types de choses, c'est nul. A la limite, mets un graphe en dessous du guide et de la référence, ça peut être intéressant. Mais un graphe ou plutôt un histogramme, j'en sais rien. Un truc visuel, parce que là, juste l'espèce de boum, gros cube de texte, ça n'a aucun intérêt en dessous de la barre de recherche, ça prend juste de la place."; "Et tant qu'à mettre un histogramme, autant le rendre dynamique."; "j'espère que le site a bien la compression, etc. Parce que je trouve qu'il n'est pas long à charger, mais on sent que c'est lourd à charger."
 - State: done.
 - Where: `docs/SITE.md`, "The docs home"; `docs/SITE.md`, "The kinds of values"; `tools/kerneltool/site_docs_home.odin`; `tools/kerneltool/site_search.odin`; `tools/kerneltool/site_values.odin`.
+
+### D-200 The cards of the docs home list everything, with no empty part
+- 2026-11-12. Decided by: the owner; the form was given by the coordinator.
+- Decision: the card of the guides lists every guide with its one line of description; the card of the reference lists every reference table with its count, with no table of three columns; a card takes the height of its rows; the chart of the search is under the reference, in the shorter column; the row of doors is removed. Each guide has a row in the table "## Documents" of `README.md`, and the site refuses a guide with none.
+- Words: "Mauvais usage de l'espace." (with a picture of the two cards: the card of the guides empty for its lower half, the table of the reference squeezed).
+- State: done.
+- Where: `docs/SITE.md`, "The docs home"; `tools/kerneltool/site_docs_home.odin`; `README.md`, "Documents".
+
+### D-201 The foot of each page names the maker
+- 2026-11-12. Decided by: the owner.
+- Decision: the foot of each page of the site starts with "modus · by Froment Software": the mark of the maker and its name as a link to https://froment.software, as on the other sites of the maker.
+- Words: "sur le site, dans le footer, il manque le « by froment software » comme il y a sur tous les sites."
+- State: done.
+- Where: `tools/kerneltool/site_frame.odin`; `resources/site/froment_software.png`.
 
 ## 13. The name and the repository
 

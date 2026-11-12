@@ -120,7 +120,7 @@ site_module_pages_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Ent
 		site_escape(&b, site_repository_file(site, SITE_MODULES_FILE))
 		strings.write_string(&b, "\"><code>" + SITE_MODULES_FILE + "</code></a> and from the source folder of each module.</p>\n")
 		site_page_add(site, Site_Page{path = modules_page, is_index = true, title = "Modules", description = site_description_cut(fmt.tprintf("The %d modules and programs of %s, %d of them in the boot image, with their purpose, their exports and their imports.", len(reference.modules), SITE_SYSTEM_NAME, in_image)), section = .Reference, crumbs = site_crumbs(.Reference), body = strings.to_string(b), sources = site_sources(SITE_MODULES_FILE), layout = .Documentation})
-		append(entries, Site_Reference_Entry{path = modules_page, title = "Modules", what = "Each module and program, with a page for each: its documentation, its exports, its imports, and for a program its grants and its budget.", source = SITE_MODULES_FILE})
+		append(entries, Site_Reference_Entry{path = modules_page, title = "Modules", what = "Each module and program, with a page for each: its documentation, its exports, its imports, and for a program its grants and its budget.", source = SITE_MODULES_FILE, count = len(reference.modules), kind = .Module})
 	}
 
 	// One page for each module. The list of the builds holds the comment

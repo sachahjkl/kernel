@@ -483,9 +483,9 @@ site_enumeration_table :: proc(site: ^Site, b: ^strings.Builder, from_page: stri
 // code, and their lines in the index of the reference.
 site_generated_tables_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Entry) {
 	reference := &site.reference
-	add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Entry, path, title, description, what, source: string, b: ^strings.Builder, sources: ..string) {
+	add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Entry, path, title, description, what, source: string, count: int, kind: Site_Value_Kind, b: ^strings.Builder, sources: ..string) {
 		site_page_add(site, Site_Page{path = path, title = title, description = site_description_cut(description), section = .Reference, crumbs = site_crumbs(.Reference), body = strings.to_string(b^), sources = site_sources(..sources), layout = .Documentation})
-		append(entries, Site_Reference_Entry{path = path, title = title, what = what, source = source})
+		append(entries, Site_Reference_Entry{path = path, title = title, what = what, source = source, count = count, kind = kind})
 	}
 
 	// The kernel operations.
@@ -550,7 +550,7 @@ site_generated_tables_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference
 		site_about_paragraph(site, &b, site_page_file(SITE_OPERATIONS_FOLDER), reference.statuses_about, SITE_OPERATION_FILE, "Status")
 		site_enumeration_table(site, &b, site_page_file(SITE_OPERATIONS_FOLDER), reference.statuses, SITE_OPERATION_FILE, "status", "Statuses of a completion", {"Number", "Status", "What the contract says"}, .Status)
 		site_source_line(site, &b, SITE_OPERATION_FILE)
-		add(site, entries, site_page_file(SITE_OPERATIONS_FOLDER), "Kernel operations", fmt.tprintf("The %d kernel operations of %s, with their numbers, their parameters and their results, read from the contract.", count, SITE_SYSTEM_NAME), "Each operation that a program asks the kernel, with its number, its parameters and its result; the status of a completion.", SITE_OPERATION_FILE, &b, SITE_OPERATION_FILE)
+		add(site, entries, site_page_file(SITE_OPERATIONS_FOLDER), "Kernel operations", fmt.tprintf("The %d kernel operations of %s, with their numbers, their parameters and their results, read from the contract.", count, SITE_SYSTEM_NAME), "Each operation that a program asks the kernel, with its number, its parameters and its result; the status of a completion.", SITE_OPERATION_FILE, count, .Operation, &b, SITE_OPERATION_FILE)
 	}
 
 	// The context: the roles of its handles and of its values.
@@ -590,7 +590,7 @@ site_generated_tables_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference
 			site_table_end(&b, roles_table)
 			site_source_line(site, &b, group.file)
 		}
-		add(site, entries, site_page_file(SITE_CONTEXT_FOLDER), "The context of a program", fmt.tprintf("The roles of the %d handles and %d values of the context, the record that each program of %s receives at its start.", op.CONTEXT_HANDLES, op.CONTEXT_VALUES, SITE_SYSTEM_NAME), "The place of each handle and each value in the context that a program receives.", SITE_OPERATION_FILE, &b, SITE_OPERATION_FILE, SITE_SYSTEM_GRANTS_FILE)
+		add(site, entries, site_page_file(SITE_CONTEXT_FOLDER), "The context of a program", fmt.tprintf("The roles of the %d handles and %d values of the context, the record that each program of %s receives at its start.", op.CONTEXT_HANDLES, op.CONTEXT_VALUES, SITE_SYSTEM_NAME), "The place of each handle and each value in the context that a program receives.", SITE_OPERATION_FILE, len(reference.context_roles), .Handle, &b, SITE_OPERATION_FILE, SITE_SYSTEM_GRANTS_FILE)
 	}
 
 	// The errors.
@@ -613,7 +613,7 @@ site_generated_tables_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference
 		}
 		site_table_end(&b, units_table)
 		site_source_line(site, &b, SITE_ERRORS_FILE)
-		add(site, entries, site_page_file(SITE_ERRORS_FOLDER), "Error kinds and units", fmt.tprintf("The %d kinds and %d units of the error record of %s, with what each kind puts in its values.", len(reference.error_kinds) - 1, len(reference.error_units) - 1, SITE_SYSTEM_NAME), "Each kind and each unit of the error record, with the meaning of its values.", SITE_ERRORS_FILE, &b, SITE_ERRORS_FILE)
+		add(site, entries, site_page_file(SITE_ERRORS_FOLDER), "Error kinds and units", fmt.tprintf("The %d kinds and %d units of the error record of %s, with what each kind puts in its values.", len(reference.error_kinds) - 1, len(reference.error_units) - 1, SITE_SYSTEM_NAME), "Each kind and each unit of the error record, with the meaning of its values.", SITE_ERRORS_FILE, len(reference.error_kinds) - 1 + len(reference.error_units) - 1, .Status, &b, SITE_ERRORS_FILE)
 	}
 
 	// The grants.
@@ -657,7 +657,7 @@ site_generated_tables_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference
 		strings.write_string(&b, "</tr>\n")
 		site_table_end(&b, programs_table)
 		site_source_line(site, &b, SITE_ROOT_FILE)
-		add(site, entries, site_page_file(SITE_GRANTS_FOLDER), "Grants of the root service", fmt.tprintf("The %d grants that the root service of %s gives at the start of a program, the %d that it records, and the grants of each program.", len(reference.start_grants), len(reference.root_grants), SITE_SYSTEM_NAME), "What the root service gives each program at its start, and what it records and can revoke.", SITE_ROOT_FILE, &b, SITE_ROOT_FILE, SITE_SYSTEM_GRANTS_FILE)
+		add(site, entries, site_page_file(SITE_GRANTS_FOLDER), "Grants of the root service", fmt.tprintf("The %d grants that the root service of %s gives at the start of a program, the %d that it records, and the grants of each program.", len(reference.start_grants), len(reference.root_grants), SITE_SYSTEM_NAME), "What the root service gives each program at its start, and what it records and can revoke.", SITE_ROOT_FILE, len(reference.start_grants) + len(reference.root_grants), .Grant, &b, SITE_ROOT_FILE, SITE_SYSTEM_GRANTS_FILE)
 	}
 
 	// The fixed ranges.
@@ -676,7 +676,7 @@ site_generated_tables_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference
 		}
 		site_table_end(&b, ranges_table)
 		site_source_line(site, &b, SITE_FIXED_ADDRESSES_FILE)
-		add(site, entries, site_page_file(SITE_FIXED_RANGES_FOLDER), "Fixed ranges", fmt.tprintf("The %d fixed ranges of the addresses of a program of %s: the mappings that the system gives, each in its own slot.", len(reference.fixed_ranges), SITE_SYSTEM_NAME), "Each range of addresses that the system gives a program, with its address.", SITE_FIXED_ADDRESSES_FILE, &b, SITE_FIXED_ADDRESSES_FILE)
+		add(site, entries, site_page_file(SITE_FIXED_RANGES_FOLDER), "Fixed ranges", fmt.tprintf("The %d fixed ranges of the addresses of a program of %s: the mappings that the system gives, each in its own slot.", len(reference.fixed_ranges), SITE_SYSTEM_NAME), "Each range of addresses that the system gives a program, with its address.", SITE_FIXED_ADDRESSES_FILE, len(reference.fixed_ranges), .Number, &b, SITE_FIXED_ADDRESSES_FILE)
 	}
 
 	// The commands of the console.
@@ -712,7 +712,7 @@ site_generated_tables_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference
 			append(&facts, Site_Symbol_Fact{label = "Result", kind = .Type, html = site_type_reference_html(site, strings.concatenate({"wire.", command.result}, context.temp_allocator), command.result, true)})
 			site_symbol_write(site, &b, Site_Symbol{id = strings.concatenate({"command-", site_slug(command.name)}, context.temp_allocator), name = command.name, signature = site_console_signature(command), signature_html = site_console_signature_html(site, command), description = command.about, page = site_page_file(SITE_CONSOLE_FOLDER), facts = facts[:], source = command.file, line = command.line})
 		}
-		add(site, entries, site_page_file(SITE_CONSOLE_FOLDER), "Commands of the console", fmt.tprintf("The %d built-in commands of the console of %s, with their parameters, their results and their help.", len(reference.console_commands), SITE_SYSTEM_NAME), "Each built-in command of the console, as help() prints it.", files[0], &b, ..files[:])
+		add(site, entries, site_page_file(SITE_CONSOLE_FOLDER), "Commands of the console", fmt.tprintf("The %d built-in commands of the console of %s, with their parameters, their results and their help.", len(reference.console_commands), SITE_SYSTEM_NAME), "Each built-in command of the console, as help() prints it.", files[0], len(reference.console_commands), .Command, &b, ..files[:])
 	}
 
 	// The types: each type that the pages above and the module pages show.

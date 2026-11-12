@@ -52,7 +52,7 @@ A page named by a folder (`news/`) is the `index.html` of that folder (see "The 
 | `docs/reference/modules/`, `docs/reference/modules/<name>/` | See "The module pages" |
 | `docs/reference/types/` | See "The types" |
 
-Each page has the bar (the heron and the name at the left, the sections as buttons: Docs, Status, News, Releases; a section appears when its page exists; on a guide or a page of the reference, Docs is the current one), breadcrumbs on each page below the home (Home / Docs / Guides / <guide>; Home / Docs / Reference / <page>; Home / Docs / Reference / Modules / <module>; Home / Status), and a foot that names the commit, the release and the time of the build, and the files that the page comes from, as links to the repository at that commit. A reference table names the files that it is read from.
+Each page has the bar (the heron and the name at the left, the sections as buttons: Docs, Status, News, Releases; a section appears when its page exists; on a guide or a page of the reference, Docs is the current one), breadcrumbs on each page below the home (Home / Docs / Guides / <guide>; Home / Docs / Reference / <page>; Home / Docs / Reference / Modules / <module>; Home / Status), and a foot that first names the maker ("modus · by Froment Software": the mark of the maker at 16 pixels, `resources/site/froment_software.png`, and its name as a link to its site, on one line), then names the commit, the release and the time of the build, and the files that the page comes from, as links to the repository at that commit. A reference table names the files that it is read from.
 
 The tool reads the commit from the files of git (`.git`, `HEAD`, the reference, `packed-refs`), with no program. When it cannot, the foot says so and the links to files of the repository go to `master`.
 
@@ -196,11 +196,11 @@ The owner asked for it on 2026-11-12: "on garde une page d'index sur docs avec u
 
 1. The heading and one sentence: what the guides and the reference are.
 2. The search field of the page, large, in the middle (see "The search"): the same index, the same list of results and the same script as the field of the bar. The bar of this page has no field. With no script the field stays hidden, and the cards under it carry the page. Under the field there is only the room where the list opens.
-3. Two cards side by side (one under the other under 720 pixels), in the form of the cards of the site:
-   - Guides: what a guide is, their count, the first six in the reading order of the page of the guides, and a link to all of them.
-   - Reference: what it holds, then a table of the parts that a reader looks for first (`site_docs_reference_parts`): the kernel operations, the types, the modules, the commands of the console and of the tool, the glossary and the measured numbers, each a link to its page with the count of what its page shows, in a column of the value kind Number (its icon once, in the head of the column). Then a link to every reference table.
-4. A card over the whole width, "What the search finds": the chart of the index (see "The chart of what the search finds").
-5. A row of doors, as the doors of the home: the first guide in the reading order, the state of the properties (the status page), the newest release, the news, and the repository.
+3. Two columns from 900 pixels, one under it (`.docs-parts`). A card takes the height of its own rows, so no card shows an empty part:
+   - The first column: the card of the guides. Every guide, in the reading order of the page of the guides, one row each: its number, its title as a link, and under it its one line of description, dim. The description is the row of the guide in the table "## Documents" of `README.md`; the command fails for a guide with no row there. The heading of the card is the link to the page of the guides.
+   - The second column (`.docs-parts-column`): the card of the reference, then the card "What the search finds". The card of the reference has every reference table (`site.reference_entries`), one row each: the icon of the kind of what the table lists, its name as a link on one line, its count at the right as a Number value, and under the name what it holds, dim. The heading of the card is the link to the index of the reference. The guides are the longer list, so the chart fills the column of the shorter one.
+   - One row form for the three cards (`.docs-row`, `site_docs_row`): a lead (a number or an icon), the name, a description or a bar, and a count in a column of one width with no rule at its left, so that the counts align. The description is always under the name: beside it, the rows of a card would each break at a different place.
+4. The page has no row of doors and no link "All ...": the bar gives the status, the news and the releases, and the cards give every guide and every table.
 
 The text of the page needs the entries of the index, and the index has an entry for each page: the command records the page with its title and its description first (`site_docs_home_add`), makes the index, then writes the text (`site_docs_home_fill`) before it writes the pages.
 

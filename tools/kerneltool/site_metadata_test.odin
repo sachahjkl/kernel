@@ -659,7 +659,7 @@ metadata_test_files :: proc() -> map[string]int {
 	for path in ([]string{SITE_STYLE_SHEET, SITE_SEARCH_SCRIPT, SITE_MARK_ANIMATION_SCRIPT, SITE_FAVICON, SITE_NEWS_FEED, SITE_RELEASES_FEED, SITE_MANIFEST, "pictures/a.png"}) {
 		files[path] = 1
 	}
-	for name in ([]string{SITE_ICON_SVG, SITE_ICON_TOUCH, SITE_MARK_BAR, SITE_MARK_BAR_LIGHT}) {
+	for name in ([]string{SITE_ICON_SVG, SITE_ICON_TOUCH, SITE_MARK_BAR, SITE_MARK_BAR_LIGHT, SITE_MAKER_PICTURE}) {
 		files[strings.concatenate({SITE_PICTURE_FOLDER, "/", name}, context.temp_allocator)] = 1
 	}
 	return files

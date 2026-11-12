@@ -183,8 +183,19 @@ The repository holds no picture of the same window with the pointer theme Posy's
 | `docs/DESIGN.md` | The design rules: how a program of the system looks. The boot display is the model |
 | `docs/POINTERS.md` | The pointer pictures: Xcursor, hyprcursor and the others; the format and the manifest of the system; the license of the Posy theme |
 | `docs/DEMONSTRATIONS.md` | For each of the 21 properties: what the machine test shows, the picture, and what no test shows yet |
+| `docs/CONSOLE.md` | The line of the console: the caret, the completion list, the history and its search, the colors of the code |
+| `docs/CRYPTOGRAPHY.md` | The cryptography of QUIC and TLS 1.3: which proven code the system takes, and how it checks it |
+| `docs/FONTS.md` | The text of the system: the vector font, the grid fit, the subpixel bands and the cache of the glyphs |
+| `docs/INTERFACE.md` | The interface package of the programs: the draw records, the damage, the layout, the input and the focus |
+| `docs/NETWORK.md` | The network: the frame service, the network service, and TCP as a library in the program |
+| `docs/QUIC.md` | QUIC version 1: packet protection, TLS 1.3, the transport of a connection, a server of several connections |
+| `docs/RANDOMNESS.md` | Where a program gets random bytes, and how the system measures the strength of its seed |
+| `docs/REPRODUCIBLE_BUILD.md` | One source gives one module: the build, and the threads of the compiler |
+| `docs/SCHEDULING.md` | The scheduling strategies: what the system takes from CFS, EEVDF and `sched_ext`, and how it changes strategy while it runs |
+| `docs/SIMD.md` | Which procedures compute with vectors, in which form, and how a person measures each one |
 | `CHANGELOG.md` | What each release brings, newest first. `changelog.d/` holds the changes that are not in a release yet |
-| `docs/HANDOFF.md` | The working record: current state, rules of the project, next steps |
+| `docs/DECISIONS.md` | The record of the decisions of the project, the open questions and the rules of work |
+| `docs/REVIEWS.md` | The reviews: each concession found, and what removes it |
 | `docs/research/` | Research notes with sources, and video transcripts |
 
 ## Code

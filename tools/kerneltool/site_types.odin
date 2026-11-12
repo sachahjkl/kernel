@@ -1265,5 +1265,5 @@ site_types_page_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Entry
 		append(&sources, folder)
 	}
 	site_page_add(site, Site_Page{path = path, title = "Types", description = site_description_cut(fmt.tprintf("The %d types of the contract of %s and of its modules: the size, the alignment, the fields and the members of each, from the compiler.", len(site.types), SITE_SYSTEM_NAME)), section = .Reference, crumbs = site_crumbs(.Reference), body = strings.to_string(b), sources = sources[:], layout = .Documentation})
-	append(entries, Site_Reference_Entry{path = path, title = "Types", what = "Each type of the contract and of the modules, with its size, its alignment and its layout.", source = SITE_TYPES_FILE})
+	append(entries, Site_Reference_Entry{path = path, title = "Types", what = "Each type of the contract and of the modules, with its size, its alignment and its layout.", source = SITE_TYPES_FILE, count = len(site.types), kind = .Type})
 }

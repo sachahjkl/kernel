@@ -68,22 +68,28 @@ Site_Search_Kind_Description :: struct {
 	folder:     string,
 }
 
-// The one table of the kinds of entries.
+// The one table of the kinds of entries. The chart of the docs home tells
+// the kinds apart by their icons and their colors, so the kinds with many
+// entries have looks of their own: a page is a file of the site, a term
+// has the kind of the glossary, an export (a procedure that a program
+// calls in a module) the arrow into a box of a call, a license row the
+// mark of what a license grants. A module and a program share the look of
+// the one page that lists both.
 site_search_kinds := [Site_Search_Kind]Site_Search_Kind_Description {
-	.Page            = {name = "page", value_kind = .Guide, folder = ""},
+	.Page            = {name = "page", value_kind = .File, folder = ""},
 	.Module          = {name = "module", value_kind = .Module, folder = SITE_MODULES_FOLDER},
 	.Program         = {name = "program", value_kind = .Module, folder = SITE_MODULES_FOLDER},
-	.Export          = {name = "export", value_kind = .Command, folder = ""},
+	.Export          = {name = "export", value_kind = .Operation, folder = ""},
 	.Operation       = {name = "operation", value_kind = .Operation, folder = SITE_OPERATIONS_FOLDER},
 	.Error_Kind      = {name = "error kind", value_kind = .Status, folder = SITE_ERRORS_FOLDER},
 	.Console_Command = {name = "console command", value_kind = .Command, folder = SITE_CONSOLE_FOLDER},
-	.Term            = {name = "term", value_kind = .Guide, folder = SITE_GLOSSARY_FOLDER},
+	.Term            = {name = "term", value_kind = .Term, folder = SITE_GLOSSARY_FOLDER},
 	.Guide_Section   = {name = "guide section", value_kind = .Guide, folder = SITE_GUIDE_FOLDER},
 	.Property        = {name = "property", value_kind = .Status, folder = SITE_STATUS_FOLDER},
 	.News            = {name = "news entry", value_kind = .Time, folder = SITE_NEWS_FOLDER},
 	.Release         = {name = "release", value_kind = .Version, folder = SITE_RELEASES_FOLDER},
 	.Gap             = {name = "gap", value_kind = .No, folder = SITE_STATUS_FOLDER},
-	.License_Row     = {name = "license row", value_kind = .File, folder = SITE_LICENSES_FOLDER},
+	.License_Row     = {name = "license row", value_kind = .Grant, folder = SITE_LICENSES_FOLDER},
 	.Type            = {name = "type", value_kind = .Type, folder = SITE_TYPES_FOLDER},
 }
 

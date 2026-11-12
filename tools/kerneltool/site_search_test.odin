@@ -152,7 +152,7 @@ site_search_index_of_a_small_site :: proc(t: ^testing.T) {
 
 	// The JSON of the index: the title of the news entry is escaped.
 	index := site_search_index_json(&site, entries, site.pages[:])
-	testing.expect(t, strings.has_prefix(index, "{\"kinds\":[[\"page\",\"guide\"],[\"module\",\"module\"],[\"program\",\"module\"]"), index[:min(len(index), 120)])
+	testing.expect(t, strings.has_prefix(index, "{\"kinds\":[[\"page\",\"file\"],[\"module\",\"module\"],[\"program\",\"module\"]"), index[:min(len(index), 120)])
 	testing.expect(t, strings.contains(index, "[\"news entry\",\"time\"]"))
 	testing.expect(t, strings.contains(index, "\"A \\\"thing\\\" \\u003c/script\\u003e\""))
 	testing.expect(t, !strings.contains(index, "</script"))
@@ -242,11 +242,11 @@ site_search_chart_of_a_small_index :: proc(t: ^testing.T) {
 	glossary_link := site_page_link(&site, path, site_page_file(SITE_GLOSSARY_FOLDER))
 	news_link := site_page_link(&site, path, site_section_page(.News))
 	expected_rows := [?]string {
-		strings.concatenate({row_start(.Term, 3), "<a class=\"search-chart-target\" href=\"", glossary_link, "\"><span class=\"value-icon value-guide\" aria-hidden=\"true\"></span><span class=\"search-chart-name\">terms</span><svg class=\"search-chart-bar value-guide\" aria-hidden=\"true\" focusable=\"false\"><rect class=\"search-chart-length\" width=\"100.0%\" height=\"100%\"/><rect class=\"search-chart-least\" width=\"4\" height=\"100%\"/></svg><code class=\"value value-number search-chart-count\">3</code></a></li>"}, context.temp_allocator),
-		strings.concatenate({row_start(.Page, 2), "<span class=\"search-chart-target\"><span class=\"value-icon value-guide\" aria-hidden=\"true\"></span><span class=\"search-chart-name\">pages</span><svg class=\"search-chart-bar value-guide\" aria-hidden=\"true\" focusable=\"false\"><rect class=\"search-chart-length\" width=\"66.6%\""}, context.temp_allocator),
-		strings.concatenate({row_start(.Export, 1), "<span class=\"search-chart-target\"><span class=\"value-icon value-command\" aria-hidden=\"true\"></span><span class=\"search-chart-name\">export</span>"}, context.temp_allocator),
-		strings.concatenate({row_start(.News, 1), "<a class=\"search-chart-target\" href=\"", news_link, "\"><span class=\"value-icon value-time\" aria-hidden=\"true\"></span><span class=\"search-chart-name\">news entry</span><svg class=\"search-chart-bar value-time\" aria-hidden=\"true\" focusable=\"false\"><rect class=\"search-chart-length\" width=\"33.3%\""}, context.temp_allocator),
-		strings.concatenate({row_start(.Release, 1), "<span class=\"search-chart-target\">"}, context.temp_allocator),
+		strings.concatenate({row_start(.Term, 3), "<a class=\"docs-row search-chart-target\" href=\"", glossary_link, "\"><span class=\"docs-row-lead value-icon value-term\" aria-hidden=\"true\"></span><span class=\"docs-row-main\"><span class=\"docs-row-name search-chart-name\">terms</span><svg class=\"docs-row-bar search-chart-bar value-term\" aria-hidden=\"true\" focusable=\"false\"><rect class=\"search-chart-length\" width=\"100.0%\" height=\"100%\"/><rect class=\"search-chart-least\" width=\"4\" height=\"100%\"/></svg>"}, context.temp_allocator),
+		strings.concatenate({row_start(.Page, 2), "<span class=\"docs-row search-chart-target\"><span class=\"docs-row-lead value-icon value-file\" aria-hidden=\"true\"></span><span class=\"docs-row-main\"><span class=\"docs-row-name search-chart-name\">pages</span><svg class=\"docs-row-bar search-chart-bar value-file\" aria-hidden=\"true\" focusable=\"false\"><rect class=\"search-chart-length\" width=\"66.6%\""}, context.temp_allocator),
+		strings.concatenate({row_start(.Export, 1), "<span class=\"docs-row search-chart-target\"><span class=\"docs-row-lead value-icon value-operation\" aria-hidden=\"true\"></span><span class=\"docs-row-main\"><span class=\"docs-row-name search-chart-name\">export</span>"}, context.temp_allocator),
+		strings.concatenate({row_start(.News, 1), "<a class=\"docs-row search-chart-target\" href=\"", news_link, "\"><span class=\"docs-row-lead value-icon value-time\" aria-hidden=\"true\"></span><span class=\"docs-row-main\"><span class=\"docs-row-name search-chart-name\">news entry</span><svg class=\"docs-row-bar search-chart-bar value-time\" aria-hidden=\"true\" focusable=\"false\"><rect class=\"search-chart-length\" width=\"33.3%\""}, context.temp_allocator),
+		strings.concatenate({row_start(.Release, 1), "<span class=\"docs-row search-chart-target\">"}, context.temp_allocator),
 	}
 	last_place := -1
 	for expected in expected_rows {
@@ -261,7 +261,7 @@ site_search_chart_of_a_small_index :: proc(t: ^testing.T) {
 	// The total: a number value, the sum of the rows.
 	testing.expect(t, strings.contains(html, fmt.tprintf("<code class=\"value value-number\">%d</code> <span id=\"search-chart-words\">entries in the index</span>", sum)), html)
 	testing.expect(t, strings.contains(html, "<span id=\"search-chart-matched\" hidden><code class=\"value value-number\" id=\"search-chart-matched-count\">0</code> of </span>"))
-	testing.expect(t, strings.contains(html, fmt.tprintf("<ol class=\"search-chart-rows\" id=\"search-chart\" data-least=\"%d\">", SITE_SEARCH_CHART_LEAST_LENGTH)))
+	testing.expect(t, strings.contains(html, fmt.tprintf("<ol class=\"docs-rows search-chart-rows\" id=\"search-chart\" data-least=\"%d\">", SITE_SEARCH_CHART_LEAST_LENGTH)))
 	testing.expect(t, strings.contains(html, "<h2 id=\"search-finds\">What the search finds</h2>"))
 	testing.expect_value(t, site_heading_value_problem(html), "")
 	testing.expect(t, !strings.contains(html, "style="), "the chart holds a style attribute")
@@ -290,6 +290,11 @@ site_docs_home_holds_the_chart :: proc(t: ^testing.T) {
 	testing.expectf(t, field >= 0 && parts > field && chart > parts, "the order of the docs home: the field at %d, the cards at %d, the chart at %d", field, parts, chart)
 	html := site_page_html(&site, Site_Page{path = path, is_index = true, title = "Docs", description = "The docs.", section = .Docs, search_in_page = true, body = body})
 	testing.expect(t, !strings.contains(html, "style="), "the docs home holds a style attribute")
+	// The foot names the maker once: its mark, then its name as a link.
+	testing.expect_value(t, strings.count(html, "<span class=\"maker\">"), 1)
+	testing.expect(t, strings.contains(html, "<p class=\"foot-maker\">" + SITE_SYSTEM_NAME + " · by <span class=\"maker\"><img src=\"../" + SITE_PICTURE_FOLDER + "/" + SITE_MAKER_PICTURE + "\" width=\"16\" height=\"16\" alt=\"\"><a href=\"" + SITE_MAKER_ADDRESS + "\">" + SITE_MAKER_NAME + "</a></span></p>"), "the foot has not the line of the maker")
+	// The page has no row of doors, and no card ends with a link to all.
+	testing.expect(t, !strings.contains(body, "Where to start") && !strings.contains(body, ">All "), "the docs home repeats the doors of the bar")
 	testing.expect_value(t, site_inline_code_problem(html), "")
 }
 
