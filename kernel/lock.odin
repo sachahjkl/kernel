@@ -42,11 +42,13 @@ lock_take :: proc "contextless" (lock: ^Lock, kind: op.Lock_Kind) {
 		count.waits += 1
 		// The event point of a wait for a lock (events.odin): only on the
 		// path that waits, and with no read of the cycle counter when no
-		// rule of this kind exists. The record is written after the take:
-		// event_record takes no lock, so it can run with this one held.
+		// rule of this kind can accept it. The record is written after the
+		// take: event_record takes no lock, so it can run with this one held.
 		started: u64
 		if event_observed(cpu, OBSERVED_LOCK_WAIT) {
-			started = cycles_now()
+			if program, _ := event_current(cpu); event_wanted(cpu, OBSERVED_LOCK_WAIT, .Lock_Wait, program) {
+				started = cycles_now()
+			}
 		}
 		for intrinsics.atomic_load(&lock.serving) != ticket {
 			sync_acknowledge(cpu)

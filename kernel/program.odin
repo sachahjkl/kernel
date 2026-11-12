@@ -748,7 +748,8 @@ handle_find :: proc "contextless" (program: ^Program, handle: u64, kind: Object_
 }
 
 // handle_close closes a handle of a program. The caller holds the program
-// lock; for a kind of handle_needs_control, also the control lock.
+// lock; for a kind of handle_needs_control, and for a machine handle with
+// the right Events, also the control lock.
 handle_close :: proc "contextless" (program: ^Program, slot: ^Handle_Slot) {
 	origin_detach(holding_of_handle(program, slot))
 	#partial switch slot.kind {
@@ -775,6 +776,12 @@ handle_close :: proc "contextless" (program: ^Program, slot: ^Handle_Slot) {
 	case .Ports:
 		slot.kind = .None
 		ports_changed(program)
+	case .Machine:
+		// The event table of the program lives while it has the right
+		// Events (events.odin): a close and a revocation both come here.
+		if .Events in slot.rights {
+			event_right_closed(program, slot)
+		}
 	}
 	slot^ = {generation = slot.generation + 1, ended = u8(errors.End.Closed)}
 }
@@ -1686,18 +1693,18 @@ kernel_interrupt :: proc "c" (frame: ^Frame) {
 		// The event points of a fault (events.odin) come after the work, so
 		// that the record says what the kernel did. The thread keeps its
 		// program and its number until its processor leaves it.
-		if event_observed(cpu, OBSERVED_FAULT) {
+		if event_wanted(cpu, OBSERVED_FAULT, .Fault, thread.program) {
 			event_record(cpu, .Fault, thread.program, thread.number, frame.vector, fault_address, u64(op.Event_Fault_Outcome.First_Use))
 		}
 	case frame.vector == VECTOR_PAGE_FAULT && fault_deliver(cpu.current, fault_address):
 		// A record of the fault ring: the thread is Waiting until a thread
 		// of its program answers, so the end below goes to schedule.
-		if event_observed(cpu, OBSERVED_FAULT) {
+		if event_wanted(cpu, OBSERVED_FAULT, .Fault, thread.program) {
 			event_record(cpu, .Fault, thread.program, thread.number, frame.vector, fault_address, u64(op.Event_Fault_Outcome.Fault_Ring))
 		}
 	case:
 		program_fault(thread.program, frame, fault_address)
-		if from_program && frame.vector < VECTOR_INTERRUPT_BASE && event_observed(cpu, OBSERVED_FAULT) {
+		if from_program && frame.vector < VECTOR_INTERRUPT_BASE && event_wanted(cpu, OBSERVED_FAULT, .Fault, thread.program) {
 			event_record(cpu, .Fault, thread.program, thread.number, frame.vector, fault_address, u64(op.Event_Fault_Outcome.Stopped))
 		}
 	}

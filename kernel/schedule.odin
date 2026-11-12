@@ -417,7 +417,7 @@ schedule :: proc "contextless" () -> ! {
 			extended_state_restore(&thread.extended_state, extended_state_form)
 			// The event point of a switch of threads (events.odin). The
 			// thread is the current thread of this processor now.
-			if event_observed(cpu, OBSERVED_SWITCH) {
+			if event_wanted(cpu, OBSERVED_SWITCH, .Switch, thread.program) {
 				event_record(cpu, .Switch, thread.program, thread.number, 0, u64(left_program), u64(left_number))
 			}
 			run(cpu, thread)

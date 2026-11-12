@@ -197,7 +197,8 @@ Operation :: enum u32 {
 	// EVENT_RING_RECORDS_MOST. At most EVENT_RULE_CAPACITY rules (No_Slot above). A new table replaces the table of
 	// the caller; a table of another program is not replaced (Bad_State). With memory 0 the caller takes its table
 	// away (Bad_State if it has none): when the operation returns, no processor writes in the old memory object.
-	// The table also ends when its program ends.
+	// The table also ends when its program ends, and when the last machine handle of its program with Events closes
+	// or is revoked: the table lives while the right that made it lives.
 }
 
 // The scheduling strategy of the machine (docs/SCHEDULING.md): the rule that
@@ -384,7 +385,10 @@ Fault_Answer_Kind :: enum u64 {
 //              before (0: none: it was idle, or it took no thread first);
 //              value_1: the number of that thread.
 //   Fault:     an exception of a thread of a program. detail: the vector;
-//              value_0: the address of a page fault (0 for another vector);
+//              value_0: the address of a page fault, only when a rule that
+//              names the program accepted the event (a rule for every
+//              program gets 0: the order of the pages that a program
+//              touches can show its data); 0 for another vector;
 //              value_1: the Event_Fault_Outcome.
 //   Lock_Wait: a processor took a lock of the kernel after a wait. detail:
 //              the Lock_Kind; value_0: the cycles of the wait. The program
@@ -423,7 +427,9 @@ Event_Rule :: struct {
 	kind:    Event_Kind,
 	flags:   Event_Rule_Flags,
 	// A program handle of the caller with the right Read: only the events
-	// of that program. 0: every program and the kernel itself (program 0).
+	// of that program, with the address of its page faults (Read gives its
+	// stop report, which has that address already). 0: every program and
+	// the kernel itself (program 0), with no address of a fault.
 	program: u64,
 	detail:  u64, // With Match_Detail: the Operation, the vector of a Fault, or the Lock_Kind.
 	// Operation and Lock_Wait: the least duration in nanoseconds, at most

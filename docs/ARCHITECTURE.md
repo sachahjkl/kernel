@@ -737,7 +737,7 @@ No bytecode, no verifier and no compiler: a rule is a record of fixed fields tha
 |---|---|---|---|---|---|
 | `Operation` | each command of a kernel entry (`enter`): the start and the end of `command_run` | the caller | the `Operation` | its cycles, from its start to its end, waits for locks included | its `Status` |
 | `Switch` | a processor takes a thread from a run queue (`schedule`, after the restore of its extended state) | the thread taken | 0 | the program slot of the thread that the processor left just before (0: none) | the number of that thread |
-| `Fault` | an exception of a thread of a program (`kernel_interrupt`), after the kernel acted on it | the faulting thread | the vector | the address of a page fault, else 0 | `Event_Fault_Outcome`: first use, fault ring, or stopped |
+| `Fault` | an exception of a thread of a program (`kernel_interrupt`), after the kernel acted on it | the faulting thread | the vector | the address of a page fault, only for a rule that names the program (section 5a), else 0 | `Event_Fault_Outcome`: first use, fault ring, or stopped |
 | `Lock_Wait` | a lock of the kernel taken after a wait (`lock_take`) | the current thread of the processor (0: none) | the `Lock_Kind` | the cycles of the wait | 0 |
 
 The time of a record is the cycle counter at the event point (the end of an operation or of a wait). The kernel entry of the decision is "the operation number and its duration": a kernel entry runs up to 32 commands of its kernel ring, so the event is one command, which has one operation number. A wait of the word wait is a `Switch` when the thread runs again; the `Operation` of `Word_Wait` itself returns before the wait.
@@ -756,10 +756,29 @@ The record (`op.Event_Record`, 64 bytes): the cycle counter, the kind, the proce
 - The table of the caller is replaced; the table of another program is refused (`Bad_State`): the machine has one table, and one observer does not end the observation of another one in silence.
 - With memory 0: the caller takes its table away (`Bad_State` if it has none). When the operation returns, no processor writes in the old memory object.
 - The table also ends when the program that gave it ends (`program_cleanup`, before its handles close): the owner of the table is that program; the kernel forgets the rules and releases the memory object.
+- **The table lives while its right lives.** When the last machine handle of the owner with `Events` closes or is revoked, the table ends (`handle_close` calls `event_right_closed` for a machine handle with `Events`; a `Handle_Close` and a revocation both reach it, and the cleanup of a program too). Without this, a revocation would not take back what the right gives: the kernel would go on writing the work of every program into the memory of a program that lost the right. `Handle_Close` of a machine handle with `Events` asks for the control lock, under which the table changes; a revocation holds it already. The kernel writes a line for each end that the owner did not ask for: "kernel: the event table of program ... ended: its program stopped; ..." or "...: its right Events ended; ...". It writes the line of a given table once for each program, so a program that replaces its own table many times does not fill the log.
 
 ### 5. The grant
 
-The new right `Events` on the machine handle, beside `Inspect` and `Schedule` (the right of `Strategy_Set`). Why not `Inspect`: `Inspect` gives counts and states; `Events` gives the order and the duration of the work of each program, to the cycle: a precise clock over other programs (property 20, line 17). A program that reads the reports must not get it as a side effect. The root service gives it by name (the grant `Events`); today only to `kernel_events`, which also gets `Give` on that handle to give `Events` to one of its children (the case of a table whose owner stops). A rule that names a program needs a program handle with Read; a rule for every program needs only the right on the machine.
+The new right `Events` on the machine handle, beside `Inspect` and `Schedule` (the right of `Strategy_Set`). Why not `Inspect`: `Inspect` gives counts and states; `Events` gives the order and the duration of the work of each program, to the cycle: a precise clock over other programs (property 20, line 17). A program that reads the reports must not get it as a side effect. The root service gives it by name (the grant `Events`); today only to `kernel_events`, with no `Give`: a program of the system cannot pass `Events` on. The person can revoke it (`revoke("kernel_events", "machine")` in the console), and the table ends with it (section 4). A rule that names a program needs a program handle with Read; a rule for every program needs only the right on the machine.
+
+### 5a. What a record shows of another program
+
+A holder of `Events` sees the work of other programs. Each field, what it shows, and when the kernel gives it:
+
+| Kind | Field | What it shows of another program | Given |
+|---|---|---|---|
+| All | time, processor, program slot and serial, thread number | when and where a thread of the program runs in the kernel, to the cycle: the precise clock of property 20, line 17 | always: it is what the right `Events` is for |
+| Operation | detail | the operation number (`Operation`): what kind of request the program makes. No argument of the operation: no handle, no address, no count, no byte of its memory | always |
+| Operation | value_0 | the cycles of the operation, waits for locks included: the duration can follow the size of the work (the pages of a commit, the ranges of a protection) | always |
+| Operation | value_1 | the `Status` of the operation | always |
+| Switch | program and thread, value_0, value_1 | which thread a processor took, and which program and thread it left: the order of the work of the programs | always |
+| Fault | detail | the vector | always |
+| Fault | value_0 | the address of a page fault. The order of the pages that a program touches for the first time can show data that the program never gives (a table read at an index that is a secret): the "controlled channel" of the attacks on enclaves | only when a rule that names the program accepted the event; a rule for every program gets 0 |
+| Fault | value_1 | the outcome: first use, fault ring, or stopped: the count of the pages that a program touches, in time | always |
+| Lock_Wait | detail, value_0 | the kind of the lock and the cycles of the wait of the current thread of the processor: how the work of other programs contends with it | always |
+
+Why Read is the right that gives the address of a fault: a program handle with Read gives `Program_State` with the stop report of the program, which holds the address of its fault and its stack trace (the reports of `Inspect` hide them: the right `Inspect` alone does not give them). So a rule that names a program gives nothing that its handle does not give already, but in time. `Events_Set` checks Read on each program handle of a rule.
 
 ### 6. Where the records go
 
@@ -775,7 +794,8 @@ One event ring for each processor, in one contiguous memory object that the call
 
 ### 7. The work at an event point
 
-- **With no rule of its kind**: one load of `observed_kinds`, a word in the first line of the processor record (the line that each kernel entry reads already: `current`), and one branch. No call, no lock, no other memory. The event points of an operation and of a lock wait read the cycle counter at the start only when the bit is set; their end tests a local value (0: no start).
+- **With no rule of its kind**: one load of `observed_kinds`, a word in the first line of the processor record (the line that each kernel entry reads already: `current`), and one branch. No call, no lock, no other memory. The event points of an operation and of a lock wait read the cycle counter at the start only when the event is wanted; their end tests a local value (0: no start).
+- **With a rule of its kind for other programs only**: after the first branch, one load of the set of the program slots of the kind (`Event_Table.programs`, one word for each kind: bit n for the program slot n, bit 0 for a rule for every program; the machine has 64 program slots), a mask (`1 | 1 << program`), and one branch. No read of the cycle counter, no call (`event_wanted`). The set is a part of the table, published with it under the rule of section 8: it is read only after the acquire load of the word said that the kind has a rule. The event point of a lock wait finds its program through `current` and its thread only after the first branch.
 - **With rules**: a call of `event_record`. It loads the word again (a wait for a lock between the start and the end answers `processor_sync`: section 8), tests the rules (at most 16, each a few compares; a rule with "one in N" adds 1 to its count with an atomic addition and divides), and writes one record of 64 bytes and the count `written` of its ring. No lock, no wait, no call of the scheduler, no address of a program.
 - **"One in N" is exact across processors**: one count for each rule, in its own line, with an atomic addition. This is the one place where two processors can write one line on an event point: only for a rule with "one in N", and only when the events of that rule come on two processors at one time. A count for each processor would keep the lines apart, but "one in N" would then mean one in N on each processor, and N events of one thread that moves between processors would not give N / 10 records.
 
@@ -804,7 +824,7 @@ An event record carries the cycle counter only (its time, and the durations of `
 
 - **Intel**: the architectural performance monitoring is `CPUID` leaf `0xA` (its version, its general counters and their width, its fixed counters: instructions retired, cycles).
 - **AMD**: leaf `0xA` is an Intel leaf. AMD has 4 legacy core counters, 6 with the core counter extension (`CPUID` `0x80000001`, `ECX` bit 23), and the monitoring version 2 from Zen 4 (`CPUID` `0x80000022`). The host of the tests is an AMD Ryzen 7 5800X (Zen 3): no version 2.
-- **The test machine**: QEMU with `-cpu max`, KVM first and TCG when KVM is absent (`tools/kerneltool/main.odin`). TCG has no performance counters. KVM gives a guest a virtual PMU when its module has `enable_pmu` and QEMU asks for it (the CPU property `pmu`); whether `-cpu max` asks for it by default was not verified by the writer. The line of the boot says what the guest sees: "kernel: performance counters (a guest of a hypervisor): ...".
+- **The test machine**: QEMU with `-cpu max`, KVM first and TCG when KVM is absent (`tools/kerneltool/main.odin`). Its first boot line: "kernel: performance counters (a guest of a hypervisor): AMD, core counter extension yes, monitoring version 2 no, 0 core counters in CPUID 0x80000022". TCG has no performance counters. KVM gives a guest a virtual PMU when its module has `enable_pmu` and QEMU asks for it (the CPU property `pmu`); whether `-cpu max` asks for it by default was not verified by the writer. The line of the boot says what the guest sees: "kernel: performance counters (a guest of a hypervisor): ...".
 - So no test reaches the counters reliably: the code for their registers is not written. A later step programs them when the boot line shows them on the test machine, with a test that compares a count of instructions retired with a known loop.
 
 ### 11. The measure
@@ -821,10 +841,17 @@ The first run measured in the program itself, and its line did not add up: "a ru
 
 The first run, at a host load near 8, one run: no rule 8 194 476 entries in one second (the kernel before this step: 8 267 093 to 8 351 786 in the same hour: an event point with no rule costs nothing that this measure sees); one rule that matches nothing 7 992 904, about 3.1 ns more for each entry (1 / 7 992 904 - 1 / 8 194 476 s). Those 3 ns are the work before any rule is tested: the cycle counter read at the start and at the end of the operation, the call of `event_record`, the second load of the observed kinds; the test of one rule is a few compares. The coordinator fills the three numbers of the new line, two runs.
 
-Would a rule for another program be free for this one?
+A rule for another program is nearly free for this one now (the set of program slots of section 7). The paths of the event point of an operation, after the change:
 
-- To test the program of a rule before its kind changes nothing: the 3 ns come before the loop over the rules.
-- A mask of kinds for each program would: the processor word would keep only the kinds of the rules for every program, and a word in the record of each named program the kinds of its rules; an event point would test the two. Then an operation of a program that no rule names skips the cycle counter and the call. The costs: one more load at each event point with no rule (a line of the program record; `enter` already writes `entries` there, so the word beside it is in a line that the entry touches), a second set of words under the rule of section 8, and the event point of a lock wait finds its program through `current` and its thread. It changes the event point with no rule, which today costs nothing measured: not written in this step; a step of its own, with a measure before and after.
+| Path | Before the set | With the set |
+|---|---|---|
+| No rule of the kind | load the word, test, branch | the same: load the word, test, branch |
+| A rule of the kind for another program | load, test, branch; `rdtsc`; the operation; `rdtsc`; call `event_record`; load the word again; the loop over the rules (compare the kind, the detail, the least duration, the program); return | load, test, branch; load the set of the kind; shift, or, test, branch; the operation |
+| A rule that can accept the event | as above, then the record | load, test, branch; load the set; test, branch; `rdtsc`; the operation; `rdtsc`; call `event_record`, as before |
+
+To test the program of a rule before its kind in the loop would save nothing: the 3 ns come before the loop. A mask of kinds in the record of each program was the other form: it adds a load to the path with no rule, and a second set of words to keep under section 8; the set in the table adds a load only after the first branch. The coordinator measures the three numbers again.
+
+"One in N" stays a count with an atomic addition and a division (one division for each event that passed the other tests of a rule with N above 1, some tens of cycles). A countdown is not exact in a few lines: a subtraction and a reset at 0 lose a count when more than N - 1 events come on other processors between the two (a virtual processor that the host stops there), and the sampling then stops for ever; a compare-and-exchange loop is exact, but its retries have no bound under contention, and an event point must have one.
 
 ### 12. Not built
 

@@ -272,13 +272,15 @@ things_of :: proc "contextless" (name: string) -> system.Budget_Amounts {
 		// budget. Pages: its module, stack, context, thread area and page
 		// tables, about 142; its window, 960 x 600 x 4 bytes, 563; its rings,
 		// 4 processors x (128 + 8192 x 64 bytes), 513; the thread that empties
-		// them, 16 + 3; one shared page for each child, 2; two children at one
-		// time (the load child with the one that faults, then with the one
-		// that owns a table), 2 x 256: 1751 in all, and 2048 leaves 297.
-		// Programs: itself and two children at one time. Threads: its main
-		// thread, the thread that empties the rings, and the main thread of
-		// each of two children.
-		return {pages = 2048, programs = 3, threads = 4}
+		// them, 16 + 3; one shared page for each child, 2; the load child,
+		// 256 + 4 loaders x (16 + 3), 332; the child that faults, at the same
+		// time, 256: 1831 in all, and 2048 leaves 217. Programs: itself and
+		// two children at one time. Threads: its main thread, 1; the load
+		// child, its main thread and 4 loaders, 5 (taken from this budget
+		// when it starts, for its life); then either the child that faults
+		// or the thread that empties the rings, 1, never both at one time:
+		// 7.
+		return {pages = 2048, programs = 3, threads = 7}
 	case "extended_state":
 		return {pages = 2048, programs = 1, threads = 32} // The main thread and up to 31 threads that hold their registers.
 	case "address_space":
@@ -960,11 +962,6 @@ start :: proc "contextless" (name: string) -> system.Status {
 	}
 	if .Events in role {
 		machine_rights += {.Events}
-		// The test of the kernel events gives Events to one child, which
-		// owns a table and stops with it: the kernel must forget the table.
-		if name == "kernel_events" {
-			machine_rights += {.Give}
-		}
 	}
 	if machine_rights != {} {
 		grants[system.GRANT_MACHINE] = {machine, machine_rights}

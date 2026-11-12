@@ -42,6 +42,15 @@ import op "contract:operation"
 //    ring: `read`, memory of the program, any value. A false value can only
 //    make the ring look full (the record is lost and counted) or let the
 //    kernel write over records of this program that it did not read.
+// 6. The table lives while its owner has a right Events: the close or the
+//    revocation of its last machine handle with Events ends the table
+//    (handle_close, event_right_closed), under the control lock, as
+//    Events_Set does.
+// 7. The address of a page fault of another program is in a record only
+//    when a rule that accepted the event names that program: naming it
+//    needs a program handle with Read, which gives its stop report, with
+//    the address of its fault, already. A rule for every program gets 0
+//    (docs/ARCHITECTURE.md, "Kernel events", section 5a).
 
 // The bits of observed_kinds: bit n for the Event_Kind n.
 OBSERVED_OPERATION :: u32(1) << u32(op.Event_Kind.Operation)
@@ -63,6 +72,13 @@ Event_Rule_In_Kernel :: struct {
 
 // The event table of the machine. owner 0: no table. Fact 3 above.
 Event_Table :: struct {
+	// For each kind, the program slots that its rules name: bit n for the
+	// program slot n, and bit 0 for a rule for every program (slot 0 is the
+	// kernel and never names a program: PROGRAM_CAPACITY is 64, one word).
+	// An event point reads it after the observed kinds said that the kind
+	// has a rule, and before it reads the cycle counter: a rule for another
+	// program costs this program one load and one branch more.
+	programs:     [op.Event_Kind]u64,
 	rule_count:   u32,
 	rules:        [op.EVENT_RULE_CAPACITY]Event_Rule_In_Kernel,
 	observed:     u32, // The bits of the kinds that have a rule.
@@ -74,6 +90,20 @@ Event_Table :: struct {
 }
 
 event_table: Event_Table
+
+#assert(PROGRAM_CAPACITY <= 64) // The program slots fit in one word of Event_Table.programs.
+
+// Why a table ends, for its line of the log.
+Event_Table_End :: enum {
+	Taken_Away, // Its owner took it away, or replaced it (Events_Set): no line.
+	Owner_Stopped,
+	Right_Ended, // The last machine handle of its owner with Events closed, or was revoked.
+}
+
+// The owner and the serial of the last table whose give the log names: a
+// program that replaces its own table many times writes one line.
+event_logged_owner: u32
+event_logged_serial: u32
 
 // The count of the events that passed the other tests of each rule, for
 // "one in N": one line for each rule, so that two rules do not share a
@@ -95,6 +125,19 @@ event_observed :: #force_inline proc "contextless" (cpu: ^Processor, bit: u32) -
 	return intrinsics.atomic_load_explicit(&cpu.observed_kinds, .Acquire) & bit != 0
 }
 
+// event_wanted says if a rule of a kind can accept an event of a program:
+// the test of an event point. With no rule of the kind: one load and one
+// branch. With one: one more load (the set of the programs of the kind, in
+// the table that the acquire load published) and one more branch, before
+// any read of the cycle counter and any call. A rule of the set can still
+// refuse the event (event_accepted): this is the cheap part of the test.
+event_wanted :: #force_inline proc "contextless" (cpu: ^Processor, bit: u32, kind: op.Event_Kind, program: u32) -> bool {
+	if !event_observed(cpu, bit) {
+		return false
+	}
+	return event_table.programs[kind] & (1 | u64(1) << program) != 0
+}
+
 // event_record writes one kernel event of this processor into its event
 // ring, when a rule accepts it. It reads the observed kinds again itself:
 // a caller that read them before a wait for a lock (where the processor
@@ -103,8 +146,14 @@ event_record :: proc "contextless" (cpu: ^Processor, kind: op.Event_Kind, progra
 	if !event_observed(cpu, u32(1) << u32(kind)) {
 		return
 	}
-	if !event_accepted(kind, program, detail, value_0) {
+	accepted, named := event_accepted(kind, program, detail, value_0)
+	if !accepted {
 		return
+	}
+	// Fact 7: the address of a fault only for a rule that names the program.
+	recorded_value_0 := value_0
+	if kind == .Fault && !named {
+		recorded_value_0 = 0
 	}
 	ring := cpu.event_ring
 	if cpu.event_written - cpu.event_read_seen >= cpu.event_capacity {
@@ -132,7 +181,7 @@ event_record :: proc "contextless" (cpu: ^Processor, kind: op.Event_Kind, progra
 		thread         = program == 0 ? 0 : thread_number,
 		program_serial = serial,
 		detail         = detail,
-		value_0        = value_0,
+		value_0        = recorded_value_0,
 		value_1        = value_1,
 	}
 	cpu.event_written += 1
@@ -145,10 +194,10 @@ event_record :: proc "contextless" (cpu: ^Processor, kind: op.Event_Kind, progra
 // counts the event for its "one in N", also when another rule accepted the
 // event already, so that the count of a rule does not depend on the others.
 // value_0 is the duration for the kinds with a least duration; the other
-// kinds have a least duration of 0, which each value passes.
+// kinds have a least duration of 0, which each value passes. named: a rule
+// that names the program accepted the event.
 @(private = "file")
-event_accepted :: proc "contextless" (kind: op.Event_Kind, program: u32, detail: u64, value_0: u64) -> bool {
-	accepted := false
+event_accepted :: proc "contextless" (kind: op.Event_Kind, program: u32, detail: u64, value_0: u64) -> (accepted: bool, named: bool) {
 	for &rule, rule_index in event_table.rules[:event_table.rule_count] {
 		if rule.kind != kind || rule.match_detail && rule.detail != detail || value_0 < rule.least_cycles {
 			continue
@@ -165,8 +214,9 @@ event_accepted :: proc "contextless" (kind: op.Event_Kind, program: u32, detail:
 			}
 		}
 		accepted = true
+		named = named || rule.program != 0
 	}
-	return accepted
+	return accepted, named
 }
 
 // event_current gives the program and the thread number of the thread that
@@ -195,7 +245,7 @@ events_set :: proc "contextless" (program_index: u32, v: [7]u64, results: ^[7]u6
 		if !owned {
 			return .Bad_State // The caller has no table to take away.
 		}
-		event_table_end()
+		event_table_end(.Taken_Away)
 		return .Ok
 	}
 	memory := handle_find(program, v[1], .Memory, {.Write}) or_return
@@ -230,13 +280,15 @@ events_set :: proc "contextless" (program_index: u32, v: [7]u64, results: ^[7]u6
 		ring_bytes = ring_bytes,
 	}
 	for rule, rule_index in given[:v[3]] {
-		table.rules[rule_index] = event_rule_check(program, rule) or_return
-		table.observed |= u32(1) << u32(rule.kind)
+		kept := event_rule_check(program, rule) or_return
+		table.rules[rule_index] = kept
+		table.observed |= u32(1) << u32(kept.kind)
+		table.programs[kept.kind] |= kept.program == 0 ? 1 : u64(1) << kept.program
 	}
 	if event_table.owner != 0 && !owned {
 		return .Bad_State // Another program observes the kernel: one table at a time.
 	}
-	event_table_end()
+	event_table_end(.Taken_Away)
 	event_table_give(&table, memory.object, program_index)
 	results[0] = ring_bytes
 	results[1] = u64(processor_count)
@@ -321,14 +373,21 @@ event_table_give :: proc "contextless" (table: ^Event_Table, region_index: u32, 
 	for cpu in processors[:processor_count] {
 		intrinsics.atomic_store(&cpu.observed_kinds, table.observed)
 	}
-	log_in("events", .Info, "kernel: program ", program_name(&programs[owner]), " gave the event table: ", u64(table.rule_count), " rules, ", table.records, " records in the ring of each of ", u64(processor_count), " processors")
+	// One line for each program that observes the kernel: the use of the
+	// right is visible, and a program that replaces its table often does
+	// not fill the log.
+	if event_logged_owner != owner || event_logged_serial != event_table.owner_serial {
+		event_logged_owner = owner
+		event_logged_serial = event_table.owner_serial
+		log_in("events", .Info, "kernel: program ", program_name(&programs[owner]), " gave the event table: ", u64(table.rule_count), " rules, ", table.records, " records in the ring of each of ", u64(processor_count), " processors")
+	}
 }
 
 // event_table_end takes the event table away, if one exists, and releases
 // the memory object of its rings. The caller holds the control lock. When
 // it returns, no processor reads the table and no processor writes in the
 // memory object (facts 3 and 4).
-event_table_end :: proc "contextless" () {
+event_table_end :: proc "contextless" (reason: Event_Table_End) {
 	if event_table.owner == 0 {
 		return
 	}
@@ -353,7 +412,13 @@ event_table_end :: proc "contextless" () {
 	owner := event_table.owner
 	region := event_table.region
 	event_table = {}
-	log_in("events", .Info, "kernel: the event table of program ", program_name(&programs[owner]), " ended: ", written, " records written, ", lost, " lost")
+	switch reason {
+	case .Taken_Away:
+	case .Owner_Stopped:
+		log_in("events", .Info, "kernel: the event table of program ", program_name(&programs[owner]), " ended: its program stopped; ", written, " records written, ", lost, " lost")
+	case .Right_Ended:
+		log_in("events", .Info, "kernel: the event table of program ", program_name(&programs[owner]), " ended: its right Events ended; ", written, " records written, ", lost, " lost")
+	}
 	region_release(region)
 }
 
@@ -362,8 +427,28 @@ event_table_end :: proc "contextless" () {
 // program stopped, and its cleanup runs (program_cleanup).
 event_table_end_for :: proc "contextless" (program_index: u32) {
 	if event_table.owner == program_index && event_table.owner_serial == programs[program_index].serial {
-		event_table_end()
+		event_table_end(.Owner_Stopped)
 	}
+}
+
+// event_right_closed ends the event table when a machine handle with
+// Events of its owner closes or is revoked, and no other handle of the
+// owner has that right (fact 6). handle_close calls it for each machine
+// handle with Events, before it clears the slot: the slot still holds the
+// handle, and the loop skips it. The caller holds the program lock of the
+// program and the control lock (Handle_Close asks for it for such a
+// handle; a revocation and the cleanup of a program hold it).
+event_right_closed :: proc "contextless" (program: ^Program, closed: ^Handle_Slot) {
+	program_index := index_of_program(program)
+	if event_table.owner != program_index || event_table.owner_serial != program.serial {
+		return
+	}
+	for &slot in program.handles {
+		if &slot != closed && slot.kind == .Machine && .Events in slot.rights {
+			return
+		}
+	}
+	event_table_end(.Right_Ended)
 }
 
 // performance_counters_log writes one line at boot: what the processor

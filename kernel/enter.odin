@@ -20,10 +20,11 @@ enter :: proc "contextless" (cpu: ^Processor, index: u32) {
 		}
 		completion := ring.Record{tag = command.tag}
 		// The event point of an operation (events.odin): with no rule of
-		// this kind, one branch on a word of this processor, and no read of
-		// the cycle counter.
+		// this kind, one branch on a word of this processor; with a rule for
+		// another program only, one more load and branch. No read of the
+		// cycle counter in either case.
 		started: u64
-		if event_observed(cpu, OBSERVED_OPERATION) {
+		if event_wanted(cpu, OBSERVED_OPERATION, .Operation, thread.program) {
 			started = cycles_now()
 		}
 		status := command_run(index, command, &completion.values)
@@ -443,7 +444,9 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 
 	case .Handle_Close:
 		slot := handle_find(program, v[0], .None) or_return
-		if handle_needs_control(slot.kind) && need_control() {
+		// A machine handle with Events can end the event table, which
+		// changes under the control lock (events.odin).
+		if (handle_needs_control(slot.kind) || slot.kind == .Machine && .Events in slot.rights) && need_control() {
 			return STATUS_RETRY
 		}
 		handle_close(program, slot)
