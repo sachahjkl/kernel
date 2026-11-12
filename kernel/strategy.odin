@@ -126,15 +126,17 @@ strategy_change :: proc "contextless" (target: op.Strategy) -> op.Strategy {
 // was in the queue stays in it, in its order, and each thread that ran
 // still runs. It clears the strategy fields of each thread whose home is
 // this queue and whose fields the old strategy wrote: a thread in the
-// list, the thread on the processor, a thread that waits. These fields are
-// under this run lock: the home of a thread changes only under the run
-// lock of the old home and of the new one. A thread that is Ready, in no
-// list and on no processor is a new thread whose creation writes its
-// fields with no lock: it is skipped; its fields are zero, and it enters
-// the list (thread_queue) under this lock, after the conversion or before
-// it. Then each thread of the list is placed by the new strategy (New);
-// the thread on the processor is placed at its next tick or when it
-// leaves (not placed); a thread that waits is placed when it wakes.
+// list, the thread on the processor, a thread that waits, a thread that a
+// stop of Thread_Control holds. These fields are under this run lock: the
+// home of a thread changes only under the run lock of the old home and of
+// the new one. Another thread that is Ready, in no list and on no
+// processor is a new thread whose creation writes its fields with no lock:
+// it is skipped; its fields are zero, and it enters the list
+// (thread_queue) under this lock, after the conversion or before it. Then
+// each thread of the list is placed by the new strategy (New); the thread
+// on the processor is placed at its next tick or when it leaves (not
+// placed); a thread that waits or that a stop holds is placed when it
+// enters the list again.
 queue_convert :: proc "contextless" (queue: ^Run_Queue, home: u32, target: op.Strategy) {
 	if queue.strategy == target {
 		return
@@ -144,7 +146,7 @@ queue_convert :: proc "contextless" (queue: ^Run_Queue, home: u32, target: op.St
 			continue
 		}
 		state := intrinsics.atomic_load(&thread.state)
-		if state == .Waiting || state == .Ready && (thread.queued || thread.processor != 0) {
+		if state == .Waiting || state == .Ready && (thread.queued || thread.processor != 0 || thread.control_stops != 0) {
 			strategy_clear(&thread)
 		}
 	}

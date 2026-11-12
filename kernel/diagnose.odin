@@ -1080,6 +1080,33 @@ value_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Pro
 			}
 		}
 		return true
+	case .Thread_Control:
+		// A refused write: the value that the check refused, read again from
+		// the argument address. The command itself is a choice, below.
+		command := op.Thread_Control_Command(v[2])
+		if command == .Write_Registers {
+			registers: op.Thread_Registers
+			if !read_user(program, v[3], &registers, size_of(registers)) {
+				return false
+			}
+			if refusal, refused := op.thread_registers_refusal(&registers); refusal != .None {
+				record_set(record, .Bad_Value, .None, 4, refused, 0, 0)
+				return true
+			}
+			return false
+		}
+		if command == .Write_Extended_State {
+			// The buffer of the operation on this processor: it ended.
+			written := &processor_self().extended_state_written
+			if !read_user(program, v[3], written, extended_state_size) {
+				return false
+			}
+			if refusal, refused := extended_state_write_refusal(written); refusal != .None {
+				record_set(record, .Bad_Value, .None, 4, refused, 0, 0)
+				return true
+			}
+			return false
+		}
 	case .Fault_Handler_Set:
 		switch {
 		case v[1] > 1:

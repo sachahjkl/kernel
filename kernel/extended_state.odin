@@ -1,6 +1,7 @@
 package kernel
 
 import "base:intrinsics"
+import op "contract:operation"
 
 // The extended state of the processor: the x87, SSE, AVX and AVX-512
 // registers of a thread (docs/ARCHITECTURE.md, "The extended state of the
@@ -49,6 +50,8 @@ CR4_OSXSAVE :: 1 << 18 // xsave, xrstor and xgetbv work, and CPUID says so to pr
 // The offsets in the start state of a thread.
 X87_CONTROL_OFFSET :: 0
 MXCSR_OFFSET :: 24
+MXCSR_MASK_OFFSET :: 28 // The bits of MXCSR that the processor takes: fxsave writes it.
+MXCSR_MASK_DEFAULT :: 0xFFBF // The mask of a processor that writes 0 there (Intel SDM, volume 1, section 11.6.6).
 HEADER_OFFSET :: 512 // XSTATE_BV, then XCOMP_BV, then reserved bytes.
 X87_CONTROL_START :: 0x037F // Every exception masked, 64-bit precision, round to nearest.
 MXCSR_START :: 0x1F80 // Every exception masked, round to nearest.
@@ -74,6 +77,9 @@ foreign _ {
 extended_state_form: Extended_State_Form
 extended_state_components: Extended_State_Components
 extended_state_size: u64 // The bytes of the area that a save writes at most.
+// The bits of MXCSR that the processor takes: a restore of an area with
+// another bit faults, so a write of Thread_Control is checked against it.
+extended_state_mxcsr_mask: u32
 // The offset and the size of each component above SSE, from CPUID leaf 0xD:
 // each other processor must give the same, since an area is restored on
 // any processor.
@@ -240,6 +246,19 @@ extended_state_prove :: proc "contextless" () {
 		log("kernel: extended state: the processor does not give back the start state of a thread: x87 control ", Hex(u64(control)), ", MXCSR ", Hex(u64(mxcsr)), ", XSTATE_BV ", Hex(header))
 		machine_stop(1)
 	}
+
+	// fxsave writes the MXCSR mask at each save, also on a processor where
+	// the threads use xsaveopt, which can skip it.
+	extended_state_save(second, .Fxsave)
+	mask := (^u32)(&second.bytes[MXCSR_MASK_OFFSET])^
+	extended_state_mxcsr_mask = mask == 0 ? MXCSR_MASK_DEFAULT : mask
+}
+
+// extended_state_write_refusal says what a write of Thread_Control refuses
+// in an area of a thread: what would make xrstor or fxrstor fault in the
+// kernel, at the next restore of the thread.
+extended_state_write_refusal :: proc "contextless" (area: ^Extended_State_Area) -> (refusal: op.Thread_Write_Refusal, value: u64) {
+	return op.extended_state_refusal(area.bytes[:extended_state_size], transmute(u64)extended_state_components, extended_state_mxcsr_mask, extended_state_form != .Fxsave)
 }
 
 // extended_state_log writes what the first processor chose: the

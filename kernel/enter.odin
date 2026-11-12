@@ -80,12 +80,14 @@ command_run :: proc "contextless" (index: u32, command: ring.Record, results: ^[
 // that another thread stops ends at any instruction, and the caller then
 // owns the data that this thread was changing.
 // The wait ends at once if the current thread is stopped too: two threads
-// that stop each other do not wait for each other.
+// that stop each other do not wait for each other. The same for a stop of
+// Thread_Control, which also waits here: two threads that hold each other
+// would wait for each other with interrupts off.
 stop_wait :: proc "contextless" (cpu: ^Processor) {
 	self := &threads[cpu.current]
 	if cpu.stopped_thread != 0 {
 		thread := &threads[cpu.stopped_thread]
-		for intrinsics.atomic_load(&thread.serial) == cpu.stopped_thread_serial && intrinsics.atomic_load(&thread.processor) != 0 && !intrinsics.atomic_load(&self.stop_requested) {
+		for intrinsics.atomic_load(&thread.serial) == cpu.stopped_thread_serial && intrinsics.atomic_load(&thread.processor) != 0 && !intrinsics.atomic_load(&self.stop_requested) && intrinsics.atomic_load(&self.control_stops) == 0 {
 			sync_acknowledge(cpu)
 			intrinsics.cpu_relax()
 		}
@@ -312,6 +314,12 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 	case .Thread_State:
 		slot := handle_find(program, v[0], .Thread, {.Read}) or_return
 		results[0] = u64(intrinsics.atomic_load(&threads[slot.object].state))
+		// What a holder of the thread needs for Thread_Control: the stop
+		// count, and the size and the layout of the extended state area.
+		results[1] = u64(intrinsics.atomic_load(&threads[slot.object].control_stops))
+		results[2] = extended_state_size
+		results[3] = transmute(u64)extended_state_components
+		results[4] = extended_state_form == .Fxsave ? 0 : 1
 		return .Ok
 
 	case .Program_Stop:
@@ -894,11 +902,15 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		}
 		waiter := &threads[waiter_index]
 		// A fault that is not a page fault and not a trap would run the same
-		// instruction on the same registers, and fault again with no end:
-		// the refusal leaves the thread waiting, so that Stop still ends it
-		// with its report. The frame is the frame of its fault: the thread
-		// wrote it before it took this lock to wait.
-		if answer == .Resume && !op.fault_kind_resumes(waiter.frame.vector) {
+		// instruction on the same registers, and fault again with no end,
+		// unless the handler wrote the registers or the extended state of
+		// the thread since the fault (Thread_Control): then the handler
+		// chose where and with what the thread goes on, and each new fault
+		// is a new record that it reads. With no write, the refusal leaves
+		// the thread waiting, so that Stop still ends it with its report.
+		// The vector is the one of its fault: a write of Thread_Control
+		// does not change it.
+		if answer == .Resume && !op.fault_kind_resumes(waiter.frame.vector) && !waiter.registers_written {
 			return .Bad_State
 		}
 		waiter.fault_waits = false
@@ -924,6 +936,10 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		}
 		results[0] = u64(strategy_change(op.Strategy(v[1])))
 		return .Ok
+
+	case .Thread_Control:
+		// The control of a thread (thread_control.odin).
+		return thread_control(index, v, results)
 
 	case .Machine_Stop:
 		_ = handle_find(program, v[0], .Machine, {.Stop}) or_return

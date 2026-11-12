@@ -65,7 +65,7 @@ Right :: enum u32 {
 	Read    = 1, // Memory: map it. Program, Thread: read its state. Interrupt: read its count.
 	Write   = 2, // Memory: map it with Write. Log: write text on the log.
 	Execute = 3, // Memory: map it with Execute.
-	Control = 4, // Program: map memory in it, give handles to it, start it, stop it. Thread: stop it.
+	Control = 4, // Program: map memory in it, give handles to it, start it, stop it. Thread: end it, hold it, read and write its registers (Thread_Control).
 	Inspect = 5, // Machine: read the reports.
 	Devices = 6, // Machine: create device handles.
 	Stop    = 7, // Machine: stop the machine.
@@ -128,7 +128,10 @@ Operation :: enum u32 {
 	// WEIGHT_FULL; 0 is WEIGHT_FULL) and the request (microseconds, 1 to REQUEST_LIMIT; 0 is REQUEST_DEFAULT) are for
 	// the strategies that use them (Strategy). A weight can only be lower than the weight of a thread with 0.
 	Thread_Stop    = 17, // (thread or 0 for self). A program with no thread stops.
-	Thread_State   = 18, // (thread) -> Program_State: Ready, Waiting or Stopped.
+	Thread_State   = 18, // (thread) -> Program_State: Ready, Waiting or Stopped; the stop count (Thread_Control); the bytes
+	// of the extended state area of a thread; its components (the bits of XCR0: 0 x87, 1 SSE, 2 AVX, 5 to 7 AVX-512); 1
+	// when the area has the header of xsave at byte 512, 0 when it is the 512 bytes of fxsave. A thread that a stop
+	// holds is Ready when its wait ended, and runs only when its stop count is 0.
 	// The word wait: the one way to wait for something else than a time.
 	// A thread waits while each word of a list holds its value. The kernel
 	// names a word by its page frame, so two programs that map one memory
@@ -195,7 +198,8 @@ Operation :: enum u32 {
 	Fault_Answer = 31, // (thread number, fault serial, Fault_Answer_Kind): the answer for a thread of this program that
 	// waits in the fault ring, by the two values of its record. Bad_State if no thread with that number waits for the
 	// fault of that serial: a wrong answer, a second answer, or an answer from another program. Bad_State also for
-	// Resume after a fault kind that does not resume (fault_kind_resumes): the thread still waits, and Stop ends it.
+	// Resume after a fault kind that does not resume by itself (fault_kind_resumes) when Thread_Control wrote neither
+	// the registers nor the extended state of the thread since its fault: the thread still waits, and Stop ends it.
 	// Kernel events (docs/ARCHITECTURE.md, "Kernel events").
 	Events_Set = 32, // (machine with Events, memory or 0, address of a table of Event_Rule, count, records in each ring)
 	// -> the bytes of one event ring, the count of processors. The event table of the machine: the kernel writes an
@@ -207,6 +211,14 @@ Operation :: enum u32 {
 	// away (Bad_State if it has none): when the operation returns, no processor writes in the old memory object.
 	// The table also ends when its program ends, and when the last machine handle of its program with Events closes
 	// or is revoked: the table lives while the right that made it lives.
+	// The control of a thread (docs/ARCHITECTURE.md, "The control of a thread").
+	Thread_Control = 33, // (thread handle with Control or 0, thread number when the handle is 0, Thread_Control_Command,
+	// address, size) -> see Thread_Control_Command. With the handle 0, the number names a live thread of this program
+	// (Thread_Record.number, Fault_Record.thread; Bad_State if none); a thread of another program needs a handle.
+	// Stop and Resume change the stop count of the thread: it runs only while the count is 0. The registers are read
+	// and written only while the thread is held: its stop count is above 0, or it waits for an answer of the fault
+	// ring (Bad_State else, and for the calling thread). A write of values that a thread of a program cannot hold
+	// changes nothing (Bad_Operation): thread_registers_refusal, extended_state_refusal.
 }
 
 // The scheduling strategy of the machine (docs/SCHEDULING.md): the rule that
@@ -412,11 +424,13 @@ Fault_Kinds :: bit_set[Fault_Kind; u64]
 FAULT_KINDS_DELIVERED :: u64(1 << 0 | 1 << 1 | 1 << 3 | 1 << 6 | 1 << 11 | 1 << 12 | 1 << 13 | 1 << 14 | 1 << 16 | 1 << 17 | 1 << 19)
 // The kinds whose class is Trap.
 FAULT_KINDS_TRAPS :: u64(1 << 1 | 1 << 3)
-// The kinds after which Resume is accepted: a trap continues after its
-// instruction, and a handler changes what a page fault finds with
+// The kinds after which Resume is accepted by itself: a trap continues after
+// its instruction, and a handler changes what a page fault finds with
 // Memory_Commit and Memory_Protect. Each other fault would run the same
-// instruction on the same registers, and fault again with no end: no
-// operation changes the registers of a waiting thread.
+// instruction on the same registers, and fault again with no end: after it,
+// Resume is accepted only when Thread_Control wrote the registers or the
+// extended state of the thread since the fault (the handler moved the
+// instruction address, or changed the value that faulted).
 FAULT_KINDS_RESUMABLE :: FAULT_KINDS_TRAPS | u64(1) << 14
 
 // The class of a vector of the processor (fault_kind_class): Fault and Trap
@@ -439,7 +453,7 @@ fault_kind_class :: proc "contextless" (vector: u64) -> Fault_Class {
 }
 
 // fault_kind_resumes says if Fault_Answer accepts Resume for a fault of a
-// vector.
+// vector with no write of the registers of the thread.
 fault_kind_resumes :: proc "contextless" (vector: u64) -> bool {
 	return vector < 64 && FAULT_KINDS_RESUMABLE & (u64(1) << vector) != 0
 }
@@ -469,8 +483,150 @@ Fault_Access :: bit_set[Fault_Access_Bit; u64]
 // The answer for a thread that waits in the fault ring.
 Fault_Answer_Kind :: enum u64 {
 	None   = 0,
-	Resume = 1, // The thread continues at the instruction of its record: the faulting instruction again, or the next one after a trap. Only for a kind of FAULT_KINDS_RESUMABLE.
+	Resume = 1, // The thread continues with its registers: at the instruction of its record (the faulting instruction again, or the next one after a trap), or where Thread_Control wrote. For a kind of FAULT_KINDS_RESUMABLE, or after a write of Thread_Control.
 	Stop   = 2, // The program stops as if no handler were set: the stop code and the stop report of the fault.
+}
+
+// What Thread_Control does. The results are in the completion record.
+Thread_Control_Command :: enum u64 {
+	None                 = 0,
+	// Adds 1 to the stop count -> the count. When the operation returns, the
+	// thread runs no instruction until its count is 0 again: a thread on
+	// another processor left it; a thread in a wait stays in it, and does
+	// not run when it ends. The calling thread itself stops after its kernel
+	// entry. At most THREAD_STOP_COUNT_LIMIT (Bad_State above).
+	Stop                 = 1,
+	// Takes 1 from the stop count -> the count. Bad_State at 0. At 0, a
+	// thread whose wait ended runs again.
+	Resume               = 2,
+	// Writes a Thread_Registers at the address (size: at least its size) ->
+	// the bytes written.
+	Read_Registers       = 3,
+	// Reads a Thread_Registers at the address (size: at least its size): the
+	// thread continues with these registers. Bad_Operation for values that
+	// a thread cannot hold (thread_registers_refusal): nothing changes.
+	Write_Registers      = 4,
+	// Writes the extended state area of the thread at the address (size: at
+	// least the bytes of the area, Thread_State) -> the bytes written, the
+	// components. The layout is the one of the processor: the standard form
+	// of xsave, with the offset of each component from CPUID leaf 0xD; or
+	// the 512 bytes of fxsave on a processor with no xsave.
+	Read_Extended_State  = 5,
+	// Reads the extended state area at the address: the thread continues
+	// with it. Bad_Operation for an area that the processor would refuse
+	// (extended_state_refusal): nothing changes.
+	Write_Extended_State = 6,
+}
+
+THREAD_STOP_COUNT_LIMIT :: 1 << 16
+
+// The general registers, the instruction address and the flags of a thread
+// that Thread_Control holds. The names are the names of the registers of
+// the processor.
+Thread_Registers :: struct {
+	rax, rbx, rcx, rdx: u64,
+	rsi, rdi, rbp, rsp: u64,
+	r8, r9, r10, r11:   u64,
+	r12, r13, r14, r15: u64,
+	rip:    u64, // The address of the next instruction of the thread: below USER_END.
+	rflags: u64, // THREAD_FLAGS_REQUIRED set, and no bit outside THREAD_FLAGS_ALLOWED.
+	cs:     u64, // THREAD_CODE_SELECTOR: the one code selector of a program.
+	ss:     u64, // THREAD_STACK_SELECTOR: the one stack selector of a program.
+	// Read only, 1: the thread is held inside a kernel entry (a wait). At
+	// its return, rax is the time, as after each kernel entry (the line at
+	// the top of this file): a write of rax is lost; rcx and r11 hold what
+	// the syscall instruction left there.
+	in_kernel_entry: u64,
+	reserved:        u64, // Not read.
+}
+#assert(size_of(Thread_Registers) == 176)
+
+THREAD_CODE_SELECTOR :: 0x23
+THREAD_STACK_SELECTOR :: 0x1B
+// Interrupts on, and bit 1, which the processor always sets.
+THREAD_FLAGS_REQUIRED :: u64(0x202)
+// The flags that a thread of a program can hold: carry, parity, adjust,
+// zero, sign, trap, interrupt, direction, overflow, resume, alignment check
+// and identification, and bit 1. Not: the I/O privilege level, nested task,
+// virtual-8086, the virtual interrupt flags, the reserved bits.
+THREAD_FLAGS_ALLOWED :: u64(0x0025_0FD7)
+
+// Which part of a Thread_Registers or of an extended state area a write
+// refused.
+Thread_Write_Refusal :: enum u64 {
+	None                = 0,
+	Code_Selector       = 1,
+	Stack_Selector      = 2,
+	Flags               = 3, // A required flag is clear, or a flag outside THREAD_FLAGS_ALLOWED is set.
+	Instruction_Address = 4, // Not below USER_END.
+	Stack_Address       = 5, // Not canonical.
+	Mxcsr               = 6, // A bit that the processor does not take (its MXCSR mask).
+	Header_Components   = 7, // XSTATE_BV names a component that the kernel does not save.
+	Header_Reserved     = 8, // A byte of the header after XSTATE_BV is not 0.
+}
+
+// thread_registers_refusal says what a write of the registers of a thread
+// refuses, and the value that it refuses. The checks are the conditions of
+// the return of the processor to a program (iretq): with them, the kernel
+// never faults at the return.
+thread_registers_refusal :: proc "contextless" (registers: ^Thread_Registers) -> (refusal: Thread_Write_Refusal, value: u64) {
+	switch {
+	case registers.cs != THREAD_CODE_SELECTOR:
+		return .Code_Selector, registers.cs
+	case registers.ss != THREAD_STACK_SELECTOR:
+		return .Stack_Selector, registers.ss
+	case registers.rflags & THREAD_FLAGS_REQUIRED != THREAD_FLAGS_REQUIRED || registers.rflags & ~THREAD_FLAGS_ALLOWED != 0:
+		return .Flags, registers.rflags
+	case registers.rip >= USER_END:
+		return .Instruction_Address, registers.rip
+	case registers.rsp >> 47 != 0 && registers.rsp >> 47 != (u64(1) << 17) - 1:
+		return .Stack_Address, registers.rsp
+	}
+	return .None, 0
+}
+
+// The places of an extended state area that a write checks (Intel SDM,
+// volume 1, chapter 13).
+EXTENDED_STATE_MXCSR_OFFSET :: 24
+EXTENDED_STATE_LEGACY_BYTES :: 512 // The area of fxsave, and the first part of the area of xsave.
+EXTENDED_STATE_HEADER_BYTES :: 64 // At EXTENDED_STATE_LEGACY_BYTES: XSTATE_BV, then XCOMP_BV and reserved bytes.
+
+// extended_state_refusal says what a write of an extended state area
+// refuses: the conditions under which xrstor or fxrstor fault on it, in the
+// standard form. area holds the bytes of the area of this machine;
+// components is XCR0; with_header is false for the form of fxsave, which
+// has no header.
+extended_state_refusal :: proc "contextless" (area: []u8, components: u64, mxcsr_mask: u32, with_header: bool) -> (refusal: Thread_Write_Refusal, value: u64) {
+	if len(area) < EXTENDED_STATE_LEGACY_BYTES {
+		return .Header_Reserved, u64(len(area))
+	}
+	mxcsr := u32(area[EXTENDED_STATE_MXCSR_OFFSET]) | u32(area[EXTENDED_STATE_MXCSR_OFFSET + 1]) << 8 | u32(area[EXTENDED_STATE_MXCSR_OFFSET + 2]) << 16 | u32(area[EXTENDED_STATE_MXCSR_OFFSET + 3]) << 24
+	if mxcsr & ~mxcsr_mask != 0 {
+		return .Mxcsr, u64(mxcsr)
+	}
+	if !with_header {
+		return .None, 0
+	}
+	if len(area) < EXTENDED_STATE_LEGACY_BYTES + EXTENDED_STATE_HEADER_BYTES {
+		return .Header_Reserved, u64(len(area))
+	}
+	little_endian_word :: proc "contextless" (bytes: []u8, at: int) -> (result: u64) {
+		for index in 0 ..< 8 {
+			result |= u64(bytes[at + index]) << u64(8 * index)
+		}
+		return
+	}
+	if header := little_endian_word(area, EXTENDED_STATE_LEGACY_BYTES); header & ~components != 0 {
+		return .Header_Components, header
+	}
+	// XCOMP_BV 0 is the standard form; the reserved bytes are 0 in each
+	// area that a save of the processor wrote.
+	for at := EXTENDED_STATE_LEGACY_BYTES + 8; at < EXTENDED_STATE_LEGACY_BYTES + EXTENDED_STATE_HEADER_BYTES; at += 8 {
+		if reserved := little_endian_word(area, at); reserved != 0 {
+			return .Header_Reserved, reserved
+		}
+	}
+	return .None, 0
 }
 
 // Kernel events (docs/ARCHITECTURE.md, "Kernel events"). The kind of a

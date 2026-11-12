@@ -242,15 +242,16 @@ kick_all :: proc "contextless" () {
 }
 
 // thread_ready_held ends the wait of a thread: it becomes Ready, in the
-// queue of its home if no processor runs it. The entries of its wait become
-// leftovers. The caller holds the run lock of the home. queued: the thread
-// is in the queue now. preempts: the strategy of the queue says that it
-// preempts the thread that runs on its home.
+// queue of its home if no processor runs it and no stop of Thread_Control
+// holds it (then the last Resume puts it there). The entries of its wait
+// become leftovers. The caller holds the run lock of the home. queued: the
+// thread is in the queue now. preempts: the strategy of the queue says that
+// it preempts the thread that runs on its home.
 thread_ready_held :: proc "contextless" (thread: ^Thread) -> (queued: bool, preempts: bool) {
 	thread.state = .Ready
 	intrinsics.atomic_store(&thread.deadline, 0)
 	intrinsics.atomic_add(&thread.wait_serial, 1)
-	if thread.processor != 0 {
+	if thread.processor != 0 || thread.control_stops != 0 {
 		return false, false
 	}
 	queue_ready(thread, .Woken)
@@ -375,7 +376,11 @@ schedule :: proc "contextless" () -> ! {
 		if !thread.placed {
 			strategy.ready(queue, home, thread, .New)
 		}
-		strategy.stopping(queue, cpu, thread, spent, ended || thread.state != .Ready)
+		// A thread that a stop holds leaves the queue as a thread that
+		// waits: its strategy keeps its lag for the Resume that puts it
+		// back (thread_control.odin).
+		held := thread.control_stops != 0
+		strategy.stopping(queue, cpu, thread, spent, ended || thread.state != .Ready || held)
 		intrinsics.atomic_store(&thread.processor, 0)
 		// The slot of an ended thread can serve a new thread before this
 		// processor gets the control lock: the serial names this thread.
@@ -385,7 +390,7 @@ schedule :: proc "contextless" () -> ! {
 			// program_stop).
 			thread.state = .Stopped
 			intrinsics.atomic_add(&thread.wait_serial, 1)
-		} else if thread.state == .Ready {
+		} else if thread.state == .Ready && !held {
 			queue_ready(thread, .Back)
 		}
 		intrinsics.atomic_store(&cpu.current, 0)

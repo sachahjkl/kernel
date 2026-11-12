@@ -269,7 +269,7 @@ things_of :: proc "contextless" (name: string) -> system.Budget_Amounts {
 	case "return_fault":
 		return {pages = 2048, programs = 2, threads = 2} // One child at a time, with one thread.
 	case "fault_ring":
-		return {pages = 4096, programs = 2, threads = 21} // One child at a time: 512 pages and 20 threads (17 that fault in a full ring, its main thread and its handler).
+		return {pages = 4096, programs = 2, threads = 22} // One child at a time: 512 pages and 20 threads (17 that fault in a full ring, its main thread and its handler); one thread of its own that spins while a child tries to name it.
 	case "kernel_events":
 		// Program_Create takes the program and its first thread from this
 		// budget. Pages: its module, stack, context, thread area and page

@@ -200,6 +200,14 @@ Thread :: struct #align (64) {
 	fault_waits:   bool,
 	fault_serial:  u64, // The serial of that fault: Program.fault_serial when it came. Program lock.
 	fault_address: u64, // The address of the access of that fault. Program lock.
+	// The control of a thread (thread_control.odin). The stop count: the
+	// thread enters no run queue while it is above 0. Written under the
+	// run lock of home (atomic: kernel_interrupt reads it with no lock).
+	control_stops: u32,
+	// Thread_Control wrote the registers or the extended state since the
+	// last fault of the thread: Fault_Answer then accepts Resume for any
+	// kind. Program lock.
+	registers_written: bool,
 }
 
 #assert(offset_of(Thread, placed) < 64)
@@ -1796,9 +1804,9 @@ kernel_interrupt :: proc "c" (frame: ^Frame) {
 	if !from_program {
 		return // The processor was idle: it looks for a thread itself.
 	}
-	// The thread that entered continues, unless it waits, it ends, or its
-	// time slice is over.
-	if !intrinsics.atomic_load(&thread.stop_requested) && intrinsics.atomic_load(&thread.state) == .Ready && cpu.slice_left > 0 {
+	// The thread that entered continues, unless it waits, it ends, a stop
+	// of Thread_Control holds it, or its time slice is over.
+	if !intrinsics.atomic_load(&thread.stop_requested) && intrinsics.atomic_load(&thread.state) == .Ready && intrinsics.atomic_load(&thread.control_stops) == 0 && cpu.slice_left > 0 {
 		run(cpu, thread)
 	}
 	schedule()

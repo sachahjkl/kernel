@@ -12,7 +12,7 @@ This document gives, for each of the 21 properties of `PROPERTIES.md`, what the 
 
 | # | Property | State | What the test shows | Picture | What no test shows |
 |---|---|---|---|---|---|
-| 1 | Small kernel with a small, counted interface | Shown | The kernel has 32 operations, the first target of property 1, and an unknown operation gives an error record that says so. `rights` asks for nine operations and reads each answer | `rights`, `errors` | No check counts the operations against a number in a document: a new operation fails no test |
+| 1 | Small kernel with a small, counted interface | Shown | The kernel has 33 operations: the first target of property 1 was 32, and the control of a thread added one. An unknown operation gives an error record that says so. `rights` asks for nine operations and reads each answer | `rights`, `errors` | No check counts the operations against a number in a document: a new operation fails no test |
 | 2 | Sandbox by default | Shown | `probe` in a call host asks for the machine with three handle numbers: the kernel refuses each one. `rights`: five refusals with `No_Right`. `fault` stops alone | `isolated`, `rights` | A program that tries each of the 27 operations with no grant |
 | 3 | No "everything is a file" | Shown in part | Each resource has its own handle kind: a handle of another kind is refused with the kind that the call needs | `errors` | The property is an absence. No test can show that no file interface exists |
 | 4 | Non-blocking command buffers | Shown | `rings`: six programs pass records through six rings. `flow`: the records of one second and the kernel entries for one million records | `rings`, `flow` | A full ring under a writer that never waits |
