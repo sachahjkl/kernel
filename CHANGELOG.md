@@ -6,6 +6,16 @@ The project has steps, not separate releases. The merge of step N on `master` is
 
 What is not in a release yet is in `changelog.d/`, one fragment for each change. `kerneltool changelog release` writes a release from the fragments. Nobody edits this file by hand.
 
+## [0.80.0] - 2026-11-12
+
+### Added
+
+- **Several streams in one QUIC connection**: a client of `quic_echo` can open 4 streams at once, and each one is echoed on its own, with its own flow control and its own reset; a lost datagram of one stream no longer holds the others. `kerneltool test quic` runs one client with 4 streams.
+
+### Security
+
+- **A QUIC server can no longer be stopped by a few dozen real addresses**: the budget of Initial checks of each address can no longer be renewed by addresses that take turns, so 33 hosts no longer stop every new client of `quic_echo`. A new address gets no check while the table of 1024 addresses is busy, and `quic_echo` counts it.
+
 ## [0.79.0] - 2026-11-12
 
 ### Added
