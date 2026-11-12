@@ -19,11 +19,14 @@ LOGO_FOLDER :: "resources/logo"
 PROJECT_IMAGE :: ".project/image.png"
 
 // What is under the mark. A transparent picture has an alpha channel: the
-// heron keeps the colors of the dark background.
+// heron keeps the colors of the dark background, and Transparent_Light has
+// the colors of the light background (the darker neck, the dark name), for
+// a page whose own background is light.
 Logo_Background :: enum {
 	Dark,
 	Light,
 	Transparent,
+	Transparent_Light,
 }
 
 // One file of the mark: a square picture, the heron at its place, and the
@@ -70,6 +73,14 @@ logo_pictures :: proc() -> []Logo_Picture {
 	with_name.path = LOGO_FOLDER + "/modus_light.png"
 	with_name.background = .Light
 	append(&pictures, with_name)
+	// The same on nothing, for a page that has its own background: the
+	// README shows one of the two by the color scheme of the reader.
+	with_name.path = LOGO_FOLDER + "/modus_transparent.png"
+	with_name.background = .Transparent
+	append(&pictures, with_name)
+	with_name.path = LOGO_FOLDER + "/modus_light_transparent.png"
+	with_name.background = .Transparent_Light
+	append(&pictures, with_name)
 	// The heron alone, on nothing, for a file to use, and the sizes of an
 	// icon: one cell is 32, 1, 2, 4 or 8 pixels.
 	heron_alone := [?]struct {
@@ -94,15 +105,20 @@ logo_pictures :: proc() -> []Logo_Picture {
 	return pictures[:]
 }
 
+logo_picture_transparent :: proc(picture: Logo_Picture) -> bool {
+	return picture.background == .Transparent || picture.background == .Transparent_Light
+}
+
 logo_picture_channels :: proc(picture: Logo_Picture) -> int {
-	return 4 if picture.background == .Transparent else 3
+	return 4 if logo_picture_transparent(picture) else 3
 }
 
 // logo_picture_pixels draws one file of the mark: red, green and blue for
 // each pixel, and alpha when the background is transparent.
 logo_picture_pixels :: proc(picture: Logo_Picture) -> []u8 {
 	channels := logo_picture_channels(picture)
-	on_light := picture.background == .Light
+	on_light := picture.background == .Light || picture.background == .Transparent_Light
+	transparent := logo_picture_transparent(picture)
 	pixels := make([]u8, picture.size * picture.size * channels, context.temp_allocator)
 	for y in 0 ..< picture.size {
 		for x in 0 ..< picture.size {
@@ -110,7 +126,7 @@ logo_picture_pixels :: proc(picture: Logo_Picture) -> []u8 {
 			if !covered && picture.with_name {
 				color, covered = mark.name_pixel(picture.name_cell_size, x - picture.name_left, y - picture.name_top, on_light)
 			}
-			if !covered && picture.background != .Transparent {
+			if !covered && !transparent {
 				color, covered = mark.background_color(on_light), true
 			}
 			pixel := pixels[(y * picture.size + x) * channels:][:channels]

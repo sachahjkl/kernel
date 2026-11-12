@@ -397,6 +397,9 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Fragment | One file of `changelog.d/` with one change that is not in a release yet: its type and the text of its entry. `kerneltool changelog release` moves the fragments into a release | changeset, news file, entry (for the file) |
 | Mark | The picture that stands for the system: a heron on a grid of 24 by 24 square cells, each part filled with one gradient. `support/mark` holds it as data; `kerneltool logo` writes its files in `resources/logo` (`docs/DESIGN.md`, section 11) | logo, icon, emblem, mascot |
 | Name of the mark | The word "modus" in letters of square cells, 5 columns by 7 rows each, under the heron in the files of the mark that have a name | wordmark, logotype |
+| Site | The documentation of the system as static pages, their style sheet and their pictures, that `kerneltool site` writes in `build/site` from the files of the repository and the logs of the machine tests (`docs/SITE.md`). Its home is the one page that shows the system | website, homepage, landing page |
+| Guide | A page of the site made from a document of `docs/`: how a part of the system is designed, and why | article, tutorial (for this) |
+| Reference table | A page of the site that the tool generates from the code or the files that define a thing: what exists in this build, each row with its source | API docs, listing |
 
 ## Terms that the system does not have
 

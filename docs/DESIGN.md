@@ -170,6 +170,8 @@ The mark is the picture that stands for the system (owner, 2026-11-12: "le heron
 |---|---|---|
 | `resources/logo/modus.png` | 1024 x 1024 | The heron (cells of 24) and the name under it (cells of 20), on the dark background |
 | `resources/logo/modus_light.png` | 1024 x 1024 | The same on the light background |
+| `resources/logo/modus_transparent.png` | 1024 x 1024 | The heron and the name in the colors of the dark background, on a transparent background |
+| `resources/logo/modus_light_transparent.png` | 1024 x 1024 | The heron and the name in the colors of the light background (the darker neck, the dark name), on a transparent background |
 | `resources/logo/heron_768.png` | 768 x 768 | The heron alone, cells of 32, on a transparent background |
 | `resources/logo/heron_24.png`, `heron_48.png`, `heron_96.png`, `heron_192.png` | 24 to 192 | The heron alone with cells of 1, 2, 4 and 8 pixels, on a transparent background |
 | `.project/image.png` | 512 x 512 | The heron alone, cells of 16, centred on the dark background |
