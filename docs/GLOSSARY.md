@@ -433,6 +433,9 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Canonical address | The one absolute address of a page that the page names in its head (`<link rel="canonical">`): the site address and the path of the page, an index page by its folder | permalink, URL (for this) |
 | Page graph | The JSON-LD of one page: one `@graph` of schema.org nodes (the site, the system, its source code, the page, its breadcrumbs, and what the page is about), built from the data that the page shows, whose nodes name each other by their `@id` | structured data (for this), schema, rich snippet |
 | Sitemap | The file `sitemap.xml` of the site: the canonical address of each page, for a search engine | site index, page list |
+| Site menu | The menu of the bar of the site: one `details` element that holds the sections and the search. Under 720 pixels it is a square button with three lines; on a wide screen it is open and shows as the bar | burger menu, hamburger, drawer |
+| Site workflow | The workflow of GitHub Actions `.github/workflows/site.yml`: at each push to `master` it builds the boot image and the site with `kerneltool`, then GitHub Pages serves the site | pipeline, CI job, deploy script |
+| Tagline | The one line under the name in the head of the home of the site: the first sentence of the first paragraph of `README.md`. The rest of that paragraph is a section lower on the home | slogan, subtitle, hero text |
 
 ## Terms that the system does not have
 

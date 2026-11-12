@@ -27,6 +27,10 @@ SITE_REFERENCE_FOLDER :: "reference"
 // guides: the site leaves them out.
 SITE_WORKING_RECORDS :: [?]string{"HANDOFF.md", "REVIEWS.md"}
 SITE_DESCRIPTION_LIMIT :: 160
+// The start of the menu of the bar: a details element, closed in the file,
+// whose summary is the square button. Its name is a word, hidden by the
+// style sheet; with no style sheet the word shows.
+SITE_MENU_OPEN :: "<details class=\"bar-menu\">\n<summary class=\"bar-menu-button\"><span class=\"bar-menu-lines\" aria-hidden=\"true\"></span><span class=\"bar-menu-name\">Menu</span></summary>\n<div class=\"bar-menu-content\">\n"
 
 Site_Section :: enum {
 	Home,
@@ -81,6 +85,7 @@ Site_Guide :: struct {
 
 Site :: struct {
 	address:      string,
+	author:       string, // The holder of the line "Copyright" of LICENSE, or "".
 	commit:       string, // "" when the tool cannot read it.
 	release:      string,
 	build_time:   string,
@@ -330,10 +335,16 @@ site_build :: proc(address: string) -> bool {
 		}
 		site_write_file(&site, strings.concatenate({SITE_PICTURE_FOLDER, "/", picture.file_name}, context.temp_allocator), data) or_return
 	}
-	icon_sizes := SITE_ICON_SIZES
-	for size in icon_sizes {
-		name := strings.concatenate({"heron_", size, ".png"}, context.temp_allocator)
-		site.copies[strings.concatenate({SITE_PICTURE_FOLDER, "/", name}, context.temp_allocator)] = strings.concatenate({LOGO_FOLDER, "/", name}, context.temp_allocator)
+	// The icons, drawn from the table of the heron (site_icons.odin):
+	// favicon.ico at the root, where a browser asks for it by default, and
+	// the others in the picture folder. The check of the icons reads them.
+	icon_files, icons_ok := site_icon_files()
+	if !icons_ok {
+		fmt.eprintfln("kerneltool: site: cannot draw the icons or write %s", SITE_FAVICON)
+		return false
+	}
+	for icon_path, icon_data in icon_files {
+		site_write_file(&site, icon_path, icon_data) or_return
 	}
 
 	// The pictures of the machine, with the captions of README.md.
@@ -372,6 +383,11 @@ site_build :: proc(address: string) -> bool {
 	if !licenses_ok {
 		return false
 	}
+	// The author: the holder of the line "Copyright" of LICENSE, the one
+	// fact of an author that the repository holds.
+	if len(site.licenses.system_rows) > 0 {
+		site.author = site_copyright_holder(site.licenses.system_rows[0].author)
+	}
 
 	// The pages.
 	site_guides_add(&site) or_return
@@ -387,7 +403,8 @@ site_build :: proc(address: string) -> bool {
 	// The files that each page names in its head, or that other programs
 	// read with no address: written before the checks of the links.
 	site_write_file(&site, SITE_RELEASES_FEED, transmute([]u8)site_releases_feed(&site)) or_return
-	site_write_file(&site, SITE_MANIFEST, transmute([]u8)site_manifest(&site)) or_return
+	manifest := site_manifest(&site)
+	site_write_file(&site, SITE_MANIFEST, transmute([]u8)manifest) or_return
 	site_write_file(&site, SITE_LANGUAGE_MODEL_INDEX, transmute([]u8)site_language_model_index(&site)) or_return
 
 	// The copies: the pictures of the machine and of the guides, the icons.
@@ -429,7 +446,11 @@ site_build :: proc(address: string) -> bool {
 	// Open Graph, the JSON-LD graphs and the sitemap; with none, their
 	// absence.
 	sitemap := site.address != "" ? site_sitemap(&site) : ""
-	metadata_problems := site_check_metadata(site.address, site.pages[:], written, sitemap, site.picture_sizes)
+	metadata_problems := make([dynamic]string, context.temp_allocator)
+	append(&metadata_problems, ..site_check_metadata(site.address, site.pages[:], written, sitemap, site.picture_sizes))
+	// The icons: favicon.ico at the root, each icon of the heads and of the
+	// manifest with its stated size, the icons of a phone opaque.
+	append(&metadata_problems, ..site_icon_problems(site.pages[:], written, manifest, icon_files))
 	if len(metadata_problems) > 0 {
 		for problem in metadata_problems {
 			fmt.eprintfln("kerneltool: site: %s", problem)
@@ -531,10 +552,11 @@ site_page_html :: proc(site: ^Site, page: Site_Page) -> string {
 	write(&b, "\">\n<meta name=\"color-scheme\" content=\"dark light\">\n")
 	fmt.sbprintf(&b, "<meta name=\"theme-color\" media=\"(prefers-color-scheme: dark)\" content=\"%s\">\n", site_color(site_dark_colors().background))
 	fmt.sbprintf(&b, "<meta name=\"theme-color\" media=\"(prefers-color-scheme: light)\" content=\"%s\">\n", site_color(site_light_colors().background))
-	icon_sizes := SITE_ICON_SIZES
-	for size in icon_sizes {
-		fmt.sbprintf(&b, "<link rel=\"icon\" type=\"image/png\" sizes=\"%sx%s\" href=\"%s\">\n", size, size, link(page, strings.concatenate({SITE_PICTURE_FOLDER, "/heron_", size, ".png"}, context.temp_allocator)))
-	}
+	// The icons, in the order that lets an old browser take the ICO and a
+	// new one the SVG; all links are relative, as every link of the site.
+	fmt.sbprintf(&b, "<link rel=\"icon\" href=\"%s\" sizes=\"32x32\">\n", link(page, SITE_FAVICON))
+	fmt.sbprintf(&b, "<link rel=\"icon\" href=\"%s\" type=\"image/svg+xml\">\n", link(page, SITE_PICTURE_FOLDER + "/" + SITE_ICON_SVG))
+	fmt.sbprintf(&b, "<link rel=\"apple-touch-icon\" href=\"%s\" sizes=\"180x180\">\n", link(page, SITE_PICTURE_FOLDER + "/" + SITE_ICON_TOUCH))
 	if site_page_exists(site, site_section_pages[.News]) {
 		fmt.sbprintf(&b, "<link rel=\"alternate\" type=\"application/atom+xml\" title=\"News of %s\" href=\"%s\">\n", SITE_SYSTEM_NAME, link(page, SITE_NEWS_FEED))
 	}
@@ -551,6 +573,11 @@ site_page_html :: proc(site: ^Site, page: Site_Page) -> string {
 	write(&b, "<header class=\"bar\">\n<div class=\"bar-inner\">\n")
 	fmt.sbprintf(&b, "<a class=\"bar-home\" href=\"%s\"><picture><source media=\"(prefers-color-scheme: light)\" srcset=\"%s\">", link(page, "index.html"), link(page, SITE_PICTURE_FOLDER + "/" + SITE_MARK_BAR_LIGHT))
 	fmt.sbprintf(&b, "<img src=\"%s\" width=\"24\" height=\"24\" alt=\"\"></picture><span>%s</span></a>\n", link(page, SITE_PICTURE_FOLDER + "/" + SITE_MARK_BAR), SITE_SYSTEM_NAME)
+	// The sections and the search are in one menu: one list of links for
+	// every width. Under 720 pixels the menu is a square button; on a wide
+	// screen the style sheet and the script show it open, as a bar
+	// (docs/SITE.md, "The site menu").
+	write(&b, SITE_MENU_OPEN)
 	write(&b, "<nav aria-label=\"Sections\">\n<ul>\n")
 	for section in Site_Section {
 		if section == .Home || !site_page_exists(site, site_section_pages[section]) {
@@ -561,7 +588,7 @@ site_page_html :: proc(site: ^Site, page: Site_Page) -> string {
 	}
 	write(&b, "</ul>\n</nav>\n")
 	write(&b, SITE_SEARCH_BOX)
-	write(&b, "</div>\n</header>\n")
+	write(&b, "</div>\n</details>\n</div>\n</header>\n")
 
 	if len(page.crumbs) > 0 {
 		write(&b, "<nav class=\"crumbs page\" aria-label=\"Breadcrumbs\">\n<ol>\n")

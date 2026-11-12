@@ -138,6 +138,34 @@ blockquote { margin-left: 0; padding-left: 16px; border-left: 2px solid var(--li
 .bar nav li { margin: 0; }
 .bar nav a { display: inline-block; padding: 0 8px; line-height: 24px; background: var(--track); text-decoration: none; border-bottom: 2px solid transparent; }
 .bar nav a[aria-current="page"] { border-bottom-color: var(--line); }
+/* The menu: one list of sections and the search, in a details element. On
+   a wide screen it is open and its button is hidden, so it is the bar of
+   the sections. A browser that has ::details-content shows the content of
+   a closed menu on a wide screen with no script; another one shows the
+   button until search.js opens the menu. The button: a square with three
+   lines, its word hidden. */
+.bar { position: relative; }
+.bar-menu { flex: 1 1 auto; min-width: 0; }
+.bar-menu-content { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 24px; }
+.bar-menu-button { list-style: none; display: block; position: relative; width: 32px; height: 32px; margin-left: auto; cursor: pointer; background: var(--track); border: 1px solid var(--track); }
+.bar-menu-button::-webkit-details-marker { display: none; }
+.bar-menu-name { position: absolute; left: -9999px; }
+.bar-menu-lines, .bar-menu-lines::before, .bar-menu-lines::after { position: absolute; left: 7px; width: 16px; height: 2px; background: var(--text); }
+.bar-menu-lines { top: 14px; }
+.bar-menu-lines::before, .bar-menu-lines::after { content: ""; left: 0; }
+.bar-menu-lines::before { top: -6px; }
+.bar-menu-lines::after { top: 6px; }
+.bar-menu[open] > .bar-menu-button { border-color: var(--line); background: var(--card-top); }
+.bar-menu[open] > .bar-menu-button .bar-menu-lines, .bar-menu[open] > .bar-menu-button .bar-menu-lines::before, .bar-menu[open] > .bar-menu-button .bar-menu-lines::after { background: var(--line); }
+@media (min-width: 720px) {
+  .bar-menu[open] > .bar-menu-button { display: none; }
+}
+@supports selector(::details-content) {
+  @media (min-width: 720px) {
+    .bar-menu > .bar-menu-button { display: none; }
+    .bar-menu::details-content { content-visibility: visible; }
+  }
+}
 /* The search: a box at the right of the bar, in the place of the clock of
    the desktop, and a list as the completion list of the console: the
    matched characters in the accent, what each row is at its right, dim. */
@@ -240,7 +268,45 @@ figcaption { padding-top: 8px; font-size: 14px; }
 .news-body.with-picture { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 384px); gap: 16px; align-items: start; }
 .news-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-bottom: 8px; }
 .news-card figure { margin-bottom: 8px; padding: 4px; }
+/* The cards of the news on the home: in a row of cards, the title, the
+   line of the kind and the date, the picture and the text of each card
+   start at the same height, whatever the length of a title. Each card
+   takes four rows of the grid of the cards and shares them (subgrid); each
+   part has its row, so a card with no picture keeps its text in line. The
+   picture boxes of a row have one ratio, that of the screen pictures; a
+   picture of another ratio is shown whole inside the box, not cut. */
+.news-card { display: grid; grid-row: span 4; grid-template-rows: subgrid; row-gap: 0; }
+.news-card > h3 { grid-row: 1; }
+.news-card > .news-meta { grid-row: 2; }
+.news-card > figure { grid-row: 3; align-self: start; }
+.news-card > p:last-child { grid-row: 4; }
+@media (min-width: 720px) {
+  .news-card figure img { aspect-ratio: 4 / 3; object-fit: contain; }
+}
+/* A browser with no subgrid: the cards are blocks, and on a wide screen a
+   title keeps the room of two lines, so that the common case aligns. */
+@supports not (grid-template-rows: subgrid) {
+  .news-card { display: block; }
+  @media (min-width: 720px) {
+    .news-card > h3 { min-height: 48px; }
+  }
+}
 @media (max-width: 719px) {
+  /* The bar: the mark at the left, the button at the right; the open menu
+     lies over the page under the bar, the sections one under the other,
+     then the search over the whole width. */
+  .bar-inner { flex-wrap: nowrap; justify-content: space-between; }
+  .bar-menu { flex: 0 0 auto; }
+  .bar-menu-content { position: absolute; left: 0; right: 0; top: 100%; z-index: 20; flex-direction: column; align-items: stretch; gap: 8px; padding: 8px 16px 16px; background: var(--card-bottom); border-bottom: 1px solid var(--line); }
+  .bar nav ul { flex-direction: column; gap: 4px; }
+  .bar nav a { display: block; padding: 4px 8px; line-height: 24px; border-bottom: 0; border-left: 2px solid transparent; }
+  .bar nav a[aria-current="page"] { border-left-color: var(--line); }
+  .search { margin-left: 0; }
+  .search input { width: 100%; height: 32px; }
+  .search-panel { position: static; width: auto; max-width: none; margin-top: 4px; }
+  /* No line wider than the screen: a long word, an address or a path
+     breaks; a table and a block of code scroll in their own box. */
+  h1, h2, h3, p, li, td, figcaption, .crumbs { overflow-wrap: anywhere; }
   .news-body.with-picture, .news-cards { grid-template-columns: minmax(0, 1fr); }
   .table { overflow-x: auto; }
   .home-head { grid-template-columns: minmax(0, 1fr); }

@@ -4,6 +4,7 @@ import "core:encoding/json"
 import "core:image/png"
 import "core:strings"
 import "core:testing"
+import "support:mark"
 
 @(private = "file")
 TEST_ADDRESS :: "https://example.invalid/modus"
@@ -20,6 +21,7 @@ metadata_test_site :: proc(address: string) -> Site {
 	site.picture_sizes["pictures/a.png"] = {8, 8}
 	site.readme.lead = "A small operating system."
 	site.readme.mark_description = "The heron and the name"
+	site.author = "Ada Example"
 	releases := make([]Changelog_Release, 1, context.temp_allocator)
 	entries := make([]Changelog_Entry, 1, context.temp_allocator)
 	// Made with an allocator: a slice literal would live on the stack of
@@ -184,6 +186,84 @@ site_metadata_with_an_address :: proc(t: ^testing.T) {
 	testing.expect(t, len(site_check_metadata(TEST_ADDRESS, site.pages[:], written, sitemap, without_card)) > 0)
 }
 
+@(test)
+site_author_of_the_site :: proc(t: ^testing.T) {
+	testing.expect_value(t, site_copyright_holder("Copyright (c) 2026 Ada Example"), "Ada Example")
+	testing.expect_value(t, site_copyright_holder("Copyright © 2025-2026, 2027 Ada Example."), "Ada Example")
+	testing.expect_value(t, site_copyright_holder("Copyright (c) 2026"), "")
+	testing.expect_value(t, site_copyright_holder(""), "")
+	// The line of LICENSE of the repository gives a name, not a year.
+	if text, read := site_read_quiet(SITE_LICENSE_FILE); read {
+		holder := site_copyright_holder(site_line_after(text, "Copyright "))
+		testing.expect(t, holder != "")
+		testing.expect(t, len(holder) > 0 && (holder[0] < '0' || holder[0] > '9') && holder[0] != '(')
+	}
+	testing.expect(t, strings.has_prefix(site_account_address(), "https://github.com/"))
+	testing.expect(t, strings.has_prefix(SITE_REPOSITORY_ADDRESS, strings.concatenate({site_account_address(), "/"}, context.temp_allocator)))
+
+	// With an address: the person, and the nodes that name it.
+	site := metadata_test_site(TEST_ADDRESS)
+	written := metadata_test_written(&site)
+	author_reference :: "{\"@id\":\"" + TEST_ADDRESS + "/#author\"}"
+	home := written[SITE_PAGE]
+	testing.expect(t, strings.contains(home, "<meta name=\"author\" content=\"Ada Example\">"))
+	testing.expect(t, strings.contains(home, "\"@type\":\"Person\",\"@id\":\"" + TEST_ADDRESS + "/#author\",\"name\":\"Ada Example\",\"url\":\"" ))
+	testing.expect(t, strings.contains(home, "\"publisher\":" + author_reference))
+	testing.expect_value(t, strings.count(home, "\"author\":" + author_reference), 2) // The program and its source code.
+	testing.expect_value(t, strings.count(written["guides/A.html"], "\"author\":" + author_reference), 3)
+	testing.expect_value(t, strings.count(written["news.html"], "\"author\":" + author_reference), 3)
+	testing.expect_value(t, len(site_check_metadata(TEST_ADDRESS, site.pages[:], written, site_sitemap(&site), site.picture_sizes)), 0)
+	testing.expect(t, strings.contains(site_releases_feed(&site), "<author><name>Ada Example</name><uri>"))
+
+	// With no holder: no person, no field that names one, and the feed
+	// names the system.
+	site.author = ""
+	without_author := metadata_test_written(&site)
+	testing.expect(t, !strings.contains(without_author[SITE_PAGE], "\"Person\""))
+	testing.expect(t, !strings.contains(without_author[SITE_PAGE], "#author"))
+	testing.expect(t, !strings.contains(without_author[SITE_PAGE], "name=\"author\""))
+	testing.expect_value(t, len(site_check_metadata(TEST_ADDRESS, site.pages[:], without_author, site_sitemap(&site), site.picture_sizes)), 0)
+	testing.expect(t, strings.contains(site_releases_feed(&site), "<author><name>" + SITE_SYSTEM_NAME + "</name>"))
+}
+
+// The site menu: one list of the sections and the search inside one
+// details element, whose summary is the button with its name.
+@(test)
+site_menu_of_the_bar :: proc(t: ^testing.T) {
+	site := metadata_test_site("")
+	html := site_page_html(&site, site.pages[2]) // guides/A.html
+	testing.expect_value(t, strings.count(html, "<details"), 1)
+	testing.expect_value(t, strings.count(html, "<summary"), 1)
+	testing.expect_value(t, strings.count(html, "aria-label=\"Sections\""), 1)
+	testing.expect(t, strings.contains(html, "<span class=\"bar-menu-name\">Menu</span></summary>"))
+	details := strings.index(html, "<details class=\"bar-menu\">")
+	sections := strings.index(html, "<nav aria-label=\"Sections\">")
+	search := strings.index(html, "id=\"site-search-box\"")
+	details_end := strings.index(html, "</details>")
+	testing.expect(t, details >= 0 && details < sections && sections < search && search < details_end)
+	if sections < 0 || details_end < 0 || sections > details_end {
+		return
+	}
+	navigation := html[sections:]
+	navigation = navigation[:strings.index(navigation, "</nav>")]
+	testing.expect_value(t, strings.count(navigation, "<ul>"), 1)
+	// Each section once in the page; the current one marked.
+	testing.expect_value(t, strings.count(html, ">News</a>"), 1)
+	testing.expect(t, strings.contains(navigation, "aria-current=\"page\">Guides</a>"))
+	testing.expect_value(t, site_inline_code_problem(html), "")
+
+	// The style sheet draws the button and the alignment of the news cards,
+	// each with its fallback; the script opens the menu on a wide screen.
+	style := site_style_sheet("")
+	testing.expect(t, strings.contains(style, ".bar-menu-button"))
+	testing.expect(t, strings.contains(style, "@supports selector(::details-content)"))
+	testing.expect(t, strings.contains(style, "grid-template-rows: subgrid"))
+	testing.expect(t, strings.contains(style, "@supports not (grid-template-rows: subgrid)"))
+	script := site_search_script()
+	testing.expect(t, strings.contains(script, "document.querySelector(\"details.bar-menu\")"))
+	testing.expect(t, strings.contains(script, "matchMedia(\"(min-width: 720px)\")"))
+}
+
 // A title that tries to end the script element, open a comment or end a
 // line of a script stays a text of the JSON, and the page stays whole.
 @(test)
@@ -239,10 +319,160 @@ site_manifest_parses :: proc(t: ^testing.T) {
 	testing.expect_value(t, err, json.Error.None)
 	root, _ := value.(json.Object)
 	icons, _ := root["icons"].(json.Array)
-	sizes := SITE_ICON_SIZES
-	testing.expect_value(t, len(icons), len(sizes))
+	testing.expect_value(t, len(icons), 3) // 192 and 512 for any use, 512 maskable.
 	name, _ := root["name"].(json.String)
 	testing.expect_value(t, name, SITE_SYSTEM_NAME)
+	start, _ := root["start_url"].(json.String)
+	scope, _ := root["scope"].(json.String)
+	testing.expect_value(t, start, "./")
+	testing.expect_value(t, scope, "./")
+}
+
+@(test)
+site_icon_file_of_the_root :: proc(t: ^testing.T) {
+	first := metadata_test_png(2, 2, 4, []u8{1, 2, 3, 255, 4, 5, 6, 0, 7, 8, 9, 128, 10, 11, 12, 255})
+	second := metadata_test_png(3, 1, 3, []u8{1, 2, 3, 4, 5, 6, 7, 8, 9})
+	pictures := [][]u8{first, second}
+	file, ok := site_ico_encode(pictures)
+	testing.expect(t, ok)
+	entries, problem := site_ico_read(file)
+	testing.expect_value(t, problem, "")
+	testing.expect_value(t, len(entries), 2)
+	if len(entries) == 2 {
+		testing.expect_value(t, entries[0].width, 2)
+		testing.expect_value(t, entries[0].height, 2)
+		testing.expect_value(t, entries[0].offset, SITE_ICO_HEADER_SIZE + 2 * SITE_ICO_ENTRY_SIZE)
+		testing.expect_value(t, entries[0].bytes, len(first))
+		testing.expect_value(t, entries[1].width, 3)
+		testing.expect_value(t, entries[1].height, 1)
+		testing.expect_value(t, entries[1].offset, entries[0].offset + len(first))
+		testing.expect_value(t, entries[1].bytes, len(second))
+		testing.expect_value(t, entries[1].offset + entries[1].bytes, len(file))
+		testing.expect(t, string(file[entries[1].offset:][:entries[1].bytes]) == string(second))
+	}
+	// A damaged file: cut, another type, an entry outside the file.
+	_, cut_problem := site_ico_read(file[:len(file) - 1])
+	testing.expect(t, cut_problem != "")
+	other_type := make([]u8, len(file), context.temp_allocator)
+	copy(other_type, file)
+	other_type[2] = 2
+	_, type_problem := site_ico_read(other_type)
+	testing.expect(t, type_problem != "")
+	_, short_problem := site_ico_read(file[:SITE_ICO_HEADER_SIZE + 4])
+	testing.expect(t, short_problem != "")
+	_, empty_ok := site_ico_encode(nil)
+	testing.expect(t, !empty_ok)
+	_, not_png_ok := site_ico_encode([][]u8{[]u8{1, 2, 3}})
+	testing.expect(t, !not_png_ok)
+}
+
+@(test)
+site_icons_of_the_site :: proc(t: ^testing.T) {
+	// Each raster icon is the heron at a whole cell size with an even
+	// margin; the icon of a phone and the maskable one are opaque, the
+	// others transparent; the maskable drawing is inside the circle of
+	// 80 percent of the icon.
+	for icon in site_icons {
+		drawing := 24 * icon.heron_cell
+		testing.expectf(t, drawing <= icon.size && (icon.size - drawing) % 2 == 0, "the icon of %d has a drawing of %d", icon.size, drawing)
+		data, encoded := site_mark_encode(site_icon_picture(icon))
+		testing.expect(t, encoded)
+		width, height, _ := site_png_size(data)
+		testing.expect_value(t, width, icon.size)
+		testing.expect_value(t, height, icon.size)
+		testing.expect_value(t, site_png_is_opaque(data), icon.opaque)
+		if icon.file_name == SITE_ICON_MASKABLE {
+			// The corners of the drawing: 2 * (drawing / 2)^2 <= (0.4 * size)^2.
+			testing.expect(t, 200 * drawing * drawing <= 64 * icon.size * icon.size)
+		}
+	}
+	// The ends of the gradient of support/mark: 0.7 * c + 76.5 and 0.7 * c.
+	black_start, black_end := site_gradient_end_colors(0x000000)
+	testing.expect_value(t, black_start, 0x4D4D4D)
+	testing.expect_value(t, black_end, 0x000000)
+	start, end := site_gradient_end_colors(0xFFFFFF)
+	testing.expect_value(t, start, 0xFFFFFF)
+	testing.expect_value(t, end, 0xB3B3B3)
+
+	// The SVG icon: the cells of the heron as rectangles, one for each run.
+	svg := site_icon_svg()
+	testing.expect(t, strings.has_prefix(svg, "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\""))
+	testing.expect(t, strings.contains(svg, "shape-rendering=\"crispEdges\""))
+	testing.expect(t, strings.contains(svg, "@media (prefers-color-scheme: dark)"))
+	covered := 0
+	for row in 0 ..< 24 {
+		for column in 0 ..< 24 {
+			if _, found := mark.heron_cell_part(column, row); found {
+				covered += 1
+			}
+		}
+	}
+	widths := 0
+	rest := svg
+	for {
+		start_index := strings.index(rest, "<rect ")
+		if start_index < 0 {
+			break
+		}
+		end_index := strings.index_byte(rest[start_index:], '>')
+		if end_index < 0 {
+			break
+		}
+		width_value, _ := site_decimal(site_first_attribute_value(rest[start_index:start_index + end_index], "width=\""))
+		widths += width_value
+		rest = rest[start_index + end_index:]
+	}
+	testing.expect_value(t, widths, covered)
+
+	// The files: favicon.ico at the root with 32 and 48, and the checks of a
+	// good site and of damaged ones.
+	files, files_ok := site_icon_files()
+	testing.expect(t, files_ok)
+	entries, favicon_problem := site_ico_read(files[SITE_FAVICON])
+	testing.expect_value(t, favicon_problem, "")
+	testing.expect_value(t, len(entries), 2)
+	site := metadata_test_site("")
+	written := metadata_test_written(&site)
+	manifest := site_manifest(&site)
+	for problem in site_icon_problems(site.pages[:], written, manifest, files) {
+		testing.expectf(t, false, "a good site has a problem of its icons: %s", problem)
+	}
+	home := written[SITE_PAGE]
+	favicon_link := strings.index(home, "<link rel=\"icon\" href=\"favicon.ico\" sizes=\"32x32\">")
+	svg_link := strings.index(home, "<link rel=\"icon\" href=\"pictures/icon.svg\" type=\"image/svg+xml\">")
+	touch_link := strings.index(home, "<link rel=\"apple-touch-icon\" href=\"pictures/icon_180.png\" sizes=\"180x180\">")
+	testing.expect(t, favicon_link >= 0 && favicon_link < svg_link && svg_link < touch_link)
+	testing.expect(t, strings.contains(written["guides/A.html"], "<link rel=\"icon\" href=\"../favicon.ico\" sizes=\"32x32\">"))
+
+	without_favicon := make(map[string][]u8, context.temp_allocator)
+	for path, data in files {
+		if path != SITE_FAVICON {
+			without_favicon[path] = data
+		}
+	}
+	testing.expect(t, len(site_icon_problems(site.pages[:], written, manifest, without_favicon)) > 0)
+	transparent_touch := make(map[string][]u8, context.temp_allocator)
+	for path, data in files {
+		transparent_touch[path] = data
+	}
+	transparent_touch[SITE_PICTURE_FOLDER + "/" + SITE_ICON_TOUCH] = files[SITE_PICTURE_FOLDER + "/" + SITE_ICON_192]
+	testing.expect(t, len(site_icon_problems(site.pages[:], written, manifest, transparent_touch)) > 0)
+	transparent_maskable := make(map[string][]u8, context.temp_allocator)
+	for path, data in files {
+		transparent_maskable[path] = data
+	}
+	transparent_maskable[SITE_PICTURE_FOLDER + "/" + SITE_ICON_MASKABLE] = files[SITE_PICTURE_FOLDER + "/" + SITE_ICON_512]
+	testing.expect(t, len(site_icon_problems(site.pages[:], written, manifest, transparent_maskable)) > 0)
+	wrong_size, replaced := strings.replace(manifest, "\"192x192\"", "\"190x190\"", 1, context.temp_allocator)
+	testing.expect(t, replaced)
+	testing.expect(t, len(site_icon_problems(site.pages[:], written, wrong_size, files)) > 0)
+	no_maskable, removed := strings.replace(manifest, "\"maskable\"", "\"any\"", 1, context.temp_allocator)
+	testing.expect(t, removed)
+	testing.expect(t, len(site_icon_problems(site.pages[:], written, no_maskable, files)) > 0)
+	changed := metadata_test_copy(written)
+	replaced_home, _ := strings.replace(home, "sizes=\"180x180\"", "sizes=\"192x192\"", 1, context.temp_allocator)
+	changed[SITE_PAGE] = replaced_home
+	testing.expect(t, len(site_icon_problems(site.pages[:], changed, manifest, files)) > 0)
 }
 
 @(test)

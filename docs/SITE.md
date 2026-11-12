@@ -26,7 +26,7 @@ No page holds a text that a person must remember to update: each page is generat
 
 | Page | Generated from |
 |---|---|
-| `index.html`, the home | The mark (`support/mark`), the first paragraph of `README.md`, the three newest news entries, the stages of the start from the lines `kernel: boot: ...` of `build/test_output.txt`, the tiles of the boot image (see "The tiles of the boot image"), the first three measured numbers, the pictures of `docs/screenshots` with the captions of `README.md`, the newest release of `CHANGELOG.md`, the count of steps of `docs/REVIEWS.md` |
+| `index.html`, the home | The mark (`support/mark`), the first sentence of the first paragraph of `README.md` as the tagline of the head, the three newest news entries, the rest of that paragraph in a section "What it is" after the news (the owner, 2026-11-12: "la tagline est trop longue"; after the news, so that the first screen of a phone holds the mark, the name, the tagline and the links only; the description of the home in its head, Open Graph, the manifest and the page graph stays the whole paragraph, cut at 160 bytes, because the tagline alone is too short to describe the system), the stages of the start from the lines `kernel: boot: ...` of `build/test_output.txt`, the tiles of the boot image (see "The tiles of the boot image"), the first three measured numbers, the pictures of `docs/screenshots` with the captions of `README.md`, the newest release of `CHANGELOG.md`, the count of steps of `docs/REVIEWS.md` |
 | `guides/index.html` | The table "Documents" of `README.md`, then the other documents of `docs/` by name |
 | `guides/<name>.html` | Each document of `docs/` but `HANDOFF.md` and `REVIEWS.md`, which are working records of the project and stay out of the site; the glossary is a page of the reference |
 | `reference/index.html` | The list of the reference tables below |
@@ -145,7 +145,7 @@ A canonical address, an address of Open Graph and an `@id` of JSON-LD must be ab
 
 | Part | With no site address | With a site address |
 |---|---|---|
-| `lang`, the viewport, the title, the description, a theme color for each color scheme, the icons (`heron_24` to `heron_192`, and `heron_192` as the icon of a phone), the manifest, the links to the two feeds, `rel=prev` and `rel=next` between guides (the reading order of the page of the guides) | Written | Written |
+| `lang`, the viewport, the title, the description, a theme color for each color scheme, the icons (`favicon.ico`, the SVG icon and the icon of a phone; see "The icons"), the manifest, the links to the two feeds, `rel=prev` and `rel=next` between guides (the reading order of the page of the guides) | Written | Written |
 | The canonical address (`GLOSSARY.md`) | No | `<site address>/<path>`; an index page by its folder (`<site address>/guides/`) |
 | Open Graph: `og:type` (`article` for a guide, else `website`), `og:site_name`, `og:title`, `og:description`, `og:url`, `og:image` with its type, width, height and alt; `twitter:card` `summary_large_image`, which reads the rest from Open Graph | No | Written; the picture is `pictures/mark_card.png` |
 | The page graph (`GLOSSARY.md`) | No | One `<script type="application/ld+json">` in the head |
@@ -172,7 +172,7 @@ One `@graph` for each page, built from the data that the page shows; no value is
 
 `BlogPosting`, not `NewsArticle`: a news entry is a dated report of the project, as a post of a blog. `NewsArticle` is for the articles of a publisher of news, and a search engine reads it as journalism.
 
-Not verified against a validator of schema.org or the documents of a search engine, since this work runs with no network: the field `availableOnDevice` of `SoftwareApplication`; whether a search engine accepts a free text "Operating system" for `applicationCategory` (its list of categories has no operating system); whether the `SearchAction` is still read (one search engine stopped showing a box of search for it in 2024); the limit of 110 characters of a headline. `author` and `publisher` are absent: the only fact of an author in the repository is the line `Copyright` of `LICENSE`, and the owner decides whether the graph names a person.
+Not verified against a validator of schema.org or the documents of a search engine, since this work runs with no network: the field `availableOnDevice` of `SoftwareApplication`; whether a search engine accepts a free text "Operating system" for `applicationCategory` (its list of categories has no operating system); whether the `SearchAction` is still read (one search engine stopped showing a box of search for it in 2024); the limit of 110 characters of a headline. The author (owner, 2026-11-12: "pour l'auteur du site évidemment tu peux mettre"): a `Person` node, `<site address>/#author`, on each page. Its `name` is the holder of the line `Copyright` of `LICENSE` (the words after `(c)` and the years), the one fact of an author that the repository holds; its `url` is the account that owns the repository (`SITE_REPOSITORY_ADDRESS` without its last part). It is the `author` of the `SoftwareApplication`, the `SoftwareSourceCode`, each `TechArticle` and each `BlogPosting`, and the `publisher` of the `WebSite`. Each page has `<meta name="author">`, also with no site address, and the two feeds name it in `<author>`. When `LICENSE` names no holder, there is no `Person`, no field names one, and the feeds name the system.
 
 ### The sitemap, robots.txt and the feeds
 
@@ -180,7 +180,7 @@ Not verified against a validator of schema.org or the documents of a search engi
 - `robots.txt` allows each page and gives the address of the sitemap. A crawler reads `robots.txt` only at the root of a host: when the site address has a path, the command says that the `robots.txt` of the root must have the line `Sitemap:`.
 - `releases.xml` is the feed of the releases (Atom): one entry for each release of `CHANGELOG.md`, newest first, with its date (`published` and `updated`, at 00:00 UTC), its first change as its summary, and its changes in HTML. The id of an entry is `<repository>/blob/master/CHANGELOG.md#release-<number>`: a release is never renamed, so the id does not change when the site gets an address.
 - `llms.txt` follows the form of llmstxt.org, as the site of the owner has one: the name, the lead of `README.md` as a quote, then a list of the pages for each section, each with its title and its description; the module pages are in the part `## Optional`.
-- `site.webmanifest`: the name, the description, `lang`, `start_url` `index.html`, the dark background as the background and theme color, and the four icons. Its addresses are relative to it.
+- `site.webmanifest`: the name, the description (the whole first paragraph of `README.md`, cut at 160 bytes), `lang`, `start_url` and `scope` `./` (the root of the site, where the manifest is), the dark background as the background and theme color, and three icons: 192 and 512 with `"purpose": "any"`, and 512 with `"purpose": "maskable"`. Its addresses are relative to it.
 
 ### The pictures
 
@@ -247,7 +247,8 @@ The cells that no file records are listed by the command. They are the licenses 
 
 The site follows `DESIGN.md`, with the colors of `support/graphics/rules.odin` and `support/mark`: the style sheet repeats no color of the rules as its own number. The elements of the system carry information where they appear:
 
-- the bar at the top, as the bar of the desktop: the heron at the left, the sections as buttons, the current one marked by a line in the blue of the title bar;
+- the bar at the top, as the bar of the desktop: the heron at the left, the sections as buttons, the current one marked by a line in the blue of the title bar; under 720 pixels, the sections and the search are behind one menu button (see "The site menu");
+- the news cards of the home, side by side on a wide screen: the title, the line of the kind and the date, the picture and the text of each card of a row start at the same height, whatever the length of a title. Each card takes four rows of the grid of the cards and shares them (`grid-template-rows: subgrid`); each part has its row, so a card with no picture keeps its text in line. The picture boxes have one ratio, 4 by 3, the ratio of the screen pictures; a picture of another ratio is shown whole in the box (`object-fit: contain`), not cut. A browser with no subgrid shows the cards as blocks, and a title keeps the room of two lines on a wide screen, so that the common case aligns. No title is cut. On a narrow screen (one column) nothing changes. The cards of the page News stand one under the other at every width: no row to align;
 - cards with a border of 1 pixel in their accent and the bar of 4 x 16 pixels before their title, as the cards of the boot display;
 - the colors of the concepts with their meaning in the system: the stages of the start take the color of who runs them (the firmware violet, the boot program orange, the kernel blue);
 - the tables have the look of the tables of the system: the titles of the columns in the dim color, every second row on a band (`DESIGN.md`, section 10). The cells wrap; a name (an identifier, a path, a signature) stays on one line. A table scrolls sideways only on a screen under 720 pixels;
@@ -269,6 +270,19 @@ The contrast of the text (WCAG 2 ratio), from the colors of the rules:
 
 Code takes the text color, because the dim color on the track is 4.33. The colors of the firmware (4.50 on a card) and of the boot program are used for marks, not for text.
 
+### The site menu
+
+The owner asked for it on 2026-11-12: "il manque un menu burger sur la version mobile du site".
+
+- The sections and the search are in one `<details class="bar-menu">` of the bar: one list of links for every width, so a screen reader reads each section once. Its `<summary>` is the button: a square of 32 pixels with three lines of 16 by 2 pixels drawn by the style sheet, and the word "Menu" as its name, hidden by the style sheet. With no style sheet the word shows, and the button opens the list.
+- Under 720 pixels: the heron and the name at the left, the button at the right. The open menu lies over the page under the bar, over the whole width: the sections one under the other, the current one marked by a line at its left, then the search over the whole width with its list under it. The open button has the border and the lines in the color of the line of a link. The focus is visible (the rule of the site). The button is a `summary`: Enter and Space open and close it with no script.
+- On a wide screen the menu is open and its button is hidden, so it is the bar of today. A `details` that is closed in the file cannot be opened by a style sheet in every browser, so two ways meet:
+  - A browser that has `::details-content` shows the content of the closed menu on a wide screen and hides the button (`@supports selector(::details-content)`), with no script.
+  - `search.js`, loaded with `defer` on each page, opens the menu on a wide screen and closes it on a narrow one, when the width changes too (`matchMedia("(min-width: 720px)")`). On a narrow screen it also closes the menu at Escape (and puts the focus on the button) and at a click outside, and opens it for `/` and for an address with `?q=`.
+  - With no script, a browser with no `::details-content` shows the button on a wide screen too, and the button opens the list: the page stays whole. With the script, such a browser shows the button for the time between the first paint and the run of the deferred script.
+- The menu is closed in the file, not open: an open menu that the script closes on a narrow screen moves the page after its first paint on each load.
+- At 360 pixels, no line is wider than the screen: a table and a block of code scroll in their own box (`.table`, `pre`); a heading, a paragraph, an item, a cell, a caption and the breadcrumbs break a long word or address (`overflow-wrap: anywhere`); the stages, the tiles and the pictures fit a column of 328 pixels.
+
 ## The mark on the site
 
 The site draws its own pictures of the mark from `support/mark` (`tools/kerneltool/site_pictures.odin`), on a transparent background, at whole cell sizes, and the page shows each one at its own size:
@@ -279,7 +293,31 @@ The site draws its own pictures of the mark from `support/mark` (`tools/kernelto
 | `pictures/mark_bar.png`, `mark_bar_light.png` | heron 1 | 24 x 24 | The bar |
 | `pictures/mark_card.png` | heron 16, name 12 | 1200 x 630 | The picture for other sites: on the dark background, because those sites show it on white. Open Graph and the page graph name it. The command stops when it is not opaque (a color type with no alpha and no `tRNS` chunk) or not 1200 x 630 |
 
-The icons of the pages are the files `heron_24.png` to `heron_192.png` of `resources/logo`. `kerneltool logo` also writes `resources/logo/modus_transparent.png` and `modus_light_transparent.png`, which the README shows in a `<picture>` for the two color schemes.
+The icons of the pages are drawn by the tool from the same table (see "The icons"); the site copies no icon of `resources/logo`. `kerneltool logo` also writes `resources/logo/modus_transparent.png` and `modus_light_transparent.png`, which the README shows in a `<picture>` for the two color schemes.
+
+### The icons
+
+The owner asked for it on 2026-11-12: "la favicon faut qu'elle soit bien configurée". The code is `tools/kerneltool/site_icons.odin`.
+
+The heron is pixels: each raster icon is the drawing of `support/mark` at a whole cell size, centred with an even margin, never scaled by a filter.
+
+| File | Size | Cells | Margin | Background | Named by |
+|---|---|---|---|---|---|
+| `favicon.ico`, at the root | 32 and 48 | 1 and 2 | 4 and 0 | Transparent, the light form | The head, first: `<link rel="icon" href="favicon.ico" sizes="32x32">`; and a browser or a search engine that asks for `/favicon.ico` |
+| `pictures/icon.svg` | 24 by 24 cells | One `rect` for each run of cells of one part in a row | 0 | Transparent | The head, second: `type="image/svg+xml"` |
+| `pictures/icon_180.png` | 180 | 7 (168) | 6 | Opaque: the dark background, the dark form | The head, third: `apple-touch-icon`, `sizes="180x180"` |
+| `pictures/icon_192.png` | 192 | 8 | 0 | Transparent, the light form | The manifest, `"purpose": "any"`; the `icon` of the two feeds |
+| `pictures/icon_512.png` | 512 | 21 (504) | 4 | Transparent, the light form | The manifest, `"purpose": "any"` |
+| `pictures/icon_512_maskable.png` | 512 | 12 (288) | 112 | Opaque: the dark background, the dark form | The manifest, `"purpose": "maskable"` |
+
+- No icon of 16 pixels: 16 pixels cannot hold the 24 cells of the heron, and the table has no smaller drawing. A browser scales the 32 of `favicon.ico` for a tab of 16 pixels, as it does for most sites. A reduced table would be a new drawing of the mark, which only the owner can decide.
+- The tab of a browser is light or dark. A transparent icon takes the light form of the mark: its neck (`0x9FB2C8`) reads on a light and on a dark tab, where the pale neck of the dark form disappears on white.
+- The icon of a phone and the maskable icon are opaque, because iOS fills a transparent part and Android cuts the icon to a shape. The maskable drawing fits inside the circle of 80 percent of the icon: its corners are at 203.6 pixels from the centre (144 times the square root of 2), under 204.8.
+- `favicon.ico` is the ICO container with PNG entries: a header of 6 bytes, an entry of 16 bytes for each picture (its width and height, 1 plane, 32 bits, its bytes and its offset, little endian), then the PNG files. The tool writes it (`site_ico_encode`) and reads its directory back (`site_ico_read`).
+- The SVG icon: each part of the heron is filled with an SVG gradient along the diagonal of its box, in cells (`gradientUnits="userSpaceOnUse"`, from the top left corner of the box to its bottom right corner), whose two ends are the colors that `support/mark` computes at the two ends (a channel `c` is `0.7 c + 76.5` at the start and `0.7 c` at the end). The eye is one flat color. `shape-rendering="crispEdges"` keeps the edges of the cells sharp. The colors in the attributes are those of the light form; a rule `@media (prefers-color-scheme: dark)` in a `<style>` element of the file gives the dark form to the parts whose two forms differ (the neck). A browser that does not apply the rule shows the light form, which reads on both.
+- Each link to an icon is relative, as every link of the site: `favicon.ico` from the home, `../favicon.ico` from a guide. The file is at the root of the site, so the default request `/favicon.ico` finds it when the site is at the root of its domain.
+
+The checks, after the checks of the pages: `favicon.ico` is at the root, its directory reads back (each entry inside the file, a PNG file of the size of its entry) and it has a picture of 32 by 32; each icon of the head of each page and of the manifest is a file that the command wrote, with the size that the page or the manifest states; the icon of a phone and each maskable icon are opaque; the manifest has an icon of 192 and one of 512 for any use, and a maskable one of 512.
 
 ## The status page
 
@@ -340,20 +378,61 @@ The work is in layers; each layer adds pages to a site that works.
 - The count of checks of `kerneltool check`: the tool prints each check that passed and keeps no count.
 - An embedded font: Paper Mono is under the SIL OFL 1.1 with no Reserved Font Name (`resources/fonts/paper_mono.license`): its ASCII subsets can be copied into the site with `OFL.txt` and their `.license` files and declared with `@font-face`. The site uses the fonts of the reader's system.
 
+## How the site is published
+
+The owner chose it on 2026-11-12: "pour la publication du site je préfère un workflow GitHub évidemment". The site is at `https://modus.froment.software/` (`SITE_ADDRESS` in `tools/kerneltool/site_frame.odin`). `kerneltool site --address https://<host>/<path>` writes it for another address for one run (see "What other sites read").
+
+The site workflow (`GLOSSARY.md`), `.github/workflows/site.yml`, runs at each push to `master` and by hand (`workflow_dispatch`). It holds no logic: each step calls the tool or an action, and each action is pinned by a version tag.
+
+| Job | Step | What it does |
+|---|---|---|
+| build | `actions/checkout@v7.0.1` | The repository at the pushed commit, with its `.git`: `HEAD` is the commit, which the foot of each page names |
+| build | `DeterminateSystems/nix-installer-action@v23` | Nix, for the flake and its FlakeHub inputs |
+| build | `DeterminateSystems/magic-nix-cache-action@v15` | The store paths of the development shell, kept in the cache of GitHub Actions between runs |
+| build | `nix develop -c kerneltool build` | The modules and `build/boot.image` |
+| build | `nix develop -c kerneltool site` | The site in `build/site`; a failed check stops the run, and the site of the last run stays online |
+| build | `actions/upload-pages-artifact@v5.0.0` | `build/site` as the artifact of GitHub Pages |
+| deploy | `actions/deploy-pages@v5.0.1` | The artifact online, in the environment `github-pages` |
+
+- The permissions: `contents: read`, `pages: write`, `id-token: write` (the deployment proves its run to GitHub Pages with a token of the run).
+- `concurrency: pages`, not cancelled: two runs do not deploy at the same time, and a deployment that started ends.
+- The wrapper `kerneltool` of the flake makes `build/` before it runs the tool.
+
+What a clean checkout gives to `kerneltool site`:
+
+| What the site reads | Made by | In the workflow |
+|---|---|---|
+| The documents, the news, the changelog, the code that the reference tables read, `flake.nix`, `flake.lock`, `LICENSE`, the pictures of `docs/screenshots` and `resources/logo` | Committed | Read |
+| The pictures of the mark, the module pages and their signatures | The code of the tool (`support/mark`, `describe_package`); no module is built | Written |
+| The commit | `.git` | Read |
+| `build/boot.image` | `kerneltool build` | Written by the step before: the tiles of the home with their sizes and colors, the size of each module in its page, and the column "in the boot image" of the licenses. With no image these show the modules with no size, and "not recorded" |
+| The logs of the machine tests, `build/test_output*.txt` | `kerneltool test`, `kerneltool measure` | Absent: each measured number says "Not measured in this build.", and so does the start of the machine on the home. The command does not fail |
+| `build/reproducible_build.txt` | `kerneltool check` | Absent: "Not measured in this build." |
+
+The time of the step `kerneltool build` on a runner of GitHub is not measured yet: the first run gives it.
+
+The domain:
+
+- The custom domain is a setting of the repository (Settings, Pages: the source "GitHub Actions", the custom domain `modus.froment.software`, "Enforce HTTPS"). With a deployment of an artifact, GitHub Pages ignores a `CNAME` file: the site has none.
+- The record at Cloudflare: `modus.froment.software`, a `CNAME` to `sachahjkl.github.io`, through the proxy of Cloudflare (the owner accepted the proxy). Not verified here: GitHub Pages makes the certificate of a custom domain only when its check of the record sees GitHub, and the proxy hides it. The usual order: the record with no proxy until GitHub shows "Enforce HTTPS", then the proxy, with the TLS mode "Full (strict)" of Cloudflare.
+- The branch `gh-pages` that served the first version by hand is no longer read once the source is "GitHub Actions".
+
+The headers: GitHub Pages sends no header that a site chooses. The proxy of Cloudflare adds these to each answer for the host `modus.froment.software` (a rule that changes the headers of the response):
+
+| Header | Value | Why |
+|---|---|---|
+| `Content-Security-Policy` | `default-src 'none'; style-src 'self'; img-src 'self' data:; script-src 'self'; connect-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'` | The style sheet, the pictures and the grid of points (`data:`), `search.js` and its fetch of `search.json`, the manifest; nothing else. The page graph is data that a browser does not run: `script-src` does not apply to it |
+| `X-Content-Type-Options` | `nosniff` | A file is read as its type only |
+| `Referrer-Policy` | `strict-origin-when-cross-origin` | Another host sees the host of the site, not the page |
+| `X-Frame-Options` | `DENY` | `frame-ancestors` for a browser that does not read it |
+| `Strict-Transport-Security` | `max-age=31536000` | The site is read over TLS only; no `includeSubDomains`, because the other hosts of the domain are not this site |
+| `Permissions-Policy` | `camera=(), microphone=(), geolocation=()` | The site uses none of them |
+| `Cross-Origin-Opener-Policy` | `same-origin` | A page of another host that opens the site gets no handle on its window |
+
+A `<meta>` policy is not written: `frame-ancestors` has no effect there, and `'self'` does not work for a page opened from a file. The types of the files are those of GitHub Pages, from their extensions: `application/xml` for the two feeds, which feed readers read.
+
 ## What the owner must decide
 
-1. The host and the domain. The choices: a branch that GitHub Pages serves (the domain of the host, or a domain of the owner with a `CNAME` file), a static host with a deploy key, or a server reached by `rsync`; the key stays outside the repository. The host must serve the site with TLS: a canonical address and an address of Open Graph are `https://`.
-2. The site address (`GLOSSARY.md`): `SITE_ADDRESS` in `tools/kerneltool/site_frame.odin`, empty now. `kerneltool site --address https://<host>/<path>` sets it for one run; a path works. What it changes, and nothing else:
-   - each page gets its canonical address, Open Graph, the summary card and its page graph, all with absolute addresses;
-   - the command writes `sitemap.xml` and `robots.txt`, and checks them with the pages;
-   - `news.xml`, `releases.xml` and `llms.txt` get absolute links, and each feed its link `self`.
-   With no address, the pages have relative links only, these parts are absent, and the command says which ones it did not write. The links inside the site stay relative in both cases, so the same pages work from a file, from a folder of a host and from the root of a domain.
-3. A site in a folder of a host (`https://<host>/<path>`): a crawler reads `robots.txt` only at the root of the host, so the `robots.txt` of the root must name `<site address>/sitemap.xml`. The command says so. A site at the root of its domain needs nothing more.
-4. The headers that the host sends. Proposed: `Content-Security-Policy: default-src 'none'; style-src 'self'; img-src 'self' data:; script-src 'self'; connect-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'` (`data:` for the grid of points of the style sheet; `script-src` and `connect-src` for the script of the search and its fetch of `search.json`; `manifest-src` for `site.webmanifest`). The page graph needs no word of its own: a `<script type="application/ld+json">` is data, and a browser does not run it, so `script-src` does not apply to it. The pages hold no other inline script and no inline style. A `<meta>` policy is not written: `frame-ancestors` has no effect there, and `'self'` does not work for a page opened from a file. Also proposed: `Content-Type: application/atom+xml` for the two feeds, `application/manifest+json` for the manifest, `text/plain; charset=utf-8` for `llms.txt`.
-5. The author in the page graph: the graph names no person now (see "The page graph"). The owner decides whether `author` and `publisher` name the holder of the line `Copyright` of `LICENSE`.
-6. `kerneltool site publish`, a later command. Design only, not written:
-   - It runs from `master` at a release, with no change in the work tree; else it stops.
-   - It builds the site with the site address of the host (`SITE_ADDRESS`, not `--address`), and stops when a check fails, as `kerneltool site` does.
-   - It sends `build/site/` to the host: the files that changed, then it removes the files that the new site does not have, so that no reader gets a page with a picture that is not there yet.
-   - It reads back the home, `sitemap.xml` and the two feeds from the host over TLS, and checks that each one has the bytes that it sent and the headers of point 4.
-   - The key of the host comes from the environment of the person who runs it, never from the repository.
+1. The measured numbers of the site online. A clean checkout has no log of a machine test, so the site says "Not measured in this build." for each number. The choices: the workflow also runs `kerneltool test` (machines under QEMU on the runner, with the time of a test run), or each release commits the lines of the numbers in one file that the site reads.
+2. The cache of the workflow: the cache of GitHub Actions (`magic-nix-cache-action`, now) or FlakeHub Cache (`flakehub-cache-action`, which needs a FlakeHub account for the repository).
+3. The name in the title of `README.md` and in the `description` of `flake.nix`: both say "Next-Gen Kernel", the name of the project before `modus`. The site does not read either (it reads the lead of `README.md`). Not changed here.

@@ -606,6 +606,26 @@ SITE_SEARCH_SCRIPT_SOURCE :: `// The search of the site, written by kerneltool s
     document.documentElement.setAttribute("data-search-self-test", selfTestLine);
   }
 
+  // The site menu: open on a wide screen, where it is the bar of the
+  // sections; on a narrow screen its button opens it, and Escape or a click
+  // outside closes it. With no script the button still opens and closes it.
+  const menu = document.querySelector("details.bar-menu");
+  const wide = window.matchMedia("(min-width: 720px)");
+  function fitMenu() { if (menu) menu.open = wide.matches; }
+  function showMenu() { if (menu && !menu.open) menu.open = true; }
+  if (menu) {
+    fitMenu();
+    wide.addEventListener("change", fitMenu);
+    document.addEventListener("click", event => {
+      if (!wide.matches && menu.open && !menu.contains(event.target)) menu.open = false;
+    });
+    menu.addEventListener("keydown", event => {
+      if (event.key !== "Escape" || event.defaultPrevented || wide.matches || !menu.open) return;
+      menu.open = false;
+      menu.querySelector("summary").focus();
+    });
+  }
+
   const box = document.getElementById("site-search-box");
   if (!box || !script) return;
   const search = box.parentElement;
@@ -735,9 +755,9 @@ SITE_SEARCH_SCRIPT_SOURCE :: `// The search of the site, written by kerneltool s
   document.addEventListener("keydown", event => {
     const target = event.target;
     const typing = target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || (target && target.isContentEditable);
-    if (event.key === "/" && !typing && !event.ctrlKey && !event.metaKey && !event.altKey) { box.focus(); event.preventDefault(); }
+    if (event.key === "/" && !typing && !event.ctrlKey && !event.metaKey && !event.altKey) { showMenu(); box.focus(); event.preventDefault(); }
   });
   const asked = new URLSearchParams(location.search).get("q");
-  if (asked) { box.value = asked; box.focus(); load().then(render); }
+  if (asked) { showMenu(); box.value = asked; box.focus(); load().then(render); }
 })();
 `

@@ -461,8 +461,10 @@ site_who_class :: proc(who: string) -> string {
 	return "accent-kernel"
 }
 
-site_home_add :: proc(site: ^Site) {
-	b := strings.builder_make(context.temp_allocator)
+// site_home_head writes the head of the home: the mark with the name, the
+// tagline (one line: the first sentence of the lead of README.md) and the
+// links to the sections. The rest of the lead is not in the head.
+site_home_head :: proc(site: ^Site, b: ^strings.Builder) {
 	home_picture: Site_Mark_Picture
 	for picture in site_mark_pictures {
 		if picture.file_name == SITE_MARK_HOME {
@@ -470,25 +472,46 @@ site_home_add :: proc(site: ^Site) {
 		}
 	}
 	width, height := site_mark_size(home_picture)
-	strings.write_string(&b, "<header class=\"home-head\">\n<picture>")
-	fmt.sbprintf(&b, "<source media=\"(prefers-color-scheme: light)\" srcset=\"%s/%s\">", SITE_PICTURE_FOLDER, SITE_MARK_HOME_LIGHT)
-	fmt.sbprintf(&b, "<img class=\"mark\" src=\"%s/%s\" width=\"%d\" height=\"%d\" alt=\"", SITE_PICTURE_FOLDER, SITE_MARK_HOME, width, height)
-	site_plain(&b, site.readme.mark_description)
-	strings.write_string(&b, "\"></picture>\n<div>\n<h1>" + SITE_SYSTEM_NAME + "</h1>\n<p class=\"lead\">")
-	site_inline(&b, site.readme.lead)
-	strings.write_string(&b, "</p>\n<ul class=\"doors\">\n")
+	strings.write_string(b, "<header class=\"home-head\">\n<picture>")
+	fmt.sbprintf(b, "<source media=\"(prefers-color-scheme: light)\" srcset=\"%s/%s\">", SITE_PICTURE_FOLDER, SITE_MARK_HOME_LIGHT)
+	fmt.sbprintf(b, "<img class=\"mark\" src=\"%s/%s\" width=\"%d\" height=\"%d\" alt=\"", SITE_PICTURE_FOLDER, SITE_MARK_HOME, width, height)
+	site_plain(b, site.readme.mark_description)
+	strings.write_string(b, "\"></picture>\n<div>\n<h1>" + SITE_SYSTEM_NAME + "</h1>\n<p class=\"lead\">")
+	site_inline(b, site.readme.tagline)
+	strings.write_string(b, "</p>\n<ul class=\"doors\">\n")
 	for section in Site_Section {
 		if section == .Home || !site_page_exists(site, site_section_pages[section]) {
 			continue
 		}
-		fmt.sbprintf(&b, "<li><a href=\"%s\">%s</a></li>\n", site_section_pages[section], site_section_titles[section])
+		fmt.sbprintf(b, "<li><a href=\"%s\">%s</a></li>\n", site_section_pages[section], site_section_titles[section])
 	}
-	strings.write_string(&b, "</ul>\n</div>\n</header>\n")
+	fmt.sbprintf(b, "<li><a href=\"%s\">The repository</a></li>\n", SITE_REPOSITORY_ADDRESS)
+	strings.write_string(b, "</ul>\n</div>\n</header>\n")
+}
+
+// site_home_explanation writes the rest of the lead of README.md, after the
+// tagline, as a short section of its own: lower than the head, so that the
+// first screen of a phone holds the mark, the name, the tagline and the
+// links only.
+site_home_explanation :: proc(site: ^Site, b: ^strings.Builder) {
+	if site.readme.explanation == "" {
+		return
+	}
+	strings.write_string(b, "<section aria-labelledby=\"about\">\n<h2 id=\"about\">What it is</h2>\n<p>")
+	site_inline(b, site.readme.explanation)
+	strings.write_string(b, "</p>\n</section>\n")
+}
+
+site_home_add :: proc(site: ^Site) {
+	b := strings.builder_make(context.temp_allocator)
+	site_home_head(site, &b)
 
 	// What runs: the newest news, the start, the tiles of the boot image and
 	// the numbers. Each part comes from a file or a log; the home adds no
-	// sentence of its own about the state of the system.
+	// sentence of its own about the state of the system. The explanation of
+	// the lead comes after the news.
 	site_news_home(site, &b)
+	site_home_explanation(site, &b)
 
 	// The path from power to the desktop: the stages that the kernel logged.
 	stages: []Site_Boot_Stage

@@ -37,7 +37,9 @@ Site_Principles :: struct {
 
 // What the site takes from README.md.
 Site_Readme :: struct {
-	lead:               string, // The first paragraph under the title.
+	lead:               string, // The first paragraph under the title: the description of the home.
+	tagline:            string, // The first sentence of the lead: the one line of the head of the home.
+	explanation:        string, // The rest of the lead, or "": a paragraph lower on the home.
 	mark_description:   string, // The alt text of the picture of the mark.
 	captions:           map[string]string, // The caption of each picture, by its path.
 	use_paragraph:      string, // The first paragraph of the section "Use".
@@ -361,6 +363,10 @@ site_readme_parse :: proc(content: string) -> (readme: Site_Readme, problem: str
 		return {}, file + ": no paragraph between the title and the next heading"
 	}
 	readme.lead = in_first_section[0]
+	// The head of the home shows one short line: the first sentence. The
+	// rest of the paragraph explains, lower on the page.
+	readme.tagline = site_first_sentence(readme.lead)
+	readme.explanation = strings.trim_space(strings.trim_prefix(strings.trim_space(readme.lead), readme.tagline))
 
 	MARK_SOURCE :: "src=\"resources/logo/modus_transparent.png\""
 	for line in lines {

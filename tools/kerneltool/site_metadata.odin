@@ -23,8 +23,6 @@ SITE_RELEASES_FEED :: "releases.xml"
 SITE_LANGUAGE_MODEL_INDEX :: "llms.txt"
 SITE_MANIFEST :: "site.webmanifest"
 SITE_LANGUAGE :: "en"
-// The sizes of the heron of resources/logo that the site copies as icons.
-SITE_ICON_SIZES :: [?]string{"24", "48", "96", "192"}
 // The picture for other sites: its size is the one that Open Graph and the
 // summary card with a large picture show whole.
 SITE_CARD_WIDTH :: 1200
@@ -96,6 +94,54 @@ site_license_address :: proc(site: ^Site) -> string {
 	return strings.concatenate({"https://spdx.org/licenses/", identifier, ".html"}, context.temp_allocator)
 }
 
+// site_copyright_holder gives the holder of a line "Copyright (c) <years>
+// <holder>": the words after the mark and the years, with no final period.
+// It gives "" when no word is left.
+site_copyright_holder :: proc(line: string) -> string {
+	rest := strings.trim_space(line)
+	rest = strings.trim_prefix(rest, "Copyright")
+	rest = strings.trim_space(rest)
+	for copyright_mark in ([]string{"(c)", "(C)", "©"}) {
+		rest = strings.trim_space(strings.trim_prefix(rest, copyright_mark))
+	}
+	// The years: digits, "-", "," and spaces, as "2025-2026, 2027".
+	index := 0
+	for index < len(rest) && ((rest[index] >= '0' && rest[index] <= '9') || rest[index] == '-' || rest[index] == ',' || rest[index] == ' ') {
+		index += 1
+	}
+	return strings.trim_right(strings.trim_space(rest[index:]), ".")
+}
+
+// site_account_address gives the address of the account that owns the
+// repository: the repository address without its last part.
+site_account_address :: proc() -> string {
+	// A constant string cannot be sliced by a variable: a copy can.
+	repository: string = SITE_REPOSITORY_ADDRESS
+	slash := strings.last_index_byte(repository, '/')
+	return repository[:slash]
+}
+
+// site_feed_author writes the author of a feed: the holder of the line
+// "Copyright" of LICENSE and the account that owns the repository, or the
+// system and its repository when LICENSE names no holder.
+site_feed_author :: proc(site: ^Site, b: ^strings.Builder) {
+	name := site.author != "" ? site.author : SITE_SYSTEM_NAME
+	address := site.author != "" ? site_account_address() : SITE_REPOSITORY_ADDRESS
+	strings.write_string(b, "<author><name>")
+	site_xml_escape(b, name)
+	strings.write_string(b, "</name><uri>")
+	site_xml_escape(b, address)
+	strings.write_string(b, "</uri></author>\n")
+}
+
+// site_json_optional_reference names another node only when its id is
+// known: a field that names no node is not written.
+site_json_optional_reference :: proc(object: ^Site_Json_Object, key, id: string) {
+	if id != "" {
+		site_json_reference(object, key, id)
+	}
+}
+
 // site_guide_index gives the place of a guide in the reading order, or -1.
 site_guide_index :: proc(site: ^Site, path: string) -> int {
 	for guide, index in site.guides {
@@ -113,7 +159,6 @@ site_guide_index :: proc(site: ^Site, path: string) -> int {
 site_head_metadata :: proc(site: ^Site, page: Site_Page, b: ^strings.Builder) {
 	fmt.sbprintf(b, "<link rel=\"alternate\" type=\"application/atom+xml\" title=\"Releases of %s\" href=\"%s\">\n", SITE_SYSTEM_NAME, site_relative(page.path, SITE_RELEASES_FEED))
 	fmt.sbprintf(b, "<link rel=\"manifest\" href=\"%s\">\n", site_relative(page.path, SITE_MANIFEST))
-	fmt.sbprintf(b, "<link rel=\"apple-touch-icon\" sizes=\"192x192\" href=\"%s\">\n", site_relative(page.path, SITE_PICTURE_FOLDER + "/heron_192.png"))
 	if index := site_guide_index(site, page.path); index >= 0 {
 		if index > 0 {
 			fmt.sbprintf(b, "<link rel=\"prev\" href=\"%s\">\n", site_relative(page.path, site.guides[index - 1].path))
@@ -121,6 +166,11 @@ site_head_metadata :: proc(site: ^Site, page: Site_Page, b: ^strings.Builder) {
 		if index + 1 < len(site.guides) {
 			fmt.sbprintf(b, "<link rel=\"next\" href=\"%s\">\n", site_relative(page.path, site.guides[index + 1].path))
 		}
+	}
+	if site.author != "" {
+		strings.write_string(b, "<meta name=\"author\" content=\"")
+		site_escape(b, site.author)
+		strings.write_string(b, "\">\n")
 	}
 	if site.address == "" {
 		return
@@ -289,6 +339,7 @@ site_structured_data :: proc(site: ^Site, page: Site_Page) -> string {
 	system_id := strings.concatenate({site_page_address(address, SITE_PAGE), "#system"}, context.temp_allocator)
 	source_id := strings.concatenate({site_page_address(address, SITE_PAGE), "#source"}, context.temp_allocator)
 	card_id := strings.concatenate({site_page_address(address, SITE_PAGE), "#card"}, context.temp_allocator)
+	author_id := site.author != "" ? strings.concatenate({site_page_address(address, SITE_PAGE), "#author"}, context.temp_allocator) : ""
 	page_address := site_page_address(address, page.path)
 	page_id := strings.concatenate({page_address, "#page"}, context.temp_allocator)
 	breadcrumb_id := strings.concatenate({page_address, "#breadcrumb"}, context.temp_allocator)
@@ -308,6 +359,7 @@ site_structured_data :: proc(site: ^Site, page: Site_Page) -> string {
 		site_json_text(&node, "description", home_description)
 		site_json_text(&node, "inLanguage", SITE_LANGUAGE)
 		site_json_reference(&node, "about", system_id)
+		site_json_optional_reference(&node, "publisher", author_id)
 		site_json_key(&node, "potentialAction")
 		action := site_json_open(&b, "SearchAction")
 		site_json_key(&action, "target")
@@ -333,6 +385,16 @@ site_structured_data :: proc(site: ^Site, page: Site_Page) -> string {
 		site_json_text(&node, "softwareVersion", site.release)
 		site_json_text(&node, "license", license)
 		site_json_reference(&node, "image", card_id)
+		site_json_optional_reference(&node, "author", author_id)
+		site_json_close(&node)
+	}
+	// The author: the name of the line "Copyright" of LICENSE, and the
+	// account that owns the repository.
+	if author_id != "" {
+		strings.write_byte(&b, ',')
+		node := site_json_open(&b, "Person", author_id)
+		site_json_text(&node, "name", site.author)
+		site_json_text(&node, "url", site_account_address())
 		site_json_close(&node)
 	}
 	// The source code of the system.
@@ -349,6 +411,7 @@ site_structured_data :: proc(site: ^Site, page: Site_Page) -> string {
 		site_json_text(&node, "license", license)
 		site_json_text(&node, "version", site.release)
 		site_json_reference(&node, "targetProduct", system_id)
+		site_json_optional_reference(&node, "author", author_id)
 		site_json_close(&node)
 	}
 	// The picture for other sites, which Open Graph also names.
@@ -457,6 +520,7 @@ site_structured_data :: proc(site: ^Site, page: Site_Page) -> string {
 		site_json_reference(&node, "mainEntityOfPage", page_id)
 		site_json_reference(&node, "isPartOf", website_id)
 		site_json_reference(&node, "about", system_id)
+		site_json_optional_reference(&node, "author", author_id)
 		site_json_reference(&node, "image", card_id)
 		site_json_close(&node)
 	case page.path == SITE_GLOSSARY_PAGE:
@@ -539,6 +603,7 @@ site_structured_data :: proc(site: ^Site, page: Site_Page) -> string {
 			site_json_reference(&post, "isPartOf", main_entity)
 			site_json_reference(&post, "mainEntityOfPage", page_id)
 			site_json_reference(&post, "about", system_id)
+			site_json_optional_reference(&post, "author", author_id)
 			if item.picture != "" {
 				site_json_reference(&post, "image", site_file_address(address, item.picture))
 			} else {
@@ -609,7 +674,7 @@ site_releases_feed :: proc(site: ^Site) -> string {
 	if len(releases) > 0 {
 		fmt.sbprintf(&b, "<updated>%sT00:00:00Z</updated>\n", releases[0].date)
 	}
-	fmt.sbprintf(&b, "<author><name>%s</name><uri>%s</uri></author>\n", SITE_SYSTEM_NAME, SITE_REPOSITORY_ADDRESS)
+	site_feed_author(site, &b)
 	strings.write_string(&b, "<link rel=\"alternate\" type=\"text/html\" href=\"")
 	site_xml_escape(&b, site_feed_address(site, site_section_pages[.Releases]))
 	strings.write_string(&b, "\"/>\n")
@@ -618,7 +683,7 @@ site_releases_feed :: proc(site: ^Site) -> string {
 		site_xml_escape(&b, site_feed_address(site, SITE_RELEASES_FEED))
 		strings.write_string(&b, "\"/>\n")
 	}
-	fmt.sbprintf(&b, "<icon>%s</icon>\n", site_feed_address(site, SITE_PICTURE_FOLDER + "/heron_192.png"))
+	fmt.sbprintf(&b, "<icon>%s</icon>\n", site_feed_address(site, SITE_PICTURE_FOLDER + "/" + SITE_ICON_192))
 	for changelog_release in releases {
 		number := release_number_text(changelog_release.number)
 		anchor := site_release_id(number)
@@ -668,23 +733,30 @@ site_manifest :: proc(site: ^Site) -> string {
 	site_json_text(&node, "short_name", SITE_SYSTEM_NAME)
 	site_json_text(&node, "description", site_description_cut(site.readme.lead))
 	site_json_text(&node, "lang", SITE_LANGUAGE)
-	site_json_text(&node, "start_url", SITE_PAGE)
+	// The manifest is at the root: "./" is the root of the site, the
+	// address of the home.
+	site_json_text(&node, "start_url", "./")
 	site_json_text(&node, "scope", "./")
 	site_json_text(&node, "display", "browser")
 	site_json_text(&node, "background_color", site_color(site_dark_colors().background))
 	site_json_text(&node, "theme_color", site_color(site_dark_colors().background))
 	site_json_key(&node, "icons")
 	strings.write_byte(&b, '[')
-	sizes := SITE_ICON_SIZES
-	for size, index in sizes {
-		if index > 0 {
+	written_icons := 0
+	for icon in site_icons {
+		if icon.in_favicon || icon.size < 192 {
+			continue // favicon.ico and the icon of a phone are named by the head.
+		}
+		if written_icons > 0 {
 			strings.write_byte(&b, ',')
 		}
-		icon := site_json_open(&b, "")
-		site_json_text(&icon, "src", strings.concatenate({SITE_PICTURE_FOLDER, "/heron_", size, ".png"}, context.temp_allocator))
-		site_json_text(&icon, "sizes", strings.concatenate({size, "x", size}, context.temp_allocator))
-		site_json_text(&icon, "type", "image/png")
-		site_json_close(&icon)
+		written_icons += 1
+		entry := site_json_open(&b, "")
+		site_json_text(&entry, "src", strings.concatenate({SITE_PICTURE_FOLDER, "/", icon.file_name}, context.temp_allocator))
+		site_json_text(&entry, "sizes", fmt.tprintf("%dx%d", icon.size, icon.size))
+		site_json_text(&entry, "type", "image/png")
+		site_json_text(&entry, "purpose", icon.opaque ? "maskable" : "any")
+		site_json_close(&entry)
 	}
 	strings.write_byte(&b, ']')
 	site_json_close(&node)

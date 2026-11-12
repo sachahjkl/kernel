@@ -226,7 +226,7 @@ site_news_feed :: proc(site: ^Site) -> string {
 	fmt.sbprintf(&b, "<title>News of %s</title>\n<subtitle>What a person can now see or use in %s, newest first.</subtitle>\n", SITE_SYSTEM_NAME, SITE_SYSTEM_NAME)
 	fmt.sbprintf(&b, "<id>%s/tree/master/%s</id>\n", SITE_REPOSITORY_ADDRESS, NEWS_FOLDER)
 	fmt.sbprintf(&b, "<updated>%sT00:00:00Z</updated>\n", site.news[0].entry.date)
-	fmt.sbprintf(&b, "<author><name>%s</name><uri>%s</uri></author>\n", SITE_SYSTEM_NAME, SITE_REPOSITORY_ADDRESS)
+	site_feed_author(site, &b)
 	strings.write_string(&b, "<link rel=\"alternate\" type=\"text/html\" href=\"")
 	site_xml_escape(&b, site_feed_address(site, site_section_pages[.News]))
 	strings.write_string(&b, "\"/>\n")
@@ -235,7 +235,7 @@ site_news_feed :: proc(site: ^Site) -> string {
 		site_xml_escape(&b, site_feed_address(site, SITE_NEWS_FEED))
 		strings.write_string(&b, "\"/>\n")
 	}
-	fmt.sbprintf(&b, "<icon>%s</icon>\n", site_feed_address(site, SITE_PICTURE_FOLDER + "/heron_192.png"))
+	fmt.sbprintf(&b, "<icon>%s</icon>\n", site_feed_address(site, SITE_PICTURE_FOLDER + "/" + SITE_ICON_192))
 	for item in site.news {
 		entry := item.entry
 		strings.write_string(&b, "<entry>\n<title>")

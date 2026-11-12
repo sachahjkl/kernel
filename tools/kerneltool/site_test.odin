@@ -240,3 +240,47 @@ site_size_of_a_png_file :: proc(t: ^testing.T) {
 	_, _, not_png_ok := site_png_size(not_png)
 	testing.expect(t, !not_png_ok)
 }
+
+// The head of the home holds the tagline, the first sentence of the lead of
+// README.md, and not the rest; the rest is once in the page, lower.
+@(test)
+site_tagline_of_the_home :: proc(t: ^testing.T) {
+	readme, problem := site_readme_parse(SMALL_README)
+	testing.expect_value(t, problem, "")
+	testing.expect_value(t, readme.tagline, "The lead.")
+	testing.expect_value(t, readme.explanation, "Its second line.")
+
+	site := test_site()
+	site.readme = readme
+	head := strings.builder_make(context.temp_allocator)
+	site_home_head(&site, &head)
+	head_html := strings.to_string(head)
+	testing.expect(t, strings.contains(head_html, "<p class=\"lead\">The lead.</p>"))
+	testing.expect(t, !strings.contains(head_html, "Its second line."))
+	page := strings.builder_make(context.temp_allocator)
+	site_home_head(&site, &page)
+	site_home_explanation(&site, &page)
+	page_html := strings.to_string(page)
+	testing.expect_value(t, strings.count(page_html, "Its second line."), 1)
+	testing.expect(t, strings.index(page_html, "Its second line.") > strings.index(page_html, "</header>"))
+
+	// A lead of one sentence has no explanation and no section for it.
+	one_sentence, _ := strings.replace(SMALL_README, "The lead.\nIts second line.", "The lead.", 1, context.temp_allocator)
+	short, short_problem := site_readme_parse(one_sentence)
+	testing.expect_value(t, short_problem, "")
+	testing.expect_value(t, short.tagline, "The lead.")
+	testing.expect_value(t, short.explanation, "")
+	site.readme = short
+	empty := strings.builder_make(context.temp_allocator)
+	site_home_explanation(&site, &empty)
+	testing.expect_value(t, strings.to_string(empty), "")
+
+	// The README of the repository: a tagline of one sentence, and the rest.
+	if data, err := os.read_entire_file(SITE_README_FILE, context.temp_allocator); err == nil {
+		repository, _ := site_readme_parse(string(data))
+		testing.expect(t, strings.has_suffix(repository.tagline, "."))
+		testing.expect(t, !strings.contains(repository.tagline, ". "))
+		testing.expect(t, repository.explanation != "")
+		testing.expect_value(t, strings.concatenate({repository.tagline, " ", repository.explanation}, context.temp_allocator), repository.lead)
+	}
+}
