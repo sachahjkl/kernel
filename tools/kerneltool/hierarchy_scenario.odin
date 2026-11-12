@@ -36,6 +36,9 @@ scenario_hierarchy_first := [?]Step {
 	// count of the trees that wait is a measure.
 	{kind = .Wait, text = "hierarchy: remove of a tree: the name is gone at its commit; "},
 	{kind = .Wait, text = "hierarchy: the removal freed 1001 objects, 11 trees and "},
+	// Names in a scrambled order: splits and merges in the middle of
+	// leaves and branches.
+	{kind = .Wait, text = "hierarchy: added 6000 names in a scrambled order in 24 commits, listed in order, each read back; removed 3000 in another order, 3000 left in order, in "},
 	{kind = .Wait, text = "hierarchy: a read-only share of tree_003: as it must"},
 	{kind = .Wait, text = "hierarchy: the share lists the 10 trees of tree_003 only: as it must"},
 	{kind = .Wait, text = "hierarchy: the name \"..\" is refused: as it must"},
@@ -49,7 +52,7 @@ scenario_hierarchy_first := [?]Step {
 	{kind = .Wait, text = "hierarchy: the read-only share cannot remove: as it must"},
 	{kind = .Wait, text = "hierarchy: after unshare, the handles of the share are revoked: a call gives Gone: as it must"},
 	{kind = .Wait, text = "hierarchy: a writable share writes in tree_005, and the maker reads it: as it must"},
-	{kind = .Wait, text = "hierarchy: the first run leaves 99100 objects and 1089 trees: as it must"},
+	{kind = .Wait, text = "hierarchy: the first run leaves 102100 objects and 1090 trees: as it must"},
 	{kind = .Wait, text = "hierarchy: done, 0 wrong"},
 	{kind = .Wait, text = "root: hierarchy stopped with code 0"},
 	{kind = .Type, text = "shutdown()"},
@@ -61,8 +64,9 @@ scenario_hierarchy_second := [?]Step {
 	{kind = .Wait, text = "compositor: surface console"},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "start(\"hierarchy\")"},
-	{kind = .Wait, text = "hierarchy: a store with 99100 objects: the run after the remount"},
-	{kind = .Wait, text = "hierarchy: after the remount: 99100 objects and 1089 trees: as it must"},
+	{kind = .Wait, text = "hierarchy: a store with 102100 objects: the run after the remount"},
+	{kind = .Wait, text = "hierarchy: after the remount: 102100 objects and 1090 trees: as it must"},
+	{kind = .Wait, text = "hierarchy: after the remount: 3000 scrambled names left, in order: as it must"},
 	{kind = .Wait, text = "hierarchy: after the remount: 97999 objects listed in the parts, 98 contents byte for byte, the renamed tree and object in their places, in "},
 	{kind = .Wait, text = "hierarchy: done, 0 wrong"},
 	{kind = .Type, text = "shutdown()"},

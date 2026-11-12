@@ -115,6 +115,8 @@ A pointer is a block number and a check: the first 8 bytes of the BLAKE3 hash of
 
 A name is one step: it has no separator, and it never names the tree above. So a name that a program looks up under a place never reaches a node outside it.
 
+In a branch, the name of the record 0 is a bound that the search never reads. It can be larger than the name of the record 1: a smaller name that goes into the child 0 splits it, and the new separator goes to the record 1. So the order of a branch is checked from its record 1.
+
 ### 3.3 The commit and the open
 
 A commit is one change of one store. It changes the entries of the trees on one or two paths from the root of the store. Each changed node of each tree is written to a free block, then the node above it, up to the root node of the store, then the store block, then the root block: copy on write, as before. A loss of power leaves the disk with the last commit or the one in flight, never a mix: the tool checks each image that a loss can leave (section 6).
@@ -191,7 +193,7 @@ Each step is one tested capability on a system that works.
 
 ## 6. The tests
 
-- Host tests of the B+ tree (`support/storage_tree`): inserts in a random order that split leaves and branches, removes that merge and rebalance, the order of the keys, the pages of a listing, copy on write (the tree before a commit is still whole), the sizes of the format, the names that are refused.
+- Host tests of the B+ tree (`support/storage_tree`): inserts in a random order that split leaves and branches, a branch whose record 0 keeps a stale name, removes that merge and rebalance, the order of the keys, the pages of a listing, copy on write (the tree before a commit is still whole), the sizes of the format, the names that are refused.
 - Host tests of the open (`support/storage_mount`): damage of a node and of a list, the recount of a store.
-- The machine test of `hierarchy`: 100000 entries in trees inside trees, the listing in pages, a rename, the removal of a tree, then a second machine that opens the same disk and checks the counts and the contents. Each refusal of the confinement (`..`, `/`, a place of another connection, a change through a read-only share, a call after `unshare`). The time of the commits is printed as a measure.
+- The machine test of `hierarchy`: 100000 entries in trees inside trees, the listing in pages, a rename, the removal of a tree, 6000 names added to one tree in a fixed scrambled order (leaves and branches split in their middle) and half of them removed in another order (merges), then a second machine that opens the same disk and checks the counts and the contents. Each refusal of the confinement (`..`, `/`, a place of another connection, a change through a read-only share, a call after `unshare`). The time of the commits is printed as a measure.
 - The losses of power (`kerneltool test power`): each image that a loss can leave opens, and gives the commit before or the commit in flight, each entry and each version byte for byte.

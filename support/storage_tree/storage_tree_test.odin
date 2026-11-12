@@ -439,3 +439,47 @@ a_damaged_node_is_found :: proc(t: ^testing.T) {
 	testing.expect(t, !get(&work, key[:], ([^]u8)(&value)[:size_of(value)]))
 	testing.expect_value(t, pool.failure, Failure.Wrong)
 }
+
+// A branch whose record 0 has a stale name: the names first go in from
+// 1000 up, so the root branch takes the name of its first leaf then; the
+// names below 1000 that come after go into the child 0, which splits, and
+// the new separator at the record 1 is smaller than the name of the record
+// 0. That branch is valid: the search never reads the name of the record 0.
+@(test)
+a_stale_name_at_the_record_0_of_a_branch :: proc(t: ^testing.T) {
+	disk := disk_make()
+	defer disk_free(disk)
+	pool := new(Pool)
+	defer free(pool)
+	pool_reset(pool)
+	work := Work{pool = pool, source = &disk.source, shape = TREE_SHAPE}
+	for number in u64(1000) ..< 1100 {
+		key := name_of_number(number)
+		value := entry_of_number(number)
+		put(&work, key[:], ([^]u8)(&value)[:size_of(value)], false)
+	}
+	finish(&work, &disk.writer)
+	pool_reset(pool)
+	for number in u64(0) ..< 100 {
+		key := name_of_number(number)
+		value := entry_of_number(number)
+		put(&work, key[:], ([^]u8)(&value)[:size_of(value)], false)
+	}
+	testing.expect_value(t, pool.failure, Failure.None)
+	finish(&work, &disk.writer)
+	pool_reset(pool)
+	root_node := disk.blocks[work.root.block]
+	testing.expect(t, header(&root_node).level > 0)
+	testing.expect(t, compare(key_at(&root_node, TREE_SHAPE, 0), key_at(&root_node, TREE_SHAPE, 1)) > 0)
+	testing.expect(t, node_valid(&root_node, TREE_SHAPE))
+	keys, _, failure, bad := walk_all(disk, work.root)
+	defer delete(keys)
+	testing.expect_value(t, failure, Failure.None)
+	testing.expect_value(t, len(keys), 200)
+	testing.expect_value(t, bad, 0)
+	for number in ([]u64{0, 99, 1000, 1099}) {
+		key := name_of_number(number)
+		value: format.Entry
+		testing.expect(t, get(&work, key[:], ([^]u8)(&value)[:size_of(value)]))
+	}
+}

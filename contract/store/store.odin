@@ -151,8 +151,10 @@ Entry :: struct {
 // and its Entry; a record of a branch is a name and the Pointer of a child.
 // In a branch, the name of the record n is at most each name under the
 // child n, and more than each name under the child n - 1; the search does
-// not read the name of the record 0. A node that a tree names is never
-// empty, and its records are in the order of their names, each name once.
+// not read the name of the record 0, which can be larger than the name of
+// the record 1. A node that a tree names is never empty; the records of a
+// leaf, and the records from 1 of a branch, are in the order of their
+// names, each name once.
 NODE_MAGIC :: u32(0x45455254) // The bytes "TREE".
 
 TREE_HEADER_SIZE :: 32

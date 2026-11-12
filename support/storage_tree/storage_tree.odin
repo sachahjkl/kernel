@@ -191,9 +191,13 @@ node_valid :: proc "contextless" (bytes: ^Block, shape: Shape) -> bool {
 	if head.magic != format.NODE_MAGIC || head.level >= DEPTH_LIMIT || head.count == 0 || int(head.count) > capacity_of(shape, head.level) {
 		return false
 	}
-	// In a branch, the key of the record 0 is a bound only: the order starts
-	// at the record 1. It is still at most the key of the record 1.
-	for index in 1 ..< int(head.count) {
+	// In a branch, the key of the record 0 is a bound that the search never
+	// reads, and it can be stale: a smaller key that went into the child 0
+	// splits it, and the new separator at the record 1 is then smaller than
+	// the key of the record 0. So the order of a branch starts at the
+	// record 1; the order of a leaf at the record 0.
+	first := head.level == 0 ? 1 : 2
+	for index in first ..< int(head.count) {
 		if compare(key_at(bytes, shape, index - 1), key_at(bytes, shape, index)) >= 0 {
 			return false
 		}

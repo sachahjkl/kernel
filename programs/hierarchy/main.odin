@@ -13,11 +13,24 @@ OBJECTS_IN_PART :: 100
 MADE_OBJECTS :: TOP_TREES * PARTS * OBJECTS_IN_PART // 100000
 PAGE_ROWS :: 16
 
+// The names that go into one tree in a scrambled order: enough leaves for
+// the branches to split, and for the root to be a branch of branches.
+SCRAMBLED_NAMES :: 6000
+// The order of the adds: the name of the number (n * ADD_STEP + 17) mod
+// SCRAMBLED_NAMES for n from 0. The order of the removes: (n * REMOVE_STEP)
+// mod SCRAMBLED_NAMES, the even numbers only. Each step is a prime that does
+// not divide SCRAMBLED_NAMES, so each order names each number once, with no
+// random source: a run is the same at each start.
+ADD_STEP :: 4099
+REMOVE_STEP :: 1777
+SCRAMBLED_LEFT :: SCRAMBLED_NAMES / 2
+
 // What the first run leaves: the objects made, one object "content" in
 // each top tree, one object written through a share, less the tree
-// "tree_002" with its 10 trees, its 1000 objects and its content.
-OBJECTS_LEFT :: MADE_OBJECTS + TOP_TREES + 1 - (PARTS * OBJECTS_IN_PART + 1)
-TREES_LEFT :: TOP_TREES + TOP_TREES * PARTS - (1 + PARTS)
+// "tree_002" with its 10 trees, its 1000 objects and its content; and the
+// tree "scrambled" with the odd half of its names.
+OBJECTS_LEFT :: MADE_OBJECTS + TOP_TREES + 1 - (PARTS * OBJECTS_IN_PART + 1) + SCRAMBLED_LEFT
+TREES_LEFT :: TOP_TREES + TOP_TREES * PARTS - (1 + PARTS) + 1
 
 client: storage.Client
 wrong_cases: int
@@ -30,6 +43,18 @@ number_name :: proc "contextless" (buffer: []u8, prefix: string, number: int) ->
 	buffer[count + 1] = u8('0' + number / 10 % 10)
 	buffer[count + 2] = u8('0' + number % 10)
 	return string(buffer[:count + 3])
+}
+
+// scrambled_name writes the name of a number of five digits.
+scrambled_name :: proc "contextless" (buffer: []u8, number: int) -> string {
+	count := copy(buffer[:], "s_")
+	divisor := 10000
+	for _ in 0 ..< 5 {
+		buffer[count] = u8('0' + number / divisor % 10)
+		count += 1
+		divisor /= 10
+	}
+	return string(buffer[:count])
 }
 
 outcome :: proc "contextless" (good: bool, what: string, parts: ..system.Part) {
@@ -212,9 +237,69 @@ first_run :: proc "contextless" () {
 	}
 	outcome(counts.removing == 0 && counts.objects == before.objects - (PARTS * OBJECTS_IN_PART + 1) && counts.trees == before.trees - (1 + PARTS) && counts.blocks < before.blocks, "the removal freed ", before.objects - counts.objects, " objects, ", before.trees - counts.trees, " trees and ", before.blocks - counts.blocks, " blocks, in ", system.time() - removal_start, " ms")
 
+	scrambled_case()
 	confinement()
 	counts, _ = storage.usage(&client)
 	outcome(counts.objects == OBJECTS_LEFT && counts.trees == TREES_LEFT, "the first run leaves ", counts.objects, " objects and ", counts.trees, " trees")
+}
+
+// scrambled_case adds names to one tree in an order that is not the order
+// of the names, so that leaves and branches split in their middle and the
+// root splits; reads each one back; then removes half of them in another
+// order, so that leaves and branches merge and take records from their
+// siblings.
+scrambled_case :: proc "contextless" () {
+	start := system.time()
+	tree_row := [1]storage.Add_Row{{name_offset = 0, name_count = 9, kind = storage.ENTRY_TREE}}
+	tree_name := "scrambled"
+	_, status := storage.add(&client, storage.ROOT, tree_row[:], transmute([]u8)tree_name)
+	place, open_status := storage.open_tree(&client, storage.ROOT, "scrambled")
+	if status != .Ok || open_status != .Ok {
+		outcome(false, "the tree scrambled: ", "status ", u64(status), " ", u64(open_status))
+		return
+	}
+	rows: [250]storage.Add_Row
+	names: [250 * 8]u8
+	commits: u64
+	for first := 0; first < SCRAMBLED_NAMES; first += len(rows) {
+		used := 0
+		count := min(len(rows), SCRAMBLED_NAMES - first)
+		for row in 0 ..< count {
+			buffer: [8]u8
+			name := scrambled_name(buffer[:], ((first + row) * ADD_STEP + 17) % SCRAMBLED_NAMES)
+			rows[row] = {name_offset = i64(used), name_count = i64(len(name)), kind = storage.ENTRY_OBJECT}
+			used += copy(names[used:], name)
+		}
+		if _, add_status := storage.add(&client, place, rows[:count], names[:used]); add_status != .Ok {
+			outcome(false, "the scrambled adds: ", "status ", u64(add_status))
+			return
+		}
+		commits += 1
+	}
+	objects, _, in_order, _ := count_entries(&client, place)
+	found_all := true
+	for number in 0 ..< SCRAMBLED_NAMES {
+		buffer: [8]u8
+		_, found, _ := storage.read(&client, place, scrambled_name(buffer[:], number), nil)
+		found_all &&= found
+	}
+	removed := 0
+	for step in 0 ..< SCRAMBLED_NAMES {
+		number := step * REMOVE_STEP % SCRAMBLED_NAMES
+		if number % 2 != 0 {
+			continue
+		}
+		buffer: [8]u8
+		if _, remove_status := storage.remove(&client, place, scrambled_name(buffer[:], number)); remove_status == .Ok {
+			removed += 1
+		}
+	}
+	left, _, left_in_order, _ := count_entries(&client, place)
+	even_buffer, odd_buffer: [8]u8
+	_, even_found, _ := storage.read(&client, place, scrambled_name(even_buffer[:], 2), nil)
+	_, odd_found, _ := storage.read(&client, place, scrambled_name(odd_buffer[:], 3), nil)
+	storage.close_tree(&client, place)
+	outcome(objects == SCRAMBLED_NAMES && in_order && found_all && removed == SCRAMBLED_LEFT && left == SCRAMBLED_LEFT && left_in_order && !even_found && odd_found, "added ", i64(objects), " names in a scrambled order in ", commits, " commits, listed in order, each read back; removed ", i64(removed), " in another order, ", i64(left), " left in order, in ", system.time() - start, " ms")
 }
 
 // confinement: a share reaches the tree of its place and nothing outside
@@ -294,6 +379,10 @@ second_run :: proc "contextless" (counts: storage.Usage) {
 		}
 		storage.close_tree(&client, top_place)
 	}
+	// The odd half of the scrambled names, in order.
+	scrambled, _ := storage.open_tree(&client, storage.ROOT, "scrambled")
+	scrambled_left, _, scrambled_in_order, _ := count_entries(&client, scrambled)
+	outcome(scrambled_left == SCRAMBLED_LEFT && scrambled_in_order, "after the remount: ", i64(scrambled_left), " scrambled names left, in order")
 	// tree_001 is inside tree_000 now, with its parts.
 	tree_0, _ := storage.open_tree(&client, storage.ROOT, "tree_000")
 	moved, _ := storage.open_tree(&client, tree_0, "tree_001_moved")
