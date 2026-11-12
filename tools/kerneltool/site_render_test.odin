@@ -42,7 +42,8 @@ site_render_each_construct :: proc(t: ^testing.T) {
 		"<li>one continued<ul>\n<li>nested",
 		"<li id=\"a-part-1\"><span class=\"label\">1.</span> first",
 		"<li id=\"a-part-34b\"><span class=\"label\">34b.</span> second",
-		"<th scope=\"col\">B | C</th>",
+		"<th scope=\"col\" class=\"column-any\">B | C</th>",
+		"<div class=\"table\" role=\"region\" tabindex=\"0\" aria-label=\"A part\">",
 		"<blockquote>\n<p>quoted &lt;text&gt;</p>",
 		"<pre><code>x := 1 &lt; 2\n</code></pre>",
 	}
@@ -242,4 +243,60 @@ site_licenses_readers :: proc(t: ^testing.T) {
 	testing.expect_value(t, manifest.license, "MIT")
 	_, no_theme_problem := site_pointer_manifest_parse("m", "license MIT\n")
 	testing.expect(t, no_theme_problem != "")
+}
+
+// The tables: the kind of each column of the measured numbers, the box (a
+// region that the keyboard reaches, with a name), and the class of its
+// column on each cell; a date in a time element; the kinds of the cells of
+// a table of a document.
+@(test)
+site_tables_with_kinds :: proc(t: ^testing.T) {
+	kinds := [?]Site_Column_Kind{.Prose, .Line, .Prose, .Date}
+	testing.expect_value(t, len(site_numbers_columns), len(kinds))
+	for column, index in site_numbers_columns {
+		testing.expect_value(t, column.kind, kinds[index])
+	}
+
+	b := strings.builder_make(context.temp_allocator)
+	strings.write_string(&b, "<p>before</p>\n")
+	table := site_table_start(&b, "Measured <numbers>", site_numbers_columns[:])
+	strings.write_string(&b, "<tr id=\"one\"><td>What</td><td class=\"code\"><code>line</code></td><td>log</td><td>")
+	site_time(&b, "2026-11-12 02:09 UTC")
+	strings.write_string(&b, "</td></tr>\n<tr><td>Second</td><td></td><td></td><td></td></tr>\n")
+	site_table_end(&b, table)
+	html := strings.to_string(b)
+	expect := [?]string {
+		"<p>before</p>\n<div class=\"table\" role=\"region\" tabindex=\"0\" aria-label=\"Measured &lt;numbers&gt;\"><table>",
+		"<th scope=\"col\" class=\"column-prose\">What</th><th scope=\"col\" class=\"column-line\">The line of the log</th>",
+		"<th scope=\"col\" class=\"column-date\">Written</th>",
+		"<tr id=\"one\"><td class=\"column-prose\">What</td><td class=\"column-line code\"><code>line</code></td><td class=\"column-prose\">log</td><td class=\"column-date\"><time datetime=\"2026-11-12T02:09Z\">2026-11-12 02:09 UTC</time></td></tr>",
+		"<tr><td class=\"column-prose\">Second</td><td class=\"column-line\"></td><td class=\"column-prose\"></td><td class=\"column-date\"></td></tr>",
+		"</tbody></table></div>\n",
+	}
+	for part in expect {
+		testing.expectf(t, strings.contains(html, part), "the table has no %q:\n%s", part, html)
+	}
+	testing.expect_value(t, strings.count(html, "role=\"region\""), 1)
+	testing.expect_value(t, strings.count(html, "class=\"column-"), 4 + 8)
+
+	testing.expect_value(t, site_cell_kind("42"), Site_Column_Kind.Number)
+	testing.expect_value(t, site_cell_kind("1 024"), Site_Column_Kind.Number)
+	testing.expect_value(t, site_cell_kind("2026-11-12"), Site_Column_Kind.Date)
+	testing.expect_value(t, site_cell_kind("2026-11-12 02:09 UTC"), Site_Column_Kind.Date)
+	testing.expect_value(t, site_cell_kind("2026-11-12 UTC"), Site_Column_Kind.Date)
+	testing.expect_value(t, site_cell_kind("12 pages"), Site_Column_Kind.Any)
+	testing.expect_value(t, site_cell_kind("v1"), Site_Column_Kind.Any)
+	testing.expect_value(t, site_cell_kind(""), Site_Column_Kind.Any)
+	plain := strings.builder_make(context.temp_allocator)
+	site_time(&plain, "not <a> date")
+	testing.expect_value(t, strings.to_string(plain), "not &lt;a&gt; date")
+	day := strings.builder_make(context.temp_allocator)
+	site_time(&day, "2026-11-12")
+	testing.expect_value(t, strings.to_string(day), "<time datetime=\"2026-11-12\">2026-11-12</time>")
+
+	// A table of a document: the general kind, and a cell of a number.
+	site := test_site()
+	rendered, _ := render(&site, "## Sizes\n\n| What | Bytes |\n|---|---|\n| The kernel | 1024 |\n")
+	testing.expect(t, strings.contains(rendered, "aria-label=\"Sizes\""))
+	testing.expect(t, strings.contains(rendered, "<td class=\"column-any\">The kernel</td><td class=\"column-number\">1024</td>"))
 }

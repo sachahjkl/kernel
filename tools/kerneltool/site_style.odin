@@ -217,8 +217,38 @@ ol.labelled > li > * { text-indent: 0; }
    the dim color, rows of 24 pixels, every second row on a band.
    The cells wrap; a name (an identifier, a path, a signature) stays on one
    line. A table scrolls sideways only on a narrow screen. */
-.table { margin: 0 0 16px; }
+/* The box of a table scrolls sideways at every width when the table is
+   wider than the page; the keyboard reaches it. A column is never narrower
+   than its kind needs: a width on a cell of the head is a least width in
+   the automatic layout of a table, and a table wider than its box shares
+   the rest of the room in proportion to those widths. */
+.table { margin: 0 0 16px; overflow-x: auto; border-left: 2px solid transparent; border-right: 2px solid transparent; }
+.table:focus-visible { outline: 2px solid var(--line); outline-offset: 2px; }
 table { border-collapse: collapse; min-width: 100%; }
+th.column-short { width: 6em; }
+th.column-prose { width: 13em; }
+th.column-line { width: 30em; }
+th.column-any { width: 6em; }
+.column-name, .column-name code { white-space: nowrap; overflow-wrap: normal; }
+.column-date, .column-number { white-space: nowrap; }
+.column-number { text-align: right; font-variant-numeric: tabular-nums; }
+td.column-line code { overflow-wrap: break-word; }
+/* The first column, the name of the row, stays in view while the table
+   scrolls sideways: an opaque background, the color of its row. */
+.table tr > :first-child { position: sticky; left: 0; z-index: 1; background: var(--background); }
+.table tbody tr:nth-child(odd) > :first-child { background: var(--card-top); }
+/* A line at each edge of the box where more of the table is: tied to the
+   place of the scroll of the box, not to the time. A box that does not
+   scroll has no line. A browser with no scroll timeline shows its scroll
+   bar only. */
+@supports (animation-timeline: scroll()) {
+  .table { animation: table-edges linear both; animation-timeline: scroll(self inline); }
+}
+@keyframes table-edges {
+  0% { border-left-color: transparent; border-right-color: var(--line); }
+  1%, 99% { border-left-color: var(--line); border-right-color: var(--line); }
+  100% { border-left-color: var(--line); border-right-color: transparent; }
+}
 th { color: var(--dim); font-weight: 400; text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--track); white-space: nowrap; }
 td { padding: 4px 8px; vertical-align: top; overflow-wrap: break-word; }
 tbody tr:nth-child(odd) { background: var(--card-top); }
@@ -306,9 +336,9 @@ figcaption { padding-top: 8px; font-size: 14px; }
   .search-panel { position: static; width: auto; max-width: none; margin-top: 4px; }
   /* No line wider than the screen: a long word, an address or a path
      breaks; a table and a block of code scroll in their own box. */
-  h1, h2, h3, p, li, td, figcaption, .crumbs { overflow-wrap: anywhere; }
+  h1, h2, h3, p, li, figcaption, .crumbs { overflow-wrap: anywhere; }
   .news-body.with-picture, .news-cards { grid-template-columns: minmax(0, 1fr); }
-  .table { overflow-x: auto; }
+
   .home-head { grid-template-columns: minmax(0, 1fr); }
   .measures, .pictures { grid-template-columns: minmax(0, 1fr); }
   figure.wide { grid-column: auto; }

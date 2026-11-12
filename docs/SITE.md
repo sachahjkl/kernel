@@ -251,7 +251,7 @@ The site follows `DESIGN.md`, with the colors of `support/graphics/rules.odin` a
 - the news cards of the home, side by side on a wide screen: the title, the line of the kind and the date, the picture and the text of each card of a row start at the same height, whatever the length of a title. Each card takes four rows of the grid of the cards and shares them (`grid-template-rows: subgrid`); each part has its row, so a card with no picture keeps its text in line. The picture boxes have one ratio, 4 by 3, the ratio of the screen pictures; a picture of another ratio is shown whole in the box (`object-fit: contain`), not cut. A browser with no subgrid shows the cards as blocks, and a title keeps the room of two lines on a wide screen, so that the common case aligns. No title is cut. On a narrow screen (one column) nothing changes. The cards of the page News stand one under the other at every width: no row to align;
 - cards with a border of 1 pixel in their accent and the bar of 4 x 16 pixels before their title, as the cards of the boot display;
 - the colors of the concepts with their meaning in the system: the stages of the start take the color of who runs them (the firmware violet, the boot program orange, the kernel blue);
-- the tables have the look of the tables of the system: the titles of the columns in the dim color, every second row on a band (`DESIGN.md`, section 10). The cells wrap; a name (an identifier, a path, a signature) stays on one line. A table scrolls sideways only on a screen under 720 pixels;
+- the tables have the look of the tables of the system: the titles of the columns in the dim color, every second row on a band (`DESIGN.md`, section 10). Each column has the least width of its kind, and a table wider than the page scrolls sideways in its own box (see "The tables");
 - the grid of points of the desktop is on the home only.
 
 Prose is in the reading font of the reader's system, at most 72 characters a line; code, signatures, numbers and identifiers are in its monospace font. No animation, no shadow, no round corner. The light form follows `prefers-color-scheme`. A print form hides the bar and the navigation.
@@ -270,6 +270,31 @@ The contrast of the text (WCAG 2 ratio), from the colors of the rules:
 
 Code takes the text color, because the dim color on the track is 4.33. The colors of the firmware (4.50 on a card) and of the boot program are used for marks, not for text.
 
+### The tables
+
+The owner asked for it on 2026-11-12, of the measured numbers at a width of 1630 pixels: "tableau pas ouf, si possible de faire un tableau scrollable ? pck la colonne compressée".
+
+The writer of each generated table states the kind of each column (`Site_Column_Kind` in `tools/kerneltool/site_pages.odin`), because it knows what the column holds. `site_table_start` writes the class of the kind on each header cell, and `site_table_end` writes it on each cell of the body, by the place of the cell in its row. The style sheet gives each kind its least width as a `width` on the header cell: in the automatic layout of a table, that width is a least width, and a table with more room shares it in proportion to those widths.
+
+| Kind | Holds | Least width | Wraps |
+|---|---|---|---|
+| Name | An identifier, a path, a signature | Its text | Never |
+| Short | A few words: a kind, a status, a version | 6 em, about 12 characters | At spaces |
+| Prose | Sentences | 13 em, about 28 characters of the reading font | At spaces |
+| Line | A quoted line of a log or of code | 30 em, about 57 characters of the monospace font at 14 pixels | At spaces; a long word breaks only when it is wider than the cell |
+| Date | A date and a time, `2026-11-12 02:09 UTC`, in a `<time datetime="2026-11-12T02:09Z">` element | Its text | Never |
+| Number | A number | Its text | Never; aligned right, with figures of one width |
+| Any | A column of a table of a document of `docs/` | 6 em, about 12 characters | At spaces; a cell that holds only a number or a date gets that kind |
+
+The measured numbers are What (Prose), The line of the log (Line), Log, line, machine (Prose) and Written (Date): 13 + 30 + 13 em and the date, under the 1120 pixels of the column of the page, so the table does not scroll on a wide screen, and a line of a log takes two or three lines.
+
+- The box: `<div class="table" role="region" tabindex="0" aria-label="...">`, the pattern for a table that scrolls: the keyboard reaches the box and scrolls it with the arrows, and a screen reader names it. The name is the name of the table that its writer gives, or the heading above a table of a document. The focus of the box is visible.
+- The box scrolls sideways at every width (`overflow-x: auto`), when the sum of the least widths passes the width of the page; on a wide screen where the table fits, nothing scrolls.
+- A sign that there is more: a line in the color of the line of a link at each edge of the box where more of the table is, tied to the place of the scroll of the box (a scroll timeline, `animation-timeline: scroll(self inline)`). It moves with the scroll, not with the time, so it is not an animation in the sense of `DESIGN.md`. A box that does not scroll has no line. A browser with no scroll timeline shows its scroll bar only.
+- The first cell of each row stays in view while the table scrolls sideways (`position: sticky; left: 0`), on an opaque background of the color of its row.
+- The head row does not stay at the top while the page scrolls. A box with `overflow-x: auto` is a scroll container for both axes, so a `position: sticky; top` of the head would stick inside the box, which does not scroll up and down: the rule would do nothing, so it is not written. The bar of the site does not stay at the top either.
+- On a narrow screen a heading, a paragraph, an item, a caption and the breadcrumbs break a long word; a cell of a table does not, because its box scrolls.
+
 ### The site menu
 
 The owner asked for it on 2026-11-12: "il manque un menu burger sur la version mobile du site".
@@ -281,7 +306,7 @@ The owner asked for it on 2026-11-12: "il manque un menu burger sur la version m
   - `search.js`, loaded with `defer` on each page, opens the menu on a wide screen and closes it on a narrow one, when the width changes too (`matchMedia("(min-width: 720px)")`). On a narrow screen it also closes the menu at Escape (and puts the focus on the button) and at a click outside, and opens it for `/` and for an address with `?q=`.
   - With no script, a browser with no `::details-content` shows the button on a wide screen too, and the button opens the list: the page stays whole. With the script, such a browser shows the button for the time between the first paint and the run of the deferred script.
 - The menu is closed in the file, not open: an open menu that the script closes on a narrow screen moves the page after its first paint on each load.
-- At 360 pixels, no line is wider than the screen: a table and a block of code scroll in their own box (`.table`, `pre`); a heading, a paragraph, an item, a cell, a caption and the breadcrumbs break a long word or address (`overflow-wrap: anywhere`); the stages, the tiles and the pictures fit a column of 328 pixels.
+- At 360 pixels, no line is wider than the screen: a table and a block of code scroll in their own box (`.table`, `pre`); a heading, a paragraph, an item, a caption and the breadcrumbs break a long word or address (`overflow-wrap: anywhere`); the stages, the tiles and the pictures fit a column of 328 pixels.
 
 ## The mark on the site
 

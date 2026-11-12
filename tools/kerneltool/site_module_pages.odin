@@ -82,7 +82,7 @@ site_module_pages_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Ent
 			in_image += item.build.image ? 1 : 0
 		}
 		fmt.sbprintf(&b, "<h1>Modules</h1>\n<p>The %d modules that the tool builds, %d of them in the boot image. A program is a module whose source is in <code>programs/</code>; the others are modules that a program loads or calls. The purpose of each is the first sentence of the comment before <code>package</code> in its source.</p>\n", len(reference.modules), in_image)
-		site_table_start(&b, {"Module", "Kind", "Boot image", "Exports", "Imports", "Purpose"})
+		modules_table := site_table_start(&b, "Modules", {{"Module", .Name}, {"Kind", .Short}, {"Boot image", .Short}, {"Exports", .Number}, {"Imports", .Prose}, {"Purpose", .Prose}})
 		for item in reference.modules {
 			fmt.sbprintf(&b, "<tr id=\"module-%s\"><td class=\"code name\">", site_slug(item.build.name))
 			site_module_link(site, &b, SITE_MODULES_PAGE, item.build.name)
@@ -98,7 +98,7 @@ site_module_pages_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Ent
 			site_text_cell(&b, item.description.about)
 			strings.write_string(&b, "</tr>\n")
 		}
-		site_table_end(&b)
+		site_table_end(&b, modules_table)
 		strings.write_string(&b, "<p class=\"source\">Read from <code>module_builds</code> in <a href=\"")
 		site_escape(&b, site_repository_file(site, SITE_MODULES_FILE))
 		strings.write_string(&b, "\"><code>" + SITE_MODULES_FILE + "</code></a> and from the source folder of each module.</p>\n")
@@ -130,7 +130,7 @@ site_module_pages_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Ent
 		strings.write_string(&b, "</div>\n")
 
 		// The facts of the build.
-		site_table_start(&b, {"Fact", "Value"})
+		facts_table := site_table_start(&b, "Facts", {{"Fact", .Short}, {"Value", .Prose}})
 		strings.write_string(&b, "<tr><td>Source</td><td class=\"code name\"><a href=\"")
 		site_escape(&b, site_folder_address(site, build.source))
 		strings.write_string(&b, "\"><code>")
@@ -176,21 +176,21 @@ site_module_pages_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Ent
 			strings.write_string(&b, "none")
 		}
 		strings.write_string(&b, "</td></tr>\n")
-		site_table_end(&b)
+		site_table_end(&b, facts_table)
 
 		// The exports.
 		fmt.sbprintf(&b, "<h2 id=\"exports\">Exports</h2>\n")
 		if len(description.exports) == 0 {
 			strings.write_string(&b, "<p>No export.</p>\n")
 		} else {
-			site_table_start(&b, {"Export", "What it does"})
+			exports_table := site_table_start(&b, "Exports", {{"Export", .Name}, {"What it does", .Prose}})
 			for export in description.exports {
 				fmt.sbprintf(&b, "<tr id=\"export-%s\">", site_slug(export.name))
 				site_text_cell(&b, site_export_signature(description, export), "code name")
 				site_text_cell(&b, export.about)
 				strings.write_string(&b, "</tr>\n")
 			}
-			site_table_end(&b)
+			site_table_end(&b, exports_table)
 		}
 		fmt.sbprintf(&b, "<p class=\"source\">Read from the source of the module, as the build reads it to describe the exports (<a href=\"%s\"><code>tools/kerneltool/describe.odin</code></a>).</p>\n", site_repository_file(site, "tools/kerneltool/describe.odin"))
 
@@ -201,7 +201,7 @@ site_module_pages_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Ent
 			grants, named_in_grants := site_case_of(reference.program_grants, reference.grants_otherwise, build.name)
 			budget, named_in_budget := site_case_of(reference.program_budgets, reference.budget_otherwise, build.name)
 			strings.write_string(&b, "<h2 id=\"root\">What the root service gives it</h2>\n")
-			site_table_start(&b, {"What", "Value", "As the root service says"})
+			budget_table := site_table_start(&b, "Grants and budget", {{"What", .Short}, {"Value", .Short}, {"As the root service says", .Prose}})
 			strings.write_string(&b, "<tr><td><a href=\"../grants.html#programs\">Grants</a></td>")
 			site_name_cell(site, &b, grants.value, SITE_ROOT_FILE, grants.line)
 			site_text_cell(&b, named_in_grants ? grants.comment : "Not named in grants_of: the grants of each other program.")
@@ -209,7 +209,7 @@ site_module_pages_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Ent
 			site_name_cell(site, &b, budget.value, SITE_ROOT_FILE, budget.line)
 			site_text_cell(&b, named_in_budget ? budget.comment : "Not named in things_of: the budget of each other program.")
 			strings.write_string(&b, "</tr>\n")
-			site_table_end(&b)
+			site_table_end(&b, budget_table)
 			fmt.sbprintf(&b, "<p class=\"source\">Read from <code>grants_of</code> and <code>things_of</code> in <a href=\"%s\"><code>%s</code></a>; <code>budget_of</code> in the same file adds the limits of processor time and of log records.</p>\n", site_repository_file(site, SITE_ROOT_FILE), SITE_ROOT_FILE)
 			append(&sources, SITE_ROOT_FILE)
 		}

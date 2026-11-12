@@ -164,7 +164,7 @@ site_status_add :: proc(site: ^Site) -> bool {
 
 	// The properties.
 	strings.write_string(&b, "<h2 id=\"properties\">Properties</h2>\n")
-	site_table_start(&b, {"Property", "Status", "Evidence items", "Gaps"})
+	properties_table := site_table_start(&b, "Properties", {{"Property", .Prose}, {"Status", .Short}, {"Evidence items", .Prose}, {"Gaps", .Prose}})
 	for property in properties {
 		heading_id := ""
 		prefix := fmt.tprintf("%d. ", property.number)
@@ -210,13 +210,13 @@ site_status_add :: proc(site: ^Site) -> bool {
 		strings.write_string(&b, named_gaps == 0 ? "<td class=\"missing\">none names it</td>" : "</td>")
 		strings.write_string(&b, "</tr>\n")
 	}
-	site_table_end(&b)
+	site_table_end(&b, properties_table)
 	strings.write_string(&b, "<p class=\"source\">The status is the column \"Status\" of the summary of the properties. An evidence item or a gap names a property when its text says \"property &lt;n&gt;\" or \"P&lt;n&gt;\".</p>\n")
 	site_source_line(site, &b, SITE_PROPERTIES_FILE, SITE_MILESTONE_FILE)
 
 	// The gaps.
 	strings.write_string(&b, "<h2 id=\"gaps\">Gaps</h2>\n")
-	site_table_start(&b, {"Gap", "Group", "What the code does not do"})
+	gaps_table := site_table_start(&b, "Gaps", {{"Gap", .Number}, {"Group", .Short}, {"What the code does not do", .Prose}})
 	for gap in gaps {
 		fmt.sbprintf(&b, "<tr id=\"gap-%d\"><td class=\"code\"><a href=\"", gap.number)
 		site_escape(&b, site_line_address(site, SITE_MILESTONE_FILE, gap.line))
@@ -225,12 +225,12 @@ site_status_add :: proc(site: ^Site) -> bool {
 		site_cell(&b, gap.text)
 		strings.write_string(&b, "</tr>\n")
 	}
-	site_table_end(&b)
+	site_table_end(&b, gaps_table)
 	site_source_line(site, &b, SITE_MILESTONE_FILE)
 
 	// The next steps.
 	strings.write_string(&b, "<h2 id=\"next-steps\">Next steps</h2>\n")
-	site_table_start(&b, {"Step", "What and its state"})
+	steps_table := site_table_start(&b, "Next steps", {{"Step", .Short}, {"What and its state", .Prose}})
 	for item in next_steps {
 		strings.write_string(&b, "<tr><td class=\"code\">")
 		site_item_links(&b, path, milestone_page, []Site_List_Item{item})
@@ -238,7 +238,7 @@ site_status_add :: proc(site: ^Site) -> bool {
 		site_cell(&b, item.text)
 		strings.write_string(&b, "</tr>\n")
 	}
-	site_table_end(&b)
+	site_table_end(&b, steps_table)
 	site_source_line(site, &b, SITE_MILESTONE_FILE)
 
 	site_page_add(site, Site_Page{path = path, title = "Status", description = site_description_cut(fmt.tprintf("The state of each of the %d properties of %s, with its evidence and its gaps; the %d gaps and the next steps.", len(properties), SITE_SYSTEM_NAME, len(gaps))), section = .Status, crumbs = site_crumbs(.Home), body = strings.to_string(b), sources = site_sources(SITE_PROPERTIES_FILE, SITE_MILESTONE_FILE)})

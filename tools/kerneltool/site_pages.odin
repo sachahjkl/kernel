@@ -20,19 +20,177 @@ Site_Reference_Entry :: struct {
 	source: string,
 }
 
-// site_table_start writes the start of a table with its header cells.
-site_table_start :: proc(b: ^strings.Builder, headers: []string) {
-	strings.write_string(b, "<div class=\"table\"><table>\n<thead><tr>")
-	for header in headers {
-		strings.write_string(b, "<th scope=\"col\">")
-		site_escape(b, header)
+// The kind of a column of a table (docs/SITE.md, "The tables"): it gives the
+// least width of the column, and whether its cells may wrap. The writer of
+// each table knows what each column holds, so it states the kind.
+Site_Column_Kind :: enum {
+	Name, // An identifier, a path, a signature: one line.
+	Short, // A few words: a kind, a status, a version.
+	Prose, // Sentences: at least about 28 characters wide.
+	Line, // A quoted line of a log or of code: at least about 60 characters of the monospace font.
+	Date, // A date and a time: never broken.
+	Number, // A number: never broken, aligned right.
+	Any, // A column of a table of a document, whose kind the tool does not know.
+}
+
+site_column_classes := [Site_Column_Kind]string {
+	.Name   = "column-name",
+	.Short  = "column-short",
+	.Prose  = "column-prose",
+	.Line   = "column-line",
+	.Date   = "column-date",
+	.Number = "column-number",
+	.Any    = "column-any",
+}
+
+Site_Column :: struct {
+	header: string,
+	kind:   Site_Column_Kind,
+}
+
+// The columns of the table of the measured numbers: the sentence, the line
+// of the log as it is quoted, where it comes from, and when the log was
+// written.
+site_numbers_columns := [?]Site_Column {
+	{"What", .Prose},
+	{"The line of the log", .Line},
+	{"Log, line, machine", .Prose},
+	{"Written", .Date},
+}
+
+// A table that is being written: where it starts in the builder, and the
+// kind of each column.
+Site_Table :: struct {
+	start: int,
+	kinds: []Site_Column_Kind,
+}
+
+// site_table_start writes the start of a table: its box, which scrolls
+// sideways when the table is wider than the page and which the keyboard
+// reaches (a region named by the name of the table), and its header cells,
+// each with the class of the kind of its column.
+site_table_start :: proc(b: ^strings.Builder, name: string, columns: []Site_Column) -> Site_Table {
+	table := Site_Table{start = strings.builder_len(b^), kinds = make([]Site_Column_Kind, len(columns), context.temp_allocator)}
+	strings.write_string(b, "<div class=\"table\" role=\"region\" tabindex=\"0\" aria-label=\"")
+	site_escape(b, name)
+	strings.write_string(b, "\"><table>\n<thead><tr>")
+	for column, index in columns {
+		table.kinds[index] = column.kind
+		fmt.sbprintf(b, "<th scope=\"col\" class=\"%s\">", site_column_classes[column.kind])
+		site_escape(b, column.header)
 		strings.write_string(b, "</th>")
 	}
 	strings.write_string(b, "</tr></thead>\n<tbody>\n")
+	return table
 }
 
-site_table_end :: proc(b: ^strings.Builder) {
+// site_table_end ends a table, and gives each cell of its body the class
+// of the kind of its column: the writers of the rows need not repeat it.
+site_table_end :: proc(b: ^strings.Builder, table: Site_Table) {
 	strings.write_string(b, "</tbody></table></div>\n")
+	written := strings.to_string(b^)
+	body_start := strings.index(written[table.start:], "<tbody>")
+	if body_start < 0 {
+		return
+	}
+	body_start += table.start
+	body := strings.clone(written[body_start:], context.temp_allocator)
+	resize(&b.buf, body_start)
+	strings.write_string(b, site_table_cells_classed(body, table.kinds))
+}
+
+// site_table_cells_classed gives the body of a table with the class of its
+// column on each cell: the column of a cell is its place in its row. The
+// text of a cell is escaped, so a "<td" is always a tag.
+site_table_cells_classed :: proc(body: string, kinds: []Site_Column_Kind) -> string {
+	out := strings.builder_make(context.temp_allocator)
+	column := 0
+	index := 0
+	for index < len(body) {
+		rest := body[index:]
+		if strings.has_prefix(rest, "<tr") && len(rest) > 3 && (rest[3] == '>' || rest[3] == ' ') {
+			column = 0
+		} else if (strings.has_prefix(rest, "<td") || strings.has_prefix(rest, "<th")) && len(rest) > 3 && (rest[3] == '>' || rest[3] == ' ') {
+			class := column < len(kinds) ? site_column_classes[kinds[column]] : ""
+			column += 1
+			if class != "" {
+				strings.write_string(&out, rest[:3])
+				after := rest[3:]
+				switch {
+				case strings.has_prefix(after, " class=\""):
+					strings.write_string(&out, " class=\"")
+					strings.write_string(&out, class)
+					strings.write_byte(&out, ' ')
+					index += 3 + len(" class=\"")
+				case:
+					strings.write_string(&out, " class=\"")
+					strings.write_string(&out, class)
+					strings.write_byte(&out, '"')
+					index += 3
+				}
+				continue
+			}
+		}
+		strings.write_byte(&out, body[index])
+		index += 1
+	}
+	return strings.to_string(out)
+}
+
+// site_cell_kind gives the kind of a cell of a table of a document that
+// holds only a number or a date ("2026-11-12", "2026-11-12 02:09 UTC"),
+// else Any: such a cell is never broken.
+site_cell_kind :: proc(text: string) -> Site_Column_Kind {
+	trimmed := strings.trim_space(text)
+	if trimmed == "" {
+		return .Any
+	}
+	is_number := true
+	for character in transmute([]u8)trimmed {
+		if !((character >= '0' && character <= '9') || character == '.' || character == ',' || character == '_' || character == ' ' || character == '%') {
+			is_number = false
+		}
+	}
+	if is_number && trimmed[0] >= '0' && trimmed[0] <= '9' {
+		return .Number
+	}
+	if len(trimmed) >= 10 && site_is_date(trimmed[:10]) {
+		after := trimmed[10:]
+		if after == "" || after == " UTC" || (len(after) == 10 && after[0] == ' ' && after[3] == ':' && strings.has_suffix(after, " UTC")) {
+			return .Date
+		}
+	}
+	return .Any
+}
+
+// site_is_date tells whether a text is a date "yyyy-mm-dd" by its form.
+site_is_date :: proc(text: string) -> bool {
+	if len(text) != 10 || text[4] != '-' || text[7] != '-' {
+		return false
+	}
+	for character, index in transmute([]u8)text {
+		if index != 4 && index != 7 && (character < '0' || character > '9') {
+			return false
+		}
+	}
+	return true
+}
+
+// site_time writes a date and a time of the form "2026-11-12 02:09 UTC" as
+// a time element whose machine form is "2026-11-12T02:09Z"; another text is
+// written as it is.
+site_time :: proc(b: ^strings.Builder, text: string) {
+	if site_cell_kind(text) != .Date || len(text) < 10 {
+		site_escape(b, text)
+		return
+	}
+	machine := text[:10]
+	if len(text) == 20 {
+		machine = strings.concatenate({text[:10], "T", text[11:16], "Z"}, context.temp_allocator)
+	}
+	fmt.sbprintf(b, "<time datetime=\"%s\">", machine)
+	site_escape(b, text)
+	strings.write_string(b, "</time>")
 }
 
 // site_cell writes one cell of inline Markdown.
@@ -175,7 +333,7 @@ site_guides_add :: proc(site: ^Site) -> bool {
 	// The index of the guides.
 	b := strings.builder_make(context.temp_allocator)
 	strings.write_string(&b, "<h1>Guides</h1>\n<p>The documents of the repository: how each part of the system is designed, and why. The tables of what exists are in the <a href=\"../reference/index.html\">reference</a>.</p>\n")
-	site_table_start(&b, {"Guide", "What it holds", "File"})
+	guides_table := site_table_start(&b, "Guides", {{"Guide", .Prose}, {"What it holds", .Prose}, {"File", .Name}})
 	for guide in site.guides {
 		fmt.sbprintf(&b, "<tr><td><a href=\"%s\">", site_relative("guides/index.html", guide.path))
 		site_escape(&b, guide.title)
@@ -184,7 +342,7 @@ site_guides_add :: proc(site: ^Site) -> bool {
 		site_cell(&b, strings.concatenate({"`", guide.source, "`"}, context.temp_allocator), "code")
 		strings.write_string(&b, "</tr>\n")
 	}
-	site_table_end(&b)
+	site_table_end(&b, guides_table)
 	site_source_line(site, &b, SITE_README_FILE)
 	site_page_add(site, Site_Page{path = "guides/index.html", title = "Guides", description = site_description_cut(fmt.tprintf("The %d documents of %s: how each part of the system is designed, and why.", len(site.guides), SITE_SYSTEM_NAME)), section = .Guides, crumbs = site_crumbs(.Home), body = strings.to_string(b), sources = site_sources(SITE_README_FILE)})
 	return true
@@ -234,14 +392,14 @@ site_reference_add :: proc(site: ^Site) -> bool {
 		commands := COMMANDS
 		fmt.sbprintf(&b, "<h1>Commands of kerneltool</h1>\n<p>All the automation of the project is one program, <code>kerneltool</code>. Run a command with <code>nix develop -c kerneltool &lt;command&gt;</code>. %d commands.</p>\n", len(commands))
 		site_source_line(site, &b, "tools/kerneltool/main.odin")
-		site_table_start(&b, {"Command", "What it does"})
+		commands_table := site_table_start(&b, "Commands of kerneltool", {{"Command", .Name}, {"What it does", .Prose}})
 		for command in commands {
 			strings.write_string(&b, "<tr>")
 			site_cell(&b, strings.concatenate({"`", command.name, "`"}, context.temp_allocator), "code")
 			site_cell(&b, command.about)
 			strings.write_string(&b, "</tr>\n")
 		}
-		site_table_end(&b)
+		site_table_end(&b, commands_table)
 		site_page_add(site, Site_Page{path = path, title = "Commands of kerneltool", description = site_description_cut(fmt.tprintf("The %d commands of kerneltool, the one tool of the project: the build, the machine tests, the pictures, the changelog and the site.", len(commands))), section = .Reference, crumbs = site_crumbs(.Reference), body = strings.to_string(b), sources = site_sources("tools/kerneltool/main.odin")})
 		append(&entries, Site_Reference_Entry{path = path, title = "Commands of kerneltool", what = "Each command of the tool of the project, with what it does.", source = "tools/kerneltool/main.odin"})
 	}
@@ -255,7 +413,7 @@ site_reference_add :: proc(site: ^Site) -> bool {
 			measured_count += number.found ? 1 : 0
 		}
 		fmt.sbprintf(&b, "<h1>Measured numbers</h1>\n<p>Each row is a line that a program of the system printed in the log of a machine test, quoted whole: the line gives its own conditions. A machine runs under QEMU on the host that ran the test: each number is one run on that host. %d of %d numbers are measured in this build.</p>\n", measured_count, len(site.measured))
-		site_table_start(&b, {"What", "The line of the log", "Log, line, machine", "Written"})
+		numbers_table := site_table_start(&b, "Measured numbers", site_numbers_columns[:])
 		for number in site.measured {
 			strings.write_string(&b, "<tr>")
 			site_cell(&b, number.measure.sentence)
@@ -277,10 +435,10 @@ site_reference_add :: proc(site: ^Site) -> bool {
 			strings.write_string(&b, ". ")
 			site_inline(&b, number.conditions)
 			strings.write_string(&b, ".</td><td class=\"code\">")
-			site_escape(&b, number.written)
+			site_time(&b, number.written)
 			strings.write_string(&b, "</td></tr>\n")
 		}
-		site_table_end(&b)
+		site_table_end(&b, numbers_table)
 		strings.write_string(&b, "<p class=\"source\">The lines are read from the logs in <code>build/</code> that the last <code>kerneltool check</code> or <code>kerneltool measure</code> wrote; the list of the numbers is <code>site_measures</code> in ")
 		strings.write_string(&b, "<a href=\"")
 		site_escape(&b, site_repository_file(site, "tools/kerneltool/site.odin"))
@@ -295,9 +453,9 @@ site_reference_add :: proc(site: ^Site) -> bool {
 		b := strings.builder_make(context.temp_allocator)
 		strings.write_string(&b, "<h1>Licenses</h1>\n<p>The license of the system, and of each part that it holds or uses. A cell with no source in the repository says \"" + SITE_NOT_RECORDED + "\".</p>\n<h2 id=\"system\">What the system holds</h2>\n")
 		system_ids, build_ids := site_license_row_ids(site.licenses)
-		site_license_table(site, &b, site.licenses.system_rows, system_ids)
+		site_license_table(site, &b, "What the system holds", site.licenses.system_rows, system_ids)
 		strings.write_string(&b, "<h2 id=\"build\">Used to build and test, not a part of the system</h2>\n")
-		site_license_table(site, &b, site.licenses.build_rows, build_ids)
+		site_license_table(site, &b, "What builds and tests it", site.licenses.build_rows, build_ids)
 		site_source_line(site, &b, SITE_LICENSE_FILE, SITE_FONT_FOLDER, SITE_SPLEEN_LICENSE_FILE, SITE_POSY_MANIFEST, SITE_SYSTEM_POINTER_MANIFEST, SITE_ODIN_LICENSE_FILE, SITE_FIAT_LICENSE_FILE, CRYPTOGRAPHY_MANIFEST, SITE_PORTRAIT_LICENSE_FILE, SITE_FLAKE_FILE, SITE_FLAKE_LOCK_FILE)
 		site_page_add(site, Site_Page{path = path, title = "Licenses", description = site_description_cut(fmt.tprintf("The license of %s and of each part that it holds or uses: %d rows, and %d tools that build and test it.", SITE_SYSTEM_NAME, len(site.licenses.system_rows), len(site.licenses.build_rows))), section = .Reference, crumbs = site_crumbs(.Reference), body = strings.to_string(b), sources = site_sources(SITE_LICENSE_FILE, SITE_FLAKE_FILE)})
 		append(&entries, Site_Reference_Entry{path = path, title = "Licenses", what = "The license, the author, the version and the place of each part of the system and of each tool of its build.", source = SITE_FLAKE_FILE})
@@ -309,7 +467,7 @@ site_reference_add :: proc(site: ^Site) -> bool {
 	// The index of the reference.
 	b := strings.builder_make(context.temp_allocator)
 	strings.write_string(&b, "<h1>Reference</h1>\n<p>Tables that the tool generates from the code and the files that define each thing. The guides explain why; these tables say what exists in this build.</p>\n")
-	site_table_start(&b, {"Table", "What it holds", "Generated from"})
+	reference_table := site_table_start(&b, "Reference tables", {{"Table", .Prose}, {"What it holds", .Prose}, {"Generated from", .Name}})
 	for entry in entries {
 		fmt.sbprintf(&b, "<tr><td><a href=\"%s\">", site_relative("reference/index.html", entry.path))
 		site_escape(&b, entry.title)
@@ -318,7 +476,7 @@ site_reference_add :: proc(site: ^Site) -> bool {
 		site_cell(&b, strings.concatenate({"`", entry.source, "`"}, context.temp_allocator), "code")
 		strings.write_string(&b, "</tr>\n")
 	}
-	site_table_end(&b)
+	site_table_end(&b, reference_table)
 	site_page_add(site, Site_Page{path = "reference/index.html", title = "Reference", description = site_description_cut(fmt.tprintf("The reference of %s: %d tables that the tool generates from the code and the files of the repository.", SITE_SYSTEM_NAME, len(entries))), section = .Reference, crumbs = site_crumbs(.Home), body = strings.to_string(b)})
 	return true
 }
@@ -346,8 +504,8 @@ site_license_row_ids :: proc(licenses: Site_Licenses) -> (system_ids: []string, 
 }
 
 // site_license_table writes the rows of one table of licenses.
-site_license_table :: proc(site: ^Site, b: ^strings.Builder, rows: []Site_License_Row, ids: []string) {
-	site_table_start(b, {"What", "Where", "License", "Author or origin", "Version or pin", "In the boot image"})
+site_license_table :: proc(site: ^Site, b: ^strings.Builder, name: string, rows: []Site_License_Row, ids: []string) {
+	licenses_table := site_table_start(b, name, {{"What", .Prose}, {"Where", .Name}, {"License", .Short}, {"Author or origin", .Prose}, {"Version or pin", .Short}, {"In the boot image", .Short}})
 	for row, index in rows {
 		fmt.sbprintf(b, "<tr id=\"%s\">", ids[index])
 		site_cell(b, row.what)
@@ -375,7 +533,7 @@ site_license_table :: proc(site: ^Site, b: ^strings.Builder, rows: []Site_Licens
 		site_cell(b, row.in_boot_image, row.in_boot_image == SITE_NOT_RECORDED ? "missing" : "")
 		strings.write_string(b, "</tr>\n")
 	}
-	site_table_end(b)
+	site_table_end(b, licenses_table)
 }
 
 site_releases_add :: proc(site: ^Site) {

@@ -312,9 +312,16 @@ site_render_table :: proc(renderer: ^Site_Renderer, lines: []string, start: int,
 	}
 	header := site_table_row_cells(lines[start])
 	term_table := renderer.glossary && len(header) > 0 && header[0] == "Term"
-	strings.write_string(b, "<div class=\"table\"><table>\n<thead><tr>")
+	// The box of the table: a region that the keyboard reaches, named by the
+	// heading above the table. A column of a document has no known kind: it
+	// gets the general least width, and a cell that holds only a number or
+	// a date is never broken.
+	region_name := len(renderer.headings) > 0 ? renderer.headings[len(renderer.headings) - 1].text : "Table"
+	strings.write_string(b, "<div class=\"table\" role=\"region\" tabindex=\"0\" aria-label=\"")
+	site_plain(b, region_name)
+	strings.write_string(b, "\"><table>\n<thead><tr>")
 	for cell in header {
-		strings.write_string(b, "<th scope=\"col\">")
+		strings.write_string(b, "<th scope=\"col\" class=\"" + "column-any" + "\">")
 		site_render_inline(renderer, cell)
 		strings.write_string(b, "</th>")
 	}
@@ -328,7 +335,8 @@ site_render_table :: proc(renderer: ^Site_Renderer, lines: []string, start: int,
 			strings.write_string(b, "<tr>")
 		}
 		for cell_index in 0 ..< len(header) {
-			strings.write_string(b, "<td>")
+			kind := cell_index < len(cells) ? site_cell_kind(cells[cell_index]) : Site_Column_Kind.Any
+			fmt.sbprintf(b, "<td class=\"%s\">", site_column_classes[kind])
 			if cell_index < len(cells) {
 				site_render_inline(renderer, cells[cell_index])
 			}

@@ -304,8 +304,8 @@ site_text_cell :: proc(b: ^strings.Builder, text: string, class: string = "") {
 
 // site_enumeration_table writes the members of an enumeration: the
 // number, the name (a link to its line), and its comment.
-site_enumeration_table :: proc(site: ^Site, b: ^strings.Builder, members: []Site_Enumeration_Member, file, id_prefix: string, headers: []string) {
-	site_table_start(b, headers)
+site_enumeration_table :: proc(site: ^Site, b: ^strings.Builder, members: []Site_Enumeration_Member, file, id_prefix, name: string, headers: [3]string) {
+	enumeration_table := site_table_start(b, name, {{headers[0], .Number}, {headers[1], .Name}, {headers[2], .Prose}})
 	for member in members {
 		fmt.sbprintf(b, "<tr id=\"%s-%s\">", id_prefix, site_slug(member.name))
 		fmt.sbprintf(b, "<td class=\"code\">%d</td>", member.number)
@@ -313,7 +313,7 @@ site_enumeration_table :: proc(site: ^Site, b: ^strings.Builder, members: []Site
 		site_text_cell(b, member.comment)
 		strings.write_string(b, "</tr>\n")
 	}
-	site_table_end(b)
+	site_table_end(b, enumeration_table)
 }
 
 // site_generated_tables_add adds the pages of the tables generated from the
@@ -330,7 +330,7 @@ site_generated_tables_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference
 		b := strings.builder_make(context.temp_allocator)
 		count := len(reference.operations) - 1 // The member None is not an operation.
 		fmt.sbprintf(&b, "<h1>Kernel operations</h1>\n<p>What a program can ask the kernel: %d operations. The parameters and the result of each are the words of the comment of the contract: \"(parameters) -&gt; result\", then its text; the contract has no other form of them.</p>\n", count)
-		site_table_start(&b, {"Number", "Operation", "Parameters", "Result", "What the contract says"})
+		operations_table := site_table_start(&b, "Kernel operations", {{"Number", .Number}, {"Operation", .Name}, {"Parameters", .Short}, {"Result", .Short}, {"What the contract says", .Prose}})
 		for operation in reference.operations {
 			fmt.sbprintf(&b, "<tr id=\"operation-%s\">", site_slug(operation.member.name))
 			fmt.sbprintf(&b, "<td class=\"code\">%d</td>", operation.member.number)
@@ -340,10 +340,10 @@ site_generated_tables_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference
 			site_text_cell(&b, operation.text)
 			strings.write_string(&b, "</tr>\n")
 		}
-		site_table_end(&b)
+		site_table_end(&b, operations_table)
 		site_source_line(site, &b, SITE_OPERATION_FILE)
 		strings.write_string(&b, "<h2 id=\"status\">The status of a completion</h2>\n")
-		site_enumeration_table(site, &b, reference.statuses, SITE_OPERATION_FILE, "status", {"Number", "Status", "What the contract says"})
+		site_enumeration_table(site, &b, reference.statuses, SITE_OPERATION_FILE, "status", "Statuses of a completion", {"Number", "Status", "What the contract says"})
 		site_source_line(site, &b, SITE_OPERATION_FILE)
 		add(site, entries, SITE_OPERATIONS_PAGE, "Kernel operations", fmt.tprintf("The %d kernel operations of %s, with their numbers, their parameters and their results, read from the contract.", count, SITE_SYSTEM_NAME), "Each operation that a program asks the kernel, with its number, its parameters and its result; the status of a completion.", SITE_OPERATION_FILE, &b, SITE_OPERATION_FILE)
 	}
@@ -362,7 +362,7 @@ site_generated_tables_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference
 		}
 		for group in groups {
 			fmt.sbprintf(&b, "<h2 id=\"%s\">%s</h2>\n", group.id, group.title)
-			site_table_start(&b, {"Constant", "Place", "Handle or value", "What the file says"})
+			roles_table := site_table_start(&b, group.title, {{"Constant", .Name}, {"Place", .Number}, {"Handle or value", .Short}, {"What the file says", .Prose}})
 			for role in group.roles {
 				size := false
 				sizes := SITE_CONTEXT_SIZES
@@ -379,7 +379,7 @@ site_generated_tables_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference
 				site_text_cell(&b, role.comment)
 				strings.write_string(&b, "</tr>\n")
 			}
-			site_table_end(&b)
+			site_table_end(&b, roles_table)
 			site_source_line(site, &b, group.file)
 		}
 		add(site, entries, SITE_CONTEXT_PAGE, "The context of a program", fmt.tprintf("The roles of the %d handles and %d values of the context, the record that each program of %s receives at its start.", op.CONTEXT_HANDLES, op.CONTEXT_VALUES, SITE_SYSTEM_NAME), "The place of each handle and each value in the context that a program receives.", SITE_OPERATION_FILE, &b, SITE_OPERATION_FILE, SITE_SYSTEM_GRANTS_FILE)
@@ -389,10 +389,10 @@ site_generated_tables_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference
 	{
 		b := strings.builder_make(context.temp_allocator)
 		fmt.sbprintf(&b, "<h1>Error kinds and units</h1>\n<p>The error record of a call that failed holds a kind, a unit, and values. %d kinds and %d units.</p>\n<h2 id=\"kinds\">Kinds</h2>\n", len(reference.error_kinds) - 1, len(reference.error_units) - 1)
-		site_enumeration_table(site, &b, reference.error_kinds, SITE_ERRORS_FILE, "kind", {"Number", "Kind", "What value, limit and found hold"})
+		site_enumeration_table(site, &b, reference.error_kinds, SITE_ERRORS_FILE, "kind", "Error kinds", {"Number", "Kind", "What value, limit and found hold"})
 		site_source_line(site, &b, SITE_ERRORS_FILE)
 		strings.write_string(&b, "<h2 id=\"units\">Units</h2>\n")
-		site_table_start(&b, {"Number", "Unit", "In a sentence", "What the contract says"})
+		units_table := site_table_start(&b, "Units", {{"Number", .Number}, {"Unit", .Name}, {"In a sentence", .Prose}, {"What the contract says", .Prose}})
 		for unit in reference.error_units {
 			fmt.sbprintf(&b, "<tr id=\"unit-%s\">", site_slug(unit.name))
 			fmt.sbprintf(&b, "<td class=\"code\">%d</td>", unit.number)
@@ -401,7 +401,7 @@ site_generated_tables_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference
 			site_text_cell(&b, unit.comment)
 			strings.write_string(&b, "</tr>\n")
 		}
-		site_table_end(&b)
+		site_table_end(&b, units_table)
 		site_source_line(site, &b, SITE_ERRORS_FILE)
 		add(site, entries, SITE_ERRORS_PAGE, "Error kinds and units", fmt.tprintf("The %d kinds and %d units of the error record of %s, with what each kind puts in its values.", len(reference.error_kinds) - 1, len(reference.error_units) - 1, SITE_SYSTEM_NAME), "Each kind and each unit of the error record, with the meaning of its values.", SITE_ERRORS_FILE, &b, SITE_ERRORS_FILE)
 	}
@@ -410,10 +410,10 @@ site_generated_tables_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference
 	{
 		b := strings.builder_make(context.temp_allocator)
 		strings.write_string(&b, "<h1>Grants of the root service</h1>\n<p>The root service starts the programs and gives each one only the handles of its role.</p>\n<h2 id=\"at-start\">What a program receives at its start</h2>\n")
-		site_enumeration_table(site, &b, reference.start_grants, SITE_ROOT_FILE, "start-grant", {"Place", "Grant", "What the root service gives"})
+		site_enumeration_table(site, &b, reference.start_grants, SITE_ROOT_FILE, "start-grant", "What a program receives at its start", {"Place", "Grant", "What the root service gives"})
 		site_source_line(site, &b, SITE_ROOT_FILE)
 		strings.write_string(&b, "<h2 id=\"recorded\">What the root service records and can revoke</h2>\n")
-		site_table_start(&b, {"Bit", "Grant", "Name in the console", "What it gives"})
+		grants_table := site_table_start(&b, "Grants", {{"Bit", .Number}, {"Grant", .Name}, {"Name in the console", .Name}, {"What it gives", .Prose}})
 		for grant in reference.root_grants {
 			fmt.sbprintf(&b, "<tr id=\"root-grant-%s\"><td class=\"code\">%d</td>", site_slug(grant.name), grant.number)
 			site_name_cell(site, &b, grant.name, SITE_SYSTEM_GRANTS_FILE, grant.line)
@@ -421,10 +421,10 @@ site_generated_tables_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference
 			site_text_cell(&b, grant.comment)
 			strings.write_string(&b, "</tr>\n")
 		}
-		site_table_end(&b)
+		site_table_end(&b, grants_table)
 		site_source_line(site, &b, SITE_SYSTEM_GRANTS_FILE)
 		strings.write_string(&b, "<h2 id=\"programs\">The grants of each program</h2>\n")
-		site_table_start(&b, {"Programs", "Grants", "Why, as the root service says"})
+		programs_table := site_table_start(&b, "Grants of each program", {{"Programs", .Short}, {"Grants", .Short}, {"Why, as the root service says", .Prose}})
 		for item in reference.program_grants {
 			strings.write_string(&b, "<tr>")
 			site_program_names_cell(site, &b, item.names)
@@ -436,7 +436,7 @@ site_generated_tables_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference
 		site_name_cell(site, &b, reference.grants_otherwise.value, SITE_ROOT_FILE, reference.grants_otherwise.line)
 		site_text_cell(&b, reference.grants_otherwise.comment)
 		strings.write_string(&b, "</tr>\n")
-		site_table_end(&b)
+		site_table_end(&b, programs_table)
 		site_source_line(site, &b, SITE_ROOT_FILE)
 		add(site, entries, SITE_GRANTS_PAGE, "Grants of the root service", fmt.tprintf("The %d grants that the root service of %s gives at the start of a program, the %d that it records, and the grants of each program.", len(reference.start_grants), len(reference.root_grants), SITE_SYSTEM_NAME), "What the root service gives each program at its start, and what it records and can revoke.", SITE_ROOT_FILE, &b, SITE_ROOT_FILE, SITE_SYSTEM_GRANTS_FILE)
 	}
@@ -445,7 +445,7 @@ site_generated_tables_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference
 	{
 		b := strings.builder_make(context.temp_allocator)
 		strings.write_string(&b, "<h1>Fixed ranges</h1>\n<p>The addresses of the mappings that the system gives a program: one slot of the band for each range, so that no two ranges overlap.</p>\n")
-		site_table_start(&b, {"Slot", "Range", "Address", "What is mapped there"})
+		ranges_table := site_table_start(&b, "Fixed ranges", {{"Slot", .Number}, {"Range", .Name}, {"Address", .Name}, {"What is mapped there", .Prose}})
 		for fixed_range in reference.fixed_ranges {
 			fmt.sbprintf(&b, "<tr id=\"range-%s\"><td class=\"code\">%d</td>", site_slug(fixed_range.name), fixed_range.number)
 			site_name_cell(site, &b, fixed_range.name, SITE_FIXED_ADDRESSES_FILE, fixed_range.line)
@@ -454,7 +454,7 @@ site_generated_tables_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference
 			site_text_cell(&b, fixed_range.comment)
 			strings.write_string(&b, "</tr>\n")
 		}
-		site_table_end(&b)
+		site_table_end(&b, ranges_table)
 		site_source_line(site, &b, SITE_FIXED_ADDRESSES_FILE)
 		add(site, entries, SITE_FIXED_RANGES_PAGE, "Fixed ranges", fmt.tprintf("The %d fixed ranges of the addresses of a program of %s: the mappings that the system gives, each in its own slot.", len(reference.fixed_ranges), SITE_SYSTEM_NAME), "Each range of addresses that the system gives a program, with its address.", SITE_FIXED_ADDRESSES_FILE, &b, SITE_FIXED_ADDRESSES_FILE)
 	}
@@ -463,14 +463,14 @@ site_generated_tables_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference
 	{
 		b := strings.builder_make(context.temp_allocator)
 		fmt.sbprintf(&b, "<h1>Commands of the console</h1>\n<p>The %d commands that the console has before any module is loaded, as <code>help()</code> prints them. A module that the console loads adds its exports: see the <a href=\"modules/index.html\">modules</a>.</p>\n", len(reference.console_commands))
-		site_table_start(&b, {"Command", "What it does"})
+		console_table := site_table_start(&b, "Commands of the console", {{"Command", .Name}, {"What it does", .Prose}})
 		for command in reference.console_commands {
 			fmt.sbprintf(&b, "<tr id=\"command-%s\">", site_slug(command.name))
 			site_name_cell(site, &b, site_console_signature(command), command.file, command.line)
 			site_text_cell(&b, command.about)
 			strings.write_string(&b, "</tr>\n")
 		}
-		site_table_end(&b)
+		site_table_end(&b, console_table)
 		files := SITE_CONSOLE_COMMAND_FILES
 		site_source_line(site, &b, ..files[:])
 		add(site, entries, SITE_CONSOLE_PAGE, "Commands of the console", fmt.tprintf("The %d built-in commands of the console of %s, with their parameters, their results and their help.", len(reference.console_commands), SITE_SYSTEM_NAME), "Each built-in command of the console, as help() prints it.", files[0], &b, ..files[:])
