@@ -21,13 +21,13 @@ SITE_MODULES_FILE :: "tools/kerneltool/modules.odin"
 SITE_CONSOLE_COMMAND_FILES :: [?]string{"programs/console/commands.odin", "programs/console/tables.odin"}
 
 // The folder of each page of a generated table: site_page_file gives its file.
-SITE_OPERATIONS_FOLDER :: "reference/operations"
-SITE_CONTEXT_FOLDER :: "reference/context"
-SITE_ERRORS_FOLDER :: "reference/errors"
-SITE_GRANTS_FOLDER :: "reference/grants"
-SITE_FIXED_RANGES_FOLDER :: "reference/fixed-ranges"
-SITE_CONSOLE_FOLDER :: "reference/console"
-SITE_MODULES_FOLDER :: "reference/modules"
+SITE_OPERATIONS_FOLDER :: SITE_REFERENCE_FOLDER + "/operations"
+SITE_CONTEXT_FOLDER :: SITE_REFERENCE_FOLDER + "/context"
+SITE_ERRORS_FOLDER :: SITE_REFERENCE_FOLDER + "/errors"
+SITE_GRANTS_FOLDER :: SITE_REFERENCE_FOLDER + "/grants"
+SITE_FIXED_RANGES_FOLDER :: SITE_REFERENCE_FOLDER + "/fixed-ranges"
+SITE_CONSOLE_FOLDER :: SITE_REFERENCE_FOLDER + "/console"
+SITE_MODULES_FOLDER :: SITE_REFERENCE_FOLDER + "/modules"
 
 // The constants of the context that are its sizes, not roles: the table of
 // the roles leaves them out.

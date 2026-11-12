@@ -398,17 +398,22 @@ site_guides_add :: proc(site: ^Site) -> bool {
 	}
 	site_table_end(&b, guides_table)
 	site_source_line(site, &b, SITE_README_FILE)
-	site_page_add(site, Site_Page{path = guides_page, is_index = true, title = "Guides", description = site_description_cut(fmt.tprintf("The %d documents of %s: how each part of the system is designed, and why.", len(site.guides), SITE_SYSTEM_NAME)), section = .Guides, crumbs = site_crumbs(.Home), body = strings.to_string(b), sources = site_sources(SITE_README_FILE), layout = .Documentation})
+	site_page_add(site, Site_Page{path = guides_page, is_index = true, title = "Guides", description = site_description_cut(fmt.tprintf("The %d documents of %s: how each part of the system is designed, and why.", len(site.guides), SITE_SYSTEM_NAME)), section = .Guides, crumbs = site_crumbs(.Docs), body = strings.to_string(b), sources = site_sources(SITE_README_FILE), layout = .Documentation})
 	return true
 }
 
 // site_crumbs gives the breadcrumbs of a page below a section: the home,
-// then the page of the section when it is not the home.
+// then each section above it down to the section itself (Home / Docs /
+// Guides for a guide).
 site_crumbs :: proc(section: Site_Section) -> []Site_Crumb {
+	chain := make([dynamic]Site_Section, context.temp_allocator)
+	for current := section; current != .Home; current = site_section_parents[current] {
+		append(&chain, current)
+	}
 	crumbs := make([dynamic]Site_Crumb, context.temp_allocator)
 	append(&crumbs, Site_Crumb{title = site_section_titles[.Home], path = site_section_page(.Home)})
-	if section != .Home {
-		append(&crumbs, Site_Crumb{title = site_section_titles[section], path = site_section_page(section)})
+	for index := len(chain) - 1; index >= 0; index -= 1 {
+		append(&crumbs, Site_Crumb{title = site_section_titles[chain[index]], path = site_section_page(chain[index])})
 	}
 	return crumbs[:]
 }
@@ -513,7 +518,7 @@ site_reference_add :: proc(site: ^Site) -> bool {
 	site_table_end(&b, reference_table)
 	// The legend of the kinds of values that the reference shows.
 	site_value_legend(&b)
-	site_page_add(site, Site_Page{path = reference_page, is_index = true, title = "Reference", description = site_description_cut(fmt.tprintf("The reference of %s: %d tables that the tool generates from the code and the files of the repository.", SITE_SYSTEM_NAME, len(entries))), section = .Reference, crumbs = site_crumbs(.Home), body = strings.to_string(b), layout = .Documentation})
+	site_page_add(site, Site_Page{path = reference_page, is_index = true, title = "Reference", description = site_description_cut(fmt.tprintf("The reference of %s: %d tables that the tool generates from the code and the files of the repository.", SITE_SYSTEM_NAME, len(entries))), section = .Reference, crumbs = site_crumbs(.Docs), body = strings.to_string(b), layout = .Documentation})
 	// The tree of the documentation lists the reference pages in this order.
 	site.reference_entries = entries[:]
 	return true
@@ -779,7 +784,7 @@ site_home_head :: proc(site: ^Site, b: ^strings.Builder) {
 	site_inline(b, site.readme.tagline)
 	strings.write_string(b, "</p>\n<ul class=\"doors\">\n")
 	for section in Site_Section {
-		if section == .Home || !site_page_exists(site, site_section_page(section)) {
+		if !site_section_in_bar(section) || !site_page_exists(site, site_section_page(section)) {
 			continue
 		}
 		fmt.sbprintf(b, "<li><a href=\"%s\">%s</a></li>\n", site_page_link(site, site_section_page(.Home), site_section_page(section)), site_section_titles[section])

@@ -28,7 +28,7 @@ This file is the record of the decisions of the project: who decided what, when,
 9. [The interface, the fonts, the mark and the design](#9-the-interface-the-fonts-the-mark-and-the-design): D-106 to D-141, D-192, D-193
 10. [The console and the tools](#10-the-console-and-the-tools): D-142 to D-148
 11. [The build and the compiler](#11-the-build-and-the-compiler): D-149 to D-162
-12. [The site and the publication](#12-the-site-and-the-publication): D-163 to D-185, D-194, D-195
+12. [The site and the publication](#12-the-site-and-the-publication): D-163 to D-185, D-194 to D-198
 13. [The name and the repository](#13-the-name-and-the-repository): D-186 to D-189
 14. [Open questions for the owner](#open-questions-for-the-owner)
 15. [Conflicts](#conflicts)
@@ -1394,6 +1394,27 @@ This file is the record of the decisions of the project: who decided what, when,
 - Words: "qu'est-ce que ça fout là ce genre d'infos ? ça devrait pas etre genre un "tag" ou une "référence" ? genre un lien, affiché avec un style pour architecture.md ?"
 - State: in force.
 - Where: `docs/SITE.md`, "The references to documents"; `tools/kerneltool/site_document_references.odin`.
+
+### D-196 One section Docs, with the guides and the reference under it
+- 2026-11-12. Decided by: the owner; the word, the place of the status page and the redirects of the two generations were given by the coordinator.
+- Decision: the bar names one section, Docs, in place of Guides and Reference: Docs, Status, News, Releases. The guides are under `/docs/guides/`, the reference under `/docs/reference/`, and `/docs/` is a page of its own. The word of the section and of its page is "Docs"; "Guides" and "Reference" stay the names of its two parts. The status page stays at `/status/`, a section of its own. Each old address of the two generations (the `.html` files, and the folders before the docs) redirects straight to the page of today.
+- Words: "pourquoi \"reference\" et pas \"docs\" ? ça parle plus aux gens ?"; "on garde une page d'index sur docs avec un sous chemin reference et guides ?".
+- State: done.
+- Where: `docs/SITE.md`, "The sections"; `docs/SITE.md`, "The redirect pages"; `tools/kerneltool/site_frame.odin`.
+
+### D-197 The docs home is a door with a search over the whole site
+- 2026-11-12. Decided by: the owner; the form was given by the coordinator.
+- Decision: `/docs/` is the home of the docs: a large search field in the middle, which searches the whole site with the index and the list of the search of the bar, then a card for the guides, a card for the reference, and doors. Every count on it is computed.
+- Words: "avec une belle \"page d'accueil de docs\" avec une searchbar, qui cherche parmi tout ?".
+- State: done.
+- Where: `docs/SITE.md`, "The docs home"; `tools/kerneltool/site_docs_home.odin`.
+
+### D-198 One search field on a page
+- 2026-11-12. Decided by: the owner, when asked whether the bar keeps its field beside the large field of the docs home.
+- Decision: the docs home has its large field and no field in its bar; every other page has the field of the bar and no other.
+- Words: "non c'est redondant. autant ne l'avoir que sur toutes les autres pages (exclusivité mutuelle)".
+- State: done.
+- Where: `docs/SITE.md`, "The search"; `tools/kerneltool/site_search.odin`.
 
 ## 13. The name and the repository
 

@@ -8,11 +8,11 @@ import "core:testing"
 // neither.
 @(test)
 site_documentation_layout_checks :: proc(t: ^testing.T) {
-	page := Site_Page{path = "guides/A/index.html", title = "A", layout = .Documentation}
+	page := Site_Page{path = "docs/guides/A/index.html", title = "A", layout = .Documentation}
 	ids := make(map[string]bool, context.temp_allocator)
 	ids["content"] = true
 	ids["part"] = true
-	good := strings.concatenate({SITE_TREE_OPEN, "<a href=\"../../guides/index.html\">Guides</a></nav>", SITE_OUTLINE_OPEN, "<summary>On this page</summary><a href=\"#content\">A</a><a href=\"#part\">P</a></nav></details>"}, context.temp_allocator)
+	good := strings.concatenate({SITE_TREE_OPEN, "<a href=\"../../../docs/guides/index.html\">Guides</a></nav>", SITE_OUTLINE_OPEN, "<summary>On this page</summary><a href=\"#content\">A</a><a href=\"#part\">P</a></nav></details>"}, context.temp_allocator)
 	testing.expect_value(t, site_layout_problem(page, good, ids), "")
 
 	Damage :: struct {
@@ -105,8 +105,8 @@ site_documentation_versions_of_files :: proc(t: ^testing.T) {
 	site := test_site()
 	site.file_versions = make(map[string]string, context.temp_allocator)
 	site.file_versions[SITE_STYLE_SHEET] = one
-	testing.expect_value(t, site_file_link(&site, "guides/A/index.html", SITE_STYLE_SHEET), strings.concatenate({"../../style.css?v=", one}, context.temp_allocator))
-	testing.expect_value(t, site_file_link(&site, "guides/A/index.html", "favicon.ico"), "../../favicon.ico")
+	testing.expect_value(t, site_file_link(&site, "docs/guides/A/index.html", SITE_STYLE_SHEET), strings.concatenate({"../../../style.css?v=", one}, context.temp_allocator))
+	testing.expect_value(t, site_file_link(&site, "docs/guides/A/index.html", "favicon.ico"), "../../../favicon.ico")
 
 	pages := [?]Site_Page{{path = "index.html", title = "Home", description = "The home.", body = ""}}
 	files := make(map[string]int, context.temp_allocator)
@@ -138,9 +138,9 @@ site_documentation_working_record_links :: proc(t: ^testing.T) {
 	testing.expect_value(t, strings.to_string(b), "<a href=\"" + SITE_REPOSITORY_ADDRESS + "/blob/master/docs/FIRST_MILESTONE.md#L42\">3</a>")
 	guide := strings.builder_make(context.temp_allocator)
 	site_item_links(&site, &guide, "status/index.html", "docs/NETWORK.md", items)
-	testing.expect_value(t, strings.to_string(guide), "<a href=\"../guides/NETWORK/index.html#evidence-3\">3</a>")
+	testing.expect_value(t, strings.to_string(guide), "<a href=\"../docs/guides/NETWORK/index.html#evidence-3\">3</a>")
 
-	renderer := site_renderer_make(&site, "guides/TEST/index.html", "docs/TEST.md")
+	renderer := site_renderer_make(&site, "docs/guides/TEST/index.html", "docs/TEST.md")
 	site_render_markdown(&renderer, "See `docs/FIRST_MILESTONE.md` and [the record](FIRST_MILESTONE.md).\n")
 	html := strings.to_string(renderer.builder)
 	testing.expect_value(t, strings.count(html, "href=\"" + SITE_REPOSITORY_ADDRESS + "/blob/master/docs/FIRST_MILESTONE.md\""), 2)

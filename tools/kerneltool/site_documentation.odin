@@ -107,10 +107,19 @@ site_tree_link :: proc(site: ^Site, b: ^strings.Builder, from_page, target, titl
 // the reference, of a module or of the status shows the reference pages,
 // every module under the heading of its group, and the status. The tree is
 // whole: nothing is folded, so a reader sees every page of the part at once.
+// Each tree starts with a link to the home of the docs.
 site_tree_html :: proc(site: ^Site, page: Site_Page) -> string {
 	b := strings.builder_make(context.temp_allocator)
 	strings.write_string(&b, SITE_TREE_OPEN)
 	strings.write_string(&b, "\n<ul class=\"tree-sections\">\n")
+	// The way back to the home of the docs, at the top of each tree: the
+	// guides and the reference are its two parts.
+	docs_page := site_section_page(.Docs)
+	if site_page_exists(site, docs_page) {
+		strings.write_string(&b, "<li>")
+		site_tree_link(site, &b, page.path, docs_page, site_section_titles[.Docs], false)
+		strings.write_string(&b, "</li>\n")
+	}
 
 	guides_page := site_section_page(.Guides)
 	if page.section == .Guides {

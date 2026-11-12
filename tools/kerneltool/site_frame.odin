@@ -20,14 +20,19 @@ import "core:time"
 // relative links only. `kerneltool site --address https://...` sets
 // another one for one run.
 SITE_ADDRESS :: "https://modus.froment.software"
+// The folder of the docs: its home, and its two parts, the guides and the
+// reference. Every path of a page of the docs starts here, so that one
+// change of these lines moves the whole docs (docs/SITE.md, "The
+// addresses of the pages").
+SITE_DOCS_FOLDER :: "docs"
+SITE_GUIDE_FOLDER :: SITE_DOCS_FOLDER + "/guides"
+SITE_REFERENCE_FOLDER :: SITE_DOCS_FOLDER + "/reference"
 // The folders of the pages of the reference that the tool writes by
 // itself; the pages of the generated tables are in site_reference.odin.
-SITE_GLOSSARY_FOLDER :: "reference/glossary"
-SITE_COMMANDS_FOLDER :: "reference/commands"
-SITE_NUMBERS_FOLDER :: "reference/numbers"
-SITE_LICENSES_FOLDER :: "reference/licenses"
-SITE_GUIDE_FOLDER :: "guides"
-SITE_REFERENCE_FOLDER :: "reference"
+SITE_GLOSSARY_FOLDER :: SITE_REFERENCE_FOLDER + "/glossary"
+SITE_COMMANDS_FOLDER :: SITE_REFERENCE_FOLDER + "/commands"
+SITE_NUMBERS_FOLDER :: SITE_REFERENCE_FOLDER + "/numbers"
+SITE_LICENSES_FOLDER :: SITE_REFERENCE_FOLDER + "/licenses"
 // The documents of docs/ that are working records of the project, not
 // guides: the site leaves them out. A link of a page to one of them names
 // the file in the repository.
@@ -41,8 +46,11 @@ SITE_REFRESH_OPEN :: "<meta http-equiv=\"refresh\" content=\"0; url="
 // style sheet; with no style sheet the word shows.
 SITE_MENU_OPEN :: "<details class=\"bar-menu\">\n<summary class=\"bar-menu-button\"><span class=\"bar-menu-lines\" aria-hidden=\"true\"></span><span class=\"bar-menu-name\">Menu</span></summary>\n<div class=\"bar-menu-content\">\n"
 
+// The sections of the site. The guides and the reference are the two parts
+// of the docs: the bar names the docs, and their pages are under its folder.
 Site_Section :: enum {
 	Home,
+	Docs,
 	Guides,
 	Reference,
 	Status,
@@ -52,6 +60,7 @@ Site_Section :: enum {
 
 site_section_titles := [Site_Section]string {
 	.Home      = "Home",
+	.Docs      = "Docs",
 	.Guides    = "Guides",
 	.Reference = "Reference",
 	.Status    = "Status",
@@ -62,16 +71,47 @@ site_section_titles := [Site_Section]string {
 // The folder of the page of each section; "" is the root of the site.
 site_section_folders := [Site_Section]string {
 	.Home      = "",
-	.Guides    = "guides",
-	.Reference = "reference",
+	.Docs      = SITE_DOCS_FOLDER,
+	.Guides    = SITE_GUIDE_FOLDER,
+	.Reference = SITE_REFERENCE_FOLDER,
 	.Status    = "status",
 	.News      = "news",
 	.Releases  = "releases",
 }
 
+// The section above each section: the breadcrumbs follow it, and the bar
+// shows only the sections whose parent is the home. The status stays a
+// section of its own: it reports the state of the properties, not how the
+// system works.
+site_section_parents := [Site_Section]Site_Section {
+	.Home      = .Home,
+	.Docs      = .Home,
+	.Guides    = .Docs,
+	.Reference = .Docs,
+	.Status    = .Home,
+	.News      = .Home,
+	.Releases  = .Home,
+}
+
 // site_section_page gives the file of the page of a section.
 site_section_page :: proc(section: Site_Section) -> string {
 	return site_page_file(site_section_folders[section])
+}
+
+// site_section_in_bar tells whether the bar and the doors of the home name
+// a section: a section right under the home.
+site_section_in_bar :: proc(section: Site_Section) -> bool {
+	return section != .Home && site_section_parents[section] == .Home
+}
+
+// site_bar_section gives the section of the bar that holds a section: the
+// docs for a guide or a page of the reference.
+site_bar_section :: proc(section: Site_Section) -> Site_Section {
+	current := section
+	for current != .Home && site_section_parents[current] != .Home {
+		current = site_section_parents[current]
+	}
+	return current
 }
 
 Site_Crumb :: struct {
@@ -80,21 +120,24 @@ Site_Crumb :: struct {
 }
 
 Site_Page :: struct {
-	path:        string, // The file, from the root of the site: "guides/NETWORK/index.html" (site_page_file).
+	path:        string, // The file, from the root of the site: "docs/guides/NETWORK/index.html" (site_page_file).
 	title:       string, // The title of the page; the <title> adds the name of the system.
 	description: string, // One or two sentences, at most SITE_DESCRIPTION_LIMIT bytes.
 	section:     Site_Section,
 	crumbs:      []Site_Crumb, // The pages above it, from the home.
 	body:        string, // The HTML of the content, from its h1.
 	sources:     []string, // The files of the repository that the page comes from.
-	is_index:    bool, // An index page: it lists the pages of its folder (the home, the guides, the reference, the modules).
+	is_index:    bool, // An index page: it lists the pages of its folder (the home, the docs, the guides, the reference, the modules).
 	layout:      Site_Layout, // Stated by the writer of the page: one centred column, or the three columns of the documentation.
+	// The page holds its own search field (the home of the docs), so the
+	// bar has none: a page has one search field.
+	search_in_page: bool,
 }
 
 // A guide: a document of docs/ as a page.
 Site_Guide :: struct {
 	source:   string, // "docs/NETWORK.md"
-	path:     string, // "guides/NETWORK/index.html"
+	path:     string, // "docs/guides/NETWORK/index.html"
 	title:    string,
 	about:    string, // Its line in the table of documents of README.md, or "".
 	headings: []Site_Heading, // Each heading of its page, with its id: the guide sections of the search index.
@@ -132,6 +175,7 @@ Site :: struct {
 	news:         []Site_News, // Newest first.
 	gaps:         []Site_Gap, // The gaps of docs/FIRST_MILESTONE.md, as the status page shows them.
 	redirects:    map[string]string, // The HTML of each redirect page, by its old path.
+	redirect_counts: [Site_Address_Generation]int, // The redirect pages of each generation of old addresses.
 	reference_entries: []Site_Reference_Entry, // The pages of the reference, in the order of its index: the tree lists them.
 	file_versions: map[string]string, // The version of the bytes of each file of SITE_VERSIONED_FILES that the command wrote.
 	symbol_count: int, // The documented symbols of the pages.
@@ -181,8 +225,8 @@ site_relative :: proc(from_page, target: string) -> string {
 }
 
 // site_page_file gives the file of a page: each page is the index.html of
-// its own folder, so that its address is the folder ("reference/licenses"
-// gives "reference/licenses/index.html"). The folder "" is the root of the
+// its own folder, so that its address is the folder ("docs/reference/licenses"
+// gives "docs/reference/licenses/index.html"). The folder "" is the root of the
 // site, the home. docs/SITE.md, "The addresses of the pages".
 site_page_file :: proc(folder: string) -> string {
 	if folder == "" {
@@ -217,14 +261,52 @@ site_page_link :: proc(site: ^Site, from_page, target: string) -> string {
 	return strings.concatenate({link, anchor}, context.temp_allocator)
 }
 
-// site_old_page_path gives the path that a page had before each page was
-// a folder ("reference/licenses.html"), or "" for an index page, whose path
-// did not change.
-site_old_page_path :: proc(page: Site_Page) -> string {
-	if page.is_index || !strings.has_suffix(page.path, "/" + SITE_PAGE) {
-		return ""
+// The generations of the old addresses of the site: each was public, so
+// each old address of a page keeps a redirect page to its address of today
+// (docs/SITE.md, "The redirect pages").
+Site_Address_Generation :: enum {
+	// "guides/NETWORK.html": before each page was the index.html of its
+	// folder. An index page had the index.html of its folder already.
+	Html_Files,
+	// "guides/NETWORK/": before the guides and the reference moved under
+	// the folder of the docs.
+	Folders_Before_Docs,
+}
+
+site_address_generation_names := [Site_Address_Generation]string {
+	.Html_Files          = "of the .html files",
+	.Folders_Before_Docs = "of the folders before " + SITE_DOCS_FOLDER + "/",
+}
+
+// One old address of a page, with its generation.
+Site_Old_Path :: struct {
+	path:       string,
+	generation: Site_Address_Generation,
+}
+
+// site_old_page_paths gives every old path of a page, by rule from its path
+// of today: the folder that it had before the docs (its folder without the
+// folder of the docs in front), then the .html file of that folder for a
+// page that is not an index page. The home was always the index.html of the
+// root, and the home of the docs is new: neither has an old path.
+site_old_page_paths :: proc(page: Site_Page) -> []Site_Old_Path {
+	paths := make([dynamic]Site_Old_Path, context.temp_allocator)
+	if !strings.has_suffix(page.path, "/" + SITE_PAGE) {
+		return paths[:]
 	}
-	return strings.concatenate({page.path[:len(page.path) - len("/" + SITE_PAGE)], ".html"}, context.temp_allocator)
+	folder := page.path[:len(page.path) - len("/" + SITE_PAGE)]
+	if folder == SITE_DOCS_FOLDER {
+		return paths[:]
+	}
+	folder_before_docs := folder
+	if strings.has_prefix(folder, SITE_DOCS_FOLDER + "/") {
+		folder_before_docs = folder[len(SITE_DOCS_FOLDER + "/"):]
+		append(&paths, Site_Old_Path{path = site_page_file(folder_before_docs), generation = .Folders_Before_Docs})
+	}
+	if !page.is_index {
+		append(&paths, Site_Old_Path{path = strings.concatenate({folder_before_docs, ".html"}, context.temp_allocator), generation = .Html_Files})
+	}
+	return paths[:]
 }
 
 // site_redirect_html gives the redirect page at the old path of a page: a
@@ -252,20 +334,32 @@ site_redirect_html :: proc(site: ^Site, old_path: string, page: Site_Page) -> st
 	return strings.to_string(b)
 }
 
-// site_redirects_make writes a redirect page at the old path of each page
-// that is not an index page.
-site_redirects_make :: proc(site: ^Site) {
+// site_redirects_make writes a redirect page at each old path of each page,
+// straight to the page of today: a redirect never names another redirect.
+// It gives the problems of the table: two pages with one old path.
+site_redirects_make :: proc(site: ^Site) -> []string {
+	problems := make([dynamic]string, context.temp_allocator)
 	site.redirects = make(map[string]string, context.temp_allocator)
+	site.redirect_counts = {}
+	owners := make(map[string]string, context.temp_allocator)
 	for page in site.pages {
-		if old_path := site_old_page_path(page); old_path != "" {
-			site.redirects[old_path] = site_redirect_html(site, old_path, page)
+		for old in site_old_page_paths(page) {
+			if owner, taken := owners[old.path]; taken {
+				append(&problems, fmt.tprintf("%s: the old path of two pages, %s and %s", old.path, owner, page.path))
+				continue
+			}
+			owners[old.path] = page.path
+			site.redirects[old.path] = site_redirect_html(site, old.path, page)
+			site.redirect_counts[old.generation] += 1
 		}
 	}
+	return problems[:]
 }
 
 // site_check_redirects checks the redirect pages: no redirect page takes
 // the path of a page or of a file of the site, and each one names, in its
-// refresh and in each link, a page that the command writes.
+// refresh and in each link, a page that the command writes, never another
+// redirect page.
 site_check_redirects :: proc(redirects: map[string]string, written: map[string]string, files: map[string]int, has_address: bool) -> []string {
 	problems := make([dynamic]string, context.temp_allocator)
 	ids := make(map[string]map[string]bool, context.temp_allocator)
@@ -308,6 +402,8 @@ site_check_redirects :: proc(redirects: map[string]string, written: map[string]s
 			if problem == "" {
 				if _, names_page := written[target]; !names_page {
 					problem = fmt.tprintf("names %s, which is not a page", target)
+				} else if _, names_redirect := redirects[target]; names_redirect {
+					problem = fmt.tprintf("names %s, which is a redirect page", target)
 				}
 			}
 			if problem != "" {
@@ -593,6 +689,10 @@ site_build :: proc(address: string) -> bool {
 	site_status_add(&site) or_return
 	site_news_add(&site)
 	site_releases_add(&site)
+	// The home of the docs before the home: the doors of the home name the
+	// sections that exist. Its text needs the index of the search, so it is
+	// written after the index (site_docs_home_fill).
+	site_docs_home_add(&site)
 	site_home_add(&site)
 	// A pointer to a document whose label finds no place is stale: the
 	// command stops with its file and its line, so that none comes back.
@@ -650,6 +750,9 @@ site_build :: proc(address: string) -> bool {
 		return false
 	}
 	site_write_file(&site, SITE_SEARCH_INDEX, transmute([]u8)search_index) or_return
+	// The home of the docs says what the search knows: the counts of the
+	// entries that the index holds.
+	site_docs_home_fill(&site, search_entries)
 
 	written := make(map[string]string, context.temp_allocator)
 	for page in site.pages {
@@ -657,10 +760,16 @@ site_build :: proc(address: string) -> bool {
 	}
 	problems := make([dynamic]string, context.temp_allocator)
 	append(&problems, ..site_check_pages(site.pages[:], written, site.files, site.address != ""))
-	// The old address of each page that is not an index page: a redirect
-	// page, which is not a page of the site (no bar, no sitemap, no index
-	// of the search).
-	site_redirects_make(&site)
+	// One search field on each page: in the bar, or in the page itself on
+	// the home of the docs.
+	for page in site.pages {
+		if problem := site_search_field_problem(page, written[page.path]); problem != "" {
+			append(&problems, fmt.tprintf("%s: %s", page.path, problem))
+		}
+	}
+	// Each old address of each page: a redirect page, which is not a page
+	// of the site (no bar, no sitemap, no index of the search).
+	append(&problems, ..site_redirects_make(&site))
 	append(&problems, ..site_check_redirects(site.redirects, written, site.files, site.address != ""))
 	if len(problems) > 0 {
 		for problem in problems {
@@ -709,6 +818,9 @@ site_build :: proc(address: string) -> bool {
 	}
 
 	fmt.printfln("kerneltool: site: wrote %s: %d pages (%d bytes), %d redirect pages at the old addresses, %d other files", SITE_FOLDER, len(site.pages), page_bytes, len(site.redirects), len(site.files) - len(site.pages) - len(site.redirects))
+	for generation in Site_Address_Generation {
+		fmt.printfln("kerneltool: site: %d redirect pages at the old addresses %s", site.redirect_counts[generation], site_address_generation_names[generation])
+	}
 	fmt.printfln("kerneltool: site: %s: %d entries of at most %d, %d bytes of at most %d; %s: %d bytes", SITE_SEARCH_INDEX, len(search_entries), SITE_SEARCH_ENTRY_LIMIT, len(search_index), SITE_SEARCH_INDEX_BYTE_LIMIT, SITE_SEARCH_SCRIPT, site.files[SITE_SEARCH_SCRIPT])
 	commit_text: string = site.commit != "" ? site.commit : "not readable (links to files go to master)"
 	fmt.printfln("kerneltool: site: %d guides, %d terms of the glossary, %d news entries, the commit %s, the release %s", len(site.guides), len(site.terms), len(site.news), commit_text, site.release)
@@ -849,15 +961,20 @@ site_page_html :: proc(site: ^Site, page: Site_Page) -> string {
 	// (docs/SITE.md, "The site menu").
 	write(&b, SITE_MENU_OPEN)
 	write(&b, "<nav class=\"bar-sections\" aria-label=\"Sections\">\n<ul>\n")
+	bar_section := site_bar_section(page.section)
 	for section in Site_Section {
-		if section == .Home || !site_page_exists(site, site_section_page(section)) {
+		if !site_section_in_bar(section) || !site_page_exists(site, site_section_page(section)) {
 			continue
 		}
-		current: string = section == page.section ? " aria-current=\"page\"" : ""
+		current: string = section == bar_section ? " aria-current=\"page\"" : ""
 		fmt.sbprintf(&b, "<li><a href=\"%s\"%s>%s</a></li>\n", site_page_link(site, page.path, site_section_page(section)), current, site_section_titles[section])
 	}
 	write(&b, "</ul>\n</nav>\n")
-	write(&b, SITE_SEARCH_BOX)
+	// One search field on a page: the home of the docs has its own large
+	// field, so its bar has none (docs/SITE.md, "The search").
+	if !page.search_in_page {
+		write(&b, site_search_field_html(.Bar))
+	}
 	// The tree of the documentation is in the menu, once in the page: on a
 	// wide screen the style sheet puts it at the left of the page, and
 	// under 720 pixels it is under the sections in the open menu

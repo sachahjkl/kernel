@@ -2,7 +2,7 @@
 
 Status: started on 2026-11-12, at the request of the owner (`DECISIONS.md`, D-163). The owner has not reviewed the choices below.
 
-The site (`GLOSSARY.md`) is the documentation of the system `modus`. The home is its front door: the one page that shows the system. Every other page is documentation: a guide (a document of `docs/`, how a part is designed and why) or a reference table (what exists in this build, generated from the code and the files that define it). The owner asked for this order on 2026-11-12: "we need to be more \"doc like\", even though it's obviously fine to have a landing page that kinda does the house tour and shows off".
+The site (`GLOSSARY.md`) is the documentation of the system `modus`. The home is its front door: the one page that shows the system. The docs (`GLOSSARY.md`) are the documentation: a guide (a document of `docs/`, how a part is designed and why) or a reference table (what exists in this build, generated from the code and the files that define it), under one section with a home of its own, the docs home (`GLOSSARY.md`). The status, the news and the releases are sections of their own. The owner asked for this order on 2026-11-12: "we need to be more \"doc like\", even though it's obviously fine to have a landing page that kinda does the house tour and shows off".
 
 No page holds a text that a person must remember to update: each page is generated from files of the repository and from the logs of the last machine tests. The news entries are the one text that a person writes for the site: each one is written once, in the step that made its thing, and is not updated after (see "The news").
 
@@ -16,13 +16,14 @@ No page holds a text that a person must remember to update: each page is generat
   - each `img` has an `alt` attribute (empty for a picture that only decorates a text beside it, as the heron of the bar), a `width` and a `height`;
   - each `href`, `src` and `srcset` that is not an address of another host names a page or a file that the command wrote (a link that ends with `/` names the `index.html` of the folder, and the query of a file version is ignored), and its anchor is an `id` of that page;
   - a link to a page has the form of the build (see "The addresses of the pages"): with a site address it names the folder, with none the `index.html`;
-  - each redirect page (`GLOSSARY.md`) is at a path that no page and no file of the site has, and its refresh and its link name a page that the command writes;
+  - each redirect page (`GLOSSARY.md`) is at a path that no page and no file of the site has, and its refresh and its link name a page that the command writes, never another redirect page; no two pages have one old path;
+  - each page has exactly one search field (`GLOSSARY.md`): in the bar, but on the docs home, where it is in the page and the bar has none (`site_search_field_problem`);
   - each `srcset` candidate names a file that the command wrote;
   - a page of the documentation layout has one documentation tree and one list "On this page", and each link of the list names an id of the page; a page of the presentation layout has neither (see "The two layouts");
   - no page holds code or style of its own: each `<script>` has a `src` and nothing inside, but the one `<script type="application/ld+json">` of the page graph, whose text has no `<`; no `<style>` element and no `style` attribute exists.
 - Then the command checks what other programs read (see "What other sites read"); a failure stops it in the same way.
 - After the checks of the pages, the command makes the index of the search and checks it against the pages (see "The search"); a failure stops it in the same way.
-- At its end the command prints: the pages and their bytes, the count of the redirect pages, the other files, the entries and the bytes of the index of the search and the bytes of the script, the guides, the news entries, the terms of the glossary, the commit and the release, the numbers that are not measured, the cells of the licenses that are not recorded, the count of the document references and the first three whose labels found no heading (see "The references to documents"), each part of a guide that the renderer did not understand, the parts that it did not write with no site address (or, with one, the parts that it wrote), and the count of the pictures of the repository that it compressed, with their bytes before and after.
+- At its end the command prints: the pages and their bytes, the count of the redirect pages and the count of each generation of old addresses, the other files, the entries and the bytes of the index of the search and the bytes of the script, the guides, the news entries, the terms of the glossary, the commit and the release, the numbers that are not measured, the cells of the licenses that are not recorded, the count of the document references and the first three whose labels found no heading (see "The references to documents"), each part of a guide that the renderer did not understand, the parts that it did not write with no site address (or, with one, the parts that it wrote), and the count of the pictures of the repository that it compressed, with their bytes before and after.
 - `kerneltool check` runs the host tests of the site (`tools/kerneltool/site_test.odin`, `site_render_test.odin`) and checks that each picture that `README.md` names is a file of the repository. It does not write the site.
 
 ## The pages
@@ -32,13 +33,14 @@ A page named by a folder (`news/`) is the `index.html` of that folder (see "The 
 | Page | Generated from |
 |---|---|
 | `index.html`, the home | The mark (`support/mark`), the first sentence of the first paragraph of `README.md` as the tagline of the head, the three newest news entries, the rest of that paragraph in a section "What it is" after the news (the owner, 2026-11-12: "la tagline est trop longue"; after the news, so that the first screen of a phone holds the mark, the name, the tagline and the links only; the description of the home in its head, Open Graph, the manifest and the page graph stays the whole paragraph, cut at 160 bytes, because the tagline alone is too short to describe the system), the stages of the start from the lines `kernel: boot: ...` of `build/test_output.txt` or of the measure record (see "The measure record"), the tiles of the boot image (see "The tiles of the boot image"), the first three measured numbers, the pictures of `docs/screenshots` with the captions of `README.md`, the newest release of `CHANGELOG.md`, the count of steps of `docs/REVIEWS.md` |
-| `guides/index.html` | The table "Documents" of `README.md`, then the other documents of `docs/` by name |
-| `guides/<name>/` | Each document of `docs/` but the working records `HANDOFF.md`, `REVIEWS.md`, `SITE.md` and `FIRST_MILESTONE.md` (`SITE_WORKING_RECORDS`), which stay out of the site: only the guides that explain the system are published. A link of a page to a working record names the file in the repository. The glossary is a page of the reference |
-| `reference/index.html` | The list of the reference tables below |
-| `reference/glossary/` | `docs/GLOSSARY.md`: each row of a table whose first column is "Term" has the anchor `term-<name>` |
-| `reference/commands/` | `COMMANDS` in `tools/kerneltool/main.odin`: the name and the text of each command |
-| `reference/numbers/` | The list `site_measures`, the measure record `docs/measures/measures.txt` and the logs of `build/` that are newer than it |
-| `reference/licenses/` | See "The licenses" |
+| `docs/`, the docs home | See "The docs home" |
+| `docs/guides/` | The table "Documents" of `README.md`, then the other documents of `docs/` by name |
+| `docs/guides/<name>/` | Each document of `docs/` but the working records `HANDOFF.md`, `REVIEWS.md`, `SITE.md` and `FIRST_MILESTONE.md` (`SITE_WORKING_RECORDS`), which stay out of the site: only the guides that explain the system are published. A link of a page to a working record names the file in the repository. The glossary is a page of the reference |
+| `docs/reference/` | The list of the reference tables below |
+| `docs/reference/glossary/` | `docs/GLOSSARY.md`: each row of a table whose first column is "Term" has the anchor `term-<name>` |
+| `docs/reference/commands/` | `COMMANDS` in `tools/kerneltool/main.odin`: the name and the text of each command |
+| `docs/reference/numbers/` | The list `site_measures`, the measure record `docs/measures/measures.txt` and the logs of `build/` that are newer than it |
+| `docs/reference/licenses/` | See "The licenses" |
 | `releases/` | All of `CHANGELOG.md`, newest first; each release has the anchor `release-<number>`, and a line with a link to each news entry that names it |
 | `news/`, `news.xml` | The files of `news/`; see "The news" |
 | `search.json`, `search.js` | The index of the search and its script; see "The search" |
@@ -46,36 +48,51 @@ A page named by a folder (`news/`) is the `index.html` of that folder (see "The 
 | `site.webmanifest`, `llms.txt` | The name, the colors and the icons of the site; the pages with their descriptions in Markdown |
 | `sitemap.xml`, `robots.txt` | Only with a site address; see "What other sites read" |
 | `status/` | See "The status page" |
-| `reference/operations/`, `context/`, `errors/`, `grants/`, `fixed-ranges/`, `console/` | See "The reference tables" |
-| `reference/modules/index.html`, `reference/modules/<name>/` | See "The module pages" |
-| `reference/types/` | See "The types" |
+| `docs/reference/operations/`, `context/`, `errors/`, `grants/`, `fixed-ranges/`, `console/` | See "The reference tables" |
+| `docs/reference/modules/`, `docs/reference/modules/<name>/` | See "The module pages" |
+| `docs/reference/types/` | See "The types" |
 
-Each page has the bar (the heron and the name at the left, the sections as buttons: Guides, Reference, Status, News, Releases; a section appears when its page exists), breadcrumbs on each page below the home, and a foot that names the commit, the release and the time of the build, and the files that the page comes from, as links to the repository at that commit. A reference table names the files that it is read from.
+Each page has the bar (the heron and the name at the left, the sections as buttons: Docs, Status, News, Releases; a section appears when its page exists; on a guide or a page of the reference, Docs is the current one), breadcrumbs on each page below the home (Home / Docs / Guides / <guide>; Home / Docs / Reference / <page>; Home / Docs / Reference / Modules / <module>; Home / Status), and a foot that names the commit, the release and the time of the build, and the files that the page comes from, as links to the repository at that commit. A reference table names the files that it is read from.
 
 The tool reads the commit from the files of git (`.git`, `HEAD`, the reference, `packed-refs`), with no program. When it cannot, the foot says so and the links to files of the repository go to `master`.
 
 ## The addresses of the pages
 
-The owner asked for it on 2026-11-12: "j'aimerais des urls genre /reference/licenses au lieu de licenses.html (possible avec index.html dans dossier".
+The owner asked for it on 2026-11-12: "j'aimerais des urls genre /reference/licenses au lieu de licenses.html (possible avec index.html dans dossier". Then, of the two sections Guides and Reference: "pourquoi \"reference\" et pas \"docs\" ? ça parle plus aux gens ?", and "on garde une page d'index sur docs avec un sous chemin reference et guides ?".
 
-- Each page is the `index.html` of its own folder: `reference/licenses/index.html`, `guides/NETWORK/index.html`, `news/index.html`. The home is `index.html` at the root. `site_page_file` in `tools/kerneltool/site_frame.odin` gives the file of a page from its folder; no other code writes the path of a page.
-- The address of a page is its folder with a final slash: `/reference/licenses/`. GitHub Pages serves the `index.html` of a folder at that address, and it redirects the address with no final slash to it.
+- Each page is the `index.html` of its own folder: `docs/reference/licenses/index.html`, `docs/guides/NETWORK/index.html`, `news/index.html`. The home is `index.html` at the root. `site_page_file` in `tools/kerneltool/site_frame.odin` gives the file of a page from its folder; no other code writes the path of a page.
+- The folders come from one place: `SITE_DOCS_FOLDER` (`docs`), `SITE_GUIDE_FOLDER` and `SITE_REFERENCE_FOLDER` under it, the folder of each reference table under the reference, and `site_section_folders` for the page of each section. A change of these lines moves the pages, the links, the canonical addresses, the sitemap, the page graphs, the feeds, `llms.txt` and the index of the search together.
+- The address of a page is its folder with a final slash: `/docs/reference/licenses/`. GitHub Pages serves the `index.html` of a folder at that address, and it redirects the address with no final slash to it.
 - `site_page_link` writes each link from a page to a page, in one of two forms:
-  - With a site address (the published site): the folder, `../../reference/licenses/`, and `./` for the home from the home.
-  - With no site address (the site opened from a disk): the file, `../../reference/licenses/index.html`. A browser shows a folder of a disk as a list of its files, not as its `index.html`.
+  - With a site address (the published site): the folder, `../../../docs/reference/licenses/`, and `./` for the home from the home.
+  - With no site address (the site opened from a disk): the file, `../../../docs/reference/licenses/index.html`. A browser shows a folder of a disk as a list of its files, not as its `index.html`.
 - A link to a file that is not a page (the style sheet, the script, a picture, an icon, a feed, the manifest) is relative in the same way, one `../` for each folder of the page.
 - The canonical address, Open Graph, the `@id`s of the page graph, the sitemap, `llms.txt` and the two feeds name the folder of each page. With no site address, `llms.txt` and the feeds name the `index.html` from the root.
 - `search.json` holds the link of each page from the root of the site, in the form of the build. The script joins it to its own folder and applies no rule of its own.
 
+### The sections
+
+The bar names the sections under the home: Docs, Status, News, Releases (`site_section_parents`). The guides and the reference are the two parts of the docs: their pages are under `docs/`, their breadcrumbs pass through the docs home, and the bar marks Docs on each of their pages. The word of the section and of its page is "Docs" (`GLOSSARY.md`): "Documentation" is already the term for the text that a module carries. "Guides" and "Reference" stay the names of the two parts.
+
+The status page stays at `status/`, a section of the bar: it reports the state of the properties, the gaps and the next steps, not how the system works. The tree of the reference still lists it, as before.
+
 ### The redirect pages
 
-The old addresses (`reference/licenses.html`) were public from the first publication to this change. The command writes a redirect page (`GLOSSARY.md`) at the old path of each page that is not an index page. The four index pages (the home, `guides/`, `reference/`, `reference/modules/`) keep their old path, so they have none.
+The old addresses were public. Two generations of them exist, and each old address of each page keeps a redirect page (`GLOSSARY.md`) straight to the address of today:
 
+| Generation | Example | Public | Which pages |
+|---|---|---|---|
+| The `.html` files (`.Html_Files`) | `guides/NETWORK.html`, `reference/licenses.html`, `news.html` | From the first publication to the addresses as folders | Each page that is not an index page: an index page had the `index.html` of its folder already |
+| The folders before the docs (`.Folders_Before_Docs`) | `guides/NETWORK/`, `reference/licenses/`, `reference/modules/console/`, `guides/` | From the addresses as folders to the move under `docs/` | Each page under `docs/`: the guides, the reference and their index pages |
+
+- `site_old_page_paths` gives every old path of a page by rule from its path of today, not from a typed list: the folder of the page without `docs/` in front gives the old folder, then `<old folder>.html` for a page that is not an index page. The home was always the root, and the docs home is new: neither has an old path. The status, the news and the releases did not move: they have the `.html` path only.
+- `site_redirects_make` writes one redirect page at each old path, to the page of today: a redirect page never names another redirect page. Two pages with one old path stop the command.
 - A redirect page has a title, `<meta name="robots" content="noindex">`, a refresh with a delay of 0 to the new address (relative), and one visible link to it. It has no script, no bar, no `h1` and no description.
 - With a site address it also names the new address as its canonical address. With none it has no canonical address, as no page has one.
 - It is not a page of the site: it is not in the sitemap, the index of the search, `llms.txt` or the feeds, and the checks of the pages, of the page graph and of the search do not apply to it.
-- The check: its path is not the path of a page or of a file of the site, and its refresh and its link name a page that the command writes.
-- The command prints their count: the count of the pages less the four index pages.
+- The check (`site_check_redirects`): its path is not the path of a page or of a file of the site, and its refresh and its link name a page that the command writes, never another redirect page.
+- The command prints the count of the redirect pages, and the count of each generation. With the pages of today (17 guides, 11 reference pages that are not index pages, 81 module pages, the three index pages of the guides, the reference and the modules, and the status, the news and the releases), it expects 112 of each: 224 redirect pages.
+- The host test `site_addresses_of_every_page` checks, with a site address and with none: every old path of both generations has its redirect page, which names its page; no old path is a page; a redirect to a page that is not written, to another redirect, or at the path of a file or a page fails the check; two pages with one old path fail; and the sitemap, the index of the search, `llms.txt` and the two feeds name no old address.
 
 ## The Markdown that the site renders
 
@@ -159,13 +176,31 @@ The owner asked for it on 2026-11-12: "une doc riche et auto générée, avec re
 
 The box and the list are those of the console (the picture `docs/screenshots/console_completion.png`):
 
-- The box is at the right of the bar, in the place of the clock of the bar of the desktop. `/` puts the focus in it when the focus is not in a field.
+- A page has one search field (`GLOSSARY.md`), in one of two places (`Site_Search_Place`): at the right of the bar, in the place of the clock of the bar of the desktop, on every page but one; in the middle of the docs home, as a large field, on that page, whose bar has none. The owner, 2026-11-12, when asked whether the bar keeps its field beside the large one: "non c'est redondant. autant ne l'avoir que sur toutes les autres pages (exclusivité mutuelle)".
+- One markup for both places (`site_search_field_html`): the same ids, so the script finds the field of the page by its id; the class of its box and its placeholder differ. One script serves both: it opens the site menu for the field only when the menu holds it.
+- `/` puts the focus in the field of the page when the focus is not in a field.
 - Under the box, a line says how many entries match and how many are not shown, and the keys; then at most 8 rows, the best first; then the text of the chosen row. A row is the title with the matched characters in the accent color (`COLOR_BOOT_PROGRAM`, at half its light in the light form) and, at its right in the dim color, its kind and the title of its page. The chosen row has the band of the track and the blue line at its left.
 - Up and Down choose a row, Enter opens it, Escape closes the list (a second Escape leaves the box). A click opens a row.
-- The query is in the address as `?q=<query>`, so that a search can be linked: a page opened with `?q=` opens the list.
+- The query is in the address as `?q=<query>`, so that a search can be linked: a page opened with `?q=` opens the list under the field that the page has. The address that the page graph gives for a search is the docs home, `docs/?q=<query>`.
 - The keyboard alone works. The box is a `combobox` with `aria-expanded`, `aria-controls` and `aria-activedescendant`; the list is a `listbox` of `option` rows with `aria-selected`; the line of the count is `aria-live`. The focus is visible.
 
-With no script, the site is whole: every page is reachable by its links, and the box is not shown (it has the attribute `hidden`, and only the script takes it away).
+With no script, the site is whole: every page is reachable by its links, and the field is not shown (its box has the attribute `hidden`, and only the script takes it away). The docs home is then its cards and its doors.
+
+## The docs home
+
+The owner asked for it on 2026-11-12: "on garde une page d'index sur docs avec un sous chemin reference et guides ? avec une belle \"page d'accueil de docs\" avec une searchbar, qui cherche parmi tout ?". The code is `tools/kerneltool/site_docs_home.odin`.
+
+`docs/` is a door to the docs, not a list: the presentation layout (one centred column, no tree, no "On this page"), the title "Docs", and from the top:
+
+1. The heading and one sentence: what the guides and the reference are.
+2. The search field of the page, large, in the middle (see "The search"): the same index, the same list of results and the same script as the field of the bar. The bar of this page has no field. With no script the field stays hidden, and the cards under it carry the page.
+3. What the search knows, computed from the entries of the index: "The search knows N entries: P pages, M modules, ...", each kind that has entries, in the tie order of the kinds (`site_search_kind_names`). No count is typed.
+4. Two cards side by side (one under the other under 720 pixels), in the form of the cards of the site:
+   - Guides: what a guide is, their count, the first six in the reading order of the page of the guides, and a link to all of them.
+   - Reference: what it holds, then a table of the parts that a reader looks for first (`site_docs_reference_parts`): the kernel operations, the types, the modules, the commands of the console and of the tool, the glossary and the measured numbers, each a link to its page with the count of what its page shows, in a column of the value kind Number (its icon once, in the head of the column). Then a link to every reference table.
+5. A row of doors, as the doors of the home: the first guide in the reading order, the state of the properties (the status page), the newest release, the news, and the repository.
+
+The text of the page needs the entries of the index, and the index has an entry for each page: the command records the page with its title and its description first (`site_docs_home_add`), makes the index, then writes the text (`site_docs_home_fill`) before it writes the pages.
 
 ## What other sites read
 
@@ -176,7 +211,7 @@ A canonical address, an address of Open Graph and an `@id` of JSON-LD must be ab
 | Part | With no site address | With a site address |
 |---|---|---|
 | `lang`, the viewport, the title, the description, a theme color for each color scheme, the icons (`favicon.ico`, the SVG icon and the icon of a phone; see "The icons"), the manifest, the links to the two feeds, `rel=prev` and `rel=next` between guides (the reading order of the page of the guides) | Written | Written |
-| The canonical address (`GLOSSARY.md`) | No | `<site address>/<folder of the page>/`, as `<site address>/reference/licenses/`; the home is `<site address>/` |
+| The canonical address (`GLOSSARY.md`) | No | `<site address>/<folder of the page>/`, as `<site address>/docs/reference/licenses/`; the home is `<site address>/` |
 | Open Graph: `og:type` (`article` for a guide, else `website`), `og:site_name`, `og:title`, `og:description`, `og:url`, `og:image` with its type, width, height and alt; `twitter:card` `summary_large_image`, which reads the rest from Open Graph | No | Written; the picture is `pictures/mark_card.png` |
 | The page graph (`GLOSSARY.md`) | No | One `<script type="application/ld+json">` in the head |
 | `sitemap.xml`, `robots.txt` | Not written | Written |
@@ -188,7 +223,7 @@ One `@graph` for each page, built from the data that the page shows; no value is
 
 | Node | Id | On | Fields |
 |---|---|---|---|
-| `WebSite` | `<site address>/#website` | Each page | `name`, `url`, `description` (of the home), `inLanguage`, `about` the system, `potentialAction`: a `SearchAction` with the `EntryPoint` `<site address>/?q={search_term_string}` and `query-input`, the form that the script of the search reads |
+| `WebSite` | `<site address>/#website` | Each page | `name`, `url`, `description` (of the home), `inLanguage`, `about` the system, `potentialAction`: a `SearchAction` with the `EntryPoint` `<site address>/docs/?q={search_term_string}` (the docs home, whose own field is the search) and `query-input`, the form that the script of the search reads |
 | `SoftwareApplication` | `#system` | Each page | `name`, `url`, `description`, `applicationCategory` "Operating system", `operatingSystem` "None: it is the operating system of the machine", `processorRequirements` "x86-64", `availableOnDevice` "QEMU on x86-64, with UEFI firmware and virtio devices" (`PROPERTIES.md`: the first machine), `softwareVersion` (the newest release), `license`, `image` |
 | `SoftwareSourceCode` | `#source` | Each page | `name`, `codeRepository`, `programmingLanguage` (a `ComputerLanguage`, Odin), `license` (`https://spdx.org/licenses/<identifier>.html`, from line 1 of `LICENSE`), `version`, `targetProduct` the system |
 | `ImageObject` | `#card` | Each page | The picture for other sites: `url`, `contentUrl`, `width`, `height`, `caption` |
@@ -380,11 +415,11 @@ The measured numbers are What (Prose), The line of the log (Line), Log, line, ma
 
 The owner asked for it on 2026-11-12: "il manque un menu burger sur la version mobile du site".
 
-- The sections and the search are in one `<details class="bar-menu">` of the bar: one list of links for every width, so a screen reader reads each section once. Its `<summary>` is the button: a square of 32 pixels with three lines of 16 by 2 pixels drawn by the style sheet, and the word "Menu" as its name, hidden by the style sheet. With no style sheet the word shows, and the button opens the list.
+- The sections and the search field are in one `<details class="bar-menu">` of the bar (on the docs home, the sections only: its field is in the page): one list of links for every width, so a screen reader reads each section once. Its `<summary>` is the button: a square of 32 pixels with three lines of 16 by 2 pixels drawn by the style sheet, and the word "Menu" as its name, hidden by the style sheet. With no style sheet the word shows, and the button opens the list.
 - Under 720 pixels: the heron and the name at the left, the button at the right. The open menu lies over the page under the bar, over the whole width: the sections one under the other, the current one marked by a line at its left, then the search over the whole width with its list under it. The open button has the border and the lines in the color of the line of a link. The focus is visible (the rule of the site). The button is a `summary`: Enter and Space open and close it with no script.
 - On a wide screen the menu is open and its button is hidden, so it is the bar of today. A `details` that is closed in the file cannot be opened by a style sheet in every browser, so two ways meet:
   - A browser that has `::details-content` shows the content of the closed menu on a wide screen and hides the button (`@supports selector(::details-content)`), with no script.
-  - `search.js`, loaded with `defer` on each page, opens the menu on a wide screen and closes it on a narrow one, when the width changes too (`matchMedia("(min-width: 720px)")`). On a narrow screen it also closes the menu at Escape (and puts the focus on the button) and at a click outside, and opens it for `/` and for an address with `?q=`.
+  - `search.js`, loaded with `defer` on each page, opens the menu on a wide screen and closes it on a narrow one, when the width changes too (`matchMedia("(min-width: 720px)")`). On a narrow screen it also closes the menu at Escape (and puts the focus on the button) and at a click outside, and opens it for `/` and for an address with `?q=` when the menu holds the search field. On the docs home the large field is in the page, also on a narrow screen, and the menu holds the sections only.
   - With no script, a browser with no `::details-content` shows the button on a wide screen too, and the button opens the list: the page stays whole. With the script, such a browser shows the button for the time between the first paint and the run of the deferred script.
 - The menu is closed in the file, not open: an open menu that the script closes on a narrow screen moves the page after its first paint on each load.
 - At 360 pixels, no line is wider than the screen: a table and a block of code scroll in their own box (`.table`, `pre`); a heading, a paragraph, an item, a caption and the breadcrumbs break a long word or address (`overflow-wrap: anywhere`); the stages, the tiles and the pictures fit a column of 328 pixels.
@@ -397,10 +432,10 @@ The writer of each page states its layout (`Site_Page.layout`); the tool does no
 
 | Layout | Pages | Form |
 |---|---|---|
-| Presentation | The home, the news, the releases | One centred column of at most 1152 pixels |
+| Presentation | The home, the docs home, the news, the releases | One centred column of at most 1152 pixels |
 | Documentation (`GLOSSARY.md`) | Each guide, each reference page, the glossary, each module page, the status, and the index pages of the guides, the reference and the modules | The documentation tree, the text, "On this page", over the whole width of the window |
 
-The documentation tree (`GLOSSARY.md`) is one `<nav class="tree" aria-label="Documentation">`: "Guides" with each guide in the reading order of the page of the guides, "Reference" with each reference page in the order of its index, "Modules" with a `details` for each group (Kernel, Programs, Modules), open when it holds the current page, and "Status". The current page has `aria-current="page"`. It is written once in each page, inside the site menu, after the search: under 720 pixels it is under the sections in the open menu, which scrolls on its own; from 720 pixels the style sheet fixes it at the left of the window (`position: fixed`, its own `overflow-y`), so a long tree never moves the page. With no script, a browser with no `::details-content` shows the tree when the button of the menu opens it, as the sections.
+The documentation tree (`GLOSSARY.md`) is one `<nav class="tree" aria-label="Documentation">`. Its first link is the docs home, "Docs", the way back to the door of the docs. Then, on a guide: "Guides" with each guide in the reading order of the page of the guides, "Reference" with each reference page in the order of its index, "Modules" with a `details` for each group (Kernel, Programs, Modules), open when it holds the current page, and "Status". The current page has `aria-current="page"`. It is written once in each page, inside the site menu, after the search: under 720 pixels it is under the sections in the open menu, which scrolls on its own; from 720 pixels the style sheet fixes it at the left of the window (`position: fixed`, its own `overflow-y`), so a long tree never moves the page. With no script, a browser with no `::details-content` shows the tree when the button of the menu opens it, as the sections.
 
 "On this page" (`GLOSSARY.md`) is one `<details class="outline">` at the start of `main`: the title of the page (a link to `#content`), then each heading h2 and h3 with an id, then each element that states a symbol with `data-outline`, in the order of the page. From 1100 pixels it is a column at the right of the text, sticky, with its own scroll, and open (`::details-content`, or `search.js`); under 1100 pixels it is closed above the text, and its summary "On this page" opens it. The script marks the link of the part in view with `aria-current="location"`: an `IntersectionObserver` reports each heading and symbol that enters or leaves the top 40 % of the window; nothing runs each frame. With no script it is a correct list of links.
 
@@ -508,7 +543,7 @@ The checks, after the checks of the pages: `favicon.ico` is at the root, its dir
 
 ## The status page
 
-`status/` gives the state of the system with no sentence of its own: each cell is a part of `PROPERTIES.md` or of `FIRST_MILESTONE.md`.
+`status/` gives the state of the system with no sentence of its own. It stays a section of its own, outside the docs (see "The sections"): each cell is a part of `PROPERTIES.md` or of `FIRST_MILESTONE.md`.
 
 | Table | Read from, and the form the reader relies on |
 |---|---|
@@ -553,7 +588,7 @@ What the tables cannot show:
 
 ## The module pages
 
-`reference/modules/index.html` lists each module of `module_builds` (`tools/kerneltool/modules.odin`) in its group, one table and one heading for each: Kernel (a module that runs in kernel mode), Programs (its source is in `programs/`), Modules (the others). The documentation tree has the same groups. A row gives its name, whether it is in the boot image, its count of exports, its imports and its purpose. `reference/modules/<name>/` gives:
+`docs/reference/modules/` lists each module of `module_builds` (`tools/kerneltool/modules.odin`) in its group, one table and one heading for each: Kernel (a module that runs in kernel mode), Programs (its source is in `programs/`), Modules (the others). The documentation tree has the same groups. A row gives its name, whether it is in the boot image, its count of exports, its imports and its purpose. `docs/reference/modules/<name>/` gives:
 
 - its documentation: the comment before `package` in its source, the text that the build writes into the module (`describe_package` of `tools/kerneltool/describe.odin`), then its document references; its purpose is the first sentence, with no pointer;
 - for a module that is a build of the source of another module with settings of its own (`defines` of its row of `module_builds`), a first paragraph before the documentation: "The module `kernel` built with the setting `TEST_BUILD_SKIPS_THE_INSTRUCTION_ADDRESS_CHECK=true`", then the comment above its row in `module_builds`, which says why it exists. The documentation after it is the comment of the shared source, which describes the other module. Its description for other sites names its source and its settings;
@@ -757,6 +792,7 @@ The work is in layers; each layer adds pages to a site that works.
 - (c) Done: the news (`news/`, `kerneltool news`), its page, its door on the home, its feed and its links from the releases.
 - (d) Done: the search: its index, its script, its box in the bar.
 - (e) Done: what other sites read (`tools/kerneltool/site_metadata.odin`): the canonical address, Open Graph, the summary card, the page graph, the manifest, `sitemap.xml`, `robots.txt`, `releases.xml`, `llms.txt`, the pictures of the repository compressed, and their checks. See "What other sites read".
+- (f) Done: one section Docs in the bar, the guides and the reference under `docs/`, the docs home with its own search field, and the redirect pages of the two generations of old addresses. See "The sections", "The redirect pages" and "The docs home".
 - The count of checks of `kerneltool check` on the site: the measure record counts the checks of `kerneltool screenshots` only (the machine tests and the second build), not the host tests of `kerneltool check`.
 - An embedded font: Paper Mono is under the SIL OFL 1.1 with no Reserved Font Name (`resources/fonts/paper_mono.license`): its ASCII subsets can be copied into the site with `OFL.txt` and their `.license` files and declared with `@font-face`. The site uses the fonts of the reader's system.
 

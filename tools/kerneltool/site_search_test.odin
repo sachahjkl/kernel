@@ -1,5 +1,6 @@
 package kerneltool
 
+import "core:fmt"
 import "core:strings"
 import "core:testing"
 import "support:line_editor"
@@ -96,8 +97,8 @@ site_search_index_of_a_small_site :: proc(t: ^testing.T) {
 	site := test_site()
 	pages := [?]Site_Page {
 		{path = "index.html", title = "modus", description = "The home."},
-		{path = "guides/NETWORK/index.html", title = "Network", description = "The guide."},
-		{path = "reference/glossary/index.html", title = "Glossary", description = "The terms."},
+		{path = SITE_GUIDE_FOLDER + "/NETWORK/" + SITE_PAGE, title = "Network", description = "The guide."},
+		{path = SITE_GLOSSARY_FOLDER + "/" + SITE_PAGE, title = "Glossary", description = "The terms."},
 		{path = "news/index.html", title = "News", description = "The news."},
 	}
 	for page in pages {
@@ -105,15 +106,15 @@ site_search_index_of_a_small_site :: proc(t: ^testing.T) {
 	}
 	headings := []Site_Heading{{level = 1, text = "Network", id = "network"}, {level = 2, text = "The `frames`", id = "the-frames", first_paragraph = "The **first** paragraph."}}
 	site.guides = make([dynamic]Site_Guide, context.temp_allocator)
-	append(&site.guides, Site_Guide{source = "docs/NETWORK.md", path = "guides/NETWORK/index.html", title = "Network", headings = headings})
+	append(&site.guides, Site_Guide{source = "docs/NETWORK.md", path = SITE_GUIDE_FOLDER + "/NETWORK/" + SITE_PAGE, title = "Network", headings = headings})
 	entry, _ := news_parse("2026-11-11-a-thing.md", "title: A \"thing\" </script>\ndate: 2026-11-11\nrelease: next\npicture: none\nkind: Shown\nguide: none\n\nIt runs. More.\n")
 	site.news = []Site_News{{entry = entry, anchor = site_news_anchor(entry)}}
 	site.gaps = []Site_Gap{}
 
 	written := make(map[string]string, context.temp_allocator)
 	written["index.html"] = "<h1>modus</h1>"
-	written["guides/NETWORK/index.html"] = "<h1 id=\"network\">Network</h1><h2 id=\"the-frames\">The frames</h2>"
-	written["reference/glossary/index.html"] = "<h1>Glossary</h1><tr id=\"term-module-metadata\"></tr><tr id=\"term-module\"></tr>"
+	written[SITE_GUIDE_FOLDER + "/NETWORK/" + SITE_PAGE] = "<h1 id=\"network\">Network</h1><h2 id=\"the-frames\">The frames</h2>"
+	written[SITE_GLOSSARY_FOLDER + "/" + SITE_PAGE] = "<h1>Glossary</h1><tr id=\"term-module-metadata\"></tr><tr id=\"term-module\"></tr>"
 	written["news/index.html"] = "<h1>News</h1><article id=\"news-2026-11-11-a-thing\"></article>"
 
 	entries := site_search_entries(&site)
@@ -139,7 +140,7 @@ site_search_index_of_a_small_site :: proc(t: ^testing.T) {
 	for path, html in written {
 		no_anchor[path] = html
 	}
-	no_anchor["guides/NETWORK/index.html"] = "<h1 id=\"network\">Network</h1>"
+	no_anchor[SITE_GUIDE_FOLDER + "/NETWORK/" + SITE_PAGE] = "<h1 id=\"network\">Network</h1>"
 	testing.expect(t, len(site_search_problems(entries, no_anchor)) > 0, "an absent anchor is not found")
 	// A page with no entry.
 	no_entry := make(map[string]string, context.temp_allocator)
@@ -161,6 +162,20 @@ site_search_index_of_a_small_site :: proc(t: ^testing.T) {
 	published := site_search_index_json(&site, entries, site.pages[:])
 	testing.expect(t, strings.contains(published, "[\"news/\",\"News\"]"))
 	testing.expect(t, strings.contains(published, "[\"./\",\"modus\"]"))
+	testing.expect(t, strings.contains(published, "[\"docs/guides/NETWORK/\",\"Network\"]"))
+
+	// What the home of the docs says that the search knows: the count of
+	// the entries, then each kind that has entries, in the tie order.
+	knows := strings.builder_make(context.temp_allocator)
+	site_docs_search_knows(&knows, entries)
+	knows_text := strings.to_string(knows)
+	testing.expect(t, strings.has_prefix(knows_text, fmt.tprintf("<p class=\"docs-knows\">The search knows %d entries: 4 pages, ", len(entries))), knows_text)
+	testing.expect(t, strings.contains(knows_text, "2 terms, 1 guide section, 1 news"), knows_text)
+	testing.expect(t, !strings.contains(knows_text, "module"), knows_text)
+	testing.expect_value(t, site_search_kind_words(.Property, 2), "properties")
+	testing.expect_value(t, site_search_kind_words(.Property, 1), "property")
+	testing.expect_value(t, site_search_kind_words(.Error_Kind, 3), "error kinds")
+	testing.expect_value(t, site_search_kind_words(.News, 5), "news")
 }
 
 @(test)
@@ -173,8 +188,8 @@ site_pages_hold_no_inline_code :: proc(t: ^testing.T) {
 	// The frame of a page: its one script is a file.
 	site := test_site()
 	site.release = "0.1.0"
-	html := site_page_html(&site, Site_Page{path = "guides/A/index.html", title = "A", description = "The guide A.", section = .Guides, body = "<h1>A</h1>"})
+	html := site_page_html(&site, Site_Page{path = SITE_GUIDE_FOLDER + "/A/" + SITE_PAGE, title = "A", description = "The guide A.", section = .Guides, body = "<h1>A</h1>"})
 	testing.expect_value(t, site_inline_code_problem(html), "")
-	testing.expect(t, strings.contains(html, "<script src=\"../../search.js\" data-index=\"search.json\" defer></script>"))
+	testing.expect(t, strings.contains(html, "<script src=\"../../../search.js\" data-index=\"search.json\" defer></script>"))
 	testing.expect(t, strings.contains(html, "<div class=\"search\" role=\"search\" hidden>"))
 }

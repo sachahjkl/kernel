@@ -19,7 +19,7 @@ import "contract:fixed_addresses"
 import module "contract:module"
 import op "contract:operation"
 
-SITE_TYPES_FOLDER :: "reference/types"
+SITE_TYPES_FOLDER :: SITE_REFERENCE_FOLDER + "/types"
 SITE_TYPES_FILE :: "tools/kerneltool/site_types.odin"
 SITE_MODULE_CONTRACT_DOCUMENT :: "docs/MODULE_CONTRACT.md"
 // The packages whose types the site documents: the packages whose files the

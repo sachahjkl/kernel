@@ -229,14 +229,14 @@ site_reference_of_the_repository :: proc(t: ^testing.T) {
 		testing.expectf(t, item.description.about != "", "the module %s has no purpose", item.build.name)
 	}
 	target, found := site_code_link(&site, "Memory_Map")
-	testing.expect(t, found && target == "reference/operations/index.html#operation-memory-map", target)
+	testing.expect(t, found && target == "docs/reference/operations/index.html#operation-memory-map", target)
 	_, ambiguous := site_code_link(&site, "Bad_Address")
 	testing.expect(t, !ambiguous, "Bad_Address is a status and an error kind: it links nowhere")
 	command, command_found := site_code_link(&site, "load(\"math\")")
-	testing.expect(t, command_found && command == "reference/console/index.html#command-load", command)
+	testing.expect(t, command_found && command == "docs/reference/console/index.html#command-load", command)
 	_, spaced := site_code_link(&site, "Memory_Map and more")
 	testing.expect(t, !spaced)
 	math_page, math_found := site_code_link(&site, "math")
 	testing.expect(t, math_found && math_page == site_module_page("math"), math_page)
-	testing.expect_value(t, site_module_page("math"), "reference/modules/math/index.html")
+	testing.expect_value(t, site_module_page("math"), "docs/reference/modules/math/index.html")
 }

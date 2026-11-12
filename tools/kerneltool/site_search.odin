@@ -491,12 +491,25 @@ site_search_script :: proc() -> string {
 	return with_cases
 }
 
-// The box of the search in the bar, in the place of the clock of the bar of
-// the desktop. It is hidden: the script shows it, so a page read with no
-// script has no box that does nothing.
-SITE_SEARCH_BOX :: `<div class="search" role="search" hidden>
-<label class="search-label" for="site-search-box">Search the site</label>
-<input id="site-search-box" type="text" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="site-search-list" aria-describedby="site-search-hint" autocomplete="off" spellcheck="false" placeholder="Search  /">
+// The places of the search field of a page: the bar, in the place of the
+// clock of the bar of the desktop, or the page itself, as a large field in
+// the middle of the home of the docs. A page has one field, in one place.
+Site_Search_Place :: enum {
+	Bar,
+	Docs_Home,
+}
+
+// The id of the search field: the script finds the field of a page by it,
+// and the check of a page counts it.
+SITE_SEARCH_FIELD_ID :: "site-search-box"
+
+// The search field and its list, in one markup for both places: the class
+// of its box and the words of its placeholder are the two parts that
+// differ. It is hidden: the script shows it, so a page read with no script
+// has no field that does nothing.
+SITE_SEARCH_FIELD_FORMAT :: `<div class="%s" role="search" hidden>
+<label class="search-label" for="` + SITE_SEARCH_FIELD_ID + `">Search the site</label>
+<input id="` + SITE_SEARCH_FIELD_ID + `" type="text" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="site-search-list" aria-describedby="site-search-hint" autocomplete="off" spellcheck="false" placeholder="%s">
 <div class="search-panel" id="site-search-panel" hidden>
 <p class="search-hint" id="site-search-hint" aria-live="polite"></p>
 <ul class="search-list" id="site-search-list" role="listbox" aria-label="Results"></ul>
@@ -504,6 +517,37 @@ SITE_SEARCH_BOX :: `<div class="search" role="search" hidden>
 </div>
 </div>
 `
+
+// site_search_field_html gives the search field of a page in one place.
+site_search_field_html :: proc(place: Site_Search_Place) -> string {
+	class, placeholder: string
+	switch place {
+	case .Bar:
+		class, placeholder = "search", "Search  /"
+	case .Docs_Home:
+		class, placeholder = "search search-door", "Search the whole site  /"
+	}
+	return fmt.tprintf(SITE_SEARCH_FIELD_FORMAT, class, placeholder)
+}
+
+// site_search_field_problem gives the fault of the search field of a
+// written page, or "": a page has one search field; it is in the bar, but
+// on a page that holds its own field, where it is after the bar.
+site_search_field_problem :: proc(page: Site_Page, html: string) -> string {
+	mark :: "id=\"" + SITE_SEARCH_FIELD_ID + "\""
+	if count := strings.count(html, mark); count != 1 {
+		return fmt.tprintf("%d search fields; a page has one", count)
+	}
+	bar_end := strings.index(html, "</header>")
+	in_bar := bar_end >= 0 && strings.index(html, mark) < bar_end
+	if page.search_in_page && in_bar {
+		return "the search field is in the bar; this page holds its own field, and its bar has none"
+	}
+	if !page.search_in_page && !in_bar {
+		return "the search field is not in the bar"
+	}
+	return ""
+}
 
 // The script. The match is support/line_editor/fuzzy_match.odin: lower, fuzzy_match,
 // ranked_before and rank_candidates (with no skip of equal names), on the
@@ -717,9 +761,14 @@ SITE_SEARCH_SCRIPT_SOURCE :: `// The search of the site, written by kerneltool s
     });
   }
 
-  const box = document.getElementById("site-search-box");
+  // The search field of the page: in the menu of the bar, or in the page
+  // itself on the home of the docs. A page has one; the menu opens for it
+  // only when it holds it.
+  const box = document.getElementById("` + SITE_SEARCH_FIELD_ID + `");
   if (!box || !script) return;
   const search = box.parentElement;
+  const inMenu = menu !== null && menu.contains(box);
+  function showField() { if (inMenu) showMenu(); }
   const panel = document.getElementById("site-search-panel");
   const list = document.getElementById("site-search-list");
   const hint = document.getElementById("site-search-hint");
@@ -848,9 +897,9 @@ SITE_SEARCH_SCRIPT_SOURCE :: `// The search of the site, written by kerneltool s
   document.addEventListener("keydown", event => {
     const target = event.target;
     const typing = target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || (target && target.isContentEditable);
-    if (event.key === "/" && !typing && !event.ctrlKey && !event.metaKey && !event.altKey) { showMenu(); box.focus(); event.preventDefault(); }
+    if (event.key === "/" && !typing && !event.ctrlKey && !event.metaKey && !event.altKey) { showField(); box.focus(); event.preventDefault(); }
   });
   const asked = new URLSearchParams(location.search).get("q");
-  if (asked) { showMenu(); box.value = asked; box.focus(); load().then(render); }
+  if (asked) { showField(); box.value = asked; box.focus(); load().then(render); }
 })();
 `

@@ -283,7 +283,7 @@ site_type_references_and_cards :: proc(t: ^testing.T) {
 	testing.expect_value(t, strings.count(cards, "<div class=\"type-card\""), 3)
 	testing.expect_value(t, strings.count(cards, "id=\"card-type-wire-table\""), 1)
 	testing.expect(t, strings.contains(cards, "id=\"card-type-wire-table-summary\">A wire form of the module contract: one register of a call. A form.</p>"), cards)
-	testing.expect(t, strings.contains(cards, "<a href=\"../../reference/types/index.html#type-operation-memory-flags\"><code>Memory_Flags</code></a>"), cards)
+	testing.expect(t, strings.contains(cards, "<a href=\"../../../docs/reference/types/index.html#type-operation-memory-flags\"><code>Memory_Flags</code></a>"), cards)
 	testing.expect(t, strings.contains(cards, "An alias of bit_set[Memory_Flag; u64]."), cards)
 	testing.expect(t, strings.contains(cards, "<li><code>Execute</code><span>bit 1</span></li>"), cards)
 	testing.expect(t, strings.contains(cards, "<li class=\"padding\">"), cards)

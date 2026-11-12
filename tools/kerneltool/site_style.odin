@@ -191,6 +191,17 @@ blockquote { margin-left: 0; padding-left: 16px; border-left: 2px solid var(--li
 .search-name { flex: 0 1 auto; }
 .search-what { flex: 0 1 auto; color: var(--dim); }
 .search-name mark { background: none; color: var(--match); font-weight: 700; }
+/* The home of the docs: a door. Its search field is large, in the middle
+   of the page, and its list opens under it; the bar of that page has no
+   field. Two cards under it, the guides and the reference. */
+.docs-head { padding: 32px 0 8px; text-align: center; }
+.docs-head .lead { margin: 0 auto 16px; }
+.search.search-door { max-width: 720px; margin: 0 auto 8px; }
+.search-door input { box-sizing: border-box; width: 100%; height: 48px; padding: 0 16px; font-size: 18px; border-color: var(--line); }
+.search-door .search-panel { left: 0; right: 0; top: 52px; width: auto; max-width: none; }
+.docs-knows { max-width: 720px; margin: 0 auto 32px; text-align: center; color: var(--dim); font-size: 14px; }
+.docs-parts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-bottom: 16px; }
+.docs-parts ol { padding-left: 24px; }
 .crumbs ol { list-style: none; margin: 16px auto 0; padding: 0; display: flex; flex-wrap: wrap; gap: 4px; color: var(--dim); }
 .crumbs li { margin: 0; }
 .crumbs li + li::before { content: "/"; margin-right: 4px; color: var(--dim); }
@@ -441,6 +452,9 @@ figcaption { padding-top: 8px; font-size: 14px; }
   .search { margin-left: 0; }
   .search input { width: 100%; height: 32px; }
   .search-panel { position: static; width: auto; max-width: none; margin-top: 4px; }
+  /* The field of the home of the docs stays in the page, not in the menu. */
+  .search-door input { height: 40px; }
+  .docs-parts { grid-template-columns: minmax(0, 1fr); }
   /* The open menu scrolls on its own: on a documentation page it holds
      the tree under the sections and the search. */
   .bar-menu-content { max-height: calc(100vh - 48px); overflow-y: auto; }

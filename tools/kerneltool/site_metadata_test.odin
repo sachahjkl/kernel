@@ -8,11 +8,16 @@ import "support:mark"
 
 @(private = "file")
 TEST_ADDRESS :: "https://example.invalid/modus"
+// The two guides of the small site, in the folder of the guides.
+@(private = "file")
+TEST_GUIDE_A :: SITE_GUIDE_FOLDER + "/A/" + SITE_PAGE
+@(private = "file")
+TEST_GUIDE_B :: SITE_GUIDE_FOLDER + "/B/" + SITE_PAGE
 
 // A small site: a home with a picture, the index of the guides, two
-// guides, the glossary, the news, the index of the reference, the releases
-// and the licenses, with or without an address. Guide A uses a term of the
-// glossary, so it links to an anchor of the glossary.
+// guides, the glossary, the news, the index of the reference, the releases,
+// the licenses and the home of the docs, with or without an address. Guide
+// A uses a term of the glossary, so it links to an anchor of the glossary.
 @(private = "file")
 metadata_test_site :: proc(address: string) -> Site {
 	site := test_site()
@@ -37,20 +42,23 @@ metadata_test_site :: proc(address: string) -> Site {
 	news[0] = Site_News{entry = News_Entry{file_name = "2026-11-12-a.md", title = "A thing", date = "2026-11-12", kind = .Shown, text = "A thing works. More text."}, anchor = "news-2026-11-12-a"}
 	site.news = news
 	site.guides = make([dynamic]Site_Guide, context.temp_allocator)
-	append(&site.guides, Site_Guide{source = "docs/A.md", path = "guides/A/index.html", title = "Guide A"})
-	append(&site.guides, Site_Guide{source = "docs/B.md", path = "guides/B/index.html", title = "Guide B"})
-	renderer := site_renderer_make(&site, "guides/A/index.html", "docs/A.md")
+	append(&site.guides, Site_Guide{source = "docs/A.md", path = TEST_GUIDE_A, title = "Guide A"})
+	append(&site.guides, Site_Guide{source = "docs/B.md", path = TEST_GUIDE_B, title = "Guide B"})
+	renderer := site_renderer_make(&site, TEST_GUIDE_A, "docs/A.md")
 	site_render_markdown(&renderer, "A module of the system.\n")
 	guide_body := strings.concatenate({"<h1>Guide A</h1>", strings.to_string(renderer.builder)}, context.temp_allocator)
 	site_page_add(&site, Site_Page{path = SITE_PAGE, is_index = true, title = SITE_SYSTEM_NAME, description = "The home.", section = .Home, body = "<h1>modus</h1><img src=\"pictures/a.png\" width=\"8\" height=\"8\" alt=\"A &amp; B\">"})
-	site_page_add(&site, Site_Page{path = "guides/index.html", is_index = true, title = "Guides", description = "The guides.", section = .Guides, crumbs = site_crumbs(.Home), body = "<h1>Guides</h1>"})
-	site_page_add(&site, Site_Page{path = "guides/A/index.html", title = "Guide A", description = "The guide A.", section = .Guides, crumbs = site_crumbs(.Guides), body = guide_body})
-	site_page_add(&site, Site_Page{path = "guides/B/index.html", title = "Guide B", description = "The guide B.", section = .Guides, crumbs = site_crumbs(.Guides), body = "<h1>Guide B</h1>"})
+	site_page_add(&site, Site_Page{path = site_section_page(.Guides), is_index = true, title = "Guides", description = "The guides.", section = .Guides, crumbs = site_crumbs(.Docs), body = "<h1>Guides</h1>"})
+	site_page_add(&site, Site_Page{path = TEST_GUIDE_A, title = "Guide A", description = "The guide A.", section = .Guides, crumbs = site_crumbs(.Guides), body = guide_body})
+	site_page_add(&site, Site_Page{path = TEST_GUIDE_B, title = "Guide B", description = "The guide B.", section = .Guides, crumbs = site_crumbs(.Guides), body = "<h1>Guide B</h1>"})
 	site_page_add(&site, Site_Page{path = site_page_file(SITE_GLOSSARY_FOLDER), title = "Glossary", description = "The terms.", section = .Reference, crumbs = site_crumbs(.Reference), body = "<h1>Glossary</h1><table><tr id=\"term-module\"><td>Module</td></tr><tr id=\"term-module-metadata\"><td>Module metadata</td></tr></table>"})
 	site_page_add(&site, Site_Page{path = site_section_page(.News), title = "News", description = "The news.", section = .News, crumbs = site_crumbs(.Home), body = "<h1>News</h1><article id=\"news-2026-11-12-a\"></article>"})
-	site_page_add(&site, Site_Page{path = site_section_page(.Reference), is_index = true, title = "Reference", description = "The reference.", section = .Reference, crumbs = site_crumbs(.Home), body = "<h1>Reference</h1>"})
+	site_page_add(&site, Site_Page{path = site_section_page(.Reference), is_index = true, title = "Reference", description = "The reference.", section = .Reference, crumbs = site_crumbs(.Docs), body = "<h1>Reference</h1>"})
 	site_page_add(&site, Site_Page{path = site_section_page(.Releases), title = "Releases", description = "The releases.", section = .Releases, crumbs = site_crumbs(.Home), body = strings.concatenate({"<h1>Releases</h1><h2 id=\"", site_release_id(site.release), "\">0.1.0</h2>"}, context.temp_allocator)})
 	site_page_add(&site, Site_Page{path = site_page_file(SITE_LICENSES_FOLDER), title = "Licenses", description = "The licenses.", section = .Reference, crumbs = site_crumbs(.Reference), body = "<h1>Licenses</h1>"})
+	// The home of the docs: its own search field, none in its bar.
+	docs_body := strings.concatenate({"<h1>Docs</h1>", site_search_field_html(.Docs_Home)}, context.temp_allocator)
+	site_page_add(&site, Site_Page{path = site_section_page(.Docs), is_index = true, title = "Docs", description = "The docs.", section = .Docs, crumbs = site_crumbs(.Home), body = docs_body, search_in_page = true})
 	return site
 }
 
@@ -75,8 +83,8 @@ metadata_test_copy :: proc(written: map[string]string) -> map[string]string {
 @(test)
 site_addresses_of_pages :: proc(t: ^testing.T) {
 	testing.expect_value(t, site_page_address(TEST_ADDRESS, "index.html"), TEST_ADDRESS + "/")
-	testing.expect_value(t, site_page_address(TEST_ADDRESS, "guides/index.html"), TEST_ADDRESS + "/guides/")
-	testing.expect_value(t, site_page_address(TEST_ADDRESS, "guides/A/index.html"), TEST_ADDRESS + "/guides/A/")
+	testing.expect_value(t, site_page_address(TEST_ADDRESS, "docs/guides/index.html"), TEST_ADDRESS + "/docs/guides/")
+	testing.expect_value(t, site_page_address(TEST_ADDRESS, "docs/guides/A/index.html"), TEST_ADDRESS + "/docs/guides/A/")
 	testing.expect_value(t, site_file_address(TEST_ADDRESS, "pictures/a.png"), TEST_ADDRESS + "/pictures/a.png")
 	testing.expect_value(t, site_headline("short"), "short")
 	testing.expect(t, len(site_headline(strings.repeat("word ", 40, context.temp_allocator))) <= SITE_HEADLINE_LIMIT)
@@ -97,14 +105,14 @@ site_metadata_without_an_address :: proc(t: ^testing.T) {
 		testing.expectf(t, site_inline_code_problem(html) == "", "%s has inline code", path)
 	}
 	// The guides name the guide before and after them.
-	testing.expect(t, strings.contains(written["guides/A/index.html"], "<link rel=\"next\" href=\"../../guides/B/index.html\">"))
-	testing.expect(t, strings.contains(written["guides/B/index.html"], "<link rel=\"prev\" href=\"../../guides/A/index.html\">"))
-	testing.expect(t, !strings.contains(written["guides/A/index.html"], "rel=\"prev\""))
+	testing.expect(t, strings.contains(written[TEST_GUIDE_A], "<link rel=\"next\" href=\"../../../docs/guides/B/index.html\">"))
+	testing.expect(t, strings.contains(written[TEST_GUIDE_B], "<link rel=\"prev\" href=\"../../../docs/guides/A/index.html\">"))
+	testing.expect(t, !strings.contains(written[TEST_GUIDE_A], "rel=\"prev\""))
 	testing.expect_value(t, len(site_check_metadata("", site.pages[:], written, "", site.picture_sizes)), 0)
 
 	// A canonical address or a sitemap with no address is a fault.
 	changed := metadata_test_copy(written)
-	changed["guides/A/index.html"] = strings.concatenate({"<link rel=\"canonical\" href=\"x\">", written["guides/A/index.html"]}, context.temp_allocator)
+	changed[TEST_GUIDE_A] = strings.concatenate({"<link rel=\"canonical\" href=\"x\">", written[TEST_GUIDE_A]}, context.temp_allocator)
 	testing.expect(t, len(site_check_metadata("", site.pages[:], changed, "", site.picture_sizes)) > 0)
 	testing.expect(t, len(site_check_metadata("", site.pages[:], written, "<urlset></urlset>", site.picture_sizes)) > 0)
 
@@ -113,7 +121,7 @@ site_metadata_without_an_address :: proc(t: ^testing.T) {
 	testing.expect(t, !strings.contains(feed, "rel=\"self\""))
 	testing.expect_value(t, strings.count(feed, "<entry>"), 1)
 	testing.expect(t, strings.contains(feed, "href=\"releases/index.html#"))
-	testing.expect(t, strings.contains(site_language_model_index(&site), "](guides/A/index.html): The guide A."))
+	testing.expect(t, strings.contains(site_language_model_index(&site), "](docs/guides/A/index.html): The guide A."))
 }
 
 @(test)
@@ -132,49 +140,57 @@ site_metadata_with_an_address :: proc(t: ^testing.T) {
 	home := written[SITE_PAGE]
 	testing.expect(t, strings.contains(home, "<link rel=\"canonical\" href=\"" + TEST_ADDRESS + "/\">"))
 	testing.expect(t, strings.contains(home, "<meta property=\"og:image\" content=\"" + TEST_ADDRESS + "/pictures/mark_card.png\">"))
-	testing.expect(t, strings.contains(written["guides/A/index.html"], "<meta property=\"og:type\" content=\"article\">"))
+	testing.expect(t, strings.contains(written[TEST_GUIDE_A], "<meta property=\"og:type\" content=\"article\">"))
 	// The graph names the nodes of each kind of page.
 	testing.expect(t, strings.contains(home, "\"@type\":\"WebSite\""))
 	testing.expect(t, strings.contains(home, "\"@type\":\"SearchAction\""))
+	// The search of the site is at the home of the docs, whose own field reads "?q=".
+	testing.expect(t, strings.contains(home, "\"urlTemplate\":\"" + TEST_ADDRESS + "/docs/?q={search_term_string}\""))
 	testing.expect(t, strings.contains(home, "\"@type\":\"SoftwareSourceCode\""))
 	testing.expect(t, strings.contains(home, "\"@type\":\"SoftwareApplication\""))
 	testing.expect(t, strings.contains(home, "\"contentUrl\":\"" + TEST_ADDRESS + "/pictures/a.png\""))
 	testing.expect(t, strings.contains(home, "\"caption\":\"A \\u0026 B\""))
 	testing.expect(t, !strings.contains(home, "\"@type\":\"BreadcrumbList\""))
-	testing.expect(t, strings.contains(written["guides/A/index.html"], "\"@type\":\"TechArticle\""))
-	testing.expect(t, strings.contains(written["guides/A/index.html"], "\"@type\":\"BreadcrumbList\""))
-	testing.expect(t, !strings.contains(written["guides/A/index.html"], "dateModified"))
-	testing.expect(t, strings.contains(written["reference/glossary/index.html"], "\"@type\":\"DefinedTerm\""))
-	testing.expect(t, strings.contains(written["reference/glossary/index.html"], "\"@id\":\"" + TEST_ADDRESS + "/reference/glossary/#term-module\""))
+	testing.expect(t, strings.contains(written[TEST_GUIDE_A], "\"@type\":\"TechArticle\""))
+	testing.expect(t, strings.contains(written[TEST_GUIDE_A], "\"@type\":\"BreadcrumbList\""))
+	// The breadcrumbs of a guide: the home, the docs, the guides, then the guide.
+	testing.expect(t, strings.contains(written[TEST_GUIDE_A], "\"position\":2,\"name\":\"Docs\",\"item\":\"" + TEST_ADDRESS + "/docs/\""))
+	testing.expect(t, strings.contains(written[TEST_GUIDE_A], "\"position\":3,\"name\":\"Guides\",\"item\":\"" + TEST_ADDRESS + "/docs/guides/\""))
+	testing.expect(t, !strings.contains(written[TEST_GUIDE_A], "dateModified"))
+	glossary_page := site_page_file(SITE_GLOSSARY_FOLDER)
+	testing.expect(t, strings.contains(written[glossary_page], "\"@type\":\"DefinedTerm\""))
+	testing.expect(t, strings.contains(written[glossary_page], "\"@id\":\"" + TEST_ADDRESS + "/docs/reference/glossary/#term-module\""))
 	testing.expect(t, strings.contains(written["news/index.html"], "\"@type\":\"BlogPosting\""))
 	testing.expect(t, strings.contains(written["news/index.html"], "\"datePublished\":\"2026-11-12\""))
-	testing.expect(t, strings.contains(written["guides/index.html"], "\"@type\":\"CollectionPage\""))
+	testing.expect(t, strings.contains(written[site_section_page(.Guides)], "\"@type\":\"CollectionPage\""))
+	testing.expect(t, strings.contains(written[site_section_page(.Docs)], "\"@type\":\"CollectionPage\""))
 	// A page that is not an index page is a WebPage, though its file is an index.html.
 	testing.expect(t, strings.contains(written["news/index.html"], "\"@type\":\"WebPage\""))
 	// The sitemap, robots.txt and the feeds.
 	testing.expect_value(t, strings.count(sitemap, "<url>"), len(site.pages))
 	testing.expect(t, strings.contains(sitemap, "<loc>" + TEST_ADDRESS + "/news/</loc><lastmod>2026-11-12</lastmod>"))
-	testing.expect(t, strings.contains(sitemap, "<loc>" + TEST_ADDRESS + "/guides/A/</loc></url>"))
+	testing.expect(t, strings.contains(sitemap, "<loc>" + TEST_ADDRESS + "/docs/guides/A/</loc></url>"))
 	testing.expect(t, strings.contains(site_robots(&site), "Sitemap: " + TEST_ADDRESS + "/sitemap.xml\n"))
 	feed := site_releases_feed(&site)
 	testing.expect(t, strings.contains(feed, "<link rel=\"self\" type=\"application/atom+xml\" href=\"" + TEST_ADDRESS + "/releases.xml\"/>"))
 	testing.expect(t, strings.contains(feed, "<id>" + SITE_REPOSITORY_ADDRESS + "/blob/master/" + CHANGELOG_FILE + "#release-"))
 	testing.expect(t, strings.contains(feed, "href=\"" + TEST_ADDRESS + "/releases/#release-"))
-	testing.expect(t, strings.contains(site_language_model_index(&site), "](" + TEST_ADDRESS + "/guides/A/): The guide A."))
+	testing.expect(t, strings.contains(site_language_model_index(&site), "](" + TEST_ADDRESS + "/docs/guides/A/): The guide A."))
 
 	Damage :: struct {
 		page, before, after: string,
 	}
 	damages := []Damage {
-		{"guides/A/index.html", "<link rel=\"canonical\"", "<link rel=\"other\""}, // No canonical address.
-		{"guides/A/index.html", "<link rel=\"canonical\" href=\"" + TEST_ADDRESS + "/guides/A/\"", "<link rel=\"canonical\" href=\"" + TEST_ADDRESS + "/guides/B/\""}, // The canonical address of another page.
-		{"guides/A/index.html", "<link rel=\"canonical\" href=\"" + TEST_ADDRESS + "/guides/A/\"", "<link rel=\"canonical\" href=\"" + TEST_ADDRESS + "/guides/A.html\""}, // The old address.
-		{"guides/A/index.html", "<meta property=\"og:image:width\" content=\"1200\">", "<meta property=\"og:image:width\" content=\"1201\">"}, // A wrong size.
-		{"guides/A/index.html", "/pictures/mark_card.png\">", "/pictures/absent.png\">"}, // A picture that does not exist.
-		{"guides/A/index.html", "<meta property=\"og:title\"", "<meta property=\"og:other\""}, // No title.
-		{"guides/A/index.html", "\"@graph\":[", "\"@graph\":"}, // JSON that does not parse.
-		{"guides/A/index.html", "\"breadcrumb\":{\"@id\":\"", "\"breadcrumb\":{\"@id\":\"https://elsewhere.invalid/"}, // An id that is not in the graph.
-		{"guides/A/index.html", "\"@context\":\"https://schema.org\"", "\"@context\":\"https://example.org\""},
+		{TEST_GUIDE_A, "<link rel=\"canonical\"", "<link rel=\"other\""}, // No canonical address.
+		{TEST_GUIDE_A, "<link rel=\"canonical\" href=\"" + TEST_ADDRESS + "/docs/guides/A/\"", "<link rel=\"canonical\" href=\"" + TEST_ADDRESS + "/docs/guides/B/\""}, // The canonical address of another page.
+		{TEST_GUIDE_A, "<link rel=\"canonical\" href=\"" + TEST_ADDRESS + "/docs/guides/A/\"", "<link rel=\"canonical\" href=\"" + TEST_ADDRESS + "/guides/A/\""}, // The old address of the folders before the docs.
+		{TEST_GUIDE_A, "<link rel=\"canonical\" href=\"" + TEST_ADDRESS + "/docs/guides/A/\"", "<link rel=\"canonical\" href=\"" + TEST_ADDRESS + "/guides/A.html\""}, // The old address of the .html files.
+		{TEST_GUIDE_A, "<meta property=\"og:image:width\" content=\"1200\">", "<meta property=\"og:image:width\" content=\"1201\">"}, // A wrong size.
+		{TEST_GUIDE_A, "/pictures/mark_card.png\">", "/pictures/absent.png\">"}, // A picture that does not exist.
+		{TEST_GUIDE_A, "<meta property=\"og:title\"", "<meta property=\"og:other\""}, // No title.
+		{TEST_GUIDE_A, "\"@graph\":[", "\"@graph\":"}, // JSON that does not parse.
+		{TEST_GUIDE_A, "\"breadcrumb\":{\"@id\":\"", "\"breadcrumb\":{\"@id\":\"https://elsewhere.invalid/"}, // An id that is not in the graph.
+		{TEST_GUIDE_A, "\"@context\":\"https://schema.org\"", "\"@context\":\"https://example.org\""},
 	}
 	for damage in damages {
 		changed := metadata_test_copy(written)
@@ -185,13 +201,13 @@ site_metadata_with_an_address :: proc(t: ^testing.T) {
 	}
 	// Two JSON-LD scripts on one page.
 	with_two_graphs := metadata_test_copy(written)
-	with_two_graphs["guides/B/index.html"] = strings.concatenate({written["guides/B/index.html"], SITE_STRUCTURED_DATA_OPEN, "{}", SITE_SCRIPT_CLOSE}, context.temp_allocator)
+	with_two_graphs[TEST_GUIDE_B] = strings.concatenate({written[TEST_GUIDE_B], SITE_STRUCTURED_DATA_OPEN, "{}", SITE_SCRIPT_CLOSE}, context.temp_allocator)
 	testing.expect(t, len(site_check_metadata(TEST_ADDRESS, site.pages[:], with_two_graphs, sitemap, site.picture_sizes)) > 0)
 	// A sitemap with a page less, or a page that the command does not write.
-	short_sitemap, removed := strings.replace_all(sitemap, "<url><loc>" + TEST_ADDRESS + "/guides/A/</loc></url>\n", "", context.temp_allocator)
+	short_sitemap, removed := strings.replace_all(sitemap, "<url><loc>" + TEST_ADDRESS + "/docs/guides/A/</loc></url>\n", "", context.temp_allocator)
 	testing.expect(t, removed)
 	testing.expect(t, len(site_check_metadata(TEST_ADDRESS, site.pages[:], written, short_sitemap, site.picture_sizes)) > 0)
-	long_sitemap := strings.concatenate({sitemap, "<url><loc>" + TEST_ADDRESS + "/guides/A.html</loc></url>\n"}, context.temp_allocator)
+	long_sitemap := strings.concatenate({sitemap, "<url><loc>" + TEST_ADDRESS + "/guides/A/</loc></url>\n"}, context.temp_allocator)
 	testing.expect(t, len(site_check_metadata(TEST_ADDRESS, site.pages[:], written, long_sitemap, site.picture_sizes)) > 0)
 	// A picture that the command did not write.
 	without_card := make(map[string][2]int, context.temp_allocator)
@@ -222,7 +238,7 @@ site_author_of_the_site :: proc(t: ^testing.T) {
 	testing.expect(t, strings.contains(home, "\"@type\":\"Person\",\"@id\":\"" + TEST_ADDRESS + "/#author\",\"name\":\"Ada Example\",\"url\":\"" ))
 	testing.expect(t, strings.contains(home, "\"publisher\":" + author_reference))
 	testing.expect_value(t, strings.count(home, "\"author\":" + author_reference), 2) // The program and its source code.
-	testing.expect_value(t, strings.count(written["guides/A/index.html"], "\"author\":" + author_reference), 3)
+	testing.expect_value(t, strings.count(written[TEST_GUIDE_A], "\"author\":" + author_reference), 3)
 	testing.expect_value(t, strings.count(written["news/index.html"], "\"author\":" + author_reference), 3)
 	testing.expect_value(t, len(site_check_metadata(TEST_ADDRESS, site.pages[:], written, site_sitemap(&site), site.picture_sizes)), 0)
 	testing.expect(t, strings.contains(site_releases_feed(&site), "<author><name>Ada Example</name><uri>"))
@@ -243,7 +259,8 @@ site_author_of_the_site :: proc(t: ^testing.T) {
 @(test)
 site_menu_of_the_bar :: proc(t: ^testing.T) {
 	site := metadata_test_site("")
-	html := site_page_html(&site, site.pages[2]) // guides/A/index.html
+	html := site_page_html(&site, site.pages[2]) // The guide A.
+	testing.expect_value(t, site.pages[2].path, TEST_GUIDE_A)
 	testing.expect_value(t, strings.count(html, "<details"), 1)
 	testing.expect_value(t, strings.count(html, "<summary"), 1)
 	testing.expect_value(t, strings.count(html, "aria-label=\"Sections\""), 1)
@@ -259,9 +276,13 @@ site_menu_of_the_bar :: proc(t: ^testing.T) {
 	navigation := html[sections:]
 	navigation = navigation[:strings.index(navigation, "</nav>")]
 	testing.expect_value(t, strings.count(navigation, "<ul>"), 1)
-	// Each section once in the page; the current one marked.
+	// Each section once in the page; the current one marked: a guide is a
+	// page of the docs. The guides and the reference are not in the bar.
 	testing.expect_value(t, strings.count(html, ">News</a>"), 1)
-	testing.expect(t, strings.contains(navigation, "aria-current=\"page\">Guides</a>"))
+	testing.expect(t, strings.contains(navigation, "aria-current=\"page\">Docs</a>"))
+	testing.expect(t, !strings.contains(navigation, ">Guides</a>"))
+	testing.expect(t, !strings.contains(navigation, ">Reference</a>"))
+	testing.expect(t, strings.contains(navigation, ">Status</a>") == site_page_exists(&site, site_section_page(.Status)))
 	testing.expect_value(t, site_inline_code_problem(html), "")
 
 	// The style sheet draws the button and the alignment of the news cards,
@@ -276,13 +297,63 @@ site_menu_of_the_bar :: proc(t: ^testing.T) {
 	testing.expect(t, strings.contains(script, "matchMedia(\"(min-width: 720px)\")"))
 }
 
+// One search field on a page: in the bar of every page, but on the home of
+// the docs, whose field is in the page and whose bar has none. The script
+// takes the field that the page has, and opens the menu only for a field
+// inside it.
+@(test)
+site_one_search_field_on_each_page :: proc(t: ^testing.T) {
+	site := metadata_test_site("")
+	written := metadata_test_written(&site)
+	for page in site.pages {
+		testing.expectf(t, site_search_field_problem(page, written[page.path]) == "", "%s: %s", page.path, site_search_field_problem(page, written[page.path]))
+	}
+	field_mark :: "id=\"" + SITE_SEARCH_FIELD_ID + "\""
+	docs_page := site_section_page(.Docs)
+	docs := written[docs_page]
+	testing.expect_value(t, strings.count(docs, field_mark), 1)
+	testing.expect(t, strings.index(docs, field_mark) > strings.index(docs, "</header>"))
+	testing.expect(t, strings.contains(docs, "class=\"search search-door\""))
+	guide := written[TEST_GUIDE_A]
+	testing.expect(t, strings.index(guide, field_mark) < strings.index(guide, "</header>"))
+	testing.expect(t, !strings.contains(guide, "search-door"))
+
+	// A bad page: a guide with a second field, a guide with none, the home
+	// of the docs with a field in its bar too, and a page that says that it
+	// holds its field but has it in the bar.
+	docs_record: Site_Page
+	for page in site.pages {
+		if page.path == docs_page {
+			docs_record = page
+		}
+	}
+	guide_record := site.pages[2]
+	two_fields := strings.concatenate({guide, site_search_field_html(.Docs_Home)}, context.temp_allocator)
+	testing.expect(t, site_search_field_problem(guide_record, two_fields) != "")
+	no_field, _ := strings.replace_all(guide, field_mark, "id=\"other\"", context.temp_allocator)
+	testing.expect(t, site_search_field_problem(guide_record, no_field) != "")
+	in_bar_too := docs_record
+	in_bar_too.search_in_page = false
+	docs_with_bar_field := site_page_html(&site, in_bar_too)
+	testing.expect(t, site_search_field_problem(docs_record, docs_with_bar_field) != "")
+	moved := guide_record
+	moved.search_in_page = true
+	testing.expect(t, site_search_field_problem(moved, guide) != "")
+
+	// The script: one implementation for both fields.
+	script := site_search_script()
+	testing.expect(t, strings.contains(script, "document.getElementById(\"" + SITE_SEARCH_FIELD_ID + "\")"))
+	testing.expect(t, strings.contains(script, "menu.contains(box)"))
+	testing.expect_value(t, strings.count(script, "showMenu(); box"), 0)
+}
+
 // A title that tries to end the script element, open a comment or end a
 // line of a script stays a text of the JSON, and the page stays whole.
 @(test)
 site_structured_data_of_a_hostile_title :: proc(t: ^testing.T) {
 	site := metadata_test_site(TEST_ADDRESS)
 	hostile := "</script><!-- \u2028 \u2029 \"quote\" \\ & <b>"
-	page := Site_Page{path = "guides/C/index.html", title = hostile, description = "The guide C.", section = .Guides, crumbs = site_crumbs(.Guides), body = "<h1>C</h1>"}
+	page := Site_Page{path = SITE_GUIDE_FOLDER + "/C/" + SITE_PAGE, title = hostile, description = "The guide C.", section = .Guides, crumbs = site_crumbs(.Guides), body = "<h1>C</h1>"}
 	site_page_add(&site, page)
 	html := site_page_html(&site, page)
 	testing.expect_value(t, site_inline_code_problem(html), "")
@@ -454,7 +525,7 @@ site_icons_of_the_site :: proc(t: ^testing.T) {
 	svg_link := strings.index(home, "<link rel=\"icon\" href=\"pictures/icon.svg\" type=\"image/svg+xml\">")
 	touch_link := strings.index(home, "<link rel=\"apple-touch-icon\" href=\"pictures/icon_180.png\" sizes=\"180x180\">")
 	testing.expect(t, favicon_link >= 0 && favicon_link < svg_link && svg_link < touch_link)
-	testing.expect(t, strings.contains(written["guides/A/index.html"], "<link rel=\"icon\" href=\"../../favicon.ico\" sizes=\"32x32\">"))
+	testing.expect(t, strings.contains(written[TEST_GUIDE_A], "<link rel=\"icon\" href=\"../../../favicon.ico\" sizes=\"32x32\">"))
 
 	without_favicon := make(map[string][]u8, context.temp_allocator)
 	for path, data in files {
@@ -599,7 +670,9 @@ metadata_test_files :: proc() -> map[string]int {
 // link to a folder names its index.html); the links have the form of the
 // build; the canonical addresses are folders and all different; the
 // sitemap, the search index and the guides before and after use the new
-// addresses; a redirect page at each old path names its page.
+// addresses; a redirect page at each old path of both generations names
+// its page straight, and nothing that other programs read names an old
+// address.
 @(test)
 site_addresses_of_every_page :: proc(t: ^testing.T) {
 	for address in ([]string{"", TEST_ADDRESS}) {
@@ -613,23 +686,23 @@ site_addresses_of_every_page :: proc(t: ^testing.T) {
 		for problem in site_check_pages(site.pages[:], written, files, has_address) {
 			testing.expectf(t, false, "address %q: a good site has a problem: %s", address, problem)
 		}
-		guide := written["guides/A/index.html"]
+		guide := written[TEST_GUIDE_A]
 		if has_address {
-			testing.expect(t, strings.contains(guide, "<link rel=\"next\" href=\"../../guides/B/\">"))
-			testing.expect(t, strings.contains(guide, "<a class=\"term\" href=\"../../reference/glossary/#term-module\">module</a>"))
-			testing.expect(t, strings.contains(guide, "<a class=\"bar-home\" href=\"../../\">"))
-			testing.expect(t, strings.contains(guide, "href=\"../../reference/licenses/\">Licenses</a>"))
-			testing.expect(t, strings.contains(written["guides/B/index.html"], "<link rel=\"prev\" href=\"../../guides/A/\">"))
+			testing.expect(t, strings.contains(guide, "<link rel=\"next\" href=\"../../../docs/guides/B/\">"))
+			testing.expect(t, strings.contains(guide, "<a class=\"term\" href=\"../../../docs/reference/glossary/#term-module\">module</a>"))
+			testing.expect(t, strings.contains(guide, "<a class=\"bar-home\" href=\"../../../\">"))
+			testing.expect(t, strings.contains(guide, "href=\"../../../docs/reference/licenses/\">Licenses</a>"))
+			testing.expect(t, strings.contains(written[TEST_GUIDE_B], "<link rel=\"prev\" href=\"../../../docs/guides/A/\">"))
 			testing.expect(t, strings.contains(written[SITE_PAGE], "<a class=\"bar-home\" href=\"./\">"))
 			testing.expect(t, !strings.contains(guide, "index.html\""))
 		} else {
-			testing.expect(t, strings.contains(guide, "<link rel=\"next\" href=\"../../guides/B/index.html\">"))
-			testing.expect(t, strings.contains(guide, "<a class=\"term\" href=\"../../reference/glossary/index.html#term-module\">module</a>"))
-			testing.expect(t, strings.contains(guide, "<a class=\"bar-home\" href=\"../../index.html\">"))
+			testing.expect(t, strings.contains(guide, "<link rel=\"next\" href=\"../../../docs/guides/B/index.html\">"))
+			testing.expect(t, strings.contains(guide, "<a class=\"term\" href=\"../../../docs/reference/glossary/index.html#term-module\">module</a>"))
+			testing.expect(t, strings.contains(guide, "<a class=\"bar-home\" href=\"../../../index.html\">"))
 		}
-		// The style sheet, the script and the icons from a page one folder deeper.
-		testing.expect(t, strings.contains(guide, "<link rel=\"stylesheet\" href=\"../../style.css\">"))
-		testing.expect(t, strings.contains(guide, "<script src=\"../../search.js\" data-index=\"search.json\" defer></script>"))
+		// The style sheet, the script and the icons from a page three folders deep.
+		testing.expect(t, strings.contains(guide, "<link rel=\"stylesheet\" href=\"../../../style.css\">"))
+		testing.expect(t, strings.contains(guide, "<script src=\"../../../search.js\" data-index=\"search.json\" defer></script>"))
 
 		// The canonical addresses: folders, all different.
 		if has_address {
@@ -650,40 +723,81 @@ site_addresses_of_every_page :: proc(t: ^testing.T) {
 			}
 		}
 
-		// The redirect pages: one at the old path of each page that is not
-		// an index page, which names the page.
-		site_redirects_make(&site)
-		testing.expect_value(t, len(site.redirects), 6) // Guide A, guide B, the glossary, the news, the releases, the licenses.
-		testing.expect(t, "guides/index.html" not_in site.redirects)
+		// The redirect pages: one at each old path of each page, which names
+		// the page itself. The generation of the .html files: the guides A
+		// and B, the glossary, the news, the releases and the licenses. The
+		// generation of the folders before the docs: the index of the
+		// guides, the guides A and B, the glossary, the index of the
+		// reference and the licenses. The home and the home of the docs
+		// have none.
+		table_problems := site_redirects_make(&site)
+		testing.expect_value(t, len(table_problems), 0)
+		testing.expect_value(t, site.redirect_counts[.Html_Files], 6)
+		testing.expect_value(t, site.redirect_counts[.Folders_Before_Docs], 6)
+		testing.expect_value(t, len(site.redirects), 12)
+		testing.expect(t, "guides/index.html" in site.redirects)
+		testing.expect(t, "reference/index.html" in site.redirects)
+		testing.expect(t, "docs.html" not_in site.redirects)
+		for page in site.pages {
+			for old in site_old_page_paths(page) {
+				html, found := site.redirects[old.path]
+				testing.expectf(t, found, "address %q: the old path %s of %s has no redirect page", address, old.path, page.path)
+				// Straight to the page: the refresh names the page, never
+				// another old path.
+				refresh := strings.concatenate({SITE_REFRESH_OPEN, site_page_link(&site, old.path, page.path), "\">"}, context.temp_allocator)
+				testing.expectf(t, strings.contains(html, refresh), "address %q: the redirect page %s does not name %s", address, old.path, page.path)
+				_, is_page := written[old.path]
+				testing.expectf(t, !is_page, "the old path %s is the path of a page", old.path)
+			}
+		}
 		redirect, has_redirect := site.redirects["guides/A.html"]
 		testing.expect(t, has_redirect)
-		expected_link: string = has_address ? "../guides/A/" : "../guides/A/index.html"
+		expected_link: string = has_address ? "../docs/guides/A/" : "../docs/guides/A/index.html"
 		testing.expect(t, strings.contains(redirect, strings.concatenate({SITE_REFRESH_OPEN, expected_link, "\">"}, context.temp_allocator)))
 		testing.expect(t, strings.contains(redirect, strings.concatenate({"<a href=\"", expected_link, "\">Guide A</a>"}, context.temp_allocator)))
 		testing.expect(t, strings.contains(redirect, "<meta name=\"robots\" content=\"noindex\">"))
-		testing.expect_value(t, strings.contains(redirect, "<link rel=\"canonical\" href=\"" + TEST_ADDRESS + "/guides/A/\">"), has_address)
+		testing.expect_value(t, strings.contains(redirect, "<link rel=\"canonical\" href=\"" + TEST_ADDRESS + "/docs/guides/A/\">"), has_address)
 		testing.expect(t, !strings.contains(redirect, "<script"))
 		testing.expect(t, !strings.contains(redirect, "<h1"))
+		folder_redirect := site.redirects["guides/A/index.html"]
+		folder_link: string = has_address ? "../../docs/guides/A/" : "../../docs/guides/A/index.html"
+		testing.expect(t, strings.contains(folder_redirect, strings.concatenate({SITE_REFRESH_OPEN, folder_link, "\">"}, context.temp_allocator)))
 		news_link: string = has_address ? "news/" : "news/index.html"
 		testing.expect(t, strings.contains(site.redirects["news.html"], strings.concatenate({SITE_REFRESH_OPEN, news_link, "\">"}, context.temp_allocator)))
 		for problem in site_check_redirects(site.redirects, written, files, has_address) {
 			testing.expectf(t, false, "address %q: a good redirect has a problem: %s", address, problem)
 		}
-		// A redirect to a page that is not written, or that takes the path of a file.
-		absent_link: string = has_address ? "../guides/C/" : "../guides/C/index.html"
+		// A redirect to a page that is not written, to another redirect, or
+		// that takes the path of a file or of a page.
+		absent_link: string = has_address ? "../docs/guides/C/" : "../docs/guides/C/index.html"
 		broken_redirect, _ := strings.replace_all(redirect, expected_link, absent_link, context.temp_allocator)
 		broken := make(map[string]string, context.temp_allocator)
 		broken["guides/A.html"] = broken_redirect
 		testing.expect(t, len(site_check_redirects(broken, written, files, has_address)) > 0)
+		chained_link: string = has_address ? "A/" : "A/index.html"
+		chained_redirect, _ := strings.replace_all(redirect, expected_link, chained_link, context.temp_allocator)
+		chained := make(map[string]string, context.temp_allocator)
+		for old_path, html in site.redirects {
+			chained[old_path] = html
+		}
+		chained["guides/A.html"] = chained_redirect
+		testing.expect(t, len(site_check_redirects(chained, written, files, has_address)) > 0)
 		on_a_file := make(map[string]string, context.temp_allocator)
 		on_a_file[SITE_STYLE_SHEET] = redirect
 		testing.expect(t, len(site_check_redirects(on_a_file, written, files, has_address)) > 0)
+		on_a_page := make(map[string]string, context.temp_allocator)
+		on_a_page[TEST_GUIDE_B] = redirect
+		testing.expect(t, len(site_check_redirects(on_a_page, written, files, has_address)) > 0)
+		// Two pages with one old path: the table refuses it.
+		twice := metadata_test_site(address)
+		site_page_add(&twice, Site_Page{path = "guides/A/index.html", title = "Old A", description = "Not a page of today."})
+		testing.expect(t, len(site_redirects_make(&twice)) > 0)
 
-		// The sitemap: each page once by its folder, no redirect page.
+		// The sitemap: each page once by its folder, no old address.
+		sitemap := site_sitemap(&site)
 		if has_address {
-			sitemap := site_sitemap(&site)
 			testing.expect_value(t, strings.count(sitemap, "<url>"), len(site.pages))
-			testing.expect_value(t, strings.count(sitemap, "<loc>" + TEST_ADDRESS + "/guides/A/</loc>"), 1)
+			testing.expect_value(t, strings.count(sitemap, "<loc>" + TEST_ADDRESS + "/docs/guides/A/</loc>"), 1)
 			testing.expect(t, !strings.contains(sitemap, ".html</loc>"))
 			testing.expect_value(t, len(site_check_metadata(TEST_ADDRESS, site.pages[:], written, sitemap, site.picture_sizes)), 0)
 		}
@@ -692,16 +806,31 @@ site_addresses_of_every_page :: proc(t: ^testing.T) {
 		// script joins it to its folder.
 		index := site_search_index_json(&site, site_search_entries(&site), site.pages[:])
 		if has_address {
-			testing.expect(t, strings.contains(index, "[\"guides/A/\",\"Guide A\"]"))
+			testing.expect(t, strings.contains(index, "[\"docs/guides/A/\",\"Guide A\"]"))
+			testing.expect(t, strings.contains(index, "[\"docs/\",\"Docs\"]"))
 			testing.expect(t, strings.contains(index, "[\"./\",\"modus\"]"))
 			testing.expect(t, !strings.contains(index, "index.html"))
 		} else {
-			testing.expect(t, strings.contains(index, "[\"guides/A/index.html\",\"Guide A\"]"))
+			testing.expect(t, strings.contains(index, "[\"docs/guides/A/index.html\",\"Guide A\"]"))
 			testing.expect(t, strings.contains(index, "[\"index.html\",\"modus\"]"))
 		}
-		testing.expect(t, !strings.contains(index, "guides/A.html"))
-		// llms.txt names no old address.
-		testing.expect(t, !strings.contains(site_language_model_index(&site), "A.html"))
+		// No old address in the index, the sitemap, llms.txt or the feeds:
+		// each is the address of a redirect page, in the form that each file
+		// writes.
+		llms := site_language_model_index(&site)
+		news_feed := site_news_feed(&site)
+		releases_feed := site_releases_feed(&site)
+		for old_path in site.redirects {
+			link := site_page_link(&site, SITE_PAGE, old_path)
+			old_address := site_feed_page_address(&site, old_path)
+			testing.expectf(t, !strings.contains(index, strings.concatenate({"[\"", link, "\""}, context.temp_allocator)), "the search index names the old path %s", old_path)
+			testing.expectf(t, !strings.contains(llms, strings.concatenate({"](", old_address}, context.temp_allocator)), "llms.txt names the old path %s", old_path)
+			testing.expectf(t, !strings.contains(news_feed, strings.concatenate({"href=\"", old_address}, context.temp_allocator)), "the news feed names the old path %s", old_path)
+			testing.expectf(t, !strings.contains(releases_feed, strings.concatenate({"href=\"", old_address}, context.temp_allocator)), "the releases feed names the old path %s", old_path)
+			if has_address {
+				testing.expectf(t, !strings.contains(sitemap, strings.concatenate({"<loc>", site_page_address(TEST_ADDRESS, old_path), "</loc>"}, context.temp_allocator)), "the sitemap names the old path %s", old_path)
+			}
+		}
 	}
 }
 
@@ -727,7 +856,7 @@ site_documentation_layout_of_the_pages :: proc(t: ^testing.T) {
 		for problem in site_check_pages(site.pages[:], written, files, address != "") {
 			testing.expectf(t, false, "address %q: a good site has a problem: %s", address, problem)
 		}
-		guide := written["guides/A/index.html"]
+		guide := written[TEST_GUIDE_A]
 		testing.expect_value(t, strings.count(guide, SITE_TREE_OPEN), 1)
 		testing.expect_value(t, strings.count(guide, SITE_OUTLINE_OPEN), 1)
 		testing.expect(t, strings.contains(guide, "<body class=\"section-guides layout-documentation\">"))
@@ -741,6 +870,9 @@ site_documentation_layout_of_the_pages :: proc(t: ^testing.T) {
 			testing.expect_value(t, strings.count(tree_html, "aria-current=\"page\""), 1)
 			testing.expect(t, strings.contains(tree_html, "aria-current=\"page\">Guide A</a>"))
 			testing.expect(t, strings.contains(tree_html, ">Guide B</a>"))
+			// The tree starts with the way back to the home of the docs.
+			docs_link := strings.index(tree_html, ">Docs</a>")
+			testing.expect(t, docs_link >= 0 && docs_link < strings.index(tree_html, ">Guide A</a>"))
 			// The tree of a guide holds the guides only; the reference has its own.
 			testing.expect(t, !strings.contains(tree_html, ">Licenses</a>"))
 		}

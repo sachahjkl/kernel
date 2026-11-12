@@ -9,8 +9,8 @@ import "core:testing"
 @(private = "file")
 reference_test_site :: proc() -> Site {
 	site := test_site()
-	site.documents["docs/ARCHITECTURE.md"] = "guides/ARCHITECTURE/index.html"
-	site.documents["ARCHITECTURE.md"] = "guides/ARCHITECTURE/index.html"
+	site.documents["docs/ARCHITECTURE.md"] = "docs/guides/ARCHITECTURE/index.html"
+	site.documents["ARCHITECTURE.md"] = "docs/guides/ARCHITECTURE/index.html"
 	// Made with an allocator: a slice literal would live on the stack of
 	// this procedure, and the site outlives it.
 	headings := make([]Site_Heading, 8, context.temp_allocator)
@@ -23,7 +23,7 @@ reference_test_site :: proc() -> Site {
 	headings[6] = {level = 2, text = "12. The interface font", id = "12-the-interface-font"}
 	headings[7] = {level = 3, text = "12.4 The glyph cache", id = "12-4-the-glyph-cache"}
 	site.guides = make([dynamic]Site_Guide, context.temp_allocator)
-	append(&site.guides, Site_Guide{source = "docs/ARCHITECTURE.md", path = "guides/ARCHITECTURE/index.html", title = "Architecture", headings = headings})
+	append(&site.guides, Site_Guide{source = "docs/ARCHITECTURE.md", path = "docs/guides/ARCHITECTURE/index.html", title = "Architecture", headings = headings})
 	return site
 }
 
@@ -109,16 +109,16 @@ site_document_pointers_find_their_headings :: proc(t: ^testing.T) {
 		link:     string,
 		resolved: bool,
 	}
-	page := "guides/ARCHITECTURE/index.html"
+	page := "docs/guides/ARCHITECTURE/index.html"
 	cases := []Case {
 		{{}, "", page, true},
-		{{"\"Kernel systems\""}, "Kernel systems", "guides/ARCHITECTURE/index.html#kernel-systems", true},
-		{{"\"kernel  SYSTEMS\""}, "Kernel systems", "guides/ARCHITECTURE/index.html#kernel-systems", true},
-		{{"K1"}, "Handle table", "guides/ARCHITECTURE/index.html#k1-handle-table", true},
-		{{"\"Kernel events\"", "section 5a"}, "What a record shows", "guides/ARCHITECTURE/index.html#5a-what-a-record-shows", true},
-		{{"section 12"}, "The interface font", "guides/ARCHITECTURE/index.html#12-the-interface-font", true},
-		{{"section 12.4"}, "The glyph cache", "guides/ARCHITECTURE/index.html#12-4-the-glyph-cache", true},
-		{{"\"The grant\""}, "The grant", "guides/ARCHITECTURE/index.html#5-the-grant", true},
+		{{"\"Kernel systems\""}, "Kernel systems", "docs/guides/ARCHITECTURE/index.html#kernel-systems", true},
+		{{"\"kernel  SYSTEMS\""}, "Kernel systems", "docs/guides/ARCHITECTURE/index.html#kernel-systems", true},
+		{{"K1"}, "Handle table", "docs/guides/ARCHITECTURE/index.html#k1-handle-table", true},
+		{{"\"Kernel events\"", "section 5a"}, "What a record shows", "docs/guides/ARCHITECTURE/index.html#5a-what-a-record-shows", true},
+		{{"section 12"}, "The interface font", "docs/guides/ARCHITECTURE/index.html#12-the-interface-font", true},
+		{{"section 12.4"}, "The glyph cache", "docs/guides/ARCHITECTURE/index.html#12-4-the-glyph-cache", true},
+		{{"\"The grant\""}, "The grant", "docs/guides/ARCHITECTURE/index.html#5-the-grant", true},
 		{{"\"No such heading\""}, "", page, false},
 		{{"section 99"}, "", page, false},
 		{{"decision 6"}, "", page, false},
@@ -167,7 +167,7 @@ site_document_pointers_to_a_working_record :: proc(t: ^testing.T) {
 		testing.expect_value(t, targets[0].heading, "Gaps")
 		testing.expect_value(t, targets[0].link, site_line_address(&site, SITE_MILESTONE_FILE, gaps_line))
 		b := strings.builder_make(context.temp_allocator)
-		site_document_reference_write(&site, &b, "reference/modules/kernel/index.html", targets[0])
+		site_document_reference_write(&site, &b, "docs/reference/modules/kernel/index.html", targets[0])
 		html := strings.to_string(b)
 		testing.expect(t, strings.has_prefix(html, SITE_DOCUMENT_REFERENCE_OPEN + SITE_REPOSITORY_ADDRESS + "/blob/master/docs/FIRST_MILESTONE.md#L"), html)
 		testing.expect(t, strings.has_suffix(html, ">First milestone: Gaps<span class=\"document-outside\"> in the repository</span></a>"), html)
@@ -187,13 +187,13 @@ site_document_reference_markup :: proc(t: ^testing.T) {
 		return
 	}
 	b := strings.builder_make(context.temp_allocator)
-	site_document_reference_write(&site, &b, "reference/modules/kernel/index.html", targets[0])
-	testing.expect_value(t, strings.to_string(b), "<a class=\"document-reference value-guide value-icon\" href=\"../../../guides/ARCHITECTURE/index.html#kernel-systems\">Architecture: Kernel systems</a>")
+	site_document_reference_write(&site, &b, "docs/reference/modules/kernel/index.html", targets[0])
+	testing.expect_value(t, strings.to_string(b), "<a class=\"document-reference value-guide value-icon\" href=\"../../../../docs/guides/ARCHITECTURE/index.html#kernel-systems\">Architecture: Kernel systems</a>")
 	published := reference_test_site()
 	published.address = "https://example.org"
 	link := strings.builder_make(context.temp_allocator)
-	site_document_reference_write(&published, &link, "reference/modules/kernel/index.html", targets[0])
-	testing.expect(t, strings.contains(strings.to_string(link), "href=\"../../../guides/ARCHITECTURE/#kernel-systems\""), strings.to_string(link))
+	site_document_reference_write(&published, &link, "docs/reference/modules/kernel/index.html", targets[0])
+	testing.expect(t, strings.contains(strings.to_string(link), "href=\"../../../../docs/guides/ARCHITECTURE/#kernel-systems\""), strings.to_string(link))
 }
 
 // The text of a source comment: an aside leaves its sentence, which ends
@@ -204,8 +204,8 @@ site_document_reference_markup :: proc(t: ^testing.T) {
 @(test)
 site_source_comment_text :: proc(t: ^testing.T) {
 	site := reference_test_site()
-	page := "reference/modules/kernel/index.html"
-	reference := "<a class=\"document-reference value-guide value-icon\" href=\"../../../guides/ARCHITECTURE/index.html#kernel-systems\">Architecture: Kernel systems</a>"
+	page := "docs/reference/modules/kernel/index.html"
+	reference := "<a class=\"document-reference value-guide value-icon\" href=\"../../../../docs/guides/ARCHITECTURE/index.html#kernel-systems\">Architecture: Kernel systems</a>"
 
 	html := site_source_comment_html(&site, page, "The kernel: the interrupts (docs/ARCHITECTURE.md, \"Kernel systems\").\nA second <line>.", .Paragraphs)
 	testing.expect_value(t, html, strings.concatenate({"<p>The kernel: the interrupts.</p>\n<p>A second &lt;line&gt;.</p>\n<p class=\"document-references\">See: ", reference, "</p>\n"}, context.temp_allocator))
@@ -249,10 +249,10 @@ site_source_comment_text :: proc(t: ^testing.T) {
 @(test)
 site_render_document_references :: proc(t: ^testing.T) {
 	site := reference_test_site()
-	renderer := site_renderer_make(&site, "guides/TEST/index.html", "docs/TEST.md")
+	renderer := site_renderer_make(&site, "docs/guides/TEST/index.html", "docs/TEST.md")
 	site_render_markdown(&renderer, "## `ARCHITECTURE.md` here\n\nAs `ARCHITECTURE.md`, \"Kernel systems\" says, and `docs/ARCHITECTURE.md`, section 12.4.\n")
 	html := strings.to_string(renderer.builder)
-	testing.expect(t, strings.contains(html, "As <a class=\"document-reference value-guide value-icon\" href=\"../../guides/ARCHITECTURE/index.html#kernel-systems\">Architecture: Kernel systems</a> says, and "), html)
+	testing.expect(t, strings.contains(html, "As <a class=\"document-reference value-guide value-icon\" href=\"../../../docs/guides/ARCHITECTURE/index.html#kernel-systems\">Architecture: Kernel systems</a> says, and "), html)
 	testing.expect(t, strings.contains(html, "#12-4-the-glyph-cache\">Architecture: The glyph cache</a>."), html)
 	testing.expect(t, strings.contains(html, "<h2 id=\"architecture-md-here\"><code>ARCHITECTURE.md</code> here</h2>"), html)
 }
@@ -263,14 +263,14 @@ site_render_document_references :: proc(t: ^testing.T) {
 @(test)
 site_module_page_of_the_kernel :: proc(t: ^testing.T) {
 	site := test_site()
-	site.documents["docs/ARCHITECTURE.md"] = "guides/ARCHITECTURE/index.html"
-	site.documents["ARCHITECTURE.md"] = "guides/ARCHITECTURE/index.html"
+	site.documents["docs/ARCHITECTURE.md"] = "docs/guides/ARCHITECTURE/index.html"
+	site.documents["ARCHITECTURE.md"] = "docs/guides/ARCHITECTURE/index.html"
 	content, ok := site_read_quiet("docs/ARCHITECTURE.md")
 	testing.expect(t, ok)
-	renderer := site_renderer_make(&site, "guides/ARCHITECTURE/index.html", "docs/ARCHITECTURE.md")
+	renderer := site_renderer_make(&site, "docs/guides/ARCHITECTURE/index.html", "docs/ARCHITECTURE.md")
 	site_render_markdown(&renderer, content)
 	site.guides = make([dynamic]Site_Guide, context.temp_allocator)
-	append(&site.guides, Site_Guide{source = "docs/ARCHITECTURE.md", path = "guides/ARCHITECTURE/index.html", title = "Architecture", headings = renderer.headings[:], items = renderer.items[:]})
+	append(&site.guides, Site_Guide{source = "docs/ARCHITECTURE.md", path = "docs/guides/ARCHITECTURE/index.html", title = "Architecture", headings = renderer.headings[:], items = renderer.items[:]})
 	if !site_reference_read(&site) {
 		testing.expect(t, false, "the sources of the reference cannot be read")
 		return
@@ -290,7 +290,7 @@ site_module_page_of_the_kernel :: proc(t: ^testing.T) {
 	}
 	testing.expect(t, kernel != "" && test_kernel != "", "no page of the kernel")
 	description := strings.index(kernel, "<p>The kernel")
-	references := strings.index(kernel, "<p class=\"document-references\">See: <a class=\"document-reference value-guide value-icon\" href=\"../../../guides/ARCHITECTURE/index.html#kernel-systems\">Architecture: Kernel systems</a>")
+	references := strings.index(kernel, "<p class=\"document-references\">See: <a class=\"document-reference value-guide value-icon\" href=\"../../../../docs/guides/ARCHITECTURE/index.html#kernel-systems\">Architecture: Kernel systems</a>")
 	// The kernel has no build setting, so its facts start with its kind.
 	facts := strings.index(kernel, ">Kind</td>")
 	testing.expectf(t, description >= 0 && references > description && facts > references, "the order of the page: %d, %d, %d", description, references, facts)
@@ -298,7 +298,7 @@ site_module_page_of_the_kernel :: proc(t: ^testing.T) {
 	testing.expect(t, !strings.contains(kernel_description, "docs/"), kernel_description)
 	testing.expect(t, strings.contains(kernel, "none: the defaults of the source"))
 	setting := "<code>TEST_BUILD_SKIPS_THE_INSTRUCTION_ADDRESS_CHECK=true</code>"
-	testing.expect(t, strings.contains(test_kernel, strings.concatenate({"<p>The module <a href=\"../../../reference/modules/kernel/index.html\"><code>kernel</code></a> built with the setting ", setting}, context.temp_allocator)), test_kernel)
+	testing.expect(t, strings.contains(test_kernel, strings.concatenate({"<p>The module <a href=\"../../../../docs/reference/modules/kernel/index.html\"><code>kernel</code></a> built with the setting ", setting}, context.temp_allocator)), test_kernel)
 	testing.expect(t, strings.index(test_kernel, "built with the setting") < strings.index(test_kernel, "<p>The kernel"), "the setting is not said first")
 	testing.expect_value(t, strings.count(test_kernel, setting), 2) // The first paragraph and the fact.
 }
@@ -309,7 +309,7 @@ site_module_page_of_the_kernel :: proc(t: ^testing.T) {
 @(test)
 site_source_comment_code_and_decisions :: proc(t: ^testing.T) {
 	site := reference_test_site()
-	page := "reference/modules/kernel/index.html"
+	page := "docs/reference/modules/kernel/index.html"
 	testing.expect_value(t, site_source_comment_html(&site, page, "For one machine of `test return_fault` only, `a<b`.", .Line), "For one machine of <code>test return_fault</code> only, <code>a&lt;b</code>.")
 	testing.expect_value(t, site_source_comment_html(&site, page, "One ` alone.", .Line), "One ` alone.")
 	testing.expect_value(t, site_source_comment_plain(&site, "For `test return_fault` only."), "For test return_fault only.")
