@@ -18,17 +18,17 @@ This file is the record of the decisions of the project: who decided what, when,
 ## Groups
 
 1. [The principles, the properties and the contracts](#1-the-principles-the-properties-and-the-contracts): D-001 to D-039, D-191, D-205, D-214 to D-217
-2. [The way of working](#2-the-way-of-working): D-040 to D-070, D-190, D-202 to D-204, D-211 to D-213, D-218
-3. [The kernel](#3-the-kernel): D-071 to D-083
+2. [The way of working](#2-the-way-of-working): D-040 to D-070, D-190, D-202 to D-204, D-211 to D-213, D-218, D-219
+3. [The kernel](#3-the-kernel): D-071 to D-083, D-220
 4. [Memory](#4-memory): D-084 to D-088
 5. [The scheduler](#5-the-scheduler): D-089 to D-091
-6. [Storage](#6-storage): D-092 to D-095
+6. [Storage](#6-storage): D-092 to D-095, D-221
 7. [The network and QUIC](#7-the-network-and-quic): D-096 to D-100
 8. [Cryptography and randomness](#8-cryptography-and-randomness): D-101 to D-105
 9. [The interface, the fonts, the mark and the design](#9-the-interface-the-fonts-the-mark-and-the-design): D-106 to D-141, D-192, D-193
 10. [The console and the tools](#10-the-console-and-the-tools): D-142 to D-148, D-206
 11. [The build and the compiler](#11-the-build-and-the-compiler): D-149 to D-162
-12. [The site and the publication](#12-the-site-and-the-publication): D-163 to D-185, D-194 to D-201, D-207 to D-210
+12. [The site and the publication](#12-the-site-and-the-publication): D-163 to D-185, D-194 to D-201, D-207 to D-210, D-222
 13. [The name and the repository](#13-the-name-and-the-repository): D-186 to D-189
 14. [Open questions for the owner](#open-questions-for-the-owner)
 15. [Conflicts](#conflicts)
@@ -626,6 +626,13 @@ This file is the record of the decisions of the project: who decided what, when,
 - State: in force; the audit of the tests is in progress.
 - Where: `AGENTS.md`, "Work"; `TOOLS.md`.
 
+### D-219 Features first; the full check, the release and the publication at the end of a batch
+- 2026-11-12. Decided by: the owner.
+- Decision: several features are written in parallel. A merge needs its build and the test of its own part; kernel code keeps its independent review. The full check, the release and the publication of the site run once, at the end of a batch.
+- Words: "pas besoin d'être aussi religieux. tu fais trop de \"refresh\"/validations. mon gars, je veux de la FEATURE; je veux qu'on bombarde et qu'on check/release/refresh A LA FIN"
+- State: in force.
+- Where: `AGENTS.md`, "Work".
+
 ## 3. The kernel
 
 ### D-071 The kernel ring is the only kernel entry
@@ -719,6 +726,13 @@ This file is the record of the decisions of the project: who decided what, when,
 - State: done (steps 43 and 67). Not done yet: a read-only grant of the clock port for `date`.
 - Where: `ARCHITECTURE.md`, "The date"; `FIRST_MILESTONE.md`, choices 249 to 251 and 445 to 457.
 
+### D-220 The kernel has 33 operations: Thread_Control
+- 2026-11-12. Decided by: the coordinator, under D-214.
+- Decision: operation 33, `Thread_Control`, stops a thread, resumes it, and reads and writes its registers and its extended state. Reason: no operation stopped a thread without ending it or gave its registers; a debugger, a collector, a profiler and a guest need it. The rights: `Inspect` to stop, resume and read; `Inspect` and `Write` to write; `Control` gives none of them.
+- Words: none.
+- State: done.
+- Where: `ARCHITECTURE.md`, "The control of a thread".
+
 ## 4. Memory
 
 ### D-084 Paging and virtual memory are design tools
@@ -808,6 +822,13 @@ This file is the record of the decisions of the project: who decided what, when,
 - Words: none.
 - State: in force.
 - Where: `ARCHITECTURE.md`, "Versions".
+
+### D-221 The model of storage: objects by hash, trees, one cell that changes; a package is a signed tree; an installation runs no code
+- 2026-11-12. Decided by: the owner; the model was proposed by the coordinator and amended by the agent of storage.
+- Decision: the boot image as the place of everything goes (fonts first). Storage has objects (bytes named by their hash), trees (names to objects and trees) and the store (the one cell that changes; its history is the versions). A package is a tree signed by a principal, with six facts (identity, entry, asked grants, a version that never goes back, provenance, license); no format of its own; the system description is a package. An installation gets objects and verifies them; it runs no code of the package; activation is a grant. Data of an application are attached to the identity of its package and to a principal. A large object pays for what it writes and how often it commits, never for its size. No concept is taken from existing systems by habit.
+- Words: "il va falloir aussi prévoir d'abandonner le concept de \"tout stocker dans l'image de boot packé\" surtout la police et ce genre de chose"; "faut essayer d'imaginer, en pratique. comment on SOUHAITE pouvoir garantir la reproducibilité, permettre qu'il y ait des \"fournisseurs de 'packages' (modules ? + assets ?), permettre que les applications stocke des données qu'il leur sont associées ? permettre d'aller voir des données de façon \"déléguée\" controlé. [...] je veux éviter la \"duplicité\" de concept par influence de l'existant"; "on est d'accord aussi que \"l'installation\" c'est juste \"télécharger les fichiers et les mettre à un endroit\" ? (en gros, comme nixos, une \"installation\" doit être transparente, pour permettre le prebuild, mise en cache, etc"; "je suis d'accord avec tout, c'est top"
+- State: the first step (trees, places, shares) is built on a branch; the rest is designed.
+- Where: `STORAGE.md`.
 
 ## 7. The network and QUIC
 
@@ -1555,6 +1576,13 @@ This file is the record of the decisions of the project: who decided what, when,
 - Words: "ce serait bien que la navbar soit sticky (sur docs et pages normales)"; "j'ai recherché un type au pif \"Time_Record\" et il apparait pas dans la recherche"; "le texte de certaines boites est tronqué"; "superbe répartion de largeur de colonne... (je vais pas m'amuser à faire ça pour chaque tableau)"; "à chaque caractère que je tape dans le truc de recherche, ça scroll un peu vers le haut"
 - State: done.
 - Where: `docs/SITE.md`.
+
+### D-222 The chart under the search field; declarations linked and code colored in prose; the scroll bars of the design
+- 2026-11-12. Decided by: the owner.
+- Decision: the chart of the search is directly under the search field, compact (this replaces its place in D-199 and D-200). A code span that names a declaration of the sources links to it, with a card; Odin in a span is colored. The scroll bars have end buttons, a bordered thumb and a grip, in the colors of the design.
+- Words: "pas ouf le placement sur le site de l'histogramme (alors qu'il est trop cool !) genre on le voit quasi pas c'est dommage."; "dans ce genre de texte, ce serait cool d'avoir des références vers les fonctions/symboles/etc mentionnées + de la coloration syntactique, meme dans les inline snippets, si possible"; "petit détail visuel, mais à mon sens, la scrollbar est trop basique, je la veux plus comme ça (theme justement PROVENANT de TON design à la base)"
+- State: done.
+- Where: `SITE.md`, "The docs home", "The declarations of the sources", "The scroll bars".
 
 ## 13. The name and the repository
 
