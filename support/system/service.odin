@@ -35,7 +35,7 @@ Connection :: struct {
 	calls:         ring.Ring,
 	region:        []u8,
 	caller:        Name, // The name of the caller, as the root service names it.
-	grant:         u64, // What the root service grants to the caller here (isolated.CALLER_AMOUNT_MASK, isolated.CALLER_PERSON).
+	grant:         u64, // What the root service grants to the caller here (isolated.CALLER_AMOUNT_MASK, isolated.CALLER_ACTS_FOR_PRINCIPAL).
 }
 
 // The connection of the call that runs: see service_caller.
@@ -233,9 +233,10 @@ connection_add :: proc "contextless" (service: ^Service, ring_memory, region_mem
 // (lend_end). An export never receives a handle that this program holds for
 // itself.
 // A refusal (Bad_Arguments, Bad_Handle) has an error record in the values
-// of the completion: the argument and why (finding W8 of the hostile read).
+// of the completion: the argument and why, so that the caller learns the
+// cause of each refusal.
 // memory_objects_allowed: a table in a lent memory object is taken. A call
-// host takes it; a service does not (finding W1): the caller can revoke the
+// host takes it; a service does not: the caller can revoke the
 // lent memory while the export runs, and the fault of the export would stop
 // the service for each of its callers. A call host serves one caller.
 export_serve :: proc "contextless" (file: []u8, base: u64, region: []u8, ring_memory: Handle, command: ring.Record, memory_objects_allowed: bool) -> (completion: ring.Record) {
@@ -259,8 +260,8 @@ export_serve :: proc "contextless" (file: []u8, base: u64, region: []u8, ring_me
 	}
 	// The proof of each handle, and the deferred close of each one that came
 	// through the call ring, come first: each refusal after this point
-	// closes them (note 1 of the second hostile read: the refusal of a
-	// memory object to a service left them open).
+	// closes them; a refusal that came before the deferred close, as the
+	// refusal of a memory object to a service, would leave them open.
 	lent := prepared.lent[:prepared.lent_count]
 	came: [module.HANDLE_CAPACITY]bool
 	first_unproven := -1
@@ -291,8 +292,8 @@ export_serve :: proc "contextless" (file: []u8, base: u64, region: []u8, ring_me
 		}
 		return refused(&completion, .Bad_Handle, errors.error_make(.Handle_Rights, .None, 0, i64(item.handle), i64(item.rights), i64(transmute(u32)held_rights)))
 	}
-	// A table names a memory object, not another kind of object (N3 of the
-	// hostile read).
+	// A table names a memory object, not another kind of object: a caller
+	// can lend a handle of any kind as the memory of a table.
 	for item in prepared.mappings[:prepared.mapping_count] {
 		if kind, _, _ := handle_state(Handle(item.handle)); kind != .Memory {
 			return refused(&completion, .Bad_Handle, errors.error_make(.Handle_Kind, .None, i64(item.parameter + 1), i64(item.handle), i64(op.Object_Kind.Memory), i64(kind)))
@@ -315,8 +316,8 @@ export_serve :: proc "contextless" (file: []u8, base: u64, region: []u8, ring_me
 			return refused(&completion, .Bad_Arguments, errors.error_make(.Out_Of_Range, .Bytes, i64(item.parameter + 1), i64(min(item.start, 1 << 62) + min(item.size, 1 << 62)), i64(object_size)))
 		}
 		// A work-around of a fault of the kernel (a mapping with no chosen
-		// address never reuses its range of addresses, given to the agent of
-		// work/scheduler): the same address at each call.
+		// address never reuses its range of addresses): the same address at
+		// each call.
 		mapping_address := isolated.TABLE_ADDRESS + u64(item.parameter) * isolated.TABLE_SPAN
 		if item.size == 0 {
 			prepared.places[item.parameter].address = mapping_address // An empty table: nothing to reach.
@@ -405,7 +406,8 @@ lend :: proc "contextless" (file: []u8, function: module.Function, arguments: []
 			arguments[index].integer = u64(result)
 		case .Table, .Bytes:
 			// A table in a memory object: the rights of the copy are the
-			// direction (property 20).
+			// direction, so the callee gets no right to write a table that it
+			// only reads.
 			if arguments[index].table.memory_handle != 0 {
 				result: Handle
 				result, status = lend_one_handle(ring_memory, Handle(arguments[index].table.memory_handle), isolated.direction_rights(function.parameter_directions[index]), lending)

@@ -32,7 +32,10 @@ Root_Command :: enum u32 {
 	Disconnect = 4, // End the connection to the service with this name.
 	// Grants reads the grants of the program with this name. The completion
 	// has two sets of Root_Grant (bit n: grant n): values[0] the grants that
-	// the program has, values[1] the grants that were revoked.
+	// the program has, values[1] the grants that were revoked. values[2] is
+	// the number of the principal whose session the program belongs to (0:
+	// the machine), and values[3..6] the name of that principal, 31 bytes at
+	// most, zero bytes after it (docs/PRINCIPALS.md).
 	Grants     = 5,
 	// Revoke ends one grant of the program with this name: values[4] is the
 	// Root_Grant. The kernel ends each handle and each mapping that came
@@ -52,11 +55,51 @@ Root_Command :: enum u32 {
 	// The name of the command is "storage". It is a second connection to
 	// the storage service, apart from the private store of the caller: a
 	// store of its own, named after the caller with ".history", with a
-	// small limit of blocks and no grant to act for the person, so it
+	// small limit of blocks and no grant to act for the principal, so it
 	// reaches that store and no other one. The completion is the completion
 	// of Connect. The root service refuses it to a program that does not
 	// have the role, and after a revocation of the grant History.
 	Connect_History = 8,
+	// The commands of the principals (docs/PRINCIPALS.md). The root service
+	// takes Principal_Create, Principal_Lock and Principals from a program
+	// with the grant Root_Ring, and Principal_Record and Principal_Unlock
+	// from the program `unlock` only.
+	//
+	// Principal_Create records a new named principal: the name is in
+	// values[0..4]. The root service starts `unlock`, which asks for the
+	// passphrase in its window, makes the keys and keeps them sealed in its
+	// store. The completion comes at once: the creation ends in `unlock`.
+	Principal_Create = 9,
+	// Principal_Lock ends the session of the named principal that is
+	// unlocked: each program of the session stops, and `unlock` starts
+	// again. values[0] of the completion is the count of the programs
+	// stopped.
+	Principal_Lock = 10,
+	// Principals reads the record of the principal with the number
+	// values[4]: values[0] the state (Principal_State), values[1..4] its
+	// name, zero bytes after it, values[5] the first 8 bytes of its public
+	// key (0: none), values[6] for principal 0 the first 8 bytes of the
+	// measure of the system in PCR 11 (0: not measured). A number with no
+	// record is refused with Bad_Handle.
+	Principals = 11,
+	// Principal_Record gives the record of a named principal that `unlock`
+	// keeps in its store: values[0..3] its public key (Ed25519, 32 bytes),
+	// values[4..6] its name (1 to 23 bytes, zero bytes after it). The
+	// completion has its number in values[0]: the same record gives the
+	// same number, and a second record is refused with No_Slot.
+	Principal_Record = 12,
+	// Principal_Unlock starts the session of the principal with the number
+	// values[4]: `unlock` opened its sealed keys with the passphrase.
+	Principal_Unlock = 13,
+}
+
+// The state of a principal in the root service.
+Principal_State :: enum u64 {
+	Absent   = 0, // No record has this number.
+	Machine  = 1, // Principal 0: always there; its session has no unlock.
+	Locked   = 2, // A named principal with no session.
+	Unlocked = 3, // A named principal whose session runs.
+	Creating = 4, // `unlock` asks for the passphrase of a new principal; no record yet.
 }
 
 // The replacement table of the machine. The root service writes it, and
@@ -140,6 +183,11 @@ root_command_names := [Root_Command]string {
 	.Revoke     = "Revoke",
 	.Replace    = "Replace",
 	.Connect_History = "Connect_History",
+	.Principal_Create = "Principal_Create",
+	.Principal_Lock = "Principal_Lock",
+	.Principals = "Principals",
+	.Principal_Record = "Principal_Record",
+	.Principal_Unlock = "Principal_Unlock",
 }
 
 root_command_name :: proc "contextless" (command: i64) -> string {
@@ -156,6 +204,8 @@ root_argument_name :: proc "contextless" (command: i64, argument: i64) -> string
 			return "grant"
 		case .Replace:
 			return "by"
+		case .Principals, .Principal_Unlock:
+			return "number"
 		}
 	}
 	return ""
@@ -168,7 +218,7 @@ Root_Grant :: enum u32 {
 	Log_Records = 3, // Read the records of the log.
 	Store       = 4, // A private store in the storage service.
 	Network     = 5, // An endpoint of datagrams in the network service, with one remote.
-	Person      = 6, // To act for the person in each service that the program is connected to (isolated.CALLER_PERSON).
+	Acts_For_Principal = 6, // To act for the principal of its session in each service that the program is connected to (isolated.CALLER_ACTS_FOR_PRINCIPAL).
 	History     = 7, // The store of the line history of the console in the storage service (Root_Command.Connect_History).
 }
 Root_Grants :: bit_set[Root_Grant;u64]
@@ -180,7 +230,7 @@ root_grant_names := [Root_Grant]string {
 	.Log_Records = "log_records",
 	.Store       = "store",
 	.Network     = "network",
-	.Person      = "person",
+	.Acts_For_Principal = "acts_for_principal",
 	.History     = "history",
 }
 

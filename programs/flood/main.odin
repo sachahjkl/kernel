@@ -64,10 +64,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					if paused {
 						terminal.status(&output, "lines written", number % ROUND, ROUND, {tone = .Warning})
 						terminal.edit(&output, "the lines wait: the key Space continues", style = {tone = .Warning})
-						system.log("flood: the person pressed Space: no more lines after ", number - 1)
+						system.log("flood: Space: no more lines after ", number - 1)
 					} else {
 						terminal.edit(&output, "")
-						system.log("flood: the person pressed Space: the lines continue")
+						system.log("flood: Space: the lines continue")
 					}
 				}
 				if has_key {

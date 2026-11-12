@@ -1,4 +1,6 @@
-// The ring: two queues of fixed records in shared memory (properties 4, 6).
+// The ring: two queues of fixed records in shared memory. It is the base
+// interface of the kernel, with no blocking operation, and the one way that
+// two programs communicate.
 //
 // One side writes the queue of command records and reads the queue of
 // completion records. The other side does the opposite. A queue has one

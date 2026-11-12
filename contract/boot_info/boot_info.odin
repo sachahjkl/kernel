@@ -1,4 +1,6 @@
-// The record that the boot program gives to the kernel (property 17).
+// The record that the boot program gives to the kernel. The boot program is
+// a UEFI program: it uses the services of the firmware before the kernel
+// starts (docs/PROPERTIES.md, "Trusted boot").
 //
 // All addresses in it are physical addresses. The boot program maps all
 // physical memory at DIRECT_MAP_BASE, and the kernel module at KERNEL_BASE,
@@ -92,7 +94,7 @@ Verifier :: enum u64 {
 Signing_Key_Kind :: enum u64 {
 	None   = 0,
 	Test   = 1, // The test signing key: its private key is published, so the system is not trusted.
-	Person = 2, // Any other key: the signing key of the person who owns the machine.
+	Person = 2, // Any other key: the signing key of the publisher of the system.
 }
 
 Measure_State :: enum u64 {

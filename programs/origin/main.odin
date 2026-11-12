@@ -1,5 +1,6 @@
-// A demonstration of the origin of a handle and of Handle_Revoke
-// (properties 2 and 13).
+// A demonstration of the origin of a handle and of Handle_Revoke: a
+// program holds only the handles that it was given, and each grant can be
+// revoked with all that came from it.
 //
 // The kernel keeps, for each handle and each mapping, the handle that it
 // came from. A program takes back what came from a handle of its own: the

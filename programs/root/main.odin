@@ -24,6 +24,7 @@ import "contract:errors"
 import "contract:fixed_addresses"
 import "contract:frame"
 import "support:pci"
+import "support:principals"
 import "support:storage"
 import "contract:settings"
 
@@ -40,7 +41,7 @@ Grant :: enum {
 	Serve, // A service: other programs call its exports through connections.
 	Terminal, // The program has no surface: it writes records to a terminal, and reads keys from it.
 	Store, // A private store in the storage service: a connection to it names the program, with a limit of blocks.
-	Person, // The program acts for the person: a service shows it what it holds for all callers.
+	Acts_For_Principal, // The program acts for the principal of its session: a service shows it what it holds for all callers.
 	Data_Disk, // A block service of the data disk, and its block ring.
 	Scratch_Disk, // A block service of the disk of the measures, and its block ring.
 	Replacements, // Read the replacement table of the machine.
@@ -49,16 +50,17 @@ Grant :: enum {
 	Network_Device, // The frame service of the network device and its frame ring, and a control ring from this service.
 	Connect, // A ring to this service that serves Connect and Disconnect only, to the services of callable_of.
 	Schedule, // The machine, with the right Schedule: change the scheduling strategy of the machine.
-	Settings, // The settings page with Write (contract:settings): the one writer of the settings of the person.
+	Settings, // The settings page with Write (contract:settings): the one writer of the settings of the machine.
 	Clock, // The date page with Write and the two ports of the real-time clock (contract:date): the one writer of the date.
 	History_Store, // A store of its own in the storage service for the line history of the program, apart from its private store (Root_Command.Connect_History).
 	Events, // The machine, with the right Events: give the event table of the machine (kernel events of every program).
+	Principals, // A ring to this service for Principal_Record and Principal_Unlock only: the program that keeps the records of the named principals (docs/PRINCIPALS.md).
 }
 
 grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 	switch name {
 	case "console":
-		return {.Root_Ring, .Inspect, .Stop, .Image, .Terminal, .Store, .Person, .Replacements, .Replace, .History_Store}
+		return {.Root_Ring, .Inspect, .Stop, .Image, .Terminal, .Store, .Acts_For_Principal, .Replacements, .Replace, .History_Store}
 	case "flood":
 		return {.Terminal}
 	case "inspect":
@@ -66,7 +68,7 @@ grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 		// of the modules, and serves the same facts (docs/TOOLS.md).
 		return {.Inspect, .Image, .Serve}
 	case "monitor":
-		return {.Inspect, .Serve} // It serves programs() and counts() to a caller that acts for the person.
+		return {.Inspect, .Serve} // It serves programs() and counts() to a caller that acts for the principal.
 	case "processors", "pages", "flow", "crowd", "clock":
 		return {.Inspect}
 	case "rights":
@@ -74,7 +76,7 @@ grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 	case "pointers":
 		return {.Image} // It reads the pointer themes in the resource table of the boot image.
 	case "log":
-		return {.Log_Records, .Serve} // It serves records() to a caller that acts for the person.
+		return {.Log_Records, .Serve} // It serves records() to a caller that acts for the principal.
 	case "boot":
 		return {.Inspect, .Image} // It shows the modules of the boot image.
 	case "rings":
@@ -96,7 +98,7 @@ grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 	case "paint", "life", "tally", "sample":
 		return {.Serve} // sample: the module of the tables, started as a program when a caller connects.
 	case "settings":
-		return {.Settings, .Serve, .Store} // It writes the settings of the person, keeps them in its private store, and serves set() and get().
+		return {.Settings, .Serve, .Store} // It writes the settings, keeps them in its private store, and serves set() and get().
 	case "date":
 		return {.Clock, .Serve} // It reads the real-time clock, writes the date page, and serves now().
 	case "manual":
@@ -107,6 +109,11 @@ grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 		return {.Serve, .Data_Disk}
 	case "notes":
 		return {.Store}
+	case "unlock":
+		// The records of the named principals in its private store, the
+		// passphrase in its window, and the two commands of the principals
+		// (docs/PRINCIPALS.md).
+		return {.Store, .Principals}
 	case "hierarchy":
 		return {.Store} // The test of the trees of a store.
 	case "errors":
@@ -129,9 +136,9 @@ grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 		// The calls of the host: a listen grant of UDP that admits the
 		// address of the host only (QUIC in the program, the module
 		// cryptography through its imports), connections to the services of
-		// callable_of, and the grant to act for the person
+		// callable_of, and the grant to act for the principal of its session
 		// (docs/MODULE_CONTRACT.md, "A call from the host").
-		return {.Connect, .Network, .Person}
+		return {.Connect, .Network, .Acts_For_Principal}
 	case "interface_through_module":
 		return {.Image} // It reads the size of the code of interface_module.
 	case "tables":
@@ -215,18 +222,18 @@ on_demand :: proc "contextless" (name: string) -> bool {
 
 // grant_for gives what a caller receives in a service (isolated.Service_Command).
 // The storage service: the private store of the caller, by its name, with a
-// limit of blocks. Each service: the flag that the caller acts for the
-// person (the manual gives what runs only to such a caller).
-grant_for :: proc "contextless" (caller: ^Started, service: ^Started) -> (grant: u64) {
+// limit of blocks. Each service: the principal of the session of the
+// caller, and the flag that the caller acts for that principal (the manual
+// gives what runs only to such a caller).
+grant_for :: proc "contextless" (caller: ^Started, service: ^Started) -> u64 {
 	name := system.name_of(caller.name[:])
 	role := grants_of(name)
+	amount: u64
 	if .Store in role && .Store not_in caller.revoked && system.name_of(service.name[:]) == "storage" {
-		grant = store_limit_of(name)
+		amount = store_limit_of(name)
 	}
-	if .Person in role && .Person not_in caller.revoked {
-		grant |= isolated.CALLER_PERSON
-	}
-	return grant
+	acts := .Acts_For_Principal in role && .Acts_For_Principal not_in caller.revoked
+	return isolated.caller_grant_make(amount, caller.principal, acts)
 }
 
 // The budget of each program, by name: pages of memory, programs, threads.
@@ -273,7 +280,7 @@ things_of :: proc "contextless" (name: string) -> system.Budget_Amounts {
 	case "return_fault":
 		return {pages = 2048, programs = 2, threads = 2} // One child at a time, with one thread.
 	case "fault_ring":
-		return {pages = 4096, programs = 2, threads = 21} // One child at a time: 512 pages and 20 threads (17 that fault in a full ring, its main thread and its handler).
+		return {pages = 4096, programs = 2, threads = 22} // One child at a time: 512 pages and 20 threads (17 that fault in a full ring, its main thread and its handler); one thread of its own that spins while a child tries to name it.
 	case "kernel_events":
 		// Program_Create takes the program and its first thread from this
 		// budget. Pages: its module, stack, context, thread area and page
@@ -331,6 +338,10 @@ things_of :: proc "contextless" (name: string) -> system.Budget_Amounts {
 		// program (docs/QUIC.md, section 7), and the call regions of its
 		// connections to services.
 		return {pages = 4096, programs = 1, threads = 1}
+	case "unlock":
+		// The blocks of Argon2id, 19 MiB (4864 pages), its window and its
+		// module (support/principals, DERIVATION_MEMORY_PAGES).
+		return {pages = 6144, programs = 1, threads = 1}
 	case "tables":
 		return {pages = 4096, programs = 3, threads = 3} // A table of 65536 readings in a memory object (640 pages), and two call hosts (sample, hostile_exports) with their threads.
 	}
@@ -370,6 +381,11 @@ Started :: struct {
 	network_memory:  system.Handle,
 	endpoint:        system.Handle, // A program with an endpoint: its datagram ring, as the network service names it.
 	network_service: ^Started,
+	// The principal whose session the program belongs to (docs/PRINCIPALS.md):
+	// 0, the machine, for the programs of the system and each program that a
+	// program of the machine starts; the named principal whose session runs
+	// for a program that the desktop starts.
+	principal:       u64,
 }
 
 // The size of the terminal of each program, and what it shows.
@@ -388,7 +404,7 @@ Connection :: struct {
 	region:  system.Handle, // The call region, as the service names it.
 	// The connection to the store of the line history of the caller
 	// (Root_Command.Connect_History): its grant is the limit of that store,
-	// never the private store and never the grant to act for the person.
+	// never the private store and never the grant to act for the principal.
 	history: bool,
 }
 
@@ -398,13 +414,12 @@ Connection :: struct {
 // data, in the commit that thins the version before: 4 is the least limit
 // with which the history can change.
 HISTORY_STORE_LIMIT :: 4
-HISTORY_STORE_SUFFIX :: ".history"
 
 // connection_grant gives what the caller of a connection receives in its
 // service now: for the history store, its limit only.
 connection_grant :: proc "contextless" (connection: ^Connection) -> u64 {
 	if connection.history {
-		return .History in connection.caller.revoked ? 0 : HISTORY_STORE_LIMIT
+		return isolated.caller_grant_make(.History in connection.caller.revoked ? 0 : HISTORY_STORE_LIMIT, connection.caller.principal, false)
 	}
 	return grant_for(connection.caller, connection.service)
 }
@@ -426,8 +441,9 @@ control: ring.Ring
 control_memory: system.Handle
 
 // The replacement table of the machine: this service writes it. Each
-// program that this service starts receives its records (property 20: a
-// program cannot ask for a replacement and cannot refuse one).
+// program that this service starts receives its records (a program cannot
+// ask for a replacement and cannot refuse one: a replacement is not an
+// access that a program takes for itself).
 replacement_memory: system.Handle
 replacement_table: ^system.Replacement_Table
 replacement_records: [system.REPLACEMENT_CAPACITY]module.Replacement
@@ -484,7 +500,7 @@ shortage_start :: proc "contextless" (ctx: ^system.Context) -> ! {
 }
 
 // fail ends the start of the machine. The machine does not stop: the boot
-// display stays, with the failure, until a person stops the machine.
+// display stays, with the failure, until the machine is stopped from outside.
 fail :: proc "contextless" (text: string, status: system.Status) -> ! {
 	system.log_in("programs", .Error, "root: ", text, ": status ", u64(status))
 	if compositor != 0 {
@@ -532,6 +548,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// The boot image against the system description, before any program
 	// starts (trust.odin).
 	trust_check()
+	principals_start()
 	// The random seed of the system: before the first program starts.
 	{
 		seed := random.entropy_gather(random.sources_of_the_processor(), &entropy_report)
@@ -635,8 +652,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 		// The pointer themes: resources of the boot image, read-only, each
 		// at its place in the list of pointer_theme_choice (the values 6 and
-		// 7, then the two values of contract:operation). The setting "pointer_theme" of the person
-		// chooses one in the compositor.
+		// 7, then the two values of contract:operation). The setting
+		// "pointer_theme" chooses one in the compositor.
 		for name, index in pointer_theme_choice() {
 			address := POINTER_THEME_ADDRESS + u64(index) * POINTER_THEME_SPACING
 			if mapping, size, given := resource_mapping(name, address, "compositor"); given {
@@ -667,8 +684,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if status = start("console"); status != .Ok {
 		fail("cannot start the console", status)
 	}
-	// The settings that the person kept (text_settings.odin).
+	// The settings that were kept (text_settings.odin).
 	settings_boot_pass_start()
+	// The named principal, if one was created: `unlock` reads its file and
+	// asks for the passphrase; with no file it stops (principals.odin).
+	unlock_start(false, "")
 
 	for {
 		// The stop of a program is an event.
@@ -676,8 +696,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		for record in system.receive(&control.completions) {
 			#partial switch display.Control(record.kind) {
 			case .Start:
+				// The desktop starts a program in the session that runs.
 				name := system.name_unpack({record.values[0], record.values[1], record.values[2], record.values[3]})
-				start(system.name_of(name[:]))
+				start(system.name_of(name[:]), desktop_principal())
 			case .Stop:
 				for &item in started {
 					if item.program != 0 && item.client == system.Handle(record.values[0]) {
@@ -697,9 +718,14 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					tag = record.tag,
 				}
 				// A program with the grant Connect only: Connect to the
-				// services of callable_of, and Disconnect.
+				// services of callable_of, and Disconnect. The program with
+				// the grant Principals: its two commands only, which no other
+				// program can send.
 				command := system.Root_Command(record.kind)
-				if .Root_Ring not_in grants_of(system.name_of(item.name[:])) && command != .Disconnect && (command != .Connect || !may_connect(system.name_of(item.name[:]), system.name_of(name[:]))) {
+				role := grants_of(system.name_of(item.name[:]))
+				of_principals := command == .Principal_Record || command == .Principal_Unlock
+				allowed := .Root_Ring in role && !of_principals || command == .Disconnect || command == .Connect && may_connect(system.name_of(item.name[:]), system.name_of(name[:])) || .Principals in role && of_principals
+				if !allowed {
 					command = .None
 					result = .No_Right
 				}
@@ -723,14 +749,26 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 						}
 					}
 				case .Start:
-					result = start(system.name_of(name[:]))
+					// A program that a program starts belongs to the session
+					// of the program that asks.
+					result = start(system.name_of(name[:]), item.principal)
 				case .Grants:
 					result = .Bad_Handle
 					if other := find(system.name_of(name[:])); other != nil {
-						completion.values[0] = transmute(u64)other.granted
-						completion.values[1] = transmute(u64)other.revoked
+						packed := system.name_pack(principal_name(other.principal))
+						completion.values = {transmute(u64)other.granted, transmute(u64)other.revoked, other.principal, packed[0], packed[1], packed[2], packed[3]}
 						result = .Ok
 					}
+				case .Principal_Create:
+					result = principal_create(system.name_of(name[:]))
+				case .Principal_Lock:
+					result = principal_lock(&completion.values)
+				case .Principals:
+					result = principal_read(record.values[4], &completion.values)
+				case .Principal_Record:
+					result = principal_record(record.values, &completion.values)
+				case .Principal_Unlock:
+					result = principal_unlock(record.values[4])
 				case .Revoke:
 					result = revoke(system.name_of(name[:]), record.values[4], &completion.values)
 				case .Replace:
@@ -738,7 +776,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				case .Stop:
 					result = .Bad_Handle
 					for &other in started {
-						// The compositor is not a program that a person stops.
+						// The compositor is not a program that the console stops.
 						if other.program != 0 && other.program != compositor && !other.is_terminal && system.name_of(other.name[:]) == system.name_of(name[:]) {
 							system.call(.Program_Stop, u64(other.program), 0)
 							result = .Ok
@@ -834,12 +872,33 @@ refusal :: proc "contextless" (command: system.Root_Command, name: string, value
 		case status == .No_Slot:
 			return errors.ring_fail(kind, .Full, .Records, 0, 0, system.REPLACEMENT_CAPACITY)
 		}
+	case .Principal_Create:
+		#partial switch status {
+		case .Bad_Operation:
+			return errors.ring_fail(kind, .Bad_Value, .None, 1)
+		case .Bad_State:
+			// One named principal: several are not built.
+			return errors.ring_fail(kind, .Full, .Principals, 0, 0, principals.PRINCIPAL_CAPACITY - 1)
+		}
+	case .Principal_Lock:
+		if status == .Bad_State {
+			return errors.ring_fail(kind, .Absent, .Principals)
+		}
+	case .Principals, .Principal_Unlock:
+		if status == .Bad_Handle {
+			return errors.ring_fail(kind, .Absent, .Principals, 2, i64(min(value, 1 << 62)))
+		}
+	case .Principal_Record:
+		if status == .No_Slot {
+			return errors.ring_fail(kind, .Full, .Principals, 0, 0, principals.PRINCIPAL_CAPACITY - 1)
+		}
 	}
 	return errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(status))
 }
 
-// start starts a program that shows a surface.
-start :: proc "contextless" (name: string) -> system.Status {
+// start starts a program that shows a surface, in the session of a
+// principal (principals.odin).
+start :: proc "contextless" (name: string, principal: u64 = principals.MACHINE) -> system.Status {
 	file: []u8
 	entry: ^info.Image_Entry
 	for &item in system.image_entries(image) {
@@ -858,7 +917,7 @@ start :: proc "contextless" (name: string) -> system.Status {
 		network_service() or_return
 	}
 	// A program with a store: the storage service starts first.
-	if .Store in role && .Person not_in role {
+	if .Store in role && .Acts_For_Principal not_in role {
 		running := false
 		for &item in started {
 			if item.program != 0 && item.service.head != nil && system.name_of(item.name[:]) == "storage" {
@@ -907,6 +966,11 @@ start :: proc "contextless" (name: string) -> system.Status {
 		grants[.Network_Device in role ? frame.GRANT_RING : block.GRANT_RING] = {block_ring, {.Read, .Write}}
 	}
 	values: [op.CONTEXT_VALUES]u64
+	if name == "unlock" {
+		values[principals.VALUE_CREATE] = u64(unlock_create)
+		packed := principals.name_pack(string(unlock_name[:unlock_name_length]))
+		copy(values[principals.VALUE_NAME:][:3], packed[:])
+	}
 	if name == "randomness" {
 		// The facts of the seed of the system, that only this service has:
 		// the program shows them (docs/RANDOMNESS.md). Facts, not the seed.
@@ -914,6 +978,7 @@ start :: proc "contextless" (name: string) -> system.Status {
 	}
 	grants[op.CONTEXT_LOG] = log_grant(name)
 	copy(slot.name[:len(slot.name) - 1], name) // The connection to the storage service names the program.
+	slot.principal = principal // The name of its store carries the principal.
 	// The connection to the private store, in the context: the call ring, the
 	// call region, the storage service with the right Read, and its file.
 	// The storage file, the date page, the settings page, five glyph caches, the file of a service.
@@ -925,7 +990,7 @@ start :: proc "contextless" (name: string) -> system.Status {
 		system.close(store_ring)
 		system.close(store_region)
 	}
-	if .Store in role && .Person not_in role {
+	if .Store in role && .Acts_For_Principal not_in role {
 		storage_service: ^Started
 		store_status: system.Status
 		_, storage_service, store_ring, store_region, store_status = connection_open(slot, "storage")
@@ -978,7 +1043,7 @@ start :: proc "contextless" (name: string) -> system.Status {
 		grants[system.GRANT_DISPLAY] = {shared[0], {.Read, .Write}}
 	}
 	status := system.Status.Ok
-	if .Root_Ring in role || .Connect in role {
+	if .Root_Ring in role || .Connect in role || .Principals in role {
 		slot.requests_memory, slot.requests, status = system.ring_create()
 		grants[system.GRANT_ROOT] = {slot.requests_memory, {.Read, .Write}}
 	}
@@ -1090,8 +1155,8 @@ start :: proc "contextless" (name: string) -> system.Status {
 	if .Network in role {
 		slot.granted += {.Network}
 	}
-	if .Person in role {
-		slot.granted += {.Person}
+	if .Acts_For_Principal in role {
+		slot.granted += {.Acts_For_Principal}
 	}
 	copy(slot.name[:len(slot.name) - 1], name)
 	if view != nil {
@@ -1099,11 +1164,21 @@ start :: proc "contextless" (name: string) -> system.Status {
 			system.call(.Program_Stop, u64(slot.program), 0)
 			return status
 		}
-		system.log_in("programs", .Info, "root: started ", name, ", with a terminal")
+		started_log(name, principal, ", with a terminal")
 		return .Ok
 	}
-	system.log_in("programs", .Info, "root: started ", name)
+	started_log(name, principal, "")
 	return .Ok
+}
+
+// started_log writes the line of a start, with the session of a named
+// principal: "root: started notes, in the session of principal 1 \"alice\"".
+started_log :: proc "contextless" (name: string, principal: u64, terminal: string) {
+	if principal == principals.MACHINE {
+		system.log_in("programs", .Info, "root: started ", name, terminal)
+	} else {
+		system.log_in("programs", .Info, "root: started ", name, terminal, ", in the session of principal ", principal, " \"", principal_name(principal), "\"")
+	}
 }
 
 // find gives the program with a name that this service started. A terminal
@@ -1117,7 +1192,8 @@ find :: proc "contextless" (name: string) -> ^Started {
 	return nil
 }
 
-// revoke ends one grant of a program that runs (property 13). Each grant
+// revoke ends one grant of a program that runs: access is never given for
+// ever, and each grant can be revoked. Each grant
 // here is a handle that this service keeps: the handle of the program came
 // from it, and the kernel ends what came from it in that program
 // (Handle_Revoke). What the program gave to other programs ends too.
@@ -1144,8 +1220,9 @@ revoke :: proc "contextless" (name: string, grant: u64, values: ^[7]u64) -> syst
 			if connection.caller != item || connection.history || system.name_of(connection.service.name[:]) != "storage" {
 				continue
 			}
-			person := grant_for(item, connection.service) & isolated.CALLER_PERSON
-			if !system.send(&connection.service.service.commands, ring.Record{kind = u32(isolated.Service_Command.Grant), values = {0 = u64(connection.ring), 6 = person}}) {
+			// The amount ends; the principal and the flag stay.
+			kept := grant_for(item, connection.service) &~ isolated.CALLER_AMOUNT_MASK
+			if !system.send(&connection.service.service.commands, ring.Record{kind = u32(isolated.Service_Command.Grant), values = {0 = u64(connection.ring), 6 = kept}}) {
 				return .No_Slot
 			}
 			count += 1
@@ -1155,11 +1232,11 @@ revoke :: proc "contextless" (name: string, grant: u64, values: ^[7]u64) -> syst
 		values[0] = count
 		system.log_in("programs", .Info, "root: revoked the grant store of ", name, ", connections changed: ", count)
 		return .Ok
-	case .Person:
+	case .Acts_For_Principal:
 		// The grant is data of each service that the program is connected
 		// to: the root service tells each one that the grant of the
 		// connection changed. A new connection has no grant to act for the
-		// person either (grant_for).
+		// principal either (grant_for).
 		item.granted -= {which}
 		item.revoked += {which}
 		count: u64
@@ -1172,7 +1249,7 @@ revoke :: proc "contextless" (name: string, grant: u64, values: ^[7]u64) -> syst
 			}
 		}
 		values[0] = count
-		system.log_in("programs", .Info, "root: revoked the grant person of ", name, ", connections changed: ", count)
+		system.log_in("programs", .Info, "root: revoked the grant acts_for_principal of ", name, ", connections changed: ", count)
 		return .Ok
 	case .History:
 		// The store of the history is data of the storage service, as the
@@ -1185,7 +1262,7 @@ revoke :: proc "contextless" (name: string, grant: u64, values: ^[7]u64) -> syst
 			if connection.caller != item || !connection.history {
 				continue
 			}
-			if !system.send(&connection.service.service.commands, ring.Record{kind = u32(isolated.Service_Command.Grant), values = {0 = u64(connection.ring), 6 = 0}}) {
+			if !system.send(&connection.service.service.commands, ring.Record{kind = u32(isolated.Service_Command.Grant), values = {0 = u64(connection.ring), 6 = isolated.caller_grant_make(0, item.principal, false)}}) {
 				return .No_Slot
 			}
 			count += 1
@@ -1293,6 +1370,7 @@ terminal_start :: proc "contextless" (view: ^Started, writer: ^Started, ring_mem
 		return status
 	}
 	view.program, view.client, view.writer, view.is_terminal = program, client, writer, true
+	view.principal = writer.principal // The lock stops the terminal of a program of the session with it.
 	copy(view.name[:len(view.name) - 1], "terminal")
 	return .Ok
 }
@@ -1321,10 +1399,12 @@ connect :: proc "contextless" (caller: ^Started, name: string, values: ^[7]u64, 
 	}
 	hash := transmute([4]u64)service.hash
 	values^ = {u64(given[0]), u64(given[1]), u64(given[2]), hash[0], hash[1], hash[2], hash[3]}
+	// The principal of the connection, and whether the caller acts for it.
+	acts := connection_grant(free) & isolated.CALLER_ACTS_FOR_PRINCIPAL != 0
 	if history {
-		system.log_in("calls", .Info, "root: connected ", system.name_of(caller.name[:]), " to the store of its line history in the service ", name, ", ", u64(HISTORY_STORE_LIMIT), " blocks")
+		system.log_in("calls", .Info, "root: connected ", system.name_of(caller.name[:]), " to the store of its line history in the service ", name, ", ", u64(HISTORY_STORE_LIMIT), " blocks, for principal ", caller.principal)
 	} else {
-		system.log_in("calls", .Info, "root: connected ", system.name_of(caller.name[:]), " to the service ", name)
+		system.log_in("calls", .Info, "root: connected ", system.name_of(caller.name[:]), " to the service ", name, acts ? ", acting for principal " : ", for principal ", caller.principal)
 	}
 	return .Ok
 }
@@ -1370,6 +1450,22 @@ connection_open :: proc "contextless" (caller: ^Started, name: string, history :
 	if ring.capacity(names) - ring.count(names) < u32(count) + 2 {
 		return nil, nil, 0, 0, .No_Slot
 	}
+	// The storage service names the store of a connection by the name that
+	// it receives: the store of the history has the name of the caller and
+	// ".history", which no module of the boot image has, and the store of a
+	// named principal has its number after it (support/principals). Each
+	// other service receives the name of the program. A name that does not
+	// fit is refused before anything is made: a cut name can be the name of
+	// another store.
+	store_name: system.Name
+	if system.name_of(service.name[:]) == "storage" {
+		if !principals.store_name_write(&store_name, system.name_of(caller.name[:]), caller.principal, history) {
+			system.log_in("calls", .Warning, "root: the name of the store of ", system.name_of(caller.name[:]), " for principal ", caller.principal, " has more than 31 bytes: no connection")
+			return nil, nil, 0, 0, .Bad_Operation
+		}
+	} else {
+		copy(store_name[:len(store_name) - 1], system.name_of(caller.name[:]))
+	}
 	ring_memory = system.memory_create(ring.PAGE_COUNT) or_return
 	region_memory, status = system.memory_create(isolated.REGION_PAGES)
 	in_service_ring, in_service_region: system.Handle
@@ -1386,13 +1482,8 @@ connection_open :: proc "contextless" (caller: ^Started, name: string, history :
 		}
 		return nil, nil, 0, 0, status
 	}
-	// The storage service names the store of a connection by the name that
-	// it receives: the store of the history has the name of the caller and
-	// ".history", which no module of the boot image has.
-	store_name: system.Name
-	system.format(store_name[:], system.name_of(caller.name[:]), history ? string(HISTORY_STORE_SUFFIX) : string(""))
-	caller_name := system.name_pack(system.name_of(store_name[:]))
-	grant := history ? HISTORY_STORE_LIMIT : grant_for(caller, service)
+	caller_name := transmute([4]u64)store_name
+	grant := history ? isolated.caller_grant_make(HISTORY_STORE_LIMIT, caller.principal, false) : grant_for(caller, service)
 	if !system.send(&service.service.commands, ring.Record{kind = u32(isolated.Service_Command.Connect), values = {0 = u64(in_service_ring), 1 = u64(in_service_region), 2 = caller_name[0], 3 = caller_name[1], 4 = caller_name[2], 5 = caller_name[3], 6 = grant}}) {
 		system.close(ring_memory)
 		system.close(region_memory)

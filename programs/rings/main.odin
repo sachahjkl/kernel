@@ -1,4 +1,6 @@
-// A demonstration of communication between programs (properties 2, 4, 6).
+// A demonstration of communication between programs: a ring is the one way
+// that programs communicate, and a program reaches only the rings that it
+// was given.
 //
 // Each square is a program with its own address space. Each line between two
 // squares is a ring: two pages of shared memory. A small colored square is a

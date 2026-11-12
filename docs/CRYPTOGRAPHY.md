@@ -25,7 +25,7 @@ What it means here:
 | Path | What it is |
 |---|---|
 | `support/cryptography/<name>/` | The files that are taken, with the folder names of the origin (`_chacha20`, `chacha20`, `_subtle`, ...), so that the import paths of the origin need one rule only |
-| `support/cryptography/compatibility_crypto`, `compatibility_endian`, `compatibility_bits`, `compatibility_bytes` | The compatibility layer: the helpers of the origin (`zero_explicit`, `compare_constant_time`, the little-endian loads, `rotate_left32`, `add_u64`, `alias_inexactly`) over the primitives of this system. The packages have their own names; the import keeps the name of the origin as its alias |
+| `support/cryptography/compatibility_crypto`, `compatibility_endian`, `compatibility_bits`, `compatibility_bytes`, `compatibility_memory` | The compatibility layer: the helpers of the origin (`zero_explicit`, `compare_constant_time`, the little-endian loads, `rotate_left32`, `add_u64`, `alias_inexactly`, and the `zero` and `zero_explicit` of `core:mem`) over the primitives of this system. The packages have their own names; the import keeps the name of the origin as its alias |
 | `support/cryptography/chacha20/chacha20_implementation_portable.odin` | A file of this system in the place of `chacha20_impl.odin` of the origin: that file chooses among three implementations with `core:sys/info`, which a module does not have. The one implementation here is the portable one of the origin, unchanged |
 | `support/cryptography/origin.manifest` | One line for each file that is taken: the file, the file of the origin, the BLAKE3 hash of the origin file |
 
@@ -61,11 +61,15 @@ A new file comes with `kerneltool cryptography-take <origin> <file>`, which writ
 
 A taken file can also have listed adjustments: `cryptography_adjustments` in `tools/kerneltool/cryptography_origin.odin` names, for one file of the origin, lines of the origin and the lines in their place. The lines of the origin must be in the origin exactly one time: when the origin changes them, the check fails and a person reads the adjustment again. The first line of an adjusted file says so.
 
-There is one correction, as five adjustments of `_chacha20/chacha20.odin` and four lines of the system's own `chacha20/chacha20_implementation_portable.odin`. The fault of the origin: `check_counter_limit` refused the block with the counter 2^32 - 1, which RFC 8439 allows, and its branch for the counter of 64 bits allowed a call that wraps the counter. QUIC header protection (RFC 9001, section 5.4.4) takes the counter from the ciphertext of a packet, so a peer could stop a program with one datagram. The correction allows a call that ends on the last block, refuses a call that goes past it, refuses each call after it until `seek` or `init`, and puts back the first word of the IV that the 64-bit increment of the implementation carried into. It is offered to Odin as its pull request 8329. When the release that the flake pins has it, the adjustments go.
+There are two groups of adjustments.
+
+**Argon2id takes no allocator.** Three adjustments of `argon2id/argon2id.odin`: its import of `core:mem` goes to `compatibility_memory`; the parameter `allocator` of `derive` becomes `work_memory`, the blocks that the caller supplies; the allocation of the blocks becomes a check that `work_memory` has the bytes that the parameters ask and is aligned on 8 bytes, else the result `Out_Of_Memory` before any work. The code of a program or of a module has no allocator. The origin erases the blocks at its end.
+
+**One correction of ChaCha20**, as five adjustments of `_chacha20/chacha20.odin` and four lines of the system's own `chacha20/chacha20_implementation_portable.odin`. The fault of the origin: `check_counter_limit` refused the block with the counter 2^32 - 1, which RFC 8439 allows, and its branch for the counter of 64 bits allowed a call that wraps the counter. QUIC header protection (RFC 9001, section 5.4.4) takes the counter from the ciphertext of a packet, so a peer could stop a program with one datagram. The correction allows a call that ends on the last block, refuses a call that goes past it, refuses each call after it until `seek` or `init`, and puts back the first word of the IV that the 64-bit increment of the implementation carried into. It is offered to Odin as its pull request 8329. When the release that the flake pins has it, the adjustments go.
 
 ## 5. The primitives, and their tests
 
-37 files are taken, in 20 packages. Each line of the table has a host test with its published vectors (`support/cryptography/vectors`), and the module runs the same vectors on the machine (section 6).
+40 files are taken, in 23 packages. Each line of the table has a host test with its published vectors (`support/cryptography/vectors`), and the module runs the same vectors on the machine (section 6).
 
 | Primitive | Origin packages | Vectors |
 |---|---|---|
@@ -78,6 +82,8 @@ There is one correction, as five adjustments of `_chacha20/chacha20.odin` and fo
 | X25519 | `x25519`, `_edwards25519`, `_fiat/field_curve25519`, `_fiat/field_scalar25519` | RFC 7748 5.2 and 6.1 |
 | Ed25519 | `ed25519` | RFC 8032 7.1, tests 1 and 2, and a changed signature that `verify` refuses |
 | AES-128-GCM | `aes` (`aes.odin`, `aes_ecb.odin`, `aes_ctr.odin`, `aes_gcm.odin`, `aes_impl.odin`), `_aes`, `_aes/ct64` | The GCM specification, test case 4, and a changed tag that `open` refuses |
+| BLAKE2b | `blake2b`, `_blake2` | RFC 7693, appendix A, on the host only |
+| Argon2id | `argon2id` | RFC 9106, section 5.3; the blocks are erased after the derivation; too few blocks is `Out_Of_Memory`. On the host only: `cryptography_vectors` does not run it on the machine; `unlock` runs the module there (`kerneltool test principals`) |
 
 **What the system puts in the place of the hardware code.** The origin chooses a hardware implementation by the processor features, which it reads with `core:sys/info`; a module does not have that package. On another processor the origin itself compiles a generic file. A file of the system takes the place of that dispatch, with the procedures of that generic file, unchanged:
 - `sha2/sha256_implementation_portable.odin`;
@@ -105,6 +111,7 @@ So the code that runs is the portable code of the origin: the bitsliced, constan
 | `hkdf_sha256_extract`, `hkdf_sha256_expand` | salt and input, or key, info and length; result, error | 32 bytes, or `length` bytes (1 to 8160) |
 | `x25519` | scalar, point, result, error | 32 bytes; a result of zeros (a point of small order) is `Not_Authentic` |
 | `ed25519_public_key`, `ed25519_sign`, `ed25519_verify` | private key or public key, message, signature, error | 32 bytes, 64 bytes, or 0 / `Not_Authentic` |
+| `argon2id` | password (1024 bytes at most), salt (8 to 64), the cost (a record `Argon2id_Cost`: the KiB of the blocks, 8 for each lane at least; the passes, 1 to 64; the lanes, 1 to 16, computed one after the other; the bytes of the key, 4 to 64), the blocks (Bytes of the caller), result, error | The key: the bytes that the cost names. `unlock` derives the key of the passphrase of a named principal with it (`PRINCIPALS.md`): 19456 KiB, 2 passes, 1 lane, 32 bytes |
 | `header_protection_mask_with_aes_128`, `header_protection_mask_with_chacha20` | key (16 or 32 bytes), sample (16 bytes), result, error | The 5 bytes of the QUIC header protection mask (RFC 9001, sections 5.4.3 and 5.4.4; `docs/QUIC.md`) |
 
 **The forms of the system.**

@@ -42,3 +42,6 @@ support/cryptography/aes/aes_ecb.odin core/crypto/aes/aes_ecb.odin 204244718029d
 support/cryptography/aes/aes_ctr.odin core/crypto/aes/aes_ctr.odin 5a59e9c8b3c99eb33bdf127b2d84010eb2af238c30008b3c7437cee60b29a990
 support/cryptography/aes/aes_gcm.odin core/crypto/aes/aes_gcm.odin 6c36e1498b5332dfbf89152d261f8c54ad6c6421e6b3e1351bd3620240fd7004
 support/cryptography/aes/aes_impl.odin core/crypto/aes/aes_impl.odin 68b77e06b3df0519a1d068c7f41c36a556b345dd670f8cf1e8698eacda65e4a5
+support/cryptography/_blake2/blake2.odin core/crypto/_blake2/blake2.odin 7523e29f18682260eab052ecfb1d1ddac94d65bc5a08de5d8d9a665215ec2a62
+support/cryptography/blake2b/blake2b.odin core/crypto/blake2b/blake2b.odin 327124506caee4f31f7068a4aedf80f0379f0b2a608f0fda7467b4a4b83518d8
+support/cryptography/argon2id/argon2id.odin core/crypto/argon2id/argon2id.odin ccb8076b41cab67407488d520ec02e32e72231e3ca471971ba17e726c436dcb9

@@ -129,9 +129,8 @@ content_types_by_name :: proc(t: ^testing.T) {
 	testing.expect_value(t, content_type_of_name("html"), "application/octet-stream")
 }
 
-// Three forms that a server must take (an independent read, notes):
-// the absolute form of a target (RFC 9112 3.2.2: a server MUST accept it),
-// a higher minor version (RFC 9110 2.5: it is read as HTTP/1.1), and empty
+// Three forms that a server must take: the absolute form of a target (RFC
+// 9112 3.2.2: a server MUST accept it), a higher minor version (RFC 9110 2.5: it is read as HTTP/1.1), and empty
 // lines before the request line (RFC 9112 2.2: a server SHOULD ignore at
 // least one).
 @(test)
@@ -179,7 +178,7 @@ head_end_from_where_the_scan_stopped :: proc(t: ^testing.T) {
 
 // The pages of a store are hostile input too: a name that breaks the
 // rules, an entry with no end, or a name that came before is refused; a
-// name goes into HTML only escaped (an independent read, W9).
+// name goes into HTML only escaped.
 @(test)
 page_index_entries :: proc(t: ^testing.T) {
 	index: [6 * PAGE_INDEX_ENTRY_SIZE]u8

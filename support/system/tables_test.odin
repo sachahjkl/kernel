@@ -4,7 +4,7 @@ package system
 import "core:testing"
 
 // bytes_append never writes at or after the capacity, also when the count
-// is near 2^64 (finding F1 of the hostile read).
+// is near 2^64, as a hostile caller gives it.
 @(test)
 bytes_append_near_the_end_of_the_numbers :: proc(t: ^testing.T) {
 	memory: [32]u8

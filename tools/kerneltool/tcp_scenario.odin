@@ -63,8 +63,8 @@ scenario_tcp := [?]Step {
 	{kind = .Wait, text = ": no request in 10 s, closed", any_order = true},
 	{kind = .Wait, text = " aborted: a body under 4096 bytes in one second: ", any_order = true},
 	{kind = .Wait, text = " aborted: an answer under 4096 bytes in one second: "},
-	// An independent read of the HTTP server: each case is a client that
-	// the server must end.
+	// The cases that a read of the HTTP server as hostile input found: each
+	// case is a client that the server must end.
 	// a whole request and one byte of the next one: 408 after 10 s.
 	{kind = .Peer, text = "one byte after a request"},
 	// the answers fill the window of the peer, which never reads; the
@@ -134,7 +134,8 @@ scenario_tcp_real := [?]Step {
 	{kind = .Wait, text = "fetch: ok, 8 cases"},
 	{kind = .Shot, text = "fetch"},
 	// A page in the private store of server, from the console, through its
-	// exports (property 19): then the host fetches it, byte for byte.
+	// exports, functions with typed parameters: then the host fetches it,
+	// byte for byte.
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "connect(\"server\")"},
 	{kind = .Wait, text = "root: connected console to the service server"},
@@ -155,7 +156,7 @@ scenario_tcp_real := [?]Step {
 	{kind = .Http, text = "head"},
 	{kind = .Http, text = "crowd"},
 	{kind = .Http, text = "errors"},
-	// An independent read of the HTTP server.
+	// The cases that a read of the HTTP server as hostile input found.
 	{kind = .Http, text = "body-not-taken"},
 	{kind = .Http, text = "requests-then-fin"},
 	{kind = .Http, text = "headers"},

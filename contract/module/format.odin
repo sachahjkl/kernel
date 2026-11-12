@@ -116,7 +116,8 @@ Type :: enum u8 {
 	// the address of a buffer record {address, capacity}. The callee writes
 	// the text in the buffer, and its integer result is the count of bytes of
 	// the full text. A count larger than the capacity means "the text did
-	// not fit": the caller owns all memory (property 14).
+	// not fit": the caller owns all memory, and the callee allocates no
+	// larger buffer.
 	Record  = 3, // The address of a record: bytes with a fixed size and described fields (Record).
 	// A record holds values only, and no address: its bytes mean the same
 	// in each program. The detail of the parameter is the index of the
@@ -197,7 +198,7 @@ Function :: struct {
 	// the address of the record. The export writes it when it fails, and only
 	// then: it fails when its integer result is negative.
 	error_record:          u32,
-	// Added on 2026-11-11 at the end of the record (the growth rule of the
+	// Added at the end of the record after the other fields (the growth rule of the
 	// table directory): the direction of each Table or Bytes parameter, 0
 	// (Read) for each other parameter. A file with records of 96 bytes has
 	// the direction Read for each parameter.

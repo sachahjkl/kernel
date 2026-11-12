@@ -4,7 +4,8 @@
 //
 // An endpoint is UDP or TCP over IPv4 for one program, with a grant. The
 // root service names the grant; the program cannot choose another one
-// (property 20, lines 3 and 11: no ambient network, no global port names).
+// (no ambient network and no global port names: docs/PROPERTIES.md, "No
+// ambient access").
 //
 //   a datagram endpoint  UDP: a client grant names the one remote address
 //                        and remote UDP port that the program reaches; the
@@ -46,13 +47,15 @@
 // programs, as it makes the call region of a connection. A program does not
 // give a region of its own: it would hold the origin of the mapping of the
 // network service, and its revocation would stop the network service on a
-// page fault, for all programs (choice 108 of docs/FIRST_MILESTONE.md).
+// page fault, for all programs: a thread that uses memory that its program
+// lost stops its program on a page fault.
 // The network service copies the data of a datagram one time: from the
 // region to its frame, or from its frame to the region. A header or a
 // checksum is never computed over bytes that the program can still change.
 //
 // Many requests are in flight. A Receive stays in flight until a datagram
-// arrives: the program gives the places before (property 14), and the
+// arrives: the program gives the places before (the caller supplies the
+// memory: the service allocates none for it), and the
 // network service drops a datagram when no place waits (Statistics counts
 // it). A completion record has the tag of its command, and a Status as its
 // kind. A refused request has the detail of the refusal in the values of its
@@ -123,7 +126,8 @@ Command :: enum u32 {
 	// service, values[3] those of the frame service, values[5] the echo
 	// requests that the network service answered, and values[4] also counts
 	// the frames that no endpoint owns. Without the right they are 0: they
-	// tell of the traffic of other programs (property 20).
+	// tell of the traffic of other programs, and a program without the right
+	// learns nothing of another program.
 	Statistics = 6,
 	// values[0]: a place in the region. values[1]: the room there, in
 	// Problem_Row records. The network service writes one row for each kind

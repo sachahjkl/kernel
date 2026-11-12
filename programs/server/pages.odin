@@ -1,10 +1,11 @@
 package server
 
 // The pages that the server serves by name: objects of its private store in
-// the storage service (property 9). The server reads them into its memory
-// when it starts, and serves them from there: a request never waits for the
-// storage service. A person changes them from the console through the
-// exports of the server, which write the store first (property 19):
+// the storage service, as each program has one. The server reads them into
+// its memory when it starts, and serves them from there: a request never
+// waits for the storage service. A person changes them from the console
+// through the exports of the server, functions with typed parameters,
+// which write the store first:
 //
 //   server.put("hello.html", "a text")    a page, new or changed
 //   server.remove("hello.html")
@@ -26,7 +27,7 @@ PAGE_NAME_LIMIT :: web.PAGE_NAME_LIMIT
 PAGE_INDEX_NAME :: web.PAGE_INDEX_NAME
 PAGE_MEMORY_PAGES :: PAGE_CAPACITY * PAGE_SIZE_LIMIT / system.PAGE_SIZE
 
-ERROR_PERSON :: -1
+ERROR_ACTS_FOR_PRINCIPAL :: -1
 ERROR_NAME :: -2
 ERROR_TOO_LARGE :: -3
 ERROR_FULL :: -4
@@ -39,7 +40,7 @@ Page_Entry :: struct {
 	length:      int, // The bytes of the page.
 	used:        bool, // false: the place is free.
 	served:      u64,
-	generation:  u64, // Changes at each put and remove of the place: an answer of an older generation ends (an independent read, B2).
+	generation:  u64, // Changes at each put and remove of the place: an answer of an older generation ends, so that it never sends the bytes of another page.
 }
 
 // One row of server.pages().
@@ -67,8 +68,9 @@ Served :: struct {
 pages: [PAGE_CAPACITY]Page_Entry
 page_memory: []u8
 // The bytes of a put, and of a page that the start reads: the store takes
-// them from here, and the page memory changes only when the store took them
-// (an independent read, F5). One byte over the limit shows a page that is
+// them from here, and the page memory changes only when the store took
+// them: what is served is always what the store keeps. One byte over the
+// limit shows a page that is
 // too large.
 page_staging: [PAGE_SIZE_LIMIT + 1]u8
 page_generation_last: u64 // The generation that the last put or remove gave.
@@ -115,7 +117,7 @@ pages_load :: proc "contextless" (ctx: ^system.Context) {
 		system.log("server: a new store: no page")
 		return
 	}
-	// The store is hostile input too (an independent read, W9): each name
+	// The store is hostile input too: each name
 	// must follow the rules and come once, each page must fit.
 	loaded, refused := 0, 0
 	for place in 0 ..< PAGE_CAPACITY {
@@ -155,22 +157,22 @@ index_write :: proc "contextless" () -> bool {
 	return status == .Ok
 }
 
-// person says if the caller of the export that runs acts for the person:
+// acts_for_principal says if the caller of the export that runs acts for the principal:
 // only such a caller changes the pages that the network sees.
 @(private = "file")
-person :: proc "contextless" () -> bool {
+acts_for_principal :: proc "contextless" () -> bool {
 	caller := system.service_caller()
-	return caller == nil || caller.grant & isolated.CALLER_PERSON != 0
+	return caller == nil || caller.grant & isolated.CALLER_ACTS_FOR_PRINCIPAL != 0
 }
 
-// put writes a page in the private store of the server, and serves it at /name from now on. The name has 1 to 39 bytes of letters, digits, ".", "-" and "_"; its end gives the content type (.html, .txt, .css, .js, .json, .svg). The text has 60 KiB at most. The result is the bytes of the page, or a negative number with an error record. The error kinds: No_Grant (-1, the caller does not act for the person); Empty, Too_Long or Bad_Byte (-2, the name); Too_Long (-3, the text); Full (-4, 16 pages); Refused (-6, the storage service refused the write, or the server has no store).
+// put writes a page in the private store of the server, and serves it at /name from now on. The name has 1 to 39 bytes of letters, digits, ".", "-" and "_"; its end gives the content type (.html, .txt, .css, .js, .json, .svg). The text has 60 KiB at most. The result is the bytes of the page, or a negative number with an error record. The error kinds: No_Grant (-1, the caller does not act for the principal); Empty, Too_Long or Bad_Byte (-2, the name); Too_Long (-3, the text); Full (-4, 16 pages); Refused (-6, the storage service refused the write, or the server has no store).
 @(export, link_name = "put")
 put :: proc "c" (name: ^string, text: ^string, error: ^errors.Error_Record) -> i64 {
-	if !person() {
-		return errors.fail(error, ERROR_PERSON, .No_Grant, .Person)
+	if !acts_for_principal() {
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
 	}
 	// The call region stays writable by the caller during the call: copy
-	// the name before the checks (choice 186).
+	// the name one time before the checks, then check and use the copy only.
 	name_copy: [PAGE_NAME_LIMIT + 1]u8
 	name_length := min(len(name^), len(name_copy))
 	copy(name_copy[:], name^)
@@ -218,8 +220,7 @@ put :: proc "c" (name: ^string, text: ^string, error: ^errors.Error_Record) -> i
 	copy(pages[place].name[:], key)
 	if !was_used && !index_write() {
 		// The index does not name the page: the page goes out again, so
-		// that the store and what is served stay the same (an independent
-		// read, W8).
+		// that the store and what is served stay the same.
 		pages[place] = {generation = page_generation_new()}
 		arguments := [2]isolated.Argument{{integer = u64(storage.ROOT)}, {text = name_copy[:name_length]}}
 		storage.call(&store_client, "remove", arguments[:])
@@ -230,11 +231,11 @@ put :: proc "c" (name: ^string, text: ^string, error: ^errors.Error_Record) -> i
 	return i64(length)
 }
 
-// remove takes a page out of the private store of the server: /name gives 404 from now on. The result is 0, or a negative number with an error record. The error kinds: No_Grant (-1, the caller does not act for the person); Absent (-5, no page has this name); Refused (-6, the storage service refused).
+// remove takes a page out of the private store of the server: /name gives 404 from now on. The result is 0, or a negative number with an error record. The error kinds: No_Grant (-1, the caller does not act for the principal); Absent (-5, no page has this name); Refused (-6, the storage service refused).
 @(export, link_name = "remove")
 remove :: proc "c" (name: ^string, error: ^errors.Error_Record) -> i64 {
-	if !person() {
-		return errors.fail(error, ERROR_PERSON, .No_Grant, .Person)
+	if !acts_for_principal() {
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
 	}
 	name_copy: [PAGE_NAME_LIMIT + 1]u8
 	name_length := min(len(name^), len(name_copy))
@@ -243,9 +244,9 @@ remove :: proc "c" (name: ^string, error: ^errors.Error_Record) -> i64 {
 	if place < 0 || len(name^) > PAGE_NAME_LIMIT {
 		return errors.fail(error, ERROR_ABSENT, .Absent, .Objects, 1)
 	}
-	// The store first: a page that the store keeps stays served (an
-	// independent read, W8: before, a refused remove gave 404 until the
-	// next start of the server, and then the page again).
+	// The store first: a page that the store keeps stays served. Else a
+	// refused remove gives 404 until the next start of the server, and then
+	// the page again.
 	arguments := [2]isolated.Argument{{integer = u64(storage.ROOT)}, {text = name_copy[:name_length]}}
 	_, _, status := storage.call(&store_client, "remove", arguments[:])
 	if status != .Ok {
@@ -332,7 +333,7 @@ counts_html :: proc "contextless" (buffer: []u8) -> string {
 	for &item, index in pages {
 		if item.used {
 			// The names follow the rules of web.page_name_valid; they are
-			// escaped anyway (an independent read, W9).
+			// escaped anyway: the store is hostile input too.
 			escaped: [6 * PAGE_NAME_LIMIT]u8
 			name := string(escaped[:web.html_text_escape(escaped[:], page_name(index))])
 			text(&writer, " <a href=\"/", name, "\">", name, "</a>")

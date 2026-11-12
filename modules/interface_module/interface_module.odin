@@ -72,9 +72,9 @@ ELEMENT_TEXT_CAPACITY :: 4096
 // are never the table of the package: the count of an Append table is the
 // count of the full answer across calls (docs/MODULE_CONTRACT.md, "Did not
 // fit, across calls"), which the package does not count; the module counts
-// it when it appends (decision of the coordinator after the second hostile
-// read: before, a count over the capacity on entry was a mark that the
-// contract refused, and it worked in a direct call only).
+// it when it appends. A count over the capacity on entry is not a mark of
+// the module: such a mark works in a direct call only, and the contract
+// refuses it.
 @(private)
 Element_Frame :: struct {
 	records: [ELEMENT_RECORD_CAPACITY]interface.Draw_Record,
@@ -263,8 +263,7 @@ draw_bar :: proc "c" (drawn: ^system.Table_To_Append(interface.Draw_Record), bar
 // are in memory that the caller can change during the call, so a check
 // here and a read later in the package would read two values. The package
 // checks each range where it reads it, on its one copy of the record
-// (support/interface, difference.odin and execute.odin; finding W-new of the
-// second hostile read).
+// (support/interface, difference.odin and execute.odin).
 @(private)
 draw_table_to_read_of :: proc "contextless" (records: ^system.Table_To_Read(interface.Draw_Record), text: ^system.Bytes_To_Read) -> (table: interface.Draw_Table, ok: bool) {
 	if records.count > TABLE_LIMIT || text.count > TABLE_LIMIT {
@@ -294,8 +293,9 @@ damage_by_difference :: proc "c" (before: ^system.Table_To_Read(interface.Draw_R
 // execute_in_rectangles draws the records of a draw table into the pixels of a canvas, in each rectangle, cut to it. The pixels are the memory of the caller: no copy in a direct call. The result is the count of rectangles, or -1 for a canvas shape that the pixels do not hold. A text record that names bytes past its text table draws nothing.
 @(export, link_name = "execute_in_rectangles")
 execute_in_rectangles :: proc "c" (now: ^system.Table_To_Read(interface.Draw_Record), now_text: ^system.Bytes_To_Read, rectangles: ^system.Table_To_Read(Damage_Rectangle), pixels: ^system.Bytes_To_Change, shape: ^Canvas_Shape) -> i64 {
-	// No product wraps (finding F2 of the hostile read): the stride is
-	// compared with the pixels of one line that the bytes hold.
+	// No product wraps, also for a stride near 2^62 that a hostile caller
+	// gives: the stride is compared with the pixels of one line that the
+	// bytes hold.
 	if shape.width <= 0 || shape.height <= 0 || shape.stride < shape.width || u64(shape.stride) > pixels.count / 4 / u64(shape.height) {
 		return -1
 	}

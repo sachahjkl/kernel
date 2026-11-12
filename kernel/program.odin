@@ -5,7 +5,8 @@ import "contract:ring"
 import "base:intrinsics"
 import op "contract:operation"
 
-// K1 and K3: the objects, the handle tables, the programs and the scheduler.
+// The objects, the handle tables, the programs and the scheduler
+// (docs/ARCHITECTURE.md, "Handle table"; docs/ARCHITECTURE.md, "Scheduler").
 // All tables are flat arrays with a fixed capacity. Index 0 of each table is
 // not used, so that 0 means "none".
 
@@ -199,6 +200,14 @@ Thread :: struct #align (64) {
 	fault_waits:   bool,
 	fault_serial:  u64, // The serial of that fault: Program.fault_serial when it came. Program lock.
 	fault_address: u64, // The address of the access of that fault. Program lock.
+	// The control of a thread (thread_control.odin). The stop count: the
+	// thread enters no run queue while it is above 0. Written under the
+	// run lock of home (atomic: kernel_interrupt reads it with no lock).
+	control_stops: u32,
+	// Thread_Control wrote the registers or the extended state since the
+	// last fault of the thread: Fault_Answer then accepts Resume for any
+	// kind. Program lock.
+	registers_written: bool,
 }
 
 #assert(offset_of(Thread, placed) < 64)
@@ -210,7 +219,7 @@ word_address :: proc "contextless" (program: ^Program, address: u64) -> u64 {
 	if address & 3 != 0 || !user_range(program, address, 4, false) {
 		return 0
 	}
-	entry := page_entry(program.table, address, false)^
+	entry := page_entry(program.table, address)^
 	// A large page: its frame is 2 MiB, and the bits 12 to 20 of the
 	// address are in the page.
 	if entry & PAGE_LARGE != 0 {
@@ -867,49 +876,87 @@ map_region :: proc "contextless" (program: ^Program, region_index: u32, address:
 		return 0, STATUS_RETRY
 	}
 	present_page_count: u64
+	// The tables that a failed map emptied: freed after its shoot-down.
+	freed: Freed_Tables
 	if large {
 		for part in 0 ..< count / op.LARGE_PAGE_PAGES {
-			entry := page_directory_entry(program.table, address + part * LARGE_PAGE_SIZE, true, &program.budget)
+			entry := page_directory_entry_hold(program.table, address + part * LARGE_PAGE_SIZE, &program.budget, &freed)
 			if entry == nil {
+				// The status before the free: the freed tables return pages
+				// to the budget.
+				refusal: op.Status = budgets[program.budget].amounts.pages == 0 ? .No_Budget : .No_Memory
+				self := processor_self()
 				for undo in 0 ..< part {
-					page_directory_entry(program.table, address + undo * LARGE_PAGE_SIZE, false)^ = 0
+					undo_address := address + undo * LARGE_PAGE_SIZE
+					undo_entry := page_directory_entry(program.table, undo_address)
+					if undo_entry == nil {
+						page_table_count_broken("a held entry has no table")
+					}
+					undo_entry^ = 0
+					if intrinsics.atomic_load(&self.table) == program.table {
+						page_flush(undo_address)
+					}
+					page_entries_release(program.table, undo_address, 2, 1, &freed)
 				}
 				intrinsics.atomic_thread_fence(.Seq_Cst)
 				processor_sync(processors_with_table(program.table))
-				if self := processor_self(); intrinsics.atomic_load(&self.table) == program.table {
-					control_register_3_write(program.table)
-				}
+				page_tables_free(program.table, &program.budget, &freed)
 				origin_detach(holding)
-				return 0, budgets[program.budget].amounts.pages == 0 ? .No_Budget : .No_Memory
+				return 0, refusal
 			}
 			frame := region.physical + (first + part * op.LARGE_PAGE_PAGES) * PAGE_SIZE
 			entry^ = bits == 0 ? 0 : frame | bits | PAGE_LARGE
 			present_page_count += bits == 0 ? 0 : op.LARGE_PAGE_PAGES
 		}
 	}
-	for page in 0 ..< (large ? 0 : count) {
-		entry := page_entry(program.table, address + page * PAGE_SIZE, true, &program.budget)
-		if entry == nil {
+	// One table of the last level at a time: one walk of the upper levels
+	// and one addition to the count of the table for its run of pages.
+	for page := u64(0); page < (large ? 0 : count); {
+		run_address := address + page * PAGE_SIZE
+		run := min(512 - (run_address >> 12 & 511), count - page)
+		run_first_entry := page_entry_hold(program.table, run_address, run, &program.budget, &freed)
+		if run_first_entry == nil {
+			refusal: op.Status = budgets[program.budget].amounts.pages == 0 ? .No_Budget : .No_Memory
 			// Another thread of the program can have used a page that was
-			// present: as in unmap, each processor forgets the entries.
+			// present: as in unmap, each processor forgets the entries. The
+			// runs of the undo are the runs of the map: the same start.
 			self := processor_self()
-			for undo in 0 ..< page {
-				page_entry(program.table, address + undo * PAGE_SIZE, false)^ = 0
-				if intrinsics.atomic_load(&self.table) == program.table {
-					page_flush(address + undo * PAGE_SIZE)
+			for undo := u64(0); undo < page; {
+				undo_address := address + undo * PAGE_SIZE
+				undo_run := min(512 - (undo_address >> 12 & 511), page - undo)
+				undo_first_entry := page_entry(program.table, undo_address)
+				if undo_first_entry == nil {
+					page_table_count_broken("a held entry has no table")
 				}
+				undo_entries := ([^]u64)(undo_first_entry)
+				for at in 0 ..< undo_run {
+					if undo_entries[at] & PAGE_PRESENT != 0 {
+						undo_entries[at] = 0
+						if intrinsics.atomic_load(&self.table) == program.table {
+							page_flush(undo_address + at * PAGE_SIZE)
+						}
+					}
+				}
+				page_entries_release(program.table, undo_address, 1, undo_run, &freed)
+				undo += undo_run
 			}
 			intrinsics.atomic_thread_fence(.Seq_Cst)
 			processor_sync(processors_with_table(program.table))
+			page_tables_free(program.table, &program.budget, &freed)
 			origin_detach(holding)
-			return 0, budgets[program.budget].amounts.pages == 0 ? .No_Budget : .No_Memory
+			return 0, refusal
 		}
-		// The tables exist now: a page fault never needs a table. A page
-		// with no frame keeps an entry of 0 until its first use.
-		frame := region_frame(region, first + page, false)
-		page_bits_now := frame == 0 ? 0 : page_bits(&Mapping{bits = bits}, region_page_state(region, first + page))
-		entry^ = page_bits_now == 0 ? 0 : frame | page_bits_now
-		present_page_count += page_bits_now == 0 ? 0 : 1
+		// The tables exist now and hold the entries while the mapping
+		// lives: a page fault never needs a table. A page with no frame
+		// keeps an entry of 0 until its first use.
+		run_entries := ([^]u64)(run_first_entry)
+		for at in 0 ..< run {
+			frame := region_frame(region, first + page + at, false)
+			page_bits_now := frame == 0 ? 0 : page_bits(&Mapping{bits = bits}, region_page_state(region, first + page + at))
+			run_entries[at] = page_bits_now == 0 ? 0 : frame | page_bits_now
+			present_page_count += page_bits_now == 0 ? 0 : 1
+		}
+		page += run
 	}
 	// Under the program lock of the program: each caller of map_region holds
 	// it (Memory_Map through target_lock in enter.odin, program_create and
@@ -923,10 +970,10 @@ map_region :: proc "contextless" (program: ^Program, region_index: u32, address:
 // chosen_address gives the lowest address from op.CHOSEN_BASE where count
 // pages fit with one page with no mapping before and after them: the first
 // gap between the mappings of the program. The range of a mapping that
-// ended serves again, with its page tables: a program that maps and unmaps
-// at each call keeps the same tables (before, each mapping took a new range
-// and new tables until the budget refused). At most MAPPING_CAPACITY passes
-// over the 128 mappings. The caller holds the program lock.
+// ended serves again: a program that maps and unmaps at each call uses the
+// same few addresses, and its tables are those of one mapping at a time.
+// At most MAPPING_CAPACITY passes over the 128 mappings. The caller holds
+// the program lock.
 chosen_address :: proc "contextless" (program: ^Program, count: u64, alignment: u64 = PAGE_SIZE) -> u64 {
 	align_up :: #force_inline proc "contextless" (value, alignment: u64) -> u64 {
 		return (value + alignment - 1) / alignment * alignment
@@ -958,55 +1005,68 @@ chosen_address :: proc "contextless" (program: ^Program, count: u64, alignment: 
 
 // unmap removes a mapping. Before the memory object can end, each
 // processor that uses the page table of the program forgets the mapping.
-// The caller holds the program lock.
+// The entries of the mapping stop being held, and each table that holds no
+// entry then is freed after that shoot-down. The caller holds the program
+// lock.
 unmap :: proc "contextless" (program: ^Program, mapping: ^Mapping) {
 	origin_detach(holding_of_mapping(program, mapping))
 	self := processor_self()
 	walked_present_pages: u64
+	freed: Freed_Tables
 	// A large page is one entry of the second level for 512 pages.
 	for part in 0 ..< (mapping.large ? mapping.page_count / op.LARGE_PAGE_PAGES : 0) {
 		address := mapping.address + part * LARGE_PAGE_SIZE
-		entry := page_directory_entry(program.table, address, false)
-		if entry != nil {
-			walked_present_pages += (entry^ & PAGE_PRESENT) * op.LARGE_PAGE_PAGES
-			entry^ = 0
-			if self.table == program.table {
-				page_flush(address)
-			}
+		entry := page_directory_entry(program.table, address)
+		if entry == nil {
+			// The mapping holds its tables: a missing one is a wrong count.
+			page_table_count_broken("a held entry has no table")
 		}
+		walked_present_pages += (entry^ & PAGE_PRESENT) * op.LARGE_PAGE_PAGES
+		entry^ = 0
+		if self.table == program.table {
+			page_flush(address)
+		}
+		page_entries_release(program.table, address, 2, 1, &freed)
 	}
 	// One table of the last level at a time (one walk of the upper levels
-	// for 512 pages); a range with no table is skipped. The entries that are
-	// not present are already 0, so the walk ends when it has cleared each
-	// present entry of the mapping (`present_page_count`): a mapping of
-	// 1 GiB with few pages that have a frame is not walked to its end. The
-	// test build walks the whole mapping, to compare the count with the walk.
+	// for 512 pages). Each page of the mapping is a held entry, present or
+	// not, so each table of the mapping loses its run of held entries with
+	// one subtraction. The entries that are not present are already 0, so
+	// the read of the entries ends when it has cleared each present entry of
+	// the mapping (`present_page_count`): the tables of a mapping of 1 GiB
+	// with few pages that have a frame are not read entry by entry. The test
+	// build reads each entry, to compare the count with the walk.
 	for page := u64(0); page < (mapping.large ? 0 : mapping.page_count); {
-		when !TEST_BUILD_CHECKS_LOCK_ORDER {
-			if walked_present_pages == mapping.present_page_count {
-				break
-			}
-		}
 		address := mapping.address + page * PAGE_SIZE
 		run := min(512 - (address >> 12 & 511), mapping.page_count - page)
-		if entry := page_entry(program.table, address, false); entry != nil {
-			entries := ([^]u64)(entry)
-			for at in 0 ..< run {
-				if entries[at] & PAGE_PRESENT != 0 {
-					walked_present_pages += 1
-					entries[at] = 0
-					if self.table == program.table {
-						page_flush(address + at * PAGE_SIZE)
-					}
+		entry := page_entry(program.table, address)
+		if entry == nil {
+			// The mapping holds its tables: a missing one is a wrong count.
+			page_table_count_broken("a held entry has no table")
+		}
+		read_entries := walked_present_pages != mapping.present_page_count
+		when TEST_BUILD_CHECKS_LOCK_ORDER {
+			read_entries = true
+		}
+		entries := ([^]u64)(entry)
+		for at in 0 ..< (read_entries ? run : 0) {
+			if entries[at] & PAGE_PRESENT != 0 {
+				walked_present_pages += 1
+				entries[at] = 0
+				if self.table == program.table {
+					page_flush(address + at * PAGE_SIZE)
 				}
 			}
 		}
+		page_entries_release(program.table, address, 1, run, &freed)
 		page += run
 	}
 	// The entries are 0 before the read of the tables of the processors: a
 	// processor that loads the table after the read sees the 0 entries.
 	intrinsics.atomic_thread_fence(.Seq_Cst)
 	processor_sync(processors_with_table(program.table))
+	// No processor walks into a freed table now: the frames can serve again.
+	page_tables_free(program.table, &program.budget, &freed)
 	// The test build checks the count of the present pages against the
 	// walk that this loop made anyway: one comparison, no other walk.
 	when TEST_BUILD_CHECKS_LOCK_ORDER {
@@ -1083,7 +1143,7 @@ page_give :: proc "contextless" (program: ^Program, address: u64, write: bool, e
 	// shoot-down of a protection change: the instruction runs again
 	// with no stop of the program.
 	if mapping.large {
-		entry := page_directory_entry(program.table, address &~ u64(LARGE_PAGE_SIZE - 1), false)
+		entry := page_directory_entry(program.table, address &~ u64(LARGE_PAGE_SIZE - 1))
 		return entry != nil && entry^ & PAGE_PRESENT != 0 && (!write || entry^ & PAGE_WRITE != 0) && (!execute || entry^ & PAGE_NO_EXECUTE == 0)
 	}
 	page := (address - mapping.address) / PAGE_SIZE
@@ -1095,9 +1155,9 @@ page_give :: proc "contextless" (program: ^Program, address: u64, write: bool, e
 	if bits == 0 || !page_committed(region, state) || write && bits & PAGE_WRITE == 0 || execute && bits & PAGE_NO_EXECUTE != 0 {
 		return false
 	}
-	entry := page_entry(program.table, mapping.address + page * PAGE_SIZE, false)
+	entry := page_entry(program.table, mapping.address + page * PAGE_SIZE)
 	if entry == nil {
-		return false // map_region made the tables: this does not happen.
+		return false // map_region made the tables and the mapping holds them: this does not happen.
 	}
 	if entry^ & PAGE_PRESENT == 0 {
 		frame := region_frame(region, mapping.first + page, true)
@@ -1744,9 +1804,9 @@ kernel_interrupt :: proc "c" (frame: ^Frame) {
 	if !from_program {
 		return // The processor was idle: it looks for a thread itself.
 	}
-	// The thread that entered continues, unless it waits, it ends, or its
-	// time slice is over.
-	if !intrinsics.atomic_load(&thread.stop_requested) && intrinsics.atomic_load(&thread.state) == .Ready && cpu.slice_left > 0 {
+	// The thread that entered continues, unless it waits, it ends, a stop
+	// of Thread_Control holds it, or its time slice is over.
+	if !intrinsics.atomic_load(&thread.stop_requested) && intrinsics.atomic_load(&thread.state) == .Ready && intrinsics.atomic_load(&thread.control_stops) == 0 && cpu.slice_left > 0 {
 		run(cpu, thread)
 	}
 	schedule()

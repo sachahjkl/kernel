@@ -21,7 +21,11 @@ import op "contract:operation"
 // - waiting -> ready (Fault_Answer Resume): under the program lock,
 //   fault_waits becomes false, then thread_wake makes it Ready under the run
 //   lock, as the end of a word wait does. run checks its frame at the
-//   return (return_frame_prepare), as each return.
+//   return (return_frame_prepare), as each return. A stop of
+//   Thread_Control keeps a Ready thread out of the queue until its Resume.
+// While it waits, Thread_Control reads and writes its registers and its
+// extended state (thread_control.odin); a write makes Resume valid for a
+// fault that would otherwise run the same instruction again.
 // - waiting -> stopped (Fault_Answer Stop, a stop of the program, the end of
 //   the handler): program_stop ends each thread of the program, a waiting
 //   one as any thread that is on no processor.
@@ -103,6 +107,9 @@ fault_deliver :: proc "contextless" (thread_index: u32, address: u64) -> bool {
 	thread.fault_waits = true
 	thread.fault_serial = program.fault_serial
 	thread.fault_address = address
+	// A write of Thread_Control before this fault does not make Resume
+	// valid for it: the handler writes after it reads this record.
+	thread.registers_written = false
 	run_unlock(home)
 	access: u64
 	if vector == VECTOR_PAGE_FAULT {

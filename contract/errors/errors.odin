@@ -86,7 +86,7 @@ Unit :: enum i64 {
 	Interrupts  = 15,
 	Memory      = 16, // Memory objects of the machine.
 	Store       = 17, // No_Grant: a private store.
-	Person      = 18, // No_Grant: to act for the person.
+	Acts_For_Principal = 18, // No_Grant: to act for the principal whose session the caller belongs to.
 	Records     = 19,
 	Connection  = 20, // No_Grant: a connection to the service.
 	Milliseconds = 21,
@@ -105,9 +105,10 @@ Unit :: enum i64 {
 	Counts      = 34, // Damaged: the counts of the blocks of a store are not trusted after a fault of the service; it makes no change in the store.
 	References  = 35, // Over_Limit: the names of one block, which a count holds.
 	Commit_Blocks = 36, // Full: the blocks that one commit can change or write.
-	Places      = 37, // The places of a connection to the storage service (docs/STORAGE.md): Absent, the number names no place of the connection, or the tree of the place was removed or renamed; Full, the table of places.
-	Trees       = 38, // Absent: the name names no tree. Bad_Value: a tree would move inside itself.
-	Changes     = 39, // No_Grant: a change of a store; the connection reads only.
+	Principals  = 37, // The named principals of the root service (docs/PRINCIPALS.md). Full: limit the named principals that it holds; Absent: no such principal, or no session runs.
+	Places      = 38, // The places of a connection to the storage service (docs/STORAGE.md): Absent, the number names no place of the connection, or the tree of the place was removed or renamed; Full, the table of places.
+	Trees       = 39, // Absent: the name names no tree. Bad_Value: a tree would move inside itself.
+	Changes     = 40, // No_Grant: a change of a store; the connection reads only.
 }
 
 // How a handle ended (Handle_Ended).
@@ -161,7 +162,7 @@ UNIT_NAMES := [Unit]string {
 	.Interrupts  = "interrupts",
 	.Memory      = "memory objects",
 	.Store       = "a private store",
-	.Person      = "to act for the person",
+	.Acts_For_Principal = "to act for the principal",
 	.Records     = "records",
 	.Connection  = "a connection to this service",
 	.Milliseconds = "milliseconds",
@@ -180,6 +181,7 @@ UNIT_NAMES := [Unit]string {
 	.Counts      = "the counts of the blocks of the store",
 	.References  = "names of one block",
 	.Commit_Blocks = "blocks that one commit can change",
+	.Principals  = "named principals",
 	.Places      = "places of the connection",
 	.Trees       = "trees",
 	.Changes     = "a change of the store (the connection reads only)",

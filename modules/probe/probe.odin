@@ -1,7 +1,8 @@
-// A module of commands that tests the sandbox of an isolated call
-// (property 19). Each export does what a module must not be able to do to
-// its caller: read any address, take all the processor time, use a handle
-// that it did not receive.
+// A module of commands that tests the sandbox of an isolated call. A call
+// to a module that is not trusted runs the module as its own program, and
+// its arguments travel as records. Each export does what a module must not
+// be able to do to its caller: read any address, take all the processor
+// time, use a handle that it did not receive.
 // The console calls it with isolate("probe"). Do not load it directly: then
 // it runs with the memory and the handles of the console.
 package probe

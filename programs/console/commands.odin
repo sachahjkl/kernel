@@ -156,6 +156,9 @@ commands_start :: proc "contextless" () {
 	command("stop", {.Text}, .None, "stop a program, by name", stop_program)
 	command("grants", {.Text}, .None, "what a program has from the root service", grants)
 	command("revoke", {.Text, .Text}, .None, "end a grant of a program that runs", revoke)
+	command("principal_create", {.Text}, .None, "create a named principal: its passphrase is typed in the window of unlock", principal_create)
+	command("lock", {}, .None, "end the session of the named principal: its programs stop", lock_session)
+	command("principals", {}, .None, "list the principals of the machine", list_principals)
 	command("replace", {.Text, .Text}, .None, "give the second module where a module imports the first", replace)
 	command("replacements", {}, .None, "list the replacement table of the machine", list_replacements)
 	command("time", {}, .Integer, "milliseconds since boot", time)
@@ -1333,7 +1336,7 @@ call_isolated :: proc "contextless" (item: ^Command, arguments: []Value) -> Valu
 		}
 		if intrinsics.atomic_load_explicit(&work.cancel, .Relaxed) != 0 {
 			sandbox_end(sandbox)
-			return fail("the person stopped the call of ", item.name, sandbox.service ? ": the console closed the connection to " : ": the console stopped the program ", sandbox.name)
+			return fail("Escape stopped the call of ", item.name, sandbox.service ? ": the console closed the connection to " : ": the console stopped the program ", sandbox.name)
 		}
 		system.wait_records(&wait, &sandbox.ring.completions)
 		system.wait_word(&wait, &work.cancel, 0)
@@ -1414,6 +1417,89 @@ grants :: proc "contextless" (arguments: []Value) -> Value {
 		}
 		print("\n")
 	}
+	// Who the grants are for: the principal of the session of the program.
+	principal_name := system.name_unpack({completion.values[3], completion.values[4], completion.values[5], completion.values[6]})
+	print(name, " runs for principal ", completion.values[2], " \"", system.name_of(principal_name[:]), "\"\n")
+	return {}
+}
+
+// principal_create asks the root service for a new named principal. The
+// passphrase is never a text of the console: the console keeps each line in
+// its history, so the passphrase is typed in the window of unlock.
+principal_create :: proc "contextless" (arguments: []Value) -> Value {
+	completion, answered := request_record(.Principal_Create, arguments[0].text)
+	if !answered {
+		return fail(requests.head == nil ? "the console has no ring to the root service" : "the root service did not answer")
+	}
+	if system.Status(completion.kind) != .Ok {
+		text: [240]u8
+		return fail(root_refusal_text(text[:], completion))
+	}
+	print("the principal ", arguments[0].text, " is created in the window of unlock: type its passphrase there\n")
+	return {}
+}
+
+// lock_session ends the session of the named principal that is unlocked.
+lock_session :: proc "contextless" (arguments: []Value) -> Value {
+	completion, answered := request_record(.Principal_Lock, "")
+	if !answered {
+		return fail(requests.head == nil ? "the console has no ring to the root service" : "the root service did not answer")
+	}
+	if system.Status(completion.kind) != .Ok {
+		text: [240]u8
+		return fail(root_refusal_text(text[:], completion))
+	}
+	print("locked: ", completion.values[0], " programs of the session stopped\n")
+	return {}
+}
+
+@(rodata)
+principal_state_names := [system.Principal_State]string {
+	.Absent   = "absent",
+	.Machine  = "the machine, no unlock",
+	.Locked   = "locked",
+	.Unlocked = "unlocked: its session runs",
+	.Creating = "created in the window of unlock",
+}
+
+// first_bytes_hexadecimal writes 8 bytes, in their order in memory, as 16
+// hexadecimal digits: the start of a key or of a measure as a reader
+// compares it.
+first_bytes_hexadecimal :: proc "contextless" (value: u64) -> (digits: [16]u8) {
+	bytes := transmute([8]u8)value
+	hexadecimal := "0123456789abcdef"
+	for item, index in bytes {
+		digits[2 * index] = hexadecimal[item >> 4]
+		digits[2 * index + 1] = hexadecimal[item & 15]
+	}
+	return
+}
+
+// list_principals gives one line for each principal of the root service.
+list_principals :: proc "contextless" (arguments: []Value) -> Value {
+	for number in u64(0) ..< 2 {
+		completion, answered := request_record(.Principals, "", number)
+		if !answered {
+			return fail(requests.head == nil ? "the console has no ring to the root service" : "the root service did not answer")
+		}
+		if system.Status(completion.kind) != .Ok {
+			continue // No record with this number.
+		}
+		state := completion.values[0] <= u64(max(system.Principal_State)) ? system.Principal_State(completion.values[0]) : .Absent
+		principal_name := system.name_unpack({completion.values[1], completion.values[2], completion.values[3], completion.values[4]})
+		print("principal ", number, " \"", system.name_of(principal_name[:]), "\": ", principal_state_names[state])
+		key_digits := first_bytes_hexadecimal(completion.values[5])
+		measure_digits := first_bytes_hexadecimal(completion.values[6])
+		if completion.values[5] != 0 {
+			print(", public key ", string(key_digits[:]), "...")
+		}
+		if number == 0 && completion.values[6] != 0 {
+			print(", the system measured: PCR 11 ", string(measure_digits[:]), "...")
+		} else if number == 0 {
+			print(", the system not measured")
+		}
+		print("\n")
+	}
 	return {}
 }
 
@@ -1435,7 +1521,7 @@ revoke :: proc "contextless" (arguments: []Value) -> Value {
 		text: [240]u8
 		return fail(root_refusal_text(text[:], completion))
 	}
-	return fail("no grant has the name ", arguments[1].text, ": the grants are log, machine, image, log_records, store, network, person, history")
+	return fail("no grant has the name ", arguments[1].text, ": the grants are log, machine, image, log_records, store, network, acts_for_principal, history")
 }
 
 // replace asks the root service to give a module where a module imports

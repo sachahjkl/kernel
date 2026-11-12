@@ -8,7 +8,7 @@ import "core:strings"
 // boot program that the firmware signing key signed.
 //
 // UEFI verifies Authenticode signatures with RSA keys and X.509
-// certificates, not Ed25519. So the person who owns the machine has a second
+// certificates, not Ed25519. So the publisher of the system has a second
 // key: the firmware signing key, an RSA-2048 key and its certificate, in the
 // folder of the signing key. Three programs of Nixpkgs do the work that the
 // tool does not write itself:
@@ -69,7 +69,7 @@ firmware_signing_key_find :: proc() -> (key: Firmware_Signing_Key, ok: bool) {
 		return {}, false
 	}
 	if path_inside_repository(key.key_path) {
-		fmt.eprintfln("kerneltool: %s is inside the repository: the private key of the person who owns the machine stays outside it", key.key_path)
+		fmt.eprintfln("kerneltool: %s is inside the repository: the private key of the publisher of the system stays outside it", key.key_path)
 		return {}, false
 	}
 	if !private_key_file_check(key.key_path) {

@@ -2,13 +2,14 @@
 // program (support/tcp), one thread, one table of connections, and records
 // of fixed size for all its state. It allocates nothing.
 //
-// What it can reach comes from its grants only (property 20):
+// What it can reach comes from its grants only, with no ambient access:
 //   a segment endpoint with a listen grant: the TCP port 80, and the
 //       remotes that send a SYN to it;
-//   a private store in the storage service (property 9): the pages that it
-//       serves, by name;
+//   a private store in the storage service, as each program has: the pages
+//       that it serves, by name;
 //   a service ring: the console calls its exports server.put,
-//       server.pages, server.remove and server.served (property 19).
+//       server.pages, server.remove and server.served, functions with
+//       typed parameters.
 // No shared folder: a person puts a page with server.put from the console.
 // PUT and DELETE over HTTP are refused (405): the network is not
 // authenticated.
@@ -41,7 +42,7 @@ RECEIVE_PLACES :: 96 // Places 0 to 95: segments that arrive. The others: segmen
 SEND_TAG :: 1000 // Tags from 1000: a Send of place tag - 1000.
 CALL_TAG :: 100_000 // Info and Release.
 // Commands that the ring did not take: they go at the next pass. A proven
-// bound, not a guess (an independent read, W11): a Send or a Receive names
+// bound, not a guess: a Send or a Receive names
 // one place, and a place is in one command at most: PLACE_COUNT; a Release
 // is held only while fewer than RELEASE_WAITING_CAPACITY are held. So the
 // held commands never pass HELD_CAPACITY; command_push_or_hold checks it.
@@ -197,7 +198,7 @@ releases_send_now :: proc "contextless" () {
 
 // The log lines of the ends of connections, in one second at most: a remote
 // that opens and closes connections must not fill the log limit of the
-// program (an independent read, W10). The others are counted, and one line
+// program, or the lines of its other work are lost. The others are counted, and one line
 // says how many.
 CONNECTION_LOG_LIMIT :: 50
 connection_log_second: u64
@@ -437,7 +438,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	local_address = u32(info.values[0])
 	listen_port = grant.port
 	// The connection table: its records and its buffers are memory of this
-	// program (property 14).
+	// program, which gives the library all the memory that it uses.
 	memory, memory_status := system.memory_create(BUFFER_PAGES)
 	buffers, buffers_status := system.memory_map(memory, {.Write})
 	if memory_status != .Ok || buffers_status != .Ok {

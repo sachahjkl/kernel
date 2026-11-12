@@ -237,10 +237,10 @@ confinement :: proc "contextless" () {
 	error: errors.Error_Record
 	_, _, read_status := storage.read(&shared, tree_4, "content", nil, &error)
 	outcome(refused_with(read_status, &error, .Absent) && errors.Unit(error.unit) == .Places, "a place of another connection names nothing on the share")
-	// Another store: the share does not act for the person.
+	// Another store: a share does not act for a principal.
 	error = {}
 	_, store_status := storage.open_store(&shared, "notes", &error)
-	outcome(refused_with(store_status, &error, .No_Grant) && errors.Unit(error.unit) == .Person, "a name of another store is refused")
+	outcome(refused_with(store_status, &error, .No_Grant) && errors.Unit(error.unit) == .Acts_For_Principal, "a name of another store is refused")
 	error = {}
 	_, write_status := storage.write(&shared, storage.ROOT, "written", transmute([]u8)string("no"), &error)
 	outcome(refused_with(write_status, &error, .No_Grant) && errors.Unit(error.unit) == .Changes, "the read-only share cannot write")

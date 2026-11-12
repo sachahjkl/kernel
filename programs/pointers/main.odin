@@ -5,7 +5,8 @@
 //
 // The program has the boot image, read-only. It finds the pointer theme
 // files in the resource table, checks the hash of each one against its
-// entry (property 11), validates it with the validation of the compositor,
+// entry (the identity of a file is the hash of its content), validates it
+// with the validation of the compositor,
 // and shows one theme at a time: two buttons change the theme. The window
 // is built with the interface package; the pointer pictures are drawn into
 // the canvas directly, inside the area of each tile, because the package

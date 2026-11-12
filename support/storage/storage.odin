@@ -52,7 +52,7 @@ ERROR_DISK :: -6 // The block service reported an error.
 ERROR_ABSENT :: -7 // The tree has no object with this name, or the place names no tree any more.
 ERROR_DAMAGED :: -8 // A block of the object, or a node of a tree of the store, has a wrong check.
 ERROR_NO_VERSION :: -9 // The object has no version of this generation.
-ERROR_PERSON :: -10 // The call names another store, and the caller does not act for the person.
+ERROR_ACTS_FOR_PRINCIPAL :: -10 // The call names another store, and the caller does not act for the principal.
 ERROR_EXISTS :: -11 // The tree has an entry with this name already.
 ERROR_PLACE :: -12 // The place is not a place of this connection, or the connection reads only.
 

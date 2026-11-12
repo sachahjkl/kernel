@@ -36,7 +36,7 @@ What the model removes as a concept:
 - **The boot image is a transport, not a concept.** It carries the objects that the machine needs before the storage service runs, one after the other. An image for a machine with no disk is the same transport with every object. An object can come by any channel: its hash proves it.
 - **A package has no format of its own.** It is a signed tree with six facts beside its entries:
   1. its stable identity: the key of its signer and a name;
-  2. the module that starts it, and the name that a person sees;
+  2. the module that starts it, and the name that the desktop shows;
   3. the grants that it asks for;
   4. a version number that never goes back: an old signed tree cannot replace a newer one;
   5. where it comes from: the hash of its sources and of the recipe of its build, so that a third party can build it again and compare;
@@ -55,7 +55,7 @@ Not built. These are rules of the model.
 What these rules forbid, so that nobody adds it later:
 
 - A package writes nothing outside its own data.
-- A package does not register itself in a table of the machine by code that runs. What the system shows of a package (the module that starts it, its name for a person, the grants that it asks for) comes from the facts of its tree, read as data.
+- A package does not register itself in a table of the machine by code that runs. What the system shows of a package (the module that starts it, the name that the desktop shows, the grants that it asks for) comes from the facts of its tree, read as data.
 - A package does not depend on the order of the installations.
 
 ### 1.2 The hard points
@@ -88,9 +88,9 @@ What these rules forbid, so that nobody adds it later:
 | The hash of a module (P11) | The name of an object | The same BLAKE3 hash; modules are not in the store yet |
 | A grant of the root service: the store of a connection and its limit | A handle on the store of a program, with its budget of blocks | Built: the connection is the handle |
 
-## 3. The format on the disk (built)
+## 3. The format on the disk
 
-The format is the contract `contract/store`, `STORAGE3`. A disk of `STORAGE2` is not read.
+Built. The format is the contract `contract/store`, `STORAGE3`. A disk of `STORAGE2` is not read.
 
 ### 3.1 The blocks
 
@@ -133,7 +133,9 @@ The open of the disk at the start walks each node of each tree once, checks each
 | The disk | 262144 blocks (1 GiB) | Unchanged |
 | The entries of a tree | No limit but the disk | |
 
-## 4. The interface of the service (built)
+## 4. The interface of the service
+
+Built.
 
 ### 4.1 Places
 
@@ -158,7 +160,7 @@ A connection to the storage service is a handle on a store or on a part of it. A
 ### 4.2 No way up
 
 - A name is one step (section 3.2): `..`, `.`, a name with `/`, and a name that starts with `/` are refused with the byte that breaks the rule.
-- The store of a connection comes from the grant of the root service, or from the share that made the connection. One procedure of the service (`may_name_store`) decides if a caller may name another store, for `open_store` and for the lines of `stores`: a caller that acts for the person names any store; another caller, and a share, its own store only.
+- The store of a connection comes from the grant of the root service, or from the share that made the connection. One procedure of the service (`may_name_store`) decides if a caller may name another store, for `open_store` and for the lines of `stores`: a caller that acts for principal N names the stores of principal N only (the principal of a store is in its name: `principals.store_name_principal`); principal 0 names no store of a named principal; a caller that does not act for a principal, and a share, name their own store only.
 - A place of another connection is refused.
 
 ### 4.3 Read only, and revocation

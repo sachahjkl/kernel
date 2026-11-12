@@ -95,7 +95,8 @@ boot_report :: proc "contextless" (report: ^op.Boot_Report) {
 
 // The reports of a developer tool (docs/TOOLS.md): what one program has, for
 // a holder of the machine with the right Inspect. They give counts, places
-// and states, never a byte of the memory of the program (property 20).
+// and states, never a byte of the memory of the program: reading the memory
+// of another program is a separate grant, which these reports do not need.
 
 // program_mappings_report writes the mappings of program slot `index`, in
 // the order of their addresses. The caller holds the control lock; this
@@ -276,7 +277,7 @@ pages_report :: proc "contextless" (report: ^op.Page_Report, about: ^Program) {
 		for &mapping in about.mappings {
 			if mapping.page_count != 0 && address >= mapping.address && address - mapping.address < mapping.page_count * PAGE_SIZE {
 				report.mapped |= 1 << page
-				if entry := page_entry(about.table, address, false); entry != nil && entry^ & PAGE_PRESENT != 0 {
+				if entry := page_entry(about.table, address); entry != nil && entry^ & PAGE_PRESENT != 0 {
 					report.present |= 1 << page
 				}
 				break

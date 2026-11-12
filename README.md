@@ -129,7 +129,7 @@ The repository holds no picture of the same window with the pointer theme Posy's
 
 ![The return to a program: five children give the kernel a thread that the processor would refuse at its return, or flags that it must not keep; the kernel stops each one as its own fault, and the machine goes on](docs/screenshots/return_fault.png)
 
-![The fault ring: a fault of a thread becomes a record for a handler thread of the program, which commits the page or gives Write back and lets the thread go on, lets it go on after a breakpoint, or stops the program with the report of a divide error; 19 cases, each in its own child program](docs/screenshots/fault_ring.png)
+![The fault ring: a fault of a thread becomes a record for a handler thread of the program, which commits the page or gives Write back and lets the thread go on, lets it go on after a breakpoint, or stops the program with the report of a divide error; then a thread stopped, its registers read and written, and resumed; 33 cases, in child programs](docs/screenshots/fault_ring.png)
 
 ![The temple of Jon: a portrait of Jonathan Blow that turns](docs/screenshots/temple.png)
 
@@ -145,7 +145,7 @@ The repository holds no picture of the same window with the pointer theme Posy's
 - A block service drives a virtio disk with device memory and a message interrupt; its client gives the memory that the device reads and writes.
 - The storage service keeps a private store for each program on the data disk: each change is one commit, and a stop of the machine never shows a part of one. `notes` finds its state after a restart of the machine, after QEMU was ended during its commits, and after its last root block was cut.
 - The network: a frame service drives a virtio network device, and the network service gives a program an endpoint of UDP datagrams that reaches only the remote of its grant. The kernel has no network code.
-- `kerneltool call <key> "monitor.programs()"` calls an export of a service of the running machine from the host, and prints the typed result: a table with its field names, a record, a text, or the sentence of its error record. The call goes over QUIC to the program `remote`, whose public key (`<key>`, in its window) the host pins; the root service decides which services it reaches, and the person revokes its grant with `revoke("remote", "person")`. The test reads the place of the pointer from the compositor before each press, and waits for log records with typed fields through `log.records()`.
+- `kerneltool call <key> "monitor.programs()"` calls an export of a service of the running machine from the host, and prints the typed result: a table with its field names, a record, a text, or the sentence of its error record. The call goes over QUIC to the program `remote`, whose public key (`<key>`, in its window) the host pins; the root service decides which services it reaches, and the console revokes its grant with `revoke("remote", "acts_for_principal")`. The test reads the place of the pointer from the compositor before each press, and waits for log records with typed fields through `log.records()`.
 - `inspect` shows one program live: its address space, its modules, its threads with the state of the scheduler, the stop report of a program that faulted, and the bytes of its own memory, from reports of the kernel that give no byte of another program.
 - The compositor owns the framebuffer. Each program draws into a surface in shared memory.
 - The console is a normal program. A command is a typed function: `hash("abc")`, `start("life")`, `programs()`.
@@ -184,6 +184,7 @@ The repository holds no picture of the same window with the pointer theme Posy's
 | `docs/POINTERS.md` | The pointer pictures: Xcursor, hyprcursor and the others; the format and the manifest of the system; the license of the Posy theme |
 | `docs/TRUSTED_BOOT.md` | The trusted boot: what verifies what at the start, with which key; the signing key; the measure; what each layer does not protect |
 | `docs/DEMONSTRATIONS.md` | For each of the 21 properties: what the machine test shows, the picture, and what no test shows yet |
+| `docs/PRINCIPALS.md` | The principals: the machine, a named principal, its unlock and its lock, the session of each program, the store of a principal, and what is not built |
 | `docs/CONSOLE.md` | The line of the console: the caret, the completion list, the history and its search, the colors of the code |
 | `docs/CRYPTOGRAPHY.md` | The cryptography of QUIC and TLS 1.3: which proven code the system takes, and how it checks it |
 | `docs/STORAGE.md` | The stored data: objects, trees and stores; what a program reaches, the format on the disk, and the steps that are not built |

@@ -369,3 +369,20 @@ error_record_place :: proc(t: ^testing.T) {
 	_, _, _, _, encoded = encode(nil, full, {{}, {}, {}, {}, {}, {}}, region[:])
 	testing.expect(t, !encoded)
 }
+
+// The grant of a connection: the amount, the principal and the flag each
+// keep their own bits, and a number out of the field cannot reach the flag.
+@(test)
+the_grant_of_a_connection_names_the_principal :: proc(t: ^testing.T) {
+	grant := caller_grant_make(4500, 1, false)
+	testing.expect_value(t, grant & CALLER_AMOUNT_MASK, 4500)
+	testing.expect_value(t, caller_principal(grant), 1)
+	testing.expect(t, grant & CALLER_ACTS_FOR_PRINCIPAL == 0)
+	acting := caller_grant_make(0, 0, true)
+	testing.expect_value(t, caller_principal(acting), 0)
+	testing.expect(t, acting & CALLER_ACTS_FOR_PRINCIPAL != 0)
+	testing.expect_value(t, acting & CALLER_AMOUNT_MASK, 0)
+	largest := caller_grant_make(CALLER_AMOUNT_MASK + 1, CALLER_PRINCIPAL_LIMIT, false)
+	testing.expect_value(t, largest, 0)
+	testing.expect_value(t, caller_principal(caller_grant_make(0, CALLER_PRINCIPAL_LIMIT - 1, true)), CALLER_PRINCIPAL_LIMIT - 1)
+}

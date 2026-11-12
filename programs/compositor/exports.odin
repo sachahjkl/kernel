@@ -11,10 +11,9 @@ import "support:system"
 // tool reads them through the remote service before each press of the
 // pointer, so that a press lands where the scenario wants it.
 //
-// The place of the pointer and the windows are facts of the screen of the
-// person: another program must not learn where the person works. The
-// exports give them only to a caller that acts
-// for the person. A Record result has no error record, so it cannot
+// The place of the pointer and the windows are facts of the screen: another
+// program must not learn where the input goes. The exports give them only
+// to a caller that acts for the principal. A Record result has no error record, so it cannot
 // refuse (docs/MODULE_CONTRACT.md, section 4): pointer() is a Table of one
 // row.
 
@@ -47,7 +46,7 @@ Window :: struct {
 	keyboard: i64, // 1: the keys go to the window: the one with the focus, while the launcher is closed.
 }
 
-ERROR_PERSON :: -1
+ERROR_ACTS_FOR_PRINCIPAL :: -1
 
 service: system.Service
 pointer_moves: u64
@@ -65,16 +64,16 @@ service_start :: proc "contextless" (ctx: ^system.Context) {
 }
 
 @(private = "file")
-person :: proc "contextless" () -> bool {
+acts_for_principal :: proc "contextless" () -> bool {
 	caller := system.service_caller()
-	return caller == nil || caller.grant & isolated.CALLER_PERSON != 0
+	return caller == nil || caller.grant & isolated.CALLER_ACTS_FOR_PRINCIPAL != 0
 }
 
-// pointer gives the place of the pointer on the screen, its buttons, the menu of the bar that is open, whether the launcher is open, and the name of the pointer shape, as one row. The result is 1, or a negative number with an error record. The error kind: No_Grant (-1, the caller does not act for the person).
+// pointer gives the place of the pointer on the screen, its buttons, the menu of the bar that is open, whether the launcher is open, and the name of the pointer shape, as one row. The result is 1, or a negative number with an error record. The error kind: No_Grant (-1, the caller does not act for the principal).
 @(export, link_name = "pointer")
 pointer :: proc "c" (result: ^[]Pointer, error: ^errors.Error_Record) -> i64 {
-	if !person() {
-		return errors.fail(error, ERROR_PERSON, .No_Grant, .Person)
+	if !acts_for_principal() {
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
 	}
 	if len(result^) > 0 {
 		result[0] = {x = i64(pointer_x), y = i64(pointer_y), buttons = i64(buttons), moves = i64(pointer_moves), keys = i64(key_records), launcher = launcher_open ? 1 : 0}
@@ -89,11 +88,11 @@ pointer :: proc "c" (result: ^[]Pointer, error: ^errors.Error_Record) -> i64 {
 	return 1
 }
 
-// windows gives one row for each window, the front one first: its title, its place and its size with the frame, its order from the front, whether it has the focus, and whether the keys go to it. The result is the count of rows, or a negative number with an error record. The error kind: No_Grant (-1, the caller does not act for the person).
+// windows gives one row for each window, the front one first: its title, its place and its size with the frame, its order from the front, whether it has the focus, and whether the keys go to it. The result is the count of rows, or a negative number with an error record. The error kind: No_Grant (-1, the caller does not act for the principal).
 @(export, link_name = "windows")
 windows :: proc "c" (result: ^[]Window, error: ^errors.Error_Record) -> i64 {
-	if !person() {
-		return errors.fail(error, ERROR_PERSON, .No_Grant, .Person)
+	if !acts_for_principal() {
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
 	}
 	for position in 0 ..< order_count {
 		row := order_count - 1 - position

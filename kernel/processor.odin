@@ -194,6 +194,10 @@ Processor :: struct {
 	program_mapping_report: op.Program_Mapping_Report,
 	thread_table_report:    op.Thread_Table_Report,
 	stop_report:            op.Stop_Report,
+	// The extended state area that a Thread_Control on this processor
+	// writes: copied from the caller once, checked here, then copied to the
+	// thread, so the caller cannot change it between the check and the use.
+	extended_state_written: Extended_State_Area,
 	segments:      [7]u64,
 	task_state:    Task_State,
 }
@@ -244,8 +248,18 @@ sync_acknowledge :: proc "contextless" (cpu: ^Processor) {
 	if intrinsics.atomic_load(&cpu.pending) == 0 {
 		return
 	}
-	if intrinsics.atomic_load(&cpu.current) == 0 {
-		// No thread: the page table of the last program can end.
+	// The page table of the program of the current thread; 0 with no thread.
+	// Between the pick of a thread and run, current names the thread while
+	// table is still the one of the program that the processor left, and a
+	// wait for a lock there (a refused return takes the control lock)
+	// answers here. That program can end meanwhile and free its tables: so
+	// the processor keeps a table only if it is the one of its thread, and
+	// run loads that one before the return.
+	current_table: u64
+	if current := intrinsics.atomic_load(&cpu.current); current != 0 {
+		current_table = programs[threads[current].program].table
+	}
+	if current_table == 0 || intrinsics.atomic_load(&cpu.table) != current_table {
 		intrinsics.atomic_store(&cpu.table, kernel_table)
 		control_register_3_write(kernel_table)
 	} else {
@@ -320,16 +334,22 @@ CR4_MACHINE_CHECK :: 1 << 6 // A machine check is the exception 18, which stops 
 // sgdt, sidt, sldt, smsw and str of a program give a protection fault: a
 // program reads no address of a table of the kernel.
 CR4_USER_INSTRUCTION_PREVENTION :: 1 << 11
+// The fifth level of the page table. The boot program loads its tables of
+// four levels in cr3 and does not change cr4, and the processor cannot
+// change the count of levels in 64-bit mode: so the bit is 0 when the
+// kernel starts (with it set the tables of four levels would not translate
+// the kernel), and every walk of the kernel has four levels. The kernel
+// writes it 0, and the start code of the other processors too.
 CR4_FIVE_LEVEL_PAGING :: 1 << 12
 CR4_NO_EXECUTE_PROGRAM :: 1 << 20
 CR4_GUARD_PROGRAM :: 1 << 21
 // The bits of CR4 that the kernel keeps from the value before
-// processor_setup: long mode needs the physical address extension, the
-// count of levels of the page table cannot change in 64-bit mode, and the
+// processor_setup: long mode needs the physical address extension, and the
 // setup of the extended state set the three others just before. Every
 // other bit that the firmware set is cleared.
-CR4_KEPT :: u64(CR4_PHYSICAL_ADDRESS_EXTENSION | CR4_FIVE_LEVEL_PAGING | CR4_OSFXSR | CR4_OSXMMEXCPT | CR4_OSXSAVE)
-#assert(CR4_KEPT == 0x4_1620)
+CR4_KEPT :: u64(CR4_PHYSICAL_ADDRESS_EXTENSION | CR4_OSFXSR | CR4_OSXMMEXCPT | CR4_OSXSAVE)
+#assert(CR4_KEPT == 0x4_0620)
+#assert(CR4_KEPT & CR4_FIVE_LEVEL_PAGING == 0)
 // The bits of CR4 that processor_setup adds when CPUID has them.
 CR4_FROM_FEATURES :: u64(CR4_MACHINE_CHECK | CR4_USER_INSTRUCTION_PREVENTION | CR4_NO_EXECUTE_PROGRAM | CR4_GUARD_PROGRAM)
 #assert(CR4_FROM_FEATURES == 0x30_0840)

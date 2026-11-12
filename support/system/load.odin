@@ -131,8 +131,8 @@ Prepared_Modules :: struct {
 }
 
 // The load source: where a loader finds the imports of a module. Nothing
-// else: the loader has no search path and no ambient module store
-// (property 20).
+// else: the loader has no search path and no ambient module store, so a
+// program reaches only the modules that it was granted.
 Load_Source :: struct {
 	image:        []u8, // The files that the program was granted, in the form of the boot image. A file has the hash that names it, or the loader refuses it.
 	replacements: []module.Replacement, // From the party that starts the program. The program cannot change them.

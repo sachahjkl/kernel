@@ -1,7 +1,8 @@
 package tcp
 
 // The connections of one program: a table of records of fixed size, with
-// the buffers in one block of memory that the caller gives (property 14).
+// the buffers in one block of memory that the caller gives: the caller
+// supplies all the memory.
 // The library allocates nothing and calls no kernel operation; one call,
 // step, reads a batch of segments, runs the timers and writes the segments
 // to send. docs/NETWORK.md has the rules and their sources.

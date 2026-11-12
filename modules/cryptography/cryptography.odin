@@ -30,6 +30,7 @@ package cryptography
 import "base:runtime"
 import "contract:errors"
 import "support:cryptography/aes"
+import "support:cryptography/argon2id"
 import "support:cryptography/chacha20"
 import "support:cryptography/chacha20poly1305"
 import bytes "support:cryptography/compatibility_bytes"
@@ -39,6 +40,7 @@ import "support:cryptography/hkdf"
 import "support:cryptography/hmac"
 import "support:cryptography/sha2"
 import "support:cryptography/x25519"
+import "support:system"
 
 TAG_SIZE :: 16
 NONCE_SIZE :: 12
@@ -469,6 +471,90 @@ ed25519_verify_run :: #force_no_inline proc "contextless" (public_text, message_
 @(export, link_name = "ed25519_verify")
 ed25519_verify :: proc "c" (public, message, signature: ^string, error: ^errors.Error_Record) -> i64 {
 	count := ed25519_verify_run(public^, message^, signature^, error)
+	crypto.erase_stack_below_the_caller()
+	return count
+}
+
+// The limits of the inputs of Argon2id, copied into the module: a
+// passphrase typed at the keyboard is far shorter. A salt of 8 bytes at
+// least (RFC 9106, section 3.1).
+PASSWORD_LIMIT :: 1024
+SALT_LEAST :: 8
+SALT_LIMIT :: 64
+// The KiB of the blocks: 8 for each lane at least (RFC 9106), 4 GiB at
+// most, which the parameter of the origin can count.
+ARGON2ID_MEMORY_LIMIT :: 4 * 1024 * 1024
+ARGON2ID_PASSES_LIMIT :: 64
+// The origin computes the lanes one after the other, in one thread: more
+// lanes cost the same time, and a limit keeps the record small.
+ARGON2ID_LANES_LIMIT :: 16
+// The tag: 4 bytes at least (RFC 9106); 64 at most, a key and more.
+ARGON2ID_TAG_LEAST :: 4
+ARGON2ID_TAG_LIMIT :: 64
+
+// The cost of one derivation of Argon2id, as one record: an export has at
+// most 6 parameters (docs/MODULE_CONTRACT.md, section 4).
+Argon2id_Cost :: struct {
+	memory_kibibytes: i64, // The KiB of the blocks: 8 for each lane at least.
+	passes:           i64, // 1 to 64.
+	lanes:            i64, // 1 to 16.
+	tag_bytes:        i64, // The bytes of the result: 4 to 64.
+}
+
+@(private)
+argon2id_run :: #force_no_inline proc "contextless" (password_text, salt_text: string, cost: Argon2id_Cost, work: system.Bytes_To_Change, output: []u8, error: ^errors.Error_Record) -> i64 {
+	context = module_context()
+	password := transmute([]u8)password_text
+	salt := transmute([]u8)salt_text
+	if !limit_check(password, PASSWORD_LIMIT, 1, error) {
+		return ERROR
+	}
+	if len(salt) < SALT_LEAST {
+		return errors.fail(error, ERROR, len(salt) == 0 ? .Empty : .Too_Small, .Bytes, 2, i64(len(salt)), SALT_LEAST)
+	}
+	if !limit_check(salt, SALT_LIMIT, 2, error) {
+		return ERROR
+	}
+	// The record is a copy: the caller cannot change it after these checks.
+	if cost.lanes < 1 || cost.lanes > ARGON2ID_LANES_LIMIT || cost.passes < 1 || cost.passes > ARGON2ID_PASSES_LIMIT || cost.tag_bytes < ARGON2ID_TAG_LEAST || cost.tag_bytes > ARGON2ID_TAG_LIMIT {
+		return errors.fail(error, ERROR, .Bad_Value, .None, 3)
+	}
+	if cost.memory_kibibytes < 8 * cost.lanes || cost.memory_kibibytes > ARGON2ID_MEMORY_LIMIT {
+		return errors.fail(error, ERROR, .Bad_Value, .None, 3, cost.memory_kibibytes, ARGON2ID_MEMORY_LIMIT)
+	}
+	// The header of the work memory is read once (the argument is a copy).
+	needed := u64(cost.memory_kibibytes) * 1024
+	if work.bytes == nil || work.capacity < needed || uintptr(work.bytes) % 8 != 0 {
+		return errors.fail(error, ERROR, .Too_Small, .Bytes, 4, i64(min(work.capacity, 1 << 62)), i64(needed))
+	}
+	tag_size := int(cost.tag_bytes)
+	if len(output) < tag_size {
+		return i64(tag_size)
+	}
+	password_copy: [PASSWORD_LIMIT]u8
+	salt_copy: [SALT_LIMIT]u8
+	tag: [ARGON2ID_TAG_LIMIT]u8
+	copy(password_copy[:], password)
+	copy(salt_copy[:], salt)
+	defer crypto.zero_explicit(&password_copy, size_of(password_copy))
+	defer crypto.zero_explicit(&tag, size_of(tag))
+	parameters := argon2id.Parameters {
+		memory_size = u32(cost.memory_kibibytes),
+		passes      = u32(cost.passes),
+		parallelism = u32(cost.lanes),
+	}
+	// The origin erases the blocks at its end (sanitize).
+	if argon2id.derive(&parameters, password_copy[:len(password)], salt_copy[:len(salt)], tag[:tag_size], work_memory = work.bytes[:needed]) != .None {
+		return errors.fail(error, ERROR, .Too_Small, .Bytes, 4, i64(min(work.capacity, 1 << 62)), i64(needed))
+	}
+	copy(output, tag[:tag_size])
+	return i64(tag_size)
+}
+
+// argon2id derives a key from a password and a salt with Argon2id (RFC 9106), at the cost of the record: the KiB of the blocks, the passes, the lanes and the bytes of the key. The caller supplies the blocks in work: memory_kibibytes * 1024 bytes of its own memory, aligned on 8 bytes, which the module erases at the end. The password has 1024 bytes at most, the salt 8 to 64. The result is the count of the bytes of the key, or a negative number with an error record: Too_Long for the password (1), Too_Small or Too_Long for the salt (2), Bad_Value for the cost (3), Too_Small for the work memory (4).
+@(export, link_name = "argon2id")
+argon2id_export :: proc "c" (password, salt: ^string, cost: ^Argon2id_Cost, work: ^system.Bytes_To_Change, result: ^[]u8, error: ^errors.Error_Record) -> i64 {
+	count := argon2id_run(password^, salt^, cost^, work^, result^, error)
 	crypto.erase_stack_below_the_caller()
 	return count
 }

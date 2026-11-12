@@ -4,7 +4,7 @@
 //
 // A change is one commit, on the disk when the call returns: the system has no save action. The state of an object before a change is a version: a program reads, compares, restores and clones versions with no code of its own. The disk always has the state of the last commit, or of the one before: a stop of the machine during a commit never shows a part of it. The checks of the blocks show each change that the service did not make.
 //
-// The person sees all the stores with stores(), from a program that acts for the person: the console.
+// A program that acts for a principal (the console, remote for the host) sees the stores of that principal with stores(), and opens a place on one of them with open_store.
 package storage_service
 
 import "contract:block"
@@ -16,9 +16,10 @@ import format "contract:store"
 import answers "support:storage"
 import "base:intrinsics"
 import tree "support:storage_tree"
+import "support:principals"
 import "support:system"
 
-ERROR_PERSON :: answers.ERROR_PERSON
+ERROR_ACTS_FOR_PRINCIPAL :: answers.ERROR_ACTS_FOR_PRINCIPAL
 ERROR_PLACE :: answers.ERROR_PLACE
 
 // ---------------------------------------------------------------------
@@ -55,7 +56,8 @@ shares: [SHARE_CAPACITY]Share
 Caller :: struct {
 	connection: ^system.Connection,
 	store:      Store_Of,
-	person:     bool,
+	acts_for_principal: bool, // The root service granted it to act for its principal.
+	principal:  u64, // The principal of the session of the caller (isolated.caller_principal).
 	read_only:  bool,
 	depth:      int,
 	path:       [NESTING_LIMIT]Entry_Name, // The root of the connection.
@@ -102,7 +104,8 @@ caller_of :: proc "contextless" () -> (caller: Caller) {
 	item := share_of(connection)
 	if item == nil {
 		caller.store = {system.name_of(connection.caller[:]), connection.grant & isolated.CALLER_AMOUNT_MASK}
-		caller.person = connection.grant & isolated.CALLER_PERSON != 0
+		caller.acts_for_principal = connection.grant & isolated.CALLER_ACTS_FOR_PRINCIPAL != 0
+		caller.principal = isolated.caller_principal(connection.grant)
 		return caller
 	}
 	store, _, found := connection_store(item.maker, 0)
@@ -166,16 +169,20 @@ place_path :: proc "contextless" (caller: ^Caller, place: i64, error: ^errors.Er
 }
 
 // may_name_store says if a caller may open a place on a store that is not
-// the store of its connection: the one rule of the service for it. Today: a
-// caller that acts for the person (the console, remote for the host), and
-// any store. With principals the rule becomes: a caller that acts for
-// principal N names the stores of principal N only; principal 0 names no
-// store of a named principal; any other caller names its own store only.
+// the store of its connection, and if stores() shows it to the caller: the
+// one rule of the service for it (docs/STORAGE.md, "No way up"). A caller
+// that acts for principal N names the stores of principal N only: the
+// principal of a store is in its name (principals.store_name_principal).
+// Principal 0, the machine, names no store of a named principal. A caller
+// that does not act for a principal, and a share, name their own store only.
 may_name_store :: proc "contextless" (caller: ^Caller, store_name: string) -> bool {
 	if store_name == caller.store.name {
 		return true
 	}
-	return caller.person && caller.connection != nil && share_of(caller.connection) == nil
+	if !caller.acts_for_principal || caller.connection == nil || share_of(caller.connection) != nil {
+		return false
+	}
+	return principals.store_name_principal(store_name) == caller.principal
 }
 
 // places_sweep frees the places of connections that ended.
@@ -624,12 +631,12 @@ usage :: proc "c" (result: ^[]Usage) -> i64 {
 	return 1
 }
 
-// stores gives each store of the disk, one line for each, with its objects, its trees, its versions, its blocks (a shared block counted one time), the blocks that two names share, its limit, the count of connections that hold its grant now, and its damage. Only a caller that acts for the person sees them.
+// stores gives the stores that the caller may name, one line for each, with its objects, its trees, its versions, its blocks (a shared block counted one time), the blocks that two names share, its limit, the count of connections that hold its grant now, and its damage. Only a caller that acts for a principal sees them: the stores of that principal.
 @(export, link_name = "stores")
 stores :: proc "c" (result: ^[]u8) -> i64 {
 	caller := caller_of()
 	writer := system.Writer{buffer = result^}
-	if !caller.person {
+	if !caller.acts_for_principal {
 		system.write_part(&writer, "no grant to see the stores")
 		return i64(writer.count + writer.dropped)
 	}
@@ -675,9 +682,9 @@ stores :: proc "c" (result: ^[]u8) -> i64 {
 // ---------------------------------------------------------------------
 // The exports of versions.
 
-// open_store gives a place on the root of another store, for the exports that read it and for restore and clone: a caller that acts for the person names any store; another caller names its own store only (may_name_store). write, add, remove, rename and share refuse a place of another store. The result is the place, or a negative number with an error record.
+// open_store gives a place on the root of another store, for the exports that read it and for restore and clone: a caller that acts for principal N names the stores of principal N; another caller names its own store only (may_name_store). write, add, remove, rename and share refuse a place of another store. The result is the place, or a negative number with an error record.
 //
-// The error kinds: No_Grant (-10, unit Person: the caller may not name this store); Absent (-7, unit Stores: no such store); Full (-5, unit Places: no free place).
+// The error kinds: No_Grant (-10, unit Acts_For_Principal: the caller may not name this store); Absent (-7, unit Stores: no such store); Full (-5, unit Places: no free place).
 @(export, link_name = "open_store")
 open_store :: proc "c" (store: ^string, error: ^errors.Error_Record) -> i64 {
 	caller := caller_of()
@@ -689,7 +696,7 @@ open_store :: proc "c" (store: ^string, error: ^errors.Error_Record) -> i64 {
 	count := copy(copied[:len(copied) - 1], store^)
 	name := string(copied[:count])
 	if !may_name_store(&caller, name) {
-		return errors.fail(error, ERROR_PERSON, .No_Grant, .Person)
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
 	}
 	index := store_find(name)
 	if index < 0 || len(store^) >= len(copied) {

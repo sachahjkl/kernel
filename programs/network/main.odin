@@ -23,7 +23,7 @@
 // endpoint, with the deadline of the oldest request that waits for an
 // answer. The data of a datagram is copied one time, between the datagram
 // region of the program and the frame region; the kernel is not on the path
-// of the data (property 5).
+// of the data, so data moves with no kernel entry.
 package network_service
 
 import "contract:datagram"
@@ -131,7 +131,8 @@ neighbors: network.Neighbors
 identification: u16
 
 // The facts of the machine: an endpoint reads them only with the right
-// Inspect of its grant (property 20).
+// Inspect of its grant: they tell of the traffic of other programs, and a
+// program sees no other program.
 answered: u64 // Echo requests from the wire that this service answered.
 machine_problems: network.Problem_Table // The frames that no endpoint owns.
 
@@ -498,7 +499,8 @@ region_refusal :: proc "contextless" (endpoint: ^Endpoint, command: u32, place, 
 
 // busy gives the values of the error record of a full table of the
 // requests that wait for an answer: the requests of all the endpoints are
-// in it, so the record gives the capacity only (property 20).
+// in it, so the record gives the capacity only: a count would tell of the
+// requests of other programs.
 busy :: proc "contextless" (command: u32, capacity: int) -> [7]u64 {
 	return errors.ring_fail(command, .Busy, .Requests, 0, 0, i64(capacity))
 }

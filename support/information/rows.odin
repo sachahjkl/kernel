@@ -1,4 +1,4 @@
-// The information of the modules (property 12): functions that read the flat tables of module files and fill tables of rows in memory of the caller.
+// The information of the modules: functions, and no query language, that read the flat tables of module files and fill tables of rows in memory of the caller.
 //
 // A function takes the catalog (the modules that the program can see) and a slice of rows. It writes the rows that fit, and gives the count of rows of the full answer: a count larger than the slice means "give more memory". It allocates nothing and keeps no state. It copies no truth: a row holds numbers and short texts that it reads from the tables, and the module file stays the one source.
 //

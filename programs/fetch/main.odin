@@ -83,8 +83,8 @@ place_bytes :: proc "contextless" (place: u32) -> []u8 {
 
 // command_push_or_hold puts a command in the ring; a full ring keeps it for
 // the next pass, so that no Send and no Receive is lost with its place. A
-// proven bound (an independent read of server, W11): each command names
-// one place, and a place is in one command at most.
+// proven bound, not a guess: each command names one place, and a place is
+// in one command at most.
 held: [PLACE_COUNT]ring.Record
 held_count: int
 
@@ -434,7 +434,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.stop(1)
 	}
 	region = ([^]u8)(address)[:datagram.REGION_PAGES * system.PAGE_SIZE]
-	// The buffers of the connections: memory of this program (property 14).
+	// The buffers of the connections: memory of this program, which gives
+	// the library all the memory that it uses.
 	BUFFER_PAGES :: CAPACITY * (SEND_SIZE + RECEIVE_SIZE) / system.PAGE_SIZE
 	memory, memory_status := system.memory_create(BUFFER_PAGES)
 	buffers, buffers_status := system.memory_map(memory, {.Write})

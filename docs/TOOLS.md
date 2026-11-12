@@ -37,6 +37,47 @@ The reports give counts, places, states and the stack trace. The stack trace com
 
 A sample makes one kernel entry for each report: the program reports of the list (one for each slot), and the mappings, the modules, the threads and the stop report of the chosen program. Each report costs one read for each mapping, thread or module: the pages with a frame are a count of each mapping, not a walk of the page table, so a program that maps 1 GiB 128 times costs the same as one that maps 128 pages. The test build checks the count against the page table at each unmap, in the walk that the unmap makes anyway. The window and the log give the measured time and entries of one sample.
 
+## The comments of the sources
+
+`kerneltool check` reads each comment of the sources and refuses a comment that names a thing of the working records by its number, its label or its date. A comment gives the reason itself, in plain words. When the reason is long, a pointer names a document and its heading, as `(docs/MODULE_CONTRACT.md, "Did not fit, across calls")`, or a numbered section, as `(docs/CONSOLE.md, section 3)`.
+
+The check reads the `.odin`, `.asm` and `.nix` files of `kernel`, `boot`, `runtime`, `contract`, `support`, `modules`, `programs` and `tools`, with their tests, and `flake.nix`. It reads a comment with the scanner of the site (`tools/kerneltool/site_source_readers.odin`): the lines of comment that follow each other are one text. A form that a line break cuts is found, at the line where it starts. A string of the code is not a comment.
+
+| Form | Example | Message |
+|---|---|---|
+| A property by its number | `(property 14)`, `(properties 2 and 20)` | a property by its number |
+| A property by its short label | `(P20)`, `(P13;`, `(P20):` | a property by its short label |
+| A choice by its number | `(choice 186)` | a choice by its number |
+| A step by its number, of two digits or more | `step 91`, `the step after 309` | a step by its number |
+| A finding of a review | `finding W8`, `findings W4 and W-new` | a finding of a review by its label |
+| The label of a finding alone in a parenthesis, of the letters B, C, F, K, N, W | `(N2)`, `(W-new)` | a finding of a review by its label |
+| The label of a finding at the start of a comment, then a colon | `W2: outside recovery`, `F1 and F2: a RST` | a finding of a review by its label |
+| The name of a review | `an independent read`, `the hostile read` | a review by its name |
+| A review by its number | `Review 10` | a review by its number |
+| A note of a review | `note 1 of the second read` | a note of a review by its number |
+| A decision by its identifier | `D-047` | a decision by its identifier |
+| An item of the handoff | `HANDOFF item 53` | an item of the handoff by its number |
+| Who made a decision | `decision of the coordinator`, `owner decision` | who made a decision |
+| A date with "owner", "decision", "decided", "added on" or "coordinator" in the 48 bytes before it | `(owner, 2026-11-11: ...)`, `Added on 2026-11-11` | the date of a decision |
+
+Each comment breach is one line of the output: the file, the line, the words, and what they name. One comment breach fails the check.
+
+The forms that the check does not refuse:
+
+- A pointer to a document with a section, a label or a heading: `docs/CONSOLE.md, section 3`, `docs/ARCHITECTURE.md, U3`. The heading in quotes of a pointer is not read: it is the text of a heading, and `kerneltool site` checks that the heading exists. `docs/PROPERTIES.md, property 10` is refused: the number of a property is not a heading.
+- A number in a word, a hexadecimal number, a size, a port, a name of a standard: `P256`, `X25519`, `SHA-256`, `0xC2`, `C2_FIELD`, `4433`, `4 KiB`.
+- A step of one digit: the steps of an algorithm or of a scenario (`RFC 6582 3.2, step 4`).
+- A date with no word of a decision before it: an example of a format, a test vector, the date of a measure.
+
+The check prefers a comment breach that it does not see to a correct comment that it refuses. It does not see:
+
+- a property by its short label with no parenthesis (`P13` alone), and a label of a finding in a sentence with no parenthesis, no "finding" and no colon at the start (`B1` alone);
+- the label of a section of a document with no path (`K2, memory`);
+- a step of one digit, and a date of a decision with no word of a decision in the 48 bytes before it;
+- a comment `/* ... */`, and a line of a string that runs over several lines (the scanner reads one line at a time).
+
+A file that `support/cryptography/origin.manifest` lists is not read: it is taken from the cryptography of Odin, `kerneltool cryptography-origin` proves that it is its origin with listed changes only, and its comments are those of Odin. A file is exempt only by a manifest that the table of exemptions of `tools/kerneltool/comment_rule_check.odin` names, with the reason.
+
 ## The bounds of the tests
 
 A test checks a condition: a value, a state, a line of the log. A test that depends on the speed of the computer that runs it fails on a loaded host with no fault of the system, so no test asserts a speed.
