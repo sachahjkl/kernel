@@ -1058,3 +1058,12 @@ The order, as told to the owner on 2026-11-10:
 12. The other gaps of this file: principals, signatures, TPM and Secure Boot, the document service, keyboard layouts.
 13. The interface package, next users, in this order: `inspect` (a list with a filter and a choice, tables, a hex view), `scheduler` and `server` (their own `card` and large text), the bar, the menus and the window frames of the compositor, the cards of the boot display, then the tables of `budget`, `rights`, `origin`, `limits`, `frames`, `imports`, `processors`, the measures of `crowd`, `flow`, `disk`, then `monitor`, `manual`, `notes`, `tally`, `terminal`. Then the package as a module for each program: the description passes tables as parameters since 416, and `interface_through_module` uses it (426); the elements that take input need the interface state as a table of one row with the direction Change.
 14. The extended state only at a switch of threads: done (548, 549). Next: skip the restore when a processor takes again the thread whose state its registers hold, with a measure.
+
+After the trusted boot and `remote` over QUIC, the order is:
+
+1. The primitives that the system itself lacks, and that a guest needs too: every kind of fault of a thread as a record of the fault ring (page faults only today); stop a thread, read and write its registers, resume it; storage at the size of a tree of files (a store holds 39 objects of about 1 MiB today).
+2. The IOMMU: a device reaches only the memory that its service was granted.
+3. A guest (`docs/GLOSSARY.md`): the processor support of the test host first (SVM), a second form of address space that the kernel builds from memory objects. First commit: a guest whose write to a port arrives as a record in the program that runs it.
+4. Linux in a guest.
+5. The access to a GPU for acceleration: the one graphics interface of the properties in software first, then over the virtual GPU of the test machine, then a driver domain (`docs/GLOSSARY.md`) on a real GPU, as an opt-in test.
+6. Programs of NT: studied first; dropped if it needs a large machinery.

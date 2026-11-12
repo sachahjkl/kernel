@@ -35,7 +35,7 @@ Three rules apply to every decision:
 
 1. **One mechanism for one concept.** If two mechanisms do the same work, delete one.
 2. **Reuse proven software where it fits.** Do not write again what is small, correct and permissively licensed.
-3. **No compatibility goal.** The system does not implement POSIX, Win32, or the Linux system call interface.
+3. **No foreign interface in the system.** The system does not implement POSIX, Win32, or the Linux system call interface: no program of the system and no kernel operation has their concepts. A foreign system can run whole inside a guest: a machine that a program of the system runs, and that holds only what that program was granted. The properties hold at the boundary of the guest; inside it, the foreign system keeps its own concepts. (2026-11-12: the rule said "No compatibility goal" before; a guest was not considered then.)
 
 ## Assumptions
 

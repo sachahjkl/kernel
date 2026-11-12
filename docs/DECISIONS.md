@@ -17,7 +17,7 @@ This file is the record of the decisions of the project: who decided what, when,
 
 ## Groups
 
-1. [The principles, the properties and the contracts](#1-the-principles-the-properties-and-the-contracts): D-001 to D-039, D-191, D-205
+1. [The principles, the properties and the contracts](#1-the-principles-the-properties-and-the-contracts): D-001 to D-039, D-191, D-205, D-214
 2. [The way of working](#2-the-way-of-working): D-040 to D-070, D-190, D-202 to D-204, D-211 to D-213
 3. [The kernel](#3-the-kernel): D-071 to D-083
 4. [Memory](#4-memory): D-084 to D-088
@@ -322,6 +322,13 @@ This file is the record of the decisions of the project: who decided what, when,
 - Words: "je comprends pas. \"la personne\" ???" (to the question: the key of the person or the key of the machine in the TPM)
 - State: open: the owner has not objected and has not confirmed.
 - Where: `PROPERTIES.md`, property 21.
+
+### D-214 Foreign systems run in a guest; the access to the GPU is the aim
+- 2026-11-12. Decided by: the owner, on the proposals of the coordinator.
+- Decision: (1) Rule 3 of the objective is rewritten: no foreign interface in the system; a foreign system runs whole inside a guest that holds only its grants. (2) The foreign concepts (fork, signals, user identifiers, a registry) exist only inside one guest, one instance for each launch. (3) Linux runs in a guest first; a layer for one binary is not planned. (4) Code of 32 bits runs only inside a guest. (5) The GPU: a driver domain, on one GPU that the owner owns, as an opt-in test. (6) The kernel can gain 3 to 5 operations past 32, each with its reason recorded (this settles Q-11). Among the forms, the most performant and the most modular one is chosen. The access to a GPU for acceleration is what matters; compatibility with NT is not decided: it is studied first, and it is dropped if it needs a large machinery.
+- Words: "je suis okay avec test propositions, (faire les choix  plus performant/modulaire possibles). pour nt je sais pas, va voir ce que fait librent (si c'est trop compliqué, on va pas faire une usine à gaz, si ça se trouve vouloir avoir une \"compat\" est con. pour moi l'important c'est de fournir un accès au gpu pour faire de l'accélération)" [test: tes; librent: not identified by the coordinator, asked]
+- State: in force; no code yet. The comparison with the properties is the report of the coordinator of 2026-11-12.
+- Where: `PROPERTIES.md`, "Objective", rule 3; `FIRST_MILESTONE.md`, "Next steps".
 
 ## 2. The way of working
 
@@ -1565,7 +1572,7 @@ Each question waits for an answer of the owner. The proposal is what holds until
 - **Q-08 The picture of every pointer of Posy's Cursor.** It stays in the devlog (D-134). Proposal: as now.
 - **Q-09 The temple of Jon in a post.** Until the owner decides, it is not posted (D-136, D-183).
 - **Q-10 The token of Cloudflare.** The rules of the headers and the purge of the cache need a token with the rights "Transform Rules: Edit" and "Cache Purge" (D-171).
-- **Q-11 The next kernel operation past 32.** (D-073). Proposal: the coordinator raises the target with a recorded reason, as the owner delegated.
+- **Q-11 The next kernel operation past 32.** (D-073). Settled by D-214. The proposal was: the coordinator raises the target with a recorded reason, as the owner delegated.
 - **Q-12 The machine tests in the site workflow.** Settled by D-194: the full check commits its numbers in the measure record; the workflow runs no machine test.
 - **Q-13 The cache of the site workflow.** The cache of GitHub Actions now, or FlakeHub Cache (D-170).
 - **Q-14 The tone of the posts.** See conflict C-10.
