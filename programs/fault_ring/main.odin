@@ -68,6 +68,12 @@ REPAIRS_CODE :: 0x10
 REPAIRS_ALL :: 0xF
 STOP_WHILE_WAITING_CODE :: 7
 FULL_RING_THREADS :: op.FAULT_RECORD_CAPACITY + 1
+// The budget of each child. The largest child needs about 300 pages (17
+// threads with their stacks and thread areas, its own stack of 64 pages,
+// 65 committed pages, its page tables) and 19 threads (the main thread,
+// the handler, and the 17 threads of a full ring).
+CHILD_PAGES :: 512
+CHILD_THREADS :: 20
 STACK_PAGES :: 64
 LAZY_PAGES :: 16
 LAZY_PAGE :: 3 // The page of the lazy object that case 1 reads.
@@ -317,25 +323,49 @@ child :: proc "contextless" (role: Role) -> ! {
 // child_run starts the child of a role, waits for its stop, and gives its
 // stop code and stop report. The budget of this program, before the start
 // and after the end of the child, says if the child left anything behind.
-child_run :: proc "contextless" (role: Role) -> (code: u32, report: op.Stop_Report, left_behind: bool) {
+// ran is false when a call failed: the call, its status and the budget are
+// on the log, and the case is wrong; a failed call is never read as a stop.
+child_run :: proc "contextless" (role: Role, name: string) -> (code: u32, report: op.Stop_Report, left_behind: bool, ran: bool) {
 	before, _ := system.budget_read()
 	grants: [op.CONTEXT_HANDLES]system.Grant
 	grants[op.CONTEXT_LOG] = {log_handle, {.Write}}
 	values: [op.CONTEXT_VALUES]u64
 	values[VALUE_ROLE] = ROLE_TAG | u64(role)
 	error: module.Load_Error
-	program, status := system.program_start(system.image_find(image, "fault_ring"), "fault_ring child", grants, random.values_with_seed(&program_generator, values), {pages = 1024, programs = 1, threads = 20, processor = 500_000, log_records = 20}, nil, nil, {image = image}, &error)
+	program, status := system.program_start(system.image_find(image, "fault_ring"), "fault_ring child", grants, random.values_with_seed(&program_generator, values), {pages = CHILD_PAGES, programs = 1, threads = CHILD_THREADS, processor = 500_000, log_records = 20}, nil, nil, {image = image}, &error)
 	if status != .Ok {
-		return 0, {}, true
+		buffer: [512]u8
+		lines := system.Writer{buffer = buffer[:]}
+		system.load_error_text(&lines, &error)
+		system.log("fault_ring: ", name, ": program_start failed: ", op.STATUS_NAMES[status], "; the load: ", system.written(&lines), "; this program can give pages ", before.pages, ", programs ", before.programs, ", threads ", before.threads, ", and the child asks ", u64(CHILD_PAGES), ", 1, ", u64(CHILD_THREADS))
+		return
 	}
+	stopped := false
+	results: [7]u64
 	for deadline := system.time() + 10_000; system.time() < deadline; {
-		if state, _ := system.program_state(program); state == .Stopped {
+		results, status = system.call(.Program_State, u64(program))
+		if status != .Ok {
+			system.log("fault_ring: ", name, ": Program_State failed: ", op.STATUS_NAMES[status])
+			system.close(program)
+			return
+		}
+		if op.Program_State(results[0]) == .Stopped {
+			stopped = true
 			break
 		}
 		system.sleep(system.time() + 10)
 	}
-	_, code = system.program_state(program)
-	report = system.program_stop_report(program)
+	if !stopped {
+		system.log("fault_ring: ", name, ": the child did not stop in 10 s")
+		system.close(program)
+		return
+	}
+	code = u32(results[1])
+	if _, status = system.call(.Program_State, u64(program), u64(uintptr(&report))); status != .Ok {
+		system.log("fault_ring: ", name, ": Program_State with the stop report failed: ", op.STATUS_NAMES[status])
+		system.close(program)
+		return
+	}
 	system.close(program)
 	// The budget of a child returns when its last processor left it: wait
 	// for it, at most one second.
@@ -347,6 +377,10 @@ child_run :: proc "contextless" (role: Role) -> (code: u32, report: op.Stop_Repo
 			system.sleep(system.time() + 10)
 		}
 	}
+	if left_behind {
+		system.log("fault_ring: ", name, ": the budget of this program did not get back every page, thread and program of the child in 1 s")
+	}
+	ran = true
 	return
 }
 
@@ -395,15 +429,15 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	draw(&window)
 
 	// The child that repairs: one run for the cases 1 to 4.
-	code, _, left := child_run(.Repairs)
+	code, _, left, ran := child_run(.Repairs, "the child that repairs")
 	for &item in cases[:4] {
 		item.ran = true
-		item.right = code & ~u32(REPAIRS_ALL) == REPAIRS_CODE && code & item.bit != 0 && !left
+		item.right = ran && code & ~u32(REPAIRS_ALL) == REPAIRS_CODE && code & item.bit != 0 && !left
 	}
 	draw(&window)
 	for &item in cases[4:] {
 		report: op.Stop_Report
-		code, report, left = child_run(item.role)
+		code, report, left, ran = child_run(item.role, item.name)
 		item.ran = true
 		switch item.role {
 		case .Parent, .Repairs:
@@ -421,6 +455,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		case .Handler_Ends:
 			item.right = code == op.STOP_CODE_FAULT_UNANSWERED && !left
 		}
+		item.right = item.right && ran
 		case_log(&item, code, report.address)
 		draw(&window)
 	}

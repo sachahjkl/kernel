@@ -263,7 +263,7 @@ things_of :: proc "contextless" (name: string) -> system.Budget_Amounts {
 	case "return_fault":
 		return {pages = 2048, programs = 2, threads = 2} // One child at a time, with one thread.
 	case "fault_ring":
-		return {pages = 3072, programs = 2, threads = 21} // One child at a time: 1024 pages and 20 threads (17 that fault in a full ring, its main thread and its handler).
+		return {pages = 4096, programs = 2, threads = 21} // One child at a time: 512 pages and 20 threads (17 that fault in a full ring, its main thread and its handler).
 	case "extended_state":
 		return {pages = 2048, programs = 1, threads = 32} // The main thread and up to 31 threads that hold their registers.
 	case "address_space":
@@ -310,7 +310,7 @@ things_of :: proc "contextless" (name: string) -> system.Budget_Amounts {
 // the log to them.
 log_grant :: proc "contextless" (name: string) -> system.Grant {
 	rights := system.Rights{.Write}
-	if name == "console" || name == "rings" || name == "errors" { // errors gives it to its child, which measures a refused Log.
+	if name == "console" || name == "rings" || name == "errors" || name == "fault_ring" { // errors gives it to its child, which measures a refused Log; the child of fault_ring that repairs logs its own cases.
 		rights += {.Give}
 	}
 	return {system.context_record().handles[op.CONTEXT_LOG], rights}
