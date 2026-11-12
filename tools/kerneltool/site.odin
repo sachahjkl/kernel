@@ -16,7 +16,7 @@ SITE_STYLE_SHEET :: "style.css"
 SITE_PICTURE_FOLDER :: "pictures"
 // The address of the repository: the one place that names it, because its
 // name can change with the name of the system.
-SITE_REPOSITORY_ADDRESS :: "https://github.com/sachahjkl/kernel"
+SITE_REPOSITORY_ADDRESS :: "https://github.com/sachahjkl/modus"
 SITE_SYSTEM_NAME :: "modus"
 SITE_RELEASE_COUNT :: 5
 SITE_LICENSE_FILE :: "LICENSE"
