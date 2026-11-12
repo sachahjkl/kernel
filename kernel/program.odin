@@ -169,7 +169,7 @@ Thread :: struct #align (64) {
 	queued:           bool,
 	placed:           bool, // The strategy placed the thread: virtual means something.
 	frame:        Frame,
-	extended_state: Extended_State_Area, // Only the processor that runs the thread uses it (docs/ARCHITECTURE.md, "The extended state of the processor").
+	extended_state: Extended_State_Area, // Complete while the thread is on no processor: schedule saves it when a processor leaves the thread, and restores it when a processor takes it (docs/ARCHITECTURE.md, "The extended state of the processor").
 	program:      u32,
 	number:       u32, // The index of the thread area in the program.
 	ring:         ring.Ring,

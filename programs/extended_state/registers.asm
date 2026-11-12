@@ -237,3 +237,227 @@ registers_enter_repeatedly:
 	LEAVE_CLEAN
 	RESTORE_CALLEE_REGISTERS
 	ret
+
+; registers_upper_halves_in_use(expected: ^Register_Image)
+; Loads ymm0 to ymm15 from the image and leaves them so: the compiled code
+; of the program uses legacy SSE instructions only, which keep the high
+; halves; so the AVX component stays in use until
+; registers_upper_halves_clean, and each switch of threads saves and
+; restores it.
+global registers_upper_halves_in_use
+registers_upper_halves_in_use:
+%assign n 0
+%rep 16
+	vmovdqu ymm %+ n, [rdi + IMAGE_VECTORS + n * 64]
+%assign n n + 1
+%endrep
+	ret
+
+; registers_upper_halves_clean(): the AVX component goes back to its init
+; state. Only where the processor has AVX.
+global registers_upper_halves_clean
+registers_upper_halves_clean:
+	vzeroupper
+	ret
+
+; The parts of a save and a restore of the extended state, each alone, in
+; this program on its own area.
+; fxsave, xsave, xsaveopt and xrstor are not privileged: a program runs them
+; with the mask of the kernel (edx:eax all ones: every component of XCR0),
+; so the kernel is not changed for the measure. Each routine is
+; (area: rawptr, count: u64) -> u64: the cycles of the cycle counter for
+; `count` loops. The area has 4096 bytes on 64 bytes. Between a save and a
+; restore the routine changes xmm0, as the kernel's copies do; after a
+; restore it changes xmm0 (or ymm0) again, as a program does: so the save
+; of the next loop has a modified component, as at a real entry.
+
+%macro TIME_START 0
+	mov r8, rdi                  ; the area
+	mov r9, rsi                  ; the count
+	lfence
+	rdtsc
+	shl rdx, 32
+	or rax, rdx
+	mov r10, rax                 ; the counter at the start
+%endmacro
+
+%macro TIME_END 0
+	lfence
+	rdtsc
+	shl rdx, 32
+	or rax, rdx
+	sub rax, r10
+%endmacro
+
+%macro ALL_COMPONENTS 0
+	mov eax, -1
+	mov edx, -1
+%endmacro
+
+; The loop alone: subtract it from the others.
+global measure_loop_alone
+measure_loop_alone:
+	TIME_START
+.again:
+	xorps xmm0, xmm1
+	dec r9
+	jnz .again
+	TIME_END
+	ret
+
+; The pair of master: fxsave64 at the entry, fxrstor64 at the resume.
+global measure_fxsave_and_fxrstor
+measure_fxsave_and_fxrstor:
+	fxsave64 [rdi]
+	TIME_START
+.again:
+	fxsave64 [r8]
+	xorps xmm0, xmm1
+	fxrstor64 [r8]
+	xorps xmm0, xmm1
+	dec r9
+	jnz .again
+	TIME_END
+	ret
+
+; The pair of the branch with no AVX: xsaveopt64 and xrstor64.
+global measure_xsaveopt_and_xrstor
+measure_xsaveopt_and_xrstor:
+	ALL_COMPONENTS
+	xsaveopt64 [rdi]
+	TIME_START
+.again:
+	ALL_COMPONENTS
+	xsaveopt64 [r8]
+	xorps xmm0, xmm1
+	ALL_COMPONENTS
+	xrstor64 [r8]
+	xorps xmm0, xmm1
+	dec r9
+	jnz .again
+	TIME_END
+	ret
+
+; The pair of the branch with AVX, for a program that uses only SSE:
+; xsaveopt64, vzeroupper, xrstor64.
+global measure_xsaveopt_vzeroupper_and_xrstor
+measure_xsaveopt_vzeroupper_and_xrstor:
+	ALL_COMPONENTS
+	xsaveopt64 [rdi]
+	TIME_START
+.again:
+	ALL_COMPONENTS
+	xsaveopt64 [r8]
+	vzeroupper
+	xorps xmm0, xmm1
+	ALL_COMPONENTS
+	xrstor64 [r8]
+	xorps xmm0, xmm1
+	dec r9
+	jnz .again
+	TIME_END
+	ret
+
+; The same for a program whose ymm registers have their high halves in use.
+global measure_xsaveopt_vzeroupper_and_xrstor_with_avx
+measure_xsaveopt_vzeroupper_and_xrstor_with_avx:
+	vxorps ymm0, ymm0, ymm1
+	ALL_COMPONENTS
+	xsaveopt64 [rdi]
+	TIME_START
+.again:
+	ALL_COMPONENTS
+	xsaveopt64 [r8]
+	vzeroupper
+	xorps xmm0, xmm1
+	ALL_COMPONENTS
+	xrstor64 [r8]
+	vxorps ymm0, ymm0, ymm1
+	dec r9
+	jnz .again
+	TIME_END
+	vzeroupper
+	ret
+
+; xsave64 with no optimization, and xrstor64.
+global measure_xsave_and_xrstor
+measure_xsave_and_xrstor:
+	ALL_COMPONENTS
+	xsave64 [rdi]
+	TIME_START
+.again:
+	ALL_COMPONENTS
+	xsave64 [r8]
+	xorps xmm0, xmm1
+	ALL_COMPONENTS
+	xrstor64 [r8]
+	xorps xmm0, xmm1
+	dec r9
+	jnz .again
+	TIME_END
+	ret
+
+global measure_vzeroupper
+measure_vzeroupper:
+	TIME_START
+.again:
+	vzeroupper
+	xorps xmm0, xmm1
+	dec r9
+	jnz .again
+	TIME_END
+	ret
+
+global measure_fxsave
+measure_fxsave:
+	TIME_START
+.again:
+	xorps xmm0, xmm1
+	fxsave64 [r8]
+	dec r9
+	jnz .again
+	TIME_END
+	ret
+
+global measure_fxrstor
+measure_fxrstor:
+	fxsave64 [rdi]
+	TIME_START
+.again:
+	fxrstor64 [r8]
+	xorps xmm0, xmm1
+	dec r9
+	jnz .again
+	TIME_END
+	ret
+
+; xsaveopt64 after a restore from the same area, as at an entry.
+global measure_xsaveopt
+measure_xsaveopt:
+	ALL_COMPONENTS
+	xsaveopt64 [rdi]
+	ALL_COMPONENTS
+	xrstor64 [rdi]
+	TIME_START
+.again:
+	xorps xmm0, xmm1
+	ALL_COMPONENTS
+	xsaveopt64 [r8]
+	dec r9
+	jnz .again
+	TIME_END
+	ret
+
+global measure_xrstor
+measure_xrstor:
+	ALL_COMPONENTS
+	xsaveopt64 [rdi]
+	TIME_START
+.again:
+	ALL_COMPONENTS
+	xrstor64 [r8]
+	xorps xmm0, xmm1
+	dec r9
+	jnz .again
+	TIME_END
+	ret

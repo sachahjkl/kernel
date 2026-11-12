@@ -75,7 +75,97 @@ foreign _ {
 	registers_hold :: proc "c" (expected, seen: ^Register_Image, level: Level, rounds, spins: u64) ---
 	registers_store :: proc "c" (seen: ^Register_Image, level: Level) ---
 	registers_enter_repeatedly :: proc "c" (expected: ^Register_Image, level: Level, count: u64) ---
+	// The parts of a save and a restore, each alone (registers.asm): the cycles of the
+	// cycle counter for `count` loops on the area.
+	registers_upper_halves_in_use :: proc "c" (expected: ^Register_Image) ---
+	registers_upper_halves_clean :: proc "c" () ---
+	measure_loop_alone :: proc "c" (area: rawptr, count: u64) -> u64 ---
+	measure_fxsave_and_fxrstor :: proc "c" (area: rawptr, count: u64) -> u64 ---
+	measure_xsaveopt_and_xrstor :: proc "c" (area: rawptr, count: u64) -> u64 ---
+	measure_xsaveopt_vzeroupper_and_xrstor :: proc "c" (area: rawptr, count: u64) -> u64 ---
+	measure_xsaveopt_vzeroupper_and_xrstor_with_avx :: proc "c" (area: rawptr, count: u64) -> u64 ---
+	measure_xsave_and_xrstor :: proc "c" (area: rawptr, count: u64) -> u64 ---
+	measure_vzeroupper :: proc "c" (area: rawptr, count: u64) -> u64 ---
+	measure_fxsave :: proc "c" (area: rawptr, count: u64) -> u64 ---
+	measure_fxrstor :: proc "c" (area: rawptr, count: u64) -> u64 ---
+	measure_xsaveopt :: proc "c" (area: rawptr, count: u64) -> u64 ---
+	measure_xrstor :: proc "c" (area: rawptr, count: u64) -> u64 ---
 }
+
+// The parts of a save and a restore that the program measures alone, on its own
+// area, with the mask of the kernel. Not privileged instructions: the kernel
+// is not changed for the measure.
+Part :: enum {
+	Loop_Alone,
+	Fxsave_And_Fxrstor,
+	Xsaveopt_And_Xrstor,
+	Xsaveopt_Vzeroupper_And_Xrstor,
+	Xsaveopt_Vzeroupper_And_Xrstor_With_Avx,
+	Xsave_And_Xrstor,
+	Fxsave,
+	Fxrstor,
+	Xsaveopt,
+	Xrstor,
+	Vzeroupper,
+}
+
+@(rodata)
+part_names := [Part]string {
+	.Loop_Alone                              = "the loop",
+	.Fxsave_And_Fxrstor                      = "fxsave64 + fxrstor64",
+	.Xsaveopt_And_Xrstor                     = "xsaveopt64 + xrstor64",
+	.Xsaveopt_Vzeroupper_And_Xrstor          = "xsaveopt64 + vzeroupper + xrstor64",
+	.Xsaveopt_Vzeroupper_And_Xrstor_With_Avx = "the same with ymm in use",
+	.Xsave_And_Xrstor                        = "xsave64 + xrstor64",
+	.Fxsave                                  = "fxsave64",
+	.Fxrstor                                 = "fxrstor64",
+	.Xsaveopt                                = "xsaveopt64",
+	.Xrstor                                  = "xrstor64",
+	.Vzeroupper                              = "vzeroupper",
+}
+
+Part_Measure :: #type proc "c" (area: rawptr, count: u64) -> u64
+
+// part_measure gives the routine of a part. A procedure, not a table: a
+// global whose initializer is not a constant is not initialized.
+part_measure :: proc "contextless" (part: Part) -> Part_Measure {
+	switch part {
+	case .Loop_Alone:
+		return measure_loop_alone
+	case .Fxsave_And_Fxrstor:
+		return measure_fxsave_and_fxrstor
+	case .Xsaveopt_And_Xrstor:
+		return measure_xsaveopt_and_xrstor
+	case .Xsaveopt_Vzeroupper_And_Xrstor:
+		return measure_xsaveopt_vzeroupper_and_xrstor
+	case .Xsaveopt_Vzeroupper_And_Xrstor_With_Avx:
+		return measure_xsaveopt_vzeroupper_and_xrstor_with_avx
+	case .Xsave_And_Xrstor:
+		return measure_xsave_and_xrstor
+	case .Fxsave:
+		return measure_fxsave
+	case .Fxrstor:
+		return measure_fxrstor
+	case .Xsaveopt:
+		return measure_xsaveopt
+	case .Xrstor:
+		return measure_xrstor
+	case .Vzeroupper:
+		return measure_vzeroupper
+	}
+	return measure_loop_alone
+}
+
+PART_LOOPS :: 100_000
+PART_RUNS :: 5 // The least of the runs: the others had an interrupt or a switch.
+
+Part_Area :: struct #align (64) {
+	bytes: [4096]u8,
+}
+part_area: Part_Area
+// The cycles of the cycle counter for one loop of each part, in tenths. 0:
+// the processor or the kernel does not give the instructions of that part.
+part_tenths: [Part]u64
 
 Register_Kind :: enum u8 {
 	Vector, // xmm, ymm or zmm, by the level.
@@ -321,6 +411,152 @@ worker_run :: proc "c" (parameter: rawptr) -> ! {
 	system.thread_stop()
 }
 
+// part_usable says if this program can run the instructions of a part:
+// xsave, xsaveopt and xrstor need CR4.OSXSAVE, which the kernel sets only
+// when it saves with xsaveopt; vzeroupper and ymm need AVX.
+part_usable :: proc "contextless" (part: Part) -> bool {
+	with_xsave := facts.leaf_1_ecx & sets.LEAF_1_ECX_OSXSAVE != 0
+	#partial switch part {
+	case .Xsaveopt_And_Xrstor, .Xsave_And_Xrstor, .Xsaveopt, .Xrstor:
+		return with_xsave
+	case .Xsaveopt_Vzeroupper_And_Xrstor, .Xsaveopt_Vzeroupper_And_Xrstor_With_Avx, .Vzeroupper:
+		return with_xsave && .Avx in usable
+	}
+	return true
+}
+
+// parts_measure measures each part that this processor and this kernel
+// give, PART_RUNS times, and keeps the least.
+parts_measure :: proc "contextless" () {
+	for part in Part {
+		if !part_usable(part) {
+			continue
+		}
+		least := max(u64)
+		for _ in 0 ..< PART_RUNS {
+			least = min(least, part_measure(part)(&part_area, PART_LOOPS))
+		}
+		part_tenths[part] = max(least * 10 / PART_LOOPS, 1)
+	}
+}
+
+// tenths_put writes a number of tenths as "12.3".
+tenths_put :: proc "contextless" (builder: ^interface.Text_Builder, tenths: u64) {
+	interface.text_put_number(builder, tenths / 10)
+	interface.text_put(builder, ".")
+	interface.text_put_number(builder, tenths % 10)
+}
+
+// part_text writes the parts from first to last as "name cycles (ns)".
+part_text :: proc "contextless" (builder: ^interface.Text_Builder, first, last: Part) -> string {
+	builder.count = 0
+	frequency := max(system.cycle_frequency(), 1)
+	for part in Part {
+		if part < first || part > last {
+			continue
+		}
+		if builder.count > 0 {
+			interface.text_put(builder, "; ")
+		}
+		interface.text_put(builder, part_names[part])
+		interface.text_put(builder, " ")
+		if part_tenths[part] == 0 {
+			interface.text_put(builder, "none")
+			continue
+		}
+		tenths_put(builder, part_tenths[part])
+		interface.text_put(builder, " (")
+		tenths_put(builder, part_tenths[part] * 1_000_000_000 / frequency)
+		interface.text_put(builder, " ns)")
+	}
+	return interface.text_of(builder)
+}
+
+// The hand-over between two threads: the main thread takes the even turns,
+// the second thread the odd ones. Each hand-over is a wake and a wait: the
+// thread that waits leaves its processor, so the kernel saves its extended
+// state, and the thread that it wakes is restored where it runs. With the
+// AVX component in use in both threads, each save and restore holds it.
+HAND_OVER_MILLISECONDS :: 500
+Hand_Over :: struct {
+	turn:      u32,
+	stop:      u32,
+	with_avx:  bool,
+	ready:     u32, // The second thread loaded its registers.
+}
+hand_over: Hand_Over
+hand_over_image: Register_Image
+// The nanoseconds of one hand-over: [0] with x87 and SSE in use, [1] with
+// the AVX component in use too. 0: not measured.
+hand_over_nanoseconds: [2]u64
+hand_over_counts: [2]u64
+
+// hand_over_registers puts the registers of a hand-over in use: only the
+// x87 and SSE of compiled code, or the ymm high halves too.
+hand_over_registers :: proc "contextless" (with_avx: bool) {
+	if with_avx {
+		registers_upper_halves_in_use(&hand_over_image)
+	} else if .Avx in usable {
+		registers_upper_halves_clean()
+	}
+}
+
+hand_over_second :: proc "c" (_: rawptr) -> ! {
+	hand_over_registers(hand_over.with_avx)
+	intrinsics.atomic_store(&hand_over.ready, 1)
+	for intrinsics.atomic_load(&hand_over.stop) == 0 {
+		turn := intrinsics.atomic_load(&hand_over.turn)
+		if turn % 2 == 0 {
+			system.word_wait(&hand_over.turn, turn, system.time() + 100)
+			continue
+		}
+		intrinsics.atomic_store(&hand_over.turn, turn + 1)
+		system.word_wake(&hand_over.turn)
+	}
+	if hand_over.with_avx {
+		registers_upper_halves_clean()
+	}
+	system.thread_stop()
+}
+
+// hand_over_measure measures one hand-over between two threads, with the
+// x87 and SSE registers in use, then with the AVX component in use. It
+// gives the count of hand-overs and the nanoseconds of one.
+hand_over_measure :: proc "contextless" (with_avx: bool) -> (count: u64, nanoseconds: u64) {
+	hand_over = {with_avx = with_avx}
+	pattern_fill(&hand_over_image, 77, 1)
+	thread, status := system.thread_start(hand_over_second, nil)
+	if status != .Ok {
+		return 0, 0
+	}
+	for intrinsics.atomic_load(&hand_over.ready) == 0 {
+		intrinsics.cpu_relax()
+	}
+	hand_over_registers(with_avx)
+	start := system.nanoseconds()
+	end := system.time() + HAND_OVER_MILLISECONDS
+	for system.time() < end {
+		turn := intrinsics.atomic_load(&hand_over.turn)
+		if turn % 2 == 1 {
+			system.word_wait(&hand_over.turn, turn, system.time() + 100)
+			continue
+		}
+		intrinsics.atomic_store(&hand_over.turn, turn + 1)
+		system.word_wake(&hand_over.turn)
+		count += 1
+	}
+	took := system.nanoseconds() - start
+	if with_avx {
+		registers_upper_halves_clean()
+	}
+	intrinsics.atomic_store(&hand_over.stop, 1)
+	intrinsics.atomic_add(&hand_over.turn, 2)
+	system.word_wake(&hand_over.turn, system.WAKE_ALL)
+	system.thread_wait(thread)
+	// Each count of this thread is two hand-overs: to the second thread and back.
+	return count * 2, took / max(count * 2, 1)
+}
+
 // entry_measure measures one empty kernel entry with the registers of a
 // level in use, after the threads of the test ended.
 entry_measure :: proc "contextless" () {
@@ -530,6 +766,15 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			start_wrong += worker.start_state_wrong
 		}
 		entry_measure()
+		parts_measure()
+		hand_over_counts[0], hand_over_nanoseconds[0] = hand_over_measure(false)
+		if .Avx in usable {
+			hand_over_counts[1], hand_over_nanoseconds[1] = hand_over_measure(true)
+		}
+		first_part, second_part, third_part: interface.Text_Builder
+		system.log("extended_state: the parts of a save and a restore, each alone in this program, cycles of the cycle counter for one loop (ns): ", part_text(&first_part, .Loop_Alone, .Fxsave_And_Fxrstor), "; ", part_text(&second_part, .Xsaveopt_And_Xrstor, .Xsaveopt_Vzeroupper_And_Xrstor), "; ", part_text(&third_part, .Xsaveopt_Vzeroupper_And_Xrstor_With_Avx, .Xsave_And_Xrstor))
+		system.log("extended_state: each instruction alone, cycles of the cycle counter for one loop (ns), the loop included: ", part_text(&first_part, .Fxsave, .Fxrstor), "; ", part_text(&second_part, .Xsaveopt, .Xrstor), "; ", part_text(&third_part, .Vzeroupper, .Vzeroupper))
+		system.log("extended_state: a hand-over between two threads by the word wait (a wake, a wait, and the save and restore of the thread that waits and of the thread that runs): ", hand_over_nanoseconds[0], " ns with x87 and SSE in use, ", hand_over_nanoseconds[1], " ns with the ymm high halves in use (0: not usable); ", hand_over_counts[0], " and ", hand_over_counts[1], " hand-overs in ", u64(HAND_OVER_MILLISECONDS), " ms each")
 		system.log("extended_state: an empty kernel entry, ", u64(MEASURE_ENTRIES), " times: ", entry_nanoseconds[.Sse], " ns with xmm in use, ", entry_nanoseconds[.Avx], " ns with ymm in use, ", entry_nanoseconds[.Avx_512], " ns with zmm in use (0: not usable)")
 		passed = wrong == 0 && start_wrong == 0
 		finished = true

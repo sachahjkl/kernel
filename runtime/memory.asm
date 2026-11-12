@@ -27,12 +27,16 @@
 ; bytes in four registers of 16 bytes. Each function reads all its source
 ; before it writes for 64 bytes or less, so the small forms also move.
 ;
-; The registers: rax, rcx, rdx, rsi, rdi, r8 to r10, xmm0 to xmm4. The
-; kernel saves the extended state of a program at each entry (xsaveopt, or
-; fxsave on a processor without it), and runs its own code with the
-; interrupts off, so the kernel can use xmm0 to xmm4. No AVX: the same file
-; runs in the boot program, in the kernel and in every program, also on a
+; The registers: rax, rcx, rdx, rsi, rdi, r8 to r10, xmm0 to xmm4. No AVX:
+; the same file runs in the boot program and in every program, also on a
 ; processor where the kernel does not enable AVX.
+;
+; The kernel form (WITHOUT_VECTOR_REGISTERS defined): no x87, SSE or AVX
+; register, because the registers of the program stay live through each
+; kernel entry (docs/ARCHITECTURE.md, "The extended state of the
+; processor"). It moves 17 to 64 bytes in general registers, rbx included
+; (saved on the stack), and more with rep movsb and rep stosb; a copy down
+; moves blocks of 8 bytes. It uses r11 too.
 ; The direction flag is clear at each call (docs/MODULE_CONTRACT.md, rule
 ; of the direction flag): rep movsb and rep stosb go up.
 bits 64
@@ -90,6 +94,38 @@ copy_bytes_without_overlap:
 	mov [rdi + rdx - 8], r8
 	ret
 .over16:
+%ifdef WITHOUT_VECTOR_REGISTERS
+	cmp rdx, 64
+	ja .over64
+	; Every read before the first write: the form also moves (copy_bytes_with_overlap).
+	push rbx
+	mov rcx, [rsi]
+	mov r8, [rsi + 8]
+	mov r9, [rsi + rdx - 16]
+	mov r10, [rsi + rdx - 8]
+	cmp edx, 32
+	jbe .store_four
+	mov r11, [rsi + 16]
+	mov rbx, [rsi + 24]
+	mov rax, [rsi + rdx - 32]
+	mov rsi, [rsi + rdx - 24]
+	mov [rdi + 16], r11
+	mov [rdi + 24], rbx
+	mov [rdi + rdx - 32], rax
+	mov [rdi + rdx - 24], rsi
+.store_four:
+	mov [rdi], rcx
+	mov [rdi + 8], r8
+	mov [rdi + rdx - 16], r9
+	mov [rdi + rdx - 8], r10
+	pop rbx
+	mov rax, rdi
+	ret
+.over64:
+	mov rcx, rdx
+	rep movsb
+	ret
+%else
 	cmp rdx, 64
 	ja .over64
 	movdqu xmm0, [rsi]
@@ -138,6 +174,7 @@ copy_bytes_without_overlap:
 	movdqu [r10 + 32], xmm2
 	movdqu [r10 + 48], xmm3
 	ret
+%endif
 
 ; copy_bytes_with_overlap: as copy_bytes_without_overlap, and the two parts can overlap.
 copy_bytes_with_overlap:
@@ -156,6 +193,20 @@ copy_bytes_with_overlap:
 	rep movsb
 	ret
 .down:
+%ifdef WITHOUT_VECTOR_REGISTERS
+	; Blocks of 8 bytes from the end. A block is read before the write
+	; that can reach it. The first 8 bytes are read first and written last.
+	mov rax, rdi
+	mov r8, [rsi]
+.loop:
+	sub rdx, 8
+	mov rcx, [rsi + rdx]
+	mov [rdi + rdx], rcx
+	cmp rdx, 8
+	ja .loop
+	mov [rdi], r8
+	ret
+%else
 	; Blocks of 16 bytes from the end. A block is read before the write
 	; that can reach it. The first 16 bytes are read first and written last.
 	mov rax, rdi
@@ -168,6 +219,7 @@ copy_bytes_with_overlap:
 	ja .loop
 	movdqu [rdi], xmm4
 	ret
+%endif
 
 ; fill_bytes_with_value: rdi the destination, esi the byte, rdx the count. Gives rdi in rax.
 fill_bytes_with_value:
@@ -199,6 +251,26 @@ fill_bytes_with_value:
 	mov [rdi + rdx - 8], rcx
 	jmp .done
 .over16:
+%ifdef WITHOUT_VECTOR_REGISTERS
+	cmp rdx, 64
+	ja .over64
+	mov [rdi], rcx
+	mov [rdi + 8], rcx
+	mov [rdi + rdx - 16], rcx
+	mov [rdi + rdx - 8], rcx
+	cmp edx, 32
+	jbe .done
+	mov [rdi + 16], rcx
+	mov [rdi + 24], rcx
+	mov [rdi + rdx - 32], rcx
+	mov [rdi + rdx - 24], rcx
+	jmp .done
+.over64:
+	mov eax, ecx
+	mov rcx, rdx
+	rep stosb
+	jmp .done
+%else
 	movq xmm0, rcx
 	punpcklqdq xmm0, xmm0
 	cmp rdx, 64
@@ -234,6 +306,7 @@ fill_bytes_with_value:
 	movdqu [r10 + 16], xmm0
 	movdqu [r10 + 32], xmm0
 	movdqu [r10 + 48], xmm0
+%endif
 .done:
 	mov rax, r9
 	ret

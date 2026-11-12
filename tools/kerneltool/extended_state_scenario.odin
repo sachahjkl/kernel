@@ -64,9 +64,9 @@ host_avx_512 :: proc() -> Host_Avx_512 {
 // The lines of the first machine, by what the host gives it.
 @(rodata)
 kernel_lines_with_each_feature := [Host_Avx_512]string {
-	.None                     = "kernel: extended state: x87, SSE, AVX; one save writes at most 832 bytes, in an area of 2688 bytes in each thread entry; saved with xsaveopt",
-	.Foundation               = "kernel: extended state: x87, SSE, AVX, AVX-512; one save writes at most 2688 bytes, in an area of 2688 bytes in each thread entry; saved with xsaveopt",
-	.Foundation_And_Byte_Word = "kernel: extended state: x87, SSE, AVX, AVX-512; one save writes at most 2688 bytes, in an area of 2688 bytes in each thread entry; saved with xsaveopt",
+	.None                     = "kernel: extended state: x87, SSE, AVX; one save writes at most 832 bytes, in an area of 2688 bytes in each thread entry; saved at a switch of threads with xsaveopt",
+	.Foundation               = "kernel: extended state: x87, SSE, AVX, AVX-512; one save writes at most 2688 bytes, in an area of 2688 bytes in each thread entry; saved at a switch of threads with xsaveopt",
+	.Foundation_And_Byte_Word = "kernel: extended state: x87, SSE, AVX, AVX-512; one save writes at most 2688 bytes, in an area of 2688 bytes in each thread entry; saved at a switch of threads with xsaveopt",
 }
 
 @(rodata)
@@ -104,7 +104,7 @@ scenario_extended_state_with_each_feature := [?]Step {
 
 @(rodata)
 scenario_extended_state_without_avx := [?]Step {
-	{kind = .Wait, text = "kernel: extended state: x87, SSE; one save writes at most 576 bytes, in an area of 2688 bytes in each thread entry; saved with xsaveopt"},
+	{kind = .Wait, text = "kernel: extended state: x87, SSE; one save writes at most 576 bytes, in an area of 2688 bytes in each thread entry; saved at a switch of threads with xsaveopt"},
 	{kind = .Wait, text = "compositor: surface console"},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "start(\"extended_state\")"},
@@ -120,7 +120,7 @@ scenario_extended_state_without_avx := [?]Step {
 
 @(rodata)
 scenario_extended_state_without_xsave := [?]Step {
-	{kind = .Wait, text = "kernel: extended state: x87, SSE; one save writes at most 512 bytes, in an area of 2688 bytes in each thread entry; saved with fxsave: the processor has no xsave or no xsaveopt"},
+	{kind = .Wait, text = "kernel: extended state: x87, SSE; one save writes at most 512 bytes, in an area of 2688 bytes in each thread entry; saved at a switch of threads with fxsave: the processor has no xsave or no xsaveopt"},
 	{kind = .Wait, text = "compositor: surface console"},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "start(\"extended_state\")"},

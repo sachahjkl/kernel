@@ -1886,6 +1886,9 @@ scenario_measure := [?]Step {
 	// save of the extended state (docs/ARCHITECTURE.md, "The extended state
 	// of the processor", section 4).
 	{kind = .Launch, text = "extended_state"},
+	{kind = .Wait, text = "extended_state: the parts of a save and a restore, each alone in this program, cycles of the cycle counter for one loop (ns): "},
+	{kind = .Wait, text = "extended_state: each instruction alone, cycles of the cycle counter for one loop (ns), the loop included: "},
+	{kind = .Wait, text = "extended_state: a hand-over between two threads by the word wait (a wake, a wait, and the save and restore of the thread that waits and of the thread that runs): "},
 	{kind = .Wait, text = "extended_state: an empty kernel entry, 100000 times: "},
 	{kind = .Wait, text = "extended_state: ok, "},
 	{kind = .Front, text = "console"},

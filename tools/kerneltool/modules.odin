@@ -23,6 +23,15 @@ SYSTEM_LIBRARY_FOLDER :: "support/system"
 // optimization), and a symbol of another object cannot replace them.
 RUNTIME_MEMORY :: "runtime/memory.asm"
 
+// The features of llc for the kernel: no x87, MMX, SSE or AVX instruction,
+// as the Linux kernel is built (-mno-80387 -mno-mmx -mno-sse -mno-sse2
+// -mno-avx -msoft-float). soft-float passes the floating point values of
+// the few runtime procedures that have them in general registers, and
+// makes their arithmetic calls: no code of the kernel calls those
+// procedures, and the link drops them (--gc-sections). The check after
+// the link (vector_check.odin) is the proof.
+KERNEL_TARGET_FEATURES :: "-mattr=-x87,-mmx,-sse,-sse2,-sse3,-ssse3,-sse4.1,-sse4.2,-avx,-avx2,-avx512f,+soft-float"
+
 // The modules of the project, each one after its imports.
 //   source:  the folder of the Odin package, and of its .asm files.
 // The exports of a module and their descriptions come from the source
@@ -223,7 +232,18 @@ build_module :: proc(build: Module_Build) -> bool {
 	}
 	// The LLVM of the Odin compiler (18) makes the object. Each function keeps
 	// its frame pointer: the kernel walks them for the stack trace of a fault.
-	run({"llc", "-O3", "--frame-pointer=all", "-relocation-model=pic", "--function-sections", "--data-sections", "-filetype=obj", "-o", join(objects, "/", build.name, ".o"), join(folder, "/", build.name, ".ll")}) or_return
+	llc := make([dynamic]string, context.temp_allocator)
+	append(&llc, "llc", "-O3", "--frame-pointer=all", "-relocation-model=pic", "--function-sections", "--data-sections", "-filetype=obj")
+	if build.kernel {
+		// The kernel has no x87, SSE or AVX instruction: the registers of a
+		// program stay live through each kernel entry, and only the switch
+		// of threads saves them (docs/ARCHITECTURE.md, "The extended state
+		// of the processor"). The IR of Odin has no target features of
+		// its own on its functions, so these features hold for all of it.
+		append(&llc, KERNEL_TARGET_FEATURES)
+	}
+	append(&llc, "-o", join(objects, "/", build.name, ".o"), join(folder, "/", build.name, ".ll"))
+	run(llc[:]) or_return
 	assembly := make([dynamic]string, context.temp_allocator)
 	append(&assembly, RUNTIME_MEMORY)
 	append(&assembly, ..(files_with_suffix(build.source, ".asm") or_return))
@@ -233,7 +253,12 @@ build_module :: proc(build: Module_Build) -> bool {
 	}
 	for source in assembly {
 		name := source[strings.last_index(source, "/") + 1:]
-		run({"nasm", "-f", "elf64", "-o", join(objects, "/", name, ".o"), source}) or_return
+		if build.kernel && source == RUNTIME_MEMORY {
+			// The kernel form of the copies: no vector register.
+			run({"nasm", "-f", "elf64", "-DWITHOUT_VECTOR_REGISTERS", "-o", join(objects, "/", name, ".o"), source}) or_return
+		} else {
+			run({"nasm", "-f", "elf64", "-o", join(objects, "/", name, ".o"), source}) or_return
+		}
 	}
 
 	// Only the exports of the module are visible in the linked object.
@@ -270,6 +295,9 @@ build_module :: proc(build: Module_Build) -> bool {
 	)
 	append(&link, ..(files_with_suffix(objects, ".o") or_return))
 	run(link[:]) or_return
+	if build.kernel && !kernel_has_no_vector_instruction(linked) {
+		return false
+	}
 
 	elf := read_file(linked) or_return
 	imports := make([dynamic]Import_File, context.temp_allocator)

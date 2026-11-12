@@ -5,11 +5,6 @@ default rel
 extern kernel_interrupt
 
 KERNEL_ENTER_VECTOR equ 128
-; Processor.extended_state_form (kernel/processor.odin) and its values
-; (Extended_State_Form in kernel/extended_state.odin).
-EXTENDED_STATE_FORM equ 32
-FORM_FXSAVE equ 0
-FORM_XSAVEOPT_AND_VZEROUPPER equ 2
 STUB_COUNT equ 80
 
 section .text
@@ -147,14 +142,13 @@ page_flush:                      ; (address)
 ; the address of the thread record. The swapgs instruction exchanges the two.
 ;   gs:0   the top of the kernel stack of the processor
 ;   gs:8   the stack of the program, during a kernel entry
-;   gs:16  the extended state area of the thread that the processor resumed
-;   gs:24  the address of the record
-;   gs:32  the form of the save of the extended state (one byte)
+;   gs:16  the address of the record
 ;
-; The extended state (docs/ARCHITECTURE.md, "The extended state of the
-; processor"): with xsave, edx:eax is all ones, so the save and the restore
-; take every component that XCR0 enables. The general registers are on the
-; stack already, so rax, rcx, rdx and r8 are free here.
+; An entry and a resume do not save or restore the x87, SSE and AVX
+; registers of the program: the kernel has no instruction that changes
+; them, so they stay live through the kernel. The scheduler saves them
+; when the processor leaves the thread for another one (docs/ARCHITECTURE.md,
+; "The extended state of the processor").
 interrupt_common:
 	PUSH_REGISTERS
 	cmp byte [user_access_guard], 0
@@ -165,19 +159,6 @@ interrupt_common:
 	jz interrupt_call
 	swapgs
 interrupt_from_program:
-	mov rcx, [gs:abs 16]
-	movzx r8d, byte [gs:abs EXTENDED_STATE_FORM]
-	cmp r8d, FORM_FXSAVE
-	je .with_fxsave
-	mov eax, -1
-	mov edx, -1
-	xsaveopt64 [rcx]
-	cmp r8d, FORM_XSAVEOPT_AND_VZEROUPPER
-	jne interrupt_call
-	vzeroupper                   ; Saved already: the kernel's SSE code runs with no high half in use.
-	jmp interrupt_call
-.with_fxsave:
-	fxsave64 [rcx]
 interrupt_call:
 	mov rdi, rsp
 	cld
@@ -207,16 +188,6 @@ kernel_enter:
 global resume
 resume:                          ; (frame: ^Frame) -> !: run a program
 	mov rsp, rdi
-	mov rcx, [gs:abs 16]
-	cmp byte [gs:abs EXTENDED_STATE_FORM], FORM_FXSAVE
-	je .with_fxrstor
-	mov eax, -1
-	mov edx, -1
-	xrstor64 [rcx]
-	jmp .restored
-.with_fxrstor:
-	fxrstor64 [rcx]
-.restored:
 	swapgs
 	POP_REGISTERS
 	add rsp, 16
@@ -247,7 +218,7 @@ stack_switch:                    ; (top: u64, entry: rawptr) -> !: continue on a
 
 global processor_self
 processor_self:                  ; () -> ^Processor
-	mov rax, [gs:abs 24]
+	mov rax, [gs:abs 16]
 	ret
 
 global cr0_read
@@ -274,13 +245,17 @@ extended_control_register_write: ; (register: u32, value: u64): xsetbv
 	xsetbv
 	ret
 
-; The save and the restore of the entry and of the resume, as functions:
-; the kernel proves the start state of a thread with them at boot, after
-; the setup of the first processor wrote its form.
+; The save and the restore of the extended state of a thread: the
+; scheduler calls them when a processor leaves a thread for another one,
+; and the first processor proves the start state with them at boot. These
+; three procedures are the only code of the kernel that names an x87, SSE
+; or AVX register (`kerneltool` refuses any other: vector_check.odin).
+; form: Extended_State_Form, 0 for fxsave64 and fxrstor64, 1 for
+; xsaveopt64 and xrstor64, with edx:eax all ones: every component of XCR0.
 global extended_state_save
-extended_state_save:             ; (area: ^Extended_State_Area)
-	cmp byte [gs:abs EXTENDED_STATE_FORM], FORM_FXSAVE
-	je .with_fxsave
+extended_state_save:             ; (area: ^Extended_State_Area, form: u8)
+	test sil, sil
+	jz .with_fxsave
 	mov eax, -1
 	mov edx, -1
 	xsaveopt64 [rdi]
@@ -290,9 +265,9 @@ extended_state_save:             ; (area: ^Extended_State_Area)
 	ret
 
 global extended_state_restore
-extended_state_restore:          ; (area: ^Extended_State_Area)
-	cmp byte [gs:abs EXTENDED_STATE_FORM], FORM_FXSAVE
-	je .with_fxrstor
+extended_state_restore:          ; (area: ^Extended_State_Area, form: u8)
+	test sil, sil
+	jz .with_fxrstor
 	mov eax, -1
 	mov edx, -1
 	xrstor64 [rdi]
@@ -305,12 +280,12 @@ extended_state_restore:          ; (area: ^Extended_State_Area)
 ; the x87 control word, MXCSR, the low 8 bytes of xmm0 and, with with_avx,
 ; bytes 16 to 23 of ymm0. No compiled code runs between the two.
 global extended_state_restore_and_read
-extended_state_restore_and_read: ; (area: ^Extended_State_Area, read: ^[4]u64, with_avx: bool)
+extended_state_restore_and_read: ; (area: ^Extended_State_Area, read: ^[4]u64, with_avx: bool, form: u8)
 	mov r8, rdi
 	mov r9, rsi
 	movzx r10d, dl
-	cmp byte [gs:abs EXTENDED_STATE_FORM], FORM_FXSAVE
-	je .with_fxrstor
+	test cl, cl
+	jz .with_fxrstor
 	mov eax, -1
 	mov edx, -1
 	xrstor64 [r8]
