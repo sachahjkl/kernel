@@ -269,14 +269,14 @@ site_guides_add :: proc(site: ^Site) -> bool {
 		cells := site_table_row_cells(line)
 		if len(cells) >= 2 && strings.has_prefix(cells[0], "`docs/") {
 			path := strings.trim(cells[0], "`")
-			if page, found := site.documents[path]; found && page != SITE_GLOSSARY_PAGE && strings.has_suffix(path, ".md") {
+			if page, found := site.documents[path]; found && page != site_page_file(SITE_GLOSSARY_FOLDER) && strings.has_suffix(path, ".md") {
 				append(&sources, path)
 			}
 		}
 	}
 	others := make([dynamic]string, context.temp_allocator)
 	for path, page in site.documents {
-		if !strings.has_prefix(path, "docs/") || page == SITE_GLOSSARY_PAGE {
+		if !strings.has_prefix(path, "docs/") || page == site_page_file(SITE_GLOSSARY_FOLDER) {
 			continue
 		}
 		listed := false
@@ -312,13 +312,13 @@ site_guides_add :: proc(site: ^Site) -> bool {
 		strings.write_string(&b, "</article>\n</div>\n<nav class=\"neighbours\" aria-label=\"Other guides\">\n")
 		if index > 0 {
 			previous := site.guides[index - 1]
-			fmt.sbprintf(&b, "<a rel=\"prev\" href=\"%s\">Previous: ", site_relative(guide.path, previous.path))
+			fmt.sbprintf(&b, "<a rel=\"prev\" href=\"%s\">Previous: ", site_page_link(site, guide.path, previous.path))
 			site_escape(&b, previous.title)
 			strings.write_string(&b, "</a>\n")
 		}
 		if index + 1 < len(site.guides) {
 			next := site.guides[index + 1]
-			fmt.sbprintf(&b, "<a rel=\"next\" href=\"%s\">Next: ", site_relative(guide.path, next.path))
+			fmt.sbprintf(&b, "<a rel=\"next\" href=\"%s\">Next: ", site_page_link(site, guide.path, next.path))
 			site_escape(&b, next.title)
 			strings.write_string(&b, "</a>\n")
 		}
@@ -331,11 +331,12 @@ site_guides_add :: proc(site: ^Site) -> bool {
 	}
 
 	// The index of the guides.
+	guides_page := site_section_page(.Guides)
 	b := strings.builder_make(context.temp_allocator)
-	strings.write_string(&b, "<h1>Guides</h1>\n<p>The documents of the repository: how each part of the system is designed, and why. The tables of what exists are in the <a href=\"../reference/index.html\">reference</a>.</p>\n")
+	fmt.sbprintf(&b, "<h1>Guides</h1>\n<p>The documents of the repository: how each part of the system is designed, and why. The tables of what exists are in the <a href=\"%s\">reference</a>.</p>\n", site_page_link(site, guides_page, site_section_page(.Reference)))
 	guides_table := site_table_start(&b, "Guides", {{"Guide", .Prose}, {"What it holds", .Prose}, {"File", .Name}})
 	for guide in site.guides {
-		fmt.sbprintf(&b, "<tr><td><a href=\"%s\">", site_relative("guides/index.html", guide.path))
+		fmt.sbprintf(&b, "<tr><td><a href=\"%s\">", site_page_link(site, guides_page, guide.path))
 		site_escape(&b, guide.title)
 		strings.write_string(&b, "</a></td>")
 		site_cell(&b, guide.about)
@@ -344,7 +345,7 @@ site_guides_add :: proc(site: ^Site) -> bool {
 	}
 	site_table_end(&b, guides_table)
 	site_source_line(site, &b, SITE_README_FILE)
-	site_page_add(site, Site_Page{path = "guides/index.html", title = "Guides", description = site_description_cut(fmt.tprintf("The %d documents of %s: how each part of the system is designed, and why.", len(site.guides), SITE_SYSTEM_NAME)), section = .Guides, crumbs = site_crumbs(.Home), body = strings.to_string(b), sources = site_sources(SITE_README_FILE)})
+	site_page_add(site, Site_Page{path = guides_page, is_index = true, title = "Guides", description = site_description_cut(fmt.tprintf("The %d documents of %s: how each part of the system is designed, and why.", len(site.guides), SITE_SYSTEM_NAME)), section = .Guides, crumbs = site_crumbs(.Home), body = strings.to_string(b), sources = site_sources(SITE_README_FILE)})
 	return true
 }
 
@@ -352,9 +353,9 @@ site_guides_add :: proc(site: ^Site) -> bool {
 // then the page of the section when it is not the home.
 site_crumbs :: proc(section: Site_Section) -> []Site_Crumb {
 	crumbs := make([dynamic]Site_Crumb, context.temp_allocator)
-	append(&crumbs, Site_Crumb{title = site_section_titles[.Home], path = site_section_pages[.Home]})
+	append(&crumbs, Site_Crumb{title = site_section_titles[.Home], path = site_section_page(.Home)})
 	if section != .Home {
-		append(&crumbs, Site_Crumb{title = site_section_titles[section], path = site_section_pages[section]})
+		append(&crumbs, Site_Crumb{title = site_section_titles[section], path = site_section_page(section)})
 	}
 	return crumbs[:]
 }
@@ -371,7 +372,8 @@ site_reference_add :: proc(site: ^Site) -> bool {
 	// The glossary.
 	{
 		content := site_read("docs/GLOSSARY.md") or_return
-		renderer := site_renderer_make(site, SITE_GLOSSARY_PAGE, "docs/GLOSSARY.md")
+		glossary_page := site_page_file(SITE_GLOSSARY_FOLDER)
+		renderer := site_renderer_make(site, glossary_page, "docs/GLOSSARY.md")
 		renderer.glossary = true
 		site_render_markdown(&renderer, content)
 		b := strings.builder_make(context.temp_allocator)
@@ -381,13 +383,13 @@ site_reference_add :: proc(site: ^Site) -> bool {
 		strings.write_string(&b, strings.to_string(renderer.builder))
 		strings.write_string(&b, "</article>\n</div>\n")
 		title := site_document_title(content)
-		site_page_add(site, Site_Page{path = SITE_GLOSSARY_PAGE, title = title, description = site_description_cut(fmt.tprintf("The %d terms of %s: one term for each concept, with its definition and the words that it replaces.", len(site.terms), SITE_SYSTEM_NAME)), section = .Reference, crumbs = site_crumbs(.Reference), body = strings.to_string(b), sources = site_sources("docs/GLOSSARY.md")})
-		append(&entries, Site_Reference_Entry{path = SITE_GLOSSARY_PAGE, title = title, what = "Each term of the project, with its definition. A term on another page links here.", source = "docs/GLOSSARY.md"})
+		site_page_add(site, Site_Page{path = glossary_page, title = title, description = site_description_cut(fmt.tprintf("The %d terms of %s: one term for each concept, with its definition and the words that it replaces.", len(site.terms), SITE_SYSTEM_NAME)), section = .Reference, crumbs = site_crumbs(.Reference), body = strings.to_string(b), sources = site_sources("docs/GLOSSARY.md")})
+		append(&entries, Site_Reference_Entry{path = glossary_page, title = title, what = "Each term of the project, with its definition. A term on another page links here.", source = "docs/GLOSSARY.md"})
 	}
 
 	// The commands of the tool.
 	{
-		path :: "reference/commands.html"
+		path := site_page_file(SITE_COMMANDS_FOLDER)
 		b := strings.builder_make(context.temp_allocator)
 		commands := COMMANDS
 		fmt.sbprintf(&b, "<h1>Commands of kerneltool</h1>\n<p>All the automation of the project is one program, <code>kerneltool</code>. Run a command with <code>nix develop -c kerneltool &lt;command&gt;</code>. %d commands.</p>\n", len(commands))
@@ -406,7 +408,7 @@ site_reference_add :: proc(site: ^Site) -> bool {
 
 	// The measured numbers.
 	{
-		path :: "reference/numbers.html"
+		path := site_page_file(SITE_NUMBERS_FOLDER)
 		b := strings.builder_make(context.temp_allocator)
 		measured_count := 0
 		for number in site.measured {
@@ -449,7 +451,7 @@ site_reference_add :: proc(site: ^Site) -> bool {
 
 	// The licenses.
 	{
-		path :: "reference/licenses.html"
+		path := site_page_file(SITE_LICENSES_FOLDER)
 		b := strings.builder_make(context.temp_allocator)
 		strings.write_string(&b, "<h1>Licenses</h1>\n<p>The license of the system, and of each part that it holds or uses. A cell with no source in the repository says \"" + SITE_NOT_RECORDED + "\".</p>\n<h2 id=\"system\">What the system holds</h2>\n")
 		system_ids, build_ids := site_license_row_ids(site.licenses)
@@ -465,11 +467,12 @@ site_reference_add :: proc(site: ^Site) -> bool {
 	site_generated_tables_add(site, &entries)
 
 	// The index of the reference.
+	reference_page := site_section_page(.Reference)
 	b := strings.builder_make(context.temp_allocator)
 	strings.write_string(&b, "<h1>Reference</h1>\n<p>Tables that the tool generates from the code and the files that define each thing. The guides explain why; these tables say what exists in this build.</p>\n")
 	reference_table := site_table_start(&b, "Reference tables", {{"Table", .Prose}, {"What it holds", .Prose}, {"Generated from", .Name}})
 	for entry in entries {
-		fmt.sbprintf(&b, "<tr><td><a href=\"%s\">", site_relative("reference/index.html", entry.path))
+		fmt.sbprintf(&b, "<tr><td><a href=\"%s\">", site_page_link(site, reference_page, entry.path))
 		site_escape(&b, entry.title)
 		strings.write_string(&b, "</a></td>")
 		site_cell(&b, entry.what)
@@ -477,7 +480,7 @@ site_reference_add :: proc(site: ^Site) -> bool {
 		strings.write_string(&b, "</tr>\n")
 	}
 	site_table_end(&b, reference_table)
-	site_page_add(site, Site_Page{path = "reference/index.html", title = "Reference", description = site_description_cut(fmt.tprintf("The reference of %s: %d tables that the tool generates from the code and the files of the repository.", SITE_SYSTEM_NAME, len(entries))), section = .Reference, crumbs = site_crumbs(.Home), body = strings.to_string(b)})
+	site_page_add(site, Site_Page{path = reference_page, is_index = true, title = "Reference", description = site_description_cut(fmt.tprintf("The reference of %s: %d tables that the tool generates from the code and the files of the repository.", SITE_SYSTEM_NAME, len(entries))), section = .Reference, crumbs = site_crumbs(.Home), body = strings.to_string(b)})
 	return true
 }
 
@@ -537,6 +540,7 @@ site_license_table :: proc(site: ^Site, b: ^strings.Builder, name: string, rows:
 }
 
 site_releases_add :: proc(site: ^Site) {
+	path := site_section_page(.Releases)
 	b := strings.builder_make(context.temp_allocator)
 	types := CHANGE_TYPES
 	releases := site.changelog.releases
@@ -546,7 +550,7 @@ site_releases_add :: proc(site: ^Site) {
 	for changelog_release in releases {
 		number := release_number_text(changelog_release.number)
 		fmt.sbprintf(&b, "<section class=\"release\">\n<h2 id=\"%s\">%s <span class=\"date\">%s</span></h2>\n", site_release_id(number), number, changelog_release.date)
-		site_news_of_release(site, &b, number)
+		site_news_of_release(site, &b, path, number)
 		type_index := -1
 		for entry in changelog_release.entries {
 			if entry.type_index != type_index {
@@ -565,7 +569,7 @@ site_releases_add :: proc(site: ^Site) {
 		}
 		strings.write_string(&b, "</section>\n")
 	}
-	site_page_add(site, Site_Page{path = site_section_pages[.Releases], title = "Releases", description = site_description_cut(fmt.tprintf("Every release of %s, newest first: %d releases, from %s to %s, with what each one brings.", SITE_SYSTEM_NAME, len(releases), oldest, site.release)), section = .Releases, crumbs = site_crumbs(.Home), body = strings.to_string(b), sources = site_sources(CHANGELOG_FILE)})
+	site_page_add(site, Site_Page{path = path, title = "Releases", description = site_description_cut(fmt.tprintf("Every release of %s, newest first: %d releases, from %s to %s, with what each one brings.", SITE_SYSTEM_NAME, len(releases), oldest, site.release)), section = .Releases, crumbs = site_crumbs(.Home), body = strings.to_string(b), sources = site_sources(CHANGELOG_FILE)})
 }
 
 // One stage of the start of the machine, as the kernel logs it:
@@ -638,10 +642,10 @@ site_home_head :: proc(site: ^Site, b: ^strings.Builder) {
 	site_inline(b, site.readme.tagline)
 	strings.write_string(b, "</p>\n<ul class=\"doors\">\n")
 	for section in Site_Section {
-		if section == .Home || !site_page_exists(site, site_section_pages[section]) {
+		if section == .Home || !site_page_exists(site, site_section_page(section)) {
 			continue
 		}
-		fmt.sbprintf(b, "<li><a href=\"%s\">%s</a></li>\n", site_section_pages[section], site_section_titles[section])
+		fmt.sbprintf(b, "<li><a href=\"%s\">%s</a></li>\n", site_page_link(site, site_section_page(.Home), site_section_page(section)), site_section_titles[section])
 	}
 	fmt.sbprintf(b, "<li><a href=\"%s\">The repository</a></li>\n", SITE_REPOSITORY_ADDRESS)
 	strings.write_string(b, "</ul>\n</div>\n</header>\n")
@@ -661,6 +665,7 @@ site_home_explanation :: proc(site: ^Site, b: ^strings.Builder) {
 }
 
 site_home_add :: proc(site: ^Site) {
+	home := site_section_page(.Home)
 	b := strings.builder_make(context.temp_allocator)
 	site_home_head(site, &b)
 
@@ -694,7 +699,7 @@ site_home_add :: proc(site: ^Site) {
 	strings.write_string(&b, "</section>\n")
 
 	// The modules of the boot image, as tiles: each a link to its page.
-	site_tiles_write(site, &b, site_section_pages[.Home])
+	site_tiles_write(site, &b, home)
 
 	// A few numbers: the first three that this build measured.
 	strings.write_string(&b, "<h2 id=\"numbers\">Measured</h2>\n<div class=\"measures\">\n")
@@ -710,7 +715,7 @@ site_home_add :: proc(site: ^Site) {
 		site_escape(&b, number.text)
 		strings.write_string(&b, "</code></p>\n</article>\n")
 	}
-	strings.write_string(&b, "</div>\n<p><a href=\"reference/numbers.html\">Every measured number, with its log and its conditions</a></p>\n")
+	fmt.sbprintf(&b, "</div>\n<p><a href=\"%s\">Every measured number, with its log and its conditions</a></p>\n", site_page_link(site, home, site_page_file(SITE_NUMBERS_FOLDER)))
 
 	// The pictures of the machine, in their groups.
 	strings.write_string(&b, "<h2 id=\"pictures\">The machine</h2>\n<p class=\"source\">Pictures of the screen that the machine test takes under QEMU; the captions are those of <code>README.md</code>. A picture opens at full size.</p>\n")
@@ -741,9 +746,9 @@ site_home_add :: proc(site: ^Site) {
 
 	// The newest release.
 	newest := site.changelog.releases[0]
-	fmt.sbprintf(&b, "<h2 id=\"release\">The newest release</h2>\n<p><a href=\"%s#%s\">%s</a>, %s: %d changes. ", site_section_pages[.Releases], site_release_id(site.release), site.release, newest.date, len(newest.entries))
+	fmt.sbprintf(&b, "<h2 id=\"release\">The newest release</h2>\n<p><a href=\"%s#%s\">%s</a>, %s: %d changes. ", site_page_link(site, home, site_section_page(.Releases)), site_release_id(site.release), site.release, newest.date, len(newest.entries))
 	fmt.sbprintf(&b, "%d steps so far; each step is one tested commit on <code>master</code>.</p>\n", site.step_count)
-	site_page_add(site, Site_Page{path = site_section_pages[.Home], title = SITE_SYSTEM_NAME, description = site_description_cut(site.readme.lead), section = .Home, body = strings.to_string(b), sources = site_sources(SITE_README_FILE, CHANGELOG_FILE)})
+	site_page_add(site, Site_Page{path = home, is_index = true, title = SITE_SYSTEM_NAME, description = site_description_cut(site.readme.lead), section = .Home, body = strings.to_string(b), sources = site_sources(SITE_README_FILE, CHANGELOG_FILE)})
 }
 
 // site_read_quiet reads a file that can be absent, with no message.

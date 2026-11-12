@@ -24,7 +24,7 @@ site_module_by_name :: proc(site: ^Site, name: string) -> (item: Site_Module, fo
 // a page of the site.
 site_module_link :: proc(site: ^Site, b: ^strings.Builder, from_page, name: string) {
 	if item, found := site_module_by_name(site, name); found {
-		fmt.sbprintf(b, "<a href=\"%s\"><code>", site_relative(from_page, item.page))
+		fmt.sbprintf(b, "<a href=\"%s\"><code>", site_page_link(site, from_page, item.page))
 		site_escape(b, name)
 		strings.write_string(b, "</code></a>")
 		return
@@ -42,7 +42,7 @@ site_program_names_cell :: proc(site: ^Site, b: ^strings.Builder, names: []strin
 		if index > 0 {
 			strings.write_string(b, ", ")
 		}
-		site_module_link(site, b, SITE_GRANTS_PAGE, name)
+		site_module_link(site, b, site_page_file(SITE_GRANTS_FOLDER), name)
 	}
 	strings.write_string(b, "</td>")
 }
@@ -74,6 +74,7 @@ site_boot_image_entry :: proc(site: ^Site, name: string) -> (entry: Site_Image_E
 site_module_pages_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Entry) {
 	reference := &site.reference
 
+	modules_page := site_page_file(SITE_MODULES_FOLDER)
 	// The index.
 	{
 		b := strings.builder_make(context.temp_allocator)
@@ -85,14 +86,14 @@ site_module_pages_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Ent
 		modules_table := site_table_start(&b, "Modules", {{"Module", .Name}, {"Kind", .Short}, {"Boot image", .Short}, {"Exports", .Number}, {"Imports", .Prose}, {"Purpose", .Prose}})
 		for item in reference.modules {
 			fmt.sbprintf(&b, "<tr id=\"module-%s\"><td class=\"code name\">", site_slug(item.build.name))
-			site_module_link(site, &b, SITE_MODULES_PAGE, item.build.name)
+			site_module_link(site, &b, modules_page, item.build.name)
 			in_boot_image: string = item.build.image ? "yes" : "no"
 			fmt.sbprintf(&b, "</td><td>%s</td><td>%s</td><td class=\"code\">%d</td><td class=\"code\">", item.kind, in_boot_image, len(item.description.exports))
 			for name, index in item.build.imports {
 				if index > 0 {
 					strings.write_string(&b, ", ")
 				}
-				site_module_link(site, &b, SITE_MODULES_PAGE, name)
+				site_module_link(site, &b, modules_page, name)
 			}
 			strings.write_string(&b, "</td>")
 			site_text_cell(&b, item.description.about)
@@ -102,14 +103,14 @@ site_module_pages_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Ent
 		strings.write_string(&b, "<p class=\"source\">Read from <code>module_builds</code> in <a href=\"")
 		site_escape(&b, site_repository_file(site, SITE_MODULES_FILE))
 		strings.write_string(&b, "\"><code>" + SITE_MODULES_FILE + "</code></a> and from the source folder of each module.</p>\n")
-		site_page_add(site, Site_Page{path = SITE_MODULES_PAGE, title = "Modules", description = site_description_cut(fmt.tprintf("The %d modules and programs of %s, %d of them in the boot image, with their purpose, their exports and their imports.", len(reference.modules), SITE_SYSTEM_NAME, in_image)), section = .Reference, crumbs = site_crumbs(.Reference), body = strings.to_string(b), sources = site_sources(SITE_MODULES_FILE)})
-		append(entries, Site_Reference_Entry{path = SITE_MODULES_PAGE, title = "Modules", what = "Each module and program, with a page for each: its documentation, its exports, its imports, and for a program its grants and its budget.", source = SITE_MODULES_FILE})
+		site_page_add(site, Site_Page{path = modules_page, is_index = true, title = "Modules", description = site_description_cut(fmt.tprintf("The %d modules and programs of %s, %d of them in the boot image, with their purpose, their exports and their imports.", len(reference.modules), SITE_SYSTEM_NAME, in_image)), section = .Reference, crumbs = site_crumbs(.Reference), body = strings.to_string(b), sources = site_sources(SITE_MODULES_FILE)})
+		append(entries, Site_Reference_Entry{path = modules_page, title = "Modules", what = "Each module and program, with a page for each: its documentation, its exports, its imports, and for a program its grants and its budget.", source = SITE_MODULES_FILE})
 	}
 
 	// One page for each module.
 	crumbs := make([dynamic]Site_Crumb, context.temp_allocator)
 	append(&crumbs, ..site_crumbs(.Reference))
-	append(&crumbs, Site_Crumb{title = "Modules", path = SITE_MODULES_PAGE})
+	append(&crumbs, Site_Crumb{title = "Modules", path = modules_page})
 	for item in reference.modules {
 		build := item.build
 		description := item.description
@@ -202,7 +203,7 @@ site_module_pages_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Ent
 			budget, named_in_budget := site_case_of(reference.program_budgets, reference.budget_otherwise, build.name)
 			strings.write_string(&b, "<h2 id=\"root\">What the root service gives it</h2>\n")
 			budget_table := site_table_start(&b, "Grants and budget", {{"What", .Short}, {"Value", .Short}, {"As the root service says", .Prose}})
-			strings.write_string(&b, "<tr><td><a href=\"../grants.html#programs\">Grants</a></td>")
+			fmt.sbprintf(&b, "<tr><td><a href=\"%s#programs\">Grants</a></td>", site_page_link(site, item.page, site_page_file(SITE_GRANTS_FOLDER)))
 			site_name_cell(site, &b, grants.value, SITE_ROOT_FILE, grants.line)
 			site_text_cell(&b, named_in_grants ? grants.comment : "Not named in grants_of: the grants of each other program.")
 			strings.write_string(&b, "</tr>\n<tr><td>Budget: pages, programs, threads</td>")
@@ -257,7 +258,7 @@ site_tiles_write :: proc(site: ^Site, b: ^strings.Builder, page: string) {
 		}
 		fmt.sbprintf(b, "<li class=\"tile %s\">", class)
 		if item, found := site_module_by_name(site, entry.name); found {
-			fmt.sbprintf(b, "<a href=\"%s\">", site_relative(page, item.page))
+			fmt.sbprintf(b, "<a href=\"%s\">", site_page_link(site, page, item.page))
 			site_escape(b, entry.name)
 			strings.write_string(b, "</a>")
 		} else {

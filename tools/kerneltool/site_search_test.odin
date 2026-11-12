@@ -96,25 +96,25 @@ site_search_index_of_a_small_site :: proc(t: ^testing.T) {
 	site := test_site()
 	pages := [?]Site_Page {
 		{path = "index.html", title = "modus", description = "The home."},
-		{path = "guides/NETWORK.html", title = "Network", description = "The guide."},
-		{path = SITE_GLOSSARY_PAGE, title = "Glossary", description = "The terms."},
-		{path = "news.html", title = "News", description = "The news."},
+		{path = "guides/NETWORK/index.html", title = "Network", description = "The guide."},
+		{path = "reference/glossary/index.html", title = "Glossary", description = "The terms."},
+		{path = "news/index.html", title = "News", description = "The news."},
 	}
 	for page in pages {
 		append(&site.pages, page)
 	}
 	headings := []Site_Heading{{level = 1, text = "Network", id = "network"}, {level = 2, text = "The `frames`", id = "the-frames", first_paragraph = "The **first** paragraph."}}
 	site.guides = make([dynamic]Site_Guide, context.temp_allocator)
-	append(&site.guides, Site_Guide{source = "docs/NETWORK.md", path = "guides/NETWORK.html", title = "Network", headings = headings})
+	append(&site.guides, Site_Guide{source = "docs/NETWORK.md", path = "guides/NETWORK/index.html", title = "Network", headings = headings})
 	entry, _ := news_parse("2026-11-11-a-thing.md", "title: A \"thing\" </script>\ndate: 2026-11-11\nrelease: next\npicture: none\nkind: Shown\nguide: none\n\nIt runs. More.\n")
 	site.news = []Site_News{{entry = entry, anchor = site_news_anchor(entry)}}
 	site.gaps = []Site_Gap{}
 
 	written := make(map[string]string, context.temp_allocator)
 	written["index.html"] = "<h1>modus</h1>"
-	written["guides/NETWORK.html"] = "<h1 id=\"network\">Network</h1><h2 id=\"the-frames\">The frames</h2>"
-	written[SITE_GLOSSARY_PAGE] = "<h1>Glossary</h1><tr id=\"term-module-metadata\"></tr><tr id=\"term-module\"></tr>"
-	written["news.html"] = "<h1>News</h1><article id=\"news-2026-11-11-a-thing\"></article>"
+	written["guides/NETWORK/index.html"] = "<h1 id=\"network\">Network</h1><h2 id=\"the-frames\">The frames</h2>"
+	written["reference/glossary/index.html"] = "<h1>Glossary</h1><tr id=\"term-module-metadata\"></tr><tr id=\"term-module\"></tr>"
+	written["news/index.html"] = "<h1>News</h1><article id=\"news-2026-11-11-a-thing\"></article>"
 
 	entries := site_search_entries(&site)
 	problems := site_search_problems(entries, written)
@@ -139,22 +139,28 @@ site_search_index_of_a_small_site :: proc(t: ^testing.T) {
 	for path, html in written {
 		no_anchor[path] = html
 	}
-	no_anchor["guides/NETWORK.html"] = "<h1 id=\"network\">Network</h1>"
+	no_anchor["guides/NETWORK/index.html"] = "<h1 id=\"network\">Network</h1>"
 	testing.expect(t, len(site_search_problems(entries, no_anchor)) > 0, "an absent anchor is not found")
 	// A page with no entry.
 	no_entry := make(map[string]string, context.temp_allocator)
 	for path, html in written {
 		no_entry[path] = html
 	}
-	no_entry["status.html"] = "<h1>Status</h1>"
+	no_entry["status/index.html"] = "<h1>Status</h1>"
 	testing.expect(t, len(site_search_problems(entries, no_entry)) > 0, "a page with no entry is not found")
 
 	// The JSON of the index: the title of the news entry is escaped.
-	index := site_search_index_json(entries, site.pages[:])
+	index := site_search_index_json(&site, entries, site.pages[:])
 	testing.expect(t, strings.has_prefix(index, "{\"kinds\":[\"page\",\"module\""))
 	testing.expect(t, strings.contains(index, "\"A \\\"thing\\\" \\u003c/script\\u003e\""))
 	testing.expect(t, !strings.contains(index, "</script"))
-	testing.expect(t, strings.contains(index, "[\"news.html\",\"News\"]"))
+	// With no site address the link of a page names its index.html; with
+	// one, its folder.
+	testing.expect(t, strings.contains(index, "[\"news/index.html\",\"News\"]"))
+	site.address = "https://example.org/modus"
+	published := site_search_index_json(&site, entries, site.pages[:])
+	testing.expect(t, strings.contains(published, "[\"news/\",\"News\"]"))
+	testing.expect(t, strings.contains(published, "[\"./\",\"modus\"]"))
 }
 
 @(test)
@@ -167,8 +173,8 @@ site_pages_hold_no_inline_code :: proc(t: ^testing.T) {
 	// The frame of a page: its one script is a file.
 	site := test_site()
 	site.release = "0.1.0"
-	html := site_page_html(&site, Site_Page{path = "guides/A.html", title = "A", description = "The guide A.", section = .Guides, body = "<h1>A</h1>"})
+	html := site_page_html(&site, Site_Page{path = "guides/A/index.html", title = "A", description = "The guide A.", section = .Guides, body = "<h1>A</h1>"})
 	testing.expect_value(t, site_inline_code_problem(html), "")
-	testing.expect(t, strings.contains(html, "<script src=\"../search.js\" defer></script>"))
+	testing.expect(t, strings.contains(html, "<script src=\"../../search.js\" defer></script>"))
 	testing.expect(t, strings.contains(html, "<div class=\"search\" role=\"search\" hidden>"))
 }

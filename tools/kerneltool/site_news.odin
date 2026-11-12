@@ -1,4 +1,4 @@
-// The news on the site (docs/SITE.md, "The news"): the page news.html, the
+// The news on the site (docs/SITE.md, "The news"): the page of the news, the
 // newest entries on the home, the Atom feed news.xml, and a link from each
 // release to the entries that name it. The entries are the files of news/
 // (tools/kerneltool/news.odin); the site adds no sentence to them.
@@ -22,7 +22,7 @@ site_news_kind_classes := [News_Kind]string {
 // One entry as the site shows it.
 Site_News :: struct {
 	entry:          News_Entry,
-	anchor:         string, // Its id on news.html.
+	anchor:         string, // Its id on the page of the news.
 	body:           string, // The HTML of its text, rendered once for the page and the feed.
 	picture:        string, // Its path in the site, or "".
 	picture_width:  int,
@@ -30,7 +30,7 @@ Site_News :: struct {
 	picture_alt:    string,
 }
 
-// site_news_anchor gives the id of an entry on news.html: from its file
+// site_news_anchor gives the id of an entry on the page of the news: from its file
 // name, which no other entry has.
 site_news_anchor :: proc(entry: News_Entry) -> string {
 	return strings.concatenate({"news-", site_slug(strings.trim_suffix(entry.file_name, ".md"))}, context.temp_allocator)
@@ -91,7 +91,7 @@ site_news_meta :: proc(site: ^Site, b: ^strings.Builder, from_page: string, entr
 	if entry.release == NEWS_NEXT_RELEASE {
 		strings.write_string(b, " - in the next release")
 	} else {
-		fmt.sbprintf(b, " - <a href=\"%s#%s\">release %s</a>", site_relative(from_page, site_section_pages[.Releases]), site_release_id(entry.release), entry.release)
+		fmt.sbprintf(b, " - <a href=\"%s#%s\">release %s</a>", site_page_link(site, from_page, site_section_page(.Releases)), site_release_id(entry.release), entry.release)
 	}
 	if entry.guide != NEWS_NONE {
 		if page, is_page := site.documents[entry.guide]; is_page {
@@ -101,7 +101,7 @@ site_news_meta :: proc(site: ^Site, b: ^strings.Builder, from_page: string, entr
 					title = guide.title
 				}
 			}
-			fmt.sbprintf(b, " - the guide <a href=\"%s\">", site_relative(from_page, page))
+			fmt.sbprintf(b, " - the guide <a href=\"%s\">", site_page_link(site, from_page, page))
 			site_escape(b, title)
 			strings.write_string(b, "</a>")
 		}
@@ -120,15 +120,15 @@ site_news_picture :: proc(b: ^strings.Builder, from_page: string, item: Site_New
 	strings.write_string(b, "\"></a></figure>\n")
 }
 
-// site_news_add writes news.html: every entry, newest first.
+// site_news_add writes the page of the news: every entry, newest first.
 site_news_add :: proc(site: ^Site) {
 	if len(site.news) == 0 {
 		return
 	}
-	path := site_section_pages[.News]
+	path := site_section_page(.News)
 	b := strings.builder_make(context.temp_allocator)
-	fmt.sbprintf(&b, "<h1>News</h1>\n<p>What a person can now see or use in %s, newest first: %d entries. Each entry is one file of <code>%s/</code>, written in the step that made the thing, and never moved or merged. The technical list of the changes of each release is on the page <a href=\"%s\">Releases</a>. The same entries as a feed: <a href=\"%s\">%s</a> (Atom).</p>\n", SITE_SYSTEM_NAME, len(site.news), NEWS_FOLDER, site_section_pages[.Releases], SITE_NEWS_FEED, SITE_NEWS_FEED)
-	strings.write_string(&b, "<p class=\"source\">The kinds: <span class=\"news-kind accent-program\">Shown</span> a person can now see or use a new thing; <span class=\"news-kind accent-memory\">Measured</span> a number about a thing that exists, with its conditions; <span class=\"news-kind accent-kernel\">Decided</span> the owner chose a thing that a person sees; <span class=\"news-kind accent-machine\">Fixed</span> a thing that a person saw fail now works.</p>\n")
+	fmt.sbprintf(&b, "<h1>News</h1>\n<p>What a person can now see or use in %s, newest first: %d entries. Each entry is one file of <code>%s/</code>, written in the step that made the thing, and never moved or merged. The technical list of the changes of each release is on the page <a href=\"%s\">Releases</a>. The same entries as a feed: <a href=\"%s\">%s</a> (Atom).</p>\n", SITE_SYSTEM_NAME, len(site.news), NEWS_FOLDER, site_page_link(site, path, site_section_page(.Releases)), site_relative(path, SITE_NEWS_FEED), SITE_NEWS_FEED)
+	strings.write_string(&b, "<p class=\"source\">The kinds: <span class=\"news-kind accent-program\">Shown</span> a person can now see or use a new thing; <span class=\"news-kind accent-memory\">Measured</span> a number about a thing that exists, with its conditions; <span class=\"news-kind accent-kernel\">Decided</span> a choice of design that a person sees; <span class=\"news-kind accent-machine\">Fixed</span> a thing that a person saw fail now works.</p>\n")
 	// One renderer for the page: the ids of the page stay unique, and each
 	// term of the glossary links once.
 	renderer := site_renderer_make(site, path, NEWS_FOLDER + "/" + NEWS_FOLDER_GUIDE)
@@ -165,11 +165,12 @@ site_news_home :: proc(site: ^Site, b: ^strings.Builder) {
 	if len(site.news) == 0 {
 		return
 	}
-	home := site_section_pages[.Home]
+	home := site_section_page(.Home)
+	news_link := site_page_link(site, home, site_section_page(.News))
 	strings.write_string(b, "<section aria-labelledby=\"news\">\n<h2 id=\"news\">News</h2>\n<div class=\"news-cards\">\n")
 	for item in site.news[:min(len(site.news), SITE_NEWS_HOME_COUNT)] {
 		entry := item.entry
-		fmt.sbprintf(b, "<article class=\"card news-card %s\">\n<h3><a href=\"%s#%s\">", site_news_kind_classes[entry.kind], site_section_pages[.News], item.anchor)
+		fmt.sbprintf(b, "<article class=\"card news-card %s\">\n<h3><a href=\"%s#%s\">", site_news_kind_classes[entry.kind], news_link, item.anchor)
 		site_escape(b, entry.title)
 		strings.write_string(b, "</a></h3>\n")
 		site_news_meta(site, b, home, entry, false)
@@ -178,19 +179,19 @@ site_news_home :: proc(site: ^Site, b: ^strings.Builder) {
 		site_inline(b, site_news_lead(entry))
 		strings.write_string(b, "</p>\n</article>\n")
 	}
-	fmt.sbprintf(b, "</div>\n<p><a href=\"%s\">Every news entry</a> - <a href=\"%s\">the feed</a></p>\n</section>\n", site_section_pages[.News], SITE_NEWS_FEED)
+	fmt.sbprintf(b, "</div>\n<p><a href=\"%s\">Every news entry</a> - <a href=\"%s\">the feed</a></p>\n</section>\n", news_link, site_relative(home, SITE_NEWS_FEED))
 }
 
 // site_news_of_release writes, under a release on the page of the
 // releases, the entries that name it.
-site_news_of_release :: proc(site: ^Site, b: ^strings.Builder, release_number: string) {
+site_news_of_release :: proc(site: ^Site, b: ^strings.Builder, from_page, release_number: string) {
 	count := 0
 	for item in site.news {
 		if item.entry.release != release_number {
 			continue
 		}
 		strings.write_string(b, count == 0 ? "<p class=\"news-links\">News: " : ", ")
-		fmt.sbprintf(b, "<a href=\"%s#%s\">", site_section_pages[.News], item.anchor)
+		fmt.sbprintf(b, "<a href=\"%s#%s\">", site_page_link(site, from_page, site_section_page(.News)), item.anchor)
 		site_escape(b, item.entry.title)
 		strings.write_string(b, "</a>")
 		count += 1
@@ -200,15 +201,31 @@ site_news_of_release :: proc(site: ^Site, b: ^strings.Builder, release_number: s
 	}
 }
 
-// site_feed_address gives an address of the site for the feed: absolute
-// when the site has an address, else relative to the feed, which is at
-// the root of the site. A reader resolves a relative address against the
-// address that it fetched the feed from.
+// site_feed_address gives the address of a file of the site that is not a
+// page, for a file at the root of the site that another program reads (a
+// feed): absolute when the site has an address, else relative to the root.
+// A reader resolves a relative address against the address that it
+// fetched the file from.
 site_feed_address :: proc(site: ^Site, path: string) -> string {
 	if site.address == "" {
 		return path
 	}
-	return strings.concatenate({site.address, "/", path}, context.temp_allocator)
+	return site_file_address(site.address, path)
+}
+
+// site_feed_page_address gives the address of a page (its file, with an
+// anchor or none) for a file at the root of the site that another program
+// reads (a feed, llms.txt): with a site address the absolute address of
+// its folder, else the link from the root, which names its index.html.
+site_feed_page_address :: proc(site: ^Site, target: string) -> string {
+	if site.address == "" {
+		return site_page_link(site, SITE_PAGE, target)
+	}
+	page_path, anchor := target, ""
+	if hash := strings.index_byte(target, '#'); hash >= 0 {
+		page_path, anchor = target[:hash], target[hash:]
+	}
+	return strings.concatenate({site_page_address(site.address, page_path), anchor}, context.temp_allocator)
 }
 
 // site_xml_escape writes a text for XML: the five characters of markup.
@@ -228,7 +245,7 @@ site_news_feed :: proc(site: ^Site) -> string {
 	fmt.sbprintf(&b, "<updated>%sT00:00:00Z</updated>\n", site.news[0].entry.date)
 	site_feed_author(site, &b)
 	strings.write_string(&b, "<link rel=\"alternate\" type=\"text/html\" href=\"")
-	site_xml_escape(&b, site_feed_address(site, site_section_pages[.News]))
+	site_xml_escape(&b, site_feed_page_address(site, site_section_page(.News)))
 	strings.write_string(&b, "\"/>\n")
 	if site.address != "" {
 		strings.write_string(&b, "<link rel=\"self\" type=\"application/atom+xml\" href=\"")
@@ -242,7 +259,7 @@ site_news_feed :: proc(site: ^Site) -> string {
 		site_xml_escape(&b, entry.title)
 		fmt.sbprintf(&b, "</title>\n<id>%s/blob/master/%s/%s</id>\n", SITE_REPOSITORY_ADDRESS, NEWS_FOLDER, entry.file_name)
 		strings.write_string(&b, "<link rel=\"alternate\" type=\"text/html\" href=\"")
-		site_xml_escape(&b, site_feed_address(site, strings.concatenate({site_section_pages[.News], "#", item.anchor}, context.temp_allocator)))
+		site_xml_escape(&b, site_feed_page_address(site, strings.concatenate({site_section_page(.News), "#", item.anchor}, context.temp_allocator)))
 		fmt.sbprintf(&b, "\"/>\n<published>%sT00:00:00Z</published>\n<updated>%sT00:00:00Z</updated>\n", entry.date, entry.date)
 		fmt.sbprintf(&b, "<category term=\"%s\"/>\n<summary>", news_kind_names[entry.kind])
 		plain := strings.builder_make(context.temp_allocator)

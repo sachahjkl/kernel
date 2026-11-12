@@ -20,13 +20,21 @@ import "core:time"
 // relative links only. `kerneltool site --address https://...` sets
 // another one for one run.
 SITE_ADDRESS :: "https://modus.froment.software"
-SITE_GLOSSARY_PAGE :: "reference/glossary.html"
+// The folders of the pages of the reference that the tool writes by
+// itself; the pages of the generated tables are in site_reference.odin.
+SITE_GLOSSARY_FOLDER :: "reference/glossary"
+SITE_COMMANDS_FOLDER :: "reference/commands"
+SITE_NUMBERS_FOLDER :: "reference/numbers"
+SITE_LICENSES_FOLDER :: "reference/licenses"
 SITE_GUIDE_FOLDER :: "guides"
 SITE_REFERENCE_FOLDER :: "reference"
 // The documents of docs/ that are working records of the project, not
 // guides: the site leaves them out.
-SITE_WORKING_RECORDS :: [?]string{"HANDOFF.md", "REVIEWS.md"}
+SITE_WORKING_RECORDS :: [?]string{"HANDOFF.md", "REVIEWS.md", "SITE.md"}
 SITE_DESCRIPTION_LIMIT :: 160
+// The start of the refresh of a redirect page; the link to the new address
+// follows it.
+SITE_REFRESH_OPEN :: "<meta http-equiv=\"refresh\" content=\"0; url="
 // The start of the menu of the bar: a details element, closed in the file,
 // whose summary is the square button. Its name is a word, hidden by the
 // style sheet; with no style sheet the word shows.
@@ -50,13 +58,19 @@ site_section_titles := [Site_Section]string {
 	.Releases  = "Releases",
 }
 
-site_section_pages := [Site_Section]string {
-	.Home      = "index.html",
-	.Guides    = "guides/index.html",
-	.Reference = "reference/index.html",
-	.Status    = "status.html",
-	.News      = "news.html",
-	.Releases  = "releases.html",
+// The folder of the page of each section; "" is the root of the site.
+site_section_folders := [Site_Section]string {
+	.Home      = "",
+	.Guides    = "guides",
+	.Reference = "reference",
+	.Status    = "status",
+	.News      = "news",
+	.Releases  = "releases",
+}
+
+// site_section_page gives the file of the page of a section.
+site_section_page :: proc(section: Site_Section) -> string {
+	return site_page_file(site_section_folders[section])
 }
 
 Site_Crumb :: struct {
@@ -65,19 +79,20 @@ Site_Crumb :: struct {
 }
 
 Site_Page :: struct {
-	path:        string, // From the root of the site: "guides/NETWORK.html".
+	path:        string, // The file, from the root of the site: "guides/NETWORK/index.html" (site_page_file).
 	title:       string, // The title of the page; the <title> adds the name of the system.
 	description: string, // One or two sentences, at most SITE_DESCRIPTION_LIMIT bytes.
 	section:     Site_Section,
 	crumbs:      []Site_Crumb, // The pages above it, from the home.
 	body:        string, // The HTML of the content, from its h1.
 	sources:     []string, // The files of the repository that the page comes from.
+	is_index:    bool, // An index page: it lists the pages of its folder (the home, the guides, the reference, the modules).
 }
 
 // A guide: a document of docs/ as a page.
 Site_Guide :: struct {
 	source:   string, // "docs/NETWORK.md"
-	path:     string, // "guides/NETWORK.html"
+	path:     string, // "guides/NETWORK/index.html"
 	title:    string,
 	about:    string, // Its line in the table of documents of README.md, or "".
 	headings: []Site_Heading, // Each heading of its page, with its id: the guide sections of the search index.
@@ -110,6 +125,7 @@ Site :: struct {
 	tile_rules:   string, // The rules of the style sheet for the tiles of the boot image on the home.
 	news:         []Site_News, // Newest first.
 	gaps:         []Site_Gap, // The gaps of docs/FIRST_MILESTONE.md, as the status page shows them.
+	redirects:    map[string]string, // The HTML of each redirect page, by its old path.
 }
 
 run_site :: proc(args: []string) -> int {
@@ -127,7 +143,8 @@ run_site :: proc(args: []string) -> int {
 
 // site_relative gives the link from one page to a path of the site: as many
 // "../" as the page has folders, so that the site works from a file, from a
-// folder of a host and from the root of a domain.
+// folder of a host and from the root of a domain. A link to a page goes
+// through site_page_link, which gives it the form of a link to a page.
 site_relative :: proc(from_page, target: string) -> string {
 	if strings.has_prefix(target, "#") {
 		return target
@@ -139,6 +156,144 @@ site_relative :: proc(from_page, target: string) -> string {
 	}
 	strings.write_string(&builder, target)
 	return strings.to_string(builder)
+}
+
+// site_page_file gives the file of a page: each page is the index.html of
+// its own folder, so that its address is the folder ("reference/licenses"
+// gives "reference/licenses/index.html"). The folder "" is the root of the
+// site, the home. docs/SITE.md, "The addresses of the pages".
+site_page_file :: proc(folder: string) -> string {
+	if folder == "" {
+		return SITE_PAGE
+	}
+	return strings.concatenate({folder, "/", SITE_PAGE}, context.temp_allocator)
+}
+
+// site_page_link gives the link from one page to another page (its file,
+// as site_page_file gives it, with an anchor or none). With a site address
+// the link names the folder of the page with a final slash: the host
+// serves the index.html of a folder, and that is the address that a person
+// sees and shares. With no address the link names the index.html: a
+// browser that opens the site from a disk shows a folder as a list of its
+// files, not as its index.html.
+site_page_link :: proc(site: ^Site, from_page, target: string) -> string {
+	page_path, anchor := target, ""
+	if hash := strings.index_byte(target, '#'); hash >= 0 {
+		page_path, anchor = target[:hash], target[hash:]
+	}
+	if page_path == "" {
+		return target // An anchor of the same page.
+	}
+	link := site_relative(from_page, page_path)
+	if site.address != "" {
+		if link == SITE_PAGE {
+			link = "./"
+		} else if strings.has_suffix(link, "/" + SITE_PAGE) {
+			link = link[:len(link) - len(SITE_PAGE)]
+		}
+	}
+	return strings.concatenate({link, anchor}, context.temp_allocator)
+}
+
+// site_old_page_path gives the path that a page had before each page was
+// a folder ("reference/licenses.html"), or "" for an index page, whose path
+// did not change.
+site_old_page_path :: proc(page: Site_Page) -> string {
+	if page.is_index || !strings.has_suffix(page.path, "/" + SITE_PAGE) {
+		return ""
+	}
+	return strings.concatenate({page.path[:len(page.path) - len("/" + SITE_PAGE)], ".html"}, context.temp_allocator)
+}
+
+// site_redirect_html gives the redirect page at the old path of a page: a
+// refresh to the new address and one visible link, with no script. With a
+// site address it names the new address as its canonical address, so that
+// a search engine moves what it knows to it. It is not indexed.
+site_redirect_html :: proc(site: ^Site, old_path: string, page: Site_Page) -> string {
+	link := site_page_link(site, old_path, page.path)
+	b := strings.builder_make(context.temp_allocator)
+	strings.write_string(&b, "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<title>")
+	site_escape(&b, page.title)
+	strings.write_string(&b, " - " + SITE_SYSTEM_NAME + "</title>\n<meta name=\"robots\" content=\"noindex\">\n")
+	if site.address != "" {
+		strings.write_string(&b, "<link rel=\"canonical\" href=\"")
+		site_escape(&b, site_page_address(site.address, page.path))
+		strings.write_string(&b, "\">\n")
+	}
+	strings.write_string(&b, SITE_REFRESH_OPEN)
+	site_escape(&b, link)
+	strings.write_string(&b, "\">\n</head>\n<body>\n<p>This page is now at <a href=\"")
+	site_escape(&b, link)
+	strings.write_string(&b, "\">")
+	site_escape(&b, page.title)
+	strings.write_string(&b, "</a>.</p>\n</body>\n</html>\n")
+	return strings.to_string(b)
+}
+
+// site_redirects_make writes a redirect page at the old path of each page
+// that is not an index page.
+site_redirects_make :: proc(site: ^Site) {
+	site.redirects = make(map[string]string, context.temp_allocator)
+	for page in site.pages {
+		if old_path := site_old_page_path(page); old_path != "" {
+			site.redirects[old_path] = site_redirect_html(site, old_path, page)
+		}
+	}
+}
+
+// site_check_redirects checks the redirect pages: no redirect page takes
+// the path of a page or of a file of the site, and each one names, in its
+// refresh and in each link, a page that the command writes.
+site_check_redirects :: proc(redirects: map[string]string, written: map[string]string, files: map[string]int, has_address: bool) -> []string {
+	problems := make([dynamic]string, context.temp_allocator)
+	ids := make(map[string]map[string]bool, context.temp_allocator)
+	for path, html in written {
+		page_ids := make(map[string]bool, context.temp_allocator)
+		for id in site_attribute_values(html, "id=\"") {
+			page_ids[id] = true
+		}
+		ids[path] = page_ids
+	}
+	for old_path, html in redirects {
+		_, is_page := written[old_path]
+		_, is_file := files[old_path]
+		if is_page || is_file {
+			append(&problems, fmt.tprintf("%s: a redirect page has the path of a page or a file of the site", old_path))
+			continue
+		}
+		folder := old_path[:max(strings.last_index_byte(old_path, '/'), 0)]
+		start := strings.index(html, SITE_REFRESH_OPEN)
+		if start < 0 {
+			append(&problems, fmt.tprintf("%s: a redirect page with no refresh", old_path))
+			continue
+		}
+		rest := html[start + len(SITE_REFRESH_OPEN):]
+		end := strings.index_byte(rest, '"')
+		refresh := end >= 0 ? site_html_unescape(rest[:end]) : "\x00"
+		links := make([dynamic]string, context.temp_allocator)
+		append(&links, refresh)
+		for value in site_attribute_values(html, "href=\"") {
+			if strings.has_prefix(value, "https://") || strings.has_prefix(value, "http://") {
+				continue // The canonical address: site_page_address of the same page as the refresh.
+			}
+			append(&links, site_html_unescape(value))
+		}
+		if len(links) < 2 {
+			append(&problems, fmt.tprintf("%s: a redirect page with no visible link", old_path))
+		}
+		for value in links {
+			target, problem := site_link_target(old_path, folder, value, written, files, ids, has_address)
+			if problem == "" {
+				if _, names_page := written[target]; !names_page {
+					problem = fmt.tprintf("names %s, which is not a page", target)
+				}
+			}
+			if problem != "" {
+				append(&problems, fmt.tprintf("%s: the redirect to \"%s\": %s", old_path, value, problem))
+			}
+		}
+	}
+	return problems[:]
 }
 
 // site_repository_file gives the address of a file of the repository at the
@@ -310,7 +465,7 @@ site_build :: proc(address: string) -> bool {
 		if working {
 			continue
 		}
-		page := name == "GLOSSARY.md" ? SITE_GLOSSARY_PAGE : strings.concatenate({SITE_GUIDE_FOLDER, "/", name[:len(name) - len(".md")], ".html"}, context.temp_allocator)
+		page := site_page_file(name == "GLOSSARY.md" ? SITE_GLOSSARY_FOLDER : strings.concatenate({SITE_GUIDE_FOLDER, "/", name[:len(name) - len(".md")]}, context.temp_allocator))
 		site.documents[path] = page
 		site.documents[name] = page
 	}
@@ -434,7 +589,13 @@ site_build :: proc(address: string) -> bool {
 	for page in site.pages {
 		written[page.path] = site_page_html(&site, page)
 	}
-	problems := site_check_pages(site.pages[:], written, site.files)
+	problems := make([dynamic]string, context.temp_allocator)
+	append(&problems, ..site_check_pages(site.pages[:], written, site.files, site.address != ""))
+	// The old address of each page that is not an index page: a redirect
+	// page, which is not a page of the site (no bar, no sitemap, no index
+	// of the search).
+	site_redirects_make(&site)
+	append(&problems, ..site_check_redirects(site.redirects, written, site.files, site.address != ""))
 	if len(problems) > 0 {
 		for problem in problems {
 			fmt.eprintfln("kerneltool: site: %s", problem)
@@ -461,7 +622,7 @@ site_build :: proc(address: string) -> bool {
 	// The index of the search, from the same data as the pages, checked
 	// against the pages that the command writes.
 	search_entries := site_search_entries(&site)
-	search_index := site_search_index_json(search_entries, site.pages[:])
+	search_index := site_search_index_json(&site, search_entries, site.pages[:])
 	search_problems := site_search_problems(search_entries, written)
 	if len(search_index) > SITE_SEARCH_INDEX_BYTE_LIMIT {
 		fmt.eprintfln("kerneltool: site: %s has %d bytes; at most %d", SITE_SEARCH_INDEX, len(search_index), SITE_SEARCH_INDEX_BYTE_LIMIT)
@@ -484,8 +645,11 @@ site_build :: proc(address: string) -> bool {
 		site_write_file(&site, path, transmute([]u8)html) or_return
 		page_bytes += len(html)
 	}
+	for old_path, html in site.redirects {
+		site_write_file(&site, old_path, transmute([]u8)html) or_return
+	}
 
-	fmt.printfln("kerneltool: site: wrote %s: %d pages (%d bytes), %d other files", SITE_FOLDER, len(site.pages), page_bytes, len(site.files) - len(site.pages))
+	fmt.printfln("kerneltool: site: wrote %s: %d pages (%d bytes), %d redirect pages at the old addresses, %d other files", SITE_FOLDER, len(site.pages), page_bytes, len(site.redirects), len(site.files) - len(site.pages) - len(site.redirects))
 	fmt.printfln("kerneltool: site: %s: %d entries of at most %d, %d bytes of at most %d; %s: %d bytes", SITE_SEARCH_INDEX, len(search_entries), SITE_SEARCH_ENTRY_LIMIT, len(search_index), SITE_SEARCH_INDEX_BYTE_LIMIT, SITE_SEARCH_SCRIPT, site.files[SITE_SEARCH_SCRIPT])
 	commit_text: string = site.commit != "" ? site.commit : "not readable (links to files go to master)"
 	fmt.printfln("kerneltool: site: %d guides, %d terms of the glossary, %d news entries, the commit %s, the release %s", len(site.guides), len(site.terms), len(site.news), commit_text, site.release)
@@ -557,7 +721,7 @@ site_page_html :: proc(site: ^Site, page: Site_Page) -> string {
 	fmt.sbprintf(&b, "<link rel=\"icon\" href=\"%s\" sizes=\"32x32\">\n", link(page, SITE_FAVICON))
 	fmt.sbprintf(&b, "<link rel=\"icon\" href=\"%s\" type=\"image/svg+xml\">\n", link(page, SITE_PICTURE_FOLDER + "/" + SITE_ICON_SVG))
 	fmt.sbprintf(&b, "<link rel=\"apple-touch-icon\" href=\"%s\" sizes=\"180x180\">\n", link(page, SITE_PICTURE_FOLDER + "/" + SITE_ICON_TOUCH))
-	if site_page_exists(site, site_section_pages[.News]) {
+	if site_page_exists(site, site_section_page(.News)) {
 		fmt.sbprintf(&b, "<link rel=\"alternate\" type=\"application/atom+xml\" title=\"News of %s\" href=\"%s\">\n", SITE_SYSTEM_NAME, link(page, SITE_NEWS_FEED))
 	}
 	// The feed of the releases, the manifest, the guides before and after;
@@ -571,7 +735,7 @@ site_page_html :: proc(site: ^Site, page: Site_Page) -> string {
 
 	// The bar: the heron and the name at the left, the sections as buttons.
 	write(&b, "<header class=\"bar\">\n<div class=\"bar-inner\">\n")
-	fmt.sbprintf(&b, "<a class=\"bar-home\" href=\"%s\"><picture><source media=\"(prefers-color-scheme: light)\" srcset=\"%s\">", link(page, "index.html"), link(page, SITE_PICTURE_FOLDER + "/" + SITE_MARK_BAR_LIGHT))
+	fmt.sbprintf(&b, "<a class=\"bar-home\" href=\"%s\"><picture><source media=\"(prefers-color-scheme: light)\" srcset=\"%s\">", site_page_link(site, page.path, site_section_page(.Home)), link(page, SITE_PICTURE_FOLDER + "/" + SITE_MARK_BAR_LIGHT))
 	fmt.sbprintf(&b, "<img src=\"%s\" width=\"24\" height=\"24\" alt=\"\"></picture><span>%s</span></a>\n", link(page, SITE_PICTURE_FOLDER + "/" + SITE_MARK_BAR), SITE_SYSTEM_NAME)
 	// The sections and the search are in one menu: one list of links for
 	// every width. Under 720 pixels the menu is a square button; on a wide
@@ -580,11 +744,11 @@ site_page_html :: proc(site: ^Site, page: Site_Page) -> string {
 	write(&b, SITE_MENU_OPEN)
 	write(&b, "<nav aria-label=\"Sections\">\n<ul>\n")
 	for section in Site_Section {
-		if section == .Home || !site_page_exists(site, site_section_pages[section]) {
+		if section == .Home || !site_page_exists(site, site_section_page(section)) {
 			continue
 		}
 		current: string = section == page.section ? " aria-current=\"page\"" : ""
-		fmt.sbprintf(&b, "<li><a href=\"%s\"%s>%s</a></li>\n", link(page, site_section_pages[section]), current, site_section_titles[section])
+		fmt.sbprintf(&b, "<li><a href=\"%s\"%s>%s</a></li>\n", site_page_link(site, page.path, site_section_page(section)), current, site_section_titles[section])
 	}
 	write(&b, "</ul>\n</nav>\n")
 	write(&b, SITE_SEARCH_BOX)
@@ -593,7 +757,7 @@ site_page_html :: proc(site: ^Site, page: Site_Page) -> string {
 	if len(page.crumbs) > 0 {
 		write(&b, "<nav class=\"crumbs page\" aria-label=\"Breadcrumbs\">\n<ol>\n")
 		for crumb in page.crumbs {
-			fmt.sbprintf(&b, "<li><a href=\"%s\">", link(page, crumb.path))
+			fmt.sbprintf(&b, "<li><a href=\"%s\">", site_page_link(site, page.path, crumb.path))
 			site_escape(&b, crumb.title)
 			write(&b, "</a></li>\n")
 		}
@@ -612,7 +776,7 @@ site_page_html :: proc(site: ^Site, page: Site_Page) -> string {
 	} else {
 		write(&b, "a work tree whose commit the tool cannot read")
 	}
-	fmt.sbprintf(&b, ", at the release <a href=\"%s#%s\">%s</a>, on %s.</p>\n", link(page, site_section_pages[.Releases]), site_release_id(site.release), site.release, site.build_time)
+	fmt.sbprintf(&b, ", at the release <a href=\"%s#%s\">%s</a>, on %s.</p>\n", site_page_link(site, page.path, site_section_page(.Releases)), site_release_id(site.release), site.release, site.build_time)
 	if len(page.sources) > 0 {
 		write(&b, "<p>Generated from: ")
 		for source, index in page.sources {
@@ -627,7 +791,7 @@ site_page_html :: proc(site: ^Site, page: Site_Page) -> string {
 		}
 		write(&b, ".</p>\n")
 	}
-	fmt.sbprintf(&b, "<p><a href=\"%s\">The repository</a> - <a href=\"%s\">Licenses</a></p>\n</div>\n</footer>\n</body>\n</html>\n", SITE_REPOSITORY_ADDRESS, link(page, "reference/licenses.html"))
+	fmt.sbprintf(&b, "<p><a href=\"%s\">The repository</a> - <a href=\"%s\">Licenses</a></p>\n</div>\n</footer>\n</body>\n</html>\n", SITE_REPOSITORY_ADDRESS, site_page_link(site, page.path, site_page_file(SITE_LICENSES_FOLDER)))
 	return strings.to_string(b)
 }
 
@@ -668,8 +832,10 @@ site_attribute_values :: proc(html, attribute: string) -> []string {
 //   each img has an alt attribute (empty for a picture that only decorates
 //   a text beside it), a width and a height;
 //   each href, src and srcset that is not an address of another host names
-//   a page or a file of the site, and its anchor is an id of that page.
-site_check_pages :: proc(pages: []Site_Page, written: map[string]string, files: map[string]int) -> []string {
+//   a page or a file of the site, and its anchor is an id of that page;
+//   a link to a page has the form of site_page_link: its folder with a
+//   site address, its index.html with none.
+site_check_pages :: proc(pages: []Site_Page, written: map[string]string, files: map[string]int, has_address: bool) -> []string {
 	problems := make([dynamic]string, context.temp_allocator)
 	ids := make(map[string]map[string]bool, context.temp_allocator)
 	for path, html in written {
@@ -728,7 +894,7 @@ site_check_pages :: proc(pages: []Site_Page, written: map[string]string, files: 
 					candidates = strings.split(value, ",", context.temp_allocator)
 				}
 				for candidate in candidates {
-					problem := site_link_problem(page.path, folder, strings.trim_space(candidate), written, files, ids)
+					_, problem := site_link_target(page.path, folder, strings.trim_space(candidate), written, files, ids, has_address)
 					if problem != "" {
 						append(&problems, fmt.tprintf("%s: %s%s\": %s", page.path, attribute, value, problem))
 					}
@@ -783,16 +949,19 @@ site_inline_code_problem :: proc(html: string) -> string {
 	return ""
 }
 
-// site_link_problem checks one link of a page, or gives "".
-site_link_problem :: proc(page_path, folder, value: string, written: map[string]string, files: map[string]int, ids: map[string]map[string]bool) -> string {
+// site_link_target checks one link of a page: it gives the page or the
+// file of the site that the link names, and the problem of the link or "".
+// A link that ends with "/" names the index.html of a folder. An address
+// of another host gives no target and no problem.
+site_link_target :: proc(page_path, folder, value: string, written: map[string]string, files: map[string]int, ids: map[string]map[string]bool, has_address: bool) -> (target: string, problem: string) {
 	if value == "\x00" {
-		return "no closing quote"
+		return "", "no closing quote"
 	}
 	if value == "" {
-		return "empty"
+		return "", "empty"
 	}
 	if strings.has_prefix(value, "https://") || strings.has_prefix(value, "http://") {
-		return "" // The address of another host: not a file of the site.
+		return "", "" // The address of another host: not a file of the site.
 	}
 	address := value
 	if space := strings.index_byte(address, ' '); space >= 0 {
@@ -803,22 +972,33 @@ site_link_problem :: proc(page_path, folder, value: string, written: map[string]
 		anchor = address[hash + 1:]
 		address = address[:hash]
 	}
-	target := page_path
+	names_folder := strings.has_suffix(address, "/")
+	names_index := address == SITE_PAGE || strings.has_suffix(address, "/" + SITE_PAGE)
+	if has_address && names_index {
+		return "", "a link to a page names its index.html; with a site address it names the folder of the page"
+	}
+	if !has_address && names_folder {
+		return "", "a link names a folder; with no site address it names the index.html of the folder, because a browser shows a folder of a disk as a list of files"
+	}
+	target = page_path
 	if address != "" {
 		target = site_path_join(folder, address)
+		if names_folder {
+			target = site_page_file(target)
+		}
 	}
 	_, is_page := written[target]
 	_, is_file := files[target]
 	if !is_page && !is_file {
-		return fmt.tprintf("names %s, which the command did not write", target)
+		return target, fmt.tprintf("names %s, which the command did not write", target)
 	}
 	if anchor != "" {
 		if !is_page {
-			return "an anchor in a file that is not a page"
+			return target, "an anchor in a file that is not a page"
 		}
 		if anchor not_in ids[target] {
-			return fmt.tprintf("%s has no id \"%s\"", target, anchor)
+			return target, fmt.tprintf("%s has no id \"%s\"", target, anchor)
 		}
 	}
-	return ""
+	return target, ""
 }

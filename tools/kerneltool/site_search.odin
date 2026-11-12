@@ -255,19 +255,19 @@ site_search_entries :: proc(site: ^Site) -> []Site_Search_Entry {
 	}
 	for operation in site.reference.operations {
 		if operation.member.number != 0 {
-			site_search_add(&entries, operation.member.name, SITE_OPERATIONS_PAGE, strings.concatenate({"operation-", site_slug(operation.member.name)}, context.temp_allocator), .Operation, operation.text)
+			site_search_add(&entries, operation.member.name, site_page_file(SITE_OPERATIONS_FOLDER), strings.concatenate({"operation-", site_slug(operation.member.name)}, context.temp_allocator), .Operation, operation.text)
 		}
 	}
 	for kind in site.reference.error_kinds {
 		if kind.number != 0 {
-			site_search_add(&entries, kind.name, SITE_ERRORS_PAGE, strings.concatenate({"kind-", site_slug(kind.name)}, context.temp_allocator), .Error_Kind, kind.comment)
+			site_search_add(&entries, kind.name, site_page_file(SITE_ERRORS_FOLDER), strings.concatenate({"kind-", site_slug(kind.name)}, context.temp_allocator), .Error_Kind, kind.comment)
 		}
 	}
 	for command in site.reference.console_commands {
-		site_search_add(&entries, command.name, SITE_CONSOLE_PAGE, strings.concatenate({"command-", site_slug(command.name)}, context.temp_allocator), .Console_Command, strings.concatenate({site_console_signature(command), ": ", command.about}, context.temp_allocator))
+		site_search_add(&entries, command.name, site_page_file(SITE_CONSOLE_FOLDER), strings.concatenate({"command-", site_slug(command.name)}, context.temp_allocator), .Console_Command, strings.concatenate({site_console_signature(command), ": ", command.about}, context.temp_allocator))
 	}
 	for term in site.terms {
-		site_search_add(&entries, term.name, SITE_GLOSSARY_PAGE, term.id, .Term, term.definition)
+		site_search_add(&entries, term.name, site_page_file(SITE_GLOSSARY_FOLDER), term.id, .Term, term.definition)
 	}
 	for guide in site.guides {
 		for heading in guide.headings {
@@ -276,23 +276,23 @@ site_search_entries :: proc(site: ^Site) -> []Site_Search_Entry {
 			}
 		}
 	}
-	status_page := site_section_pages[.Status]
+	status_page := site_section_page(.Status)
 	for property in site.principles.properties {
 		site_search_add(&entries, property.title, status_page, fmt.tprintf("property-%d", property.number), .Property, fmt.tprintf("%s. %s", property.status, property.sentence))
 	}
 	for item in site.news {
-		site_search_add(&entries, item.entry.title, site_section_pages[.News], item.anchor, .News, site_news_lead(item.entry))
+		site_search_add(&entries, item.entry.title, site_section_page(.News), item.anchor, .News, site_news_lead(item.entry))
 	}
 	for changelog_release in site.changelog.releases {
 		number := release_number_text(changelog_release.number)
 		first := len(changelog_release.entries) > 0 ? entry_joined(changelog_release.entries[0].lines) : ""
-		site_search_add(&entries, number, site_section_pages[.Releases], site_release_id(number), .Release, fmt.tprintf("%s: %s", changelog_release.date, first))
+		site_search_add(&entries, number, site_section_page(.Releases), site_release_id(number), .Release, fmt.tprintf("%s: %s", changelog_release.date, first))
 	}
 	for gap in site.gaps {
 		site_search_add(&entries, gap.text, status_page, fmt.tprintf("gap-%d", gap.number), .Gap, gap.group != "" ? gap.group : gap.text)
 	}
 	system_ids, build_ids := site_license_row_ids(site.licenses)
-	license_page :: "reference/licenses.html"
+	license_page := site_page_file(SITE_LICENSES_FOLDER)
 	for row, index in site.licenses.system_rows {
 		site_search_add(&entries, row.what, license_page, system_ids[index], .License_Row, strings.concatenate({row.license, ", ", row.author}, context.temp_allocator))
 	}
@@ -382,10 +382,12 @@ site_json_string :: proc(b: ^strings.Builder, text: string) {
 }
 
 // site_search_index_json gives search.json:
-//   {"kinds": [<name>, ...], "pages": [[<path>, <title>], ...],
+//   {"kinds": [<name>, ...], "pages": [[<link>, <title>], ...],
 //    "entries": [[<title>, <page index>, <anchor>, <kind index>, <text>], ...]}
-// The kind index is also the tie order of the match.
-site_search_index_json :: proc(entries: []Site_Search_Entry, pages: []Site_Page) -> string {
+// The kind index is also the tie order of the match. The link of a page is
+// the link from the root of the site, where the script is, as
+// site_page_link writes it: the script only joins it to its folder.
+site_search_index_json :: proc(site: ^Site, entries: []Site_Search_Entry, pages: []Site_Page) -> string {
 	b := strings.builder_make(context.temp_allocator)
 	strings.write_string(&b, "{\"kinds\":[")
 	for kind in Site_Search_Kind {
@@ -399,7 +401,7 @@ site_search_index_json :: proc(entries: []Site_Search_Entry, pages: []Site_Page)
 	for page, index in pages {
 		page_numbers[page.path] = index
 		strings.write_string(&b, index > 0 ? ",\n[" : "\n[")
-		site_json_string(&b, page.path)
+		site_json_string(&b, site_page_link(site, SITE_PAGE, page.path))
 		strings.write_byte(&b, ',')
 		site_json_string(&b, page.title)
 		strings.write_byte(&b, ']')

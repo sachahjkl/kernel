@@ -20,14 +20,14 @@ SITE_ROOT_FILE :: "programs/root/main.odin"
 SITE_MODULES_FILE :: "tools/kerneltool/modules.odin"
 SITE_CONSOLE_COMMAND_FILES :: [?]string{"programs/console/commands.odin", "programs/console/tables.odin"}
 
-SITE_OPERATIONS_PAGE :: "reference/operations.html"
-SITE_CONTEXT_PAGE :: "reference/context.html"
-SITE_ERRORS_PAGE :: "reference/errors.html"
-SITE_GRANTS_PAGE :: "reference/grants.html"
-SITE_FIXED_RANGES_PAGE :: "reference/fixed-ranges.html"
-SITE_CONSOLE_PAGE :: "reference/console.html"
+// The folder of each page of a generated table: site_page_file gives its file.
+SITE_OPERATIONS_FOLDER :: "reference/operations"
+SITE_CONTEXT_FOLDER :: "reference/context"
+SITE_ERRORS_FOLDER :: "reference/errors"
+SITE_GRANTS_FOLDER :: "reference/grants"
+SITE_FIXED_RANGES_FOLDER :: "reference/fixed-ranges"
+SITE_CONSOLE_FOLDER :: "reference/console"
 SITE_MODULES_FOLDER :: "reference/modules"
-SITE_MODULES_PAGE :: "reference/modules/index.html"
 
 // The constants of the context that are its sizes, not roles: the table of
 // the roles leaves them out.
@@ -64,7 +64,7 @@ Site_Reference :: struct {
 }
 
 site_module_page :: proc(name: string) -> string {
-	return strings.concatenate({SITE_MODULES_FOLDER, "/", name, ".html"}, context.temp_allocator)
+	return site_page_file(strings.concatenate({SITE_MODULES_FOLDER, "/", name}, context.temp_allocator))
 }
 
 // site_line_address gives the address of one line of a file of the
@@ -178,25 +178,25 @@ site_code_links_make :: proc(site: ^Site) {
 	ambiguous := make(map[string]bool, context.temp_allocator)
 	for operation in site.reference.operations {
 		if operation.member.number != 0 {
-			site_code_link_add(&links, &ambiguous, operation.member.name, strings.concatenate({SITE_OPERATIONS_PAGE, "#operation-", site_slug(operation.member.name)}, context.temp_allocator))
+			site_code_link_add(&links, &ambiguous, operation.member.name, strings.concatenate({site_page_file(SITE_OPERATIONS_FOLDER), "#operation-", site_slug(operation.member.name)}, context.temp_allocator))
 		}
 	}
 	for status in site.reference.statuses {
 		// A status is not linked, but a name that is also a status is
 		// ambiguous: Bad_Address is a status and an error kind.
-		site_code_link_add(&links, &ambiguous, status.name, strings.concatenate({SITE_OPERATIONS_PAGE, "#status-", site_slug(status.name)}, context.temp_allocator))
+		site_code_link_add(&links, &ambiguous, status.name, strings.concatenate({site_page_file(SITE_OPERATIONS_FOLDER), "#status-", site_slug(status.name)}, context.temp_allocator))
 		ambiguous[status.name] = true
 	}
 	for kind in site.reference.error_kinds {
 		if kind.number != 0 {
-			site_code_link_add(&links, &ambiguous, kind.name, strings.concatenate({SITE_ERRORS_PAGE, "#kind-", site_slug(kind.name)}, context.temp_allocator))
+			site_code_link_add(&links, &ambiguous, kind.name, strings.concatenate({site_page_file(SITE_ERRORS_FOLDER), "#kind-", site_slug(kind.name)}, context.temp_allocator))
 		}
 	}
 	for item in site.reference.modules {
 		site_code_link_add(&links, &ambiguous, item.build.name, item.page)
 	}
 	for command in site.reference.console_commands {
-		site_code_link_add(&links, &ambiguous, strings.concatenate({command.name, "()"}, context.temp_allocator), strings.concatenate({SITE_CONSOLE_PAGE, "#command-", site_slug(command.name)}, context.temp_allocator))
+		site_code_link_add(&links, &ambiguous, strings.concatenate({command.name, "()"}, context.temp_allocator), strings.concatenate({site_page_file(SITE_CONSOLE_FOLDER), "#command-", site_slug(command.name)}, context.temp_allocator))
 	}
 	for name in ambiguous {
 		delete_key(&links, name)
@@ -345,7 +345,7 @@ site_generated_tables_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference
 		strings.write_string(&b, "<h2 id=\"status\">The status of a completion</h2>\n")
 		site_enumeration_table(site, &b, reference.statuses, SITE_OPERATION_FILE, "status", "Statuses of a completion", {"Number", "Status", "What the contract says"})
 		site_source_line(site, &b, SITE_OPERATION_FILE)
-		add(site, entries, SITE_OPERATIONS_PAGE, "Kernel operations", fmt.tprintf("The %d kernel operations of %s, with their numbers, their parameters and their results, read from the contract.", count, SITE_SYSTEM_NAME), "Each operation that a program asks the kernel, with its number, its parameters and its result; the status of a completion.", SITE_OPERATION_FILE, &b, SITE_OPERATION_FILE)
+		add(site, entries, site_page_file(SITE_OPERATIONS_FOLDER), "Kernel operations", fmt.tprintf("The %d kernel operations of %s, with their numbers, their parameters and their results, read from the contract.", count, SITE_SYSTEM_NAME), "Each operation that a program asks the kernel, with its number, its parameters and its result; the status of a completion.", SITE_OPERATION_FILE, &b, SITE_OPERATION_FILE)
 	}
 
 	// The context: the roles of its handles and of its values.
@@ -382,7 +382,7 @@ site_generated_tables_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference
 			site_table_end(&b, roles_table)
 			site_source_line(site, &b, group.file)
 		}
-		add(site, entries, SITE_CONTEXT_PAGE, "The context of a program", fmt.tprintf("The roles of the %d handles and %d values of the context, the record that each program of %s receives at its start.", op.CONTEXT_HANDLES, op.CONTEXT_VALUES, SITE_SYSTEM_NAME), "The place of each handle and each value in the context that a program receives.", SITE_OPERATION_FILE, &b, SITE_OPERATION_FILE, SITE_SYSTEM_GRANTS_FILE)
+		add(site, entries, site_page_file(SITE_CONTEXT_FOLDER), "The context of a program", fmt.tprintf("The roles of the %d handles and %d values of the context, the record that each program of %s receives at its start.", op.CONTEXT_HANDLES, op.CONTEXT_VALUES, SITE_SYSTEM_NAME), "The place of each handle and each value in the context that a program receives.", SITE_OPERATION_FILE, &b, SITE_OPERATION_FILE, SITE_SYSTEM_GRANTS_FILE)
 	}
 
 	// The errors.
@@ -403,7 +403,7 @@ site_generated_tables_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference
 		}
 		site_table_end(&b, units_table)
 		site_source_line(site, &b, SITE_ERRORS_FILE)
-		add(site, entries, SITE_ERRORS_PAGE, "Error kinds and units", fmt.tprintf("The %d kinds and %d units of the error record of %s, with what each kind puts in its values.", len(reference.error_kinds) - 1, len(reference.error_units) - 1, SITE_SYSTEM_NAME), "Each kind and each unit of the error record, with the meaning of its values.", SITE_ERRORS_FILE, &b, SITE_ERRORS_FILE)
+		add(site, entries, site_page_file(SITE_ERRORS_FOLDER), "Error kinds and units", fmt.tprintf("The %d kinds and %d units of the error record of %s, with what each kind puts in its values.", len(reference.error_kinds) - 1, len(reference.error_units) - 1, SITE_SYSTEM_NAME), "Each kind and each unit of the error record, with the meaning of its values.", SITE_ERRORS_FILE, &b, SITE_ERRORS_FILE)
 	}
 
 	// The grants.
@@ -438,7 +438,7 @@ site_generated_tables_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference
 		strings.write_string(&b, "</tr>\n")
 		site_table_end(&b, programs_table)
 		site_source_line(site, &b, SITE_ROOT_FILE)
-		add(site, entries, SITE_GRANTS_PAGE, "Grants of the root service", fmt.tprintf("The %d grants that the root service of %s gives at the start of a program, the %d that it records, and the grants of each program.", len(reference.start_grants), len(reference.root_grants), SITE_SYSTEM_NAME), "What the root service gives each program at its start, and what it records and can revoke.", SITE_ROOT_FILE, &b, SITE_ROOT_FILE, SITE_SYSTEM_GRANTS_FILE)
+		add(site, entries, site_page_file(SITE_GRANTS_FOLDER), "Grants of the root service", fmt.tprintf("The %d grants that the root service of %s gives at the start of a program, the %d that it records, and the grants of each program.", len(reference.start_grants), len(reference.root_grants), SITE_SYSTEM_NAME), "What the root service gives each program at its start, and what it records and can revoke.", SITE_ROOT_FILE, &b, SITE_ROOT_FILE, SITE_SYSTEM_GRANTS_FILE)
 	}
 
 	// The fixed ranges.
@@ -456,13 +456,13 @@ site_generated_tables_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference
 		}
 		site_table_end(&b, ranges_table)
 		site_source_line(site, &b, SITE_FIXED_ADDRESSES_FILE)
-		add(site, entries, SITE_FIXED_RANGES_PAGE, "Fixed ranges", fmt.tprintf("The %d fixed ranges of the addresses of a program of %s: the mappings that the system gives, each in its own slot.", len(reference.fixed_ranges), SITE_SYSTEM_NAME), "Each range of addresses that the system gives a program, with its address.", SITE_FIXED_ADDRESSES_FILE, &b, SITE_FIXED_ADDRESSES_FILE)
+		add(site, entries, site_page_file(SITE_FIXED_RANGES_FOLDER), "Fixed ranges", fmt.tprintf("The %d fixed ranges of the addresses of a program of %s: the mappings that the system gives, each in its own slot.", len(reference.fixed_ranges), SITE_SYSTEM_NAME), "Each range of addresses that the system gives a program, with its address.", SITE_FIXED_ADDRESSES_FILE, &b, SITE_FIXED_ADDRESSES_FILE)
 	}
 
 	// The commands of the console.
 	{
 		b := strings.builder_make(context.temp_allocator)
-		fmt.sbprintf(&b, "<h1>Commands of the console</h1>\n<p>The %d commands that the console has before any module is loaded, as <code>help()</code> prints them. A module that the console loads adds its exports: see the <a href=\"modules/index.html\">modules</a>.</p>\n", len(reference.console_commands))
+		fmt.sbprintf(&b, "<h1>Commands of the console</h1>\n<p>The %d commands that the console has before any module is loaded, as <code>help()</code> prints them. A module that the console loads adds its exports: see the <a href=\"%s\">modules</a>.</p>\n", len(reference.console_commands), site_page_link(site, site_page_file(SITE_CONSOLE_FOLDER), site_page_file(SITE_MODULES_FOLDER)))
 		console_table := site_table_start(&b, "Commands of the console", {{"Command", .Name}, {"What it does", .Prose}})
 		for command in reference.console_commands {
 			fmt.sbprintf(&b, "<tr id=\"command-%s\">", site_slug(command.name))
@@ -473,7 +473,7 @@ site_generated_tables_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference
 		site_table_end(&b, console_table)
 		files := SITE_CONSOLE_COMMAND_FILES
 		site_source_line(site, &b, ..files[:])
-		add(site, entries, SITE_CONSOLE_PAGE, "Commands of the console", fmt.tprintf("The %d built-in commands of the console of %s, with their parameters, their results and their help.", len(reference.console_commands), SITE_SYSTEM_NAME), "Each built-in command of the console, as help() prints it.", files[0], &b, ..files[:])
+		add(site, entries, site_page_file(SITE_CONSOLE_FOLDER), "Commands of the console", fmt.tprintf("The %d built-in commands of the console of %s, with their parameters, their results and their help.", len(reference.console_commands), SITE_SYSTEM_NAME), "Each built-in command of the console, as help() prints it.", files[0], &b, ..files[:])
 	}
 
 	site_module_pages_add(site, entries)

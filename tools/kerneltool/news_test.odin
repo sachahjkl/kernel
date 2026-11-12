@@ -142,7 +142,7 @@ news_feed_escapes_and_links :: proc(t: ^testing.T) {
 	testing.expect(t, strings.contains(feed, "<updated>2026-11-11T00:00:00Z</updated>"))
 	testing.expect(t, strings.contains(feed, "<id>" + SITE_REPOSITORY_ADDRESS + "/blob/master/news/" + GOOD_NEWS_NAME + "</id>"))
 	// With no address: relative links and no link "self".
-	testing.expect(t, strings.contains(feed, "href=\"news.html#news-2026-11-11-a-thing\""))
+	testing.expect(t, strings.contains(feed, "href=\"news/index.html#news-2026-11-11-a-thing\""))
 	testing.expect(t, !strings.contains(feed, "rel=\"self\""))
 	// The HTML of the content is escaped once more: no markup of it is markup of the feed.
 	testing.expect(t, strings.contains(feed, "&lt;p&gt;x &amp;amp; &quot;y&quot;&lt;/p&gt;"))
@@ -152,6 +152,6 @@ news_feed_escapes_and_links :: proc(t: ^testing.T) {
 
 	site.address = "https://example.org/modus"
 	addressed := site_news_feed(&site)
-	testing.expect(t, strings.contains(addressed, "href=\"https://example.org/modus/news.html#news-2026-11-11-a-thing\""))
+	testing.expect(t, strings.contains(addressed, "href=\"https://example.org/modus/news/#news-2026-11-11-a-thing\""))
 	testing.expect(t, strings.contains(addressed, "<link rel=\"self\" type=\"application/atom+xml\" href=\"https://example.org/modus/news.xml\"/>"))
 }

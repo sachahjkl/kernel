@@ -549,18 +549,18 @@ site_write_code_span :: proc(renderer: ^Site_Renderer, code: string) {
 	b := &renderer.builder
 	base := code[strings.last_index_byte(code, '/') + 1:]
 	if page, is_guide := renderer.site.documents[code]; is_guide && !renderer.in_heading {
-		fmt.sbprintf(b, "<a href=\"%s\"><code>", site_relative(renderer.page, page))
+		fmt.sbprintf(b, "<a href=\"%s\"><code>", site_page_link(renderer.site, renderer.page, page))
 		site_escape(b, code)
 		strings.write_string(b, "</code></a>")
 		return
 	} else if page_of_base, base_is_guide := renderer.site.documents[base]; base_is_guide && strings.has_suffix(code, ".md") && !renderer.in_heading {
-		fmt.sbprintf(b, "<a href=\"%s\"><code>", site_relative(renderer.page, page_of_base))
+		fmt.sbprintf(b, "<a href=\"%s\"><code>", site_page_link(renderer.site, renderer.page, page_of_base))
 		site_escape(b, code)
 		strings.write_string(b, "</code></a>")
 		return
 	}
 	if target, named := site_code_link(renderer.site, code); named && !renderer.in_heading {
-		fmt.sbprintf(b, "<a class=\"reference\" href=\"%s\"><code>", site_relative(renderer.page, target))
+		fmt.sbprintf(b, "<a class=\"reference\" href=\"%s\"><code>", site_page_link(renderer.site, renderer.page, target))
 		site_escape(b, code)
 		strings.write_string(b, "</code></a>")
 		return
@@ -601,7 +601,7 @@ site_write_link :: proc(renderer: ^Site_Renderer, label, target: string) {
 	folder := renderer.source[:max(strings.last_index_byte(renderer.source, '/'), 0)]
 	resolved := site_path_join(folder, address)
 	if page, is_guide := renderer.site.documents[resolved]; is_guide {
-		fmt.sbprintf(b, "<a href=\"%s\">", site_relative(renderer.page, page))
+		fmt.sbprintf(b, "<a href=\"%s\">", site_page_link(renderer.site, renderer.page, page))
 		site_render_inline_plain(renderer, label)
 		strings.write_string(b, "</a>")
 		return
@@ -721,7 +721,7 @@ site_write_with_terms :: proc(renderer: ^Site_Renderer, text: string) {
 				continue
 			}
 			site_escape(b, text[written:index])
-			fmt.sbprintf(b, "<a class=\"term\" href=\"%s#%s\">", site_relative(renderer.page, SITE_GLOSSARY_PAGE), term.id)
+			fmt.sbprintf(b, "<a class=\"term\" href=\"%s#%s\">", site_page_link(renderer.site, renderer.page, site_page_file(SITE_GLOSSARY_FOLDER)), term.id)
 			site_escape(b, text[index:index + length])
 			strings.write_string(b, "</a>")
 			renderer.linked_terms[term.id] = true

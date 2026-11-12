@@ -119,19 +119,19 @@ site_document_render :: proc(site: ^Site, source: string) -> (renderer: Site_Ren
 }
 
 // site_item_links writes the labels of items as links to their ids in a guide.
-site_item_links :: proc(b: ^strings.Builder, from_page, guide_page: string, items: []Site_List_Item) {
+site_item_links :: proc(site: ^Site, b: ^strings.Builder, from_page, guide_page: string, items: []Site_List_Item) {
 	for item, index in items {
 		if index > 0 {
 			strings.write_string(b, ", ")
 		}
-		fmt.sbprintf(b, "<a href=\"%s#%s\">", site_relative(from_page, guide_page), item.id)
+		fmt.sbprintf(b, "<a href=\"%s#%s\">", site_page_link(site, from_page, guide_page), item.id)
 		site_escape(b, item.label)
 		strings.write_string(b, "</a>")
 	}
 }
 
 site_status_add :: proc(site: ^Site) -> bool {
-	path := site_section_pages[.Status]
+	path := site_section_page(.Status)
 	properties := site.principles.properties
 	milestone_text := site_read(SITE_MILESTONE_FILE) or_return
 	milestone := site_document_render(site, SITE_MILESTONE_FILE) or_return
@@ -176,7 +176,7 @@ site_status_add :: proc(site: ^Site) -> bool {
 		}
 		fmt.sbprintf(&b, "<tr id=\"property-%d\"><td>", property.number)
 		if heading_id != "" {
-			fmt.sbprintf(&b, "<a href=\"%s#%s\">", site_relative(path, properties_page), heading_id)
+			fmt.sbprintf(&b, "<a href=\"%s#%s\">", site_page_link(site, path, properties_page), heading_id)
 		}
 		fmt.sbprintf(&b, "%d. ", property.number)
 		site_inline(&b, property.title)
@@ -195,7 +195,7 @@ site_status_add :: proc(site: ^Site) -> bool {
 			strings.write_string(&b, "<td class=\"missing\">none names it</td>")
 		} else {
 			strings.write_string(&b, "<td class=\"code\">")
-			site_item_links(&b, path, milestone_page, naming[:])
+			site_item_links(site, &b, path, milestone_page, naming[:])
 			strings.write_string(&b, "</td>")
 		}
 		named_gaps := 0
@@ -233,7 +233,7 @@ site_status_add :: proc(site: ^Site) -> bool {
 	steps_table := site_table_start(&b, "Next steps", {{"Step", .Short}, {"What and its state", .Prose}})
 	for item in next_steps {
 		strings.write_string(&b, "<tr><td class=\"code\">")
-		site_item_links(&b, path, milestone_page, []Site_List_Item{item})
+		site_item_links(site, &b, path, milestone_page, []Site_List_Item{item})
 		strings.write_string(&b, "</td>")
 		site_cell(&b, item.text)
 		strings.write_string(&b, "</tr>\n")

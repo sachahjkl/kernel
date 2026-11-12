@@ -161,10 +161,10 @@ site_head_metadata :: proc(site: ^Site, page: Site_Page, b: ^strings.Builder) {
 	fmt.sbprintf(b, "<link rel=\"manifest\" href=\"%s\">\n", site_relative(page.path, SITE_MANIFEST))
 	if index := site_guide_index(site, page.path); index >= 0 {
 		if index > 0 {
-			fmt.sbprintf(b, "<link rel=\"prev\" href=\"%s\">\n", site_relative(page.path, site.guides[index - 1].path))
+			fmt.sbprintf(b, "<link rel=\"prev\" href=\"%s\">\n", site_page_link(site, page.path, site.guides[index - 1].path))
 		}
 		if index + 1 < len(site.guides) {
-			fmt.sbprintf(b, "<link rel=\"next\" href=\"%s\">\n", site_relative(page.path, site.guides[index + 1].path))
+			fmt.sbprintf(b, "<link rel=\"next\" href=\"%s\">\n", site_page_link(site, page.path, site.guides[index + 1].path))
 		}
 	}
 	if site.author != "" {
@@ -445,16 +445,16 @@ site_structured_data :: proc(site: ^Site, page: Site_Page) -> string {
 		main_entity = system_id
 	case is_guide:
 		main_entity = strings.concatenate({page_address, "#article"}, context.temp_allocator)
-	case page.path == SITE_GLOSSARY_PAGE:
+	case page.path == site_page_file(SITE_GLOSSARY_FOLDER):
 		main_entity = strings.concatenate({page_address, "#terms"}, context.temp_allocator)
-	case page.path == SITE_MODULES_PAGE:
+	case page.path == site_page_file(SITE_MODULES_FOLDER):
 		main_entity = strings.concatenate({page_address, "#modules"}, context.temp_allocator)
-	case page.path == site_section_pages[.News] && len(site.news) > 0:
+	case page.path == site_section_page(.News) && len(site.news) > 0:
 		main_entity = strings.concatenate({page_address, "#blog"}, context.temp_allocator)
 	}
 	{
 		strings.write_byte(&b, ',')
-		is_collection := page.path != SITE_PAGE && strings.has_suffix(page.path, SITE_PAGE)
+		is_collection := page.is_index && page.path != SITE_PAGE
 		node := site_json_open(&b, is_collection ? "CollectionPage" : "WebPage", page_id)
 		site_json_text(&node, "url", page_address)
 		site_json_text(&node, "name", page.title)
@@ -523,7 +523,7 @@ site_structured_data :: proc(site: ^Site, page: Site_Page) -> string {
 		site_json_optional_reference(&node, "author", author_id)
 		site_json_reference(&node, "image", card_id)
 		site_json_close(&node)
-	case page.path == SITE_GLOSSARY_PAGE:
+	case page.path == site_page_file(SITE_GLOSSARY_FOLDER):
 		strings.write_byte(&b, ',')
 		node := site_json_open(&b, "DefinedTermSet", main_entity)
 		site_json_text(&node, "name", page.title)
@@ -543,7 +543,7 @@ site_structured_data :: proc(site: ^Site, page: Site_Page) -> string {
 		}
 		strings.write_byte(&b, ']')
 		site_json_close(&node)
-	case page.path == SITE_MODULES_PAGE:
+	case page.path == site_page_file(SITE_MODULES_FOLDER):
 		strings.write_byte(&b, ',')
 		node := site_json_open(&b, "ItemList", main_entity)
 		site_json_text(&node, "name", page.title)
@@ -572,7 +572,7 @@ site_structured_data :: proc(site: ^Site, page: Site_Page) -> string {
 		}
 		strings.write_byte(&b, ']')
 		site_json_close(&node)
-	case page.path == site_section_pages[.News] && len(site.news) > 0:
+	case page.path == site_section_page(.News) && len(site.news) > 0:
 		// A news entry is a dated report of the project, not journalism:
 		// a post of a blog, not a news article.
 		strings.write_byte(&b, ',')
@@ -636,9 +636,9 @@ site_sitemap :: proc(site: ^Site) -> string {
 		site_xml_escape(&b, site_page_address(site.address, path))
 		strings.write_string(&b, "</loc>")
 		last_change := ""
-		if path == site_section_pages[.News] && len(site.news) > 0 {
+		if path == site_section_page(.News) && len(site.news) > 0 {
 			last_change = site.news[0].entry.date
-		} else if path == site_section_pages[.Releases] && len(site.changelog.releases) > 0 {
+		} else if path == site_section_page(.Releases) && len(site.changelog.releases) > 0 {
 			last_change = site.changelog.releases[0].date
 		}
 		if last_change != "" {
@@ -676,7 +676,7 @@ site_releases_feed :: proc(site: ^Site) -> string {
 	}
 	site_feed_author(site, &b)
 	strings.write_string(&b, "<link rel=\"alternate\" type=\"text/html\" href=\"")
-	site_xml_escape(&b, site_feed_address(site, site_section_pages[.Releases]))
+	site_xml_escape(&b, site_feed_page_address(site, site_section_page(.Releases)))
 	strings.write_string(&b, "\"/>\n")
 	if site.address != "" {
 		strings.write_string(&b, "<link rel=\"self\" type=\"application/atom+xml\" href=\"")
@@ -689,7 +689,7 @@ site_releases_feed :: proc(site: ^Site) -> string {
 		anchor := site_release_id(number)
 		fmt.sbprintf(&b, "<entry>\n<title>%s %s</title>\n<id>%s#%s</id>\n", SITE_SYSTEM_NAME, number, changelog_address, anchor)
 		strings.write_string(&b, "<link rel=\"alternate\" type=\"text/html\" href=\"")
-		site_xml_escape(&b, site_feed_address(site, strings.concatenate({site_section_pages[.Releases], "#", anchor}, context.temp_allocator)))
+		site_xml_escape(&b, site_feed_page_address(site, strings.concatenate({site_section_page(.Releases), "#", anchor}, context.temp_allocator)))
 		fmt.sbprintf(&b, "\"/>\n<published>%sT00:00:00Z</published>\n<updated>%sT00:00:00Z</updated>\n", changelog_release.date, changelog_release.date)
 		if len(changelog_release.entries) > 0 {
 			strings.write_string(&b, "<summary>")
@@ -773,13 +773,13 @@ site_language_model_index :: proc(site: ^Site) -> string {
 	fmt.sbprintf(&b, "# %s\n\n> %s\n\n", SITE_SYSTEM_NAME, site_plain_text(site.readme.lead))
 	fmt.sbprintf(&b, "The documentation of %s, generated from the repository %s at the release %s.\n", SITE_SYSTEM_NAME, SITE_REPOSITORY_ADDRESS, site.release)
 	line :: proc(site: ^Site, b: ^strings.Builder, page: Site_Page) {
-		address := site.address != "" ? site_page_address(site.address, page.path) : page.path
+		address := site_feed_page_address(site, page.path)
 		fmt.sbprintf(b, "- [%s](%s): %s\n", page.title, address, page.description)
 	}
 	for section in Site_Section {
 		heading_written := false
 		for page in site.pages {
-			is_module_page := strings.has_prefix(page.path, SITE_MODULES_FOLDER + "/") && page.path != SITE_MODULES_PAGE
+			is_module_page := strings.has_prefix(page.path, SITE_MODULES_FOLDER + "/") && page.path != site_page_file(SITE_MODULES_FOLDER)
 			if page.section != section || is_module_page {
 				continue
 			}
@@ -792,7 +792,7 @@ site_language_model_index :: proc(site: ^Site) -> string {
 	}
 	optional_written := false
 	for page in site.pages {
-		if !strings.has_prefix(page.path, SITE_MODULES_FOLDER + "/") || page.path == SITE_MODULES_PAGE {
+		if !strings.has_prefix(page.path, SITE_MODULES_FOLDER + "/") || page.path == site_page_file(SITE_MODULES_FOLDER) {
 			continue
 		}
 		if !optional_written {

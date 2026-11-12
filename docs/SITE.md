@@ -14,39 +14,66 @@ No page holds a text that a person must remember to update: each page is generat
 - Before it writes a page, the command checks all the pages. A failure stops the command with the page and the reason, and no page is written:
   - each page has one `h1`, a title and a description of at most 160 bytes; no two pages share a title or a description;
   - each `img` has an `alt` attribute (empty for a picture that only decorates a text beside it, as the heron of the bar), a `width` and a `height`;
-  - each `href`, `src` and `srcset` that is not an address of another host names a page or a file that the command wrote, and its anchor is an `id` of that page;
+  - each `href`, `src` and `srcset` that is not an address of another host names a page or a file that the command wrote (a link that ends with `/` names the `index.html` of the folder), and its anchor is an `id` of that page;
+  - a link to a page has the form of the build (see "The addresses of the pages"): with a site address it names the folder, with none the `index.html`;
+  - each redirect page (`GLOSSARY.md`) is at a path that no page and no file of the site has, and its refresh and its link name a page that the command writes;
   - each `srcset` candidate names a file that the command wrote;
   - no page holds code or style of its own: each `<script>` has a `src` and nothing inside, but the one `<script type="application/ld+json">` of the page graph, whose text has no `<`; no `<style>` element and no `style` attribute exists.
 - Then the command checks what other programs read (see "What other sites read"); a failure stops it in the same way.
 - After the checks of the pages, the command makes the index of the search and checks it against the pages (see "The search"); a failure stops it in the same way.
-- At its end the command prints: the pages and their bytes, the other files, the entries and the bytes of the index of the search and the bytes of the script, the guides, the news entries, the terms of the glossary, the commit and the release, the numbers that are not measured, the cells of the licenses that are not recorded, each part of a guide that the renderer did not understand, the parts that it did not write with no site address (or, with one, the parts that it wrote), and the count of the pictures of the repository that it compressed, with their bytes before and after.
+- At its end the command prints: the pages and their bytes, the count of the redirect pages, the other files, the entries and the bytes of the index of the search and the bytes of the script, the guides, the news entries, the terms of the glossary, the commit and the release, the numbers that are not measured, the cells of the licenses that are not recorded, each part of a guide that the renderer did not understand, the parts that it did not write with no site address (or, with one, the parts that it wrote), and the count of the pictures of the repository that it compressed, with their bytes before and after.
 - `kerneltool check` runs the host tests of the site (`tools/kerneltool/site_test.odin`, `site_render_test.odin`) and checks that each picture that `README.md` names is a file of the repository. It does not write the site.
 
 ## The pages
+
+A page named by a folder (`news/`) is the `index.html` of that folder (see "The addresses of the pages").
 
 | Page | Generated from |
 |---|---|
 | `index.html`, the home | The mark (`support/mark`), the first sentence of the first paragraph of `README.md` as the tagline of the head, the three newest news entries, the rest of that paragraph in a section "What it is" after the news (the owner, 2026-11-12: "la tagline est trop longue"; after the news, so that the first screen of a phone holds the mark, the name, the tagline and the links only; the description of the home in its head, Open Graph, the manifest and the page graph stays the whole paragraph, cut at 160 bytes, because the tagline alone is too short to describe the system), the stages of the start from the lines `kernel: boot: ...` of `build/test_output.txt`, the tiles of the boot image (see "The tiles of the boot image"), the first three measured numbers, the pictures of `docs/screenshots` with the captions of `README.md`, the newest release of `CHANGELOG.md`, the count of steps of `docs/REVIEWS.md` |
 | `guides/index.html` | The table "Documents" of `README.md`, then the other documents of `docs/` by name |
-| `guides/<name>.html` | Each document of `docs/` but `HANDOFF.md` and `REVIEWS.md`, which are working records of the project and stay out of the site; the glossary is a page of the reference |
+| `guides/<name>/` | Each document of `docs/` but `HANDOFF.md` and `REVIEWS.md`, which are working records of the project and stay out of the site; the glossary is a page of the reference |
 | `reference/index.html` | The list of the reference tables below |
-| `reference/glossary.html` | `docs/GLOSSARY.md`: each row of a table whose first column is "Term" has the anchor `term-<name>` |
-| `reference/commands.html` | `COMMANDS` in `tools/kerneltool/main.odin`: the name and the text of each command |
-| `reference/numbers.html` | The list `site_measures` and the logs of `build/` |
-| `reference/licenses.html` | See "The licenses" |
-| `releases.html` | All of `CHANGELOG.md`, newest first; each release has the anchor `release-<number>`, and a line with a link to each news entry that names it |
-| `news.html`, `news.xml` | The files of `news/`; see "The news" |
+| `reference/glossary/` | `docs/GLOSSARY.md`: each row of a table whose first column is "Term" has the anchor `term-<name>` |
+| `reference/commands/` | `COMMANDS` in `tools/kerneltool/main.odin`: the name and the text of each command |
+| `reference/numbers/` | The list `site_measures` and the logs of `build/` |
+| `reference/licenses/` | See "The licenses" |
+| `releases/` | All of `CHANGELOG.md`, newest first; each release has the anchor `release-<number>`, and a line with a link to each news entry that names it |
+| `news/`, `news.xml` | The files of `news/`; see "The news" |
 | `search.json`, `search.js` | The index of the search and its script; see "The search" |
 | `releases.xml` | The feed of the releases, from `CHANGELOG.md`; see "What other sites read" |
 | `site.webmanifest`, `llms.txt` | The name, the colors and the icons of the site; the pages with their descriptions in Markdown |
 | `sitemap.xml`, `robots.txt` | Only with a site address; see "What other sites read" |
-| `status.html` | See "The status page" |
-| `reference/operations.html`, `context.html`, `errors.html`, `grants.html`, `fixed-ranges.html`, `console.html` | See "The reference tables" |
-| `reference/modules/index.html`, `reference/modules/<name>.html` | See "The module pages" |
+| `status/` | See "The status page" |
+| `reference/operations/`, `context/`, `errors/`, `grants/`, `fixed-ranges/`, `console/` | See "The reference tables" |
+| `reference/modules/index.html`, `reference/modules/<name>/` | See "The module pages" |
 
 Each page has the bar (the heron and the name at the left, the sections as buttons: Guides, Reference, Status, News, Releases; a section appears when its page exists), breadcrumbs on each page below the home, and a foot that names the commit, the release and the time of the build, and the files that the page comes from, as links to the repository at that commit. A reference table names the files that it is read from.
 
 The tool reads the commit from the files of git (`.git`, `HEAD`, the reference, `packed-refs`), with no program. When it cannot, the foot says so and the links to files of the repository go to `master`.
+
+## The addresses of the pages
+
+The owner asked for it on 2026-11-12: "j'aimerais des urls genre /reference/licenses au lieu de licenses.html (possible avec index.html dans dossier".
+
+- Each page is the `index.html` of its own folder: `reference/licenses/index.html`, `guides/NETWORK/index.html`, `news/index.html`. The home is `index.html` at the root. `site_page_file` in `tools/kerneltool/site_frame.odin` gives the file of a page from its folder; no other code writes the path of a page.
+- The address of a page is its folder with a final slash: `/reference/licenses/`. GitHub Pages serves the `index.html` of a folder at that address, and it redirects the address with no final slash to it.
+- `site_page_link` writes each link from a page to a page, in one of two forms:
+  - With a site address (the published site): the folder, `../../reference/licenses/`, and `./` for the home from the home.
+  - With no site address (the site opened from a disk): the file, `../../reference/licenses/index.html`. A browser shows a folder of a disk as a list of its files, not as its `index.html`.
+- A link to a file that is not a page (the style sheet, the script, a picture, an icon, a feed, the manifest) is relative in the same way, one `../` for each folder of the page.
+- The canonical address, Open Graph, the `@id`s of the page graph, the sitemap, `llms.txt` and the two feeds name the folder of each page. With no site address, `llms.txt` and the feeds name the `index.html` from the root.
+- `search.json` holds the link of each page from the root of the site, in the form of the build. The script joins it to its own folder and applies no rule of its own.
+
+### The redirect pages
+
+The old addresses (`reference/licenses.html`) were public from the first publication to this change. The command writes a redirect page (`GLOSSARY.md`) at the old path of each page that is not an index page. The four index pages (the home, `guides/`, `reference/`, `reference/modules/`) keep their old path, so they have none.
+
+- A redirect page has a title, `<meta name="robots" content="noindex">`, a refresh with a delay of 0 to the new address (relative), and one visible link to it. It has no script, no bar, no `h1` and no description.
+- With a site address it also names the new address as its canonical address. With none it has no canonical address, as no page has one.
+- It is not a page of the site: it is not in the sitemap, the index of the search, `llms.txt` or the feeds, and the checks of the pages, of the page graph and of the search do not apply to it.
+- The check: its path is not the path of a page or of a file of the site, and its refresh and its link name a page that the command writes.
+- The command prints their count: the count of the pages less the four index pages.
 
 ## The Markdown that the site renders
 
@@ -87,14 +114,14 @@ A news entry (`GLOSSARY.md`) is one file of `news/`, `news/<yyyy-mm-dd>-<subject
 | Fixed | A thing that a person saw fail now works | The color of the machine |
 
 - `kerneltool news new <subject>` writes an entry with the date of the host, `release: next`, and no title and no text, so that the check fails until a person writes them. `kerneltool news check` checks each entry: the head, each key known and present once, the date a date of the calendar and the date of the file name, the picture a PNG file of `docs/screenshots/` or `resources/logo/`, the release a release of `CHANGELOG.md` or `next`, the guide a document of `docs/` that is a page of the site, the text not empty, at most 1200 bytes, with no heading and no line of HTML, and no two titles the same. `kerneltool check` runs it, and `kerneltool site` stops on the same faults.
-- `news.html`: each entry, newest first, as a card with the color of its kind, its date, a link to its release and to its guide, its picture, and a link to its file. Its anchor is `news-<the name of its file>`. One renderer renders all the entries of the page, so the ids stay unique and each term of the glossary links once.
+- `news/`: each entry, newest first, as a card with the color of its kind, its date, a link to its release and to its guide, its picture, and a link to its file. Its anchor is `news-<the name of its file>`. One renderer renders all the entries of the page, so the ids stay unique and each term of the glossary links once.
 - The home shows the three newest entries: the title, the kind, the date, the picture and the first sentence.
-- `releases.html`: under each release, a link to each entry that names it. An entry with `release: next` is in no release yet.
+- `releases/`: under each release, a link to each entry that names it. An entry with `release: next` is in no release yet.
 - `news.xml`: the feed, Atom (RFC 4287), newest first; each entry has its title, its date (`published` and `updated`, at 00:00 UTC), its kind as a `category`, its first sentence as its `summary`, and its text and picture as HTML in its `content`. The id of the feed and of each entry is the address of its file in the repository on `master` (`<repository>/blob/master/news/<file>`): a file of `news/` is never moved, so the id stays the same when the site gets an address. Each page names the feed in its head (`<link rel="alternate" type="application/atom+xml">`), so that a browser and a feed reader find it.
 
 What a feed reader needs, and what is missing with no address:
 
-- A reader subscribes to the address of the feed and resolves each relative link against it. With no address (`SITE_ADDRESS` is empty), the links of the feed are relative to the root of the site (`news.html#news-...`, `pictures/...`): they work for a reader that fetched the feed from the host of the site.
+- A reader subscribes to the address of the feed and resolves each relative link against it. With no address (`SITE_ADDRESS` is empty), the links of the feed are relative to the root of the site (`news/index.html#news-...`, `pictures/...`): they work for a reader that fetched the feed from the host of the site.
 - Missing with no address: the link `rel="self"` (the feed cannot name its own place), absolute links (a reader that receives the feed as a file, or copies an entry elsewhere, cannot resolve them), and the discovery of the feed from another site. `kerneltool site --address https://...` writes absolute links and the link `self`. The command says so when the site has no address.
 
 ## The search
@@ -146,7 +173,7 @@ A canonical address, an address of Open Graph and an `@id` of JSON-LD must be ab
 | Part | With no site address | With a site address |
 |---|---|---|
 | `lang`, the viewport, the title, the description, a theme color for each color scheme, the icons (`favicon.ico`, the SVG icon and the icon of a phone; see "The icons"), the manifest, the links to the two feeds, `rel=prev` and `rel=next` between guides (the reading order of the page of the guides) | Written | Written |
-| The canonical address (`GLOSSARY.md`) | No | `<site address>/<path>`; an index page by its folder (`<site address>/guides/`) |
+| The canonical address (`GLOSSARY.md`) | No | `<site address>/<folder of the page>/`, as `<site address>/reference/licenses/`; the home is `<site address>/` |
 | Open Graph: `og:type` (`article` for a guide, else `website`), `og:site_name`, `og:title`, `og:description`, `og:url`, `og:image` with its type, width, height and alt; `twitter:card` `summary_large_image`, which reads the rest from Open Graph | No | Written; the picture is `pictures/mark_card.png` |
 | The page graph (`GLOSSARY.md`) | No | One `<script type="application/ld+json">` in the head |
 | `sitemap.xml`, `robots.txt` | Not written | Written |
@@ -176,7 +203,7 @@ Not verified against a validator of schema.org or the documents of a search engi
 
 ### The sitemap, robots.txt and the feeds
 
-- `sitemap.xml` lists the canonical address of each page that the command writes, once, by path. A page has a `lastmod` only when the tool knows the date of its last change: `news.html` (the date of its newest entry) and `releases.html` (the date of its newest release). The other pages have none: each build changes their foot, and the tool does not read the history of their sources. A wrong `lastmod` teaches a search engine to ignore the field.
+- `sitemap.xml` lists the canonical address of each page that the command writes, once, by path. A page has a `lastmod` only when the tool knows the date of its last change: `news/` (the date of its newest entry) and `releases/` (the date of its newest release). The other pages have none: each build changes their foot, and the tool does not read the history of their sources. A wrong `lastmod` teaches a search engine to ignore the field.
 - `robots.txt` allows each page and gives the address of the sitemap. A crawler reads `robots.txt` only at the root of a host: when the site address has a path, the command says that the `robots.txt` of the root must have the line `Sitemap:`.
 - `releases.xml` is the feed of the releases (Atom): one entry for each release of `CHANGELOG.md`, newest first, with its date (`published` and `updated`, at 00:00 UTC), its first change as its summary, and its changes in HTML. The id of an entry is `<repository>/blob/master/CHANGELOG.md#release-<number>`: a release is never renamed, so the id does not change when the site gets an address.
 - `llms.txt` follows the form of llmstxt.org, as the site of the owner has one: the name, the lead of `README.md` as a quote, then a list of the pages for each section, each with its title and its description; the module pages are in the part `## Optional`.
@@ -194,7 +221,7 @@ No picture is written at half its width. A browser takes a picture of 512 pixels
 
 After the checks of the pages, with a site address:
 
-- each page has one canonical address, its own, and no two pages share one;
+- each page has one canonical address, its own (the folder of the page, with a final slash), and no two pages share one;
 - each page has `og:url` (its canonical address), `og:type`, `og:title`, `og:description`, `og:site_name`, `og:image:alt`, and an `og:image` that is a PNG file that the command wrote, with the width and the height that the page states;
 - each page has one page graph; it parses (`core:encoding/json`, strict JSON), its `@context` is `https://schema.org`, it has a `@graph`, and each `@id` that a field names is a node of the graph or the canonical address of a page of the site;
 - the sitemap lists each page that the command writes once, and no other address.
@@ -340,13 +367,13 @@ The heron is pixels: each raster icon is the drawing of `support/mark` at a whol
 - The icon of a phone and the maskable icon are opaque, because iOS fills a transparent part and Android cuts the icon to a shape. The maskable drawing fits inside the circle of 80 percent of the icon: its corners are at 203.6 pixels from the centre (144 times the square root of 2), under 204.8.
 - `favicon.ico` is the ICO container with PNG entries: a header of 6 bytes, an entry of 16 bytes for each picture (its width and height, 1 plane, 32 bits, its bytes and its offset, little endian), then the PNG files. The tool writes it (`site_ico_encode`) and reads its directory back (`site_ico_read`).
 - The SVG icon: each part of the heron is filled with an SVG gradient along the diagonal of its box, in cells (`gradientUnits="userSpaceOnUse"`, from the top left corner of the box to its bottom right corner), whose two ends are the colors that `support/mark` computes at the two ends (a channel `c` is `0.7 c + 76.5` at the start and `0.7 c` at the end). The eye is one flat color. `shape-rendering="crispEdges"` keeps the edges of the cells sharp. The colors in the attributes are those of the light form; a rule `@media (prefers-color-scheme: dark)` in a `<style>` element of the file gives the dark form to the parts whose two forms differ (the neck). A browser that does not apply the rule shows the light form, which reads on both.
-- Each link to an icon is relative, as every link of the site: `favicon.ico` from the home, `../favicon.ico` from a guide. The file is at the root of the site, so the default request `/favicon.ico` finds it when the site is at the root of its domain.
+- Each link to an icon is relative, as every link of the site: `favicon.ico` from the home, `../../favicon.ico` from a guide. The file is at the root of the site, so the default request `/favicon.ico` finds it when the site is at the root of its domain.
 
 The checks, after the checks of the pages: `favicon.ico` is at the root, its directory reads back (each entry inside the file, a PNG file of the size of its entry) and it has a picture of 32 by 32; each icon of the head of each page and of the manifest is a file that the command wrote, with the size that the page or the manifest states; the icon of a phone and each maskable icon are opaque; the manifest has an icon of 192 and one of 512 for any use, and a maskable one of 512.
 
 ## The status page
 
-`status.html` gives the state of the system with no sentence of its own: each cell is a part of `PROPERTIES.md` or of `FIRST_MILESTONE.md`.
+`status/` gives the state of the system with no sentence of its own: each cell is a part of `PROPERTIES.md` or of `FIRST_MILESTONE.md`.
 
 | Table | Read from, and the form the reader relies on |
 |---|---|
@@ -379,7 +406,7 @@ What the tables cannot show:
 
 ## The module pages
 
-`reference/modules/index.html` lists each module of `module_builds` (`tools/kerneltool/modules.odin`): its name, its kind, whether it is in the boot image, its count of exports, its imports and its purpose. A module whose source is in `programs/` is a program; the others are modules. `reference/modules/<name>.html` gives:
+`reference/modules/index.html` lists each module of `module_builds` (`tools/kerneltool/modules.odin`): its name, its kind, whether it is in the boot image, its count of exports, its imports and its purpose. A module whose source is in `programs/` is a program; the others are modules. `reference/modules/<name>/` gives:
 
 - its documentation: the comment before `package` in its source, the text that the build writes into the module (`describe_package` of `tools/kerneltool/describe.odin`); its purpose is the first sentence;
 - its source folder, its size in the boot image of the last build (or that the image is not built), its imports and the modules that import it;

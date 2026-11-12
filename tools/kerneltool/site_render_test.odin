@@ -11,8 +11,8 @@ test_site :: proc() -> Site {
 	site.copies = make(map[string]string, context.temp_allocator)
 	site.files = make(map[string]int, context.temp_allocator)
 	site.pages = make([dynamic]Site_Page, context.temp_allocator)
-	site.documents["docs/NETWORK.md"] = "guides/NETWORK.html"
-	site.documents["NETWORK.md"] = "guides/NETWORK.html"
+	site.documents["docs/NETWORK.md"] = "guides/NETWORK/index.html"
+	site.documents["NETWORK.md"] = "guides/NETWORK/index.html"
 	terms := make([]Site_Term, 2, context.temp_allocator)
 	terms[0] = {name = "Module metadata", id = "term-module-metadata"}
 	terms[1] = {name = "Module", id = "term-module"}
@@ -22,7 +22,7 @@ test_site :: proc() -> Site {
 
 @(private = "file")
 render :: proc(site: ^Site, markdown: string, glossary := false) -> (html: string, renderer: Site_Renderer) {
-	renderer = site_renderer_make(site, "guides/TEST.html", "docs/TEST.md")
+	renderer = site_renderer_make(site, "guides/TEST/index.html", "docs/TEST.md")
 	renderer.glossary = glossary
 	site_render_markdown(&renderer, markdown)
 	return strings.to_string(renderer.builder), renderer
@@ -36,7 +36,7 @@ site_render_each_construct :: proc(t: ^testing.T) {
 	expect := [?]string {
 		"<h1 id=\"the-title\">The &lt;title&gt;</h1>",
 		"<code>code</code>",
-		"<strong>bold</strong> &amp; a <a href=\"../guides/NETWORK.html\">link</a>",
+		"<strong>bold</strong> &amp; a <a href=\"../../guides/NETWORK/index.html\">link</a>",
 		"Its second line.",
 		"<h2 id=\"a-part\">A part</h2>",
 		"<li>one continued<ul>\n<li>nested",
@@ -59,8 +59,8 @@ site_render_each_construct :: proc(t: ^testing.T) {
 site_render_links_the_first_use_of_a_term :: proc(t: ^testing.T) {
 	site := test_site()
 	html, _ := render(&site, "The module metadata of a module. Modules, and `Module` in code.\n")
-	testing.expect(t, strings.contains(html, "<a class=\"term\" href=\"../reference/glossary.html#term-module-metadata\">module metadata</a>"))
-	testing.expect(t, strings.contains(html, "of a <a class=\"term\" href=\"../reference/glossary.html#term-module\">module</a>."))
+	testing.expect(t, strings.contains(html, "<a class=\"term\" href=\"../../reference/glossary/index.html#term-module-metadata\">module metadata</a>"))
+	testing.expect(t, strings.contains(html, "of a <a class=\"term\" href=\"../../reference/glossary/index.html#term-module\">module</a>."))
 	testing.expect_value(t, strings.count(html, "#term-module\""), 1)
 	glossary, _ := render(&site, "| Term | Definition |\n|---|---|\n| Module | A module |\n", glossary = true)
 	testing.expect(t, strings.contains(glossary, "<tr id=\"term-module\">"))
@@ -75,7 +75,7 @@ site_render_the_documents_of_the_repository :: proc(t: ^testing.T) {
 	for path in paths {
 		data, err := os.read_entire_file(path, context.temp_allocator)
 		testing.expect(t, err == nil)
-		renderer := site_renderer_make(&site, "guides/X.html", path)
+		renderer := site_renderer_make(&site, "guides/X/index.html", path)
 		site_render_markdown(&renderer, string(data))
 		html := strings.to_string(renderer.builder)
 		testing.expectf(t, strings.count(html, "<h1") == 1, "%s gives %d headings h1", path, strings.count(html, "<h1"))
@@ -94,9 +94,9 @@ site_render_the_documents_of_the_repository :: proc(t: ^testing.T) {
 @(test)
 site_relative_paths :: proc(t: ^testing.T) {
 	testing.expect_value(t, site_relative("index.html", "style.css"), "style.css")
-	testing.expect_value(t, site_relative("guides/NETWORK.html", "style.css"), "../style.css")
-	testing.expect_value(t, site_relative("reference/modules/math.html", "index.html"), "../../index.html")
-	testing.expect_value(t, site_relative("guides/A.html", "#part"), "#part")
+	testing.expect_value(t, site_relative("guides/NETWORK/index.html", "style.css"), "../../style.css")
+	testing.expect_value(t, site_relative("reference/modules/math/index.html", "index.html"), "../../../index.html")
+	testing.expect_value(t, site_relative("guides/A/index.html", "#part"), "#part")
 	testing.expect_value(t, site_path_join("guides", "../pictures/a.png"), "pictures/a.png")
 	testing.expect_value(t, site_path_join("docs", "./NETWORK.md"), "docs/NETWORK.md")
 	testing.expect_value(t, site_slug("The kernel: 32 operations!"), "the-kernel-32-operations")
@@ -109,38 +109,49 @@ site_relative_paths :: proc(t: ^testing.T) {
 site_page_frame_escapes_its_texts :: proc(t: ^testing.T) {
 	site := test_site()
 	site.release = "0.1.0"
-	page := Site_Page{path = "guides/A.html", title = "<x-title>", description = "<x-description> & \"quote\"", section = .Guides, crumbs = site_crumbs(.Guides), body = "<h1>A</h1>"}
+	page := Site_Page{path = "guides/A/index.html", title = "<x-title>", description = "<x-description> & \"quote\"", section = .Guides, crumbs = site_crumbs(.Guides), body = "<h1>A</h1>"}
 	html := site_page_html(&site, page)
 	testing.expect(t, !strings.contains(html, "<x-title>"))
 	testing.expect(t, !strings.contains(html, "<x-description>"))
 	testing.expect(t, strings.contains(html, "&lt;x-description&gt; &amp; &quot;quote&quot;"))
-	testing.expect(t, strings.contains(html, "href=\"../style.css\""))
+	testing.expect(t, strings.contains(html, "href=\"../../style.css\""))
 }
 
 @(test)
 site_checks_of_the_pages :: proc(t: ^testing.T) {
 	good := [?]Site_Page {
 		{path = "index.html", title = "Home", description = "The home.", body = ""},
-		{path = "guides/A.html", title = "A", description = "The guide A.", body = ""},
+		{path = "guides/A/index.html", title = "A", description = "The guide A.", body = ""},
 	}
 	files := make(map[string]int, context.temp_allocator)
 	files["pictures/a.png"] = 1
+	// With no site address, a link to a page names its index.html.
 	written := make(map[string]string, context.temp_allocator)
-	written["index.html"] = "<h1 id=\"top\">Home</h1><a href=\"guides/A.html#part\">A</a><img src=\"pictures/a.png\" width=\"8\" height=\"8\" alt=\"\"><a href=\"https://example.org/\">x</a>"
-	written["guides/A.html"] = "<h1>A</h1><h2 id=\"part\">P</h2><a href=\"../index.html#top\">home</a><a href=\"#part\">here</a>"
-	testing.expect_value(t, len(site_check_pages(good[:], written, files)), 0)
+	written["index.html"] = "<h1 id=\"top\">Home</h1><a href=\"guides/A/index.html#part\">A</a><img src=\"pictures/a.png\" width=\"8\" height=\"8\" alt=\"\"><a href=\"https://example.org/\">x</a>"
+	written["guides/A/index.html"] = "<h1>A</h1><h2 id=\"part\">P</h2><a href=\"../../index.html#top\">home</a><a href=\"#part\">here</a>"
+	testing.expect_value(t, len(site_check_pages(good[:], written, files, false)), 0)
+	// With a site address, it names the folder of the page.
+	published := make(map[string]string, context.temp_allocator)
+	published["index.html"] = "<h1 id=\"top\">Home</h1><a href=\"guides/A/#part\">A</a><a href=\"./\">home</a><img src=\"pictures/a.png\" width=\"8\" height=\"8\" alt=\"\">"
+	published["guides/A/index.html"] = "<h1>A</h1><h2 id=\"part\">P</h2><a href=\"../../#top\">home</a><a href=\"#part\">here</a>"
+	testing.expect_value(t, len(site_check_pages(good[:], published, files, true)), 0)
+	// The form of the other build fails.
+	testing.expect(t, len(site_check_pages(good[:], written, files, true)) > 0)
+	testing.expect(t, len(site_check_pages(good[:], published, files, false)) > 0)
 
 	Damage :: struct {
 		page, before, after: string,
 	}
 	damages := []Damage {
 		{"index.html", "<h1 id=\"top\">Home</h1>", ""}, // No h1.
-		{"guides/A.html", "<h2 id=\"part\">P</h2>", "<h1 id=\"part\">P</h1>"}, // Two h1.
+		{"guides/A/index.html", "<h2 id=\"part\">P</h2>", "<h1 id=\"part\">P</h1>"}, // Two h1.
 		{"index.html", " width=\"8\"", ""}, // A picture with no width.
 		{"index.html", " alt=\"\"", ""}, // A picture with no alt.
-		{"index.html", "guides/A.html#part", "guides/B.html"}, // A page that does not exist.
-		{"index.html", "guides/A.html#part", "guides/A.html#absent"}, // An anchor that does not exist.
-		{"guides/A.html", "href=\"#part\"", "href=\"#absent\""},
+		{"index.html", "guides/A/index.html#part", "guides/B/index.html"}, // A page that does not exist.
+		{"index.html", "guides/A/index.html#part", "guides/A/index.html#absent"}, // An anchor that does not exist.
+		{"index.html", "guides/A/index.html#part", "guides/A.html"}, // The old path of the page.
+		{"index.html", "guides/A/index.html#part", "guides/index.html"}, // A folder with no page.
+		{"guides/A/index.html", "href=\"#part\"", "href=\"#absent\""},
 		{"index.html", "pictures/a.png", "pictures/b.png"},
 	}
 	for damage in damages {
@@ -151,14 +162,45 @@ site_checks_of_the_pages :: proc(t: ^testing.T) {
 		replaced, did := strings.replace_all(written[damage.page], damage.before, damage.after, context.temp_allocator)
 		testing.expectf(t, did, "the text %q is not in %s", damage.before, damage.page)
 		changed[damage.page] = replaced
-		testing.expectf(t, len(site_check_pages(good[:], changed, files)) > 0, "no problem found after %q became %q", damage.before, damage.after)
+		testing.expectf(t, len(site_check_pages(good[:], changed, files, false)) > 0, "no problem found after %q became %q", damage.before, damage.after)
 	}
 	same_title := good
 	same_title[1].title = "Home"
-	testing.expect(t, len(site_check_pages(same_title[:], written, files)) > 0)
+	testing.expect(t, len(site_check_pages(same_title[:], written, files, false)) > 0)
 	same_description := good
 	same_description[1].description = "The home."
-	testing.expect(t, len(site_check_pages(same_description[:], written, files)) > 0)
+	testing.expect(t, len(site_check_pages(same_description[:], written, files, false)) > 0)
+}
+
+// The file of a page, the link to a page in its two forms, and the old
+// path of a page.
+@(test)
+site_page_files_and_links :: proc(t: ^testing.T) {
+	testing.expect_value(t, site_page_file(""), "index.html")
+	testing.expect_value(t, site_page_file("reference/licenses"), "reference/licenses/index.html")
+	testing.expect_value(t, site_section_page(.Home), "index.html")
+	testing.expect_value(t, site_section_page(.News), "news/index.html")
+	testing.expect_value(t, site_section_page(.Guides), "guides/index.html")
+
+	on_disk := test_site()
+	testing.expect_value(t, site_page_link(&on_disk, "guides/A/index.html", "reference/licenses/index.html"), "../../reference/licenses/index.html")
+	testing.expect_value(t, site_page_link(&on_disk, "guides/A/index.html", "index.html"), "../../index.html")
+	testing.expect_value(t, site_page_link(&on_disk, "index.html", "reference/glossary/index.html#term-module"), "reference/glossary/index.html#term-module")
+	testing.expect_value(t, site_page_link(&on_disk, "guides/A/index.html", "#part"), "#part")
+
+	published := test_site()
+	published.address = "https://example.org/modus"
+	testing.expect_value(t, site_page_link(&published, "guides/A/index.html", "reference/licenses/index.html"), "../../reference/licenses/")
+	testing.expect_value(t, site_page_link(&published, "guides/A/index.html", "index.html"), "../../")
+	testing.expect_value(t, site_page_link(&published, "index.html", "index.html"), "./")
+	testing.expect_value(t, site_page_link(&published, "index.html", "index.html#news"), "./#news")
+	testing.expect_value(t, site_page_link(&published, "guides/A/index.html", "reference/glossary/index.html#term-module"), "../../reference/glossary/#term-module")
+
+	testing.expect_value(t, site_old_page_path(Site_Page{path = "reference/licenses/index.html"}), "reference/licenses.html")
+	testing.expect_value(t, site_old_page_path(Site_Page{path = "reference/modules/math/index.html"}), "reference/modules/math.html")
+	testing.expect_value(t, site_old_page_path(Site_Page{path = "news/index.html"}), "news.html")
+	testing.expect_value(t, site_old_page_path(Site_Page{path = "guides/index.html", is_index = true}), "")
+	testing.expect_value(t, site_old_page_path(Site_Page{path = "index.html", is_index = true}), "")
 }
 
 @(test)
