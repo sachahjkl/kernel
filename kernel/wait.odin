@@ -129,7 +129,14 @@ wait_entry_wake :: proc "contextless" (thread: ^Thread, serial: u32) -> bool {
 // no more, which only reads its words again. A thread that registers again
 // later does it under the program lock, after the frames left, and finds
 // the page not committed.
+//
+// A thread that waits for an answer of the fault ring is in no table of
+// words, and its wait ends only with the answer: it is skipped. Its caller
+// holds the program lock, under which fault_waits changes.
 thread_words_wake :: proc "contextless" (thread: ^Thread) {
+	if thread.fault_waits {
+		return
+	}
 	home := run_lock(thread)
 	queued, preempts := false, false
 	switch {

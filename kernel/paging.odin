@@ -19,6 +19,7 @@ PAGE_LARGE :: u64(1) << 7
 // The bits of the error code of a page fault.
 FAULT_PRESENT :: 1 << 0 // The entry was present: the access is not permitted.
 FAULT_WRITE :: 1 << 1
+FAULT_RESERVED_BIT :: 1 << 3 // An entry of a page table has a reserved bit set.
 FAULT_EXECUTE :: 1 << 4
 LARGE_PAGE_SIZE :: 2 << 20
 DIRECT_MAP_INDEX :: (u64(info.DIRECT_MAP_BASE) >> 39) & 511

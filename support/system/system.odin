@@ -233,7 +233,8 @@ fault_handler_set :: proc "contextless" (thread: Handle = 0, error: ^errors.Erro
 }
 
 // fault_handler_end ends the delivery: a page fault stops the program again.
-// A thread that waits still gets its answer from fault_answer.
+// If a thread waits for an answer, its record is lost with the ring: the
+// program stops with STOP_CODE_FAULT_UNANSWERED. Answer first.
 fault_handler_end :: proc "contextless" () -> Status {
 	_, status := call(.Fault_Handler_Set, 0, 1)
 	return status

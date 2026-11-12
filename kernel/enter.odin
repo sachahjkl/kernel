@@ -846,8 +846,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			return .Bad_Operation
 		}
 		if v[1] == 1 {
-			program.fault_handler = 0
-			return .Ok
+			return fault_handler_set(program_index, 0)
 		}
 		handler := index
 		if v[0] != 0 {
@@ -867,7 +866,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		}
 		waiter_index := fault_waiter_find(program_index, v[0], v[1])
 		if waiter_index == 0 {
-			return .Bad_State // No thread with that number and serial waits: an old answer, or a wrong one.
+			return .Bad_State // No thread with that number and fault serial waits: an old answer, or a wrong one.
 		}
 		waiter := &threads[waiter_index]
 		waiter.fault_waits = false

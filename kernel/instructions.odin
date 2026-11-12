@@ -16,6 +16,15 @@ package kernel
 // A change of the page table, of a model-specific register or of a port
 // has effects on memory that the compiler cannot see.
 //
+// A template whose instruction changes a flag also has #clobber %flags
+// (the compiler then gives LLVM the flags, the direction flag and the x87
+// status, as Clang does for each asm): a move to or from a control register
+// leaves the arithmetic flags undefined, cld writes the direction flag, and
+// stac and clac write AC. The compiler adds that clobber by itself only for
+// an instruction that its table lists as writing an arithmetic flag, and
+// its table lists none of these, so without it the compiler could keep the
+// result of a comparison in the flags across the instruction.
+//
 // No template here names an x87, MMX, SSE or AVX register: the registers of
 // a program stay live through each kernel entry (docs/ARCHITECTURE.md, "The
 // extended state of the processor", section 3a).
@@ -109,27 +118,27 @@ extended_control_register_write :: #force_inline proc "contextless" (index: u32,
 
 // The control registers. cr0 and cr4 hold the modes of the processor, cr2
 // the address of the last page fault, and cr3 the page table.
-control_register_0_read :: asm() -> (value: u64) [#volatile, #clobber memory] {
+control_register_0_read :: asm() -> (value: u64) [#volatile, #clobber memory, #clobber %flags] {
 	mov value, %cr0
 }
 
-control_register_2_read :: asm() -> (value: u64) [#volatile, #clobber memory] {
+control_register_2_read :: asm() -> (value: u64) [#volatile, #clobber memory, #clobber %flags] {
 	mov value, %cr2
 }
 
-control_register_3_read :: asm() -> (value: u64) [#volatile, #clobber memory] {
+control_register_3_read :: asm() -> (value: u64) [#volatile, #clobber memory, #clobber %flags] {
 	mov value, %cr3
 }
 
-control_register_3_write :: asm(value: u64) [#volatile, #clobber memory] {
+control_register_3_write :: asm(value: u64) [#volatile, #clobber memory, #clobber %flags] {
 	mov %cr3, value
 }
 
-control_register_4_read :: asm() -> (value: u64) [#volatile, #clobber memory] {
+control_register_4_read :: asm() -> (value: u64) [#volatile, #clobber memory, #clobber %flags] {
 	mov value, %cr4
 }
 
-control_register_4_write :: asm(value: u64) [#volatile, #clobber memory] {
+control_register_4_write :: asm(value: u64) [#volatile, #clobber memory, #clobber %flags] {
 	mov %cr4, value
 }
 
@@ -168,6 +177,7 @@ copy_bytes_upward :: asm(destination: u64, source: u64, count: u64) -> (destinat
 	count -> count_left            = %rcx,
 	#volatile,
 	#clobber memory,
+	#clobber %flags,
 ] {
 	// The compiler asks that the direction be set in the template itself.
 	cld
@@ -186,6 +196,7 @@ copy_bytes_upward_with_program_access :: asm(destination: u64, source: u64, coun
 	count -> count_left            = %rcx,
 	#volatile,
 	#clobber memory,
+	#clobber %flags,
 ] {
 	stac
 	cld

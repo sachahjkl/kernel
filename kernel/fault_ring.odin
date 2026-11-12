@@ -26,6 +26,15 @@ import op "contract:operation"
 //   one as any thread that is on no processor.
 // A waiting thread holds nothing but its thread: no record of the kernel,
 // no lock, no page.
+//
+// A thread that waits for an answer is in no table of words, and only
+// Fault_Answer, the end of the ring (its handler ends, or Fault_Handler_Set
+// while it waits) or the stop of its program ends its wait.
+//
+// The record names the faulting thread by its number and by the serial of
+// the fault: a count of the program (Program.fault_serial), not the serial
+// of the kernel's thread slot, which all programs share and which would
+// tell a program how many threads others made in that slot.
 
 // fault_deliver gives a page fault of the current thread of this processor
 // to the fault ring of its program. true: the record is written and the
@@ -56,8 +65,11 @@ fault_deliver :: proc "contextless" (thread_index: u32, address: u64) -> bool {
 		return false
 	}
 	// fault_read is memory of the program: any value. The kernel indexes
-	// with its own count, and a difference that is not below the capacity
-	// is full: it never writes outside fault_records.
+	// with its own count, so it never writes outside fault_records. A
+	// difference that is not below the capacity is full. A false fault_read
+	// harms only its program: a value above the count makes the ring full,
+	// and a value a little below the count lets the kernel write over
+	// records that the program did not read yet.
 	read := intrinsics.atomic_load(&record.fault_read)
 	if program.fault_written - read >= op.FAULT_RECORD_CAPACITY {
 		program.fault_full += 1
@@ -65,17 +77,27 @@ fault_deliver :: proc "contextless" (thread_index: u32, address: u64) -> bool {
 		log_in("fault", .Warning, "kernel: program ", program_name(program), ": the fault ring is full (", u64(program.fault_full), " times): the fault stops the program")
 		return false
 	}
+	// The entries of an earlier word wait stay in the table of words until
+	// the next kernel entry of the thread (wait_begin), and a fault is not
+	// one: a word_wake, a decommit or a revocation would end this wait
+	// through them, with no answer. The thread leaves the table here. Its
+	// processor owns it (it is the current thread), and the wait locks come
+	// after the program lock.
+	wait_unregister(thread)
+	thread.woken = false
+	program.fault_serial += 1
 	// The thread waits before its record is published: an answer reads the
 	// record first, so it finds the thread waiting.
 	home := run_lock(thread)
 	thread.state = .Waiting
 	intrinsics.atomic_store(&thread.deadline, op.WAIT_FOREVER)
 	thread.fault_waits = true
+	thread.fault_serial = program.fault_serial
 	thread.fault_address = address
 	run_unlock(home)
 	record.fault_records[program.fault_written % op.FAULT_RECORD_CAPACITY] = {
 		thread      = u64(thread.number),
-		serial      = u64(thread.serial),
+		serial      = program.fault_serial,
 		address     = address,
 		access      = thread.frame.error & 0b10011, // Present, Write, Execute: the bits of Fault_Access.
 		instruction = thread.frame.rip,
@@ -88,16 +110,30 @@ fault_deliver :: proc "contextless" (thread_index: u32, address: u64) -> bool {
 }
 
 // fault_handler_set makes a thread of the program its fault handler, with
-// an empty ring. The caller holds the program lock (execute).
+// an empty ring, or ends the delivery (handler_index 0). The ring of the
+// old handler ends either way: a thread that waits then has a record that
+// no thread will read, so the program stops as at the end of the handler
+// thread. The caller holds the program lock (execute).
 fault_handler_set :: proc "contextless" (program_index: u32, handler_index: u32) -> op.Status {
 	program := &programs[program_index]
 	handler := &threads[handler_index]
 	// Only a live thread of this program: thread.program is 0 after
 	// thread_finish, which runs under this lock.
-	if handler.program != program_index || handler.record_in_kernel == nil {
+	if handler_index != 0 && (handler.program != program_index || handler.record_in_kernel == nil) {
 		return .Bad_State
 	}
+	if fault_waiter_exists(program_index) {
+		// A stop of the program takes the control lock.
+		if need_control() {
+			return STATUS_RETRY
+		}
+		program_stop(program_index, op.STOP_CODE_FAULT_UNANSWERED)
+		return .Ok
+	}
 	program.fault_handler = handler_index
+	if handler_index == 0 {
+		return .Ok
+	}
 	program.fault_handler_serial = handler.serial
 	program.fault_written = 0
 	intrinsics.atomic_store(&handler.record_in_kernel.fault_written, 0)
@@ -106,11 +142,11 @@ fault_handler_set :: proc "contextless" (program_index: u32, handler_index: u32)
 }
 
 // fault_waiter_find gives the thread of a program with a number and a
-// serial that waits for an answer, or 0. The caller holds the program lock,
+// fault serial that waits for an answer, or 0. The caller holds the program lock,
 // under which fault_waits and thread.program change.
 fault_waiter_find :: proc "contextless" (program_index: u32, number: u64, serial: u64) -> u32 {
 	for &thread, slot in threads[1:] {
-		if thread.program == program_index && thread.fault_waits && u64(thread.number) == number && u64(thread.serial) == serial {
+		if thread.program == program_index && thread.fault_waits && u64(thread.number) == number && thread.fault_serial == serial {
 			return u32(slot + 1)
 		}
 	}

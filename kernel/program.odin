@@ -197,6 +197,7 @@ Thread :: struct #align (64) {
 	// Written under the program lock; the thread is Waiting with no deadline
 	// while it is true.
 	fault_waits:   bool,
+	fault_serial:  u64, // The serial of that fault: Program.fault_serial when it came. Program lock.
 	fault_address: u64, // The address of the access of that fault. Program lock.
 }
 
@@ -250,6 +251,7 @@ Program :: struct {
 	fault_handler_serial: u32,
 	fault_written:        u32, // The records that the kernel wrote in that ring: the kernel's own count, not the one in memory of the program.
 	fault_full:           u32, // The faults that found the ring full.
+	fault_serial:         u64, // The faults given to a ring: the serial of the next record is one more. A count of this program only.
 }
 
 HOLDS_STOPPED :: u64(1) << 32
@@ -1578,6 +1580,12 @@ EXCEPTION_NAMES := [32]string {
 @(require, linkage = "strong", link_name = "kernel_interrupt")
 kernel_interrupt :: proc "c" (frame: ^Frame) {
 	from_program := frame.cs & 3 != 0
+	// The address of a page fault, read once and first: every later use
+	// takes this value, also if a later path can take another page fault.
+	fault_address: u64
+	if frame.vector == VECTOR_PAGE_FAULT {
+		fault_address = control_register_2_read()
+	}
 	// A fault of the iretq of resume: the processor refused the return to
 	// the current thread. The same test as in interrupt_common, which gave
 	// the kernel its gs back for this case only.
@@ -1587,7 +1595,10 @@ kernel_interrupt :: proc "c" (frame: ^Frame) {
 	if !from_program && frame.vector < VECTOR_INTERRUPT_BASE {
 		// The processor can hold any lock: it takes none.
 		name := EXCEPTION_NAMES[frame.vector]
-		address := control_register_2_read()
+		address := fault_address
+		if frame.vector != VECTOR_PAGE_FAULT {
+			address = control_register_2_read()
+		}
 		fault_report_begin()
 		log("kernel: exception in the kernel: ", name, " vector ", frame.vector, " error ", Hex(frame.error), " at ", Hex(frame.rip), " address ", Hex(address), ": ", fault_reason(frame, address))
 		machine_stop(2)
@@ -1656,15 +1667,24 @@ kernel_interrupt :: proc "c" (frame: ^Frame) {
 		cpu.interrupts += 1
 		interrupt_signal(INTERRUPT_LINES + frame.vector - VECTOR_MESSAGE_BASE)
 		apic_write(APIC_END, 0)
-	case frame.vector == VECTOR_PAGE_FAULT && frame.error & FAULT_PRESENT == 0 && page_fault(thread.program, control_register_2_read(), frame.error):
+	case frame.vector == VECTOR_PAGE_FAULT && frame.error & FAULT_RESERVED_BIT != 0:
+		// The processor found a reserved bit in an entry of a page table.
+		// Only the kernel writes those entries: it is a mistake of the
+		// kernel, not of the program. The machine stops, as at an exception
+		// in the kernel; a fault handler never sees it, so a repair cannot
+		// hide it in a loop of faults.
+		fault_report_begin()
+		log("kernel: a page table entry of program ", program_name(&programs[thread.program]), " has a reserved bit: page fault error ", Hex(frame.error), " at ", Hex(frame.rip), " address ", Hex(fault_address))
+		machine_stop(2)
+	case frame.vector == VECTOR_PAGE_FAULT && frame.error & FAULT_PRESENT == 0 && page_fault(thread.program, fault_address, frame.error):
 		// A page on first use, or a page that another thread made present
 		// while this one waited for the lock: the instruction runs again.
 		cpu.first_use_faults += 1
-	case frame.vector == VECTOR_PAGE_FAULT && fault_deliver(cpu.current, control_register_2_read()):
+	case frame.vector == VECTOR_PAGE_FAULT && fault_deliver(cpu.current, fault_address):
 		// A record of the fault ring: the thread is Waiting until a thread
 		// of its program answers, so the end below goes to schedule.
 	case:
-		program_fault(thread.program, frame, control_register_2_read())
+		program_fault(thread.program, frame, fault_address)
 	}
 	if !from_program {
 		return // The processor was idle: it looks for a thread itself.

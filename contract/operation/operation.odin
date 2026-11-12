@@ -179,9 +179,12 @@ Operation :: enum u32 {
 	Fault_Handler_Set = 30, // (thread handle with Control or 0 for the calling thread, 1 to end the delivery): the page
 	// faults of the other threads of this program, below THREAD_AREA_BASE, become records of the fault ring in the
 	// thread record of this thread, in place of a stop; the thread of a fault waits for Fault_Answer. Only a thread of
-	// this program. A new handler replaces the one before; its ring starts empty.
-	Fault_Answer = 31, // (thread number, serial, Fault_Answer_Kind): the answer for a thread of this program that waits
-	// in the fault ring. Bad_State if no thread with that number and serial waits.
+	// this program. A new handler replaces the one before; its ring starts empty. A new handler, or the end of the
+	// delivery, while a thread waits for an answer ends the ring that holds its record: the program stops with
+	// STOP_CODE_FAULT_UNANSWERED, as when the handler thread ends.
+	Fault_Answer = 31, // (thread number, fault serial, Fault_Answer_Kind): the answer for a thread of this program that
+	// waits in the fault ring, by the two values of its record. Bad_State if no thread with that number waits for the
+	// fault of that serial: a wrong answer, a second answer, or an answer from another program.
 }
 
 // The scheduling strategy of the machine (docs/SCHEDULING.md): the rule that
@@ -334,7 +337,7 @@ FAULT_RECORD_CAPACITY :: 16
 
 Fault_Record :: struct {
 	thread:      u64, // The number of the thread in its program (Thread_Record.number).
-	serial:      u64, // The serial of the thread: Fault_Answer names it, so an answer for an ended thread whose number serves again is refused.
+	serial:      u64, // The serial of the fault: a count of the faults of this program that went to a ring (the first is 1). Fault_Answer names it, so an answer for an earlier fault, or for an ended thread whose number serves again, is refused.
 	address:     u64, // The address of the access.
 	access:      u64, // Fault_Access: what the access was.
 	instruction: u64, // The address of the instruction. After Resume the thread runs it again.
@@ -443,7 +446,7 @@ STOP_CODE_FAULT :: 0x100 // Add the number of the processor exception: 14 is a p
 STOP_CODE_NO_HANDLE :: 0x200 // The last handle to the program closed.
 STOP_CODE_NOT_COMMITTED :: 0x300 // A page fault on a page of an Uncommitted object that is not committed.
 STOP_CODE_RETURN :: 0x400 // The kernel cannot return to a thread of the program: its instruction or stack address is not one that the processor takes (docs/ARCHITECTURE.md, "The return to a program"). The stop report has the address in `address`.
-STOP_CODE_FAULT_UNANSWERED :: 0x500 // The fault handler of the program ended while a thread waited for an answer in the fault ring.
+STOP_CODE_FAULT_UNANSWERED :: 0x500 // The fault ring of the program ended while a thread waited for an answer in it: its handler thread ended, or Fault_Handler_Set named another handler or ended the delivery.
 
 // The state of a program or of a thread. A program is Ready when one of
 // its threads is Ready.

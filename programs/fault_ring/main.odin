@@ -21,9 +21,20 @@
 //      page and every thread.
 //   9. The handler ends while a thread waits: the program stops with the
 //      code of a fault that no thread can answer.
+//  10. A thread with the entry of an earlier word wait still in the table of
+//      words faults, and the page of that word is decommitted while it
+//      waits: it still waits, with one record, and one answer resumes it.
+//  11. A new handler while a thread waits: the ring with its record ends,
+//      and the program stops with the same code as in case 9.
+//  12. An answer from another program (this parent), with the thread number
+//      and the serial of the record of the child: refused.
+//  13. 10 000 faults, each answered at once by a handler that spins on
+//      another processor, while the faulting thread can still be on its way
+//      out of its processor: each one resumes once, with the right value.
 package fault_ring
 
 import "base:intrinsics"
+import "contract:fixed_addresses"
 import "contract:module"
 import op "contract:operation"
 import "support:display"
@@ -33,8 +44,8 @@ import "support:random"
 import "support:system"
 
 LINE :: interface.TABLE_LINE
-WIDTH :: 896
-HEIGHT :: 400
+WIDTH :: 960
+HEIGHT :: 460
 PAGE :: system.PAGE_SIZE
 
 // The value of the context that gives the role of a child: ROLE_TAG in the
@@ -60,6 +71,10 @@ Role :: enum u64 {
 	Full_Ring          = 4,
 	Stop_While_Waiting = 5,
 	Handler_Ends       = 6,
+	Word_Leftover      = 7,
+	Handler_Changed    = 8,
+	Foreign_Answer     = 9,
+	Early_Answer       = 10,
 }
 
 // The child that repairs stops with REPAIRS_CODE and one bit for each of
@@ -67,6 +82,15 @@ Role :: enum u64 {
 REPAIRS_CODE :: 0x10
 REPAIRS_ALL :: 0xF
 STOP_WHILE_WAITING_CODE :: 7
+// The children of the cases 10, 12 and 13 stop with their code and one bit
+// for each check that went as it must.
+LEFTOVER_CODE :: 0x20
+LEFTOVER_ALL :: 0x7
+FOREIGN_CODE :: 0x30
+FOREIGN_ALL :: 0x7
+EARLY_CODE :: 0x40
+EARLY_ALL :: 0x3
+EARLY_FAULTS :: 10_000
 FULL_RING_THREADS :: op.FAULT_RECORD_CAPACITY + 1
 // The budget of each child. The largest child needs about 300 pages (17
 // threads with their stacks and thread areas, its own stack of 64 pages,
@@ -79,6 +103,19 @@ LAZY_PAGES :: 16
 LAZY_PAGE :: 3 // The page of the lazy object that case 1 reads.
 MAGIC :: u64(0x5EED_0000_0000_0000)
 
+// The page that the parent shares with each child, at SHARED_ADDRESS in the
+// child.
+SHARED_ADDRESS :: fixed_addresses.OWN_CHOICE_START + 0x0000_0400_0000_0000
+Shared_Page :: struct {
+	least_fault_nanoseconds: u64, // Case 3: the least time of one repaired fault.
+	// Case 12: the record of the fault that waits, for the answer of the
+	// parent. waiting is 1 when the two values are written.
+	waiting_thread:  u64,
+	waiting_serial:  u64,
+	waiting:         u32,
+	foreign_refused: u32, // 1: the answer of the parent got Bad_State; 2: it got another status.
+}
+
 // One case of the parent: what its child gave.
 Case :: struct {
 	name:  string,
@@ -86,9 +123,11 @@ Case :: struct {
 	bit:   u32, // For the child that repairs: its bit in the stop code.
 	ran:   bool,
 	right: bool,
+	value: [64]u8, // The text of the row, when the case gives a number.
+	value_length: int,
 }
 
-cases := [9]Case {
+cases := [13]Case {
 	{name = "a read of a page that is not committed", role = .Repairs, bit = 1},
 	{name = "a write to a read-only page", role = .Repairs, bit = 2},
 	{name = "a stack that grows by 64 pages", role = .Repairs, bit = 4},
@@ -98,6 +137,10 @@ cases := [9]Case {
 	{name = "a full ring", role = .Full_Ring},
 	{name = "the program stops while a thread waits", role = .Stop_While_Waiting},
 	{name = "the handler ends while a thread waits", role = .Handler_Ends},
+	{name = "a word wait, a fault, a decommit of the word", role = .Word_Leftover},
+	{name = "a new handler while a thread waits", role = .Handler_Changed},
+	{name = "an answer from another program", role = .Foreign_Answer},
+	{name = "10 000 answers given at once", role = .Early_Answer},
 }
 
 program_generator: random.Generator
@@ -115,8 +158,16 @@ read_only_base: u64
 stack_memory: system.Handle // Uncommitted: case 3.
 stack_base: u64
 handler_ready: u32
+handler_record: ^op.Thread_Record // The thread record of the handler: its ring.
 wrong_serial_refused: bool
 stack_repairs: u32
+resumed_threads: u32 // The threads of fault_on_a_page that went past their fault.
+handler_done: u32
+
+// shared_page gives the page that the parent shares with this child.
+shared_page :: #force_inline proc "contextless" () -> ^Shared_Page {
+	return (^Shared_Page)(uintptr(SHARED_ADDRESS))
+}
 
 // handler_start starts the handler thread of a child and waits until it is
 // the fault handler of the program.
@@ -134,6 +185,7 @@ handler_become :: proc "contextless" () {
 	if system.fault_handler_set() != .Ok {
 		system.stop(21)
 	}
+	handler_record = system.thread_record() // Read after handler_ready, which is stored after it.
 	intrinsics.atomic_store(&handler_ready, 1)
 }
 
@@ -222,6 +274,7 @@ child_repairs :: proc "contextless" () -> ! {
 	if repairs == STACK_PAGES {
 		bits |= 4
 	}
+	intrinsics.volatile_store(&shared_page().least_fault_nanoseconds, least)
 	system.log("fault_ring: a stack that grows: ", u64(repairs), " pages of ", u64(STACK_PAGES), ", each one committed by the handler at its first touch; one repaired fault took ", least, " ns at least", repairs == STACK_PAGES ? string(": as it must") : string(": WRONG"))
 
 	// 4. The wrong serial of case 1.
@@ -266,7 +319,188 @@ silent_handler :: proc "c" (_: rawptr) -> ! {
 fault_on_a_page :: proc "c" (parameter: rawptr) -> ! {
 	page := u64(uintptr(parameter))
 	intrinsics.volatile_store((^u64)(uintptr(lazy_base + page * PAGE)), page)
+	intrinsics.atomic_add(&resumed_threads, 1)
 	system.thread_stop()
+}
+
+// wait_for waits until the word is not 0, at most a number of milliseconds.
+wait_for :: proc "contextless" (word: ^u32, milliseconds: u64) -> bool {
+	for deadline := system.time() + milliseconds; intrinsics.atomic_load(word) == 0; {
+		if system.time() >= deadline {
+			return false
+		}
+		system.sleep(system.time() + 1)
+	}
+	return true
+}
+
+lazy_page_repair :: proc "contextless" (value: u64) {
+	ranges := [1]op.Page_Range{{first = 0, page_count = 1}}
+	if _, status := system.memory_commit(lazy_memory, ranges[:]); status != .Ok {
+		system.stop(24)
+	}
+	intrinsics.volatile_store((^u64)(uintptr(lazy_base)), value)
+}
+
+// Case 10. The word of a word wait, in a committed page of an uncommitted
+// object: the handler decommits that page while the thread waits.
+word_memory: system.Handle
+word_base: u64
+waker_woke: u32
+leftover_quiet: bool // No second record, and the thread did not run, before the answer.
+leftover_answer: system.Status
+
+// waker sets the word and wakes the main thread, once it waits.
+waker :: proc "c" (_: rawptr) -> ! {
+	system.sleep(system.time() + 50)
+	word := (^u32)(uintptr(word_base))
+	intrinsics.atomic_store(word, 1)
+	intrinsics.atomic_store(&waker_woke, u32(system.word_wake(word)))
+	system.thread_stop()
+}
+
+leftover_handler :: proc "c" (_: rawptr) -> ! {
+	handler_become()
+	record, _ := system.fault_record_next()
+	// The kernel ends the wait of each thread with a word in a page that
+	// leaves the program. The faulting thread still has the entry of its
+	// word wait: it must not wake.
+	ranges := [1]op.Page_Range{{first = 0, page_count = 1}}
+	if _, status := system.memory_decommit(word_memory, ranges[:]); status != .Ok {
+		system.stop(25)
+	}
+	written := intrinsics.atomic_load(&handler_record.fault_written)
+	system.sleep(system.time() + 100)
+	leftover_quiet = intrinsics.atomic_load(&handler_record.fault_written) == written && intrinsics.atomic_load(&resumed_threads) == 0
+	lazy_page_repair(MAGIC)
+	leftover_answer = system.fault_answer(record, .Resume)
+	intrinsics.atomic_store(&handler_done, 1)
+	for {
+		system.sleep(system.time() + 1000)
+	}
+}
+
+child_word_leftover :: proc "contextless" () -> ! {
+	lazy_object(1)
+	status: system.Status
+	word_memory, status = system.memory_create(1, flags = {.Uncommitted})
+	address, _ := system.memory_map(word_memory)
+	word_base = u64(uintptr(address))
+	ranges := [1]op.Page_Range{{first = 0, page_count = 1}}
+	if status != .Ok || word_base == 0 {
+		system.stop(22)
+	}
+	if _, committed := system.memory_commit(word_memory, ranges[:]); committed != .Ok {
+		system.stop(24)
+	}
+	handler_start(leftover_handler)
+	system.thread_start(waker, nil, 4)
+	// One word wait, ended by the waker: its entry stays in the table of
+	// words until the next kernel entry of this thread. The fault below
+	// comes first: no operation between the two.
+	word := (^u32)(uintptr(word_base))
+	for intrinsics.atomic_load(word) == 0 {
+		system.word_wait(word, 0)
+	}
+	value := intrinsics.volatile_load((^u64)(uintptr(lazy_base)))
+	intrinsics.atomic_add(&resumed_threads, 1)
+	wait_for(&handler_done, 2000)
+	bits: u32
+	if intrinsics.atomic_load(&waker_woke) == 1 {
+		bits |= 1
+	}
+	if leftover_quiet {
+		bits |= 2
+	}
+	if leftover_answer == .Ok && value == MAGIC {
+		bits |= 4
+	}
+	system.log("fault_ring: a word wait, a fault, a decommit of the word: the waker woke ", u64(waker_woke), " thread; ", leftover_quiet ? string("no second record and no run before the answer") : string("the thread ran or faulted again with no answer: WRONG"), "; the answer: ", op.STATUS_NAMES[leftover_answer], ", the thread read ", system.Hex(value), bits == LEFTOVER_ALL ? string(": as it must") : string(": WRONG"))
+	system.stop(LEFTOVER_CODE | bits)
+}
+
+// Case 12. The handler writes the record for the parent, and answers only
+// after the answer of the parent.
+foreign_handler :: proc "c" (_: rawptr) -> ! {
+	handler_become()
+	record, _ := system.fault_record_next()
+	intrinsics.volatile_store(&shared_page().waiting_thread, record.thread)
+	intrinsics.volatile_store(&shared_page().waiting_serial, record.serial)
+	intrinsics.atomic_store(&shared_page().waiting, 1)
+	bits: u32
+	if wait_for(&shared_page().foreign_refused, 2000) && intrinsics.atomic_load(&shared_page().foreign_refused) == 1 {
+		bits |= 1
+	}
+	// The answer of the parent did not resume the thread: it has not run,
+	// and it did not fault again.
+	system.sleep(system.time() + 50)
+	if intrinsics.atomic_load(&resumed_threads) == 0 && intrinsics.atomic_load(&handler_record.fault_written) == 1 {
+		bits |= 2
+	}
+	lazy_page_repair(MAGIC)
+	if system.fault_answer(record, .Resume) == .Ok && wait_for(&resumed_threads, 1000) {
+		bits |= 4
+	}
+	system.log("fault_ring: an answer from another program: the parent answered for the thread ", record.thread, " and the serial ", record.serial, ": ", intrinsics.atomic_load(&shared_page().foreign_refused) == 1 ? string("refused with Bad_State") : string("not refused"), "; the thread still waited, and the answer of its own program resumed it", bits == FOREIGN_ALL ? string(": as it must") : string(": WRONG"))
+	system.stop(FOREIGN_CODE | bits)
+}
+
+// Case 13. The handler spins on its ring and answers each record at once:
+// the answer can come while the faulting thread still leaves its
+// processor.
+early_answers: u32
+
+spinning_handler :: proc "c" (_: rawptr) -> ! {
+	handler_become()
+	own := system.thread_record()
+	served: u64
+	for {
+		written := intrinsics.atomic_load(&own.fault_written)
+		read := intrinsics.atomic_load(&own.fault_read)
+		if written == read {
+			// Spin for a while, then wait: a handler that only spins can
+			// spend the processor time of the budget of the child.
+			for spin := 0; spin < 100_000 && intrinsics.atomic_load(&own.fault_written) == written; spin += 1 {
+				intrinsics.cpu_relax()
+			}
+			if intrinsics.atomic_load(&own.fault_written) == written {
+				system.word_wait(&own.fault_written, written, system.time() + 1)
+			}
+			continue
+		}
+		record := own.fault_records[read % op.FAULT_RECORD_CAPACITY]
+		intrinsics.atomic_store(&own.fault_read, read + 1)
+		lazy_page_repair(MAGIC + served)
+		served += 1
+		if system.fault_answer(record, .Resume) == .Ok {
+			intrinsics.atomic_add(&early_answers, 1)
+		}
+	}
+}
+
+child_early_answer :: proc "contextless" () -> ! {
+	lazy_object(1)
+	handler_start(spinning_handler)
+	right: u64
+	ranges := [1]op.Page_Range{{first = 0, page_count = 1}}
+	for n in 0 ..< u64(EARLY_FAULTS) {
+		if intrinsics.volatile_load((^u64)(uintptr(lazy_base))) == MAGIC + n {
+			right += 1
+		}
+		if _, status := system.memory_decommit(lazy_memory, ranges[:]); status != .Ok {
+			system.stop(25)
+		}
+	}
+	answers := u64(intrinsics.atomic_load(&early_answers))
+	bits: u32
+	if answers == EARLY_FAULTS {
+		bits |= 1
+	}
+	if right == EARLY_FAULTS {
+		bits |= 2
+	}
+	system.log("fault_ring: 10 000 answers given at once: ", answers, " faults resumed, ", right, " values right, of ", u64(EARLY_FAULTS), bits == EARLY_ALL ? string(": as it must") : string(": WRONG"))
+	system.stop(EARLY_CODE | bits)
 }
 
 lazy_object :: proc "contextless" (pages: u64) {
@@ -316,6 +550,28 @@ child :: proc "contextless" (role: Role) -> ! {
 		for {
 			system.sleep(system.time() + 1000)
 		}
+	case .Word_Leftover:
+		child_word_leftover()
+	case .Handler_Changed:
+		lazy_object(1)
+		handler_start(silent_handler)
+		system.thread_start(fault_on_a_page, nil, 4)
+		// The record is published after its thread waits.
+		for intrinsics.atomic_load(&handler_record.fault_written) == 0 {
+			system.sleep(system.time() + 1)
+		}
+		// This thread becomes the handler: the ring of the first one, with
+		// the record of the waiting thread, ends.
+		system.fault_handler_set()
+	case .Foreign_Answer:
+		lazy_object(1)
+		handler_start(foreign_handler)
+		system.thread_start(fault_on_a_page, nil, 4)
+		for {
+			system.sleep(system.time() + 1000)
+		}
+	case .Early_Answer:
+		child_early_answer()
 	}
 	system.stop(30) // Not reached: each case above stops its program.
 }
@@ -325,14 +581,28 @@ child :: proc "contextless" (role: Role) -> ! {
 // and after the end of the child, says if the child left anything behind.
 // ran is false when a call failed: the call, its status and the budget are
 // on the log, and the case is wrong; a failed call is never read as a stop.
-child_run :: proc "contextless" (role: Role, name: string) -> (code: u32, report: op.Stop_Report, left_behind: bool, ran: bool) {
+child_run :: proc "contextless" (role: Role, name: string) -> (code: u32, report: op.Stop_Report, left_behind: bool, ran: bool, page: Shared_Page) {
+	shared_memory, created := system.memory_create(1)
+	if created != .Ok {
+		system.log("fault_ring: ", name, ": memory_create of the shared page failed: ", op.STATUS_NAMES[created])
+		return
+	}
+	defer system.close(shared_memory)
+	shared_address, mapped := system.memory_map(shared_memory)
+	if mapped != .Ok {
+		system.log("fault_ring: ", name, ": memory_map of the shared page failed: ", op.STATUS_NAMES[mapped])
+		return
+	}
+	defer system.memory_unmap(shared_address)
+	in_parent := (^Shared_Page)(shared_address)
+	mappings := [1]system.Mapping{{memory = shared_memory, address = SHARED_ADDRESS, flags = {.Write}}}
 	before, _ := system.budget_read()
 	grants: [op.CONTEXT_HANDLES]system.Grant
 	grants[op.CONTEXT_LOG] = {log_handle, {.Write}}
 	values: [op.CONTEXT_VALUES]u64
 	values[VALUE_ROLE] = ROLE_TAG | u64(role)
 	error: module.Load_Error
-	program, status := system.program_start(system.image_find(image, "fault_ring"), "fault_ring child", grants, random.values_with_seed(&program_generator, values), {pages = CHILD_PAGES, programs = 1, threads = CHILD_THREADS, processor = 500_000, log_records = 20}, nil, nil, {image = image}, &error)
+	program, status := system.program_start(system.image_find(image, "fault_ring"), "fault_ring child", grants, random.values_with_seed(&program_generator, values), {pages = CHILD_PAGES, programs = 1, threads = CHILD_THREADS, processor = 500_000, log_records = 20}, mappings[:], nil, {image = image}, &error)
 	if status != .Ok {
 		buffer: [512]u8
 		lines := system.Writer{buffer = buffer[:]}
@@ -352,6 +622,16 @@ child_run :: proc "contextless" (role: Role, name: string) -> (code: u32, report
 		if op.Program_State(results[0]) == .Stopped {
 			stopped = true
 			break
+		}
+		// Case 12: the answer of another program, with the two values of
+		// the record of the child.
+		if role == .Foreign_Answer && intrinsics.atomic_load(&in_parent.waiting) == 1 && intrinsics.atomic_load(&in_parent.foreign_refused) == 0 {
+			record := op.Fault_Record{thread = intrinsics.volatile_load(&in_parent.waiting_thread), serial = intrinsics.volatile_load(&in_parent.waiting_serial)}
+			answered := system.fault_answer(record, .Resume)
+			if answered != .Bad_State {
+				system.log("fault_ring: ", name, ": Fault_Answer of the parent gave ", op.STATUS_NAMES[answered], ", not Bad_State")
+			}
+			intrinsics.atomic_store(&in_parent.foreign_refused, answered == .Bad_State ? u32(1) : u32(2))
 		}
 		system.sleep(system.time() + 10)
 	}
@@ -380,6 +660,7 @@ child_run :: proc "contextless" (role: Role, name: string) -> (code: u32, report
 	if left_behind {
 		system.log("fault_ring: ", name, ": the budget of this program did not get back every page, thread and program of the child in 1 s")
 	}
+	page = in_parent^
 	ran = true
 	return
 }
@@ -395,8 +676,11 @@ draw :: proc "contextless" (window: ^display.Window) {
 		if item.ran {
 			value = item.right ? "as it must" : "WRONG: see the log"
 			color = item.right ? graphics.COLOR_PROGRAM : graphics.COLOR_FAILED
+			if item.value_length > 0 {
+				value = string(item.value[:item.value_length])
+			}
 		}
-		interface.label_value_line(&frame, interface.column_take(&column, LINE), item.name, value, color, 400)
+		interface.label_value_line(&frame, interface.column_take(&column, LINE), item.name, value, color, 420)
 	}
 	interface.window_frame_end(&drawing, &frame, window)
 }
@@ -429,15 +713,19 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	draw(&window)
 
 	// The child that repairs: one run for the cases 1 to 4.
-	code, _, left, ran := child_run(.Repairs, "the child that repairs")
+	code, _, left, ran, page := child_run(.Repairs, "the child that repairs")
 	for &item in cases[:4] {
 		item.ran = true
 		item.right = ran && code & ~u32(REPAIRS_ALL) == REPAIRS_CODE && code & item.bit != 0 && !left
 	}
+	// The row of case 3 shows the measured time.
+	if cases[2].right {
+		cases[2].value_length = len(system.format(cases[2].value[:], "as it must: one repaired fault in ", page.least_fault_nanoseconds, " ns at least"))
+	}
 	draw(&window)
 	for &item in cases[4:] {
 		report: op.Stop_Report
-		code, report, left, ran = child_run(item.role, item.name)
+		code, report, left, ran, _ = child_run(item.role, item.name)
 		item.ran = true
 		switch item.role {
 		case .Parent, .Repairs:
@@ -452,8 +740,14 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			item.right = code == op.STOP_CODE_NOT_COMMITTED && !left
 		case .Stop_While_Waiting:
 			item.right = code == STOP_WHILE_WAITING_CODE && !left
-		case .Handler_Ends:
+		case .Handler_Ends, .Handler_Changed:
 			item.right = code == op.STOP_CODE_FAULT_UNANSWERED && !left
+		case .Word_Leftover:
+			item.right = code == LEFTOVER_CODE | LEFTOVER_ALL && !left
+		case .Foreign_Answer:
+			item.right = code == FOREIGN_CODE | FOREIGN_ALL && !left
+		case .Early_Answer:
+			item.right = code == EARLY_CODE | EARLY_ALL && !left
 		}
 		item.right = item.right && ran
 		case_log(&item, code, report.address)
