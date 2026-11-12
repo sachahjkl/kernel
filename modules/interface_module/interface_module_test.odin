@@ -63,10 +63,13 @@ counts_of_the_full_answer_across_calls :: proc(t: ^testing.T) {
 	area := Area{0, 0, 8, 8}
 	testing.expect_value(t, draw_background(&drawn, &area), 2) // A rectangle and the grid.
 	testing.expect_value(t, draw_background(&drawn, &area), 4) // 1 of 2 fits.
+	// A cell wide enough for the six characters: a text is cut to its cell,
+	// and this test is about the counts, not about the cut.
+	wide := Area{0, 0, 64, 16}
 	empty := ""
-	testing.expect_value(t, draw_cell_text(&drawn, &text, &area, &empty, 0, 0), 4) // Appends nothing.
+	testing.expect_value(t, draw_cell_text(&drawn, &text, &wide, &empty, 0, 0), 4) // Appends nothing.
 	words := "abcdef"
-	testing.expect_value(t, draw_cell_text(&drawn, &text, &area, &words, 0, 0), 5)
+	testing.expect_value(t, draw_cell_text(&drawn, &text, &wide, &words, 0, 0), 5)
 	testing.expect_value(t, text.count, 6) // The 6 bytes of the full answer; 4 fit.
 	testing.expect_value(t, string(text_memory[:4]), "abcd")
 	testing.expect_value(t, text_memory[4], 0xA5)
