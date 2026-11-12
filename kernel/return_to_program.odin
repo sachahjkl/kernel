@@ -51,9 +51,28 @@ return_refusal_sentences := [Return_Refusal]string {
 }
 
 foreign _ {
-	// The iretq of resume (processor.asm): the one instruction where the
-	// kernel runs with the gs of a program.
+	// The iretq of resume (processor.asm), where a refusal of the processor
+	// faults.
 	resume_return: u8
+}
+
+// A setting of the compiler for one kernel of the test only: the module
+// kernel_without_return_check of tools/kerneltool/modules.odin, which one
+// machine of `kerneltool test return_fault` boots. It skips the check of
+// the instruction address, so that the processor itself refuses the return
+// and the second layer runs. The module "kernel" has no define, so this is
+// false in it; the boot log of a kernel with it has
+// TEST_BUILD_LINE_WITHOUT_RETURN_CHECK, and the tool fails each other machine
+// that prints that line.
+TEST_BUILD_SKIPS_THE_INSTRUCTION_ADDRESS_CHECK :: #config(TEST_BUILD_SKIPS_THE_INSTRUCTION_ADDRESS_CHECK, false)
+TEST_BUILD_LINE_WITHOUT_RETURN_CHECK :: "kernel: TEST BUILD: the check of the instruction address before a return to a program is skipped"
+
+// return_to_program_log names, at boot, a kernel of the test with a check
+// skipped.
+return_to_program_log :: proc "contextless" () {
+	when TEST_BUILD_SKIPS_THE_INSTRUCTION_ADDRESS_CHECK {
+		log(TEST_BUILD_LINE_WITHOUT_RETURN_CHECK)
+	}
 }
 
 // address_canonical says if an address is canonical with 4 levels of page
@@ -78,8 +97,10 @@ return_frame_prepare :: proc "contextless" (frame: ^Frame) -> (refusal: Return_R
 	frame.cs = SELECTOR_USER_CODE
 	frame.ss = SELECTOR_USER_DATA
 	frame.rflags = frame.rflags & RETURN_FLAGS_OF_A_PROGRAM | USER_FLAGS
-	if frame.rip >= USER_END {
-		return .Instruction_Address, frame.rip
+	when !TEST_BUILD_SKIPS_THE_INSTRUCTION_ADDRESS_CHECK {
+		if frame.rip >= USER_END {
+			return .Instruction_Address, frame.rip
+		}
 	}
 	if !address_canonical(frame.rsp) {
 		return .Stack_Address, frame.rsp
@@ -90,7 +111,7 @@ return_frame_prepare :: proc "contextless" (frame: ^Frame) -> (refusal: Return_R
 // program_return_refused stops the program of a thread that the kernel
 // cannot return to: a fault of that program, with its stop report. The
 // thread is the current thread of this processor; the caller then calls
-// schedule, which ends it. The caller holds no lock.
+// schedule_on_a_fresh_stack, which ends it. The caller holds no lock.
 program_return_refused :: proc "contextless" (thread: ^Thread, refusal: Return_Refusal, value: u64, vector: u64) {
 	index := thread.program
 	control_take()
@@ -120,5 +141,17 @@ return_refused_by_the_processor :: proc "contextless" (frame: ^Frame) -> ! {
 	sync_acknowledge(cpu)
 	thread := &threads[cpu.current]
 	program_return_refused(thread, .Refused_By_The_Processor, thread.frame.rip, frame.vector)
+	schedule_on_a_fresh_stack(cpu)
+}
+
+// schedule_on_a_fresh_stack continues in schedule at the top of the kernel
+// stack of this processor. After a refused return, the frames on the stack
+// are dead: run and resume never return. So a chain of refusals in a row
+// uses the stack of one schedule and one run, whatever its length.
+schedule_on_a_fresh_stack :: proc "contextless" (cpu: ^Processor) -> ! {
+	stack_switch(cpu.stack_top, rawptr(schedule_from_the_top))
+}
+
+schedule_from_the_top :: proc "c" () -> ! {
 	schedule()
 }

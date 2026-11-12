@@ -17,7 +17,7 @@ import op "contract:operation"
 import module "contract:module"
 import "base:intrinsics"
 
-kernel_file := #load("../build/modules/kernel.module")
+kernel_file := #load(#config(KERNEL_MODULE, "../build/modules/kernel.module"))
 // The tool can give another boot image, for the test of a start that fails.
 boot_image := #load(#config(BOOT_IMAGE, "../build/boot.image"))
 display_data: bootscreen.Data

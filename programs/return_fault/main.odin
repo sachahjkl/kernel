@@ -17,6 +17,11 @@
 //      waits for the timer.
 //   3. The flag nested task, set with popfq before a syscall: the kernel
 //      clears it for itself, and the program gets its flags back without it.
+//   4. The trap flag, set with popfq right before a syscall: the kernel
+//      clears it for itself, takes no trap, and gives it back; the trap then
+//      comes in the program, after its first instruction: its own fault.
+//   5. A stack address that is not canonical, held at a syscall: the entry
+//      saves it without a use of it, and the return refuses it.
 package return_fault
 
 import "contract:module"
@@ -40,6 +45,9 @@ VALUE_WITH_AVX :: 1 // 1: the child of the instruction address holds ymm values.
 LAST_PAGE :: u64(op.USER_END) - system.PAGE_SIZE
 LAST_INSTRUCTION :: u64(op.USER_END) - 2
 
+// The code with which a child of the trap flag stops itself if no trap came.
+TRAP_NOT_TAKEN :: 4
+
 // The codes with which a child of the nested task stops itself.
 NESTED_TASK_CLEARED :: 1 // The flag was set before the entry, and clear after it.
 NESTED_TASK_NOT_SET :: 2 // popfq did not set the flag: the case did not run.
@@ -50,12 +58,16 @@ Role :: enum u64 {
 	Instruction_Address = 1,
 	Stack_Address       = 2,
 	Nested_Task         = 3,
+	Trap_Flag           = 4,
+	Stack_At_A_Syscall  = 5,
 }
 
 foreign _ {
 	jump_to_the_last_instruction :: proc "c" (address: rawptr, with_avx: bool) -> ! ---
 	spin_with_a_stack_that_is_not_canonical :: proc "c" () -> ! ---
 	syscall_with_nested_task :: proc "c" (before: ^u64) -> u64 ---
+	syscall_with_the_trap_flag :: proc "c" () -> u64 ---
+	syscall_with_a_stack_that_is_not_canonical :: proc "c" () -> ! ---
 }
 
 // One case: what the child gave, and if it is what the kernel must give.
@@ -68,10 +80,12 @@ Case :: struct {
 	address:   u64, // The address of its stop report.
 }
 
-cases := [3]Case {
+cases := [5]Case {
 	{name = "the instruction address after the last page", role = .Instruction_Address},
 	{name = "a stack address that is not canonical", role = .Stack_Address},
 	{name = "the flag nested task at a syscall", role = .Nested_Task},
+	{name = "the trap flag at a syscall", role = .Trap_Flag},
+	{name = "a stack address that is not canonical at a syscall", role = .Stack_At_A_Syscall},
 }
 
 program_generator: random.Generator
@@ -150,6 +164,11 @@ case_run :: proc "contextless" (item: ^Case) {
 		item.right = state == .Stopped && code == op.STOP_CODE_RETURN && report.address == 0x8000_0000_0000_0000
 	case .Nested_Task:
 		item.right = state == .Stopped && code == NESTED_TASK_CLEARED
+	case .Trap_Flag:
+		// A debug exception of the program (vector 1) stops it as its own fault.
+		item.right = state == .Stopped && code == op.STOP_CODE_FAULT + 1
+	case .Stack_At_A_Syscall:
+		item.right = state == .Stopped && code == op.STOP_CODE_RETURN && report.address == 0x8000_0000_0000_0000
 	case .Parent:
 	}
 	system.log("return_fault: ", item.name, ": the child stopped with the code ", system.Hex(u64(code)), ", the address ", system.Hex(item.address), item.right ? string(": as it must") : string(": WRONG"))
@@ -186,6 +205,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		spin_with_a_stack_that_is_not_canonical()
 	case .Nested_Task:
 		child_nested_task()
+	case .Trap_Flag:
+		syscall_with_the_trap_flag()
+		system.stop(TRAP_NOT_TAKEN)
+	case .Stack_At_A_Syscall:
+		syscall_with_a_stack_that_is_not_canonical()
 	case .Parent:
 	}
 	if !random.generator_from_context(&program_generator, ctx) {

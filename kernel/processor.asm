@@ -157,15 +157,18 @@ page_flush:                      ; (address)
 ;   kernel its own.
 ; - from the kernel, at any instruction but the iretq of resume: the base of
 ;   the kernel already.
-; - from the kernel at the iretq of resume (resume_return): resume ran
-;   swapgs before it, so the base is the one of the program. The only
-;   interrupts there are a fault of the iretq itself (vector 11, 12 or 13:
-;   the processor refused the frame) and an NMI or a machine check, which
-;   come between two instructions (vector 2 or 18). A fault gets swapgs
-;   here, and kernel_interrupt makes it a fault of the thread
-;   (return_refused_by_the_processor). An NMI or a machine check does not:
-;   the kernel stops the machine for it, and its report reads nothing
-;   through gs.
+; - from the kernel between the swapgs of resume and its iretq (the 15
+;   pops, the add and the iretq): the base is the one of the program.
+;   Interrupts are off there, so only these arrive there:
+;   - a fault of the iretq itself (rip resume_return, vector 11, 12 or 13:
+;     the processor refused the frame). It gets swapgs here, and
+;     kernel_interrupt makes it a fault of the thread
+;     (return_refused_by_the_processor).
+;   - an NMI or a machine check (vector 2 or 18), at any of these
+;     instructions. It gets no swapgs. kernel_interrupt takes the path of a
+;     fault of the kernel and stops the machine; that report reads nothing
+;     through gs, so it arrives. A program cannot cause either: the kernel
+;     sends no NMI, and a machine check is a fault of the hardware.
 interrupt_common:
 	PUSH_REGISTERS
 	cmp byte [user_access_guard], 0
@@ -222,16 +225,36 @@ kernel_enter:
 ; read, and below it, where nothing lives: a kernel entry starts at the top
 ; of the stack and never continues an earlier one. The top 22 * 8 bytes of
 ; the stack are where each entry from a program put its frame.
-; The direction flag is clear in the kernel (syscall clears it through
-; MSR_SFMASK, each interrupt runs cld), so rep movsq goes up.
+;
+; Two forms of the copy of 176 bytes, chosen by measure (the kernel entries
+; of the program locks in one second): 11 pairs of moves of 8 bytes in
+; general registers (RESUME_COPY_WITH_REP_MOVSQ 0), or rep movsq (1). The
+; kernel has no vector instruction, so no moves of 16 bytes. rep movsq has a
+; start cost of some tens of cycles for a short count; the 44 moves have
+; none, and with two loads and two stores in a cycle they take about 22
+; cycles. The direction flag is clear in the kernel (syscall clears it
+; through MSR_SFMASK, each interrupt runs cld), so rep movsq goes up.
+%define RESUME_COPY_WITH_REP_MOVSQ 0
+
 global resume
 resume:                          ; (frame: ^Frame) -> !: run a program
 	mov rsi, rdi                 ; the frame of the thread
 	mov rsp, [gs:abs 0]          ; the top of the kernel stack (gs: the kernel's)
 	sub rsp, 22 * 8
 	mov rdi, rsp
+%if RESUME_COPY_WITH_REP_MOVSQ
 	mov ecx, 22
 	rep movsq
+%else
+%assign pair 0
+%rep 11
+	mov rax, [rsi + pair * 16]
+	mov rdx, [rsi + pair * 16 + 8]
+	mov [rdi + pair * 16], rax
+	mov [rdi + pair * 16 + 8], rdx
+%assign pair pair + 1
+%endrep
+%endif
 	swapgs                       ; From here to the iretq, gs is the program's.
 	POP_REGISTERS
 	add rsp, 16                  ; The vector and the error code.

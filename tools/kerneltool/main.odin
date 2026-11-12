@@ -42,6 +42,7 @@ BOOT_PROGRAM :: BOOT_OBJECT_FOLDER + "/BOOTX64.EFI"
 BOOT_VOLUME :: BUILD_FOLDER + "/boot_volume.img"
 BOOT_VOLUME_FAILS :: BUILD_FOLDER + "/boot_volume_fails.img"
 BOOT_VOLUME_SHORTAGE :: BUILD_FOLDER + "/boot_volume_shortage.img"
+BOOT_VOLUME_WITHOUT_RETURN_CHECK :: BUILD_FOLDER + "/boot_volume_without_return_check.img" // The kernel kernel_without_return_check: one machine of `test return_fault` only.
 TEST_OUTPUT_SHORTAGE :: BUILD_FOLDER + "/test_output_shortage.txt"
 BOOT_VOLUME_SELF_TEST :: BUILD_FOLDER + "/boot_volume_self_test_%d.img"
 // The path where the firmware looks for the boot program of a disk.
@@ -139,7 +140,7 @@ run_build :: proc(args: []string) -> int {
 		fmt.eprintln("kerneltool: build [processes]")
 		return EXIT_USAGE
 	}
-	if !build_modules() || !build_boot_program("boot_fails.image", BOOT_VOLUME_FAILS, 0) || !build_boot_program("boot_shortage.image", BOOT_VOLUME_SHORTAGE, 0) {
+	if !build_modules() || !build_boot_program("boot_fails.image", BOOT_VOLUME_FAILS, 0) || !build_boot_program("boot_shortage.image", BOOT_VOLUME_SHORTAGE, 0) || !build_boot_program("boot.image", BOOT_VOLUME_WITHOUT_RETURN_CHECK, 0, "kernel_without_return_check") {
 		return EXIT_FAILURE
 	}
 	// One boot program for each test of the kernel on itself.
@@ -154,9 +155,10 @@ run_build :: proc(args: []string) -> int {
 	return 0
 }
 
-// build_boot_program builds the boot program with a boot image of the build
-// folder, and writes a boot volume with it. BOOT_PROGRAM is the last one.
-build_boot_program :: proc(image: string, volume_path: string, self_test: int) -> bool {
+// build_boot_program builds the boot program with a boot image and a kernel
+// module of the build folder, and writes a boot volume with it. BOOT_PROGRAM
+// is the last one.
+build_boot_program :: proc(image: string, volume_path: string, self_test: int, kernel := "kernel") -> bool {
 	reset_folder(BOOT_OBJECT_FOLDER) or_return
 	run(
 		{
@@ -175,6 +177,7 @@ build_boot_program :: proc(image: string, volume_path: string, self_test: int) -
 			SUPPORT_LIBRARY,
 			strings.concatenate({"-define:BOOT_IMAGE=../build/", image}, context.temp_allocator),
 			fmt.tprintf("-define:SELF_TEST=%d", self_test),
+			fmt.tprintf("-define:KERNEL_MODULE=../build/modules/%s.module", kernel),
 			"-out:" + BOOT_OBJECT_FOLDER + "/boot.obj",
 		},
 	) or_return

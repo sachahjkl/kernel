@@ -361,6 +361,7 @@ processor_start :: proc "contextless" () {
 	lock_ready = true
 	extended_state_prove()
 	extended_state_log()
+	return_to_program_log()
 	timer_calibrate()
 	timer_start()
 }

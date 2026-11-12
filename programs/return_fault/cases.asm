@@ -58,3 +58,39 @@ syscall_with_nested_task:
 	and qword [rsp], ~0x4000
 	popfq
 	ret
+
+; syscall_with_the_trap_flag() -> u64
+; Sets the trap flag with popfq, then makes one kernel entry with no wait as
+; the instruction right after popfq: a flag that popfq sets stops the
+; program after the instruction that follows it, so the trap belongs to
+; that syscall. The mask of the kernel clears the flag for the kernel; the
+; kernel must not take the trap at privilege 0. The kernel gives the flag
+; back with the flags of the program, so the trap comes after the first
+; instruction after the return: a fault of this program, which stops it.
+; If no trap comes, it clears the flag and gives 1.
+global syscall_with_the_trap_flag
+syscall_with_the_trap_flag:
+	xor edi, edi
+	pushfq
+	or qword [rsp], 0x100
+	popfq
+	syscall                      ; rax, rcx and r11 change.
+	pushfq                       ; The trap of the program comes after this instruction.
+	and qword [rsp], ~0x100
+	popfq
+	mov eax, 1
+	ret
+
+; syscall_with_a_stack_that_is_not_canonical() -> !
+; Holds an address that is not canonical in rsp and makes one kernel entry
+; with no wait. The entry of the kernel saves rsp without a use of it; the
+; return refuses it.
+global syscall_with_a_stack_that_is_not_canonical
+syscall_with_a_stack_that_is_not_canonical:
+	xor edi, edi
+	mov rax, 0x8000000000000000
+	mov rsp, rax
+	syscall
+.spin:
+	pause
+	jmp .spin

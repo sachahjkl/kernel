@@ -127,7 +127,7 @@ The same window with the pointer theme of the owner (Posy's Cursor, CC BY-NC 4.0
 
 ![The extended state of each thread: more threads than processors hold every ymm or zmm register, the x87 stack and MXCSR across kernel entries, one square for each register; and the cost of one empty kernel entry with xmm, ymm and zmm in use](docs/screenshots/extended_state.png)
 
-![The return to a program: three children give the kernel a thread that the processor would refuse at its return; the kernel stops each one as its own fault, and the machine goes on](docs/screenshots/return_fault.png)
+![The return to a program: five children give the kernel a thread that the processor would refuse at its return, or flags that it must not keep; the kernel stops each one as its own fault, and the machine goes on](docs/screenshots/return_fault.png)
 
 ![The temple of Jon: a portrait of Jonathan Blow that turns](docs/screenshots/temple.png)
 

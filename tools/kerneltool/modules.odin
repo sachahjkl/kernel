@@ -44,12 +44,20 @@ Module_Build :: struct {
 	imports: []string,
 	kernel:  bool,
 	image:   bool,
+	// Settings of the compiler for this module only (-define). Only a
+	// kernel for one machine of the test has one.
+	defines: []string,
 }
 
 module_builds := [?]Module_Build {
 	{name = "test_callee", source = "modules/test_callee"},
 	{name = "test_caller", source = "modules/test_caller", imports = {"test_callee"}},
 	{name = "kernel", source = "kernel", kernel = true},
+	// The same kernel with the check of the instruction address before a
+	// return to a program skipped, for one machine of `test return_fault`
+	// only: its boot volume is BOOT_VOLUME_WITHOUT_RETURN_CHECK, and
+	// machine_test refuses the line of this kernel in every other machine.
+	{name = "kernel_without_return_check", source = "kernel", kernel = true, defines = {"TEST_BUILD_SKIPS_THE_INSTRUCTION_ADDRESS_CHECK=true"}},
 	{name = "root", source = "programs/root", image = true},
 	{name = "input", source = "programs/input", image = true},
 	{name = "compositor", source = "programs/compositor", image = true},
@@ -211,6 +219,9 @@ build_module :: proc(build: Module_Build) -> bool {
 		CONTRACT_LIBRARY,
 		join("-out:", llvm_ir_folder),
 	)
+	for define in build.defines {
+		append(&compile, strings.concatenate({"-define:", define}, context.temp_allocator))
+	}
 	if build.kernel {
 		append(&compile, "-disable-red-zone")
 		append(&compile, test_build_checks ? "-define:TEST_BUILD_CHECKS_LOCK_ORDER=true" : "-define:TEST_BUILD_CHECKS_LOCK_ORDER=false")

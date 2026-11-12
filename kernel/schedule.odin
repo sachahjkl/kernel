@@ -449,7 +449,7 @@ run :: proc "contextless" (cpu: ^Processor, thread: ^Thread) -> ! {
 	// processor would refuse stops the program here, as its own fault.
 	if refusal, value := return_frame_prepare(&thread.frame); refusal != .None {
 		program_return_refused(thread, refusal, value, 0)
-		schedule()
+		schedule_on_a_fresh_stack(cpu)
 	}
 	if cpu.preempt_from != 0 {
 		cpu.preempt_cycles += cycles_now() - cpu.preempt_from

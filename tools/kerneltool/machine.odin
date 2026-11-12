@@ -2511,6 +2511,16 @@ machine_test :: proc(steps: []Step, volume: string, output: string, exit_status:
 	if passed {
 		passed = peer_check(&peer)
 	}
+	// The kernel with a check skipped runs only from its own boot volume:
+	// another machine that prints its line ran a kernel of the test by
+	// mistake, and its result is not a result of the kernel.
+	if passed && volume != BOOT_VOLUME_WITHOUT_RETURN_CHECK {
+		log, _ := os.read_entire_file(output, context.temp_allocator)
+		if strings.contains(string(log), TEST_KERNEL_WITHOUT_RETURN_CHECK_LINE) {
+			fmt.eprintfln("kerneltool: test failed: the machine of %s ran the kernel of the test with a check skipped: \"%s\"", volume, TEST_KERNEL_WITHOUT_RETURN_CHECK_LINE)
+			passed = false
+		}
+	}
 	if !passed {
 		log, _ := os.read_entire_file(output, context.temp_allocator)
 		lines := strings.split_lines(string(log), context.temp_allocator)
