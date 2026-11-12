@@ -6,6 +6,16 @@ The project has steps, not separate releases. The merge of step N on `master` is
 
 What is not in a release yet is in `changelog.d/`, one fragment for each change. `kerneltool changelog release` writes a release from the fragments. Nobody edits this file by hand.
 
+## [0.77.0] - 2026-11-12
+
+### Added
+
+- **The mark in the system**: the heron is at the left of the bar of the desktop, in the place of the word "kernel", and the heron with the name modus is in the head of the boot display. Both are drawn from the data of `support/mark`, with no picture file in the boot image.
+
+### Security
+
+- **The program `settings` can no longer make the keys of the person get lost.** A new count of changes on the settings page with the same values made the compositor send one record into the ring of each window, the ring that also carries the keys and the pointer; it now tells the windows only when the values differ from the values that it told last.
+
 ## [0.76.0] - 2026-11-12
 
 ### Added
