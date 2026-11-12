@@ -421,8 +421,9 @@ control: ring.Ring
 control_memory: system.Handle
 
 // The replacement table of the machine: this service writes it. Each
-// program that this service starts receives its records (property 20: a
-// program cannot ask for a replacement and cannot refuse one).
+// program that this service starts receives its records (a program cannot
+// ask for a replacement and cannot refuse one: a replacement is not an
+// access that a program takes for itself).
 replacement_memory: system.Handle
 replacement_table: ^system.Replacement_Table
 replacement_records: [system.REPLACEMENT_CAPACITY]module.Replacement
@@ -1112,7 +1113,8 @@ find :: proc "contextless" (name: string) -> ^Started {
 	return nil
 }
 
-// revoke ends one grant of a program that runs (property 13). Each grant
+// revoke ends one grant of a program that runs: access is never given for
+// ever, and each grant can be revoked. Each grant
 // here is a handle that this service keeps: the handle of the program came
 // from it, and the kernel ends what came from it in that program
 // (Handle_Revoke). What the program gave to other programs ends too.

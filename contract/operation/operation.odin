@@ -1,4 +1,6 @@
-// The kernel operations: what a program can ask the kernel (property 1).
+// The kernel operations: what a program can ask the kernel. The list is
+// short and counted, and only a change of docs/PROPERTIES.md changes its
+// limit (docs/PROPERTIES.md, "Small kernel with a small, counted interface").
 //
 // Each thread of a program has one ring to the kernel: the kernel ring. It
 // is one page after the thread record of the thread, and the `gs` register
@@ -607,7 +609,8 @@ Inspect_Kind :: enum u64 {
 	Mappings  = 5, // Mapping_Report. index 0: the kernel half of the addresses. 1: the half of the program that asks.
 	Modules   = 6, // Module_Report of program slot `index`
 	// The reports of a developer tool (docs/TOOLS.md): what one program has,
-	// read with the right Inspect: counts, places and states (property 20).
+	// read with the right Inspect: counts, places and states. A program
+	// without that right sees no other program.
 	// Each one has the serial of the program, so that a reader drops a
 	// sample of two programs in one slot.
 	Program_Mappings = 7, // Program_Mapping_Report of program slot `index`.
@@ -946,8 +949,9 @@ Program_Report :: struct {
 	program_serial: u64, // A number that changes for each new program in the slot: two reports with the same serial are of one program.
 }
 
-// The context: the one record that a program receives when it starts
-// (property 19). The address of the record is the parameter of the entry.
+// The context: the one record that a program receives when it starts, in
+// place of text arguments that it must parse. The address of the record is
+// the parameter of the entry.
 CONTEXT_HANDLES :: 16
 // The values 0 to 15 began as free values, and the roles of the system
 // took 9 to 15 one after the other until two roles wanted one number. The

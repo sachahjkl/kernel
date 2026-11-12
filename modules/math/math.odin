@@ -1,4 +1,5 @@
-// A module of commands (property 19). It is not a program: it has no entry.
+// A module of commands: each command is a function with typed parameters,
+// not a program that parses text. It is not a program: it has no entry.
 // The console loads it and calls its exports with the call form
 // (docs/MODULE_CONTRACT.md, section 4). The tool makes the description of each
 // export from this source: the name, the parameters, the result, and the

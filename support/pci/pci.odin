@@ -121,7 +121,8 @@ capability :: proc "contextless" (configuration: []u8, kind: u8) -> u32 {
 	return 0
 }
 
-// The fixed machine (property 7): the tool puts each disk at a place on bus
+// The fixed machine: the system targets one fixed machine at a time, so the
+// places of its devices are constants. The tool puts each disk at a place on bus
 // 0. The boot volume is at another place: no service receives it.
 DATA_DISK_DEVICE :: 0x10 // The disk of the storage service.
 SCRATCH_DISK_DEVICE :: 0x11 // A disk for the measures of the block service.

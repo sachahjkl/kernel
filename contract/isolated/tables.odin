@@ -56,8 +56,8 @@ is_table_or_bytes :: proc "contextless" (type: module.Type) -> bool {
 }
 
 // direction_rights gives the rights of a lent memory object for a
-// direction: Read, or Read and Write (property 20: the rights are the
-// direction).
+// direction: Read, or Read and Write. The rights are the direction: a
+// callee gets no right to write a table that it only reads.
 direction_rights :: proc "contextless" (direction: module.Direction) -> op.Rights {
 	return direction == .Read ? {.Read} : {.Read, .Write}
 }
@@ -124,8 +124,9 @@ table_encode :: proc "contextless" (file: []u8, type: module.Type, detail: u32, 
 }
 
 // The ranges of the call region that one call reads or writes: decode
-// refuses two ranges that overlap when one of them is written (finding W3
-// of the hostile read): a Change table over another table, over the error
+// refuses two ranges that overlap when one of them is written, because a
+// write through one range changes what the other range holds: a Change
+// table over another table, over the error
 // record, or over the argument record whose counts the receiver writes back.
 Region_Range :: struct {
 	start, end: u64, // end is not in the range.
@@ -186,7 +187,8 @@ table_decode :: proc "contextless" (file: []u8, type: module.Type, detail: u32, 
 	// by the form (the place has capacity = count). An Append count can be
 	// over the capacity (across calls).
 	// No count and no capacity times a size passes TABLE_SPAN, in each
-	// form: no product and no sum below wraps (finding F1 of the hostile read).
+	// form: no product and no sum below wraps, also for a count near 2^64
+	// that a hostile caller gives.
 	if field.count > TABLE_SPAN / size || field.capacity > TABLE_SPAN / size {
 		return refuse(refusal, .Too_Long, .Records, argument, max(field.count, field.capacity), TABLE_SPAN / size)
 	}
@@ -200,7 +202,8 @@ table_decode :: proc "contextless" (file: []u8, type: module.Type, detail: u32, 
 		if field.start % alignment != 0 {
 			return refuse(refusal, .Bad_Value, .Bytes, argument, field.start, 0)
 		}
-		// The pages of the records stay in the span of this parameter (N2).
+		// The pages of the records stay in the span of this parameter, so
+		// that their mapping never enters the span of the next parameter.
 		if reachable_records * size > TABLE_SPAN - module.PAGE_SIZE {
 			return refuse(refusal, .Too_Long, .Bytes, argument, reachable_records * size, TABLE_SPAN - module.PAGE_SIZE)
 		}
@@ -269,8 +272,8 @@ Return_Problem :: enum u32 {
 // the capacity. offset is the offset of the argument record that encode
 // gave. A memory object needs no copy: the callee wrote the memory of the
 // caller. It checks each answer first, then copies: on a problem, parameter
-// is its number, from 1, and no count and no record of the caller changes
-// (finding W7 of the hostile read).
+// is its number, from 1, and no count and no record of the caller changes:
+// the caller never keeps half of an answer.
 tables_return :: proc "contextless" (file: []u8, function: module.Function, arguments: []Argument, region: []u8, offset: u64) -> (problem: Return_Problem, parameter: int) {
 	return tables_return_of(file, function, arguments, region, offset, 0)
 }

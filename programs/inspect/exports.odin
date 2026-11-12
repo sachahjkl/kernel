@@ -6,11 +6,11 @@ import op "contract:operation"
 import "support:addresses"
 import "support:system"
 
-// The same facts as the window, as tables (property 19): a caller that
-// acts for the person reads them, the remote service among them:
+// The same facts as the window, as tables of records, not text: a caller
+// that acts for the person reads them, the remote service among them:
 // kerneltool call "inspect.mappings(\"console\")". The facts are of another
-// program (property 20, line 1), so a caller that does not act for the
-// person gets a refusal.
+// program, and a program sees no other program, so a caller that does not
+// act for the person gets a refusal.
 
 // One mapping of a program: mappings().
 Mapping :: struct {

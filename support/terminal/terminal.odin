@@ -1,5 +1,7 @@
 // The terminal: how a program gives text to a terminal, and how the
-// terminal gives keys to the program (properties 4, 6, 13, 20).
+// terminal gives keys to the program: records of a fixed size in a ring, as
+// between any two programs, and only to the program that the terminal was
+// given to.
 //
 // A program does not write a stream of bytes with commands hidden in it:
 // no escape character and no escape sequence exists. A program sends

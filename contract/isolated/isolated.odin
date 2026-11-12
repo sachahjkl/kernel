@@ -1,5 +1,6 @@
 // The isolated call: a program calls an export of a module that runs in
-// another program (property 19; docs/MODULE_CONTRACT.md, sections 4 and 5).
+// another program. A command is a function, and its arguments are typed
+// records, never text (docs/MODULE_CONTRACT.md, sections 4 and 5).
 //
 // The caller starts a call host: a program that loads one module and serves
 // its exports. The call host receives two memory objects:
@@ -393,7 +394,8 @@ result_table :: proc "contextless" (region: []u8, result: Slice, count: u64, siz
 // record is not in the call region, or when two ranges of the call region
 // overlap and one of them is written. Then the receiver must not call the
 // export, and `refusal` (it can be nil) has an error record that says which
-// argument and why (finding W8 of the hostile read): the receiver gives it
+// argument and why, so that the caller learns the cause of each refusal:
+// the receiver gives it
 // to the caller in the completion record.
 decode :: proc "contextless" (file: []u8, function: module.Function, offset, size: u64, region: []u8, call: ^Call, refusal: ^errors.Error_Record = nil) -> (ok: bool) {
 	function := function

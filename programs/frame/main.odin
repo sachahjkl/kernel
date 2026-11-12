@@ -7,11 +7,13 @@
 // message interrupt, memory for the queues, the machine with the right
 // Physical only, and a copy of the configuration of the device. The root
 // service found the device, enabled it and set its interrupt. The kernel has
-// no code for this device (property 7); the code of virtio that the block
-// service also uses is in support/virtio.
+// no code for this device: the code that knows a device is a program or a
+// library. The code of virtio that the block service also uses is in
+// support/virtio.
 //
 // The device reads and writes the frame region of the client: the kernel is
-// not on the path of the data (property 5). This service does not read a
+// not on the path of the data, so data moves with no kernel entry. This
+// service does not read a
 // frame: the client builds and checks each one.
 package frame_service
 

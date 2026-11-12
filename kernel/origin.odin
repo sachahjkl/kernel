@@ -4,7 +4,9 @@ import "base:intrinsics"
 import "contract:errors"
 import op "contract:operation"
 
-// The origin tree: what came from which handle (property 13).
+// The origin tree: what came from which handle. Kernel state is flat tables
+// with no pointer tree, so the tree is one table of links below
+// (docs/PROPERTIES.md, "Data-oriented kernel internals").
 //
 // A holding is a handle or a mapping of a program. The origin of a holding
 // is the handle that it came from:

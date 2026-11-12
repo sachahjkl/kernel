@@ -124,8 +124,8 @@ sources_that_are_refused :: proc(t: ^testing.T) {
 
 // A remote with no segment for 60 s is live: 60 s is RTO_MOST of
 // support/tcp, the longest gap between two probes of a zero window. A full
-// table must not give its place to a new remote then (an independent read,
-// W12): its place serves again only after twice that time.
+// table must not give its place to a new remote then: its place serves
+// again only after twice that time.
 @(test)
 admitted_remote_at_the_longest_gap_of_tcp :: proc(t: ^testing.T) {
 	table: Admitted

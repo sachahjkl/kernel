@@ -26,8 +26,8 @@ STEP_TIMEOUT :: 20 * time.Second
 // The bound of the first Wait of each machine: its boot ("compositor:
 // surface console" and its like). A boot that is slow under the load of the
 // host says nothing about the system; a later step that is slow does, so it
-// keeps STEP_TIMEOUT (owner, 2026-11-11: a boot timed out at a host load of
-// 62 while eight agents ran on the computer).
+// keeps STEP_TIMEOUT. A boot timed out at a host load of 62, while eight
+// agents ran on the computer.
 BOOT_WAIT_TIMEOUT :: 180 * time.Second
 KEY_PAUSE :: 45 * time.Millisecond
 MOUSE_PAUSE :: 25 * time.Millisecond
@@ -1331,7 +1331,7 @@ scenario := [?]Step {
 	{kind = .Type, text = "connect(\"manual\")"},
 	{kind = .Wait, text = "[console] manual: 16 commands of a service that runs"},
 	{kind = .Type, text = "manual.about(\"math\")"},
-	{kind = .Wait, text = "[console] A module of commands (property 19)"},
+	{kind = .Wait, text = "[console] A module of commands: each command is a function"},
 	{kind = .Type, text = "manual.signature(\"tally\", 1)"},
 	{kind = .Wait, text = "[console] add(amount: Integer, note: Text) -> Integer"},
 	{kind = .Type, text = "manual.show(\"nothing\")"},

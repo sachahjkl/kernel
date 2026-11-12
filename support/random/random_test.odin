@@ -190,8 +190,8 @@ a_draw_leaves_the_generator_free :: proc(t: ^testing.T) {
 }
 
 // A key is drawn only when the seed has the strength that the caller asks:
-// a weaker seed gives Seed_Too_Weak and no byte (the owner's rule: the
-// program chooses what it accepts, and an unmet requirement is an error).
+// a weaker seed gives Seed_Too_Weak and no byte (the program chooses what
+// it accepts, and an unmet requirement is an error).
 @(test)
 a_key_asks_for_a_least_seed_strength :: proc(t: ^testing.T) {
 	Case :: struct {

@@ -28,7 +28,8 @@ problem_count :: proc "contextless" (table: ^Problem_Table, found: datagram.Prob
 // problem_rows writes the rows that an endpoint can read: the rows of its
 // own table, then, with the right Inspect of its grant, the rows of the
 // machine. It never reads the table of another endpoint: the caller gives
-// only the table of the endpoint that asks (property 20). It gives the count
+// only the table of the endpoint that asks, because a program learns
+// nothing of the traffic of another. It gives the count
 // of the full answer; rows holds the part that fits.
 problem_rows :: proc "contextless" (own: ^Problem_Table, machine: ^Problem_Table, inspect: bool, rows: []datagram.Problem_Row) -> (count: int) {
 	tables := [2]^Problem_Table{own, inspect ? machine : nil}
@@ -59,7 +60,7 @@ problem_rows :: proc "contextless" (own: ^Problem_Table, machine: ^Problem_Table
 // cannot close its own port.
 // Milliseconds: twice RTO_MOST of support/tcp (60 s, the longest gap
 // between two probes of a zero window), so that a live remote keeps its
-// place (an independent read, W12: with 60 s and ">=", it lost it).
+// place: with 60 s and ">=", a live remote loses it.
 ADMITTED_IDLE :: 2 * 60_000
 
 Admitted_Remote :: struct {

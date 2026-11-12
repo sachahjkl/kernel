@@ -23,9 +23,9 @@ PROGRESS_LIMIT :: 10_000 // Bytes to send, and no byte read and no byte acknowle
 BODY_SILENCE_LIMIT :: 10_000 // No byte of a body that is not whole: a RST.
 // A body, and the bytes that this server sends, must move TRANSFER_RATE_LEAST
 // bytes in one second over each period of TRANSFER_PERIOD: else a RST. A
-// rate over each period, not an average from the start (an independent
-// read, W6: 1 MiB at once then nothing held a record for 68 minutes, and one
-// byte acknowledged each 9 s held an answer for days).
+// rate over each period, not an average from the start: with an average,
+// 1 MiB at once then nothing held a record for 68 minutes, and one byte
+// acknowledged each 9 s held an answer for days.
 TRANSFER_PERIOD :: 10_000
 TRANSFER_RATE_LEAST :: 4096
 SINK_LIMIT :: 16 << 20 // The largest body of /sink: 413 over it.
@@ -118,9 +118,9 @@ answer_start :: proc "contextless" (index: int, status: int, content_type: strin
 	length := body_source == .None ? len(body) : body_length
 	if request.content_length > 0 && !session.body_taken {
 		// A body that the server does not read, with each status: its bytes
-		// are not a next request (RFC 9112 6.3; an independent read, F4: a
-		// body that held a request was read as one: with a proxy before the
-		// server, request smuggling). The connection ends after the answer.
+		// are not a next request (RFC 9112 6.3): a body that holds a
+		// request must not be read as one, else a proxy before the server
+		// allows request smuggling. The connection ends after the answer.
 		// A close, not a read of the body that drops it: no new state, and
 		// a GET with a body has no meaning (RFC 9110 9.3.1).
 		session.close_after = true
@@ -213,10 +213,10 @@ answer_write :: proc "contextless" (index: int) -> bool {
 			bytes = chunk[:part]
 		case .Page:
 			// The page that the answer started with, or nothing: a put or a
-			// remove of its place during the answer ends the connection (an
-			// independent read, B2: before, the answer read the live page
-			// memory: a shorter page stopped the program, a page of the
-			// same length gave mixed bytes under the first Content-Length).
+			// remove of its place during the answer ends the connection. An
+			// answer that reads the live page memory fails: a shorter page
+			// stops the program, and a page of the same length gives mixed
+			// bytes under the first Content-Length.
 			page := &pages[session.answer_page]
 			if !page.used || page.generation != session.answer_page_generation || session.answer_offset + part > page.length {
 				aborted(index, "aborted: the page changed during its answer")
@@ -347,9 +347,9 @@ request_finish :: proc "contextless" (index: int) {
 	session.answer_head_done = 0
 	session.answer_left = 0
 	session.progress_at = system.time()
-	// The bytes that stay in the input are the start of the next head (an
-	// independent read, B1): its time starts now, so that the limit of a
-	// head applies to it. Else the next head starts with its first byte.
+	// The bytes that stay in the input are the start of the next head: its
+	// time starts now, so that the limit of a head applies to it. Else the
+	// next head starts with its first byte.
 	if session.input_length > 0 {
 		session.head_at = system.time()
 		session.request_started_at = system.nanoseconds()
@@ -357,8 +357,8 @@ request_finish :: proc "contextless" (index: int) {
 		session.head_at = 0
 	}
 	// After the FIN of the remote, the connection ends when no whole
-	// request waits in the input (an independent read, W7: before, a FIN
-	// after three whole requests gave one answer).
+	// request waits in the input: a FIN after three whole requests gives
+	// three answers, not one.
 	if session.peer_closed && web.head_end(session.input[:session.input_length]) == 0 {
 		close_after = true
 	}
@@ -466,9 +466,9 @@ http_remote_closed :: proc "contextless" (index: int) {
 }
 
 // http_limits ends what makes no progress on a connection: an open one,
-// and one that this server closed with bytes still to send (an independent
-// read, F3: a closed connection had no limit, and a remote that answers
-// each probe with a zero window held it for ever).
+// and one that this server closed with bytes still to send: with no limit
+// on a closed connection, a remote that answers each probe with a zero
+// window holds it for ever.
 http_limits :: proc "contextless" (index: int, now: u64) {
 	session := &sessions[index]
 	connection := &connections[index]

@@ -6,7 +6,8 @@
 // one message interrupt, memory for its queues, and a copy of its
 // configuration. This package reads the virtio capabilities in the copy,
 // agrees on the features with the device, and drives split virtqueues in
-// the memory of the queues. The kernel has no code for a device (property 7).
+// the memory of the queues. The kernel has no code for a device: the code
+// that knows a device is a program or a library.
 //
 // A queue takes three pages of the memory of the queues: the descriptors,
 // what the driver gives (avail), what the device used. A queue has at most

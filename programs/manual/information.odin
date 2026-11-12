@@ -7,15 +7,16 @@ import "support:information"
 import "support:sentence"
 import "support:system"
 
-// The manual is also the service of the information of the modules
-// (property 12): each export below gives a table of records, from the flat
+// The manual is also the service of the information of the modules,
+// through functions and with no query language: each export below gives a
+// table of records, from the flat
 // tables of the modules of the boot image (support/information). The
 // console combines the tables with where, sort, join and columns.
 //
 // What runs comes from the kernel: the module records of each program,
 // with the replacements that the loader applied. The manual reads them with
 // its grant, the machine with the right Inspect, and gives them only to a
-// caller that acts for the person (property 20).
+// caller that acts for the person: a program sees no other program.
 //
 // The window shows the same facts: the key Tab, or overview(), shows the
 // table of all the modules; the page of a module has its sizes, the modules

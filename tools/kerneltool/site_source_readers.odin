@@ -60,21 +60,110 @@ site_is_identifier :: proc(text: string) -> bool {
 	return true
 }
 
-// site_code_and_comment splits a line of Odin into its code and the text of
-// its comment "// ...". A "//" inside a string is not a comment.
-site_code_and_comment :: proc(line: string) -> (code: string, comment: string) {
-	in_string := false
+// The marks of the comments of one language of the sources. The site and
+// the check of the comments read the comments with the same scanner, so a
+// comment is the same text for both.
+Comment_Syntax :: struct {
+	marker:         string, // What opens a comment that runs to the end of the line: "//", ";", "#". Never empty.
+	escaped_quotes: string, // The bytes that open and close a string in which a backslash escapes the next byte.
+	raw_quotes:     string, // The bytes that open and close a string with no escape.
+}
+
+// comment_syntax_of gives the marks of the comments of a source file by the
+// extension of its name; known is false for another kind of file.
+comment_syntax_of :: proc(path: string) -> (syntax: Comment_Syntax, known: bool) {
+	switch {
+	case strings.has_suffix(path, ".odin"):
+		// A rune literal is a string too: else the quote of '"' opens one.
+		return {marker = "//", escaped_quotes = "\"'", raw_quotes = "`"}, true
+	case strings.has_suffix(path, ".asm"):
+		return {marker = ";", raw_quotes = "\"'`"}, true
+	case strings.has_suffix(path, ".nix"):
+		return {marker = "#", escaped_quotes = "\""}, true
+	}
+	return {}, false
+}
+
+// source_code_and_comment splits a line of a source into its code and the
+// text of its comment. A marker inside a string is not a comment. The
+// scanner reads one line at a time: a string that runs over several lines
+// (a raw string of Odin, a '' string of Nix) is code only on its first line.
+source_code_and_comment :: proc(line: string, syntax: Comment_Syntax) -> (code: string, comment: string) {
+	quote: u8 = 0
 	for index := 0; index < len(line); index += 1 {
+		character := line[index]
 		switch {
-		case line[index] == '\\' && in_string:
-			index += 1
-		case line[index] == '"':
-			in_string = !in_string
-		case !in_string && line[index] == '/' && index + 1 < len(line) && line[index + 1] == '/':
-			return strings.trim_space(line[:index]), strings.trim_space(line[index + 2:])
+		case quote != 0:
+			if character == '\\' && strings.index_byte(syntax.escaped_quotes, quote) >= 0 {
+				index += 1
+			} else if character == quote {
+				quote = 0
+			}
+		case strings.index_byte(syntax.escaped_quotes, character) >= 0 || strings.index_byte(syntax.raw_quotes, character) >= 0:
+			quote = character
+		case strings.has_prefix(line[index:], syntax.marker):
+			return strings.trim_space(line[:index]), strings.trim_space(line[index + len(syntax.marker):])
 		}
 	}
 	return strings.trim_space(line), ""
+}
+
+// site_code_and_comment splits a line of Odin into its code and the text of
+// its comment "// ...".
+site_code_and_comment :: proc(line: string) -> (code: string, comment: string) {
+	syntax, _ := comment_syntax_of(".odin")
+	return source_code_and_comment(line, syntax)
+}
+
+// One comment of a source: the lines of comment that follow each other,
+// joined with one space, as a page of the site shows them.
+Comment_Block :: struct {
+	text:       string,
+	first_line: int, // The line of its first line, from 0.
+	starts:     []int, // The offset in text where each of its lines starts.
+}
+
+// comment_blocks gives the comments of a source, in their order.
+comment_blocks :: proc(content: string, syntax: Comment_Syntax) -> []Comment_Block {
+	blocks := make([dynamic]Comment_Block, context.temp_allocator)
+	lines := site_lines(content)
+	index := 0
+	for index < len(lines) {
+		_, first := source_code_and_comment(lines[index], syntax)
+		if first == "" {
+			index += 1
+			continue
+		}
+		builder := strings.builder_make(context.temp_allocator)
+		starts := make([dynamic]int, context.temp_allocator)
+		block_line := index
+		for index < len(lines) {
+			_, comment := source_code_and_comment(lines[index], syntax)
+			if comment == "" {
+				break
+			}
+			if strings.builder_len(builder) > 0 {
+				strings.write_byte(&builder, ' ')
+			}
+			append(&starts, strings.builder_len(builder))
+			strings.write_string(&builder, comment)
+			index += 1
+		}
+		append(&blocks, Comment_Block{text = strings.to_string(builder), first_line = block_line, starts = starts[:]})
+	}
+	return blocks[:]
+}
+
+// comment_block_line gives the line, from 1, of the file where a byte of
+// the text of a comment is.
+comment_block_line :: proc(block: Comment_Block, offset: int) -> int {
+	line := block.first_line
+	for start, start_index in block.starts {
+		if start <= offset {
+			line = block.first_line + start_index
+		}
+	}
+	return line + 1
 }
 
 // site_join_comment adds a part to a comment, with one space between.

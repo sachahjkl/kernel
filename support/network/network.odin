@@ -48,8 +48,8 @@ ARP_REPLY :: 2
 TTL :: 64
 
 // The error of a frame is a record of the datagram contract, because the
-// network service gives it to programs (owner, 2026-11-10: errors that
-// inform). parse gives the kinds Too_Short to Unsupported.
+// network service gives it to programs, and an error must inform the
+// program that receives it. parse gives the kinds Too_Short to Unsupported.
 Layer :: datagram.Layer
 Problem_Kind :: datagram.Problem_Kind
 Problem :: datagram.Problem

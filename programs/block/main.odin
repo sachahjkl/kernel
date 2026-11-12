@@ -7,11 +7,13 @@
 // message interrupt, memory for the queue, the machine with the right
 // Physical only, and a copy of the configuration of the device. The root
 // service found the device, enabled it and set its interrupt
-// (support/pci). The kernel has no code for this device (property 7). The
-// code that each virtio device service shares is in support/virtio.
+// (support/pci). The kernel has no code for this device: the code that
+// knows a device is a program or a library. The code that each virtio
+// device service shares is in support/virtio.
 //
 // The device reads and writes the data region of the client: the kernel is
-// not on the path of the data (property 5). The service enters the kernel
+// not on the path of the data, so data moves with no kernel entry. The
+// service enters the kernel
 // to wait, and to wake its client; one entry serves many requests.
 package block_service
 

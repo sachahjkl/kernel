@@ -8,7 +8,7 @@ import "core:thread"
 import "support:system"
 
 // Another thread of the caller changes a record of the shared call region
-// while sum_words reads it (finding W2 of the hostile read). The export
+// while sum_words reads it: a hostile caller can do this. The export
 // copies the record once and uses only the copy: it gives a sum or an
 // error record, never a fault.
 @(test)

@@ -305,7 +305,7 @@ site_module_page_of_the_kernel :: proc(t: ^testing.T) {
 
 // A comment holds code in backticks: on a page each pair is a code
 // element, and the summary has no backticks. The identifier of a decision
-// is a label ("D-163").
+// (a capital D, a hyphen and a number) is a label.
 @(test)
 site_source_comment_code_and_decisions :: proc(t: ^testing.T) {
 	site := reference_test_site()

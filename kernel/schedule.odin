@@ -3,9 +3,10 @@ package kernel
 import "base:intrinsics"
 import op "contract:operation"
 
-// K3: the scheduler (docs/ARCHITECTURE.md, "Locks of the kernel", "The
-// scheduler"). Each processor has a run queue: the threads that are Ready,
-// that no processor runs, and whose home is this processor. The run lock of
+// The scheduler (docs/ARCHITECTURE.md, "Scheduler"; docs/ARCHITECTURE.md,
+// "Locks of the kernel", "The scheduler"). Each processor has a run queue:
+// the threads that are Ready, that no processor runs, and whose home is
+// this processor. The run lock of
 // a processor protects its queue and the scheduling state of the threads
 // whose home it is: state, processor, home and the links of the queue.
 //
@@ -257,7 +258,8 @@ thread_ready_held :: proc "contextless" (thread: ^Thread) -> (queued: bool, pree
 	home := processors[thread.home]
 	if running := home.current; running != 0 {
 		// At most one wake preemption of a processor in each millisecond
-		// by a thread of another program (P20): the interrupt and the pass
+		// by a thread of another program, because a program must not pay
+		// for the work of another: the interrupt and the pass
 		// through schedule are paid by the thread that runs there. A
 		// thread of the same program preempts with no limit: its program
 		// pays. With no preemption the woken thread waits at most for a

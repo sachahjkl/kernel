@@ -398,7 +398,7 @@ decode_random_tables :: proc(t: ^testing.T) {
 	testing.expect(t, accepted > 1000, "the test must accept many records")
 }
 
-// An Append place near 2^64 (finding F1 of the hostile read): 8 free bytes
+// An Append place near 2^64, as a hostile caller gives it: 8 free bytes
 // at the end of the call region, with a count and a capacity that do not
 // fit in TABLE_SPAN. decode refuses it: no count times a size wraps.
 @(test)
@@ -420,9 +420,10 @@ decode_refuses_counts_near_the_end_of_the_numbers :: proc(t: ^testing.T) {
 	testing.expect(t, decode(file, function, 0, 32, region, &call), "one record at the end of the call region")
 }
 
-// Ranges of the call region that overlap, where one of them is written
-// (finding W3 of the hostile read): decode refuses them, with an error
-// record of the kind Overlap. Two ranges that are only read can overlap.
+// Ranges of the call region that overlap, where one of them is written: a
+// write through one range changes what the other range holds. decode
+// refuses them, with an error record of the kind Overlap. Two ranges that
+// are only read can overlap.
 @(test)
 decode_refuses_ranges_that_overlap :: proc(t: ^testing.T) {
 	storage: [1024]u8
@@ -465,7 +466,8 @@ decode_refuses_ranges_that_overlap :: proc(t: ^testing.T) {
 	testing.expect(t, !decode(file, function, 0, 40, region[:], &call), "a Change table over the error record")
 }
 
-// A refusal of decode says which argument and why (finding W8).
+// A refusal of decode says which argument and why, so that the caller
+// learns the cause of each refusal.
 @(test)
 decode_refusal_is_an_error_record :: proc(t: ^testing.T) {
 	storage: [1024]u8
@@ -489,7 +491,7 @@ decode_refusal_is_an_error_record :: proc(t: ^testing.T) {
 }
 
 // A table in a memory object reaches at most TABLE_SPAN less one page: the
-// mapping of its pages never enters the span of the next parameter (N2).
+// mapping of its pages never enters the span of the next parameter.
 @(test)
 memory_object_table_stays_in_its_span :: proc(t: ^testing.T) {
 	region: [128]u8
@@ -503,7 +505,8 @@ memory_object_table_stays_in_its_span :: proc(t: ^testing.T) {
 	testing.expect(t, decode(nil, function, 0, 32, region[:], &call), "16 GiB less one page")
 }
 
-// A record whose size is not a multiple of its alignment is not valid (N1).
+// A record whose size is not a multiple of its alignment is not valid: the
+// next record of a table would lose the alignment of its fields.
 @(test)
 record_size_is_a_multiple_of_its_alignment :: proc(t: ^testing.T) {
 	storage: [1024]u8
@@ -518,7 +521,7 @@ record_size_is_a_multiple_of_its_alignment :: proc(t: ^testing.T) {
 }
 
 // When the answer of the second table is wrong, the count of the first
-// table does not change either (finding W7).
+// table does not change either: the caller never keeps half of an answer.
 @(test)
 tables_return_changes_nothing_on_a_problem :: proc(t: ^testing.T) {
 	storage: [1024]u8
@@ -546,8 +549,8 @@ tables_return_changes_nothing_on_a_problem :: proc(t: ^testing.T) {
 	testing.expect_value(t, problem, Return_Problem.Bad_Description)
 }
 
-// A value that an Integer field of its size does not hold (N4 of the
-// hostile read): field_integer_fits says so, so that a caller refuses it
+// A value that an Integer field of its size does not hold:
+// field_integer_fits says so, so that a caller refuses it
 // with a sentence and does not cut it (300 in a u8 was 44).
 @(test)
 field_integer_fits_its_size :: proc(t: ^testing.T) {
@@ -565,8 +568,8 @@ field_integer_fits_its_size :: proc(t: ^testing.T) {
 	testing.expect(t, module.field_integer_fits(value, min(i64)))
 }
 
-// The Append rule across calls (decision of the coordinator after the
-// second hostile read): the same sequence of calls on one table that does
+// The Append rule across calls (docs/MODULE_CONTRACT.md, "Did not fit,
+// across calls"): the same sequence of calls on one table that does
 // not fit gives the same counts and the same records in a direct call and
 // in an isolated call (a call host and a service use the same encode,
 // decode, counts_store and tables_return: the region form). The callee

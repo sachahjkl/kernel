@@ -44,7 +44,7 @@ Attack :: enum {
 	Half_Head_Fin, // Half a head, then a FIN.
 	Zero_Window, // /large, and a window of 0 for ever.
 	Huge, // A Content-Length of 999 999 999 999.
-	// The kinds of an independent read of the HTTP server (after the 7 of "slow").
+	// The kinds that a read of the HTTP server as hostile input found (after the 7 of "slow").
 	Request_Then_One_Byte, // A whole request and one byte of the next one, then nothing.
 	Answers_Then_Close_To_A_Zero_Window, // 64 pipelined requests, the last one with "Connection: close"; it never reads.
 	Body_Then_Nothing, // 1 MiB of a body of 16 MiB at once, then nothing.
@@ -337,7 +337,7 @@ peer_case_start :: proc(state: ^Peer_Tcp, name: string) -> bool {
 		client := client_page(true)
 		client.delayed = true
 		add(state, client)
-	// An independent read of the HTTP server: each case is one client that
+	// The cases that a read of the HTTP server as hostile input found: each case is one client that
 	// the server must end, then a page that shows that it still serves.
 	case "one byte after a request":
 		add(state, {attack = .Request_Then_One_Byte})

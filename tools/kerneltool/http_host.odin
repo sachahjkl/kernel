@@ -295,8 +295,8 @@ http_case_run :: proc(forward: Forward, case_text: string, expected: string) -> 
 			return false
 		}
 		test_passed_print("/%s gives 404 after server.remove", parts[1])
-	// An independent read of the HTTP server (F4): a request with a body
-	// that the server does not take. The body must not be read as the next
+	// A case that a read of the HTTP server as hostile input found: a
+	// request with a body that the server does not take. The body must not be read as the next
 	// request (RFC 9112 6.3; with a proxy before the server: request
 	// smuggling): one answer, then the end of the connection.
 	case "body-not-taken":
@@ -314,7 +314,7 @@ http_case_run :: proc(forward: Forward, case_text: string, expected: string) -> 
 			return false
 		}
 		test_passed_print("a GET with a body that is a request: one answer 200, then the server ended the connection after %.0f ms; the body was not read as a request", time.duration_milliseconds(took))
-	// W7: three whole requests, then a FIN: three answers, then the end.
+	// Three whole requests, then a FIN: three answers, then the end.
 	case "requests-then-fin":
 		connection, ok := http_host_connect(forward)
 		if !ok {

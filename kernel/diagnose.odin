@@ -13,7 +13,8 @@ import "contract:ring"
 // The record comes from the forms of the parameters (op.OPERATIONS), read
 // in their order, as the operation reads them. It describes what the
 // caller gave and its own handles: the amounts of a budget and the state
-// of a program only when the handle has the right Read (P20).
+// of a program only when the handle has the right Read: without it, a
+// program learns nothing of another program.
 //
 // Each table is read in one place: the procedures `read_*` below. Each one
 // takes the lock that protects what it reads in the table "Locks of the
@@ -222,7 +223,7 @@ read_threads :: proc "contextless" (program: ^Program) -> u32 {
 // their order: the control lock only for the programs, the threads and the
 // limits (Program_Create, Thread_Create, Budget_Create); the program lock
 // (the handle); the frame lock (the pages). A handle without Read gives no
-// amount (P20).
+// amount: the amounts tell of the other programs that the budget pays for.
 @(private = "file")
 read_budget :: proc "contextless" (program: ^Program, handle: u64, operation: op.Operation) -> (amounts: op.Budget_Amounts, rights: op.Rights, ok: bool) {
 	rights, ok = read_budget_rights(program, handle)
@@ -264,7 +265,8 @@ read_budget_rights :: proc "contextless" (program: ^Program, handle: u64) -> (ri
 
 // read_log_count gives the log records in this second of the budget that
 // paid for the program, and its limit, if the program holds that budget
-// with the right Read (P20); held is false otherwise. Lock: the program lock
+// with the right Read, because the count tells of the other programs that
+// the budget pays for; held is false otherwise. Lock: the program lock
 // only. The handle keeps the budget live; program.budget changes only when
 // that budget ends (an atomic store), and the limit of a live budget never
 // changes: no other lock is needed. The count is atomic.
@@ -613,7 +615,8 @@ read_pays_for :: proc "contextless" (budget: u32, region: u32) -> bool {
 budget_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Program, operation: op.Operation, v: [7]u64) -> bool {
 	if operation == .Log {
 		// The limit of the budget of the program. Its counts only with a
-		// handle with Read (P20); a budget above it is never described: when
+		// handle with Read, so that a program without it learns nothing of
+		// another program; a budget above it is never described: when
 		// the budget of the program is not over its limit now, a budget above
 		// refused, or a new second started, and the record is Refused.
 		logged, limit, held := read_log_count(program)
@@ -648,7 +651,8 @@ budget_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Pr
 	if !found {
 		return false
 	}
-	// Without Read the record depends on the operation alone (P20).
+	// Without Read the record depends on the operation alone, so that it
+	// tells nothing of another program.
 	if .Read not_in rights {
 		#partial switch operation {
 		case .Memory_Create:
@@ -922,7 +926,8 @@ slot_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Prog
 		// thread area is one), the thread table of the machine. The record
 		// names a table of the caller only. Which of two tables of the
 		// machine is full is a fact of the machine that the status does not
-		// give (P20): Refused. The areas and the mappings of another program
+		// give, because a program learns nothing of another program:
+		// Refused. The areas and the mappings of another program
 		// (Program_Start) need its lock: Refused too.
 		switch {
 		case operation == .Thread_Create && areas:

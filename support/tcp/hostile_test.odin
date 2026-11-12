@@ -4,10 +4,11 @@ package tcp
 import "core:testing"
 
 // The tests of the faults that a read of the library as hostile input
-// found (choices of the step after 309 in docs/FIRST_MILESTONE.md), and the
-// cases that it found with no test.
+// found (docs/FIRST_MILESTONE.md, "Faults of the library from the hostile
+// read"), and the cases that it found with no test. Each test failed before
+// its correction.
 
-// F1: a RST with data whose first byte is before RCV.NXT and whose end is
+// A RST with data whose first byte is before RCV.NXT and whose end is
 // in the window. RFC 5961 3.2 tests the sequence of the segment as it came:
 // it is not RCV.NXT, so the answer is a challenge ACK, not a reset.
 @(test)
@@ -26,7 +27,7 @@ reset_with_data_before_the_window :: proc(t: ^testing.T) {
 	testing.expect_value(t, b.challenges, 1)
 }
 
-// F2: the remote gave a window of 0, then went away: the probes end with
+// The remote gave a window of 0, then went away: the probes end with
 // Timed_Out, not never.
 @(test)
 probes_give_up :: proc(t: ^testing.T) {
@@ -42,7 +43,7 @@ probes_give_up :: proc(t: ^testing.T) {
 	testing.expect(t, ok)
 }
 
-// F4: a SYN, then nothing: the passive record ends after fewer retries than
+// A SYN, then nothing: the passive record ends after fewer retries than
 // an established connection, and the program gets an event for it.
 @(test)
 syn_received_ends_soon :: proc(t: ^testing.T) {
@@ -61,7 +62,7 @@ syn_received_ends_soon :: proc(t: ^testing.T) {
 	testing.expectf(t, link.now - start < 20_000_000, "the record ended after %d us", link.now - start)
 }
 
-// B1: a SYN, then a RST at the exact sequence: the passive record ends with
+// A SYN, then a RST at the exact sequence: the passive record ends with
 // an event, so that the program releases the remote.
 @(test)
 passive_reset_has_an_event :: proc(t: ^testing.T) {
@@ -75,7 +76,7 @@ passive_reset_has_an_event :: proc(t: ^testing.T) {
 	testing.expect(t, available(&link.sides[1].connections[0]))
 }
 
-// W1: a flood of segments out of the window gets a bounded count of
+// A flood of segments out of the window gets a bounded count of
 // answers in one second (a limit for each connection: CVE-2016-5696 came
 // from one limit for all).
 @(test)
@@ -99,7 +100,7 @@ answers_are_limited :: proc(t: ^testing.T) {
 	testing.expect_value(t, b.state, State.Established)
 }
 
-// W2: after a timeout, recover is the highest sequence sent (RFC 6582 3.2,
+// After a timeout, recover is the highest sequence sent (RFC 6582 3.2,
 // step 4).
 @(test)
 recover_after_a_timeout :: proc(t: ^testing.T) {
@@ -116,7 +117,7 @@ recover_after_a_timeout :: proc(t: ^testing.T) {
 	testing.expect_value(t, a.recover, a.send_most)
 }
 
-// W2: outside recovery, recover follows the acknowledged edge: a fast
+// Outside recovery, recover follows the acknowledged edge: a fast
 // retransmit still starts after 2^31 bytes.
 @(test)
 recover_follows_the_edge :: proc(t: ^testing.T) {
@@ -128,7 +129,7 @@ recover_follows_the_edge :: proc(t: ^testing.T) {
 	testing.expect(t, !before(a.recover, a.send_unacknowledged - 2 * u32(a.mss) - 1))
 }
 
-// W3: the SYN counts in the acknowledged bytes once, by the state, not
+// The SYN counts in the acknowledged bytes once, by the state, not
 // when SND.UNA is again the initial sequence after 2^32 bytes.
 @(test)
 syn_acknowledged_once :: proc(t: ^testing.T) {
@@ -152,7 +153,7 @@ syn_acknowledged_once :: proc(t: ^testing.T) {
 	testing.expect_value(t, a.send_length, 0)
 }
 
-// W4: a second FIN at RCV.NXT, after the first: nothing moves. In
+// A second FIN at RCV.NXT, after the first: nothing moves. In
 // TIME-WAIT, a FIN again restarts the timer.
 @(test)
 second_fin :: proc(t: ^testing.T) {

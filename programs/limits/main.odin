@@ -1,5 +1,6 @@
 // A demonstration of the limits of a budget: processor time and log
-// records (property 20).
+// records. A program cannot take all the processor time or fill the log:
+// each resource has a limit.
 //
 // The program makes three budgets with a limit of processor time, and one
 // thread on each budget. Each thread computes with no end. A fourth thread
