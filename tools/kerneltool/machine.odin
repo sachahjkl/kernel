@@ -1,5 +1,6 @@
 package kerneltool
 
+import "contract:glyph_cache"
 import "contract:store"
 import "support:bar"
 import "core:fmt"
@@ -788,15 +789,15 @@ scenario := [?]Step {
 	{kind = .Move, text = "plasma", to_x = 232, to_y = 144},
 	{kind = .Shot, text = "desktop_moved"},
 	// The menu of the programs: the button of the bar opens and closes it.
-	{kind = .Click, x = 116, y = 14},
+	{kind = .Click, text = BAR_PROGRAMS_BUTTON},
 	{kind = .Shot, text = "menu"},
-	{kind = .Click, x = 116, y = 14},
+	{kind = .Click, text = BAR_PROGRAMS_BUTTON},
 	// The menu of the windows: a press on a line brings the window to the
 	// front.
-	{kind = .Click, x = 200, y = 14},
+	{kind = .Click, text = BAR_WINDOWS_BUTTON},
 	{kind = .Wait, text = "compositor: windows: "},
 	{kind = .Shot, text = "windows"},
-	{kind = .Click, x = 200, y = 14},
+	{kind = .Click, text = BAR_WINDOWS_BUTTON},
 	{kind = .Front, text = "console"},
 	{kind = .Front, text = "plasma"},
 
@@ -2297,6 +2298,13 @@ pointer_button :: proc(machine: ^Machine, down: bool) {
 	time.sleep(4 * MOUSE_PAUSE)
 }
 
+// The text of a Click step that presses a button of the bar: the tool
+// takes its middle from the layout of the bar (machine_bar_layout), not
+// from a typed place, because the width of a button is the width of its
+// name in the font that draws it.
+BAR_PROGRAMS_BUTTON :: "the button programs of the bar"
+BAR_WINDOWS_BUTTON :: "the button windows of the bar"
+
 WINDOW_GRAB_X :: 100 // A point of the title bar of each window.
 WINDOW_GRAB_Y :: 12
 // The close button of a window, as the compositor draws it: its center, from
@@ -2379,6 +2387,61 @@ window_of_compositor :: proc(machine: ^Machine, title: string) -> (x, y, width: 
 // log_read gives the complete lines of the log of the machine. QEMU writes
 // the log one byte at a time: the last line can be a part of a line, and a
 // part of "at 168,142" reads as another place.
+// The regular cache of the interface font, read once from the build: the
+// bytes of the resource interface_glyph_cache of the boot image.
+machine_interface_cache: glyph_cache.Cache
+machine_interface_cache_words: []u64
+
+// machine_bar_layout gives the places of the bar of the compositor of the
+// machine. The last line of the log that names the font of the bar says
+// which font it is; in the interface font, the tool measures the layout
+// from the cache file of the build, and confirms it against the numbers
+// that the compositor wrote: a press must land on the entry that the eye
+// sees. ok is false, with a line, when the two measures differ or the log
+// has no such line yet.
+machine_bar_layout :: proc(machine: ^Machine) -> (layout: bar.Layout, ok: bool) {
+	INTERFACE_LINE :: "compositor: the bar is in the interface font: "
+	CELLS_LINE :: "compositor: the bar is in the font of the cells"
+	text := log_read(machine)
+	interface_at := strings.last_index(text, INTERFACE_LINE)
+	cells_at := strings.last_index(text, CELLS_LINE)
+	if interface_at < 0 && cells_at < 0 {
+		fmt.eprintln("kerneltool: test failed: the log does not say in which font the compositor draws its bar")
+		return {}, false
+	}
+	if interface_at < cells_at {
+		return bar.layout_of(nil), true
+	}
+	if machine_interface_cache_words == nil {
+		bytes, read_error := os.read_entire_file(INTERFACE_GLYPH_CACHE_OUTPUT, context.allocator)
+		if read_error != nil {
+			fmt.eprintfln("kerneltool: test failed: cannot read %s: %v", INTERFACE_GLYPH_CACHE_OUTPUT, read_error)
+			return {}, false
+		}
+		// validate needs memory aligned on 8 bytes.
+		machine_interface_cache_words = make([]u64, (len(bytes) + 7) / 8)
+		aligned := ([^]u8)(raw_data(machine_interface_cache_words))[:len(bytes)]
+		copy(aligned, bytes)
+		delete(bytes)
+		refused: glyph_cache.Problem
+		machine_interface_cache, refused = glyph_cache.validate(aligned)
+		if refused.kind != .None {
+			fmt.eprintfln("kerneltool: test failed: %s is refused: %s", INTERFACE_GLYPH_CACHE_OUTPUT, glyph_cache.problem_sentences[refused.kind])
+			delete(machine_interface_cache_words)
+			machine_interface_cache_words = nil
+			return {}, false
+		}
+	}
+	layout = bar.layout_of(&machine_interface_cache)
+	expected := fmt.tprintf("%sprograms %d pixels, windows %d, the widest name %d", INTERFACE_LINE, layout.label_width, layout.windows_label_width, layout.longest_name_width)
+	if !strings.has_prefix(text[interface_at:], expected) {
+		end := strings.index_byte(text[interface_at:], '\n')
+		fmt.eprintfln("kerneltool: test failed: the tool measures the bar as \"%s\", the compositor wrote \"%s\"", expected, text[interface_at:][:end < 0 ? len(text) - interface_at : end])
+		return {}, false
+	}
+	return layout, true
+}
+
 log_read :: proc(machine: ^Machine) -> string {
 	log, err := os.read_entire_file(machine.output, context.temp_allocator)
 	if err != nil {
@@ -2791,9 +2854,25 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				step.x, step.y = x + WINDOW_GRAB_X, y + WINDOW_GRAB_Y
 				step.to_x, step.to_y = step.to_x + WINDOW_GRAB_X, step.to_y + WINDOW_GRAB_Y
 			}
+			// The places of the bar come from the font that draws it: the
+			// layout that the compositor wrote in its log, measured here
+			// from the same cache of the build.
+			layout: bar.Layout
+			if step.kind == .Launch || step.kind == .Front || step.kind == .Click && (step.text == BAR_PROGRAMS_BUTTON || step.text == BAR_WINDOWS_BUTTON) {
+				known: bool
+				if layout, known = machine_bar_layout(machine); !known {
+					return false
+				}
+			}
+			if step.kind == .Click && step.text == BAR_PROGRAMS_BUTTON {
+				step.x, step.y = bar.button_center(layout)
+			}
+			if step.kind == .Click && step.text == BAR_WINDOWS_BUTTON {
+				step.x, step.y = bar.windows_button_center(layout)
+			}
 			if step.kind == .Launch {
 				found: bool
-				step.x, step.y, found = bar.center(step.text)
+				step.x, step.y, found = bar.center(layout, step.text)
 				if !found {
 					fmt.eprintfln("error: the menu of the programs does not have the program %s", step.text)
 					return false
@@ -2808,7 +2887,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				}
 			}
 			if step.kind == .Launch {
-				menu_x, menu_y := bar.button_center()
+				menu_x, menu_y := bar.button_center(layout)
 				if !pointer_move(machine, menu_x, menu_y) {
 					fmt.eprintfln("kerneltool: test failed: step %d: the pointer did not reach its place", index + 1)
 					return false
@@ -2831,7 +2910,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				}
 			}
 			if step.kind == .Front {
-				menu_x, menu_y := bar.windows_button_center()
+				menu_x, menu_y := bar.windows_button_center(layout)
 				if !pointer_move(machine, menu_x, menu_y) {
 					fmt.eprintfln("kerneltool: test failed: step %d: the pointer did not reach its place", index + 1)
 					return false
@@ -2843,7 +2922,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 					fmt.eprintfln("kerneltool: test failed: step %d: the menu of the windows does not have %s", index + 1, step.text)
 					return false
 				}
-				step.x, step.y = bar.windows_line_center(line)
+				step.x, step.y = bar.windows_line_center(layout, line)
 			}
 			if !pointer_move(machine, step.x, step.y) {
 				fmt.eprintfln("kerneltool: test failed: step %d: the pointer did not reach its place", index + 1)

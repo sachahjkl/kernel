@@ -17,6 +17,7 @@
 package bootscreen
 
 import info "contract:boot_info"
+import "support:display"
 import "support:graphics"
 import "support:interface"
 import "support:mark"
@@ -251,6 +252,37 @@ stripes_of_screen :: proc "contextless" (order: graphics.Subpixel_Order) -> grap
 CARD_TITLE :: graphics.CARD_TITLE
 CARD_MARGIN :: graphics.CARD_MARGIN
 
+// The interface font of the boot display (docs/DESIGN.md, section 5): the
+// root service gives it after it validated the caches of the boot image
+// (interface_font_use), so its titles and the names of its facts are in
+// B612 and its values in the font of the cells. The boot program holds no
+// glyph cache: its first screen is in Spleen 8x16, the one font of its
+// binary.
+boot_interface_font: ^display.Interface_Font
+
+interface_font_use :: proc "contextless" (font: ^display.Interface_Font) {
+	boot_interface_font = font
+}
+
+// write_name draws a name in the interface font when the display has it,
+// cut to room, else in the font of the cells, and gives the x after it.
+@(private)
+write_name :: proc "contextless" (canvas: graphics.Canvas, x, y: int, name: string, room: int, color: graphics.Color) -> int {
+	records: [1]interface.Draw_Record
+	text: [64]u8
+	table := interface.Draw_Table{records = records[:], text = text[:], interface_font = boot_interface_font}
+	shown := interface.text_fit(&table, interface.FONT_INTERFACE, name, room)
+	if interface.font_in_use(&table, interface.FONT_INTERFACE, len(shown)).kind != .Interface || len(shown) > len(text) {
+		return write(canvas, x, y, shown, color)
+	}
+	order := graphics.text_state.order
+	graphics.text_state.order = stripes_of_screen(order)
+	defer graphics.text_state.order = order
+	after := interface.draw_text(&table, x, y, shown, tone(color), interface.FONT_INTERFACE)
+	interface.execute(&table, canvas)
+	return after
+}
+
 // card draws the frame of one part of the display with the card of the
 // interface package (the same card as in each window), and gives the place
 // of its content. The caption says which record the card shows.
@@ -258,7 +290,7 @@ CARD_MARGIN :: graphics.CARD_MARGIN
 card :: proc "contextless" (canvas: graphics.Canvas, x, y, width, height: int, title, caption: string, accent: graphics.Color) -> graphics.Canvas {
 	records: [8]interface.Draw_Record
 	text: [128]u8
-	table := interface.Draw_Table{records = records[:], text = text[:]}
+	table := interface.Draw_Table{records = records[:], text = text[:], interface_font = boot_interface_font}
 	frame := interface.Frame{table = &table}
 	content := interface.card(&frame, {x, y, width, height}, title, caption, accent)
 	interface.execute(&table, canvas)
@@ -268,7 +300,7 @@ card :: proc "contextless" (canvas: graphics.Canvas, x, y, width, height: int, t
 // fact draws one line "name value".
 @(private)
 fact :: proc "contextless" (canvas: graphics.Canvas, y: int, name: string, value: ^Text, color: graphics.Color = graphics.COLOR_TEXT) {
-	write(canvas, 0, y, name, graphics.COLOR_DIM)
+	write_name(canvas, 0, y, name, FACT_VALUE - 8, graphics.COLOR_DIM)
 	if value.count == 0 {
 		put(value, "not known yet")
 		show(canvas, FACT_VALUE, y, value, graphics.COLOR_DIM)

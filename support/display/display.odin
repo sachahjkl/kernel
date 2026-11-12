@@ -159,9 +159,7 @@ open :: proc "contextless" (ctx: ^system.Context, width, height: int, title: str
 		return {}, false
 	}
 	text_settings_open(ctx)
-	if !program_interface_font_given {
-		program_interface_font, program_interface_font_given = interface_font_open(ctx)
-	}
+	interface_font_load(ctx)
 	status: system.Status
 	if window.ring, status = system.ring_open(window.ring_memory, error); status != .Ok {
 		return {}, false
@@ -394,6 +392,14 @@ interface_font_open :: proc "contextless" (ctx: ^system.Context) -> (font: Inter
 // cells.
 program_interface_font: Interface_Font
 program_interface_font_given: bool
+
+// interface_font_load validates the interface font of this program once:
+// open calls it, and the compositor, which draws with no window of its own.
+interface_font_load :: proc "contextless" (ctx: ^system.Context) {
+	if !program_interface_font_given {
+		program_interface_font, program_interface_font_given = interface_font_open(ctx)
+	}
+}
 
 // interface_font_of gives the interface font of this program, or nil.
 interface_font_of :: proc "contextless" () -> ^Interface_Font {
