@@ -159,6 +159,7 @@ open :: proc "contextless" (ctx: ^system.Context, width, height: int, title: str
 		return {}, false
 	}
 	text_settings_open(ctx)
+	interface_font_load(ctx)
 	status: system.Status
 	if window.ring, status = system.ring_open(window.ring_memory, error); status != .Ok {
 		return {}, false
@@ -372,12 +373,37 @@ interface_font_open :: proc "contextless" (ctx: ^system.Context) -> (font: Inter
 		if problem.kind == .None && caches[index].header.flags & glyph_cache.FLAG_PROPORTIONAL == 0 {
 			problem = {kind = .Bad_Flags, value = u64(caches[index].header.flags), limit = glyph_cache.FLAG_PROPORTIONAL}
 		}
+		if problem.kind == .Not_Mapped {
+			// A program that its starter gave no interface font: its
+			// elements draw in the font of the cells, with no line on the log.
+			return {}, false
+		}
 		if problem.kind != .None {
 			system.log_in("programs", .Warning, "display: the glyph cache of the interface font is refused: ", glyph_cache.problem_sentences[problem.kind], ", value ", problem.value)
 			return {}, false
 		}
 	}
 	return {regular = caches[0], bold = caches[1]}, true
+}
+
+// The interface font of this program, validated once by open: the elements
+// of support/interface draw their names, titles and labels in it
+// (docs/FONTS.md, section 12.6). Absent: they draw in the font of the
+// cells.
+program_interface_font: Interface_Font
+program_interface_font_given: bool
+
+// interface_font_load validates the interface font of this program once:
+// open calls it, and the compositor, which draws with no window of its own.
+interface_font_load :: proc "contextless" (ctx: ^system.Context) {
+	if !program_interface_font_given {
+		program_interface_font, program_interface_font_given = interface_font_open(ctx)
+	}
+}
+
+// interface_font_of gives the interface font of this program, or nil.
+interface_font_of :: proc "contextless" () -> ^Interface_Font {
+	return program_interface_font_given ? &program_interface_font : nil
 }
 
 // text_settings_apply gives the choice of the settings page to

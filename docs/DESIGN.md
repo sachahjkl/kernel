@@ -61,11 +61,19 @@ One color is one concept, as one term is one concept.
 
 ## 5. Text
 
-- One font at a time, on the grid of cells of 8 x 16 pixels: the vector font by default, drawn with a coverage for each subpixel band (owner, 2026-11-11: "par défaut il faut une police vectorielle", "Bandes sous-pixel"); Spleen 8x16 as the fallback and as the other value of the setting `font` (`docs/FONTS.md`). Before 2026-11-11 the rule was "One font: Spleen 8x16".
-- Three sizes: cells of 1, 2 and 3 times 8 x 16. The vector font draws each size from its outline; Spleen enlarges its pixels. No other size.
-- The vector font is monospace: its advance is the width of a cell, so a layout in cells holds with either font. A glyph stays inside its cell.
+- **Two fonts** (proposal of 2026-11-12, which the owner accepted in substance on 2026-11-11: "Go b612" for the interface, "Paper mono très bien pour monospace"; `docs/FONTS.md`, section 12.6). It replaces the rule "one font at a time, on the grid of cells":
+  - **The interface font, B612** (proportional): each text that names or explains: the title and the caption of a card, a label, the name of a button, a line of a list or a menu, the title of a column, a sentence of help.
+  - **The font of the cells, Paper Mono** (monospace): each value, and each text that a person compares character by character or copies: a number in a column, a hash, an address, a text that a person types, code, the console, the terminal, a text grid.
+  - Both draw in the line of 16 pixels of the grid, at the scales 1, 2 and 3. The places of the elements stay on the grid of 8; the letters of the interface font do not.
+  - A text is measured in the font that draws it, and an element cuts a text to its box: no text passes its element in either font.
+  - With no interface font (absent, refused, or the setting `font` is Spleen 8x16), each text is in the font of the cells, with the same layout rules.
+  - The compositor follows the same rule (2026-11-12): the buttons of the bar, the lines of its menus, the titles of the windows, the names and the hints of the launcher are in the interface font; the clock, the date, the text that the person types in the launcher and the counts of the menus are in the font of the cells. The mark and its name in square cells do not change. The places of the buttons and of the lines come from the widths of their texts in the font that draws them (the bar layout).
+  - **The boot display, by design, in two steps**: the boot program holds no glyph cache, so the first screen of the machine is in Spleen 8x16, the one font of its binary, as a text grid is. The root service then draws the same display again with the caches of the boot image: the titles of its cards and the names of its facts in the interface font, its values in the font of the cells.
+- The font of the cells: the vector font by default, drawn with a coverage for each subpixel band (owner, 2026-11-11: "par défaut il faut une police vectorielle", "Bandes sous-pixel"); Spleen 8x16 as the fallback and as the other value of the setting `font` (`docs/FONTS.md`).
+- Three sizes: lines of 1, 2 and 3 times 16 pixels; cells of 1, 2 and 3 times 8 x 16 for the font of the cells. No other size.
+- The font of the cells is monospace: its advance is the width of a cell, so a layout in cells holds with the vector font and with Spleen. A glyph of the font of the cells stays inside its cell.
 - An enlarged picture of the screen shows colored edges on each letter: the subpixel bands, not a fault. The setting `subpixel_order` `none` gives gray edges.
-- The title of a card is in capital letters, in the bold weight of the vector font, in the accent of the card, after a bar of 4 x 16 pixels in the same accent.
+- The title of a card is in capital letters, in the bold weight of the interface font, in the accent of the card, after a bar of 4 x 16 pixels in the same accent.
 - A name is in the dim color. A value is in the text color. A measure of a concept is in the color of that concept.
 - A card has at most one number in the large size: the number that the card is about.
 - Numbers of one column are aligned on the right, each with its unit.

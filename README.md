@@ -215,7 +215,7 @@ kerneltool run
 | `module` | `module <name> with_checks\|without_checks measure_run\|usual_run`: build one module of the table (the parallel build runs it) |
 | `run` | Build, then start the machine under QEMU, with the log of the kernel on the terminal of the host |
 | `test` | Build, start the machine, act as the person (keys, pointer), check the log, save pictures |
-| `screenshots` | `test`, then copy the pictures to `docs/screenshots/` |
+| `screenshots` | `test`, then copy the pictures to `docs/screenshots/`. The pictures are compressed PNG files; `screenshots compress` compresses, with no machine, each PNG file of `docs/screenshots/` and `resources/` that is not compressed yet |
 | `film` | Build, start the machine, film the terminal, write `build/film/terminal.mp4` (not a test) |
 | `font` | Convert the BDF file of the font to `support/graphics/font.odin` |
 | `pointers` | Convert the pointer manifests of `resources/pointers/` to pointer theme files in `build/pointers/`, and print a table of each theme (`build` does it too) |

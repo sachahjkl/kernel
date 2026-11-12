@@ -6,6 +6,40 @@ The project has steps, not separate releases. The merge of step N on `master` is
 
 What is not in a release yet is in `changelog.d/`, one fragment for each change. `kerneltool changelog release` writes a release from the fragments. Nobody edits this file by hand.
 
+## [0.86.0] - 2026-11-12
+
+### Changed
+
+- **The desktop names things in B612 too.** The buttons of the bar, its menus, the titles of the windows and the launcher are in the interface font B612, and the clock, the date and what the person types stay in Paper Mono; the buttons are as wide as their names in that font. The display of the boot, after its first screen, has its titles and names in B612 too.
+
+## [0.85.0] - 2026-11-12
+
+### Fixed
+
+- **A QUIC server frees the connection of a client that went silent at its idle timeout**: a client that vanished while the server had data in flight kept its connection, and its place in the table of `quic_echo`, for about two hours, because each unanswered probe pushed the idle timeout further. It now ends after 30 s, whatever the probes. A replayed packet can no longer keep a silent connection alive, a server can no longer be started with no idle timeout, and `quic_echo` logs how long each idle end took against its bound.
+
+## [0.84.0] - 2026-11-12
+
+### Fixed
+
+- **No text of the system is cut in silence**: a log line longer than 512 bytes was cut with no sign, and so was each text that a program formats in a buffer too small; the log now takes a text whole, in several lines, and a text that a place cannot hold ends with "... and N bytes more". The console refuses a program name longer than 31 bytes, which the root service cut before.
+
+## [0.83.0] - 2026-11-12
+
+### Added
+
+- **The console keeps its line history across a stop**: after each line, the history goes to a store of its own in the storage service (4 blocks, apart from the store of the person), and at the next start Up and Control-R find the lines of before, also after a stop of the machine. history_clear() forgets it, in memory and on the disk.
+
+### Fixed
+
+- **The console prints a long result whole**: a result of more than 256 bytes was cut in the terminal and in the log with no sign, and a line of more than 192 bytes was cut in the log; the console now prints each result at any length.
+
+## [0.82.0] - 2026-11-12
+
+### Changed
+
+- **Windows name things in B612.** The titles, captions, labels, buttons and lists of every window drawn with the interface package are in the interface font B612, and their values (numbers, typed text, tables, terminals) stay in Paper Mono; a window with no interface font draws everything in Paper Mono with the same layout.
+
 ## [0.81.0] - 2026-11-12
 
 ### Added

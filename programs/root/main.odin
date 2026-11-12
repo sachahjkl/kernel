@@ -51,13 +51,14 @@ Grant :: enum {
 	Schedule, // The machine, with the right Schedule: change the scheduling strategy of the machine.
 	Settings, // The settings page with Write (contract:settings): the one writer of the settings of the person.
 	Clock, // The date page with Write and the two ports of the real-time clock (contract:date): the one writer of the date.
+	History_Store, // A store of its own in the storage service for the line history of the program, apart from its private store (Root_Command.Connect_History).
 	Events, // The machine, with the right Events: give the event table of the machine (kernel events of every program).
 }
 
 grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 	switch name {
 	case "console":
-		return {.Root_Ring, .Inspect, .Stop, .Image, .Terminal, .Store, .Person, .Replacements, .Replace}
+		return {.Root_Ring, .Inspect, .Stop, .Image, .Terminal, .Store, .Person, .Replacements, .Replace, .History_Store}
 	case "flood":
 		return {.Terminal}
 	case "inspect":
@@ -371,6 +372,27 @@ Connection :: struct {
 	service: ^Started,
 	ring:    system.Handle, // The call ring, as the service names it.
 	region:  system.Handle, // The call region, as the service names it.
+	// The connection to the store of the line history of the caller
+	// (Root_Command.Connect_History): its grant is the limit of that store,
+	// never the private store and never the grant to act for the person.
+	history: bool,
+}
+
+// The blocks of the store of a line history. One object of one block
+// takes 3 blocks of a store (the table of the store, the list of the
+// object, its data), and a change of it needs one block more for the new
+// data, in the commit that thins the version before: 4 is the least limit
+// with which the history can change.
+HISTORY_STORE_LIMIT :: 4
+HISTORY_STORE_SUFFIX :: ".history"
+
+// connection_grant gives what the caller of a connection receives in its
+// service now: for the history store, its limit only.
+connection_grant :: proc "contextless" (connection: ^Connection) -> u64 {
+	if connection.history {
+		return .History in connection.caller.revoked ? 0 : HISTORY_STORE_LIMIT
+	}
+	return grant_for(connection.caller, connection.service)
 }
 
 CONNECTION_CAPACITY :: 32
@@ -666,10 +688,18 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				#partial switch command {
 				case .Connect:
 					result = connect(&item, system.name_of(name[:]), &completion.values)
+				case .Connect_History:
+					result = .No_Right
+					if .History_Store in grants_of(system.name_of(item.name[:])) && .History not_in item.revoked && system.name_of(name[:]) == "storage" {
+						result = connect(&item, "storage", &completion.values, history = true)
+					}
 				case .Disconnect:
+					// The connection of the history is not ended by the name
+					// of its service: the program keeps its history when it
+					// ends its calls to the storage service.
 					result = .Bad_Handle
 					for &connection in connections {
-						if connection.caller == &item && system.name_of(connection.service.name[:]) == system.name_of(name[:]) {
+						if connection.caller == &item && !connection.history && system.name_of(connection.service.name[:]) == system.name_of(name[:]) {
 							disconnect(&connection)
 							result = .Ok
 						}
@@ -1093,7 +1123,7 @@ revoke :: proc "contextless" (name: string, grant: u64, values: ^[7]u64) -> syst
 		// on its service ring that the grant of each connection changed.
 		count: u64
 		for &connection in connections {
-			if connection.caller != item || system.name_of(connection.service.name[:]) != "storage" {
+			if connection.caller != item || connection.history || system.name_of(connection.service.name[:]) != "storage" {
 				continue
 			}
 			person := grant_for(item, connection.service) & isolated.CALLER_PERSON
@@ -1119,12 +1149,31 @@ revoke :: proc "contextless" (name: string, grant: u64, values: ^[7]u64) -> syst
 			if connection.caller != item {
 				continue
 			}
-			if system.send(&connection.service.service.commands, ring.Record{kind = u32(isolated.Service_Command.Grant), values = {0 = u64(connection.ring), 6 = grant_for(item, connection.service)}}) {
+			if system.send(&connection.service.service.commands, ring.Record{kind = u32(isolated.Service_Command.Grant), values = {0 = u64(connection.ring), 6 = connection_grant(&connection)}}) {
 				count += 1
 			}
 		}
 		values[0] = count
 		system.log_in("programs", .Info, "root: revoked the grant person of ", name, ", connections changed: ", count)
+		return .Ok
+	case .History:
+		// The store of the history is data of the storage service, as the
+		// private store: the storage service ends the grant of the
+		// connection, and the program keeps its history in its memory only.
+		item.granted -= {which}
+		item.revoked += {which}
+		count: u64
+		for &connection in connections {
+			if connection.caller != item || !connection.history {
+				continue
+			}
+			if !system.send(&connection.service.service.commands, ring.Record{kind = u32(isolated.Service_Command.Grant), values = {0 = u64(connection.ring), 6 = 0}}) {
+				return .No_Slot
+			}
+			count += 1
+		}
+		values[0] = count
+		system.log_in("programs", .Info, "root: revoked the grant history of ", name, ", connections changed: ", count)
 		return .Ok
 	case .Network:
 		// The endpoint is data of the network service, as a store is data of
@@ -1234,8 +1283,8 @@ terminal_start :: proc "contextless" (view: ^Started, writer: ^Started, ring_mem
 // new call ring and a new call region, that the two programs receive. This
 // service pays for the two memory objects and does not keep them. values is
 // the completion of Root_Command.Connect.
-connect :: proc "contextless" (caller: ^Started, name: string, values: ^[7]u64) -> system.Status {
-	free, service, ring_memory, region_memory := connection_open(caller, name) or_return
+connect :: proc "contextless" (caller: ^Started, name: string, values: ^[7]u64, history := false) -> system.Status {
+	free, service, ring_memory, region_memory := connection_open(caller, name, history) or_return
 	defer system.close(ring_memory)
 	defer system.close(region_memory)
 	// The caller receives its handles through its ring to this service.
@@ -1254,7 +1303,11 @@ connect :: proc "contextless" (caller: ^Started, name: string, values: ^[7]u64) 
 	}
 	hash := transmute([4]u64)service.hash
 	values^ = {u64(given[0]), u64(given[1]), u64(given[2]), hash[0], hash[1], hash[2], hash[3]}
-	system.log_in("calls", .Info, "root: connected ", system.name_of(caller.name[:]), " to the service ", name)
+	if history {
+		system.log_in("calls", .Info, "root: connected ", system.name_of(caller.name[:]), " to the store of its line history in the service ", name, ", ", u64(HISTORY_STORE_LIMIT), " blocks")
+	} else {
+		system.log_in("calls", .Info, "root: connected ", system.name_of(caller.name[:]), " to the service ", name)
+	}
 	return .Ok
 }
 
@@ -1262,7 +1315,7 @@ connect :: proc "contextless" (caller: ^Started, name: string, values: ^[7]u64) 
 // the service with a name, and starts the service if it starts on demand.
 // It gives the call ring and the call region: give them to the caller,
 // then close them.
-connection_open :: proc "contextless" (caller: ^Started, name: string) -> (free: ^Connection, service: ^Started, ring_memory, region_memory: system.Handle, status: system.Status) {
+connection_open :: proc "contextless" (caller: ^Started, name: string, history := false) -> (free: ^Connection, service: ^Started, ring_memory, region_memory: system.Handle, status: system.Status) {
 	for pass in 0 ..< 2 {
 		for &item in started {
 			if item.program != 0 && item.service.head != nil && system.name_of(item.name[:]) == name {
@@ -1285,7 +1338,7 @@ connection_open :: proc "contextless" (caller: ^Started, name: string) -> (free:
 			free = &connection
 		} else if connection.service == service {
 			count += 1
-			if connection.caller == caller {
+			if connection.caller == caller && connection.history == history {
 				return nil, nil, 0, 0, .Bad_State
 			}
 		}
@@ -1315,21 +1368,27 @@ connection_open :: proc "contextless" (caller: ^Started, name: string) -> (free:
 		}
 		return nil, nil, 0, 0, status
 	}
-	caller_name := system.name_pack(system.name_of(caller.name[:]))
-	grant := grant_for(caller, service)
+	// The storage service names the store of a connection by the name that
+	// it receives: the store of the history has the name of the caller and
+	// ".history", which no module of the boot image has.
+	store_name: system.Name
+	system.format(store_name[:], system.name_of(caller.name[:]), history ? string(HISTORY_STORE_SUFFIX) : string(""))
+	caller_name := system.name_pack(system.name_of(store_name[:]))
+	grant := history ? HISTORY_STORE_LIMIT : grant_for(caller, service)
 	if !system.send(&service.service.commands, ring.Record{kind = u32(isolated.Service_Command.Connect), values = {0 = u64(in_service_ring), 1 = u64(in_service_region), 2 = caller_name[0], 3 = caller_name[1], 4 = caller_name[2], 5 = caller_name[3], 6 = grant}}) {
 		system.close(ring_memory)
 		system.close(region_memory)
 		return nil, nil, 0, 0, .No_Slot
 	}
 	if grant & isolated.CALLER_AMOUNT_MASK != 0 {
-		caller.granted += {.Store}
+		caller.granted += {history ? system.Root_Grant.History : system.Root_Grant.Store}
 	}
 	free^ = {
 		caller  = caller,
 		service = service,
 		ring    = in_service_ring,
 		region  = in_service_region,
+		history = history,
 	}
 	return free, service, ring_memory, region_memory, .Ok
 }

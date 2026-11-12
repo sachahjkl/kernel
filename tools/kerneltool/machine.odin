@@ -1,9 +1,9 @@
 package kerneltool
 
+import "contract:glyph_cache"
 import "contract:store"
 import "support:bar"
 import "core:fmt"
-import "core:hash"
 import "core:math/rand"
 import "core:os"
 import "core:slice"
@@ -59,6 +59,13 @@ Step_Kind :: enum {
 	Point, // Move the pointer to (x, y) with no press, then read compositor.pointer(): its shape must be the name text (docs/POINTERS.md). With inside_window, (x, y) are from the corner of that window, its title bar included; a negative x is from its right side. It needs the confirmation of the pointer (a Call with pointer before it).
 	Remember, // The rest of the line after the text, in the log after the last Wait, is kept for the step Distinct (a value that the machine drew).
 	Distinct, // Each value that Remember kept in this test part differs from each other one; text names them.
+	// As Wait; then the number after text is the base of the generations of
+	// the storage service for the steps after it: a later step names
+	// {generation} or {generation+N} in its text or its expected text. A
+	// generation counts the commits of the whole disk, and the console
+	// commits its line history after each line: a step counts from a base
+	// near it, not from the format of the disk.
+	Generation,
 	Peer_Start, // The peer starts the TCP case text; the next steps run while it runs.
 	Peer_Result, // The end of the case of the last Peer_Start: it must pass. text is its name.
 	Fetch, // The TCP of the host fetches the page text of `server` through QEMU user networking (web_host.odin).
@@ -107,6 +114,45 @@ date_check :: proc(index: int, machine_seconds: i64, what: string) -> bool {
 	}
 	fmt.printfln("kerneltool: test passed: the date of the machine (%s) is %d s since 1970, the host gives %d: %d s apart", what, machine_seconds, host, apart)
 	return true
+}
+
+// generation_expand writes the base of the generations in a text: each
+// {generation} is the base, and each {generation+N} the base and N. A mark
+// with no end, or an N that is not a number, stays as it is: the step then
+// waits for a text that the machine does not print, and fails.
+generation_expand :: proc(text: string, base: i64) -> string {
+	MARK :: "{generation"
+	if !strings.contains(text, MARK) {
+		return text
+	}
+	builder := strings.builder_make(context.temp_allocator)
+	rest := text
+	for {
+		at := strings.index(rest, MARK)
+		if at < 0 {
+			strings.write_string(&builder, rest)
+			break
+		}
+		strings.write_string(&builder, rest[:at])
+		after := rest[at + len(MARK):]
+		end := strings.index_byte(after, '}')
+		offset: i64
+		ok := end >= 0
+		if ok && end > 0 {
+			ok = after[0] == '+'
+			if ok {
+				offset, ok = strconv.parse_i64(after[1:end])
+			}
+		}
+		if !ok {
+			strings.write_string(&builder, MARK)
+			rest = after
+			continue
+		}
+		strings.write_i64(&builder, base + offset)
+		rest = after[end + 1:]
+	}
+	return strings.to_string(builder)
 }
 
 // number_after reads the decimal number after a text in another text.
@@ -169,13 +215,22 @@ scenario_persist_first := [?]Step {
 	{kind = .Wait, text = "[console] settings: 3 commands of a service that runs"},
 	{kind = .Type, text = "settings.set(\"font\", \"spleen\")"},
 	{kind = .Wait, text = "settings: font spleen, subpixel order rgb, pointer theme owner, grid fit on; kept in the store"},
+	// A line for the next machine: the console keeps its line history in
+	// its store, after each line and before shutdown().
+	{kind = .Type, text = "length(\"kept across a stop\")"},
+	{kind = .Wait, text = "[console] 18"},
 	{kind = .Type, text = "shutdown()"},
 	{kind = .Wait, text = "kernel: the machine stops with code 0"},
 }
 
 scenario_persist_second := [?]Step {
 	{kind = .Wait, text = "compositor: surface console", any_order = true},
-	{kind = .Wait, text = "storage: ok, generation 1023: 2 stores, 3 objects, ", any_order = true},
+	// 1 + 21 commits of the note, 1000 of the count, 1 of the settings, and
+	// 4 of the line history of the console: after connect, after set,
+	// after length, and before shutdown(). The stores of notes, settings
+	// and the history of the console; the history is one object.
+	{kind = .Wait, text = "storage: ok, generation 1027: 3 stores, 4 objects, ", any_order = true},
+	{kind = .Wait, text = "console: the line history: 4 lines kept from before the stop", any_order = true},
 	// The setting of the machine before: the desktop draws in Spleen 8x16.
 	{kind = .Wait, text = "settings: the boot pass: the settings kept in the store: font spleen, subpixel order rgb, pointer theme owner, grid fit on; in ", any_order = true},
 	{kind = .Wait, text = " blocks checked, 0 wrong, in ", any_order = true},
@@ -190,6 +245,21 @@ scenario_persist_second := [?]Step {
 	{kind = .Wait, text = "settings: ok, font spleen, subpixel order rgb, pointer theme owner, grid fit on"},
 	{kind = .Shot, text = "settings_kept"},
 	{kind = .Front, text = "console"},
+	// The line history of the machine before: Up gives shutdown(), a second
+	// Up the line before it; Enter runs it.
+	{kind = .Key, text = "up"},
+	{kind = .Key, text = "up"},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "> length(\"kept across a stop\")"},
+	{kind = .Wait, text = "[console] 18"},
+	// The search finds it too: Enter puts it in the input, a second Enter
+	// runs it.
+	{kind = .Key, text = "ctrl-r"},
+	{kind = .Keys, text = "kept"},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "console: the history search gave the line length(\"kept across a stop\")"},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "[console] 18"},
 	{kind = .Type, text = "connect(\"settings\")"},
 	{kind = .Wait, text = "[console] settings: 3 commands of a service that runs"},
 	{kind = .Type, text = "settings.set(\"font\", \"vector\")"},
@@ -666,6 +736,11 @@ scenario := [?]Step {
 	// The boot pass of settings: the storage service starts at boot, with
 	// the block service of the data disk; a new disk keeps no settings.
 	{kind = .Wait, text = "storage: ok, a new disk: generation 1, 16384 blocks", any_order = true},
+	// The console asks for the store of its line history at its start: the
+	// root service answers after the start of the boot pass, so the storage
+	// service runs.
+	{kind = .Wait, text = "root: connected console to the store of its line history in the service storage, 4 blocks", any_order = true},
+	{kind = .Wait, text = "console: no line history kept: the history starts empty", any_order = true},
 	{kind = .Wait, text = "settings: the boot pass: no settings kept: the defaults: font vector, subpixel order rgb, pointer theme owner, grid fit on; in ", any_order = true},
 	{kind = .Wait, text = "root: settings stopped with code 0"},
 
@@ -713,15 +788,15 @@ scenario := [?]Step {
 	{kind = .Move, text = "plasma", to_x = 232, to_y = 144},
 	{kind = .Shot, text = "desktop_moved"},
 	// The menu of the programs: the button of the bar opens and closes it.
-	{kind = .Click, x = 116, y = 14},
+	{kind = .Click, text = BAR_PROGRAMS_BUTTON},
 	{kind = .Shot, text = "menu"},
-	{kind = .Click, x = 116, y = 14},
+	{kind = .Click, text = BAR_PROGRAMS_BUTTON},
 	// The menu of the windows: a press on a line brings the window to the
 	// front.
-	{kind = .Click, x = 200, y = 14},
+	{kind = .Click, text = BAR_WINDOWS_BUTTON},
 	{kind = .Wait, text = "compositor: windows: "},
 	{kind = .Shot, text = "windows"},
-	{kind = .Click, x = 200, y = 14},
+	{kind = .Click, text = BAR_WINDOWS_BUTTON},
 	{kind = .Front, text = "console"},
 	{kind = .Front, text = "plasma"},
 
@@ -774,8 +849,8 @@ scenario := [?]Step {
 	// arguments go through a ring. The description is the same.
 	{kind = .Type, text = "clear()"},
 	{kind = .Type, text = "isolate(\"probe\")"},
-	{kind = .Wait, text = "[probe] host: ready, 7 exports"},
-	{kind = .Wait, text = "[console] probe: 7 commands in a sandboxed program"},
+	{kind = .Wait, text = "[probe] host: ready, 8 exports"},
+	{kind = .Wait, text = "[console] probe: 8 commands in a sandboxed program"},
 	{kind = .Type, text = "count() + count() * 10"},
 	{kind = .Wait, text = "[console] 21"},
 	{kind = .Type, text = "checksum(\"abc\" + name)"},
@@ -1390,6 +1465,17 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[console] error: root.Stop: the argument name names a program of the system: it starts at boot, or it is a device service, and the call does not act on it"},
 	{kind = .Type, text = "revoke(\"nobody\", \"log\")"},
 	{kind = .Wait, text = "[console] error: root.Revoke: the argument name names none of the programs"},
+	// A text is never cut in silence. The ring of the root service holds a
+	// name of 31 bytes: the console refuses a longer one, which a cut could
+	// make the name of another program.
+	{kind = .Type, text = "start(\"a_name_longer_than_the_ring_holds_today\")"},
+	{kind = .Wait, text = "[console] error: root.Start: the argument name has 39 bytes; it can have at most 31 bytes"},
+	// A log text of 1500 bytes: the module in its call host logs it in
+	// lines of 512 bytes, and its end is on the log. After the check of the
+	// log: these lines take 9 records of the ring.
+	{kind = .Type, text = "log_long(1500)"},
+	{kind = .Wait, text = "01234 the end of the long text"},
+	{kind = .Wait, text = "[console] 1500"},
 	// An export that refuses: the console writes the sentence of its error
 	// record from the description of the export.
 	{kind = .Type, text = "load(\"tally\")"},
@@ -1527,7 +1613,10 @@ scenario := [?]Step {
 	{kind = .Type, text = "connect(\"storage\")"},
 	{kind = .Record, program = "root", channel = "calls", level = "info", text = "root: connected console to the service storage"},
 	{kind = .Type, text = "storage.write(\"greeting\", \"kept on the disk\")"},
-	{kind = .Wait, text = "[console] 2"},
+	// The generation of this commit is the base: the console committed its
+	// line history after each line before this one.
+	{kind = .Wait, text = "> storage.write(\"greeting\", \"kept on the disk\")"},
+	{kind = .Generation, text = "[console] "},
 	{kind = .Type, text = "storage.read(\"greeting\")"},
 	{kind = .Wait, text = "[console] kept on the disk"},
 	// The limit of the store: one more object needs two more blocks.
@@ -1535,16 +1624,19 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[console] error: storage.write: the call needs 5 blocks in all, with no earlier version kept; the limit is 4 blocks (-2)"},
 	// A change of the object at the limit: the version of its state before
 	// does not fit, and the same commit thins it.
+	// Each line commits the line history after it: the base and 1 after
+	// the line of the base, 2 after the read, 3 after the refused write;
+	// this write is the commit 4.
 	{kind = .Type, text = "storage.write(\"greeting\", \"changed at the limit\")"},
-	{kind = .Wait, text = "[console] 3"},
-	{kind = .Record, program = "storage", level = "info", text = "storage: the store console is at its limit of 4 blocks: the commit of generation 3 thinned 1 version, the oldest of the store first", any_order = true},
+	{kind = .Wait, text = "[console] {generation+4}"},
+	{kind = .Record, program = "storage", level = "info", text = "storage: the store console is at its limit of 4 blocks: the commit of generation {generation+4} thinned 1 version, the oldest of the store first", any_order = true},
 	// An error of a service is a record: the console writes it as a sentence.
 	{kind = .Type, text = "storage.write(\"\", \"x\")"},
 	{kind = .Wait, text = "[console] error: storage.write: the argument name is empty; it must have 1 to 39 bytes (-3)"},
 	{kind = .Type, text = "storage.read(\"nothing\")"},
 	{kind = .Wait, text = "[console] error: storage.read: the argument name: the store has no object with this name (-7)"},
 	{kind = .Type, text = "storage.objects()"},
-	{kind = .Wait, text = "[console] greeting 20 bytes, generation 3"},
+	{kind = .Wait, text = "[console] greeting 20 bytes, generation {generation+4}"},
 	{kind = .Type, text = "storage.stores()"},
 	{kind = .Wait, text = "[console] console: 1 objects, 0 versions, 3 of 4 blocks, 0 shared, 1 connection"},
 	// The person sees the grant and revokes it: the store stays on the disk,
@@ -1567,31 +1659,43 @@ scenario := [?]Step {
 	{kind = .Wait, text = "notes: a new store: no note, the count 0", any_order = true},
 	{kind = .Wait, text = "compositor: surface notes"},
 	{kind = .Type, text = "versions"},
-	{kind = .Wait, text = "notes: the note is \"versions\", generation 11, 7 versions; one commit of the note: "},
+	// The 13 lines of the console from the base each committed the history
+	// (the base and 14 at the last one); the 8 keys of the note are the
+	// commits 15 to 22.
+	{kind = .Wait, text = "notes: the note is \"versions\", generation {generation+22}, 7 versions; one commit of the note: "},
 	{kind = .Key, text = "up"},
-	{kind = .Wait, text = "notes: the version 7 of 8, generation 10, 20"}, // A version has the date of its commit.
+	{kind = .Wait, text = "notes: the version 7 of 8, generation {generation+21}, 20"}, // A version has the date of its commit.
 	{kind = .Wait, text = ": \"version\""},
 	{kind = .Key, text = "up"},
-	{kind = .Wait, text = "notes: the version 6 of 8, generation 9, "},
+	{kind = .Wait, text = "notes: the version 6 of 8, generation {generation+20}, "},
 	{kind = .Wait, text = ": \"versio\""},
 	{kind = .Shot, text = "notes_versions"},
 	{kind = .Key, text = "ret"},
-	{kind = .Wait, text = "notes: restored the version of generation 9: \"versio\", in the commit of generation 12 in "},
+	{kind = .Wait, text = "notes: restored the version of generation {generation+20}: \"versio\", in the commit of generation {generation+23} in "},
 	// The exports of the versions, from the host: the remote service acts
 	// for the person, so it names the store of notes.
 	{kind = .Call, text = "storage.versions(\"notes\", \"note\")", expected = "9 rows of Version"},
 	// The date of the machine, from the host, some minutes after its start:
 	// it advanced with the host.
 	{kind = .Call, text = "date.now()", expected = "Date{milliseconds = ", date_after = "milliseconds = "},
-	{kind = .Call, text = "storage.version(\"notes\", \"note\", 7)", expected = "vers"},
-	{kind = .Call, text = "storage.compare(\"notes\", \"note\", 6, 11)", expected = "1 rows of Byte_Range"},
-	{kind = .Call, text = "storage.version(\"notes\", \"note\", 99)", outcome = .Failed, expected = "error: storage.version: the argument generation: the object has no version of the generation 99 (-9)"},
-	{kind = .Call, text = "storage.restore(\"notes\", \"note\", 11)", expected = "13"},
-	{kind = .Call, text = "storage.clone(\"notes\", \"note\", \"copy\")", expected = "14"},
+	{kind = .Call, text = "storage.version(\"notes\", \"note\", {generation+18})", expected = "vers"},
+	{kind = .Call, text = "storage.compare(\"notes\", \"note\", {generation+17}, {generation+22})", expected = "1 rows of Byte_Range"},
+	// The generation 1 is the format of the disk: no object has it.
+	{kind = .Call, text = "storage.version(\"notes\", \"note\", 1)", outcome = .Failed, expected = "error: storage.version: the argument generation: the object has no version of the generation 1 (-9)"},
+	{kind = .Call, text = "storage.restore(\"notes\", \"note\", {generation+22})", expected = "{generation+24}"},
+	{kind = .Call, text = "storage.clone(\"notes\", \"note\", \"copy\")", expected = "{generation+25}"},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "storage.stores()"},
+	// The answer of stores() has one line for each store: with the store
+	// of the line history, more than 256 bytes. The console prints a
+	// result whole, at any length.
+	{kind = .Wait, text = "[console] console.history: 1 objects, ", any_order = true},
 	{kind = .Wait, text = "[console] notes: 2 objects, 9 versions, "},
 	{kind = .Shot, text = "storage_versions"},
+	// A result of 324 bytes on one line: before, the console cut it at 256
+	// bytes in the terminal and at 192 bytes in the log, with no sign.
+	{kind = .Type, text = "repeat(\"0123456789\", 30) + \"the end of a long result\""},
+	{kind = .Wait, text = "01234567890123456789the end of a long result"},
 	{kind = .Type, text = "stop(\"notes\")"},
 	{kind = .Wait, text = "root: notes stopped"},
 	// Errors that diagnose: each case makes an error for real, and the
@@ -1698,6 +1802,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "interface_elements: nothing changed: "},
 	{kind = .Wait, text = "interface_elements: one number changed: "},
 	{kind = .Wait, text = "interface_elements: everything moved: "},
+	{kind = .Wait, text = "interface_elements: one whole frame, built and drawn (the least of 20): the font of the cells "},
 	{kind = .Wait, text = "interface_elements: ok, the whole frame drawn in "},
 	{kind = .Key, text = "tab"},
 	{kind = .Key, text = "ret"},
@@ -2203,6 +2308,13 @@ pointer_button :: proc(machine: ^Machine, down: bool) {
 	time.sleep(4 * MOUSE_PAUSE)
 }
 
+// The text of a Click step that presses a button of the bar: the tool
+// takes its middle from the layout of the bar (machine_bar_layout), not
+// from a typed place, because the width of a button is the width of its
+// name in the font that draws it.
+BAR_PROGRAMS_BUTTON :: "the button programs of the bar"
+BAR_WINDOWS_BUTTON :: "the button windows of the bar"
+
 WINDOW_GRAB_X :: 100 // A point of the title bar of each window.
 WINDOW_GRAB_Y :: 12
 // The close button of a window, as the compositor draws it: its center, from
@@ -2285,6 +2397,61 @@ window_of_compositor :: proc(machine: ^Machine, title: string) -> (x, y, width: 
 // log_read gives the complete lines of the log of the machine. QEMU writes
 // the log one byte at a time: the last line can be a part of a line, and a
 // part of "at 168,142" reads as another place.
+// The regular cache of the interface font, read once from the build: the
+// bytes of the resource interface_glyph_cache of the boot image.
+machine_interface_cache: glyph_cache.Cache
+machine_interface_cache_words: []u64
+
+// machine_bar_layout gives the places of the bar of the compositor of the
+// machine. The last line of the log that names the font of the bar says
+// which font it is; in the interface font, the tool measures the layout
+// from the cache file of the build, and confirms it against the numbers
+// that the compositor wrote: a press must land on the entry that the eye
+// sees. ok is false, with a line, when the two measures differ or the log
+// has no such line yet.
+machine_bar_layout :: proc(machine: ^Machine) -> (layout: bar.Layout, ok: bool) {
+	INTERFACE_LINE :: "compositor: the bar is in the interface font: "
+	CELLS_LINE :: "compositor: the bar is in the font of the cells"
+	text := log_read(machine)
+	interface_at := strings.last_index(text, INTERFACE_LINE)
+	cells_at := strings.last_index(text, CELLS_LINE)
+	if interface_at < 0 && cells_at < 0 {
+		fmt.eprintln("kerneltool: test failed: the log does not say in which font the compositor draws its bar")
+		return {}, false
+	}
+	if interface_at < cells_at {
+		return bar.layout_of(nil), true
+	}
+	if machine_interface_cache_words == nil {
+		bytes, read_error := os.read_entire_file(INTERFACE_GLYPH_CACHE_OUTPUT, context.allocator)
+		if read_error != nil {
+			fmt.eprintfln("kerneltool: test failed: cannot read %s: %v", INTERFACE_GLYPH_CACHE_OUTPUT, read_error)
+			return {}, false
+		}
+		// validate needs memory aligned on 8 bytes.
+		machine_interface_cache_words = make([]u64, (len(bytes) + 7) / 8)
+		aligned := ([^]u8)(raw_data(machine_interface_cache_words))[:len(bytes)]
+		copy(aligned, bytes)
+		delete(bytes)
+		refused: glyph_cache.Problem
+		machine_interface_cache, refused = glyph_cache.validate(aligned)
+		if refused.kind != .None {
+			fmt.eprintfln("kerneltool: test failed: %s is refused: %s", INTERFACE_GLYPH_CACHE_OUTPUT, glyph_cache.problem_sentences[refused.kind])
+			delete(machine_interface_cache_words)
+			machine_interface_cache_words = nil
+			return {}, false
+		}
+	}
+	layout = bar.layout_of(&machine_interface_cache)
+	expected := fmt.tprintf("%sprograms %d pixels, windows %d, the widest name %d", INTERFACE_LINE, layout.label_width, layout.windows_label_width, layout.longest_name_width)
+	if !strings.has_prefix(text[interface_at:], expected) {
+		end := strings.index_byte(text[interface_at:], '\n')
+		fmt.eprintfln("kerneltool: test failed: the tool measures the bar as \"%s\", the compositor wrote \"%s\"", expected, text[interface_at:][:end < 0 ? len(text) - interface_at : end])
+		return {}, false
+	}
+	return layout, true
+}
+
 log_read :: proc(machine: ^Machine) -> string {
 	log, err := os.read_entire_file(machine.output, context.temp_allocator)
 	if err != nil {
@@ -2379,58 +2546,20 @@ screen_save :: proc(machine: ^Machine, name: string) -> bool {
 			continue
 		}
 		path := join(SCREENSHOT_FOLDER, "/", name, ".png")
-		if write_err := os.write_entire_file(path, png_encode(width, height, dump[position:][:width * height * 3])); err != nil {
-			fmt.eprintfln("kerneltool: cannot write %s: %v", path, write_err)
+		file, encode_error := png_encode(width, height, 3, dump[position:][:width * height * 3])
+		if encode_error != nil {
+			fmt.eprintfln("kerneltool: cannot encode %s: %v", path, encode_error)
 			return false
 		}
-		fmt.printfln("kerneltool: screen saved: %s (%dx%d)", path, width, height)
+		if write_error := os.write_entire_file(path, file); write_error != nil {
+			fmt.eprintfln("kerneltool: cannot write %s: %v", path, write_error)
+			return false
+		}
+		fmt.printfln("kerneltool: screen saved: %s (%dx%d, %d bytes)", path, width, height, len(file))
 		return true
 	}
 	fmt.eprintln("kerneltool: QEMU did not save the screen")
 	return false
-}
-
-// png_encode gives a PNG file of pixels that are 3 bytes each: red, green,
-// blue. The data is not compressed: the tool needs no compression library.
-png_encode :: proc(width, height: int, pixels: []u8) -> []u8 {
-	big_endian :: proc(out: ^[dynamic]u8, value: u32) {
-		append(out, u8(value >> 24), u8(value >> 16), u8(value >> 8), u8(value))
-	}
-	chunk :: proc(out: ^[dynamic]u8, kind: string, data: []u8) {
-		big_endian(out, u32(len(data)))
-		start := len(out)
-		append(out, kind)
-		append(out, ..data)
-		big_endian(out, hash.crc32(out[start:]))
-	}
-
-	// Each line: one filter byte (0: none), then the pixels.
-	line_size := 1 + width * 3
-	lines := make([]u8, height * line_size, context.temp_allocator)
-	for y in 0 ..< height {
-		copy(lines[y * line_size + 1:][:width * 3], pixels[y * width * 3:])
-	}
-	// A zlib stream of stored blocks.
-	stream := make([dynamic]u8, context.temp_allocator)
-	append(&stream, 0x78, 0x01)
-	BLOCK :: 65535
-	for start := 0; start < len(lines); start += BLOCK {
-		count := min(BLOCK, len(lines) - start)
-		append(&stream, u8(start + count == len(lines)), u8(count), u8(count >> 8), u8(~count), u8(~count >> 8))
-		append(&stream, ..lines[start:][:count])
-	}
-	big_endian(&stream, hash.adler32(lines))
-
-	out := make([dynamic]u8, context.temp_allocator)
-	append(&out, 0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n')
-	header := make([dynamic]u8, context.temp_allocator)
-	big_endian(&header, u32(width))
-	big_endian(&header, u32(height))
-	append(&header, 8, 2, 0, 0, 0) // 8 bits, red green blue.
-	chunk(&out, "IHDR", header[:])
-	chunk(&out, "IDAT", stream[:])
-	chunk(&out, "IEND", nil)
-	return out[:]
 }
 
 // machine_test runs a scenario on a boot volume. It passes when each step
@@ -2539,7 +2668,17 @@ remembered_values: [dynamic]string
 scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 	peer_case_started := 0 // The number of the case of the last step Peer_Start.
 	first_wait := true // The first Wait of the machine is its boot: BOOT_WAIT_TIMEOUT.
-	for step, index in steps {
+	generation_base: i64 = -1 // The number that the last step Generation read; -1: none.
+	for given_step, index in steps {
+		step := given_step
+		if strings.contains(step.text, "{generation") || strings.contains(step.expected, "{generation") {
+			if generation_base < 0 {
+				fmt.eprintfln("kerneltool: test failed: step %d names {generation} before a step Generation", index + 1)
+				return false
+			}
+			step.text = generation_expand(step.text, generation_base)
+			step.expected = generation_expand(step.expected, generation_base)
+		}
 		switch step.kind {
 		case .Wait:
 			limit := first_wait ? BOOT_WAIT_TIMEOUT : STEP_TIMEOUT
@@ -2565,6 +2704,20 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				return false
 			}
 			date_check(index, value, step.text) or_return
+		case .Generation:
+			seen_before := machine.seen
+			if !log_wait(machine, step.text, step.any_order) {
+				fmt.eprintfln("kerneltool: test failed: step %d: the machine did not print \"%s\"", index + 1, step.text)
+				return false
+			}
+			log := log_read(machine)
+			value, found := number_after(log[seen_before:], step.text)
+			if !found || value < 1 {
+				fmt.eprintfln("kerneltool: test failed: step %d: no generation after \"%s\"", index + 1, step.text)
+				return false
+			}
+			generation_base = value
+			fmt.printfln("kerneltool: the base of the generations is %d (after \"%s\")", value, step.text)
 		case .Trace:
 			if !log_wait(machine, step.text) {
 				fmt.eprintfln("kerneltool: test failed: step %d: the machine did not print \"%s\"", index + 1, step.text)
@@ -2683,9 +2836,25 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				step.x, step.y = x + WINDOW_GRAB_X, y + WINDOW_GRAB_Y
 				step.to_x, step.to_y = step.to_x + WINDOW_GRAB_X, step.to_y + WINDOW_GRAB_Y
 			}
+			// The places of the bar come from the font that draws it: the
+			// layout that the compositor wrote in its log, measured here
+			// from the same cache of the build.
+			layout: bar.Layout
+			if step.kind == .Launch || step.kind == .Front || step.kind == .Click && (step.text == BAR_PROGRAMS_BUTTON || step.text == BAR_WINDOWS_BUTTON) {
+				known: bool
+				if layout, known = machine_bar_layout(machine); !known {
+					return false
+				}
+			}
+			if step.kind == .Click && step.text == BAR_PROGRAMS_BUTTON {
+				step.x, step.y = bar.button_center(layout)
+			}
+			if step.kind == .Click && step.text == BAR_WINDOWS_BUTTON {
+				step.x, step.y = bar.windows_button_center(layout)
+			}
 			if step.kind == .Launch {
 				found: bool
-				step.x, step.y, found = bar.center(step.text)
+				step.x, step.y, found = bar.center(layout, step.text)
 				if !found {
 					fmt.eprintfln("error: the menu of the programs does not have the program %s", step.text)
 					return false
@@ -2700,7 +2869,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				}
 			}
 			if step.kind == .Launch {
-				menu_x, menu_y := bar.button_center()
+				menu_x, menu_y := bar.button_center(layout)
 				if !pointer_move(machine, menu_x, menu_y) {
 					fmt.eprintfln("kerneltool: test failed: step %d: the pointer did not reach its place", index + 1)
 					return false
@@ -2723,7 +2892,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				}
 			}
 			if step.kind == .Front {
-				menu_x, menu_y := bar.windows_button_center()
+				menu_x, menu_y := bar.windows_button_center(layout)
 				if !pointer_move(machine, menu_x, menu_y) {
 					fmt.eprintfln("kerneltool: test failed: step %d: the pointer did not reach its place", index + 1)
 					return false
@@ -2735,7 +2904,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 					fmt.eprintfln("kerneltool: test failed: step %d: the menu of the windows does not have %s", index + 1, step.text)
 					return false
 				}
-				step.x, step.y = bar.windows_line_center(line)
+				step.x, step.y = bar.windows_line_center(layout, line)
 			}
 			if !pointer_move(machine, step.x, step.y) {
 				fmt.eprintfln("kerneltool: test failed: step %d: the pointer did not reach its place", index + 1)

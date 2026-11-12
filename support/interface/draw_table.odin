@@ -8,9 +8,11 @@
 // events of a window and presents its surface.
 package interface
 
+import "contract:glyph_cache"
+import "support:display"
 import "support:graphics"
 
-DRAW_RECORD_VERSION :: 6 // A new kind of record, or a new field, is a new version. 2: Folded_Gap, Picture. 3: Text_Grid. 4: Line, and the field line_thickness. 5: the fields filled and background of a cell of a text grid. 6: the byte line_thickness is kind_detail, the weight of a text too.
+DRAW_RECORD_VERSION :: 7 // A new kind of record, or a new field, is a new version. 2: Folded_Gap, Picture. 3: Text_Grid. 4: Line, and the field line_thickness. 5: the fields filled and background of a cell of a text grid. 6: the byte line_thickness is kind_detail, the weight of a text too. 7: Interface_Text, and the byte text_subpixel_x is text_origin_thirds.
 
 Draw_Kind :: enum u8 {
 	None                = 0,
@@ -38,6 +40,19 @@ Draw_Kind :: enum u8 {
 	// of the square drawn at each point of the path (docs/INTERFACE.md,
 	// section 2.5).
 	Line                = 10,
+	// A text in the interface font (docs/FONTS.md, section 12): the bytes
+	// text_start ..< text_start + text_count, in first_color. The rectangle
+	// of the record holds every pixel that the text draws: the box of its
+	// measure, grown by its ink margin on each side. second_color is the ink
+	// margin in pixels; the origin of the text is at x + margin, plus
+	// text_origin_thirds thirds of a pixel; kind_detail is the weight
+	// (docs/INTERFACE.md, section 2.1).
+	Interface_Text      = 11,
+}
+
+// is_text_kind says if a record is a text whose bytes are in the text table.
+is_text_kind :: proc "contextless" (kind: Draw_Kind) -> bool {
+	return kind == .Text || kind == .Interface_Text
 }
 
 // The largest thickness of a line: past it, the squares of a long line
@@ -74,7 +89,7 @@ Text_Grid :: struct {
 Draw_Record :: struct {
 	kind:            Draw_Kind,
 	text_scale:      u8, // Text: 1, 2 or 3.
-	text_subpixel_x: u8, // Text: the position after x, in 1/64 of a pixel. 0 on the grid of cells: the vector font and Spleen 8x16 (docs/FONTS.md).
+	text_origin_thirds: u8, // Interface_Text: the origin after x + margin, in thirds of a pixel: 0, 1 or 2. 0 for the other kinds.
 	kind_detail:     u8, // Line: the thickness, 1 to LINE_THICKNESS_LIMIT pixels. Text: the weight (Font_Weight: 0 regular, 1 bold). 0 for the other kinds.
 	x, y:            i32,
 	width, height:   i32,
@@ -103,6 +118,11 @@ Draw_Table :: struct {
 	refused:      bool,
 	pictures:     []graphics.Canvas, // The pictures that Picture records show.
 	grids:        []Text_Grid, // The grids that Text_Grid records show.
+	// The interface font that measures and draws the Interface_Text records
+	// of the table: the caches that the program validated (display). nil:
+	// the program has none, and a text in the interface font is a text in
+	// the font of the cells.
+	interface_font: ^display.Interface_Font,
 }
 
 // A rectangle of the surface. right and bottom are not in it.
@@ -130,6 +150,7 @@ draw_table_copy :: proc "contextless" (target, source: ^Draw_Table) -> bool {
 	target.full = source.full
 	target.refused = source.refused
 	target.pictures = source.pictures
+	target.interface_font = source.interface_font
 	// The cells of each grid: the target keeps its own copy, in its memory.
 	if len(target.grids) < len(source.grids) {
 		return false
@@ -332,9 +353,15 @@ draw_clip :: proc "contextless" (table: ^Draw_Table, x, y, width, height: int) {
 }
 
 // draw_text appends a run of text at (x, y), the top left corner of its
-// first character, and gives the x after its last character.
+// first character, and gives the x after its last character. A text in the
+// interface font is an Interface_Text record when the table has the font
+// (font_in_use), else a text of the font of the cells.
 draw_text :: proc "contextless" (table: ^Draw_Table, x, y: int, text: string, color: graphics.Color, font: Font = {}, element: u32 = 0) -> int {
-	width := text_width(font, text)
+	used := font_in_use(table, font, len(text))
+	if used.kind == .Interface {
+		return interface_text_append(table, i64(x) * 64, y, text, color, used, element)
+	}
+	width := text_width(used, text)
 	if len(text) == 0 {
 		return x
 	}
@@ -345,14 +372,53 @@ draw_text :: proc "contextless" (table: ^Draw_Table, x, y: int, text: string, co
 	start := table.text_count
 	copy(table.text[start:], text)
 	table.text_count += len(text)
-	scale := font_scale(font)
-	record_append(table, with_place({kind = .Text, text_scale = u8(scale), kind_detail = u8(font.weight), first_color = color, text_start = u32(start), text_count = u32(len(text)), element = element}, x, y, width, graphics.CELL_HEIGHT * scale))
+	scale := font_scale(used)
+	record_append(table, with_place({kind = .Text, text_scale = u8(scale), kind_detail = u8(used.weight), first_color = color, text_start = u32(start), text_count = u32(len(text)), element = element}, x, y, width, graphics.CELL_HEIGHT * scale))
 	return x + width
 }
 
-// draw_text_right appends a run of text that ends at right.
+// draw_text_right appends a run of text that ends at right. In the
+// interface font the origin is at a third of a pixel, so the end is at
+// right or at most a third of a pixel before it.
 draw_text_right :: proc "contextless" (table: ^Draw_Table, right, y: int, text: string, color: graphics.Color, font: Font = {}, element: u32 = 0) {
-	draw_text(table, right - text_width(font, text), y, text, color, font, element)
+	used := font_in_use(table, font, len(text))
+	if used.kind == .Interface {
+		// The origin goes to the nearest third of a pixel, which can be up to
+		// 10.7 / 64 of a pixel to the right: 11 / 64 less makes it the third
+		// at or before the exact place, so the text never passes right.
+		interface_text_append(table, i64(right) * 64 - interface_width_subpixels(table.interface_font, used, text) - 11, y, text, color, used, element)
+		return
+	}
+	draw_text(table, right - text_width(used, text), y, text, color, used, element)
+}
+
+// interface_text_append appends a text in the interface font whose origin
+// is at place, in 1/64 of a pixel, rounded to the nearest third of a pixel
+// (the positions of the glyph cache), and gives the x of the end of its
+// measured box, rounded up. The rectangle of the record is the box grown by
+// the ink margin of the font on each side (graphics.PROPORTIONAL_INK_MARGIN
+// times the scale), so the damage of the record holds each pixel of its ink.
+@(private)
+interface_text_append :: proc "contextless" (table: ^Draw_Table, place: i64, y: int, text: string, color: graphics.Color, font: Font, element: u32) -> int {
+	width := interface_width_subpixels(table.interface_font, font, text)
+	pixel, third := glyph_cache.position_of(place, 3)
+	origin := pixel * 64 + i64(third) * 64 / 3
+	end := int((origin + width + 63) / 64)
+	if len(text) == 0 {
+		return end
+	}
+	if table.text_count + len(text) > len(table.text) {
+		table.full = true
+		return end
+	}
+	start := table.text_count
+	copy(table.text[start:], text)
+	table.text_count += len(text)
+	scale := font_scale(font)
+	margin := graphics.PROPORTIONAL_INK_MARGIN * scale
+	left := int(pixel) - margin
+	record_append(table, with_place({kind = .Interface_Text, text_scale = u8(scale), text_origin_thirds = u8(third), kind_detail = u8(font.weight), first_color = color, second_color = u32(margin), text_start = u32(start), text_count = u32(len(text)), element = element}, left, y, end + margin - left, graphics.CELL_HEIGHT * scale))
+	return end
 }
 
 // The places of a record stay inside this distance of the corner of the

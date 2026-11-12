@@ -139,10 +139,7 @@ pointer_shape_under :: proc "contextless" () -> pointer_pictures.Pointer_Shape {
 	if menu_open != .None && menu_line >= 0 {
 		return .Pointing_Hand
 	}
-	if x, y, width, height := bar.button(); inside(pointer_x, pointer_y, x, y, width, height) {
-		return .Pointing_Hand
-	}
-	if x, y, width, height := bar.windows_button(); inside(pointer_x, pointer_y, x, y, width, height) {
+	if bar.button_at(bar_layout, pointer_x, pointer_y) != .None {
 		return .Pointing_Hand
 	}
 	if pointer_y < BAR_HEIGHT {

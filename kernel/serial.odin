@@ -1,6 +1,7 @@
 package kernel
 
 import "base:intrinsics"
+import "contract:cut_mark"
 import op "contract:operation"
 
 // The serial port is the log of the kernel. It is the only device that the
@@ -175,21 +176,23 @@ log :: proc "contextless" (parts: ..Log_Part) {
 
 // log_in writes one record of the kernel. A part is a string, an integer
 // (decimal), or a Hex.
+//
+// The text of one record of the kernel has at most 352 bytes: the stack of
+// the kernel is small. A longer text ends with the cut mark and the count
+// of the missing bytes (contract:cut_mark): never cut in silence.
 log_in :: proc "contextless" (channel: string, level: op.Log_Level, parts: ..Log_Part) {
 	buffer: [352]u8
 	count := 0
-	put :: proc "contextless" (buffer: []u8, count: ^int, bytes: []u8) {
-		for b in bytes {
-			if count^ < len(buffer) {
-				buffer[count^] = b
-				count^ += 1
-			}
-		}
+	dropped := 0
+	put :: proc "contextless" (buffer: []u8, count: ^int, dropped: ^int, bytes: []u8) {
+		taken := copy(buffer[count^:], bytes)
+		count^ += taken
+		dropped^ += len(bytes) - taken
 	}
 	for part in parts {
 		switch value in part {
 		case string:
-			put(buffer[:], &count, transmute([]u8)value)
+			put(buffer[:], &count, &dropped, transmute([]u8)value)
 		case u64:
 			digits: [20]u8
 			digit_count := 0
@@ -200,16 +203,17 @@ log_in :: proc "contextless" (channel: string, level: op.Log_Level, parts: ..Log
 				rest /= 10
 				if rest == 0 {break}
 			}
-			put(buffer[:], &count, digits[len(digits) - digit_count:])
+			put(buffer[:], &count, &dropped, digits[len(digits) - digit_count:])
 		case Hex:
 			digits: [16]u8
 			alphabet := HEX_DIGITS
 			for i in 0 ..< 16 {
 				digits[i] = alphabet[(u64(value) >> uint(60 - 4 * i)) & 0xF]
 			}
-			put(buffer[:], &count, digits[:])
+			put(buffer[:], &count, &dropped, digits[:])
 		}
 	}
+	count, _, _ = cut_mark.apply(buffer[:], count, dropped)
 	taken := log_take()
 	log_bytes(buffer[:count])
 	log_bytes({'\r', '\n'})

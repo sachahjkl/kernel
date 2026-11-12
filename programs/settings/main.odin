@@ -162,7 +162,11 @@ get :: proc "c" (name: ^string, result: ^[]u8) -> i64 {
 		return 0
 	}
 	values := settings.read(page).values
-	return i64(copy(result^, settings.descriptions[setting].value_names[values[setting]]))
+	// The count of the whole text: a caller with a smaller buffer sees that
+	// it does not fit.
+	value_name := settings.descriptions[setting].value_names[values[setting]]
+	copy(result^, value_name)
+	return i64(len(value_name))
 }
 
 // repeat keeps count records in the store, one commit each, with the font and the subpixel order of each record from its number: the case of the loss of power of the machine test (a loss in the middle gives the record before or the record in flight, never a mix). The page takes the last record. The result is the count of records kept, or a negative number with an error record: No_Grant (-1); Bad_Value (-3, a count outside 1 to 1000); Refused (-4, the store refused a record).

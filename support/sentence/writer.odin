@@ -6,6 +6,8 @@
 // of the host is the sentence of the machine.
 package sentence
 
+import "contract:cut_mark"
+
 // Text without an allocator: a Part is a string or a number, and format
 // writes parts in a buffer.
 
@@ -20,18 +22,36 @@ Part :: union {
 
 HEX_DIGITS :: [16]u8{'0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'}
 
+// A writer fills its buffer, and counts the bytes that the buffer cannot
+// hold: written ends the text with the cut mark (contract:cut_mark) when it
+// dropped some. A text is never cut in silence (docs/ARCHITECTURE.md).
 Writer :: struct {
-	buffer: []u8,
-	count:  int,
+	buffer:         []u8,
+	count:          int,
+	dropped:        int, // The bytes that did not fit.
+	marked:         bool, // written ended the text with the cut mark.
+	mark_start:     int, // When marked: the bytes of the text before the mark.
+	mark_missing:   u64, // When marked: the count that the mark says.
+	dropped_marked: int, // When marked: dropped when the mark was written.
 }
 
 write_bytes :: proc "contextless" (writer: ^Writer, bytes: []u8) {
-	for b in bytes {
-		if writer.count < len(writer.buffer) {
-			writer.buffer[writer.count] = b
-			writer.count += 1
-		}
+	// After the mark, each byte is a missing byte: written counts it in the
+	// mark again.
+	if writer.marked {
+		writer.dropped += len(bytes)
+		return
 	}
+	room := max(len(writer.buffer) - writer.count, 0)
+	taken := min(room, len(bytes))
+	copy(writer.buffer[writer.count:][:taken], bytes[:taken])
+	writer.count += taken
+	writer.dropped += len(bytes) - taken
+}
+
+// writer_reset makes a writer empty, for a new text in the same buffer.
+writer_reset :: proc "contextless" (writer: ^Writer) {
+	writer^ = {buffer = writer.buffer}
 }
 
 write_unsigned :: proc "contextless" (writer: ^Writer, value: u64, minimum_digits := 1, pad: u8 = '0') {
@@ -75,7 +95,20 @@ write_part :: proc "contextless" (writer: ^Writer, part: Part) {
 	}
 }
 
+// written gives the text of a writer. When the buffer dropped bytes, the
+// text ends with the cut mark and the count of the missing bytes. The mark
+// ends the text: a byte written after it counts as missing, and the next
+// call of written writes the mark again with the new count.
 written :: proc "contextless" (writer: ^Writer) -> string {
+	switch {
+	case writer.dropped > 0 && !writer.marked:
+		writer.count, writer.mark_start, writer.mark_missing = cut_mark.apply(writer.buffer, writer.count, writer.dropped)
+		writer.marked, writer.dropped_marked = true, writer.dropped
+	case writer.marked && writer.dropped > writer.dropped_marked:
+		more := u64(writer.dropped - writer.dropped_marked)
+		writer.count, writer.mark_start, writer.mark_missing = cut_mark.apply(writer.buffer, writer.mark_start, int(writer.mark_missing + more))
+		writer.dropped_marked = writer.dropped
+	}
 	return string(writer.buffer[:writer.count])
 }
 

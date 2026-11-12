@@ -194,7 +194,14 @@ server_init :: proc "contextless" (server: ^Server, connections: []Connection, r
 		return false
 	}
 	if len(streams) < len(connections) || len(streams) % len(connections) != 0 {
-		errors.fail(error, -1, .Bad_Value, .Records, 3, i64(len(streams)), i64(len(connections)), 0)
+		errors.fail(error, -1, .Bad_Value, .Records, 4, i64(len(streams)), i64(len(connections)), 0)
+		return false
+	}
+	if configuration.idle_timeout_milliseconds == 0 {
+		// A record of a server always has a bound: with no idle timeout on
+		// either side, a client that vanishes while the server has a packet
+		// in flight keeps the record for ever, and the server probes it.
+		errors.fail(error, -1, .Empty, .Milliseconds, 5, 0, i64(VARIABLE_LENGTH_INTEGER_LARGEST), 0)
 		return false
 	}
 	server.streams = streams

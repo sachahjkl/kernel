@@ -49,7 +49,9 @@ PLACE_STEP_Y :: 32
 CLIENT_CAPACITY :: 32 // The root service starts 32 programs at most.
 DAMAGE_CAPACITY :: 8
 CLOCK_WIDTH :: 19 * 8 // "2026-11-11 16:30:05", or the time since boot "00:00:00" when the system has no date.
-LAUNCHER_HINT :: "launcher: super" // In the bar, at the left of the time.
+// The hint of the launcher in the bar, at the left of the time: "launcher: super".
+LAUNCHER_HINT_NAME :: "launcher: "
+LAUNCHER_HINT_KEY :: "super"
 
 Client :: struct {
 	ring_memory: system.Handle, // 0: the slot is free.
@@ -159,14 +161,93 @@ damage_focus :: proc "contextless" () {
 
 // damage_menu records the buttons of the bar and their menus.
 damage_menu :: proc "contextless" () {
-	x, y, width, height := bar.button()
+	damage_menu_of(bar_layout)
+}
+
+// damage_menu_of records the buttons and the menus of one layout of the
+// bar: a change of the font damages the places of the old layout and of
+// the new one.
+damage_menu_of :: proc "contextless" (layout: bar.Layout) {
+	x, y, width, height := bar.button(layout)
 	damage_add(x, y, width, height)
-	x, y, width, height = bar.menu()
+	x, y, width, height = bar.menu(layout)
 	damage_add(x, y, width, height)
-	x, y, width, height = bar.windows_button()
+	x, y, width, height = bar.windows_button(layout)
 	damage_add(x, y, width, height)
-	x, y, width, height = bar.windows_menu(CLIENT_CAPACITY) // A window can leave while the menu is open.
+	x, y, width, height = bar.windows_menu(layout, CLIENT_CAPACITY) // A window can leave while the menu is open.
 	damage_add(x, y, width, height)
+}
+
+// The texts that the compositor draws itself follow the rule of the two
+// fonts (docs/DESIGN.md, section 5): the names (the buttons of the bar, the
+// lines of the menus, the titles of the windows, the names of the
+// launcher, a hint) in the interface font; the values (the clock, the date,
+// the text that the person types, a count) in the font of the cells. The
+// interface font is the one of support/display (interface_font_load); with
+// none, or with the setting Spleen 8x16, each text is in the font of the
+// cells with the same layout rules.
+bar_layout: bar.Layout
+bar_layout_known: bool
+bar_in_interface_font: bool
+
+// bar_measure writes once in the log the time of one whole frame of the
+// bar with the menu of the programs open, built and drawn, in the font of
+// the cells and in the interface font: the least of 20 rounds, so that a
+// round that the host stops in its middle does not count. It runs before
+// the first frame, which draws the whole screen after it.
+bar_measure :: proc "contextless" () {
+	ROUNDS :: 20
+	font := display.interface_font_of()
+	saved_layout, saved_menu := bar_layout, menu_open
+	menu_open = .Programs
+	fonts := [2]^display.Interface_Font{nil, font}
+	least := [2]u64{max(u64), max(u64)}
+	measured := 0
+	for measured_font in fonts {
+		if measured == 1 && (font == nil || graphics.text_state.font != .Vector) {
+			break
+		}
+		bar_layout = bar.layout_of(measured_font != nil ? &measured_font.regular : nil)
+		_, menu_top, _, menu_height := bar.menu(bar_layout)
+		area := interface.Rectangle{0, 0, frame.width, max(BAR_HEIGHT, menu_top + menu_height)}
+		for _ in 0 ..< ROUNDS {
+			start := system.nanoseconds()
+			screen_build(0, measured_font)
+			interface.execute_in_rectangle(&screen_table, frame, area)
+			least[measured] = min(least[measured], system.nanoseconds() - start)
+		}
+		measured += 1
+	}
+	bar_layout, menu_open = saved_layout, saved_menu
+	if measured < 2 {
+		system.log("compositor: the bar and the menu of the programs, built and drawn (the least of 20): the font of the cells ", least[0] / 1000, ".", least[0] / 100 % 10, " us; no interface font")
+		return
+	}
+	system.log("compositor: the bar and the menu of the programs, built and drawn (the least of 20): the font of the cells ", least[0] / 1000, ".", least[0] / 100 % 10, " us, the interface font ", least[1] / 1000, ".", least[1] / 100 % 10, " us")
+}
+
+// bar_layout_update measures the bar in the font that draws it now, and
+// writes in the log which font it is when it changes: the kernel tool reads
+// that line to find the places of the bar. The places of the old and of
+// the new layout are damaged.
+bar_layout_update :: proc "contextless" () {
+	font := display.interface_font_of()
+	in_interface_font := font != nil && graphics.text_state.font == .Vector
+	layout := bar.layout_of(in_interface_font ? &font.regular : nil)
+	if bar_layout_known && layout == bar_layout && in_interface_font == bar_in_interface_font {
+		return
+	}
+	if bar_layout_known {
+		damage_menu_of(bar_layout)
+	}
+	bar_layout, bar_layout_known, bar_in_interface_font = layout, true, in_interface_font
+	damage_add(0, 0, screen.width, BAR_HEIGHT)
+	damage_menu_of(bar_layout)
+	if in_interface_font {
+		system.log("compositor: the bar is in the interface font: programs ", u64(layout.label_width), " pixels, windows ", u64(layout.windows_label_width), ", the widest name ", u64(layout.longest_name_width))
+	} else {
+		system.log("compositor: the bar is in the font of the cells")
+	}
 }
 
 // window_of_line gives the client of a line of the menu of the windows, or -1.
@@ -279,6 +360,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// The text of the desktop: the settings of the person and the glyph cache
 	// (contract:settings); a change of the settings wakes this loop.
 	display.text_settings_open(ctx)
+	display.interface_font_load(ctx)
+	launcher_now.interface_font = display.interface_font_of()
+	launcher_before.interface_font = launcher_now.interface_font
+	bar_layout_update()
+	bar_measure()
 	settings_seen: u32
 	// settings_seen starts at 0: when the boot pass of settings wrote the page
 	// before this read, the first turn of the loop sees a change and tells
@@ -396,6 +482,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 // (support/display gives it the new font before the event).
 settings_changed :: proc "contextless" (choice: settings.Choice) {
 	display.text_settings_apply()
+	bar_layout_update()
 	pointer_theme_choose(settings.pointer_theme_of(choice)) // pointer_picture.odin
 	told := 0
 	for &client in clients {
@@ -572,7 +659,7 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32) 
 	// The menu of the windows: its button opens it, and a press on a line
 	// brings the window to the front.
 	if menu_open != .None {
-		over := menu_open == .Programs ? bar.line_at(pointer_x, pointer_y) : bar.windows_line_at(order_count, pointer_x, pointer_y)
+		over := menu_open == .Programs ? bar.line_at(bar_layout, pointer_x, pointer_y) : bar.windows_line_at(bar_layout, order_count, pointer_x, pointer_y)
 		if over != menu_line {
 			menu_line = over
 			damage_menu()
@@ -598,12 +685,13 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32) 
 			menu_line = -1
 			damage_menu()
 		}
-		if x, y, width, height := bar.button(); inside(pointer_x, pointer_y, x, y, width, height) && was_open != .Programs {
+		under := bar.button_at(bar_layout, pointer_x, pointer_y)
+		if under == .Programs && was_open != .Programs {
 			menu_open = .Programs
 			system.log_in("surfaces", .Info, "compositor: the menu of the programs is open")
 			damage_menu()
 		}
-		if x, y, width, height := bar.windows_button(); inside(pointer_x, pointer_y, x, y, width, height) && was_open != .Windows {
+		if under == .Windows && was_open != .Windows {
 			menu_open = .Windows
 			windows_log()
 			damage_menu()
@@ -645,7 +733,7 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32) 
 // draw draws again each damage rectangle, then copies it to the screen.
 draw :: proc "contextless" (now: u64) {
 	start := system.nanoseconds()
-	screen_build(now)
+	screen_build(now, display.interface_font_of())
 	for area in damage[:damage_count] {
 		draw_area(area, now)
 	}
@@ -713,9 +801,9 @@ frame_records :: proc "contextless" (table: ^interface.Draw_Table, client: ^Clie
 	interface.draw_horizontal_gradient(table, x, y + outer_height - BORDER, outer_width, BORDER, start, end)
 	interface.draw_rectangle(table, x, y + TITLE_HEIGHT, BORDER, outer_height - TITLE_HEIGHT - BORDER, start)
 	interface.draw_rectangle(table, x + outer_width - BORDER, y + TITLE_HEIGHT, BORDER, outer_height - TITLE_HEIGHT - BORDER, end)
-	title := system.name_of(client.title[:])
-	shown := clamp((outer_width - CLOSE_SIZE - 16) / graphics.CELL_WIDTH, 0, len(title))
-	interface.draw_text(table, x + 8, y + 4, title[:shown], focus ? graphics.COLOR_WHITE : graphics.COLOR_DIM)
+	// The title: a name, cut in its font to the room before the close button.
+	title := interface.text_fit(table, interface.FONT_INTERFACE, system.name_of(client.title[:]), outer_width - CLOSE_SIZE - 16)
+	interface.draw_text(table, x + 8, y + 4, title, focus ? graphics.COLOR_WHITE : graphics.COLOR_DIM, interface.FONT_INTERFACE)
 	base := graphics.Color(graphics.COLOR_STOP_PROGRAM_QUIET)
 	cross_color := graphics.Color(graphics.COLOR_STOP_PROGRAM_QUIET_MARK)
 	if focus || pointer_over {
@@ -903,7 +991,7 @@ launcher_build :: proc "contextless" (input: ^interface.Input) -> interface.Elem
 	interface.text_put(&empty, string(typed[:typed_count]))
 	interface.text_put(&empty, "\" in its name")
 	interface.list_with_choice(&frame, {content.x, top + LAUNCHER_LIST, content.width, LAUNCHER_ROWS * interface.TABLE_LINE}, interface.identity("launcher list"), names[:match_count], &choice, {marked = string(typed[:typed_count]), chosen_hint = "enter: start", empty_text = interface.text_of(&empty)})
-	interface.draw_text(frame.table, content.x, top + LAUNCHER_LIST + LAUNCHER_ROWS * interface.TABLE_LINE + 8, "up down: choose   enter: start   esc: close", graphics.COLOR_DIM)
+	interface.draw_text(frame.table, content.x, top + LAUNCHER_LIST + LAUNCHER_ROWS * interface.TABLE_LINE + 8, "up down: choose   enter: start   esc: close", graphics.COLOR_DIM, interface.FONT_INTERFACE)
 	interface.frame_end(&frame)
 	return result
 }
@@ -914,14 +1002,16 @@ launcher_filter :: proc "contextless" () {
 	match_count = bar.filter(string(typed[:typed_count]), matches[:])
 	choice = 0
 	buffer: [len(bar.names) * 16]u8
-	count := 0
-	for index in matches[:match_count] {
-		if count > 0 {
-			count += copy(buffer[count:], ", ")
-		}
-		count += copy(buffer[count:], bar.names[index])
+	writer := system.Writer {
+		buffer = buffer[:],
 	}
-	system.log_in("surfaces", .Info, "compositor: the launcher lists ", u64(match_count), " of ", u64(len(bar.names)), " for \"", string(typed[:typed_count]), "\": ", string(buffer[:count]))
+	for index, number in matches[:match_count] {
+		if number > 0 {
+			system.write_part(&writer, ", ")
+		}
+		system.write_part(&writer, bar.names[index])
+	}
+	system.log_in("surfaces", .Info, "compositor: the launcher lists ", u64(match_count), " of ", u64(len(bar.names)), " for \"", string(typed[:typed_count]), "\": ", system.written(&writer))
 }
 
 launcher_close :: proc "contextless" (cause: string) {
@@ -1050,8 +1140,11 @@ bar_mark_build :: proc "contextless" () {
 	mark.mark_draw(bar_mark_picture, 0, 0, bar.MARK_CELL_SIZE, false)
 }
 
-screen_build :: proc "contextless" (now: u64) {
-	screen_table = {records = screen_records[:], text = screen_text[:], pictures = screen_pictures[:]}
+// screen_build builds the draw table of the screen. interface_font: the
+// interface font of the names, or nil for the font of the cells (the
+// measure of bar_measure compares the two).
+screen_build :: proc "contextless" (now: u64, interface_font: ^display.Interface_Font) {
+	screen_table = {records = screen_records[:], text = screen_text[:], pictures = screen_pictures[:], interface_font = interface_font}
 	table := &screen_table
 	pointer_close := close_button_under_pointer()
 	for position in 0 ..< order_count {
@@ -1070,14 +1163,17 @@ screen_build :: proc "contextless" (now: u64) {
 	interface.draw_picture(table, bar.MARK_X, bar.MARK_Y, BAR_MARK_PICTURE, BAR_MARK_GENERATION)
 	bar_button_records :: proc "contextless" (table: ^interface.Draw_Table, x, y, width, height: int, label: string, open: bool) {
 		interface.draw_rectangle(table, x, y, width, height, open ? graphics.COLOR_TITLE : graphics.COLOR_TRACK)
-		interface.draw_text(table, x + bar.PADDING, y + (height - graphics.CELL_HEIGHT) / 2, label, open ? graphics.COLOR_WHITE : graphics.COLOR_TEXT)
+		interface.draw_text(table, x + bar.PADDING, y + (height - graphics.CELL_HEIGHT) / 2, label, open ? graphics.COLOR_WHITE : graphics.COLOR_TEXT, interface.FONT_INTERFACE)
 	}
-	left, top, button_width, button_height := bar.button()
+	left, top, button_width, button_height := bar.button(bar_layout)
 	bar_button_records(table, left, top, button_width, button_height, bar.LABEL, menu_open == .Programs)
-	left, top, button_width, button_height = bar.windows_button()
+	left, top, button_width, button_height = bar.windows_button(bar_layout)
 	bar_button_records(table, left, top, button_width, button_height, bar.WINDOWS_LABEL, menu_open == .Windows)
-	hint_x := width - CLOCK_WIDTH - 32 - interface.text_width({}, LAUNCHER_HINT)
-	interface.draw_text(table, interface.draw_text(table, hint_x, 8, "launcher: ", graphics.COLOR_DIM), 8, "super", graphics.COLOR_TEXT)
+	// The hint of the launcher: a name, in the interface font, measured in
+	// its two parts as they are drawn.
+	hint_width := interface.text_measured_width(table, interface.FONT_INTERFACE, LAUNCHER_HINT_NAME) + interface.text_measured_width(table, interface.FONT_INTERFACE, LAUNCHER_HINT_KEY)
+	hint_x := width - CLOCK_WIDTH - 32 - hint_width
+	interface.draw_text(table, interface.draw_text(table, hint_x, 8, LAUNCHER_HINT_NAME, graphics.COLOR_DIM, interface.FONT_INTERFACE), 8, LAUNCHER_HINT_KEY, graphics.COLOR_TEXT, interface.FONT_INTERFACE)
 	seconds := now / 1000
 	x := width - CLOCK_WIDTH - 16
 	if milliseconds, known := date.milliseconds_now(date_page, now); known {
@@ -1096,14 +1192,14 @@ screen_build :: proc "contextless" (now: u64) {
 	card_frame := interface.Frame{table = table}
 	count: interface.Text_Builder
 	if menu_open == .Windows && order_count > 0 {
-		menu_left, menu_top, menu_width, menu_height := bar.windows_menu(order_count)
+		menu_left, menu_top, menu_width, menu_height := bar.windows_menu(bar_layout, order_count)
 		interface.card(&card_frame, {menu_left, menu_top, menu_width, menu_height}, "WINDOWS", "the client table", graphics.COLOR_KERNEL, interface.number_text(&count, u64(order_count)))
 		for line in 0 ..< order_count {
 			index := window_of_line(line)
 			if index < 0 {
 				break
 			}
-			line_x, line_y, line_width, line_height := bar.windows_line(line)
+			line_x, line_y, line_width, line_height := bar.windows_line(bar_layout, line)
 			focus := index == order[order_count - 1]
 			if line == menu_line {
 				interface.draw_rectangle(table, line_x, line_y, line_width, line_height, graphics.COLOR_TITLE)
@@ -1112,18 +1208,19 @@ screen_build :: proc "contextless" (now: u64) {
 				// The window that has the focus: a square, and its title in white.
 				interface.draw_rectangle(table, line_x + 8, line_y + 8, 8, 8, line == menu_line ? graphics.COLOR_WHITE : graphics.COLOR_TITLE)
 			}
-			interface.draw_text(table, line_x + 24, line_y + 4, system.name_of(clients[index].title[:]), focus || line == menu_line ? graphics.COLOR_WHITE : graphics.COLOR_TEXT)
+			title := interface.text_fit(table, interface.FONT_INTERFACE, system.name_of(clients[index].title[:]), line_width - bar.WINDOWS_TITLE_X - bar.PADDING)
+			interface.draw_text(table, line_x + bar.WINDOWS_TITLE_X, line_y + 4, title, focus || line == menu_line ? graphics.COLOR_WHITE : graphics.COLOR_TEXT, interface.FONT_INTERFACE)
 		}
 	}
 	if menu_open == .Programs {
-		menu_left, menu_top, menu_width, menu_height := bar.menu()
+		menu_left, menu_top, menu_width, menu_height := bar.menu(bar_layout)
 		interface.card(&card_frame, {menu_left, menu_top, menu_width, menu_height}, "PROGRAMS", "bar.names", graphics.COLOR_KERNEL, interface.number_text(&count, len(bar.names)))
 		for name, index in bar.names {
-			line_x, line_y, line_width, line_height := bar.line(index)
+			line_x, line_y, line_width, line_height := bar.line(bar_layout, index)
 			if index == menu_line {
 				interface.draw_rectangle(table, line_x, line_y, line_width, line_height, graphics.COLOR_TITLE)
 			}
-			interface.draw_text(table, line_x + bar.PADDING, line_y + 4, name, index == menu_line ? graphics.COLOR_WHITE : graphics.COLOR_TEXT)
+			interface.draw_text(table, line_x + bar.PADDING, line_y + 4, name, index == menu_line ? graphics.COLOR_WHITE : graphics.COLOR_TEXT, interface.FONT_INTERFACE)
 		}
 	}
 	if table.full {

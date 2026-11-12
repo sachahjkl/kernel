@@ -81,6 +81,11 @@ VALIDATE_GENERATION_MASK :: (u64(1) << (31 - VALIDATE_PLACE_BITS)) - 1
 // A Validate follows a datagram that arrived, as a Release does.
 HELD_CAPACITY :: PLACE_COUNT + 2 * RECEIVE_PLACES + CAPACITY
 
+// The time that the program may see the idle deadline of a connection
+// after it passed: the program learns it when its wait ends, and a busy or
+// slow machine wakes it late. The end that this margin tells from is an end
+// hours late, or none.
+IDLE_END_LATE_WAKE_MILLISECONDS :: 5000
 LOG_LIMIT :: 50 // Lines of connections in one second at most: a client that opens many must not fill the log limit of the program.
 
 cryptography := quic.Cryptography {
@@ -267,6 +272,20 @@ end_reason :: proc "contextless" (connection: ^quic.Connection) -> string {
 	return "closed by this server"
 }
 
+// idle_end_log writes how long a connection that ended by its idle timeout
+// received nothing, in time of the machine, against its bound: at least
+// its idle timeout, and at most its bound (the larger of the idle timeout
+// and three probe timeouts with no backoff) and a late wake of the
+// program. A test reads the verdict; the numbers are on the line.
+idle_end_log :: proc "contextless" (connection: ^quic.Connection, remote: quic.Remote) {
+	silence := (connection.ended_at - min(connection.last_activity, connection.ended_at)) / 1000
+	idle_timeout := connection.idle_timeout / 1000
+	bound := quic.connection_idle_bound(connection) / 1000
+	held := silence >= idle_timeout && silence <= bound + IDLE_END_LATE_WAKE_MILLISECONDS
+	text: [40]u8
+	system.log("quic_echo: ", address_text(text[:], remote), held ? ": the idle end held its bound: " : ": the idle end did NOT hold its bound: ", silence, " ms with no packet of the client, the idle timeout ", idle_timeout, " ms, the bound ", bound, " ms, a late wake of the program up to ", u64(IDLE_END_LATE_WAKE_MILLISECONDS), " ms")
+}
+
 // printable_text copies the bytes of a text of the network into place,
 // each byte that is not printable ASCII as '?': a log line stays one line.
 printable_text :: proc "contextless" (place: []u8, bytes: []u8) -> string {
@@ -319,6 +338,9 @@ echo_work :: proc "contextless" () {
 				reason: [quic.CLOSE_REASON_KEPT]u8
 				reason_text := printable_text(reason[:], connection.close_reason_of_peer[:connection.close_reason_of_peer_length])
 				system.log("quic_echo: ", address_text(text[:], record.remote), " ended (", end_reason(connection), ", the code ", system.Hex(connection.close_error_code), connection.close_is_application ? " of the application" : "", ", the frame type ", system.Hex(connection.close_frame_type), ", the reason of the client \"", reason_text, "\"): in ", connection.data_consumed_total, " bytes, out ", connection.data_sent_total, " bytes, srtt ", connection.smoothed_round_trip, " us")
+				if connection.closed_by_idle_timeout {
+					idle_end_log(connection, record.remote)
+				}
 			}
 		}
 	}

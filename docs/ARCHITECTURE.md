@@ -248,6 +248,18 @@ A set of modules that most programs use. It is not a C library and no program is
 
 The program that the person sees: starts programs, shows windows, shows grants. It is a normal program with handles from the root service.
 
+### A text is never cut in silence
+
+No helper of the system cuts a text without saying so. A text that does not fit in its place is one of three:
+
+- **Written whole, in several parts.** The log takes a text of any length: `system.log_in` and `system.log` write the parts of a text in a buffer of 512 bytes, and send it to the kernel as one line each time it is full, after a whole character; the text continues on the next line. `system.log_text` sends lines of 4096 bytes, the text of one Log call. The kernel writes the text of one Log call in as many log records (176 bytes each) as it needs, chained by `more`: no byte of a call is lost. A terminal writes a run in as many records as it needs.
+- **Cut with the cut mark.** The start of the text, after a whole character, then "... and N bytes more" (`contract:cut_mark`, the one form; the kernel and the programs share it). The writer of `support/sentence` counts the bytes that its buffer does not hold (`Writer.dropped`), and `written` ends its text with the mark: each sentence, each `format`, each text that a program builds with it. The kernel ends a record of its own that passes its 352 bytes with the mark. A Text field of a record of the information functions (`information.text_put`) ends with it. A line that a terminal record holds whole (the edit line, the status) ends with it past 256 bytes.
+- **Refused, with an error that the caller takes.** An export with a Text result gives the count of the whole text: a caller whose buffer is smaller sees it and says so ("the result of ... has N bytes: it does not fit"). The storage service and `settings.get` give that count. The console refuses a name longer than the 31 bytes of a name of the root ring, because a cut name can be the name of another program. The kernel refuses a Log call of more than 4096 bytes.
+
+A text cut to the box where it is drawn is not this fault: the eye sees where the box ends. The ring of the log keeps its last 1023 records; a reader that comes late counts the records that it did not read, and says it (the program `log`: "N lost").
+
+The tool checks a part of the rule on the sources (`text_cut_check` in `kerneltool check`): outside `support/sentence`, no source sets the count of a variable `writer` by hand, and none reads its buffer by hand. It reads text, not types: a writer of another name escapes it.
+
 ## Locks of the kernel
 
 Status: done on 2026-11-10 (the step "the kernel lock split by data", choices of `FIRST_MILESTONE.md`). The code follows this section: no kernel entry takes a lock for all the kernel.

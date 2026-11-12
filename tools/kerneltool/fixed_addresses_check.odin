@@ -84,7 +84,6 @@ identifier_byte :: proc(byte: u8) -> bool {
 
 // source_files_of_a_folder appends the .odin files of a folder and of its
 // folders.
-@(private = "file")
 source_files_of_a_folder :: proc(folder: string, files: ^[dynamic]string) -> bool {
 	entries, err := os.read_all_directory_by_path(folder, context.temp_allocator)
 	if err != nil {
