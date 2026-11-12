@@ -98,6 +98,12 @@ FULL_RING_THREADS :: op.FAULT_RECORD_CAPACITY + 1
 // the handler, and the 17 threads of a full ring).
 CHILD_PAGES :: 512
 CHILD_THREADS :: 20
+// The parent waits for the stop of a child while the child makes progress:
+// at most STALL_MILLISECONDS with no growth of Shared_Page.progress, and
+// OVERALL_MILLISECONDS in all. The time of a case that makes many round
+// trips grows with the load of the host; a stall does not.
+STALL_MILLISECONDS :: 10_000
+OVERALL_MILLISECONDS :: 120_000
 STACK_PAGES :: 64
 LAZY_PAGES :: 16
 LAZY_PAGE :: 3 // The page of the lazy object that case 1 reads.
@@ -114,6 +120,12 @@ Shared_Page :: struct {
 	waiting_serial:  u64,
 	waiting:         u32,
 	foreign_refused: u32, // 1: the answer of the parent got Bad_State; 2: it got another status.
+	// Case 13: the faults that the main thread of the child went past, and
+	// the answers of its handler. The parent bounds a stall of progress,
+	// not the whole run, and logs both at a timeout: a slow host and a lost
+	// wake then give different lines.
+	progress:        u64,
+	answers:         u64,
 }
 
 // One case of the parent: what its child gave.
@@ -473,7 +485,8 @@ spinning_handler :: proc "c" (_: rawptr) -> ! {
 		lazy_page_repair(MAGIC + served)
 		served += 1
 		if system.fault_answer(record, .Resume) == .Ok {
-			intrinsics.atomic_add(&early_answers, 1)
+			answered := intrinsics.atomic_add(&early_answers, 1) + 1
+			intrinsics.volatile_store(&shared_page().answers, u64(answered))
 		}
 	}
 }
@@ -483,6 +496,7 @@ child_early_answer :: proc "contextless" () -> ! {
 	handler_start(spinning_handler)
 	right: u64
 	ranges := [1]op.Page_Range{{first = 0, page_count = 1}}
+	started := system.time()
 	for n in 0 ..< u64(EARLY_FAULTS) {
 		if intrinsics.volatile_load((^u64)(uintptr(lazy_base))) == MAGIC + n {
 			right += 1
@@ -490,7 +504,9 @@ child_early_answer :: proc "contextless" () -> ! {
 		if _, status := system.memory_decommit(lazy_memory, ranges[:]); status != .Ok {
 			system.stop(25)
 		}
+		intrinsics.volatile_store(&shared_page().progress, n + 1)
 	}
+	elapsed := system.time() - started
 	answers := u64(intrinsics.atomic_load(&early_answers))
 	bits: u32
 	if answers == EARLY_FAULTS {
@@ -499,7 +515,7 @@ child_early_answer :: proc "contextless" () -> ! {
 	if right == EARLY_FAULTS {
 		bits |= 2
 	}
-	system.log("fault_ring: 10 000 answers given at once: ", answers, " faults resumed, ", right, " values right, of ", u64(EARLY_FAULTS), bits == EARLY_ALL ? string(": as it must") : string(": WRONG"))
+	system.log("fault_ring: 10 000 answers given at once: ", answers, " faults resumed, ", right, " values right, of ", u64(EARLY_FAULTS), bits == EARLY_ALL ? string(": as it must") : string(": WRONG"), ", in ", elapsed, " ms")
 	system.stop(EARLY_CODE | bits)
 }
 
@@ -612,7 +628,12 @@ child_run :: proc "contextless" (role: Role, name: string) -> (code: u32, report
 	}
 	stopped := false
 	results: [7]u64
-	for deadline := system.time() + 10_000; system.time() < deadline; {
+	// A case that never writes its progress keeps a bound of
+	// STALL_MILLISECONDS from its start.
+	started := system.time()
+	stall_deadline := started + STALL_MILLISECONDS
+	progress_seen: u64
+	for now := started; now < stall_deadline && now < started + OVERALL_MILLISECONDS; now = system.time() {
 		results, status = system.call(.Program_State, u64(program))
 		if status != .Ok {
 			system.log("fault_ring: ", name, ": Program_State failed: ", op.STATUS_NAMES[status])
@@ -633,10 +654,25 @@ child_run :: proc "contextless" (role: Role, name: string) -> (code: u32, report
 			}
 			intrinsics.atomic_store(&in_parent.foreign_refused, answered == .Bad_State ? u32(1) : u32(2))
 		}
+		if progress := intrinsics.volatile_load(&in_parent.progress); progress > progress_seen {
+			progress_seen = progress
+			stall_deadline = system.time() + STALL_MILLISECONDS
+		}
 		system.sleep(system.time() + 10)
 	}
 	if !stopped {
-		system.log("fault_ring: ", name, ": the child did not stop in 10 s")
+		elapsed := system.time() - started
+		progress := intrinsics.volatile_load(&in_parent.progress)
+		answers := intrinsics.volatile_load(&in_parent.answers)
+		switch {
+		case role != .Early_Answer:
+			system.log("fault_ring: ", name, ": the child did not stop in 10 s")
+		case stall_deadline >= started + OVERALL_MILLISECONDS:
+			// The loop ends at the first of the two bounds: here, the overall one.
+			system.log("fault_ring: ", name, ": the child did not stop in 120 s: at step ", progress, " of ", u64(EARLY_FAULTS), ", ", answers, " answers, after ", elapsed, " ms")
+		case:
+			system.log("fault_ring: ", name, ": the child did not stop: no progress for 10 s at step ", progress, " of ", u64(EARLY_FAULTS), ", ", answers, " answers, after ", elapsed, " ms")
+		}
 		system.close(program)
 		return
 	}
