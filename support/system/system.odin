@@ -484,6 +484,47 @@ strategy_set :: proc "contextless" (machine: Handle, strategy: op.Strategy, erro
 	return op.Strategy(results[0]), status
 }
 
+// events_set gives the event table of the machine (docs/ARCHITECTURE.md,
+// "Kernel events"): the rules, and a Contiguous memory object with Write
+// that holds one event ring of `records` records for each processor. It
+// gives the bytes of one ring and the count of processors. A new table of
+// this program replaces its table. The machine handle needs the right
+// Events.
+events_set :: proc "contextless" (machine: Handle, memory: Handle, rules: []op.Event_Rule, records: u64, error: ^errors.Error_Record = nil) -> (ring_bytes: u64, processor_count: u64, status: Status) {
+	results: [7]u64
+	results, status = call_with_error(error, .Events_Set, u64(machine), u64(memory), u64(uintptr(raw_data(rules))), u64(len(rules)), records)
+	return results[0], results[1], status
+}
+
+// events_end takes the event table of this program away. When it returns,
+// the kernel writes no more record in the memory object of the rings.
+events_end :: proc "contextless" (machine: Handle, error: ^errors.Error_Record = nil) -> Status {
+	_, status := call_with_error(error, .Events_Set, u64(machine), 0)
+	return status
+}
+
+// event_ring gives the head and the records of the event ring of one
+// processor, in the memory object of the rings mapped at base. records is
+// the count that this program gave to events_set.
+event_ring :: proc "contextless" (base: rawptr, ring_bytes: u64, processor: u64, records: u64) -> (head: ^op.Event_Ring, ring_records: []op.Event_Record) {
+	head = (^op.Event_Ring)(uintptr(base) + uintptr(processor * ring_bytes))
+	ring_records = ([^]op.Event_Record)(uintptr(head) + op.EVENT_RING_HEAD_BYTES)[:records]
+	return
+}
+
+// event_next gives the next record of an event ring, or false when the ring
+// is empty. The place of the record is free for the kernel again after it.
+event_next :: proc "contextless" (head: ^op.Event_Ring, ring_records: []op.Event_Record) -> (record: op.Event_Record, ok: bool) {
+	written := intrinsics.atomic_load(&head.written)
+	read := intrinsics.atomic_load(&head.read)
+	if read == written || len(ring_records) == 0 {
+		return {}, false
+	}
+	record = ring_records[read % u64(len(ring_records))]
+	intrinsics.atomic_store(&head.read, read + 1)
+	return record, true
+}
+
 // thread_stop ends the thread that calls it.
 thread_stop :: proc "contextless" () -> ! {
 	call(.Thread_Stop, 0)

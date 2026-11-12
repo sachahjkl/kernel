@@ -85,6 +85,7 @@ module_builds := [?]Module_Build {
 	{name = "extended_state", source = "programs/extended_state", image = true},
 	{name = "return_fault", source = "programs/return_fault", image = true},
 	{name = "fault_ring", source = "programs/fault_ring", image = true},
+	{name = "kernel_events", source = "programs/kernel_events", image = true},
 	{name = "terminal", source = "programs/terminal", image = true},
 	{name = "flood", source = "programs/flood", image = true},
 	{name = "processors", source = "programs/processors", image = true},

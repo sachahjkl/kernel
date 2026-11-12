@@ -51,6 +51,7 @@ Grant :: enum {
 	Schedule, // The machine, with the right Schedule: change the scheduling strategy of the machine.
 	Settings, // The settings page with Write (contract:settings): the one writer of the settings of the person.
 	Clock, // The date page with Write and the two ports of the real-time clock (contract:date): the one writer of the date.
+	Events, // The machine, with the right Events: give the event table of the machine (kernel events of every program).
 }
 
 grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
@@ -87,6 +88,8 @@ grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 		return {.Image} // It starts its children from the boot image.
 	case "fault_ring":
 		return {.Image} // It starts its children from the boot image.
+	case "kernel_events":
+		return {.Events, .Image} // It gives the event table of the machine, and starts its children from the boot image.
 	case "scheduler":
 		return {.Inspect, .Schedule} // It reads the counts of the scheduler, and changes the strategy.
 	case "paint", "life", "tally", "sample":
@@ -264,6 +267,8 @@ things_of :: proc "contextless" (name: string) -> system.Budget_Amounts {
 		return {pages = 2048, programs = 2, threads = 2} // One child at a time, with one thread.
 	case "fault_ring":
 		return {pages = 4096, programs = 2, threads = 21} // One child at a time: 512 pages and 20 threads (17 that fault in a full ring, its main thread and its handler).
+	case "kernel_events":
+		return {pages = 4096, programs = 3, threads = 4} // The rings (about 1 MiB with 4 processors), one child at a time of 256 pages and 2 threads, and the thread that empties the rings.
 	case "extended_state":
 		return {pages = 2048, programs = 1, threads = 32} // The main thread and up to 31 threads that hold their registers.
 	case "address_space":
@@ -942,6 +947,14 @@ start :: proc "contextless" (name: string) -> system.Status {
 	}
 	if .Schedule in role {
 		machine_rights += {.Schedule}
+	}
+	if .Events in role {
+		machine_rights += {.Events}
+		// The test of the kernel events gives Events to one child, which
+		// owns a table and stops with it: the kernel must forget the table.
+		if name == "kernel_events" {
+			machine_rights += {.Give}
+		}
 	}
 	if machine_rights != {} {
 		grants[system.GRANT_MACHINE] = {machine, machine_rights}

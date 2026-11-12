@@ -268,6 +268,8 @@ Paths: **op** a kernel operation; **tick** the timer of a processor; **dev** a d
 | Processor record: `preempt_from`, `interrupt_preemptions`, `preempt_cycles` | its processor; `Processor_Report` reads the counts | its processor only | none: data of one processor | |
 | Processor record: `table` | `unmap`, the cleanup of a program (which processors to synchronize) | its processor only | atomic store and load, ordered with the page table writes | the page table in `cr3` |
 | Processor record: `pending`, `idle`, `preempt` | its processor | another processor sets them (`preempt`: `kick`, after a strategy said that a woken thread preempts); its processor clears them | atomic | `processor_sync`, the wake of an idle processor, wake preemption |
+| Processor record: `observed_kinds` | each event point of its processor (an acquire load) | **op** `Events_Set`, **stop** (the end of the table of a program that ends) | control lock; atomic store and load | 0, or the kinds of the rules of the event table ("Kernel events", section 8) |
+| Processor record: its ring of kernel events (`event_ring`, `event_records`, `event_capacity`, `event_written`, `event_read_seen`, `event_lost`); `event_table`; the counts of "one in N" | each event point of its processor | its processor at an event point (the counts: atomic additions); the control path only while `observed_kinds` of each processor is 0 and after a `processor_sync` to the others | control lock and that rule ("Kernel events", section 8) | the memory object of the rings has one reference of the kernel while the table exists |
 | Processor record: port bitmap, `ports_loaded`, `ports_serial` | the processor (hardware) | its processor only, in `run` | none: data of one processor | the Ports handles of the program that runs; `program.ports_serial` |
 | Run queue of a processor: head, tail, count, `weight` (the sum of the weights in the list) | its processor, a processor that takes work from it, a strategy; reports read `count` (atomic) | **op** thread create, **wake**, **tick** (end of a turn), **stop** | run lock of the processor | a thread is in one queue at most |
 | Run queue: `strategy`, `virtual` (the queue clock) | the strategy functions, `queue_pick`; reports read `strategy` (atomic) | `strategy`: the first processor at boot (`strategy_start`, before the other processors start), then **op** `Strategy_Set` (`queue_convert`); `virtual`: the strategy functions | run lock of the processor | the strategy fields of each thread whose home is this queue are zero or belong to `strategy` |
@@ -459,7 +461,7 @@ A program names one of its threads as its fault handler (`Fault_Handler_Set`, op
 
 **The answer `Stop`** writes the stop report from the frame of the waiting thread and the address of its fault (`program_fault_report`, the same code as a fault with no handler), with the stack trace of the waiting thread: the answering thread is of the same program, so the page table of its processor is the one of the program.
 
-**The kernel operations**: 31 (30 `Fault_Handler_Set`, 31 `Fault_Answer`). Property 1 names a first target of 32 or fewer.
+**The kernel operations**: 30 `Fault_Handler_Set` and 31 `Fault_Answer`. With `Events_Set` (32, "Kernel events"), the kernel has 32 operations: the first target of property 1, 32 or fewer.
 
 **The address of a fault** is read from `cr2` once, at the start of `kernel_interrupt`, and each path of the page fault (`page_fault`, `fault_deliver`, `program_fault`) takes that value.
 
@@ -718,6 +720,106 @@ A template is compiled code: the check of the build (`tools/kerneltool/vector_ch
 - The measure of the copy and the fill at the start of the compositor ("compositor: copy_bytes_without_overlap, ns for ..."): `runtime/memory.asm` did not change; expected: no change.
 
 The first number of the measure goes here.
+
+## Kernel events
+
+Status: designed and written on 2026-11-12 (`HANDOFF.md`, item 53: "fixed event points in the kernel (kernel entry, thread switch, fault, lock take), a table of rules that a program with a grant gives to the kernel (kind of event, program, threshold), applied in bounded time, and the records in a ring"). Not built, not run and not measured by the writer. The terms are in `GLOSSARY.md`: kernel event, event point, observed kinds, event rule, event table, event ring, event record, lost count, performance counter. The code is `kernel/events.odin`, the event points in `kernel/enter.odin`, `kernel/schedule.odin`, `kernel/program.odin` (`kernel_interrupt`) and `kernel/lock.odin`, the operation `Events_Set`; the test is the program `kernel_events` (`kerneltool test kernel_events`).
+
+### 1. What it is, and what it is not
+
+The kernel has four fixed event points. A program with the right `Events` on the machine gives the kernel an event table: at most 16 rules, and a memory object for the records. At an event point, the kernel tests the rules of the kind of the event; when a rule accepts the event, the kernel writes one event record into the event ring of its processor. The program reads the rings with no kernel entry.
+
+No bytecode, no verifier and no compiler: a rule is a record of fixed fields that the kernel compares, and its cost has a bound that does not depend on the rule (at most 16 tests of a few fields). Property 1: one new operation, `Events_Set`, number 32; the kernel has 32 operations, the first target of property 1. Property 13: the rules are a table, the records are fixed records in a ring for each processor. Property 20: a grant, and a program handle for each named program.
+
+### 2. The kinds of kernel events
+
+| Kind | Event point | Program and thread of the record | detail | value_0 | value_1 |
+|---|---|---|---|---|---|
+| `Operation` | each command of a kernel entry (`enter`): the start and the end of `command_run` | the caller | the `Operation` | its cycles, from its start to its end, waits for locks included | its `Status` |
+| `Switch` | a processor takes a thread from a run queue (`schedule`, after the restore of its extended state) | the thread taken | 0 | the program slot of the thread that the processor left just before (0: none) | the number of that thread |
+| `Fault` | an exception of a thread of a program (`kernel_interrupt`), after the kernel acted on it | the faulting thread | the vector | the address of a page fault, else 0 | `Event_Fault_Outcome`: first use, fault ring, or stopped |
+| `Lock_Wait` | a lock of the kernel taken after a wait (`lock_take`) | the current thread of the processor (0: none) | the `Lock_Kind` | the cycles of the wait | 0 |
+
+The time of a record is the cycle counter at the event point (the end of an operation or of a wait). The kernel entry of the decision is "the operation number and its duration": a kernel entry runs up to 32 commands of its kernel ring, so the event is one command, which has one operation number. A wait of the word wait is a `Switch` when the thread runs again; the `Operation` of `Word_Wait` itself returns before the wait.
+
+### 3. The rule and the record
+
+The rule (`op.Event_Rule`, 64 bytes): the kind; the flag `Match_Detail` and a detail (an operation number, a vector, a lock kind); a program (a program handle of the caller with Read, or 0 for every program and the kernel itself); a least duration in nanoseconds (Operation and Lock_Wait; at most 1 s; the kernel converts it to cycles once, when the table is given); "one in N" (0 and 1: each). A rule accepts an event when its tests pass: kind, program, detail, least duration; then "one in N" over the events that passed the other tests of this rule since the table was given. A count, never a random source in the kernel. An event that one rule or more accept is one record.
+
+The record (`op.Event_Record`, 64 bytes): the cycle counter, the kind, the processor, the program slot and its serial, the thread number, the detail, two values, one reserved word.
+
+### 4. The operation
+
+`Events_Set` (32): (machine with Events, memory or 0, address of a table of `Event_Rule`, count, records in each ring) -> the bytes of one ring, the count of processors.
+
+- With a memory handle: the memory object is `Contiguous`, with the right Write, not device memory, and holds one ring of `EVENT_RING_HEAD_BYTES` (128) + records * 64 bytes for each processor. records is a power of two, 16 to 2^20. Else `Bad_Operation`. More than 16 rules: `No_Slot` (its error record: Too_Long, Records). A rule that is not valid (an unknown kind or flag, a reserved word not 0, a duration for Switch or Fault, a detail for Switch, a duration above 1 s, a bad program handle): `Bad_Operation` or `Bad_Handle`.
+- The table of the caller is replaced; the table of another program is refused (`Bad_State`): the machine has one table, and one observer does not end the observation of another one in silence.
+- With memory 0: the caller takes its table away (`Bad_State` if it has none). When the operation returns, no processor writes in the old memory object.
+- The table also ends when the program that gave it ends (`program_cleanup`, before its handles close): the owner of the table is that program; the kernel forgets the rules and releases the memory object.
+
+### 5. The grant
+
+The new right `Events` on the machine handle, beside `Inspect` and `Schedule` (the right of `Strategy_Set`). Why not `Inspect`: `Inspect` gives counts and states; `Events` gives the order and the duration of the work of each program, to the cycle: a precise clock over other programs (property 20, line 17). A program that reads the reports must not get it as a side effect. The root service gives it by name (the grant `Events`); today only to `kernel_events`, which also gets `Give` on that handle to give `Events` to one of its children (the case of a table whose owner stops). A rule that names a program needs a program handle with Read; a rule for every program needs only the right on the machine.
+
+### 6. Where the records go
+
+One event ring for each processor, in one contiguous memory object that the caller made and its budget paid (property 14). The ring of processor p starts at p times the bytes of one ring. A ring has a head of two lines (the line that the kernel writes: `written`, `lost`, the capacity and the processor; the line that the program writes: `read`), then the records.
+
+- **One ring for each processor**: the event point of a processor writes only its own ring and its own processor record, so it takes no lock, and no line is written by two processors (property 13).
+- **Memory of the caller, not pages that the kernel owns and maps read-only.** The hazard of memory that a program writes is a value that the kernel reads and trusts. The kernel reads one word of a ring, `read`, and trusts it for nothing: it indexes with its own counts (`event_written`, a capacity that is a power of two), so it never writes outside the ring; a false `read` loses records of the program, or lets the kernel write over records that the program did not read: nothing else. It never reads a record back. A ring that the program can only read still needs a word that the program writes (what it consumed), or an operation for each read, which is the cost that a ring removes; so the read-only form adds a mapping that the kernel makes, and its own lifetime rule, and removes no hazard. The fault ring made the same choice for another reason (it needed no new memory: 16 records in the thread record); that reason does not hold here (a ring of 8192 records is 512 KiB), so the choice comes from the reading above.
+- **The lifetime**: the kernel holds one reference to the memory object while the table exists. A close of the handle of the program, an unmap, a revocation or a decommit end holdings of programs, not the reference of the kernel: the frames stay until the kernel releases them, after the synchronization of section 8. A contiguous object has all its frames from its creation; they do not move; the direct map gives each one at a fixed offset. So an event point writes through the direct map, never through an address of a program: no fault, no page table of a program, no `user_copy`.
+- **Device memory** (`Device_Create` of kind Memory) is refused: the kernel would write into the registers of a device.
+- The cost of the reference: the object counts one more reference. That changes nothing for a contiguous object, whose decommit and the protection of a part are refused anyway.
+
+**A full ring.** The kernel keeps its own count of written records and the last `read` that it loaded. When the difference reaches the capacity, it loads `read` once more; if the ring is still full, it drops the record and adds 1 to its lost count, which it stores in the head (`lost`). Never a wait, never a silent loss, never a write over a record that is not read.
+
+### 7. The work at an event point
+
+- **With no rule of its kind**: one load of `observed_kinds`, a word in the first line of the processor record (the line that each kernel entry reads already: `current`), and one branch. No call, no lock, no other memory. The event points of an operation and of a lock wait read the cycle counter at the start only when the bit is set; their end tests a local value (0: no start).
+- **With rules**: a call of `event_record`. It loads the word again (a wait for a lock between the start and the end answers `processor_sync`: section 8), tests the rules (at most 16, each a few compares; a rule with "one in N" adds 1 to its count with an atomic addition and divides), and writes one record of 64 bytes and the count `written` of its ring. No lock, no wait, no call of the scheduler, no address of a program.
+- **"One in N" is exact across processors**: one count for each rule, in its own line, with an atomic addition. This is the one place where two processors can write one line on an event point: only for a rule with "one in N", and only when the events of that rule come on two processors at one time. A count for each processor would keep the lines apart, but "one in N" would then mean one in N on each processor, and N events of one thread that moves between processors would not give N / 10 records.
+
+What an event point never does: fault (the frames of the ring are mapped by the direct map and held by the kernel), take a lock (the interrupted path can hold any lock: an event point is inside `lock_take`), wait, call the scheduler, answer `processor_sync`, use an address of a program.
+
+### 8. How the table changes while other processors read it
+
+The event table, the ring fields of each processor record and the counts of "one in N" change only under the control lock, and only while the observed kinds of every processor are 0 and every other processor answered a `processor_sync` since they became 0 (`event_table_end`, `event_table_give`).
+
+1. To end a table: store 0 in the observed kinds of each processor, then `processor_sync` to every other processor, then release the memory object.
+2. To give a table: end the table that exists (step 1), write the new table, the ring fields of each processor record and the heads of the rings, then store the observed kinds of each processor last (an atomic store; the event point loads it with an acquire).
+
+Why it is correct: a processor answers `processor_sync` only at a kernel entry, in its idle wait, and while it waits for a lock; `event_record` contains none of these. So a processor that read its word as not 0 ends its use of the table before its next answer. A processor that answered loads its word as 0 after: the store of 0 and the store of `pending` that it saw are two atomic stores of one processor, which x86-64 keeps in order, and its load of `pending` comes before its load of the word. After the synchronization, no processor reads the old table or writes the old rings: the frames can go.
+
+Why not a generation word: a generation tells a reader that the table changed during its read, but the reader can have written into memory that the change released; the release needs a moment after which no reader runs, and `processor_sync` gives it. Why not a stop of each processor at a safe point: `processor_sync` is that in its smallest form; each processor passes one point, none stops. The cost is one synchronization for each change of the table: an operation of an observing tool, rare.
+
+The locks: `Events_Set` holds the program lock of the caller and the control lock (it asks for it); the end of a table takes the log lock (one line) and the frame lock (`region_release`), both after them in the order. The end of a table in `program_cleanup` holds the control lock and no program lock.
+
+### 9. The fault ring and the fault event
+
+The fault ring is built, reviewed and has its own operations; this step does not change it. A fault event is an observation: a record that a program with the right `Events` reads later; nothing waits for it, and a full event ring loses it. A record of the fault ring is a delivery: the faulting thread waits until its own program answers, and a full fault ring stops the program. The event point of a fault comes after the kernel acted, so its record says what the kernel did: `First_Use` (a page on first use was given), `Fault_Ring` (the fault went to the fault ring), `Stopped` (the program stops).
+
+### 10. The processor counters
+
+An event record carries the cycle counter only (its time, and the durations of `Operation` and `Lock_Wait`). The kernel detects the performance counters at boot and writes one line of the log; it programs none and has no `rdpmc`.
+
+- **Intel**: the architectural performance monitoring is `CPUID` leaf `0xA` (its version, its general counters and their width, its fixed counters: instructions retired, cycles).
+- **AMD**: leaf `0xA` is an Intel leaf. AMD has 4 legacy core counters, 6 with the core counter extension (`CPUID` `0x80000001`, `ECX` bit 23), and the monitoring version 2 from Zen 4 (`CPUID` `0x80000022`). The host of the tests is an AMD Ryzen 7 5800X (Zen 3): no version 2.
+- **The test machine**: QEMU with `-cpu max`, KVM first and TCG when KVM is absent (`tools/kerneltool/main.odin`). TCG has no performance counters. KVM gives a guest a virtual PMU when its module has `enable_pmu` and QEMU asks for it (the CPU property `pmu`); whether `-cpu max` asks for it by default was not verified by the writer. The line of the boot says what the guest sees: "kernel: performance counters (a guest of a hypervisor): ...".
+- So no test reaches the counters reliably: the code for their registers is not written. A later step programs them when the boot line shows them on the test machine, with a test that compares a count of instructions retired with a known loop.
+
+### 11. The measure
+
+`kernel_events` measures the kernel entries of one program in one second (one operation `Memory_Size` each, as the lockers of `locks`) three times: with no rule; with one rule that matches nothing (an `Operation` rule for `Machine_Stop`: the event point calls `event_record`, which tests one rule); and with a rule on every operation of every program, while a thread of the program empties the rings each millisecond. The line of the log: "kernel_events: kernel entries in one second, one program: no rule ..., one rule that matches nothing ..., a rule on every kernel entry ... (... records, ... lost)". The reference before this step: "locks: kernel entries in one second" with one locker, 8 063 360 and 8 359 466.
+
+The coordinator fills the numbers: before this step (`locks`, one locker), and the three numbers of `kernel_events`, two runs each.
+
+### 12. Not built
+
+- The counters of the processor (section 10).
+- A rule on a range of operation numbers, or on a thread: a rule names one detail and one program.
+- A table for each observer: the machine has one table.
+- An event of the interrupts of devices, of the tick, of a wake: four kinds only in this step.
+- A wake of the reader: the program reads its rings by itself; no word of a ring is woken (a wake at each record would make each event point a call of the scheduler path). A reader waits with a deadline.
 
 ## How the systems depend on each other
 

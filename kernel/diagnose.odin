@@ -890,6 +890,13 @@ slot_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Prog
 		// The one cause of No_Slot here: the handle table of the target.
 		record_set(record, .Full, .Handles, 1, v[0], HANDLE_CAPACITY - 1, 0)
 		return true
+	case .Events_Set:
+		// The one cause of No_Slot here: more rules than the event table holds.
+		if v[3] <= op.EVENT_RULE_CAPACITY {
+			return false
+		}
+		record_set(record, .Too_Long, .Records, 4, v[3], op.EVENT_RULE_CAPACITY, 0)
+		return true
 	}
 	// The new handle goes in the table of the caller.
 	if operation != .Program_Start && read_free_handles(program) == 0 {

@@ -94,7 +94,7 @@ RIGHTS_PROGRAM :: op.Rights{.Give, .Read, .Control}
 RIGHTS_THREAD :: op.Rights{.Give, .Read, .Control}
 RIGHTS_PORTS :: op.Rights{.Give}
 RIGHTS_INTERRUPT :: op.Rights{.Give, .Read}
-RIGHTS_MACHINE :: op.Rights{.Give, .Inspect, .Devices, .Stop, .Physical, .Schedule}
+RIGHTS_MACHINE :: op.Rights{.Give, .Inspect, .Devices, .Stop, .Physical, .Schedule, .Events}
 RIGHTS_BUDGET :: op.Rights{.Give, .Read, .Spend, .Commit}
 RIGHTS_LOG :: op.Rights{.Give, .Write}
 
@@ -1491,6 +1491,9 @@ program_stop :: proc "contextless" (index: u32, code: u32) {
 // a thread of it. The caller holds the control lock.
 program_cleanup :: proc "contextless" (index: u32) {
 	program := &programs[index]
+	// The event table belongs to the program that gave it: it ends with it,
+	// before its handles close (events.odin). No program lock is held here.
+	event_table_end_for(index)
 	for &thread, slot in threads[1:] {
 		if thread.program == index && thread.state == .Stopped && !thread.finished {
 			thread_finish(u32(slot + 1), thread.serial)
@@ -1615,7 +1618,7 @@ kernel_interrupt :: proc "c" (frame: ^Frame) {
 	switch {
 	case frame.vector == VECTOR_KERNEL_ENTER:
 		cpu.entries += 1
-		enter(cpu.current)
+		enter(cpu, cpu.current)
 	case frame.vector == VECTOR_TIMER:
 		if from_program {
 			cpu.busy_time += 1
@@ -1680,11 +1683,23 @@ kernel_interrupt :: proc "c" (frame: ^Frame) {
 		// A page on first use, or a page that another thread made present
 		// while this one waited for the lock: the instruction runs again.
 		cpu.first_use_faults += 1
+		// The event points of a fault (events.odin) come after the work, so
+		// that the record says what the kernel did. The thread keeps its
+		// program and its number until its processor leaves it.
+		if event_observed(cpu, OBSERVED_FAULT) {
+			event_record(cpu, .Fault, thread.program, thread.number, frame.vector, fault_address, u64(op.Event_Fault_Outcome.First_Use))
+		}
 	case frame.vector == VECTOR_PAGE_FAULT && fault_deliver(cpu.current, fault_address):
 		// A record of the fault ring: the thread is Waiting until a thread
 		// of its program answers, so the end below goes to schedule.
+		if event_observed(cpu, OBSERVED_FAULT) {
+			event_record(cpu, .Fault, thread.program, thread.number, frame.vector, fault_address, u64(op.Event_Fault_Outcome.Fault_Ring))
+		}
 	case:
 		program_fault(thread.program, frame, fault_address)
+		if from_program && frame.vector < VECTOR_INTERRUPT_BASE && event_observed(cpu, OBSERVED_FAULT) {
+			event_record(cpu, .Fault, thread.program, thread.number, frame.vector, fault_address, u64(op.Event_Fault_Outcome.Stopped))
+		}
 	}
 	if !from_program {
 		return // The processor was idle: it looks for a thread itself.

@@ -71,6 +71,9 @@ Right :: enum u32 {
 	// Budget: pay pages of a memory object that this budget already pays for (Memory_Commit), and nothing else: no
 	// object, thread, program or budget is created with it. The narrow form of Spend, to give to another program.
 	Commit = 11,
+	// Machine: give the event table of the machine (Events_Set): the kernel then writes records of its own work,
+	// for every program or for the programs that the rules name, into memory of the caller.
+	Events = 12,
 }
 Rights :: bit_set[Right;u32]
 
@@ -185,6 +188,16 @@ Operation :: enum u32 {
 	Fault_Answer = 31, // (thread number, fault serial, Fault_Answer_Kind): the answer for a thread of this program that
 	// waits in the fault ring, by the two values of its record. Bad_State if no thread with that number waits for the
 	// fault of that serial: a wrong answer, a second answer, or an answer from another program.
+	// Kernel events (docs/ARCHITECTURE.md, "Kernel events").
+	Events_Set = 32, // (machine with Events, memory or 0, address of a table of Event_Rule, count, records in each ring)
+	// -> the bytes of one event ring, the count of processors. The event table of the machine: the kernel writes an
+	// Event_Record into the event ring of the processor of each kernel event that a rule accepts. The memory object
+	// is Contiguous, with Write, and holds one ring of EVENT_RING_HEAD_BYTES + records * 64 bytes for each processor,
+	// one after the other from its first byte; records is a power of two from EVENT_RING_RECORDS_LEAST to
+	// EVENT_RING_RECORDS_MOST. At most EVENT_RULE_CAPACITY rules (No_Slot above). A new table replaces the table of
+	// the caller; a table of another program is not replaced (Bad_State). With memory 0 the caller takes its table
+	// away (Bad_State if it has none): when the operation returns, no processor writes in the old memory object.
+	// The table also ends when its program ends.
 }
 
 // The scheduling strategy of the machine (docs/SCHEDULING.md): the rule that
@@ -359,6 +372,113 @@ Fault_Answer_Kind :: enum u64 {
 	Resume = 1, // The thread runs the faulting instruction again.
 	Stop   = 2, // The program stops as if no handler were set: the stop code and the stop report of the fault.
 }
+
+// Kernel events (docs/ARCHITECTURE.md, "Kernel events"). The kind of a
+// kernel event, and what the fields of its Event_Record hold:
+//   Operation: one operation of a kernel entry. detail: the Operation;
+//              value_0: its cycles of the cycle counter, from the start of
+//              its execution to its end; value_1: its Status.
+//   Switch:    a processor takes a thread from a run queue. The program and
+//              the thread of the record are the thread taken; value_0: the
+//              program slot of the thread that the processor left just
+//              before (0: none: it was idle, or it took no thread first);
+//              value_1: the number of that thread.
+//   Fault:     an exception of a thread of a program. detail: the vector;
+//              value_0: the address of a page fault (0 for another vector);
+//              value_1: the Event_Fault_Outcome.
+//   Lock_Wait: a processor took a lock of the kernel after a wait. detail:
+//              the Lock_Kind; value_0: the cycles of the wait. The program
+//              and the thread are the current thread of the processor (0:
+//              none).
+Event_Kind :: enum u32 {
+	None      = 0,
+	Operation = 1,
+	Switch    = 2,
+	Fault     = 3,
+	Lock_Wait = 4,
+}
+
+// What the kernel did with a fault of a program (Event_Record.value_1 of a
+// Fault).
+Event_Fault_Outcome :: enum u64 {
+	None      = 0,
+	First_Use = 1, // A page on first use: the page has its frame, and the instruction runs again.
+	Fault_Ring = 2, // A record of the fault ring of the program: the thread waits for an answer.
+	Stopped   = 3, // The program stops.
+}
+
+Event_Rule_Flag :: enum u32 {
+	Match_Detail = 0, // The detail of the event must be the detail of the rule. Not for Switch.
+}
+Event_Rule_Flags :: bit_set[Event_Rule_Flag;u32]
+
+// One rule of the event table. A rule accepts a kernel event of its kind
+// when each of its tests passes: the program, the detail with Match_Detail,
+// the least duration; then "one in N": of the events that passed the other
+// tests of this rule, since the table was given, the event N, 2N, 3N and so
+// on. A kernel event that a rule accepts is one Event_Record, whatever the
+// other rules say. The kernel tests the rules in their order: at most
+// EVENT_RULE_CAPACITY tests of a few fields, with no lock.
+Event_Rule :: struct {
+	kind:    Event_Kind,
+	flags:   Event_Rule_Flags,
+	// A program handle of the caller with the right Read: only the events
+	// of that program. 0: every program and the kernel itself (program 0).
+	program: u64,
+	detail:  u64, // With Match_Detail: the Operation, the vector of a Fault, or the Lock_Kind.
+	// Operation and Lock_Wait: the least duration in nanoseconds, at most
+	// EVENT_LEAST_NANOSECONDS_MOST. 0 for Switch and Fault.
+	least_nanoseconds: u64,
+	one_in:  u64, // 0 and 1: each event. N: one in N, at most EVENT_ONE_IN_MOST.
+	reserved: [3]u64, // 0.
+}
+#assert(size_of(Event_Rule) == 64)
+
+EVENT_RULE_CAPACITY :: 16
+EVENT_LEAST_NANOSECONDS_MOST :: 1_000_000_000
+EVENT_ONE_IN_MOST :: 1 << 32
+EVENT_RING_RECORDS_LEAST :: 16
+EVENT_RING_RECORDS_MOST :: 1 << 20
+
+// One kernel event, in the event ring of the processor where it came.
+Event_Record :: struct {
+	time:      u64, // The cycle counter at the event point (Time_Record: cycle_start and cycle_frequency).
+	kind:      Event_Kind,
+	processor: u32, // The index of the processor.
+	program:   u32, // The slot of the program. 0: the kernel, with no thread.
+	thread:    u32, // The number of the thread in its program (Thread_Record.number). 0 when program is 0.
+	program_serial: u64, // The serial of the program of the slot (Program_Report.program_serial).
+	detail:    u64,
+	value_0:   u64,
+	value_1:   u64,
+	reserved:  u64,
+}
+#assert(size_of(Event_Record) == 64)
+
+// The head of one event ring. The ring of processor p starts at the byte
+// p * (EVENT_RING_HEAD_BYTES + records * 64) of the memory object; its
+// records follow its head. The kernel writes the record n at the index
+// n % records, then `written` = n + 1. The program reads the records from
+// `read` to `written`, then writes `read`: a place is free for the kernel
+// again once `read` passed it. When records - (written - read) is 0, the
+// kernel drops the record and adds 1 to `lost`: it never waits, and it
+// never writes over a record that the program did not read. The kernel
+// keeps its own counts; it reads only `read` from this memory, and a false
+// value there loses records of this program, or lets the kernel write over
+// records that this program did not read: nothing else.
+Event_Ring :: struct {
+	// The line that the kernel writes.
+	written:   u64,
+	lost:      u64,
+	records:   u64, // The capacity of the ring, written when the table is given.
+	processor: u64,
+	reserved_kernel: [4]u64,
+	// The line that the program writes.
+	read:      u64,
+	reserved_program: [7]u64,
+}
+#assert(size_of(Event_Ring) == 128)
+EVENT_RING_HEAD_BYTES :: size_of(Event_Ring)
 
 Status :: enum u32 {
 	Ok            = 0,

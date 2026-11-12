@@ -349,9 +349,12 @@ threads_alive :: proc "contextless" () -> bool {
 schedule :: proc "contextless" () -> ! {
 	cpu := processor_self()
 	spent := budget_charge(cpu)
+	// The thread that this processor leaves, for the record of a switch.
+	left_program, left_number: u32
 	if cpu.current != 0 {
 		index := cpu.current
 		thread := &threads[index]
+		left_program, left_number = thread.program, thread.number
 		// The x87, SSE and AVX registers of the thread are still live: no
 		// code of the kernel changed them since the thread entered. They
 		// go to its area now, before any other processor can take the
@@ -412,8 +415,15 @@ schedule :: proc "contextless" () -> ! {
 			// a restore then costs a little, and keeps no rule of who owns
 			// the registers.
 			extended_state_restore(&thread.extended_state, extended_state_form)
+			// The event point of a switch of threads (events.odin). The
+			// thread is the current thread of this processor now.
+			if event_observed(cpu, OBSERVED_SWITCH) {
+				event_record(cpu, .Switch, thread.program, thread.number, 0, u64(left_program), u64(left_number))
+			}
 			run(cpu, thread)
 		}
+		// No thread was taken: the next one follows the idle wait.
+		left_program, left_number = 0, 0
 		if intrinsics.atomic_load(&root_started) && !threads_alive() {
 			log("kernel: no program is left")
 			machine_stop(0)

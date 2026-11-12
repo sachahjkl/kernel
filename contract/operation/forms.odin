@@ -63,6 +63,7 @@ OPERATIONS := [Operation]Operation_Form {
 	.Memory_Protect = {"Memory_Protect", {{"ranges", .Address, .None, {}, 0}, {"count", .Count, .None, {}, RANGE_TABLE_CAPACITY}, {"flags", .Flags, .None, {}, 0b111}, {}, {}, {}, {}}},
 	.Fault_Handler_Set = {"Fault_Handler_Set", {{"thread", .Handle_Or_Zero, .Thread, {.Control}, 0}, {"end", .Choice, .None, {}, 1}, {}, {}, {}, {}, {}}},
 	.Fault_Answer = {"Fault_Answer", {{"thread", .Value, .None, {}, 0}, {"serial", .Value, .None, {}, 0}, {"answer", .Choice, .None, {}, u64(max(Fault_Answer_Kind))}, {}, {}, {}, {}}},
+	.Events_Set = {"Events_Set", {{"machine", .Handle, .Machine, {.Events}, 0}, {"memory", .Handle_Or_Zero, .Memory, {.Write}, 0}, {"rules", .Address, .None, {}, 0}, {"count", .Count, .None, {}, EVENT_RULE_CAPACITY}, {"records", .Count, .None, {}, EVENT_RING_RECORDS_MOST}, {}, {}}},
 }
 
 @(rodata)

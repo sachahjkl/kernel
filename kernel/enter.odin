@@ -8,7 +8,7 @@ import op "contract:operation"
 // of the program, then makes the program wait if it asked for that.
 
 
-enter :: proc "contextless" (index: u32) {
+enter :: proc "contextless" (cpu: ^Processor, index: u32) {
 	thread := &threads[index]
 	intrinsics.atomic_add(&programs[thread.program].entries, 1)
 	thread.in_enter = true
@@ -19,7 +19,20 @@ enter :: proc "contextless" (index: u32) {
 			break
 		}
 		completion := ring.Record{tag = command.tag}
+		// The event point of an operation (events.odin): with no rule of
+		// this kind, one branch on a word of this processor, and no read of
+		// the cycle counter.
+		started: u64
+		if event_observed(cpu, OBSERVED_OPERATION) {
+			started = cycles_now()
+		}
 		status := command_run(index, command, &completion.values)
+		if started != 0 {
+			// The operation can have stopped this thread or its program: its
+			// slot keeps its program and its number until its processor
+			// leaves it (schedule), so the record names it.
+			event_record(cpu, .Operation, thread.program, thread.number, u64(command.kind), cycles_now() - started, u64(status))
+		}
 		// The operation can end the thread: then it does nothing more.
 		if intrinsics.atomic_load(&thread.stop_requested) {
 			return
@@ -879,6 +892,11 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		// this processor is the one of the program (the stack trace).
 		program_stop(program_index, program_fault_report(program_index, &waiter.frame, waiter.fault_address))
 		return .Ok
+
+	case .Events_Set:
+		// Kernel events (events.odin): the table changes under the control
+		// lock.
+		return events_set(program_index, v, results)
 
 	case .Strategy_Set:
 		_ = handle_find(program, v[0], .Machine, {.Schedule}) or_return

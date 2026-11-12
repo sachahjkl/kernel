@@ -20,6 +20,7 @@ right_names := [op.Right]string {
 	.Physical = "Physical",
 	.Schedule = "Schedule",
 	.Commit   = "Commit",
+	.Events   = "Events",
 }
 
 @(rodata)

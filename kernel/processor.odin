@@ -116,6 +116,11 @@ Processor :: struct {
 	pending:       u32, // Not 0: another processor waits in processor_sync.
 	idle:          bool, // The processor waits for an interrupt, with no thread. Another processor clears it to wake it (kick).
 	extended_state_refused: bool, // At its start, the processor could not save the extended state that the first processor saves: it never runs a thread.
+	// The kinds of kernel events that the event table has rules for: bit n
+	// for the Event_Kind n; 0 with no table (events.odin). Each event point
+	// reads it first. It is in the first line of the record, which each
+	// kernel entry reads already. The control path writes it (atomic).
+	observed_kinds: u32,
 	table:         u64, // The page table that the processor uses. Only this processor writes it; others read it (unmap).
 	slice_left:    u64, // Ticks left of the time slice, the longest turn under each strategy; 0: the turn ends (strategy.odin).
 	charged_from:  u64, // The cycle counter when the kernel last counted the time of the current thread (limit.odin).
@@ -159,6 +164,18 @@ Processor :: struct {
 	stopped_thread, stopped_thread_serial: u32, // A thread that ran on another processor. 0: none.
 	stopped_programs: u64, // Bit n: program n had a thread on a processor.
 	stopped_serials:  [PROGRAM_CAPACITY]u32,
+	// The event ring of this processor (events.odin): only this processor
+	// writes these fields and the ring, while observed_kinds is not 0; the
+	// control path writes them only while it is 0 and after a
+	// processor_sync. The counts are the kernel's own: event_written and
+	// event_lost are what the head of the ring says, event_read_seen is the
+	// last `read` of the program that the kernel loaded.
+	event_ring:      ^op.Event_Ring,
+	event_records:   [^]op.Event_Record,
+	event_capacity:  u64, // A power of two.
+	event_written:   u64,
+	event_read_seen: u64,
+	event_lost:      u64,
 	frame_cache:   Frame_Cache,
 	// The table of ranges of the Memory_Commit or Memory_Protect that runs
 	// on this processor (a copy of the table of the caller).
@@ -180,6 +197,7 @@ Processor :: struct {
 
 #assert(offset_of(Processor, user_stack) == 8)
 #assert(offset_of(Processor, self) == 16) // processor_self in instructions.odin
+#assert(offset_of(Processor, observed_kinds) < 64) // The first line of the record.
 
 processors: [PROCESSOR_CAPACITY]^Processor
 processor_count: u32
@@ -355,6 +373,7 @@ processor_start :: proc "contextless" () {
 	extended_state_prove()
 	extended_state_log()
 	return_to_program_log()
+	performance_counters_log()
 	timer_calibrate()
 	timer_start()
 }
