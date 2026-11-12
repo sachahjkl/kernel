@@ -52,6 +52,17 @@ PEER_QUIC_SPOOFED :: 8
 // still come: the Version Negotiation packet, or an answer to a forged
 // Initial, which must not come.
 PEER_QUIC_FLOOD_SETTLE :: 2 * time.Second
+// The copies of the CONNECTION_CLOSE of a client at the end of a case, sent
+// outside the changes of the case (loss, reorder). One close that the case
+// drops, or holds for a reorder with no later frame to let it go, leaves
+// the server to its idle timeout, and the step that reads "closed by the
+// client" then depends on a clock. The server in the draining state sends
+// nothing back (RFC 9000, section 10.2.2), so the client cannot learn that
+// the close came: it sends copies. The path from the peer to the server
+// (the loopback of the host, the device, the network service) drops a
+// datagram only when a queue is full, which no case leaves at its end:
+// 3 copies stand for the loss of 2 of them.
+PEER_QUIC_CLOSE_COPIES :: 3
 
 Peer_Quic :: struct {
 	cryptography:  quic.Cryptography,
@@ -84,6 +95,8 @@ Peer_Quic :: struct {
 	finished:      [PEER_QUIC_CAPACITY][PEER_QUIC_STREAMS]bool,
 	expect_failure: bool, // The case passes when the handshake fails with bad_certificate.
 	vanish:        bool, // The client takes the Retry, sends its Initial with the token, then nothing.
+	silent:        bool, // The case "silent": at the end of its echo, the client sends nothing more and takes nothing, with no close.
+	silenced:      bool, // The client of the case "silent" went silent: until the next case, its datagrams are dropped both ways.
 	vanish_after_bytes: u64, // The bytes that the client of the vanish case had sent when it took the Retry.
 	flood_sent:    int,
 	flood_ended_at: time.Tick, // The last datagram of the flood went.
@@ -215,6 +228,7 @@ peer_quic_case_start :: proc(peer: ^Peer, state: ^Peer_Quic) -> bool {
 	state.stream_identifiers, state.stream_opened = {}, {}
 	state.streams_per_client = 1
 	state.expect_failure, state.vanish = false, false
+	state.silent, state.silenced = false, false
 	state.flood_sent, state.flood_answers, state.negotiation_answers, state.retry_answers = 0, 0, 0, 0
 	state.answer_bytes, state.most_answer_bytes = {}, 0
 	state.retries_to, state.most_retries_to = {}, 0
@@ -240,6 +254,11 @@ peer_quic_case_start :: proc(peer: ^Peer, state: ^Peer_Quic) -> bool {
 		state.total = 0
 	case "flood":
 		state.random = 0x464c_4f4f_4400_0002
+		state.total = 64 * 1024
+	case "silent":
+		// 64 KiB each way, then the client goes silent with no close: the
+		// server ends the record at its idle timeout.
+		state.silent = true
 		state.total = 64 * 1024
 	case "vanish":
 		state.vanish = true
@@ -374,6 +393,9 @@ peer_quic_datagram :: proc(peer: ^Peer, destination: [4]u8, port: u16, data: []u
 		state.dropped += 1
 		return
 	}
+	if state.silenced {
+		return
+	}
 	for index in 0 ..< state.client_count {
 		if state.ports[index] == port {
 			// The client of the vanish case takes the Retry, then nothing.
@@ -488,6 +510,9 @@ peer_quic_tick :: proc(peer: ^Peer) {
 	buffer: [quic.MAX_DATAGRAM_SIZE]u8
 	for index in 0 ..< state.client_count {
 		client := &state.clients[index]
+		if state.silenced {
+			continue
+		}
 		if state.vanish && index == 0 && client.retried {
 			if state.vanish_after_bytes == 0 {
 				state.vanish_after_bytes = client.bytes_sent
@@ -507,7 +532,7 @@ peer_quic_tick :: proc(peer: ^Peer) {
 		}
 	}
 	if state.running {
-		peer_quic_check(state, wanted)
+		peer_quic_check(peer, state, wanted)
 	}
 }
 
@@ -559,7 +584,7 @@ peer_quic_echo :: proc(state: ^Peer_Quic) {
 
 // peer_quic_check ends the case when it passed or failed.
 @(private = "file")
-peer_quic_check :: proc(state: ^Peer_Quic, wanted: int) {
+peer_quic_check :: proc(peer: ^Peer, state: ^Peer_Quic, wanted: int) {
 	elapsed := time.tick_since(state.started)
 	if state.failure != "" {
 		peer_quic_end(state, wanted, false)
@@ -623,8 +648,16 @@ peer_quic_check :: proc(state: ^Peer_Quic, wanted: int) {
 				peer_quic_end(state, wanted, false)
 				return
 			}
-			for index in 0 ..< state.client_count {
-				quic.connection_close(&state.clients[index], 0, peer_quic_now(state))
+			if state.silent {
+				// No close: the client takes nothing more and sends nothing
+				// more. The server has a packet of its own in flight that the
+				// client never acknowledges (the end of its stream, or the
+				// MAX_STREAMS after it), so it probes until its idle timeout.
+				state.silenced = true
+			} else {
+				for index in 0 ..< state.client_count {
+					peer_quic_close(peer, state, index)
+				}
 			}
 			state.result = fmt.aprintf("%d clients of %d streams, %d bytes each way on each stream, srtt %d us; %d datagrams lost, %d reordered, %d repeated; %d datagrams of a flood and %d spoofed Initials, %d Retries to it (the most bytes to one address %d), %d Version Negotiation packet", state.client_count, state.streams_per_client, state.total, client.smoothed_round_trip, state.dropped, state.reordered, state.repeated, min(state.flood_sent, PEER_QUIC_FLOOD), PEER_QUIC_SPOOFED, state.retry_answers, state.most_answer_bytes, state.negotiation_answers)
 			peer_quic_end(state, wanted, true)
@@ -637,9 +670,31 @@ peer_quic_check :: proc(state: ^Peer_Quic, wanted: int) {
 	}
 }
 
-// peer_quic_end writes the result of a case. The clients that closed send
-// their CONNECTION_CLOSE at the next ticks of a later case: the server ends
-// their records by the close, or at its idle timeout.
+// peer_quic_close closes a client of a case that ended: its
+// CONNECTION_CLOSE goes PEER_QUIC_CLOSE_COPIES times, outside the changes
+// of the case, so that the server ends the record by the close and not by
+// a clock. Later datagrams of the server get the close again from the
+// closing state of the client, through the changes of the case, as any
+// datagram of the client does.
+@(private = "file")
+peer_quic_close :: proc(peer: ^Peer, state: ^Peer_Quic, index: int) {
+	client := &state.clients[index]
+	now := peer_quic_now(state)
+	quic.connection_close(client, 0, now)
+	buffer: [quic.MAX_DATAGRAM_SIZE]u8
+	length := quic.connection_datagram_send(client, buffer[:], now)
+	if length == 0 {
+		return
+	}
+	frame := peer_quic_udp(peer, PEER_ADDRESS, state.ports[index], buffer[:length])
+	for _ in 0 ..< PEER_QUIC_CLOSE_COPIES {
+		peer_send(peer, frame)
+	}
+}
+
+// peer_quic_end writes the result of a case. Its clients closed (or, in the
+// case "silent", went silent); their datagrams still move at the next
+// ticks, until a later case starts its own clients.
 @(private = "file")
 peer_quic_end :: proc(state: ^Peer_Quic, wanted: int, passed: bool) {
 	state.passed = passed

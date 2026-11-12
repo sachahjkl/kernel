@@ -557,7 +557,7 @@ connection_enter_closing :: proc "contextless" (connection: ^Connection, now: u6
 	connection.close_to_send = true
 	connection.close_datagrams_received = 0
 	connection.close_next_answer = 1
-	connection.close_deadline = saturating_add(now, saturating_multiply(3, probe_timeout_duration(connection, .Application)))
+	connection.close_deadline = saturating_add(now, saturating_multiply(3, probe_timeout_base(connection, .Application)))
 	tls_handshake_erase_secrets(&connection.tls)
 }
 
@@ -569,7 +569,7 @@ connection_enter_draining :: proc "contextless" (connection: ^Connection, code: 
 	connection.close_is_application = application
 	connection.state = .Draining
 	connection.close_to_send = false
-	connection.close_deadline = saturating_add(now, saturating_multiply(3, probe_timeout_duration(connection, .Application)))
+	connection.close_deadline = saturating_add(now, saturating_multiply(3, probe_timeout_base(connection, .Application)))
 	tls_handshake_erase_secrets(&connection.tls)
 }
 
@@ -643,8 +643,17 @@ connection_idle_deadline :: proc "contextless" (connection: ^Connection) -> u64 
 		return NO_DEADLINE
 	}
 	// At least three probe timeouts, so that a loss does not end a
-	// connection that works (RFC 9000, section 10.1).
-	return saturating_add(connection.last_activity, max(connection.idle_timeout, saturating_multiply(3, probe_timeout_duration(connection, .Application))))
+	// connection that works (RFC 9000, section 10.1: "three times the
+	// current Probe Timeout"). The timeout here has no backoff: with the
+	// backoff, each probe that the silent peer does not answer doubles the
+	// bound, the bound moves past each next probe, and the connection lives
+	// until the backoff stops (hours), holding its record. With no backoff,
+	// a connection that receives nothing ends at most max(idle timeout,
+	// 3 × base probe timeout) after its last activity, whatever the count
+	// of probes. The activity is a packet received and processed, or the
+	// first ack-eliciting packet sent after it (connection_send.odin); a
+	// later probe does not move it.
+	return saturating_add(connection.last_activity, max(connection.idle_timeout, saturating_multiply(3, probe_timeout_base(connection, .Application))))
 }
 
 // connection_time_passes acts on each deadline that passed.
