@@ -219,7 +219,7 @@ create :: proc "contextless" () {
 		return
 	}
 	principals.file_encode(&file, &file_bytes)
-	if _, status := storage.write(&client, principals.FILE_OBJECT, file_bytes[:]); status != .Ok {
+	if _, status := storage.write(&client, storage.ROOT, principals.FILE_OBJECT, file_bytes[:]); status != .Ok {
 		system.log("unlock: the store did not keep the file of the principal: status ", u64(status))
 		message, message_failed = "the store did not keep the principal", true
 		return
@@ -367,7 +367,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		message = "type a passphrase of 8 bytes at least"
 	} else {
 		buffer: [principals.FILE_SIZE + 1]u8
-		bytes, found, read_status := storage.read(&client, principals.FILE_OBJECT, buffer[:])
+		bytes, found, read_status := storage.read(&client, storage.ROOT, principals.FILE_OBJECT, buffer[:])
 		if read_status == .Ok && !found {
 			system.log("unlock: no named principal: the machine runs as principal 0, with no unlock")
 			system.stop(0)

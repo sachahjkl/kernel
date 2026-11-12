@@ -231,6 +231,27 @@ store_name_write :: proc "contextless" (out: ^[32]u8, program: string, principal
 	return ok
 }
 
+// store_name_principal gives the principal of a store from its name: the
+// inverse of store_name_write. A name with no ending ".principal.<number>"
+// is a store of the machine. The storage service decides with it which
+// stores a caller may name (docs/STORAGE.md, "No way up").
+store_name_principal :: proc "contextless" (name: string) -> u64 {
+	SUFFIX :: ".principal."
+	digits_end := len(name)
+	digits_start := digits_end
+	for digits_start > 0 && name[digits_start - 1] >= '0' && name[digits_start - 1] <= '9' {
+		digits_start -= 1
+	}
+	if digits_start == digits_end || digits_end - digits_start > 5 || digits_start < len(SUFFIX) || name[digits_start - len(SUFFIX):digits_start] != SUFFIX {
+		return MACHINE
+	}
+	value: u64
+	for index in digits_start ..< digits_end {
+		value = value * 10 + u64(name[index] - '0')
+	}
+	return value
+}
+
 @(private)
 u32_put :: proc "contextless" (bytes: []u8, value: u32) {
 	bytes[0], bytes[1], bytes[2], bytes[3] = u8(value), u8(value >> 8), u8(value >> 16), u8(value >> 24)

@@ -68,7 +68,7 @@ cases := [CASE_CAPACITY]Case {
 	{text = "load agenda, calendar_changed", expected = "load: Check"},
 	{text = "direct call: square_root(-4)", expected = "Too_Small"},
 	{text = "storage.write(\"\", \"x\")", expected = "Empty"},
-	{text = "storage.write: a name of 40 bytes", expected = "Too_Long"},
+	{text = "storage.write: a name of 65 bytes", expected = "Too_Long"},
 	{text = "storage.write: a zero byte", expected = "Bad_Byte"},
 	{text = "storage.write over the limit", expected = "Over_Limit"},
 	{text = "storage.size(\"nothing\")", expected = "Absent"},
@@ -438,9 +438,9 @@ storage_case :: proc "contextless" (writer: ^system.Writer, export: string, expe
 		system.write_part(writer, "no connection to the storage service")
 		return false
 	}
-	arguments := [2]isolated.Argument{{text = transmute([]u8)name}, {text = transmute([]u8)data}}
+	arguments := [3]isolated.Argument{{integer = u64(storage.ROOT)}, {text = transmute([]u8)name}, {text = transmute([]u8)data}}
 	error: errors.Error_Record
-	result, _, status := storage.call(&client, export, arguments[:export == "write" ? 2 : 1], &error)
+	result, _, status := storage.call(&client, export, arguments[:export == "write" ? 3 : 2], &error)
 	storage.error_text(writer, &client, &error)
 	return status == .Failed && result < 0 && errors.Kind(error.kind) == expected
 }
@@ -450,7 +450,7 @@ case_empty :: proc "contextless" (writer: ^system.Writer) -> bool {
 }
 
 case_long :: proc "contextless" (writer: ^system.Writer) -> bool {
-	return storage_case(writer, "write", .Too_Long, "a name of forty bytes, nine more than 31", "x")
+	return storage_case(writer, "write", .Too_Long, "a name of sixty-five bytes: one more than the longest name can be", "x")
 }
 
 case_byte :: proc "contextless" (writer: ^system.Writer) -> bool {

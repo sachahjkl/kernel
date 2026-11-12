@@ -112,7 +112,7 @@ pages_load :: proc "contextless" (ctx: ^system.Context) {
 		return
 	}
 	index: [PAGE_CAPACITY * web.PAGE_INDEX_ENTRY_SIZE]u8
-	bytes, found, status := storage.read(&store_client, PAGE_INDEX_NAME, index[:])
+	bytes, found, status := storage.read(&store_client, storage.ROOT, PAGE_INDEX_NAME, index[:])
 	if status != .Ok || !found || len(bytes) != size_of(index) {
 		system.log("server: a new store: no page")
 		return
@@ -129,7 +129,7 @@ pages_load :: proc "contextless" (ctx: ^system.Context) {
 		if len(name) == 0 {
 			continue
 		}
-		text, page_found, page_status := storage.read(&store_client, name, page_staging[:])
+		text, page_found, page_status := storage.read(&store_client, storage.ROOT, name, page_staging[:])
 		if page_status != .Ok || !page_found {
 			continue
 		}
@@ -153,7 +153,7 @@ index_write :: proc "contextless" () -> bool {
 			copy(index[place * web.PAGE_INDEX_ENTRY_SIZE:][:web.PAGE_INDEX_ENTRY_SIZE - 1], page_name(place))
 		}
 	}
-	_, status := storage.write(&store_client, PAGE_INDEX_NAME, ([^]u8)(&index)[:size_of(index)])
+	_, status := storage.write(&store_client, storage.ROOT, PAGE_INDEX_NAME, ([^]u8)(&index)[:size_of(index)])
 	return status == .Ok
 }
 
@@ -208,7 +208,7 @@ put :: proc "c" (name: ^string, text: ^string, error: ^errors.Error_Record) -> i
 	// change), then to the store, then to the page memory: the page that is
 	// served changes only when the store took it.
 	length := copy(page_staging[:PAGE_SIZE_LIMIT], text^)
-	if _, status := storage.write(&store_client, key, page_staging[:length]); status != .Ok {
+	if _, status := storage.write(&store_client, storage.ROOT, key, page_staging[:length]); status != .Ok {
 		system.log("server: the store refused the page /", key, ": the page that is served did not change")
 		return errors.fail(error, ERROR_STORE, .Refused, .Store, 0, 0, 0, i64(status))
 	}
@@ -222,7 +222,7 @@ put :: proc "c" (name: ^string, text: ^string, error: ^errors.Error_Record) -> i
 		// The index does not name the page: the page goes out again, so
 		// that the store and what is served stay the same.
 		pages[place] = {generation = page_generation_new()}
-		arguments := [1]isolated.Argument{{text = name_copy[:name_length]}}
+		arguments := [2]isolated.Argument{{integer = u64(storage.ROOT)}, {text = name_copy[:name_length]}}
 		storage.call(&store_client, "remove", arguments[:])
 		system.log("server: the store refused the index of the pages: /", key, " is not served")
 		return errors.fail(error, ERROR_STORE, .Refused, .Store)
@@ -247,7 +247,7 @@ remove :: proc "c" (name: ^string, error: ^errors.Error_Record) -> i64 {
 	// The store first: a page that the store keeps stays served. Else a
 	// refused remove gives 404 until the next start of the server, and then
 	// the page again.
-	arguments := [1]isolated.Argument{{text = name_copy[:name_length]}}
+	arguments := [2]isolated.Argument{{integer = u64(storage.ROOT)}, {text = name_copy[:name_length]}}
 	_, _, status := storage.call(&store_client, "remove", arguments[:])
 	if status != .Ok {
 		system.log("server: the store refused the removal of /", string(name_copy[:name_length]), ": the page is still served")

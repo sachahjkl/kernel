@@ -114,6 +114,8 @@ grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 		// passphrase in its window, and the two commands of the principals
 		// (docs/PRINCIPALS.md).
 		return {.Store, .Principals}
+	case "hierarchy":
+		return {.Store} // The test of the trees of a store.
 	case "errors":
 		return {.Store, .Image, .Inspect, .Connect} // It makes errors in its store, loads modules and starts fault from the boot image, counts the locks, and asks for connections that the root service refuses (callable_of gives it none).
 	case "imports":
@@ -207,6 +209,8 @@ store_limit_of :: proc "contextless" (name: string) -> u64 {
 		return 2 // One object is over the limit.
 	case "notes":
 		return 4500 // The versions of a run of 1000 commits of the count (4 blocks each), then thinning at the limit.
+	case "hierarchy":
+		return 12000 // 100000 empty objects in 1110 trees: about 9500 nodes, and room for the copies of a commit.
 	}
 	return 64
 }
@@ -308,10 +312,11 @@ things_of :: proc "contextless" (name: string) -> system.Budget_Amounts {
 	case "block", "frame":
 		return {pages = 256, programs = 1, threads = 1}
 	case "storage":
-		// About 9 MB of tables: the count of names of each block of the disk,
-		// the changes of one commit, the leaves of one version index, and the
-		// versions of one object for versions().
-		return {pages = 4096, programs = 1, threads = 1}
+		// About 16 MB of tables: the count of names of each block of the
+		// disk, the changes of one commit, the leaves of one version index,
+		// the versions of one object for versions(), the nodes of the trees
+		// of one commit and of one read, and the walks of the trees.
+		return {pages = 6144, programs = 1, threads = 1}
 	case "disk":
 		return {pages = 2048, programs = 1, threads = 1}
 	case "imports":

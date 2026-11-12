@@ -130,7 +130,13 @@ The storage service names a store by the name that the root service gives to the
 | 1 | `notes` | `notes.principal.1` |
 | 1 | `console`, its line history | `console.history.principal.1` |
 
-So two principals that run one program have two stores, and the stores of the system keep their names. A name that does not fit in 31 bytes is refused, never cut: a cut name can be the name of another store. The identity of the package of a program (the key of the principal that signs the package, and its name) enters in the same procedure when storage attaches data to it.
+So two principals that run one program have two stores, and the stores of the system keep their names. The inverse, `principals.store_name_principal`, gives the principal of a store from its name.
+
+**Which stores a caller names.** The storage service applies one rule, in one procedure (`may_name_store`; `STORAGE.md`, "No way up"), from bits 48 to 62 of the grant of each connection:
+
+- A caller that acts for principal N sees the stores of principal N only: `stores()` lists them, and `open_store` gives a place on one of them; another store is refused with `No_Grant`, unit `Acts_For_Principal`.
+- Principal 0 sees the stores of principal 0 only. It does not see the stores of a named principal: the machine is not an administrator.
+- A caller that does not act for a principal, and a share of a store, see their own store only. A name that does not fit in 31 bytes is refused, never cut: a cut name can be the name of another store. The identity of the package of a program (the key of the principal that signs the package, and its name) enters in the same procedure when storage attaches data to it.
 
 ## 7. The commands
 
@@ -153,18 +159,13 @@ A refusal is an error record with the unit `Principals`: a second named principa
 
 - `odin test support/principals`: the names of the stores, a name that does not fit, the names and the passphrases, a round trip of the file, and ten hostile files.
 - `odin test support/cryptography/vectors`: BLAKE2b of RFC 7693 and Argon2id of RFC 9106, section 5.3; the blocks are erased after the derivation, and a supply of blocks that is too small gives `Out_Of_Memory`.
-- `kerneltool test principals`: two machines on one data disk. The first one: no named principal; a note of `notes` started by the console belongs to principal 0; the creation of `alice` in the window of `unlock`; `notes` from the menu has a new store, `notes.principal.1`; the grants name the principal; the console connects acting for principal 0, and still reads the note of principal 1 (the gap of section 9, as a line of the log); the lock stops `notes`; a wrong passphrase opens nothing; the right one starts the session again and `notes` finds the note and the count of alice; a revocation of the store of `notes`. The second machine, on the same disk: the passphrase starts the session, and the note of alice is there. Picture: `principals_unlock`.
+- `kerneltool test principals`: two machines on one data disk. The first one: no named principal; a note of `notes` started by the console belongs to principal 0; the creation of `alice` in the window of `unlock`; `notes` from the menu has a new store, `notes.principal.1`; the grants name the principal; the console connects acting for principal 0: `storage.open_store("notes.principal.1")` is refused with `No_Grant`, and `storage.stores()` does not list that store; the lock stops `notes`; a wrong passphrase opens nothing; the right one starts the session again and `notes` finds the note and the count of alice; a revocation of the store of `notes`. The second machine, on the same disk: the passphrase starts the session, and the note of alice is there. Picture: `principals_unlock`.
 
 ## 9. Not built
 
 - **The seal by the TPM.** The TPM seals the key of the principal to the measure of the system (PCR 11), behind a PIN. With it, a copy of the disk does not allow tries without limit.
 - **The key of principal 0**: the attestation key of the TPM.
 - **The encryption of the stores of a principal** with its unlock key. Today the data of a principal is on the disk in clear, as each store.
-- **The limit of acting for a principal in storage.** The storage service checks only the flag `CALLER_ACTS_FOR_PRINCIPAL`, not the principal of the grant. So the console, which acts for principal 0, reads the stores of principal 1 through `stores()`, `versions()`, `version()` and the other exports that name a store. The rule that the storage service must apply, from bits 48 to 62 of the grant of each connection:
-  - A caller that acts for principal N sees the stores of principal N only: `stores()` lists them, and an export that names another store is refused with `No_Grant`.
-  - Principal 0 sees the stores of principal 0 only. It does not see the stores of a named principal: the machine is not an administrator.
-  - A caller that does not act for a principal sees its own store only, as now.
-  - The machine test shows the gap as a line of the log: in `kerneltool test principals`, the console calls `storage.version("notes.principal.1", "note", ...)` and the log has "[console] of alice". When the rule is built, that step waits for the refusal.
 - **Recovery.** A lost passphrase is a lost principal: no administrator can reset it. Property 21 asks for recovery from the first version of layer 3: a second device or a printed recovery key. It is not built.
 - **The desktop while locked.** The desktop stays: programs of principal 0 run and can be started. A desktop that shows only `unlock` while a named principal is locked is not built.
 - **Several named principals (layer 4).** The design: one record for each principal in the root service; one file for each in the store of `unlock`; one session at a time on the desktop, or one desktop for each session. Each principal has disjoint stores by the name of the store, and disjoint grants by the principal of each program. No kernel change.

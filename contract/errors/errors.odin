@@ -63,6 +63,7 @@ Kind :: enum i64 {
 	Not_Multiple      = 36, // value: the argument; limit: the number that it must be a multiple of; found: the rest.
 	Not_Authentic     = 37, // The bytes of the argument do not prove what they must: the tag of a sealed text, or a signature, does not verify. No byte of the result is given.
 	Seed_Too_Weak     = 38, // The random seed of the program is weaker than the least strength that the caller accepts. value: the strength of the seed; limit: the least strength asked (1 weak, 2 processor, 3 entropy). Nothing is made.
+	Exists            = 39, // The name of the argument names something that exists already, and the call makes a new one. found: 0, or the number from 1 of the row of a table argument that names it.
 }
 
 // What value, limit and found count.
@@ -105,6 +106,9 @@ Unit :: enum i64 {
 	References  = 35, // Over_Limit: the names of one block, which a count holds.
 	Commit_Blocks = 36, // Full: the blocks that one commit can change or write.
 	Principals  = 37, // The named principals of the root service (docs/PRINCIPALS.md). Full: limit the named principals that it holds; Absent: no such principal, or no session runs.
+	Places      = 38, // The places of a connection to the storage service (docs/STORAGE.md): Absent, the number names no place of the connection, or the tree of the place was removed or renamed; Full, the table of places.
+	Trees       = 39, // Absent: the name names no tree. Bad_Value: a tree would move inside itself.
+	Changes     = 40, // No_Grant: a change of a store; the connection reads only.
 }
 
 // How a handle ended (Handle_Ended).
@@ -178,6 +182,9 @@ UNIT_NAMES := [Unit]string {
 	.References  = "names of one block",
 	.Commit_Blocks = "blocks that one commit can change",
 	.Principals  = "named principals",
+	.Places      = "places of the connection",
+	.Trees       = "trees",
+	.Changes     = "a change of the store (the connection reads only)",
 }
 
 // A ring completion (contract/ring) has the status of the contract of its

@@ -28,7 +28,11 @@ store_names_carry_the_principal :: proc(t: ^testing.T) {
 			length += 1
 		}
 		testing.expect_value(t, string(out[:length]), item.name)
+		// The inverse gives the principal back from the name.
+		testing.expect_value(t, store_name_principal(item.name), item.principal)
 	}
+	testing.expect_value(t, store_name_principal("principal.1"), u64(MACHINE))
+	testing.expect_value(t, store_name_principal("notes.principal."), u64(MACHINE))
 	// Two principals that run one program: two stores.
 	first, second: [32]u8
 	testing.expect(t, store_name_write(&first, "notes", MACHINE, false))

@@ -146,6 +146,53 @@ service_run :: proc "contextless" (service: ^Service) -> (calls: int) {
 	return calls
 }
 
+// connection_make opens a connection that this program made itself, with
+// a call ring and a call region that it created: the storage service makes
+// one for each share (docs/STORAGE.md, "Places"). It is not one of the
+// connections that the root service names: the program keeps it, serves it
+// with connection_serve, and ends it with connection_end.
+connection_make :: proc "contextless" (ring_memory, region_memory: Handle, caller: Name) -> (connection: Connection, ok: bool) {
+	calls, ring_status := ring_open(ring_memory)
+	if ring_status != .Ok {
+		return {}, false
+	}
+	bytes, region_status := memory_map(region_memory)
+	if region_status != .Ok {
+		ring_close(&calls)
+		return {}, false
+	}
+	return {ring_memory = ring_memory, region_memory = region_memory, calls = calls, region = ([^]u8)(bytes)[:memory_size(region_memory) * PAGE_SIZE], caller = caller}, true
+}
+
+// connection_end closes a connection that connection_make opened.
+connection_end :: proc "contextless" (connection: ^Connection) {
+	if connection.calls.head != nil {
+		ring_close(&connection.calls)
+		memory_unmap(raw_data(connection.region))
+	}
+	close(connection.ring_memory)
+	close(connection.region_memory)
+	connection^ = {}
+}
+
+// connection_serve executes the calls that wait on a connection that this
+// program made itself, as service_run does for the connections of the root
+// service. It gives the count of calls.
+connection_serve :: proc "contextless" (service: ^Service, connection: ^Connection) -> (calls: int) {
+	for _ in 0 ..< ring.CAPACITY {
+		command, has_command := receive(&connection.calls.commands)
+		if !has_command {
+			break
+		}
+		serving = connection
+		send(&connection.calls.completions, export_serve(service.file, op.PROGRAM_BASE, connection.region, connection.ring_memory, command, false))
+		serving = nil
+		calls += 1
+	}
+	service.calls += u64(calls)
+	return calls
+}
+
 @(private)
 connection_add :: proc "contextless" (service: ^Service, ring_memory, region_memory: Handle, caller: Name, grant: u64) -> bool {
 	for &connection in service.connections {

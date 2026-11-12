@@ -81,18 +81,18 @@ scenario_principals_first := [?]Step {
 	// 0, never for principal 1.
 	{kind = .Type, text = "connect(\"storage\")"},
 	{kind = .Wait, text = "root: connected console to the service storage, acting for principal 0"},
+	// A caller that acts for principal N sees and opens the stores of
+	// principal N only (docs/PRINCIPALS.md, "The store of a principal"):
+	// the console acts for principal 0, so the store of notes of alice is
+	// neither listed nor opened.
+	{kind = .Type, text = "storage.open_store(\"notes.principal.1\")"},
+	{kind = .Wait, text = "[console] error: storage.open_store: the caller has no grant for this: to act for the principal (-10)"},
 	{kind = .Type, text = "storage.stores()"},
-	{kind = .Wait, text = "notes.principal.1: "},
-	// The gap that this line shows: the storage service checks only that
-	// the caller acts for a principal, not for which one, so the console,
-	// which acts for principal 0, reads the note of principal 1. The rule
-	// (docs/PRINCIPALS.md, "Not built"): a caller that acts for principal
-	// N sees the stores of principal N only. When storage applies it, this
-	// step waits for the refusal in place of the note.
-	{kind = .Type, text = "storage.version(\"notes.principal.1\", \"note\", {generation})"},
-	{kind = .Wait, text = "[console] of alice"},
+	{kind = .Wait, text = "[console] console.history: ", any_order = true},
+	// The lines of stores() all come before the answer of the next line: a
+	// line of the store of alice there would end the wait as a failure.
 	{kind = .Type, text = "principals()"},
-	{kind = .Wait, text = "[console] principal 1 \"alice\": unlocked: its session runs, public key "},
+	{kind = .Wait, text = "[console] principal 1 \"alice\": unlocked: its session runs, public key ", fails_on = "[console] notes.principal.1: "},
 	// The lock: the programs of the session stop, and unlock asks again.
 	{kind = .Type, text = "lock()"},
 	{kind = .Wait, text = "root: the session of principal 1 \"alice\" ends: 1 programs stopped"},

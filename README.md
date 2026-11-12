@@ -187,6 +187,7 @@ The repository holds no picture of the same window with the pointer theme Posy's
 | `docs/PRINCIPALS.md` | The principals: the machine, a named principal, its unlock and its lock, the session of each program, the store of a principal, and what is not built |
 | `docs/CONSOLE.md` | The line of the console: the caret, the completion list, the history and its search, the colors of the code |
 | `docs/CRYPTOGRAPHY.md` | The cryptography of QUIC and TLS 1.3: which proven code the system takes, and how it checks it |
+| `docs/STORAGE.md` | The stored data: objects, trees and stores; what a program reaches, the format on the disk, and the steps that are not built |
 | `docs/FONTS.md` | The text of the system: the vector font, the grid fit, the subpixel bands and the cache of the glyphs |
 | `docs/INTERFACE.md` | The interface package of the programs: the draw records, the damage, the layout, the input and the focus |
 | `docs/NETWORK.md` | The network: the frame service, the network service, and TCP as a library in the program |

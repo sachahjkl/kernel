@@ -84,6 +84,10 @@ error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record,
 		amount(writer, record.limit, unit)
 	case .Bad_Value:
 		subject(writer, record, argument)
+		if errors.Unit(record.unit) == .Trees {
+			write_part(writer, " is inside the tree that moves: a tree cannot move inside itself")
+			return
+		}
 		write_part(writer, " has the value ")
 		write_part(writer, record.value)
 		write_part(writer, ", which the call refuses")
@@ -207,6 +211,10 @@ error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record,
 			write_part(writer, ", names nothing that the program has")
 		} else if errors.Unit(record.unit) == .Objects {
 			write_part(writer, ": the store has no object with this name")
+		} else if errors.Unit(record.unit) == .Places {
+			write_part(writer, ": the place is not a place of this connection, or its tree was removed or renamed")
+		} else if errors.Unit(record.unit) == .Trees {
+			write_part(writer, ": the tree has no tree with this name")
 		} else if errors.Unit(record.unit) == .Versions {
 			write_part(writer, ": the object has no version of the generation ")
 			write_part(writer, record.value)
@@ -222,7 +230,7 @@ error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record,
 			return
 		}
 		if errors.Unit(record.unit) == .Stores {
-			write_part(writer, "the table of the private store is damaged: a block of it has a wrong check")
+			write_part(writer, "the private store is damaged: a node of one of its trees, or its store block, has a wrong check")
 		} else {
 			write_part(writer, "the object of ")
 			subject(writer, record, argument)
@@ -311,6 +319,14 @@ error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record,
 		write_part(writer, ", and the call asks for ")
 		write_part(writer, seed_strength_name(record.limit))
 		write_part(writer, " at least: it made nothing")
+	case .Exists:
+		if record.found > 0 {
+			write_part(writer, "row ")
+			write_part(writer, record.found)
+			write_part(writer, " of ")
+		}
+		subject(writer, record, argument)
+		write_part(writer, ": the tree has an entry with this name already")
 	case .Not_Authentic:
 		subject(writer, record, argument)
 		write_part(writer, " is not authentic: its tag or its signature does not verify, and the call gives no byte of it")

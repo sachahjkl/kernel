@@ -2,6 +2,7 @@ package kerneltool
 
 import "contract:settings"
 import format "contract:store"
+import "base:runtime"
 import "core:fmt"
 import "core:math/rand"
 import "core:mem"
@@ -12,6 +13,7 @@ import "core:strings"
 import "core:sync"
 import "core:time"
 import "support:storage_mount"
+import tree "support:storage_tree"
 
 // The loss of power: a stop of the machine never shows a part of a commit.
 // The tool serves the data disk itself (network_block_device.odin), so it
@@ -27,7 +29,7 @@ import "support:storage_mount"
 //
 // What each image must give:
 //   - the disk opens, with no wrong block, no block named two times, and the
-//     count of blocks of each store equal to what its table names;
+//     counts of each store equal to what its trees name;
 //   - the objects are those of the durable image, or those of the image with
 //     every write (the commit in flight at the loss, if its root was among
 //     the writes): each object byte for byte, never a mix of the two.
@@ -47,11 +49,14 @@ Stored_Version :: struct {
 	damaged:    bool,
 }
 
-// One object of a store, as an image gives it: its current version and its
-// versions, the oldest first.
+// One entry of a store, as an image gives it: an object with its current
+// version and its versions, the oldest first, or a tree. The name is the
+// names of its path from the root of the store, joined with "/" for the
+// tool only.
 Stored_Object :: struct {
 	store:    string,
 	name:     string,
+	tree:     bool,
 	bytes:    []u8,
 	damaged:  bool,
 	versions: []Stored_Version,
@@ -102,51 +107,119 @@ image_read :: proc "contextless" (reader: ^storage_mount.Block_Reader, numbers: 
 	return true
 }
 
+// The walk of the trees of one store of an image. The walks of the trees
+// and the state of the open keep its address: it lives in the heap, not on
+// the stack.
+Contents_Walk :: struct {
+	state:     ^storage_mount.State,
+	reader:    Image_Reader,
+	source:    storage_mount.Reader_Source,
+	objects:   [dynamic]Stored_Object,
+	store:     string,
+	allocator: runtime.Allocator,
+	saved:     runtime.Context,
+	walks:     [format.NESTING_LIMIT + 1]tree.Walk,
+	path:      [format.NESTING_LIMIT]string,
+	nesting:   int,
+	bytes:     []u8,
+	failed:    bool,
+}
+
 // disk_contents opens an image as the storage service does, and reads each
-// object, checked. The strings and the bytes are in the temporary memory.
+// entry of each tree of each store, checked. The strings and the bytes are
+// in the allocator.
 disk_contents :: proc(image: []u8, state: ^storage_mount.State, allocator := context.temp_allocator, known: ^Known_Checks = nil) -> (contents: Disk_Contents) {
-	reader := Image_Reader{reader = {read = image_read, check = image_check}, image = image, known = known}
-	contents.mount = storage_mount.mount(state, &reader, u64(len(image)) / format.BLOCK_SIZE)
+	walking := new(Contents_Walk)
+	defer free(walking)
+	walking.reader = Image_Reader{reader = {read = image_read, check = image_check}, image = image, known = known}
+	contents.mount = storage_mount.mount(state, &walking.reader, u64(len(image)) / format.BLOCK_SIZE)
 	contents.objects = make([dynamic]Stored_Object, allocator)
 	if contents.mount.failed || contents.mount.needs_format {
 		return contents
 	}
-	bytes := make([]u8, format.OBJECT_BLOCKS_LIMIT * format.BLOCK_SIZE, allocator)
+	walking.state = state
+	walking.source = storage_mount.reader_source(&walking.reader, state.disk_size)
+	walking.objects = contents.objects
+	walking.allocator = allocator
+	walking.saved = context
+	walking.bytes = make([]u8, format.OBJECT_BLOCKS_LIMIT * format.BLOCK_SIZE, allocator)
 	for &store, store_index in state.root.stores {
 		if store.name[0] == 0 || state.store_damaged[store_index] {
 			continue
 		}
-		for &object, object_index in state.tables[store_index].objects {
-			if object.name[0] == 0 {
-				continue
-			}
-			size, ok := storage_mount.object_bytes(state, &reader, store_index, object_index, bytes)
-			item := Stored_Object {
-				store   = strings.clone(string(cstring(&store.name[0])), allocator),
-				name    = strings.clone(string(cstring(&object.name[0])), allocator),
-				damaged = !ok,
-			}
-			if ok {
-				item.bytes = slice.clone(bytes[:size], allocator)
-			}
-			entries := make([]format.Version_Entry, format.VERSIONS_LIMIT, allocator)
-			count, versions_ok := storage_mount.versions_read(state, &reader, object.versions, entries)
-			item.versions_damaged = !versions_ok
-			versions := make([]Stored_Version, min(count, len(entries)), allocator)
-			for &version, index in versions {
-				entry := entries[index]
-				version.generation = entry.generation
-				if storage_mount.list_bytes(state, &reader, entry.list, entry.size, bytes) {
-					version.bytes = slice.clone(bytes[:entry.size], allocator)
-				} else {
-					version.damaged = true
-				}
-			}
-			item.versions = versions
-			append(&contents.objects, item)
-		}
+		walking.store = strings.clone(string(cstring(&store.name[0])), allocator)
+		contents_walk_tree(walking, state.store_blocks[store_index].tree, 0)
+	}
+	contents.objects = walking.objects
+	if walking.failed {
+		contents.mount.wrong += 1 // A tree that the open walked whole and this walk cannot: never with a disk that the open accepted.
 	}
 	return contents
+}
+
+contents_walk_tree :: proc(walking: ^Contents_Walk, root: format.Pointer, nesting: int) {
+	if nesting > format.NESTING_LIMIT || root.block == 0 {
+		return
+	}
+	one := &walking.walks[nesting]
+	one.source = &walking.source.source
+	one.shape = tree.TREE_SHAPE
+	one.visit_node = nil
+	one.visit_record = contents_visit
+	one.data = walking
+	before := walking.nesting
+	walking.nesting = nesting
+	if tree.walk_tree(one, root) != .None {
+		walking.failed = true
+	}
+	walking.nesting = before
+}
+
+contents_visit :: proc "contextless" (one: ^tree.Walk, key: []u8, value: []u8) {
+	walking := (^Contents_Walk)(one.data)
+	context = walking.saved
+	name_key := (^format.Entry_Name)(raw_data(key))^
+	entry := (^format.Entry)(raw_data(value))^
+	name := strings.clone(format.name_of(&name_key), walking.allocator)
+	nesting := walking.nesting
+	parts := make([dynamic]string, context.temp_allocator)
+	append(&parts, ..walking.path[:nesting])
+	append(&parts, name)
+	item := Stored_Object {
+		store = walking.store,
+		name  = strings.join(parts[:], "/", walking.allocator),
+		tree  = entry.kind == .Tree,
+	}
+	if entry.kind == .Tree {
+		append(&walking.objects, item)
+		if nesting < format.NESTING_LIMIT {
+			walking.path[nesting] = name
+			contents_walk_tree(walking, entry.pointer, nesting + 1)
+		}
+		return
+	}
+	state := walking.state
+	reader := &walking.reader
+	if storage_mount.list_bytes(state, reader, entry.pointer, entry.size, walking.bytes) {
+		item.bytes = slice.clone(walking.bytes[:entry.size], walking.allocator)
+	} else {
+		item.damaged = true
+	}
+	entries := make([]format.Version_Entry, format.VERSIONS_LIMIT, context.temp_allocator)
+	count, versions_ok := storage_mount.versions_read(state, reader, entry.versions, entries)
+	item.versions_damaged = !versions_ok
+	versions := make([]Stored_Version, min(count, len(entries)), walking.allocator)
+	for &version, index in versions {
+		version_entry := entries[index]
+		version.generation = version_entry.generation
+		if storage_mount.list_bytes(state, reader, version_entry.list, version_entry.size, walking.bytes) {
+			version.bytes = slice.clone(walking.bytes[:version_entry.size], walking.allocator)
+		} else {
+			version.damaged = true
+		}
+	}
+	item.versions = versions
+	append(&walking.objects, item)
 }
 
 // same_contents says if two images give the same commit: the generation,
@@ -159,7 +232,7 @@ same_contents :: proc(a, b: ^Disk_Contents) -> bool {
 		found := false
 		for &other in b.objects {
 			if other.store == item.store && other.name == item.name {
-				found = !other.damaged && !item.damaged && slice.equal(other.bytes, item.bytes) && same_versions(item.versions, other.versions) && !item.versions_damaged && !other.versions_damaged
+				found = other.tree == item.tree && !other.damaged && !item.damaged && slice.equal(other.bytes, item.bytes) && same_versions(item.versions, other.versions) && !item.versions_damaged && !other.versions_damaged
 			}
 		}
 		if !found {
@@ -514,7 +587,7 @@ power_loss_sequence :: proc(what: string, steps: []Step, output_number: int, thi
 	if torn_root {
 		append(&second, Step{kind = .Wait, text = "has a wrong check: a write that a stop cut; the service uses the root before it", any_order = true})
 	}
-	append(&second, Step{kind = .Wait, text = fmt.aprintf("storage: ok, generation %d: 1 stores, 2 objects, %d versions, ", durable_contents.mount.generation, version_count(&durable_contents)), any_order = true})
+	append(&second, Step{kind = .Wait, text = fmt.aprintf("storage: ok, generation %d: 1 stores, 2 objects, 0 trees, %d versions, ", durable_contents.mount.generation, version_count(&durable_contents)), any_order = true})
 	append(&second, Step{kind = .Wait, text = "notes: restored the note \"kept through a loss of power\" and the count ", any_order = true})
 	append(&second, Step{kind = .Wait, text = "compositor: surface notes"})
 	if thinning {

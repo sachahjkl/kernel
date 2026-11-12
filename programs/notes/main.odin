@@ -52,7 +52,7 @@ commit_time_total, commit_count: u64 // In microseconds.
 restore_time_last: u64
 
 history_read :: proc "contextless" () {
-	rows, total, status := storage.versions(&client, "note", history[:])
+	rows, total, status := storage.versions(&client, storage.ROOT, "note", history[:])
 	if status == .Ok {
 		history_total = total
 		shown_count = 0
@@ -71,7 +71,7 @@ show :: proc "contextless" (place: int) {
 		return
 	}
 	shown = place
-	bytes, status := storage.version(&client, "note", history[place].generation, shown_text[:])
+	bytes, status := storage.version(&client, storage.ROOT, "note", history[place].generation, shown_text[:])
 	shown_count = status == .Ok ? len(bytes) : 0
 	date_text: [24]u8
 	system.log("notes: the version ", u64(place + 1), " of ", u64(history_count()), ", generation ", history[place].generation, history[place].date != 0 ? ", " : "", history[place].date != 0 ? calendar.iso_text(date_text[:], history[place].date) : "", ": \"", string(shown_text[:shown_count]), "\"")
@@ -81,7 +81,7 @@ show :: proc "contextless" (place: int) {
 keep :: proc "contextless" (name: string, data: []u8) -> bool {
 	error: errors.Error_Record
 	started := system.nanoseconds()
-	result, status := storage.write(&client, name, data, &error)
+	result, status := storage.write(&client, storage.ROOT, name, data, &error)
 	if name == "note" {
 		commit_time_total += (system.nanoseconds() - started) / 1000
 		commit_count += 1
@@ -113,7 +113,7 @@ count_versions: [1200]storage.Version // The measure of a list of versions of th
 // of the count hold one count. An object that the storage service has and
 // cannot give is not an empty object: the window says it.
 restore :: proc "contextless" () {
-	text, found, status := storage.read(&client, "note", note[:])
+	text, found, status := storage.read(&client, storage.ROOT, "note", note[:])
 	note_damaged := status == .Damaged
 	if status != .Ok && !note_damaged {
 		restored, gone = "no store: the program keeps nothing", true
@@ -123,7 +123,7 @@ restore :: proc "contextless" () {
 	if found {
 		note_count = len(text)
 	}
-	bytes, has_count, count_status := storage.read(&client, "count", ([^]u8)(&words)[:size_of(words)])
+	bytes, has_count, count_status := storage.read(&client, storage.ROOT, "count", ([^]u8)(&words)[:size_of(words)])
 	if !found && !has_count && !note_damaged && count_status == .Ok {
 		restored, restored_good = "a new store: no note, the count 0", true
 		system.log("notes: a new store: no note, the count 0")
@@ -258,7 +258,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				// becomes a version.
 				generation_shown := history[shown].generation
 				started := system.nanoseconds()
-				commit, status := storage.restore(&client, "note", generation_shown)
+				commit, status := storage.restore(&client, storage.ROOT, "note", generation_shown)
 				restore_time_last = (system.nanoseconds() - started) / 1000
 				if status == .Ok && commit > 0 {
 					generation = commit
@@ -281,7 +281,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					if step == RUN_STEPS {
 						system.log("notes: count ", count, ", stopped: ", u64(RUN_STEPS), " commits in ", system.time() - started, " ms")
 						measure_started := system.nanoseconds()
-						_, total, status := storage.versions(&client, "count", count_versions[:])
+						_, total, status := storage.versions(&client, storage.ROOT, "count", count_versions[:])
 						if status == .Ok {
 							system.log("notes: the versions of the count: ", total, " rows in ", (system.nanoseconds() - measure_started) / 1000, " us")
 						}
