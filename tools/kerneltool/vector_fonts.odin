@@ -18,7 +18,7 @@ import "support:vector_font"
 // build/fonts/candidates.png, the picture of the choice, from the same
 // renderer as the system.
 //
-// The build makes the two glyph caches of the default font (build_glyph_caches):
+// The build makes the glyph caches of the default font and of the interface font (build_glyph_caches):
 // the boot image holds it as the resource "glyph_cache".
 
 VECTOR_FONT_SOURCES_VARIABLE :: "VECTOR_FONT_SOURCES"
@@ -33,6 +33,8 @@ GLYPH_CACHE_BOLD_RESOURCE :: "glyph_cache_bold"
 CANDIDATES_PICTURE :: VECTOR_FONT_BUILD_FOLDER + "/candidates.png"
 INTERFACE_GLYPH_CACHE_OUTPUT :: VECTOR_FONT_BUILD_FOLDER + "/interface_glyph_cache.bin"
 INTERFACE_GLYPH_CACHE_BOLD_OUTPUT :: VECTOR_FONT_BUILD_FOLDER + "/interface_glyph_cache_bold.bin"
+INTERFACE_GLYPH_CACHE_RESOURCE :: "interface_glyph_cache"
+INTERFACE_GLYPH_CACHE_BOLD_RESOURCE :: "interface_glyph_cache_bold"
 
 // The default font of the system: one line to change (docs/FONTS.md, "The
 // font file").
@@ -46,23 +48,34 @@ Vector_Font_Candidate :: struct {
 	family:       string,
 	license:      string,
 	license_file: string, // The full text of the license, in resources/fonts.
+	zero_form:    Zero_Form,
 }
 
+// The form of the zero in a subset. Slashed: the glyph that the feature
+// "zero" of the table GSUB gives for '0' (a single substitution), read from
+// the font file; a font with no such feature keeps its zero, and the tool
+// says so. The default zero of Paper Mono looks like its capital O.
+Zero_Form :: enum u8 {
+	Of_The_Font,
+	Slashed,
+}
+ZERO_FEATURE :: vector_font.Feature_Tag{'z', 'e', 'r', 'o'}
+
 vector_font_candidates := [?]Vector_Font_Candidate {
-	{"paper_mono", "Paper Mono ASCII", "SIL OFL 1.1, no Reserved Font Name", "OFL.txt"},
-	{"dejavu_sans_mono", "DejaVu Sans Mono ASCII", "Bitstream Vera license; DejaVu changes in the public domain", "BITSTREAM_VERA_LICENSE.txt"},
-	{"jetbrains_mono", "JetBrains Mono ASCII", "SIL OFL 1.1, no Reserved Font Name", "OFL.txt"},
-	{"ibm_mono", "IBM Mono ASCII", "SIL OFL 1.1, Reserved Font Name Plex: renamed", "OFL.txt"},
-	{"fira_mono", "Fira Mono ASCII", "SIL OFL 1.1", "OFL.txt"},
-	{"commit_mono", "CommitMono ASCII", "SIL OFL 1.1 in the font file; MIT in its repository", "OFL.txt"},
-	{"iosevka", "Iosevka ASCII", "SIL OFL 1.1, no Reserved Font Name", "OFL.txt"},
+	{"paper_mono", "Paper Mono ASCII", "SIL OFL 1.1, no Reserved Font Name", "OFL.txt", .Slashed},
+	{"dejavu_sans_mono", "DejaVu Sans Mono ASCII", "Bitstream Vera license; DejaVu changes in the public domain", "BITSTREAM_VERA_LICENSE.txt", .Of_The_Font},
+	{"jetbrains_mono", "JetBrains Mono ASCII", "SIL OFL 1.1, no Reserved Font Name", "OFL.txt", .Of_The_Font},
+	{"ibm_mono", "IBM Mono ASCII", "SIL OFL 1.1, Reserved Font Name Plex: renamed", "OFL.txt", .Of_The_Font},
+	{"fira_mono", "Fira Mono ASCII", "SIL OFL 1.1", "OFL.txt", .Of_The_Font},
+	{"commit_mono", "CommitMono ASCII", "SIL OFL 1.1 in the font file; MIT in its repository", "OFL.txt", .Of_The_Font},
+	{"iosevka", "Iosevka ASCII", "SIL OFL 1.1, no Reserved Font Name", "OFL.txt", .Of_The_Font},
 }
 
 // The weight of the default font for emphasis (the titles of the cards):
 // subset with the candidates, drawn at scale 1 only. Paper Mono has a
 // SemiBold and no Bold: the SemiBold is the emphasis.
 vector_font_emphasis := [?]Vector_Font_Candidate {
-	{"paper_mono_semibold", "Paper Mono ASCII SemiBold", "SIL OFL 1.1, no Reserved Font Name", "OFL.txt"},
+	{"paper_mono_semibold", "Paper Mono ASCII SemiBold", "SIL OFL 1.1, no Reserved Font Name", "OFL.txt", .Slashed},
 }
 EMPHASIS_VECTOR_FONT :: "paper_mono_semibold"
 
@@ -70,8 +83,8 @@ EMPHASIS_VECTOR_FONT :: "paper_mono_semibold"
 // weights. Not a candidate of the picture: the grid of cells is not its
 // place.
 vector_font_interface := [?]Vector_Font_Candidate {
-	{"b612", "B612 ASCII", "SIL OFL 1.1, no Reserved Font Name", "OFL.txt"},
-	{"b612_bold", "B612 ASCII Bold", "SIL OFL 1.1, no Reserved Font Name", "OFL.txt"},
+	{"b612", "B612 ASCII", "SIL OFL 1.1, no Reserved Font Name", "OFL.txt", .Of_The_Font},
+	{"b612_bold", "B612 ASCII Bold", "SIL OFL 1.1, no Reserved Font Name", "OFL.txt", .Of_The_Font},
 }
 INTERFACE_VECTOR_FONT :: "b612"
 INTERFACE_EMPHASIS_VECTOR_FONT :: "b612_bold"
@@ -84,7 +97,7 @@ run_vector_fonts :: proc(args: []string) -> int {
 	}
 	make_folder(VECTOR_FONT_FOLDER)
 	make_folder(VECTOR_FONT_BUILD_FOLDER)
-	fmt.printfln("%-18s %10s %8s %10s %8s %8s %8s %6s", "font", "source", "subset", "composite", "advance", "x-height", "cap", "pairs")
+	fmt.printfln("%-18s %10s %8s %10s %8s %8s %8s %6s %s", "font", "source", "subset", "composite", "advance", "x-height", "cap", "pairs", "zero")
 	// proportional: each character has its own advance; the subset keeps
 	// the pair adjustments of kern.
 	Subset_Request :: struct {
@@ -133,9 +146,13 @@ run_vector_fonts :: proc(args: []string) -> int {
 			fmt.eprintfln("kerneltool: cannot write %s: %v", license_path, err)
 			return EXIT_FAILURE
 		}
-		fmt.printfln("%-18s %10d %8d %10d %8d %8d %8d %6d", candidate.name, len(source), len(subset), report.composites, report.measures.advance, report.measures.x_height, report.measures.cap_height, report.pairs)
+		fmt.printfln("%-18s %10d %8d %10d %8d %8d %8d %6d %s", candidate.name, len(source), len(subset), report.composites, report.measures.advance, report.measures.x_height, report.measures.cap_height, report.pairs, report.zero)
+		if candidate.zero_form == .Slashed && report.zero_glyph == 0 {
+			fmt.printfln("kerneltool: %s has no single substitution of the feature zero for '0': its subset keeps the zero of the font", candidate.name)
+		}
 	}
-	if !candidates_picture_write() || !interface_glyph_caches_write() {
+	_, interface_written := interface_glyph_caches_write()
+	if !candidates_picture_write() || !interface_written {
 		return EXIT_FAILURE
 	}
 	fmt.printfln("kerneltool: the subsets are in %s, the picture of the choice is %s", VECTOR_FONT_FOLDER, CANDIDATES_PICTURE)
@@ -146,6 +163,8 @@ Subset_Report :: struct {
 	problem:      string,
 	composites:   int, // Glyphs made of glyphs, made simple.
 	pairs:        int, // The pair adjustments of the characters 32 to 126 that the subset keeps.
+	zero_glyph:   int, // The glyph of the source that the subset draws for '0' in place of the glyph of the cmap; 0: the zero of the font.
+	zero:         string, // For the table of the command: "slashed (glyph n)" or "of the font".
 	measures:     vector_font.Font_Measures,
 	license_text: string,
 }
@@ -168,6 +187,7 @@ font_subset :: proc(source: []u8, candidate: Vector_Font_Candidate, proportional
 		report.problem = problem != .None ? vector_font.font_problem_names[problem] : "the font is not monospace"
 		return nil, report, false
 	}
+	report.zero = "of the font"
 	// The pair adjustments, read from the source as hostile input: each
 	// pair of two characters of the subset, by the glyphs of the subset.
 	kern: []u8
@@ -201,6 +221,19 @@ font_subset :: proc(source: []u8, candidate: Vector_Font_Candidate, proportional
 			if problem != .None {
 				report.problem = fmt.tprintf("the character %d: %s", 31 + index, vector_font.font_problem_names[problem])
 				return nil, report, false
+			}
+			if 31 + index == '0' && candidate.zero_form == .Slashed {
+				substitute, substitution_problem := vector_font.single_substitution(&font, ZERO_FEATURE, glyph)
+				#partial switch substitution_problem {
+				case .None:
+					glyph = substitute
+					report.zero_glyph = substitute
+					report.zero = fmt.tprintf("slashed (glyph %d)", substitute)
+				case .No_Feature:
+				case:
+					report.problem = fmt.tprintf("the table GSUB: %s", vector_font.font_problem_names[substitution_problem])
+					return nil, report, false
+				}
 			}
 		}
 		if is_composite(&font, glyph) {
@@ -275,7 +308,7 @@ font_subset :: proc(source: []u8, candidate: Vector_Font_Candidate, proportional
 	subset = sfnt_write(tables[:])
 	report.license_text = fmt.aprintf(
 		"%s\n\nThis file is a subset of %s, made by \"kerneltool vector_fonts\" (docs/FONTS.md):\nthe characters 32 to 126 and the glyph .notdef, each glyph a simple glyph\n(%d glyphs made of glyphs were made simple), no hinting instructions, no\nOpenType layout tables%s. The subset carries the name \"%s\".\nLicense of the source: %s.\n\nThe text of the license in the source font file:\n\n%s\n\nURL of the license: %s\nThe full text of the license: %s, in this folder.\n",
-		copyright, candidate.name, report.composites, proportional ? fmt.tprintf("; the %d pair adjustments of its table kern between\nthese characters", report.pairs) : "", candidate.family, candidate.license, license, license_place, candidate.license_file,
+		copyright, candidate.name, report.composites, strings.concatenate({proportional ? fmt.tprintf("; the %d pair adjustments of its table kern between\nthese characters", report.pairs) : "", report.zero_glyph != 0 ? fmt.tprintf(";\nthe character 0 is the glyph %d of the source, the slashed zero of its\nfeature zero", report.zero_glyph) : ""}, context.temp_allocator), candidate.family, candidate.license, license, license_place, candidate.license_file,
 		allocator = context.temp_allocator,
 	)
 	return subset, report, true
@@ -588,7 +621,7 @@ glyph_cache_of :: proc(font_bytes: []u8, font_name: string, grid_fit: bool, scal
 // grid fit and without it, and of its bold weight at scale 1, and gives
 // them as resources of the boot image. The setting "grid_fit" of the
 // person chooses one of the first two at run time.
-build_glyph_caches :: proc() -> (resources: [3]Resource_File, ok: bool) {
+build_glyph_caches :: proc() -> (resources: [5]Resource_File, ok: bool) {
 	make_folder(VECTOR_FONT_BUILD_FOLDER)
 	builds := [3]struct {
 		font:         string,
@@ -605,6 +638,9 @@ build_glyph_caches :: proc() -> (resources: [3]Resource_File, ok: bool) {
 		}
 		resources[index] = {name = build.name, path = build.output}
 	}
+	// The two caches of the interface font (docs/FONTS.md, section 12).
+	interface_resources := interface_glyph_caches_write() or_return
+	resources[3], resources[4] = interface_resources[0], interface_resources[1]
 	return resources, true
 }
 
@@ -615,14 +651,16 @@ INTERFACE_POSITIONS := [3]int{3, 1, 1}
 INTERFACE_BOLD_POSITIONS := [1]int{3}
 
 // interface_glyph_caches_write draws the two glyph caches of the interface
-// font from its subsets, checks them with the reader of the programs, and
-// writes their sizes. They are not yet resources of the boot image.
-interface_glyph_caches_write :: proc() -> bool {
+// font from its subsets, checks them with the reader of the programs (so a
+// resource is never shorter than its header, and states its own size), and
+// writes them with their sizes: the two resources of the boot image of the
+// interface font.
+interface_glyph_caches_write :: proc() -> (resources: [2]Resource_File, ok: bool) {
 	builds := [2]struct {
-		font, output: string,
-		positions:    []int,
-	}{{INTERFACE_VECTOR_FONT, INTERFACE_GLYPH_CACHE_OUTPUT, INTERFACE_POSITIONS[:]}, {INTERFACE_EMPHASIS_VECTOR_FONT, INTERFACE_GLYPH_CACHE_BOLD_OUTPUT, INTERFACE_BOLD_POSITIONS[:]}}
-	for build in builds {
+		font, output, name: string,
+		positions:          []int,
+	}{{INTERFACE_VECTOR_FONT, INTERFACE_GLYPH_CACHE_OUTPUT, INTERFACE_GLYPH_CACHE_RESOURCE, INTERFACE_POSITIONS[:]}, {INTERFACE_EMPHASIS_VECTOR_FONT, INTERFACE_GLYPH_CACHE_BOLD_OUTPUT, INTERFACE_GLYPH_CACHE_BOLD_RESOURCE, INTERFACE_BOLD_POSITIONS[:]}}
+	for build, index in builds {
 		font_bytes := read_file(join(VECTOR_FONT_FOLDER, "/", build.font, ".ttf")) or_return
 		font, problem := vector_font.font_open(font_bytes)
 		memory := new(vector_font.Render_Memory, context.temp_allocator)
@@ -634,17 +672,18 @@ interface_glyph_caches_write :: proc() -> bool {
 		}
 		if problem != .None {
 			fmt.eprintfln("kerneltool: the interface font %s: %s", build.font, vector_font.font_problem_names[problem])
-			return false
+			return {}, false
 		}
 		if _, refused := glyph_cache.validate(out[:size]); refused.kind != .None {
 			fmt.eprintfln("kerneltool: the glyph cache of %s is refused: %s", build.font, glyph_cache.problem_sentences[refused.kind])
-			return false
+			return {}, false
 		}
 		if err := os.write_entire_file(build.output, out[:size]); err != nil {
 			fmt.eprintfln("kerneltool: cannot write %s: %v", build.output, err)
-			return false
+			return {}, false
 		}
 		fmt.printfln("kerneltool: the glyph cache of %s with the positions %v: %d bytes, in %s", build.font, build.positions, size, build.output)
+		resources[index] = {name = build.name, path = build.output}
 	}
-	return true
+	return resources, true
 }

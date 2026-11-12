@@ -106,6 +106,7 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Kernel operation | One request that a program makes to the kernel (P1) | system call, syscall |
 | Boot program | The UEFI program that loads and measures the system, then starts the kernel (P17) | boot loader, bootloader |
 | Fixed range | An address and a span of the address space of a program where the system places one mapping that it gives: the settings page, a glyph cache, the date page, the files of a module. Each is one member of the enumeration `Fixed_Range` of `contract/fixed_addresses`, one slot of the band from `BAND_START`, so no two overlap; a mapping that a program places by its own choice is outside the band, from `OWN_CHOICE_START` | well-known address, fixed mapping |
+| Mapped ranges | The fixed ranges that the starter of a program mapped for it: a set of bits, bit n for the member n of `Fixed_Range`, in the value 20 of its context (`fixed_addresses.ranges_mapped`). A program reads nothing at a range whose bit is clear | mapping flags, present mask |
 
 ## Access
 
@@ -157,10 +158,12 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Key record | A record from a terminal to its program: the code of one key that the person pressed, its character, and the modifiers that the person held (Shift, Control) | standard input, character device, raw mode, cooked mode |
 | Edit line | The one line that a program changes: the line of input of the person with a cursor, or a line that says what the program does now. The program sends its text and the place of the cursor; the terminal shows it after the last line. The program owns the editing | line discipline, readline, cursor addressing, prompt |
 | Line editor | The procedures of `support/line_editor` that change an edit line with keys: the caret, a character at the caret, Backspace, Delete. They have no state of their own: the line is a record of the program | readline, line discipline |
-| Hint line | One dim line that a program shows under its edit line: the signature of the call at the caret, or how to use the list that is open. A new one replaces the one before | tooltip, status (for this), echo area |
+| Hint line | One dim line that a program shows under its edit line: the signature of the call at the caret, or how to use the list that is open. It has a long form and a short form; the terminal shows the long one when it fits in its columns. The terminal draws it in the free row. A new one replaces the one before | tooltip, status (for this), echo area |
+| Free row | The row of the view of a terminal under the edit line, that the terminal keeps free at all times: the hint line is drawn in it, so the text does not move when a hint comes or goes | spacer, padding line |
 | Completion list | The names that can take the place of the name at the caret, best first, with one chosen row. The program gives the rows; its terminal draws them over its text, at the edit line | dropdown, popup, autocomplete menu, suggestions |
 | Fuzzy match | A match where the characters of a query appear in a name in their order, with gaps allowed, lower and upper case equal. A score orders the names that match (`docs/CONSOLE.md`, section 3) | fuzzy search, subsequence search, filter (for this) |
 | Line history | The lines that the person entered in the console, in a ring of bytes in its memory, the newest first | history (alone), scrollback, command log |
+| Line history file | The line history as bytes, to keep it in a store: a version, the lines, a BLAKE3 hash (`support/line_editor/history_file.odin`). A file that fails a check gives an empty history | history dump, .bash_history |
 | History search | The completion list over the line history: Control-R opens it, and the fuzzy match orders the lines, the newest first for equal scores | reverse-i-search, incremental search |
 | Text region | The shared memory beside a terminal ring where the program writes the bytes of its text, in order. A record gives only a count of bytes: the terminal keeps its own place | scrollback (for this), pipe buffer |
 | Run | Bytes of text that have one style. A line is a list of runs | span, segment, chunk |
@@ -283,7 +286,7 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Desktop shell | The program that starts programs and shows surfaces and grants to the person | window manager |
 | Focus | The state of the window in front: its program receives the keys, and the pointer events over its surface. Its title bar is blue | active window, keyboard owner |
 | Title bar | The top part of the frame of a window: the title and the close button. The title bar of the window that has the focus goes from blue to a darker blue toward the right; the others are quiet (`docs/DESIGN.md`, section 9) | header, caption, decoration |
-| Bar | The line at the top of the screen that the compositor draws: the name of the system, the buttons of the two menus, the key of the launcher, the time since the start. `support/bar` holds its places and the table of the names of the programs | task bar, panel, dock |
+| Bar | The line at the top of the screen that the compositor draws: the mark of the system, the buttons of the two menus, the key of the launcher, the time since the start. `support/bar` holds its places and the table of the names of the programs | task bar, panel, dock |
 | Menu of the programs | The menu of the bar with one line for each name of the table `bar.names`. A press on a line starts the program | launcher, start menu |
 | Menu of the windows | The menu of the bar with one line for each window. A press on a line brings the window to the front and gives it the focus | task bar, window list, switcher |
 | Launcher | The panel in the middle of the screen that the key super opens. The person types a part of a name, and the list has the names of `bar.names` that contain it, the names that start with it first. Enter starts the chosen program, as the menu of the programs does | run dialog, command palette, menu of the programs |
@@ -328,8 +331,12 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Interface font | The proportional font of the titles, the labels, the buttons, the menus and the bar: B612 (designed, not built; `docs/FONTS.md`, section 12) | UI font, system font (for this), sans |
 | Advance | The distance from the origin of a glyph to the origin of the next one, before any pair adjustment | width (for this), pitch |
 | Pair adjustment | The change of the advance that a font gives for one pair of glyphs that follow each other (`kern` format 0, or a pair lookup of `GPOS`) | kerning pair (for this) |
+| Font feature | A named choice of glyph forms that a font offers in its table `GSUB`, by a tag of four letters: `zero` (the slashed zero), `ss01` (a stylistic set), `numr` (numerators) | OpenType feature (for this), font option |
+| Single substitution | A lookup of the table `GSUB` that puts one glyph in the place of another (lookup type 1): the feature `zero` of Paper Mono puts the glyph 304 in the place of the glyph 294 of the character 0 | glyph swap, alternate |
+| Slashed zero | A zero with a stroke at an angle inside it, so that it does not look like the capital O. The character 0 of the system is the slashed zero of Paper Mono (`docs/FONTS.md`, section 6) | crossed zero, zero with a slash |
 | Text shaping | The step that turns the characters of a text into placed glyphs with a font: here the advances and the pair adjustments only; no ligature, no other script (`docs/FONTS.md`, section 12.3) | layout (for this), typesetting |
 | Placed glyph | A record of 16 bytes that text shaping gives for one character: the glyph, its x from the origin of the run and its advance, in 1/64 of a pixel | positioned glyph, glyph run entry |
+| Ink margin | How far the ink of a text of a proportional font can pass the box that its measure gives, on each side: 2 pixels at scale 1 for B612 (`graphics.PROPORTIONAL_INK_MARGIN`). The damage of a text widens its measured box by it | bleed, overhang (for this) |
 | Subpixel position | The fraction of a pixel where a glyph starts. The glyph cache of a proportional font keeps each glyph at three: 0, 1/3 and 2/3 of a pixel | subpixel offset, bucket |
 | Spacing | The advances of the characters 32 to 126 and the pair adjustments of one font at one scale, in 1/64 of a pixel: the two tables that text shaping reads, from a glyph cache (`support/text_shaping`, `Spacing`) | metrics (for this), kerning data |
 | Text range | A record that names one text in a table of bytes by its first byte and its count, with its width, which the measure writes (`text_shaping.Text_Range`) | span (for this), slice |

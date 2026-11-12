@@ -1,22 +1,23 @@
 // The settings of the person (docs/FONTS.md, "The setting"): one page that
 // the root service creates. The program `settings` is its one writer; each
 // program with a surface or a terminal, and the compositor, map it with the
-// right Read only, at PAGE_ADDRESS. The context value VALUE_PAGE says where
-// it is (0: the program has no page, and its text is Spleen).
+// right Read only, at PAGE_ADDRESS. The bit of the range Settings_Page in
+// the context value op.CONTEXT_VALUE_FIXED_RANGES_MAPPED says that it is
+// mapped (clear: the program has no page, and its text is Spleen).
 //
 // Each setting is one value of the page and one row of `descriptions`: its
 // name and the names of its values. Value 0 of each setting is its default
 // (ZII): an all-zero page is the vector font with the grid fit, red green
 // blue, the pointer theme of the owner when the boot image has it.
 //
-// The page holds the choices only. The three glyph caches of the vector
-// font (with and without the grid fit, and the bold weight at scale 1) are
-// not on the page: the root service maps these resources of the boot image
-// read-only in the same programs, after it checked their hashes, at the
-// fixed addresses of contract:fixed_addresses, and writes their sizes in
-// the context of each program (glyph_cache_place). The program `settings`
-// writes the page, so a field of the page can only change a look: no
-// program reads an address or a size from it.
+// The page holds the choices only. The glyph caches (the three of the font
+// of the cells, the two of the interface font) are not on the page: the
+// root service maps these resources of the boot image read-only in the
+// same programs, after it checked their hashes and their format, at the
+// fixed ranges of contract:fixed_addresses, and sets the bit of each range
+// in the context of each program (glyph_cache_open). The program
+// `settings` writes the page, so a field of the page can only change a
+// look: no program reads an address or a size from it.
 //
 // A change: the writer makes change_count odd, writes the values, makes it
 // even again, and wakes the threads that wait on it (the compositor). The
@@ -33,13 +34,13 @@ package settings
 
 import "base:intrinsics"
 import "contract:fixed_addresses"
+import "contract:glyph_cache"
 import op "contract:operation"
 
 PAGE_ADDRESS :: fixed_addresses.SETTINGS_PAGE_ADDRESS
 GLYPH_CACHE_ADDRESS :: fixed_addresses.GLYPH_CACHE_ADDRESS
 GLYPH_CACHE_WITHOUT_GRID_FIT_ADDRESS :: fixed_addresses.GLYPH_CACHE_WITHOUT_GRID_FIT_ADDRESS
 GLYPH_CACHE_BOLD_ADDRESS :: fixed_addresses.GLYPH_CACHE_BOLD_ADDRESS
-VALUE_PAGE :: 13 // The value of the context with the address of the page. The system fixes it for each program (contract:operation, Context).
 GRANT_PAGE :: 12 // The handle of the context of the program `settings`: the page, with Read and Write.
 VALUE_BOOT_PASS :: op.CONTEXT_VALUE_SETTINGS_BOOT_PASS // The program `settings`: 1 for the pass at boot (read the kept record, write the page, stop).
 KEPT_OBJECT_NAME :: "settings" // The object of the private store of `settings` that holds Kept_Settings.
@@ -101,39 +102,40 @@ Page :: struct {
 }
 #assert(size_of(Page) <= 4096)
 
-// The three glyph caches that a program with a surface or a terminal can
-// receive.
+// The glyph caches that a program with a surface or a terminal can
+// receive: the three of the font of the cells, and the two of the
+// interface font (docs/FONTS.md, section 12).
 Glyph_Cache :: enum u8 {
 	With_Grid_Fit,
 	Without_Grid_Fit,
 	Bold, // Scale 1 only: the titles of the cards. Absent: the titles are the regular weight.
+	Interface, // B612 Regular: three positions at scale 1, one at the scales 2 and 3.
+	Interface_Bold, // B612 Bold: scale 1 only, three positions.
 }
 
-Glyph_Cache_Place :: struct {
-	address:    u64, // A fixed range (contract:fixed_addresses).
-	span:       u64, // The most bytes that the range holds.
-	size_value: int, // The value of the context with its size.
+// The fixed range of each glyph cache.
+glyph_cache_ranges := [Glyph_Cache]fixed_addresses.Fixed_Range {
+	.With_Grid_Fit    = .Glyph_Cache,
+	.Without_Grid_Fit = .Glyph_Cache_Without_Grid_Fit,
+	.Bold             = .Glyph_Cache_Bold,
+	.Interface        = .Interface_Glyph_Cache,
+	.Interface_Bold   = .Interface_Glyph_Cache_Bold,
 }
 
-glyph_cache_places := [Glyph_Cache]Glyph_Cache_Place {
-	.With_Grid_Fit    = {GLYPH_CACHE_ADDRESS, fixed_addresses.RANGE_SPAN, op.CONTEXT_VALUE_GLYPH_CACHE_SIZE},
-	.Without_Grid_Fit = {GLYPH_CACHE_WITHOUT_GRID_FIT_ADDRESS, fixed_addresses.RANGE_SPAN, op.CONTEXT_VALUE_GLYPH_CACHE_WITHOUT_GRID_FIT_SIZE},
-	.Bold             = {GLYPH_CACHE_BOLD_ADDRESS, fixed_addresses.RANGE_SPAN, op.CONTEXT_VALUE_GLYPH_CACHE_BOLD_SIZE},
-}
-
-// glyph_cache_place gives where a glyph cache is in this program: the
-// address of its fixed range, and the size that the root service wrote in
-// the context at the start, bounded by the span of the range. size 0: the
-// program has no such cache. The bytes there are pages of the boot image,
-// mapped read-only, that no program can write (docs/FONTS.md, section 5,
-// "Who can write a cache").
-glyph_cache_place :: proc "contextless" (values: ^[op.CONTEXT_VALUES]u64, cache: Glyph_Cache) -> (address: u64, size: u64) {
-	place := glyph_cache_places[cache]
-	size = values[place.size_value]
-	if size > place.span {
-		return place.address, 0
+// glyph_cache_open validates a glyph cache of this program at its fixed
+// range. With the bit of the range clear in the context (the starter did
+// not map it), nothing is read and the problem is Not_Mapped. Else the
+// size comes from the header of the cache, bounded by the span of the
+// range (glyph_cache.validate_at). The bytes there are pages of the boot
+// image, mapped read-only, that no program can write (docs/FONTS.md,
+// section 5, "Who can write a cache").
+glyph_cache_open :: proc "contextless" (values: ^[op.CONTEXT_VALUES]u64, cache: Glyph_Cache) -> (glyph_cache.Cache, glyph_cache.Problem) {
+	range := glyph_cache_ranges[cache]
+	if range not_in fixed_addresses.ranges_mapped(values) {
+		return {}, {kind = .Not_Mapped, index = u32(range)}
 	}
-	return place.address, size
+	place := fixed_addresses.range_of(range)
+	return glyph_cache.validate_at(uintptr(place.address), place.span)
 }
 
 // Choice: the values of a page, as one copy.
@@ -162,6 +164,20 @@ grid_fit_of :: #force_inline proc "contextless" (choice: Choice) -> Grid_Fit {
 // not have (a page or a record of a later version).
 valid :: proc "contextless" (setting: Setting, value: u32) -> u32 {
 	return value < descriptions[setting].value_count ? value : 0
+}
+
+// values_differ tells whether two choices have different values. The count
+// of changes is not compared: the program `settings` can change the count
+// with no end and leave the values as they were, and a reader that acts on
+// each new count then does work for nothing (the compositor tells every
+// window, and a window ring that is full loses the keys of the person).
+values_differ :: proc "contextless" (first, second: Choice) -> bool {
+	for setting in Setting {
+		if first.values[setting] != second.values[setting] {
+			return true
+		}
+	}
+	return false
 }
 
 // READ_TRIES: the most reads of a page that changes, or that its writer

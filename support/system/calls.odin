@@ -43,6 +43,12 @@ Call_Status :: enum u32 {
 	Wrong_Answer = 6, // The other program gave a count of a table that is smaller than the count on entry. The error record names the parameter.
 	Failed       = 7, // The export failed: its integer result is negative, and the error record is filled.
 	Not_Done     = 8, // call_direct does not do this description: a result that is not an Integer, a record of a table that is not valid. The error record says which.
+	// The export failed, and the error record is its own; but its table of
+	// error details came back wrong (a count smaller than on entry, or a
+	// table outside the call region): the table of the caller keeps its
+	// count from before the call. The reason of the failure stays in the
+	// record; the status says that the details are missing.
+	Failed_With_Wrong_Details = 9,
 }
 
 // call_direct calls an export of a module that is in this program, with
@@ -196,13 +202,12 @@ call_isolated :: proc "contextless" (connection: ^Call_Connection, file: []u8, e
 					intrinsics.mem_copy_non_overlapping(error, raw_data(connection.region[error_place.start:]), size_of(errors.Error_Record))
 				}
 				// The error details come back with the error record: one
-				// answer. A wrong count of the callee keeps the count of the
-				// caller, and the record says it.
-				if problem, parameter := isolated.error_details_return(file, function, arguments, connection.region, offset); problem != .None {
-					if error != nil {
-						error^ = errors.error_make(.Bad_Value, .Records, i64(parameter), i64(problem))
-					}
-					return result, .Wrong_Answer
+				// answer. A wrong table of details keeps the count of the
+				// caller and the record of the export: the record says why
+				// the export failed, the status says that the details did
+				// not come.
+				if problem, _ := isolated.error_details_return(file, function, arguments, connection.region, offset); problem != .None {
+					return result, .Failed_With_Wrong_Details
 				}
 				return result, .Failed
 			}

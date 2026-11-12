@@ -1,5 +1,6 @@
 package root
 
+import "contract:fixed_addresses"
 import "contract:glyph_cache"
 import "contract:settings"
 import op "contract:operation"
@@ -7,8 +8,8 @@ import "support:graphics"
 import "support:system"
 
 // The text of the system and the settings of the person (docs/FONTS.md):
-// this service creates the settings page, checks the hashes of the two
-// glyph caches of the boot image once, draws the boot display with the
+// this service creates the settings page, checks the hashes and the format
+// of the glyph caches of the boot image once, draws the boot display with the
 // default one, and maps the page and the caches read-only into each
 // program with a surface, into each terminal and into the compositor. The
 // program `settings` receives the page with Write.
@@ -19,21 +20,29 @@ import "support:system"
 // settings kept in its private store and writes the page; the compositor
 // sees the change and each window draws again.
 
-GLYPH_CACHE_RESOURCE :: "glyph_cache"
-GLYPH_CACHE_WITHOUT_GRID_FIT_RESOURCE :: "glyph_cache_no_grid_fit"
-GLYPH_CACHE_BOLD_RESOURCE :: "glyph_cache_bold"
+// The resource of the boot image of each glyph cache.
+glyph_cache_resources := [settings.Glyph_Cache]string {
+	.With_Grid_Fit    = "glyph_cache",
+	.Without_Grid_Fit = "glyph_cache_no_grid_fit",
+	.Bold             = "glyph_cache_bold",
+	.Interface        = "interface_glyph_cache",
+	.Interface_Bold   = "interface_glyph_cache_bold",
+}
 
 settings_memory: system.Handle
 settings_page: ^settings.Page
 glyph_cache_mappings: [settings.Glyph_Cache]system.Mapping // page_count 0: no such glyph cache.
-glyph_cache_sizes: [settings.Glyph_Cache]u64 // In bytes; written in the context of each program that receives the mapping.
 // The boot pass of `settings` is the next start of that name: start() gives
 // it the value VALUE_BOOT_PASS.
 settings_boot_pass: bool
 
 // text_settings_create makes the settings page and finds the glyph caches.
-// With no cache, or a cache whose hash is wrong, each program draws with
-// Spleen 8x16, and the log says why.
+// Each cache is given only when its hash is right (resource_mapping) and
+// its format is valid: a resource shorter than the header of a cache, or
+// whose header states another size than the resource, is not given, so a
+// program that reads the size in the header reads only mapped bytes. With
+// no cache of the text of cells, each program draws with Spleen 8x16, and
+// the log says why.
 text_settings_create :: proc "contextless" () {
 	status: system.Status
 	settings_memory, status = system.memory_create(1)
@@ -45,56 +54,56 @@ text_settings_create :: proc "contextless" () {
 		fail("cannot create the settings page", status)
 	}
 	settings_page = (^settings.Page)(address)
-	if mapping, size, given := resource_mapping(GLYPH_CACHE_WITHOUT_GRID_FIT_RESOURCE, settings.GLYPH_CACHE_WITHOUT_GRID_FIT_ADDRESS, "each program with a surface"); given {
-		glyph_cache_mappings[.Without_Grid_Fit] = mapping
-		glyph_cache_sizes[.Without_Grid_Fit] = size
+	caches: [settings.Glyph_Cache]glyph_cache.Cache
+	for name, cache in glyph_cache_resources {
+		place := fixed_addresses.range_of(settings.glyph_cache_ranges[cache])
+		mapping, _, given := resource_mapping(name, place.address, "each program with a surface")
+		if !given {
+			continue
+		}
+		entry := system.image_resource_find(image, name)
+		problem: glyph_cache.Problem
+		caches[cache], problem = glyph_cache.validate(image[entry.offset:][:entry.size])
+		if problem.kind != .None {
+			system.log_in("programs", .Warning, "root: the glyph cache ", name, " is refused: ", glyph_cache.problem_sentences[problem.kind], ", value ", problem.value, ": it is not given")
+			continue
+		}
+		glyph_cache_mappings[cache] = mapping
 	}
-	if mapping, size, given := resource_mapping(GLYPH_CACHE_BOLD_RESOURCE, settings.GLYPH_CACHE_BOLD_ADDRESS, "each program with a surface"); given {
-		glyph_cache_mappings[.Bold] = mapping
-		glyph_cache_sizes[.Bold] = size
-	}
-	mapping, size, given := resource_mapping(GLYPH_CACHE_RESOURCE, settings.GLYPH_CACHE_ADDRESS, "each program with a surface")
-	if !given {
+	if glyph_cache_mappings[.With_Grid_Fit].page_count == 0 {
 		system.log_in("programs", .Warning, "root: the boot image has no valid glyph cache: the text of the system is Spleen 8x16")
 		return
 	}
-	glyph_cache_mappings[.With_Grid_Fit] = mapping
-	glyph_cache_sizes[.With_Grid_Fit] = size
-	entry := system.image_resource_find(image, GLYPH_CACHE_RESOURCE)
-	// The boot display: the cache in the image that this service maps. The
-	// line of resource_mapping says that the hash is right; a refusal of the
-	// format has a line of its own.
-	if problem := graphics.text_cache_set(image[entry.offset:][:entry.size]); problem.kind != .None {
-		system.log_in("programs", .Warning, "root: the glyph cache is refused: problem ", u64(problem.kind), ", value ", problem.value, ": the boot display is Spleen 8x16")
+	// The boot display: the caches in the image that this service maps.
+	if problem := graphics.text_cache_use(caches[.With_Grid_Fit]); problem.kind != .None {
+		system.log_in("programs", .Warning, "root: the glyph cache is refused: ", glyph_cache.problem_sentences[problem.kind], ": the boot display is Spleen 8x16")
 	}
-	if bold := system.image_resource_find(image, GLYPH_CACHE_BOLD_RESOURCE); bold != nil && glyph_cache_mappings[.Bold].page_count != 0 {
-		if cache, problem := glyph_cache.validate(image[bold.offset:][:bold.size]); problem.kind == .None {
-			graphics.text_bold_cache_use(cache)
-		}
+	if glyph_cache_mappings[.Bold].page_count != 0 {
+		graphics.text_bold_cache_use(caches[.Bold])
 	}
 }
 
 // text_settings_give adds the settings page and the glyph caches,
 // read-only, to the mappings of a program that has a surface or a terminal,
-// and the address of the page and the size of each cache to its values. A
-// cache mapping has no flag: the right Read only, for every program, the
-// program `settings` included. The pages come from the boot image, whose
-// one handle (of this service) has no right Write.
+// and sets the bit of each range in its values. A cache mapping has no
+// flag: the right Read only, for every program, the program `settings`
+// included. The pages come from the boot image, whose one handle (of this
+// service) has no right Write.
 text_settings_give :: proc "contextless" (mappings: []system.Mapping, count: ^int, values: ^[op.CONTEXT_VALUES]u64) {
 	if settings_page == nil || count^ + 1 + len(glyph_cache_mappings) > len(mappings) {
 		return
 	}
 	mappings[count^] = {memory = settings_memory, address = settings.PAGE_ADDRESS, first = 0, page_count = 1}
 	count^ += 1
+	fixed_addresses.range_mapped_add(values, .Settings_Page)
 	for mapping, cache in glyph_cache_mappings {
 		if mapping.page_count != 0 {
 			mappings[count^] = mapping
 			mappings[count^].flags = {}
 			count^ += 1
-			values[settings.glyph_cache_places[cache].size_value] = glyph_cache_sizes[cache]
+			fixed_addresses.range_mapped_add(values, settings.glyph_cache_ranges[cache])
 		}
 	}
-	values[settings.VALUE_PAGE] = settings.PAGE_ADDRESS
 }
 
 // settings_boot_pass_start starts `settings` for its boot pass: it reads

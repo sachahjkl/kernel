@@ -5,6 +5,7 @@ import "contract:glyph_cache"
 import "core:fmt"
 import "core:testing"
 import "core:time"
+import "support:text_shaping"
 import "support:vector_font"
 
 // The SSE2 forms of the blends against their scalar forms (docs/SIMD.md):
@@ -584,4 +585,71 @@ text_speed_of_each_blend :: proc(t: ^testing.T) {
 		scalar := least_of(canvas, background, data, false)
 		fmt.printfln("graphics: one glyph of paper_mono at scale 1 over %v: the table blend %.1f ns, the SSE2 form %.1f ns, the scalar form %.1f ns", background, with_tables, sse2, scalar)
 	}
+}
+
+// The text of a proportional font, drawn with text_proportional_with (the
+// table blend, with the form of the target as its fallback), gives the
+// bytes of the same placed glyphs drawn with the SSE2 form alone and with
+// the scalar form alone, each glyph at the position that position_of
+// gives. The texts have pairs and glyphs that overlap; three places, a
+// fraction of a pixel apart; each order of the stripes; the four
+// backgrounds.
+@(test)
+proportional_text_gives_the_same_bytes_in_each_blend :: proc(t: ^testing.T) {
+	caches := test_caches_build(t)
+	defer for item in caches {
+		delete(item.words)
+	}
+	cache := &caches[2].cache // B612
+	spacing, spacing_ok := text_shaping.spacing_of(cache, 1)
+	testing.expect(t, spacing_ok)
+	table: [4096]u8
+	square_root_table_fill(&table)
+	tables := new(Blend_Tables)
+	defer free(tables)
+	WIDTH :: 640
+	HEIGHT :: 48
+	drawn: [3][]Color
+	for &pixels in drawn {
+		pixels = make([]Color, WIDTH * HEIGHT)
+	}
+	defer for pixels in drawn {
+		delete(pixels)
+	}
+	canvases: [3]Canvas
+	for pixels, index in drawn {
+		canvases[index] = {pixels = raw_data(pixels), width = WIDTH, height = HEIGHT, stride = WIDTH}
+	}
+	texts := [?]string{"To LT Ty AVATAR Wave", "The quick brown fox jumps over the lazy dog.", "0123456789 {fill} [rings] gi Rb 0O 1lI"}
+	places := [3]i64{8 * 64, 8 * 64 + 21, 8 * 64 + 43}
+	differences: [2]int
+	for sample_text in texts {
+		placed: [64]text_shaping.Placed_Glyph
+		count, _, _ := text_shaping.shape(&spacing, transmute([]u8)sample_text, placed[:])
+		for place in places {
+			for background in Speed_Background {
+				for order in Subpixel_Order {
+					for canvas in canvases {
+						background_fill(canvas, background)
+					}
+					for glyph in placed[:count] {
+						pixel, position := glyph_cache.position_of(place + i64(glyph.x), int(cache.sizes[0].position_count))
+						value := u8(32 + glyph.glyph)
+						glyph_in_form(.Scalar, cache, &table, order, canvases[0], int(pixel), 8, value, COLOR_TEXT, 1, position)
+						glyph_in_form(.Sse2, cache, &table, order, canvases[1], int(pixel), 8, value, COLOR_TEXT, 1, position)
+					}
+					text_proportional_with(cache, &table, tables, order, canvases[2], place, 8, placed[:count], 1, COLOR_TEXT)
+					for pixel, index in drawn[0] {
+						if drawn[2][index] != pixel {
+							differences[0] += 1
+						}
+						if drawn[1][index] != pixel {
+							differences[1] += 1
+						}
+					}
+				}
+			}
+		}
+	}
+	testing.expectf(t, differences == [2]int{}, "the text of B612: the table blend differs from the scalar form in %v pixels, the SSE2 form in %v", differences[0], differences[1])
 }

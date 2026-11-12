@@ -14,10 +14,15 @@
 // address written another way is not a fixed range. So two ranges cannot
 // overlap, and the compiler checks that the band holds every member.
 //
+// An address of the band has no other source than this table. No other
+// file computes an address from BAND_START or SLOT: `kerneltool check`
+// refuses a file of contract, support, programs or modules outside this
+// folder that names them (tools/kerneltool/fixed_addresses_check.odin).
+//
 // A mapping that a program places by its own choice goes outside the
 // band, at OWN_CHOICE_START or after. The modules that a program loads
-// stay below BAND_START: support/system (load.odin) refuses a module that
-// passes it.
+// end at MODULES_END or before: support/system (load.odin) refuses a
+// module that passes it.
 package fixed_addresses
 
 import op "contract:operation"
@@ -29,9 +34,15 @@ SLOT_COUNT :: 16
 BAND_END :: BAND_START + SLOT_COUNT * SLOT
 // The first address of a mapping that a program places by its own choice.
 OWN_CHOICE_START :: BAND_END
+// The end of the addresses where a program loads its modules, from
+// op.MODULE_BASE: the band starts there.
+MODULES_END :: BAND_START
 // The span of each range: one slot.
 RANGE_SPAN :: SLOT
 
+// The table of the fixed ranges: a new range is a new member, and its
+// address is its slot. A constant written by hand in the band, with no
+// member, is not a fixed range, and the check of the tool refuses it.
 Fixed_Range :: enum u8 {
 	Module_Files, // The files of a module and of its imports, in the program that runs the module (contract:isolated).
 	Pointer_Themes, // The pointer themes of the compositor, one after the other (programs/root).
@@ -42,8 +53,27 @@ Fixed_Range :: enum u8 {
 	Date_Page, // The date page (contract:date).
 	Storage_File, // The file of the storage service (support/storage).
 	Module_Tables, // The tables of the parameters of one export, in the program that receives the call (contract:isolated).
+	Interface_Glyph_Cache, // The glyph cache of the interface font, regular weight (contract:settings).
+	Interface_Glyph_Cache_Bold, // The glyph cache of the interface font, bold weight.
 }
 #assert(int(max(Fixed_Range)) < SLOT_COUNT)
+
+// Fixed_Ranges: a set of ranges, one bit for each member. The value
+// op.CONTEXT_VALUE_FIXED_RANGES_MAPPED of the context of a program is the
+// set that its starter mapped. A bit past the last member has no meaning.
+Fixed_Ranges :: bit_set[Fixed_Range;u64]
+#assert(size_of(Fixed_Ranges) == size_of(u64))
+
+// ranges_mapped gives the ranges that the starter of a program mapped for it.
+ranges_mapped :: proc "contextless" (values: ^[op.CONTEXT_VALUES]u64) -> Fixed_Ranges {
+	return transmute(Fixed_Ranges)values[op.CONTEXT_VALUE_FIXED_RANGES_MAPPED]
+}
+
+// range_mapped_add is for a starter: it states in the values of its child
+// that it maps a range.
+range_mapped_add :: proc "contextless" (values: ^[op.CONTEXT_VALUES]u64, range: Fixed_Range) {
+	values[op.CONTEXT_VALUE_FIXED_RANGES_MAPPED] = transmute(u64)(ranges_mapped(values) + {range})
+}
 
 // The band is after the addresses that the kernel chooses and the modules,
 // and inside the addresses of a program.
@@ -59,6 +89,8 @@ GLYPH_CACHE_BOLD_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Glyph_Cache_Bold
 DATE_PAGE_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Date_Page)
 STORAGE_FILE_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Storage_File)
 MODULE_TABLES_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Module_Tables)
+INTERFACE_GLYPH_CACHE_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Interface_Glyph_Cache)
+INTERFACE_GLYPH_CACHE_BOLD_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Interface_Glyph_Cache_Bold)
 
 Address_Range :: struct {
 	address: u64,

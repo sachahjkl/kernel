@@ -817,7 +817,7 @@ scenario := [?]Step {
 	// with the rights of the description, for the time of the call.
 	{kind = .Type, text = "clear()"},
 	{kind = .Type, text = "isolate(\"sample\")"},
-	{kind = .Wait, text = "[console] sample: 10 commands in a sandboxed program"},
+	{kind = .Wait, text = "[console] sample: 11 commands in a sandboxed program"},
 	// The exports that are wrong on purpose are in a module of their own,
 	// which no service holds.
 	{kind = .Type, text = "isolate(\"hostile_exports\")"},
@@ -881,19 +881,19 @@ scenario := [?]Step {
 	// The same descriptions serve a direct call. The module is then in the
 	// console: it has the handles of the console, and kept gives 0.
 	{kind = .Type, text = "unload(\"sample\")"},
-	{kind = .Wait, text = "[console] sample: 10 commands removed, its sandboxed program stops"},
+	{kind = .Wait, text = "[console] sample: 11 commands removed, its sandboxed program stops"},
 	{kind = .Type, text = "unload(\"hostile_exports\")"},
 	{kind = .Wait, text = "[console] hostile_exports: 4 commands removed"},
 	{kind = .Type, text = "clear()"},
 	{kind = .Type, text = "load(\"sample\")"},
-	{kind = .Wait, text = "[console] sample: 10 commands, hash"},
+	{kind = .Wait, text = "[console] sample: 11 commands, hash"},
 	{kind = .Type, text = "load(\"hostile_exports\")"},
 	{kind = .Wait, text = "[console] hostile_exports: 4 commands, hash"},
 	{kind = .Type, text = "g = grow(r, 5)"},
 	{kind = .Type, text = "g.width * g.height + keep(b) + kept()"},
 	{kind = .Wait, text = "[console] 12848"},
 	{kind = .Type, text = "unload(\"sample\")"},
-	{kind = .Wait, text = "[console] sample: 10 commands removed, the module left the memory of the console"},
+	{kind = .Wait, text = "[console] sample: 11 commands removed, the module left the memory of the console"},
 	{kind = .Type, text = "unload(\"hostile_exports\")"},
 	{kind = .Wait, text = "[console] hostile_exports: 4 commands removed, the module left the memory of the console"},
 	{kind = .Type, text = "release(b)"},
@@ -1407,7 +1407,7 @@ scenario := [?]Step {
 	// (After the check of the log: these lines do not push the boot
 	// records out of the log.)
 	{kind = .Type, text = "load(\"sample\")"},
-	{kind = .Wait, text = "[console] sample: 10 commands, hash"},
+	{kind = .Wait, text = "[console] sample: 11 commands, hash"},
 	// A table goes into a direct call: the export reads and changes the
 	// memory of the variable, with no copy. A table from where() goes in;
 	// a table from columns() has another record, and the console refuses it.
@@ -1424,17 +1424,26 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[console] error: sum_values: argument 1 is Table(Reading, Read), not Table(Reading)"},
 	{kind = .Shot, text = "table_argument"},
 	{kind = .Type, text = "unload(\"sample\")"},
-	{kind = .Wait, text = "[console] sample: 10 commands removed, the module left the memory of the console"},
+	{kind = .Wait, text = "[console] sample: 11 commands removed, the module left the memory of the console"},
 	// A table goes into an isolated call: the rows go into the call
 	// region, and the rows of a Change table come back.
 	{kind = .Type, text = "isolate(\"sample\")"},
-	{kind = .Wait, text = "[console] sample: 10 commands in a sandboxed program"},
+	{kind = .Wait, text = "[console] sample: 11 commands in a sandboxed program"},
 	{kind = .Type, text = "t = readings(4)"},
 	{kind = .Type, text = "scale_values(t, 3)"},
 	{kind = .Type, text = "sum_values(t)"},
 	{kind = .Wait, text = "[console] 300"},
+	// An export that fails after it changed rows of a Change table: only
+	// its error record and its table of error details come back, so the
+	// variable keeps its rows. scale_values_up_to changes the readings 1
+	// and 2 (30 and 60, by 3, stay under 200), then refuses the reading 3
+	// (90 by 3 is 270): with the changes, the sum would be 480.
+	{kind = .Type, text = "scale_values_up_to(t, 3, 200)"},
+	{kind = .Wait, text = "[console] error: scale_values_up_to: the argument factor has the value 3, which the call refuses; it takes at most 2 (-1)"},
+	{kind = .Type, text = "sum_values(t)"},
+	{kind = .Wait, text = "[console] 300"},
 	{kind = .Type, text = "unload(\"sample\")"},
-	{kind = .Wait, text = "[console] sample: 10 commands removed, its sandboxed program stops"},
+	{kind = .Wait, text = "[console] sample: 11 commands removed, its sandboxed program stops"},
 	// The signature of an export with a table and bytes: one form in the
 	// manual, the console and the errors.
 	{kind = .Type, text = "start(\"manual\")"},
@@ -1711,6 +1720,14 @@ scenario := [?]Step {
 	{kind = .Shot, text = "font_candidates"},
 	{kind = .Close, text = "vector_glyphs"},
 	{kind = .Wait, text = "root: vector_glyphs stopped"},
+	// The interface font (docs/FONTS.md, section 12): B612 placed by
+	// support/text_shaping and drawn by graphics.text_proportional.
+	{kind = .Launch, text = "interface_font"},
+	{kind = .Wait, text = "interface_font: one line of "},
+	{kind = .Wait, text = "interface_font: ok, "},
+	{kind = .Shot, text = "interface_font"},
+	{kind = .Close, text = "interface_font"},
+	{kind = .Wait, text = "root: interface_font stopped"},
 	// The pointer pictures (docs/POINTERS.md): the shape that the compositor
 	// chooses for what is under the pointer, and the shape that a program
 	// asks for over its own surface. The window of pointers shows each
@@ -1863,6 +1880,13 @@ scenario := [?]Step {
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "> length(\"first search line\")"},
 	{kind = .Wait, text = "[console] 17"},
+	// The time of one key with the list open, for the names of this console
+	// and for the worst case of 512 names of 128 bytes.
+	{kind = .Type, text = "measure_completion()"},
+	{kind = .Wait, text = "console: one key with the completion list: the collect "},
+	{kind = .Wait, text = " names (the names of this console, the least of 20 batches of 10)"},
+	{kind = .Wait, text = "console: one key with the completion list: the collect "},
+	{kind = .Wait, text = " over 512 names (512 names of 128 bytes, the least of 20 batches of 10)"},
 	// Each page is free or paid, after all the starts and stops of this test.
 	{kind = .Type, text = "memory()"},
 	{kind = .Wait, text = " pages: all the free pages"},
@@ -1887,6 +1911,10 @@ scenario_measure := [?]Step {
 	{kind = .Wait, text = "locks: ok, the kernel counted each entry, each page returned, no wake was lost, each stopped program returned its pages, its slot and its threads"},
 	{kind = .Shot, text = "locks_alone"},
 	{kind = .Front, text = "console"},
+	// One key of the completion list of the console, with no other load.
+	{kind = .Type, text = "measure_completion()"},
+	{kind = .Wait, text = " names (the names of this console, the least of 20 batches of 10)"},
+	{kind = .Wait, text = " over 512 names (512 names of 128 bytes, the least of 20 batches of 10)"},
 	{kind = .Type, text = "shutdown()"},
 	{kind = .Wait, text = "kernel: the machine stops with code 0"},
 }

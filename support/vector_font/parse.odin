@@ -17,6 +17,7 @@ Font_Problem :: enum u8 {
 	Too_Many_Points, // The glyph has more points or contours than the memory of the caller.
 	No_Glyph, // The character has no glyph.
 	No_Face, // A collection of fonts has no face of this number.
+	No_Feature, // The table GSUB has no single substitution of this feature for this glyph.
 }
 
 font_problem_names := [Font_Problem]string {
@@ -28,6 +29,7 @@ font_problem_names := [Font_Problem]string {
 	.Too_Many_Points    = "a glyph has more points or contours than the memory of the caller",
 	.No_Glyph           = "the character has no glyph",
 	.No_Face            = "the collection of fonts has no face of this number",
+	.No_Feature         = "the font has no single substitution of this feature for this glyph",
 }
 
 // The tables of a font file, as offsets in the file.
@@ -43,6 +45,7 @@ Font_File :: struct {
 	character_map:       Table, // The cmap subtable of format 4.
 	name, os2, post:     Table, // Read by the tool only.
 	kern:                Table, // The pair adjustments; absent in many fonts (spacing.odin).
+	gsub:                Table, // The substitutions of glyphs; read by the tool only (substitution.odin).
 }
 
 Table :: struct {
@@ -155,6 +158,8 @@ font_open :: proc "contextless" (bytes: []u8, directory: int = 0) -> (font: Font
 			font.post = table
 		case "kern":
 			font.kern = table
+		case "GSUB":
+			font.gsub = table
 		}
 	}
 	for table in ([?]Table{font.head, font.hhea, font.maxp, font.hmtx, font.loca, font.glyf, font.character_map}) {
