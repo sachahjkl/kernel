@@ -1,99 +1,99 @@
 measure record 1
-time 2026-11-12 17:36 UTC
+time 2026-11-12 18:59 UTC
 release 0.91.0
-commit f2f6deb4ae9f0952f4a61c28e619b093f5bde32a
+commit f82daedbf49b8c4adc34f1dda00c8574eac874ea
 tree clean
 host AMD Ryzen 7 5800X 8-Core Processor, 16 logical processors; QEMU with KVM
-checks 1169
+checks 1205
 number Kernel entries in one second, with 1, 2 and 4 programs that each take the locks of their own objects
 log build/test_output.txt
-line 575
+line 585
 matching 1
 machine The main machine of `kerneltool test`, while the other programs of the test run
-text [locks] locks: kernel entries in one second, each locker on its own objects: 1 locker 6835626, 2 lockers 11712213, 4 lockers 20451626
+text [locks] locks: kernel entries in one second, each locker on its own objects: 1 locker 6423253, 2 lockers 9050666, 4 lockers 14798293
 number Reads of the time in one second from the time page, with no kernel entry
 log build/test_output.txt
-line 561
+line 571
 matching 1
 machine The main machine of `kerneltool test`, while the other programs of the test run
-text [clock] clock: the time page: 1302624280 reads in one second, 0 kernel entries for one million reads
+text [clock] clock: the time page: 2197175058 reads in one second, 0 kernel entries for one million reads
 number Wakes in one second of two threads that wake each other on a busy machine, under the strategy EEVDF
 log build/test_output.txt
-line 594
+line 604
 matching 1
 machine The main machine of `kerneltool test`, while the other programs of the test run
-text [scheduler] scheduler: EEVDF: two threads that wake each other, a spinner on each processor: 290879 wakes in one second (116376 turns ended on the processor of the waker, 192 by an interrupt, 637 moves); a thread that sleeps 2 ms among 8 spinners: late by 584 us in the middle, 4030 us at worst; 8 spinners of one weight: shares 11.3 % to 13.3 %, work 9871 million in one second; 12 spinners, weights 1 2 4: a spinner of each weight 4.6 %, 7.9 %, 12.3 %; 138803 turns ended by a wake, 2033 moves, one pick 87 ns, one preemption by an interrupt 2449 ns in the kernel
+text [scheduler] scheduler: EEVDF: two threads that wake each other, a spinner on each processor: 161230 wakes in one second (64424 turns ended on the processor of the waker, 128 by an interrupt, 545 moves); a thread that sleeps 2 ms among 8 spinners: late by 932 us in the middle, 6868 us at worst; 8 spinners of one weight: shares 11.4 % to 14.3 %, work 3836 million in one second; 12 spinners, weights 1 2 4: a spinner of each weight 4.6 %, 8.2 %, 12.0 %; 73201 turns ended by a wake, 2295 moves, one pick 167 ns, one preemption by an interrupt 7228 ns in the kernel
 number One glyph of the vector font, from its outline and from the glyph cache
 log build/test_output.txt
-line 1445
+line 1455
 matching 1
 machine The main machine of `kerneltool test`, while the other programs of the test run
-text [vector_glyphs] vector_glyphs: one glyph from its outline, in fixed point, with the stripes (the least of batches): scale 1 3156 ns, scale 2 8482 ns, scale 3 16539 ns; from the glyph cache: 203 ns; Spleen 8x16: 27 ns
+text [vector_glyphs] vector_glyphs: one glyph from its outline, in fixed point, with the stripes (the least of batches): scale 1 3018 ns, scale 2 8268 ns, scale 3 16054 ns; from the glyph cache: 197 ns; Spleen 8x16: 27 ns
 number A full frame of the compositor
 log build/test_output.txt
-line 1525
+line 1535
 matching 24
 machine The main machine of `kerneltool test`, while the other programs of the test run
-text [compositor:surfaces] compositor: a full frame of 1024x768 with 17 windows in 2309 us
+text [compositor:surfaces] compositor: a full frame of 1024x768 with 17 windows in 1266 us
 number Blocks read in one second from a virtio disk, through the block service in user space
 log build/test_output.txt
-line 1267
+line 1277
 matching 1
 machine The main machine of `kerneltool test`, while the other programs of the test run
-text [disk] disk: read, 1 block in each request, 32 in flight: 161124 blocks in one second, kernel entries for 100 requests: 10 of this program, 16 of the block service, 0 errors
+text [disk] disk: read, 1 block in each request, 32 in flight: 346348 blocks in one second, kernel entries for 100 requests: 12 of this program, 18 of the block service, 0 errors
 number 1000 commits of a program to its private store, one commit for each step
 log build/test_output_persist_1.txt
-line 80
+line 90
 matching 1
 machine The first machine of the test of persistence of `kerneltool test`, on a new data disk
-text [notes] notes: count 1000, stopped: 1000 commits in 4287 ms
+text [notes] notes: count 1000, stopped: 1000 commits in 3616 ms
 number The headers and the checksum of one UDP datagram, in the network service
 log build/test_output_network.txt
-line 73
+line 83
 matching 1
 machine The network machine of `kerneltool test`: the remote is the peer of the tool, on the loopback of the host
-text [network] network: the headers and the checksum of a datagram of 1472 bytes: 1000 ns, in this program (no offload)
+text [network] network: the headers and the checksum of a datagram of 1472 bytes: 1100 ns, in this program (no offload)
 number The round trip of one UDP datagram
 log build/test_output_network.txt
-line 97
+line 107
 matching 1
 machine The network machine of `kerneltool test`: the remote is the peer of the tool, on the loopback of the host
-text [net] net: the round trip of one datagram of 64 bytes: 118 us at least, 197 us in the middle, over 1000
+text [net] net: the round trip of one datagram of 64 bytes: 54 us at least, 71 us in the middle, over 1000
 number UDP datagrams in one second, with 64 in flight
 log build/test_output_network.txt
-line 99
+line 109
 matching 1
 machine The network machine of `kerneltool test`: the remote is the peer of the tool, on the loopback of the host
-text [net] net: a burst with 64 datagrams in flight: 51695 datagrams in one second, sent and answered, 0 lost
+text [net] net: a burst with 64 datagrams in flight: 90481 datagrams in one second, sent and answered, 0 lost
 number TCP: 1 MiB that the program `fetch` receives from a server of the host
 log build/test_output_tcp_real.txt
-line 101
+line 111
 matching 1
 machine The machine of `kerneltool test` with QEMU user networking: the remote is the TCP of the host, through libslirp
-text [fetch] fetch: GET /large: 1048576 bytes, fnv1a64 e7867887f2822325 as expected, 49.6 MB/s
+text [fetch] fetch: GET /large: 1048576 bytes, fnv1a64 e7867887f2822325 as expected, 87.1 MB/s
 number TCP: 1 MiB that the program `fetch` sends to a server of the host
 log build/test_output_tcp_real.txt
-line 102
+line 112
 matching 1
 machine The machine of `kerneltool test` with QEMU user networking: the remote is the TCP of the host, through libslirp
-text [fetch] fetch: POST /sink, 1 MiB: the remote got the same hash, 16.6 MB/s
+text [fetch] fetch: POST /sink, 1 MiB: the remote got the same hash, 19.8 MB/s
 number ChaCha20-Poly1305: the seal of one QUIC datagram of 1200 bytes, through the module `cryptography`
 log build/test_output_cryptography.txt
-line 81
+line 91
 matching 1
 machine The machine of `kerneltool test crypto`
-text [cryptography_vectors] cryptography_vectors: seal ChaCha20-Poly1305: 4307 ns for 1200 bytes, 278 MB/s
+text [cryptography_vectors] cryptography_vectors: seal ChaCha20-Poly1305: 2726 ns for 1200 bytes, 440 MB/s
 number The same bytes after a second build
 log build/reproducible_build.txt
 line 1
 matching 1
 machine Written by `kerneltool check`, after it built every module and the boot program a second time and compared the bytes
 text 81 modules, their LLVM IR and their objects, 2 pointer theme files, and the boot program and its object are the same bytes after a second build
-boot kernel: boot: firmware: 980772 us
-boot kernel: boot: boot program: load the kernel, the boot image: 17834 us
-boot kernel: boot: boot program: page tables, memory map, jump: 15899 us
+boot kernel: boot: firmware: 759052 us
+boot kernel: boot: boot program: load the kernel, the boot image: 36610 us
+boot kernel: boot: boot program: page tables, memory map, jump: 12705 us
 boot kernel: boot: kernel: page frames, kernel page table: 407 us
-boot kernel: boot: kernel: first processor, timer: 16819 us
-boot kernel: boot: kernel: other processors: 33421 us
-boot kernel: boot: kernel: root service: 2080 us
+boot kernel: boot: kernel: first processor, timer: 16761 us
+boot kernel: boot: kernel: other processors: 33413 us
+boot kernel: boot: kernel: root service: 2135 us
 end
