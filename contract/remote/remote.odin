@@ -1,21 +1,28 @@
 // The call from the host: what the kernel tool on the host and the remote
 // service in the machine agree on (docs/MODULE_CONTRACT.md, section 4, "A
-// call from the host").
+// call from the host"; docs/QUIC.md, section 7).
 //
 // The host encodes an isolated call of an export of a service with the
-// description of the export (isolated.encode), and sends it as one call
-// request: a Request header, then the first bytes of the call region. The
-// remote service copies these bytes at offset 0 of the call region of its
-// connection to the service, makes the isolated call, and sends the call
-// answer: one or more datagrams, each an Answer header and a part of the
-// bytes of the result.
+// description of the export (isolated.encode). It carries each call on one
+// bidirectional QUIC stream of one connection to the remote service: the
+// call request (a Request header, then the first bytes of the call region),
+// then the end of the stream. The remote service copies these bytes at
+// offset 0 of the call region of its connection to the service, makes the
+// isolated call, and writes the call answer on the same stream: one Answer
+// header, then the bytes of the result, then the end of the stream. The
+// stream names the call: a header has no request number.
 //
-// The remote service trusts nothing in a datagram: request_check checks each
-// count and each place against the size of the datagram and of the call
-// region. It does not read the description: the service checks the argument
-// record, as for each caller.
+// A call that fails before its answer ends its stream with RESET_STREAM and
+// an application error code of Stream_Error, never a close of the
+// connection: the other calls go on.
 //
-// The host trusts nothing in an answer: answer_check checks each part.
+// The remote service trusts nothing in a request: request_check checks each
+// count and each place against the bytes of the stream and the size of the
+// call region. It does not read the description: the service checks the
+// argument record, as for each caller.
+//
+// The host trusts nothing in an answer: answer_check checks the header
+// against the bytes of the stream.
 //
 // All numbers are little-endian. A header has no text but fixed names of 32
 // bytes, and no field whose size depends on a language or a machine.
@@ -24,25 +31,76 @@
 package remote
 
 import "base:intrinsics"
-import "contract:datagram"
 import "contract:errors"
 import "contract:isolated"
 
-// The UDP port of the host, at the address of the gateway (10.0.2.2): the
-// grant of the endpoint of the remote service names it.
-HOST_PORT :: 7100
+// The UDP port of the listen grant of the remote service, on the address of
+// the machine.
+LISTEN_PORT :: 7100
 
-DATAGRAM_LIMIT :: datagram.DATA_LIMIT // The bytes of one datagram.
+// The one remote address that the listen grant of the remote service
+// admits: the host, at the gateway of the network of the machine
+// (10.0.2.2). The network service drops a datagram of another address
+// before the program sees it.
+HOST_ADDRESS :: 0x0A000202
+
+// The application protocol (ALPN) of a connection to the remote service: a
+// client that offers another one fails the handshake.
+APPLICATION_PROTOCOL :: "modus-remote-call"
+
 REGION_SIZE :: isolated.REGION_PAGES * 4096 // The call region of a connection.
 REQUEST_SIZE :: size_of(Request)
 ANSWER_SIZE :: size_of(Answer)
-ARGUMENT_LIMIT :: DATAGRAM_LIMIT - REQUEST_SIZE // The bytes of the call region in one call request.
-PART_LIMIT :: DATAGRAM_LIMIT - ANSWER_SIZE // The bytes of the result in one datagram of an answer.
-PART_CAPACITY :: (REGION_SIZE + PART_LIMIT - 1) / PART_LIMIT // The datagrams of the largest answer.
+// The bytes of a request on a stream at most: its header and a whole call
+// region. One byte more and the remote service resets the stream with
+// Too_Large, before any call.
+REQUEST_LIMIT :: REQUEST_SIZE + REGION_SIZE
+// The bytes of an answer on a stream at most: its header and a whole call
+// region.
+ANSWER_LIMIT :: ANSWER_SIZE + REGION_SIZE
 
-// The numbers that the peer of the test gives to the malformed requests
-// that it sends: the top bit. The tool numbers its requests from 1.
-PEER_NUMBERS :: u64(1) << 63
+// The QUIC connections that the remote service holds at one time: the tool,
+// and one more while a tool starts again. A third client gets no record
+// until one ends.
+CONNECTION_CAPACITY :: 2
+// The calls of one connection at one time: its stream records. The server
+// gives the client this many streams (MAX_STREAMS), and one more each time
+// that a stream ends: a client that opens one more waits for MAX_STREAMS
+// (it sends STREAMS_BLOCKED), it is not refused.
+CALLS_AT_ONCE :: 8
+
+// The application error code of a RESET_STREAM or a STOP_SENDING of a call
+// stream, and of a CONNECTION_CLOSE of the application.
+Stream_Error :: enum u64 {
+	None      = 0,
+	// The request has more than REQUEST_LIMIT bytes: the remote service
+	// sends STOP_SENDING and RESET_STREAM before any call.
+	Too_Large = 1,
+	// A bound of time of the remote service passed: a request that was not
+	// complete, or an answer that the host did not take, in its bound. The
+	// remote service logs which one.
+	Timeout   = 2,
+	// The host gave up the call: a reset of the host. A call that ran keeps
+	// its effects.
+	Cancelled = 3,
+}
+
+@(rodata)
+STREAM_ERROR_NAMES := [Stream_Error]string {
+	.None      = "None",
+	.Too_Large = "Too_Large",
+	.Timeout   = "Timeout",
+	.Cancelled = "Cancelled",
+}
+
+// stream_error_name gives the name of an application error code, or "" for
+// a code that this contract does not name.
+stream_error_name :: proc "contextless" (code: u64) -> string {
+	if code >= u64(len(STREAM_ERROR_NAMES)) {
+		return ""
+	}
+	return STREAM_ERROR_NAMES[Stream_Error(code)]
+}
 
 Request_Kind :: enum u32 {
 	None = 0,
@@ -53,7 +111,6 @@ Request_Kind :: enum u32 {
 Request :: struct {
 	kind:         Request_Kind,
 	export:       u32, // The index of the export in the module of the service: the kind of the command record.
-	number:       u64, // The request number. 0: no request.
 	service:      [32]u8, // The name of the service, as the root service names it: zero bytes after the name.
 	hash:         [32]u8, // The BLAKE3 hash of the module file of the service that the host read.
 	arguments:    u32, // The bytes of the call region after this header. They go at offset 0.
@@ -69,43 +126,36 @@ Request :: struct {
 	details_end:  u32,
 	_:            u32,
 }
-#assert(size_of(Request) == 112)
+#assert(size_of(Request) == 104)
 
 // The names of the fields of a Request, for the sentence of a refusal: the
 // argument of the error record is the index, from 1.
 @(rodata)
-REQUEST_FIELD_NAMES := [?]string{"kind", "export", "number", "service", "hash", "arguments", "record_size", "result_start", "result_count", "result_unit", "error_start", "details_end"}
+REQUEST_FIELD_NAMES := [?]string{"kind", "export", "service", "hash", "arguments", "record_size", "result_start", "result_count", "result_unit", "error_start", "details_end"}
 
 Status :: enum u32 {
 	// The call ran. call_status is the isolated.Status of the completion;
 	// value is the integer result. When value is negative and the export
 	// has an error record, error is the record that the service wrote, and
 	// the bytes of the answer are its error details (details_bytes).
-	Ok       = 0,
+	Ok      = 0,
 	// The remote service refused the request, and no call ran: error says
 	// why. Its argument is the field of the Request (REQUEST_FIELD_NAMES).
-	Refused  = 1,
-	// The remote service started. number is 0. The host learns the local
-	// port of the endpoint of the remote service from it.
-	Started  = 2,
+	Refused = 1,
 }
 
-// The header of each datagram of a call answer. A part of the result
-// follows it: count bytes, at offset of the result.
+// The header of a call answer. The bytes of the result follow it: total
+// bytes, then the end of the stream.
 Answer :: struct {
 	status:      Status,
 	call_status: u32, // isolated.Status.
-	number:      u64, // The request number. 0: a request that was too short to have one.
 	value:       i64, // The integer result of the export.
-	total:       u32, // The bytes of the whole result.
-	offset:      u32, // The place of this part in the result.
-	count:       u32, // The bytes of this part.
+	total:       u32, // The bytes of the result after this header.
 	details:     u32, // A call that failed: the count of its error details, of the full answer, at most the largest u32. The bytes of the answer are the details that fit.
 	hash:        [32]u8, // The hash of the module of the service that runs, when the remote service knows it.
 	error:       errors.Error_Record,
 }
-#assert(size_of(Answer) == 128)
-#assert(ANSWER_SIZE + PART_LIMIT == DATAGRAM_LIMIT)
+#assert(size_of(Answer) == 112)
 
 @(private)
 read :: proc "contextless" (bytes: []u8, $T: typeid) -> (value: T) {
@@ -127,22 +177,43 @@ refuse :: proc "contextless" (kind: errors.Kind, unit: errors.Unit, field: int, 
 // The numbers of the fields, from 1: the argument of a refusal.
 FIELD_KIND :: 1
 FIELD_EXPORT :: 2
-FIELD_NUMBER :: 3
-FIELD_SERVICE :: 4
-FIELD_HASH :: 5
-FIELD_ARGUMENTS :: 6
-FIELD_RECORD_SIZE :: 7
-FIELD_RESULT_START :: 8
-FIELD_RESULT_COUNT :: 9
-FIELD_RESULT_UNIT :: 10
-FIELD_ERROR_START :: 11
-FIELD_DETAILS_END :: 12
+FIELD_SERVICE :: 3
+FIELD_HASH :: 4
+FIELD_ARGUMENTS :: 5
+FIELD_RECORD_SIZE :: 6
+FIELD_RESULT_START :: 7
+FIELD_RESULT_COUNT :: 8
+FIELD_RESULT_UNIT :: 9
+FIELD_ERROR_START :: 10
+FIELD_DETAILS_END :: 11
 
-// request_check reads the header of a call request in the bytes of one
-// datagram, and checks it against those bytes and a call region of
+// What the bytes of one direction of a call stream are, so far.
+Stream_Progress :: enum u8 {
+	Waiting, // Not all bytes came: the end of the stream did not come.
+	Complete, // The end of the stream came, within the limit.
+	Too_Large, // More bytes than the limit came, with or without the end.
+}
+
+// stream_progress says what the bytes of one direction of a call stream
+// are: received bytes so far, finished when the end of the stream came,
+// against limit (REQUEST_LIMIT for a request, ANSWER_LIMIT for an answer).
+// A stream over its limit is Too_Large at once: its reader does not wait
+// for the end to refuse it.
+stream_progress :: proc "contextless" (received: u64, finished: bool, limit: u64) -> Stream_Progress {
+	switch {
+	case received > limit:
+		return .Too_Large
+	case finished:
+		return .Complete
+	}
+	return .Waiting
+}
+
+// request_check reads the header of a call request in the bytes of a whole
+// request stream, and checks it against those bytes and a call region of
 // region_size bytes. When ok is false, error says which field is wrong:
 // the remote service sends it in an answer with the status Refused. The
-// header is a copy: the datagram region can change after the check.
+// header is a copy: the stream buffer can change after the check.
 // arguments: the bytes of the call region, after the header.
 request_check :: proc "contextless" (bytes: []u8, region_size: u64) -> (request: Request, arguments: []u8, error: errors.Error_Record, ok: bool) {
 	if len(bytes) < REQUEST_SIZE {
@@ -153,8 +224,6 @@ request_check :: proc "contextless" (bytes: []u8, region_size: u64) -> (request:
 	switch {
 	case request.kind != .Call:
 		return request, nil, refuse(.Bad_Value, .None, FIELD_KIND, i64(request.kind), i64(Request_Kind.Call)), false
-	case request.number == 0:
-		return request, nil, refuse(.Bad_Value, .None, FIELD_NUMBER, 0), false
 	case request.service[0] == 0:
 		return request, nil, refuse(.Empty, .Bytes, FIELD_SERVICE, 0, i64(len(request.service) - 1)), false
 	case request.service[len(request.service) - 1] != 0:
@@ -227,61 +296,52 @@ details_shown :: proc "contextless" (answer: Answer, byte_count: u64) -> (shown:
 	return shown, byte_count % isolated.ERROR_RECORD_SIZE == 0 && records <= u64(answer.details)
 }
 
-// part_count gives the datagrams of a call answer with a result of total
-// bytes: one at least.
-part_count :: proc "contextless" (total: u64) -> u64 {
-	return max((total + PART_LIMIT - 1) / PART_LIMIT, 1)
-}
-
-// answer_write writes datagram `part` of a call answer in out, and gives
-// its bytes. header has the fields of the whole answer; this procedure sets
-// total, offset and count. ok is false when out is too small or part is
-// past the end.
-answer_write :: proc "contextless" (out: []u8, header: Answer, result: []u8, part: u64) -> (bytes: []u8, ok: bool) {
+// answer_write writes a whole call answer in out: the header, with total
+// set to the bytes of result, then result. ok is false when out is too
+// small or the result is larger than a call region.
+answer_write :: proc "contextless" (out: []u8, header: Answer, result: []u8) -> (bytes: []u8, ok: bool) {
 	total := u64(len(result))
-	if part >= part_count(total) || total > REGION_SIZE {
-		return nil, false
-	}
-	offset := part * PART_LIMIT
-	count := min(total - min(offset, total), PART_LIMIT)
-	if u64(len(out)) < ANSWER_SIZE + count {
+	if total > REGION_SIZE || u64(len(out)) < ANSWER_SIZE + total {
 		return nil, false
 	}
 	header := header
-	header.total, header.offset, header.count = u32(total), u32(offset), u32(count)
+	header.total = u32(total)
 	write(out, header)
-	intrinsics.mem_copy_non_overlapping(raw_data(out[ANSWER_SIZE:]), raw_data(result[offset:]), int(count))
-	return out[:ANSWER_SIZE + count], true
+	if total > 0 {
+		intrinsics.mem_copy_non_overlapping(raw_data(out[ANSWER_SIZE:]), raw_data(result), int(total))
+	}
+	return out[:ANSWER_SIZE + total], true
 }
 
-// answer_check reads one datagram of a call answer. part is the bytes of
-// the result that it carries, at header.offset. ok is false when a count or
-// a place is not inside the datagram or inside a call region.
-answer_check :: proc "contextless" (bytes: []u8) -> (header: Answer, part: []u8, ok: bool) {
+// answer_check reads a whole call answer: the bytes of its stream up to the
+// end. result is the bytes after the header. ok is false when the bytes
+// are not exactly a header and the total that it names, or when the total
+// is larger than a call region.
+answer_check :: proc "contextless" (bytes: []u8) -> (header: Answer, result: []u8, ok: bool) {
 	if len(bytes) < ANSWER_SIZE {
 		return {}, nil, false
 	}
 	header = read(bytes, Answer)
 	rest := u64(len(bytes) - ANSWER_SIZE)
-	if u64(header.count) != rest || u64(header.total) > REGION_SIZE || u64(header.offset) > u64(header.total) || u64(header.count) > u64(header.total) - u64(header.offset) {
-		return header, nil, false
-	}
-	if header.offset % PART_LIMIT != 0 || (header.count != PART_LIMIT && u64(header.offset) + u64(header.count) != u64(header.total)) {
+	if u64(header.total) != rest || u64(header.total) > REGION_SIZE {
 		return header, nil, false
 	}
 	return header, bytes[ANSWER_SIZE:], true
 }
 
-// request_write writes a call request in out: the header, then the bytes
-// of the call region. ok is false when they do not fit in one datagram.
+// request_write writes a whole call request in out: the header, then the
+// bytes of the call region. ok is false when they do not fit in out, or
+// when the arguments are larger than a call region.
 request_write :: proc "contextless" (out: []u8, header: Request, arguments: []u8) -> (bytes: []u8, ok: bool) {
-	if len(arguments) > ARGUMENT_LIMIT || len(out) < REQUEST_SIZE + len(arguments) {
+	if len(arguments) > REGION_SIZE || len(out) < REQUEST_SIZE + len(arguments) {
 		return nil, false
 	}
 	header := header
 	header.arguments = u32(len(arguments))
 	write(out, header)
-	intrinsics.mem_copy_non_overlapping(raw_data(out[REQUEST_SIZE:]), raw_data(arguments), len(arguments))
+	if len(arguments) > 0 {
+		intrinsics.mem_copy_non_overlapping(raw_data(out[REQUEST_SIZE:]), raw_data(arguments), len(arguments))
+	}
 	return out[:REQUEST_SIZE + len(arguments)], true
 }
 

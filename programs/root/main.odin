@@ -124,9 +124,11 @@ grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 	case "network":
 		return {.Network_Device}
 	case "remote":
-		// The calls of the host: an endpoint whose grant names the host,
-		// connections to the services of callable_of, and the grant to act
-		// for the person (docs/MODULE_CONTRACT.md, "A call from the host").
+		// The calls of the host: a listen grant of UDP that admits the
+		// address of the host only (QUIC in the program, the module
+		// cryptography through its imports), connections to the services of
+		// callable_of, and the grant to act for the person
+		// (docs/MODULE_CONTRACT.md, "A call from the host").
 		return {.Connect, .Network, .Person}
 	case "interface_through_module":
 		return {.Image} // It reads the size of the code of interface_module.
@@ -316,6 +318,13 @@ things_of :: proc "contextless" (name: string) -> system.Budget_Amounts {
 		// 130 KiB for each, and an echo buffer of 16 KiB for each stream:
 		// about 2770 pages, in one mapping of the program (docs/QUIC.md,
 		// section 6).
+		return {pages = 4096, programs = 1, threads = 1}
+	case "remote":
+		// 2 QUIC connections of about 85 KiB each, 8 streams of about
+		// 130 KiB for each, and a buffer of a request or an answer of about
+		// 64 KiB for each stream: about 820 pages, in one mapping of the
+		// program (docs/QUIC.md, section 7), and the call regions of its
+		// connections to services.
 		return {pages = 4096, programs = 1, threads = 1}
 	case "tables":
 		return {pages = 4096, programs = 3, threads = 3} // A table of 65536 readings in a memory object (640 pages), and two call hosts (sample, hostile_exports) with their threads.
