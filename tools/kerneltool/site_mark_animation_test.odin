@@ -73,6 +73,16 @@ site_mark_sprites_are_distinct :: proc(t: ^testing.T) {
 	testing.expect_value(t, sprites.of_frame[.Look][1], 0)
 	// The third frame of the leg repeats its first.
 	testing.expect_value(t, sprites.of_frame[.Leg][2], sprites.of_frame[.Leg][0])
+	// The scratch starts from the pose of the leg animation: one sprite.
+	testing.expect_value(t, sprites.of_frame[.Scratch][0], sprites.of_frame[.Leg][1])
+	// The still heron, 14 frames of the five first animations, 4 poses of the
+	// preen and 3 of the scratch. A sprite of the home is 198 pixels wide, so
+	// the home sheets are 4356 pixels wide: one row, under the 8192 pixels
+	// that a browser decodes in a picture.
+	testing.expect_value(t, len(sprites.cells), 22)
+	home, _, _, _ := site_mark_animation_pictures()
+	sprite_width, _ := site_mark_size(home)
+	testing.expect(t, sprite_width * len(sprites.cells) <= 8192)
 	for animation in mark.Animation {
 		testing.expect_value(t, len(sprites.of_frame[animation]), mark.animation_frame_count(animation))
 	}

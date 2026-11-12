@@ -30,6 +30,8 @@ Animation :: enum u8 {
 	Leg, // The knee of the raised leg comes in, and out again.
 	Ripple, // Two waves leave the legs on the line of the water.
 	Dip, // The head dips one cell, the eye closes, then a swallow goes down the neck.
+	Preen, // The neck bends down and back, the beak scratches the back two times, the neck comes up.
+	Scratch, // The raised leg goes down and scratches the ground three times.
 }
 
 @(rodata)
@@ -38,19 +40,38 @@ animation_names := [Animation]string {
 	.Look   = "look",
 	.Leg    = "leg",
 	.Ripple = "ripple",
-	.Dip    = "dip",
+	.Dip     = "dip",
+	.Preen   = "preen",
+	.Scratch = "scratch",
 }
 
 // The bounds that the host tests hold the tables to. A frame that differs
-// from the still heron, or from the frame before it, by more cells than
-// FRAME_CHANGE_LIMIT is a new drawing, not an idle movement. The shortest
-// frame keeps the changes to at most about 6 each second.
+// from the still heron, or from the frame before it, by more cells than the
+// limit of its animation is a new drawing, not an idle movement. Most
+// animations move a few cells and keep FRAME_CHANGE_LIMIT. The preen moves
+// the whole head and the upper neck onto the back, so it has a limit of its
+// own; a new animation that needs more is a decision, not a change of the
+// common limit. The shortest frame keeps the changes to at most about 6
+// each second.
 FRAME_CHANGE_LIMIT :: 24
+PREEN_FRAME_CHANGE_LIMIT :: 48
+
+@(rodata)
+animation_change_limits := [Animation]int {
+	.Blink   = FRAME_CHANGE_LIMIT,
+	.Look    = FRAME_CHANGE_LIMIT,
+	.Leg     = FRAME_CHANGE_LIMIT,
+	.Ripple  = FRAME_CHANGE_LIMIT,
+	.Dip     = FRAME_CHANGE_LIMIT,
+	.Preen   = PREEN_FRAME_CHANGE_LIMIT,
+	.Scratch = FRAME_CHANGE_LIMIT,
+}
+
 FRAME_DURATION_LEAST :: 150 // Milliseconds.
 FRAME_DURATION_MOST :: 1000
 ANIMATION_DURATION_MOST :: 3000 // All the frames of one animation.
-STILL_DURATION_LEAST :: 3000 // The still heron between two animations.
-STILL_DURATION_MOST :: 10000
+STILL_DURATION_LEAST :: 2000 // The still heron between two animations.
+STILL_DURATION_MOST :: 6000
 
 Animation_Frame :: struct {
 	animation:             Animation,
@@ -86,6 +107,25 @@ animation_frames := [?]Animation_Frame {
 	{.Dip, 4, 0, 220}, // The head back; a swallow at the top of the neck.
 	{.Dip, 5, 0, 220}, // The swallow in the middle of the neck.
 	{.Dip, 6, 0, 220}, // The swallow at the bottom of the neck.
+	// The neck goes down through two poses, so the head does not jump onto
+	// the back, and comes up through the same poses.
+	{.Preen, 1, 0, 250}, // The head three rows lower, the neck curved.
+	{.Preen, 2, 1, 250}, // The head turned back, the beak above the body.
+	{.Preen, 3, 2, 300}, // The head on the back, the beak in the feathers.
+	{.Preen, 4, 3, 180}, // A stroke: the tip of the beak up, a feather lifts.
+	{.Preen, 5, 3, 180}, // The beak in the feathers.
+	{.Preen, 6, 4, 180}, // A stroke.
+	{.Preen, 7, 3, 250}, // The beak in the feathers.
+	{.Preen, 8, 2, 250}, // The head turned back.
+	{.Preen, 9, 1, 250}, // The head three rows lower.
+	{.Scratch, 1, 0, 200}, // The knee in: the pose of the leg animation.
+	{.Scratch, 2, 0, 220}, // The foot forward on the ground.
+	{.Scratch, 3, 0, 220}, // The foot pulled back; water lifts behind it.
+	{.Scratch, 4, 2, 200}, // Forward.
+	{.Scratch, 5, 3, 220}, // Back; the water lifts one cell farther.
+	{.Scratch, 6, 2, 200}, // Forward.
+	{.Scratch, 7, 3, 220}, // Back.
+	{.Scratch, 8, 1, 200}, // The knee in, then the raised leg again.
 }
 
 // The columns count from the left and the rows from the top, as in
@@ -176,6 +216,162 @@ animation_changes := [?]Cell_Change {
 	{.Dip, 4, 17, 5, 'h'},
 	{.Dip, 5, 15, 7, 'h'},
 	{.Dip, 6, 16, 9, 'h'},
+
+	// Preen, frame 1, from the still heron: the crest and the head three rows
+	// lower, the upper neck shorter, with the curve of the still neck.
+	// Frame 2, from frame 1: the head turned to face back, the beak to the
+	// left above the body. Frame 3, from frame 2: the head folded onto the
+	// shoulder, the eye at column 11, row 9, the beak down to the left with
+	// its tip at column 7, row 10, on the body. Frame 4, from frame 3: the
+	// tip of the beak leaves the body, and a feather at its left lifts.
+	{.Preen, 1, 14, 0, '.'},
+	{.Preen, 1, 15, 0, '.'},
+	{.Preen, 1, 15, 1, '.'},
+	{.Preen, 1, 16, 1, '.'},
+	{.Preen, 1, 17, 1, '.'},
+	{.Preen, 1, 18, 1, '.'},
+	{.Preen, 1, 14, 2, '.'},
+	{.Preen, 1, 15, 2, '.'},
+	{.Preen, 1, 16, 2, '.'},
+	{.Preen, 1, 17, 2, '.'},
+	{.Preen, 1, 18, 2, '.'},
+	{.Preen, 1, 19, 2, '.'},
+	{.Preen, 1, 20, 2, '.'},
+	{.Preen, 1, 21, 2, '.'},
+	{.Preen, 1, 22, 2, '.'},
+	{.Preen, 1, 23, 2, '.'},
+	{.Preen, 1, 13, 3, 'v'},
+	{.Preen, 1, 14, 3, 'v'},
+	{.Preen, 1, 15, 3, '.'},
+	{.Preen, 1, 16, 3, '.'},
+	{.Preen, 1, 17, 3, '.'},
+	{.Preen, 1, 18, 3, '.'},
+	{.Preen, 1, 19, 3, '.'},
+	{.Preen, 1, 20, 3, '.'},
+	{.Preen, 1, 21, 3, '.'},
+	{.Preen, 1, 14, 4, 'h'},
+	{.Preen, 1, 17, 4, 'h'},
+	{.Preen, 1, 13, 5, 'h'},
+	{.Preen, 1, 14, 5, 'h'},
+	{.Preen, 1, 16, 5, 'k'},
+	{.Preen, 1, 17, 5, 'h'},
+	{.Preen, 1, 18, 5, 'y'},
+	{.Preen, 1, 19, 5, 'y'},
+	{.Preen, 1, 20, 5, 'y'},
+	{.Preen, 1, 21, 5, 'y'},
+	{.Preen, 1, 22, 5, 'y'},
+	{.Preen, 1, 16, 6, 'h'},
+	{.Preen, 1, 17, 6, 'h'},
+	{.Preen, 1, 18, 6, 'y'},
+	{.Preen, 1, 19, 6, 'y'},
+	{.Preen, 1, 20, 6, 'y'},
+	{.Preen, 1, 13, 7, '.'},
+	{.Preen, 1, 15, 7, 'h'},
+	{.Preen, 2, 13, 3, '.'},
+	{.Preen, 2, 14, 3, '.'},
+	{.Preen, 2, 14, 4, '.'},
+	{.Preen, 2, 15, 4, 'v'},
+	{.Preen, 2, 16, 4, 'v'},
+	{.Preen, 2, 17, 4, '.'},
+	{.Preen, 2, 12, 5, 'h'},
+	{.Preen, 2, 16, 5, '.'},
+	{.Preen, 2, 17, 5, '.'},
+	{.Preen, 2, 18, 5, '.'},
+	{.Preen, 2, 19, 5, '.'},
+	{.Preen, 2, 20, 5, '.'},
+	{.Preen, 2, 21, 5, '.'},
+	{.Preen, 2, 22, 5, '.'},
+	{.Preen, 2, 7, 6, 'y'},
+	{.Preen, 2, 8, 6, 'y'},
+	{.Preen, 2, 9, 6, 'y'},
+	{.Preen, 2, 10, 6, 'y'},
+	{.Preen, 2, 11, 6, 'h'},
+	{.Preen, 2, 12, 6, 'k'},
+	{.Preen, 2, 13, 6, 'h'},
+	{.Preen, 2, 16, 6, '.'},
+	{.Preen, 2, 17, 6, '.'},
+	{.Preen, 2, 18, 6, '.'},
+	{.Preen, 2, 19, 6, '.'},
+	{.Preen, 2, 20, 6, '.'},
+	{.Preen, 2, 9, 7, 'y'},
+	{.Preen, 2, 10, 7, 'y'},
+	{.Preen, 2, 11, 7, 'y'},
+	{.Preen, 2, 12, 7, 'h'},
+	{.Preen, 2, 13, 7, 'h'},
+	{.Preen, 2, 13, 8, '.'},
+	{.Preen, 2, 15, 8, 'h'},
+	{.Preen, 3, 15, 4, '.'},
+	{.Preen, 3, 16, 4, '.'},
+	{.Preen, 3, 12, 5, '.'},
+	{.Preen, 3, 13, 5, '.'},
+	{.Preen, 3, 14, 5, '.'},
+	{.Preen, 3, 15, 5, '.'},
+	{.Preen, 3, 7, 6, '.'},
+	{.Preen, 3, 8, 6, '.'},
+	{.Preen, 3, 9, 6, '.'},
+	{.Preen, 3, 10, 6, '.'},
+	{.Preen, 3, 11, 6, '.'},
+	{.Preen, 3, 12, 6, '.'},
+	{.Preen, 3, 13, 6, '.'},
+	{.Preen, 3, 14, 6, '.'},
+	{.Preen, 3, 15, 6, '.'},
+	{.Preen, 3, 9, 7, '.'},
+	{.Preen, 3, 10, 7, '.'},
+	{.Preen, 3, 11, 7, '.'},
+	{.Preen, 3, 12, 7, '.'},
+	{.Preen, 3, 13, 7, '.'},
+	{.Preen, 3, 14, 7, 'v'},
+	{.Preen, 3, 15, 7, 'v'},
+	{.Preen, 3, 11, 8, 'h'},
+	{.Preen, 3, 12, 8, 'h'},
+	{.Preen, 3, 13, 8, 'h'},
+	{.Preen, 3, 9, 9, 'y'},
+	{.Preen, 3, 10, 9, 'h'},
+	{.Preen, 3, 11, 9, 'k'},
+	{.Preen, 3, 12, 9, 'h'},
+	{.Preen, 3, 13, 9, 'h'},
+	{.Preen, 3, 7, 10, 'y'},
+	{.Preen, 3, 8, 10, 'y'},
+	{.Preen, 3, 9, 10, 'h'},
+	{.Preen, 3, 10, 10, 'h'},
+	{.Preen, 3, 11, 10, 'h'},
+	{.Preen, 3, 12, 10, 'h'},
+	{.Preen, 3, 13, 10, 'h'},
+	{.Preen, 4, 6, 10, 'b'},
+	{.Preen, 4, 7, 10, '.'},
+
+	// Scratch: the raised leg is the leg with the knee at column 14, row 19,
+	// and its foot at column 12, row 21. Frame 1: the knee in, as the frame
+	// 2 of the leg animation. Frame 2: the leg reaches forward, its foot on
+	// the row of the ground at the columns 14 and 15 (in the place of
+	// water). Frame 3: the foot pulled back to the columns 13 and 14, and one
+	// cell of water lifts behind it, at column 16. Frame 5, from frame 3:
+	// the water lifts at column 17.
+	{.Scratch, 1, 12, 18, 'o'},
+	{.Scratch, 1, 13, 18, '.'},
+	{.Scratch, 1, 13, 19, 'o'},
+	{.Scratch, 1, 14, 19, '.'},
+	{.Scratch, 1, 12, 20, 'o'},
+	{.Scratch, 1, 13, 20, '.'},
+	{.Scratch, 2, 13, 19, 'o'},
+	{.Scratch, 2, 14, 19, '.'},
+	{.Scratch, 2, 13, 20, '.'},
+	{.Scratch, 2, 14, 20, 'o'},
+	{.Scratch, 2, 12, 21, '.'},
+	{.Scratch, 2, 14, 21, 'o'},
+	{.Scratch, 2, 14, 22, 'o'},
+	{.Scratch, 2, 15, 22, 'o'},
+	{.Scratch, 3, 12, 18, 'o'},
+	{.Scratch, 3, 13, 18, '.'},
+	{.Scratch, 3, 13, 19, 'o'},
+	{.Scratch, 3, 14, 19, '.'},
+	{.Scratch, 3, 12, 21, '.'},
+	{.Scratch, 3, 13, 21, 'o'},
+	{.Scratch, 3, 16, 21, 't'},
+	{.Scratch, 3, 13, 22, 'o'},
+	{.Scratch, 3, 14, 22, 'o'},
+	{.Scratch, 5, 16, 21, '.'},
+	{.Scratch, 5, 17, 21, 't'},
 }
 
 // One step of the order of play: the still heron for still_milliseconds,
@@ -185,27 +381,30 @@ Play_Step :: struct {
 	animation:          Animation,
 }
 
-// The order of play. It repeats after its last step, about every 90 seconds.
+// The order of play. It repeats after its last step, about every 80 seconds:
+// 64.1 seconds of still times and 15.7 seconds of animations.
 // The still times differ and the animations do not come in a fixed cycle,
 // so the order does not look periodic; no random number is needed. The
 // weight of an animation is how many times it is in this order.
 @(rodata)
 play_order := [?]Play_Step {
-	{4000, .Blink},
-	{6500, .Ripple},
 	{3000, .Blink},
-	{5500, .Look},
-	{7000, .Blink},
-	{4500, .Leg},
-	{3500, .Ripple},
-	{6000, .Blink},
-	{8000, .Dip},
+	{4800, .Ripple},
+	{2200, .Blink},
 	{4000, .Look},
-	{5000, .Blink},
-	{7500, .Ripple},
-	{3500, .Leg},
-	{4500, .Blink},
-	{6000, .Look},
+	{5200, .Blink},
+	{3400, .Preen},
+	{2600, .Ripple},
+	{4400, .Blink},
+	{5500, .Dip},
+	{3000, .Look},
+	{3700, .Blink},
+	{5000, .Scratch},
+	{2400, .Leg},
+	{4200, .Blink},
+	{3300, .Ripple},
+	{2800, .Leg},
+	{4600, .Look},
 }
 
 // The letter of each cell of the heron, by row, then by column.
