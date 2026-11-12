@@ -190,7 +190,6 @@ site_style_sheet_polish :: proc(t: ^testing.T) {
 		"tab-size: 4;",
 		"@media (prefers-reduced-motion: no-preference) {\n  html { scroll-behavior: smooth; }",
 		"scroll-margin-top:",
-		"scroll-padding-top:",
 		":target",
 		"-webkit-tap-highlight-color:",
 		"touch-action: manipulation;",

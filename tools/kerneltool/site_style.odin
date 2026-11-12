@@ -474,7 +474,6 @@ SITE_POLISH_RULES :: `
 :root {
   color-scheme: dark light;
   accent-color: var(--line);
-  scroll-padding-top: calc(var(--bar-height) + 16px);
   -webkit-tap-highlight-color: color-mix(in srgb, var(--line) 30%, transparent);
 }
 /* A page with and without a scroll bar has the same width. */
@@ -512,6 +511,9 @@ pre, code { tab-size: 4; }
 /* A jump to an anchor: the bar of the site stays at the top, so the target
    keeps the height of the bar and a little room above it, and a line at
    its left marks where the link landed. */
+/* The room is a margin of each target, not a padding of the scroll of the
+   page: with a padding, the browser takes the search field of the bar as
+   hidden under it and scrolls the page at each key. */
 [id] { scroll-margin-top: calc(var(--bar-height) + 16px); }
 h2:target, h3:target, li:target, p:target { box-sizing: border-box; border-left: 2px solid var(--line); padding-left: 8px; }
 .table tr:target > td { background: var(--track); }
