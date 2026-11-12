@@ -274,17 +274,19 @@ ol.labelled > li > * { text-indent: 0; }
    The cells wrap; a name (an identifier, a path, a signature) stays on one
    line. A table scrolls sideways only on a narrow screen. */
 /* The box of a table scrolls sideways at every width when the table is
-   wider than the page; the keyboard reaches it. A column of names, numbers
-   or dates takes only the width of its content (a width of 1% asks for the
-   least), so the spare room of a wide table goes to the columns of prose
-   and of log lines, which have a least width and no upper bound. */
+   wider than the page; the keyboard reaches it. The widths of the columns
+   are left to the automatic layout of the browser, which shares the room
+   by the content of each column: no table has widths of its own. Two rules
+   only: a column of names, numbers or dates takes just the width of its
+   content (a width of 1% asks for the least) and never wraps; a column of
+   prose or of log lines has a small least width, so a long text beside it
+   cannot squeeze it to one word a line. */
 .table { margin: 0 0 16px; overflow-x: auto; border-left: 2px solid transparent; border-right: 2px solid transparent; }
 .table:focus-visible { outline: 2px solid var(--line); outline-offset: 2px; }
 table { border-collapse: collapse; min-width: 100%; }
 th.column-name, th.column-number, th.column-date { width: 1%; }
 th.column-short { width: 1%; min-width: 6em; }
-th.column-prose { min-width: 13em; }
-th.column-line { min-width: 30em; }
+th.column-prose, th.column-line { min-width: 12em; }
 th.column-any { min-width: 6em; }
 .column-name, .column-name code { white-space: nowrap; overflow-wrap: normal; }
 .column-date, .column-number { white-space: nowrap; }
