@@ -38,13 +38,13 @@ disk_put :: proc(disk: ^Test_Disk, value: ^$T) -> format.Pointer where size_of(T
 	return {block = number, check = format.check(block)}
 }
 
-// disk_root writes the root of one store "s" with one table in block 0.
-disk_root :: proc(disk: ^Test_Disk, table: format.Pointer, used: u64) {
+// disk_root writes the root of one store "s" in block 0.
+disk_root :: proc(disk: ^Test_Disk, store_block: format.Pointer, used: u64) {
 	root := format.Root{magic = format.ROOT_MAGIC, generation = 2, disk_blocks = u64(len(disk.bytes) / BLOCK_SIZE)}
 	root.stores[0].name[0] = 's'
 	root.stores[0].limit = 1 << 20
 	root.stores[0].used = used
-	root.stores[0].table = table
+	root.stores[0].store = store_block
 	root.check = format.root_check(&root)
 	copy(disk.bytes[:BLOCK_SIZE], ([^]u8)(&root)[:BLOCK_SIZE])
 }
@@ -65,13 +65,42 @@ disk_object :: proc(disk: ^Test_Disk) -> (blocks: Object_Blocks) {
 	return blocks
 }
 
-disk_table :: proc(disk: ^Test_Disk, object: Object_Blocks, versions: format.Pointer) -> format.Pointer {
-	table: format.Table
-	table.objects[0].name[0] = 'a'
-	table.objects[0].size = 10
-	table.objects[0].list = object.list
-	table.objects[0].versions = versions
-	return disk_put(disk, &table)
+Named_Entry :: struct {
+	name:  string,
+	entry: format.Entry,
+}
+
+// disk_leaf writes a leaf of a tree with these entries, in their order.
+disk_leaf :: proc(disk: ^Test_Disk, entries: []Named_Entry) -> format.Pointer {
+	node: [BLOCK_SIZE]u8
+	header := (^format.Tree_Header)(&node)
+	header.magic = format.NODE_MAGIC
+	header.count = u32(len(entries))
+	size := size_of(format.Entry_Name) + size_of(format.Entry)
+	for item, index in entries {
+		place := node[format.TREE_HEADER_SIZE + index * size:]
+		copy(place, item.name)
+		entry := item.entry
+		copy(place[size_of(format.Entry_Name):], ([^]u8)(&entry)[:size_of(format.Entry)])
+	}
+	return disk_put(disk, &node)
+}
+
+object_entry :: proc(object: Object_Blocks, versions: format.Pointer) -> format.Entry {
+	return {kind = .Object, size = 10, pointer = object.list, versions = versions}
+}
+
+// disk_store writes a leaf with the one object "a", and the store block
+// that names it, with the counts of that store.
+disk_store :: proc(disk: ^Test_Disk, object: Object_Blocks, versions: format.Pointer) -> format.Pointer {
+	entries := []Named_Entry{{"a", object_entry(object, versions)}}
+	leaf := disk_leaf(disk, entries)
+	block: format.Store_Block
+	block.tree = leaf
+	block.objects = 1
+	block.current_blocks = 2
+	block.node_blocks = 1
+	return disk_put(disk, &block)
 }
 
 // An index that names more leaves than an index holds is damage: the open
@@ -84,8 +113,8 @@ an_index_with_too_many_leaves :: proc(t: ^testing.T) {
 	index: format.Version_Index
 	index.leaf_count = 300
 	index_pointer := disk_put(&disk, &index)
-	table := disk_table(&disk, object, index_pointer)
-	disk_root(&disk, table, 4)
+	table := disk_store(&disk, object, index_pointer)
+	disk_root(&disk, table, 5)
 	state := new(State)
 	defer free(state)
 	result := mount(state, &disk, 16)
@@ -112,7 +141,7 @@ leaves_with_a_wrong_count :: proc(t: ^testing.T) {
 		index.leaf_count = 1
 		index.leaves[0] = leaf_pointer
 		index_pointer := disk_put(&disk, &index)
-		disk_root(&disk, disk_table(&disk, object, index_pointer), 5)
+		disk_root(&disk, disk_store(&disk, object, index_pointer), 6)
 		state := new(State)
 		defer free(state)
 		result := mount(state, &disk, 16)
@@ -137,7 +166,7 @@ a_version_too_large :: proc(t: ^testing.T) {
 	index.leaf_count = 1
 	index.leaves[0] = leaf_pointer
 	index_pointer := disk_put(&disk, &index)
-	disk_root(&disk, disk_table(&disk, object, index_pointer), 6)
+	disk_root(&disk, disk_store(&disk, object, index_pointer), 8)
 	state := new(State)
 	defer free(state)
 	result := mount(state, &disk, 32)
@@ -153,11 +182,11 @@ the_recount_of_a_store :: proc(t: ^testing.T) {
 	disk := disk_make(16)
 	defer delete(disk.bytes)
 	object := disk_object(&disk)
-	disk_root(&disk, disk_table(&disk, object, {}), 99)
+	disk_root(&disk, disk_store(&disk, object, {}), 99)
 	state := new(State)
 	defer free(state)
 	result := mount(state, &disk, 16)
-	testing.expect_value(t, state.store_recount[0], 3) // The table, the list, the block of data.
+	testing.expect_value(t, state.store_recount[0], 4) // The store block, the leaf, the list, the block of data.
 	testing.expect_value(t, result.stores_recounted, 1)
 	testing.expect_value(t, result.stores_with_wrong_count, 1)
 	testing.expect(t, !state.store_faulty[0])
@@ -171,14 +200,83 @@ the_recount_of_a_damaged_store :: proc(t: ^testing.T) {
 	defer delete(disk.bytes)
 	object := disk_object(&disk)
 	disk.bytes[object.list.block * BLOCK_SIZE] ~= 1 // The list no longer has its check.
-	disk_root(&disk, disk_table(&disk, object, {}), 3)
+	disk_root(&disk, disk_store(&disk, object, {}), 4)
 	state := new(State)
 	defer free(state)
 	result := mount(state, &disk, 16)
 	testing.expect_value(t, result.damaged_objects, 1)
-	testing.expect_value(t, state.store_recount[0], 2) // The table and the wrong list; not the block of data.
+	testing.expect_value(t, state.store_damaged_objects[0], 1)
+	testing.expect_value(t, state.store_recount[0], 3) // The store block, the leaf and the wrong list; not the block of data.
 	testing.expect_value(t, result.stores_with_wrong_count, 0)
 	testing.expect(t, !used(state, object.data.block))
+	testing.expect(t, !state.store_damaged[0])
+}
+
+// A store whose counts are right: no fault, and the open keeps them.
+@(test)
+a_store_with_its_counts :: proc(t: ^testing.T) {
+	disk := disk_make(16)
+	defer delete(disk.bytes)
+	object := disk_object(&disk)
+	disk_root(&disk, disk_store(&disk, object, {}), 4)
+	state := new(State)
+	defer free(state)
+	result := mount(state, &disk, 16)
+	testing.expect_value(t, result.stores_with_wrong_count, 0)
+	testing.expect_value(t, result.stores_recounted, 0)
+	testing.expect_value(t, result.objects, 1)
+	testing.expect_value(t, state.store_blocks[0].current_blocks, 2)
+}
+
+// A tree inside a tree: its nodes and its entries are walked and counted;
+// an entry that gives another count of entries than its tree has is a
+// fault of the engine.
+@(test)
+a_tree_inside_a_tree :: proc(t: ^testing.T) {
+	for given_count in ([]u64{2, 3}) {
+		disk := disk_make(16)
+		defer delete(disk.bytes)
+		first := disk_object(&disk)
+		second := disk_object(&disk)
+		inner := disk_leaf(&disk, {{"x", object_entry(first, {})}, {"y", object_entry(second, {})}})
+		outer := disk_leaf(&disk, {{"inner", {kind = .Tree, size = given_count, pointer = inner}}})
+		block: format.Store_Block
+		block.tree = outer
+		block.objects = 2
+		block.trees = 1
+		block.current_blocks = 4
+		block.node_blocks = 2
+		disk_root(&disk, disk_put(&disk, &block), 7)
+		state := new(State)
+		defer free(state)
+		result := mount(state, &disk, 16)
+		testing.expect_value(t, result.objects, 2)
+		testing.expect_value(t, result.trees, 1)
+		testing.expect_value(t, result.wrong, 0)
+		testing.expect_value(t, state.store_recount[0], 7)
+		testing.expect_value(t, result.stores_with_wrong_count, given_count == 2 ? 0 : 1)
+	}
+}
+
+// A leaf whose names are out of order breaks a rule of the format: its
+// store is damaged, as with a wrong check.
+@(test)
+a_leaf_out_of_order :: proc(t: ^testing.T) {
+	disk := disk_make(16)
+	defer delete(disk.bytes)
+	first := disk_object(&disk)
+	second := disk_object(&disk)
+	leaf := disk_leaf(&disk, {{"b", object_entry(first, {})}, {"a", object_entry(second, {})}})
+	block: format.Store_Block
+	block.tree = leaf
+	disk_root(&disk, disk_put(&disk, &block), 6)
+	state := new(State)
+	defer free(state)
+	result := mount(state, &disk, 16)
+	testing.expect(t, !result.failed)
+	testing.expect(t, state.store_damaged[0])
+	testing.expect_value(t, result.damaged_stores, 1)
+	testing.expect(t, wrong_block(state, leaf.block))
 }
 
 // More than 65535 names of one list: four objects with full version indexes,
@@ -190,12 +288,13 @@ a_count_above_sixteen_bits :: proc(t: ^testing.T) {
 	disk := disk_make(blocks)
 	defer delete(disk.bytes)
 	object := disk_object(&disk)
-	table: format.Table
 	leaf: format.Version_Leaf
 	leaf.count = format.VERSION_LEAF_CAPACITY
 	for &entry, place in leaf.entries {
 		entry = {generation = u64(place + 1), size = 10, list = object.list}
 	}
+	entries: [OBJECTS]Named_Entry
+	names := [OBJECTS]string{"a", "b", "c", "d"}
 	for object_index in 0 ..< OBJECTS {
 		index: format.Version_Index
 		index.leaf_count = format.VERSION_INDEX_CAPACITY
@@ -203,39 +302,41 @@ a_count_above_sixteen_bits :: proc(t: ^testing.T) {
 		for &pointer in index.leaves {
 			pointer = disk_put(&disk, &leaf)
 		}
-		table.objects[object_index].name[0] = u8('a' + object_index)
-		table.objects[object_index].size = 10
-		table.objects[object_index].list = object.list
-		table.objects[object_index].versions = disk_put(&disk, &index)
+		entries[object_index] = {names[object_index], object_entry(object, disk_put(&disk, &index))}
 	}
-	table_pointer := disk_put(&disk, &table)
-	disk_root(&disk, table_pointer, disk.next - 2)
+	block: format.Store_Block
+	block.tree = disk_leaf(&disk, entries[:])
+	block.objects = OBJECTS
+	block.current_blocks = 2 * OBJECTS
+	block.node_blocks = 1
+	store_block := disk_put(&disk, &block)
+	disk_root(&disk, store_block, disk.next - 2)
 	state := new(State)
 	defer free(state)
 	result := mount(state, &disk, u64(blocks))
-	names := u64(OBJECTS) * (1 + format.VERSIONS_LIMIT)
-	testing.expect(t, names > 65535)
-	testing.expect_value(t, u64(state.references[object.list.block]), names)
+	references := u64(OBJECTS) * (1 + format.VERSIONS_LIMIT)
+	testing.expect(t, references > 65535)
+	testing.expect_value(t, u64(state.references[object.list.block]), references)
 	testing.expect_value(t, result.reference_overflow, 0)
 	testing.expect_value(t, result.stores_with_wrong_count, 0)
 	testing.expect(t, !state.store_faulty[0])
 	testing.expect_value(t, result.versions, u64(OBJECTS) * format.VERSIONS_LIMIT)
 }
 
-// A block of a table named from two stores: a fault of the engine, and each
-// of the two stores is faulty.
+// A store block named from two stores: a fault of the engine, and each of
+// the two stores is faulty.
 @(test)
 a_block_named_from_two_stores :: proc(t: ^testing.T) {
 	disk := disk_make(16)
 	defer delete(disk.bytes)
 	object := disk_object(&disk)
-	table := disk_table(&disk, object, {})
+	store_block := disk_store(&disk, object, {})
 	root := format.Root{magic = format.ROOT_MAGIC, generation = 2, disk_blocks = 16}
 	for index in 0 ..< 2 {
 		root.stores[index].name[0] = u8('s' + index)
 		root.stores[index].limit = 64
-		root.stores[index].used = 3
-		root.stores[index].table = table
+		root.stores[index].used = 4
+		root.stores[index].store = store_block
 	}
 	root.check = format.root_check(&root)
 	copy(disk.bytes[:BLOCK_SIZE], ([^]u8)(&root)[:BLOCK_SIZE])

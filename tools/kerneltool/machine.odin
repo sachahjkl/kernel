@@ -2,6 +2,7 @@ package kerneltool
 
 import "contract:glyph_cache"
 import "contract:store"
+import tree "support:storage_tree"
 import "support:bar"
 import "core:fmt"
 import "core:math/rand"
@@ -481,7 +482,7 @@ scenario_network := [?]Step {
 	{kind = .Call, text = "storage.stores()", expected = " blocks in use"},
 	// Failures: the sentence of the error record of the service.
 	{kind = .Call, text = "monitor.count(\"nothing\")", outcome = .Failed, expected = "error: monitor.count: the argument name names nothing that exists (-3)"},
-	{kind = .Call, text = "storage.size(\"note\")", outcome = .Failed, expected = "error: storage.size: the caller has no grant for this: a private store (-1)"},
+	{kind = .Call, text = "storage.size(0, \"note\")", outcome = .Failed, expected = "error: storage.size: the caller has no grant for this: a private store (-1)"},
 	{kind = .Call, text = "manual.exports(\"nothing\")", outcome = .Failed, expected = "error: manual.exports: the argument name names none of the modules (-1)"},
 	// The tool checks the arguments against the description before it sends.
 	{kind = .Call, text = "monitor.count(4)", outcome = .Wrong, expected = "error: the parameter name of monitor.count is a Text, the argument is an Integer"},
@@ -664,14 +665,12 @@ object_damage :: proc(path: string, store_name: string, object_name: string) -> 
 		if name_of(entry.name[:]) != store_name {
 			continue
 		}
-		table: store.Table
-		disk_block(file, entry.table.block, &table) or_return
-		for &object in table.objects {
-			if name_of(object.name[:]) != object_name || object.list.block == 0 {
-				continue
-			}
+		block: store.Store_Block
+		disk_block(file, entry.store.block, &block) or_return
+		object, found := tree_entry_find(file, block.tree, object_name) or_return
+		if found && object.kind == .Object && object.pointer.block != 0 {
 			list: store.List
-			disk_block(file, object.list.block, &list) or_return
+			disk_block(file, object.pointer.block, &list) or_return
 			number := list.data[0].block
 			at := i64(number * store.BLOCK_SIZE)
 			one: [1]u8
@@ -689,6 +688,40 @@ object_damage :: proc(path: string, store_name: string, object_name: string) -> 
 	}
 	fmt.eprintfln("kerneltool: the disk has no object %s in a store %s", object_name, store_name)
 	return false
+}
+
+// tree_entry_find finds an entry of a tree on a disk file: the walk down
+// the B+ tree of the tree, as support/storage_tree does.
+tree_entry_find :: proc(file: ^os.File, root: store.Pointer, name: string) -> (found_entry: store.Entry, found: bool, ok: bool) {
+	key := store.entry_name(name)
+	pointer := root
+	for _ in 0 ..< store.TREE_DEPTH_LIMIT {
+		if pointer.block == 0 {
+			return {}, false, true
+		}
+		node: [store.BLOCK_SIZE]u8
+		disk_block(file, pointer.block, &node) or_return
+		header := (^store.Tree_Header)(&node)
+		if header.level == 0 {
+			size := size_of(store.Entry_Name) + size_of(store.Entry)
+			for index in 0 ..< int(min(header.count, store.LEAF_CAPACITY)) {
+				record := node[store.TREE_HEADER_SIZE + index * size:][:size]
+				if tree.compare(record[:size_of(store.Entry_Name)], key[:]) == 0 {
+					return (^store.Entry)(raw_data(record[size_of(store.Entry_Name):]))^, true, true
+				}
+			}
+			return {}, false, true
+		}
+		size := size_of(store.Entry_Name) + size_of(store.Pointer)
+		next := 0
+		for index in 1 ..< int(min(header.count, store.BRANCH_CAPACITY)) {
+			if tree.compare(node[store.TREE_HEADER_SIZE + index * size:][:size_of(store.Entry_Name)], key[:]) <= 0 {
+				next = index
+			}
+		}
+		pointer = (^store.Pointer)(raw_data(node[store.TREE_HEADER_SIZE + next * size + size_of(store.Entry_Name):]))^
+	}
+	return {}, false, true
 }
 
 // first_root_cut makes a new disk with a first root that a stop cut: the
@@ -1663,43 +1696,43 @@ scenario := [?]Step {
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "connect(\"storage\")"},
 	{kind = .Record, program = "root", channel = "calls", level = "info", text = "root: connected console to the service storage"},
-	{kind = .Type, text = "storage.write(\"greeting\", \"kept on the disk\")"},
+	{kind = .Type, text = "storage.write(0, \"greeting\", \"kept on the disk\")"},
 	// The generation of this commit is the base: the console committed its
 	// line history after each line before this one.
-	{kind = .Wait, text = "> storage.write(\"greeting\", \"kept on the disk\")"},
+	{kind = .Wait, text = "> storage.write(0, \"greeting\", \"kept on the disk\")"},
 	{kind = .Generation, text = "[console] "},
-	{kind = .Type, text = "storage.read(\"greeting\")"},
+	{kind = .Type, text = "storage.read(0, \"greeting\")"},
 	{kind = .Wait, text = "[console] kept on the disk"},
 	// The limit of the store: one more object needs two more blocks.
-	{kind = .Type, text = "storage.write(\"second\", \"one block more\")"},
-	{kind = .Wait, text = "[console] error: storage.write: the call needs 5 blocks in all, with no earlier version kept; the limit is 4 blocks (-2)"},
+	{kind = .Type, text = "storage.write(0, \"second\", \"one block more\")"},
+	{kind = .Wait, text = "[console] error: storage.write: the call needs 6 blocks in all, with no earlier version kept; the limit is 4 blocks (-2)"},
 	// A change of the object at the limit: the version of its state before
 	// does not fit, and the same commit thins it.
 	// Each line commits the line history after it: the base and 1 after
 	// the line of the base, 2 after the read, 3 after the refused write;
 	// this write is the commit 4.
-	{kind = .Type, text = "storage.write(\"greeting\", \"changed at the limit\")"},
+	{kind = .Type, text = "storage.write(0, \"greeting\", \"changed at the limit\")"},
 	{kind = .Wait, text = "[console] {generation+4}"},
 	{kind = .Record, program = "storage", level = "info", text = "storage: the store console is at its limit of 4 blocks: the commit of generation {generation+4} thinned 1 version, the oldest of the store first", any_order = true},
 	// An error of a service is a record: the console writes it as a sentence.
-	{kind = .Type, text = "storage.write(\"\", \"x\")"},
-	{kind = .Wait, text = "[console] error: storage.write: the argument name is empty; it must have 1 to 39 bytes (-3)"},
-	{kind = .Type, text = "storage.read(\"nothing\")"},
+	{kind = .Type, text = "storage.write(0, \"\", \"x\")"},
+	{kind = .Wait, text = "[console] error: storage.write: the argument name is empty; it must have 1 to 64 bytes (-3)"},
+	{kind = .Type, text = "storage.read(0, \"nothing\")"},
 	{kind = .Wait, text = "[console] error: storage.read: the argument name: the store has no object with this name (-7)"},
-	{kind = .Type, text = "storage.objects()"},
-	{kind = .Wait, text = "[console] greeting 20 bytes, generation {generation+4}"},
+	{kind = .Type, text = "storage.size(0, \"greeting\")"},
+	{kind = .Wait, text = "[console] 20"},
 	{kind = .Type, text = "storage.stores()"},
-	{kind = .Wait, text = "[console] console: 1 objects, 0 versions, 3 of 4 blocks, 0 shared, 1 connection"},
+	{kind = .Wait, text = "[console] console: 1 objects, 0 trees, 0 versions, 4 of 4 blocks, 0 shared, 1 connection"},
 	// The person sees the grant and revokes it: the store stays on the disk,
 	// and the console cannot reach it.
 	{kind = .Type, text = "grants(\"console\")"},
 	{kind = .Wait, text = "[console] console has: log, machine, image, store, person"},
 	{kind = .Type, text = "revoke(\"console\", \"store\")"},
 	{kind = .Record, program = "root", channel = "programs", level = "info", text = "root: revoked the grant store of console, connections changed: 1"},
-	{kind = .Type, text = "storage.write(\"greeting\", \"changed\")"},
+	{kind = .Type, text = "storage.write(0, \"greeting\", \"changed\")"},
 	{kind = .Wait, text = "[console] error: storage.write: the caller has no grant for this: a private store (-1)"},
 	{kind = .Type, text = "storage.stores()"},
-	{kind = .Wait, text = "[console] console: 1 objects, 0 versions, 3 of 4 blocks, 0 shared, 0 connections"},
+	{kind = .Wait, text = "[console] console: 1 objects, 0 trees, 0 versions, 4 of 4 blocks, 0 shared, 0 connections"},
 	{kind = .Type, text = "grants(\"console\")"},
 	{kind = .Wait, text = "[console] console lost: store"},
 	{kind = .Shot, text = "storage"},
@@ -1725,23 +1758,25 @@ scenario := [?]Step {
 	{kind = .Wait, text = "notes: restored the version of generation {generation+20}: \"versio\", in the commit of generation {generation+23} in "},
 	// The exports of the versions, from the host: the remote service acts
 	// for the person, so it names the store of notes.
-	{kind = .Call, text = "storage.versions(\"notes\", \"note\")", expected = "9 rows of Version"},
+	// A place on the store of notes: the first place of the service, 1.
+	{kind = .Call, text = "storage.open_store(\"notes\")", expected = "1"},
+	{kind = .Call, text = "storage.versions(1, \"note\")", expected = "9 rows of Version"},
 	// The date of the machine, from the host, some minutes after its start:
 	// it advanced with the host.
 	{kind = .Call, text = "date.now()", expected = "Date{milliseconds = ", date_after = "milliseconds = "},
-	{kind = .Call, text = "storage.version(\"notes\", \"note\", {generation+18})", expected = "vers"},
-	{kind = .Call, text = "storage.compare(\"notes\", \"note\", {generation+17}, {generation+22})", expected = "1 rows of Byte_Range"},
+	{kind = .Call, text = "storage.version(1, \"note\", {generation+18})", expected = "vers"},
+	{kind = .Call, text = "storage.compare(1, \"note\", {generation+17}, {generation+22})", expected = "1 rows of Byte_Range"},
 	// The generation 1 is the format of the disk: no object has it.
-	{kind = .Call, text = "storage.version(\"notes\", \"note\", 1)", outcome = .Failed, expected = "error: storage.version: the argument generation: the object has no version of the generation 1 (-9)"},
-	{kind = .Call, text = "storage.restore(\"notes\", \"note\", {generation+22})", expected = "{generation+24}"},
-	{kind = .Call, text = "storage.clone(\"notes\", \"note\", \"copy\")", expected = "{generation+25}"},
+	{kind = .Call, text = "storage.version(1, \"note\", 1)", outcome = .Failed, expected = "error: storage.version: the argument generation: the object has no version of the generation 1 (-9)"},
+	{kind = .Call, text = "storage.restore(1, \"note\", {generation+22})", expected = "{generation+24}"},
+	{kind = .Call, text = "storage.clone(1, \"note\", \"copy\")", expected = "{generation+25}"},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "storage.stores()"},
 	// The answer of stores() has one line for each store: with the store
 	// of the line history, more than 256 bytes. The console prints a
 	// result whole, at any length.
 	{kind = .Wait, text = "[console] console.history: 1 objects, ", any_order = true},
-	{kind = .Wait, text = "[console] notes: 2 objects, 9 versions, "},
+	{kind = .Wait, text = "[console] notes: 2 objects, 0 trees, 9 versions, "},
 	{kind = .Shot, text = "storage_versions"},
 	// A result of 324 bytes on one line: before, the console cut it at 256
 	// bytes in the terminal and at 192 bytes in the log, with no sign.

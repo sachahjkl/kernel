@@ -64,7 +64,7 @@ keep :: proc "contextless" (values: [settings.Setting]u32) -> bool {
 	}
 	kept := settings.kept_of(values)
 	error: errors.Error_Record
-	_, status := storage.write(&store, settings.KEPT_OBJECT_NAME, ([^]u8)(&kept)[:size_of(kept)], &error)
+	_, status := storage.write(&store, storage.ROOT, settings.KEPT_OBJECT_NAME, ([^]u8)(&kept)[:size_of(kept)], &error)
 	if status != .Ok {
 		buffer: [256]u8
 		writer := system.Writer{buffer = buffer[:]}
@@ -200,7 +200,7 @@ boot_pass :: proc "contextless" () -> ! {
 	values: [settings.Setting]u32
 	what := "no settings kept: the defaults"
 	if has_store {
-		bytes, found, status := storage.read(&store, settings.KEPT_OBJECT_NAME, buffer[:])
+		bytes, found, status := storage.read(&store, storage.ROOT, settings.KEPT_OBJECT_NAME, buffer[:])
 		switch {
 		case status != .Ok:
 			what = "the store gives no record (status not Ok): the defaults"

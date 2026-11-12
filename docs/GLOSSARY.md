@@ -282,30 +282,37 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 
 | Term | Definition | Do not use |
 |---|---|---|
-| Object | One named piece of stored data with its versions, held by the storage service and reached by handle (P9) | file, blob, inode |
-| Version | The state of one object at one commit: its bytes, its size, the generation and the time of that commit. Each commit that changes an object keeps the state before it as a version, in the version index of the object. The storage service keeps versions (P9) | snapshot (when it means one object), backup, revision, undo step |
+| Object | Bytes that never change, named by their hash (BLAKE3). A new content is a new object. An entry of a tree names an object; a write gives the entry a new object (P9, `docs/STORAGE.md`) | file, blob, inode |
+| Tree | An object that names other objects and trees: each entry has a name. A tree holds trees, so it fixes everything under it. On the disk each tree is a B+ tree of nodes, its own one (`docs/STORAGE.md`) | directory, folder, list (for this), manifest, catalog (for this) |
+| Entry | One name of a tree and what it names: an object or a tree. A name has 1 to 64 bytes, no zero byte, no byte `/`, and is not `.` or `..`: it is one step down, never up | directory entry, link, file name, path |
+| Node | One block of the B+ tree of a tree: a leaf of up to 24 entries, or a branch of up to 50 children | page (for this), bucket, inode |
+| Store | A cell that names one tree now: the one thing of storage that changes. A commit moves it to another tree in one step; its versions are its history | reference (for this), volume, file system, mount, head |
+| Place | A number that a connection to the storage service holds: the names of a path from the root of the connection, and the right to change or read only. Place 0 is the root of the connection. A place is valid on its connection only | file descriptor, directory handle, working directory, path |
+| Share | A connection to the storage service that the service itself makes for a caller: its root is a tree of the store of the caller, with or without the right to change. The caller gives its two handles to another program; `unshare` revokes them | mount, bind, export (for this), link |
+| Removal queue | The trees of a store that a remove took out of their tree. The storage service frees them in steps of 64 entries, one commit each, when no call waits | trash, bin, garbage list |
+| Version | The state of the object of one entry at one commit: its bytes, its size, the generation and the time of that commit. Each commit that changes an object keeps the state before it as a version, in the version index of the object. The storage service keeps versions (P9) | snapshot (when it means one object), backup, revision, undo step |
 | Current version | The state of an object that its last commit made: what a read gives. It is not in the version index | head, working copy, latest revision |
 | Version index | The blocks of one object that list its versions: an index block, which names leaf blocks, which hold the version entries, the oldest first | history file, journal, log |
 | Shared block | A block that two lists or two versions name: an unchanged block of an object, or the blocks of a clone. The storage service counts it one time in the blocks of the store | deduplicated block, extent reference |
 | Reference count | For each block in use, the count of what names it: list entries for a block of data, versions and objects for a list. The storage service frees a block when its count goes to 0 | link count, refcount (in text) |
 | Thinning | A commit that removes versions of an object: by the retention rule, or the oldest version of the store when a change does not fit in the limit of the store. Its blocks that no other version names become free | garbage collection, pruning, cleanup, compaction |
 | Retention rule | Which versions the storage service keeps: each version for 10 minutes, then one for each hour for one day, then one for each day | backup policy, history limit |
-| Clone | A new object whose list is the list of another object: the two share each block until one of them changes (P9) | copy (for this), hard link, reflink |
+| Clone | A new entry that names the object of another entry, with its list: the two share each block until one of them changes (P9) | copy (for this), hard link, reflink |
 | Restore | A commit that makes a version the current version again. The current version before it becomes a version: nothing is lost | revert, rollback, undo |
 | Time since the format | The milliseconds of the storage service since the format of the disk: the root block keeps it at each commit. It is the time of a version until the system has a date | uptime, timestamp |
-| Snapshot | The state of a whole private store at one time | checkpoint, backup |
-| Private store | The set of objects that belongs to one program. No other program sees it (P8, P9) | home directory, app data, container |
+| Snapshot | The tree that a store named at one commit. Not kept apart today: the versions are kept for each object (`docs/STORAGE.md`, section 1.3) | checkpoint, backup |
+| Private store | The store of one program: the root service names it after the program, with a limit of blocks. No other program sees it, except through a share (P8, P9) | home directory, app data, container |
 | Document | An object that belongs to the person and not to one program. The document service grants it (P8) | file, user file |
 | Module store | The set of all modules and system data, each identified by content hash (P11) | package store, repository, the Nix store |
 | System description | The list of hashes that defines one version of the whole system (P11). Its file (`contract/system_description`) names the kernel and each module and resource of the boot image, with its kind, its size and its BLAKE3 hash, in the order of the boot image. The boot image holds it as the resource `system_description` | image, generation, manifest, profile, system list |
 | Distinct result | One content of one output of a build (a module, its LLVM IR, its object, the boot program) among the contents that several builds of the same source gave. One source must give one distinct result for each output (P11). `kerneltool repeat` counts them, and `check` and `repeat` keep each one in `build/different_builds/` | variant (except in the names of the kept files), version |
-| Storage service | The service that owns the block device and gives objects, versions and private stores (P9) | file system |
+| Storage service | The service that owns the block device and keeps the stores, their trees, their objects and their versions (P9, `docs/STORAGE.md`) | file system |
 | Root block | The block of the data disk that names the private stores. The disk has two places for it; the storage service takes the valid one with the highest generation | superblock, uberblock, meta page |
 | Commit | One change of the stores: the storage service writes new blocks, then a new root block. A commit is on the disk completely or not at all | transaction (for this), save, sync |
 | Generation | The number of a commit. Each commit has the generation of the one before plus 1. It counts the commits of the whole disk, of each store | epoch, transaction id, version (for this) |
 | History store | The store of the line history of the console in the storage service, apart from its private store: named after the console with `.history`, a limit of 4 blocks, and no grant to act for the person. The root service gives the connection to it (`Root_Command.Connect_History`), with the grant `history` | shell history file, profile directory |
 | Base of the generations | In a machine test, the generation of one commit that a step `Generation` reads from the log: the steps after it name the generations that they wait for as the base and a count (`{generation+4}`), because other commits (the line history) come before | offset, delta |
-| Damaged object | An object with a block that a valid root block names and that does not have its check. The storage service does not give its bytes; a write or a remove replaces it. A private store with such a table is a damaged store | corrupt file, bad sector |
+| Damaged object | An object with a block that a valid root block names and that does not have its check. The storage service does not give its bytes; a write or a remove replaces it. A private store with a node or a store block of that kind is a damaged store | corrupt file, bad sector |
 | Check | The first 8 bytes of the BLAKE3 hash of a block, kept in the block that names it. A block that does not have its check is wrong, and the storage service does not use it | checksum, CRC, digest |
 
 ## Desktop

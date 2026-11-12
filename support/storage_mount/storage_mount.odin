@@ -8,6 +8,7 @@ package storage_mount
 
 import "base:intrinsics"
 import format "contract:store"
+import tree "support:storage_tree"
 
 BLOCK_SIZE :: format.BLOCK_SIZE
 SCRATCH_BLOCKS :: format.OBJECT_BLOCKS_LIMIT + 2
@@ -29,21 +30,61 @@ check_of_block :: proc "contextless" (reader: ^Block_Reader, number: u64, bytes:
 	return reader.check != nil ? reader.check(reader, number, bytes) : format.check(bytes)
 }
 
+// Reader_Source reads the nodes of the trees through a Block_Reader, for
+// support/storage_tree.
+Reader_Source :: struct {
+	using source: tree.Source,
+	reader:       ^Block_Reader,
+	disk_size:    u64,
+}
+
+reader_source :: proc "contextless" (reader: ^Block_Reader, disk_size: u64) -> Reader_Source {
+	return {source = {read = reader_source_read}, reader = reader, disk_size = disk_size}
+}
+
+reader_source_read :: proc "contextless" (source: ^tree.Source, pointer: format.Pointer, into: ^tree.Block) -> tree.Read {
+	from := (^Reader_Source)(source)
+	if pointer.block < 2 || pointer.block >= from.disk_size {
+		return .Wrong
+	}
+	numbers := [1]u64{pointer.block}
+	if !from.reader.read(from.reader, numbers[:], into[:]) {
+		return .Device
+	}
+	return check_of_block(from.reader, pointer.block, into[:]) == pointer.check ? .Good : .Wrong
+}
+
+// The counts of one store, as its store block keeps them and as the walk
+// finds them.
+Store_Counts :: struct {
+	objects:        u64,
+	trees:          u64,
+	current_blocks: u64,
+	node_blocks:    u64,
+	removing:       u64,
+}
+
+store_counts_of :: proc "contextless" (block: ^format.Store_Block) -> Store_Counts {
+	return {objects = block.objects, trees = block.trees, current_blocks = block.current_blocks, node_blocks = block.node_blocks, removing = block.removing}
+}
+
 // What the open knows of a disk. The storage service keeps it while it
 // runs; the tool makes one for each image.
 State :: struct {
 	root:          format.Root,
 	root_place:    u64, // 0 or 1: the place of the root on the disk.
 	disk_size:     u64, // The blocks of the disk that the service uses.
-	tables:        [format.STORE_CAPACITY]format.Table,
+	// The store block of each store, with the counts that the walk found in
+	// place of the counts on the disk: the service starts from them.
+	store_blocks:  [format.STORE_CAPACITY]format.Store_Block,
 	in_use:        [format.DISK_BLOCKS_LIMIT / 64]u64, // Bit n: block n is named by the root.
 	in_use_count:  u64,
 	// The reference count of each block that the root names: for a block of
-	// data, the lists that name it; for a list, the objects and versions that
-	// name it; 1 for a table, an index and a leaf.
+	// data, the lists that name it; for a list, the entries and versions
+	// that name it; 1 for a store block, a node, an index and a leaf.
 	references:    [format.DISK_BLOCKS_LIMIT]u32,
 	owner:         [format.DISK_BLOCKS_LIMIT]u8, // The store that names the block, plus 1.
-	wrong_blocks:  [format.DISK_BLOCKS_LIMIT / 64]u64, // Bit n: block n was read and has a wrong check.
+	wrong_blocks:  [format.DISK_BLOCKS_LIMIT / 64]u64, // Bit n: block n was read and has a wrong check, or breaks a rule of the format.
 	store_versions: [format.STORE_CAPACITY]u64, // The versions of the objects of each store.
 	store_shared:  [format.STORE_CAPACITY]u64, // The blocks of each store with a reference count of 2 or more.
 	// The distinct blocks of each store that the walk counted: the count that
@@ -55,15 +96,23 @@ State :: struct {
 	// fit its type): its counts are not trusted, and the service makes no
 	// change in it.
 	store_faulty:  [format.STORE_CAPACITY]bool,
-	damaged:       [format.STORE_CAPACITY]u64, // Bit n: the object n of the store has a wrong block.
-	store_damaged: [format.STORE_CAPACITY]bool, // The table of the store has a wrong check.
+	store_damaged: [format.STORE_CAPACITY]bool, // Its store block or a node of one of its trees is wrong.
+	store_damaged_objects: [format.STORE_CAPACITY]u64, // Objects with a wrong list or a wrong block of data.
 	scratch:       [SCRATCH_BLOCKS * BLOCK_SIZE]u8,
+	// One walk for each level of trees inside trees: a walk holds the nodes
+	// of its path, and a tree inside a tree is walked while its entry is read.
+	walks:         [format.NESTING_LIMIT + 1]tree.Walk,
+	// The walk of the store that the open reads now: the walks of its trees
+	// name it, so it lives in the state, not on the stack.
+	store_walk:    Store_Walk,
 }
 
 Mount :: struct {
 	generation:      u64,
 	stores:          u64,
 	objects:         u64,
+	trees:           u64, // The trees inside the trees of the stores.
+	removing:        u64, // The trees in the removal queues.
 	checked:         u64, // Blocks read and compared with their check.
 	wrong:           u64,
 	damaged_objects: u64,
@@ -77,19 +126,18 @@ Mount :: struct {
 	damaged_versions: u64, // Versions with a wrong list or a wrong block of data, or in a wrong leaf.
 	shared:          u64, // Blocks with a reference count of 2 or more.
 	// Faults of the engine itself, that no stop of the machine can make: a
-	// table, an index or a leaf that the root names two times, a block named
-	// from two stores, and a store whose count of blocks is not the count of
-	// its distinct blocks.
+	// block of one name that the root names two times, a block named from
+	// two stores, and a store whose counts are not the counts of what it
+	// names (its blocks, its objects, its trees, the entries of a tree).
 	named_twice:          u64,
 	named_by_two_stores:  u64,
-	stores_with_wrong_count: u64, // Stores walked whole whose count in the root is not the count of their distinct blocks.
+	stores_with_wrong_count: u64, // Stores walked whole whose count of blocks, or a count of the store block or of an entry, is wrong.
 	reference_overflow:   u64, // Blocks with more names than a count holds.
 	stores_recounted:     u64, // Stores whose count in the root differs from the recount: the open takes the recount.
 }
 
-// REFERENCE_LIMIT is the most names of one block that a count holds. A disk
-// that the engine wrote cannot reach it: one store has at most
-// OBJECT_CAPACITY objects of VERSIONS_LIMIT versions.
+// REFERENCE_LIMIT is the most names of one block that a count holds: the
+// open and a commit refuse a count past it.
 REFERENCE_LIMIT :: u64(max(u32))
 
 // reference counts one more name of a block, from a store. It gives true
@@ -254,12 +302,49 @@ scratch_block :: proc "contextless" (state: ^State, index: int) -> []u8 {
 	return state.scratch[index * BLOCK_SIZE:][:BLOCK_SIZE]
 }
 
+// single counts the one name of a block that only one name can have: a
+// store block, a version index, a version leaf. It reads and checks it into
+// the scratch block 0.
+single :: proc "contextless" (state: ^State, reader: ^Block_Reader, pointer: format.Pointer, store_index: int, result: ^Mount, named: ^u64) -> Read {
+	if !reference(state, pointer.block, store_index, result) {
+		result.named_twice += 1
+		state.store_faulty[store_index] = true
+	} else {
+		named^ += 1
+	}
+	wrong, outcome := read_checked(state, reader, {pointer}, 0)
+	result.checked += 1
+	if outcome == .Wrong {
+		result.wrong += wrong
+		wrong_block_set(state, pointer.block)
+	}
+	return outcome
+}
+
+// The walk of one store, for the visits of the walks of its trees.
+Store_Walk :: struct {
+	state:       ^State,
+	reader:      ^Block_Reader,
+	source:      Reader_Source,
+	result:      ^Mount,
+	store_index: int,
+	named:       u64, // The distinct blocks of the store.
+	counts:      Store_Counts,
+	nesting:     int, // The level of the tree that is walked: 0 for the tree of the store.
+	in_removals: bool, // The walk is in the removal queue: its entries are trees to free.
+	complete:    bool, // Each block of the store was read: its counts are known.
+	device:      bool,
+	broken:      bool, // A node or an entry breaks a rule: the store is damaged.
+	entry_count_wrong: bool, // An entry of a tree gives another count of entries than its tree has.
+}
+
 // walk reads each block that a root names, checks it, and counts its
-// references: the objects, their versions, and each block one time. A wrong
-// block does not end the walk: its object, its version, or its store for a
-// table, is damaged. The blocks that a wrong table, index, leaf or list
-// named are not known, so they are free. It gives false when the device
-// reported an error.
+// references: the store blocks, the nodes of each tree, the objects, their
+// versions, and each block one time. A wrong list or a wrong block of data
+// does not end the walk: its object, or its version, is damaged. A wrong
+// store block or node damages its store: the walk of that store stops. The
+// blocks under a wrong block are not known, so they are free. It gives
+// false when the device reported an error.
 walk :: proc "contextless" (state: ^State, reader: ^Block_Reader, candidate: ^format.Root, result: ^Mount) -> bool {
 	state.in_use = {}
 	state.in_use_count = 0
@@ -270,127 +355,271 @@ walk :: proc "contextless" (state: ^State, reader: ^Block_Reader, candidate: ^fo
 	state.store_shared = {}
 	state.store_recount = {}
 	state.store_faulty = {}
+	state.store_damaged = {}
+	state.store_damaged_objects = {}
+	state.store_blocks = {}
 	mark(state, 0, true)
 	mark(state, 1, true)
-	state.tables = {}
-	state.damaged = {}
-	state.store_damaged = {}
-	result.stores, result.objects, result.checked, result.wrong = 0, 0, 0, 0
+	result.stores, result.objects, result.trees, result.removing = 0, 0, 0, 0
+	result.checked, result.wrong = 0, 0
 	result.damaged_objects, result.damaged_stores, result.named_twice, result.stores_with_wrong_count = 0, 0, 0, 0
 	result.versions, result.damaged_versions, result.shared, result.named_by_two_stores = 0, 0, 0, 0
 	result.reference_overflow, result.stores_recounted = 0, 0
-	// A block that only one name can have: a table, an index, a leaf.
-	single :: proc "contextless" (state: ^State, reader: ^Block_Reader, pointer: format.Pointer, store_index: int, result: ^Mount, named: ^u64) -> Read {
-		if !reference(state, pointer.block, store_index, result) {
-			result.named_twice += 1
-			state.store_faulty[store_index] = true
-		} else {
-			named^ += 1
-		}
-		wrong, outcome := read_checked(state, reader, {pointer}, 0)
-		result.checked += 1
-		if outcome == .Wrong {
-			result.wrong += wrong
-			wrong_block_set(state, pointer.block)
-		}
-		return outcome
-	}
 	for &store, index in candidate.stores {
 		if store.name[0] == 0 {
 			continue
 		}
 		result.stores += 1
-		named: u64 // The distinct blocks of the store: the table, then each block that the store names first.
-		outcome := single(state, reader, store.table, index, result, &named)
-		if outcome == .Device {
+		ok := walk_store(state, reader, &store, index, result)
+		// The walk of a store names the reader and the result of this call
+		// only while it runs.
+		state.store_walk = {}
+		if !ok {
 			return false
 		}
-		if outcome == .Wrong {
-			result.damaged_stores += 1
-			state.store_damaged[index] = true
+	}
+	return true
+}
+
+walk_store :: proc "contextless" (state: ^State, reader: ^Block_Reader, store: ^format.Store_Entry, index: int, result: ^Mount) -> bool {
+	named: u64
+	switch single(state, reader, store.store, index, result, &named) {
+	case .Device:
+		return false
+	case .Wrong:
+		result.damaged_stores += 1
+		state.store_damaged[index] = true
+		state.store_recount[index] = named
+		return true
+	case .Good:
+	}
+	block := &state.store_blocks[index]
+	intrinsics.mem_copy_non_overlapping(block, raw_data(scratch_block(state, 0)), BLOCK_SIZE)
+	on_disk := store_counts_of(block)
+	walking := &state.store_walk
+	walking^ = {
+		state       = state,
+		reader      = reader,
+		source      = reader_source(reader, state.disk_size),
+		result      = result,
+		store_index = index,
+		named       = named,
+		complete    = true,
+	}
+	roots := [2]format.Pointer{block.tree, block.removals}
+	for root, which in roots {
+		walking.in_removals = which == 1
+		walk_one_tree(walking, root, 0)
+		if walking.device {
+			return false
+		}
+		if walking.broken {
+			break
+		}
+	}
+	if walking.broken {
+		result.damaged_stores += 1
+		state.store_damaged[index] = true
+		walking.complete = false
+	}
+	state.store_recount[index] = walking.named
+	wrong_count := walking.named != store.used || walking.counts != on_disk || walking.entry_count_wrong
+	if walking.named != store.used {
+		result.stores_recounted += 1
+	}
+	if wrong_count && walking.complete {
+		result.stores_with_wrong_count += 1
+	}
+	result.objects += walking.counts.objects
+	result.trees += walking.counts.trees
+	result.removing += walking.counts.removing
+	// The service starts from the counts of the walk: the next commit
+	// writes them.
+	if !walking.broken {
+		block.objects = walking.counts.objects
+		block.trees = walking.counts.trees
+		block.current_blocks = walking.counts.current_blocks
+		block.node_blocks = walking.counts.node_blocks
+		block.removing = walking.counts.removing
+	}
+	return true
+}
+
+// walk_one_tree walks one tree of a store, and each tree inside it while
+// its entry is read. It gives the count of its entries.
+walk_one_tree :: proc "contextless" (walking: ^Store_Walk, root: format.Pointer, nesting: int) -> (entries: u64) {
+	if nesting > format.NESTING_LIMIT {
+		walking.broken = true
+		return 0
+	}
+	state := walking.state
+	one := &state.walks[nesting]
+	one.source = &walking.source.source
+	one.shape = tree.TREE_SHAPE
+	one.visit_node = visit_node_of_store
+	one.visit_record = visit_entry_of_store
+	one.data = walking
+	one.nodes, one.records = 0, 0
+	before := walking.nesting
+	walking.nesting = nesting
+	failure := tree.walk_tree(one, root)
+	walking.nesting = before
+	switch failure {
+	case .Device:
+		walking.device = true
+	case .Wrong, .Damaged, .Full, .Write:
+		if one.failed_block != 0 && !wrong_block(state, one.failed_block) {
+			wrong_block_set(state, one.failed_block)
+			walking.result.wrong += 1
+		}
+		walking.broken = true
+	case .None:
+	}
+	return one.records
+}
+
+visit_node_of_store :: proc "contextless" (one: ^tree.Walk, pointer: format.Pointer) -> bool {
+	walking := (^Store_Walk)(one.data)
+	if pointer.block < 2 || pointer.block >= walking.state.disk_size {
+		return true // The read says that it is wrong.
+	}
+	if !reference(walking.state, pointer.block, walking.store_index, walking.result) {
+		// A node named two times: the walk does not read it again, so a loop
+		// of nodes ends.
+		walking.result.named_twice += 1
+		walking.state.store_faulty[walking.store_index] = true
+		return false
+	}
+	walking.named += 1
+	walking.counts.node_blocks += 1
+	walking.result.checked += 1
+	return true
+}
+
+visit_entry_of_store :: proc "contextless" (one: ^tree.Walk, _: []u8, value: []u8) {
+	walking := (^Store_Walk)(one.data)
+	state := walking.state
+	result := walking.result
+	index := walking.store_index
+	entry := (^format.Entry)(raw_data(value))^
+	queued := walking.in_removals && walking.nesting == 0
+	if queued {
+		if entry.kind != .Tree {
+			walking.broken = true
+			one.failure = .Damaged
+			return
+		}
+		walking.counts.removing += 1
+	}
+	switch entry.kind {
+	case .Object:
+		walking.counts.objects += 1
+		if entry.pointer.block != 0 {
+			walking.counts.current_blocks += 1 + (entry.size + BLOCK_SIZE - 1) / BLOCK_SIZE
+		}
+		switch reference_list(state, walking.reader, entry.pointer, entry.size, index, result, &walking.named) {
+		case .Device:
+			walking.device = true
+			one.failure = .Device
+			return
+		case .Wrong:
+			result.damaged_objects += 1
+			state.store_damaged_objects[index] += 1
+			walking.complete = false
+		case .Good:
+		}
+		if entry.versions.block != 0 && !walk_versions(walking, entry.versions) {
+			walking.device = true
+			one.failure = .Device
+			return
+		}
+	case .Tree:
+		walking.counts.trees += 1
+		if entry.versions.block != 0 || entry.hash != {} || entry.pointer.block == 0 && entry.size != 0 {
+			walking.broken = true
+			one.failure = .Damaged
+			return
+		}
+		if entry.pointer.block != 0 {
+			entries := walk_one_tree(walking, entry.pointer, walking.nesting + 1)
+			if walking.device {
+				one.failure = .Device
+				return
+			}
+			if walking.broken {
+				one.failure = .Damaged
+				return
+			}
+			if entries != entry.size {
+				walking.entry_count_wrong = true
+			}
+		}
+	case .None:
+		walking.broken = true
+		one.failure = .Damaged
+	case:
+		// A kind that the format does not have.
+		walking.broken = true
+		one.failure = .Damaged
+	}
+}
+
+// walk_versions counts the version index of an object, its leaves and the
+// list of each version. It gives false when the device reported an error.
+walk_versions :: proc "contextless" (walking: ^Store_Walk, versions: format.Pointer) -> bool {
+	state := walking.state
+	reader := walking.reader
+	result := walking.result
+	index := walking.store_index
+	switch single(state, reader, versions, index, result, &walking.named) {
+	case .Device:
+		return false
+	case .Wrong:
+		result.damaged_versions += 1 // The versions of the object are not known.
+		walking.complete = false
+		return true
+	case .Good:
+	}
+	version_index := (^format.Version_Index)(raw_data(scratch_block(state, 0)))^
+	// A count that the format does not permit is damage, as a wrong check:
+	// the engine then never reads past the leaves of an index.
+	if version_index.leaf_count > format.VERSION_INDEX_CAPACITY {
+		result.wrong += 1
+		wrong_block_set(state, versions.block)
+		result.damaged_versions += 1
+		walking.complete = false
+		return true
+	}
+	for leaf_pointer in version_index.leaves[:version_index.leaf_count] {
+		switch single(state, reader, leaf_pointer, index, result, &walking.named) {
+		case .Device:
+			return false
+		case .Wrong:
+			result.damaged_versions += 1
+			walking.complete = false
+			continue
+		case .Good:
+		}
+		leaf := (^format.Version_Leaf)(raw_data(scratch_block(state, 0)))^
+		// The engine writes no empty leaf, and no leaf of more entries than
+		// it holds.
+		if leaf.count == 0 || leaf.count > format.VERSION_LEAF_CAPACITY {
+			result.wrong += 1
+			wrong_block_set(state, leaf_pointer.block)
+			result.damaged_versions += 1
+			walking.complete = false
 			continue
 		}
-		intrinsics.mem_copy_non_overlapping(&state.tables[index], raw_data(scratch_block(state, 0)), BLOCK_SIZE)
-		complete := true // Each block of the store was read: its count of blocks is known.
-		for &object, object_index in state.tables[index].objects {
-			if object.name[0] == 0 {
-				continue
-			}
-			result.objects += 1
-			switch reference_list(state, reader, object.list, object.size, index, result, &named) {
+		for &entry in leaf.entries[:leaf.count] {
+			result.versions += 1
+			state.store_versions[index] += 1
+			switch reference_list(state, reader, entry.list, entry.size, index, result, &walking.named) {
 			case .Device:
 				return false
 			case .Wrong:
-				result.damaged_objects += 1
-				state.damaged[index] |= 1 << uint(object_index)
-				complete = false
-			case .Good:
-			}
-			if object.versions.block == 0 {
-				continue
-			}
-			outcome = single(state, reader, object.versions, index, result, &named)
-			if outcome == .Device {
-				return false
-			}
-			if outcome == .Wrong {
-				result.damaged_versions += 1 // The versions of the object are not known.
-				complete = false
-				continue
-			}
-			version_index := (^format.Version_Index)(raw_data(scratch_block(state, 0)))^
-			// A count that the format does not permit is damage, as a wrong
-			// check: the engine then never reads past the leaves of an index.
-			if version_index.leaf_count > format.VERSION_INDEX_CAPACITY {
-				result.wrong += 1
-				wrong_block_set(state, object.versions.block)
 				result.damaged_versions += 1
-				complete = false
-				continue
-			}
-			for leaf_pointer in version_index.leaves[:version_index.leaf_count] {
-				outcome = single(state, reader, leaf_pointer, index, result, &named)
-				if outcome == .Device {
-					return false
-				}
-				if outcome == .Wrong {
-					result.damaged_versions += 1
-					complete = false
-					continue
-				}
-				leaf := (^format.Version_Leaf)(raw_data(scratch_block(state, 0)))^
-				// The engine writes no empty leaf, and no leaf of more entries
-				// than it holds.
-				if leaf.count == 0 || leaf.count > format.VERSION_LEAF_CAPACITY {
-					result.wrong += 1
-					wrong_block_set(state, leaf_pointer.block)
-					result.damaged_versions += 1
-					complete = false
-					continue
-				}
-				for &entry in leaf.entries[:leaf.count] {
-					result.versions += 1
-					state.store_versions[index] += 1
-					switch reference_list(state, reader, entry.list, entry.size, index, result, &named) {
-					case .Device:
-						return false
-					case .Wrong:
-						result.damaged_versions += 1
-						complete = false
-					case .Good:
-					}
-				}
-			}
-		}
-		// The count of the store is its recount: the blocks under a wrong
-		// block are not counted in memory either, so they are free there and
-		// out of the limit of the store. A store walked whole whose root gives
-		// another count is a fault of the engine that wrote it.
-		state.store_recount[index] = named
-		if named != store.used {
-			result.stores_recounted += 1
-			if complete {
-				result.stores_with_wrong_count += 1
+				walking.complete = false
+			case .Good:
 			}
 		}
 	}
@@ -498,15 +727,6 @@ list_bytes :: proc "contextless" (state: ^State, reader: ^Block_Reader, list: fo
 	}
 	intrinsics.mem_copy_non_overlapping(raw_data(into), raw_data(state.scratch[BLOCK_SIZE:]), int(size))
 	return true
-}
-
-// object_bytes reads the bytes of the current version of an object of a
-// store that the open walked, checked, into `into`. ok is false when the
-// object is damaged or the device reported an error; size is its count of
-// bytes.
-object_bytes :: proc "contextless" (state: ^State, reader: ^Block_Reader, store_index: int, object_index: int, into: []u8) -> (size: u64, ok: bool) {
-	object := state.tables[store_index].objects[object_index]
-	return object.size, list_bytes(state, reader, object.list, object.size, into)
 }
 
 // versions_read reads the version entries of an object, the oldest first,

@@ -106,7 +106,7 @@ history_load :: proc "contextless" () {
 	// One byte more than a file can have: a larger object is refused.
 	buffer: [line_editor.HISTORY_FILE_SIZE_LIMIT + 1]u8
 	error: errors.Error_Record
-	bytes, found, status := storage.read(&history_client, HISTORY_OBJECT_NAME, buffer[:], &error)
+	bytes, found, status := storage.read(&history_client, storage.ROOT, HISTORY_OBJECT_NAME, buffer[:], &error)
 	switch {
 	case status == .Damaged:
 		system.log("console: the line history is damaged in its store: the history starts empty")
@@ -145,7 +145,7 @@ history_save :: proc "contextless" () {
 	buffer: [line_editor.HISTORY_FILE_SIZE_LIMIT]u8
 	bytes := line_editor.history_file_write(&history, buffer[:])
 	error: errors.Error_Record
-	_, status := storage.write(&history_client, HISTORY_OBJECT_NAME, bytes, &error)
+	_, status := storage.write(&history_client, storage.ROOT, HISTORY_OBJECT_NAME, bytes, &error)
 	if status == .Ok {
 		history_saved_lines = history.lines_written
 		return
@@ -178,7 +178,7 @@ history_clear :: proc "contextless" (arguments: []Value) -> Value {
 		return {}
 	}
 	error: errors.Error_Record
-	result, status := storage.remove(&history_client, HISTORY_OBJECT_NAME, &error)
+	result, status := storage.remove(&history_client, storage.ROOT, HISTORY_OBJECT_NAME, &error)
 	if status == .Ok || status == .Failed && result == storage.ERROR_ABSENT {
 		print("the line history is cleared: ", u64(count), " lines, and its store\n")
 		return {}
