@@ -10,8 +10,11 @@ package kerneltool
 // writes no more records; the address of a fault is 0 for a rule for every
 // program and given for a rule that names the child; 1000 gives and ends of
 // a table under a load on each processor leave a pattern whole after each
-// end. The cost of an entry, with its records + lost equal to the count of
-// the loop of the child, is a line of the log, for the coordinator.
+// end. The cost of an entry in four rounds (no rule, a rule that names
+// another program, a rule for every program that matches nothing, a rule
+// that accepts each operation), with records + lost that agree with the
+// count of the loop of the child, is a line of the log, for the
+// coordinator.
 //
 // Then the two ends of a table that the program does not ask for. The tool
 // stops kernel_events while its table is given: the kernel ends the table
@@ -41,6 +44,9 @@ scenario_kernel_events := [?]Step {
 	{kind = .Wait, text = "kernel_events: the address of a fault: a rule for every program: "},
 	{kind = .Wait, text = "kernel_events: 1000 gives and ends under load: 1000 ends with ", seconds = 60},
 	{kind = .Wait, text = "kernel_events: kernel entries in one second of the load child (its own count and time): no rule "},
+	{kind = .Wait, text = "; a rule that names another program "},
+	{kind = .Wait, text = " lost, of 0); a rule for every program that matches nothing "},
+	{kind = .Wait, text = " lost, of 0); a rule that accepts each of its operations "},
 	{kind = .Wait, text = "kernel_events: in 200 ms while this program sleeps, every program: "},
 	{kind = .Wait, text = "kernel_events: the table is given; waiting for the revocation of the grant machine"},
 	// The end of the table with its owner.

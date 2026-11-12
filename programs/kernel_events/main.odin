@@ -21,9 +21,11 @@
 //      enter the kernel on each processor: after each end, a pattern over
 //      the whole memory object of the rings stays whole.
 //  11. The cost: kernel entries in one second of the load child, with its
-//      own count and time: with no rule, with one rule that matches
-//      nothing, and with a rule that accepts each of its operations; the
-//      records written plus lost must equal its count.
+//      own count and time: with no rule, with a rule that names another
+//      program, with a rule for every program that matches nothing, and
+//      with a rule that accepts each of its operations; the records
+//      written plus lost must be 0 for the second and the third, and its
+//      count for the fourth.
 //  12. The right revoked: the person revokes the grant machine of this
 //      program (the console, in the scenario); the table ends with it, no
 //      record comes after, and Events_Set is refused.
@@ -116,11 +118,12 @@ ROUND_LOADERS_STOP :: 8
 // The rounds of the measure: the load child runs its loop of Memory_Size
 // for MEASURE_TIME, and writes its own count and its own time.
 ROUND_MEASURE_NO_RULE :: 9
-ROUND_MEASURE_NOTHING :: 10
-ROUND_MEASURE_EACH :: 11
+ROUND_MEASURE_OTHER :: 10
+ROUND_MEASURE_NOTHING :: 11
+ROUND_MEASURE_EACH :: 12
 // The right revoked: CALLS operations before the revocation, CALLS after.
-ROUND_BEFORE_REVOCATION :: 12
-ROUND_AFTER_REVOCATION :: 13
+ROUND_BEFORE_REVOCATION :: 13
+ROUND_AFTER_REVOCATION :: 14
 
 // The page that the parent shares with each child, at SHARED_ADDRESS in the
 // child.
@@ -195,9 +198,9 @@ processor_count: u64
 
 shown: Tally // The records of all the cases, for the window.
 shown_lost: u64
-// The three measures of the cost, in the order of the rounds: no rule,
-// one rule that matches nothing, a rule that accepts each operation of the
-// load child.
+// The four measures of the cost, in the order of the rounds: no rule; a
+// rule that names another program; a rule for every program that matches
+// nothing; a rule that accepts each operation of the load child.
 Measure :: struct {
 	count:       u64, // The operations of the loop of the load child: its own count.
 	nanoseconds: u64, // The time of its loop.
@@ -205,7 +208,7 @@ Measure :: struct {
 	written:     u64, // The records in all the rings when the table ended: the sum of the heads.
 	lost:        u64,
 }
-measures: [3]Measure
+measures: [4]Measure
 
 records_now, records_before: [256]interface.Draw_Record
 text_now, text_before: [4096]u8
@@ -432,9 +435,11 @@ cases_of_refusal :: proc "contextless" () {
 // The cases 3 to 8, with the load child (the caller started it and ends
 // it) and the child that faults. Each count that a case checks is a count
 // that this program knows by its own means: the loop of the load child
-// (CALLS, SLEEPS), the one access of the child that faults.
-cases_of_counts :: proc "contextless" (window: ^display.Window, load: ^Child) {
-	faulter, faulter_started := child_start(.Faulter, "the child that faults", WAITER_AMOUNTS)
+// (CALLS, SLEEPS), the one access of the child that faults. The child that
+// faults stops at its fault; the caller keeps its handle until after the
+// measure, where a rule names it (case_of_the_cost), and ends it then.
+cases_of_counts :: proc "contextless" (window: ^display.Window, load: ^Child) -> (faulter: Child, faulter_started: bool) {
+	faulter, faulter_started = child_start(.Faulter, "the child that faults", WAITER_AMOUNTS)
 	if !faulter_started {
 		system.log("kernel_events: the child that faults did not start: the cases 3 to 8 do not run")
 		return
@@ -473,7 +478,6 @@ cases_of_counts :: proc "contextless" (window: ^display.Window, load: ^Child) {
 	right = faulted && tally.faults_stopped == 1 && tally.fault_detail == 14 && tally.fault_address == FAULT_ADDRESS
 	system.log("kernel_events: a child that faults once: ", tally.faults_stopped, " record of a fault that stopped it, vector ", tally.fault_detail, ", address ", system.Hex(tally.fault_address), ", stop code ", system.Hex(code[1]), right ? string(": as it must") : string(": WRONG"))
 	case_end(4, right, tally.faults_stopped, " record, vector ", tally.fault_detail, right ? string(": as it must") : string(": WRONG"))
-	child_end(&faulter, "the child that faults")
 	interface_draw(window)
 
 	// 6. One in 10.
@@ -507,6 +511,7 @@ cases_of_counts :: proc "contextless" (window: ^display.Window, load: ^Child) {
 	system.log("kernel_events: the table taken away: ", written_after - written_before, " records after it; a second take gave ", op.STATUS_NAMES[second], right ? string(": as it must") : string(": WRONG"))
 	case_end(7, right, written_after - written_before, " records after it", right ? string(": as it must") : string(": WRONG"))
 	interface_draw(window)
+	return
 }
 
 // Case 9: the address of a fault. The load child makes one first use of a
@@ -612,7 +617,7 @@ case_of_the_revoked_right :: proc "contextless" (load: ^Child) {
 
 // The thread that empties the rings during the measures: it moves the
 // count read of each ring to its count written, each millisecond, as an
-// observer does. It runs in the three rounds, so that the three measures
+// observer does. It runs in the four rounds, so that the four measures
 // have the same threads; its own kernel entries are waits with no command,
 // and no rule of the measure names this program.
 drain_running: u32
@@ -658,26 +663,43 @@ measure_round :: proc "contextless" (load: ^Child, round: u32, rules: []op.Event
 	return ran && measure.count != 0
 }
 
-// Case 10: the cost of an entry, measured by the load child with its own
+// Case 11: the cost of an entry, measured by the load child with its own
 // count and its own time (one operation Memory_Size in each entry, as the
-// lockers of the program locks), three times: no rule; one rule that
-// matches nothing (an Operation rule for Machine_Stop, for every program:
-// the event point reads the cycle counter twice and tests one rule); a rule
-// that accepts each operation of the loop. The two last ones are checked
-// against the heads of the rings: written + lost is 0 for the first, the
-// count of the loop for the second. A measure whose numbers do not agree is
-// a failed case.
-case_of_the_cost :: proc "contextless" (load: ^Child) {
+// lockers of the program locks), four times, each round of the same time
+// and with the thread that empties the rings:
+//   1. no rule;
+//   2. a rule of the kind Operation that names another program: the child
+//      that faults, which stopped at its fault, whose handle this program
+//      keeps, and which makes no operation (the slot keeps its program and
+//      its serial while the handle lives). The event point of the load
+//      child loads the set of the program slots of the kind and skips;
+//   3. a rule for every program that matches nothing (Machine_Stop): the
+//      event point reads the cycle counter twice, calls event_record and
+//      tests the rule;
+//   4. a rule that accepts each operation of the loop.
+// The three last ones are checked against the heads of the rings: written
+// + lost is 0 for the second and the third, the count of the loop for the
+// fourth. A measure whose numbers do not agree is a failed case.
+case_of_the_cost :: proc "contextless" (load: ^Child, other: ^Child) {
+	other_program: u64
+	if other != nil {
+		other_program = u64(other.program)
+	}
+	named_other := [1]op.Event_Rule{{kind = .Operation, program = other_program}}
 	nothing := [1]op.Event_Rule{{kind = .Operation, flags = {.Match_Detail}, detail = u64(op.Operation.Machine_Stop)}}
 	each := [1]op.Event_Rule{{kind = .Operation, flags = {.Match_Detail}, program = u64(load.program), detail = u64(op.Operation.Memory_Size)}}
 	ran := measure_round(load, ROUND_MEASURE_NO_RULE, nil, &measures[0])
-	ran = measure_round(load, ROUND_MEASURE_NOTHING, nothing[:], &measures[1]) && ran
-	ran = measure_round(load, ROUND_MEASURE_EACH, each[:], &measures[2]) && ran
-	nothing_agrees := measures[1].written + measures[1].lost == 0
-	each_agrees := measures[2].written + measures[2].lost == measures[2].count
-	right := ran && nothing_agrees && each_agrees
-	system.log("kernel_events: kernel entries in one second of the load child (its own count and time): no rule ", measures[0].rate, " (", measures[0].count, " operations in ", measures[0].nanoseconds, " ns); one rule that matches nothing ", measures[1].rate, " (", measures[1].count, " operations in ", measures[1].nanoseconds, " ns; ", measures[1].written, " records + ", measures[1].lost, " lost, of 0); a rule that accepts each of its operations ", measures[2].rate, " (", measures[2].count, " operations in ", measures[2].nanoseconds, " ns; ", measures[2].written, " records + ", measures[2].lost, " lost = ", measures[2].written + measures[2].lost, ", of ", measures[2].count, ")", right ? string(": as it must") : string(": WRONG"))
-	case_end(10, right, measures[0].rate, ", ", measures[1].rate, ", ", measures[2].rate, right ? string(": as it must") : string(": WRONG"))
+	// With no other program, the round does not run: a rule for every
+	// program would not measure the same path.
+	ran = other != nil && measure_round(load, ROUND_MEASURE_OTHER, named_other[:], &measures[1]) && ran
+	ran = measure_round(load, ROUND_MEASURE_NOTHING, nothing[:], &measures[2]) && ran
+	ran = measure_round(load, ROUND_MEASURE_EACH, each[:], &measures[3]) && ran
+	other_agrees := measures[1].written + measures[1].lost == 0
+	nothing_agrees := measures[2].written + measures[2].lost == 0
+	each_agrees := measures[3].written + measures[3].lost == measures[3].count
+	right := ran && other_agrees && nothing_agrees && each_agrees
+	system.log("kernel_events: kernel entries in one second of the load child (its own count and time): no rule ", measures[0].rate, " (", measures[0].count, " operations in ", measures[0].nanoseconds, " ns); a rule that names another program ", measures[1].rate, " (", measures[1].count, " operations in ", measures[1].nanoseconds, " ns; ", measures[1].written, " records + ", measures[1].lost, " lost, of 0); a rule for every program that matches nothing ", measures[2].rate, " (", measures[2].count, " operations in ", measures[2].nanoseconds, " ns; ", measures[2].written, " records + ", measures[2].lost, " lost, of 0); a rule that accepts each of its operations ", measures[3].rate, " (", measures[3].count, " operations in ", measures[3].nanoseconds, " ns; ", measures[3].written, " records + ", measures[3].lost, " lost = ", measures[3].written + measures[3].lost, ", of ", measures[3].count, ")", right ? string(": as it must") : string(": WRONG"))
+	case_end(10, right, measures[0].rate, ", ", measures[1].rate, ", ", measures[2].rate, ", ", measures[3].rate, right ? string(": as it must") : string(": WRONG"))
 
 	// What every program does while this one sleeps 200 ms: shown, not
 	// checked (no count of this program can check it).
@@ -752,7 +774,7 @@ child_role_run :: proc "contextless" (role: Role) -> ! {
 			}
 			round = intrinsics.atomic_load(&shared.go)
 			switch round {
-			case ROUND_MEASURE_NO_RULE, ROUND_MEASURE_NOTHING, ROUND_MEASURE_EACH:
+			case ROUND_MEASURE_NO_RULE, ROUND_MEASURE_OTHER, ROUND_MEASURE_NOTHING, ROUND_MEASURE_EACH:
 				// The measure: its own count and its own time. The loop
 				// makes one kernel entry with one operation Memory_Size for
 				// each count, and no other operation Memory_Size; the
@@ -868,11 +890,18 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	load_amounts.processor = min(load_amounts.processor, own.processor)
 	load, load_started := child_start(.Load, "the load child", load_amounts)
 	if load_started {
-		cases_of_counts(&window, &load)
+		faulter, faulter_started := cases_of_counts(&window, &load)
 		case_of_the_fault_address(&load)
 		interface_draw(&window)
 		case_of_the_ends_under_load(&load, &window)
-		case_of_the_cost(&load)
+		other: ^Child
+		if faulter_started {
+			other = &faulter
+		}
+		case_of_the_cost(&load, other)
+		if faulter_started {
+			child_end(&faulter, "the child that faults")
+		}
 		interface_draw(&window)
 		case_of_the_revoked_right(&load)
 		child_end(&load, "the load child")
