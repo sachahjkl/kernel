@@ -11,6 +11,10 @@ import "core:strings"
 import "core:sys/linux"
 
 MODULE_BUILD_FOLDER :: BUILD_FOLDER + "/modules"
+// The modules of the build with no debug information: the check that the
+// debug objects change no byte of a module builds every module there
+// (repeat.odin, modules_same_without_debug_information).
+MODULE_BUILD_FOLDER_WITHOUT_DEBUG_INFORMATION :: BUILD_FOLDER + "/modules_without_debug_information"
 BOOT_IMAGE :: BUILD_FOLDER + "/boot.image"
 BOOT_IMAGE_FAILS :: BUILD_FOLDER + "/boot_fails.image"
 BOOT_IMAGE_SHORTAGE :: BUILD_FOLDER + "/boot_shortage.image"
@@ -140,17 +144,24 @@ module_builds := [?]Module_Build {
 	{name = "date", source = "programs/date", image = true},
 }
 
+// The folder of the modules of this build, and whether the compiler writes
+// debug information: a module process receives both from its command.
+module_build_folder := MODULE_BUILD_FOLDER
+debug_information := true
+
 join :: proc(parts: ..string) -> string {
 	return strings.concatenate(parts, context.temp_allocator)
 }
 
 module_path :: proc(name: string) -> string {
-	return join(MODULE_BUILD_FOLDER, "/", name, ".module")
+	return join(module_build_folder, "/", name, ".module")
 }
 
 build_modules :: proc() -> bool {
 	// One process for each module, several at once (parallel_build.odin).
 	build_modules_in_parallel() or_return
+	// The debug objects, beside the modules, in one file for the boot volumes.
+	debug_image_write() or_return
 	// The pointer themes: the resources of the boot image (pointers.odin).
 	resources := build_pointer_themes(os.get_env(POINTER_THEME_SOURCE_VARIABLE, context.temp_allocator), false) or_return
 	// The glyph caches of the default font and of the interface font: five more resources (vector_fonts.odin).
@@ -197,7 +208,7 @@ measure_run := false
 // all with lld into one position-independent object, and converts that
 // object into a module.
 build_module :: proc(build: Module_Build) -> bool {
-	folder := join(MODULE_BUILD_FOLDER, "/", build.name)
+	folder := join(module_build_folder, "/", build.name)
 	objects := join(folder, "/objects")
 	reset_folder(objects) or_return
 	llvm_ir_folder := join(folder, "/llvm_ir")
@@ -223,6 +234,13 @@ build_module :: proc(build: Module_Build) -> bool {
 		CONTRACT_LIBRARY,
 		join("-out:", llvm_ir_folder),
 	)
+	// The line program of DWARF, for the line table of the debug object.
+	// The module itself has no byte of it: the converter copies the
+	// segments only, and `check` proves that each module is the same bytes
+	// without it.
+	if debug_information {
+		append(&compile, "-debug")
+	}
 	for define in build.defines {
 		append(&compile, strings.concatenate({"-define:", define}, context.temp_allocator))
 	}
@@ -335,6 +353,9 @@ build_module :: proc(build: Module_Build) -> bool {
 	if err := os.write_entire_file(module_path(build.name), file); err != nil {
 		fmt.eprintfln("kerneltool: cannot write %s: %v", module_path(build.name), err)
 		return false
+	}
+	if debug_information {
+		debug_object_write(build.name, elf, file) or_return
 	}
 	return true
 }

@@ -115,6 +115,7 @@ command_count: int
 
 machine: system.Handle
 image: []u8
+debug_image: []u8 // The debug objects of the modules: the names of a stop report. nil: none.
 requests: ring.Ring
 requests_memory: system.Handle
 request_count: u32 // The tag of the last command to the root service.
@@ -137,6 +138,7 @@ commands_start :: proc "contextless" () {
 	if address, status := system.memory_map(image_memory, {}); status == .Ok {
 		image = ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]
 	}
+	debug_image = system.debug_image_of(ctx)
 	requests_memory = ctx.handles[system.GRANT_ROOT]
 	requests, _ = system.ring_open(requests_memory)
 	if address, status := system.memory_map(ctx.handles[system.GRANT_REPLACEMENTS], {}); status == .Ok {
@@ -1059,19 +1061,30 @@ fail_load :: proc "contextless" (what: string, name: string) -> Value {
 
 // fault_print writes where a program stopped on a fault: the module that
 // ran, as the loader of the program recorded it, and the module that it
-// replaced.
+// replaced. With the debug image, the instruction and each frame have the
+// name of their procedure and their source line.
 fault_print :: proc "contextless" (report: ^op.Stop_Report) {
 	if report.module.size != 0 {
-		print("error: the instruction is at offset ", system.Hex(report.instruction - report.module.base), " of ", module_text(report.module.hash), "\n")
+		buffer: [256]u8
+		writer := system.Writer{buffer = buffer[:]}
+		named := false
+		if entry := system.image_entry_of(image, report.module.hash); entry != nil && debug_image != nil {
+			named = system.place_write(&writer, system.debug_object_of(debug_image, report.module.hash), report.instruction - report.module.base, system.name_of(entry.name[:]), false)
+		}
+		if named {
+			print("error: the instruction is at ", system.written(&writer), "\n")
+		} else {
+			print("error: the instruction is at offset ", system.Hex(report.instruction - report.module.base), " of ", module_text(report.module.hash), "\n")
+		}
 		if report.module.replaces != {} {
 			print("error: ", module_text(report.module.hash), " runs in place of ", module_text(report.module.replaces), "\n")
 		}
 	}
 	// The stack trace: the instruction, then the return address of each call.
 	for &frame, number in report.frames[:min(report.frame_count, op.STOP_FRAME_CAPACITY)] {
-		buffer: [96]u8
+		buffer: [256]u8
 		writer := system.Writer{buffer = buffer[:]}
-		system.frame_text(&writer, image, &frame)
+		system.frame_text(&writer, image, debug_image, &frame, number)
 		print("error: frame ", u64(number), ": ", system.written(&writer), number == 0 ? ", the instruction" : "", "\n")
 	}
 }

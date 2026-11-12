@@ -92,3 +92,12 @@ So the flake applies no patch, and no build passes `-thread-count`. Sections 1 t
 
 Limits: one host, one release, 20 builds of each module. `kerneltool repeat all 100` on a quiet host is not done.
 
+
+## 8. The debug information
+
+The tool compiles each module with `-debug`, for the line table of its debug object (`MODULE_CONTRACT.md`, "Debug information"). The identity of a module must not depend on it:
+
+- The converter copies the segments of the linked file only: the sections `.debug_*` are not in the module.
+- The base library and the support library of the modules do not read `ODIN_DEBUG`, the constant that `-debug` sets (no `when ODIN_DEBUG` in `base`, `contract`, `support`, `modules` or `programs`). LLVM does not let a debug location change the code that it emits.
+- The proof is a build: after the second build, `kerneltool check` builds every module a third time with no `-debug`, in `build/modules_without_debug_information`, and compares each module byte for byte with the module of the build. A difference fails the check and names the part of the module where it is.
+- The debug object is an output of the build like the others: the second build compares it too, and `kerneltool repeat` counts its distinct contents in a column of its own. A source path in it is from the root of the repository or of the Odin installation, never absolute: the tool refuses to write a debug object with an absolute path of a file or with the folder of the build in its bytes, so it does not depend on the folder or the host of the build.

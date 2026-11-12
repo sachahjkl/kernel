@@ -55,6 +55,7 @@ Fixed_Range :: enum u8 {
 	Module_Tables, // The tables of the parameters of one export, in the program that receives the call (contract:isolated).
 	Interface_Glyph_Cache, // The glyph cache of the interface font, regular weight (contract:settings).
 	Interface_Glyph_Cache_Bold, // The glyph cache of the interface font, bold weight.
+	Debug_Image, // The debug image, read-only: the debug objects of the modules, by the hash of each module (contract:debug_object).
 }
 #assert(int(max(Fixed_Range)) < SLOT_COUNT)
 
@@ -91,6 +92,7 @@ STORAGE_FILE_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Storage_File)
 MODULE_TABLES_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Module_Tables)
 INTERFACE_GLYPH_CACHE_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Interface_Glyph_Cache)
 INTERFACE_GLYPH_CACHE_BOLD_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Interface_Glyph_Cache_Bold)
+DEBUG_IMAGE_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Debug_Image)
 
 Address_Range :: struct {
 	address: u64,

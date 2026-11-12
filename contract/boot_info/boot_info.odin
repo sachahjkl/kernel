@@ -63,6 +63,13 @@ Boot_Info :: struct {
 	firmware_revision:  u64,
 	self_test:          Self_Test,
 	trust:              Boot_Trust,
+	// The debug image: the debug objects of the modules, a file of the boot
+	// volume beside the boot program (docs/MODULE_CONTRACT.md, "Debug
+	// information"). 0: the volume has none, or the boot program could not
+	// read it. It is data for a reader of names: the boot program does not
+	// verify it, and no code comes from it.
+	debug_image:        u64,
+	debug_image_size:   u64,
 }
 
 // The trust record (docs/TRUSTED_BOOT.md): what the boot program verified

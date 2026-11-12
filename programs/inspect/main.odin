@@ -5,13 +5,15 @@
 // click, or letters that filter the list. The window shows the address
 // space of the program as one band and a table, its modules, its threads
 // with the state of the scheduler, and the stop report of a program that
-// stopped on a fault, each address as "module + offset". A sample of the
+// stopped on a fault, each address as "module + offset", or with the debug
+// image as the procedure and its source line. A sample of the
 // reports of the kernel comes each 250 ms; a value that changed is drawn in
 // the color of the boot program for one sample. Space freezes the sample.
 // Tab shows the bytes of the memory of this program itself (hex.odin).
 //
-// The program holds the machine with the right Inspect and the boot image
-// (the names of the modules and their exports), and nothing more: it reads
+// The program holds the machine with the right Inspect, the boot image (the
+// names of the modules and their exports) and the debug image (the names
+// of the procedures and the source lines), and nothing more: it reads
 // reports, it changes nothing, and it reads no byte of another program.
 // It also serves the same facts as tables (exports.odin).
 package inspect
@@ -48,6 +50,7 @@ Sample :: struct {
 
 machine: system.Handle
 image: []u8
+debug_image: []u8 // nil: no debug image; the frames are "module + offset".
 entries: [PROGRAM_SLOTS]Entry
 entry_count: int
 shown: [PROGRAM_SLOTS]int // The indexes in entries that the filter keeps.
@@ -153,6 +156,7 @@ sample_take :: proc "contextless" () {
 	current.entries = system.kernel_entries() - before
 	current.time = system.time()
 	samples += 1
+	frame_names_update()
 	if slot != 0 && (slot != logged_slot || selected_program_serial != logged_program_serial) {
 		logged_slot, logged_program_serial = slot, selected_program_serial
 		sample_log()
@@ -218,6 +222,45 @@ module_file :: proc "contextless" (hash: [32]u8) -> []u8 {
 	return image[entry.offset:][:entry.size]
 }
 
+// The names of the frames of the stop report of the sample, from the
+// debug image. They are made when the stop report changes, not at each
+// picture: a name costs the check of a debug object.
+FRAME_NAME_CAPACITY :: 160
+Frame_Names :: struct {
+	report: op.Stop_Report, // The stop report of these names.
+	texts:  [op.STOP_FRAME_CAPACITY][FRAME_NAME_CAPACITY]u8,
+	counts: [op.STOP_FRAME_CAPACITY]int, // 0: the frame has no name.
+}
+frame_names: Frame_Names
+
+frame_names_update :: proc "contextless" () {
+	if debug_image == nil || current.stop == frame_names.report {
+		return
+	}
+	frame_names.report = current.stop
+	frame_names.counts = {}
+	stop := &frame_names.report
+	for &frame, number in stop.frames[:min(stop.frame_count, op.STOP_FRAME_CAPACITY)] {
+		entry := system.image_entry_of(image, frame.hash)
+		if frame.base == 0 || entry == nil {
+			continue
+		}
+		writer := system.Writer{buffer = frame_names.texts[number][:]}
+		if system.place_write(&writer, system.debug_object_of(debug_image, frame.hash), frame.address - frame.base, system.name_of(entry.name[:]), number > 0) {
+			frame_names.counts[number] = len(system.written(&writer))
+		}
+	}
+}
+
+// frame_name gives the name of a frame of the stop report of the sample:
+// "fault::three + 0x8 in fault (programs/fault/main.odin:15)", or "".
+frame_name :: proc "contextless" (number: int) -> string {
+	if number < 0 || number >= op.STOP_FRAME_CAPACITY || current.stop != frame_names.report {
+		return ""
+	}
+	return string(frame_names.texts[number][:frame_names.counts[number]])
+}
+
 // stop_write writes a stop report: the vector, the address, and each frame.
 stop_write :: proc "contextless" (writer: ^system.Writer, stop: ^op.Stop_Report) {
 	system.write_part(writer, stop.vector == 14 ? "page fault at " : "fault ")
@@ -227,6 +270,8 @@ stop_write :: proc "contextless" (writer: ^system.Writer, stop: ^op.Stop_Report)
 		system.write_part(writer, number == 0 ? "" : ", ")
 		if frame.address == 0 {
 			system.write_part(writer, "not code")
+		} else if name := frame_name(number); name != "" {
+			system.write_part(writer, name)
 		} else {
 			address_write(writer, frame.address, true)
 		}
@@ -299,6 +344,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if address, status := system.memory_map(ctx.handles[system.GRANT_IMAGE], {}); status == .Ok {
 		image = ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]
 	}
+	debug_image = system.debug_image_of(ctx)
 	service, _ = system.service_open(ctx)
 	hex_start()
 	// The first program: this one, until the person chooses.

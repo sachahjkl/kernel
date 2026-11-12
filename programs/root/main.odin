@@ -55,18 +55,19 @@ Grant :: enum {
 	History_Store, // A store of its own in the storage service for the line history of the program, apart from its private store (Root_Command.Connect_History).
 	Events, // The machine, with the right Events: give the event table of the machine (kernel events of every program).
 	Principals, // A ring to this service for Principal_Record and Principal_Unlock only: the program that keeps the records of the named principals (docs/PRINCIPALS.md).
+	Debug_Image, // The debug image, read-only: the names of the procedures and the source lines of a stop report (debug_image.odin).
 }
 
 grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 	switch name {
 	case "console":
-		return {.Root_Ring, .Inspect, .Stop, .Image, .Terminal, .Store, .Acts_For_Principal, .Replacements, .Replace, .History_Store}
+		return {.Root_Ring, .Inspect, .Stop, .Image, .Terminal, .Store, .Acts_For_Principal, .Replacements, .Replace, .History_Store, .Debug_Image}
 	case "flood":
 		return {.Terminal}
 	case "inspect":
 		// A developer tool: it reads the reports of the machine and the names
 		// of the modules, and serves the same facts (docs/TOOLS.md).
-		return {.Inspect, .Image, .Serve}
+		return {.Inspect, .Image, .Serve, .Debug_Image}
 	case "monitor":
 		return {.Inspect, .Serve} // It serves programs() and counts() to a caller that acts for the principal.
 	case "processors", "pages", "flow", "crowd", "clock":
@@ -117,7 +118,7 @@ grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 	case "hierarchy":
 		return {.Store} // The test of the trees of a store.
 	case "errors":
-		return {.Store, .Image, .Inspect, .Connect} // It makes errors in its store, loads modules and starts fault from the boot image, counts the locks, and asks for connections that the root service refuses (callable_of gives it none).
+		return {.Store, .Image, .Inspect, .Connect, .Debug_Image} // It makes errors in its store, loads modules and starts fault from the boot image, counts the locks, and asks for connections that the root service refuses (callable_of gives it none).
 	case "imports":
 		return {.Inspect, .Image} // It loads modules of the boot image, and measures with the cycle counter.
 	case "cryptography_vectors":
@@ -534,6 +535,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	image = ([^]u8)(address)[:ctx.values[op.ROOT_VALUE_BOOT_IMAGE_SIZE]]
 	system.log(ROOT_MARK, ", ", u64(len(system.image_entries(image))), " modules in the boot image")
+	debug_image_take(ctx)
 	// The screen first: a failure of the check below stays on it.
 	if pixels, map_status := system.memory_map(ctx.handles[op.ROOT_FRAMEBUFFER], {.Write}); map_status == .Ok {
 		screen = {
@@ -981,7 +983,7 @@ start :: proc "contextless" (name: string, principal: u64 = principals.MACHINE) 
 	slot.principal = principal // The name of its store carries the principal.
 	// The connection to the private store, in the context: the call ring, the
 	// call region, the storage service with the right Read, and its file.
-	// The storage file, the date page, the settings page, five glyph caches, the file of a service.
+	// The storage file, the date page, the settings page, five glyph caches, the file of a service, the debug image.
 	mappings: [12]system.Mapping
 	mapping_count := 0
 	// This service closes its handles of the connection after the start.
@@ -1107,6 +1109,9 @@ start :: proc "contextless" (name: string, principal: u64 = principals.MACHINE) 
 	}
 	// Each program: the date page, read-only.
 	date_page_give(mappings[:], &mapping_count, &values)
+	if .Debug_Image in role {
+		debug_image_give(mappings[:], &mapping_count, &values)
+	}
 	// A program with a surface: the settings page and the glyph cache, read-only.
 	if .Terminal not_in role {
 		text_settings_give(mappings[:], &mapping_count, &values)

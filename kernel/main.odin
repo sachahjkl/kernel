@@ -145,6 +145,12 @@ root_start :: proc "contextless" (boot: ^info.Boot_Info) {
 	}
 	record.handles[op.ROOT_BOOT_IMAGE] = handle_insert(program, {kind = .Memory, rights = {.Give, .Read}, object = region_device(boot.boot_image, (boot.boot_image_size + PAGE_SIZE - 1) / PAGE_SIZE)})
 	record.values[op.ROOT_VALUE_BOOT_IMAGE_SIZE] = boot.boot_image_size
+	// The debug image: the kernel gives its pages and reads none of them
+	// (docs/MODULE_CONTRACT.md, "Debug information").
+	if boot.debug_image != 0 && boot.debug_image_size != 0 {
+		record.handles[op.ROOT_DEBUG_IMAGE] = handle_insert(program, {kind = .Memory, rights = {.Give, .Read}, object = region_device(boot.debug_image, (boot.debug_image_size + PAGE_SIZE - 1) / PAGE_SIZE)})
+		record.values[op.ROOT_VALUE_DEBUG_IMAGE_SIZE] = boot.debug_image_size
+	}
 
 	if _, status := thread_create(index, ROOT_BUDGET, u64(start), op.STACK_TOP, op.CONTEXT_ADDRESS); status != .Ok {
 		fail("no memory for the first thread")
