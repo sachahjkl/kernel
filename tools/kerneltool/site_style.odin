@@ -269,17 +269,18 @@ ol.labelled > li > * { text-indent: 0; }
    The cells wrap; a name (an identifier, a path, a signature) stays on one
    line. A table scrolls sideways only on a narrow screen. */
 /* The box of a table scrolls sideways at every width when the table is
-   wider than the page; the keyboard reaches it. A column is never narrower
-   than its kind needs: a width on a cell of the head is a least width in
-   the automatic layout of a table, and a table wider than its box shares
-   the rest of the room in proportion to those widths. */
+   wider than the page; the keyboard reaches it. A column of names, numbers
+   or dates takes only the width of its content (a width of 1% asks for the
+   least), so the spare room of a wide table goes to the columns of prose
+   and of log lines, which have a least width and no upper bound. */
 .table { margin: 0 0 16px; overflow-x: auto; border-left: 2px solid transparent; border-right: 2px solid transparent; }
 .table:focus-visible { outline: 2px solid var(--line); outline-offset: 2px; }
 table { border-collapse: collapse; min-width: 100%; }
-th.column-short { width: 6em; }
-th.column-prose { width: 13em; }
-th.column-line { width: 30em; }
-th.column-any { width: 6em; }
+th.column-name, th.column-number, th.column-date { width: 1%; }
+th.column-short { width: 1%; min-width: 6em; }
+th.column-prose { min-width: 13em; }
+th.column-line { min-width: 30em; }
+th.column-any { min-width: 6em; }
 .column-name, .column-name code { white-space: nowrap; overflow-wrap: normal; }
 .column-date, .column-number { white-space: nowrap; }
 .column-number { text-align: right; font-variant-numeric: tabular-nums; }
