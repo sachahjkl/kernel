@@ -4,7 +4,9 @@
 // ways, and drives the fake clock of the endpoints.
 package quic
 
+import "contract:errors"
 import "core:testing"
+import "support:random"
 
 // idle_bound gives the latest end of a connection that receives nothing:
 // its last activity plus the larger of its idle timeout and three probe
@@ -170,4 +172,135 @@ the_closing_state_lasts_three_base_probe_timeouts :: proc(t: ^testing.T) {
 	closed_at := endpoints.now
 	connection_close(server, 0, closed_at)
 	testing.expect_value(t, server.close_deadline, closed_at + 3 * probe_timeout_base(server, .Application))
+}
+
+// Datagrams that must not keep a silent connection alive. The server
+// records 32 islands of data on a stream, which fill the set of its
+// received ranges, then the client goes silent. During the silence the
+// server gets: a datagram with its connection identifier that does not
+// authenticate; a replay of an authentic packet that it recorded; an
+// authentic packet whose data has no place in the set (it is processed,
+// not recorded, not acknowledged); and a replay of that one. None moves
+// the last activity, and the record ends at the bound of the last packet
+// that was recorded. Before, the packet with no place moved the last
+// activity, and so did each replay of it.
+@(test)
+datagrams_during_a_silence_do_not_move_the_idle_bound :: proc(t: ^testing.T) {
+	endpoints := connected_endpoints()
+	defer free(endpoints)
+	for _ in 0 ..< 2000 {
+		endpoints_step(endpoints)
+	}
+	server := &endpoints.server
+	if !testing.expect_value(t, server.spaces[.Application].ack_eliciting_in_flight, 0) {
+		return
+	}
+	endpoints.channel.cut = true
+	keys := endpoints.client.spaces[.Application].send_keys
+	number := endpoints.client.spaces[.Application].next_packet_number + 10
+	UNIT :: 100
+	recorded: [dynamic]u8
+	defer delete(recorded)
+	for island in 0 ..< RANGE_SET_LIMIT {
+		sealed, processed := authentic_packet_receive(endpoints, server, &keys, number, stream_frame_of_the_pattern((2 * island + 1) * UNIT, UNIT), endpoints.now)
+		testing.expect(t, processed)
+		if island == 0 {
+			append(&recorded, ..sealed)
+		}
+		number += 1
+	}
+	reference := server.last_activity
+	bound := idle_bound(server)
+	testing.expect_value(t, reference, endpoints.now)
+	advance :: proc(endpoints: ^Test_Endpoints, until: u64) {
+		for endpoints.now < until {
+			endpoints_step(endpoints)
+		}
+	}
+	error: errors.Error_Record
+	// 10 s in: a datagram with the identifier of the server that does not
+	// authenticate.
+	advance(endpoints, reference + 10_000_000)
+	forged: [64]u8
+	forged[0] = FIXED_BIT | u8(PACKET_NUMBER_SIZE - 1)
+	copy(forged[1:], server.local_connection_id[:])
+	for index in 1 + CONNECTION_ID_SIZE ..< len(forged) {
+		forged[index] = u8(index * 37)
+	}
+	testing.expect(t, !connection_datagram_receive(server, forged[:], endpoints.now, &error))
+	testing.expect_value(t, server.last_activity, reference)
+	// 15 s in: a replay of the first island, which the server recorded.
+	advance(endpoints, reference + 15_000_000)
+	testing.expect(t, !connection_datagram_receive(server, recorded[:], endpoints.now, &error))
+	testing.expect_value(t, server.last_activity, reference)
+	// 20 s in: an authentic island past the 32nd: processed, not recorded.
+	advance(endpoints, reference + 20_000_000)
+	no_place, processed := authentic_packet_receive(endpoints, server, &keys, number, stream_frame_of_the_pattern((2 * RANGE_SET_LIMIT + 1) * UNIT, UNIT), endpoints.now)
+	testing.expect(t, processed)
+	testing.expect(t, !range_set_contains(&server.spaces[.Application].received, number))
+	testing.expect_value(t, server.last_activity, reference)
+	replay := make([]u8, len(no_place))
+	defer delete(replay)
+	copy(replay, no_place)
+	// 25 s in: its replay.
+	advance(endpoints, reference + 25_000_000)
+	connection_datagram_receive(server, replay, endpoints.now, &error)
+	testing.expect_value(t, server.last_activity, reference)
+	ended_at := steps_until_closed(endpoints, 3600_000_000)
+	testing.expect(t, server.state == .Closed && server.closed_by_idle_timeout)
+	testing.expectf(t, ended_at >= reference + server.idle_timeout && ended_at <= bound, "the server ended %d us after the last recorded packet; its bound is %d us", ended_at - reference, bound - reference)
+	testing.expect_value(t, server.ended_at, ended_at)
+}
+
+// A server with no idle timeout is refused: with no idle timeout on either
+// side, a client that vanishes with data of the server in flight would keep
+// its record for ever. The error says which argument, and what it must
+// have: "argument 5 is empty; it must have 1 to 4611686018427387903
+// milliseconds".
+@(test)
+a_server_with_no_idle_timeout_is_refused :: proc(t: ^testing.T) {
+	cryptography := module_cryptography()
+	generator: random.Generator
+	connections := make([]Connection, 1)
+	defer delete(connections)
+	records := make([]Server_Record, 1)
+	defer delete(records)
+	streams := make([]Stream, 1)
+	defer delete(streams)
+	server := new(Server)
+	defer free(server)
+	configuration := Connection_Configuration{idle_timeout_milliseconds = 0}
+	configuration.tls = {role = .Server, least_seed_strength = .Processor}
+	error: errors.Error_Record
+	testing.expect(t, !server_init(server, connections, records, streams, &configuration, &cryptography, &generator, SERVER_LIMITS_DEFAULT, &error))
+	testing.expect_value(t, error.kind, i64(errors.Kind.Empty))
+	testing.expect_value(t, error.unit, i64(errors.Unit.Milliseconds))
+	testing.expect_value(t, error.argument, 5)
+	testing.expect_value(t, error.limit, i64(VARIABLE_LENGTH_INTEGER_LARGEST))
+}
+
+// The draining state ends by the clock after three probe timeouts with no
+// backoff, whatever the probes before the close of the peer: a server that
+// probed 16 times, then gets the CONNECTION_CLOSE of the client, ends 3
+// base probe timeouts later.
+@(test)
+the_draining_state_ends_by_the_clock :: proc(t: ^testing.T) {
+	endpoints := connected_endpoints()
+	defer free(endpoints)
+	endpoints.channel.cut = true
+	server := &endpoints.server
+	server.probe_timeout_count = 16
+	keys := endpoints.client.spaces[.Application].send_keys
+	number := endpoints.client.spaces[.Application].next_packet_number + 10
+	// CONNECTION_CLOSE of the application: the code 0, no reason.
+	_, processed := authentic_packet_receive(endpoints, server, &keys, number, []u8{FRAME_CONNECTION_CLOSE_APPLICATION, 0, 0}, endpoints.now)
+	testing.expect(t, processed)
+	testing.expect_value(t, server.state, Connection_State.Draining)
+	closed_by_peer_at := endpoints.now
+	deadline := closed_by_peer_at + 3 * probe_timeout_base(server, .Application)
+	testing.expect_value(t, server.close_deadline, deadline)
+	ended_at := steps_until_closed(endpoints, 3600_000_000)
+	testing.expect_value(t, server.state, Connection_State.Closed)
+	testing.expectf(t, ended_at >= deadline && ended_at <= deadline + 1000, "the draining state ended %d us after the close; its deadline was %d us after it", ended_at - closed_by_peer_at, deadline - closed_by_peer_at)
+	testing.expect_value(t, server.ended_at, ended_at)
 }

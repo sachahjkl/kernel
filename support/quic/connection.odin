@@ -216,6 +216,7 @@ Connection :: struct {
 	closed_by_peer:                    bool,
 	closed_by_idle_timeout:            bool,
 	closed_by_handshake_timeout:       bool,
+	ended_at:                          u64, // The time at which connection_time_passes ended the connection: with last_activity, a program shows how long an idle end took.
 	handshake_deadline:                u64,
 	// Set while the frames of one packet are read: data of the packet had no
 	// place in a range set, so the packet is not acknowledged.
@@ -574,8 +575,9 @@ connection_enter_draining :: proc "contextless" (connection: ^Connection, code: 
 }
 
 @(private)
-connection_end :: proc "contextless" (connection: ^Connection) {
+connection_end :: proc "contextless" (connection: ^Connection, now: u64) {
 	connection.state = .Closed
+	connection.ended_at = now
 	for level in Encryption_Level {
 		space := &connection.spaces[level]
 		secret_erase(&space.send_keys, size_of(space.send_keys))
@@ -653,7 +655,15 @@ connection_idle_deadline :: proc "contextless" (connection: ^Connection) -> u64 
 	// of probes. The activity is a packet received and processed, or the
 	// first ack-eliciting packet sent after it (connection_send.odin); a
 	// later probe does not move it.
-	return saturating_add(connection.last_activity, max(connection.idle_timeout, saturating_multiply(3, probe_timeout_base(connection, .Application))))
+	return saturating_add(connection.last_activity, connection_idle_bound(connection))
+}
+
+// connection_idle_bound gives the time after the last activity at which a
+// connection that receives nothing ends: the larger of its idle timeout and
+// three probe timeouts with no backoff (connection_idle_deadline). A
+// program compares it with the time that an idle end took.
+connection_idle_bound :: proc "contextless" (connection: ^Connection) -> u64 {
+	return max(connection.idle_timeout, saturating_multiply(3, probe_timeout_base(connection, .Application)))
 }
 
 // connection_time_passes acts on each deadline that passed.
@@ -663,7 +673,7 @@ connection_time_passes :: proc "contextless" (connection: ^Connection, now: u64)
 		return
 	case .Closing, .Draining:
 		if now >= connection.close_deadline {
-			connection_end(connection)
+			connection_end(connection, now)
 		}
 		return
 	case .Handshake, .Connected:
@@ -673,14 +683,14 @@ connection_time_passes :: proc "contextless" (connection: ^Connection, now: u64)
 	}
 	if connection.state == .Handshake && now >= connection.handshake_deadline {
 		connection.closed_by_handshake_timeout = true
-		connection_end(connection)
+		connection_end(connection, now)
 		return
 	}
 	if now >= connection_idle_deadline(connection) {
 		// The idle timeout ends the connection with no packet (RFC 9000,
 		// section 10.1).
 		connection.closed_by_idle_timeout = true
-		connection_end(connection)
+		connection_end(connection, now)
 		return
 	}
 	loss_detection_timeout(connection, now)
