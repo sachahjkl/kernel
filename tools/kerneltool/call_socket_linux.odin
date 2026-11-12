@@ -8,7 +8,7 @@ import "core:time"
 
 // The socket of the calls of the tool to its peer (peer_remote.odin): a
 // Unix stream socket in a folder that only the user of the tool reaches.
-// A call through it acts for the person in the machine, so the socket is
+// A call through it acts for the principal in the machine, so the socket is
 // not a port of the loopback, which every user of the host reaches.
 //
 // The folder: $XDG_RUNTIME_DIR/kerneltool when the variable is set, else

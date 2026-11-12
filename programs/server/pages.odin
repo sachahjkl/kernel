@@ -27,7 +27,7 @@ PAGE_NAME_LIMIT :: web.PAGE_NAME_LIMIT
 PAGE_INDEX_NAME :: web.PAGE_INDEX_NAME
 PAGE_MEMORY_PAGES :: PAGE_CAPACITY * PAGE_SIZE_LIMIT / system.PAGE_SIZE
 
-ERROR_PERSON :: -1
+ERROR_ACTS_FOR_PRINCIPAL :: -1
 ERROR_NAME :: -2
 ERROR_TOO_LARGE :: -3
 ERROR_FULL :: -4
@@ -157,19 +157,19 @@ index_write :: proc "contextless" () -> bool {
 	return status == .Ok
 }
 
-// person says if the caller of the export that runs acts for the person:
+// acts_for_principal says if the caller of the export that runs acts for the principal:
 // only such a caller changes the pages that the network sees.
 @(private = "file")
-person :: proc "contextless" () -> bool {
+acts_for_principal :: proc "contextless" () -> bool {
 	caller := system.service_caller()
-	return caller == nil || caller.grant & isolated.CALLER_PERSON != 0
+	return caller == nil || caller.grant & isolated.CALLER_ACTS_FOR_PRINCIPAL != 0
 }
 
-// put writes a page in the private store of the server, and serves it at /name from now on. The name has 1 to 39 bytes of letters, digits, ".", "-" and "_"; its end gives the content type (.html, .txt, .css, .js, .json, .svg). The text has 60 KiB at most. The result is the bytes of the page, or a negative number with an error record. The error kinds: No_Grant (-1, the caller does not act for the person); Empty, Too_Long or Bad_Byte (-2, the name); Too_Long (-3, the text); Full (-4, 16 pages); Refused (-6, the storage service refused the write, or the server has no store).
+// put writes a page in the private store of the server, and serves it at /name from now on. The name has 1 to 39 bytes of letters, digits, ".", "-" and "_"; its end gives the content type (.html, .txt, .css, .js, .json, .svg). The text has 60 KiB at most. The result is the bytes of the page, or a negative number with an error record. The error kinds: No_Grant (-1, the caller does not act for the principal); Empty, Too_Long or Bad_Byte (-2, the name); Too_Long (-3, the text); Full (-4, 16 pages); Refused (-6, the storage service refused the write, or the server has no store).
 @(export, link_name = "put")
 put :: proc "c" (name: ^string, text: ^string, error: ^errors.Error_Record) -> i64 {
-	if !person() {
-		return errors.fail(error, ERROR_PERSON, .No_Grant, .Person)
+	if !acts_for_principal() {
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
 	}
 	// The call region stays writable by the caller during the call: copy
 	// the name one time before the checks, then check and use the copy only.
@@ -231,11 +231,11 @@ put :: proc "c" (name: ^string, text: ^string, error: ^errors.Error_Record) -> i
 	return i64(length)
 }
 
-// remove takes a page out of the private store of the server: /name gives 404 from now on. The result is 0, or a negative number with an error record. The error kinds: No_Grant (-1, the caller does not act for the person); Absent (-5, no page has this name); Refused (-6, the storage service refused).
+// remove takes a page out of the private store of the server: /name gives 404 from now on. The result is 0, or a negative number with an error record. The error kinds: No_Grant (-1, the caller does not act for the principal); Absent (-5, no page has this name); Refused (-6, the storage service refused).
 @(export, link_name = "remove")
 remove :: proc "c" (name: ^string, error: ^errors.Error_Record) -> i64 {
-	if !person() {
-		return errors.fail(error, ERROR_PERSON, .No_Grant, .Person)
+	if !acts_for_principal() {
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
 	}
 	name_copy: [PAGE_NAME_LIMIT + 1]u8
 	name_length := min(len(name^), len(name_copy))

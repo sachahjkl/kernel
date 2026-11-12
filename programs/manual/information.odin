@@ -16,7 +16,7 @@ import "support:system"
 // What runs comes from the kernel: the module records of each program,
 // with the replacements that the loader applied. The manual reads them with
 // its grant, the machine with the right Inspect, and gives them only to a
-// caller that acts for the person: a program sees no other program.
+// caller that acts for the principal: a program sees no other program.
 //
 // The window shows the same facts: the key Tab, or overview(), shows the
 // table of all the modules; the page of a module has its sizes, the modules
@@ -122,11 +122,11 @@ segments :: proc "c" (name: ^string, result: ^[]information.Segment, error: ^err
 	return table_count(count, problem, error)
 }
 
-// running gives one row for each module that runs in a program, from the module records of the kernel: the program, the module, its hash, and the hash that a replacement changed. The result is the count of rows, or a negative number with an error record. The error kinds: No_Grant (-3, the caller does not act for the person); Refused (-3, the kernel refused the report to this program, with its status).
+// running gives one row for each module that runs in a program, from the module records of the kernel: the program, the module, its hash, and the hash that a replacement changed. The result is the count of rows, or a negative number with an error record. The error kinds: No_Grant (-3, the caller does not act for the principal); Refused (-3, the kernel refused the report to this program, with its status).
 @(export, link_name = "running")
 running :: proc "c" (result: ^[]information.Running, error: ^errors.Error_Record) -> i64 {
-	if caller := system.service_caller(); caller != nil && caller.grant & isolated.CALLER_PERSON == 0 {
-		return errors.fail(error, -3, .No_Grant, .Person)
+	if caller := system.service_caller(); caller != nil && caller.grant & isolated.CALLER_ACTS_FOR_PRINCIPAL == 0 {
+		return errors.fail(error, -3, .No_Grant, .Acts_For_Principal)
 	}
 	count, problem := information.running(machine, catalog(), result^)
 	return table_count(count, problem, error)

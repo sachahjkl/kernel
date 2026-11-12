@@ -505,7 +505,7 @@ scenario_network := [?]Step {
 	{kind = .Wait, text = ": the idle end held its bound: "},
 	{kind = .Remote_Case, text = "silence ends"},
 	// The person sees the grant, and revokes it: the services refuse what
-	// they give only to a caller that acts for the person.
+	// they give only to a caller that acts for the principal.
 	// The developer tool serves its tables to a caller that acts for the
 	// person: the remote service, until the revocation below.
 	{kind = .Launch, text = "inspect"},
@@ -513,20 +513,20 @@ scenario_network := [?]Step {
 	{kind = .Call, text = "inspect.mappings(\"remote\")", expected = " rows of Mapping"},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "grants(\"remote\")"},
-	{kind = .Wait, text = "[console] remote has: log, network, person"},
-	{kind = .Type, text = "revoke(\"remote\", \"person\")"},
-	{kind = .Wait, text = "root: revoked the grant person of remote, connections changed: 5"},
-	{kind = .Call, text = "inspect.mappings(\"remote\")", outcome = .Failed, expected = "error: inspect.mappings: the caller has no grant for this: to act for the person (-1)"},
-	{kind = .Call, text = "inspect.threads(\"remote\")", outcome = .Failed, expected = "error: inspect.threads: the caller has no grant for this: to act for the person (-1)"},
-	{kind = .Call, text = "inspect.modules(\"remote\")", outcome = .Failed, expected = "error: inspect.modules: the caller has no grant for this: to act for the person (-1)"},
-	{kind = .Call, text = "monitor.programs()", outcome = .Failed, expected = "error: monitor.programs: the caller has no grant for this: to act for the person (-1)"},
+	{kind = .Wait, text = "[console] remote has: log, network, acts_for_principal"},
+	{kind = .Type, text = "revoke(\"remote\", \"acts_for_principal\")"},
+	{kind = .Wait, text = "root: revoked the grant acts_for_principal of remote, connections changed: 5"},
+	{kind = .Call, text = "inspect.mappings(\"remote\")", outcome = .Failed, expected = "error: inspect.mappings: the caller has no grant for this: to act for the principal (-1)"},
+	{kind = .Call, text = "inspect.threads(\"remote\")", outcome = .Failed, expected = "error: inspect.threads: the caller has no grant for this: to act for the principal (-1)"},
+	{kind = .Call, text = "inspect.modules(\"remote\")", outcome = .Failed, expected = "error: inspect.modules: the caller has no grant for this: to act for the principal (-1)"},
+	{kind = .Call, text = "monitor.programs()", outcome = .Failed, expected = "error: monitor.programs: the caller has no grant for this: to act for the principal (-1)"},
 	// The place of the pointer is a fact of the screen of the person: the
 	// tool moves the pointer with no confirmation again.
-	{kind = .Call, text = "compositor.pointer()", outcome = .Failed, pointer = true, expected = "error: compositor.pointer: the caller has no grant for this: to act for the person (-1)"},
+	{kind = .Call, text = "compositor.pointer()", outcome = .Failed, pointer = true, expected = "error: compositor.pointer: the caller has no grant for this: to act for the principal (-1)"},
 	// The window of inspect covers the windows under it: it closes now.
 	{kind = .Close, text = "inspect"},
 	{kind = .Wait, text = "root: inspect stopped with code 0"},
-	{kind = .Call, text = "manual.running()", outcome = .Failed, expected = "error: manual.running: the caller has no grant for this: to act for the person (-3)"},
+	{kind = .Call, text = "manual.running()", outcome = .Failed, expected = "error: manual.running: the caller has no grant for this: to act for the principal (-3)"},
 	{kind = .Call, text = "storage.stores()", expected = "no grant to see the stores"},
 	{kind = .Call, text = "manual.modules()", expected = " rows of Module"},
 	{kind = .Call, text = "monitor.served()", expected = "Served{calls = "},
@@ -934,7 +934,7 @@ scenario := [?]Step {
 	{kind = .Shot, text = "running"},
 	{kind = .Key, text = "esc"},
 	{kind = .Wait, text = "console: Escape stops the line after "},
-	{kind = .Wait, text = "[console] error: the person stopped the call of spin"},
+	{kind = .Wait, text = "[console] error: Escape stopped the call of spin"},
 	{kind = .Wait, text = "[console] 13"},
 	{kind = .Type, text = "programs()"},
 	{kind = .Wait, text = "probe"},
@@ -1630,10 +1630,10 @@ scenario := [?]Step {
 	// the key Space, and shows it in the line that it changes.
 	{kind = .Key, text = "spc"},
 	{kind = .Wait, text = "terminal: the first key goes to flood", any_order = true},
-	{kind = .Wait, text = "flood: the person pressed Space: no more lines after "},
+	{kind = .Wait, text = "flood: Space: no more lines after "},
 	{kind = .Shot, text = "terminal_keys"},
 	{kind = .Key, text = "spc"},
-	{kind = .Wait, text = "flood: the person pressed Space: the lines continue"},
+	{kind = .Wait, text = "flood: Space: the lines continue"},
 	// The program stops: its terminal stays, with what the program wrote.
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "stop(\"flood\")"},
@@ -1665,7 +1665,7 @@ scenario := [?]Step {
 	{kind = .Record, program = "root", channel = "programs", level = "info", text = "root: block stopped with code 0"},
 	// The storage service runs since the boot (the boot pass of settings
 	// needs it), with the block service of the data disk. The console has a
-	// private store of 4 blocks, by its name; it acts for the person, so it
+	// private store of 4 blocks, by its name; it acts for the principal, so it
 	// also sees all the stores.
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "connect(\"storage\")"},
@@ -1700,7 +1700,7 @@ scenario := [?]Step {
 	// The person sees the grant and revokes it: the store stays on the disk,
 	// and the console cannot reach it.
 	{kind = .Type, text = "grants(\"console\")"},
-	{kind = .Wait, text = "[console] console has: log, machine, image, store, person"},
+	{kind = .Wait, text = "[console] console has: log, machine, image, store, acts_for_principal"},
 	{kind = .Type, text = "revoke(\"console\", \"store\")"},
 	{kind = .Record, program = "root", channel = "programs", level = "info", text = "root: revoked the grant store of console, connections changed: 1"},
 	{kind = .Type, text = "storage.write(\"greeting\", \"changed\")"},

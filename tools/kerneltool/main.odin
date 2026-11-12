@@ -108,7 +108,7 @@ Command :: struct {
 COMMANDS :: [?]Command {
 	{name = "build", about = "the modules, the boot image and the boot program, as " + BOOT_PROGRAM + "; one process for each module, as many at once as the processors, or `build <processes>`", run = run_build},
 	{name = "module", about = "module <name> with_checks|without_checks measure_run|usual_run: build one module of the table (the parallel build runs this command)", run = run_module},
-	{name = "test", about = "build, start the machine under QEMU, act as the person, check the log, save pictures of the screen; `test network`, `test main`, `test power`, `test tcp`, `test quic`, `test quic-real`, `test random`, `test extended_state`, `test return_fault`, `test trusted_boot`: one part only; `test trusted_boot tpm`: with the two machines that have a software TPM", run = run_test},
+	{name = "test", about = "build, start the machine under QEMU, press its keys and move its pointer, check the log, save pictures of the screen; `test network`, `test main`, `test power`, `test principals`, `test tcp`, `test quic`, `test quic-real`, `test random`, `test extended_state`, `test return_fault`, `test trusted_boot`: one part only; `test trusted_boot tpm`: with the two machines that have a software TPM", run = run_test},
 	{name = "run", about = "build, then start the machine under QEMU, with the log of the kernel on this terminal; `run without_checks`: the measure build", run = run_machine},
 	{name = "screenshots", about = "test and the second build, then write the measure record " + MEASURE_RECORD_FILE + " and copy the pictures to " + DOCUMENT_SCREENSHOT_FOLDER + " and to a new folder of " + DEVELOPMENT_LOG_FOLDER + "; `screenshots compress`: compress the PNG files of " + DOCUMENT_SCREENSHOT_FOLDER + " and " + RESOURCE_FOLDER + " whose data is stored, with no machine", run = run_screenshots},
 	{name = "measure", about = "build, start the machine, run the measures of the locks of the kernel with no other program, and stop: the numbers are in " + TEST_OUTPUT_MEASURE + "; `measure scheduler N`: the program scheduler N times; `measure windows`: each window that the interface package draws, alone, and a table of the time of its pictures; `measure without_checks ...`: the measure build, with no check in the kernel (no lock order check, no check of the frames)", run = run_measure},
@@ -343,6 +343,10 @@ run_test :: proc(args: []string) -> int {
 	if len(args) == 1 && args[0] == "fault_ring" {
 		return fault_ring_tests_run() ? 0 : EXIT_FAILURE
 	}
+	// `test principals`: the two machines of the principals only.
+	if len(args) == 1 && args[0] == "principals" {
+		return principals_tests_run() ? 0 : EXIT_FAILURE
+	}
 	// `test kernel_events`: the machine of the kernel events only.
 	if len(args) == 1 && args[0] == "kernel_events" {
 		return kernel_events_tests_run() ? 0 : EXIT_FAILURE
@@ -368,7 +372,7 @@ run_test :: proc(args: []string) -> int {
 	if len(args) == 1 && args[0] == "quic-real" {
 		return quic_real_tests_run() ? 0 : EXIT_FAILURE
 	}
-	if !machine_test(scenario_fails[:], BOOT_VOLUME_FAILS, TEST_OUTPUT_FAILS, 0) || !trusted_boot_tests_run() || !machine_test(scenario_shortage[:], BOOT_VOLUME_SHORTAGE, TEST_OUTPUT_SHORTAGE, MACHINE_STOP_OK, TEST_DATA_DISK) || !self_tests_run() || !machine_test(scenario[:], BOOT_VOLUME, TEST_OUTPUT, MACHINE_STOP_OK, TEST_DATA_DISK) || !machine_test(scenario_network[:], BOOT_VOLUME, TEST_OUTPUT_NETWORK, MACHINE_STOP_OK, TEST_DATA_DISK) || !tcp_tests_run() || !quic_tests_run() || !quic_real_tests_run() || !random_tests_run() || !extended_state_tests_run() || !return_fault_tests_run() || !fault_ring_tests_run() || !kernel_events_tests_run() || !cryptography_tests_run() || !persistence_run() || !power_loss_run() || !power_loss_settings_run() || !test_modules() || !test_descriptions() {
+	if !machine_test(scenario_fails[:], BOOT_VOLUME_FAILS, TEST_OUTPUT_FAILS, 0) || !trusted_boot_tests_run() || !machine_test(scenario_shortage[:], BOOT_VOLUME_SHORTAGE, TEST_OUTPUT_SHORTAGE, MACHINE_STOP_OK, TEST_DATA_DISK) || !self_tests_run() || !machine_test(scenario[:], BOOT_VOLUME, TEST_OUTPUT, MACHINE_STOP_OK, TEST_DATA_DISK) || !machine_test(scenario_network[:], BOOT_VOLUME, TEST_OUTPUT_NETWORK, MACHINE_STOP_OK, TEST_DATA_DISK) || !tcp_tests_run() || !quic_tests_run() || !quic_real_tests_run() || !random_tests_run() || !extended_state_tests_run() || !return_fault_tests_run() || !fault_ring_tests_run() || !kernel_events_tests_run() || !cryptography_tests_run() || !persistence_run() || !principals_tests_run() || !power_loss_run() || !power_loss_settings_run() || !test_modules() || !test_descriptions() {
 		return EXIT_FAILURE
 	}
 	fmt.println("kerneltool: all tests passed")
@@ -546,7 +550,7 @@ run_check :: proc(args: []string) -> int {
 	// compiler assembles runtime/memory_for_host_tests.asm itself and links
 	// its object by its path (a library found through `-L/` is refused by
 	// the linker of the Nix sandbox).
-	for folder in ([]string{"runtime", "contract/blake3", "contract/isolated", "contract/pointer_pictures", "contract/remote", "support/sentence", "support/cryptography/vectors", "modules/cryptography", "support/quic", "contract/date", "support/storage_mount", "support/storage_retention", "support/calendar", "support/line_editor", "support/console_language", "modules/interface_module", "modules/sample", "support/system", "support/bar", "support/bootscreen/image_card", "support/graphics", "support/interface", "support/addresses", "support/information", "support/vector_font", "support/network", "support/tcp", "support/web", "support/cryptography/chacha20", "support/random", "tools/kerneltool", "contract/fixed_addresses", "contract/settings", "modules/text_shaping", "support/text_shaping", "support/mark", "support/terminal", "contract/cut_mark", "runtime/without_vector_registers", "support/instruction_sets", "contract/system_description", "contract/operation"}) {
+	for folder in ([]string{"runtime", "contract/blake3", "contract/isolated", "contract/pointer_pictures", "contract/remote", "support/sentence", "support/cryptography/vectors", "modules/cryptography", "support/quic", "contract/date", "support/storage_mount", "support/storage_retention", "support/principals", "support/calendar", "support/line_editor", "support/console_language", "modules/interface_module", "modules/sample", "support/system", "support/bar", "support/bootscreen/image_card", "support/graphics", "support/interface", "support/addresses", "support/information", "support/vector_font", "support/network", "support/tcp", "support/web", "support/cryptography/chacha20", "support/random", "tools/kerneltool", "contract/fixed_addresses", "contract/settings", "modules/text_shaping", "support/text_shaping", "support/mark", "support/terminal", "contract/cut_mark", "runtime/without_vector_registers", "support/instruction_sets", "contract/system_description", "contract/operation"}) {
 		name, _ := strings.replace_all(folder, "/", "_", context.temp_allocator)
 		if !run({"odin", "test", folder, "-vet", CONTRACT_LIBRARY, SUPPORT_LIBRARY, strings.concatenate({"-out:" + BUILD_FOLDER + "/test_", name}, context.temp_allocator)}) {
 			return EXIT_FAILURE
