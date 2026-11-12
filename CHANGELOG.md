@@ -6,6 +6,12 @@ The project has steps, not separate releases. The merge of step N on `master` is
 
 What is not in a release yet is in `changelog.d/`, one fragment for each change. `kerneltool changelog release` writes a release from the fragments. Nobody edits this file by hand.
 
+## [0.84.0] - 2026-11-12
+
+### Fixed
+
+- **No text of the system is cut in silence**: a log line longer than 512 bytes was cut with no sign, and so was each text that a program formats in a buffer too small; the log now takes a text whole, in several lines, and a text that a place cannot hold ends with "... and N bytes more". The console refuses a program name longer than 31 bytes, which the root service cut before.
+
 ## [0.83.0] - 2026-11-12
 
 ### Added
