@@ -17,8 +17,8 @@ This file is the record of the decisions of the project: who decided what, when,
 
 ## Groups
 
-1. [The principles, the properties and the contracts](#1-the-principles-the-properties-and-the-contracts): D-001 to D-039, D-191
-2. [The way of working](#2-the-way-of-working): D-040 to D-070, D-190
+1. [The principles, the properties and the contracts](#1-the-principles-the-properties-and-the-contracts): D-001 to D-039, D-191, D-205
+2. [The way of working](#2-the-way-of-working): D-040 to D-070, D-190, D-202 to D-204
 3. [The kernel](#3-the-kernel): D-071 to D-083
 4. [Memory](#4-memory): D-084 to D-088
 5. [The scheduler](#5-the-scheduler): D-089 to D-091
@@ -26,9 +26,9 @@ This file is the record of the decisions of the project: who decided what, when,
 7. [The network and QUIC](#7-the-network-and-quic): D-096 to D-100
 8. [Cryptography and randomness](#8-cryptography-and-randomness): D-101 to D-105
 9. [The interface, the fonts, the mark and the design](#9-the-interface-the-fonts-the-mark-and-the-design): D-106 to D-141, D-192, D-193
-10. [The console and the tools](#10-the-console-and-the-tools): D-142 to D-148
+10. [The console and the tools](#10-the-console-and-the-tools): D-142 to D-148, D-206
 11. [The build and the compiler](#11-the-build-and-the-compiler): D-149 to D-162
-12. [The site and the publication](#12-the-site-and-the-publication): D-163 to D-185, D-194 to D-201
+12. [The site and the publication](#12-the-site-and-the-publication): D-163 to D-185, D-194 to D-201, D-207 to D-210
 13. [The name and the repository](#13-the-name-and-the-repository): D-186 to D-189
 14. [Open questions for the owner](#open-questions-for-the-owner)
 15. [Conflicts](#conflicts)
@@ -316,6 +316,13 @@ This file is the record of the decisions of the project: who decided what, when,
 - State: in force (applied in D-095 and in the formats of `MODULE_CONTRACT.md`).
 - Where: `AGENTS.md`; `MODULE_CONTRACT.md`, "The format".
 
+### D-205 Who signs the system description
+- 2026-11-12. Decided by: the coordinator, after a question of the owner. The owner can reverse it.
+- Decision: the owner of the machine signs the system description with a key that they keep. The key of the machine in its TPM can attest the measure later. The wording of property 21 on the signer is to be corrected.
+- Words: "je comprends pas. \"la personne\" ???" (to the question: the key of the person or the key of the machine in the TPM)
+- State: open: the owner has not objected and has not confirmed.
+- Where: `PROPERTIES.md`, property 21.
+
 ## 2. The way of working
 
 ### D-040 Do not go too fast
@@ -541,6 +548,27 @@ This file is the record of the decisions of the project: who decided what, when,
 - Words: none.
 - State: in force. The measures on a quiet host are in the list of next work.
 - Where: `MODULE_CONTRACT.md`, "Measures"; `REVIEWS.md`.
+
+### D-202 Finished work goes into master, and its branch is deleted
+- 2026-11-12. Decided by: the owner.
+- Decision: each finished piece of work is merged into `master`, pushed, and its branch is deleted. No branch stays after its work is done.
+- Words: "Tu te fous de ma gueule, faut tout intégrer dans Master. T'as trop tendance à laisser des bronches traîner alors que faut fusionner à la fin." [bronches: branches]
+- State: in force.
+- Where: `AGENTS.md`, "Work".
+
+### D-203 What the system is for, and what comes after the site
+- 2026-11-12. Decided by: the owner.
+- Decision: the system is to be used and to be a ground for design ideas, not only a demonstration. The next work is the polish of the primitives of the kernel and of the modules that the system provides, then compatibility layers for Linux and for NT, and a passthrough of a GPU driver. A comparison of these with the 21 properties comes before any code for them.
+- Words: "2ème et troisième option, pour moi la \"suite\" c'est peaufiner nos primitives kernels/modules pré fournis, et essayer de faire des modules/layers de compatibilité linux et nt, et possibilité de faire un passthrough driver gpu. ça solutionnerait plein de cas d'usages"
+- State: not done yet.
+- Where: `FIRST_MILESTONE.md`, "Next steps".
+
+### D-204 After the site: the trusted boot, then remote over QUIC
+- 2026-11-12. Decided by: the owner.
+- Decision: the two pieces to finish after the site are the trusted boot and `remote` over QUIC. The site is not the goal of the project.
+- Words: "après le site, on fait ces trucs (pour \"finir\" ces parties) Le démarrage de confiance, remote par-dessus QUIC"; "là on se focalise sur le site, mais bon, le site ça n'a pas de valeur finale"
+- State: `remote` over QUIC: done. The trusted boot: not done yet (its test machines with a TPM are not reliable).
+- Where: `QUIC.md`, section 7; `FIRST_MILESTONE.md`, "Next steps".
 
 ## 3. The kernel
 
@@ -1118,6 +1146,13 @@ This file is the record of the decisions of the project: who decided what, when,
 - State: done (step 50). Not done yet: the counters of the processor; a stronger right to read another program.
 - Where: `TOOLS.md`; `FIRST_MILESTONE.md`, choices 316 to 324.
 
+### D-206 The console colors its code
+- 2026-11-12. Decided by: the owner.
+- Decision: the line of the console and the rows of its completion list show code in colors. A chosen row keeps a contrast that passes the test of the design rules.
+- Words: "dans les suggestions de complétion, le \"code\" affiché pourrait il etre colorisé ? et dans la ligne de commande aussi ?"; on the contrast of a chosen row: "bah ajuste le contraste c'est important"
+- State: done.
+- Where: `CONSOLE.md`; `DESIGN.md`, the colors.
+
 ## 11. The build and the compiler
 
 ### D-149 Odin is the implementation language
@@ -1436,6 +1471,34 @@ This file is the record of the decisions of the project: who decided what, when,
 - Words: "sur le site, dans le footer, il manque le « by froment software » comme il y a sur tous les sites."
 - State: done.
 - Where: `tools/kerneltool/site_frame.odin`; `resources/site/froment_software.png`.
+
+### D-207 The site colors its code
+- 2026-11-12. Decided by: the owner; the means was chosen by the coordinator.
+- Decision: code on the site is colored. The tool colors it with the tokenizer of the compiler, not with Shiki: a Node script is forbidden in the repository.
+- Words: "Un peu dommage aussi qu'on ait pas de coloration du code, peut-être avec Shiki"
+- State: done.
+- Where: `docs/SITE.md`; `tools/kerneltool/site_code.odin`.
+
+### D-208 The look of the site: scroll bars, selection, values, type cards
+- 2026-11-12. Decided by: the owner.
+- Decision: the site styles its scroll bars and its selection color. A technical value is in the monospace font, with a color and an icon of its kind. A type has a card: its size, its alignment and its fields.
+- Words: "si tu peux styliser les scroll-bars [...] genre la couleur de highlight, enfin tout ce bordel"; "sur les différents data types, d'avoir un tool type qui explique le type. Genre sa carte d'identité, sa taille, des informations techniques. Sa taille, son alignement"; "que les valeurs techniques [...] soient affichées en monospace, qu'elles aient une couleur [...] accompagnées d'un icône"
+- State: done.
+- Where: `docs/SITE.md`, "The kinds of values"; `tools/kerneltool/site_types.odin`; `tools/kerneltool/site_values.odin`.
+
+### D-209 The documentation tree: separate and expanded
+- 2026-11-12. Decided by: the owner.
+- Decision: the guides and the reference each have their own tree, and a tree is shown expanded.
+- Words: "je ne suis pas fan qu'on regroupe dans la table des matières les guides, la doc [...] la doc, je voudrais voir l'arbre déployé et pas compressé"
+- State: done.
+- Where: `docs/SITE.md`; `tools/kerneltool/site_documentation.odin`.
+
+### D-210 Faults of the site that the owner found
+- 2026-11-12. Decided by: the owner.
+- Decision: the bar stays at the top of each page. The search finds a type by its name. A tile shows its whole text. The widths of the columns of a table come from one general rule, never from a setting of one table. The page does not move while a person types in the search field. No scroll is smooth.
+- Words: "ce serait bien que la navbar soit sticky (sur docs et pages normales)"; "j'ai recherché un type au pif \"Time_Record\" et il apparait pas dans la recherche"; "le texte de certaines boites est tronqué"; "superbe répartion de largeur de colonne... (je vais pas m'amuser à faire ça pour chaque tableau)"; "à chaque caractère que je tape dans le truc de recherche, ça scroll un peu vers le haut"
+- State: done.
+- Where: `docs/SITE.md`.
 
 ## 13. The name and the repository
 
