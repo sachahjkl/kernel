@@ -108,7 +108,7 @@ Each program validates its glyph caches once, then the drawing code reads the co
 | `values[pointer_theme]` | any number | one of the two theme files that the compositor validated, a look |
 | `values[grid_fit]` | any number | one of the two caches that the program validated, a look |
 | `values[4..7]` | any number | no reader |
-| `change_count` | odd for ever, or changed with no end | a reader gives up after 64 reads and takes the defaults (`settings.read`); each change makes the windows draw again: a cost of time, which the program `settings` also pays, not a fault |
+| `change_count` | odd for ever, or changed with no end | a reader gives up after 64 reads and takes the defaults (`settings.read`). The compositor tells the windows only when the values differ from the values that it told last (`settings.values_differ`): a new count with the same values sends no record into the ring of a window, which also carries its keys. Values that change with no end make the windows draw again: a cost of time, which the program `settings` also pays |
 | `reserved` | any number | no reader |
 
 ### Where it lives: three places weighed

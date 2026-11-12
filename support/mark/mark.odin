@@ -16,6 +16,21 @@ import "support:graphics"
 // The heron is a square of this many cells on each side.
 HERON_GRID_SIZE :: 24
 
+// The largest cell size that the procedures of this package accept. A larger
+// cell is refused: the mark is then 0 by 0 pixels and no pixel is covered.
+// The limit keeps every product of the gradient in a signed integer of 64
+// bits with a wide margin (the largest is about 7 * 255 * 2 * 65536 * 1152,
+// near 2.7e11), and a heron of 24 * 65536 pixels is already wider than any
+// screen. The caller gives the cell size, so a program of the system can
+// pass any value.
+CELL_SIZE_LIMIT :: 1 << 16
+
+// cell_size_is_accepted tells whether the procedures of this package draw at
+// a cell size.
+cell_size_is_accepted :: proc "contextless" (cell_size: int) -> bool {
+	return cell_size > 0 && cell_size <= CELL_SIZE_LIMIT
+}
+
 // The two backgrounds of the mark: the background of the system, and a light
 // background for a page of another program.
 BACKGROUND_DARK :: graphics.COLOR_BACKGROUND
@@ -103,16 +118,21 @@ heron_cell_part :: proc "contextless" (column, row: int) -> (index: int, found: 
 }
 
 // heron_size gives the width and the height in pixels of the heron, when a
-// cell is a square of cell_size pixels.
+// cell is a square of cell_size pixels. A cell size that is not accepted
+// gives 0.
 heron_size :: proc "contextless" (cell_size: int) -> int {
+	if !cell_size_is_accepted(cell_size) {
+		return 0
+	}
 	return HERON_GRID_SIZE * cell_size
 }
 
 // mark_pixel gives the color of the pixel (x, y) of the heron, from its top
 // left corner, when a cell is a square of cell_size pixels. A pixel of an
 // empty cell, or outside the heron, is not covered: the background shows.
+// A cell size that is not accepted covers no pixel.
 mark_pixel :: proc "contextless" (cell_size, x, y: int, on_light: bool) -> (color: u32, covered: bool) {
-	if cell_size <= 0 || x < 0 || y < 0 {
+	if !cell_size_is_accepted(cell_size) || x < 0 || y < 0 || x >= heron_size(cell_size) || y >= heron_size(cell_size) {
 		return 0, false
 	}
 	index, found := heron_cell_part(x / cell_size, y / cell_size)
@@ -143,6 +163,10 @@ mark_pixel :: proc "contextless" (cell_size, x, y: int, on_light: bool) -> (colo
 // whole. The quotient is rounded to the nearest whole value (a half goes
 // up). That is the exact value of the formula; a gradient in floats of 32
 // bits gives the same value or a value one unit apart.
+//
+// The caller keeps the cell size within CELL_SIZE_LIMIT and the pixel inside
+// the heron: the products then stay far from the limits of 64 bits.
+@(private)
 gradient_color :: proc "contextless" (base: u32, box: Cell_Box, cell_size, x, y: int) -> u32 {
 	// The direction of the gradient, in cells.
 	direction_x := i64(box.last_column + 1 - box.first_column)
@@ -188,8 +212,12 @@ name_letters := [NAME_LETTER_COUNT][NAME_ROWS]string {
 NAME_COLUMNS :: NAME_LETTER_COUNT * NAME_LETTER_COLUMNS + (NAME_LETTER_COUNT - 1) * NAME_GAP_COLUMNS
 
 // name_size gives the width and the height in pixels of the name, when a
-// cell is a square of cell_size pixels.
+// cell is a square of cell_size pixels. A cell size that is not accepted
+// gives 0 by 0.
 name_size :: proc "contextless" (cell_size: int) -> (width, height: int) {
+	if !cell_size_is_accepted(cell_size) {
+		return 0, 0
+	}
 	return NAME_COLUMNS * cell_size, NAME_ROWS * cell_size
 }
 
@@ -211,7 +239,8 @@ name_cell_is_filled :: proc "contextless" (column, row: int) -> bool {
 // corner, is covered, and its color. The name is one flat color: the text
 // color on the dark background, the dark background color on the light one.
 name_pixel :: proc "contextless" (cell_size, x, y: int, on_light: bool) -> (color: u32, covered: bool) {
-	if cell_size <= 0 || x < 0 || y < 0 || !name_cell_is_filled(x / cell_size, y / cell_size) {
+	width, height := name_size(cell_size)
+	if !cell_size_is_accepted(cell_size) || x < 0 || y < 0 || x >= width || y >= height || !name_cell_is_filled(x / cell_size, y / cell_size) {
 		return 0, false
 	}
 	return name_color(on_light), true
@@ -224,4 +253,82 @@ name_color :: proc "contextless" (on_light: bool) -> u32 {
 // background_color gives the color of the background of the mark.
 background_color :: proc "contextless" (on_light: bool) -> u32 {
 	return BACKGROUND_LIGHT if on_light else BACKGROUND_DARK
+}
+
+// Where mark_draw and name_draw write: the pixels of the canvas are
+// 0x00RRGGBB, or have red in the low byte, as the framebuffers of some
+// machines do.
+Channel_Order :: enum u8 {
+	Red_In_High_Byte, // graphics.Color.
+	Red_In_Low_Byte,
+}
+
+@(private)
+color_in_order :: #force_inline proc "contextless" (color: u32, order: Channel_Order) -> graphics.Color {
+	if order == .Red_In_Low_Byte {
+		return color >> 16 & 0xFF | color & 0xFF00 | color << 16 & 0xFF0000
+	}
+	return color
+}
+
+// mark_draw draws the heron into a canvas, with its top left corner at
+// (x, y) of the canvas, at a cell size. It writes only the covered pixels,
+// so the empty cells keep what the canvas had there. It writes nothing
+// outside the canvas: a place partly or fully outside draws the part that is
+// inside. A cell size that is not accepted draws nothing.
+//
+// The cost: one call of mark_pixel for each pixel of the heron inside the
+// canvas, 576 * cell_size * cell_size at most. A call makes two integer
+// divisions to find the cell, and one more for each of the three channels of
+// a pixel of a gradient. A caller that draws the heron each
+// frame draws it once into a picture of its own and copies that picture.
+mark_draw :: proc "contextless" (canvas: graphics.Canvas, x, y, cell_size: int, on_light: bool, order := Channel_Order.Red_In_High_Byte) {
+	size := heron_size(cell_size)
+	first_x, first_y, last_x, last_y, inside := place_in_canvas(canvas, x, y, size, size)
+	if !inside {
+		return
+	}
+	for canvas_y in first_y ..< last_y {
+		for canvas_x in first_x ..< last_x {
+			if color, covered := mark_pixel(cell_size, canvas_x - x, canvas_y - y, on_light); covered {
+				canvas.pixels[canvas_y * canvas.stride + canvas_x] = color_in_order(color, order)
+			}
+		}
+	}
+}
+
+// name_draw draws the name of the mark into a canvas, with its top left
+// corner at (x, y) of the canvas, at a cell size, in the same way as
+// mark_draw: the covered pixels only, nothing outside the canvas.
+name_draw :: proc "contextless" (canvas: graphics.Canvas, x, y, cell_size: int, on_light: bool, order := Channel_Order.Red_In_High_Byte) {
+	width, height := name_size(cell_size)
+	first_x, first_y, last_x, last_y, inside := place_in_canvas(canvas, x, y, width, height)
+	if !inside {
+		return
+	}
+	for canvas_y in first_y ..< last_y {
+		for canvas_x in first_x ..< last_x {
+			if color, covered := name_pixel(cell_size, canvas_x - x, canvas_y - y, on_light); covered {
+				canvas.pixels[canvas_y * canvas.stride + canvas_x] = color_in_order(color, order)
+			}
+		}
+	}
+}
+
+// place_in_canvas gives the part of a rectangle at (x, y) that is inside the
+// canvas: the first and the last pixel (the last one is not in it). inside is
+// false when no pixel of the rectangle is in the canvas. The rectangle has a
+// size of at most 33 * CELL_SIZE_LIMIT pixels, so x + width does not wrap
+// for an x that a screen can have; an x near the limits of int is refused.
+@(private)
+place_in_canvas :: proc "contextless" (canvas: graphics.Canvas, x, y, width, height: int) -> (first_x, first_y, last_x, last_y: int, inside: bool) {
+	PLACE_LIMIT :: 1 << 40
+	if width <= 0 || height <= 0 || canvas.pixels == nil || x < -PLACE_LIMIT || y < -PLACE_LIMIT || x > PLACE_LIMIT || y > PLACE_LIMIT {
+		return 0, 0, 0, 0, false
+	}
+	first_x = max(x, 0)
+	first_y = max(y, 0)
+	last_x = min(x + width, canvas.width)
+	last_y = min(y + height, canvas.height)
+	return first_x, first_y, last_x, last_y, first_x < last_x && first_y < last_y
 }

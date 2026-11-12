@@ -44,3 +44,20 @@ the_place_of_a_glyph_cache :: proc(t: ^testing.T) {
 	bold_address, too_large := glyph_cache_place(&values, .Bold)
 	testing.expect(t, bold_address == GLYPH_CACHE_BOLD_ADDRESS && too_large == 0)
 }
+
+// Two choices with the same values and other counts do not differ; one
+// value changed makes them differ, for each setting.
+@(test)
+values_differ_compares_the_values_only :: proc(t: ^testing.T) {
+	first := Choice{values = {.Font = 1, .Subpixel_Order = 2, .Pointer_Theme = 0, .Grid_Fit = 1}, change_count = 2}
+	second := first
+	second.change_count = 1_000_002
+	testing.expect(t, !values_differ(first, second))
+	testing.expect(t, !values_differ(first, first))
+	for setting in Setting {
+		changed := first
+		changed.values[setting] += 1
+		testing.expectf(t, values_differ(first, changed), "a change of %v", setting)
+		testing.expectf(t, values_differ(changed, first), "a change of %v, in the other order", setting)
+	}
+}

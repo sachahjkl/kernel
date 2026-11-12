@@ -2,6 +2,7 @@
 package mark
 
 import "core:testing"
+import "support:graphics"
 
 // The box of each part in the table is the box of its letter in the rows,
 // and each letter of the rows has a part.
@@ -112,4 +113,156 @@ name_cells :: proc(t: ^testing.T) {
 	testing.expect(t, covered && color == BACKGROUND_DARK)
 	color, covered = name_pixel(10, 0, 20, false)
 	testing.expect(t, covered && color == 0xDCE4EC)
+}
+
+// A cell size above the limit covers no pixel and has no size; the old form
+// trapped on a division by zero at a cell size of 1 << 52. A pixel past the
+// picture is not covered. The limit itself draws.
+@(test)
+cell_sizes_and_places_out_of_range :: proc(t: ^testing.T) {
+	_, covered := mark_pixel(1 << 52, 14 << 52, 0, false)
+	testing.expect(t, !covered)
+	_, covered = mark_pixel(CELL_SIZE_LIMIT + 1, 14 * (CELL_SIZE_LIMIT + 1), 0, false)
+	testing.expect(t, !covered)
+	_, covered = mark_pixel(max(int), 0, 0, false)
+	testing.expect(t, !covered)
+	_, covered = mark_pixel(-3, 14, 0, false)
+	testing.expect(t, !covered)
+	testing.expect_value(t, heron_size(CELL_SIZE_LIMIT + 1), 0)
+	testing.expect_value(t, heron_size(max(int)), 0)
+	testing.expect_value(t, heron_size(CELL_SIZE_LIMIT), HERON_GRID_SIZE * CELL_SIZE_LIMIT)
+	width, height := name_size(CELL_SIZE_LIMIT + 1)
+	testing.expect(t, width == 0 && height == 0)
+	width, height = name_size(max(int))
+	testing.expect(t, width == 0 && height == 0)
+	_, covered = name_pixel(CELL_SIZE_LIMIT + 1, 0, 2 * (CELL_SIZE_LIMIT + 1), false)
+	testing.expect(t, !covered)
+	// The last pixel of the body at the largest cell size: covered, with the
+	// color of the formula (computed apart; 0x3E78B2 at a cell size of 24).
+	color: u32
+	color, covered = mark_pixel(CELL_SIZE_LIMIT, 15 * CELL_SIZE_LIMIT - 1, 16 * CELL_SIZE_LIMIT - 1, false)
+	testing.expect(t, covered)
+	testing.expect_value(t, color, u32(0x3E77B2))
+	// Past the right and the bottom of the heron and of the name.
+	_, covered = mark_pixel(1, HERON_GRID_SIZE, 0, false)
+	testing.expect(t, !covered)
+	_, covered = mark_pixel(1, 0, HERON_GRID_SIZE, false)
+	testing.expect(t, !covered)
+	_, covered = mark_pixel(2, 2 * HERON_GRID_SIZE, 2 * 11, false)
+	testing.expect(t, !covered)
+	_, covered = name_pixel(1, NAME_COLUMNS, 6, false)
+	testing.expect(t, !covered)
+	_, covered = name_pixel(1, 32, NAME_ROWS, false)
+	testing.expect(t, !covered)
+	_, covered = name_pixel(1, max(int), max(int), false)
+	testing.expect(t, !covered)
+}
+
+DRAW_TEST_SENTINEL :: graphics.Color(0xABCDEF) // No pixel of the mark has this color.
+
+// mark_draw writes exactly the colors of mark_pixel at the covered pixels,
+// and leaves every other pixel as it was.
+@(test)
+mark_draw_writes_the_pixels_of_mark_pixel :: proc(t: ^testing.T) {
+	SIDE :: 64
+	buffer: [SIDE * SIDE]graphics.Color
+	backgrounds := [2]bool{false, true}
+	for on_light in backgrounds {
+		for &pixel in buffer {
+			pixel = DRAW_TEST_SENTINEL
+		}
+		canvas := graphics.Canvas{pixels = raw_data(buffer[:]), width = SIDE, height = SIDE, stride = SIDE}
+		LEFT :: 5
+		TOP :: 7
+		mark_draw(canvas, LEFT, TOP, 2, on_light)
+		for y in 0 ..< SIDE {
+			for x in 0 ..< SIDE {
+				expected := DRAW_TEST_SENTINEL
+				if color, covered := mark_pixel(2, x - LEFT, y - TOP, on_light); covered {
+					expected = color
+				}
+				if buffer[y * SIDE + x] != expected {
+					testing.expectf(t, false, "pixel %d, %d: 0x%06X, not 0x%06X", x, y, buffer[y * SIDE + x], expected)
+					return
+				}
+			}
+		}
+	}
+}
+
+// A heron and a name partly outside a canvas: the canvas is a view inside a
+// larger buffer, and no pixel of the buffer outside the view changes.
+@(test)
+a_place_partly_outside_writes_nothing_outside :: proc(t: ^testing.T) {
+	SIDE :: 80
+	VIEW_LEFT :: 16
+	VIEW_TOP :: 16
+	VIEW_SIDE :: 40
+	buffer: [SIDE * SIDE]graphics.Color
+	Place :: struct {
+		x, y:      int,
+		with_name: bool,
+	}
+	places := [?]Place{{-10, 20, false}, {20, -30, false}, {-47, -47, false}, {39, 39, false}, {-100, 0, false}, {-20, 30, true}, {30, -5, true}}
+	for place in places {
+		for &pixel in buffer {
+			pixel = DRAW_TEST_SENTINEL
+		}
+		view := graphics.Canvas{pixels = ([^]graphics.Color)(&buffer[VIEW_TOP * SIDE + VIEW_LEFT]), width = VIEW_SIDE, height = VIEW_SIDE, stride = SIDE}
+		if place.with_name {
+			name_draw(view, place.x, place.y, 2, false)
+		} else {
+			mark_draw(view, place.x, place.y, 2, false)
+		}
+		for y in 0 ..< SIDE {
+			for x in 0 ..< SIDE {
+				expected := DRAW_TEST_SENTINEL
+				in_view := x >= VIEW_LEFT && x < VIEW_LEFT + VIEW_SIDE && y >= VIEW_TOP && y < VIEW_TOP + VIEW_SIDE
+				if in_view {
+					view_x, view_y := x - VIEW_LEFT - place.x, y - VIEW_TOP - place.y
+					color: u32
+					covered: bool
+					if place.with_name {
+						color, covered = name_pixel(2, view_x, view_y, false)
+					} else {
+						color, covered = mark_pixel(2, view_x, view_y, false)
+					}
+					if covered {
+						expected = color
+					}
+				}
+				if buffer[y * SIDE + x] != expected {
+					testing.expectf(t, false, "place %v, pixel %d, %d of the buffer: 0x%06X, not 0x%06X", place, x, y, buffer[y * SIDE + x], expected)
+					return
+				}
+			}
+		}
+	}
+	// A cell size that is not accepted, and a place far outside: nothing.
+	for &pixel in buffer {
+		pixel = DRAW_TEST_SENTINEL
+	}
+	whole := graphics.Canvas{pixels = raw_data(buffer[:]), width = SIDE, height = SIDE, stride = SIDE}
+	mark_draw(whole, 0, 0, CELL_SIZE_LIMIT + 1, false)
+	mark_draw(whole, 0, 0, 0, false)
+	mark_draw(whole, min(int), min(int), 1, false)
+	mark_draw(whole, max(int) - 10, 0, 1, false)
+	name_draw(whole, max(int) - 10, max(int) - 10, 1, false)
+	for pixel in buffer {
+		if pixel != DRAW_TEST_SENTINEL {
+			testing.expect(t, false, "a refused draw wrote a pixel")
+			return
+		}
+	}
+}
+
+// With red in the low byte, the channels of each pixel are in the other
+// order.
+@(test)
+mark_draw_with_red_in_the_low_byte :: proc(t: ^testing.T) {
+	buffer: [HERON_GRID_SIZE * HERON_GRID_SIZE]graphics.Color
+	canvas := graphics.Canvas{pixels = raw_data(buffer[:]), width = HERON_GRID_SIZE, height = HERON_GRID_SIZE, stride = HERON_GRID_SIZE}
+	mark_draw(canvas, 0, 0, 1, false, .Red_In_Low_Byte)
+	// The first pixel of the body (6, 11) is 0x72ACE7.
+	testing.expect_value(t, buffer[11 * HERON_GRID_SIZE + 6], graphics.Color(0xE7AC72))
 }
