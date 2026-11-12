@@ -132,6 +132,10 @@ Site :: struct {
 	file_versions: map[string]string, // The version of the bytes of each file of SITE_VERSIONED_FILES that the command wrote.
 	symbol_count: int, // The documented symbols of the pages.
 	symbols_without_description: int, // The symbols whose source has no comment.
+	types:        [dynamic]Site_Type, // Each type that a page can show (docs/SITE.md, "The types").
+	type_keys:    map[string]int, // The key of each type ("operation.Fault_Record") to its place in types.
+	type_ids:     map[string]int, // The id of each type on the page of the types to its place in types.
+	type_names_without_card: int, // The places where a page shows a type that has no card: its name is plain.
 }
 
 run_site :: proc(args: []string) -> int {
@@ -677,6 +681,9 @@ site_build :: proc(address: string) -> bool {
 	// A symbol with no comment in its source shows no text on its page: the
 	// count makes the gap visible.
 	fmt.printfln("kerneltool: site: %d documented symbols, %d symbols with no description in their source", site.symbol_count, site.symbols_without_description)
+	// A type that a page shows with no card is plain text: the count makes
+	// the gap visible.
+	fmt.printfln("kerneltool: site: %d types, %d type names with no card", len(site.types), site.type_names_without_card)
 	if site.address == "" {
 		fmt.println("kerneltool: site: no address (SITE_ADDRESS is empty): the pages have relative links only. Not written: the canonical addresses, Open Graph and the summary card, the JSON-LD graphs, " + SITE_SITEMAP + ", " + SITE_ROBOTS + ", and the link \"self\" of the feeds")
 		fmt.printfln("kerneltool: site: %s, %s and %s have relative links: a reader resolves them against the address that it fetched the file from", SITE_NEWS_FEED, SITE_RELEASES_FEED, SITE_LANGUAGE_MODEL_INDEX)
@@ -817,11 +824,14 @@ site_page_html :: proc(site: ^Site, page: Site_Page) -> string {
 		write(&b, "<div class=\"text\">\n")
 		write(&b, strings.to_string(crumbs))
 		write(&b, page.body)
+		// The card of each type that the text names, once for the page.
+		write(&b, site_type_cards_html(site, page.path, page.body))
 		write(&b, "</div>\n</main>\n")
 	} else {
 		write(&b, strings.to_string(crumbs))
 		fmt.sbprintf(&b, "<main id=\"content\" class=\"page page-%s\">\n", section_name)
 		write(&b, page.body)
+		write(&b, site_type_cards_html(site, page.path, page.body))
 		write(&b, "</main>\n")
 	}
 
@@ -945,6 +955,9 @@ site_check_pages :: proc(pages: []Site_Page, written: map[string]string, files: 
 			append(&problems, fmt.tprintf("%s: %s", page.path, problem))
 		}
 		if problem := site_layout_problem(page, html, ids[page.path]); problem != "" {
+			append(&problems, fmt.tprintf("%s: %s", page.path, problem))
+		}
+		if problem := site_type_cards_problem(html, ids[page.path]); problem != "" {
 			append(&problems, fmt.tprintf("%s: %s", page.path, problem))
 		}
 		folder := page.path[:max(strings.last_index_byte(page.path, '/'), 0)]

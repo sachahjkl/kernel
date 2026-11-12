@@ -48,6 +48,7 @@ A page named by a folder (`news/`) is the `index.html` of that folder (see "The 
 | `status/` | See "The status page" |
 | `reference/operations/`, `context/`, `errors/`, `grants/`, `fixed-ranges/`, `console/` | See "The reference tables" |
 | `reference/modules/index.html`, `reference/modules/<name>/` | See "The module pages" |
+| `reference/types/` | See "The types" |
 
 Each page has the bar (the heron and the name at the left, the sections as buttons: Guides, Reference, Status, News, Releases; a section appears when its page exists), breadcrumbs on each page below the home, and a foot that names the commit, the release and the time of the build, and the files that the page comes from, as links to the repository at that commit. A reference table names the files that it is read from.
 
@@ -378,7 +379,7 @@ One table, `site_value_kinds`, gives each value kind (`GLOSSARY.md`) its class `
 | Value: a value of the context, not a handle | One small square | Memory | 8.47 / 7.22 | 4.62 / 5.00 |
 | Grant | A check mark in steps | Machine | `0xD070B0`, 6.02 / 5.12 | 78 %, `0xA15688`, 4.61 / 5.00 |
 | Status: a status, an error kind, the state of a property | A flag | Failed | `0xF06060`, 5.94 / 5.06 | 78 %, `0xBA4A4A`, 4.65 / 5.04 |
-| Type of the module contract | Angle brackets `< >` | Firmware, at 115 % | `0x9E8FCB`, 6.58 / 5.60 | 83 %, `0x7566A1`, 4.65 / 5.03 |
+| Type: of the contract, a wire form, a record of a module, a basic type | Angle brackets `< >` | Firmware, at 115 % | `0x9E8FCB`, 6.58 / 5.60 | 83 %, `0x7566A1`, 4.65 / 5.03 |
 | Operation of the kernel | An arrow into a box | Kernel | 6.63 / 5.65 | 4.69 / 5.08 |
 | Command of the console or of the tool | A prompt `>_` | Program | `0x58D878`, 10.45 / 8.90 | 58 %, `0x327C45`, 4.72 / 5.12 |
 | Module | A block with a notch | Program | 10.45 / 8.90 | 4.72 / 5.12 |
@@ -505,6 +506,71 @@ What the tables cannot show:
 - its kind (its group);
 - its exports, a table then each one as a documented symbol (see "The reference tables"), each with its signature as the console prints it (`write(name: Text, data: Text) -> Integer`, `Handle(Read, Write)`, `Table(Rectangle, Change)`) and its line of help. They come from the same reader as the build: no module needs to be built;
 - for a program, its grants and its budget (pages, programs, threads) from `grants_of` and `things_of` of the root service, with the comments of those lines.
+
+## The types
+
+The owner asked for it on 2026-11-12: "Si c'était possible sur les différents data types, d'avoir un tool type qui explique le type. Genre sa carte d'identité, sa taille, des informations techniques. Sa taille, son alignement, les trucs normaux qu'on aimerait savoir quand on vient sur cette doc." The code is `tools/kerneltool/site_types.odin`; its host tests are `site_types_test.odin`.
+
+### What a type card holds
+
+Each type has a type card (`GLOSSARY.md`). The facts come from the compiler, never from a number typed by hand: the tool imports the contract packages, and `type_info_of(T)` gives the size, the alignment, each field with its name, type and offset, each member of an enum with its value, the element and the underlying type of a bit set, the base of a distinct type, and the variants of a union. The declaration (its source text), its comment and its line come from the parser of Odin (`core:odin/parser`), as the descriptions of the modules do.
+
+| Kind | Rows | The card |
+|---|---|---|
+| Struct | Each type of `contract/operation`, `contract/errors`, `contract/fixed_addresses`, `contract/module` (`SITE_TYPE_PACKAGES`) | Size, alignment, the padding in all; a table of the fields (name, type, offset, size) with a row "padding" for each run of unused bytes; the sizes of the rows add up to the size |
+| Enum | The same packages | Its base type; a table of the members, with each value in decimal and in hexadecimal (a negative value as the bytes of its base hold it) |
+| Bit set | The same packages; each one of the contract is an alias | Its enum, its underlying type, the type that the alias names; a table of the bits and their masks |
+| Distinct | The same packages | Its base |
+| Wire form (`GLOSSARY.md`) | The members of `Type` of `contract/module` but None | The comment of the member in `contract/module/format.odin`; one register of a call (`PARAMETER_CAPACITY`); the types of the module contract that the comment names (`Table_Place`, `Function`); for Handle, the size of `Handle` in a record; a link to the guide of the module contract. A fact that only the guide states is not copied |
+| Record of a module | Each record of `Module_Description.records` of each module | The size and the offsets of the description that the build writes; the size of a field from its wire form (an Integer of its detail, 8 for 0; a Handle of `size_of(Handle)`; a Text of its detail); the alignment is the largest of its fields |
+| Basic | `u8` to `i64`, `int`, `bool`, `rawptr`, `uintptr`, `string`, `[]u8` (`site_basic_types`) | Its size and alignment, and one line of what it is |
+
+Each card also says where the type is named: the types whose fields, base or element it is, the kernel operations whose words name it, the modules whose exports take or give it, and the commands of the console.
+
+### The table and its check
+
+`site_contract_type_rows` holds one row for each type of the documented packages: its package, its name and its type information, `{"operation", "Rights", type_info_of(op.Rights)}`. The name is stated in the row because the bit sets of the contract are aliases (`Rights :: bit_set[Right; u32]`): the type information of an alias is the type that it names, with no name. The contract is not changed for the site. `kerneltool site` reads each declaration of a type of those packages with the parser (`Name :: struct`, `enum`, `bit_set`, `union`, `distinct`, `bit_field`, or an array type) and stops when:
+
+- a declaration has no row: a new type of the contract cannot be forgotten;
+- a row names no declaration, or a type has two rows, or a row has no type information;
+- a row whose type is named has another name or package than the compiler gives it: a wrong row of a named type is caught. The row of an alias is checked against the declarations only.
+
+An alias has the kind of what it names (a bit set), and its card says "An alias of `bit_set[Right; u32]`". A field whose type is that bit set finds the card of the alias.
+
+A type that a page shows and that has no card (an array as `[16]u8`, the kind `Value` of the console, a record that the description does not hold) is written as a value of the kind Type with no reference, and the command prints the count: "N type names with no card".
+
+The host test `site_types_table_is_complete` runs the same check on the repository.
+
+### The machine of the tool and the target
+
+The tool is built for the host; the system for x86-64 with no operating system. Each type of the four packages has the same layout on both today: an address, `int` and `uintptr` are 8 bytes on x86-64 and on a host of 64 bits, and the rules of a struct of Odin are the same (each field at a multiple of its alignment, the size a multiple of the largest alignment). Two things keep this true:
+
+- A size that the contract asserts (`#assert(size_of(Fault_Record) == 64)`) is checked when the tool is built and when the system is built. The host test `site_types_sizes_agree_with_the_asserts` reads each assert with a number in the four packages and compares it with the card.
+- A type that holds an address, a slice, a string, `int` or `uintptr` says so on its card, with the machine that made the page (`ODIN_OS_STRING`, `ODIN_ARCH_STRING`): `Parameter_Form` and `Operation_Form` (a string), `Bound_Import` (a slice of bytes and a `uintptr`). Its size follows the size of an address of the target.
+
+### The reference and its card
+
+One procedure, `site_type_reference`, writes a type wherever a page shows it:
+
+- the signature of each kernel operation (each word of its comment that names a type of the package operation), of each export (the wire form and the record, from the description, not from the text of the signature), and of each command of the console (each kind that is a wire form);
+- the facts of each export and command (parameters, result, error record), and the columns "Parameters" and "Result" of the table of the operations;
+- on the page of the types: the type of each field, the base, the element, and the types that a wire form names.
+
+The markup: `<button type="button" class="type-reference" popovertarget="card-<id>" popovertargetaction="show" aria-describedby="card-<id>-summary">Name</button>`. The card is `<div class="type-card" id="card-<id>" popover>`: the name as a link to the page of the types, a first line (the kind, the size, the alignment, the padding, the first sentence of the comment), at most 8 fields, members or bits, then "and N more", and the note of the target. A page holds the card of each type that it names once, at the end of its text, in the order of the first reference (`site_type_cards_html`); every reference to that type on the page opens it.
+
+Why this form:
+
+- A card inside the reference, shown by `:hover` and `:focus`, is cut by the box of a table that scrolls (`overflow-x: auto`), and a touch screen has no hover.
+- A card placed by the script with `position: fixed` needs the script for its content.
+- A popover is in the top layer, so no box cuts it. A click, a tap, Enter or Space opens it with no script; Escape and a click outside close it. `popovertargetaction="show"` keeps an open card open at a second click.
+- On a touch screen, a tap opens the card, and a tap on its title goes to the page of the types.
+- `search.js` adds the rest: a mouse that rests 400 ms on a reference opens its card, which closes 300 ms after the mouse leaves the reference and the card; the focus of the keyboard (`:focus-visible`) opens it and the focus that goes to another element closes it. With no script, a click is needed.
+- A screen reader reads the first line of the card with the button (`aria-describedby`): the summary is in the page, also when the card is closed.
+- With anchor positioning (`position-area`), the card is under its reference and flips above it near the bottom of the window. A browser with no anchor positioning puts it in the middle of the window, the default place of a popover. A browser with no popover shows the cards as a list at the end of the text.
+
+The check of each page (`site_type_cards_problem`): each `popovertarget` and each `aria-describedby` names an id of the page, and no two cards have one id.
+
+What is not done: the types are not entries of the search; a type of a guide (a code span) is not a reference; the declaration on the page of the types is its text, with no references inside it.
 
 ## The tiles of the boot image
 

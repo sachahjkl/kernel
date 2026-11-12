@@ -364,10 +364,14 @@ Site_Symbol :: struct {
 	id:          string, // The id of its heading: the target of the links to it.
 	name:        string,
 	signature:   string, // "" when the source states none.
-	description: string, // The text of its source comment, one paragraph a line; "" when the source has none.
-	facts:       []Site_Symbol_Fact,
-	source:      string, // Its file in the repository, or "".
-	line:        int,
+	// The signature as HTML, with each type as a reference to its card;
+	// written in place of signature when it is not "".
+	signature_html:   string,
+	description:      string, // The text of its source comment, one paragraph a line; "" when the source has none.
+	facts:            []Site_Symbol_Fact,
+	after_facts_html: string, // A table of the symbol after its facts (the fields of a type), or "".
+	source:           string, // Its file in the repository, or "".
+	line:             int,
 }
 
 // site_symbol_write writes a documented symbol: its name as a heading that
@@ -381,7 +385,11 @@ site_symbol_write :: proc(site: ^Site, b: ^strings.Builder, symbol: Site_Symbol)
 	strings.write_string(b, "\"><code>")
 	site_escape(b, symbol.name)
 	strings.write_string(b, "</code></h3>\n")
-	if symbol.signature != "" {
+	if symbol.signature_html != "" {
+		strings.write_string(b, "<pre class=\"signature\"><code>")
+		strings.write_string(b, symbol.signature_html)
+		strings.write_string(b, "</code></pre>\n")
+	} else if symbol.signature != "" {
 		strings.write_string(b, "<pre class=\"signature\"><code>")
 		site_escape(b, symbol.signature)
 		strings.write_string(b, "</code></pre>\n")
@@ -421,6 +429,7 @@ site_symbol_write :: proc(site: ^Site, b: ^strings.Builder, symbol: Site_Symbol)
 		}
 		strings.write_string(b, "</dl>\n")
 	}
+	strings.write_string(b, symbol.after_facts_html)
 	strings.write_string(b, "</section>\n")
 }
 

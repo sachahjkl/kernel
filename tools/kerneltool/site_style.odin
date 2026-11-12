@@ -321,6 +321,35 @@ td.value code { padding: 0; }
 .value-icon::before { content: ""; display: inline-block; width: 12px; height: 12px; margin-right: 4px; vertical-align: -1px; background-color: var(--value-color); -webkit-mask: var(--value-icon) no-repeat center / 12px 12px; mask: var(--value-icon) no-repeat center / 12px 12px; }
 span.value-icon::before { margin-right: 0; }
 
+/* The types (docs/SITE.md, "The types"): a reference is a button that opens
+   the card of its type, a popover in the top layer, so the box of a table
+   that scrolls does not cut it. With anchor positioning the card is under
+   the reference; else the browser puts it in the middle of the window. */
+button.type-reference { font: inherit; color: inherit; background: none; border: 0; margin: 0; padding: 0; cursor: help; text-decoration: underline dotted; text-underline-offset: 3px; }
+button.type-reference.value { font-family: var(--mono); font-size: 14px; color: var(--value-color); padding: 0 0 0 4px; border-left: 2px solid var(--value-color); }
+button.type-reference:hover { text-decoration-style: solid; }
+button.type-reference:focus-visible { outline: 2px solid var(--line); outline-offset: 2px; }
+.type-card { width: min(28rem, calc(100vw - 32px)); max-height: min(70vh, 32rem); overflow: auto; margin: auto; padding: 12px 16px; color: var(--text); background: var(--card-top); border: 1px solid var(--line); font-family: var(--reading); font-size: 14px; line-height: 20px; text-align: left; white-space: normal; }
+.type-card p { margin: 0 0 8px; max-width: none; }
+.type-card-title code { font-size: 16px; }
+.type-card-kind, .type-card-more, .type-card-target { color: var(--dim); }
+.type-card-rows { list-style: none; margin: 0 0 8px; padding: 0; font-family: var(--mono); font-size: 13px; }
+.type-card-rows li { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto auto; gap: 0 12px; padding: 2px 0; border-top: 1px solid var(--track); }
+.type-card-rows li:has(> :nth-child(2):last-child) { grid-template-columns: minmax(0, 1fr) auto; }
+.type-card-rows li span { color: var(--dim); font-variant-numeric: tabular-nums; text-align: right; }
+.type-card-rows li.padding { color: var(--dim); }
+.type-card-rows code { background: none; padding: 0; overflow-wrap: anywhere; }
+/* A browser with no popover shows the cards as a list at the end of the text. */
+@supports not selector(:popover-open) {
+  .type-cards { margin-top: 32px; }
+  .type-card { margin: 0 0 8px; }
+}
+tr.padding td { color: var(--dim); }
+.type-layout { color: var(--dim); }
+@supports (position-area: block-end) {
+  .type-card:popover-open { inset: auto; margin: 4px 0 0; position-area: block-end span-inline-end; position-try-fallbacks: flip-block, flip-inline; }
+}
+
 /* Cards: a border of 1 pixel in the accent, the bar of 4 by 16 pixels
    before the title. */
 .card { min-width: 0; padding: 16px; margin-bottom: 8px; background: linear-gradient(var(--card-top), var(--card-bottom)); border: 1px solid var(--border-top); border-image: linear-gradient(var(--border-top), var(--border-bottom)) 1; }

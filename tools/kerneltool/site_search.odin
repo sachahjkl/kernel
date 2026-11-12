@@ -663,6 +663,44 @@ SITE_SEARCH_SCRIPT_SOURCE :: `// The search of the site, written by kerneltool s
     }
   }
 
+  // The cards of the types: a reference is a button that opens the card of
+  // its type with a click, a tap or Enter, with no script. The script adds
+  // a pointer that rests on the reference, and the focus of the keyboard:
+  // both open the card, which closes when the pointer leaves the reference
+  // and the card, or when the focus leaves them.
+  if (HTMLElement.prototype.hasOwnProperty("popover")) {
+    let openTimer = 0, closeTimer = 0;
+    const isOpen = card => card.matches(":popover-open");
+    function openCard(card, button) {
+      clearTimeout(closeTimer);
+      if (!isOpen(card)) card.showPopover({ source: button });
+    }
+    function closeCard(card) {
+      clearTimeout(openTimer);
+      clearTimeout(closeTimer);
+      closeTimer = setTimeout(() => {
+        if (isOpen(card) && !card.matches(":hover") && !card.contains(document.activeElement)) card.hidePopover();
+      }, 300);
+    }
+    document.querySelectorAll("button.type-reference[popovertarget]").forEach(button => {
+      const card = document.getElementById(button.getAttribute("popovertarget"));
+      if (!card) return;
+      button.addEventListener("pointerenter", event => {
+        if (event.pointerType !== "mouse") return;
+        clearTimeout(openTimer);
+        clearTimeout(closeTimer);
+        openTimer = setTimeout(() => openCard(card, button), 400);
+      });
+      button.addEventListener("pointerleave", event => { if (event.pointerType === "mouse") closeCard(card); });
+      button.addEventListener("focus", () => { if (button.matches(":focus-visible")) openCard(card, button); });
+      // A tap moves the focus to no element: the card stays, and a tap
+      // outside it closes it. A key moves the focus to another element.
+      button.addEventListener("blur", event => { if (event.relatedTarget && !card.contains(event.relatedTarget)) closeCard(card); });
+      card.addEventListener("pointerenter", () => clearTimeout(closeTimer));
+      card.addEventListener("pointerleave", event => { if (event.pointerType === "mouse") closeCard(card); });
+    });
+  }
+
   const box = document.getElementById("site-search-box");
   if (!box || !script) return;
   const search = box.parentElement;

@@ -94,7 +94,7 @@ site_value_kinds := [Site_Value_Kind]Site_Value_Kind_Description {
 		cells = {"............", ".##.........", ".#######....", ".########...", ".#######....", ".##.........", ".##.........", ".##.........", ".##.........", ".##.........", "............", "............"},
 	},
 	.Type = {
-		name = "type", title = "Type", meaning = "A type of the module contract: Integer, Text, a record, Table, Bytes, Handle.",
+		name = "type", title = "Type", meaning = "A type: of the contract, a wire form of the module contract, a record of a module, or a basic type.",
 		color = graphics.COLOR_FIRMWARE, dark_percent = 115, light_percent = 83,
 		cells = {"............", "...##..##...", "..##....##..", ".##......##.", "##........##", ".##......##.", "..##....##..", "...##..##...", "............", "............", "............", "............"},
 	},

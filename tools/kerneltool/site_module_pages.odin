@@ -216,7 +216,7 @@ site_module_pages_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Ent
 			}
 			site_table_end(&b, exports_table)
 			for export in description.exports {
-				site_export_symbol_write(site, &b, description, export)
+				site_export_symbol_write(site, &b, build.name, description, export)
 			}
 		}
 		fmt.sbprintf(&b, "<p class=\"source\">Read from the source of the module, as the build reads it to describe the exports (<a href=\"%s\"><code>tools/kerneltool/describe.odin</code></a>).</p>\n", site_repository_file(site, "tools/kerneltool/describe.odin"))
@@ -250,11 +250,12 @@ site_module_pages_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Ent
 // its parameters, its result, how it fails, and its line in the source. The
 // rules that give these facts are those of the build (describe.odin): no
 // fact is typed here.
-site_export_symbol_write :: proc(site: ^Site, b: ^strings.Builder, description: Module_Description, export: Export_Description) {
+site_export_symbol_write :: proc(site: ^Site, b: ^strings.Builder, module_name: string, description: Module_Description, export: Export_Description) {
 	facts := make([dynamic]Site_Symbol_Fact, context.temp_allocator)
 	if export.name == ENTRY_NAME {
 		append(&facts, Site_Symbol_Fact{label = "Form", html = site_text_html("The entry of the module: one parameter, an address, fixed by the contract.")})
 	} else {
+		// Each type opens its card: the wire form and the record.
 		parameters := strings.builder_make(context.temp_allocator)
 		for type, index in export.parameters {
 			if index > 0 {
@@ -263,14 +264,18 @@ site_export_symbol_write :: proc(site: ^Site, b: ^strings.Builder, description: 
 			name := index < len(export.names) ? export.names[index] : ""
 			detail: u32 = index < len(export.details) ? export.details[index] : 0
 			direction: module.Direction = index < len(export.directions) ? export.directions[index] : .Read
-			strings.write_string(&parameters, site_value_html(.Type, strings.concatenate({name, ": ", site_type_text(description, type, detail, direction, true)}, context.temp_allocator)))
+			strings.write_string(&parameters, "<code class=\"value value-type\">")
+			site_escape(&parameters, name)
+			strings.write_string(&parameters, ": ")
+			strings.write_string(&parameters, site_type_html(site, module_name, description, type, detail, direction, true))
+			strings.write_string(&parameters, "</code>")
 		}
 		if len(export.parameters) == 0 {
 			strings.write_string(&parameters, "none")
 		}
 		append(&facts, Site_Symbol_Fact{label = "Parameters", kind = .Type, html = strings.to_string(parameters)})
-		result := export.result == .None ? "none" : site_type_text(description, export.result, export.result_detail, .Read, false)
-		append(&facts, Site_Symbol_Fact{label = "Result", kind = .Type, html = site_value_html(.Type, result)})
+		result: string = export.result == .None ? site_value_html(.Type, "none") : strings.concatenate({"<code class=\"value value-type\">", site_type_html(site, module_name, description, export.result, export.result_detail, .Read, false), "</code>"}, context.temp_allocator)
+		append(&facts, Site_Symbol_Fact{label = "Result", kind = .Type, html = result})
 		if export.error_record != 0 {
 			// The rule of the build: an export with an error record fails
 			// when its result is negative, and writes the record.
@@ -278,10 +283,10 @@ site_export_symbol_write :: proc(site: ^Site, b: ^strings.Builder, description: 
 			if int(export.error_record) <= len(description.records) {
 				record_name = description.records[export.error_record - 1].name
 			}
-			append(&facts, Site_Symbol_Fact{label = "When it fails", html = strings.concatenate({site_text_html("a negative result, and the error record "), site_value_html(.Type, record_name)}, context.temp_allocator)})
+			append(&facts, Site_Symbol_Fact{label = "When it fails", html = strings.concatenate({site_text_html("a negative result, and the error record "), site_type_reference_html(site, site_module_record_key(module_name, record_name), record_name, true)}, context.temp_allocator)})
 		}
 	}
-	site_symbol_write(site, b, Site_Symbol{id = strings.concatenate({"export-", site_slug(export.name)}, context.temp_allocator), name = export.name, signature = site_export_signature(description, export), description = export.text, facts = facts[:], source = export.file, line = export.line})
+	site_symbol_write(site, b, Site_Symbol{id = strings.concatenate({"export-", site_slug(export.name)}, context.temp_allocator), name = export.name, signature = site_export_signature(description, export), signature_html = site_export_signature_html(site, module_name, description, export), description = export.text, facts = facts[:], source = export.file, line = export.line})
 }
 
 // The tiles of the boot image on the home: as the boot display draws them
