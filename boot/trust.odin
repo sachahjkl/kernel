@@ -170,6 +170,12 @@ check_fail :: proc "contextless" (boot: ^info.Boot_Info, step: bootscreen.Step, 
 		bootscreen.put(&shown, string(found[:16]))
 	}
 	print("\r\n")
+	// The card of the boot image names the file whole, also when the head
+	// has no room for its whole sentence.
+	#partial switch result.fault {
+	case .Name_Differs, .Kind_Differs, .Outside_Image, .Size_Differs, .Hash_Differs, .Stated_Hash_Differs:
+		display_data.failed_name = name
+	}
 	trust_stop(boot, step, string(shown.bytes[:shown.count]))
 }
 

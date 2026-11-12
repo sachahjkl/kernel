@@ -11,7 +11,8 @@ The rules live as one table of constants in `support/graphics/rules.odin`: the g
 - Each thing on the screen is a fact of a record. A display invents nothing.
 - Each card has a caption that names its record, for example `Boot_Report.stages`. A person can find the source of each number.
 - A record that is all zero is valid. Its card says "not known yet", in the dim color. A card never shows a zero as if it was a measure.
-- A size on the screen carries a fact when it can: the width of a stage is its duration, the width of a tile is the size of its module. A form has a least width, so that its name stays readable.
+- A size on the screen carries a fact when it can: the width of a stage is its duration, the width of a part of a size strip is the size of its file. A form has a least width, so that it stays visible.
+- A name is whole or absent: a form that is too narrow for its name shows no name, and the name is said elsewhere when a reader needs it. A name is never cut.
 - A step is an interface, not a printed line: a list of steps shows each step with its state ("done", "now", "failed").
 
 ## 2. Forms
@@ -48,6 +49,8 @@ One color is one concept, as one term is one concept.
 | Program | `0x58D878` |
 | Memory | `0x38C0B0` |
 | Machine | `0xD070B0` |
+| A module with no entry export | `0xC8C058` |
+| A resource of the boot image | `0x9AA8C8` |
 | Failed | `0xF06060` |
 | Stop a program | `0xB82232`: a rich red, the color of the close button of a window |
 | Not usable | `0x4A5563` |
@@ -248,6 +251,18 @@ The mark has idle animations. Several animations play in turn. They play only on
 - A hidden tab: the play stops, no timer runs, and the icon is the still icon again.
 - `kerneltool logo` writes `build/mark_animations.png`: each animation as a row of its frames at cells of 8 pixels, with the durations and the order of play, for a person to look at.
 - The desktop of the system does not play the animations. The data is ready for it: `animation_frame_cells` gives the cells of a frame, and `cells_draw` draws them. To play them, the compositor needs one picture of 24 x 24 pixels for each distinct frame, drawn at the start as the still heron is. It also needs one timer that changes the generation of the Picture record of the bar at the times of the order of play.
+
+## 12. The card of the boot image
+
+The card "BOOT IMAGE" of the boot display says which files the boot image holds, by kind, and what the check of their hashes found. It has 536 x 130 pixels of content, whatever the count of files. Package `support/bootscreen/image_card` computes its places; the boot program, the root service and the program `boot` draw them. It uses integers only and allocates nothing.
+
+- **The kinds**: "programs" are the modules with an entry export; "no entry" are the modules with no entry export, which other modules import; "resources" are the files of the resource table. The kernel is not in the boot image: the card of the machine gives its size, and the line of the check counts it.
+- **The size strip**, 12 pixels high, at the top: one size strip for all the files, by kind, then from the largest file to the smallest. A part is at least 2 pixels wide, 4 for the failed file. The parts fill the width exactly. If the files need more than the width at their least, the smallest files have no part; the failed file always has one. Two parts that touch take two shades of the color of their kind. The strip has no names.
+- **The rows of names**, 4 rows of 18 pixels under the strip. Each kind has one row at least: the color of the kind, its name, its count and its bytes. Then the tiles: the names of its largest files, from the largest. A tile is as wide as its whole name. The first name that does not fit ends the kind, so a smaller file never takes the place of a larger one. The count of the files with no tile ("+55") follows the last tile, in the dim color. The rows that are left go, one at a time, to the kind with the most files with no tile.
+- **The line of the check**: the count of the files that have the hash of the system description, the kernel included ("85 verified, the kernel included"); or, after a failure, "failed: " and the whole name of the file, in the color of a failure; or "no file verified" when the check failed before the files (a wrong signature). The part and the tile of the failed file are in the color of a failure.
+- **The line of the trust** is the last line (`docs/TRUSTED_BOOT.md`, section 4).
+
+With the boot image of the last build (77 modules and 9 resources), the card names 12 files: 7 programs in two rows (`console`, `root`, `temple`, `remote`, `vector_glyphs`, `errors`, `address_space`), 3 modules with no entry and 2 resources. A host test holds this count.
 
 ## State
 

@@ -17,6 +17,7 @@
 package bootscreen
 
 import info "contract:boot_info"
+import "support:bootscreen/image_card"
 import "support:display"
 import "support:graphics"
 import "support:interface"
@@ -65,6 +66,7 @@ Data :: struct {
 	image:           []u8, // The boot image.
 	processor_name:  [48]u8,
 	message:         string, // What the machine does now.
+	failed_name:     string, // The file that failed the check of its hash: the card of the boot image names it.
 	state:           State,
 	step:            Step, // The step that the machine does now.
 	red_first:       bool, // The pixels of the canvas have red in the low byte.
@@ -352,33 +354,35 @@ step_names := [Step]string {
 	.Desktop       = "the desktop",
 }
 
-// The boot image as tiles: one tile for each module. The width of a tile
-// is the size of the module, with a least width. A tile shows the whole
-// name of its module, or no name when the name does not fit: a name is
-// never cut. The color of a tile comes from the hash of its module.
-TILE_ROWS :: 5
-TILE_HEIGHT :: 20
-TILE_GAP :: 2
-TILE_LEAST :: 36
+// The card of the boot image (docs/DESIGN.md, section 12): the size
+// strip, the rows of names by kind, the line of the check and the line of
+// the trust. Package image_card computes the places.
+IMAGE_STRIP_HEIGHT :: 12
+IMAGE_ROWS_Y :: 20
+IMAGE_ROW_PITCH :: 18
+IMAGE_LABEL_ROOM :: 80 // The name of a kind: "resources" takes 9 cells.
+IMAGE_COUNT_RIGHT :: 128 // The count of a kind ends here: 4 digits after the name.
+IMAGE_BYTES_RIGHT :: 208 // The bytes of a kind end here.
+IMAGE_NAMES_X :: 216 // The tiles of the names start here.
+IMAGE_CHECK_Y :: 96
+IMAGE_TRUST_Y :: 114
 
+// The layout is large for a stack: one copy serves each draw of the program.
 @(private)
-tile_width :: proc "contextless" (size, scale: u64) -> int {
-	return max(int(size * scale >> 20), TILE_LEAST)
+image_layout: image_card.Layout
+
+@(private, rodata)
+image_kind_names := [image_card.File_Kind]string {
+	.Program  = "programs",
+	.No_Entry = "no entry",
+	.Resource = "resources",
 }
 
-// tiles_fit says if the tiles, at this scale, fit in the rows.
-@(private)
-tiles_fit :: proc "contextless" (entries: []info.Image_Entry, scale: u64, width: int) -> bool {
-	x, row := 0, 0
-	for &entry in entries {
-		tile := min(tile_width(entry.size, scale), width)
-		if x + tile > width {
-			x = 0
-			row += 1
-		}
-		x += tile + TILE_GAP
-	}
-	return row < TILE_ROWS
+@(private, rodata)
+image_kind_colors := [image_card.File_Kind]graphics.Color {
+	.Program  = graphics.COLOR_PROGRAM,
+	.No_Entry = graphics.COLOR_NO_ENTRY,
+	.Resource = graphics.COLOR_RESOURCE,
 }
 
 // draw draws the display in the top left of a canvas. The canvas must
@@ -771,60 +775,25 @@ draw :: proc "contextless" (canvas: graphics.Canvas, data: ^Data) {
 		fact(area, FACTS + 5 * LINE, "kernel", &text)
 	}
 
-	// The modules of the boot image, as tiles. The color of a tile comes
-	// from the hash of the module: a module that changes takes a new color.
+	// The files of the boot image: the size strip, then the kinds with
+	// their largest files by name, the check and the trust.
 	BOTTOM_Y :: MIDDLE_Y + MIDDLE_HEIGHT + MARGIN
 	BOTTOM_HEIGHT :: HEIGHT - BOTTOM_Y - MARGIN
 	{
 		area := card(canvas, MARGIN, BOTTOM_Y, LEFT_WIDTH, BOTTOM_HEIGHT, "BOOT IMAGE", "Image_Entry, Boot_Report.trust", graphics.COLOR_BOOT_PROGRAM)
-		entries: []info.Image_Entry
-		if len(data.image) >= size_of(info.Image_Header) {
-			header := (^info.Image_Header)(raw_data(data.image))
-			if header.magic == info.IMAGE_MAGIC && size_of(info.Image_Header) + int(header.count) * size_of(info.Image_Entry) <= len(data.image) {
-				entries = ([^]info.Image_Entry)(raw_data(data.image[size_of(info.Image_Header):]))[:header.count]
-			}
-		}
-		if entries == nil {
-			write(area, 0, 0, "not known yet", graphics.COLOR_DIM)
-		}
-		total: u64 = 1
-		for &entry in entries {
-			total += entry.size
-		}
-		// The scale: pixels for each byte, with 20 bits after the point.
-		// The largest scale at which the tiles fit in the rows.
-		scale := u64(TILE_ROWS * area.width) << 20 / total
-		for scale > 1 && !tiles_fit(entries, scale, area.width) {
-			scale = scale * 15 / 16
-		}
-		x, row := 0, 0
-		for &entry in entries {
-			tile := min(tile_width(entry.size, scale), area.width)
-			if x + tile > area.width {
-				x = 0
-				row += 1
-			}
-			if row >= TILE_ROWS {
-				break
-			}
-			color := graphics.hue_color(entry.hash[0])
-			y := row * (TILE_HEIGHT + TILE_GAP)
-			block(area, x, y, tile, TILE_HEIGHT, graphics.shade(color, 70), graphics.shade(color, 40))
-			fill(area, x + 3, y + TILE_HEIGHT - 3, tile - 6, 1, color)
-			put_name(&text, entry.name[:])
-			if text.count * 8 > tile - 6 {
-				text.count = 0
-			}
-			show(area, x + 4, y + 1, &text, graphics.shade(color, 175))
-			x += tile + TILE_GAP
-		}
-		if len(entries) != 0 {
-			put_number(&text, u64(len(entries)))
-			put(&text, " modules, ")
+		layout := &image_layout
+		image_card.layout_compute(layout, data.image, data.failed_name, area.width, area.width - IMAGE_NAMES_X)
+		if layout.valid {
+			image_card_draw(area, layout)
+			put_number(&text, u64(image_card.file_total(layout)))
+			put(&text, " files, ")
 			put_size(&text, u64(len(data.image)))
 			show_right(canvas, MARGIN + LEFT_WIDTH - CARD_MARGIN, BOTTOM_Y + 13, &text, graphics.COLOR_TEXT)
+		} else {
+			write(area, 0, 0, "not known yet", graphics.COLOR_DIM)
 		}
-		trust_line(area, TILE_ROWS * (TILE_HEIGHT + TILE_GAP) + 4, data)
+		check_line(area, IMAGE_CHECK_Y, data)
+		trust_line(area, IMAGE_TRUST_Y, data)
 	}
 
 	// The programs.
@@ -869,6 +838,79 @@ put_hex_bytes :: proc "contextless" (text: ^Text, bytes: []u8) {
 	for value in bytes {
 		put(text, characters[value >> 4:][:1])
 		put(text, characters[value & 15:][:1])
+	}
+}
+
+// image_card_draw draws the size strip and the rows of names of the card
+// of the boot image. Two parts that touch take two shades of their kind;
+// the failed file is in the color of a failure, in the strip and on its
+// tile.
+@(private)
+image_card_draw :: proc "contextless" (area: graphics.Canvas, layout: ^image_card.Layout) {
+	text: Text
+	block(area, 0, 0, area.width, IMAGE_STRIP_HEIGHT, graphics.COLOR_TRACK, graphics.COLOR_TRACK)
+	for &file, index in layout.files[:layout.file_count] {
+		if file.strip_width == 0 {
+			continue
+		}
+		color := file.failed ? graphics.COLOR_FAILED : image_kind_colors[file.kind]
+		top := u32((index & 1) == 0 ? 120 : 96)
+		block(area, file.strip_x, 0, file.strip_width, IMAGE_STRIP_HEIGHT, graphics.shade(color, top), graphics.shade(color, top - 42))
+	}
+	names_width := area.width - IMAGE_NAMES_X
+	for kind in image_card.File_Kind {
+		summary := &layout.kinds[kind]
+		if summary.row_count == 0 {
+			continue
+		}
+		color := image_kind_colors[kind]
+		y := IMAGE_ROWS_Y + summary.first_row * IMAGE_ROW_PITCH
+		block(area, 0, y + 3, 10, 10, graphics.shade(color, 125), graphics.shade(color, 78))
+		write_name(area, 16, y, image_kind_names[kind], IMAGE_LABEL_ROOM, graphics.COLOR_DIM)
+		put_number(&text, u64(summary.count))
+		show_right(area, IMAGE_COUNT_RIGHT, y, &text, graphics.COLOR_TEXT)
+		put_size(&text, summary.bytes)
+		show_right(area, IMAGE_BYTES_RIGHT, y, &text, color)
+		// The count of the files of the kind with no tile, after its tiles.
+		hidden := summary.count - summary.named
+		if hidden > 0 && summary.more_x + image_card.more_width(hidden) <= names_width {
+			put(&text, "+")
+			put_number(&text, u64(hidden))
+			show(area, IMAGE_NAMES_X + summary.more_x, IMAGE_ROWS_Y + summary.more_row * IMAGE_ROW_PITCH, &text, graphics.COLOR_DIM)
+		}
+	}
+	for &tile in layout.tiles[:layout.tile_count] {
+		file := &layout.files[tile.file]
+		color := file.failed ? graphics.COLOR_FAILED : image_kind_colors[file.kind]
+		x := IMAGE_NAMES_X + tile.x
+		y := IMAGE_ROWS_Y + tile.row * IMAGE_ROW_PITCH
+		block(area, x, y, tile.width, LINE, graphics.shade(color, u32(file.failed ? 70 : 46)), graphics.shade(color, u32(file.failed ? 48 : 30)))
+		write(area, x + image_card.TILE_PADDING, y, file.name, graphics.shade(color, 175))
+	}
+}
+
+// check_line draws what the check of the hashes found: the count of the
+// files that have the hash of the system description, or the whole name of
+// the file that failed, in the color of a failure.
+@(private)
+check_line :: proc "contextless" (area: graphics.Canvas, y: int, data: ^Data) {
+	text: Text
+	x := write_name(area, 0, y, "check", FACT_VALUE - 8, graphics.COLOR_DIM)
+	x = max(x + 8, 56)
+	trust := &data.boot.trust
+	switch {
+	case len(data.failed_name) != 0:
+		put(&text, "failed: ")
+		put(&text, data.failed_name)
+		show(area, x, y, &text, graphics.COLOR_FAILED)
+	case trust.verifier != .None:
+		put_number(&text, trust.entry_count)
+		put(&text, " verified, the kernel included")
+		show(area, x, y, &text, graphics.COLOR_PROGRAM)
+	case data.state == .Failed && trust.key_kind != .None:
+		write(area, x, y, "no file verified", graphics.COLOR_FAILED)
+	case:
+		write(area, x, y, "not verified yet", graphics.COLOR_DIM)
 	}
 }
 

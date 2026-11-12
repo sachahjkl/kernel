@@ -26,6 +26,8 @@ COLOR_KERNEL :: 0x4A9CF0
 COLOR_PROGRAM :: 0x58D878 // Also the state "runs", and an expected answer.
 COLOR_MEMORY :: 0x38C0B0
 COLOR_MACHINE :: 0xD070B0
+COLOR_NO_ENTRY :: 0xC8C058 // A module with no entry export: other modules import it.
+COLOR_RESOURCE :: 0x9AA8C8 // A resource of the boot image: a file that is not a module.
 COLOR_FAILED :: 0xF06060
 COLOR_NOT_USABLE :: 0x4A5563
 COLOR_TEXT :: 0xDCE4EC
@@ -70,8 +72,8 @@ shade :: proc "contextless" (color: Color, percent: u32) -> Color {
 }
 
 // hue_color gives one color of the circle of colors, of middle strength.
-// The boot display colors the tile of a module with the first byte of its
-// hash, and the site colors its tiles with the same rule.
+// The site colors the tile of a module with the first byte of its hash:
+// a module that changes takes a new color.
 hue_color :: proc "contextless" (hue: u8) -> Color {
 	LOW :: 64
 	HIGH :: 208

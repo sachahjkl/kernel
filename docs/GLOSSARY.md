@@ -71,6 +71,7 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Step of the start | One point on the path of the start that the boot display shows (`bootscreen.Step`): ten points, from the firmware to the desktop. The program that draws says which step the machine does now. A step has no time: a stage is a part with a measured time | phase, progress |
 | Card | The frame of one subject in a display: a title in its accent, a caption that names its record, and its content (`docs/DESIGN.md`) | panel, box, widget |
 | Tile | A rectangle that stands for one thing of a set, with its name inside; its width can be a size (`docs/DESIGN.md`) | chip, badge |
+| Size strip | A bar of one row in which each file of a set is a part as wide as its share of the bytes, with a least width; the parts fill the bar exactly and carry no name. The card of the boot image starts with one (`docs/DESIGN.md`, section 12) | treemap, histogram, size bar |
 | Accent | The color of the concept that a card is about (`docs/DESIGN.md`) | theme color |
 | Boot record | The record that the kernel keeps of how the machine started (`Boot_Report`): the stages, the memory ranges of the firmware, the firmware, the framebuffer | boot log, dmesg |
 | Guard page | A page of addresses with no memory, next to a stack: a use of it is a page fault, not a write on other memory | red zone, canary |
