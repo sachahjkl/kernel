@@ -1,4 +1,4 @@
-// The boot program: a UEFI program (docs/PROPERTIES.md, property 17).
+// The boot program: a UEFI program (docs/PROPERTIES.md, "Trusted boot").
 //
 // It contains the kernel module, the boot image and the public key of the
 // signing key. It does this:

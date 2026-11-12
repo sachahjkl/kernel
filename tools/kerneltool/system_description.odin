@@ -195,7 +195,7 @@ boot_image_signed_write :: proc(base_path, kernel_name, output_path: string, cha
 	description := make([dynamic]u8, context.temp_allocator)
 	header := system_description.Header{magic = system_description.MAGIC, version = system_description.VERSION, entry_count = u32(1 + len(files))}
 	append(&description, ..mem.ptr_to_bytes(&header))
-	kernel_entry := description_entry(kernel_name, .Kernel, kernel)
+	kernel_entry := description_entry(system_description.KERNEL_ENTRY_NAME, .Kernel, kernel)
 	append(&description, ..mem.ptr_to_bytes(&kernel_entry))
 	for item, index in files {
 		kind := index < module_count ? system_description.Entry_Kind.Module : system_description.Entry_Kind.Resource

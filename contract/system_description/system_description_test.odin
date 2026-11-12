@@ -61,7 +61,12 @@ System :: struct {
 
 @(private = "file")
 system_make :: proc() -> (system: System) {
-	kernel := []u8{1, 2, 3, 4, 5, 6, 7, 8}
+	// The kernel bytes outlive this procedure: a slice literal would lie in
+	// its frame.
+	kernel := make([]u8, 8, context.temp_allocator)
+	for &value, index in kernel {
+		value = u8(index + 1)
+	}
 	alpha := make([]u8, 3000, context.temp_allocator)
 	for &value, index in alpha {
 		value = u8(index % 251)

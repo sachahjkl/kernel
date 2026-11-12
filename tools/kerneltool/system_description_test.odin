@@ -32,7 +32,7 @@ the_test_signing_key_is_the_published_one :: proc(t: ^testing.T) {
 @(test)
 a_private_key_stays_outside_the_repository :: proc(t: ^testing.T) {
 	testing.expect(t, path_inside_repository(TEST_SIGNING_KEY_FILE))
-	testing.expect(t, path_inside_repository("build/signing_key"))
+	testing.expect(t, path_inside_repository("tools/signing_key"))
 	testing.expect(t, path_inside_repository("."))
 	testing.expect(t, !path_inside_repository("/nonexistent_folder_of_a_test/signing_key"))
 }

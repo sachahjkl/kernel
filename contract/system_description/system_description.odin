@@ -41,6 +41,10 @@ SIGNATURE_LABEL :: "system description signature 1"
 // The names of the two last resources of the boot image.
 RESOURCE_DESCRIPTION :: "system_description"
 RESOURCE_SIGNATURE :: "system_description_signature"
+// The name of entry 0. It is fixed, whatever file the kernel was built
+// from: a name that the builder chose would give one system two
+// descriptions, and so two hashes.
+KERNEL_ENTRY_NAME :: "kernel"
 
 // The public key of the test signing key: RFC 8032, section 7.1, TEST 1.
 // Its private key is in that document and in this repository: a system
@@ -155,7 +159,7 @@ entries :: proc "contextless" (description: []u8) -> (list: []Entry, valid: bool
 			return nil, false
 		}
 		if index == 0 {
-			if entry.kind != .Kernel {
+			if entry.kind != .Kernel || name_of(&entry.name) != KERNEL_ENTRY_NAME {
 				return nil, false
 			}
 			continue
@@ -237,6 +241,12 @@ image_check :: proc "contextless" (description: []u8, image: []u8) -> (result: C
 	}
 	modules, resources, image_valid := info.image_tables(image)
 	if !image_valid || len(resources) < 2 {
+		result.fault = .Image_Not_Valid
+		return
+	}
+	// The two last resources are the description and its signature, by
+	// their names: no other resource escapes the list.
+	if name_of(&resources[len(resources) - 2].name) != RESOURCE_DESCRIPTION || name_of(&resources[len(resources) - 1].name) != RESOURCE_SIGNATURE {
 		result.fault = .Image_Not_Valid
 		return
 	}

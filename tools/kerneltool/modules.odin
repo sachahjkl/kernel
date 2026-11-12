@@ -340,7 +340,7 @@ build_module :: proc(build: Module_Build) -> bool {
 // build_boot_image writes the modules that have `image` set, then the
 // resources, into one block (boot_info/boot_info.odin). It leaves out the
 // module `without`. A resource has its name and the hash of its bytes, as a
-// module (property 11). This image has no system description: each boot
+// module. This image has no system description: each boot
 // volume gets a copy with its own (system_description.odin).
 build_boot_image :: proc(path: string, without: string, resources: []Resource_File) -> bool {
 	files := make([dynamic]Image_File, context.temp_allocator)
