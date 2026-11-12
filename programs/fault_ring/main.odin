@@ -37,7 +37,20 @@ WIDTH :: 896
 HEIGHT :: 400
 PAGE :: system.PAGE_SIZE
 
-VALUE_ROLE :: 0 // The value of the context that gives the role of a child.
+// The value of the context that gives the role of a child: ROLE_TAG in the
+// high half, the role in the low half. The root service writes the values 0
+// to 2 for a program with grants (value 0: the size of the boot image), and
+// other values for some programs: a value without the tag is the parent.
+VALUE_ROLE :: 5
+ROLE_TAG :: u64(0x4641_554C_0000_0000) // "FAUL"
+
+// role_of gives the role that the starter of this program wrote.
+role_of :: proc "contextless" (value: u64) -> Role {
+	if value & 0xFFFF_FFFF_0000_0000 != ROLE_TAG || value & 0xFFFF_FFFF > u64(max(Role)) {
+		return .Parent
+	}
+	return Role(value & 0xFFFF_FFFF)
+}
 
 Role :: enum u64 {
 	Parent             = 0,
@@ -261,7 +274,9 @@ lazy_object :: proc "contextless" (pages: u64) {
 }
 
 child :: proc "contextless" (role: Role) -> ! {
-	#partial switch role {
+	switch role {
+	case .Parent:
+		// Not a child: entry calls child only for another role.
 	case .Repairs:
 		child_repairs()
 	case .Answer_Stop:
@@ -307,7 +322,7 @@ child_run :: proc "contextless" (role: Role) -> (code: u32, report: op.Stop_Repo
 	grants: [op.CONTEXT_HANDLES]system.Grant
 	grants[op.CONTEXT_LOG] = {log_handle, {.Write}}
 	values: [op.CONTEXT_VALUES]u64
-	values[VALUE_ROLE] = u64(role)
+	values[VALUE_ROLE] = ROLE_TAG | u64(role)
 	error: module.Load_Error
 	program, status := system.program_start(system.image_find(image, "fault_ring"), "fault_ring child", grants, random.values_with_seed(&program_generator, values), {pages = 1024, programs = 1, threads = 20, processor = 500_000, log_records = 20}, nil, nil, {image = image}, &error)
 	if status != .Ok {
@@ -358,7 +373,7 @@ case_log :: proc "contextless" (item: ^Case, code: u32, address: u64) {
 
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
-	if role := Role(ctx.values[VALUE_ROLE]); role != .Parent {
+	if role := role_of(ctx.values[VALUE_ROLE]); role != .Parent {
 		child(role)
 	}
 	if !random.generator_from_context(&program_generator, ctx) {
@@ -390,7 +405,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		report: op.Stop_Report
 		code, report, left = child_run(item.role)
 		item.ran = true
-		#partial switch item.role {
+		switch item.role {
+		case .Parent, .Repairs:
+			// Not in cases[4:]: the cases 1 to 4 ran above in one child.
 		case .Answer_Stop:
 			// The report of a fault with no handler: a read of a page that is
 			// not committed, at the page that the child read.
