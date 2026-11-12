@@ -23,6 +23,10 @@ scenario_quic := [?]Step {
 	{kind = .Peer_Quic, text = "echo"},
 	{kind = .Wait, text = "quic_echo: a connection from 10.0.2.2 port "},
 	{kind = .Wait, text = " ended (closed by the client, the code 0000000000000000 of the application, the frame type 0000000000000000, the reason of the client \"\"): in 1048576 bytes, out 1048576 bytes"},
+	// One client with 4 streams at once, 256 KiB each way on each: the
+	// same 1 MiB in all.
+	{kind = .Peer_Quic, text = "streams"},
+	{kind = .Wait, text = " ended (closed by the client, the code 0000000000000000 of the application, the frame type 0000000000000000, the reason of the client \"\"): in 1048576 bytes, out 1048576 bytes"},
 	// The same with 5 % of the datagrams lost, 10 % reordered, 10 % repeated.
 	{kind = .Peer_Quic, text = "loss"},
 	// With loss, the one datagram that carries the close of the client can be

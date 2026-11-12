@@ -5,13 +5,15 @@
 // The launcher (launcher.odin) lists the same names.
 package bar
 
+import "support:mark"
+
 @(rodata)
-names := [?]string{"boot", "pages", "log", "console", "monitor", "plasma", "life", "paint", "fault", "temple", "rings", "threads", "workers", "rights", "origin", "budget", "limits", "processors", "flow", "crowd", "clock", "randomness", "flood", "tally", "manual", "frames", "disk", "notes", "imports", "net", "remote", "server", "inspect", "locks", "errors", "scheduler", "interface_elements", "vector_glyphs", "pointers", "settings", "tables", "interface_through_module", "address_space", "cryptography_vectors", "quic_echo"}
+names := [?]string{"boot", "pages", "log", "console", "monitor", "plasma", "life", "paint", "fault", "temple", "rings", "threads", "workers", "rights", "origin", "budget", "limits", "processors", "flow", "crowd", "clock", "randomness", "flood", "tally", "manual", "frames", "disk", "notes", "imports", "net", "remote", "server", "inspect", "locks", "errors", "scheduler", "interface_elements", "vector_glyphs", "interface_font", "pointers", "settings", "tables", "interface_through_module", "address_space", "cryptography_vectors", "quic_echo", "extended_state"}
 
 // The bar is on the grid of docs/DESIGN.md: 8 pixels.
 LABEL :: "programs" // The text of the button that opens the menu of the programs.
 CHARACTER_WIDTH :: 8 // The font of the system.
-START :: 80 // After the name of the system.
+START :: 80 // After the mark of the system.
 PADDING :: 8
 HEIGHT :: 32 // The height of the bar.
 BUTTON_Y :: 4
@@ -21,6 +23,15 @@ BORDER :: 1
 TITLE :: 40 // The title of a menu, as the title of a card.
 COLUMNS :: 2 // The menu of the programs has two columns of names.
 COLUMN_LEAST :: 120 // The title of the menu fits.
+
+// The mark of the system at the left of the bar, where the name of the
+// system was: the heron at a cell size of 1, 24 by 24 pixels, at the height
+// of the buttons. It ends before START.
+MARK_X :: 16
+MARK_Y :: BUTTON_Y
+MARK_CELL_SIZE :: 1
+MARK_SIZE :: mark.HERON_GRID_SIZE * MARK_CELL_SIZE
+#assert(MARK_X + MARK_SIZE <= START && MARK_Y + MARK_SIZE <= HEIGHT)
 
 // rows gives the lines of one column of the menu of the programs.
 rows :: proc "contextless" () -> int {

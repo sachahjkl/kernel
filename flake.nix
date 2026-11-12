@@ -139,7 +139,9 @@
           cp build/test_output.txt $out
         '';
       }
-      // firmware);
+      // firmware
+      # The source fonts: a test of the tool reads the feature "zero" of Paper Mono in them.
+      // vectorFontSources);
   in {
     formatter.${system} = pkgs.alejandra;
 

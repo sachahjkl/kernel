@@ -802,24 +802,19 @@ CONTEXT_VALUE_SETTINGS_BOOT_PASS :: 17
 // compositor). The setting "pointer_theme" chooses between the two.
 CONTEXT_VALUE_SECOND_POINTER_THEME_ADDRESS :: 18
 CONTEXT_VALUE_SECOND_POINTER_THEME_SIZE :: 19
-// The values 20 to 22: the sizes of the three glyph caches that the root
-// service maps read-only into a program with a surface or a terminal (with
-// the grid fit, without it, the bold weight), 0 for a cache that it does
-// not map. Their addresses are fixed (contract:fixed_addresses). They are
-// values of the context, which only the starter writes, and not fields of
-// the settings page, which the program `settings` writes: a size that
-// another program chose could name memory that is not mapped.
-CONTEXT_VALUE_GLYPH_CACHE_SIZE :: 20
-CONTEXT_VALUE_GLYPH_CACHE_WITHOUT_GRID_FIT_SIZE :: 21
-CONTEXT_VALUE_GLYPH_CACHE_BOLD_SIZE :: 22
+// The value 20: a set of bits, bit n for the member n of the fixed ranges
+// (contract:fixed_addresses, Fixed_Range): the ranges that the starter
+// mapped for this program. A set bit is the statement of the starter that
+// the range is mapped; a program reads nothing at a fixed range whose bit
+// is clear. It is a value of the context, which only the starter writes,
+// and not a field of a shared page, which another program can write. The
+// values 21, 22 and 23 have no role.
+CONTEXT_VALUE_FIXED_RANGES_MAPPED :: 20
 CONTEXT_BUDGET :: 15 // The budget of the program.
-// The value that the root service fixes for each program that it starts
-// with a surface or a terminal: values[13] is the address of the settings
-// page (contract:settings, VALUE_PAGE), 0 for none. A program does not use
-// value 13 for another role.
-// The value that the root service fixes for each program that it starts:
-// values[15] is the address of the date page (contract:date, VALUE_PAGE), 0
-// for none. A program does not use value 15 for another role.
+// The values 13 and 15 have no role: the settings page and the date page
+// are fixed ranges, mapped when their bit of the value 20 is set. A new
+// role of the system takes a number from 16, never 13 or 15, so that an
+// old reader cannot take a new value for a page.
 
 // The roles of the first program (the root service).
 ROOT_MACHINE :: 0

@@ -13,8 +13,9 @@ package quic
 // - the three packet number spaces, ACK frames, loss detection by the packet
 //   threshold and the time threshold, and the probe timeout (RFC 9002);
 // - a fixed congestion window (no NewReno yet);
-// - flow control of the connection and of one bidirectional stream, which
-//   the client opens (stream 0);
+// - bidirectional streams that the client opens, in a table of records of
+//   the caller, with flow control for each stream and for the connection
+//   (streams.odin);
 // - the idle timeout, the anti-amplification limit of a server, and the
 //   closing and draining states;
 // - the handshake, driven by the TLS state machine.
@@ -26,7 +27,6 @@ import "support:random"
 CLOSE_REASON_KEPT :: 48 // The bytes of the reason phrase of a close of the peer that a connection keeps.
 MAX_DATAGRAM_SIZE :: 1200 // The datagrams that this side sends: the size that every path of QUIC carries (RFC 9000, section 14).
 CONNECTION_ID_SIZE :: 8 // The connection identifiers that this side chooses.
-STREAM_BUFFER_SIZE :: 65536 // The bytes of the stream in each direction that wait: to be acknowledged, or to be read.
 CRYPTO_BUFFER_SIZE :: 4096 // The handshake bytes of one level in each direction: more from the peer is CRYPTO_BUFFER_EXCEEDED.
 SENT_PACKET_LIMIT :: 64 // The ack-eliciting packets of one space that wait for an acknowledgement.
 // RFC 9002, section 7.2: the initial window, min(10 * 1200, max(14720, 2 *
@@ -64,9 +64,9 @@ Connection_State :: enum u8 {
 Control_Frame :: enum u8 {
 	Handshake_Done,
 	Max_Data,
-	Max_Stream_Data,
+	Max_Streams, // The limit of streams that this side gives the peer: a server, when a stream of the client ended.
+	Streams_Blocked, // A client that cannot open a stream for the limit of the server.
 	Path_Response,
-	Reset_Stream,
 }
 
 // One ack-eliciting packet that waits for an acknowledgement: what it
@@ -78,10 +78,15 @@ Sent_Packet :: struct {
 	size:          u64,
 	crypto_offset: u64,
 	crypto_length: u64,
-	stream_offset: u64,
-	stream_length: u64,
-	stream_finish: bool,
-	controls:      bit_set[Control_Frame],
+	// One STREAM frame at most: its stream, its range, its end.
+	stream_identifier: u64,
+	stream_offset:     u64,
+	stream_length:     u64,
+	stream_finish:     bool,
+	controls:          bit_set[Control_Frame],
+	// The control frames of one stream at most.
+	stream_controls:            bit_set[Stream_Control],
+	stream_controls_identifier: u64,
 }
 
 // The handshake bytes of one level: the bytes that TLS gave to send (kept
@@ -124,33 +129,6 @@ Packet_Number_Space :: struct {
 	// forgot their ranges, and such a packet may have been processed.
 	packet_number_floor:           u64,
 	crypto:                        Crypto_Stream,
-}
-
-// The one bidirectional stream, stream 0, which the client opens.
-Stream :: struct {
-	opened:                bool,
-	// Sending: the bytes that the application wrote, in a ring by offset.
-	send:                  [STREAM_BUFFER_SIZE]u8,
-	send_length:           u64,
-	send_next:             u64,
-	send_again:            Range_Set,
-	send_acknowledged:     Range_Set,
-	send_finish:           bool, // The application wrote its last byte.
-	finish_sent:           bool,
-	finish_acknowledged:   bool,
-	send_limit:            u64, // The MAX_STREAM_DATA of the peer.
-	reset_sent:            bool, // After a STOP_SENDING of the peer: this side sends RESET_STREAM and no more data.
-	reset_code:            u64,
-	// Receiving: the bytes of the peer, in a ring by offset.
-	receive:               [STREAM_BUFFER_SIZE]u8,
-	received:              Range_Set,
-	read_offset:           u64,
-	receive_limit:         u64, // The MAX_STREAM_DATA that this side gave.
-	highest_received:      u64,
-	has_final_size:        bool,
-	final_size:            u64,
-	reset_received:        bool,
-	peer_reset_code:       u64,
 }
 
 Connection_Configuration :: struct {
@@ -208,13 +186,23 @@ Connection :: struct {
 	idle_timeout:                      u64,
 	last_activity:                     u64,
 	ack_eliciting_sent_since_receive:  bool,
-	// Flow control.
-	peer_max_data:                     u64,
-	receive_max_data:                  u64,
+	// The streams (streams.odin): the table of the caller, and the counts
+	// of the streams that each side opened.
+	streams:                           []Stream,
+	streams_opened_by_peer:            u64,
+	streams_opened_by_this_side:       u64,
+	streams_limit_given:               u64, // The MAX_STREAMS that this side gave the peer: the streams that the peer may open in all.
 	peer_max_streams_bidirectional:    u64,
+	stream_send_turn:                  int, // The record whose stream sends first in the next packet: each stream gets its turn.
+	// Flow control of the connection: the data of all streams.
+	peer_max_data:                     u64,
+	data_sent_total:                   u64, // The new bytes that this side sent, on all streams.
+	receive_window:                    u64,
+	receive_max_data:                  u64, // The MAX_DATA that this side gave.
+	data_received_total:               u64, // The largest offset of each stream of the peer, summed.
+	data_consumed_total:               u64, // The bytes of the peer that the application read, or that a reset of the peer dropped.
 	peer_max_ack_delay:                u64, // Microseconds.
 	peer_ack_delay_exponent:           u64,
-	stream:                            Stream,
 	pending_controls:                  bit_set[Control_Frame],
 	path_response:                     [PATH_DATA_SIZE]u8,
 	// The close.
@@ -249,9 +237,10 @@ Connection :: struct {
 // connection_start_client starts a client: it chooses its connection
 // identifier and the Destination Connection ID of its first Initial, and
 // makes the ClientHello. The first datagram is ready for
-// connection_datagram_send.
-connection_start_client :: proc "contextless" (connection: ^Connection, configuration: ^Connection_Configuration, cryptography: ^Cryptography, generator: ^random.Generator, now: u64, error: ^errors.Error_Record) -> bool {
-	connection_reset(connection, configuration, cryptography, generator, now)
+// connection_datagram_send. streams is memory of the caller, never a
+// stack: the streams that the client opens at one time.
+connection_start_client :: proc "contextless" (connection: ^Connection, streams: []Stream, configuration: ^Connection_Configuration, cryptography: ^Cryptography, generator: ^random.Generator, now: u64, error: ^errors.Error_Record) -> bool {
+	connection_reset(connection, streams, configuration, cryptography, generator, now)
 	connection.configuration.tls.role = .Client
 	connection.address_validated = true
 	connection.handshake_deadline = saturating_add(now, HANDSHAKE_TIME_LIMIT)
@@ -276,10 +265,12 @@ connection_start_client :: proc "contextless" (connection: ^Connection, configur
 
 // connection_start_server prepares a server for one client: the handshake
 // starts at the first Initial packet of the client, whose Destination
-// Connection ID gives the Initial keys.
-connection_start_server :: proc "contextless" (connection: ^Connection, configuration: ^Connection_Configuration, cryptography: ^Cryptography, generator: ^random.Generator, now: u64, error: ^errors.Error_Record) -> bool {
-	connection_reset(connection, configuration, cryptography, generator, now)
+// Connection ID gives the Initial keys. streams is memory of the caller,
+// never a stack: the client may open as many streams at one time.
+connection_start_server :: proc "contextless" (connection: ^Connection, streams: []Stream, configuration: ^Connection_Configuration, cryptography: ^Cryptography, generator: ^random.Generator, now: u64, error: ^errors.Error_Record) -> bool {
+	connection_reset(connection, streams, configuration, cryptography, generator, now)
 	connection.configuration.tls.role = .Server
+	connection.streams_limit_given = u64(len(streams))
 	if !connection_seed_strength_check(configuration, error) {
 		connection.state = .Closed
 		return false
@@ -305,7 +296,7 @@ connection_seed_strength_check :: proc "contextless" (configuration: ^Connection
 }
 
 @(private)
-connection_reset :: proc "contextless" (connection: ^Connection, configuration: ^Connection_Configuration, cryptography: ^Cryptography, generator: ^random.Generator, now: u64) {
+connection_reset :: proc "contextless" (connection: ^Connection, streams: []Stream, configuration: ^Connection_Configuration, cryptography: ^Cryptography, generator: ^random.Generator, now: u64) {
 	connection^ = {}
 	connection.configuration = configuration^
 	connection.cryptography = cryptography
@@ -313,8 +304,19 @@ connection_reset :: proc "contextless" (connection: ^Connection, configuration: 
 	connection.state = .Handshake
 	connection.last_activity = now
 	connection.idle_timeout = saturating_multiply(configuration.idle_timeout_milliseconds, 1000)
-	connection.receive_max_data = STREAM_BUFFER_SIZE
-	connection.stream.receive_limit = STREAM_BUFFER_SIZE
+	connection.streams = streams
+	for &stream in streams {
+		// A connection that ended with streams still open left their bytes:
+		// the next connection of the table never holds them.
+		if stream.in_use {
+			stream_buffers_erase(&stream)
+		}
+		stream.state = {}
+	}
+	// The window of the connection: the buffers of every stream, so the
+	// limit of each stream is the one that binds.
+	connection.receive_window = u64(max(len(streams), 1)) * STREAM_BUFFER_SIZE
+	connection.receive_max_data = connection.receive_window
 	connection.peer_max_ack_delay = 25_000
 	connection.peer_ack_delay_exponent = 3
 }
@@ -347,12 +349,12 @@ connection_tls_start :: proc "contextless" (connection: ^Connection, error: ^err
 	parameters^ = transport_parameters_default()
 	parameters.max_idle_timeout = connection.configuration.idle_timeout_milliseconds
 	parameters.max_udp_payload_size = DATAGRAM_LIMIT
-	parameters.initial_max_data = STREAM_BUFFER_SIZE
+	parameters.initial_max_data = connection.receive_window
 	parameters.initial_max_stream_data_bidirectional_local = STREAM_BUFFER_SIZE
 	parameters.initial_max_stream_data_bidirectional_remote = STREAM_BUFFER_SIZE
-	// The client opens the one stream: a server allows one bidirectional
-	// stream of the client, a client none of the server.
-	parameters.initial_max_streams_bidirectional = connection.configuration.tls.role == .Server ? 1 : 0
+	// Only the client opens streams: a server allows the client one stream
+	// for each of its records, a client allows the server none.
+	parameters.initial_max_streams_bidirectional = connection.streams_limit_given
 	parameters.initial_source_connection_id_length = copy(parameters.initial_source_connection_id[:], connection.local_connection_id[:])
 	parameters.has_initial_source_connection_id = true
 	if connection.configuration.tls.role == .Server {
@@ -495,15 +497,9 @@ connection_peer_parameters_apply :: proc "contextless" (connection: ^Connection,
 			return connection_fail(connection, u64(Transport_Error.Transport_Parameter_Error), 0, now)
 		}
 	}
+	// The limit of each stream comes from these parameters when the stream
+	// opens (stream_record_take).
 	connection.peer_max_data = parameters.initial_max_data
-	// Stream 0 is opened by the client: for the client the peer gives the
-	// limit of a stream that the other side opened, for the server the
-	// limit of a stream that it opened itself.
-	if peer_role == .Server {
-		connection.stream.send_limit = parameters.initial_max_stream_data_bidirectional_remote
-	} else {
-		connection.stream.send_limit = parameters.initial_max_stream_data_bidirectional_local
-	}
 	connection.peer_max_streams_bidirectional = parameters.initial_max_streams_bidirectional
 	connection.peer_max_ack_delay = parameters.max_ack_delay * 1000
 	connection.peer_ack_delay_exponent = parameters.ack_delay_exponent
@@ -679,68 +675,4 @@ connection_time_passes :: proc "contextless" (connection: ^Connection, now: u64)
 		return
 	}
 	loss_detection_timeout(connection, now)
-}
-
-// stream_write gives bytes to the stream; it gives the count that it took
-// (the room of the stream buffer). finish says that these are the last
-// bytes. The client opens the stream with its first write; a server writes
-// once the client opened it.
-stream_write :: proc "contextless" (connection: ^Connection, bytes: []u8, finish: bool) -> int {
-	if connection.state != .Handshake && connection.state != .Connected {
-		return 0
-	}
-	stream := &connection.stream
-	if connection.configuration.tls.role == .Server && !stream.opened {
-		return 0
-	}
-	if stream.send_finish || stream.reset_sent {
-		return 0
-	}
-	stream.opened = true
-	acknowledged := range_set_prefix(&stream.send_acknowledged)
-	free := STREAM_BUFFER_SIZE - (stream.send_length - acknowledged)
-	count := int(min(u64(len(bytes)), free))
-	ring_write(stream.send[:], stream.send_length, bytes[:count])
-	stream.send_length += u64(count)
-	if finish && count == len(bytes) {
-		stream.send_finish = true
-	}
-	return count
-}
-
-// stream_read gives the bytes of the peer that came in order. finished
-// says that the peer sent its last byte and that it was read. A stream that
-// the peer reset gives no more bytes, and reset is true.
-stream_read :: proc "contextless" (connection: ^Connection, buffer: []u8) -> (count: int, finished: bool, reset: bool) {
-	stream := &connection.stream
-	if stream.reset_received {
-		return 0, false, true
-	}
-	available := range_set_prefix(&stream.received) - stream.read_offset
-	count = int(min(available, u64(len(buffer))))
-	ring_read(stream.receive[:], stream.read_offset, buffer[:count])
-	stream.read_offset += u64(count)
-	// Flow control: a new limit when half of the window was read.
-	if stream.read_offset + STREAM_BUFFER_SIZE - stream.receive_limit >= STREAM_BUFFER_SIZE / 2 {
-		stream.receive_limit = stream.read_offset + STREAM_BUFFER_SIZE
-		connection.receive_max_data = stream.receive_limit
-		connection.pending_controls += {.Max_Data, .Max_Stream_Data}
-	}
-	finished = stream.has_final_size && stream.read_offset == stream.final_size
-	return
-}
-
-// The ring of a stream: the byte at offset is at offset modulo the size.
-@(private)
-ring_write :: proc "contextless" (ring: []u8, offset: u64, bytes: []u8) {
-	start := int(offset % u64(len(ring)))
-	first := copy(ring[start:], bytes)
-	copy(ring, bytes[first:])
-}
-
-@(private)
-ring_read :: proc "contextless" (ring: []u8, offset: u64, bytes: []u8) {
-	start := int(offset % u64(len(ring)))
-	first := copy(bytes, ring[start:])
-	copy(bytes[first:], ring)
 }

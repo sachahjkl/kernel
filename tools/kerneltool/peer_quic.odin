@@ -26,6 +26,7 @@ import cryptography_module "../../modules/cryptography"
 
 QUIC_SERVER_PORT :: 4433
 PEER_QUIC_CAPACITY :: 8
+PEER_QUIC_STREAMS :: 4 // The streams of one client at most: the limit that quic_echo gives.
 PEER_QUIC_PORT_FIRST :: 41000
 PEER_QUIC_TIME_LIMIT :: 120 * time.Second // On the clock of the host: it only ends a case that hangs.
 PEER_QUIC_FLOOD :: 1000 // The datagrams of the flood that no key opens.
@@ -58,6 +59,7 @@ Peer_Quic :: struct {
 	configuration: quic.Connection_Configuration,
 	pinned:        bool,
 	clients:       []quic.Connection,
+	client_streams: []quic.Stream, // PEER_QUIC_STREAMS records for each client, in the order of the clients.
 	client_count:  int,
 	ports:         [PEER_QUIC_CAPACITY]u16,
 	next_port:     u16,
@@ -73,10 +75,13 @@ Peer_Quic :: struct {
 	name:          string,
 	running:       bool,
 	started:       time.Tick,
-	total:         int, // The bytes of the echo of each client.
-	written:       [PEER_QUIC_CAPACITY]int,
-	read:          [PEER_QUIC_CAPACITY]int,
-	finished:      [PEER_QUIC_CAPACITY]bool,
+	total:         int, // The bytes of the echo of each stream.
+	streams_per_client: int,
+	stream_identifiers: [PEER_QUIC_CAPACITY][PEER_QUIC_STREAMS]u64,
+	stream_opened: [PEER_QUIC_CAPACITY][PEER_QUIC_STREAMS]bool,
+	written:       [PEER_QUIC_CAPACITY][PEER_QUIC_STREAMS]int,
+	read:          [PEER_QUIC_CAPACITY][PEER_QUIC_STREAMS]int,
+	finished:      [PEER_QUIC_CAPACITY][PEER_QUIC_STREAMS]bool,
 	expect_failure: bool, // The case passes when the handshake fails with bad_certificate.
 	vanish:        bool, // The client takes the Retry, sends its Initial with the token, then nothing.
 	vanish_after_bytes: u64, // The bytes that the client of the vanish case had sent when it took the Retry.
@@ -103,6 +108,7 @@ Peer_Quic :: struct {
 peer_quic_make :: proc() -> ^Peer_Quic {
 	state := new(Peer_Quic)
 	state.clients = make([]quic.Connection, PEER_QUIC_CAPACITY)
+	state.client_streams = make([]quic.Stream, PEER_QUIC_CAPACITY * PEER_QUIC_STREAMS)
 	state.cryptography = {
 		seal_with_aes_128_gcm                = cryptography_module.seal_with_aes_128_gcm,
 		open_with_aes_128_gcm                = cryptography_module.open_with_aes_128_gcm,
@@ -137,6 +143,7 @@ peer_quic_make :: proc() -> ^Peer_Quic {
 
 peer_quic_free :: proc(state: ^Peer_Quic) {
 	delete(state.clients)
+	delete(state.client_streams)
 	for frame in state.held {
 		delete(frame)
 	}
@@ -205,6 +212,8 @@ peer_quic_case_start :: proc(peer: ^Peer, state: ^Peer_Quic) -> bool {
 	state.loss, state.reorder, state.duplicate = 0, 0, 0
 	state.dropped, state.reordered, state.repeated = 0, 0, 0
 	state.written, state.read, state.finished = {}, {}, {}
+	state.stream_identifiers, state.stream_opened = {}, {}
+	state.streams_per_client = 1
 	state.expect_failure, state.vanish = false, false
 	state.flood_sent, state.flood_answers, state.negotiation_answers, state.retry_answers = 0, 0, 0, 0
 	state.answer_bytes, state.most_answer_bytes = {}, 0
@@ -216,6 +225,10 @@ peer_quic_case_start :: proc(peer: ^Peer, state: ^Peer_Quic) -> bool {
 	state.total = 1 << 20
 	switch name {
 	case "echo":
+	case "streams":
+		// 4 streams of one client at once, 256 KiB each way on each.
+		state.streams_per_client = PEER_QUIC_STREAMS
+		state.total = 256 * 1024
 	case "loss":
 		// The changes of the TCP cases: 5 % lost, 10 % reordered, 10 % repeated.
 		state.random, state.loss, state.reorder, state.duplicate = 0x5155_4943_0000_0001, 50, 100, 100
@@ -247,7 +260,8 @@ peer_quic_case_start :: proc(peer: ^Peer, state: ^Peer_Quic) -> bool {
 	for index in 0 ..< state.client_count {
 		state.ports[index] = state.next_port
 		state.next_port += 1
-		if !quic.connection_start_client(&state.clients[index], &configuration, &state.cryptography, &state.generator, peer_quic_now(state), &error) {
+		streams_of_client := state.client_streams[index * PEER_QUIC_STREAMS:][:PEER_QUIC_STREAMS]
+		if !quic.connection_start_client(&state.clients[index], streams_of_client, &configuration, &state.cryptography, &state.generator, peer_quic_now(state), &error) {
 			state.failure = "the client did not start"
 			return false
 		}
@@ -497,35 +511,47 @@ peer_quic_tick :: proc(peer: ^Peer) {
 	}
 }
 
-// peer_quic_echo writes the pattern of the TCP cases on the stream of each
-// client, then checks each byte that comes back.
+// peer_quic_echo writes the pattern of the TCP cases on each stream of
+// each client, then checks each byte that comes back. A client opens its
+// streams when the limit of the server allows them.
 @(private = "file")
 peer_quic_echo :: proc(state: ^Peer_Quic) {
 	chunk: [4096]u8
 	for index in 0 ..< state.client_count {
 		client := &state.clients[index]
-		for state.written[index] < state.total {
-			count := min(len(chunk), state.total - state.written[index])
-			for place in 0 ..< count {
-				chunk[place] = web.pattern(state.written[index] + place)
+		for slot in 0 ..< state.streams_per_client {
+			if !state.stream_opened[index][slot] {
+				identifier, opened := quic.stream_open(client)
+				if !opened {
+					break
+				}
+				state.stream_identifiers[index][slot] = identifier
+				state.stream_opened[index][slot] = true
 			}
-			taken := quic.stream_write(client, chunk[:count], state.written[index] + count == state.total)
-			state.written[index] += taken
-			if taken < count {
-				break
-			}
-		}
-		for {
-			count, ended, _ := quic.stream_read(client, chunk[:])
-			for place in 0 ..< count {
-				if chunk[place] != web.pattern(state.read[index] + place) && state.failure == "" {
-					state.failure = fmt.aprintf("client %d: the byte %d came back changed", index, state.read[index] + place)
+			identifier := state.stream_identifiers[index][slot]
+			for state.written[index][slot] < state.total {
+				count := min(len(chunk), state.total - state.written[index][slot])
+				for place in 0 ..< count {
+					chunk[place] = web.pattern(state.written[index][slot] + place)
+				}
+				taken := quic.stream_write(client, identifier, chunk[:count], state.written[index][slot] + count == state.total)
+				state.written[index][slot] += taken
+				if taken < count {
+					break
 				}
 			}
-			state.read[index] += count
-			state.finished[index] = state.finished[index] || ended
-			if count == 0 {
-				break
+			for {
+				count, ended, _ := quic.stream_read(client, identifier, chunk[:])
+				for place in 0 ..< count {
+					if chunk[place] != web.pattern(state.read[index][slot] + place) && state.failure == "" {
+						state.failure = fmt.aprintf("client %d, stream %d: the byte %d came back changed", index, identifier, state.read[index][slot] + place)
+					}
+				}
+				state.read[index][slot] += count
+				state.finished[index][slot] = state.finished[index][slot] || ended
+				if count == 0 {
+					break
+				}
 			}
 		}
 	}
@@ -566,7 +592,9 @@ peer_quic_check :: proc(state: ^Peer_Quic, wanted: int) {
 	case:
 		done := true
 		for index in 0 ..< state.client_count {
-			done = done && state.finished[index] && state.read[index] == state.total
+			for slot in 0 ..< state.streams_per_client {
+				done = done && state.finished[index][slot] && state.read[index][slot] == state.total
+			}
 		}
 		if state.name == "flood" {
 			// The answers of the server come after the flood: the check waits
@@ -598,13 +626,13 @@ peer_quic_check :: proc(state: ^Peer_Quic, wanted: int) {
 			for index in 0 ..< state.client_count {
 				quic.connection_close(&state.clients[index], 0, peer_quic_now(state))
 			}
-			state.result = fmt.aprintf("%d clients, %d bytes each way, srtt %d us; %d datagrams lost, %d reordered, %d repeated; %d datagrams of a flood and %d spoofed Initials, %d Retries to it (the most bytes to one address %d), %d Version Negotiation packet", state.client_count, state.total, client.smoothed_round_trip, state.dropped, state.reordered, state.repeated, min(state.flood_sent, PEER_QUIC_FLOOD), PEER_QUIC_SPOOFED, state.retry_answers, state.most_answer_bytes, state.negotiation_answers)
+			state.result = fmt.aprintf("%d clients of %d streams, %d bytes each way on each stream, srtt %d us; %d datagrams lost, %d reordered, %d repeated; %d datagrams of a flood and %d spoofed Initials, %d Retries to it (the most bytes to one address %d), %d Version Negotiation packet", state.client_count, state.streams_per_client, state.total, client.smoothed_round_trip, state.dropped, state.reordered, state.repeated, min(state.flood_sent, PEER_QUIC_FLOOD), PEER_QUIC_SPOOFED, state.retry_answers, state.most_answer_bytes, state.negotiation_answers)
 			peer_quic_end(state, wanted, true)
 			return
 		}
 	}
 	if elapsed > PEER_QUIC_TIME_LIMIT {
-		state.failure = fmt.aprintf("not done in %v: client 0 in the state %v (closed with %x), %d of %d bytes back; %d datagrams of the flood sent, %d Version Negotiation answers, %d answers to the flood", PEER_QUIC_TIME_LIMIT, client.state, client.close_error_code, state.read[0], state.total, state.flood_sent, state.negotiation_answers, state.flood_answers)
+		state.failure = fmt.aprintf("not done in %v: client 0 in the state %v (closed with %x), %d of %d bytes back; %d datagrams of the flood sent, %d Version Negotiation answers, %d answers to the flood", PEER_QUIC_TIME_LIMIT, client.state, client.close_error_code, state.read[0][0], state.total, state.flood_sent, state.negotiation_answers, state.flood_answers)
 		peer_quic_end(state, wanted, false)
 	}
 }

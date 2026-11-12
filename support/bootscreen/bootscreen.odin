@@ -19,6 +19,7 @@ package bootscreen
 import info "contract:boot_info"
 import "support:graphics"
 import "support:interface"
+import "support:mark"
 import op "contract:operation"
 import "base:intrinsics"
 
@@ -369,7 +370,23 @@ draw :: proc "contextless" (canvas: graphics.Canvas, data: ^Data) {
 			fill(canvas, column, row, 1, 8, graphics.mix(top, graphics.shade(top, 62), u32(row * 255 / HEADER)))
 		}
 	}
-	write_large(canvas, 20, 12, "kernel", 3, graphics.COLOR_WHITE)
+	// The mark of the system where the name of the system was: the heron
+	// with cells of 2 pixels (48 by 48, the height of the large text that was
+	// there), and the name of the mark with cells of 3 pixels, at the right
+	// of the heron, its bottom on the bottom of the heron. Both end before
+	// the path of the steps.
+	{
+		MARK_LEFT :: 20
+		MARK_TOP :: 12
+		MARK_CELL_SIZE :: 2
+		NAME_GAP :: 12
+		NAME_CELL_SIZE :: 3
+		channel_order := mark.Channel_Order.Red_In_Low_Byte if red_first else mark.Channel_Order.Red_In_High_Byte
+		mark.mark_draw(canvas, MARK_LEFT, MARK_TOP, MARK_CELL_SIZE, false, channel_order)
+		heron_side := mark.heron_size(MARK_CELL_SIZE)
+		_, name_height := mark.name_size(NAME_CELL_SIZE)
+		mark.name_draw(canvas, MARK_LEFT + heron_side + NAME_GAP, MARK_TOP + heron_side - name_height, NAME_CELL_SIZE, false, channel_order)
+	}
 	state_color := graphics.Color(graphics.COLOR_BOOT_PROGRAM)
 	switch data.state {
 	case .Running:

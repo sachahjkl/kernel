@@ -155,7 +155,10 @@ scenario_persist_first := [?]Step {
 	{kind = .Type, text = "kept across a restart"},
 	{kind = .Wait, text = "notes: the note is \"kept across a restart\", generation 22"},
 	{kind = .Key, text = "tab"},
-	{kind = .Wait, text = "notes: count 1000, stopped: 1000 commits in "},
+	// 1000 commits to the disk take about 3 s on a quiet host, and several
+	// times that when other machines run beside this one: the step has its
+	// own time.
+	{kind = .Wait, text = "notes: count 1000, stopped: 1000 commits in ", seconds = 120},
 	{kind = .Wait, text = "notes: the versions of the count: 1000 rows in "},
 	// A setting that the next machine finds (the boot pass of settings).
 	{kind = .Launch, text = "settings"},
@@ -817,7 +820,7 @@ scenario := [?]Step {
 	// with the rights of the description, for the time of the call.
 	{kind = .Type, text = "clear()"},
 	{kind = .Type, text = "isolate(\"sample\")"},
-	{kind = .Wait, text = "[console] sample: 10 commands in a sandboxed program"},
+	{kind = .Wait, text = "[console] sample: 11 commands in a sandboxed program"},
 	// The exports that are wrong on purpose are in a module of their own,
 	// which no service holds.
 	{kind = .Type, text = "isolate(\"hostile_exports\")"},
@@ -881,19 +884,19 @@ scenario := [?]Step {
 	// The same descriptions serve a direct call. The module is then in the
 	// console: it has the handles of the console, and kept gives 0.
 	{kind = .Type, text = "unload(\"sample\")"},
-	{kind = .Wait, text = "[console] sample: 10 commands removed, its sandboxed program stops"},
+	{kind = .Wait, text = "[console] sample: 11 commands removed, its sandboxed program stops"},
 	{kind = .Type, text = "unload(\"hostile_exports\")"},
 	{kind = .Wait, text = "[console] hostile_exports: 4 commands removed"},
 	{kind = .Type, text = "clear()"},
 	{kind = .Type, text = "load(\"sample\")"},
-	{kind = .Wait, text = "[console] sample: 10 commands, hash"},
+	{kind = .Wait, text = "[console] sample: 11 commands, hash"},
 	{kind = .Type, text = "load(\"hostile_exports\")"},
 	{kind = .Wait, text = "[console] hostile_exports: 4 commands, hash"},
 	{kind = .Type, text = "g = grow(r, 5)"},
 	{kind = .Type, text = "g.width * g.height + keep(b) + kept()"},
 	{kind = .Wait, text = "[console] 12848"},
 	{kind = .Type, text = "unload(\"sample\")"},
-	{kind = .Wait, text = "[console] sample: 10 commands removed, the module left the memory of the console"},
+	{kind = .Wait, text = "[console] sample: 11 commands removed, the module left the memory of the console"},
 	{kind = .Type, text = "unload(\"hostile_exports\")"},
 	{kind = .Wait, text = "[console] hostile_exports: 4 commands removed, the module left the memory of the console"},
 	{kind = .Type, text = "release(b)"},
@@ -1407,7 +1410,7 @@ scenario := [?]Step {
 	// (After the check of the log: these lines do not push the boot
 	// records out of the log.)
 	{kind = .Type, text = "load(\"sample\")"},
-	{kind = .Wait, text = "[console] sample: 10 commands, hash"},
+	{kind = .Wait, text = "[console] sample: 11 commands, hash"},
 	// A table goes into a direct call: the export reads and changes the
 	// memory of the variable, with no copy. A table from where() goes in;
 	// a table from columns() has another record, and the console refuses it.
@@ -1424,17 +1427,26 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[console] error: sum_values: argument 1 is Table(Reading, Read), not Table(Reading)"},
 	{kind = .Shot, text = "table_argument"},
 	{kind = .Type, text = "unload(\"sample\")"},
-	{kind = .Wait, text = "[console] sample: 10 commands removed, the module left the memory of the console"},
+	{kind = .Wait, text = "[console] sample: 11 commands removed, the module left the memory of the console"},
 	// A table goes into an isolated call: the rows go into the call
 	// region, and the rows of a Change table come back.
 	{kind = .Type, text = "isolate(\"sample\")"},
-	{kind = .Wait, text = "[console] sample: 10 commands in a sandboxed program"},
+	{kind = .Wait, text = "[console] sample: 11 commands in a sandboxed program"},
 	{kind = .Type, text = "t = readings(4)"},
 	{kind = .Type, text = "scale_values(t, 3)"},
 	{kind = .Type, text = "sum_values(t)"},
 	{kind = .Wait, text = "[console] 300"},
+	// An export that fails after it changed rows of a Change table: only
+	// its error record and its table of error details come back, so the
+	// variable keeps its rows. scale_values_up_to changes the readings 1
+	// and 2 (30 and 60, by 3, stay under 200), then refuses the reading 3
+	// (90 by 3 is 270): with the changes, the sum would be 480.
+	{kind = .Type, text = "scale_values_up_to(t, 3, 200)"},
+	{kind = .Wait, text = "[console] error: scale_values_up_to: the argument factor has the value 3, which the call refuses; it takes at most 2 (-1)"},
+	{kind = .Type, text = "sum_values(t)"},
+	{kind = .Wait, text = "[console] 300"},
 	{kind = .Type, text = "unload(\"sample\")"},
-	{kind = .Wait, text = "[console] sample: 10 commands removed, its sandboxed program stops"},
+	{kind = .Wait, text = "[console] sample: 11 commands removed, its sandboxed program stops"},
 	// The signature of an export with a table and bytes: one form in the
 	// manual, the console and the errors.
 	{kind = .Type, text = "start(\"manual\")"},
@@ -1686,6 +1698,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "interface_elements: nothing changed: "},
 	{kind = .Wait, text = "interface_elements: one number changed: "},
 	{kind = .Wait, text = "interface_elements: everything moved: "},
+	{kind = .Wait, text = "interface_elements: one whole frame, built and drawn (the least of 20): the font of the cells "},
 	{kind = .Wait, text = "interface_elements: ok, the whole frame drawn in "},
 	{kind = .Key, text = "tab"},
 	{kind = .Key, text = "ret"},
@@ -1711,6 +1724,14 @@ scenario := [?]Step {
 	{kind = .Shot, text = "font_candidates"},
 	{kind = .Close, text = "vector_glyphs"},
 	{kind = .Wait, text = "root: vector_glyphs stopped"},
+	// The interface font (docs/FONTS.md, section 12): B612 placed by
+	// support/text_shaping and drawn by graphics.text_proportional.
+	{kind = .Launch, text = "interface_font"},
+	{kind = .Wait, text = "interface_font: one line of "},
+	{kind = .Wait, text = "interface_font: ok, "},
+	{kind = .Shot, text = "interface_font"},
+	{kind = .Close, text = "interface_font"},
+	{kind = .Wait, text = "root: interface_font stopped"},
 	// The pointer pictures (docs/POINTERS.md): the shape that the compositor
 	// chooses for what is under the pointer, and the shape that a program
 	// asks for over its own surface. The window of pointers shows each
@@ -1863,6 +1884,13 @@ scenario := [?]Step {
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "> length(\"first search line\")"},
 	{kind = .Wait, text = "[console] 17"},
+	// The time of one key with the list open, for the names of this console
+	// and for the worst case of 512 names of 128 bytes.
+	{kind = .Type, text = "measure_completion()"},
+	{kind = .Wait, text = "console: one key with the completion list: the collect "},
+	{kind = .Wait, text = " names (the names of this console, the least of 20 batches of 10)"},
+	{kind = .Wait, text = "console: one key with the completion list: the collect "},
+	{kind = .Wait, text = " over 512 names (512 names of 128 bytes, the least of 20 batches of 10)"},
 	// Each page is free or paid, after all the starts and stops of this test.
 	{kind = .Type, text = "memory()"},
 	{kind = .Wait, text = " pages: all the free pages"},
@@ -1886,7 +1914,20 @@ scenario_measure := [?]Step {
 	{kind = .Wait, text = "locks: frame caches after the measures (frames now, batches taken, batches given, drains): processor 0: "},
 	{kind = .Wait, text = "locks: ok, the kernel counted each entry, each page returned, no wake was lost, each stopped program returned its pages, its slot and its threads"},
 	{kind = .Shot, text = "locks_alone"},
+	// One empty kernel entry with xmm, ymm and zmm in use: the cost of the
+	// save of the extended state (docs/ARCHITECTURE.md, "The extended state
+	// of the processor", section 4).
+	{kind = .Launch, text = "extended_state"},
+	{kind = .Wait, text = "extended_state: the parts of a save and a restore, each alone in this program, cycles of the cycle counter for one loop (ns): "},
+	{kind = .Wait, text = "extended_state: each instruction alone, cycles of the cycle counter for one loop (ns), the loop included: "},
+	{kind = .Wait, text = "extended_state: a hand-over between two threads by the word wait (a wake, a wait, and the save and restore of the thread that waits and of the thread that runs): "},
+	{kind = .Wait, text = "extended_state: an empty kernel entry, 100000 times: "},
+	{kind = .Wait, text = "extended_state: ok, "},
 	{kind = .Front, text = "console"},
+	// One key of the completion list of the console, with no other load.
+	{kind = .Type, text = "measure_completion()"},
+	{kind = .Wait, text = " names (the names of this console, the least of 20 batches of 10)"},
+	{kind = .Wait, text = " over 512 names (512 names of 128 bytes, the least of 20 batches of 10)"},
 	{kind = .Type, text = "shutdown()"},
 	{kind = .Wait, text = "kernel: the machine stops with code 0"},
 }
@@ -2395,7 +2436,7 @@ png_encode :: proc(width, height: int, pixels: []u8) -> []u8 {
 
 // machine_test runs a scenario on a boot volume. It passes when each step
 // passes and QEMU ends with the status exit_status.
-machine_test :: proc(steps: []Step, volume: string, output: string, exit_status: int, data_disk: string = TEST_DATA_DISK, user_network := false, disk_server: ^Network_Block_Device = nil, processor_without_random := false) -> bool {
+machine_test :: proc(steps: []Step, volume: string, output: string, exit_status: int, data_disk: string = TEST_DATA_DISK, user_network := false, disk_server: ^Network_Block_Device = nil, processor: Processor_Model = .Maximum) -> bool {
 	peer: Peer
 	if !peer_start(&peer) {
 		return false
@@ -2412,7 +2453,7 @@ machine_test :: proc(steps: []Step, volume: string, output: string, exit_status:
 		forward = {host_port = port, listener = &listener}
 	}
 	defer listener_stop(&listener)
-	command, ok := machine_command(volume, output, data_disk, &peer, forward, processor_without_random)
+	command, ok := machine_command(volume, output, data_disk, &peer, forward, processor)
 	if !ok {
 		return false
 	}

@@ -142,8 +142,13 @@ page_flush:                      ; (address)
 ; the address of the thread record. The swapgs instruction exchanges the two.
 ;   gs:0   the top of the kernel stack of the processor
 ;   gs:8   the stack of the program, during a kernel entry
-;   gs:16  the area where the next entry saves the floating-point state
-;   gs:24  the address of the record
+;   gs:16  the address of the record
+;
+; An entry and a resume do not save or restore the x87, SSE and AVX
+; registers of the program: the kernel has no instruction that changes
+; them, so they stay live through the kernel. The scheduler saves them
+; when the processor leaves the thread for another one (docs/ARCHITECTURE.md,
+; "The extended state of the processor").
 interrupt_common:
 	PUSH_REGISTERS
 	cmp byte [user_access_guard], 0
@@ -154,8 +159,6 @@ interrupt_common:
 	jz interrupt_call
 	swapgs
 interrupt_from_program:
-	mov rax, [gs:abs 16]
-	fxsave64 [rax]
 interrupt_call:
 	mov rdi, rsp
 	cld
@@ -185,8 +188,6 @@ kernel_enter:
 global resume
 resume:                          ; (frame: ^Frame) -> !: run a program
 	mov rsp, rdi
-	mov rax, [gs:abs 16]
-	fxrstor64 [rax]
 	swapgs
 	POP_REGISTERS
 	add rsp, 16
@@ -217,7 +218,7 @@ stack_switch:                    ; (top: u64, entry: rawptr) -> !: continue on a
 
 global processor_self
 processor_self:                  ; () -> ^Processor
-	mov rax, [gs:abs 24]
+	mov rax, [gs:abs 16]
 	ret
 
 global cr0_read
@@ -234,6 +235,83 @@ global cr4_write
 cr4_write:
 	mov cr4, rdi
 	ret
+
+global extended_control_register_write
+extended_control_register_write: ; (register: u32, value: u64): xsetbv
+	mov ecx, edi
+	mov eax, esi
+	mov rdx, rsi
+	shr rdx, 32
+	xsetbv
+	ret
+
+; The save and the restore of the extended state of a thread: the
+; scheduler calls them when a processor leaves a thread for another one,
+; and the first processor proves the start state with them at boot. These
+; three procedures are the only code of the kernel that names an x87, SSE
+; or AVX register (`kerneltool` refuses any other: vector_check.odin). Each
+; one ends with a label "<name>_end": the check allows the instructions of
+; a procedure only up to that label, and refuses a kernel where the label
+; does not follow the procedure.
+; form: Extended_State_Form, 0 for fxsave64 and fxrstor64, 1 for
+; xsaveopt64 and xrstor64, with edx:eax all ones: every component of XCR0.
+global extended_state_save
+extended_state_save:             ; (area: ^Extended_State_Area, form: u8)
+	test sil, sil
+	jz .with_fxsave
+	mov eax, -1
+	mov edx, -1
+	xsaveopt64 [rdi]
+	ret
+.with_fxsave:
+	fxsave64 [rdi]
+	ret
+extended_state_save_end:                         ; The end of the procedure for the check of the build: never executed.
+	int3
+
+global extended_state_restore
+extended_state_restore:          ; (area: ^Extended_State_Area, form: u8)
+	test sil, sil
+	jz .with_fxrstor
+	mov eax, -1
+	mov edx, -1
+	xrstor64 [rdi]
+	ret
+.with_fxrstor:
+	fxrstor64 [rdi]
+	ret
+extended_state_restore_end:                         ; The end of the procedure for the check of the build: never executed.
+	int3
+
+; The restore, then the registers as the processor took them from the area:
+; the x87 control word, MXCSR, the low 8 bytes of xmm0 and, with with_avx,
+; bytes 16 to 23 of ymm0. No compiled code runs between the two.
+global extended_state_restore_and_read
+extended_state_restore_and_read: ; (area: ^Extended_State_Area, read: ^[4]u64, with_avx: bool, form: u8)
+	mov r8, rdi
+	mov r9, rsi
+	movzx r10d, dl
+	test cl, cl
+	jz .with_fxrstor
+	mov eax, -1
+	mov edx, -1
+	xrstor64 [r8]
+	jmp .read
+.with_fxrstor:
+	fxrstor64 [r8]
+.read:
+	fnstcw [r9]
+	stmxcsr [r9 + 8]
+	movq [r9 + 16], xmm0
+	test r10d, r10d
+	jz .done
+	vextractf128 xmm1, ymm0, 1
+	movq [r9 + 24], xmm1
+	vzeroupper
+.done:
+	ret
+extended_state_restore_and_read_end:                         ; The end of the procedure for the check of the build: never executed.
+	int3
 
 %assign vector 0
 %rep STUB_COUNT

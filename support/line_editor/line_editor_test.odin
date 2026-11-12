@@ -1,6 +1,7 @@
 #+build !freestanding
 package line_editor
 
+import "contract:blake3"
 import "core:testing"
 
 // ---- The keys of a line.
@@ -301,6 +302,38 @@ ten_thousand_candidates :: proc(t: ^testing.T) {
 	testing.expect_value(t, small_candidates[small[1].candidate].name, "abc")
 }
 
+// Long names of one length that differ only in their last byte: their
+// order reads NAME_COMPARE_LIMIT bytes, not the whole names, so they are
+// equal and stay in the order of the table. A compare of the whole names
+// would put them in the order of their last byte, the reverse here. The
+// test checks the order only; the bound of the work follows from it.
+@(test)
+long_names_of_one_length :: proc(t: ^testing.T) {
+	NAME_SIZE :: 1000
+	COUNT :: CANDIDATE_SCAN_LIMIT
+	bytes := make([]u8, NAME_SIZE * COUNT)
+	defer delete(bytes)
+	candidates := make([]Candidate, COUNT)
+	defer delete(candidates)
+	for number in 0 ..< COUNT {
+		name := bytes[number * NAME_SIZE:][:NAME_SIZE]
+		for &b in name {
+			b = 'a'
+		}
+		name[NAME_SIZE - 1] = u8(255 - number % 200) // Down: the reverse of the table.
+		candidates[number] = {name = string(name)}
+	}
+	ranked: [RANKED_CAPACITY]Ranked
+	kept, matched := rank_candidates("a", candidates, ranked[:])
+	testing.expect_value(t, matched, COUNT)
+	testing.expect_value(t, kept, RANKED_CAPACITY)
+	for item, index in ranked[:kept] {
+		testing.expectf(t, item.candidate == index, "place %d holds the candidate %d", index, item.candidate)
+	}
+	testing.expect(t, names_equal(candidates[0].name, candidates[1].name), "equal in the bytes that the order reads")
+	testing.expect(t, !names_equal("ab", "abc") && !names_equal("ab", "ac") && names_equal("", ""))
+}
+
 @(test)
 empty_query_order :: proc(t: ^testing.T) {
 	names := [?]Candidate{{name = "stop"}, {name = "help"}, {name = "hash"}, {name = "load"}, {name = "modules"}, {name = "time"}}
@@ -423,4 +456,106 @@ history_search_order :: proc(t: ^testing.T) {
 	// "prog": the line with "programs" matches side by side; "processors"
 	// does not hold a g.
 	expect(t, "prog", candidates[:count], ranked[:], {"monitor.count(\"programs\")"})
+}
+
+// ---- The line history as a file.
+
+@(test)
+history_file_round_trip :: proc(t: ^testing.T) {
+	history := new(History)
+	defer free(history)
+	read_back := new(History)
+	defer free(read_back)
+	for text in ([]string{"connect(\"monitor\")", "monitor.count(\"processors\")", "help()"}) {
+		history_add(history, text)
+	}
+	buffer: [HISTORY_FILE_SIZE_LIMIT]u8
+	bytes := history_file_write(history, buffer[:])
+	testing.expect_value(t, len(bytes), HISTORY_FILE_HEADER_SIZE + 3 + 18 + 27 + 6 + HISTORY_FILE_HASH_SIZE)
+	testing.expect_value(t, history_file_read(bytes, read_back), History_File_Problem.None)
+	testing.expect_value(t, history_count(read_back), 3)
+	for age in 0 ..< 3 {
+		written, _ := history_line(history, age)
+		read, _ := history_line(read_back, age)
+		testing.expect_value(t, read, written)
+	}
+	// An empty history is a file of a header and a hash.
+	empty := new(History)
+	defer free(empty)
+	bytes = history_file_write(empty, buffer[:])
+	testing.expect_value(t, len(bytes), HISTORY_FILE_HEADER_SIZE + HISTORY_FILE_HASH_SIZE)
+	testing.expect_value(t, history_file_read(bytes, read_back), History_File_Problem.None)
+	testing.expect_value(t, history_count(read_back), 0)
+	// A buffer too small for a header and a hash gives no file.
+	testing.expect(t, history_file_write(history, buffer[:40]) == nil)
+}
+
+// A file of one block keeps the newest lines that fit, the oldest of them
+// first.
+@(test)
+history_file_keeps_the_newest_lines :: proc(t: ^testing.T) {
+	history := new(History)
+	defer free(history)
+	read_back := new(History)
+	defer free(read_back)
+	long: [LINE_CAPACITY]u8
+	for number in 0 ..< 40 {
+		for &b in long {
+			b = u8('a' + number % 26)
+		}
+		history_add(history, string(long[:]))
+	}
+	buffer: [HISTORY_FILE_SIZE_LIMIT]u8
+	bytes := history_file_write(history, buffer[:])
+	// (4096 - 16 - 32) / 201 = 20 lines.
+	testing.expect_value(t, history_file_read(bytes, read_back), History_File_Problem.None)
+	testing.expect_value(t, history_count(read_back), 20)
+	for age in 0 ..< 20 {
+		text, _ := history_line(read_back, age)
+		testing.expect(t, len(text) == LINE_CAPACITY && text[0] == u8('a' + (39 - age) % 26))
+	}
+}
+
+// Each hostile file gives an empty history and the name of its problem.
+@(test)
+history_file_hostile :: proc(t: ^testing.T) {
+	history := new(History)
+	defer free(history)
+	read_back := new(History)
+	defer free(read_back)
+	history_add(history, "help()")
+	history_add(history, "time()")
+	buffer: [HISTORY_FILE_SIZE_LIMIT]u8
+	good := history_file_write(history, buffer[:])
+	copy_of_good: [HISTORY_FILE_SIZE_LIMIT]u8
+
+	// change applies one change to a copy of the good file, and makes its
+	// hash again when asked: the checks after the hash see the change.
+	expect_problem :: proc(t: ^testing.T, good: []u8, copy_buffer: []u8, read_back: ^History, problem: History_File_Problem, change: proc(bytes: []u8), rehash: bool, name: string) {
+		bytes := copy_buffer[:len(good)]
+		copy(bytes, good)
+		change(bytes)
+		if rehash {
+			end := len(bytes) - HISTORY_FILE_HASH_SIZE
+			hash := blake3.hash(bytes[:end])
+			copy(bytes[end:], hash[:])
+		}
+		history_add(read_back, "left from before")
+		found := history_file_read(bytes, read_back)
+		testing.expectf(t, found == problem, "%s: %v, not %v", name, found, problem)
+		testing.expectf(t, history_count(read_back) == 0, "%s: the history is empty", name)
+	}
+	expect_problem(t, good, copy_of_good[:], read_back, .Wrong_Magic, proc(bytes: []u8) {bytes[0] = 'X'}, false, "magic")
+	expect_problem(t, good, copy_of_good[:], read_back, .Wrong_Version, proc(bytes: []u8) {bytes[4] = 2}, false, "version")
+	expect_problem(t, good, copy_of_good[:], read_back, .Wrong_Hash, proc(bytes: []u8) {bytes[17] ~= 1}, false, "a changed byte")
+	expect_problem(t, good, copy_of_good[:], read_back, .Too_Many_Lines, proc(bytes: []u8) {bytes[9] = 0xFF}, true, "the count of lines")
+	expect_problem(t, good, copy_of_good[:], read_back, .Wrong_Size, proc(bytes: []u8) {bytes[12] += 1}, true, "the count of bytes")
+	expect_problem(t, good, copy_of_good[:], read_back, .Wrong_Line, proc(bytes: []u8) {bytes[16] = 0}, true, "a line of 0 bytes")
+	expect_problem(t, good, copy_of_good[:], read_back, .Wrong_Line, proc(bytes: []u8) {bytes[16] = 250}, true, "a line longer than the lines")
+	expect_problem(t, good, copy_of_good[:], read_back, .Not_Printable, proc(bytes: []u8) {bytes[17] = 7}, true, "a control byte")
+	expect_problem(t, good, copy_of_good[:], read_back, .Wrong_Count, proc(bytes: []u8) {bytes[8] = 1}, true, "fewer lines than the bytes")
+	expect_problem(t, good, copy_of_good[:], read_back, .Wrong_Count, proc(bytes: []u8) {bytes[8] = 3}, true, "more lines than the bytes")
+	short := [10]u8{}
+	testing.expect_value(t, history_file_read(short[:], read_back), History_File_Problem.Too_Short)
+	testing.expect_value(t, history_file_read(nil, read_back), History_File_Problem.Too_Short)
 }

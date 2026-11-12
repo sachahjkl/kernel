@@ -77,9 +77,12 @@ Server_Limits :: struct {
 // worst second, when every budget is spent. A flood must then bring 24 MB/s
 // of Initials with no token, or 36 MB/s with tokens, to spend a budget.
 // The depth is a tenth of a second of each rate. One address whose token
-// opened gets 4 Initial checks in each second, 4 at once: a client needs
-// one, and some more when its Initial is lost, so 500 such addresses are
-// needed to spend the shared budget.
+// opened gets 4 Initial checks at once, then 1 in each second: a client
+// needs one, and one more for each Initial that the network loses. The
+// table of address budgets has 1024 places, so addresses that rotate
+// through it get at most 1024 checks in each second after the depths:
+// half of the shared budget, which keeps the other half for addresses
+// that the table refuses or that come back.
 SERVER_LIMITS_DEFAULT :: Server_Limits {
 	connections_per_remote_address        = 8,
 	handshakes_per_remote_address         = 2,
@@ -91,7 +94,7 @@ SERVER_LIMITS_DEFAULT :: Server_Limits {
 	token_checks_depth                    = 3000,
 	initial_checks_per_second             = 2000,
 	initial_checks_depth                  = 200,
-	initial_checks_per_address_per_second = 4,
+	initial_checks_per_address_per_second = 1,
 	initial_checks_per_address_depth      = 4,
 }
 
@@ -132,6 +135,7 @@ Server_Counters :: struct {
 	refused_full:                 u64,
 	over_budget:                  u64, // Datagrams of unknown identifiers dropped over a shared budget, before any cryptography.
 	over_address_budget:          u64, // Initials with a valid token dropped over the budget of Initial checks of their address, before the Initial is opened.
+	address_table_full:           u64, // Initials with a valid token of a new address, dropped because no place of the table of address budgets was free or full again.
 	tokens_used_again:            u64, // A valid token whose record was taken before.
 	used_tokens_forgotten:        u64, // A used token that the full table forgot before it expired: it can take a record again.
 	other_remote:                 u64, // A known identifier from another remote.
@@ -158,6 +162,8 @@ Server_Work :: enum u8 {
 Server :: struct {
 	connections:        []Connection, // Memory of the caller: a mapping, never a stack.
 	records:            []Server_Record,
+	streams:            []Stream, // Memory of the caller: the stream records of each connection, streams_per_connection each, in the order of the connections.
+	streams_per_connection: int,
 	configuration:      Connection_Configuration,
 	cryptography:       ^Cryptography,
 	generator:          ^random.Generator,
@@ -177,14 +183,22 @@ Server :: struct {
 }
 
 // server_init prepares a server over the memory of the caller: one
-// Connection and one Server_Record for each place. The configuration is the
-// one of each connection: the role server, its key, its least seed
-// strength. It makes the key of the tokens of Retry.
-server_init :: proc "contextless" (server: ^Server, connections: []Connection, records: []Server_Record, configuration: ^Connection_Configuration, cryptography: ^Cryptography, generator: ^random.Generator, limits: Server_Limits, error: ^errors.Error_Record) -> bool {
+// Connection and one Server_Record for each place, and the same count of
+// stream records for each place (at least one): the streams that one
+// client may open at one time. The configuration is the one of each
+// connection: the role server, its key, its least seed strength. It makes
+// the key of the tokens of Retry.
+server_init :: proc "contextless" (server: ^Server, connections: []Connection, records: []Server_Record, streams: []Stream, configuration: ^Connection_Configuration, cryptography: ^Cryptography, generator: ^random.Generator, limits: Server_Limits, error: ^errors.Error_Record) -> bool {
 	if len(connections) == 0 || len(connections) != len(records) {
 		errors.fail(error, -1, .Bad_Value, .Records, 2, i64(len(records)), i64(len(connections)), 0)
 		return false
 	}
+	if len(streams) < len(connections) || len(streams) % len(connections) != 0 {
+		errors.fail(error, -1, .Bad_Value, .Records, 3, i64(len(streams)), i64(len(connections)), 0)
+		return false
+	}
+	server.streams = streams
+	server.streams_per_connection = len(streams) / len(connections)
 	if !connection_seed_strength_check(configuration, error) {
 		return false
 	}
@@ -215,34 +229,39 @@ Server_Datagram :: struct {
 // server_batch_order gives the order in which the caller gives a batch of
 // datagrams to server_datagram_receive: first each datagram that goes to a
 // record, then the others, each group in the order of arrival. order holds
-// each index of the batch once, and the count is len(batch). The decision
-// is taken once for the whole batch, before any datagram is given: a
-// datagram that a record would take only after an earlier datagram of the
-// batch took that record is in the second group, and is given all the
-// same.
+// each index of the batch once, and the count is the smaller of len(batch)
+// and len(order). The header of each datagram is read once, before any
+// datagram is given: a datagram that a record would take only after an
+// earlier datagram of the batch took that record is in the second group,
+// and is given all the same.
 //
 // The order is a priority, not a decision of security: it reads the header
 // in place, with no copy. If the bytes change under it, a datagram is only
 // given earlier or later; server_datagram_receive decides on its own copy.
 server_batch_order :: proc "contextless" (server: ^Server, batch: []Server_Datagram, order: []int) -> int {
-	count := 0
-	for known_group in ([]bool{true, false}) {
-		for item, index in batch {
-			if count == len(order) {
-				return count
-			}
-			error: errors.Error_Record
-			header: Packet_Header
-			known := false
-			if len(item.bytes) <= DATAGRAM_LIMIT && header_read(item.bytes, 0, CONNECTION_ID_SIZE, &header, &error) {
-				record, _ := server_record_of(server, &header, item.remote)
-				known = record >= 0
-			}
-			if known == known_group {
-				order[count] = index
-				count += 1
-			}
+	count := min(len(batch), len(order))
+	// The known datagrams fill order from its front, the others from its
+	// back; the back part is then turned round, to the order of arrival.
+	front, back := 0, count
+	for index in 0 ..< count {
+		item := batch[index]
+		error: errors.Error_Record
+		header: Packet_Header
+		known := false
+		if len(item.bytes) <= DATAGRAM_LIMIT && header_read(item.bytes, 0, CONNECTION_ID_SIZE, &header, &error) {
+			record, _ := server_record_of(server, &header, item.remote)
+			known = record >= 0
 		}
+		if known {
+			order[front] = index
+			front += 1
+		} else {
+			back -= 1
+			order[back] = index
+		}
+	}
+	for left, right := front, count - 1; left < right; left, right = left + 1, right - 1 {
+		order[left], order[right] = order[right], order[left]
 	}
 	return count
 }
@@ -443,8 +462,13 @@ server_new_connection :: proc "contextless" (server: ^Server, datagram: []u8, he
 		server.counters.refused_full += 1
 		return -1, 0
 	}
-	if !server_address_budget_take(server, remote.address, now) {
+	switch server_address_budget_take(server, remote.address, now) {
+	case .Taken:
+	case .Over_Budget:
 		server.counters.over_address_budget += 1
+		return -1, 0
+	case .Table_Full:
+		server.counters.address_table_full += 1
 		return -1, 0
 	}
 	if !server_work_take(server, .Initial_Check, now) {
@@ -455,7 +479,8 @@ server_new_connection :: proc "contextless" (server: ^Server, datagram: []u8, he
 		return -1, 0
 	}
 	connection := &server.connections[free]
-	if !connection_start_server(connection, &server.configuration, server.cryptography, server.generator, now, &error) {
+	streams_of_place := server.streams[free * server.streams_per_connection:][:server.streams_per_connection]
+	if !connection_start_server(connection, streams_of_place, &server.configuration, server.cryptography, server.generator, now, &error) {
 		return -1, 0
 	}
 	// The record of a client that came back with its token: its address is

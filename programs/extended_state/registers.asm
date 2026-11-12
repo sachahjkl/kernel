@@ -1,0 +1,463 @@
+; The registers of the extended state, held across kernel entries. Odin
+; code between two passes uses the xmm registers itself, so the load, the
+; spin, the kernel entries and the store of one pass are one routine that
+; calls nothing. Register_Image in main.odin has this layout.
+bits 64
+default rel
+
+IMAGE_VECTORS     equ 0              ; 32 registers of 64 bytes: register n at n * 64
+IMAGE_OPMASKS     equ 2048           ; 8 values of 8 bytes: k0 to k7 (16 bits, or 64 with the wide opmasks)
+IMAGE_X87         equ 2112           ; 8 integers of 8 bytes, in the order of the loads
+IMAGE_X87_CONTROL equ 2176           ; 2 bytes: the value after CONTROL_ROUND, and the value stored at the end
+IMAGE_X87_CONTROL_FIRST equ 2178     ; 2 bytes: the value loaded at the start
+IMAGE_MXCSR       equ 2180           ; 4 bytes: the value after MXCSR_ROUND, and the value stored at the end
+IMAGE_MXCSR_FIRST equ 2184           ; 4 bytes: the value loaded at the start
+
+LEVEL_SSE         equ 0              ; xmm0 to xmm15
+LEVEL_AVX         equ 1              ; ymm0 to ymm15
+LEVEL_AVX_512     equ 2              ; zmm0 to zmm31 and k0 to k7, 16 bits of each (kmovw: AVX-512 F)
+LEVEL_AVX_512_WIDE_OPMASKS equ 3     ; the same, 64 bits of each opmask (kmovq: AVX-512 BW)
+
+; The rounds of a pass where one control register changes alone, before
+; the kernel entry of that round: a save must keep it although no other
+; register of its component changed since the last restore.
+MXCSR_ROUND       equ 5
+CONTROL_ROUND     equ 10
+
+section .text
+
+%macro LOAD_VECTORS 1                ; %1: the base register of the image
+	cmp r13, LEVEL_AVX_512
+	jae %%zmm
+	cmp r13, LEVEL_AVX
+	je %%ymm
+%assign n 0
+%rep 16
+	movdqu xmm %+ n, [%1 + IMAGE_VECTORS + n * 64]
+%assign n n + 1
+%endrep
+	jmp %%done
+%%ymm:
+%assign n 0
+%rep 16
+	vmovdqu ymm %+ n, [%1 + IMAGE_VECTORS + n * 64]
+%assign n n + 1
+%endrep
+	jmp %%done
+%%zmm:
+%assign n 0
+%rep 32
+	vmovdqu64 zmm %+ n, [%1 + IMAGE_VECTORS + n * 64]
+%assign n n + 1
+%endrep
+	cmp r13, LEVEL_AVX_512_WIDE_OPMASKS
+	je %%wide
+%assign n 0
+%rep 8
+	kmovw k %+ n, [%1 + IMAGE_OPMASKS + n * 8]
+%assign n n + 1
+%endrep
+	jmp %%done
+%%wide:
+%assign n 0
+%rep 8
+	kmovq k %+ n, [%1 + IMAGE_OPMASKS + n * 8]
+%assign n n + 1
+%endrep
+%%done:
+%endmacro
+
+%macro STORE_VECTORS 1               ; %1: the base register of the image
+	cmp r13, LEVEL_AVX_512
+	jae %%zmm
+	cmp r13, LEVEL_AVX
+	je %%ymm
+%assign n 0
+%rep 16
+	movdqu [%1 + IMAGE_VECTORS + n * 64], xmm %+ n
+%assign n n + 1
+%endrep
+	jmp %%done
+%%ymm:
+%assign n 0
+%rep 16
+	vmovdqu [%1 + IMAGE_VECTORS + n * 64], ymm %+ n
+%assign n n + 1
+%endrep
+	jmp %%done
+%%zmm:
+%assign n 0
+%rep 32
+	vmovdqu64 [%1 + IMAGE_VECTORS + n * 64], zmm %+ n
+%assign n n + 1
+%endrep
+	cmp r13, LEVEL_AVX_512_WIDE_OPMASKS
+	je %%wide
+%assign n 0
+%rep 8
+	kmovw [%1 + IMAGE_OPMASKS + n * 8], k %+ n
+%assign n n + 1
+%endrep
+	jmp %%done
+%%wide:
+%assign n 0
+%rep 8
+	kmovq [%1 + IMAGE_OPMASKS + n * 8], k %+ n
+%assign n n + 1
+%endrep
+%%done:
+%endmacro
+
+; The registers that Odin code expects after a pass: the upper halves
+; zero, the x87 stack empty, the default controls.
+%macro LEAVE_CLEAN 0
+	cmp r13, LEVEL_SSE
+	je %%no_upper
+	vzeroupper
+%%no_upper:
+	fninit
+	push 0x1F80                  ; MXCSR: every exception masked, round to nearest
+	ldmxcsr [rsp]
+	add rsp, 8
+%endmacro
+
+%macro SAVE_CALLEE_REGISTERS 0
+	push rbx
+	push rbp
+	push r12
+	push r13
+	push r14
+	push r15
+%endmacro
+
+%macro RESTORE_CALLEE_REGISTERS 0
+	pop r15
+	pop r14
+	pop r13
+	pop r12
+	pop rbp
+	pop rbx
+%endmacro
+
+; registers_hold(expected, seen: ^Register_Image, level, rounds, spins: u64)
+; Loads every register of the level, the x87 stack, and the first x87
+; control word and MXCSR from expected. Then, for each round: a spin of
+; `spins` loops (the timer interrupts it), then one kernel entry: on an
+; even round an entry that returns at once, on an odd round a wait for a
+; deadline that has passed, so the thread leaves its processor until the
+; next tick and can come back on another one. Before the entry of round
+; MXCSR_ROUND it loads the second MXCSR alone, and before the entry of
+; round CONTROL_ROUND the second x87 control word alone. Then it stores
+; every register in seen. rounds must be above CONTROL_ROUND.
+global registers_hold
+registers_hold:
+	SAVE_CALLEE_REGISTERS
+	mov rbx, rdi                 ; expected
+	mov r12, rsi                 ; seen
+	mov r13, rdx                 ; level
+	mov r14, rcx                 ; rounds
+	mov r15, r8                  ; spins
+	fninit
+	fldcw [rbx + IMAGE_X87_CONTROL_FIRST]
+%assign n 0
+%rep 8
+	fild qword [rbx + IMAGE_X87 + n * 8]
+%assign n n + 1
+%endrep
+	ldmxcsr [rbx + IMAGE_MXCSR_FIRST]
+	LOAD_VECTORS rbx
+	xor ebp, ebp                 ; the round
+.round:
+	cmp rbp, r14
+	je .end
+	mov rcx, r15
+.spin:
+	dec rcx
+	jnz .spin
+	cmp rbp, MXCSR_ROUND
+	jne .not_mxcsr_round
+	ldmxcsr [rbx + IMAGE_MXCSR]
+.not_mxcsr_round:
+	cmp rbp, CONTROL_ROUND
+	jne .not_control_round
+	fldcw [rbx + IMAGE_X87_CONTROL]
+.not_control_round:
+	mov rdi, rbp
+	and edi, 1                   ; 0: no wait; 1: the deadline of the millisecond 1 of the machine, long passed
+	syscall                      ; The kernel gives the time in rax; rcx and r11 change. No other register.
+	inc rbp
+	jmp .round
+.end:
+	STORE_VECTORS r12
+	fnstcw [r12 + IMAGE_X87_CONTROL]
+	stmxcsr [r12 + IMAGE_MXCSR]
+%assign n 7
+%rep 8
+	fistp qword [r12 + IMAGE_X87 + n * 8] ; The last load is the top of the stack.
+%assign n n - 1
+%endrep
+	LEAVE_CLEAN
+	RESTORE_CALLEE_REGISTERS
+	ret
+
+; registers_store(seen: ^Register_Image, level: u64)
+; Stores the registers of the level, the x87 control word and MXCSR as they
+; are: at the start of a thread, the start state of the kernel. The x87
+; stack is not stored: it is empty.
+global registers_store
+registers_store:
+	SAVE_CALLEE_REGISTERS
+	mov r12, rdi
+	mov r13, rsi
+	STORE_VECTORS r12
+	fnstcw [r12 + IMAGE_X87_CONTROL]
+	stmxcsr [r12 + IMAGE_MXCSR]
+	RESTORE_CALLEE_REGISTERS
+	ret
+
+; registers_enter_repeatedly(expected: ^Register_Image, level, count: u64)
+; Loads the registers of the level, so that they are in use, then makes
+; `count` kernel entries that return at once: the measure of the cost of
+; an entry with that state.
+global registers_enter_repeatedly
+registers_enter_repeatedly:
+	SAVE_CALLEE_REGISTERS
+	mov rbx, rdi
+	mov r13, rsi
+	mov r14, rdx
+	LOAD_VECTORS rbx
+.again:
+	test r14, r14
+	jz .end
+	xor edi, edi
+	syscall
+	dec r14
+	jmp .again
+.end:
+	LEAVE_CLEAN
+	RESTORE_CALLEE_REGISTERS
+	ret
+
+; registers_upper_halves_in_use(expected: ^Register_Image)
+; Loads ymm0 to ymm15 from the image and leaves them so: the compiled code
+; of the program uses legacy SSE instructions only, which keep the high
+; halves; so the AVX component stays in use until
+; registers_upper_halves_clean, and each switch of threads saves and
+; restores it.
+global registers_upper_halves_in_use
+registers_upper_halves_in_use:
+%assign n 0
+%rep 16
+	vmovdqu ymm %+ n, [rdi + IMAGE_VECTORS + n * 64]
+%assign n n + 1
+%endrep
+	ret
+
+; registers_upper_halves_clean(): the AVX component goes back to its init
+; state. Only where the processor has AVX.
+global registers_upper_halves_clean
+registers_upper_halves_clean:
+	vzeroupper
+	ret
+
+; The parts of a save and a restore of the extended state, each alone, in
+; this program on its own area.
+; fxsave, xsave, xsaveopt and xrstor are not privileged: a program runs them
+; with the mask of the kernel (edx:eax all ones: every component of XCR0),
+; so the kernel is not changed for the measure. Each routine is
+; (area: rawptr, count: u64) -> u64: the cycles of the cycle counter for
+; `count` loops. The area has 4096 bytes on 64 bytes. Between a save and a
+; restore the routine changes xmm0, as the kernel's copies do; after a
+; restore it changes xmm0 (or ymm0) again, as a program does: so the save
+; of the next loop has a modified component, as at a real entry.
+
+%macro TIME_START 0
+	mov r8, rdi                  ; the area
+	mov r9, rsi                  ; the count
+	lfence
+	rdtsc
+	shl rdx, 32
+	or rax, rdx
+	mov r10, rax                 ; the counter at the start
+%endmacro
+
+%macro TIME_END 0
+	lfence
+	rdtsc
+	shl rdx, 32
+	or rax, rdx
+	sub rax, r10
+%endmacro
+
+%macro ALL_COMPONENTS 0
+	mov eax, -1
+	mov edx, -1
+%endmacro
+
+; The loop alone: subtract it from the others.
+global measure_loop_alone
+measure_loop_alone:
+	TIME_START
+.again:
+	xorps xmm0, xmm1
+	dec r9
+	jnz .again
+	TIME_END
+	ret
+
+; The pair of master: fxsave64 at the entry, fxrstor64 at the resume.
+global measure_fxsave_and_fxrstor
+measure_fxsave_and_fxrstor:
+	fxsave64 [rdi]
+	TIME_START
+.again:
+	fxsave64 [r8]
+	xorps xmm0, xmm1
+	fxrstor64 [r8]
+	xorps xmm0, xmm1
+	dec r9
+	jnz .again
+	TIME_END
+	ret
+
+; The pair of the branch with no AVX: xsaveopt64 and xrstor64.
+global measure_xsaveopt_and_xrstor
+measure_xsaveopt_and_xrstor:
+	ALL_COMPONENTS
+	xsaveopt64 [rdi]
+	TIME_START
+.again:
+	ALL_COMPONENTS
+	xsaveopt64 [r8]
+	xorps xmm0, xmm1
+	ALL_COMPONENTS
+	xrstor64 [r8]
+	xorps xmm0, xmm1
+	dec r9
+	jnz .again
+	TIME_END
+	ret
+
+; The pair of the branch with AVX, for a program that uses only SSE:
+; xsaveopt64, vzeroupper, xrstor64.
+global measure_xsaveopt_vzeroupper_and_xrstor
+measure_xsaveopt_vzeroupper_and_xrstor:
+	ALL_COMPONENTS
+	xsaveopt64 [rdi]
+	TIME_START
+.again:
+	ALL_COMPONENTS
+	xsaveopt64 [r8]
+	vzeroupper
+	xorps xmm0, xmm1
+	ALL_COMPONENTS
+	xrstor64 [r8]
+	xorps xmm0, xmm1
+	dec r9
+	jnz .again
+	TIME_END
+	ret
+
+; The same for a program whose ymm registers have their high halves in use.
+global measure_xsaveopt_vzeroupper_and_xrstor_with_avx
+measure_xsaveopt_vzeroupper_and_xrstor_with_avx:
+	vxorps ymm0, ymm0, ymm1
+	ALL_COMPONENTS
+	xsaveopt64 [rdi]
+	TIME_START
+.again:
+	ALL_COMPONENTS
+	xsaveopt64 [r8]
+	vzeroupper
+	xorps xmm0, xmm1
+	ALL_COMPONENTS
+	xrstor64 [r8]
+	vxorps ymm0, ymm0, ymm1
+	dec r9
+	jnz .again
+	TIME_END
+	vzeroupper
+	ret
+
+; xsave64 with no optimization, and xrstor64.
+global measure_xsave_and_xrstor
+measure_xsave_and_xrstor:
+	ALL_COMPONENTS
+	xsave64 [rdi]
+	TIME_START
+.again:
+	ALL_COMPONENTS
+	xsave64 [r8]
+	xorps xmm0, xmm1
+	ALL_COMPONENTS
+	xrstor64 [r8]
+	xorps xmm0, xmm1
+	dec r9
+	jnz .again
+	TIME_END
+	ret
+
+global measure_vzeroupper
+measure_vzeroupper:
+	TIME_START
+.again:
+	vzeroupper
+	xorps xmm0, xmm1
+	dec r9
+	jnz .again
+	TIME_END
+	ret
+
+global measure_fxsave
+measure_fxsave:
+	TIME_START
+.again:
+	xorps xmm0, xmm1
+	fxsave64 [r8]
+	dec r9
+	jnz .again
+	TIME_END
+	ret
+
+global measure_fxrstor
+measure_fxrstor:
+	fxsave64 [rdi]
+	TIME_START
+.again:
+	fxrstor64 [r8]
+	xorps xmm0, xmm1
+	dec r9
+	jnz .again
+	TIME_END
+	ret
+
+; xsaveopt64 after a restore from the same area, as at an entry.
+global measure_xsaveopt
+measure_xsaveopt:
+	ALL_COMPONENTS
+	xsaveopt64 [rdi]
+	ALL_COMPONENTS
+	xrstor64 [rdi]
+	TIME_START
+.again:
+	xorps xmm0, xmm1
+	ALL_COMPONENTS
+	xsaveopt64 [r8]
+	dec r9
+	jnz .again
+	TIME_END
+	ret
+
+global measure_xrstor
+measure_xrstor:
+	ALL_COMPONENTS
+	xsaveopt64 [rdi]
+	TIME_START
+.again:
+	ALL_COMPONENTS
+	xrstor64 [r8]
+	xorps xmm0, xmm1
+	dec r9
+	jnz .again
+	TIME_END
+	ret

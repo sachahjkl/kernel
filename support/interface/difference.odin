@@ -58,13 +58,13 @@ records_equal :: proc "contextless" (before: ^Draw_Table, old: Draw_Record, now:
 	old_without_place, new_without_place := old, new
 	// Only a text has a place that can change with no change of what is
 	// drawn. For a picture or a text grid, the same field is its index.
-	if old.kind == .Text && new.kind == .Text {
+	if is_text_kind(old.kind) && old.kind == new.kind {
 		old_without_place.text_start, new_without_place.text_start = 0, 0
 	}
 	if (transmute([size_of(Draw_Record)]u8)old_without_place) != (transmute([size_of(Draw_Record)]u8)new_without_place) {
 		return false
 	}
-	if old.kind != .Text {
+	if !is_text_kind(old.kind) {
 		return true
 	}
 	if u64(old.text_start) + u64(old.text_count) > u64(before.text_count) || u64(new.text_start) + u64(new.text_count) > u64(now.text_count) {

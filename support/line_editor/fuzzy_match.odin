@@ -4,17 +4,31 @@ package line_editor
 // order, not always side by side ("mcnt" matches "monitor.count"). A score
 // orders the names that match. Lower and upper case are equal.
 //
-// The work for one name is bounded: the match reads at most the first
-// NAME_SCAN_LIMIT bytes of the name two times (a pass forward and a pass
-// back), then scores at most QUERY_LIMIT places: at most
-// 2 * 128 + 64 = 320 steps. The ranking reads at most CANDIDATE_SCAN_LIMIT
-// names. So one key costs at most 4096 * 320 steps, about 1.3 million,
-// whatever another program wrote in its descriptions.
+// The work for one name is bounded, whatever another program wrote in its
+// descriptions:
+//   the match     the first NAME_SCAN_LIMIT bytes of the name, two times
+//                 (a pass forward and a pass back), then at most
+//                 QUERY_LIMIT places: at most 2 * 128 + 64 = 320 steps.
+//   the place     a binary search in the kept names: at most 7 orders of
+//                 two names, each one at most NAME_COMPARE_LIMIT bytes, so
+//                 1792 bytes; then a move of at most 64 kept records.
+//   equal names   only for a search that skips them (a history): at most
+//                 64 kept names of NAME_COMPARE_LIMIT bytes, 16 384 bytes.
+// The ranking reads at most CANDIDATE_SCAN_LIMIT names. So one key costs
+// at most 4096 * (320 + 1792 + 64), about 8.9 million steps; a search that
+// skips equal names reads at most 256 lines of a history, so at most
+// 256 * (320 + 1792 + 64 + 16 384), about 4.8 million.
 
 NAME_SCAN_LIMIT :: 128 // The bytes of a name that the match reads. A longer name matches only in its start.
 QUERY_LIMIT :: 64 // A longer query matches no name.
 CANDIDATE_SCAN_LIMIT :: 4096 // The names that one ranking reads; the names after them are not read.
 RANKED_CAPACITY :: 64 // The best names that a ranking keeps.
+// The bytes of two names that their order reads: after them, the shorter
+// name comes first, and two names of one length are equal. It holds a whole
+// line of a history, so that two lines that differ only at their end stay
+// two lines.
+NAME_COMPARE_LIMIT :: 256
+#assert(NAME_COMPARE_LIMIT >= LINE_CAPACITY)
 
 // The places of the characters of a name that the query matched: bit n is
 // the byte n of the name.
@@ -134,12 +148,26 @@ ranked_before :: proc "contextless" (a: Ranked, a_name: string, a_tie: u32, b: R
 	if len(a_name) != len(b_name) {
 		return len(a_name) < len(b_name)
 	}
-	for index in 0 ..< len(a_name) {
+	for index in 0 ..< min(len(a_name), NAME_COMPARE_LIMIT) {
 		if a_name[index] != b_name[index] {
 			return a_name[index] < b_name[index]
 		}
 	}
 	return false
+}
+
+// names_equal says if two names are equal in their length and in their
+// first NAME_COMPARE_LIMIT bytes.
+names_equal :: proc "contextless" (a, b: string) -> bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for index in 0 ..< min(len(a), NAME_COMPARE_LIMIT) {
+		if a[index] != b[index] {
+			return false
+		}
+	}
+	return true
 }
 
 // rank_candidates matches the query against each candidate (at most
@@ -161,18 +189,22 @@ rank_candidates :: proc "contextless" (query: string, candidates: []Candidate, r
 			score     = score,
 			places    = places,
 		}
-		// The place of the new one: before each kept one that it comes
-		// before. An equal one stays after the kept ones: the order of the
+		// The place of the new one: before the first kept one that it
+		// comes before, found by a binary search (the kept ones are in
+		// order). An equal one goes after the kept ones: the order of the
 		// table decides between equals.
-		place := kept
-		for place > 0 {
-			other := ranked[place - 1]
+		low, high := 0, kept
+		for low < high {
+			middle := (low + high) / 2
+			other := ranked[middle]
 			other_candidate := &read[other.candidate]
-			if !ranked_before(entry, candidate.name, candidate.tie_order, other, other_candidate.name, other_candidate.tie_order) {
-				break
+			if ranked_before(entry, candidate.name, candidate.tie_order, other, other_candidate.name, other_candidate.tie_order) {
+				high = middle
+			} else {
+				low = middle + 1
 			}
-			place -= 1
 		}
+		place := low
 		if skip_equal_names && equal_name_with_score(read, ranked[:kept], score, candidate.name) {
 			continue
 		}
@@ -196,7 +228,7 @@ equal_name_with_score :: proc "contextless" (candidates: []Candidate, kept: []Ra
 		if item.score < score {
 			break
 		}
-		if item.score == score && candidates[item.candidate].name == name {
+		if item.score == score && names_equal(candidates[item.candidate].name, name) {
 			return true
 		}
 	}

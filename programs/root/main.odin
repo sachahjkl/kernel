@@ -16,7 +16,7 @@ import op "contract:operation"
 import "contract:ring"
 import "support:random"
 import "support:system"
-import "support:terminal"
+import terminal "support:terminal"
 import "contract:block"
 import "contract:datagram"
 import "contract:date"
@@ -256,6 +256,8 @@ things_of :: proc "contextless" (name: string) -> system.Budget_Amounts {
 		return {pages = 2048, programs = 1, threads = 9}
 	case "locks":
 		return {pages = 9216, programs = 8, threads = 20} // 4 lockers of 1024 pages, then 3 at a time of the stress case.
+	case "extended_state":
+		return {pages = 2048, programs = 1, threads = 32} // The main thread and up to 31 threads that hold their registers.
 	case "address_space":
 		return {pages = 40960, programs = 2, threads = 6} // 64 MiB of large pages, two ranges of 1 GiB with their page tables, a child.
 	case "scheduler":
@@ -284,10 +286,11 @@ things_of :: proc "contextless" (name: string) -> system.Budget_Amounts {
 	case "server":
 		return {pages = 4096, programs = 1, threads = 1} // A table of 32 connections with their buffers, and a large window.
 	case "quic_echo":
-		// 16 QUIC connections of about 214 KiB each and their echo buffers
-		// of 64 KiB: about 1112 pages, in one mapping of the program
-		// (docs/QUIC.md, section 6).
-		return {pages = 2048, programs = 1, threads = 1}
+		// 16 QUIC connections of about 85 KiB each, 4 streams of about
+		// 130 KiB for each, and an echo buffer of 16 KiB for each stream:
+		// about 2770 pages, in one mapping of the program (docs/QUIC.md,
+		// section 6).
+		return {pages = 4096, programs = 1, threads = 1}
 	case "tables":
 		return {pages = 4096, programs = 3, threads = 3} // A table of 65536 readings in a memory object (640 pages), and two call hosts (sample, hostile_exports) with their threads.
 	}
@@ -546,7 +549,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		// The compositor is also a service (programs/compositor/exports.odin):
 		// a service ring and its own file, as start() gives to a service.
 		// Its values 0 to 3 are the screen, so the file is at values 4 and 5.
-		mappings: [10]system.Mapping
+		// The file, two pointer themes, the settings page, five glyph caches, the date page.
+		mappings: [12]system.Mapping
 		mapping_count := 0
 		served := &started[0]
 		served^ = {}
@@ -839,7 +843,8 @@ start :: proc "contextless" (name: string) -> system.Status {
 	copy(slot.name[:len(slot.name) - 1], name) // The connection to the storage service names the program.
 	// The connection to the private store, in the context: the call ring, the
 	// call region, the storage service with the right Read, and its file.
-	mappings: [10]system.Mapping
+	// The storage file, the date page, the settings page, five glyph caches, the file of a service.
+	mappings: [12]system.Mapping
 	mapping_count := 0
 	// This service closes its handles of the connection after the start.
 	store_ring, store_region: system.Handle
@@ -1183,7 +1188,8 @@ terminal_start :: proc "contextless" (view: ^Started, writer: ^Started, ring_mem
 	measure: bool
 	values[terminal.VALUE_COLUMNS], values[terminal.VALUE_ROWS], measure = terminal_of(system.name_of(writer.name[:]))
 	values[terminal.VALUE_MEASURE] = u64(measure)
-	mappings: [4]system.Mapping
+	// The settings page and five glyph caches.
+	mappings: [8]system.Mapping
 	mapping_count := 0
 	text_settings_give(mappings[:], &mapping_count, &values)
 	program, status := system.program_start(system.image_find(image, "terminal"), "terminal", grants, random.values_with_seed(&program_generator, values), budget_of("terminal"), mappings[:mapping_count], &prepared)

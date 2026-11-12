@@ -6,6 +6,79 @@ The project has steps, not separate releases. The merge of step N on `master` is
 
 What is not in a release yet is in `changelog.d/`, one fragment for each change. `kerneltool changelog release` writes a release from the fragments. Nobody edits this file by hand.
 
+## [0.82.0] - 2026-11-12
+
+### Changed
+
+- **Windows name things in B612.** The titles, captions, labels, buttons and lists of every window drawn with the interface package are in the interface font B612, and their values (numbers, typed text, tables, terminals) stay in Paper Mono; a window with no interface font draws everything in Paper Mono with the same layout.
+
+## [0.81.0] - 2026-11-12
+
+### Added
+
+- **Programs can use AVX and AVX-512**: the kernel saves the extended state of each thread with `xsaveopt` (x87, SSE, AVX, and AVX-512 when the processor has it; one save writes at most 832 bytes with AVX and 2688 with AVX-512, and each thread entry of the kernel holds an area of 2688 bytes), sets `CR4` and `XCR0` itself on each processor, and logs what it saves at boot. A processor without `xsave` keeps the save with `fxsave`. A program reads what it can use with `support/instruction_sets`, and the program `extended_state` shows that each register of each thread is kept.
+
+### Changed
+
+- **A kernel entry no longer saves the vector registers of a program**: the kernel saves and restores the x87, SSE and AVX registers of a thread only when a processor leaves it for another thread, and the kernel itself has no instruction that uses them, which the build proves on each kernel that it makes. One kernel entry takes 120 to 124 ns where it took 176 to 178 ns (the machine of the test, two runs each), and one hand-over between two threads takes 125 to 133 ns with the registers saved and restored.
+
+### Fixed
+
+- **A program that used AVX no longer gets the high halves of its ymm registers from another thread**: before, the kernel saved only 512 bytes with `fxsave` and kept the `XCR0` that the firmware left, so AVX could work with wrong values and no error. Now a register state component is enabled only when the kernel saves it.
+- **A reset QUIC stream no longer closes the whole connection**: when a stream was reset while flow control still held back some of its bytes, the reset named the bytes written instead of the bytes sent, and a correct peer closed the connection. The bytes of a stream are now erased from memory when the stream ends.
+
+## [0.80.0] - 2026-11-12
+
+### Added
+
+- **Several streams in one QUIC connection**: a client of `quic_echo` can open 4 streams at once, and each one is echoed on its own, with its own flow control and its own reset; a lost datagram of one stream no longer holds the others. `kerneltool test quic` runs one client with 4 streams.
+
+### Security
+
+- **A QUIC server can no longer be stopped by a few dozen real addresses**: the budget of Initial checks of each address can no longer be renewed by addresses that take turns, so 33 hosts no longer stop every new client of `quic_echo`. A new address gets no check while the table of 1024 addresses is busy, and `quic_echo` counts it.
+
+## [0.79.0] - 2026-11-12
+
+### Added
+
+- **The interface font is drawn.** The program `interface_font` shows B612 Regular and Bold placed with their pairs at a third of a pixel: a paragraph, three pairs with and without their adjustment, one word at the three positions of a pixel, the digits in columns, and the time of one line.
+
+### Changed
+
+- **The zero of the system is slashed.** Every window, the console and the terminal draw the character 0 as the slashed zero of Paper Mono, which its feature zero gives, so a 0 no longer looks like the capital O.
+- **The caches of the interface font come with the system.** The two glyph caches of B612 are in the boot image, checked once by the root service and shared read-only by every program with a window, and a program learns which shared ranges it received from one value of its context; the program `interface_font` no longer builds its own caches.
+
+## [0.78.0] - 2026-11-12
+
+### Added
+
+- **The time of one key of the completion list is measured**: measure_completion() in the console gives the collect, the rank and the rows of one key, for the names of the console and for 512 names of 128 bytes; in the quotes of connect and stop, a key no longer reads the programs that run again.
+
+### Changed
+
+- **The text of the console no longer moves when the line under the input comes or goes**: the terminal keeps one free row under the edit line, and draws the hint there; a hint that is too long for the window shows its short form.
+
+### Fixed
+
+- **The status line of a terminal names the lines of the text in view**: after a clear it said "line 738 of 737", because it counted the edit line as a line of the text; it now says "lines 709 to 736 of 737", or "none in view".
+- **An export that fails in a sandboxed program or a service no longer changes a table of the console**: the console copied back the rows that a failed export wrote in a Change table; it now copies back only the table of error details, as the contract says.
+- **A completion list shows only the rows that its program gave for it**: a list with no rows of its own showed the rows of the list before; when more names exist than the list reads, the line under the input says so.
+- **A failed isolated call keeps the reason of its failure**: when the table of error details came back wrong, the error record of the export was replaced by a record about the table; it now stays, and a separate status says that the details are missing.
+
+### Security
+
+- **Long names of one length no longer slow each key of the console**: the order of two names in the completion list read whole names, up to 64 times for each name, so a service with long export names of one length made each key slow; it now reads at most 256 bytes of a name, and one key has a fixed bound.
+
+## [0.77.0] - 2026-11-12
+
+### Added
+
+- **The mark in the system**: the heron is at the left of the bar of the desktop, in the place of the word "kernel", and the heron with the name modus is in the head of the boot display. Both are drawn from the data of `support/mark`, with no picture file in the boot image.
+
+### Security
+
+- **The program `settings` can no longer make the keys of the person get lost.** A new count of changes on the settings page with the same values made the compositor send one record into the ring of each window, the ring that also carries the keys and the pointer; it now tells the windows only when the values differ from the values that it told last.
+
 ## [0.76.0] - 2026-11-12
 
 ### Added

@@ -61,11 +61,17 @@ One color is one concept, as one term is one concept.
 
 ## 5. Text
 
-- One font at a time, on the grid of cells of 8 x 16 pixels: the vector font by default, drawn with a coverage for each subpixel band (owner, 2026-11-11: "par défaut il faut une police vectorielle", "Bandes sous-pixel"); Spleen 8x16 as the fallback and as the other value of the setting `font` (`docs/FONTS.md`). Before 2026-11-11 the rule was "One font: Spleen 8x16".
-- Three sizes: cells of 1, 2 and 3 times 8 x 16. The vector font draws each size from its outline; Spleen enlarges its pixels. No other size.
-- The vector font is monospace: its advance is the width of a cell, so a layout in cells holds with either font. A glyph stays inside its cell.
+- **Two fonts** (proposal of 2026-11-12, which the owner accepted in substance on 2026-11-11: "Go b612" for the interface, "Paper mono très bien pour monospace"; `docs/FONTS.md`, section 12.6). It replaces the rule "one font at a time, on the grid of cells":
+  - **The interface font, B612** (proportional): each text that names or explains: the title and the caption of a card, a label, the name of a button, a line of a list or a menu, the title of a column, a sentence of help.
+  - **The font of the cells, Paper Mono** (monospace): each value, and each text that a person compares character by character or copies: a number in a column, a hash, an address, a text that a person types, code, the console, the terminal, a text grid.
+  - Both draw in the line of 16 pixels of the grid, at the scales 1, 2 and 3. The places of the elements stay on the grid of 8; the letters of the interface font do not.
+  - A text is measured in the font that draws it, and an element cuts a text to its box: no text passes its element in either font.
+  - With no interface font (absent, refused, or the setting `font` is Spleen 8x16), each text is in the font of the cells, with the same layout rules.
+- The font of the cells: the vector font by default, drawn with a coverage for each subpixel band (owner, 2026-11-11: "par défaut il faut une police vectorielle", "Bandes sous-pixel"); Spleen 8x16 as the fallback and as the other value of the setting `font` (`docs/FONTS.md`).
+- Three sizes: lines of 1, 2 and 3 times 16 pixels; cells of 1, 2 and 3 times 8 x 16 for the font of the cells. No other size.
+- The font of the cells is monospace: its advance is the width of a cell, so a layout in cells holds with the vector font and with Spleen. A glyph of the font of the cells stays inside its cell.
 - An enlarged picture of the screen shows colored edges on each letter: the subpixel bands, not a fault. The setting `subpixel_order` `none` gives gray edges.
-- The title of a card is in capital letters, in the bold weight of the vector font, in the accent of the card, after a bar of 4 x 16 pixels in the same accent.
+- The title of a card is in capital letters, in the bold weight of the interface font, in the accent of the card, after a bar of 4 x 16 pixels in the same accent.
 - A name is in the dim color. A value is in the text color. A measure of a concept is in the color of that concept.
 - A card has at most one number in the large size: the number that the card is about.
 - Numbers of one column are aligned on the right, each with its unit.
@@ -102,7 +108,7 @@ The owner asked for "a gradient from the current blue, as the start colour, to a
 
 - The background is `COLOR_BACKGROUND` with the grid of points of section 3. The compositor computes it once, at its start.
 - The bar is 32 pixels high, at the top of the screen. It has the surface of a card (`COLOR_CARD_TOP` to `COLOR_CARD_BOTTOM`) and a line of 1 pixel in `COLOR_TRACK` at its bottom.
-- The bar holds, from the left: the name of the system; the button `programs`; the button `windows`; at the right, the key of the launcher ("launcher: super") and the time since the start of the machine.
+- The bar holds, from the left: the mark of the system (the heron with cells of 1 pixel, 24 by 24, at (16, 4): section 11); the button `programs`; the button `windows`; at the right, the key of the launcher ("launcher: super") and the time since the start of the machine.
 - A button is 24 pixels high, in `COLOR_TRACK`. The button of an open menu is in `COLOR_TITLE`, with its label in white.
 
 ### Menus
@@ -160,7 +166,8 @@ The interface package (`support/interface`, `docs/INTERFACE.md`) draws these ele
 The mark is the picture that stands for the system (owner, 2026-11-12: "le heron A n°1 est le meilleur, nickel cest simple ! + le logo \"modus\" comme t'as fait super cool").
 
 - The form: a heron on a grid of 24 by 24 square cells. It stands on one leg in water. Its parts: the crest and the tail (one part, in the color of the firmware), the head and the neck (the text color), the eye, the beak and the legs (two parts, in the color of the boot program), the body (the kernel), the wing (`0x2F6FC0`), the water (memory). No line goes around it.
-- The data: `support/mark` holds the rows of the cells, the table of the parts with their colors and their boxes, and the letters of the name of the mark. Its procedures are pure: `mark_pixel(cell_size, x, y, on_light)` gives the color of one pixel of the heron, `name_pixel` one pixel of the name, `heron_size` and `name_size` their sizes.
+- The data: `support/mark` holds the rows of the cells, the table of the parts with their colors and their boxes, and the letters of the name of the mark. Its procedures are pure: `mark_pixel(cell_size, x, y, on_light)` gives the color of one pixel of the heron, `name_pixel` one pixel of the name, `heron_size` and `name_size` their sizes. `mark_draw(canvas, x, y, cell_size, on_light)` and `name_draw` draw into a canvas of `support/graphics`: the covered pixels only, cut to the canvas.
+- The cell size: 1 to `CELL_SIZE_LIMIT` (65 536). Another cell size draws nothing and has a size of 0. A pixel outside the heron or the name is not covered.
 - The gradient: each part is filled with one linear gradient, from the top left corner of the box of the part (the color moved 30 % toward white) to its bottom right corner (the color moved 30 % toward black). A pixel takes the gradient at its centre. The eye is one flat color. The arithmetic is in integers, rounded to the nearest value, so that every machine gives the same pixels.
 - The two backgrounds: the background of the system `0x0B1018`, and the light background `0xF4F6F8` of a page of another program. On the light background the neck is darker (`0x9FB2C8`), and the name is in `0x0B1018` instead of the text color.
 - The name of the mark: "modus" in letters of 5 by 7 cells, 2 empty columns between two letters, one flat color.
@@ -178,7 +185,14 @@ The mark is the picture that stands for the system (owner, 2026-11-12: "le heron
 
 - A transparent file keeps the colors of the dark background: its pale neck shows little on a white page. Use `modus_light.png` there.
 - The PNG writer of these files is the one of the Odin standard library: it compresses, and it writes an alpha channel. The writer of the pictures of the screen has neither.
-- A program of the system can draw the mark from the same data, at any whole cell size. No program does it yet: not the bar, not the boot display.
+- Where the system draws the mark, always with the colors of the dark background:
+
+| Where | Who draws | What | When the gradients are computed |
+|---|---|---|---|
+| The bar of the desktop | the compositor | the heron, cells of 1 pixel, at (16, 4), in the place of the word "kernel" | once, at the start, into a picture of 24 x 24 pixels over the pixels of the bar; each frame copies that picture (a Picture record that never changes) |
+| The head of the boot display | `support/bootscreen`: the boot program, the root service, the program `boot` | the heron, cells of 2 pixels (48 x 48) at (20, 12), and the name of the mark, cells of 3 pixels, at its right, in the place of the large word "kernel" | at each draw of the display: one call for each of the 2 304 pixels of the box of the heron and the 2 079 pixels of the box of the name, a few integer divisions each |
+
+- No file of the mark is in the boot image: each place draws from the data.
 
 ## State
 

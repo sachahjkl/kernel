@@ -1,7 +1,8 @@
 // A QUIC echo server (docs/QUIC.md, section 6): QUIC in the program
-// (support/quic), over a datagram endpoint with a listen grant of UDP. Each
-// connection has one stream; the server writes back each byte that it
-// reads, then ends the stream after the client ended it.
+// (support/quic), over a datagram endpoint with a listen grant of UDP. A
+// client opens up to STREAMS_PER_CONNECTION streams at one time; on each
+// one the server writes back each byte that it reads, then ends the stream
+// after the client ended it, or resets it after the client reset it.
 //
 // What it can reach comes from its grants only:
 //   a datagram endpoint with a listen grant: the UDP port 4433, and the
@@ -45,11 +46,16 @@ foreign _ {
 }
 
 CAPACITY :: 16 // Connections at one time.
-// The memory of the connections and of their echo: one mapping of this
-// program, never a stack (a connection has about 214 KiB).
+STREAMS_PER_CONNECTION :: 4 // The streams that one client may open at one time.
+// The bytes that one stream read and did not write back yet: the echo
+// writes them back before it reads more.
+ECHO_BUFFER_SIZE :: 16384
+// The memory of the connections, of their streams and of their echo: one
+// mapping of this program, never a stack.
 CONNECTION_BYTES :: CAPACITY * size_of(quic.Connection)
-ECHO_BYTES :: CAPACITY * quic.STREAM_BUFFER_SIZE
-TABLE_PAGES :: (CONNECTION_BYTES + ECHO_BYTES + system.PAGE_SIZE - 1) / system.PAGE_SIZE
+STREAM_BYTES :: CAPACITY * STREAMS_PER_CONNECTION * size_of(quic.Stream)
+ECHO_BYTES :: CAPACITY * STREAMS_PER_CONNECTION * ECHO_BUFFER_SIZE
+TABLE_PAGES :: (CONNECTION_BYTES + STREAM_BYTES + ECHO_BYTES + system.PAGE_SIZE - 1) / system.PAGE_SIZE
 APPLICATION_PROTOCOL :: "kernel-remote"
 IDLE_TIMEOUT_MILLISECONDS :: 30_000
 
@@ -59,7 +65,15 @@ PLACE_COUNT :: datagram.REGION_PAGES * system.PAGE_SIZE / PLACE_SIZE
 RECEIVE_PLACES :: 96 // Places 0 to 95: datagrams that arrive. The others: datagrams to send.
 SEND_TAG :: 1000 // Tags from 1000: a Send of place tag - 1000.
 CALL_TAG :: 100_000 // Info and Release.
-VALIDATE_TAG :: 200_000 // Tags from 200 000: a Validate for the record of place tag - 200 000.
+// The tag of a Validate: its top bit, the low 27 bits of the generation of
+// the record, and the place of the record in the low 4 bits. A result that
+// comes after its record ended and the place was taken again names the old
+// generation, and confirms nothing: 2^27 records would have to be taken
+// in one round of the ring for it to match.
+VALIDATE_TAG :: u32(1) << 31
+VALIDATE_PLACE_BITS :: 4
+VALIDATE_GENERATION_MASK :: (u64(1) << (31 - VALIDATE_PLACE_BITS)) - 1
+#assert(CAPACITY <= 1 << VALIDATE_PLACE_BITS)
 // Commands that the ring did not take: a Send or a Receive names one place,
 // and a place is in one command at most; a Release follows a Send or a
 // datagram that arrived, and the releases of one pass are at most the
@@ -90,22 +104,28 @@ program_generator: random.Generator
 server: quic.Server
 records: [CAPACITY]quic.Server_Record
 connections: []quic.Connection
-echo_buffers: [][quic.STREAM_BUFFER_SIZE]u8
+streams: []quic.Stream
+echo_buffers: [][ECHO_BUFFER_SIZE]u8
 public_key: [32]u8
 weak_seed: bool // The seed is weaker than "processor": no key, no endpoint.
 listen_port: u16
 
-// The echo of each record: the bytes read and not yet written back.
-Echo :: struct {
-	generation:     u64, // The generation of the record that this echo belongs to.
+// The echo of one stream: the bytes read and not yet written back.
+Stream_Echo :: struct {
+	active:         bool,
+	identifier:     u64, // The stream of this echo: the stream record of the same place of the connection.
 	start, end:     int,
 	finished:       bool,
 	finish_written: bool,
-	logged:         bool,
+}
+
+// The echo of each record.
+Echo :: struct {
+	generation: u64, // The generation of the record that this echo belongs to.
+	logged:     bool,
+	streams:    [STREAMS_PER_CONNECTION]Stream_Echo,
 }
 echoes: [CAPACITY]Echo
-// The generation of the record of each place when its last Validate went.
-validation_generations: [CAPACITY]u64
 
 endpoint: ring.Ring
 region: []u8
@@ -171,11 +191,22 @@ send :: proc "contextless" (place: u32, length: int, remote: quic.Remote) {
 // place proved its address: it lifts the limit of 3 times the bytes that
 // came from it. It goes before the Sends of the record, which the ring
 // keeps in order. Its completion goes to the server
-// (server_validation_confirmed), with the generation of the record when
-// it was sent.
+// (server_validation_confirmed) when the record of its tag is still the
+// record of the place (validation_completed).
 validate :: proc "contextless" (remote: quic.Remote, place: int) {
-	validation_generations[place] = records[place].generation
-	command_push_or_hold(ring.Record{kind = u32(datagram.Command.Validate), tag = VALIDATE_TAG + u32(place), values = {0 = u64(remote.address), 1 = u64(remote.port)}})
+	tag := VALIDATE_TAG | u32(records[place].generation & VALIDATE_GENERATION_MASK) << VALIDATE_PLACE_BITS | u32(place)
+	command_push_or_hold(ring.Record{kind = u32(datagram.Command.Validate), tag = tag, values = {0 = u64(remote.address), 1 = u64(remote.port)}})
+}
+
+// validation_completed gives the result of a Validate to the server, for
+// the record that its tag names, if that record still holds the place.
+validation_completed :: proc "contextless" (completion: ring.Record) {
+	place := int(completion.tag & ((1 << VALIDATE_PLACE_BITS) - 1))
+	generation_bits := u64(completion.tag & ~VALIDATE_TAG) >> VALIDATE_PLACE_BITS
+	if place >= CAPACITY || !records[place].in_use || records[place].generation & VALIDATE_GENERATION_MASK != generation_bits {
+		return
+	}
+	quic.server_validation_confirmed(&server, place, records[place].generation, datagram.Status(completion.kind) == .Ok && completion.values[0] == 1)
 }
 
 // release asks the network service to forget a remote: after the Sends to
@@ -263,25 +294,20 @@ echo_work :: proc "contextless" () {
 			}
 		}
 		connection := &connections[place]
-		pending := echo_buffers[place][:]
-		for {
-			if echo.start < echo.end {
-				echo.start += quic.stream_write(connection, pending[echo.start:echo.end], false)
-				if echo.start < echo.end {
-					break
-				}
+		// Each stream is read to its end, or to the reset of the client: a
+		// stream record is freed only when the application read that end
+		// (stream_read), so a stream left unread would keep its record, and
+		// the client would get no stream in its place.
+		for &stream, slot in connection.streams {
+			stream_echo := &echo.streams[slot]
+			if !stream.in_use {
+				stream_echo.active = false
+				continue
 			}
-			echo.start, echo.end = 0, 0
-			count, finished, _ := quic.stream_read(connection, pending)
-			echo.end = count
-			echo.finished = echo.finished || finished
-			if count == 0 {
-				break
+			if !stream_echo.active || stream_echo.identifier != stream.identifier {
+				stream_echo^ = {active = true, identifier = stream.identifier}
 			}
-		}
-		if echo.finished && echo.start == echo.end && !echo.finish_written {
-			quic.stream_write(connection, nil, true)
-			echo.finish_written = true
+			stream_echo_work(connection, stream_echo, echo_buffers[place * STREAMS_PER_CONNECTION + slot][:])
 		}
 		if connection.state == .Closed && !echo.logged {
 			echo.logged = true
@@ -292,9 +318,43 @@ echo_work :: proc "contextless" () {
 				// alert is 0x100 plus the alert.
 				reason: [quic.CLOSE_REASON_KEPT]u8
 				reason_text := printable_text(reason[:], connection.close_reason_of_peer[:connection.close_reason_of_peer_length])
-				system.log("quic_echo: ", address_text(text[:], record.remote), " ended (", end_reason(connection), ", the code ", system.Hex(connection.close_error_code), connection.close_is_application ? " of the application" : "", ", the frame type ", system.Hex(connection.close_frame_type), ", the reason of the client \"", reason_text, "\"): in ", connection.stream.read_offset, " bytes, out ", connection.stream.send_length, " bytes, srtt ", connection.smoothed_round_trip, " us")
+				system.log("quic_echo: ", address_text(text[:], record.remote), " ended (", end_reason(connection), ", the code ", system.Hex(connection.close_error_code), connection.close_is_application ? " of the application" : "", ", the frame type ", system.Hex(connection.close_frame_type), ", the reason of the client \"", reason_text, "\"): in ", connection.data_consumed_total, " bytes, out ", connection.data_sent_total, " bytes, srtt ", connection.smoothed_round_trip, " us")
 			}
 		}
+	}
+}
+
+// stream_echo_work writes back what one stream read, then its end; a
+// stream that the client reset is reset with the same code.
+stream_echo_work :: proc "contextless" (connection: ^quic.Connection, stream_echo: ^Stream_Echo, pending: []u8) {
+	for {
+		if stream_echo.start < stream_echo.end {
+			stream_echo.start += quic.stream_write(connection, stream_echo.identifier, pending[stream_echo.start:stream_echo.end], false)
+			if stream_echo.start < stream_echo.end {
+				return
+			}
+		}
+		stream_echo.start, stream_echo.end = 0, 0
+		// The code of a reset of the client, before the read that can end
+		// the stream.
+		code: u64
+		if stream := quic.stream_of(connection, stream_echo.identifier); stream != nil {
+			code = stream.peer_reset_code
+		}
+		count, finished, reset := quic.stream_read(connection, stream_echo.identifier, pending)
+		if reset {
+			quic.stream_reset(connection, stream_echo.identifier, code)
+			return
+		}
+		stream_echo.end = count
+		stream_echo.finished = stream_echo.finished || finished
+		if count == 0 {
+			break
+		}
+	}
+	if stream_echo.finished && stream_echo.start == stream_echo.end && !stream_echo.finish_written {
+		quic.stream_write(connection, stream_echo.identifier, nil, true)
+		stream_echo.finish_written = true
 	}
 }
 
@@ -316,7 +376,7 @@ counters_log :: proc "contextless" () {
 	counters_second = second
 	counters_logged = server.counters
 	sends_refused_logged = sends_refused
-	system.log("quic_echo: accepted ", counters.accepted, ", ended ", counters.ended, ", Retries ", counters.retries, ", tokens refused ", counters.tokens_refused + counters.tokens_expired, ", not authentic ", counters.not_authentic, ", too small ", counters.too_small, ", Initials refused by a limit (each try of a client counts) ", counters.refused_remote_limit + counters.refused_handshake_limit, ", Initials refused with a full table ", counters.refused_full, ", over the budget ", counters.over_budget, ", over the budget of an address ", counters.over_address_budget, ", tokens used again ", counters.tokens_used_again, ", version negotiations ", counters.version_negotiations, ", Sends refused by the network service ", sends_refused, " (the last status ", u64(send_refusal_last), ")")
+	system.log("quic_echo: accepted ", counters.accepted, ", ended ", counters.ended, ", Retries ", counters.retries, ", tokens refused ", counters.tokens_refused + counters.tokens_expired, ", not authentic ", counters.not_authentic, ", too small ", counters.too_small, ", Initials refused by a limit (each try of a client counts) ", counters.refused_remote_limit + counters.refused_handshake_limit, ", Initials refused with a full table ", counters.refused_full, ", over the budget ", counters.over_budget, ", over the budget of an address ", counters.over_address_budget, ", new addresses with no place in the table of address budgets ", counters.address_table_full, ", tokens used again ", counters.tokens_used_again, ", version negotiations ", counters.version_negotiations, ", Sends refused by the network service ", sends_refused, " (the last status ", u64(send_refusal_last), ")")
 }
 
 // exchange gives the server the datagrams that arrived, runs its timers,
@@ -459,9 +519,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		fail("no memory for the table of connections")
 	}
 	connections = ([^]quic.Connection)(table)[:CAPACITY]
-	echo_buffers = ([^][quic.STREAM_BUFFER_SIZE]u8)(rawptr(uintptr(table) + CONNECTION_BYTES))[:CAPACITY]
+	streams = ([^]quic.Stream)(rawptr(uintptr(table) + CONNECTION_BYTES))[:CAPACITY * STREAMS_PER_CONNECTION]
+	echo_buffers = ([^][ECHO_BUFFER_SIZE]u8)(rawptr(uintptr(table) + CONNECTION_BYTES + STREAM_BYTES))[:CAPACITY * STREAMS_PER_CONNECTION]
 	error: errors.Error_Record
-	if !quic.server_init(&server, connections, records[:], &configuration, &cryptography, &program_generator, quic.SERVER_LIMITS_DEFAULT, &error) {
+	if !quic.server_init(&server, connections, records[:], streams, &configuration, &cryptography, &program_generator, quic.SERVER_LIMITS_DEFAULT, &error) {
 		fail("the server refused its configuration")
 	}
 	// The server keeps its own copy of the key. A plain store of zeros to a
@@ -475,7 +536,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		free_count += 1
 	}
 	system.wake_reader(&endpoint.commands)
-	system.log("quic_echo: listening on the UDP port ", u64(listen_port), ", a table of ", u64(CAPACITY), " connections of ", u64(size_of(quic.Connection) / 1024), " KiB, the key of this server from the generator of the program")
+	system.log("quic_echo: listening on the UDP port ", u64(listen_port), ", a table of ", u64(CAPACITY), " connections of ", u64(size_of(quic.Connection) / 1024), " KiB, each with ", u64(STREAMS_PER_CONNECTION), " streams of ", u64(size_of(quic.Stream) / 1024), " KiB, the key of this server from the generator of the program")
 
 	arrived: [RECEIVE_PLACES]ring.Record
 	last_draw: u64
@@ -493,9 +554,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				} else {
 					post(record.tag)
 				}
-			case record.tag >= VALIDATE_TAG && record.tag < VALIDATE_TAG + CAPACITY:
-				place := int(record.tag - VALIDATE_TAG)
-				quic.server_validation_confirmed(&server, place, validation_generations[place], datagram.Status(record.kind) == .Ok && record.values[0] == 1)
+			case record.tag & VALIDATE_TAG != 0:
+				validation_completed(record)
 			case record.tag >= SEND_TAG && record.tag < SEND_TAG + PLACE_COUNT:
 				free_places[free_count] = record.tag - SEND_TAG
 				free_count += 1

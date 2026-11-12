@@ -337,6 +337,18 @@ source_file :: proc "contextless" (source: Load_Source, hash: [32]u8) -> (file: 
 	return file, .None, .None
 }
 
+// module_fits_below_band says if a module of memory_size bytes at the
+// address next, with the page with no memory after it, ends at or before
+// the end of the addresses of the modules: the band of the fixed ranges,
+// where the system maps the settings page, the glyph caches and the files
+// of the modules, starts there. No sum wraps: the size is compared first.
+module_fits_below_band :: proc "contextless" (next, memory_size: u64) -> bool {
+	if memory_size > fixed_addresses.MODULES_END - PAGE_SIZE {
+		return false
+	}
+	return next <= fixed_addresses.MODULES_END - PAGE_SIZE - memory_size
+}
+
 // place puts a module in the space, after its imports. named is the hash
 // that the caller or an import of importer names. first is the file of the
 // first module.
@@ -398,14 +410,19 @@ place :: proc "contextless" (space: ^Module_Space, named: [32]u8, first: []u8, i
 			return fail(space, error, stage, importer, named, hash)
 		}
 	}
-	head, _ := module.header(file)
+	// Each file here was validated (module_space_load, source_file); a
+	// header that is not valid still stops the load at once, before its
+	// size is used.
+	head, header_error := module.header(file)
+	if header_error != .None {
+		error.file_error = header_error
+		return fail(space, error, .Read, importer, named, hash)
+	}
 	import_count := int(max(module.count(file, .Imports), 1)) - 1
 	if import_count > IMPORT_CAPACITY {
 		return fail(space, error, .Room, importer, named, hash)
 	}
-	// The modules stay below the band of the fixed ranges, where the system
-	// maps the settings page, the glyph caches and the files of the modules.
-	if head.memory_size > fixed_addresses.BAND_START - PAGE_SIZE || space.next > fixed_addresses.BAND_START - PAGE_SIZE - head.memory_size {
+	if !module_fits_below_band(space.next, head.memory_size) {
 		return fail(space, error, .Room, importer, named, hash)
 	}
 	item := &space.modules[free]

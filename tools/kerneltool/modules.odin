@@ -23,6 +23,15 @@ SYSTEM_LIBRARY_FOLDER :: "support/system"
 // optimization), and a symbol of another object cannot replace them.
 RUNTIME_MEMORY :: "runtime/memory.asm"
 
+// The features of llc for the kernel: no x87, MMX, SSE or AVX instruction,
+// as the Linux kernel is built (-mno-80387 -mno-mmx -mno-sse -mno-sse2
+// -mno-avx -msoft-float). soft-float passes the floating point values of
+// the few runtime procedures that have them in general registers, and
+// makes their arithmetic calls: no code of the kernel calls those
+// procedures, and the link drops them (--gc-sections). The check after
+// the link (vector_check.odin) is the proof.
+KERNEL_TARGET_FEATURES :: "-mattr=-x87,-mmx,-sse,-sse2,-sse3,-ssse3,-sse4.1,-sse4.2,-avx,-avx2,-avx512f,+soft-float"
+
 // The modules of the project, each one after its imports.
 //   source:  the folder of the Odin package, and of its .asm files.
 // The exports of a module and their descriptions come from the source
@@ -65,6 +74,7 @@ module_builds := [?]Module_Build {
 	{name = "manual", source = "programs/manual", image = true},
 	{name = "clock", source = "programs/clock", image = true},
 	{name = "randomness", source = "programs/randomness", image = true},
+	{name = "extended_state", source = "programs/extended_state", image = true},
 	{name = "terminal", source = "programs/terminal", image = true},
 	{name = "flood", source = "programs/flood", image = true},
 	{name = "processors", source = "programs/processors", image = true},
@@ -111,6 +121,7 @@ module_builds := [?]Module_Build {
 	{name = "interface_through_module", source = "programs/interface_through_module", imports = {"interface_module"}, image = true},
 	{name = "text_shaping", source = "modules/text_shaping", image = true},
 	{name = "vector_glyphs", source = "programs/vector_glyphs", image = true},
+	{name = "interface_font", source = "programs/interface_font", image = true},
 	{name = "pointers", source = "programs/pointers", image = true},
 	{name = "settings", source = "programs/settings", image = true},
 	{name = "date", source = "programs/date", image = true},
@@ -129,7 +140,7 @@ build_modules :: proc() -> bool {
 	build_modules_in_parallel() or_return
 	// The pointer themes: the resources of the boot image (pointers.odin).
 	resources := build_pointer_themes(os.get_env(POINTER_THEME_SOURCE_VARIABLE, context.temp_allocator), false) or_return
-	// The two glyph caches of the default font: two more resources (vector_fonts.odin).
+	// The glyph caches of the default font and of the interface font: five more resources (vector_fonts.odin).
 	glyph_caches := build_glyph_caches() or_return
 	all_resources := make([dynamic]Resource_File, context.temp_allocator)
 	append(&all_resources, ..resources)
@@ -223,7 +234,26 @@ build_module :: proc(build: Module_Build) -> bool {
 	}
 	// The LLVM of the Odin compiler (18) makes the object. Each function keeps
 	// its frame pointer: the kernel walks them for the stack trace of a fault.
-	run({"llc", "-O3", "--frame-pointer=all", "-relocation-model=pic", "--function-sections", "--data-sections", "-filetype=obj", "-o", join(objects, "/", build.name, ".o"), join(folder, "/", build.name, ".ll")}) or_return
+	llc := make([dynamic]string, context.temp_allocator)
+	append(&llc, "llc", "-O3", "--frame-pointer=all", "-relocation-model=pic", "--function-sections", "--data-sections", "-filetype=obj")
+	if build.kernel {
+		// The kernel has no x87, SSE or AVX instruction: the registers of a
+		// program stay live through each kernel entry, and only the switch
+		// of threads saves them (docs/ARCHITECTURE.md, "The extended state
+		// of the processor"). These features hold for all of the IR only
+		// while no function of it has target features of its own: a
+		// function attribute would take the place of -mattr for that
+		// function. The disassembly after the link would find its vector
+		// instructions; this test gives the cause first.
+		ir := read_file(join(folder, "/", build.name, ".ll")) or_return
+		if strings.contains(string(ir), "\"target-features\"") {
+			fmt.eprintfln("kerneltool: the LLVM IR of %s has functions with target features of their own: the features of llc for the kernel would not hold for them", build.name)
+			return false
+		}
+		append(&llc, KERNEL_TARGET_FEATURES)
+	}
+	append(&llc, "-o", join(objects, "/", build.name, ".o"), join(folder, "/", build.name, ".ll"))
+	run(llc[:]) or_return
 	assembly := make([dynamic]string, context.temp_allocator)
 	append(&assembly, RUNTIME_MEMORY)
 	append(&assembly, ..(files_with_suffix(build.source, ".asm") or_return))
@@ -233,7 +263,12 @@ build_module :: proc(build: Module_Build) -> bool {
 	}
 	for source in assembly {
 		name := source[strings.last_index(source, "/") + 1:]
-		run({"nasm", "-f", "elf64", "-o", join(objects, "/", name, ".o"), source}) or_return
+		if build.kernel && source == RUNTIME_MEMORY {
+			// The kernel form of the copies: no vector register.
+			run({"nasm", "-f", "elf64", "-DWITHOUT_VECTOR_REGISTERS", "-o", join(objects, "/", name, ".o"), source}) or_return
+		} else {
+			run({"nasm", "-f", "elf64", "-o", join(objects, "/", name, ".o"), source}) or_return
+		}
 	}
 
 	// Only the exports of the module are visible in the linked object.
@@ -270,6 +305,9 @@ build_module :: proc(build: Module_Build) -> bool {
 	)
 	append(&link, ..(files_with_suffix(objects, ".o") or_return))
 	run(link[:]) or_return
+	if build.kernel && !kernel_has_no_vector_instruction(linked) {
+		return false
+	}
 
 	elf := read_file(linked) or_return
 	imports := make([dynamic]Import_File, context.temp_allocator)
