@@ -1,12 +1,12 @@
 # Rules for an agent that works on this repository
 
-Read `docs/HANDOFF.md` first. It holds the decisions of the owner. `docs/PROPERTIES.md` holds the 21 properties: the fundamental concepts of the system.
+Read `docs/DECISIONS.md` first. It holds the decisions of the project: who decided what, when, and in which words. `docs/PROPERTIES.md` holds the 21 properties: the fundamental concepts of the system.
 
 ## Push back
 
-The owner asked for this rule on 2026-11-10.
+The owner asked for this rule on 2026-11-10 (D-047).
 
-- Compare each proposal of the owner with `docs/PROPERTIES.md` and with the decisions in `docs/HANDOFF.md`, before any work on it.
+- Compare each proposal of the owner with `docs/PROPERTIES.md` and with the decisions in `docs/DECISIONS.md`, before any work on it.
 - If a proposal contradicts a property or a decision, say so first. Name the property or the decision, and state the contradiction in one or two sentences.
 - Do not implement the proposal in silence, and do not bend it in silence into something else.
 - Propose the nearest form of the idea that keeps the properties, if one exists. If none exists, say that.
@@ -19,7 +19,9 @@ The owner asked for this rule on 2026-11-10.
 - One term for one concept. Define a term in `docs/GLOSSARY.md` before its first use.
 - Each step adds one capability to a system that works. Each step is a tested commit on `master`.
 - All automation is a command of `tools/kerneltool`. Run it with `nix develop -c kerneltool <command>`.
-- Record each decision of the owner in `docs/HANDOFF.md` and in the document of its subject.
+- Record each decision in `docs/DECISIONS.md`, with the next free identifier, at the end of its group. The guide of its subject states the rule with no who.
+- A guide never names a person or a role of the project, a step, a choice or a date of a decision (owner, 2026-11-12; D-069). That record is `docs/DECISIONS.md`.
+- A news entry never says "the owner" (owner, 2026-11-12; D-070). It states the fact.
 - The order of the next steps is in `docs/FIRST_MILESTONE.md`, section "Next steps".
 - Names (owner, 2026-11-11): no esoteric, over-compressed name of a type, a function, a field or a file. Use long, descriptive names of complete words (`copy_bytes_without_overlap`, not `memcpy`).
 - Pictures (owner, 2026-11-11): each picture that you produce and view goes in `~/Projects/kernel-devlog`, in a dated folder. Never delete a folder of the devlog.
