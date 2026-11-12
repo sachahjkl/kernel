@@ -8,7 +8,7 @@ The trusted boot has three layers. Each layer works without the next one.
 |---|---|---|
 | 1. The signed system description | The boot program verifies a signature and every hash before the kernel starts. The root service checks the boot image again | Built |
 | 2. The measure | The firmware extends PCR 11 of the TPM with the hash of the system description, before the kernel starts | Built |
-| 3. Secure Boot | The firmware verifies the boot program before it starts it | Designed, not built |
+| 3. Secure Boot | The firmware verifies the Authenticode signature of the boot program before it starts it | Built |
 
 ## 1. The claims
 
@@ -21,6 +21,8 @@ Each claim names what verifies, what it verifies, with which key, and when.
 5. Before it starts the first program, the root service takes the system description of the boot image only if its BLAKE3 hash is the hash that the boot program wrote in the trust record. Then it compares each module and resource of the boot image with it, as in claim 2.
 6. After claim 5, no program can change a module of the boot image: the kernel gives the pages of the boot image to the root service with the right Read and with no right Write.
 7. Nothing verifies the boot program while Secure Boot is off. The trust record and the boot display say "verified by the boot program, which the firmware did not verify".
+8. With Secure Boot on, before it starts the boot program, the firmware verifies its Authenticode signature with the certificates in its variable `db`. The build signs the boot program with the firmware signing key, and the test machine has the certificate of that key as its only entry of `db`.
+9. The boot program reads the variable `SecureBoot` of the firmware. With the value 1, the trust record says `Firmware_And_Boot_Program`, and the boot display says "verified by: the firmware (Secure Boot), then the boot program". The value 1 means that a certificate of `db` verified the boot program: on a machine whose `db` also holds the certificates of a vendor, it can be a certificate of that vendor (section 7).
 
 ## 2. What each layer protects, and what it does not
 
@@ -40,6 +42,8 @@ It does not protect against:
 - **a stolen private key.** A person who has it can sign a system that the boot program accepts.
 - **the firmware, and the kernel after the start.** The checks run once, at the start. A fault of the kernel or a device that writes memory directly (DMA) is not in their scope.
 
+The second check, by the root service, finds a fault of the path from the boot program to the first program: a fault of the copy of the boot image, or of the kernel. It does not find an attacker: no program can write the pages of the boot image before it. Its time on the test machine: ____ (the line `root: the boot image agrees ...` of the log gives it at each boot).
+
 ### Layer 2: the measure
 
 It adds a record that the TPM keeps until the next reset of the machine. No code that runs after the boot program can set PCR 11 back to an earlier value. A sealed key or a remote party can depend on that value. The system does neither yet.
@@ -50,9 +54,16 @@ It does not protect against:
 - **a machine with no TPM.** The boot continues. The trust record says `No_Tpm`, and the boot display says "no TPM: the system is not measured".
 - **a TPM that is software.** The test machine uses `swtpm` on the host. The host can read and change its state.
 
-### Layer 3: Secure Boot (designed)
+### Layer 3: Secure Boot
 
-It closes the gap of layer 1: the firmware starts only a boot program that the firmware signing key signed. Then the trust record says "verified by the firmware (Secure Boot), then the boot program". Section 7 gives the design.
+It closes the gap of layer 1: the firmware starts only a boot program that a certificate of its `db` verifies. A person who can write the boot volume can no longer replace the boot program, its public key or its checks without the private key of the firmware signing key. Then a measure in PCR 11 comes from a boot program that the firmware verified.
+
+It does not protect against:
+
+- **an older boot program, or an older system, that the same keys signed.** No counter in the TPM refuses it: not built.
+- **the other certificates of `db`.** A machine whose `db` holds the certificates of a vendor starts each boot program that the vendor signed.
+- **a change of the variables of the firmware by a person at the machine.** The setup of the firmware can turn Secure Boot off or enrol another certificate. PCR 7, where the firmware measures its Secure Boot state, is read by nothing.
+- **PCR 4.** The firmware measures the boot program there. The system does not read it.
 
 ## 3. The system description
 
@@ -78,6 +89,8 @@ The rules that make one system have one description, and one hash:
 - Entry 0 is the kernel module. The modules of the boot image come next, in the order of the boot image. The resources come last, in the order of the boot image.
 - A name has one byte at least, then zero bytes only. Each reserved field is zero.
 - The reader refuses a file of another size, another magic, another version, or another order of kinds.
+- The reader refuses two entries with one name: the loader finds a module by its name.
+- A boot volume with no system description does not boot: there is no state "not signed".
 
 The boot image holds the system description and its description signature as its two last resources: `system_description` and `system_description_signature`. The description does not list these two resources: a file cannot hold its own hash. The description also does not list the boot program, for the same reason: the boot program holds the boot image. Layer 3 covers the boot program.
 
@@ -99,7 +112,8 @@ A failed check of the boot program stops the boot. The kernel does not start.
 
 - The serial log has one line with the file and the two hashes: `boot program: console does not have the hash of the system description: expected <64 digits>, found <64 digits>`. A wrong signature gives `boot program: the signature of the system description is wrong`.
 - The boot display shows the same failure in red in its head, with the first 16 digits of each hash. Its step is "the kernel module" for the kernel, else "the boot image".
-- The boot program turns off the watchdog of the firmware, so the failure stays on the screen until a person stops the machine.
+- The boot program turns off the watchdog of the firmware, so the failure stays on the screen until a person stops the machine. It never returns to the firmware: the firmware does not try the next boot option.
+- With Secure Boot on, a boot program that the firmware refuses never starts. The boot manager of the firmware writes `BdsDxe: failed to load Boot<number>` on the serial console, and tries its next boot option.
 
 A failed check of the root service stops the start of the programs. The boot display shows "the start failed:" and the file, and the log has the two hashes.
 
@@ -108,7 +122,7 @@ The boot display has three facts under the tiles of the boot image, from the tru
 | Fact | Values |
 |---|---|
 | signed by | "the TEST key: its private key is public" (red), or "the key" and the first 8 bytes of the public key |
-| verified by | "the boot program, which the firmware did not verify", or "the firmware (Secure Boot), then the boot program", or "the check failed" |
+| verified by | "the boot program, which the firmware did not verify", or "the firmware (Secure Boot), then the boot program" (Secure Boot on: claim 9), or "the check failed" |
 | measured | "PCR 11 =" and the first 16 bytes of the value, or "no TPM: the system is not measured", or a refusal of the firmware |
 
 ## 5. The signing key
@@ -116,13 +130,18 @@ The boot display has three facts under the tiles of the boot image, from the tru
 The signing key is an Ed25519 key pair of the person who owns the machine.
 
 - **Where it lives**: the private key is a file outside the repository. The environment variable `SYSTEM_SIGNING_KEY` names it at build time. The tool refuses a path inside the repository. The boot volume holds the public key and the description signature only.
-- **With no variable**: the build signs with the test signing key of `resources/keys`, and the machine says that it is not trusted.
+- **With no variable**: the build signs with the test signing key and the test firmware signing key of `resources/keys`, and the machine says that it is not trusted.
+- **The rule of the file**: the tool refuses a private key file that another user owns, or that the group or the others can read, write or run. It finds the repository from the folder of `flake.nix` above the working folder, and compares resolved paths: a symbolic link to the repository is inside it.
+- **In memory**: the tool clears the private key after it signed.
+- **A volume for a test machine only**: beside each boot volume, the tool writes `<volume>.signed_by`. For a volume that the test keys signed, it says "the TEST signing key, whose private key is published: do not install this volume on a real machine". Do not install such a volume on a real machine: anyone can sign a system that it accepts. The test builds and the pictures of the site use the test keys.
 
 ### Creation
 
 1. Run `nix develop -c kerneltool key new <folder>`, with a folder outside the repository.
-2. The tool writes `<folder>/signing_key`: the private key, 64 hexadecimal digits, readable by its owner only, in a folder that only its owner can open. It writes `<folder>/signing_key.public`: the public key.
-3. The tool refuses to replace an existing key.
+2. The tool writes `<folder>/signing_key`: the private key, 64 hexadecimal digits, readable by its owner only, in a folder that only its owner can open. It writes `<folder>/signing_key.public`: the public key. It creates each file exclusively: a file or a symbolic link at that path makes it stop.
+3. The tool then writes the firmware signing key with `openssl`: `<folder>/firmware_signing_key.pem` (the RSA-2048 private key) and `<folder>/firmware_signing_key.crt` (its certificate).
+4. The tool refuses to replace an existing key.
+5. To enrol the certificate in the firmware of a real machine, a person present at the machine uses the setup of the firmware: the certificate `firmware_signing_key.crt` as the platform key, the key exchange key and the entry of `db`, then Secure Boot on. The steps depend on the firmware of the machine.
 
 ### Use
 
@@ -132,8 +151,8 @@ The signing key is an Ed25519 key pair of the person who owns the machine.
 
 ### Backup
 
-1. Copy `signing_key` to two media that stay offline, in two places. The 64 digits can also be printed on paper.
-2. The public key is not secret.
+1. Copy `signing_key` and `firmware_signing_key.pem` to two media that stay offline, in two places. The 64 digits of `signing_key` can also be printed on paper.
+2. The public key and the certificate are not secret.
 
 ### Loss
 
@@ -155,23 +174,22 @@ A person who has the private key can sign a system that the boot program accepts
 
 The test machine of the measure uses the firmware with a TPM driver (`OVMF_FULL_CODE`) and a software TPM: `kerneltool` starts `swtpm socket --tpm2` with a new state for each machine, waits for its socket, starts QEMU with `-tpmdev emulator` and `tpm-tis`, and stops `swtpm` after QEMU. That firmware needs the system management mode of QEMU (`-machine q35,smm=on`).
 
-## 7. Secure Boot: the design
+## 7. Secure Boot
 
-Not built. What the layer needs:
+1. **A second key.** UEFI Secure Boot verifies Authenticode signatures with RSA keys and X.509 certificates. It cannot verify Ed25519. So the person who owns the machine has a firmware signing key: an RSA-2048 key and a self-signed certificate, that `kerneltool key new` makes with `openssl req -new -x509 -newkey rsa:2048 -sha256 -days 36500 -nodes`, in the folder of the signing key. The firmware does not check the dates of a certificate of `db`.
+2. **The test pair** is `resources/keys/test_firmware_signing_key.pem` and `.crt`, beside the test signing key, and its private key is published in the same way. `kerneltool key test-firmware-new` writes it once.
+3. **The signature of the boot program**: `sbsign --key <key> --cert <certificate> --output <signed> <unsigned>`, of the package `sbsigntool`. The build keeps the unsigned boot program as its output and writes the signed copy beside it.
+4. **The variable store of the test machine**: `virt-fw-vars` of the package `python3Packages.virt-firmware` writes a copy of `OVMF_FULL_VARS` with the certificate as PK, KEK and the one entry of `db`, and Secure Boot on (`--set-pk`, `--add-kek`, `--add-db`, `--secure-boot`). No certificate of a vendor is enrolled.
+5. **The machines** of `kerneltool test trusted_boot`: the signed boot program starts, its trust record says `Firmware_And_Boot_Program`, and PCR 11 holds the same value as with the unsigned boot program of the same system; the signed boot program with one byte changed does not start; the unsigned boot program does not start. For the last two, the tool waits for the line `BdsDxe: failed to load Boot` of the firmware, then checks that the log has no line `boot program: started`.
 
-1. **A second key.** UEFI Secure Boot verifies Authenticode signatures with RSA keys and X.509 certificates. It cannot verify Ed25519. So the person who owns the machine has a firmware signing key: an RSA-2048 key and a certificate. In the design, `kerneltool key new` also makes it, with `openssl req -x509 -newkey rsa:2048 -nodes -days 36500`, in the same folder.
-2. **The signature of the boot program**: `sbsign --key <key> --cert <certificate> --output BOOTX64.EFI <unsigned>`, of the package `sbsigntool` of Nixpkgs. An existing signer of Authenticode is used, not a writer of the tool.
-3. **The enrolment in the test machine**: `virt-fw-vars` of the package `python3Packages.virt-firmware` writes a copy of `OVMF_FULL_VARS` with the certificate as PK, KEK and db, and Secure Boot on (`--set-pk`, `--add-kek`, `--add-db`, `--secure-boot`). The flags are from the documentation of virt-firmware and are not tested here. The copy goes to `build/`, one for each machine, as for the other variable stores.
-4. **The test**: one machine boots the signed boot program and its trust record says `Firmware_And_Boot_Program`. One machine boots a signed boot program with one byte changed, and the firmware refuses it: the serial log has no line `boot program: started`, and the firmware shows its refusal.
-5. **What the boot program reads**: the variable `SecureBoot` of the firmware. The boot program already reads it: with value 1, the trust record says `Firmware_And_Boot_Program`.
-
-What layer 3 does not protect against: the keys in the db of the firmware. If the db also holds the keys of another vendor, each boot program that such a key signed starts. The store of the test machine holds the certificate of the person only.
+The machines with this firmware run with one processor: each access of the firmware to its variables is a system management interrupt that each processor must enter, and on a loaded host the firmware with four processors did not reach the boot program within the bound of the tool.
 
 ## 8. The costs
 
 - **Time**: the boot program hashes the kernel and the whole boot image, and the root service hashes the boot image again. The log gives both times: `root: the boot program checked the signature and every hash in <n> us` and `root: the boot image agrees with the system description ...: <n> modules and resources checked in <n> us`.
 - **Two hash functions**: BLAKE3 is the identity of each file and of the description. The TPM uses SHA-256 because it has no BLAKE3 bank.
 - **Two keys with Secure Boot**: an Ed25519 key for the description and an RSA key for the firmware.
+- **The start of the firmware with system management mode**: the tool prints the time from the start of QEMU to `boot program: started` for each machine with that firmware.
 - **The boot volume of each test**: the build signs one boot image for each boot volume, because the kernel of one test volume differs.
 
 ## 9. Code
@@ -184,5 +202,6 @@ What layer 3 does not protect against: the keys in the db of the firmware. If th
 | The check of the root service | `programs/root/trust.odin` |
 | The facts of the boot display | `support/bootscreen/bootscreen.odin` (`trust_facts`) |
 | The signature, the keys, the command `key` | `tools/kerneltool/system_description.odin` |
-| The four machines of `test trusted_boot` | `tools/kerneltool/trusted_boot_scenario.odin` |
+| The ten machines of `test trusted_boot` | `tools/kerneltool/trusted_boot_scenario.odin` |
+| The firmware signing key, `sbsign`, the variable store with Secure Boot | `tools/kerneltool/secure_boot.odin` |
 | The Ed25519 code of the boot program | `support/cryptography/ed25519` (`docs/CRYPTOGRAPHY.md`) |

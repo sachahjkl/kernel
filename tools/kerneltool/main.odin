@@ -57,6 +57,15 @@ BOOT_VOLUME_SELF_TEST :: BUILD_FOLDER + "/boot_volume_self_test_%d.img"
 BOOT_VOLUME_CHANGED_MODULE :: BUILD_FOLDER + "/boot_volume_changed_module.img"
 BOOT_VOLUME_WRONG_SIGNATURE :: BUILD_FOLDER + "/boot_volume_wrong_signature.img"
 BOOT_VOLUME_OTHER_SYSTEM :: BUILD_FOLDER + "/boot_volume_other_system.img"
+// More volumes that the boot program must refuse: one byte of the kernel
+// changed; no system description; an entry that states another hash.
+BOOT_VOLUME_CHANGED_KERNEL :: BUILD_FOLDER + "/boot_volume_changed_kernel.img"
+BOOT_VOLUME_WITHOUT_DESCRIPTION :: BUILD_FOLDER + "/boot_volume_without_description.img"
+BOOT_VOLUME_STATED_HASH :: BUILD_FOLDER + "/boot_volume_stated_hash.img"
+// The boot program signed for Secure Boot, and the same with one byte
+// changed after the signature (secure_boot.odin).
+BOOT_VOLUME_SECURE_BOOT :: BUILD_FOLDER + "/boot_volume_secure_boot.img"
+BOOT_VOLUME_SECURE_BOOT_CHANGED :: BUILD_FOLDER + "/boot_volume_secure_boot_changed.img"
 // The path where the firmware looks for the boot program of a disk.
 BOOT_PROGRAM_PATH :: "EFI/BOOT/BOOTX64.EFI"
 FIRMWARE_VARIABLES :: BUILD_FOLDER + "/ovmf_vars.fd"
@@ -166,6 +175,15 @@ run_build :: proc(args: []string) -> int {
 	if !build_boot_program("boot.image", BOOT_VOLUME_CHANGED_MODULE, 0, change = {module_changed_after_description = CHANGED_MODULE}) || !build_boot_program("boot.image", BOOT_VOLUME_WRONG_SIGNATURE, 0, change = {signature_changed = true}) || !build_boot_program("boot.image", BOOT_VOLUME_OTHER_SYSTEM, 0, change = {module_changed_before_description = OTHER_SYSTEM_MODULE}) {
 		return EXIT_FAILURE
 	}
+	if !build_boot_program("boot.image", BOOT_VOLUME_CHANGED_KERNEL, 0, change = {kernel_changed_after_description = true}) || !build_boot_program("boot.image", BOOT_VOLUME_WITHOUT_DESCRIPTION, 0, change = {description_left_out = true}) || !build_boot_program("boot.image", BOOT_VOLUME_STATED_HASH, 0, change = {stated_hash_changed_module = CHANGED_MODULE}) {
+		return EXIT_FAILURE
+	}
+	// Secure Boot: the boot program signed with the firmware signing key, the
+	// same with one byte changed, and the variable store that enrols the
+	// certificate.
+	if !build_boot_program("boot.image", BOOT_VOLUME_SECURE_BOOT, 0, firmware_signature = .Signed) || !build_boot_program("boot.image", BOOT_VOLUME_SECURE_BOOT_CHANGED, 0, firmware_signature = .Signed_Then_Changed) || !secure_boot_variables_write() {
+		return EXIT_FAILURE
+	}
 	// One boot program for each test of the kernel on itself.
 	for test in self_tests {
 		if !build_boot_program("boot.image", self_test_file(BOOT_VOLUME_SELF_TEST, test.number), test.number) {
@@ -183,9 +201,9 @@ run_build :: proc(args: []string) -> int {
 // is the last one. The boot image of the volume is a copy of the image of
 // the build with its system description and its description signature
 // (system_description.odin); change makes a volume for a test of a failure.
-build_boot_program :: proc(image: string, volume_path: string, self_test: int, kernel := "kernel", change: Image_Change = {}) -> bool {
+build_boot_program :: proc(image: string, volume_path: string, self_test: int, kernel := "kernel", change: Image_Change = {}, firmware_signature: Firmware_Signature = .None) -> bool {
 	signed_image := signed_image_path(volume_path)
-	boot_image_signed_write(strings.concatenate({BUILD_FOLDER, "/", image}, context.temp_allocator), kernel, signed_image, change) or_return
+	signed := boot_image_signed_write(strings.concatenate({BUILD_FOLDER, "/", image}, context.temp_allocator), kernel, signed_image, change) or_return
 	reset_folder(BOOT_OBJECT_FOLDER) or_return
 	run(
 		{
@@ -205,7 +223,7 @@ build_boot_program :: proc(image: string, volume_path: string, self_test: int, k
 			strings.concatenate({"-define:BOOT_IMAGE=../", signed_image}, context.temp_allocator),
 			"-define:SYSTEM_PUBLIC_KEY=../" + SYSTEM_PUBLIC_KEY_FILE,
 			fmt.tprintf("-define:SELF_TEST=%d", self_test),
-			fmt.tprintf("-define:KERNEL_MODULE=../build/modules/%s.module", kernel),
+			strings.concatenate({"-define:KERNEL_MODULE=../", signed.kernel_module_path}, context.temp_allocator),
 			"-out:" + BOOT_OBJECT_FOLDER + "/boot.obj",
 		},
 	) or_return
@@ -216,7 +234,12 @@ build_boot_program :: proc(image: string, volume_path: string, self_test: int, k
 	append(&link, "lld-link", "/subsystem:efi_application", "/entry:efi_main", "/nodefaultlib", "/out:" + BOOT_PROGRAM)
 	append(&link, ..objects)
 	run(link[:]) or_return
-	program := read_file(BOOT_PROGRAM) or_return
+	program_path := BOOT_PROGRAM
+	if firmware_signature != .None {
+		boot_program_sign(firmware_signature) or_return
+		program_path = BOOT_PROGRAM_SIGNED
+	}
+	program := read_file(program_path) or_return
 	volume, fits := volume_encode({{path = BOOT_PROGRAM_PATH, data = program}}, context.temp_allocator)
 	if !fits {
 		fmt.eprintln("kerneltool: the boot program does not fit in the boot volume")
@@ -224,6 +247,13 @@ build_boot_program :: proc(image: string, volume_path: string, self_test: int, k
 	}
 	if write_err := os.write_entire_file(volume_path, volume); write_err != nil {
 		fmt.eprintfln("kerneltool: cannot write %s: %v", volume_path, write_err)
+		return false
+	}
+	// Beside the volume: which key signed it. A volume that the test keys
+	// signed is for a test machine only.
+	signed_by := signed.signed_by_test_key ? "the TEST signing key, whose private key is published: do not install this volume on a real machine\n" : "the signing key of SYSTEM_SIGNING_KEY\n"
+	if write_err := os.write_entire_file(signed_by_file_path(volume_path), signed_by); write_err != nil {
+		fmt.eprintfln("kerneltool: cannot write %s: %v", signed_by_file_path(volume_path), write_err)
 		return false
 	}
 	return true
@@ -543,11 +573,19 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 		return nil, false
 	}
 	code_variable, variables_variable, variables_copy := "OVMF_CODE", "OVMF_VARS", FIRMWARE_VARIABLES
-	if firmware == .With_Tpm {
+	switch firmware {
+	case .Usual:
+	case .With_Tpm, .With_Tpm_And_Secure_Boot:
 		code_variable, variables_variable, variables_copy = "OVMF_FULL_CODE", "OVMF_FULL_VARS", FIRMWARE_FULL_VARIABLES
 	}
 	firmware_code := os.get_env(code_variable, context.temp_allocator)
 	firmware_variables := os.get_env(variables_variable, context.temp_allocator)
+	// The machine with Secure Boot on starts from the variable store in
+	// which the build enrolled the certificate of the firmware signing key
+	// (secure_boot.odin), not from the empty store of the firmware.
+	if firmware == .With_Tpm_And_Secure_Boot {
+		firmware_variables = SECURE_BOOT_VARIABLES
+	}
 	if firmware_code == "" || firmware_variables == "" {
 		fmt.eprintfln("kerneltool: %s and %s are not set. Use the development shell: nix develop", code_variable, variables_variable)
 		return nil, false
@@ -567,7 +605,7 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 		"-machine",
 		// The firmware with Secure Boot needs the system management mode of
 		// the processor: its variables are written only there.
-		firmware == .With_Tpm ? "q35,smm=on" : "q35",
+		firmware != .Usual ? "q35,smm=on" : "q35",
 		"-accel",
 		"kvm",
 		"-accel",
@@ -577,7 +615,7 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 		"-m",
 		"512",
 		"-smp",
-		"4",
+		firmware != .Usual ? TPM_MACHINE_PROCESSORS : "4",
 		"-device",
 		"isa-debug-exit,iobase=0xf4,iosize=0x04",
 		"-no-reboot",
@@ -603,7 +641,10 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 		"-drive",
 		strings.concatenate({"if=none,id=boot,format=raw,file=", volume}, context.temp_allocator),
 		"-device",
-		"virtio-blk-pci,drive=boot",
+		// The boot volume is the first boot option of the firmware: with no
+		// bootindex, the order of its options follows its own enumeration,
+		// and a firmware with a network stack can try a network boot first.
+		"virtio-blk-pci,drive=boot,bootindex=0",
 		"-drive",
 		strings.concatenate({"if=none,id=data,format=raw,file=", data_disk}, context.temp_allocator),
 		"-device",
@@ -613,11 +654,20 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 		"-device",
 		fmt.tprintf("virtio-blk-pci,drive=scratch,disable-legacy=on,addr=0x%x", pci.SCRATCH_DISK_DEVICE),
 	)
-	if firmware == .With_Tpm {
+	if firmware != .Usual {
+		if test_output == "" {
+			fmt.eprintln("kerneltool: a machine with a TPM runs only as a test machine, with its own files")
+			return nil, false
+		}
 		// The flash of the firmware is writable only in system management
 		// mode; the TPM is the software TPM that machine_test starts
-		// (trusted_boot_scenario.odin), through its socket.
-		append(&list, "-global", "driver=cfi.pflash01,property=secure,value=on", "-chardev", "socket,id=tpm_socket,path=" + TPM_SOCKET, "-tpmdev", "emulator,id=tpm,chardev=tpm_socket", "-device", "tpm-tis,tpmdev=tpm")
+		// (trusted_boot_scenario.odin), through the socket of this machine.
+		// The firmware writes its own log on the debug console port: the
+		// tool shows its end when the boot program does not start.
+		append(&list, "-global", "driver=cfi.pflash01,property=secure,value=on")
+		append(&list, "-chardev", strings.concatenate({"socket,id=tpm_socket,path=", tpm_socket_of(test_output)}, context.temp_allocator))
+		append(&list, "-tpmdev", "emulator,id=tpm,chardev=tpm_socket", "-device", "tpm-tis,tpmdev=tpm")
+		append(&list, "-debugcon", strings.concatenate({"file:", machine_file(test_output, FIRMWARE_LOG_SUFFIX)}, context.temp_allocator), "-global", "isa-debugcon.iobase=0x402")
 	}
 	if test_output != "" {
 		// No window. The log of the kernel (the serial port) goes to a file.

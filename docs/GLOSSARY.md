@@ -436,6 +436,7 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Measure | The extension of a register of the TPM with the SHA-256 hash of the system description, which the firmware does at the request of the boot program, before the kernel starts (P17) | attestation (for this), seal, measurement log (for this) |
 | Measure register | PCR 11 of the TPM: the register that holds the measure | slot, PCR (alone, for this register) |
 | Firmware signing key | The RSA-2048 key and its X.509 certificate of the person who owns the machine, that sign the boot program for Secure Boot. The firmware keeps the certificate in its variable `db` | db key (for the pair), Secure Boot key |
+| Test firmware signing key | The firmware signing key of the tests, in `resources/keys`. Its private key is published, so a boot program that it signed is not trusted | development certificate |
 
 ## Project
 

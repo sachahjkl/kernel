@@ -203,6 +203,11 @@ one_description_has_one_form :: proc(t: ^testing.T) {
 		at(description, 3).name[10] = 'x'
 		refused(t, description, "a byte after the end of a name")
 	}
+	{
+		description := copy_of(system.description)
+		at(description, 2).name = at(description, 1).name
+		refused(t, description, "two entries with one name")
+	}
 	refused(t, description_of(nil), "no entry")
 }
 

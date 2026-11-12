@@ -1,0 +1,3 @@
+type: Added
+
+**Secure Boot verifies the boot program**: the build signs the boot program with a firmware signing key, an RSA key and its certificate, because the firmware cannot verify Ed25519. With Secure Boot on and that certificate enrolled, the firmware starts only the signed boot program, and the boot display says "verified by: the firmware (Secure Boot), then the boot program". A signed boot program with one changed byte, and an unsigned one, never start. `kerneltool key new` now also makes the firmware signing key. Beside each boot volume, a file says which key signed it, and that a volume signed by the test keys must not be installed on a real machine.

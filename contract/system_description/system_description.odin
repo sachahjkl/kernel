@@ -158,6 +158,13 @@ entries :: proc "contextless" (description: []u8) -> (list: []Entry, valid: bool
 		if entry.reserved != 0 || !name_valid(&entry.name) {
 			return nil, false
 		}
+		// One name names one file: the loader finds a module by its name,
+		// so a second entry with the name of an earlier one is refused.
+		for &earlier in list[:index] {
+			if earlier.name == entry.name {
+				return nil, false
+			}
+		}
 		if index == 0 {
 			if entry.kind != .Kernel || name_of(&entry.name) != KERNEL_ENTRY_NAME {
 				return nil, false

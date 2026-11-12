@@ -184,6 +184,7 @@ scenario_fails := [?]Step {
 	{kind = .Wait, text = "kernel: ok"},
 	{kind = .Wait, text = "root: ok"},
 	{kind = .Wait, text = "root: the boot image agrees with the system description that the boot program verified: "},
+	{kind = .Wait, text = "root: the system description is not measured into the TPM"},
 	{kind = .Wait, text = "root: cannot start the compositor: status "},
 	{kind = .Wait, text = "root: the boot display shows the failure"},
 	{kind = .Shot, text = "boot_fails"},
@@ -2143,6 +2144,7 @@ Machine :: struct {
 	client:      Call_Client,
 	client_open: bool,
 	forward:     Forward, // QEMU user networking: the port of hostfwd and the listener of guestfwd.
+	started_at:  time.Tick, // When QEMU started: the first Wait says how long the boot took.
 }
 
 monitor_send :: proc(machine: ^Machine, parts: ..string) {
@@ -2574,9 +2576,10 @@ screen_save :: proc(machine: ^Machine, name: string) -> bool {
 // machine_test runs a scenario on a boot volume. It passes when each step
 // passes and QEMU ends with the status exit_status.
 machine_test :: proc(steps: []Step, volume: string, output: string, exit_status: int, data_disk: string = TEST_DATA_DISK, user_network := false, disk_server: ^Network_Block_Device = nil, processor: Processor_Model = .Maximum, firmware: Machine_Firmware = .Usual) -> bool {
-	// The software TPM runs before QEMU and ends after it.
+	// The software TPM runs before QEMU and ends after it, with a folder of
+	// its own for each machine.
 	tpm: Tpm_Process
-	if firmware == .With_Tpm && !tpm_start(&tpm) {
+	if firmware != .Usual && !tpm_start(&tpm, output) {
 		return false
 	}
 	defer tpm_stop(&tpm)
@@ -2612,6 +2615,7 @@ machine_test :: proc(steps: []Step, volume: string, output: string, exit_status:
 		return false
 	}
 	machine := Machine {
+		started_at = time.tick_now(),
 		process   = process,
 		monitor   = monitor_write,
 		output    = output,
@@ -2621,6 +2625,10 @@ machine_test :: proc(steps: []Step, volume: string, output: string, exit_status:
 		disk_server = disk_server,
 	}
 	passed := scenario_run(&machine, steps)
+	if !passed && firmware != .Usual {
+		// While QEMU still runs: what the firmware shows and wrote.
+		firmware_failure_report(&machine, output)
+	}
 	if len(machine.confirmations) > 0 {
 		slice.sort(machine.confirmations[:])
 		fmt.printfln("kerneltool: test passed: the tool confirmed %d places of the pointer through compositor.pointer(), %d after a correction; one confirmation took %d us at least, %d us in the middle", len(machine.confirmations), machine.corrected, i64(machine.confirmations[0] / time.Microsecond), i64(machine.confirmations[len(machine.confirmations) / 2] / time.Microsecond))
@@ -2700,12 +2708,17 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 			if step.seconds > 0 {
 				limit = time.Duration(step.seconds) * time.Second
 			}
+			was_first_wait := first_wait
 			first_wait = false
 			if !log_wait(machine, step.text, step.any_order, limit) {
-				fmt.eprintfln("kerneltool: test failed: step %d: the machine did not print \"%s\"", index + 1, step.text)
+				fmt.eprintfln("kerneltool: test failed: step %d: the machine did not print \"%s\" within %v", index + 1, step.text, limit)
 				return false
 			}
-			fmt.printfln("kerneltool: test passed: the machine printed \"%s\"", step.text)
+			if was_first_wait {
+				fmt.printfln("kerneltool: test passed: the machine printed \"%s\", %.1f s after the start of QEMU", step.text, time.duration_seconds(time.tick_since(machine.started_at)))
+			} else {
+				fmt.printfln("kerneltool: test passed: the machine printed \"%s\"", step.text)
+			}
 		case .Date:
 			seen_before := machine.seen
 			if !log_wait(machine, step.text, step.any_order) {

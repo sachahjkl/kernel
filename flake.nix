@@ -48,7 +48,11 @@
     # llc makes each object with frame pointers.
     # openssl: its QUIC client is the peer of the test "quic-real" of kerneltool.
     # swtpm: the software TPM of the machines of "test trusted_boot".
-    buildTools = [odin pkgs.llvmPackages_18.llvm pkgs.llvmPackages.lld pkgs.nasm pkgs.qemu pkgs.coreutils pkgs.openssl pkgs.swtpm];
+    # sbsigntool (sbsign): signs the boot program for Secure Boot.
+    # virt-firmware (virt-fw-vars): enrols the certificate of the firmware
+    # signing key in a variable store of the firmware, with Secure Boot on.
+    # openssl also makes the firmware signing key ("kerneltool key new").
+    buildTools = [odin pkgs.llvmPackages_18.llvm pkgs.llvmPackages.lld pkgs.nasm pkgs.qemu pkgs.coreutils pkgs.openssl pkgs.swtpm pkgs.sbsigntool pkgs.python3Packages.virt-firmware];
 
     # The pointer theme of the owner (docs/POINTERS.md): "Posy's Cursor", the
     # package of nixpkgs, pinned by flake.lock. Its license is CC-BY-NC-4.0,
@@ -67,7 +71,9 @@
       OVMF_VARS = "${pkgs.OVMF.fd}/FV/OVMF_VARS.fd";
       # The same firmware with a TPM driver and Secure Boot (it needs the
       # system management mode of QEMU), for the machines of the trusted
-      # boot. Its variable store has no key: Secure Boot stays off.
+      # boot. Its variable store has no key: Secure Boot stays off; the build
+      # writes a copy with the certificate of the firmware signing key
+      # enrolled, for the machines with Secure Boot on.
       OVMF_FULL_CODE = "${pkgs.OVMFFull.fd}/FV/OVMF_CODE.fd";
       OVMF_FULL_VARS = "${pkgs.OVMFFull.fd}/FV/OVMF_VARS.fd";
       # The source of the font, for the command "font" of kerneltool.
