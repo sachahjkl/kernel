@@ -390,6 +390,7 @@ Map_Flags :: bit_set[Map_Flag;u64]
 STOP_CODE_FAULT :: 0x100 // Add the number of the processor exception: 14 is a page fault.
 STOP_CODE_NO_HANDLE :: 0x200 // The last handle to the program closed.
 STOP_CODE_NOT_COMMITTED :: 0x300 // A page fault on a page of an Uncommitted object that is not committed.
+STOP_CODE_RETURN :: 0x400 // The kernel cannot return to a thread of the program: its instruction or stack address is not one that the processor takes (docs/ARCHITECTURE.md, "The return to a program"). The stop report has the address in `address`.
 
 // The state of a program or of a thread. A program is Ready when one of
 // its threads is Ready.

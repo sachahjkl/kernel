@@ -1551,6 +1551,12 @@ EXCEPTION_NAMES := [32]string {
 @(require, linkage = "strong", link_name = "kernel_interrupt")
 kernel_interrupt :: proc "c" (frame: ^Frame) {
 	from_program := frame.cs & 3 != 0
+	// A fault of the iretq of resume: the processor refused the return to
+	// the current thread. The same test as in interrupt_common, which gave
+	// the kernel its gs back for this case only.
+	if !from_program && frame.rip == u64(uintptr(&resume_return)) && frame.vector >= 11 && frame.vector <= 13 {
+		return_refused_by_the_processor(frame)
+	}
 	if !from_program && frame.vector < VECTOR_INTERRUPT_BASE {
 		// The processor can hold any lock: it takes none.
 		name := EXCEPTION_NAMES[frame.vector]

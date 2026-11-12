@@ -563,6 +563,55 @@ With no kernel operation: the processor tells it. `CPUID` leaf 1 gives `OSXSAVE`
 - **The readers of the state of a thread**: none. `Thread_State`, the reports of `Inspect` and the stop report of a program give no register of the extended state; the area is read only by the restore. A future reader (a debugger) reads a thread that is on no processor (section 3).
 - **A thread that ends**: it is saved when its processor leaves it, then its slot is freed; the next thread of the slot gets the start state.
 
+## The return to a program
+
+Status: designed and written on 2026-11-12 (the owner's list of next work: "a fault at the return to a program is a fault of that program"). Before this, a thread whose saved state the processor refused at `iretq` made the processor fault in the kernel, and the kernel stopped the machine: one program could stop the machine (property 2). `Thread_Create` refused one cause only. The term is in `GLOSSARY.md`: refused return. The code is `kernel/return_to_program.odin`, `resume` and `interrupt_common` in `kernel/processor.asm`, `run` in `kernel/schedule.odin`; the test is the program `return_fault` (`kerneltool test return_fault`).
+
+### 1. The frame of a thread, and who writes it
+
+The kernel returns to a thread with `iretq`, from the frame of 22 values that it keeps for the thread (`Thread.frame`: 15 registers, the vector, the error code, then `rip`, `cs`, `rflags`, `rsp`, `ss`). `iretq` refuses, with a fault in the kernel, an `rip` that is not canonical, a selector that is not valid for the return, and, with the flag nested task set in the flags of the kernel, any return (in 64-bit mode). In 64-bit mode `iretq` does not touch the stack of the program: an `rsp` with no memory behind it faults later, in the program, at its first use of the stack.
+
+| Writer of the frame | Fields | Can a program make `iretq` refuse it? |
+|---|---|---|
+| An interrupt or an exception from a program: the processor pushes the state of the program, and `kernel_interrupt` copies it | all | Yes. `rip` is `USER_END` (2^47, not canonical) when an interrupt comes after an instruction that ends at the last byte below `USER_END`: a program can map executable memory at the last page (`Memory_Map` refuses only an address at or above `USER_END`). `rsp` is any value that the program put in it, also one that is not canonical. `cs` and `ss` are the selectors of programs: the table of descriptors has no other descriptor that a program can load. |
+| `syscall` (`kernel_enter`): `rip` is the return address that the processor wrote in `rcx`, `rflags` the flags that it wrote in `r11` | all | Yes, every time: a `syscall` in the last two bytes below `USER_END` gives the return address `USER_END`. `rsp` as above. |
+| The flags of the kernel at `syscall`: the flags of the program less the mask of `MSR_SFMASK` | the flags of `iretq` itself | Yes, before this change: the mask did not clear nested task, which a program sets with `popfq`; the kernel then ran with it, and its `iretq` faulted. |
+| `Thread_Create` and `Program_Start` (`thread_create`) | `rip`, `rsp`, `cs`, `ss`, `rflags` | No: an entry at or above `USER_END` and a stack above `USER_END` or below 8 are refused (`Bad_Address`); `cs`, `ss` and the flags are constants. |
+| `run`: `rax` after a kernel entry (the time) | `rax` | No: a general register. |
+| Another writer (a debugger, a restart, a fault handler that changes `rip`) | | None exists. A future one writes the frame only through the rules of section 2, and the frame is checked again before each return. |
+
+### 2. The first layer: the frame is made safe before each return
+
+`run` is the one procedure that calls `resume`, and `resume` is the one place where the kernel returns to a program. At the start of `run`, `return_frame_prepare` makes these hold, each one a line of the code:
+
+- `cs` is the code selector of programs and `ss` their data selector.
+- `rflags` keeps from the program only the bits of `RETURN_FLAGS_OF_A_PROGRAM` (carry, parity, adjust, zero, sign, trap, direction, overflow, resume, alignment check, identification), and has the interrupt flag and the reserved bit 1 set: IOPL 0, no nested task, no virtual-8086 flag, interrupts on.
+- `rip` is below `USER_END`: canonical, and in the half of a program. Else the return is refused, with the field "instruction address".
+- `rsp` is canonical. Else the return is refused, with the field "stack address". A program that keeps an address that is not canonical in `rsp` is stopped at its next return: it cannot use it as a stack, and a processor can refuse it at `iretq` (the manuals of Intel and AMD differ on this check; the kernel does not depend on either).
+
+A refused return stops the program of the thread, as a fault of that program (`program_return_refused`): the stop code `STOP_CODE_RETURN`, the instruction address in `instruction`, the refused value in `address`, the module of the instruction, and one line of the log, "kernel: program ... stopped: the kernel cannot return to its thread: ...". Then `schedule` ends the thread and runs another one.
+
+`MSR_SFMASK` is `0x44700`: `syscall` clears interrupt, trap, direction, user access and nested task. An interrupt gate already clears nested task, trap and interrupt; `interrupt_common` clears user access (`clac`) and direction (`cld`). So the kernel never runs with a flag of the program that changes `iretq`.
+
+### 3. The second layer: a fault of the `iretq` of `resume` is a fault of the thread
+
+After the first layer, no cause is known for which the processor refuses the `iretq` of `resume`. The second layer makes a cause that nobody found a fault of the thread too, and not of the kernel. Each fact at the instant of that `iretq`, from the code:
+
+- **The stack.** `resume` copies the frame of the thread to the top 22 * 8 bytes of the kernel stack of the processor (`[gs:0] - 176`), sets `rsp` there, and pops it. At the `iretq`, `rsp` is `[gs:0] - 40`: the five values `rip`, `cs`, `rflags`, `rsp`, `ss`. Nothing below it lives: a kernel entry starts at the top of the stack and never continues an earlier one, and `resume` never returns. The top 176 bytes are where each entry from a program puts its frame, so the copy writes over a frame that `kernel_interrupt` already copied to the thread.
+- **The fault frame.** A fault of `iretq` comes at privilege 0, with no change of stack (no gate of the vectors 11, 12, 13 has a stack of its own). The processor pushes its frame below `rsp`, aligned on 16, over the part of the copy that the pops already read and below it. The thread table is not written. (Before this change, `resume` returned from the frame in the thread table, and such a push wrote over the thread table.)
+- **gs.** `resume` ran `swapgs` before the `iretq`: the gs base is the one of the program (the thread record, or what the program loaded), and the base of the processor record is in `MSR_KERNEL_GS_BASE`. The saved `cs` is the kernel's, so the test "did the interrupt come from a program" is false. `interrupt_common` therefore tests the saved `rip`: equal to `resume_return` (the label of the `iretq`), and the vector 11, 12 or 13 (segment not present, stack fault, general protection: the faults of `iretq`), it runs `swapgs`. At that one instruction no other instruction of the kernel runs with the gs of a program, and interrupts are off: the only other interrupts there are an NMI and a machine check, which come between two instructions (vector 2 or 18). They get no `swapgs`, the kernel stops the machine for them, and its report reads nothing through gs.
+- **The registers.** The general registers are those of the program (the pops ran); the stub saves them in the fault frame. The frame of the thread in the thread table is unchanged: the report uses it. The extended state of the thread is live in the registers, as at each return.
+- **The thread.** It is the current thread of the processor: `run` runs only for `cpu.current`.
+
+`kernel_interrupt` makes the same test first (`resume_return`, vector 11 to 13, from the kernel) and calls `return_refused_by_the_processor`: the stop of the program with the field "the processor refused the return" and the vector in the stop report, then `schedule`, which saves the extended state of the thread and ends it. No program can make this layer run today: the test program has no case for it.
+
+The cost: the copy of 176 bytes at each return (`rep movsq`), on a line of the stack that the entry wrote; `return_frame_prepare` is three stores, two compares and one mask. The coordinator measures it with `kerneltool measure` (kernel entries of `locks`).
+
+### 4. What stays
+
+- An NMI or a machine check between the `swapgs` of `resume` and its `iretq` stops the machine. The kernel uses no NMI.
+- The fault of `kernel_enter` between its `swapgs` and the switch of the stack cannot come: the instructions there touch only the processor record. An NMI there stops the machine, as above.
+
 ## How the systems depend on each other
 
 ```mermaid

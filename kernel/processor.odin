@@ -296,7 +296,11 @@ processor_setup :: proc "contextless" (cpu: ^Processor) {
 	msr_write(MSR_EFER, msr_read(MSR_EFER) | 1)
 	msr_write(MSR_STAR, 0x0010_0008 << 32)
 	msr_write(MSR_LSTAR, u64(uintptr(rawptr(kernel_enter))))
-	msr_write(MSR_SFMASK, 0x40700) // Clear the interrupt, direction, trap and user access flags.
+	// The flags of the kernel at a syscall: the flags of the program with
+	// these cleared: interrupt, direction, trap, user access, and nested
+	// task. A program can set nested task with popfq; with it set in the
+	// kernel, the iretq of resume would fault in the kernel.
+	msr_write(MSR_SFMASK, 0x44700)
 	// The kernel does not execute the memory of programs, and uses it only
 	// in user_copy, when the processor can refuse the rest (SMEP, SMAP).
 	CR4_NO_EXECUTE_PROGRAM :: 1 << 20

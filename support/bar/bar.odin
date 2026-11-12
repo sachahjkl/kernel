@@ -8,7 +8,7 @@ package bar
 import "support:mark"
 
 @(rodata)
-names := [?]string{"boot", "pages", "log", "console", "monitor", "plasma", "life", "paint", "fault", "temple", "rings", "threads", "workers", "rights", "origin", "budget", "limits", "processors", "flow", "crowd", "clock", "randomness", "flood", "tally", "manual", "frames", "disk", "notes", "imports", "net", "remote", "server", "inspect", "locks", "errors", "scheduler", "interface_elements", "vector_glyphs", "interface_font", "pointers", "settings", "tables", "interface_through_module", "address_space", "cryptography_vectors", "quic_echo", "extended_state"}
+names := [?]string{"boot", "pages", "log", "console", "monitor", "plasma", "life", "paint", "fault", "temple", "rings", "threads", "workers", "rights", "origin", "budget", "limits", "processors", "flow", "crowd", "clock", "randomness", "flood", "tally", "manual", "frames", "disk", "notes", "imports", "net", "remote", "server", "inspect", "locks", "errors", "scheduler", "interface_elements", "vector_glyphs", "interface_font", "pointers", "settings", "tables", "interface_through_module", "address_space", "cryptography_vectors", "quic_echo", "extended_state", "return_fault"}
 
 // The bar is on the grid of docs/DESIGN.md: 8 pixels.
 LABEL :: "programs" // The text of the button that opens the menu of the programs.

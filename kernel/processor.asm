@@ -149,14 +149,42 @@ page_flush:                      ; (address)
 ; them, so they stay live through the kernel. The scheduler saves them
 ; when the processor leaves the thread for another one (docs/ARCHITECTURE.md,
 ; "The extended state of the processor").
+; The frame on the stack, from rsp: the 15 registers, then at 15 * 8 the
+; vector, at 16 * 8 the error code, at 17 * 8 rip and at 18 * 8 cs.
+;
+; The gs base at an interrupt, by where it came from:
+; - from a program (cs & 3 != 0): the base of the program; swapgs gives the
+;   kernel its own.
+; - from the kernel, at any instruction but the iretq of resume: the base of
+;   the kernel already.
+; - from the kernel at the iretq of resume (resume_return): resume ran
+;   swapgs before it, so the base is the one of the program. The only
+;   interrupts there are a fault of the iretq itself (vector 11, 12 or 13:
+;   the processor refused the frame) and an NMI or a machine check, which
+;   come between two instructions (vector 2 or 18). A fault gets swapgs
+;   here, and kernel_interrupt makes it a fault of the thread
+;   (return_refused_by_the_processor). An NMI or a machine check does not:
+;   the kernel stops the machine for it, and its report reads nothing
+;   through gs.
 interrupt_common:
 	PUSH_REGISTERS
 	cmp byte [user_access_guard], 0
 	je .no_guard
 	clac                         ; The interrupted code could be in user_copy, or a program set the flag.
 .no_guard:
-	test byte [rsp + 15 * 8 + 24], 3 ; did the interrupt come from a program?
-	jz interrupt_call
+	test byte [rsp + 18 * 8], 3  ; did the interrupt come from a program?
+	jnz .from_program
+	lea rax, [rel resume_return] ; rax is on the stack: free here.
+	cmp [rsp + 17 * 8], rax
+	jne interrupt_call
+	mov rax, [rsp + 15 * 8]      ; the vector
+	cmp rax, 11
+	jb interrupt_call
+	cmp rax, 13
+	ja interrupt_call
+	swapgs                       ; A fault of the iretq of resume: the kernel's gs back.
+	jmp interrupt_call
+.from_program:
 	swapgs
 interrupt_from_program:
 interrupt_call:
@@ -185,12 +213,30 @@ kernel_enter:
 	PUSH_REGISTERS
 	jmp interrupt_from_program
 
+; resume returns to a program from a copy of its frame at the top of the
+; kernel stack of this processor, not from the frame of the thread in the
+; thread table: if the processor refuses the iretq, it pushes the frame of
+; its fault below rsp, on the stack where rsp is. From the frame of the
+; thread, that push would write over the thread table; from the top of the
+; kernel stack, it writes over the part of the copy that the pops already
+; read, and below it, where nothing lives: a kernel entry starts at the top
+; of the stack and never continues an earlier one. The top 22 * 8 bytes of
+; the stack are where each entry from a program put its frame.
+; The direction flag is clear in the kernel (syscall clears it through
+; MSR_SFMASK, each interrupt runs cld), so rep movsq goes up.
 global resume
 resume:                          ; (frame: ^Frame) -> !: run a program
-	mov rsp, rdi
-	swapgs
+	mov rsi, rdi                 ; the frame of the thread
+	mov rsp, [gs:abs 0]          ; the top of the kernel stack (gs: the kernel's)
+	sub rsp, 22 * 8
+	mov rdi, rsp
+	mov ecx, 22
+	rep movsq
+	swapgs                       ; From here to the iretq, gs is the program's.
 	POP_REGISTERS
-	add rsp, 16
+	add rsp, 16                  ; The vector and the error code.
+global resume_return
+resume_return:
 	iretq
 
 ; user_copy(destination, source, count): the one place where the kernel

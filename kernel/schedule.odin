@@ -445,6 +445,12 @@ schedule :: proc "contextless" () -> ! {
 // thread that continues after an entry kept them, and schedule restored a
 // thread that it took from a queue.
 run :: proc "contextless" (cpu: ^Processor, thread: ^Thread) -> ! {
+	// The one place before each return to a program: a frame that the
+	// processor would refuse stops the program here, as its own fault.
+	if refusal, value := return_frame_prepare(&thread.frame); refusal != .None {
+		program_return_refused(thread, refusal, value, 0)
+		schedule()
+	}
 	if cpu.preempt_from != 0 {
 		cpu.preempt_cycles += cycles_now() - cpu.preempt_from
 		cpu.interrupt_preemptions += 1
