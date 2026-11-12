@@ -63,10 +63,14 @@ Handle :: distinct u32 // 0 names no object.
 Right :: enum u32 {
 	Give    = 0, // Each kind: give a copy of the handle to another program.
 	Read    = 1, // Memory: map it. Program, Thread: read its state. Interrupt: read its count.
-	Write   = 2, // Memory: map it with Write. Log: write text on the log.
+	// Memory: map it with Write. Log: write text on the log. Thread: write its registers and its extended state
+	// while it is held (Thread_Control): full control of the code that its program runs.
+	Write   = 2,
 	Execute = 3, // Memory: map it with Execute.
-	Control = 4, // Program: map memory in it, give handles to it, start it, stop it. Thread: end it, hold it, read and write its registers (Thread_Control).
-	Inspect = 5, // Machine: read the reports.
+	Control = 4, // Program: map memory in it, give handles to it, start it, stop it. Thread: end it, make it the fault handler.
+	// Machine: read the reports. Thread: hold it and release it, and read its registers and its extended state
+	// (Thread_Control): what a sampling profiler needs, and no write.
+	Inspect = 5,
 	Devices = 6, // Machine: create device handles.
 	Stop    = 7, // Machine: stop the machine.
 	Spend   = 8, // Budget: create objects with it, and take a part of it for a new budget.
@@ -212,8 +216,9 @@ Operation :: enum u32 {
 	// The table also ends when its program ends, and when the last machine handle of its program with Events closes
 	// or is revoked: the table lives while the right that made it lives.
 	// The control of a thread (docs/ARCHITECTURE.md, "The control of a thread").
-	Thread_Control = 33, // (thread handle with Control or 0, thread number when the handle is 0, Thread_Control_Command,
-	// address, size) -> see Thread_Control_Command. With the handle 0, the number names a live thread of this program
+	Thread_Control = 33, // (thread handle or 0, thread number when the handle is 0, Thread_Control_Command, address,
+	// size) -> see Thread_Control_Command. The handle needs the rights of thread_control_rights: Inspect for each
+	// command, and Write too for a write. With the handle 0, the number names a live thread of this program
 	// (Thread_Record.number, Fault_Record.thread; Bad_State if none); a thread of another program needs a handle.
 	// Stop and Resume change the stop count of the thread: it runs only while the count is 0. The registers are read
 	// and written only while the thread is held: its stop count is above 0, or it waits for an answer of the fault
@@ -495,6 +500,13 @@ Thread_Control_Command :: enum u64 {
 	// another processor left it; a thread in a wait stays in it, and does
 	// not run when it ends. The calling thread itself stops after its kernel
 	// entry. At most THREAD_STOP_COUNT_LIMIT (Bad_State above).
+	// One case returns earlier: when the calling thread is itself held (it
+	// stopped itself earlier in the same entry, or another thread stopped
+	// it), the operation does not wait for a thread on another processor to
+	// leave it, so that two threads that stop each other do not wait for
+	// each other. That thread then leaves its processor at the interrupt
+	// that the stop sent, and a read of its registers gets Bad_State until
+	// it left.
 	Stop                 = 1,
 	// Takes 1 from the stop count -> the count. Bad_State at 0. At 0, a
 	// thread whose wait ended runs again.
@@ -518,6 +530,20 @@ Thread_Control_Command :: enum u64 {
 	Write_Extended_State = 6,
 }
 
+// thread_control_rights gives the rights that a thread handle needs for a
+// command of Thread_Control: Inspect for each command, and Write too for a
+// write. A write lets its holder choose the code that the program of the
+// thread runs, so it has its own right; a hold and a read do not, so a
+// profiler gets them with no write. A writer also reads the frame before it
+// writes it. Control, the right to end a thread, gives none of them.
+thread_control_rights :: proc "contextless" (command: Thread_Control_Command) -> Rights {
+	#partial switch command {
+	case .Write_Registers, .Write_Extended_State:
+		return {.Inspect, .Write}
+	}
+	return {.Inspect}
+}
+
 THREAD_STOP_COUNT_LIMIT :: 1 << 16
 
 // The general registers, the instruction address and the flags of a thread
@@ -532,10 +558,14 @@ Thread_Registers :: struct {
 	rflags: u64, // THREAD_FLAGS_REQUIRED set, and no bit outside THREAD_FLAGS_ALLOWED.
 	cs:     u64, // THREAD_CODE_SELECTOR: the one code selector of a program.
 	ss:     u64, // THREAD_STACK_SELECTOR: the one stack selector of a program.
-	// Read only, 1: the thread is held inside a kernel entry (a wait). At
-	// its return, rax is the time, as after each kernel entry (the line at
-	// the top of this file): a write of rax is lost; rcx and r11 hold what
-	// the syscall instruction left there.
+	// Read only, 1: the last entry of the thread into the kernel was a
+	// syscall that has not returned yet: the thread waits in it, or its
+	// processor left it after the operations of the entry and before the
+	// return (its time slice ended, or a stop held it). At that return, rax
+	// is the time, as after each kernel entry (the line at the top of this
+	// file): a write of rax is lost; rcx and r11 hold what the syscall
+	// instruction left there. 0: the thread left at an interrupt or a fault
+	// of its own code, and each register is its own.
 	in_kernel_entry: u64,
 	reserved:        u64, // Not read.
 }
@@ -1089,11 +1119,26 @@ Log_Record :: struct {
 
 // The stacks of the kernel. Each processor has one slot of addresses: a
 // guard page with no memory, the kernel stack, a guard page, the stack of
-// the double fault, and guard pages to the end of the slot.
+// the double fault, then the interrupt stacks of the debug exception, the
+// non-maskable interrupt and the machine check, each after a guard page,
+// and guard pages to the end of the slot.
 KERNEL_STACK_BASE :: 0xFFFF_FF00_0000_0000
 KERNEL_STACK_SLOT_PAGES :: 32
 KERNEL_STACK_PAGES :: 16 // From page 1 of the slot.
 KERNEL_FAULT_STACK_PAGES :: 4 // From page 2 + KERNEL_STACK_PAGES of the slot.
+// Each of the three other interrupt stacks. Each one holds only the frame
+// and the report of a fault of the kernel: a debug exception of a program
+// leaves it for the kernel stack at once.
+KERNEL_INTERRUPT_STACK_PAGES :: 2
+KERNEL_INTERRUPT_STACK_COUNT :: 3
+// The first page in the slot of an interrupt stack (0: debug, 1:
+// non-maskable interrupt, 2: machine check).
+kernel_interrupt_stack_first_page :: proc "contextless" (stack_index: u64) -> u64 {
+	return 2 + KERNEL_STACK_PAGES + KERNEL_FAULT_STACK_PAGES + 1 + stack_index * (KERNEL_INTERRUPT_STACK_PAGES + 1)
+}
+// The pages of the slot that hold a stack; each other page is a guard page.
+KERNEL_STACK_SLOT_STACK_PAGES :: KERNEL_STACK_PAGES + KERNEL_FAULT_STACK_PAGES + KERNEL_INTERRUPT_STACK_COUNT * KERNEL_INTERRUPT_STACK_PAGES
+#assert(1 + KERNEL_STACK_PAGES + 1 + KERNEL_FAULT_STACK_PAGES + KERNEL_INTERRUPT_STACK_COUNT * (1 + KERNEL_INTERRUPT_STACK_PAGES) < KERNEL_STACK_SLOT_PAGES)
 
 // A run of pages that a page table gives, with one protection.
 Mapping_Flag :: enum u64 {

@@ -92,7 +92,9 @@ Object_Kind :: op.Object_Kind
 // The rights of the handle of a new object, by kind.
 RIGHTS_MEMORY :: op.Rights{.Give, .Read, .Write, .Execute}
 RIGHTS_PROGRAM :: op.Rights{.Give, .Read, .Control}
-RIGHTS_THREAD :: op.Rights{.Give, .Read, .Control}
+// A thread: Control ends it; Inspect holds it and reads its registers;
+// Write writes them (op.thread_control_rights).
+RIGHTS_THREAD :: op.Rights{.Give, .Read, .Write, .Control, .Inspect}
 RIGHTS_PORTS :: op.Rights{.Give}
 RIGHTS_INTERRUPT :: op.Rights{.Give, .Read}
 RIGHTS_MACHINE :: op.Rights{.Give, .Inspect, .Devices, .Stop, .Physical, .Schedule, .Events}
@@ -200,6 +202,12 @@ Thread :: struct #align (64) {
 	fault_waits:   bool,
 	fault_serial:  u64, // The serial of that fault: Program.fault_serial when it came. Program lock.
 	fault_address: u64, // The address of the access of that fault. Program lock.
+	// The instruction address and the frame pointer of that fault: a
+	// write of Thread_Control changes the frame while the thread waits,
+	// and the stop report of the answer Stop names the fault, not the
+	// write. Program lock.
+	fault_instruction:   u64,
+	fault_frame_pointer: u64,
 	// The control of a thread (thread_control.odin). The stop count: the
 	// thread enters no run queue while it is above 0. Written under the
 	// run lock of home (atomic: kernel_interrupt reads it with no lock).
@@ -1677,8 +1685,8 @@ kernel_interrupt :: proc "c" (frame: ^Frame) {
 		fault_address = control_register_2_read()
 	}
 	// A fault of the iretq of resume: the processor refused the return to
-	// the current thread. The same test as in interrupt_common, which gave
-	// the kernel its gs back for this case only.
+	// the current thread. interrupt_common gave the kernel its gs back for
+	// each interrupt between the swapgs of resume and its iretq.
 	if !from_program && frame.rip == u64(uintptr(&resume_return)) && frame.vector >= 11 && frame.vector <= 13 {
 		return_refused_by_the_processor(frame)
 	}
@@ -1715,6 +1723,19 @@ kernel_interrupt :: proc "c" (frame: ^Frame) {
 		thread.frame = frame^
 	}
 	switch {
+	case frame.vector == VECTOR_DEBUG_FRAME_LOST:
+		// The program ran int1 with a held debug trap, and the second trap
+		// took the place of the frame of the first on their one stack: the
+		// kernel does not know where the thread was, so it cannot return to
+		// it, and no fault handler could resume it. The program stops with
+		// the stop code of a debug exception and the instruction address 0;
+		// its general registers are its own, so the stack trace starts from
+		// its frame pointer.
+		frame.vector = VECTOR_DEBUG
+		program_fault(thread.program, frame, 0)
+		if event_wanted(cpu, OBSERVED_FAULT, .Fault, thread.program) {
+			event_record(cpu, .Fault, thread.program, thread.number, frame.vector, 0, u64(op.Event_Fault_Outcome.Stopped))
+		}
 	case frame.vector == VECTOR_KERNEL_ENTER:
 		cpu.entries += 1
 		enter(cpu, cpu.current)

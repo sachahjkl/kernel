@@ -103,8 +103,15 @@ part :: proc "contextless" (text: ^Text, address: u64) {
 	case address >= u64(info.KERNEL_BASE):
 		put(text, "kernel module")
 	case address >= op.KERNEL_STACK_BASE:
-		offset := (address - op.KERNEL_STACK_BASE) % slot_size
-		put(text, offset == info.PAGE_SIZE ? "stack of processor " : "fault stack of processor ")
+		page := (address - op.KERNEL_STACK_BASE) % slot_size / info.PAGE_SIZE
+		switch page {
+		case 1:
+			put(text, "stack of processor ")
+		case 2 + op.KERNEL_STACK_PAGES:
+			put(text, "double fault stack of processor ")
+		case:
+			put(text, "interrupt stack of processor ")
+		}
 		put_number(text, (address - op.KERNEL_STACK_BASE) / slot_size)
 	case address >= u64(info.DIRECT_MAP_BASE):
 		put(text, "direct map")

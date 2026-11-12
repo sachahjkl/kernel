@@ -306,7 +306,7 @@ processors_start :: proc "contextless" (boot: ^info.Boot_Info) {
 			}
 		}
 		if started && intrinsics.atomic_load(&cpu.extended_state_refused) {
-			log("kernel: the processor ", u64(id), " cannot save the extended state that the first processor saves: it stays stopped")
+			log("kernel: the processor ", u64(id), " cannot save the extended state that the first processor saves, or takes other bits of MXCSR: it stays stopped")
 			started = false
 		} else if !started {
 			log("kernel: the processor ", u64(id), " did not start")
@@ -331,7 +331,7 @@ processor_entry :: proc "c" (cpu: ^Processor) -> ! {
 	// extended state sets it when this processor can save what the first
 	// processor saves.
 	control_register_4_write(first_cr4 &~ CR4_OSXSAVE)
-	if !extended_state_other_setup() {
+	if !extended_state_other_setup(cpu) {
 		// The first processor sees started_count move, reads the flag, logs
 		// it, and resets this processor.
 		intrinsics.atomic_store(&cpu.extended_state_refused, true)

@@ -20,6 +20,7 @@ SELECTOR_USER_CODE :: 0x20 | 3
 SELECTOR_TASK :: 0x28
 USER_FLAGS :: 0x202 // Interrupts on.
 
+VECTOR_DEBUG :: 1
 VECTOR_NON_MASKABLE_INTERRUPT :: 2
 VECTOR_DOUBLE_FAULT :: 8
 VECTOR_PAGE_FAULT :: 14
@@ -31,6 +32,17 @@ VECTOR_SYNC :: 50 // Another processor waits for this one: see processor_sync.
 VECTOR_SPURIOUS :: 63
 VECTOR_MESSAGE_BASE :: 64 // The message interrupts (operation.Device_Kind.Message): vectors 64 to 79.
 VECTOR_KERNEL_ENTER :: 128
+// Not a vector of the processor: interrupt_common writes it in the frame of
+// a program whose debug frame a second debug trap took the place of, after
+// int1 with a held trap. The frame has no instruction address and no stack
+// address: the program stops (kernel/processor.asm, interrupt_common).
+VECTOR_DEBUG_FRAME_LOST :: 255
+// The interrupt stacks of the task state, from 1 (0 in a gate: no stack of
+// its own).
+INTERRUPT_STACK_DOUBLE_FAULT :: 1
+INTERRUPT_STACK_DEBUG :: 2
+INTERRUPT_STACK_NON_MASKABLE_INTERRUPT :: 3
+INTERRUPT_STACK_MACHINE_CHECK :: 4
 INTERRUPT_LINES :: 16
 // An interrupt object: a line of the 8259 (0 to 15), or a message interrupt
 // (16 and after).
@@ -198,6 +210,12 @@ Processor :: struct {
 	// writes: copied from the caller once, checked here, then copied to the
 	// thread, so the caller cannot change it between the check and the use.
 	extended_state_written: Extended_State_Area,
+	// The part and the value that a write of Thread_Control on this
+	// processor refused: the error record of the operation takes them from
+	// here, not from a second read of the memory of the caller, which the
+	// caller can change between the two reads.
+	thread_write_refusal:       op.Thread_Write_Refusal,
+	thread_write_refused_value: u64,
 	segments:      [7]u64,
 	task_state:    Task_State,
 }
@@ -274,7 +292,7 @@ processor_create :: proc "contextless" (index: u32, apic_id: u32) -> ^Processor 
 	if address == 0 {
 		return nil
 	}
-	stack_top, fault_top, ok := stacks_create(index)
+	tops, ok := stacks_create(index)
 	if !ok {
 		frames_free(address, (size_of(Processor) + PAGE_SIZE - 1) / PAGE_SIZE)
 		return nil
@@ -283,9 +301,19 @@ processor_create :: proc "contextless" (index: u32, apic_id: u32) -> ^Processor 
 	cpu.self = cpu
 	cpu.index = index
 	cpu.apic_id = apic_id
-	cpu.stack_top = stack_top
-	// A double fault arrives on its own stack: the kernel stack can be full.
-	cpu.task_state.interrupts[0] = fault_top
+	cpu.stack_top = tops.kernel
+	// The interrupt stacks of the task state (the gates name them in
+	// processor_start). A double fault arrives on its own stack: the kernel
+	// stack can be full. A debug exception, a non-maskable interrupt and a
+	// machine check can arrive in the first instructions of the entry of
+	// syscall, where the stack pointer is still the one of the program: on
+	// their own stacks, the processor never pushes a frame where a program
+	// chose (docs/ARCHITECTURE.md, "The windows of the entry and of the
+	// return").
+	cpu.task_state.interrupts[INTERRUPT_STACK_DOUBLE_FAULT - 1] = tops.double_fault
+	cpu.task_state.interrupts[INTERRUPT_STACK_DEBUG - 1] = tops.interrupts[0]
+	cpu.task_state.interrupts[INTERRUPT_STACK_NON_MASKABLE_INTERRUPT - 1] = tops.interrupts[1]
+	cpu.task_state.interrupts[INTERRUPT_STACK_MACHINE_CHECK - 1] = tops.interrupts[2]
 	cpu.table = kernel_table
 	cpu.task_state.stack_0 = cpu.stack_top
 	cpu.task_state.port_offset = u16(offset_of(Task_State, ports))
@@ -354,6 +382,12 @@ CR4_KEPT :: u64(CR4_PHYSICAL_ADDRESS_EXTENSION | CR4_OSFXSR | CR4_OSXMMEXCPT | C
 CR4_FROM_FEATURES :: u64(CR4_MACHINE_CHECK | CR4_USER_INSTRUCTION_PREVENTION | CR4_NO_EXECUTE_PROGRAM | CR4_GUARD_PROGRAM)
 #assert(CR4_FROM_FEATURES == 0x30_0840)
 #assert(CR4_KEPT & CR4_FROM_FEATURES == 0)
+// The instructions that let a program write its own fs and gs bases. Off:
+// interrupt_common (kernel/processor.asm) tells the gs base of the kernel
+// from the base of a program by its sign, and with them on a program could
+// set a base in the kernel half.
+CR4_FS_GS_BASE :: 1 << 16
+#assert((CR4_KEPT | CR4_FROM_FEATURES) & CR4_FS_GS_BASE == 0)
 
 // DR7 with no breakpoint on (bit 10 is always 1), and DR6 with no status
 // (its reserved bits are 1).
@@ -369,10 +403,14 @@ processor_setup :: proc "contextless" (cpu: ^Processor) {
 	descriptor := Table_Descriptor{size_of(cpu.segments) - 1, u64(uintptr(&cpu.segments))}
 	gdt_load(&descriptor)
 	task_register_load(SELECTOR_TASK)
-	descriptor = {size_of(gates) - 1, u64(uintptr(&gates))}
-	interrupt_table_load(&descriptor)
+	// The gs bases before the interrupt table: the load of the segment
+	// table cleared the gs base, and an NMI that came after the load of the
+	// table with that base would take, by the sign rule of interrupt_common,
+	// the value that the firmware left in MSR_KERNEL_GS_BASE.
 	model_specific_register_write(MSR_GS_BASE, u64(uintptr(cpu)))
 	model_specific_register_write(MSR_KERNEL_GS_BASE, 0)
+	descriptor = {size_of(gates) - 1, u64(uintptr(&gates))}
+	interrupt_table_load(&descriptor)
 
 	// The syscall instruction.
 	MSR_EFER :: 0xC000_0080
@@ -416,9 +454,9 @@ processor_setup :: proc "contextless" (cpu: ^Processor) {
 		}
 	}
 	control_register_4_write(cr4)
-	// No breakpoint that the firmware set stays on: a debug exception in
-	// the kernel stops the machine, and its window before the stack of the
-	// kernel would run on the stack of a program.
+	// No breakpoint that the firmware set stays on: then each debug
+	// exception in the kernel is a trap of a program that came late, which
+	// interrupt_common drops.
 	debug_register_7_write(DR7_NO_BREAKPOINT)
 	debug_register_6_write(DR6_CLEAR)
 	apic_setup(cpu)
@@ -435,7 +473,13 @@ processor_start :: proc "contextless" () {
 			offset_high = u32(stub >> 32),
 		}
 	}
-	gates[8].stack = 1 // The double fault: stack 1 of the task state.
+	// The vectors with a stack of their own: the number of an interrupt
+	// stack of the task state (processor_create gives each processor its
+	// stacks).
+	gates[VECTOR_DOUBLE_FAULT].stack = INTERRUPT_STACK_DOUBLE_FAULT
+	gates[VECTOR_DEBUG].stack = INTERRUPT_STACK_DEBUG
+	gates[VECTOR_NON_MASKABLE_INTERRUPT].stack = INTERRUPT_STACK_NON_MASKABLE_INTERRUPT
+	gates[VECTOR_MACHINE_CHECK].stack = INTERRUPT_STACK_MACHINE_CHECK
 	// int3 of a program reaches its gate only with the privilege level 3 in
 	// the gate; with 0 the processor gives a protection fault in its place,
 	// and a fault handler cannot tell a breakpoint. Every other gate keeps

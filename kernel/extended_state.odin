@@ -155,12 +155,17 @@ extended_state_first_setup :: proc "contextless" () {
 
 // extended_state_other_setup sets on another processor the control
 // registers that the first processor chose. False: this processor cannot
-// save the same components in the same form, and must not run threads.
-extended_state_other_setup :: proc "contextless" () -> bool {
+// save the same components in the same form, or takes other bits of MXCSR,
+// and must not run threads. A write of Thread_Control is checked against
+// the mask of the first processor, and the thread can be restored on any
+// processor: a processor that refuses a bit that the first one takes would
+// fault in the kernel at that restore. cpu is the record of this processor:
+// its buffer of the extended state holds no thread yet.
+extended_state_other_setup :: proc "contextless" (cpu: ^Processor) -> bool {
 	cr4 := control_register_4_read() | CR4_OSFXSR | CR4_OSXMMEXCPT
 	if extended_state_form == .Fxsave {
 		control_register_4_write(cr4 &~ CR4_OSXSAVE)
-		return true
+		return extended_state_mxcsr_mask_measure(&cpu.extended_state_written) == extended_state_mxcsr_mask
 	}
 	with_xsave, supported := extended_state_supported()
 	if !with_xsave || !(extended_state_components <= supported) {
@@ -172,7 +177,7 @@ extended_state_other_setup :: proc "contextless" () -> bool {
 	control_register_4_write(cr4 | CR4_OSXSAVE)
 	extended_control_register_write(0, transmute(u64)extended_state_components)
 	_, size, _, _ := intrinsics.x86_cpuid(0xD, 0)
-	return u64(size) == extended_state_size
+	return u64(size) == extended_state_size && extended_state_mxcsr_mask_measure(&cpu.extended_state_written) == extended_state_mxcsr_mask
 }
 
 // extended_state_start writes the start state of a new thread: no register
@@ -247,11 +252,17 @@ extended_state_prove :: proc "contextless" () {
 		machine_stop(1)
 	}
 
-	// fxsave writes the MXCSR mask at each save, also on a processor where
-	// the threads use xsaveopt, which can skip it.
-	extended_state_save(second, .Fxsave)
-	mask := (^u32)(&second.bytes[MXCSR_MASK_OFFSET])^
-	extended_state_mxcsr_mask = mask == 0 ? MXCSR_MASK_DEFAULT : mask
+	extended_state_mxcsr_mask = extended_state_mxcsr_mask_measure(second)
+}
+
+// extended_state_mxcsr_mask_measure gives the bits of MXCSR that the
+// processor that runs it takes. fxsave writes the mask at each save, also
+// on a processor where the threads use xsaveopt, which can skip it. The
+// area is any area of the processor that holds no thread.
+extended_state_mxcsr_mask_measure :: proc "contextless" (area: ^Extended_State_Area) -> u32 {
+	extended_state_save(area, .Fxsave)
+	mask := (^u32)(&area.bytes[MXCSR_MASK_OFFSET])^
+	return mask == 0 ? MXCSR_MASK_DEFAULT : mask
 }
 
 // extended_state_write_refusal says what a write of Thread_Control refuses
