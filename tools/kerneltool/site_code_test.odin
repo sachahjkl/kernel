@@ -170,9 +170,6 @@ site_style_sheet_polish :: proc(t: ^testing.T) {
 	expect := [?]string {
 		"color-scheme: dark light;",
 		"scrollbar-gutter: stable;",
-		"scrollbar-color: var(--dim) var(--track); scrollbar-width: thin;",
-		"@supports not (scrollbar-color: auto)",
-		"::-webkit-scrollbar-thumb:hover { background: var(--line); }",
 		"overscroll-behavior: contain;",
 		"::selection { background: var(--selection); color: var(--selection-text); }",
 		"--selection:",
@@ -194,9 +191,9 @@ site_style_sheet_polish :: proc(t: ^testing.T) {
 		"touch-action: manipulation;",
 		"text-size-adjust: 100%;",
 		"image-rendering: pixelated;",
-		".type-card::backdrop",
+		".type-card::backdrop, .declaration-card::backdrop",
 		"@media (forced-colors: active)",
-		".type-cards { display: none; }",
+		".type-cards, .declaration-cards { display: none; }",
 		".c-k { color:",
 		".c-c { color:",
 		"pre .type-reference { color:",
@@ -219,4 +216,112 @@ site_style_sheet_polish :: proc(t: ^testing.T) {
 	}
 	// A jump to an anchor goes there at once: the page never scrolls by itself.
 	testing.expect_value(t, strings.count(sheet, "scroll-behavior: smooth"), 0)
+}
+
+// The scroll bars: the parts of WebKit and Chromium with a button at each
+// end, a track, a thumb with its grip and its colors with the pointer over
+// it; the two standard properties only for an engine with no such parts,
+// because Chromium ignores the parts of an element that has them. Each
+// triangle and each grip is a data address in the colors of its form; the
+// rules of the scroll bars hold no color of their own; each border of a
+// thumb and each triangle keeps the contrast of a graphic.
+@(test)
+site_style_sheet_scroll_bars :: proc(t: ^testing.T) {
+	sheet := site_style_sheet("")
+	expect := [?]string {
+		"@supports selector(::-webkit-scrollbar) {",
+		"@supports not selector(::-webkit-scrollbar) {",
+		"::-webkit-scrollbar { width: 16px; height: 16px;",
+		"::-webkit-scrollbar-track:vertical { border-left: 1px solid var(--scroll-edge); }",
+		"::-webkit-scrollbar-thumb { background: var(--scroll-thumb) var(--scroll-grip-vertical) no-repeat center; border: 1px solid var(--scroll-thumb-edge); border-radius: 0; }",
+		"::-webkit-scrollbar-thumb:hover, ::-webkit-scrollbar-thumb:active {",
+		"::-webkit-scrollbar-button:single-button {",
+		"::-webkit-scrollbar-button:single-button:vertical:decrement { background-image: var(--scroll-arrow-up); }",
+		"::-webkit-scrollbar-button:single-button:vertical:increment { background-image: var(--scroll-arrow-down); }",
+		"::-webkit-scrollbar-button:single-button:horizontal:decrement { background-image: var(--scroll-arrow-left); }",
+		"::-webkit-scrollbar-button:single-button:horizontal:increment { background-image: var(--scroll-arrow-right); }",
+		"::-webkit-scrollbar-corner {",
+		"scrollbar-color: var(--scroll-thumb-edge) var(--scroll-track); scrollbar-width: auto;",
+	}
+	for part in expect {
+		testing.expectf(t, strings.contains(sheet, part), "the style sheet has no %q", part)
+	}
+	// The standard properties are only inside the test of the engines with
+	// no parts of WebKit: written elsewhere, Chromium would drop the parts.
+	standard := strings.index(sheet, "scrollbar-color:")
+	no_parts := strings.index(sheet, "@supports not selector(::-webkit-scrollbar) {")
+	testing.expect(t, standard > no_parts && no_parts >= 0, "scrollbar-color is outside the test of the engines with no parts of WebKit")
+	testing.expect_value(t, strings.count(sheet, "scrollbar-color:"), 1)
+	testing.expect_value(t, strings.count(sheet, "scrollbar-width:"), 1)
+	// The rules of the scroll bars name no color: the colors come from the
+	// variables, which the table of colors writes.
+	testing.expect(t, !strings.contains(SITE_SCROLL_RULES, "#") && !strings.contains(SITE_SCROLL_RULES, "rgb") && !strings.contains(SITE_SCROLL_RULES, "data:"), "the rules of the scroll bars hold a color of their own")
+	// The variables of each form, and each data address well formed, in
+	// the colors of its form only.
+	for is_light in ([]bool{false, true}) {
+		colors := site_scroll_colors(is_light)
+		b := strings.builder_make(context.temp_allocator)
+		site_scroll_variables(&b, is_light)
+		variables := strings.to_string(b)
+		testing.expectf(t, strings.contains(sheet, variables), "the style sheet has not the variables of the scroll bars (light form: %v)", is_light)
+		allowed := []graphics.Color{colors.arrow, colors.arrow_hover, colors.grip, colors.grip_hover}
+		addresses := 0
+		rest := variables
+		for {
+			start := strings.index(rest, "url(\"")
+			if start < 0 {
+				break
+			}
+			rest = rest[start + len("url(\""):]
+			end := strings.index(rest, "\")")
+			testing.expect(t, end > 0, "a data address has no end")
+			if end <= 0 {
+				break
+			}
+			address := rest[:end]
+			addresses += 1
+			testing.expectf(t, strings.has_prefix(address, "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'") && strings.has_suffix(address, "%3C/svg%3E"), "a data address of the scroll bars is not an SVG picture: %s", address)
+			testing.expectf(t, !strings.contains_any(address, "<>\"#\n"), "a data address of the scroll bars holds a character that ends it: %s", address)
+			// Each color inside the address is a color of the form.
+			colors_inside := 0
+			inner := address
+			for {
+				mark := strings.index(inner, "%23")
+				if mark < 0 {
+					break
+				}
+				inner = inner[mark + 3:]
+				testing.expect(t, len(inner) >= 6)
+				if len(inner) < 6 {
+					break
+				}
+				found := false
+				for color in allowed {
+					found ||= site_color(color)[1:] == inner[:6]
+				}
+				testing.expectf(t, found, "the color %s of a data address is not a color of the scroll bars (light form: %v)", inner[:6], is_light)
+				colors_inside += 1
+			}
+			testing.expectf(t, colors_inside == 1, "a data address of the scroll bars has %d colors", colors_inside)
+			rest = rest[end:]
+		}
+		// Four triangles and two grips, each at rest and with the pointer.
+		testing.expect_value(t, addresses, 12)
+		// A thumb is a graphic: its border at rest and with the pointer over
+		// it keeps 3 to 1 on the track; a triangle on its button too.
+		for edge in ([]graphics.Color{colors.thumb_edge, colors.thumb_hover_edge}) {
+			ratio := site_contrast_ratio(edge, colors.track)
+			testing.expectf(t, ratio >= SITE_VALUE_GRAPHIC_CONTRAST_LEAST, "the border of a thumb %06x on the track %06x (light form: %v): %.2f; at least %.1f", u32(edge), u32(colors.track), is_light, ratio, SITE_VALUE_GRAPHIC_CONTRAST_LEAST)
+		}
+		for arrow in ([]graphics.Color{colors.arrow, colors.arrow_hover}) {
+			ratio := site_contrast_ratio(arrow, colors.button)
+			testing.expectf(t, ratio >= SITE_VALUE_GRAPHIC_CONTRAST_LEAST, "a triangle %06x on its button %06x (light form: %v): %.2f", u32(arrow), u32(colors.button), is_light, ratio)
+		}
+		testing.expectf(t, site_contrast_ratio(colors.grip_hover, colors.thumb_hover) >= SITE_VALUE_GRAPHIC_CONTRAST_LEAST, "the grip on a thumb under the pointer (light form: %v): %.2f", is_light, site_contrast_ratio(colors.grip_hover, colors.thumb_hover))
+	}
+	// The triangles are four rows of pixels in the middle of a square of 16.
+	up := site_scroll_arrow_svg(.Up, graphics.COLOR_WHITE)
+	testing.expect(t, strings.contains(up, "<rect x=\"7\" y=\"6\" width=\"2\" height=\"1\"/><rect x=\"6\" y=\"7\" width=\"4\" height=\"1\"/><rect x=\"5\" y=\"8\" width=\"6\" height=\"1\"/><rect x=\"4\" y=\"9\" width=\"8\" height=\"1\"/>"), up)
+	right := site_scroll_arrow_svg(.Right, graphics.COLOR_WHITE)
+	testing.expect(t, strings.contains(right, "<rect x=\"9\" y=\"7\" width=\"1\" height=\"2\"/>") && strings.contains(right, "<rect x=\"6\" y=\"4\" width=\"1\" height=\"8\"/>"), right)
 }

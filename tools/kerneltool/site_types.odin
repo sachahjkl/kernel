@@ -1044,10 +1044,10 @@ site_type_cards_html :: proc(site: ^Site, from_page, body: string) -> string {
 }
 
 // site_type_cards_problem gives the fault of the cards of a written page,
-// or "": each popovertarget and each aria-describedby names an id of the
-// page, and no two cards have one id.
+// or "": each popovertarget, each card of a declaration and each
+// aria-describedby names an id of the page, and no two cards have one id.
 site_type_cards_problem :: proc(html: string, page_ids: map[string]bool) -> string {
-	for attribute in ([]string{"popovertarget", "aria-describedby"}) {
+	for attribute in ([]string{"popovertarget", "data-declaration-card", "aria-describedby"}) {
 		for value in site_attribute_values(html, strings.concatenate({attribute, "=\""}, context.temp_allocator)) {
 			if value not_in page_ids {
 				return fmt.tprintf("the attribute %s names \"%s\", which is not an id of the page", attribute, value)
@@ -1056,11 +1056,11 @@ site_type_cards_problem :: proc(html: string, page_ids: map[string]bool) -> stri
 	}
 	cards := make(map[string]bool, context.temp_allocator)
 	for id in site_attribute_values(html, "id=\"") {
-		if !strings.has_prefix(id, SITE_TYPE_CARD_PREFIX) {
+		if !strings.has_prefix(id, SITE_TYPE_CARD_PREFIX) && !strings.has_prefix(id, SITE_DECLARATION_CARD_PREFIX) {
 			continue
 		}
 		if id in cards {
-			return fmt.tprintf("two elements have the id \"%s\"; a page has one card for each type", id)
+			return fmt.tprintf("two elements have the id \"%s\"; a page has one card for each type and each declaration", id)
 		}
 		cards[id] = true
 	}

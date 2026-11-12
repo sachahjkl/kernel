@@ -196,17 +196,17 @@ chart_test_site :: proc() -> (site: Site, entries: []Site_Search_Entry) {
 	return site, list[:]
 }
 
-// The chart of what the search finds: one row for each kind with entries,
-// the largest count first and the tie order for two equal counts; the
-// largest bar at its whole length, the others in proportion, each with the
-// least length; a link for a kind whose page exists, none for the others;
-// the name for one entry and for more; the total, the sum of the rows; the
-// data attributes that the script reads; no style attribute.
+// The chart of what the search finds: one chip and one segment for each
+// kind with entries, in the tie order of the kinds; the segments side by
+// side over the whole bar, each in the color of its kind; a link for a kind
+// whose page exists, none for the others; the name of the kind for many
+// entries at every count; the total, the sum of the counts; the data
+// attributes that the script reads; no style attribute.
 @(test)
 site_search_chart_of_a_small_index :: proc(t: ^testing.T) {
 	site, entries := chart_test_site()
 	rows := site_search_chart_rows(&site, entries)
-	expected_kinds := [?]Site_Search_Kind{.Term, .Page, .Export, .News, .Release}
+	expected_kinds := [?]Site_Search_Kind{.Page, .Export, .Term, .News, .Release}
 	testing.expect_value(t, len(rows), len(expected_kinds))
 	sum := 0
 	for row, place in rows {
@@ -219,64 +219,115 @@ site_search_chart_of_a_small_index :: proc(t: ^testing.T) {
 	if len(rows) != len(expected_kinds) {
 		return
 	}
-	testing.expect_value(t, rows[0].count, 3)
-	testing.expect_value(t, rows[0].page, site_page_file(SITE_GLOSSARY_FOLDER))
+	testing.expect_value(t, rows[0].count, 2)
+	testing.expect_value(t, rows[0].page, "")
 	testing.expect_value(t, rows[1].page, "")
-	testing.expect_value(t, rows[2].page, "")
+	testing.expect_value(t, rows[2].page, site_page_file(SITE_GLOSSARY_FOLDER))
 	testing.expect_value(t, rows[3].page, site_section_page(.News))
 	testing.expect_value(t, rows[4].page, "")
 
-	testing.expect_value(t, site_search_chart_length(3, 3), "100.0%")
-	testing.expect_value(t, site_search_chart_length(2, 3), "66.6%")
-	testing.expect_value(t, site_search_chart_length(1, 3), "33.3%")
-	testing.expect_value(t, site_search_chart_length(1, 1000), "0.1%")
-	testing.expect_value(t, site_search_chart_length(0, 0), "0.0%")
+	testing.expect_value(t, site_search_chart_percent(1000), "100.0%")
+	testing.expect_value(t, site_search_chart_percent(746), "74.6%")
+	testing.expect_value(t, site_search_chart_percent(8), "0.8%")
+	testing.expect_value(t, site_search_chart_percent(0), "0.0%")
 
 	path := site_section_page(.Docs)
 	b := strings.builder_make(context.temp_allocator)
 	site_search_chart(&b, &site, path, rows)
 	html := strings.to_string(b)
+	// The counts 2 1 3 1 1 over 8 entries: the least share is 8 of 1000 for
+	// each, and the rest, 960, in proportion, rounded down; the last
+	// segment takes what the rounding left.
+	segments := site_search_chart_segments([]int{2, 1, 3, 1, 1})
+	expected_segments := [?]Site_Search_Chart_Segment{{0, 248}, {248, 128}, {376, 368}, {744, 128}, {872, 128}}
+	for segment, index in segments {
+		testing.expectf(t, segment == expected_segments[index], "the segment %d is %v, not %v", index, segment, expected_segments[index])
+	}
+	for row, index in rows {
+		value_name := site_value_kinds[site_search_kinds[row.kind].value_kind].name
+		segment := fmt.tprintf("<rect class=\"search-chart-segment value-%s\" data-kind=\"%d\" x=\"%s\" width=\"%s\" height=\"100%%\"/>", value_name, int(row.kind), site_search_chart_percent(segments[index].start), site_search_chart_percent(segments[index].width))
+		testing.expectf(t, strings.contains(html, segment), "the chart has not the segment %s:\n%s", segment, html)
+	}
 	row_start :: proc(kind: Site_Search_Kind, count: int) -> string {
-		return fmt.tprintf("<li class=\"search-chart-row\" data-kind=\"%d\" data-count=\"%d\" data-singular=\"%s\" data-plural=\"%s\">", int(kind), count, site_search_kinds[kind].name, site_search_kind_words(kind, 2))
+		return fmt.tprintf("<li class=\"search-chart-row\" data-kind=\"%d\" data-count=\"%d\" data-plural=\"%s\">", int(kind), count, site_search_kind_words(kind, 2))
 	}
 	glossary_link := site_page_link(&site, path, site_page_file(SITE_GLOSSARY_FOLDER))
 	news_link := site_page_link(&site, path, site_section_page(.News))
 	expected_rows := [?]string {
-		strings.concatenate({row_start(.Term, 3), "<a class=\"docs-row search-chart-target\" href=\"", glossary_link, "\"><span class=\"docs-row-lead value-icon value-term\" aria-hidden=\"true\"></span><span class=\"docs-row-main\"><span class=\"docs-row-name search-chart-name\">terms</span><svg class=\"docs-row-bar search-chart-bar value-term\" aria-hidden=\"true\" focusable=\"false\"><rect class=\"search-chart-length\" width=\"100.0%\" height=\"100%\"/><rect class=\"search-chart-least\" width=\"4\" height=\"100%\"/></svg>"}, context.temp_allocator),
-		strings.concatenate({row_start(.Page, 2), "<span class=\"docs-row search-chart-target\"><span class=\"docs-row-lead value-icon value-file\" aria-hidden=\"true\"></span><span class=\"docs-row-main\"><span class=\"docs-row-name search-chart-name\">pages</span><svg class=\"docs-row-bar search-chart-bar value-file\" aria-hidden=\"true\" focusable=\"false\"><rect class=\"search-chart-length\" width=\"66.6%\""}, context.temp_allocator),
-		strings.concatenate({row_start(.Export, 1), "<span class=\"docs-row search-chart-target\"><span class=\"docs-row-lead value-icon value-operation\" aria-hidden=\"true\"></span><span class=\"docs-row-main\"><span class=\"docs-row-name search-chart-name\">export</span>"}, context.temp_allocator),
-		strings.concatenate({row_start(.News, 1), "<a class=\"docs-row search-chart-target\" href=\"", news_link, "\"><span class=\"docs-row-lead value-icon value-time\" aria-hidden=\"true\"></span><span class=\"docs-row-main\"><span class=\"docs-row-name search-chart-name\">news entry</span><svg class=\"docs-row-bar search-chart-bar value-time\" aria-hidden=\"true\" focusable=\"false\"><rect class=\"search-chart-length\" width=\"33.3%\""}, context.temp_allocator),
-		strings.concatenate({row_start(.Release, 1), "<span class=\"docs-row search-chart-target\">"}, context.temp_allocator),
+		strings.concatenate({row_start(.Page, 2), "<span class=\"search-chart-target\"><span class=\"search-chart-icon value-icon value-file\" aria-hidden=\"true\"></span><span class=\"search-chart-name\">pages</span><code class=\"value value-number search-chart-count\">2</code></span></li>"}, context.temp_allocator),
+		// The name of a chip is the name for many entries, also for one.
+		strings.concatenate({row_start(.Export, 1), "<span class=\"search-chart-target\"><span class=\"search-chart-icon value-icon value-operation\" aria-hidden=\"true\"></span><span class=\"search-chart-name\">exports</span>"}, context.temp_allocator),
+		strings.concatenate({row_start(.Term, 3), "<a class=\"search-chart-target\" href=\"", glossary_link, "\"><span class=\"search-chart-icon value-icon value-term\" aria-hidden=\"true\"></span><span class=\"search-chart-name\">terms</span><code class=\"value value-number search-chart-count\">3</code></a></li>"}, context.temp_allocator),
+		strings.concatenate({row_start(.News, 1), "<a class=\"search-chart-target\" href=\"", news_link, "\"><span class=\"search-chart-icon value-icon value-time\" aria-hidden=\"true\"></span><span class=\"search-chart-name\">news entries</span>"}, context.temp_allocator),
+		strings.concatenate({row_start(.Release, 1), "<span class=\"search-chart-target\">"}, context.temp_allocator),
 	}
 	last_place := -1
 	for expected in expected_rows {
 		place := strings.index(html, expected)
-		testing.expectf(t, place > last_place, "the chart has not this row after the row before it: %s\n%s", expected, html)
+		testing.expectf(t, place > last_place, "the chart has not this chip after the chip before it: %s\n%s", expected, html)
 		last_place = max(last_place, place)
 	}
-	testing.expectf(t, !strings.contains(html, fmt.tprintf("data-kind=\"%d\"", int(Site_Search_Kind.Property))), "a kind with no entry has a row")
+	testing.expectf(t, !strings.contains(html, fmt.tprintf("data-kind=\"%d\"", int(Site_Search_Kind.Property))), "a kind with no entry has a chip")
 	testing.expect_value(t, strings.count(html, "<li "), len(rows))
-	testing.expect_value(t, strings.count(html, "<rect class=\"search-chart-least\" width=\"4\""), len(rows))
-	testing.expect_value(t, strings.count(html, "width=\"100.0%\""), 1)
-	// The total: a number value, the sum of the rows.
-	testing.expect(t, strings.contains(html, fmt.tprintf("<code class=\"value value-number\">%d</code> <span id=\"search-chart-words\">entries in the index</span>", sum)), html)
+	testing.expect_value(t, strings.count(html, "<rect "), len(rows))
+	// The bar is one SVG before the chips, which a screen reader skips.
+	bar := strings.index(html, "<svg class=\"search-chart-bar\" id=\"search-chart-bar\" aria-hidden=\"true\" focusable=\"false\">")
+	chips := strings.index(html, "<ul class=\"search-chart-rows\" id=\"search-chart\">")
+	testing.expectf(t, bar >= 0 && chips > bar, "the bar at %d, the chips at %d", bar, chips)
+	// The total: a number value, the sum of the counts.
+	testing.expect(t, strings.contains(html, fmt.tprintf("<code class=\"value value-number\">%d</code> <span id=\"search-chart-words\">entries</span>", sum)), html)
 	testing.expect(t, strings.contains(html, "<span id=\"search-chart-matched\" hidden><code class=\"value value-number\" id=\"search-chart-matched-count\">0</code> of </span>"))
-	testing.expect(t, strings.contains(html, fmt.tprintf("<ol class=\"docs-rows search-chart-rows\" id=\"search-chart\" data-least=\"%d\">", SITE_SEARCH_CHART_LEAST_LENGTH)))
-	testing.expect(t, strings.contains(html, "<h2 id=\"search-finds\">What the search finds</h2>"))
+	testing.expect(t, strings.contains(html, "<h2 class=\"search-chart-heading\" id=\"search-finds\">What the search finds</h2>"))
 	testing.expect_value(t, site_heading_value_problem(html), "")
 	testing.expect(t, !strings.contains(html, "style="), "the chart holds a style attribute")
 	testing.expect_value(t, site_inline_code_problem(html), "")
 
-	// The script reads what the markup holds: the id of the chart, the
-	// attributes of a row and the classes of its parts.
+	// The script reads what the markup holds: the ids of the chips and of
+	// the bar, the attributes of a chip and the classes of its parts.
 	script := site_search_script()
-	for name in ([]string{"\"search-chart\"", "li[data-kind]", "dataset.kind", "dataset.singular", "dataset.plural", "dataset.least", ".search-chart-target", ".search-chart-name", ".search-chart-count", ".search-chart-length", ".search-chart-least", "\"search-chart-matched\"", "\"search-chart-matched-count\"", "\"search-chart-words\"", "search-chart-none", "aria-pressed"}) {
+	for name in ([]string{"\"search-chart\"", "\"search-chart-bar\"", "li[data-kind]", "rect[data-kind", "dataset.kind", "dataset.plural", ".search-chart-target", ".search-chart-count", "\"search-chart-matched\"", "\"search-chart-matched-count\"", "\"search-chart-words\"", "search-chart-none", "aria-pressed", "setAttribute(\"x\"", "setAttribute(\"width\"", "RULE.leastShare"}) {
 		testing.expectf(t, strings.contains(script, name), "the script does not read %s", name)
 	}
+	testing.expect(t, strings.contains(script, fmt.tprintf("\"leastShare\":%d", SITE_SEARCH_CHART_LEAST_SHARE)), "the script has not the least share of a segment")
 }
 
-// The docs home: no paragraph of counts under the search field; the chart
-// after the cards; no style attribute on the page.
+// The cases of the segments of the bar that the script runs in its self
+// test, run here over the segments of the tool; each set of segments fills
+// the bar and keeps the order of the counts.
+@(test)
+site_search_segment_cases_table :: proc(t: ^testing.T) {
+	testing.expect(t, len(site_search_segment_cases) >= 5, "the table has too few cases of the segments")
+	for segment_case in site_search_segment_cases {
+		counts := make([dynamic]int, context.temp_allocator)
+		for word in strings.fields(segment_case.counts, context.temp_allocator) {
+			append(&counts, site_digits_value(word))
+		}
+		segments := site_search_chart_segments(counts[:])
+		parts := make([dynamic]string, context.temp_allocator)
+		filled, any_count := 0, false
+		for segment, index in segments {
+			append(&parts, fmt.tprintf("%d:%d", segment.start, segment.width))
+			testing.expectf(t, segment.start == filled, "%q: the segment %d starts at %d, after %d", segment_case.counts, index, segment.start, filled)
+			filled += segment.width
+			any_count ||= counts[index] > 0
+			if counts[index] > 0 {
+				testing.expectf(t, segment.width >= min(SITE_SEARCH_CHART_LEAST_SHARE, 1000 / len(counts)), "%q: the segment %d is narrower than the least share", segment_case.counts, index)
+			} else {
+				testing.expectf(t, segment.width == 0, "%q: the segment %d of no entry has a width", segment_case.counts, index)
+			}
+		}
+		testing.expectf(t, !any_count || filled == 1000, "%q: the segments fill %d of 1000", segment_case.counts, filled)
+		got := strings.join(parts[:], " ", context.temp_allocator)
+		testing.expectf(t, got == segment_case.segments, "%q: the segments %s, not %s", segment_case.counts, got, segment_case.segments)
+	}
+	testing.expect(t, strings.contains(site_search_cases_json(), "\"segments\":[[\"3 0 1\",\"0:746 746:0 746:254\"]"))
+	testing.expect(t, strings.contains(site_search_script(), "CASES.segments"), "the self test of the script does not run the segments")
+}
+
+// The docs home: the field, then the chart under it over the whole width,
+// then the cards; the list of results is inside the box of the field and
+// the chart, so that it opens under the chart; no style attribute on the
+// page.
 @(test)
 site_docs_home_holds_the_chart :: proc(t: ^testing.T) {
 	site, entries := chart_test_site()
@@ -284,10 +335,13 @@ site_docs_home_holds_the_chart :: proc(t: ^testing.T) {
 	body := site_docs_home_body(&site, path, entries)
 	testing.expect(t, !strings.contains(body, "docs-knows"), "the docs home has the paragraph of the counts")
 	testing.expect(t, !strings.contains(body, "The search knows"), "the docs home has the paragraph of the counts")
+	box := strings.index(body, "<div class=\"docs-search\">")
 	field := strings.index(body, "id=\"" + SITE_SEARCH_FIELD_ID + "\"")
-	parts := strings.index(body, "<div class=\"docs-parts\">")
 	chart := strings.index(body, "id=\"search-chart\"")
-	testing.expectf(t, field >= 0 && parts > field && chart > parts, "the order of the docs home: the field at %d, the cards at %d, the chart at %d", field, parts, chart)
+	box_end := strings.index(body, "</section>\n</div>\n")
+	parts := strings.index(body, "<div class=\"docs-parts\">")
+	testing.expectf(t, box >= 0 && field > box && chart > field && box_end > chart && parts > box_end, "the order of the docs home: the box at %d, the field at %d, the chart at %d, the end of the box at %d, the cards at %d", box, field, chart, box_end, parts)
+	testing.expect(t, !strings.contains(body, "docs-parts-column"), "the chart is still in a column of the cards")
 	html := site_page_html(&site, Site_Page{path = path, is_index = true, title = "Docs", description = "The docs.", section = .Docs, search_in_page = true, body = body})
 	testing.expect(t, !strings.contains(html, "style="), "the docs home holds a style attribute")
 	// The foot names the maker once: its mark, then its name as a link.
@@ -296,6 +350,12 @@ site_docs_home_holds_the_chart :: proc(t: ^testing.T) {
 	// The page has no row of doors, and no card ends with a link to all.
 	testing.expect(t, !strings.contains(body, "Where to start") && !strings.contains(body, ">All "), "the docs home repeats the doors of the bar")
 	testing.expect_value(t, site_inline_code_problem(html), "")
+	// The style sheet opens the list of the docs home under the chart, at
+	// every width.
+	sheet := site_style_sheet("")
+	testing.expect(t, strings.contains(sheet, ".docs-search { position: relative;"))
+	testing.expect(t, strings.contains(sheet, ".docs-search .search-door .search-panel { position: absolute; top: 100%;"))
+	testing.expect(t, strings.count(sheet, ".docs-search .search-door .search-panel { position: absolute;") == 2, "the list of the docs home is not under the chart on a narrow screen")
 }
 
 // The cases of the counts by kind that the script runs in its self test,

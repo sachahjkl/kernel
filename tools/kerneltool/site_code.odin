@@ -339,13 +339,53 @@ site_code_odin_classes :: proc(site: ^Site, source: string, tokens: []Site_Code_
 	return classes, keys
 }
 
+// What a fragment of code in a text needs to link its names to their
+// declarations: the page that holds it and the folders that the text
+// around it names (docs/SITE.md, "The declarations of the sources").
+Site_Code_Links :: struct {
+	site:            ^Site,
+	from_page:       string,
+	context_folders: []string,
+}
+
+// site_code_link_place gives the declaration that a name of a fragment of
+// code links to, or -1. A name after "package." is looked for in that
+// package; a name after another value and a period is a field, and a short
+// name is a local of the example: neither links.
+site_code_link_place :: proc(links: ^Site_Code_Links, source: string, tokens: []Site_Code_Token, index: int) -> int {
+	if links == nil || links.site == nil || len(links.site.declarations.declarations) == 0 {
+		return -1
+	}
+	name := site_code_token_text(source, tokens[index])
+	if len(name) < SITE_DECLARATION_SHORTEST_NAME_IN_CODE || site_is_odin_word(name) {
+		return -1
+	}
+	span := Site_Declaration_Span{name = name}
+	previous := site_code_token_before(tokens, index)
+	if previous >= 0 && tokens[previous].kind == .Period {
+		qualifier := site_code_token_before(tokens, previous)
+		if qualifier < 0 || tokens[qualifier].kind != .Ident {
+			return -1
+		}
+		span.qualifier = site_code_token_text(source, tokens[qualifier])
+		if span.qualifier not_in links.site.declarations.packages {
+			return -1
+		}
+	}
+	next := site_code_token_after(tokens, index)
+	span.called = next >= 0 && tokens[next].kind == .Open_Paren
+	place, resolution := site_declaration_resolve(&links.site.declarations, span, links.context_folders)
+	return resolution == .Linked ? place : -1
+}
+
 // site_code_odin writes a text of Odin with the class of each token, and
 // each type of the contract as a reference to its card. package_name is the
 // package of the text ("operation" for a declaration of contract/operation),
 // or "" when it is not known (a block of a guide): then only "package.Name"
-// of a documented package is a reference. It writes nothing and gives false
-// when the tokenizer refuses the text.
-site_code_odin :: proc(site: ^Site, b: ^strings.Builder, source, package_name: string) -> bool {
+// of a documented package is a reference. With links, each name that the
+// declaration index resolves is a link to its declaration. It writes
+// nothing and gives false when the tokenizer refuses the text.
+site_code_odin :: proc(site: ^Site, b: ^strings.Builder, source, package_name: string, links: ^Site_Code_Links = nil) -> bool {
 	tokens, ok := site_code_odin_tokens(source)
 	if !ok {
 		return false
@@ -369,6 +409,14 @@ site_code_odin :: proc(site: ^Site, b: ^strings.Builder, source, package_name: s
 		}
 		site_escape(b, gap)
 		bytes := source[token.start:token.end]
+		if token.kind == .Ident && links != nil && (class == .None || class == .Type || class == .Literal) {
+			if place := site_code_link_place(links, source, tokens, index); place >= 0 {
+				close_span(b, &open)
+				site_declaration_link_in_code(links.site, b, links.from_page, bytes, class, place)
+				position = token.end
+				continue
+			}
+		}
 		switch class {
 		case .None:
 			close_span(b, &open)

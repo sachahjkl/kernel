@@ -345,6 +345,7 @@ site_guides_add :: proc(site: ^Site) -> bool {
 	not_rendered_count := len(site.not_rendered)
 	names_without_card := site.type_names_without_card
 	blocks_not_colored, first_block_not_colored := site.code_blocks_not_colored, site.first_code_block_not_colored
+	declaration_spans := site.declaration_spans
 	site.document_headings_pending = true
 	for guide, index in site.guides {
 		content := site_read(guide.source) or_return
@@ -359,6 +360,7 @@ site_guides_add :: proc(site: ^Site) -> bool {
 	}
 	site.type_names_without_card = names_without_card
 	site.code_blocks_not_colored, site.first_code_block_not_colored = blocks_not_colored, first_block_not_colored
+	site.declaration_spans = declaration_spans
 	for guide, index in site.guides {
 		content := site_read(guide.source) or_return
 		renderer := site_renderer_make(site, guide.path, guide.source)

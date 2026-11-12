@@ -250,6 +250,26 @@ site_search_kind_cases := [?]Site_Search_Kind_Case {
 	{"system", "stwr", -1, "0:1", 1, "storage.write"},
 }
 
+// The cases of the segments of the bar of the chart of the docs home: the
+// counts of the kinds, in their order, and the start and the width of each
+// segment, in thousandths of the bar, as "start:width". The host test
+// site_search_segment_cases_table runs them over site_search_chart_segments,
+// and the self test of the script over its own segments. The least share is
+// SITE_SEARCH_CHART_LEAST_SHARE.
+Site_Search_Segment_Case :: struct {
+	counts:   string,
+	segments: string,
+}
+
+site_search_segment_cases := [?]Site_Search_Segment_Case {
+	{"3 0 1", "0:746 746:0 746:254"},
+	{"1 1000", "0:8 8:992"},
+	{"2 3 5", "0:203 203:300 503:497"},
+	{"5", "0:1000"},
+	{"0 0", "0:0 0:0"},
+	{"", ""},
+}
+
 // site_search_cut gives a text of at most limit bytes, cut at the start of
 // a character, with "..." when it is cut.
 site_search_cut :: proc(text: string, limit: int) -> string {
@@ -516,7 +536,7 @@ site_search_rule_json :: proc() -> string {
 	// The braces of the object are added around the format: the format
 	// itself holds none.
 	return strings.concatenate({"{", fmt.tprintf(
-		"\"match\":%d,\"start\":%d,\"segment\":%d,\"sideBySide\":%d,\"gapOpen\":%d,\"gapByte\":%d,\"nameScanLimit\":%d,\"queryLimit\":%d,\"candidateScanLimit\":%d,\"rankedCapacity\":%d,\"rows\":%d",
+		"\"match\":%d,\"start\":%d,\"segment\":%d,\"sideBySide\":%d,\"gapOpen\":%d,\"gapByte\":%d,\"nameScanLimit\":%d,\"queryLimit\":%d,\"candidateScanLimit\":%d,\"rankedCapacity\":%d,\"rows\":%d,\"leastShare\":%d",
 		line_editor.SCORE_MATCH,
 		line_editor.SCORE_START,
 		line_editor.SCORE_SEGMENT,
@@ -528,12 +548,14 @@ site_search_rule_json :: proc() -> string {
 		line_editor.CANDIDATE_SCAN_LIMIT,
 		line_editor.RANKED_CAPACITY,
 		SITE_SEARCH_ROWS,
+		SITE_SEARCH_CHART_LEAST_SHARE,
 	), "}"}, context.temp_allocator)
 }
 
 // site_search_cases_json gives the table of the matcher as the script reads
 // it: {"names": [[group, name, tie order], ...], "orders": [[group, query,
-// name, score], ...], "kinds": [[group, query, only, counts, listed, first], ...]}.
+// name, score], ...], "kinds": [[group, query, only, counts, listed, first], ...],
+// "segments": [[counts, segments], ...]}.
 site_search_cases_json :: proc() -> string {
 	b := strings.builder_make(context.temp_allocator)
 	strings.write_string(&b, "{\"names\":[")
@@ -564,6 +586,14 @@ site_search_cases_json :: proc() -> string {
 		site_json_string(&b, kind_case.counts)
 		fmt.sbprintf(&b, ",%d,", kind_case.listed)
 		site_json_string(&b, kind_case.first)
+		strings.write_byte(&b, ']')
+	}
+	strings.write_string(&b, "],\"segments\":[")
+	for segment_case, index in site_search_segment_cases {
+		strings.write_string(&b, index > 0 ? ",[" : "[")
+		site_json_string(&b, segment_case.counts)
+		strings.write_byte(&b, ',')
+		site_json_string(&b, segment_case.segments)
 		strings.write_byte(&b, ']')
 	}
 	strings.write_string(&b, "]}")
@@ -749,6 +779,29 @@ SITE_SEARCH_SCRIPT_SOURCE :: `// The search of the site, written by kerneltool s
     return Array.from(counts.keys()).sort((a, b) => a - b).map(tie => tie + ":" + counts.get(tie)).join(" ");
   }
 
+  // The segments of the bar of the chart, in thousandths of its width:
+  // site_search_chart_segments of the tool, rule for rule.
+  function segments(counts, leastShare) {
+    const result = counts.map(() => ({ start: 0, width: 0 }));
+    let total = 0, shown = 0, last = -1;
+    counts.forEach((count, index) => { if (count > 0) { total += count; shown++; last = index; } });
+    if (total === 0) return result;
+    let least = leastShare;
+    if (shown * least > 1000) least = Math.floor(1000 / shown);
+    const rest = 1000 - shown * least;
+    let sum = 0;
+    counts.forEach((count, index) => {
+      if (count > 0) { result[index].width = least + Math.floor(rest * count / total); sum += result[index].width; }
+    });
+    result[last].width += 1000 - sum;
+    let start = 0;
+    for (const segment of result) { segment.start = start; start += segment.width; }
+    return result;
+  }
+
+  // A share in thousandths as the tool writes it: "74.6%".
+  function percent(perMille) { return Math.floor(perMille / 10) + "." + (perMille % 10) + "%"; }
+
   function selfTest() {
     const groups = {};
     for (const [group, name, tie] of CASES.names) {
@@ -777,7 +830,14 @@ SITE_SEARCH_SCRIPT_SOURCE :: `// The search of the site, written by kerneltool s
       if (gotCounts === counts && result.matched === listed && gotFirst === firstName) passed++;
       else if (!first) first = group + " \"" + query + "\" in " + only + ": " + gotCounts + ", " + result.matched + " listed, first \"" + gotFirst + "\"; expected " + counts + ", " + listed + " listed, first \"" + firstName + "\"";
     }
-    const count = cases.size + CASES.kinds.length;
+    // The segments of the bar of the chart.
+    for (const [countsLine, expected] of CASES.segments) {
+      const counts = countsLine === "" ? [] : countsLine.split(" ").map(Number);
+      const got = segments(counts, RULE.leastShare).map(segment => segment.start + ":" + segment.width).join(" ");
+      if (got === expected) passed++;
+      else if (!first) first = "the segments of \"" + countsLine + "\": " + got + "; expected " + expected;
+    }
+    const count = cases.size + CASES.kinds.length + CASES.segments.length;
     return first === "" ? "search self test: " + passed + " of " + count + " cases pass" :
       "search self test: FAIL, " + passed + " of " + count + " cases pass; the first that fails: " + first;
   }
@@ -847,17 +907,19 @@ SITE_SEARCH_SCRIPT_SOURCE :: `// The search of the site, written by kerneltool s
     }
   }
 
-  // The cards of the types: a reference is a button that opens the card of
-  // its type with a click, a tap or Enter, with no script. The script adds
-  // a pointer that rests on the reference, and the focus of the keyboard:
-  // both open the card, which closes when the pointer leaves the reference
-  // and the card, or when the focus leaves them.
+  // The cards of the types and of the declarations. A reference to a type
+  // is a button that opens the card of its type with a click, a tap or
+  // Enter, with no script. A reference to a declaration is a link, and its
+  // card opens with the script only. The script adds a pointer that rests on
+  // the reference, and the focus of the keyboard: both open the card, which
+  // closes when the pointer leaves the reference and the card, or when the
+  // focus leaves them.
   if (HTMLElement.prototype.hasOwnProperty("popover")) {
     let openTimer = 0, closeTimer = 0;
     const isOpen = card => card.matches(":popover-open");
-    function openCard(card, button) {
+    function openCard(card, opener) {
       clearTimeout(closeTimer);
-      if (!isOpen(card)) card.showPopover({ source: button });
+      if (!isOpen(card)) card.showPopover({ source: opener });
     }
     function closeCard(card) {
       clearTimeout(openTimer);
@@ -866,23 +928,26 @@ SITE_SEARCH_SCRIPT_SOURCE :: `// The search of the site, written by kerneltool s
         if (isOpen(card) && !card.matches(":hover") && !card.contains(document.activeElement)) card.hidePopover();
       }, 300);
     }
-    document.querySelectorAll("button.type-reference[popovertarget]").forEach(button => {
-      const card = document.getElementById(button.getAttribute("popovertarget"));
-      if (!card) return;
-      button.addEventListener("pointerenter", event => {
+    const openers = [];
+    document.querySelectorAll("button.type-reference[popovertarget]").forEach(button => openers.push([button, button.getAttribute("popovertarget")]));
+    document.querySelectorAll("a.declaration-reference[data-declaration-card]").forEach(link => openers.push([link, link.dataset.declarationCard]));
+    for (const [opener, id] of openers) {
+      const card = document.getElementById(id);
+      if (!card) continue;
+      opener.addEventListener("pointerenter", event => {
         if (event.pointerType !== "mouse") return;
         clearTimeout(openTimer);
         clearTimeout(closeTimer);
-        openTimer = setTimeout(() => openCard(card, button), 400);
+        openTimer = setTimeout(() => openCard(card, opener), 400);
       });
-      button.addEventListener("pointerleave", event => { if (event.pointerType === "mouse") closeCard(card); });
-      button.addEventListener("focus", () => { if (button.matches(":focus-visible")) openCard(card, button); });
+      opener.addEventListener("pointerleave", event => { if (event.pointerType === "mouse") closeCard(card); });
+      opener.addEventListener("focus", () => { if (opener.matches(":focus-visible")) openCard(card, opener); });
       // A tap moves the focus to no element: the card stays, and a tap
       // outside it closes it. A key moves the focus to another element.
-      button.addEventListener("blur", event => { if (event.relatedTarget && !card.contains(event.relatedTarget)) closeCard(card); });
+      opener.addEventListener("blur", event => { if (event.relatedTarget && !card.contains(event.relatedTarget)) closeCard(card); });
       card.addEventListener("pointerenter", () => clearTimeout(closeTimer));
       card.addEventListener("pointerleave", event => { if (event.pointerType === "mouse") closeCard(card); });
-    });
+    }
   }
 
   // The search field of the page: in the menu of the bar, or in the page
@@ -969,27 +1034,26 @@ SITE_SEARCH_SCRIPT_SOURCE :: `// The search of the site, written by kerneltool s
     }
   }
 
-  // The chart of the docs home (docs/SITE.md, "The docs home"). With no
-  // script it shows the counts of the whole index, and a row whose kind has
-  // a page is a link to it. While the field holds a text, each row shows the
-  // count of the matches of its kind, in the same place, and is a button
-  // that keeps the list to its kind; with no text it is a link again.
+  // The chart of the docs home (docs/SITE.md, "The chart of what the search
+  // finds"): one bar of segments under the field, and a row of chips. With
+  // no script it shows the counts of the whole index, and a chip whose kind
+  // has a page is a link to it. While the field holds a text, each chip
+  // shows the count of the matches of its kind and each segment its share
+  // of them, in the same place; a press on a chip or on a segment keeps the
+  // list to its kind. With no text a chip is a link again.
   const chart = document.getElementById("search-chart");
+  const chartBar = document.getElementById("search-chart-bar");
   const chartRows = chart ? Array.from(chart.querySelectorAll("li[data-kind]")).map(row => ({
     row: row,
     kind: Number(row.dataset.kind),
-    singular: row.dataset.singular,
     plural: row.dataset.plural,
     target: row.querySelector(".search-chart-target"),
-    name: row.querySelector(".search-chart-name"),
     count: row.querySelector(".search-chart-count"),
-    length: row.querySelector(".search-chart-length"),
-    least: row.querySelector(".search-chart-least"),
+    segment: chartBar ? chartBar.querySelector("rect[data-kind='" + row.dataset.kind + "']") : null,
   })) : [];
   const chartMatched = document.getElementById("search-chart-matched");
   const chartMatchedCount = document.getElementById("search-chart-matched-count");
   const chartWords = document.getElementById("search-chart-words");
-  const leastLength = chart ? chart.dataset.least : "0";
   // The kind that the list keeps, or -1 for every kind.
   let only = -1;
   let chartButtons = false;
@@ -999,8 +1063,8 @@ SITE_SEARCH_SCRIPT_SOURCE :: `// The search of the site, written by kerneltool s
     return item ? item.plural : "";
   }
 
-  // The rows are buttons while the field holds a text, links (or plain
-  // rows, for a kind with no page) when it is empty.
+  // The chips are buttons while the field holds a text, links (or plain
+  // chips, for a kind with no page) when it is empty.
   function chartAsButtons(on) {
     if (on !== chartButtons) {
       chartButtons = on;
@@ -1018,29 +1082,29 @@ SITE_SEARCH_SCRIPT_SOURCE :: `// The search of the site, written by kerneltool s
     if (on) for (const item of chartRows) item.target.setAttribute("aria-pressed", item.kind === only ? "true" : "false");
   }
 
-  // A length is the count over the largest count, as the tool writes it;
-  // the least length keeps a small count visible. The order of the rows
-  // does not change while the reader types.
+  // The places of the segments, as the tool computes them: the order of
+  // the chips and of the segments does not change while the reader types.
   function drawChart(counts, querying) {
     if (!chart) return;
-    let largest = 0, total = 0;
-    for (const item of chartRows) largest = Math.max(largest, counts.get(item.kind) || 0);
+    let total = 0;
     for (const value of counts.values()) total += value;
-    for (const item of chartRows) {
+    const shares = segments(chartRows.map(item => counts.get(item.kind) || 0), RULE.leastShare);
+    chartRows.forEach((item, number) => {
       const value = counts.get(item.kind) || 0;
       item.count.textContent = String(value);
-      item.name.textContent = value === 1 ? item.singular : item.plural;
-      item.length.setAttribute("width", largest > 0 ? (Math.floor(value * 1000 / largest) / 10).toFixed(1) + "%" : "0.0%");
-      item.least.setAttribute("width", value > 0 ? leastLength : "0");
       item.row.classList.toggle("search-chart-none", value === 0);
-    }
+      if (item.segment) {
+        item.segment.setAttribute("x", percent(shares[number].start));
+        item.segment.setAttribute("width", percent(shares[number].width));
+      }
+    });
     chartMatched.hidden = !querying;
     chartMatchedCount.textContent = String(total);
-    chartWords.textContent = querying ? "entries match" : "entries in the index";
+    chartWords.textContent = querying ? "match" : "entries";
     chartAsButtons(querying);
   }
 
-  // One kind at a time: a second press on the same row gives every kind
+  // One kind at a time: a second press on the same kind gives every kind
   // back. The focus returns to the field, whose list shows the result and
   // takes the keys.
   function keepKind(kind) {
@@ -1051,7 +1115,7 @@ SITE_SEARCH_SCRIPT_SOURCE :: `// The search of the site, written by kerneltool s
   }
 
   if (chart) {
-    // With no text in the field, a row does what its markup does: a link
+    // With no text in the field, a chip does what its markup does: a link
     // opens its page.
     const pressed = event => {
       const target = event.target.closest(".search-chart-target");
@@ -1061,6 +1125,18 @@ SITE_SEARCH_SCRIPT_SOURCE :: `// The search of the site, written by kerneltool s
     };
     chart.addEventListener("click", pressed);
     chart.addEventListener("keydown", event => { if (event.key === "Enter" || event.key === " ") pressed(event); });
+  }
+  if (chartBar) {
+    // A segment is a target for the pointer only: the chips are the same
+    // targets for the keyboard and for a screen reader.
+    chartBar.addEventListener("click", event => {
+      const segment = event.target.closest("rect[data-kind]");
+      if (!segment) return;
+      const kind = Number(segment.dataset.kind);
+      if (chartButtons) { keepKind(kind); return; }
+      const item = chartRows.find(row => row.kind === kind);
+      if (item && item.target.href) location.href = item.target.href;
+    });
   }
 
   function render() {

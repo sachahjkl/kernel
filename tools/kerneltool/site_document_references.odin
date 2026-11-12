@@ -1017,7 +1017,7 @@ site_comment_text_write :: proc(site: ^Site, b: ^strings.Builder, from_page, mar
 		if closing < 0 {
 			break
 		}
-		site_comment_words_write(b, rest[:mark], html)
+		site_comment_words_write(site, b, from_page, rest[:mark], html)
 		number := site_digits_value(rest[mark + 1:mark + 1 + closing])
 		if number >= 0 && number < len(in_place) {
 			if html {
@@ -1033,14 +1033,16 @@ site_comment_text_write :: proc(site: ^Site, b: ^strings.Builder, from_page, mar
 		}
 		rest = rest[mark + 1 + closing + 1:]
 	}
-	site_comment_words_write(b, rest, html)
+	site_comment_words_write(site, b, from_page, rest, html)
 }
 
 // site_comment_words_write writes words of a source comment. A comment
 // holds code in backticks ("`test return_fault`"): as HTML each pair is a
-// code element, as plain text the backticks go away. No other mark of
-// Markdown is read: a comment is not a document.
-site_comment_words_write :: proc(b: ^strings.Builder, text: string, html: bool) {
+// code element, or the link to the declaration that it names, or a colored
+// fragment of Odin (docs/SITE.md, "The declarations of the sources"); as
+// plain text the backticks go away. No other mark of Markdown is read: a
+// comment is not a document.
+site_comment_words_write :: proc(site: ^Site, b: ^strings.Builder, from_page, text: string, html: bool) {
 	rest := text
 	for {
 		open := strings.index_byte(rest, '`')
@@ -1054,9 +1056,13 @@ site_comment_words_write :: proc(b: ^strings.Builder, text: string, html: bool) 
 		code := rest[open + 1:open + 1 + closing]
 		if html {
 			site_escape(b, rest[:open])
-			strings.write_string(b, "<code>")
-			site_escape(b, code)
-			strings.write_string(b, "</code>")
+			// A comment names no folder around its spans: a name that
+			// several packages declare stays plain.
+			if !site_declaration_code_span(site, b, from_page, from_page, code, nil) {
+				strings.write_string(b, "<code>")
+				site_escape(b, code)
+				strings.write_string(b, "</code>")
+			}
 		} else {
 			strings.write_string(b, rest[:open])
 			strings.write_string(b, code)

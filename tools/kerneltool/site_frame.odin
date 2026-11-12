@@ -197,6 +197,8 @@ Site :: struct {
 	document_references: map[string]bool,
 	document_outlines: map[string]Site_Document_Outline, // The title and the headings of each document that the site reads from its file.
 	document_headings_pending: bool, // While the guides are read for their headings only: no reference is counted.
+	declarations: Site_Declaration_Index, // Each declaration of the sources of the system (docs/SITE.md, "The declarations of the sources").
+	declaration_spans: Site_Declaration_Span_Counts, // What became of the code spans that have the form of a name.
 }
 
 run_site :: proc(args: []string) -> int {
@@ -612,6 +614,9 @@ site_build :: proc(address: string) -> bool {
 	// The sources of the reference tables are read before any guide is
 	// rendered: a code span of a guide links to their rows.
 	site_reference_read(&site) or_return
+	// The declarations of the sources, before any guide is rendered: a code
+	// span of a guide links to them.
+	site_declarations_read(&site) or_return
 
 	if !reset_folder(SITE_FOLDER) {
 		return false
@@ -866,6 +871,11 @@ site_build :: proc(address: string) -> bool {
 	} else {
 		fmt.println("kerneltool: site: 0 code blocks not colored")
 	}
+	// The code spans that have the form of a name: a stale name in a guide
+	// is a span that names no declaration, and the first ones are named.
+	for line in site_declaration_summary(&site) {
+		fmt.printfln("kerneltool: site: %s", line)
+	}
 	if site.address == "" {
 		fmt.println("kerneltool: site: no address (SITE_ADDRESS is empty): the pages have relative links only. Not written: the canonical addresses, Open Graph and the summary card, the JSON-LD graphs, " + SITE_SITEMAP + ", " + SITE_ROBOTS + ", and the link \"self\" of the feeds")
 		fmt.printfln("kerneltool: site: %s, %s and %s have relative links: a reader resolves them against the address that it fetched the file from", SITE_NEWS_FEED, SITE_RELEASES_FEED, SITE_LANGUAGE_MODEL_INDEX)
@@ -1025,14 +1035,15 @@ site_page_html :: proc(site: ^Site, page: Site_Page) -> string {
 		write(&b, "<div class=\"text\">\n")
 		write(&b, strings.to_string(crumbs))
 		write(&b, page.body)
-		// The card of each type that the text names, once for the page.
-		write(&b, site_type_cards_html(site, page.path, page.body))
+		// The card of each type and of each declaration that the text
+		// names, once for the page.
+		write(&b, site_cards_html(site, page.path, page.body))
 		write(&b, "</div>\n</main>\n")
 	} else {
 		write(&b, strings.to_string(crumbs))
 		fmt.sbprintf(&b, "<main id=\"content\" class=\"page page-%s\">\n", section_name)
 		write(&b, page.body)
-		write(&b, site_type_cards_html(site, page.path, page.body))
+		write(&b, site_cards_html(site, page.path, page.body))
 		write(&b, "</main>\n")
 	}
 
@@ -1062,6 +1073,16 @@ site_page_html :: proc(site: ^Site, page: Site_Page) -> string {
 	}
 	fmt.sbprintf(&b, "<p><a href=\"%s\">The repository</a> - <a href=\"%s\">Licenses</a></p>\n</div>\n</footer>\n</body>\n</html>\n", SITE_REPOSITORY_ADDRESS, site_page_link(site, page.path, site_page_file(SITE_LICENSES_FOLDER)))
 	return strings.to_string(b)
+}
+
+// site_cards_html gives the cards that the text of a page opens: the card of
+// each declaration that it links to, and the card of each type that the
+// text or those cards name. The one line of a declaration can name a type of
+// the contract, so the types are collected after the declarations.
+site_cards_html :: proc(site: ^Site, from_page, body: string) -> string {
+	declaration_cards := site_declaration_cards_html(site, from_page, body)
+	type_cards := site_type_cards_html(site, from_page, strings.concatenate({body, declaration_cards}, context.temp_allocator))
+	return strings.concatenate({type_cards, declaration_cards}, context.temp_allocator)
 }
 
 // site_release_id gives the anchor of a release on the page of the releases.

@@ -23,7 +23,7 @@ No page holds a text that a person must remember to update: each page is generat
   - no page holds code or style of its own: each `<script>` has a `src` and nothing inside, but the one `<script type="application/ld+json">` of the page graph, whose text has no `<`; no `<style>` element and no `style` attribute exists.
 - Then the command checks what other programs read (see "What other sites read"); a failure stops it in the same way.
 - After the checks of the pages, the command makes the index of the search and checks it against the pages (see "The search"); a failure stops it in the same way.
-- At its end the command prints: the pages and their bytes, the count of the redirect pages and the count of each generation of old addresses, the other files, the bytes of the style sheet and the count of the icons inside it, the entries and the bytes of the index of the search and the bytes of the script, the guides, the news entries, the terms of the glossary, the commit and the release, the numbers that are not measured, the cells of the licenses that are not recorded, the count of the document references and the first three whose labels found no heading (see "The references to documents"), each part of a guide that the renderer did not understand, the parts that it did not write with no site address (or, with one, the parts that it wrote), and the count of the pictures of the repository that it compressed, with their bytes before and after.
+- At its end the command prints: the pages and their bytes, the count of the redirect pages and the count of each generation of old addresses, the other files, the bytes of the style sheet and the count of the icons inside it, the entries and the bytes of the index of the search and the bytes of the script, the guides, the news entries, the terms of the glossary, the commit and the release, the numbers that are not measured, the cells of the licenses that are not recorded, the count of the document references and the first three whose labels found no heading (see "The references to documents"), the count of the declarations of the sources and of the files that the parser refused, and the count of the code spans that link to a declaration, that are ambiguous and that name no declaration, with the first five of the last two (see "The declarations of the sources"), each part of a guide that the renderer did not understand, the parts that it did not write with no site address (or, with one, the parts that it wrote), and the count of the pictures of the repository that it compressed, with their bytes before and after.
 - `kerneltool check` runs the host tests of the site (`tools/kerneltool/site_test.odin`, `site_render_test.odin`) and checks that each picture that `README.md` names is a file of the repository. It does not write the site.
 
 ## The pages
@@ -114,6 +114,7 @@ Links:
 - A code span that names a file or a folder of the repository (from the root or from the folder of the document, also `file.odin:34`) becomes a link to that file at the commit of the build. The folder `build/` is not in the repository.
 - A link to an address of another host stays a link.
 - A code span that names a row of a reference table becomes a link to the row. The rule: the whole text of the span, with its case, is the name of one kernel operation (`Memory_Map`), one error kind (`No_Grant`) or one module (`math`); or the span is a call of a built-in command of the console (`load("math")`, `help()`). A name that two tables have links nowhere: `Bad_Address` is a status and an error kind. A status, a unit and a grant are not linked: their names (`Pages`, `Store`, `Person`) are also common words of the code. A document of `docs/` comes first, then a row, then a file of the repository.
+- A code span that names a declaration of the sources (`blend_coverage_row_in_order`, `graphics.mix`, `layout_place()`) is a link to it, with a declaration card; a code span that is a fragment of Odin (`square_root[(d * d) >> 12]`) is colored as a block of code. A document, a row and a file come first. See "The declarations of the sources".
 - The first use of each term of the glossary on a page links to the term. The rule: the letters of the term with no regard to case, a whole word, or the word with an `s`; outside code, links and headings; the longest terms first; once for each term on a page.
 
 What it does not render, shown as text and listed by the command: a mermaid diagram (shown as its code), a line of HTML, a table with no line of dashes, a fence with no end, a link to a file that is not in the repository. A single `*` or `_` is text: the documents use no italics.
@@ -173,6 +174,7 @@ The owner asked for it on 2026-11-12: "une doc riche et auto générée, avec re
 - The match and the order are those of the completion list of the console (`CONSOLE.md`, section 3; `support/line_editor/fuzzy_match.odin`): `lower`, `fuzzy_match`, `ranked_before` and `rank_candidates`, ported rule for rule on the UTF-8 bytes of the query and of the title. The tie order is the kind: of two entries with one score, a module comes before a guide section that has its name.
 - Two things keep the script in step with the console. The tool writes the constants of `support/line_editor` (the points of each rule, the bounds) into the script. And one table of queries, names, scores and orders, `site_search_match_names` and `site_search_match_orders` in `tools/kerneltool/site_search.odin`, is run twice: by the host test `site_search_matcher_table` over the matcher of Odin, and by the script over its own matcher when the address of a page has `?selftest=1` (it prints one line in the console of the browser, "search self test: N of N cases pass" or the first case that fails, when the script runs during the load and again when the list opens; the same line is the attribute `data-search-self-test` of the root element and the first words under the box). A change of the rule in Odin fails the host test until the table has the new scores; the new table then fails the self test of the script until the script has the new rule. No program of the repository runs the script: the self test is run in a browser.
 - The chart of the docs home counts the matches of each kind (see "The docs home"). One more table, `site_search_kind_cases`, holds its cases: a query over a group of names, the tie order that the list keeps (a tie order stands for a kind), the count of the matches of each tie order, the count that the list keeps and its first name. The empty query is the field with no text, and gives the counts of the whole group. The host test `site_search_kind_cases_table` runs it over the matcher of the console, and the self test of the script runs it over its own.
+- A third table, `site_search_segment_cases`, holds the segments of the bar of that chart: the counts of the kinds, and the start and the width of each segment in thousandths of the bar. The host test `site_search_segment_cases_table` runs it over `site_search_chart_segments`, and the self test of the script over its own segments. The tool writes the least share of a segment into the rule of the script (`leastShare`).
 
 ### The look
 
@@ -195,38 +197,39 @@ The owner asked for it on 2026-11-12: "on garde une page d'index sur docs avec u
 `docs/` is a door to the docs, not a list: the presentation layout (one centred column, no tree, no "On this page"), the title "Docs", and from the top:
 
 1. The heading and one sentence: what the guides and the reference are.
-2. The search field of the page, large, in the middle (see "The search"): the same index, the same list of results and the same script as the field of the bar. The bar of this page has no field. With no script the field stays hidden, and the cards under it carry the page. Under the field there is only the room where the list opens.
-3. Two columns from 900 pixels, one under it (`.docs-parts`). A card takes the height of its own rows, so no card shows an empty part:
+2. The search field of the page, large, in the middle (see "The search"): the same index, the same list of results and the same script as the field of the bar. The bar of this page has no field. With no script the field stays hidden, and the chart and the cards under it carry the page.
+3. The chart of what the search finds, directly under the field, over the whole width of the page (see "The chart of what the search finds"). The field and the chart are one box (`.docs-search`): the list of results opens under the chart, over the cards, at every width. So the field, the chart and the list are in view while the reader types, in that order.
+4. Two columns from 900 pixels, one under it (`.docs-parts`). A card takes the height of its own rows, so no card shows an empty part:
    - The first column: the card of the guides. Every guide, in the reading order of the page of the guides, one row each: its number, its title as a link, and under it its one line of description, dim. The description is the row of the guide in the table "## Documents" of `README.md`; the command fails for a guide with no row there. The heading of the card is the link to the page of the guides.
-   - The second column (`.docs-parts-column`): the card of the reference, then the card "What the search finds". The card of the reference has every reference table (`site.reference_entries`), one row each: the icon of the kind of what the table lists, its name as a link on one line, its count at the right as a Number value, and under the name what it holds, dim. The heading of the card is the link to the index of the reference. The guides are the longer list, so the chart fills the column of the shorter one.
-   - One row form for the three cards (`.docs-row`, `site_docs_row`): a lead (a number or an icon), the name, a description or a bar, and a count in a column of one width with no rule at its left, so that the counts align. The description is always under the name: beside it, the rows of a card would each break at a different place.
-4. The page has no row of doors and no link "All ...": the bar gives the status, the news and the releases, and the cards give every guide and every table.
+   - The second column: the card of the reference. Every reference table (`site.reference_entries`), one row each: the icon of the kind of what the table lists, its name as a link on one line, its count at the right as a Number value, and under the name what it holds, dim. The heading of the card is the link to the index of the reference.
+   - One row form for the two cards (`.docs-row`, `site_docs_row`): a lead (a number or an icon), the name, a description, and a count in a column of one width with no rule at its left, so that the counts align. The description is always under the name: beside it, the rows of a card would each break at a different place.
+5. The page has no row of doors and no link "All ...": the bar gives the status, the news and the releases, and the cards give every guide and every table.
 
 The text of the page needs the entries of the index, and the index has an entry for each page: the command records the page with its title and its description first (`site_docs_home_add`), makes the index, then writes the text (`site_docs_home_fill`) before it writes the pages.
 
 ### The chart of what the search finds
 
-The owner asked for it on 2026-11-12, of the paragraph that gave the counts under the field: "Un truc visuel, parce que là, juste l'espèce de boum, gros cube de texte, ça n'a aucun intérêt en dessous de la barre de recherche, ça prend juste de la place.", then "Et tant qu'à mettre un histogramme, autant le rendre dynamique." The code is `site_search_chart` in `tools/kerneltool/site_docs_home.odin`, and the part of `search.js` that follows the field.
+The owner asked for it on 2026-11-12, of the paragraph that gave the counts under the field: "Un truc visuel, parce que là, juste l'espèce de boum, gros cube de texte, ça n'a aucun intérêt en dessous de la barre de recherche, ça prend juste de la place.", then "Et tant qu'à mettre un histogramme, autant le rendre dynamique." Then, of its place in the column of the reference, under the cards: "pas ouf le placement sur le site de l'histogramme (alors qu'il est trop cool !) genre on le voit quasi pas c'est dommage." Its point is that it moves while the reader types: it is under the field, in a compact form that does not push the cards away. The code is `site_search_chart` in `tools/kerneltool/site_docs_home.odin`, and the part of `search.js` that follows the field.
 
 With no script, the chart is whole and static:
 
-- Under the heading, the total: the count of the entries of the index, a number value, the sum of the rows. Every count is computed from the index; none is typed.
-- A list with one row for each kind that has entries, the largest count first; of two equal counts, the tie order of the kinds. A kind with no entry has no row.
-- A row: the icon of the kind, its name for its count (`site_search_kind_words`: "1 news entry", "16 news entries"), a bar, and the count as a number value, right-aligned, with figures of one width. The icon and the color of a kind are those of its value kind in `site_search_kinds`, the same as the list of results shows.
-- The bar: a rectangle with square corners in the color of the kind. Its length is the count over the largest count, linear: the largest bar takes the whole width of its column. A second rectangle of 4 pixels (`SITE_SEARCH_CHART_LEAST_LENGTH`) is under it, so that a count of 1 among 1000 still shows a mark.
-- The names start at one place and the bars at one place: the name has a column of one width. Under 720 pixels the icon, the name and the count are on one line, and the bar is under the name over the rest of the width: no row scrolls and no name is cut.
-- A row whose kind has a page that lists every entry of the kind is a link to that page: the modules and the programs to the index of the modules, the operations, the error kinds, the commands of the console, the terms (the glossary), the license rows and the types to their reference pages, the guide sections to the index of the guides, the properties and the gaps to the status page, the news entries to the news, the releases to the releases. The pages and the exports have no page of their own: their rows are not links.
-- The names and the counts are the text of the list, for a reader with no picture and for a screen reader. The icon and the bar are `aria-hidden`.
+- One bar of 12 pixels over the width of the page, and at its right the total: the count of the entries of the index ("1834 entries"), a number value, the sum of the counts. Every count is computed from the index; none is typed.
+- The bar: one segment for each kind that has entries, in the tie order of the kinds (the order of `search.json`), side by side from the left: a rectangle with square corners in the color of the value kind of the kind (`site_search_kinds`, the color that the list of results shows), with a line of 1 pixel of the background between two segments. The width of a segment: a least share of 8 thousandths of the bar (`SITE_SEARCH_CHART_LEAST_SHARE`, about 9 pixels at 1152 pixels and 3 at 360), so that a count of 1 among 1000 still shows a mark; the rest of the bar in proportion to the counts, rounded down; the last segment takes what the rounding left, so that the segments fill the bar (`site_search_chart_segments`). A kind with no entry has no segment and no chip.
+- Under the bar, one row of chips that wraps, a chip for each kind in the same order: the icon of the kind, its name for many entries ("terms", "news entries"), and its count as a number value, right-aligned in a width of four figures (the index holds at most 4096 entries). The name stays the name for many entries at every count: a chip keeps its width while the reader types, so the row does not break at another place and the cards under it do not move.
+- A chip whose kind has a page that lists every entry of the kind is a link to that page: the modules and the programs to the index of the modules, the operations, the error kinds, the commands of the console, the terms (the glossary), the license rows and the types to their reference pages, the guide sections to the index of the guides, the properties and the gaps to the status page, the news entries to the news, the releases to the releases. The pages and the exports have no page of their own: their chips are not links.
+- The names and the counts are the text of the chart, for a reader with no picture and for a screen reader. The bar and the icons are `aria-hidden`. The heading "What the search finds" names the section for a screen reader; it is not shown: it is a line of text in the place that the owner wants free.
+- The height at 1420 pixels: the line of the bar (24 pixels) and two rows of chips of 24 pixels, about 3 lines. On a narrow screen the chips wrap on more rows; nothing scrolls sideways.
 
-Why an SVG rectangle: a page holds no style attribute, so a length cannot be a `width` of the style of an element. An inline `<svg>` with no `viewBox` takes the width of its column from the style sheet, and a `<rect width="66.6%">` is a part of that width: the length is an attribute, it scales with the page, and the style sheet needs no rule for each length. The second rectangle gives the least length in pixels, which a percentage cannot.
+Why an SVG rectangle: a page holds no style attribute, so a width cannot be a `width` of the style of an element. An inline `<svg>` with no `viewBox` takes the width of its box from the style sheet, and a `<rect x="12.3%" width="4.5%">` is a part of that width: the place and the width are attributes, they scale with the page, and the style sheet needs no rule for each width.
 
 With the script, the chart follows the field:
 
-- While the field holds a text, each row shows the count of the entries of its kind that match it: the match of the list, over every match, not only over the rows that the list shows. The bar of the largest of these counts takes the whole width. A kind with no match stays in its place, dim, with 0 and no bar. The rows do not move while the reader types. The total reads "N of T entries match".
+- While the field holds a text, each chip shows the count of the entries of its kind that match it: the match of the list, over every match, not only over the rows that the list shows. Each segment takes its share of the matches by the same rule. A kind with no match stays in its place: its chip dim with 0, its segment with no width. The chips and the segments keep their order while the reader types. The total reads "N of T match".
 - With no text in the field, the chart shows the counts of the whole index again.
-- While the field holds a text, a row is a button (`role="button"`, `tabindex="0"`, `aria-pressed`): a click, Enter or Space keeps the list of results to its kind, and the line of the count of the list says "Only <kind>.". A second press gives every kind back. One kind at a time. The kind that the list keeps has the band of the track and the line at its left, as the chosen row of the list. The focus returns to the field, whose list shows the result and takes the keys. With no text in the field, a row is again what its markup is: a link opens its page.
-- The markup of a row says what the script needs: `data-kind` (the index of the kind in `search.json`), `data-count` (its count in the index), `data-singular` and `data-plural` (its names); the list has the id `search-chart` and `data-least`, the least length. The script writes the `width` attribute of each rectangle in the form that the tool writes ("66.6%").
-- The movement: a bar changes its length in 150 ms (`transition: width 150ms ease-out`, on the rectangles only), and at once under `prefers-reduced-motion: reduce`. Nothing moves when the page loads: a transition plays only when the script changes a length. The `width` attribute of a `rect` is a property of the style sheet in SVG 2, so the transition applies where a browser maps the attribute to the property; a browser that does not changes the length at once, which is correct. A `transform` attribute (`scale(x, 1)`) does not take a transition either, and a style that the script sets is a style attribute in the page: neither is used.
+- While the field holds a text, a chip is a button (`role="button"`, `tabindex="0"`, `aria-pressed`): a click, Enter or Space keeps the list of results to its kind, and the line of the count of the list says "Only <kind>.". A second press gives every kind back. One kind at a time. The kind that the list keeps has the band of the track and the line at its left, as the chosen row of the list. The focus returns to the field, whose list shows the result and takes the keys. A click on a segment does what its chip does; a segment is a target of the pointer only, and the chips are the targets of the keyboard and of a screen reader. With no text in the field, a chip is again what its markup is (a link opens its page), and a click on a segment opens the page of its chip.
+- The list of results is in the box of the field and the chart (`.docs-search`, `position: relative`): it is placed at the bottom of the box (`position: absolute; top: 100%`), under the chart and over the cards, at most 720 pixels wide, in the middle. Under 720 pixels too: the rule that puts the list of the bar in the flow of the open menu does not apply to this box.
+- The markup says what the script needs: each chip `data-kind` (the index of the kind in `search.json`), `data-count` (its count in the index) and `data-plural` (its name); the list of chips has the id `search-chart`; the bar has the id `search-chart-bar`, and each segment `data-kind`. The script writes the `x` and `width` attributes of each segment in the form that the tool writes ("74.6%", `site_search_chart_percent`), with the least share of the rule of the script.
+- The movement: a segment changes its place and its width in 150 ms (`transition: x 150ms ease-out, width 150ms ease-out`, on the segments only), and at once under `prefers-reduced-motion: reduce`. Nothing moves when the page loads: a transition plays only when the script changes an attribute. The `x` and `width` attributes of a `rect` are properties of the style sheet in SVG 2, so the transition applies where a browser maps the attribute to the property; a browser that does not changes the segment at once, which is correct. A style that the script sets is a style attribute in the page: it is not used.
 
 ## What other sites read
 
@@ -396,7 +399,7 @@ The site follows `DESIGN.md`, with the colors of `support/graphics/rules.odin` a
 - the tables have the look of the tables of the system: the titles of the columns in the dim color, every second row on a band (`DESIGN.md`, section 10). Each column has the least width of its kind, and a table wider than the page scrolls sideways in its own box (see "The tables");
 - the grid of points of the desktop is on the home only.
 
-Prose is in the reading font of the reader's system, at most 72 characters a line on a presentation page and 80 on a documentation page; code, signatures, numbers and identifiers are in its monospace font. No animation, no shadow, no round corner; one exception: a bar of the chart of the docs home changes its length in 150 ms when the search changes its count, never at the load of a page, and at once for a reader who asks for reduced motion (see "The chart of what the search finds"). The light form follows `prefers-color-scheme`. A print form hides the bar and the navigation.
+Prose is in the reading font of the reader's system, at most 72 characters a line on a presentation page and 80 on a documentation page; code, signatures, numbers and identifiers are in its monospace font. No animation, no shadow, no round corner; one exception: a segment of the bar of the chart of the docs home changes its place and its width in 150 ms when the search changes its count, never at the load of a page, and at once for a reader who asks for reduced motion (see "The chart of what the search finds"). The light form follows `prefers-color-scheme`. A print form hides the bar and the navigation.
 
 The contrast of the text (WCAG 2 ratio), from the colors of the rules:
 
@@ -501,6 +504,9 @@ One table, `site_value_kinds`, gives each value kind (`GLOSSARY.md`) its class `
 | Version, release, commit, hash | A tag with a hole | Boot program | 8.42 / 7.17 | 4.66 / 5.05 |
 | Yes: a state that holds | A filled square | Program | 10.45 / 8.90 | 4.72 / 5.12 |
 | No: a state that does not hold | An empty square | Dim | 5.40 / 4.60 | 4.60 / 4.99 |
+| Procedure: a procedure of the declaration index | Two parentheses | Kernel | 6.63 / 5.65 | 4.69 / 5.08 |
+| Constant: a constant of the declaration index | A lock | Memory | 8.47 / 7.22 | 4.62 / 5.00 |
+| Global variable: a variable at the top of a package of the declaration index | A cross of two diagonals | Boot program | 8.42 / 7.17 | 4.66 / 5.05 |
 
 The firmware violet at 100 % is 4.50 on the band of a row, at the bound: the type kind takes it at 115 %.
 
@@ -514,20 +520,20 @@ Where it shows:
 - the module pages: the index (module, number, yes or no in each cell, the imports), the facts of a module (file, yes or no, size), the facts of each export (type);
 - the facts of each symbol: its number, its statuses, its parameters and its result, its source line (file);
 - the status page: the status of each property (status), the gaps and the next steps (number);
-- not the guides and not the glossary: a document of `docs/` keeps its code spans as Markdown marks them, and no kind is guessed in prose;
+- the code spans of the guides, the glossary, the news and the source comments that name a declaration of the sources (see "The declarations of the sources"): the kind comes from the declaration index, never from the look of the span; another code span of a document keeps the look that Markdown gives it;
 - the kind Guide is not a value: a document reference is a name in the reading font, and takes only the color and the icon of the kind (see "The references to documents"). It shows in the prose of a guide and of a source comment.
 
 The restraint:
 
 - At most one icon for each value, and the same kind always has the same color and the same icon.
 - A column whose cells are all of one kind shows the icon once, in its head, and its cells keep the font and the color only. A fact shows the icon once, before its label. A value has its own icon only in a column of mixed kinds (handle or value, yes or no) or in a cell of facts of several kinds.
-- No icon and no colored value in a heading (a check of the pages: `site_heading_value_problem`), and none in running prose.
+- No icon and no colored value in a heading (a check of the pages: `site_heading_value_problem`). In running prose, only a declaration reference: the span itself was code, and the icon says what the link opens.
 
 The icons: the source of each one is its cells in `site_value_kinds`; the tool draws it as an SVG picture (one `rect` for each run of cells of a row, `shape-rendering="crispEdges"`, `site_value_icon_svg`). The style sheet holds each picture once, as a data address (`--value-icon: url("data:image/svg+xml,...")` in the rule of the kind, `site_value_icon_address`); the light form changes the color of a kind, not its icon. One procedure, `site_svg_data_address`, writes each data address of the style sheet, the icons and the grid of points of the home: it percent-encodes `%`, `<`, `>` and `#`, makes each double quote single, and drops the line feeds. The style sheet draws an icon as the `::before` of the element: a box of 12 by 12 pixels in the color of the kind, with the picture as its `mask`. A mask is an image of the style sheet: `img-src 'self' data:` covers it, and the style sheet is `style-src 'self'`, so the Content-Security-Policy of the host does not change. The command prints the bytes of the style sheet and the count of icons inside it.
 
 Why inside the style sheet: the icons were 16 files of `pictures/values/`, 9 801 bytes in all, that the style sheet named. A browser learns of such a file only when it reads the style sheet, then asks for each one alone; each took 220 to 290 ms when the edge of the host did not hold it. Measured on the published site in a browser with an empty cache: on `/docs/` the icon of numbers arrived 349 to 635 ms after the start, after the first paint at 408 ms, so the icons appeared late. Inside the style sheet, an icon comes with the rules that draw it, and the compression of the style sheet takes most of the bytes that the files had. Nothing else names an icon, so the files are not written.
 
-An icon and a bar of the chart of the docs home are graphics: their bound is 3 to 1 (WCAG 2.1, 1.4.11). The host test `site_value_graphics_contrast` checks the color of the value kind of each kind of search entry, in both forms, on the background, the two colors of a card and the track (the band of the chosen row). One sprite with an external `<use href="...#handle">` was refused: whether `img-src` or `default-src` governs the fetch of an external `<use>` is not the same in each browser, and `default-src` is `'none'`. The icon has no text and no name: it is decoration, and the head, the label or the text says the kind.
+An icon and a segment of the chart of the docs home are graphics: their bound is 3 to 1 (WCAG 2.1, 1.4.11). The host test `site_value_graphics_contrast` checks the color of the value kind of each kind of search entry, in both forms, on the background, the two colors of a card and the track (the band of the chosen row). One sprite with an external `<use href="...#handle">` was refused: whether `img-src` or `default-src` governs the fetch of an external `<use>` is not the same in each browser, and `default-src` is `'none'`. The icon has no text and no name: it is decoration, and the head, the label or the text says the kind.
 
 The legend: the reference index ends with the section "The kinds of values", a table of the icon, the kind and its meaning, from the same table.
 
@@ -682,7 +688,7 @@ Before it writes a page, the command checks every pointer, also those of a comme
 
 ### Code in a comment
 
-A comment of the source holds code in backticks (`test return_fault`). The writer of the source comments writes each pair as a code element, and the plain form drops the backticks. It reads no other mark of Markdown: a comment is not a document.
+A comment of the source holds code in backticks (`test return_fault`). The writer of the source comments writes each pair as a code element, a link to the declaration that it names, or a colored fragment of Odin (see "The declarations of the sources"); the plain form drops the backticks. It reads no other mark of Markdown: a comment is not a document.
 
 ## The types
 
@@ -745,9 +751,9 @@ Why this form:
 - A screen reader reads the first line of the card with the button (`aria-describedby`): the summary is in the page, also when the card is closed.
 - With anchor positioning (`position-area`), the card is under its reference and flips above it near the bottom of the window. A browser with no anchor positioning puts it in the middle of the window, the default place of a popover. A browser with no popover shows the cards as a list at the end of the text.
 
-The check of each page (`site_type_cards_problem`): each `popovertarget` and each `aria-describedby` names an id of the page, and no two cards have one id.
+The check of each page (`site_type_cards_problem`): each `popovertarget`, each `data-declaration-card` and each `aria-describedby` names an id of the page, and no two cards of a type or of a declaration have one id.
 
-What is not done: the types are not entries of the search; a type of a guide (a code span) is not a reference.
+A code span of a guide, of a news entry or of a source comment that names a type of the contract is a reference to its card, through the declaration index (see "The declarations of the sources").
 
 ## The colors of the code
 
@@ -781,16 +787,74 @@ Where it applies: only a block that the tool knows to be Odin.
 - The declaration of each type on the page of the types, with each type of the contract inside it as a reference: this closes "the declaration has no references inside it".
 - The signatures of the kernel operations, of the exports and of the commands of the console: they are built from their parts, so each part takes its class with no tokenizer: the name `c-n`, the punctuation and the arrow `c-p`, each type a reference. The parameters of an operation are words of a comment, and stay plain.
 - The fenced blocks of the guides marked `odin`. A block with no language stays plain: the language is not guessed.
+- A code span of a text that is a fragment of Odin by the test of "The declarations of the sources": a span is short, and the test refuses each form of a command, a path and a log, so a span is colored only when it can be nothing but code.
 
 The fenced blocks of `docs/*.md` on 2026-11-12: 15 blocks; 9 with no language, 5 `mermaid`, 1 `odin`. No block is marked `asm`, `sh`, `console`, `nix` or `yaml`, so the tool has no other lexer: a lexer for a language that no block names is code with no use. The 5 mermaid blocks stay plain, as before. The one block of Odin (`MODULE_CONTRACT.md`, the export `seal`) is colored.
 
 The size: the declarations of the page of the types are 963 lines, 53 KB of text, about 7 900 tokens; their spans and references add about 100 KB to that page (estimated, not measured). The guide of the module contract grows by about 1.5 KB; the other guides do not change.
 
+## The declarations of the sources
+
+The owner asked for it on 2026-11-12, of a paragraph of a guide with code spans that name procedures and files and hold an expression: "dans ce genre de texte, ce serait cool d'avoir des références vers les fonctions/symboles/etc mentionnées + de la coloration syntactique, meme dans les inline snippets, si possible". The code is `tools/kerneltool/site_declarations.odin`; its host tests are `site_declarations_test.odin`.
+
+### The declaration index
+
+`kerneltool site` reads the declaration index (`GLOSSARY.md`) before it renders any guide (`site_declarations_read`): each source file of `kernel`, `boot`, `contract`, `support`, `modules` and `programs` (`SITE_DECLARATION_FOLDERS`; not the tests and not the tool), with the parser of Odin (`core:odin/parser`), as the types and the exports are read. Each declaration at the top of a file, and inside a `when` there, gives one entry:
+
+- its name, its package (the name after `package`), its folder, its file and its line;
+- its kind, from its value: a mutable declaration is a global variable; a procedure literal or a group of procedures is a procedure; a type expression (`struct`, `enum`, `union`, `bit_set`, `distinct`, an array, a pointer...) is a type; a name with a capital and lowercase letters given another name is an alias of a type; any other value is a constant;
+- its one line of Odin: the text of the declaration up to the body of a procedure, or up to the first `{` of another value, which becomes `{...}`; its tokens with no comment and single spaces; the line is whole, and it wraps in the card;
+- the first sentence of its comment (the comment above it, or the comment of its line).
+
+The tree of the parser of each file lives in an arena of its own, freed before the next file. A file that the parser refuses is counted, and the command names the first one; it does not stop: the build of the system checks its sources.
+
+### What a code span names
+
+The code spans of the guides, the glossary, the news entries and the source comments (the descriptions of the modules, the text of each symbol, each cell of a reference table that holds a comment) take one path, after the document references, the rows of the reference tables and the files of the repository. A code span of a heading stays code.
+
+1. A span whose whole text is a name (`blend_coverage_row_in_order`), `name()`, `package.name` or `package.name()` is looked for in the index. A file name with a known extension (`boot.image`, `flake.nix`), a keyword and a built-in type are not names. A span `value.field` whose first part is no package of the index is a field, not a name: it goes to the next step.
+2. The resolution (`site_declaration_resolve`): the declarations with that name; with `package.`, those of that package (its name or the last part of its folder); with `()`, the procedures. If one of them is in a folder that the text around the span names (the heading of level 2, the heading of level 3, the paragraph: `support/graphics`, or a file under it as `support/graphics/blend.odin`), that one. Else, when one declaration is left, that one; but a common word (lowercase letters only: `count`, `build`) needs `package.`, `()` or a folder of the text. Else the span stays code, and is counted as ambiguous. A source comment names no folder around its spans.
+3. A span that is not a name and that is a fragment of Odin is colored by the tokenizer and the classes of the blocks of code (`site_code_odin`), in a `<code class="code-inline">`. Each name in it that the index resolves by the same rule is a link, with no card: the link is enough inside an expression. A name of fewer than 3 letters is a local of the example (`a`, `d`) and does not link.
+4. Any other span stays code.
+
+The test of a fragment of Odin (`site_code_span_is_odin`) leaves a span plain when it is unsure. It refuses:
+
+- a text that the tokenizer refuses, or of one token;
+- a command of a shell: its first word is a known command (`kerneltool`, `nix`, `git`, `odin`, `qemu-system-x86_64`, `cd`, ...), or it has `--`, `$`, `\` or `~/`, or it starts with `./` or `/`;
+- a path: a `/` with no space on either side; a file name: a name, a period and a known extension;
+- a setting of a command or of the environment: an `=` with no space on either side (`NAME=true`);
+- a line of a log or of prose: two names or values side by side with no operator between (`test return_fault`, `1031293 us`), or two labels `name: ` in one span (`kernel: boot: firmware`);
+- names joined by operators alone (`Ctrl+C`, `a + b`): a fragment holds one part that only code has: a keyword, a literal, a bracket, `:`, `::`, `->`, `^`, a period between names, `..<`, `<<`, `>>`, `==`, `=`, `#` or `@`.
+
+What stays plain: commands of the shell and of the tool, paths and file names, settings `NAME=value`, lines of a log, key names and their combinations, single words that are not a declaration, a single number, an expression of names and `+` or `-` alone, and a text with a comment or a backslash.
+
+### The markup
+
+- A declaration that is a type of the contract is the reference to its type card (see "The types"), as a value of the kind Type.
+- Another declaration: `<a class="declaration-reference" href="..." data-declaration-card="declaration-<n>" aria-describedby="declaration-<n>-summary"><code class="value value-procedure value-icon">name</code></a>`: a link in the color and with the icon of its value kind (procedure, type, constant, global variable; see "The kinds of values"). The link goes to the page of its module when it is an export of a module of the build (`#export-<name>`), else to its line in the repository at the commit of the build.
+- A name inside a fragment: `<a class="declaration-link" href="...">`, in the class of its token.
+- The declaration card (`GLOSSARY.md`): `<div class="declaration-card" id="declaration-<n>" popover>`: the name as the link, with the icon of its kind; its kind and its package; its one line of Odin, colored; the first sentence of its comment (`id="declaration-<n>-summary"`), or "A procedure with no comment in its source."; its file and line as a link. A page holds the card of each declaration that it links to once, at the end of its text, in the order of the first link (`site_declaration_cards_html`); the type cards come after the declaration cards are known, because a one line of Odin can name a type of the contract (`site_cards_html`).
+- The script opens a card as it opens a type card: a mouse that rests 400 ms on the link, or the focus of the keyboard; it closes 300 ms after the pointer leaves the link and the card. With no script the link works and no card opens; a browser with no popover shows the cards as a list at the end of the text.
+
+### The size
+
+A card is written once in each page that links to its declaration, as the type cards are; the cards do not come from a file that the script loads at the first hover. The bytes, estimated from the counts of the guides (not measured; the command prints the bytes of the pages):
+
+- `ARCHITECTURE.md` has 1545 code spans, 714 of them different, 574 of the form of a name. If 40 % of those link: about 230 cards of about 750 bytes (the address of the repository at the commit twice, the colored line, the sentence), 170 KB, and about 600 links of about 260 bytes instead of 25, 140 KB. Its page grows from about 260 KB to about 570 KB, before compression; the addresses repeat, and the compression of the host takes most of them.
+- The page of the types (about 780 KB, the largest page) shows the comments of the contract: 61 code spans, most of them common words that stay code. It grows by a few KB and stays the largest page.
+- A file of cards for the whole index would hold every declaration of the sources (several thousand), whatever the page; a file for each page is one more request and one more script path. So the cards are in the page, as the type cards.
+
+If a measure shows a guide too heavy, the first saving is the address of the repository in the card (the title links to the same line as the place).
+
+### The count
+
+The command prints the declarations of the index by kind, the files that the parser refused, then "N code spans name a declaration and link to it, M are ambiguous, K name no declaration", with the first five spans of the last two and their files: a stale name in a guide is then seen. A span that names no declaration does not stop the command: many spans are words of a log, of a command or of a field. A document that a page renders again (the status page renders `PROPERTIES.md` and `FIRST_MILESTONE.md` for their ids) is not counted twice, and the first pass over the guides, for their headings, is not counted.
+
 ## The polish of the browser's parts
 
 The owner asked for it on 2026-11-12: "si tu peux styliser les scroll-bars, s'il te plaît, ce serait cool. Tu as tous les trucs de peaufinage en CSS là que tu peux mettre, genre la couleur de highlight, enfin tout ce bordel." In the design of the system: square, the colors of the palette, both color schemes, and nothing more. The rules are `SITE_POLISH_RULES` in `tools/kerneltool/site_style.odin`, after the colors, so that print and the forced colors win over them.
 
-- Scroll bars: `scrollbar-color` (the dim color on the track color) and `scrollbar-width: thin` on the page, the tree, "On this page", the table boxes, the blocks of code, the open menu, the list of the search and the cards of the types. The parts `::-webkit-scrollbar` only inside `@supports not (scrollbar-color: auto)`: a browser that has both ignores the standard one when the parts are styled. A square thumb of 8 pixels, the line color on hover. `scrollbar-gutter: stable` on the page.
+- Scroll bars: see "The scroll bars". `scrollbar-gutter: stable` on the page.
 - `color-scheme: dark light` on the root; each page already has `<meta name="color-scheme" content="dark light">`.
 - `::selection`: the line color at 70 % (`0x2B5688`) under white text, 7.53 to 1, the same in both schemes (a host test). It is one rule for every element, so it holds in the blocks of code and on the values.
 - `accent-color` and `caret-color`: the line color. The placeholder of the search: the dim color at 115 % in the dark form (5.40 on the field; the dim color itself is 4.33), the dim color of the light form there (5.69).
@@ -802,11 +866,35 @@ The owner asked for it on 2026-11-12: "si tu peux styliser les scroll-bars, s'il
 - The jump to an anchor: `scroll-margin-top` of each target is the height of the bar and 16 pixels, so the bar does not hide the target. The page has no `scroll-padding-top`: with one, a browser takes the search field of the bar as hidden and scrolls the page at each key. A heading, an item or a paragraph that is the target has a line of 2 pixels at its left; a row of a table has the band of the track. No fade: the design rules have no animation.
 - `overscroll-behavior: contain` on the tree, "On this page" and the open menu; `touch-action: manipulation` on links, buttons and summaries; the tap highlight in the line color at 30 %; `text-size-adjust: 100%`.
 - `image-rendering: pixelated` on the mark of the home and the heron of the bar (already); the icons of the values are masks drawn at their size. The screen pictures are not pixelated: they are shown smaller than their pixels.
-- The card of a type has no veil: `::backdrop` is transparent; a card is not a modal.
+- The card of a type and the card of a declaration have no veil: `::backdrop` is transparent; a card is not a modal.
 - Forced colors (`@media (forced-colors: active)`): the icons of the values in `CanvasText`, the marks of the values in `CanvasText`, the focus in `Highlight`, the border of a card in `CanvasText`.
 - Print: black text, no color of code or of a value, no card of a type, a block of code wraps.
 
 A host test checks that the style sheet holds each of these rules, has no `outline: none` and no `outline: 0`, and that each `border-radius` is 0.
+
+### The scroll bars
+
+The owner asked for it on 2026-11-12, with two pictures of the scroll bar of another program of the same design: "petit détail visuel, mais à mon sens, la scrollbar est trop basique, je la veux plus comme ça (theme justement PROVENANT de TON design à la base)". The rules are `SITE_SCROLL_RULES` and `site_scroll_variables` in `tools/kerneltool/site_style.odin`. They apply to every part that scrolls: the page, the tree, "On this page", the table boxes, the blocks of code, the open menu, the list of the search and the cards of the types and of the declarations.
+
+The form, 16 pixels wide (a size of the grid of the design, near the 22 pixels of the pictures), all rectangular:
+
+- At each end a square button with a solid triangle of four rows of pixels, in the dim color on the darker panel of the bottom of a card; the text color with the pointer over it; the fill of the thumb while it is pressed.
+- The track: the track color, with a line of 1 pixel at its edge (left for a vertical bar, top for a horizontal one) in the track color moved 25 % toward the dim color.
+- The thumb: a rectangle of the track color moved 35 % toward the dim color (30 % in the light form), with a border of 1 pixel in the dim color, and in its middle a grip of three lines of 8 pixels, 3 pixels apart, across the thumb, in the dim color. With the pointer over it or while it is dragged: the blue of the line at 73 % with a border of the blue at 112 % (the light form: the blue itself, with a border at 73 %), and the grip in the text color (white in the light form). The fill of the pictures is quieter than 3 to 1 on the track; the border carries the contrast of a graphic.
+- The corner where two bars meet: the panel of the buttons.
+
+The colors come from the table of colors of the site (`site_scroll_colors`, from the colors of each form and the blue of the line), as variables of each form. A data address cannot read a variable of the style sheet: `site_scroll_variables` writes each triangle (4 directions) and each grip (2 directions), at rest and with the pointer, as a data address in the colors of each form, through `site_svg_data_address`: 12 addresses for each form. The rules name only the variables.
+
+What each engine shows:
+
+| Engine | Means | What it shows |
+|---|---|---|
+| Chromium (Chrome, Edge) and WebKit (Safari) | `::-webkit-scrollbar`, `-button:single-button` with `:vertical`/`:horizontal` and `:decrement`/`:increment`, `-track`, `-thumb` with `:hover` and `:active`, `-corner`, inside `@supports selector(::-webkit-scrollbar)` | The whole form: the buttons, the track, the thumb and its grip, the colors with the pointer |
+| Gecko (Firefox) | `scrollbar-color` (the border color of the thumb on the track color) and `scrollbar-width: auto`, inside `@supports not selector(::-webkit-scrollbar)` | The colors only: no button, no border, no grip; the system draws the form and its own color under the pointer |
+
+Chromium, since version 121, draws the standard scroll bar of an element that has `scrollbar-color` or `scrollbar-width`, and ignores the parts `::-webkit-scrollbar` of that element. So the two standard properties are written only for an engine with no such parts: each engine takes its own rules. A Chromium that does not accept a pseudo-element in `@supports selector()` takes the standard colors, which is correct.
+
+The host test `site_style_sheet_scroll_bars` checks: the rules of both engines; the two standard properties written once, inside the test of the engines with no parts of WebKit; no color in the rules themselves; in each form, 12 data addresses, each an SVG picture with no character that ends the address and one color of the scroll bars of its form; a contrast of 3 to 1 of the border of the thumb (at rest and with the pointer) on the track, of a triangle on its button and of the grip on the thumb under the pointer.
 
 ## The tiles of the boot image
 

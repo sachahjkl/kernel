@@ -42,6 +42,9 @@ Site_Value_Kind :: enum {
 	Version,
 	Yes,
 	No,
+	Procedure,
+	Constant,
+	Variable,
 }
 
 Site_Value_Kind_Description :: struct {
@@ -152,6 +155,26 @@ site_value_kinds := [Site_Value_Kind]Site_Value_Kind_Description {
 		name = "no", title = "No", meaning = "A state that does not hold: not in the boot image, not built.",
 		color = graphics.COLOR_DIM, dark_percent = 100, light_percent = 82,
 		cells = {"............", ".##########.", ".#........#.", ".#........#.", ".#........#.", ".#........#.", ".#........#.", ".#........#.", ".#........#.", ".##########.", "............", "............"},
+	},
+	// The three kinds of a declaration of the sources that are not a type
+	// (docs/SITE.md, "The declarations of the sources"). A procedure is
+	// called as an operation is: the kernel blue. A constant is a literal
+	// of the code: the color of a literal, with a lock. A global variable
+	// changes over the run, as a time does: the color of the boot program.
+	.Procedure = {
+		name = "procedure", title = "Procedure", meaning = "A procedure that the sources of the system declare.",
+		color = graphics.COLOR_KERNEL, dark_percent = 100, light_percent = 73,
+		cells = {"............", "...#....#...", "..##....##..", "..#......#..", ".##......##.", ".##......##.", ".##......##.", "..#......#..", "..##....##..", "...#....#...", "............", "............"},
+	},
+	.Constant = {
+		name = "constant", title = "Constant", meaning = "A constant that the sources of the system declare.",
+		color = graphics.COLOR_MEMORY, dark_percent = 100, light_percent = 65,
+		cells = {"............", "....####....", "...#....#...", "...#....#...", "..########..", "..########..", "..###..###..", "..###..###..", "..########..", "..########..", "............", "............"},
+	},
+	.Variable = {
+		name = "variable", title = "Global variable", meaning = "A variable that the sources of the system declare at the top of a package.",
+		color = graphics.COLOR_BOOT_PROGRAM, dark_percent = 100, light_percent = 65,
+		cells = {"............", ".##......##.", "..##....##..", "...##..##...", "....####....", ".....##.....", "....####....", "...##..##...", "..##....##..", ".##......##.", "............", "............"},
 	},
 }
 

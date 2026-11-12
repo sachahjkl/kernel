@@ -220,13 +220,17 @@ blockquote { margin-left: 0; padding-left: 16px; border-left: 2px solid var(--li
 .search-what { flex: 0 1 auto; color: var(--dim); }
 .search-name mark { background: none; color: var(--match); font-weight: 700; }
 /* The home of the docs: a door. Its search field is large, in the middle
-   of the page, and its list opens under it; the bar of that page has no
-   field. Two cards under it, the guides and the reference. */
+   of the page; the bar of that page has no field. Under the field, the
+   chart of what the search finds over the whole width of the page; the
+   list of results opens under the chart, over the cards, so that the
+   field, the chart and the list stay in view while the reader types. Two
+   cards under them, the guides and the reference. */
 .docs-head { padding: 32px 0 8px; text-align: center; }
 .docs-head .lead { margin: 0 auto 16px; }
-.search.search-door { max-width: 720px; margin: 0 auto 32px; }
+.docs-search { position: relative; margin-bottom: 24px; }
+.docs-search .search.search-door { position: static; max-width: 720px; margin: 0 auto 16px; }
 .search-door input { box-sizing: border-box; width: 100%; height: 48px; padding: 0 16px; font-size: 18px; border-color: var(--line); }
-.search-door .search-panel { left: 0; right: 0; top: 52px; width: auto; max-width: none; }
+.docs-search .search-door .search-panel { position: absolute; top: 100%; left: 0; right: 0; width: auto; max-width: 720px; margin: 4px auto 0; }
 /* The two cards of the guides and of the reference: two columns from 900
    pixels, one under it. A card takes the height of its own rows, so no
    card shows an empty part beside a longer one. */
@@ -237,7 +241,7 @@ blockquote { margin-left: 0; padding-left: 16px; border-left: 2px solid var(--li
 /* The kind of a row of the list: its icon in the color of its kind, its
    words dim, as the rest of the line. */
 span.search-kind.value-icon::before { margin-right: 4px; }
-/* One row form for the three cards of the docs home: the lead (a number
+/* One row form for the two cards of the docs home: the lead (a number
    of a reading order, or the icon of a kind at the size of the icon of a
    table cell), the name, then a description or a bar, and a count at the
    right. The name and the description share one line when the width
@@ -245,8 +249,6 @@ span.search-kind.value-icon::before { margin-right: 4px; }
    width, that of five figures (the index holds at most 4096 entries), its
    figures at the right and of one width; it has no rule at its left, so
    that the counts of the rows align. */
-.docs-parts-column { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
-.docs-parts-column .search-chart { margin-bottom: 0; }
 .docs-rows { list-style: none; margin: 0; padding: 0; }
 .docs-rows li { margin: 0; }
 .docs-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: start; gap: 0 8px; padding: 2px 0; line-height: 24px; }
@@ -254,33 +256,39 @@ span.search-kind.value-icon::before { margin-right: 4px; }
 .docs-row-number { width: 2ch; text-align: right; font-family: var(--mono); font-size: 14px; color: var(--dim); }
 .docs-row-main { display: flex; flex-wrap: wrap; align-items: center; gap: 0 12px; min-width: 0; }
 .docs-row-name { overflow-wrap: anywhere; }
-.docs-rows-one-line .docs-row-name, .search-chart .docs-row-name { white-space: nowrap; overflow-wrap: normal; }
+.docs-rows-one-line .docs-row-name { white-space: nowrap; overflow-wrap: normal; }
 /* The description is always under the name: beside it, the rows of a card
    would each break at a different place. */
 .docs-row-about { flex: 1 1 100%; min-width: 0; color: var(--dim); font-size: 14px; line-height: 20px; }
 .docs-row .docs-row-count { width: 5ch; padding: 0; border-left: 0; text-align: right; font-variant-numeric: tabular-nums; }
-/* The chart of what the search finds: a row of the form above for each
-   kind, a bar in the place of the description. The bars of all rows
-   start at one place, so the name has one width. A bar is an SVG rect in
-   the color of its kind, with square corners; its length is an attribute.
-   Where the name and a bar of 8 em do not fit on one line, the bar goes
-   under the name. While the field holds a text, a row is a button: the
-   kind that the list keeps has the band and the line of the chosen row of
-   the list. */
-.search-chart { margin-bottom: 16px; }
-.search-chart-total { color: var(--dim); }
+/* The chart of what the search finds: one bar of 12 pixels over the whole
+   width, a segment for each kind in the color of its kind, square, and the
+   total at its right; under it one row of chips that wraps on a narrow
+   screen, each chip the icon, the name and the count of a kind. A segment
+   is an SVG rect: its place and its width are attributes. A chip keeps one
+   width while the reader types: its name does not change and its count has
+   the width of four figures. While the field holds a text, a chip is a
+   button: the kind that the list keeps has the band and the line of the
+   chosen row of the list. */
+.search-chart { margin: 0; }
+.search-chart-heading { position: absolute; left: -9999px; }
+.search-chart-line { display: flex; align-items: center; gap: 12px; margin-bottom: 4px; }
+.search-chart-bar { display: block; flex: 1 1 auto; min-width: 8em; height: 12px; background: var(--track); }
+.search-chart-segment { fill: var(--value-color); stroke: var(--background); stroke-width: 1px; cursor: pointer; transition: x 150ms ease-out, width 150ms ease-out; }
+.search-chart-total { flex: 0 0 auto; margin: 0; color: var(--dim); font-size: 14px; line-height: 24px; white-space: nowrap; }
 .search-chart-total .value { padding: 0; border-left: 0; }
-.search-chart .docs-row-name { flex: 0 0 11em; }
-.docs-row-bar { display: block; flex: 1 1 8em; min-width: 8em; height: 12px; }
-.search-chart-bar rect { fill: var(--value-color); transition: width 150ms ease-out; }
-.search-chart-target { padding: 2px 4px; color: var(--text); text-decoration: none; border-left: 2px solid transparent; }
-/* A count keeps the color of a number also in a row that is a link. */
+.search-chart-rows { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 0 4px; }
+.search-chart-rows li { margin: 0; }
+.search-chart-target { display: inline-flex; align-items: center; gap: 6px; padding: 0 4px; font-size: 13px; line-height: 24px; color: var(--text); text-decoration: none; white-space: nowrap; border-left: 2px solid transparent; }
+.search-chart-icon.value-icon::before { display: block; margin: 0; }
+.search-chart-target .search-chart-count { width: 4ch; padding: 0; border-left: 0; text-align: right; font-size: 13px; font-variant-numeric: tabular-nums; }
+/* A count keeps the color of a number also in a chip that is a link. */
 .search-chart-target .value { color: var(--value-color); }
 .search-chart-target[role="button"] { cursor: pointer; }
 .search-chart-target[aria-pressed="true"] { background: var(--track); border-left-color: var(--line); }
 .search-chart-none .search-chart-target, .search-chart-none .search-chart-target .value { color: var(--dim); }
 @media (prefers-reduced-motion: reduce) {
-  .search-chart-bar rect { transition: none; }
+  .search-chart-segment { transition: none; }
 }
 .crumbs ol { list-style: none; margin: 16px auto 0; padding: 0; display: flex; flex-wrap: wrap; gap: 4px; color: var(--dim); }
 .crumbs li { margin: 0; }
@@ -452,7 +460,28 @@ button.type-reference:focus-visible { outline: 2px solid var(--line); outline-of
 tr.padding td { color: var(--dim); }
 .type-layout { color: var(--dim); }
 @supports (position-area: block-end) {
-  .type-card:popover-open { inset: auto; margin: 4px 0 0; position-area: block-end span-inline-end; position-try-fallbacks: flip-block, flip-inline; }
+  .type-card:popover-open, .declaration-card:popover-open { inset: auto; margin: 4px 0 0; position-area: block-end span-inline-end; position-try-fallbacks: flip-block, flip-inline; }
+}
+/* The declarations of the sources (docs/SITE.md, "The declarations of the
+   sources"): a code span that names one is a link that holds a value of
+   its kind, with its icon; its card is a popover in the form of a type
+   card, which the script opens. A fragment of Odin in a text is colored as
+   a block of code, each name of a declaration in it a link. */
+a.declaration-reference { text-decoration-style: dotted; text-decoration-thickness: 1px; text-underline-offset: 3px; }
+a.declaration-reference:hover { background: none; text-decoration-style: solid; }
+/* A value inside a link takes the color of the link elsewhere; a
+   declaration keeps the color of its kind. */
+a.declaration-reference .value, .declaration-card-title .value { color: var(--value-color); }
+code.code-inline { padding: 0 4px; }
+a.declaration-link { color: inherit; text-decoration-thickness: 1px; text-underline-offset: 3px; }
+.declaration-card { width: min(36rem, calc(100vw - 32px)); max-height: min(70vh, 32rem); overflow: auto; margin: auto; padding: 12px 16px; color: var(--text); background: var(--card-top); border: 1px solid var(--line); font-family: var(--reading); font-size: 14px; line-height: 20px; text-align: left; white-space: normal; }
+.declaration-card p { margin: 0 0 8px; max-width: none; }
+.declaration-card p:last-child { margin-bottom: 0; }
+.declaration-card-kind, .declaration-card-place, .declaration-card-place a { color: var(--dim); }
+.declaration-card-signature { margin: 0 0 8px; padding: 4px 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
+@supports not selector(:popover-open) {
+  .declaration-cards { margin-top: 32px; }
+  .declaration-card { margin: 0 0 8px; }
 }
 
 /* Cards: a border of 1 pixel in the accent, the bar of 4 by 16 pixels
@@ -536,8 +565,10 @@ figcaption { padding-top: 8px; font-size: 14px; }
   .search { margin-left: 0; }
   .search input { width: 100%; height: 32px; }
   .search-panel { position: static; width: auto; max-width: none; margin-top: 4px; }
-  /* The field of the home of the docs stays in the page, not in the menu. */
+  /* The field of the home of the docs stays in the page, not in the menu;
+     its list still opens under the chart. */
   .search-door input { height: 40px; }
+  .docs-search .search-door .search-panel { position: absolute; }
   /* The open menu scrolls on its own: on a documentation page it holds
      the tree under the sections and the search. */
   .bar-menu-content { max-height: calc(100vh - 48px); overflow-y: auto; }
@@ -565,8 +596,9 @@ figcaption { padding-top: 8px; font-size: 14px; }
 `
 
 // The polish of the parts of the browser (docs/SITE.md, "The polish of the
-// browser's parts"): the scroll bars, the selection, the focus, the marks
-// of the lists, the jump to an anchor, the forced colors. In the design of
+// browser's parts"): the gutter of the scroll bar, the selection, the
+// focus, the marks of the lists, the jump to an anchor, the forced colors;
+// the scroll bars themselves are SITE_SCROLL_RULES. In the design of
 // the system: square, the colors of the palette, both forms. The variables
 // --selection, --selection-text and --placeholder are written for each
 // form by site_polish_variables.
@@ -578,17 +610,6 @@ SITE_POLISH_RULES :: `
 }
 /* A page with and without a scroll bar has the same width. */
 html { scrollbar-gutter: stable; }
-/* The scroll bars: thin, a thumb in the dim color on the track color. The
-   standard properties first; the parts of WebKit only for a browser with no
-   standard one, because a browser that has both ignores the standard one
-   when the parts are styled. */
-html, .tree, .outline, .table, pre, .bar-menu-content, .search-panel, .type-card { scrollbar-color: var(--dim) var(--track); scrollbar-width: thin; }
-@supports not (scrollbar-color: auto) {
-  ::-webkit-scrollbar { width: 8px; height: 8px; background: var(--track); }
-  ::-webkit-scrollbar-thumb { background: var(--dim); border: 0; }
-  ::-webkit-scrollbar-thumb:hover { background: var(--line); }
-  ::-webkit-scrollbar-corner { background: var(--track); }
-}
 /* The scroll of the tree and of "On this page" stops at their end: it does
    not move the page. */
 .tree, .outline, .bar-menu-content { overscroll-behavior: contain; }
@@ -614,23 +635,200 @@ pre, code { tab-size: 4; }
 [id] { scroll-margin-top: calc(var(--bar-height) + 16px); }
 h2:target, h3:target, li:target, p:target { box-sizing: border-box; border-left: 2px solid var(--line); padding-left: 8px; }
 .table tr:target > td { background: var(--track); }
-/* A card of a type is not a modal: no veil over the page. */
-.type-card::backdrop { background: transparent; }
+/* A card of a type or of a declaration is not a modal: no veil over the page. */
+.type-card::backdrop, .declaration-card::backdrop { background: transparent; }
 @media (forced-colors: active) {
   /* The system colors: the icons, the marks of the values and the focus stay. */
   .value-icon::before { forced-color-adjust: none; background-color: CanvasText; }
   .search-chart-bar rect { fill: CanvasText; }
   code.value, button.type-reference.value { border-left-color: CanvasText; }
   a:focus-visible, button:focus-visible, summary:focus-visible, input:focus-visible, [tabindex]:focus-visible { outline-color: Highlight; }
-  .type-card { border-color: CanvasText; }
+  .type-card, .declaration-card { border-color: CanvasText; }
 }
 @media print {
-  /* Plain black text: no color of code or of a value, no card of a type. */
-  .type-cards { display: none; }
+  /* Plain black text: no color of code or of a value, no card of a type
+     or of a declaration. */
+  .type-cards, .declaration-cards { display: none; }
   pre, code, .value, pre .type-reference, button.type-reference.value, [class^="c-"] { color: #000; }
   pre { white-space: pre-wrap; }
 }
 `
+
+// The scroll bars (docs/SITE.md, "The scroll bars"), as the scroll bars of
+// the programs of the system: a button with a triangle at each end, a
+// track with a lighter line at its edge, a square thumb with a lighter
+// border and a grip of three lines; with the pointer over it the thumb
+// takes the blue of the line and the grip is near white. Everything is
+// rectangular. The parts ::-webkit-scrollbar are for Chromium and WebKit;
+// Chromium ignores them on an element that has scrollbar-color or
+// scrollbar-width, so those two are written only for an engine with no
+// such parts (Firefox), with the color of the border of the thumb, which
+// keeps the contrast of a graphic on the track. A data address cannot read
+// a variable of the style sheet: the tool writes each triangle and each
+// grip in the colors of each form (site_scroll_variables).
+SITE_SCROLL_RULES :: `
+@supports selector(::-webkit-scrollbar) {
+  ::-webkit-scrollbar { width: 16px; height: 16px; background: var(--scroll-track); }
+  ::-webkit-scrollbar-track { background: var(--scroll-track); }
+  ::-webkit-scrollbar-track:vertical { border-left: 1px solid var(--scroll-edge); }
+  ::-webkit-scrollbar-track:horizontal { border-top: 1px solid var(--scroll-edge); }
+  ::-webkit-scrollbar-thumb { background: var(--scroll-thumb) var(--scroll-grip-vertical) no-repeat center; border: 1px solid var(--scroll-thumb-edge); border-radius: 0; }
+  ::-webkit-scrollbar-thumb:vertical { min-height: 24px; }
+  ::-webkit-scrollbar-thumb:horizontal { min-width: 24px; background-image: var(--scroll-grip-horizontal); }
+  ::-webkit-scrollbar-thumb:hover, ::-webkit-scrollbar-thumb:active { background-color: var(--scroll-thumb-hover); background-image: var(--scroll-grip-vertical-hover); border-color: var(--scroll-thumb-hover-edge); }
+  ::-webkit-scrollbar-thumb:horizontal:hover, ::-webkit-scrollbar-thumb:horizontal:active { background-image: var(--scroll-grip-horizontal-hover); }
+  ::-webkit-scrollbar-button:single-button { display: block; width: 16px; height: 16px; background: var(--scroll-button) no-repeat center; border: 1px solid var(--scroll-edge); border-radius: 0; }
+  ::-webkit-scrollbar-button:single-button:vertical:decrement { background-image: var(--scroll-arrow-up); }
+  ::-webkit-scrollbar-button:single-button:vertical:increment { background-image: var(--scroll-arrow-down); }
+  ::-webkit-scrollbar-button:single-button:horizontal:decrement { background-image: var(--scroll-arrow-left); }
+  ::-webkit-scrollbar-button:single-button:horizontal:increment { background-image: var(--scroll-arrow-right); }
+  ::-webkit-scrollbar-button:single-button:vertical:decrement:hover { background-image: var(--scroll-arrow-up-hover); }
+  ::-webkit-scrollbar-button:single-button:vertical:increment:hover { background-image: var(--scroll-arrow-down-hover); }
+  ::-webkit-scrollbar-button:single-button:horizontal:decrement:hover { background-image: var(--scroll-arrow-left-hover); }
+  ::-webkit-scrollbar-button:single-button:horizontal:increment:hover { background-image: var(--scroll-arrow-right-hover); }
+  ::-webkit-scrollbar-button:single-button:active { background-color: var(--scroll-thumb); }
+  ::-webkit-scrollbar-corner { background: var(--scroll-button); }
+}
+@supports not selector(::-webkit-scrollbar) {
+  html, .tree, .outline, .table, pre, .bar-menu-content, .search-panel, .type-card, .declaration-card { scrollbar-color: var(--scroll-thumb-edge) var(--scroll-track); scrollbar-width: auto; }
+}
+`
+
+// The colors of the scroll bars in one form. The border of the thumb (at
+// rest and with the pointer over it) carries its contrast of a graphic on
+// the track: the fill is the quieter tone of the programs of the system.
+Site_Scroll_Colors :: struct {
+	track:            graphics.Color,
+	edge:             graphics.Color, // The line at the edge of the track and around a button.
+	button:           graphics.Color,
+	arrow:            graphics.Color,
+	arrow_hover:      graphics.Color,
+	thumb:            graphics.Color,
+	thumb_edge:       graphics.Color,
+	thumb_hover:      graphics.Color,
+	thumb_hover_edge: graphics.Color,
+	grip:             graphics.Color,
+	grip_hover:       graphics.Color,
+}
+
+// site_scroll_colors gives the colors of the scroll bars of one form, from
+// the colors of the form and the blue of the line.
+site_scroll_colors :: proc(light: bool) -> Site_Scroll_Colors {
+	colors := light ? site_light_colors() : site_dark_colors()
+	if light {
+		return Site_Scroll_Colors {
+			track = colors.track,
+			edge = graphics.mix(colors.track, colors.dim, site_percent(25)),
+			button = colors.card_bottom,
+			arrow = colors.dim,
+			arrow_hover = colors.text,
+			thumb = graphics.mix(colors.track, colors.dim, site_percent(30)),
+			thumb_edge = colors.dim,
+			thumb_hover = colors.line,
+			thumb_hover_edge = graphics.shade(colors.line, 73),
+			grip = colors.dim,
+			grip_hover = graphics.COLOR_WHITE,
+		}
+	}
+	return Site_Scroll_Colors {
+		track = colors.track,
+		edge = graphics.mix(colors.track, colors.dim, site_percent(25)),
+		button = colors.card_bottom,
+		arrow = colors.dim,
+		arrow_hover = colors.text,
+		thumb = graphics.mix(colors.track, colors.dim, site_percent(35)),
+		thumb_edge = colors.dim,
+		thumb_hover = graphics.shade(colors.line, 73),
+		thumb_hover_edge = graphics.shade(colors.line, 112),
+		grip = colors.dim,
+		grip_hover = colors.text,
+	}
+}
+
+// The four directions of the triangle of a button of a scroll bar.
+Site_Scroll_Direction :: enum {
+	Up,
+	Down,
+	Left,
+	Right,
+}
+
+site_scroll_direction_names := [Site_Scroll_Direction]string {
+	.Up    = "up",
+	.Down  = "down",
+	.Left  = "left",
+	.Right = "right",
+}
+
+// site_scroll_arrow_svg gives the triangle of a button: a square of 16
+// pixels, and in its middle a solid triangle of four rows of pixels, as the
+// icons of the values are drawn: one rect for each row.
+site_scroll_arrow_svg :: proc(direction: Site_Scroll_Direction, color: graphics.Color) -> string {
+	b := strings.builder_make(context.temp_allocator)
+	fmt.sbprintf(&b, "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"16\" height=\"16\" viewBox=\"0 0 16 16\" shape-rendering=\"crispEdges\" fill=\"%s\">", site_color(color))
+	for row in 0 ..< 4 {
+		half := row + 1
+		switch direction {
+		case .Up:
+			fmt.sbprintf(&b, "<rect x=\"%d\" y=\"%d\" width=\"%d\" height=\"1\"/>", 8 - half, 6 + row, 2 * half)
+		case .Down:
+			fmt.sbprintf(&b, "<rect x=\"%d\" y=\"%d\" width=\"%d\" height=\"1\"/>", 8 - half, 9 - row, 2 * half)
+		case .Left:
+			fmt.sbprintf(&b, "<rect x=\"%d\" y=\"%d\" width=\"1\" height=\"%d\"/>", 6 + row, 8 - half, 2 * half)
+		case .Right:
+			fmt.sbprintf(&b, "<rect x=\"%d\" y=\"%d\" width=\"1\" height=\"%d\"/>", 9 - row, 8 - half, 2 * half)
+		}
+	}
+	strings.write_string(&b, "</svg>")
+	return strings.to_string(b)
+}
+
+// site_scroll_grip_svg gives the grip of a thumb: three lines of 8 pixels,
+// 3 pixels apart, across the thumb (horizontal lines on a vertical thumb).
+site_scroll_grip_svg :: proc(vertical: bool, color: graphics.Color) -> string {
+	b := strings.builder_make(context.temp_allocator)
+	if vertical {
+		fmt.sbprintf(&b, "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"8\" height=\"7\" viewBox=\"0 0 8 7\" shape-rendering=\"crispEdges\" fill=\"%s\">", site_color(color))
+		for line in 0 ..< 3 {
+			fmt.sbprintf(&b, "<rect x=\"0\" y=\"%d\" width=\"8\" height=\"1\"/>", 3 * line)
+		}
+	} else {
+		fmt.sbprintf(&b, "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"7\" height=\"8\" viewBox=\"0 0 7 8\" shape-rendering=\"crispEdges\" fill=\"%s\">", site_color(color))
+		for line in 0 ..< 3 {
+			fmt.sbprintf(&b, "<rect x=\"%d\" y=\"0\" width=\"1\" height=\"8\"/>", 3 * line)
+		}
+	}
+	strings.write_string(&b, "</svg>")
+	return strings.to_string(b)
+}
+
+// site_scroll_variables writes the variables of the scroll bars of one
+// form: the colors, then each triangle and each grip as a data address in
+// those colors, at rest and with the pointer over it.
+site_scroll_variables :: proc(builder: ^strings.Builder, light: bool) {
+	colors := site_scroll_colors(light)
+	strings.write_string(builder, ":root {\n")
+	site_variable(builder, "scroll-track", colors.track)
+	site_variable(builder, "scroll-edge", colors.edge)
+	site_variable(builder, "scroll-button", colors.button)
+	site_variable(builder, "scroll-thumb", colors.thumb)
+	site_variable(builder, "scroll-thumb-edge", colors.thumb_edge)
+	site_variable(builder, "scroll-thumb-hover", colors.thumb_hover)
+	site_variable(builder, "scroll-thumb-hover-edge", colors.thumb_hover_edge)
+	address :: proc(target: ^strings.Builder, variable_name, svg: string) {
+		fmt.sbprintf(target, "  --%s: url(\"%s\");\n", variable_name, site_svg_data_address(svg))
+	}
+	for direction in Site_Scroll_Direction {
+		name := site_scroll_direction_names[direction]
+		address(builder, strings.concatenate({"scroll-arrow-", name}, context.temp_allocator), site_scroll_arrow_svg(direction, colors.arrow))
+		address(builder, strings.concatenate({"scroll-arrow-", name, "-hover"}, context.temp_allocator), site_scroll_arrow_svg(direction, colors.arrow_hover))
+	}
+	address(builder, "scroll-grip-vertical", site_scroll_grip_svg(true, colors.grip))
+	address(builder, "scroll-grip-vertical-hover", site_scroll_grip_svg(true, colors.grip_hover))
+	address(builder, "scroll-grip-horizontal", site_scroll_grip_svg(false, colors.grip))
+	address(builder, "scroll-grip-horizontal-hover", site_scroll_grip_svg(false, colors.grip_hover))
+	strings.write_string(builder, "}\n")
+}
 
 // The colors of the parts of the browser in one form: the selection (the
 // line color, darker, under white text: the same in both forms), and the
@@ -673,6 +871,9 @@ site_style_sheet :: proc(tile_rules: string) -> string {
 	strings.write_string(&builder, site_code_rules(false))
 	site_polish_variables(&builder, false)
 	strings.write_string(&builder, SITE_POLISH_RULES)
+	// The scroll bars, in the colors of the dark form.
+	site_scroll_variables(&builder, false)
+	strings.write_string(&builder, SITE_SCROLL_RULES)
 	// The colors and the widths of the tiles of the boot image: they come
 	// from the image of the build, so they are not fixed rules.
 	strings.write_string(&builder, tile_rules)
@@ -688,6 +889,7 @@ site_style_sheet :: proc(tile_rules: string) -> string {
 	strings.write_string(&builder, site_value_rules(true))
 	strings.write_string(&builder, site_code_rules(true))
 	site_polish_variables(&builder, true)
+	site_scroll_variables(&builder, true)
 	// The grid of points is a decoration of the dark background only.
 	strings.write_string(&builder, ".section-home { background-image: none; }\n}\n")
 	// Print is plain black text, also in the light form, whose colors of code

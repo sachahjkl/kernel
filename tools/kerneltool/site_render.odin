@@ -48,6 +48,22 @@ Site_Renderer :: struct {
 	linked_terms: map[string]bool,
 	glossary:     bool, // The page of the glossary: its terms get anchors, and no term links.
 	in_heading:   bool,
+	// The folders of the sources that the heading of level 2, the heading
+	// of level 3 and the paragraph name: a name that several packages
+	// declare is resolved by them (site_declaration_resolve).
+	section_folders:    []string,
+	subsection_folders: []string,
+	paragraph_folders:  []string,
+}
+
+// site_renderer_context_folders gives the folders that the text around a
+// code span names: its headings and its paragraph.
+site_renderer_context_folders :: proc(renderer: ^Site_Renderer) -> []string {
+	folders := make([dynamic]string, context.temp_allocator)
+	append(&folders, ..renderer.section_folders)
+	append(&folders, ..renderer.subsection_folders)
+	append(&folders, ..renderer.paragraph_folders)
+	return folders[:]
 }
 
 site_renderer_make :: proc(site: ^Site, page, source: string) -> Site_Renderer {
@@ -213,6 +229,15 @@ site_render_markdown :: proc(renderer: ^Site_Renderer, content: string, first_li
 			id := site_unique_id(renderer, site_slug(text))
 			if level == 2 {
 				renderer.section = id
+			}
+			if renderer.site != nil {
+				switch {
+				case level <= 2:
+					renderer.section_folders = site_context_folders(&renderer.site.declarations, text)
+					renderer.subsection_folders = nil
+				case level == 3:
+					renderer.subsection_folders = site_context_folders(&renderer.site.declarations, text)
+				}
 			}
 			append(&renderer.headings, Site_Heading{level = level, text = text, id = id})
 			fmt.sbprintf(b, "<h%d id=\"%s\">", level, id)
@@ -502,6 +527,9 @@ site_render_inline :: proc(renderer: ^Site_Renderer, text: string) {
 	bold_open := false
 	plain_start := 0
 	index := 0
+	if renderer.site != nil && !renderer.in_heading {
+		renderer.paragraph_folders = site_context_folders(&renderer.site.declarations, text)
+	}
 	flush :: proc(renderer: ^Site_Renderer, text: string) {
 		site_write_with_terms(renderer, text)
 	}
@@ -589,6 +617,11 @@ site_write_code_span :: proc(renderer: ^Site_Renderer, code: string) {
 		strings.write_string(b, "\"><code>")
 		site_escape(b, code)
 		strings.write_string(b, "</code></a>")
+		return
+	}
+	// A name of a declaration of the sources, or a fragment of Odin
+	// (docs/SITE.md, "The declarations of the sources").
+	if !renderer.in_heading && site_declaration_code_span(renderer.site, b, renderer.page, renderer.source, code, site_renderer_context_folders(renderer)) {
 		return
 	}
 	strings.write_string(b, "<code>")

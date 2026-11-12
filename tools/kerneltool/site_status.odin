@@ -113,9 +113,12 @@ site_document_render :: proc(site: ^Site, source: string) -> (renderer: Site_Ren
 		page = SITE_PAGE
 	}
 	listed := len(site.not_rendered)
+	// The spans of a document rendered again are counted by its own page.
+	declaration_spans := site.declaration_spans
 	renderer = site_renderer_make(site, page, source)
 	site_render_markdown(&renderer, content)
 	resize(&site.not_rendered, listed)
+	site.declaration_spans = declaration_spans
 	return renderer, true
 }
 
