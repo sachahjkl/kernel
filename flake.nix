@@ -125,7 +125,7 @@
         name = "kernel-boot-test";
         src = inputs.nixpkgs.lib.fileset.toSource {
           root = ./.;
-          fileset = inputs.nixpkgs.lib.fileset.unions [./flake.nix ./CHANGELOG.md ./changelog.d ./boot ./contract ./kernel ./modules ./programs ./resources ./runtime ./support ./tools];
+          fileset = inputs.nixpkgs.lib.fileset.unions [./flake.nix ./CHANGELOG.md ./changelog.d ./boot ./contract ./kernel ./modules ./programs ./resources ./runtime ./support ./tools ./.project];
         };
         nativeBuildInputs = buildTools ++ [kerneltool];
         buildPhase = ''

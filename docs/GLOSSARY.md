@@ -387,6 +387,8 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Release | One section of the changelog: a release number, a date, and the entries of the changes, in the parts Added, Changed, Deprecated, Removed, Fixed and Security. The merge of step N on `master` is one release | version (a stored object has versions), tag, build |
 | Release number | The number of a release, `<major>.<minor>.<patch>`: `0.N.0` for step N, `0.N.1` for a correction after it. `RELEASE_NUMBER` in `contract/release` is the newest one | version number, version |
 | Fragment | One file of `changelog.d/` with one change that is not in a release yet: its type and the text of its entry. `kerneltool changelog release` moves the fragments into a release | changeset, news file, entry (for the file) |
+| Mark | The picture that stands for the system: a heron on a grid of 24 by 24 square cells, each part filled with one gradient. `support/mark` holds it as data; `kerneltool logo` writes its files in `resources/logo` (`docs/DESIGN.md`, section 11) | logo, icon, emblem, mascot |
+| Name of the mark | The word "modus" in letters of square cells, 5 columns by 7 rows each, under the heron in the files of the mark that have a name | wordmark, logotype |
 
 ## Terms that the system does not have
 

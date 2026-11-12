@@ -6,6 +6,21 @@ The project has steps, not separate releases. The merge of step N on `master` is
 
 What is not in a release yet is in `changelog.d/`, one fragment for each change. `kerneltool changelog release` writes a release from the fragments. Nobody edits this file by hand.
 
+## [0.75.0] - 2026-11-12
+
+### Added
+
+- **The mark of the system**: a heron of square cells with one gradient in each part, and the name modus under it. `kerneltool logo` writes its files in `resources/logo` from the data of `support/mark`, at 1024 pixels on a dark and on a light background and at the sizes 24 to 768.
+
+### Changed
+
+- **Text over a gradient or a picture is drawn with the SSE2 blend.** The text of every window over a title bar or a picture takes the SSE2 form of the blend, with the same pixels as before.
+
+### Security
+
+- **No program chooses where another program reads its glyph caches.** The program `settings` could write the address and the size of the glyph caches on the settings page, and so make each program that started later read and draw memory that `settings` controlled; the caches are now at fixed addresses with their sizes in the context that the root service writes, mapped read-only for every program. A program also no longer waits for ever on a settings page left in the middle of a change.
+- **A hostile font file no longer stops the reader.** A glyph made of thousands of empty parts made the font reader run for an unbounded time; the reader now stops at 64 parts, and a glyph cache whose monospace glyphs leave their cells, or whose header has unknown flags or a name with no end, is refused.
+
 ## [0.74.0] - 2026-11-11
 
 ### Added

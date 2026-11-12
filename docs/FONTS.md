@@ -18,6 +18,7 @@ The system is laid out in cells of 8 x 16 pixels, and the design rules are a gri
 
 - **The default font is monospace.** Its advance maps to exactly 8 pixels at scale 1: the scale of the outline is 8 / advance, the same on both axes. A line is 16 pixels. Each existing layout holds; no window changes its size.
 - **The scales 2 and 3 are real sizes**: 16 x 32 and 24 x 48 pixels, each drawn from the outline at that size, not enlarged pixels. The large numbers of `scheduler`, `remote`, `terminal`, `server` and the boot display gain the most.
+- **Spleen as the fallback is enlarged** (owner, 2026-11-12: "yeah that's fine"): the rule "no enlarged low-resolution font" holds for the default font. When a program has no valid glyph cache, or when a person chooses Spleen in the settings, Spleen draws each of its pixels as a square at the scales 2 and 3: the other choice at that moment is no large text.
 - **A glyph is cut to its cell.** The ink and the color fringe of a glyph stay inside its cell of 8 x 16 (or 16 x 32, 24 x 48). A cell never draws into its neighbour: the terminal fills one cell and draws its character, and the damage by difference of `support/interface` takes the rectangle of a text record as all that it draws. A glyph that passes its advance (rare in a monospace font) loses that part.
 - **The baseline** puts the middle of the ink of the characters 33 to 126 at the middle of the cell (`vector_font.glyph_style_of`). For JetBrains Mono at scale 1 it is row 12, the baseline of Spleen.
 
