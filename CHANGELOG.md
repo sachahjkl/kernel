@@ -6,6 +6,12 @@ The project has steps, not separate releases. The merge of step N on `master` is
 
 What is not in a release yet is in `changelog.d/`, one fragment for each change. `kerneltool changelog release` writes a release from the fragments. Nobody edits this file by hand.
 
+## [0.86.0] - 2026-11-12
+
+### Changed
+
+- **The desktop names things in B612 too.** The buttons of the bar, its menus, the titles of the windows and the launcher are in the interface font B612, and the clock, the date and what the person types stay in Paper Mono; the buttons are as wide as their names in that font. The display of the boot, after its first screen, has its titles and names in B612 too.
+
 ## [0.85.0] - 2026-11-12
 
 ### Fixed
