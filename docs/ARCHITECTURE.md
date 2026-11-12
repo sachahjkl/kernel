@@ -809,9 +809,22 @@ An event record carries the cycle counter only (its time, and the durations of `
 
 ### 11. The measure
 
-`kernel_events` measures the kernel entries of one program in one second (one operation `Memory_Size` each, as the lockers of `locks`) three times: with no rule; with one rule that matches nothing (an `Operation` rule for `Machine_Stop`: the event point calls `event_record`, which tests one rule); and with a rule on every operation of every program, while a thread of the program empties the rings each millisecond. The line of the log: "kernel_events: kernel entries in one second, one program: no rule ..., one rule that matches nothing ..., a rule on every kernel entry ... (... records, ... lost)". The reference before this step: "locks: kernel entries in one second" with one locker, 8 063 360 and 8 359 466.
+The load child of `kernel_events` measures its own kernel entries for 300 ms, three times: one operation `Memory_Size` in each entry, as the lockers of `locks`, with its own count of the loop and its own time (`system.nanoseconds`, no kernel entry). The rate is the count times 10^9 divided by the time. The three tables:
 
-The coordinator fills the numbers: before this step (`locks`, one locker), and the three numbers of `kernel_events`, two runs each.
+1. No rule.
+2. One rule that matches nothing: an `Operation` rule for `Machine_Stop`, for every program.
+3. One rule that accepts each operation of the loop: `Operation`, `Match_Detail` `Memory_Size`, the program handle of the load child.
+
+The table lives from before the round to after it, and the child makes no other operation `Memory_Size` in that time; the thread of the parent that empties the rings each millisecond runs in the three rounds, and its kernel entries are waits with no command. So the events that rule 3 accepts are exactly the count of the loop: the case checks that the records written plus the records lost, summed over the heads of all the rings after the table ended, equal that count, and that they are 0 with rule 2. The line of the log gives each number: "kernel_events: kernel entries in one second of the load child (its own count and time): no rule R (C operations in T ns); one rule that matches nothing R (C operations in T ns; W records + L lost, of 0); a rule that accepts each of its operations R (C operations in T ns; W records + L lost = S, of C)". A measure whose numbers do not agree fails the case.
+
+The first run measured in the program itself, and its line did not add up: "a rule on every kernel entry 7524195 (2252433 records, 0 lost)". 7 524 195 was a rate in one second; the loop ran 300 ms, so it made about 2.26 million operations, and the records were those and a few operations of other programs. The rate and the count were of two intervals, and nothing checked one against the other. That form is gone.
+
+The first run, at a host load near 8, one run: no rule 8 194 476 entries in one second (the kernel before this step: 8 267 093 to 8 351 786 in the same hour: an event point with no rule costs nothing that this measure sees); one rule that matches nothing 7 992 904, about 3.1 ns more for each entry (1 / 7 992 904 - 1 / 8 194 476 s). Those 3 ns are the work before any rule is tested: the cycle counter read at the start and at the end of the operation, the call of `event_record`, the second load of the observed kinds; the test of one rule is a few compares. The coordinator fills the three numbers of the new line, two runs.
+
+Would a rule for another program be free for this one?
+
+- To test the program of a rule before its kind changes nothing: the 3 ns come before the loop over the rules.
+- A mask of kinds for each program would: the processor word would keep only the kinds of the rules for every program, and a word in the record of each named program the kinds of its rules; an event point would test the two. Then an operation of a program that no rule names skips the cycle counter and the call. The costs: one more load at each event point with no rule (a line of the program record; `enter` already writes `entries` there, so the word beside it is in a line that the entry touches), a second set of words under the rule of section 8, and the event point of a lock wait finds its program through `current` and its thread. It changes the event point with no rule, which today costs nothing measured: not written in this step; a step of its own, with a measure before and after.
 
 ### 12. Not built
 

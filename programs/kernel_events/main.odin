@@ -16,8 +16,10 @@
 //   7. A full ring: the records written and the lost count add up to 1000.
 //   8. The table taken away: no record after it.
 //   9. A child that stops with its own table: the kernel forgets the table.
-//  10. The cost: kernel entries in one second with no rule, with one rule
-//      that matches nothing, and with a rule on every kernel entry.
+//  10. The cost: kernel entries in one second of the load child, with its
+//      own count and time: with no rule, with one rule that matches
+//      nothing, and with a rule that accepts each of its operations; the
+//      records written plus lost must equal its count.
 package kernel_events
 
 import "base:intrinsics"
@@ -64,15 +66,33 @@ FULL_RING_RECORDS :: 16
 OWNER_RECORDS :: 16
 FAULT_ADDRESS :: u64(0x1000) // Below the module of the program: no mapping.
 MEASURE_TIME :: 300 // Milliseconds of one measure.
-CHILD_PAGES :: 256
-CHILD_THREADS :: 2
 STOP_BY_PARENT :: 9
+
+// What each child asks of the budget of this program: only what it uses.
+// pages: its own copy of the module (the file is about 160 KiB, 40 pages,
+// with its data), its stack (64 pages), its context (1), its thread area
+// (1 + 2), its page tables (about 8) and its own objects (at most 2): under
+// 130 pages; 256 leaves room for a larger module.
+// programs 1 and threads 1: each child has its main thread only, and
+// Program_Create takes the program and that first thread from this budget.
+// processor: the load child runs the measure of the cost for 300 ms with no
+// wait, so it gets one whole processor (1 000 000 microseconds in each
+// second); with less, its budget would stop it in each period, and the
+// measure would count the stops. The two others wait: 100 000.
+// log_records 0: a child has no log handle and writes no record.
+LOAD_AMOUNTS :: system.Budget_Amounts{pages = 256, programs = 1, threads = 1, processor = 1_000_000, log_records = 0}
+WAITER_AMOUNTS :: system.Budget_Amounts{pages = 256, programs = 1, threads = 1, processor = 100_000, log_records = 0}
 
 // The rounds of the load child.
 ROUND_EXACT :: 1
 ROUND_ONE_IN :: 2
 ROUND_FULL :: 3
 ROUND_TAKEN_AWAY :: 4
+// The rounds of the measure: the load child runs its loop of Memory_Size
+// for MEASURE_TIME, and writes its own count and its own time.
+ROUND_MEASURE_NO_RULE :: 5
+ROUND_MEASURE_NOTHING :: 6
+ROUND_MEASURE_EACH :: 7
 
 // The page that the parent shares with each child, at SHARED_ADDRESS in the
 // child.
@@ -82,6 +102,10 @@ Shared_Page :: struct {
 	done:         u32, // The last round that the load child ran.
 	installed:    u32, // The owner child: 1 when its call of Events_Set returned.
 	owner_status: u32, // Its status.
+	// A round of the measure: the operations Memory_Size that the load
+	// child made, counted by its own loop, and the nanoseconds of the loop.
+	measure_count:       u64,
+	measure_nanoseconds: u64,
 }
 
 shared_page :: #force_inline proc "contextless" () -> ^Shared_Page {
@@ -134,7 +158,17 @@ processor_count: u64
 
 shown: Tally // The records of all the cases, for the window.
 shown_lost: u64
-entry_rates: [3]u64 // No rule, one rule that matches nothing, a rule on each operation.
+// The three measures of the cost, in the order of the rounds: no rule,
+// one rule that matches nothing, a rule that accepts each operation of the
+// load child.
+Measure :: struct {
+	count:       u64, // The operations of the loop of the load child: its own count.
+	nanoseconds: u64, // The time of its loop.
+	rate:        u64, // count in one second.
+	written:     u64, // The records in all the rings when the table ended: the sum of the heads.
+	lost:        u64,
+}
+measures: [3]Measure
 
 records_now, records_before: [256]interface.Draw_Record
 text_now, text_before: [4096]u8
@@ -148,7 +182,7 @@ Child :: struct {
 	before:        system.Budget_Amounts,
 }
 
-child_start :: proc "contextless" (role: Role, name: string, with_events: bool) -> (child: Child, ok: bool) {
+child_start :: proc "contextless" (role: Role, name: string, with_events: bool, amounts: system.Budget_Amounts) -> (child: Child, ok: bool) {
 	status: system.Status
 	child.shared_memory, status = system.memory_create(1)
 	if status != .Ok {
@@ -172,12 +206,17 @@ child_start :: proc "contextless" (role: Role, name: string, with_events: bool) 
 	values: [op.CONTEXT_VALUES]u64
 	values[VALUE_ROLE] = ROLE_TAG | u64(role)
 	error: module.Load_Error
-	child.program, status = system.program_start(system.image_find(image, "kernel_events"), "kernel_events child", grants, random.values_with_seed(&program_generator, values), {pages = CHILD_PAGES, programs = 1, threads = CHILD_THREADS, processor = 500_000, log_records = 20}, mappings[:], nil, {image = image}, &error)
+	child.program, status = system.program_start(system.image_find(image, "kernel_events"), "kernel_events child", grants, random.values_with_seed(&program_generator, values), amounts, mappings[:], nil, {image = image}, &error)
 	if status != .Ok {
 		buffer: [512]u8
 		lines := system.Writer{buffer = buffer[:]}
 		system.load_error_text(&lines, &error)
-		system.log("kernel_events: ", name, ": program_start failed: ", op.STATUS_NAMES[status], "; the load: ", system.written(&lines))
+		// No_Budget: Budget_Create moves the pages, the programs and the
+		// threads from this budget, and refuses a processor limit or a log
+		// limit above the limits of this budget; then the new budget pays
+		// for the program, its page tables, its first thread and the load.
+		// Each amount, what this budget holds and what the child asks.
+		system.log("kernel_events: ", name, ": program_start failed: ", op.STATUS_NAMES[status], "; the load: ", system.written(&lines), "; this program can give pages ", child.before.pages, ", programs ", child.before.programs, ", threads ", child.before.threads, ", processor ", child.before.processor, ", log records ", child.before.log_records, "; the child asks pages ", amounts.pages, ", programs ", amounts.programs, ", threads ", amounts.threads, ", processor ", amounts.processor, ", log records ", amounts.log_records)
 		system.memory_unmap(address)
 		system.close(child.shared_memory)
 		return
@@ -349,36 +388,43 @@ cases_of_refusal :: proc "contextless" () {
 	case_end(1, right, right ? string("16 taken, 17 refused with No_Slot: as it must") : string("WRONG: see the log"))
 }
 
-// The cases 3 to 8, with the load child and the child that faults.
-cases_of_counts :: proc "contextless" (window: ^display.Window) {
-	load, load_started := child_start(.Load, "the load child", false)
-	faulter, faulter_started := child_start(.Faulter, "the child that faults", false)
-	if !load_started || !faulter_started {
-		system.log("kernel_events: the children did not start")
+// The cases 3 to 8, with the load child (the caller started it and ends
+// it) and the child that faults. Each count that a case checks is a count
+// that this program knows by its own means: the loop of the load child
+// (CALLS, SLEEPS), the one access of the child that faults.
+cases_of_counts :: proc "contextless" (window: ^display.Window, load: ^Child) {
+	faulter, faulter_started := child_start(.Faulter, "the child that faults", false, WAITER_AMOUNTS)
+	if !faulter_started {
+		system.log("kernel_events: the child that faults did not start: the cases 3 to 8 do not run")
 		return
 	}
 	memory_size := u64(op.Operation.Memory_Size)
 
 	// 3, 4 and 5. One table: the operations Memory_Size of the load child,
-	// its switches, the faults of the other child, and every wait for a
-	// lock of the kernel (shown, not checked).
-	exact := [4]op.Event_Rule {
+	// its switches, and the faults of the other child. No rule for every
+	// program here: its records would share the rings with the counted
+	// ones, and a ring that it fills would lose counted records.
+	exact := [3]op.Event_Rule {
 		{kind = .Operation, flags = {.Match_Detail}, program = u64(load.program), detail = memory_size},
 		{kind = .Switch, program = u64(load.program)},
 		{kind = .Fault, program = u64(faulter.program)},
-		{kind = .Lock_Wait},
 	}
 	tally: Tally
 	given := table_give(exact[:], RING_RECORDS)
 	intrinsics.atomic_store(&faulter.shared.go, 1)
 	system.word_wake(&faulter.shared.go)
-	ran := given == .Ok && round_run(&load, ROUND_EXACT)
+	ran := given == .Ok && round_run(load, ROUND_EXACT)
 	faulted := child_stopped(&faulter, 5000)
 	_, lost, _ := heads()
 	rings_read(&tally)
+	// Each record of the kind Operation comes from the one rule of that
+	// kind, so the records + lost of all the rings is at most the count of
+	// the loop; with no record lost, it is exactly that count.
 	right := ran && tally.kinds[.Operation] == CALLS && lost == 0
 	system.log("kernel_events: 1000 operations Memory_Size of one program: ", tally.kinds[.Operation], " records, ", lost, " lost", right ? string(": as it must") : string(": WRONG"))
 	case_end(2, right, tally.kinds[.Operation], " records, ", lost, " lost", right ? string(": as it must") : string(": WRONG"))
+	// A lower bound: each of the 20 sleeps of the loop ends with a switch
+	// to the thread; its waits for the round add more.
 	right = ran && tally.kinds[.Switch] >= SLEEPS
 	system.log("kernel_events: a thread that sleeps 20 times: ", tally.kinds[.Switch], " switches to it", right ? string(": as it must") : string(": WRONG"))
 	case_end(3, right, tally.kinds[.Switch], " switches to it, at least 20", right ? string(": as it must") : string(": WRONG"))
@@ -392,7 +438,7 @@ cases_of_counts :: proc "contextless" (window: ^display.Window) {
 	// 6. One in 10.
 	one_in := [1]op.Event_Rule{{kind = .Operation, flags = {.Match_Detail}, program = u64(load.program), detail = memory_size, one_in = ONE_IN}}
 	tally = {}
-	ran = table_give(one_in[:], RING_RECORDS) == .Ok && round_run(&load, ROUND_ONE_IN)
+	ran = table_give(one_in[:], RING_RECORDS) == .Ok && round_run(load, ROUND_ONE_IN)
 	rings_read(&tally)
 	right = ran && tally.kinds[.Operation] == CALLS / ONE_IN
 	system.log("kernel_events: one in 10: ", tally.kinds[.Operation], " records of 1000 operations", right ? string(": as it must") : string(": WRONG"))
@@ -401,7 +447,7 @@ cases_of_counts :: proc "contextless" (window: ^display.Window) {
 
 	// 7. A full ring: this program reads nothing until the end of the round.
 	tally = {}
-	ran = table_give(exact[:1], FULL_RING_RECORDS) == .Ok && round_run(&load, ROUND_FULL)
+	ran = table_give(exact[:1], FULL_RING_RECORDS) == .Ok && round_run(load, ROUND_FULL)
 	written, full_lost, most := heads()
 	rings_read(&tally)
 	right = ran && written + full_lost == CALLS && full_lost > 0 && most <= FULL_RING_RECORDS && tally.kinds[.Operation] == written
@@ -413,19 +459,18 @@ cases_of_counts :: proc "contextless" (window: ^display.Window) {
 	// and a second take is refused.
 	ended := system.events_end(machine)
 	written_before, lost_before, _ := heads()
-	ran = ended == .Ok && round_run(&load, ROUND_TAKEN_AWAY)
+	ran = ended == .Ok && round_run(load, ROUND_TAKEN_AWAY)
 	written_after, lost_after, _ := heads()
 	second := system.events_end(machine)
 	right = ran && written_after == written_before && lost_after == lost_before && second == .Bad_State
 	system.log("kernel_events: the table taken away: ", written_after - written_before, " records after it; a second take gave ", op.STATUS_NAMES[second], right ? string(": as it must") : string(": WRONG"))
 	case_end(7, right, written_after - written_before, " records after it", right ? string(": as it must") : string(": WRONG"))
-	child_end(&load, "the load child")
 	interface_draw(window)
 }
 
 // Case 9: a child gives its own table and stops with it.
 case_of_the_owner :: proc "contextless" () {
-	owner, started := child_start(.Owner, "the child that owns a table", true)
+	owner, started := child_start(.Owner, "the child that owns a table", true, WAITER_AMOUNTS)
 	if !started {
 		case_end(8, false, string("WRONG: the child did not start"))
 		return
@@ -448,24 +493,11 @@ case_of_the_owner :: proc "contextless" () {
 	case_end(8, right, right ? string("forgotten at its stop: as it must") : string("WRONG: see the log"))
 }
 
-// The measure: kernel entries in one second, each one operation Memory_Size
-// of this program, as the lockers of the program locks do.
-entries_measure :: proc "contextless" (memory: system.Handle) -> u64 {
-	count: u64
-	start := system.nanoseconds()
-	for end := system.time() + MEASURE_TIME; system.time() < end; {
-		for _ in 0 ..< 64 {
-			system.call(.Memory_Size, u64(memory))
-		}
-		count += 64
-	}
-	elapsed := max(system.nanoseconds() - start, 1)
-	return count * 1_000_000_000 / elapsed
-}
-
-// The thread that empties the rings while a rule records each operation:
-// it moves the count read of each ring to its count written, each
-// millisecond, as an observer does.
+// The thread that empties the rings during the measures: it moves the
+// count read of each ring to its count written, each millisecond, as an
+// observer does. It runs in the three rounds, so that the three measures
+// have the same threads; its own kernel entries are waits with no command,
+// and no rule of the measure names this program.
 drain_running: u32
 
 drain_thread :: proc "c" (_: rawptr) -> ! {
@@ -479,39 +511,66 @@ drain_thread :: proc "c" (_: rawptr) -> ! {
 	system.thread_stop()
 }
 
-case_of_the_cost :: proc "contextless" () {
-	memory, status := system.memory_create(1)
-	if status != .Ok {
-		case_end(9, false, string("WRONG: no memory"))
-		return
+// measure_round runs one round of the measure in the load child, with a
+// table of rules or none. The table lives from before the round to after
+// it, and in that time the load child makes no operation Memory_Size but
+// the ones of its loop: so the events that a rule for its Memory_Size
+// accepts are exactly the count of its loop. The heads are read after the
+// table ended: the kernel writes no more there.
+measure_round :: proc "contextless" (load: ^Child, round: u32, rules: []op.Event_Rule, measure: ^Measure) -> bool {
+	if len(rules) != 0 && table_give(rules, RING_RECORDS) != .Ok {
+		return false
 	}
-	defer system.close(memory)
-	entry_rates[0] = entries_measure(memory)
-	nothing := [1]op.Event_Rule{{kind = .Operation, flags = {.Match_Detail}, detail = u64(op.Operation.Machine_Stop)}}
-	given_nothing := table_give(nothing[:], RING_RECORDS)
-	entry_rates[1] = entries_measure(memory)
-	every := [1]op.Event_Rule{{kind = .Operation}}
-	given_every := table_give(every[:], RING_RECORDS)
 	intrinsics.atomic_store(&drain_running, 1)
 	drainer, drainer_status := system.thread_start(drain_thread, nil)
-	entry_rates[2] = entries_measure(memory)
+	ran := drainer_status == .Ok && round_run(load, round)
 	intrinsics.atomic_store(&drain_running, 0)
 	if drainer_status == .Ok {
 		system.thread_wait(drainer)
+	} else {
+		system.log("kernel_events: the thread that empties the rings did not start: ", op.STATUS_NAMES[drainer_status])
 	}
-	written, lost, _ := heads()
-	system.events_end(machine)
-	right := given_nothing == .Ok && given_every == .Ok && drainer_status == .Ok && entry_rates[0] != 0 && entry_rates[1] != 0 && entry_rates[2] != 0
-	system.log("kernel_events: kernel entries in one second, one program: no rule ", entry_rates[0], ", one rule that matches nothing ", entry_rates[1], ", a rule on every kernel entry ", entry_rates[2], " (", written, " records, ", lost, " lost)")
-	case_end(9, right, entry_rates[0], ", ", entry_rates[1], ", ", entry_rates[2])
+	if len(rules) != 0 {
+		ended := system.events_end(machine)
+		measure.written, measure.lost, _ = heads()
+		ran = ran && ended == .Ok
+	}
+	measure.count = intrinsics.atomic_load(&load.shared.measure_count)
+	measure.nanoseconds = max(intrinsics.atomic_load(&load.shared.measure_nanoseconds), 1)
+	measure.rate = measure.count * 1_000_000_000 / measure.nanoseconds
+	return ran && measure.count != 0
+}
 
-	// The longest operation of the machine in 200 ms, for the window.
+// Case 10: the cost of an entry, measured by the load child with its own
+// count and its own time (one operation Memory_Size in each entry, as the
+// lockers of the program locks), three times: no rule; one rule that
+// matches nothing (an Operation rule for Machine_Stop, for every program:
+// the event point reads the cycle counter twice and tests one rule); a rule
+// that accepts each operation of the loop. The two last ones are checked
+// against the heads of the rings: written + lost is 0 for the first, the
+// count of the loop for the second. A measure whose numbers do not agree is
+// a failed case.
+case_of_the_cost :: proc "contextless" (load: ^Child) {
+	nothing := [1]op.Event_Rule{{kind = .Operation, flags = {.Match_Detail}, detail = u64(op.Operation.Machine_Stop)}}
+	each := [1]op.Event_Rule{{kind = .Operation, flags = {.Match_Detail}, program = u64(load.program), detail = u64(op.Operation.Memory_Size)}}
+	ran := measure_round(load, ROUND_MEASURE_NO_RULE, nil, &measures[0])
+	ran = measure_round(load, ROUND_MEASURE_NOTHING, nothing[:], &measures[1]) && ran
+	ran = measure_round(load, ROUND_MEASURE_EACH, each[:], &measures[2]) && ran
+	nothing_agrees := measures[1].written + measures[1].lost == 0
+	each_agrees := measures[2].written + measures[2].lost == measures[2].count
+	right := ran && nothing_agrees && each_agrees
+	system.log("kernel_events: kernel entries in one second of the load child (its own count and time): no rule ", measures[0].rate, " (", measures[0].count, " operations in ", measures[0].nanoseconds, " ns); one rule that matches nothing ", measures[1].rate, " (", measures[1].count, " operations in ", measures[1].nanoseconds, " ns; ", measures[1].written, " records + ", measures[1].lost, " lost, of 0); a rule that accepts each of its operations ", measures[2].rate, " (", measures[2].count, " operations in ", measures[2].nanoseconds, " ns; ", measures[2].written, " records + ", measures[2].lost, " lost = ", measures[2].written + measures[2].lost, ", of ", measures[2].count, ")", right ? string(": as it must") : string(": WRONG"))
+	case_end(9, right, measures[0].rate, ", ", measures[1].rate, ", ", measures[2].rate, right ? string(": as it must") : string(": WRONG"))
+
+	// What every program does while this one sleeps 200 ms: shown, not
+	// checked (no count of this program can check it).
+	everything := [2]op.Event_Rule{{kind = .Operation}, {kind = .Lock_Wait}}
 	tally: Tally
-	if table_give(every[:], RING_RECORDS) == .Ok {
+	if table_give(everything[:], RING_RECORDS) == .Ok {
 		system.sleep(system.time() + 200)
 		system.events_end(machine)
 		rings_read(&tally)
-		system.log("kernel_events: the longest operation of the machine in 200 ms: ", operation_name(tally.longest_operation), ", ", nanoseconds_of(tally.longest), " ns, of ", tally.kinds[.Operation], " operations")
+		system.log("kernel_events: in 200 ms while this program sleeps, every program: ", tally.kinds[.Operation], " operations, the longest ", operation_name(tally.longest_operation), " in ", nanoseconds_of(tally.longest), " ns; ", tally.kinds[.Lock_Wait], " waits for a lock (shown, not checked)")
 	}
 }
 
@@ -558,6 +617,24 @@ child_role_run :: proc "contextless" (role: Role, ctx: ^system.Context) -> ! {
 				system.word_wait(&shared.go, round, system.time() + 100)
 			}
 			round = intrinsics.atomic_load(&shared.go)
+			if round >= ROUND_MEASURE_NO_RULE {
+				// The measure: its own count and its own time. The loop
+				// makes one kernel entry with one operation Memory_Size for
+				// each count, and no other operation Memory_Size.
+				count: u64
+				start := system.nanoseconds()
+				for end := system.time() + MEASURE_TIME; system.time() < end; {
+					for _ in 0 ..< 64 {
+						system.call(.Memory_Size, u64(memory))
+					}
+					count += 64
+				}
+				intrinsics.atomic_store(&shared.measure_nanoseconds, system.nanoseconds() - start)
+				intrinsics.atomic_store(&shared.measure_count, count)
+				intrinsics.atomic_store(&shared.done, round)
+				system.word_wake(&shared.done)
+				continue
+			}
 			for _ in 0 ..< CALLS {
 				system.call(.Memory_Size, u64(memory))
 			}
@@ -634,10 +711,18 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 
 	cases_of_refusal()
 	interface_draw(&window)
-	cases_of_counts(&window)
+	load, load_started := child_start(.Load, "the load child", false, LOAD_AMOUNTS)
+	if load_started {
+		cases_of_counts(&window, &load)
+	} else {
+		system.log("kernel_events: the load child did not start: the cases 3 to 8 and 10 do not run")
+	}
 	case_of_the_owner()
 	interface_draw(&window)
-	case_of_the_cost()
+	if load_started {
+		case_of_the_cost(&load)
+		child_end(&load, "the load child")
+	}
 
 	right := 0
 	for item in cases {

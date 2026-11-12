@@ -268,7 +268,17 @@ things_of :: proc "contextless" (name: string) -> system.Budget_Amounts {
 	case "fault_ring":
 		return {pages = 4096, programs = 2, threads = 21} // One child at a time: 512 pages and 20 threads (17 that fault in a full ring, its main thread and its handler).
 	case "kernel_events":
-		return {pages = 4096, programs = 3, threads = 4} // The rings (about 1 MiB with 4 processors), one child at a time of 256 pages and 2 threads, and the thread that empties the rings.
+		// Program_Create takes the program and its first thread from this
+		// budget. Pages: its module, stack, context, thread area and page
+		// tables, about 142; its window, 960 x 600 x 4 bytes, 563; its rings,
+		// 4 processors x (128 + 8192 x 64 bytes), 513; the thread that empties
+		// them, 16 + 3; one shared page for each child, 2; two children at one
+		// time (the load child with the one that faults, then with the one
+		// that owns a table), 2 x 256: 1751 in all, and 2048 leaves 297.
+		// Programs: itself and two children at one time. Threads: its main
+		// thread, the thread that empties the rings, and the main thread of
+		// each of two children.
+		return {pages = 2048, programs = 3, threads = 4}
 	case "extended_state":
 		return {pages = 2048, programs = 1, threads = 32} // The main thread and up to 31 threads that hold their registers.
 	case "address_space":
