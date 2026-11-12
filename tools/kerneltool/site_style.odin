@@ -144,7 +144,12 @@ blockquote { margin-left: 0; padding-left: 16px; border-left: 2px solid var(--li
    a closed menu on a wide screen with no script; another one shows the
    button until search.js opens the menu. The button: a square with three
    lines, its word hidden. */
-.bar { position: relative; }
+/* The bar stays at the top of the window while the page scrolls, on every
+   page. Its height is fixed, so that the parts under it (the column "On
+   this page", the target of a link) know where the bar ends. */
+:root { --bar-height: 41px; }
+.bar { position: sticky; top: 0; z-index: 30; }
+.bar-inner { min-height: 40px; }
 .bar-menu { flex: 1 1 auto; min-width: 0; }
 .bar-menu-content { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 24px; }
 .bar-menu-button { list-style: none; display: block; position: relative; width: 32px; height: 32px; margin-left: auto; cursor: pointer; background: var(--track); border: 1px solid var(--track); }
@@ -246,7 +251,7 @@ blockquote { margin-left: 0; padding-left: 16px; border-left: 2px solid var(--li
 @media (min-width: 1100px) {
   .documentation { grid-template-columns: minmax(0, 1fr) 240px; }
   .documentation > .text { grid-column: 1; grid-row: 1; }
-  .documentation > .outline { grid-column: 2; grid-row: 1; position: sticky; top: 0; align-self: start; max-height: 100vh; overflow-y: auto; margin: 0; padding: 16px 0; }
+  .documentation > .outline { grid-column: 2; grid-row: 1; position: sticky; top: var(--bar-height); align-self: start; max-height: calc(100vh - var(--bar-height)); overflow-y: auto; margin: 0; padding: 16px 0; }
   .outline[open] > summary { display: none; }
 }
 /* A browser that has ::details-content shows "On this page" beside the
@@ -465,7 +470,7 @@ SITE_POLISH_RULES :: `
 :root {
   color-scheme: dark light;
   accent-color: var(--line);
-  scroll-padding-top: 16px;
+  scroll-padding-top: calc(var(--bar-height) + 16px);
   -webkit-tap-highlight-color: color-mix(in srgb, var(--line) 30%, transparent);
 }
 /* A page with and without a scroll bar has the same width. */
@@ -500,10 +505,10 @@ pre, code { tab-size: 4; }
 @media (prefers-reduced-motion: no-preference) {
   html { scroll-behavior: smooth; }
 }
-/* A jump to an anchor: the bar of the site does not stay at the top, so the
-   target keeps only a little room above it, and a line at its left marks
-   where the link landed. */
-[id] { scroll-margin-top: 16px; }
+/* A jump to an anchor: the bar of the site stays at the top, so the target
+   keeps the height of the bar and a little room above it, and a line at
+   its left marks where the link landed. */
+[id] { scroll-margin-top: calc(var(--bar-height) + 16px); }
 h2:target, h3:target, li:target, p:target { box-sizing: border-box; border-left: 2px solid var(--line); padding-left: 8px; }
 .table tr:target > td { background: var(--track); }
 /* A card of a type is not a modal: no veil over the page. */
