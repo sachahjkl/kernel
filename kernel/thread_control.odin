@@ -8,6 +8,13 @@ import op "contract:operation"
 // and its extended state, and resumes it. A debugger, a garbage collector,
 // a sampling profiler and the program that runs a guest use it.
 //
+// Through a handle, a stop, a resume and a read need the right Inspect, a
+// write the right Write (op.thread_control_rights). A write lets its holder
+// choose the code that the program runs; a hold and a read do not, so a
+// profiler or a collector that only reads gets no write. Control, the right
+// to end the thread, gives neither: a handle given only so that another
+// program can end a thread does not become a grant to debug it.
+//
 // The stop is a count, not a state: two holders that each stop the thread
 // each resume it, and the thread runs again only after the last Resume. The
 // count is orthogonal to the wait of the thread (Ready or Waiting): a wait
@@ -41,6 +48,8 @@ import op "contract:operation"
 thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7]u64) -> op.Status {
 	caller_program_index := threads[caller_index].program
 	caller_program := &programs[caller_program_index]
+	cpu := processor_self()
+	cpu.thread_write_refusal, cpu.thread_write_refused_value = .None, 0
 	command := op.Thread_Control_Command(v[2])
 	if command == .None || v[2] > u64(max(op.Thread_Control_Command)) {
 		return .Bad_Operation
@@ -55,7 +64,10 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 			return .Bad_State
 		}
 	} else {
-		slot := handle_find(caller_program, v[0], .Thread, {.Control}) or_return
+		// The right of the command: a handle that a program gave so that
+		// another one can end a thread (Control) does not let it hold the
+		// thread or write its registers.
+		slot := handle_find(caller_program, v[0], .Thread, op.thread_control_rights(command)) or_return
 		target_index = slot.object
 		// A thread of another program: its program lock, which the lock
 		// order allows only with the control lock. The program of a thread
@@ -104,7 +116,8 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 		case .Write_Registers:
 			registers: op.Thread_Registers
 			user_copy(&registers, rawptr(uintptr(v[3])), size)
-			if refusal, _ := op.thread_registers_refusal(&registers); refusal != .None {
+			if refusal, value := op.thread_registers_refusal(&registers); refusal != .None {
+				cpu.thread_write_refusal, cpu.thread_write_refused_value = refusal, value
 				return .Bad_Operation
 			}
 			thread_frame_write(thread, &registers)
@@ -113,12 +126,13 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 			user_copy(rawptr(uintptr(v[3])), &thread.extended_state, size)
 			results[1] = transmute(u64)extended_state_components
 		case .Write_Extended_State:
-			written := &processor_self().extended_state_written
+			written := &cpu.extended_state_written
 			// The bytes past the size of a save keep the values of the thread:
 			// the area is copied whole below.
 			written^ = thread.extended_state
 			user_copy(written, rawptr(uintptr(v[3])), size)
-			if refusal, _ := extended_state_write_refusal(written); refusal != .None {
+			if refusal, value := extended_state_write_refusal(written); refusal != .None {
+				cpu.thread_write_refusal, cpu.thread_write_refused_value = refusal, value
 				return .Bad_Operation
 			}
 			thread.extended_state = written^

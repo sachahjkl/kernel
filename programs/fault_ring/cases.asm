@@ -94,10 +94,12 @@ single_step_end:
 ; mov_ss_then_syscall(): the trap flag set, then mov ss and a syscall as the
 ; next instruction. mov ss holds the trap of its instruction until the
 ; instruction after it: the syscall, whose mask clears the flag for the
-; kernel. A trap that the processor gave at the first instruction of the
-; kernel would stop the machine. Each trap must be a record of this
-; program, between mov_ss_then_syscall and mov_ss_then_syscall_end. The
-; syscall has rdi 0: a kernel entry with no wait.
+; kernel. A trap that the processor gives at the first instruction of the
+; kernel arrives on a stack of its own, and the kernel drops it there
+; (docs/ARCHITECTURE.md, "The windows of the entry and of the return").
+; Each trap that the program sees must be a record of this program, between
+; mov_ss_then_syscall and mov_ss_then_syscall_end. The syscall has rdi 0: a
+; kernel entry with no wait.
 global mov_ss_then_syscall
 global mov_ss_then_syscall_end
 mov_ss_then_syscall:

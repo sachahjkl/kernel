@@ -573,6 +573,11 @@ handles_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^P
 					kind = .Program
 				}
 			}
+		case .Thread_Control:
+			// The right depends on the command: Write for a write.
+			if n == 0 && v[2] <= u64(max(op.Thread_Control_Command)) {
+				rights = op.thread_control_rights(op.Thread_Control_Command(v[2]))
+			}
 		}
 		if handle_explain(record, program, n + 1, v[n], kind, rights) {
 			return true
@@ -1081,31 +1086,12 @@ value_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Pro
 		}
 		return true
 	case .Thread_Control:
-		// A refused write: the value that the check refused, read again from
-		// the argument address. The command itself is a choice, below.
-		command := op.Thread_Control_Command(v[2])
-		if command == .Write_Registers {
-			registers: op.Thread_Registers
-			if !read_user(program, v[3], &registers, size_of(registers)) {
-				return false
-			}
-			if refusal, refused := op.thread_registers_refusal(&registers); refusal != .None {
-				record_set(record, .Bad_Value, .None, 4, refused, 0, 0)
-				return true
-			}
-			return false
-		}
-		if command == .Write_Extended_State {
-			// The buffer of the operation on this processor: it ended.
-			written := &processor_self().extended_state_written
-			if !read_user(program, v[3], written, extended_state_size) {
-				return false
-			}
-			if refusal, refused := extended_state_write_refusal(written); refusal != .None {
-				record_set(record, .Bad_Value, .None, 4, refused, 0, 0)
-				return true
-			}
-			return false
+		// A refused write: the value and the part that the check refused, as
+		// the operation kept them on this processor from its own copy. The
+		// command itself is a choice, below.
+		if cpu := processor_self(); cpu.thread_write_refusal != .None {
+			record_set(record, .Bad_Value, .None, 4, cpu.thread_write_refused_value, 0, u64(cpu.thread_write_refusal))
+			return true
 		}
 	case .Fault_Handler_Set:
 		switch {

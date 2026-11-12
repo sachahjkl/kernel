@@ -103,11 +103,20 @@ paging_start :: proc "contextless" (boot: ^info.Boot_Info) {
 	control_register_3_write(kernel_table)
 }
 
-// stacks_create gives a processor its kernel stack and its stack of the
-// double fault, in the slot of the processor. The pages around them have
-// no memory: a stack that is full stops the machine with a report, and
-// never writes on other memory.
-stacks_create :: proc "contextless" (index: u32) -> (stack_top, fault_top: u64, ok: bool) {
+// The tops of the stacks of one processor.
+Kernel_Stack_Tops :: struct {
+	kernel:       u64,
+	double_fault: u64,
+	// The interrupt stacks of the debug exception, the non-maskable
+	// interrupt and the machine check, in that order.
+	interrupts:   [op.KERNEL_INTERRUPT_STACK_COUNT]u64,
+}
+
+// stacks_create gives a processor its kernel stack, its stack of the
+// double fault and its three other interrupt stacks, in the slot of the
+// processor. The pages around them have no memory: a stack that is full
+// stops the machine with a report, and never writes on other memory.
+stacks_create :: proc "contextless" (index: u32) -> (tops: Kernel_Stack_Tops, ok: bool) {
 	slot := u64(op.KERNEL_STACK_BASE) + u64(index) * op.KERNEL_STACK_SLOT_PAGES * PAGE_SIZE
 	place :: proc "contextless" (address: u64, pages: u64) -> bool {
 		physical := frames_allocate(pages)
@@ -127,9 +136,19 @@ stacks_create :: proc "contextless" (index: u32) -> (stack_top, fault_top: u64, 
 	fault := stack + (op.KERNEL_STACK_PAGES + 1) * PAGE_SIZE
 	if !place(stack, op.KERNEL_STACK_PAGES) || !place(fault, op.KERNEL_FAULT_STACK_PAGES) {
 		stacks_free(index)
-		return 0, 0, false
+		return {}, false
 	}
-	return stack + op.KERNEL_STACK_PAGES * PAGE_SIZE, fault + op.KERNEL_FAULT_STACK_PAGES * PAGE_SIZE, true
+	tops.kernel = stack + op.KERNEL_STACK_PAGES * PAGE_SIZE
+	tops.double_fault = fault + op.KERNEL_FAULT_STACK_PAGES * PAGE_SIZE
+	for &top, n in tops.interrupts {
+		first := slot + op.kernel_interrupt_stack_first_page(u64(n)) * PAGE_SIZE
+		if !place(first, op.KERNEL_INTERRUPT_STACK_PAGES) {
+			stacks_free(index)
+			return {}, false
+		}
+		top = first + op.KERNEL_INTERRUPT_STACK_PAGES * PAGE_SIZE
+	}
+	return tops, true
 }
 
 // stacks_free frees the stacks of a processor that did not start. No
@@ -247,8 +266,8 @@ mappings_report :: proc "contextless" (report: ^op.Mapping_Report, table: u64, f
 		return
 	}
 	// The guard pages: each page of the slot of a processor that is not a
-	// page of one of its two stacks.
-	report.guards_expected = u64(processor_count) * (op.KERNEL_STACK_SLOT_PAGES - op.KERNEL_STACK_PAGES - op.KERNEL_FAULT_STACK_PAGES)
+	// page of one of its stacks.
+	report.guards_expected = u64(processor_count) * (op.KERNEL_STACK_SLOT_PAGES - op.KERNEL_STACK_SLOT_STACK_PAGES)
 	for index in 0 ..< u64(processor_count) {
 		slot := u64(op.KERNEL_STACK_BASE) + index * op.KERNEL_STACK_SLOT_PAGES * PAGE_SIZE
 		for page in 0 ..< u64(op.KERNEL_STACK_SLOT_PAGES) {

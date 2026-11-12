@@ -1,0 +1,3 @@
+type: Security
+
+**A debug trap at the entry of the kernel no longer runs on a stack that a program chose**: a program that runs `mov ss` or `pop ss` just before `syscall` with the trap flag set could, on a processor that gives that trap at the first instruction of the kernel, make the processor push the frame of the trap on the stack of the program at privilege 0: the machine stopped, or 22 values that the program chose went to an address of the kernel that it chose. The debug exception, the non-maskable interrupt and the machine check now have their own stack on each processor, the kernel drops such a trap, and an NMI or a machine check in the first or last instructions of a kernel entry runs with the gs of the kernel and stops the machine with its line.

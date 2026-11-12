@@ -92,7 +92,9 @@ Object_Kind :: op.Object_Kind
 // The rights of the handle of a new object, by kind.
 RIGHTS_MEMORY :: op.Rights{.Give, .Read, .Write, .Execute}
 RIGHTS_PROGRAM :: op.Rights{.Give, .Read, .Control}
-RIGHTS_THREAD :: op.Rights{.Give, .Read, .Control}
+// A thread: Control ends it; Inspect holds it and reads its registers;
+// Write writes them (op.thread_control_rights).
+RIGHTS_THREAD :: op.Rights{.Give, .Read, .Write, .Control, .Inspect}
 RIGHTS_PORTS :: op.Rights{.Give}
 RIGHTS_INTERRUPT :: op.Rights{.Give, .Read}
 RIGHTS_MACHINE :: op.Rights{.Give, .Inspect, .Devices, .Stop, .Physical, .Schedule, .Events}
@@ -200,6 +202,12 @@ Thread :: struct #align (64) {
 	fault_waits:   bool,
 	fault_serial:  u64, // The serial of that fault: Program.fault_serial when it came. Program lock.
 	fault_address: u64, // The address of the access of that fault. Program lock.
+	// The instruction address and the frame pointer of that fault: a
+	// write of Thread_Control changes the frame while the thread waits,
+	// and the stop report of the answer Stop names the fault, not the
+	// write. Program lock.
+	fault_instruction:   u64,
+	fault_frame_pointer: u64,
 	// The control of a thread (thread_control.odin). The stop count: the
 	// thread enters no run queue while it is above 0. Written under the
 	// run lock of home (atomic: kernel_interrupt reads it with no lock).
@@ -1677,8 +1685,8 @@ kernel_interrupt :: proc "c" (frame: ^Frame) {
 		fault_address = control_register_2_read()
 	}
 	// A fault of the iretq of resume: the processor refused the return to
-	// the current thread. The same test as in interrupt_common, which gave
-	// the kernel its gs back for this case only.
+	// the current thread. interrupt_common gave the kernel its gs back for
+	// each interrupt between the swapgs of resume and its iretq.
 	if !from_program && frame.rip == u64(uintptr(&resume_return)) && frame.vector >= 11 && frame.vector <= 13 {
 		return_refused_by_the_processor(frame)
 	}

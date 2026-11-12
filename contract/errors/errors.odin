@@ -28,7 +28,10 @@ Kind :: enum i64 {
 	Empty             = 1, // A text argument has no byte. limit: the most that it can have.
 	Too_Long          = 2, // value: the size of the argument; limit: the most that it can have.
 	Too_Small         = 3, // value: the size of the argument; limit: the least that it must have.
-	Bad_Value         = 4, // value: a value that the call refuses; limit: the largest value that it takes, or 0 when the sentence gives no range.
+	// value: a value that the call refuses; limit: the largest value that it takes, or 0 when the sentence gives no range;
+	// found: 0, or the part of the argument that the call refuses, as the call numbers its parts (Thread_Control:
+	// op.Thread_Write_Refusal).
+	Bad_Value         = 4,
 	Bad_Flags         = 5, // value: the flags; limit: the flags that the call knows.
 	Bad_Byte          = 6, // value: the offset of the byte in the text; found: the byte.
 	Bad_Address       = 7, // value: the address; limit: the count of bytes; found: 1 when the call writes there.

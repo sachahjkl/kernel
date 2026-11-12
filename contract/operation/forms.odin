@@ -64,7 +64,7 @@ OPERATIONS := [Operation]Operation_Form {
 	.Fault_Handler_Set = {"Fault_Handler_Set", {{"thread", .Handle_Or_Zero, .Thread, {.Control}, 0}, {"end", .Choice, .None, {}, 1}, {"kinds", .Flags, .None, {}, FAULT_KINDS_DELIVERED}, {}, {}, {}, {}}},
 	.Fault_Answer = {"Fault_Answer", {{"thread", .Value, .None, {}, 0}, {"serial", .Value, .None, {}, 0}, {"answer", .Choice, .None, {}, u64(max(Fault_Answer_Kind))}, {}, {}, {}, {}}},
 	.Events_Set = {"Events_Set", {{"machine", .Handle, .Machine, {.Events}, 0}, {"memory", .Handle_Or_Zero, .Memory, {.Write}, 0}, {"rules", .Address, .None, {}, 0}, {"count", .Count, .None, {}, EVENT_RULE_CAPACITY}, {"records", .Count, .None, {}, EVENT_RING_RECORDS_MOST}, {}, {}}},
-	.Thread_Control = {"Thread_Control", {{"thread", .Handle_Or_Zero, .Thread, {.Control}, 0}, {"number", .Value, .None, {}, 0}, {"command", .Choice, .None, {}, u64(max(Thread_Control_Command))}, {"address", .Address, .None, {}, 0}, {"size", .Count, .None, {}, 0}, {}, {}}},
+	.Thread_Control = {"Thread_Control", {{"thread", .Handle_Or_Zero, .Thread, {.Inspect}, 0}, {"number", .Value, .None, {}, 0}, {"command", .Choice, .None, {}, u64(max(Thread_Control_Command))}, {"address", .Address, .None, {}, 0}, {"size", .Count, .None, {}, 0}, {}, {}}},
 }
 
 @(rodata)

@@ -99,23 +99,53 @@ gdt_load:                        ; (descriptor: rawptr): load the table and all 
 ; The frame on the stack, from rsp: the 15 registers, then at 15 * 8 the
 ; vector, at 16 * 8 the error code, at 17 * 8 rip and at 18 * 8 cs.
 ;
-; The gs base at an interrupt, by where it came from:
+; The gs base at an interrupt, by where it came from (docs/ARCHITECTURE.md,
+; "The windows of the entry and of the return"):
 ; - from a program (cs & 3 != 0): the base of the program; swapgs gives the
 ;   kernel its own.
-; - from the kernel, at any instruction but the iretq of resume: the base of
-;   the kernel already.
-; - from the kernel between the swapgs of resume and its iretq (the 15
-;   pops, the add and the iretq): the base is the one of the program.
-;   Interrupts are off there, so only these arrive there:
-;   - a fault of the iretq itself (rip resume_return, vector 11, 12 or 13:
-;     the processor refused the frame). It gets swapgs here, and
-;     kernel_interrupt makes it a fault of the thread
-;     (return_refused_by_the_processor).
-;   - an NMI or a machine check (vector 2 or 18), at any of these
-;     instructions. It gets no swapgs. kernel_interrupt takes the path of a
-;     fault of the kernel and stops the machine; that report reads nothing
-;     through gs, so it arrives. A program cannot cause either: the kernel
-;     sends no NMI, and a machine check is a fault of the hardware.
+; - from the kernel at kernel_enter, before its swapgs: the base of the
+;   program. Interrupts are off there (the mask of syscall), so only an
+;   exception with a stack of its own arrives there: a debug trap that the
+;   processor held over the syscall (mov ss or pop ss before it, or the trap
+;   flag on some processors), an NMI or a machine check.
+; - from the kernel after that swapgs and before the switch of the stack
+;   (label kernel_enter_on_kernel_stack): the base of the kernel, with the
+;   stack pointer of the program; the same three can arrive.
+; - from the kernel between the swapgs of resume and its iretq (labels
+;   resume_with_program_gs to resume_return, both included): the base of
+;   the program. Interrupts are off there, so only a fault of the iretq
+;   itself (rip resume_return, vector 11, 12 or 13: the processor refused
+;   the frame; kernel_interrupt makes it a fault of the thread), an NMI or a
+;   machine check arrive there.
+; - from the kernel between the first instruction of a stub and the swapgs
+;   of .from_program below, for an interrupt from a program: the base of
+;   the program. Only an NMI or a machine check arrives there.
+; - from the kernel anywhere else: the base of the kernel.
+;
+; So the stub decides:
+; - A debug trap and the faults of the iretq of resume, by the saved
+;   instruction address compared with the labels of the two windows: these
+;   come only there, and the value of the base does not tell the window.
+; - An NMI and a machine check, which can come at any instruction, by the
+;   sign of the base, as Linux does in paranoid_entry: the base of the
+;   kernel is an address of the kernel half; the base of a program is its
+;   thread record, below the kernel half, or 0 when the program loaded its
+;   gs register (each descriptor has the base 0). A program cannot write a
+;   base of the kernel half: the instruction wrgsbase is off (CR4.FSGSBASE
+;   is clear, an assert of kernel/processor.odin) and wrmsr is privileged.
+;
+; Each path that takes the swap here never comes back to the iretq of this
+; stub: kernel_interrupt stops the machine for an NMI or a machine check in
+; the kernel, and ends the thread of a refused return. So no swap back is
+; needed. The base of the kernel stays in MSR_KERNEL_GS_BASE through each
+; window, so the swap gives it, whatever the program loaded.
+;
+; A debug trap in the window of kernel_enter is not a fault of the kernel:
+; the program asked for the trap, and the syscall cleared the trap flag
+; for the kernel. The stub clears DR6 and returns to the entry, which goes
+; on; no compiled code runs on a gs that the stub did not choose. The trap
+; is dropped: the flags of the program in r11 keep its trap flag, so the
+; program gets its next trap after its first instruction after the return.
 interrupt_common:
 	PUSH_REGISTERS
 	cmp byte [user_access_guard], 0
@@ -124,18 +154,60 @@ interrupt_common:
 .no_guard:
 	test byte [rsp + 18 * 8], 3  ; did the interrupt come from a program?
 	jnz .from_program
-	lea rax, [rel resume_return] ; rax is on the stack: free here.
-	cmp [rsp + 17 * 8], rax
-	jne interrupt_call
-	mov rax, [rsp + 15 * 8]      ; the vector
-	cmp rax, 11
+	; From the kernel. rax, rcx and rdx are on the stack: free here.
+	mov rax, [rsp + 15 * 8]      ; The vector.
+	cmp rax, 2                   ; A non-maskable interrupt.
+	je .gs_by_its_sign
+	cmp rax, 18                  ; A machine check.
+	je .gs_by_its_sign
+	mov rax, [rsp + 17 * 8]      ; The instruction address.
+	lea rcx, [rel kernel_enter]
+	cmp rax, rcx
+	jb .not_in_entry
+	lea rcx, [rel kernel_enter_on_kernel_stack]
+	cmp rax, rcx
+	jb .in_entry
+.not_in_entry:
+	lea rcx, [rel resume_with_program_gs]
+	cmp rax, rcx
 	jb interrupt_call
-	cmp rax, 13
+	lea rcx, [rel resume_return]
+	cmp rax, rcx
 	ja interrupt_call
-	swapgs                       ; A fault of the iretq of resume: the kernel's gs back.
+	swapgs                       ; Between the swapgs of resume and its iretq: the kernel's gs back.
+	jmp interrupt_call
+.in_entry:
+	cmp qword [rsp + 15 * 8], 1  ; The vector: a debug trap.
+	jne .gs_by_its_sign          ; Nothing else can come there: a fault of the kernel, with the kernel's gs.
+	mov eax, 0xFFFF0FF0          ; DR6 with no status (DR6_CLEAR in kernel/processor.odin).
+	mov dr6, rax
+	POP_REGISTERS
+	add rsp, 16
+	iretq                        ; Back to the entry, on the stack and the gs that it had.
+.gs_by_its_sign:
+	mov ecx, 0xC0000101          ; MSR_GS_BASE
+	rdmsr                        ; edx: bits 32 to 63 of the base.
+	test edx, edx
+	js interrupt_call            ; Bit 63 set: an address of the kernel half, the kernel's base.
+	swapgs
 	jmp interrupt_call
 .from_program:
 	swapgs
+	; An exception with a stack of its own (debug, NMI, machine check)
+	; arrives on that stack also from a program. The kernel can then switch
+	; to another thread, wait, and reuse that stack for the next one: so the
+	; frame moves to the top of the kernel stack, where each entry from a
+	; program puts it, and the stack of the exception is free again.
+	mov rax, [gs:abs 0]
+	sub rax, 22 * 8
+	cmp rsp, rax
+	je interrupt_from_program
+	mov rsi, rsp
+	mov rdi, rax
+	mov ecx, 22
+	cld
+	rep movsq
+	mov rsp, rax
 interrupt_from_program:
 interrupt_call:
 	mov rdi, rsp
@@ -147,12 +219,16 @@ interrupt_call:
 
 ; The one kernel entry point of programs: the syscall instruction.
 ; rcx holds the return address and r11 the flags. It builds the same frame
-; as an interrupt.
+; as an interrupt. interrupt_common knows the three instructions before
+; kernel_enter_on_kernel_stack by their addresses: no instruction goes in
+; between without a change of its windows.
 global kernel_enter
+global kernel_enter_on_kernel_stack
 kernel_enter:
 	swapgs
 	mov [gs:abs 8], rsp
 	mov rsp, [gs:abs 0]
+kernel_enter_on_kernel_stack:
 	push 0x1B                    ; ss: user data
 	push qword [gs:abs 8]
 	push r11                     ; flags
@@ -194,6 +270,35 @@ resume:                          ; (frame: ^Frame) -> !: run a program
 %assign pair pair + 1
 %endrep
 	swapgs                       ; From here to the iretq, gs is the program's.
+global resume_with_program_gs
+resume_with_program_gs:
+	; The data selectors ds, es, fs and gs are not in the frame of a
+	; thread: a value that one program loads would stay for the next
+	; program on this processor, a channel of a few bits between them. So
+	; each return gives them the null selector, which a program also gets
+	; at its start. The load costs a write of the gs base, so it runs only
+	; when one of them is not null: at the first return of a processor
+	; (its kernel loaded ds and es), and after a program loaded one.
+	mov ax, ds
+	mov cx, es
+	or ax, cx
+	mov cx, fs
+	or ax, cx
+	mov cx, gs
+	or ax, cx
+	jz .selectors_null
+	; The load of gs writes its base (to 0, or not at all on some
+	; processors): the base of the program is read first and written back.
+	; The fs base is 0 for every thread: the kernel writes no other.
+	mov ecx, 0xC0000101          ; MSR_GS_BASE: here, the base of the program.
+	rdmsr
+	xor esi, esi
+	mov ds, si
+	mov es, si
+	mov fs, si
+	mov gs, si
+	wrmsr
+.selectors_null:
 	POP_REGISTERS
 	add rsp, 16                  ; The vector and the error code.
 global resume_return

@@ -918,10 +918,17 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			thread_wake(waiter)
 			return .Ok
 		}
-		// The report of the fault, as with no handler: the frame of the
-		// waiting thread is the frame of its fault, and the page table of
-		// this processor is the one of the program (the stack trace).
-		program_stop(program_index, program_fault_report(program_index, &waiter.frame, waiter.fault_address))
+		// The report of the fault, as with no handler. A write of
+		// Thread_Control can have moved the instruction address and the
+		// frame pointer of the waiting thread since its fault: the report
+		// takes the two of the fault, which fault_deliver kept, so that it
+		// names the instruction that faulted and its stack trace. The vector
+		// and the error code are the fault's: no write changes them. The page
+		// table of this processor is the one of the program (the stack trace).
+		fault_frame := waiter.frame
+		fault_frame.rip = waiter.fault_instruction
+		fault_frame.rbp = waiter.fault_frame_pointer
+		program_stop(program_index, program_fault_report(program_index, &fault_frame, waiter.fault_address))
 		return .Ok
 
 	case .Events_Set:

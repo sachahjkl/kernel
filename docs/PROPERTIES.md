@@ -78,7 +78,7 @@ Status: Decided.
 - **Forbids**: file systems, network protocols, device drivers, window management and text formats in the kernel.
 - **Cost**: Each service that leaves the kernel needs a user-space home and a fast path to reach it. Properties 4, 5 and 6 pay this cost.
 - **Reuse**: seL4 and Zircon show that a kernel of this scope ships. NT shows that one handle table for every kernel resource scales to a full system. [Notes `existing_kernels_good_ideas.md` §1, §3]
-- **Open**: the limit itself. A first target is 32 operations or fewer.
+- **Open**: the limit itself. The first target was 32 operations or fewer. The kernel has 33 operations: each operation past 32 has its reason written in its guide (`Thread_Control`, 33: `ARCHITECTURE.md`, "The control of a thread").
 
 ## 2. Sandbox by default
 

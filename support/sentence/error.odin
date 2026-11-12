@@ -87,6 +87,10 @@ error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record,
 		write_part(writer, " has the value ")
 		write_part(writer, record.value)
 		write_part(writer, ", which the call refuses")
+		if record.found != 0 {
+			write_part(writer, " in its part ")
+			write_part(writer, record.found)
+		}
 		if record.limit != 0 {
 			write_part(writer, "; it takes at most ")
 			write_part(writer, record.limit)

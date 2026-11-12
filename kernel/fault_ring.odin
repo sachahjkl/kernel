@@ -107,6 +107,8 @@ fault_deliver :: proc "contextless" (thread_index: u32, address: u64) -> bool {
 	thread.fault_waits = true
 	thread.fault_serial = program.fault_serial
 	thread.fault_address = address
+	thread.fault_instruction = thread.frame.rip
+	thread.fault_frame_pointer = thread.frame.rbp
 	// A write of Thread_Control before this fault does not make Resume
 	// valid for it: the handler writes after it reads this record.
 	thread.registers_written = false

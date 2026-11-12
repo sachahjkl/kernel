@@ -62,6 +62,7 @@ Step_Kind :: enum {
 	Close, // Press the close button of the window with the title text. The tool reads the place and the size of the window in the log.
 	Film, // Save the screen 25 times in one second, for x milliseconds, as the next pictures of the film.
 	Quit, // End QEMU: the machine does not stop by itself.
+	Monitor, // Send the line text to the QEMU monitor, as it is (for example "nmi": a non-maskable interrupt to each processor).
 	Trace, // The log has text, after the text of the last Wait, then a stack trace to the end of the line: the tool names each frame from the linked file of its module, and the names start with `names`.
 	Record, // A log record with the program `program`, the channel `channel`, the level `level` and a text that has `text`, after the record of the last Record step: the tool reads log.records() through the remote service (call.odin). With any_order, the next Record step searches from the same place.
 	Agree, // The program `text`: the mapped pages and the threads that inspect.mappings() and inspect.threads() give are the ones that monitor.programs() gives (two tools, two reports of the kernel).
@@ -1228,7 +1229,7 @@ scenario := [?]Step {
 	// writable and executable, and each kernel stack has its guard pages.
 	{kind = .Launch, text = "pages"},
 	{kind = .Wait, text = "pages: the kernel half: ", any_order = true},
-	{kind = .Wait, text = " 0 write and execute, 48 guard pages of 48"},
+	{kind = .Wait, text = " 0 write and execute, 24 guard pages of 24"},
 	{kind = .Wait, text = "pages: ok, the page tables keep the rules"},
 	{kind = .Wait, text = "pages: the processor refuses the memory of programs to the kernel"},
 	{kind = .Shot, text = "pages"},
@@ -3390,6 +3391,8 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 			}
 		case .Quit:
 			monitor_send(machine, "quit")
+		case .Monitor:
+			monitor_send(machine, step.text)
 		case .Power_Loss:
 			server := machine.disk_server
 			if server == nil {

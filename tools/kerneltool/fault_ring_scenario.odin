@@ -18,7 +18,7 @@ package kerneltool
 // error; the vectors that the kernel never delivers are refused. Then the
 // control of a thread: a stop, a read and a write of the registers, the
 // writes that the kernel refuses, a stop of a thread that waits, two stops,
-// a handle without Control, a divide error that its handler skips, and no
+// the rights of a thread handle, a divide error that its handler skips, and no
 // way to name a thread of another program without a handle. Then the
 // entries to the gates and the debug trap: int 3 in two bytes, int 14,
 // int1, the trap flag set with popfq, and mov ss before a syscall with the
@@ -75,7 +75,7 @@ scenario_fault_ring := [?]Step {
 	{kind = .Wait, text = "fault_ring: an extended state that faults: every hostile write refused with Bad_Operation, the area that was read accepted; the thread ran after its Resume: as it must"},
 	{kind = .Wait, text = "fault_ring: a stop of a thread that waits: its wait ended, it did not run before its Resume, and it ran after it: as it must"},
 	{kind = .Wait, text = "fault_ring: two stops, two resumes: still stopped after one Resume, running after the second; a third Resume got Bad_State: as it must"},
-	{kind = .Wait, text = "fault_ring: a thread handle without Control: Thread_Control got No_Right, the thread kept running: as it must"},
+	{kind = .Wait, text = "fault_ring: the rights of a thread handle: with Read and Control, Stop got No_Right, Read_Registers No_Right, Write_Registers No_Right; with Inspect only, Stop, Read_Registers and Resume got Ok, Write_Registers No_Right; the thread kept running: as it must"},
 	{kind = .Wait, text = "fault_ring: a divide error skipped by its handler: Resume before the write got Bad_State; after the write of the instruction address and rax, the thread went on with 42: as it must"},
 	{kind = .Wait, text = "fault_ring: the control of a thread: the child stopped with the code 00000000000010ff: as it must"},
 	{kind = .Wait, text = "fault_ring: the thread of another program: 32 calls of 32 refused; no number and no handle of this program names it: as it must"},
@@ -85,7 +85,9 @@ scenario_fault_ring := [?]Step {
 	{kind = .Wait, text = "fault_ring: int 14: one protection fault with the error code 0x72, no page fault; the handler skipped the two bytes: as it must"},
 	{kind = .Wait, text = "fault_ring: int1: one debug record, at the address of the instruction plus 1: as it must"},
 	{kind = .Wait, text = "fault_ring: the trap flag set with popfq: 6 debug records, one after each instruction, the last after the popfq that cleared the flag: as it must"},
-	{kind = .Wait, text = "fault_ring: mov ss, then syscall, with the trap flag: the machine went on; each record is a debug trap of this program, in its code: as it must"},
+	// It shows what this processor did, not every processor: a trap at the
+	// first instruction of the kernel entry is dropped by the kernel there.
+	{kind = .Wait, text = "fault_ring: mov ss, then syscall, with the trap flag: on this processor the machine went on, and each record is a debug trap of this program, in its code: as it must"},
 	{kind = .Wait, text = "fault_ring: the entries and the debug trap: the child stopped with the code 000000000000201f: as it must"},
 	{kind = .Wait, text = "fault_ring: ok, 33 cases: each fault was repaired, or stopped its program with the report of today, each control of a thread held, and each child gave back every page and every thread"},
 	{kind = .Front, text = "fault_ring"},

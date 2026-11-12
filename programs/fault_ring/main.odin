@@ -57,7 +57,9 @@
 //  24. A stop of a thread that waits, then its wake: it does not run until
 //      its Resume.
 //  25. Two stops need two Resumes.
-//  26. A handle to the thread without the right Control: refused.
+//  26. The rights of a thread handle: with Read and Control (the right to
+//      end it), each command is refused; with Inspect only, a stop, a
+//      read and a resume are accepted, and a write is refused.
 //  27. A divide error whose handler adds the length of the div to the
 //      instruction address and writes rax: Resume, refused before the
 //      write, is accepted after it, and the thread goes on.
@@ -71,8 +73,11 @@
 //  31. int1 (the byte F1): a debug trap at the address + 1.
 //  32. The trap flag set with popfq: one debug record for each instruction
 //      until the popfq that clears it.
-//  33. mov ss, then syscall, with the trap flag: the machine goes on, and
-//      each record is a debug trap of this program, in its code.
+//  33. mov ss, then syscall, with the trap flag: on the processor of the
+//      test, the machine goes on, and each record is a debug trap of this
+//      program, in its code. It does not show that the processor gave no
+//      trap at the first instruction of the kernel entry: the kernel drops
+//      such a trap there.
 package fault_ring
 
 import "base:intrinsics"
@@ -293,7 +298,7 @@ cases := [33]Case {
 	{name = "an extended state that faults", role = .Controls, bit = 0x08},
 	{name = "a stop of a thread that waits", role = .Controls, bit = 0x10},
 	{name = "two stops, two resumes", role = .Controls, bit = 0x20},
-	{name = "a thread handle without Control", role = .Controls, bit = 0x40},
+	{name = "the rights of a thread handle", role = .Controls, bit = 0x40},
 	{name = "a divide error skipped by its handler", role = .Controls, bit = 0x80},
 	{name = "the thread of another program", role = .Foreign_Thread, bit = 0x01},
 	{name = "int 3 in two bytes", role = .Debug_Entries, bit = 0x01},
@@ -683,8 +688,10 @@ child_early_answer :: proc "contextless" () -> ! {
 // The cases 14 to 19: faults that are not page faults. The handler takes
 // the kinds of kinds_wanted. To its first record it answers Resume: the
 // kernel accepts it for a breakpoint, and must refuse it for a fault that
-// would run the same instruction on the same registers; then it answers
-// Stop. A second record answers Stop at once: a Resume that the kernel took
+// would run the same instruction on the same registers; then it moves the
+// instruction address of the thread by one byte and answers Stop, and the
+// stop report must name the instruction of the fault, not the written one.
+// A second record answers Stop at once: a Resume that the kernel took
 // by mistake ends there, and does not loop.
 kinds_wanted: op.Fault_Kinds
 
@@ -713,6 +720,14 @@ kinds_handler :: proc "c" (_: rawptr) -> ! {
 		resumed := system.fault_answer(record, .Resume)
 		intrinsics.atomic_store(&shared.resume_status, u32(resumed) + 1)
 		if resumed != .Ok {
+			// A write of the instruction address before the answer Stop:
+			// the stop report must still name the instruction of the fault,
+			// which the case compares with the record.
+			registers: op.Thread_Registers
+			if _, read := control(0, record.thread, .Read_Registers, &registers, size_of(registers)); read == .Ok {
+				registers.rip += 1
+				control(0, record.thread, .Write_Registers, &registers, size_of(registers))
+			}
 			system.fault_answer(record, .Stop)
 		}
 	}
@@ -1016,16 +1031,28 @@ child_controls :: proc "contextless" () -> ! {
 	}
 	system.log("fault_ring: two stops, two resumes: ", quiet ? string("still stopped after one Resume") : string("ran after one Resume"), ", ", ran ? string("running after the second") : string("not running after the second"), "; a third Resume got ", op.STATUS_NAMES[third], right ? string(": as it must") : string(": WRONG"))
 
-	// 26. A thread handle without the right Control.
-	reader, given := system.give(0, spinner.handle, {.Read})
-	_, without := control(reader, 0, .Stop)
-	count_state, state_status := system.call(.Thread_State, u64(reader))
+	// 26. The rights of a thread handle. A handle with Read and Control,
+	// the rights to read the state and to end the thread, neither holds the
+	// thread nor reads or writes its registers. A handle with Inspect only
+	// holds it, reads its registers and resumes it, and cannot write them.
+	ender, ender_given := system.give(0, spinner.handle, {.Read, .Control})
+	_, ender_stop := control(ender, 0, .Stop)
+	_, ender_read := control(ender, 0, .Read_Registers, &registers, size_of(registers))
+	_, ender_write := control(ender, 0, .Write_Registers, &registers, size_of(registers))
+	count_state, state_status := system.call(.Thread_State, u64(ender))
+	ender_right := ender_given == .Ok && ender_stop == .No_Right && ender_read == .No_Right && ender_write == .No_Right && state_status == .Ok && count_state[1] == 0
+	inspector, inspector_given := system.give(0, spinner.handle, {.Inspect})
+	_, inspector_stop := control(inspector, 0, .Stop)
+	_, inspector_read := control(inspector, 0, .Read_Registers, &registers, size_of(registers))
+	_, inspector_write := control(inspector, 0, .Write_Registers, &registers, size_of(registers))
+	_, inspector_resume := control(inspector, 0, .Resume)
+	inspector_right := inspector_given == .Ok && inspector_stop == .Ok && inspector_read == .Ok && inspector_write == .No_Right && inspector_resume == .Ok
 	ran = grows(&control_cells.count)
-	right = given == .Ok && without == .No_Right && state_status == .Ok && count_state[1] == 0 && ran
+	right = ender_right && inspector_right && ran
 	if right {
 		bits |= 0x40
 	}
-	system.log("fault_ring: a thread handle without Control: Thread_Control got ", op.STATUS_NAMES[without], ", the thread kept running", right ? string(": as it must") : string(": WRONG"))
+	system.log("fault_ring: the rights of a thread handle: with Read and Control, Stop got ", op.STATUS_NAMES[ender_stop], ", Read_Registers ", op.STATUS_NAMES[ender_read], ", Write_Registers ", op.STATUS_NAMES[ender_write], "; with Inspect only, Stop, Read_Registers and Resume got ", inspector_stop == .Ok && inspector_read == .Ok && inspector_resume == .Ok ? string("Ok") : string("an error"), ", Write_Registers ", op.STATUS_NAMES[inspector_write], "; the thread kept running", right ? string(": as it must") : string(": WRONG"))
 
 	// 27. A divide error skipped by its handler.
 	handler_start(divide_handler)
@@ -1170,7 +1197,7 @@ child_debug_entries :: proc "contextless" () -> ! {
 	if right {
 		bits |= 0x10
 	}
-	entry_line("mov ss, then syscall, with the trap flag", "the machine went on; each record is a debug trap of this program, in its code", right)
+	entry_line("mov ss, then syscall, with the trap flag", "on this processor the machine went on, and each record is a debug trap of this program, in its code", right)
 	system.stop(DEBUG_ENTRIES_CODE | bits)
 }
 

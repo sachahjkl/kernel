@@ -97,5 +97,22 @@ the_form_of_thread_control :: proc(t: ^testing.T) {
 	testing.expect_value(t, form.name, "Thread_Control")
 	testing.expect_value(t, form.parameters[2].form, Form.Choice)
 	testing.expect_value(t, form.parameters[2].limit, u64(max(Thread_Control_Command)))
-	testing.expect_value(t, form.parameters[0].rights, Rights{.Control})
+	testing.expect_value(t, form.parameters[0].rights, Rights{.Inspect})
+}
+
+// A hold, a release and a read need Inspect; a write needs Write; no
+// command needs Control, the right to end a thread, so a handle given to
+// end a thread neither holds it nor writes its registers.
+@(test)
+the_rights_of_each_command :: proc(t: ^testing.T) {
+	for command in Thread_Control_Command {
+		rights := thread_control_rights(command)
+		switch command {
+		case .Write_Registers, .Write_Extended_State:
+			testing.expect_value(t, rights, Rights{.Write})
+		case .None, .Stop, .Resume, .Read_Registers, .Read_Extended_State:
+			testing.expect_value(t, rights, Rights{.Inspect})
+		}
+		testing.expect(t, .Control not_in rights)
+	}
 }
