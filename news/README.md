@@ -9,7 +9,7 @@ The changelog and the news are two records:
 
 ## When to write one
 
-- A step adds one entry when a person can see or use something new: a program, a window, a command, a measured number, a choice of the owner that a person sees.
+- A step adds one entry when a person can see or use something new: a program, a window, a command, a measured number, a choice of design that a person sees.
 - A step with nothing to show adds none. A correction inside the code, a refactoring, a document only: no entry.
 - One thing, one entry. Two things that a person sees separately are two entries.
 - An entry is never moved, never merged with another, and not changed after its step, but to correct a fact that is wrong. A later change of the same thing is a new entry.
@@ -46,10 +46,10 @@ The kinds, the colored mark of the card of the entry:
 |---|---|
 | `Shown` | A person can now see or use a new thing in the running system |
 | `Measured` | A number about a thing that exists is measured, with its conditions |
-| `Decided` | The owner chose a thing that a person sees: a name, a mark, a font |
+| `Decided` | A choice of design that a person sees: a name, a mark, a font. The text says what the thing is now, not who chose it |
 | `Fixed` | A thing that a person saw fail now works |
 
-The text: at most 1200 bytes; no heading (the title is the heading); no line of HTML. Write in the simplified technical English of the repository: one fact in each sentence, no promotion, no adjective that is not measured, each number with the conditions that its document gives. A longer report belongs in the guide that the entry names.
+The text: at most 1200 bytes; no heading (the title is the heading); no line of HTML. Write in the simplified technical English of the repository: one fact in each sentence, no promotion, no adjective that is not measured, each number with the conditions that its document gives. A longer report belongs in the guide that the entry names. Never write "the owner": a reader of the site does not know that word; say what the thing is now.
 
 ## The commands
 

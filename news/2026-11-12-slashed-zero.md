@@ -5,4 +5,4 @@ picture: docs/screenshots/font_vector.png
 kind: Decided
 guide: docs/FONTS.md
 
-The owner chose the slashed zero of Paper Mono. The tool reads the form from the feature table of the font file, so the form is the one that the font designer drew. A zero and a capital O are now different on every text grid of the system. The system can also draw B612, a font with letters of different widths, from a cache that the tool builds ahead.
+The zero of the system is now the slashed zero of Paper Mono. The tool reads the form from the feature table of the font file, so the form is the one that the font designer drew. A zero and a capital O are now different on every text grid of the system. The system can also draw B612, a font with letters of different widths, from a cache that the tool builds ahead.
