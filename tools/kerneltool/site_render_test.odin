@@ -45,7 +45,10 @@ site_render_each_construct :: proc(t: ^testing.T) {
 		"<th scope=\"col\" class=\"column-any\">B | C</th>",
 		"<div class=\"table\" role=\"region\" tabindex=\"0\" aria-label=\"A part\">",
 		"<blockquote>\n<p>quoted &lt;text&gt;</p>",
-		"<pre><code>x := 1 &lt; 2\n</code></pre>",
+		// A block marked odin is colored by the tokenizer of the compiler.
+		"<pre><code>x <span class=\"c-p\">:=</span> <span class=\"c-l\">1</span> <span class=\"c-p\">&lt;</span> <span class=\"c-l\">2</span>\n</code></pre>",
+		// The mermaid block is plain: only a block marked odin is colored.
+		"<pre><code>graph\n</code></pre>",
 	}
 	for part in expect {
 		testing.expectf(t, strings.contains(html, part), "the HTML has no %q:\n%s", part, html)
@@ -310,9 +313,9 @@ site_tables_with_kinds :: proc(t: ^testing.T) {
 	expect := [?]string {
 		"<p>before</p>\n<div class=\"table\" role=\"region\" tabindex=\"0\" aria-label=\"Measured &lt;numbers&gt;\"><table>",
 		"<th scope=\"col\" class=\"column-prose\">What</th><th scope=\"col\" class=\"column-line\">The line of the log</th>",
-		"<th scope=\"col\" class=\"column-date\">Written</th>",
-		"<tr id=\"one\"><td class=\"column-prose\">What</td><td class=\"column-line code\"><code>line</code></td><td class=\"column-prose\">log</td><td class=\"column-date\"><time datetime=\"2026-11-12T02:09Z\">2026-11-12 02:09 UTC</time></td></tr>",
-		"<tr><td class=\"column-prose\">Second</td><td class=\"column-line\"></td><td class=\"column-prose\"></td><td class=\"column-date\"></td></tr>",
+		"<th scope=\"col\" class=\"column-date value-head value-icon value-time\">Written</th>",
+		"<tr id=\"one\"><td class=\"column-prose\">What</td><td class=\"column-line code\"><code>line</code></td><td class=\"column-prose\">log</td><td class=\"column-date value value-time\"><time datetime=\"2026-11-12T02:09Z\">2026-11-12 02:09 UTC</time></td></tr>",
+		"<tr><td class=\"column-prose\">Second</td><td class=\"column-line\"></td><td class=\"column-prose\"></td><td class=\"column-date value value-time\"></td></tr>",
 		"</tbody></table></div>\n",
 	}
 	for part in expect {

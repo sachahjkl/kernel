@@ -25,6 +25,7 @@ Site_List_Item :: struct {
 	label:   string,
 	id:      string,
 	text:    string,
+	line:    int, // The line of its label in the file: the link to it when the file is not a page of the site.
 }
 
 // A term of the glossary: the page links its first use in each other page.
@@ -279,16 +280,25 @@ site_render_fence :: proc(renderer: ^Site_Renderer, lines: []string, start: int,
 	}
 	indent := strings.index(lines[start], "```")
 	index := start + 1
-	strings.write_string(b, "<pre><code>")
+	code_text := strings.builder_make(context.temp_allocator)
 	for index < len(lines) && strings.trim_space(lines[index]) != "```" {
 		code := lines[index]
 		// The code of a fence inside a list item has the indentation of the item.
 		if indent > 0 && len(code) >= indent && strings.trim_space(code[:indent]) == "" {
 			code = code[indent:]
 		}
-		site_escape(b, code)
-		strings.write_byte(b, '\n')
+		strings.write_string(&code_text, code)
+		strings.write_byte(&code_text, '\n')
 		index += 1
+	}
+	strings.write_string(b, "<pre><code>")
+	// Only a block that its document marks as Odin is colored: the language
+	// of a block with no mark is not guessed.
+	if language == "odin" && renderer.site != nil {
+		place := fmt.tprintf("%s:%d", renderer.source, start + first_line_number)
+		strings.write_string(b, site_code_block_html(renderer.site, strings.to_string(code_text), "", place))
+	} else {
+		site_escape(b, strings.to_string(code_text))
 	}
 	strings.write_string(b, "</code></pre>\n")
 	if index >= len(lines) {
@@ -354,6 +364,7 @@ Site_Pending_Item :: struct {
 	marker: Site_Marker,
 	text:   [dynamic]string,
 	code:   [dynamic]string, // The HTML of each fenced block of the item.
+	line:   int, // The line of its marker in the file.
 }
 
 site_render_list :: proc(renderer: ^Site_Renderer, lines: []string, start: int, first_line_number: int) -> int {
@@ -385,6 +396,7 @@ site_render_list :: proc(renderer: ^Site_Renderer, lines: []string, start: int, 
 				marker = marker,
 				text   = make([dynamic]string, context.temp_allocator),
 				code   = make([dynamic]string, context.temp_allocator),
+				line   = first_line_number + index,
 			}
 			append(&item.text, marker.text)
 			append(&items, item)
@@ -428,7 +440,7 @@ site_write_list :: proc(renderer: ^Site_Renderer, items: []Site_Pending_Item, po
 			id := ""
 			if depth == 0 {
 				id = site_unique_id(renderer, strings.concatenate({renderer.section != "" ? renderer.section : "item", "-", item.marker.label}, context.temp_allocator))
-				append(&renderer.items, Site_List_Item{section = renderer.section, label = item.marker.label, id = id, text = text})
+				append(&renderer.items, Site_List_Item{section = renderer.section, label = item.marker.label, id = id, text = text, line = item.line})
 				fmt.sbprintf(b, "<li id=\"%s\">", id)
 			} else {
 				strings.write_string(b, "<li>")
@@ -735,29 +747,4 @@ site_write_with_terms :: proc(renderer: ^Site_Renderer, text: string) {
 		}
 	}
 	site_escape(b, text[written:])
-}
-
-// site_table_of_contents writes the headings of levels 2 and 3 of a page.
-site_table_of_contents :: proc(renderer: ^Site_Renderer) -> string {
-	b := strings.builder_make(context.temp_allocator)
-	count := 0
-	for heading in renderer.headings {
-		if heading.level == 2 || heading.level == 3 {
-			count += 1
-		}
-	}
-	if count < 2 {
-		return ""
-	}
-	strings.write_string(&b, "<nav class=\"contents\" aria-label=\"Contents of this page\">\n<p class=\"contents-title\">Contents</p>\n<ul>\n")
-	for heading in renderer.headings {
-		if heading.level != 2 && heading.level != 3 {
-			continue
-		}
-		fmt.sbprintf(&b, "<li class=\"level-%d\"><a href=\"#%s\">", heading.level, heading.id)
-		site_inline(&b, heading.text)
-		strings.write_string(&b, "</a></li>\n")
-	}
-	strings.write_string(&b, "</ul>\n</nav>\n")
-	return strings.to_string(b)
 }

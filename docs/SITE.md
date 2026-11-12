@@ -14,10 +14,11 @@ No page holds a text that a person must remember to update: each page is generat
 - Before it writes a page, the command checks all the pages. A failure stops the command with the page and the reason, and no page is written:
   - each page has one `h1`, a title and a description of at most 160 bytes; no two pages share a title or a description;
   - each `img` has an `alt` attribute (empty for a picture that only decorates a text beside it, as the heron of the bar), a `width` and a `height`;
-  - each `href`, `src` and `srcset` that is not an address of another host names a page or a file that the command wrote (a link that ends with `/` names the `index.html` of the folder), and its anchor is an `id` of that page;
+  - each `href`, `src` and `srcset` that is not an address of another host names a page or a file that the command wrote (a link that ends with `/` names the `index.html` of the folder, and the query of a file version is ignored), and its anchor is an `id` of that page;
   - a link to a page has the form of the build (see "The addresses of the pages"): with a site address it names the folder, with none the `index.html`;
   - each redirect page (`GLOSSARY.md`) is at a path that no page and no file of the site has, and its refresh and its link name a page that the command writes;
   - each `srcset` candidate names a file that the command wrote;
+  - a page of the documentation layout has one documentation tree and one list "On this page", and each link of the list names an id of the page; a page of the presentation layout has neither (see "The two layouts");
   - no page holds code or style of its own: each `<script>` has a `src` and nothing inside, but the one `<script type="application/ld+json">` of the page graph, whose text has no `<`; no `<style>` element and no `style` attribute exists.
 - Then the command checks what other programs read (see "What other sites read"); a failure stops it in the same way.
 - After the checks of the pages, the command makes the index of the search and checks it against the pages (see "The search"); a failure stops it in the same way.
@@ -32,7 +33,7 @@ A page named by a folder (`news/`) is the `index.html` of that folder (see "The 
 |---|---|
 | `index.html`, the home | The mark (`support/mark`), the first sentence of the first paragraph of `README.md` as the tagline of the head, the three newest news entries, the rest of that paragraph in a section "What it is" after the news (the owner, 2026-11-12: "la tagline est trop longue"; after the news, so that the first screen of a phone holds the mark, the name, the tagline and the links only; the description of the home in its head, Open Graph, the manifest and the page graph stays the whole paragraph, cut at 160 bytes, because the tagline alone is too short to describe the system), the stages of the start from the lines `kernel: boot: ...` of `build/test_output.txt`, the tiles of the boot image (see "The tiles of the boot image"), the first three measured numbers, the pictures of `docs/screenshots` with the captions of `README.md`, the newest release of `CHANGELOG.md`, the count of steps of `docs/REVIEWS.md` |
 | `guides/index.html` | The table "Documents" of `README.md`, then the other documents of `docs/` by name |
-| `guides/<name>/` | Each document of `docs/` but `HANDOFF.md` and `REVIEWS.md`, which are working records of the project and stay out of the site; the glossary is a page of the reference |
+| `guides/<name>/` | Each document of `docs/` but the working records `HANDOFF.md`, `REVIEWS.md`, `SITE.md` and `FIRST_MILESTONE.md` (`SITE_WORKING_RECORDS`), which stay out of the site: only the guides that explain the system are published. A link of a page to a working record names the file in the repository. The glossary is a page of the reference |
 | `reference/index.html` | The list of the reference tables below |
 | `reference/glossary/` | `docs/GLOSSARY.md`: each row of a table whose first column is "Term" has the anchor `term-<name>` |
 | `reference/commands/` | `COMMANDS` in `tools/kerneltool/main.odin`: the name and the text of each command |
@@ -47,6 +48,7 @@ A page named by a folder (`news/`) is the `index.html` of that folder (see "The 
 | `status/` | See "The status page" |
 | `reference/operations/`, `context/`, `errors/`, `grants/`, `fixed-ranges/`, `console/` | See "The reference tables" |
 | `reference/modules/index.html`, `reference/modules/<name>/` | See "The module pages" |
+| `reference/types/` | See "The types" |
 
 Each page has the bar (the heron and the name at the left, the sections as buttons: Guides, Reference, Status, News, Releases; a section appears when its page exists), breadcrumbs on each page below the home, and a foot that names the commit, the release and the time of the build, and the files that the page comes from, as links to the repository at that commit. A reference table names the files that it is read from.
 
@@ -98,7 +100,7 @@ Links:
 
 What it does not render, shown as text and listed by the command: a mermaid diagram (shown as its code), a line of HTML, a table with no line of dashes, a fence with no end, a link to a file that is not in the repository. A single `*` or `_` is text: the documents use no italics.
 
-Each guide has its table of contents (the headings of levels 2 and 3, beside the text on a wide screen) and links to the guides before and after it.
+Each guide has the documentation layout (see "The two layouts"): its headings of levels 2 and 3 are in "On this page". It links to the guides before and after it.
 
 ## The news
 
@@ -281,7 +283,7 @@ The site follows `DESIGN.md`, with the colors of `support/graphics/rules.odin` a
 - the tables have the look of the tables of the system: the titles of the columns in the dim color, every second row on a band (`DESIGN.md`, section 10). Each column has the least width of its kind, and a table wider than the page scrolls sideways in its own box (see "The tables");
 - the grid of points of the desktop is on the home only.
 
-Prose is in the reading font of the reader's system, at most 72 characters a line; code, signatures, numbers and identifiers are in its monospace font. No animation, no shadow, no round corner. The light form follows `prefers-color-scheme`. A print form hides the bar and the navigation.
+Prose is in the reading font of the reader's system, at most 72 characters a line on a presentation page and 80 on a documentation page; code, signatures, numbers and identifiers are in its monospace font. No animation, no shadow, no round corner. The light form follows `prefers-color-scheme`. A print form hides the bar and the navigation.
 
 The contrast of the text (WCAG 2 ratio), from the colors of the rules:
 
@@ -335,6 +337,85 @@ The owner asked for it on 2026-11-12: "il manque un menu burger sur la version m
 - The menu is closed in the file, not open: an open menu that the script closes on a narrow screen moves the page after its first paint on each load.
 - At 360 pixels, no line is wider than the screen: a table and a block of code scroll in their own box (`.table`, `pre`); a heading, a paragraph, an item, a caption and the breadcrumbs break a long word or address (`overflow-wrap: anywhere`); the stages, the tiles and the pictures fit a column of 328 pixels.
 
+### The two layouts
+
+The owner asked for it on 2026-11-12: "la doc, je veux un vrai truc de doc, comme Odin par exemple, où ils ont une sidebar, il y a des documentations techniques au centre, il y a les symboles à droite". The code is `tools/kerneltool/site_documentation.odin`.
+
+The writer of each page states its layout (`Site_Page.layout`); the tool does not guess it from a path.
+
+| Layout | Pages | Form |
+|---|---|---|
+| Presentation | The home, the news, the releases | One centred column of at most 1152 pixels |
+| Documentation (`GLOSSARY.md`) | Each guide, each reference page, the glossary, each module page, the status, and the index pages of the guides, the reference and the modules | The documentation tree, the text, "On this page", over the whole width of the window |
+
+The documentation tree (`GLOSSARY.md`) is one `<nav class="tree" aria-label="Documentation">`: "Guides" with each guide in the reading order of the page of the guides, "Reference" with each reference page in the order of its index, "Modules" with a `details` for each group (Kernel, Programs, Modules), open when it holds the current page, and "Status". The current page has `aria-current="page"`. It is written once in each page, inside the site menu, after the search: under 720 pixels it is under the sections in the open menu, which scrolls on its own; from 720 pixels the style sheet fixes it at the left of the window (`position: fixed`, its own `overflow-y`), so a long tree never moves the page. With no script, a browser with no `::details-content` shows the tree when the button of the menu opens it, as the sections.
+
+"On this page" (`GLOSSARY.md`) is one `<details class="outline">` at the start of `main`: the title of the page (a link to `#content`), then each heading h2 and h3 with an id, then each element that states a symbol with `data-outline`, in the order of the page. From 1100 pixels it is a column at the right of the text, sticky, with its own scroll, and open (`::details-content`, or `search.js`); under 1100 pixels it is closed above the text, and its summary "On this page" opens it. The script marks the link of the part in view with `aria-current="location"`: an `IntersectionObserver` reports each heading and symbol that enters or leaves the top 40 % of the window; nothing runs each frame. With no script it is a correct list of links.
+
+The text keeps a measure of 80 characters (`80ch`) for paragraphs, items, headings and quotes; a table, a block of code and a figure take the whole middle column, and a table still scrolls in its own box.
+
+| Width of the window | Columns | The grid |
+|---|---|---|
+| Under 720 pixels (360) | The text only; the tree is in the menu; "On this page" is closed above the text | `main`: `grid-template-columns: minmax(0, 1fr)` |
+| 720 to 1099 pixels (768, 1024) | The tree, fixed, 256 pixels; the text | `body`: `padding-left: 256px`; `main`: `grid-template-columns: minmax(0, 1fr)` |
+| From 1100 pixels (1440, 1920, 2560) | The tree, 256 pixels; the text; "On this page", 240 pixels | `body`: `padding-left: 256px`; `main`: `grid-template-columns: minmax(0, 1fr) 240px` |
+
+No column has a fixed least width but the tree and "On this page", and each grid item of the text has `min-width: 0`: no line is wider than the window at 360, 768, 1024, 1440, 1920 and 2560 pixels. At 768 pixels the text column is 480 pixels; at 1100 pixels, 540.
+
+Print shows the middle column only: the bar, the tree, "On this page", the breadcrumbs and the links to the guides before and after are hidden.
+
+### The kinds of values
+
+The owner asked for it on 2026-11-12: "que les valeurs techniques, comme par exemple le fait de dire handle ou les valeurs numériques, soient affichées en monospace, qu'elles aient une couleur [...] accompagnées d'un icône". The rule of the two fonts of the desktop holds (`DESIGN.md`, "Two fonts"): a name or an explanation in the reading font, a value in the monospace font. The code is `tools/kerneltool/site_values.odin`.
+
+One table, `site_value_kinds`, gives each value kind (`GLOSSARY.md`) its class `value-<name>`, its icon (12 by 12 cells, `#` a cell), an accent of `support/graphics/rules.odin` with a `graphics.shade` for each color scheme, and its meaning. The contrast is that of the text of a value on the two surfaces of a table: the background and the band of every second row (dark: `0x0B1018`, `0x17212E`; light: `0xF4F6F8`, white). A host test computes each one.
+
+| Kind | Icon | Accent | Dark: color, contrast | Light: shade, color, contrast |
+|---|---|---|---|---|
+| Number: a count, a place, an index, an address | A hash sign | Memory | `0x38C0B0`, 8.47 / 7.22 | 65 %, `0x247C71`, 4.62 / 5.00 |
+| Size: bytes or pages | Three stacked bars | Memory | 8.47 / 7.22 | 4.62 / 5.00 |
+| Time: a duration, a date, a time | A square with two hands | Boot program | `0xE0A040`, 8.42 / 7.17 | 65 %, `0x906729`, 4.66 / 5.05 |
+| Handle | A square ring on a stem | Kernel | `0x4A9CF0`, 6.63 / 5.65 | 73 %, `0x3571AF`, 4.69 / 5.08 |
+| Value: a value of the context, not a handle | One small square | Memory | 8.47 / 7.22 | 4.62 / 5.00 |
+| Grant | A check mark in steps | Machine | `0xD070B0`, 6.02 / 5.12 | 78 %, `0xA15688`, 4.61 / 5.00 |
+| Status: a status, an error kind, the state of a property | A flag | Failed | `0xF06060`, 5.94 / 5.06 | 78 %, `0xBA4A4A`, 4.65 / 5.04 |
+| Type: of the contract, a wire form, a record of a module, a basic type | Angle brackets `< >` | Firmware, at 115 % | `0x9E8FCB`, 6.58 / 5.60 | 83 %, `0x7566A1`, 4.65 / 5.03 |
+| Operation of the kernel | An arrow into a box | Kernel | 6.63 / 5.65 | 4.69 / 5.08 |
+| Command of the console or of the tool | A prompt `>_` | Program | `0x58D878`, 10.45 / 8.90 | 58 %, `0x327C45`, 4.72 / 5.12 |
+| Module | A block with a notch | Program | 10.45 / 8.90 | 4.72 / 5.12 |
+| File or folder of the repository | A page with a corner of steps | Dim | `0x7C8A99`, 5.40 / 4.60 | 82 %, `0x65717D`, 4.60 / 4.99 |
+| Version, release, commit, hash | A tag with a hole | Boot program | 8.42 / 7.17 | 4.66 / 5.05 |
+| Yes: a state that holds | A filled square | Program | 10.45 / 8.90 | 4.72 / 5.12 |
+| No: a state that does not hold | An empty square | Dim | 5.40 / 4.60 | 4.60 / 4.99 |
+
+The firmware violet at 100 % is 4.50 on the band of a row, at the bound: the type kind takes it at 115 %.
+
+The markup: a value is `<code class="value value-<name>">`, written by one procedure (`site_value`), in the monospace font and the color of its kind, with a rule of 2 pixels at its left and no filled background. A color is never the only sign: the monospace font, the icon in the head of its column or before the label of its fact, and the text carry the kind too.
+
+Who states the kind: the writer of each table gives the kind of each column (`site_table_start`, its last argument), and the writer of a symbol gives the kind of each fact (`Site_Symbol_Fact.kind`). No cell is classified by its text. The one rule of the column itself: a column of the kind Number is of the number kind, and a column of the kind Date of the time kind; their writers already state what they hold.
+
+Where it shows:
+
+- the reference tables: the statuses and the error kinds (status), the grants (grant), the operations (operation), the commands of the console and of the tool (command), the context roles (number; handle or value in each cell), the fixed ranges (number), the programs and their grants (module, grant), the licenses (file, version), the index of the guides and of the reference (file), the measured numbers (the date: time; a quoted line of a log stays as the log has it);
+- the module pages: the index (module, number, yes or no in each cell, the imports), the facts of a module (file, yes or no, size), the facts of each export (type);
+- the facts of each symbol: its number, its statuses, its parameters and its result, its source line (file);
+- the status page: the status of each property (status), the gaps and the next steps (number);
+- not the guides and not the glossary: a document of `docs/` keeps its code spans as Markdown marks them, and no kind is guessed in prose.
+
+The restraint:
+
+- At most one icon for each value, and the same kind always has the same color and the same icon.
+- A column whose cells are all of one kind shows the icon once, in its head, and its cells keep the font and the color only. A fact shows the icon once, before its label. A value has its own icon only in a column of mixed kinds (handle or value, yes or no) or in a cell of facts of several kinds.
+- No icon and no colored value in a heading (a check of the pages: `site_heading_value_problem`), and none in running prose.
+
+The icons: each one is an SVG file, `pictures/values/<name>.svg`, written by the tool from its cells (one `rect` for each run of cells of a row, `shape-rendering="crispEdges"`). The style sheet draws an icon as the `::before` of the element: a box of 12 by 12 pixels in the color of the kind, with the file as its `mask`. A mask is an image of the style sheet: `img-src 'self'` covers it, and the style sheet is `style-src 'self'`, so the Content-Security-Policy of the host does not change. One sprite with an external `<use href="...#handle">` was refused: whether `img-src` or `default-src` governs the fetch of an external `<use>` is not the same in each browser, and `default-src` is `'none'`. The icon has no text and no name: it is decoration, and the head, the label or the text says the kind.
+
+The legend: the reference index ends with the section "The kinds of values", a table of the icon, the kind and its meaning, from the same table.
+
+### The versions of the files
+
+The site is behind a proxy that keeps a file for hours. Each link to a file whose bytes change between builds carries its file version (`GLOSSARY.md`): `style.css?v=<16 hexadecimal digits>`, the first 8 bytes of the BLAKE3 hash of its bytes (`contract/blake3`). The files: `style.css`, `search.js`, `mark_animation.js` and `search.json` (`SITE_VERSIONED_FILES`). The same bytes give the same address. The index of the search is written before the pages, so that each page names its version: `search.js` reads it from the attribute `data-index` of its own `script` element, relative to its folder, with no inline script. The check of the links ignores the query. The icons and the pictures carry no version: their bytes come from the mark and the repository and change rarely.
+
 ## The mark on the site
 
 The site draws its own pictures of the mark from `support/mark` (`tools/kerneltool/site_pictures.odin`), on a transparent background, at whole cell sizes, and the page shows each one at its own size:
@@ -378,12 +459,12 @@ The checks, after the checks of the pages: `favicon.ico` is at the root, its dir
 | Table | Read from, and the form the reader relies on |
 |---|---|
 | Properties | `PROPERTIES.md`: the number and the title of each section `## <n>. <title>`, and the column "Status" of the table `## Summary` (the reader of the first layer). The title links to the heading in the guide |
-| Its evidence items | `FIRST_MILESTONE.md`: the numbered items under `## Evidence`, with their ids `evidence-<label>` in the guide. An item names a property when its text says `property <n>` (no regard to case) or `P<n>` (a capital P), as a whole word; `properties 3 and 4` names none |
+| Its evidence items | `FIRST_MILESTONE.md`: the numbered items under `## Evidence`, each a link to its line in the repository (the file is a working record, not a page of the site). An item names a property when its text says `property <n>` (no regard to case) or `P<n>` (a capital P), as a whole word; `properties 3 and 4` names none |
 | Its gaps | The items `- <text>` under `## Gaps`, and the lines that continue them (they start with a space), by the same rule. A line of text between the items (`Performance:`) is the group of the items after it |
 | Gaps | Each gap, with its number (`gap-<n>` on the page, from 1 in the order of the file, with a link to its line), its group and its text |
-| Next steps | The numbered items under `## Next steps`, each with a link to its id `next-steps-<label>` in the guide |
+| Next steps | The numbered items under `## Next steps`, each with a link to its line in the repository |
 
-The page renders `FIRST_MILESTONE.md` and `PROPERTIES.md` again to read the ids: the renderer gives the same ids to the same text, so the links reach the guide.
+The page renders `PROPERTIES.md` again to read the ids of its headings: the renderer gives the same ids to the same text, so the links reach the guide. It renders `FIRST_MILESTONE.md` for its numbered items and their lines only, and drops the HTML. The status page has the documentation layout; its property rows and its gap rows are symbols of "On this page".
 
 ## The reference tables
 
@@ -398,6 +479,18 @@ Each table is read from the text of the file that defines the thing (`tools/kern
 | Fixed ranges | `Fixed_Range` in `contract/fixed_addresses/fixed_addresses.odin` | An enumeration. The address is `fixed_addresses.range_of` of the compiled contract |
 | Commands of the console | `programs/console/commands.odin`, `programs/console/tables.odin` | Lines `command("<name>", {.<Kind>, ...}, .<Kind>, "<help>", <procedure>)`; the signature as `help()` prints it, `Value` for the kind None of a parameter |
 
+Each page starts with what the thing is: the comment above its declaration in the source (`site_comment_above`), when the source has one, as a quote that names its file. Then the table.
+
+The kernel operations, the commands of the console, the commands of the tool and the exports of each module are documented symbols (`GLOSSARY.md`), under the table of their page, as on a package page of a programming language. A symbol shows:
+
+- its name, as a heading with its id (`operation-<name>`, `command-<name>`, `tool-command-<name>`, `export-<name>`), which "On this page" lists; the name in the table is a link to it;
+- its signature in a block of code: an operation as `Name(<parameters>) -> <result>` from the start of its comment (none when the comment does not start with `(`), a command as `help()` prints it, a command of the tool as `nix develop -c kerneltool <name>`, an export as the console prints it;
+- the text of its source comment, one paragraph a line; nothing when the source has none;
+- its facts: the number of an operation and the statuses that its comment names (links to the table of statuses); the parameters and the result of a command; the parameters, the result and the error record of an export (the rule of the build: it fails with a negative result and writes the record);
+- its source line, a link to `<repository>/blob/<commit>/<file>#L<line>`.
+
+The command prints the count of the symbols and of those with no comment in their source (each `entry` of a module has none: the build gives it no text). The rows of the other tables that have an id (a status, an error kind, a unit, a role, a grant, a fixed range, a license, a measured number, a property, a gap) state a symbol too (`data-outline`), so "On this page" lists them.
+
 What the tables cannot show:
 
 - The values 13 and 15 of the context (the settings page and the date page) have a comment in `contract/operation` and no constant: they are not in the table.
@@ -406,12 +499,136 @@ What the tables cannot show:
 
 ## The module pages
 
-`reference/modules/index.html` lists each module of `module_builds` (`tools/kerneltool/modules.odin`): its name, its kind, whether it is in the boot image, its count of exports, its imports and its purpose. A module whose source is in `programs/` is a program; the others are modules. `reference/modules/<name>/` gives:
+`reference/modules/index.html` lists each module of `module_builds` (`tools/kerneltool/modules.odin`) in its group, one table and one heading for each: Kernel (a module that runs in kernel mode), Programs (its source is in `programs/`), Modules (the others). The documentation tree has the same groups. A row gives its name, whether it is in the boot image, its count of exports, its imports and its purpose. `reference/modules/<name>/` gives:
 
 - its documentation: the comment before `package` in its source, the text that the build writes into the module (`describe_package` of `tools/kerneltool/describe.odin`); its purpose is the first sentence;
 - its source folder, its size in the boot image of the last build (or that the image is not built), its imports and the modules that import it;
-- its exports, each with its signature as the console prints it (`write(name: Text, data: Text) -> Integer`, `Handle(Read, Write)`, `Table(Rectangle, Change)`) and its line of help. They come from the same reader as the build: no module needs to be built;
+- its kind (its group);
+- its exports, a table then each one as a documented symbol (see "The reference tables"), each with its signature as the console prints it (`write(name: Text, data: Text) -> Integer`, `Handle(Read, Write)`, `Table(Rectangle, Change)`) and its line of help. They come from the same reader as the build: no module needs to be built;
 - for a program, its grants and its budget (pages, programs, threads) from `grants_of` and `things_of` of the root service, with the comments of those lines.
+
+## The types
+
+The owner asked for it on 2026-11-12: "Si c'était possible sur les différents data types, d'avoir un tool type qui explique le type. Genre sa carte d'identité, sa taille, des informations techniques. Sa taille, son alignement, les trucs normaux qu'on aimerait savoir quand on vient sur cette doc." The code is `tools/kerneltool/site_types.odin`; its host tests are `site_types_test.odin`.
+
+### What a type card holds
+
+Each type has a type card (`GLOSSARY.md`). The facts come from the compiler, never from a number typed by hand: the tool imports the contract packages, and `type_info_of(T)` gives the size, the alignment, each field with its name, type and offset, each member of an enum with its value, the element and the underlying type of a bit set, the base of a distinct type, and the variants of a union. The declaration (its source text), its comment and its line come from the parser of Odin (`core:odin/parser`), as the descriptions of the modules do.
+
+| Kind | Rows | The card |
+|---|---|---|
+| Struct | Each type of `contract/operation`, `contract/errors`, `contract/fixed_addresses`, `contract/module` (`SITE_TYPE_PACKAGES`) | Size, alignment, the padding in all; a table of the fields (name, type, offset, size) with a row "padding" for each run of unused bytes; the sizes of the rows add up to the size |
+| Enum | The same packages | Its base type; a table of the members, with each value in decimal and in hexadecimal (a negative value as the bytes of its base hold it) |
+| Bit set | The same packages; each one of the contract is an alias | Its enum, its underlying type, the type that the alias names; a table of the bits and their masks |
+| Distinct | The same packages | Its base |
+| Wire form (`GLOSSARY.md`) | The members of `Type` of `contract/module` but None | The comment of the member in `contract/module/format.odin`; one register of a call (`PARAMETER_CAPACITY`); the types of the module contract that the comment names (`Table_Place`, `Function`); for Handle, the size of `Handle` in a record; a link to the guide of the module contract. A fact that only the guide states is not copied |
+| Record of a module | Each record of `Module_Description.records` of each module | The size and the offsets of the description that the build writes; the size of a field from its wire form (an Integer of its detail, 8 for 0; a Handle of `size_of(Handle)`; a Text of its detail); the alignment is the largest of its fields |
+| Basic | `u8` to `i64`, `int`, `bool`, `rawptr`, `uintptr`, `string`, `[]u8` (`site_basic_types`) | Its size and alignment, and one line of what it is |
+
+Each card also says where the type is named: the types whose fields, base or element it is, the kernel operations whose words name it, the modules whose exports take or give it, and the commands of the console.
+
+### The table and its check
+
+`site_contract_type_rows` holds one row for each type of the documented packages: its package, its name and its type information, `{"operation", "Rights", type_info_of(op.Rights)}`. The name is stated in the row because the bit sets of the contract are aliases (`Rights :: bit_set[Right; u32]`): the type information of an alias is the type that it names, with no name. The contract is not changed for the site. `kerneltool site` reads each declaration of a type of those packages with the parser (`Name :: struct`, `enum`, `bit_set`, `union`, `distinct`, `bit_field`, or an array type) and stops when:
+
+- a declaration has no row: a new type of the contract cannot be forgotten;
+- a row names no declaration, or a type has two rows, or a row has no type information;
+- a row whose type is named has another name or package than the compiler gives it: a wrong row of a named type is caught. The row of an alias is checked against the declarations only.
+
+An alias has the kind of what it names (a bit set), and its card says "An alias of `bit_set[Right; u32]`". A field whose type is that bit set finds the card of the alias.
+
+A type that a page shows and that has no card (an array as `[16]u8`, the kind `Value` of the console, a record that the description does not hold) is written as a value of the kind Type with no reference, and the command prints the count: "N type names with no card".
+
+The host test `site_types_table_is_complete` runs the same check on the repository.
+
+### The machine of the tool and the target
+
+The tool is built for the host; the system for x86-64 with no operating system. Each type of the four packages has the same layout on both today: an address, `int` and `uintptr` are 8 bytes on x86-64 and on a host of 64 bits, and the rules of a struct of Odin are the same (each field at a multiple of its alignment, the size a multiple of the largest alignment). Two things keep this true:
+
+- A size that the contract asserts (`#assert(size_of(Fault_Record) == 64)`) is checked when the tool is built and when the system is built. The host test `site_types_sizes_agree_with_the_asserts` reads each assert with a number in the four packages and compares it with the card.
+- A type that holds an address, a slice, a string, `int` or `uintptr` says so on its card, with the machine that made the page (`ODIN_OS_STRING`, `ODIN_ARCH_STRING`): `Parameter_Form` and `Operation_Form` (a string), `Bound_Import` (a slice of bytes and a `uintptr`). Its size follows the size of an address of the target.
+
+### The reference and its card
+
+One procedure, `site_type_reference`, writes a type wherever a page shows it:
+
+- the signature of each kernel operation (each word of its comment that names a type of the package operation), of each export (the wire form and the record, from the description, not from the text of the signature), and of each command of the console (each kind that is a wire form);
+- the facts of each export and command (parameters, result, error record), and the columns "Parameters" and "Result" of the table of the operations;
+- on the page of the types: the type of each field, the base, the element, and the types that a wire form names.
+
+The markup: `<button type="button" class="type-reference" popovertarget="card-<id>" popovertargetaction="show" aria-describedby="card-<id>-summary">Name</button>`. The card is `<div class="type-card" id="card-<id>" popover>`: the name as a link to the page of the types, a first line (the kind, the size, the alignment, the padding, the first sentence of the comment), at most 8 fields, members or bits, then "and N more", and the note of the target. A page holds the card of each type that it names once, at the end of its text, in the order of the first reference (`site_type_cards_html`); every reference to that type on the page opens it.
+
+Why this form:
+
+- A card inside the reference, shown by `:hover` and `:focus`, is cut by the box of a table that scrolls (`overflow-x: auto`), and a touch screen has no hover.
+- A card placed by the script with `position: fixed` needs the script for its content.
+- A popover is in the top layer, so no box cuts it. A click, a tap, Enter or Space opens it with no script; Escape and a click outside close it. `popovertargetaction="show"` keeps an open card open at a second click.
+- On a touch screen, a tap opens the card, and a tap on its title goes to the page of the types.
+- `search.js` adds the rest: a mouse that rests 400 ms on a reference opens its card, which closes 300 ms after the mouse leaves the reference and the card; the focus of the keyboard (`:focus-visible`) opens it and the focus that goes to another element closes it. With no script, a click is needed.
+- A screen reader reads the first line of the card with the button (`aria-describedby`): the summary is in the page, also when the card is closed.
+- With anchor positioning (`position-area`), the card is under its reference and flips above it near the bottom of the window. A browser with no anchor positioning puts it in the middle of the window, the default place of a popover. A browser with no popover shows the cards as a list at the end of the text.
+
+The check of each page (`site_type_cards_problem`): each `popovertarget` and each `aria-describedby` names an id of the page, and no two cards have one id.
+
+What is not done: the types are not entries of the search; a type of a guide (a code span) is not a reference.
+
+## The colors of the code
+
+The owner asked for it on 2026-11-12: "Un peu dommage aussi qu'on ait pas de coloration du code, peut-être avec Shiki, on peut, parce que là je vois du Odin qui est pas coloré." The code is `tools/kerneltool/site_code.odin`; its host tests are `site_code_test.odin`.
+
+The tool colors the code when it writes the pages: static markup, no script, no request, nothing new in the Content-Security-Policy. Not Shiki: it is a library of Node, and the automation of the repository is commands of the Odin tool, with no script of another language. Odin is read by the tokenizer of the compiler itself (`core:odin/tokenizer`), not by a grammar of regular expressions: a token is what the compiler sees.
+
+- `site_code_odin` writes each token in a `<span class="c-<class>">`, and each byte between two tokens (spaces, line feeds) as it is: the text of the output with its tags removed and its escapes undone is the source, byte for byte. The tokenizer gives the comments as tokens. Two tokens of one class with only spaces between share one span.
+- A text that the tokenizer refuses (an illegal character, a string or a comment with no end) is written plain, and `kerneltool site` prints "N code blocks not colored, the first: <place>". A fragment that is not a declaration is still tokens and is colored: the tokenizer does not parse.
+
+| Class | What | Accent of the design rules | Dark: shade, contrast on the block of code `0x1C2633` | Light: shade, contrast on the block of code `0xD6DBE0` |
+|---|---|---|---|---|
+| `c-k` | A keyword of the tokenizer | Kernel | 115 %, `0x64AAF2`, 6.24 | 55 %, `0x285583`, 5.55 |
+| `c-t` | A built-in type; a name with a capital in the place of a type; a reference to a card, in a block of code | Firmware | 115 %, `0x9E8FCB`, 5.27 | 60 %, `0x554A75`, 5.75 |
+| `c-l` | A number, a string, a rune, `true`, `false`, `nil`, a name in capitals, `.Member`, a member of an enum body | Memory | 100 %, `0x38C0B0`, 6.79 | 50 %, `0x1B5F57`, 5.34 |
+| `c-n` | A name before `::`: the name at its declaration | Program | 100 %, `0x58D878`, 8.37 | 45 %, `0x276035`, 5.36 |
+| `c-d` | `#` and the name after it, `@` and the first name of its attribute, a file tag | Machine | 115 %, `0xD785BB`, 5.79 | 55 %, `0x723D60`, 5.90 |
+| `c-c` | A comment | Dim | 125 %, `0x9CA6B2`, 6.19 | 60 %, `0x4A525B`, 5.69 |
+| `c-p` | An operator or punctuation: the quiet class | Dim | 140 %, `0xB0B8C1`, 7.62 | 50 %, `0x3D444C`, 7.08 |
+
+A host test computes each contrast; the bound is 4.5, as for the value kinds. A person who prints gets black text.
+
+The rule for the names of types, from the tokens only:
+
+- a name of the package of the text (the package of a declaration of the page of the types) that is a type of the contract, and `package.Name` of a documented package anywhere, is a reference to its card (see "The types");
+- a built-in type (`u64`, `bool`, `string`, `rawptr`, ...) is `c-t`;
+- another name with a capital is `c-t` only in the place of a type: after `:` (not `::`), `^`, `]`, `->` or `distinct`, or after `qualifier.` in that place. Elsewhere (`size_of(Pair)`, `in Kinds`) it stays plain: the tool does not guess.
+
+Where it applies: only a block that the tool knows to be Odin.
+
+- The declaration of each type on the page of the types, with each type of the contract inside it as a reference: this closes "the declaration has no references inside it".
+- The signatures of the kernel operations, of the exports and of the commands of the console: they are built from their parts, so each part takes its class with no tokenizer: the name `c-n`, the punctuation and the arrow `c-p`, each type a reference. The parameters of an operation are words of a comment, and stay plain.
+- The fenced blocks of the guides marked `odin`. A block with no language stays plain: the language is not guessed.
+
+The fenced blocks of `docs/*.md` on 2026-11-12: 15 blocks; 9 with no language, 5 `mermaid`, 1 `odin`. No block is marked `asm`, `sh`, `console`, `nix` or `yaml`, so the tool has no other lexer: a lexer for a language that no block names is code with no use. The 5 mermaid blocks stay plain, as before. The one block of Odin (`MODULE_CONTRACT.md`, the export `seal`) is colored.
+
+The size: the declarations of the page of the types are 963 lines, 53 KB of text, about 7 900 tokens; their spans and references add about 100 KB to that page (estimated, not measured). The guide of the module contract grows by about 1.5 KB; the other guides do not change.
+
+## The polish of the browser's parts
+
+The owner asked for it on 2026-11-12: "si tu peux styliser les scroll-bars, s'il te plaît, ce serait cool. Tu as tous les trucs de peaufinage en CSS là que tu peux mettre, genre la couleur de highlight, enfin tout ce bordel." In the design of the system: square, the colors of the palette, both color schemes, and nothing more. The rules are `SITE_POLISH_RULES` in `tools/kerneltool/site_style.odin`, after the colors, so that print and the forced colors win over them.
+
+- Scroll bars: `scrollbar-color` (the dim color on the track color) and `scrollbar-width: thin` on the page, the tree, "On this page", the table boxes, the blocks of code, the open menu, the list of the search and the cards of the types. The parts `::-webkit-scrollbar` only inside `@supports not (scrollbar-color: auto)`: a browser that has both ignores the standard one when the parts are styled. A square thumb of 8 pixels, the line color on hover. `scrollbar-gutter: stable` on the page.
+- `color-scheme: dark light` on the root; each page already has `<meta name="color-scheme" content="dark light">`.
+- `::selection`: the line color at 70 % (`0x2B5688`) under white text, 7.53 to 1, the same in both schemes (a host test). It is one rule for every element, so it holds in the blocks of code and on the values.
+- `accent-color` and `caret-color`: the line color. The placeholder of the search: the dim color at 115 % in the dark form (5.40 on the field; the dim color itself is 4.33), the dim color of the light form there (5.69).
+- The focus: a square outline of 2 pixels in the line color, offset 2 pixels, on links, buttons, summaries, fields and each element with `tabindex` (the table boxes). No rule removes an outline (a host test).
+- The marks of the lists: a square, in the dim color; the marks of a `summary` in the dim color. The bar menu has its own button and no mark.
+- `text-wrap: balance` on the headings and `pretty` on the paragraphs, the items, the definitions and the quotes; `tab-size: 4` in code; the links keep their thickness and offset. `hanging-punctuation` is not written: one browser has it, and it moves the first letter of a quote.
+- `scroll-behavior: smooth` only inside `@media (prefers-reduced-motion: no-preference)`.
+- The jump to an anchor: the bar of the site does not stay at the top, so `scroll-margin-top` and `scroll-padding-top` are 16 pixels: a little room above the target. A heading, an item or a paragraph that is the target has a line of 2 pixels at its left; a row of a table has the band of the track. No fade: the design rules have no animation.
+- `overscroll-behavior: contain` on the tree, "On this page" and the open menu; `touch-action: manipulation` on links, buttons and summaries; the tap highlight in the line color at 30 %; `text-size-adjust: 100%`.
+- `image-rendering: pixelated` on the mark of the home and the heron of the bar (already); the icons of the values are masks drawn at their size. The screen pictures are not pixelated: they are shown smaller than their pixels.
+- The card of a type has no veil: `::backdrop` is transparent; a card is not a modal.
+- Forced colors (`@media (forced-colors: active)`): the icons of the values in `CanvasText`, the marks of the values in `CanvasText`, the focus in `Highlight`, the border of a card in `CanvasText`.
+- Print: black text, no color of code or of a value, no card of a type, a block of code wraps.
+
+A host test checks that the style sheet holds each of these rules, has no `outline: none` and no `outline: 0`, and that each `border-radius` is 0.
 
 ## The tiles of the boot image
 

@@ -239,6 +239,30 @@ site_constants_read :: proc(content, file, first: string, prefixes: []string) ->
 	return list[:], ""
 }
 
+// site_comment_above gives the comment lines just above the first line that
+// starts with a prefix ("Operation :: enum"), joined, or "" when there is
+// none: the documentation of a declaration, which a reference page shows
+// above its table.
+site_comment_above :: proc(content, prefix: string) -> string {
+	lines := site_lines(content)
+	for line, index in lines {
+		if !strings.has_prefix(line, prefix) {
+			continue
+		}
+		above := index
+		for above > 0 && strings.has_prefix(strings.trim_space(lines[above - 1]), "//") {
+			above -= 1
+		}
+		comment := ""
+		for comment_line in lines[above:index] {
+			_, text := site_code_and_comment(comment_line)
+			comment = site_join_comment(comment, text)
+		}
+		return comment
+	}
+	return ""
+}
+
 // site_quoted_list gives each text in quotes of a part of a line.
 site_quoted_list :: proc(text: string) -> []string {
 	list := make([dynamic]string, context.temp_allocator)

@@ -61,6 +61,32 @@ Site_Reference :: struct {
 	fixed_ranges:     []Site_Enumeration_Member,
 	console_commands: []Site_Console_Command,
 	modules:          []Site_Module,
+	// The comment above each declaration that a page shows, or "": the
+	// text at the top of its page.
+	operations_about:   string,
+	statuses_about:     string,
+	error_kinds_about:  string,
+	error_units_about:  string,
+	start_grants_about: string,
+	root_grants_about:  string,
+	fixed_ranges_about: string,
+}
+
+// site_about_paragraph writes the comment above a declaration as a
+// paragraph that names its file, or nothing when the file has none.
+site_about_paragraph :: proc(site: ^Site, b: ^strings.Builder, about, file, declaration: string) {
+	if about == "" {
+		return
+	}
+	strings.write_string(b, "<blockquote class=\"source-comment\">\n<p>")
+	site_escape(b, about)
+	strings.write_string(b, "</p>\n</blockquote>\n<p class=\"source\">The comment above <code>")
+	site_escape(b, declaration)
+	strings.write_string(b, "</code> in <a href=\"")
+	site_escape(b, site_repository_file(site, file))
+	strings.write_string(b, "\"><code>")
+	site_escape(b, file)
+	strings.write_string(b, "</code></a>.</p>\n")
 }
 
 site_module_page :: proc(name: string) -> string {
@@ -138,6 +164,13 @@ site_reference_read :: proc(site: ^Site) -> bool {
 		append(&commands, ..found)
 	}
 	reference.console_commands = commands[:]
+	reference.operations_about = site_comment_above(operation_text, "Operation :: enum")
+	reference.statuses_about = site_comment_above(operation_text, "Status :: enum")
+	reference.error_kinds_about = site_comment_above(errors_text, "Kind :: enum")
+	reference.error_units_about = site_comment_above(errors_text, "Unit :: enum")
+	reference.start_grants_about = site_comment_above(root_text, "Grant :: enum")
+	reference.root_grants_about = site_comment_above(grants_text, "Root_Grant :: enum")
+	reference.fixed_ranges_about = site_comment_above(fixed_text, "Fixed_Range :: enum")
 
 	// The modules: each one of module_builds, with the description that the
 	// build writes into the module, read from the same source.
@@ -155,6 +188,8 @@ site_reference_read :: proc(site: ^Site) -> bool {
 		}
 		return false
 	}
+	// The types: after the operations and the modules, which name them.
+	site_types_read(site) or_return
 	site_code_links_make(site)
 	return true
 }
@@ -280,6 +315,131 @@ site_export_signature :: proc(description: Module_Description, export: Export_De
 	return strings.to_string(builder)
 }
 
+// site_type_html gives a type as site_type_text writes it, with the wire
+// form and the record as references to their cards: the same text, from
+// the same data.
+site_type_html :: proc(site: ^Site, module_name: string, description: Module_Description, type: module.Type, detail: u32, direction: module.Direction, parameter: bool) -> string {
+	b := strings.builder_make(context.temp_allocator)
+	form_key := site_wire_form_key(type)
+	form_name := fmt.tprintf("%v", type)
+	record_name := "Record"
+	if detail >= 1 && int(detail) <= len(description.records) {
+		record_name = description.records[detail - 1].name
+	}
+	record_key := site_module_record_key(module_name, record_name)
+	switch type {
+	case .None:
+		strings.write_string(&b, "None")
+	case .Integer:
+		site_type_reference(site, &b, form_key, form_name, false)
+	case .Text:
+		site_type_reference(site, &b, form_key, form_name, false)
+		if detail != 0 {
+			fmt.sbprintf(&b, "(%d)", detail)
+		}
+	case .Record:
+		site_type_reference(site, &b, record_key, record_name, false)
+	case .Handle:
+		// The rights after the form: the text of site_type_text after "Handle".
+		site_type_reference(site, &b, form_key, form_name, false)
+		text := site_type_text(description, type, detail, direction, parameter)
+		site_escape(&b, text[len("Handle"):])
+	case .Table:
+		site_type_reference(site, &b, form_key, form_name, false)
+		strings.write_byte(&b, '(')
+		site_type_reference(site, &b, record_key, record_name, false)
+		if parameter {
+			fmt.sbprintf(&b, ", %v", direction)
+		}
+		strings.write_byte(&b, ')')
+	case .Bytes:
+		site_type_reference(site, &b, form_key, form_name, false)
+		if parameter {
+			fmt.sbprintf(&b, "(%v)", direction)
+		}
+	}
+	return strings.to_string(b)
+}
+
+// site_export_signature_html gives the signature of an export as
+// site_export_signature writes it, with each type as a reference.
+site_export_signature_html :: proc(site: ^Site, module_name: string, description: Module_Description, export: Export_Description) -> string {
+	// Each part in the color of its role in the code: the name, the
+	// punctuation, and each type as a reference.
+	builder := strings.builder_make(context.temp_allocator)
+	site_code_span(&builder, .Name, export.name)
+	site_code_span(&builder, .Punctuation, "(")
+	for type, index in export.parameters {
+		if index > 0 {
+			site_code_span(&builder, .Punctuation, ",")
+			strings.write_byte(&builder, ' ')
+		}
+		if index < len(export.names) && export.names[index] != "" {
+			site_escape(&builder, export.names[index])
+			site_code_span(&builder, .Punctuation, ":")
+			strings.write_byte(&builder, ' ')
+		}
+		detail: u32 = index < len(export.details) ? export.details[index] : 0
+		direction: module.Direction = index < len(export.directions) ? export.directions[index] : .Read
+		strings.write_string(&builder, site_type_html(site, module_name, description, type, detail, direction, true))
+	}
+	site_code_span(&builder, .Punctuation, ")")
+	if export.result != .None {
+		strings.write_byte(&builder, ' ')
+		site_code_span(&builder, .Punctuation, "->")
+		strings.write_byte(&builder, ' ')
+		strings.write_string(&builder, site_type_html(site, module_name, description, export.result, export.result_detail, .Read, false))
+	}
+	return strings.to_string(builder)
+}
+
+// site_operation_signature_html gives the signature of a kernel operation,
+// "Name(<parameters>) -> <result>", with each word that names a type of the
+// package operation as a reference; "" when its comment states no form.
+site_operation_signature_html :: proc(site: ^Site, operation: Site_Operation) -> string {
+	if !strings.has_prefix(operation.member.comment, "(") {
+		return ""
+	}
+	// The parameters are words of a comment, not code: only the name, the
+	// parentheses, the arrow and the types have the colors of the code.
+	b := strings.builder_make(context.temp_allocator)
+	site_code_span(&b, .Name, operation.member.name)
+	site_code_span(&b, .Punctuation, "(")
+	site_text_with_type_references(site, &b, operation.parameters, "operation")
+	site_code_span(&b, .Punctuation, ")")
+	if operation.result != "" {
+		strings.write_byte(&b, ' ')
+		site_code_span(&b, .Punctuation, "->")
+		strings.write_byte(&b, ' ')
+		site_text_with_type_references(site, &b, operation.result, "operation")
+	}
+	return strings.to_string(b)
+}
+
+// site_console_signature_html gives a command as site_console_signature
+// writes it, with each kind that is a wire form of the module contract as
+// a reference.
+site_console_signature_html :: proc(site: ^Site, command: Site_Console_Command) -> string {
+	b := strings.builder_make(context.temp_allocator)
+	site_code_span(&b, .Name, command.name)
+	site_code_span(&b, .Punctuation, "(")
+	for parameter, index in command.parameters {
+		if index > 0 {
+			site_code_span(&b, .Punctuation, ",")
+			strings.write_byte(&b, ' ')
+		}
+		site_type_reference(site, &b, strings.concatenate({"wire.", parameter}, context.temp_allocator), parameter, false)
+	}
+	site_code_span(&b, .Punctuation, ")")
+	if command.result != "None" {
+		strings.write_byte(&b, ' ')
+		site_code_span(&b, .Punctuation, "->")
+		strings.write_byte(&b, ' ')
+		site_type_reference(site, &b, strings.concatenate({"wire.", command.result}, context.temp_allocator), command.result, false)
+	}
+	return strings.to_string(b)
+}
+
 // site_name_cell writes the cell of a name that links to its line in the
 // source file.
 site_name_cell :: proc(site: ^Site, b: ^strings.Builder, name, file: string, line: int) {
@@ -304,10 +464,12 @@ site_text_cell :: proc(b: ^strings.Builder, text: string, class: string = "") {
 
 // site_enumeration_table writes the members of an enumeration: the
 // number, the name (a link to its line), and its comment.
-site_enumeration_table :: proc(site: ^Site, b: ^strings.Builder, members: []Site_Enumeration_Member, file, id_prefix, name: string, headers: [3]string) {
-	enumeration_table := site_table_start(b, name, {{headers[0], .Number}, {headers[1], .Name}, {headers[2], .Prose}})
+// The names are values of one kind (a status, a grant): the kind is in the
+// head of their column.
+site_enumeration_table :: proc(site: ^Site, b: ^strings.Builder, members: []Site_Enumeration_Member, file, id_prefix, name: string, headers: [3]string, name_kind: Site_Value_Kind) {
+	enumeration_table := site_table_start(b, name, {{headers[0], .Number}, {headers[1], .Name}, {headers[2], .Prose}}, {.None, name_kind, .None})
 	for member in members {
-		fmt.sbprintf(b, "<tr id=\"%s-%s\">", id_prefix, site_slug(member.name))
+		fmt.sbprintf(b, "<tr id=\"%s-%s\" data-outline=\"%s\">", id_prefix, site_slug(member.name), member.name)
 		fmt.sbprintf(b, "<td class=\"code\">%d</td>", member.number)
 		site_name_cell(site, b, member.name, file, member.line)
 		site_text_cell(b, member.comment)
@@ -321,7 +483,7 @@ site_enumeration_table :: proc(site: ^Site, b: ^strings.Builder, members: []Site
 site_generated_tables_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Entry) {
 	reference := &site.reference
 	add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Entry, path, title, description, what, source: string, b: ^strings.Builder, sources: ..string) {
-		site_page_add(site, Site_Page{path = path, title = title, description = site_description_cut(description), section = .Reference, crumbs = site_crumbs(.Reference), body = strings.to_string(b^), sources = site_sources(..sources)})
+		site_page_add(site, Site_Page{path = path, title = title, description = site_description_cut(description), section = .Reference, crumbs = site_crumbs(.Reference), body = strings.to_string(b^), sources = site_sources(..sources), layout = .Documentation})
 		append(entries, Site_Reference_Entry{path = path, title = title, what = what, source = source})
 	}
 
@@ -330,20 +492,62 @@ site_generated_tables_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference
 		b := strings.builder_make(context.temp_allocator)
 		count := len(reference.operations) - 1 // The member None is not an operation.
 		fmt.sbprintf(&b, "<h1>Kernel operations</h1>\n<p>What a program can ask the kernel: %d operations. The parameters and the result of each are the words of the comment of the contract: \"(parameters) -&gt; result\", then its text; the contract has no other form of them.</p>\n", count)
-		operations_table := site_table_start(&b, "Kernel operations", {{"Number", .Number}, {"Operation", .Name}, {"Parameters", .Short}, {"Result", .Short}, {"What the contract says", .Prose}})
+		site_about_paragraph(site, &b, reference.operations_about, SITE_OPERATION_FILE, "Operation")
+		strings.write_string(&b, "<p>The table gives the number and the form of each operation; a name leads to the operation under the table, with its text, the statuses that its text names, and its line in the contract.</p>\n")
+		operations_table := site_table_start(&b, "Kernel operations", {{"Number", .Number}, {"Operation", .Name}, {"Parameters", .Short}, {"Result", .Short}}, {.None, .Operation, .None, .None})
 		for operation in reference.operations {
-			fmt.sbprintf(&b, "<tr id=\"operation-%s\">", site_slug(operation.member.name))
-			fmt.sbprintf(&b, "<td class=\"code\">%d</td>", operation.member.number)
-			site_name_cell(site, &b, operation.member.name, SITE_OPERATION_FILE, operation.member.line)
-			site_text_cell(&b, operation.parameters, "code")
-			site_text_cell(&b, operation.result, "code")
-			site_text_cell(&b, operation.text)
-			strings.write_string(&b, "</tr>\n")
+			if operation.member.number == 0 {
+				continue // The member None is not an operation.
+			}
+			fmt.sbprintf(&b, "<tr><td class=\"code\">%d</td><td class=\"code name\"><a href=\"#operation-%s\"><code>", operation.member.number, site_slug(operation.member.name))
+			site_escape(&b, operation.member.name)
+			strings.write_string(&b, "</code></a></td><td class=\"code\">")
+			// The words that name a type of the contract open its card.
+			site_text_with_type_references(site, &b, operation.parameters, "operation")
+			strings.write_string(&b, "</td><td class=\"code\">")
+			site_text_with_type_references(site, &b, operation.result, "operation")
+			strings.write_string(&b, "</td></tr>\n")
 		}
 		site_table_end(&b, operations_table)
 		site_source_line(site, &b, SITE_OPERATION_FILE)
+		status_names := make([dynamic]string, context.temp_allocator)
+		for status in reference.statuses {
+			if status.number != 0 {
+				append(&status_names, status.name)
+			}
+		}
+		strings.write_string(&b, "<h2 id=\"each-operation\">Each operation</h2>\n")
+		for operation in reference.operations {
+			if operation.member.number == 0 {
+				continue
+			}
+			name := operation.member.name
+			// The contract states the form only as "(parameters) -> result"
+			// at the start of the comment; with no such start, no signature.
+			signature := ""
+			if strings.has_prefix(operation.member.comment, "(") {
+				signature = fmt.tprintf("%s(%s)", name, operation.parameters)
+				if operation.result != "" {
+					signature = strings.concatenate({signature, " -> ", operation.result}, context.temp_allocator)
+				}
+			}
+			facts := make([dynamic]Site_Symbol_Fact, context.temp_allocator)
+			append(&facts, Site_Symbol_Fact{label = "Number", kind = .Number, html = site_value_html(.Number, fmt.tprintf("%d", operation.member.number))})
+			if named := site_names_in_text(operation.member.comment, status_names[:]); len(named) > 0 {
+				refused := strings.builder_make(context.temp_allocator)
+				for status, index in named {
+					if index > 0 {
+						strings.write_string(&refused, ", ")
+					}
+					site_value_link(&refused, .Status, strings.concatenate({"#status-", site_slug(status)}, context.temp_allocator), status, false)
+				}
+				append(&facts, Site_Symbol_Fact{label = "Statuses that its text names", kind = .Status, html = strings.to_string(refused)})
+			}
+			site_symbol_write(site, &b, Site_Symbol{id = strings.concatenate({"operation-", site_slug(name)}, context.temp_allocator), name = name, signature = signature, signature_html = site_operation_signature_html(site, operation), description = operation.text, facts = facts[:], source = SITE_OPERATION_FILE, line = operation.member.line})
+		}
 		strings.write_string(&b, "<h2 id=\"status\">The status of a completion</h2>\n")
-		site_enumeration_table(site, &b, reference.statuses, SITE_OPERATION_FILE, "status", "Statuses of a completion", {"Number", "Status", "What the contract says"})
+		site_about_paragraph(site, &b, reference.statuses_about, SITE_OPERATION_FILE, "Status")
+		site_enumeration_table(site, &b, reference.statuses, SITE_OPERATION_FILE, "status", "Statuses of a completion", {"Number", "Status", "What the contract says"}, .Status)
 		site_source_line(site, &b, SITE_OPERATION_FILE)
 		add(site, entries, site_page_file(SITE_OPERATIONS_FOLDER), "Kernel operations", fmt.tprintf("The %d kernel operations of %s, with their numbers, their parameters and their results, read from the contract.", count, SITE_SYSTEM_NAME), "Each operation that a program asks the kernel, with its number, its parameters and its result; the status of a completion.", SITE_OPERATION_FILE, &b, SITE_OPERATION_FILE)
 	}
@@ -373,9 +577,12 @@ site_generated_tables_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference
 					continue
 				}
 				what: string = strings.contains(role.name, "_VALUE_") ? "value" : "handle"
-				fmt.sbprintf(&b, "<tr id=\"role-%s\">", site_slug(role.name))
+				fmt.sbprintf(&b, "<tr id=\"role-%s\" data-outline=\"%s\">", site_slug(role.name), role.name)
 				site_name_cell(site, &b, role.name, group.file, role.line)
-				fmt.sbprintf(&b, "<td class=\"code\">%d</td><td>%s</td>", role.value, what)
+				// The column holds handles and values: each cell has the icon of its kind.
+				fmt.sbprintf(&b, "<td>%d</td><td>", role.value)
+				site_value(&b, what == "value" ? Site_Value_Kind.Value : Site_Value_Kind.Handle, what, true)
+				strings.write_string(&b, "</td>")
 				site_text_cell(&b, role.comment)
 				strings.write_string(&b, "</tr>\n")
 			}
@@ -389,12 +596,14 @@ site_generated_tables_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference
 	{
 		b := strings.builder_make(context.temp_allocator)
 		fmt.sbprintf(&b, "<h1>Error kinds and units</h1>\n<p>The error record of a call that failed holds a kind, a unit, and values. %d kinds and %d units.</p>\n<h2 id=\"kinds\">Kinds</h2>\n", len(reference.error_kinds) - 1, len(reference.error_units) - 1)
-		site_enumeration_table(site, &b, reference.error_kinds, SITE_ERRORS_FILE, "kind", "Error kinds", {"Number", "Kind", "What value, limit and found hold"})
+		site_about_paragraph(site, &b, reference.error_kinds_about, SITE_ERRORS_FILE, "Kind")
+		site_enumeration_table(site, &b, reference.error_kinds, SITE_ERRORS_FILE, "kind", "Error kinds", {"Number", "Kind", "What value, limit and found hold"}, .Status)
 		site_source_line(site, &b, SITE_ERRORS_FILE)
 		strings.write_string(&b, "<h2 id=\"units\">Units</h2>\n")
+		site_about_paragraph(site, &b, reference.error_units_about, SITE_ERRORS_FILE, "Unit")
 		units_table := site_table_start(&b, "Units", {{"Number", .Number}, {"Unit", .Name}, {"In a sentence", .Prose}, {"What the contract says", .Prose}})
 		for unit in reference.error_units {
-			fmt.sbprintf(&b, "<tr id=\"unit-%s\">", site_slug(unit.name))
+			fmt.sbprintf(&b, "<tr id=\"unit-%s\" data-outline=\"%s\">", site_slug(unit.name), unit.name)
 			fmt.sbprintf(&b, "<td class=\"code\">%d</td>", unit.number)
 			site_name_cell(site, &b, unit.name, SITE_ERRORS_FILE, unit.line)
 			site_text_cell(&b, reference.unit_names[unit.name])
@@ -410,12 +619,14 @@ site_generated_tables_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference
 	{
 		b := strings.builder_make(context.temp_allocator)
 		strings.write_string(&b, "<h1>Grants of the root service</h1>\n<p>The root service starts the programs and gives each one only the handles of its role.</p>\n<h2 id=\"at-start\">What a program receives at its start</h2>\n")
-		site_enumeration_table(site, &b, reference.start_grants, SITE_ROOT_FILE, "start-grant", "What a program receives at its start", {"Place", "Grant", "What the root service gives"})
+		site_about_paragraph(site, &b, reference.start_grants_about, SITE_ROOT_FILE, "Grant")
+		site_enumeration_table(site, &b, reference.start_grants, SITE_ROOT_FILE, "start-grant", "What a program receives at its start", {"Place", "Grant", "What the root service gives"}, .Grant)
 		site_source_line(site, &b, SITE_ROOT_FILE)
 		strings.write_string(&b, "<h2 id=\"recorded\">What the root service records and can revoke</h2>\n")
-		grants_table := site_table_start(&b, "Grants", {{"Bit", .Number}, {"Grant", .Name}, {"Name in the console", .Name}, {"What it gives", .Prose}})
+		site_about_paragraph(site, &b, reference.root_grants_about, SITE_SYSTEM_GRANTS_FILE, "Root_Grant")
+		grants_table := site_table_start(&b, "Grants", {{"Bit", .Number}, {"Grant", .Name}, {"Name in the console", .Name}, {"What it gives", .Prose}}, {.None, .Grant, .Grant, .None})
 		for grant in reference.root_grants {
-			fmt.sbprintf(&b, "<tr id=\"root-grant-%s\"><td class=\"code\">%d</td>", site_slug(grant.name), grant.number)
+			fmt.sbprintf(&b, "<tr id=\"root-grant-%s\" data-outline=\"%s\"><td class=\"code\">%d</td>", site_slug(grant.name), grant.name, grant.number)
 			site_name_cell(site, &b, grant.name, SITE_SYSTEM_GRANTS_FILE, grant.line)
 			site_text_cell(&b, reference.root_grant_names[grant.name], "code name")
 			site_text_cell(&b, grant.comment)
@@ -424,9 +635,16 @@ site_generated_tables_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference
 		site_table_end(&b, grants_table)
 		site_source_line(site, &b, SITE_SYSTEM_GRANTS_FILE)
 		strings.write_string(&b, "<h2 id=\"programs\">The grants of each program</h2>\n")
-		programs_table := site_table_start(&b, "Grants of each program", {{"Programs", .Short}, {"Grants", .Short}, {"Why, as the root service says", .Prose}})
+		programs_table := site_table_start(&b, "Grants of each program", {{"Programs", .Short}, {"Grants", .Short}, {"Why, as the root service says", .Prose}}, {.Module, .Grant, .None})
 		for item in reference.program_grants {
-			strings.write_string(&b, "<tr>")
+			// Each row is a link target, named by its first program.
+			if len(item.names) > 0 {
+				fmt.sbprintf(&b, "<tr id=\"programs-%s\" data-outline=\"", site_slug(item.names[0]))
+				site_escape(&b, strings.join(item.names, ", ", context.temp_allocator))
+				strings.write_string(&b, "\">")
+			} else {
+				strings.write_string(&b, "<tr>")
+			}
 			site_program_names_cell(site, &b, item.names)
 			site_name_cell(site, &b, item.value, SITE_ROOT_FILE, item.line)
 			site_text_cell(&b, item.comment)
@@ -445,9 +663,10 @@ site_generated_tables_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference
 	{
 		b := strings.builder_make(context.temp_allocator)
 		strings.write_string(&b, "<h1>Fixed ranges</h1>\n<p>The addresses of the mappings that the system gives a program: one slot of the band for each range, so that no two ranges overlap.</p>\n")
-		ranges_table := site_table_start(&b, "Fixed ranges", {{"Slot", .Number}, {"Range", .Name}, {"Address", .Name}, {"What is mapped there", .Prose}})
+		site_about_paragraph(site, &b, reference.fixed_ranges_about, SITE_FIXED_ADDRESSES_FILE, "Fixed_Range")
+		ranges_table := site_table_start(&b, "Fixed ranges", {{"Slot", .Number}, {"Range", .Name}, {"Address", .Name}, {"What is mapped there", .Prose}}, {.None, .None, .Number, .None})
 		for fixed_range in reference.fixed_ranges {
-			fmt.sbprintf(&b, "<tr id=\"range-%s\"><td class=\"code\">%d</td>", site_slug(fixed_range.name), fixed_range.number)
+			fmt.sbprintf(&b, "<tr id=\"range-%s\" data-outline=\"%s\"><td class=\"code\">%d</td>", site_slug(fixed_range.name), fixed_range.name, fixed_range.number)
 			site_name_cell(site, &b, fixed_range.name, SITE_FIXED_ADDRESSES_FILE, fixed_range.line)
 			// The address comes from the contract itself, not from a copy of its constants.
 			fmt.sbprintf(&b, "<td class=\"code name\">0x%016X</td>", fixed_addresses.range_of(fixed_addresses.Fixed_Range(fixed_range.number)).address)
@@ -463,18 +682,39 @@ site_generated_tables_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference
 	{
 		b := strings.builder_make(context.temp_allocator)
 		fmt.sbprintf(&b, "<h1>Commands of the console</h1>\n<p>The %d commands that the console has before any module is loaded, as <code>help()</code> prints them. A module that the console loads adds its exports: see the <a href=\"%s\">modules</a>.</p>\n", len(reference.console_commands), site_page_link(site, site_page_file(SITE_CONSOLE_FOLDER), site_page_file(SITE_MODULES_FOLDER)))
-		console_table := site_table_start(&b, "Commands of the console", {{"Command", .Name}, {"What it does", .Prose}})
+		console_table := site_table_start(&b, "Commands of the console", {{"Command", .Name}, {"What it does", .Prose}}, {.Command, .None})
 		for command in reference.console_commands {
-			fmt.sbprintf(&b, "<tr id=\"command-%s\">", site_slug(command.name))
-			site_name_cell(site, &b, site_console_signature(command), command.file, command.line)
+			fmt.sbprintf(&b, "<tr><td class=\"code name\"><a href=\"#command-%s\"><code>", site_slug(command.name))
+			site_escape(&b, site_console_signature(command))
+			strings.write_string(&b, "</code></a></td>")
 			site_text_cell(&b, command.about)
 			strings.write_string(&b, "</tr>\n")
 		}
 		site_table_end(&b, console_table)
 		files := SITE_CONSOLE_COMMAND_FILES
 		site_source_line(site, &b, ..files[:])
+		strings.write_string(&b, "<h2 id=\"each-command\">Each command</h2>\n")
+		for command in reference.console_commands {
+			facts := make([dynamic]Site_Symbol_Fact, context.temp_allocator)
+			parameters := strings.builder_make(context.temp_allocator)
+			for parameter, index in command.parameters {
+				if index > 0 {
+					strings.write_string(&parameters, ", ")
+				}
+				site_type_reference(site, &parameters, strings.concatenate({"wire.", parameter}, context.temp_allocator), parameter, true)
+			}
+			if len(command.parameters) == 0 {
+				site_value(&parameters, .Type, "none", false)
+			}
+			append(&facts, Site_Symbol_Fact{label = "Parameters", kind = .Type, html = strings.to_string(parameters)})
+			append(&facts, Site_Symbol_Fact{label = "Result", kind = .Type, html = site_type_reference_html(site, strings.concatenate({"wire.", command.result}, context.temp_allocator), command.result, true)})
+			site_symbol_write(site, &b, Site_Symbol{id = strings.concatenate({"command-", site_slug(command.name)}, context.temp_allocator), name = command.name, signature = site_console_signature(command), signature_html = site_console_signature_html(site, command), description = command.about, facts = facts[:], source = command.file, line = command.line})
+		}
 		add(site, entries, site_page_file(SITE_CONSOLE_FOLDER), "Commands of the console", fmt.tprintf("The %d built-in commands of the console of %s, with their parameters, their results and their help.", len(reference.console_commands), SITE_SYSTEM_NAME), "Each built-in command of the console, as help() prints it.", files[0], &b, ..files[:])
 	}
+
+	// The types: each type that the pages above and the module pages show.
+	site_types_page_add(site, entries)
 
 	site_module_pages_add(site, entries)
 }

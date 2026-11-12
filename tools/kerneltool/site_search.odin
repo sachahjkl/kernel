@@ -628,6 +628,79 @@ SITE_SEARCH_SCRIPT_SOURCE :: `// The search of the site, written by kerneltool s
     });
   }
 
+  // "On this page" of a documentation page: open beside the text on a wide
+  // screen, closed above the text on a narrower one. The link of the part
+  // of the page in view is marked as the page scrolls: an observer of the
+  // targets of the links reports when one enters or leaves the top of the
+  // window; nothing runs each frame. With no script it is a list of links.
+  const outline = document.querySelector("details.outline");
+  if (outline) {
+    const besideText = window.matchMedia("(min-width: 1100px)");
+    function fitOutline() { outline.open = besideText.matches; }
+    fitOutline();
+    besideText.addEventListener("change", fitOutline);
+    const links = Array.from(outline.querySelectorAll("a[href^='#']"));
+    const targets = links.map(link => document.getElementById(decodeURIComponent(link.hash.slice(1))));
+    const inView = new Set();
+    function markCurrent() {
+      const current = targets.findIndex(target => target && inView.has(target));
+      if (current < 0) return;
+      links.forEach((link, number) => {
+        if (number === current) link.setAttribute("aria-current", "location");
+        else link.removeAttribute("aria-current");
+      });
+    }
+    if ("IntersectionObserver" in window) {
+      const observer = new IntersectionObserver(changes => {
+        for (const change of changes) {
+          if (change.isIntersecting) inView.add(change.target); else inView.delete(change.target);
+        }
+        markCurrent();
+      }, { rootMargin: "0px 0px -60% 0px" });
+      // The first link names the whole text: it stays marked until a
+      // heading or a symbol enters the top of the window.
+      for (const target of targets) if (target && target.tagName !== "MAIN") observer.observe(target);
+    }
+  }
+
+  // The cards of the types: a reference is a button that opens the card of
+  // its type with a click, a tap or Enter, with no script. The script adds
+  // a pointer that rests on the reference, and the focus of the keyboard:
+  // both open the card, which closes when the pointer leaves the reference
+  // and the card, or when the focus leaves them.
+  if (HTMLElement.prototype.hasOwnProperty("popover")) {
+    let openTimer = 0, closeTimer = 0;
+    const isOpen = card => card.matches(":popover-open");
+    function openCard(card, button) {
+      clearTimeout(closeTimer);
+      if (!isOpen(card)) card.showPopover({ source: button });
+    }
+    function closeCard(card) {
+      clearTimeout(openTimer);
+      clearTimeout(closeTimer);
+      closeTimer = setTimeout(() => {
+        if (isOpen(card) && !card.matches(":hover") && !card.contains(document.activeElement)) card.hidePopover();
+      }, 300);
+    }
+    document.querySelectorAll("button.type-reference[popovertarget]").forEach(button => {
+      const card = document.getElementById(button.getAttribute("popovertarget"));
+      if (!card) return;
+      button.addEventListener("pointerenter", event => {
+        if (event.pointerType !== "mouse") return;
+        clearTimeout(openTimer);
+        clearTimeout(closeTimer);
+        openTimer = setTimeout(() => openCard(card, button), 400);
+      });
+      button.addEventListener("pointerleave", event => { if (event.pointerType === "mouse") closeCard(card); });
+      button.addEventListener("focus", () => { if (button.matches(":focus-visible")) openCard(card, button); });
+      // A tap moves the focus to no element: the card stays, and a tap
+      // outside it closes it. A key moves the focus to another element.
+      button.addEventListener("blur", event => { if (event.relatedTarget && !card.contains(event.relatedTarget)) closeCard(card); });
+      card.addEventListener("pointerenter", () => clearTimeout(closeTimer));
+      card.addEventListener("pointerleave", event => { if (event.pointerType === "mouse") closeCard(card); });
+    });
+  }
+
   const box = document.getElementById("site-search-box");
   if (!box || !script) return;
   const search = box.parentElement;
@@ -641,7 +714,9 @@ SITE_SEARCH_SCRIPT_SOURCE :: `// The search of the site, written by kerneltool s
 
   function load() {
     if (!loading) {
-      loading = fetch(new URL("search.json", root)).then(answer => {
+      // The address of the index, with the version of its bytes, is an
+      // attribute of the script element, relative to the folder of the script.
+      loading = fetch(new URL(script.dataset.index || "search.json", root)).then(answer => {
         if (!answer.ok) throw new Error("status " + answer.status);
         return answer.json();
       }).then(data => {
