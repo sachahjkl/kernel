@@ -6,6 +6,22 @@ The project has steps, not separate releases. The merge of step N on `master` is
 
 What is not in a release yet is in `changelog.d/`, one fragment for each change. `kerneltool changelog release` writes a release from the fragments. Nobody edits this file by hand.
 
+## [0.83.0] - 2026-11-12
+
+### Added
+
+- **The console keeps its line history across a stop**: after each line, the history goes to a store of its own in the storage service (4 blocks, apart from the store of the person), and at the next start Up and Control-R find the lines of before, also after a stop of the machine. history_clear() forgets it, in memory and on the disk.
+
+### Fixed
+
+- **The console prints a long result whole**: a result of more than 256 bytes was cut in the terminal and in the log with no sign, and a line of more than 192 bytes was cut in the log; the console now prints each result at any length.
+
+## [0.82.0] - 2026-11-12
+
+### Changed
+
+- **Windows name things in B612.** The titles, captions, labels, buttons and lists of every window drawn with the interface package are in the interface font B612, and their values (numbers, typed text, tables, terminals) stay in Paper Mono; a window with no interface font draws everything in Paper Mono with the same layout.
+
 ## [0.81.0] - 2026-11-12
 
 ### Added

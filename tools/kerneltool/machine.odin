@@ -1791,6 +1791,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "interface_elements: nothing changed: "},
 	{kind = .Wait, text = "interface_elements: one number changed: "},
 	{kind = .Wait, text = "interface_elements: everything moved: "},
+	{kind = .Wait, text = "interface_elements: one whole frame, built and drawn (the least of 20): the font of the cells "},
 	{kind = .Wait, text = "interface_elements: ok, the whole frame drawn in "},
 	{kind = .Key, text = "tab"},
 	{kind = .Key, text = "ret"},

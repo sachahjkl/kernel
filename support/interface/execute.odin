@@ -1,6 +1,7 @@
 package interface
 
 import "support:graphics"
+import "support:text_shaping"
 
 // execute draws each record of a table into a canvas, in order. The records
 // are in the coordinates of the surface; (origin_x, origin_y) is where the
@@ -81,6 +82,8 @@ execute_in_rectangle :: proc "contextless" (table: ^Draw_Table, canvas: graphics
 			if start + count <= table.text_count {
 				text_draw(view, x, y, string(table.text[start:start + count]), record.first_color, int(record.text_scale), record.kind_detail == u8(Font_Weight.Bold) ? .Bold : .Regular)
 			}
+		case .Interface_Text:
+			interface_text_draw(table, record, view, x, y)
 		case .Folded_Gap:
 			graphics.fill(view, x, y, width, height, record.second_color)
 			// Two lines at an angle, from the bottom left up to the right.
@@ -180,6 +183,39 @@ text_grid_draw :: proc "contextless" (canvas: graphics.Canvas, x, y: int, grid: 
 			column += count
 		}
 	}
+}
+
+// interface_text_draw draws an Interface_Text record whose x and y are in
+// the view. The record is a copy, and each field is checked before its use:
+// a record that a caller wrote by hand can have any bytes. A record with a
+// range outside the text table, a third of 3 or more, an ink margin past
+// INK_MARGIN_LIMIT, a scale out of 1 to 3, or more than INTERFACE_TEXT_LIMIT
+// bytes draws nothing. With no interface font, the text is drawn in the
+// font of the cells at its origin, cut to its rectangle as each record.
+@(private)
+interface_text_draw :: proc "contextless" (table: ^Draw_Table, record: Draw_Record, view: graphics.Canvas, x, y: int) {
+	start := u64(record.text_start)
+	count := u64(record.text_count)
+	margin := u64(record.second_color)
+	scale := int(record.text_scale)
+	if start + count > u64(table.text_count) || count > INTERFACE_TEXT_LIMIT || record.text_origin_thirds > 2 || margin > INK_MARGIN_LIMIT || scale < 1 || scale > 3 {
+		return
+	}
+	text := table.text[start:][:count]
+	font := Font{kind = .Interface, scale = u8(scale), weight = record.kind_detail == u8(Font_Weight.Bold) ? .Bold : .Regular}
+	if table.interface_font == nil {
+		text_draw(view, x + int(margin), y, string(text), record.first_color, scale, font.weight)
+		return
+	}
+	cache := interface_cache_of(table.interface_font, font)
+	spacing, ok := text_shaping.spacing_of(cache, scale)
+	if !ok {
+		return
+	}
+	placed: [INTERFACE_TEXT_LIMIT]text_shaping.Placed_Glyph
+	placed_count, _, _ := text_shaping.shape(&spacing, text, placed[:])
+	origin := (i64(x) + i64(margin)) * 64 + i64(record.text_origin_thirds) * 64 / 3
+	graphics.text_proportional(view, origin, y, placed[:min(placed_count, len(placed))], cache, scale, record.first_color)
 }
 
 // text_draw draws characters of the font of the system, each pixel of the
