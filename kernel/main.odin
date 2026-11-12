@@ -1,4 +1,4 @@
-// The kernel (docs/ARCHITECTURE.md, systems K1 to K5).
+// The kernel: the handle table, memory, the scheduler, the rings and the waits, the device grants and the interrupts (docs/ARCHITECTURE.md, "Kernel systems").
 package kernel
 
 import info "contract:boot_info"

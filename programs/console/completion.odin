@@ -184,7 +184,12 @@ completion_tab :: proc "contextless" () {
 		return
 	}
 	candidate := &completion.names.items[completion.ranked[0].candidate]
-	system.log("console: the completion list opens by Tab: ", u64(completion.matched_count), " names of ", u64(completion.names.count), " match \"", completion.place.query, "\", the first is ", candidate.name, "; one ranking takes ", completion.longest_ranking / 1000, " us at most, over ", completion.rankings, " keys")
+	// The count of the runs of code of the first row: a check reads the
+	// colors of the list from the log, not from a pixel.
+	buffer: [terminal.RUN_LIMIT]u8
+	runs: [terminal.CODE_RUN_LIMIT]terminal.Code_Run
+	_, _, run_count := candidate_row_runs(&buffer, candidate^, runs[:])
+	system.log("console: the completion list opens by Tab: ", u64(completion.matched_count), " names of ", u64(completion.names.count), " match \"", completion.place.query, "\", the first is ", candidate.name, "; one ranking takes ", completion.longest_ranking / 1000, " us at most, over ", completion.rankings, " keys; its first row has ", u64(run_count), " runs of code")
 }
 
 completion_close :: proc "contextless" () {
@@ -565,12 +570,12 @@ list_send :: proc "contextless" () {
 	for row in 0 ..< shown {
 		item := completion.ranked[completion.first_shown + row]
 		candidate := completion.names.items[item.candidate]
-		about: [160]u8
-		writer := system.Writer {
-			buffer = about[:],
-		}
-		candidate_about(&writer, candidate)
-		terminal.list_row(&output, row, candidate.name, system.written(&writer), transmute([2]u64)item.places)
+		buffer: [terminal.RUN_LIMIT]u8
+		runs: [terminal.CODE_RUN_LIMIT]terminal.Code_Run
+		text, name_length, run_count := candidate_row_runs(&buffer, candidate, runs[:])
+		// The runs go first: the List_Row that follows takes them.
+		terminal.code_runs_send(&output, .List_Row, row, runs[:run_count])
+		terminal.list_row(&output, row, text[:name_length], text[name_length:], transmute([2]u64)item.places)
 	}
 	anchor := len(PROMPT)
 	if completion.mode == .Names {

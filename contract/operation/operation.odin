@@ -806,8 +806,7 @@ LOG_TEXT_CAPACITY :: 176
 LOG_CHANNEL_CAPACITY :: 16
 // 128 pages: 2047 records. With 64 pages (1023 records), the main machine
 // test wrote about 1024 records before it starts the program log, which
-// checks that it lost none: each new line of a program broke the check
-// (docs/FIRST_MILESTONE.md, the choice of the pointer pictures).
+// checks that it lost none: each new line of a program broke the check.
 LOG_PAGES :: 128
 LOG_RECORD_CAPACITY :: LOG_PAGES * 4096 / size_of(Log_Record) - 1
 

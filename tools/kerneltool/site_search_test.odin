@@ -1,5 +1,6 @@
 package kerneltool
 
+import "core:fmt"
 import "core:strings"
 import "core:testing"
 import "support:line_editor"
@@ -96,8 +97,8 @@ site_search_index_of_a_small_site :: proc(t: ^testing.T) {
 	site := test_site()
 	pages := [?]Site_Page {
 		{path = "index.html", title = "modus", description = "The home."},
-		{path = "guides/NETWORK/index.html", title = "Network", description = "The guide."},
-		{path = "reference/glossary/index.html", title = "Glossary", description = "The terms."},
+		{path = SITE_GUIDE_FOLDER + "/NETWORK/" + SITE_PAGE, title = "Network", description = "The guide."},
+		{path = SITE_GLOSSARY_FOLDER + "/" + SITE_PAGE, title = "Glossary", description = "The terms."},
 		{path = "news/index.html", title = "News", description = "The news."},
 	}
 	for page in pages {
@@ -105,15 +106,15 @@ site_search_index_of_a_small_site :: proc(t: ^testing.T) {
 	}
 	headings := []Site_Heading{{level = 1, text = "Network", id = "network"}, {level = 2, text = "The `frames`", id = "the-frames", first_paragraph = "The **first** paragraph."}}
 	site.guides = make([dynamic]Site_Guide, context.temp_allocator)
-	append(&site.guides, Site_Guide{source = "docs/NETWORK.md", path = "guides/NETWORK/index.html", title = "Network", headings = headings})
+	append(&site.guides, Site_Guide{source = "docs/NETWORK.md", path = SITE_GUIDE_FOLDER + "/NETWORK/" + SITE_PAGE, title = "Network", headings = headings})
 	entry, _ := news_parse("2026-11-11-a-thing.md", "title: A \"thing\" </script>\ndate: 2026-11-11\nrelease: next\npicture: none\nkind: Shown\nguide: none\n\nIt runs. More.\n")
 	site.news = []Site_News{{entry = entry, anchor = site_news_anchor(entry)}}
 	site.gaps = []Site_Gap{}
 
 	written := make(map[string]string, context.temp_allocator)
 	written["index.html"] = "<h1>modus</h1>"
-	written["guides/NETWORK/index.html"] = "<h1 id=\"network\">Network</h1><h2 id=\"the-frames\">The frames</h2>"
-	written["reference/glossary/index.html"] = "<h1>Glossary</h1><tr id=\"term-module-metadata\"></tr><tr id=\"term-module\"></tr>"
+	written[SITE_GUIDE_FOLDER + "/NETWORK/" + SITE_PAGE] = "<h1 id=\"network\">Network</h1><h2 id=\"the-frames\">The frames</h2>"
+	written[SITE_GLOSSARY_FOLDER + "/" + SITE_PAGE] = "<h1>Glossary</h1><tr id=\"term-module-metadata\"></tr><tr id=\"term-module\"></tr>"
 	written["news/index.html"] = "<h1>News</h1><article id=\"news-2026-11-11-a-thing\"></article>"
 
 	entries := site_search_entries(&site)
@@ -139,7 +140,7 @@ site_search_index_of_a_small_site :: proc(t: ^testing.T) {
 	for path, html in written {
 		no_anchor[path] = html
 	}
-	no_anchor["guides/NETWORK/index.html"] = "<h1 id=\"network\">Network</h1>"
+	no_anchor[SITE_GUIDE_FOLDER + "/NETWORK/" + SITE_PAGE] = "<h1 id=\"network\">Network</h1>"
 	testing.expect(t, len(site_search_problems(entries, no_anchor)) > 0, "an absent anchor is not found")
 	// A page with no entry.
 	no_entry := make(map[string]string, context.temp_allocator)
@@ -151,7 +152,8 @@ site_search_index_of_a_small_site :: proc(t: ^testing.T) {
 
 	// The JSON of the index: the title of the news entry is escaped.
 	index := site_search_index_json(&site, entries, site.pages[:])
-	testing.expect(t, strings.has_prefix(index, "{\"kinds\":[\"page\",\"module\""))
+	testing.expect(t, strings.has_prefix(index, "{\"kinds\":[[\"page\",\"file\"],[\"module\",\"module\"],[\"program\",\"module\"]"), index[:min(len(index), 120)])
+	testing.expect(t, strings.contains(index, "[\"news entry\",\"time\"]"))
 	testing.expect(t, strings.contains(index, "\"A \\\"thing\\\" \\u003c/script\\u003e\""))
 	testing.expect(t, !strings.contains(index, "</script"))
 	// With no site address the link of a page names its index.html; with
@@ -161,6 +163,176 @@ site_search_index_of_a_small_site :: proc(t: ^testing.T) {
 	published := site_search_index_json(&site, entries, site.pages[:])
 	testing.expect(t, strings.contains(published, "[\"news/\",\"News\"]"))
 	testing.expect(t, strings.contains(published, "[\"./\",\"modus\"]"))
+	testing.expect(t, strings.contains(published, "[\"docs/guides/NETWORK/\",\"Network\"]"))
+
+	// The name of a kind for a count reads right for one and for more.
+	testing.expect_value(t, site_search_kind_words(.Property, 2), "properties")
+	testing.expect_value(t, site_search_kind_words(.Property, 1), "property")
+	testing.expect_value(t, site_search_kind_words(.Error_Kind, 3), "error kinds")
+	testing.expect_value(t, site_search_kind_words(.News, 1), "news entry")
+	testing.expect_value(t, site_search_kind_words(.News, 16), "news entries")
+	testing.expect_value(t, site_search_kind_words(.License_Row, 25), "license rows")
+}
+
+// The entries of a small index for the chart of the docs home: three
+// terms, two pages, one export, one news entry and one release; no
+// property. The glossary and the news have their page; the releases have
+// none in this site.
+@(private = "file")
+chart_test_site :: proc() -> (site: Site, entries: []Site_Search_Entry) {
+	site = test_site()
+	append(&site.pages, Site_Page{path = site_section_page(.Docs), title = "Docs", description = "The docs."})
+	append(&site.pages, Site_Page{path = site_page_file(SITE_GLOSSARY_FOLDER), title = "Glossary", description = "The terms."})
+	append(&site.pages, Site_Page{path = site_section_page(.News), title = "News", description = "The news."})
+	list := make([dynamic]Site_Search_Entry, context.temp_allocator)
+	append(&list, Site_Search_Entry{title = "a release", kind = .Release})
+	append(&list, Site_Search_Entry{title = "a term", kind = .Term})
+	append(&list, Site_Search_Entry{title = "a page", kind = .Page})
+	append(&list, Site_Search_Entry{title = "an entry", kind = .News})
+	append(&list, Site_Search_Entry{title = "a second term", kind = .Term})
+	append(&list, Site_Search_Entry{title = "an export", kind = .Export})
+	append(&list, Site_Search_Entry{title = "a second page", kind = .Page})
+	append(&list, Site_Search_Entry{title = "a third term", kind = .Term})
+	return site, list[:]
+}
+
+// The chart of what the search finds: one row for each kind with entries,
+// the largest count first and the tie order for two equal counts; the
+// largest bar at its whole length, the others in proportion, each with the
+// least length; a link for a kind whose page exists, none for the others;
+// the name for one entry and for more; the total, the sum of the rows; the
+// data attributes that the script reads; no style attribute.
+@(test)
+site_search_chart_of_a_small_index :: proc(t: ^testing.T) {
+	site, entries := chart_test_site()
+	rows := site_search_chart_rows(&site, entries)
+	expected_kinds := [?]Site_Search_Kind{.Term, .Page, .Export, .News, .Release}
+	testing.expect_value(t, len(rows), len(expected_kinds))
+	sum := 0
+	for row, place in rows {
+		sum += row.count
+		if place < len(expected_kinds) {
+			testing.expectf(t, row.kind == expected_kinds[place], "place %d holds %v, not %v", place, row.kind, expected_kinds[place])
+		}
+	}
+	testing.expect_value(t, sum, len(entries))
+	if len(rows) != len(expected_kinds) {
+		return
+	}
+	testing.expect_value(t, rows[0].count, 3)
+	testing.expect_value(t, rows[0].page, site_page_file(SITE_GLOSSARY_FOLDER))
+	testing.expect_value(t, rows[1].page, "")
+	testing.expect_value(t, rows[2].page, "")
+	testing.expect_value(t, rows[3].page, site_section_page(.News))
+	testing.expect_value(t, rows[4].page, "")
+
+	testing.expect_value(t, site_search_chart_length(3, 3), "100.0%")
+	testing.expect_value(t, site_search_chart_length(2, 3), "66.6%")
+	testing.expect_value(t, site_search_chart_length(1, 3), "33.3%")
+	testing.expect_value(t, site_search_chart_length(1, 1000), "0.1%")
+	testing.expect_value(t, site_search_chart_length(0, 0), "0.0%")
+
+	path := site_section_page(.Docs)
+	b := strings.builder_make(context.temp_allocator)
+	site_search_chart(&b, &site, path, rows)
+	html := strings.to_string(b)
+	row_start :: proc(kind: Site_Search_Kind, count: int) -> string {
+		return fmt.tprintf("<li class=\"search-chart-row\" data-kind=\"%d\" data-count=\"%d\" data-singular=\"%s\" data-plural=\"%s\">", int(kind), count, site_search_kinds[kind].name, site_search_kind_words(kind, 2))
+	}
+	glossary_link := site_page_link(&site, path, site_page_file(SITE_GLOSSARY_FOLDER))
+	news_link := site_page_link(&site, path, site_section_page(.News))
+	expected_rows := [?]string {
+		strings.concatenate({row_start(.Term, 3), "<a class=\"docs-row search-chart-target\" href=\"", glossary_link, "\"><span class=\"docs-row-lead value-icon value-term\" aria-hidden=\"true\"></span><span class=\"docs-row-main\"><span class=\"docs-row-name search-chart-name\">terms</span><svg class=\"docs-row-bar search-chart-bar value-term\" aria-hidden=\"true\" focusable=\"false\"><rect class=\"search-chart-length\" width=\"100.0%\" height=\"100%\"/><rect class=\"search-chart-least\" width=\"4\" height=\"100%\"/></svg>"}, context.temp_allocator),
+		strings.concatenate({row_start(.Page, 2), "<span class=\"docs-row search-chart-target\"><span class=\"docs-row-lead value-icon value-file\" aria-hidden=\"true\"></span><span class=\"docs-row-main\"><span class=\"docs-row-name search-chart-name\">pages</span><svg class=\"docs-row-bar search-chart-bar value-file\" aria-hidden=\"true\" focusable=\"false\"><rect class=\"search-chart-length\" width=\"66.6%\""}, context.temp_allocator),
+		strings.concatenate({row_start(.Export, 1), "<span class=\"docs-row search-chart-target\"><span class=\"docs-row-lead value-icon value-operation\" aria-hidden=\"true\"></span><span class=\"docs-row-main\"><span class=\"docs-row-name search-chart-name\">export</span>"}, context.temp_allocator),
+		strings.concatenate({row_start(.News, 1), "<a class=\"docs-row search-chart-target\" href=\"", news_link, "\"><span class=\"docs-row-lead value-icon value-time\" aria-hidden=\"true\"></span><span class=\"docs-row-main\"><span class=\"docs-row-name search-chart-name\">news entry</span><svg class=\"docs-row-bar search-chart-bar value-time\" aria-hidden=\"true\" focusable=\"false\"><rect class=\"search-chart-length\" width=\"33.3%\""}, context.temp_allocator),
+		strings.concatenate({row_start(.Release, 1), "<span class=\"docs-row search-chart-target\">"}, context.temp_allocator),
+	}
+	last_place := -1
+	for expected in expected_rows {
+		place := strings.index(html, expected)
+		testing.expectf(t, place > last_place, "the chart has not this row after the row before it: %s\n%s", expected, html)
+		last_place = max(last_place, place)
+	}
+	testing.expectf(t, !strings.contains(html, fmt.tprintf("data-kind=\"%d\"", int(Site_Search_Kind.Property))), "a kind with no entry has a row")
+	testing.expect_value(t, strings.count(html, "<li "), len(rows))
+	testing.expect_value(t, strings.count(html, "<rect class=\"search-chart-least\" width=\"4\""), len(rows))
+	testing.expect_value(t, strings.count(html, "width=\"100.0%\""), 1)
+	// The total: a number value, the sum of the rows.
+	testing.expect(t, strings.contains(html, fmt.tprintf("<code class=\"value value-number\">%d</code> <span id=\"search-chart-words\">entries in the index</span>", sum)), html)
+	testing.expect(t, strings.contains(html, "<span id=\"search-chart-matched\" hidden><code class=\"value value-number\" id=\"search-chart-matched-count\">0</code> of </span>"))
+	testing.expect(t, strings.contains(html, fmt.tprintf("<ol class=\"docs-rows search-chart-rows\" id=\"search-chart\" data-least=\"%d\">", SITE_SEARCH_CHART_LEAST_LENGTH)))
+	testing.expect(t, strings.contains(html, "<h2 id=\"search-finds\">What the search finds</h2>"))
+	testing.expect_value(t, site_heading_value_problem(html), "")
+	testing.expect(t, !strings.contains(html, "style="), "the chart holds a style attribute")
+	testing.expect_value(t, site_inline_code_problem(html), "")
+
+	// The script reads what the markup holds: the id of the chart, the
+	// attributes of a row and the classes of its parts.
+	script := site_search_script()
+	for name in ([]string{"\"search-chart\"", "li[data-kind]", "dataset.kind", "dataset.singular", "dataset.plural", "dataset.least", ".search-chart-target", ".search-chart-name", ".search-chart-count", ".search-chart-length", ".search-chart-least", "\"search-chart-matched\"", "\"search-chart-matched-count\"", "\"search-chart-words\"", "search-chart-none", "aria-pressed"}) {
+		testing.expectf(t, strings.contains(script, name), "the script does not read %s", name)
+	}
+}
+
+// The docs home: no paragraph of counts under the search field; the chart
+// after the cards; no style attribute on the page.
+@(test)
+site_docs_home_holds_the_chart :: proc(t: ^testing.T) {
+	site, entries := chart_test_site()
+	path := site_section_page(.Docs)
+	body := site_docs_home_body(&site, path, entries)
+	testing.expect(t, !strings.contains(body, "docs-knows"), "the docs home has the paragraph of the counts")
+	testing.expect(t, !strings.contains(body, "The search knows"), "the docs home has the paragraph of the counts")
+	field := strings.index(body, "id=\"" + SITE_SEARCH_FIELD_ID + "\"")
+	parts := strings.index(body, "<div class=\"docs-parts\">")
+	chart := strings.index(body, "id=\"search-chart\"")
+	testing.expectf(t, field >= 0 && parts > field && chart > parts, "the order of the docs home: the field at %d, the cards at %d, the chart at %d", field, parts, chart)
+	html := site_page_html(&site, Site_Page{path = path, is_index = true, title = "Docs", description = "The docs.", section = .Docs, search_in_page = true, body = body})
+	testing.expect(t, !strings.contains(html, "style="), "the docs home holds a style attribute")
+	// The foot names the maker once: its mark, then its name as a link.
+	testing.expect_value(t, strings.count(html, "<span class=\"maker\">"), 1)
+	testing.expect(t, strings.contains(html, "<p class=\"foot-maker\">" + SITE_SYSTEM_NAME + " · by <span class=\"maker\"><img src=\"../" + SITE_PICTURE_FOLDER + "/" + SITE_MAKER_PICTURE + "\" width=\"16\" height=\"16\" alt=\"\"><a href=\"" + SITE_MAKER_ADDRESS + "\">" + SITE_MAKER_NAME + "</a></span></p>"), "the foot has not the line of the maker")
+	// The page has no row of doors, and no card ends with a link to all.
+	testing.expect(t, !strings.contains(body, "Where to start") && !strings.contains(body, ">All "), "the docs home repeats the doors of the bar")
+	testing.expect_value(t, site_inline_code_problem(html), "")
+}
+
+// The cases of the counts by kind that the script runs in its self test,
+// run here over the matcher of the console: the counts of each tie order,
+// the restriction of the list to one tie order, and the empty field.
+@(test)
+site_search_kind_cases_table :: proc(t: ^testing.T) {
+	testing.expect(t, len(site_search_kind_cases) >= 5, "the table has too few cases of the counts by kind")
+	for kind_case in site_search_kind_cases {
+		counts: [8]int
+		kept_candidates := make([dynamic]line_editor.Candidate, context.temp_allocator)
+		for name in site_search_match_names {
+			if name.group != kind_case.group {
+				continue
+			}
+			if _, _, is_match := line_editor.fuzzy_match(kind_case.query, name.name); is_match {
+				counts[name.tie_order] += 1
+			}
+			if kind_case.only < 0 || int(name.tie_order) == kind_case.only {
+				append(&kept_candidates, line_editor.Candidate{name = name.name, tie_order = name.tie_order})
+			}
+		}
+		parts := make([dynamic]string, context.temp_allocator)
+		for count, tie in counts {
+			if count > 0 {
+				append(&parts, fmt.tprintf("%d:%d", tie, count))
+			}
+		}
+		counts_text := strings.join(parts[:], " ", context.temp_allocator)
+		testing.expectf(t, counts_text == kind_case.counts, "%s %q: the counts %s, not %s", kind_case.group, kind_case.query, counts_text, kind_case.counts)
+		ranked: [line_editor.RANKED_CAPACITY]line_editor.Ranked
+		kept, matched := line_editor.rank_candidates(kind_case.query, kept_candidates[:], ranked[:])
+		testing.expectf(t, matched == kind_case.listed, "%s %q in %d: %d listed, not %d", kind_case.group, kind_case.query, kind_case.only, matched, kind_case.listed)
+		first := kept > 0 ? kept_candidates[ranked[0].candidate].name : ""
+		testing.expectf(t, first == kind_case.first, "%s %q in %d: the first is %q, not %q", kind_case.group, kind_case.query, kind_case.only, first, kind_case.first)
+	}
+	testing.expect(t, strings.contains(site_search_cases_json(), "\"kinds\":[[\"tie\",\"set\",-1,\"1:2 2:1 3:1\",4,\"set.long_name\"]"))
 }
 
 @(test)
@@ -173,8 +345,8 @@ site_pages_hold_no_inline_code :: proc(t: ^testing.T) {
 	// The frame of a page: its one script is a file.
 	site := test_site()
 	site.release = "0.1.0"
-	html := site_page_html(&site, Site_Page{path = "guides/A/index.html", title = "A", description = "The guide A.", section = .Guides, body = "<h1>A</h1>"})
+	html := site_page_html(&site, Site_Page{path = SITE_GUIDE_FOLDER + "/A/" + SITE_PAGE, title = "A", description = "The guide A.", section = .Guides, body = "<h1>A</h1>"})
 	testing.expect_value(t, site_inline_code_problem(html), "")
-	testing.expect(t, strings.contains(html, "<script src=\"../../search.js\" data-index=\"search.json\" defer></script>"))
+	testing.expect(t, strings.contains(html, "<script src=\"../../../search.js\" data-index=\"search.json\" defer></script>"))
 	testing.expect(t, strings.contains(html, "<div class=\"search\" role=\"search\" hidden>"))
 }

@@ -5,7 +5,7 @@ import op "contract:operation"
 import "contract:system_description"
 import "support:system"
 
-// The check of the root service (docs/TRUSTED_BOOT.md, "The root service").
+// The check of the root service (docs/TRUSTED_BOOT.md, "Layer 1: the signed system description").
 //
 // The boot program verified the description signature and every hash
 // before the kernel started, and wrote what it verified in the trust

@@ -1162,7 +1162,7 @@ screen_build :: proc "contextless" (now: u64, interface_font: ^display.Interface
 	screen_pictures[BAR_MARK_PICTURE] = bar_mark_picture
 	interface.draw_picture(table, bar.MARK_X, bar.MARK_Y, BAR_MARK_PICTURE, BAR_MARK_GENERATION)
 	bar_button_records :: proc "contextless" (table: ^interface.Draw_Table, x, y, width, height: int, label: string, open: bool) {
-		interface.draw_rectangle(table, x, y, width, height, open ? graphics.COLOR_TITLE : graphics.COLOR_TRACK)
+		interface.draw_rectangle(table, x, y, width, height, open ? graphics.COLOR_CHOSEN : graphics.COLOR_TRACK)
 		interface.draw_text(table, x + bar.PADDING, y + (height - graphics.CELL_HEIGHT) / 2, label, open ? graphics.COLOR_WHITE : graphics.COLOR_TEXT, interface.FONT_INTERFACE)
 	}
 	left, top, button_width, button_height := bar.button(bar_layout)
@@ -1202,7 +1202,7 @@ screen_build :: proc "contextless" (now: u64, interface_font: ^display.Interface
 			line_x, line_y, line_width, line_height := bar.windows_line(bar_layout, line)
 			focus := index == order[order_count - 1]
 			if line == menu_line {
-				interface.draw_rectangle(table, line_x, line_y, line_width, line_height, graphics.COLOR_TITLE)
+				interface.draw_rectangle(table, line_x, line_y, line_width, line_height, graphics.COLOR_CHOSEN)
 			}
 			if focus {
 				// The window that has the focus: a square, and its title in white.
@@ -1218,7 +1218,7 @@ screen_build :: proc "contextless" (now: u64, interface_font: ^display.Interface
 		for name, index in bar.names {
 			line_x, line_y, line_width, line_height := bar.line(bar_layout, index)
 			if index == menu_line {
-				interface.draw_rectangle(table, line_x, line_y, line_width, line_height, graphics.COLOR_TITLE)
+				interface.draw_rectangle(table, line_x, line_y, line_width, line_height, graphics.COLOR_CHOSEN)
 			}
 			interface.draw_text(table, line_x + bar.PADDING, line_y + 4, name, index == menu_line ? graphics.COLOR_WHITE : graphics.COLOR_TEXT, interface.FONT_INTERFACE)
 		}

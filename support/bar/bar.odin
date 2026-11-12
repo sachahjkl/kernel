@@ -27,8 +27,8 @@ COLUMNS :: 2 // The menu of the programs has two columns of names.
 COLUMN_LEAST :: 120 // The title of the menu fits.
 
 // Layout: the widths of the texts of the bar, measured in the font that
-// draws them (docs/DESIGN.md, section 5: the names of the bar are in the
-// interface font; with no interface font, in the font of the cells). The
+// draws them: the names of the bar are in the interface font; with no
+// interface font, in the font of the cells (docs/DESIGN.md, section 5). The
 // place of each button and of each line of a menu comes from it, so a
 // press lands on the entry that the eye sees. The compositor measures it
 // once, and again when the font changes; it writes in its log which font

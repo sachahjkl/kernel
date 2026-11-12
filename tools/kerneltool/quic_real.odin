@@ -169,6 +169,6 @@ openssl_quic_run :: proc(machine: ^Machine, line: string) -> bool {
 		print_output(output, machine, line)
 		return false
 	}
-	fmt.printfln("kerneltool: test passed: openssl s_client -quic connected to quic_echo with the raw public key of the log, and its line came back")
+	test_passed_print("openssl s_client -quic connected to quic_echo with the raw public key of the log, and its line came back")
 	return true
 }

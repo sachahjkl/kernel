@@ -187,7 +187,7 @@ key :: proc "contextless" (pressed: Key) {
 line_enter :: proc "contextless" () {
 	text := line_editor.line_text(&line)
 	system.lock(&output_lock)
-	terminal.line(&output, {PROMPT, {tone = .Accent}}, {text, {tone = .Strong}})
+	echo_write(text)
 	system.unlock(&output_lock)
 	if len(text) > 0 {
 		line_editor.history_add(&history, text)
@@ -276,6 +276,13 @@ edit_show :: proc "contextless" () {
 	if shown_count != len(text) || string(shown[:max(shown_count, 0)]) != text || cursor != shown_cursor {
 		shown_count = copy(shown[:], text)
 		shown_cursor = cursor
+		// The line of the person is code: its runs go first, and the Edit
+		// that follows takes them. The time of a line that runs has none.
+		if !running {
+			runs: [terminal.CODE_RUN_LIMIT]terminal.Code_Run
+			run_count := edit_runs(text, int(cursor), runs[:])
+			terminal.code_runs_send(&output, .Edit, 0, runs[:run_count])
+		}
 		terminal.edit(&output, text, cursor, style)
 	}
 	completion_show()

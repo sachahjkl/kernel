@@ -37,6 +37,11 @@ COLOR_DIM :: 0x7C8A99
 // COLOR_TITLE_QUIET_END.
 COLOR_TITLE :: 0x3F7CC4 // The blue of the title bar before the rules.
 COLOR_TITLE_END :: 0x162C45 // graphics.shade(COLOR_TITLE, 36).
+// A chosen row of a list or a menu, with its text in white: the title blue
+// at 96 %, shade(COLOR_TITLE, 96). White has 4.67 to 1 on it; on the title
+// blue itself white has only 4.29, under the 4.5 that a text needs. A
+// matched character of a chosen row is the reverse: this blue on white.
+COLOR_CHOSEN :: 0x3C76BB
 COLOR_TITLE_QUIET :: 0x2A3442
 COLOR_TITLE_QUIET_END :: 0x161D27
 // The concept "stop a program": the close button of a window (owner,

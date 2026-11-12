@@ -20,14 +20,24 @@ import "core:time"
 // relative links only. `kerneltool site --address https://...` sets
 // another one for one run.
 SITE_ADDRESS :: "https://modus.froment.software"
+// The folder of the docs: its home, and its two parts, the guides and the
+// reference. Every path of a page of the docs starts here, so that one
+// change of these lines moves the whole docs (docs/SITE.md, "The
+// addresses of the pages").
+SITE_DOCS_FOLDER :: "docs"
+SITE_GUIDE_FOLDER :: SITE_DOCS_FOLDER + "/guides"
+SITE_REFERENCE_FOLDER :: SITE_DOCS_FOLDER + "/reference"
 // The folders of the pages of the reference that the tool writes by
 // itself; the pages of the generated tables are in site_reference.odin.
-SITE_GLOSSARY_FOLDER :: "reference/glossary"
-SITE_COMMANDS_FOLDER :: "reference/commands"
-SITE_NUMBERS_FOLDER :: "reference/numbers"
-SITE_LICENSES_FOLDER :: "reference/licenses"
-SITE_GUIDE_FOLDER :: "guides"
-SITE_REFERENCE_FOLDER :: "reference"
+SITE_GLOSSARY_FOLDER :: SITE_REFERENCE_FOLDER + "/glossary"
+SITE_COMMANDS_FOLDER :: SITE_REFERENCE_FOLDER + "/commands"
+SITE_NUMBERS_FOLDER :: SITE_REFERENCE_FOLDER + "/numbers"
+SITE_LICENSES_FOLDER :: SITE_REFERENCE_FOLDER + "/licenses"
+// The folders of the sections that are not docs: the table of the search
+// kinds names them too.
+SITE_STATUS_FOLDER :: "status"
+SITE_NEWS_FOLDER :: "news"
+SITE_RELEASES_FOLDER :: "releases"
 // The documents of docs/ that are working records of the project, not
 // guides: the site leaves them out. A link of a page to one of them names
 // the file in the repository.
@@ -41,8 +51,11 @@ SITE_REFRESH_OPEN :: "<meta http-equiv=\"refresh\" content=\"0; url="
 // style sheet; with no style sheet the word shows.
 SITE_MENU_OPEN :: "<details class=\"bar-menu\">\n<summary class=\"bar-menu-button\"><span class=\"bar-menu-lines\" aria-hidden=\"true\"></span><span class=\"bar-menu-name\">Menu</span></summary>\n<div class=\"bar-menu-content\">\n"
 
+// The sections of the site. The guides and the reference are the two parts
+// of the docs: the bar names the docs, and their pages are under its folder.
 Site_Section :: enum {
 	Home,
+	Docs,
 	Guides,
 	Reference,
 	Status,
@@ -52,6 +65,7 @@ Site_Section :: enum {
 
 site_section_titles := [Site_Section]string {
 	.Home      = "Home",
+	.Docs      = "Docs",
 	.Guides    = "Guides",
 	.Reference = "Reference",
 	.Status    = "Status",
@@ -62,16 +76,47 @@ site_section_titles := [Site_Section]string {
 // The folder of the page of each section; "" is the root of the site.
 site_section_folders := [Site_Section]string {
 	.Home      = "",
-	.Guides    = "guides",
-	.Reference = "reference",
-	.Status    = "status",
-	.News      = "news",
-	.Releases  = "releases",
+	.Docs      = SITE_DOCS_FOLDER,
+	.Guides    = SITE_GUIDE_FOLDER,
+	.Reference = SITE_REFERENCE_FOLDER,
+	.Status    = SITE_STATUS_FOLDER,
+	.News      = SITE_NEWS_FOLDER,
+	.Releases  = SITE_RELEASES_FOLDER,
+}
+
+// The section above each section: the breadcrumbs follow it, and the bar
+// shows only the sections whose parent is the home. The status stays a
+// section of its own: it reports the state of the properties, not how the
+// system works.
+site_section_parents := [Site_Section]Site_Section {
+	.Home      = .Home,
+	.Docs      = .Home,
+	.Guides    = .Docs,
+	.Reference = .Docs,
+	.Status    = .Home,
+	.News      = .Home,
+	.Releases  = .Home,
 }
 
 // site_section_page gives the file of the page of a section.
 site_section_page :: proc(section: Site_Section) -> string {
 	return site_page_file(site_section_folders[section])
+}
+
+// site_section_in_bar tells whether the bar and the doors of the home name
+// a section: a section right under the home.
+site_section_in_bar :: proc(section: Site_Section) -> bool {
+	return section != .Home && site_section_parents[section] == .Home
+}
+
+// site_bar_section gives the section of the bar that holds a section: the
+// docs for a guide or a page of the reference.
+site_bar_section :: proc(section: Site_Section) -> Site_Section {
+	current := section
+	for current != .Home && site_section_parents[current] != .Home {
+		current = site_section_parents[current]
+	}
+	return current
 }
 
 Site_Crumb :: struct {
@@ -80,24 +125,28 @@ Site_Crumb :: struct {
 }
 
 Site_Page :: struct {
-	path:        string, // The file, from the root of the site: "guides/NETWORK/index.html" (site_page_file).
+	path:        string, // The file, from the root of the site: "docs/guides/NETWORK/index.html" (site_page_file).
 	title:       string, // The title of the page; the <title> adds the name of the system.
 	description: string, // One or two sentences, at most SITE_DESCRIPTION_LIMIT bytes.
 	section:     Site_Section,
 	crumbs:      []Site_Crumb, // The pages above it, from the home.
 	body:        string, // The HTML of the content, from its h1.
 	sources:     []string, // The files of the repository that the page comes from.
-	is_index:    bool, // An index page: it lists the pages of its folder (the home, the guides, the reference, the modules).
+	is_index:    bool, // An index page: it lists the pages of its folder (the home, the docs, the guides, the reference, the modules).
 	layout:      Site_Layout, // Stated by the writer of the page: one centred column, or the three columns of the documentation.
+	// The page holds its own search field (the home of the docs), so the
+	// bar has none: a page has one search field.
+	search_in_page: bool,
 }
 
 // A guide: a document of docs/ as a page.
 Site_Guide :: struct {
 	source:   string, // "docs/NETWORK.md"
-	path:     string, // "guides/NETWORK/index.html"
+	path:     string, // "docs/guides/NETWORK/index.html"
 	title:    string,
 	about:    string, // Its line in the table of documents of README.md, or "".
 	headings: []Site_Heading, // Each heading of its page, with its id: the guide sections of the search index.
+	items:    []Site_List_Item, // Each top-level item of an ordered list of its page, with its id: a reference to "choice <n>" finds it.
 }
 
 Site :: struct {
@@ -119,6 +168,9 @@ Site :: struct {
 	step_count:   int,
 	changelog:    Changelog,
 	measured:     []Site_Measured,
+	measure_record: Site_Measure_Record, // The measure record of the work tree.
+	boot_stages:  []Site_Boot_Stage, // The stages of the start that the home shows.
+	boot_source:  Site_Measure_Source,
 	figures:      []Site_Figure,
 	boot_image:   []Site_Image_Entry,
 	licenses:     Site_Licenses,
@@ -128,6 +180,7 @@ Site :: struct {
 	news:         []Site_News, // Newest first.
 	gaps:         []Site_Gap, // The gaps of docs/FIRST_MILESTONE.md, as the status page shows them.
 	redirects:    map[string]string, // The HTML of each redirect page, by its old path.
+	redirect_counts: [Site_Address_Generation]int, // The redirect pages of each generation of old addresses.
 	reference_entries: []Site_Reference_Entry, // The pages of the reference, in the order of its index: the tree lists them.
 	file_versions: map[string]string, // The version of the bytes of each file of SITE_VERSIONED_FILES that the command wrote.
 	symbol_count: int, // The documented symbols of the pages.
@@ -138,6 +191,12 @@ Site :: struct {
 	type_names_without_card: int, // The places where a page shows a type that has no card: its name is plain.
 	code_blocks_not_colored: int, // The blocks of Odin that the tokenizer refused: written plain.
 	first_code_block_not_colored: string, // The place of the first of them, or "".
+	// Each pointer to a document that a page shows, by its document and its
+	// labels: whether each label found its heading (docs/SITE.md, "The
+	// references to documents").
+	document_references: map[string]bool,
+	document_outlines: map[string]Site_Document_Outline, // The title and the headings of each document that the site reads from its file.
+	document_headings_pending: bool, // While the guides are read for their headings only: no reference is counted.
 }
 
 run_site :: proc(args: []string) -> int {
@@ -171,8 +230,8 @@ site_relative :: proc(from_page, target: string) -> string {
 }
 
 // site_page_file gives the file of a page: each page is the index.html of
-// its own folder, so that its address is the folder ("reference/licenses"
-// gives "reference/licenses/index.html"). The folder "" is the root of the
+// its own folder, so that its address is the folder ("docs/reference/licenses"
+// gives "docs/reference/licenses/index.html"). The folder "" is the root of the
 // site, the home. docs/SITE.md, "The addresses of the pages".
 site_page_file :: proc(folder: string) -> string {
 	if folder == "" {
@@ -207,14 +266,52 @@ site_page_link :: proc(site: ^Site, from_page, target: string) -> string {
 	return strings.concatenate({link, anchor}, context.temp_allocator)
 }
 
-// site_old_page_path gives the path that a page had before each page was
-// a folder ("reference/licenses.html"), or "" for an index page, whose path
-// did not change.
-site_old_page_path :: proc(page: Site_Page) -> string {
-	if page.is_index || !strings.has_suffix(page.path, "/" + SITE_PAGE) {
-		return ""
+// The generations of the old addresses of the site: each was public, so
+// each old address of a page keeps a redirect page to its address of today
+// (docs/SITE.md, "The redirect pages").
+Site_Address_Generation :: enum {
+	// "guides/NETWORK.html": before each page was the index.html of its
+	// folder. An index page had the index.html of its folder already.
+	Html_Files,
+	// "guides/NETWORK/": before the guides and the reference moved under
+	// the folder of the docs.
+	Folders_Before_Docs,
+}
+
+site_address_generation_names := [Site_Address_Generation]string {
+	.Html_Files          = "of the .html files",
+	.Folders_Before_Docs = "of the folders before " + SITE_DOCS_FOLDER + "/",
+}
+
+// One old address of a page, with its generation.
+Site_Old_Path :: struct {
+	path:       string,
+	generation: Site_Address_Generation,
+}
+
+// site_old_page_paths gives every old path of a page, by rule from its path
+// of today: the folder that it had before the docs (its folder without the
+// folder of the docs in front), then the .html file of that folder for a
+// page that is not an index page. The home was always the index.html of the
+// root, and the home of the docs is new: neither has an old path.
+site_old_page_paths :: proc(page: Site_Page) -> []Site_Old_Path {
+	paths := make([dynamic]Site_Old_Path, context.temp_allocator)
+	if !strings.has_suffix(page.path, "/" + SITE_PAGE) {
+		return paths[:]
 	}
-	return strings.concatenate({page.path[:len(page.path) - len("/" + SITE_PAGE)], ".html"}, context.temp_allocator)
+	folder := page.path[:len(page.path) - len("/" + SITE_PAGE)]
+	if folder == SITE_DOCS_FOLDER {
+		return paths[:]
+	}
+	folder_before_docs := folder
+	if strings.has_prefix(folder, SITE_DOCS_FOLDER + "/") {
+		folder_before_docs = folder[len(SITE_DOCS_FOLDER + "/"):]
+		append(&paths, Site_Old_Path{path = site_page_file(folder_before_docs), generation = .Folders_Before_Docs})
+	}
+	if !page.is_index {
+		append(&paths, Site_Old_Path{path = strings.concatenate({folder_before_docs, ".html"}, context.temp_allocator), generation = .Html_Files})
+	}
+	return paths[:]
 }
 
 // site_redirect_html gives the redirect page at the old path of a page: a
@@ -242,20 +339,32 @@ site_redirect_html :: proc(site: ^Site, old_path: string, page: Site_Page) -> st
 	return strings.to_string(b)
 }
 
-// site_redirects_make writes a redirect page at the old path of each page
-// that is not an index page.
-site_redirects_make :: proc(site: ^Site) {
+// site_redirects_make writes a redirect page at each old path of each page,
+// straight to the page of today: a redirect never names another redirect.
+// It gives the problems of the table: two pages with one old path.
+site_redirects_make :: proc(site: ^Site) -> []string {
+	problems := make([dynamic]string, context.temp_allocator)
 	site.redirects = make(map[string]string, context.temp_allocator)
+	site.redirect_counts = {}
+	owners := make(map[string]string, context.temp_allocator)
 	for page in site.pages {
-		if old_path := site_old_page_path(page); old_path != "" {
-			site.redirects[old_path] = site_redirect_html(site, old_path, page)
+		for old in site_old_page_paths(page) {
+			if owner, taken := owners[old.path]; taken {
+				append(&problems, fmt.tprintf("%s: the old path of two pages, %s and %s", old.path, owner, page.path))
+				continue
+			}
+			owners[old.path] = page.path
+			site.redirects[old.path] = site_redirect_html(site, old.path, page)
+			site.redirect_counts[old.generation] += 1
 		}
 	}
+	return problems[:]
 }
 
 // site_check_redirects checks the redirect pages: no redirect page takes
 // the path of a page or of a file of the site, and each one names, in its
-// refresh and in each link, a page that the command writes.
+// refresh and in each link, a page that the command writes, never another
+// redirect page.
 site_check_redirects :: proc(redirects: map[string]string, written: map[string]string, files: map[string]int, has_address: bool) -> []string {
 	problems := make([dynamic]string, context.temp_allocator)
 	ids := make(map[string]map[string]bool, context.temp_allocator)
@@ -298,6 +407,8 @@ site_check_redirects :: proc(redirects: map[string]string, written: map[string]s
 			if problem == "" {
 				if _, names_page := written[target]; !names_page {
 					problem = fmt.tprintf("names %s, which is not a page", target)
+				} else if _, names_redirect := redirects[target]; names_redirect {
+					problem = fmt.tprintf("names %s, which is a redirect page", target)
 				}
 			}
 			if problem != "" {
@@ -404,6 +515,13 @@ site_glossary_terms :: proc(content: string) -> []Site_Term {
 	slice.sort_by(terms[:], proc(a, b: Site_Term) -> bool {return len(a.name) > len(b.name)})
 	return terms[:]
 }
+
+// The maker of the system, named in the foot of each page: the name, the
+// address of its site, and its mark (a file of the repository, copied).
+SITE_MAKER_NAME :: "Froment Software"
+SITE_MAKER_ADDRESS :: "https://froment.software"
+SITE_MAKER_PICTURE_SOURCE :: "resources/site/froment_software.png"
+SITE_MAKER_PICTURE :: "froment_software.png"
 
 // site_write_file writes one file of the site, and records it.
 site_write_file :: proc(site: ^Site, path: string, data: []u8) -> bool {
@@ -522,6 +640,13 @@ site_build :: proc(address: string) -> bool {
 	for icon_path, icon_data in icon_files {
 		site_write_file(&site, icon_path, icon_data) or_return
 	}
+	// The mark of the maker, for the foot of each page.
+	maker_picture, maker_error := os.read_entire_file(SITE_MAKER_PICTURE_SOURCE, context.temp_allocator)
+	if maker_error != nil {
+		fmt.eprintfln("kerneltool: site: cannot read %s", SITE_MAKER_PICTURE_SOURCE)
+		return false
+	}
+	site_write_file(&site, SITE_PICTURE_FOLDER + "/" + SITE_MAKER_PICTURE, maker_picture) or_return
 
 	// The pictures of the machine, with the captions of README.md.
 	figures := make([dynamic]Site_Figure, context.temp_allocator)
@@ -543,11 +668,23 @@ site_build :: proc(address: string) -> bool {
 	}
 	site.figures = figures[:]
 
+	// The measured numbers and the stages of the start: from the logs of
+	// build/ when they are newer than the measure record, else from the
+	// record. A clean checkout has the record only.
+	measure_record_found, measure_record_problem := site_measure_record_read(MEASURE_RECORD_FILE)
+	if measure_record_problem != "" {
+		fmt.eprintfln("kerneltool: site: %s", measure_record_problem)
+		return false
+	}
+	site.measure_record = measure_record_found
 	measured := make([dynamic]Site_Measured, context.temp_allocator)
 	for measure in site_measures {
-		append(&measured, site_measure_read(measure))
+		append(&measured, site_measure_resolve(site_measure_read(measure), site.measure_record))
 	}
 	site.measured = measured[:]
+	boot_log: string
+	boot_log, site.boot_source = site_boot_log_choose(site.measure_record)
+	site.boot_stages = site_boot_stages(boot_log)
 	image_problem: string
 	site.boot_image, image_problem = site_boot_image_read(BOOT_IMAGE)
 	if image_problem != "" {
@@ -571,7 +708,21 @@ site_build :: proc(address: string) -> bool {
 	site_status_add(&site) or_return
 	site_news_add(&site)
 	site_releases_add(&site)
+	// The home of the docs before the home: the doors of the home name the
+	// sections that exist. Its text needs the index of the search, so it is
+	// written after the index (site_docs_home_fill).
+	site_docs_home_add(&site)
 	site_home_add(&site)
+	// A pointer to a document whose label finds no place is stale: the
+	// command stops with its file and its line, so that none comes back.
+	pointer_problems := site_document_pointer_problems(&site)
+	if len(pointer_problems) > 0 {
+		for problem in pointer_problems {
+			fmt.eprintfln("kerneltool: site: %s", problem)
+		}
+		fmt.eprintfln("kerneltool: site: %d pointers to documents name no heading; no page is written", len(pointer_problems))
+		return false
+	}
 	if len(site.news) > 0 {
 		// The feed is written before the checks: each page links to it.
 		site_write_file(&site, SITE_NEWS_FEED, transmute([]u8)site_news_feed(&site)) or_return
@@ -603,11 +754,12 @@ site_build :: proc(address: string) -> bool {
 		}
 		site_write_file(&site, target, data) or_return
 	}
-	site_write_file(&site, SITE_STYLE_SHEET, transmute([]u8)site_style_sheet(site.tile_rules)) or_return
+	// The style sheet holds the icons of the kinds of values: a page asks
+	// for no file to draw them.
+	style_sheet := site_style_sheet(site.tile_rules)
+	site_write_file(&site, SITE_STYLE_SHEET, transmute([]u8)style_sheet) or_return
 	site_write_file(&site, SITE_SEARCH_SCRIPT, transmute([]u8)site_search_script()) or_return
 	site_mark_animation_write(&site) or_return
-	// The icons of the kinds of values: the style sheet names them.
-	site_value_icons_write(&site) or_return
 	// The index of the search, from the same data as the pages. It is
 	// written before the pages, because each page names the version of its
 	// bytes; it is checked against the pages after them.
@@ -618,6 +770,9 @@ site_build :: proc(address: string) -> bool {
 		return false
 	}
 	site_write_file(&site, SITE_SEARCH_INDEX, transmute([]u8)search_index) or_return
+	// The home of the docs says what the search knows: the counts of the
+	// entries that the index holds.
+	site_docs_home_fill(&site, search_entries)
 
 	written := make(map[string]string, context.temp_allocator)
 	for page in site.pages {
@@ -625,10 +780,16 @@ site_build :: proc(address: string) -> bool {
 	}
 	problems := make([dynamic]string, context.temp_allocator)
 	append(&problems, ..site_check_pages(site.pages[:], written, site.files, site.address != ""))
-	// The old address of each page that is not an index page: a redirect
-	// page, which is not a page of the site (no bar, no sitemap, no index
-	// of the search).
-	site_redirects_make(&site)
+	// One search field on each page: in the bar, or in the page itself on
+	// the home of the docs.
+	for page in site.pages {
+		if problem := site_search_field_problem(page, written[page.path]); problem != "" {
+			append(&problems, fmt.tprintf("%s: %s", page.path, problem))
+		}
+	}
+	// Each old address of each page: a redirect page, which is not a page
+	// of the site (no bar, no sitemap, no index of the search).
+	append(&problems, ..site_redirects_make(&site))
 	append(&problems, ..site_check_redirects(site.redirects, written, site.files, site.address != ""))
 	if len(problems) > 0 {
 		for problem in problems {
@@ -677,6 +838,10 @@ site_build :: proc(address: string) -> bool {
 	}
 
 	fmt.printfln("kerneltool: site: wrote %s: %d pages (%d bytes), %d redirect pages at the old addresses, %d other files", SITE_FOLDER, len(site.pages), page_bytes, len(site.redirects), len(site.files) - len(site.pages) - len(site.redirects))
+	for generation in Site_Address_Generation {
+		fmt.printfln("kerneltool: site: %d redirect pages at the old addresses %s", site.redirect_counts[generation], site_address_generation_names[generation])
+	}
+	fmt.printfln("kerneltool: site: %s: %d bytes, with %d icons of the kinds of values inside", SITE_STYLE_SHEET, len(style_sheet), site_style_sheet_icon_count(style_sheet))
 	fmt.printfln("kerneltool: site: %s: %d entries of at most %d, %d bytes of at most %d; %s: %d bytes", SITE_SEARCH_INDEX, len(search_entries), SITE_SEARCH_ENTRY_LIMIT, len(search_index), SITE_SEARCH_INDEX_BYTE_LIMIT, SITE_SEARCH_SCRIPT, site.files[SITE_SEARCH_SCRIPT])
 	commit_text: string = site.commit != "" ? site.commit : "not readable (links to files go to master)"
 	fmt.printfln("kerneltool: site: %d guides, %d terms of the glossary, %d news entries, the commit %s, the release %s", len(site.guides), len(site.terms), len(site.news), commit_text, site.release)
@@ -686,6 +851,14 @@ site_build :: proc(address: string) -> bool {
 	// A type that a page shows with no card is plain text: the count makes
 	// the gap visible.
 	fmt.printfln("kerneltool: site: %d types, %d type names with no card", len(site.types), site.type_names_without_card)
+	// A pointer of a comment or a guide whose label finds no heading is a
+	// stale pointer: the count and the first ones make it seen.
+	reference_count, unresolved_references := site_document_references_summary(&site)
+	if len(unresolved_references) > 0 {
+		fmt.printfln("kerneltool: site: %d document references, %d with no heading found: %s", reference_count, len(unresolved_references), strings.join(unresolved_references[:min(3, len(unresolved_references))], "; ", context.temp_allocator))
+	} else {
+		fmt.printfln("kerneltool: site: %d document references, 0 with no heading found", reference_count)
+	}
 	// A block of Odin that the tokenizer refused is plain: the count and the
 	// first one make it seen.
 	if site.code_blocks_not_colored > 0 {
@@ -705,14 +878,28 @@ site_build :: proc(address: string) -> bool {
 		}
 	}
 	fmt.printfln("kerneltool: site: %d pictures of the repository, compressed: %d bytes, from %d bytes of their files", picture_count, written_picture_bytes, source_picture_bytes)
-	missing := 0
+	missing, from_record, from_build := 0, 0, 0
 	for number in site.measured {
-		if !number.found {
+		switch number.source {
+		case .None:
 			missing += 1
-			fmt.printfln("kerneltool: site: not measured in this build: %s (%s)", number.measure.sentence, number.missing)
+			fmt.printfln("kerneltool: site: not measured: %s (%s)", number.measure.sentence, number.missing)
+		case .Record:
+			from_record += 1
+		case .Build:
+			from_build += 1
 		}
 	}
-	fmt.printfln("kerneltool: site: %d of %d numbers measured", len(site.measured) - missing, len(site.measured))
+	fmt.printfln("kerneltool: site: %d of %d numbers measured: %d from %s, %d from the logs in %s/ that are newer", len(site.measured) - missing, len(site.measured), from_record, MEASURE_RECORD_FILE, from_build, BUILD_FOLDER)
+	if site.measure_record.present {
+		record := site.measure_record.record
+		fmt.printfln("kerneltool: site: %s: the full check of %s, on the tree of %s (%s), the release %s, %d checks passed", MEASURE_RECORD_FILE, record.time, site_short_commit(record.commit), measure_tree_state_names[record.tree], record.release, record.checks_passed)
+		if record.release != site.release {
+			fmt.printfln("kerneltool: site: %s is of the release %s, older than the release %s of the site", MEASURE_RECORD_FILE, record.release, site.release)
+		}
+	} else {
+		fmt.printfln("kerneltool: site: no %s", MEASURE_RECORD_FILE)
+	}
 	for cell in site.licenses.gaps {
 		fmt.printfln("kerneltool: site: a cell of the licenses is not recorded: %s", cell)
 	}
@@ -795,15 +982,20 @@ site_page_html :: proc(site: ^Site, page: Site_Page) -> string {
 	// (docs/SITE.md, "The site menu").
 	write(&b, SITE_MENU_OPEN)
 	write(&b, "<nav class=\"bar-sections\" aria-label=\"Sections\">\n<ul>\n")
+	bar_section := site_bar_section(page.section)
 	for section in Site_Section {
-		if section == .Home || !site_page_exists(site, site_section_page(section)) {
+		if !site_section_in_bar(section) || !site_page_exists(site, site_section_page(section)) {
 			continue
 		}
-		current: string = section == page.section ? " aria-current=\"page\"" : ""
+		current: string = section == bar_section ? " aria-current=\"page\"" : ""
 		fmt.sbprintf(&b, "<li><a href=\"%s\"%s>%s</a></li>\n", site_page_link(site, page.path, site_section_page(section)), current, site_section_titles[section])
 	}
 	write(&b, "</ul>\n</nav>\n")
-	write(&b, SITE_SEARCH_BOX)
+	// One search field on a page: the home of the docs has its own large
+	// field, so its bar has none (docs/SITE.md, "The search").
+	if !page.search_in_page {
+		write(&b, site_search_field_html(.Bar))
+	}
 	// The tree of the documentation is in the menu, once in the page: on a
 	// wide screen the style sheet puts it at the left of the page, and
 	// under 720 pixels it is under the sections in the open menu
@@ -845,7 +1037,9 @@ site_page_html :: proc(site: ^Site, page: Site_Page) -> string {
 	}
 
 	// The foot: the build that the page comes from, and its sources.
-	write(&b, "<footer class=\"foot\">\n<div class=\"page\">\n<p>Generated by <code>kerneltool site</code> from ")
+	write(&b, "<footer class=\"foot\">\n<div class=\"page\">\n")
+	fmt.sbprintf(&b, "<p class=\"foot-maker\">%s · by <span class=\"maker\"><img src=\"%s\" width=\"16\" height=\"16\" alt=\"\"><a href=\"%s\">%s</a></span></p>\n", SITE_SYSTEM_NAME, link(page, SITE_PICTURE_FOLDER + "/" + SITE_MAKER_PICTURE), SITE_MAKER_ADDRESS, SITE_MAKER_NAME)
+	write(&b, "<p>Generated by <code>kerneltool site</code> from ")
 	if site.commit != "" {
 		fmt.sbprintf(&b, "the commit <a href=\"%s/commit/%s\"><code>%s</code></a>", SITE_REPOSITORY_ADDRESS, site.commit, site.commit[:12])
 	} else {

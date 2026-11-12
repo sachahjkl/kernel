@@ -24,7 +24,9 @@ package kerneltool
 import "core:fmt"
 import "core:os"
 import "core:strings"
+import "core:sync"
 import "core:time"
+import "contract:remote"
 import "support:pci"
 
 EXIT_FAILURE :: 1
@@ -108,7 +110,7 @@ COMMANDS :: [?]Command {
 	{name = "module", about = "module <name> with_checks|without_checks measure_run|usual_run: build one module of the table (the parallel build runs this command)", run = run_module},
 	{name = "test", about = "build, start the machine under QEMU, act as the person, check the log, save pictures of the screen; `test network`, `test main`, `test power`, `test tcp`, `test quic`, `test quic-real`, `test random`, `test extended_state`, `test return_fault`, `test trusted_boot`: one part only; `test trusted_boot tpm`: with the two machines that have a software TPM", run = run_test},
 	{name = "run", about = "build, then start the machine under QEMU, with the log of the kernel on this terminal; `run without_checks`: the measure build", run = run_machine},
-	{name = "screenshots", about = "test, then copy the pictures to " + DOCUMENT_SCREENSHOT_FOLDER + " and to a new folder of " + DEVELOPMENT_LOG_FOLDER + "; `screenshots compress`: compress the PNG files of " + DOCUMENT_SCREENSHOT_FOLDER + " and " + RESOURCE_FOLDER + " whose data is stored, with no machine", run = run_screenshots},
+	{name = "screenshots", about = "test and the second build, then write the measure record " + MEASURE_RECORD_FILE + " and copy the pictures to " + DOCUMENT_SCREENSHOT_FOLDER + " and to a new folder of " + DEVELOPMENT_LOG_FOLDER + "; `screenshots compress`: compress the PNG files of " + DOCUMENT_SCREENSHOT_FOLDER + " and " + RESOURCE_FOLDER + " whose data is stored, with no machine", run = run_screenshots},
 	{name = "measure", about = "build, start the machine, run the measures of the locks of the kernel with no other program, and stop: the numbers are in " + TEST_OUTPUT_MEASURE + "; `measure scheduler N`: the program scheduler N times; `measure windows`: each window that the interface package draws, alone, and a table of the time of its pictures; `measure without_checks ...`: the measure build, with no check in the kernel (no lock order check, no check of the frames)", run = run_measure},
 	{name = "film", about = "build, start the machine, film the terminal, and write " + FILM_OUTPUT + " and a copy in " + DEVELOPMENT_LOG_FOLDER + " (needs ffmpeg)", run = run_film},
 	{name = "font", about = "convert the BDF file of the font to " + FONT_OUTPUT, run = run_font},
@@ -116,7 +118,7 @@ COMMANDS :: [?]Command {
 	{name = "vector_fonts", about = "subset the vector font candidates of " + VECTOR_FONT_SOURCES_VARIABLE + " to " + VECTOR_FONT_FOLDER + " and draw " + CANDIDATES_PICTURE, run = run_vector_fonts},
 	{name = "logo", about = "draw the files of the mark of the system from support/mark: " + LOGO_FOLDER + " and " + PROJECT_IMAGE + "; `check` verifies them; and " + MARK_ANIMATIONS_PICTURE + ", every frame of the animations of the mark", run = run_logo},
 	{name = "portrait", about = "convert " + PORTRAIT_SOURCE + " to " + PORTRAIT_OUTPUT, run = run_portrait},
-	{name = "call", about = "call \"service.export(arguments)\": call an export of a service of the machine that `run` started, through the program remote, and print the typed result", run = run_call},
+	{name = "call", about = "call <key> \"service.export(arguments)\": call an export of a service of the machine that `run` started, through the program remote over QUIC (key: the public key of remote, from its window), and print the typed result; the peer of `run` takes the call on a socket that only this user reaches", run = run_call},
 	{name = "repeat", about = "repeat <module> <count>: build one module again and again, with no machine, and count the distinct modules, LLVM IR files and objects; `repeat all <count> [processes]`: every module and the boot program, one row each", run = run_repeat},
 	{name = "cryptography-take", about = "cryptography-take <file under the root of Odin> <file of the repository>: copy a file of core:crypto with the listed import changes, and print its line of the manifest", run = run_cryptography_take},
 	{name = "cryptography-system-hashes", about = "print the line of " + CRYPTOGRAPHY_SYSTEM_FILES + " for each .odin file of support/cryptography that is not taken from Odin", run = run_cryptography_system_hashes},
@@ -272,11 +274,16 @@ run_machine :: proc(args: []string) -> int {
 	if !disk_prepare(DATA_DISK, DATA_DISK_SIZE, false) {
 		return EXIT_FAILURE
 	}
-	// The peer receives the call requests of `kerneltool call` at CALL_PORT.
+	// The peer receives the calls of `kerneltool call` on a Unix socket of
+	// the private folder of the user: `kerneltool call` finds it by its name.
 	peer: Peer
-	if !peer_start(&peer, CALL_PORT) {
+	if !peer_start(&peer, CALL_SOCKET_RUN_NAME) {
 		return EXIT_FAILURE
 	}
+	// The person names the key of each start of remote in `kerneltool
+	// call`: this peer takes it.
+	peer.remote.keys_from_calls = true
+	fmt.printfln("kerneltool: the peer takes the calls of `kerneltool call` at %s (only this user reaches it)", peer.call_socket)
 	defer peer_stop(&peer)
 	command, ok := machine_command(BOOT_VOLUME, "", DATA_DISK, &peer)
 	if !ok {
@@ -368,8 +375,19 @@ run_test :: proc(args: []string) -> int {
 	return 0
 }
 
-// run_screenshots runs the machine test and copies its pictures to the
-// documents and to a new folder of the development log.
+// The count of the checks that passed in this process: the measure record
+// states it. Each check that passes prints its line through
+// test_passed_print. A peer thread can print one, so the count is atomic.
+test_passed_count: int
+
+test_passed_print :: proc(format: string, args: ..any) {
+	sync.atomic_add(&test_passed_count, 1)
+	fmt.printfln("kerneltool: test passed: %s", fmt.tprintf(format, ..args))
+}
+
+// run_screenshots runs the machine test and the second build, writes the
+// measure record (measure_record.odin), and copies the pictures of the test
+// to the documents and to a new folder of the development log.
 // `screenshots compress` runs no machine: it compresses each PNG file of
 // the documents and of the resources whose data is stored (picture_files.odin).
 run_screenshots :: proc(args: []string) -> int {
@@ -382,8 +400,18 @@ run_screenshots :: proc(args: []string) -> int {
 		fmt.eprintln("kerneltool: screenshots takes no argument, or `compress`")
 		return EXIT_USAGE
 	}
+	// The facts of the tree before the pass changes it: the pass writes the
+	// pictures and the record into the repository.
+	run_facts := measure_run_facts_read()
 	if code := run_test(nil); code != 0 {
 		return code
+	}
+	// The record states the second build, as `kerneltool check` makes it.
+	if !outputs_same_after_second_build() {
+		return EXIT_FAILURE
+	}
+	if !measure_record_write(run_facts) {
+		return EXIT_FAILURE
 	}
 	pictures, ok := files_with_suffix(SCREENSHOT_FOLDER, ".png")
 	// The name of the folder is the time of the run, in UTC.
@@ -512,13 +540,13 @@ run_check :: proc(args: []string) -> int {
 		if !run({"odin", "check", strings.concatenate({"contract/", name}, context.temp_allocator), "-no-entry-point", "-vet", CONTRACT_LIBRARY}) {
 			return EXIT_FAILURE
 		}
-		fmt.printfln("kerneltool: test passed: contract:%s compiles with the contract library only", name)
+		test_passed_print("contract:%s compiles with the contract library only", name)
 	}
 	// The tests of runtime/memory.asm link the form of the host: the
 	// compiler assembles runtime/memory_for_host_tests.asm itself and links
 	// its object by its path (a library found through `-L/` is refused by
 	// the linker of the Nix sandbox).
-	for folder in ([]string{"runtime", "contract/blake3", "contract/isolated", "contract/pointer_pictures", "contract/remote", "support/sentence", "support/cryptography/vectors", "modules/cryptography", "support/quic", "contract/date", "support/storage_mount", "support/storage_retention", "support/calendar", "support/line_editor", "modules/interface_module", "modules/sample", "support/system", "support/bar", "support/graphics", "support/interface", "support/addresses", "support/information", "support/vector_font", "support/network", "support/tcp", "support/web", "support/cryptography/chacha20", "support/random", "tools/kerneltool", "contract/fixed_addresses", "contract/settings", "modules/text_shaping", "support/text_shaping", "support/mark", "support/terminal", "contract/cut_mark", "runtime/without_vector_registers", "support/instruction_sets", "contract/system_description"}) {
+	for folder in ([]string{"runtime", "contract/blake3", "contract/isolated", "contract/pointer_pictures", "contract/remote", "support/sentence", "support/cryptography/vectors", "modules/cryptography", "support/quic", "contract/date", "support/storage_mount", "support/storage_retention", "support/calendar", "support/line_editor", "support/console_language", "modules/interface_module", "modules/sample", "support/system", "support/bar", "support/graphics", "support/interface", "support/addresses", "support/information", "support/vector_font", "support/network", "support/tcp", "support/web", "support/cryptography/chacha20", "support/random", "tools/kerneltool", "contract/fixed_addresses", "contract/settings", "modules/text_shaping", "support/text_shaping", "support/mark", "support/terminal", "contract/cut_mark", "runtime/without_vector_registers", "support/instruction_sets", "contract/system_description"}) {
 		name, _ := strings.replace_all(folder, "/", "_", context.temp_allocator)
 		if !run({"odin", "test", folder, "-vet", CONTRACT_LIBRARY, SUPPORT_LIBRARY, strings.concatenate({"-out:" + BUILD_FOLDER + "/test_", name}, context.temp_allocator)}) {
 			return EXIT_FAILURE
@@ -607,6 +635,12 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 	if !run({"chmod", "u+w", variables_copy}) {
 		return nil, false
 	}
+	listener_port := forward.listener != nil ? forward.listener.port : 0
+	network_device := network_device_of(forward.host_port, listener_port, peer.port, peer.machine.port)
+	if problem := network_device_problem(network_device); problem != "" {
+		fmt.eprintfln("kerneltool: %s", problem)
+		return nil, false
+	}
 	list := make([dynamic]string, context.temp_allocator)
 	append(
 		&list,
@@ -632,7 +666,7 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 		"-net",
 		"none", // No other network device than the one below.
 		"-netdev",
-		forward.host_port != 0 ? fmt.tprintf("user,id=network,restrict=on,hostfwd=tcp:127.0.0.1:%d-10.0.2.15:80,guestfwd=tcp:%s:80-tcp:127.0.0.1:%d", forward.host_port, GUEST_ADDRESS, forward.listener.port) : fmt.tprintf("dgram,id=network,remote.type=inet,remote.host=127.0.0.1,remote.port=%d,local.type=inet,local.host=127.0.0.1,local.port=%d", peer.port, peer.machine.port),
+		network_device,
 	)
 	if forward.host_port != 0 {
 		// Each frame of the device, with its time, for the tool after the run
@@ -699,6 +733,44 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 		append(&list, "-serial", "stdio")
 	}
 	return list[:], true
+}
+
+// network_device_of gives the network device of a machine: QEMU user
+// networking with its TCP when host_port is not 0 (web_host.odin), else the
+// peer (`-netdev dgram`).
+network_device_of :: proc(host_port, listener_port, peer_port, machine_port: int) -> string {
+	if host_port != 0 {
+		return fmt.tprintf("user,id=network,restrict=on,hostfwd=tcp:127.0.0.1:%d-10.0.2.15:80,guestfwd=tcp:%s:80-tcp:127.0.0.1:%d", host_port, GUEST_ADDRESS, listener_port)
+	}
+	return fmt.tprintf("dgram,id=network,remote.type=inet,remote.host=127.0.0.1,remote.port=%d,local.type=inet,local.host=127.0.0.1,local.port=%d", peer_port, machine_port)
+}
+
+// network_device_problem refuses a network device that forwards a UDP port
+// of the host to the port of `remote`. QEMU user networking gives each
+// forwarded datagram the address 10.0.2.2, the one address that the grant
+// of `remote` admits: such a forward opens the calls as the person to
+// whoever reaches the port of the host (docs/QUIC.md, section 7). A
+// forward is "hostfwd=[tcp|udp]:[address]:port-[address]:port"; with no
+// protocol it is TCP.
+network_device_problem :: proc(device: string) -> string {
+	for part in strings.split(device, ",", context.temp_allocator) {
+		if !strings.has_prefix(part, "hostfwd=") {
+			continue
+		}
+		rule := part[len("hostfwd="):]
+		if !strings.has_prefix(rule, "udp:") {
+			continue
+		}
+		dash := strings.last_index_byte(rule, '-')
+		colon := strings.last_index_byte(rule, ':')
+		if dash < 0 || colon < dash {
+			return fmt.tprintf("the network device has a UDP forward that the tool cannot read: %s", part)
+		}
+		if rule[colon + 1:] == fmt.tprintf("%d", remote.LISTEN_PORT) {
+			return fmt.tprintf("the network device forwards a UDP port of the host to the port %d of remote: each sender would call as the person (%s)", remote.LISTEN_PORT, part)
+		}
+	}
+	return ""
 }
 
 // run starts a program with the terminal of this tool and waits for its end.

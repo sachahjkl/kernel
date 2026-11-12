@@ -54,23 +54,67 @@ Site_Search_Kind :: enum u8 {
 	Release,
 	Gap,
 	License_Row,
+	Type,
 }
 
-site_search_kind_names := [Site_Search_Kind]string {
-	.Page            = "page",
-	.Module          = "module",
-	.Program         = "program",
-	.Export          = "export",
-	.Operation       = "operation",
-	.Error_Kind      = "error kind",
-	.Console_Command = "console command",
-	.Term            = "term",
-	.Guide_Section   = "guide section",
-	.Property        = "property",
-	.News            = "news",
-	.Release         = "release",
-	.Gap             = "gap",
-	.License_Row     = "license row",
+// What the site shows of a kind of entry: its name for one entry (the list
+// of results and the chart of the docs home give it), the value kind whose
+// icon and color it takes, so that the list and the chart show one look for
+// one kind, and the folder of the one page that lists every entry of the
+// kind. No page lists every page or every export: their folder is "".
+Site_Search_Kind_Description :: struct {
+	name:       string,
+	value_kind: Site_Value_Kind,
+	folder:     string,
+}
+
+// The one table of the kinds of entries. The chart of the docs home tells
+// the kinds apart by their icons and their colors, so the kinds with many
+// entries have looks of their own: a page is a file of the site, a term
+// has the kind of the glossary, an export (a procedure that a program
+// calls in a module) the arrow into a box of a call, a license row the
+// mark of what a license grants. A module and a program share the look of
+// the one page that lists both.
+site_search_kinds := [Site_Search_Kind]Site_Search_Kind_Description {
+	.Page            = {name = "page", value_kind = .File, folder = ""},
+	.Module          = {name = "module", value_kind = .Module, folder = SITE_MODULES_FOLDER},
+	.Program         = {name = "program", value_kind = .Module, folder = SITE_MODULES_FOLDER},
+	.Export          = {name = "export", value_kind = .Operation, folder = ""},
+	.Operation       = {name = "operation", value_kind = .Operation, folder = SITE_OPERATIONS_FOLDER},
+	.Error_Kind      = {name = "error kind", value_kind = .Status, folder = SITE_ERRORS_FOLDER},
+	.Console_Command = {name = "console command", value_kind = .Command, folder = SITE_CONSOLE_FOLDER},
+	.Term            = {name = "term", value_kind = .Term, folder = SITE_GLOSSARY_FOLDER},
+	.Guide_Section   = {name = "guide section", value_kind = .Guide, folder = SITE_GUIDE_FOLDER},
+	.Property        = {name = "property", value_kind = .Status, folder = SITE_STATUS_FOLDER},
+	.News            = {name = "news entry", value_kind = .Time, folder = SITE_NEWS_FOLDER},
+	.Release         = {name = "release", value_kind = .Version, folder = SITE_RELEASES_FOLDER},
+	.Gap             = {name = "gap", value_kind = .No, folder = SITE_STATUS_FOLDER},
+	.License_Row     = {name = "license row", value_kind = .Grant, folder = SITE_LICENSES_FOLDER},
+	.Type            = {name = "type", value_kind = .Type, folder = SITE_TYPES_FOLDER},
+}
+
+// site_search_kind_words gives the name of a kind of entry for a count:
+// "1 term", "3 terms", "2 properties", "1 news entry", "16 news entries".
+site_search_kind_words :: proc(kind: Site_Search_Kind, count: int) -> string {
+	name := site_search_kinds[kind].name
+	if count == 1 {
+		return name
+	}
+	if strings.has_suffix(name, "y") {
+		return strings.concatenate({name[:len(name) - 1], "ies"}, context.temp_allocator)
+	}
+	return strings.concatenate({name, "s"}, context.temp_allocator)
+}
+
+// site_search_kind_page gives the page that lists every entry of a kind,
+// when the site has it, or "".
+site_search_kind_page :: proc(site: ^Site, kind: Site_Search_Kind) -> string {
+	folder := site_search_kinds[kind].folder
+	if folder == "" {
+		return ""
+	}
+	page := site_page_file(folder)
+	return site_page_exists(site, page) ? page : ""
 }
 
 Site_Search_Entry :: struct {
@@ -179,6 +223,33 @@ site_search_match_orders := [?]Site_Search_Match_Order {
 	{"tie", "set", "beta.set", 104},
 }
 
+// The cases of the counts by kind, which the chart of the docs home shows
+// and the restriction of the list to one kind uses. The tie order of a
+// name stands for the kind of an entry of the index. A case is a query over
+// the names of a group and the tie order that the list keeps (-1: every
+// one); it expects the count of the names that match for each tie order,
+// as "tie:count" in the order of the tie orders, the count of the matches
+// that the list keeps, and the first name of the list ("" for none). The
+// empty query is the field with no text: the counts of the whole group.
+Site_Search_Kind_Case :: struct {
+	group:  string,
+	query:  string,
+	only:   int,
+	counts: string,
+	listed: int,
+	first:  string,
+}
+
+site_search_kind_cases := [?]Site_Search_Kind_Case {
+	{"tie", "set", -1, "1:2 2:1 3:1", 4, "set.long_name"},
+	{"tie", "set", 1, "1:2 2:1 3:1", 2, "alpha.set"},
+	{"tie", "set", 2, "1:2 2:1 3:1", 1, "beta.set"},
+	{"tie", "long", -1, "3:1", 1, "set.long_name"},
+	{"tie", "long", 1, "3:1", 0, ""},
+	{"tie", "", -1, "1:2 2:1 3:1", 4, "alpha.set"},
+	{"system", "stwr", -1, "0:1", 1, "storage.write"},
+}
+
 // site_search_cut gives a text of at most limit bytes, cut at the start of
 // a character, with "..." when it is cut.
 site_search_cut :: proc(text: string, limit: int) -> string {
@@ -248,23 +319,37 @@ site_search_entries :: proc(site: ^Site) -> []Site_Search_Entry {
 	}
 	for item in site.reference.modules {
 		kind: Site_Search_Kind = item.kind == "program" ? .Program : .Module
-		site_search_add(&entries, item.build.name, item.page, "", kind, item.description.about)
+		site_search_add(&entries, item.build.name, item.page, "", kind, site_source_comment_plain(site, item.description.about))
 		for export in item.description.exports {
-			site_search_add(&entries, strings.concatenate({item.build.name, ".", export.name}, context.temp_allocator), item.page, strings.concatenate({"export-", site_slug(export.name)}, context.temp_allocator), .Export, strings.concatenate({site_export_signature(item.description, export), ": ", export.about}, context.temp_allocator))
+			site_search_add(&entries, strings.concatenate({item.build.name, ".", export.name}, context.temp_allocator), item.page, strings.concatenate({"export-", site_slug(export.name)}, context.temp_allocator), .Export, strings.concatenate({site_export_signature(item.description, export), ": ", site_source_comment_plain(site, export.about)}, context.temp_allocator))
 		}
 	}
 	for operation in site.reference.operations {
 		if operation.member.number != 0 {
-			site_search_add(&entries, operation.member.name, site_page_file(SITE_OPERATIONS_FOLDER), strings.concatenate({"operation-", site_slug(operation.member.name)}, context.temp_allocator), .Operation, operation.text)
+			site_search_add(&entries, operation.member.name, site_page_file(SITE_OPERATIONS_FOLDER), strings.concatenate({"operation-", site_slug(operation.member.name)}, context.temp_allocator), .Operation, site_source_comment_plain(site, operation.text))
 		}
 	}
 	for kind in site.reference.error_kinds {
 		if kind.number != 0 {
-			site_search_add(&entries, kind.name, site_page_file(SITE_ERRORS_FOLDER), strings.concatenate({"kind-", site_slug(kind.name)}, context.temp_allocator), .Error_Kind, kind.comment)
+			site_search_add(&entries, kind.name, site_page_file(SITE_ERRORS_FOLDER), strings.concatenate({"kind-", site_slug(kind.name)}, context.temp_allocator), .Error_Kind, site_source_comment_plain(site, kind.comment))
 		}
 	}
+	// Each type of the contract, by its name and by its name with its
+	// package: a reader looks for "Time_Record" as the code writes it.
+	types_page := site_page_file(SITE_TYPES_FOLDER)
+	for type in site.types {
+		text := site_source_comment_plain(site, type.description)
+		if text == "" {
+			text = type.declaration
+		}
+		title := type.name
+		if type.package_name != "" {
+			title = strings.concatenate({type.package_name, ".", type.name}, context.temp_allocator)
+		}
+		site_search_add(&entries, title, types_page, type.id, .Type, text)
+	}
 	for command in site.reference.console_commands {
-		site_search_add(&entries, command.name, site_page_file(SITE_CONSOLE_FOLDER), strings.concatenate({"command-", site_slug(command.name)}, context.temp_allocator), .Console_Command, strings.concatenate({site_console_signature(command), ": ", command.about}, context.temp_allocator))
+		site_search_add(&entries, command.name, site_page_file(SITE_CONSOLE_FOLDER), strings.concatenate({"command-", site_slug(command.name)}, context.temp_allocator), .Console_Command, strings.concatenate({site_console_signature(command), ": ", site_source_comment_plain(site, command.about)}, context.temp_allocator))
 	}
 	for term in site.terms {
 		site_search_add(&entries, term.name, site_page_file(SITE_GLOSSARY_FOLDER), term.id, .Term, term.definition)
@@ -382,11 +467,12 @@ site_json_string :: proc(b: ^strings.Builder, text: string) {
 }
 
 // site_search_index_json gives search.json:
-//   {"kinds": [<name>, ...], "pages": [[<link>, <title>], ...],
+//   {"kinds": [[<name>, <value kind>], ...], "pages": [[<link>, <title>], ...],
 //    "entries": [[<title>, <page index>, <anchor>, <kind index>, <text>], ...]}
-// The kind index is also the tie order of the match. The link of a page is
-// the link from the root of the site, where the script is, as
-// site_page_link writes it: the script only joins it to its folder.
+// The kind index is also the tie order of the match. The value kind is the
+// name of the class whose icon and color the list shows for the kind. The
+// link of a page is the link from the root of the site, where the script
+// is, as site_page_link writes it: the script only joins it to its folder.
 site_search_index_json :: proc(site: ^Site, entries: []Site_Search_Entry, pages: []Site_Page) -> string {
 	b := strings.builder_make(context.temp_allocator)
 	strings.write_string(&b, "{\"kinds\":[")
@@ -394,7 +480,11 @@ site_search_index_json :: proc(site: ^Site, entries: []Site_Search_Entry, pages:
 		if kind != .Page {
 			strings.write_byte(&b, ',')
 		}
-		site_json_string(&b, site_search_kind_names[kind])
+		strings.write_byte(&b, '[')
+		site_json_string(&b, site_search_kinds[kind].name)
+		strings.write_byte(&b, ',')
+		site_json_string(&b, site_value_kinds[site_search_kinds[kind].value_kind].name)
+		strings.write_byte(&b, ']')
 	}
 	strings.write_string(&b, "],\n\"pages\":[")
 	page_numbers := make(map[string]int, context.temp_allocator)
@@ -442,7 +532,8 @@ site_search_rule_json :: proc() -> string {
 }
 
 // site_search_cases_json gives the table of the matcher as the script reads
-// it: {"names": [[group, name, tie order], ...], "orders": [[group, query, name, score], ...]}.
+// it: {"names": [[group, name, tie order], ...], "orders": [[group, query,
+// name, score], ...], "kinds": [[group, query, only, counts, listed, first], ...]}.
 site_search_cases_json :: proc() -> string {
 	b := strings.builder_make(context.temp_allocator)
 	strings.write_string(&b, "{\"names\":[")
@@ -463,6 +554,18 @@ site_search_cases_json :: proc() -> string {
 		site_json_string(&b, order.name)
 		fmt.sbprintf(&b, ",%d]", order.score)
 	}
+	strings.write_string(&b, "],\"kinds\":[")
+	for kind_case, index in site_search_kind_cases {
+		strings.write_string(&b, index > 0 ? ",[" : "[")
+		site_json_string(&b, kind_case.group)
+		strings.write_byte(&b, ',')
+		site_json_string(&b, kind_case.query)
+		fmt.sbprintf(&b, ",%d,", kind_case.only)
+		site_json_string(&b, kind_case.counts)
+		fmt.sbprintf(&b, ",%d,", kind_case.listed)
+		site_json_string(&b, kind_case.first)
+		strings.write_byte(&b, ']')
+	}
 	strings.write_string(&b, "]}")
 	return strings.to_string(b)
 }
@@ -475,12 +578,25 @@ site_search_script :: proc() -> string {
 	return with_cases
 }
 
-// The box of the search in the bar, in the place of the clock of the bar of
-// the desktop. It is hidden: the script shows it, so a page read with no
-// script has no box that does nothing.
-SITE_SEARCH_BOX :: `<div class="search" role="search" hidden>
-<label class="search-label" for="site-search-box">Search the site</label>
-<input id="site-search-box" type="text" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="site-search-list" aria-describedby="site-search-hint" autocomplete="off" spellcheck="false" placeholder="Search  /">
+// The places of the search field of a page: the bar, in the place of the
+// clock of the bar of the desktop, or the page itself, as a large field in
+// the middle of the home of the docs. A page has one field, in one place.
+Site_Search_Place :: enum {
+	Bar,
+	Docs_Home,
+}
+
+// The id of the search field: the script finds the field of a page by it,
+// and the check of a page counts it.
+SITE_SEARCH_FIELD_ID :: "site-search-box"
+
+// The search field and its list, in one markup for both places: the class
+// of its box and the words of its placeholder are the two parts that
+// differ. It is hidden: the script shows it, so a page read with no script
+// has no field that does nothing.
+SITE_SEARCH_FIELD_FORMAT :: `<div class="%s" role="search" hidden>
+<label class="search-label" for="` + SITE_SEARCH_FIELD_ID + `">Search the site</label>
+<input id="` + SITE_SEARCH_FIELD_ID + `" type="text" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="site-search-list" aria-describedby="site-search-hint" autocomplete="off" spellcheck="false" placeholder="%s">
 <div class="search-panel" id="site-search-panel" hidden>
 <p class="search-hint" id="site-search-hint" aria-live="polite"></p>
 <ul class="search-list" id="site-search-list" role="listbox" aria-label="Results"></ul>
@@ -488,6 +604,37 @@ SITE_SEARCH_BOX :: `<div class="search" role="search" hidden>
 </div>
 </div>
 `
+
+// site_search_field_html gives the search field of a page in one place.
+site_search_field_html :: proc(place: Site_Search_Place) -> string {
+	class, placeholder: string
+	switch place {
+	case .Bar:
+		class, placeholder = "search", "Search  /"
+	case .Docs_Home:
+		class, placeholder = "search search-door", "Search the whole site  /"
+	}
+	return fmt.tprintf(SITE_SEARCH_FIELD_FORMAT, class, placeholder)
+}
+
+// site_search_field_problem gives the fault of the search field of a
+// written page, or "": a page has one search field; it is in the bar, but
+// on a page that holds its own field, where it is after the bar.
+site_search_field_problem :: proc(page: Site_Page, html: string) -> string {
+	mark :: "id=\"" + SITE_SEARCH_FIELD_ID + "\""
+	if count := strings.count(html, mark); count != 1 {
+		return fmt.tprintf("%d search fields; a page has one", count)
+	}
+	bar_end := strings.index(html, "</header>")
+	in_bar := bar_end >= 0 && strings.index(html, mark) < bar_end
+	if page.search_in_page && in_bar {
+		return "the search field is in the bar; this page holds its own field, and its bar has none"
+	}
+	if !page.search_in_page && !in_bar {
+		return "the search field is not in the bar"
+	}
+	return ""
+}
 
 // The script. The match is support/line_editor/fuzzy_match.odin: lower, fuzzy_match,
 // ranked_before and rank_candidates (with no skip of equal names), on the
@@ -556,14 +703,21 @@ SITE_SEARCH_SCRIPT_SOURCE :: `// The search of the site, written by kerneltool s
   }
 
   // rank_candidates: candidates are {bytes, tie}; at most capacity kept.
-  function rank(query, candidates, capacity) {
+  // byTie counts every match by its tie order, which is the kind of an
+  // entry of the index. With only >= 0, the list keeps and counts the
+  // matches of that tie order alone; byTie still counts all of them.
+  function rank(query, candidates, capacity, only) {
     const read = Math.min(candidates.length, RULE.candidateScanLimit);
     const ranked = [];
+    const byTie = new Map();
+    const restricted = typeof only === "number" && only >= 0;
     let matched = 0;
     for (let index = 0; index < read; index++) {
       const candidate = candidates[index];
       const found = fuzzyMatch(query, candidate.bytes);
       if (!found) continue;
+      byTie.set(candidate.tie, (byTie.get(candidate.tie) || 0) + 1);
+      if (restricted && candidate.tie !== only) continue;
       matched++;
       const entry = { index: index, score: found.score, places: found.places, tie: candidate.tie, bytes: candidate.bytes };
       let place = ranked.length;
@@ -572,7 +726,27 @@ SITE_SEARCH_SCRIPT_SOURCE :: `// The search of the site, written by kerneltool s
       ranked.splice(place, 0, entry);
       if (ranked.length > capacity) ranked.pop();
     }
-    return { ranked: ranked, matched: matched };
+    return { ranked: ranked, matched: matched, byTie: byTie };
+  }
+
+  // The counts of the chart for the text of the field: with no text, the
+  // count of each tie order over the whole index; with a text, the count of
+  // the matches of each one, by the same match as the list.
+  function countsFor(query, candidates) {
+    if (query.length === 0) {
+      const whole = new Map();
+      const read = Math.min(candidates.length, RULE.candidateScanLimit);
+      for (let index = 0; index < read; index++) {
+        const tie = candidates[index].tie;
+        whole.set(tie, (whole.get(tie) || 0) + 1);
+      }
+      return whole;
+    }
+    return rank(encoder.encode(query), candidates, 0, -1).byTie;
+  }
+
+  function countsText(counts) {
+    return Array.from(counts.keys()).sort((a, b) => a - b).map(tie => tie + ":" + counts.get(tie)).join(" ");
   }
 
   function selfTest() {
@@ -594,8 +768,18 @@ SITE_SEARCH_SCRIPT_SOURCE :: `// The search of the site, written by kerneltool s
       if (got === want && result.matched === item.expected.length) passed++;
       else if (!first) first = item.group + " \"" + item.query + "\": " + got + "; expected " + want;
     }
-    return first === "" ? "search self test: " + passed + " of " + cases.size + " cases pass" :
-      "search self test: FAIL, " + passed + " of " + cases.size + " cases pass; the first that fails: " + first;
+    // The counts by kind, the restriction to one kind, and the field with
+    // no text, which gives the counts of the whole group.
+    for (const [group, query, only, counts, listed, firstName] of CASES.kinds) {
+      const gotCounts = countsText(countsFor(query, groups[group]));
+      const result = rank(encoder.encode(query), groups[group], RULE.rankedCapacity, only);
+      const gotFirst = result.ranked.length > 0 ? groups[group][result.ranked[0].index].name : "";
+      if (gotCounts === counts && result.matched === listed && gotFirst === firstName) passed++;
+      else if (!first) first = group + " \"" + query + "\" in " + only + ": " + gotCounts + ", " + result.matched + " listed, first \"" + gotFirst + "\"; expected " + counts + ", " + listed + " listed, first \"" + firstName + "\"";
+    }
+    const count = cases.size + CASES.kinds.length;
+    return first === "" ? "search self test: " + passed + " of " + count + " cases pass" :
+      "search self test: FAIL, " + passed + " of " + count + " cases pass; the first that fails: " + first;
   }
   // The line of the self test is printed when the script runs, during the
   // load of the page, and again when the list opens: a capture of the
@@ -701,9 +885,14 @@ SITE_SEARCH_SCRIPT_SOURCE :: `// The search of the site, written by kerneltool s
     });
   }
 
-  const box = document.getElementById("site-search-box");
+  // The search field of the page: in the menu of the bar, or in the page
+  // itself on the home of the docs. A page has one; the menu opens for it
+  // only when it holds it.
+  const box = document.getElementById("` + SITE_SEARCH_FIELD_ID + `");
   if (!box || !script) return;
   const search = box.parentElement;
+  const inMenu = menu !== null && menu.contains(box);
+  function showField() { if (inMenu) showMenu(); }
   const panel = document.getElementById("site-search-panel");
   const list = document.getElementById("site-search-list");
   const hint = document.getElementById("site-search-hint");
@@ -720,7 +909,7 @@ SITE_SEARCH_SCRIPT_SOURCE :: `// The search of the site, written by kerneltool s
         if (!answer.ok) throw new Error("status " + answer.status);
         return answer.json();
       }).then(data => {
-        index = data.entries.map(e => ({ title: e[0], page: data.pages[e[1]], anchor: e[2], kind: data.kinds[e[3]], text: e[4], bytes: encoder.encode(e[0]), tie: e[3] }));
+        index = data.entries.map(e => ({ title: e[0], page: data.pages[e[1]], anchor: e[2], kind: data.kinds[e[3]][0], value: data.kinds[e[3]][1], text: e[4], bytes: encoder.encode(e[0]), tie: e[3] }));
       }).catch(() => {
         index = [];
         hint.textContent = "The index of the search cannot be read: a page opened from a file cannot read another file. Every page is reachable by its links.";
@@ -780,17 +969,116 @@ SITE_SEARCH_SCRIPT_SOURCE :: `// The search of the site, written by kerneltool s
     }
   }
 
+  // The chart of the docs home (docs/SITE.md, "The docs home"). With no
+  // script it shows the counts of the whole index, and a row whose kind has
+  // a page is a link to it. While the field holds a text, each row shows the
+  // count of the matches of its kind, in the same place, and is a button
+  // that keeps the list to its kind; with no text it is a link again.
+  const chart = document.getElementById("search-chart");
+  const chartRows = chart ? Array.from(chart.querySelectorAll("li[data-kind]")).map(row => ({
+    row: row,
+    kind: Number(row.dataset.kind),
+    singular: row.dataset.singular,
+    plural: row.dataset.plural,
+    target: row.querySelector(".search-chart-target"),
+    name: row.querySelector(".search-chart-name"),
+    count: row.querySelector(".search-chart-count"),
+    length: row.querySelector(".search-chart-length"),
+    least: row.querySelector(".search-chart-least"),
+  })) : [];
+  const chartMatched = document.getElementById("search-chart-matched");
+  const chartMatchedCount = document.getElementById("search-chart-matched-count");
+  const chartWords = document.getElementById("search-chart-words");
+  const leastLength = chart ? chart.dataset.least : "0";
+  // The kind that the list keeps, or -1 for every kind.
+  let only = -1;
+  let chartButtons = false;
+
+  function kindPlural(kind) {
+    const item = chartRows.find(row => row.kind === kind);
+    return item ? item.plural : "";
+  }
+
+  // The rows are buttons while the field holds a text, links (or plain
+  // rows, for a kind with no page) when it is empty.
+  function chartAsButtons(on) {
+    if (on !== chartButtons) {
+      chartButtons = on;
+      for (const item of chartRows) {
+        if (on) {
+          item.target.setAttribute("role", "button");
+          item.target.setAttribute("tabindex", "0");
+        } else {
+          item.target.removeAttribute("role");
+          item.target.removeAttribute("tabindex");
+          item.target.removeAttribute("aria-pressed");
+        }
+      }
+    }
+    if (on) for (const item of chartRows) item.target.setAttribute("aria-pressed", item.kind === only ? "true" : "false");
+  }
+
+  // A length is the count over the largest count, as the tool writes it;
+  // the least length keeps a small count visible. The order of the rows
+  // does not change while the reader types.
+  function drawChart(counts, querying) {
+    if (!chart) return;
+    let largest = 0, total = 0;
+    for (const item of chartRows) largest = Math.max(largest, counts.get(item.kind) || 0);
+    for (const value of counts.values()) total += value;
+    for (const item of chartRows) {
+      const value = counts.get(item.kind) || 0;
+      item.count.textContent = String(value);
+      item.name.textContent = value === 1 ? item.singular : item.plural;
+      item.length.setAttribute("width", largest > 0 ? (Math.floor(value * 1000 / largest) / 10).toFixed(1) + "%" : "0.0%");
+      item.least.setAttribute("width", value > 0 ? leastLength : "0");
+      item.row.classList.toggle("search-chart-none", value === 0);
+    }
+    chartMatched.hidden = !querying;
+    chartMatchedCount.textContent = String(total);
+    chartWords.textContent = querying ? "entries match" : "entries in the index";
+    chartAsButtons(querying);
+  }
+
+  // One kind at a time: a second press on the same row gives every kind
+  // back. The focus returns to the field, whose list shows the result and
+  // takes the keys.
+  function keepKind(kind) {
+    only = only === kind ? -1 : kind;
+    chartAsButtons(chartButtons);
+    box.focus();
+    load().then(render);
+  }
+
+  if (chart) {
+    // With no text in the field, a row does what its markup does: a link
+    // opens its page.
+    const pressed = event => {
+      const target = event.target.closest(".search-chart-target");
+      if (!chartButtons || !target) return;
+      event.preventDefault();
+      keepKind(Number(target.parentElement.dataset.kind));
+    };
+    chart.addEventListener("click", pressed);
+    chart.addEventListener("keydown", event => { if (event.key === "Enter" || event.key === " ") pressed(event); });
+  }
+
   function render() {
     const query = box.value;
     list.textContent = "";
     shown = [];
+    if (query === "") only = -1;
+    // An index that cannot be read leaves the chart as the tool wrote it.
+    if (index && index.length > 0 && query === "") drawChart(countsFor("", index), false);
     if (!index || query === "") { close(); return; }
     if (index.length === 0) { open(); return; }
-    const result = rank(encoder.encode(query), index, RULE.rows);
+    const result = rank(encoder.encode(query), index, RULE.rows, only);
+    drawChart(result.byTie, true);
     shown = result.ranked;
     const rest = result.matched - shown.length;
-    hint.textContent = result.matched === 0 ? "No entry matches. Escape: close" :
-      result.matched + (result.matched === 1 ? " entry matches" : " entries match") + (rest > 0 ? ", " + rest + " more not shown" : "") + ". Up, Down: choose. Enter: open. Escape: close";
+    const kept = only >= 0 ? "Only " + kindPlural(only) + ". " : "";
+    hint.textContent = kept + (result.matched === 0 ? "No entry matches. Escape: close" :
+      result.matched + (result.matched === 1 ? " entry matches" : " entries match") + (rest > 0 ? ", " + rest + " more not shown" : "") + ". Up, Down: choose. Enter: open. Escape: close");
     shown.forEach((ranked, number) => {
       const item = index[ranked.index];
       const row = document.createElement("li");
@@ -802,9 +1090,14 @@ SITE_SEARCH_SCRIPT_SOURCE :: `// The search of the site, written by kerneltool s
       const name = document.createElement("span");
       name.className = "search-name";
       marked(name, ranked.bytes, ranked.places);
+      // The kind with the icon and the color of its value kind, as the
+      // chart of the docs home shows it; the words stay dim.
       const what = document.createElement("span");
       what.className = "search-what";
-      what.textContent = item.kind + ", " + item.page[1];
+      const kind = document.createElement("span");
+      kind.className = "search-kind value-icon value-" + item.value;
+      kind.textContent = item.kind;
+      what.append(kind, ", " + item.page[1]);
       link.append(name, what);
       row.append(link);
       list.append(row);
@@ -832,9 +1125,9 @@ SITE_SEARCH_SCRIPT_SOURCE :: `// The search of the site, written by kerneltool s
   document.addEventListener("keydown", event => {
     const target = event.target;
     const typing = target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || (target && target.isContentEditable);
-    if (event.key === "/" && !typing && !event.ctrlKey && !event.metaKey && !event.altKey) { showMenu(); box.focus(); event.preventDefault(); }
+    if (event.key === "/" && !typing && !event.ctrlKey && !event.metaKey && !event.altKey) { showField(); box.focus(); event.preventDefault(); }
   });
   const asked = new URLSearchParams(location.search).get("q");
-  if (asked) { showMenu(); box.value = asked; box.focus(); load().then(render); }
+  if (asked) { showField(); box.value = asked; box.focus(); load().then(render); }
 })();
 `

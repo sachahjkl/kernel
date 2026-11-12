@@ -107,7 +107,7 @@ Tables as parameters: one description, three ways to call (a direct call, a call
 
 ![The network: a virtio network device in a program, a network service with ARP, IPv4, ICMP echo and UDP, and an endpoint with a grant of one remote; ten cases with their answers, and the measures](docs/screenshots/network.png)
 
-![A call from the host: kerneltool call "monitor.programs()" reaches the program remote through its endpoint, which makes the isolated call and sends the typed result back; the counts, the connections that the root service made, and the last calls](docs/screenshots/remote.png)
+![A call from the host: kerneltool call reaches the program remote on one QUIC stream, which makes the isolated call and writes the typed result back; the counts, the public key, the connections that the root service made, and the last calls](docs/screenshots/remote.png)
 
 ![TCP in the program: server holds a listen grant on the port 80 and serves one table of connections from one thread; the peer of the test drops, reorders and repeats frames, resets a connection, opens 16 at once, and keeps 32 connections with no progress, which the server ends; the table shows the state, the bytes, the round trip and the congestion window of each connection](docs/screenshots/server.png)
 
@@ -145,7 +145,7 @@ The repository holds no picture of the same window with the pointer theme Posy's
 - A block service drives a virtio disk with device memory and a message interrupt; its client gives the memory that the device reads and writes.
 - The storage service keeps a private store for each program on the data disk: each change is one commit, and a stop of the machine never shows a part of one. `notes` finds its state after a restart of the machine, after QEMU was ended during its commits, and after its last root block was cut.
 - The network: a frame service drives a virtio network device, and the network service gives a program an endpoint of UDP datagrams that reaches only the remote of its grant. The kernel has no network code.
-- `kerneltool call "monitor.programs()"` calls an export of a service of the running machine from the host, and prints the typed result: a table with its field names, a record, a text, or the sentence of its error record. The program `remote` relays the call; the root service decides which services it reaches, and the person revokes its grant with `revoke("remote", "person")`. The test reads the place of the pointer from the compositor before each press, and waits for log records with typed fields through `log.records()`.
+- `kerneltool call <key> "monitor.programs()"` calls an export of a service of the running machine from the host, and prints the typed result: a table with its field names, a record, a text, or the sentence of its error record. The call goes over QUIC to the program `remote`, whose public key (`<key>`, in its window) the host pins; the root service decides which services it reaches, and the person revokes its grant with `revoke("remote", "person")`. The test reads the place of the pointer from the compositor before each press, and waits for log records with typed fields through `log.records()`.
 - `inspect` shows one program live: its address space, its modules, its threads with the state of the scheduler, the stop report of a program that faulted, and the bytes of its own memory, from reports of the kernel that give no byte of another program.
 - The compositor owns the framebuffer. Each program draws into a surface in shared memory.
 - The console is a normal program. A command is a typed function: `hash("abc")`, `start("life")`, `programs()`.
@@ -184,8 +184,19 @@ The repository holds no picture of the same window with the pointer theme Posy's
 | `docs/POINTERS.md` | The pointer pictures: Xcursor, hyprcursor and the others; the format and the manifest of the system; the license of the Posy theme |
 | `docs/TRUSTED_BOOT.md` | The trusted boot: what verifies what at the start, with which key; the signing key; the measure; what each layer does not protect |
 | `docs/DEMONSTRATIONS.md` | For each of the 21 properties: what the machine test shows, the picture, and what no test shows yet |
+| `docs/CONSOLE.md` | The line of the console: the caret, the completion list, the history and its search, the colors of the code |
+| `docs/CRYPTOGRAPHY.md` | The cryptography of QUIC and TLS 1.3: which proven code the system takes, and how it checks it |
+| `docs/FONTS.md` | The text of the system: the vector font, the grid fit, the subpixel bands and the cache of the glyphs |
+| `docs/INTERFACE.md` | The interface package of the programs: the draw records, the damage, the layout, the input and the focus |
+| `docs/NETWORK.md` | The network: the frame service, the network service, and TCP as a library in the program |
+| `docs/QUIC.md` | QUIC version 1: packet protection, TLS 1.3, the transport of a connection, a server of several connections |
+| `docs/RANDOMNESS.md` | Where a program gets random bytes, and how the system measures the strength of its seed |
+| `docs/REPRODUCIBLE_BUILD.md` | One source gives one module: the build, and the threads of the compiler |
+| `docs/SCHEDULING.md` | The scheduling strategies: what the system takes from CFS, EEVDF and `sched_ext`, and how it changes strategy while it runs |
+| `docs/SIMD.md` | Which procedures compute with vectors, in which form, and how a person measures each one |
 | `CHANGELOG.md` | What each release brings, newest first. `changelog.d/` holds the changes that are not in a release yet |
-| `docs/HANDOFF.md` | The working record: current state, rules of the project, next steps |
+| `docs/DECISIONS.md` | The record of the decisions of the project, the open questions and the rules of work |
+| `docs/REVIEWS.md` | The reviews: each concession found, and what removes it |
 | `docs/research/` | Research notes with sources, and video transcripts |
 
 ## Code

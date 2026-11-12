@@ -34,7 +34,7 @@ SITE_HEADLINE_LIMIT :: 110
 
 // site_page_address gives the absolute address of a page. An index page
 // is named by its folder, the form that a host serves and that a person
-// shares: "https://host/path/guides/", not ".../guides/index.html".
+// shares: "https://host/path/docs/guides/", not ".../docs/guides/index.html".
 site_page_address :: proc(address, path: string) -> string {
 	if path == SITE_PAGE {
 		return strings.concatenate({address, "/"}, context.temp_allocator)
@@ -351,7 +351,8 @@ site_structured_data :: proc(site: ^Site, page: Site_Page) -> string {
 	b := strings.builder_make(context.temp_allocator)
 	strings.write_string(&b, "{\"@context\":\"https://schema.org\",\"@graph\":[")
 
-	// The site, with the search that the script reads from "?q=".
+	// The site, with the search that the script reads from "?q=": at the
+	// home of the docs, the page whose own field is the search.
 	{
 		node := site_json_open(&b, "WebSite", website_id)
 		site_json_text(&node, "name", SITE_SYSTEM_NAME)
@@ -364,7 +365,7 @@ site_structured_data :: proc(site: ^Site, page: Site_Page) -> string {
 		action := site_json_open(&b, "SearchAction")
 		site_json_key(&action, "target")
 		target := site_json_open(&b, "EntryPoint")
-		site_json_text(&target, "urlTemplate", strings.concatenate({site_page_address(address, SITE_PAGE), "?q={search_term_string}"}, context.temp_allocator))
+		site_json_text(&target, "urlTemplate", strings.concatenate({site_page_address(address, site_section_page(.Docs)), "?q={search_term_string}"}, context.temp_allocator))
 		site_json_close(&target)
 		site_json_text(&action, "query-input", "required name=search_term_string")
 		site_json_close(&action)

@@ -2,7 +2,7 @@
 
 This document is the design of QUIC version 1 in this system, its first three layers (packet protection, TLS 1.3, the transport of one connection), and the fourth (a server of several connections over a listen grant of UDP, `quic_echo`). The terms are in `GLOSSARY.md`, section "QUIC".
 
-QUIC (RFC 9000) carries the streams of a connection over UDP, and protects each packet with keys that a TLS 1.3 handshake gives (RFC 9001). The purpose here: the service `remote` gets an authentication (a host program that sends UDP to its port acts for the person today), and `server` gets a second transport.
+QUIC (RFC 9000) carries the streams of a connection over UDP, and protects each packet with keys that a TLS 1.3 handshake gives (RFC 9001). The purpose here: the service `remote` gets an authentication of the machine to the host, and a protection of each call on the path (section 7), and `server` gets a second transport.
 
 ## 1. Where QUIC runs
 
@@ -503,56 +503,68 @@ The runs settled the two points that the design left open:
 
 The run passes: OpenSSL takes the Retry, completes the handshake with the raw public key that the machine logged, sends a line and reads it back. The part is in the whole test; it needs only the loopback of the host, and OpenSSL is a build tool of the flake.
 
-## 7. `remote` over QUIC (designed, not built)
+## 7. `remote` over QUIC (built)
 
-**Today.** The service `remote` has a datagram endpoint whose grant names the host (10.0.2.2, port `remote.HOST_PORT`), and the grant to act for the person. A call is one UDP datagram with a request header of 112 bytes (`contract/remote`) and its arguments; an answer comes in one or more datagrams. Nothing is encrypted and nothing is authenticated: whoever can send a datagram from the address and port of the host calls as the person.
+**What it is.** The service `remote` is a QUIC server, as `quic_echo`, and its own transport of datagrams is gone. The host calls an export of a service through it (`docs/MODULE_CONTRACT.md`, "A call from the host"); each call is one call stream.
 
-**What changes.**
-- `remote` becomes a QUIC server, as `quic_echo`: a listen grant of UDP in the place of its grant of the host, its key made at its start, its public key on its log and in its window.
-- The host tool pins that key (the step Quic_Key). The peer of the tool is the QUIC client: `kerneltool call` gives it a call on the loopback of the host as today, and the peer carries it on a stream. A stack of the host can connect through the UDP relay of the peer.
+**The transport.**
+- `remote` has a UDP listen grant on the port `remote.LISTEN_PORT` (7100) that names one remote address: `remote.HOST_ADDRESS`, the host at the gateway (10.0.2.2). The network service drops a datagram of another address before it admits it, whatever its size (a problem row `Not_Granted` of the endpoint). The other rules are the rules of a UDP listen grant (section 6). `remote` refuses to start with a grant that admits each address.
+- It makes an Ed25519 key at its start from its own generator, with the strength "processor" at least, as `quic_echo`. The public key goes on the log ("remote: the public key of this service: " and 64 hexadecimal digits) and in its window. A seed weaker than "processor" makes no key: `remote` says so, and listens on nothing.
+- Its application protocol (ALPN) is `remote.APPLICATION_PROTOCOL`, "modus-remote-call". A client that offers another one fails the handshake.
+- It has the Retry and the budgets of work of section 6, with the limits of `quic_echo` for a table of 2 records: one address may hold both records, in the handshake too.
 
-**One call, one stream.** The host opens a bidirectional stream for each call. A call does not wait for another call on the wire: a lost datagram of one call does not stop the others.
-1. The host writes on its stream the request: the `remote.Request` header of 112 bytes, then the bytes of the call region (its `arguments` field), then the end of the stream.
-2. `remote` reads the stream into the call region of its connection to the service, as it arrives: the stream buffer (64 KiB) is not a limit, the call region (16 pages, 64 KiB) is.
-3. When the end of the stream came and the request checks (`request_check`, with the stream in the place of the datagram: `arguments` must equal the bytes after the header, and fit the call region), `remote` makes the isolated call.
-4. `remote` writes on the same stream the answer: one `remote.Answer` header, the bytes of the result, then the end of the stream. The answers in parts go away: QUIC carries an answer of any size within the call region, in order.
-5. The stream ends when both ends were read and acknowledged: its record is free, and the server gives the host one more stream (MAX_STREAMS).
+**One call, one stream.**
+1. The host opens a bidirectional stream, and writes the call request: the `remote.Request` header of 104 bytes, then the bytes of the call region (its `arguments` field), then the end of the stream.
+2. `remote` reads the stream into the buffer of its stream as it arrives. The buffer holds `remote.REQUEST_LIMIT` bytes: the header and a whole call region (65 640 bytes).
+3. When the end of the stream came, `remote` checks the request (`remote.request_check`, against the bytes of the stream), then makes the isolated call. A request that does not check gets an answer with the status Refused and its error record, as each refusal of `remote`. A stream that ends before its header is such a request ("the call has 20 bytes; it must have at least 104 bytes").
+4. `remote` writes on the same stream the call answer: one `remote.Answer` header of 112 bytes, whose `total` counts the bytes of the result, then those bytes, then the end of the stream. The host checks that the bytes are exactly a header and its total (`remote.answer_check`).
+5. The stream ends when both ends were read and acknowledged: its stream record is free, and the server gives the host one more stream (MAX_STREAMS).
 
-What leaves the contract: the request `number` (the stream identifier names the call), the parts of an answer (`PART_LIMIT`, `PART_CAPACITY`), and `ARGUMENT_LIMIT` (the call region bounds a request). No compatibility form stays.
+The stream names the call: the headers have no request number, and the answers in parts are gone. A lost datagram is sent again by QUIC, so a call is never sent again by the host: a call whose answer did not come may have run, and the tool says so.
 
-**Several calls at once.**
-- `remote` has 2 connection records (the tool, and one more while a tool restarts) of 8 stream records each: 8 calls at once for one host, about 2.3 MiB of records. A host that opens a 9th call waits for MAX_STREAMS (it sends STREAMS_BLOCKED).
-- `remote` runs one isolated call at a time, in the order in which the requests completed: its connection to a service has one call region. A request that completed waits in its stream buffer, and flow control (64 KiB for each stream) stops the host from sending more than the buffers hold.
-- The answers come back in any order. The host matches each answer to its call by the stream.
+**Several calls at once.** `remote` has 2 connection records of 8 stream records each (`remote.CONNECTION_CAPACITY`, `remote.CALLS_AT_ONCE`): 8 calls at once on one connection. A host that opens a 9th stream is not refused: its client sends STREAMS_BLOCKED and waits for MAX_STREAMS, which comes when one of the 8 ends. `remote` makes one isolated call at a time, in the order in which the requests became whole: its connection to a service has one call region. While an isolated call runs (5 s at most), `remote` runs no QUIC; the client sends again what it does not see acknowledged. After an isolated call of 100 ms or more (`SLOW_CALL_MILLISECONDS`), the next call waits 50 ms (`EXCHANGE_AFTER_SLOW_CALL_MILLISECONDS`), in which `remote` only moves datagrams: the handshake of a second connection, or the next flight of a stream, goes as far as the round trips of that time allow. A call of 5 s then waits 1 % more at most; a fast call adds no wait. The limit: a handshake needs about three round trips, and the deadline of a handshake is 10 s of the machine, which counts the time of the isolated calls. A client whose round trip is more than about 15 ms needs more than one window, and during a row of calls of 5 s each its handshake can pass its deadline. On the test network a round trip is under 1 ms. The answers come back in any order; the host matches each one to its call by its stream. The memory: 2 records of about 85 KiB, 16 stream records of about 130 KiB, and a buffer of about 64 KiB for each stream (the request, then the answer), about 3.2 MiB in one mapping of the program.
 
-**Errors and ends of a call.** An error of a stream is a reset with an application error code, never a close of the connection: the other calls go on.
+**Errors and ends of a call.** An error of one call ends its stream with RESET_STREAM and a stream error code (`remote.Stream_Error`), never a close of the connection: the other calls go on. The tool prints the code by its name.
 
-| Case | What `remote` does |
-|---|---|
-| A request that does not check (`request_check`) | It answers with `Status` and the error record, as today, then the end of the stream |
-| A request longer than the header and the call region | STOP_SENDING and RESET_STREAM with the code `Too_Large`, before any call |
-| A stream that ends before its header | RESET_STREAM with the code `Malformed` |
-| The host resets its stream, or sends STOP_SENDING, before the call | No call; the record ends |
-| The host resets its stream after the call started | The call runs to its end (an isolated call cannot be stopped); its answer is dropped. The person sees its effects |
-| A stream with no new byte for 10 s while its request is not complete | RESET_STREAM with the code `Timeout`: a host that opens 8 streams and sends nothing would stop every call |
+| Case | What `remote` does | Code |
+|---|---|---|
+| A request that does not check | It answers with the status Refused and its error record, then the end of the stream | none |
+| A request of more than `REQUEST_LIMIT` bytes | STOP_SENDING and RESET_STREAM as soon as the byte after the limit comes, before any call | Too_Large (1) |
+| A request that is not whole 10 s after its stream came (`REQUEST_TIME_LIMIT`) | STOP_SENDING and RESET_STREAM, no call | Timeout (2) |
+| An answer that the host did not take (each byte and the end acknowledged) 10 s after the call (`ANSWER_TIME_LIMIT`) | RESET_STREAM | Timeout (2) |
+| The host resets its stream, or sends STOP_SENDING, before the call | No call; `remote` ends its own direction | Cancelled (3) |
+| The host sends STOP_SENDING during the answer | The library resets the answer with the code of the host at once; `remote` stops the bound of the answer and drops what still comes | the code of the host |
+| The host resets its stream after the call started | The call runs to its end (an isolated call cannot be stopped); its answer is not taken. The person sees its effects | none |
+| A stream that `remote` reset and that the host did not end 10 s later (`RELEASE_TIME_LIMIT`) | CONNECTION_CLOSE of the application: a stream record that the host never ends would hold one call of the 8 | Timeout (2) |
 
-The codes are values of a new enumeration of `contract/remote` (`Stream_Error`), which the tool prints by name.
+A host that vanishes while `remote` holds a stream of it (an answer whose end it did not acknowledge) is ended by the bounds of the stream before its idle timeout: the reset of the answer 10 s after the call, then CONNECTION_CLOSE 10 s later, each with its log line; a host that vanishes with no stream open is ended at the idle bound. Each bound is in milliseconds of the machine, from the start of its phase, and the wait of `remote` ends at the nearest one. A bound counts only the time in which the stream could move: after each isolated call, `remote` moves the start of the bound of each stream that is reading, answering or discarding later by the time of that call (`call_bounds_pause`). Each reset and each close by a bound writes a line on the log with the time that it took and its verdict: "held" when the time is at least the bound and at most the bound and 5 s of a late wake of the program, else "did NOT hold". A connection that ends at its idle timeout writes the line of `quic_echo` ("the idle end held its bound").
 
-**The tool.** The peer keeps one connection to `remote` for the session of the tool. Each `kerneltool call` request on the loopback becomes a stream; the peer writes the request, reads the answer up to its end, checks it with `answer_check`, and gives it back on the loopback. A lost connection (idle timeout, a new start of `remote` with a new key) fails the calls that wait, with the reason, and the next call makes a new connection after the person pins the new key.
+**Who may call.** The rule that holds is the rule of the datagrams before: the address of the host.
+- The listen grant admits the address 10.0.2.2 only. The network service drops a datagram of another address. The root service names the grant; the person reads it with `grants` and ends it with `revoke`.
+- What QUIC adds: the host knows that it speaks to the machine whose key it pinned, and no one on the path reads a call or an answer, changes one, or plays one again. A Retry validates the address: a datagram with the address of the host that comes from elsewhere takes no record, because its sender does not receive the Retry. Before, one forged datagram with the address and the port of the host made a call.
+- What it does not protect: `remote` does not know who the client is. Whoever sends and receives the datagrams of 10.0.2.2 (the gateway of the network of the machine) can make a connection and call as the person. QUIC adds nothing there.
+  - On the test network the gateway is the peer of the tool. The peer takes the calls of the tool on a Unix socket in a folder of the user with the mode 0700. So each program of the same user on the host can call as the person; a program of another user cannot.
+  - With QEMU user networking, a forward of a UDP port of the host to the port 7100 (`hostfwd=udp:...-:7100`) would give each forwarded datagram the address 10.0.2.2. Then each sender that reaches the port of the host could call as the person. The tool forwards no such port, and it refuses to start a machine whose network device has one (`network_device_problem`). A person who adds such a forward by hand opens `remote` to whoever reaches that port.
+- What would protect it: the host proves a key of its own (a raw public key of a client in TLS), and the root service gives that key to `remote` as a grant that the person reads and revokes. That is a principal of property 21, which is not built.
 
-**The tests (to write with it).** On the machine: 8 calls at once, each with its answer on its own stream; a 9th that waits for MAX_STREAMS; an answer larger than one datagram (the result of a Table); a request larger than the call region (reset `Too_Large`); a stream that the host resets before its end (no call); a stream that sends nothing (reset `Timeout` after 10 s); the same calls with 5 % of the datagrams lost.
+**The tool.** The peer of the tool is the QUIC client (`tools/kerneltool/peer_remote.odin`).
+- It pins the key that `remote` logged (the step Remote_Key of the machine test), or the key that `kerneltool call <key> "..."` names, read in the window of `remote`. A new key closes the connection; the next call makes a new one.
+- A pin belongs to one start of `remote`: each start makes a new key. The test tool forgets the pin after each step that starts or closes `remote`, and refuses to run a scenario that has a step that calls `remote` with no step Remote_Key since the last start of `remote` (`remote_key_problem`). The peer of a machine test takes the key of the log only: a call that names another key fails, and does not change the pin. The peer of `kerneltool run` takes the key that each call names.
+- When `remote` presents another key than the pinned one, the handshake fails with bad_certificate, and the call fails at once with both keys in hexadecimal ("the pin does not match: the pinned key of remote is ..., and remote presented ..."). Each next call fails the same way, with no connection, until a new pin. A connection that ends before the end of its handshake fails the calls that wait for it: the peer never makes connections in a loop. The library keeps the key that a client refused (`Tls_Handshake.refused_server_public_key`) for that text.
+- The header of a call on the call socket has a fixed mark and the count of the bytes of the request. A header that is not at the start of the bytes, or a request that is cut, fails the call with what the peer read; it never becomes a call with another key or another request.
+- The tool gives each call to the peer on its call socket: a header with the key, the bytes of the request, the end of the sending; the peer writes the outcome, the bytes of the answer, and the end. The call socket is a Unix socket in `$XDG_RUNTIME_DIR/kerneltool`, or in `/tmp/kerneltool-<user number>` when that variable is not set. The tool makes that folder with the mode 0700, and uses it only when it is a folder of this user (not a link) with no right for the group and the others. A folder under the repository is not used: a repository can be readable by its group. `kerneltool run` takes the socket `calls-run.socket` and prints its path; `kerneltool call` finds it by the same rule. A machine test takes a socket with the number of its process and of its peer, and the step Call uses the same code.
+- One connection carries the calls of a session. At a call, a connection whose last packet came more than 20 s ago is closed, and a new one is made: under the idle timeout of `remote` (30 s), so that no call goes on a connection that `remote` may have ended. A connection that ended (its idle timeout, a close of `remote`, a new start of `remote` with a new key) fails the calls that were open on it, with the reason; the next call makes a new connection.
 
-**What is protected, and what is not.**
-- Protected: the host knows that it speaks to the machine whose key it pinned, and not to another one on the path. No one on the path reads a call or an answer, changes one, or plays one again.
-- Not protected: the machine does not know who the client is. Any program that can send UDP to the port of `remote` can make a connection and call as the person, as today. QUIC adds nothing there.
-- What would protect it: the host proves a key of its own (a client certificate of TLS, a raw public key too), and the root service gives that key to `remote` as a grant that the person reads and revokes. That is a principal of property 21, which is not built. Until then, the guard of the person stays the grant of `remote` and the closed network of the test.
+**The tests.**
+- On the host (`contract/remote/remote_test.odin`): the request and the answer written and read again, from no result to a whole call region; each refusal of `request_check`; the answer that `answer_check` refuses (shorter than its total, longer, a total over a call region); the framing of a stream (`stream_progress`: a request of `REQUEST_LIMIT` bytes is whole, one byte more is Too_Large before the end of the stream, an empty stream is a request that `request_check` refuses); the name of each stream error code; random requests.
+- On the machine: each step Call of the scenarios goes over QUIC, and the step "a lost datagram" drops one datagram of `remote` to the host (QUIC sends it again, and `monitor.served()` shows that the call ran one time). The cases of the peer: six malformed requests, each on its own stream, refused with their error records; two calls on two streams at one time, each answer on its own stream; a request of `REQUEST_LIMIT` + 1 bytes, reset with Too_Large; 50 bytes of a request and no end, reset with Timeout at the bound of a request, which `remote` checks in time of the machine; an Initial from 198.51.100.7, which the grant does not admit, that gets nothing (a call of the host after it gets its answer, and the network service and `remote` take datagrams in order); the peer silent, both ways, from a moment when the connection is quiet (no call, no stream of the client, no acknowledgement owed): `remote` ends the connection at its idle bound in time of the machine, and the next call of the tool opens a new connection.
 
 ## 8. The next layers (designed, not built)
 
 1. **The transport, second part**:
    - NewReno congestion control, from the ideas and the tests of the Reno of `support/tcp`;
    - connection identifiers, the validation of a new path (NAT rebinding), the stateless reset, DATA_BLOCKED and STREAM_DATA_BLOCKED.
-2. **`remote` over QUIC** (section 7), then mutual authentication when principals exist.
+2. **The authentication of the client of `remote`** (section 7, "Who may call"), when principals exist.
 
 ## 9. What is not built, and will not be in version 1 of this library
 

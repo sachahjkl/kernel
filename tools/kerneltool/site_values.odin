@@ -16,10 +16,12 @@ import "support:graphics"
 // The icons are pixel forms on a grid of 12 by 12 cells, as the heron of
 // the mark is: each cell is one pixel at the size that the site shows.
 SITE_VALUE_ICON_SIZE :: 12
-SITE_VALUE_ICON_FOLDER :: "pictures/values"
 // The least contrast of the text of a value on each surface of a table,
 // in both color schemes (WCAG 2, the bound of normal text).
 SITE_VALUE_CONTRAST_LEAST :: 4.5
+// The least contrast of a graphic: an icon of a kind or a bar of the chart
+// of the docs home on each surface where it is drawn (WCAG 2.1, 1.4.11).
+SITE_VALUE_GRAPHIC_CONTRAST_LEAST :: 3.0
 
 Site_Value_Kind :: enum {
 	None, // Not a value: the cell is a name or a text.
@@ -35,6 +37,8 @@ Site_Value_Kind :: enum {
 	Command,
 	Module,
 	File,
+	Guide,
+	Term,
 	Version,
 	Yes,
 	No,
@@ -118,6 +122,22 @@ site_value_kinds := [Site_Value_Kind]Site_Value_Kind_Description {
 		color = graphics.COLOR_DIM, dark_percent = 100, light_percent = 82,
 		cells = {".######.....", ".#....##....", ".#.....##...", ".#......##..", ".#.......#..", ".#.......#..", ".#.......#..", ".#.......#..", ".#.......#..", ".#########..", "............", "............"},
 	},
+	// A document is text to read: the color of the text. Its reference is
+	// a name in the reading font, not a value: the kind gives its color and
+	// its icon (docs/SITE.md, "The references to documents").
+	.Guide = {
+		name = "guide", title = "Guide", meaning = "A document of the site, a guide or the glossary, and the heading that a reference names; a working record is a file of the repository.",
+		color = graphics.COLOR_TEXT, dark_percent = 100, light_percent = 20,
+		cells = {"............", ".##########.", ".#........#.", ".#.######.#.", ".#........#.", ".#.######.#.", ".#........#.", ".#.####...#.", ".#........#.", ".##########.", "............", "............"},
+	},
+	// A term of the glossary is a name, not a value, as a document is: the
+	// kind gives the glossary and the terms of the search their icon and
+	// their color, so that a term does not look like a guide section.
+	.Term = {
+		name = "term", title = "Term", meaning = "A term of the glossary: one name for one concept.",
+		color = graphics.COLOR_MEMORY, dark_percent = 100, light_percent = 65,
+		cells = {"............", ".##########.", ".##########.", ".....##.....", ".....##.....", ".....##.....", ".....##.....", ".....##.....", ".....##.....", "....####....", "............", "............"},
+	},
 	.Version = {
 		name = "version", title = "Version", meaning = "A version, a release, a commit or a hash.",
 		color = graphics.COLOR_BOOT_PROGRAM, dark_percent = 100, light_percent = 65,
@@ -139,11 +159,6 @@ site_value_kinds := [Site_Value_Kind]Site_Value_Kind_Description {
 site_value_color :: proc(kind: Site_Value_Kind, light: bool) -> graphics.Color {
 	description := site_value_kinds[kind]
 	return graphics.shade(description.color, light ? description.light_percent : description.dark_percent)
-}
-
-// site_value_icon_file gives the file of the icon of a kind in the site.
-site_value_icon_file :: proc(kind: Site_Value_Kind) -> string {
-	return strings.concatenate({SITE_VALUE_ICON_FOLDER, "/", site_value_kinds[kind].name, ".svg"}, context.temp_allocator)
 }
 
 // site_value writes a value of a kind: one code element in the monospace
@@ -174,8 +189,8 @@ site_value_link :: proc(b: ^strings.Builder, kind: Site_Value_Kind, address, tex
 	strings.write_string(b, "</a>")
 }
 
-// site_value_icon_svg gives the icon of a kind as an SVG file: one rect for
-// each run of cells of a row, in black: the style sheet uses the file as a
+// site_value_icon_svg gives the icon of a kind as an SVG picture: one rect
+// for each run of cells of a row, in black: the style sheet uses it as a
 // mask, so the icon takes the color of its kind.
 site_value_icon_svg :: proc(kind: Site_Value_Kind) -> string {
 	b := strings.builder_make(context.temp_allocator)
@@ -198,27 +213,30 @@ site_value_icon_svg :: proc(kind: Site_Value_Kind) -> string {
 	return strings.to_string(b)
 }
 
-// site_value_icons_write writes the icon of each kind into the site.
-site_value_icons_write :: proc(site: ^Site) -> bool {
-	for kind in Site_Value_Kind {
-		if kind == .None {
-			continue
-		}
-		site_write_file(site, site_value_icon_file(kind), transmute([]u8)site_value_icon_svg(kind)) or_return
-	}
-	return true
+// site_value_icon_address gives the icon of a kind as a data address of the
+// style sheet. Its source stays the cells of the table; only its delivery
+// is inside the style sheet: a file for each icon was one more request for
+// each, which the browser learns of only after the style sheet, so the
+// icons came after the first paint (docs/SITE.md, "The kinds of values").
+site_value_icon_address :: proc(kind: Site_Value_Kind) -> string {
+	return site_svg_data_address(site_value_icon_svg(kind))
 }
 
-// site_value_rules gives the rules of the style sheet for the kinds: the
-// color and the icon of each kind, in one form. The address of an icon is
-// relative to the style sheet, which is at the root of the site.
+// site_value_rules gives the rules of the style sheet for the kinds, in one
+// form: the color of each kind, and in the dark form, which comes first and
+// holds for both, its icon. The icon is the same in both forms, so the
+// style sheet holds it once.
 site_value_rules :: proc(light: bool) -> string {
 	b := strings.builder_make(context.temp_allocator)
 	for kind in Site_Value_Kind {
 		if kind == .None {
 			continue
 		}
-		fmt.sbprintf(&b, ".value-%s {{ --value-color: %s; --value-icon: url(\"%s\"); }}\n", site_value_kinds[kind].name, site_color(site_value_color(kind, light)), site_value_icon_file(kind))
+		fmt.sbprintf(&b, ".value-%s {{ --value-color: %s;", site_value_kinds[kind].name, site_color(site_value_color(kind, light)))
+		if !light {
+			fmt.sbprintf(&b, " --value-icon: url(\"%s\");", site_value_icon_address(kind))
+		}
+		strings.write_string(&b, " }\n")
 	}
 	return strings.to_string(b)
 }

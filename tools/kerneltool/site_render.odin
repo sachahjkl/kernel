@@ -26,6 +26,7 @@ Site_List_Item :: struct {
 	id:      string,
 	text:    string,
 	line:    int, // The line of its label in the file: the link to it when the file is not a page of the site.
+	heading: int, // The index of the heading above it in the headings of the renderer, or -1: a reference finds it inside the part of a heading.
 }
 
 // A term of the glossary: the page links its first use in each other page.
@@ -440,7 +441,7 @@ site_write_list :: proc(renderer: ^Site_Renderer, items: []Site_Pending_Item, po
 			id := ""
 			if depth == 0 {
 				id = site_unique_id(renderer, strings.concatenate({renderer.section != "" ? renderer.section : "item", "-", item.marker.label}, context.temp_allocator))
-				append(&renderer.items, Site_List_Item{section = renderer.section, label = item.marker.label, id = id, text = text, line = item.line})
+				append(&renderer.items, Site_List_Item{section = renderer.section, label = item.marker.label, id = id, text = text, line = item.line, heading = len(renderer.headings) - 1})
 				fmt.sbprintf(b, "<li id=\"%s\">", id)
 			} else {
 				strings.write_string(b, "<li>")
@@ -511,8 +512,22 @@ site_render_inline :: proc(renderer: ^Site_Renderer, text: string) {
 			if end >= 0 {
 				flush(renderer, text[plain_start:index])
 				code := text[index + 1:index + 1 + end]
-				site_write_code_span(renderer, code)
 				index += end + 2
+				// A code span that names a document, with the labels of a
+				// place after it (`ARCHITECTURE.md`, "The fault ring"), is a
+				// reference to that place, as a pointer of a source comment.
+				if path, names_document := site_document_of_code_span(renderer.site, code); names_document && !renderer.in_heading {
+					labels, labels_end := site_pointer_labels(text, index)
+					targets := site_document_targets(renderer.site, path, labels)
+					if len(targets) > 0 {
+						site_document_references_count(renderer.site, path, labels, targets)
+						site_document_references_write(renderer.site, &renderer.builder, renderer.page, targets, " and ")
+						index = labels_end
+						plain_start = index
+						continue
+					}
+				}
+				site_write_code_span(renderer, code)
 				plain_start = index
 				continue
 			}
@@ -557,20 +572,11 @@ site_render_inline :: proc(renderer: ^Site_Renderer, text: string) {
 	}
 }
 
+// site_write_code_span writes a code span that names no document (those are
+// references: site_render_inline): a link to a row of a reference table or
+// to a file of the repository, or code.
 site_write_code_span :: proc(renderer: ^Site_Renderer, code: string) {
 	b := &renderer.builder
-	base := code[strings.last_index_byte(code, '/') + 1:]
-	if page, is_guide := renderer.site.documents[code]; is_guide && !renderer.in_heading {
-		fmt.sbprintf(b, "<a href=\"%s\"><code>", site_page_link(renderer.site, renderer.page, page))
-		site_escape(b, code)
-		strings.write_string(b, "</code></a>")
-		return
-	} else if page_of_base, base_is_guide := renderer.site.documents[base]; base_is_guide && strings.has_suffix(code, ".md") && !renderer.in_heading {
-		fmt.sbprintf(b, "<a href=\"%s\"><code>", site_page_link(renderer.site, renderer.page, page_of_base))
-		site_escape(b, code)
-		strings.write_string(b, "</code></a>")
-		return
-	}
 	if target, named := site_code_link(renderer.site, code); named && !renderer.in_heading {
 		fmt.sbprintf(b, "<a class=\"reference\" href=\"%s\"><code>", site_page_link(renderer.site, renderer.page, target))
 		site_escape(b, code)

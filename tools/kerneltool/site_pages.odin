@@ -20,6 +20,8 @@ Site_Reference_Entry :: struct {
 	title:  string,
 	what:   string,
 	source: string,
+	count:  int, // The rows of its tables: the docs home shows it.
+	kind:   Site_Value_Kind, // The kind of what its rows name: the docs home shows its icon.
 }
 
 // The kind of a column of a table (docs/SITE.md, "The tables"): it gives the
@@ -329,13 +331,40 @@ site_guides_add :: proc(site: ^Site) -> bool {
 			fmt.eprintfln("kerneltool: site: %s has no title \"# <title>\"", source)
 			return false
 		}
+		// The docs home shows each guide with one line that says what it holds.
+		if about[source] == "" {
+			fmt.eprintfln("kerneltool: site: %s has no row in the table \"## Documents\" of %s: a guide needs its one line of description", source, SITE_README_FILE)
+			return false
+		}
 		append(&site.guides, Site_Guide{source = source, path = site.documents[source], title = title, about = about[source]})
 	}
+	// The headings of every guide before any guide is written: a guide
+	// refers to a heading of a guide that comes after it, and the id of a
+	// heading is the one that the renderer gives. This first pass keeps the
+	// headings only, and takes back what it recorded.
+	not_rendered_count := len(site.not_rendered)
+	names_without_card := site.type_names_without_card
+	blocks_not_colored, first_block_not_colored := site.code_blocks_not_colored, site.first_code_block_not_colored
+	site.document_headings_pending = true
+	for guide, index in site.guides {
+		content := site_read(guide.source) or_return
+		heading_renderer := site_renderer_make(site, guide.path, guide.source)
+		site_render_markdown(&heading_renderer, content)
+		site.guides[index].headings = heading_renderer.headings[:]
+		site.guides[index].items = heading_renderer.items[:]
+	}
+	site.document_headings_pending = false
+	for len(site.not_rendered) > not_rendered_count {
+		pop(&site.not_rendered)
+	}
+	site.type_names_without_card = names_without_card
+	site.code_blocks_not_colored, site.first_code_block_not_colored = blocks_not_colored, first_block_not_colored
 	for guide, index in site.guides {
 		content := site_read(guide.source) or_return
 		renderer := site_renderer_make(site, guide.path, guide.source)
 		site_render_markdown(&renderer, content)
 		site.guides[index].headings = renderer.headings[:]
+		site.guides[index].items = renderer.items[:]
 		b := strings.builder_make(context.temp_allocator)
 		// The headings of the guide are in the list "On this page" of the frame.
 		strings.write_string(&b, "<article class=\"prose\">\n")
@@ -376,17 +405,22 @@ site_guides_add :: proc(site: ^Site) -> bool {
 	}
 	site_table_end(&b, guides_table)
 	site_source_line(site, &b, SITE_README_FILE)
-	site_page_add(site, Site_Page{path = guides_page, is_index = true, title = "Guides", description = site_description_cut(fmt.tprintf("The %d documents of %s: how each part of the system is designed, and why.", len(site.guides), SITE_SYSTEM_NAME)), section = .Guides, crumbs = site_crumbs(.Home), body = strings.to_string(b), sources = site_sources(SITE_README_FILE), layout = .Documentation})
+	site_page_add(site, Site_Page{path = guides_page, is_index = true, title = "Guides", description = site_description_cut(fmt.tprintf("The %d documents of %s: how each part of the system is designed, and why.", len(site.guides), SITE_SYSTEM_NAME)), section = .Guides, crumbs = site_crumbs(.Docs), body = strings.to_string(b), sources = site_sources(SITE_README_FILE), layout = .Documentation})
 	return true
 }
 
 // site_crumbs gives the breadcrumbs of a page below a section: the home,
-// then the page of the section when it is not the home.
+// then each section above it down to the section itself (Home / Docs /
+// Guides for a guide).
 site_crumbs :: proc(section: Site_Section) -> []Site_Crumb {
+	chain := make([dynamic]Site_Section, context.temp_allocator)
+	for current := section; current != .Home; current = site_section_parents[current] {
+		append(&chain, current)
+	}
 	crumbs := make([dynamic]Site_Crumb, context.temp_allocator)
 	append(&crumbs, Site_Crumb{title = site_section_titles[.Home], path = site_section_page(.Home)})
-	if section != .Home {
-		append(&crumbs, Site_Crumb{title = site_section_titles[section], path = site_section_page(section)})
+	for index := len(chain) - 1; index >= 0; index -= 1 {
+		append(&crumbs, Site_Crumb{title = site_section_titles[chain[index]], path = site_section_page(chain[index])})
 	}
 	return crumbs[:]
 }
@@ -413,7 +447,7 @@ site_reference_add :: proc(site: ^Site) -> bool {
 		strings.write_string(&b, "</article>\n")
 		title := site_document_title(content)
 		site_page_add(site, Site_Page{path = glossary_page, title = title, description = site_description_cut(fmt.tprintf("The %d terms of %s: one term for each concept, with its definition and the words that it replaces.", len(site.terms), SITE_SYSTEM_NAME)), section = .Reference, crumbs = site_crumbs(.Reference), body = strings.to_string(b), sources = site_sources("docs/GLOSSARY.md"), layout = .Documentation})
-		append(&entries, Site_Reference_Entry{path = glossary_page, title = title, what = "Each term of the project, with its definition. A term on another page links here.", source = "docs/GLOSSARY.md"})
+		append(&entries, Site_Reference_Entry{path = glossary_page, title = title, what = "Each term of the project, with its definition. A term on another page links here.", source = "docs/GLOSSARY.md", count = len(site.terms), kind = .Term})
 	}
 
 	// The commands of the tool.
@@ -445,63 +479,17 @@ site_reference_add :: proc(site: ^Site) -> bool {
 					break
 				}
 			}
-			site_symbol_write(site, &b, Site_Symbol{id = strings.concatenate({"tool-command-", site_slug(command.name)}, context.temp_allocator), name = command.name, signature = strings.concatenate({"nix develop -c kerneltool ", command.name}, context.temp_allocator), description = command.about, source = SITE_TOOL_MAIN_FILE, line = line})
+			site_symbol_write(site, &b, Site_Symbol{id = strings.concatenate({"tool-command-", site_slug(command.name)}, context.temp_allocator), name = command.name, signature = strings.concatenate({"nix develop -c kerneltool ", command.name}, context.temp_allocator), description = command.about, page = path, source = SITE_TOOL_MAIN_FILE, line = line})
 		}
 		site_page_add(site, Site_Page{path = path, title = "Commands of kerneltool", description = site_description_cut(fmt.tprintf("The %d commands of kerneltool, the one tool of the project: the build, the machine tests, the pictures, the changelog and the site.", len(commands))), section = .Reference, crumbs = site_crumbs(.Reference), body = strings.to_string(b), sources = site_sources(SITE_TOOL_MAIN_FILE), layout = .Documentation})
-		append(&entries, Site_Reference_Entry{path = path, title = "Commands of kerneltool", what = "Each command of the tool of the project, with what it does.", source = SITE_TOOL_MAIN_FILE})
+		append(&entries, Site_Reference_Entry{path = path, title = "Commands of kerneltool", what = "Each command of the tool of the project, with what it does.", source = SITE_TOOL_MAIN_FILE, count = len(commands), kind = .Command})
 	}
 
 	// The measured numbers.
 	{
 		path := site_page_file(SITE_NUMBERS_FOLDER)
-		b := strings.builder_make(context.temp_allocator)
-		measured_count := 0
-		for number in site.measured {
-			measured_count += number.found ? 1 : 0
-		}
-		fmt.sbprintf(&b, "<h1>Measured numbers</h1>\n<p>Each row is a line that a program of the system printed in the log of a machine test, quoted whole: the line gives its own conditions. A machine runs under QEMU on the host that ran the test: each number is one run on that host. %d of %d numbers are measured in this build.</p>\n", measured_count, len(site.measured))
-		numbers_table := site_table_start(&b, "Measured numbers", site_numbers_columns[:])
-		number_ids := make(map[string]bool, context.temp_allocator)
-		for number in site.measured {
-			// Each row is a link target, and a symbol of "On this page".
-			wanted := strings.concatenate({"number-", site_slug(number.measure.sentence)}, context.temp_allocator)
-			id := wanted
-			for suffix := 2; (id in number_ids); suffix += 1 {
-				id = fmt.tprintf("%s-%d", wanted, suffix)
-			}
-			number_ids[id] = true
-			fmt.sbprintf(&b, "<tr id=\"%s\" data-outline=\"", id)
-			site_plain(&b, number.measure.sentence)
-			strings.write_string(&b, "\">")
-			site_cell(&b, number.measure.sentence)
-			if !number.found {
-				strings.write_string(&b, "<td class=\"missing\">" + SITE_NOT_MEASURED + "</td><td class=\"missing\">")
-				site_escape(&b, number.missing)
-				strings.write_string(&b, "</td><td></td></tr>\n")
-				continue
-			}
-			strings.write_string(&b, "<td class=\"code\"><code>")
-			site_escape(&b, number.text)
-			strings.write_string(&b, "</code></td><td><code>")
-			site_escape(&b, number.path)
-			fmt.sbprintf(&b, "</code>, line %d", number.line_number)
-			if number.matching_lines > 1 {
-				which: string = number.measure.choice == .Last ? "last" : "first"
-				fmt.sbprintf(&b, " (the %s of %d lines with this text)", which, number.matching_lines)
-			}
-			strings.write_string(&b, ". ")
-			site_inline(&b, number.conditions)
-			strings.write_string(&b, ".</td><td class=\"code\">")
-			site_time(&b, number.written)
-			strings.write_string(&b, "</td></tr>\n")
-		}
-		site_table_end(&b, numbers_table)
-		strings.write_string(&b, "<p class=\"source\">The lines are read from the logs in <code>build/</code> that the last <code>kerneltool check</code> or <code>kerneltool measure</code> wrote; the list of the numbers is <code>site_measures</code> in ")
-		strings.write_string(&b, "<a href=\"")
-		site_escape(&b, site_repository_file(site, "tools/kerneltool/site.odin"))
-		strings.write_string(&b, "\"><code>tools/kerneltool/site.odin</code></a>.</p>\n")
-		site_page_add(site, Site_Page{path = path, title = "Measured numbers", description = site_description_cut(fmt.tprintf("%d numbers that the machine tests of %s printed, each quoted whole from its log with its conditions.", len(site.measured), SITE_SYSTEM_NAME)), section = .Reference, crumbs = site_crumbs(.Reference), body = strings.to_string(b), sources = site_sources("tools/kerneltool/site.odin"), layout = .Documentation})
-		append(&entries, Site_Reference_Entry{path = path, title = "Measured numbers", what = "Each number that the machine tests print, with its log and its conditions.", source = "build/test_output*.txt"})
+		site_page_add(site, Site_Page{path = path, title = "Measured numbers", description = site_description_cut(fmt.tprintf("%d numbers that the machine tests of %s printed, each quoted whole from its log with its conditions.", len(site.measured), SITE_SYSTEM_NAME)), section = .Reference, crumbs = site_crumbs(.Reference), body = site_numbers_body(site), sources = site_sources("tools/kerneltool/site.odin"), layout = .Documentation})
+		append(&entries, Site_Reference_Entry{path = path, title = "Measured numbers", what = "Each number that the machine tests print, with its log and its conditions.", source = MEASURE_RECORD_FILE, count = len(site.measured), kind = .Number})
 	}
 
 	// The licenses.
@@ -515,7 +503,7 @@ site_reference_add :: proc(site: ^Site) -> bool {
 		site_license_table(site, &b, "What builds and tests it", site.licenses.build_rows, build_ids)
 		site_source_line(site, &b, SITE_LICENSE_FILE, SITE_FONT_FOLDER, SITE_SPLEEN_LICENSE_FILE, SITE_POSY_MANIFEST, SITE_SYSTEM_POINTER_MANIFEST, SITE_ODIN_LICENSE_FILE, SITE_FIAT_LICENSE_FILE, CRYPTOGRAPHY_MANIFEST, SITE_PORTRAIT_LICENSE_FILE, SITE_FLAKE_FILE, SITE_FLAKE_LOCK_FILE)
 		site_page_add(site, Site_Page{path = path, title = "Licenses", description = site_description_cut(fmt.tprintf("The license of %s and of each part that it holds or uses: %d rows, and %d tools that build and test it.", SITE_SYSTEM_NAME, len(site.licenses.system_rows), len(site.licenses.build_rows))), section = .Reference, crumbs = site_crumbs(.Reference), body = strings.to_string(b), sources = site_sources(SITE_LICENSE_FILE, SITE_FLAKE_FILE), layout = .Documentation})
-		append(&entries, Site_Reference_Entry{path = path, title = "Licenses", what = "The license, the author, the version and the place of each part of the system and of each tool of its build.", source = SITE_FLAKE_FILE})
+		append(&entries, Site_Reference_Entry{path = path, title = "Licenses", what = "The license, the author, the version and the place of each part of the system and of each tool of its build.", source = SITE_FLAKE_FILE, count = len(site.licenses.system_rows) + len(site.licenses.build_rows), kind = .Grant})
 	}
 
 	// The tables generated from the code, and the pages of the modules.
@@ -537,10 +525,110 @@ site_reference_add :: proc(site: ^Site) -> bool {
 	site_table_end(&b, reference_table)
 	// The legend of the kinds of values that the reference shows.
 	site_value_legend(&b)
-	site_page_add(site, Site_Page{path = reference_page, is_index = true, title = "Reference", description = site_description_cut(fmt.tprintf("The reference of %s: %d tables that the tool generates from the code and the files of the repository.", SITE_SYSTEM_NAME, len(entries))), section = .Reference, crumbs = site_crumbs(.Home), body = strings.to_string(b), layout = .Documentation})
+	site_page_add(site, Site_Page{path = reference_page, is_index = true, title = "Reference", description = site_description_cut(fmt.tprintf("The reference of %s: %d tables that the tool generates from the code and the files of the repository.", SITE_SYSTEM_NAME, len(entries))), section = .Reference, crumbs = site_crumbs(.Docs), body = strings.to_string(b), layout = .Documentation})
 	// The tree of the documentation lists the reference pages in this order.
 	site.reference_entries = entries[:]
 	return true
+}
+
+// site_numbers_run writes the first paragraphs of the page of the numbers:
+// the run of the measure record (its time, its commit, its host), a release
+// of the site that is newer than the record, and the numbers that come
+// from build/.
+site_numbers_run :: proc(site: ^Site, b: ^strings.Builder) {
+	from_build := 0
+	for number in site.measured {
+		from_build += number.source == .Build ? 1 : 0
+	}
+	if !site.measure_record.present {
+		fmt.sbprintf(b, "<p class=\"missing\">The repository holds no measure record (<code>%s</code>): only the logs in <code>%s/</code> of this work tree give numbers.</p>\n", MEASURE_RECORD_FILE, BUILD_FOLDER)
+	} else {
+		record := site.measure_record.record
+		strings.write_string(b, "<p>The full check of ")
+		site_time(b, record.time)
+		strings.write_string(b, ", on the tree of ")
+		if record.commit != "" {
+			fmt.sbprintf(b, "<a href=\"%s/commit/%s\"><code>", SITE_REPOSITORY_ADDRESS, record.commit)
+			site_escape(b, site_short_commit(record.commit))
+			strings.write_string(b, "</code></a>")
+		} else {
+			site_escape(b, site_short_commit(record.commit))
+		}
+		strings.write_string(b, " ")
+		site_escape(b, site_tree_words(record.tree))
+		strings.write_string(b, ", the release ")
+		site_escape(b, record.release)
+		strings.write_string(b, ". The host: ")
+		site_escape(b, record.host)
+		fmt.sbprintf(b, ". %d checks passed. The record is <code>%s</code>.</p>\n", record.checks_passed, MEASURE_RECORD_FILE)
+		if record.release != site.release {
+			strings.write_string(b, "<p class=\"missing\">The measure record is of the release ")
+			site_escape(b, record.release)
+			strings.write_string(b, ". This site shows the release ")
+			site_escape(b, site.release)
+			strings.write_string(b, ": the numbers were measured before this release.</p>\n")
+		}
+	}
+	if from_build > 0 {
+		fmt.sbprintf(b, "<p>%d numbers come from the logs in <code>%s/</code> of this work tree, which are newer than the measure record.</p>\n", from_build, BUILD_FOLDER)
+	}
+}
+
+// site_numbers_body writes the page of the measured numbers.
+site_numbers_body :: proc(site: ^Site) -> string {
+	b := strings.builder_make(context.temp_allocator)
+	measured_count := 0
+	for number in site.measured {
+		measured_count += number.found ? 1 : 0
+	}
+	strings.write_string(&b, "<h1>Measured numbers</h1>\n")
+	site_numbers_run(site, &b)
+	fmt.sbprintf(&b, "<p>Each row is a line that a program of the system printed in the log of a machine test, quoted whole: the line gives its own conditions. A machine runs under QEMU on the host that ran the test: each number is one run on that host. %d of %d numbers are measured.</p>\n", measured_count, len(site.measured))
+	numbers_table := site_table_start(&b, "Measured numbers", site_numbers_columns[:])
+	number_ids := make(map[string]bool, context.temp_allocator)
+	for number in site.measured {
+		// Each row is a link target, and a symbol of "On this page".
+		wanted := strings.concatenate({"number-", site_slug(number.measure.sentence)}, context.temp_allocator)
+		id := wanted
+		for suffix := 2; (id in number_ids); suffix += 1 {
+			id = fmt.tprintf("%s-%d", wanted, suffix)
+		}
+		number_ids[id] = true
+		fmt.sbprintf(&b, "<tr id=\"%s\" data-outline=\"", id)
+		site_plain(&b, number.measure.sentence)
+		strings.write_string(&b, "\">")
+		site_cell(&b, number.measure.sentence)
+		if !number.found {
+			strings.write_string(&b, "<td class=\"missing\">" + SITE_NOT_MEASURED + "</td><td class=\"missing\">")
+			site_escape(&b, number.missing)
+			strings.write_string(&b, "</td><td></td></tr>\n")
+			continue
+		}
+		strings.write_string(&b, "<td class=\"code\"><code>")
+		site_escape(&b, number.text)
+		strings.write_string(&b, "</code></td><td><code>")
+		site_escape(&b, number.path)
+		fmt.sbprintf(&b, "</code>, line %d", number.line_number)
+		if number.matching_lines > 1 {
+			which: string = number.measure.choice == .Last ? "last" : "first"
+			fmt.sbprintf(&b, " (the %s of %d lines with this text)", which, number.matching_lines)
+		}
+		strings.write_string(&b, ". ")
+		if number.conditions != "" {
+			site_inline(&b, number.conditions)
+			strings.write_string(&b, ". ")
+		}
+		site_inline(&b, site_origin_words(number.source, site.measure_record))
+		strings.write_string(&b, ".</td><td class=\"code\">")
+		site_time(&b, number.written)
+		strings.write_string(&b, "</td></tr>\n")
+	}
+	site_table_end(&b, numbers_table)
+	fmt.sbprintf(&b, "<p class=\"source\">The lines come from the measure record <code>%s</code>, which <code>kerneltool screenshots</code> writes after a full check that passed, or from the logs in <code>%s/</code> that a later <code>kerneltool test</code> or <code>kerneltool measure</code> wrote; the list of the numbers is <code>site_measures</code> in ", MEASURE_RECORD_FILE, BUILD_FOLDER)
+	strings.write_string(&b, "<a href=\"")
+	site_escape(&b, site_repository_file(site, "tools/kerneltool/site.odin"))
+	strings.write_string(&b, "\"><code>tools/kerneltool/site.odin</code></a>.</p>\n")
+	return strings.to_string(b)
 }
 
 // site_license_row_ids gives the id of each row of the two tables of
@@ -703,7 +791,7 @@ site_home_head :: proc(site: ^Site, b: ^strings.Builder) {
 	site_inline(b, site.readme.tagline)
 	strings.write_string(b, "</p>\n<ul class=\"doors\">\n")
 	for section in Site_Section {
-		if section == .Home || !site_page_exists(site, site_section_page(section)) {
+		if !site_section_in_bar(section) || !site_page_exists(site, site_section_page(section)) {
 			continue
 		}
 		fmt.sbprintf(b, "<li><a href=\"%s\">%s</a></li>\n", site_page_link(site, site_section_page(.Home), site_section_page(section)), site_section_titles[section])
@@ -738,10 +826,7 @@ site_home_add :: proc(site: ^Site) {
 	site_home_explanation(site, &b)
 
 	// The path from power to the desktop: the stages that the kernel logged.
-	stages: []Site_Boot_Stage
-	if log, has_log := site_read_quiet(TEST_OUTPUT); has_log {
-		stages = site_boot_stages(log)
-	}
+	stages := site.boot_stages
 	strings.write_string(&b, "<section class=\"card accent-kernel\" aria-labelledby=\"start\">\n<h2 id=\"start\">The start of the machine</h2>\n")
 	if len(stages) == 0 {
 		strings.write_string(&b, "<p class=\"missing\">" + SITE_NOT_MEASURED + "</p>\n")
@@ -755,7 +840,9 @@ site_home_add :: proc(site: ^Site) {
 			fmt.sbprintf(&b, "</span> <span class=\"time\">%d.%d ms</span></li>\n", stage.microseconds / 1000, stage.microseconds % 1000 / 100)
 		}
 		strings.write_string(&b, "</ol>\n")
-		fmt.sbprintf(&b, "<p class=\"source\">The lines \"kernel: boot: ...\" of <code>%s</code>, one run of the main machine test under QEMU.</p>\n", TEST_OUTPUT)
+		fmt.sbprintf(&b, "<p class=\"source\">The lines \"kernel: boot: ...\" of <code>%s</code>, one run of the main machine test under QEMU. ", TEST_OUTPUT)
+		site_inline(&b, site_origin_words(site.boot_source, site.measure_record))
+		strings.write_string(&b, ".</p>\n")
 	}
 	strings.write_string(&b, "</section>\n")
 

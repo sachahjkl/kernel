@@ -103,7 +103,6 @@ module_builds := [?]Module_Build {
 	{name = "frame", source = "programs/frame", image = true},
 	{name = "network", source = "programs/network", image = true},
 	{name = "net", source = "programs/net", image = true},
-	{name = "remote", source = "programs/remote", image = true},
 	{name = "server", source = "programs/server", image = true},
 	{name = "fetch", source = "programs/fetch", image = true},
 	{name = "inspect", source = "programs/inspect", image = true},
@@ -116,6 +115,7 @@ module_builds := [?]Module_Build {
 	{name = "cryptography", source = "modules/cryptography", image = true},
 	{name = "cryptography_vectors", source = "programs/cryptography_vectors", imports = {"cryptography"}, image = true},
 	{name = "quic_echo", source = "programs/quic_echo", imports = {"cryptography"}, image = true},
+	{name = "remote", source = "programs/remote", imports = {"cryptography"}, image = true},
 	{name = "sample", source = "modules/sample", image = true},
 	{name = "hostile_exports", source = "modules/hostile_exports", image = true},
 	{name = "calendar", source = "modules/calendar", image = true},
@@ -530,13 +530,13 @@ test_descriptions :: proc() -> bool {
 				fmt.eprintfln("kerneltool: test failed: the record %s in %s does not agree with its source", item.name, build.name)
 				return false
 			}
-			fmt.printfln("kerneltool: test passed: the record %s}}, %d bytes, of %s comes from its source", strings.to_string(layout), item.size, build.name)
+			test_passed_print("the record %s}}, %d bytes, of %s comes from its source", strings.to_string(layout), item.size, build.name)
 		}
 		if build.name == "math" {
-			fmt.printfln("kerneltool: test passed: the documentation of %s comes from its source: \"%s\", and %d bytes of text", build.name, about, len(text))
+			test_passed_print("the documentation of %s comes from its source: \"%s\", and %d bytes of text", build.name, about, len(text))
 		}
 		if len(exports) > 1 {
-			fmt.printfln("kerneltool: test passed: the %d descriptions of %s come from its source; the last is %s", len(exports), build.name, strings.to_string(last))
+			test_passed_print("the %d descriptions of %s come from its source; the last is %s", len(exports), build.name, strings.to_string(last))
 		}
 	}
 	return true
@@ -562,8 +562,8 @@ test_modules :: proc() -> bool {
 		return false
 	}
 	hash := blake3.hash(callee.file)
-	fmt.printfln(
-		"kerneltool: test passed: test_caller called test_callee (%d bytes, %d rebase words, hash %x...) and got %d",
+	test_passed_print(
+		"test_caller called test_callee (%d bytes, %d rebase words, hash %x...) and got %d",
 		len(callee.file),
 		module.count(callee.file, .Rebases),
 		hash[:4],

@@ -17,8 +17,8 @@ This file is the record of the decisions of the project: who decided what, when,
 
 ## Groups
 
-1. [The principles, the properties and the contracts](#1-the-principles-the-properties-and-the-contracts): D-001 to D-039, D-191
-2. [The way of working](#2-the-way-of-working): D-040 to D-070, D-190
+1. [The principles, the properties and the contracts](#1-the-principles-the-properties-and-the-contracts): D-001 to D-039, D-191, D-205
+2. [The way of working](#2-the-way-of-working): D-040 to D-070, D-190, D-202 to D-204
 3. [The kernel](#3-the-kernel): D-071 to D-083
 4. [Memory](#4-memory): D-084 to D-088
 5. [The scheduler](#5-the-scheduler): D-089 to D-091
@@ -26,9 +26,9 @@ This file is the record of the decisions of the project: who decided what, when,
 7. [The network and QUIC](#7-the-network-and-quic): D-096 to D-100
 8. [Cryptography and randomness](#8-cryptography-and-randomness): D-101 to D-105
 9. [The interface, the fonts, the mark and the design](#9-the-interface-the-fonts-the-mark-and-the-design): D-106 to D-141, D-192, D-193
-10. [The console and the tools](#10-the-console-and-the-tools): D-142 to D-148
+10. [The console and the tools](#10-the-console-and-the-tools): D-142 to D-148, D-206
 11. [The build and the compiler](#11-the-build-and-the-compiler): D-149 to D-162
-12. [The site and the publication](#12-the-site-and-the-publication): D-163 to D-185
+12. [The site and the publication](#12-the-site-and-the-publication): D-163 to D-185, D-194 to D-201, D-207 to D-210
 13. [The name and the repository](#13-the-name-and-the-repository): D-186 to D-189
 14. [Open questions for the owner](#open-questions-for-the-owner)
 15. [Conflicts](#conflicts)
@@ -174,7 +174,7 @@ This file is the record of the decisions of the project: who decided what, when,
 - Decision: no intermediate form of code; private module data and no code before the entry; one level of nested data across a ring; no thread-local data in the contract; no unwinding, and frame pointers are required; the kernel is a module.
 - Words: none recorded.
 - State: in force.
-- Where: `MODULE_CONTRACT.md`, "Rules closed".
+- Where: `MODULE_CONTRACT.md`, "Closed rules".
 
 ### D-021 The call form: registers
 - 2026-11-09. Decided by: the coordinator (the owner delegated the choice). The owner can reverse it.
@@ -315,6 +315,13 @@ This file is the record of the decisions of the project: who decided what, when,
 - Words: "Do not preserve backward compatibility" (the global rules of the owner).
 - State: in force (applied in D-095 and in the formats of `MODULE_CONTRACT.md`).
 - Where: `AGENTS.md`; `MODULE_CONTRACT.md`, "The format".
+
+### D-205 Who signs the system description
+- 2026-11-12. Decided by: the coordinator, after a question of the owner. The owner can reverse it.
+- Decision: the owner of the machine signs the system description with a key that they keep. The key of the machine in its TPM can attest the measure later. The wording of property 21 on the signer is to be corrected.
+- Words: "je comprends pas. \"la personne\" ???" (to the question: the key of the person or the key of the machine in the TPM)
+- State: open: the owner has not objected and has not confirmed.
+- Where: `PROPERTIES.md`, property 21.
 
 ## 2. The way of working
 
@@ -541,6 +548,27 @@ This file is the record of the decisions of the project: who decided what, when,
 - Words: none.
 - State: in force. The measures on a quiet host are in the list of next work.
 - Where: `MODULE_CONTRACT.md`, "Measures"; `REVIEWS.md`.
+
+### D-202 Finished work goes into master, and its branch is deleted
+- 2026-11-12. Decided by: the owner.
+- Decision: each finished piece of work is merged into `master`, pushed, and its branch is deleted. No branch stays after its work is done.
+- Words: "Tu te fous de ma gueule, faut tout intégrer dans Master. T'as trop tendance à laisser des bronches traîner alors que faut fusionner à la fin." [bronches: branches]
+- State: in force.
+- Where: `AGENTS.md`, "Work".
+
+### D-203 What the system is for, and what comes after the site
+- 2026-11-12. Decided by: the owner.
+- Decision: the system is to be used and to be a ground for design ideas, not only a demonstration. The next work is the polish of the primitives of the kernel and of the modules that the system provides, then compatibility layers for Linux and for NT, and a passthrough of a GPU driver. A comparison of these with the 21 properties comes before any code for them.
+- Words: "2ème et troisième option, pour moi la \"suite\" c'est peaufiner nos primitives kernels/modules pré fournis, et essayer de faire des modules/layers de compatibilité linux et nt, et possibilité de faire un passthrough driver gpu. ça solutionnerait plein de cas d'usages"
+- State: not done yet.
+- Where: `FIRST_MILESTONE.md`, "Next steps".
+
+### D-204 After the site: the trusted boot, then remote over QUIC
+- 2026-11-12. Decided by: the owner.
+- Decision: the two pieces to finish after the site are the trusted boot and `remote` over QUIC. The site is not the goal of the project.
+- Words: "après le site, on fait ces trucs (pour \"finir\" ces parties) Le démarrage de confiance, remote par-dessus QUIC"; "là on se focalise sur le site, mais bon, le site ça n'a pas de valeur finale"
+- State: `remote` over QUIC: done. The trusted boot: not done yet (its test machines with a TPM are not reliable).
+- Where: `QUIC.md`, section 7; `FIRST_MILESTONE.md`, "Next steps".
 
 ## 3. The kernel
 
@@ -1118,6 +1146,13 @@ This file is the record of the decisions of the project: who decided what, when,
 - State: done (step 50). Not done yet: the counters of the processor; a stronger right to read another program.
 - Where: `TOOLS.md`; `FIRST_MILESTONE.md`, choices 316 to 324.
 
+### D-206 The console colors its code
+- 2026-11-12. Decided by: the owner.
+- Decision: the line of the console and the rows of its completion list show code in colors. A chosen row keeps a contrast that passes the test of the design rules.
+- Words: "dans les suggestions de complétion, le \"code\" affiché pourrait il etre colorisé ? et dans la ligne de commande aussi ?"; on the contrast of a chosen row: "bah ajuste le contraste c'est important"
+- State: done.
+- Where: `CONSOLE.md`; `DESIGN.md`, the colors.
+
 ## 11. The build and the compiler
 
 ### D-149 Odin is the implementation language
@@ -1381,6 +1416,90 @@ This file is the record of the decisions of the project: who decided what, when,
 - State: in force.
 - Where: this file.
 
+### D-194 The site shows the numbers of the last full check
+- 2026-11-12. Decided by: the owner, on the published page of the numbers; the form was given by the coordinator.
+- Decision: the published site shows the measured numbers of the last full check of the commit that it is built from. The pass that commits the pictures (`kerneltool screenshots`) also commits the measure record, `docs/measures/measures.txt`. The site reads `build/` when its logs are newer than the record, else the record. This settles Q-12.
+- Words: "0 of 14 numbers are measured in this build" (the page that the owner saw); "The published site must show the numbers of the last full check of the commit that it is built from."
+- State: in force.
+- Where: `docs/SITE.md`, "The measure record"; `tools/kerneltool/measure_record.odin`.
+
+### D-195 A pointer of a comment to a document is a reference on the site
+- 2026-11-12. Decided by: the owner, on the page of the module `kernel_without_return_check`; the form was given by the coordinator.
+- Decision: a pointer of a source comment to a document (`docs/ARCHITECTURE.md, "Kernel systems"`) is shown on the site as a link with the title of the document and of the heading, in a style of its own, not as the path and a label. A pointer whose label names no heading stops `kerneltool site`.
+- Words: "qu'est-ce que ça fout là ce genre d'infos ? ça devrait pas etre genre un "tag" ou une "référence" ? genre un lien, affiché avec un style pour architecture.md ?"
+- State: in force.
+- Where: `docs/SITE.md`, "The references to documents"; `tools/kerneltool/site_document_references.odin`.
+
+### D-196 One section Docs, with the guides and the reference under it
+- 2026-11-12. Decided by: the owner; the word, the place of the status page and the redirects of the two generations were given by the coordinator.
+- Decision: the bar names one section, Docs, in place of Guides and Reference: Docs, Status, News, Releases. The guides are under `/docs/guides/`, the reference under `/docs/reference/`, and `/docs/` is a page of its own. The word of the section and of its page is "Docs"; "Guides" and "Reference" stay the names of its two parts. The status page stays at `/status/`, a section of its own. Each old address of the two generations (the `.html` files, and the folders before the docs) redirects straight to the page of today.
+- Words: "pourquoi \"reference\" et pas \"docs\" ? ça parle plus aux gens ?"; "on garde une page d'index sur docs avec un sous chemin reference et guides ?".
+- State: done.
+- Where: `docs/SITE.md`, "The sections"; `docs/SITE.md`, "The redirect pages"; `tools/kerneltool/site_frame.odin`.
+
+### D-197 The docs home is a door with a search over the whole site
+- 2026-11-12. Decided by: the owner; the form was given by the coordinator.
+- Decision: `/docs/` is the home of the docs: a large search field in the middle, which searches the whole site with the index and the list of the search of the bar, then a card for the guides, a card for the reference, and doors. Every count on it is computed.
+- Words: "avec une belle \"page d'accueil de docs\" avec une searchbar, qui cherche parmi tout ?".
+- State: done.
+- Where: `docs/SITE.md`, "The docs home"; `tools/kerneltool/site_docs_home.odin`.
+
+### D-198 One search field on a page
+- 2026-11-12. Decided by: the owner, when asked whether the bar keeps its field beside the large field of the docs home.
+- Decision: the docs home has its large field and no field in its bar; every other page has the field of the bar and no other.
+- Words: "non c'est redondant. autant ne l'avoir que sur toutes les autres pages (exclusivité mutuelle)".
+- State: done.
+- Where: `docs/SITE.md`, "The search"; `tools/kerneltool/site_search.odin`.
+
+### D-199 A chart of what the search finds, which follows the search; the icons of the values inside the style sheet
+- 2026-11-12. Decided by: the owner; the reading of "dynamique", the form of the chart and the delivery of the icons were given by the coordinator.
+- Decision: the paragraph of the counts under the search field of the docs home is removed. Under the cards of the guides and of the reference, a horizontal bar chart gives the count of the entries of each kind of the index, the largest first, each kind with the icon and the color that the list of results shows for it, and a link to the page that lists the kind, when one exists. With no script the chart is static. The coordinator reads "dynamique" so: while the search field holds a text, each row shows the count of the matches of its kind, in the same place, a press on a row keeps the list of results to its kind, and a bar changes its length in at most 150 ms, with no movement for a reader who asks for reduced motion. The icons of the value kinds are inside the style sheet, so that a page asks for no file to draw them.
+- Words: "cette liste rébarbative d'informations sans aucune mise en forme, aucune couleur sur les numéros, les symboles, les types de choses, c'est nul. A la limite, mets un graphe en dessous du guide et de la référence, ça peut être intéressant. Mais un graphe ou plutôt un histogramme, j'en sais rien. Un truc visuel, parce que là, juste l'espèce de boum, gros cube de texte, ça n'a aucun intérêt en dessous de la barre de recherche, ça prend juste de la place."; "Et tant qu'à mettre un histogramme, autant le rendre dynamique."; "j'espère que le site a bien la compression, etc. Parce que je trouve qu'il n'est pas long à charger, mais on sent que c'est lourd à charger."
+- State: done.
+- Where: `docs/SITE.md`, "The docs home"; `docs/SITE.md`, "The kinds of values"; `tools/kerneltool/site_docs_home.odin`; `tools/kerneltool/site_search.odin`; `tools/kerneltool/site_values.odin`.
+
+### D-200 The cards of the docs home list everything, with no empty part
+- 2026-11-12. Decided by: the owner; the form was given by the coordinator.
+- Decision: the card of the guides lists every guide with its one line of description; the card of the reference lists every reference table with its count, with no table of three columns; a card takes the height of its rows; the chart of the search is under the reference, in the shorter column; the row of doors is removed. Each guide has a row in the table "## Documents" of `README.md`, and the site refuses a guide with none.
+- Words: "Mauvais usage de l'espace." (with a picture of the two cards: the card of the guides empty for its lower half, the table of the reference squeezed).
+- State: done.
+- Where: `docs/SITE.md`, "The docs home"; `tools/kerneltool/site_docs_home.odin`; `README.md`, "Documents".
+
+### D-201 The foot of each page names the maker
+- 2026-11-12. Decided by: the owner.
+- Decision: the foot of each page of the site starts with "modus · by Froment Software": the mark of the maker and its name as a link to https://froment.software, as on the other sites of the maker.
+- Words: "sur le site, dans le footer, il manque le « by froment software » comme il y a sur tous les sites."
+- State: done.
+- Where: `tools/kerneltool/site_frame.odin`; `resources/site/froment_software.png`.
+
+### D-207 The site colors its code
+- 2026-11-12. Decided by: the owner; the means was chosen by the coordinator.
+- Decision: code on the site is colored. The tool colors it with the tokenizer of the compiler, not with Shiki: a Node script is forbidden in the repository.
+- Words: "Un peu dommage aussi qu'on ait pas de coloration du code, peut-être avec Shiki"
+- State: done.
+- Where: `docs/SITE.md`; `tools/kerneltool/site_code.odin`.
+
+### D-208 The look of the site: scroll bars, selection, values, type cards
+- 2026-11-12. Decided by: the owner.
+- Decision: the site styles its scroll bars and its selection color. A technical value is in the monospace font, with a color and an icon of its kind. A type has a card: its size, its alignment and its fields.
+- Words: "si tu peux styliser les scroll-bars [...] genre la couleur de highlight, enfin tout ce bordel"; "sur les différents data types, d'avoir un tool type qui explique le type. Genre sa carte d'identité, sa taille, des informations techniques. Sa taille, son alignement"; "que les valeurs techniques [...] soient affichées en monospace, qu'elles aient une couleur [...] accompagnées d'un icône"
+- State: done.
+- Where: `docs/SITE.md`, "The kinds of values"; `tools/kerneltool/site_types.odin`; `tools/kerneltool/site_values.odin`.
+
+### D-209 The documentation tree: separate and expanded
+- 2026-11-12. Decided by: the owner.
+- Decision: the guides and the reference each have their own tree, and a tree is shown expanded.
+- Words: "je ne suis pas fan qu'on regroupe dans la table des matières les guides, la doc [...] la doc, je voudrais voir l'arbre déployé et pas compressé"
+- State: done.
+- Where: `docs/SITE.md`; `tools/kerneltool/site_documentation.odin`.
+
+### D-210 Faults of the site that the owner found
+- 2026-11-12. Decided by: the owner.
+- Decision: the bar stays at the top of each page. The search finds a type by its name. A tile shows its whole text. The widths of the columns of a table come from one general rule, never from a setting of one table. The page does not move while a person types in the search field. No scroll is smooth.
+- Words: "ce serait bien que la navbar soit sticky (sur docs et pages normales)"; "j'ai recherché un type au pif \"Time_Record\" et il apparait pas dans la recherche"; "le texte de certaines boites est tronqué"; "superbe répartion de largeur de colonne... (je vais pas m'amuser à faire ça pour chaque tableau)"; "à chaque caractère que je tape dans le truc de recherche, ça scroll un peu vers le haut"
+- State: done.
+- Where: `docs/SITE.md`.
+
 ## 13. The name and the repository
 
 ### D-186 The name is modus
@@ -1426,7 +1545,7 @@ Each question waits for an answer of the owner. The proposal is what holds until
 - **Q-09 The temple of Jon in a post.** Until the owner decides, it is not posted (D-136, D-183).
 - **Q-10 The token of Cloudflare.** The rules of the headers and the purge of the cache need a token with the rights "Transform Rules: Edit" and "Cache Purge" (D-171).
 - **Q-11 The next kernel operation past 32.** (D-073). Proposal: the coordinator raises the target with a recorded reason, as the owner delegated.
-- **Q-12 The machine tests in the site workflow.** The workflow runs no machine test, so the site online says "Not measured in this build." (D-170). The choices: the workflow runs `kerneltool test`, or each release commits its numbers.
+- **Q-12 The machine tests in the site workflow.** Settled by D-194: the full check commits its numbers in the measure record; the workflow runs no machine test.
 - **Q-13 The cache of the site workflow.** The cache of GitHub Actions now, or FlakeHub Cache (D-170).
 - **Q-14 The tone of the posts.** See conflict C-10.
 

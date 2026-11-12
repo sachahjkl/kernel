@@ -17,6 +17,34 @@ site_color :: proc(color: graphics.Color) -> string {
 	return fmt.tprintf("#%06x", u32(color) & 0xFFFFFF)
 }
 
+// site_svg_data_address gives an SVG picture as a data address for the
+// style sheet, so that a page asks for no other file to draw it. The
+// characters that end the address or start a fragment or an escape are
+// percent-encoded, a double quote becomes a single one (the address is
+// inside url("...")), and a line feed is dropped.
+site_svg_data_address :: proc(svg: string) -> string {
+	b := strings.builder_make(context.temp_allocator)
+	strings.write_string(&b, "data:image/svg+xml,")
+	for index in 0 ..< len(svg) {
+		switch svg[index] {
+		case '%':
+			strings.write_string(&b, "%25")
+		case '<':
+			strings.write_string(&b, "%3C")
+		case '>':
+			strings.write_string(&b, "%3E")
+		case '#':
+			strings.write_string(&b, "%23")
+		case '"':
+			strings.write_byte(&b, '\'')
+		case '\n', '\r':
+		case:
+			strings.write_byte(&b, svg[index])
+		}
+	}
+	return strings.to_string(b)
+}
+
 site_variable :: proc(builder: ^strings.Builder, name: string, color: graphics.Color) {
 	strings.write_string(builder, "  --")
 	strings.write_string(builder, name)
@@ -144,7 +172,12 @@ blockquote { margin-left: 0; padding-left: 16px; border-left: 2px solid var(--li
    a closed menu on a wide screen with no script; another one shows the
    button until search.js opens the menu. The button: a square with three
    lines, its word hidden. */
-.bar { position: relative; }
+/* The bar stays at the top of the window while the page scrolls, on every
+   page. Its height is fixed, so that the parts under it (the column "On
+   this page", the target of a link) know where the bar ends. */
+:root { --bar-height: 41px; }
+.bar { position: sticky; top: 0; z-index: 30; }
+.bar-inner { min-height: 40px; }
 .bar-menu { flex: 1 1 auto; min-width: 0; }
 .bar-menu-content { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 24px; }
 .bar-menu-button { list-style: none; display: block; position: relative; width: 32px; height: 32px; margin-left: auto; cursor: pointer; background: var(--track); border: 1px solid var(--track); }
@@ -186,11 +219,78 @@ blockquote { margin-left: 0; padding-left: 16px; border-left: 2px solid var(--li
 .search-name { flex: 0 1 auto; }
 .search-what { flex: 0 1 auto; color: var(--dim); }
 .search-name mark { background: none; color: var(--match); font-weight: 700; }
+/* The home of the docs: a door. Its search field is large, in the middle
+   of the page, and its list opens under it; the bar of that page has no
+   field. Two cards under it, the guides and the reference. */
+.docs-head { padding: 32px 0 8px; text-align: center; }
+.docs-head .lead { margin: 0 auto 16px; }
+.search.search-door { max-width: 720px; margin: 0 auto 32px; }
+.search-door input { box-sizing: border-box; width: 100%; height: 48px; padding: 0 16px; font-size: 18px; border-color: var(--line); }
+.search-door .search-panel { left: 0; right: 0; top: 52px; width: auto; max-width: none; }
+/* The two cards of the guides and of the reference: two columns from 900
+   pixels, one under it. A card takes the height of its own rows, so no
+   card shows an empty part beside a longer one. */
+.docs-parts { display: grid; grid-template-columns: minmax(0, 1fr); align-items: start; gap: 8px; margin-bottom: 8px; }
+@media (min-width: 900px) {
+  .docs-parts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+/* The kind of a row of the list: its icon in the color of its kind, its
+   words dim, as the rest of the line. */
+span.search-kind.value-icon::before { margin-right: 4px; }
+/* One row form for the three cards of the docs home: the lead (a number
+   of a reading order, or the icon of a kind at the size of the icon of a
+   table cell), the name, then a description or a bar, and a count at the
+   right. The name and the description share one line when the width
+   allows; else the description goes under the name. The count has one
+   width, that of five figures (the index holds at most 4096 entries), its
+   figures at the right and of one width; it has no rule at its left, so
+   that the counts of the rows align. */
+.docs-parts-column { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
+.docs-parts-column .search-chart { margin-bottom: 0; }
+.docs-rows { list-style: none; margin: 0; padding: 0; }
+.docs-rows li { margin: 0; }
+.docs-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: start; gap: 0 8px; padding: 2px 0; line-height: 24px; }
+.docs-row-lead.value-icon::before { display: block; width: 12px; height: 12px; margin: 6px 0; }
+.docs-row-number { width: 2ch; text-align: right; font-family: var(--mono); font-size: 14px; color: var(--dim); }
+.docs-row-main { display: flex; flex-wrap: wrap; align-items: center; gap: 0 12px; min-width: 0; }
+.docs-row-name { overflow-wrap: anywhere; }
+.docs-rows-one-line .docs-row-name, .search-chart .docs-row-name { white-space: nowrap; overflow-wrap: normal; }
+/* The description is always under the name: beside it, the rows of a card
+   would each break at a different place. */
+.docs-row-about { flex: 1 1 100%; min-width: 0; color: var(--dim); font-size: 14px; line-height: 20px; }
+.docs-row .docs-row-count { width: 5ch; padding: 0; border-left: 0; text-align: right; font-variant-numeric: tabular-nums; }
+/* The chart of what the search finds: a row of the form above for each
+   kind, a bar in the place of the description. The bars of all rows
+   start at one place, so the name has one width. A bar is an SVG rect in
+   the color of its kind, with square corners; its length is an attribute.
+   Where the name and a bar of 8 em do not fit on one line, the bar goes
+   under the name. While the field holds a text, a row is a button: the
+   kind that the list keeps has the band and the line of the chosen row of
+   the list. */
+.search-chart { margin-bottom: 16px; }
+.search-chart-total { color: var(--dim); }
+.search-chart-total .value { padding: 0; border-left: 0; }
+.search-chart .docs-row-name { flex: 0 0 11em; }
+.docs-row-bar { display: block; flex: 1 1 8em; min-width: 8em; height: 12px; }
+.search-chart-bar rect { fill: var(--value-color); transition: width 150ms ease-out; }
+.search-chart-target { padding: 2px 4px; color: var(--text); text-decoration: none; border-left: 2px solid transparent; }
+/* A count keeps the color of a number also in a row that is a link. */
+.search-chart-target .value { color: var(--value-color); }
+.search-chart-target[role="button"] { cursor: pointer; }
+.search-chart-target[aria-pressed="true"] { background: var(--track); border-left-color: var(--line); }
+.search-chart-none .search-chart-target, .search-chart-none .search-chart-target .value { color: var(--dim); }
+@media (prefers-reduced-motion: reduce) {
+  .search-chart-bar rect { transition: none; }
+}
 .crumbs ol { list-style: none; margin: 16px auto 0; padding: 0; display: flex; flex-wrap: wrap; gap: 4px; color: var(--dim); }
 .crumbs li { margin: 0; }
 .crumbs li + li::before { content: "/"; margin-right: 4px; color: var(--dim); }
 .foot { margin-top: 64px; padding: 16px 0 32px; border-top: 1px solid var(--track); color: var(--dim); font-size: 14px; }
 .foot a, .foot code { color: var(--dim); }
+/* The maker: its mark and its name stay on one line. */
+.maker { white-space: nowrap; }
+.maker img { display: inline-block; width: 16px; height: 16px; margin: 0 6px 0 2px; vertical-align: -3px; }
+.foot .maker a { color: var(--text); font-weight: 700; }
 .source, .missing, .date, .status, figcaption, .contents-title { color: var(--dim); }
 .source { font-size: 14px; }
 
@@ -246,7 +346,7 @@ blockquote { margin-left: 0; padding-left: 16px; border-left: 2px solid var(--li
 @media (min-width: 1100px) {
   .documentation { grid-template-columns: minmax(0, 1fr) 240px; }
   .documentation > .text { grid-column: 1; grid-row: 1; }
-  .documentation > .outline { grid-column: 2; grid-row: 1; position: sticky; top: 0; align-self: start; max-height: 100vh; overflow-y: auto; margin: 0; padding: 16px 0; }
+  .documentation > .outline { grid-column: 2; grid-row: 1; position: sticky; top: var(--bar-height); align-self: start; max-height: calc(100vh - var(--bar-height)); overflow-y: auto; margin: 0; padding: 16px 0; }
   .outline[open] > summary { display: none; }
 }
 /* A browser that has ::details-content shows "On this page" beside the
@@ -269,18 +369,16 @@ ol.labelled > li > * { text-indent: 0; }
    The cells wrap; a name (an identifier, a path, a signature) stays on one
    line. A table scrolls sideways only on a narrow screen. */
 /* The box of a table scrolls sideways at every width when the table is
-   wider than the page; the keyboard reaches it. A column of names, numbers
-   or dates takes only the width of its content (a width of 1% asks for the
-   least), so the spare room of a wide table goes to the columns of prose
-   and of log lines, which have a least width and no upper bound. */
+   wider than the page; the keyboard reaches it. A table has its natural
+   width: each column is as wide as its content, and the table is not
+   stretched to the width of the page, so no column holds empty room. A
+   column of names, numbers or dates never wraps. When the natural width
+   passes the page, the browser wraps the columns of prose first; they
+   keep a small least width. */
 .table { margin: 0 0 16px; overflow-x: auto; border-left: 2px solid transparent; border-right: 2px solid transparent; }
 .table:focus-visible { outline: 2px solid var(--line); outline-offset: 2px; }
-table { border-collapse: collapse; min-width: 100%; }
-th.column-name, th.column-number, th.column-date { width: 1%; }
-th.column-short { width: 1%; min-width: 6em; }
-th.column-prose { min-width: 13em; }
-th.column-line { min-width: 30em; }
-th.column-any { min-width: 6em; }
+table { border-collapse: collapse; }
+th.column-prose, th.column-line { min-width: 12em; }
 .column-name, .column-name code { white-space: nowrap; overflow-wrap: normal; }
 .column-date, .column-number { white-space: nowrap; }
 .column-number { text-align: right; font-variant-numeric: tabular-nums; }
@@ -320,6 +418,13 @@ td.value code { padding: 0; }
 .value-head { color: var(--dim); }
 .value-icon::before { content: ""; display: inline-block; width: 12px; height: 12px; margin-right: 4px; vertical-align: -1px; background-color: var(--value-color); -webkit-mask: var(--value-icon) no-repeat center / 12px 12px; mask: var(--value-icon) no-repeat center / 12px 12px; }
 span.value-icon::before { margin-right: 0; }
+/* A reference to a document (docs/SITE.md, "The references to documents"):
+   a name in the reading font, in the color and with the icon of the kind
+   Guide. A working record says that it is a file of the repository. The
+   line "See:" after a text holds the references of its asides. */
+a.document-reference { color: var(--value-color); text-decoration-color: var(--line); }
+.document-outside { color: var(--dim); }
+.document-references { color: var(--dim); }
 
 /* The types (docs/SITE.md, "The types"): a reference is a button that opens
    the card of its type, a popover in the top layer, so the box of a table
@@ -366,7 +471,9 @@ tr.padding td { color: var(--dim); }
 .home-head { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 32px; align-items: start; padding: 32px 0; margin-bottom: 16px; }
 .home-head picture { display: block; }
 .tiles { list-style: none; padding: 0; margin: 0 0 16px; display: flex; flex-wrap: wrap; gap: 2px; }
-.tiles li { margin: 0; flex: 1 1 96px; min-width: 48px; height: 24px; line-height: 20px; padding: 0 4px; overflow: hidden; white-space: nowrap; font-family: var(--mono); font-size: 12px; background: var(--track); border-bottom: 1px solid var(--dim); }
+/* A tile is never narrower than its name: a small module takes the width
+   of its name, and the others share the rest of the row by their sizes. */
+.tiles li { margin: 0; flex: 1 1 96px; min-width: max-content; height: 24px; line-height: 20px; padding: 0 4px; overflow: hidden; white-space: nowrap; font-family: var(--mono); font-size: 12px; background: var(--track); border-bottom: 1px solid var(--dim); }
 .tiles a { display: block; color: inherit; text-decoration: none; }
 .tiles a:hover { background: none; text-decoration: underline; }
 .mark { display: block; image-rendering: pixelated; }
@@ -429,6 +536,8 @@ figcaption { padding-top: 8px; font-size: 14px; }
   .search { margin-left: 0; }
   .search input { width: 100%; height: 32px; }
   .search-panel { position: static; width: auto; max-width: none; margin-top: 4px; }
+  /* The field of the home of the docs stays in the page, not in the menu. */
+  .search-door input { height: 40px; }
   /* The open menu scrolls on its own: on a documentation page it holds
      the tree under the sections and the search. */
   .bar-menu-content { max-height: calc(100vh - 48px); overflow-y: auto; }
@@ -465,7 +574,6 @@ SITE_POLISH_RULES :: `
 :root {
   color-scheme: dark light;
   accent-color: var(--line);
-  scroll-padding-top: 16px;
   -webkit-tap-highlight-color: color-mix(in srgb, var(--line) 30%, transparent);
 }
 /* A page with and without a scroll bar has the same width. */
@@ -497,13 +605,13 @@ li::marker, summary::marker { color: var(--dim); }
 h1, h2, h3, h4 { text-wrap: balance; }
 p, li, dd, blockquote { text-wrap: pretty; }
 pre, code { tab-size: 4; }
-@media (prefers-reduced-motion: no-preference) {
-  html { scroll-behavior: smooth; }
-}
-/* A jump to an anchor: the bar of the site does not stay at the top, so the
-   target keeps only a little room above it, and a line at its left marks
-   where the link landed. */
-[id] { scroll-margin-top: 16px; }
+/* A jump to an anchor: the bar of the site stays at the top, so the target
+   keeps the height of the bar and a little room above it, and a line at
+   its left marks where the link landed. */
+/* The room is a margin of each target, not a padding of the scroll of the
+   page: with a padding, the browser takes the search field of the bar as
+   hidden under it and scrolls the page at each key. */
+[id] { scroll-margin-top: calc(var(--bar-height) + 16px); }
 h2:target, h3:target, li:target, p:target { box-sizing: border-box; border-left: 2px solid var(--line); padding-left: 8px; }
 .table tr:target > td { background: var(--track); }
 /* A card of a type is not a modal: no veil over the page. */
@@ -511,6 +619,7 @@ h2:target, h3:target, li:target, p:target { box-sizing: border-box; border-left:
 @media (forced-colors: active) {
   /* The system colors: the icons, the marks of the values and the focus stay. */
   .value-icon::before { forced-color-adjust: none; background-color: CanvasText; }
+  .search-chart-bar rect { fill: CanvasText; }
   code.value, button.type-reference.value { border-left-color: CanvasText; }
   a:focus-visible, button:focus-visible, summary:focus-visible, input:focus-visible, [tabindex]:focus-visible { outline-color: Highlight; }
   .type-card { border-color: CanvasText; }
@@ -543,6 +652,12 @@ site_polish_variables :: proc(builder: ^strings.Builder, light: bool) {
 	strings.write_string(builder, "}\n")
 }
 
+// site_style_sheet_icon_count gives the count of the icons of the kinds of
+// values that a style sheet holds as data addresses.
+site_style_sheet_icon_count :: proc(sheet: string) -> int {
+	return strings.count(sheet, "--value-icon: url(\"data:image/svg+xml,")
+}
+
 // site_style_sheet gives the whole style sheet: the variables of the dark
 // form, the rules, the grid of points of the background, then the light form
 // for a reader whose system asks for it.
@@ -564,10 +679,10 @@ site_style_sheet :: proc(tile_rules: string) -> string {
 	// The grid of points of the background (docs/DESIGN.md, section 3): a
 	// square of 2 pixels each 24 pixels, at 12 + 24 n. A picture in the style
 	// sheet itself, so that the page asks for no other file.
-	point := site_color(graphics.COLOR_POINT)
-	strings.write_string(&builder, ".section-home {\n  background-image: url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24'%3E%3Crect width='2' height='2' fill='%23")
-	strings.write_string(&builder, point[1:])
-	strings.write_string(&builder, "'/%3E%3C/svg%3E\");\n  background-position: 12px 12px;\n}\n")
+	point := fmt.tprintf("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"24\" height=\"24\"><rect width=\"2\" height=\"2\" fill=\"%s\"/></svg>", site_color(graphics.COLOR_POINT))
+	strings.write_string(&builder, ".section-home {\n  background-image: url(\"")
+	strings.write_string(&builder, site_svg_data_address(point))
+	strings.write_string(&builder, "\");\n  background-position: 12px 12px;\n}\n")
 	strings.write_string(&builder, "@media (prefers-color-scheme: light) {\n")
 	site_colors_write(&builder, site_light_colors())
 	strings.write_string(&builder, site_value_rules(true))

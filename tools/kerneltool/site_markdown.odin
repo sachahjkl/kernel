@@ -502,6 +502,6 @@ readme_pictures_check :: proc() -> bool {
 			return false
 		}
 	}
-	fmt.printfln("kerneltool: test passed: the %d pictures that %s names are files of the repository", len(readme.captions), SITE_README_FILE)
+	test_passed_print("the %d pictures that %s names are files of the repository", len(readme.captions), SITE_README_FILE)
 	return true
 }

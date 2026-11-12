@@ -314,13 +314,13 @@ trusted_boot_tests_run :: proc(with_tpm := false) -> bool {
 			fmt.eprintln("kerneltool: test failed: a system with one byte of one module changed has the same measure")
 			return false
 		}
-		fmt.println("kerneltool: test passed: a system with one byte of the module " + OTHER_SYSTEM_MODULE + " changed has another measure")
+		test_passed_print("%s", "a system with one byte of the module " + OTHER_SYSTEM_MODULE + " changed has another measure")
 	} else {
 		fmt.println("kerneltool: the two machines of the measure did not run: `kerneltool test trusted_boot tpm` runs them")
 	}
 	// The tool ends QEMU: status 0.
 	machine_test(scenario_secure_boot[:], BOOT_VOLUME_SECURE_BOOT, TEST_OUTPUT_SECURE_BOOT, 0, firmware = .With_Secure_Boot) or_return
-	fmt.printfln("kerneltool: test passed: the firmware with Secure Boot started the signed boot program of %s, which says so", BOOT_VOLUME_SECURE_BOOT)
+	test_passed_print("the firmware with Secure Boot started the signed boot program of %s, which says so", BOOT_VOLUME_SECURE_BOOT)
 	refused_machine_run(scenario_secure_boot_refused[:], BOOT_VOLUME_SECURE_BOOT_CHANGED, TEST_OUTPUT_SECURE_BOOT_CHANGED, .With_Secure_Boot) or_return
 	refused_machine_run(scenario_secure_boot_refused[:], BOOT_VOLUME, TEST_OUTPUT_SECURE_BOOT_UNSIGNED, .With_Secure_Boot) or_return
 	return true
@@ -343,10 +343,10 @@ refused_machine_run :: proc(steps: []Step, volume, output: string, firmware: Mac
 			fmt.eprintfln("kerneltool: test failed: the firmware with Secure Boot started the boot program of %s", volume)
 			return false
 		}
-		fmt.printfln("kerneltool: test passed: the firmware with Secure Boot refused the boot program of %s, which never started", volume)
+		test_passed_print("the firmware with Secure Boot refused the boot program of %s, which never started", volume)
 		return true
 	}
-	fmt.printfln("kerneltool: test passed: the boot program refused %s, and the kernel did not start", volume)
+	test_passed_print("the boot program refused %s, and the kernel did not start", volume)
 	return true
 }
 
@@ -374,6 +374,6 @@ measure_machine_run :: proc(steps: []Step, volume, output: string, firmware: Mac
 		fmt.eprintfln("kerneltool: test failed: the TPM of %s holds %s in PCR 11; the system description gives %s", volume, found, string(expected[:]))
 		return
 	}
-	fmt.printfln("kerneltool: test passed: PCR 11 of %s is %s, the value that the tool computes from its system description", volume, found)
+	test_passed_print("PCR 11 of %s is %s, the value that the tool computes from its system description", volume, found)
 	return measure_expected(description), true
 }

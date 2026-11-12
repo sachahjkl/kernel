@@ -107,10 +107,19 @@ site_tree_link :: proc(site: ^Site, b: ^strings.Builder, from_page, target, titl
 // the reference, of a module or of the status shows the reference pages,
 // every module under the heading of its group, and the status. The tree is
 // whole: nothing is folded, so a reader sees every page of the part at once.
+// Each tree starts with a link to the home of the docs.
 site_tree_html :: proc(site: ^Site, page: Site_Page) -> string {
 	b := strings.builder_make(context.temp_allocator)
 	strings.write_string(&b, SITE_TREE_OPEN)
 	strings.write_string(&b, "\n<ul class=\"tree-sections\">\n")
+	// The way back to the home of the docs, at the top of each tree: the
+	// guides and the reference are its two parts.
+	docs_page := site_section_page(.Docs)
+	if site_page_exists(site, docs_page) {
+		strings.write_string(&b, "<li>")
+		site_tree_link(site, &b, page.path, docs_page, site_section_titles[.Docs], false)
+		strings.write_string(&b, "</li>\n")
+	}
 
 	guides_page := site_section_page(.Guides)
 	if page.section == .Guides {
@@ -368,6 +377,7 @@ Site_Symbol :: struct {
 	// written in place of signature when it is not "".
 	signature_html:   string,
 	description:      string, // The text of its source comment, one paragraph a line; "" when the source has none.
+	page:             string, // The page that shows it: the references of its text are relative to it.
 	facts:            []Site_Symbol_Fact,
 	after_facts_html: string, // A table of the symbol after its facts (the fields of a type), or "".
 	source:           string, // Its file in the repository, or "".
@@ -397,14 +407,7 @@ site_symbol_write :: proc(site: ^Site, b: ^strings.Builder, symbol: Site_Symbol)
 	if strings.trim_space(symbol.description) == "" {
 		site.symbols_without_description += 1
 	}
-	for paragraph in strings.split(symbol.description, "\n", context.temp_allocator) {
-		if strings.trim_space(paragraph) == "" {
-			continue
-		}
-		strings.write_string(b, "<p>")
-		site_escape(b, strings.trim_space(paragraph))
-		strings.write_string(b, "</p>\n")
-	}
+	site_source_comment(site, b, symbol.page, symbol.description, .Paragraphs)
 	if len(symbol.facts) > 0 || symbol.source != "" {
 		strings.write_string(b, "<dl class=\"symbol-facts\">\n")
 		for fact in symbol.facts {
