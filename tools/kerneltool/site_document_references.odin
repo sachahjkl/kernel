@@ -10,6 +10,7 @@
 package kerneltool
 
 import "core:fmt"
+import "core:os"
 import "core:slice"
 import "core:strings"
 
@@ -191,7 +192,8 @@ site_parts_outside_quotes :: proc(text: string) -> []string {
 }
 
 // site_label_token_end reads a label of a section at an index: "8", "12.4",
-// "5a", "U2b", "K1". With capital_required, the label starts with a capital
+// "5a", "U2b", "K1", and the identifier of a decision "D-163". With
+// capital_required, the label starts with a capital
 // letter: a bare number after a comma is a word of the sentence.
 site_label_token_end :: proc(text: string, at: int, capital_required: bool) -> (end: int, found: bool) {
 	decimal_digit :: proc(character: u8) -> bool {
@@ -200,6 +202,9 @@ site_label_token_end :: proc(text: string, at: int, capital_required: bool) -> (
 	index := at
 	if index < len(text) && text[index] >= 'A' && text[index] <= 'Z' {
 		index += 1
+		if index + 1 < len(text) && text[index] == '-' && decimal_digit(text[index + 1]) {
+			index += 1
+		}
 	} else if capital_required {
 		return 0, false
 	}
@@ -1011,11 +1016,7 @@ site_comment_text_write :: proc(site: ^Site, b: ^strings.Builder, from_page, mar
 		if closing < 0 {
 			break
 		}
-		if html {
-			site_escape(b, rest[:mark])
-		} else {
-			strings.write_string(b, rest[:mark])
-		}
+		site_comment_words_write(b, rest[:mark], html)
 		number := site_digits_value(rest[mark + 1:mark + 1 + closing])
 		if number >= 0 && number < len(in_place) {
 			if html {
@@ -1030,6 +1031,36 @@ site_comment_text_write :: proc(site: ^Site, b: ^strings.Builder, from_page, mar
 			}
 		}
 		rest = rest[mark + 1 + closing + 1:]
+	}
+	site_comment_words_write(b, rest, html)
+}
+
+// site_comment_words_write writes words of a source comment. A comment
+// holds code in backticks ("`test return_fault`"): as HTML each pair is a
+// code element, as plain text the backticks go away. No other mark of
+// Markdown is read: a comment is not a document.
+site_comment_words_write :: proc(b: ^strings.Builder, text: string, html: bool) {
+	rest := text
+	for {
+		open := strings.index_byte(rest, '`')
+		if open < 0 {
+			break
+		}
+		closing := strings.index_byte(rest[open + 1:], '`')
+		if closing <= 0 {
+			break
+		}
+		code := rest[open + 1:open + 1 + closing]
+		if html {
+			site_escape(b, rest[:open])
+			strings.write_string(b, "<code>")
+			site_escape(b, code)
+			strings.write_string(b, "</code>")
+		} else {
+			strings.write_string(b, rest[:open])
+			strings.write_string(b, code)
+		}
+		rest = rest[open + 1 + closing + 1:]
 	}
 	if html {
 		site_escape(b, rest)
@@ -1112,4 +1143,165 @@ site_document_of_code_span :: proc(site: ^Site, code: string) -> (path: string, 
 		return strings.concatenate({"docs/", base}, context.temp_allocator), true
 	}
 	return "", false
+}
+
+// The folders whose source comments the check of the pointers reads: the
+// sources of the system. The tool is not read: its tests hold pointers
+// that do not resolve on purpose.
+SITE_POINTER_SOURCE_FOLDERS :: [?]string{"kernel", "programs", "modules", "support", "contract", "runtime", "boot"}
+
+// site_odin_files_under adds the path of each source file of a folder and
+// of its folders, but the tests, to paths.
+site_odin_files_under :: proc(folder: string, paths: ^[dynamic]string) {
+	entries, list_error := os.read_all_directory_by_path(folder, context.temp_allocator)
+	if list_error != nil {
+		return
+	}
+	for entry in entries {
+		path := strings.concatenate({folder, "/", entry.name}, context.temp_allocator)
+		if entry.type == .Directory {
+			site_odin_files_under(path, paths)
+		} else if strings.has_suffix(entry.name, ".odin") && !strings.has_suffix(entry.name, "_test.odin") {
+			append(paths, path)
+		}
+	}
+}
+
+// site_pointer_problem gives the fault of a pointer whose labels do not all
+// find their place, or "": a pointer to no document of docs/ is not one.
+site_pointer_problem :: proc(site: ^Site, file: string, line: int, path: string, labels: []string) -> string {
+	targets := site_document_targets(site, path, labels)
+	for target in targets {
+		if !target.resolved {
+			return fmt.tprintf("%s, line %d: the pointer to %s, %s, names no heading of it", file, line, path, strings.join(labels, ", ", context.temp_allocator))
+		}
+	}
+	return ""
+}
+
+// site_comment_pointer_problems reads the comments of one source file: the
+// lines of comment that follow each other are one text, as the site joins
+// them, and each pointer of the text names the line where it starts.
+site_comment_pointer_problems :: proc(site: ^Site, file, content: string) -> []string {
+	problems := make([dynamic]string, context.temp_allocator)
+	lines := site_lines(content)
+	index := 0
+	for index < len(lines) {
+		_, first := site_code_and_comment(lines[index])
+		if first == "" {
+			index += 1
+			continue
+		}
+		// One text from the lines of comment that follow each other, with
+		// the offset where each line starts in it.
+		block := strings.builder_make(context.temp_allocator)
+		starts := make([dynamic]int, context.temp_allocator)
+		block_line := index
+		for index < len(lines) {
+			_, comment := site_code_and_comment(lines[index])
+			if comment == "" {
+				break
+			}
+			if strings.builder_len(block) > 0 {
+				strings.write_byte(&block, ' ')
+			}
+			append(&starts, strings.builder_len(block))
+			strings.write_string(&block, comment)
+			index += 1
+		}
+		text := strings.to_string(block)
+		for pointer in site_document_pointers(text) {
+			line := block_line
+			for start, start_index in starts {
+				if start <= pointer.start {
+					line = block_line + start_index
+				}
+			}
+			if problem := site_pointer_problem(site, file, line + 1, pointer.path, pointer.labels); problem != "" {
+				append(&problems, problem)
+			}
+		}
+	}
+	return problems[:]
+}
+
+// site_guide_pointer_problems reads the code spans of a Markdown file that
+// name a document, with the labels after them, line by line, outside the
+// fences of code, as the renderer writes them.
+site_guide_pointer_problems :: proc(site: ^Site, file, content: string) -> []string {
+	problems := make([dynamic]string, context.temp_allocator)
+	fenced := false
+	for line, line_index in site_lines(content) {
+		if strings.has_prefix(strings.trim_space(line), "```") {
+			fenced = !fenced
+			continue
+		}
+		if fenced {
+			continue
+		}
+		if level, _ := site_heading_level(line); level > 0 {
+			continue // A code span of a heading stays code.
+		}
+		position := 0
+		for position < len(line) {
+			open := strings.index_byte(line[position:], '`')
+			if open < 0 {
+				break
+			}
+			open += position
+			closing := strings.index_byte(line[open + 1:], '`')
+			if closing < 0 {
+				break
+			}
+			code := line[open + 1:open + 1 + closing]
+			position = open + 1 + closing + 1
+			path, names_document := site_document_of_code_span(site, code)
+			if !names_document {
+				continue
+			}
+			labels, _ := site_pointer_labels(line, position)
+			if problem := site_pointer_problem(site, file, line_index + 1, path, labels); problem != "" {
+				append(&problems, problem)
+			}
+		}
+	}
+	return problems[:]
+}
+
+// site_document_pointer_problems checks every pointer of the source
+// comments of the system and of the documents that the site renders (the
+// guides, the glossary, the news, and the working record that the status
+// page reads): each label finds its place. A pointer that does not is stale,
+// and the command stops: it cannot come back. The guides are read first,
+// for their headings.
+site_document_pointer_problems :: proc(site: ^Site) -> []string {
+	problems := make([dynamic]string, context.temp_allocator)
+	files := make([dynamic]string, context.temp_allocator)
+	folders := SITE_POINTER_SOURCE_FOLDERS
+	for folder in folders {
+		site_odin_files_under(folder, &files)
+	}
+	for file in files {
+		content, read_ok := site_read_quiet(file)
+		if !read_ok {
+			continue
+		}
+		append(&problems, ..site_comment_pointer_problems(site, file, content))
+	}
+	documents := make([dynamic]string, context.temp_allocator)
+	for guide in site.guides {
+		append(&documents, guide.source)
+	}
+	append(&documents, SITE_GLOSSARY_FILE, SITE_MILESTONE_FILE)
+	if news_files, news_ok := files_with_suffix("news", ".md"); news_ok {
+		append(&documents, ..news_files)
+	}
+	for document in documents {
+		content, read_ok := site_read_quiet(document)
+		if !read_ok {
+			continue
+		}
+		append(&problems, ..site_guide_pointer_problems(site, document, content))
+	}
+	return problems[:]
 }

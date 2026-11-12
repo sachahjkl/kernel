@@ -14,8 +14,9 @@ import "support:system"
 // The place of the pointer and the windows are facts of the screen of the
 // person: another program must not learn where the person works. The
 // exports give them only to a caller that acts
-// for the person. A Record result cannot refuse (docs/MODULE_CONTRACT.md,
-// section 4: it has no error record), so pointer() is a Table of one row.
+// for the person. A Record result has no error record, so it cannot
+// refuse (docs/MODULE_CONTRACT.md, section 4): pointer() is a Table of one
+// row.
 
 // The values of the context that name the file of this program: 0 to 3 are
 // the screen (VALUE_WIDTH ...). The root service writes the same numbers.

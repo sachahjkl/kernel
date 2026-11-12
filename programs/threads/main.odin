@@ -1,4 +1,5 @@
-// A demonstration of threads (docs/ARCHITECTURE.md, decision 6).
+// A demonstration of threads (docs/ARCHITECTURE.md, "Open questions about
+// the architecture", item 6).
 //
 // One program, one address space, five threads. Each square is drawn by its
 // own thread, in a picture that the threads share with the first thread:

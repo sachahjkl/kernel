@@ -454,7 +454,7 @@ event_right_closed :: proc "contextless" (program: ^Program, closed: ^Handle_Slo
 // performance_counters_log writes one line at boot: what the processor
 // says of its performance counters. The kernel does not program them; the
 // event records carry the cycle counter only (docs/ARCHITECTURE.md, "Kernel
-// events", the processor counters).
+// events", section 10).
 performance_counters_log :: proc "contextless" () {
 	highest, vendor_b, vendor_c, vendor_d := intrinsics.x86_cpuid(0, 0)
 	// "GenuineIntel" and "AuthenticAMD", as the three registers give them.

@@ -28,7 +28,7 @@ This file is the record of the decisions of the project: who decided what, when,
 9. [The interface, the fonts, the mark and the design](#9-the-interface-the-fonts-the-mark-and-the-design): D-106 to D-141, D-192, D-193
 10. [The console and the tools](#10-the-console-and-the-tools): D-142 to D-148
 11. [The build and the compiler](#11-the-build-and-the-compiler): D-149 to D-162
-12. [The site and the publication](#12-the-site-and-the-publication): D-163 to D-185, D-194
+12. [The site and the publication](#12-the-site-and-the-publication): D-163 to D-185, D-194, D-195
 13. [The name and the repository](#13-the-name-and-the-repository): D-186 to D-189
 14. [Open questions for the owner](#open-questions-for-the-owner)
 15. [Conflicts](#conflicts)
@@ -174,7 +174,7 @@ This file is the record of the decisions of the project: who decided what, when,
 - Decision: no intermediate form of code; private module data and no code before the entry; one level of nested data across a ring; no thread-local data in the contract; no unwinding, and frame pointers are required; the kernel is a module.
 - Words: none recorded.
 - State: in force.
-- Where: `MODULE_CONTRACT.md`, "Rules closed".
+- Where: `MODULE_CONTRACT.md`, "Closed rules".
 
 ### D-021 The call form: registers
 - 2026-11-09. Decided by: the coordinator (the owner delegated the choice). The owner can reverse it.
@@ -1387,6 +1387,13 @@ This file is the record of the decisions of the project: who decided what, when,
 - Words: "0 of 14 numbers are measured in this build" (the page that the owner saw); "The published site must show the numbers of the last full check of the commit that it is built from."
 - State: in force.
 - Where: `docs/SITE.md`, "The measure record"; `tools/kerneltool/measure_record.odin`.
+
+### D-195 A pointer of a comment to a document is a reference on the site
+- 2026-11-12. Decided by: the owner, on the page of the module `kernel_without_return_check`; the form was given by the coordinator.
+- Decision: a pointer of a source comment to a document (`docs/ARCHITECTURE.md, "Kernel systems"`) is shown on the site as a link with the title of the document and of the heading, in a style of its own, not as the path and a label. A pointer whose label names no heading stops `kerneltool site`.
+- Words: "qu'est-ce que ça fout là ce genre d'infos ? ça devrait pas etre genre un "tag" ou une "référence" ? genre un lien, affiché avec un style pour architecture.md ?"
+- State: in force.
+- Where: `docs/SITE.md`, "The references to documents"; `tools/kerneltool/site_document_references.odin`.
 
 ## 13. The name and the repository
 

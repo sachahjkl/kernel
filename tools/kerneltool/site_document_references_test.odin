@@ -302,3 +302,70 @@ site_module_page_of_the_kernel :: proc(t: ^testing.T) {
 	testing.expect(t, strings.index(test_kernel, "built with the setting") < strings.index(test_kernel, "<p>The kernel"), "the setting is not said first")
 	testing.expect_value(t, strings.count(test_kernel, setting), 2) // The first paragraph and the fact.
 }
+
+// A comment holds code in backticks: on a page each pair is a code
+// element, and the summary has no backticks. The identifier of a decision
+// is a label ("D-163").
+@(test)
+site_source_comment_code_and_decisions :: proc(t: ^testing.T) {
+	site := reference_test_site()
+	page := "reference/modules/kernel/index.html"
+	testing.expect_value(t, site_source_comment_html(&site, page, "For one machine of `test return_fault` only, `a<b`.", .Line), "For one machine of <code>test return_fault</code> only, <code>a&lt;b</code>.")
+	testing.expect_value(t, site_source_comment_html(&site, page, "One ` alone.", .Line), "One ` alone.")
+	testing.expect_value(t, site_source_comment_plain(&site, "For `test return_fault` only."), "For test return_fault only.")
+
+	targets := site_document_targets(&site, "docs/DECISIONS.md", []string{"D-163"})
+	testing.expect_value(t, len(targets), 1)
+	if len(targets) == 1 {
+		testing.expect(t, targets[0].resolved && targets[0].outside, "D-163 is not found")
+		testing.expect_value(t, targets[0].heading, "A technical site")
+	}
+}
+
+// The check of the pointers names the file and the line of a stale one,
+// in a comment of the source (the line where the pointer starts, in a
+// comment of several lines) and in a guide; a pointer that resolves gives
+// no fault.
+@(test)
+site_document_pointer_check :: proc(t: ^testing.T) {
+	site := reference_test_site()
+	source := "x :: 1\n// A thing (docs/ARCHITECTURE.md,\n// \"No such heading\").\n// Fine (docs/ARCHITECTURE.md, \"Kernel systems\").\ny :: 2 // docs/ARCHITECTURE.md, section 99.\n"
+	problems := site_comment_pointer_problems(&site, "a.odin", source)
+	testing.expectf(t, len(problems) == 2, "%v", problems)
+	if len(problems) == 2 {
+		testing.expect(t, strings.has_prefix(problems[0], "a.odin, line 2: "), problems[0])
+		testing.expect(t, strings.has_prefix(problems[1], "a.odin, line 5: "), problems[1])
+	}
+	guide := "# A\n\nAs `ARCHITECTURE.md`, \"Kernel systems\" says.\n\n```\n`ARCHITECTURE.md`, \"In a fence\"\n```\n\nAnd `ARCHITECTURE.md`, \"Nothing\".\n"
+	guide_problems := site_guide_pointer_problems(&site, "docs/A.md", guide)
+	testing.expectf(t, len(guide_problems) == 1, "%v", guide_problems)
+	if len(guide_problems) == 1 {
+		testing.expect(t, strings.has_prefix(guide_problems[0], "docs/A.md, line 9: "), guide_problems[0])
+	}
+}
+
+// Every pointer of the repository resolves: the source comments of the
+// system, the guides, the glossary, the news and the working record that
+// the status page reads.
+@(test)
+site_document_pointers_of_the_repository :: proc(t: ^testing.T) {
+	site := test_site()
+	paths, ok := files_with_suffix("docs", ".md")
+	testing.expect(t, ok)
+	for path in paths {
+		name := site_file_name(path)
+		if site_is_working_record(name) {
+			continue
+		}
+		page := site_page_file(name == "GLOSSARY.md" ? SITE_GLOSSARY_FOLDER : strings.concatenate({SITE_GUIDE_FOLDER, "/", name[:len(name) - len(".md")]}, context.temp_allocator))
+		site.documents[path] = page
+		site.documents[name] = page
+	}
+	glossary, glossary_ok := site_read_quiet(SITE_GLOSSARY_FILE)
+	testing.expect(t, glossary_ok)
+	site.terms = site_glossary_terms(glossary)
+	site.guides = make([dynamic]Site_Guide, context.temp_allocator)
+	testing.expect(t, site_guides_add(&site))
+	problems := site_document_pointer_problems(&site)
+	testing.expectf(t, len(problems) == 0, "%d stale pointers: %v", len(problems), problems)
+}

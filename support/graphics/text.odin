@@ -35,7 +35,7 @@ Text_State :: struct {
 	has_cache:   bool,
 	cache:       glyph_cache.Cache,
 	// The blend in linear light: square_root[i] is the 8-bit value whose
-	// square is nearest to (4096 i + 2048) / 255 (docs/FONTS.md, "Gamma").
+	// square is nearest to (4096 i + 2048) / 255 (docs/FONTS.md, "The blend in linear light").
 	square_root: [4096]u8,
 	// The bold weight at scale 1, for emphasis: the titles of the cards.
 	has_bold_cache: bool,

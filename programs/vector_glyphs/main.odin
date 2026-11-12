@@ -5,7 +5,8 @@
 // The program carries the six subsets of resources/fonts (ASCII only) and
 // builds a glyph cache of each one in its own memory: the time of that
 // build is the measure of a cache made by each program at run time (the
-// first of the three places of docs/FONTS.md, "Where the cache lives").
+// first of the three places of docs/FONTS.md, "Where it lives: three places
+// weighed").
 // The text of the window itself is the text of the system: the glyph
 // cache that the root service maps, or Spleen, as the setting says.
 package vector_glyphs

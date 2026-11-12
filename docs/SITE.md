@@ -1,6 +1,6 @@
 # The site
 
-Status: started on 2026-11-12, at the request of the owner (`HANDOFF.md`, "A technical site"). The owner has not reviewed the choices below.
+Status: started on 2026-11-12, at the request of the owner (`DECISIONS.md`, D-163). The owner has not reviewed the choices below.
 
 The site (`GLOSSARY.md`) is the documentation of the system `modus`. The home is its front door: the one page that shows the system. Every other page is documentation: a guide (a document of `docs/`, how a part is designed and why) or a reference table (what exists in this build, generated from the code and the files that define it). The owner asked for this order on 2026-11-12: "we need to be more \"doc like\", even though it's obviously fine to have a landing page that kinda does the house tour and shows off".
 
@@ -581,7 +581,7 @@ A comment of the source names a document for a person who reads the code: a docu
 | A word of its sentence | `The colors of docs/DESIGN.md: a name is dim.` | The path and the labels after it |
 
 - The labels of a part of a parenthesis are its parts after the path, split at ", " outside quotes: `"Did not fit, across calls"` is one label.
-- After a path in running text, a label follows ", ": a heading in quotes, `section <n>`, `sections <n> and <m>`, `property <n>`, `choice <n>`, `decision <n>`, `item <n>`, or a label that starts with a capital letter (`U3`, `K1`). A bare number after a comma is a word of the sentence.
+- After a path in running text, a label follows ", ": a heading in quotes, `section <n>`, `sections <n> and <m>`, `property <n>`, `choice <n>`, `decision <n>`, `item <n>`, or a label that starts with a capital letter (`U3`, `K1`, `D-163`). A bare number after a comma is a word of the sentence.
 - The first three forms are asides. A path of the last form is a word of its sentence.
 
 ### The place that a pointer names
@@ -589,7 +589,7 @@ A comment of the source names a document for a person who reads the code: a docu
 `site_document_targets` finds the place of each label, in the order of the labels; each label after the first looks inside the part of the heading of the label before it (`"Kernel events", section 5a`).
 
 - A heading in quotes: the heading whose text gives the same id by the rule of the ids (`site_slug`), with or without the label of its section ("11. The mark" for `"The mark"`); else the one heading whose text starts with those words.
-- `section <n>`, `property <n>` and a label as `U3`: the first heading whose text starts with the label and then ". " or a space ("12. The interface font" for 12; "12.4 The glyph cache" for 12.4, not for 12).
+- `section <n>`, `property <n>`, a label as `U3` and the identifier of a decision (`D-163`): the first heading whose text starts with the label and then ". " or a space ("12. The interface font" for 12; "12.4 The glyph cache" for 12.4, not for 12).
 - `choice <n>`, `decision <n>`, `item <n>`: the one top-level item of an ordered list with that number, inside the part of the heading "Choices ..." or "Decisions ..." when the document has one. The reference shows its words in bold, else its first sentence.
 - A quoted label that no heading has, as the last label: the words in bold at the start of a line (`- **The frame caches** ...`) of the part. The reference shows them and links to the heading above them.
 - `sections 4 and 5`: two references.
@@ -609,9 +609,15 @@ One form for every page: the text of the comment, then one line "See:" with the 
 
 A code span of a guide, of the glossary or of a news entry that names a document is a reference of the same markup (see "The Markdown that the site renders"): one look for a reference to a document on every page.
 
-### The count
+### The count and the check
 
-The command prints "N document references, M with no heading found: <the first three>": N is the count of the different pointers of the pages and of the code spans of the guides that name a document, M those whose labels found no place. A pointer that is not resolved is a stale pointer of a comment or of a guide, or a label that names no heading (a free text, as "the choice of the pointer pictures"): the fix is in its comment.
+The command prints "N document references, M with no heading found: <the first three>": N is the count of the different pointers of the pages and of the code spans of the guides that name a document, M those whose labels found no place.
+
+Before it writes a page, the command checks every pointer, also those of a comment that no page shows: each comment of each source file of `kernel`, `programs`, `modules`, `support`, `contract`, `runtime` and `boot` (the lines of comment that follow each other are one text), and each code span that names a document in the guides, the glossary, the news and `FIRST_MILESTONE.md`. A pointer whose labels do not all find their place stops the command, with its file and its line: a stale pointer or a label that names no heading (a free text) cannot come back. The tool is not read: its tests hold stale pointers on purpose. A guide names no working record and no decision; a working record names a decision by its identifier (`DECISIONS.md`, D-163), which is a label.
+
+### Code in a comment
+
+A comment of the source holds code in backticks (`test return_fault`). The writer of the source comments writes each pair as a code element, and the plain form drops the backticks. It reads no other mark of Markdown: a comment is not a document.
 
 ## The types
 
