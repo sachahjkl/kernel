@@ -78,6 +78,21 @@ site_png_compress :: proc(data: []u8) -> (compressed: []u8, ok: bool) {
 
 // site_mark_encode draws one picture of the mark and gives its PNG file.
 site_mark_encode :: proc(picture: Site_Mark_Picture) -> (file: []u8, ok: bool) {
+	still := mark.still_cells()
+	width, height := site_mark_size(picture)
+	return site_pixels_encode(picture.file_name, width, height, site_mark_channels(picture), site_mark_pixels(picture, &still))
+}
+
+// site_mark_channels gives the bytes of a pixel of a picture of the mark:
+// red, green and blue, and alpha when it is transparent.
+site_mark_channels :: proc(picture: Site_Mark_Picture) -> int {
+	return 3 if picture.opaque else 4
+}
+
+// site_mark_pixels draws one picture of the mark with the cells of one frame
+// of the heron (the still heron, or a frame of an animation of
+// support/mark): the bytes of each pixel, row by row.
+site_mark_pixels :: proc(picture: Site_Mark_Picture, cells: ^mark.Heron_Cells) -> []u8 {
 	width, height := site_mark_size(picture)
 	drawing_width, drawing_height := site_mark_drawing_size(picture)
 	left := (width - drawing_width) / 2
@@ -90,11 +105,11 @@ site_mark_encode :: proc(picture: Site_Mark_Picture) -> (file: []u8, ok: bool) {
 	}
 	name_left := left + (drawing_width - name_width) / 2
 	name_top := top + heron + picture.gap
-	channels := picture.opaque ? 3 : 4
+	channels := site_mark_channels(picture)
 	pixels := make([]u8, width * height * channels, context.temp_allocator)
 	for y in 0 ..< height {
 		for x in 0 ..< width {
-			color, covered := mark.mark_pixel(picture.heron_cell, x - heron_left, y - top, picture.on_light)
+			color, covered := mark.cells_pixel(cells, picture.heron_cell, x - heron_left, y - top, picture.on_light)
 			if !covered && picture.name_cell > 0 {
 				color, covered = mark.name_pixel(picture.name_cell, x - name_left, y - name_top, picture.on_light)
 			}
@@ -113,6 +128,12 @@ site_mark_encode :: proc(picture: Site_Mark_Picture) -> (file: []u8, ok: bool) {
 			}
 		}
 	}
+	return pixels
+}
+
+// site_pixels_encode gives the PNG file of pixels of 3 or 4 bytes; the name
+// is for the message of a failure.
+site_pixels_encode :: proc(name: string, width, height, channels: int, pixels: []u8) -> (file: []u8, ok: bool) {
 	image := png.Image {
 		width    = width,
 		height   = height,
@@ -123,7 +144,7 @@ site_mark_encode :: proc(picture: Site_Mark_Picture) -> (file: []u8, ok: bool) {
 	copy(image.pixels[:], pixels)
 	output := make([dynamic]u8, context.temp_allocator)
 	if err := png.save_to_buffer(&output, &image, allocator = context.temp_allocator); err != nil {
-		fmt.eprintfln("kerneltool: site: cannot encode %s: %v", picture.file_name, err)
+		fmt.eprintfln("kerneltool: site: cannot encode %s: %v", name, err)
 		return nil, false
 	}
 	return output[:], true
