@@ -1,6 +1,7 @@
 package console
 
 import module "contract:module"
+import "support:console_language"
 import "support:sentence"
 import "support:system"
 
@@ -194,10 +195,10 @@ fail :: proc "contextless" (parts: ..system.Part) -> Value {
 	return {}
 }
 
+// The parser reads its tokens with the scanner of support/console_language,
+// the one that colors the lines: the two agree on each token.
 skip_spaces :: proc "contextless" () {
-	for position < len(source) && source[position] == ' ' {
-		position += 1
-	}
+	position = console_language.space_end(source, position)
 }
 
 peek :: proc "contextless" () -> u8 {
@@ -213,20 +214,10 @@ accept :: proc "contextless" (character: u8) -> bool {
 	return false
 }
 
-is_letter :: proc "contextless" (c: u8) -> bool {
-	return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c == '_'
-}
-
-is_digit :: proc "contextless" (c: u8) -> bool {
-	return c >= '0' && c <= '9'
-}
-
 read_name :: proc "contextless" () -> string {
 	skip_spaces()
 	start := position
-	for position < len(source) && (is_letter(source[position]) || (is_digit(source[position]) || source[position] == '.') && position > start) {
-		position += 1
-	}
+	position = console_language.name_end(source, start)
 	return source[start:position]
 }
 
@@ -383,25 +374,24 @@ factor :: proc "contextless" () -> Value {
 			return fail("\")\" is missing")
 		}
 		return value
-	case is_digit(c):
+	case console_language.digit(c):
 		value: i64
-		for position < len(source) && is_digit(source[position]) {
-			value = value * 10 + i64(source[position] - '0')
-			position += 1
+		end := console_language.number_end(source, position)
+		for digit_byte in transmute([]u8)source[position:end] {
+			value = value * 10 + i64(digit_byte - '0')
 		}
+		position = end
 		return {kind = .Integer, integer = value}
 	case c == '"':
-		position += 1
-		start := position
-		for position < len(source) && source[position] != '"' {
-			position += 1
-		}
-		if position == len(source) {
+		start := position + 1
+		end, finished := console_language.text_end(source, position)
+		if !finished {
+			position = end
 			return fail("the text has no end quote")
 		}
-		position += 1
-		return {kind = .Text, text = source[start:position - 1]}
-	case is_letter(c):
+		position = end
+		return {kind = .Text, text = source[start:end - 1]}
+	case console_language.name_first(c):
 		name := read_name()
 		if accept('(') {
 			return call(name)

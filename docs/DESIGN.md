@@ -59,6 +59,24 @@ One color is one concept, as one term is one concept.
 - If a thing has an identity (a hash), its color can come from the hash. A thing that changes takes a new color.
 - A color never stands alone for a fact: a text or a place says the same fact.
 
+### The colors of code
+
+Code has one set of colors wherever it is shown: on the site, and in the console of the system. The table is `support/graphics/code_colors.odin` (`Code_Class`, `code_class_colors`); the site (`tools/kerneltool/site_code.odin`) and the terminal (`support/terminal/code_runs.odin`) read it. Each class is an accent of the concepts, moved toward white on a dark surface and toward black on the light page of the site.
+
+| Class | What | Accent | Dark: shade, color | Light: shade |
+|---|---|---|---|---|
+| Keyword | A word of the language | Kernel | 115 %, `0x64AAF2` | 55 % |
+| Type | A type, or a name in the place of a type | Firmware | 115 %, `0x9E8FCB` | 60 % |
+| Literal | A number, a text, a constant, a member | Memory | 100 %, `0x38C0B0` | 50 % |
+| Name | The name of a function or of a declaration | Program | 100 %, `0x58D878` | 45 % |
+| Directive | A directive or an attribute | Machine | 115 %, `0xD785BB` | 55 % |
+| Comment | A comment, or words that are not code: quiet | Dim | 125 %, `0x9CA6B2` | 60 % |
+| Punctuation | An operator or punctuation: quiet | Dim | 140 %, `0xB0B8C1` | 50 % |
+
+- A part with no class has the color of the text around it.
+- Each class has at least 4.5 to 1 on each surface that shows code: the block of code of the site in both forms, and the background and the card in the terminal. Host tests compute each contrast.
+- On a chosen line in the blue of the title bar, no class keeps that contrast: the line is white.
+
 ## 5. Text
 
 - **Two fonts** (`docs/FONTS.md`, section 12.6):

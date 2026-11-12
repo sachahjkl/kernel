@@ -150,8 +150,15 @@ Edit_Line :: struct {
 	cursor:     int,
 	has_cursor: bool,
 	style:      terminal.Style,
+	code:       terminal.Code_Runs, // Checked against the text. None: the line is plain.
 }
 edit_line: Edit_Line
+// The runs of code that the next Edit record takes (terminal.Kind.Code_Runs).
+edit_runs_pending: terminal.Code_Runs
+// The lists of runs of code that were refused for the edit line: each one
+// left its line plain. The list counts its own.
+edit_runs_refused: u64
+runs_refusal_logged: bool
 
 // The line under the edit line (terminal.Kind.Hint): a long form, and a
 // short form for a terminal too narrow for the long one. The text holds
@@ -284,6 +291,11 @@ apply :: proc "contextless" (record: ring.Record) {
 			edit_line.has_cursor = true
 			edit_line.cursor = int(min(record.values[1], u64(edit_line.length)))
 		}
+		edit_line.code = edit_runs_pending
+		edit_runs_pending = {}
+		if edit_line.code.count != 0 && !terminal.code_runs_check(&edit_line.code, edit_line.length) {
+			edit_runs_refused += 1
+		}
 	case .Hint:
 		first, second := take(record.tag)
 		hint_line = {style = transmute(terminal.Style)record.values[0]}
@@ -300,7 +312,40 @@ apply :: proc "contextless" (record: ring.Record) {
 		terminal.list_keep_row(&list_keeping, record.values, first, second)
 	case .List:
 		terminal.list_keep_show(&list_keeping, record.values)
+	case .Code_Runs:
+		first, second := take(record.tag)
+		target := record.values[0] <= u64(max(terminal.Kind)) ? terminal.Kind(u32(record.values[0])) : terminal.Kind.None
+		switch target {
+		case .Edit:
+			read, ok := terminal.code_runs_read(first, second)
+			if !ok {
+				edit_runs_refused += 1
+			}
+			edit_runs_pending = read
+		case .List_Row:
+			terminal.list_keep_code_runs(&list_keeping, record.values, first, second)
+		case .None, .Text, .Status, .Clear, .Hint, .List, .Code_Runs:
+			edit_runs_refused += 1 // No other record takes runs.
+		}
 	}
+	// A program that sends runs that do not fit its rows: its rows stay
+	// plain, and the log says it once.
+	if !runs_refusal_logged && edit_runs_refused + list_keeping.runs_refused != 0 {
+		runs_refusal_logged = true
+		system.log("terminal: ", program_name, " sent runs of code that do not fit their row: the row is drawn plain, its text whole")
+	}
+}
+
+// style_color gives the color of a run of text: its own color with the
+// flag Color; if not, the color of its code kind when the kind has one; if
+// not, the color of its tone. A kind or a tone past the known ones is the
+// default.
+style_color :: proc "contextless" (style: terminal.Style) -> graphics.Color {
+	if .Color in style.flags {
+		return style.color & 0xFFFFFF
+	}
+	plain := tone_colors[terminal.Tone(min(u8(style.tone), u8(max(terminal.Tone))))]
+	return terminal.code_kind_color(terminal.code_kind_of(u8(style.code)), plain)
 }
 
 // shown_character gives the byte that a cell shows for a byte of a list or
@@ -365,17 +410,31 @@ list_fill :: proc "contextless" (edit_top, below: int) {
 		for &cell in cells {
 			cell = {character = ' ', filled = true, color = name_color, background = background}
 		}
+		// A row with runs of code: each part in the color of its kind, and
+		// the part with no kind in the color of the name. On the chosen row
+		// each part is white: no color of a kind keeps its contrast on the
+		// blue (docs/CONSOLE.md, section 7). A matched character is in the
+		// match color over its kind: the match is what the person typed.
+		colored := row.code.count != 0
+		if colored {
+			about_color = chosen ? graphics.COLOR_WHITE : name_color
+		}
+		code_cursor := 0 // The run of code of the bytes of the row, in order.
 		name_shown := min(row.name_length, inner)
 		for place in 0 ..< name_shown {
 			matched := row.matched[place / 64] & (1 << u64(place % 64)) != 0
-			cells[1 + place] = {character = shown_character(row.text[place]), filled = true, color = matched ? match_color : name_color, background = background}
+			kind := terminal.code_runs_kind_at(&row.code, place, &code_cursor)
+			color := chosen ? name_color : terminal.code_kind_color(kind, name_color)
+			cells[1 + place] = {character = shown_character(row.text[place]), filled = true, color = matched ? match_color : color, background = background}
 		}
 		// What the name is, at the right, cut at its end when the room is short.
 		about_room := inner - name_shown - 2
 		about_shown := about_room > 0 ? min(row.length - row.name_length, about_room) : 0
 		about_left := 1 + inner - about_shown
 		for place in 0 ..< about_shown {
-			cells[about_left + place] = {character = shown_character(row.text[row.name_length + place]), filled = true, color = about_color, background = background}
+			kind := terminal.code_runs_kind_at(&row.code, row.name_length + place, &code_cursor)
+			color := chosen ? about_color : terminal.code_kind_color(kind, about_color)
+			cells[about_left + place] = {character = shown_character(row.text[row.name_length + place]), filled = true, color = color, background = background}
 		}
 		if scroll == 1 {
 			thumb := index >= thumb_top && index < thumb_top + thumb_rows
@@ -407,6 +466,7 @@ view_make :: proc "contextless" () {
 		note("-- ", program_name, " stopped with code ", u64(request.code), " after ", lines_written, " lines --")
 		status_line.total = 0
 		edit_line = {}
+		edit_runs_pending = {}
 		hint_line = {}
 		terminal.list_keep_forget(&list_keeping)
 	}
@@ -438,16 +498,18 @@ view_make :: proc "contextless" () {
 	view.text_rows = 0
 	top = max(top, oldest)
 	view.top = top
-	edit_color := .Color in edit_line.style.flags ? edit_line.style.color & 0xFFFFFF : tone_colors[terminal.Tone(min(u8(edit_line.style.tone), u8(max(terminal.Tone))))]
+	edit_color := style_color(edit_line.style)
 	for &row, index in view.cells[:rows] {
 		row = {}
 		number := top + u64(index)
 		if number >= count && number - count < edit_rows {
 			first := int(number - count) * columns
+			code_cursor := 0 // The run of code of the bytes of this row, in order.
 			for column in 0 ..< columns {
 				place := first + column
 				if place < edit_line.length {
-					row[column] = {character = edit_line.text[place], color = edit_color}
+					kind := terminal.code_runs_kind_at(&edit_line.code, place, &code_cursor)
+					row[column] = {character = edit_line.text[place], color = terminal.code_kind_color(kind, edit_color)}
 				}
 				if edit_line.has_cursor && place == edit_line.cursor {
 					row[column] = {character = max(row[column].character, ' '), reverse = true, color = COLOR_CURSOR}
@@ -467,7 +529,7 @@ view_make :: proc "contextless" () {
 		column := 0
 		for run_index in line.first_run ..< line.first_run + u64(line.run_count) {
 			run := runs[run_index & (RUN_CAPACITY - 1)]
-			color := .Color in run.style.flags ? run.style.color & 0xFFFFFF : tone_colors[terminal.Tone(min(u8(run.style.tone), u8(max(terminal.Tone))))]
+			color := style_color(run.style)
 			reverse := .Reverse in run.style.flags
 			for offset in 0 ..< u64(run.length) {
 				if column == columns {
@@ -492,7 +554,7 @@ hint_fill :: proc "contextless" (row: ^[COLUMNS_LIMIT]Cell) {
 	form, shown := terminal.hint_form_choose(hint_line.long_count, hint_line.length - hint_line.long_count, columns)
 	first := form == .Long ? 0 : hint_line.long_count
 	marked := hint_line.marked[form]
-	color := .Color in hint_line.style.flags ? hint_line.style.color & 0xFFFFFF : tone_colors[terminal.Tone(min(u8(hint_line.style.tone), u8(max(terminal.Tone))))]
+	color := style_color(hint_line.style)
 	for place in 0 ..< shown {
 		in_mark := place >= marked[0] && place < marked[0] + marked[1]
 		row[place] = {character = shown_character(hint_line.text[first + place]), color = in_mark ? tone_colors[.Accent] : color}
@@ -666,7 +728,7 @@ draw :: proc "contextless" (window: ^display.Window, follow: bool) {
 	has_status := status.total != 0
 	status_end := TEXT_X // Where the text of the status ends: the keys at the right must not run over it.
 	if has_status {
-		color := .Color in status.style.flags ? status.style.color & 0xFFFFFF : tone_colors[terminal.Tone(min(u8(status.style.tone), u8(max(terminal.Tone))))]
+		color := style_color(status.style)
 		x := interface.draw_text(table, TEXT_X, status_y, string(status.text[:status.length]), graphics.COLOR_TEXT) + 12
 		bar :: 240
 		interface.draw_rectangle(table, x, status_y + 4, bar, 8, graphics.COLOR_TRACK)

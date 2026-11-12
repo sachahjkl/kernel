@@ -28,12 +28,30 @@ worst_name_bytes: [CANDIDATE_CAPACITY * WORST_NAME_SIZE]u8
 measure_names: Candidate_Table
 measure_ranked: [line_editor.RANKED_CAPACITY]line_editor.Ranked
 
-// The time of the three parts of one key, in nanoseconds.
+// The time of the four parts of one key, in nanoseconds. colors: the runs
+// of code of the edit line, a line of LINE_CAPACITY bytes, and of the rows.
 Key_Time :: struct {
-	collect, rank, rows: u64,
+	collect, rank, rows, colors: u64,
+}
+
+// The edit line of the measure of the colors: calls, texts, numbers and
+// operators up to LINE_CAPACITY bytes, the longest line that a person can
+// type, after the prompt. It has more parts than CODE_RUN_LIMIT: the runs
+// are full, the most work of one line.
+measure_line_bytes: [len(PROMPT) + LINE_CAPACITY]u8
+measure_line: string
+
+measure_line_write :: proc "contextless" () {
+	PIECE :: "monitor.count(\"ab\") + 12 * x - "
+	count := copy(measure_line_bytes[:], PROMPT)
+	for count < len(measure_line_bytes) {
+		count += copy(measure_line_bytes[count:], PIECE)
+	}
+	measure_line = string(measure_line_bytes[:count])
 }
 
 measure_completion :: proc "contextless" (arguments: []Value) -> Value {
+	measure_line_write()
 	least, name_count := completion_measure(collect_console_names)
 	completion_measure_print("the names of this console", least, name_count)
 	worst_names_write()
@@ -77,7 +95,7 @@ collect_worst_names :: proc "contextless" (table: ^Candidate_Table) {
 // completion_measure gives the least time of each part of one key over the
 // batches, and the count of names that the collect gave.
 completion_measure :: proc "contextless" (collect: proc "contextless" (table: ^Candidate_Table)) -> (least: Key_Time, name_count: int) {
-	least = {max(u64), max(u64), max(u64)}
+	least = {max(u64), max(u64), max(u64), max(u64)}
 	for _ in 0 ..< COMPLETION_MEASURE_BATCHES {
 		batch: Key_Time
 		for _ in 0 ..< COMPLETION_MEASURE_KEYS {
@@ -88,13 +106,17 @@ completion_measure :: proc "contextless" (collect: proc "contextless" (table: ^C
 			ranked := system.nanoseconds()
 			rows_write(kept)
 			written := system.nanoseconds()
+			colors_write(kept)
+			colored := system.nanoseconds()
 			batch.collect += collected - started
 			batch.rank += ranked - collected
 			batch.rows += written - ranked
+			batch.colors += colored - written
 		}
 		least.collect = min(least.collect, batch.collect / COMPLETION_MEASURE_KEYS)
 		least.rank = min(least.rank, batch.rank / COMPLETION_MEASURE_KEYS)
 		least.rows = min(least.rows, batch.rows / COMPLETION_MEASURE_KEYS)
+		least.colors = min(least.colors, batch.colors / COMPLETION_MEASURE_KEYS)
 	}
 	return least, measure_names.count
 }
@@ -114,9 +136,20 @@ rows_write :: proc "contextless" (kept: int) {
 	}
 }
 
+// colors_write makes the runs of code of one key: the edit line of the
+// measure, and the rows that list_send gives the terminal. The runs go to
+// a buffer of the measure, not to the terminal.
+colors_write :: proc "contextless" (kept: int) {
+	runs: [terminal.CODE_RUN_LIMIT]terminal.Code_Run
+	_ = edit_runs(measure_line, len(measure_line), runs[:])
+	for item in measure_ranked[:min(kept, terminal.LIST_ROWS)] {
+		buffer: [terminal.RUN_LIMIT]u8
+		_, _, _ = candidate_row_runs(&buffer, measure_names.items[item.candidate], runs[:])
+	}
+}
+
 // completion_measure_print writes one line of the measure, in microseconds
-// with one decimal. The line stays under the 192 bytes that print gives to
-// one line of the log.
+// with one decimal.
 completion_measure_print :: proc "contextless" (what: string, least: Key_Time, name_count: int) {
-	print("console: one key with the completion list: the collect ", least.collect / 1000, ".", least.collect / 100 % 10, " us, the rank ", least.rank / 1000, ".", least.rank / 100 % 10, " us, the rows ", least.rows / 1000, ".", least.rows / 100 % 10, " us, over ", u64(name_count), " names (", what, ", the least of ", u64(COMPLETION_MEASURE_BATCHES), " batches of ", u64(COMPLETION_MEASURE_KEYS), ")\n")
+	print("console: one key with the completion list: the collect ", least.collect / 1000, ".", least.collect / 100 % 10, " us, the rank ", least.rank / 1000, ".", least.rank / 100 % 10, " us, the rows ", least.rows / 1000, ".", least.rows / 100 % 10, " us, the colors ", least.colors / 1000, ".", least.colors / 100 % 10, " us, over ", u64(name_count), " names (", what, ", the least of ", u64(COMPLETION_MEASURE_BATCHES), " batches of ", u64(COMPLETION_MEASURE_KEYS), ")\n")
 }

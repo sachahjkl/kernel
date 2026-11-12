@@ -1946,6 +1946,11 @@ scenario := [?]Step {
 	{kind = .Key, text = "tab"},
 	{kind = .Wait, text = "console: the completion list opens by Tab: "},
 	{kind = .Wait, text = " match \"mcnt\", the first is monitor.count; one ranking takes "},
+	// The colors of the first row, from the log and not from a pixel:
+	// monitor . count, then export of monitor ( name : Text ) -> Integer.
+	{kind = .Wait, text = " keys; its first row has 13 runs of code"},
+	// The picture shows the signatures of the rows in the colors of code,
+	// and the edit line "> mcnt" plain: the name is still being typed.
 	{kind = .Shot, text = "console_completion"},
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "console: the completion gave the line monitor.count("},

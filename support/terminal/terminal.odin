@@ -101,6 +101,14 @@ RUN_LIMIT :: 256 // The bytes of the text of one record.
 //           values[3] their count: with more names than rows, the list
 //           shows a scroll mark. values[4]: the byte of the edit line where
 //           the name starts: the list starts at its column.
+//   Code_Runs The runs of code of the next record of a target
+//           (code_runs.odin): what each part of its text is, so that the
+//           terminal colors it. tag: the count of bytes of the runs, 4 for
+//           each run, at most CODE_RUN_LIMIT runs. values[0]: the target,
+//           Kind.Edit or Kind.List_Row; another target is not kept.
+//           values[1]: for List_Row, the number of the row. The next record
+//           of the target takes the runs; a record of the target with no
+//           Code_Runs before it is plain.
 // The terminal draws each byte of a list or a hint that is not a character
 // of the font (under 32, over 126) as '?': the text of these records comes
 // from the descriptions of other programs.
@@ -111,9 +119,15 @@ Kind :: enum u32 {
 	Clear    = 3,
 	Edit     = 4,
 	Hint     = 5,
-	List_Row = 6,
-	List     = 7,
+	List_Row  = 6,
+	List      = 7,
+	Code_Runs = 8,
 }
+
+// A new kind of record, or a new field, is a new version. 2: the kind
+// Code_Runs, and the byte Style.code, which was the first byte of
+// Style.reserved: a program of version 1 writes 0 there, the kind None.
+TERMINAL_RECORD_VERSION :: 2
 
 NO_CURSOR :: max(u64)
 NO_CHOICE :: max(u64)
@@ -157,10 +171,13 @@ Flag :: enum u8 {
 }
 
 // The style of a run: values[0] of a record. The zero value is the default.
+// The color of a run: Style.color with the flag Color; if not, the color of
+// its code kind when the kind has one; if not, the color of its tone.
 Style :: struct {
 	tone:     Tone,
 	flags:    bit_set[Flag;u8],
-	reserved: u16,
+	code:     Code_Kind, // A Text record: what the run is in a line of code (code_runs.odin).
+	reserved: u8,
 	color:    u32, // Red, green, blue: 0xRRGGBB.
 }
 #assert(size_of(Style) == 8)
@@ -343,6 +360,7 @@ List_Row :: struct {
 	length:      int,
 	name_length: int,
 	matched:     [2]u64,
+	code:        Code_Runs, // The runs of code of the row, checked against its text. None: the row is plain.
 }
 
 List_Shown :: struct {
@@ -355,14 +373,18 @@ List_Shown :: struct {
 }
 
 List_Keeping :: struct {
-	next:  [LIST_ROWS]List_Row, // The rows given since the last List.
-	shown: List_Shown,
+	next:         [LIST_ROWS]List_Row, // The rows given since the last List.
+	pending:      [LIST_ROWS]Code_Runs, // The runs that the next List_Row of each row takes.
+	shown:        List_Shown,
+	runs_refused: u64, // The lists of runs that were refused: each one left its row plain.
 }
 
 // list_keep_row keeps the row of a List_Row record: values[0] its number,
 // values[1] the bytes of its name, values[2] and values[3] the matched
 // places. The text is in two parts (the text region starts again at its
-// first byte). A number past the rows is not kept.
+// first byte). A number past the rows is not kept. The row takes the runs
+// of code that came for its number since its last List_Row, when they fit
+// its text; if not, it is plain and the refusal is counted.
 list_keep_row :: proc "contextless" (keeping: ^List_Keeping, values: [7]u64, first, second: []u8) {
 	if values[0] >= LIST_ROWS {
 		return
@@ -372,6 +394,26 @@ list_keep_row :: proc "contextless" (keeping: ^List_Keeping, values: [7]u64, fir
 	row.length += copy(row.text[row.length:], second)
 	row.name_length = int(min(values[1], u64(row.length)))
 	row.matched = {values[2], values[3]}
+	row.code = keeping.pending[values[0]]
+	keeping.pending[values[0]] = {}
+	if row.code.count != 0 && !code_runs_check(&row.code, row.length) {
+		keeping.runs_refused += 1
+	}
+}
+
+// list_keep_code_runs keeps the runs of a Code_Runs record for a list row:
+// values[1] the number of the row. A number past the rows, or bytes that
+// are not a whole count of runs, are not kept.
+list_keep_code_runs :: proc "contextless" (keeping: ^List_Keeping, values: [7]u64, first, second: []u8) {
+	if values[1] >= LIST_ROWS {
+		keeping.runs_refused += 1
+		return
+	}
+	runs, ok := code_runs_read(first, second)
+	if !ok {
+		keeping.runs_refused += 1
+	}
+	keeping.pending[values[1]] = runs
 }
 
 // list_keep_show shows the rows given since the last List, with the values
@@ -390,8 +432,10 @@ list_keep_show :: proc "contextless" (keeping: ^List_Keeping, values: [7]u64) {
 // list_keep_forget forgets the list and the rows given: the program of the
 // terminal stopped.
 list_keep_forget :: proc "contextless" (keeping: ^List_Keeping) {
+	refused := keeping.runs_refused
 	keeping^ = {}
 	keeping.shown.chosen = -1
+	keeping.runs_refused = refused
 }
 
 // record_text gives the text of a record that holds one line as it is:
