@@ -77,13 +77,13 @@ code_runs_checked_against_their_row :: proc(t: ^testing.T) {
 	cases := [?]Case {
 		{{{0, 3, .Function, 0}, {3, 1, .Operator, 0}, {5, 2, .Number, 0}}, 3, 8, true},
 		{{{0, 3, .Function, 0}, {3, 1, .Operator, 0}, {5, 4, .Number, 0}}, 3, 8, false}, // Past the row.
-		{{{0, 3, .Function, 0}, {2, 1, .Operator, 0}}, 2, 8, false}, // Overlap.
-		{{{4, 1, .Operator, 0}, {0, 3, .Function, 0}}, 2, 8, false}, // Not in order.
-		{{{0, 0, .Function, 0}}, 1, 8, false}, // No byte.
-		{{{0, 1, bad_kind, 0}}, 1, 8, false}, // A kind that does not exist.
-		{{{0, 1, .None, 0}}, 1, 8, false},
-		{{{255, 1, .Words, 0}}, 1, RUN_LIMIT, true}, // The last byte of a row of RUN_LIMIT bytes.
-		{{}, 0, 0, true},
+		{{{0, 3, .Function, 0}, {2, 1, .Operator, 0}, {0, 0, .None, 0}}, 2, 8, false}, // Overlap.
+		{{{4, 1, .Operator, 0}, {0, 3, .Function, 0}, {0, 0, .None, 0}}, 2, 8, false}, // Not in order.
+		{{{0, 0, .Function, 0}, {0, 0, .None, 0}, {0, 0, .None, 0}}, 1, 8, false}, // No byte.
+		{{{0, 1, bad_kind, 0}, {0, 0, .None, 0}, {0, 0, .None, 0}}, 1, 8, false}, // A kind that does not exist.
+		{{{0, 1, .None, 0}, {0, 0, .None, 0}, {0, 0, .None, 0}}, 1, 8, false},
+		{{{255, 1, .Words, 0}, {0, 0, .None, 0}, {0, 0, .None, 0}}, 1, RUN_LIMIT, true}, // The last byte of a row of RUN_LIMIT bytes.
+		{{{0, 0, .None, 0}, {0, 0, .None, 0}, {0, 0, .None, 0}}, 0, 0, true},
 	}
 	for &item, index in cases {
 		runs: Code_Runs

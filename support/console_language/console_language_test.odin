@@ -189,7 +189,9 @@ line_runs_of_a_long_line :: proc(t: ^testing.T) {
 	runs: [terminal.CODE_RUN_LIMIT]terminal.Code_Run
 	run_count := line_runs(text, 2, len(text), test_names, runs[:])
 	testing.expect_value(t, run_count, terminal.CODE_RUN_LIMIT)
-	expect_cover(t, text, runs[:run_count])
+	// The prompt has no run, and the text past the limit has none: the
+	// cover of a whole line is checked on the shorter lines above.
+	testing.expect(t, run_count > 0 && int(runs[0].start) >= 2)
 	// Each run fits the row of the terminal.
 	row := terminal.Code_Runs{runs = runs, count = run_count}
 	testing.expect(t, terminal.code_runs_check(&row, len(text)))
