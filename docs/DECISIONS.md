@@ -18,7 +18,7 @@ This file is the record of the decisions of the project: who decided what, when,
 ## Groups
 
 1. [The principles, the properties and the contracts](#1-the-principles-the-properties-and-the-contracts): D-001 to D-039, D-191, D-205
-2. [The way of working](#2-the-way-of-working): D-040 to D-070, D-190, D-202 to D-204
+2. [The way of working](#2-the-way-of-working): D-040 to D-070, D-190, D-202 to D-204, D-211 to D-213
 3. [The kernel](#3-the-kernel): D-071 to D-083
 4. [Memory](#4-memory): D-084 to D-088
 5. [The scheduler](#5-the-scheduler): D-089 to D-091
@@ -569,6 +569,27 @@ This file is the record of the decisions of the project: who decided what, when,
 - Words: "après le site, on fait ces trucs (pour \"finir\" ces parties) Le démarrage de confiance, remote par-dessus QUIC"; "là on se focalise sur le site, mais bon, le site ça n'a pas de valeur finale"
 - State: `remote` over QUIC: done. The trusted boot: not done yet (its test machines with a TPM are not reliable).
 - Where: `QUIC.md`, section 7; `FIRST_MILESTONE.md`, "Next steps".
+
+### D-211 The documentation stays up to date
+- 2026-11-12. Decided by: the owner.
+- Decision: a change of the code changes, in the same commit, each document that describes it.
+- Words: "Note bien dans le agent.md qu'il faut garder la documentation à jour, même si je pense que tu es déjà conscient de ça."
+- State: in force.
+- Where: `AGENTS.md`, "Work".
+
+### D-212 One full check for a group of merges
+- 2026-11-12. Decided by: the owner, on a proposal of the coordinator.
+- Decision: the full check (47 minutes) runs once for a group of merges. Each merge passes the build, the host tests of what it changes and `kerneltool site` before it.
+- Words: "C'est bon. Fusionne." (to: "Je peux regrouper plusieurs fusions sous un seul contrôle [...] Je le fais à partir de maintenant, sauf avis contraire.")
+- State: in force.
+- Where: `AGENTS.md`, "Work".
+
+### D-213 The trusted boot is merged; its two machines with a TPM are opt-in
+- 2026-11-12. Decided by: the owner, on a proposal of the coordinator.
+- Decision: the three layers of the trusted boot are merged. The two test machines with a software TPM are not in the full check: on some runs QEMU does not give the firmware the answer of one TPM command. `kerneltool test trusted_boot tpm` runs them. The cause is to be found, or the measure tested on a hardware TPM, before a key is sealed to the measure.
+- Words: "C'est bon. Fusionne." (to: "je fusionne les couches qui marchent et je sors les machines TPM du contrôle complet en attendant")
+- State: done; the cause of the lost answer: not found.
+- Where: `TRUSTED_BOOT.md`, "The machines of the TPM"; `tools/kerneltool/trusted_boot_scenario.odin`.
 
 ## 3. The kernel
 

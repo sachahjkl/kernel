@@ -19,6 +19,8 @@ The owner asked for this rule on 2026-11-10 (D-047).
 - One term for one concept. Define a term in `docs/GLOSSARY.md` before its first use.
 - Each step adds one capability to a system that works. Each step is a tested commit on `master`.
 - All automation is a command of `tools/kerneltool`. Run it with `nix develop -c kerneltool <command>`.
+- Keep the documentation up to date (owner, 2026-11-12): a change of the code changes, in the same commit, each document that describes it: the guide of its subject, the glossary, `README.md`, `docs/FIRST_MILESTONE.md`, the changelog fragment and the news entry when a person sees the change. A document that says what the code no longer does is a fault, as a failing test is.
+- The full check runs once for a group of merges, not once for each merge (owner, 2026-11-12). Each merge still passes the build, the host tests of what it changes and `kerneltool site`.
 - Record each decision in `docs/DECISIONS.md`, with the next free identifier, at the end of its group. The guide of its subject states the rule with no who.
 - A guide never names a person or a role of the project, a step, a choice or a date of a decision (owner, 2026-11-12; D-069). That record is `docs/DECISIONS.md`.
 - A news entry never says "the owner" (owner, 2026-11-12; D-070). It states the fact.
