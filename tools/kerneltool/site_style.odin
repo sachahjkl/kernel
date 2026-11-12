@@ -323,6 +323,13 @@ td.value code { padding: 0; }
 .value-head { color: var(--dim); }
 .value-icon::before { content: ""; display: inline-block; width: 12px; height: 12px; margin-right: 4px; vertical-align: -1px; background-color: var(--value-color); -webkit-mask: var(--value-icon) no-repeat center / 12px 12px; mask: var(--value-icon) no-repeat center / 12px 12px; }
 span.value-icon::before { margin-right: 0; }
+/* A reference to a document (docs/SITE.md, "The references to documents"):
+   a name in the reading font, in the color and with the icon of the kind
+   Guide. A working record says that it is a file of the repository. The
+   line "See:" after a text holds the references of its asides. */
+a.document-reference { color: var(--value-color); text-decoration-color: var(--line); }
+.document-outside { color: var(--dim); }
+.document-references { color: var(--dim); }
 
 /* The types (docs/SITE.md, "The types"): a reference is a button that opens
    the card of its type, a popover in the top layer, so the box of a table

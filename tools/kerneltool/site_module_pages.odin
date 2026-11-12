@@ -110,7 +110,8 @@ site_module_pages_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Ent
 					site_module_link(site, &b, modules_page, name)
 				}
 				strings.write_string(&b, "</td>")
-				site_text_cell(&b, item.description.about)
+				// A summary: the page of the module shows the whole text with its references.
+				site_text_cell(&b, site_source_comment_plain(site, item.description.about))
 				strings.write_string(&b, "</tr>\n")
 			}
 			site_table_end(&b, modules_table)
@@ -122,7 +123,9 @@ site_module_pages_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Ent
 		append(entries, Site_Reference_Entry{path = modules_page, title = "Modules", what = "Each module and program, with a page for each: its documentation, its exports, its imports, and for a program its grants and its budget.", source = SITE_MODULES_FILE})
 	}
 
-	// One page for each module.
+	// One page for each module. The list of the builds holds the comment
+	// above the row of a module with settings of its own.
+	modules_text, _ := site_read_quiet(SITE_MODULES_FILE)
 	crumbs := make([dynamic]Site_Crumb, context.temp_allocator)
 	append(&crumbs, ..site_crumbs(.Reference))
 	append(&crumbs, Site_Crumb{title = "Modules", path = modules_page})
@@ -134,15 +137,15 @@ site_module_pages_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Ent
 		strings.write_string(&b, "<h1>")
 		site_escape(&b, title)
 		strings.write_string(&b, "</h1>\n<div class=\"prose\">\n")
-		// The documentation text: one paragraph for each line (text_of).
-		for paragraph in strings.split(description.text, "\n", context.temp_allocator) {
-			if strings.trim_space(paragraph) == "" {
-				continue
-			}
-			strings.write_string(&b, "<p>")
-			site_escape(&b, strings.trim_space(paragraph))
-			strings.write_string(&b, "</p>\n")
+		// A build of the source of another module with settings of its own
+		// says so first: the documentation below is the comment of that
+		// source, which describes the other module.
+		if len(build.defines) > 0 {
+			site_module_build_note(site, &b, item, modules_text)
 		}
+		// The documentation text: one paragraph for each line (text_of),
+		// then the references to the documents that it names.
+		site_source_comment(site, &b, item.page, description.text, .Paragraphs)
 		strings.write_string(&b, "</div>\n")
 
 		// The facts of the build.
@@ -171,6 +174,21 @@ site_module_pages_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Ent
 		if build.kernel {
 			strings.write_string(&b, "<tr><td>Mode</td><td>runs in kernel mode</td></tr>\n")
 		}
+		// The settings of the compiler for this module only: two modules of
+		// one source differ by them.
+		strings.write_string(&b, "<tr><td>Build settings</td><td class=\"code\">")
+		if len(build.defines) == 0 {
+			strings.write_string(&b, "none: the defaults of the source")
+		}
+		for define, index in build.defines {
+			if index > 0 {
+				strings.write_string(&b, ", ")
+			}
+			strings.write_string(&b, "<code>")
+			site_escape(&b, define)
+			strings.write_string(&b, "</code>")
+		}
+		strings.write_string(&b, "</td></tr>\n")
 		strings.write_string(&b, "<tr><td>Imports</td><td class=\"code\">")
 		if len(build.imports) == 0 {
 			strings.write_string(&b, "none")
@@ -211,12 +229,12 @@ site_module_pages_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Ent
 				fmt.sbprintf(&b, "<tr><td class=\"code name\"><a href=\"#export-%s\"><code>", site_slug(export.name))
 				site_escape(&b, site_export_signature(description, export))
 				strings.write_string(&b, "</code></a></td>")
-				site_text_cell(&b, export.about)
+				site_text_cell(&b, site_source_comment_plain(site, export.about))
 				strings.write_string(&b, "</tr>\n")
 			}
 			site_table_end(&b, exports_table)
 			for export in description.exports {
-				site_export_symbol_write(site, &b, build.name, description, export)
+				site_export_symbol_write(site, &b, item.page, build.name, description, export)
 			}
 		}
 		fmt.sbprintf(&b, "<p class=\"source\">Read from the source of the module, as the build reads it to describe the exports (<a href=\"%s\"><code>tools/kerneltool/describe.odin</code></a>).</p>\n", site_repository_file(site, "tools/kerneltool/describe.odin"))
@@ -231,17 +249,58 @@ site_module_pages_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Ent
 			budget_table := site_table_start(&b, "Grants and budget", {{"What", .Short}, {"Value", .Short}, {"As the root service says", .Prose}})
 			fmt.sbprintf(&b, "<tr><td><a href=\"%s#programs\">Grants</a></td>", site_page_link(site, item.page, site_page_file(SITE_GRANTS_FOLDER)))
 			site_name_cell(site, &b, grants.value, SITE_ROOT_FILE, grants.line)
-			site_text_cell(&b, named_in_grants ? grants.comment : "Not named in grants_of: the grants of each other program.")
+			site_comment_cell(site, &b, item.page, named_in_grants ? grants.comment : "Not named in grants_of: the grants of each other program.")
 			strings.write_string(&b, "</tr>\n<tr><td>Budget: pages, programs, threads</td>")
 			site_name_cell(site, &b, budget.value, SITE_ROOT_FILE, budget.line)
-			site_text_cell(&b, named_in_budget ? budget.comment : "Not named in things_of: the budget of each other program.")
+			site_comment_cell(site, &b, item.page, named_in_budget ? budget.comment : "Not named in things_of: the budget of each other program.")
 			strings.write_string(&b, "</tr>\n")
 			site_table_end(&b, budget_table)
 			fmt.sbprintf(&b, "<p class=\"source\">Read from <code>grants_of</code> and <code>things_of</code> in <a href=\"%s\"><code>%s</code></a>; <code>budget_of</code> in the same file adds the limits of processor time and of log records.</p>\n", site_repository_file(site, SITE_ROOT_FILE), SITE_ROOT_FILE)
 			append(&sources, SITE_ROOT_FILE)
 		}
-		about := description.about != "" ? description.about : "no documentation"
+		about := description.about != "" ? site_source_comment_plain(site, description.about) : "no documentation"
+		if len(build.defines) > 0 {
+			about = strings.concatenate({"its source ", build.source, " built with ", strings.join(build.defines, ", ", context.temp_allocator)}, context.temp_allocator)
+		}
 		site_page_add(site, Site_Page{path = item.page, title = title, description = site_description_cut(fmt.tprintf("The %s %s of %s: %s.", item.kind, build.name, SITE_SYSTEM_NAME, about)), section = .Reference, crumbs = crumbs[:], body = strings.to_string(b), sources = sources[:], layout = .Documentation})
+	}
+}
+
+// site_module_build_note writes the first paragraph of a module that is a
+// build of the source of another module with settings of its own: "The
+// module kernel built with the setting ...", then the comment above its row
+// in module_builds, which says why it exists.
+site_module_build_note :: proc(site: ^Site, b: ^strings.Builder, item: Site_Module, modules_text: string) {
+	same_source := ""
+	for other in site.reference.modules {
+		if other.build.name != item.build.name && other.build.source == item.build.source && len(other.build.defines) == 0 {
+			same_source = other.build.name
+			break
+		}
+	}
+	strings.write_string(b, "<p>")
+	if other_item, found := site_module_by_name(site, same_source); found {
+		// A link in a sentence: no colored value in running prose.
+		fmt.sbprintf(b, "The module <a href=\"%s\"><code>", site_page_link(site, item.page, other_item.page))
+		site_escape(b, same_source)
+		strings.write_string(b, "</code></a> built with ")
+	} else {
+		strings.write_string(b, "The source <code>")
+		site_escape(b, item.build.source)
+		strings.write_string(b, "</code> built with ")
+	}
+	strings.write_string(b, len(item.build.defines) == 1 ? "the setting " : "the settings ")
+	for define, index in item.build.defines {
+		if index > 0 {
+			strings.write_string(b, ", ")
+		}
+		strings.write_string(b, "<code>")
+		site_escape(b, define)
+		strings.write_string(b, "</code>")
+	}
+	strings.write_string(b, ". The text after this paragraph is the comment of that source.</p>\n")
+	if comment := site_comment_above(modules_text, strings.concatenate({"\t{name = \"", item.build.name, "\","}, context.temp_allocator)); comment != "" {
+		site_source_comment(site, b, item.page, comment, .Paragraphs)
 	}
 }
 
@@ -250,7 +309,7 @@ site_module_pages_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Ent
 // its parameters, its result, how it fails, and its line in the source. The
 // rules that give these facts are those of the build (describe.odin): no
 // fact is typed here.
-site_export_symbol_write :: proc(site: ^Site, b: ^strings.Builder, module_name: string, description: Module_Description, export: Export_Description) {
+site_export_symbol_write :: proc(site: ^Site, b: ^strings.Builder, page, module_name: string, description: Module_Description, export: Export_Description) {
 	facts := make([dynamic]Site_Symbol_Fact, context.temp_allocator)
 	if export.name == ENTRY_NAME {
 		append(&facts, Site_Symbol_Fact{label = "Form", html = site_text_html("The entry of the module: one parameter, an address, fixed by the contract.")})
@@ -286,7 +345,7 @@ site_export_symbol_write :: proc(site: ^Site, b: ^strings.Builder, module_name: 
 			append(&facts, Site_Symbol_Fact{label = "When it fails", html = strings.concatenate({site_text_html("a negative result, and the error record "), site_type_reference_html(site, site_module_record_key(module_name, record_name), record_name, true)}, context.temp_allocator)})
 		}
 	}
-	site_symbol_write(site, b, Site_Symbol{id = strings.concatenate({"export-", site_slug(export.name)}, context.temp_allocator), name = export.name, signature = site_export_signature(description, export), signature_html = site_export_signature_html(site, module_name, description, export), description = export.text, facts = facts[:], source = export.file, line = export.line})
+	site_symbol_write(site, b, Site_Symbol{id = strings.concatenate({"export-", site_slug(export.name)}, context.temp_allocator), name = export.name, signature = site_export_signature(description, export), signature_html = site_export_signature_html(site, module_name, description, export), description = export.text, page = page, facts = facts[:], source = export.file, line = export.line})
 }
 
 // The tiles of the boot image on the home: as the boot display draws them

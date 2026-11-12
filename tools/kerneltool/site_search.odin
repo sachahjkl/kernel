@@ -250,26 +250,26 @@ site_search_entries :: proc(site: ^Site) -> []Site_Search_Entry {
 	}
 	for item in site.reference.modules {
 		kind: Site_Search_Kind = item.kind == "program" ? .Program : .Module
-		site_search_add(&entries, item.build.name, item.page, "", kind, item.description.about)
+		site_search_add(&entries, item.build.name, item.page, "", kind, site_source_comment_plain(site, item.description.about))
 		for export in item.description.exports {
-			site_search_add(&entries, strings.concatenate({item.build.name, ".", export.name}, context.temp_allocator), item.page, strings.concatenate({"export-", site_slug(export.name)}, context.temp_allocator), .Export, strings.concatenate({site_export_signature(item.description, export), ": ", export.about}, context.temp_allocator))
+			site_search_add(&entries, strings.concatenate({item.build.name, ".", export.name}, context.temp_allocator), item.page, strings.concatenate({"export-", site_slug(export.name)}, context.temp_allocator), .Export, strings.concatenate({site_export_signature(item.description, export), ": ", site_source_comment_plain(site, export.about)}, context.temp_allocator))
 		}
 	}
 	for operation in site.reference.operations {
 		if operation.member.number != 0 {
-			site_search_add(&entries, operation.member.name, site_page_file(SITE_OPERATIONS_FOLDER), strings.concatenate({"operation-", site_slug(operation.member.name)}, context.temp_allocator), .Operation, operation.text)
+			site_search_add(&entries, operation.member.name, site_page_file(SITE_OPERATIONS_FOLDER), strings.concatenate({"operation-", site_slug(operation.member.name)}, context.temp_allocator), .Operation, site_source_comment_plain(site, operation.text))
 		}
 	}
 	for kind in site.reference.error_kinds {
 		if kind.number != 0 {
-			site_search_add(&entries, kind.name, site_page_file(SITE_ERRORS_FOLDER), strings.concatenate({"kind-", site_slug(kind.name)}, context.temp_allocator), .Error_Kind, kind.comment)
+			site_search_add(&entries, kind.name, site_page_file(SITE_ERRORS_FOLDER), strings.concatenate({"kind-", site_slug(kind.name)}, context.temp_allocator), .Error_Kind, site_source_comment_plain(site, kind.comment))
 		}
 	}
 	// Each type of the contract, by its name and by its name with its
 	// package: a reader looks for "Time_Record" as the code writes it.
 	types_page := site_page_file(SITE_TYPES_FOLDER)
 	for type in site.types {
-		text := type.description
+		text := site_source_comment_plain(site, type.description)
 		if text == "" {
 			text = type.declaration
 		}
@@ -280,7 +280,7 @@ site_search_entries :: proc(site: ^Site) -> []Site_Search_Entry {
 		site_search_add(&entries, title, types_page, type.id, .Type, text)
 	}
 	for command in site.reference.console_commands {
-		site_search_add(&entries, command.name, site_page_file(SITE_CONSOLE_FOLDER), strings.concatenate({"command-", site_slug(command.name)}, context.temp_allocator), .Console_Command, strings.concatenate({site_console_signature(command), ": ", command.about}, context.temp_allocator))
+		site_search_add(&entries, command.name, site_page_file(SITE_CONSOLE_FOLDER), strings.concatenate({"command-", site_slug(command.name)}, context.temp_allocator), .Console_Command, strings.concatenate({site_console_signature(command), ": ", site_source_comment_plain(site, command.about)}, context.temp_allocator))
 	}
 	for term in site.terms {
 		site_search_add(&entries, term.name, site_page_file(SITE_GLOSSARY_FOLDER), term.id, .Term, term.definition)

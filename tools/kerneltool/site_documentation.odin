@@ -368,6 +368,7 @@ Site_Symbol :: struct {
 	// written in place of signature when it is not "".
 	signature_html:   string,
 	description:      string, // The text of its source comment, one paragraph a line; "" when the source has none.
+	page:             string, // The page that shows it: the references of its text are relative to it.
 	facts:            []Site_Symbol_Fact,
 	after_facts_html: string, // A table of the symbol after its facts (the fields of a type), or "".
 	source:           string, // Its file in the repository, or "".
@@ -397,14 +398,7 @@ site_symbol_write :: proc(site: ^Site, b: ^strings.Builder, symbol: Site_Symbol)
 	if strings.trim_space(symbol.description) == "" {
 		site.symbols_without_description += 1
 	}
-	for paragraph in strings.split(symbol.description, "\n", context.temp_allocator) {
-		if strings.trim_space(paragraph) == "" {
-			continue
-		}
-		strings.write_string(b, "<p>")
-		site_escape(b, strings.trim_space(paragraph))
-		strings.write_string(b, "</p>\n")
-	}
+	site_source_comment(site, b, symbol.page, symbol.description, .Paragraphs)
 	if len(symbol.facts) > 0 || symbol.source != "" {
 		strings.write_string(b, "<dl class=\"symbol-facts\">\n")
 		for fact in symbol.facts {

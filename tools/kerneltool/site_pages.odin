@@ -331,11 +331,33 @@ site_guides_add :: proc(site: ^Site) -> bool {
 		}
 		append(&site.guides, Site_Guide{source = source, path = site.documents[source], title = title, about = about[source]})
 	}
+	// The headings of every guide before any guide is written: a guide
+	// refers to a heading of a guide that comes after it, and the id of a
+	// heading is the one that the renderer gives. This first pass keeps the
+	// headings only, and takes back what it recorded.
+	not_rendered_count := len(site.not_rendered)
+	names_without_card := site.type_names_without_card
+	blocks_not_colored, first_block_not_colored := site.code_blocks_not_colored, site.first_code_block_not_colored
+	site.document_headings_pending = true
+	for guide, index in site.guides {
+		content := site_read(guide.source) or_return
+		heading_renderer := site_renderer_make(site, guide.path, guide.source)
+		site_render_markdown(&heading_renderer, content)
+		site.guides[index].headings = heading_renderer.headings[:]
+		site.guides[index].items = heading_renderer.items[:]
+	}
+	site.document_headings_pending = false
+	for len(site.not_rendered) > not_rendered_count {
+		pop(&site.not_rendered)
+	}
+	site.type_names_without_card = names_without_card
+	site.code_blocks_not_colored, site.first_code_block_not_colored = blocks_not_colored, first_block_not_colored
 	for guide, index in site.guides {
 		content := site_read(guide.source) or_return
 		renderer := site_renderer_make(site, guide.path, guide.source)
 		site_render_markdown(&renderer, content)
 		site.guides[index].headings = renderer.headings[:]
+		site.guides[index].items = renderer.items[:]
 		b := strings.builder_make(context.temp_allocator)
 		// The headings of the guide are in the list "On this page" of the frame.
 		strings.write_string(&b, "<article class=\"prose\">\n")
@@ -445,7 +467,7 @@ site_reference_add :: proc(site: ^Site) -> bool {
 					break
 				}
 			}
-			site_symbol_write(site, &b, Site_Symbol{id = strings.concatenate({"tool-command-", site_slug(command.name)}, context.temp_allocator), name = command.name, signature = strings.concatenate({"nix develop -c kerneltool ", command.name}, context.temp_allocator), description = command.about, source = SITE_TOOL_MAIN_FILE, line = line})
+			site_symbol_write(site, &b, Site_Symbol{id = strings.concatenate({"tool-command-", site_slug(command.name)}, context.temp_allocator), name = command.name, signature = strings.concatenate({"nix develop -c kerneltool ", command.name}, context.temp_allocator), description = command.about, page = path, source = SITE_TOOL_MAIN_FILE, line = line})
 		}
 		site_page_add(site, Site_Page{path = path, title = "Commands of kerneltool", description = site_description_cut(fmt.tprintf("The %d commands of kerneltool, the one tool of the project: the build, the machine tests, the pictures, the changelog and the site.", len(commands))), section = .Reference, crumbs = site_crumbs(.Reference), body = strings.to_string(b), sources = site_sources(SITE_TOOL_MAIN_FILE), layout = .Documentation})
 		append(&entries, Site_Reference_Entry{path = path, title = "Commands of kerneltool", what = "Each command of the tool of the project, with what it does.", source = SITE_TOOL_MAIN_FILE})

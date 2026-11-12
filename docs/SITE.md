@@ -22,7 +22,7 @@ No page holds a text that a person must remember to update: each page is generat
   - no page holds code or style of its own: each `<script>` has a `src` and nothing inside, but the one `<script type="application/ld+json">` of the page graph, whose text has no `<`; no `<style>` element and no `style` attribute exists.
 - Then the command checks what other programs read (see "What other sites read"); a failure stops it in the same way.
 - After the checks of the pages, the command makes the index of the search and checks it against the pages (see "The search"); a failure stops it in the same way.
-- At its end the command prints: the pages and their bytes, the count of the redirect pages, the other files, the entries and the bytes of the index of the search and the bytes of the script, the guides, the news entries, the terms of the glossary, the commit and the release, the numbers that are not measured, the cells of the licenses that are not recorded, each part of a guide that the renderer did not understand, the parts that it did not write with no site address (or, with one, the parts that it wrote), and the count of the pictures of the repository that it compressed, with their bytes before and after.
+- At its end the command prints: the pages and their bytes, the count of the redirect pages, the other files, the entries and the bytes of the index of the search and the bytes of the script, the guides, the news entries, the terms of the glossary, the commit and the release, the numbers that are not measured, the cells of the licenses that are not recorded, the count of the document references and the first three whose labels found no heading (see "The references to documents"), each part of a guide that the renderer did not understand, the parts that it did not write with no site address (or, with one, the parts that it wrote), and the count of the pictures of the repository that it compressed, with their bytes before and after.
 - `kerneltool check` runs the host tests of the site (`tools/kerneltool/site_test.odin`, `site_render_test.odin`) and checks that each picture that `README.md` names is a file of the repository. It does not write the site.
 
 ## The pages
@@ -92,7 +92,8 @@ The renderer (`tools/kerneltool/site_render.odin`) knows the Markdown that the d
 
 Links:
 
-- A code span or a link that names a document of `docs/` becomes a link to its page. The anchor of a link to another file is dropped: the ids of the site are not the anchors of the host of the repository.
+- A code span that names a document of `docs/` (`ARCHITECTURE.md`, `docs/FONTS.md`, `FIRST_MILESTONE.md`), with the labels of a place after it (`ARCHITECTURE.md`, "The fault ring"; `docs/FONTS.md`, section 12.4), is a document reference (see "The references to documents"). In a heading it stays code.
+- A link that names a document of `docs/` becomes a link to its page, with its own text. The anchor of a link to another file is dropped: the ids of the site are not the anchors of the host of the repository.
 - A code span that names a file or a folder of the repository (from the root or from the folder of the document, also `file.odin:34`) becomes a link to that file at the commit of the build. The folder `build/` is not in the repository.
 - A link to an address of another host stays a link.
 - A code span that names a row of a reference table becomes a link to the row. The rule: the whole text of the span, with its case, is the name of one kernel operation (`Memory_Map`), one error kind (`No_Grant`) or one module (`math`); or the span is a call of a built-in command of the console (`load("math")`, `help()`). A name that two tables have links nowhere: `Bad_Address` is a status and an error kind. A status, a unit and a grant are not linked: their names (`Pages`, `Store`, `Person`) are also common words of the code. A document of `docs/` comes first, then a row, then a file of the repository.
@@ -435,6 +436,7 @@ One table, `site_value_kinds`, gives each value kind (`GLOSSARY.md`) its class `
 | Command of the console or of the tool | A prompt `>_` | Program | `0x58D878`, 10.45 / 8.90 | 58 %, `0x327C45`, 4.72 / 5.12 |
 | Module | A block with a notch | Program | 10.45 / 8.90 | 4.72 / 5.12 |
 | File or folder of the repository | A page with a corner of steps | Dim | `0x7C8A99`, 5.40 / 4.60 | 82 %, `0x65717D`, 4.60 / 4.99 |
+| Guide: a document of the site and a heading of it, in a document reference | A page with three lines of text | Text | `0xDCE4EC`, 14.84 / 12.64 | 20 %, `0x2C2D2F`, 12.72 / 13.78 |
 | Version, release, commit, hash | A tag with a hole | Boot program | 8.42 / 7.17 | 4.66 / 5.05 |
 | Yes: a state that holds | A filled square | Program | 10.45 / 8.90 | 4.72 / 5.12 |
 | No: a state that does not hold | An empty square | Dim | 5.40 / 4.60 | 4.60 / 4.99 |
@@ -451,7 +453,8 @@ Where it shows:
 - the module pages: the index (module, number, yes or no in each cell, the imports), the facts of a module (file, yes or no, size), the facts of each export (type);
 - the facts of each symbol: its number, its statuses, its parameters and its result, its source line (file);
 - the status page: the status of each property (status), the gaps and the next steps (number);
-- not the guides and not the glossary: a document of `docs/` keeps its code spans as Markdown marks them, and no kind is guessed in prose.
+- not the guides and not the glossary: a document of `docs/` keeps its code spans as Markdown marks them, and no kind is guessed in prose;
+- the kind Guide is not a value: a document reference is a name in the reading font, and takes only the color and the icon of the kind (see "The references to documents"). It shows in the prose of a guide and of a source comment.
 
 The restraint:
 
@@ -530,13 +533,13 @@ Each table is read from the text of the file that defines the thing (`tools/kern
 | Fixed ranges | `Fixed_Range` in `contract/fixed_addresses/fixed_addresses.odin` | An enumeration. The address is `fixed_addresses.range_of` of the compiled contract |
 | Commands of the console | `programs/console/commands.odin`, `programs/console/tables.odin` | Lines `command("<name>", {.<Kind>, ...}, .<Kind>, "<help>", <procedure>)`; the signature as `help()` prints it, `Value` for the kind None of a parameter |
 
-Each page starts with what the thing is: the comment above its declaration in the source (`site_comment_above`), when the source has one, as a quote that names its file. Then the table.
+Each page starts with what the thing is: the comment above its declaration in the source (`site_comment_above`), when the source has one, as a quote that names its file, with its document references (see "The references to documents"). Then the table. A cell that holds a comment of the source (a member of an enumeration, a role, a grant, a range, the comment of a case of the root service) has its document references too.
 
 The kernel operations, the commands of the console, the commands of the tool and the exports of each module are documented symbols (`GLOSSARY.md`), under the table of their page, as on a package page of a programming language. A symbol shows:
 
 - its name, as a heading with its id (`operation-<name>`, `command-<name>`, `tool-command-<name>`, `export-<name>`), which "On this page" lists; the name in the table is a link to it;
 - its signature in a block of code: an operation as `Name(<parameters>) -> <result>` from the start of its comment (none when the comment does not start with `(`), a command as `help()` prints it, a command of the tool as `nix develop -c kerneltool <name>`, an export as the console prints it;
-- the text of its source comment, one paragraph a line; nothing when the source has none;
+- the text of its source comment, one paragraph a line, then its document references; nothing when the source has none;
 - its facts: the number of an operation and the statuses that its comment names (links to the table of statuses); the parameters and the result of a command; the parameters, the result and the error record of an export (the rule of the build: it fails with a negative result and writes the record);
 - its source line, a link to `<repository>/blob/<commit>/<file>#L<line>`.
 
@@ -552,11 +555,63 @@ What the tables cannot show:
 
 `reference/modules/index.html` lists each module of `module_builds` (`tools/kerneltool/modules.odin`) in its group, one table and one heading for each: Kernel (a module that runs in kernel mode), Programs (its source is in `programs/`), Modules (the others). The documentation tree has the same groups. A row gives its name, whether it is in the boot image, its count of exports, its imports and its purpose. `reference/modules/<name>/` gives:
 
-- its documentation: the comment before `package` in its source, the text that the build writes into the module (`describe_package` of `tools/kerneltool/describe.odin`); its purpose is the first sentence;
-- its source folder, its size in the boot image of the last build (or that the image is not built), its imports and the modules that import it;
+- its documentation: the comment before `package` in its source, the text that the build writes into the module (`describe_package` of `tools/kerneltool/describe.odin`), then its document references; its purpose is the first sentence, with no pointer;
+- for a module that is a build of the source of another module with settings of its own (`defines` of its row of `module_builds`), a first paragraph before the documentation: "The module `kernel` built with the setting `TEST_BUILD_SKIPS_THE_INSTRUCTION_ADDRESS_CHECK=true`", then the comment above its row in `module_builds`, which says why it exists. The documentation after it is the comment of the shared source, which describes the other module. Its description for other sites names its source and its settings;
+- its source folder, its size in the boot image of the last build (or that the image is not built), its build settings (the `defines` of its row, or "none"), its imports and the modules that import it;
 - its kind (its group);
 - its exports, a table then each one as a documented symbol (see "The reference tables"), each with its signature as the console prints it (`write(name: Text, data: Text) -> Integer`, `Handle(Read, Write)`, `Table(Rectangle, Change)`) and its line of help. They come from the same reader as the build: no module needs to be built;
 - for a program, its grants and its budget (pages, programs, threads) from `grants_of` and `things_of` of the root service, with the comments of those lines.
+
+## The references to documents
+
+The owner asked for it on 2026-11-12, of the page of a module that started with "The kernel (docs/ARCHITECTURE.md, systems K1 to K5).": "ça devrait pas etre genre un \"tag\" ou une \"référence\" ? genre un lien, affiché avec un style pour architecture.md ? je comprends pas ce texte en fait. K1 to K5 ?". The code is `tools/kerneltool/site_document_references.odin`; its host tests are `site_document_references_test.odin`.
+
+A comment of the source names a document for a person who reads the code: a document pointer (`GLOSSARY.md`). The rule of the comments allows it. On a page, the path and a label such as "U3" or "section 8" mean nothing: the site writes a document reference (`GLOSSARY.md`) in its place.
+
+### The forms of a pointer
+
+`site_document_pointers` reads each `docs/<NAME>.md` of a text (capital letters, digits and `_`; not a part of a longer path or word), then the labels after it:
+
+| Form | Example | What the pointer takes |
+|---|---|---|
+| A whole parenthesis | `(docs/ARCHITECTURE.md, "Kernel systems")` | The parenthesis and the space before it |
+| A part of a parenthesis, after other words and ", " | `(support/cryptography/origin.manifest, docs/CRYPTOGRAPHY.md)` | ", " and the part: `(support/cryptography/origin.manifest)` stays |
+| A part of a parenthesis, after or before "; " | `(property 19; docs/MODULE_CONTRACT.md, sections 4 and 5)` | The part and one "; " |
+| After "see" | `..., see docs/DESIGN.md, section 3.` | "see", the path and the labels, and ", " before them |
+| A word of its sentence | `The colors of docs/DESIGN.md: a name is dim.` | The path and the labels after it |
+
+- The labels of a part of a parenthesis are its parts after the path, split at ", " outside quotes: `"Did not fit, across calls"` is one label.
+- After a path in running text, a label follows ", ": a heading in quotes, `section <n>`, `sections <n> and <m>`, `property <n>`, `choice <n>`, `decision <n>`, `item <n>`, or a label that starts with a capital letter (`U3`, `K1`). A bare number after a comma is a word of the sentence.
+- The first three forms are asides. A path of the last form is a word of its sentence.
+
+### The place that a pointer names
+
+`site_document_targets` finds the place of each label, in the order of the labels; each label after the first looks inside the part of the heading of the label before it (`"Kernel events", section 5a`).
+
+- A heading in quotes: the heading whose text gives the same id by the rule of the ids (`site_slug`), with or without the label of its section ("11. The mark" for `"The mark"`); else the one heading whose text starts with those words.
+- `section <n>`, `property <n>` and a label as `U3`: the first heading whose text starts with the label and then ". " or a space ("12. The interface font" for 12; "12.4 The glyph cache" for 12.4, not for 12).
+- `choice <n>`, `decision <n>`, `item <n>`: the one top-level item of an ordered list with that number, inside the part of the heading "Choices ..." or "Decisions ..." when the document has one. The reference shows its words in bold, else its first sentence.
+- A quoted label that no heading has, as the last label: the words in bold at the start of a line (`- **The frame caches** ...`) of the part. The reference shows them and links to the heading above them.
+- `sections 4 and 5`: two references.
+- The glossary: a quoted label is first a term, whose row has the anchor `term-<name>`; else a heading.
+
+A pointer whose labels do not all find their place names the document alone: the reference shows the title, never the label, and the command counts the pointer as not resolved. A path that names no document of `docs/` is not a pointer: its text stays.
+
+The headings of a guide are those of its rendered page, with their ids: `site_guides_add` renders every guide once for its headings and its items before it writes any page, so a guide refers to a guide after it. A working record (`SITE_WORKING_RECORDS`) is not a page: its reference links to the line of the heading or the item in the file at the commit, and says "in the repository".
+
+### The markup, and where the references go
+
+A reference is `<a class="document-reference value-guide value-icon" href="...">Architecture: Kernel systems</a>`: the title of the document (the `#` heading of the file), then ": " and the text of the heading without the label of its section. It takes the color and the icon of the value kind Guide (see "The kinds of values"), in the reading font: the name of a document is a name, not a value.
+
+One form for every page: the text of the comment, then one line "See:" with the references of its asides, each once. In a paragraph form (a description, a symbol, the quote at the start of a reference page) the line is a paragraph `<p class="document-references">`; in a cell of a table it is a `<span>` after the text. Why: a reference inside a sentence breaks it, as the parenthesis did, and several references in one paragraph are hard to tell apart; after the text, the sentence reads as one ("The kernel: ... the interrupts."), and the reader finds the documents of a text in one place. The text on the two sides of an aside joins: no space before a period, and no "()". A path that is a word of its sentence ("the rules of docs/DESIGN.md") is the one exception: the sentence needs it, so its reference takes its place.
+
+`site_source_comment` writes every source comment that a page shows: the description of a module, the text of each symbol (an operation, a command of the console or of the tool, an export, a type), the comment above a declaration, and each cell of a reference table that holds a comment. A summary (the purpose of a module in the index, the first column of a table of exports or commands, the description of a page, the text of an entry of the search, the first line of a type card) has no reference: `site_source_comment_plain` takes the asides out, and a path that is a word of its sentence becomes the title of its document. The page of the thing shows the whole text with its references.
+
+A code span of a guide, of the glossary or of a news entry that names a document is a reference of the same markup (see "The Markdown that the site renders"): one look for a reference to a document on every page.
+
+### The count
+
+The command prints "N document references, M with no heading found: <the first three>": N is the count of the different pointers of the pages and of the code spans of the guides that name a document, M those whose labels found no place. A pointer that is not resolved is a stale pointer of a comment or of a guide, or a label that names no heading (a free text, as "the choice of the pointer pictures"): the fix is in its comment.
 
 ## The types
 

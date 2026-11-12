@@ -98,6 +98,7 @@ Site_Guide :: struct {
 	title:    string,
 	about:    string, // Its line in the table of documents of README.md, or "".
 	headings: []Site_Heading, // Each heading of its page, with its id: the guide sections of the search index.
+	items:    []Site_List_Item, // Each top-level item of an ordered list of its page, with its id: a reference to "choice <n>" finds it.
 }
 
 Site :: struct {
@@ -141,6 +142,12 @@ Site :: struct {
 	type_names_without_card: int, // The places where a page shows a type that has no card: its name is plain.
 	code_blocks_not_colored: int, // The blocks of Odin that the tokenizer refused: written plain.
 	first_code_block_not_colored: string, // The place of the first of them, or "".
+	// Each pointer to a document that a page shows, by its document and its
+	// labels: whether each label found its heading (docs/SITE.md, "The
+	// references to documents").
+	document_references: map[string]bool,
+	document_outlines: map[string]Site_Document_Outline, // The title and the headings of each document that the site reads from its file.
+	document_headings_pending: bool, // While the guides are read for their headings only: no reference is counted.
 }
 
 run_site :: proc(args: []string) -> int {
@@ -701,6 +708,14 @@ site_build :: proc(address: string) -> bool {
 	// A type that a page shows with no card is plain text: the count makes
 	// the gap visible.
 	fmt.printfln("kerneltool: site: %d types, %d type names with no card", len(site.types), site.type_names_without_card)
+	// A pointer of a comment or a guide whose label finds no heading is a
+	// stale pointer: the count and the first ones make it seen.
+	reference_count, unresolved_references := site_document_references_summary(&site)
+	if len(unresolved_references) > 0 {
+		fmt.printfln("kerneltool: site: %d document references, %d with no heading found: %s", reference_count, len(unresolved_references), strings.join(unresolved_references[:min(3, len(unresolved_references))], "; ", context.temp_allocator))
+	} else {
+		fmt.printfln("kerneltool: site: %d document references, 0 with no heading found", reference_count)
+	}
 	// A block of Odin that the tokenizer refused is plain: the count and the
 	// first one make it seen.
 	if site.code_blocks_not_colored > 0 {

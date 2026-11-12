@@ -918,7 +918,7 @@ site_text_with_type_references :: proc(site: ^Site, b: ^strings.Builder, text, p
 
 // site_type_summary gives the first line of the card of a type: its kind,
 // its size and its alignment, then the first sentence of its description.
-site_type_summary :: proc(type: Site_Type) -> string {
+site_type_summary :: proc(site: ^Site, type: Site_Type) -> string {
 	b := strings.builder_make(context.temp_allocator)
 	switch type.kind {
 	case .Wire_Form:
@@ -943,7 +943,7 @@ site_type_summary :: proc(type: Site_Type) -> string {
 	if type.alias_of != "" {
 		fmt.sbprintf(&b, " An alias of %s.", type.alias_of)
 	}
-	if first := about_of(type.description, ""); first != "" {
+	if first := site_source_comment_plain(site, about_of(type.description, "")); first != "" {
 		strings.write_byte(&b, ' ')
 		strings.write_string(&b, first)
 		strings.write_byte(&b, '.')
@@ -960,7 +960,7 @@ site_type_card_write :: proc(site: ^Site, b: ^strings.Builder, from_page: string
 	strings.write_string(b, "\"><code>")
 	site_escape(b, type.name)
 	fmt.sbprintf(b, "</code></a> <span class=\"type-card-kind\">%s</span></p>\n<p class=\"type-card-summary\" id=\"%s%s%s\">", site_type_kind_names[type.kind], SITE_TYPE_CARD_PREFIX, type.id, SITE_TYPE_CARD_SUMMARY_SUFFIX)
-	site_escape(b, site_type_summary(type))
+	site_escape(b, site_type_summary(site, type))
 	strings.write_string(b, "</p>\n")
 	shown, total := 0, 0
 	if len(type.fields) > 0 {
@@ -1204,7 +1204,7 @@ site_type_symbol_write :: proc(site: ^Site, b: ^strings.Builder, type: Site_Type
 	if type.declaration != "" {
 		declaration_html = site_code_block_html(site, type.declaration, type.package_name, fmt.tprintf("%s:%d", type.source, type.line))
 	}
-	site_symbol_write(site, b, Site_Symbol{id = type.id, name = type.name, signature = type.declaration, signature_html = declaration_html, description = type.description, facts = facts[:], source = type.source, line = type.line, after_facts_html = strings.to_string(after)})
+	site_symbol_write(site, b, Site_Symbol{id = type.id, name = type.name, signature = type.declaration, signature_html = declaration_html, description = type.description, page = site_page_file(SITE_TYPES_FOLDER), facts = facts[:], source = type.source, line = type.line, after_facts_html = strings.to_string(after)})
 }
 
 // site_types_page_add adds the page of the types and its line in the index

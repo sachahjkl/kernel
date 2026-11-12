@@ -207,7 +207,7 @@ site_type_card_of_an_enum :: proc(t: ^testing.T) {
 	testing.expect_value(t, rights.element_text, "Right")
 	testing.expect_value(t, rights.size, size_of(op.Rights))
 	testing.expect(t, strings.has_prefix(rights.alias_of, "bit_set[Right"), rights.alias_of)
-	testing.expect(t, strings.contains(site_type_summary(rights), "An alias of bit_set[Right"), site_type_summary(rights))
+	testing.expect(t, strings.contains(site_type_summary(nil, rights), "An alias of bit_set[Right"), site_type_summary(nil, rights))
 	right_names := reflect.enum_field_names(op.Right)
 	right_values := reflect.enum_field_values(op.Right)
 	testing.expect_value(t, len(rights.members), len(right_names))

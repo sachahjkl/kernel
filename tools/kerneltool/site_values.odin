@@ -35,6 +35,7 @@ Site_Value_Kind :: enum {
 	Command,
 	Module,
 	File,
+	Guide,
 	Version,
 	Yes,
 	No,
@@ -117,6 +118,14 @@ site_value_kinds := [Site_Value_Kind]Site_Value_Kind_Description {
 		name = "file", title = "File", meaning = "A file or a folder of the repository.",
 		color = graphics.COLOR_DIM, dark_percent = 100, light_percent = 82,
 		cells = {".######.....", ".#....##....", ".#.....##...", ".#......##..", ".#.......#..", ".#.......#..", ".#.......#..", ".#.......#..", ".#.......#..", ".#########..", "............", "............"},
+	},
+	// A document is text to read: the color of the text. Its reference is
+	// a name in the reading font, not a value: the kind gives its color and
+	// its icon (docs/SITE.md, "The references to documents").
+	.Guide = {
+		name = "guide", title = "Guide", meaning = "A document of the site, a guide or the glossary, and the heading that a reference names; a working record is a file of the repository.",
+		color = graphics.COLOR_TEXT, dark_percent = 100, light_percent = 20,
+		cells = {"............", ".##########.", ".#........#.", ".#.######.#.", ".#........#.", ".#.######.#.", ".#........#.", ".#.####...#.", ".#........#.", ".##########.", "............", "............"},
 	},
 	.Version = {
 		name = "version", title = "Version", meaning = "A version, a release, a commit or a hash.",
