@@ -84,6 +84,7 @@ Step :: struct {
 	// programs print in an order that the system does not fix.
 	any_order:  bool,
 	seconds:    int, // For Wait: the time allowed, when the line can come later than STEP_TIMEOUT.
+	fails_on:   string, // For Wait: a text that ends the wait as a failure when the machine prints it first: the step names its two outcomes.
 	names:      string, // For Trace: the names of the functions of the first frames, separated by spaces.
 	expected:   string, // For Call: a part of what the tool prints.
 	outcome:    Call_Outcome, // For Call: Result, Failed or Refused.
@@ -2513,6 +2514,32 @@ log_wait :: proc(machine: ^Machine, text: string, any_order := false, limit := S
 	return false
 }
 
+// log_wait_or_failure waits until the log, after the last Wait, has text or
+// failure. It gives the line of failure when failure came first, and
+// text_found when text came first. It does not move the place of the log:
+// the Wait that follows finds text there at once.
+log_wait_or_failure :: proc(machine: ^Machine, text, failure: string, limit: time.Duration) -> (failure_line: string, text_found: bool) {
+	start := time.now()
+	for time.since(start) < limit {
+		log := log_read(machine)
+		if len(log) > machine.seen {
+			rest := log[machine.seen:]
+			text_at := strings.index(rest, text)
+			failure_at := strings.index(rest, failure)
+			if failure_at >= 0 && (text_at < 0 || failure_at < text_at) {
+				line := rest[failure_at:]
+				end := strings.index_byte(line, '\n')
+				return strings.trim_right(end < 0 ? line : line[:end], "\r"), false
+			}
+			if text_at >= 0 {
+				return "", true
+			}
+		}
+		time.sleep(50 * time.Millisecond)
+	}
+	return "", false
+}
+
 // log_last_line gives the last line of the log of the machine that has a
 // text, from that text, or "" when none has it.
 log_last_line :: proc(machine: ^Machine, text: string) -> string {
@@ -2710,6 +2737,17 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 			}
 			was_first_wait := first_wait
 			first_wait = false
+			if step.fails_on != "" {
+				failure_line, text_found := log_wait_or_failure(machine, step.text, step.fails_on, limit)
+				if failure_line != "" {
+					fmt.eprintfln("kerneltool: test failed: step %d: the machine printed \"%s\" before \"%s\"", index + 1, failure_line, step.text)
+					return false
+				}
+				if !text_found {
+					fmt.eprintfln("kerneltool: test failed: step %d: the machine printed neither \"%s\" nor \"%s\" within %v", index + 1, step.text, step.fails_on, limit)
+					return false
+				}
+			}
 			if !log_wait(machine, step.text, step.any_order, limit) {
 				fmt.eprintfln("kerneltool: test failed: step %d: the machine did not print \"%s\" within %v", index + 1, step.text, limit)
 				return false

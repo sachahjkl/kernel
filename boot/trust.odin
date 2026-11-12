@@ -188,6 +188,7 @@ trust_fail :: proc "contextless" (boot: ^info.Boot_Info, step: bootscreen.Step, 
 // failure stays until a person stops the machine.
 trust_stop :: proc "contextless" (boot: ^info.Boot_Info, step: bootscreen.Step, text: string) -> ! {
 	display(boot, text, .Failed, step)
+	// After the draw, print writes on the serial port only (boot/main.odin).
 	print("boot program: the boot display shows the failure\r\n")
 	system.boot_services.set_watchdog_timer(0, 0, 0, nil)
 	for {
@@ -205,11 +206,21 @@ TPM_PCR_READ_COMMAND_SIZE :: 2 + 4 + 4 + 4 + 2 + 1 + 3
 // The registers that a selection of 3 bytes names: PCR 0 to 23.
 TPM_SELECTION_SIZE :: 3
 
+// The tries of the measure. A command of the TPM that the interface of the
+// firmware does not finish in its time is reported as a device error; a
+// slow interface can finish the next one. 4 tries, 0.5 s apart, add 1.5 s
+// at most to a boot whose TPM refuses for good.
+MEASURE_TRY_COUNT :: 4
+MEASURE_TRY_WAIT_MICROSECONDS :: 500_000
+
 // measure asks the firmware to extend the measure register with the
 // SHA-256 hash of the system description, then reads the register back.
-// A machine with no TPM boots, and its trust record says No_Tpm: the
-// measure serves a sealed key or a remote party, which then see that the
-// system was not measured.
+//
+// The rule when it fails (docs/TRUSTED_BOOT.md, "The measure"): the boot
+// continues, and the trust record, the boot display and the log say which
+// state holds: no TPM, measured, refused, or measured with no read. No key
+// is sealed to the measure yet, so a stop would protect nothing: a missing
+// measure is visible to a party that reads PCR 11.
 measure :: proc "contextless" (boot: ^info.Boot_Info, description: []u8) {
 	trust := &boot.trust
 	trust.measure_register = info.MEASURE_REGISTER
@@ -231,15 +242,54 @@ measure :: proc "contextless" (boot: ^info.Boot_Info, description: []u8) {
 	put_little_endian_u32(event[14:], TCG_EVENT_IPL)
 	copy(event[EFI_TCG2_EVENT_DATA_OFFSET:], message[:])
 	text: bootscreen.Text
-	status := tpm.hash_log_extend_event(tpm, 0, u64(uintptr(raw_data(description))), u64(len(description)), raw_data(event[:]))
-	if status != 0 {
-		trust.measure = .Refused
-		trust.measure_status = u64(status)
-		bootscreen.put(&text, "boot program: the firmware refused to measure the system description: status ")
+	status: Efi_Status
+	for attempt in 1 ..= MEASURE_TRY_COUNT {
+		trust.measure_tries = u64(attempt)
+		status = tpm.hash_log_extend_event(tpm, 0, u64(uintptr(raw_data(description))), u64(len(description)), raw_data(event[:]))
+		if status == 0 {
+			break
+		}
+		text.count = 0
+		bootscreen.put(&text, "boot program: try ")
+		bootscreen.put_number(&text, u64(attempt))
+		bootscreen.put(&text, " of the measure: the firmware answered status ")
 		bootscreen.put_hex(&text, u64(status), 16)
 		print(string(text.bytes[:text.count]))
 		print("\r\n")
+		if attempt < MEASURE_TRY_COUNT {
+			system.boot_services.stall(MEASURE_TRY_WAIT_MICROSECONDS)
+		}
+	}
+	text.count = 0
+	if status != 0 {
+		trust.measure = .Refused
+		trust.measure_status = u64(status)
+		bootscreen.put(&text, "boot program: the TPM refused the measure of the system description: status ")
+		bootscreen.put_hex(&text, u64(status), 16)
+		print(string(text.bytes[:text.count]))
+		print("\r\n")
+		// Which part refuses: when a read through the same protocol fails
+		// too, with no command at the TPM, the firmware has marked its TPM
+		// as absent after an earlier error of its own.
+		_, probe_status, probe_read := register_read(tpm, info.MEASURE_REGISTER)
+		text.count = 0
+		bootscreen.put(&text, "boot program: a read of PCR 11 through the same firmware: ")
+		if probe_read {
+			bootscreen.put(&text, "it works")
+		} else {
+			bootscreen.put(&text, "status ")
+			bootscreen.put_hex(&text, probe_status, 16)
+		}
+		print(string(text.bytes[:text.count]))
+		print("\r\n")
 		return
+	}
+	if trust.measure_tries > 1 {
+		bootscreen.put(&text, "boot program: the measure succeeded at try ")
+		bootscreen.put_number(&text, trust.measure_tries)
+		print(string(text.bytes[:text.count]))
+		print("\r\n")
+		text.count = 0
 	}
 	value, read_status, read := register_read(tpm, info.MEASURE_REGISTER)
 	if !read {
@@ -334,4 +384,45 @@ big_endian_u32 :: proc "contextless" (bytes: []u8) -> u32 {
 
 big_endian_u16 :: proc "contextless" (bytes: []u8) -> u16 {
 	return u16(bytes[0]) << 8 | u16(bytes[1])
+}
+
+// The first serial port of a PC: the log of the machine tests reads it.
+SERIAL_PORT :: 0x3F8
+SERIAL_PORT_LINE_STATUS :: SERIAL_PORT + 5
+SERIAL_PORT_CAN_TAKE_A_BYTE :: 0x20
+// A port that never becomes ready (no serial port on this machine) must not
+// hold the boot: after this count of reads the byte is dropped.
+SERIAL_PORT_WAIT_LIMIT :: 100_000
+
+serial_port_write_in_registers :: asm(port: u16, value: u8) -> (port_after: u16, value_after: u8) [
+	port -> port_after   = %dx,
+	value -> value_after = %al,
+	#volatile,
+	#clobber memory,
+] {
+	out
+}
+
+serial_port_read_in_registers :: asm(port: u16, before: u8) -> (port_after: u16, value: u8) [
+	port -> port_after = %dx,
+	before -> value    = %al,
+	#volatile,
+	#clobber memory,
+] {
+	in
+}
+
+// serial_port_print writes ASCII text on the serial port with the
+// instructions of the processor, not through the console of the firmware:
+// the text does not reach the screen.
+serial_port_print :: proc "contextless" (text: string) {
+	for index in 0 ..< len(text) {
+		for _ in 0 ..< SERIAL_PORT_WAIT_LIMIT {
+			_, status := serial_port_read_in_registers(SERIAL_PORT_LINE_STATUS, 0)
+			if status & SERIAL_PORT_CAN_TAKE_A_BYTE != 0 {
+				break
+			}
+		}
+		_, _ = serial_port_write_in_registers(SERIAL_PORT, text[index])
+	}
 }

@@ -63,8 +63,14 @@ trust_check :: proc "contextless" () {
 	switch trust.measure {
 	case .Measured:
 		digits := system_description.hexadecimal(trust.measure_value)
-		system.log("root: measured: PCR ", trust.measure_register, " = ", string(digits[:]))
-	case .None, .No_Tpm, .Refused, .Not_Read:
-		system.log("root: the system description is not measured into the TPM")
+		system.log("root: measured: PCR ", trust.measure_register, " = ", string(digits[:]), ", at try ", trust.measure_tries)
+	case .No_Tpm:
+		system.log("root: the system description is not measured into the TPM: the firmware has no TPM")
+	case .Refused:
+		system.log_in("programs", .Warning, "root: the TPM refused the measure of the system description: status ", system.Hex(trust.measure_status), ", after ", trust.measure_tries, " tries: PCR ", trust.measure_register, " does not hold it")
+	case .Not_Read:
+		system.log_in("programs", .Warning, "root: the system description is measured, but the read of PCR ", trust.measure_register, " failed: status ", system.Hex(trust.measure_status))
+	case .None:
+		system.log_in("programs", .Warning, "root: the boot program did not try the measure")
 	}
 }

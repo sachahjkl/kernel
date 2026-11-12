@@ -107,7 +107,7 @@ Efi_Boot_Services :: struct {
 	unload_image:           rawptr,
 	exit_boot_services:     proc "win64" (image: rawptr, key: uint) -> Efi_Status,
 	get_next_count:         rawptr,
-	stall:                  rawptr,
+	stall:                  proc "win64" (microseconds: uint) -> Efi_Status,
 	set_watchdog_timer:     proc "win64" (timeout: uint, code: u64, data_size: uint, data: [^]u16) -> Efi_Status,
 	connect_controller:     rawptr,
 	disconnect_controller:  rawptr,

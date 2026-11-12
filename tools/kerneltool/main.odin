@@ -666,7 +666,13 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 		// tool shows its end when the boot program does not start.
 		append(&list, "-global", "driver=cfi.pflash01,property=secure,value=on")
 		append(&list, "-chardev", strings.concatenate({"socket,id=tpm_socket,path=", tpm_socket_of(test_output)}, context.temp_allocator))
-		append(&list, "-tpmdev", "emulator,id=tpm,chardev=tpm_socket", "-device", "tpm-tis,tpmdev=tpm")
+		// The CRB interface, not TIS: TIS moves each byte of a command and of
+		// its answer through one register, each access an exit to QEMU; the
+		// CRB interface puts them in a buffer of memory. Fewer exits leave
+		// fewer chances for the time-outs of the interface driver of the
+		// firmware on a loaded host (docs/TRUSTED_BOOT.md, "The machines of
+		// the TPM").
+		append(&list, "-tpmdev", "emulator,id=tpm,chardev=tpm_socket", "-device", "tpm-crb,tpmdev=tpm")
 		append(&list, "-debugcon", strings.concatenate({"file:", machine_file(test_output, FIRMWARE_LOG_SUFFIX)}, context.temp_allocator), "-global", "isa-debugcon.iobase=0x402")
 	}
 	if test_output != "" {

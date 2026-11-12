@@ -266,8 +266,19 @@ stop :: proc "contextless" (text: string) -> ! {
 	for {}
 }
 
-// print writes ASCII text on the firmware console, which takes UTF-16.
+// Set when the boot display is on the screen. The console of the firmware
+// writes on the screen as well as on the serial port: after the first draw
+// of the display, each line goes to the serial port only, so that no text
+// lies over the display.
+display_on_screen := false
+
+// print writes ASCII text on the firmware console, which takes UTF-16; after
+// the first draw of the boot display, on the serial port only.
 print :: proc "contextless" (text: string) {
+	if display_on_screen {
+		serial_port_print(text)
+		return
+	}
 	buffer: [128]u16
 	count := 0
 	for i in 0 ..< len(text) {
@@ -300,6 +311,7 @@ display :: proc "contextless" (boot: ^info.Boot_Info, message: string, state := 
 	if screen.address == 0 || screen.format == .None {
 		return
 	}
+	display_on_screen = true
 	data := &display_data
 	data.boot.firmware_vendor = boot.firmware_vendor
 	data.boot.firmware_revision = boot.firmware_revision

@@ -54,10 +54,23 @@ Machine_Firmware :: enum {
 }
 
 // The machines with the firmware that has a TPM driver run with the
-// processors of every other machine. With one processor, the firmware of
-// the test machine refuses to measure (HashLogExtendEvent gives a device
-// error, and no extend of the register reaches the TPM): seen in a run.
+// processors of every other machine: the count of processors is not the
+// cause of a refused measure (docs/TRUSTED_BOOT.md, "The machines of the
+// TPM").
 TPM_MACHINE_PROCESSORS :: "4"
+
+// The steps of such a machine after "boot program: started", until the
+// desktop: the commands of the TPM go through the system management mode
+// and the interface of the device on a loaded host, and the kernel starts
+// later. 300 s is the bound of each of them; a refused measure ends the
+// wait at once, with the line of the refusal.
+TPM_MACHINE_STEP_SECONDS :: 300
+MEASURE_REFUSED_LINE :: "boot program: the TPM refused the measure"
+
+// The control command of swtpm that QEMU sends when the firmware abandons a
+// command of the TPM before its answer (CMD_CANCEL_TPM_CMD): the trace of a
+// time-out of the interface driver of the firmware.
+SWTPM_CANCEL_COMMAND :: "00 00 00 09"
 
 // The first wait of a machine with that firmware: for "boot program:
 // started", by name, with its own bound. A boot that is slow under the load
@@ -138,6 +151,26 @@ tpm_stop :: proc(tpm: ^Tpm_Process) {
 	tpm.folder = ""
 }
 
+// tpm_cancels_report prints how many commands of the TPM the firmware of a
+// machine abandoned: each one is a time-out of its interface driver, after
+// which the firmware can mark its TPM as absent for the rest of the boot
+// (docs/TRUSTED_BOOT.md, "The machines of the TPM").
+tpm_cancels_report :: proc(output: string) {
+	path := strings.concatenate({tpm_folder_of(output), "/swtpm.log"}, context.temp_allocator)
+	data, err := os.read_entire_file(path, context.temp_allocator)
+	if err != nil {
+		return
+	}
+	lines := strings.split_lines(string(data), context.temp_allocator)
+	cancels := 0
+	for line, index in lines {
+		if strings.has_prefix(strings.trim_space(line), "Ctrl Cmd:") && index + 1 < len(lines) && strings.trim_space(lines[index + 1]) == SWTPM_CANCEL_COMMAND {
+			cancels += 1
+		}
+	}
+	fmt.printfln("kerneltool: the firmware of %s abandoned %d commands of the TPM (%s)", output, cancels, path)
+}
+
 // firmware_failure_report says what a machine with that firmware showed
 // when a step failed, while QEMU still runs: a picture of its screen (a
 // prompt or a menu of the firmware is there), then the end of the log of
@@ -202,12 +235,12 @@ MEASURE_LINE :: "boot program: PCR 11 = "
 
 scenario_measured := [?]Step {
 	{kind = .Wait, text = "boot program: started", seconds = TPM_MACHINE_FIRST_WAIT_SECONDS},
-	{kind = .Wait, text = "boot program: verified by the boot program, which the firmware did not verify"},
-	{kind = .Wait, text = "boot program: the kernel and each module and resource have the hash of the system description"},
-	{kind = .Wait, text = MEASURE_LINE},
-	{kind = .Wait, text = "root: the boot image agrees with the system description that the boot program verified: "},
-	{kind = .Wait, text = "root: measured: PCR 11 = "},
-	{kind = .Wait, text = "compositor: surface console", any_order = true, seconds = 180},
+	{kind = .Wait, text = "boot program: verified by the boot program, which the firmware did not verify", seconds = TPM_MACHINE_STEP_SECONDS},
+	{kind = .Wait, text = "boot program: the kernel and each module and resource have the hash of the system description", seconds = TPM_MACHINE_STEP_SECONDS},
+	{kind = .Wait, text = MEASURE_LINE, fails_on = MEASURE_REFUSED_LINE, seconds = TPM_MACHINE_STEP_SECONDS},
+	{kind = .Wait, text = "root: the boot image agrees with the system description that the boot program verified: ", seconds = TPM_MACHINE_STEP_SECONDS},
+	{kind = .Wait, text = "root: measured: PCR 11 = ", seconds = TPM_MACHINE_STEP_SECONDS},
+	{kind = .Wait, text = "compositor: surface console", any_order = true, seconds = TPM_MACHINE_STEP_SECONDS},
 	{kind = .Launch, text = "boot"},
 	{kind = .Wait, text = "boot: ok, 7 stages, "},
 	{kind = .Shot, text = "boot_measured"},
@@ -216,17 +249,17 @@ scenario_measured := [?]Step {
 
 scenario_other_system := [?]Step {
 	{kind = .Wait, text = "boot program: started", seconds = TPM_MACHINE_FIRST_WAIT_SECONDS},
-	{kind = .Wait, text = MEASURE_LINE},
-	{kind = .Wait, text = "root: the boot image agrees with the system description that the boot program verified: "},
+	{kind = .Wait, text = MEASURE_LINE, fails_on = MEASURE_REFUSED_LINE, seconds = TPM_MACHINE_STEP_SECONDS},
+	{kind = .Wait, text = "root: the boot image agrees with the system description that the boot program verified: ", seconds = TPM_MACHINE_STEP_SECONDS},
 	{kind = .Quit},
 }
 
 scenario_secure_boot := [?]Step {
 	{kind = .Wait, text = "boot program: started", seconds = TPM_MACHINE_FIRST_WAIT_SECONDS},
-	{kind = .Wait, text = "boot program: verified by the firmware (Secure Boot), then by the boot program"},
-	{kind = .Wait, text = MEASURE_LINE},
-	{kind = .Wait, text = "root: verified by the firmware (Secure Boot), then by the boot program"},
-	{kind = .Wait, text = "compositor: surface console", any_order = true, seconds = 180},
+	{kind = .Wait, text = "boot program: verified by the firmware (Secure Boot), then by the boot program", seconds = TPM_MACHINE_STEP_SECONDS},
+	{kind = .Wait, text = MEASURE_LINE, fails_on = MEASURE_REFUSED_LINE, seconds = TPM_MACHINE_STEP_SECONDS},
+	{kind = .Wait, text = "root: verified by the firmware (Secure Boot), then by the boot program", seconds = TPM_MACHINE_STEP_SECONDS},
+	{kind = .Wait, text = "compositor: surface console", any_order = true, seconds = TPM_MACHINE_STEP_SECONDS},
 	{kind = .Launch, text = "boot"},
 	{kind = .Wait, text = "boot: ok, 7 stages, "},
 	{kind = .Shot, text = "boot_secure_boot"},
@@ -296,7 +329,11 @@ refused_machine_run :: proc(steps: []Step, volume, output: string, firmware: Mac
 // that the tool computes from the system description of the volume.
 measure_machine_run :: proc(steps: []Step, volume, output: string, firmware: Machine_Firmware) -> (value: [32]u8, ok: bool) {
 	// The tool ends QEMU: status 0.
-	machine_test(steps, volume, output, 0, firmware = firmware) or_return
+	passed := machine_test(steps, volume, output, 0, firmware = firmware)
+	tpm_cancels_report(output)
+	if !passed {
+		return
+	}
 	description := image_description_read(volume) or_return
 	expected := system_description.hexadecimal(measure_expected(description))
 	log_bytes := read_file(output) or_return

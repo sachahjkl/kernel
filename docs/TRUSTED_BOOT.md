@@ -51,7 +51,8 @@ It adds a record that the TPM keeps until the next reset of the machine. No code
 It does not protect against:
 
 - **a boot program that lies.** A replaced boot program can extend PCR 11 with the hash of a correct description and then start other code. The measure is as honest as the boot program. The firmware of the test machine also measures the boot program itself into PCR 4 (TCG PC Client Platform Firmware Profile), so a party that reads PCR 4 and PCR 11 together can see a replaced boot program. The system does not read PCR 4.
-- **a machine with no TPM.** The boot continues. The trust record says `No_Tpm`, and the boot display says "no TPM: the system is not measured".
+- **a machine with no TPM.** The boot continues. The trust record says `No_Tpm`, and the boot display says "no TPM".
+- **a TPM that the firmware stopped using.** The boot continues. The trust record says `Refused`, and the boot display says "TPM refused the measure" in red (section 6).
 - **a TPM that is software.** The test machine uses `swtpm` on the host. The host can read and change its state.
 
 ### Layer 3: Secure Boot
@@ -117,13 +118,15 @@ A failed check of the boot program stops the boot. The kernel does not start.
 
 A failed check of the root service stops the start of the programs. The boot display shows "the start failed:" and the file, and the log has the two hashes.
 
-The boot display has three facts under the tiles of the boot image, from the trust record:
+The boot display has one line "trust" under the tiles of the boot image, from the trust record, in three parts with a color each. The short words fit the card; the log has the long forms.
 
-| Fact | Values |
+| Part | Values |
 |---|---|
-| signed by | "the TEST key: its private key is public" (red), or "the key" and the first 8 bytes of the public key |
-| verified by | "the boot program, which the firmware did not verify", or "the firmware (Secure Boot), then the boot program" (Secure Boot on: claim 9), or "the check failed" |
-| measured | "PCR 11 =" and the first 16 bytes of the value, or "no TPM: the system is not measured", or a refusal of the firmware |
+| The key | "TEST key" (red), or "key" and the first 4 bytes of the public key |
+| What verified | "boot program only" (the firmware did not verify the boot program), or "Secure Boot" (claim 9), or "check failed" (red) |
+| The measure | "PCR 11" and the first 4 bytes of the value, or "no TPM", or "TPM refused the measure" (red), or "PCR not read" (red) |
+
+Each tile of the boot image shows the whole name of its module, or no name when the name is wider than the tile: a name is never cut. After its first draw of the display, the boot program writes its lines on the serial port only, not through the console of the firmware, which also writes on the screen.
 
 ## 5. The signing key
 
@@ -171,8 +174,23 @@ A person who has the private key can sign a system that the boot program accepts
 - **The event**: type `EV_IPL`, in the event log of the firmware. Its data is the signed message: the label and the BLAKE3 hash. The event log names the system by its identity, BLAKE3; the TPM has no BLAKE3 bank, so the register holds SHA-256.
 - **The path**: the boot program calls `HashLogExtendEvent` of `EFI_TCG2_PROTOCOL`, then `TPM2_PCR_Read` through `SubmitCommand`. The firmware talks to the TPM. The boot program has no TPM driver.
 - **The order**: the boot program measures after the checks of section 1 and before it leaves the firmware services.
+- **The tries**: when `HashLogExtendEvent` fails, the boot program tries again, 4 tries in all, 0.5 s apart through `Stall` of the firmware: at most 1.5 s more. A slow interface can finish a later try; the log then says "the measure succeeded at try N", and the trust record keeps the count.
+- **The rule when every try fails**: no key is sealed to the measure yet, so a stop protects nothing. The boot continues. The trust record says `Refused` with the status of the firmware; the boot display says "TPM refused the measure" in red; the root service writes a warning with the status and the count of tries. A party that reads PCR 11 sees that it does not hold the measure. When a key is sealed to the measure, that key stays sealed: the person sees why on the display.
+- **What the log says of a refusal**: after the last try, the boot program reads PCR 11 through `SubmitCommand` of the same protocol and writes the result. When that read fails too, and no command reaches the TPM, the firmware has stopped using its TPM.
 
-The test machine of the measure uses the firmware with a TPM driver (`OVMF_FULL_CODE`) and a software TPM: `kerneltool` starts `swtpm socket --tpm2` with a new state for each machine, waits for its socket, starts QEMU with `-tpmdev emulator` and `tpm-tis`, and stops `swtpm` after QEMU. That firmware needs the system management mode of QEMU (`-machine q35,smm=on`).
+### A measure that does not depend on the event path of the firmware
+
+Designed, not built. When `HashLogExtendEvent` fails, the boot program can send `TPM2_PCR_Extend` itself through `SubmitCommand`, with the SHA-256 hash of the description that it computes with `support/cryptography/sha2` (the boot program links it already for Ed25519). The event log of the firmware then has no entry, and the display must say "measured, with no entry in the event log". It is not built because it does not help in the case that the test machines show: in the firmware of EDK II, as far as its source is known here, `SubmitCommand` checks the same flag "TPM present" as `HashLogExtendEvent`, and fails at once when the firmware cleared it. The one path that does not depend on that flag is a driver of the interface of the TPM in the boot program, and the boot program has no TPM driver: it talks to the TPM through the firmware.
+
+### The machines of the TPM
+
+On a loaded host, the firmware of the test machines sometimes refuses the measure: `HashLogExtendEvent` gives `EFI_DEVICE_ERROR` (status `8000000000000007`), and no command for PCR 11 reaches the TPM. The swtpm log of such a machine shows, before the measure of the boot program, the control command `00 00 00 09` (cancel a command) two times: QEMU sends it when the interface driver of the firmware abandons a command before its answer.
+
+- **The probable cause**: a time-out of the interface driver of the firmware during one of its own measures. The firmware then reports a device error, and its TPM driver (`Tcg2Dxe`) marks the TPM as absent for the rest of the boot: each later call of `HashLogExtendEvent` gives `EFI_DEVICE_ERROR` at once, with no command. The count of processors is not the cause: the refusal came with one and with four.
+- **What proves it**: in the swtpm log of every refused machine, the cancel command before the end; in the log of a good machine, no cancel command, and the extend of PCR 11 (handle `00 00 00 0B`, four digests) after the command `HierarchyChangeAuth`. After each machine of the TPM, the tool prints the count of abandoned commands from its swtpm log. The read of PCR 11 after a refusal (above) fails with the same status when the flag is the cause. A debug build of the firmware (`OVMFFull.override { debug = true; }`) writes the line of `Tcg2Dxe` that disables the TPM on the debug console, which the tool keeps.
+- **What the test machines do**: they use the interface CRB of QEMU (`tpm-crb`), not TIS: TIS moves each byte of a command through one register, with one exit to QEMU for each, and CRB puts the command in a buffer of memory. Fewer exits leave fewer chances for a time-out on a loaded host. The steps of a machine of the TPM after `boot program: started` have a bound of 300 s each, and the wait for `boot program: PCR 11 = ` ends at once with the line of a refusal.
+
+The test machine of the measure uses the firmware with a TPM driver (`OVMF_FULL_CODE`) and a software TPM: `kerneltool` starts `swtpm socket --tpm2` with a new state for each machine, waits for its socket, starts QEMU with `-tpmdev emulator` and `tpm-crb`, and stops `swtpm` after QEMU. That firmware needs the system management mode of QEMU (`-machine q35,smm=on`).
 
 ## 7. Secure Boot
 
@@ -182,7 +200,7 @@ The test machine of the measure uses the firmware with a TPM driver (`OVMF_FULL_
 4. **The variable store of the test machine**: `virt-fw-vars` of the package `python3Packages.virt-firmware` writes a copy of `OVMF_FULL_VARS` with the certificate as PK, KEK and the one entry of `db`, and Secure Boot on (`--set-pk`, `--add-kek`, `--add-db`, `--secure-boot`). No certificate of a vendor is enrolled.
 5. **The machines** of `kerneltool test trusted_boot`: the signed boot program starts, its trust record says `Firmware_And_Boot_Program`, and PCR 11 holds the same value as with the unsigned boot program of the same system; the signed boot program with one byte changed does not start; the unsigned boot program does not start. For the last two, the tool waits for the line `BdsDxe: failed to load Boot` of the firmware, then checks that the log has no line `boot program: started`.
 
-The machines with this firmware run with four processors, as every other machine. With one processor, the firmware of the test machine refuses the measure: `HashLogExtendEvent` gives a device error, and no extend of the register reaches the TPM. The first wait of such a machine is the line `boot program: started`, by name, with a bound of 600 seconds: this firmware starts slower than the usual one, and slower still on a loaded host. The tool prints the time of the first wait of each machine.
+The machines with this firmware run with four processors, as every other machine (section 6, "The machines of the TPM"). The first wait of such a machine is the line `boot program: started`, by name, with a bound of 600 seconds: this firmware starts slower than the usual one, and slower still on a loaded host. The tool prints the time of the first wait of each machine.
 
 ## 8. The costs
 
@@ -200,7 +218,7 @@ The machines with this firmware run with four processors, as every other machine
 | The trust record | `contract/boot_info/boot_info.odin` (`Boot_Trust`) |
 | The checks and the measure of the boot program | `boot/trust.odin` |
 | The check of the root service | `programs/root/trust.odin` |
-| The facts of the boot display | `support/bootscreen/bootscreen.odin` (`trust_facts`) |
+| The line of the trust on the boot display | `support/bootscreen/bootscreen.odin` (`trust_line`) |
 | The signature, the keys, the command `key` | `tools/kerneltool/system_description.odin` |
 | The ten machines of `test trusted_boot` | `tools/kerneltool/trusted_boot_scenario.odin` |
 | The firmware signing key, `sbsign`, the variable store with Secure Boot | `tools/kerneltool/secure_boot.odin` |

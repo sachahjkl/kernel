@@ -353,9 +353,10 @@ step_names := [Step]string {
 }
 
 // The boot image as tiles: one tile for each module. The width of a tile
-// is the size of the module, with a least width for its name. Three rows
-// leave room for the three facts of the trust record under them.
-TILE_ROWS :: 3
+// is the size of the module, with a least width. A tile shows the whole
+// name of its module, or no name when the name does not fit: a name is
+// never cut. The color of a tile comes from the hash of its module.
+TILE_ROWS :: 5
 TILE_HEIGHT :: 20
 TILE_GAP :: 2
 TILE_LEAST :: 36
@@ -473,7 +474,9 @@ draw :: proc "contextless" (canvas: graphics.Canvas, data: ^Data) {
 	// The stages, on one line of time. The line starts with the boot
 	// program: the firmware before it takes most of the time.
 	{
-		area := card(canvas, MARGIN, 84, WIDTH - 2 * MARGIN, 246, "THE LINE OF TIME", "Boot_Report.stages, Program_Report.start_time: the cycle counter", graphics.COLOR_KERNEL)
+		// 236: the six rows of names end at the bottom of its content; the
+		// card of the boot image takes the rest for the line of the trust.
+		area := card(canvas, MARGIN, 84, WIDTH - 2 * MARGIN, 236, "THE LINE OF TIME", "Boot_Report.stages, Program_Report.start_time: the cycle counter", graphics.COLOR_KERNEL)
 		origin := boot.stage_count > 1 ? boot.stages[1].start : 0
 		last := origin
 		for stage in boot.stages[:boot.stage_count] {
@@ -633,7 +636,7 @@ draw :: proc "contextless" (canvas: graphics.Canvas, data: ^Data) {
 
 	// The memory.
 	LEFT_WIDTH :: 568
-	MIDDLE_Y :: 338
+	MIDDLE_Y :: 328
 	MIDDLE_HEIGHT :: 178
 	{
 		area := card(canvas, MARGIN, MIDDLE_Y, LEFT_WIDTH, MIDDLE_HEIGHT, "MEMORY", "Boot_Report.ranges, System_Report", graphics.COLOR_MEMORY)
@@ -809,7 +812,9 @@ draw :: proc "contextless" (canvas: graphics.Canvas, data: ^Data) {
 			block(area, x, y, tile, TILE_HEIGHT, graphics.shade(color, 70), graphics.shade(color, 40))
 			fill(area, x + 3, y + TILE_HEIGHT - 3, tile - 6, 1, color)
 			put_name(&text, entry.name[:])
-			text.count = min(text.count, (tile - 6) / 8)
+			if text.count * 8 > tile - 6 {
+				text.count = 0
+			}
 			show(area, x + 4, y + 1, &text, graphics.shade(color, 175))
 			x += tile + TILE_GAP
 		}
@@ -819,7 +824,7 @@ draw :: proc "contextless" (canvas: graphics.Canvas, data: ^Data) {
 			put_size(&text, u64(len(data.image)))
 			show_right(canvas, MARGIN + LEFT_WIDTH - CARD_MARGIN, BOTTOM_Y + 13, &text, graphics.COLOR_TEXT)
 		}
-		trust_facts(area, TILE_ROWS * (TILE_HEIGHT + TILE_GAP) + 6, data)
+		trust_line(area, TILE_ROWS * (TILE_HEIGHT + TILE_GAP) + 4, data)
 	}
 
 	// The programs.
@@ -867,60 +872,79 @@ put_hex_bytes :: proc "contextless" (text: ^Text, bytes: []u8) {
 	}
 }
 
-// trust_facts draws the three facts of the trust record (docs/TRUSTED_BOOT.md):
-// which key signed the system description, what verified it, and the
-// measure. A test key and a boot program that nothing verified are said in
-// plain words: a reader must not take such a system for a trusted one.
+// trust_part draws one part of the line of the trust, with a comma after
+// it unless it is the last, and gives the x of the next part.
 @(private)
-trust_facts :: proc "contextless" (area: graphics.Canvas, y: int, data: ^Data) {
+trust_part :: proc "contextless" (canvas: graphics.Canvas, x, y: int, text: ^Text, color: graphics.Color, last: bool) -> int {
+	if !last {
+		put(text, ",")
+	}
+	return show(canvas, x, y, text, color) + (last ? 0 : 8)
+}
+
+// trust_line draws the trust record in one line (docs/TRUSTED_BOOT.md,
+// "What a failure shows"): which key signed the system description, what
+// verified it, and the measure, each in short words and in its own color.
+// The long forms are on the log. A test key, a boot program that nothing
+// verified and a refused measure are said in plain words: a reader must not
+// take such a system for a trusted one.
+@(private)
+trust_line :: proc "contextless" (area: graphics.Canvas, y: int, data: ^Data) {
 	trust := &data.boot.trust
 	text: Text
-	color := graphics.Color(graphics.COLOR_TEXT)
+	x := write_name(area, 0, y, "trust", FACT_VALUE - 8, graphics.COLOR_DIM)
+	x = max(x + 8, 56)
+	color := graphics.Color(graphics.COLOR_DIM)
 	switch trust.key_kind {
 	case .None:
+		put(&text, "not signed")
 	case .Test:
-		put(&text, "the TEST key: its private key is public")
+		put(&text, "TEST key")
 		color = graphics.COLOR_FAILED
 	case .Person:
-		put(&text, "the key ")
-		put_hex_bytes(&text, trust.public_key[:8])
+		put(&text, "key ")
+		put_hex_bytes(&text, trust.public_key[:4])
+		color = graphics.COLOR_TEXT
 	}
-	fact(area, y, "signed by", &text, color)
-	color = graphics.COLOR_TEXT
+	x = trust_part(area, x, y, &text, color, false)
+	color = graphics.COLOR_DIM
 	switch trust.verifier {
 	case .None:
 		if data.state == .Failed && trust.key_kind != .None {
-			put(&text, "the check failed: see the line above")
+			put(&text, "check failed")
 			color = graphics.COLOR_FAILED
+		} else {
+			put(&text, "not verified yet")
 		}
 	case .Boot_Program:
-		put(&text, "the boot program, which the firmware did not verify")
+		put(&text, "boot program only")
 		color = graphics.COLOR_BOOT_PROGRAM
 	case .Firmware_And_Boot_Program:
-		put(&text, "the firmware (Secure Boot), then the boot program")
+		put(&text, "Secure Boot")
 		color = graphics.COLOR_PROGRAM
 	}
-	fact(area, y + LINE, "verified by", &text, color)
-	color = graphics.COLOR_TEXT
+	x = trust_part(area, x, y, &text, color, false)
+	color = graphics.COLOR_DIM
 	switch trust.measure {
 	case .None:
+		put(&text, "not measured yet")
 	case .Measured:
 		put(&text, "PCR ")
 		put_number(&text, trust.measure_register)
-		put(&text, " = ")
-		put_hex_bytes(&text, trust.measure_value[:16])
+		put(&text, " ")
+		put_hex_bytes(&text, trust.measure_value[:4])
 		color = graphics.COLOR_PROGRAM
 	case .No_Tpm:
-		put(&text, "no TPM: the system is not measured")
+		put(&text, "no TPM")
 		color = graphics.COLOR_BOOT_PROGRAM
 	case .Refused:
-		put(&text, "the firmware refused the measure")
+		put(&text, "TPM refused the measure")
 		color = graphics.COLOR_FAILED
 	case .Not_Read:
-		put(&text, "measured, but the register was not read")
+		put(&text, "PCR not read")
 		color = graphics.COLOR_FAILED
 	}
-	fact(area, y + 2 * LINE, "measured", &text, color)
+	_ = trust_part(area, x, y, &text, color, true)
 }
 
 // draw_screen draws the display in the middle of a screen.

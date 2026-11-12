@@ -77,6 +77,7 @@ Boot_Trust :: struct {
 	measure_register: u64, // The register of the TPM that the boot program extended.
 	measure_value:    [32]u8, // The value of the register in the SHA-256 bank, read back from the TPM.
 	measure_status:   u64, // The status of the firmware, or the response code of the TPM, when measure is Refused or Not_Read.
+	measure_tries:    u64, // The tries of the extension: 1 when the first one worked.
 }
 
 // Who verified the system description. A boot program that the firmware
@@ -98,7 +99,7 @@ Measure_State :: enum u64 {
 	None     = 0, // The boot program did not try.
 	Measured = 1, // The register holds the measure; measure_value is its value.
 	No_Tpm   = 2, // The firmware has no TPM protocol.
-	Refused  = 3, // The firmware refused the extension.
+	Refused  = 3, // The firmware refused the extension at each try: the TPM is there, the system is not measured.
 	Not_Read = 4, // The extension was done; the read of the register failed.
 }
 
