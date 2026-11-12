@@ -65,6 +65,11 @@ scenario_principals_first := [?]Step {
 	{kind = .Type, text = "of alice"},
 	// The generation of the last commit of the note: the current version.
 	{kind = .Generation, text = "notes: the note is \"of alice\", generation "},
+	// A count too: notes takes a store with a note and no count for a
+	// damaged one ("the 3 blocks of the count do not agree") at its next
+	// start, after the lock.
+	{kind = .Key, text = "tab"},
+	{kind = .Wait, text = "notes: count 1000, stopped: 1000 commits in "},
 	// The grant records name the principal.
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "grants(\"notes\")"},
@@ -110,7 +115,7 @@ scenario_principals_first := [?]Step {
 	{kind = .Wait, text = "unlock: the passphrase of principal 1 \"alice\" opens its seal; the secret keys are erased: nothing uses them yet"},
 	{kind = .Wait, text = "root: the session of principal 1 \"alice\" starts: the desktop starts each program in it"},
 	{kind = .Launch, text = "notes"},
-	{kind = .Wait, text = "notes: restored the note \"of alice\" and the count 0, its 3 blocks agree", any_order = true},
+	{kind = .Wait, text = "notes: restored the note \"of alice\" and the count 1000, its 3 blocks agree", any_order = true},
 	{kind = .Wait, text = "compositor: surface notes"},
 	// A revocation ends a grant of a program of the session.
 	{kind = .Front, text = "console"},
@@ -118,6 +123,8 @@ scenario_principals_first := [?]Step {
 	{kind = .Wait, text = "root: revoked the grant store of notes, connections changed: 1"},
 	{kind = .Type, text = "grants(\"notes\")"},
 	{kind = .Wait, text = "[console] notes lost: store"},
+	// The session runs: no window of unlock opens after the console came
+	// to the front, so the last line goes to the console.
 	{kind = .Type, text = "shutdown()"},
 	{kind = .Wait, text = "kernel: the machine stops with code 0"},
 }
@@ -132,11 +139,16 @@ scenario_principals_second := [?]Step {
 	{kind = .Wait, text = "root: the session of principal 1 \"alice\" starts: the desktop starts each program in it"},
 	{kind = .Launch, text = "notes"},
 	{kind = .Wait, text = "root: started notes, in the session of principal 1 \"alice\""},
-	{kind = .Wait, text = "notes: restored the note \"of alice\" and the count 0, its 3 blocks agree", any_order = true},
+	{kind = .Wait, text = "notes: restored the note \"of alice\" and the count 1000, its 3 blocks agree", any_order = true},
 	{kind = .Wait, text = "compositor: surface notes"},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "lock()"},
 	{kind = .Wait, text = "root: the session of principal 1 \"alice\" ends: 1 programs stopped"},
+	// The lock starts unlock again, and its window takes the front: the
+	// console comes back to the front after that window, so the last line
+	// goes to the console and not to unlock as a passphrase.
+	{kind = .Wait, text = "compositor: surface unlock"},
+	{kind = .Front, text = "console"},
 	{kind = .Type, text = "shutdown()"},
 	{kind = .Wait, text = "kernel: the machine stops with code 0"},
 }
