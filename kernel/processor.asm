@@ -173,15 +173,11 @@ kernel_enter:
 ; of the stack and never continues an earlier one. The top 22 * 8 bytes of
 ; the stack are where each entry from a program put its frame.
 ;
-; Two forms of the copy of 176 bytes, chosen by measure (the kernel entries
-; of the program locks in one second): 11 pairs of moves of 8 bytes in
-; general registers (RESUME_COPY_WITH_REP_MOVSQ 0), or rep movsq (1). The
-; kernel has no vector instruction, so no moves of 16 bytes. rep movsq has a
-; start cost of some tens of cycles for a short count; the 44 moves have
-; none, and with two loads and two stores in a cycle they take about 22
-; cycles. The direction flag is clear in the kernel (syscall clears it
-; through MSR_SFMASK, each interrupt runs cld), so rep movsq goes up.
-%define RESUME_COPY_WITH_REP_MOVSQ 0
+; The copy of 176 bytes is 11 pairs of moves of 8 bytes in general
+; registers: the kernel has no vector instruction, so no moves of 16 bytes.
+; rep movsq was measured slower here: it has a start cost of some tens of
+; cycles for a short count (docs/ARCHITECTURE.md, "The return to a
+; program", has the numbers).
 
 global resume
 resume:                          ; (frame: ^Frame) -> !: run a program
@@ -189,10 +185,6 @@ resume:                          ; (frame: ^Frame) -> !: run a program
 	mov rsp, [gs:abs 0]          ; the top of the kernel stack (gs: the kernel's)
 	sub rsp, 22 * 8
 	mov rdi, rsp
-%if RESUME_COPY_WITH_REP_MOVSQ
-	mov ecx, 22
-	rep movsq
-%else
 %assign pair 0
 %rep 11
 	mov rax, [rsi + pair * 16]
@@ -201,7 +193,6 @@ resume:                          ; (frame: ^Frame) -> !: run a program
 	mov [rdi + pair * 16 + 8], rdx
 %assign pair pair + 1
 %endrep
-%endif
 	swapgs                       ; From here to the iretq, gs is the program's.
 	POP_REGISTERS
 	add rsp, 16                  ; The vector and the error code.
