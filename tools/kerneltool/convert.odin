@@ -34,6 +34,9 @@ Export_Description :: struct {
 	directions:    []module.Direction, // The direction of each Table or Bytes parameter (module.Function.parameter_directions).
 	result_detail: u32,
 	error_record:  u32, // Not 0: the export gives an error record, with this record (module.Function.error_record).
+	// Where the source declares it: the site links each export to its line.
+	file:          string,
+	line:          int,
 }
 
 // The description of a record: what module.Record and its fields hold.

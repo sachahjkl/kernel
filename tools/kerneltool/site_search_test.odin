@@ -175,6 +175,6 @@ site_pages_hold_no_inline_code :: proc(t: ^testing.T) {
 	site.release = "0.1.0"
 	html := site_page_html(&site, Site_Page{path = "guides/A/index.html", title = "A", description = "The guide A.", section = .Guides, body = "<h1>A</h1>"})
 	testing.expect_value(t, site_inline_code_problem(html), "")
-	testing.expect(t, strings.contains(html, "<script src=\"../../search.js\" defer></script>"))
+	testing.expect(t, strings.contains(html, "<script src=\"../../search.js\" data-index=\"search.json\" defer></script>"))
 	testing.expect(t, strings.contains(html, "<div class=\"search\" role=\"search\" hidden>"))
 }

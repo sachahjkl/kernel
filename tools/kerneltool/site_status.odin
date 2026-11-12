@@ -100,16 +100,17 @@ site_property_numbers :: proc(text: string, property_count: int) -> []int {
 	return numbers[:]
 }
 
-// site_document_render renders a document of docs/ again, only for its ids
-// and its labelled items: the page of the guide has the same ids, because the
-// renderer gives the same ids to the same text. What the renderer lists as
-// not rendered is listed once, by the guide.
+// site_document_render renders a document of docs/ again, only for its ids,
+// its headings and its labelled items: the page of a guide has the same ids,
+// because the renderer gives the same ids to the same text. A working record
+// is not a page of the site; it is rendered for its items and their lines
+// only, and the HTML is dropped. What the renderer lists as not rendered is
+// listed once, by the guide.
 site_document_render :: proc(site: ^Site, source: string) -> (renderer: Site_Renderer, ok: bool) {
 	content := site_read(source) or_return
 	page, is_guide := site.documents[source]
 	if !is_guide {
-		fmt.eprintfln("kerneltool: site: %s is not a guide of the site", source)
-		return {}, false
+		page = SITE_PAGE
 	}
 	listed := len(site.not_rendered)
 	renderer = site_renderer_make(site, page, source)
@@ -118,13 +119,23 @@ site_document_render :: proc(site: ^Site, source: string) -> (renderer: Site_Ren
 	return renderer, true
 }
 
-// site_item_links writes the labels of items as links to their ids in a guide.
-site_item_links :: proc(site: ^Site, b: ^strings.Builder, from_page, guide_page: string, items: []Site_List_Item) {
+// site_item_links writes the labels of items of a document as links: to
+// their ids in the page of the document when it is a guide, else to their
+// lines in the file of the repository (a working record is not a page of
+// the site).
+site_item_links :: proc(site: ^Site, b: ^strings.Builder, from_page, source: string, items: []Site_List_Item) {
+	guide_page, is_guide := site.documents[source]
 	for item, index in items {
 		if index > 0 {
 			strings.write_string(b, ", ")
 		}
-		fmt.sbprintf(b, "<a href=\"%s#%s\">", site_page_link(site, from_page, guide_page), item.id)
+		strings.write_string(b, "<a href=\"")
+		if is_guide {
+			site_escape(b, strings.concatenate({site_page_link(site, from_page, guide_page), "#", item.id}, context.temp_allocator))
+		} else {
+			site_escape(b, site_line_address(site, source, item.line))
+		}
+		strings.write_string(b, "\">")
 		site_escape(b, item.label)
 		strings.write_string(b, "</a>")
 	}
@@ -136,7 +147,6 @@ site_status_add :: proc(site: ^Site) -> bool {
 	milestone_text := site_read(SITE_MILESTONE_FILE) or_return
 	milestone := site_document_render(site, SITE_MILESTONE_FILE) or_return
 	principles := site_document_render(site, SITE_PROPERTIES_FILE) or_return
-	milestone_page := site.documents[SITE_MILESTONE_FILE]
 	properties_page := site.documents[SITE_PROPERTIES_FILE]
 	gaps, gaps_problem := site_gaps_read(milestone_text)
 	if gaps_problem != "" {
@@ -174,7 +184,9 @@ site_status_add :: proc(site: ^Site) -> bool {
 				break
 			}
 		}
-		fmt.sbprintf(&b, "<tr id=\"property-%d\"><td>", property.number)
+		fmt.sbprintf(&b, "<tr id=\"property-%d\" data-outline=\"%d. ", property.number, property.number)
+		site_plain(&b, property.title)
+		strings.write_string(&b, "\"><td>")
 		if heading_id != "" {
 			fmt.sbprintf(&b, "<a href=\"%s#%s\">", site_page_link(site, path, properties_page), heading_id)
 		}
@@ -195,7 +207,7 @@ site_status_add :: proc(site: ^Site) -> bool {
 			strings.write_string(&b, "<td class=\"missing\">none names it</td>")
 		} else {
 			strings.write_string(&b, "<td class=\"code\">")
-			site_item_links(site, &b, path, milestone_page, naming[:])
+			site_item_links(site, &b, path, SITE_MILESTONE_FILE, naming[:])
 			strings.write_string(&b, "</td>")
 		}
 		named_gaps := 0
@@ -218,7 +230,7 @@ site_status_add :: proc(site: ^Site) -> bool {
 	strings.write_string(&b, "<h2 id=\"gaps\">Gaps</h2>\n")
 	gaps_table := site_table_start(&b, "Gaps", {{"Gap", .Number}, {"Group", .Short}, {"What the code does not do", .Prose}})
 	for gap in gaps {
-		fmt.sbprintf(&b, "<tr id=\"gap-%d\"><td class=\"code\"><a href=\"", gap.number)
+		fmt.sbprintf(&b, "<tr id=\"gap-%d\" data-outline=\"Gap %d\"><td class=\"code\"><a href=\"", gap.number, gap.number)
 		site_escape(&b, site_line_address(site, SITE_MILESTONE_FILE, gap.line))
 		fmt.sbprintf(&b, "\">%d</a></td>", gap.number)
 		site_cell(&b, gap.group)
@@ -233,7 +245,7 @@ site_status_add :: proc(site: ^Site) -> bool {
 	steps_table := site_table_start(&b, "Next steps", {{"Step", .Short}, {"What and its state", .Prose}})
 	for item in next_steps {
 		strings.write_string(&b, "<tr><td class=\"code\">")
-		site_item_links(site, &b, path, milestone_page, []Site_List_Item{item})
+		site_item_links(site, &b, path, SITE_MILESTONE_FILE, []Site_List_Item{item})
 		strings.write_string(&b, "</td>")
 		site_cell(&b, item.text)
 		strings.write_string(&b, "</tr>\n")
@@ -241,6 +253,6 @@ site_status_add :: proc(site: ^Site) -> bool {
 	site_table_end(&b, steps_table)
 	site_source_line(site, &b, SITE_MILESTONE_FILE)
 
-	site_page_add(site, Site_Page{path = path, title = "Status", description = site_description_cut(fmt.tprintf("The state of each of the %d properties of %s, with its evidence and its gaps; the %d gaps and the next steps.", len(properties), SITE_SYSTEM_NAME, len(gaps))), section = .Status, crumbs = site_crumbs(.Home), body = strings.to_string(b), sources = site_sources(SITE_PROPERTIES_FILE, SITE_MILESTONE_FILE)})
+	site_page_add(site, Site_Page{path = path, title = "Status", description = site_description_cut(fmt.tprintf("The state of each of the %d properties of %s, with its evidence and its gaps; the %d gaps and the next steps.", len(properties), SITE_SYSTEM_NAME, len(gaps))), section = .Status, crumbs = site_crumbs(.Home), body = strings.to_string(b), sources = site_sources(SITE_PROPERTIES_FILE, SITE_MILESTONE_FILE), layout = .Documentation})
 	return true
 }

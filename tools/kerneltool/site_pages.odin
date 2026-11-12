@@ -10,6 +10,8 @@ import "core:slice"
 import "core:strings"
 
 SITE_BOOT_STAGE_PREFIX :: "kernel: boot: "
+// The file of the table of the commands of the tool.
+SITE_TOOL_MAIN_FILE :: "tools/kerneltool/main.odin"
 
 // A table that the reference shows: its file and its title, for its
 // line in the index of the reference.
@@ -305,11 +307,10 @@ site_guides_add :: proc(site: ^Site) -> bool {
 		site_render_markdown(&renderer, content)
 		site.guides[index].headings = renderer.headings[:]
 		b := strings.builder_make(context.temp_allocator)
-		strings.write_string(&b, "<div class=\"guide\">\n")
-		strings.write_string(&b, site_table_of_contents(&renderer))
+		// The headings of the guide are in the list "On this page" of the frame.
 		strings.write_string(&b, "<article class=\"prose\">\n")
 		strings.write_string(&b, strings.to_string(renderer.builder))
-		strings.write_string(&b, "</article>\n</div>\n<nav class=\"neighbours\" aria-label=\"Other guides\">\n")
+		strings.write_string(&b, "</article>\n<nav class=\"neighbours\" aria-label=\"Other guides\">\n")
 		if index > 0 {
 			previous := site.guides[index - 1]
 			fmt.sbprintf(&b, "<a rel=\"prev\" href=\"%s\">Previous: ", site_page_link(site, guide.path, previous.path))
@@ -327,7 +328,7 @@ site_guides_add :: proc(site: ^Site) -> bool {
 		if description == "" {
 			description = site_description_cut(strings.concatenate({"The guide \"", guide.title, "\" of ", SITE_SYSTEM_NAME, "."}, context.temp_allocator))
 		}
-		site_page_add(site, Site_Page{path = guide.path, title = guide.title, description = description, section = .Guides, crumbs = site_crumbs(.Guides), body = strings.to_string(b), sources = site_sources(guide.source)})
+		site_page_add(site, Site_Page{path = guide.path, title = guide.title, description = description, section = .Guides, crumbs = site_crumbs(.Guides), body = strings.to_string(b), sources = site_sources(guide.source), layout = .Documentation})
 	}
 
 	// The index of the guides.
@@ -345,7 +346,7 @@ site_guides_add :: proc(site: ^Site) -> bool {
 	}
 	site_table_end(&b, guides_table)
 	site_source_line(site, &b, SITE_README_FILE)
-	site_page_add(site, Site_Page{path = guides_page, is_index = true, title = "Guides", description = site_description_cut(fmt.tprintf("The %d documents of %s: how each part of the system is designed, and why.", len(site.guides), SITE_SYSTEM_NAME)), section = .Guides, crumbs = site_crumbs(.Home), body = strings.to_string(b), sources = site_sources(SITE_README_FILE)})
+	site_page_add(site, Site_Page{path = guides_page, is_index = true, title = "Guides", description = site_description_cut(fmt.tprintf("The %d documents of %s: how each part of the system is designed, and why.", len(site.guides), SITE_SYSTEM_NAME)), section = .Guides, crumbs = site_crumbs(.Home), body = strings.to_string(b), sources = site_sources(SITE_README_FILE), layout = .Documentation})
 	return true
 }
 
@@ -377,13 +378,11 @@ site_reference_add :: proc(site: ^Site) -> bool {
 		renderer.glossary = true
 		site_render_markdown(&renderer, content)
 		b := strings.builder_make(context.temp_allocator)
-		strings.write_string(&b, "<div class=\"guide\">\n")
-		strings.write_string(&b, site_table_of_contents(&renderer))
-		strings.write_string(&b, "<article class=\"prose wide\">\n")
+		strings.write_string(&b, "<article class=\"prose\">\n")
 		strings.write_string(&b, strings.to_string(renderer.builder))
-		strings.write_string(&b, "</article>\n</div>\n")
+		strings.write_string(&b, "</article>\n")
 		title := site_document_title(content)
-		site_page_add(site, Site_Page{path = glossary_page, title = title, description = site_description_cut(fmt.tprintf("The %d terms of %s: one term for each concept, with its definition and the words that it replaces.", len(site.terms), SITE_SYSTEM_NAME)), section = .Reference, crumbs = site_crumbs(.Reference), body = strings.to_string(b), sources = site_sources("docs/GLOSSARY.md")})
+		site_page_add(site, Site_Page{path = glossary_page, title = title, description = site_description_cut(fmt.tprintf("The %d terms of %s: one term for each concept, with its definition and the words that it replaces.", len(site.terms), SITE_SYSTEM_NAME)), section = .Reference, crumbs = site_crumbs(.Reference), body = strings.to_string(b), sources = site_sources("docs/GLOSSARY.md"), layout = .Documentation})
 		append(&entries, Site_Reference_Entry{path = glossary_page, title = title, what = "Each term of the project, with its definition. A term on another page links here.", source = "docs/GLOSSARY.md"})
 	}
 
@@ -392,18 +391,34 @@ site_reference_add :: proc(site: ^Site) -> bool {
 		path := site_page_file(SITE_COMMANDS_FOLDER)
 		b := strings.builder_make(context.temp_allocator)
 		commands := COMMANDS
-		fmt.sbprintf(&b, "<h1>Commands of kerneltool</h1>\n<p>All the automation of the project is one program, <code>kerneltool</code>. Run a command with <code>nix develop -c kerneltool &lt;command&gt;</code>. %d commands.</p>\n", len(commands))
-		site_source_line(site, &b, "tools/kerneltool/main.odin")
+		main_text, _ := site_read_quiet(SITE_TOOL_MAIN_FILE)
+		main_lines := site_lines(main_text)
+		fmt.sbprintf(&b, "<h1>Commands of kerneltool</h1>\n<p>All the automation of the project is one program, <code>kerneltool</code>. Run a command with <code>nix develop -c kerneltool &lt;command&gt;</code>. %d commands.</p>\n<p>The table names each command; under it, each command has its text, as <code>COMMANDS</code> writes it, and a link to its line.</p>\n", len(commands))
+		site_source_line(site, &b, SITE_TOOL_MAIN_FILE)
 		commands_table := site_table_start(&b, "Commands of kerneltool", {{"Command", .Name}, {"What it does", .Prose}})
 		for command in commands {
-			strings.write_string(&b, "<tr>")
-			site_cell(&b, strings.concatenate({"`", command.name, "`"}, context.temp_allocator), "code")
+			fmt.sbprintf(&b, "<tr><td class=\"code name\"><a href=\"#tool-command-%s\"><code>", site_slug(command.name))
+			site_escape(&b, command.name)
+			strings.write_string(&b, "</code></a></td>")
 			site_cell(&b, command.about)
 			strings.write_string(&b, "</tr>\n")
 		}
 		site_table_end(&b, commands_table)
-		site_page_add(site, Site_Page{path = path, title = "Commands of kerneltool", description = site_description_cut(fmt.tprintf("The %d commands of kerneltool, the one tool of the project: the build, the machine tests, the pictures, the changelog and the site.", len(commands))), section = .Reference, crumbs = site_crumbs(.Reference), body = strings.to_string(b), sources = site_sources("tools/kerneltool/main.odin")})
-		append(&entries, Site_Reference_Entry{path = path, title = "Commands of kerneltool", what = "Each command of the tool of the project, with what it does.", source = "tools/kerneltool/main.odin"})
+		strings.write_string(&b, "<h2 id=\"each-command\">Each command</h2>\n")
+		for command in commands {
+			// The line of the command in the table COMMANDS: the link to its source.
+			wanted := strings.concatenate({"{name = \"", command.name, "\","}, context.temp_allocator)
+			line := 0
+			for text, index in main_lines {
+				if strings.has_prefix(strings.trim_space(text), wanted) {
+					line = index + 1
+					break
+				}
+			}
+			site_symbol_write(site, &b, Site_Symbol{id = strings.concatenate({"tool-command-", site_slug(command.name)}, context.temp_allocator), name = command.name, signature = strings.concatenate({"nix develop -c kerneltool ", command.name}, context.temp_allocator), description = command.about, source = SITE_TOOL_MAIN_FILE, line = line})
+		}
+		site_page_add(site, Site_Page{path = path, title = "Commands of kerneltool", description = site_description_cut(fmt.tprintf("The %d commands of kerneltool, the one tool of the project: the build, the machine tests, the pictures, the changelog and the site.", len(commands))), section = .Reference, crumbs = site_crumbs(.Reference), body = strings.to_string(b), sources = site_sources(SITE_TOOL_MAIN_FILE), layout = .Documentation})
+		append(&entries, Site_Reference_Entry{path = path, title = "Commands of kerneltool", what = "Each command of the tool of the project, with what it does.", source = SITE_TOOL_MAIN_FILE})
 	}
 
 	// The measured numbers.
@@ -416,8 +431,18 @@ site_reference_add :: proc(site: ^Site) -> bool {
 		}
 		fmt.sbprintf(&b, "<h1>Measured numbers</h1>\n<p>Each row is a line that a program of the system printed in the log of a machine test, quoted whole: the line gives its own conditions. A machine runs under QEMU on the host that ran the test: each number is one run on that host. %d of %d numbers are measured in this build.</p>\n", measured_count, len(site.measured))
 		numbers_table := site_table_start(&b, "Measured numbers", site_numbers_columns[:])
+		number_ids := make(map[string]bool, context.temp_allocator)
 		for number in site.measured {
-			strings.write_string(&b, "<tr>")
+			// Each row is a link target, and a symbol of "On this page".
+			wanted := strings.concatenate({"number-", site_slug(number.measure.sentence)}, context.temp_allocator)
+			id := wanted
+			for suffix := 2; (id in number_ids); suffix += 1 {
+				id = fmt.tprintf("%s-%d", wanted, suffix)
+			}
+			number_ids[id] = true
+			fmt.sbprintf(&b, "<tr id=\"%s\" data-outline=\"", id)
+			site_plain(&b, number.measure.sentence)
+			strings.write_string(&b, "\">")
 			site_cell(&b, number.measure.sentence)
 			if !number.found {
 				strings.write_string(&b, "<td class=\"missing\">" + SITE_NOT_MEASURED + "</td><td class=\"missing\">")
@@ -445,7 +470,7 @@ site_reference_add :: proc(site: ^Site) -> bool {
 		strings.write_string(&b, "<a href=\"")
 		site_escape(&b, site_repository_file(site, "tools/kerneltool/site.odin"))
 		strings.write_string(&b, "\"><code>tools/kerneltool/site.odin</code></a>.</p>\n")
-		site_page_add(site, Site_Page{path = path, title = "Measured numbers", description = site_description_cut(fmt.tprintf("%d numbers that the machine tests of %s printed, each quoted whole from its log with its conditions.", len(site.measured), SITE_SYSTEM_NAME)), section = .Reference, crumbs = site_crumbs(.Reference), body = strings.to_string(b), sources = site_sources("tools/kerneltool/site.odin")})
+		site_page_add(site, Site_Page{path = path, title = "Measured numbers", description = site_description_cut(fmt.tprintf("%d numbers that the machine tests of %s printed, each quoted whole from its log with its conditions.", len(site.measured), SITE_SYSTEM_NAME)), section = .Reference, crumbs = site_crumbs(.Reference), body = strings.to_string(b), sources = site_sources("tools/kerneltool/site.odin"), layout = .Documentation})
 		append(&entries, Site_Reference_Entry{path = path, title = "Measured numbers", what = "Each number that the machine tests print, with its log and its conditions.", source = "build/test_output*.txt"})
 	}
 
@@ -459,7 +484,7 @@ site_reference_add :: proc(site: ^Site) -> bool {
 		strings.write_string(&b, "<h2 id=\"build\">Used to build and test, not a part of the system</h2>\n")
 		site_license_table(site, &b, "What builds and tests it", site.licenses.build_rows, build_ids)
 		site_source_line(site, &b, SITE_LICENSE_FILE, SITE_FONT_FOLDER, SITE_SPLEEN_LICENSE_FILE, SITE_POSY_MANIFEST, SITE_SYSTEM_POINTER_MANIFEST, SITE_ODIN_LICENSE_FILE, SITE_FIAT_LICENSE_FILE, CRYPTOGRAPHY_MANIFEST, SITE_PORTRAIT_LICENSE_FILE, SITE_FLAKE_FILE, SITE_FLAKE_LOCK_FILE)
-		site_page_add(site, Site_Page{path = path, title = "Licenses", description = site_description_cut(fmt.tprintf("The license of %s and of each part that it holds or uses: %d rows, and %d tools that build and test it.", SITE_SYSTEM_NAME, len(site.licenses.system_rows), len(site.licenses.build_rows))), section = .Reference, crumbs = site_crumbs(.Reference), body = strings.to_string(b), sources = site_sources(SITE_LICENSE_FILE, SITE_FLAKE_FILE)})
+		site_page_add(site, Site_Page{path = path, title = "Licenses", description = site_description_cut(fmt.tprintf("The license of %s and of each part that it holds or uses: %d rows, and %d tools that build and test it.", SITE_SYSTEM_NAME, len(site.licenses.system_rows), len(site.licenses.build_rows))), section = .Reference, crumbs = site_crumbs(.Reference), body = strings.to_string(b), sources = site_sources(SITE_LICENSE_FILE, SITE_FLAKE_FILE), layout = .Documentation})
 		append(&entries, Site_Reference_Entry{path = path, title = "Licenses", what = "The license, the author, the version and the place of each part of the system and of each tool of its build.", source = SITE_FLAKE_FILE})
 	}
 
@@ -480,7 +505,9 @@ site_reference_add :: proc(site: ^Site) -> bool {
 		strings.write_string(&b, "</tr>\n")
 	}
 	site_table_end(&b, reference_table)
-	site_page_add(site, Site_Page{path = reference_page, is_index = true, title = "Reference", description = site_description_cut(fmt.tprintf("The reference of %s: %d tables that the tool generates from the code and the files of the repository.", SITE_SYSTEM_NAME, len(entries))), section = .Reference, crumbs = site_crumbs(.Home), body = strings.to_string(b)})
+	site_page_add(site, Site_Page{path = reference_page, is_index = true, title = "Reference", description = site_description_cut(fmt.tprintf("The reference of %s: %d tables that the tool generates from the code and the files of the repository.", SITE_SYSTEM_NAME, len(entries))), section = .Reference, crumbs = site_crumbs(.Home), body = strings.to_string(b), layout = .Documentation})
+	// The tree of the documentation lists the reference pages in this order.
+	site.reference_entries = entries[:]
 	return true
 }
 
@@ -510,7 +537,9 @@ site_license_row_ids :: proc(licenses: Site_Licenses) -> (system_ids: []string, 
 site_license_table :: proc(site: ^Site, b: ^strings.Builder, name: string, rows: []Site_License_Row, ids: []string) {
 	licenses_table := site_table_start(b, name, {{"What", .Prose}, {"Where", .Name}, {"License", .Short}, {"Author or origin", .Prose}, {"Version or pin", .Short}, {"In the boot image", .Short}})
 	for row, index in rows {
-		fmt.sbprintf(b, "<tr id=\"%s\">", ids[index])
+		fmt.sbprintf(b, "<tr id=\"%s\" data-outline=\"", ids[index])
+		site_plain(b, row.what)
+		strings.write_string(b, "\">")
 		site_cell(b, row.what)
 		if row.place != "" {
 			strings.write_string(b, "<td class=\"code name\"><a href=\"")

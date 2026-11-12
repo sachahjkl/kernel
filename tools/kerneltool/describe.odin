@@ -548,7 +548,7 @@ describe_file :: proc(file: ^ast.File, list: ^[dynamic]Export_Description, state
 			if !address || result_text != "" && result_text != "i64" {
 				return describe_fail(path, declaration, "the entry has one parameter, an address, and no result or an i64 result")
 			}
-			append(list, Export_Description{name = name})
+			append(list, Export_Description{name = name, file = path, line = declaration.pos.line})
 			continue
 		}
 
@@ -557,6 +557,8 @@ describe_file :: proc(file: ^ast.File, list: ^[dynamic]Export_Description, state
 		}
 		description := Export_Description {
 			name = name,
+			file = path,
+			line = declaration.pos.line,
 		}
 		parameters := make([dynamic]module.Type, context.temp_allocator)
 		names := make([dynamic]string, context.temp_allocator)

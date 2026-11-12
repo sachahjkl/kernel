@@ -29,8 +29,9 @@ SITE_LICENSES_FOLDER :: "reference/licenses"
 SITE_GUIDE_FOLDER :: "guides"
 SITE_REFERENCE_FOLDER :: "reference"
 // The documents of docs/ that are working records of the project, not
-// guides: the site leaves them out.
-SITE_WORKING_RECORDS :: [?]string{"HANDOFF.md", "REVIEWS.md", "SITE.md"}
+// guides: the site leaves them out. A link of a page to one of them names
+// the file in the repository.
+SITE_WORKING_RECORDS :: [?]string{"HANDOFF.md", "REVIEWS.md", "SITE.md", "FIRST_MILESTONE.md"}
 SITE_DESCRIPTION_LIMIT :: 160
 // The start of the refresh of a redirect page; the link to the new address
 // follows it.
@@ -87,6 +88,7 @@ Site_Page :: struct {
 	body:        string, // The HTML of the content, from its h1.
 	sources:     []string, // The files of the repository that the page comes from.
 	is_index:    bool, // An index page: it lists the pages of its folder (the home, the guides, the reference, the modules).
+	layout:      Site_Layout, // Stated by the writer of the page: one centred column, or the three columns of the documentation.
 }
 
 // A guide: a document of docs/ as a page.
@@ -126,6 +128,10 @@ Site :: struct {
 	news:         []Site_News, // Newest first.
 	gaps:         []Site_Gap, // The gaps of docs/FIRST_MILESTONE.md, as the status page shows them.
 	redirects:    map[string]string, // The HTML of each redirect page, by its old path.
+	reference_entries: []Site_Reference_Entry, // The pages of the reference, in the order of its index: the tree lists them.
+	file_versions: map[string]string, // The version of the bytes of each file of SITE_VERSIONED_FILES that the command wrote.
+	symbol_count: int, // The documented symbols of the pages.
+	symbols_without_description: int, // The symbols whose source has no comment.
 }
 
 run_site :: proc(args: []string) -> int {
@@ -404,6 +410,15 @@ site_write_file :: proc(site: ^Site, path: string, data: []u8) -> bool {
 		return false
 	}
 	site.files[path] = len(data)
+	versioned := SITE_VERSIONED_FILES
+	for file in versioned {
+		if file == path {
+			if site.file_versions == nil {
+				site.file_versions = make(map[string]string, context.temp_allocator)
+			}
+			site.file_versions[path] = site_bytes_version(data)
+		}
+	}
 	if width, height, is_png := site_png_size(data); is_png {
 		site.picture_sizes[path] = {width, height}
 	}
@@ -585,6 +600,16 @@ site_build :: proc(address: string) -> bool {
 	site_write_file(&site, SITE_STYLE_SHEET, transmute([]u8)site_style_sheet(site.tile_rules)) or_return
 	site_write_file(&site, SITE_SEARCH_SCRIPT, transmute([]u8)site_search_script()) or_return
 	site_mark_animation_write(&site) or_return
+	// The index of the search, from the same data as the pages. It is
+	// written before the pages, because each page names the version of its
+	// bytes; it is checked against the pages after them.
+	search_entries := site_search_entries(&site)
+	search_index := site_search_index_json(&site, search_entries, site.pages[:])
+	if len(search_index) > SITE_SEARCH_INDEX_BYTE_LIMIT {
+		fmt.eprintfln("kerneltool: site: %s has %d bytes; at most %d", SITE_SEARCH_INDEX, len(search_index), SITE_SEARCH_INDEX_BYTE_LIMIT)
+		return false
+	}
+	site_write_file(&site, SITE_SEARCH_INDEX, transmute([]u8)search_index) or_return
 
 	written := make(map[string]string, context.temp_allocator)
 	for page in site.pages {
@@ -620,15 +645,9 @@ site_build :: proc(address: string) -> bool {
 		fmt.eprintfln("kerneltool: site: %d problems of what other sites read; no page is written", len(metadata_problems))
 		return false
 	}
-	// The index of the search, from the same data as the pages, checked
-	// against the pages that the command writes.
-	search_entries := site_search_entries(&site)
-	search_index := site_search_index_json(&site, search_entries, site.pages[:])
+	// The index of the search, checked against the pages that the command
+	// writes.
 	search_problems := site_search_problems(search_entries, written)
-	if len(search_index) > SITE_SEARCH_INDEX_BYTE_LIMIT {
-		fmt.eprintfln("kerneltool: site: %s has %d bytes; at most %d", SITE_SEARCH_INDEX, len(search_index), SITE_SEARCH_INDEX_BYTE_LIMIT)
-		return false
-	}
 	if len(search_problems) > 0 {
 		for problem in search_problems {
 			fmt.eprintfln("kerneltool: site: %s", problem)
@@ -636,7 +655,6 @@ site_build :: proc(address: string) -> bool {
 		fmt.eprintfln("kerneltool: site: %d problems of the search index; no page is written", len(search_problems))
 		return false
 	}
-	site_write_file(&site, SITE_SEARCH_INDEX, transmute([]u8)search_index) or_return
 	if site.address != "" {
 		site_write_file(&site, SITE_SITEMAP, transmute([]u8)sitemap) or_return
 		site_write_file(&site, SITE_ROBOTS, transmute([]u8)site_robots(&site)) or_return
@@ -654,6 +672,9 @@ site_build :: proc(address: string) -> bool {
 	fmt.printfln("kerneltool: site: %s: %d entries of at most %d, %d bytes of at most %d; %s: %d bytes", SITE_SEARCH_INDEX, len(search_entries), SITE_SEARCH_ENTRY_LIMIT, len(search_index), SITE_SEARCH_INDEX_BYTE_LIMIT, SITE_SEARCH_SCRIPT, site.files[SITE_SEARCH_SCRIPT])
 	commit_text: string = site.commit != "" ? site.commit : "not readable (links to files go to master)"
 	fmt.printfln("kerneltool: site: %d guides, %d terms of the glossary, %d news entries, the commit %s, the release %s", len(site.guides), len(site.terms), len(site.news), commit_text, site.release)
+	// A symbol with no comment in its source shows no text on its page: the
+	// count makes the gap visible.
+	fmt.printfln("kerneltool: site: %d documented symbols, %d symbols with no description in their source", site.symbol_count, site.symbols_without_description)
 	if site.address == "" {
 		fmt.println("kerneltool: site: no address (SITE_ADDRESS is empty): the pages have relative links only. Not written: the canonical addresses, Open Graph and the summary card, the JSON-LD graphs, " + SITE_SITEMAP + ", " + SITE_ROBOTS + ", and the link \"self\" of the feeds")
 		fmt.printfln("kerneltool: site: %s, %s and %s have relative links: a reader resolves them against the address that it fetched the file from", SITE_NEWS_FEED, SITE_RELEASES_FEED, SITE_LANGUAGE_MODEL_INDEX)
@@ -729,13 +750,21 @@ site_page_html :: proc(site: ^Site, page: Site_Page) -> string {
 	// with an address, the canonical address, Open Graph and JSON-LD.
 	site_head_metadata(site, page, &b)
 	section_name := strings.to_lower(site_section_titles[page.section], context.temp_allocator)
-	fmt.sbprintf(&b, "<link rel=\"stylesheet\" href=\"%s\">\n", link(page, SITE_STYLE_SHEET))
-	// The one script of the site: the search. Each page is whole with no script.
-	// The animations of the mark play on the large heron of the home only.
+	is_documentation := page.layout == .Documentation
+	layout_name: string = is_documentation ? "documentation" : "presentation"
+	// The files that change between builds carry the version of their
+	// bytes, so that a proxy that keeps a file for hours never serves an
+	// old one with a new page.
+	fmt.sbprintf(&b, "<link rel=\"stylesheet\" href=\"%s\">\n", site_file_link(site, page.path, SITE_STYLE_SHEET))
+	// The script of the site: the search, the menu and "On this page". Each
+	// page is whole with no script. The animations of the mark play on the
+	// large heron of the home only. The script reads the address of the
+	// index of the search, with its version, from its own element: the
+	// address is relative to the folder of the script.
 	if page.section == .Home {
-		fmt.sbprintf(&b, "<script src=\"%s\" defer></script>\n", link(page, SITE_MARK_ANIMATION_SCRIPT))
+		fmt.sbprintf(&b, "<script src=\"%s\" defer></script>\n", site_file_link(site, page.path, SITE_MARK_ANIMATION_SCRIPT))
 	}
-	fmt.sbprintf(&b, "<script src=\"%s\" defer></script>\n</head>\n<body class=\"section-%s\">\n", link(page, SITE_SEARCH_SCRIPT), section_name)
+	fmt.sbprintf(&b, "<script src=\"%s\" data-index=\"%s\" defer></script>\n</head>\n<body class=\"section-%s layout-%s\">\n", site_file_link(site, page.path, SITE_SEARCH_SCRIPT), site_file_link(site, SITE_PAGE, SITE_SEARCH_INDEX), section_name, layout_name)
 	write(&b, "<a class=\"skip\" href=\"#content\">Skip to the content</a>\n")
 
 	// The bar: the heron and the name at the left, the sections as buttons.
@@ -747,7 +776,7 @@ site_page_html :: proc(site: ^Site, page: Site_Page) -> string {
 	// screen the style sheet and the script show it open, as a bar
 	// (docs/SITE.md, "The site menu").
 	write(&b, SITE_MENU_OPEN)
-	write(&b, "<nav aria-label=\"Sections\">\n<ul>\n")
+	write(&b, "<nav class=\"bar-sections\" aria-label=\"Sections\">\n<ul>\n")
 	for section in Site_Section {
 		if section == .Home || !site_page_exists(site, site_section_page(section)) {
 			continue
@@ -757,22 +786,42 @@ site_page_html :: proc(site: ^Site, page: Site_Page) -> string {
 	}
 	write(&b, "</ul>\n</nav>\n")
 	write(&b, SITE_SEARCH_BOX)
+	// The tree of the documentation is in the menu, once in the page: on a
+	// wide screen the style sheet puts it at the left of the page, and
+	// under 720 pixels it is under the sections in the open menu
+	// (docs/SITE.md, "The two layouts").
+	if is_documentation {
+		write(&b, site_tree_html(site, page))
+	}
 	write(&b, "</div>\n</details>\n</div>\n</header>\n")
 
+	crumbs := strings.builder_make(context.temp_allocator)
 	if len(page.crumbs) > 0 {
-		write(&b, "<nav class=\"crumbs page\" aria-label=\"Breadcrumbs\">\n<ol>\n")
+		write(&crumbs, is_documentation ? "<nav class=\"crumbs\" aria-label=\"Breadcrumbs\">\n<ol>\n" : "<nav class=\"crumbs page\" aria-label=\"Breadcrumbs\">\n<ol>\n")
 		for crumb in page.crumbs {
-			fmt.sbprintf(&b, "<li><a href=\"%s\">", site_page_link(site, page.path, crumb.path))
-			site_escape(&b, crumb.title)
-			write(&b, "</a></li>\n")
+			fmt.sbprintf(&crumbs, "<li><a href=\"%s\">", site_page_link(site, page.path, crumb.path))
+			site_escape(&crumbs, crumb.title)
+			write(&crumbs, "</a></li>\n")
 		}
-		write(&b, "<li aria-current=\"page\">")
-		site_escape(&b, page.title)
-		write(&b, "</li>\n</ol>\n</nav>\n")
+		write(&crumbs, "<li aria-current=\"page\">")
+		site_escape(&crumbs, page.title)
+		write(&crumbs, "</li>\n</ol>\n</nav>\n")
 	}
-	fmt.sbprintf(&b, "<main id=\"content\" class=\"page page-%s\">\n", section_name)
-	write(&b, page.body)
-	write(&b, "</main>\n")
+	if is_documentation {
+		// The list "On this page" comes first: beside the text on a wide
+		// screen, above it on a narrower one.
+		fmt.sbprintf(&b, "<main id=\"content\" class=\"documentation page-%s\">\n", section_name)
+		write(&b, site_outline_html(page))
+		write(&b, "<div class=\"text\">\n")
+		write(&b, strings.to_string(crumbs))
+		write(&b, page.body)
+		write(&b, "</div>\n</main>\n")
+	} else {
+		write(&b, strings.to_string(crumbs))
+		fmt.sbprintf(&b, "<main id=\"content\" class=\"page page-%s\">\n", section_name)
+		write(&b, page.body)
+		write(&b, "</main>\n")
+	}
 
 	// The foot: the build that the page comes from, and its sources.
 	write(&b, "<footer class=\"foot\">\n<div class=\"page\">\n<p>Generated by <code>kerneltool site</code> from ")
@@ -890,6 +939,9 @@ site_check_pages :: proc(pages: []Site_Page, written: map[string]string, files: 
 		if problem := site_inline_code_problem(html); problem != "" {
 			append(&problems, fmt.tprintf("%s: %s", page.path, problem))
 		}
+		if problem := site_layout_problem(page, html, ids[page.path]); problem != "" {
+			append(&problems, fmt.tprintf("%s: %s", page.path, problem))
+		}
 		folder := page.path[:max(strings.last_index_byte(page.path, '/'), 0)]
 		for attribute in ([]string{"href=\"", "src=\"", "srcset=\""}) {
 			for value in site_attribute_values(html, attribute) {
@@ -976,6 +1028,10 @@ site_link_target :: proc(page_path, folder, value: string, written: map[string]s
 	if hash := strings.index_byte(address, '#'); hash >= 0 {
 		anchor = address[hash + 1:]
 		address = address[:hash]
+	}
+	// The version of a file ("style.css?v=..."): the file is the same.
+	if query := strings.index_byte(address, '?'); query >= 0 {
+		address = address[:query]
 	}
 	names_folder := strings.has_suffix(address, "/")
 	names_index := address == SITE_PAGE || strings.has_suffix(address, "/" + SITE_PAGE)

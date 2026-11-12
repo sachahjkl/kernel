@@ -134,10 +134,10 @@ blockquote { margin-left: 0; padding-left: 16px; border-left: 2px solid var(--li
 .bar-inner { max-width: 1152px; margin: 0 auto; padding: 4px 16px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 24px; }
 .bar-home { display: inline-flex; align-items: center; gap: 8px; text-decoration: none; font-family: var(--mono); font-weight: 700; }
 .bar-home img { display: block; image-rendering: pixelated; }
-.bar nav ul { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; }
-.bar nav li { margin: 0; }
-.bar nav a { display: inline-block; padding: 0 8px; line-height: 24px; background: var(--track); text-decoration: none; border-bottom: 2px solid transparent; }
-.bar nav a[aria-current="page"] { border-bottom-color: var(--line); }
+.bar-sections ul { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; }
+.bar-sections li { margin: 0; }
+.bar-sections a { display: inline-block; padding: 0 8px; line-height: 24px; background: var(--track); text-decoration: none; border-bottom: 2px solid transparent; }
+.bar-sections a[aria-current="page"] { border-bottom-color: var(--line); }
 /* The menu: one list of sections and the search, in a details element. On
    a wide screen it is open and its button is hidden, so it is the bar of
    the sections. A browser that has ::details-content shows the content of
@@ -194,18 +194,69 @@ blockquote { margin-left: 0; padding-left: 16px; border-left: 2px solid var(--li
 .source, .missing, .date, .status, figcaption, .contents-title { color: var(--dim); }
 .source { font-size: 14px; }
 
-/* Prose: a guide. The contents beside it on a wide screen. */
+/* Prose on a presentation page: one centred column. */
 .prose { max-width: 72ch; }
-.prose.wide { max-width: none; }
-.guide { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px 32px; }
-.contents { font-size: 14px; }
-.contents ul { list-style: none; padding: 0; margin: 0; }
-.contents li { margin: 0; }
-.contents .level-3 { padding-left: 16px; }
-.contents a { text-decoration: none; }
+
+/* The documentation layout (docs/SITE.md, "The two layouts"): the tree at
+   the left, the text in the middle, "On this page" at the right.
+   Under 720 pixels: one column; the tree is in the open menu, under the
+   sections; "On this page" is a closed details above the text.
+   From 720 pixels: the tree is a column of 256 pixels at the left of the
+   window, fixed, with its own scroll; the text takes the rest.
+   From 1100 pixels: "On this page" is a column of 240 pixels at the right,
+   sticky, with its own scroll.
+   The text keeps a measure of 80 characters for prose; a table, a block of
+   code and a figure take the whole middle column. */
+.layout-documentation .bar-inner { max-width: none; }
+.documentation { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0 32px; padding: 0 16px; }
+.documentation > .text { min-width: 0; }
+.text .prose { max-width: none; }
+.text :is(p, li, dt, dd, blockquote, h1, h2, h3, h4) { max-width: 80ch; }
+.text :is(td, th) :is(p, li) { max-width: none; }
+.tree { font-size: 14px; line-height: 20px; }
+.tree ul { list-style: none; margin: 0; padding: 0; }
+.tree li { margin: 0; }
+.tree a { display: block; padding: 2px 8px; text-decoration: none; border-left: 2px solid transparent; overflow-wrap: anywhere; }
+.tree a[aria-current="page"] { border-left-color: var(--line); background: var(--track); }
+.tree-sections > li { margin-bottom: 16px; }
+.tree-sections > li > a { font-weight: 700; }
+.tree-sections ul ul a, .tree-groups ul a { padding-left: 24px; }
+.tree-group > summary { cursor: pointer; padding: 2px 8px; color: var(--dim); }
+.tree-count { font-family: var(--mono); font-size: 12px; }
+.outline { font-size: 14px; line-height: 20px; margin: 16px 0; }
+.outline > summary { cursor: pointer; color: var(--dim); }
+.outline ul { list-style: none; margin: 0; padding: 0; }
+.outline li { margin: 0; }
+.outline a { display: block; padding: 2px 8px; text-decoration: none; border-left: 2px solid var(--track); overflow-wrap: anywhere; }
+.outline a[aria-current="location"] { border-left-color: var(--line); }
+.outline .outline-level-3, .outline .outline-symbol { padding-left: 16px; }
+.outline .outline-symbol code { background: none; padding: 0; }
+.symbol { margin: 0 0 32px; padding-top: 8px; border-top: 1px solid var(--track); }
+.symbol h3 { margin: 0 0 8px; }
+.symbol h3 code { background: none; padding: 0; font-size: 18px; }
+.symbol .signature { margin: 0 0 8px; }
+.symbol-facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 16px; margin: 0 0 16px; font-size: 14px; }
+.symbol-facts dt { color: var(--dim); }
+.symbol-facts dd { margin: 0; min-width: 0; }
+.source-comment p { max-width: 80ch; }
+@media (min-width: 720px) {
+  .layout-documentation { padding-left: 256px; }
+  .layout-documentation .tree { position: fixed; top: 0; bottom: 0; left: 0; width: 256px; overflow-y: auto; padding: 16px 8px; background: var(--card-bottom); border-right: 1px solid var(--track); }
+}
 @media (min-width: 1100px) {
-  .guide { grid-template-columns: 224px minmax(0, 1fr); }
-  .contents { grid-column: 1; grid-row: 1; position: sticky; top: 16px; align-self: start; max-height: calc(100vh - 32px); overflow-y: auto; }
+  .documentation { grid-template-columns: minmax(0, 1fr) 240px; }
+  .documentation > .text { grid-column: 1; grid-row: 1; }
+  .documentation > .outline { grid-column: 2; grid-row: 1; position: sticky; top: 0; align-self: start; max-height: 100vh; overflow-y: auto; margin: 0; padding: 16px 0; }
+  .outline[open] > summary { display: none; }
+}
+/* A browser that has ::details-content shows "On this page" beside the
+   text with no script; another one shows its summary until search.js
+   opens it. */
+@supports selector(::details-content) {
+  @media (min-width: 1100px) {
+    .outline > summary { display: none; }
+    .outline::details-content { content-visibility: visible; }
+  }
 }
 ol.labelled { list-style: none; padding-left: 0; }
 ol.labelled > li { padding-left: 48px; text-indent: -48px; }
@@ -328,12 +379,16 @@ figcaption { padding-top: 8px; font-size: 14px; }
   .bar-inner { flex-wrap: nowrap; justify-content: space-between; }
   .bar-menu { flex: 0 0 auto; }
   .bar-menu-content { position: absolute; left: 0; right: 0; top: 100%; z-index: 20; flex-direction: column; align-items: stretch; gap: 8px; padding: 8px 16px 16px; background: var(--card-bottom); border-bottom: 1px solid var(--line); }
-  .bar nav ul { flex-direction: column; gap: 4px; }
-  .bar nav a { display: block; padding: 4px 8px; line-height: 24px; border-bottom: 0; border-left: 2px solid transparent; }
-  .bar nav a[aria-current="page"] { border-left-color: var(--line); }
+  .bar-sections ul { flex-direction: column; gap: 4px; }
+  .bar-sections a { display: block; padding: 4px 8px; line-height: 24px; border-bottom: 0; border-left: 2px solid transparent; }
+  .bar-sections a[aria-current="page"] { border-left-color: var(--line); }
   .search { margin-left: 0; }
   .search input { width: 100%; height: 32px; }
   .search-panel { position: static; width: auto; max-width: none; margin-top: 4px; }
+  /* The open menu scrolls on its own: on a documentation page it holds
+     the tree under the sections and the search. */
+  .bar-menu-content { max-height: calc(100vh - 48px); overflow-y: auto; }
+  .tree { padding-top: 8px; border-top: 1px solid var(--track); }
   /* No line wider than the screen: a long word, an address or a path
      breaks; a table and a block of code scroll in their own box. */
   h1, h2, h3, p, li, figcaption, .crumbs { overflow-wrap: anywhere; }
@@ -345,7 +400,10 @@ figcaption { padding-top: 8px; font-size: 14px; }
   h1 { font-size: 28px; line-height: 32px; }
 }
 @media print {
-  .bar, .crumbs, .contents, .neighbours, .skip { display: none; }
+  /* Print shows the middle column only. */
+  .bar, .crumbs, .tree, .outline, .neighbours, .skip { display: none; }
+  .layout-documentation { padding-left: 0; }
+  .documentation { display: block; padding: 0; }
   html, body { background: #fff; color: #000; }
   a { color: #000; }
   .prose { max-width: none; }

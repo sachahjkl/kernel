@@ -249,7 +249,7 @@ site_menu_of_the_bar :: proc(t: ^testing.T) {
 	testing.expect_value(t, strings.count(html, "aria-label=\"Sections\""), 1)
 	testing.expect(t, strings.contains(html, "<span class=\"bar-menu-name\">Menu</span></summary>"))
 	details := strings.index(html, "<details class=\"bar-menu\">")
-	sections := strings.index(html, "<nav aria-label=\"Sections\">")
+	sections := strings.index(html, "<nav class=\"bar-sections\" aria-label=\"Sections\">")
 	search := strings.index(html, "id=\"site-search-box\"")
 	details_end := strings.index(html, "</details>")
 	testing.expect(t, details >= 0 && details < sections && sections < search && search < details_end)
@@ -629,7 +629,7 @@ site_addresses_of_every_page :: proc(t: ^testing.T) {
 		}
 		// The style sheet, the script and the icons from a page one folder deeper.
 		testing.expect(t, strings.contains(guide, "<link rel=\"stylesheet\" href=\"../../style.css\">"))
-		testing.expect(t, strings.contains(guide, "<script src=\"../../search.js\" defer></script>"))
+		testing.expect(t, strings.contains(guide, "<script src=\"../../search.js\" data-index=\"search.json\" defer></script>"))
 
 		// The canonical addresses: folders, all different.
 		if has_address {
@@ -702,5 +702,50 @@ site_addresses_of_every_page :: proc(t: ^testing.T) {
 		testing.expect(t, !strings.contains(index, "guides/A.html"))
 		// llms.txt names no old address.
 		testing.expect(t, !strings.contains(site_language_model_index(&site), "A.html"))
+	}
+}
+
+// The documentation layout on the small site, with a site address and with
+// none: each guide and reference page has one tree, inside the menu of the
+// bar, with the current page marked, and one list "On this page"; the home
+// has neither; every page passes the checks.
+@(test)
+site_documentation_layout_of_the_pages :: proc(t: ^testing.T) {
+	for address in ([]string{"", TEST_ADDRESS}) {
+		site := metadata_test_site(address)
+		for &page in site.pages {
+			if page.section == .Guides || page.section == .Reference {
+				page.layout = .Documentation
+			}
+		}
+		entries := make([]Site_Reference_Entry, 2, context.temp_allocator)
+		entries[0] = Site_Reference_Entry{path = site_page_file(SITE_GLOSSARY_FOLDER), title = "Glossary"}
+		entries[1] = Site_Reference_Entry{path = site_page_file(SITE_LICENSES_FOLDER), title = "Licenses"}
+		site.reference_entries = entries
+		written := metadata_test_written(&site)
+		files := metadata_test_files()
+		for problem in site_check_pages(site.pages[:], written, files, address != "") {
+			testing.expectf(t, false, "address %q: a good site has a problem: %s", address, problem)
+		}
+		guide := written["guides/A/index.html"]
+		testing.expect_value(t, strings.count(guide, SITE_TREE_OPEN), 1)
+		testing.expect_value(t, strings.count(guide, SITE_OUTLINE_OPEN), 1)
+		testing.expect(t, strings.contains(guide, "<body class=\"section-guides layout-documentation\">"))
+		menu := strings.index(guide, "<details class=\"bar-menu\">")
+		tree := strings.index(guide, SITE_TREE_OPEN)
+		header_end := strings.index(guide, "</header>")
+		testing.expect(t, menu >= 0 && menu < tree && tree < header_end)
+		if tree >= 0 {
+			tree_html := guide[tree:]
+			tree_html = tree_html[:strings.index(tree_html, "</nav>")]
+			testing.expect_value(t, strings.count(tree_html, "aria-current=\"page\""), 1)
+			testing.expect(t, strings.contains(tree_html, "aria-current=\"page\">Guide A</a>"))
+			testing.expect(t, strings.contains(tree_html, ">Guide B</a>"))
+			testing.expect(t, strings.contains(tree_html, ">Licenses</a>"))
+		}
+		home := written[SITE_PAGE]
+		testing.expect(t, !strings.contains(home, SITE_TREE_OPEN))
+		testing.expect(t, !strings.contains(home, SITE_OUTLINE_OPEN))
+		testing.expect(t, strings.contains(home, "layout-presentation"))
 	}
 }

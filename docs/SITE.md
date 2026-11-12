@@ -14,10 +14,11 @@ No page holds a text that a person must remember to update: each page is generat
 - Before it writes a page, the command checks all the pages. A failure stops the command with the page and the reason, and no page is written:
   - each page has one `h1`, a title and a description of at most 160 bytes; no two pages share a title or a description;
   - each `img` has an `alt` attribute (empty for a picture that only decorates a text beside it, as the heron of the bar), a `width` and a `height`;
-  - each `href`, `src` and `srcset` that is not an address of another host names a page or a file that the command wrote (a link that ends with `/` names the `index.html` of the folder), and its anchor is an `id` of that page;
+  - each `href`, `src` and `srcset` that is not an address of another host names a page or a file that the command wrote (a link that ends with `/` names the `index.html` of the folder, and the query of a file version is ignored), and its anchor is an `id` of that page;
   - a link to a page has the form of the build (see "The addresses of the pages"): with a site address it names the folder, with none the `index.html`;
   - each redirect page (`GLOSSARY.md`) is at a path that no page and no file of the site has, and its refresh and its link name a page that the command writes;
   - each `srcset` candidate names a file that the command wrote;
+  - a page of the documentation layout has one documentation tree and one list "On this page", and each link of the list names an id of the page; a page of the presentation layout has neither (see "The two layouts");
   - no page holds code or style of its own: each `<script>` has a `src` and nothing inside, but the one `<script type="application/ld+json">` of the page graph, whose text has no `<`; no `<style>` element and no `style` attribute exists.
 - Then the command checks what other programs read (see "What other sites read"); a failure stops it in the same way.
 - After the checks of the pages, the command makes the index of the search and checks it against the pages (see "The search"); a failure stops it in the same way.
@@ -32,7 +33,7 @@ A page named by a folder (`news/`) is the `index.html` of that folder (see "The 
 |---|---|
 | `index.html`, the home | The mark (`support/mark`), the first sentence of the first paragraph of `README.md` as the tagline of the head, the three newest news entries, the rest of that paragraph in a section "What it is" after the news (the owner, 2026-11-12: "la tagline est trop longue"; after the news, so that the first screen of a phone holds the mark, the name, the tagline and the links only; the description of the home in its head, Open Graph, the manifest and the page graph stays the whole paragraph, cut at 160 bytes, because the tagline alone is too short to describe the system), the stages of the start from the lines `kernel: boot: ...` of `build/test_output.txt`, the tiles of the boot image (see "The tiles of the boot image"), the first three measured numbers, the pictures of `docs/screenshots` with the captions of `README.md`, the newest release of `CHANGELOG.md`, the count of steps of `docs/REVIEWS.md` |
 | `guides/index.html` | The table "Documents" of `README.md`, then the other documents of `docs/` by name |
-| `guides/<name>/` | Each document of `docs/` but `HANDOFF.md` and `REVIEWS.md`, which are working records of the project and stay out of the site; the glossary is a page of the reference |
+| `guides/<name>/` | Each document of `docs/` but the working records `HANDOFF.md`, `REVIEWS.md`, `SITE.md` and `FIRST_MILESTONE.md` (`SITE_WORKING_RECORDS`), which stay out of the site: only the guides that explain the system are published. A link of a page to a working record names the file in the repository. The glossary is a page of the reference |
 | `reference/index.html` | The list of the reference tables below |
 | `reference/glossary/` | `docs/GLOSSARY.md`: each row of a table whose first column is "Term" has the anchor `term-<name>` |
 | `reference/commands/` | `COMMANDS` in `tools/kerneltool/main.odin`: the name and the text of each command |
@@ -98,7 +99,7 @@ Links:
 
 What it does not render, shown as text and listed by the command: a mermaid diagram (shown as its code), a line of HTML, a table with no line of dashes, a fence with no end, a link to a file that is not in the repository. A single `*` or `_` is text: the documents use no italics.
 
-Each guide has its table of contents (the headings of levels 2 and 3, beside the text on a wide screen) and links to the guides before and after it.
+Each guide has the documentation layout (see "The two layouts"): its headings of levels 2 and 3 are in "On this page". It links to the guides before and after it.
 
 ## The news
 
@@ -281,7 +282,7 @@ The site follows `DESIGN.md`, with the colors of `support/graphics/rules.odin` a
 - the tables have the look of the tables of the system: the titles of the columns in the dim color, every second row on a band (`DESIGN.md`, section 10). Each column has the least width of its kind, and a table wider than the page scrolls sideways in its own box (see "The tables");
 - the grid of points of the desktop is on the home only.
 
-Prose is in the reading font of the reader's system, at most 72 characters a line; code, signatures, numbers and identifiers are in its monospace font. No animation, no shadow, no round corner. The light form follows `prefers-color-scheme`. A print form hides the bar and the navigation.
+Prose is in the reading font of the reader's system, at most 72 characters a line on a presentation page and 80 on a documentation page; code, signatures, numbers and identifiers are in its monospace font. No animation, no shadow, no round corner. The light form follows `prefers-color-scheme`. A print form hides the bar and the navigation.
 
 The contrast of the text (WCAG 2 ratio), from the colors of the rules:
 
@@ -335,6 +336,37 @@ The owner asked for it on 2026-11-12: "il manque un menu burger sur la version m
 - The menu is closed in the file, not open: an open menu that the script closes on a narrow screen moves the page after its first paint on each load.
 - At 360 pixels, no line is wider than the screen: a table and a block of code scroll in their own box (`.table`, `pre`); a heading, a paragraph, an item, a caption and the breadcrumbs break a long word or address (`overflow-wrap: anywhere`); the stages, the tiles and the pictures fit a column of 328 pixels.
 
+### The two layouts
+
+The owner asked for it on 2026-11-12: "la doc, je veux un vrai truc de doc, comme Odin par exemple, où ils ont une sidebar, il y a des documentations techniques au centre, il y a les symboles à droite". The code is `tools/kerneltool/site_documentation.odin`.
+
+The writer of each page states its layout (`Site_Page.layout`); the tool does not guess it from a path.
+
+| Layout | Pages | Form |
+|---|---|---|
+| Presentation | The home, the news, the releases | One centred column of at most 1152 pixels |
+| Documentation (`GLOSSARY.md`) | Each guide, each reference page, the glossary, each module page, the status, and the index pages of the guides, the reference and the modules | The documentation tree, the text, "On this page", over the whole width of the window |
+
+The documentation tree (`GLOSSARY.md`) is one `<nav class="tree" aria-label="Documentation">`: "Guides" with each guide in the reading order of the page of the guides, "Reference" with each reference page in the order of its index, "Modules" with a `details` for each group (Kernel, Programs, Modules), open when it holds the current page, and "Status". The current page has `aria-current="page"`. It is written once in each page, inside the site menu, after the search: under 720 pixels it is under the sections in the open menu, which scrolls on its own; from 720 pixels the style sheet fixes it at the left of the window (`position: fixed`, its own `overflow-y`), so a long tree never moves the page. With no script, a browser with no `::details-content` shows the tree when the button of the menu opens it, as the sections.
+
+"On this page" (`GLOSSARY.md`) is one `<details class="outline">` at the start of `main`: the title of the page (a link to `#content`), then each heading h2 and h3 with an id, then each element that states a symbol with `data-outline`, in the order of the page. From 1100 pixels it is a column at the right of the text, sticky, with its own scroll, and open (`::details-content`, or `search.js`); under 1100 pixels it is closed above the text, and its summary "On this page" opens it. The script marks the link of the part in view with `aria-current="location"`: an `IntersectionObserver` reports each heading and symbol that enters or leaves the top 40 % of the window; nothing runs each frame. With no script it is a correct list of links.
+
+The text keeps a measure of 80 characters (`80ch`) for paragraphs, items, headings and quotes; a table, a block of code and a figure take the whole middle column, and a table still scrolls in its own box.
+
+| Width of the window | Columns | The grid |
+|---|---|---|
+| Under 720 pixels (360) | The text only; the tree is in the menu; "On this page" is closed above the text | `main`: `grid-template-columns: minmax(0, 1fr)` |
+| 720 to 1099 pixels (768, 1024) | The tree, fixed, 256 pixels; the text | `body`: `padding-left: 256px`; `main`: `grid-template-columns: minmax(0, 1fr)` |
+| From 1100 pixels (1440, 1920, 2560) | The tree, 256 pixels; the text; "On this page", 240 pixels | `body`: `padding-left: 256px`; `main`: `grid-template-columns: minmax(0, 1fr) 240px` |
+
+No column has a fixed least width but the tree and "On this page", and each grid item of the text has `min-width: 0`: no line is wider than the window at 360, 768, 1024, 1440, 1920 and 2560 pixels. At 768 pixels the text column is 480 pixels; at 1100 pixels, 540.
+
+Print shows the middle column only: the bar, the tree, "On this page", the breadcrumbs and the links to the guides before and after are hidden.
+
+### The versions of the files
+
+The site is behind a proxy that keeps a file for hours. Each link to a file whose bytes change between builds carries its file version (`GLOSSARY.md`): `style.css?v=<16 hexadecimal digits>`, the first 8 bytes of the BLAKE3 hash of its bytes (`contract/blake3`). The files: `style.css`, `search.js`, `mark_animation.js` and `search.json` (`SITE_VERSIONED_FILES`). The same bytes give the same address. The index of the search is written before the pages, so that each page names its version: `search.js` reads it from the attribute `data-index` of its own `script` element, relative to its folder, with no inline script. The check of the links ignores the query. The icons and the pictures carry no version: their bytes come from the mark and the repository and change rarely.
+
 ## The mark on the site
 
 The site draws its own pictures of the mark from `support/mark` (`tools/kerneltool/site_pictures.odin`), on a transparent background, at whole cell sizes, and the page shows each one at its own size:
@@ -378,12 +410,12 @@ The checks, after the checks of the pages: `favicon.ico` is at the root, its dir
 | Table | Read from, and the form the reader relies on |
 |---|---|
 | Properties | `PROPERTIES.md`: the number and the title of each section `## <n>. <title>`, and the column "Status" of the table `## Summary` (the reader of the first layer). The title links to the heading in the guide |
-| Its evidence items | `FIRST_MILESTONE.md`: the numbered items under `## Evidence`, with their ids `evidence-<label>` in the guide. An item names a property when its text says `property <n>` (no regard to case) or `P<n>` (a capital P), as a whole word; `properties 3 and 4` names none |
+| Its evidence items | `FIRST_MILESTONE.md`: the numbered items under `## Evidence`, each a link to its line in the repository (the file is a working record, not a page of the site). An item names a property when its text says `property <n>` (no regard to case) or `P<n>` (a capital P), as a whole word; `properties 3 and 4` names none |
 | Its gaps | The items `- <text>` under `## Gaps`, and the lines that continue them (they start with a space), by the same rule. A line of text between the items (`Performance:`) is the group of the items after it |
 | Gaps | Each gap, with its number (`gap-<n>` on the page, from 1 in the order of the file, with a link to its line), its group and its text |
-| Next steps | The numbered items under `## Next steps`, each with a link to its id `next-steps-<label>` in the guide |
+| Next steps | The numbered items under `## Next steps`, each with a link to its line in the repository |
 
-The page renders `FIRST_MILESTONE.md` and `PROPERTIES.md` again to read the ids: the renderer gives the same ids to the same text, so the links reach the guide.
+The page renders `PROPERTIES.md` again to read the ids of its headings: the renderer gives the same ids to the same text, so the links reach the guide. It renders `FIRST_MILESTONE.md` for its numbered items and their lines only, and drops the HTML. The status page has the documentation layout; its property rows and its gap rows are symbols of "On this page".
 
 ## The reference tables
 
@@ -398,6 +430,18 @@ Each table is read from the text of the file that defines the thing (`tools/kern
 | Fixed ranges | `Fixed_Range` in `contract/fixed_addresses/fixed_addresses.odin` | An enumeration. The address is `fixed_addresses.range_of` of the compiled contract |
 | Commands of the console | `programs/console/commands.odin`, `programs/console/tables.odin` | Lines `command("<name>", {.<Kind>, ...}, .<Kind>, "<help>", <procedure>)`; the signature as `help()` prints it, `Value` for the kind None of a parameter |
 
+Each page starts with what the thing is: the comment above its declaration in the source (`site_comment_above`), when the source has one, as a quote that names its file. Then the table.
+
+The kernel operations, the commands of the console, the commands of the tool and the exports of each module are documented symbols (`GLOSSARY.md`), under the table of their page, as on a package page of a programming language. A symbol shows:
+
+- its name, as a heading with its id (`operation-<name>`, `command-<name>`, `tool-command-<name>`, `export-<name>`), which "On this page" lists; the name in the table is a link to it;
+- its signature in a block of code: an operation as `Name(<parameters>) -> <result>` from the start of its comment (none when the comment does not start with `(`), a command as `help()` prints it, a command of the tool as `nix develop -c kerneltool <name>`, an export as the console prints it;
+- the text of its source comment, one paragraph a line; nothing when the source has none;
+- its facts: the number of an operation and the statuses that its comment names (links to the table of statuses); the parameters and the result of a command; the parameters, the result and the error record of an export (the rule of the build: it fails with a negative result and writes the record);
+- its source line, a link to `<repository>/blob/<commit>/<file>#L<line>`.
+
+The command prints the count of the symbols and of those with no comment in their source (each `entry` of a module has none: the build gives it no text). The rows of the other tables that have an id (a status, an error kind, a unit, a role, a grant, a fixed range, a license, a measured number, a property, a gap) state a symbol too (`data-outline`), so "On this page" lists them.
+
 What the tables cannot show:
 
 - The values 13 and 15 of the context (the settings page and the date page) have a comment in `contract/operation` and no constant: they are not in the table.
@@ -406,11 +450,12 @@ What the tables cannot show:
 
 ## The module pages
 
-`reference/modules/index.html` lists each module of `module_builds` (`tools/kerneltool/modules.odin`): its name, its kind, whether it is in the boot image, its count of exports, its imports and its purpose. A module whose source is in `programs/` is a program; the others are modules. `reference/modules/<name>/` gives:
+`reference/modules/index.html` lists each module of `module_builds` (`tools/kerneltool/modules.odin`) in its group, one table and one heading for each: Kernel (a module that runs in kernel mode), Programs (its source is in `programs/`), Modules (the others). The documentation tree has the same groups. A row gives its name, whether it is in the boot image, its count of exports, its imports and its purpose. `reference/modules/<name>/` gives:
 
 - its documentation: the comment before `package` in its source, the text that the build writes into the module (`describe_package` of `tools/kerneltool/describe.odin`); its purpose is the first sentence;
 - its source folder, its size in the boot image of the last build (or that the image is not built), its imports and the modules that import it;
-- its exports, each with its signature as the console prints it (`write(name: Text, data: Text) -> Integer`, `Handle(Read, Write)`, `Table(Rectangle, Change)`) and its line of help. They come from the same reader as the build: no module needs to be built;
+- its kind (its group);
+- its exports, a table then each one as a documented symbol (see "The reference tables"), each with its signature as the console prints it (`write(name: Text, data: Text) -> Integer`, `Handle(Read, Write)`, `Table(Rectangle, Change)`) and its line of help. They come from the same reader as the build: no module needs to be built;
 - for a program, its grants and its budget (pages, programs, threads) from `grants_of` and `things_of` of the root service, with the comments of those lines.
 
 ## The tiles of the boot image

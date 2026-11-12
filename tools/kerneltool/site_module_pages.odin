@@ -8,6 +8,7 @@ package kerneltool
 
 import "core:fmt"
 import "core:strings"
+import module "contract:module"
 import "support:graphics"
 
 // site_module_by_name gives the module of module_builds with this name.
@@ -82,28 +83,42 @@ site_module_pages_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Ent
 		for item in reference.modules {
 			in_image += item.build.image ? 1 : 0
 		}
-		fmt.sbprintf(&b, "<h1>Modules</h1>\n<p>The %d modules that the tool builds, %d of them in the boot image. A program is a module whose source is in <code>programs/</code>; the others are modules that a program loads or calls. The purpose of each is the first sentence of the comment before <code>package</code> in its source.</p>\n", len(reference.modules), in_image)
-		modules_table := site_table_start(&b, "Modules", {{"Module", .Name}, {"Kind", .Short}, {"Boot image", .Short}, {"Exports", .Number}, {"Imports", .Prose}, {"Purpose", .Prose}})
-		for item in reference.modules {
-			fmt.sbprintf(&b, "<tr id=\"module-%s\"><td class=\"code name\">", site_slug(item.build.name))
-			site_module_link(site, &b, modules_page, item.build.name)
-			in_boot_image: string = item.build.image ? "yes" : "no"
-			fmt.sbprintf(&b, "</td><td>%s</td><td>%s</td><td class=\"code\">%d</td><td class=\"code\">", item.kind, in_boot_image, len(item.description.exports))
-			for name, index in item.build.imports {
-				if index > 0 {
-					strings.write_string(&b, ", ")
-				}
-				site_module_link(site, &b, modules_page, name)
+		fmt.sbprintf(&b, "<h1>Modules</h1>\n<p>The %d modules that the tool builds, %d of them in the boot image. A kernel runs in kernel mode; a program is a module whose source is in <code>programs/</code>; the others are modules that a program loads or calls. The purpose of each is the first sentence of the comment before <code>package</code> in its source.</p>\n", len(reference.modules), in_image)
+		// One table for each group, in the order of the tree of the documentation.
+		for group in Site_Module_Group {
+			count := 0
+			for item in reference.modules {
+				count += site_module_group(item) == group ? 1 : 0
 			}
-			strings.write_string(&b, "</td>")
-			site_text_cell(&b, item.description.about)
-			strings.write_string(&b, "</tr>\n")
+			if count == 0 {
+				continue
+			}
+			fmt.sbprintf(&b, "<h2 id=\"%s\">%s</h2>\n", site_module_group_ids[group], site_module_group_titles[group])
+			modules_table := site_table_start(&b, site_module_group_titles[group], {{"Module", .Name}, {"Boot image", .Short}, {"Exports", .Number}, {"Imports", .Prose}, {"Purpose", .Prose}})
+			for item in reference.modules {
+				if site_module_group(item) != group {
+					continue
+				}
+				fmt.sbprintf(&b, "<tr id=\"module-%s\"><td class=\"code name\">", site_slug(item.build.name))
+				site_module_link(site, &b, modules_page, item.build.name)
+				in_boot_image: string = item.build.image ? "yes" : "no"
+				fmt.sbprintf(&b, "</td><td>%s</td><td class=\"code\">%d</td><td class=\"code\">", in_boot_image, len(item.description.exports))
+				for name, index in item.build.imports {
+					if index > 0 {
+						strings.write_string(&b, ", ")
+					}
+					site_module_link(site, &b, modules_page, name)
+				}
+				strings.write_string(&b, "</td>")
+				site_text_cell(&b, item.description.about)
+				strings.write_string(&b, "</tr>\n")
+			}
+			site_table_end(&b, modules_table)
 		}
-		site_table_end(&b, modules_table)
 		strings.write_string(&b, "<p class=\"source\">Read from <code>module_builds</code> in <a href=\"")
 		site_escape(&b, site_repository_file(site, SITE_MODULES_FILE))
 		strings.write_string(&b, "\"><code>" + SITE_MODULES_FILE + "</code></a> and from the source folder of each module.</p>\n")
-		site_page_add(site, Site_Page{path = modules_page, is_index = true, title = "Modules", description = site_description_cut(fmt.tprintf("The %d modules and programs of %s, %d of them in the boot image, with their purpose, their exports and their imports.", len(reference.modules), SITE_SYSTEM_NAME, in_image)), section = .Reference, crumbs = site_crumbs(.Reference), body = strings.to_string(b), sources = site_sources(SITE_MODULES_FILE)})
+		site_page_add(site, Site_Page{path = modules_page, is_index = true, title = "Modules", description = site_description_cut(fmt.tprintf("The %d modules and programs of %s, %d of them in the boot image, with their purpose, their exports and their imports.", len(reference.modules), SITE_SYSTEM_NAME, in_image)), section = .Reference, crumbs = site_crumbs(.Reference), body = strings.to_string(b), sources = site_sources(SITE_MODULES_FILE), layout = .Documentation})
 		append(entries, Site_Reference_Entry{path = modules_page, title = "Modules", what = "Each module and program, with a page for each: its documentation, its exports, its imports, and for a program its grants and its budget.", source = SITE_MODULES_FILE})
 	}
 
@@ -132,6 +147,7 @@ site_module_pages_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Ent
 
 		// The facts of the build.
 		facts_table := site_table_start(&b, "Facts", {{"Fact", .Short}, {"Value", .Prose}})
+		fmt.sbprintf(&b, "<tr><td>Kind</td><td><a href=\"%s#%s\">%s</a></td></tr>\n", site_page_link(site, item.page, modules_page), site_module_group_ids[site_module_group(item)], site_module_group_titles[site_module_group(item)])
 		strings.write_string(&b, "<tr><td>Source</td><td class=\"code name\"><a href=\"")
 		site_escape(&b, site_folder_address(site, build.source))
 		strings.write_string(&b, "\"><code>")
@@ -179,19 +195,24 @@ site_module_pages_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Ent
 		strings.write_string(&b, "</td></tr>\n")
 		site_table_end(&b, facts_table)
 
-		// The exports.
+		// The exports: a summary table, then each export as a documented
+		// symbol, as a package page of a programming language shows it.
 		fmt.sbprintf(&b, "<h2 id=\"exports\">Exports</h2>\n")
 		if len(description.exports) == 0 {
 			strings.write_string(&b, "<p>No export.</p>\n")
 		} else {
 			exports_table := site_table_start(&b, "Exports", {{"Export", .Name}, {"What it does", .Prose}})
 			for export in description.exports {
-				fmt.sbprintf(&b, "<tr id=\"export-%s\">", site_slug(export.name))
-				site_text_cell(&b, site_export_signature(description, export), "code name")
+				fmt.sbprintf(&b, "<tr><td class=\"code name\"><a href=\"#export-%s\"><code>", site_slug(export.name))
+				site_escape(&b, site_export_signature(description, export))
+				strings.write_string(&b, "</code></a></td>")
 				site_text_cell(&b, export.about)
 				strings.write_string(&b, "</tr>\n")
 			}
 			site_table_end(&b, exports_table)
+			for export in description.exports {
+				site_export_symbol_write(site, &b, description, export)
+			}
 		}
 		fmt.sbprintf(&b, "<p class=\"source\">Read from the source of the module, as the build reads it to describe the exports (<a href=\"%s\"><code>tools/kerneltool/describe.odin</code></a>).</p>\n", site_repository_file(site, "tools/kerneltool/describe.odin"))
 
@@ -215,8 +236,47 @@ site_module_pages_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Ent
 			append(&sources, SITE_ROOT_FILE)
 		}
 		about := description.about != "" ? description.about : "no documentation"
-		site_page_add(site, Site_Page{path = item.page, title = title, description = site_description_cut(fmt.tprintf("The %s %s of %s: %s.", item.kind, build.name, SITE_SYSTEM_NAME, about)), section = .Reference, crumbs = crumbs[:], body = strings.to_string(b), sources = sources[:]})
+		site_page_add(site, Site_Page{path = item.page, title = title, description = site_description_cut(fmt.tprintf("The %s %s of %s: %s.", item.kind, build.name, SITE_SYSTEM_NAME, about)), section = .Reference, crumbs = crumbs[:], body = strings.to_string(b), sources = sources[:], layout = .Documentation})
 	}
+}
+
+// site_export_symbol_write writes one export of a module as a documented
+// symbol: its signature as the console prints it, the text of its comment,
+// its parameters, its result, how it fails, and its line in the source. The
+// rules that give these facts are those of the build (describe.odin): no
+// fact is typed here.
+site_export_symbol_write :: proc(site: ^Site, b: ^strings.Builder, description: Module_Description, export: Export_Description) {
+	facts := make([dynamic]Site_Symbol_Fact, context.temp_allocator)
+	if export.name == ENTRY_NAME {
+		append(&facts, Site_Symbol_Fact{label = "Form", html = site_text_html("The entry of the module: one parameter, an address, fixed by the contract.")})
+	} else {
+		parameters := strings.builder_make(context.temp_allocator)
+		for type, index in export.parameters {
+			if index > 0 {
+				strings.write_string(&parameters, ", ")
+			}
+			name := index < len(export.names) ? export.names[index] : ""
+			detail: u32 = index < len(export.details) ? export.details[index] : 0
+			direction: module.Direction = index < len(export.directions) ? export.directions[index] : .Read
+			strings.write_string(&parameters, site_code_html(strings.concatenate({name, ": ", site_type_text(description, type, detail, direction, true)}, context.temp_allocator)))
+		}
+		if len(export.parameters) == 0 {
+			strings.write_string(&parameters, "none")
+		}
+		append(&facts, Site_Symbol_Fact{label = "Parameters", html = strings.to_string(parameters)})
+		result := export.result == .None ? "none" : site_type_text(description, export.result, export.result_detail, .Read, false)
+		append(&facts, Site_Symbol_Fact{label = "Result", html = site_code_html(result)})
+		if export.error_record != 0 {
+			// The rule of the build: an export with an error record fails
+			// when its result is negative, and writes the record.
+			record_name := "an error record"
+			if int(export.error_record) <= len(description.records) {
+				record_name = description.records[export.error_record - 1].name
+			}
+			append(&facts, Site_Symbol_Fact{label = "When it fails", html = strings.concatenate({site_text_html("a negative result, and the error record "), site_code_html(record_name)}, context.temp_allocator)})
+		}
+	}
+	site_symbol_write(site, b, Site_Symbol{id = strings.concatenate({"export-", site_slug(export.name)}, context.temp_allocator), name = export.name, signature = site_export_signature(description, export), description = export.text, facts = facts[:], source = export.file, line = export.line})
 }
 
 // The tiles of the boot image on the home: as the boot display draws them

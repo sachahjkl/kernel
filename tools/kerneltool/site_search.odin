@@ -628,6 +628,41 @@ SITE_SEARCH_SCRIPT_SOURCE :: `// The search of the site, written by kerneltool s
     });
   }
 
+  // "On this page" of a documentation page: open beside the text on a wide
+  // screen, closed above the text on a narrower one. The link of the part
+  // of the page in view is marked as the page scrolls: an observer of the
+  // targets of the links reports when one enters or leaves the top of the
+  // window; nothing runs each frame. With no script it is a list of links.
+  const outline = document.querySelector("details.outline");
+  if (outline) {
+    const besideText = window.matchMedia("(min-width: 1100px)");
+    function fitOutline() { outline.open = besideText.matches; }
+    fitOutline();
+    besideText.addEventListener("change", fitOutline);
+    const links = Array.from(outline.querySelectorAll("a[href^='#']"));
+    const targets = links.map(link => document.getElementById(decodeURIComponent(link.hash.slice(1))));
+    const inView = new Set();
+    function markCurrent() {
+      const current = targets.findIndex(target => target && inView.has(target));
+      if (current < 0) return;
+      links.forEach((link, number) => {
+        if (number === current) link.setAttribute("aria-current", "location");
+        else link.removeAttribute("aria-current");
+      });
+    }
+    if ("IntersectionObserver" in window) {
+      const observer = new IntersectionObserver(changes => {
+        for (const change of changes) {
+          if (change.isIntersecting) inView.add(change.target); else inView.delete(change.target);
+        }
+        markCurrent();
+      }, { rootMargin: "0px 0px -60% 0px" });
+      // The first link names the whole text: it stays marked until a
+      // heading or a symbol enters the top of the window.
+      for (const target of targets) if (target && target.tagName !== "MAIN") observer.observe(target);
+    }
+  }
+
   const box = document.getElementById("site-search-box");
   if (!box || !script) return;
   const search = box.parentElement;
@@ -641,7 +676,9 @@ SITE_SEARCH_SCRIPT_SOURCE :: `// The search of the site, written by kerneltool s
 
   function load() {
     if (!loading) {
-      loading = fetch(new URL("search.json", root)).then(answer => {
+      // The address of the index, with the version of its bytes, is an
+      // attribute of the script element, relative to the folder of the script.
+      loading = fetch(new URL(script.dataset.index || "search.json", root)).then(answer => {
         if (!answer.ok) throw new Error("status " + answer.status);
         return answer.json();
       }).then(data => {
