@@ -155,7 +155,10 @@ scenario_persist_first := [?]Step {
 	{kind = .Type, text = "kept across a restart"},
 	{kind = .Wait, text = "notes: the note is \"kept across a restart\", generation 22"},
 	{kind = .Key, text = "tab"},
-	{kind = .Wait, text = "notes: count 1000, stopped: 1000 commits in "},
+	// 1000 commits to the disk take about 3 s on a quiet host, and several
+	// times that when other machines run beside this one: the step has its
+	// own time.
+	{kind = .Wait, text = "notes: count 1000, stopped: 1000 commits in ", seconds = 120},
 	{kind = .Wait, text = "notes: the versions of the count: 1000 rows in "},
 	// A setting that the next machine finds (the boot pass of settings).
 	{kind = .Launch, text = "settings"},
