@@ -262,10 +262,9 @@ child_start :: proc "contextless" (role: Role, name: string, amounts: system.Bud
 	return child, true
 }
 
-// child_stopped waits until a child stopped, at most a number of
-// milliseconds.
-child_stopped :: proc "contextless" (child: ^Child, milliseconds: u64) -> bool {
-	for deadline := system.time() + milliseconds; system.time() < deadline; {
+// child_stopped waits until a child stopped. The bound only ends a hang.
+child_stopped :: proc "contextless" (child: ^Child) -> bool {
+	for deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS; system.time() < deadline; {
 		results, status := system.call(.Program_State, u64(child.program))
 		if status != .Ok || op.Program_State(results[0]) == .Stopped {
 			return status == .Ok
@@ -276,12 +275,13 @@ child_stopped :: proc "contextless" (child: ^Child, milliseconds: u64) -> bool {
 }
 
 // child_end stops a child, closes it, and says if its budget came back
-// whole within one second: each page, each thread and its program.
+// whole: each page, each thread and its program. The budget comes back when
+// the last processor left the child; the bound only ends a hang.
 child_end :: proc "contextless" (child: ^Child, name: string) -> (back: bool) {
 	system.call(.Program_Stop, u64(child.program), STOP_BY_PARENT)
-	child_stopped(child, 5000)
+	child_stopped(child)
 	system.close(child.program)
-	for deadline := system.time() + 1000; !back && system.time() < deadline; {
+	for deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS; !back && system.time() < deadline; {
 		after, _ := system.budget_read()
 		back = after.pages == child.before.pages && after.threads == child.before.threads && after.programs == child.before.programs
 		if !back {
@@ -289,18 +289,19 @@ child_end :: proc "contextless" (child: ^Child, name: string) -> (back: bool) {
 		}
 	}
 	if !back {
-		system.log("kernel_events: ", name, ": the budget of this program did not get back every page, thread and program of the child in 1 s")
+		system.log("kernel_events: ", name, ": the budget of this program did not get back every page, thread and program of the child in ", u64(system.TEST_HANG_BOUND_MILLISECONDS), " ms")
 	}
 	system.memory_unmap(child.shared)
 	system.close(child.shared_memory)
 	return back
 }
 
-// round_run asks the load child to run one round and waits for its end.
+// round_run asks the load child to run one round and waits for its end. The
+// bound only ends a hang.
 round_run :: proc "contextless" (load: ^Child, round: u32) -> bool {
 	intrinsics.atomic_store(&load.shared.go, round)
 	system.word_wake(&load.shared.go)
-	deadline := system.time() + 5000
+	deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS
 	for system.time() < deadline {
 		done := intrinsics.atomic_load(&load.shared.done)
 		if done == round {
@@ -311,7 +312,7 @@ round_run :: proc "contextless" (load: ^Child, round: u32) -> bool {
 	if intrinsics.atomic_load(&load.shared.done) == round {
 		return true
 	}
-	system.log("kernel_events: the load child did not end the round ", u64(round), " in 5 s")
+	system.log("kernel_events: the load child did not end the round ", u64(round), " in ", u64(system.TEST_HANG_BOUND_MILLISECONDS), " ms")
 	return false
 }
 
@@ -460,7 +461,7 @@ cases_of_counts :: proc "contextless" (window: ^display.Window, load: ^Child) ->
 	intrinsics.atomic_store(&faulter.shared.go, 1)
 	system.word_wake(&faulter.shared.go)
 	ran := given == .Ok && round_run(load, ROUND_EXACT)
-	faulted := child_stopped(&faulter, 5000)
+	faulted := child_stopped(&faulter)
 	_, lost, _ := heads()
 	rings_read(&tally)
 	// Each record of the kind Operation comes from the one rule of that
@@ -599,8 +600,10 @@ case_of_the_revoked_right :: proc "contextless" (load: ^Child) {
 	ran := table_give(rules[:], RING_RECORDS) == .Ok && round_run(load, ROUND_BEFORE_REVOCATION)
 	written_before, lost_before, _ := heads()
 	system.log("kernel_events: the table is given; waiting for the revocation of the grant machine")
+	// The wait for the person has no bound: a person takes the time that
+	// they take, and the machine test bounds each of its own steps.
 	revoked := false
-	for deadline := system.time() + 60_000; system.time() < deadline; {
+	for !revoked {
 		if _, status := system.call(.Handle_State, u64(machine)); status != .Ok {
 			revoked = true
 			break

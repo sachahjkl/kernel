@@ -862,18 +862,22 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 	case .Fault_Handler_Set:
 		// The fault ring (fault_ring.odin): the program names one of its
 		// own threads; a pager for another program is not in this step.
-		if v[1] > 1 {
+		kinds, known := op.fault_kinds_of_argument(v[2])
+		if v[1] > 1 || !known {
 			return .Bad_Operation
 		}
 		if v[1] == 1 {
-			return fault_handler_set(program_index, 0)
+			if v[2] != 0 {
+				return .Bad_Operation // The end of the delivery takes no kinds.
+			}
+			return fault_handler_set(program_index, 0, 0)
 		}
 		handler := index
 		if v[0] != 0 {
 			slot := handle_find(program, v[0], .Thread, {.Control}) or_return
 			handler = slot.object
 		}
-		return fault_handler_set(program_index, handler)
+		return fault_handler_set(program_index, handler, kinds)
 
 	case .Fault_Answer:
 		answer := op.Fault_Answer_Kind(v[2])
@@ -889,6 +893,14 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			return .Bad_State // No thread with that number and fault serial waits: an old answer, or a wrong one.
 		}
 		waiter := &threads[waiter_index]
+		// A fault that is not a page fault and not a trap would run the same
+		// instruction on the same registers, and fault again with no end:
+		// the refusal leaves the thread waiting, so that Stop still ends it
+		// with its report. The frame is the frame of its fault: the thread
+		// wrote it before it took this lock to wait.
+		if answer == .Resume && !op.fault_kind_resumes(waiter.frame.vector) {
+			return .Bad_State
+		}
 		waiter.fault_waits = false
 		if answer == .Resume {
 			thread_wake(waiter)

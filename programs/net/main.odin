@@ -138,12 +138,12 @@ answer :: proc "contextless" (deadline: u64 = system.WAIT_FOREVER) -> (record: r
 	}
 }
 
-// call sends one command and waits for its completion (2 s at most). The
-// completions of other tags that arrive meanwhile are dropped.
+// call sends one command and waits for its completion. The completions of
+// other tags that arrive meanwhile are dropped. The bound only ends a hang.
 call :: proc "contextless" (command: datagram.Command, values: [7]u64 = {}) -> (record: ring.Record, ok: bool) {
 	next_tag += 1
 	request(command, next_tag, values)
-	deadline := system.time() + 2000
+	deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS
 	for {
 		record = answer(deadline) or_return
 		if record.tag == next_tag {
@@ -227,7 +227,7 @@ cases_run :: proc "contextless" () {
 	copy(place_of(SEND_FIRST), MESSAGE)
 	start = system.cycles()
 	send(SEND_FIRST, len(MESSAGE))
-	place, count, remote, port, has_answer := datagram_wait(system.time() + 2000)
+	place, count, remote, port, has_answer := datagram_wait(system.time() + system.TEST_HANG_BOUND_MILLISECONDS)
 	took = microseconds(system.cycles() - start)
 	same := has_answer && count == len(MESSAGE) && string(place_of(place)[:count]) == MESSAGE && remote == GATEWAY && port == ECHO_PORT
 	note("UDP to 10.0.2.2 port 7, 41 bytes", same, "the same 41 bytes came back from ", address_text(text[:], u32(remote)), " port ", port, " in ", took, " us")
@@ -523,7 +523,7 @@ after_key :: proc "contextless" () {
 		item.count = len(system.written(&writer))
 		item.right = true
 	case datagram.Status(sent.kind) == .Ok:
-		place, count, _, _, ok := datagram_wait(system.time() + 1000)
+		place, count, _, _, ok := datagram_wait(system.time() + system.TEST_HANG_BOUND_MILLISECONDS)
 		if ok {
 			post(place)
 		}

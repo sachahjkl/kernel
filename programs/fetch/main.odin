@@ -32,7 +32,6 @@ PLACE_COUNT :: datagram.REGION_PAGES * system.PAGE_SIZE / PLACE_SIZE
 RECEIVE_PLACES :: 96
 SEND_TAG :: 1000
 CALL_TAG :: 100_000
-WAIT_LIMIT :: 20_000 // Milliseconds for one case.
 
 WIDTH :: 976
 CASE_CAPACITY :: 10
@@ -190,7 +189,8 @@ call :: proc "contextless" (command: datagram.Command, tag: u32, values: [7]u64)
 	call_count = 0
 	command_push_or_hold(ring.Record{kind = u32(command), tag = tag, values = values})
 	system.wake_reader(&endpoint.commands)
-	deadline := system.time() + 2000
+	// The bound only ends a hang.
+	deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS
 	for system.time() < deadline {
 		for item in calls[:call_count] {
 			if item.tag == tag {
@@ -213,7 +213,8 @@ Response :: struct {
 // exchange writes a request on connection 0, with a body of the large
 // pattern when body > 0, and reads the response.
 exchange :: proc "contextless" (request: string, body: int) -> (response: Response, ok: bool) {
-	deadline := system.time() + WAIT_LIMIT
+	// The bound only ends a hang.
+	deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS
 	exchange_started_at = system.nanoseconds()
 	first_segment_sent_at, first_segment_received_at, first_data_received_at = 0, 0, 0
 	written := 0
@@ -322,7 +323,7 @@ cases_run :: proc "contextless" () {
 	// 4. The handshake.
 	start := system.nanoseconds()
 	index, error := tcp.connect(&table, REMOTE, REMOTE_PORT, start / 1000)
-	for index == 0 && error.kind == 0 && connections[0].state == .Syn_Sent && system.nanoseconds() - start < 5_000_000_000 {
+	for index == 0 && error.kind == 0 && connections[0].state == .Syn_Sent && system.nanoseconds() - start < system.TEST_HANG_BOUND_MILLISECONDS * 1_000_000 {
 		pump()
 	}
 	opened := connections[0].state == .Established
@@ -365,9 +366,15 @@ cases_run :: proc "contextless" () {
 	// 8. The close from this side. The remote acknowledges the FIN; then it
 	// sends its own FIN (TIME-WAIT here), or keeps its half of the
 	// connection open (FIN-WAIT-2 here). Both are TCP.
+	// The condition is the ACK of the FIN: the wait for it only ends at a
+	// hang. Both ends that follow are TCP: the extra 2 s only give the FIN
+	// of the remote a chance to come, for the text of the row.
 	tcp.close(&table, 0)
-	deadline := system.time() + 2000
-	for connections[0].state != .Time_Wait && system.time() < deadline {
+	deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS
+	for !connections[0].fin_acknowledged && system.time() < deadline {
+		pump()
+	}
+	for after_ack := system.time() + 2000; connections[0].state != .Time_Wait && system.time() < after_ack; {
 		pump()
 	}
 	state := connections[0].state

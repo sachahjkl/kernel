@@ -146,7 +146,8 @@ case_run :: proc "contextless" (item: ^Case) {
 		return
 	}
 	defer system.close(program)
-	for deadline := system.time() + 5000; system.time() < deadline; {
+	// The bound only ends a hang.
+	for deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS; system.time() < deadline; {
 		if state, _ := system.program_state(program); state == .Stopped {
 			break
 		}

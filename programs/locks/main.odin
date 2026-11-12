@@ -34,7 +34,10 @@ drawing: interface.Window_Drawing
 
 MEASURE_TIME :: 300 // Milliseconds of one measure.
 PAIR_TIME :: 500 // Milliseconds of one measure of the word wait.
-LOST_WAIT :: 1000 // Milliseconds: a wait that ends at its deadline after the word changed lost its wake.
+// A wait that ends at this deadline after the word changed lost its wake. A
+// wake that is only late on a loaded host comes long before it: the bound of
+// a hang.
+LOST_WAIT :: system.TEST_HANG_BOUND_MILLISECONDS
 LOCKER_AMOUNTS :: system.Budget_Amounts{pages = 1024, programs = 1, threads = 1, processor = 1_000_000, log_records = 10}
 CHURN_AMOUNTS :: system.Budget_Amounts{pages = 512, programs = 1, threads = lockers.CHURN_THREADS, processor = 1_000_000, log_records = 10}
 CHURN_ROUNDS :: 40
@@ -96,7 +99,7 @@ command :: proc "contextless" (active: int, mode: lockers.Mode, start, end: u64)
 		intrinsics.atomic_add(&slot.command, 1)
 		system.word_wake(&slot.command, system.WAKE_ALL)
 	}
-	deadline := end + 5000
+	deadline := end + system.TEST_HANG_BOUND_MILLISECONDS // The bound only ends a hang.
 	for index in 0 ..< active {
 		slot := &board.slots[index]
 		for intrinsics.atomic_load(&slot.done) == seen[index] {
@@ -240,7 +243,7 @@ pairs :: proc "contextless" (load: int) -> u64 {
 	for index in 0 ..< load {
 		slot := &board.slots[index]
 		for intrinsics.atomic_load(&slot.done) == seen[index] {
-			system.word_wait(&slot.done, seen[index], system.time() + 5000)
+			system.word_wait(&slot.done, seen[index], system.time() + system.TEST_HANG_BOUND_MILLISECONDS)
 		}
 	}
 	intrinsics.atomic_store(&pair.stop, 1)
@@ -375,7 +378,7 @@ draw_records :: proc "contextless" (table: ^interface.Draw_Table) {
 stress :: proc "contextless" (image: []u8, programs_free: u64) {
 	// The lockers of the measures have ended: their slots are back.
 	initial: system.Budget_Amounts
-	for deadline := system.time() + 5000; system.time() < deadline; {
+	for deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS; system.time() < deadline; {
 		initial, _ = system.budget_read()
 		if initial.programs == programs_free {
 			break
@@ -437,8 +440,8 @@ stress :: proc "contextless" (image: []u8, programs_free: u64) {
 	system.word_wake(&stopper.target)
 	system.thread_wait(helper)
 	// The cleanup of a program runs when its last thread leaves its
-	// processor: wait for the budget.
-	deadline := system.time() + 5000
+	// processor: wait for the budget. The bound only ends a hang.
+	deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS
 	after: system.Budget_Amounts
 	for system.time() < deadline {
 		after, _ = system.budget_read()
@@ -469,39 +472,44 @@ frames_stress_right: bool
 
 frames_stress :: proc "contextless" () {
 	modes := [lockers.LOCKER_CAPACITY]lockers.Mode{.Large, .Large, .Faults, .Faults}
-	seen: [lockers.LOCKER_CAPACITY]u32
-	start := system.time() + 20
-	end := start + FRAMES_STRESS_TIME
-	for index in 0 ..< lockers.LOCKER_CAPACITY {
-		slot := &board.slots[index]
-		seen[index] = intrinsics.atomic_load(&slot.done)
-		slot.mode = modes[index]
-		slot.start = start
-		slot.end = end
-		intrinsics.atomic_add(&slot.command, 1)
-		system.word_wake(&slot.command, system.WAKE_ALL)
-	}
-	reports, wrong: u64
-	for system.time() < end + 5 {
-		read := report()
-		reports += 1
-		if read.budget_pages + read.reserved_pages != read.free_pages {
-			wrong += 1
-		}
-	}
+	reports, wrong, made, faulted: u64
 	answered := true
-	for index in 0 ..< lockers.LOCKER_CAPACITY {
-		slot := &board.slots[index]
-		for intrinsics.atomic_load(&slot.done) == seen[index] {
-			if system.time() > end + 5000 {
-				answered = false
-				break
-			}
-			system.word_wait(&slot.done, seen[index], system.time() + 100)
+	// A loaded host can give the lockers no time in one round: the rounds go
+	// on until each kind of work ran at least once. The bound only ends a
+	// hang.
+	for stress_deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS; answered && (made == 0 || faulted == 0) && system.time() < stress_deadline; {
+		seen: [lockers.LOCKER_CAPACITY]u32
+		start := system.time() + 20
+		end := start + FRAMES_STRESS_TIME
+		for index in 0 ..< lockers.LOCKER_CAPACITY {
+			slot := &board.slots[index]
+			seen[index] = intrinsics.atomic_load(&slot.done)
+			slot.mode = modes[index]
+			slot.start = start
+			slot.end = end
+			intrinsics.atomic_add(&slot.command, 1)
+			system.word_wake(&slot.command, system.WAKE_ALL)
 		}
+		for system.time() < end + 5 {
+			read := report()
+			reports += 1
+			if read.budget_pages + read.reserved_pages != read.free_pages {
+				wrong += 1
+			}
+		}
+		for index in 0 ..< lockers.LOCKER_CAPACITY {
+			slot := &board.slots[index]
+			for intrinsics.atomic_load(&slot.done) == seen[index] {
+				if system.time() > end + system.TEST_HANG_BOUND_MILLISECONDS {
+					answered = false
+					break
+				}
+				system.word_wait(&slot.done, seen[index], system.time() + 100)
+			}
+		}
+		made += board.slots[0].count + board.slots[1].count
+		faulted += board.slots[2].count + board.slots[3].count
 	}
-	made := board.slots[0].count + board.slots[1].count
-	faulted := board.slots[2].count + board.slots[3].count
 	frames_stress_right = answered && made != 0 && faulted != 0 && wrong == 0
 	system.log("locks: frames: ", made, " objects of 600 pages made and closed by two lockers while two lockers faulted ", faulted, " pages and this program read ", reports, " reports; reports where the free pages less the reserved pages were not the pages of the budgets: ", wrong)
 }
@@ -582,7 +590,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 
 	// Each locker is ready: its start is not in a measure.
 	for &slot in board.slots {
-		deadline := system.time() + 5000
+		deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS
 		for intrinsics.atomic_load(&slot.done) == 0 && system.time() < deadline {
 			system.word_wait(&slot.done, 0, deadline)
 		}

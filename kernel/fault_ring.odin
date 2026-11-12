@@ -4,12 +4,13 @@ import "base:intrinsics"
 import op "contract:operation"
 
 // The fault ring (docs/ARCHITECTURE.md, "The fault ring"). A program names
-// one of its threads as its fault handler (Fault_Handler_Set). A page fault
-// of another thread of the program, which would stop the program, becomes a
-// record in the thread record of the handler; the faulting thread waits; a
-// thread of the program repairs (Memory_Commit, Memory_Protect) and answers
-// (Fault_Answer): Resume runs the faulting instruction again, Stop stops
-// the program with the report of the fault, as with no handler.
+// one of its threads as its fault handler (Fault_Handler_Set), with the
+// fault kinds that it takes. A fault of such a kind of another thread of the
+// program, which would stop the program, becomes a record in the thread
+// record of the handler; the faulting thread waits; a thread of the program
+// repairs (Memory_Commit, Memory_Protect) and answers (Fault_Answer): Resume
+// lets the thread continue at the instruction of its record, Stop stops the
+// program with the report of the fault, as with no handler.
 //
 // The states of a faulting thread, each change under the locks named:
 // - running -> waiting for an answer (fault_deliver): under the program
@@ -36,25 +37,33 @@ import op "contract:operation"
 // of the kernel's thread slot, which all programs share and which would
 // tell a program how many threads others made in that slot.
 
-// fault_deliver gives a page fault of the current thread of this processor
-// to the fault ring of its program. true: the record is written and the
-// thread waits for an answer. false: the fault stops the program, as with no
-// handler. The caller holds no lock.
+// fault_deliver gives a fault of the current thread of this processor to
+// the fault ring of its program. The frame of the thread is the frame of the
+// fault; address is the address of a page fault, and 0 for another kind.
+// true: the record is written and the thread waits for an answer. false: the
+// fault stops the program, as with no handler. The caller holds no lock.
 fault_deliver :: proc "contextless" (thread_index: u32, address: u64) -> bool {
+	thread := &threads[thread_index]
+	vector := thread.frame.vector
+	program_index := thread.program
+	program := &programs[program_index]
+	// The kinds of the handler, read with no lock: a fault of a kind that
+	// the program did not ask for, and every fault of a program with no
+	// handler, takes no lock here. The check under the lock below decides.
+	if vector >= 64 || intrinsics.atomic_load(&program.fault_kinds) & (u64(1) << vector) == 0 {
+		return false
+	}
 	// The thread areas, the time page and the kernel half are not served: a
 	// handler cannot repair them, and the records of the ring are in a
 	// thread area.
-	if address >= op.THREAD_AREA_BASE {
+	if vector == VECTOR_PAGE_FAULT && address >= op.THREAD_AREA_BASE {
 		return false
 	}
-	thread := &threads[thread_index]
-	program_index := thread.program
-	program := &programs[program_index]
 	taken := program_lock(program_index)
 	defer program_unlock(program_index, taken)
 	handler_index := program.fault_handler
 	// A fault of the handler itself is not delivered: no fault of a fault.
-	if handler_index == 0 || handler_index == thread_index || program.state == .Stopped {
+	if handler_index == 0 || handler_index == thread_index || program.state == .Stopped || program.fault_kinds & (u64(1) << vector) == 0 {
 		return false
 	}
 	handler := &threads[handler_index]
@@ -95,12 +104,18 @@ fault_deliver :: proc "contextless" (thread_index: u32, address: u64) -> bool {
 	thread.fault_serial = program.fault_serial
 	thread.fault_address = address
 	run_unlock(home)
+	access: u64
+	if vector == VECTOR_PAGE_FAULT {
+		access = thread.frame.error & 0b10011 // Present, Write, Execute: the bits of Fault_Access.
+	}
 	record.fault_records[program.fault_written % op.FAULT_RECORD_CAPACITY] = {
 		thread      = u64(thread.number),
 		serial      = program.fault_serial,
 		address     = address,
-		access      = thread.frame.error & 0b10011, // Present, Write, Execute: the bits of Fault_Access.
+		access      = access,
 		instruction = thread.frame.rip,
+		kind        = op.Fault_Kind(vector),
+		error_code  = thread.frame.error,
 	}
 	program.fault_written += 1
 	// The record is written before the count that publishes it.
@@ -109,12 +124,13 @@ fault_deliver :: proc "contextless" (thread_index: u32, address: u64) -> bool {
 	return true
 }
 
-// fault_handler_set makes a thread of the program its fault handler, with
-// an empty ring, or ends the delivery (handler_index 0). The ring of the
-// old handler ends either way: a thread that waits then has a record that
-// no thread will read, so the program stops as at the end of the handler
-// thread. The caller holds the program lock (execute).
-fault_handler_set :: proc "contextless" (program_index: u32, handler_index: u32) -> op.Status {
+// fault_handler_set makes a thread of the program its fault handler for the
+// fault kinds of a mask of vectors, with an empty ring, or ends the delivery
+// (handler_index 0). The ring of the old handler ends either way: a thread
+// that waits then has a record that no thread will read, so the program
+// stops as at the end of the handler thread. The caller holds the program
+// lock (execute).
+fault_handler_set :: proc "contextless" (program_index: u32, handler_index: u32, kinds: u64) -> op.Status {
 	program := &programs[program_index]
 	handler := &threads[handler_index]
 	// Only a live thread of this program: thread.program is 0 after
@@ -132,12 +148,14 @@ fault_handler_set :: proc "contextless" (program_index: u32, handler_index: u32)
 	}
 	program.fault_handler = handler_index
 	if handler_index == 0 {
+		intrinsics.atomic_store(&program.fault_kinds, 0)
 		return .Ok
 	}
 	program.fault_handler_serial = handler.serial
 	program.fault_written = 0
 	intrinsics.atomic_store(&handler.record_in_kernel.fault_written, 0)
 	intrinsics.atomic_store(&handler.record_in_kernel.fault_read, 0)
+	intrinsics.atomic_store(&program.fault_kinds, kinds)
 	return .Ok
 }
 

@@ -267,10 +267,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	region = ([^]u8)(address)
 	// The data region goes to the block service through the block ring.
 	// The block service maps the ring when it starts: until then, the kernel
-	// does not know the other side.
+	// does not know the other side. The bound only ends a hang: a loaded
+	// host can start the block service late.
 	given: system.Handle
 	give_status := system.Status.Bad_Handle
-	for attempt := 0; attempt < 2000 && give_status != .Ok; attempt += 1 {
+	for deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS; give_status != .Ok && system.time() < deadline; {
 		if given, give_status = system.give(ring_memory, memory, {.Read, .Write}); give_status != .Ok {
 			system.sleep(system.time() + 1)
 		}

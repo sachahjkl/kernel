@@ -312,7 +312,8 @@ root_connect :: proc "contextless" (name: string) -> (completion: ring.Record, o
 	if !system.send(&requests.commands, ring.Record{kind = u32(system.Root_Command.Connect), tag = request_tag, values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3]}}) {
 		return {}, false
 	}
-	limit := system.time() + 2000
+	// The bound only ends a hang.
+	limit := system.time() + system.TEST_HANG_BOUND_MILLISECONDS
 	for system.time() < limit {
 		for record in system.receive(&requests.completions) {
 			if record.tag == request_tag {
@@ -481,7 +482,8 @@ case_fault :: proc "contextless" (writer: ^system.Writer) -> bool {
 		system.close(last_fault)
 	}
 	last_fault = program
-	limit := system.time() + 5000
+	// The bound only ends a hang.
+	limit := system.time() + system.TEST_HANG_BOUND_MILLISECONDS
 	for {
 		wait := system.wait_begin()
 		if state, _ := system.program_state(program); state == .Stopped || system.time() > limit {
@@ -789,6 +791,15 @@ contend :: proc "contextless" () -> bool {
 	threads[1], statuses[1] = system.thread_start(failing, rawptr(uintptr(1)))
 	threads[2], statuses[2] = system.thread_start(changing, nil)
 	system.sleep(system.time() + CONTENTION_MILLISECONDS)
+	// A loaded host can give the threads little time in that window: the
+	// contention goes on until each side did its work at least once. The
+	// bound only ends a hang.
+	for deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS; system.time() < deadline; {
+		if intrinsics.atomic_load(&contention.failures[0]) + intrinsics.atomic_load(&contention.failures[1]) > 0 && intrinsics.atomic_load(&contention.made) > 0 {
+			break
+		}
+		system.sleep(system.time() + 10)
+	}
 	intrinsics.atomic_store(&contention.stop, 1)
 	started := 0
 	for thread, index in threads {

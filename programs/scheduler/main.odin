@@ -11,7 +11,8 @@
 // click on a strategy, change it.
 //
 // The program checks what does not depend on the load of the host: no
-// spinner starved, EEVDF woke more often than round robin in the same run,
+// spinner starved, a wake ended turns under EEVDF and none under round
+// robin (the counts of the kernel; the wakes in one second are measures),
 // the weights order the shares under the strategies with weights, each
 // thread runs after the changes, no wake was lost, the kernel refuses a
 // change with no right Schedule and a weight above the full weight.
@@ -36,7 +37,10 @@ SLEEP_TIME :: 2 // Milliseconds: one sleep of the thread whose delay is measured
 SLEEP_COUNT :: 60
 SHARE_TIME :: 500 // Milliseconds: the spinners share the processors.
 WARM_TIME :: 50 // Milliseconds before a measure: the spinners started.
-LOST_WAIT :: 1000 // Milliseconds: a wait that ends at its deadline after its word changed lost its wake.
+// A wait that ends at this deadline after its word changed lost its wake. A
+// wake that is only late on a loaded host comes long before it: the bound of
+// a hang.
+LOST_WAIT :: system.TEST_HANG_BOUND_MILLISECONDS
 EQUAL_COUNT :: 8
 WEIGHTED_COUNT :: 12
 @(rodata)
@@ -494,21 +498,25 @@ stress :: proc "contextless" () {
 		}
 	}
 	system.thread_wait(thread)
-	// After the last change, each thread still runs.
+	// After the last change, each thread still runs: the wait is for each
+	// count to grow, and the bound only ends a hang.
 	first := spinner_counts(0, EQUAL_COUNT)
 	rounds := intrinsics.atomic_load(&pair.rounds[0])
-	system.sleep(system.time() + 200)
-	last := spinner_counts(0, EQUAL_COUNT)
-	stress_wakes = pair.rounds[0]
-	ran := intrinsics.atomic_load(&pair.rounds[0]) > rounds
-	for spinner in 0 ..< EQUAL_COUNT {
-		ran &&= last[spinner] > first[spinner]
+	ran := false
+	for deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS; !ran && system.time() < deadline; {
+		system.sleep(system.time() + 10)
+		last := spinner_counts(0, EQUAL_COUNT)
+		ran = intrinsics.atomic_load(&pair.rounds[0]) > rounds
+		for spinner in 0 ..< EQUAL_COUNT {
+			ran &&= last[spinner] > first[spinner]
+		}
 	}
+	stress_wakes = pair.rounds[0]
 	pair_stop()
 	spinners_stop(0, EQUAL_COUNT)
 	// The slots of the threads returned to the budget.
 	after: system.Budget_Amounts
-	for deadline := system.time() + 2000; system.time() < deadline; {
+	for deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS; system.time() < deadline; {
 		after, _ = system.budget_read()
 		if after.threads == at_start.threads {
 			break
@@ -829,14 +837,19 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if lost_wakes != 0 {
 		fail("a wake was lost")
 	}
-	if results[0].measured && results[2].measured && results[2].wakes <= results[0].wakes {
-		fail("EEVDF did not wake more often than round robin")
+	// Round robin has no wake preemption, and EEVDF has it: the counts of
+	// the kernel in the case of the two threads say it. The wakes in one
+	// second of each are a measure, printed and not checked.
+	round_robin_preemptions := results[0].pair_local + results[0].pair_interrupts
+	eevdf_preemptions := results[2].pair_local + results[2].pair_interrupts
+	if results[0].measured && results[2].measured && (round_robin_preemptions != 0 || eevdf_preemptions == 0) {
+		fail("round robin ended a turn by a wake, or EEVDF never did")
 	}
 	stress()
 	system.strategy_set(machine, original)
 	done = true
 	if right {
-		system.log("scheduler: ok, no spinner starved under 3 strategies, EEVDF woke ", results[2].wakes / max(results[0].wakes, 1), " times as often as round robin, the weights ordered the shares, each thread ran after ", stress_changes, " changes, 0 wakes lost, a change needs the right Schedule")
+		system.log("scheduler: ok, no spinner starved under 3 strategies, EEVDF woke ", results[2].wakes / max(results[0].wakes, 1), " times as often as round robin (a measure), a wake ended ", eevdf_preemptions, " turns under EEVDF and 0 under round robin, the weights ordered the shares, each thread ran after ", stress_changes, " changes, 0 wakes lost, a change needs the right Schedule")
 	} else {
 		system.log("scheduler: wrong: ", problem)
 	}

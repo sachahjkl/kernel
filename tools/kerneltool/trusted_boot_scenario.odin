@@ -94,7 +94,7 @@ machine_file :: proc(output, suffix: string) -> string {
 // The software TPM of one machine: a folder of its own for each machine,
 // with a new state, so that each starts with a TPM with no history and no
 // file of another machine.
-TPM_START_TIMEOUT :: 10 * time.Second
+TPM_START_TIMEOUT :: HANG_BOUND // It only ends a start of swtpm that hangs.
 
 tpm_folder_of :: proc(output: string) -> string {
 	return machine_file(output, "_tpm")

@@ -113,6 +113,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	rule_right := above == .No_Budget && zero == .No_Budget
 
 	sample := 0
+	reported := false
 	// The kernel counts processor time with the cycle counter, so the
 	// interval is measured with it too. The milliseconds of the time page
 	// count ticks, and a tick can come late: the two do not compare.
@@ -128,11 +129,19 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			row.before = used
 		}
 		sample += 1
-		// The first interval has the start of the threads: the second one counts.
-		if sample == 3 {
-			right := started && log_right && rule_right
+		// The first interval has the start of the threads: the second one
+		// counts, or the first later one where each thread ran. A loaded host
+		// can give a thread no time in one interval; the samples only end a
+		// hang.
+		each_ran := true
+		for row in rows {
+			each_ran &&= row.used > 0
+		}
+		if !reported && sample >= 3 && (each_ran || sample >= 3 + system.TEST_HANG_BOUND_MILLISECONDS / INTERVAL) {
+			reported = true
+			right := started && log_right && rule_right && each_ran
 			for row in rows {
-				right &&= within(row) && row.used > 0
+				right &&= within(row)
 			}
 			system.log("limits: processor time of one second, used of limit: ", rows[0].used, " of ", rows[0].limit, ", ", rows[1].used, " of ", rows[1].limit, ", ", rows[2].used, " of ", rows[2].limit, ", the program ", rows[3].used, " of ", rows[3].limit)
 			if right {

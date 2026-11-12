@@ -224,15 +224,15 @@ memory_protect :: proc "contextless" (ranges: []op.Address_Range, flags: op.Map_
 // The fault ring (docs/ARCHITECTURE.md, "The fault ring").
 
 // fault_handler_set makes a thread of this program its fault handler (0:
-// the thread that calls it): the page faults of the other threads become
-// records of the ring in the thread record of the handler, and each
-// faulting thread waits for fault_answer.
-fault_handler_set :: proc "contextless" (thread: Handle = 0, error: ^errors.Error_Record = nil) -> Status {
-	_, status := call_with_error(error, .Fault_Handler_Set, u64(thread), 0)
+// the thread that calls it): the faults of these kinds of the other threads
+// become records of the ring in the thread record of the handler, and each
+// faulting thread waits for fault_answer. No kinds: page faults only.
+fault_handler_set :: proc "contextless" (thread: Handle = 0, kinds: op.Fault_Kinds = {}, error: ^errors.Error_Record = nil) -> Status {
+	_, status := call_with_error(error, .Fault_Handler_Set, u64(thread), 0, transmute(u64)kinds)
 	return status
 }
 
-// fault_handler_end ends the delivery: a page fault stops the program again.
+// fault_handler_end ends the delivery: a fault stops the program again.
 // If a thread waits for an answer, its record is lost with the ring: the
 // program stops with STOP_CODE_FAULT_UNANSWERED. Answer first.
 fault_handler_end :: proc "contextless" () -> Status {
@@ -240,8 +240,10 @@ fault_handler_end :: proc "contextless" () -> Status {
 	return status
 }
 
-// fault_answer answers for the thread of a record: Resume runs the faulting
-// instruction again, Stop stops the program with the report of the fault.
+// fault_answer answers for the thread of a record: Resume lets the thread
+// continue at the instruction of the record (Bad_State for a kind that
+// does not resume: op.fault_kind_resumes), Stop stops the program with the
+// report of the fault.
 fault_answer :: proc "contextless" (record: op.Fault_Record, answer: op.Fault_Answer_Kind, error: ^errors.Error_Record = nil) -> Status {
 	_, status := call_with_error(error, .Fault_Answer, record.thread, record.serial, u64(answer))
 	return status

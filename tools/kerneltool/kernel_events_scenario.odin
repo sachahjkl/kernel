@@ -42,7 +42,7 @@ scenario_kernel_events := [?]Step {
 	{kind = .Wait, text = "kernel_events: a full ring of 16 records: "},
 	{kind = .Wait, text = "kernel_events: the table taken away: 0 records after it; a second take gave Bad_State: as it must"},
 	{kind = .Wait, text = "kernel_events: the address of a fault: a rule for every program: "},
-	{kind = .Wait, text = "kernel_events: 1000 gives and ends under load: 1000 ends with ", seconds = 60},
+	{kind = .Wait, text = "kernel_events: 1000 gives and ends under load: 1000 ends with "},
 	{kind = .Wait, text = "kernel_events: kernel entries in one second of the load child (its own count and time): no rule "},
 	{kind = .Wait, text = "; a rule that names another program "},
 	{kind = .Wait, text = " lost, of 0); a rule for every program that matches nothing "},
@@ -56,7 +56,7 @@ scenario_kernel_events := [?]Step {
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "start(\"kernel_events\")"},
 	{kind = .Wait, text = "kernel_events: a seventeenth rule: 16 rules Ok, 17 rules No_Slot: as it must"},
-	{kind = .Wait, text = "kernel_events: the table is given; waiting for the revocation of the grant machine", seconds = 120},
+	{kind = .Wait, text = "kernel_events: the table is given; waiting for the revocation of the grant machine"},
 	// The end of the table with its right.
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "revoke(\"kernel_events\", \"machine\")"},

@@ -97,11 +97,6 @@ RELEASE_TIME_LIMIT :: 10_000
 // most; a fast call adds no wait.
 SLOW_CALL_MILLISECONDS :: 100
 EXCHANGE_AFTER_SLOW_CALL_MILLISECONDS :: 50
-// The time that the program may see a deadline after it passed: it learns
-// it when its wait ends, and a busy or slow machine, or an isolated call
-// (CALL_LIMIT), wakes it late. A log line of a bound says "held" when the
-// time is at least the bound and at most the bound and this margin.
-LATE_WAKE_MILLISECONDS :: 5000
 
 // The datagram region: 256 places of 2048 bytes.
 PLACE_SIZE :: 2048
@@ -355,9 +350,12 @@ log_allowed :: proc "contextless" () -> bool {
 }
 
 // bound_verdict gives the words of a log line of a bound: held when the
-// time is at least the bound and at most the bound and a late wake.
+// time is at least the bound. The program learns that a deadline passed
+// when its wait ends, and a busy or slow machine, or an isolated call
+// (CALL_LIMIT), wakes it late: how late depends on the host, so the line
+// gives the time and no verdict checks an upper side.
 bound_verdict :: proc "contextless" (elapsed, bound: u64) -> string {
-	if elapsed >= bound && elapsed <= bound + LATE_WAKE_MILLISECONDS {
+	if elapsed >= bound {
 		return "held"
 	}
 	return "did NOT hold"
@@ -377,15 +375,16 @@ end_reason :: proc "contextless" (connection: ^quic.Connection) -> string {
 
 // idle_end_log writes how long a connection that ended by its idle timeout
 // received nothing, in time of the machine, against its bound: at least
-// its idle timeout, and at most its bound and a late wake of the program.
+// its idle timeout. How late after its bound the end came depends on the
+// load of the host: the line gives it, and the verdict does not check it.
 // A test reads the verdict; the numbers are on the line.
 idle_end_log :: proc "contextless" (connection: ^quic.Connection, peer: quic.Remote) {
 	silence := (connection.ended_at - min(connection.last_activity, connection.ended_at)) / 1000
 	idle_timeout := connection.idle_timeout / 1000
 	bound := quic.connection_idle_bound(connection) / 1000
-	held := silence >= idle_timeout && silence <= bound + LATE_WAKE_MILLISECONDS
+	held := silence >= idle_timeout
 	text: [40]u8
-	system.log("remote: ", address_text(text[:], peer), held ? ": the idle end held its bound: " : ": the idle end did NOT hold its bound: ", silence, " ms with no packet of the host, the idle timeout ", idle_timeout, " ms, the bound ", bound, " ms, a late wake of the program up to ", u64(LATE_WAKE_MILLISECONDS), " ms")
+	system.log("remote: ", address_text(text[:], peer), held ? ": the idle end held its bound: " : ": the idle end did NOT hold its bound: ", silence, " ms with no packet of the host, the idle timeout ", idle_timeout, " ms, the bound ", bound, " ms, ", silence - min(silence, bound), " ms after the bound")
 }
 
 // stream_refuse ends a call stream with a code: STOP_SENDING (the host stops

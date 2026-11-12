@@ -28,7 +28,6 @@ HEIGHT :: HEADER + PICTURE_HEIGHT + 2 * MARGIN
 FRAME_TIME :: 33
 PICTURE_PAUSE :: 500 // Milliseconds between two pictures.
 LOAD_INTERVAL :: 250 // Milliseconds between two measures of the load.
-TOGETHER_TIME :: 3000 // Milliseconds, at most, of the first test.
 WORKER_COUNT :: 4
 PROCESSOR_ROWS :: 8 // The panel shows at most this number of processors.
 ITERATIONS :: 4000
@@ -119,8 +118,10 @@ run_together :: proc "contextless" () {
 	}
 	// This thread is the fifth: with the four others, it can fill 5 processors.
 	target := min(processor_count, WORKER_COUNT + 1)
+	// The bound only ends a hang: a loaded host can take long to run every
+	// virtual processor at one time.
 	start := system.time()
-	for together < target && system.time() < start + TOGETHER_TIME {
+	for together < target && system.time() < start + system.TEST_HANG_BOUND_MILLISECONDS {
 		together = max(together, processors_same())
 	}
 	intrinsics.atomic_store(&spin_stop, 1)

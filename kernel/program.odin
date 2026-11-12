@@ -247,8 +247,13 @@ Program :: struct {
 	cleaned:      bool, // program_cleanup ran: the slot can be free when no handle names it. Control lock.
 	serial:       u32, // Changes for each new program in the slot. It stays when the slot serves a new program.
 	// The fault ring (fault_ring.odin), under the program lock. 0: no fault
-	// handler, and a page fault stops the program.
+	// handler, and every fault stops the program.
 	fault_handler:        u32, // The thread whose thread record holds the fault ring.
+	// The fault kinds of the handler: bit n is the vector n. 0 with no
+	// handler. Written under the program lock with an atomic store, and read
+	// with no lock by a fault first, so that a fault that is not delivered
+	// takes no lock.
+	fault_kinds:          u64,
 	fault_handler_serial: u32,
 	fault_written:        u32, // The records that the kernel wrote in that ring: the kernel's own count, not the one in memory of the program.
 	fault_full:           u32, // The faults that found the ring full.
@@ -1368,6 +1373,7 @@ thread_finish :: proc "contextless" (index: u32, serial: u32) {
 	handler_ended := program.fault_handler == index
 	if handler_ended {
 		program.fault_handler = 0
+		intrinsics.atomic_store(&program.fault_kinds, 0)
 	}
 	// Under the program lock: program_event, which holds only this lock,
 	// never reads this slot as a thread of the program again, also when a
@@ -1579,10 +1585,24 @@ ports_switch :: proc "contextless" (cpu: ^Processor, index: u32) {
 
 EXCEPTION_NAMES := [32]string {
 	0  = "division by zero",
+	1  = "debug",
+	2  = "non-maskable interrupt",
+	3  = "breakpoint",
+	4  = "overflow",
+	5  = "bound range",
 	6  = "invalid instruction",
+	7  = "device not available",
 	8  = "double fault",
+	10 = "invalid task state",
+	11 = "segment not present",
+	12 = "stack fault",
 	13 = "protection fault",
 	14 = "page fault",
+	16 = "x87 floating point",
+	17 = "alignment check",
+	18 = "machine check",
+	19 = "SIMD floating point",
+	21 = "control protection",
 }
 
 // kernel_interrupt is where every interrupt, exception and kernel entry
@@ -1602,6 +1622,18 @@ kernel_interrupt :: proc "c" (frame: ^Frame) {
 	// the kernel its gs back for this case only.
 	if !from_program && frame.rip == u64(uintptr(&resume_return)) && frame.vector >= 11 && frame.vector <= 13 {
 		return_refused_by_the_processor(frame)
+	}
+	// A non-maskable interrupt, a double fault and a machine check are not
+	// faults of an instruction of the program that ran: a double fault is a
+	// mistake of the kernel, a machine check an error of the machine, and
+	// the kernel sends no non-maskable interrupt, so one reports the machine
+	// (a hardware error, or a request through the hypervisor). To stop only
+	// that program would hide the fault and go on with a machine that is
+	// not sound: the machine stops with a line, as in the kernel below.
+	if from_program && (frame.vector == VECTOR_NON_MASKABLE_INTERRUPT || frame.vector == VECTOR_DOUBLE_FAULT || frame.vector == VECTOR_MACHINE_CHECK) {
+		fault_report_begin()
+		log("kernel: ", EXCEPTION_NAMES[frame.vector], " vector ", frame.vector, " while a program ran, at ", Hex(frame.rip), ": a fault of the machine, not of the program: the machine stops")
+		machine_stop(2)
 	}
 	if !from_program && frame.vector < VECTOR_INTERRUPT_BASE {
 		// The processor can hold any lock: it takes none.
@@ -1697,9 +1729,10 @@ kernel_interrupt :: proc "c" (frame: ^Frame) {
 		if event_wanted(cpu, OBSERVED_FAULT, .Fault, thread.program) {
 			event_record(cpu, .Fault, thread.program, thread.number, frame.vector, fault_address, u64(op.Event_Fault_Outcome.First_Use))
 		}
-	case frame.vector == VECTOR_PAGE_FAULT && fault_deliver(cpu.current, fault_address):
+	case from_program && frame.vector < VECTOR_INTERRUPT_BASE && fault_deliver(cpu.current, fault_address):
 		// A record of the fault ring: the thread is Waiting until a thread
-		// of its program answers, so the end below goes to schedule.
+		// of its program answers, so the end below goes to schedule. The
+		// address is 0 for a fault that is not a page fault.
 		if event_wanted(cpu, OBSERVED_FAULT, .Fault, thread.program) {
 			event_record(cpu, .Fault, thread.program, thread.number, frame.vector, fault_address, u64(op.Event_Fault_Outcome.Fault_Ring))
 		}

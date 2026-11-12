@@ -1080,6 +1080,16 @@ value_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Pro
 			}
 		}
 		return true
+	case .Fault_Handler_Set:
+		switch {
+		case v[1] > 1:
+			record_set(record, .Bad_Value, .None, 2, v[1], 1, 0)
+		case v[1] == 1:
+			record_set(record, .Bad_Flags, .None, 3, v[2], 0, 0) // The end of the delivery takes no kinds.
+		case:
+			record_set(record, .Bad_Flags, .None, 3, v[2], op.FAULT_KINDS_DELIVERED, 0)
+		}
+		return true
 	case .Thread_Create:
 		switch {
 		case v[4] > op.WEIGHT_FULL:

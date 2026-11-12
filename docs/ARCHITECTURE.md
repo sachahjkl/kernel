@@ -266,7 +266,7 @@ The kernel runs on all processors with no single lock: no kernel entry takes a l
 
 ### The data of the kernel
 
-Paths: **op** a kernel operation; **tick** the timer of a processor; **dev** a device interrupt; **fault** a page fault of a program; **wake** a word wake, an event or a deadline; **revoke** `Handle_Revoke`; **stop** the stop of a program or of a thread.
+Paths: **op** a kernel operation; **tick** the timer of a processor; **dev** a device interrupt; **fault** a processor exception of a program; **wake** a word wake, an event or a deadline; **revoke** `Handle_Revoke`; **stop** the stop of a program or of a thread.
 
 | Data | Read by | Written by | Protection | Ties to other data |
 |---|---|---|---|---|
@@ -291,6 +291,7 @@ Paths: **op** a kernel operation; **tick** the timer of a processor; **dev** a d
 | Thread: frame, extended state area, kernel ring, `in_enter`, `run_time`, `words` | its processor while it runs; a waker reads `words` of a thread that waits | the processor that runs it | the rule of the owner (below) | |
 | Thread: `stop_requested` | the processor that runs it | **stop** | atomic | |
 | Thread: `record_in_kernel`, `fault_waits`, `fault_serial`, `fault_address`; program: `fault_handler`, `fault_handler_serial`, `fault_written`, `fault_full`, `fault_serial` | **fault** (`fault_deliver`), **op** (`Fault_Handler_Set`, `Fault_Answer`), **stop** (`thread_finish`) | the same | program lock of the program; `thread.state` and `deadline` of a thread that starts to wait, under its run lock too | a thread with `fault_waits` is `Waiting` with no deadline and has no entry in the table of words; `fault_handler` names a live thread of the program, or 0 |
+| Program: `fault_kinds` | **fault** (`fault_deliver`: first with no lock, then under the program lock) | **op** (`Fault_Handler_Set`), **stop** (`thread_finish` of the handler) | written under the program lock with an atomic store; the read with no lock is a filter only | 0 when `fault_handler` is 0 |
 | Thread: `references`, `budget` | **op**, **tick** (budget) | **op**, budget end | `references` atomic (a copy of a handle in its own program adds 1 with no control lock); `budget` written under the frame lock | |
 | Wait table: buckets of entries (word, thread, serial) | **wake** | **op** (`Word_Wait`), the start of the next entry, **stop** | wait lock of the bucket | an entry is valid while its serial is the `wait_serial` of its thread |
 | Program: `handles`, `mappings`, `next_address`, the lower half of its page table, `thread_areas`, `thread_count`, `mapped_pages`, `modules`, `stop`, `state`, `code`, `has_ports` | **op**, **fault**, **revoke**, **stop**, reports | **op**, **fault**, **revoke**, **stop** | program lock | a mapping names a memory object with one reference; a handle names an object with one reference |
@@ -443,22 +444,43 @@ The locks: a commit holds the program lock of the caller (the operation), then t
 
 ### The fault ring
 
-Without a fault handler, a page fault of a program that `page_give` cannot serve stops the program, with a stop report. The terms are in `GLOSSARY.md`: fault handler, fault ring, fault record. The code is `kernel/fault_ring.odin`, the two operations in `kernel/enter.odin`, the case of `kernel_interrupt`, and `thread_finish`; the test is the program `fault_ring` (`kerneltool test fault_ring`).
+Without a fault handler, a processor exception of a program that the kernel does not serve itself (a page fault that `page_give` cannot serve, a divide error, an invalid opcode, ...) stops the program, with a stop report. The terms are in `GLOSSARY.md`: fault handler, fault ring, fault record, fault kind, fault class. The code is `kernel/fault_ring.odin`, the two operations in `kernel/enter.odin`, the case of `kernel_interrupt`, and `thread_finish`; the kinds and their classes are in `contract/operation` (`Fault_Kind`, `fault_kind_class`, `fault_kind_resumes`, `fault_kinds_of_argument`, with host tests); the test is the program `fault_ring` (`kerneltool test fault_ring`).
 
-A program names one of its threads as its fault handler (`Fault_Handler_Set`, operation 30). Then a page fault of another thread of the program, at an address below `THREAD_AREA_BASE`, which would stop the program, is a fault record in the fault ring, and the thread waits. A thread of the program repairs with the operations above (`Memory_Commit`, `Memory_Protect`) and answers (`Fault_Answer`, operation 31): `Resume` runs the faulting instruction again; `Stop` stops the program with the stop code and the stop report of the fault, as with no handler. A program uses it for guard pages, a stack that grows, memory committed at the first touch, and the barriers of a collector; the kernel holds no policy. No signal (property 16): a fault is a record in memory of the program, and the answer is an operation.
+A program names one of its threads as its fault handler (`Fault_Handler_Set`, operation 30), with the fault kinds that the handler takes (`op.Fault_Kinds`, the third argument; 0 is page faults only). Then a fault of such a kind of another thread of the program, which would stop the program, is a fault record in the fault ring, and the thread waits. A page fault is delivered only at an address below `THREAD_AREA_BASE`. A thread of the program repairs with the operations above (`Memory_Commit`, `Memory_Protect`) and answers (`Fault_Answer`, operation 31): `Resume` lets the thread continue at the instruction of its record; `Stop` stops the program with the stop code and the stop report of the fault, as with no handler. A program uses it for guard pages, a stack that grows, memory committed at the first touch, the barriers of a collector, and a debugger that sets breakpoints; the kernel holds no policy. No signal (property 16): a fault is a record in memory of the program, and the answer is an operation.
+
+**The fault kinds.** A fault kind is the processor exception, named by its vector. Its fault class says where the thread continues: a fault did not run its instruction, and the frame holds the address of that instruction; a trap ran its instruction, and the frame holds the address of the next one. The record gives that address (`instruction`), the kind and the error code of the processor.
+
+| Vector | Kind | Class | Resume | Error code |
+|---|---|---|---|---|
+| 0 | `Divide_Error` (`div` or `idiv` by 0, or a quotient too large) | fault | refused | none (0) |
+| 1 | `Debug` (the trap flag after an instruction, `int1`) | trap | accepted | none (0) |
+| 3 | `Breakpoint` (`int3`, `int 3`) | trap | accepted | none (0) |
+| 6 | `Invalid_Opcode` (`ud2`, an instruction that the processor does not have) | fault | refused | none (0) |
+| 11 | `Segment_Not_Present` | fault | refused | the selector |
+| 12 | `Stack_Fault` (a stack address that is not canonical) | fault | refused | 0 or the selector |
+| 13 | `General_Protection` (a privileged instruction, an address that is not canonical, `int n` for a vector other than 3, `sgdt`, `sidt`, `sldt`, `smsw` and `str` with UMIP) | fault | refused | 0, the selector, or `(n << 3) + 2` for `int n` (0x72 for `int 14`) |
+| 14 | `Page_Fault` | fault | accepted | the bits of the access (also in `access`) |
+| 16 | `X87_Floating_Point` (at the next x87 instruction; CR0.NE is set) | fault | refused | none (0) |
+| 17 | `Alignment_Check` (an access that is not aligned with the flag AC set; CR0.AM is set) | fault | refused | 0 |
+| 19 | `Simd_Floating_Point` | fault | refused | none (0) |
+
+`Debug` is a trap only: a `Debug` exception is a fault only for an instruction breakpoint of a debug register, and the kernel sets no debug register for a program (it clears DR7 at the start of each processor). After a trap, `instruction` is the next instruction, so the length of the one that trapped is not in the record: `int3` (CC) and `int1` (F1) are one byte, `int 3` (CD 03) two. A debugger that wrote CC subtracts 1. `int n` for another vector never arrives as the exception n: its gate has the privilege level 0, so the processor gives a `General_Protection` with the error code `(n << 3) | 2`. The gate of the vector 3 has the privilege level 3, so that `int3` of a program is a `Breakpoint`; with 0, the processor gives a `General_Protection` in its place. Every other gate keeps 0: no `int n` of a program acts as an exception or an interrupt. With no handler, `int3` stops its program with the code `STOP_CODE_FAULT` + 3.
+
+**The rule of Resume.** `Fault_Answer` accepts `Resume` for a trap (the thread continues after its instruction) and for a page fault (the handler changes what the instruction finds with `Memory_Commit` and `Memory_Protect`). For every other fault it refuses `Resume` with `Bad_State`, and the thread still waits: `Stop` ends it with its report. Such a fault runs the same instruction on the same registers again, and faults again with no end: no operation writes the registers of a waiting thread, and the extended state (x87, SSE, AVX) of the thread is saved in the kernel, where the handler cannot read it. To accept `Resume` and charge each new record to the budget would make a loop of records that never ends and that no line of the log names. The refusal is visible to the handler at its first answer. When an operation writes the registers of a waiting thread, the handler can repair such a fault, and the rule changes with it.
 
 **Where the ring is.** In the thread record of the handler, after its fields (`op.Thread_Record`: `fault_written`, `fault_read`, `fault_full`, and `fault_records`, 16 records of 64 bytes). The kernel already writes that page (the event word) through the direct map, and the budget of the program paid for it with the thread. So the ring needs no new memory object, no mapping, and no count of references: it lives as long as the handler. `fault_read` is memory of the program; the kernel indexes the records with its own count (`Program.fault_written`), so it never writes outside `fault_records`, and a difference with `fault_read` that is not below the capacity is a full ring. A false value of `fault_read` harms only its own program: a value above the count makes the ring full (the next fault stops the program), and a value a little below the count lets the kernel write over records that the program did not read yet (their threads wait until the program answers them, or stops).
 
 **The rules**:
 
 - **Who registers**: the program itself, for one of its own threads (a thread handle with Control, or the calling thread). A pager that serves the faults of another program needs a fault ring that the pager reads and a right on the program handle: it is not built.
-- **Which faults**: every page fault that `page_give` does not serve (no frame and not committed, no mapping, or an access that the protection refuses), at an address below `THREAD_AREA_BASE`. No flag of a mapping (such as `Faults_To_Ring`) selects the faults: a program that wants only some ranges answers `Stop` for the others. A fault of another kind (a protection fault, an invalid instruction) stops the program as with no handler.
-- **What is never delivered**: a page fault with the reserved bit of the error code (an entry of a page table with a reserved bit: only the kernel writes those entries, so the machine stops with a line of the log, as at an exception in the kernel; a handler never sees it, so a repair cannot hide it in a loop of faults); a fault of the handler thread itself (it would wait for its own answer: no fault of a fault); a fault at or above `THREAD_AREA_BASE` (the thread areas, which hold the ring; the time page; the kernel half); a fault in the kernel on behalf of a program (`user_copy` checks the range first with `user_range`, so an operation with a bad address fails with its status). Each of these stops the program as with no handler, or fails the operation.
+- **Which faults**: each fault of a kind that the handler asked for. For page faults: every page fault that `page_give` does not serve (no frame and not committed, no mapping, or an access that the protection refuses), at an address below `THREAD_AREA_BASE`. No flag of a mapping (such as `Faults_To_Ring`) selects the faults: a program that wants only some ranges answers `Stop` for the others.
+- **The kinds of a handler**: the third argument of `Fault_Handler_Set` is a set of fault kinds, bit n for the vector n (`op.Fault_Kinds`). 0 is page faults only: a handler that repairs pages never gets a divide error that it would answer as a page. A fault of a kind that the handler did not ask for stops the program as with no handler. A bit of a vector that the kernel never delivers refuses the whole argument (`Bad_Operation`, with the error record `Bad_Flags` and the mask `FAULT_KINDS_DELIVERED`), and so do kinds with the end of the delivery (`end` 1). The kinds are one word of the program (`Program.fault_kinds`), written under the program lock; a fault reads it first with no lock, so a fault that is not delivered takes no lock and does no more work than with no handler. A delivery needs the check under the program lock too. The read with no lock alone decides a stop: a fault at the same time as the `Fault_Handler_Set` that adds its kind can read the old word and stop the program. That fault counts as one before the operation; a fault that starts after the operation returned reads the new word.
+- **What is never delivered**: the vectors that are not fault kinds: the non-maskable interrupt (2), the double fault (8) and the machine check (18), which are not faults of an instruction of a thread (each one stops the machine with a line, also when a program ran: a double fault is a mistake of the kernel, a machine check an error of the machine, and the kernel sends no non-maskable interrupt, so one reports the machine); overflow (4) and bound (5), whose instructions are invalid in 64-bit mode and give `Invalid_Opcode`; device not available (7) and invalid task state (10), mistakes of the kernel, which keeps the extended state and the task state of each processor; the reserved vectors and those of modes that the kernel does not use. Also: a page fault with the reserved bit of the error code (an entry of a page table with a reserved bit: only the kernel writes those entries, so the machine stops with a line of the log, as at an exception in the kernel; a handler never sees it, so a repair cannot hide it in a loop of faults); a fault of the handler thread itself, of any kind (it would wait for its own answer: no fault of a fault); a fault of a program that stops (its state is `Stopped`, under the program lock); a page fault at or above `THREAD_AREA_BASE` (the thread areas, which hold the ring; the time page; the kernel half); a fault in the kernel, also on behalf of a program (the machine stops; `user_copy` checks the range first with `user_range`, so an operation with a bad address fails with its status); a fault of the `iretq` of a return to a program (a refused return, "The return to a program"). Each of these stops the program as with no handler, stops the machine, or fails the operation.
 - **A full ring**: the fault stops the program as with no handler, with the report of the fault; the kernel adds 1 to `fault_full` and writes a line of the log. The thread never waits for a place.
 - **The ring ends while a thread waits**: the handler thread ends, or `Fault_Handler_Set` names another handler (or the same one again: its ring starts empty) or ends the delivery (`end` 1). The record of the waiting thread is then in a ring that no thread will read: the program stops with the stop code `STOP_CODE_FAULT_UNANSWERED` (0x500), the same rule for the three. Without a waiting thread, each of them only ends the delivery or changes the handler: a later fault stops the program as with no handler, or goes to the new ring.
 - **The program stops while a thread waits**: `program_stop` ends the waiting thread as any thread that is on no processor. A waiting thread holds its thread and nothing else: no record of the kernel, no lock, no page.
 - **No time bound**: a thread waits until the answer or the end of its program. Property 4 has one wait with a deadline, for a program that wants one; the fault handler of the program decides how long the repair takes, and a handler that never answers holds only threads of its own program, which its budget paid. The program, or the person, stops it.
-- **Who answers**: any thread of the program. The record names the thread by its number and the serial of the fault; `Fault_Answer` finds a thread of the program with that number that waits for the fault of that serial, and refuses any other (`Bad_State`): an answer for a thread that ended and whose number serves again is refused, and so are a second answer, an answer for an earlier fault of the same thread, and an answer from another program.
+- **Who answers**: any thread of the program. The record names the thread by its number and the serial of the fault; `Fault_Answer` finds a thread of the program with that number that waits for the fault of that serial, and refuses any other (`Bad_State`): an answer for a thread that ended and whose number serves again is refused, and so are a second answer, an answer for an earlier fault of the same thread, and an answer from another program. `Resume` for a kind that does not resume is refused with `Bad_State` too, and leaves the thread waiting (the rule of Resume, above).
 - **The serial of a fault**: a count of the program (`Program.fault_serial`, 1 for the first fault that goes to a ring), not the serial of the kernel's slot of the thread. All programs share those slots: a serial of a slot in a record would tell a program how many threads the other programs made in its slots.
 
 **The states of a faulting thread**, each change under the locks named:
@@ -467,15 +489,17 @@ A program names one of its threads as its fault handler (`Fault_Handler_Set`, op
 - **Waiting, then ready** (`Fault_Answer` with `Resume`): under the program lock, `fault_waits` becomes false; then `thread_wake` makes it `Ready` under the run lock, as the end of a word wait does. If the thread is still on its processor, `schedule` puts it in a queue when it leaves (the rule of `thread_ready_held`).
 - **Waiting, then stopped** (`Fault_Answer` with `Stop`, `program_stop`, the end of the handler): `program_stop` ends it.
 
-**The return.** A thread resumed after an answer returns through `run`, so its frame passes `return_frame_prepare` as each return does ("The return to a program"). The frame is the one that the processor gave at the fault: the instruction runs again. No operation lets a thread of the program write the registers of a waiting thread, so the single check of the frame stays the only place where a program can change a frame.
+**The return.** A thread resumed after an answer returns through `run`, so its frame passes `return_frame_prepare` as each return does ("The return to a program"). The frame is the one that the processor gave at the fault: after a page fault the instruction runs again; after a trap the thread continues at the next instruction. No operation lets a thread of the program write the registers of a waiting thread, so the single check of the frame stays the only place where a program can change a frame.
 
-**The answer `Stop`** writes the stop report from the frame of the waiting thread and the address of its fault (`program_fault_report`, the same code as a fault with no handler), with the stack trace of the waiting thread: the answering thread is of the same program, so the page table of its processor is the one of the program.
+**The answer `Stop`** writes the stop report from the frame of the waiting thread and the address of its fault (`program_fault_report`, the same code as a fault with no handler: the stop code `STOP_CODE_FAULT` plus the vector, the vector, the instruction, the address of a page fault), with the stack trace of the waiting thread: the answering thread is of the same program, so the page table of its processor is the one of the program.
 
 **The kernel operations**: 30 `Fault_Handler_Set` and 31 `Fault_Answer`. With `Events_Set` (32, "Kernel events"), the kernel has 32 operations: the first target of property 1, 32 or fewer.
 
-**The address of a fault** is read from `cr2` once, at the start of `kernel_interrupt`, and each path of the page fault (`page_fault`, `fault_deliver`, `program_fault`) takes that value.
+**The address of a fault** is read from `cr2` once, at the start of `kernel_interrupt`, and each path of the page fault (`page_fault`, `fault_deliver`, `program_fault`) takes that value. For another kind the address is 0.
 
-**Not built**: a pager for another program; a flag of a mapping; a fault of a thread of the kernel on behalf of a program; the faults of other kinds (a protection fault, a division by zero); an operation that writes the registers of a waiting thread.
+**The kernel event of a fault** (`Fault`, "Kernel events") has the vector in its detail for each kind, and the outcome `Fault_Ring` for a fault that went to the ring.
+
+**Not built**: a pager for another program; a flag of a mapping; a fault of a thread of the kernel on behalf of a program; an operation that writes the registers of a waiting thread, and so a `Resume` after a fault other than a page fault.
 
 ## The extended state of the processor
 
@@ -665,6 +689,41 @@ The cost: the copy of 176 bytes at each return, on a line of the stack that the 
 - An NMI or a machine check at any instruction between the `swapgs` of `resume` and its `iretq` (the 15 pops, the add, the `iretq`) arrives with the gs of the program and is not recognised: the kernel stops the machine, with a report that reads nothing through gs. A program cannot cause it: the kernel sends no NMI, and a machine check is a fault of the hardware.
 - The fault of `kernel_enter` between its `swapgs` and the switch of the stack cannot come: the instructions there touch only the processor record. An NMI there stops the machine, as above.
 
+## The control registers of a processor
+
+The kernel writes its own control registers on each processor, the first one and the others, in `processor_setup` (`kernel/processor.odin`). It keeps no bit that the firmware set for its own reasons: such a bit would decide what a program sees. The values are constants with asserts of their bits. The first processor writes one line at boot: "kernel: control registers: cr0 ..., cr4 ...", with UMIP on or not.
+
+**CR0** is one value, `0x80050033`:
+
+| Bit | Name | Why |
+|---|---|---|
+| 0 | protected mode | needed for long mode |
+| 1 | monitor coprocessor | `wait` obeys the flag task switched, which stays clear |
+| 4 | extension type | always 1 on a 64-bit processor |
+| 5 | numeric error | an x87 error is `X87_Floating_Point` of the thread. Without it, the error goes out on line 13 of the interrupt controller: a device interrupt of the program that owns that line, and no record |
+| 16 | write protect | the kernel obeys read-only pages |
+| 18 | alignment mask | a program that sets the flag AC gets `Alignment_Check` for an access that is not aligned, on every machine. It acts at level 3 only: the kernel, and its `stac` and `clac`, are not changed. Without it `Alignment_Check` would be a kind that the kernel lists and never delivers |
+| 31 | paging | needed for long mode |
+
+Clear: emulation (2) and task switched (3), so device not available never comes (the kernel keeps the extended state of the thread in the registers while it runs); not write-through (29) and cache disabled (30), so the caches work. The start code of the other processors loads the CR0 of the first processor, read after its setup, then `processor_setup` writes the value again.
+
+**CR4** keeps five bits of its value before `processor_setup`: the physical address extension (5) and the count of levels of the page table (12), which long mode needs and which cannot change in 64-bit mode, and `OSFXSR` (9), `OSXMMEXCPT` (10) and `OSXSAVE` (18), which the setup of the extended state set just before ("The extended state of the processor"). It adds, when `CPUID` has them:
+
+| Bit | Name | `CPUID` | Why |
+|---|---|---|---|
+| 6 | machine check | leaf 1, `EDX` bit 7 | a machine check is the exception 18, which stops the machine with a line; without it the processor shuts down with no line |
+| 11 | UMIP | leaf 7, `ECX` bit 2 | `sgdt`, `sidt`, `sldt`, `smsw` and `str` of a program give `General_Protection`, so a program reads no address of a table of the kernel |
+| 20 | SMEP | leaf 7, `EBX` bit 7 | the kernel does not execute the memory of programs |
+| 21 | SMAP | leaf 7, `EBX` bit 20 | the kernel uses the memory of programs only in `user_copy` |
+
+Every other bit is cleared, among them the global pages, the time stamp disable, the base registers of `fs` and `gs` for programs, and the process context identifiers.
+
+**With no UMIP**, a program reads with `sgdt` the address and the limit of the segment table of its processor (in the record of the processor), with `sidt` the address of the interrupt table of the kernel, and with `smsw` the low 16 bits of CR0. `sldt` gives 0 (the kernel has no local table) and `str` the selector of the task state. These are addresses of the kernel half, which a program cannot read or write; they tell where the kernel placed its tables, nothing else.
+
+**DR7** is 0x400 (no breakpoint on) and **DR6** 0xFFFF0FF0 (no status) on each processor: no breakpoint of the firmware stays on. A debug exception in the kernel stops the machine, and the entry of `syscall` runs a few instructions on the stack of the program before it takes its own.
+
+**A non-maskable interrupt, a double fault or a machine check** stops the machine with a line, also when a program ran: none is a fault of an instruction of that program, and to stop only that program would hide the fault of the machine or of the kernel.
+
 ## The instructions of the kernel
 
 The small instructions of the kernel (ports, MSR, `cr3`) are `asm` templates; the cycle counter and the copy and fill of memory have the forms of sections 2 and 4. No measure of this form is recorded (section 6). The term is in `GLOSSARY.md`: instruction template. The code is `kernel/instructions.odin`; what stays in assembler is in `kernel/processor.asm`.
@@ -682,7 +741,8 @@ The syntax comes from the tests of the compiler (`tests/internal/test_asm_*.odin
 | `port_write_8`, `port_read_8` | `out`, `in` (8 bits) | each byte of the log on the serial port (a read of the status and a write), the end of a line interrupt of the 8259 |
 | `model_specific_register_read`, `model_specific_register_write` | `rdmsr`, `wrmsr` | each register of the interrupt controller in x2APIC mode (the end of an interrupt, the timer, the interrupt to another processor), and the gs base of the program at a switch of threads |
 | `control_register_3_read`, `control_register_3_write` | `mov` from and to `cr3` | each switch to a thread of another program, and the answer to `processor_sync` |
-| `control_register_0_read`, `control_register_2_read`, `control_register_4_read`, `control_register_4_write` | `mov` from and to `cr0`, `cr2`, `cr4` | `cr2` at each page fault; the others at the start of a processor |
+| `control_register_0_read`, `control_register_0_write`, `control_register_2_read`, `control_register_4_read`, `control_register_4_write` | `mov` from and to `cr0`, `cr2`, `cr4` | `cr2` at each page fault; the others at the start of a processor |
+| `debug_register_6_write`, `debug_register_7_write` | `mov` to `dr6`, `dr7` | once, at the start of a processor |
 | `page_flush` | `invlpg` | each page of an unmap, a decommit or a change of protection |
 | `processor_self` | `mov` from `[gs:16]` | many times in each kernel entry: each lock, each operation |
 | `interrupt_table_load`, `task_register_load` | `lidt`, `ltr` | once, at the start of a processor |

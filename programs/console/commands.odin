@@ -1126,17 +1126,40 @@ error_details_print :: proc "contextless" (item: ^Command, details: []errors.Err
 	}
 }
 
-// stop_reason gives the text of the code of a stopped program.
+// stop_reason gives the text of the code of a stopped program: each fault
+// kind that the kernel delivers, and each stop code of the kernel.
 stop_reason :: proc "contextless" (code: u32) -> string {
 	switch code {
-	case op.STOP_CODE_FAULT + 0:
+	case op.STOP_CODE_FAULT + u32(op.Fault_Kind.Divide_Error):
 		return "division by zero"
-	case op.STOP_CODE_FAULT + 6:
+	case op.STOP_CODE_FAULT + u32(op.Fault_Kind.Debug):
+		return "debug trap"
+	case op.STOP_CODE_FAULT + u32(op.Fault_Kind.Breakpoint):
+		return "breakpoint"
+	case op.STOP_CODE_FAULT + u32(op.Fault_Kind.Invalid_Opcode):
 		return "invalid instruction"
-	case op.STOP_CODE_FAULT + 13:
+	case op.STOP_CODE_FAULT + u32(op.Fault_Kind.Segment_Not_Present):
+		return "segment not present"
+	case op.STOP_CODE_FAULT + u32(op.Fault_Kind.Stack_Fault):
+		return "stack fault"
+	case op.STOP_CODE_FAULT + u32(op.Fault_Kind.General_Protection):
 		return "protection fault"
-	case op.STOP_CODE_FAULT + 14:
+	case op.STOP_CODE_FAULT + u32(op.Fault_Kind.Page_Fault):
 		return "page fault"
+	case op.STOP_CODE_FAULT + u32(op.Fault_Kind.X87_Floating_Point):
+		return "x87 floating-point error"
+	case op.STOP_CODE_FAULT + u32(op.Fault_Kind.Alignment_Check):
+		return "alignment check"
+	case op.STOP_CODE_FAULT + u32(op.Fault_Kind.Simd_Floating_Point):
+		return "SIMD floating-point error"
+	case op.STOP_CODE_NO_HANDLE:
+		return "its last handle closed"
+	case op.STOP_CODE_NOT_COMMITTED:
+		return "page fault on a page that is not committed"
+	case op.STOP_CODE_RETURN:
+		return "the kernel cannot return to its thread"
+	case op.STOP_CODE_FAULT_UNANSWERED:
+		return "a fault that no thread can answer: its fault ring ended"
 	}
 	return code >= op.STOP_CODE_FAULT ? "fault" : "it stopped itself"
 }
