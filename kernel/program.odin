@@ -1622,6 +1622,18 @@ kernel_interrupt :: proc "c" (frame: ^Frame) {
 	if !from_program && frame.rip == u64(uintptr(&resume_return)) && frame.vector >= 11 && frame.vector <= 13 {
 		return_refused_by_the_processor(frame)
 	}
+	// A non-maskable interrupt, a double fault and a machine check are not
+	// faults of an instruction of the program that ran: a double fault is a
+	// mistake of the kernel, a machine check an error of the machine, and
+	// the kernel sends no non-maskable interrupt, so one reports the machine
+	// (a hardware error, or a request through the hypervisor). To stop only
+	// that program would hide the fault and go on with a machine that is
+	// not sound: the machine stops with a line, as in the kernel below.
+	if from_program && (frame.vector == VECTOR_NON_MASKABLE_INTERRUPT || frame.vector == VECTOR_DOUBLE_FAULT || frame.vector == VECTOR_MACHINE_CHECK) {
+		fault_report_begin()
+		log("kernel: ", EXCEPTION_NAMES[frame.vector], " vector ", frame.vector, " while a program ran, at ", Hex(frame.rip), ": a fault of the machine, not of the program: the machine stops")
+		machine_stop(2)
+	}
 	if !from_program && frame.vector < VECTOR_INTERRUPT_BASE {
 		// The processor can hold any lock: it takes none.
 		name := EXCEPTION_NAMES[frame.vector]

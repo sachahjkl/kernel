@@ -155,6 +155,10 @@ Shared_Page :: struct {
 	resume_status:      u32,
 	// Case 19: the arguments of Fault_Handler_Set that the kernel refused.
 	refused_arguments:  u64,
+	// 1: the parent read its budget after the start; the child runs its
+	// case only then, so that no part of its budget returned before that
+	// read.
+	go:                 u32,
 }
 
 // One case of the parent: what its child gave.
@@ -828,6 +832,14 @@ child_run :: proc "contextless" (role: Role, name: string) -> (code: u32, report
 		system.log("fault_ring: ", name, ": program_start failed: ", op.STATUS_NAMES[status], "; the load: ", system.written(&lines), "; this program can give pages ", before.pages, ", programs ", before.programs, ", threads ", before.threads, ", and the child asks ", u64(CHILD_PAGES), ", 1, ", u64(CHILD_THREADS))
 		return
 	}
+	// The budget of this program once the child has its own. The start
+	// also made page tables of this program, for its views of the module of
+	// the child (support/system, module_prepare and segment_copy), and an
+	// unmap keeps them: they are this program's, not the child's. From
+	// here, the child gives back exactly what it was given.
+	given, _ := system.budget_read()
+	intrinsics.atomic_store(&in_parent.go, 1)
+	system.word_wake(&in_parent.go)
 	stopped := false
 	results: [7]u64
 	// A case that never writes its progress keeps the bound of a hang from
@@ -889,15 +901,20 @@ child_run :: proc "contextless" (role: Role, name: string) -> (code: u32, report
 	// The budget of a child returns when its last processor left it: wait
 	// for it. The bound only ends a hang: a loaded host can take long.
 	left_behind = true
+	after: system.Budget_Amounts
 	for deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS; left_behind && system.time() < deadline; {
-		after, _ := system.budget_read()
-		left_behind = after.pages != before.pages || after.threads != before.threads || after.programs != before.programs
+		after, _ = system.budget_read()
+		left_behind = after.pages != given.pages + CHILD_PAGES || after.threads != given.threads + CHILD_THREADS || after.programs != given.programs + 1
 		if left_behind {
 			system.sleep(system.time() + 10)
 		}
 	}
 	if left_behind {
-		system.log("fault_ring: ", name, ": the budget of this program did not get back every page, thread and program of the child in ", u64(system.TEST_HANG_BOUND_MILLISECONDS), " ms")
+		// The numbers tell a slow release from a leak, and which amount it
+		// is: the next read comes after the line.
+		system.log("fault_ring: ", name, ": the budget of this program did not get back every page, thread and program of the child in ", u64(system.TEST_HANG_BOUND_MILLISECONDS), " ms: pages ", given.pages + CHILD_PAGES, " expected, ", after.pages, " after; threads ", given.threads + CHILD_THREADS, ", ", after.threads, "; programs ", given.programs + 1, ", ", after.programs)
+		later, _ := system.budget_read()
+		system.log("fault_ring: ", name, ": after the line: pages ", later.pages, ", threads ", later.threads, ", programs ", later.programs)
 	}
 	page = in_parent^
 	ran = true
@@ -931,6 +948,10 @@ case_log :: proc "contextless" (item: ^Case, code: u32, address: u64) {
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if role := role_of(ctx.values[VALUE_ROLE]); role != .Parent {
+		go := &shared_page().go
+		for intrinsics.atomic_load(go) == 0 {
+			system.word_wait(go, 0)
+		}
 		child(role)
 	}
 	if !random.generator_from_context(&program_generator, ctx) {
