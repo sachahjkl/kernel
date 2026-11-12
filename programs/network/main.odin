@@ -657,6 +657,12 @@ udp_remote_admitted :: proc "contextless" (endpoint: ^Endpoint, packet: network.
 	}
 	offset := u16(network.ETHERNET_HEADER + network.IPV4_HEADER)
 	switch {
+	case endpoint.grant.address != 0 && packet.source_address != endpoint.grant.address:
+		// A UDP listen grant that names one remote address admits that
+		// address only: a datagram of another one never reaches the program,
+		// whatever its size.
+		network.problem_count(&endpoint.problems, {kind = .Not_Granted, layer = .Udp, offset = network.ETHERNET_HEADER + 12, value = packet.source_address, limit = endpoint.grant.address}, .Endpoint)
+		return false
 	case len(packet.data) < datagram.LISTEN_FIRST_LEAST:
 		network.problem_count(&endpoint.problems, {kind = .Bad_Length, layer = .Udp, offset = offset + 4, value = u32(len(packet.data)), limit = datagram.LISTEN_FIRST_LEAST}, .Endpoint)
 		return false
@@ -843,6 +849,9 @@ controlled :: proc "contextless" (record: ring.Record) {
 			case grant.tcp && grant.listen:
 				endpoint.local_port = grant.port
 				system.log("network: an endpoint for ", system.name_of(name[:]), ": TCP, the listen port ", u64(grant.port), ", the remotes that send to it")
+			case grant.listen && grant.address != 0:
+				endpoint.local_port = grant.port
+				system.log("network: an endpoint for ", system.name_of(name[:]), ": UDP, the listen port ", u64(grant.port), ", the remotes of the address ", system.written(&writer), " only that send 1200 bytes to it")
 			case grant.listen:
 				endpoint.local_port = grant.port
 				system.log("network: an endpoint for ", system.name_of(name[:]), ": UDP, the listen port ", u64(grant.port), ", the remotes that send 1200 bytes to it")

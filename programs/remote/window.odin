@@ -21,7 +21,7 @@ COLOR_ERROR_RECORD :: graphics.COLOR_BOOT_PROGRAM
 // color "failed", with a text that says the same.
 
 WIDTH :: 720
-HEIGHT :: 528
+HEIGHT :: 552
 
 // The window is built with the interface package (docs/INTERFACE.md): the
 // elements of the rules, the damage by difference, a present of the part
@@ -47,9 +47,15 @@ draw :: proc "contextless" (window: ^display.Window) {
 	table := frame.table
 	interface.background(&frame, {0, 0, WIDTH, HEIGHT})
 	buffer: [64]u8
+	if weak_seed {
+		inside := interface.card(&frame, {8, 8, WIDTH - 16, 100}, "NO KEY", "the random seed of this program is weaker than \"processor\"", graphics.COLOR_FAILED)
+		interface.draw_text(table, inside.x, inside.y, "Seed_Too_Weak: this service makes no key, and listens on nothing", graphics.COLOR_FAILED)
+		interface.window_frame_end(&drawing, &frame, window)
+		return
+	}
 
 	// The calls of the host, with the large number of the card.
-	inside := interface.card(&frame, {8, 8, WIDTH - 16, 168}, "CALLS FROM THE HOST", "remote.Request -> isolated call -> remote.Answer", graphics.COLOR_PROGRAM)
+	inside := interface.card(&frame, {8, 8, WIDTH - 16, 192}, "CALLS FROM THE HOST", "one QUIC stream: remote.Request -> isolated call -> remote.Answer", graphics.COLOR_PROGRAM)
 	interface.large_number(&frame, inside.x, inside.y, system.format(buffer[:], counts.calls), graphics.COLOR_PROGRAM)
 	interface.draw_text(table, inside.x, inside.y + 56, "calls that ran", graphics.COLOR_DIM)
 	COLUMN :: 232
@@ -60,21 +66,21 @@ draw :: proc "contextless" (window: ^display.Window) {
 		unit:  string,
 	}
 	facts := [?]Fact {
-		{"requests from 10.0.2.2", counts.requests, ""},
-		{"datagrams of the answers", counts.datagrams, ""},
+		{"whole requests", counts.requests, ""},
 		{"refused by this program", counts.refused, ""},
-		{"sent again, not run again", counts.repeated, ""},
+		{"streams reset", counts.too_large + counts.timeouts, ""},
+		{"given up by the host", counts.cancelled, ""},
 		{"bytes in", counts.bytes_in, " B"},
 		{"bytes out", counts.bytes_out, " B"},
 	}
 	for item, index in facts {
-		color := item.name == "refused by this program" && item.value != 0 ? graphics.Color(graphics.COLOR_FAILED) : graphics.COLOR_TEXT
+		color := (item.name == "refused by this program" || item.name == "streams reset") && item.value != 0 ? graphics.Color(graphics.COLOR_FAILED) : graphics.COLOR_TEXT
 		interface.label_value_line(&frame, {inside.x + COLUMN, inside.y + index * LINE, VALUE + 64 - COLUMN, LINE}, item.name, system.format(buffer[:], item.value, item.unit), color)
 	}
-	interface.draw_text(table, inside.x + VALUE + 96, inside.y, "endpoint", graphics.COLOR_DIM)
-	interface.draw_text(table, inside.x + VALUE + 96, inside.y + LINE, system.format(buffer[:], "port ", local_port), graphics.COLOR_TEXT)
-	interface.draw_text(table, inside.x + VALUE + 96, inside.y + 2 * LINE, "grant", graphics.COLOR_DIM)
-	interface.draw_text(table, inside.x + VALUE + 96, inside.y + 3 * LINE, system.format(buffer[:], "10.0.2.2:", u64(remote.HOST_PORT)), graphics.COLOR_TEXT)
+	interface.draw_text(table, inside.x + VALUE + 96, inside.y, "listens on", graphics.COLOR_DIM)
+	interface.draw_text(table, inside.x + VALUE + 96, inside.y + LINE, system.format(buffer[:], "UDP ", u64(listen_port)), graphics.COLOR_TEXT)
+	interface.draw_text(table, inside.x + VALUE + 96, inside.y + 2 * LINE, "admits", graphics.COLOR_DIM)
+	interface.draw_text(table, inside.x + VALUE + 96, inside.y + 3 * LINE, "10.0.2.2 only", graphics.COLOR_TEXT)
 	// One bar: the width of each part is its count of requests.
 	BAR_Y :: 96
 	parts := [3]u64{counts.calls - counts.failed, counts.failed, counts.refused}
@@ -83,11 +89,15 @@ draw :: proc "contextless" (window: ^display.Window) {
 	x := interface.draw_text(table, inside.x, inside.y + BAR_Y + 12, system.format(buffer[:], counts.calls - counts.failed, " gave a result"), graphics.COLOR_PROGRAM)
 	x = interface.draw_text(table, x + 24, inside.y + BAR_Y + 12, system.format(buffer[:], counts.failed, " gave an error record"), COLOR_ERROR_RECORD)
 	interface.draw_text(table, x + 24, inside.y + BAR_Y + 12, system.format(buffer[:], counts.refused, " refused"), graphics.COLOR_FAILED)
+	// The key that the host pins: 64 hexadecimal digits.
+	key: [64]u8
+	at := interface.draw_text(table, inside.x, inside.y + BAR_Y + 12 + LINE + 8, "public key ", graphics.COLOR_DIM)
+	interface.draw_text(table, at, inside.y + BAR_Y + 12 + LINE + 8, hex_text(key[:], public_key[:]), graphics.COLOR_TEXT)
 
 	// The connections that the root service made.
-	inside = interface.card(&frame, {8, 184, WIDTH - 16, 144}, "CONNECTIONS", "root: Connect, a call ring and a call region of 64 KiB", graphics.COLOR_MEMORY)
+	inside = interface.card(&frame, {8, 208, WIDTH - 16, 144}, "CONNECTIONS", "root: Connect, a call ring and a call region of 64 KiB", graphics.COLOR_MEMORY)
 	shown := 0
-	for &connection in connections {
+	for &connection in service_connections {
 		if connection.name[0] == 0 {
 			continue
 		}
@@ -109,7 +119,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 	}
 
 	// The last calls, the last one first.
-	inside = interface.card(&frame, {8, 336, WIDTH - 16, 184}, "LAST CALLS", "remote.Answer: status, value, bytes, time in this program", graphics.COLOR_PROGRAM)
+	inside = interface.card(&frame, {8, 360, WIDTH - 16, 184}, "LAST CALLS", "remote.Answer: status, value, bytes, time in this program", graphics.COLOR_PROGRAM)
 	for row in 0 ..< min(recent_count, RECENT_CAPACITY) {
 		item := &recent[(recent_count - 1 - row) % RECENT_CAPACITY]
 		y := inside.y + int(row) * LINE
@@ -129,8 +139,8 @@ draw :: proc "contextless" (window: ^display.Window) {
 		interface.mark(&frame, inside.x + 200, y + 4, 8, color)
 		interface.draw_text(table, inside.x + 216, y, state, color)
 		if item.text_count != 0 {
-			at := 216 + interface.text_width({}, state) + 16
-			interface.draw_text(table, inside.x + at, y, string(item.text[:min(item.text_count, (inside.width - at) / graphics.CELL_WIDTH)]), graphics.COLOR_DIM)
+			text_place := 216 + interface.text_width({}, state) + 16
+			interface.draw_text(table, inside.x + text_place, y, string(item.text[:min(item.text_count, (inside.width - text_place) / graphics.CELL_WIDTH)]), graphics.COLOR_DIM)
 		} else {
 			interface.draw_text_right(table, inside.x + 488, y, system.format(buffer[:], item.value), graphics.COLOR_TEXT)
 			interface.draw_text_right(table, inside.x + 576, y, system.format(buffer[:], item.bytes, " B"), graphics.COLOR_TEXT)
@@ -138,7 +148,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 		}
 	}
 	if recent_count == 0 {
-		interface.draw_text(table, inside.x, inside.y, "none yet: kerneltool call \"monitor.programs()\" on the host", graphics.COLOR_DIM)
+		interface.draw_text(table, inside.x, inside.y, "none yet: kerneltool call <public key> \"monitor.programs()\" on the host", graphics.COLOR_DIM)
 	}
 	interface.window_frame_end(&drawing, &frame, window)
 }

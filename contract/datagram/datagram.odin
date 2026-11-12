@@ -10,7 +10,9 @@
 //                        and remote UDP port that the program reaches; the
 //                        network service gives the local port and writes the
 //                        UDP header. A listen grant names one local UDP
-//                        port, and answers only the admitted remotes: each
+//                        port, and may name one remote address: then a
+//                        datagram of another address is dropped. It answers
+//                        only the admitted remotes: each
 //                        remote that sent a datagram of LISTEN_FIRST_LEAST
 //                        bytes at least to that port, ADMITTED_CAPACITY at
 //                        most, until the program releases it (a QUIC
@@ -250,11 +252,11 @@ Problem_Row :: struct {
 // facts of all programs already.
 GRANT_INSPECT :: u64(1) << 48
 GRANT_TCP :: u64(1) << 49 // A segment endpoint.
-GRANT_LISTEN :: u64(1) << 50 // A listen grant: the port is the local TCP or UDP port, and no remote is named.
+GRANT_LISTEN :: u64(1) << 50 // A listen grant: the port is the local TCP or UDP port. A UDP listen grant may name one remote address; no remote port is named.
 
 // The grant of an endpoint.
 Grant :: struct {
-	address: u32, // The remote address. 0 with a listen grant.
+	address: u32, // The remote address. With a UDP listen grant: the one address that it admits, or 0 for each address. 0 with a TCP listen grant.
 	port:    u16, // The remote port; with a listen grant, the local TCP or UDP port.
 	inspect: bool,
 	tcp:     bool,

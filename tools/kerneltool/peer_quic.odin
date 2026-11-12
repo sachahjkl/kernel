@@ -292,6 +292,12 @@ peer_quic_case_start :: proc(peer: ^Peer, state: ^Peer_Quic) -> bool {
 // peer to the QUIC server of the machine. The relay (peer_relay.odin)
 // builds its frames with it too.
 peer_quic_udp :: proc(peer: ^Peer, source: [4]u8, port: u16, data: []u8) -> []u8 {
+	return peer_udp_to_machine(peer, source, port, QUIC_SERVER_PORT, data)
+}
+
+// peer_udp_to_machine builds a frame of a UDP datagram from an address and
+// a port of the peer to a UDP port of the machine.
+peer_udp_to_machine :: proc(peer: ^Peer, source: [4]u8, port: u16, destination_port: u16, data: []u8) -> []u8 {
 	length := 8 + len(data)
 	frame := make([]u8, max(42 + len(data), 60), context.temp_allocator)
 	sync.mutex_lock(&peer.lock)
@@ -312,7 +318,7 @@ peer_quic_udp :: proc(peer: ^Peer, source: [4]u8, port: u16, data: []u8) -> []u8
 	copy(ip[16:20], machine_address[:])
 	put16(ip, 10, internet_sum(0, ip))
 	put16(frame, 34, int(port))
-	put16(frame, 36, QUIC_SERVER_PORT)
+	put16(frame, 36, int(destination_port))
 	put16(frame, 38, length)
 	copy(frame[42:], data)
 	value := internet_sum(pseudo_sum(address[:], machine_address[:], length), frame[34:42 + len(data)])
