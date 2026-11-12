@@ -352,6 +352,14 @@ schedule :: proc "contextless" () -> ! {
 	if cpu.current != 0 {
 		index := cpu.current
 		thread := &threads[index]
+		// The x87, SSE and AVX registers of the thread are still live: no
+		// code of the kernel changed them since the thread entered. They
+		// go to its area now, before any other processor can take the
+		// thread: a thread on a processor is in no queue, and it reaches
+		// one only below (queue_ready), or through a wake after its
+		// processor is 0. The release of the run lock orders this save
+		// before the restore of the processor that takes it.
+		extended_state_save(&thread.extended_state, extended_state_form)
 		program := thread.program
 		home := run_lock(thread)
 		ended := intrinsics.atomic_load(&thread.stop_requested)
@@ -397,6 +405,13 @@ schedule :: proc "contextless" () -> ! {
 			cpu.charged_from = cycles_now()
 			cpu.turn_start = cpu.charged_from
 			cpu.slice_left = TIME_SLICE
+			// The registers of this processor hold the thread that it left,
+			// or nothing of use: the area of the thread that it takes is
+			// complete (saved where it left, or the start state of a new
+			// thread). Also when it takes the thread that it left just now:
+			// a restore then costs a little, and keeps no rule of who owns
+			// the registers.
+			extended_state_restore(&thread.extended_state, extended_state_form)
 			run(cpu, thread)
 		}
 		if intrinsics.atomic_load(&root_started) && !threads_alive() {
@@ -425,7 +440,10 @@ schedule :: proc "contextless" () -> ! {
 }
 
 // run gives the processor to its current thread. The program of the
-// thread stays while the thread is on this processor (`holds`).
+// thread stays while the thread is on this processor (`holds`). The
+// registers of the extended state of the thread are live already: a
+// thread that continues after an entry kept them, and schedule restored a
+// thread that it took from a queue.
 run :: proc "contextless" (cpu: ^Processor, thread: ^Thread) -> ! {
 	if cpu.preempt_from != 0 {
 		cpu.preempt_cycles += cycles_now() - cpu.preempt_from
@@ -447,7 +465,6 @@ run :: proc "contextless" (cpu: ^Processor, thread: ^Thread) -> ! {
 		cpu.record_serial = thread.serial
 		msr_write(MSR_KERNEL_GS_BASE, thread.record)
 	}
-	cpu.fpu_area = &thread.fpu
 	if thread.in_enter {
 		thread.in_enter = false
 		thread.frame.rax = intrinsics.atomic_load(&time_milliseconds)

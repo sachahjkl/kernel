@@ -169,7 +169,7 @@ Thread :: struct #align (64) {
 	queued:           bool,
 	placed:           bool, // The strategy placed the thread: virtual means something.
 	frame:        Frame,
-	fpu:          Fpu_State,
+	extended_state: Extended_State_Area, // Complete while the thread is on no processor: schedule saves it when a processor leaves the thread, and restores it when a processor takes it (docs/ARCHITECTURE.md, "The extended state of the processor").
 	program:      u32,
 	number:       u32, // The index of the thread area in the program.
 	ring:         ring.Ring,
@@ -1118,8 +1118,6 @@ maps_region :: proc "contextless" (program: ^Program, region: u32) -> bool {
 	return false
 }
 
-FPU_START :: [32]u8{0 = 0x7F, 1 = 0x03, 24 = 0x80, 25 = 0x1F}
-
 // time_page_create makes the time page. The kernel keeps one reference:
 // the page stays when no program has it.
 time_page_create :: proc "contextless" () -> bool {
@@ -1257,30 +1255,31 @@ thread_create :: proc "contextless" (program_index: u32, budget: u32, entry, sta
 	serial := thread.serial + 1
 	wait_serial := thread.wait_serial
 	home := thread.home
-	thread^ = {
-		state = .Ready,
-		program = program_index,
-		budget = budget,
-		number = number,
-		ring = thread_ring,
-		record = record,
-		events = &direct(regions[region].physical, op.Thread_Record).events,
-		serial = serial,
-		wait_serial = wait_serial,
-		home = home,
-		weight = weight == 0 ? op.WEIGHT_FULL : u32(weight),
-		request = request == 0 ? op.REQUEST_DEFAULT : u32(request),
-		frame = {
-			rip    = entry,
-			cs     = SELECTOR_USER_CODE,
-			rflags = USER_FLAGS,
-			rsp    = stack - 8, // As after a call instruction.
-			ss     = SELECTOR_USER_DATA,
-			rdi    = parameter,
-		},
+	// Written in place: a composite literal of the whole entry can be built
+	// on the kernel stack first, and the entry holds an extended state area
+	// of 2688 bytes.
+	intrinsics.mem_zero(thread, size_of(Thread))
+	thread.state = .Ready
+	thread.program = program_index
+	thread.budget = budget
+	thread.number = number
+	thread.ring = thread_ring
+	thread.record = record
+	thread.events = &direct(regions[region].physical, op.Thread_Record).events
+	thread.serial = serial
+	thread.wait_serial = wait_serial
+	thread.home = home
+	thread.weight = weight == 0 ? op.WEIGHT_FULL : u32(weight)
+	thread.request = request == 0 ? op.REQUEST_DEFAULT : u32(request)
+	thread.frame = {
+		rip    = entry,
+		cs     = SELECTOR_USER_CODE,
+		rflags = USER_FLAGS,
+		rsp    = stack - 8, // As after a call instruction.
+		ss     = SELECTOR_USER_DATA,
+		rdi    = parameter,
 	}
-	start := FPU_START
-	copy(thread.fpu.bytes[:], start[:])
+	extended_state_start(&thread.extended_state)
 	budgets[budget].amounts.threads -= 1
 	program.thread_areas |= 1 << number
 	program.thread_count += 1

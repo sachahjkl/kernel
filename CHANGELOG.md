@@ -6,6 +6,21 @@ The project has steps, not separate releases. The merge of step N on `master` is
 
 What is not in a release yet is in `changelog.d/`, one fragment for each change. `kerneltool changelog release` writes a release from the fragments. Nobody edits this file by hand.
 
+## [0.81.0] - 2026-11-12
+
+### Added
+
+- **Programs can use AVX and AVX-512**: the kernel saves the extended state of each thread with `xsaveopt` (x87, SSE, AVX, and AVX-512 when the processor has it; one save writes at most 832 bytes with AVX and 2688 with AVX-512, and each thread entry of the kernel holds an area of 2688 bytes), sets `CR4` and `XCR0` itself on each processor, and logs what it saves at boot. A processor without `xsave` keeps the save with `fxsave`. A program reads what it can use with `support/instruction_sets`, and the program `extended_state` shows that each register of each thread is kept.
+
+### Changed
+
+- **A kernel entry no longer saves the vector registers of a program**: the kernel saves and restores the x87, SSE and AVX registers of a thread only when a processor leaves it for another thread, and the kernel itself has no instruction that uses them, which the build proves on each kernel that it makes. One kernel entry takes 120 to 124 ns where it took 176 to 178 ns (the machine of the test, two runs each), and one hand-over between two threads takes 125 to 133 ns with the registers saved and restored.
+
+### Fixed
+
+- **A program that used AVX no longer gets the high halves of its ymm registers from another thread**: before, the kernel saved only 512 bytes with `fxsave` and kept the `XCR0` that the firmware left, so AVX could work with wrong values and no error. Now a register state component is enabled only when the kernel saves it.
+- **A reset QUIC stream no longer closes the whole connection**: when a stream was reset while flow control still held back some of its bytes, the reset named the bytes written instead of the bytes sent, and a correct peer closed the connection. The bytes of a stream are now erased from memory when the stream ends.
+
 ## [0.80.0] - 2026-11-12
 
 ### Added

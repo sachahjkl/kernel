@@ -256,6 +256,8 @@ things_of :: proc "contextless" (name: string) -> system.Budget_Amounts {
 		return {pages = 2048, programs = 1, threads = 9}
 	case "locks":
 		return {pages = 9216, programs = 8, threads = 20} // 4 lockers of 1024 pages, then 3 at a time of the stress case.
+	case "extended_state":
+		return {pages = 2048, programs = 1, threads = 32} // The main thread and up to 31 threads that hold their registers.
 	case "address_space":
 		return {pages = 40960, programs = 2, threads = 6} // 64 MiB of large pages, two ranges of 1 GiB with their page tables, a child.
 	case "scheduler":

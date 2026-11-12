@@ -78,7 +78,7 @@ Command :: struct {
 COMMANDS :: [?]Command {
 	{name = "build", about = "the modules, the boot image and the boot program, as " + BOOT_PROGRAM + "; one process for each module, as many at once as the processors, or `build <processes>`", run = run_build},
 	{name = "module", about = "module <name> with_checks|without_checks measure_run|usual_run: build one module of the table (the parallel build runs this command)", run = run_module},
-	{name = "test", about = "build, start the machine under QEMU, act as the person, check the log, save pictures of the screen; `test network`, `test main`, `test power`, `test tcp`, `test quic`, `test quic-real`: one part only", run = run_test},
+	{name = "test", about = "build, start the machine under QEMU, act as the person, check the log, save pictures of the screen; `test network`, `test main`, `test power`, `test tcp`, `test quic`, `test quic-real`, `test random`, `test extended_state`: one part only", run = run_test},
 	{name = "run", about = "build, then start the machine under QEMU, with the log of the kernel on this terminal; `run without_checks`: the measure build", run = run_machine},
 	{name = "screenshots", about = "test, then copy the pictures to " + DOCUMENT_SCREENSHOT_FOLDER + " and to a new folder of " + DEVELOPMENT_LOG_FOLDER, run = run_screenshots},
 	{name = "measure", about = "build, start the machine, run the measures of the locks of the kernel with no other program, and stop: the numbers are in " + TEST_OUTPUT_MEASURE + "; `measure scheduler N`: the program scheduler N times; `measure windows`: each window that the interface package draws, alone, and a table of the time of its pictures; `measure without_checks ...`: the measure build, with no check in the kernel (no lock order check, no check of the frames)", run = run_measure},
@@ -236,7 +236,7 @@ run_test :: proc(args: []string) -> int {
 	if !disk_prepare(TEST_DATA_DISK, DATA_DISK_SIZE, true) {
 		return EXIT_FAILURE
 	}
-	// `test network`, `test main`, `test power`, `test tcp`: one part only, for the work on it.
+	// `test network`, `test main`, `test power`, `test tcp`, `test random`, `test extended_state`: one part only, for the work on it.
 	if len(args) == 1 && args[0] == "tcp" {
 		return tcp_tests_run() ? 0 : EXIT_FAILURE
 	}
@@ -261,6 +261,10 @@ run_test :: proc(args: []string) -> int {
 	if len(args) == 1 && args[0] == "shortage" {
 		return machine_test(scenario_shortage[:], BOOT_VOLUME_SHORTAGE, TEST_OUTPUT_SHORTAGE, MACHINE_STOP_OK, TEST_DATA_DISK) ? 0 : EXIT_FAILURE
 	}
+	// `test extended_state`: the three machines of the extended state only.
+	if len(args) == 1 && args[0] == "extended_state" {
+		return extended_state_tests_run() ? 0 : EXIT_FAILURE
+	}
 	// `test tcp`: the two machines of TCP only.
 	if len(args) == 1 && args[0] == "tcp" {
 		return tcp_tests_run() ? 0 : EXIT_FAILURE
@@ -274,7 +278,7 @@ run_test :: proc(args: []string) -> int {
 	if len(args) == 1 && args[0] == "quic-real" {
 		return quic_real_tests_run() ? 0 : EXIT_FAILURE
 	}
-	if !machine_test(scenario_fails[:], BOOT_VOLUME_FAILS, TEST_OUTPUT_FAILS, 0) || !machine_test(scenario_shortage[:], BOOT_VOLUME_SHORTAGE, TEST_OUTPUT_SHORTAGE, MACHINE_STOP_OK, TEST_DATA_DISK) || !self_tests_run() || !machine_test(scenario[:], BOOT_VOLUME, TEST_OUTPUT, MACHINE_STOP_OK, TEST_DATA_DISK) || !machine_test(scenario_network[:], BOOT_VOLUME, TEST_OUTPUT_NETWORK, MACHINE_STOP_OK, TEST_DATA_DISK) || !tcp_tests_run() || !quic_tests_run() || !quic_real_tests_run() || !random_tests_run() || !cryptography_tests_run() || !persistence_run() || !power_loss_run() || !power_loss_settings_run() || !test_modules() || !test_descriptions() {
+	if !machine_test(scenario_fails[:], BOOT_VOLUME_FAILS, TEST_OUTPUT_FAILS, 0) || !machine_test(scenario_shortage[:], BOOT_VOLUME_SHORTAGE, TEST_OUTPUT_SHORTAGE, MACHINE_STOP_OK, TEST_DATA_DISK) || !self_tests_run() || !machine_test(scenario[:], BOOT_VOLUME, TEST_OUTPUT, MACHINE_STOP_OK, TEST_DATA_DISK) || !machine_test(scenario_network[:], BOOT_VOLUME, TEST_OUTPUT_NETWORK, MACHINE_STOP_OK, TEST_DATA_DISK) || !tcp_tests_run() || !quic_tests_run() || !quic_real_tests_run() || !random_tests_run() || !extended_state_tests_run() || !cryptography_tests_run() || !persistence_run() || !power_loss_run() || !power_loss_settings_run() || !test_modules() || !test_descriptions() {
 		return EXIT_FAILURE
 	}
 	fmt.println("kerneltool: all tests passed")
@@ -420,7 +424,7 @@ run_check :: proc(args: []string) -> int {
 	// compiler assembles runtime/memory_for_host_tests.asm itself and links
 	// its object by its path (a library found through `-L/` is refused by
 	// the linker of the Nix sandbox).
-	for folder in ([]string{"runtime", "contract/blake3", "contract/isolated", "contract/pointer_pictures", "contract/remote", "support/sentence", "support/cryptography/vectors", "modules/cryptography", "support/quic", "contract/date", "support/storage_mount", "support/storage_retention", "support/calendar", "support/line_editor", "modules/interface_module", "modules/sample", "support/system", "support/bar", "support/graphics", "support/interface", "support/addresses", "support/information", "support/vector_font", "support/network", "support/tcp", "support/web", "support/cryptography/chacha20", "support/random", "tools/kerneltool", "contract/fixed_addresses", "contract/settings", "modules/text_shaping", "support/text_shaping", "support/mark", "support/terminal"}) {
+	for folder in ([]string{"runtime", "contract/blake3", "contract/isolated", "contract/pointer_pictures", "contract/remote", "support/sentence", "support/cryptography/vectors", "modules/cryptography", "support/quic", "contract/date", "support/storage_mount", "support/storage_retention", "support/calendar", "support/line_editor", "modules/interface_module", "modules/sample", "support/system", "support/bar", "support/graphics", "support/interface", "support/addresses", "support/information", "support/vector_font", "support/network", "support/tcp", "support/web", "support/cryptography/chacha20", "support/random", "tools/kerneltool", "contract/fixed_addresses", "contract/settings", "modules/text_shaping", "support/text_shaping", "support/mark", "support/terminal", "runtime/without_vector_registers", "support/instruction_sets"}) {
 		name, _ := strings.replace_all(folder, "/", "_", context.temp_allocator)
 		if !run({"odin", "test", folder, "-vet", CONTRACT_LIBRARY, SUPPORT_LIBRARY, strings.concatenate({"-out:" + BUILD_FOLDER + "/test_", name}, context.temp_allocator)}) {
 			return EXIT_FAILURE
@@ -444,6 +448,22 @@ run_check :: proc(args: []string) -> int {
 	return outputs_same_after_second_build() ? 0 : EXIT_FAILURE
 }
 
+// The processor of a test machine, as the -cpu of QEMU.
+Processor_Model :: enum {
+	Maximum, // Each feature that the host processor, or the emulation, has.
+	Without_Random, // No rdrand and no rdseed: the fallback of the seed of the root service (`test random`).
+	Without_Avx, // No AVX: the kernel saves x87 and SSE with xsaveopt (`test extended_state`).
+	Without_Xsave, // No xsave: the kernel saves with fxsave (`test extended_state`).
+}
+
+@(rodata)
+processor_models := [Processor_Model]string {
+	.Maximum        = "max",
+	.Without_Random = "max,-rdrand,-rdseed",
+	.Without_Avx    = "max,-avx",
+	.Without_Xsave  = "max,-xsave",
+}
+
 // machine_command gives the one QEMU command line of the project: the first
 // machine of property 7. The boot volume is a virtio block device. If
 // test_output is a path, the machine has no window and writes its log there.
@@ -451,9 +471,8 @@ run_check :: proc(args: []string) -> int {
 // loopback of the host, at peer_port, as one UDP datagram.
 // The network device goes to the peer (`-netdev dgram`), or, when forward
 // has a port, to QEMU user networking with its TCP (web_host.odin).
-// processor_without_random takes rdrand and rdseed out of the processor of
-// the machine: the fallback of the seed of the root service (`test random`).
-machine_command :: proc(volume: string, test_output: string, data_disk: string, peer: ^Peer, forward: Forward = {}, processor_without_random := false) -> (command: []string, ok: bool) {
+// processor gives the processor of the machine (Processor_Model).
+machine_command :: proc(volume: string, test_output: string, data_disk: string, peer: ^Peer, forward: Forward = {}, processor: Processor_Model = .Maximum) -> (command: []string, ok: bool) {
 	if !disk_prepare(SCRATCH_DISK, SCRATCH_DISK_SIZE, false) {
 		return nil, false
 	}
@@ -482,7 +501,7 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 		"-accel",
 		"tcg",
 		"-cpu",
-		processor_without_random ? "max,-rdrand,-rdseed" : "max", // Each feature that the host processor, or the emulation, has.
+		processor_models[processor],
 		"-m",
 		"512",
 		"-smp",
