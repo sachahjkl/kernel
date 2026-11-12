@@ -53,8 +53,27 @@ Fixed_Range :: enum u8 {
 	Date_Page, // The date page (contract:date).
 	Storage_File, // The file of the storage service (support/storage).
 	Module_Tables, // The tables of the parameters of one export, in the program that receives the call (contract:isolated).
+	Interface_Glyph_Cache, // The glyph cache of the interface font, regular weight (contract:settings).
+	Interface_Glyph_Cache_Bold, // The glyph cache of the interface font, bold weight.
 }
 #assert(int(max(Fixed_Range)) < SLOT_COUNT)
+
+// Fixed_Ranges: a set of ranges, one bit for each member. The value
+// op.CONTEXT_VALUE_FIXED_RANGES_MAPPED of the context of a program is the
+// set that its starter mapped. A bit past the last member has no meaning.
+Fixed_Ranges :: bit_set[Fixed_Range;u64]
+#assert(size_of(Fixed_Ranges) == size_of(u64))
+
+// ranges_mapped gives the ranges that the starter of a program mapped for it.
+ranges_mapped :: proc "contextless" (values: ^[op.CONTEXT_VALUES]u64) -> Fixed_Ranges {
+	return transmute(Fixed_Ranges)values[op.CONTEXT_VALUE_FIXED_RANGES_MAPPED]
+}
+
+// range_mapped_add is for a starter: it states in the values of its child
+// that it maps a range.
+range_mapped_add :: proc "contextless" (values: ^[op.CONTEXT_VALUES]u64, range: Fixed_Range) {
+	values[op.CONTEXT_VALUE_FIXED_RANGES_MAPPED] = transmute(u64)(ranges_mapped(values) + {range})
+}
 
 // The band is after the addresses that the kernel chooses and the modules,
 // and inside the addresses of a program.
@@ -70,6 +89,8 @@ GLYPH_CACHE_BOLD_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Glyph_Cache_Bold
 DATE_PAGE_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Date_Page)
 STORAGE_FILE_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Storage_File)
 MODULE_TABLES_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Module_Tables)
+INTERFACE_GLYPH_CACHE_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Interface_Glyph_Cache)
+INTERFACE_GLYPH_CACHE_BOLD_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Interface_Glyph_Cache_Bold)
 
 Address_Range :: struct {
 	address: u64,

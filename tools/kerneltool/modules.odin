@@ -130,7 +130,7 @@ build_modules :: proc() -> bool {
 	build_modules_in_parallel() or_return
 	// The pointer themes: the resources of the boot image (pointers.odin).
 	resources := build_pointer_themes(os.get_env(POINTER_THEME_SOURCE_VARIABLE, context.temp_allocator), false) or_return
-	// The two glyph caches of the default font: two more resources (vector_fonts.odin).
+	// The glyph caches of the default font and of the interface font: five more resources (vector_fonts.odin).
 	glyph_caches := build_glyph_caches() or_return
 	all_resources := make([dynamic]Resource_File, context.temp_allocator)
 	append(&all_resources, ..resources)

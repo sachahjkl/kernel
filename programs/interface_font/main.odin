@@ -4,11 +4,9 @@
 // word at the three positions of a pixel, enlarged, the digits in columns,
 // and the time of one line.
 //
-// The program carries the two subsets of resources/fonts and builds the
-// two glyph caches in its own memory at start, as `vector_glyphs` builds
-// the caches of the candidates: the caches of the interface font are not
-// yet resources of the boot image. The labels of the window are the text
-// of the system.
+// The two glyph caches are resources of the boot image that the root
+// service maps read-only at their fixed ranges (display.interface_font_open
+// validates them). The labels of the window are the text of the system.
 package interface_font
 
 import "contract:glyph_cache"
@@ -17,24 +15,11 @@ import "support:graphics"
 import "support:interface"
 import "support:system"
 import "support:text_shaping"
-import "support:vector_font"
 
 WIDTH :: 800
 HEIGHT :: 640
 
-regular_font := #load("../../resources/fonts/b612.ttf")
-bold_font := #load("../../resources/fonts/b612_bold.ttf")
-
-// The room of each cache, in 8-byte words. The caches of the tool are
-// 424 784 bytes (three positions at scale 1, one at the scales 2 and 3) and
-// 108 324 bytes (the bold weight at scale 1, three positions).
-REGULAR_CACHE_ROOM :: 640 * 1024
-BOLD_CACHE_ROOM :: 192 * 1024
-regular_memory: [REGULAR_CACHE_ROOM / 8]u64
-bold_memory: [BOLD_CACHE_ROOM / 8]u64
-render_memory: vector_font.Render_Memory
 regular_cache, bold_cache: glyph_cache.Cache
-regular_build_time, bold_build_time: u64
 // The spacing of the regular weight at scale 1 and at scale 3, the bold
 // weight at scale 1, and the regular weight at scale 3 with no pair.
 regular_spacing, regular_spacing_large, bold_spacing, no_pair_spacing_large: text_shaping.Spacing
@@ -67,29 +52,6 @@ shaping_time, drawing_time: u64
 records_now, records_before: [128]interface.Draw_Record
 text_now, text_before: [4096]u8
 drawing: interface.Window_Drawing
-
-// cache_build builds the glyph cache of one weight in the memory of the
-// program and validates it with the reader of every program.
-cache_build :: proc "contextless" (bytes: []u8, name: string, out: []u8, positions: []int, time: ^u64) -> (cache: glyph_cache.Cache, ok: bool) {
-	font, problem := vector_font.font_open(bytes)
-	start := system.nanoseconds()
-	size := 0
-	if problem == .None {
-		size, problem = vector_font.glyph_cache_build_proportional(&font, bytes, name, true, &render_memory, out, positions)
-	}
-	if problem != .None {
-		system.log("interface_font: the font ", name, " is refused: ", vector_font.font_problem_names[problem])
-		return {}, false
-	}
-	time^ = system.nanoseconds() - start
-	refused: glyph_cache.Problem
-	cache, refused = glyph_cache.validate(out[:size])
-	if refused.kind != .None {
-		system.log("interface_font: the cache of ", name, " is refused: ", glyph_cache.problem_sentences[refused.kind])
-		return {}, false
-	}
-	return cache, true
-}
 
 // line_draw places a text and draws it, its origin at the whole pixel x and
 // the top of its line at y; it gives the width in 1/64 of a pixel.
@@ -138,11 +100,11 @@ draw :: proc "contextless" (window: ^display.Window) {
 	interface.text_put_number(&timing, shaping_time)
 	interface.text_put(&timing, " ns, drawing ")
 	interface.text_put_number(&timing, drawing_time)
-	interface.text_put(&timing, " ns; caches built in ")
-	interface.text_put_number(&timing, regular_build_time / 1000)
+	interface.text_put(&timing, " ns; caches of ")
+	interface.text_put_number(&timing, regular_cache.header.file_size)
 	interface.text_put(&timing, " and ")
-	interface.text_put_number(&timing, bold_build_time / 1000)
-	interface.text_put(&timing, " us")
+	interface.text_put_number(&timing, bold_cache.header.file_size)
+	interface.text_put(&timing, " bytes, from the boot image")
 	interface.draw_text(frame.table, content.x, content.y + TIME_TOP, interface.text_of(&timing), graphics.COLOR_DIM)
 	interface.window_frame_end(&drawing, &frame, window)
 
@@ -202,27 +164,27 @@ measure :: proc "contextless" () {
 
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
-	regular_positions := [3]int{3, 1, 1}
-	bold_positions := [1]int{3}
-	regular_ok, bold_ok: bool
-	regular_cache, regular_ok = cache_build(regular_font, "b612", ([^]u8)(raw_data(regular_memory[:]))[:REGULAR_CACHE_ROOM], regular_positions[:], &regular_build_time)
-	bold_cache, bold_ok = cache_build(bold_font, "b612_bold", ([^]u8)(raw_data(bold_memory[:]))[:BOLD_CACHE_ROOM], bold_positions[:], &bold_build_time)
-	spacing_ok: [3]bool
-	regular_spacing, spacing_ok[0] = text_shaping.spacing_of(&regular_cache, 1)
-	regular_spacing_large, spacing_ok[1] = text_shaping.spacing_of(&regular_cache, 3)
-	bold_spacing, spacing_ok[2] = text_shaping.spacing_of(&bold_cache, 1)
-	if !regular_ok || !bold_ok || !spacing_ok[0] || !spacing_ok[1] || !spacing_ok[2] {
-		system.stop(1)
-	}
-	no_pair_spacing_large = {advances = regular_spacing_large.advances}
-
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "interface_font")
 	if !ok {
 		system.stop(1)
 	}
+	font, font_ok := display.interface_font_open(ctx)
+	if !font_ok {
+		system.log("interface_font: the boot image gives no valid cache of the interface font")
+		system.stop(1)
+	}
+	regular_cache, bold_cache = font.regular, font.bold
+	spacing_ok: [3]bool
+	regular_spacing, spacing_ok[0] = text_shaping.spacing_of(&regular_cache, 1)
+	regular_spacing_large, spacing_ok[1] = text_shaping.spacing_of(&regular_cache, 3)
+	bold_spacing, spacing_ok[2] = text_shaping.spacing_of(&bold_cache, 1)
+	if !spacing_ok[0] || !spacing_ok[1] || !spacing_ok[2] {
+		system.stop(1)
+	}
+	no_pair_spacing_large = {advances = regular_spacing_large.advances}
 	drawing = interface.window_drawing_of(records_now[:], records_before[:], text_now[:], text_before[:])
 	measure()
-	system.log("interface_font: one line of ", u64(len(PARAGRAPH[1])), " characters in B612 at scale 1 (the least of 50 batches): shaping ", shaping_time, " ns, drawing ", drawing_time, " ns; the caches built in ", regular_build_time / 1000, " and ", bold_build_time / 1000, " us")
+	system.log("interface_font: one line of ", u64(len(PARAGRAPH[1])), " characters in B612 at scale 1 (the least of 50 batches): shaping ", shaping_time, " ns, drawing ", drawing_time, " ns; the caches of ", regular_cache.header.file_size, " and ", bold_cache.header.file_size, " bytes, from the boot image")
 	draw(&window)
 	system.log("interface_font: ok, B612 Regular and Bold, ", u64(regular_cache.header.pair_count), " and ", u64(bold_cache.header.pair_count), " pairs")
 	for {

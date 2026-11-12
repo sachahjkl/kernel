@@ -131,6 +131,7 @@ Problem_Kind :: enum u8 {
 	Bad_Flags, // A flag that this reader does not know, or a filter past FILTER_COUNT.
 	Bad_Name, // font_name has a byte outside 32 to 126 before its end, no zero byte, or a byte after its end.
 	Proportional, // A valid cache of a proportional font, where a reader needs the cache of a font of cells.
+	Not_Mapped, // The starter of the program did not map this cache: no byte was read.
 }
 
 Problem :: struct {
@@ -155,6 +156,7 @@ problem_sentences := [Problem_Kind]string {
 	.Bad_Flags   = "the glyph cache has a flag or a filter that this reader does not know",
 	.Bad_Name    = "the name of the font of the glyph cache is not printable text with an end",
 	.Proportional = "the glyph cache is of a proportional font, not of a font of cells",
+	.Not_Mapped  = "the starter of the program did not map this glyph cache",
 }
 
 // Cache: a valid file, read in place.
@@ -277,6 +279,28 @@ validate :: proc "contextless" (bytes: []u8) -> (cache: Cache, problem: Problem)
 		}
 	}
 	return cache, {}
+}
+
+// validate_at validates a cache that the starter of the program mapped at
+// a fixed address, in a range of span bytes. The cache states its own size:
+// file_size in its header. The header is mapped (a mapping has whole pages,
+// and a starter maps no cache shorter than its header), so the size is
+// read there, bounded by the span of the range and by the header, and
+// then the whole file is validated, which checks file_size again. The
+// caller has checked that the starter states the range as mapped. A
+// starter that states a range as mapped, maps less than the size that the
+// header states, or maps memory that it can still write, makes this read
+// fault or the cache change after the validation: a program trusts its
+// starter (docs/FONTS.md, section 5, "Who can write a cache").
+validate_at :: proc "contextless" (address: uintptr, span: u64) -> (cache: Cache, problem: Problem) {
+	if address == 0 || address % 8 != 0 {
+		return {}, {kind = .Too_Short, value = u64(address)}
+	}
+	size := (^Header)(address).file_size
+	if size < HEADER_SIZE || size > span {
+		return {}, {kind = .Bad_Size, value = size, limit = span}
+	}
+	return validate(([^]u8)(address)[:size])
 }
 
 // glyph gives the size, and the entry of one character at one scale (1 to

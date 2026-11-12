@@ -4,7 +4,9 @@
 // not a part of the kernel) and writes the date of the time 0 of the
 // system. Each program that the root service starts by its name, and the
 // compositor, map the page with the right Read only, at PAGE_ADDRESS; the
-// context value VALUE_PAGE says where it is (0: the program has no page). A
+// bit of the range Date_Page in the context value
+// op.CONTEXT_VALUE_FIXED_RANGES_MAPPED says that it is mapped (clear: the
+// program has no page). A
 // terminal has no page: it shows the text of another program, and needs no
 // date. A program that another program starts has none either.
 //
@@ -23,7 +25,6 @@ import "contract:fixed_addresses"
 import op "contract:operation"
 
 PAGE_ADDRESS :: fixed_addresses.DATE_PAGE_ADDRESS
-VALUE_PAGE :: 15 // The value of the context with the address of the page, for each program that the root service starts.
 GRANT_PAGE :: 6 // The handle of the context of the program `date`: the page, with Read and Write.
 GRANT_PORTS :: 7 // The handle of the context of the program `date`: the ports 0x70 and 0x71 of the real-time clock.
 
@@ -42,7 +43,7 @@ Page :: struct {
 
 // page_of gives the date page of a program, or nil.
 page_of :: proc "contextless" (ctx: ^op.Context) -> ^Page {
-	return ctx.values[VALUE_PAGE] == PAGE_ADDRESS ? (^Page)(uintptr(PAGE_ADDRESS)) : nil
+	return .Date_Page in fixed_addresses.ranges_mapped(&ctx.values) ? (^Page)(uintptr(PAGE_ADDRESS)) : nil
 }
 
 // The dates that a reader takes: from 1970 to the end of the year 9999. A

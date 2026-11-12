@@ -15,6 +15,7 @@ package display
 import "contract:errors"
 import "support:graphics"
 import "contract:ring"
+import "contract:fixed_addresses"
 import "contract:glyph_cache"
 import "contract:pointer_pictures"
 import "contract:settings"
@@ -299,9 +300,11 @@ glyph_cache_valid: [settings.Grid_Fit]bool
 // Why one validation is enough: the drawing code reads the counts and the
 // offsets of a cache again at each glyph, so the bytes must not change
 // after `validate`. A program trusts its starter, which already chooses
-// its grants, its mappings and its budget: the starter writes the size of
-// each cache in the context and maps the memory at the fixed range of the
-// cache (contract:fixed_addresses), so a starter that keeps that memory
+// its grants, its mappings and its budget: the starter states in the
+// context which fixed ranges it mapped (contract:fixed_addresses) and maps
+// the memory there; the cache states its own size in its header. So a
+// starter that sets a bit with no mapping, or maps less than the header
+// states, makes this program fault, and a starter that keeps that memory
 // with Write could change it. The root service is the starter of each
 // program with a surface. It maps each cache from the boot image with the
 // right Read only, for every program, and the one handle of the boot image,
@@ -309,23 +312,21 @@ glyph_cache_valid: [settings.Grid_Fit]bool
 // write the bytes of a cache, nor point this program at other bytes. The
 // settings page, which the program `settings` writes, gives choices only.
 text_settings_open :: proc "contextless" (ctx: ^system.Context) {
-	address := ctx.values[settings.VALUE_PAGE]
-	if address == 0 || settings_page != nil {
+	if .Settings_Page not_in fixed_addresses.ranges_mapped(&ctx.values) || settings_page != nil {
 		return
 	}
-	settings_page = (^settings.Page)(uintptr(address))
+	settings_page = (^settings.Page)(uintptr(settings.PAGE_ADDRESS))
 	places := [settings.Grid_Fit]settings.Glyph_Cache {
 		.On  = .With_Grid_Fit,
 		.Off = .Without_Grid_Fit,
 	}
 	for cache, grid_fit in places {
-		cache_address, cache_size := settings.glyph_cache_place(&ctx.values, cache)
-		if cache_size == 0 {
+		problem: glyph_cache.Problem
+		glyph_caches[grid_fit], problem = settings.glyph_cache_open(&ctx.values, cache)
+		if problem.kind == .Not_Mapped {
 			system.log_in("programs", .Warning, "display: no glyph cache with the grid fit ", settings.descriptions[.Grid_Fit].value_names[grid_fit], ": that text is Spleen 8x16")
 			continue
 		}
-		problem: glyph_cache.Problem
-		glyph_caches[grid_fit], problem = glyph_cache.validate(([^]u8)(uintptr(cache_address))[:cache_size])
 		if problem.kind != .None {
 			system.log_in("programs", .Warning, "display: the glyph cache is refused: ", glyph_cache.problem_sentences[problem.kind], ", value ", problem.value, ", limit ", problem.limit, ": that text is Spleen 8x16")
 			continue
@@ -338,8 +339,7 @@ text_settings_open :: proc "contextless" (ctx: ^system.Context) {
 	}
 	// The bold weight of the titles: a text in the regular weight when it
 	// is absent or refused.
-	if bold_address, bold_size := settings.glyph_cache_place(&ctx.values, .Bold); bold_size != 0 {
-		bold, problem := glyph_cache.validate(([^]u8)(uintptr(bold_address))[:bold_size])
+	if bold, problem := settings.glyph_cache_open(&ctx.values, .Bold); problem.kind != .Not_Mapped {
 		if problem.kind == .None {
 			problem = graphics.text_bold_cache_use(bold)
 		}
@@ -348,6 +348,36 @@ text_settings_open :: proc "contextless" (ctx: ^system.Context) {
 		}
 	}
 	text_settings_apply()
+}
+
+// Interface_Font: the two glyph caches of the interface font (docs/FONTS.md,
+// section 12), each validated once.
+Interface_Font :: struct {
+	regular: glyph_cache.Cache,
+	bold:    glyph_cache.Cache,
+}
+
+// interface_font_open validates the two glyph caches of the interface font
+// that the starter mapped at their fixed ranges (settings.glyph_cache_open:
+// the same rule as the caches of the text of cells). ok is false when one
+// is absent or refused, with a line on the log: the program then draws its
+// text with the font of the cells. Each cache must be of a proportional
+// font: graphics.text_proportional draws it.
+interface_font_open :: proc "contextless" (ctx: ^system.Context) -> (font: Interface_Font, ok: bool) {
+	weights := [2]settings.Glyph_Cache{.Interface, .Interface_Bold}
+	caches: [2]glyph_cache.Cache
+	for weight, index in weights {
+		problem: glyph_cache.Problem
+		caches[index], problem = settings.glyph_cache_open(&ctx.values, weight)
+		if problem.kind == .None && caches[index].header.flags & glyph_cache.FLAG_PROPORTIONAL == 0 {
+			problem = {kind = .Bad_Flags, value = u64(caches[index].header.flags), limit = glyph_cache.FLAG_PROPORTIONAL}
+		}
+		if problem.kind != .None {
+			system.log_in("programs", .Warning, "display: the glyph cache of the interface font is refused: ", glyph_cache.problem_sentences[problem.kind], ", value ", problem.value)
+			return {}, false
+		}
+	}
+	return {regular = caches[0], bold = caches[1]}, true
 }
 
 // text_settings_apply gives the choice of the settings page to

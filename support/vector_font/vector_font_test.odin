@@ -305,3 +305,41 @@ segments_at_the_edges_stay_in_their_rows :: proc(t: ^testing.T) {
 	coverage_finish(&narrow, coverage[:])
 	testing.expect_value(t, narrow_cells[(1 + 1) * 3], 0)
 }
+
+// A cache at an address states its own size in its header: validate_at
+// bounds that size by the span of the range and by the header before it
+// reads the whole. A size over the span, or under the header, is refused
+// after a read of the header only. A size larger than the mapping under a
+// span that holds it cannot be tested on the host: the read faults, as it
+// does in a program whose starter states a range that it did not map.
+@(test)
+a_cache_at_an_address_states_its_size :: proc(t: ^testing.T) {
+	bytes := #load("../../resources/fonts/jetbrains_mono.ttf")
+	font, _ := font_open(bytes)
+	memory := new(Render_Memory)
+	defer free(memory)
+	out := make([]u64, GLYPH_CACHE_LIMIT / 8)
+	defer delete(out)
+	file := ([^]u8)(raw_data(out))[:GLYPH_CACHE_LIMIT]
+	size, problem := glyph_cache_build(&font, bytes, "jetbrains_mono", true, memory, file)
+	testing.expect_value(t, problem, Font_Problem.None)
+	address := uintptr(raw_data(file))
+	cache, refused := glyph_cache.validate_at(address, u64(GLYPH_CACHE_LIMIT))
+	testing.expect_value(t, refused.kind, glyph_cache.Problem_Kind.None)
+	testing.expect_value(t, len(cache.words), int(cache.header.word_count))
+	// The span of the range is smaller than the size that the header states.
+	_, over := glyph_cache.validate_at(address, u64(size) - 1)
+	testing.expect_value(t, over.kind, glyph_cache.Problem_Kind.Bad_Size)
+	testing.expect_value(t, over.value, u64(size))
+	// A header that states a size under itself, and one over the span.
+	header := (^glyph_cache.Header)(address)
+	header.file_size = glyph_cache.HEADER_SIZE - 1
+	_, short := glyph_cache.validate_at(address, u64(GLYPH_CACHE_LIMIT))
+	testing.expect_value(t, short.kind, glyph_cache.Problem_Kind.Bad_Size)
+	header.file_size = u64(GLYPH_CACHE_LIMIT) + 8
+	_, past := glyph_cache.validate_at(address, u64(GLYPH_CACHE_LIMIT))
+	testing.expect_value(t, past.kind, glyph_cache.Problem_Kind.Bad_Size)
+	// An address of no cache.
+	_, nowhere := glyph_cache.validate_at(0, u64(GLYPH_CACHE_LIMIT))
+	testing.expect_value(t, nowhere.kind, glyph_cache.Problem_Kind.Too_Short)
+}

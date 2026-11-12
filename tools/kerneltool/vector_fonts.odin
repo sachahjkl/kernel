@@ -18,7 +18,7 @@ import "support:vector_font"
 // build/fonts/candidates.png, the picture of the choice, from the same
 // renderer as the system.
 //
-// The build makes the two glyph caches of the default font (build_glyph_caches):
+// The build makes the glyph caches of the default font and of the interface font (build_glyph_caches):
 // the boot image holds it as the resource "glyph_cache".
 
 VECTOR_FONT_SOURCES_VARIABLE :: "VECTOR_FONT_SOURCES"
@@ -33,6 +33,8 @@ GLYPH_CACHE_BOLD_RESOURCE :: "glyph_cache_bold"
 CANDIDATES_PICTURE :: VECTOR_FONT_BUILD_FOLDER + "/candidates.png"
 INTERFACE_GLYPH_CACHE_OUTPUT :: VECTOR_FONT_BUILD_FOLDER + "/interface_glyph_cache.bin"
 INTERFACE_GLYPH_CACHE_BOLD_OUTPUT :: VECTOR_FONT_BUILD_FOLDER + "/interface_glyph_cache_bold.bin"
+INTERFACE_GLYPH_CACHE_RESOURCE :: "interface_glyph_cache"
+INTERFACE_GLYPH_CACHE_BOLD_RESOURCE :: "interface_glyph_cache_bold"
 
 // The default font of the system: one line to change (docs/FONTS.md, "The
 // font file").
@@ -149,7 +151,8 @@ run_vector_fonts :: proc(args: []string) -> int {
 			fmt.printfln("kerneltool: %s has no single substitution of the feature zero for '0': its subset keeps the zero of the font", candidate.name)
 		}
 	}
-	if !candidates_picture_write() || !interface_glyph_caches_write() {
+	_, interface_written := interface_glyph_caches_write()
+	if !candidates_picture_write() || !interface_written {
 		return EXIT_FAILURE
 	}
 	fmt.printfln("kerneltool: the subsets are in %s, the picture of the choice is %s", VECTOR_FONT_FOLDER, CANDIDATES_PICTURE)
@@ -618,7 +621,7 @@ glyph_cache_of :: proc(font_bytes: []u8, font_name: string, grid_fit: bool, scal
 // grid fit and without it, and of its bold weight at scale 1, and gives
 // them as resources of the boot image. The setting "grid_fit" of the
 // person chooses one of the first two at run time.
-build_glyph_caches :: proc() -> (resources: [3]Resource_File, ok: bool) {
+build_glyph_caches :: proc() -> (resources: [5]Resource_File, ok: bool) {
 	make_folder(VECTOR_FONT_BUILD_FOLDER)
 	builds := [3]struct {
 		font:         string,
@@ -635,6 +638,9 @@ build_glyph_caches :: proc() -> (resources: [3]Resource_File, ok: bool) {
 		}
 		resources[index] = {name = build.name, path = build.output}
 	}
+	// The two caches of the interface font (docs/FONTS.md, section 12).
+	interface_resources := interface_glyph_caches_write() or_return
+	resources[3], resources[4] = interface_resources[0], interface_resources[1]
 	return resources, true
 }
 
@@ -645,14 +651,16 @@ INTERFACE_POSITIONS := [3]int{3, 1, 1}
 INTERFACE_BOLD_POSITIONS := [1]int{3}
 
 // interface_glyph_caches_write draws the two glyph caches of the interface
-// font from its subsets, checks them with the reader of the programs, and
-// writes their sizes. They are not yet resources of the boot image.
-interface_glyph_caches_write :: proc() -> bool {
+// font from its subsets, checks them with the reader of the programs (so a
+// resource is never shorter than its header, and states its own size), and
+// writes them with their sizes: the two resources of the boot image of the
+// interface font.
+interface_glyph_caches_write :: proc() -> (resources: [2]Resource_File, ok: bool) {
 	builds := [2]struct {
-		font, output: string,
-		positions:    []int,
-	}{{INTERFACE_VECTOR_FONT, INTERFACE_GLYPH_CACHE_OUTPUT, INTERFACE_POSITIONS[:]}, {INTERFACE_EMPHASIS_VECTOR_FONT, INTERFACE_GLYPH_CACHE_BOLD_OUTPUT, INTERFACE_BOLD_POSITIONS[:]}}
-	for build in builds {
+		font, output, name: string,
+		positions:          []int,
+	}{{INTERFACE_VECTOR_FONT, INTERFACE_GLYPH_CACHE_OUTPUT, INTERFACE_GLYPH_CACHE_RESOURCE, INTERFACE_POSITIONS[:]}, {INTERFACE_EMPHASIS_VECTOR_FONT, INTERFACE_GLYPH_CACHE_BOLD_OUTPUT, INTERFACE_GLYPH_CACHE_BOLD_RESOURCE, INTERFACE_BOLD_POSITIONS[:]}}
+	for build, index in builds {
 		font_bytes := read_file(join(VECTOR_FONT_FOLDER, "/", build.font, ".ttf")) or_return
 		font, problem := vector_font.font_open(font_bytes)
 		memory := new(vector_font.Render_Memory, context.temp_allocator)
@@ -664,17 +672,18 @@ interface_glyph_caches_write :: proc() -> bool {
 		}
 		if problem != .None {
 			fmt.eprintfln("kerneltool: the interface font %s: %s", build.font, vector_font.font_problem_names[problem])
-			return false
+			return {}, false
 		}
 		if _, refused := glyph_cache.validate(out[:size]); refused.kind != .None {
 			fmt.eprintfln("kerneltool: the glyph cache of %s is refused: %s", build.font, glyph_cache.problem_sentences[refused.kind])
-			return false
+			return {}, false
 		}
 		if err := os.write_entire_file(build.output, out[:size]); err != nil {
 			fmt.eprintfln("kerneltool: cannot write %s: %v", build.output, err)
-			return false
+			return {}, false
 		}
 		fmt.printfln("kerneltool: the glyph cache of %s with the positions %v: %d bytes, in %s", build.font, build.positions, size, build.output)
+		resources[index] = {name = build.name, path = build.output}
 	}
-	return true
+	return resources, true
 }

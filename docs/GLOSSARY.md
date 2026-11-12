@@ -106,6 +106,7 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Kernel operation | One request that a program makes to the kernel (P1) | system call, syscall |
 | Boot program | The UEFI program that loads and measures the system, then starts the kernel (P17) | boot loader, bootloader |
 | Fixed range | An address and a span of the address space of a program where the system places one mapping that it gives: the settings page, a glyph cache, the date page, the files of a module. Each is one member of the enumeration `Fixed_Range` of `contract/fixed_addresses`, one slot of the band from `BAND_START`, so no two overlap; a mapping that a program places by its own choice is outside the band, from `OWN_CHOICE_START` | well-known address, fixed mapping |
+| Mapped ranges | The fixed ranges that the starter of a program mapped for it: a set of bits, bit n for the member n of `Fixed_Range`, in the value 20 of its context (`fixed_addresses.ranges_mapped`). A program reads nothing at a range whose bit is clear | mapping flags, present mask |
 
 ## Access
 
