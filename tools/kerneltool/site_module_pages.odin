@@ -348,10 +348,9 @@ site_export_symbol_write :: proc(site: ^Site, b: ^strings.Builder, page, module_
 	site_symbol_write(site, b, Site_Symbol{id = strings.concatenate({"export-", site_slug(export.name)}, context.temp_allocator), name = export.name, signature = site_export_signature(description, export), signature_html = site_export_signature_html(site, module_name, description, export), description = export.text, page = page, facts = facts[:], source = export.file, line = export.line})
 }
 
-// The tiles of the boot image on the home: as the boot display draws them
-// (support/bootscreen), one tile for each module of the image of the last
-// build, its width from its size, its color from the first byte of its hash
-// (graphics.hue_color). The colors go into the style sheet: the pages hold
+// The tiles of the boot image on the home: one tile for each module of the
+// image of the last build, its width from its size, its color from the
+// first byte of its hash (graphics.hue_color). The colors go into the style sheet: the pages hold
 // no inline style.
 SITE_TILE_ROWS :: 5
 SITE_TILE_ROW_WIDTH :: 1088 // A card on a wide page: the page without its padding and the padding of the card.
@@ -397,7 +396,7 @@ site_tiles_write :: proc(site: ^Site, b: ^strings.Builder, page: string) {
 	}
 	strings.write_string(b, "</ul>\n")
 	if built {
-		fmt.sbprintf(b, "<p class=\"source\">%d modules, %d KiB, in <code>%s</code> of the last build. A tile is a module: its width follows its size, and is at least the width of its name; its color comes from its hash, as the boot display draws it.</p>\n", len(entries), (total - 1) / 1024, BOOT_IMAGE)
+		fmt.sbprintf(b, "<p class=\"source\">%d modules, %d KiB, in <code>%s</code> of the last build. A tile is a module: its width follows its size, and is at least the width of its name; its color comes from its hash.</p>\n", len(entries), (total - 1) / 1024, BOOT_IMAGE)
 	} else {
 		fmt.sbprintf(b, "<p class=\"missing\">The boot image is not built: the tiles are the modules of <code>module_builds</code> that it holds, with no size and no color.</p>\n")
 	}

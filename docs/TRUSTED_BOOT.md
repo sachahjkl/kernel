@@ -118,7 +118,7 @@ A failed check of the boot program stops the boot. The kernel does not start.
 
 A failed check of the root service stops the start of the programs. The boot display shows "the start failed:" and the file, and the log has the two hashes.
 
-The boot display has one line "trust" under the tiles of the boot image, from the trust record, in three parts with a color each. The short words fit the card; the log has the long forms.
+The card of the boot image (`docs/DESIGN.md`, section 12) has one line "check": the count of the verified files, or, after a failure, "failed: " and the whole name of the file, in red. The part and the tile of that file are red too. The line "trust" is the last line of the card, from the trust record, in three parts with a color each. The short words fit the card; the log has the long forms.
 
 | Part | Values |
 |---|---|
@@ -126,7 +126,7 @@ The boot display has one line "trust" under the tiles of the boot image, from th
 | What verified | "boot program only" (the firmware did not verify the boot program), or "Secure Boot" (claim 9), or "check failed" (red) |
 | The measure | "PCR 11" and the first 4 bytes of the value, or "no TPM", or "TPM refused the measure" (red), or "PCR not read" (red) |
 
-Each tile of the boot image shows the whole name of its module, or no name when the name is wider than the tile: a name is never cut. After its first draw of the display, the boot program writes its lines on the serial port only, not through the console of the firmware, which also writes on the screen.
+After its first draw of the display, the boot program writes its lines on the serial port only, not through the console of the firmware, which also writes on the screen.
 
 ## 5. The signing key
 
@@ -233,7 +233,8 @@ The machines with this firmware run with four processors, as every other machine
 | The trust record | `contract/boot_info/boot_info.odin` (`Boot_Trust`) |
 | The checks and the measure of the boot program | `boot/trust.odin` |
 | The check of the root service | `programs/root/trust.odin` |
-| The line of the trust on the boot display | `support/bootscreen/bootscreen.odin` (`trust_line`) |
+| The line of the trust and the line of the check on the boot display | `support/bootscreen/bootscreen.odin` (`trust_line`, `check_line`) |
+| The places of the card of the boot image | `support/bootscreen/image_card` |
 | The signature, the keys, the command `key` | `tools/kerneltool/system_description.odin` |
 | The ten machines of `test trusted_boot` | `tools/kerneltool/trusted_boot_scenario.odin` |
 | The firmware signing key, `sbsign`, the variable store with Secure Boot | `tools/kerneltool/secure_boot.odin` |

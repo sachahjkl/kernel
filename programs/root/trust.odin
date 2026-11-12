@@ -46,6 +46,10 @@ trust_check :: proc "contextless" () {
 		buffer: [256]u8
 		text := system.format(buffer[:], system_description.name_of(&result.name), ": ", system_description.fault_sentences[result.fault])
 		system.log_in("programs", .Error, "root: ", text, ": expected ", string(expected[:]), ", found ", string(found_digits[:]))
+		#partial switch result.fault {
+		case .Name_Differs, .Kind_Differs, .Outside_Image, .Size_Differs, .Hash_Differs, .Stated_Hash_Differs:
+			screen_data.failed_name = system_description.name_of(&result.name)
+		}
 		fail(text, .Bad_State)
 	}
 	system.log("root: the boot image agrees with the system description that the boot program verified: ", trust.entry_count - 1, " modules and resources checked in ", spent / 1000, " us; the kernel was checked by the boot program only")
