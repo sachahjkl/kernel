@@ -72,10 +72,11 @@ Site_Page :: struct {
 
 // A guide: a document of docs/ as a page.
 Site_Guide :: struct {
-	source: string, // "docs/NETWORK.md"
-	path:   string, // "guides/NETWORK.html"
-	title:  string,
-	about:  string, // Its line in the table of documents of README.md, or "".
+	source:   string, // "docs/NETWORK.md"
+	path:     string, // "guides/NETWORK.html"
+	title:    string,
+	about:    string, // Its line in the table of documents of README.md, or "".
+	headings: []Site_Heading, // Each heading of its page, with its id: the guide sections of the search index.
 }
 
 Site :: struct {
@@ -101,6 +102,8 @@ Site :: struct {
 	reference:    Site_Reference,
 	code_links:   map[string]string, // The text of a code span to the row of a reference table that it names.
 	tile_rules:   string, // The rules of the style sheet for the tiles of the boot image on the home.
+	news:         []Site_News, // Newest first.
+	gaps:         []Site_Gap, // The gaps of docs/FIRST_MILESTONE.md, as the status page shows them.
 }
 
 run_site :: proc(args: []string) -> int {
@@ -221,7 +224,8 @@ site_glossary_terms :: proc(content: string) -> []Site_Term {
 		}
 		name := site_term_name(cells[0])
 		if len(name) >= 3 {
-			append(&terms, Site_Term{name = name, id = strings.concatenate({"term-", site_slug(name)}, context.temp_allocator)})
+			definition := len(cells) > 1 ? cells[1] : ""
+			append(&terms, Site_Term{name = name, id = strings.concatenate({"term-", site_slug(name)}, context.temp_allocator), definition = definition})
 		}
 	}
 	slice.sort_by(terms[:], proc(a, b: Site_Term) -> bool {return len(a.name) > len(b.name)})
@@ -275,6 +279,8 @@ site_build :: proc(address: string) -> bool {
 		return false
 	}
 	site.release = release_number_text(site.changelog.releases[0].number)
+	// The news names releases of the changelog, pictures and guides.
+	site_news_read(&site) or_return
 	site.commit = site_git_commit()
 	now := time.now()
 	year, month, day := time.date(now)
@@ -357,8 +363,13 @@ site_build :: proc(address: string) -> bool {
 	site_guides_add(&site) or_return
 	site_reference_add(&site) or_return
 	site_status_add(&site) or_return
+	site_news_add(&site)
 	site_releases_add(&site)
 	site_home_add(&site)
+	if len(site.news) > 0 {
+		// The feed is written before the checks: each page links to it.
+		site_write_file(&site, SITE_NEWS_FEED, transmute([]u8)site_news_feed(&site)) or_return
+	}
 
 	// The copies: the pictures of the machine and of the guides, the icons.
 	for target, source in site.copies {
@@ -366,6 +377,7 @@ site_build :: proc(address: string) -> bool {
 		site_write_file(&site, target, data) or_return
 	}
 	site_write_file(&site, SITE_STYLE_SHEET, transmute([]u8)site_style_sheet(site.tile_rules)) or_return
+	site_write_file(&site, SITE_SEARCH_SCRIPT, transmute([]u8)site_search_script()) or_return
 
 	written := make(map[string]string, context.temp_allocator)
 	for page in site.pages {
@@ -379,6 +391,23 @@ site_build :: proc(address: string) -> bool {
 		fmt.eprintfln("kerneltool: site: %d problems; no page is written", len(problems))
 		return false
 	}
+	// The index of the search, from the same data as the pages, checked
+	// against the pages that the command writes.
+	search_entries := site_search_entries(&site)
+	search_index := site_search_index_json(search_entries, site.pages[:])
+	search_problems := site_search_problems(search_entries, written)
+	if len(search_index) > SITE_SEARCH_INDEX_BYTE_LIMIT {
+		fmt.eprintfln("kerneltool: site: %s has %d bytes; at most %d", SITE_SEARCH_INDEX, len(search_index), SITE_SEARCH_INDEX_BYTE_LIMIT)
+		return false
+	}
+	if len(search_problems) > 0 {
+		for problem in search_problems {
+			fmt.eprintfln("kerneltool: site: %s", problem)
+		}
+		fmt.eprintfln("kerneltool: site: %d problems of the search index; no page is written", len(search_problems))
+		return false
+	}
+	site_write_file(&site, SITE_SEARCH_INDEX, transmute([]u8)search_index) or_return
 	page_bytes := 0
 	for path, html in written {
 		site_write_file(&site, path, transmute([]u8)html) or_return
@@ -386,10 +415,14 @@ site_build :: proc(address: string) -> bool {
 	}
 
 	fmt.printfln("kerneltool: site: wrote %s: %d pages (%d bytes), %d other files", SITE_FOLDER, len(site.pages), page_bytes, len(site.files) - len(site.pages))
+	fmt.printfln("kerneltool: site: %s: %d entries of at most %d, %d bytes of at most %d; %s: %d bytes", SITE_SEARCH_INDEX, len(search_entries), SITE_SEARCH_ENTRY_LIMIT, len(search_index), SITE_SEARCH_INDEX_BYTE_LIMIT, SITE_SEARCH_SCRIPT, site.files[SITE_SEARCH_SCRIPT])
 	commit_text: string = site.commit != "" ? site.commit : "not readable (links to files go to master)"
-	fmt.printfln("kerneltool: site: %d guides, %d terms of the glossary, the commit %s, the release %s", len(site.guides), len(site.terms), commit_text, site.release)
+	fmt.printfln("kerneltool: site: %d guides, %d terms of the glossary, %d news entries, the commit %s, the release %s", len(site.guides), len(site.terms), len(site.news), commit_text, site.release)
 	if site.address == "" {
 		fmt.println("kerneltool: site: no address (SITE_ADDRESS is empty): the pages have relative links only; no canonical address, no sitemap and no absolute address is written")
+		if len(site.news) > 0 {
+			fmt.printfln("kerneltool: site: %s has relative links and no link \"self\": a feed reader resolves them against the address that it fetched the feed from; with no address the feed cannot name its own place", SITE_NEWS_FEED)
+		}
 	}
 	missing := 0
 	for number in site.measured {
@@ -450,8 +483,13 @@ site_page_html :: proc(site: ^Site, page: Site_Page) -> string {
 	for size in ([]string{"24", "48", "96", "192"}) {
 		fmt.sbprintf(&b, "<link rel=\"icon\" type=\"image/png\" sizes=\"%sx%s\" href=\"%s\">\n", size, size, link(page, strings.concatenate({SITE_PICTURE_FOLDER, "/heron_", size, ".png"}, context.temp_allocator)))
 	}
+	if site_page_exists(site, site_section_pages[.News]) {
+		fmt.sbprintf(&b, "<link rel=\"alternate\" type=\"application/atom+xml\" title=\"News of %s\" href=\"%s\">\n", SITE_SYSTEM_NAME, link(page, SITE_NEWS_FEED))
+	}
 	section_name := strings.to_lower(site_section_titles[page.section], context.temp_allocator)
-	fmt.sbprintf(&b, "<link rel=\"stylesheet\" href=\"%s\">\n</head>\n<body class=\"section-%s\">\n", link(page, SITE_STYLE_SHEET), section_name)
+	fmt.sbprintf(&b, "<link rel=\"stylesheet\" href=\"%s\">\n", link(page, SITE_STYLE_SHEET))
+	// The one script of the site: the search. Each page is whole with no script.
+	fmt.sbprintf(&b, "<script src=\"%s\" defer></script>\n</head>\n<body class=\"section-%s\">\n", link(page, SITE_SEARCH_SCRIPT), section_name)
 	write(&b, "<a class=\"skip\" href=\"#content\">Skip to the content</a>\n")
 
 	// The bar: the heron and the name at the left, the sections as buttons.
@@ -466,7 +504,9 @@ site_page_html :: proc(site: ^Site, page: Site_Page) -> string {
 		current: string = section == page.section ? " aria-current=\"page\"" : ""
 		fmt.sbprintf(&b, "<li><a href=\"%s\"%s>%s</a></li>\n", link(page, site_section_pages[section]), current, site_section_titles[section])
 	}
-	write(&b, "</ul>\n</nav>\n</div>\n</header>\n")
+	write(&b, "</ul>\n</nav>\n")
+	write(&b, SITE_SEARCH_BOX)
+	write(&b, "</div>\n</header>\n")
 
 	if len(page.crumbs) > 0 {
 		write(&b, "<nav class=\"crumbs page\" aria-label=\"Breadcrumbs\">\n<ol>\n")
@@ -594,6 +634,9 @@ site_check_pages :: proc(pages: []Site_Page, written: map[string]string, files: 
 			}
 			rest = rest[start + end:]
 		}
+		if problem := site_inline_code_problem(html); problem != "" {
+			append(&problems, fmt.tprintf("%s: %s", page.path, problem))
+		}
 		folder := page.path[:max(strings.last_index_byte(page.path, '/'), 0)]
 		for attribute in ([]string{"href=\"", "src=\"", "srcset=\""}) {
 			for value in site_attribute_values(html, attribute) {
@@ -605,6 +648,35 @@ site_check_pages :: proc(pages: []Site_Page, written: map[string]string, files: 
 		}
 	}
 	return problems[:]
+}
+
+// site_inline_code_problem gives the fault of a page that holds code or
+// style of its own, or "": each script is a file (<script src="..."></script>
+// with nothing inside), and no style element or style attribute exists.
+// A policy of the host can then forbid inline code (docs/SITE.md, "What the
+// owner must decide"). The text of a page is escaped, so its words never
+// read as these tags.
+site_inline_code_problem :: proc(html: string) -> string {
+	if strings.contains(html, "<style") {
+		return "a style element; the rules are in the style sheet"
+	}
+	if len(site_attribute_values(html, "style=\"")) > 0 {
+		return "a style attribute; the rules are in the style sheet"
+	}
+	rest := html
+	for {
+		start := strings.index(rest, "<script")
+		if start < 0 {
+			break
+		}
+		rest = rest[start:]
+		end := strings.index_byte(rest, '>')
+		if end < 0 || !strings.contains(rest[:end], " src=\"") || !strings.has_prefix(rest[end + 1:], "</script>") {
+			return "a script with code in the page; a script is a file of the site"
+		}
+		rest = rest[end + 1:]
+	}
+	return ""
 }
 
 // site_link_problem checks one link of a page, or gives "".

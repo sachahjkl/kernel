@@ -34,11 +34,12 @@ Site_Colors :: struct {
 	text:        graphics.Color,
 	dim:         graphics.Color,
 	line:        graphics.Color, // The line under a link, and the outline of the focus.
+	match:       graphics.Color, // The characters that the search matched.
 	on_light:    bool,
 }
 
 site_dark_colors :: proc() -> Site_Colors {
-	return Site_Colors{background = graphics.COLOR_BACKGROUND, card_top = graphics.COLOR_CARD_TOP, card_bottom = graphics.COLOR_CARD_BOTTOM, track = graphics.COLOR_TRACK, text = graphics.COLOR_TEXT, dim = graphics.COLOR_DIM, line = graphics.COLOR_TITLE}
+	return Site_Colors{background = graphics.COLOR_BACKGROUND, card_top = graphics.COLOR_CARD_TOP, card_bottom = graphics.COLOR_CARD_BOTTOM, track = graphics.COLOR_TRACK, text = graphics.COLOR_TEXT, dim = graphics.COLOR_DIM, line = graphics.COLOR_TITLE, match = graphics.COLOR_BOOT_PROGRAM}
 }
 
 // The light form: the light background of the mark, white cards, the text
@@ -54,6 +55,8 @@ site_light_colors :: proc() -> Site_Colors {
 		text = graphics.Color(mark.name_color(true)),
 		dim = graphics.shade(graphics.COLOR_DIM, 60),
 		line = graphics.COLOR_TITLE,
+		// The accent at half its light keeps its contrast on white.
+		match = graphics.shade(graphics.COLOR_BOOT_PROGRAM, 50),
 		on_light = true,
 	}
 }
@@ -70,6 +73,7 @@ site_colors_write :: proc(builder: ^strings.Builder, colors: Site_Colors) {
 	site_variable(builder, "text", colors.text)
 	site_variable(builder, "dim", colors.dim)
 	site_variable(builder, "line", colors.line)
+	site_variable(builder, "match", colors.match)
 	strings.write_string(builder, "}\n")
 	for accent in site_accents {
 		strings.write_string(builder, ".")
@@ -134,6 +138,26 @@ blockquote { margin-left: 0; padding-left: 16px; border-left: 2px solid var(--li
 .bar nav li { margin: 0; }
 .bar nav a { display: inline-block; padding: 0 8px; line-height: 24px; background: var(--track); text-decoration: none; border-bottom: 2px solid transparent; }
 .bar nav a[aria-current="page"] { border-bottom-color: var(--line); }
+/* The search: a box at the right of the bar, in the place of the clock of
+   the desktop, and a list as the completion list of the console: the
+   matched characters in the accent, what each row is at its right, dim. */
+.search { margin-left: auto; position: relative; }
+.search[hidden], .search-panel[hidden] { display: none; }
+.search-label { position: absolute; left: -9999px; }
+.search input { width: 224px; height: 24px; padding: 0 8px; font-family: var(--mono); font-size: 14px; color: var(--text); background: var(--track); border: 1px solid var(--track); border-radius: 0; }
+.search input::placeholder { color: var(--dim); }
+.search input:focus-visible { outline: 2px solid var(--line); outline-offset: 0; }
+.search-panel { position: absolute; right: 0; top: 32px; z-index: 10; width: 640px; max-width: calc(100vw - 32px); padding: 4px; background: var(--card-bottom); border: 1px solid var(--line); }
+.search-hint, .search-detail { margin: 0; padding: 0 4px; font-family: var(--mono); font-size: 12px; line-height: 20px; color: var(--dim); }
+.search-detail:empty { display: none; }
+.search-list { list-style: none; margin: 0; padding: 0; }
+.search-list li { margin: 0; }
+.search-list a { display: flex; justify-content: space-between; gap: 16px; padding: 0 4px; line-height: 24px; font-family: var(--mono); font-size: 14px; text-decoration: none; border-left: 2px solid transparent; }
+.search-list [aria-selected="true"] a { background: var(--track); border-left-color: var(--line); }
+.search-name, .search-what { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.search-name { flex: 0 1 auto; }
+.search-what { flex: 0 1 auto; color: var(--dim); }
+.search-name mark { background: none; color: var(--match); font-weight: 700; }
 .crumbs ol { list-style: none; margin: 16px auto 0; padding: 0; display: flex; flex-wrap: wrap; gap: 4px; color: var(--dim); }
 .crumbs li { margin: 0; }
 .crumbs li + li::before { content: "/"; margin-right: 4px; color: var(--dim); }
@@ -206,7 +230,18 @@ figure a { display: block; }
 figure a:hover { background: none; }
 figure img { display: block; width: 100%; height: auto; }
 figcaption { padding-top: 8px; font-size: 14px; }
+
+/* The news: a card for each entry; its kind is the colored mark of the card. */
+.card.news-entry { margin-bottom: 16px; }
+.card.news-entry h2, .card.news-card h3 { text-transform: none; font-family: var(--reading); margin-bottom: 8px; }
+.card.news-entry h2 { font-size: 20px; line-height: 28px; }
+.news-meta, .news-links { color: var(--dim); font-size: 14px; }
+.news-kind { font-family: var(--mono); font-size: 12px; text-transform: uppercase; color: var(--accent-text); border-left: 4px solid var(--accent); padding-left: 4px; }
+.news-body.with-picture { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 384px); gap: 16px; align-items: start; }
+.news-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-bottom: 8px; }
+.news-card figure { margin-bottom: 8px; padding: 4px; }
 @media (max-width: 719px) {
+  .news-body.with-picture, .news-cards { grid-template-columns: minmax(0, 1fr); }
   .table { overflow-x: auto; }
   .home-head { grid-template-columns: minmax(0, 1fr); }
   .measures, .pictures { grid-template-columns: minmax(0, 1fr); }

@@ -12,9 +12,10 @@ import "core:os"
 import "core:strings"
 
 Site_Heading :: struct {
-	level: int,
-	text:  string,
-	id:    string,
+	level:           int,
+	text:            string,
+	id:              string,
+	first_paragraph: string, // The Markdown of the first paragraph under it, or "": its text in the search index.
 }
 
 // A top-level item of an ordered list: its section (the id of the heading
@@ -28,8 +29,9 @@ Site_List_Item :: struct {
 
 // A term of the glossary: the page links its first use in each other page.
 Site_Term :: struct {
-	name: string,
-	id:   string,
+	name:       string,
+	id:         string,
+	definition: string, // The cell after the term: its text in the search index.
 }
 
 Site_Renderer :: struct {
@@ -258,8 +260,12 @@ site_render_markdown :: proc(renderer: ^Site_Renderer, content: string, first_li
 			append(&parts, next)
 			index += 1
 		}
+		paragraph := strings.join(parts[:], " ", context.temp_allocator)
+		if len(renderer.headings) > 0 && renderer.headings[len(renderer.headings) - 1].first_paragraph == "" {
+			renderer.headings[len(renderer.headings) - 1].first_paragraph = paragraph
+		}
 		strings.write_string(b, "<p>")
-		site_render_inline(renderer, strings.join(parts[:], " ", context.temp_allocator))
+		site_render_inline(renderer, paragraph)
 		strings.write_string(b, "</p>\n")
 	}
 }

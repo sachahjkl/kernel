@@ -126,8 +126,8 @@
         name = "kernel-boot-test";
         src = inputs.nixpkgs.lib.fileset.toSource {
           root = ./.;
-          # The host tests of `kerneltool site` read README.md, flake.lock and the Markdown documents; the check of the README needs its pictures.
-          fileset = inputs.nixpkgs.lib.fileset.unions [./flake.nix ./flake.lock ./CHANGELOG.md ./changelog.d ./README.md (inputs.nixpkgs.lib.fileset.fileFilter (file: file.hasExt "md") ./docs) ./docs/screenshots ./boot ./contract ./kernel ./modules ./programs ./resources ./runtime ./support ./tools ./.project];
+          # The host tests of `kerneltool site` read README.md, flake.lock and the Markdown documents; the check of the README needs its pictures; `kerneltool news check` reads news/.
+          fileset = inputs.nixpkgs.lib.fileset.unions [./flake.nix ./flake.lock ./CHANGELOG.md ./changelog.d ./news ./README.md (inputs.nixpkgs.lib.fileset.fileFilter (file: file.hasExt "md") ./docs) ./docs/screenshots ./boot ./contract ./kernel ./modules ./programs ./resources ./runtime ./support ./tools ./.project];
         };
         nativeBuildInputs = buildTools ++ [kerneltool];
         buildPhase = ''

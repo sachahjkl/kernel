@@ -145,6 +145,7 @@ site_guides_add :: proc(site: ^Site) -> bool {
 		content := site_read(guide.source) or_return
 		renderer := site_renderer_make(site, guide.path, guide.source)
 		site_render_markdown(&renderer, content)
+		site.guides[index].headings = renderer.headings[:]
 		b := strings.builder_make(context.temp_allocator)
 		strings.write_string(&b, "<div class=\"guide\">\n")
 		strings.write_string(&b, site_table_of_contents(&renderer))
@@ -293,9 +294,10 @@ site_reference_add :: proc(site: ^Site) -> bool {
 		path :: "reference/licenses.html"
 		b := strings.builder_make(context.temp_allocator)
 		strings.write_string(&b, "<h1>Licenses</h1>\n<p>The license of the system, and of each part that it holds or uses. A cell with no source in the repository says \"" + SITE_NOT_RECORDED + "\".</p>\n<h2 id=\"system\">What the system holds</h2>\n")
-		site_license_table(site, &b, site.licenses.system_rows)
+		system_ids, build_ids := site_license_row_ids(site.licenses)
+		site_license_table(site, &b, site.licenses.system_rows, system_ids)
 		strings.write_string(&b, "<h2 id=\"build\">Used to build and test, not a part of the system</h2>\n")
-		site_license_table(site, &b, site.licenses.build_rows)
+		site_license_table(site, &b, site.licenses.build_rows, build_ids)
 		site_source_line(site, &b, SITE_LICENSE_FILE, SITE_FONT_FOLDER, SITE_SPLEEN_LICENSE_FILE, SITE_POSY_MANIFEST, SITE_SYSTEM_POINTER_MANIFEST, SITE_ODIN_LICENSE_FILE, SITE_FIAT_LICENSE_FILE, CRYPTOGRAPHY_MANIFEST, SITE_PORTRAIT_LICENSE_FILE, SITE_FLAKE_FILE, SITE_FLAKE_LOCK_FILE)
 		site_page_add(site, Site_Page{path = path, title = "Licenses", description = site_description_cut(fmt.tprintf("The license of %s and of each part that it holds or uses: %d rows, and %d tools that build and test it.", SITE_SYSTEM_NAME, len(site.licenses.system_rows), len(site.licenses.build_rows))), section = .Reference, crumbs = site_crumbs(.Reference), body = strings.to_string(b), sources = site_sources(SITE_LICENSE_FILE, SITE_FLAKE_FILE)})
 		append(&entries, Site_Reference_Entry{path = path, title = "Licenses", what = "The license, the author, the version and the place of each part of the system and of each tool of its build.", source = SITE_FLAKE_FILE})
@@ -321,11 +323,33 @@ site_reference_add :: proc(site: ^Site) -> bool {
 	return true
 }
 
+// site_license_row_ids gives the id of each row of the two tables of
+// licenses: "license-" and the slug of what the row is, with "-2", "-3"
+// for a slug that an earlier row has. The page and the search index take
+// the ids from here.
+site_license_row_ids :: proc(licenses: Site_Licenses) -> (system_ids: []string, build_ids: []string) {
+	taken := make(map[string]bool, context.temp_allocator)
+	ids_of :: proc(rows: []Site_License_Row, used: ^map[string]bool) -> []string {
+		ids := make([]string, len(rows), context.temp_allocator)
+		for row, index in rows {
+			wanted := strings.concatenate({"license-", site_slug(row.what)}, context.temp_allocator)
+			id := wanted
+			for number := 2; (id in used^); number += 1 {
+				id = fmt.tprintf("%s-%d", wanted, number)
+			}
+			used^[id] = true
+			ids[index] = id
+		}
+		return ids
+	}
+	return ids_of(licenses.system_rows, &taken), ids_of(licenses.build_rows, &taken)
+}
+
 // site_license_table writes the rows of one table of licenses.
-site_license_table :: proc(site: ^Site, b: ^strings.Builder, rows: []Site_License_Row) {
+site_license_table :: proc(site: ^Site, b: ^strings.Builder, rows: []Site_License_Row, ids: []string) {
 	site_table_start(b, {"What", "Where", "License", "Author or origin", "Version or pin", "In the boot image"})
-	for row in rows {
-		strings.write_string(b, "<tr>")
+	for row, index in rows {
+		fmt.sbprintf(b, "<tr id=\"%s\">", ids[index])
 		site_cell(b, row.what)
 		if row.place != "" {
 			strings.write_string(b, "<td class=\"code name\"><a href=\"")
@@ -364,6 +388,7 @@ site_releases_add :: proc(site: ^Site) {
 	for changelog_release in releases {
 		number := release_number_text(changelog_release.number)
 		fmt.sbprintf(&b, "<section class=\"release\">\n<h2 id=\"%s\">%s <span class=\"date\">%s</span></h2>\n", site_release_id(number), number, changelog_release.date)
+		site_news_of_release(site, &b, number)
 		type_index := -1
 		for entry in changelog_release.entries {
 			if entry.type_index != type_index {
@@ -459,6 +484,11 @@ site_home_add :: proc(site: ^Site) {
 		fmt.sbprintf(&b, "<li><a href=\"%s\">%s</a></li>\n", site_section_pages[section], site_section_titles[section])
 	}
 	strings.write_string(&b, "</ul>\n</div>\n</header>\n")
+
+	// What runs: the newest news, the start, the tiles of the boot image and
+	// the numbers. Each part comes from a file or a log; the home adds no
+	// sentence of its own about the state of the system.
+	site_news_home(site, &b)
 
 	// The path from power to the desktop: the stages that the kernel logged.
 	stages: []Site_Boot_Stage

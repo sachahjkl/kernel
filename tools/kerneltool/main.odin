@@ -94,9 +94,10 @@ COMMANDS :: [?]Command {
 	{name = "cryptography-system-hashes", about = "print the line of " + CRYPTOGRAPHY_SYSTEM_FILES + " for each .odin file of support/cryptography that is not taken from Odin", run = run_cryptography_system_hashes},
 	{name = "cryptography-origin", about = "check that each file of " + CRYPTOGRAPHY_MANIFEST + " is its origin in Odin with the listed changes only", run = run_cryptography_origin},
 	{name = "changelog", about = "new <type> <subject> \"<text>\" (or - and the text on the standard input) | check | assemble | release <release number> | notes <release number>: the fragments of " + FRAGMENT_FOLDER + " and the releases of " + CHANGELOG_FILE, run = run_changelog},
-	{name = "site", about = "write the technical site of the system in " + SITE_FOLDER + ": one page from the documents, the pictures and the logs of the last machine tests, with no script and no request to another server", run = run_site},
+	{name = "news", about = "new <subject> | check: the news entries of " + NEWS_FOLDER + ", dated reports in prose of what a person can now see or use, for the page of the news of the site", run = run_news},
+	{name = "site", about = "write the site of the system in " + SITE_FOLDER + ": the pages from the documents, the code, the news, the pictures and the logs of the last machine tests, an index and one small script for the search, and the feed of the news; no request to another server", run = run_site},
 	{name = "release_number", about = "print the release number of the system: the newest release of " + CHANGELOG_FILE, run = run_release_number},
-	{name = "check", about = "odin check -vet and odin test of the host code, changelog check, then test", run = run_check},
+	{name = "check", about = "odin check -vet and odin test of the host code, changelog check, news check, then test", run = run_check},
 }
 
 main :: proc() {
@@ -437,6 +438,9 @@ run_check :: proc(args: []string) -> int {
 		return EXIT_FAILURE
 	}
 	if !changelog_check() {
+		return EXIT_FAILURE
+	}
+	if !news_check() {
 		return EXIT_FAILURE
 	}
 	if run_test(nil) != 0 {

@@ -143,6 +143,7 @@ site_status_add :: proc(site: ^Site) -> bool {
 		fmt.eprintfln("kerneltool: site: %s", gaps_problem)
 		return false
 	}
+	site.gaps = gaps
 	evidence := make([dynamic]Site_List_Item, context.temp_allocator)
 	next_steps := make([dynamic]Site_List_Item, context.temp_allocator)
 	for item in milestone.items {

@@ -4,7 +4,6 @@ import "core:os"
 import "core:strings"
 import "core:testing"
 
-@(private = "file")
 test_site :: proc() -> Site {
 	site: Site
 	site.documents = make(map[string]string, context.temp_allocator)
