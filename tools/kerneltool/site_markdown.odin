@@ -67,7 +67,7 @@ site_first_sentence :: proc(text: string) -> string {
 
 // site_digits_value gives the value of a text of decimal digits, or -1.
 site_digits_value :: proc(text: string) -> int {
-	if len(text) == 0 || len(text) > 6 {
+	if len(text) == 0 || len(text) > 12 {
 		return -1
 	}
 	value := 0

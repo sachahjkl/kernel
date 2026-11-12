@@ -64,6 +64,30 @@ shade :: proc "contextless" (color: Color, percent: u32) -> Color {
 	return percent <= 100 ? mix(COLOR_BLACK, color, percent * 255 / 100) : mix(color, COLOR_WHITE, (min(percent, 200) - 100) * 255 / 100)
 }
 
+// hue_color gives one color of the circle of colors, of middle strength.
+// The boot display colors the tile of a module with the first byte of its
+// hash, and the site colors its tiles with the same rule.
+hue_color :: proc "contextless" (hue: u8) -> Color {
+	LOW :: 64
+	HIGH :: 208
+	part := u32(hue) * 6 % 256
+	rise := LOW + (HIGH - LOW) * part / 255
+	fall := HIGH - (HIGH - LOW) * part / 255
+	switch u32(hue) * 6 / 256 {
+	case 0:
+		return rgb(HIGH, rise, LOW)
+	case 1:
+		return rgb(fall, HIGH, LOW)
+	case 2:
+		return rgb(LOW, HIGH, rise)
+	case 3:
+		return rgb(LOW, fall, HIGH)
+	case 4:
+		return rgb(rise, LOW, HIGH)
+	}
+	return rgb(HIGH, LOW, fall)
+}
+
 // block draws a rectangle whose color goes from top, on its first line, to
 // bottom, on its last line: the sign of depth of the rules.
 block :: proc "contextless" (canvas: Canvas, x, y, width, height: int, top, bottom: Color) {

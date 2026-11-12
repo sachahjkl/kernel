@@ -301,6 +301,9 @@ site_reference_add :: proc(site: ^Site) -> bool {
 		append(&entries, Site_Reference_Entry{path = path, title = "Licenses", what = "The license, the author, the version and the place of each part of the system and of each tool of its build.", source = SITE_FLAKE_FILE})
 	}
 
+	// The tables generated from the code, and the pages of the modules.
+	site_generated_tables_add(site, &entries)
+
 	// The index of the reference.
 	b := strings.builder_make(context.temp_allocator)
 	strings.write_string(&b, "<h1>Reference</h1>\n<p>Tables that the tool generates from the code and the files that define each thing. The guides explain why; these tables say what exists in this build.</p>\n")
@@ -325,7 +328,7 @@ site_license_table :: proc(site: ^Site, b: ^strings.Builder, rows: []Site_Licens
 		strings.write_string(b, "<tr>")
 		site_cell(b, row.what)
 		if row.place != "" {
-			strings.write_string(b, "<td class=\"code\"><a href=\"")
+			strings.write_string(b, "<td class=\"code name\"><a href=\"")
 			site_escape(b, site_repository_file(site, row.place))
 			strings.write_string(b, "\"><code>")
 			site_escape(b, row.place)
@@ -478,6 +481,9 @@ site_home_add :: proc(site: ^Site) {
 		fmt.sbprintf(&b, "<p class=\"source\">The lines \"kernel: boot: ...\" of <code>%s</code>, one run of the main machine test under QEMU.</p>\n", TEST_OUTPUT)
 	}
 	strings.write_string(&b, "</section>\n")
+
+	// The modules of the boot image, as tiles: each a link to its page.
+	site_tiles_write(site, &b, site_section_pages[.Home])
 
 	// A few numbers: the first three that this build measured.
 	strings.write_string(&b, "<h2 id=\"numbers\">Measured</h2>\n<div class=\"measures\">\n")

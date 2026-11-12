@@ -22,7 +22,7 @@ No page holds a text that a person must remember to update: each page is generat
 
 | Page | Generated from |
 |---|---|
-| `index.html`, the home | The mark (`support/mark`), the first paragraph of `README.md`, the stages of the start from the lines `kernel: boot: ...` of `build/test_output.txt`, the first three measured numbers, the pictures of `docs/screenshots` with the captions of `README.md`, the newest release of `CHANGELOG.md`, the count of steps of `docs/REVIEWS.md` |
+| `index.html`, the home | The mark (`support/mark`), the first paragraph of `README.md`, the stages of the start from the lines `kernel: boot: ...` of `build/test_output.txt`, the tiles of the boot image (see "The tiles of the boot image"), the first three measured numbers, the pictures of `docs/screenshots` with the captions of `README.md`, the newest release of `CHANGELOG.md`, the count of steps of `docs/REVIEWS.md` |
 | `guides/index.html` | The table "Documents" of `README.md`, then the other documents of `docs/` by name |
 | `guides/<name>.html` | Each document of `docs/` but `HANDOFF.md` and `REVIEWS.md`, which are working records of the project and stay out of the site; the glossary is a page of the reference |
 | `reference/index.html` | The list of the reference tables below |
@@ -31,6 +31,9 @@ No page holds a text that a person must remember to update: each page is generat
 | `reference/numbers.html` | The list `site_measures` and the logs of `build/` |
 | `reference/licenses.html` | See "The licenses" |
 | `releases.html` | All of `CHANGELOG.md`, newest first; each release has the anchor `release-<number>` |
+| `status.html` | See "The status page" |
+| `reference/operations.html`, `context.html`, `errors.html`, `grants.html`, `fixed-ranges.html`, `console.html` | See "The reference tables" |
+| `reference/modules/index.html`, `reference/modules/<name>.html` | See "The module pages" |
 
 Each page has the bar (the heron and the name at the left, the sections as buttons: Guides, Reference, Status, News, Releases; a section appears when its page exists), breadcrumbs on each page below the home, and a foot that names the commit, the release and the time of the build, and the files that the page comes from, as links to the repository at that commit. A reference table names the files that it is read from.
 
@@ -54,6 +57,7 @@ Links:
 - A code span or a link that names a document of `docs/` becomes a link to its page. The anchor of a link to another file is dropped: the ids of the site are not the anchors of the host of the repository.
 - A code span that names a file or a folder of the repository (from the root or from the folder of the document, also `file.odin:34`) becomes a link to that file at the commit of the build. The folder `build/` is not in the repository.
 - A link to an address of another host stays a link.
+- A code span that names a row of a reference table becomes a link to the row. The rule: the whole text of the span, with its case, is the name of one kernel operation (`Memory_Map`), one error kind (`No_Grant`) or one module (`math`); or the span is a call of a built-in command of the console (`load("math")`, `help()`). A name that two tables have links nowhere: `Bad_Address` is a status and an error kind. A status, a unit and a grant are not linked: their names (`Pages`, `Store`, `Person`) are also common words of the code. A document of `docs/` comes first, then a row, then a file of the repository.
 - The first use of each term of the glossary on a page links to the term. The rule: the letters of the term with no regard to case, a whole word, or the word with an `s`; outside code, links and headings; the longest terms first; once for each term on a page.
 
 What it does not render, shown as text and listed by the command: a mermaid diagram (shown as its code), a line of HTML, a table with no line of dashes, a fence with no end, a link to a file that is not in the repository. A single `*` or `_` is text: the documents use no italics.
@@ -109,7 +113,7 @@ The site follows `DESIGN.md`, with the colors of `support/graphics/rules.odin` a
 - the bar at the top, as the bar of the desktop: the heron at the left, the sections as buttons, the current one marked by a line in the blue of the title bar;
 - cards with a border of 1 pixel in their accent and the bar of 4 x 16 pixels before their title, as the cards of the boot display;
 - the colors of the concepts with their meaning in the system: the stages of the start take the color of who runs them (the firmware violet, the boot program orange, the kernel blue);
-- the tables have the look of the tables of the system: the titles of the columns in the dim color, every second row on a band (`DESIGN.md`, section 10);
+- the tables have the look of the tables of the system: the titles of the columns in the dim color, every second row on a band (`DESIGN.md`, section 10). The cells wrap; a name (an identifier, a path, a signature) stays on one line. A table scrolls sideways only on a screen under 720 pixels;
 - the grid of points of the desktop is on the home only.
 
 Prose is in the reading font of the reader's system, at most 72 characters a line; code, signatures, numbers and identifiers are in its monospace font. No animation, no shadow, no round corner. The light form follows `prefers-color-scheme`. A print form hides the bar and the navigation.
@@ -138,12 +142,59 @@ The site draws its own pictures of the mark from `support/mark` (`tools/kernelto
 
 The icons of the pages are the files `heron_24.png` to `heron_192.png` of `resources/logo`. `kerneltool logo` also writes `resources/logo/modus_transparent.png` and `modus_light_transparent.png`, which the README shows in a `<picture>` for the two color schemes.
 
+## The status page
+
+`status.html` gives the state of the system with no sentence of its own: each cell is a part of `PROPERTIES.md` or of `FIRST_MILESTONE.md`.
+
+| Table | Read from, and the form the reader relies on |
+|---|---|
+| Properties | `PROPERTIES.md`: the number and the title of each section `## <n>. <title>`, and the column "Status" of the table `## Summary` (the reader of the first layer). The title links to the heading in the guide |
+| Its evidence items | `FIRST_MILESTONE.md`: the numbered items under `## Evidence`, with their ids `evidence-<label>` in the guide. An item names a property when its text says `property <n>` (no regard to case) or `P<n>` (a capital P), as a whole word; `properties 3 and 4` names none |
+| Its gaps | The items `- <text>` under `## Gaps`, and the lines that continue them (they start with a space), by the same rule. A line of text between the items (`Performance:`) is the group of the items after it |
+| Gaps | Each gap, with its number (`gap-<n>` on the page, from 1 in the order of the file, with a link to its line), its group and its text |
+| Next steps | The numbered items under `## Next steps`, each with a link to its id `next-steps-<label>` in the guide |
+
+The page renders `FIRST_MILESTONE.md` and `PROPERTIES.md` again to read the ids: the renderer gives the same ids to the same text, so the links reach the guide.
+
+## The reference tables
+
+Each table is read from the text of the file that defines the thing (`tools/kerneltool/site_source_readers.odin`): the comments of a contract are its documentation, and the compiler drops them. Each row links to its line in the file, at the commit of the build. Under each table, the page names the file. Each reader knows one form; when a file loses it, the command stops with the file and the line.
+
+| Page | Read from | The form |
+|---|---|---|
+| Kernel operations | `Operation` and `Status` in `contract/operation/operation.odin` | An enumeration: a line `<Name> :: enum <type> {`, one member a line (`<Name> = <decimal>,` or `<Name>,`, with a comment `// ...` or not), a line `}`. A line that is only a comment continues the comment of the member above it. The comment of an operation is `(<parameters>) -> <result>. <text>` or `(<parameters>): <text>`: the parameters and the result exist only as these words, and the table shows them |
+| The context of a program | The constants `CONTEXT_...` and `ROOT_...` of `contract/operation/operation.odin` from the line `CONTEXT_HANDLES ::`, and `GRANT_...` of `support/system/grants.odin` | `<NAME> :: <decimal>`, with the comment lines just above it and the comment of its line. `CONTEXT_HANDLES` and `CONTEXT_VALUES` are the sizes, and a name that ends in `_COUNT` is a count: not roles. A name with `_VALUE_` is a value, another a handle |
+| Error kinds and units | `Kind`, `Unit` and `UNIT_NAMES` in `contract/errors/errors.odin` | Enumerations; a table `UNIT_NAMES := [Unit]string {` of lines `.<Name> = "<text>",` |
+| Grants of the root service | `Grant` and the procedure `grants_of` in `programs/root/main.odin`; `Root_Grant` and `root_grant_names` in `support/system/grants.odin` | Enumerations and a table of names; in `grants_of`, lines `case "<name>", ...:`, comment lines or not, then `return <value>`; the last `return` of the procedure is the value of each other program |
+| Fixed ranges | `Fixed_Range` in `contract/fixed_addresses/fixed_addresses.odin` | An enumeration. The address is `fixed_addresses.range_of` of the compiled contract |
+| Commands of the console | `programs/console/commands.odin`, `programs/console/tables.odin` | Lines `command("<name>", {.<Kind>, ...}, .<Kind>, "<help>", <procedure>)`; the signature as `help()` prints it, `Value` for the kind None of a parameter |
+
+What the tables cannot show:
+
+- The values 13 and 15 of the context (the settings page and the date page) have a comment in `contract/operation` and no constant: they are not in the table.
+- A heading comment inside an enumeration (as "The word wait" before `Word_Wait`) shows under the member before it: the form cannot tell it from a comment that continues.
+- The limits of processor time and of log records of a program come from `budget_of`, a computation: the page names it and does not show its values.
+
+## The module pages
+
+`reference/modules/index.html` lists each module of `module_builds` (`tools/kerneltool/modules.odin`): its name, its kind, whether it is in the boot image, its count of exports, its imports and its purpose. A module whose source is in `programs/` is a program; the others are modules. `reference/modules/<name>.html` gives:
+
+- its documentation: the comment before `package` in its source, the text that the build writes into the module (`describe_package` of `tools/kerneltool/describe.odin`); its purpose is the first sentence;
+- its source folder, its size in the boot image of the last build (or that the image is not built), its imports and the modules that import it;
+- its exports, each with its signature as the console prints it (`write(name: Text, data: Text) -> Integer`, `Handle(Read, Write)`, `Table(Rectangle, Change)`) and its line of help. They come from the same reader as the build: no module needs to be built;
+- for a program, its grants and its budget (pages, programs, threads) from `grants_of` and `things_of` of the root service, with the comments of those lines.
+
+## The tiles of the boot image
+
+The home shows one tile for each module of `build/boot.image`, as the boot display draws them (`support/bootscreen`): the width from the size of the module (5 rows of 1088 pixels for all, at least 48 pixels), the color from the first byte of its hash (`graphics.hue_color`, one rule for the boot display and the site). Each tile links to its module page. The colors and the widths are rules of the style sheet, because the pages hold no inline style. When the image is not built, the tiles are the modules of `module_builds` that it holds, with no size and no color, and the home says so.
+
 ## Not done yet
 
 The work is in layers; each layer adds pages to a site that works.
 
 - (a) Done: the pages, the bar, the transparent mark, the renderer, the guides; also the tables of the licenses.
-- (b) Not done: the Status page (each property with its state in the words of `PROPERTIES.md`, its evidence items and the gaps that name it; the gaps and the next steps as tables), and the reference tables generated from the code: the kernel operations, the context values, the error kinds and units, the grants of the root service, the fixed ranges, the console commands, and the modules with their exports and signatures, with the tiles of the boot image on the home.
+- (b) Done: the status page, the reference tables generated from the code, the module pages, the tiles of the boot image on the home, the links from the code spans of the guides to the rows.
+- The places that the next layers fill: the news is the section `News` of the bar (`news.html`; the bar shows a section when its page exists), with its door on the home; the search is one more file of the site and a field in the bar; the metadata for other sites goes into the head of `site_page_html`, which writes every page.
 - (c) Not done: the news (`news/`, `kerneltool news`), its page and its feed.
 - (d) Not done: the search.
 - (e) Not done: Open Graph, JSON-LD, `sitemap.xml`, `robots.txt`, the feeds, `llms.txt`, `site.webmanifest`, the checks of the JSON-LD, the smaller pictures for `srcset`.

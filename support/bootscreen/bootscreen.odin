@@ -188,29 +188,6 @@ show_right :: proc "contextless" (canvas: graphics.Canvas, x, y: int, text: ^Tex
 	show(canvas, x - text.count * 8, y, text, color)
 }
 
-// hue_color gives one color of the circle of colors, of middle strength.
-@(private)
-hue_color :: proc "contextless" (hue: u8) -> graphics.Color {
-	LOW :: 64
-	HIGH :: 208
-	part := u32(hue) * 6 % 256
-	rise := LOW + (HIGH - LOW) * part / 255
-	fall := HIGH - (HIGH - LOW) * part / 255
-	switch u32(hue) * 6 / 256 {
-	case 0:
-		return graphics.rgb(HIGH, rise, LOW)
-	case 1:
-		return graphics.rgb(fall, HIGH, LOW)
-	case 2:
-		return graphics.rgb(LOW, HIGH, rise)
-	case 3:
-		return graphics.rgb(LOW, fall, HIGH)
-	case 4:
-		return graphics.rgb(rise, LOW, HIGH)
-	}
-	return graphics.rgb(HIGH, LOW, fall)
-}
-
 // block draws a rectangle. Its color goes from top, on its first line, to
 // bottom, on its last line.
 @(private)
@@ -777,7 +754,7 @@ draw :: proc "contextless" (canvas: graphics.Canvas, data: ^Data) {
 			if row >= TILE_ROWS {
 				break
 			}
-			color := hue_color(entry.hash[0])
+			color := graphics.hue_color(entry.hash[0])
 			y := row * (TILE_HEIGHT + TILE_GAP)
 			block(area, x, y, tile, TILE_HEIGHT, graphics.shade(color, 70), graphics.shade(color, 40))
 			fill(area, x + 3, y + TILE_HEIGHT - 3, tile - 6, 1, color)

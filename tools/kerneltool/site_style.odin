@@ -162,13 +162,16 @@ ol.labelled > li > * { text-indent: 0; }
 .neighbours { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; margin-top: 32px; }
 
 /* Tables: the look of the tables of the system: the titles of the columns in
-   the dim color, rows of 24 pixels, every second row on a band. */
-.table { overflow-x: auto; margin: 0 0 16px; }
+   the dim color, rows of 24 pixels, every second row on a band.
+   The cells wrap; a name (an identifier, a path, a signature) stays on one
+   line. A table scrolls sideways only on a narrow screen. */
+.table { margin: 0 0 16px; }
 table { border-collapse: collapse; min-width: 100%; }
 th { color: var(--dim); font-weight: 400; text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--track); white-space: nowrap; }
-td { padding: 4px 8px; vertical-align: top; }
+td { padding: 4px 8px; vertical-align: top; overflow-wrap: break-word; }
 tbody tr:nth-child(odd) { background: var(--card-top); }
-td.code { white-space: nowrap; }
+td.name, td.name code { white-space: nowrap; overflow-wrap: normal; }
+a.reference { text-decoration-style: dashed; }
 
 /* Cards: a border of 1 pixel in the accent, the bar of 4 by 16 pixels
    before the title. */
@@ -181,7 +184,14 @@ td.code { white-space: nowrap; }
 .line code { display: block; padding: 8px; white-space: pre-wrap; }
 
 /* The home. */
-.home-head { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 32px; align-items: center; padding-top: 32px; }
+/* The head takes the height of its picture: the name under the heron is in
+   the picture, and the card below starts after it. */
+.home-head { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 32px; align-items: start; padding: 32px 0; margin-bottom: 16px; }
+.home-head picture { display: block; }
+.tiles { list-style: none; padding: 0; margin: 0 0 16px; display: flex; flex-wrap: wrap; gap: 2px; }
+.tiles li { margin: 0; flex: 1 1 96px; min-width: 48px; height: 24px; line-height: 20px; padding: 0 4px; overflow: hidden; white-space: nowrap; font-family: var(--mono); font-size: 12px; background: var(--track); border-bottom: 1px solid var(--dim); }
+.tiles a { display: block; color: inherit; text-decoration: none; }
+.tiles a:hover { background: none; text-decoration: underline; }
 .mark { display: block; image-rendering: pixelated; }
 .lead { font-size: 18px; line-height: 28px; max-width: 60ch; }
 .doors { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; }
@@ -197,6 +207,7 @@ figure a:hover { background: none; }
 figure img { display: block; width: 100%; height: auto; }
 figcaption { padding-top: 8px; font-size: 14px; }
 @media (max-width: 719px) {
+  .table { overflow-x: auto; }
   .home-head { grid-template-columns: minmax(0, 1fr); }
   .measures, .pictures { grid-template-columns: minmax(0, 1fr); }
   figure.wide { grid-column: auto; }
@@ -214,10 +225,13 @@ figcaption { padding-top: 8px; font-size: 14px; }
 // site_style_sheet gives the whole style sheet: the variables of the dark
 // form, the rules, the grid of points of the background, then the light form
 // for a reader whose system asks for it.
-site_style_sheet :: proc() -> string {
+site_style_sheet :: proc(tile_rules: string) -> string {
 	builder := strings.builder_make(context.temp_allocator)
 	site_colors_write(&builder, site_dark_colors())
 	strings.write_string(&builder, SITE_STYLE_RULES)
+	// The colors and the widths of the tiles of the boot image: they come
+	// from the image of the build, so they are not fixed rules.
+	strings.write_string(&builder, tile_rules)
 	// The grid of points of the background (docs/DESIGN.md, section 3): a
 	// square of 2 pixels each 24 pixels, at 12 + 24 n. A picture in the style
 	// sheet itself, so that the page asks for no other file.

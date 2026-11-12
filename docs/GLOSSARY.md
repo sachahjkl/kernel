@@ -400,6 +400,8 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Site | The documentation of the system as static pages, their style sheet and their pictures, that `kerneltool site` writes in `build/site` from the files of the repository and the logs of the machine tests (`docs/SITE.md`). Its home is the one page that shows the system | website, homepage, landing page |
 | Guide | A page of the site made from a document of `docs/`: how a part of the system is designed, and why | article, tutorial (for this) |
 | Reference table | A page of the site that the tool generates from the code or the files that define a thing: what exists in this build, each row with its source | API docs, listing |
+| Module page | A reference table of the site for one module of `module_builds`: its documentation, its exports as the console prints them, its imports, and for a program its grants and its budget | API page, package page |
+| Status page | The page of the site that gives the state of each property in the words of `PROPERTIES.md`, the evidence items and the gaps of `FIRST_MILESTONE.md` that name it, then the gaps and the next steps. What is not done is on it as plainly as what is done | roadmap, progress page, "what runs today" |
 
 ## Terms that the system does not have
 

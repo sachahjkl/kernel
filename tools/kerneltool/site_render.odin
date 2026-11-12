@@ -545,6 +545,12 @@ site_write_code_span :: proc(renderer: ^Site_Renderer, code: string) {
 		strings.write_string(b, "</code></a>")
 		return
 	}
+	if target, named := site_code_link(renderer.site, code); named && !renderer.in_heading {
+		fmt.sbprintf(b, "<a class=\"reference\" href=\"%s\"><code>", site_relative(renderer.page, target))
+		site_escape(b, code)
+		strings.write_string(b, "</code></a>")
+		return
+	}
 	if path, found := site_repository_path(renderer.source, code); found && !renderer.in_heading {
 		strings.write_string(b, "<a href=\"")
 		site_escape(b, site_repository_file(renderer.site, path))

@@ -98,6 +98,9 @@ Site :: struct {
 	figures:      []Site_Figure,
 	boot_image:   []Site_Image_Entry,
 	licenses:     Site_Licenses,
+	reference:    Site_Reference,
+	code_links:   map[string]string, // The text of a code span to the row of a reference table that it names.
+	tile_rules:   string, // The rules of the style sheet for the tiles of the boot image on the home.
 }
 
 run_site :: proc(args: []string) -> int {
@@ -296,6 +299,9 @@ site_build :: proc(address: string) -> bool {
 		site.documents[name] = page
 	}
 	site.terms = site_glossary_terms(glossary_text)
+	// The sources of the reference tables are read before any guide is
+	// rendered: a code span of a guide links to their rows.
+	site_reference_read(&site) or_return
 
 	if !reset_folder(SITE_FOLDER) {
 		return false
@@ -350,6 +356,7 @@ site_build :: proc(address: string) -> bool {
 	// The pages.
 	site_guides_add(&site) or_return
 	site_reference_add(&site) or_return
+	site_status_add(&site) or_return
 	site_releases_add(&site)
 	site_home_add(&site)
 
@@ -358,7 +365,7 @@ site_build :: proc(address: string) -> bool {
 		data := read_file(source) or_return
 		site_write_file(&site, target, data) or_return
 	}
-	site_write_file(&site, SITE_STYLE_SHEET, transmute([]u8)site_style_sheet()) or_return
+	site_write_file(&site, SITE_STYLE_SHEET, transmute([]u8)site_style_sheet(site.tile_rules)) or_return
 
 	written := make(map[string]string, context.temp_allocator)
 	for page in site.pages {
