@@ -21,15 +21,21 @@ package quic
 // - An Initial with an unknown identifier and no token gets a Retry packet
 //   (retry.odin), and the server keeps nothing: no record, no key.
 // - An Initial with a token takes a free record only when its token opens
-//   for its remote (the client proved its address), when the Initial itself
-//   opens, and under the limits: connections of one remote address,
-//   handshakes of one remote address, handshakes at once, a free record.
-//   Over a limit it gets no answer: the client tries again.
-// - The work of datagrams of unknown identifiers has a budget in each
-//   second: Retries, token checks, Initial checks. Over the budget such a
-//   datagram is dropped before any cryptography. The datagrams of known
-//   records have no budget (server_datagram_is_known lets the caller give
-//   them first).
+//   for its remote (the client proved its address), when the token did not
+//   take a record before, under the limits (connections of one remote
+//   address, handshakes of one remote address, handshakes at once, a free
+//   record, the budget of Initial checks of the address), and when the
+//   Initial itself opens. Each limit that needs no cryptography is checked
+//   before the Initial is opened. Over a limit it gets no answer: the
+//   client tries again.
+// - The work of datagrams of unknown identifiers has budgets
+//   (server_budgets.odin): Retries, token checks, Initial checks, and the
+//   Initial checks of one address. Over a budget such a datagram is
+//   dropped before any cryptography. The datagrams of known records have no
+//   budget (server_batch_order lets the caller give them first).
+// - A record whose address the server validated asks the caller to
+//   validate its remote at each datagram, until the caller confirms that
+//   the network service took it (server_validation_confirmed).
 // - A long header of another version gets one Version Negotiation packet,
 //   at most a fixed count in each second.
 // - The stateless reset is not done.
@@ -42,14 +48,23 @@ Server_Limits :: struct {
 	handshakes_per_remote_address:   int, // Records in the handshake that one remote address holds.
 	handshakes_at_once:              int, // Records in the handshake, for all remotes.
 	version_negotiations_per_second: int,
-	retries_per_second:              int,
-	token_checks_per_second:         int,
-	initial_checks_per_second:       int,
+	// The budgets of work: each one a rate in each second and a depth, the
+	// most units that a burst takes at once (server_budgets.odin).
+	retries_per_second:                    int,
+	retries_depth:                         int,
+	token_checks_per_second:               int,
+	token_checks_depth:                    int,
+	initial_checks_per_second:             int,
+	initial_checks_depth:                  int,
+	initial_checks_per_address_per_second: int, // For each address whose token opened.
+	initial_checks_per_address_depth:      int,
 }
 
 // The limits of quic_echo, and of the tests: a table of 16 records. The
-// budgets of work, by the speeds of docs/CRYPTOGRAPHY.md, section 6, with
-// the erasure of 16 KiB of stack after each export:
+// budgets of work are a share of one processor, by the costs of each piece
+// of work, from the speeds of docs/CRYPTOGRAPHY.md, section 6, with the
+// erasure of 16 KiB of stack after each export (the speed test
+// the_cost_of_the_work_of_new_connections measures them on the host):
 // - a Retry: 8 random bytes, one ChaCha20-Poly1305 seal of 37 bytes (the
 //   token), one AES-128-GCM tag over a packet of about 100 bytes: two
 //   exports, about 10 us;
@@ -57,17 +72,27 @@ Server_Limits :: struct {
 //   about 3 us;
 // - an Initial check: 9 HKDF exports for the Initial keys, one mask, one
 //   AES-128-GCM open of about 1160 bytes: 11 exports, about 30 us.
-// 2000 Retries, 2000 token checks and 500 Initial checks in one second
-// take about 20 + 6 + 15 = 41 ms of one processor in the worst second: 4 %.
-// 500 new connections in one second is far over what the table of 16 takes.
+// 20 000 Retries, 30 000 token checks and 2000 Initial checks in one
+// second take about 200 + 90 + 60 = 350 ms of one processor: 35 % in the
+// worst second, when every budget is spent. A flood must then bring 24 MB/s
+// of Initials with no token, or 36 MB/s with tokens, to spend a budget.
+// The depth is a tenth of a second of each rate. One address whose token
+// opened gets 4 Initial checks in each second, 4 at once: a client needs
+// one, and some more when its Initial is lost, so 500 such addresses are
+// needed to spend the shared budget.
 SERVER_LIMITS_DEFAULT :: Server_Limits {
-	connections_per_remote_address  = 8,
-	handshakes_per_remote_address   = 2,
-	handshakes_at_once              = 8,
-	version_negotiations_per_second = 16,
-	retries_per_second              = 2000,
-	token_checks_per_second         = 2000,
-	initial_checks_per_second       = 500,
+	connections_per_remote_address        = 8,
+	handshakes_per_remote_address         = 2,
+	handshakes_at_once                    = 8,
+	version_negotiations_per_second       = 16,
+	retries_per_second                    = 20_000,
+	retries_depth                         = 2000,
+	token_checks_per_second               = 30_000,
+	token_checks_depth                    = 3000,
+	initial_checks_per_second             = 2000,
+	initial_checks_depth                  = 200,
+	initial_checks_per_address_per_second = 4,
+	initial_checks_per_address_depth      = 4,
 }
 
 Remote :: struct {
@@ -81,6 +106,12 @@ Server_Record :: struct {
 	remote:     Remote,
 	started_at: u64,
 	generation: u64, // A new value each time that the record is taken: the caller tells two clients of one place apart.
+	// The caller confirmed that the network service validated the remote
+	// (the command Validate gave 1). Until then each datagram of a record
+	// whose address is validated asks the caller to validate the remote:
+	// a Validate that came after the network service forgot the remote
+	// gives 0, and a later one, after a datagram admitted it again, works.
+	validation_confirmed: bool,
 }
 
 // What the server counts: the work that a flood costs is visible.
@@ -99,7 +130,10 @@ Server_Counters :: struct {
 	refused_remote_limit:         u64,
 	refused_handshake_limit:      u64,
 	refused_full:                 u64,
-	over_budget:                  u64, // Datagrams of unknown identifiers dropped over the budget of the second, before any cryptography.
+	over_budget:                  u64, // Datagrams of unknown identifiers dropped over a shared budget, before any cryptography.
+	over_address_budget:          u64, // Initials with a valid token dropped over the budget of Initial checks of their address, before the Initial is opened.
+	tokens_used_again:            u64, // A valid token whose record was taken before.
+	used_tokens_forgotten:        u64, // A used token that the full table forgot before it expired: it can take a record again.
 	other_remote:                 u64, // A known identifier from another remote.
 	no_connection:                u64, // A packet that is not an Initial, for no record.
 	version_negotiations:         u64,
@@ -111,7 +145,7 @@ Server_Counters :: struct {
 Server_Outcome :: struct {
 	record:          int, // The record that took the datagram; -1: none.
 	answer_length:   int, // A Retry or a Version Negotiation packet in the answer buffer, for the remote.
-	validate_remote: bool, // The remote proved its address: the caller marks it validated, before it sends the datagrams of the record.
+	validate_remote: bool, // The remote proved its address: the caller marks it validated, before it sends the datagrams of the record, and gives the result to server_validation_confirmed.
 	release_remote:  bool, // The server keeps nothing of this remote: the caller releases it, after it sent the answer.
 }
 
@@ -133,8 +167,9 @@ Server :: struct {
 	next_generation:    u64,
 	negotiation_second: u64,
 	negotiation_count:  int,
-	work_second:        u64,
-	work_count:         [Server_Work]int,
+	work_buckets:       [Server_Work]Work_Bucket,
+	address_budgets:    [SERVER_ADDRESS_BUDGETS]Server_Address_Budget,
+	used_tokens:        [SERVER_USED_TOKENS]Server_Used_Token,
 	retry_key:          [RETRY_TOKEN_KEY_SIZE]u8, // Made at the start, from the generator: the tokens of another start do not open.
 	token_counter:      u64, // The nonce of each token: never two times with one key.
 	datagram_copy:      [DATAGRAM_LIMIT]u8, // Private memory: the copy of the datagram, on which each decision is taken.
@@ -162,27 +197,74 @@ server_init :: proc "contextless" (server: ^Server, connections: []Connection, r
 	server.limits = limits
 	server.counters = {}
 	server.token_counter = 0
+	server.work_buckets = {}
+	server.address_budgets = {}
+	server.used_tokens = {}
 	for &record in records {
 		record = {}
 	}
 	return random.fill_for_a_key(generator, server.retry_key[:], configuration.tls.least_seed_strength, error)
 }
 
-// server_datagram_is_known says if a datagram goes to a record: the caller
-// gives these datagrams first in each pass, so that the datagrams of a
-// flood never wait in front of them. The decision is taken on a copy.
-server_datagram_is_known :: proc "contextless" (server: ^Server, datagram: []u8, remote: Remote) -> bool {
-	error: errors.Error_Record
-	copy_of_the_datagram, taken := datagram_take(datagram, server.datagram_copy[:], &error)
-	if !taken {
-		return false
+// One datagram of a batch that arrived together, with its remote.
+Server_Datagram :: struct {
+	bytes:  []u8,
+	remote: Remote,
+}
+
+// server_batch_order gives the order in which the caller gives a batch of
+// datagrams to server_datagram_receive: first each datagram that goes to a
+// record, then the others, each group in the order of arrival. order holds
+// each index of the batch once, and the count is len(batch). The decision
+// is taken once for the whole batch, before any datagram is given: a
+// datagram that a record would take only after an earlier datagram of the
+// batch took that record is in the second group, and is given all the
+// same.
+//
+// The order is a priority, not a decision of security: it reads the header
+// in place, with no copy. If the bytes change under it, a datagram is only
+// given earlier or later; server_datagram_receive decides on its own copy.
+server_batch_order :: proc "contextless" (server: ^Server, batch: []Server_Datagram, order: []int) -> int {
+	count := 0
+	for known_group in ([]bool{true, false}) {
+		for item, index in batch {
+			if count == len(order) {
+				return count
+			}
+			error: errors.Error_Record
+			header: Packet_Header
+			known := false
+			if len(item.bytes) <= DATAGRAM_LIMIT && header_read(item.bytes, 0, CONNECTION_ID_SIZE, &header, &error) {
+				record, _ := server_record_of(server, &header, item.remote)
+				known = record >= 0
+			}
+			if known == known_group {
+				order[count] = index
+				count += 1
+			}
+		}
 	}
-	header: Packet_Header
-	if !header_read(copy_of_the_datagram, 0, CONNECTION_ID_SIZE, &header, &error) {
-		return false
+	return count
+}
+
+// server_validation_confirmed takes the result of the Validate that the
+// caller sent for the record at place, when the record was of the
+// generation given: true when the network service validated the remote.
+// Each record of that remote is then confirmed. A result of false changes
+// nothing: the next datagram of the record asks again.
+server_validation_confirmed :: proc "contextless" (server: ^Server, place: int, generation: u64, validated: bool) {
+	if !validated || place < 0 || place >= len(server.records) {
+		return
 	}
-	index, _ := server_record_of(server, &header, remote)
-	return index >= 0
+	record := server.records[place]
+	if !record.in_use || record.generation != generation {
+		return
+	}
+	for &other in server.records {
+		if other.in_use && other.remote == record.remote {
+			other.validation_confirmed = true
+		}
+	}
 }
 
 // server_datagram_receive gives one datagram of a remote to its record, or
@@ -207,8 +289,10 @@ server_datagram_receive :: proc "contextless" (server: ^Server, received: []u8, 
 	}
 	index, other_remote := server_record_of(server, &header, remote)
 	if index >= 0 {
-		connection_datagram_receive(&server.connections[index], datagram, now, &error)
+		connection := &server.connections[index]
+		connection_datagram_receive(connection, datagram, now, &error)
 		outcome.record = index
+		outcome.validate_remote = connection.address_validated && !server.records[index].validation_confirmed
 		return
 	}
 	outcome.release_remote = !server_remote_has_record(server, remote)
@@ -269,36 +353,33 @@ server_remote_has_record :: proc "contextless" (server: ^Server, remote: Remote)
 	return false
 }
 
-// server_work_take takes one unit of a budget of the second: false when the
+// server_work_take takes one unit of a shared budget: false when the
 // budget is spent, and the datagram is dropped before any cryptography.
 @(private)
 server_work_take :: proc "contextless" (server: ^Server, work: Server_Work, now: u64) -> bool {
-	second := now / 1_000_000
-	if second != server.work_second {
-		server.work_second = second
-		server.work_count = {}
-	}
-	limit: int
+	rate, depth: int
 	switch work {
 	case .Retry:
-		limit = server.limits.retries_per_second
+		rate, depth = server.limits.retries_per_second, server.limits.retries_depth
 	case .Token_Check:
-		limit = server.limits.token_checks_per_second
+		rate, depth = server.limits.token_checks_per_second, server.limits.token_checks_depth
 	case .Initial_Check:
-		limit = server.limits.initial_checks_per_second
+		rate, depth = server.limits.initial_checks_per_second, server.limits.initial_checks_depth
 	}
-	if server.work_count[work] >= limit {
+	if !work_bucket_take(&server.work_buckets[work], rate, depth, now) {
 		server.counters.over_budget += 1
 		return false
 	}
-	server.work_count[work] += 1
 	return true
 }
 
 // server_new_connection answers an Initial with an unknown identifier: a
-// Retry when it has no token; a free record when its token and the Initial
-// open, under the limits. It gives the record or -1, and the length of an
-// answer in answer.
+// Retry when it has no token; a free record when its token opens and did
+// not take a record before, under the limits, and when the Initial opens.
+// The limits that need no cryptography come before the open of the
+// Initial: an address whose token is valid cannot spend the shared budget
+// of Initial checks with Initials that the limits refuse. It gives the
+// record or -1, and the length of an answer in answer.
 @(private)
 server_new_connection :: proc "contextless" (server: ^Server, datagram: []u8, header: ^Packet_Header, remote: Remote, answer: []u8, now: u64) -> (index: int, answer_length: int) {
 	if len(datagram) < SMALLEST_MAX_UDP_PAYLOAD_SIZE || header.destination_connection_id_length < CONNECTION_ID_SIZE {
@@ -327,11 +408,8 @@ server_new_connection :: proc "contextless" (server: ^Server, datagram: []u8, he
 		server.counters.tokens_refused += 1
 		return -1, 0
 	}
-	if !server_work_take(server, .Initial_Check, now) {
-		return -1, 0
-	}
-	if !server_initial_is_authentic(server, datagram, header) {
-		server.counters.not_authentic += 1
+	if server_token_was_used(server, facts.counter) {
+		server.counters.tokens_used_again += 1
 		return -1, 0
 	}
 	of_address, handshakes_of_address, handshakes := 0, 0, 0
@@ -365,6 +443,17 @@ server_new_connection :: proc "contextless" (server: ^Server, datagram: []u8, he
 		server.counters.refused_full += 1
 		return -1, 0
 	}
+	if !server_address_budget_take(server, remote.address, now) {
+		server.counters.over_address_budget += 1
+		return -1, 0
+	}
+	if !server_work_take(server, .Initial_Check, now) {
+		return -1, 0
+	}
+	if !server_initial_is_authentic(server, datagram, header) {
+		server.counters.not_authentic += 1
+		return -1, 0
+	}
 	connection := &server.connections[free]
 	if !connection_start_server(connection, &server.configuration, server.cryptography, server.generator, now, &error) {
 		return -1, 0
@@ -385,12 +474,13 @@ server_new_connection :: proc "contextless" (server: ^Server, datagram: []u8, he
 	}
 	server.next_generation += 1
 	server.records[free] = {in_use = true, remote = remote, started_at = now, generation = server.next_generation}
+	server_token_mark_used(server, facts.counter, facts.issued_at, now)
 	server.counters.accepted += 1
 	return free, 0
 }
 
 // server_retry writes a Retry packet for an Initial with no token, within
-// the budget of the second. The server keeps nothing: the token holds what
+// the budget of Retries. The server keeps nothing: the token holds what
 // it needs when the client comes back. It gives the length, or 0.
 @(private)
 server_retry :: proc "contextless" (server: ^Server, header: ^Packet_Header, remote: Remote, answer: []u8, now: u64) -> int {

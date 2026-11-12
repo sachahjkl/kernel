@@ -43,8 +43,8 @@ PEER_QUIC_FLOOD_PER_TICK :: 5
 // datagram of the flood, which is allowed.
 PEER_QUIC_FLOOD_WAITING :: 32
 PEER_QUIC_FLOOD_STALL :: 50 * time.Millisecond
-// The flood of the fourth independent read: authentic Initials (anyone can
-// make one) with no token, 2 from each of 4 forged addresses. With Retry,
+// The forged part of the flood that is authentic: Initials that open
+// (anyone can make one) with no token, 2 from each of 4 forged addresses. With Retry,
 // each one gets a Retry to its forged address, and takes no record.
 PEER_QUIC_SPOOFED :: 8
 // The time after the last datagram of the flood in which an answer can
@@ -86,6 +86,10 @@ Peer_Quic :: struct {
 	retry_answers: int, // Retry packets to the addresses of the flood: at most one for each Initial of the flood.
 	answer_bytes:  [PEER_QUIC_FLOOD + PEER_QUIC_SPOOFED]int, // The bytes of the answers to each address of the flood: at most 3 times the 1200 that it sent.
 	most_answer_bytes: int,
+	// The Retry packets to each address and port of the flood, which sent
+	// one Initial: at most one each.
+	retries_to:        [PEER_QUIC_FLOOD + PEER_QUIC_SPOOFED]int,
+	most_retries_to:   int,
 	last_answer_at: time.Tick, // The last answer to the flood: the flood waits for its answers.
 	negotiation_answers: int, // Version Negotiation packets that name version 1.
 	failure:       string,
@@ -204,6 +208,7 @@ peer_quic_case_start :: proc(peer: ^Peer, state: ^Peer_Quic) -> bool {
 	state.expect_failure, state.vanish = false, false
 	state.flood_sent, state.flood_answers, state.negotiation_answers, state.retry_answers = 0, 0, 0, 0
 	state.answer_bytes, state.most_answer_bytes = {}, 0
+	state.retries_to, state.most_retries_to = {}, 0
 	state.last_answer_at = time.tick_now()
 	state.vanish_after_bytes = 0
 	state.failure = ""
@@ -342,6 +347,10 @@ peer_quic_datagram :: proc(peer: ^Peer, destination: [4]u8, port: u16, data: []u
 			// A Retry of version 1 (the form, the fixed bit, the type 3),
 			// within 3 times the datagram that it answers.
 			state.retry_answers += 1
+			if slot >= 0 && slot < len(state.retries_to) {
+				state.retries_to[slot] += 1
+				state.most_retries_to = max(state.most_retries_to, state.retries_to[slot])
+			}
 		case:
 			state.flood_answers += 1
 		}
@@ -576,8 +585,8 @@ peer_quic_check :: proc(state: ^Peer_Quic, wanted: int) {
 			// each Initial, never more than 3 times the 1200 bytes that an
 			// address sent, and the real client got its echo (done). The
 			// count of Retries is reported.
-			if state.name == "flood" && (state.retry_answers == 0 || state.retry_answers > PEER_QUIC_FLOOD + PEER_QUIC_SPOOFED || state.most_answer_bytes > 3 * quic.MAX_DATAGRAM_SIZE) {
-				state.failure = fmt.aprintf("%d Retry packets to the flood (at most %d), the most bytes to one address %d (at most %d)", state.retry_answers, PEER_QUIC_FLOOD + PEER_QUIC_SPOOFED, state.most_answer_bytes, 3 * quic.MAX_DATAGRAM_SIZE)
+			if state.name == "flood" && (state.retry_answers == 0 || state.most_retries_to > 1 || state.most_answer_bytes > 3 * quic.MAX_DATAGRAM_SIZE) {
+				state.failure = fmt.aprintf("%d Retry packets to the flood (at least 1), the most Retries to one address and port %d (at most 1, for its one Initial), the most bytes to one address %d (at most %d)", state.retry_answers, state.most_retries_to, state.most_answer_bytes, 3 * quic.MAX_DATAGRAM_SIZE)
 				peer_quic_end(state, wanted, false)
 				return
 			}

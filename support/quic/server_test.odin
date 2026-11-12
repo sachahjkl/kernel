@@ -100,7 +100,7 @@ harness_seed :: proc(first: u8) -> (seed: [random.SEED_SIZE]u8) {
 // client, for the message of a failure.
 harness_describe :: proc(harness: ^Harness) -> string {
 	counters := harness.server.counters
-	text := fmt.tprintf("server: accepted %d, ended %d, datagrams %d, unreadable %d, Retries %d, tokens refused %d, tokens expired %d, not authentic %d, too small %d, refused by the limit of a remote %d, by the limit of the handshakes %d, table full %d, over the budget %d, from another remote %d, of no connection %d, version negotiations %d; records in use %d; clients that did not start %d; clients:", counters.accepted, counters.ended, counters.datagrams, counters.unreadable, counters.retries, counters.tokens_refused, counters.tokens_expired, counters.not_authentic, counters.too_small, counters.refused_remote_limit, counters.refused_handshake_limit, counters.refused_full, counters.over_budget, counters.other_remote, counters.no_connection, counters.version_negotiations, server_connections_in_use(&harness.server), harness.clients_not_started)
+	text := fmt.tprintf("server: accepted %d, ended %d, datagrams %d, unreadable %d, Retries %d, tokens refused %d, tokens expired %d, not authentic %d, too small %d, refused by the limit of a remote %d, by the limit of the handshakes %d, table full %d, over the budget %d, over the budget of an address %d, tokens used again %d, used tokens forgotten %d, from another remote %d, of no connection %d, version negotiations %d; records in use %d; clients that did not start %d; clients:", counters.accepted, counters.ended, counters.datagrams, counters.unreadable, counters.retries, counters.tokens_refused, counters.tokens_expired, counters.not_authentic, counters.too_small, counters.refused_remote_limit, counters.refused_handshake_limit, counters.refused_full, counters.over_budget, counters.over_address_budget, counters.tokens_used_again, counters.used_tokens_forgotten, counters.other_remote, counters.no_connection, counters.version_negotiations, server_connections_in_use(&harness.server), harness.clients_not_started)
 	for &client, index in harness.clients {
 		text = fmt.tprintf("%s [%d: %v, a Retry taken %v, closed with %x, by the handshake deadline %v, by the idle timeout %v, %d bytes sent, %d received]", text, index, client.state, client.retried, client.close_error_code, client.closed_by_handshake_timeout, client.closed_by_idle_timeout, client.bytes_sent, client.bytes_received)
 	}
@@ -430,8 +430,8 @@ a_flood_of_forged_initials :: proc(t: ^testing.T) {
 	testing.expectf(t, harness.now - start < 1_000_000, "the client connected after %d us; %s", harness.now - start, harness_describe(harness))
 }
 
-// The flood of the fourth independent read: 8 authentic Initials, 2 from
-// each of 4 forged addresses, every 10 s. Each one gets a Retry to its
+// A flood of authentic Initials from forged sources: 8 authentic Initials
+// (anyone can make one), 2 from each of 4 forged addresses, every 10 s. Each one gets a Retry to its
 // forged address, and no record. A real client that starts in the middle
 // of it, 15 s in, at the time of a new round, connects at once. Before
 // Retry, these 8 Initials held the 8 handshake places for ever.
@@ -653,4 +653,160 @@ a_handshake_with_a_client_with_an_empty_identifier :: proc(t: ^testing.T) {
 	testing.expectf(t, packet_open(&harness.cryptography, &server_keys, sent, &initial, 0, &opened, &error), "%v", error)
 	secret_erase(&client_keys, size_of(client_keys))
 	secret_erase(&server_keys, size_of(server_keys))
+}
+
+// retry_of sends an authentic Initial with no token from a remote, and
+// gives the token and the identifier of the Retry that answers it.
+retry_of :: proc(harness: ^Harness, remote: Remote, identifier: [CONNECTION_ID_SIZE]u8) -> (token: [RETRY_TOKEN_SIZE]u8, retry_source: [CONNECTION_ID_SIZE]u8, ok: bool) {
+	first := authentic_initial(&harness.cryptography, identifier)
+	answer: [MAX_DATAGRAM_SIZE]u8
+	outcome := server_datagram_receive(&harness.server, first[:], remote, answer[:], harness.now)
+	error: errors.Error_Record
+	header: Packet_Header
+	if outcome.answer_length == 0 || !header_read(answer[:outcome.answer_length], 0, 0, &header, &error) || header.type != .Retry || header.token_length != RETRY_TOKEN_SIZE {
+		return
+	}
+	copy(token[:], answer[header.token_offset:][:header.token_length])
+	copy(retry_source[:], header.source_connection_id[:header.source_connection_id_length])
+	return token, retry_source, true
+}
+
+// One host with a real address takes one Retry, then sends 500 Initials in
+// each second with its valid token and the identifier of the Retry, each
+// with a changed byte, so that none opens. They pass the token check, but
+// the budget of Initial checks of that address refuses all of them after
+// its 4 at once and 4 in each second, before any open: the shared budget
+// is not spent. A real client that starts at the same time connects and
+// ends its echo.
+@(test)
+one_address_with_a_valid_token_cannot_spend_the_budget_of_initial_checks :: proc(t: ^testing.T) {
+	harness := harness_make(1)
+	defer harness_free(harness)
+	testing.expectf(t, harness.clients_not_started == 0, "%s", harness_describe(harness))
+	attacker := Remote{0x0B00_0001, 40_000}
+	token, retry_source, has_retry := retry_of(harness, attacker, {0xB0, 0xB1, 0xB2, 0xB3, 0xB4, 0xB5, 0xB6, 0xB7})
+	if !testing.expectf(t, has_retry, "%s", harness_describe(harness)) {
+		return
+	}
+	garbage := authentic_initial(&harness.cryptography, retry_source, token[:])
+	garbage[MAX_DATAGRAM_SIZE - 1] ~= 0x01 // The tag: the Initial does not open.
+	start := harness.now
+	next_attack := start
+	attacks := 0
+	for harness.now < start + 2_000_000 {
+		for next_attack <= harness.now {
+			harness_server_receive(harness, attacker, garbage[:])
+			attacks += 1
+			next_attack += 2000 // 500 in each second.
+		}
+		harness_echo(harness)
+		harness_step(harness)
+	}
+	counters := harness.server.counters
+	testing.expectf(t, attacks >= 1000, "%d Initials of the attacker", attacks)
+	// 4 at once, then 4 in each second, for the attacker; the real client
+	// needs one or a few.
+	testing.expectf(t, counters.authenticity_checks <= 4 + 2 * 4 + 4, "%d Initial checks; %s", counters.authenticity_checks, harness_describe(harness))
+	testing.expectf(t, counters.over_address_budget >= u64(attacks) - 4 - 2 * 4 - 1, "%s", harness_describe(harness))
+	testing.expectf(t, counters.over_budget == 0, "%s", harness_describe(harness))
+	testing.expectf(t, counters.accepted == 1 && harness.clients[0].state == .Connected, "the real client did not connect during the attack; %s", harness_describe(harness))
+	ended := harness_run(t, harness, 4096, 10_000_000)
+	testing.expectf(t, ended == 1, "%d clients ended their echo, not 1; %s", ended, harness_describe(harness))
+}
+
+// A token takes a record once: after its record ended, the same Initial
+// with the same token, from the same remote and within the lifetime of the
+// token, takes no record.
+@(test)
+a_token_takes_a_record_once :: proc(t: ^testing.T) {
+	harness := harness_make(0)
+	defer harness_free(harness)
+	remote := Remote{0x0B00_0002, 40_001}
+	token, retry_source, has_retry := retry_of(harness, remote, {0xC0, 0xC1, 0xC2, 0xC3, 0xC4, 0xC5, 0xC6, 0xC7})
+	if !testing.expectf(t, has_retry, "%s", harness_describe(harness)) {
+		return
+	}
+	initial := authentic_initial(&harness.cryptography, retry_source, token[:])
+	answer: [MAX_DATAGRAM_SIZE]u8
+	outcome := server_datagram_receive(&harness.server, initial[:], remote, answer[:], harness.now)
+	if !testing.expectf(t, outcome.record >= 0 && harness.server.counters.accepted == 1, "%s", harness_describe(harness)) {
+		return
+	}
+	// The record ends.
+	harness.connections[outcome.record].state = .Closed
+	released: [HARNESS_RECORDS]Remote
+	testing.expect_value(t, server_sweep(&harness.server, released[:]), 1)
+	harness.now += 1000
+	outcome = server_datagram_receive(&harness.server, initial[:], remote, answer[:], harness.now)
+	testing.expectf(t, outcome.record < 0 && harness.server.counters.accepted == 1 && harness.server.counters.tokens_used_again == 1, "%s", harness_describe(harness))
+	testing.expectf(t, harness.server.counters.authenticity_checks == 1, "%s", harness_describe(harness))
+}
+
+// Two datagrams of a client that came back with its token arrive in one
+// batch, after a datagram of a known record. The order is decided once:
+// the known datagram first, then both new ones; the first new one takes a
+// record, and the second one goes to that record.
+@(test)
+two_datagrams_of_a_new_connection_in_one_batch :: proc(t: ^testing.T) {
+	harness := harness_make(0)
+	defer harness_free(harness)
+	answer: [MAX_DATAGRAM_SIZE]u8
+	known_remote := Remote{0x0B00_0003, 40_002}
+	known_token, known_source, known_retry := retry_of(harness, known_remote, {0xD0, 0xD1, 0xD2, 0xD3, 0xD4, 0xD5, 0xD6, 0xD7})
+	new_remote := Remote{0x0B00_0004, 40_003}
+	new_token, new_source, new_retry := retry_of(harness, new_remote, {0xE0, 0xE1, 0xE2, 0xE3, 0xE4, 0xE5, 0xE6, 0xE7})
+	if !testing.expectf(t, known_retry && new_retry, "%s", harness_describe(harness)) {
+		return
+	}
+	known := authentic_initial(&harness.cryptography, known_source, known_token[:])
+	outcome := server_datagram_receive(&harness.server, known[:], known_remote, answer[:], harness.now)
+	testing.expect(t, outcome.record >= 0)
+	first := authentic_initial(&harness.cryptography, new_source, new_token[:])
+	second := first
+	batch := []Server_Datagram{{first[:], new_remote}, {second[:], new_remote}, {known[:], known_remote}}
+	order: [3]int
+	testing.expect_value(t, server_batch_order(&harness.server, batch, order[:]), 3)
+	testing.expect_value(t, order, [3]int{2, 0, 1})
+	records: [3]int
+	for index in order {
+		records[index] = server_datagram_receive(&harness.server, batch[index].bytes, batch[index].remote, answer[:], harness.now).record
+	}
+	testing.expectf(t, records[0] >= 0 && records[1] == records[0] && records[2] != records[0], "the records of the batch: %v; %s", records, harness_describe(harness))
+	testing.expectf(t, harness.server.counters.accepted == 2, "%s", harness_describe(harness))
+}
+
+// A record asks the caller to validate its remote at each datagram until
+// the caller confirms it: a Validate that gave 0 (the network service had
+// forgotten the remote) or a result for an older generation of the place
+// confirms nothing.
+@(test)
+a_record_asks_for_its_validation_until_it_is_confirmed :: proc(t: ^testing.T) {
+	harness := harness_make(0)
+	defer harness_free(harness)
+	remote := Remote{0x0B00_0005, 40_004}
+	token, retry_source, has_retry := retry_of(harness, remote, {0xF0, 0xF1, 0xF2, 0xF3, 0xF4, 0xF5, 0xF6, 0xF7})
+	if !testing.expectf(t, has_retry, "%s", harness_describe(harness)) {
+		return
+	}
+	initial := authentic_initial(&harness.cryptography, retry_source, token[:])
+	answer: [MAX_DATAGRAM_SIZE]u8
+	outcome := server_datagram_receive(&harness.server, initial[:], remote, answer[:], harness.now)
+	if !testing.expect(t, outcome.record >= 0 && outcome.validate_remote) {
+		return
+	}
+	place := outcome.record
+	generation := harness.records[place].generation
+	// Each next datagram of the record: the same Initial again.
+	again :: proc(harness: ^Harness, initial: []u8, remote: Remote) -> Server_Outcome {
+		answer: [MAX_DATAGRAM_SIZE]u8
+		return server_datagram_receive(&harness.server, initial, remote, answer[:], harness.now)
+	}
+	testing.expect(t, again(harness, initial[:], remote).validate_remote)
+	server_validation_confirmed(&harness.server, place, generation, false)
+	testing.expect(t, again(harness, initial[:], remote).validate_remote)
+	server_validation_confirmed(&harness.server, place, generation + 1, true)
+	testing.expect(t, again(harness, initial[:], remote).validate_remote)
+	server_validation_confirmed(&harness.server, place, generation, true)
+	outcome = again(harness, initial[:], remote)
+	testing.expect(t, outcome.record == place && !outcome.validate_remote)
 }

@@ -167,7 +167,7 @@ A third network machine (`scenario_tcp`) has the peer of the tool on `-netdev dg
 
 ## The listen grant of UDP
 
-Written on 2026-11-11 for QUIC (`docs/QUIC.md`, section 6), not run yet. A datagram endpoint can have a listen grant: one local UDP port that the root service names, and the remotes that came to it. Its rules are the ones of the listen grant of TCP above, with one change: a new remote is admitted on a datagram of 1200 bytes at least (`datagram.LISTEN_FIRST_LEAST`), where TCP admits it on a SYN. 1200 bytes is the least first datagram of a QUIC client (RFC 9000, section 14.1), so a stray small datagram of an unknown remote takes no place.
+Written for QUIC (`docs/QUIC.md`, section 6); `kerneltool test quic` and `kerneltool test quic-real` run it. A datagram endpoint can have a listen grant: one local UDP port that the root service names, and the remotes that came to it. Its rules are the ones of the listen grant of TCP above, with one change: a new remote is admitted on a datagram of 1200 bytes at least (`datagram.LISTEN_FIRST_LEAST`), where TCP admits it on a SYN. 1200 bytes is the least first datagram of a QUIC client (RFC 9000, section 14.1), so a stray small datagram of an unknown remote takes no place.
 
 - The table of admitted remotes is the one of TCP (`network.Admitted`): 64 places, the oldest place with no traffic for 120 s serves again, `Release` forgets a remote.
 - A UDP listen port is not a port PORT_FIRST + n of a client grant, and no other UDP listen grant has it.

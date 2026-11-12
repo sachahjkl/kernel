@@ -20,10 +20,11 @@ package quic
 //
 // A replay: whoever sees a token on the path can send it again, from the
 // address and port of that client only (the additional data), with the
-// identifier that the Retry named, within its lifetime. That gives the
-// record of that one client, the limits of one remote address, for the
-// lifetime of the token; an attacker on the path can do worse anyway (drop
-// the datagrams). It gives nothing to an attacker off the path.
+// identifier that the Retry named, within its lifetime. While the record of
+// the client lives, the replay goes to that record. A token takes a record
+// once (server_budgets.odin), unless the table of used tokens forgot it.
+// An attacker on the path can do worse anyway (drop the datagrams). A
+// replay gives nothing to an attacker off the path.
 
 import "contract:errors"
 
@@ -48,6 +49,7 @@ Retry_Token_Facts :: struct {
 	original_destination_connection_id_length: int,
 	retry_source_connection_id:                [CONNECTION_ID_SIZE]u8,
 	issued_at:                                 u64,
+	counter:                                   u64, // The nonce of the token: retry_token_open gives it, and the server takes each token once.
 }
 
 // retry_token_nonce: four zero bytes, then the counter. The server never
@@ -121,6 +123,7 @@ retry_token_open :: proc "contextless" (cryptography: ^Cryptography, key: ^[RETR
 	for index in 0 ..< 8 {
 		facts.issued_at = facts.issued_at << 8 | u64(plain[1 + CONNECTION_ID_LIMIT + CONNECTION_ID_SIZE + index])
 	}
+	facts.counter = counter
 	if facts.issued_at > now || now - facts.issued_at > RETRY_TOKEN_LIFETIME {
 		return fail_at(error, .Out_Of_Range, 3, int(min(facts.issued_at, u64(max(int)))), int(min(now, u64(max(int)))))
 	}

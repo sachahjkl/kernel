@@ -160,40 +160,49 @@ retries_that_a_client_refuses :: proc(t: ^testing.T) {
 	}
 }
 
-// The budgets of a second: 3000 Initials with no token get 2000 Retries,
-// and 1000 are dropped before any cryptography; 3000 Initials with tokens
-// that do not open cost 2000 checks of a token; the next second has its
-// budget again.
+// The shared budgets are token buckets. 3000 Initials with no token at one
+// time get the depth of 2000 Retries, and 1000 are dropped before any
+// cryptography. 1 ms later the bucket gained 20 Retries, not a new second
+// of budget: a burst at any time gets the depth and the rate, never twice
+// the budget. 100 ms later it is full again. 4000 Initials with tokens
+// that do not open cost the depth of 3000 token checks, and no Initial
+// check.
 @(test)
-the_work_of_a_second_has_a_budget :: proc(t: ^testing.T) {
+the_work_of_new_connections_has_token_buckets :: proc(t: ^testing.T) {
 	harness := harness_make(0)
 	defer harness_free(harness)
 	server := &harness.server
 	answer: [MAX_DATAGRAM_SIZE]u8
 	state: u64 = 0x4255_4447_4554_0001
-	for index in 0 ..< 3000 {
-		forged := forged_initial(&state)
-		server_datagram_receive(server, forged[:], {u32(0x0E00_0000 + index), 40_000}, answer[:], harness.now)
+	start := harness.now
+	burst :: proc(server: ^Server, state: ^u64, count: int, first_address: u32, now: u64, answer: []u8) {
+		for index in 0 ..< count {
+			forged := forged_initial(state)
+			server_datagram_receive(server, forged[:], {first_address + u32(index), 40_000}, answer, now)
+		}
 	}
+	burst(server, &state, 3000, 0x0E00_0000, start, answer[:])
 	testing.expectf(t, server.counters.retries == 2000 && server.counters.over_budget == 1000, "%s", harness_describe(harness))
+	burst(server, &state, 100, 0x0E10_0000, start + 1000, answer[:])
+	testing.expectf(t, server.counters.retries == 2020 && server.counters.over_budget == 1080, "%s", harness_describe(harness))
+	burst(server, &state, 3000, 0x0E20_0000, start + 101_000, answer[:])
+	testing.expectf(t, server.counters.retries == 4020 && server.counters.over_budget == 2080, "%s", harness_describe(harness))
 	garbage: [RETRY_TOKEN_SIZE]u8
 	garbage[0] = RETRY_TOKEN_FORMAT
 	identifier: [CONNECTION_ID_SIZE]u8 = {3, 3, 3, 3, 3, 3, 3, 3}
 	datagram := authentic_initial(&harness.cryptography, identifier, garbage[:])
-	for index in 0 ..< 3000 {
-		server_datagram_receive(server, datagram[:], {u32(0x0F00_0000 + index), 40_000}, answer[:], harness.now)
+	for index in 0 ..< 4000 {
+		server_datagram_receive(server, datagram[:], {u32(0x0F00_0000 + index), 40_000}, answer[:], start + 101_000)
 	}
-	testing.expectf(t, server.counters.tokens_refused == 2000 && server.counters.over_budget == 2000, "%s", harness_describe(harness))
+	testing.expectf(t, server.counters.tokens_refused == 3000 && server.counters.over_budget == 3080, "%s", harness_describe(harness))
 	testing.expectf(t, server.counters.authenticity_checks == 0, "%s", harness_describe(harness))
-	forged := forged_initial(&state)
-	server_datagram_receive(server, forged[:], {0x0E00_FFFF, 40_000}, answer[:], harness.now + 1_000_000)
-	testing.expectf(t, server.counters.retries == 2001, "%s", harness_describe(harness))
 }
 
-// A datagram of a known record is known before any cryptography: the
-// caller gives it before the datagrams of unknown identifiers.
+// A datagram of a known record comes first in the order of a batch, before
+// any cryptography; the same bytes from another remote, and a forged
+// Initial, come after it.
 @(test)
-a_datagram_of_a_record_is_known :: proc(t: ^testing.T) {
+a_datagram_of_a_record_comes_first :: proc(t: ^testing.T) {
 	harness := harness_make(1)
 	defer harness_free(harness)
 	testing.expectf(t, harness_run(t, harness, 1024, 10_000_000) == 1, "%s", harness_describe(harness))
@@ -202,11 +211,12 @@ a_datagram_of_a_record_is_known :: proc(t: ^testing.T) {
 	connection_close(client, 0, harness.now)
 	length := connection_datagram_send(client, buffer[:], harness.now)
 	testing.expect(t, length > 0)
-	testing.expect(t, server_datagram_is_known(&harness.server, buffer[:length], harness.client_remotes[0]))
-	testing.expect(t, !server_datagram_is_known(&harness.server, buffer[:length], {0x0A00_0399, 1}))
 	state: u64 = 0x4b4e_4f57_4e00_0001
 	forged := forged_initial(&state)
-	testing.expect(t, !server_datagram_is_known(&harness.server, forged[:], harness.client_remotes[0]))
+	batch := []Server_Datagram{{forged[:], harness.client_remotes[0]}, {buffer[:length], {0x0A00_0399, 1}}, {buffer[:length], harness.client_remotes[0]}}
+	order: [3]int
+	testing.expect_value(t, server_batch_order(&harness.server, batch, order[:]), 3)
+	testing.expect_value(t, order, [3]int{2, 0, 1})
 	testing.expect(t, harness.records[0].generation == 1)
 }
 
