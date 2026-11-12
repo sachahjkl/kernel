@@ -1,3 +1,5 @@
+<p align="center"><img src="resources/logo/modus.png" width="256" alt="The mark of modus: a heron of square pixels that stands on one leg in water, a blue body, a pale neck, an orange beak and a violet crest and tail, above the name modus in square letters, on a dark background"></p>
+
 # Next-Gen Kernel
 
 A new kernel and operating system, written in Odin.

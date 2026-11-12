@@ -35,7 +35,11 @@ connection_datagram_receive :: proc "contextless" (connection: ^Connection, rece
 			// CONNECTION_CLOSE again, once for each datagram (RFC 9000,
 			// section 10.2.1); it is not opened.
 			if connection_id_is_ours(connection, &header) {
-				connection.close_to_send = true
+				connection.close_datagrams_received += 1
+				if connection.close_datagrams_received >= connection.close_next_answer {
+					connection.close_to_send = true
+					connection.close_next_answer = saturating_multiply(connection.close_next_answer, 2)
+				}
 				processed = true
 			}
 			break
@@ -84,9 +88,14 @@ packet_receive :: proc "contextless" (connection: ^Connection, datagram: []u8, h
 		level = .Handshake
 	case .One_Rtt:
 		level = .Application
+	case .Retry:
+		if !connection_id_is_ours(connection, header) {
+			return fail_at(error, .Bad_Value, 1, header.start)
+		}
+		return client_retry_receive(connection, datagram, header, now, error)
 	case:
-		// 0-RTT, Retry, Version Negotiation and other versions: this layer
-		// does none of them, and drops the packet.
+		// 0-RTT, Version Negotiation and other versions: this layer does
+		// none of them, and drops the packet.
 		return fail_at(error, .Unsupported, 1, header.start, 0, int(header.type))
 	}
 	role := connection.configuration.tls.role
@@ -212,6 +221,54 @@ packet_receive :: proc "contextless" (connection: ^Connection, datagram: []u8, h
 	return true
 }
 
+// client_retry_receive takes a Retry packet of the server (RFC 9000,
+// section 17.2.5.2): one at most, before any Initial of the server, with a
+// Source Connection ID that is not the identifier that the client chose,
+// and a Retry Integrity Tag over that identifier. The client then sends to
+// the identifier of the Retry, derives its Initial keys from it, and sends
+// its ClientHello again in Initial packets that carry the token. The packet
+// numbers go on: they never repeat in a space.
+@(private)
+client_retry_receive :: proc "contextless" (connection: ^Connection, datagram: []u8, header: ^Packet_Header, now: u64, error: ^errors.Error_Record) -> bool {
+	if connection.configuration.tls.role != .Client || connection.state != .Handshake || connection.retried || connection.peer_connection_id_known {
+		return fail_at(error, .State, 1, header.start, 0, int(header.type))
+	}
+	original := connection.original_destination_connection_id[:connection.original_destination_connection_id_length]
+	source := header.source_connection_id[:header.source_connection_id_length]
+	if bytes_equal(source, original) || header.token_length > RETRY_TOKEN_LIMIT {
+		return fail_at(error, .Bad_Value, 1, header.start)
+	}
+	if !retry_integrity_check(connection.cryptography, original, datagram, header, error) {
+		return false
+	}
+	connection.retried = true
+	connection.retry_first_destination_connection_id_length = copy(connection.retry_first_destination_connection_id[:], original)
+	connection.retry_source_connection_id_length = copy(connection.retry_source_connection_id[:], source)
+	connection.retry_token_length = copy(connection.retry_token[:], datagram[header.token_offset:][:header.token_length])
+	connection.peer_connection_id_length = copy(connection.peer_connection_id[:], source)
+	connection.original_destination_connection_id_length = copy(connection.original_destination_connection_id[:], source)
+	if !connection_initial_keys_install(connection, error) {
+		connection_fail(connection, u64(Transport_Error.Internal_Error), 0, now)
+		return false
+	}
+	// The Initial packets before the Retry are not acknowledged, and none
+	// will be: they leave the flight, and the ClientHello goes again from
+	// its first byte.
+	space := &connection.spaces[.Initial]
+	for &packet in space.sent {
+		if packet.in_use {
+			sent_packet_remove(connection, space, &packet)
+		}
+	}
+	space.loss_time = 0
+	space.crypto.send_next = 0
+	space.crypto.send_again = {}
+	space.crypto.send_acknowledged = {}
+	connection.probe_timeout_count = 0
+	connection.last_activity = now
+	return true
+}
+
 // server_first_initial gives the record of a server to a client, at the
 // first Initial packet of the client that opened: the Destination
 // Connection ID of the client gave the Initial keys, and its Source
@@ -330,27 +387,25 @@ frame_process :: proc "contextless" (connection: ^Connection, level: Encryption_
 		if reader.failed {
 			return encoding_error(connection, type, now)
 		}
-		if !stream_identifier_check(connection, stream_id, type, now) {
+		stream, ok := stream_of_frame(connection, stream_id, type, now)
+		if !ok {
 			return false
 		}
-		return stream_reset_receive(connection, code, final_size, now)
+		if stream != nil {
+			return stream_reset_receive(connection, stream, code, final_size, now)
+		}
 	case FRAME_STOP_SENDING:
 		stream_id := frame_read_integer(reader)
 		code := frame_read_integer(reader)
 		if reader.failed {
 			return encoding_error(connection, type, now)
 		}
-		if !stream_identifier_check(connection, stream_id, type, now) {
+		stream, ok := stream_of_frame(connection, stream_id, type, now)
+		if !ok {
 			return false
 		}
-		// This side stops the data of the stream and tells the peer with
-		// RESET_STREAM and the same code (RFC 9000, section 3.5).
-		stream := &connection.stream
-		if !stream.reset_sent && !(stream.finish_acknowledged) {
-			stream.reset_sent = true
-			stream.reset_code = code
-			stream.send_again = {}
-			connection.pending_controls += {.Reset_Stream}
+		if stream != nil {
+			stream_stop_sending_receive(stream, code)
 		}
 	case FRAME_CRYPTO:
 		offset := frame_read_integer(reader)
@@ -388,10 +443,15 @@ frame_process :: proc "contextless" (connection: ^Connection, level: Encryption_
 			// RFC 9000, section 19.8: the end of the data past 2^62 - 1.
 			return encoding_error(connection, type, now)
 		}
-		if !stream_identifier_check(connection, stream_id, type, now) {
+		stream, ok := stream_of_frame(connection, stream_id, type, now)
+		if !ok {
 			return false
 		}
-		return stream_data_receive(connection, offset, data, type & FRAME_STREAM_FLAG_FINISH != 0, now)
+		if stream == nil {
+			// A stream that ended: its data came before.
+			return true
+		}
+		return stream_data_receive(connection, stream, offset, data, type & FRAME_STREAM_FLAG_FINISH != 0, now)
 	case FRAME_MAX_DATA:
 		maximum := frame_read_integer(reader)
 		if reader.failed {
@@ -404,10 +464,13 @@ frame_process :: proc "contextless" (connection: ^Connection, level: Encryption_
 		if reader.failed {
 			return encoding_error(connection, type, now)
 		}
-		if !stream_identifier_check(connection, stream_id, type, now) {
+		stream, ok := stream_of_frame(connection, stream_id, type, now)
+		if !ok {
 			return false
 		}
-		connection.stream.send_limit = max(connection.stream.send_limit, maximum)
+		if stream != nil {
+			stream.send_limit = max(stream.send_limit, maximum)
+		}
 	case FRAME_MAX_STREAMS_BIDIRECTIONAL, FRAME_MAX_STREAMS_UNIDIRECTIONAL:
 		maximum := frame_read_integer(reader)
 		if reader.failed || maximum > STREAMS_LIMIT {
@@ -427,7 +490,8 @@ frame_process :: proc "contextless" (connection: ^Connection, level: Encryption_
 		if reader.failed {
 			return encoding_error(connection, type, now)
 		}
-		return stream_identifier_check(connection, stream_id, type, now)
+		_, ok := stream_of_frame(connection, stream_id, type, now)
+		return ok
 	case FRAME_STREAMS_BLOCKED_BIDIRECTIONAL, FRAME_STREAMS_BLOCKED_UNIDIRECTIONAL:
 		maximum := frame_read_integer(reader)
 		if reader.failed || maximum > STREAMS_LIMIT {
@@ -485,11 +549,12 @@ frame_process :: proc "contextless" (connection: ^Connection, level: Encryption_
 			frame_type = frame_read_integer(reader)
 		}
 		reason_length := frame_read_integer(reader)
-		frame_read_bytes(reader, reason_length)
+		reason := frame_read_bytes(reader, reason_length)
 		if reader.failed {
 			return encoding_error(connection, type, now)
 		}
 		connection_enter_draining(connection, code, frame_type, type == FRAME_CONNECTION_CLOSE_APPLICATION, now)
+		connection.close_reason_of_peer_length = copy(connection.close_reason_of_peer[:], reason)
 	case FRAME_HANDSHAKE_DONE:
 		if role == .Server {
 			return connection_fail(connection, u64(Transport_Error.Protocol_Violation), type, now)
@@ -550,96 +615,6 @@ ack_frame_process :: proc "contextless" (connection: ^Connection, level: Encrypt
 		return connection_fail(connection, u64(Transport_Error.Protocol_Violation), type, now)
 	}
 	acknowledgement_receive(connection, level, ranges[:count], largest, ack_delay, now)
-	return true
-}
-
-// stream_identifier_check accepts a frame for stream 0, the one
-// bidirectional stream, which the client opens. A stream that the peer may
-// not open is STREAM_LIMIT_ERROR; a stream of this side that it did not
-// open is STREAM_STATE_ERROR (RFC 9000, sections 4.6 and 19.8).
-@(private)
-stream_identifier_check :: proc "contextless" (connection: ^Connection, stream_id: u64, type: u64, now: u64) -> bool {
-	role := connection.configuration.tls.role
-	opened_by_client := stream_id & 0x01 == 0
-	unidirectional := stream_id & 0x02 != 0
-	opened_by_peer := opened_by_client == (role == .Server)
-	index := stream_id >> 2
-	if unidirectional {
-		// This side allows no unidirectional stream, and opens none.
-		code := opened_by_peer ? Transport_Error.Stream_Limit_Error : Transport_Error.Stream_State_Error
-		return connection_fail(connection, u64(code), type, now)
-	}
-	if opened_by_peer {
-		if index >= connection.local_parameters.initial_max_streams_bidirectional {
-			return connection_fail(connection, u64(Transport_Error.Stream_Limit_Error), type, now)
-		}
-		connection.stream.opened = true
-		return true
-	}
-	// A stream of this side: only the client opens one, stream 0.
-	if role == .Server || index > 0 || !connection.stream.opened {
-		return connection_fail(connection, u64(Transport_Error.Stream_State_Error), type, now)
-	}
-	return true
-}
-
-// stream_data_receive takes the data of a STREAM frame: its end within the
-// limits that this side gave, and a final size that never changes (RFC
-// 9000, sections 4.1 and 4.5).
-@(private)
-stream_data_receive :: proc "contextless" (connection: ^Connection, offset: u64, data: []u8, finish: bool, now: u64) -> bool {
-	stream := &connection.stream
-	end := offset + u64(len(data))
-	if stream.has_final_size && (end > stream.final_size || (finish && end != stream.final_size)) {
-		return connection_fail(connection, u64(Transport_Error.Final_Size_Error), FRAME_STREAM, now)
-	}
-	if finish && end < stream.highest_received {
-		return connection_fail(connection, u64(Transport_Error.Final_Size_Error), FRAME_STREAM, now)
-	}
-	if end > stream.receive_limit || end > connection.receive_max_data {
-		return connection_fail(connection, u64(Transport_Error.Flow_Control_Error), FRAME_STREAM, now)
-	}
-	if stream.reset_received {
-		return true
-	}
-	if finish {
-		stream.has_final_size = true
-		stream.final_size = end
-	}
-	stream.highest_received = max(stream.highest_received, end)
-	// The bytes that were read already are not written again; the limit
-	// above keeps each other byte inside the ring.
-	from := max(offset, stream.read_offset)
-	if from < end {
-		if !range_set_insert(&stream.received, from, end) {
-			// No place to note the data: it is dropped, and its packet is
-			// not acknowledged (packet_receive).
-			connection.packet_data_dropped = true
-			return true
-		}
-		ring_write(stream.receive[:], from, data[int(from - offset):])
-	}
-	return true
-}
-
-// stream_reset_receive ends the receiving part of the stream at a
-// RESET_STREAM of the peer (RFC 9000, section 19.4).
-@(private)
-stream_reset_receive :: proc "contextless" (connection: ^Connection, code: u64, final_size: u64, now: u64) -> bool {
-	stream := &connection.stream
-	if (stream.has_final_size && final_size != stream.final_size) || final_size < stream.highest_received {
-		return connection_fail(connection, u64(Transport_Error.Final_Size_Error), FRAME_RESET_STREAM, now)
-	}
-	if final_size > stream.receive_limit || final_size > connection.receive_max_data {
-		return connection_fail(connection, u64(Transport_Error.Flow_Control_Error), FRAME_RESET_STREAM, now)
-	}
-	stream.has_final_size = true
-	stream.final_size = final_size
-	stream.highest_received = final_size
-	if !stream.reset_received {
-		stream.reset_received = true
-		stream.peer_reset_code = code
-	}
 	return true
 }
 

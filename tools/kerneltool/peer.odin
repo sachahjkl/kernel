@@ -82,6 +82,8 @@ Peer :: struct {
 	lose:             int, // The next datagrams of the remote service to the host that the peer drops: the test of a lost datagram.
 	lost:             int,
 	tcp:          ^Peer_Tcp, // The peer as a TCP client (peer_tcp.odin).
+	quic:         ^Peer_Quic, // The peer as QUIC clients (peer_quic.odin).
+	relay:        Peer_Relay, // UDP of programs of the host to the machine (peer_relay.odin).
 	tcp_segments: int, // TCP segments of the machine.
 }
 
@@ -101,6 +103,11 @@ peer_start :: proc(peer: ^Peer, call_port := 0) -> bool {
 	// The receive of the frames ends each 1 ms: the TCP case of the peer
 	// (peer_tcp.odin) runs its timers between two frames.
 	_ = net.set_option(socket, .Receive_Timeout, 1 * time.Millisecond)
+	// A margin for the bursts of the machine (a flood of QUIC Initials
+	// gets one Retry each). The host may hold the buffer under this size
+	// (net.core.rmem_max): peer_run reads every frame that waits before
+	// the next sends, and the QUIC flood waits for its answers.
+	_ = net.set_option(socket, .Receive_Buffer_Size, 4 << 20)
 	calls, calls_err := net.make_bound_udp_socket(net.IP4_Loopback, call_port)
 	if calls_err != nil {
 		fmt.eprintfln("kerneltool: the peer cannot receive call requests on 127.0.0.1 port %d: %v", call_port, calls_err)
@@ -121,6 +128,15 @@ peer_start :: proc(peer: ^Peer, call_port := 0) -> bool {
 	net.close(machine_socket)
 	peer^ = {socket = socket, port = bound.port, call_socket = calls, call_port = calls_bound.port, machine = machine_bound}
 	peer.tcp = peer_tcp_make()
+	peer.quic = peer_quic_make()
+	if !peer_relay_start(&peer.relay) {
+		peer_tcp_free(peer.tcp)
+		peer_quic_free(peer.quic)
+		peer.tcp, peer.quic = nil, nil
+		net.close(socket)
+		net.close(calls)
+		return false
+	}
 	hardware_of_machine := [6]u8{0x52, 0x54, 0x00, 0x12, 0x34, 0x56}
 	peer.hardware = hardware_of_machine
 	peer.thread = thread.create_and_start_with_poly_data(peer, peer_run)
@@ -142,6 +158,10 @@ peer_stop :: proc(peer: ^Peer) {
 	peer.thread = nil
 	peer_tcp_free(peer.tcp)
 	peer.tcp = nil
+	peer_quic_free(peer.quic)
+	peer.quic = nil
+	peer_relay_report(&peer.relay)
+	peer_relay_stop(&peer.relay)
 }
 
 // peer_check says if the peer saw only correct frames, and if the network
@@ -198,12 +218,24 @@ pseudo_sum :: proc(source, destination: []u8, length: int, protocol := 17) -> u3
 	return u32(be16(source, 0) + be16(source, 2) + be16(destination, 0) + be16(destination, 2) + protocol + length)
 }
 
+// peer_run reads the frames of the machine, and runs the ticks of the cases
+// and of the relay when no frame waits, and at most once in a millisecond
+// while frames come: each frame that waits is read before the next sends of
+// the cases, so the answers of the machine never pile up in the socket.
 peer_run :: proc(peer: ^Peer) {
 	buffer: [2048]u8
+	last_tick := time.tick_now()
 	for !sync.atomic_load(&peer.stop) {
 		count, from, err := net.recv_udp(peer.socket, buffer[:])
-		// The TCP case of the tool, if one runs: its timers and its clients.
-		peer_tcp_tick(peer, nil)
+		if err != nil || count == 0 || time.tick_since(last_tick) >= time.Millisecond {
+			// The TCP case of the tool, if one runs: its timers and its clients.
+			peer_tcp_tick(peer, nil)
+			// The QUIC case of the tool, if one runs.
+			peer_quic_tick(peer)
+			// The datagrams of programs of the host for the machine.
+			peer_relay_tick(peer)
+			last_tick = time.tick_now()
+		}
 		free_all(context.temp_allocator)
 		if err != nil || count == 0 {
 			continue
@@ -289,7 +321,10 @@ peer_frame :: proc(peer: ^Peer, frame: []u8) {
 			return
 		}
 		total := be16(ip, 2)
-		if total < 20 || total > len(ip) || be16(ip, 6) & 0x3FFF != 0 || address_at(ip, 12) != MACHINE_ADDRESS || address_at(ip, 16) != PEER_ADDRESS {
+		// A datagram of the QUIC server to an address of the flood of the
+		// peer (peer_quic.odin) goes through the gateway: the peer.
+		to_flood := ip[9] == 17 && total >= 28 && peer_quic_flood_address(address_at(ip, 16)) && be16(ip, 20) == QUIC_SERVER_PORT
+		if total < 20 || total > len(ip) || be16(ip, 6) & 0x3FFF != 0 || address_at(ip, 12) != MACHINE_ADDRESS || (address_at(ip, 16) != PEER_ADDRESS && !to_flood) {
 			peer_wrong(peer, "an IPv4 header with a wrong length, fragment or address")
 			return
 		}
@@ -322,6 +357,15 @@ peer_frame :: proc(peer: ^Peer, frame: []u8) {
 		case 17:
 			if len(payload) < 8 || be16(payload, 4) != len(payload) || be16(payload, 6) == 0 || internet_sum(pseudo_sum(ip[12:16], ip[16:20], len(payload)), payload) != 0 {
 				peer_wrong(peer, "a UDP datagram with a wrong length or checksum")
+				return
+			}
+			if be16(payload, 0) == QUIC_SERVER_PORT {
+				if address_at(ip, 16) == PEER_ADDRESS && peer_relay_datagram(peer, u16(be16(payload, 2)), payload[8:]) {
+					free_all(context.temp_allocator)
+					return
+				}
+				peer_quic_datagram(peer, address_at(ip, 16), u16(be16(payload, 2)), payload[8:])
+				free_all(context.temp_allocator)
 				return
 			}
 			if be16(payload, 2) == remote.HOST_PORT {

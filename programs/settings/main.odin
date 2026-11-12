@@ -265,13 +265,11 @@ draw :: proc "contextless" (window: ^display.Window) {
 	interface.draw_text(frame.table, sample.x, sample.y + 56, "EEVDF fair", graphics.COLOR_PROGRAM, interface.FONT_MEDIUM)
 	after := interface.large_number(&frame, sample.x, sample.y + 88, "12 345", graphics.COLOR_TEXT)
 	interface.draw_text(frame.table, after + 16, sample.y + 112, "wakes in one second", graphics.COLOR_DIM)
-	// The sizes of the caches are values of the context of this program,
-	// which the root service wrote; the hash is that of the font file, in
-	// the header of the cache that this program validated.
+	// The sizes of the caches are in their headers; the hash is that of the
+	// font file, in the header of the cache that this program validated.
 	facts: interface.Text_Builder
-	context_values := &system.context_record().values
-	_, with_grid_fit_size := settings.glyph_cache_place(context_values, .With_Grid_Fit)
-	_, without_grid_fit_size := settings.glyph_cache_place(context_values, .Without_Grid_Fit)
+	with_grid_fit_size := display.glyph_cache_valid[.On] ? display.glyph_caches[.On].header.file_size : 0
+	without_grid_fit_size := display.glyph_cache_valid[.Off] ? display.glyph_caches[.Off].header.file_size : 0
 	if with_grid_fit_size == 0 || !graphics.text_state.has_cache {
 		interface.text_put(&facts, "no glyph cache: the text is Spleen 8x16")
 	} else {

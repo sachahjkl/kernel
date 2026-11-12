@@ -46,7 +46,8 @@
     # What tools/kerneltool needs on the path.
     # llc comes from the LLVM of the Odin compiler (18): Odin writes LLVM IR, and
     # llc makes each object with frame pointers.
-    buildTools = [odin pkgs.llvmPackages_18.llvm pkgs.llvmPackages.lld pkgs.nasm pkgs.qemu pkgs.coreutils];
+    # openssl: its QUIC client is the peer of the test "quic-real" of kerneltool.
+    buildTools = [odin pkgs.llvmPackages_18.llvm pkgs.llvmPackages.lld pkgs.nasm pkgs.qemu pkgs.coreutils pkgs.openssl];
 
     # The pointer theme of the owner (docs/POINTERS.md): "Posy's Cursor", the
     # package of nixpkgs, pinned by flake.lock. Its license is CC-BY-NC-4.0,
@@ -125,7 +126,7 @@
         name = "kernel-boot-test";
         src = inputs.nixpkgs.lib.fileset.toSource {
           root = ./.;
-          fileset = inputs.nixpkgs.lib.fileset.unions [./flake.nix ./CHANGELOG.md ./changelog.d ./boot ./contract ./kernel ./modules ./programs ./resources ./runtime ./support ./tools];
+          fileset = inputs.nixpkgs.lib.fileset.unions [./flake.nix ./CHANGELOG.md ./changelog.d ./boot ./contract ./kernel ./modules ./programs ./resources ./runtime ./support ./tools ./.project];
         };
         nativeBuildInputs = buildTools ++ [kerneltool];
         buildPhase = ''
@@ -137,7 +138,9 @@
           cp build/test_output.txt $out
         '';
       }
-      // firmware);
+      // firmware
+      # The source fonts: a test of the tool reads the feature "zero" of Paper Mono in them.
+      // vectorFontSources);
   in {
     formatter.${system} = pkgs.alejandra;
 

@@ -1,5 +1,6 @@
 package root
 
+import "contract:fixed_addresses"
 import "contract:date"
 import op "contract:operation"
 import "support:system"
@@ -19,12 +20,12 @@ date_page_create :: proc "contextless" () {
 }
 
 // date_page_give adds the date page, read-only, to the mappings of a
-// program, and its address to the values.
+// program, and sets its bit in the values.
 date_page_give :: proc "contextless" (mappings: []system.Mapping, count: ^int, values: ^[op.CONTEXT_VALUES]u64) {
 	if date_memory == 0 || count^ >= len(mappings) {
 		return
 	}
 	mappings[count^] = {memory = date_memory, address = date.PAGE_ADDRESS, first = 0, page_count = 1, flags = {}}
 	count^ += 1
-	values[date.VALUE_PAGE] = date.PAGE_ADDRESS
+	fixed_addresses.range_mapped_add(values, .Date_Page)
 }

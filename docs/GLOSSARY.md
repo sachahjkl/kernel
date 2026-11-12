@@ -112,6 +112,7 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Kernel operation | One request that a program makes to the kernel (P1) | system call, syscall |
 | Boot program | The UEFI program that loads and measures the system, then starts the kernel (P17) | boot loader, bootloader |
 | Fixed range | An address and a span of the address space of a program where the system places one mapping that it gives: the settings page, a glyph cache, the date page, the files of a module. Each is one member of the enumeration `Fixed_Range` of `contract/fixed_addresses`, one slot of the band from `BAND_START`, so no two overlap; a mapping that a program places by its own choice is outside the band, from `OWN_CHOICE_START` | well-known address, fixed mapping |
+| Mapped ranges | The fixed ranges that the starter of a program mapped for it: a set of bits, bit n for the member n of `Fixed_Range`, in the value 20 of its context (`fixed_addresses.ranges_mapped`). A program reads nothing at a range whose bit is clear | mapping flags, present mask |
 
 ## Access
 
@@ -163,10 +164,12 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Key record | A record from a terminal to its program: the code of one key that the person pressed, its character, and the modifiers that the person held (Shift, Control) | standard input, character device, raw mode, cooked mode |
 | Edit line | The one line that a program changes: the line of input of the person with a cursor, or a line that says what the program does now. The program sends its text and the place of the cursor; the terminal shows it after the last line. The program owns the editing | line discipline, readline, cursor addressing, prompt |
 | Line editor | The procedures of `support/line_editor` that change an edit line with keys: the caret, a character at the caret, Backspace, Delete. They have no state of their own: the line is a record of the program | readline, line discipline |
-| Hint line | One dim line that a program shows under its edit line: the signature of the call at the caret, or how to use the list that is open. A new one replaces the one before | tooltip, status (for this), echo area |
+| Hint line | One dim line that a program shows under its edit line: the signature of the call at the caret, or how to use the list that is open. It has a long form and a short form; the terminal shows the long one when it fits in its columns. The terminal draws it in the free row. A new one replaces the one before | tooltip, status (for this), echo area |
+| Free row | The row of the view of a terminal under the edit line, that the terminal keeps free at all times: the hint line is drawn in it, so the text does not move when a hint comes or goes | spacer, padding line |
 | Completion list | The names that can take the place of the name at the caret, best first, with one chosen row. The program gives the rows; its terminal draws them over its text, at the edit line | dropdown, popup, autocomplete menu, suggestions |
 | Fuzzy match | A match where the characters of a query appear in a name in their order, with gaps allowed, lower and upper case equal. A score orders the names that match (`docs/CONSOLE.md`, section 3) | fuzzy search, subsequence search, filter (for this) |
 | Line history | The lines that the person entered in the console, in a ring of bytes in its memory, the newest first | history (alone), scrollback, command log |
+| Line history file | The line history as bytes, to keep it in a store: a version, the lines, a BLAKE3 hash (`support/line_editor/history_file.odin`). A file that fails a check gives an empty history | history dump, .bash_history |
 | History search | The completion list over the line history: Control-R opens it, and the fuzzy match orders the lines, the newest first for equal scores | reverse-i-search, incremental search |
 | Text region | The shared memory beside a terminal ring where the program writes the bytes of its text, in order. A record gives only a count of bytes: the terminal keeps its own place | scrollback (for this), pipe buffer |
 | Run | Bytes of text that have one style. A line is a list of runs | span, segment, chunk |
@@ -218,7 +221,7 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Term | Definition | Do not use |
 |---|---|---|
 | Network service | The one client of the frame service. It speaks Ethernet, ARP, IPv4, ICMP echo and UDP with the protocol library `support/network`, checks TCP segments against their grant, and gives each program with the grant one endpoint. It keeps no state of a TCP connection. It starts when the first such program starts | network stack, TCP/IP stack, netd, network daemon |
-| Endpoint | What a program holds to send and receive datagrams or segments: a datagram ring and a datagram region, with a grant. The grant of a datagram endpoint names one remote, and the network service gives its local UDP port. A segment endpoint has a client grant or a listen grant. The program does not choose a remote that its grant does not name (P20). With the right Inspect of its grant, it also reads the facts of the network of the machine: the frames that no endpoint owns, the kernel entries of the two services | socket, port (for this), connection (for this) |
+| Endpoint | What a program holds to send and receive datagrams or segments: a datagram ring and a datagram region, with a grant. The grant of a datagram endpoint names one remote, and the network service gives its local UDP port; or it is a listen grant of one local UDP port. A segment endpoint has a client grant or a listen grant. The program does not choose a remote that its grant does not name (P20). With the right Inspect of its grant, it also reads the facts of the network of the machine: the frames that no endpoint owns, the kernel entries of the two services | socket, port (for this), connection (for this) |
 | Datagram | The data of one UDP datagram and its remote: what a program sends and receives through an endpoint. 1472 bytes at most: one frame, no fragment | packet, message |
 | Remote | The IPv4 address and the UDP port or TCP port at the other end of a datagram or of a connection | peer (for this), destination, host |
 | UDP port | The 16-bit number of UDP that names an endpoint at an address. It is not the Ports object of the kernel | port (alone), socket number |
@@ -226,8 +229,8 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Segment | One TCP segment: its header, its options and its data, 1480 bytes at most (one frame, no fragment). What a program sends and receives through a segment endpoint | packet, TCP packet, message |
 | Segment endpoint | An endpoint whose grant has the protocol TCP. The program writes and reads whole segments; the network service writes the IPv4 header and keeps no state of a connection | TCP socket, listening socket |
 | Client grant | The grant of a segment endpoint that reaches one remote, from a block of 64 local TCP ports that the network service chooses | outbound rule, connect permission |
-| Listen grant | The grant of a segment endpoint that receives on one local TCP port that the root service names, from any remote, and answers only the admitted remotes | listening socket, bind permission, server socket |
-| Admitted remote | A remote that sent a segment to the port of a listen grant. The network service keeps 64 for each listen grant, until the program releases one | connection tracking entry, conntrack, NAT entry |
+| Listen grant | The grant of an endpoint that receives on one local TCP or UDP port that the root service names, from any remote, and answers only the admitted remotes | listening socket, bind permission, server socket |
+| Admitted remote | A remote that sent a SYN to the TCP port of a listen grant, or a datagram of 1200 bytes at least to its UDP port. The network service keeps 64 for each listen grant, until the program releases one | connection tracking entry, conntrack, NAT entry |
 | Connection | The state of one TCP connection in the program that owns it: one fixed-size record of the TCP library (`tcp.Connection`), with a send buffer and a receive buffer of the caller | socket, TCB (in this system), session |
 | Web page | An object of the private store of `server` that it serves by its name, at `/name`. A person puts one with `server.put` from the console | file (for this), static file, asset |
 | Access record | The record of one request that `server` answered: the remote, the method, the target, the status, the bytes and the time. The window shows the last ones, and the log channel `requests` has one for each request | access log line, hit |
@@ -289,7 +292,7 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Desktop shell | The program that starts programs and shows surfaces and grants to the person | window manager |
 | Focus | The state of the window in front: its program receives the keys, and the pointer events over its surface. Its title bar is blue | active window, keyboard owner |
 | Title bar | The top part of the frame of a window: the title and the close button. The title bar of the window that has the focus goes from blue to a darker blue toward the right; the others are quiet (`docs/DESIGN.md`, section 9) | header, caption, decoration |
-| Bar | The line at the top of the screen that the compositor draws: the name of the system, the buttons of the two menus, the key of the launcher, the time since the start. `support/bar` holds its places and the table of the names of the programs | task bar, panel, dock |
+| Bar | The line at the top of the screen that the compositor draws: the mark of the system, the buttons of the two menus, the key of the launcher, the time since the start. `support/bar` holds its places and the table of the names of the programs | task bar, panel, dock |
 | Menu of the programs | The menu of the bar with one line for each name of the table `bar.names`. A press on a line starts the program | launcher, start menu |
 | Menu of the windows | The menu of the bar with one line for each window. A press on a line brings the window to the front and gives it the focus | task bar, window list, switcher |
 | Launcher | The panel in the middle of the screen that the key super opens. The person types a part of a name, and the list has the names of `bar.names` that contain it, the names that start with it first. Enter starts the chosen program, as the menu of the programs does | run dialog, command palette, menu of the programs |
@@ -334,8 +337,12 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Interface font | The proportional font of the titles, the labels, the buttons, the menus and the bar: B612 (designed, not built; `docs/FONTS.md`, section 12) | UI font, system font (for this), sans |
 | Advance | The distance from the origin of a glyph to the origin of the next one, before any pair adjustment | width (for this), pitch |
 | Pair adjustment | The change of the advance that a font gives for one pair of glyphs that follow each other (`kern` format 0, or a pair lookup of `GPOS`) | kerning pair (for this) |
+| Font feature | A named choice of glyph forms that a font offers in its table `GSUB`, by a tag of four letters: `zero` (the slashed zero), `ss01` (a stylistic set), `numr` (numerators) | OpenType feature (for this), font option |
+| Single substitution | A lookup of the table `GSUB` that puts one glyph in the place of another (lookup type 1): the feature `zero` of Paper Mono puts the glyph 304 in the place of the glyph 294 of the character 0 | glyph swap, alternate |
+| Slashed zero | A zero with a stroke at an angle inside it, so that it does not look like the capital O. The character 0 of the system is the slashed zero of Paper Mono (`docs/FONTS.md`, section 6) | crossed zero, zero with a slash |
 | Text shaping | The step that turns the characters of a text into placed glyphs with a font: here the advances and the pair adjustments only; no ligature, no other script (`docs/FONTS.md`, section 12.3) | layout (for this), typesetting |
 | Placed glyph | A record of 16 bytes that text shaping gives for one character: the glyph, its x from the origin of the run and its advance, in 1/64 of a pixel | positioned glyph, glyph run entry |
+| Ink margin | How far the ink of a text of a proportional font can pass the box that its measure gives, on each side: 2 pixels at scale 1 for B612 (`graphics.PROPORTIONAL_INK_MARGIN`). The damage of a text widens its measured box by it | bleed, overhang (for this) |
 | Subpixel position | The fraction of a pixel where a glyph starts. The glyph cache of a proportional font keeps each glyph at three: 0, 1/3 and 2/3 of a pixel | subpixel offset, bucket |
 | Spacing | The advances of the characters 32 to 126 and the pair adjustments of one font at one scale, in 1/64 of a pixel: the two tables that text shaping reads, from a glyph cache (`support/text_shaping`, `Spacing`) | metrics (for this), kerning data |
 | Text range | A record that names one text in a table of bytes by its first byte and its count, with its width, which the measure writes (`text_shaping.Text_Range`) | span (for this), slice |
@@ -373,10 +380,19 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Ack-eliciting packet | A packet with a frame other than PADDING, ACK and CONNECTION_CLOSE: the peer must acknowledge it | reliable packet |
 | Probe timeout | The time after which a side that has no acknowledgement sends one or two probe packets, from the round-trip time and its variation (RFC 9002, section 6.2). It doubles at each timeout without an acknowledgement | retransmission timeout, RTO (for this) |
 | Congestion window | The most bytes of ack-eliciting packets that a side has in flight. This layer keeps it fixed at 12 000 bytes | send window (for this) |
+| QUIC stream | One ordered flow of bytes in each direction inside a QUIC connection, named by a stream identifier (RFC 9000, section 2). A connection carries several at once; the bytes of one never wait for a loss of another | channel (for this), substream |
+| Stream record | One `quic.Stream` in the table that the caller of a QUIC connection gives: the state and the buffers of one open QUIC stream. Their count bounds the streams that are open at one time | stream slot |
+| Limit of streams | The count of QUIC streams that one side allows the other to open since the start of the connection (MAX_STREAMS). A server of this system raises it by one each time a stream of the client ended | stream credit, concurrency limit (for this) |
+| Implicit open | The open of a QUIC stream by a frame of the peer that names it, or a higher stream of the same kind, before the peer sent anything on it (RFC 9000, section 3.2) | |
 | Flow control limit | The largest offset of data that a side allows the peer to send, for one stream (MAX_STREAM_DATA) and for the connection (MAX_DATA). Data past it closes the connection with FLOW_CONTROL_ERROR | receive window (for this) |
 | Anti-amplification limit | A server that did not validate the address of a client sends at most 3 times the bytes that it received from it (RFC 9000, section 8.1) | |
 | Address validation | The proof that a client receives at its address: here, a Handshake packet of the client, which needs the keys of the server's flight | |
 | Handshake confirmed | The point after which a side drops its Handshake keys: a server when the handshake completes, a client when HANDSHAKE_DONE comes (RFC 9001, section 4.1.2) | handshake done (for the state) |
+| Connection record | One `quic.Connection` in a table of a server: all the state of one connection, about 214 KiB, in a mapping of the program | session (for this), socket |
+| Version Negotiation packet | The packet with the version 0 that a server sends to a client whose long header names a version that the server does not speak: it lists the versions that the server speaks (RFC 9000, section 17.2.1) | version error |
+| Retry token | The value that a server gives in a Retry packet and that a client sends back in its next Initial: it proves that the client receives datagrams at its address. This system seals it with a key of the server, over the address and port of the client, its identifiers and a time | cookie (for this), address token (for the token of NEW_TOKEN) |
+| Validated remote | An admitted remote of a UDP listen grant that the program marked with the command Validate, because it proved its address: the network service then sends to it with no limit of 3 times the bytes that came from it | trusted remote, whitelisted address |
+| Stateless reset | A packet that ends a connection whose state a side lost, proven by a token that the side gave before (RFC 9000, section 10.3). Not built | reset (for this) |
 | Handshake deadline | The time after which a connection whose handshake did not complete ends: 10 s from the start of a client, or from the first authentic Initial at a server | handshake timeout (for the value) |
 | Packet number floor | The packet number below which a side refuses each packet of a space, because its set of received numbers forgot those ranges | replay window |
 | Idle timeout | The time with no packet of the peer after which a side ends a connection with no packet: the smaller of the two that the sides give, and 3 probe timeouts at least | keep-alive |
@@ -384,6 +400,10 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Draining state | The state of a side that received CONNECTION_CLOSE: it sends nothing, for 3 probe timeouts | |
 | Transport parameters | The values that each side of QUIC gives the other in the handshake of TLS: its limits, its timeouts, and the connection identifiers that it used (RFC 9000, section 18) | settings |
 | Retry packet | A packet of a server that asks the client to send its Initial packet again with a token, to prove its address; its integrity tag uses a fixed key | redirect |
+| Table of address budgets | The table of a QUIC server that holds a budget of Initial checks for each address whose token opened. A place moves to a new address only when its bucket is full again, so the table gives at most the sum of its buckets | address cache |
+| Budget of work | The most pieces of one kind of work that a QUIC server does for datagrams of unknown identifiers (Retries, token checks, Initial checks), as a token bucket. Over it, a datagram is dropped before any cryptography. Not a budget of memory of the kernel | rate limit (for this), quota |
+| Token bucket | A count of units that grows by a rate in each second up to a depth, and from which each piece of work takes one unit: a burst takes the depth, then the rate. The tokens of a bucket are not the tokens of Retry | leaky bucket, fixed window |
+| UDP relay | The part of the peer of the tool that carries UDP datagrams between a program of the host, on a socket of the loopback, and the UDP port 4433 of the machine, as frames from 10.0.2.2 with a port for each client of the host | port forward, proxy, hostfwd (for this) |
 
 ## Project
 
@@ -393,6 +413,8 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Release | One section of the changelog: a release number, a date, and the entries of the changes, in the parts Added, Changed, Deprecated, Removed, Fixed and Security. The merge of step N on `master` is one release | version (a stored object has versions), tag, build |
 | Release number | The number of a release, `<major>.<minor>.<patch>`: `0.N.0` for step N, `0.N.1` for a correction after it. `RELEASE_NUMBER` in `contract/release` is the newest one | version number, version |
 | Fragment | One file of `changelog.d/` with one change that is not in a release yet: its type and the text of its entry. `kerneltool changelog release` moves the fragments into a release | changeset, news file, entry (for the file) |
+| Mark | The picture that stands for the system: a heron on a grid of 24 by 24 square cells, each part filled with one gradient. `support/mark` holds it as data; `kerneltool logo` writes its files in `resources/logo` (`docs/DESIGN.md`, section 11) | logo, icon, emblem, mascot |
+| Name of the mark | The word "modus" in letters of square cells, 5 columns by 7 rows each, under the heron in the files of the mark that have a name | wordmark, logotype |
 
 ## Terms that the system does not have
 

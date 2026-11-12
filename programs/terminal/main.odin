@@ -35,7 +35,7 @@ import "support:graphics"
 import "support:interface"
 import "contract:ring"
 import "support:system"
-import "support:terminal"
+import terminal "support:terminal"
 import "base:intrinsics"
 
 COLUMNS_LIMIT :: terminal.COLUMNS_LIMIT
@@ -153,34 +153,20 @@ Edit_Line :: struct {
 }
 edit_line: Edit_Line
 
-// The line under the edit line (terminal.Kind.Hint).
+// The line under the edit line (terminal.Kind.Hint): a long form, and a
+// short form for a terminal too narrow for the long one. The text holds
+// the long form, then the short form.
 Hint_Line :: struct {
-	text:         [terminal.RUN_LIMIT]u8,
-	length:       int,
-	marked_start: int,
-	marked_count: int,
-	style:        terminal.Style,
+	text:       [terminal.RUN_LIMIT]u8,
+	length:     int,
+	long_count: int,
+	marked:     [terminal.Hint_Form][2]int, // The first byte and the count of bytes that each form marks.
+	style:      terminal.Style,
 }
 hint_line: Hint_Line
 
-// The completion list (terminal.Kind.List_Row, terminal.Kind.List). The
-// rows of the next list come first; the List record shows them.
-List_Row :: struct {
-	text:        [terminal.RUN_LIMIT]u8,
-	length:      int,
-	name_length: int,
-	matched:     [2]u64,
-}
-Completion_List :: struct {
-	rows:      [terminal.LIST_ROWS]List_Row,
-	row_count: int,
-	chosen:    int, // -1: no row is chosen.
-	first:     int, // The place of the first row in all the names.
-	total:     int, // All the names: more than row_count shows a scroll mark.
-	anchor:    int, // The byte of the edit line where the name starts.
-}
-list_rows_next: [terminal.LIST_ROWS]List_Row
-completion_list: Completion_List
+// The completion list (terminal.Kind.List_Row, terminal.Kind.List).
+list_keeping: terminal.List_Keeping
 
 // ---- What the drawer asks, and the view that the reader gives.
 
@@ -205,6 +191,10 @@ View :: struct {
 	// The cells of the completion list, for its border: list_columns 0 is
 	// no list.
 	list_left, list_top, list_columns, list_rows: int,
+	// The rows of the view that show lines of the text: the edit line and
+	// the row under it are not lines of the text. After a clear, the view
+	// can show none.
+	text_rows: u64,
 }
 
 request: Request
@@ -299,27 +289,17 @@ apply :: proc "contextless" (record: ring.Record) {
 		hint_line = {style = transmute(terminal.Style)record.values[0]}
 		hint_line.length = copy(hint_line.text[:], first)
 		hint_line.length += copy(hint_line.text[hint_line.length:], second)
-		hint_line.marked_start = int(min(record.values[1], u64(hint_line.length)))
-		hint_line.marked_count = int(min(record.values[2], u64(hint_line.length - hint_line.marked_start)))
+		hint_line.long_count = int(min(record.values[3], u64(hint_line.length)))
+		short_count := hint_line.length - hint_line.long_count
+		long_start := int(min(record.values[1], u64(hint_line.long_count)))
+		short_start := int(min(record.values[4], u64(short_count)))
+		hint_line.marked[.Long] = {long_start, int(min(record.values[2], u64(hint_line.long_count - long_start)))}
+		hint_line.marked[.Short] = {short_start, int(min(record.values[5], u64(short_count - short_start)))}
 	case .List_Row:
-		// The values come from the program: each one is brought inside the
-		// row before it is used.
 		first, second := take(record.tag)
-		if record.values[0] >= terminal.LIST_ROWS {
-			return
-		}
-		row := &list_rows_next[record.values[0]]
-		row.length = copy(row.text[:], first)
-		row.length += copy(row.text[row.length:], second)
-		row.name_length = int(min(record.values[1], u64(row.length)))
-		row.matched = {record.values[2], record.values[3]}
+		terminal.list_keep_row(&list_keeping, record.values, first, second)
 	case .List:
-		completion_list.rows = list_rows_next
-		completion_list.row_count = int(min(record.values[0], terminal.LIST_ROWS))
-		completion_list.chosen = record.values[1] < u64(completion_list.row_count) ? int(record.values[1]) : -1
-		completion_list.total = int(min(max(record.values[3], u64(completion_list.row_count)), 1 << 20))
-		completion_list.first = int(min(record.values[2], u64(completion_list.total - completion_list.row_count)))
-		completion_list.anchor = int(min(record.values[4], terminal.RUN_LIMIT))
+		terminal.list_keep_show(&list_keeping, record.values)
 	}
 }
 
@@ -337,10 +317,10 @@ shown_character :: proc "contextless" (character: u8) -> u8 {
 // below the first row under the edit line and its hint.
 list_fill :: proc "contextless" (edit_top, below: int) {
 	view.list_columns = 0
-	if completion_list.row_count == 0 || edit_top < 0 || edit_top >= rows {
+	if list_keeping.shown.row_count == 0 || edit_top < 0 || edit_top >= rows {
 		return
 	}
-	shown_rows := completion_list.row_count
+	shown_rows := list_keeping.shown.row_count
 	space_below := max(rows - below, 0)
 	space_above := edit_top
 	top: int
@@ -358,25 +338,25 @@ list_fill :: proc "contextless" (edit_top, below: int) {
 		return
 	}
 	// The rows shown keep the chosen row in view.
-	offset := completion_list.chosen >= shown_rows ? completion_list.chosen - shown_rows + 1 : 0
-	scroll := completion_list.total > completion_list.row_count || shown_rows < completion_list.row_count ? 1 : 0
+	offset := list_keeping.shown.chosen >= shown_rows ? list_keeping.shown.chosen - shown_rows + 1 : 0
+	scroll := list_keeping.shown.total > list_keeping.shown.row_count || shown_rows < list_keeping.shown.row_count ? 1 : 0
 	longest := 0
-	for &row in completion_list.rows[offset:][:shown_rows] {
+	for &row in list_keeping.shown.rows[offset:][:shown_rows] {
 		about := row.length - row.name_length
 		longest = max(longest, row.name_length + (about > 0 ? 2 + about : 0))
 	}
 	list_width := min(max(longest + 2 + scroll, LIST_WIDTH_LEAST), columns)
-	anchor := min(completion_list.anchor, edit_line.length)
+	anchor := min(list_keeping.shown.anchor, edit_line.length)
 	left := min(anchor % columns, columns - list_width)
 	inner := list_width - 2 - scroll
 	// The scroll mark: a track, and a thumb at the place of the rows shown
 	// in all the names.
-	shown_first := completion_list.first + offset
-	thumb_rows := max(shown_rows * shown_rows / max(completion_list.total, 1), 1)
-	thumb_top := min(shown_first * shown_rows / max(completion_list.total, 1), shown_rows - thumb_rows)
+	shown_first := list_keeping.shown.first + offset
+	thumb_rows := max(shown_rows * shown_rows / max(list_keeping.shown.total, 1), 1)
+	thumb_top := min(shown_first * shown_rows / max(list_keeping.shown.total, 1), shown_rows - thumb_rows)
 	for index in 0 ..< shown_rows {
-		row := &completion_list.rows[offset + index]
-		chosen := offset + index == completion_list.chosen
+		row := &list_keeping.shown.rows[offset + index]
+		chosen := offset + index == list_keeping.shown.chosen
 		background: graphics.Color = chosen ? COLOR_LIST_CHOSEN : COLOR_LIST
 		name_color: graphics.Color = chosen ? graphics.COLOR_WHITE : graphics.COLOR_TEXT
 		match_color: graphics.Color = chosen ? COLOR_MATCH_ON_CHOSEN_ROW : tone_colors[.Accent]
@@ -428,7 +408,7 @@ view_make :: proc "contextless" () {
 		status_line.total = 0
 		edit_line = {}
 		hint_line = {}
-		completion_list.row_count = 0
+		terminal.list_keep_forget(&list_keeping)
 	}
 	count := lines_written
 	if lines[lines_written & (LINE_CAPACITY - 1)].run_count != 0 {
@@ -437,9 +417,11 @@ view_make :: proc "contextless" () {
 	// The line that the program changes takes rows after the last line.
 	edit_cells := edit_line.length + int(edit_line.has_cursor)
 	edit_rows := u64(min((edit_cells + columns - 1) / columns, rows))
-	// The hint takes one row under the edit line, only with an edit line.
-	hint_rows: u64 = edit_rows > 0 && hint_line.length > 0 ? 1 : 0
-	total := count + edit_rows + hint_rows
+	// One row under the edit line stays free at all times, with or without
+	// a hint line: the hint is drawn over it, as the list is drawn over the
+	// text, so the text does not move when a hint comes or goes.
+	free_rows: u64 = edit_rows > 0 ? 1 : 0
+	total := count + edit_rows + free_rows
 	top := request.top
 	if request.follow || top + u64(rows) > total {
 		top = total > u64(rows) ? total - u64(rows) : 0
@@ -450,8 +432,10 @@ view_make :: proc "contextless" () {
 	view.gone = !request.follow && top == view.top && top < oldest
 	if view.gone {
 		view.list_columns = 0
+		view.text_rows = 0
 		return
 	}
+	view.text_rows = 0
 	top = max(top, oldest)
 	view.top = top
 	edit_color := .Color in edit_line.style.flags ? edit_line.style.color & 0xFFFFFF : tone_colors[terminal.Tone(min(u8(edit_line.style.tone), u8(max(terminal.Tone))))]
@@ -471,17 +455,14 @@ view_make :: proc "contextless" () {
 			}
 			continue
 		}
-		if hint_rows == 1 && number == count + edit_rows {
-			hint_color := .Color in hint_line.style.flags ? hint_line.style.color & 0xFFFFFF : tone_colors[terminal.Tone(min(u8(hint_line.style.tone), u8(max(terminal.Tone))))]
-			for place in 0 ..< min(hint_line.length, columns) {
-				marked := place >= hint_line.marked_start && place < hint_line.marked_start + hint_line.marked_count
-				row[place] = {character = shown_character(hint_line.text[place]), color = marked ? tone_colors[.Accent] : hint_color}
-			}
+		if free_rows == 1 && number == count + edit_rows {
+			hint_fill(&row)
 			continue
 		}
 		if number >= count || !line_valid(number) {
 			continue
 		}
+		view.text_rows += 1
 		line := lines[number & (LINE_CAPACITY - 1)]
 		column := 0
 		for run_index in line.first_run ..< line.first_run + u64(line.run_count) {
@@ -501,7 +482,21 @@ view_make :: proc "contextless" () {
 		}
 	}
 	edit_top := int(i64(count) - i64(top))
-	list_fill(edit_top, edit_top + int(edit_rows + hint_rows))
+	list_fill(edit_top, edit_top + int(edit_rows + free_rows))
+}
+
+// hint_fill writes the hint line in the free row under the edit line: its
+// long form when it fits in the columns, if not its short form, cut to the
+// columns.
+hint_fill :: proc "contextless" (row: ^[COLUMNS_LIMIT]Cell) {
+	form, shown := terminal.hint_form_choose(hint_line.long_count, hint_line.length - hint_line.long_count, columns)
+	first := form == .Long ? 0 : hint_line.long_count
+	marked := hint_line.marked[form]
+	color := .Color in hint_line.style.flags ? hint_line.style.color & 0xFFFFFF : tone_colors[terminal.Tone(min(u8(hint_line.style.tone), u8(max(terminal.Tone))))]
+	for place in 0 ..< shown {
+		in_mark := place >= marked[0] && place < marked[0] + marked[1]
+		row[place] = {character = shown_character(hint_line.text[first + place]), color = in_mark ? tone_colors[.Accent] : color}
+	}
 }
 
 BATCH :: 1024 // The records that the reader reads between two looks at the request.
@@ -695,8 +690,16 @@ draw :: proc "contextless" (window: ^display.Window, follow: bool) {
 	// is on the line of the keys.
 	hint_left := measure ? TEXT_X : status_end
 	if measure || !has_status {
-		x := interface.draw_text(table, TEXT_X, hint_y, follow ? "line " : "held at line ", follow ? graphics.COLOR_DIM : COLOR_HELD)
-		x = interface.draw_text(table, x, hint_y, number(&buffer, view.top + 1), follow ? graphics.COLOR_TEXT : COLOR_HELD)
+		// The lines of the text that the rows show: the edit line and the
+		// row under it are not lines of the text.
+		x := interface.draw_text(table, TEXT_X, hint_y, follow ? "lines " : "held at lines ", follow ? graphics.COLOR_DIM : COLOR_HELD)
+		if view.text_rows == 0 {
+			x = interface.draw_text(table, x, hint_y, "none in view", follow ? graphics.COLOR_TEXT : COLOR_HELD)
+		} else {
+			x = interface.draw_text(table, x, hint_y, number(&buffer, view.top + 1), follow ? graphics.COLOR_TEXT : COLOR_HELD)
+			x = interface.draw_text(table, x, hint_y, " to ", graphics.COLOR_DIM)
+			x = interface.draw_text(table, x, hint_y, number(&buffer, view.top + view.text_rows), follow ? graphics.COLOR_TEXT : COLOR_HELD)
+		}
 		x = interface.draw_text(table, x, hint_y, " of ", graphics.COLOR_DIM)
 		x = interface.draw_text(table, x, hint_y, number(&buffer, view.count), graphics.COLOR_TEXT)
 		if view.gone {

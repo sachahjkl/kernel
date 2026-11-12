@@ -46,6 +46,8 @@ Transport_Parameters :: struct {
 	max_ack_delay:                             u64, // Milliseconds.
 	active_connection_id_limit:                u64,
 	disable_active_migration:                  bool,
+	retry_source_connection_id:                [CONNECTION_ID_LIMIT]u8, // A server after a Retry: the Source Connection ID of its Retry.
+	retry_source_connection_id_length:         int,
 	has_retry_source_connection_id:            bool,
 }
 
@@ -84,6 +86,12 @@ transport_parameters_write :: proc "contextless" (parameters: ^Transport_Paramet
 	integer(&writer, PARAMETER_INITIAL_MAX_STREAM_DATA_BIDIRECTIONAL_REMOTE, parameters.initial_max_stream_data_bidirectional_remote)
 	integer(&writer, PARAMETER_INITIAL_MAX_STREAMS_BIDIRECTIONAL, parameters.initial_max_streams_bidirectional)
 	bytes(&writer, PARAMETER_INITIAL_SOURCE_CONNECTION_ID, parameters.initial_source_connection_id[:parameters.initial_source_connection_id_length])
+	if parameters.disable_active_migration {
+		bytes(&writer, PARAMETER_DISABLE_ACTIVE_MIGRATION, nil)
+	}
+	if role == .Server && parameters.has_retry_source_connection_id {
+		bytes(&writer, PARAMETER_RETRY_SOURCE_CONNECTION_ID, parameters.retry_source_connection_id[:parameters.retry_source_connection_id_length])
+	}
 	if writer.failed {
 		return 0
 	}
@@ -147,6 +155,7 @@ transport_parameters_read :: proc "contextless" (bytes: []u8, sender: Tls_Role, 
 			if len(value) > CONNECTION_ID_LIMIT {
 				return .Transport_Parameter_Error
 			}
+			parameters.retry_source_connection_id_length = copy(parameters.retry_source_connection_id[:], value)
 			parameters.has_retry_source_connection_id = true
 		case PARAMETER_STATELESS_RESET_TOKEN:
 			if len(value) != STATELESS_RESET_TOKEN_SIZE {

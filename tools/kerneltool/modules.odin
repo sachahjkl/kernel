@@ -104,6 +104,7 @@ module_builds := [?]Module_Build {
 	{name = "math", source = "modules/math", image = true},
 	{name = "cryptography", source = "modules/cryptography", image = true},
 	{name = "cryptography_vectors", source = "programs/cryptography_vectors", imports = {"cryptography"}, image = true},
+	{name = "quic_echo", source = "programs/quic_echo", imports = {"cryptography"}, image = true},
 	{name = "sample", source = "modules/sample", image = true},
 	{name = "hostile_exports", source = "modules/hostile_exports", image = true},
 	{name = "calendar", source = "modules/calendar", image = true},
@@ -120,6 +121,7 @@ module_builds := [?]Module_Build {
 	{name = "interface_through_module", source = "programs/interface_through_module", imports = {"interface_module"}, image = true},
 	{name = "text_shaping", source = "modules/text_shaping", image = true},
 	{name = "vector_glyphs", source = "programs/vector_glyphs", image = true},
+	{name = "interface_font", source = "programs/interface_font", image = true},
 	{name = "pointers", source = "programs/pointers", image = true},
 	{name = "settings", source = "programs/settings", image = true},
 	{name = "date", source = "programs/date", image = true},
@@ -138,7 +140,7 @@ build_modules :: proc() -> bool {
 	build_modules_in_parallel() or_return
 	// The pointer themes: the resources of the boot image (pointers.odin).
 	resources := build_pointer_themes(os.get_env(POINTER_THEME_SOURCE_VARIABLE, context.temp_allocator), false) or_return
-	// The two glyph caches of the default font: two more resources (vector_fonts.odin).
+	// The glyph caches of the default font and of the interface font: five more resources (vector_fonts.odin).
 	glyph_caches := build_glyph_caches() or_return
 	all_resources := make([dynamic]Resource_File, context.temp_allocator)
 	append(&all_resources, ..resources)

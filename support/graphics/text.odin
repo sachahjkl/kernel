@@ -1,6 +1,7 @@
 package graphics
 
 import "contract:glyph_cache"
+import "support:text_shaping"
 
 // The text of the system (docs/FONTS.md). Two fonts draw on one grid of
 // cells of 8 x 16 pixels at scale 1 (16 x 32, 24 x 48 at the scales 2 and
@@ -54,26 +55,51 @@ text_cache_set :: proc "contextless" (bytes: []u8) -> glyph_cache.Problem {
 		text_state.has_cache = false
 		return problem
 	}
-	text_cache_use(cache)
+	return text_cache_use(cache)
+}
+
+// cell_cache_problem says if a valid cache can draw the cells of the grid:
+// a cache of a proportional font cannot. Its glyphs are boxes of ink that
+// pass their cells, so the damage of a grid of text cells, which depends
+// on a glyph that stays in its cell, would leave stale pixels. A
+// proportional cache is drawn by text_proportional only.
+cell_cache_problem :: proc "contextless" (cache: ^glyph_cache.Cache) -> glyph_cache.Problem {
+	if cache.header.flags & glyph_cache.FLAG_PROPORTIONAL != 0 {
+		return {kind = .Proportional, value = u64(cache.header.flags)}
+	}
 	return {}
 }
 
 // text_cache_use makes a cache that glyph_cache.validate accepted the cache
 // of the vector font: a change of the setting "grid_fit" between two
-// caches that the program validated once.
-text_cache_use :: proc "contextless" (cache: glyph_cache.Cache) {
+// caches that the program validated once. A cache of a proportional font
+// is refused: the program draws with Spleen, as for any refused cache.
+text_cache_use :: proc "contextless" (cache: glyph_cache.Cache) -> glyph_cache.Problem {
+	cache := cache
+	if problem := cell_cache_problem(&cache); problem.kind != .None {
+		text_state.has_cache = false
+		return problem
+	}
 	text_state.cache = cache
 	text_state.has_cache = true
 	if text_state.square_root[4095] == 0 {
 		square_root_table_fill(&text_state.square_root)
 	}
+	return {}
 }
 
 // text_bold_cache_use makes a cache that glyph_cache.validate accepted the
-// cache of the bold weight.
-text_bold_cache_use :: proc "contextless" (cache: glyph_cache.Cache) {
+// cache of the bold weight. A cache of a proportional font is refused: the
+// titles are the regular weight.
+text_bold_cache_use :: proc "contextless" (cache: glyph_cache.Cache) -> glyph_cache.Problem {
+	cache := cache
+	if problem := cell_cache_problem(&cache); problem.kind != .None {
+		text_state.has_bold_cache = false
+		return problem
+	}
 	text_state.bold_cache = cache
 	text_state.has_bold_cache = true
+	return {}
 }
 
 // text_bold draws characters at scale 1 in the bold weight of the vector
@@ -189,13 +215,25 @@ character_vector :: #force_inline proc "contextless" (canvas: Canvas, x, y: int,
 
 // character_vector_with draws one character with the fast blend: the same
 // pixels as character_vector_reference.
-character_vector_with :: proc "contextless" (cache: ^glyph_cache.Cache, square_root: ^[4096]u8, tables: ^Blend_Tables, order: Subpixel_Order, canvas: Canvas, x, y: int, value: u8, color: Color, scale: int) #no_bounds_check {
+character_vector_with :: proc "contextless" (cache: ^glyph_cache.Cache, square_root: ^[4096]u8, tables: ^Blend_Tables, order: Subpixel_Order, canvas: Canvas, x, y: int, value: u8, color: Color, scale: int) {
 	_, entry, found := glyph_cache.glyph(cache, value, scale)
 	if !found || entry.row_count == 0 {
 		return
 	}
-	// The words of a row start at the column left of the cell: 0, and the
-	// width of the cell, in the cache of a monospace font.
+	glyph_entry_draw(cache, entry, square_root, tables, order, canvas, x, y, color)
+}
+
+// glyph_entry_draw draws one glyph entry of a valid cache with the fast
+// blend, its origin at the whole pixel x, the top of its line at y, cut to
+// the canvas. The text of cells and the text of a proportional font both
+// draw through it, so both have the same blend.
+@(private)
+glyph_entry_draw :: proc "contextless" (cache: ^glyph_cache.Cache, entry: glyph_cache.Glyph_Entry, square_root: ^[4096]u8, tables: ^Blend_Tables, order: Subpixel_Order, canvas: Canvas, x, y: int, color: Color) #no_bounds_check {
+	if entry.row_count == 0 {
+		return
+	}
+	// The words of a row start at the column left of the origin: 0, and
+	// the width of the cell, in the cache of a monospace font.
 	column_x := x + int(entry.left)
 	width := int(entry.width)
 	first_column := max(0, -column_x)
@@ -275,5 +313,52 @@ character_spleen_enlarged :: proc "contextless" (canvas: Canvas, x, y: int, valu
 				fill(canvas, x + column * scale, y + row * scale, scale, scale, color)
 			}
 		}
+	}
+}
+
+// The ink of a text of a proportional font can pass the box that its
+// measure gives (text_shaping.text_width), on each side, by at most this
+// many pixels at scale 1: a glyph that starts left of its origin (B612: at
+// most 126 units, 0.84 pixel), the spread of the filter (two thirds of a
+// pixel), and the rounding to a third of a pixel (one sixth). A caller that
+// damages the place of a text widens the measured box by it, times the
+// scale (docs/FONTS.md, section 12.5).
+PROPORTIONAL_INK_MARGIN :: 2
+
+// text_proportional draws the placed glyphs of a text of a proportional
+// font (text_shaping.shape) from a cache of that font: place is the x of
+// the origin of the text in 1/64 of a pixel, y the top of its line. Each
+// glyph is drawn at the nearest of the positions of its scale, through the
+// blend of the text of cells, cut to the canvas. The state of the program
+// gives the order of the stripes and the blend tables.
+text_proportional :: proc "contextless" (canvas: Canvas, place: i64, y: int, placed: []text_shaping.Placed_Glyph, cache: ^glyph_cache.Cache, scale: int, color: Color) {
+	if text_state.square_root[4095] == 0 {
+		square_root_table_fill(&text_state.square_root)
+	}
+	text_proportional_with(cache, &text_state.square_root, &text_state.blend_tables, text_state.order, canvas, place, y, placed, scale, color)
+}
+
+// text_proportional_with is text_proportional with its state given: the
+// tests draw with it, each with its own tables.
+text_proportional_with :: proc "contextless" (cache: ^glyph_cache.Cache, square_root: ^[4096]u8, tables: ^Blend_Tables, order: Subpixel_Order, canvas: Canvas, place: i64, y: int, placed: []text_shaping.Placed_Glyph, scale: int, color: Color) {
+	if scale < 1 || scale > len(cache.sizes) {
+		return
+	}
+	position_count := int(cache.sizes[scale - 1].position_count)
+	for glyph in placed {
+		if glyph.glyph >= cache.header.character_count {
+			continue
+		}
+		pixel, position := glyph_cache.position_of(place + i64(glyph.x), position_count)
+		// A glyph far outside the canvas: its pixel does not fit an int of
+		// the canvas, and it draws nothing.
+		if pixel < -i64(glyph_cache.GLYPH_WIDTH_LIMIT) || pixel > i64(canvas.width) {
+			continue
+		}
+		_, entry, found := glyph_cache.glyph_at_position(cache, u8(cache.header.first_character + glyph.glyph), scale, position)
+		if !found {
+			continue
+		}
+		glyph_entry_draw(cache, entry, square_root, tables, order, canvas, int(pixel), y, color)
 	}
 }

@@ -102,7 +102,7 @@ The owner asked for "a gradient from the current blue, as the start colour, to a
 
 - The background is `COLOR_BACKGROUND` with the grid of points of section 3. The compositor computes it once, at its start.
 - The bar is 32 pixels high, at the top of the screen. It has the surface of a card (`COLOR_CARD_TOP` to `COLOR_CARD_BOTTOM`) and a line of 1 pixel in `COLOR_TRACK` at its bottom.
-- The bar holds, from the left: the name of the system; the button `programs`; the button `windows`; at the right, the key of the launcher ("launcher: super") and the time since the start of the machine.
+- The bar holds, from the left: the mark of the system (the heron with cells of 1 pixel, 24 by 24, at (16, 4): section 11); the button `programs`; the button `windows`; at the right, the key of the launcher ("launcher: super") and the time since the start of the machine.
 - A button is 24 pixels high, in `COLOR_TRACK`. The button of an open menu is in `COLOR_TITLE`, with its label in white.
 
 ### Menus
@@ -154,6 +154,37 @@ The interface package (`support/interface`, `docs/INTERFACE.md`) draws these ele
 | Large number | The font at 3 times its size, drawn from its outline at 24 x 48: the one number of a card (section 5) |
 
 - An element that takes input can take the focus, and the keyboard reaches it: Tab, Enter, Space, the arrows (`docs/INTERFACE.md`, section 4).
+
+## 11. The mark
+
+The mark is the picture that stands for the system (owner, 2026-11-12: "le heron A n°1 est le meilleur, nickel cest simple ! + le logo \"modus\" comme t'as fait super cool").
+
+- The form: a heron on a grid of 24 by 24 square cells. It stands on one leg in water. Its parts: the crest and the tail (one part, in the color of the firmware), the head and the neck (the text color), the eye, the beak and the legs (two parts, in the color of the boot program), the body (the kernel), the wing (`0x2F6FC0`), the water (memory). No line goes around it.
+- The data: `support/mark` holds the rows of the cells, the table of the parts with their colors and their boxes, and the letters of the name of the mark. Its procedures are pure: `mark_pixel(cell_size, x, y, on_light)` gives the color of one pixel of the heron, `name_pixel` one pixel of the name, `heron_size` and `name_size` their sizes. `mark_draw(canvas, x, y, cell_size, on_light)` and `name_draw` draw into a canvas of `support/graphics`: the covered pixels only, cut to the canvas.
+- The cell size: 1 to `CELL_SIZE_LIMIT` (65 536). Another cell size draws nothing and has a size of 0. A pixel outside the heron or the name is not covered.
+- The gradient: each part is filled with one linear gradient, from the top left corner of the box of the part (the color moved 30 % toward white) to its bottom right corner (the color moved 30 % toward black). A pixel takes the gradient at its centre. The eye is one flat color. The arithmetic is in integers, rounded to the nearest value, so that every machine gives the same pixels.
+- The two backgrounds: the background of the system `0x0B1018`, and the light background `0xF4F6F8` of a page of another program. On the light background the neck is darker (`0x9FB2C8`), and the name is in `0x0B1018` instead of the text color.
+- The name of the mark: "modus" in letters of 5 by 7 cells, 2 empty columns between two letters, one flat color.
+- The files: `kerneltool logo` writes them, and `kerneltool check` fails with "run kerneltool logo" when a file does not have the pixels of the data.
+
+| File | Size | What it shows |
+|---|---|---|
+| `resources/logo/modus.png` | 1024 x 1024 | The heron (cells of 24) and the name under it (cells of 20), on the dark background |
+| `resources/logo/modus_light.png` | 1024 x 1024 | The same on the light background |
+| `resources/logo/heron_768.png` | 768 x 768 | The heron alone, cells of 32, on a transparent background |
+| `resources/logo/heron_24.png`, `heron_48.png`, `heron_96.png`, `heron_192.png` | 24 to 192 | The heron alone with cells of 1, 2, 4 and 8 pixels, on a transparent background |
+| `.project/image.png` | 512 x 512 | The heron alone, cells of 16, centred on the dark background |
+
+- A transparent file keeps the colors of the dark background: its pale neck shows little on a white page. Use `modus_light.png` there.
+- The PNG writer of these files is the one of the Odin standard library: it compresses, and it writes an alpha channel. The writer of the pictures of the screen has neither.
+- Where the system draws the mark, always with the colors of the dark background:
+
+| Where | Who draws | What | When the gradients are computed |
+|---|---|---|---|
+| The bar of the desktop | the compositor | the heron, cells of 1 pixel, at (16, 4), in the place of the word "kernel" | once, at the start, into a picture of 24 x 24 pixels over the pixels of the bar; each frame copies that picture (a Picture record that never changes) |
+| The head of the boot display | `support/bootscreen`: the boot program, the root service, the program `boot` | the heron, cells of 2 pixels (48 x 48) at (20, 12), and the name of the mark, cells of 3 pixels, at its right, in the place of the large word "kernel" | at each draw of the display: one call for each of the 2 304 pixels of the box of the heron and the 2 079 pixels of the box of the name, a few integer divisions each |
+
+- No file of the mark is in the boot image: each place draws from the data.
 
 ## State
 

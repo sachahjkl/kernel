@@ -140,7 +140,10 @@ packet_header_size :: proc "contextless" (connection: ^Connection, level: Encryp
 	}
 	size := 1 + 4 + 1 + connection.peer_connection_id_length + 1 + CONNECTION_ID_SIZE + LONG_HEADER_LENGTH_SIZE + PACKET_NUMBER_SIZE
 	if level == .Initial {
-		size += 1 // A token of 0 bytes: its length.
+		// The token: its length, then its bytes. A client after a Retry
+		// sends the token of the Retry; else it is empty.
+		token := connection.retry_token_length
+		size += variable_length_integer_size(u64(token)) + token
 	}
 	return size
 }
@@ -170,8 +173,9 @@ packet_write_and_seal :: proc "contextless" (connection: ^Connection, level: Enc
 		at += 1
 		at += copy(buffer[at:], connection.local_connection_id[:])
 		if level == .Initial {
-			buffer[at] = 0
-			at += 1
+			token := connection.retry_token[:connection.retry_token_length]
+			at += variable_length_integer_write(buffer, at, u64(len(token)), variable_length_integer_size(u64(len(token))))
+			at += copy(buffer[at:], token)
 		}
 		at += variable_length_integer_write(buffer, at, u64(PACKET_NUMBER_SIZE + payload_length + TAG_SIZE), LONG_HEADER_LENGTH_SIZE)
 	}
@@ -346,7 +350,7 @@ crypto_frame_write :: proc "contextless" (space: ^Packet_Number_Space, writer: ^
 }
 
 // control_frames_write writes the control frames that wait, each one when
-// it fits.
+// it fits: those of the connection, then those of one stream.
 @(private)
 control_frames_write :: proc "contextless" (connection: ^Connection, writer: ^Frame_Writer, record: ^Sent_Packet) -> bool {
 	written := false
@@ -364,12 +368,18 @@ control_frames_write :: proc "contextless" (connection: ^Connection, writer: ^Fr
 		record.controls += {.Max_Data}
 		written = true
 	}
-	if .Max_Stream_Data in pending^ && frame_room(writer) >= 2 + variable_length_integer_size(connection.stream.receive_limit) {
-		frame_write_integer(writer, FRAME_MAX_STREAM_DATA)
-		frame_write_integer(writer, 0)
-		frame_write_integer(writer, connection.stream.receive_limit)
-		pending^ -= {.Max_Stream_Data}
-		record.controls += {.Max_Stream_Data}
+	if .Max_Streams in pending^ && frame_room(writer) >= 1 + variable_length_integer_size(connection.streams_limit_given) {
+		frame_write_integer(writer, FRAME_MAX_STREAMS_BIDIRECTIONAL)
+		frame_write_integer(writer, connection.streams_limit_given)
+		pending^ -= {.Max_Streams}
+		record.controls += {.Max_Streams}
+		written = true
+	}
+	if .Streams_Blocked in pending^ && frame_room(writer) >= 1 + variable_length_integer_size(connection.peer_max_streams_bidirectional) {
+		frame_write_integer(writer, FRAME_STREAMS_BLOCKED_BIDIRECTIONAL)
+		frame_write_integer(writer, connection.peer_max_streams_bidirectional)
+		pending^ -= {.Streams_Blocked}
+		record.controls += {.Streams_Blocked}
 		written = true
 	}
 	if .Path_Response in pending^ && frame_room(writer) >= 1 + PATH_DATA_SIZE {
@@ -379,30 +389,85 @@ control_frames_write :: proc "contextless" (connection: ^Connection, writer: ^Fr
 		record.controls += {.Path_Response}
 		written = true
 	}
-	stream := &connection.stream
-	if .Reset_Stream in pending^ && frame_room(writer) >= 2 + variable_length_integer_size(stream.reset_code) + variable_length_integer_size(stream.send_length) {
-		// The final size is every byte that the application wrote: the
-		// peer counts them for flow control.
-		frame_write_integer(writer, FRAME_RESET_STREAM)
-		frame_write_integer(writer, 0)
-		frame_write_integer(writer, stream.reset_code)
-		frame_write_integer(writer, stream.send_length)
-		pending^ -= {.Reset_Stream}
-		record.controls += {.Reset_Stream}
-		written = true
+	// The control frames of one stream: a lost packet names one stream, so
+	// its frames go again for that stream.
+	for &stream in connection.streams {
+		if !stream.in_use || stream.pending_controls == {} {
+			continue
+		}
+		if stream_control_frames_write(&stream, writer, record) {
+			written = true
+		}
+		break
 	}
 	return written
 }
 
-// stream_frame_write writes one STREAM frame of stream 0: the bytes of a
-// lost packet first, then new bytes within the limits of the peer, and the
-// end of the stream when the last byte goes.
+// stream_control_frames_write writes the control frames of one stream that
+// wait, each one when it fits.
 @(private)
-stream_frame_write :: proc "contextless" (connection: ^Connection, writer: ^Frame_Writer, record: ^Sent_Packet) -> bool {
-	stream := &connection.stream
-	if connection.state != .Connected || !stream.opened || stream.reset_sent {
+stream_control_frames_write :: proc "contextless" (stream: ^Stream, writer: ^Frame_Writer, record: ^Sent_Packet) -> bool {
+	identifier_size := variable_length_integer_size(stream.identifier)
+	written: bit_set[Stream_Control]
+	if .Max_Stream_Data in stream.pending_controls && frame_room(writer) >= 1 + identifier_size + variable_length_integer_size(stream.receive_limit) {
+		frame_write_integer(writer, FRAME_MAX_STREAM_DATA)
+		frame_write_integer(writer, stream.identifier)
+		frame_write_integer(writer, stream.receive_limit)
+		written += {.Max_Stream_Data}
+	}
+	if .Reset_Stream in stream.pending_controls && frame_room(writer) >= 1 + identifier_size + variable_length_integer_size(stream.reset_code) + variable_length_integer_size(stream.send_length) {
+		// The final size is the largest offset sent: stream_reset_send set
+		// send_length to it. The peer counts it for flow control.
+		frame_write_integer(writer, FRAME_RESET_STREAM)
+		frame_write_integer(writer, stream.identifier)
+		frame_write_integer(writer, stream.reset_code)
+		frame_write_integer(writer, stream.send_length)
+		written += {.Reset_Stream}
+	}
+	if .Stop_Sending in stream.pending_controls && frame_room(writer) >= 1 + identifier_size + variable_length_integer_size(stream.stop_sending_code) {
+		frame_write_integer(writer, FRAME_STOP_SENDING)
+		frame_write_integer(writer, stream.identifier)
+		frame_write_integer(writer, stream.stop_sending_code)
+		written += {.Stop_Sending}
+	}
+	if written == {} {
 		return false
 	}
+	stream.pending_controls -= written
+	record.stream_controls = written
+	record.stream_controls_identifier = stream.identifier
+	return true
+}
+
+// stream_frame_write writes one STREAM frame: of the first stream, from
+// the record of its turn, that has bytes or its end to send. Each stream
+// then gets its turn.
+@(private)
+stream_frame_write :: proc "contextless" (connection: ^Connection, writer: ^Frame_Writer, record: ^Sent_Packet) -> bool {
+	if connection.state != .Connected {
+		return false
+	}
+	count := len(connection.streams)
+	for step in 0 ..< count {
+		index := (connection.stream_send_turn + step) % count
+		stream := &connection.streams[index]
+		if !stream.in_use || stream.reset_sent {
+			continue
+		}
+		if stream_frame_write_of(connection, stream, writer, record) {
+			connection.stream_send_turn = (index + 1) % count
+			return true
+		}
+	}
+	return false
+}
+
+// stream_frame_write_of writes one STREAM frame of a stream: the bytes of
+// a lost packet first, then new bytes within the limits of the peer for
+// the stream and for the connection, and the end of the stream when the
+// last byte goes.
+@(private)
+stream_frame_write_of :: proc "contextless" (connection: ^Connection, stream: ^Stream, writer: ^Frame_Writer, record: ^Sent_Packet) -> bool {
 	// The bytes that the peer acknowledged may be written over by new
 	// bytes: they are never sent again.
 	range_set_remove_below(&stream.send_again, range_set_prefix(&stream.send_acknowledged))
@@ -411,8 +476,8 @@ stream_frame_write :: proc "contextless" (connection: ^Connection, writer: ^Fram
 	if again {
 		offset, length = stream.send_again.starts[0], stream.send_again.ends[0] - stream.send_again.starts[0]
 	} else {
-		// One stream: the data of the connection is the data of the stream.
-		limit := min(stream.send_limit, connection.peer_max_data, stream.send_length)
+		connection_room := connection.peer_max_data - min(connection.data_sent_total, connection.peer_max_data)
+		limit := min(stream.send_limit, stream.send_length, stream.send_next + connection_room)
 		if stream.send_next < limit {
 			offset, length = stream.send_next, limit - stream.send_next
 		} else if stream.send_finish && !stream.finish_sent && stream.send_next == stream.send_length {
@@ -421,9 +486,9 @@ stream_frame_write :: proc "contextless" (connection: ^Connection, writer: ^Fram
 			return false
 		}
 	}
-	// The type, the identifier 0, the offset, and a length of 2 bytes at
-	// most (a packet is under 16 KiB).
-	overhead := 1 + 1 + variable_length_integer_size(offset) + 2
+	// The type, the identifier, the offset, and a length of 2 bytes at most
+	// (a packet is under 16 KiB).
+	overhead := 1 + variable_length_integer_size(stream.identifier) + variable_length_integer_size(offset) + 2
 	room := frame_room(writer)
 	if room < overhead || (length > 0 && room == overhead) {
 		return false
@@ -433,6 +498,7 @@ stream_frame_write :: proc "contextless" (connection: ^Connection, writer: ^Fram
 		range_set_take_first(&stream.send_again, length)
 	} else {
 		stream.send_next += length
+		connection.data_sent_total += length
 	}
 	finish := stream.send_finish && offset + length == stream.send_length
 	if finish {
@@ -446,14 +512,14 @@ stream_frame_write :: proc "contextless" (connection: ^Connection, writer: ^Fram
 		type |= FRAME_STREAM_FLAG_FINISH
 	}
 	frame_write_integer(writer, type)
-	frame_write_integer(writer, 0)
+	frame_write_integer(writer, stream.identifier)
 	if offset > 0 {
 		frame_write_integer(writer, offset)
 	}
 	frame_write_integer(writer, length)
 	ring_read(stream.send[:], offset, writer.bytes[writer.position:][:int(length)])
 	writer.position += int(length)
-	record.stream_offset, record.stream_length, record.stream_finish = offset, length, finish
+	record.stream_identifier, record.stream_offset, record.stream_length, record.stream_finish = stream.identifier, offset, length, finish
 	return true
 }
 
