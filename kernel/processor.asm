@@ -249,7 +249,10 @@ extended_control_register_write: ; (register: u32, value: u64): xsetbv
 ; scheduler calls them when a processor leaves a thread for another one,
 ; and the first processor proves the start state with them at boot. These
 ; three procedures are the only code of the kernel that names an x87, SSE
-; or AVX register (`kerneltool` refuses any other: vector_check.odin).
+; or AVX register (`kerneltool` refuses any other: vector_check.odin). Each
+; one ends with a label "<name>_end": the check allows the instructions of
+; a procedure only up to that label, and refuses a kernel where the label
+; does not follow the procedure.
 ; form: Extended_State_Form, 0 for fxsave64 and fxrstor64, 1 for
 ; xsaveopt64 and xrstor64, with edx:eax all ones: every component of XCR0.
 global extended_state_save
@@ -263,6 +266,8 @@ extended_state_save:             ; (area: ^Extended_State_Area, form: u8)
 .with_fxsave:
 	fxsave64 [rdi]
 	ret
+extended_state_save_end:                         ; The end of the procedure for the check of the build: never executed.
+	int3
 
 global extended_state_restore
 extended_state_restore:          ; (area: ^Extended_State_Area, form: u8)
@@ -275,6 +280,8 @@ extended_state_restore:          ; (area: ^Extended_State_Area, form: u8)
 .with_fxrstor:
 	fxrstor64 [rdi]
 	ret
+extended_state_restore_end:                         ; The end of the procedure for the check of the build: never executed.
+	int3
 
 ; The restore, then the registers as the processor took them from the area:
 ; the x87 control word, MXCSR, the low 8 bytes of xmm0 and, with with_avx,
@@ -303,6 +310,8 @@ extended_state_restore_and_read: ; (area: ^Extended_State_Area, read: ^[4]u64, w
 	vzeroupper
 .done:
 	ret
+extended_state_restore_and_read_end:                         ; The end of the procedure for the check of the build: never executed.
+	int3
 
 %assign vector 0
 %rep STUB_COUNT

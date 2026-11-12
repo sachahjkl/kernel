@@ -113,7 +113,11 @@ Processor :: struct {
 	self:          ^Processor,
 	index:         u32,
 	apic_id:       u32,
-	current:       u32, // The thread that runs. 0: none. Another processor writes 0 here to take the thread away.
+	// The thread that runs. 0: none. Only this processor writes it
+	// (queue_pick, schedule): schedule saves the extended state of this
+	// thread when it leaves it, and a 0 written by another processor would
+	// skip that save and lose the registers of the thread.
+	current:       u32,
 	record_thread: u32, // The thread whose thread record address is in the gs register of programs.
 	ports_loaded:  u32, // The program whose ports are open in the task state.
 	pending:       u32, // Not 0: another processor waits in processor_sync.

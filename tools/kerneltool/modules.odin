@@ -238,8 +238,16 @@ build_module :: proc(build: Module_Build) -> bool {
 		// The kernel has no x87, SSE or AVX instruction: the registers of a
 		// program stay live through each kernel entry, and only the switch
 		// of threads saves them (docs/ARCHITECTURE.md, "The extended state
-		// of the processor"). The IR of Odin has no target features of
-		// its own on its functions, so these features hold for all of it.
+		// of the processor"). These features hold for all of the IR only
+		// while no function of it has target features of its own: a
+		// function attribute would take the place of -mattr for that
+		// function. The disassembly after the link would find its vector
+		// instructions; this test gives the cause first.
+		ir := read_file(join(folder, "/", build.name, ".ll")) or_return
+		if strings.contains(string(ir), "\"target-features\"") {
+			fmt.eprintfln("kerneltool: the LLVM IR of %s has functions with target features of their own: the features of llc for the kernel would not hold for them", build.name)
+			return false
+		}
 		append(&llc, KERNEL_TARGET_FEATURES)
 	}
 	append(&llc, "-o", join(objects, "/", build.name, ".o"), join(folder, "/", build.name, ".ll"))

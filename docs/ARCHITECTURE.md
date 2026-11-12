@@ -502,26 +502,35 @@ How the build keeps the rule:
 - **The compiled code.** Odin writes the kernel as LLVM IR, and `llc` makes the object (`tools/kerneltool/modules.odin`). The IR has no target features on its functions, so the features of `llc` hold for all of it: `-mattr=-x87,-mmx,-sse,-sse2,-sse3,-ssse3,-sse4.1,-sse4.2,-avx,-avx2,-avx512f,+soft-float` (`KERNEL_TARGET_FEATURES`), the flags that the Linux kernel uses in the form of `llc`. The IR has vector types that the optimizer of Odin made (`<2 x i64>` for loops of copies): `llc` splits them into general registers. Copies of records become moves of general registers, or calls of the copy procedures.
 - **Floating point.** The x86-64 calling convention passes `f32` and `f64` values in xmm registers; with no SSE, `+soft-float` passes them in general registers and makes their arithmetic calls of procedures. The kernel has no floating-point value of its own (`grep` of `f16`, `f32`, `f64`, `float` and `core:simd` in `kernel/` finds none). The IR has four procedures of the Odin runtime with floating point, the conversions of `f16` (`__extendhfsf2`, `__gnu_h2f_ieee`, `__truncsfhf2`, `__truncdfhf2`); no code of the kernel calls them, and the link drops them (`--gc-sections`).
 - **The copies of memory.** `runtime/memory.asm` has a kernel form (`WITHOUT_VECTOR_REGISTERS`): 17 to 64 bytes in general registers, every read before the first write; more with `rep movsb` and `rep stosb`; a copy down in blocks of 8 bytes. Programs and the boot program keep the form with xmm0 to xmm4. The host tests of the kernel form are in `runtime/without_vector_registers`.
-- **The proof.** After the link of the kernel, the build disassembles it (`llvm-objdump -d`, AT&T syntax) and refuses it when an instruction outside the three procedures names `%xmm`, `%ymm`, `%zmm`, `%st`, `%mm` or `%k0` to `%k7`, or is an x87, VEX, EVEX or opmask instruction, `emms`, `ldmxcsr`, `stmxcsr`, `xsave` or `xrstor` (`tools/kerneltool/vector_check.odin`, with its host tests). The start code of the other processors is in the data section and is not executed in the kernel's mode of 64 bits before `processor_entry`; its `fninit` and `ldmxcsr` run before any thread.
+- **The proof.** After the link of the kernel, the build disassembles it (`llvm-objdump -d`, AT&T syntax) and refuses it when an instruction outside the three procedures names `%xmm`, `%ymm`, `%zmm`, `%tmm`, `%st`, `%mm` or `%k0` to `%k7`, or is an x87, VEX, EVEX, AMX or opmask instruction, `wait` (the name that the disassembler gives to `fwait`), `emms`, `ldmxcsr`, `stmxcsr`, `xsave` or `xrstor` (`tools/kerneltool/vector_check.odin`, with its host tests). Each of the three procedures ends with a label `<name>_end` in `kernel/processor.asm`: the check allows the instructions of a procedure up to that label only, and refuses a kernel where another name follows the procedure. A check that reads nothing proves nothing, so the check also fails when it reads fewer than 10 000 instructions (the kernel has 31 145), when one of the three procedures is not in the listing, or when it sees no vector instruction in one of them, where one must be. Before `llc`, the build refuses kernel IR whose functions have target features of their own, which would take the place of the features of `llc`. The start code of the other processors is in the data section and is not disassembled: its `fninit` and `ldmxcsr` run once, at the start of a processor, before it runs a thread, and the first thread of that processor is restored.
 - **Modules.** No module of a program runs in the kernel: the kernel is one module, `kernel = true` in the module table, and only that module is built with these features and checked. A module that would run in the kernel gets the same features and the same check.
 
 ### 4. The cost
 
-| | `master` (`fxsave64`, `fxrstor64` at each entry and resume) | Now |
+Measured by the coordinator on 2026-11-12 with `kerneltool measure`: the test machine under KVM (4 processors) on the host of the tests (AMD Ryzen 7 5800X), two runs of each build, one machine at a time, a host load of 6.4 to 8.7 before each run (the limit for a valid measure is 8, so these runs are at its edge).
+
+| | `master` (`fxsave64` at each entry, `fxrstor64` at each resume) | This design (save and restore at a switch of threads) |
 |---|---|---|
-| Each kernel entry that returns to the same thread | one save and one restore: 227 cycles on the host | nothing: the entry does not touch the extended state |
-| Each switch of threads on a processor | one entry and one resume, as above | one save of the thread that leaves and one restore of the thread that comes: `xsaveopt64` and `xrstor64`, 430 cycles on the host for x87 and SSE |
-| A thread that uses the ymm high halves | it could not, with a correct result | + 256 bytes in the save and the restore of each switch |
-| A thread that uses AVX-512 | it could not | up to + 1600 bytes in each switch (the opmask and the two parts of zmm) |
-| A thread that never used AVX | | the AVX component stays in its init state: `xsaveopt` writes nothing of it, and `xrstor` reads nothing of it |
+| Kernel entries in one second, one locker of `locks` (an entry that returns to the same thread) | 5 669 546 and 5 613 013: 176 and 178 ns for each entry | 8 063 360 and 8 359 466: 124 and 120 ns for each entry |
+| Kernel entries in one second, 4 lockers | 20 326 826 and 20 503 040 | 26 945 066 and 27 561 173 |
+| One hand-over between two threads by the word wait (a wake, a wait, a save and a restore) | | 128 and 125 ns with x87 and SSE in use; 133 and 127 ns with the ymm high halves in use |
+| One empty kernel entry of the program `extended_state` | | 90 ns with xmm in use, 78 ns with ymm in use (one run) |
 
-What the coordinator measures (`kerneltool measure`):
+The reason for the design is the cost of the instructions themselves, measured on the host (one pinned core, the least of 200 batches, in cycles): `fxsave64` 72, `fxrstor64` 167, `xsaveopt64` 101, `xrstor64` 327, `vzeroupper` 2. The pair at each entry of `master` was 227 cycles, about 60 ns of an entry of 177 ns; the pair `xsaveopt64` and `xrstor64` at each entry was 430 cycles and made an entry 229 to 249 ns. Now an entry pays no pair, and each switch pays the pair of 430 cycles once.
 
-- `locks: kernel entries in one second, each locker on its own objects: 1 locker ...`: one entry with no switch; compare with 5 657 386 and 5 634 346 on `master`.
-- `locks: word wait, two threads wake each other: ...`: each wake is a switch; it pays the save and the restore that the entries no longer pay.
-- `extended_state: a hand-over between two threads by the word wait (...): ... ns with x87 and SSE in use, ... ns with the ymm high halves in use`: the cost of one switch with each state, in the program.
-- `extended_state: the parts of a save and a restore, each alone in this program, ...` and `each instruction alone ...`: the cycles of each instruction of the save and the restore on the machine, measured by the program on its own area (`fxsave`, `xsave`, `xsaveopt` and `xrstor` are not privileged).
-- `extended_state: an empty kernel entry, 100000 times: ...`: with xmm, ymm or zmm in use, now the same entry.
+| | What a switch saves and restores |
+|---|---|
+| A thread that never used AVX | x87 and SSE: the AVX component stays in its init state, so `xsaveopt` writes nothing of it and `xrstor` reads nothing of it |
+| A thread that uses the ymm high halves | + 256 bytes in the save and the restore |
+| A thread that uses AVX-512 | up to + 1600 bytes (the opmask and the two parts of zmm); not measured: the host has no AVX-512 |
+
+The lines of `kerneltool measure`:
+
+- `locks: kernel entries in one second, each locker on its own objects: ...`: entries with no switch.
+- `locks: word wait, two threads wake each other: ...`: each wake is a switch.
+- `extended_state: a hand-over between two threads by the word wait (...): ...`: one switch with x87 and SSE in use, then with the ymm high halves in use.
+- `extended_state: the parts of a save and a restore, each alone in this program, ...` and `each instruction alone ...`: the cycles of each instruction of the save and the restore, measured by the program on its own area (`fxsave`, `xsave`, `xsaveopt` and `xrstor` are not privileged).
+- `extended_state: an empty kernel entry, 100000 times: ...`: with xmm, ymm or zmm in use.
 
 ### 5. A hostile program
 
