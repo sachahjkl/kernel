@@ -1,7 +1,7 @@
 title: A QUIC server answers on the network
 date: 2026-11-12
 release: 0.76.0
-picture: none
+picture: docs/screenshots/quic_echo.png
 kind: Shown
 guide: docs/QUIC.md
 
