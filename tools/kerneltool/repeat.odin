@@ -7,12 +7,13 @@ import "core:slice"
 import "core:strconv"
 import "core:strings"
 
-// One source must give one module (property 11). Two commands check it:
+// One source must give one module: the identity of a module is the hash of
+// its content, so a build must be deterministic. Two commands check it:
 // `check` builds everything a second time and compares; `repeat` builds
 // again and again with no machine. Each compares the outputs of a build,
 // not only the module: a difference in the LLVM IR or in the object is the
-// early sign (choice 359: each object differed while each module was the
-// same). When an output differs, each distinct content stays in
+// early sign: once, each object differed while each module was the same.
+// When an output differs, each distinct content stays in
 // DIFFERENT_BUILDS_FOLDER with the name of the file, and the tool prints
 // where the first difference is.
 
@@ -276,7 +277,7 @@ repeat_all :: proc(count: int) -> int {
 // second time and compares each output with the output of the first build:
 // the module, its LLVM IR and its object, the pointer theme files (the
 // resources of the boot image), the boot program and its object. The hash
-// of a module is the identity of its source, not of one build (property 11).
+// of a module is the identity of its source, not of one build.
 outputs_same_after_second_build :: proc() -> bool {
 	reset_folder(DIFFERENT_BUILDS_FOLDER) or_return
 	all := make([dynamic]Distinct_Results)

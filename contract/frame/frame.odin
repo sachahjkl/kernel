@@ -22,7 +22,8 @@
 //
 // Many requests are in flight at the same time. A Receive stays in flight
 // until a frame arrives in its place: the client gives the places for the
-// frames before they arrive (property 14), and the device drops a frame when
+// frames before they arrive (the client supplies the memory: the service
+// allocates none for it), and the device drops a frame when
 // no place waits. A completion record has the tag of its command. The frame
 // service takes a command only when the completion queue has room for its
 // completion: a client that does not read its completions stops the

@@ -5,7 +5,9 @@ import module "contract:module"
 import "base:intrinsics"
 import op "contract:operation"
 
-// Paging as a tool of the kernel on itself (owner decision of 2026-11-10).
+// Paging as a tool of the kernel on itself: the kernel protects its own
+// pages as it protects the pages of a program, so that a fault of the
+// kernel cannot write its code or execute its data.
 //
 // The kernel half of the addresses has three parts:
 //   the direct map: all physical memory, never executable. The pages of

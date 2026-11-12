@@ -95,7 +95,8 @@ boot_report :: proc "contextless" (report: ^op.Boot_Report) {
 
 // The reports of a developer tool (docs/TOOLS.md): what one program has, for
 // a holder of the machine with the right Inspect. They give counts, places
-// and states, never a byte of the memory of the program (property 20).
+// and states, never a byte of the memory of the program: reading the memory
+// of another program is a separate grant, which these reports do not need.
 
 // program_mappings_report writes the mappings of program slot `index`, in
 // the order of their addresses. The caller holds the control lock; this

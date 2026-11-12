@@ -245,8 +245,8 @@ drawn_before: bool
 record_capacity_of_build: u64 = RECORD_CAPACITY
 
 // kept_counts gives the records and the bytes of the frame that the tables
-// hold: a table that did not fit has a count larger than its capacity
-// (finding W5 of the hostile read: the program used the count as it was).
+// hold: a table that did not fit has a count larger than its capacity, so
+// the count as it comes is never an index.
 kept_counts :: proc "contextless" () -> (records, bytes: u64) {
 	return min(drawn.count, drawn.capacity), min(text.count, text.capacity)
 }

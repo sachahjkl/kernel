@@ -67,8 +67,8 @@ site_gaps_read :: proc(content: string) -> (gaps: []Site_Gap, problem: string) {
 
 // site_property_numbers gives the properties that a text names. The rule:
 // "property <n>" with no regard to case, or "P<n>" with a capital P, each a
-// whole word; n from 1 to the count of the properties. "properties 3 and 4"
-// names none: the documents write one property at a time.
+// whole word; n from 1 to the count of the properties. "properties <n> and
+// <m>" names none: the documents write one property at a time.
 site_property_numbers :: proc(text: string, property_count: int) -> []int {
 	numbers := make([dynamic]int, context.temp_allocator)
 	lower := strings.to_lower(text, context.temp_allocator)

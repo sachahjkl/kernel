@@ -2,7 +2,8 @@ package kernel
 
 import "base:intrinsics"
 
-// The limits of a budget: processor time and log records (property 20).
+// The limits of a budget: processor time and log records. A program cannot
+// take all the processor time or fill the log: each resource has a limit.
 //
 // Pages, programs and threads are things that a budget holds: they move
 // from a budget to a new budget, and they return. Time does not return, so

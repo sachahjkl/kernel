@@ -7,13 +7,14 @@ import "support:system"
 import "base:intrinsics"
 
 // The log is also a service: records() gives the log records as a table of
-// records with typed fields (property 19), so that a reader checks the
+// records with typed fields, so that a reader checks the
 // program, the channel and the level of a record, not a line of text. The
 // serial port keeps the same records as lines: it works before any service
 // runs, and when the network does not.
 //
-// The records of the log are facts of all the programs (property 20): the
-// export gives them only to a caller that acts for the person.
+// The records of the log are facts of all the programs, and a program sees
+// no other program: the export gives them only to a caller that acts for
+// the person.
 
 // One row of the log: records(). A row has 256 bytes, the most that a
 // record of a description has, so its text has 160 bytes: a log record of

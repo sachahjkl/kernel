@@ -477,7 +477,8 @@ segments :: proc "contextless" (catalog: Catalog, name: string, rows: []Segment)
 // module records that each loader gave to the kernel (operation
 // Program_Module), with the hash that a replacement changed. The kernel
 // gives them to a holder of the machine with the right Inspect: a program
-// sees what runs only with that grant (property 20). The kernel has the
+// sees what runs only with that grant, because a program sees no other
+// program. The kernel has the
 // records of each program, also of programs that the root service did not
 // start. problem: Refused, with the status of the kernel.
 running :: proc "contextless" (machine: system.Handle, catalog: Catalog, rows: []Running) -> (count: int, problem: Problem) {

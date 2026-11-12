@@ -127,7 +127,7 @@ COMMANDS :: [?]Command {
 	{name = "news", about = "new <subject> | check: the news entries of " + NEWS_FOLDER + ", dated reports in prose of what a person can now see or use, for the page of the news of the site", run = run_news},
 	{name = "site", about = "write the site of the system in " + SITE_FOLDER + ": the pages from the documents, the code, the news, the pictures and the logs of the last machine tests, an index and one small script for the search, and the feed of the news; no request to another server", run = run_site},
 	{name = "release_number", about = "print the release number of the system: the newest release of " + CHANGELOG_FILE, run = run_release_number},
-	{name = "check", about = "odin check -vet and odin test of the host code, changelog check, news check, then test", run = run_check},
+	{name = "check", about = "odin check -vet and odin test of the host code, the checks of the sources (among them the rule on comments), changelog check, news check, then test", run = run_check},
 	{name = "key", about = "key new <folder outside the repository>: write a new signing key of the system description (the private key, readable by its owner only, and the public key); `key show`: print the public key that the build uses (" + SIGNING_KEY_VARIABLE + ", or the test signing key)", run = run_key},
 }
 
@@ -567,6 +567,9 @@ run_check :: proc(args: []string) -> int {
 	if !text_cut_check() {
 		return EXIT_FAILURE
 	}
+	if !comment_rule_check() {
+		return EXIT_FAILURE
+	}
 	if !changelog_check() {
 		return EXIT_FAILURE
 	}
@@ -596,7 +599,8 @@ processor_models := [Processor_Model]string {
 }
 
 // machine_command gives the one QEMU command line of the project: the first
-// machine of property 7. The boot volume is a virtio block device. If
+// fixed machine that the system targets (QEMU on x86-64 with virtio
+// devices, UEFI firmware and a TPM). The boot volume is a virtio block device. If
 // test_output is a path, the machine has no window and writes its log there.
 // The network device sends each frame to the peer (peer.odin) on the
 // loopback of the host, at peer_port, as one UDP datagram.

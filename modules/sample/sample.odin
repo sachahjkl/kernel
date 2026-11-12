@@ -1,6 +1,6 @@
-// A module of commands that take a record, a handle or a table (property
-// 19). A record is bytes with described fields: the caller and the module
-// read the same layout. A handle is lent for the time of one call, with the
+// A module of commands that take a record, a handle or a table, never text
+// that the module must parse. A record is bytes with described fields: the
+// caller and the module read the same layout. A handle is lent for the time of one call, with the
 // rights that the description names and no other right. A table is records
 // of one description in memory of the caller, with a direction: Read,
 // Change or Append.

@@ -59,8 +59,8 @@ Call_Status :: enum u32 {
 // place, and the count of an Append table is its new count. An export with
 // an error record writes it at `error`.
 // It does the descriptions with an Integer result or none; another result
-// gives Not_Done (finding W6 of the hostile read: it gave the address of the
-// error record where the export reads its buffer). It checks the
+// gives Not_Done: else it gives the address of the error record where the
+// export reads its buffer. It checks the
 // description as the receiver of an isolated call does (record_size), and
 // the record of each table.
 call_direct :: proc "contextless" (file: []u8, address: uintptr, function: module.Function, arguments: []isolated.Argument, error: ^errors.Error_Record = nil) -> (result: i64, status: Call_Status) {

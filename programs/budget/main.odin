@@ -1,4 +1,5 @@
-// A demonstration of budgets (properties 2 and 20).
+// A demonstration of budgets: a program holds only what it was given, and
+// each resource has a limit.
 //
 // No operation creates an object from nothing: a budget pays for each
 // memory object, each program and each thread. The root service gave this

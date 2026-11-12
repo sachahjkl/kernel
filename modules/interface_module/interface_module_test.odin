@@ -5,8 +5,8 @@ import "core:testing"
 import "support:interface"
 import "support:system"
 
-// A canvas whose stride times its height wraps (finding F2 of the hostile
-// read): the export refuses it, and draws nothing.
+// A canvas whose stride times its height wraps, as a hostile caller gives
+// it: the export refuses it, and draws nothing.
 @(test)
 canvas_shape_that_wraps_is_refused :: proc(t: ^testing.T) {
 	pixels: [16]u32
@@ -26,7 +26,7 @@ canvas_shape_that_wraps_is_refused :: proc(t: ^testing.T) {
 }
 
 // A text record that names bytes past the text table, and a capacity over
-// the largest int (findings W4 and W-new): no fault; the record past the
+// the largest int, as a hostile caller gives them: no fault; the record past the
 // text differs, so its rectangle is damaged; the capacity is refused.
 @(test)
 hostile_records_are_refused :: proc(t: ^testing.T) {
@@ -48,8 +48,8 @@ hostile_records_are_refused :: proc(t: ^testing.T) {
 	testing.expect_value(t, draw_background(&drawn, &area), 2)
 }
 
-// The Append rule across calls (decision of the coordinator after the
-// second hostile read): the counts are the counts of the full answer, also
+// The Append rule across calls (docs/MODULE_CONTRACT.md, "Did not fit,
+// across calls"): the counts are the counts of the full answer, also
 // after a call that did not fit and a call that appends nothing; nothing
 // is written at or after a capacity.
 @(test)

@@ -9,8 +9,9 @@ import "core:odin/parser"
 import "core:strconv"
 import "core:strings"
 
-// The descriptions of the exports of a module come from its source
-// (property 19, docs/MODULE_CONTRACT.md section 4). This file reads an Odin
+// The descriptions of the exports of a module come from its source: the
+// description is enough to call a function with no other knowledge of the
+// module (docs/MODULE_CONTRACT.md, section 4). This file reads an Odin
 // package. An export is a procedure with the attribute @(export).
 //
 // The rules, which the tool checks:

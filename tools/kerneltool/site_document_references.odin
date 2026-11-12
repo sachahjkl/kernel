@@ -192,7 +192,8 @@ site_parts_outside_quotes :: proc(text: string) -> []string {
 }
 
 // site_label_token_end reads a label of a section at an index: "8", "12.4",
-// "5a", "U2b", "K1", and the identifier of a decision "D-163". With
+// "5a", "U2b", "K1", and the identifier of a decision (a capital D, a
+// hyphen and a number). With
 // capital_required, the label starts with a capital
 // letter: a bare number after a comma is a word of the sentence.
 site_label_token_end :: proc(text: string, at: int, capital_required: bool) -> (end: int, found: bool) {
@@ -1184,40 +1185,13 @@ site_pointer_problem :: proc(site: ^Site, file: string, line: int, path: string,
 // them, and each pointer of the text names the line where it starts.
 site_comment_pointer_problems :: proc(site: ^Site, file, content: string) -> []string {
 	problems := make([dynamic]string, context.temp_allocator)
-	lines := site_lines(content)
-	index := 0
-	for index < len(lines) {
-		_, first := site_code_and_comment(lines[index])
-		if first == "" {
-			index += 1
-			continue
-		}
-		// One text from the lines of comment that follow each other, with
-		// the offset where each line starts in it.
-		block := strings.builder_make(context.temp_allocator)
-		starts := make([dynamic]int, context.temp_allocator)
-		block_line := index
-		for index < len(lines) {
-			_, comment := site_code_and_comment(lines[index])
-			if comment == "" {
-				break
-			}
-			if strings.builder_len(block) > 0 {
-				strings.write_byte(&block, ' ')
-			}
-			append(&starts, strings.builder_len(block))
-			strings.write_string(&block, comment)
-			index += 1
-		}
-		text := strings.to_string(block)
-		for pointer in site_document_pointers(text) {
-			line := block_line
-			for start, start_index in starts {
-				if start <= pointer.start {
-					line = block_line + start_index
-				}
-			}
-			if problem := site_pointer_problem(site, file, line + 1, pointer.path, pointer.labels); problem != "" {
+	syntax, known := comment_syntax_of(file)
+	if !known {
+		return problems[:]
+	}
+	for block in comment_blocks(content, syntax) {
+		for pointer in site_document_pointers(block.text) {
+			if problem := site_pointer_problem(site, file, comment_block_line(block, pointer.start), pointer.path, pointer.labels); problem != "" {
 				append(&problems, problem)
 			}
 		}

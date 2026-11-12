@@ -994,8 +994,9 @@ delegation :: proc "contextless" (ctx: ^system.Context) {
 	system.close(board_memory)
 }
 
-// The addresses that the kernel chooses are used again (the fault found by
-// the agent of work/tables): one object mapped and unmapped 100 000 times
+// The addresses that the kernel chooses are used again (a kernel that
+// never reuses a range of addresses runs out of them): one object mapped
+// and unmapped 100 000 times
 // costs the budget the same as one time.
 reuse_right: bool
 reuse_pages_first, reuse_pages_last: u64

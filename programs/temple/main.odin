@@ -1,6 +1,8 @@
 // A demonstration, for fun: the temple of Jon. A portrait of Jonathan Blow
 // turns about its vertical axis, with perspective, in front of rays of light.
-// The processor draws all of it (property 18, step 1: no GPU).
+// The processor draws all of it: the system has no GPU code yet, and
+// programs draw on the processor first (docs/PROPERTIES.md, "One graphics
+// interface").
 package temple
 
 import "support:display"

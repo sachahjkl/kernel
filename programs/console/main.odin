@@ -1,4 +1,4 @@
-// The console (property 19): a program that has a terminal. The person
+// The console: a program that has a terminal. The person
 // types expressions of a small language. A command is a function with typed
 // parameters and a typed result; it is not a separate program, and it does
 // not parse text.

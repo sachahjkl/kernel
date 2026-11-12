@@ -4,7 +4,8 @@ import "contract:ring"
 import "base:intrinsics"
 import op "contract:operation"
 
-// K4: the kernel entry. It executes the command records of the kernel ring
+// The kernel entry (docs/ARCHITECTURE.md, "Rings and wait"). It executes the
+// command records of the kernel ring
 // of the program, then makes the program wait if it asked for that.
 
 
@@ -75,7 +76,9 @@ command_run :: proc "contextless" (index: u32, command: ring.Record, results: ^[
 
 // stop_wait waits, with no lock held, until each thread that this
 // operation stopped on another processor left it: after Thread_Stop or
-// Program_Stop, no thread of what stopped runs an instruction (choice 18).
+// Program_Stop, no thread of what stopped runs an instruction: a thread
+// that another thread stops ends at any instruction, and the caller then
+// owns the data that this thread was changing.
 // The wait ends at once if the current thread is stopped too: two threads
 // that stop each other do not wait for each other.
 stop_wait :: proc "contextless" (cpu: ^Processor) {
@@ -280,7 +283,8 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			return STATUS_RETRY
 		}
 		budget := handle_find(program, v[0], .Budget, {.Spend}) or_return
-		// A weight above the full weight would raise the share (P20).
+		// A weight above the full weight would raise the share: a program
+		// would take processor time that its budget does not give.
 		if v[4] > op.WEIGHT_FULL || v[5] > op.REQUEST_LIMIT {
 			return .Bad_Operation
 		}

@@ -1,4 +1,5 @@
-// A measure of one ring (properties 4 and 6).
+// A measure of one ring: the ring is the base interface of the kernel and
+// the one way that programs communicate.
 //
 // One thread writes records in a ring as fast as it can. A second thread
 // reads them. No queue operation enters the kernel: a thread enters the

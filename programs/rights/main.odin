@@ -1,4 +1,5 @@
-// A demonstration of rights on handles (properties 2 and 20).
+// A demonstration of rights on handles: a program holds only the handles
+// that it was given, and only with the rights that it was given.
 //
 // The root service gives this program two handles, each with a part of its
 // rights: the machine with Inspect, the boot image with Read. The program

@@ -3,7 +3,8 @@ package kernel
 import info "contract:boot_info"
 import "base:intrinsics"
 
-// K2, memory: the page frames, and the page tables of address spaces.
+// Memory: the page frames, and the page tables of address spaces
+// (docs/ARCHITECTURE.md, "Memory").
 
 PAGE_SIZE :: info.PAGE_SIZE
 PAGE_PRESENT :: u64(1) << 0

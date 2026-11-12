@@ -321,8 +321,7 @@ run_hostile :: proc "contextless" () {
 	hostile_add("the same rows in a lent memory object", lent_status == .Ok && result == expected, result)
 
 	// The service refuses a table in a memory object: the caller could
-	// revoke it while the export runs, and stop the service for each caller
-	// (finding W1 of the hostile read).
+	// revoke it while the export runs, and stop the service for each caller.
 	if ways_ready[.Service] {
 		arguments[0].table = {records = bytes_of(raw_data(large), 64 * 40), count = 64, memory_handle = u64(large_memory)}
 		refusal: errors.Error_Record
@@ -351,7 +350,7 @@ run_hostile :: proc "contextless" () {
 	hostile_add("a Change table lent with Read only", refused == .Bad_Handle && large[63].value == 63, "Bad_Handle; rows unchanged")
 
 	// A budget lent as the memory of a table: the receiver checks the kind
-	// of the object (N3 of the hostile read).
+	// of the object: a table names a memory object, and no other kind.
 	budget_copy, budget_status := system.give(0, system.own_budget(), {.Read, .Give})
 	if budget_status == .Ok {
 		receiver, budget_status = system.give(host.ring_memory, budget_copy, {.Read})
@@ -367,7 +366,7 @@ run_hostile :: proc "contextless" () {
 	refusal_add("a budget as the memory of a table", refused == .Bad_Handle && errors.Kind(refusal.kind) == .Handle_Kind, &refusal, "sum_values", "readings")
 
 	// A count larger than the call region, written by hand: the refusal is
-	// an error record (finding W8).
+	// an error record, so that the caller learns which argument and why.
 	arguments[0].table = {records = bytes_of(raw_data(large), 64 * 40), count = 64}
 	_, size, _, _, encoded = isolated.encode(sample_file, function, arguments[:1], host.region)
 	field := (^isolated.Table_Field)(raw_data(host.region))
@@ -388,8 +387,8 @@ run_hostile :: proc "contextless" () {
 	refusal_add("a start that wraps", refused == .Bad_Arguments && errors.Kind(refusal.kind) == .Out_Of_Range && refusal.argument == 1, &refusal, "sum_values", "readings")
 
 	// A direct call of an export with a Table result: call_direct does not
-	// do it, and says so (finding W6: it gave the address of the error
-	// record where the export reads its buffer).
+	// do it, and says so: else it gives the address of the error record
+	// where the export reads its buffer.
 	readings_index, readings_function, readings_address := export_of("readings")
 	arguments[0] = {integer = 4}
 	direct_refusal: errors.Error_Record

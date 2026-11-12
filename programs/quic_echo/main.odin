@@ -494,7 +494,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	configuration.tls = {role = .Server, least_seed_strength = .Processor}
 	configuration.tls.application_protocol_length = copy(configuration.tls.application_protocol[:], APPLICATION_PROTOCOL)
 	if !key_make(&configuration) {
-		// The rule of the owner on a weak seed: the program chooses what it
+		// The rule on a weak seed: the program chooses what it
 		// accepts, and a seed under it is an error that it shows.
 		weak_seed = true
 		system.log("quic_echo: the random seed of this program is weak: it makes no key of a server, and listens on nothing")

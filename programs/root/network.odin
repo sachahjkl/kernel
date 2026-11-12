@@ -11,13 +11,14 @@ import "support:system"
 // (on demand, as the storage service). This service gives each such program
 // one endpoint (contract/datagram): a datagram ring that it gives to the two
 // programs, and a grant that it names on the control ring of the network
-// service. The program cannot choose its remote or its local port
-// (property 20, lines 3 and 11).
+// service. The program cannot choose its remote or its local port: it has
+// no ambient network, and no port is a global name.
 
 // The right Inspect of the grant of an endpoint (the facts of the network
 // of the machine: the frames that no endpoint owns, the kernel entries of
 // the two services) goes only to a program that holds the machine with the
-// right Inspect: it reads the facts of all programs already (property 20).
+// right Inspect: it reads the facts of all programs already, and no other
+// program learns of the traffic of another.
 
 QUIC_ECHO_PORT :: 4433 // The UDP port of quic_echo: the port of the examples of RFC 9000 implementations.
 

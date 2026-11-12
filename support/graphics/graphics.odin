@@ -1,5 +1,7 @@
 // The graphics library: drawing with the processor into pixel memory
-// (property 18, step 1: no GPU). It is compiled into each program that draws.
+// (the system has no GPU code yet, and programs draw on the processor
+// first: docs/PROPERTIES.md, "One graphics interface"). It is compiled into
+// each program that draws.
 package graphics
 
 import "base:intrinsics"

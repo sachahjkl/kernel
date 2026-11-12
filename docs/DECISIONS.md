@@ -469,7 +469,7 @@ This file is the record of the decisions of the project: who decided what, when,
 - 2026-11-11. Decided by: the owner (accepted the rule of the coordinator).
 - Decision: a comment gives the reason itself. It names no number of a property, a choice, a step or a review finding, and no date of a decision. A pointer to a document is allowed. The ChaCha20 code copied from Odin is not touched.
 - Words: "euh ne pas mentionner nos \"propriétés\" dans les commentaires non ? exemple \"(property 10)\""; then "je suis okay avec ta suggestion".
-- State: in force for new code. Not done yet: the cleanup of the whole code and the check in `kerneltool check` (56 lines with "(property N" remain in the sources on 2026-11-12).
+- State: done. `kerneltool check` refuses such a comment (183 were rewritten on 2026-11-12).
 - Where: `AGENTS.md`.
 
 ### D-060 A development log out of the repository

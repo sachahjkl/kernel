@@ -1,4 +1,6 @@
-// The record that the boot program gives to the kernel (property 17).
+// The record that the boot program gives to the kernel. The boot program is
+// a UEFI program: it uses the services of the firmware before the kernel
+// starts (docs/PROPERTIES.md, "Trusted boot").
 //
 // All addresses in it are physical addresses. The boot program maps all
 // physical memory at DIRECT_MAP_BASE, and the kernel module at KERNEL_BASE,

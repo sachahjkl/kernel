@@ -1,6 +1,6 @@
-// The TCP library: TCP in the program that uses it (property 5,
-// docs/NETWORK.md). This file: the numbers of TCP, the order of sequence
-// numbers, and the header of a segment.
+// The TCP library: TCP in the program that uses it, so that the kernel is
+// not on the path of the data (docs/NETWORK.md). This file: the numbers of
+// TCP, the order of sequence numbers, and the header of a segment.
 //
 // A segment is the bytes of TCP: the header, its options and the data,
 // with no IPv4 header. Numbers are in the order of the machine; a segment

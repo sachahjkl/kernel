@@ -7,13 +7,13 @@ import op "contract:operation"
 import "support:system"
 
 // The monitor is also a service: its exports give what its window shows, as
-// tables of records (property 19). The console calls them through a
+// tables of records, not text. The console calls them through a
 // connection, and the host through the remote service.
 //
 // The facts are the facts of the machine: each program and the counts of
 // the kernel. The monitor reads them with its grant, the machine with the
 // right Inspect, and gives them only to a caller that acts for the person
-// (property 20, line 1: a program sees no other program).
+// (a program sees no other program).
 
 // One row for each program that runs: programs().
 Program :: struct {

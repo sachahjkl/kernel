@@ -1,9 +1,11 @@
 // The call host: a program that loads one module and executes the isolated
-// calls of its exports (property 19, package isolated).
+// calls of its exports (package isolated): the arguments travel as records,
+// not as text.
 //
 // The caller starts one call host per module, with two grants: the call
 // ring and the call region. The call host has no other handle, so the module
-// can reach nothing else (property 2). A fault in the module stops this
+// can reach nothing else: a program holds only the handles that it was
+// given. A fault in the module stops this
 // program only.
 package host
 
