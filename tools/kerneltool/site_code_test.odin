@@ -188,9 +188,7 @@ site_style_sheet_polish :: proc(t: ^testing.T) {
 		"text-wrap: balance;",
 		"text-wrap: pretty;",
 		"tab-size: 4;",
-		"@media (prefers-reduced-motion: no-preference) {\n  html { scroll-behavior: smooth; }",
 		"scroll-margin-top:",
-		"scroll-padding-top:",
 		":target",
 		"-webkit-tap-highlight-color:",
 		"touch-action: manipulation;",
@@ -219,9 +217,6 @@ site_style_sheet_polish :: proc(t: ^testing.T) {
 		value := strings.trim_space(rest[:strings.index_any(rest, ";}")])
 		testing.expectf(t, value == "0", "a border-radius of %q", value)
 	}
-	// Smooth scrolling only when the reader allows motion.
-	smooth := strings.index(sheet, "scroll-behavior: smooth")
-	reduced := strings.index(sheet, "@media (prefers-reduced-motion: no-preference)")
-	testing.expect(t, reduced >= 0 && reduced < smooth)
-	testing.expect_value(t, strings.count(sheet, "scroll-behavior: smooth"), 1)
+	// A jump to an anchor goes there at once: the page never scrolls by itself.
+	testing.expect_value(t, strings.count(sheet, "scroll-behavior: smooth"), 0)
 }

@@ -274,20 +274,16 @@ ol.labelled > li > * { text-indent: 0; }
    The cells wrap; a name (an identifier, a path, a signature) stays on one
    line. A table scrolls sideways only on a narrow screen. */
 /* The box of a table scrolls sideways at every width when the table is
-   wider than the page; the keyboard reaches it. The widths of the columns
-   are left to the automatic layout of the browser, which shares the room
-   by the content of each column: no table has widths of its own. Two rules
-   only: a column of names, numbers or dates takes just the width of its
-   content (a width of 1% asks for the least) and never wraps; a column of
-   prose or of log lines has a small least width, so a long text beside it
-   cannot squeeze it to one word a line. */
+   wider than the page; the keyboard reaches it. A table has its natural
+   width: each column is as wide as its content, and the table is not
+   stretched to the width of the page, so no column holds empty room. A
+   column of names, numbers or dates never wraps. When the natural width
+   passes the page, the browser wraps the columns of prose first; they
+   keep a small least width. */
 .table { margin: 0 0 16px; overflow-x: auto; border-left: 2px solid transparent; border-right: 2px solid transparent; }
 .table:focus-visible { outline: 2px solid var(--line); outline-offset: 2px; }
-table { border-collapse: collapse; min-width: 100%; }
-th.column-name, th.column-number, th.column-date { width: 1%; }
-th.column-short { width: 1%; min-width: 6em; }
+table { border-collapse: collapse; }
 th.column-prose, th.column-line { min-width: 12em; }
-th.column-any { min-width: 6em; }
 .column-name, .column-name code { white-space: nowrap; overflow-wrap: normal; }
 .column-date, .column-number { white-space: nowrap; }
 .column-number { text-align: right; font-variant-numeric: tabular-nums; }
@@ -474,7 +470,6 @@ SITE_POLISH_RULES :: `
 :root {
   color-scheme: dark light;
   accent-color: var(--line);
-  scroll-padding-top: calc(var(--bar-height) + 16px);
   -webkit-tap-highlight-color: color-mix(in srgb, var(--line) 30%, transparent);
 }
 /* A page with and without a scroll bar has the same width. */
@@ -506,12 +501,12 @@ li::marker, summary::marker { color: var(--dim); }
 h1, h2, h3, h4 { text-wrap: balance; }
 p, li, dd, blockquote { text-wrap: pretty; }
 pre, code { tab-size: 4; }
-@media (prefers-reduced-motion: no-preference) {
-  html { scroll-behavior: smooth; }
-}
 /* A jump to an anchor: the bar of the site stays at the top, so the target
    keeps the height of the bar and a little room above it, and a line at
    its left marks where the link landed. */
+/* The room is a margin of each target, not a padding of the scroll of the
+   page: with a padding, the browser takes the search field of the bar as
+   hidden under it and scrolls the page at each key. */
 [id] { scroll-margin-top: calc(var(--bar-height) + 16px); }
 h2:target, h3:target, li:target, p:target { box-sizing: border-box; border-left: 2px solid var(--line); padding-left: 8px; }
 .table tr:target > td { background: var(--track); }
