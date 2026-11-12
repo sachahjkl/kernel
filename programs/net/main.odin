@@ -520,7 +520,7 @@ after_key :: proc "contextless" () {
 		writer := system.Writer{buffer = item.answer[:]}
 		system.write_part(&writer, "refused, the endpoint has no grant now: ")
 		network.completion_error_text(&writer, sent)
-		item.count = writer.count
+		item.count = len(system.written(&writer))
 		item.right = true
 	case datagram.Status(sent.kind) == .Ok:
 		place, count, _, _, ok := datagram_wait(system.time() + 1000)
@@ -533,7 +533,7 @@ after_key :: proc "contextless" () {
 		writer := system.Writer{buffer = item.answer[:]}
 		system.write_part(&writer, "refused: ")
 		network.completion_error_text(&writer, sent)
-		item.count = writer.count
+		item.count = len(system.written(&writer))
 		item.right = false
 	}
 	case_count = CASE_CAPACITY

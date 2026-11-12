@@ -70,3 +70,20 @@ shout :: proc "c" (text: ^string, result: ^[]u8) -> i64 {
 lie :: proc "c" (count: i64, result: ^[]u8) -> i64 {
 	return count
 }
+
+// A text for log_long, filled at each call.
+LONG_TEXT_LIMIT :: 2000
+long_text: [LONG_TEXT_LIMIT]u8
+
+// log_long writes one text of count bytes on the log (at most 2000): digits, then the words "the end of the long text". The log keeps a text whole: a text longer than its part of 512 bytes goes in several lines, never cut in silence. The result is the count of bytes of the text.
+@(export, link_name = "log_long")
+log_long :: proc "c" (count: i64) -> i64 {
+	END :: " the end of the long text"
+	size := int(clamp(count, len(END), LONG_TEXT_LIMIT))
+	body := size - len(END)
+	for index in 0 ..< body {
+		long_text[index] = u8('0' + index % 10)
+	}
+	system.log(string(long_text[:body]), END)
+	return i64(size)
+}

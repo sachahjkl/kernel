@@ -68,3 +68,19 @@ list_values_of_a_hostile_program :: proc(t: ^testing.T) {
 	testing.expect_value(t, keeping.shown.row_count, 0)
 	testing.expect_value(t, keeping.shown.rows[2].length, 0)
 }
+
+// A line longer than a record ends with the cut mark; a line that fits is
+// the same text.
+@(test)
+record_text_of_a_long_line :: proc(t: ^testing.T) {
+	buffer: [RUN_LIMIT]u8
+	testing.expect_value(t, record_text("a short line", &buffer), "a short line")
+	long: [RUN_LIMIT + 44]u8
+	for &b in long {
+		b = 'x'
+	}
+	text := record_text(string(long[:]), &buffer)
+	testing.expect_value(t, len(text), RUN_LIMIT)
+	// 44 dropped, 21 bytes of mark: 235 bytes stay, 65 are missing.
+	testing.expect_value(t, text[235:], "... and 65 bytes more")
+}

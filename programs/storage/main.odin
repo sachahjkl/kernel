@@ -77,13 +77,13 @@ objects :: proc "c" (result: ^[]u8) -> i64 {
 	writer := system.Writer{buffer = result^}
 	if limit == 0 {
 		system.write_part(&writer, "no store")
-		return i64(writer.count)
+		return i64(writer.count + writer.dropped)
 	}
 	index := store_find(store)
 	count := 0
 	if index >= 0 && store_damaged[index] {
 		system.write_part(&writer, "the table of the store has a wrong check: the service does not know its objects")
-		return i64(writer.count)
+		return i64(writer.count + writer.dropped)
 	}
 	if index >= 0 {
 		for &object, object_index in tables[index].objects {
@@ -117,7 +117,7 @@ objects :: proc "c" (result: ^[]u8) -> i64 {
 	if count == 0 {
 		system.write_part(&writer, "no object")
 	}
-	return i64(writer.count)
+	return i64(writer.count + writer.dropped)
 }
 
 // stores gives each store of the disk, one line for each, with its objects, its versions, its blocks (a shared block counted one time), the blocks that two names share, its limit, the count of connections that hold its grant now, and its damage. Only a caller that acts for the person sees them.
@@ -127,7 +127,7 @@ stores :: proc "c" (result: ^[]u8) -> i64 {
 	writer := system.Writer{buffer = result^}
 	if !person {
 		system.write_part(&writer, "no grant to see the stores")
-		return i64(writer.count)
+		return i64(writer.count + writer.dropped)
 	}
 	parts := [?]system.Part{"generation ", root.generation, ", ", opened.in_use_count, " of ", root.disk_blocks, " blocks in use, ", commits, " commits and ", blocks_written, " blocks written since the start"}
 	for part in parts {
@@ -166,7 +166,7 @@ stores :: proc "c" (result: ^[]u8) -> i64 {
 			}
 		}
 	}
-	return i64(writer.count)
+	return i64(writer.count + writer.dropped)
 }
 
 // store_named gives the store that an export names: the store of the

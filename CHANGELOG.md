@@ -6,6 +6,18 @@ The project has steps, not separate releases. The merge of step N on `master` is
 
 What is not in a release yet is in `changelog.d/`, one fragment for each change. `kerneltool changelog release` writes a release from the fragments. Nobody edits this file by hand.
 
+## [0.85.0] - 2026-11-12
+
+### Fixed
+
+- **A QUIC server frees the connection of a client that went silent at its idle timeout**: a client that vanished while the server had data in flight kept its connection, and its place in the table of `quic_echo`, for about two hours, because each unanswered probe pushed the idle timeout further. It now ends after 30 s, whatever the probes. A replayed packet can no longer keep a silent connection alive, a server can no longer be started with no idle timeout, and `quic_echo` logs how long each idle end took against its bound.
+
+## [0.84.0] - 2026-11-12
+
+### Fixed
+
+- **No text of the system is cut in silence**: a log line longer than 512 bytes was cut with no sign, and so was each text that a program formats in a buffer too small; the log now takes a text whole, in several lines, and a text that a place cannot hold ends with "... and N bytes more". The console refuses a program name longer than 31 bytes, which the root service cut before.
+
 ## [0.83.0] - 2026-11-12
 
 ### Added

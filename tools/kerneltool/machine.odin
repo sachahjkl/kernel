@@ -850,8 +850,8 @@ scenario := [?]Step {
 	// arguments go through a ring. The description is the same.
 	{kind = .Type, text = "clear()"},
 	{kind = .Type, text = "isolate(\"probe\")"},
-	{kind = .Wait, text = "[probe] host: ready, 7 exports"},
-	{kind = .Wait, text = "[console] probe: 7 commands in a sandboxed program"},
+	{kind = .Wait, text = "[probe] host: ready, 8 exports"},
+	{kind = .Wait, text = "[console] probe: 8 commands in a sandboxed program"},
 	{kind = .Type, text = "count() + count() * 10"},
 	{kind = .Wait, text = "[console] 21"},
 	{kind = .Type, text = "checksum(\"abc\" + name)"},
@@ -1466,6 +1466,17 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[console] error: root.Stop: the argument name names a program of the system: it starts at boot, or it is a device service, and the call does not act on it"},
 	{kind = .Type, text = "revoke(\"nobody\", \"log\")"},
 	{kind = .Wait, text = "[console] error: root.Revoke: the argument name names none of the programs"},
+	// A text is never cut in silence. The ring of the root service holds a
+	// name of 31 bytes: the console refuses a longer one, which a cut could
+	// make the name of another program.
+	{kind = .Type, text = "start(\"a_name_longer_than_the_ring_holds_today\")"},
+	{kind = .Wait, text = "[console] error: root.Start: the argument name has 39 bytes; it can have at most 31 bytes"},
+	// A log text of 1500 bytes: the module in its call host logs it in
+	// lines of 512 bytes, and its end is on the log. After the check of the
+	// log: these lines take 9 records of the ring.
+	{kind = .Type, text = "log_long(1500)"},
+	{kind = .Wait, text = "01234 the end of the long text"},
+	{kind = .Wait, text = "[console] 1500"},
 	// An export that refuses: the console writes the sentence of its error
 	// record from the description of the export.
 	{kind = .Type, text = "load(\"tally\")"},
