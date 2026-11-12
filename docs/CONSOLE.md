@@ -1,7 +1,5 @@
 # The line of the console
 
-Status: built on 2026-11-11; the line history across a stop (section 6) on 2026-11-12.
-
 The console owns the line that the person edits: its bytes, the caret, the line history, and the completion list. The terminal draws them and gives the keys. The procedures that change the line are in `support/line_editor`: they have no state of their own and make no kernel call, so host tests run each key (`support/line_editor/line_editor_test.odin`). The console uses them in `programs/console/main.odin` and `programs/console/completion.odin`.
 
 ## 1. The keys
@@ -96,13 +94,13 @@ The line under the edit line (the hint line) and the list are drawn over the gri
 
 A hint line has two forms: a long one, and a short one for a terminal that is too narrow (`terminal.hint_form_choose`): the long form when it has no more bytes than the columns; if not, the short form when the program gave one; the form chosen is cut to the columns. The console gives a short form for the list ("12 names. Tab: take. Esc: close") and for the search ("search: leng  2 lines. ^R ^S Enter Esc"); a signature has one form, cut at the right.
 
-The status line of the terminal names the lines of the text that the view shows: "lines 709 to 736 of 737", or "lines none in view of 737" when the view shows no line of the text. The edit line and the free row are not lines of the text. Before, it named the first row of the view as a line: after `clear()`, the terminal forgets its lines and the first row of the view is the edit line, so it said "line 738 of 737".
+The status line of the terminal names the lines of the text that the view shows: "lines 709 to 736 of 737", or "lines none in view of 737" when the view shows no line of the text. The edit line and the free row are not lines of the text. After `clear()`, the terminal forgets its lines and the first row of the view is the edit line: a status that named the first row of the view would say "line 738 of 737".
 
 ## 6. The line history across a stop
 
 The history lives in the memory of the console: 256 lines at most in a ring of 16 384 bytes (`line_editor.History`), and fewer when the lines are long (81 lines of 200 bytes). A line never wraps at the end of the ring, so each line is one slice of it. The same line two times in a row is kept one time. It also survives a stop of the console and a stop of the machine.
 
-**The choice of the store is a decision of the coordinator** (2026-11-12): the owner put the item in his list of next work and did not choose between the two forms; he can reverse it. The history is the state of the console, not a file of the person; a grant for one purpose with a small limit is what property 20 asks for; the store of the person and its checks stay as they are.
+**Why a store of its own.** The history is the state of the console, not a file of the person; a grant for one purpose with a small limit is what property 20 asks for; the store of the person and its checks stay as they are.
 
 **The history store.** The root service gives the console a second connection to the storage service, for its history only (`Root_Command.Connect_History`, the role `History_Store`, the grant `history`):
 

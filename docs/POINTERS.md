@@ -1,6 +1,6 @@
 # Pointer pictures
 
-The request of the owner (2026-11-11, dictated): the system gets its own format for the pictures of the pointer, simple to manage and to package; the pointer theme that the owner uses on Linux, "Posy's Cursor", is imported, converted and adjusted; a tool packages it; the format is "un format de manifeste simple le format texte qui est facile à parser [...] ou même binaire d'ailleurs mais je te laisse choisir".
+The system has its own format for the pictures of the pointer, simple to manage and to package. A text manifest describes each theme, and the kernel tool packages it into one binary file. The tool imports, converts and adjusts the pointer theme "Posy's Cursor" from its Xcursor files.
 
 The terms are in `GLOSSARY.md`: pointer, pointer shape, pointer picture, hot spot, nominal size, pointer theme, pointer theme file, pointer manifest, resource, caret. The system says "pointer", never "cursor". The caret of a text input is another thing.
 
@@ -24,16 +24,16 @@ Source: the manual page `Xcursor(3)` of libXcursor (x.org, read on 2026-11-11), 
 
 ### hyprcursor (Hyprland)
 
-The owner named it on 2026-11-11, during this step: "je sais que hyprland a son propre format de curseur qui est pas trop mal, s'il est simple à parser mais simple à implémenter [...] tu peux y aller [...] parce que bon Xcursor voilà quoi". Read on 2026-11-11 (`hyprwm/hyprcursor`, `README.md` and `docs/MAKING_THEMES.md`):
+Read on 2026-11-11 (`hyprwm/hyprcursor`, `README.md` and `docs/MAKING_THEMES.md`):
 
 - A theme is a folder with `manifest.hl` (`name`, `description`, `version`, `cursors_directory`) and one folder for each shape, packed as a zip file (`.hlc`). Each shape has `meta.hl`: `resize_algorithm` (bilinear, nearest, none), `hotspot_x` and `hotspot_y` as fractions from 0 to 1 of the size, `define_override` (the other names of the shape, as the links of Xcursor), and `define_size = 32, image32.png` (one line for each size; several lines of one size with a delay in ms make an animation). The pictures are PNG or SVG, square. The `.hl` files are hyprlang; TOML is the other form.
 - The library needs hyprlang, cairo, libzip, librsvg and tomlplusplus. Its gain over Xcursor is size (PNG compression: 44.1 MB to 6.6 MB for one theme) and scaling (SVG).
 
-What this step takes from it, and what not:
+What this system takes from it, and what not:
 
-- **Not as the format that the compositor reads.** At run time it needs a zip reader, an inflate and PNG decoder, an SVG rasterizer and a hyprlang parser in the compositor: four parsers of input that the compositor must not trust, against the rule of this step "no parse at run time" and against section 7 of `DESIGN.md`. The pointer theme file of section 3 is read in place after one validation. Its size is not a problem here: the theme of the owner at 32 and 64 is 883 008 bytes, the boot image holds it once.
+- **Not as the format that the compositor reads.** At run time it needs a zip reader, an inflate and PNG decoder, an SVG rasterizer and a hyprlang parser in the compositor: four parsers of input that the compositor must not trust, against the rule of this format "no parse at run time" and against section 7 of `DESIGN.md`. The pointer theme file of section 3 is read in place after one validation. Its size is not a problem here: the Posy theme at 32 and 64 is 883 008 bytes, the boot image holds it once.
 - **As the model of the manifest.** The manifest of section 4 is the same idea as `meta.hl`, in one file for the theme: the sizes, the names that a shape takes from other names (the sources, in order), the frames with a delay, the hot spot. It differs in two places: the hot spot is in pixels of the smallest size (a fraction of the size gives a pixel only after a rounding), and a grid of squares is a source of its own.
-- **Not as a source of the tool.** Posy's Cursor exists as Xcursor files and as Windows files, not as hyprcursor. A reader of `.hlc` files in the tool needs zip and PNG (the Odin library has an inflate and a PNG reader, no zip reader). It is a later step if the owner wants a theme that exists only in that form.
+- **Not as a source of the tool.** Posy's Cursor exists as Xcursor files and as Windows files, not as hyprcursor. A reader of `.hlc` files in the tool needs zip and PNG (the Odin library has an inflate and a PNG reader, no zip reader). That reader is not built.
 
 ### The Wayland cursor shape protocol (`cursor-shape-v1`, wayland-protocols 1.48)
 
@@ -44,7 +44,7 @@ What this step takes from it, and what not:
 
 ### The pointer shapes
 
-One enum of the system, `Pointer_Shape` in `contract/pointer_pictures`, with one long name for each. Zero is the arrow: a zero record asks for the default (ZII). The CSS names are the sources in the manifest of the theme of the owner.
+One enum of the system, `Pointer_Shape` in `contract/pointer_pictures`, with one long name for each. Zero is the arrow: a zero record asks for the default (ZII). The CSS names are the sources in the manifest of the Posy theme.
 
 | Number | Name | CSS name | Where the system uses it today |
 |---|---|---|---|
@@ -118,11 +118,11 @@ source    = file name                       a file of the Xcursor folder; the fi
 ## 5. The two themes
 
 - **The theme of the system** (`resources/pointers/system.manifest`, under the license of the repository): the 15 shapes as grids of squares, in the style of the arrow of `DESIGN.md`, at the sizes 24 (squares of 2 pixels) and 48 (squares of 4 pixels, for a later screen with twice the pixels). `wait` and `busy_with_arrow` have 4 frames of 250 ms. It is always in the boot image, as the resource `pointers_system`.
-- **The theme of the owner** (`resources/pointers/posy.manifest`): "Posy's Cursor" from the build input `posy-cursors` of `flake.nix` (the package of nixpkgs, pinned by `flake.lock`). The flake gives its folder to the tool as `POINTER_THEME_SOURCE`. The tool converts it at each build into `build/pointers/posy.pointers`, which the boot image holds as the resource `pointers_posy`. No file of that theme and no file made from its pixels is in the repository (section 6). Sizes: 32 (the smallest size of the theme) and 64 for the later screen; the two animated shapes keep 32 only (77 frames: 315 KiB at 32, 1.26 MiB more at 64).
-- **The choice of the compositor** (decision of the owner, 2026-11-11, `HANDOFF.md` item 33): the theme of the owner is the default when the build has its input; the theme of the system is the fallback. The root service gives the compositor `pointers_posy` when the boot image has it, else `pointers_system` (`pointer_theme_choice` in `programs/root/resources.odin`: the one place of the choice, where a later setting of the person changes the order). With no build input, the tool makes the theme of the system only, and the system works the same.
+- **The Posy theme** (`resources/pointers/posy.manifest`): "Posy's Cursor" from the build input `posy-cursors` of `flake.nix` (the package of nixpkgs, pinned by `flake.lock`). The flake gives its folder to the tool as `POINTER_THEME_SOURCE`. The tool converts it at each build into `build/pointers/posy.pointers`, which the boot image holds as the resource `pointers_posy`. No file of that theme and no file made from its pixels is in the repository (section 6). Sizes: 32 (the smallest size of the theme) and 64 for the later screen; the two animated shapes keep 32 only (77 frames: 315 KiB at 32, 1.26 MiB more at 64).
+- **The choice of the compositor**: the Posy theme is the default when the build has its input; the theme of the system is the fallback. The root service gives the compositor the themes of the boot image in order: `pointers_posy` when the boot image has it, then `pointers_system` (`pointer_theme_choice` in `programs/root/resources.odin`: the one place of this order). The setting `pointer_theme` of the person chooses one of them (`docs/FONTS.md`, "The setting"). With no build input, the tool makes the theme of the system only, and the system works the same.
 - **How a resource enters the boot image and reaches a program**: `docs/ARCHITECTURE.md`, U2b.
 
-## 6. The license of the theme of the owner
+## 6. The license of the Posy theme
 
 Read on 2026-11-11:
 
@@ -133,28 +133,26 @@ Read on 2026-11-11:
 
 What follows for this repository: property 2 of the objective of `PROPERTIES.md` reuses what is "permissively licensed"; a NonCommercial license is not. So the repository holds the manifest and the tool, and the build makes the theme file from the input. The theme file carries the license `CC-BY-NC-4.0` and the attribution: "Posy's Cursor by Michiel de Boer (Posy), michieldb.nl/other/cursors; Linux port 1.6 by simtrami, github.com/simtrami/posy-improved-cursor-linux; CC BY-NC 4.0, creativecommons.org/licenses/by-nc/4.0; converted by kerneltool: the sizes 32 and 64, no pixel changed". The program `pointers` shows it with the theme.
 
-## 7. Decisions of the owner
+## 7. The place of the Posy theme
 
-Decided on 2026-11-11 (`HANDOFF.md` item 33):
-
-1. **Posy's Cursor stays a build input.** The flake fetches it, the tool converts it at build time, and no file of the theme and no file made from its pixels enters the repository.
+1. **Posy's Cursor is a build input.** The flake fetches it, the tool converts it at build time, and no file of the theme and no file made from its pixels enters the repository.
 2. **It is the default pointer theme when the build input is there.** The theme of the system is the fallback.
-3. The exception of `DESIGN.md` (the pointer is the one picture with smooth edges) follows from 1 and 2.
+3. The pointer picture is the one picture of the desktop with smooth edges and transparency (`DESIGN.md`, section 9, "Pointer"): this follows from 1 and 2.
 
-What stays for the owner: a commercial use of the system needs another default theme (CC BY-NC 4.0, section 2(a)(1)), or a license from Michiel de Boer; a setting of the person that chooses the theme (the settings service does not exist yet).
+A commercial use of the system needs another default theme (CC BY-NC 4.0, section 2(a)(1)), or a license from Michiel de Boer.
 
 ## 8. Measures
 
-From the full check of this step (one run, with a load of about 30 on the host: the rule of the project says that such numbers are not valid; they are an order of size):
+From one full check (one run, with a load of about 30 on the host: the rule of the project says that such numbers are not valid; they are an order of size):
 
 | What | Time |
 |---|---|
-| `kerneltool pointers`: the theme of the owner (122 names, 17 files read, 178 pictures, 883 008 bytes) | 34 to 87 ms |
+| `kerneltool pointers`: the Posy theme (122 names, 17 files read, 178 pictures, 883 008 bytes) | 34 to 87 ms |
 | the same for the theme of the system (15 grids, 42 pictures, 208 512 bytes) | 0.6 to 0.8 ms |
-| the root service: the hash of the theme of the owner | 1.4 to 1.8 ms |
-| the compositor: `validate` of the theme of the owner, once | 427 to 653 us |
+| the root service: the hash of the Posy theme | 1.4 to 1.8 ms |
+| the compositor: `validate` of the Posy theme, once | 427 to 653 us |
 | the blend of the arrow of Posy, 32x32, 860 pixels transparent | 824 to 1008 ns |
 | a copy of 32x32, for comparison | 151 to 153 ns |
 | the pointer in one frame, the mean of 256 frames | 1926 to 2040 ns |
-| `pointers`: the hash and the validation of the theme of the owner | 2.3 ms |
+| `pointers`: the hash and the validation of the Posy theme | 2.3 ms |
 | `pointers`: the first frame of its window | 886 us |

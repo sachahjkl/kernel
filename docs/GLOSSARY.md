@@ -1,6 +1,6 @@
 # Glossary
 
-Status: draft 2, 2026-11-09. The owner accepted the terms on 2026-11-09, with "module" in place of "unit". "Person" is provisional.
+"Person" is a provisional term.
 
 This file is the one place that defines the terms of the project.
 Each concept has one term. Documents, code and conversation use that term and no synonym.
@@ -328,7 +328,7 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Pointer picture | One image of one pointer shape at one nominal size, for one frame of an animation: its width, height, hot spot, delay and pixels with premultiplied alpha | cursor image, sprite, icon |
 | Hot spot | The pixel of a pointer picture that the compositor puts at the place of the pointer | click point, hotspot, anchor |
 | Nominal size | The size in pixels that a theme gives to a pointer picture, to choose among its sizes. The width and the height of the picture can differ from it | cursor size |
-| Pointer theme | The pointer pictures of each pointer shape, with a name, a license and an attribution. The system has its own theme in the repository; the theme of the owner comes from a build input | cursor theme, icon theme |
+| Pointer theme | The pointer pictures of each pointer shape, with a name, a license and an attribution. The system has its own theme in the repository; the theme Posy's Cursor comes from a build input | cursor theme, icon theme |
 | Pointer theme file | One pointer theme in the format of the system (`contract/pointer_pictures`): a header, a table of shapes, a table of pictures, the pixels. A program maps it and reads it with no parse, after one validation | cursor file, .cur, Xcursor file (for this) |
 | Pointer manifest | A text file of the repository that says how the tool makes a pointer theme file: for each pointer shape, the files of an Xcursor theme or grids of squares, and the adjustments (`docs/POINTERS.md`, "The manifest") | config, recipe, index.theme |
 | Premultiplied alpha | A form of a pixel whose red, green and blue are already multiplied by its alpha. A blend is then `result = source + destination * (255 - alpha) / 255` for each channel | straight alpha (for this) |

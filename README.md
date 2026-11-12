@@ -1,11 +1,11 @@
 <p align="center"><picture><source media="(prefers-color-scheme: light)" srcset="resources/logo/modus_light_transparent.png"><img src="resources/logo/modus_transparent.png" width="256" alt="The mark of modus: a heron of square pixels that stands on one leg in water, a blue body, a pale neck, an orange beak and a violet crest and tail, above the name modus in square letters"></picture></p>
 
-# Next-Gen Kernel
+# modus
 
 A new kernel and operating system, written in Odin.
 The system boots under QEMU to a graphical desktop with a console, a system tool and demo programs.
 
-[`CHANGELOG.md`](CHANGELOG.md) lists what each release brings. The merge of step N is the release 0.N.0; `kerneltool release_number` prints the newest one (0.59.0 when this line was written).
+[`CHANGELOG.md`](CHANGELOG.md) lists what each release brings. `kerneltool release_number` prints the newest release.
 
 ![The desktop: console, life, monitor and plasma. The title bar of the window in front goes from blue to a darker blue; the others are quiet](docs/screenshots/desktop.png)
 
@@ -123,7 +123,7 @@ Tables as parameters: one description, three ways to call (a direct call, a call
 
 ![The pointer pictures: each shape of the pointer theme of the system, at 24 and 48 pixels, with the lines of its hot spot](docs/screenshots/pointers_system.png)
 
-The same window with the pointer theme of the owner (Posy's Cursor, CC BY-NC 4.0) is a picture of the devlog only: the repository holds no file of that theme.
+The repository holds no picture of the same window with the pointer theme Posy's Cursor (CC BY-NC 4.0): it holds no file of that theme.
 
 ![The extended state of each thread: more threads than processors hold every ymm or zmm register, the x87 stack and MXCSR across kernel entries, one square for each register; and the cost of one empty kernel entry with xmm, ymm and zmm in use](docs/screenshots/extended_state.png)
 
@@ -164,7 +164,7 @@ The same window with the pointer theme of the owner (Posy's Cursor, CC BY-NC 4.0
 - `address_space` shows a program that drives its own virtual memory: 1 GiB of addresses in one mapping that pays only the pages that it commits, pages that return to the budget at once, a protection change with its shoot-down, a guard page, and large pages.
 - `scheduler` shows the scheduling strategies, which the machine changes while it runs: two threads that wake each other on a busy machine make about 80 wakes in one second under round robin and more than 300 000 under EEVDF, and the weights 1, 2 and 4 give shares of about 4, 7.5 and 13.5 %.
 - `workers` shows the lock and the word wait: four threads take tiles from one queue. Four threads add to one number: with the lock no addition is lost, with no lock millions are lost.
-- The pointer has pictures in a format of the system (`docs/POINTERS.md`): the tool converts the Xcursor theme of the owner, Posy's Cursor, from a build input, and a theme of the system drawn as grids of squares; each is a resource of the boot image with its hash. The compositor chooses the shape from what is under the pointer (a title bar, a close button, a text input) and blends its picture at its hot spot; a program asks for a shape over its own surface. `pointers` shows each theme.
+- The pointer has pictures in a format of the system (`docs/POINTERS.md`): the tool converts the Xcursor theme Posy's Cursor from a build input, and a theme of the system drawn as grids of squares; each is a resource of the boot image with its hash. The compositor chooses the shape from what is under the pointer (a title bar, a close button, a text input) and blends its picture at its hot spot; a program asks for a shape over its own surface. `pointers` shows each theme.
 - A program that faults stops alone. The system continues.
 
 `docs/FIRST_MILESTONE.md` gives the details, the design choices and the gaps.
@@ -181,10 +181,10 @@ The same window with the pointer theme of the owner (Posy's Cursor, CC BY-NC 4.0
 | `docs/SITE.md` | The site of the system: what `kerneltool site` writes, and where each part of the page comes from |
 | `docs/GLOSSARY.md` | The terms of the project. One term per concept |
 | `docs/DESIGN.md` | The design rules: how a program of the system looks. The boot display is the model |
-| `docs/POINTERS.md` | The pointer pictures: Xcursor, hyprcursor and the others; the format and the manifest of the system; the license of the theme of the owner |
+| `docs/POINTERS.md` | The pointer pictures: Xcursor, hyprcursor and the others; the format and the manifest of the system; the license of the Posy theme |
 | `docs/DEMONSTRATIONS.md` | For each of the 21 properties: what the machine test shows, the picture, and what no test shows yet |
 | `CHANGELOG.md` | What each release brings, newest first. `changelog.d/` holds the changes that are not in a release yet |
-| `docs/HANDOFF.md` | Current state, rules of the owner, next steps |
+| `docs/HANDOFF.md` | The working record: current state, rules of the project, next steps |
 | `docs/research/` | Research notes with sources, and video transcripts |
 
 ## Code

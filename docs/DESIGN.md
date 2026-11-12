@@ -1,6 +1,6 @@
 # The design rules
 
-These rules say how a program of this system looks. The owner asked for them on 2026-11-10, after the new boot display: "peut-être extrait en des design rules". They are taken from the boot display (`support/bootscreen/`), which the owner approved. The boot display is the model.
+These rules say how a program of this system looks. They are taken from the boot display (`support/bootscreen/`). The boot display is the model.
 
 A new graphical program follows these rules. The programs of the desktop that came before do not follow all of them yet: see "State" at the end.
 
@@ -16,10 +16,10 @@ The rules live as one table of constants in `support/graphics/rules.odin`: the g
 
 ## 2. Forms
 
-- Rectangular forms are the preference of the design, not an absolute rule (owner, 2026-11-11: "c'est pas une interdiction absolue de tirer que des rectangles, c'est juste que c'est la préférence tendancielle que je veux. Je veux pas que tout soit un blob arrondi en fait."). A form is a rectangle unless another form says more. Any geometry can be drawn, sparingly; a round form can be right in some cases. The look to avoid: everything is a rounded blob. This replaces the rule of 2026-11-10 ("no round corner, no circle and no ellipse").
+- Rectangular forms are the preference of the design, not an absolute rule. A form is a rectangle unless another form says more. Any geometry can be drawn, sparingly; a round form can be right in some cases. The look to avoid: everything is a rounded blob.
 - A point or a mark is a square.
 - A line is a rectangle that is 1 or 2 pixels thick.
-- Lines at an angle are allowed (owner, 2026-11-11: "évidemment, les traits obliques c'est autorisé"). The boot display keeps its own use of them: a part that has no measure on this scale (the firmware before the line of time).
+- Lines at an angle are allowed. The boot display keeps its own use of them: a part that has no measure on this scale (the firmware before the line of time).
 - There is no shadow and no transparency.
 
 ## 3. Surfaces
@@ -49,7 +49,7 @@ One color is one concept, as one term is one concept.
 | Memory | `0x38C0B0` |
 | Machine | `0xD070B0` |
 | Failed | `0xF06060` |
-| Stop a program | `0xB82232` (owner, 2026-11-11: "et ce serait bien que les x de fermeture soit rouge, riche") |
+| Stop a program | `0xB82232`: a rich red, the color of the close button of a window |
 | Not usable | `0x4A5563` |
 | Text | `0xDCE4EC` |
 | Dim text | `0x7C8A99` |
@@ -61,15 +61,15 @@ One color is one concept, as one term is one concept.
 
 ## 5. Text
 
-- **Two fonts** (proposal of 2026-11-12, which the owner accepted in substance on 2026-11-11: "Go b612" for the interface, "Paper mono très bien pour monospace"; `docs/FONTS.md`, section 12.6). It replaces the rule "one font at a time, on the grid of cells":
+- **Two fonts** (`docs/FONTS.md`, section 12.6):
   - **The interface font, B612** (proportional): each text that names or explains: the title and the caption of a card, a label, the name of a button, a line of a list or a menu, the title of a column, a sentence of help.
   - **The font of the cells, Paper Mono** (monospace): each value, and each text that a person compares character by character or copies: a number in a column, a hash, an address, a text that a person types, code, the console, the terminal, a text grid.
   - Both draw in the line of 16 pixels of the grid, at the scales 1, 2 and 3. The places of the elements stay on the grid of 8; the letters of the interface font do not.
   - A text is measured in the font that draws it, and an element cuts a text to its box: no text passes its element in either font.
   - With no interface font (absent, refused, or the setting `font` is Spleen 8x16), each text is in the font of the cells, with the same layout rules.
-  - The compositor follows the same rule (2026-11-12): the buttons of the bar, the lines of its menus, the titles of the windows, the names and the hints of the launcher are in the interface font; the clock, the date, the text that the person types in the launcher and the counts of the menus are in the font of the cells. The mark and its name in square cells do not change. The places of the buttons and of the lines come from the widths of their texts in the font that draws them (the bar layout).
+  - The compositor follows the same rule: the buttons of the bar, the lines of its menus, the titles of the windows, the names and the hints of the launcher are in the interface font; the clock, the date, the text that the person types in the launcher and the counts of the menus are in the font of the cells. The mark and its name in square cells do not change. The places of the buttons and of the lines come from the widths of their texts in the font that draws them (the bar layout).
   - **The boot display, by design, in two steps**: the boot program holds no glyph cache, so the first screen of the machine is in Spleen 8x16, the one font of its binary, as a text grid is. The root service then draws the same display again with the caches of the boot image: the titles of its cards and the names of its facts in the interface font, its values in the font of the cells.
-- The font of the cells: the vector font by default, drawn with a coverage for each subpixel band (owner, 2026-11-11: "par défaut il faut une police vectorielle", "Bandes sous-pixel"); Spleen 8x16 as the fallback and as the other value of the setting `font` (`docs/FONTS.md`).
+- The font of the cells: the vector font by default, drawn with a coverage for each subpixel band; Spleen 8x16 as the fallback and as the other value of the setting `font` (`docs/FONTS.md`).
 - Three sizes: lines of 1, 2 and 3 times 16 pixels; cells of 1, 2 and 3 times 8 x 16 for the font of the cells. No other size.
 - The font of the cells is monospace: its advance is the width of a cell, so a layout in cells holds with the vector font and with Spleen. A glyph of the font of the cells stays inside its cell.
 - An enlarged picture of the screen shows colored edges on each letter: the subpixel bands, not a fault. The setting `subpixel_order` `none` gives gray edges.
@@ -89,21 +89,19 @@ One color is one concept, as one term is one concept.
 
 - Drawing is `fill` of rectangles with integer arithmetic. No floating point and no image file. The one drawn data is the glyph cache of the vector font: the kernel tool makes it at build time from the outlines, in integers, and a text draw blends its words (`docs/FONTS.md`).
 - A display does not wait so that a person can see it. A display that fails stays.
-- Each display has a measured draw time in its choice in `docs/FIRST_MILESTONE.md`.
+- Each display has a measured draw time.
 
 ## 8. Decoration
 
-Three things carry no fact: the grid of points on the background, the blue of the head of the boot display, which goes darker toward the right, and the same blue on the title bar of the window in front (section 9). A new decoration needs a decision of the owner.
+Three things carry no fact: the grid of points on the background, the blue of the head of the boot display, which goes darker toward the right, and the same blue on the title bar of the window in front (section 9). No other decoration exists.
 
 ## 9. The desktop
 
 The desktop is the screen of the compositor: the background, the bar, the windows, the two menus of the bar and the launcher. It follows sections 1 to 8.
 
-### Readings of the request of the owner (2026-11-11)
+### The gradient and the launcher
 
-The owner asked for "a gradient from the current blue, as the start colour, to a darker blue toward the right", then a launcher as an experiment (`docs/HANDOFF.md`, 2026-11-10). Two points were not clear. The coordinator read them as follows on 2026-11-11. The owner can reverse each reading.
-
-- **"The current blue"** is the blue of the title bar of a window, `0x3F7CC4`: the one saturated blue surface of the desktop before this step. The background of the desktop is not that blue: it is the background of the rules now.
+- **The gradient** of a title bar goes from the blue of the title bar, `0x3F7CC4`, at its left to a darker blue at its right. The background of the desktop is not that blue: it is the background of the rules.
 - **The launcher** is not the menu of the programs. The menu is a list that the pointer opens from the bar. The launcher is a panel in the middle of the screen that a key opens: the person types a part of a name, and the list narrows at each key. It is the way of the keyboard to start a program. The desktop keeps the menu.
 
 ### Background and bar
@@ -123,16 +121,17 @@ The owner asked for "a gradient from the current blue, as the start colour, to a
 ### Windows
 
 - A window is a title bar of 24 pixels over the surface of its program, with a border of 2 pixels at the left, the right and the bottom. There is no shadow.
-- The title bar of the window that has the focus goes from `COLOR_TITLE` (`0x3F7CC4`, the blue of the title bar before the rules) at its left column to `COLOR_TITLE_END` (`0x162C45`, the same blue at 36 %) at its right column. Its top line is 125 % of these colors: the sign of depth of section 3. The bottom border has the colors of the title bar; the left border is the start color, the right border the end color.
+- The title bar of the window that has the focus goes from `COLOR_TITLE` (`0x3F7CC4`) at its left column to `COLOR_TITLE_END` (`0x162C45`, the same blue at 36 %) at its right column. Its top line is 125 % of these colors: the sign of depth of section 3. The bottom border has the colors of the title bar; the left border is the start color, the right border the end color.
 - The title bar of another window is quiet: it goes from `COLOR_TITLE_QUIET` (`0x2A3442`) to `COLOR_TITLE_QUIET_END` (`0x161D27`), and its title is in the dim color. So the gradient also says which window has the keyboard. Its title also says it: a title in white has the focus.
-- The close button is a square of 24 x 24 pixels at the right end of the title bar, with the character `x` of the font in white. Its color is the concept "stop a program" (2026-11-11): a deep red `COLOR_STOP_PROGRAM` (`0xB82232`), not the coral of "failed", because to close a window is not a failure. It has the sign of depth of the rules: a block from 118 % of the red at the top to 82 % at the bottom, and a top line at 150 %. When the pointer is over it, the red is brighter (`0xE0343F`). On a window that is not in front, the red is quiet (`0x4E2229`) and the `x` is a dim pink (`0xC09098`). A cross of squares of 2 pixels was tried beside the character `x`: its two lines do not meet on one square at the centre, and it does not match the title; the character stays.
+- The close button is a square of 24 x 24 pixels at the right end of the title bar, with the character `x` of the font in white. Its color is the concept "stop a program": a deep red `COLOR_STOP_PROGRAM` (`0xB82232`), not the coral of "failed", because to close a window is not a failure. It has the sign of depth of the rules: a block from 118 % of the red at the top to 82 % at the bottom, and a top line at 150 %. When the pointer is over it, the red is brighter (`0xE0343F`). On a window that is not in front, the red is quiet (`0x4E2229`) and the `x` is a dim pink (`0xC09098`). The button shows the character `x`, not a cross of squares of 2 pixels: the two lines of such a cross do not meet on one square at the centre, and the cross does not match the title.
 - The compositor places a new window at (60, 52), and each next one 36 pixels to the right and 30 pixels lower, for 8 windows. These numbers are not on the grid: the machine test presses places in windows at these numbers (see "State").
-- Cost: the compositor computes the colors of one line of a title bar once, for the columns that the frame shows, then copies them to each line. Choice 265 of `docs/FIRST_MILESTONE.md` has the measures.
+- Cost: the compositor computes the colors of one line of a title bar once, for the columns that the frame shows, with a fixed-point step for each channel (no division for each pixel), then copies them to the 24 lines. At its start it measures three forms of a title bar of 1024 pixels, 64 times each, and writes them on the log. On 10 machines of one check: one color takes 1.6 to 2.7 us, a mix for each pixel 65 to 87 us, one row of colors then copies 5.7 to 6.8 us. The gradient costs about 4 us for each window that a frame draws.
+- At 8 bits for each channel, the gradient has 41 levels of red, 80 of green and 126 of blue over the width of a window. The picture shows no band, so there is no dithering.
 
 ### Pointer
 
 - The pointer is an arrow of squares of 2 pixels, 8 squares wide and 11 high: black at the edge, white inside. Its point is the top left square. This arrow is the shape `arrow` of the pointer theme of the system (`resources/pointers/system.manifest`). Each other pointer shape of that theme has the same style: squares of 2 pixels, black and white.
-- **Not a rectangle (2026-11-11; since the rule on forms became a preference, this is no longer an exception).** The owner asked for the pointer theme that the owner uses on Linux, "Posy's Cursor" (`docs/POINTERS.md`). Its pointer pictures have smooth edges, curves and transparency: they are not rectangles. The request of the owner, in the words of the dictation: "si tu peux juste bah importer migrer ajuster les posies curseur c'est celui que j'utilise normalement sur Linux". The coordinator recorded this exception, as the nearest form that keeps the rule for the rest: the pointer picture is the one picture resource of the desktop that does not follow sections 2 and 7. It is drawn with a blend of premultiplied alpha. The windows, the bar, the menus, the launcher and each program keep "rectangles only, no round corners" and "no transparency". The owner can reverse this exception: then the theme of the system is the one theme. The same day the owner decided that the theme of the owner is a build input and the default pointer theme when the build has it (`HANDOFF.md` item 33): the exception follows from that decision.
+- **Not a rectangle.** The theme "Posy's Cursor" (`docs/POINTERS.md`) is a build input. When the build has it, it is the default pointer theme. Its pointer pictures have smooth edges, curves and transparency: they are not rectangles. The pointer picture is the one picture resource of the desktop that does not follow sections 2 and 7. It is drawn with a blend of premultiplied alpha. The windows, the bar, the menus, the launcher and each program keep rectangular forms and no transparency.
 
 ### Launcher
 
@@ -165,7 +164,7 @@ The interface package (`support/interface`, `docs/INTERFACE.md`) draws these ele
 
 ## 11. The mark
 
-The mark is the picture that stands for the system (owner, 2026-11-12: "le heron A n°1 est le meilleur, nickel cest simple ! + le logo \"modus\" comme t'as fait super cool").
+The mark is the picture that stands for the system: a heron in pixel cells, and the name "modus".
 
 - The form: a heron on a grid of 24 by 24 square cells. It stands on one leg in water. Its parts: the crest and the tail (one part, in the color of the firmware), the head and the neck (the text color), the eye, the beak and the legs (two parts, in the color of the boot program), the body (the kernel), the wing (`0x2F6FC0`), the water (memory). No line goes around it.
 - The data: `support/mark` holds the rows of the cells, the table of the parts with their colors and their boxes, and the letters of the name of the mark. Its procedures are pure: `mark_pixel(cell_size, x, y, on_light)` gives the color of one pixel of the heron, `name_pixel` one pixel of the name, `heron_size` and `name_size` their sizes. `mark_draw(canvas, x, y, cell_size, on_light)` and `name_draw` draw into a canvas of `support/graphics`: the covered pixels only, cut to the canvas.
@@ -191,14 +190,14 @@ The mark is the picture that stands for the system (owner, 2026-11-12: "le heron
 
 | Where | Who draws | What | When the gradients are computed |
 |---|---|---|---|
-| The bar of the desktop | the compositor | the heron, cells of 1 pixel, at (16, 4), in the place of the word "kernel" | once, at the start, into a picture of 24 x 24 pixels over the pixels of the bar; each frame copies that picture (a Picture record that never changes) |
-| The head of the boot display | `support/bootscreen`: the boot program, the root service, the program `boot` | the heron, cells of 2 pixels (48 x 48) at (20, 12), and the name of the mark, cells of 3 pixels, at its right, in the place of the large word "kernel" | at each draw of the display: one call for each of the 2 304 pixels of the box of the heron and the 2 079 pixels of the box of the name, a few integer divisions each |
+| The bar of the desktop | the compositor | the heron, cells of 1 pixel, at (16, 4) | once, at the start, into a picture of 24 x 24 pixels over the pixels of the bar; each frame copies that picture (a Picture record that never changes) |
+| The head of the boot display | `support/bootscreen`: the boot program, the root service, the program `boot` | the heron, cells of 2 pixels (48 x 48) at (20, 12), and the name of the mark, cells of 3 pixels, at its right | at each draw of the display: one call for each of the 2 304 pixels of the box of the heron and the 2 079 pixels of the box of the name, a few integer divisions each |
 
 - No file of the mark is in the boot image: each place draws from the data.
 
 ### The animations
 
-The owner asked for it on 2026-11-12: "le Pixel art, le logo, on pourrait même en faire une version animée, en mode idle quoi. Et pourquoi pas même plusieurs animations parmi lesquelles on cyclerait. [...] le favicone soit animé. Évidemment, il faudrait que ça respecte les choix de l'utilisateur au niveau des animations. [...] Pas à tous les endroits, pas dans le header, mais seulement le gros logo sur la page d'accueil."
+The mark has idle animations. Several animations play in turn. They play only on the large mark of the home of the site and on the icon of its tab, and they respect the choice of the person about motion.
 
 - An animation of the mark moves a few cells of the still heron. It does not draw the bird again. The data is in `support/mark/animation.odin`, beside the table of the still heron, in the same cells and letters. A cell that moves takes the gradient of its part over the box of that part in the still heron.
 
@@ -220,12 +219,12 @@ The owner asked for it on 2026-11-12: "le Pixel art, le logo, on pourrait même 
 - Reduced motion: when the browser says that the person asks for reduced motion, nothing moves, and the still picture stays. A change of that choice while the page is open stops or starts the play.
 - A hidden tab: the play stops, no timer runs, and the icon is the still icon again.
 - `kerneltool logo` writes `build/mark_animations.png`: each animation as a row of its frames at cells of 8 pixels, with the durations and the order of play, for a person to look at.
-- The desktop of the system can play the same data later: `animation_frame_cells` gives the cells of a frame, and `cells_draw` draws them. The compositor would need one picture of 24 x 24 pixels for each distinct frame, drawn at the start as the still heron is now, and one timer that changes the generation of the Picture record of the bar at the times of the order of play.
+- The desktop of the system does not play the animations. The data is ready for it: `animation_frame_cells` gives the cells of a frame, and `cells_draw` draws them. To play them, the compositor needs one picture of 24 x 24 pixels for each distinct frame, drawn at the start as the still heron is. It also needs one timer that changes the generation of the Picture record of the bar at the times of the order of play.
 
 ## State
 
 - The boot display follows all rules.
 - The desktop (the compositor: background, bar, menus, windows, pointer, launcher) follows all rules, with one exception: the places of new windows are not on the grid. The main scenario of the machine test presses fixed places in windows at these places; to move them to the grid is to measure each of these places again.
 - `clock`, the window of `remote`, the launcher of the compositor, `interface_elements`, `vector_glyphs` and `settings` are built with the interface package (section 10). `errors`, `locks` and `net` take all their colors from `support/graphics`. `log` and `pages` take the background, the text and the dim color from it.
-- Each other program takes from `support/graphics` the colors that have a role of the rules: the background, the card (a panel or a band), the text, the dim color, the track (the empty part of a bar), an expected answer (`COLOR_PROGRAM`) and a failure (`COLOR_FAILED`), where its own color had that role. The colors that mean something of one program stay in it: a refusal that the program expects, an answer that is not the expected one (`0xE0B040` in eight programs), the measures of `flow`, `crowd`, `disk` and `clock`, the bars of `budget` and `processors`, the states of `rings`, `threads` and `terminal`, the headings of `manual`, the count of `tally`, the marble of `temple`, the paper of `paint`, the levels of `log`, the kinds of pages of `pages`. Some of them have the value of a rule color with another meaning (`0xE0A040` for kernel entries): a color of the rules for them is a change of meaning, a later step.
-- The windows below the level of the boot display, `remote` and `scheduler` (2026-11-11), from the farthest: `temple` (marble and ink, no rule color), `paint` (a light paper), `manual` (its own colors for headings, no cards), `monitor` (one list, no cards), the tables of `budget`, `rights`, `origin`, `limits`, `frames`, `imports`, `processors` (one size of text, bands but no cards and no captions), the measures of `clock`, `crowd`, `flow`, `disk`, then `rings`, `threads`, `workers`, `tally`, `notes`, `life`, and the text of `console` and `terminal`.
+- Each other program takes from `support/graphics` the colors that have a role of the rules: the background, the card (a panel or a band), the text, the dim color, the track (the empty part of a bar), an expected answer (`COLOR_PROGRAM`) and a failure (`COLOR_FAILED`), where its own color had that role. The colors that mean something of one program stay in it: a refusal that the program expects, an answer that is not the expected one (`0xE0B040` in eight programs), the measures of `flow`, `crowd`, `disk` and `clock`, the bars of `budget` and `processors`, the states of `rings`, `threads` and `terminal`, the headings of `manual`, the count of `tally`, the marble of `temple`, the paper of `paint`, the levels of `log`, the kinds of pages of `pages`. Some of them have the value of a rule color with another meaning (`0xE0A040` for kernel entries): a color of the rules for them is a change of meaning, which is not done.
+- The windows below the level of the boot display, `remote` and `scheduler`, from the farthest: `temple` (marble and ink, no rule color), `paint` (a light paper), `manual` (its own colors for headings, no cards), `monitor` (one list, no cards), the tables of `budget`, `rights`, `origin`, `limits`, `frames`, `imports`, `processors` (one size of text, bands but no cards and no captions), the measures of `clock`, `crowd`, `flow`, `disk`, then `rings`, `threads`, `workers`, `tally`, `notes`, `life`, and the text of `console` and `terminal`.
