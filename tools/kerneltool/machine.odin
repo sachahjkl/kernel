@@ -2606,7 +2606,7 @@ machine_test :: proc(steps: []Step, volume: string, output: string, exit_status:
 	// The software TPM runs before QEMU and ends after it, with a folder of
 	// its own for each machine.
 	tpm: Tpm_Process
-	if firmware != .Usual && !tpm_start(&tpm, output) {
+	if firmware == .With_Tpm && !tpm_start(&tpm, output) {
 		return false
 	}
 	defer tpm_stop(&tpm)

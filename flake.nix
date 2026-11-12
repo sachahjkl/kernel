@@ -65,15 +65,26 @@
         config.allowUnfreePredicate = package: inputs.nixpkgs.lib.getName package == "posy-cursors";
       }).posy-cursors;
 
-    # The UEFI firmware of the first machine. kerneltool reads these two names.
+    # The firmware of the machines of the measure: the TPM driver without
+    # Secure Boot, so without system management mode. With it, the firmware
+    # sometimes abandons one command of the software TPM and stops using the
+    # TPM for the rest of the boot (docs/TRUSTED_BOOT.md, "The machines of
+    # the TPM").
+    ovmfWithTpm = pkgs.OVMF.override {tpmSupport = true;};
+
+    # The UEFI firmware of the first machine. kerneltool reads these names.
     firmware = {
       OVMF_CODE = "${pkgs.OVMF.fd}/FV/OVMF_CODE.fd";
       OVMF_VARS = "${pkgs.OVMF.fd}/FV/OVMF_VARS.fd";
-      # The same firmware with a TPM driver and Secure Boot (it needs the
-      # system management mode of QEMU), for the machines of the trusted
-      # boot. Its variable store has no key: Secure Boot stays off; the build
-      # writes a copy with the certificate of the firmware signing key
-      # enrolled, for the machines with Secure Boot on.
+      # The same firmware with a TPM driver and no system management mode,
+      # for the machines of the measure. Nixpkgs builds no such variant: this
+      # one is built from the source of EDK II, once, then kept in the store.
+      OVMF_TPM_CODE = "${ovmfWithTpm.fd}/FV/OVMF_CODE.fd";
+      OVMF_TPM_VARS = "${ovmfWithTpm.fd}/FV/OVMF_VARS.fd";
+      # The firmware with a TPM driver and Secure Boot (it needs the system
+      # management mode of QEMU), for the machines of Secure Boot. Its
+      # variable store has no key; the build writes a copy with the
+      # certificate of the firmware signing key enrolled and Secure Boot on.
       OVMF_FULL_CODE = "${pkgs.OVMFFull.fd}/FV/OVMF_CODE.fd";
       OVMF_FULL_VARS = "${pkgs.OVMFFull.fd}/FV/OVMF_VARS.fd";
       # The source of the font, for the command "font" of kerneltool.

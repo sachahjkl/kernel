@@ -9,8 +9,10 @@
 // The development shell of flake.nix supplies what this tool needs:
 //   on the path: odin, lld-link, ld.lld, nasm, qemu-system-x86_64, swtpm
 //   OVMF_CODE, OVMF_VARS: the UEFI firmware image and its variable store
-//   OVMF_FULL_CODE, OVMF_FULL_VARS: the same firmware with a TPM driver and
-//     Secure Boot, for the machines of `test trusted_boot`
+//   OVMF_TPM_CODE, OVMF_TPM_VARS: the same firmware with a TPM driver and
+//     no system management mode, for the machines of the measure
+//   OVMF_FULL_CODE, OVMF_FULL_VARS: the firmware with Secure Boot (and system
+//     management mode), for the machines of Secure Boot
 //   SYSTEM_SIGNING_KEY (not set by the shell): the private key of the person
 //     who owns the machine, which signs the system description; with none,
 //     the test signing key of resources/keys (system_description.odin)
@@ -70,6 +72,7 @@ BOOT_VOLUME_SECURE_BOOT_CHANGED :: BUILD_FOLDER + "/boot_volume_secure_boot_chan
 BOOT_PROGRAM_PATH :: "EFI/BOOT/BOOTX64.EFI"
 FIRMWARE_VARIABLES :: BUILD_FOLDER + "/ovmf_vars.fd"
 FIRMWARE_FULL_VARIABLES :: BUILD_FOLDER + "/ovmf_full_vars.fd"
+FIRMWARE_TPM_VARIABLES :: BUILD_FOLDER + "/ovmf_tpm_vars.fd"
 TEST_OUTPUT :: BUILD_FOLDER + "/test_output.txt"
 TEST_OUTPUT_FAILS :: BUILD_FOLDER + "/test_output_fails.txt"
 TEST_OUTPUT_SELF_TEST :: BUILD_FOLDER + "/test_output_self_test_%d.txt"
@@ -103,7 +106,7 @@ Command :: struct {
 COMMANDS :: [?]Command {
 	{name = "build", about = "the modules, the boot image and the boot program, as " + BOOT_PROGRAM + "; one process for each module, as many at once as the processors, or `build <processes>`", run = run_build},
 	{name = "module", about = "module <name> with_checks|without_checks measure_run|usual_run: build one module of the table (the parallel build runs this command)", run = run_module},
-	{name = "test", about = "build, start the machine under QEMU, act as the person, check the log, save pictures of the screen; `test network`, `test main`, `test power`, `test tcp`, `test quic`, `test quic-real`, `test random`, `test extended_state`, `test return_fault`, `test trusted_boot`: one part only", run = run_test},
+	{name = "test", about = "build, start the machine under QEMU, act as the person, check the log, save pictures of the screen; `test network`, `test main`, `test power`, `test tcp`, `test quic`, `test quic-real`, `test random`, `test extended_state`, `test return_fault`, `test trusted_boot`: one part only; `test trusted_boot tpm`: with the two machines that have a software TPM", run = run_test},
 	{name = "run", about = "build, then start the machine under QEMU, with the log of the kernel on this terminal; `run without_checks`: the measure build", run = run_machine},
 	{name = "screenshots", about = "test, then copy the pictures to " + DOCUMENT_SCREENSHOT_FOLDER + " and to a new folder of " + DEVELOPMENT_LOG_FOLDER + "; `screenshots compress`: compress the PNG files of " + DOCUMENT_SCREENSHOT_FOLDER + " and " + RESOURCE_FOLDER + " whose data is stored, with no machine", run = run_screenshots},
 	{name = "measure", about = "build, start the machine, run the measures of the locks of the kernel with no other program, and stop: the numbers are in " + TEST_OUTPUT_MEASURE + "; `measure scheduler N`: the program scheduler N times; `measure windows`: each window that the interface package draws, alone, and a table of the time of its pictures; `measure without_checks ...`: the measure build, with no check in the kernel (no lock order check, no check of the frames)", run = run_measure},
@@ -300,6 +303,10 @@ run_test :: proc(args: []string) -> int {
 	// `test network`, `test main`, `test power`, `test tcp`, `test random`, `test extended_state`, `test return_fault`, `test fault_ring`, `test kernel_events`, `test trusted_boot`: one part only, for the work on it.
 	if len(args) == 1 && args[0] == "trusted_boot" {
 		return trusted_boot_tests_run() ? 0 : EXIT_FAILURE
+	}
+	// `test trusted_boot tpm`: with the two machines of the measure.
+	if len(args) == 2 && args[0] == "trusted_boot" && args[1] == "tpm" {
+		return trusted_boot_tests_run(with_tpm = true) ? 0 : EXIT_FAILURE
 	}
 	if len(args) == 1 && args[0] == "tcp" {
 		return tcp_tests_run() ? 0 : EXIT_FAILURE
@@ -575,7 +582,9 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 	code_variable, variables_variable, variables_copy := "OVMF_CODE", "OVMF_VARS", FIRMWARE_VARIABLES
 	switch firmware {
 	case .Usual:
-	case .With_Tpm, .With_Tpm_And_Secure_Boot:
+	case .With_Tpm:
+		code_variable, variables_variable, variables_copy = "OVMF_TPM_CODE", "OVMF_TPM_VARS", FIRMWARE_TPM_VARIABLES
+	case .With_Secure_Boot:
 		code_variable, variables_variable, variables_copy = "OVMF_FULL_CODE", "OVMF_FULL_VARS", FIRMWARE_FULL_VARIABLES
 	}
 	firmware_code := os.get_env(code_variable, context.temp_allocator)
@@ -583,7 +592,7 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 	// The machine with Secure Boot on starts from the variable store in
 	// which the build enrolled the certificate of the firmware signing key
 	// (secure_boot.odin), not from the empty store of the firmware.
-	if firmware == .With_Tpm_And_Secure_Boot {
+	if firmware == .With_Secure_Boot {
 		firmware_variables = SECURE_BOOT_VARIABLES
 	}
 	if firmware_code == "" || firmware_variables == "" {
@@ -605,7 +614,7 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 		"-machine",
 		// The firmware with Secure Boot needs the system management mode of
 		// the processor: its variables are written only there.
-		firmware != .Usual ? "q35,smm=on" : "q35",
+		firmware == .With_Secure_Boot ? "q35,smm=on" : "q35",
 		"-accel",
 		"kvm",
 		"-accel",
@@ -615,7 +624,7 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 		"-m",
 		"512",
 		"-smp",
-		firmware != .Usual ? TPM_MACHINE_PROCESSORS : "4",
+		"4",
 		"-device",
 		"isa-debug-exit,iobase=0xf4,iosize=0x04",
 		"-no-reboot",
@@ -656,24 +665,31 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 	)
 	if firmware != .Usual {
 		if test_output == "" {
-			fmt.eprintln("kerneltool: a machine with a TPM runs only as a test machine, with its own files")
+			fmt.eprintln("kerneltool: a machine with a TPM or with Secure Boot runs only as a test machine, with its own files")
 			return nil, false
 		}
-		// The flash of the firmware is writable only in system management
-		// mode; the TPM is the software TPM that machine_test starts
-		// (trusted_boot_scenario.odin), through the socket of this machine.
 		// The firmware writes its own log on the debug console port: the
 		// tool shows its end when the boot program does not start.
-		append(&list, "-global", "driver=cfi.pflash01,property=secure,value=on")
-		append(&list, "-chardev", strings.concatenate({"socket,id=tpm_socket,path=", tpm_socket_of(test_output)}, context.temp_allocator))
-		// The CRB interface, not TIS: TIS moves each byte of a command and of
-		// its answer through one register, each access an exit to QEMU; the
-		// CRB interface puts them in a buffer of memory. Fewer exits leave
-		// fewer chances for the time-outs of the interface driver of the
-		// firmware on a loaded host (docs/TRUSTED_BOOT.md, "The machines of
-		// the TPM").
-		append(&list, "-tpmdev", "emulator,id=tpm,chardev=tpm_socket", "-device", "tpm-crb,tpmdev=tpm")
 		append(&list, "-debugcon", strings.concatenate({"file:", machine_file(test_output, FIRMWARE_LOG_SUFFIX)}, context.temp_allocator), "-global", "isa-debugcon.iobase=0x402")
+	}
+	if firmware == .With_Secure_Boot {
+		// The flash of the firmware with Secure Boot is writable only in
+		// system management mode.
+		append(&list, "-global", "driver=cfi.pflash01,property=secure,value=on")
+	}
+	if firmware == .With_Tpm {
+		// The software TPM that machine_test starts (trusted_boot_scenario.odin),
+		// through the socket of this machine, on the CRB interface: the
+		// command and its answer are in a buffer of memory, not moved byte
+		// by byte through one register.
+		append(&list, "-chardev", strings.concatenate({"socket,id=tpm_socket,path=", tpm_socket_of(test_output)}, context.temp_allocator))
+		append(&list, "-tpmdev", "emulator,id=tpm,chardev=tpm_socket", "-device", "tpm-crb,tpmdev=tpm")
+		// The trace of QEMU for the TPM, with the time of each line: when the
+		// device received each command of the firmware and when the firmware
+		// wrote to the device (a start, a cancel). It shows whether an
+		// abandoned command reached QEMU and when the firmware gave it up.
+		append(&list, "-msg", "timestamp=on", "-D", machine_file(test_output, QEMU_TRACE_SUFFIX))
+		append(&list, "-trace", "enable=tpm_emulator_handle_request", "-trace", "enable=tpm_crb_mmio_write", "-trace", "enable=tpm_emulator_set_locality")
 	}
 	if test_output != "" {
 		// No window. The log of the kernel (the serial port) goes to a file.
