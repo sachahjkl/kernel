@@ -584,19 +584,27 @@ SITE_SEARCH_SCRIPT_SOURCE :: `// The search of the site, written by kerneltool s
       if (!cases.has(key)) cases.set(key, { group: group, query: query, expected: [] });
       cases.get(key).expected.push({ name: name, score: score });
     }
-    let failed = 0;
+    let passed = 0, first = "";
     for (const item of cases.values()) {
       const result = rank(encoder.encode(item.query), groups[item.group], RULE.rankedCapacity);
       const got = result.ranked.map(r => groups[item.group][r.index].name + " " + r.score).join(", ");
       const want = item.expected.map(e => e.name + " " + e.score).join(", ");
-      if (got !== want || result.matched !== item.expected.length) {
-        failed++;
-        console.error("search self test: " + item.group + " \"" + item.query + "\": " + got + "; expected " + want);
-      }
+      if (got === want && result.matched === item.expected.length) passed++;
+      else if (!first) first = item.group + " \"" + item.query + "\": " + got + "; expected " + want;
     }
-    console.log("search self test: " + (failed === 0 ? "pass" : "FAIL") + ", " + (cases.size - failed) + " of " + cases.size + " cases");
+    return first === "" ? "search self test: " + passed + " of " + cases.size + " cases pass" :
+      "search self test: FAIL, " + passed + " of " + cases.size + " cases pass; the first that fails: " + first;
   }
-  if (new URLSearchParams(location.search).get("selftest") === "1") selfTest();
+  // The line of the self test is printed when the script runs, during the
+  // load of the page, and again when the list opens: a capture of the
+  // console that starts after the load still reads it. It is also the
+  // attribute data-search-self-test of the root element, and the first
+  // line under the box.
+  const selfTestLine = new URLSearchParams(location.search).get("selftest") === "1" ? selfTest() : "";
+  if (selfTestLine) {
+    console.log(selfTestLine);
+    document.documentElement.setAttribute("data-search-self-test", selfTestLine);
+  }
 
   const box = document.getElementById("site-search-box");
   if (!box || !script) return;
@@ -648,7 +656,14 @@ SITE_SEARCH_SCRIPT_SOURCE :: `// The search of the site, written by kerneltool s
     }
   }
 
-  function open() { panel.hidden = false; box.setAttribute("aria-expanded", "true"); }
+  function open() {
+    if (selfTestLine && panel.hidden) {
+      console.log(selfTestLine);
+      hint.textContent = selfTestLine + ". " + hint.textContent;
+    }
+    panel.hidden = false;
+    box.setAttribute("aria-expanded", "true");
+  }
   function close() {
     panel.hidden = true;
     box.setAttribute("aria-expanded", "false");

@@ -15,9 +15,11 @@ No page holds a text that a person must remember to update: each page is generat
   - each page has one `h1`, a title and a description of at most 160 bytes; no two pages share a title or a description;
   - each `img` has an `alt` attribute (empty for a picture that only decorates a text beside it, as the heron of the bar), a `width` and a `height`;
   - each `href`, `src` and `srcset` that is not an address of another host names a page or a file that the command wrote, and its anchor is an `id` of that page;
-  - no page holds code or style of its own: each `<script>` has a `src` and nothing inside, and no `<style>` element and no `style` attribute exists.
+  - each `srcset` candidate names a file that the command wrote;
+  - no page holds code or style of its own: each `<script>` has a `src` and nothing inside, but the one `<script type="application/ld+json">` of the page graph, whose text has no `<`; no `<style>` element and no `style` attribute exists.
+- Then the command checks what other programs read (see "What other sites read"); a failure stops it in the same way.
 - After the checks of the pages, the command makes the index of the search and checks it against the pages (see "The search"); a failure stops it in the same way.
-- At its end the command prints: the pages and their bytes, the other files, the entries and the bytes of the index of the search and the bytes of the script, the guides, the news entries, the terms of the glossary, the commit and the release, the numbers that are not measured, the cells of the licenses that are not recorded, and each part of a guide that the renderer did not understand.
+- At its end the command prints: the pages and their bytes, the other files, the entries and the bytes of the index of the search and the bytes of the script, the guides, the news entries, the terms of the glossary, the commit and the release, the numbers that are not measured, the cells of the licenses that are not recorded, each part of a guide that the renderer did not understand, the parts that it did not write with no site address (or, with one, the parts that it wrote), and the bytes of the pictures at half width.
 - `kerneltool check` runs the host tests of the site (`tools/kerneltool/site_test.odin`, `site_render_test.odin`) and checks that each picture that `README.md` names is a file of the repository. It does not write the site.
 
 ## The pages
@@ -35,6 +37,9 @@ No page holds a text that a person must remember to update: each page is generat
 | `releases.html` | All of `CHANGELOG.md`, newest first; each release has the anchor `release-<number>`, and a line with a link to each news entry that names it |
 | `news.html`, `news.xml` | The files of `news/`; see "The news" |
 | `search.json`, `search.js` | The index of the search and its script; see "The search" |
+| `releases.xml` | The feed of the releases, from `CHANGELOG.md`; see "What other sites read" |
+| `site.webmanifest`, `llms.txt` | The name, the colors and the icons of the site; the pages with their descriptions in Markdown |
+| `sitemap.xml`, `robots.txt` | Only with a site address; see "What other sites read" |
 | `status.html` | See "The status page" |
 | `reference/operations.html`, `context.html`, `errors.html`, `grants.html`, `fixed-ranges.html`, `console.html` | See "The reference tables" |
 | `reference/modules/index.html`, `reference/modules/<name>.html` | See "The module pages" |
@@ -118,7 +123,7 @@ The owner asked for it on 2026-11-12: "une doc riche et auto générée, avec re
 
 - On the first key in the box, it fetches `search.json` from the folder of the script. A page opened from a file cannot read another file in the browsers of today: the script then says so under the box, and the site stays whole by its links.
 - The match and the order are those of the completion list of the console (`CONSOLE.md`, section 3; `support/line_editor/fuzzy_match.odin`): `lower`, `fuzzy_match`, `ranked_before` and `rank_candidates`, ported rule for rule on the UTF-8 bytes of the query and of the title. The tie order is the kind: of two entries with one score, a module comes before a guide section that has its name.
-- Two things keep the script in step with the console. The tool writes the constants of `support/line_editor` (the points of each rule, the bounds) into the script. And one table of queries, names, scores and orders, `site_search_match_names` and `site_search_match_orders` in `tools/kerneltool/site_search.odin`, is run twice: by the host test `site_search_matcher_table` over the matcher of Odin, and by the script over its own matcher when the address of a page has `?selftest=1` (it prints "search self test: pass" or "FAIL" with each wrong case in the console of the browser). A change of the rule in Odin fails the host test until the table has the new scores; the new table then fails the self test of the script until the script has the new rule. No program of the repository runs the script: the self test is run in a browser.
+- Two things keep the script in step with the console. The tool writes the constants of `support/line_editor` (the points of each rule, the bounds) into the script. And one table of queries, names, scores and orders, `site_search_match_names` and `site_search_match_orders` in `tools/kerneltool/site_search.odin`, is run twice: by the host test `site_search_matcher_table` over the matcher of Odin, and by the script over its own matcher when the address of a page has `?selftest=1` (it prints one line in the console of the browser, "search self test: N of N cases pass" or the first case that fails, when the script runs during the load and again when the list opens; the same line is the attribute `data-search-self-test` of the root element and the first words under the box). A change of the rule in Odin fails the host test until the table has the new scores; the new table then fails the self test of the script until the script has the new rule. No program of the repository runs the script: the self test is run in a browser.
 
 ### The look
 
@@ -131,6 +136,68 @@ The box and the list are those of the console (the picture `docs/screenshots/con
 - The keyboard alone works. The box is a `combobox` with `aria-expanded`, `aria-controls` and `aria-activedescendant`; the list is a `listbox` of `option` rows with `aria-selected`; the line of the count is `aria-live`. The focus is visible.
 
 With no script, the site is whole: every page is reachable by its links, and the box is not shown (it has the attribute `hidden`, and only the script takes it away).
+
+## What other sites read
+
+The owner asked for it on 2026-11-12: "we'll want a sitemap, json-ld, good seo (graph) etc". The structure follows a site of the owner that has these parts; no fact of that site is copied here. The code is `tools/kerneltool/site_metadata.odin`; its host tests are `site_metadata_test.odin`, with a site address and with none.
+
+A canonical address, an address of Open Graph and an `@id` of JSON-LD must be absolute: a relative one is wrong for the program that receives it. So each part that needs one is written only with a site address (`GLOSSARY.md`), and the command lists the parts that it did not write.
+
+| Part | With no site address | With a site address |
+|---|---|---|
+| `lang`, the viewport, the title, the description, a theme color for each color scheme, the icons (`heron_24` to `heron_192`, and `heron_192` as the icon of a phone), the manifest, the links to the two feeds, `rel=prev` and `rel=next` between guides (the reading order of the page of the guides) | Written | Written |
+| The canonical address (`GLOSSARY.md`) | No | `<site address>/<path>`; an index page by its folder (`<site address>/guides/`) |
+| Open Graph: `og:type` (`article` for a guide, else `website`), `og:site_name`, `og:title`, `og:description`, `og:url`, `og:image` with its type, width, height and alt; `twitter:card` `summary_large_image`, which reads the rest from Open Graph | No | Written; the picture is `pictures/mark_card.png` |
+| The page graph (`GLOSSARY.md`) | No | One `<script type="application/ld+json">` in the head |
+| `sitemap.xml`, `robots.txt` | Not written | Written |
+| `news.xml`, `releases.xml`, `llms.txt` | Relative links, no link `self` | Absolute links, a link `self` in each feed |
+
+### The page graph
+
+One `@graph` for each page, built from the data that the page shows; no value is typed for the graph. Each node has an `@id`; a field names another node as `{"@id": ...}`. The text goes through the JSON writer of the search index (`site_json_string`), which escapes `<`, `>`, `&`, U+2028 and U+2029: a title as `</script><!--` stays a text of the JSON, and the script element has no `<` inside.
+
+| Node | Id | On | Fields |
+|---|---|---|---|
+| `WebSite` | `<site address>/#website` | Each page | `name`, `url`, `description` (of the home), `inLanguage`, `about` the system, `potentialAction`: a `SearchAction` with the `EntryPoint` `<site address>/?q={search_term_string}` and `query-input`, the form that the script of the search reads |
+| `SoftwareApplication` | `#system` | Each page | `name`, `url`, `description`, `applicationCategory` "Operating system", `operatingSystem` "None: it is the operating system of the machine", `processorRequirements` "x86-64", `availableOnDevice` "QEMU on x86-64, with UEFI firmware and virtio devices" (`PROPERTIES.md`: the first machine), `softwareVersion` (the newest release), `license`, `image` |
+| `SoftwareSourceCode` | `#source` | Each page | `name`, `codeRepository`, `programmingLanguage` (a `ComputerLanguage`, Odin), `license` (`https://spdx.org/licenses/<identifier>.html`, from line 1 of `LICENSE`), `version`, `targetProduct` the system |
+| `ImageObject` | `#card` | Each page | The picture for other sites: `url`, `contentUrl`, `width`, `height`, `caption` |
+| `ImageObject` | The address of the picture | A page that shows pictures | One for each `img` of the content of the page, read from the element itself: `contentUrl`, `width`, `height`, `caption` (its alt text) |
+| `WebPage`, or `CollectionPage` for an index | `<canonical address>#page` | Each page | `url`, `name`, `description`, `inLanguage`, `isPartOf` the site, `primaryImageOfPage` the card, `breadcrumb`, `mainEntity`, `image` the pictures that it shows |
+| `BreadcrumbList` | `#breadcrumb` | Each page below the home | A `ListItem` for each crumb of the line above the content, then the page |
+| `TechArticle` | `#article` | A guide | `headline` (at most 110 bytes), `description`, `inLanguage`, `url`, `mainEntityOfPage`, `isPartOf`, `about`, `image`. No `dateModified` and no `datePublished`: the tool does not read the history of a document, and a false date is worse than none |
+| `DefinedTermSet`, `DefinedTerm` | `#terms`; a term by its anchor `#term-<name>` | The glossary | Each term with its `name`, its definition as `description`, its `url` and `inDefinedTermSet` |
+| `ItemList` | `#modules` | The index of the modules | `numberOfItems`, a `ListItem` for each module page with its `position`, `name` and `url` |
+| `Blog`, `BlogPosting` | `#blog`; an entry by its anchor `#news-<file>` | The news | A `BlogPosting` for each entry: `headline`, `description` (its first sentence), `url`, `inLanguage`, `datePublished` and `dateModified` (the date of its head: an entry is never updated), `articleSection` (its kind), `isPartOf`, `mainEntityOfPage`, `about`, `image` (its picture, else the card) |
+
+`BlogPosting`, not `NewsArticle`: a news entry is a dated report of the project, as a post of a blog. `NewsArticle` is for the articles of a publisher of news, and a search engine reads it as journalism.
+
+Not verified against a validator of schema.org or the documents of a search engine, since this work runs with no network: the field `availableOnDevice` of `SoftwareApplication`; whether a search engine accepts a free text "Operating system" for `applicationCategory` (its list of categories has no operating system); whether the `SearchAction` is still read (one search engine stopped showing a box of search for it in 2024); the limit of 110 characters of a headline. `author` and `publisher` are absent: the only fact of an author in the repository is the line `Copyright` of `LICENSE`, and the owner decides whether the graph names a person.
+
+### The sitemap, robots.txt and the feeds
+
+- `sitemap.xml` lists the canonical address of each page that the command writes, once, by path. A page has a `lastmod` only when the tool knows the date of its last change: `news.html` (the date of its newest entry) and `releases.html` (the date of its newest release). The other pages have none: each build changes their foot, and the tool does not read the history of their sources. A wrong `lastmod` teaches a search engine to ignore the field.
+- `robots.txt` allows each page and gives the address of the sitemap. A crawler reads `robots.txt` only at the root of a host: when the site address has a path, the command says that the `robots.txt` of the root must have the line `Sitemap:`.
+- `releases.xml` is the feed of the releases (Atom): one entry for each release of `CHANGELOG.md`, newest first, with its date (`published` and `updated`, at 00:00 UTC), its first change as its summary, and its changes in HTML. The id of an entry is `<repository>/blob/master/CHANGELOG.md#release-<number>`: a release is never renamed, so the id does not change when the site gets an address.
+- `llms.txt` follows the form of llmstxt.org, as the site of the owner has one: the name, the lead of `README.md` as a quote, then a list of the pages for each section, each with its title and its description; the module pages are in the part `## Optional`.
+- `site.webmanifest`: the name, the description, `lang`, `start_url` `index.html`, the dark background as the background and theme color, and the four icons. Its addresses are relative to it.
+
+### The pictures
+
+Each `img` has `width`, `height` and an alt text (a check of the pages). The pictures below the first screen have `loading="lazy"` and `decoding="async"`: the pictures of the machine, of the news and of the guides. The mark of the home and the heron of the bar are on the first screen and load at once.
+
+Each picture of the machine on the home is also written at half its width and height (`<name>_half.png`): each pixel is the mean of a square of 2 by 2, with `core:image/png` of the compiler. The `img` names the two in `srcset` with `sizes` from the rules of the style sheet (556 pixels in a column, 1120 for a wide picture, the screen under 720 pixels). The half picture is written only when it has fewer bytes. The command prints the bytes of the half pictures and of the whole ones. A browser takes the half picture only when its place, times the density of the screen, is at most its width (512 pixels for a picture of 1024): a phone of density 1, not a screen of density 2. The mean of 2 by 2 pixels blurs the text of a screenshot.
+
+### The checks
+
+After the checks of the pages, with a site address:
+
+- each page has one canonical address, its own, and no two pages share one;
+- each page has `og:url` (its canonical address), `og:type`, `og:title`, `og:description`, `og:site_name`, `og:image:alt`, and an `og:image` that is a PNG file that the command wrote, with the width and the height that the page states;
+- each page has one page graph; it parses (`core:encoding/json`, strict JSON), its `@context` is `https://schema.org`, it has a `@graph`, and each `@id` that a field names is a node of the graph or the canonical address of a page of the site;
+- the sitemap lists each page that the command writes once, and no other address.
+
+With no site address: no page has a canonical address, Open Graph or a page graph, and there is no sitemap. A page with two `h1` fails the checks of the pages.
 
 ## The numbers
 
@@ -208,7 +275,7 @@ The site draws its own pictures of the mark from `support/mark` (`tools/kernelto
 |---|---|---|---|
 | `pictures/mark_home.png`, `mark_home_light.png` | heron 8, name 6 | 198 x 250 | The head of the home, one file for each color scheme (`<picture>` and `prefers-color-scheme`) |
 | `pictures/mark_bar.png`, `mark_bar_light.png` | heron 1 | 24 x 24 | The bar |
-| `pictures/mark_card.png` | heron 16, name 12 | 1200 x 630 | The picture for other sites: on the dark background, because those sites show it on white. Written now; the head of a page does not name it yet |
+| `pictures/mark_card.png` | heron 16, name 12 | 1200 x 630 | The picture for other sites: on the dark background, because those sites show it on white. Open Graph and the page graph name it. The command stops when it is not opaque (a color type with no alpha and no `tRNS` chunk) or not 1200 x 630 |
 
 The icons of the pages are the files `heron_24.png` to `heron_192.png` of `resources/logo`. `kerneltool logo` also writes `resources/logo/modus_transparent.png` and `modus_light_transparent.png`, which the README shows in a `<picture>` for the two color schemes.
 
@@ -267,13 +334,24 @@ The work is in layers; each layer adds pages to a site that works.
 - The metadata for other sites goes into the head of `site_page_html`, which writes every page.
 - (c) Done: the news (`news/`, `kerneltool news`), its page, its door on the home, its feed and its links from the releases.
 - (d) Done: the search: its index, its script, its box in the bar.
-- (e) Not done: Open Graph, JSON-LD, `sitemap.xml`, `robots.txt`, a feed of the releases, `llms.txt`, `site.webmanifest`, the checks of the JSON-LD, the smaller pictures for `srcset`. Their places: the metadata of a page goes into the head that `site_page_html` writes (after the link to the feed); `sitemap.xml` and `robots.txt` need the address of the site and are written next to `news.xml` in `site_build`; a feed of the releases is a second `site_*_feed` beside `site_news_feed`, from `site.changelog`, linked from the head as the feed of the news is. The search adds each new page to its index by itself: a page is an entry.
+- (e) Done: what other sites read (`tools/kerneltool/site_metadata.odin`): the canonical address, Open Graph, the summary card, the page graph, the manifest, `sitemap.xml`, `robots.txt`, `releases.xml`, `llms.txt`, the pictures of the machine at half width, and their checks. See "What other sites read".
 - The count of checks of `kerneltool check`: the tool prints each check that passed and keeps no count.
 - An embedded font: Paper Mono is under the SIL OFL 1.1 with no Reserved Font Name (`resources/fonts/paper_mono.license`): its ASCII subsets can be copied into the site with `OFL.txt` and their `.license` files and declared with `@font-face`. The site uses the fonts of the reader's system.
 
 ## What the owner must decide
 
-1. The address of the site: `SITE_ADDRESS` in `tools/kerneltool/site_frame.odin`, empty. With no address the pages have relative links only, and the command writes no canonical address, no sitemap and no absolute address, and says so. `--address` sets it for one run.
-2. The host: a branch that GitHub Pages serves, a static host with a deploy key, or a server reached by `rsync`; the key stays outside the repository. A later `kerneltool site publish` builds the site, stops when a check fails, and sends `build/site/` to the host, from `master` at a release.
-3. The domain, and whether the host serves it with TLS.
-4. The headers that the host sends. Proposed: `Content-Security-Policy: default-src 'none'; style-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'` (`data:` for the grid of points of the style sheet). With the search: `script-src 'self'; connect-src 'self'`, for the script and for its fetch of `search.json`. The pages hold no inline script and no inline style. A `<meta>` policy is not written: `frame-ancestors` has no effect there, and `'self'` does not work for a page opened from a file.
+1. The host and the domain. The choices: a branch that GitHub Pages serves (the domain of the host, or a domain of the owner with a `CNAME` file), a static host with a deploy key, or a server reached by `rsync`; the key stays outside the repository. The host must serve the site with TLS: a canonical address and an address of Open Graph are `https://`.
+2. The site address (`GLOSSARY.md`): `SITE_ADDRESS` in `tools/kerneltool/site_frame.odin`, empty now. `kerneltool site --address https://<host>/<path>` sets it for one run; a path works. What it changes, and nothing else:
+   - each page gets its canonical address, Open Graph, the summary card and its page graph, all with absolute addresses;
+   - the command writes `sitemap.xml` and `robots.txt`, and checks them with the pages;
+   - `news.xml`, `releases.xml` and `llms.txt` get absolute links, and each feed its link `self`.
+   With no address, the pages have relative links only, these parts are absent, and the command says which ones it did not write. The links inside the site stay relative in both cases, so the same pages work from a file, from a folder of a host and from the root of a domain.
+3. A site in a folder of a host (`https://<host>/<path>`): a crawler reads `robots.txt` only at the root of the host, so the `robots.txt` of the root must name `<site address>/sitemap.xml`. The command says so. A site at the root of its domain needs nothing more.
+4. The headers that the host sends. Proposed: `Content-Security-Policy: default-src 'none'; style-src 'self'; img-src 'self' data:; script-src 'self'; connect-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'` (`data:` for the grid of points of the style sheet; `script-src` and `connect-src` for the script of the search and its fetch of `search.json`; `manifest-src` for `site.webmanifest`). The page graph needs no word of its own: a `<script type="application/ld+json">` is data, and a browser does not run it, so `script-src` does not apply to it. The pages hold no other inline script and no inline style. A `<meta>` policy is not written: `frame-ancestors` has no effect there, and `'self'` does not work for a page opened from a file. Also proposed: `Content-Type: application/atom+xml` for the two feeds, `application/manifest+json` for the manifest, `text/plain; charset=utf-8` for `llms.txt`.
+5. The author in the page graph: the graph names no person now (see "The page graph"). The owner decides whether `author` and `publisher` name the holder of the line `Copyright` of `LICENSE`.
+6. `kerneltool site publish`, a later command. Design only, not written:
+   - It runs from `master` at a release, with no change in the work tree; else it stops.
+   - It builds the site with the site address of the host (`SITE_ADDRESS`, not `--address`), and stops when a check fails, as `kerneltool site` does.
+   - It sends `build/site/` to the host: the files that changed, then it removes the files that the new site does not have, so that no reader gets a page with a picture that is not there yet.
+   - It reads back the home, `sitemap.xml` and the two feeds from the host over TLS, and checks that each one has the bytes that it sent and the headers of point 4.
+   - The key of the host comes from the environment of the person who runs it, never from the repository.

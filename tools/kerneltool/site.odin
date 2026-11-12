@@ -134,6 +134,9 @@ Site_Figure :: struct {
 	width:     int,
 	height:    int,
 	pixelated: bool,
+	half_file_name: string, // The picture at half width in the picture folder, or "" when it is not written.
+	half_width:     int,
+	half_height:    int,
 }
 
 Site_Accent :: struct {

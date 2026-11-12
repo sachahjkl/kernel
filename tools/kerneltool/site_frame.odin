@@ -89,6 +89,7 @@ Site :: struct {
 	not_rendered: [dynamic]string,
 	copies:       map[string]string, // A path in the site to the file of the repository that it copies.
 	files:        map[string]int, // Each file of the site that is not a page, with its bytes.
+	picture_sizes: map[string][2]int, // Each PNG file of the site, with its width and its height.
 	pages:        [dynamic]Site_Page,
 	guides:       [dynamic]Site_Guide,
 	principles:   Site_Principles,
@@ -243,6 +244,9 @@ site_write_file :: proc(site: ^Site, path: string, data: []u8) -> bool {
 		return false
 	}
 	site.files[path] = len(data)
+	if width, height, is_png := site_png_size(data); is_png {
+		site.picture_sizes[path] = {width, height}
+	}
 	return true
 }
 
@@ -253,6 +257,7 @@ site_build :: proc(address: string) -> bool {
 	site.not_rendered = make([dynamic]string, context.temp_allocator)
 	site.copies = make(map[string]string, context.temp_allocator)
 	site.files = make(map[string]int, context.temp_allocator)
+	site.picture_sizes = make(map[string][2]int, context.temp_allocator)
 	site.pages = make([dynamic]Site_Page, context.temp_allocator)
 	site.guides = make([dynamic]Site_Guide, context.temp_allocator)
 
@@ -315,15 +320,25 @@ site_build :: proc(address: string) -> bool {
 	// The pictures of the mark, and the icons: the heron alone of resources/logo.
 	for picture in site_mark_pictures {
 		data := site_mark_encode(picture) or_return
+		if picture.file_name == SITE_MARK_CARD {
+			// Other sites show the card on any background and at this size.
+			width, height, _ := site_png_size(data)
+			if width != SITE_CARD_WIDTH || height != SITE_CARD_HEIGHT || !site_png_is_opaque(data) {
+				fmt.eprintfln("kerneltool: site: %s is %d by %d or not opaque; the picture for other sites is opaque, %d by %d", picture.file_name, width, height, SITE_CARD_WIDTH, SITE_CARD_HEIGHT)
+				return false
+			}
+		}
 		site_write_file(&site, strings.concatenate({SITE_PICTURE_FOLDER, "/", picture.file_name}, context.temp_allocator), data) or_return
 	}
-	for size in ([]string{"24", "48", "96", "192"}) {
+	icon_sizes := SITE_ICON_SIZES
+	for size in icon_sizes {
 		name := strings.concatenate({"heron_", size, ".png"}, context.temp_allocator)
 		site.copies[strings.concatenate({SITE_PICTURE_FOLDER, "/", name}, context.temp_allocator)] = strings.concatenate({LOGO_FOLDER, "/", name}, context.temp_allocator)
 	}
 
 	// The pictures of the machine, with the captions of README.md.
 	figures := make([dynamic]Site_Figure, context.temp_allocator)
+	whole_picture_bytes, half_picture_bytes := 0, 0
 	for picture in site_pictures {
 		caption, has_caption := site.readme.captions[picture.path]
 		if !has_caption || caption == "" {
@@ -338,7 +353,18 @@ site_build :: proc(address: string) -> bool {
 		}
 		file_name := site_file_name(picture.path)
 		site.copies[strings.concatenate({SITE_PICTURE_FOLDER, "/", file_name}, context.temp_allocator)] = picture.path
-		append(&figures, Site_Figure{group = picture.group, file_name = file_name, caption = caption, width = width, height = height})
+		figure := Site_Figure{group = picture.group, file_name = file_name, caption = caption, width = width, height = height}
+		// The picture at half its width, for a narrow screen: written only
+		// when it has fewer bytes than the whole picture.
+		if half, half_width, half_height, halved := site_png_half(data); halved && len(half) < len(data) {
+			figure.half_file_name = strings.concatenate({strings.trim_suffix(file_name, ".png"), SITE_HALF_PICTURE_SUFFIX}, context.temp_allocator)
+			figure.half_width = half_width
+			figure.half_height = half_height
+			site_write_file(&site, strings.concatenate({SITE_PICTURE_FOLDER, "/", figure.half_file_name}, context.temp_allocator), half) or_return
+			whole_picture_bytes += len(data)
+			half_picture_bytes += len(half)
+		}
+		append(&figures, figure)
 	}
 	site.figures = figures[:]
 
@@ -370,6 +396,11 @@ site_build :: proc(address: string) -> bool {
 		// The feed is written before the checks: each page links to it.
 		site_write_file(&site, SITE_NEWS_FEED, transmute([]u8)site_news_feed(&site)) or_return
 	}
+	// The files that each page names in its head, or that other programs
+	// read with no address: written before the checks of the links.
+	site_write_file(&site, SITE_RELEASES_FEED, transmute([]u8)site_releases_feed(&site)) or_return
+	site_write_file(&site, SITE_MANIFEST, transmute([]u8)site_manifest(&site)) or_return
+	site_write_file(&site, SITE_LANGUAGE_MODEL_INDEX, transmute([]u8)site_language_model_index(&site)) or_return
 
 	// The copies: the pictures of the machine and of the guides, the icons.
 	for target, source in site.copies {
@@ -391,6 +422,18 @@ site_build :: proc(address: string) -> bool {
 		fmt.eprintfln("kerneltool: site: %d problems; no page is written", len(problems))
 		return false
 	}
+	// What other programs read: with an address, the canonical addresses,
+	// Open Graph, the JSON-LD graphs and the sitemap; with none, their
+	// absence.
+	sitemap := site.address != "" ? site_sitemap(&site) : ""
+	metadata_problems := site_check_metadata(site.address, site.pages[:], written, sitemap, site.picture_sizes)
+	if len(metadata_problems) > 0 {
+		for problem in metadata_problems {
+			fmt.eprintfln("kerneltool: site: %s", problem)
+		}
+		fmt.eprintfln("kerneltool: site: %d problems of what other sites read; no page is written", len(metadata_problems))
+		return false
+	}
 	// The index of the search, from the same data as the pages, checked
 	// against the pages that the command writes.
 	search_entries := site_search_entries(&site)
@@ -408,6 +451,10 @@ site_build :: proc(address: string) -> bool {
 		return false
 	}
 	site_write_file(&site, SITE_SEARCH_INDEX, transmute([]u8)search_index) or_return
+	if site.address != "" {
+		site_write_file(&site, SITE_SITEMAP, transmute([]u8)sitemap) or_return
+		site_write_file(&site, SITE_ROBOTS, transmute([]u8)site_robots(&site)) or_return
+	}
 	page_bytes := 0
 	for path, html in written {
 		site_write_file(&site, path, transmute([]u8)html) or_return
@@ -419,10 +466,18 @@ site_build :: proc(address: string) -> bool {
 	commit_text: string = site.commit != "" ? site.commit : "not readable (links to files go to master)"
 	fmt.printfln("kerneltool: site: %d guides, %d terms of the glossary, %d news entries, the commit %s, the release %s", len(site.guides), len(site.terms), len(site.news), commit_text, site.release)
 	if site.address == "" {
-		fmt.println("kerneltool: site: no address (SITE_ADDRESS is empty): the pages have relative links only; no canonical address, no sitemap and no absolute address is written")
-		if len(site.news) > 0 {
-			fmt.printfln("kerneltool: site: %s has relative links and no link \"self\": a feed reader resolves them against the address that it fetched the feed from; with no address the feed cannot name its own place", SITE_NEWS_FEED)
+		fmt.println("kerneltool: site: no address (SITE_ADDRESS is empty): the pages have relative links only. Not written: the canonical addresses, Open Graph and the summary card, the JSON-LD graphs, " + SITE_SITEMAP + ", " + SITE_ROBOTS + ", and the link \"self\" of the feeds")
+		fmt.printfln("kerneltool: site: %s, %s and %s have relative links: a reader resolves them against the address that it fetched the file from", SITE_NEWS_FEED, SITE_RELEASES_FEED, SITE_LANGUAGE_MODEL_INDEX)
+	} else {
+		fmt.printfln("kerneltool: site: the address %s: a canonical address, Open Graph and a JSON-LD graph on each page; %s with %d pages; %s; the link \"self\" of %s and %s", site.address, SITE_SITEMAP, len(site.pages), SITE_ROBOTS, SITE_NEWS_FEED, SITE_RELEASES_FEED)
+		// A crawler reads robots.txt only at the root of a host.
+		after_scheme := site.address[strings.index(site.address, "://") + 3:]
+		if strings.contains(after_scheme, "/") {
+			fmt.printfln("kerneltool: site: the site is in a folder of its host: a crawler does not read %s there; the %s of the root of the host must have the line \"Sitemap: %s/%s\"", SITE_ROBOTS, SITE_ROBOTS, site.address, SITE_SITEMAP)
 		}
+	}
+	if whole_picture_bytes > 0 {
+		fmt.printfln("kerneltool: site: the pictures of the machine at half width: %d bytes for %d bytes of the whole pictures; a narrow screen saves %d bytes", half_picture_bytes, whole_picture_bytes, whole_picture_bytes - half_picture_bytes)
 	}
 	missing := 0
 	for number in site.measured {
@@ -475,17 +530,16 @@ site_page_html :: proc(site: ^Site, page: Site_Page) -> string {
 	write(&b, "\">\n<meta name=\"color-scheme\" content=\"dark light\">\n")
 	fmt.sbprintf(&b, "<meta name=\"theme-color\" media=\"(prefers-color-scheme: dark)\" content=\"%s\">\n", site_color(site_dark_colors().background))
 	fmt.sbprintf(&b, "<meta name=\"theme-color\" media=\"(prefers-color-scheme: light)\" content=\"%s\">\n", site_color(site_light_colors().background))
-	if site.address != "" {
-		write(&b, "<link rel=\"canonical\" href=\"")
-		site_escape(&b, strings.concatenate({site.address, "/", page.path}, context.temp_allocator))
-		write(&b, "\">\n")
-	}
-	for size in ([]string{"24", "48", "96", "192"}) {
+	icon_sizes := SITE_ICON_SIZES
+	for size in icon_sizes {
 		fmt.sbprintf(&b, "<link rel=\"icon\" type=\"image/png\" sizes=\"%sx%s\" href=\"%s\">\n", size, size, link(page, strings.concatenate({SITE_PICTURE_FOLDER, "/heron_", size, ".png"}, context.temp_allocator)))
 	}
 	if site_page_exists(site, site_section_pages[.News]) {
 		fmt.sbprintf(&b, "<link rel=\"alternate\" type=\"application/atom+xml\" title=\"News of %s\" href=\"%s\">\n", SITE_SYSTEM_NAME, link(page, SITE_NEWS_FEED))
 	}
+	// The feed of the releases, the manifest, the guides before and after;
+	// with an address, the canonical address, Open Graph and JSON-LD.
+	site_head_metadata(site, page, &b)
 	section_name := strings.to_lower(site_section_titles[page.section], context.temp_allocator)
 	fmt.sbprintf(&b, "<link rel=\"stylesheet\" href=\"%s\">\n", link(page, SITE_STYLE_SHEET))
 	// The one script of the site: the search. Each page is whole with no script.
@@ -640,9 +694,16 @@ site_check_pages :: proc(pages: []Site_Page, written: map[string]string, files: 
 		folder := page.path[:max(strings.last_index_byte(page.path, '/'), 0)]
 		for attribute in ([]string{"href=\"", "src=\"", "srcset=\""}) {
 			for value in site_attribute_values(html, attribute) {
-				problem := site_link_problem(page.path, folder, value, written, files, ids)
-				if problem != "" {
-					append(&problems, fmt.tprintf("%s: %s%s\": %s", page.path, attribute, value, problem))
+				// A srcset has several candidates: "<file> <width>w, ...".
+				candidates := []string{value}
+				if attribute == "srcset=\"" {
+					candidates = strings.split(value, ",", context.temp_allocator)
+				}
+				for candidate in candidates {
+					problem := site_link_problem(page.path, folder, strings.trim_space(candidate), written, files, ids)
+					if problem != "" {
+						append(&problems, fmt.tprintf("%s: %s%s\": %s", page.path, attribute, value, problem))
+					}
 				}
 			}
 		}
@@ -671,7 +732,22 @@ site_inline_code_problem :: proc(html: string) -> string {
 		}
 		rest = rest[start:]
 		end := strings.index_byte(rest, '>')
-		if end < 0 || !strings.contains(rest[:end], " src=\"") || !strings.has_prefix(rest[end + 1:], "</script>") {
+		if end < 0 {
+			return "a script with code in the page; a script is a file of the site"
+		}
+		// The one script element with text inside: the JSON-LD graph, data
+		// that a browser does not run. Its text has no "<", so it cannot end
+		// the element or open another one.
+		if rest[:end + 1] == SITE_STRUCTURED_DATA_OPEN {
+			inside := rest[end + 1:]
+			close_index := strings.index(inside, SITE_SCRIPT_CLOSE)
+			if close_index < 0 || strings.contains(inside[:close_index], "<") {
+				return "a JSON-LD script with markup inside or with no end"
+			}
+			rest = inside[close_index + len(SITE_SCRIPT_CLOSE):]
+			continue
+		}
+		if !strings.contains(rest[:end], " src=\"") || !strings.has_prefix(rest[end + 1:], SITE_SCRIPT_CLOSE) {
 			return "a script with code in the page; a script is a file of the site"
 		}
 		rest = rest[end + 1:]
