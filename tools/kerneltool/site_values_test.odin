@@ -54,11 +54,19 @@ site_value_kinds_are_complete :: proc(t: ^testing.T) {
 	testing.expect(t, site_contrast_ratio(0x4A9CF0, 0x4A9CF0) < 1.01)
 }
 
-// The icon of each kind is an SVG file: one rect for each run of cells of
-// a row, inside the grid; the style sheet names each file.
+// The icon of each kind is an SVG picture: one rect for each run of cells
+// of a row, inside the grid. The style sheet holds each one once, as a
+// data address, and names no file of icons: a page asks for no file to
+// draw an icon.
 @(test)
-site_value_icon_files :: proc(t: ^testing.T) {
+site_value_icons_in_the_style_sheet :: proc(t: ^testing.T) {
 	sheet := site_style_sheet("")
+	testing.expect(t, !strings.contains(sheet, "pictures/values"), "the style sheet names a file of icons")
+	kind_count := 0
+	for kind in Site_Value_Kind {
+		kind_count += kind == .None ? 0 : 1
+	}
+	testing.expect_value(t, site_style_sheet_icon_count(sheet), kind_count)
 	for kind in Site_Value_Kind {
 		if kind == .None {
 			continue
@@ -76,7 +84,37 @@ site_value_icon_files :: proc(t: ^testing.T) {
 		}
 		testing.expectf(t, strings.count(svg, "<rect ") == runs, "the icon of %v has %d rects for %d runs", kind, strings.count(svg, "<rect "), runs)
 		testing.expect(t, !strings.contains(svg, "x=\"12\"") && !strings.contains(svg, "y=\"12\""))
-		testing.expectf(t, strings.contains(sheet, fmt.tprintf("url(\"%s\")", site_value_icon_file(kind))), "the style sheet does not name the icon of %v", kind)
+		address := site_value_icon_address(kind)
+		testing.expect(t, strings.has_prefix(address, "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'"), address)
+		testing.expectf(t, !strings.contains(address, "<") && !strings.contains(address, ">") && !strings.contains(address, "#") && !strings.contains(address, "\"") && !strings.contains(address, "\n"), "the address of the icon of %v holds a character that ends it: %s", kind, address)
+		testing.expectf(t, strings.count(sheet, fmt.tprintf("--value-icon: url(\"%s\");", address)) == 1, "the style sheet does not hold the icon of %v once", kind)
+	}
+	// The one procedure of the data addresses also writes the grid of
+	// points of the home, as the style sheet held it before.
+	testing.expect_value(t, site_svg_data_address("<rect fill=\"#0a0b0c\"/>\n"), "data:image/svg+xml,%3Crect fill='%230a0b0c'/%3E")
+	testing.expect_value(t, site_svg_data_address("100%"), "data:image/svg+xml,100%25")
+	testing.expect(t, strings.contains(sheet, "background-image: url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24'%3E%3Crect width='2' height='2' fill='%23"))
+}
+
+// An icon of a kind and a bar of the chart of the docs home are graphics:
+// each value kind that a kind of search entry takes has at least the
+// contrast of a graphic on each surface where the list of results and the
+// chart draw it: the background, the card (its top and its bottom: the
+// list and the chart are on a card), and the band of the chosen row.
+@(test)
+site_value_graphics_contrast :: proc(t: ^testing.T) {
+	dark, light := site_dark_colors(), site_light_colors()
+	for kind in Site_Search_Kind {
+		value_kind := site_search_kinds[kind].value_kind
+		testing.expectf(t, value_kind != .None, "the search kind %v has no value kind", kind)
+		for is_light in ([]bool{false, true}) {
+			colors := is_light ? light : dark
+			color := site_value_color(value_kind, is_light)
+			for under in ([]graphics.Color{colors.background, colors.card_top, colors.card_bottom, colors.track}) {
+				ratio := site_contrast_ratio(color, under)
+				testing.expectf(t, ratio >= SITE_VALUE_GRAPHIC_CONTRAST_LEAST, "the search kind %v (%v) on %06x (light form: %v): a contrast of %.2f; at least %.1f", kind, value_kind, u32(under), is_light, ratio, SITE_VALUE_GRAPHIC_CONTRAST_LEAST)
+			}
+		}
 	}
 }
 

@@ -20,6 +20,8 @@ Site_Reference_Entry :: struct {
 	title:  string,
 	what:   string,
 	source: string,
+	count:  int, // The rows of its tables: the docs home shows it.
+	kind:   Site_Value_Kind, // The kind of what its rows name: the docs home shows its icon.
 }
 
 // The kind of a column of a table (docs/SITE.md, "The tables"): it gives the
@@ -329,6 +331,11 @@ site_guides_add :: proc(site: ^Site) -> bool {
 			fmt.eprintfln("kerneltool: site: %s has no title \"# <title>\"", source)
 			return false
 		}
+		// The docs home shows each guide with one line that says what it holds.
+		if about[source] == "" {
+			fmt.eprintfln("kerneltool: site: %s has no row in the table \"## Documents\" of %s: a guide needs its one line of description", source, SITE_README_FILE)
+			return false
+		}
 		append(&site.guides, Site_Guide{source = source, path = site.documents[source], title = title, about = about[source]})
 	}
 	// The headings of every guide before any guide is written: a guide
@@ -440,7 +447,7 @@ site_reference_add :: proc(site: ^Site) -> bool {
 		strings.write_string(&b, "</article>\n")
 		title := site_document_title(content)
 		site_page_add(site, Site_Page{path = glossary_page, title = title, description = site_description_cut(fmt.tprintf("The %d terms of %s: one term for each concept, with its definition and the words that it replaces.", len(site.terms), SITE_SYSTEM_NAME)), section = .Reference, crumbs = site_crumbs(.Reference), body = strings.to_string(b), sources = site_sources("docs/GLOSSARY.md"), layout = .Documentation})
-		append(&entries, Site_Reference_Entry{path = glossary_page, title = title, what = "Each term of the project, with its definition. A term on another page links here.", source = "docs/GLOSSARY.md"})
+		append(&entries, Site_Reference_Entry{path = glossary_page, title = title, what = "Each term of the project, with its definition. A term on another page links here.", source = "docs/GLOSSARY.md", count = len(site.terms), kind = .Term})
 	}
 
 	// The commands of the tool.
@@ -475,14 +482,14 @@ site_reference_add :: proc(site: ^Site) -> bool {
 			site_symbol_write(site, &b, Site_Symbol{id = strings.concatenate({"tool-command-", site_slug(command.name)}, context.temp_allocator), name = command.name, signature = strings.concatenate({"nix develop -c kerneltool ", command.name}, context.temp_allocator), description = command.about, page = path, source = SITE_TOOL_MAIN_FILE, line = line})
 		}
 		site_page_add(site, Site_Page{path = path, title = "Commands of kerneltool", description = site_description_cut(fmt.tprintf("The %d commands of kerneltool, the one tool of the project: the build, the machine tests, the pictures, the changelog and the site.", len(commands))), section = .Reference, crumbs = site_crumbs(.Reference), body = strings.to_string(b), sources = site_sources(SITE_TOOL_MAIN_FILE), layout = .Documentation})
-		append(&entries, Site_Reference_Entry{path = path, title = "Commands of kerneltool", what = "Each command of the tool of the project, with what it does.", source = SITE_TOOL_MAIN_FILE})
+		append(&entries, Site_Reference_Entry{path = path, title = "Commands of kerneltool", what = "Each command of the tool of the project, with what it does.", source = SITE_TOOL_MAIN_FILE, count = len(commands), kind = .Command})
 	}
 
 	// The measured numbers.
 	{
 		path := site_page_file(SITE_NUMBERS_FOLDER)
 		site_page_add(site, Site_Page{path = path, title = "Measured numbers", description = site_description_cut(fmt.tprintf("%d numbers that the machine tests of %s printed, each quoted whole from its log with its conditions.", len(site.measured), SITE_SYSTEM_NAME)), section = .Reference, crumbs = site_crumbs(.Reference), body = site_numbers_body(site), sources = site_sources("tools/kerneltool/site.odin"), layout = .Documentation})
-		append(&entries, Site_Reference_Entry{path = path, title = "Measured numbers", what = "Each number that the machine tests print, with its log and its conditions.", source = MEASURE_RECORD_FILE})
+		append(&entries, Site_Reference_Entry{path = path, title = "Measured numbers", what = "Each number that the machine tests print, with its log and its conditions.", source = MEASURE_RECORD_FILE, count = len(site.measured), kind = .Number})
 	}
 
 	// The licenses.
@@ -496,7 +503,7 @@ site_reference_add :: proc(site: ^Site) -> bool {
 		site_license_table(site, &b, "What builds and tests it", site.licenses.build_rows, build_ids)
 		site_source_line(site, &b, SITE_LICENSE_FILE, SITE_FONT_FOLDER, SITE_SPLEEN_LICENSE_FILE, SITE_POSY_MANIFEST, SITE_SYSTEM_POINTER_MANIFEST, SITE_ODIN_LICENSE_FILE, SITE_FIAT_LICENSE_FILE, CRYPTOGRAPHY_MANIFEST, SITE_PORTRAIT_LICENSE_FILE, SITE_FLAKE_FILE, SITE_FLAKE_LOCK_FILE)
 		site_page_add(site, Site_Page{path = path, title = "Licenses", description = site_description_cut(fmt.tprintf("The license of %s and of each part that it holds or uses: %d rows, and %d tools that build and test it.", SITE_SYSTEM_NAME, len(site.licenses.system_rows), len(site.licenses.build_rows))), section = .Reference, crumbs = site_crumbs(.Reference), body = strings.to_string(b), sources = site_sources(SITE_LICENSE_FILE, SITE_FLAKE_FILE), layout = .Documentation})
-		append(&entries, Site_Reference_Entry{path = path, title = "Licenses", what = "The license, the author, the version and the place of each part of the system and of each tool of its build.", source = SITE_FLAKE_FILE})
+		append(&entries, Site_Reference_Entry{path = path, title = "Licenses", what = "The license, the author, the version and the place of each part of the system and of each tool of its build.", source = SITE_FLAKE_FILE, count = len(site.licenses.system_rows) + len(site.licenses.build_rows), kind = .Grant})
 	}
 
 	// The tables generated from the code, and the pages of the modules.
