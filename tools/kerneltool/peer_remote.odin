@@ -39,6 +39,10 @@ import cryptography_module "../../modules/cryptography"
 
 PEER_REMOTE_PORT_FIRST :: 43000 // The local UDP port of the first connection of the peer to `remote`; one more for each next one.
 PEER_REMOTE_REUSE_LIMIT :: 20 * time.Second
+// On the clock of the host: the case "silence" waits at most this long for
+// a quiet connection; a quiet connection needs one round trip and the delay
+// of an acknowledgement (25 ms).
+PEER_REMOTE_QUIET_LIMIT :: 10 * time.Second
 // The calls that the peer holds at one time: the calls at once of one
 // connection, and the calls that wait for a stream.
 PEER_REMOTE_CALLS :: 2 * remote.CALLS_AT_ONCE
@@ -125,6 +129,11 @@ Peer_Remote :: struct {
 	lose:             int, // The next datagrams of `remote` to the host that the peer drops: the test of a lost datagram.
 	lost:             int,
 	silent:           bool, // The peer drops each datagram of the connection, both ways: the test of a lost connection.
+	// The case "silence" asks for the silence; the thread of the peer
+	// starts it only when the connection is quiet (peer_remote_quiet), so
+	// that `remote` holds no stream of it and the record can end only by
+	// its idle bound.
+	silence_wanted:   bool,
 	stranger_answers: int, // Datagrams of `remote` to an address that its grant does not admit: there must be none.
 	// The socket of the calls of the tool (call_socket_linux.odin).
 	listener:         linux.Fd,
@@ -554,6 +563,40 @@ peer_remote_tick :: proc(peer: ^Peer) {
 	if quic.connection_deadline(client) <= now {
 		quic.connection_time_passes(client, now)
 	}
+	// After the sends of this tick: the last acknowledgement of the client
+	// went before the silence.
+	if state.silence_wanted && peer_remote_quiet(state) {
+		state.silent = true
+		state.silence_wanted = false
+	}
+}
+
+// peer_remote_quiet says if the connection holds nothing that `remote`
+// waits for: no call, no stream record of the client in use (each one
+// frees when the client read the end of `remote` and `remote` acknowledged
+// the end of the client), and no acknowledgement that the client owes. The
+// acknowledgement of the end of the last answer is then sent, so `remote`
+// frees its stream record too: with the peer silent from then on, its
+// record can end only at its idle bound, not by a bound of a stream (an
+// answer that the host does not acknowledge is reset 10 s after the call,
+// and the connection closed 10 s after that). The lock is held.
+@(private = "file")
+peer_remote_quiet :: proc(state: ^Peer_Remote) -> bool {
+	client := &state.client
+	if !state.active || client.state != .Connected || client.spaces[.Application].ack_needed {
+		return false
+	}
+	for &call in state.calls {
+		if call.state == .Submitted || call.state == .Open {
+			return false
+		}
+	}
+	for &stream in client.streams {
+		if stream.in_use {
+			return false
+		}
+	}
+	return true
 }
 
 // peer_remote_socket_start takes the socket of the calls of the tool, in
@@ -883,9 +926,27 @@ remote_case_run :: proc(machine: ^Machine, name: string) -> (passed: bool, resul
 		return true, "an Initial from 198.51.100.7, which the grant does not admit, got nothing; the call of the host after it got its answer"
 	case "silence":
 		sync.mutex_lock(&state.lock)
-		state.silent = true
+		state.silence_wanted = true
 		sync.mutex_unlock(&state.lock)
-		return true, "the peer drops each datagram of its connection to remote, both ways"
+		// The bound is on the clock of the host: it only ends a case whose
+		// connection never becomes quiet.
+		start := time.tick_now()
+		for {
+			sync.mutex_lock(&state.lock)
+			silent, active := state.silent, state.active
+			sync.mutex_unlock(&state.lock)
+			if silent {
+				break
+			}
+			if !active || time.tick_since(start) > PEER_REMOTE_QUIET_LIMIT {
+				sync.mutex_lock(&state.lock)
+				state.silence_wanted = false
+				sync.mutex_unlock(&state.lock)
+				return false, fmt.tprintf("the connection to remote did not become quiet (no call, no stream, no acknowledgement owed) in %v: the silence would not test the idle bound alone", PEER_REMOTE_QUIET_LIMIT)
+			}
+			time.sleep(5 * time.Millisecond)
+		}
+		return true, "the connection was quiet (no call, no stream, no acknowledgement owed); the peer now drops each datagram of it, both ways"
 	case "silence ends":
 		sync.mutex_lock(&state.lock)
 		state.silent = false
