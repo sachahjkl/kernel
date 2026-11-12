@@ -194,6 +194,10 @@ Processor :: struct {
 	program_mapping_report: op.Program_Mapping_Report,
 	thread_table_report:    op.Thread_Table_Report,
 	stop_report:            op.Stop_Report,
+	// The extended state area that a Thread_Control on this processor
+	// writes: copied from the caller once, checked here, then copied to the
+	// thread, so the caller cannot change it between the check and the use.
+	extended_state_written: Extended_State_Area,
 	segments:      [7]u64,
 	task_state:    Task_State,
 }

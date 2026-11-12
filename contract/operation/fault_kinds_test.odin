@@ -49,8 +49,9 @@ the_class_of_each_vector :: proc(t: ^testing.T) {
 	}
 }
 
-// Resume: the traps and the page fault only. Every other delivered fault
-// runs the same instruction on the same registers again.
+// Resume with no write of the registers: the traps and the page fault only.
+// Every other delivered fault runs the same instruction on the same
+// registers again.
 @(test)
 the_kinds_that_resume :: proc(t: ^testing.T) {
 	for kind in Fault_Kind {
