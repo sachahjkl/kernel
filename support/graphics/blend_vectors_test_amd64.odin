@@ -328,14 +328,16 @@ premultiplied_forms_meet_each_channel_value :: proc(t: ^testing.T) {
 // glyph_in_form draws one glyph as character_vector_with does, with the
 // rows blended in one form: the choice of the program does not decide here.
 @(private = "file")
-glyph_in_form :: proc(form: Blend_Form, cache: ^glyph_cache.Cache, table: ^[4096]u8, order: Subpixel_Order, canvas: Canvas, x, y: int, value: u8, color: Color, scale: int) {
-	size, entry, found := glyph_cache.glyph(cache, value, scale)
+glyph_in_form :: proc(form: Blend_Form, cache: ^glyph_cache.Cache, table: ^[4096]u8, order: Subpixel_Order, canvas: Canvas, x, y: int, value: u8, color: Color, scale: int, position := 0) {
+	_, entry, found := glyph_cache.glyph_at_position(cache, value, scale, position)
 	if !found || entry.row_count == 0 {
 		return
 	}
-	width := int(size.cell_width)
-	first_column := max(0, -x)
-	last_column := min(width, canvas.width - x)
+	// The words of a row start at the column left of the origin.
+	column_x := x + int(entry.left)
+	width := int(entry.width)
+	first_column := max(0, -column_x)
+	last_column := min(width, canvas.width - column_x)
 	first_row := max(0, -(y + int(entry.first_row)))
 	last_row := min(int(entry.row_count), canvas.height - y - int(entry.first_row))
 	if first_column >= last_column || first_row >= last_row {
@@ -343,7 +345,7 @@ glyph_in_form :: proc(form: Blend_Form, cache: ^glyph_cache.Cache, table: ^[4096
 	}
 	words := raw_data(cache.words[entry.word_offset:])
 	for row in first_row ..< last_row {
-		line := canvas.pixels[(y + int(entry.first_row) + row) * canvas.stride + x:]
+		line := canvas.pixels[(y + int(entry.first_row) + row) * canvas.stride + column_x:]
 		coverage_row_in_form(form, line, words[row * width:], first_column, last_column, color, order, table)
 	}
 }
@@ -404,5 +406,182 @@ glyph_draw_cost_of_each_form :: proc(t: ^testing.T) {
 			glyph_in_form(form, &cache, &table, .Red_Green_Blue, canvas, 8, 8, sample[index % len(sample)], COLOR_TEXT, 1)
 		}
 		fmt.printfln("graphics: one glyph from the glyph cache on the host, the %v form: %v ns", form, time.duration_nanoseconds(time.tick_since(start)) / REPEAT)
+	}
+}
+
+// The glyph caches of the system: Paper Mono with the grid fit at the
+// three scales, its SemiBold at scale 1, and B612 with its positions (a
+// proportional cache: left sides other than 0, glyphs that overlap).
+@(private = "file")
+Test_Cache :: struct {
+	name:  string,
+	words: []u64,
+	cache: glyph_cache.Cache,
+}
+
+@(private = "file")
+test_caches_build :: proc(t: ^testing.T) -> (caches: [3]Test_Cache) {
+	memory := new(vector_font.Render_Memory)
+	defer free(memory)
+	Source :: struct {
+		name:         string,
+		bytes:        []u8,
+		scale_count:  int,
+		proportional: bool,
+	}
+	sources := [3]Source {
+		{"paper_mono", #load("../../resources/fonts/paper_mono.ttf"), 3, false},
+		{"paper_mono_semibold", #load("../../resources/fonts/paper_mono_semibold.ttf"), 1, false},
+		{"b612", #load("../../resources/fonts/b612.ttf"), 3, true},
+	}
+	positions := [3]int{3, 1, 1}
+	for source, index in sources {
+		font, problem := vector_font.font_open(source.bytes)
+		testing.expect_value(t, problem, vector_font.Font_Problem.None)
+		limit := source.proportional ? vector_font.PROPORTIONAL_GLYPH_CACHE_LIMIT : vector_font.GLYPH_CACHE_LIMIT
+		caches[index].name = source.name
+		caches[index].words = make([]u64, limit / 8)
+		file := ([^]u8)(raw_data(caches[index].words))[:limit]
+		size: int
+		if source.proportional {
+			size, problem = vector_font.glyph_cache_build_proportional(&font, source.bytes, source.name, true, memory, file, positions[:])
+		} else {
+			size, problem = vector_font.glyph_cache_build(&font, source.bytes, source.name, true, memory, file, source.scale_count)
+		}
+		testing.expect_value(t, problem, vector_font.Font_Problem.None)
+		refused: glyph_cache.Problem
+		caches[index].cache, refused = glyph_cache.validate(file[:size])
+		testing.expect_value(t, refused.kind, glyph_cache.Problem_Kind.None)
+	}
+	return caches
+}
+
+// The three blends of a glyph give the same bytes: the table blend of the
+// programs (character_vector_with, with its fallback in the form of the
+// target), the SSE2 form alone and the scalar form alone. For each cache of
+// the system, each scale that it has, each order of the stripes, three
+// colors, over a flat color, the gradient of a card, a gradient across and
+// noise, in two passes (the second over the first). The glyphs are 6
+// pixels apart for each scale, so the glyphs of B612 overlap. The positions
+// 1 and 2 of B612 compare the SSE2 form with the scalar form only: the
+// table blend draws the position 0 (the draw of placed glyphs is a later
+// step).
+@(test)
+three_blends_give_the_same_bytes_for_each_cache :: proc(t: ^testing.T) {
+	caches := test_caches_build(t)
+	defer for item in caches {
+		delete(item.words)
+	}
+	table: [4096]u8
+	square_root_table_fill(&table)
+	tables := new(Blend_Tables)
+	defer free(tables)
+	WIDTH :: 6 * 3 * 96 + 64
+	HEIGHT :: 48
+	drawn: [3][]Color
+	for &pixels in drawn {
+		pixels = make([]Color, WIDTH * HEIGHT)
+	}
+	defer for pixels in drawn {
+		delete(pixels)
+	}
+	canvases: [3]Canvas
+	for pixels, index in drawn {
+		canvases[index] = {pixels = raw_data(pixels), width = WIDTH, height = HEIGHT, stride = WIDTH}
+	}
+	colors := [?]Color{COLOR_TEXT, COLOR_PROGRAM, COLOR_WHITE}
+	differences: [2]int // The table blend, then the SSE2 form, against the scalar form.
+	for &item in caches {
+		for scale in 1 ..= len(item.cache.sizes) {
+			position_count := int(item.cache.sizes[scale - 1].position_count)
+			for position in 0 ..< position_count {
+				for background in Speed_Background {
+					for order in Subpixel_Order {
+						for color in colors {
+							for canvas in canvases {
+								background_fill(canvas, background)
+							}
+							for _ in 0 ..< 2 {
+								for character in 32 ..< 127 {
+									x := 8 + (character - 32) * 6 * scale
+									value := u8(character)
+									glyph_in_form(.Scalar, &item.cache, &table, order, canvases[0], x, 0, value, color, scale, position)
+									glyph_in_form(.Sse2, &item.cache, &table, order, canvases[1], x, 0, value, color, scale, position)
+									if position == 0 {
+										character_vector_with(&item.cache, &table, tables, order, canvases[2], x, 0, value, color, scale)
+									}
+								}
+							}
+							for pixel, index in drawn[0] {
+								if position == 0 && drawn[2][index] != pixel {
+									differences[0] += 1
+								}
+								if drawn[1][index] != pixel {
+									differences[1] += 1
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+		testing.expectf(t, differences == [2]int{}, "%s: the table blend differs from the scalar form in %v pixels, the SSE2 form in %v", item.name, differences[0], differences[1])
+		fmt.printfln("graphics: %s: the table blend, the SSE2 form and the scalar form: %v and %v pixels differ", item.name, differences[0], differences[1])
+		differences = {}
+	}
+}
+
+// The time of one glyph at scale 1 of Paper Mono in each blend, over a
+// flat color, a gradient across and noise, on the host: run with `taskset
+// -c N` and -o:speed, the least of SPEED_BATCHES batches of one line (as
+// text_speed_parts). The table blend is the path of the programs; the SSE2
+// form alone and the scalar form alone draw each row with that form.
+@(test)
+text_speed_of_each_blend :: proc(t: ^testing.T) {
+	caches := test_caches_build(t)
+	defer for item in caches {
+		delete(item.words)
+	}
+	Blend_Speed_Data :: struct {
+		cache:  ^glyph_cache.Cache,
+		table:  [4096]u8,
+		tables: Blend_Tables,
+		form:   Blend_Form,
+	}
+	data := new(Blend_Speed_Data)
+	defer free(data)
+	data.cache = &caches[0].cache
+	square_root_table_fill(&data.table)
+	pixels := make([]Color, 640 * 48)
+	defer delete(pixels)
+	canvas := Canvas{pixels = raw_data(pixels), width = 640, height = 48, stride = 640}
+	SAMPLE :: "compositor  12.4 ms  2 418 pages {fill} [rings] gi Rb 0O 1lI"
+	#assert(len(SAMPLE) == SPEED_GLYPHS)
+	least_of :: proc(canvas: Canvas, background: Speed_Background, data: ^Blend_Speed_Data, tables: bool) -> f64 {
+		least := max(i64)
+		text := SAMPLE
+		for _ in 0 ..< SPEED_BATCHES {
+			background_fill(canvas, background) // Not in the time.
+			start := time.tick_now()
+			for index in 0 ..< SPEED_GLYPHS {
+				if tables {
+					character_vector_with(data.cache, &data.table, &data.tables, .Red_Green_Blue, canvas, 8 * index, 8, text[index], COLOR_TEXT, 1)
+				} else {
+					glyph_in_form(data.form, data.cache, &data.table, .Red_Green_Blue, canvas, 8 * index, 8, text[index], COLOR_TEXT, 1)
+				}
+			}
+			least = min(least, time.duration_nanoseconds(time.tick_since(start)))
+		}
+		return f64(least) / SPEED_GLYPHS
+	}
+	backgrounds := [3]Speed_Background{.Flat, .Across, .Noise}
+	for background in backgrounds {
+		data.tables = {}
+		with_tables := least_of(canvas, background, data, true)
+		data.form = .Sse2
+		sse2 := least_of(canvas, background, data, false)
+		data.form = .Scalar
+		scalar := least_of(canvas, background, data, false)
+		fmt.printfln("graphics: one glyph of paper_mono at scale 1 over %v: the table blend %.1f ns, the SSE2 form %.1f ns, the scalar form %.1f ns", background, with_tables, sse2, scalar)
 	}
 }

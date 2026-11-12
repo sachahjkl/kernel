@@ -6,9 +6,17 @@
 // root service names the grant; the program cannot choose another one
 // (property 20, lines 3 and 11: no ambient network, no global port names).
 //
-//   a datagram endpoint  UDP: the one remote address and remote UDP port
-//                        that the program reaches. The network service
-//                        gives the local port and writes the UDP header.
+//   a datagram endpoint  UDP: a client grant names the one remote address
+//                        and remote UDP port that the program reaches; the
+//                        network service gives the local port and writes the
+//                        UDP header. A listen grant names one local UDP
+//                        port, and answers only the admitted remotes: each
+//                        remote that sent a datagram of LISTEN_FIRST_LEAST
+//                        bytes at least to that port, ADMITTED_CAPACITY at
+//                        most, until the program releases it (a QUIC
+//                        server: docs/QUIC.md, section 6). To a remote that
+//                        the program did not validate, it sends at most 3
+//                        times the bytes that came from that remote.
 //   a segment endpoint   TCP: the program writes and reads whole segments
 //                        (support/tcp); the network service writes the IPv4
 //                        header and keeps no state of a connection. A client
@@ -58,6 +66,11 @@ SEGMENT_LIMIT :: 1480 // The bytes of one segment, with its TCP header: one fram
 SEGMENT_LEAST :: 20 // A TCP header with no option.
 PORT_BLOCK :: 64 // The local TCP ports of a client grant.
 ADMITTED_CAPACITY :: 64 // The admitted remotes of a listen grant.
+// The least bytes of a datagram that admits a new remote to a UDP listen
+// port. The protocol that listens over UDP, QUIC, starts each connection
+// with a datagram of 1200 bytes at least (RFC 9000, section 14.1): a
+// shorter datagram of an unknown remote takes no place of the table.
+LISTEN_FIRST_LEAST :: 1200
 
 REGION_PAGES :: 128 // The datagram region: 512 KiB.
 
@@ -117,11 +130,22 @@ Command :: enum u32 {
 	// that no endpoint owns (scope Machine). It never gives a row of another
 	// endpoint. The completion has the count of the full table in values[0].
 	Problems   = 7,
-	// A listen grant: values[0], values[1]: the address and the TCP port of
-	// an admitted remote, whose connection ended. The network service
-	// forgets it: a segment to it is refused until it sends one again. The
-	// completion: values[0] 1 if the remote was admitted, else 0.
+	// A listen grant: values[0], values[1]: the address and the port of an
+	// admitted remote, whose connection ended or that the program refused.
+	// The network service forgets it: a segment or a datagram to it is
+	// refused until it is admitted again. The completion: values[0] 1 if the
+	// remote was admitted, else 0.
 	Release    = 8,
+	// A UDP listen grant: values[0], values[1]: the address and the port of
+	// an admitted remote that proved its address to the program (a QUIC
+	// server: a token of its Retry). Until then, the network service sends
+	// to that remote at most 3 times the bytes that came from it (status
+	// Amplification). A program that validates each remote removes that
+	// limit for the remotes that sent to it; it still reaches no address
+	// that did not send it a datagram, and a remote with no datagram for
+	// 120 s loses its place. The completion: values[0] 1 if the remote was
+	// admitted, else 0.
+	Validate   = 9,
 }
 
 // The status of a request: the kind of its completion record. When it is
@@ -142,6 +166,11 @@ Status :: enum u32 {
 	No_Answer    = 6, // No_Answer: value the address, limit the milliseconds waited, found what did not answer.
 	Link_Down    = 7, // Link_Down.
 	Busy         = 8, // Busy, unit Requests: too many requests of this kind in flight. limit: the most.
+	// Over_Limit, unit Bytes: a Send of a UDP listen grant to a remote that
+	// is not validated would pass 3 times the bytes that came from it.
+	// value: the bytes that the remote would have received; limit: 3 times
+	// the bytes that came from it.
+	Amplification = 9,
 }
 
 // The command of the control ring, from the root service to the network
@@ -186,7 +215,7 @@ Problem_Kind :: enum u8 {
 	Unsupported  = 5, // A field that names something that the network service does not do. value: the field.
 	No_Endpoint  = 6, // A datagram to a local port of no endpoint. value: the port.
 	Not_Granted  = 7, // A datagram from a remote that the grant of the endpoint does not name. value: the remote port; limit: the port of the grant.
-	Full         = 8, // A segment from a new remote when the admitted remotes of a listen grant are full. value: the remote port; limit: the capacity.
+	Full         = 8, // A segment or a datagram from a new remote when the admitted remotes of a listen grant are full. value: the remote port; limit: the capacity.
 }
 
 // The error of one frame: a record, not a number. Zero is no problem.
@@ -221,12 +250,12 @@ Problem_Row :: struct {
 // facts of all programs already.
 GRANT_INSPECT :: u64(1) << 48
 GRANT_TCP :: u64(1) << 49 // A segment endpoint.
-GRANT_LISTEN :: u64(1) << 50 // A listen grant: the port is the local TCP port, and no remote is named.
+GRANT_LISTEN :: u64(1) << 50 // A listen grant: the port is the local TCP or UDP port, and no remote is named.
 
 // The grant of an endpoint.
 Grant :: struct {
 	address: u32, // The remote address. 0 with a listen grant.
-	port:    u16, // The remote port; with a listen grant, the local TCP port.
+	port:    u16, // The remote port; with a listen grant, the local TCP or UDP port.
 	inspect: bool,
 	tcp:     bool,
 	listen:  bool,
@@ -270,6 +299,7 @@ COMMAND_NAMES := [Command]string {
 	.Statistics = "Statistics",
 	.Problems = "Problems",
 	.Release = "Release",
+	.Validate = "Validate",
 }
 
 command_name :: proc "contextless" (command: i64) -> string {
@@ -297,7 +327,7 @@ argument_name :: proc "contextless" (command: i64, argument: i64) -> string {
 	case .Problems:
 		names := [?]string{"place", "room"}
 		return argument <= len(names) ? names[argument - 1] : ""
-	case .Release:
+	case .Release, .Validate:
 		names := [?]string{"address", "port"}
 		return argument <= len(names) ? names[argument - 1] : ""
 	}

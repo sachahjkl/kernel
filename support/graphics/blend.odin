@@ -170,3 +170,144 @@ blend_coverage_row_in_order :: #force_inline proc "contextless" (line: [^]Color,
 		line[column] = channel(under_red, under_red * under_red, color_red, red_square, red, square_root) << 16 | channel(under_green, under_green * under_green, color_green, green_square, green, square_root) << 8 | channel(under_blue, under_blue * under_blue, color_blue, blue_square, blue, square_root)
 	}
 }
+
+// The fast form of the blend for text over a pixel of one flat color (the
+// cards, the console): for one text color over one pixel color, the result
+// of a channel is a function of its coverage only. A blend table keeps it
+// for each coverage, computed on first use with the formula of
+// blend_coverage_row, so a pixel is three loads and a store, and its value
+// is the value of the reference, bit for bit (host test
+// fast_blend_is_the_reference).
+//
+// The choice is made for each row of a glyph: a row whose two end pixels
+// have one color takes the table of that color, and each pixel of the row
+// with that color under it uses the table; another pixel, or a row over a
+// gradient across or a picture, takes the reference blend.
+//
+// The tables are in the memory of the caller (Blend_Tables, in the text
+// state of the program). A new table clears nothing: it takes a new
+// generation, and a value of another generation is computed again.
+
+// Blend_Table: the results for one text color over one pixel color. Each
+// value has its generation in the high byte; red is already shifted by 16,
+// green by 8.
+Blend_Table :: struct {
+	color, under: Color,
+	generation:   u32, // 1 to 255; 0: the table holds nothing.
+	channels:     [3][256]u32,
+}
+
+BLEND_TABLE_COUNT :: 8
+
+// Blend_Tables: a few tables, the one replaced next in turn. All zero is
+// valid: no table yet.
+Blend_Tables :: struct {
+	tables: [BLEND_TABLE_COUNT]Blend_Table,
+	next:   int,
+	last:   int, // The table that the last search found.
+	made:   u64, // Tables made since the start: a measure.
+}
+
+// blend_table_of gives the table of a text color over a pixel color; it
+// makes it when no table has the pair.
+blend_table_of :: proc "contextless" (tables: ^Blend_Tables, color, under: Color) -> ^Blend_Table #no_bounds_check {
+	last := &tables.tables[tables.last]
+	if last.generation != 0 && last.under == under && last.color == color {
+		return last
+	}
+	for &table, index in tables.tables {
+		if table.generation != 0 && table.under == under && table.color == color {
+			tables.last = index
+			return &table
+		}
+	}
+	index := tables.next
+	tables.next = (tables.next + 1) % BLEND_TABLE_COUNT
+	table := &tables.tables[index]
+	table.color, table.under = color, under
+	table.generation += 1
+	if table.generation > 255 {
+		// Each value of an old generation can have the number 1: clear.
+		for &channel in table.channels {
+			channel = {}
+		}
+		table.generation = 1
+	}
+	tables.last = index
+	tables.made += 1
+	return table
+}
+
+// blend_glyph_rows draws the rows of a glyph with the fast blend: the same
+// pixels as blend_coverage_row for each row.
+blend_glyph_rows :: proc "contextless" (canvas_row: [^]Color, stride: int, words: [^]u32, width, first_row, last_row, first, last: int, color: Color, order: Subpixel_Order, square_root: ^[4096]u8, tables: ^Blend_Tables) {
+	switch order {
+	case .Red_Green_Blue:
+		blend_glyph_rows_in_order(canvas_row, stride, words, width, first_row, last_row, first, last, color, .Red_Green_Blue, square_root, tables)
+	case .Blue_Green_Red:
+		blend_glyph_rows_in_order(canvas_row, stride, words, width, first_row, last_row, first, last, color, .Blue_Green_Red, square_root, tables)
+	case .None:
+		blend_glyph_rows_in_order(canvas_row, stride, words, width, first_row, last_row, first, last, color, .None, square_root, tables)
+	}
+}
+
+@(private)
+blend_glyph_rows_in_order :: #force_inline proc "contextless" (canvas_row: [^]Color, stride: int, words: [^]u32, width, first_row, last_row, first, last: int, color: Color, $ORDER: Subpixel_Order, square_root: ^[4096]u8, tables: ^Blend_Tables) #no_bounds_check {
+	for row in first_row ..< last_row {
+		line := canvas_row[row * stride:]
+		row_words := words[row * width:]
+		under := line[first]
+		if line[last - 1] != under {
+			// A row over a gradient across or a picture: no table holds it;
+			// the form of the target (SSE2 on amd64), the same bytes.
+			blend_coverage_row_in_form_of_target(line, row_words, first, last, color, ORDER, square_root)
+			continue
+		}
+		table := blend_table_of(tables, color, under)
+		generation := table.generation << 24
+		red_values, green_values, blue_values := &table.channels[0], &table.channels[1], &table.channels[2]
+		under_red, under_green, under_blue := under >> 16 & 0xFF, under >> 8 & 0xFF, under & 0xFF
+		color_red, color_green, color_blue := color >> 16 & 0xFF, color >> 8 & 0xFF, color & 0xFF
+		// A value of the table, computed on first use with the formula of
+		// the reference blend.
+		value_of :: #force_inline proc "contextless" (values: ^[256]u32, coverage, generation, under, front: u32, $SHIFT: uint, square_root: ^[4096]u8) -> u32 #no_bounds_check {
+			value := values[coverage]
+			if value & 0xFF000000 != generation {
+				result: u32
+				switch coverage {
+				case 0:
+					result = under
+				case 255:
+					result = front
+				case:
+					result = u32(square_root[(under * under * (255 - coverage) + front * front * coverage) >> 12])
+				}
+				value = result << SHIFT | generation
+				values[coverage] = value
+			}
+			return value
+		}
+		for column in first ..< last {
+			word := row_words[column]
+			if word == 0 {
+				continue
+			}
+			if line[column] != under {
+				// One pixel: the SSE2 form works on groups of four and
+				// gives a lone pixel to this scalar form anyway.
+				blend_coverage_row_in_order(line, row_words, column, column + 1, color, ORDER, square_root)
+				continue
+			}
+			red, green, blue: u32
+			when ORDER == .Red_Green_Blue {
+				red, green, blue = word >> 16 & 0xFF, word >> 8 & 0xFF, word & 0xFF
+			} else when ORDER == .Blue_Green_Red {
+				red, green, blue = word & 0xFF, word >> 8 & 0xFF, word >> 16 & 0xFF
+			} else {
+				red = word >> 24
+				green, blue = red, red
+			}
+			line[column] = (value_of(red_values, red, generation, under_red, color_red, 16, square_root) | value_of(green_values, green, generation, under_green, color_green, 8, square_root) | value_of(blue_values, blue, generation, under_blue, color_blue, 0, square_root)) & 0x00FFFFFF
+		}
+	}
+}

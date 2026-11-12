@@ -10,8 +10,10 @@ package compositor
 // there. An animated shape wakes the compositor at the time of its next
 // frame, and only while it shows.
 
+import op "contract:operation"
 import "contract:pointer_pictures"
 import "contract:ring"
+import "contract:settings"
 import "support:bar"
 import "support:graphics"
 import "support:system"
@@ -19,6 +21,9 @@ import "support:system"
 // The values of the context that give the theme file, mapped read-only.
 VALUE_POINTER_THEME_ADDRESS :: 6
 VALUE_POINTER_THEME_SIZE :: 7
+// The places of the address and the size of each theme: the second one is
+// at the values that contract:operation names for it.
+POINTER_THEME_VALUES := [2][2]int{{VALUE_POINTER_THEME_ADDRESS, VALUE_POINTER_THEME_SIZE}, {op.CONTEXT_VALUE_SECOND_POINTER_THEME_ADDRESS, op.CONTEXT_VALUE_SECOND_POINTER_THEME_SIZE}}
 // The nominal size that the compositor asks: the smallest size of the theme
 // that is at least this one. 24 for the theme of the system, 32 for the
 // theme of the owner (the smallest size that it has).
@@ -56,31 +61,67 @@ pointer_drawn_valid: bool
 pointer_measure_frames, pointer_measure_time, pointer_measure_longest: u64
 pointer_frame_time: u64
 
-// pointer_theme_open maps nothing: the root service mapped the file. It
-// validates the file once; a file that is not valid is not used.
+// The themes that the root service gives, in the order of
+// pointer_pictures.RESOURCE_PREFERENCE: each one validated once, or nil.
+// The setting "pointer_theme" chooses one (pointer_theme_choose).
+pointer_themes: [len(pointer_pictures.RESOURCE_PREFERENCE)][]u8
+
+// pointer_theme_open maps nothing: the root service mapped the files, the
+// first one at the values 6 and 7, the second at the values that
+// contract:operation names for it. It validates
+// each file once; a file that is not valid is not used.
 pointer_theme_open :: proc "contextless" (ctx: ^system.Context) {
-	address := ctx.values[VALUE_POINTER_THEME_ADDRESS]
-	size := ctx.values[VALUE_POINTER_THEME_SIZE]
-	if address == 0 || size == 0 {
+	for &theme, index in pointer_themes {
+		address := ctx.values[POINTER_THEME_VALUES[index][0]]
+		size := ctx.values[POINTER_THEME_VALUES[index][1]]
+		if address == 0 || size == 0 {
+			continue
+		}
+		file := ([^]u8)(uintptr(address))[:size]
+		start := system.nanoseconds()
+		problem := pointer_pictures.validate(file)
+		spent := system.nanoseconds() - start
+		if problem.kind != .None {
+			buffer: [256]u8
+			system.log_in("surfaces", .Warning, "compositor: the pointer theme file ", pointer_pictures.RESOURCE_PREFERENCE[index], " is not valid, not used: ", pointer_pictures.sentence(problem, buffer[:]))
+			continue
+		}
+		theme = file
+		head := pointer_pictures.header(file)
+		system.log_in("surfaces", .Info, "compositor: the pointer theme ", pointer_pictures.text_of(head.theme_name[:]), " (", pointer_pictures.text_of(head.license[:]), "): ", u64(head.shape_count), " shapes, ", u64(head.picture_count), " pictures, ", size, " bytes, validated in ", spent / 1000, " us")
+	}
+	pointer_theme_choose(.Of_The_Owner)
+	if pointer_theme == nil {
 		system.log_in("surfaces", .Warning, "compositor: no pointer theme: the arrow of squares")
 		pointer_update(0)
 		return
 	}
-	file := ([^]u8)(uintptr(address))[:size]
-	start := system.nanoseconds()
-	problem := pointer_pictures.validate(file)
-	spent := system.nanoseconds() - start
-	if problem.kind != .None {
-		buffer: [256]u8
-		system.log_in("surfaces", .Warning, "compositor: the pointer theme file is not valid, not used: ", pointer_pictures.sentence(problem, buffer[:]))
-		pointer_update(0)
+	pointer_blend_measure()
+}
+
+// pointer_theme_choose takes the theme of the setting: the first theme of
+// the list that the root service gave (the theme of the owner when the
+// boot image has it), or the theme of the system. It draws the pointer
+// again with it.
+pointer_theme_choose :: proc "contextless" (setting: settings.Pointer_Theme) {
+	chosen: []u8
+	if setting == .Of_The_System {
+		chosen = pointer_themes[len(pointer_themes) - 1]
+	}
+	for theme in pointer_themes {
+		if chosen == nil {
+			chosen = theme
+		}
+	}
+	if raw_data(chosen) == raw_data(pointer_theme) && len(chosen) == len(pointer_theme) {
 		return
 	}
-	pointer_theme = file
-	head := pointer_pictures.header(file)
-	system.log_in("surfaces", .Info, "compositor: the pointer theme ", pointer_pictures.text_of(head.theme_name[:]), " (", pointer_pictures.text_of(head.license[:]), "): ", u64(head.shape_count), " shapes, ", u64(head.picture_count), " pictures, ", size, " bytes, validated in ", spent / 1000, " us")
+	pointer_theme = chosen
+	pointer_drawn_valid = false // The next update chooses its picture in the new theme.
 	pointer_update(0)
-	pointer_blend_measure()
+	if chosen != nil {
+		system.log_in("surfaces", .Info, "compositor: the pointer theme in use: ", pointer_pictures.text_of(pointer_pictures.header(chosen).theme_name[:]))
+	}
 }
 
 // pointer_shape_under gives the shape for what is under the pointer.

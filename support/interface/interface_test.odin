@@ -958,7 +958,7 @@ line_hostile_values :: proc(t: ^testing.T) {
 	// A thickness past the limit is cut to it.
 	draw_line(&table, 0, 0, 10, 0, 1000, 0xFFFFFF)
 	testing.expect_value(t, table.record_count, 1)
-	testing.expect_value(t, int(table.records[0].line_thickness), LINE_THICKNESS_LIMIT)
+	testing.expect_value(t, int(table.records[0].kind_detail), LINE_THICKNESS_LIMIT)
 	// The ends at the limit: a record, and only the pixels in the canvas.
 	draw_line(&table, -LINE_COORDINATE_LIMIT, 3, LINE_COORDINATE_LIMIT, 3, 1, 0xFFFFFF)
 	testing.expect_value(t, table.record_count, 2)
@@ -978,10 +978,10 @@ line_hostile_values :: proc(t: ^testing.T) {
 	// Records written by hand that the execution refuses: no pixel, no damage.
 	pixels = {}
 	hostile := [?]Draw_Record {
-		{kind = .Line, line_thickness = 0, x = 1, y = 1, width = 5, height = 5, first_color = 0xFFFFFF},
-		{kind = .Line, line_thickness = 200, x = 1, y = 1, width = 5, height = 5, first_color = 0xFFFFFF},
-		{kind = .Line, line_thickness = 1, x = 1, y = 1, width = max(i32), height = 5, first_color = 0xFFFFFF},
-		{kind = .Line, line_thickness = 1, x = min(i32), y = min(i32), width = max(i32), height = max(i32), first_color = 0xFFFFFF},
+		{kind = .Line, kind_detail = 0, x = 1, y = 1, width = 5, height = 5, first_color = 0xFFFFFF},
+		{kind = .Line, kind_detail = 200, x = 1, y = 1, width = 5, height = 5, first_color = 0xFFFFFF},
+		{kind = .Line, kind_detail = 1, x = 1, y = 1, width = max(i32), height = 5, first_color = 0xFFFFFF},
+		{kind = .Line, kind_detail = 1, x = min(i32), y = min(i32), width = max(i32), height = max(i32), first_color = 0xFFFFFF},
 	}
 	for record in hostile {
 		testing.expect(t, empty(record_rectangle(record)), "a refused line covers nothing")

@@ -19,6 +19,8 @@ import "support:system"
 // the two services) goes only to a program that holds the machine with the
 // right Inspect: it reads the facts of all programs already (property 20).
 
+QUIC_ECHO_PORT :: 4433 // The UDP port of quic_echo: the port of the examples of RFC 9000 implementations.
+
 // endpoint_of gives the grant of the endpoint of a program (docs/NETWORK.md):
 //   net     a datagram endpoint: the echo server of the test, 10.0.2.2 port 7.
 //   remote  a datagram endpoint: the host, at the gateway.
@@ -26,6 +28,8 @@ import "support:system"
 //           remotes that send a segment to it.
 //   fetch   a segment endpoint with a client grant: 10.0.2.100 port 80, the
 //           web server of the test (the tool behind QEMU user networking).
+//   quic_echo  a datagram endpoint with a listen grant: the UDP port 4433,
+//           and the remotes that send a datagram of 1200 bytes to it.
 endpoint_of :: proc "contextless" (name: string) -> datagram.Grant {
 	switch name {
 	case "net":
@@ -36,6 +40,8 @@ endpoint_of :: proc "contextless" (name: string) -> datagram.Grant {
 		return {port = 80, tcp = true, listen = true}
 	case "fetch":
 		return {address = 0x0A000264, port = 80, tcp = true}
+	case "quic_echo":
+		return {port = QUIC_ECHO_PORT, listen = true}
 	}
 	return {}
 }

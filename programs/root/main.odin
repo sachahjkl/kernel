@@ -21,6 +21,7 @@ import "contract:block"
 import "contract:datagram"
 import "contract:date"
 import "contract:errors"
+import "contract:fixed_addresses"
 import "contract:frame"
 import "support:pci"
 import "support:storage"
@@ -87,7 +88,7 @@ grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 	case "paint", "life", "tally", "sample":
 		return {.Serve} // sample: the module of the tables, started as a program when a caller connects.
 	case "settings":
-		return {.Settings, .Serve} // It writes the settings of the person, and serves set() and get().
+		return {.Settings, .Serve, .Store} // It writes the settings of the person, keeps them in its private store, and serves set() and get().
 	case "date":
 		return {.Clock, .Serve} // It reads the real-time clock, writes the date page, and serves now().
 	case "manual":
@@ -110,6 +111,8 @@ grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 		return {.Network, .Serve, .Store} // A listen grant, its exports for the console, and its pages in its private store.
 	case "fetch":
 		return {.Network}
+	case "quic_echo":
+		return {.Network} // A listen grant of UDP: QUIC in the program, the module cryptography through its imports.
 	case "network":
 		return {.Network_Device}
 	case "remote":
@@ -153,7 +156,11 @@ COMPOSITOR_VALUE_FILE_SIZE :: 5
 // of the boot image, mapped read-only (resources.odin).
 COMPOSITOR_VALUE_POINTER_THEME_ADDRESS :: 6
 COMPOSITOR_VALUE_POINTER_THEME_SIZE :: 7
-POINTER_THEME_ADDRESS :: 0x0000_3100_0000_0000
+POINTER_THEME_ADDRESS :: fixed_addresses.POINTER_THEMES_ADDRESS
+// The values of the context of the compositor for each pointer theme: the
+// second at the values that contract:operation names for it.
+COMPOSITOR_POINTER_THEME_VALUES := [2][2]int{{COMPOSITOR_VALUE_POINTER_THEME_ADDRESS, COMPOSITOR_VALUE_POINTER_THEME_SIZE}, {op.CONTEXT_VALUE_SECOND_POINTER_THEME_ADDRESS, op.CONTEXT_VALUE_SECOND_POINTER_THEME_SIZE}}
+POINTER_THEME_SPACING :: fixed_addresses.RANGE_SPAN / 2 // The second theme is this far after the first.
 
 // may_connect says if a program can ask the root service for a connection
 // to the service with a name.
@@ -276,6 +283,11 @@ things_of :: proc "contextless" (name: string) -> system.Budget_Amounts {
 		return {pages = 2048, programs = 3, threads = 4} // It starts fault and its child, and 3 threads under contention.
 	case "server":
 		return {pages = 4096, programs = 1, threads = 1} // A table of 32 connections with their buffers, and a large window.
+	case "quic_echo":
+		// 16 QUIC connections of about 214 KiB each and their echo buffers
+		// of 64 KiB: about 1112 pages, in one mapping of the program
+		// (docs/QUIC.md, section 6).
+		return {pages = 2048, programs = 1, threads = 1}
 	case "tables":
 		return {pages = 4096, programs = 3, threads = 3} // A table of 65536 readings in a memory object (640 pages), and two call hosts (sample, hostile_exports) with their threads.
 	}
@@ -534,7 +546,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		// The compositor is also a service (programs/compositor/exports.odin):
 		// a service ring and its own file, as start() gives to a service.
 		// Its values 0 to 3 are the screen, so the file is at values 4 and 5.
-		mappings: [5]system.Mapping
+		mappings: [10]system.Mapping
 		mapping_count := 0
 		served := &started[0]
 		served^ = {}
@@ -552,14 +564,18 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				served.hash = item.hash
 			}
 		}
-		// The pointer theme: a resource of the boot image, read-only.
-		for name in pointer_theme_choice() {
-			if mapping, size, given := resource_mapping(name, POINTER_THEME_ADDRESS, "compositor"); given {
-				values[COMPOSITOR_VALUE_POINTER_THEME_ADDRESS] = POINTER_THEME_ADDRESS
-				values[COMPOSITOR_VALUE_POINTER_THEME_SIZE] = size
+		// The pointer themes: resources of the boot image, read-only, each
+		// at its place in the list of pointer_theme_choice (the values 6 and
+		// 7, then the two values of contract:operation). The setting "pointer_theme" of the person
+		// chooses one in the compositor.
+		for name, index in pointer_theme_choice() {
+			address := POINTER_THEME_ADDRESS + u64(index) * POINTER_THEME_SPACING
+			if mapping, size, given := resource_mapping(name, address, "compositor"); given {
+				places := COMPOSITOR_POINTER_THEME_VALUES[index]
+				values[places[0]] = address
+				values[places[1]] = size
 				mappings[mapping_count] = mapping
 				mapping_count += 1
-				break
 			}
 		}
 		text_settings_give(mappings[:], &mapping_count, &values)
@@ -582,6 +598,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if status = start("console"); status != .Ok {
 		fail("cannot start the console", status)
 	}
+	// The settings that the person kept (text_settings.odin).
+	settings_boot_pass_start()
 
 	for {
 		// The stop of a program is an event.
@@ -821,7 +839,7 @@ start :: proc "contextless" (name: string) -> system.Status {
 	copy(slot.name[:len(slot.name) - 1], name) // The connection to the storage service names the program.
 	// The connection to the private store, in the context: the call ring, the
 	// call region, the storage service with the right Read, and its file.
-	mappings: [6]system.Mapping
+	mappings: [10]system.Mapping
 	mapping_count := 0
 	// This service closes its handles of the connection after the start.
 	store_ring, store_region: system.Handle
@@ -927,6 +945,7 @@ start :: proc "contextless" (name: string) -> system.Status {
 	}
 	if .Settings in role {
 		grants[settings.GRANT_PAGE] = {settings_memory, {.Read, .Write}}
+		values[settings.VALUE_BOOT_PASS] = u64(settings_boot_pass)
 	}
 	clock_ports: system.Handle
 	defer if clock_ports != 0 {
@@ -1164,7 +1183,7 @@ terminal_start :: proc "contextless" (view: ^Started, writer: ^Started, ring_mem
 	measure: bool
 	values[terminal.VALUE_COLUMNS], values[terminal.VALUE_ROWS], measure = terminal_of(system.name_of(writer.name[:]))
 	values[terminal.VALUE_MEASURE] = u64(measure)
-	mappings: [2]system.Mapping
+	mappings: [4]system.Mapping
 	mapping_count := 0
 	text_settings_give(mappings[:], &mapping_count, &values)
 	program, status := system.program_start(system.image_find(image, "terminal"), "terminal", grants, random.values_with_seed(&program_generator, values), budget_of("terminal"), mappings[:mapping_count], &prepared)

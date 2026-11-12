@@ -35,7 +35,11 @@ connection_datagram_receive :: proc "contextless" (connection: ^Connection, rece
 			// CONNECTION_CLOSE again, once for each datagram (RFC 9000,
 			// section 10.2.1); it is not opened.
 			if connection_id_is_ours(connection, &header) {
-				connection.close_to_send = true
+				connection.close_datagrams_received += 1
+				if connection.close_datagrams_received >= connection.close_next_answer {
+					connection.close_to_send = true
+					connection.close_next_answer = saturating_multiply(connection.close_next_answer, 2)
+				}
 				processed = true
 			}
 			break
@@ -84,9 +88,14 @@ packet_receive :: proc "contextless" (connection: ^Connection, datagram: []u8, h
 		level = .Handshake
 	case .One_Rtt:
 		level = .Application
+	case .Retry:
+		if !connection_id_is_ours(connection, header) {
+			return fail_at(error, .Bad_Value, 1, header.start)
+		}
+		return client_retry_receive(connection, datagram, header, now, error)
 	case:
-		// 0-RTT, Retry, Version Negotiation and other versions: this layer
-		// does none of them, and drops the packet.
+		// 0-RTT, Version Negotiation and other versions: this layer does
+		// none of them, and drops the packet.
 		return fail_at(error, .Unsupported, 1, header.start, 0, int(header.type))
 	}
 	role := connection.configuration.tls.role
@@ -209,6 +218,54 @@ packet_receive :: proc "contextless" (connection: ^Connection, datagram: []u8, h
 		connection.address_validated = true
 		connection_space_discard(connection, .Initial)
 	}
+	return true
+}
+
+// client_retry_receive takes a Retry packet of the server (RFC 9000,
+// section 17.2.5.2): one at most, before any Initial of the server, with a
+// Source Connection ID that is not the identifier that the client chose,
+// and a Retry Integrity Tag over that identifier. The client then sends to
+// the identifier of the Retry, derives its Initial keys from it, and sends
+// its ClientHello again in Initial packets that carry the token. The packet
+// numbers go on: they never repeat in a space.
+@(private)
+client_retry_receive :: proc "contextless" (connection: ^Connection, datagram: []u8, header: ^Packet_Header, now: u64, error: ^errors.Error_Record) -> bool {
+	if connection.configuration.tls.role != .Client || connection.state != .Handshake || connection.retried || connection.peer_connection_id_known {
+		return fail_at(error, .State, 1, header.start, 0, int(header.type))
+	}
+	original := connection.original_destination_connection_id[:connection.original_destination_connection_id_length]
+	source := header.source_connection_id[:header.source_connection_id_length]
+	if bytes_equal(source, original) || header.token_length > RETRY_TOKEN_LIMIT {
+		return fail_at(error, .Bad_Value, 1, header.start)
+	}
+	if !retry_integrity_check(connection.cryptography, original, datagram, header, error) {
+		return false
+	}
+	connection.retried = true
+	connection.retry_first_destination_connection_id_length = copy(connection.retry_first_destination_connection_id[:], original)
+	connection.retry_source_connection_id_length = copy(connection.retry_source_connection_id[:], source)
+	connection.retry_token_length = copy(connection.retry_token[:], datagram[header.token_offset:][:header.token_length])
+	connection.peer_connection_id_length = copy(connection.peer_connection_id[:], source)
+	connection.original_destination_connection_id_length = copy(connection.original_destination_connection_id[:], source)
+	if !connection_initial_keys_install(connection, error) {
+		connection_fail(connection, u64(Transport_Error.Internal_Error), 0, now)
+		return false
+	}
+	// The Initial packets before the Retry are not acknowledged, and none
+	// will be: they leave the flight, and the ClientHello goes again from
+	// its first byte.
+	space := &connection.spaces[.Initial]
+	for &packet in space.sent {
+		if packet.in_use {
+			sent_packet_remove(connection, space, &packet)
+		}
+	}
+	space.loss_time = 0
+	space.crypto.send_next = 0
+	space.crypto.send_again = {}
+	space.crypto.send_acknowledged = {}
+	connection.probe_timeout_count = 0
+	connection.last_activity = now
 	return true
 }
 
@@ -485,11 +542,12 @@ frame_process :: proc "contextless" (connection: ^Connection, level: Encryption_
 			frame_type = frame_read_integer(reader)
 		}
 		reason_length := frame_read_integer(reader)
-		frame_read_bytes(reader, reason_length)
+		reason := frame_read_bytes(reader, reason_length)
 		if reader.failed {
 			return encoding_error(connection, type, now)
 		}
 		connection_enter_draining(connection, code, frame_type, type == FRAME_CONNECTION_CLOSE_APPLICATION, now)
+		connection.close_reason_of_peer_length = copy(connection.close_reason_of_peer[:], reason)
 	case FRAME_HANDSHAKE_DONE:
 		if role == .Server {
 			return connection_fail(connection, u64(Transport_Error.Protocol_Violation), type, now)

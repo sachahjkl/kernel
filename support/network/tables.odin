@@ -63,11 +63,22 @@ problem_rows :: proc "contextless" (own: ^Problem_Table, machine: ^Problem_Table
 ADMITTED_IDLE :: 2 * 60_000
 
 Admitted_Remote :: struct {
-	address: u32,
-	port:    u16,
-	used:    bool,
-	time:    u64, // Milliseconds: the last segment of this remote, in or out.
+	address:   u32,
+	port:      u16,
+	used:      bool,
+	time:      u64, // Milliseconds: the last segment of this remote, in or out (TCP), or the last datagram that came from it (UDP).
+	// UDP: the bytes of the datagrams that came from this remote and that
+	// went to it, and whether the program said that the remote proved its
+	// address (the command Validate).
+	bytes_in:  u64,
+	bytes_out: u64,
+	validated: bool,
 }
+
+// A UDP listen grant sends to a remote that did not prove its address at
+// most this many times the bytes that came from it: the limit of RFC 9000,
+// section 8.1, which the network service holds without knowing QUIC.
+AMPLIFICATION_FACTOR :: 3
 
 Admitted :: [datagram.ADMITTED_CAPACITY]Admitted_Remote
 
@@ -104,6 +115,61 @@ admitted_add :: proc "contextless" (table: ^Admitted, address: u32, port: u16, n
 	}
 	table[oldest] = {address = address, port = port, used = true, time = now}
 	return true
+}
+
+// admitted_received counts a datagram that came from an admitted remote,
+// and takes now as the time of its last datagram. false: the remote is not
+// admitted.
+admitted_received :: proc "contextless" (table: ^Admitted, address: u32, port: u16, bytes: u64, now: u64) -> bool {
+	for &item in table {
+		if item.used && item.address == address && item.port == port {
+			item.time = now
+			item.bytes_in = saturating_add(item.bytes_in, bytes)
+			return true
+		}
+	}
+	return false
+}
+
+// admitted_send_allowed says if a UDP listen grant may send bytes to a
+// remote, and counts them: the remote is admitted, and it is validated, or
+// the bytes sent to it stay within AMPLIFICATION_FACTOR times the bytes
+// that came from it. A send does not change the time of the place: only a
+// datagram of the remote keeps it admitted, so a program cannot hold a
+// place, and send, by sending. limit and would_send give the detail of a
+// refusal.
+admitted_send_allowed :: proc "contextless" (table: ^Admitted, address: u32, port: u16, bytes: u64) -> (allowed: bool, admitted: bool, limit: u64, would_send: u64) {
+	for &item in table {
+		if !item.used || item.address != address || item.port != port {
+			continue
+		}
+		would_send = saturating_add(item.bytes_out, bytes)
+		limit = item.bytes_in > max(u64) / AMPLIFICATION_FACTOR ? max(u64) : item.bytes_in * AMPLIFICATION_FACTOR
+		if !item.validated && would_send > limit {
+			return false, true, limit, would_send
+		}
+		item.bytes_out = would_send
+		return true, true, limit, would_send
+	}
+	return false, false, 0, 0
+}
+
+// admitted_validate marks a remote that proved its address: the limit of
+// admitted_send_allowed no longer applies to it. It says if the remote was
+// admitted.
+admitted_validate :: proc "contextless" (table: ^Admitted, address: u32, port: u16) -> bool {
+	for &item in table {
+		if item.used && item.address == address && item.port == port {
+			item.validated = true
+			return true
+		}
+	}
+	return false
+}
+
+@(private)
+saturating_add :: proc "contextless" (left, right: u64) -> u64 {
+	return left > max(u64) - right ? max(u64) : left + right
 }
 
 // admitted_release forgets a remote. It says if the remote was admitted.

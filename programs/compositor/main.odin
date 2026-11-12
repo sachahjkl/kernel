@@ -14,6 +14,7 @@ import "support:calendar"
 import "support:graphics"
 import "support:interface"
 import "support:bar"
+import "support:mark"
 import "contract:ring"
 import "support:system"
 import "contract:pointer_pictures"
@@ -265,6 +266,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 	}
 	pointer_x, pointer_y = width / 2, height / 2
+	bar_mark_build()
 	launcher_now = {records = launcher_records_now[:], text = launcher_text_now[:]}
 	launcher_before = {records = launcher_records_before[:], text = launcher_text_before[:]}
 	memory_measure()
@@ -278,8 +280,17 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// (contract:settings); a change of the settings wakes this loop.
 	display.text_settings_open(ctx)
 	settings_seen: u32
+	// settings_seen starts at 0: when the boot pass of settings wrote the page
+	// before this read, the first turn of the loop sees a change and tells
+	// each window, also the ones that read the page before the boot pass.
+	// After that first time, a new count tells the windows only when the
+	// values differ from the values that they were told last: `settings`
+	// can change the count with no end and the same values, and each told
+	// window gets one record in the ring that also carries its keys.
+	settings_told: settings.Choice
+	settings_told_once: bool
 	if display.settings_page != nil {
-		settings_seen = settings.read(display.settings_page).change_count
+		pointer_theme_choose(settings.pointer_theme_of(settings.read(display.settings_page)))
 	}
 
 	next_frame: u64
@@ -305,7 +316,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		if display.settings_page != nil {
 			if choice := settings.read(display.settings_page); choice.change_count != settings_seen {
 				settings_seen = choice.change_count
-				settings_changed(choice)
+				if !settings_told_once || settings.values_differ(choice, settings_told) {
+					settings_told = choice
+					settings_told_once = true
+					settings_changed(choice)
+				}
 			}
 		}
 		for record in system.receive(&control.commands) {
@@ -381,6 +396,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 // (support/display gives it the new font before the event).
 settings_changed :: proc "contextless" (choice: settings.Choice) {
 	display.text_settings_apply()
+	pointer_theme_choose(settings.pointer_theme_of(choice)) // pointer_picture.odin
 	told := 0
 	for &client in clients {
 		if client.ring.head != nil {
@@ -389,7 +405,16 @@ settings_changed :: proc "contextless" (choice: settings.Choice) {
 		}
 	}
 	damage_add(0, 0, screen.width, screen.height)
-	system.log("compositor: the settings changed: font ", settings.font_names[choice.font], ", subpixel order ", settings.subpixel_order_names[choice.subpixel_order], "; ", u64(told), " windows draw again")
+	buffer: [256]u8
+	writer := system.Writer{buffer = buffer[:]}
+	for setting in settings.Setting {
+		description := settings.descriptions[setting]
+		system.write_part(&writer, setting == .Font ? "" : ", ")
+		system.write_part(&writer, description.title)
+		system.write_part(&writer, " ")
+		system.write_part(&writer, description.value_names[choice.values[setting]])
+	}
+	system.log("compositor: the settings changed: ", system.written(&writer), "; ", u64(told), " windows draw again")
 }
 
 send :: proc "contextless" (client: ^Client, record: ring.Record) {
@@ -692,15 +717,15 @@ frame_records :: proc "contextless" (table: ^interface.Draw_Table, client: ^Clie
 	shown := clamp((outer_width - CLOSE_SIZE - 16) / graphics.CELL_WIDTH, 0, len(title))
 	interface.draw_text(table, x + 8, y + 4, title[:shown], focus ? graphics.COLOR_WHITE : graphics.COLOR_DIM)
 	base := graphics.Color(graphics.COLOR_STOP_PROGRAM_QUIET)
-	mark := graphics.Color(graphics.COLOR_STOP_PROGRAM_QUIET_MARK)
+	cross_color := graphics.Color(graphics.COLOR_STOP_PROGRAM_QUIET_MARK)
 	if focus || pointer_over {
 		base = pointer_over ? graphics.COLOR_STOP_PROGRAM_POINTER_OVER : graphics.COLOR_STOP_PROGRAM
-		mark = graphics.COLOR_WHITE
+		cross_color = graphics.COLOR_WHITE
 	}
 	close_x := x + outer_width - BORDER - CLOSE_SIZE
 	interface.draw_vertical_gradient(table, close_x, y, CLOSE_SIZE, TITLE_HEIGHT, graphics.shade(base, 118), graphics.shade(base, 82))
 	interface.draw_rectangle(table, close_x, y, CLOSE_SIZE, 1, graphics.shade(base, 150))
-	interface.draw_character(table, close_x + (CLOSE_SIZE - graphics.CELL_WIDTH) / 2, y + (TITLE_HEIGHT - graphics.CELL_HEIGHT) / 2, 'x', mark)
+	interface.draw_character(table, close_x + (CLOSE_SIZE - graphics.CELL_WIDTH) / 2, y + (TITLE_HEIGHT - graphics.CELL_HEIGHT) / 2, 'x', cross_color)
 }
 
 // title_measure measures three forms of the title bar of the widest window
@@ -993,8 +1018,37 @@ loop_copy :: proc "contextless" (to, from: [^]u8, count: int) {
 // area. The launcher has its own table; the pointer is drawn after both.
 screen_records: [512]interface.Draw_Record
 screen_text: [8192]u8
-screen_pictures: [CLIENT_CAPACITY]graphics.Canvas
+screen_pictures: [CLIENT_CAPACITY + 1]graphics.Canvas // The surfaces, then the heron of the bar.
 screen_table := interface.Draw_Table{}
+
+// The heron of the bar (docs/DESIGN.md, "The mark"). Its gradients are
+// computed once, at the start, into this picture; each frame shows it with
+// a Picture record, a copy of 24 rows. Its generation never changes, so the
+// difference of two frames never finds it changed.
+BAR_MARK_PICTURE :: CLIENT_CAPACITY // Its index in screen_pictures.
+BAR_MARK_GENERATION :: 1
+bar_mark_pixels: [bar.MARK_SIZE * bar.MARK_SIZE]graphics.Color
+bar_mark_picture: graphics.Canvas
+
+// bar_background_records appends the surface of the bar: its gradient and
+// the line under it.
+bar_background_records :: proc "contextless" (table: ^interface.Draw_Table, width: int) {
+	interface.draw_vertical_gradient(table, 0, 0, width, BAR_HEIGHT - 1, graphics.COLOR_CARD_TOP, graphics.COLOR_CARD_BOTTOM)
+	interface.draw_rectangle(table, 0, BAR_HEIGHT - 1, width, 1, graphics.COLOR_TRACK)
+}
+
+// bar_mark_build draws the heron of the bar into its picture. A picture has
+// no transparency, so the picture first gets the pixels of the bar under the
+// heron, from the same records and the same code that draw the bar: an empty
+// cell of the heron then shows exactly the bar around it.
+bar_mark_build :: proc "contextless" () {
+	bar_mark_picture = {pixels = raw_data(bar_mark_pixels[:]), width = bar.MARK_SIZE, height = bar.MARK_SIZE, stride = bar.MARK_SIZE}
+	records: [4]interface.Draw_Record
+	table := interface.Draw_Table{records = records[:]}
+	bar_background_records(&table, bar.MARK_X + bar.MARK_SIZE)
+	interface.execute(&table, bar_mark_picture, -bar.MARK_X, -bar.MARK_Y)
+	mark.mark_draw(bar_mark_picture, 0, 0, bar.MARK_CELL_SIZE, false)
+}
 
 screen_build :: proc "contextless" (now: u64) {
 	screen_table = {records = screen_records[:], text = screen_text[:], pictures = screen_pictures[:]}
@@ -1008,12 +1062,12 @@ screen_build :: proc "contextless" (now: u64) {
 		interface.draw_picture(table, client.x + BORDER, client.y + TITLE_HEIGHT, position, 0)
 	}
 
-	// The bar: the name of the system, the two buttons, the date and the time
+	// The bar: the mark of the system, the two buttons, the date and the time
 	// of day (the time since boot when the system has no date).
 	width := frame.width
-	interface.draw_vertical_gradient(table, 0, 0, width, BAR_HEIGHT - 1, graphics.COLOR_CARD_TOP, graphics.COLOR_CARD_BOTTOM)
-	interface.draw_rectangle(table, 0, BAR_HEIGHT - 1, width, 1, graphics.COLOR_TRACK)
-	interface.draw_text(table, 16, 8, "kernel", graphics.COLOR_TEXT)
+	bar_background_records(table, width)
+	screen_pictures[BAR_MARK_PICTURE] = bar_mark_picture
+	interface.draw_picture(table, bar.MARK_X, bar.MARK_Y, BAR_MARK_PICTURE, BAR_MARK_GENERATION)
 	bar_button_records :: proc "contextless" (table: ^interface.Draw_Table, x, y, width, height: int, label: string, open: bool) {
 		interface.draw_rectangle(table, x, y, width, height, open ? graphics.COLOR_TITLE : graphics.COLOR_TRACK)
 		interface.draw_text(table, x + bar.PADDING, y + (height - graphics.CELL_HEIGHT) / 2, label, open ? graphics.COLOR_WHITE : graphics.COLOR_TEXT)

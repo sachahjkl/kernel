@@ -79,7 +79,7 @@ execute_in_rectangle :: proc "contextless" (table: ^Draw_Table, canvas: graphics
 			start := int(record.text_start)
 			count := int(record.text_count)
 			if start + count <= table.text_count {
-				text_draw(view, x, y, string(table.text[start:start + count]), record.first_color, int(record.text_scale))
+				text_draw(view, x, y, string(table.text[start:start + count]), record.first_color, int(record.text_scale), record.kind_detail == u8(Font_Weight.Bold) ? .Bold : .Regular)
 			}
 		case .Folded_Gap:
 			graphics.fill(view, x, y, width, height, record.second_color)
@@ -101,7 +101,7 @@ execute_in_rectangle :: proc "contextless" (table: ^Draw_Table, canvas: graphics
 			// (x, y) is the first end in the view; the path is the one of
 			// graphics.line from the end that line_ends_in_order puts first.
 			start_x, start_y, end_x, end_y := line_ends_in_order(x, y, x + width, y + height)
-			graphics.line(view, start_x, start_y, end_x, end_y, int(record.line_thickness), record.first_color)
+			graphics.line(view, start_x, start_y, end_x, end_y, int(record.kind_detail), record.first_color)
 		case .Point_Grid:
 			// The points are at 12 + 24 n of the surface, so that two areas
 			// of one surface show one grid. A point that starts before the
@@ -184,7 +184,11 @@ text_grid_draw :: proc "contextless" (canvas: graphics.Canvas, x, y: int, grid: 
 
 // text_draw draws characters of the font of the system, each pixel of the
 // font as a square of scale pixels.
-text_draw :: proc "contextless" (canvas: graphics.Canvas, x, y: int, text: string, color: graphics.Color, scale: int) {
+text_draw :: proc "contextless" (canvas: graphics.Canvas, x, y: int, text: string, color: graphics.Color, scale: int, weight: Font_Weight = .Regular) {
+	if weight == .Bold && scale <= 1 {
+		graphics.text_bold(canvas, x, y, text, color)
+		return
+	}
 	graphics.text_scaled(canvas, x, y, text, color, scale)
 }
 

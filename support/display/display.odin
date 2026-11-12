@@ -285,34 +285,78 @@ next_event :: proc "contextless" (window: ^Window) -> (event: Event, ok: bool) {
 // The settings page of this program (contract:settings), or nil.
 settings_page: ^settings.Page
 
+// The two glyph caches of this program, each validated once: with the grid fit
+// and without it (the setting "grid_fit").
+glyph_caches: [settings.Grid_Fit]glyph_cache.Cache
+glyph_cache_valid: [settings.Grid_Fit]bool
+
 // text_settings_open finds the settings page in the context, validates the
-// glyph cache once (a font file and a cache are hostile input), and applies
-// the choice of the person. With no page, or a cache that the validation
-// refuses, the text of the program is Spleen 8x16, with a line on the log.
-// The compositor calls it too: it has no window of this package.
+// glyph caches once (a font file and a cache are hostile input), and
+// applies the choice of the person. With no page, or a cache that the
+// validation refuses, the text of the program is Spleen 8x16, with a line
+// on the log. The compositor calls it too.
+//
+// Why one validation is enough: the drawing code reads the counts and the
+// offsets of a cache again at each glyph, so the bytes must not change
+// after `validate`. They cannot. The address of each cache is a fixed range
+// (contract:fixed_addresses), not a value of the settings page, and its
+// size is a value of the context that the root service wrote; the root
+// service maps the cache from the boot image with the right Read only, for
+// every program; the one handle of the boot image, of the root service,
+// has no right Write. So no program can write the bytes of a cache, nor
+// point this program at other bytes. The settings page, which the program
+// `settings` writes, gives choices only.
 text_settings_open :: proc "contextless" (ctx: ^system.Context) {
 	address := ctx.values[settings.VALUE_PAGE]
 	if address == 0 || settings_page != nil {
 		return
 	}
 	settings_page = (^settings.Page)(uintptr(address))
-	if settings_page.glyph_cache_size == 0 {
-		system.log_in("programs", .Warning, "display: no glyph cache: the text is Spleen 8x16")
-	} else {
-		bytes := ([^]u8)(uintptr(settings_page.glyph_cache_address))[:settings_page.glyph_cache_size]
-		if problem := graphics.text_cache_set(bytes); problem.kind != .None {
-			system.log_in("programs", .Warning, "display: the glyph cache is refused: ", glyph_cache.problem_sentences[problem.kind], ", value ", problem.value, ", limit ", problem.limit, ": the text is Spleen 8x16")
+	places := [settings.Grid_Fit]settings.Glyph_Cache {
+		.On  = .With_Grid_Fit,
+		.Off = .Without_Grid_Fit,
+	}
+	for cache, grid_fit in places {
+		cache_address, cache_size := settings.glyph_cache_place(&ctx.values, cache)
+		if cache_size == 0 {
+			system.log_in("programs", .Warning, "display: no glyph cache with the grid fit ", settings.descriptions[.Grid_Fit].value_names[grid_fit], ": that text is Spleen 8x16")
+			continue
+		}
+		problem: glyph_cache.Problem
+		glyph_caches[grid_fit], problem = glyph_cache.validate(([^]u8)(uintptr(cache_address))[:cache_size])
+		if problem.kind != .None {
+			system.log_in("programs", .Warning, "display: the glyph cache is refused: ", glyph_cache.problem_sentences[problem.kind], ", value ", problem.value, ", limit ", problem.limit, ": that text is Spleen 8x16")
+			continue
+		}
+		glyph_cache_valid[grid_fit] = true
+	}
+	// The bold weight of the titles: a text in the regular weight when it
+	// is absent or refused.
+	if bold_address, bold_size := settings.glyph_cache_place(&ctx.values, .Bold); bold_size != 0 {
+		bold, problem := glyph_cache.validate(([^]u8)(uintptr(bold_address))[:bold_size])
+		if problem.kind == .None {
+			graphics.text_bold_cache_use(bold)
+		} else {
+			system.log_in("programs", .Warning, "display: the bold glyph cache is refused: ", glyph_cache.problem_sentences[problem.kind], ": the titles are the regular weight")
 		}
 	}
 	text_settings_apply()
 }
 
 // text_settings_apply gives the choice of the settings page to
-// support/graphics.
+// support/graphics: the font, the order of the stripes, and the glyph cache
+// of the grid fit.
 text_settings_apply :: proc "contextless" () {
 	if settings_page == nil {
 		return
 	}
 	choice := settings.read(settings_page)
-	graphics.text_choice_set(choice.font == .Spleen ? .Spleen : .Vector, graphics.Subpixel_Order(u8(choice.subpixel_order)))
+	grid_fit := settings.grid_fit_of(choice)
+	font := settings.font_of(choice) == .Spleen ? graphics.Text_Font.Spleen : graphics.Text_Font.Vector
+	if glyph_cache_valid[grid_fit] {
+		graphics.text_cache_use(glyph_caches[grid_fit])
+	} else {
+		font = .Spleen
+	}
+	graphics.text_choice_set(font, graphics.Subpixel_Order(u8(settings.subpixel_order_of(choice))))
 }

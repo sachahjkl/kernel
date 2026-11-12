@@ -23,6 +23,7 @@ package quic
 import "contract:errors"
 import "support:random"
 
+CLOSE_REASON_KEPT :: 48 // The bytes of the reason phrase of a close of the peer that a connection keeps.
 MAX_DATAGRAM_SIZE :: 1200 // The datagrams that this side sends: the size that every path of QUIC carries (RFC 9000, section 14).
 CONNECTION_ID_SIZE :: 8 // The connection identifiers that this side chooses.
 STREAM_BUFFER_SIZE :: 65536 // The bytes of the stream in each direction that wait: to be acknowledged, or to be read.
@@ -172,8 +173,20 @@ Connection :: struct {
 	peer_connection_id:                [CONNECTION_ID_LIMIT]u8,
 	peer_connection_id_length:         int,
 	peer_connection_id_known:          bool, // A client: the server chose its identifier.
+	// The Destination Connection ID of the first Initial of the client: the
+	// Initial keys come from it. After a Retry it is the Source Connection
+	// ID of the Retry (RFC 9001, section 5.2).
 	original_destination_connection_id: [CONNECTION_ID_LIMIT]u8,
 	original_destination_connection_id_length: int,
+	// A Retry (retry.odin). A client: the one Retry that it took. A server:
+	// the record of a client that came back with a valid token.
+	retried:                           bool,
+	retry_first_destination_connection_id: [CONNECTION_ID_LIMIT]u8, // The identifier that the client chose first, before the Retry.
+	retry_first_destination_connection_id_length: int,
+	retry_source_connection_id:        [CONNECTION_ID_LIMIT]u8, // The Source Connection ID of the Retry.
+	retry_source_connection_id_length: int,
+	retry_token:                       [RETRY_TOKEN_LIMIT]u8, // A client: the token that each later Initial carries.
+	retry_token_length:                int,
 	local_parameters:                  Transport_Parameters,
 	peer_parameters:                   Transport_Parameters,
 	peer_parameters_applied:           bool,
@@ -208,6 +221,10 @@ Connection :: struct {
 	close_error_code:                  u64,
 	close_frame_type:                  u64,
 	close_is_application:              bool,
+	// The first bytes of the reason phrase of the CONNECTION_CLOSE of the
+	// peer: a program logs them, to tell why a foreign stack closed.
+	close_reason_of_peer:              [CLOSE_REASON_KEPT]u8,
+	close_reason_of_peer_length:       int,
 	closed_by_peer:                    bool,
 	closed_by_idle_timeout:            bool,
 	closed_by_handshake_timeout:       bool,
@@ -216,6 +233,12 @@ Connection :: struct {
 	// place in a range set, so the packet is not acknowledged.
 	packet_data_dropped:               bool,
 	close_to_send:                     bool,
+	// The closing state answers the 1st, 2nd, 4th, 8th... datagram of the
+	// peer, not each one: a third party that knows the identifier and
+	// forges the address of the client makes few answers (RFC 9000,
+	// section 10.2.1).
+	close_datagrams_received:          u64,
+	close_next_answer:                 u64,
 	close_deadline:                    u64,
 	// Private memory: the copy of a datagram that came, and the frames of
 	// the packets of a datagram to send.
@@ -333,7 +356,20 @@ connection_tls_start :: proc "contextless" (connection: ^Connection, error: ^err
 	parameters.initial_source_connection_id_length = copy(parameters.initial_source_connection_id[:], connection.local_connection_id[:])
 	parameters.has_initial_source_connection_id = true
 	if connection.configuration.tls.role == .Server {
-		parameters.original_destination_connection_id_length = copy(parameters.original_destination_connection_id[:], connection.original_destination_connection_id[:connection.original_destination_connection_id_length])
+		// A server of this library finds a connection by its identifier and
+		// by the address and port of its client: the client must not move
+		// to another address (RFC 9000, section 9).
+		parameters.disable_active_migration = true
+		// After a Retry the server names the identifier that the client
+		// chose first, and the Source Connection ID of its Retry (RFC 9000,
+		// section 7.3).
+		if connection.retried {
+			parameters.original_destination_connection_id_length = copy(parameters.original_destination_connection_id[:], connection.retry_first_destination_connection_id[:connection.retry_first_destination_connection_id_length])
+			parameters.retry_source_connection_id_length = copy(parameters.retry_source_connection_id[:], connection.retry_source_connection_id[:connection.retry_source_connection_id_length])
+			parameters.has_retry_source_connection_id = true
+		} else {
+			parameters.original_destination_connection_id_length = copy(parameters.original_destination_connection_id[:], connection.original_destination_connection_id[:connection.original_destination_connection_id_length])
+		}
 		parameters.has_original_destination_connection_id = true
 	}
 	tls_configuration := &connection.configuration.tls
@@ -444,9 +480,18 @@ connection_peer_parameters_apply :: proc "contextless" (connection: ^Connection,
 		return connection_fail(connection, u64(Transport_Error.Transport_Parameter_Error), 0, now)
 	}
 	if peer_role == .Server {
+		// The server names the identifier that this client chose first; and,
+		// when this client took a Retry, the Source Connection ID of that
+		// Retry, and only then (RFC 9000, section 7.3).
 		original := connection.original_destination_connection_id[:connection.original_destination_connection_id_length]
-		// This client follows no Retry, so a server may not name one.
-		if !bytes_equal(parameters.original_destination_connection_id[:parameters.original_destination_connection_id_length], original) || parameters.has_retry_source_connection_id {
+		if connection.retried {
+			original = connection.retry_first_destination_connection_id[:connection.retry_first_destination_connection_id_length]
+		}
+		if !bytes_equal(parameters.original_destination_connection_id[:parameters.original_destination_connection_id_length], original) {
+			return connection_fail(connection, u64(Transport_Error.Transport_Parameter_Error), 0, now)
+		}
+		retry_source := connection.retry_source_connection_id[:connection.retry_source_connection_id_length]
+		if parameters.has_retry_source_connection_id != connection.retried || (connection.retried && !bytes_equal(parameters.retry_source_connection_id[:parameters.retry_source_connection_id_length], retry_source)) {
 			return connection_fail(connection, u64(Transport_Error.Transport_Parameter_Error), 0, now)
 		}
 	}
@@ -514,6 +559,8 @@ connection_close :: proc "contextless" (connection: ^Connection, application_err
 connection_enter_closing :: proc "contextless" (connection: ^Connection, now: u64) {
 	connection.state = .Closing
 	connection.close_to_send = true
+	connection.close_datagrams_received = 0
+	connection.close_next_answer = 1
 	connection.close_deadline = saturating_add(now, saturating_multiply(3, probe_timeout_duration(connection, .Application)))
 	tls_handshake_erase_secrets(&connection.tls)
 }

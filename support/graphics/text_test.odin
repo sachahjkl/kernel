@@ -96,7 +96,7 @@ glyph_draw_cost :: proc(t: ^testing.T) {
 	REPEAT :: 200_000
 	start := time.tick_now()
 	for index in 0 ..< REPEAT {
-		character_vector_with(&cache, &state.square_root, .Red_Green_Blue, canvas, 8, 8, sample[index % len(sample)], COLOR_TEXT, 1)
+		character_vector_reference(&cache, &state.square_root, .Red_Green_Blue, canvas, 8, 8, sample[index % len(sample)], COLOR_TEXT, 1)
 	}
 	vector := time.duration_nanoseconds(time.tick_since(start)) / REPEAT
 	start = time.tick_now()
@@ -105,4 +105,59 @@ glyph_draw_cost :: proc(t: ^testing.T) {
 	}
 	spleen := time.duration_nanoseconds(time.tick_since(start)) / REPEAT
 	fmt.printfln("graphics: one glyph on the host: from the glyph cache %v ns, Spleen 8x16 %v ns", vector, spleen)
+}
+
+// The fast blend gives the pixels of the reference blend, bit for bit, for
+// each character at each scale, each order of the stripes, several colors,
+// over a flat color, the gradient of a card, a gradient across, and noise.
+@(test)
+fast_blend_is_the_reference :: proc(t: ^testing.T) {
+	bytes := #load("../../resources/fonts/jetbrains_mono.ttf")
+	font, _ := vector_font.font_open(bytes)
+	memory := new(vector_font.Render_Memory)
+	defer free(memory)
+	out := make([]u64, vector_font.GLYPH_CACHE_LIMIT / 8)
+	defer delete(out)
+	file := ([^]u8)(raw_data(out))[:vector_font.GLYPH_CACHE_LIMIT]
+	size, _ := vector_font.glyph_cache_build(&font, bytes, "jetbrains_mono", true, memory, file)
+	cache, _ := glyph_cache.validate(file[:size])
+	table: [4096]u8
+	square_root_table_fill(&table)
+	tables := new(Blend_Tables)
+	defer free(tables)
+	WIDTH :: 24 * 96
+	first := make([]Color, WIDTH * 48)
+	second := make([]Color, WIDTH * 48)
+	defer delete(first)
+	defer delete(second)
+	a := Canvas{pixels = raw_data(first), width = WIDTH, height = 48, stride = WIDTH}
+	b := Canvas{pixels = raw_data(second), width = WIDTH, height = 48, stride = WIDTH}
+	colors := [?]Color{COLOR_TEXT, COLOR_DIM, COLOR_PROGRAM, COLOR_BACKGROUND, COLOR_WHITE}
+	differences := 0
+	for background in Speed_Background {
+		for order in Subpixel_Order {
+			for color in colors {
+				for scale in 1 ..= 3 {
+					background_fill(a, background)
+					background_fill(b, background)
+					// Two passes: the second draws over the first, as a frame
+					// drawn again, and over the tables made by the first.
+					for _ in 0 ..< 2 {
+						for character in 32 ..< 127 {
+							x := (character - 32) * 8 * scale % (WIDTH - 24)
+							character_vector_reference(&cache, &table, order, a, x, 0, u8(character), color, scale)
+							character_vector_with(&cache, &table, tables, order, b, x, 0, u8(character), color, scale)
+						}
+					}
+					for pixel, index in first {
+						if pixel != second[index] {
+							differences += 1
+						}
+					}
+				}
+			}
+		}
+	}
+	testing.expectf(t, differences == 0, "the fast blend differs from the reference in %v pixels", differences)
+	fmt.printfln("graphics: the fast blend and the reference: %v pixels differ; %v tables made", differences, tables.made)
 }

@@ -54,6 +54,14 @@ scenario_random_without_the_processor := [?]Step {
 	{kind = .Front, text = "randomness"},
 	{kind = .Shot, text = "randomness_weak"},
 	{kind = .Distinct, text = "three machines, one of them with no rdrand and no rdseed"},
+	// A QUIC server asks for the strength "processor" at least: with a weak
+	// seed it makes no key, says why on the log and in its window, and
+	// listens on nothing (docs/QUIC.md, section 6).
+	{kind = .Front, text = "console"},
+	{kind = .Type, text = "start(\"quic_echo\")"},
+	{kind = .Wait, text = "quic_echo: the random seed of this program is weak: it makes no key of a server, and listens on nothing"},
+	{kind = .Front, text = "quic_echo"},
+	{kind = .Shot, text = "quic_echo_weak"},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "shutdown()"},
 	{kind = .Wait, text = "kernel: the machine stops with code 0"},

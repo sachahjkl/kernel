@@ -140,7 +140,10 @@ packet_header_size :: proc "contextless" (connection: ^Connection, level: Encryp
 	}
 	size := 1 + 4 + 1 + connection.peer_connection_id_length + 1 + CONNECTION_ID_SIZE + LONG_HEADER_LENGTH_SIZE + PACKET_NUMBER_SIZE
 	if level == .Initial {
-		size += 1 // A token of 0 bytes: its length.
+		// The token: its length, then its bytes. A client after a Retry
+		// sends the token of the Retry; else it is empty.
+		token := connection.retry_token_length
+		size += variable_length_integer_size(u64(token)) + token
 	}
 	return size
 }
@@ -170,8 +173,9 @@ packet_write_and_seal :: proc "contextless" (connection: ^Connection, level: Enc
 		at += 1
 		at += copy(buffer[at:], connection.local_connection_id[:])
 		if level == .Initial {
-			buffer[at] = 0
-			at += 1
+			token := connection.retry_token[:connection.retry_token_length]
+			at += variable_length_integer_write(buffer, at, u64(len(token)), variable_length_integer_size(u64(len(token))))
+			at += copy(buffer[at:], token)
 		}
 		at += variable_length_integer_write(buffer, at, u64(PACKET_NUMBER_SIZE + payload_length + TAG_SIZE), LONG_HEADER_LENGTH_SIZE)
 	}
