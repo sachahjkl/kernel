@@ -485,7 +485,7 @@ table_print :: proc "contextless" (value: Value) {
 	print(system.written(&writer), "\n")
 	for index in 0 ..< table.rows {
 		row := table_row(table, value, index)
-		writer.count = 0
+		system.writer_reset(&writer)
 		for number in 0 ..< field_count {
 			cell := row_value(row, items[number])
 			text := cell.text

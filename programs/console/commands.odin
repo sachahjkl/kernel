@@ -1324,6 +1324,11 @@ request_record :: proc "contextless" (kind: system.Root_Command, name: string, v
 	if requests.head == nil {
 		return {}, false
 	}
+	// The ring holds a name of 31 bytes: a longer name is refused here,
+	// because a cut name can be the name of another program.
+	if len(name) >= len(system.Name) {
+		return {kind = u32(system.Status.Bad_Operation), values = errors.ring_fail(u32(kind), .Too_Long, .Bytes, 1, i64(len(name)), len(system.Name) - 1)}, true
+	}
 	packed := system.name_pack(name)
 	request_count += 1
 	system.send(&requests.commands, ring.Record{kind = u32(kind), tag = request_count, values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3], 4 = value}})

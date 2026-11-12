@@ -307,9 +307,15 @@ information_page :: proc "contextless" (hash: [32]u8) {
 hex_of :: proc "contextless" (hash: [32]u8) -> string {
 	text: [64]u8
 	information.hash_text(hash, &text)
-	start := built_count
-	built_count += copy(built[built_count:], text[:])
-	return string(built[start:built_count])
+	// The built lines can be full: the writer ends the text with the cut
+	// mark then.
+	writer := system.Writer {
+		buffer = built[built_count:],
+	}
+	system.write_bytes(&writer, text[:])
+	result := system.written(&writer)
+	built_count += len(result)
+	return result
 }
 
 // information_start keeps the machine handle and measures the functions:

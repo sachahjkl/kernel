@@ -1,5 +1,6 @@
 package system
 
+import "contract:cut_mark"
 import op "contract:operation"
 import "support:sentence"
 
@@ -14,6 +15,7 @@ write_unsigned :: sentence.write_unsigned
 write_hex :: sentence.write_hex
 write_part :: sentence.write_part
 written :: sentence.written
+writer_reset :: sentence.writer_reset
 format :: sentence.format
 write_number :: sentence.write_number
 write_rights :: sentence.write_rights
@@ -38,18 +40,52 @@ log :: proc "contextless" (parts: ..Part) {
 
 // log_in writes one text on the log, in a channel and with a level. The
 // channel is a short name with no space: at most 16 characters. The kernel
-// sets the time, the program and the thread of the record.
+// sets the time, the program and the thread of the record. A text of any
+// length goes whole: the parts are written in a buffer of LOG_PART_SIZE
+// bytes, and each time the buffer is full it goes to the kernel as one line
+// of the log, ended after a whole character; the text continues on the next
+// line. Nothing is cut.
+LOG_PART_SIZE :: 512
+
 log_in :: proc "contextless" (channel: string, level: op.Log_Level, parts: ..Part) {
 	handle := context_record().handles[op.CONTEXT_LOG]
 	if handle == 0 {
 		return
 	}
-	buffer: [512]u8
-	text := format(buffer[:], ..parts)
 	name: [op.LOG_CHANNEL_CAPACITY]u8
 	copy(name[:], channel)
 	packed := transmute([2]u64)name
-	call(.Log, u64(handle), u64(uintptr(raw_data(text))), u64(len(text)), u64(level), packed[0], packed[1])
+	buffer: [LOG_PART_SIZE]u8
+	count := 0
+	send :: proc "contextless" (handle: Handle, bytes: []u8, level: op.Log_Level, packed: [2]u64) {
+		call(.Log, u64(handle), u64(uintptr(raw_data(bytes))), u64(len(bytes)), u64(level), packed[0], packed[1])
+	}
+	for part in parts {
+		number: [24]u8
+		bytes: []u8
+		if text, is_text := part.(string); is_text {
+			bytes = transmute([]u8)text
+		} else {
+			bytes = transmute([]u8)format(number[:], part)
+		}
+		for len(bytes) > 0 {
+			taken := copy(buffer[count:], bytes)
+			count += taken
+			bytes = bytes[taken:]
+			if count == len(buffer) && len(bytes) > 0 {
+				// A full buffer and more to come: one line, ended after a
+				// whole character; the bytes of a cut character go first on
+				// the next line.
+				line := cut_mark.complete_characters(buffer[:count])
+				if line == 0 {
+					line = count
+				}
+				send(handle, buffer[:line], level, packed)
+				count = copy(buffer[:], buffer[line:count])
+			}
+		}
+	}
+	send(handle, buffer[:count], level, packed)
 }
 
 // LOG_CALL_LIMIT is the bytes of text that the kernel takes in one Log call:
@@ -68,6 +104,11 @@ log_text :: proc "contextless" (text: string) {
 	rest := text
 	for {
 		part := rest[:min(len(rest), LOG_CALL_LIMIT)]
+		// A line of the log ends after a whole character.
+		if len(part) < len(rest) {
+			whole := cut_mark.complete_characters(transmute([]u8)part)
+			part = part[:whole > 0 ? whole : len(part)]
+		}
 		rest = rest[len(part):]
 		call(.Log, u64(handle), u64(uintptr(raw_data(part))), u64(len(part)), u64(op.Log_Level.Info), 0, 0)
 		if len(rest) == 0 {

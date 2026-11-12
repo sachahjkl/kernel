@@ -76,6 +76,7 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Run | Pages that follow each other in a page table with one protection (`Mapping_Run`) | extent, VMA |
 | Self test | A boot of the machine where the kernel does one thing that its page tables must refuse, to prove that the processor refuses it | negative test, lkdtm |
 | Log record | One entry of the log: a number, a time, a program, a thread, a level, a channel and a text (`Log_Record`). The kernel sets all but the last three | log line, message |
+| Cut mark | The end of a text that a place of a fixed size could not hold: the start of the text, after a whole character, then "... and N bytes more", where N counts each byte that the place does not hold (`contract:cut_mark`). The one form of a cut text in the system: a text is written whole, cut with this mark, or refused; never cut in silence | ellipsis, truncation, "..." (alone) |
 | Channel | The short name that a program gives to a log record, to group records of one subject | facility, tag, category, logger |
 | Level | How much a log record matters: Info, Debug, Warning or Error | severity, priority |
 | Lock of the kernel | A word that one processor holds at a time, to change one kind of kernel data. Each kind has a place in the lock order (`ARCHITECTURE.md`, "Locks of the kernel"). Not the lock of a program, which is a word of the program | spinlock, mutex (for this) |

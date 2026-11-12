@@ -810,6 +810,12 @@ The cost of the checks, as these runs show it: about 30 % of the reports and of 
 
 
 
+NEW-1. **A text is never cut in silence** (`docs/ARCHITECTURE.md`, "A text is never cut in silence"): a text that does not fit is written whole in parts, cut with the cut mark, or refused with an error. The writer of `support/sentence` counts the bytes that it drops, and `written` ends its text with the mark; `log_in` writes a text whole, in lines of 512 bytes; the kernel ends a record of its own that passes 352 bytes with the mark; the Text answers of the storage service and of `settings.get` give the whole count; the console refuses a root ring name of more than 31 bytes.
+NEW-2. **One mark for the whole system: "... and N bytes more"**, after a whole UTF-8 character, in `contract:cut_mark`, which the kernel and the programs share. N counts each byte that the place does not hold, those that the mark takes back too. `information.text_put` used "..." with no count: it now uses the mark. A buffer smaller than the mark holds as much of it as fits.
+NEW-3. **A byte written after the mark is a missing byte**: the writer writes the mark again with the new count at the next `written`; `writer_reset` starts a new text in the same buffer.
+NEW-4. **A partial check of the sources** (`text_cut_check`): outside `support/sentence` and the tests, no source sets `writer.count` or reads `writer.buffer[`. It reads text, not types: a writer of another name escapes it.
+NEW-5. **The scenario**: after the check of the log of the main machine, `probe.log_long(1500)` logs 1500 bytes in three lines of the log (9 records), and the tool waits for the end of the text; `start` with a name of 39 bytes is refused by the console with the count.
+
 ## Gaps
 
 - **A fault at the return to a program is a fault of the kernel** (Review 10): the kernel refuses the one known cause (a thread whose entry or stack is not an address of a program), but any other state of a thread that the processor refuses at `iretq` would stop the machine. To do: treat a fault at that instruction as a fault of the program.

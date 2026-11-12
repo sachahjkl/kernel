@@ -914,14 +914,16 @@ launcher_filter :: proc "contextless" () {
 	match_count = bar.filter(string(typed[:typed_count]), matches[:])
 	choice = 0
 	buffer: [len(bar.names) * 16]u8
-	count := 0
-	for index in matches[:match_count] {
-		if count > 0 {
-			count += copy(buffer[count:], ", ")
-		}
-		count += copy(buffer[count:], bar.names[index])
+	writer := system.Writer {
+		buffer = buffer[:],
 	}
-	system.log_in("surfaces", .Info, "compositor: the launcher lists ", u64(match_count), " of ", u64(len(bar.names)), " for \"", string(typed[:typed_count]), "\": ", string(buffer[:count]))
+	for index, number in matches[:match_count] {
+		if number > 0 {
+			system.write_part(&writer, ", ")
+		}
+		system.write_part(&writer, bar.names[index])
+	}
+	system.log_in("surfaces", .Info, "compositor: the launcher lists ", u64(match_count), " of ", u64(len(bar.names)), " for \"", string(typed[:typed_count]), "\": ", system.written(&writer))
 }
 
 launcher_close :: proc "contextless" (cause: string) {
