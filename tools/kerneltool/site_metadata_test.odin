@@ -585,7 +585,7 @@ site_pictures_opaque_and_compressed :: proc(t: ^testing.T) {
 @(private = "file")
 metadata_test_files :: proc() -> map[string]int {
 	files := make(map[string]int, context.temp_allocator)
-	for path in ([]string{SITE_STYLE_SHEET, SITE_SEARCH_SCRIPT, SITE_FAVICON, SITE_NEWS_FEED, SITE_RELEASES_FEED, SITE_MANIFEST, "pictures/a.png"}) {
+	for path in ([]string{SITE_STYLE_SHEET, SITE_SEARCH_SCRIPT, SITE_MARK_ANIMATION_SCRIPT, SITE_FAVICON, SITE_NEWS_FEED, SITE_RELEASES_FEED, SITE_MANIFEST, "pictures/a.png"}) {
 		files[path] = 1
 	}
 	for name in ([]string{SITE_ICON_SVG, SITE_ICON_TOUCH, SITE_MARK_BAR, SITE_MARK_BAR_LIGHT}) {

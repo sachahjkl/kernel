@@ -584,6 +584,7 @@ site_build :: proc(address: string) -> bool {
 	}
 	site_write_file(&site, SITE_STYLE_SHEET, transmute([]u8)site_style_sheet(site.tile_rules)) or_return
 	site_write_file(&site, SITE_SEARCH_SCRIPT, transmute([]u8)site_search_script()) or_return
+	site_mark_animation_write(&site) or_return
 
 	written := make(map[string]string, context.temp_allocator)
 	for page in site.pages {
@@ -730,6 +731,10 @@ site_page_html :: proc(site: ^Site, page: Site_Page) -> string {
 	section_name := strings.to_lower(site_section_titles[page.section], context.temp_allocator)
 	fmt.sbprintf(&b, "<link rel=\"stylesheet\" href=\"%s\">\n", link(page, SITE_STYLE_SHEET))
 	// The one script of the site: the search. Each page is whole with no script.
+	// The animations of the mark play on the large heron of the home only.
+	if page.section == .Home {
+		fmt.sbprintf(&b, "<script src=\"%s\" defer></script>\n", link(page, SITE_MARK_ANIMATION_SCRIPT))
+	}
 	fmt.sbprintf(&b, "<script src=\"%s\" defer></script>\n</head>\n<body class=\"section-%s\">\n", link(page, SITE_SEARCH_SCRIPT), section_name)
 	write(&b, "<a class=\"skip\" href=\"#content\">Skip to the content</a>\n")
 
