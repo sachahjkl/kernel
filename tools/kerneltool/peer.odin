@@ -176,14 +176,14 @@ peer_check :: proc(peer: ^Peer) -> bool {
 		return false
 	}
 	if peer.frames != 0 {
-		fmt.printfln("kerneltool: test passed: the peer received %d frames from the network service, 0 wrong: %d ARP, %d echo and %d UDP answered, %d echo replies of the machine, %d TCP segments; %d frames of the firmware before it", peer.frames, peer.arp_answers, peer.echo_answers, peer.udp_answers, peer.ping_replies, peer.tcp_segments, peer.firmware)
+		test_passed_print("the peer received %d frames from the network service, 0 wrong: %d ARP, %d echo and %d UDP answered, %d echo replies of the machine, %d TCP segments; %d frames of the firmware before it", peer.frames, peer.arp_answers, peer.echo_answers, peer.udp_answers, peer.ping_replies, peer.tcp_segments, peer.firmware)
 	}
 	if peer.remote_starts != 0 {
 		if peer.malformed_right != len(remote_malformed) {
 			fmt.eprintfln("kerneltool: test failed: the remote service refused %d of the %d malformed call requests with the expected error record; the first other answer: %s", peer.malformed_right, len(remote_malformed), peer.malformed_wrong)
 			return false
 		}
-		fmt.printfln("kerneltool: test passed: the remote service started %d times, sent %d datagrams to the host, and refused each of the %d malformed call requests with the expected error record", peer.remote_starts, peer.remote_datagrams, len(remote_malformed))
+		test_passed_print("the remote service started %d times, sent %d datagrams to the host, and refused each of the %d malformed call requests with the expected error record", peer.remote_starts, peer.remote_datagrams, len(remote_malformed))
 	}
 	return true
 }

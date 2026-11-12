@@ -17,6 +17,7 @@ package kerneltool
 import "core:fmt"
 import "core:os"
 import "core:strings"
+import "core:sync"
 import "core:time"
 import "support:pci"
 
@@ -83,7 +84,7 @@ COMMANDS :: [?]Command {
 	{name = "module", about = "module <name> with_checks|without_checks measure_run|usual_run: build one module of the table (the parallel build runs this command)", run = run_module},
 	{name = "test", about = "build, start the machine under QEMU, act as the person, check the log, save pictures of the screen; `test network`, `test main`, `test power`, `test tcp`, `test quic`, `test quic-real`, `test random`, `test extended_state`, `test return_fault`: one part only", run = run_test},
 	{name = "run", about = "build, then start the machine under QEMU, with the log of the kernel on this terminal; `run without_checks`: the measure build", run = run_machine},
-	{name = "screenshots", about = "test, then copy the pictures to " + DOCUMENT_SCREENSHOT_FOLDER + " and to a new folder of " + DEVELOPMENT_LOG_FOLDER + "; `screenshots compress`: compress the PNG files of " + DOCUMENT_SCREENSHOT_FOLDER + " and " + RESOURCE_FOLDER + " whose data is stored, with no machine", run = run_screenshots},
+	{name = "screenshots", about = "test and the second build, then write the measure record " + MEASURE_RECORD_FILE + " and copy the pictures to " + DOCUMENT_SCREENSHOT_FOLDER + " and to a new folder of " + DEVELOPMENT_LOG_FOLDER + "; `screenshots compress`: compress the PNG files of " + DOCUMENT_SCREENSHOT_FOLDER + " and " + RESOURCE_FOLDER + " whose data is stored, with no machine", run = run_screenshots},
 	{name = "measure", about = "build, start the machine, run the measures of the locks of the kernel with no other program, and stop: the numbers are in " + TEST_OUTPUT_MEASURE + "; `measure scheduler N`: the program scheduler N times; `measure windows`: each window that the interface package draws, alone, and a table of the time of its pictures; `measure without_checks ...`: the measure build, with no check in the kernel (no lock order check, no check of the frames)", run = run_measure},
 	{name = "film", about = "build, start the machine, film the terminal, and write " + FILM_OUTPUT + " and a copy in " + DEVELOPMENT_LOG_FOLDER + " (needs ffmpeg)", run = run_film},
 	{name = "font", about = "convert the BDF file of the font to " + FONT_OUTPUT, run = run_font},
@@ -304,8 +305,19 @@ run_test :: proc(args: []string) -> int {
 	return 0
 }
 
-// run_screenshots runs the machine test and copies its pictures to the
-// documents and to a new folder of the development log.
+// The count of the checks that passed in this process: the measure record
+// states it. Each check that passes prints its line through
+// test_passed_print. A peer thread can print one, so the count is atomic.
+test_passed_count: int
+
+test_passed_print :: proc(format: string, args: ..any) {
+	sync.atomic_add(&test_passed_count, 1)
+	fmt.printfln("kerneltool: test passed: %s", fmt.tprintf(format, ..args))
+}
+
+// run_screenshots runs the machine test and the second build, writes the
+// measure record (measure_record.odin), and copies the pictures of the test
+// to the documents and to a new folder of the development log.
 // `screenshots compress` runs no machine: it compresses each PNG file of
 // the documents and of the resources whose data is stored (picture_files.odin).
 run_screenshots :: proc(args: []string) -> int {
@@ -318,8 +330,18 @@ run_screenshots :: proc(args: []string) -> int {
 		fmt.eprintln("kerneltool: screenshots takes no argument, or `compress`")
 		return EXIT_USAGE
 	}
+	// The facts of the tree before the pass changes it: the pass writes the
+	// pictures and the record into the repository.
+	run_facts := measure_run_facts_read()
 	if code := run_test(nil); code != 0 {
 		return code
+	}
+	// The record states the second build, as `kerneltool check` makes it.
+	if !outputs_same_after_second_build() {
+		return EXIT_FAILURE
+	}
+	if !measure_record_write(run_facts) {
+		return EXIT_FAILURE
 	}
 	pictures, ok := files_with_suffix(SCREENSHOT_FOLDER, ".png")
 	// The name of the folder is the time of the run, in UTC.
@@ -448,7 +470,7 @@ run_check :: proc(args: []string) -> int {
 		if !run({"odin", "check", strings.concatenate({"contract/", name}, context.temp_allocator), "-no-entry-point", "-vet", CONTRACT_LIBRARY}) {
 			return EXIT_FAILURE
 		}
-		fmt.printfln("kerneltool: test passed: contract:%s compiles with the contract library only", name)
+		test_passed_print("contract:%s compiles with the contract library only", name)
 	}
 	// The tests of runtime/memory.asm link the form of the host: the
 	// compiler assembles runtime/memory_for_host_tests.asm itself and links

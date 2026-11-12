@@ -112,7 +112,7 @@ date_check :: proc(index: int, machine_seconds: i64, what: string) -> bool {
 		fmt.eprintfln("kerneltool: test failed: step %d: the date of the machine (%s) is %d, the host gives %d: %d s apart", index + 1, what, machine_seconds, host, apart)
 		return false
 	}
-	fmt.printfln("kerneltool: test passed: the date of the machine (%s) is %d s since 1970, the host gives %d: %d s apart", what, machine_seconds, host, apart)
+	test_passed_print("the date of the machine (%s) is %d s since 1970, the host gives %d: %d s apart", what, machine_seconds, host, apart)
 	return true
 }
 
@@ -2608,10 +2608,10 @@ machine_test :: proc(steps: []Step, volume: string, output: string, exit_status:
 	passed := scenario_run(&machine, steps)
 	if len(machine.confirmations) > 0 {
 		slice.sort(machine.confirmations[:])
-		fmt.printfln("kerneltool: test passed: the tool confirmed %d places of the pointer through compositor.pointer(), %d after a correction; one confirmation took %d us at least, %d us in the middle", len(machine.confirmations), machine.corrected, i64(machine.confirmations[0] / time.Microsecond), i64(machine.confirmations[len(machine.confirmations) / 2] / time.Microsecond))
+		test_passed_print("the tool confirmed %d places of the pointer through compositor.pointer(), %d after a correction; one confirmation took %d us at least, %d us in the middle", len(machine.confirmations), machine.corrected, i64(machine.confirmations[0] / time.Microsecond), i64(machine.confirmations[len(machine.confirmations) / 2] / time.Microsecond))
 	}
 	if machine.keys_confirmed > 0 {
-		fmt.printfln("kerneltool: test passed: the tool sent %d keys, each one after the compositor had received the key before it", machine.keys_confirmed)
+		test_passed_print("the tool sent %d keys, each one after the compositor had received the key before it", machine.keys_confirmed)
 	}
 	if machine.client_open {
 		call_client_close(&machine.client)
@@ -2690,7 +2690,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				fmt.eprintfln("kerneltool: test failed: step %d: the machine did not print \"%s\"", index + 1, step.text)
 				return false
 			}
-			fmt.printfln("kerneltool: test passed: the machine printed \"%s\"", step.text)
+			test_passed_print("the machine printed \"%s\"", step.text)
 		case .Date:
 			seen_before := machine.seen
 			if !log_wait(machine, step.text, step.any_order) {
@@ -2731,7 +2731,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				fmt.eprintfln("kerneltool: test failed: step %d: the stack trace names %s, not %s", index + 1, found, step.names)
 				return false
 			}
-			fmt.printfln("kerneltool: test passed: the stack trace after \"%s\" names the functions %s", step.text, found)
+			test_passed_print("the stack trace after \"%s\" names the functions %s", step.text, found)
 		case .Type, .Keys:
 			for i in 0 ..< len(step.text) {
 				name := key_name(step.text[i])
@@ -2792,7 +2792,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				fmt.eprintfln("kerneltool: test failed: step %d: the pointer at %d,%d has the shape \"%s\", not \"%s\"", index + 1, x, y, shape, step.text)
 				return false
 			}
-			fmt.printfln("kerneltool: test passed: the pointer at %d,%d has the shape %s", x, y, step.text)
+			test_passed_print("the pointer at %d,%d has the shape %s", x, y, step.text)
 		case .Click, .Drag, .Launch, .Move, .Close, .Front:
 			step := step
 			moved_title: string
@@ -2932,7 +2932,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 					fmt.eprintfln("kerneltool: test failed: step %d: the window %s did not come to the front", index + 1, step.text)
 					return false
 				}
-				fmt.printfln("kerneltool: test passed: the window %s came to the front", step.text)
+				test_passed_print("the window %s came to the front", step.text)
 			}
 			if moved_title != "" {
 				// The compositor writes the new place: the window did move.
@@ -2989,7 +2989,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 						if !step.any_order {
 							machine.record_next = last_number + 1
 						}
-						fmt.printfln("kerneltool: test passed: the log record %d of %s, channel \"%s\", level %s, has \"%s\" (%d calls of log.records, %d rows)", number, step.program, step.channel, step.level, step.text, reads, last - row + 1)
+						test_passed_print("the log record %d of %s, channel \"%s\", level %s, has \"%s\" (%d calls of log.records, %d rows)", number, step.program, step.channel, step.level, step.text, reads, last - row + 1)
 						break
 					}
 					from = last_number + 1
@@ -3033,7 +3033,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				fmt.eprintfln("kerneltool: test failed: step %d: %s: monitor.programs() gives %d mapped pages and %d threads, inspect gives %d pages in %d mappings and %d threads", index + 1, step.text, mapped, threads_count, pages, mappings.total, threads.total)
 				return false
 			}
-			fmt.printfln("kerneltool: test passed: %s: inspect gives %d pages in %d mappings and %d threads, as monitor.programs() gives", step.text, pages, mappings.total, threads.total)
+			test_passed_print("%s: inspect gives %d pages in %d mappings and %d threads, as monitor.programs() gives", step.text, pages, mappings.total, threads.total)
 		case .Call:
 			if !machine.client_open {
 				if !call_client_open(&machine.client, machine.call_port) {
@@ -3058,7 +3058,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				// A result: the tool confirms each place from now on. A
 				// refusal (the grant person was revoked): the blind way again.
 				machine.confirm = result.outcome == .Result
-				fmt.printfln("kerneltool: test passed: the tool %s the place of the pointer through compositor.pointer() from now on", machine.confirm ? "reads" : "no longer reads")
+				test_passed_print("the tool %s the place of the pointer through compositor.pointer() from now on", machine.confirm ? "reads" : "no longer reads")
 			}
 			printed := strings.join(result.lines[:], "\n", context.temp_allocator)
 			for line in result.lines {
@@ -3072,7 +3072,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				fmt.eprintfln("kerneltool: test failed: step %d: the answer of %s came in %d datagrams, not %d or more", index + 1, step.text, result.datagrams, step.parts)
 				return false
 			}
-			fmt.printfln("kerneltool: test passed: the call %s printed \"%s\", in %d datagrams", step.text, step.expected, result.datagrams)
+			test_passed_print("the call %s printed \"%s\", in %d datagrams", step.text, step.expected, result.datagrams)
 			if step.date_after != "" {
 				milliseconds, found := number_after(printed, step.date_after)
 				if !found {
@@ -3089,7 +3089,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 					fmt.eprintfln("kerneltool: test failed: step %d: after %d lost datagrams the request went %d times, and the monitor ran %d calls, not 2", index + 1, step.lose, sends, after - served_before)
 					return false
 				}
-				fmt.printfln("kerneltool: test passed: the peer dropped %d datagrams of the answer of %s; the tool sent the request %d times, and the monitor ran the call one time", step.lose, step.text, sends)
+				test_passed_print("the peer dropped %d datagrams of the answer of %s; the tool sent the request %d times, and the monitor ran the call one time", step.lose, step.text, sends)
 			}
 			if step.rows_call != "" {
 				// Another call gives the count of the rows.
@@ -3098,7 +3098,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 					fmt.eprintfln("kerneltool: test failed: step %d: the call gave %d rows, %s gives %d", index + 1, result.rows, step.rows_call, counted.value)
 					return false
 				}
-				fmt.printfln("kerneltool: test passed: the call gave %d rows, and %s gives %d", result.rows, step.rows_call, counted.value)
+				test_passed_print("the call gave %d rows, and %s gives %d", result.rows, step.rows_call, counted.value)
 			}
 			if step.repeat > 0 {
 				least, middle, per_second, measured := call_measure(&machine.client, step.text, step.repeat)
@@ -3106,7 +3106,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 					fmt.eprintfln("kerneltool: test failed: step %d: the measure of %s had a call with no answer", index + 1, step.text)
 					return false
 				}
-				fmt.printfln("kerneltool: test passed: the call %s from the host: the round trip %d us at least, %d us in the middle, over %d calls; %d calls in one second, one after the other", step.text, i64(least / time.Microsecond), i64(middle / time.Microsecond), step.repeat, per_second)
+				test_passed_print("the call %s from the host: the round trip %d us at least, %d us in the middle, over %d calls; %d calls in one second, one after the other", step.text, i64(least / time.Microsecond), i64(middle / time.Microsecond), step.repeat, per_second)
 			}
 		case .Remember:
 			if !log_wait(machine, step.text, false) {
@@ -3127,7 +3127,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 					}
 				}
 			}
-			fmt.printfln("kerneltool: test passed: %s: %d values, each different", step.text, len(remembered_values))
+			test_passed_print("%s: %d values, each different", step.text, len(remembered_values))
 		case .Quic_Key:
 			if !log_wait(machine, step.text, false) {
 				fmt.eprintfln("kerneltool: test failed: step %d: the machine did not print \"%s\"", index + 1, step.text)
@@ -3156,7 +3156,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				fmt.eprintfln("kerneltool: test failed: step %d: the QUIC case \"%s\" of the peer: %s; the last counts of the server: %s", index + 1, step.text, result, counts)
 				return false
 			}
-			fmt.printfln("kerneltool: test passed: the QUIC case \"%s\" of the peer: %s; the last counts of the server: %s", step.text, result, counts)
+			test_passed_print("the QUIC case \"%s\" of the peer: %s; the last counts of the server: %s", step.text, result, counts)
 		case .Peer_Start:
 			peer_case_started = peer_case_start_from_the_tool(machine.peer, step.text)
 			fmt.printfln("kerneltool: the TCP case \"%s\" of the peer runs; the next steps run with it", step.text)
@@ -3166,14 +3166,14 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				fmt.eprintfln("kerneltool: test failed: step %d: the TCP case \"%s\" of the peer: %s", index + 1, step.text, result)
 				return false
 			}
-			fmt.printfln("kerneltool: test passed: the TCP case \"%s\" of the peer: %s", step.text, result)
+			test_passed_print("the TCP case \"%s\" of the peer: %s", step.text, result)
 		case .Peer:
 			passed, result := peer_case(machine.peer, step.text)
 			if !passed {
 				fmt.eprintfln("kerneltool: test failed: step %d: the TCP case \"%s\" of the peer: %s", index + 1, step.text, result)
 				return false
 			}
-			fmt.printfln("kerneltool: test passed: the TCP case \"%s\" of the peer: %s", step.text, result)
+			test_passed_print("the TCP case \"%s\" of the peer: %s", step.text, result)
 		case .Fetch:
 			if !forward_fetch(machine.forward, step.text) {
 				return false

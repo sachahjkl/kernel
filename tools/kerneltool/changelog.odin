@@ -731,7 +731,7 @@ changelog_check :: proc() -> bool {
 	for checked_release in changelog.releases {
 		entry_count += len(checked_release.entries)
 	}
-	fmt.printfln("kerneltool: test passed: %s has %d releases and %d entries, %s has %d fragments, all well formed", CHANGELOG_FILE, len(changelog.releases), entry_count, FRAGMENT_FOLDER, len(fragments))
+	test_passed_print("%s has %d releases and %d entries, %s has %d fragments, all well formed", CHANGELOG_FILE, len(changelog.releases), entry_count, FRAGMENT_FOLDER, len(fragments))
 	return true
 }
 

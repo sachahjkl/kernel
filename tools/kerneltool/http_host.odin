@@ -168,7 +168,7 @@ http_case_run :: proc(forward: Forward, case_text: string, expected: string) -> 
 			free_all(context.temp_allocator)
 		}
 		took := time.tick_since(start)
-		fmt.printfln("kerneltool: test passed: %d requests on one connection of the host through libslirp, each 200: %.0f requests in one second (the clock of the host)", COUNT, f64(COUNT) / time.duration_seconds(took))
+		test_passed_print("%d requests on one connection of the host through libslirp, each 200: %.0f requests in one second (the clock of the host)", COUNT, f64(COUNT) / time.duration_seconds(took))
 	case "new-connections":
 		// One connection for each request.
 		COUNT :: 300
@@ -182,7 +182,7 @@ http_case_run :: proc(forward: Forward, case_text: string, expected: string) -> 
 			free_all(context.temp_allocator)
 		}
 		took := time.tick_since(start)
-		fmt.printfln("kerneltool: test passed: %d requests, each with a new connection of the host through libslirp, each 200: %.0f requests in one second (the clock of the host)", COUNT, f64(COUNT) / time.duration_seconds(took))
+		test_passed_print("%d requests, each with a new connection of the host through libslirp, each 200: %.0f requests in one second (the clock of the host)", COUNT, f64(COUNT) / time.duration_seconds(took))
 	case "pipeline":
 		// Three requests in one send: three answers, in order.
 		connection, ok := http_host_connect(forward)
@@ -198,7 +198,7 @@ http_case_run :: proc(forward: Forward, case_text: string, expected: string) -> 
 			fmt.eprintfln("kerneltool: the pipelined answers: %d, %d (Content-Length %d), %d", first.status, second.status, second.content_length, third.status)
 			return false
 		}
-		fmt.printfln("kerneltool: test passed: three requests in one segment, three answers in order: GET / 200 (%d bytes), HEAD /counts.json 200 (Content-Length %d, no body), GET /nothing 404", len(first.body), second.content_length)
+		test_passed_print("three requests in one segment, three answers in order: GET / 200 (%d bytes), HEAD /counts.json 200 (Content-Length %d, no body), GET /nothing 404", len(first.body), second.content_length)
 	case "split":
 		// A head and a body in many sends, with waits between them.
 		connection, ok := http_host_connect(forward)
@@ -223,7 +223,7 @@ http_case_run :: proc(forward: Forward, case_text: string, expected: string) -> 
 			fmt.eprintfln("kerneltool: the split body: status %d, %q", answer.status, string(answer.body))
 			return false
 		}
-		fmt.printfln("kerneltool: test passed: a head in 2 sends and a body of %d bytes in 10, 20 ms apart: the server gave the same hash", SIZE)
+		test_passed_print("a head in 2 sends and a body of %d bytes in 10, 20 ms apart: the server gave the same hash", SIZE)
 	case "head":
 		// HEAD gives the head of GET with no body: the next request on the
 		// same connection is read right.
@@ -240,7 +240,7 @@ http_case_run :: proc(forward: Forward, case_text: string, expected: string) -> 
 			fmt.eprintfln("kerneltool: HEAD: status %d, Content-Length %d; the next answer %d", head.status, head.content_length, after.status)
 			return false
 		}
-		fmt.printfln("kerneltool: test passed: HEAD / gave 200, text/html and Content-Length %d with no body; the next request on the connection gave 200", head.content_length)
+		test_passed_print("HEAD / gave 200, text/html and Content-Length %d with no body; the next request on the connection gave 200", head.content_length)
 	case "errors":
 		Error_Case :: struct {
 			name:    string,
@@ -279,7 +279,7 @@ http_case_run :: proc(forward: Forward, case_text: string, expected: string) -> 
 			fmt.eprintfln("kerneltool: half a head: status %d, not 408", late.status)
 			return false
 		}
-		fmt.printfln("kerneltool: test passed: each refusal has its status:%s half a head 408 after %.1f s", strings.to_string(found), time.duration_seconds(time.tick_since(start)))
+		test_passed_print("each refusal has its status:%s half a head 408 after %.1f s", strings.to_string(found), time.duration_seconds(time.tick_since(start)))
 	case "page":
 		// A page of the store of the server, byte for byte.
 		answer := http_host_request(forward, fmt.tprintf("GET /%s HTTP/1.1\r\nHost: 10.0.2.15\r\n\r\n", parts[1]))
@@ -287,14 +287,14 @@ http_case_run :: proc(forward: Forward, case_text: string, expected: string) -> 
 			fmt.eprintfln("kerneltool: /%s: status %d, %q, not %q", parts[1], answer.status, string(answer.body), expected)
 			return false
 		}
-		fmt.printfln("kerneltool: test passed: the host fetched /%s from the store of server: %d bytes, the same bytes that the console put", parts[1], len(answer.body))
+		test_passed_print("the host fetched /%s from the store of server: %d bytes, the same bytes that the console put", parts[1], len(answer.body))
 	case "missing":
 		answer := http_host_request(forward, fmt.tprintf("GET /%s HTTP/1.1\r\nHost: 10.0.2.15\r\n\r\n", parts[1]))
 		if answer.status != 404 {
 			fmt.eprintfln("kerneltool: /%s: status %d, not 404", parts[1], answer.status)
 			return false
 		}
-		fmt.printfln("kerneltool: test passed: /%s gives 404 after server.remove", parts[1])
+		test_passed_print("/%s gives 404 after server.remove", parts[1])
 	// An independent read of the HTTP server (F4): a request with a body
 	// that the server does not take. The body must not be read as the next
 	// request (RFC 9112 6.3; with a proxy before the server: request
@@ -313,7 +313,7 @@ http_case_run :: proc(forward: Forward, case_text: string, expected: string) -> 
 			fmt.eprintfln("kerneltool: a GET with a body of a request: %d answers, the end of the connection: %v, the first line %q", answers, ended, string(bytes[:min(len(bytes), 20)]))
 			return false
 		}
-		fmt.printfln("kerneltool: test passed: a GET with a body that is a request: one answer 200, then the server ended the connection after %.0f ms; the body was not read as a request", time.duration_milliseconds(took))
+		test_passed_print("a GET with a body that is a request: one answer 200, then the server ended the connection after %.0f ms; the body was not read as a request", time.duration_milliseconds(took))
 	// W7: three whole requests, then a FIN: three answers, then the end.
 	case "requests-then-fin":
 		connection, ok := http_host_connect(forward)
@@ -329,7 +329,7 @@ http_case_run :: proc(forward: Forward, case_text: string, expected: string) -> 
 			fmt.eprintfln("kerneltool: three requests then a FIN: %d answers, the end of the connection: %v", answers, ended)
 			return false
 		}
-		fmt.printfln("kerneltool: test passed: three requests then a FIN in one send: three answers (200, 404, 200 of HEAD), then the end of the connection")
+		test_passed_print("three requests then a FIN in one send: three answers (200, 404, 200 of HEAD), then the end of the connection")
 	// The notes of the read: each answer says nosniff; HTTP/1.0 with
 	// keep-alive gets "Connection: keep-alive" and a second answer on the
 	// same connection.
@@ -348,7 +348,7 @@ http_case_run :: proc(forward: Forward, case_text: string, expected: string) -> 
 			fmt.eprintfln("kerneltool: HTTP/1.0 with keep-alive: %d, then %d; the head %q", first.status, second.status, first.head)
 			return false
 		}
-		fmt.printfln("kerneltool: test passed: HTTP/1.0 with keep-alive: the answer says Connection: keep-alive and X-Content-Type-Options: nosniff, and a second request on the connection gets its answer (404, nosniff too)")
+		test_passed_print("HTTP/1.0 with keep-alive: the answer says Connection: keep-alive and X-Content-Type-Options: nosniff, and a second request on the connection gets its answer (404, nosniff too)")
 	case "crowd":
 		// 16 connections at once: each sends, then each reads.
 		COUNT :: 16
@@ -374,7 +374,7 @@ http_case_run :: proc(forward: Forward, case_text: string, expected: string) -> 
 			fmt.eprintfln("kerneltool: 16 connections at once: %d answers 200", answered)
 			return false
 		}
-		fmt.printfln("kerneltool: test passed: 16 connections of the host at once, 16 answers 200")
+		test_passed_print("16 connections of the host at once, 16 answers 200")
 	case:
 		return false
 	}

@@ -343,8 +343,8 @@ cryptography_origin_check :: proc() -> bool {
 			return false
 		}
 	}
-	fmt.printfln("kerneltool: test passed: each of the %d .odin files of %s is in a list; %d files of the system have the hash of their list", len(found), CRYPTOGRAPHY_FOLDER, len(listed) - files)
-	fmt.printfln("kerneltool: test passed: %d files of support/cryptography are their origin in Odin %s (each with the BLAKE3 hash of the manifest) with the %d listed import changes, the %d listed adjustments, and nothing else", files, CRYPTOGRAPHY_ORIGIN_RELEASE, len(cryptography_import_changes), len(cryptography_adjustments))
+	test_passed_print("each of the %d .odin files of %s is in a list; %d files of the system have the hash of their list", len(found), CRYPTOGRAPHY_FOLDER, len(listed) - files)
+	test_passed_print("%d files of support/cryptography are their origin in Odin %s (each with the BLAKE3 hash of the manifest) with the %d listed import changes, the %d listed adjustments, and nothing else", files, CRYPTOGRAPHY_ORIGIN_RELEASE, len(cryptography_import_changes), len(cryptography_adjustments))
 	return true
 }
 

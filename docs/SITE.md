@@ -31,13 +31,13 @@ A page named by a folder (`news/`) is the `index.html` of that folder (see "The 
 
 | Page | Generated from |
 |---|---|
-| `index.html`, the home | The mark (`support/mark`), the first sentence of the first paragraph of `README.md` as the tagline of the head, the three newest news entries, the rest of that paragraph in a section "What it is" after the news (the owner, 2026-11-12: "la tagline est trop longue"; after the news, so that the first screen of a phone holds the mark, the name, the tagline and the links only; the description of the home in its head, Open Graph, the manifest and the page graph stays the whole paragraph, cut at 160 bytes, because the tagline alone is too short to describe the system), the stages of the start from the lines `kernel: boot: ...` of `build/test_output.txt`, the tiles of the boot image (see "The tiles of the boot image"), the first three measured numbers, the pictures of `docs/screenshots` with the captions of `README.md`, the newest release of `CHANGELOG.md`, the count of steps of `docs/REVIEWS.md` |
+| `index.html`, the home | The mark (`support/mark`), the first sentence of the first paragraph of `README.md` as the tagline of the head, the three newest news entries, the rest of that paragraph in a section "What it is" after the news (the owner, 2026-11-12: "la tagline est trop longue"; after the news, so that the first screen of a phone holds the mark, the name, the tagline and the links only; the description of the home in its head, Open Graph, the manifest and the page graph stays the whole paragraph, cut at 160 bytes, because the tagline alone is too short to describe the system), the stages of the start from the lines `kernel: boot: ...` of `build/test_output.txt` or of the measure record (see "The measure record"), the tiles of the boot image (see "The tiles of the boot image"), the first three measured numbers, the pictures of `docs/screenshots` with the captions of `README.md`, the newest release of `CHANGELOG.md`, the count of steps of `docs/REVIEWS.md` |
 | `guides/index.html` | The table "Documents" of `README.md`, then the other documents of `docs/` by name |
 | `guides/<name>/` | Each document of `docs/` but the working records `HANDOFF.md`, `REVIEWS.md`, `SITE.md` and `FIRST_MILESTONE.md` (`SITE_WORKING_RECORDS`), which stay out of the site: only the guides that explain the system are published. A link of a page to a working record names the file in the repository. The glossary is a page of the reference |
 | `reference/index.html` | The list of the reference tables below |
 | `reference/glossary/` | `docs/GLOSSARY.md`: each row of a table whose first column is "Term" has the anchor `term-<name>` |
 | `reference/commands/` | `COMMANDS` in `tools/kerneltool/main.odin`: the name and the text of each command |
-| `reference/numbers/` | The list `site_measures` and the logs of `build/` |
+| `reference/numbers/` | The list `site_measures`, the measure record `docs/measures/measures.txt` and the logs of `build/` that are newer than it |
 | `reference/licenses/` | See "The licenses" |
 | `releases/` | All of `CHANGELOG.md`, newest first; each release has the anchor `release-<number>`, and a line with a link to each news entry that names it |
 | `news/`, `news.xml` | The files of `news/`; see "The news" |
@@ -232,26 +232,77 @@ With no site address: no page has a canonical address, Open Graph or a page grap
 
 ## The numbers
 
-Each number is a line that a program printed in the log of a machine test, quoted whole: the line gives its own conditions. The table also gives the log, the line number, the machine that wrote the log, and the time of the log. No number is typed by hand. When the log or its line is absent, the row says "Not measured in this build." and the command lists it.
+Each number is a line that a program printed in the log of a machine test, quoted whole: the line gives its own conditions. The table also gives the log, the line number, the machine that wrote the log, where the line comes from (the full check of the measure record, with its date and its commit, or a log of this work tree), and the time of the log or of the record. No number is typed by hand. When neither a log nor the measure record has the line, the row says "Not measured." with the reasons, and the command lists it.
 
-| Number | Log in `build/` | Text of the line |
-|---|---|---|
-| Kernel entries in one second, 1, 2 and 4 lockers | `test_output_measure.txt`, else `test_output.txt` | `locks: kernel entries in one second` |
-| Reads of the time page in one second | `test_output.txt` | `clock: the time page:` |
-| Wakes in one second under EEVDF | `test_output.txt` | `scheduler: EEVDF: two threads that wake each other` |
-| One glyph of the vector font | `test_output.txt` | `vector_glyphs: one glyph from its outline` |
-| A full frame of the compositor (the last line) | `test_output.txt` | `compositor: a full frame of` |
-| Blocks read in one second, 32 in flight | `test_output.txt` | `disk: read, 1 block in each request, 32 in flight` |
-| 1000 commits to a private store | `test_output_persist_1.txt` | `notes: count 1000, stopped` |
-| The headers and the checksum of a UDP datagram | `test_output_network.txt` | `network: the headers and the checksum of a datagram` |
-| The round trip of a UDP datagram | `test_output_network.txt` | `net: the round trip of one datagram` |
-| UDP datagrams in one second, 64 in flight | `test_output_network.txt` | `net: a burst with 64 datagrams in flight` |
-| TCP, 1 MiB received from the host | `test_output_tcp_real.txt` | `fetch: GET /large:` |
-| TCP, 1 MiB sent to the host | `test_output_tcp_real.txt` | `fetch: POST /sink, 1 MiB` |
-| ChaCha20-Poly1305 on 1200 bytes | `test_output_cryptography.txt` | `cryptography_vectors: seal ChaCha20-Poly1305` |
-| The same bytes after a second build | `reproducible_build.txt` | `the same bytes after a second build` |
+The first paragraph of the page states the run of the measure record: its time, its commit and whether its tree had changes that were not committed, its release, its host and its count of checks that passed. When the release of the record is not the newest release of the changelog, a paragraph says that the numbers were measured before the release that the site shows. With no measure record, a paragraph says so.
 
-`kerneltool check` writes `build/reproducible_build.txt` after its comparison of two builds.
+| Number | Log in `build/` | Text of the line | Required |
+|---|---|---|---|
+| Kernel entries in one second, 1, 2 and 4 lockers | `test_output_measure.txt`, else `test_output.txt` | `locks: kernel entries in one second` | yes |
+| Reads of the time page in one second | `test_output.txt` | `clock: the time page:` | yes |
+| Wakes in one second under EEVDF | `test_output.txt` | `scheduler: EEVDF: two threads that wake each other` | yes |
+| One glyph of the vector font | `test_output.txt` | `vector_glyphs: one glyph from its outline` | yes |
+| A full frame of the compositor (the last line) | `test_output.txt` | `compositor: a full frame of` | no |
+| Blocks read in one second, 32 in flight | `test_output.txt` | `disk: read, 1 block in each request, 32 in flight` | yes |
+| 1000 commits to a private store | `test_output_persist_1.txt` | `notes: count 1000, stopped` | yes |
+| The headers and the checksum of a UDP datagram | `test_output_network.txt` | `network: the headers and the checksum of a datagram` | yes |
+| The round trip of a UDP datagram | `test_output_network.txt` | `net: the round trip of one datagram` | yes |
+| UDP datagrams in one second, 64 in flight | `test_output_network.txt` | `net: a burst with 64 datagrams in flight` | yes |
+| TCP, 1 MiB received from the host | `test_output_tcp_real.txt` | `fetch: GET /large:` | yes |
+| TCP, 1 MiB sent to the host | `test_output_tcp_real.txt` | `fetch: POST /sink, 1 MiB` | yes |
+| ChaCha20-Poly1305 on 1200 bytes | `test_output_cryptography.txt` | `cryptography_vectors: seal ChaCha20-Poly1305` | yes |
+| The same bytes after a second build | `reproducible_build.txt` | `the same bytes after a second build` | yes |
+
+`kerneltool check` and `kerneltool screenshots` write `build/reproducible_build.txt` after their comparison of two builds.
+
+A required number is a line that a scenario of `kerneltool test` waits for (a step `Wait`), or the line of the second build: a run that passed holds it. A host test checks that each required number is such a line. A full frame of the compositor is not required: the compositor prints it when a frame redraws the whole screen, and no step waits for it. The lock measure of `kerneltool measure` (`test_output_measure.txt`) comes first when it is newer, but the full check does not run it: the full check takes the same line from `test_output.txt`.
+
+## The measure record
+
+The site workflow builds the site on a clean checkout and runs no machine test: the logs of `build/` are absent there. So the pass that commits the pictures also commits the numbers. `kerneltool screenshots` runs the machine tests (`kerneltool test`) and the second build, then writes `docs/measures/measures.txt` before it copies the pictures. The file is in the repository.
+
+The form, one line for each fact, a key, one space and a value:
+
+```
+measure record 1
+time 2026-11-12 02:09 UTC
+release 0.91.0
+commit <40 hexadecimal digits, or unknown>
+tree clean | changed | unknown
+host <processor model>, <n> logical processors; QEMU with KVM
+checks <count of checks that passed>
+number <the sentence of site_measures>
+log build/test_output.txt
+line <line number in the log>
+matching <count of lines with the text>
+machine <the machine that wrote the log>
+text <the whole line of the log, with its label>
+number <a sentence of a number that the run did not give>
+absent <why>
+boot kernel: boot: firmware: 1031293 us
+end
+```
+
+- The numbers are in the order of `site_measures`, the lines `boot` in the order of the log of the main machine. The same run gives the same bytes but for the measured values, the time and the count.
+- The commit and the tree are read when the pass starts, before it writes into the tree. The commit is the commit of the tree that ran: the commit that holds the record comes after it.
+- `time` is the time when the record was written, in UTC. `checks` counts each line `kerneltool: test passed: ...` of the process.
+- A log written before the start of the run is of another run: the pass does not read it.
+- The pass fails, and does not write the record, when a required number has no line in the logs of the run. A number that is not required and has no line gets a line `absent`.
+- The pass reads the record back before it writes it. The site refuses a record that does not have this form, and stops.
+
+What the record never holds, and how the pass removes it from each value:
+
+- A path in the repository becomes relative to it: `<repository>/build/x` becomes `build/x`, the repository folder alone becomes `.`.
+- The home folder becomes `~`.
+- The user name (`USER`) becomes `<user>`, and the host name (`/proc/sys/kernel/hostname`) becomes `<host>`, when they have 3 bytes or more: a shorter name matches parts of common words.
+- The host line holds the model of the processor (`/proc/cpuinfo`), the count of logical processors, and "QEMU with KVM" when `/dev/kvm` exists, else "QEMU with TCG".
+
+How the site chooses, for each number and for the stages of the start:
+
+- A log of `build/` that has the line and is newer than the record (the time of the files in the work tree): the log. A person who just ran the tests sees their numbers. The row says "Measured in this work tree".
+- Else the record, when it holds the line. The row says "Measured in the full check of <date>, on the tree of <commit>".
+- Else "Not measured.", with the reasons: no log, a log older than the record, no record, or the reason of the run.
+- A checkout writes the record at the time of the checkout: the logs of an older run lose.
 
 ## The licenses
 
@@ -645,7 +696,7 @@ The work is in layers; each layer adds pages to a site that works.
 - (c) Done: the news (`news/`, `kerneltool news`), its page, its door on the home, its feed and its links from the releases.
 - (d) Done: the search: its index, its script, its box in the bar.
 - (e) Done: what other sites read (`tools/kerneltool/site_metadata.odin`): the canonical address, Open Graph, the summary card, the page graph, the manifest, `sitemap.xml`, `robots.txt`, `releases.xml`, `llms.txt`, the pictures of the repository compressed, and their checks. See "What other sites read".
-- The count of checks of `kerneltool check`: the tool prints each check that passed and keeps no count.
+- The count of checks of `kerneltool check` on the site: the measure record counts the checks of `kerneltool screenshots` only (the machine tests and the second build), not the host tests of `kerneltool check`.
 - An embedded font: Paper Mono is under the SIL OFL 1.1 with no Reserved Font Name (`resources/fonts/paper_mono.license`): its ASCII subsets can be copied into the site with `OFL.txt` and their `.license` files and declared with `@font-face`. The site uses the fonts of the reader's system.
 
 ## How the site is published
@@ -676,8 +727,9 @@ What a clean checkout gives to `kerneltool site`:
 | The pictures of the mark, the module pages and their signatures | The code of the tool (`support/mark`, `describe_package`); no module is built | Written |
 | The commit | `.git` | Read |
 | `build/boot.image` | `kerneltool build` | Written by the step before: the tiles of the home with their sizes and colors, the size of each module in its page, and the column "in the boot image" of the licenses. With no image these show the modules with no size, and "not recorded" |
-| The logs of the machine tests, `build/test_output*.txt` | `kerneltool test`, `kerneltool measure` | Absent: each measured number says "Not measured in this build.", and so does the start of the machine on the home. The command does not fail |
-| `build/reproducible_build.txt` | `kerneltool check` | Absent: "Not measured in this build." |
+| The measure record, `docs/measures/measures.txt` | `kerneltool screenshots` | Committed: the measured numbers, the second build and the stages of the start of the last full check, with its date, its commit and its host |
+| The logs of the machine tests, `build/test_output*.txt` | `kerneltool test`, `kerneltool measure` | Absent: the site reads the measure record. With no record, each number says "Not measured.", and so does the start of the machine on the home. The command does not fail |
+| `build/reproducible_build.txt` | `kerneltool check`, `kerneltool screenshots` | Absent: the line of the measure record |
 
 The time of the step `kerneltool build` on a runner of GitHub is not measured yet: the first run gives it.
 
@@ -703,6 +755,6 @@ A `<meta>` policy is not written: `frame-ancestors` has no effect there, and `'s
 
 ## What the owner must decide
 
-1. The measured numbers of the site online. A clean checkout has no log of a machine test, so the site says "Not measured in this build." for each number. The choices: the workflow also runs `kerneltool test` (machines under QEMU on the runner, with the time of a test run), or each release commits the lines of the numbers in one file that the site reads.
+1. Done: the measured numbers of the site online come from the measure record (see "The measure record").
 2. The cache of the workflow: the cache of GitHub Actions (`magic-nix-cache-action`, now) or FlakeHub Cache (`flakehub-cache-action`, which needs a FlakeHub account for the repository).
 3. The name in the title of `README.md` and in the `description` of `flake.nix`: both say "Next-Gen Kernel", the name of the project before `modus`. The site does not read either (it reads the lead of `README.md`). Not changed here.

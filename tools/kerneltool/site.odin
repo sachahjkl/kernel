@@ -20,7 +20,7 @@ SITE_REPOSITORY_ADDRESS :: "https://github.com/sachahjkl/modus"
 SITE_SYSTEM_NAME :: "modus"
 SITE_RELEASE_COUNT :: 5
 SITE_LICENSE_FILE :: "LICENSE"
-SITE_NOT_MEASURED :: "Not measured in this build."
+SITE_NOT_MEASURED :: "Not measured."
 // `kerneltool check` writes here the line of its comparison of two builds.
 REPRODUCIBLE_BUILD_RECORD :: BUILD_FOLDER + "/reproducible_build.txt"
 
@@ -71,6 +71,9 @@ Site_Measure_Place :: enum {
 // program printed it, and a part of the text of that line. The first log
 // that has the line gives it. The page quotes the whole line: the line
 // gives its own conditions (the count, the size, the unit).
+// A required number is a line that a scenario of `kerneltool test` waits
+// for, or the line of the second build: a run of `kerneltool screenshots`
+// that passed holds it, so the measure record must hold it.
 Site_Measure :: struct {
 	sentence: string,
 	files:    [2]string, // "" for no second log.
@@ -78,23 +81,24 @@ Site_Measure :: struct {
 	choice:   Site_Line_Choice,
 	accent:   graphics.Color, // The color of the concept that the number measures.
 	place:    Site_Measure_Place,
+	required: bool,
 }
 
 site_measures := [?]Site_Measure {
-	{sentence = "Kernel entries in one second, with 1, 2 and 4 programs that each take the locks of their own objects", files = {TEST_OUTPUT_MEASURE, TEST_OUTPUT}, pattern = "locks: kernel entries in one second", choice = .First, accent = graphics.COLOR_KERNEL, place = .Numbers},
-	{sentence = "Reads of the time in one second from the time page, with no kernel entry", files = {TEST_OUTPUT, ""}, pattern = "clock: the time page:", choice = .First, accent = graphics.COLOR_KERNEL, place = .Numbers},
-	{sentence = "Wakes in one second of two threads that wake each other on a busy machine, under the strategy EEVDF", files = {TEST_OUTPUT, ""}, pattern = "scheduler: EEVDF: two threads that wake each other", choice = .First, accent = graphics.COLOR_KERNEL, place = .Numbers},
-	{sentence = "One glyph of the vector font, from its outline and from the glyph cache", files = {TEST_OUTPUT, ""}, pattern = "vector_glyphs: one glyph from its outline", choice = .First, accent = graphics.COLOR_PROGRAM, place = .Numbers},
-	{sentence = "A full frame of the compositor", files = {TEST_OUTPUT, ""}, pattern = "compositor: a full frame of", choice = .Last, accent = graphics.COLOR_PROGRAM, place = .Numbers},
-	{sentence = "Blocks read in one second from a virtio disk, through the block service in user space", files = {TEST_OUTPUT, ""}, pattern = "disk: read, 1 block in each request, 32 in flight", choice = .First, accent = graphics.COLOR_MEMORY, place = .Numbers},
-	{sentence = "1000 commits of a program to its private store, one commit for each step", files = {BUILD_FOLDER + "/test_output_persist_1.txt", ""}, pattern = "notes: count 1000, stopped", choice = .First, accent = graphics.COLOR_MEMORY, place = .Numbers},
-	{sentence = "The headers and the checksum of one UDP datagram, in the network service", files = {TEST_OUTPUT_NETWORK, ""}, pattern = "network: the headers and the checksum of a datagram", choice = .First, accent = graphics.COLOR_MACHINE, place = .Numbers},
-	{sentence = "The round trip of one UDP datagram", files = {TEST_OUTPUT_NETWORK, ""}, pattern = "net: the round trip of one datagram", choice = .First, accent = graphics.COLOR_MACHINE, place = .Numbers},
-	{sentence = "UDP datagrams in one second, with 64 in flight", files = {TEST_OUTPUT_NETWORK, ""}, pattern = "net: a burst with 64 datagrams in flight", choice = .First, accent = graphics.COLOR_MACHINE, place = .Numbers},
-	{sentence = "TCP: 1 MiB that the program `fetch` receives from a server of the host", files = {TEST_OUTPUT_TCP_REAL, ""}, pattern = "fetch: GET /large:", choice = .First, accent = graphics.COLOR_MACHINE, place = .Numbers},
-	{sentence = "TCP: 1 MiB that the program `fetch` sends to a server of the host", files = {TEST_OUTPUT_TCP_REAL, ""}, pattern = "fetch: POST /sink, 1 MiB", choice = .First, accent = graphics.COLOR_MACHINE, place = .Numbers},
-	{sentence = "ChaCha20-Poly1305: the seal of one QUIC datagram of 1200 bytes, through the module `cryptography`", files = {TEST_OUTPUT_CRYPTOGRAPHY, ""}, pattern = "cryptography_vectors: seal ChaCha20-Poly1305", choice = .First, accent = graphics.COLOR_PROGRAM, place = .Numbers},
-	{sentence = "The same bytes after a second build", files = {REPRODUCIBLE_BUILD_RECORD, ""}, pattern = "the same bytes after a second build", choice = .Last, accent = graphics.COLOR_KERNEL, place = .Build},
+	{sentence = "Kernel entries in one second, with 1, 2 and 4 programs that each take the locks of their own objects", files = {TEST_OUTPUT_MEASURE, TEST_OUTPUT}, pattern = "locks: kernel entries in one second", choice = .First, accent = graphics.COLOR_KERNEL, place = .Numbers, required = true},
+	{sentence = "Reads of the time in one second from the time page, with no kernel entry", files = {TEST_OUTPUT, ""}, pattern = "clock: the time page:", choice = .First, accent = graphics.COLOR_KERNEL, place = .Numbers, required = true},
+	{sentence = "Wakes in one second of two threads that wake each other on a busy machine, under the strategy EEVDF", files = {TEST_OUTPUT, ""}, pattern = "scheduler: EEVDF: two threads that wake each other", choice = .First, accent = graphics.COLOR_KERNEL, place = .Numbers, required = true},
+	{sentence = "One glyph of the vector font, from its outline and from the glyph cache", files = {TEST_OUTPUT, ""}, pattern = "vector_glyphs: one glyph from its outline", choice = .First, accent = graphics.COLOR_PROGRAM, place = .Numbers, required = true},
+	{sentence = "A full frame of the compositor", files = {TEST_OUTPUT, ""}, pattern = "compositor: a full frame of", choice = .Last, accent = graphics.COLOR_PROGRAM, place = .Numbers, required = false},
+	{sentence = "Blocks read in one second from a virtio disk, through the block service in user space", files = {TEST_OUTPUT, ""}, pattern = "disk: read, 1 block in each request, 32 in flight", choice = .First, accent = graphics.COLOR_MEMORY, place = .Numbers, required = true},
+	{sentence = "1000 commits of a program to its private store, one commit for each step", files = {BUILD_FOLDER + "/test_output_persist_1.txt", ""}, pattern = "notes: count 1000, stopped", choice = .First, accent = graphics.COLOR_MEMORY, place = .Numbers, required = true},
+	{sentence = "The headers and the checksum of one UDP datagram, in the network service", files = {TEST_OUTPUT_NETWORK, ""}, pattern = "network: the headers and the checksum of a datagram", choice = .First, accent = graphics.COLOR_MACHINE, place = .Numbers, required = true},
+	{sentence = "The round trip of one UDP datagram", files = {TEST_OUTPUT_NETWORK, ""}, pattern = "net: the round trip of one datagram", choice = .First, accent = graphics.COLOR_MACHINE, place = .Numbers, required = true},
+	{sentence = "UDP datagrams in one second, with 64 in flight", files = {TEST_OUTPUT_NETWORK, ""}, pattern = "net: a burst with 64 datagrams in flight", choice = .First, accent = graphics.COLOR_MACHINE, place = .Numbers, required = true},
+	{sentence = "TCP: 1 MiB that the program `fetch` receives from a server of the host", files = {TEST_OUTPUT_TCP_REAL, ""}, pattern = "fetch: GET /large:", choice = .First, accent = graphics.COLOR_MACHINE, place = .Numbers, required = true},
+	{sentence = "TCP: 1 MiB that the program `fetch` sends to a server of the host", files = {TEST_OUTPUT_TCP_REAL, ""}, pattern = "fetch: POST /sink, 1 MiB", choice = .First, accent = graphics.COLOR_MACHINE, place = .Numbers, required = true},
+	{sentence = "ChaCha20-Poly1305: the seal of one QUIC datagram of 1200 bytes, through the module `cryptography`", files = {TEST_OUTPUT_CRYPTOGRAPHY, ""}, pattern = "cryptography_vectors: seal ChaCha20-Poly1305", choice = .First, accent = graphics.COLOR_PROGRAM, place = .Numbers, required = true},
+	{sentence = "The same bytes after a second build", files = {REPRODUCIBLE_BUILD_RECORD, ""}, pattern = "the same bytes after a second build", choice = .Last, accent = graphics.COLOR_KERNEL, place = .Build, required = true},
 }
 
 // What each log is: the machine that wrote it and what else ran.
@@ -113,17 +117,35 @@ site_output_files := [?]Site_Output_File {
 	{REPRODUCIBLE_BUILD_RECORD, "Written by `kerneltool check`, after it built every module and the boot program a second time and compared the bytes"},
 }
 
+// Where a number or the stages of the start that a page shows come from:
+// a log in build/ that is newer than the measure record, or the measure
+// record.
+Site_Measure_Source :: enum {
+	None,
+	Build,
+	Record,
+}
+
 // One number as the page shows it.
 Site_Measured :: struct {
 	measure:        Site_Measure,
 	found:          bool,
+	source:         Site_Measure_Source,
 	path:           string,
 	conditions:     string,
 	line_number:    int,
 	matching_lines: int,
 	text:           string, // The line, with no "[program] " label.
-	written:        string, // The time of the log, in UTC.
+	written:        string, // The time of the log, or of the measure record, in UTC.
+	log_time:       time.Time, // The time of the log in build/ that has the line.
 	missing:        string, // Why the number is absent.
+}
+
+// The measure record as the site reads it from the work tree.
+Site_Measure_Record :: struct {
+	present: bool,
+	record:  Measure_Record,
+	written: time.Time, // The time of the file in the work tree.
 }
 
 // One picture as the page shows it.
@@ -193,20 +215,27 @@ site_without_program_label :: proc(line: string) -> string {
 	return line
 }
 
-// site_line_choose finds the lines of a log that contain the pattern, and
-// gives the first or the last one.
-site_line_choose :: proc(content, pattern: string, choice: Site_Line_Choice) -> (text: string, line_number, matching_lines: int) {
-	for line, index in site_lines(content) {
-		if !strings.contains(line, pattern) {
+// log_line_choose finds the lines of a log that contain the pattern, and
+// gives the first or the last one whole, with its label.
+log_line_choose :: proc(content, pattern: string, choice: Site_Line_Choice) -> (line: string, line_number, matching_lines: int) {
+	for candidate, index in site_lines(content) {
+		if !strings.contains(candidate, pattern) {
 			continue
 		}
 		matching_lines += 1
 		if matching_lines == 1 || choice == .Last {
-			text = site_without_program_label(line)
+			line = candidate
 			line_number = index + 1
 		}
 	}
 	return
+}
+
+// site_line_choose gives the line of log_line_choose with no label.
+site_line_choose :: proc(content, pattern: string, choice: Site_Line_Choice) -> (text: string, line_number, matching_lines: int) {
+	line: string
+	line, line_number, matching_lines = log_line_choose(content, pattern, choice)
+	return site_without_program_label(line), line_number, matching_lines
 }
 
 // site_file_time gives the time of the last change of a file, in UTC.
@@ -215,9 +244,7 @@ site_file_time :: proc(path: string) -> string {
 	if err != nil {
 		return ""
 	}
-	year, month, day := time.date(info.modification_time)
-	hour, minute, _ := time.clock(info.modification_time)
-	return fmt.tprintf("%04d-%02d-%02d %02d:%02d UTC", year, int(month), day, hour, minute)
+	return measure_time_text(info.modification_time)
 }
 
 site_output_conditions :: proc(path: string) -> string {
@@ -251,16 +278,160 @@ site_measure_read :: proc(measure: Site_Measure) -> (measured: Site_Measured) {
 			continue
 		}
 		measured.found = true
+		measured.source = .Build
 		measured.path = path
 		measured.conditions = site_output_conditions(path)
 		measured.line_number = line_number
 		measured.matching_lines = matching_lines
 		measured.text = text
 		measured.written = site_file_time(path)
+		if file_information, stat_error := os.stat(path, context.temp_allocator); stat_error == nil {
+			measured.log_time = file_information.modification_time
+		}
 		return
 	}
 	measured.missing = strings.join(reasons[:], "; ", context.temp_allocator)
 	return
+}
+
+// site_measure_record_read reads the measure record of the work tree. An
+// absent file is no problem: the site then has the logs of build/ only. A
+// file that does not have its form stops the site.
+site_measure_record_read :: proc(path: string) -> (found: Site_Measure_Record, problem: string) {
+	file_information, stat_error := os.stat(path, context.temp_allocator)
+	if stat_error != nil {
+		return {}, ""
+	}
+	data, read_error := os.read_entire_file(path, context.temp_allocator)
+	if read_error != nil {
+		return {}, fmt.tprintf("%s: cannot read: %v", path, read_error)
+	}
+	record, parse_problem := measure_record_parse(string(data))
+	if parse_problem != "" {
+		return {}, fmt.tprintf("%s: %s", path, parse_problem)
+	}
+	return Site_Measure_Record{present = true, record = record, written = file_information.modification_time}, ""
+}
+
+// site_measure_source_choose chooses where a fact of the page comes from.
+// A log of build/ that is newer than the measure record wins: a person who
+// just ran the tests sees their numbers. Else the record, when it holds
+// the fact. A checkout writes the record at the time of the checkout, so
+// the logs of an older run lose.
+site_measure_source_choose :: proc(build_found: bool, build_time: time.Time, record: Site_Measure_Record, record_holds: bool) -> Site_Measure_Source {
+	if build_found && (!record.present || time.diff(record.written, build_time) > 0) {
+		return .Build
+	}
+	if record.present && record_holds {
+		return .Record
+	}
+	return .None
+}
+
+// site_measure_record_number finds a number of the table in the record, by
+// its sentence.
+site_measure_record_number :: proc(record: Measure_Record, sentence: string) -> (number: Measure_Record_Number, held: bool) {
+	for candidate in record.numbers {
+		if candidate.sentence == sentence {
+			return candidate, true
+		}
+	}
+	return {}, false
+}
+
+// site_measure_resolve gives a number as the page shows it, from what the
+// logs of build/ gave and from the measure record.
+site_measure_resolve :: proc(from_build: Site_Measured, record: Site_Measure_Record) -> Site_Measured {
+	measured := from_build
+	record_number, held := site_measure_record_number(record.record, from_build.measure.sentence)
+	measured.source = site_measure_source_choose(from_build.found, from_build.log_time, record, held && record_number.found)
+	switch measured.source {
+	case .Build:
+		return measured
+	case .Record:
+		measured.found = true
+		measured.path = record_number.log
+		measured.conditions = record_number.machine
+		measured.line_number = record_number.line_number
+		measured.matching_lines = record_number.matching_lines
+		measured.text = site_without_program_label(record_number.line)
+		measured.written = record.record.time
+		measured.missing = ""
+		return measured
+	case .None:
+	}
+	measured.found = false
+	reasons := make([dynamic]string, context.temp_allocator)
+	if from_build.found {
+		append(&reasons, fmt.tprintf("%s is older than %s", from_build.path, MEASURE_RECORD_FILE))
+	} else if from_build.missing != "" {
+		append(&reasons, from_build.missing)
+	}
+	if !record.present {
+		append(&reasons, fmt.tprintf("%s: no file", MEASURE_RECORD_FILE))
+	} else if !held {
+		append(&reasons, fmt.tprintf("the full check of %s does not have this number", record.record.time))
+	} else {
+		append(&reasons, fmt.tprintf("the full check of %s did not print it: %s", record.record.time, record_number.absent))
+	}
+	measured.missing = strings.join(reasons[:], "; ", context.temp_allocator)
+	return measured
+}
+
+// site_boot_log_choose gives the lines of the start that the home shows,
+// from the log of the main machine or from the measure record, by the same
+// rule as the numbers.
+site_boot_log_choose :: proc(record: Site_Measure_Record) -> (log: string, source: Site_Measure_Source) {
+	build_time: time.Time
+	file_information, stat_error := os.stat(TEST_OUTPUT, context.temp_allocator)
+	build_found := stat_error == nil
+	if build_found {
+		build_time = file_information.modification_time
+	}
+	switch site_measure_source_choose(build_found, build_time, record, len(record.record.boot_lines) > 0) {
+	case .Build:
+		content, _ := site_read_quiet(TEST_OUTPUT)
+		return content, .Build
+	case .Record:
+		return strings.join(record.record.boot_lines, "\n", context.temp_allocator), .Record
+	case .None:
+	}
+	return "", .None
+}
+
+// site_short_commit gives the first digits of a commit, as the pages show
+// it.
+site_short_commit :: proc(commit: string) -> string {
+	if commit == "" {
+		return "a commit that the tool could not read"
+	}
+	return commit[:min(MEASURE_COMMIT_SHORT_LENGTH, len(commit))]
+}
+
+// site_tree_words says whether the tree of a run had changes.
+site_tree_words :: proc(state: Measure_Tree_State) -> string {
+	switch state {
+	case .Clean:
+		return "with no change that was not committed"
+	case .Changed:
+		return "with changes that were not committed"
+	case .Unknown:
+	}
+	return "whose changes the tool could not read"
+}
+
+// site_origin_words says where a number or the stages of the start come
+// from, as a line of Markdown.
+site_origin_words :: proc(source: Site_Measure_Source, record: Site_Measure_Record) -> string {
+	switch source {
+	case .Record:
+		day := record.record.time[:min(10, len(record.record.time))]
+		return fmt.tprintf("Measured in the full check of %s, on the tree of `%s`, %s", day, site_short_commit(record.record.commit), site_tree_words(record.record.tree))
+	case .Build:
+		return "Measured in this work tree: the log in `" + BUILD_FOLDER + "/` is newer than `" + MEASURE_RECORD_FILE + "`"
+	case .None:
+	}
+	return ""
 }
 
 // site_escape writes a text of a file as HTML text: each character that

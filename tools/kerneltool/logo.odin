@@ -209,7 +209,7 @@ logo_check :: proc() -> bool {
 			fmt.eprintfln("kerneltool: test failed: %s is not the picture of the data of support/mark: run kerneltool logo", picture.path)
 			return false
 		}
-		fmt.printfln("kerneltool: test passed: %s is the picture of the data of support/mark", picture.path)
+		test_passed_print("%s is the picture of the data of support/mark", picture.path)
 	}
 	return true
 }

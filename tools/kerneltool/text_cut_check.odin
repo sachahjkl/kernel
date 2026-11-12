@@ -40,7 +40,7 @@ text_cut_check :: proc() -> bool {
 	if found > 0 {
 		return false
 	}
-	fmt.printfln("kerneltool: test passed: no source sets the count of a writer or reads its buffer by hand (%d files read)", len(files))
+	test_passed_print("no source sets the count of a writer or reads its buffer by hand (%d files read)", len(files))
 	return true
 }
 

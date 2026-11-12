@@ -57,7 +57,7 @@ fixed_addresses_check :: proc() -> bool {
 	if found > 0 {
 		return false
 	}
-	fmt.printfln("kerneltool: test passed: no file outside %s names BAND_START or SLOT (%d files read)", FIXED_ADDRESSES_FOLDER, len(files))
+	test_passed_print("no file outside %s names BAND_START or SLOT (%d files read)", FIXED_ADDRESSES_FOLDER, len(files))
 	return true
 }
 

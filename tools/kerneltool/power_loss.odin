@@ -480,7 +480,7 @@ power_loss_sequence :: proc(what: string, steps: []Step, output_number: int, thi
 		fmt.eprintfln("kerneltool: test failed: %d of %d images of the disk after the loss of power are wrong; the first: %s", search.wrong, search.images, search.first_wrong)
 		return false
 	}
-	fmt.printfln("kerneltool: test passed: %d images of the disk after the loss of power %s, %d of them with a torn write, each one checked with the code of the storage service on the host in %d ms: %d give the durable commit, %d the commit in flight, none a mix; each object and each of its versions byte for byte (%d versions durable, %d in flight, %d thinned by the commit in flight)", search.images, what, search.torn_images, i64(search.elapsed / time.Millisecond), search.older_images, search.newer_images, search.versions_durable, search.versions_in_flight, search.thinned_in_flight)
+	test_passed_print("%d images of the disk after the loss of power %s, %d of them with a torn write, each one checked with the code of the storage service on the host in %d ms: %d give the durable commit, %d the commit in flight, none a mix; each object and each of its versions byte for byte (%d versions durable, %d in flight, %d thinned by the commit in flight)", search.images, what, search.torn_images, i64(search.elapsed / time.Millisecond), search.older_images, search.newer_images, search.versions_durable, search.versions_in_flight, search.thinned_in_flight)
 	if thinning && search.thinned_in_flight == 0 {
 		fmt.eprintfln("kerneltool: test failed: the commit in flight at the loss of power thinned no version: the store was not at its limit")
 		return false
@@ -499,7 +499,7 @@ power_loss_sequence :: proc(what: string, steps: []Step, output_number: int, thi
 		fmt.eprintfln("kerneltool: test failed: %d durable commits and %d flushes reached the disk: a commit needs two", commits, server.flushes)
 		return false
 	}
-	fmt.printfln("kerneltool: test passed: %d durable commits, and %d flushes reached the disk: the block service passes each flush of the storage service to the device", commits, server.flushes)
+	test_passed_print("%d durable commits, and %d flushes reached the disk: the block service passes each flush of the storage service to the device", commits, server.flushes)
 	image, torn_root := hard_image(server.durable, pending)
 	defer delete(image)
 	sync.mutex_unlock(&server.lock)
@@ -607,7 +607,7 @@ power_loss_settings_run :: proc() -> bool {
 		fmt.eprintfln("kerneltool: test failed: the settings: the durable image has %s record of settings (valid: %v); the image with each write, valid: %v", durable_found ? "a" : "no", durable_valid, in_flight_valid)
 		return false
 	}
-	fmt.printfln("kerneltool: test passed: the settings: %d images of the disk after the loss of power, %d with a torn write: %d give the durable record (%s, generation %d), %d the record in flight (%s, generation %d), none a mix", search.images, search.torn_images, search.older_images, durable_text, durable.mount.generation, search.newer_images, in_flight_text, in_flight.mount.generation)
+	test_passed_print("the settings: %d images of the disk after the loss of power, %d with a torn write: %d give the durable record (%s, generation %d), %d the record in flight (%s, generation %d), none a mix", search.images, search.torn_images, search.older_images, durable_text, durable.mount.generation, search.newer_images, in_flight_text, in_flight.mount.generation)
 	hard, _ := hard_image(server.durable, pending)
 	defer delete(hard)
 	sync.mutex_unlock(&server.lock)
