@@ -564,7 +564,7 @@ run :: proc "contextless" (index: int) {
 	item := &cases[index]
 	writer := system.Writer{buffer = item.sentence[:]}
 	item.right = case_run(index, &writer)
-	item.count = writer.count
+	item.count = len(system.written(&writer))
 }
 
 // measure gives the nanoseconds of one kernel operation that succeeds and

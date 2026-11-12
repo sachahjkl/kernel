@@ -30,6 +30,7 @@ Channel :: struct {
 	drop_to_server_from: int, // The datagrams to the server after this count are lost; 0: none.
 	drop_first_to_server: int, // The first datagrams to the server that are lost.
 	drop_first_to_client: int,
+	cut:                 bool, // Each datagram, both ways, is lost: a peer that went silent. Each one is still counted.
 	sent_to_server:      int,
 	sent_to_client:      int,
 }
@@ -48,6 +49,9 @@ channel_send :: proc(channel: ^Channel, bytes: []u8, to_server: bool, now: u64) 
 		return
 	}
 	if !to_server && count^ <= channel.drop_first_to_client {
+		return
+	}
+	if channel.cut {
 		return
 	}
 	if channel_next(channel) % 1000 < channel.loss {

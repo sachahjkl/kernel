@@ -185,15 +185,21 @@ packet_receive :: proc "contextless" (connection: ^Connection, datagram: []u8, h
 	if !frames_ok {
 		return true
 	}
-	connection.last_activity = now
-	connection.ack_eliciting_sent_since_receive = false
 	if connection.packet_data_dropped {
 		// Data of this packet had no place: the packet is not recorded and
 		// not acknowledged, so the peer declares it lost and sends its data
 		// again. Its other frames were taken; each one has the same effect
-		// when it comes again.
+		// when it comes again. It does not move the last activity: a packet
+		// that is not recorded is not seen as a duplicate when it comes
+		// again, so a replay of it by whoever saw it on the path would keep
+		// a silent connection alive. The packet of the peer that sends the
+		// data again is recorded, and moves it.
 		return true
 	}
+	// The last activity moves only for a packet that is recorded: a replay
+	// of it is then refused as a duplicate before its open.
+	connection.last_activity = now
+	connection.ack_eliciting_sent_since_receive = false
 	if !range_set_insert(&space.received, number, number + 1) {
 		space.packet_number_floor = max(space.packet_number_floor, space.received.ends[0])
 		range_set_drop_lowest(&space.received)

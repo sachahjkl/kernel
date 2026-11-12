@@ -233,15 +233,26 @@ peer_completed_address_validation :: proc "contextless" (connection: ^Connection
 	return connection.client_received_handshake_ack || connection.handshake_confirmed
 }
 
-// probe_timeout_duration gives the probe timeout of a space, with its
-// backoff (RFC 9002, section 6.2.1).
-probe_timeout_duration :: proc "contextless" (connection: ^Connection, level: Encryption_Level) -> u64 {
+// probe_timeout_base gives the probe timeout of a space from the
+// round-trip time alone, with no backoff (RFC 9002, section 6.2.1). The
+// idle timeout and the closing and draining states use this one: the
+// backoff doubles at each probe that nothing answers, so a bound made with
+// it grows as fast as the probes come, and a peer that went silent would
+// never meet it.
+probe_timeout_base :: proc "contextless" (connection: ^Connection, level: Encryption_Level) -> u64 {
 	smoothed := connection.has_round_trip_sample ? connection.smoothed_round_trip : INITIAL_ROUND_TRIP_TIME
 	variation := connection.has_round_trip_sample ? connection.round_trip_variation : INITIAL_ROUND_TRIP_TIME / 2
 	duration := saturating_add(smoothed, max(saturating_multiply(4, variation), GRANULARITY))
 	if level == .Application {
 		duration = saturating_add(duration, connection.peer_max_ack_delay)
 	}
+	return duration
+}
+
+// probe_timeout_duration gives the probe timeout of a space, with its
+// backoff (RFC 9002, section 6.2.1): the time to the next probe.
+probe_timeout_duration :: proc "contextless" (connection: ^Connection, level: Encryption_Level) -> u64 {
+	duration := probe_timeout_base(connection, level)
 	backoff := uint(min(connection.probe_timeout_count, 16))
 	if duration > max(u64) >> backoff {
 		return max(u64)

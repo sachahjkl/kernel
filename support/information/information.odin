@@ -1,5 +1,6 @@
 package information
 
+import "contract:cut_mark"
 import module "contract:module"
 import op "contract:operation"
 import "support:system"
@@ -106,21 +107,14 @@ hash_text :: proc "contextless" (hash: [32]u8, into: ^[64]u8) {
 }
 
 // text_put writes a text in a Text field. A text longer than the field
-// ends with "...": the field holds no part of a character after that.
+// ends with the cut mark and the count of the missing bytes, after a whole
+// character (contract:cut_mark); the bytes after it are zero.
 text_put :: proc "contextless" (field: []u8, text: string) {
 	for &b in field {
 		b = 0
 	}
-	if len(text) <= len(field) {
-		copy(field, text)
-		return
-	}
-	cut := len(field) - 3
-	for cut > 0 && text[cut] & 0xC0 == 0x80 {
-		cut -= 1 // Not in the middle of a UTF-8 character.
-	}
-	copy(field, text[:cut])
-	copy(field[cut:], "...")
+	count := copy(field, text)
+	_, _, _ = cut_mark.apply(field, count, len(text) - count)
 }
 
 // described_export says if export `index` has a description that a person
@@ -316,7 +310,7 @@ export_row :: proc "contextless" (found: Item, index: u32, function: module.Func
 	}
 	system.write_rights(&writer, rights, " ")
 	text_put(row.rights[:], system.written(&writer))
-	writer.count = 0
+	system.writer_reset(&writer)
 	signature_write(&writer, file, function)
 	text_put(row.signature[:], system.written(&writer))
 }

@@ -2,6 +2,8 @@ package root
 
 import "contract:fixed_addresses"
 import "contract:glyph_cache"
+import "support:bootscreen"
+import "support:display"
 import "contract:settings"
 import op "contract:operation"
 import "support:graphics"
@@ -30,6 +32,7 @@ glyph_cache_resources := [settings.Glyph_Cache]string {
 }
 
 settings_memory: system.Handle
+boot_interface_font: display.Interface_Font // The interface font of the boot display, from the boot image.
 settings_page: ^settings.Page
 glyph_cache_mappings: [settings.Glyph_Cache]system.Mapping // page_count 0: no such glyph cache.
 // The boot pass of `settings` is the next start of that name: start() gives
@@ -80,6 +83,13 @@ text_settings_create :: proc "contextless" () {
 	}
 	if glyph_cache_mappings[.Bold].page_count != 0 {
 		graphics.text_bold_cache_use(caches[.Bold])
+	}
+	// The boot display: its titles and the names of its facts in the
+	// interface font, from the same caches that the programs receive.
+	interface_given := glyph_cache_mappings[.Interface].page_count != 0 && glyph_cache_mappings[.Interface_Bold].page_count != 0
+	if interface_given && caches[.Interface].header.flags & glyph_cache.FLAG_PROPORTIONAL != 0 && caches[.Interface_Bold].header.flags & glyph_cache.FLAG_PROPORTIONAL != 0 {
+		boot_interface_font = {regular = caches[.Interface], bold = caches[.Interface_Bold]}
+		bootscreen.interface_font_use(&boot_interface_font)
 	}
 }
 

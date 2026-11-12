@@ -15,11 +15,11 @@ import "core:slice"
 import "core:strings"
 import "core:time"
 
-// The address of the site. The owner has not chosen a host or a domain, so
-// it is empty: the pages use relative links only, and no canonical address
-// or sitemap is written. `kerneltool site --address https://...` sets it
-// for one run.
-SITE_ADDRESS :: ""
+// The address of the site: the pages get canonical addresses, Open Graph,
+// a JSON-LD graph and a sitemap from it. An empty address gives a site of
+// relative links only. `kerneltool site --address https://...` sets
+// another one for one run.
+SITE_ADDRESS :: "https://modus.froment.software"
 SITE_GLOSSARY_PAGE :: "reference/glossary.html"
 SITE_GUIDE_FOLDER :: "guides"
 SITE_REFERENCE_FOLDER :: "reference"

@@ -34,6 +34,7 @@
 // that the terminal did not read.
 package terminal_records
 
+import "contract:cut_mark"
 import "contract:errors"
 import "contract:ring"
 import "support:system"
@@ -256,7 +257,8 @@ line :: proc "contextless" (terminal: ^Terminal, runs: ..Run) {
 // status sets the status of the terminal: a text, and a value of a total.
 // A total of 0 removes the status.
 status :: proc "contextless" (terminal: ^Terminal, text: string, value, total: u64, style: Style = {}) {
-	part := text[:min(len(text), RUN_LIMIT)]
+	marked: [RUN_LIMIT]u8
+	part := record_text(text, &marked)
 	append(terminal, part)
 	push(terminal, ring.Record{kind = u32(Kind.Status), tag = u32(len(part)), values = {0 = transmute(u64)style, 1 = value, 2 = total}})
 	system.wake_reader(&terminal.ring.commands)
@@ -265,7 +267,8 @@ status :: proc "contextless" (terminal: ^Terminal, text: string, value, total: u
 // edit sets the line that the program changes, with the place of its
 // cursor. edit(terminal, "") removes the line.
 edit :: proc "contextless" (terminal: ^Terminal, text: string, cursor: u64 = NO_CURSOR, style: Style = {}) {
-	part := text[:min(len(text), RUN_LIMIT)]
+	marked: [RUN_LIMIT]u8
+	part := record_text(text, &marked)
 	append(terminal, part)
 	push(terminal, ring.Record{kind = u32(Kind.Edit), tag = u32(len(part)), values = {0 = transmute(u64)style, 1 = cursor}})
 	system.wake_reader(&terminal.ring.commands)
@@ -389,6 +392,19 @@ list_keep_show :: proc "contextless" (keeping: ^List_Keeping, values: [7]u64) {
 list_keep_forget :: proc "contextless" (keeping: ^List_Keeping) {
 	keeping^ = {}
 	keeping.shown.chosen = -1
+}
+
+// record_text gives the text of a record that holds one line as it is:
+// the text when it has at most RUN_LIMIT bytes, else its start with the cut
+// mark and the count of the missing bytes, written in buffer. The terminal
+// draws the line whole, so a cut there is not seen without the mark.
+record_text :: proc "contextless" (text: string, buffer: ^[RUN_LIMIT]u8) -> string {
+	if len(text) <= RUN_LIMIT {
+		return text
+	}
+	count := copy(buffer[:], text)
+	marked, _, _ := cut_mark.apply(buffer[:], count, len(text) - count)
+	return string(buffer[:marked])
 }
 
 // key gives the next key that the person pressed. false: no key waits.
