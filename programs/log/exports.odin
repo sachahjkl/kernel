@@ -13,7 +13,7 @@ import "base:intrinsics"
 // runs, and when the network does not.
 //
 // The records of the log are facts of all the programs (property 20): the
-// export gives them only to a caller that acts for the person.
+// export gives them only to a caller that acts for the principal.
 
 // One row of the log: records(). A row has 256 bytes, the most that a
 // record of a description has, so its text has 160 bytes: a log record of
@@ -34,7 +34,7 @@ Record :: struct {
 #assert(size_of(Record) == 256)
 ROW_TEXT_SIZE :: 160
 
-ERROR_PERSON :: -1
+ERROR_ACTS_FOR_PRINCIPAL :: -1
 
 @(rodata)
 level_names := [system.Log_Level]string {
@@ -48,11 +48,11 @@ service: system.Service
 reader_head: ^op.Log_Head
 reader_records: [^]op.Log_Record
 
-// records gives the log records from the number `after` on: the number, the time in microseconds, the program and its slot, the level, the channel, and the text. A text of more than 160 bytes takes two rows, and a row says when its text goes on in the next row. The first row also gives the records that the kernel wrote over before this call read them. The result is the count of the rows from `after` to the last record, or a negative number with an error record. The error kind: No_Grant (-1, the caller does not act for the person).
+// records gives the log records from the number `after` on: the number, the time in microseconds, the program and its slot, the level, the channel, and the text. A text of more than 160 bytes takes two rows, and a row says when its text goes on in the next row. The first row also gives the records that the kernel wrote over before this call read them. The result is the count of the rows from `after` to the last record, or a negative number with an error record. The error kind: No_Grant (-1, the caller does not act for the principal).
 @(export, link_name = "records")
 records :: proc "c" (after: i64, result: ^[]Record, error: ^errors.Error_Record) -> i64 {
-	if caller := system.service_caller(); caller != nil && caller.grant & isolated.CALLER_PERSON == 0 {
-		return errors.fail(error, ERROR_PERSON, .No_Grant, .Person)
+	if caller := system.service_caller(); caller != nil && caller.grant & isolated.CALLER_ACTS_FOR_PRINCIPAL == 0 {
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
 	}
 	written := intrinsics.atomic_load(&reader_head.written)
 	next := u64(max(after, 0))

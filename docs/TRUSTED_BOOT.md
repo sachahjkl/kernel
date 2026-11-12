@@ -46,7 +46,7 @@ The second check, by the root service, finds a fault of the path from the boot p
 
 ### Layer 2: the measure
 
-It adds a record that the TPM keeps until the next reset of the machine. No code that runs after the boot program can set PCR 11 back to an earlier value. A sealed key or a remote party can depend on that value. The system does neither yet.
+It adds a record that the TPM keeps until the next reset of the machine. No code that runs after the boot program can set PCR 11 back to an earlier value. A sealed key or a remote party can depend on that value. The system does neither yet. The root service puts the value in the record of principal 0, the machine (`PRINCIPALS.md`, section 2).
 
 It does not protect against:
 

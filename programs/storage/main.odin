@@ -22,7 +22,7 @@ caller_store :: proc "contextless" () -> (name: string, limit: u64, person: bool
 	if connection == nil {
 		return "", 0, false
 	}
-	return system.name_of(connection.caller[:]), connection.grant & isolated.CALLER_AMOUNT_MASK, connection.grant & isolated.CALLER_PERSON != 0
+	return system.name_of(connection.caller[:]), connection.grant & isolated.CALLER_AMOUNT_MASK, connection.grant & isolated.CALLER_ACTS_FOR_PRINCIPAL != 0
 }
 
 // write replaces the object with this name in the store of the caller, with the bytes of data, in one commit on the disk. The state before becomes a version. At the limit of the store, the oldest versions of the store are thinned in the same commit. The result is the generation of the commit, or a negative number with an error record.
@@ -182,7 +182,7 @@ store_named :: proc "contextless" (given: string, error: ^errors.Error_Record) -
 		return {own, limit}, true
 	}
 	if !person {
-		errors.fail(error, answers.ERROR_PERSON, .No_Grant, .Person)
+		errors.fail(error, answers.ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
 		return {}, false
 	}
 	index := store_find(given)
@@ -443,8 +443,8 @@ compare :: proc "c" (store: ^string, name: ^string, first: i64, second: i64, res
 // store_refusal gives the result of a refusal that store_named wrote.
 store_refusal :: proc "contextless" (error: ^errors.Error_Record) -> i64 {
 	switch {
-	case error.kind == i64(errors.Kind.No_Grant) && error.unit == i64(errors.Unit.Person):
-		return answers.ERROR_PERSON
+	case error.kind == i64(errors.Kind.No_Grant) && error.unit == i64(errors.Unit.Acts_For_Principal):
+		return answers.ERROR_ACTS_FOR_PRINCIPAL
 	case error.kind == i64(errors.Kind.Absent):
 		return ERROR_ABSENT
 	}

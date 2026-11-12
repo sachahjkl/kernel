@@ -12,7 +12,7 @@ import "support:system"
 //
 // The facts are the facts of the machine: each program and the counts of
 // the kernel. The monitor reads them with its grant, the machine with the
-// right Inspect, and gives them only to a caller that acts for the person
+// right Inspect, and gives them only to a caller that acts for the principal
 // (property 20, line 1: a program sees no other program).
 
 // One row for each program that runs: programs().
@@ -48,7 +48,7 @@ Served :: struct {
 	pictures: i64, // The pictures of its window.
 }
 
-ERROR_PERSON :: -1
+ERROR_ACTS_FOR_PRINCIPAL :: -1
 ERROR_REFUSED :: -2
 ERROR_ABSENT :: -3
 
@@ -65,19 +65,19 @@ machine: system.Handle
 service: system.Service
 pictures: u64
 
-// person says if the caller of the export that runs acts for the person.
-// A call of the monitor itself has no caller: it acts for the person.
+// acts_for_principal says if the caller of the export that runs acts for the principal.
+// A call of the monitor itself has no caller: it acts for the principal.
 @(private = "file")
-person :: proc "contextless" () -> bool {
+acts_for_principal :: proc "contextless" () -> bool {
 	caller := system.service_caller()
-	return caller == nil || caller.grant & isolated.CALLER_PERSON != 0
+	return caller == nil || caller.grant & isolated.CALLER_ACTS_FOR_PRINCIPAL != 0
 }
 
-// programs gives one row for each program that runs, from the reports of the kernel: its slot, its name, its state, its pages with a frame and its mapped pages, its handles, threads, processor time in milliseconds, kernel entries, and the time of its start in microseconds. The result is the count of rows, or a negative number with an error record. The error kinds: No_Grant (-1, the caller does not act for the person); Refused (-2, the kernel refused a report to the monitor, with its status).
+// programs gives one row for each program that runs, from the reports of the kernel: its slot, its name, its state, its pages with a frame and its mapped pages, its handles, threads, processor time in milliseconds, kernel entries, and the time of its start in microseconds. The result is the count of rows, or a negative number with an error record. The error kinds: No_Grant (-1, the caller does not act for the principal); Refused (-2, the kernel refused a report to the monitor, with its status).
 @(export, link_name = "programs")
 programs :: proc "c" (result: ^[]Program, error: ^errors.Error_Record) -> i64 {
-	if !person() {
-		return errors.fail(error, ERROR_PERSON, .No_Grant, .Person)
+	if !acts_for_principal() {
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
 	}
 	report: op.System_Report
 	if _, status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.System), 0, u64(uintptr(&report)), size_of(report)); status != .Ok {
@@ -111,11 +111,11 @@ programs :: proc "c" (result: ^[]Program, error: ^errors.Error_Record) -> i64 {
 	return i64(total)
 }
 
-// counts gives one row for each count of the machine that the kernel reports: the time, the pages, the free pages, the reserved pages, the memory objects, the programs, the processors, the kernel entries, the interrupts, the page faults of a first use, and the takes and the waits of the locks of the kernel, the scheduling strategy (its number, and its name as the unit) and its changes. The result is the count of rows, or a negative number with an error record. The error kinds: No_Grant (-1, the caller does not act for the person); Refused (-2, the kernel refused the report to the monitor, with its status).
+// counts gives one row for each count of the machine that the kernel reports: the time, the pages, the free pages, the reserved pages, the memory objects, the programs, the processors, the kernel entries, the interrupts, the page faults of a first use, and the takes and the waits of the locks of the kernel, the scheduling strategy (its number, and its name as the unit) and its changes. The result is the count of rows, or a negative number with an error record. The error kinds: No_Grant (-1, the caller does not act for the principal); Refused (-2, the kernel refused the report to the monitor, with its status).
 @(export, link_name = "counts")
 counts :: proc "c" (result: ^[]Count, error: ^errors.Error_Record) -> i64 {
-	if !person() {
-		return errors.fail(error, ERROR_PERSON, .No_Grant, .Person)
+	if !acts_for_principal() {
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
 	}
 	rows: [COUNT_CAPACITY]Count
 	total, status := counts_read(&rows)
@@ -126,11 +126,11 @@ counts :: proc "c" (result: ^[]Count, error: ^errors.Error_Record) -> i64 {
 	return i64(total)
 }
 
-// count gives one count of the machine by its name, as counts() names it: count("free pages"). The result is the count, or a negative number with an error record. The error kinds: No_Grant (-1, the caller does not act for the person); Refused (-2, the kernel refused the report to the monitor); Absent (-3, no count has this name).
+// count gives one count of the machine by its name, as counts() names it: count("free pages"). The result is the count, or a negative number with an error record. The error kinds: No_Grant (-1, the caller does not act for the principal); Refused (-2, the kernel refused the report to the monitor); Absent (-3, no count has this name).
 @(export, link_name = "count")
 count :: proc "c" (name: ^string, error: ^errors.Error_Record) -> i64 {
-	if !person() {
-		return errors.fail(error, ERROR_PERSON, .No_Grant, .Person)
+	if !acts_for_principal() {
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
 	}
 	// One copy: the caller can change the call region during the call.
 	wanted: [24]u8
@@ -151,11 +151,11 @@ count :: proc "c" (name: ^string, error: ^errors.Error_Record) -> i64 {
 	return errors.fail(error, ERROR_ABSENT, .Absent, .None, 1)
 }
 
-// counts_named gives the counts of the machine that a table of names names, in the order of the table: many counts in one call. The result is the count of rows, or a negative number with an error record. The error kinds: No_Grant (-1, the caller does not act for the person); Refused (-2, the kernel refused the report to the monitor); Absent (-3, a name names no count: found is the number of its row, from 1). With a table of error details, it gives one Absent detail for each row that names no count, in the order of the rows; the error record is the first of them.
+// counts_named gives the counts of the machine that a table of names names, in the order of the table: many counts in one call. The result is the count of rows, or a negative number with an error record. The error kinds: No_Grant (-1, the caller does not act for the principal); Refused (-2, the kernel refused the report to the monitor); Absent (-3, a name names no count: found is the number of its row, from 1). With a table of error details, it gives one Absent detail for each row that names no count, in the order of the rows; the error record is the first of them.
 @(export, link_name = "counts_named")
 counts_named :: proc "c" (names: ^system.Table_To_Read(Count_Name), details: ^system.Table_To_Append(errors.Error_Record), result: ^[]Count, error: ^errors.Error_Record) -> i64 {
-	if !person() {
-		return errors.fail(error, ERROR_PERSON, .No_Grant, .Person)
+	if !acts_for_principal() {
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
 	}
 	rows: [COUNT_CAPACITY]Count
 	total, status := counts_read(&rows)

@@ -414,7 +414,7 @@ The shared file system (property 8) is one case. This property lists the other c
 
 ## 21. Principals: who acts, without users
 
-Status: Decided for layers 1 and 2: they are the design. Layers 3 to 5 are a direction, not a design.
+Status: Decided for layers 1 and 2: they are the design. Layers 3 to 5 are a direction, not a design. Built: layer 1; layer 2 in part (the record of the machine and its measure, not its key in the TPM); layer 3 in part (one named principal, its unlock by a passphrase with no seal by the TPM, its session, its stores, the lock; not its encrypted stores and not its recovery). Layers 4 and 5: not built (`PRINCIPALS.md`).
 
 - **Rule**: The kernel has no concept of "who executes". The answer is always: a program, with the handles that it holds.
 - **Rule**: A principal is a key pair and the root handles that the key unlocks: documents, grant records, settings. A principal exists in the root service and in storage. The kernel does not know it.

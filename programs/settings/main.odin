@@ -38,7 +38,7 @@ text_now, text_before: [8192]u8
 drawing: interface.Window_Drawing
 drawn_change: u32 = 1 // The change count of the last frame; odd: none yet.
 
-ERROR_PERSON :: -1
+ERROR_ACTS_FOR_PRINCIPAL :: -1
 ERROR_NAME :: -2
 ERROR_VALUE :: -3
 ERROR_STORE :: -4
@@ -92,9 +92,9 @@ change :: proc "contextless" (values: [settings.Setting]u32) -> bool {
 }
 
 @(private = "file")
-person :: proc "contextless" () -> bool {
+acts_for_principal :: proc "contextless" () -> bool {
 	caller := system.service_caller()
-	return caller == nil || caller.grant & isolated.CALLER_PERSON != 0
+	return caller == nil || caller.grant & isolated.CALLER_ACTS_FOR_PRINCIPAL != 0
 }
 
 // copied copies a text argument: the caller can change the call region
@@ -119,11 +119,11 @@ setting_of :: proc "contextless" (name: string) -> (setting: settings.Setting, f
 	return {}, false
 }
 
-// set changes a setting of the person, and keeps it in the store: set("font", "vector" or "spleen"); set("subpixel_order", "rgb", "bgr" or "none"); set("pointer_theme", "owner" or "system"); set("grid_fit", "on" or "off"). Every window draws again. The result is 1, or a negative number with an error record. The error kinds: No_Grant (-1, the caller does not act for the person); Absent (-2, no setting has this name); Bad_Value (-3, the setting has no such value); Refused (-4, the page changed but the store did not keep it).
+// set changes a setting of the person, and keeps it in the store: set("font", "vector" or "spleen"); set("subpixel_order", "rgb", "bgr" or "none"); set("pointer_theme", "owner" or "system"); set("grid_fit", "on" or "off"). Every window draws again. The result is 1, or a negative number with an error record. The error kinds: No_Grant (-1, the caller does not act for the principal); Absent (-2, no setting has this name); Bad_Value (-3, the setting has no such value); Refused (-4, the page changed but the store did not keep it).
 @(export, link_name = "set")
 set :: proc "c" (name: ^string, value: ^string, error: ^errors.Error_Record) -> i64 {
-	if !person() {
-		return errors.fail(error, ERROR_PERSON, .No_Grant, .Person)
+	if !acts_for_principal() {
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
 	}
 	name_buffer, value_buffer: [32]u8
 	wanted, name_ok := copied(name^, name_buffer[:])
@@ -172,8 +172,8 @@ get :: proc "c" (name: ^string, result: ^[]u8) -> i64 {
 // repeat keeps count records in the store, one commit each, with the font and the subpixel order of each record from its number: the case of the loss of power of the machine test (a loss in the middle gives the record before or the record in flight, never a mix). The page takes the last record. The result is the count of records kept, or a negative number with an error record: No_Grant (-1); Bad_Value (-3, a count outside 1 to 1000); Refused (-4, the store refused a record).
 @(export, link_name = "repeat")
 repeat :: proc "c" (count: i64, error: ^errors.Error_Record) -> i64 {
-	if !person() {
-		return errors.fail(error, ERROR_PERSON, .No_Grant, .Person)
+	if !acts_for_principal() {
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
 	}
 	if count < 1 || count > 1000 {
 		return errors.fail(error, ERROR_VALUE, .Bad_Value, .None, 1, count, 1000)

@@ -54,15 +54,39 @@ Cryptography_Adjustment :: struct {
 	lines:        string,
 }
 
-// The listed adjustments. All of them are one correction of the origin,
-// offered to Odin as its pull request 8329 (docs/CRYPTOGRAPHY.md, section
-// 4): the counter check of ChaCha20 refused the block with the last
-// counter, which RFC 8439 allows, and the peer of a QUIC connection
-// chooses that counter (the sample of the header protection). The check
-// now allows a call that ends on the last block, refuses a call that goes
-// past it, and refuses each call after it until `seek` or `init`. When the
-// release of Odin that the flake pins has the correction, these lines go.
+// The listed adjustments (docs/CRYPTOGRAPHY.md, section 4, "Listed
+// adjustments"). There are two groups.
+//
+// The adjustments of _chacha20/chacha20.odin are one correction of the
+// origin, offered to Odin as its pull request 8329: the counter check of
+// ChaCha20 refused the block with the last counter, which RFC 8439 allows,
+// and the peer of a QUIC connection chooses that counter (the sample of the
+// header protection). The check now allows a call that ends on the last
+// block, refuses a call that goes past it, and refuses each call after it
+// until `seek` or `init`. When the release of Odin that the flake pins has
+// the correction, these lines go.
+//
+// The adjustments of argon2id/argon2id.odin take its allocator away: the
+// caller supplies the blocks, because the code of a program or of a module
+// has no allocator. A supply that is smaller than the parameters ask, or
+// not aligned on 8 bytes, is the result Out_Of_Memory before any work. The
+// helpers of core:mem come from the compatibility layer.
 cryptography_adjustments := [?]Cryptography_Adjustment {
+	{
+		"core/crypto/argon2id/argon2id.odin",
+		"import \"core:mem\"\n",
+		"import mem \"support:cryptography/compatibility_memory\"\n",
+	},
+	{
+		"core/crypto/argon2id/argon2id.odin",
+		"\tallocator := context.allocator, // Not temp as this can be large.\n",
+		"\twork_memory: []byte = nil, // The caller supplies the blocks: memory_size KiB, aligned on 8 bytes.\n",
+	},
+	{
+		"core/crypto/argon2id/argon2id.odin",
+		"\tb := mem.alloc_bytes_non_zeroed(\n\t\tint(m_) * BLOCK_SIZE_BYTES,\n\t\talignment = mem.PAGE_SIZE,\n\t\tallocator = allocator,\n\t) or_return\n\tdefer delete(b, allocator)\n",
+		"\tif u64(len(work_memory)) < m_ * BLOCK_SIZE_BYTES || uintptr(raw_data(work_memory)) % 8 != 0 {\n\t\treturn .Out_Of_Memory\n\t}\n\tb := work_memory[:int(m_) * BLOCK_SIZE_BYTES]\n",
+	},
 	{
 		"core/crypto/_chacha20/chacha20.odin",
 		"import \"base:intrinsics\"\n",

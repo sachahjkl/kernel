@@ -7,10 +7,10 @@ import "support:addresses"
 import "support:system"
 
 // The same facts as the window, as tables (property 19): a caller that
-// acts for the person reads them, the remote service among them:
+// acts for the principal reads them, the remote service among them:
 // kerneltool call "inspect.mappings(\"console\")". The facts are of another
 // program (property 20, line 1), so a caller that does not act for the
-// person gets a refusal.
+// principal gets a refusal.
 
 // One mapping of a program: mappings().
 Mapping :: struct {
@@ -48,7 +48,7 @@ Module :: struct {
 	size: i64,
 }
 
-ERROR_PERSON :: -1
+ERROR_ACTS_FOR_PRINCIPAL :: -1
 ERROR_ABSENT :: -2
 ERROR_CHANGED :: -3 // The program of the slot changed during the call, three times.
 
@@ -60,8 +60,8 @@ call_threads: op.Thread_Table_Report
 
 @(private = "file")
 program_find :: proc "contextless" (name: ^string, error: ^errors.Error_Record) -> (slot: u64, failure: i64) {
-	if caller := system.service_caller(); caller != nil && caller.grant & isolated.CALLER_PERSON == 0 {
-		return 0, errors.fail(error, ERROR_PERSON, .No_Grant, .Person)
+	if caller := system.service_caller(); caller != nil && caller.grant & isolated.CALLER_ACTS_FOR_PRINCIPAL == 0 {
+		return 0, errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
 	}
 	// One copy: the caller can change the call region during the call.
 	copied: [32]u8
@@ -76,7 +76,7 @@ program_find :: proc "contextless" (name: ^string, error: ^errors.Error_Record) 
 	return slot, 0
 }
 
-// mappings gives one row for each mapping of the program with this name, in the order of the addresses: the address, the module and the offset when a module holds it, the pages, the pages with a page frame, the kind, the rights, the memory object and how many handles and mappings name it. The result is the count of rows, or a negative number with an error record. The error kinds: No_Grant (-1, the caller does not act for the person); Absent (-2, no program has this name); Absent (-3, a new program took the slot during the call, three times).
+// mappings gives one row for each mapping of the program with this name, in the order of the addresses: the address, the module and the offset when a module holds it, the pages, the pages with a page frame, the kind, the rights, the memory object and how many handles and mappings name it. The result is the count of rows, or a negative number with an error record. The error kinds: No_Grant (-1, the caller does not act for the principal); Absent (-2, no program has this name); Absent (-3, a new program took the slot during the call, three times).
 @(export, link_name = "mappings")
 mappings :: proc "c" (program: ^string, result: ^[]Mapping, error: ^errors.Error_Record) -> i64 {
 	slot, failure := program_find(program, error)
@@ -124,7 +124,7 @@ thread_states := [op.Program_State]string {
 	.Stopped = "stopped",
 }
 
-// threads gives one row for each thread of the program with this name: its thread area, its state, the processor that runs it and its home queue, its weight and its request, its virtual time and its lag, its processor time, the words of its word wait and the end of its wait. The result is the count of rows, or a negative number with an error record. The error kinds: No_Grant (-1, the caller does not act for the person); Absent (-2, no program has this name).
+// threads gives one row for each thread of the program with this name: its thread area, its state, the processor that runs it and its home queue, its weight and its request, its virtual time and its lag, its processor time, the words of its word wait and the end of its wait. The result is the count of rows, or a negative number with an error record. The error kinds: No_Grant (-1, the caller does not act for the principal); Absent (-2, no program has this name).
 @(export, link_name = "threads")
 threads :: proc "c" (program: ^string, result: ^[]Thread, error: ^errors.Error_Record) -> i64 {
 	slot, failure := program_find(program, error)
@@ -156,7 +156,7 @@ threads :: proc "c" (program: ^string, result: ^[]Thread, error: ^errors.Error_R
 	return i64(count)
 }
 
-// modules gives one row for each module record of the program with this name: the name in the boot image, the hash, the base and the size. The result is the count of rows, or a negative number with an error record. The error kinds: No_Grant (-1, the caller does not act for the person); Absent (-2, no program has this name).
+// modules gives one row for each module record of the program with this name: the name in the boot image, the hash, the base and the size. The result is the count of rows, or a negative number with an error record. The error kinds: No_Grant (-1, the caller does not act for the principal); Absent (-2, no program has this name).
 @(export, link_name = "modules")
 modules :: proc "c" (program: ^string, result: ^[]Module, error: ^errors.Error_Record) -> i64 {
 	slot, failure := program_find(program, error)

@@ -35,7 +35,7 @@ Connection :: struct {
 	calls:         ring.Ring,
 	region:        []u8,
 	caller:        Name, // The name of the caller, as the root service names it.
-	grant:         u64, // What the root service grants to the caller here (isolated.CALLER_AMOUNT_MASK, isolated.CALLER_PERSON).
+	grant:         u64, // What the root service grants to the caller here (isolated.CALLER_AMOUNT_MASK, isolated.CALLER_ACTS_FOR_PRINCIPAL).
 }
 
 // The connection of the call that runs: see service_caller.

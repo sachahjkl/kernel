@@ -1,7 +1,5 @@
 # Glossary
 
-"Person" is a provisional term.
-
 This file is the one place that defines the terms of the project.
 Each concept has one term. Documents, code and conversation use that term and no synonym.
 The "Do not use" column lists the words that this term replaces.
@@ -160,9 +158,14 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Lent handle | A handle that a caller gives for the time of one call. The caller makes a copy of its handle with the rights of the description, gives a handle that comes from the copy, and revokes the copy after the call | borrowed handle, loan |
 | Ambient access | Access that a program has because it runs, and not because it received a handle. The system has none (P20) | ambient authority |
 | Sandbox | The state of every program: it can reach only the objects of its handles (P2) | jail, container |
-| Principal | A key pair and the root handles that the key unlocks: documents, grant records, settings. The kernel does not know it. Principal 0 is the machine (P21) | user, account, owner, root, administrator, executor |
-| Session | The tree of programs that started from the root handles of one principal (P21) | login, user session |
-| Person | A human who acts in a session. The word has no meaning to the system; it is used only to describe actions at the desktop, such as "the person chooses a document" | user |
+| Principal | A key pair and the root handles that the key unlocks: documents, grant records, settings. The kernel does not know it. The root service holds one record for each principal and names it by its number (`PRINCIPALS.md`). Principal 0 is the machine (P21) | user, account, owner, root, administrator, executor, person, publisher |
+| Named principal | A principal with a number of 1 or more: a name for display, an Ed25519 key to sign grants, an X25519 key to unlock documents, and a passphrase. The program `unlock` keeps its record (`PRINCIPALS.md`) | user account, login |
+| Session | The tree of programs that started from the root handles of one principal (P21). The root service records the principal of each program that it starts: 0 for the programs of the system, the named principal that is unlocked for a program that the desktop starts, the principal of the program that asks for a program that a program starts | login, user session |
+| Unlock | The act that starts the session of a named principal: Argon2id derives a key from its passphrase, and the key opens the seal of its secret keys. A wrong passphrase gives another key, and the seal does not open | login, sign in, authentication |
+| Lock of a session | The act that ends the session of a named principal: each program of the session stops, and an unlock is needed again (`lock()` in the console). Not a lock of memory | log out, sign out |
+| Passphrase | The text that derives the key of the seal of a named principal: 8 to 128 printable bytes, typed in the window of `unlock` only, shown as dots, kept nowhere | password, PIN |
+| Acts for the principal | A grant of the root service (`acts_for_principal`, `isolated.CALLER_ACTS_FOR_PRINCIPAL`): in each service that the program is connected to, it sees what the service holds for all callers, for the principal of its session. Revocable | superuser, privileged, person |
+| Input | The keys and the pointer, as the system receives them. A text that describes an act at the desktop names the input or the act ("Space is pressed"), not who acts | user, person |
 
 ## Communication
 
@@ -303,7 +306,7 @@ References such as (P10) point to a property in `PROPERTIES.md`.
 | Root block | The block of the data disk that names the private stores. The disk has two places for it; the storage service takes the valid one with the highest generation | superblock, uberblock, meta page |
 | Commit | One change of the stores: the storage service writes new blocks, then a new root block. A commit is on the disk completely or not at all | transaction (for this), save, sync |
 | Generation | The number of a commit. Each commit has the generation of the one before plus 1. It counts the commits of the whole disk, of each store | epoch, transaction id, version (for this) |
-| History store | The store of the line history of the console in the storage service, apart from its private store: named after the console with `.history`, a limit of 4 blocks, and no grant to act for the person. The root service gives the connection to it (`Root_Command.Connect_History`), with the grant `history` | shell history file, profile directory |
+| History store | The store of the line history of the console in the storage service, apart from its private store: named after the console with `.history`, a limit of 4 blocks, and no grant to act for the principal. The root service gives the connection to it (`Root_Command.Connect_History`), with the grant `history` | shell history file, profile directory |
 | Base of the generations | In a machine test, the generation of one commit that a step `Generation` reads from the log: the steps after it name the generations that they wait for as the base and a count (`{generation+4}`), because other commits (the line history) come before | offset, delta |
 | Damaged object | An object with a block that a valid root block names and that does not have its check. The storage service does not give its bytes; a write or a remove replaces it. A private store with such a table is a damaged store | corrupt file, bad sector |
 | Check | The first 8 bytes of the BLAKE3 hash of a block, kept in the block that names it. A block that does not have its check is wrong, and the storage service does not use it | checksum, CRC, digest |

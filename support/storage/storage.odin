@@ -41,7 +41,7 @@ ERROR_DISK :: -6 // The block service reported an error.
 ERROR_ABSENT :: -7 // The store has no object with this name.
 ERROR_DAMAGED :: -8 // A block of the object, or the table of the store, has a wrong check.
 ERROR_NO_VERSION :: -9 // The object has no version of this generation.
-ERROR_PERSON :: -10 // The call names another store, and the caller does not act for the person.
+ERROR_ACTS_FOR_PRINCIPAL :: -10 // The call names another store, and the caller does not act for the principal.
 
 Client :: struct {
 	ring_memory:   system.Handle,
