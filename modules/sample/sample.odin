@@ -212,6 +212,24 @@ upper_case :: proc "c" (text: ^system.Bytes_To_Change) -> i64 {
 	return changed
 }
 
+// scale_values_up_to multiplies the value, the minimum and the maximum of each reading by a factor, in order, in the memory of the caller (the direction Change), while each new value stays at most largest_value, and gives the count of readings. At the first reading whose value would pass it, it stops with -1 and an error record Bad_Value for the factor, with the largest factor that this reading takes: the readings before it are already changed. A caller in another program receives none of these changes: a failed export gives back only its table of error details.
+@(export, link_name = "scale_values_up_to")
+scale_values_up_to :: proc "c" (readings: ^system.Table_To_Change(Reading), factor: i64, largest_value: i64, error: ^errors.Error_Record) -> i64 {
+	if factor < 1 {
+		return errors.fail(error, -1, .Too_Small, .None, 2, factor, 1)
+	}
+	for &reading in system.table_changed_records(readings) {
+		// The record is copied before it is checked: in an isolated call it
+		// is in the call region, which the caller can change during the call.
+		copied := intrinsics.volatile_load(&reading)
+		if copied.value > largest_value / factor {
+			return errors.fail(error, -1, .Bad_Value, .None, 2, factor, copied.value > 0 ? largest_value / copied.value : 0)
+		}
+		reading = {sensor = copied.sensor, time = copied.time, value = copied.value * factor, minimum = copied.minimum * factor, maximum = copied.maximum * factor}
+	}
+	return i64(readings.count)
+}
+
 // The same module as a program: a service that serves the exports above.
 // An export needs nothing from the entry.
 @(export, link_name = "entry")

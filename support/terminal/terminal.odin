@@ -32,7 +32,7 @@
 // The ring keeps at most RING_CAPACITY records that the terminal did not
 // read, of RUN_LIMIT bytes at most: the program never writes over text
 // that the terminal did not read.
-package terminal
+package terminal_records
 
 import "contract:errors"
 import "contract:ring"
@@ -75,10 +75,17 @@ RUN_LIMIT :: 256 // The bytes of the text of one record.
 //           terminal shows no such line.
 //   Hint    One line under the edit line, in the dim color: what the
 //           program says about the line (the signature of the call at the
-//           cursor). A new one replaces the one before; no text removes
-//           it. tag: the count of bytes of its text. values[0]: a Style.
-//           values[1], values[2]: the first byte and the count of bytes of
-//           the part that the terminal marks.
+//           cursor). It has a long form, and a short form for a terminal
+//           that is too narrow for the long one (hint_form_choose); the
+//           text is the long form, then the short form. The terminal keeps
+//           a free row under the edit line at all times and draws the hint
+//           over it: a hint that comes or goes does not move the text. A
+//           new one replaces the one before; no text removes it. tag: the
+//           count of bytes of the two forms. values[0]: a Style. values[1],
+//           values[2]: the first byte and the count of bytes of the part of
+//           the long form that the terminal marks. values[3]: the bytes of
+//           the long form. values[4], values[5]: the marked part of the
+//           short form, from its first byte.
 //   List_Row One row of the next completion list. tag: the count of bytes
 //           of its text: the name, then what the name is. values[0]: the
 //           number of the row, below LIST_ROWS. values[1]: the bytes of the
@@ -264,13 +271,42 @@ edit :: proc "contextless" (terminal: ^Terminal, text: string, cursor: u64 = NO_
 	system.wake_reader(&terminal.ring.commands)
 }
 
-// hint sets the line under the edit line, with a marked part (start and
-// count in bytes) and a style. A text of 0 bytes removes it.
-hint :: proc "contextless" (terminal: ^Terminal, text: string, marked_start: int, marked_count: int, style: Style) {
-	part := text[:min(len(text), RUN_LIMIT)]
-	append(terminal, part)
-	push(terminal, ring.Record{kind = u32(Kind.Hint), tag = u32(len(part)), values = {0 = transmute(u64)style, 1 = u64(max(marked_start, 0)), 2 = u64(max(marked_count, 0))}})
+// A form of a hint line, and the part of it that the terminal marks: the
+// first byte and the count of bytes.
+Hint_Form :: enum u8 {
+	Long  = 0,
+	Short = 1,
+}
+
+Hint_Text :: struct {
+	text:         string,
+	marked_start: int,
+	marked_count: int,
+}
+
+// hint sets the line under the edit line: a long form, a short form ("" if
+// the long form is the only one), and a style. A long form of 0 bytes
+// removes it. The two forms together are cut to RUN_LIMIT bytes, the long
+// form first.
+hint :: proc "contextless" (terminal: ^Terminal, long: Hint_Text, short: Hint_Text, style: Style) {
+	long_part := long.text[:min(len(long.text), RUN_LIMIT)]
+	short_part := short.text[:min(len(short.text), RUN_LIMIT - len(long_part))]
+	append(terminal, long_part)
+	append(terminal, short_part)
+	push(terminal, ring.Record{kind = u32(Kind.Hint), tag = u32(len(long_part) + len(short_part)), values = {0 = transmute(u64)style, 1 = u64(max(long.marked_start, 0)), 2 = u64(max(long.marked_count, 0)), 3 = u64(len(long_part)), 4 = u64(max(short.marked_start, 0)), 5 = u64(max(short.marked_count, 0))}})
 	system.wake_reader(&terminal.ring.commands)
+}
+
+// hint_form_choose chooses the form of a hint line for a width of columns
+// cells: the long form when it fits; if not, the short form when the
+// program gave one; if not, the long form. shown is the bytes of the form
+// that the row shows: the form, cut to the columns.
+hint_form_choose :: proc "contextless" (long_count, short_count, columns: int) -> (form: Hint_Form, shown: int) {
+	room := max(columns, 0)
+	if long_count <= room || short_count <= 0 {
+		return .Long, clamp(long_count, 0, room)
+	}
+	return .Short, min(short_count, room)
 }
 
 // list_row gives one row of the next completion list: a name, what it is,
@@ -291,6 +327,68 @@ list_row :: proc "contextless" (terminal: ^Terminal, row: int, name: string, abo
 list_show :: proc "contextless" (terminal: ^Terminal, row_count: int, chosen: u64, first: int, total: int, anchor: int) {
 	push(terminal, ring.Record{kind = u32(Kind.List), values = {0 = u64(clamp(row_count, 0, LIST_ROWS)), 1 = chosen, 2 = u64(max(first, 0)), 3 = u64(max(total, 0)), 4 = u64(max(anchor, 0))}})
 	system.wake_reader(&terminal.ring.commands)
+}
+
+// What a terminal keeps of the completion list of its program: the rows
+// that List_Row records gave, and the list that the last List record shows.
+// The values come from the program: each one is brought inside its array
+// before it is kept. The rows given before a List go to that List only: a
+// List with no new rows shows empty rows, never the rows of a list before,
+// which can come from another program of the same terminal.
+List_Row :: struct {
+	text:        [RUN_LIMIT]u8,
+	length:      int,
+	name_length: int,
+	matched:     [2]u64,
+}
+
+List_Shown :: struct {
+	rows:      [LIST_ROWS]List_Row,
+	row_count: int,
+	chosen:    int, // -1: no row is chosen.
+	first:     int, // The place of the first row in all the names.
+	total:     int, // All the names: more than row_count shows a scroll mark.
+	anchor:    int, // The byte of the edit line where the name starts.
+}
+
+List_Keeping :: struct {
+	next:  [LIST_ROWS]List_Row, // The rows given since the last List.
+	shown: List_Shown,
+}
+
+// list_keep_row keeps the row of a List_Row record: values[0] its number,
+// values[1] the bytes of its name, values[2] and values[3] the matched
+// places. The text is in two parts (the text region starts again at its
+// first byte). A number past the rows is not kept.
+list_keep_row :: proc "contextless" (keeping: ^List_Keeping, values: [7]u64, first, second: []u8) {
+	if values[0] >= LIST_ROWS {
+		return
+	}
+	row := &keeping.next[values[0]]
+	row.length = copy(row.text[:], first)
+	row.length += copy(row.text[row.length:], second)
+	row.name_length = int(min(values[1], u64(row.length)))
+	row.matched = {values[2], values[3]}
+}
+
+// list_keep_show shows the rows given since the last List, with the values
+// of a List record, then forgets them.
+list_keep_show :: proc "contextless" (keeping: ^List_Keeping, values: [7]u64) {
+	shown := &keeping.shown
+	shown.rows = keeping.next
+	keeping.next = {}
+	shown.row_count = int(min(values[0], LIST_ROWS))
+	shown.chosen = values[1] < u64(shown.row_count) ? int(values[1]) : -1
+	shown.total = int(min(max(values[3], u64(shown.row_count)), 1 << 20))
+	shown.first = int(min(values[2], u64(shown.total - shown.row_count)))
+	shown.anchor = int(min(values[4], RUN_LIMIT))
+}
+
+// list_keep_forget forgets the list and the rows given: the program of the
+// terminal stopped.
+list_keep_forget :: proc "contextless" (keeping: ^List_Keeping) {
+	keeping^ = {}
+	keeping.shown.chosen = -1
 }
 
 // key gives the next key that the person pressed. false: no key waits.

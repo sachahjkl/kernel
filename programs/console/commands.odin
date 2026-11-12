@@ -169,6 +169,7 @@ commands_start :: proc "contextless" () {
 	command("variables", {}, .None, "list the variables", list_variables)
 	command("clear", {}, .None, "clear the console", clear)
 	command("shutdown", {}, .None, "stop the machine", shutdown)
+	command("measure_completion", {}, .None, "measure one key of the completion list", measure_completion)
 	tables_start()
 }
 
@@ -1221,20 +1222,28 @@ call_isolated :: proc "contextless" (item: ^Command, arguments: []Value) -> Valu
 			}
 			switch isolated.Status(completion.kind) {
 			case .Ok:
-				// The rows of a Change table come back into the memory of the value.
-				if problem, parameter := isolated.tables_return(item.file, item.function, encoded[:parameter_total], sandbox.region, offset); problem != .None {
-					name := parameter >= 1 && parameter <= item.parameter_count ? item.parameter_names[parameter - 1] : "of error details"
-					return fail("the program ", sandbox.name, " gave a wrong count for the table ", name)
-				}
-				// A failure: the other program wrote the error record, values
-				// only, in the place that encode chose, and the error details.
+				// A failure first: the other program wrote the error record,
+				// values only, in the place that encode chose, and the error
+				// details. Only the table of error details comes back: the
+				// rows that a failed export wrote in a Change table stay out
+				// of the values of the console (docs/MODULE_CONTRACT.md,
+				// section 8, "The table of error details").
 				if error_place.count != 0 && i64(completion.values[0]) < 0 {
 					error := (^errors.Error_Record)(raw_data(sandbox.region[error_place.start:]))^
 					failure := export_failure(item, &error, i64(completion.values[0]))
 					if item.details_parameter != 0 {
-						error_details_print(item, details[:], encoded[item.details_parameter - 1].table.count)
+						if problem, _ := isolated.error_details_return(item.file, item.function, encoded[:parameter_total], sandbox.region, offset); problem != .None {
+							print("error: the program ", sandbox.name, " gave a wrong count for the table of error details: the details are missing\n")
+						} else {
+							error_details_print(item, details[:], encoded[item.details_parameter - 1].table.count)
+						}
 					}
 					return failure
+				}
+				// The rows of a Change table come back into the memory of the value.
+				if problem, parameter := isolated.tables_return(item.file, item.function, encoded[:parameter_total], sandbox.region, offset); problem != .None {
+					name := parameter >= 1 && parameter <= item.parameter_count ? item.parameter_names[parameter - 1] : "of error details"
+					return fail("the program ", sandbox.name, " gave a wrong count for the table ", name)
 				}
 				#partial switch item.result {
 				case .Integer:
