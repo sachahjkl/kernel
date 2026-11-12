@@ -17,7 +17,8 @@ The first layer of the network is the base: the frame service, the network servi
 | Server | `programs/server` | A program with a listen grant on the TCP port 80. One thread serves all its connections from one connection table. It speaks a small HTTP/1.1 |
 | Client | `programs/fetch` | A program with a segment grant of one remote. It fetches pages and measures |
 | QUIC server | `programs/quic_echo` | A program with a listen grant of UDP on the port 4433: QUIC in the program (`docs/QUIC.md`, section 6) |
-| Peer | `tools/kerneltool/peer.odin` | The gateway of the test machine. It is also a TCP client that the tool drives, with loss, reorder and duplicates that the tool chooses |
+| Remote service | `programs/remote` | The calls of the host: a QUIC server with a listen grant of UDP on the port 7100 that admits the address of the host (10.0.2.2) only. Each call is one QUIC stream (`docs/QUIC.md`, section 7) |
+| Peer | `tools/kerneltool/peer.odin` | The gateway of the test machine. It is also a TCP client that the tool drives, with loss, reorder and duplicates that the tool chooses, and the QUIC client of the remote service |
 
 The kernel has no network code.
 
@@ -180,6 +181,7 @@ A third network machine (`scenario_tcp`) has the peer of the tool on `-netdev dg
 Written for QUIC (`docs/QUIC.md`, section 6); `kerneltool test quic` and `kerneltool test quic-real` run it. A datagram endpoint can have a listen grant: one local UDP port that the root service names, and the remotes that came to it. Its rules are the ones of the listen grant of TCP above, with one change: a new remote is admitted on a datagram of 1200 bytes at least (`datagram.LISTEN_FIRST_LEAST`), where TCP admits it on a SYN. 1200 bytes is the least first datagram of a QUIC client (RFC 9000, section 14.1), so a stray small datagram of an unknown remote takes no place.
 
 - The table of admitted remotes is the one of TCP (`network.Admitted`): 64 places, the oldest place with no traffic for 120 s serves again, `Release` forgets a remote.
+- A UDP listen grant can name one remote address (`datagram.Grant.address`): then a datagram of another address is never admitted, whatever its size, and the endpoint counts it (`Not_Granted`). The port of the remote is not named: a QUIC client takes a new port for each connection. The grant of `remote` names the address of the host, 10.0.2.2: that address is the rule of who may call (`docs/QUIC.md`, section 7). A TCP listen grant names no address.
 - A UDP listen port is not a port PORT_FIRST + n of a client grant, and no other UDP listen grant has it.
 - A Send goes only to an admitted remote. To a remote that the program did not validate, the network service sends at most 3 times the bytes that came from it (status `Amplification`, error kind `Over_Limit`); the command `Validate` lifts that limit for a remote that proved its address to the program (`docs/QUIC.md`, section 6, says what a program that validates every remote gains). A send does not keep a place alive: only a datagram of the remote does.
 - `Resolve` and `Echo` are refused, as for each listen grant: the program answers, but it does not reach.

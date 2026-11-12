@@ -49,8 +49,19 @@ Attack :: enum {
 	Answers_Then_Close_To_A_Zero_Window, // 64 pipelined requests, the last one with "Connection: close"; it never reads (F3).
 	Body_Then_Nothing, // 1 MiB of a body of 16 MiB at once, then nothing (W6).
 	Slow_Reader, // GET /large; it reads 8 KiB each 8 s: 1 KiB in one second (W6).
-	Reader_Of_A_Page_That_Changes, // 40 pipelined GET of a page of 3200 bytes; it reads nothing until the step Peer_Result, after the console removed the page (B2).
+	Reader_Of_A_Page_That_Changes, // CHANGING_PAGE_REQUESTS pipelined GET of a page of 3200 bytes; it reads at CHANGING_PAGE_READ_PACE until the step Peer_Result, after the console removed the page, then as fast as it can (B2).
 }
+
+// The case "page changed during its answer". The client reads its answers
+// at a pace three times the least pace of the slow-reader rule of `server`
+// (4096 bytes in one second over 10 s), counted from the end of its
+// requests, so that the rule never ends it before the console removes the
+// page: a pause of the thread of the peer up to about 6 s in 10 s is read
+// back at once. The requests hold that pace for about 270 s of answers: the
+// steps of the console come long before.
+CHANGING_PAGE_SIZE :: 3200
+CHANGING_PAGE_REQUESTS :: 1000
+CHANGING_PAGE_READ_PACE :: 3 * 4096 // Bytes in one second.
 
 Client_Phase :: enum {
 	Connect,
@@ -98,6 +109,15 @@ Client :: struct {
 	first_byte_at: time.Tick, // The first byte of the body of the answer, at the peer.
 	last_byte_at:  time.Tick,
 	written_at:    time.Tick, // The request and its body were in the send buffer of the peer.
+	// The client of a page that changes: its answers, read and checked.
+	page_read:          int, // The bytes of answers that it read.
+	page_head:          [512]u8,
+	page_head_length:   int,
+	page_body_left:     int, // The bytes of the body of the answer in progress that did not come yet; 0 between two answers.
+	page_announced:     int, // The Content-Length of the last head.
+	page_answers:       int, // The whole answers.
+	page_wrong:         string, // The first answer that is not the page of CHANGING_PAGE_SIZE bytes with the status 200.
+	reset_after_removal: bool, // The server ended the connection after the step Peer_Result: after the console removed the page.
 }
 
 Peer_Tcp :: struct {
@@ -429,9 +449,24 @@ peer_tcp_tick :: proc(peer: ^Peer, incoming: []tcp.Incoming) {
 		}
 	}
 	if all_done {
-		if state.name == "page changed during its answer" && !state.clients[0].reset_by_server {
-			peer_case_end(state, wanted, false, "the server sent both answers whole: the page did not change during the second one")
-			return
+		if state.name == "page changed during its answer" {
+			// The reason of the end, as far as the peer sees it: a RST, after
+			// the removal, with every answer before it the page itself. The
+			// server logs its reason; the step after this one waits for it.
+			client := &state.clients[0]
+			failure := ""
+			switch {
+			case !client.reset_by_server:
+				failure = fmt.aprintf("the server ended the connection with its FIN after %d whole answers: the page did not change during an answer", client.page_answers)
+			case !client.reset_after_removal:
+				failure = fmt.aprintf("the server reset the connection before the console removed the page, after %d whole answers and %d bytes: another limit than the change of the page", client.page_answers, client.page_read)
+			case client.page_wrong != "":
+				failure = client.page_wrong
+			}
+			if failure != "" {
+				peer_case_end(state, wanted, false, failure)
+				return
+			}
 		}
 		peer_case_end(state, wanted, true, peer_case_summary(state))
 		return
@@ -489,7 +524,13 @@ peer_case_summary :: proc(state: ^Peer_Tcp) -> string {
 		return fmt.aprintf("1 MiB from the server, at the peer: %.1f ms from its first byte to its last one, %.1f MB/s; the load of the host %s", time.duration_milliseconds(took), f64(web.LARGE_SIZE) / max(time.duration_seconds(took), 1e-9) / 1e6, host_load())
 	case "leak":
 		return fmt.aprintf("%d segments by hand from 768 ports: a bare RST, a bare ACK, a SYN then a RST, a SYN that the library refuses; then a page came in %.1f ms", len(state.raw), time.duration_milliseconds(state.fetch_at - state.raw_time))
-	case "one byte after a request", "answers then close to a zero window", "body then nothing", "slow reader", "page changed during its answer":
+	case "page changed during its answer":
+		client := &state.clients[0]
+		if client.page_body_left > 0 {
+			return fmt.aprintf("after the removal of the page, the server reset the connection inside answer %d: %d of the %d bytes that its head announced came; %d whole answers before it", client.page_answers + 1, client.page_announced - client.page_body_left, client.page_announced, client.page_answers)
+		}
+		return fmt.aprintf("after the removal of the page, the server reset the connection after %d whole answers, at the end of one: the bytes do not show more", client.page_answers)
+	case "one byte after a request", "answers then close to a zero window", "body then nothing", "slow reader":
 		client := &state.clients[0]
 		return fmt.aprintf("the server ended the connection after %.1f s with %s", time.duration_seconds(client.ended_at), client.reset_by_server ? "a RST" : "its FIN")
 	case "slow":
@@ -538,10 +579,10 @@ attack_text :: proc(attack: Attack) -> string {
 	case .Slow_Reader:
 		return "GET /large HTTP/1.1\r\nHost: 10.0.2.15\r\n\r\n"
 	case .Reader_Of_A_Page_That_Changes:
-		// 40 answers of 3.3 KiB: more than the window of the peer (32 KiB)
-		// and the send buffer of the server (64 KiB), so one answer is in
-		// progress when the page changes.
-		return strings.repeat("GET /changing.txt HTTP/1.1\r\nHost: 10.0.2.15\r\n\r\n", 40, context.temp_allocator)
+		// 1000 answers of 3.3 KiB: far more than the window of the peer
+		// (32 KiB) and the send buffer of the server (64 KiB), so the server
+		// always has an answer in progress, until the page changes.
+		return strings.repeat("GET /changing.txt HTTP/1.1\r\nHost: 10.0.2.15\r\n\r\n", CHANGING_PAGE_REQUESTS, context.temp_allocator)
 	}
 	return ""
 }
@@ -565,6 +606,57 @@ host_load :: proc() -> string {
 	text := string(bytes)
 	end := strings.index_byte(text, ' ')
 	return strings.clone(text[:max(end, 0)])
+}
+
+// changing_page_read reads at most allowed bytes of the answers of the
+// client of a page that changes, and checks each answer: a head with the
+// status 200 and a Content-Length of the page, then its body.
+changing_page_read :: proc(state: ^Peer_Tcp, client: ^Client, index: int, allowed: int) {
+	chunk: [16384]u8
+	left := allowed
+	for left > 0 {
+		count, _ := tcp.read(&state.table, index, chunk[:min(len(chunk), left)])
+		if count == 0 {
+			return
+		}
+		client.page_read += count
+		left -= count
+		rest := chunk[:count]
+		for len(rest) > 0 {
+			if client.page_body_left > 0 {
+				taken := min(len(rest), client.page_body_left)
+				client.page_body_left -= taken
+				rest = rest[taken:]
+				if client.page_body_left == 0 {
+					client.page_answers += 1
+				}
+				continue
+			}
+			// A head, one byte at a time: it ends at its empty line.
+			if client.page_head_length == len(client.page_head) {
+				if client.page_wrong == "" {
+					client.page_wrong = fmt.aprintf("answer %d: a head of more than %d bytes", client.page_answers + 1, len(client.page_head))
+				}
+				return
+			}
+			client.page_head[client.page_head_length] = rest[0]
+			client.page_head_length += 1
+			rest = rest[1:]
+			if web.head_end(client.page_head[:client.page_head_length]) == 0 {
+				continue
+			}
+			head, ok := web.head_read(client.page_head[:client.page_head_length])
+			client.page_head_length = 0
+			if (!ok || head.status != 200 || head.content_length != CHANGING_PAGE_SIZE) && client.page_wrong == "" {
+				client.page_wrong = fmt.aprintf("answer %d: the status %d with a Content-Length of %d, not the page of %d bytes", client.page_answers + 1, head.status, head.content_length, CHANGING_PAGE_SIZE)
+			}
+			client.page_announced = max(head.content_length, 0)
+			client.page_body_left = client.page_announced
+			if client.page_body_left == 0 {
+				client.page_answers += 1
+			}
+		}
+	}
 }
 
 // client_run moves one client of a case.
@@ -662,6 +754,12 @@ client_run :: proc(peer: ^Peer, state: ^Peer_Tcp, client: ^Client, now: u64) {
 			// The server must end the connection: a RST, or its FIN.
 			kinds := state.seen_by[index]
 			if connection.state == .Closed || .Reset in kinds || .Peer_Closed in kinds || .Timed_Out in kinds {
+				if client.attack == .Reader_Of_A_Page_That_Changes {
+					// The bytes that came before the end are part of the reason:
+					// they are read before the case ends.
+					changing_page_read(state, client, index, max(int))
+					client.reset_after_removal = sync.atomic_load(&state.result_wanted) == sync.atomic_load(&state.wanted)
+				}
 				client.ended_at = time.tick_since(state.started)
 				client.reset_by_server = .Reset in kinds
 				client.phase = .Done
@@ -677,16 +775,15 @@ client_run :: proc(peer: ^Peer, state: ^Peer_Tcp, client: ^Client, now: u64) {
 					client.trickle_at = time.tick_now()
 				}
 			case .Reader_Of_A_Page_That_Changes:
-				// No time of the host: the steps of the console come first.
-				if sync.atomic_load(&state.result_wanted) == sync.atomic_load(&state.wanted) {
-					chunk: [16384]u8
-					for {
-						count, _ := tcp.read(&state.table, index, chunk[:])
-						if count == 0 {
-							break
-						}
-					}
+				// Before the removal: at the pace, so that the slow-reader rule
+				// does not end the connection. After it: as fast as it can, so
+				// that the server writes the answer in progress again, and finds
+				// the change.
+				allowed := max(int)
+				if sync.atomic_load(&state.result_wanted) != sync.atomic_load(&state.wanted) {
+					allowed = int(time.duration_seconds(time.tick_since(client.trickle_at)) * CHANGING_PAGE_READ_PACE) - client.page_read
 				}
+				changing_page_read(state, client, index, allowed)
 			case .Trickle:
 				if time.tick_since(client.trickle_at) >= time.Second {
 					tcp.write(&state.table, index, {'x'})

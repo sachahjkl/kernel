@@ -84,7 +84,10 @@ scenario_tcp := [?]Step {
 	{kind = .Peer_Start, text = "page changed during its answer"},
 	{kind = .Type, text = "server.remove(\"changing.txt\")"},
 	{kind = .Wait, text = "server: the page /changing.txt is out of the store"},
-	// Now the peer reads: the server writes again, and finds the change.
+	// Until now the peer read at three times the least pace of the
+	// slow-reader rule; now it reads as fast as it can: the server writes
+	// the answer in progress again, and finds the change. The case checks
+	// that the RST came after the removal, inside the answers of the page.
 	{kind = .Peer_Result, text = "page changed during its answer"},
 	{kind = .Wait, text = " aborted: the page changed during its answer: "},
 	{kind = .Front, text = "server"},

@@ -23,7 +23,10 @@ QUIC_ECHO_PORT :: 4433 // The UDP port of quic_echo: the port of the examples of
 
 // endpoint_of gives the grant of the endpoint of a program (docs/NETWORK.md):
 //   net     a datagram endpoint: the echo server of the test, 10.0.2.2 port 7.
-//   remote  a datagram endpoint: the host, at the gateway.
+//   remote  a datagram endpoint with a listen grant: the UDP port
+//           remote.LISTEN_PORT, and only the remotes of the address of the
+//           host (10.0.2.2) that send a datagram of 1200 bytes to it: QUIC
+//           in the program (docs/QUIC.md, section 7).
 //   server  a segment endpoint with a listen grant: the TCP port 80, and the
 //           remotes that send a segment to it.
 //   fetch   a segment endpoint with a client grant: 10.0.2.100 port 80, the
@@ -35,7 +38,7 @@ endpoint_of :: proc "contextless" (name: string) -> datagram.Grant {
 	case "net":
 		return {address = 0x0A000202, port = 7}
 	case "remote":
-		return {address = 0x0A000202, port = remote.HOST_PORT} // 10.0.2.2: the host.
+		return {address = remote.HOST_ADDRESS, port = remote.LISTEN_PORT, listen = true}
 	case "server":
 		return {port = 80, tcp = true, listen = true}
 	case "fetch":

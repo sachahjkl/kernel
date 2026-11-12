@@ -5,6 +5,7 @@ import "contract:errors"
 import "contract:isolated"
 import module "contract:module"
 import "contract:remote"
+import "core:encoding/hex"
 import "core:fmt"
 import "core:net"
 import "core:os"
@@ -21,17 +22,21 @@ import "support:sentence"
 // The tool reads the description of the export in the module file of the
 // service (build/modules/<service>.module), checks each argument against
 // it, and writes the argument record with isolated.encode, as a caller
-// program does. It sends one call request to the peer on the loopback of
-// the host; the peer gives it to the remote service in the machine, and
-// gives the datagrams of the call answer back.
+// program does. It gives the call request to the peer on a TCP connection
+// of the loopback of the host (Loopback_Call, peer_remote.odin); the QUIC
+// client of the peer carries it on one stream of its connection to the
+// remote service in the machine, and gives the call answer back.
 //
-// `kerneltool run` starts the peer with its port of call requests at
-// CALL_PORT; the machine test gives the peer a port of the system, and the
-// step Call uses the same code.
+// `kerneltool run` starts the peer with its port of calls at CALL_PORT;
+// `kerneltool call` names the public key of `remote` that the person reads
+// in its window. The machine test gives the peer a port of the system and
+// the key on the log (step Remote_Key), and the step Call uses the same
+// code.
 
-CALL_PORT :: 7101 // On 127.0.0.1: the peer of `kerneltool run` receives the call requests there.
-CALL_REPEAT_TIME :: 300 * time.Millisecond // With no complete answer, the request goes again.
-CALL_TIME_LIMIT :: 10 * time.Second
+CALL_PORT :: 7101 // On 127.0.0.1, TCP: the peer of `kerneltool run` receives the calls there.
+// On the clock of the host: it only ends a call that hangs. The peer ends a
+// call at PEER_REMOTE_CALL_LIMIT.
+CALL_TIME_LIMIT :: PEER_REMOTE_CALL_LIMIT + 10 * time.Second
 CALL_ERROR_DETAILS :: 16 // The places of the table of error details that the tool gives to an export.
 
 // What a call gave, for the machine test.
@@ -39,6 +44,7 @@ Call_Outcome :: enum {
 	Result, // The export ran and gave its result.
 	Failed, // The export ran and gave an error record.
 	Refused, // The remote service or the service refused the call.
+	Reset, // The remote service reset the stream of the call (remote.Stream_Error).
 	No_Answer, // No complete answer came.
 	Wrong, // The text of the call, or its arguments, do not agree with the description.
 }
@@ -48,7 +54,9 @@ Call_Result :: struct {
 	lines:    [dynamic]string, // What the tool prints, one line each.
 	rows:     int, // A Table: its count of rows.
 	value:    i64,
-	datagrams: int, // The datagrams of the answer.
+	answer_bytes: int, // The bytes of the answer on its stream: its header and its result.
+	datagrams: int, // The datagrams of `remote` that the peer received during the call.
+	new_connection: bool, // The call made a new QUIC connection.
 }
 
 // A call that the tool can send again and again: the measures.
@@ -63,36 +71,30 @@ Prepared_Call :: struct {
 }
 
 Call_Client :: struct {
-	socket: net.UDP_Socket,
-	peer:   net.Endpoint,
-	number: u64, // The last request number.
-	sends:  int, // The times that the last call request went: 1, or more after a lost datagram.
+	peer:   net.Endpoint, // The TCP port of the calls of the peer, on the loopback.
+	key:    [32]u8, // The public key of `remote` that the call names; all zero: the key that the peer pinned.
 	wrong_hash: bool, // The next call request names another hash of the module: the test of the refusal.
 	last_hash:  [32]u8, // The hash that the last call request named.
 	modules:    [dynamic]Read_Module, // The module files that the client read, with their hashes: a call reads and hashes a file one time.
 	region: []u8,
 	result: []u8,
+	request: []u8, // The bytes of a whole request.
+	received: []u8, // A Loopback_Result and the bytes of a whole answer.
 }
 
-call_client_open :: proc(client: ^Call_Client, port: int) -> bool {
-	socket, err := net.make_bound_udp_socket(net.IP4_Loopback, 0)
-	if err != nil {
-		fmt.eprintfln("kerneltool: no UDP socket for the call: %v", err)
-		return false
-	}
-	_ = net.set_option(socket, .Receive_Timeout, 50 * time.Millisecond)
-	client.socket = socket
+call_client_open :: proc(client: ^Call_Client, port: int, key: [32]u8 = {}) -> bool {
 	client.peer = {address = net.IP4_Loopback, port = port}
-	// A number that a call of an earlier run did not use: the remote service
-	// keeps the answer of its last number.
-	client.number = u64(time.now()._nsec) & (remote.PEER_NUMBERS - 1)
+	client.key = key
 	client.region = make([]u8, remote.REGION_SIZE)
 	client.result = make([]u8, remote.REGION_SIZE)
+	client.request = make([]u8, remote.REQUEST_LIMIT)
+	client.received = make([]u8, size_of(Loopback_Result) + remote.ANSWER_LIMIT + 1)
 	return true
 }
 
 call_client_close :: proc(client: ^Call_Client) {
-	net.close(client.socket)
+	delete(client.request)
+	delete(client.received)
 	delete(client.region)
 	delete(client.result)
 	for item in client.modules {
@@ -422,8 +424,8 @@ call_prepare :: proc(client: ^Call_Client, text: string) -> (call: Prepared_Call
 		unit = described.size
 		result.count *= u64(described.size)
 	}
-	if end > remote.ARGUMENT_LIMIT {
-		return {}, fmt.tprintf("the arguments of %s.%s take %d bytes; one call request carries %d", service, export, end, remote.ARGUMENT_LIMIT)
+	if end > remote.REGION_SIZE {
+		return {}, fmt.tprintf("the arguments of %s.%s take %d bytes; one call request carries %d", service, export, end, remote.REGION_SIZE)
 	}
 	request := remote.Request {
 		kind         = .Call,
@@ -443,62 +445,89 @@ call_prepare :: proc(client: ^Call_Client, text: string) -> (call: Prepared_Call
 	return {service = service, export = export, file = file, function = function, index = index, request = request, bytes = client.region[:end]}, ""
 }
 
-// call_send sends a call request and gives the answer: its header and the
-// bytes of the result. It sends the request again when no complete answer
-// came: the remote service does not run it two times.
-call_send :: proc(client: ^Call_Client, call: ^Prepared_Call) -> (answer: remote.Answer, result: []u8, datagrams: int, ok: bool) {
-	client.number += 1
-	call.request.number = client.number
-	out: [remote.DATAGRAM_LIMIT]u8
+// What the path of a call gave, besides the answer.
+Call_Transport :: struct {
+	outcome:        Remote_Call_Outcome,
+	code:           u64, // A Reset: the remote.Stream_Error.
+	reason:         string,
+	answer_bytes:   int,
+	datagrams:      int,
+	new_connection: bool,
+}
+
+// call_send gives a call request to the peer, and gives the answer: its
+// header and the bytes of the result. ok is false when no whole answer
+// came: transport says why. A call is never sent again: a call that may
+// have run is not run a second time.
+call_send :: proc(client: ^Call_Client, call: ^Prepared_Call) -> (answer: remote.Answer, result: []u8, transport: Call_Transport, ok: bool) {
 	header := call.request
 	if client.wrong_hash {
 		header.hash[0] ~= 0xFF
 		client.wrong_hash = false
 	}
 	client.last_hash = header.hash
-	bytes, written := remote.request_write(out[:], header, call.bytes)
+	bytes, written := remote.request_write(client.request, header, call.bytes)
 	if !written {
-		return {}, nil, 0, false
+		return {}, nil, {outcome = .Lost, reason = "the request does not fit in a call region"}, false
 	}
-	parts: [remote.PART_CAPACITY]bool
-	received, needed := 0, 0
+	received, sent := loopback_call(client, bytes)
+	if !sent {
+		return {}, nil, {outcome = .Lost, reason = "the peer of the tool does not answer on the loopback: does `kerneltool run` run?"}, false
+	}
+	if len(received) < size_of(Loopback_Result) {
+		return {}, nil, {outcome = .Lost, reason = "the peer ended the call with no outcome"}, false
+	}
+	outcome := (^Loopback_Result)(raw_data(received))^
+	transport = {outcome = outcome.outcome, code = outcome.code, datagrams = int(outcome.datagrams), new_connection = outcome.new_connection != 0}
+	reason_count := 0
+	for reason_count < len(outcome.reason) && outcome.reason[reason_count] != 0 {
+		reason_count += 1
+	}
+	transport.reason = strings.clone(string(outcome.reason[:reason_count]), context.temp_allocator)
+	if outcome.outcome != .Answer {
+		return {}, nil, transport, false
+	}
+	answer_part := received[size_of(Loopback_Result):]
+	transport.answer_bytes = len(answer_part)
+	checked, part, valid := remote.answer_check(answer_part)
+	if !valid {
+		transport.outcome = .Answer_Too_Large
+		transport.reason = "the answer is not a header and the bytes that it names"
+		return {}, nil, transport, false
+	}
+	copy(client.result, part)
+	return checked, client.result[:len(part)], transport, true
+}
+
+// loopback_call writes a call on a TCP connection of the loopback to the
+// peer, and reads all that the peer writes back, up to its end.
+@(private = "file")
+loopback_call :: proc(client: ^Call_Client, request: []u8) -> (received: []u8, ok: bool) {
+	connection, err := net.dial_tcp(client.peer)
+	if err != nil {
+		return nil, false
+	}
+	defer net.close(connection)
+	_ = net.set_option(connection, .Receive_Timeout, 100 * time.Millisecond)
+	header := Loopback_Call{key = client.key}
+	header_bytes := transmute([size_of(Loopback_Call)]u8)header
+	if !loopback_send_all(connection, header_bytes[:]) || !loopback_send_all(connection, request) {
+		return nil, false
+	}
+	_ = net.shutdown(connection, .Send)
+	count := 0
 	start := time.tick_now()
-	client.sends = 0
-	for time.tick_since(start) < CALL_TIME_LIMIT {
-		client.sends += 1
-		if _, err := net.send_udp(client.socket, bytes, client.peer); err != nil {
-			return {}, nil, 0, false
+	for count < len(client.received) && time.tick_since(start) < CALL_TIME_LIMIT {
+		read, receive_err := net.recv_tcp(connection, client.received[count:])
+		if receive_err == .Timeout || receive_err == .Would_Block {
+			continue
 		}
-		sent := time.tick_now()
-		for time.tick_since(sent) < CALL_REPEAT_TIME {
-			buffer: [remote.DATAGRAM_LIMIT + 1]u8
-			count, _, err := net.recv_udp(client.socket, buffer[:])
-			if err != nil || count == 0 {
-				continue
-			}
-			header, part, valid := remote.answer_check(buffer[:count])
-			if !valid || header.number != client.number {
-				continue
-			}
-			if needed == 0 {
-				answer = header
-				needed = int(remote.part_count(u64(header.total)))
-			} else if header.total != answer.total || header.status != answer.status || header.value != answer.value {
-				continue // A part of another answer: the remote service gives one answer for one number.
-			}
-			number := int(header.offset) / remote.PART_LIMIT
-			if !parts[number] {
-				parts[number] = true
-				copy(client.result[header.offset:], part)
-				received += 1
-				datagrams += 1
-			}
-			if received == needed {
-				return answer, client.result[:answer.total], datagrams, true
-			}
+		if receive_err != nil || read == 0 {
+			break
 		}
+		count += read
 	}
-	return {}, nil, datagrams, false
+	return client.received[:count], true
 }
 
 // call_run makes one call and gives what the tool prints.
@@ -510,11 +539,23 @@ call_run :: proc(client: ^Call_Client, text: string) -> (outcome: Call_Result) {
 		append(&outcome.lines, fmt.tprintf("error: %s", problem))
 		return outcome
 	}
-	answer, result, datagrams, answered := call_send(client, &call)
-	outcome.datagrams = datagrams
+	answer, result, transport, answered := call_send(client, &call)
+	outcome.datagrams = transport.datagrams
+	outcome.answer_bytes = transport.answer_bytes
+	outcome.new_connection = transport.new_connection
 	if !answered {
-		outcome.outcome = .No_Answer
-		append(&outcome.lines, "error: no complete answer in 10 s: does the machine run the program remote? (the menu of the bar, or start(\"remote\") in the console)")
+		#partial switch transport.outcome {
+		case .Reset:
+			outcome.outcome = .Reset
+			name := remote.stream_error_name(transport.code)
+			if name == "" {
+				name = fmt.tprintf("%d, a code that the contract does not name", transport.code)
+			}
+			append(&outcome.lines, fmt.tprintf("error: remote reset the stream of the call with the code %s", name))
+		case:
+			outcome.outcome = .No_Answer
+			append(&outcome.lines, fmt.tprintf("error: no whole answer: %s", transport.reason))
+		}
 		return outcome
 	}
 	outcome.value = answer.value
@@ -536,10 +577,6 @@ call_run :: proc(client: ^Call_Client, text: string) -> (outcome: Call_Result) {
 		if answer.error.argument == remote.FIELD_HASH {
 			append(&outcome.lines, fmt.tprintf("error: the machine runs %s %s; the request named %s (%s is %s): start the machine of this build", call.service, hex_of(answer.hash[:8]), hex_of(client.last_hash[:8]), module_path(call.service), hex_of(call.request.hash[:8])))
 		}
-		return outcome
-	case .Started:
-		outcome.outcome = .No_Answer
-		append(&outcome.lines, "error: the answer has the status Started")
 		return outcome
 	case .Ok:
 	case:
@@ -855,18 +892,26 @@ call_measure :: proc(client: ^Call_Client, text: string, count: int) -> (least, 
 }
 
 // run_call is the command `call`: a call to the machine that `kerneltool
-// run` started.
+// run` started. Its first argument is the public key of `remote`, as its
+// window shows it: the QUIC client of the peer pins it.
 run_call :: proc(args: []string) -> int {
-	if len(args) != 1 {
-		fmt.eprintln("kerneltool: call \"service.export(arguments)\", for example call \"monitor.programs()\"")
+	key_text := ""
+	if len(args) == 2 {
+		key_text = args[0]
+	}
+	key_bytes, key_ok := hex.decode(transmute([]u8)key_text, context.temp_allocator)
+	if len(args) != 2 || !key_ok || len(key_bytes) != 32 {
+		fmt.eprintln("kerneltool: call <the public key of remote, 64 hexadecimal digits, from its window> \"service.export(arguments)\", for example call 3f2a...9c \"monitor.programs()\"")
 		return EXIT_USAGE
 	}
+	key: [32]u8
+	copy(key[:], key_bytes)
 	client: Call_Client
-	if !call_client_open(&client, CALL_PORT) {
+	if !call_client_open(&client, CALL_PORT, key) {
 		return EXIT_FAILURE
 	}
 	defer call_client_close(&client)
-	result := call_run(&client, args[0])
+	result := call_run(&client, args[1])
 	for line in result.lines {
 		if result.outcome == .Result {
 			fmt.println(line)

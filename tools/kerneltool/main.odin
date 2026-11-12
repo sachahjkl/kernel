@@ -91,7 +91,7 @@ COMMANDS :: [?]Command {
 	{name = "vector_fonts", about = "subset the vector font candidates of " + VECTOR_FONT_SOURCES_VARIABLE + " to " + VECTOR_FONT_FOLDER + " and draw " + CANDIDATES_PICTURE, run = run_vector_fonts},
 	{name = "logo", about = "draw the files of the mark of the system from support/mark: " + LOGO_FOLDER + " and " + PROJECT_IMAGE + "; `check` verifies them; and " + MARK_ANIMATIONS_PICTURE + ", every frame of the animations of the mark", run = run_logo},
 	{name = "portrait", about = "convert " + PORTRAIT_SOURCE + " to " + PORTRAIT_OUTPUT, run = run_portrait},
-	{name = "call", about = "call \"service.export(arguments)\": call an export of a service of the machine that `run` started, through the program remote, and print the typed result", run = run_call},
+	{name = "call", about = "call <key> \"service.export(arguments)\": call an export of a service of the machine that `run` started, through the program remote over QUIC (key: the public key of remote, from its window), and print the typed result", run = run_call},
 	{name = "repeat", about = "repeat <module> <count>: build one module again and again, with no machine, and count the distinct modules, LLVM IR files and objects; `repeat all <count> [processes]`: every module and the boot program, one row each", run = run_repeat},
 	{name = "cryptography-take", about = "cryptography-take <file under the root of Odin> <file of the repository>: copy a file of core:crypto with the listed import changes, and print its line of the manifest", run = run_cryptography_take},
 	{name = "cryptography-system-hashes", about = "print the line of " + CRYPTOGRAPHY_SYSTEM_FILES + " for each .odin file of support/cryptography that is not taken from Odin", run = run_cryptography_system_hashes},
@@ -215,7 +215,8 @@ run_machine :: proc(args: []string) -> int {
 	if !disk_prepare(DATA_DISK, DATA_DISK_SIZE, false) {
 		return EXIT_FAILURE
 	}
-	// The peer receives the call requests of `kerneltool call` at CALL_PORT.
+	// The peer receives the calls of `kerneltool call` at the TCP port
+	// CALL_PORT of the loopback.
 	peer: Peer
 	if !peer_start(&peer, CALL_PORT) {
 		return EXIT_FAILURE

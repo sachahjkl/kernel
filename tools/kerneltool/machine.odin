@@ -73,6 +73,8 @@ Step_Kind :: enum {
 	Quic_Key, // As Remember: the 64 hexadecimal digits after text, in the log after the last Wait, are the public key of a QUIC server, which the QUIC client of the peer pins (peer_quic.odin).
 	Peer_Quic, // The peer runs the QUIC case text (peer_quic.odin) and checks its answers.
 	Openssl_Quic, // `openssl s_client -quic` of the host sends the line text to quic_echo through the UDP relay of the peer, and must get it back, from the key that the step Quic_Key read (quic_real.odin, peer_relay.odin).
+	Remote_Key, // As Quic_Key, for the QUIC client of `remote` in the peer (peer_remote.odin): each Call after it goes over QUIC with this key.
+	Remote_Case, // The peer runs the case text of `remote` (peer_remote.odin, remote_case_run) and checks its outcome.
 }
 
 Step :: struct {
@@ -88,14 +90,14 @@ Step :: struct {
 	expected:   string, // For Call: a part of what the tool prints.
 	outcome:    Call_Outcome, // For Call: Result, Failed or Refused.
 	rows_call:  string, // For Call: a call whose Integer result is the count of rows of the Table.
-	lose:       int, // For Call: the peer drops this many datagrams of the answer; the tool sends the request again, and monitor.served() shows that the call ran one time.
+	lose:       int, // For Call: the peer drops this many datagrams of `remote` to the host; QUIC sends them again, and monitor.served() shows that the call ran one time.
 	wrong_hash: bool, // For Call: the request names another hash of the module.
 	program:    string, // For Record: the program that wrote the record.
 	channel:    string, // For Record: its channel ("" for none).
 	level:      string, // For Record: info, debug, warning or error.
 	pointer:    bool, // For Call: when the call has its result, the tool confirms each place of the pointer from now on (pointer_confirm).
 	repeat:     int, // For Call: the calls of the measure of the round trip.
-	parts:      int, // For Call: the least count of datagrams of the answer.
+	least_answer_bytes: int, // For Call: the least bytes of the answer on its stream.
 	inside_window: string, // For Click: (x, y) are inside the surface of the window with this title, as the log of the compositor places it. For Point: from the corner of the window.
 	date_after: string, // For Call: the number after this text in what the tool prints is a date of the machine in milliseconds since 1970: it must be within DATE_TOLERANCE_SECONDS of the host time.
 }
@@ -410,10 +412,12 @@ scenario_network := [?]Step {
 	{kind = .Wait, text = "compositor: surface manual"},
 	{kind = .Launch, text = "remote"},
 	{kind = .Wait, text = "root: started remote"},
-	{kind = .Wait, text = "remote: ok, an endpoint with the grant 10.0.2.2 port 7100; the call requests of the host arrive there", any_order = true},
-	// The peer sends six malformed call requests when the remote service
-	// starts: each one has its error record, and no call runs.
-	{kind = .Wait, text = "remote: refused a request: remote: the call has 20 bytes; it must have at least 112 bytes"},
+	{kind = .Remote_Key, text = "remote: the public key of this service: "},
+	{kind = .Wait, text = "remote: listening on the UDP port 7100, for the host 10.0.2.2 only", any_order = true},
+	// Six malformed call requests, each on its own stream: each one has its
+	// error record, and no call runs.
+	{kind = .Remote_Case, text = "malformed"},
+	{kind = .Wait, text = "remote: refused a request: remote: the call has 20 bytes; it must have at least 104 bytes"},
 	{kind = .Wait, text = "remote: refused a request: remote: the argument kind has the value 9, which the call refuses; it takes at most 1"},
 	{kind = .Wait, text = "remote: refused a request: remote: the argument arguments has 400 bytes; it can have at most 16 bytes"},
 	{kind = .Wait, text = "remote: refused a request: remote: the argument result_count has 65536 bytes; it can have at most 65472 bytes"},
@@ -431,11 +435,8 @@ scenario_network := [?]Step {
 	// A Table: the row of the remote service is there, and the count of the
 	// rows is the count that the monitor wrote on the log.
 	{kind = .Call, text = "monitor.programs()", expected = "remote", rows_call = "monitor.count(\"programs\")"},
-	// A lost datagram: the tool sends the request again, and the remote
-	// service sends the answer that it kept; the call runs one time.
+	// A lost datagram: QUIC sends it again, and the call runs one time.
 	{kind = .Call, text = "monitor.count(\"processors\")", expected = "4", lose = 1},
-	{kind = .Wait, text = "remote: the request "},
-	{kind = .Wait, text = " came again: its answer went again, and the call did not run again; 1 in all"},
 	// Another module than the one that runs: the remote service refuses it,
 	// and the tool names the two hashes.
 	{kind = .Call, text = "monitor.count(\"processors\")", outcome = .Refused, wrong_hash = true, expected = "the request named "},
@@ -443,8 +444,8 @@ scenario_network := [?]Step {
 	{kind = .Call, text = "monitor.counts()", expected = "15 rows of Count"},
 	// A Record: the counts of the monitor itself, which each caller sees.
 	{kind = .Call, text = "monitor.served()", expected = "Served{calls = "},
-	// A result larger than one datagram.
-	{kind = .Call, text = "manual.modules()", expected = " rows of Module", parts = 2},
+	// A result larger than one datagram, on one stream.
+	{kind = .Call, text = "manual.modules()", expected = " rows of Module", least_answer_bytes = 1201},
 	{kind = .Call, text = "manual.running()", expected = " rows of Running"},
 	// A Text, from a service that starts at the first connection.
 	{kind = .Call, text = "storage.stores()", expected = " blocks in use"},
@@ -454,6 +455,25 @@ scenario_network := [?]Step {
 	{kind = .Call, text = "manual.exports(\"nothing\")", outcome = .Failed, expected = "error: manual.exports: the argument name names none of the modules (-1)"},
 	// The tool checks the arguments against the description before it sends.
 	{kind = .Call, text = "monitor.count(4)", outcome = .Wrong, expected = "error: the parameter name of monitor.count is a Text, the argument is an Integer"},
+	// The transport (docs/QUIC.md, section 7). Two calls at one time, on two
+	// streams: each answer on its own stream, in any order.
+	{kind = .Remote_Case, text = "two at once"},
+	// A request of more than a header and a call region: reset with
+	// Too_Large, and no call.
+	{kind = .Remote_Case, text = "too large"},
+	{kind = .Wait, text = ": a request of more than 65640 bytes: reset with the code Too_Large, and no call"},
+	// A stream with a part of a request and no end: reset with Timeout at
+	// the bound of a request, in time of the machine.
+	{kind = .Remote_Case, text = "a part and no end"},
+	{kind = .Wait, text = " ms of the machine; the bound of a request held"},
+	// A datagram from an address that the listen grant does not admit gets
+	// nothing: the network service drops it before remote.
+	{kind = .Remote_Case, text = "stranger"},
+	// The connection of the peer lost: remote ends it at its idle bound, in
+	// time of the machine, and the next call opens a new connection.
+	{kind = .Remote_Case, text = "silence"},
+	{kind = .Wait, text = ": the idle end held its bound: ", seconds = 120},
+	{kind = .Remote_Case, text = "silence ends"},
 	// The person sees the grant, and revokes it: the services refuse what
 	// they give only to a caller that acts for the person.
 	// The developer tool serves its tables to a caller that acts for the
@@ -1023,7 +1043,8 @@ scenario := [?]Step {
 	// and corrects it before each press.
 	{kind = .Launch, text = "remote"},
 	{kind = .Wait, text = "root: started remote"},
-	{kind = .Wait, text = "remote: ok, an endpoint with the grant 10.0.2.2 port 7100; the call requests of the host arrive there", any_order = true},
+	{kind = .Remote_Key, text = "remote: the public key of this service: "},
+	{kind = .Wait, text = "remote: listening on the UDP port 7100, for the host 10.0.2.2 only", any_order = true},
 	{kind = .Call, text = "compositor.pointer()", expected = "1 rows of Pointer", pointer = true},
 	{kind = .Call, text = "compositor.windows()", expected = "remote"},
 
@@ -3042,6 +3063,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				machine.client_open = true
 			}
 			served_before: i64
+			lost_before: int
 			if step.lose > 0 {
 				before, has_before := record_field(&machine.client, "monitor.served()", "calls")
 				if !has_before {
@@ -3049,11 +3071,10 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 					return false
 				}
 				served_before = before
-				sync.atomic_store(&machine.peer.lose, step.lose)
+				lost_before = peer_remote_lose(machine.peer.remote, step.lose)
 			}
 			machine.client.wrong_hash = step.wrong_hash
 			result := call_run(&machine.client, step.text)
-			sends := machine.client.sends
 			if step.pointer {
 				// A result: the tool confirms each place from now on. A
 				// refusal (the grant person was revoked): the blind way again.
@@ -3068,11 +3089,11 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				fmt.eprintfln("kerneltool: test failed: step %d: the call %s gave %v, not %v with \"%s\"", index + 1, step.text, result.outcome, step.outcome, step.expected)
 				return false
 			}
-			if result.datagrams < step.parts {
-				fmt.eprintfln("kerneltool: test failed: step %d: the answer of %s came in %d datagrams, not %d or more", index + 1, step.text, result.datagrams, step.parts)
+			if result.answer_bytes < step.least_answer_bytes {
+				fmt.eprintfln("kerneltool: test failed: step %d: the answer of %s has %d bytes, not %d or more", index + 1, step.text, result.answer_bytes, step.least_answer_bytes)
 				return false
 			}
-			fmt.printfln("kerneltool: test passed: the call %s printed \"%s\", in %d datagrams", step.text, step.expected, result.datagrams)
+			fmt.printfln("kerneltool: test passed: the call %s printed \"%s\", an answer of %d bytes on one stream, %d datagrams of remote during the call%s", step.text, step.expected, result.answer_bytes, result.datagrams, result.new_connection ? ", on a new connection" : "")
 			if step.date_after != "" {
 				milliseconds, found := number_after(printed, step.date_after)
 				if !found {
@@ -3082,14 +3103,16 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				date_check(index, milliseconds / 1000, step.text) or_return
 			}
 			if step.lose > 0 {
-				// The request went again; the service ran the call one time:
-				// served() counts the call of the step and its own call before.
+				// QUIC sent the dropped datagrams again; the service ran the
+				// call one time: served() counts the call of the step and its
+				// own call before.
+				lost := peer_remote_lost(machine.peer.remote) - lost_before
 				after, has_after := record_field(&machine.client, "monitor.served()", "calls")
-				if sends < 2 || !has_after || after - served_before != 2 {
-					fmt.eprintfln("kerneltool: test failed: step %d: after %d lost datagrams the request went %d times, and the monitor ran %d calls, not 2", index + 1, step.lose, sends, after - served_before)
+				if lost < step.lose || !has_after || after - served_before != 2 {
+					fmt.eprintfln("kerneltool: test failed: step %d: the peer dropped %d datagrams of remote (%d asked), and the monitor ran %d calls, not 2", index + 1, lost, step.lose, after - served_before)
 					return false
 				}
-				fmt.printfln("kerneltool: test passed: the peer dropped %d datagrams of the answer of %s; the tool sent the request %d times, and the monitor ran the call one time", step.lose, step.text, sends)
+				fmt.printfln("kerneltool: test passed: the peer dropped %d datagrams of remote during %s; QUIC sent them again, and the monitor ran the call one time", lost, step.text)
 			}
 			if step.rows_call != "" {
 				// Another call gives the count of the rows.
@@ -3141,6 +3164,32 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				return false
 			}
 			fmt.printfln("kerneltool: the QUIC client of the peer pins the key %s", line)
+		case .Remote_Key:
+			if !log_wait(machine, step.text, false) {
+				fmt.eprintfln("kerneltool: test failed: step %d: the machine did not print \"%s\"", index + 1, step.text)
+				return false
+			}
+			log := log_read(machine)
+			rest := log[machine.seen:]
+			line := strings.trim_right(rest[:max(strings.index_byte(rest, '\n'), 0)], "\r")
+			if !peer_remote_pin_text(machine.peer.remote, line) {
+				fmt.eprintfln("kerneltool: test failed: step %d: \"%s\" is not a public key of 64 hexadecimal digits", index + 1, line)
+				return false
+			}
+			fmt.printfln("kerneltool: the QUIC client of remote in the peer pins the key %s", line)
+		case .Remote_Case:
+			if !machine.client_open {
+				if !call_client_open(&machine.client, machine.call_port) {
+					return false
+				}
+				machine.client_open = true
+			}
+			passed, result := remote_case_run(machine, step.text)
+			if !passed {
+				fmt.eprintfln("kerneltool: test failed: step %d: the case \"%s\" of remote: %s", index + 1, step.text, result)
+				return false
+			}
+			fmt.printfln("kerneltool: test passed: the case \"%s\" of remote: %s", step.text, result)
 		case .Openssl_Quic:
 			if !openssl_quic_run(machine, step.text) {
 				fmt.eprintfln("kerneltool: test failed: step %d: the QUIC client of OpenSSL", index + 1)
