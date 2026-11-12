@@ -16,9 +16,9 @@ The vector forms use the 128-bit registers of SSE2. Every x86-64 processor has S
 
 The arithmetic is written with `base:intrinsics` on `#simd[N]T` types (`simd_shuffle`, `simd_select`, `simd_lanes_eq`, `simd_shr`, `simd_extract`, the operators `+ - *`, and `cast` between element widths). The compiler lowers them for the baseline.
 
-### What was measured and decided about AVX2
+### What was measured about AVX2
 
-A first version had an AVX2 form of each procedure, behind one choice at the start of a program (CPUID and XGETBV as `asm` templates). The coordinator built it and ran the host tests on a host with AVX2. The host load was 10, above the limit of 8, so these times rank the forms and are not valid measures of speed:
+An AVX2 form of each procedure, behind one choice at the start of a program (CPUID and XGETBV as `asm` templates), was measured by the host tests on a host with AVX2. The host load was 10, above the limit of 8, so these times rank the forms and are not valid measures of speed:
 
 | Measure (host, `-o:speed`) | Scalar | SSE2 | AVX2 |
 |---|---|---|---|
@@ -27,13 +27,13 @@ A first version had an AVX2 form of each procedure, behind one choice at the sta
 
 The build with no optimisation (the build of the host tests of `kerneltool check`) gave the same order: one glyph 1382 / 813 / 4716 ns in a first run, BLAKE3 5920 / 1904 / 2002 us.
 
-AVX2 lost to SSE2 in both places, and its form of the blend of a glyph gave wrong bytes in the build with no optimisation. The decision: this pass has the scalar form and the SSE2 form only. The AVX2 forms, the choice at the start of a program, and the package of that choice are removed.
+AVX2 lost to SSE2 in both places, and its form of the blend of a glyph gave wrong bytes in the build with no optimisation. So the system has the scalar form and the SSE2 form only: no AVX2 form, no choice at the start of a program, and no package for that choice.
 
-### What AVX2 needs before it comes back
+### What an AVX2 form needs
 
 1. The kernel saves the extended state of a program (`xsave`, XCR0 bits 1 and 2) at each switch of threads (`ARCHITECTURE.md`, "The extended state of the processor"). A program reads whether AVX2 is usable with `support/instruction_sets`, once at its start.
 2. A form that wins by measure on the machine, with optimisation, on a host with a load under 8. The blend of a glyph reads a table at an index for each channel. The AVX2 gather (`vpgatherdd`) is not faster than single loads on every processor, and on processors from Skylake to Ice Lake and Tiger Lake the correction against Gather Data Sampling (2023) makes it several times slower. A form to measure first: the arithmetic in `ymm` registers with the reads of one byte of the SSE2 form, and no gather.
-3. The cause of the wrong bytes understood. The facts: in the build with no optimisation, the AVX2 form gave the byte 03 in some channels. 03 is entry 0 of the table of square roots, so the gather read index 0 in those lanes: the vector of indices that the gather received had zeros where the indices were not 0. The build with optimisation gave the right bytes. The first cause found and corrected: an AVX2 procedure passed vectors of 256 bits by value to procedures without the target feature (section "A lesson"). After that correction, the indices went to the gather procedure through a pointer, and the fault stayed. What I now think: the same kind of fault at a place that the reading did not see, where a vector of more than 128 bits passes between two procedures in a build that puts nothing inline. Candidates: the call of the binding `x86._mm256_i32gather_epi32` (a procedure of the C convention that takes and gives a vector of 256 bits), or the vector of 512 bits that the shared arithmetic returned. A fault of the compiler in that build is also possible. The way to know: read the LLVM IR of the test build for the gather procedure and its callers, and compare the vector of indices that is stored with the one that the gather instruction receives.
+3. The cause of the wrong bytes understood. The facts: in the build with no optimisation, the AVX2 form gave the byte 03 in some channels. 03 is entry 0 of the table of square roots, so the gather read index 0 in those lanes: the vector of indices that the gather received had zeros where the indices were not 0. The build with optimisation gave the right bytes. One cause is known: an AVX2 procedure that passes vectors of 256 bits by value to procedures without the target feature (section "A lesson"). With the indices passed to the gather procedure through a pointer, the fault stayed. The probable cause: the same kind of fault at another place, where a vector of more than 128 bits passes between two procedures in a build that puts nothing inline. Candidates: the call of the binding `x86._mm256_i32gather_epi32` (a procedure of the C convention that takes and gives a vector of 256 bits), or the vector of 512 bits that the shared arithmetic returned. A fault of the compiler in that build is also possible. The way to know: read the LLVM IR of the test build for the gather procedure and its callers, and compare the vector of indices that is stored with the one that the gather instruction receives.
 
 ### A lesson for later: vectors of more than 128 bits across procedures
 
@@ -63,11 +63,11 @@ The SSE2 form is `blend_coverage_row_sse2` in `support/graphics/blend_vectors_am
 
 The table is kept: 12 reads of one byte cost less than a square root computed in lanes (a search of 8 steps for each channel).
 
-The scalar form had a fault, found by the comparison: it kept the channels of the previous pixel, and took the value `0xFFFFFFFF` for "no previous pixel". A first pixel `0xFFFFFFFF` was blended as black. A canvas of the system holds `0x00RRGGBB` only, so no screen changed. The scalar form now has a flag for "no previous pixel"; the host test `coverage_scalar_form_reads_a_pixel_of_all_ones` keeps it.
+The scalar form keeps the channels of the previous pixel, with a flag for "no previous pixel". The value `0xFFFFFFFF` cannot mean "no previous pixel": a first pixel `0xFFFFFFFF` is then blended as black. A canvas of the system holds `0x00RRGGBB` only. The host test `coverage_scalar_form_reads_a_pixel_of_all_ones` keeps the flag.
 
 ### Fill and copy
 
-They are not written again:
+They have no vector form of their own:
 
 - `graphics.copy` calls `intrinsics.mem_copy_non_overlapping`, which is `copy_bytes_without_overlap` of `runtime/memory.asm` (moves of 16 bytes and `rep movsb`).
 - `graphics.fill` is a loop of 32-bit stores, and the compiler makes it a vector loop: the code of the compositor has `pshufd $0x0` (the color in the four lanes) and stores of 16 bytes in `interface::execute_in_rectangle` (`objdump -d build/modules/compositor/linked.elf`). A fill of 32-bit pixels is not a fill of bytes: `fill_bytes_with_value` does not apply.
@@ -107,10 +107,10 @@ grep "compositor: the blend of the arrow" build/test_output.txt
 grep "root: the resource glyph_cache" build/test_output.txt
 ```
 
-| Line | The number | Before (the scalar form) |
+| Line | The number | The scalar form |
 |---|---|---|
 | `vector_glyphs: one glyph ...` | after "from the glyph cache:": one glyph in ns, the least of 50 batches | 309 ns, Spleen 35 ns (`docs/FONTS.md`, section 5) |
-| `compositor: the blend of the arrow of 32x32 ...` | the blend of the arrow in ns, and a copy of the same size | 824 to 1008 ns, a copy 151 to 153 ns (choice 367 of `docs/FIRST_MILESTONE.md`) |
+| `compositor: the blend of the arrow of 32x32 ...` | the blend of the arrow in ns, and a copy of the same size | 824 to 1008 ns, a copy 151 to 153 ns |
 | `root: the resource glyph_cache (390624 bytes, its hash checked in N us) ...` | the hash of the glyph cache in us | 796 to 966 us (`docs/FONTS.md`, section 5) |
 
 On the host, with the optimisation of a module:

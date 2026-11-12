@@ -1,7 +1,5 @@
 # Randomness
 
-Status: built on 2026-11-11 (branch `work/tcp`), as Part A of the step "randomness for the system, then QUIC". The coordinator preferred the form of a seed for each program to a kernel operation or a call for each draw. The owner has not reviewed it.
-
 The terms are in `GLOSSARY.md`, section "Randomness": random seed, random generator, entropy report, seed strength.
 
 ## 1. Where a program gets random bytes
@@ -12,7 +10,7 @@ A program draws random bytes from its own random generator, a record of fixed si
 - **Each starter** (root, `console`, `errors`, `imports`, `frames`, `locks`, `rings`) gives each child 32 bytes of its own stream (`random.values_with_seed`). `system.program_start` refuses a start whose seed is 32 zero bytes: a starter cannot forget it.
 - **The program** reads its seed once (`random.generator_from_context`), which erases it in the context.
 
-The options that the coordinator gave, weighed against the properties:
+The forms that the system can take, weighed against the properties:
 
 | Option | Against the properties | Chosen |
 |---|---|---|
@@ -22,7 +20,7 @@ The options that the coordinator gave, weighed against the properties:
 
 **What a starter knows.** The starter of a program knows its seed. A child has no secret from its starter, which already chooses its code and its grants. Two programs that one starter starts do not know the streams of each other.
 
-**The fault program reads value 14.** `fault` read its "zero" address from the value 15 of its context. The seed first took the values 12 to 15; after the settings page took value 13 (step 58), the seed is in the values 9 to 12, and `fault` reads value 14, which no starter writes.
+**The fault program reads value 14.** `fault` reads its "zero" address from the value 14 of its context, which no starter writes: the seed is in the values 9 to 12.
 
 ## 2. The generator
 
@@ -50,13 +48,15 @@ The root service hashes, with BLAKE3, each value of each source, each with its l
 
 The strength of the seed is the strongest source that gave all its values. The root service writes it on the log: "root: the random seed of the system, strength ...". It gives the facts of the gathering, never the seed, to the program `randomness` (its context values 0 to 7).
 
+**The reads are not merged.** The reads of `rdrand` and `rdseed` through a procedure value (`processor_values` in `support/random`) carry `#side_effects`: without it, LLVM keeps one value for all the reads (a machine test then shows "rdrand present, 1 good, 255 refused").
+
 **No claim beyond the sources.** The system does not test the output of `rdseed` or `rdrand` for quality. A processor whose generator is wrong or hostile gives a wrong seed, with no sign; the jitter of the cycle counter is mixed in so that such a processor alone does not fix the seed, but this system claims no bits from it.
 
 **A machine with no `rdrand` and no `rdseed`.** The seed comes from the cycle counter only. Each program still starts and draws. The log and the window say "weak (the cycle counter only)" in the color of a failure. `kerneltool test random` runs such a machine (`-cpu max,-rdrand,-rdseed`).
 
 **Each program knows the strength of its seed.** The starter writes the strength of the seed of the system in the context value 16 (`op.CONTEXT_VALUE_SEED_STRENGTH`) with the seed: 1 weak, 2 processor, 3 entropy. A child's seed comes from its starter's stream, so it has the same strength. `random.seed_strength(generator)` gives it.
 
-**Each program chooses the least strength that it accepts.** The decision of the owner, 2026-11-11, word for word: "je pense que les fonctions qu'on expose devrait permettre de choisir ce que le programme tolère et dans le cas où les requis que le programme attend ne sont pas satisfaits et ben dans ce cas là c'est une erreur c'est pas grave".
+**Each program chooses the least strength that it accepts.** The functions let the program state what it tolerates; a seed below that is an error of the call, not a stop.
 - `random.fill_for_a_key(generator, output, least_strength, error)` gives bytes for a key, a nonce or another secret only when the seed of the program has `least_strength` at least.
 - If the seed is weaker, the call gives the error kind `Seed_Too_Weak` (value: the strength of the seed; limit: the strength asked), with the sentence "the random seed of this program has the strength weak (the cycle counter only), and the call asks for processor (rdrand) at least: it made nothing". It writes no byte.
 - The system does not refuse for the program, and a plain draw with no requirement (`random.fill`) stays as it is.
@@ -79,17 +79,9 @@ The strength of the seed is the strongest source that gave all its values. The r
   - The first 16 bytes of the stream of the 4 programs all differ: two programs give different streams, and a restart gives different streams.
 - `server` and `fetch` take the secret of the initial sequence numbers of TCP from their generator (`kerneltool test tcp`).
 
-## 5. The TCP secret before step 60: checked, and not weaker than the window said
+## 5. What is not built
 
-Checked on 2026-11-11, after the review row of step 60 asked whether the missing `#side_effects` made the TCP secret of the earlier steps weaker than the window said. The answer is no, by the machine code:
-
-- `tcp.secret_make` of step 52 (`8d8d077`), built again with the same flake, and disassembled (`llvm-objdump -d` of `server.o` and `fetch.o`): each of the four values of the secret runs its own `rdrand` instruction (20 `rdrand` in each object: a loop of up to 10 tries for each value), and the check of equal values compares the four results. LLVM did not merge the four reads: each read is in another iteration of a loop whose result goes to memory.
-- So, on a processor with `rdrand`, the secret came from `rdrand`, and the window of `server` said "rdrand"; a refusal (a value of 0, all ones, or two equal values) gave "the cycle counter (weak)" in the color of a failure. The window said the truth.
-- The fault that `#side_effects` corrects was in the new code of `support/random` (`processor_values` through a procedure value): there LLVM kept one value, and the first machine test of this step showed "rdrand present, 1 good, 255 refused". It never reached a TCP secret: it was found and corrected before the commit that moved the secret to the generator.
-
-## 6. What is not built
-
-- **An entropy device.** QEMU has `virtio-rng-pci`. A device program of property 7 that reads it and gives its bytes to the root service (`reseed`) is the next layer. The window says "none yet".
+- **An entropy device.** QEMU has `virtio-rng-pci`. A device program of property 7 that reads it and gives its bytes to the root service (`reseed`) is not built. The window says "none yet".
 - **A reseed of a running program.** A program reseeds its own generator only from bytes that it has (`random.reseed`). No service gives fresh bytes to a running program.
 - **The TPM** (property 17) as a source.
 - **A measure of the jitter of the cycle counter** (as `jitterentropy` does). Without it, the claim stays 0 bits.

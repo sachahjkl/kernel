@@ -1,12 +1,12 @@
 # The network: TCP as a library in the program
 
-Status: done on 2026-11-11 (choices 295 to 309 of `FIRST_MILESTONE.md`). The first layer of the network (step 40, choices 191 to 209 of `FIRST_MILESTONE.md`) is the base: the frame service, the network service, endpoints of datagrams. `GLOSSARY.md` defines the terms.
+The first layer of the network is the base: the frame service, the network service, endpoints of datagrams. `GLOSSARY.md` defines the terms.
 
-## What the owner decided
+## The principles
 
 - The network stack is a library in the program that uses the network (property 5).
-- The note of property 5 (2026-11-10): the network service is on the data path for UDP; TCP and QUIC stay libraries in the program.
-- The owner asked for UDP, TCP and QUIC, and for a server as a scenario (`HANDOFF.md`, "Direction").
+- The note of property 5: the network service is on the data path for UDP; TCP and QUIC stay libraries in the program.
+- The network has UDP, TCP and QUIC, and a server as a scenario.
 
 ## The parts
 
@@ -19,7 +19,7 @@ Status: done on 2026-11-11 (choices 295 to 309 of `FIRST_MILESTONE.md`). The fir
 | QUIC server | `programs/quic_echo` | A program with a listen grant of UDP on the port 4433: QUIC in the program (`docs/QUIC.md`, section 6) |
 | Peer | `tools/kerneltool/peer.odin` | The gateway of the test machine. It is also a TCP client that the tool drives, with loss, reorder and duplicates that the tool chooses |
 
-The kernel has no network code. It did not change in this step.
+The kernel has no network code.
 
 ## The segment endpoint
 
@@ -32,7 +32,7 @@ The library writes the segments directly in the places of the datagram region, s
 
 ### The grant of a segment endpoint
 
-The root service names the grant by the name of the program, as for UDP (`endpoint_of`). The person reads it with `grants` and revokes it with `revoke` (choice 204). Two forms exist:
+The root service names the grant by the name of the program, as for UDP (`endpoint_of`). The person reads it with `grants` and revokes it with `revoke`. Two forms exist:
 
 | Form | Local TCP ports | Remotes | Use |
 |---|---|---|---|
@@ -41,32 +41,32 @@ The root service names the grant by the name of the program, as for UDP (`endpoi
 
 A client grant has 64 local ports, because a closed connection stays in TIME-WAIT (below) and one local port serves one connection at a time to one remote. The program chooses a port of its block for each connection.
 
-A listen grant is narrow in another way: the program answers, but it does not reach. The network service keeps one table of admitted remotes for each listen grant: an address and a TCP port that sent a SYN (no ACK, no RST) to the listen port, when a Receive of the endpoint waited for it, from an address that can answer (not 0, a broadcast or multicast address, or the local address). A segment of a remote that is not admitted does not reach the program. A segment to send goes out only to an admitted remote. So a program with a listen grant cannot open a connection to a machine that did not come to it, and cannot send a segment to it. The table has 64 places, each with the time of its last segment in or out. The program releases a remote (command `Release`) when its connection ended, after its last segment. When the table is full, the oldest place with no segment for more than 120 s serves again (twice the longest gap between two probes of a zero window in `support/tcp`, so that a live remote keeps its place); with none, a SYN from a new remote is dropped and counted in the problems of the endpoint (kind `Full`). A program that forgets a `Release` loses only places with no traffic (an independent read found the leak of the first form, choice 334 of the corrections).
+A listen grant is narrow in another way: the program answers, but it does not reach. The network service keeps one table of admitted remotes for each listen grant: an address and a TCP port that sent a SYN (no ACK, no RST) to the listen port, when a Receive of the endpoint waited for it, from an address that can answer (not 0, a broadcast or multicast address, or the local address). A segment of a remote that is not admitted does not reach the program. A segment to send goes out only to an admitted remote. So a program with a listen grant cannot open a connection to a machine that did not come to it, and cannot send a segment to it. The table has 64 places, each with the time of its last segment in or out. The program releases a remote (command `Release`) when its connection ended, after its last segment. When the table is full, the oldest place with no segment for more than 120 s serves again (twice the longest gap between two probes of a zero window in `support/tcp`, so that a live remote keeps its place); with none, a SYN from a new remote is dropped and counted in the problems of the endpoint (kind `Full`). A program that forgets a `Release` loses only places with no traffic.
 
-This table is the one state of TCP in the network service: addresses and ports, with no sequence number and no window. It is the port table that the coordinator asked for, with the remotes of a server.
+This table is the one state of TCP in the network service: addresses and ports, with no sequence number and no window. It is the port table of the network service, with the remotes of a server.
 
 ### What the network service does for each segment
 
 | Direction | Work | Why |
 |---|---|---|
-| Arrives | Checks the Ethernet, IPv4 and TCP headers, and the TCP checksum (`network.parse`) | The service reads the ports to choose the endpoint. A port that the wire damaged must not give a segment to another program. A refused segment is a problem row, as for UDP (choice 199) |
+| Arrives | Checks the Ethernet, IPv4 and TCP headers, and the TCP checksum (`network.parse`) | The service reads the ports to choose the endpoint. A port that the wire damaged must not give a segment to another program. A refused segment is a problem row, as for UDP |
 | Arrives | Finds the endpoint by the local port, checks the remote against the grant, admits a remote of a listen grant | Property 20, line 3 |
-| Arrives | Copies the segment from the frame to the region | The device writes the frame region of the service, not the region of the program (choice 196) |
+| Arrives | Copies the segment from the frame to the region | The device writes the frame region of the service, not the region of the program |
 | Sent | Copies the segment from the region to the frame, then reads its ports from the copy | A port is checked in bytes that the program cannot change after the check |
 | Sent | Checks the local port against the block or the listen port, and the remote against the grant or the table of admitted remotes | Property 20, lines 3 and 11 |
-| Sent | Writes the IPv4 and Ethernet headers | It must check them anyway (choice 194) |
+| Sent | Writes the IPv4 and Ethernet headers | It must check them anyway |
 | Sent | Does not check the TCP checksum | A wrong checksum harms only the program that wrote it: the remote drops the segment |
 
 The library computes the TCP checksum of each segment that it sends. It does not check the checksum of a segment that arrives through the network service: the service did. The function `tcp.checksum_valid` is for a caller that reads segments from another source.
 
 ### The note of property 5
 
-The note says: "the network service stays on the data path for UDP; TCP and QUIC stay libraries in the program." For TCP this step does this:
+The note says: "the network service stays on the data path for UDP; TCP and QUIC stay libraries in the program." For TCP the system does this:
 
 - The protocol of TCP is in the program: the state of each connection, the sequence numbers, the windows, the timers, the retransmissions, the congestion control, the reassembly. The program can read and change each field of its connections.
 - The network service is still on the data path for TCP, as for UDP, with the same work: one copy of each segment, the IPv4 header, a checksum, and the check of the grant. The reason is the same: the device of the first machine has one pair of queues, so one program reads each frame.
 
-So the note is right about the place of the protocol, and not complete about the data path. Proposed wording of the note, for the coordinator to record:
+So the note is right about the place of the protocol, and not complete about the data path. A complete wording of the note:
 
 > For UDP and TCP, the network service is on the data path: it reads each frame, checks it against the grant of an endpoint, writes the IPv4 header and copies each datagram or segment one time. The protocol of TCP (its connections, windows, timers and retransmissions) is a library in the program; the network service keeps only the ports and, for a listen grant, the remotes that came to it. QUIC will be a library over datagrams.
 
@@ -74,7 +74,7 @@ So the note is right about the place of the protocol, and not complete about the
 
 ### The form of the interface
 
-The interface follows the owner's rule on data-oriented interfaces (`HANDOFF.md`, item 94):
+The interface follows the rule of the system on data-oriented interfaces: many records in one call, in memory of the caller, never a list of pointers.
 
 - A connection is one record of fixed size (`tcp.Connection`, 400 bytes). The caller gives the table of records and one block of memory for the buffers (property 14): each connection has a send buffer and a receive buffer at a place that its index gives. The library allocates nothing.
 - One call does the work of a batch: `tcp.step` takes all the segments that arrived, the time, a table of places for the segments to send, and a table of events. It reads all the segments, runs the timers, and writes all the segments to send.
@@ -98,7 +98,7 @@ The program owns each field. It reads the state, the windows, the round trip est
 | Out of order | A segment after a hole goes to its place in the receive buffer; 8 ranges remember what arrived. An ACK goes at once | RFC 9293 3.10.7.4, RFC 5681 4.2 |
 | Delayed ACK | One ACK for each second full segment, or after 40 ms | RFC 9293 3.8.6.3, RFC 5681 4.2 |
 | Retransmission timer | SRTT and RTTVAR from the round trips, in microseconds; one segment timed at a time; no sample from a segment sent two times (Karn); the timer doubles after each timeout | RFC 6298 |
-| Least RTO | 200 ms, not the 1 s of RFC 6298 2.4 | Choice of this step: the test link has round trips under 1 ms |
+| Least RTO | 200 ms, not the 1 s of RFC 6298 2.4 | A choice of this library: the test link has round trips under 1 ms |
 | Retries | 8 timeouts in a row end the connection (event Timed_Out, a RST) | RFC 9293 3.8.3 |
 | Congestion control | Slow start, congestion avoidance, fast retransmit after 3 duplicate ACKs, fast recovery: Reno, with the partial ACK of NewReno. The congestion window stops at the largest window of the remote | RFC 5681, RFC 6582 |
 | Limited Transmit | The first two duplicate ACKs each send one new segment | RFC 3042 |
@@ -107,13 +107,13 @@ The program owns each field. It reads the state, the windows, the round trip est
 | Zero window | A persist timer sends a probe (one byte before `SND.UNA`, with no data) until the window opens; it doubles as the retransmission timer does | RFC 9293 3.8.6.1 |
 | Close | FIN in both directions: FIN-WAIT-1, FIN-WAIT-2, CLOSING, TIME-WAIT, CLOSE-WAIT, LAST-ACK. A FIN is taken only before the FIN of the remote. FIN-WAIT-2 ends after 20 s with a RST | RFC 9293 3.6 |
 | Limits against a remote that does not answer | A passive open ends after 3 timeouts (15 s); 8 probes of a zero window with no answer end a connection; the ACKs that answer segments out of the window, and the challenge ACKs, are 10 in one second for each connection | RFC 5961 7, CVE-2016-5696 |
-| TIME-WAIT | 10 s: 2 MSL with an MSL of 5 s | Choice of this step, see below |
+| TIME-WAIT | 10 s: 2 MSL with an MSL of 5 s | A choice of this library, see below |
 | RST | Sent for a segment of no connection, for a SYN when the table is full, and by `abort`. A RST received ends the connection only if its sequence is exactly `RCV.NXT` | RFC 9293 3.10.7.1, RFC 5961 3 |
 | Challenge ACK | A RST in the window but not at `RCV.NXT`, a SYN in a synchronized state, and an ACK after `SND.NXT` get an ACK and change nothing | RFC 5961 3, 4, 5 |
 
 The MSL of RFC 9293 is 2 minutes. The library takes 5 s, as an MSL for one link: the TIME-WAIT of 10 s keeps a connection record for 10 s, not for 4 minutes. A program that serves many short connections needs records for them. The initial sequence numbers of RFC 6528 protect a new connection on the same ports.
 
-### What it does not do in this step
+### What it does not do
 
 - Window scaling (RFC 7323): a window is 65 535 bytes at most. On a link with a round trip of 1 ms, that is 65 MB/s at most for one connection.
 - Selective acknowledgments (SACK, RFC 2018), timestamps (RFC 7323), TCP Fast Open (RFC 7413), ECN (RFC 3168), urgent data (the field is read and ignored).
@@ -148,10 +148,20 @@ A third network machine (`scenario_tcp`) has the peer of the tool on `-netdev dg
 
 ### What the tests found
 
-- With batches of segments, a receiver must still send one duplicate ACK for each segment after a hole; with one ACK for a batch, no fast retransmit started (choice 302).
+- With batches of segments, a receiver must still send one duplicate ACK for each segment after a hole; with one ACK for a batch, no fast retransmit starts. The record counts the ACKs that it owes.
+- `recover` of NewReno starts at the initial sequence number, not at 0: with 0 and an initial number above 2^31, no fast retransmit can start.
+- Avoidance of the silly window can stop a sender with a small window and nothing in flight: the persist timer ends that case too.
+- The congestion window stops at the largest window that the remote gave: without that limit, it grows with no end when the window of the remote limits the sender.
 - 1 MiB with 5 % loss in each direction, on the host link of the tests: 5 to 10 s with Reno and NewReno, 1.5 to 2.7 s with Limited Transmit. The timeouts that remain come mostly from a retransmission that the link dropped too: SACK would remove more of them.
 - libslirp acknowledges the FIN of a connection of `guestfwd` and does not send its own: the connection of `fetch` stays in FIN-WAIT-2.
-- The measures are in choice 309 of `FIRST_MILESTONE.md`.
+- The measures (the machine test, QEMU with KVM, 4 processors, while other machine tests ran on the host; one run unless said):
+  - Between the peer and `server`: 1 MiB from the server in 52.9 ms (19.8 MB/s), 1 MiB to the server at 20.2 MB/s.
+  - With 5 % loss in each direction: 0.8 and 0.7 MB/s (48 segments sent again; 2.2 and 0.8 MB/s in another run). With 10 % reordered: 16.6 and 15.3 MB/s. With 10 % repeated: 16.1 and 14.9 MB/s. A zero window of 1.5 s: 4 probes.
+  - The handshake seen by `server` (SYN to the ACK of its SYN, ACK): 61 to 135 us at least. `GET /` answered and acknowledged in 157 to 224 us.
+  - With libslirp: the host fetched 1 MiB at 58.6 to 64.9 MB/s and sent 1 MiB at 57.6 to 61.0 MB/s (the clock of the host). `server` measured 92.9 to 98.4 MB/s out and 81.9 to 90.4 MB/s in.
+  - `fetch` measured the handshake in 261 to 266 us, 1 MiB in at 105.3 to 140.7 MB/s, 1 MiB out at 11.4 to 11.9 MB/s, and `GET /hello` in 42.6 to 43.5 ms. The cause of that time is not known: the tool answers at once, so the time is in QEMU, libslirp or the wait of `fetch`.
+  - With 16 connections, the answers were acknowledged 0.2 to 30 ms after their request, in the order of the connections: the peer runs one step for each frame.
+  - The window of a connection is 32 KiB (the receive buffer), so one connection cannot exceed 32 KiB for each round trip. The test asserts no speed.
 
 ## The HTTP server
 
@@ -160,10 +170,10 @@ A third network machine (`scenario_tcp`) has the peer of the tool on `-netdev dg
 - **The reading of a head** is `support/web.request_read`, for hostile input: a bound for each part, and a problem with its status (400, 405, 408, 413, 414, 431, 501, 505) for each rule that a head breaks.
 - **Connections** stay open after an answer; "Connection: close" or HTTP/1.0 ends them. The bytes after a head stay in the input: they are the body, or the next request (pipelining). The answers go in the order of the requests.
 - **What it serves** comes from its grants (property 20): its own counts (`/`, `/counts.json`), and the pages of its private store (property 9). A person changes the pages from the console through its exports (property 19): `server.put`, `server.remove`, `server.pages`, `server.served`. PUT and DELETE over HTTP stay off: without TLS the network is not authenticated.
-- **Limits** against a client that makes no progress (two independent reads found that one host could keep each record): 10 s with no request, 408 for a head after 10 s (also a head that starts after an answer), no byte of a body in 10 s, a body and the bytes to send under 4096 bytes in one second over a period of 10 s (also after this server closed), 24 connections for each remote address.
+- **Limits** against a client that makes no progress (without them, one host could keep each record): 10 s with no request, 408 for a head after 10 s (also a head that starts after an answer), no byte of a body in 10 s, a body and the bytes to send under 4096 bytes in one second over a period of 10 s (also after this server closed), 24 connections for each remote address.
 - **The pages and their origin**: an answer of a page keeps the generation of its place, and a page that changes during it ends the connection with a RST. `put` and `remove` change the store first. The pages, `/` and `/counts.json` share one origin, and a page of the store runs script on it by design: the origin holds no secret, no cookie and no authority. Each answer says `X-Content-Type-Options: nosniff`.
 - **No Date field**: the system has no clock of the day, and a server with no clock sends none (RFC 9110 6.6.1).
-- **No TLS** until the work of QUIC: the next section says what it needs.
+- **No TLS** over TCP: the TLS 1.3 of the system is the one of QUIC (`docs/QUIC.md`).
 
 ## The listen grant of UDP
 
@@ -175,24 +185,21 @@ Written for QUIC (`docs/QUIC.md`, section 6); `kerneltool test quic` and `kernel
 - `Resolve` and `Echo` are refused, as for each listen grant: the program answers, but it does not reach.
 - The program releases a remote whose datagram it refused (a forged Initial, a datagram of no connection), so that a flood of many addresses does not hold the table.
 
-The kernel did not change. The network service does for a datagram of a listen grant what it does for each datagram: it checks the headers and the checksum, finds the endpoint by the local port, checks the remote, and copies the datagram one time.
+The kernel has no code for it. The network service does for a datagram of a listen grant what it does for each datagram: it checks the headers and the checksum, finds the endpoint by the local port, checks the remote, and copies the datagram one time.
 
 ## QUIC: what it reuses, and what it needs
 
-The design of QUIC and its first layer, packet protection, are in `docs/QUIC.md`. The text below was written before them, and stays as the list of what QUIC reuses; the list of what it needs is now answered: TLS 1.3 and its primitives (`docs/CRYPTOGRAPHY.md`), randomness (`docs/RANDOMNESS.md`), and raw public keys in place of certificates and a date (`docs/QUIC.md`, section 4).
+The design of QUIC is in `docs/QUIC.md`. QUIC runs over UDP (RFC 9000), so it is a library in the program over a datagram endpoint.
 
-QUIC is the next step. It runs over UDP (RFC 9000), so it is a library in the program over a datagram endpoint, which exists.
+It reuses from TCP:
 
-It reuses from this step:
-
-- The endpoint and its grant: a client grant of one remote, and the listen grant with its admitted remotes, for UDP in place of TCP. The table of admitted remotes moves to the datagram endpoint unchanged (done: the section above).
+- The endpoint and its grant: a client grant of one remote, and the listen grant with its admitted remotes, for UDP in place of TCP. The table of admitted remotes is the one of the datagram endpoint, unchanged (the section above).
 - The form of the interface: a table of connection records and buffers of the caller, one `step` for a batch of datagrams, a table of events, the deadline of the next timer.
 - The ideas of loss and congestion: RFC 9002 takes the round trip estimate of RFC 6298, and its congestion control is NewReno. The code of the estimate and of the congestion window can be shared, as a package that both libraries import.
 - The tests: the peer with loss, reorder and duplicates, and a machine with libslirp for UDP.
 
-It needs what the system does not have:
+It needs more than TCP gives:
 
-- TLS 1.3 (RFC 8446, RFC 9001): the key exchange (X25519), AEAD (AES-GCM or ChaCha20-Poly1305), HKDF, certificates and their check. No such code exists in the system.
-- A random service: keys need a secret that an attacker cannot guess. `rdrand` in each program is not a service of the system.
-- A time of the day, to check a certificate: the date page has the date of the real-time clock, read one time; a certificate needs a date that an attacker cannot set (the clock of the machine is not one).
-- A way to give a program the trusted certificates, as a grant.
+- TLS 1.3 (RFC 8446, RFC 9001): the key exchange (X25519), AEAD (AES-GCM or ChaCha20-Poly1305), HKDF. `docs/CRYPTOGRAPHY.md` has the primitives.
+- Randomness: keys need a secret that an attacker cannot guess. `rdrand` in each program is not a service of the system (`docs/RANDOMNESS.md`).
+- A check of the peer. A certificate needs a time of the day that an attacker cannot set: the date page has the date of the real-time clock, read one time, and the clock of the machine is not such a time. So QUIC uses raw public keys in place of certificates and a date (`docs/QUIC.md`, section 4).

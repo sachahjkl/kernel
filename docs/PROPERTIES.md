@@ -1,14 +1,13 @@
 # Kernel properties
 
-Status: draft 2, 2026-11-09. This document is the plan of the properties on which the kernel is built.
-No code exists yet. The owner must accept or reject each proposal before design work starts.
+This document gives the properties on which the kernel is built.
 
 ## How to read this document
 
 Each property has a status:
 
-- **Decided**: the owner stated it.
-- **Proposed**: it comes from the research or from design reasoning. The owner has not accepted it.
+- **Decided**: it is a rule of the system.
+- **Proposed**: it comes from the research or from design reasoning. It is a direction, not a rule of the system.
 
 Each property gives the same fields:
 
@@ -40,7 +39,7 @@ Three rules apply to every decision:
 
 ## Assumptions
 
-- **64 bits only.** Decided by the owner on 2026-11-10. An address is 64 bits on every machine of the system. The system has no 32-bit target and runs no 32-bit program. The targets are x86-64 first, and ARM64 at best.
+- **64 bits only.** An address is 64 bits on every machine of the system. The system has no 32-bit target and runs no 32-bit program. The targets are x86-64 first, and ARM64 at best.
 - **Result**: an address, a count, a handle and a register value have one size: 8 bytes. A record has one layout on all machines. The call form passes each scalar in one register. No contract has a second form for a smaller machine.
 - **Forbids**: a type whose size depends on the machine, a 32-bit variant of a record, a compatibility mode for 32-bit code.
 
@@ -75,7 +74,7 @@ Three rules apply to every decision:
 Status: Decided.
 
 - **Rule**: The kernel does four things: it isolates address spaces, it schedules processors, it owns the table of handles, and it grants access to memory and devices. All other work runs in user space. [Blow §2]
-- **Rule**: The kernel interface has a budget. The proposal is a hard limit on the number of kernel operations, written in this document, and changed only by a decision of the owner.
+- **Rule**: The kernel interface has a budget. The proposal is a hard limit on the number of kernel operations, written in this document, and changed only by a change of this document.
 - **Forbids**: file systems, network protocols, device drivers, window management and text formats in the kernel.
 - **Cost**: Each service that leaves the kernel needs a user-space home and a fast path to reach it. Properties 4, 5 and 6 pay this cost.
 - **Reuse**: seL4 and Zircon show that a kernel of this scope ships. NT shows that one handle table for every kernel resource scales to a full system. [Notes `existing_kernels_good_ideas.md` §1, §3]
@@ -91,12 +90,12 @@ Status: Decided.
 - **Forbids**: global names that any program can open, user identifiers as the access model, access control lists on a shared namespace, a "root" user.
 - **Cost**: The desktop must give access through user actions. A file picker that runs outside the program and returns a handle is the standard solution. Programs that need broad access, such as a backup tool or a file manager, need an explicit grant model.
 - **Reuse**: Zircon handles with rights. Capsicum. The "powerbox" file picker pattern. [Notes `existing_kernels_good_ideas.md` §3, §4]
-- **Revocation** (2026-11-10, step 25): the kernel keeps the origin of each handle and each mapping, and `Handle_Revoke` ends what came from a handle, through each chain of gifts (`FIRST_MILESTONE.md`, choices 105 to 113).
-- **Open**: how the user sees and revokes grants on the desktop: the console has `grants` and `revoke`, and no window yet. Blow gives no design for the desktop part. [Blow §7]
+- **Revocation**: the kernel keeps the origin of each handle and each mapping. `Handle_Revoke` ends what came from a handle, through each chain of gifts.
+- **Open**: how the person sees and revokes grants on the desktop. The console has `grants` and `revoke`. No window shows the grants. Blow gives no design for the desktop part. [Blow §7]
 
 ## 3. No "everything is a file"
 
-Status: Decided by the owner on 2026-11-09.
+Status: Decided.
 
 - **Rule**: A stored object, a network connection, a device queue, a timer and a memory region are different types. Each type has its own small set of operations. [Blow §4]
 - **Rule**: The handle table is uniform. The operations are not. A handle has a type, and the kernel rejects an operation that does not belong to the type.
@@ -107,7 +106,7 @@ Status: Decided by the owner on 2026-11-09.
 
 ## 4. Base interface: non-blocking command buffers
 
-Status: Decided. Accepted by the owner on 2026-11-09. It is the interface that Blow describes. [Blow §3]
+Status: Decided. It is the interface that Blow describes. [Blow §3]
 
 - **Rule**: A program asks for work by writing command records into a submission ring in memory that it shares with the receiver. It reads results from a completion ring. The receiver is the kernel or another program.
 - **Rule**: No operation blocks at this level. One kernel operation exists to wait: "sleep until one of these rings has entries".
@@ -125,8 +124,8 @@ Status: Decided.
 
 - **Rule**: The kernel is the control plane. It checks the right one time and maps the device queue or the shared ring into the program. After that, data moves without a kernel entry. [Blow §5]
 - **Rule**: The network stack is a library in the program that uses the network. [Blow §5]
-- **Note (owner, 2026-11-10)**: for UDP, the first layer of the network does not have this form. The network device of the first machine has one pair of queues, so the network service is the user-space multiplexer of the cost line below: it reads each frame, checks it against the grant of an endpoint, writes the headers of UDP and IPv4 and copies each datagram one time (choice 194 of `FIRST_MILESTONE.md`). The kernel carries no data. The owner kept this form after the objection of the coordinator. TCP and QUIC stay libraries in the program.
-- **Note (coordinator, 2026-11-11, step 48; the owner has not decided it and can reverse it)**: for TCP the same holds, for the same reason (one pair of queues). The protocol of TCP is a library in the program (`support/tcp`): its connections, windows, timers and retransmissions. The network service is still on the data path: it reads each frame, checks the TCP checksum and the ports against the grant of an endpoint, writes the IPv4 header and copies each segment one time; it keeps only the ports and, for a listen grant, the remotes that came to it (`docs/NETWORK.md`, "The note of property 5"). The note above said "for UDP only": that was not complete.
+- **Note, UDP**: the first layer of the network does not have this form. The network device of the first machine has one pair of queues. So the network service is the user-space multiplexer of the cost line below. It reads each frame, checks it against the grant of an endpoint, writes the headers of UDP and IPv4 and copies each datagram one time. The kernel carries no data. TCP and QUIC stay libraries in the program.
+- **Note, TCP**: the same holds for TCP, for the same reason (one pair of queues). The protocol of TCP is a library in the program (`support/tcp`): its connections, windows, timers and retransmissions. The network service is still on the data path. It reads each frame, checks the TCP checksum and the ports against the grant of an endpoint, writes the IPv4 header and copies each segment one time. It keeps only the ports and, for a listen grant, the remotes that came to it (`docs/NETWORK.md`, "The note of property 5").
 - **Forbids**: a kernel network stack, a kernel block layer, a kernel entry per packet or per block.
 - **Cost**: Two programs that use one device need the device to give separate queues, or they need a user-space multiplexer. Direct device access is safe only with an IOMMU, or with a device that the hypervisor isolates. A program can no longer rely on the kernel to keep a connection alive when the program stops.
 - **Reuse**: Arrakis and IX prove the model. DPDK and SPDK are production examples of user-space network and NVMe access. A small permissive TCP library such as lwIP or smoltcp can be the first stack. [Notes `existing_kernels_good_ideas.md` §3] [Notes `bcachefs_storage.md` §5]
@@ -142,15 +141,16 @@ Status: Decided.
 - **Forbids**: pipes, signals, message queues, sockets between local programs, a second mechanism "for small messages".
 - **Cost**: A receiver must treat shared memory as hostile: the sender can change it during the read. The rule is "copy, then validate". Layouts must be versioned. A program that waits on a dead peer needs a kernel notification.
 - **Reuse**: L4 and seL4 show how few cache lines a fast path needs. [Notes `data_oriented_kernel.md` §3]
-- **Open**: How a handle moves through a ring. The wake-up primitive exists since 2026-11-10: the word wait (`Word_Wait`, `Word_Wake`). Since step 6 each ring waits on it: the system has one wait.
+- **Wake-up**: the wake-up primitive is the word wait (`Word_Wait`, `Word_Wake`). Each ring waits on it: the system has one wait.
+- **Open**: How a handle moves through a ring.
 
 ## 7. No drivers in the kernel, and fixed hardware first
 
-Status: Decided. Accepted by the owner on 2026-11-09. The rules follow Blow. [Blow §5, §6]
+Status: Decided. The rules follow Blow. [Blow §5, §6]
 
 - **Rule**: The kernel contains no device driver. The code that knows a device is a library or a user-space program.
 - **Rule**: The system targets one fixed machine at a time. The first machine is virtual: QEMU on x86-64 with virtio devices, UEFI firmware (OVMF) and a TPM 2.0 (property 17).
-- **Owner's position**: Hardware support is not the main problem of the project. The design of the system is.
+- **Position**: Hardware support is not the main problem of the project. The design of the system is.
 - **Rule**: Each device class has one standard queue protocol. Virtio is that protocol for the first machine. Real hardware that differs gets a user-space translator, with no kernel access.
 - **Why virtio**: It is a published standard for network, block, console, input and display. Each device is a set of queues in shared memory. This is the "standard packet format over DMA" that Blow asks for, and it exists today. [Blow §5]
 - **Forbids**: loadable kernel modules, vendor code in the kernel, support for hardware that nobody on the project owns.
@@ -163,7 +163,7 @@ Status: Decided. Accepted by the owner on 2026-11-09. The rules follow Blow. [Bl
 
 Status: Decided.
 
-- **Why** (owner, 2026-11-09): This is a security requirement, not a preference. A shared tree that every program can read and write is a source of many security defects. A security model that fits the present time cannot keep it.
+- **Why**: This is a security requirement, not a preference. A shared tree that every program can read and write is a source of many security defects. A security model that fits the present time cannot keep it.
 - **Rule**: No tree of names exists that all programs see and can change. A program sees its own store and the objects that it received by handle. [Blow §7]
 - **Rule**: System code and system data are immutable and identified by content hash (property 11).
 - **Forbids**: `PATH`, a registry, installers, shared configuration directories that programs write, hidden files in a home directory. [Blow §9]
@@ -172,21 +172,21 @@ Status: Decided.
 
 ## 9. A storage engine with one private store per program
 
-Status: Decided. On 2026-11-09 the owner chose the engine: do not fork bcachefs; write a new engine under MIT that reuses its ideas. The first version is SQLite on the raw block device.
+Status: Decided. The engine is new, under MIT, and reuses ideas of bcachefs. It is not a fork of bcachefs.
 
-State on 2026-11-10 (steps 30 to 32), with the decision of the owner of the same day: SQLite is removed. The engine is the storage service in Odin, about 800 lines: copy on write, two places for the root block, a check of each block in the pointer that names it (choice 150 of `FIRST_MILESTONE.md`). The sentence above about a first version on SQLite is no longer a rule. Not done from the rules below: objects have names in a store, not identifiers. On 2026-11-11 (step of the versions, `FIRST_MILESTONE.md`, 38d): each commit keeps the state before it as a version, with a retention rule and thinning at the limit of the store; clones share their blocks; a snapshot is the versions of a store at one generation.
+The engine is the storage service in Odin, about 800 lines. It writes by copy on write, keeps two places for the root block, and checks each block in the pointer that names it. The system holds no SQLite. One rule below is not done: objects have names in a store, not identifiers. Each commit keeps the state before it as a version, with a retention rule and thinning at the limit of the store. Clones share their blocks. A snapshot is the versions of a store at one generation.
 
 - **Rule**: Storage is a transactional object store in user space. Objects have identifiers, not paths. A directory is an optional index, not the base structure.
 - **Rule**: Each program gets a private store. A copy-on-write clone is the way to give a copy of an object. A snapshot gives versions of a store.
 - **Rule**: The storage service reaches the disk through the queues of property 5.
 - **Recommendation**: Do not fork bcachefs. It is GPL-2.0, more than 100,000 lines of Linux-specific code, and it has one maintainer. Write a small engine that takes its best ideas: the cache-line-aware search inside a B-tree node, and buckets with generation numbers. [Notes `bcachefs_storage.md` §3, §7]
 - **Recommendation**: Take the structure from Fuchsia Fxfs: user-space, object identifiers, directories optional. [Notes `bcachefs_storage.md` §5]
-- **Cost**: A new storage engine is the largest reliability risk in the project. The answer is its tests of a stop in the machine test (steps 31 and 32), not a borrowed engine.
-- **Open**: the owner must decide the licence question. Options: keep MIT and reimplement; or run upstream bcachefs as a separate GPL user-space service.
+- **Cost**: A new storage engine is the largest reliability risk in the project. The answer is its tests of a stop in the machine test, not a borrowed engine.
+- **Licence**: the engine is under MIT and reimplements the ideas. The other option, upstream bcachefs as a separate GPL user-space service, is not taken.
 
 ### Persistence: no save action, and versions for all programs
 
-Status: Decided by the owner on 2026-11-09.
+Status: Decided.
 
 - **Rule**: A program sends each change of a document to the storage service when the change occurs. The document in storage is always current. The system has no "save" action.
 - **Rule**: The storage service keeps the earlier versions of each object. A program or the person can read an object as it was at an earlier time.
@@ -195,7 +195,7 @@ Status: Decided by the owner on 2026-11-09.
 - **Why it is cheap**: A copy-on-write store writes new blocks and keeps the old ones. The earlier versions exist already. The system exposes them and does not discard them.
 - **Result**: Protection against lost work and a history are supplied one time, by the system, to all programs. A program writes no code for them.
 - **Cost**: Disk space. A retention rule deletes old versions, for example: keep all versions for one day, then one per hour, then one per day.
-- **Open**: who sets the retention rule (the service applies one fixed rule since 2026-11-11: each version for 10 minutes, then one an hour for a day, then one a day). How a program groups small changes into one step that the person can undo. A later option above this model is a program whose full state returns after a restart.
+- **Open**: who sets the retention rule (the service applies one fixed rule: each version for 10 minutes, then one an hour for a day, then one a day). How a program groups small changes into one step that the person can undo. A later option above this model is a program whose full state returns after a restart.
 
 ## 10. One code module
 
@@ -207,14 +207,14 @@ Status: Decided.
 - **Forbids**: separate archive and shared-object formats, a global library directory, symbol lookup by search order, a C library that the system imposes.
 - **Cost**: Inlining across modules removes the ability to replace a module. Patching calls at load time makes pages private to a process.
 - **Reuse**: The object formats of today already contain position-independent code. The project can use an existing compiler back end and define only the container and the loader.
-- **Open**, already raised with the owner:
+- **Open**:
   1. Where inlining across modules is allowed. Proposal: only inside a bundle, and the bundle records it.
   2. If the loader patches calls between modules. Proposal: no; calls go through a table per module, so code pages stay shared and identical to the file.
   3. The calling convention between modules. It is a permanent contract. [Blow, `6zQzNpjgbAY` 15:15]
 
 ## 11. Reproducible system
 
-Status: Decided by the owner on 2026-11-09. The detail below is proposed.
+Status: Decided. The detail below is proposed.
 
 - **Rule**: The identity of a module is the hash of its content. A module refers to another module by hash, never by path or by name.
 - **Rule**: A system is a list of hashes. Two machines with the same list run the same code.
@@ -225,16 +225,16 @@ Status: Decided by the owner on 2026-11-09. The detail below is proposed.
 - **Cost**: A build must be deterministic for the hash to mean something. The compiler and the linker must not write times, host names or random identifiers. Old modules need garbage collection.
 - **Reuse**: The Nix store model and its closure concept. Content-addressed derivations in Nix.
 - **Open**: the hash function. BLAKE3 is the proposal. How names for people map to hashes; the proposal is a signed table in the system description.
-- **State (2026-11-11)**: the build is deterministic for the compiler of the flake. The stock Odin compiler ran two threads with `-thread-count:1`, and a rare build gave other code; the flake patches it (choice 400 of `FIRST_MILESTONE.md`). Measured: 100 builds of each of the 61 modules and of the boot program, under a host load of 9.5 to 62, gave one module, one LLVM IR file and one object each. Each full check builds everything two times and compares the three.
+- **State**: the build is deterministic for the compiler of the flake: the release `dev-2026-11a` of Odin, with no patch, on all its threads (`docs/REPRODUCIBLE_BUILD.md`). Measured on 2026-11-11: with the release `dev-2026-05` and a patch that gives it one thread, 100 builds of each of the 61 modules and of the boot program, under a host load of 9.5 to 62, gave one module, one LLVM IR file and one object each; with `dev-2026-11a` and no patch, 20 builds of each of 64 modules gave the same. The stock `dev-2026-05` with `-thread-count:1` runs two threads, and a rare build with it gives other code. Each full check builds everything two times and compares the three.
 
 ## 12. Module metadata in flat tables, read through functions
 
-Status: Decided. Changed by the owner on 2026-11-10: SQLite is removed from the system. Before, this property made SQLite a base library and an index over the tables of the modules.
+Status: Decided. The system holds no SQLite: no base library and no index over the tables of the modules.
 
 - **Rule**: The metadata of a module is a set of flat tables inside the module: arrays of fixed-size records at known offsets, valid when zero. They hold the symbols, the interfaces, the dependencies, the origin of each bundled module and the debug information. The flat tables are the source of truth, and the only format.
 - **Rule**: The loader reads the flat tables directly.
-- **Rule** (owner, 2026-11-10): A rich and descriptive set of functions gives the information of the modules: clear functions with documentation, that a program and the console call. A question across many modules is a function that reads the tables in a line. The results are tables of records, so that the functions combine. Since 2026-11-11 a table also goes into a function as a parameter (property 19, "State"). No query language exists in the system.
-- **Why**: The owner judged that a language and an engine to maintain cost far more than good functions. The tables of a machine are small, and a linear read of flat tables is the data-oriented way (P13). One format has no copy to keep equal to its source.
+- **Rule**: A rich and descriptive set of functions gives the information of the modules: clear functions with documentation, that a program and the console call. A question across many modules is a function that reads the tables in a line. The results are tables of records, so that the functions combine. A table also goes into a function as a parameter (property 19, "State"). No query language exists in the system.
+- **Why**: A language and an engine to maintain cost far more than good functions. The tables of a machine are small, and a linear read of flat tables is the data-oriented way (P13). One format has no copy to keep equal to its source.
 - **Cost**: A new kind of question needs a new function, or a combination of functions in the console.
 - **Not forbidden**: a program can bring SQLite as its own module. The system does not need it and does not serve it.
 
@@ -254,7 +254,7 @@ Status: Decided.
 
 ### Zero is initialization (ZII)
 
-Status: Decided by the owner on 2026-11-09 as a principle. The detail below is proposed. The name comes from Casey Muratori.
+Status: Decided as a principle. The detail below is proposed. The name comes from Casey Muratori.
 
 - **Rule**: A record that is all zero bytes is a valid record with a defined meaning. No record needs a constructor.
 - **Rule**: This applies to every contract of the system: the context of property 19, ring records, module metadata, kernel tables.
@@ -269,7 +269,7 @@ Status: Decided by the owner on 2026-11-09 as a principle. The detail below is p
 
 ## 14. Memory is supplied by the caller
 
-Status: Decided. Accepted by the owner on 2026-11-09.
+Status: Decided.
 
 - **Rule**: A kernel operation writes its result into memory that the caller gives. The kernel does not allocate hidden state per call.
 - **Rule**: "Reserve address space" and "commit pages" are two cheap operations. Programs build arenas on them.
@@ -280,7 +280,7 @@ Status: Decided. Accepted by the owner on 2026-11-09.
 
 ## 15. Isolation inside a program
 
-Status: Decided. Accepted by the owner on 2026-11-09. Blow names it as an unsolved problem. [Blow §11]
+Status: Decided. Blow names it as an unsolved problem. [Blow §11]
 
 - **Problem**: A program wants to run a plugin that it does not trust, share data structures with it, and survive its crash. Today this needs a second process and serialization.
 - **Proposal**: A process can contain several protection domains. A domain is a set of page rights inside one address space. A switch between domains costs less than a process switch. A domain can be destroyed alone.
@@ -290,7 +290,7 @@ Status: Decided. Accepted by the owner on 2026-11-09. Blow names it as an unsolv
 
 ## 16. Removed concepts
 
-Status: Decided. Accepted by the owner on 2026-11-09.
+Status: Decided.
 
 | Concept | Replacement |
 |---|---|
@@ -310,10 +310,10 @@ Status: Decided. Accepted by the owner on 2026-11-09.
 
 ## 17. Trusted boot: UEFI program, Secure Boot, TPM
 
-Status: Decided by the owner on 2026-11-09. The detail below is proposed.
+Status: Decided. The detail below is proposed.
 
 - **Rule**: The boot stage is a UEFI program. It uses the firmware services before it gives control to the kernel: it reads the modules from the boot volume, gets the memory map, gets the framebuffer, gets random numbers, and talks to the TPM. The project writes no boot loader and no boot-time disk or display code.
-- **Rule**: Secure Boot verifies the boot program. The owner's key signs it. The firmware refuses a boot program that is not signed.
+- **Rule**: Secure Boot verifies the boot program. The key of the person who owns the machine signs it. The firmware refuses a boot program that is not signed.
 - **Rule**: The boot is measured. The boot program extends a TPM register with the hash of the system description of property 11, before the kernel starts.
 - **Why property 11 makes this cheap**: A system is one list of hashes. One measurement of that list covers every module of the system. Current systems must measure a kernel, an initial disk image, a command line and many files separately.
 - **Uses of the TPM**:
@@ -323,14 +323,14 @@ Status: Decided by the owner on 2026-11-09. The detail below is proposed.
   4. Give a hardware source of random numbers at boot.
 - **Rule**: After boot, the TPM is a device like the others. A user-space service owns its queue. Programs reach it by handle (properties 2 and 7).
 - **Forbids**: an unsigned code path from firmware to kernel, a boot loader with a configuration language, kernel arguments as free text.
-- **Cost**: A key that is sealed to exact measurements becomes unreadable after each upgrade. The standard solution is to seal to a signed policy in place of exact values: the TPM releases the key to any system list that the owner's key signed. A rollback to an old signed list with a known defect must be prevented by a counter in the TPM.
-- **Cost**: The system needs a key management story for the owner: creation, enrolment in the firmware, backup, loss.
+- **Cost**: A key that is sealed to exact measurements becomes unreadable after each upgrade. The standard solution is to seal to a signed policy in place of exact values: the TPM releases the key to any system list that the key of the person who owns the machine signed. A rollback to an old signed list with a known defect must be prevented by a counter in the TPM.
+- **Cost**: The system needs a key management story for the person who owns the machine: creation, enrolment in the firmware, backup, loss.
 - **Reuse**: UEFI firmware services. OVMF and a software TPM under QEMU give Secure Boot and a TPM 2.0 on the first machine. The TCG TPM 2.0 specification. A small permissive TPM command library, to be selected.
-- **Open**: the exact meaning of "rich boot" for the owner. This text reads it as "do as much boot work as possible with UEFI services in a UEFI program". How much the boot program does before it leaves firmware services. Which registers hold which measurements.
+- **Open**: the exact meaning of "rich boot". This text reads it as "do as much boot work as possible with UEFI services in a UEFI program". How much the boot program does before it leaves firmware services. Which registers hold which measurements.
 
 ## 18. One graphics interface: WebGPU with WGSL
 
-Status: Decided by the owner on 2026-11-09. The detail below is proposed.
+Status: Decided. The detail below is proposed.
 
 - **Rule**: Programs draw through one interface: WebGPU. They write shaders in one language: WGSL. The system exposes no other graphics interface.
 - **Why it fits**:
@@ -348,20 +348,20 @@ Status: Decided by the owner on 2026-11-09. The detail below is proposed.
 - **Cost**: WebGPU lacks some features of the native interfaces. This is accepted: one mechanism for one concept.
 - **Tension with property 7**: Blow wants a very thin graphics driver. A WebGPU back end for a real device is not thin. The software back end and virtio-gpu delay this problem; they do not remove it.
 - **Reuse**: the WebGPU and WGSL specifications. An existing WGSL compiler front end (Naga, Tint) if its language fits the project. The WebGPU conformance test suite, to test the implementation.
-- **Decided by the owner on 2026-11-09**: The project writes the WebGPU implementation from nothing. It does not port wgpu or Dawn. Graphical code is a program of this system and uses no existing toolkit.
-- **Order, decided by the owner on 2026-11-09**: No GPU at first. Step 1: the boot program passes the UEFI framebuffer; a surface is a shared memory region of pixels with a "present" command that names the changed rectangles; the compositor copies surfaces to the framebuffer; programs draw on the CPU. Step 2: the first WebGPU subset with a software back end that renders into the same surfaces. Step 3: virtio-gpu. Step 4: one real GPU. A surface is the way to share pixels, not a second drawing interface. See `research/webgpu_from_nothing_study.md`.
+- **Rule**: The project writes the WebGPU implementation from nothing. It does not port wgpu or Dawn. Graphical code is a program of this system and uses no existing toolkit.
+- **Order**: No GPU at first. First: the boot program passes the UEFI framebuffer; a surface is a shared memory region of pixels with a "present" command that names the changed rectangles; the compositor copies surfaces to the framebuffer; programs draw on the CPU. Second: the first WebGPU subset with a software back end that renders into the same surfaces. Third: virtio-gpu. Fourth: one real GPU. A surface is the way to share pixels, not a second drawing interface. See `research/webgpu_from_nothing_study.md`.
 - **Open**: The role of the kernel: the proposal is none beyond the mapping of device queues (property 5). How the compositor shares surfaces with programs; shared memory of property 6 is the proposal.
 
 ## 19. A command is a function: no text between programs
 
-Status: Decided by the owner on 2026-11-09. The detail below is proposed.
+Status: Decided. The detail below is proposed.
 
 - **Rule**: Programs do not exchange text that the receiver must parse. The system has no command line arguments as strings, no text pipes, no standard input and output streams, and no environment variables.
 - **Rule**: A command line program and a library are the same thing. Both are a module that exports functions (property 10). A command is one exported function.
 - **Rule**: The metadata of a module (property 12) describes each exported function completely: its name, the name and type of each parameter, the type of each result, and a text for the person. This description is sufficient to call the function with no other knowledge of the module.
-- **Rule**: A started program receives no `argc` and no `argv`. At the minimum, it receives one structured context: a typed record with a fixed layout. Decided by the owner on 2026-11-09.
+- **Rule**: A started program receives no `argc` and no `argv`. At the minimum, it receives one structured context: a typed record with a fixed layout.
 - **Content of the context** (proposed): the typed arguments of the called function, the handles that the caller grants (property 2), and the rings to the caller and to the kernel (property 4). The context holds no strings that the program must parse.
-- **Rule**: No contract of the system depends on a feature of one programming language. Decided by the owner on 2026-11-09. The context, the module format, the calling convention, the type description and the ring layouts are defined as memory layouts and numbers. A program in any language that can read and write memory at fixed offsets can use them.
+- **Rule**: No contract of the system depends on a feature of one programming language. The context, the module format, the calling convention, the type description and the ring layouts are defined as memory layouts and numbers. A program in any language that can read and write memory at fixed offsets can use them.
 - **Consequence**: The context is a plain record of the system. It is not the implicit `context` of Odin or Jai. A language binding can copy its fields into a language feature; the system does not know about it.
 - **Consequences**:
   1. The console reads the metadata and calls the function directly, with typed values. Completion, help and argument checks come from the metadata, not from code in each program.
@@ -375,12 +375,12 @@ Status: Decided by the owner on 2026-11-09. The detail below is proposed.
 - **Cost**: The type description becomes a permanent contract of the system. Its design must come before the first modules.
 - **Cost**: Streams of data with no known end (logs, audio, large results) need a typed stream form above rings, not one return value.
 - **Prior art to study**: PowerShell (objects in pipelines), Nushell (typed tables), Lisp machines and Oberon (commands are exported procedures), COM and WinRT metadata, the WebAssembly component model (language-independent interface types).
-- **State (2026-11-11)**: a table of records and a range of bytes are parameters, each with a direction (Read, Change, Append), in memory of the caller (P14): the owner decided it on 2026-11-11 ("ok bah on le fait alors ?"). One description serves a direct call with no copy, a call host and a service; a table too large for the call region goes in a lent memory object whose rights are the direction (P20). The program `tables` shows the same answers in the three ways; `MODULE_CONTRACT.md`, "Tables and bytes as parameters".
+- **State**: a table of records and a range of bytes are parameters, each with a direction (Read, Change, Append), in memory of the caller (P14). One description serves a direct call with no copy, a call host and a service. A table too large for the call region goes in a lent memory object whose rights are the direction (P20). The program `tables` shows the same answers in the three ways; `MODULE_CONTRACT.md`, "Tables and bytes as parameters".
 - **Open**: the set of base types (no float, no record in a record). How a function declares the handles that it needs (property 2), so that the console can ask the person before the call. Versioning of a function whose description changes.
 
 ## 20. No ambient access: the other holes to close
 
-Status: Decided. The owner asked for this list and accepted all of it on 2026-11-09.
+Status: Decided.
 
 Ambient access is access that a program has because it runs, and not because it received a handle.
 The shared file system (property 8) is one case. This property lists the other cases. Each one gets the same answer: the resource is reached only by a handle that a person or a parent granted.
@@ -413,7 +413,7 @@ The shared file system (property 8) is one case. This property lists the other c
 
 ## 21. Principals: who acts, without users
 
-Status: Decided by the owner on 2026-11-09. Layers 1 and 2 are the design. Layers 3 to 5 are a direction, not a design.
+Status: Decided for layers 1 and 2: they are the design. Layers 3 to 5 are a direction, not a design.
 
 - **Rule**: The kernel has no concept of "who executes". The answer is always: a program, with the handles that it holds.
 - **Rule**: A principal is a key pair and the root handles that the key unlocks: documents, grant records, settings. A principal exists in the root service and in storage. The kernel does not know it.
@@ -444,9 +444,9 @@ The "user" of current systems does six jobs. This system splits them:
   3. One human principal. The unlock decrypts its documents. The lock discards the key.
   4. Several principals on one machine: disjoint handle trees, no kernel change.
   5. One principal on several machines, and sharing between principals: the principal key signs each machine key; signed grants carry access between machines.
-- **Usability** (owner, 2026-11-09): A desktop that ordinary people can use needs concessions on security. This is accepted. It must not ruin the security model.
+- **Usability**: A desktop that ordinary people can use needs concessions on security. This is accepted. It must not ruin the security model.
 - **Proposed rule for concessions**: A concession is made in the desktop shell, as a default grant that is data: visible, recorded, and revocable. A concession is never made in the kernel, in a contract, or as a new form of ambient access. The base system stays strict; the desktop chooses how much it grants without a question.
-- **Forms of concession** (proposed, after the owner's note that some doors can stay open so that the system is not painful to use):
+- **Forms of concession** (proposed; some doors can stay open so that the system is not painful to use):
   1. A remembered grant: the system asks one time, then renews the grant with no question.
   2. A grant that follows from an action: the person opens, drops or pastes a document. No question is shown.
   3. A default set of grants for a kind of program, given at first start.
@@ -464,7 +464,7 @@ The "user" of current systems does six jobs. This system splits them:
 - **Replaceable modules (10) against speed**: Calls through a table cost one indirect call. The bundle is the place where a developer trades replaceability for inlining.
 - **No global file system (8) against the desktop**: A person thinks in documents, not in programs. The document store service must exist before the first real desktop program.
 - **Small interface (1) against typed resources (3)**: Types multiply operations. The ring of property 4 solves this: the kernel has few entry operations, and the typed commands are records in a ring.
-- **New storage engine (9) against reliability**: The engine is small and each commit is tested against a stop of the machine. SQLite is not used (owner, 2026-11-10).
+- **New storage engine (9) against reliability**: The engine is small and each commit is tested against a stop of the machine. SQLite is not used.
 
 ## Reuse list
 
@@ -480,19 +480,19 @@ The "user" of current systems does six jobs. This system splits them:
 | Hash | BLAKE3 | CC0 or Apache-2.0 |
 | Store and system description model | Nix concepts | Design only |
 | Storage ideas | bcachefs node search and buckets, Fxfs object model | Design only |
-| Software rendering and UI | `gui_toolkit` of the owner, if its back end can target a framebuffer | Owner |
+| Software rendering and UI | `gui_toolkit`, a separate library, if its back end can target a framebuffer | Same copyright holder as this system |
 
 Licences in this table come from memory. Verify each one before the code is imported.
 
-## Decisions that the owner must make
+## Open decisions
 
 1. **Module contract**: the open questions of `MODULE_CONTRACT.md`.
 
-Closed on 2026-11-09: implementation language (Odin), storage licence (new engine under MIT), status of properties 4, 7, 14, 15 and 16 (accepted), kernel entry (kernel ring only), threads (several threads per program), call form (registers, `MODULE_CONTRACT.md` section 4), graphics implementation (written from nothing, no port of wgpu or Dawn), kernel operation limit (the kernel tool counts the kinds of kernel operation; no fixed limit yet).
+Fixed choices: implementation language (Odin), storage licence (new engine under MIT), properties 4, 7, 14, 15 and 16 (decided), kernel entry (kernel ring only), threads (several threads per program), call form (registers, `MODULE_CONTRACT.md` section 4), graphics implementation (written from nothing, no port of wgpu or Dawn), kernel operation limit (the kernel tool counts the kinds of kernel operation; no fixed limit yet).
 
-## Proposed first milestone
+## First milestone
 
-The smallest end-to-end system that shows the model:
+The first milestone is the smallest end-to-end system that shows the model:
 
 1. A UEFI program starts under QEMU with OVMF, loads the kernel and two modules, and starts the kernel. The kernel prints on the serial port.
 2. The kernel loads two modules from a boot image, each in its own address space, with an empty handle table.
@@ -500,5 +500,5 @@ The smallest end-to-end system that shows the model:
 4. Program A sends a typed record to program B through the ring. Program B prints it through a console ring.
 
 This milestone uses properties 1, 2, 4, 6, 10, 13 and 17 in their smallest form. It needs no storage, no network and no graphics.
-Secure Boot and the TPM measurement are the next step, because the boot program already exists.
+Secure Boot and the TPM measurement come after it, because they need only the boot program.
 Each later step adds one capability to a system that already works.

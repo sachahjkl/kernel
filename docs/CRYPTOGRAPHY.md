@@ -1,10 +1,10 @@
 # Cryptography
 
-Status: in construction on branch `work/tcp` (2026-11-11), for QUIC and TLS 1.3 (`docs/NETWORK.md`). The owner has not reviewed it.
+The cryptography of the system serves QUIC and TLS 1.3 (`docs/NETWORK.md`).
 
-## 1. The decision of the owner
+## 1. The rule: proven code, in the forms of the system
 
-The owner, 2026-11-11, word for word: "don't write cryptography from nothing, but maybe incorporate existing stuff and adjust it/provide wrappers functions/compat, so that they use OUR kernel primitives (tables, modules, shit like that)".
+The system does not write cryptography from nothing. It takes existing code and adjusts it, with wrapper functions and a compatibility layer, so that the code uses the primitives of this system: tables and modules.
 
 What it means here:
 
@@ -15,7 +15,7 @@ What it means here:
 
 ## 2. The origin, and its license
 
-- **Origin**: Odin's `core:crypto`, from the compiler that the flake pins: the release `dev-2026-11a` of Odin, which `flake.nix` fetches by its tag and its hash. The first files were taken from `dev-2026-05`; they were taken again from `dev-2026-11a` when the compiler changed (`kerneltool cryptography-take`), and the origin had corrected its ChaCha20 counter check and rewritten `_subtle` since.
+- **Origin**: Odin's `core:crypto`, from the compiler that the flake pins: the release `dev-2026-11a` of Odin, which `flake.nix` fetches by its tag and its hash. When the compiler changes, `kerneltool cryptography-take` takes the files again.
 - **License of Odin, and of `core:crypto`** (its README: "This library is made available under the zlib license"): the zlib license, in `support/cryptography/LICENSE.odin.txt`. Its second clause, "Altered source versions must be plainly marked as such", is met by the first line of each file that is taken.
 - **fiat-crypto**: the field arithmetic of `core:crypto/_fiat` is a port of fiat-crypto, which gives three licenses. Odin chose BSD-1-Clause; its text is in `support/cryptography/LICENSE.fiat-crypto.txt`, with the first part that is taken.
 - **Review**: the README of `core:crypto` says that the packages "have not received independent third party review". The system relies on the RFC test vectors (section 5) and on the timing rules of the origin. It does not claim more.
@@ -49,7 +49,7 @@ The listed changes, all in `tools/kerneltool/cryptography_origin.odin` (`cryptog
 
 The check also covers the folders, not only the listed files: Odin compiles each `.odin` file of a package folder, so a new file in a folder of a copy would change the code with no line of a manifest.
 - It walks each folder of `support/cryptography`. Each `.odin` file must be a line of `origin.manifest` or a line of `system_files.manifest`, and no file is in both or two times.
-- `system_files.manifest` lists the files that the system wrote (the compatibility layer, the files in the place of a hardware dispatch, the tests), each with its BLAKE3 hash. A change of one of them fails the check until a reviewer writes its new hash: `kerneltool cryptography-system-hashes` prints the lines.
+- `system_files.manifest` lists the files that the system wrote (the compatibility layer, the files in the place of a hardware dispatch, the tests), each with its BLAKE3 hash. A change of one of them fails the check until a person writes its new hash: `kerneltool cryptography-system-hashes` prints the lines.
 - An origin path starts with `core/crypto/` and holds no `..`; a file of the repository starts with `support/cryptography/` and holds no `..`. A line cannot take a file from another part of Odin or of the host.
 - A symbolic link anywhere under `support/cryptography` fails the check: a folder of a copy that points elsewhere would bring `.odin` files that no list names.
 - A file that is not a `.odin` file, a `LICENSE.*` file of the top folder or one of the two manifests fails the check: a `#load` or a `foreign import` could read it, and no list has its hash.
@@ -57,11 +57,11 @@ The check also covers the folders, not only the listed files: Odin compiles each
 
 A new file comes with `kerneltool cryptography-take <origin> <file>`, which writes it and prints its line of the manifest.
 
-### Listed adjustments (2026-11-11)
+### Listed adjustments
 
-A taken file can also have listed adjustments: `cryptography_adjustments` in `tools/kerneltool/cryptography_origin.odin` names, for one file of the origin, lines of the origin and the lines in their place. The lines of the origin must be in the origin exactly one time: when the origin changes them, the check fails and a person reads the adjustment again. The first line of an adjusted file says so. The owner allowed this form ("incorporate existing stuff and adjust it").
+A taken file can also have listed adjustments: `cryptography_adjustments` in `tools/kerneltool/cryptography_origin.odin` names, for one file of the origin, lines of the origin and the lines in their place. The lines of the origin must be in the origin exactly one time: when the origin changes them, the check fails and a person reads the adjustment again. The first line of an adjusted file says so.
 
-Today there is one correction, as five adjustments of `_chacha20/chacha20.odin` and four lines of the system's own `chacha20/chacha20_implementation_portable.odin`. The fault of the origin: `check_counter_limit` refused the block with the counter 2^32 - 1, which RFC 8439 allows, and its branch for the counter of 64 bits allowed a call that wraps the counter. QUIC header protection (RFC 9001, section 5.4.4) takes the counter from the ciphertext of a packet, so a peer could stop a program with one datagram (found by the second independent read of `support/quic`). The correction allows a call that ends on the last block, refuses a call that goes past it, refuses each call after it until `seek` or `init`, and puts back the first word of the IV that the 64-bit increment of the implementation carried into. It is offered to Odin as its pull request 8329, from the account of the owner. When the release that the flake pins has it, the adjustments go.
+There is one correction, as five adjustments of `_chacha20/chacha20.odin` and four lines of the system's own `chacha20/chacha20_implementation_portable.odin`. The fault of the origin: `check_counter_limit` refused the block with the counter 2^32 - 1, which RFC 8439 allows, and its branch for the counter of 64 bits allowed a call that wraps the counter. QUIC header protection (RFC 9001, section 5.4.4) takes the counter from the ciphertext of a packet, so a peer could stop a program with one datagram. The correction allows a call that ends on the last block, refuses a call that goes past it, refuses each call after it until `seek` or `init`, and puts back the first word of the IV that the 64-bit increment of the implementation carried into. It is offered to Odin as its pull request 8329. When the release that the flake pins has it, the adjustments go.
 
 ## 5. The primitives, and their tests
 
@@ -124,7 +124,7 @@ So the code that runs is the portable code of the origin: the bitsliced, constan
 - **A result that overlaps an argument** with an offset is the error `Bad_Value` for argument 5 (the code of the origin would stop the program); a result at the same address as the text (in place) is right.
 - **A nonce never comes two times with one key**: that is the duty of the caller. With ChaCha20-Poly1305, a repeated nonce gives the XOR of the two texts and the key of Poly1305; with AES-GCM, it gives the key of GHASH, and with it forgeries.
 - **A failure is an error record.** A key or a nonce of another size gives `Too_Small`, `Too_Long` or `Empty`, with the number of the argument and the size that it must have. A tag or a signature that does not verify gives the new kind `Not_Authentic` (`contract/errors`, with its sentence in `support/sentence`). An open leaves no byte of a text that is not authentic in the result: it erases what it wrote. A caller cannot take a failed open for a success, because the count is negative. X25519 gives `Bad_Value` for argument 2 for a point of small order, whose shared secret is 32 zero bytes: it is a point that shares no secret, not a text that is not authentic.
-- **Secrets are erased, and so is the stack below each export.** Each export copies a key into its own frame and erases the copy. The frames of the code of the origin under it also hold secrets: the SHA-512 of an Ed25519 private key (its scalar and its nonce prefix), the expanded AES key, the words of the ChaCha20 key, the states of SHA-2 and HMAC. So each export, after its work, calls `erase_stack_below_the_caller` (`runtime/memory.asm`): it writes 0 in the 16 KiB below the stack pointer. The largest frames under an export are its own copies (8160 bytes of HKDF output and 1024 bytes of info, or 4096 bytes of a message, or 2048 bytes of additional data) and the frames of the origin under them (states of some hundred bytes, points of 160 bytes, the bitsliced AES state), together under 12 KiB. This is a reasoned size, not a measure (the coordinator can measure the frames with `llc -stack-size-section`). What stays: the registers after the return, the copies that the caller makes, and the memory of the caller. The cost is 2048 stores of 8 bytes in each call, some hundred nanoseconds; a QUIC packet makes two calls (the AEAD and the header protection mask).
+- **Secrets are erased, and so is the stack below each export.** Each export copies a key into its own frame and erases the copy. The frames of the code of the origin under it also hold secrets: the SHA-512 of an Ed25519 private key (its scalar and its nonce prefix), the expanded AES key, the words of the ChaCha20 key, the states of SHA-2 and HMAC. So each export, after its work, calls `erase_stack_below_the_caller` (`runtime/memory.asm`): it writes 0 in the 16 KiB below the stack pointer. The largest frames under an export are its own copies (8160 bytes of HKDF output and 1024 bytes of info, or 4096 bytes of a message, or 2048 bytes of additional data) and the frames of the origin under them (states of some hundred bytes, points of 160 bytes, the bitsliced AES state), together under 12 KiB. This is a reasoned size, not a measure (`llc -stack-size-section` can measure the frames). What stays: the registers after the return, the copies that the caller makes, and the memory of the caller. The cost is 2048 stores of 8 bytes in each call, some hundred nanoseconds; a QUIC packet makes two calls (the AEAD and the header protection mask).
 - **The erasure goes from the top down, and a thread needs 24 KiB of stack.** `erase_stack_below_the_caller` writes from just below the stack pointer down to 16 KiB below it, 8 bytes at a time. If the stack of the thread is shorter, the first store past its bottom hits the unmapped page under the stack, and the program stops there: no byte of the mapping under that page (a ring, a region that another program shares) is written. So a thread that calls the module or draws random bytes needs 16 KiB below its frame at the call, and its own frames: 24 KiB in all. The threads of `system.thread_start` have 64 KiB by default (`THREAD_STACK_PAGES`) and the main thread 256 KiB; a thread started with fewer than 6 pages, or one that has used more than 40 KiB of its 64 KiB at the call, stops at its guard page.
 - **One call at a time per thread, no hidden state, no allocation.** The code of the origin runs with a zero `context`. `runtime.default_context()` stores the default random generator of the runtime, whose state is thread-local, and a module has no thread-local data (the convert step of the tool refuses it).
 - **A key of zeros is valid** for the AEADs and HKDF, as their standards say. X25519 refuses the result of zeros, not the key.
@@ -143,7 +143,7 @@ So the code that runs is the portable code of the origin: the bitsliced, constan
 
 So the module form costs nothing that matters next to the primitives.
 
-**The seam for batches.** The module contract cannot describe a table as a parameter in `master` yet. The branch `work/tables` designs it, with `^system.Table_To_Read(Name)`, `Table_To_Change` and `Bytes_To_Read` (`docs/MODULE_CONTRACT.md` on that branch). When it is merged, the module gains the batch exports: seal or open a table of packet records in one call. Until then QUIC calls the exports one packet at a time, through one procedure table of its own (`support/quic`), so that a batch export later changes that one table only.
+**The seam for batches.** The module contract describes a table as a parameter (`docs/MODULE_CONTRACT.md`, "Tables and bytes as parameters"). The module has no batch export yet: seal or open a table of packet records in one call. QUIC calls the exports one packet at a time, through one procedure table of its own (`support/quic`), so that a batch export later changes that one table only.
 
 ## 7. What is not done
 

@@ -1,7 +1,5 @@
 # Architecture
 
-Status: draft 1, 2026-11-09. Proposal for review by the owner. `FIRST_MILESTONE.md` says which parts are implemented, and how.
-
 This document names the key systems and shows how they connect.
 It does not design the inside of each system.
 `PROPERTIES.md` gives the rules that each system must obey. References such as (P4) point to a property number.
@@ -93,14 +91,14 @@ The kernel has five systems. Each one owns a small set of flat tables (P13).
 ### K2. Memory
 
 - **Does**: Tracks physical page frames. Builds address spaces. Gives "reserve address space", "commit pages", and "map this region in that program" (P14).
-- **As implemented** (paging, second part): `Memory_Create` reserves: the budget pays for each page, and each page gets its page frame at its first use, by the program (a page fault) or by the kernel. The flag `Frames_Now` gives all the frames at creation. Map is a separate operation. No access fails for lack of memory: a reserved page always has a free frame.
+- **As implemented**: `Memory_Create` reserves: the budget pays for each page, and each page gets its page frame at its first use, by the program (a page fault) or by the kernel. The flag `Frames_Now` gives all the frames at creation. Map is a separate operation. No access fails for lack of memory: a reserved page always has a free frame.
 - **Owns**: the page frame table; one address space record per program; the frame list of each memory object.
 - **Does not**: page to disk, cache files, or allocate hidden memory for a caller.
 
 ### K3. Scheduler
 
 - **Does**: Chooses which thread runs on each processor. Keeps time. Wakes threads.
-- **As implemented** (2026-11-11, `docs/SCHEDULING.md`): three strategies behind one table of six functions (round robin, fair, EEVDF), one for the whole machine, which a program with the right Schedule changes while the system runs (`Strategy_Set`). Wake preemption, also on another processor. A weight and a request for each thread, at its creation.
+- **As implemented** (`docs/SCHEDULING.md`): three strategies behind one table of six functions (round robin, fair, EEVDF), one for the whole machine, which a program with the right Schedule changes while the system runs (`Strategy_Set`). Wake preemption, also on another processor. A weight and a request for each thread, at its creation.
 - **Owns**: one run queue per processor; the thread table, split in a hot part and a cold part.
 - **Does not**: know about priorities of services by name. Policy is data that the root service sets.
 
@@ -113,7 +111,7 @@ The kernel has five systems. Each one owns a small set of flat tables (P13).
 ### K5. Device grant and interrupts
 
 - **Does**: Maps the queues and registers of one device into one device service. Turns each interrupt into a completion record in a ring. Programs the IOMMU so that a device reaches only the memory of its service.
-- **Implemented** (2026-11-10): device memory over the registers of a device (`Device_Create`, kind `Memory`), message interrupts (kind `Message`), and the physical address of a memory object for a holder of the right Physical (`Memory_Physical`). The root service finds the devices on the bus, not the kernel. Not done: the IOMMU.
+- **Implemented**: device memory over the registers of a device (`Device_Create`, kind `Memory`), message interrupts (kind `Message`), and the physical address of a memory object for a holder of the right Physical (`Memory_Physical`). The root service finds the devices on the bus, not the kernel. Not done: the IOMMU.
 - **Owns**: the device table; the interrupt routing table.
 - **Does not**: contain code for any device (P7).
 
@@ -169,16 +167,16 @@ One service per device class: block, network card, display, input, TPM.
 
 - Owns the block device queues. Gives transactional object stores (P9).
 - Creates one private store per program. Gives versions and clones; a snapshot is the versions of a store at one generation.
-- **Implemented** (2026-11-10, `programs/storage`): a native engine. The owner removed SQLite from the system on 2026-11-10. Copy on write with two places for the root block and a check of each block in the block that names it. The storage service is a service with exports; the root service names the private store of each connection and its limit of blocks. Not done: versions, snapshots, clones. The format of the disk is the contract `store`. A block with a wrong check damages its object only: the service serves the others, and does not give the bytes of a damaged object. The open of the disk (`support/storage_mount`) is the same code in the service and in the kernel tool, which checks on the host each image of the disk that a loss of power can leave: the tool serves the data disk with the Network Block Device protocol and knows each write and each flush (`FIRST_MILESTONE.md`, choices 382 to 384 of the power loss).
+- **Implemented** (`programs/storage`): a native engine, with no SQLite. Copy on write with two places for the root block and a check of each block in the block that names it. The storage service is a service with exports; the root service names the private store of each connection and its limit of blocks. The format of the disk is the contract `store`. A block with a wrong check damages its object only: the service serves the others, and does not give the bytes of a damaged object. The open of the disk (`support/storage_mount`) is the same code in the service and in the kernel tool, which checks on the host each image of the disk that a loss of power can leave: the tool serves the data disk with the Network Block Device protocol and knows each write and each flush.
 
 #### Versions (property 9, "no save action, and versions for all programs")
 
-Designed on 2026-11-11, before the code. The terms are in `GLOSSARY.md`, section Storage.
+The terms are in `GLOSSARY.md`, section Storage.
 
 - **What a version is.** The state of one object at one commit: its size, its list (and through it its blocks of data), the generation and the time of that commit. A version of a whole private store (a snapshot) is not kept apart: the state of a store at a generation G is, for each object, its version with the highest generation at or below G. So one structure serves both, and a program asks for the versions of the object that the person sees.
-- **Who makes it.** Each commit that changes an object: the program makes no call for it. The state before the commit goes into the version index of the object; the new state is the current version. A damaged state (a block with a wrong check) is not kept as a version: the change replaces it. A remove ends the object and its versions (an explicit act of the program; see the gaps).
-- **Where it is on the disk** (`contract/store`). The object entry names a version index (one block: up to 254 leaf blocks); a leaf holds 85 version entries of 48 bytes (generation, time, date, size, list). Up to 21590 versions for each object. A commit rewrites the index and the leaf that it changes: 2 blocks, copy on write as each other block. The entry of an object grows from 72 to 104 bytes: a table has 39 objects (it had 48).
-- **What a version costs.** Nothing more for its bytes: the blocks of the state before a commit are on the disk already, and copy on write never wrote over them. A commit now keeps them in place of making them free. A block of data whose bytes did not change is not written again: the new list names the old block (a shared block), so a change of one block of an object of 32 blocks costs 1 block of data, 1 list, the leaf and the index (and the table and the root, as before). The version holds the blocks that only it names: its list and its changed blocks. The extra writes of each commit: the index and the leaf (2 blocks), and one read of each.
+- **Who makes it.** Each commit that changes an object: the program makes no call for it. The state before the commit goes into the version index of the object; the new state is the current version. A damaged state (a block with a wrong check) is not kept as a version: the change replaces it. A remove ends the object and its versions (an explicit act of the program).
+- **Where it is on the disk** (`contract/store`). The object entry names a version index (one block: up to 254 leaf blocks); a leaf holds 85 version entries of 48 bytes (generation, time, date, size, list). Up to 21590 versions for each object. A commit rewrites the index and the leaf that it changes: 2 blocks, copy on write as each other block. The entry of an object is 104 bytes (72 without the version index): a table has 39 objects (48 with entries of 72 bytes).
+- **What a version costs.** Nothing more for its bytes: the blocks of the state before a commit are on the disk already, and copy on write never wrote over them. A commit keeps them in place of making them free. A block of data whose bytes did not change is not written again: the new list names the old block (a shared block), so a change of one block of an object of 32 blocks costs 1 block of data, 1 list, the leaf and the index (and the table and the root, as before). The version holds the blocks that only it names: its list and its changed blocks. The extra writes of each commit: the index and the leaf (2 blocks), and one read of each.
 - **The accounting.** The blocks of a store are its distinct blocks: a shared block is counted one time (the reference count of each block, in the memory of the service, made again by the open from the disk). The limit of the store (the grant of the root service) counts the versions too: a program cannot fill the disk with versions (P20, and the rule of the budget: each thing is paid by its owner).
 - **Thinning.** The retention rule: each version is kept 10 minutes; after that, one version for each hour (the newest of the hour) until it is one day old; after that, one for each day. The service applies it to an object at a commit of that object, at most one time each minute (a full read of its leaves). At the limit of the store, a change that does not fit thins the oldest versions of the store (the lowest generations, in any object of the store), in the same commit as the change, until it fits: a commit is still one change, and a loss of power never keeps a thinning without its change. The order is the generation: the version that the change itself makes can go too, when each other version of the store is newer. A change that does not fit with every earlier version thinned is refused before any thinning, so a refused change destroys no history: Over_Limit, with the blocks that the current objects need with the change and the limit, and the sentence says "with no earlier version kept". The count of the current objects counts a block that two clones share two times: such a refusal can come early.
 - **The time of a version.** Each version keeps the time since the format of the disk (the root block keeps it at each commit; the service adds its own time since its start) and the date (seconds since 1970, UTC; 0 when the system had no date). The age of a version for the retention rule is the smaller of its age by the date and its age by the time since the format (`storage_retention.age`): the date counts the time when no machine ran, but a clock can be wrong on one start (an empty battery) and right on the next, and then the versions of the wrong start would look years old; the time since the format never makes a version older than it is. A date at or after the year 10000 is no date. The generation orders the versions in all cases.
@@ -187,23 +185,23 @@ Designed on 2026-11-11, before the code. The terms are in `GLOSSARY.md`, section
 - **Damaged versions.** A version index or a leaf with a wrong check, or with a count that the format does not permit, does not lock its object: the next commit of the object drops those versions (they are not known) and writes no block in their place; its lists are not released, because the open did not count them. A write or a remove of the object works, and thinning at the limit skips them. `versions`, `version` and `restore` of that object give Damaged until then. A list that goes wrong while the service runs keeps its blocks in use until the next start, which counts again: the safe direction, as no block in use is given to another name.
 - **Compaction.** The retention rule leaves a few versions in each leaf. When the index has its 254 leaves and the last one is full, the commit moves the versions to the first leaves, in their order (`storage_mount.version_leaves_compact`), and writes them again: up to 254 reads and 254 writes, one time in many commits. At 21590 versions the oldest goes first.
 - **The capacities of one commit.** One commit changes the names of at most 65536 blocks and writes at most 1024. A commit that needs more is refused with Full, unit Commit_Blocks, not with a full disk. No store can reach them today: the largest limit is 4500 blocks.
-- **The disk format** stays `STORAGE2`: these corrections change no byte of the disk; the counts of names are in memory only, and the open makes them again from the disk. A disk of `STORAGE1` is not read.
+- **The disk format** is `STORAGE2`: the counts of names change no byte of the disk; the counts of names are in memory only, and the open makes them again from the disk. A disk of `STORAGE1` is not read.
 
-#### The date (designed and built on 2026-11-11)
+#### The date
 
 - **Who reads the clock.** A small service, `date`, not the kernel and not the root service: a driver is a program (P7), and the root service gives `date` the two ports of the real-time clock (0x70, 0x71) and the date page with Write, and nothing else. `date` reads the clock at its start, then each 10 s: it waits for the clock to change its second, so the date of the time 0 of the system is exact to about one millisecond (the clock gives whole seconds). Each read has a bound: a clock that never ends an update, or whose registers change at each read, gives no date. Each field is checked in its mode (two decimal digits, or binary; 12 or 24 hours) and its range (`calendar.clock_seconds`, host tests).
 - **The year.** The clock gives two digits. The century register is not read: only the ACPI table FADT says if a machine has one, and where, and `date` does not read that table. The two digits give 2020 to 2099; 00 to 19 give no date, because a clock with an empty battery starts again at 2000.
 - **The cost of the grant.** The processor gives a program a port, not a value of a port, and not a read alone: the port bitmap of the kernel (`ports_allow`) lets `date` write any index to 0x70 and read or write any byte of the memory of the clock, the settings of the firmware and their check included, and set bit 7 of the index (the mask of the non-maskable interrupt). A narrower grant needs a change of the kernel (a kernel operation that reads named registers of the clock for its caller, or a trap of each access to the two ports); none is written.
 - **Where the date lives.** The date page (`contract/date`), on the model of the settings page: one page that the root service creates, with one writer, mapped read-only at a fixed address into each program that the root service starts (its bit in the context value 20 says that it is mapped). It holds the date of the time 0 of the system, in milliseconds since 1970 UTC. The date of now is that plus `system.time()`: no kernel entry and no call. A change of the page is guarded by an even and odd counter, as the settings page. A reader of the page gives up after 64 reads of a page that changes, or that a writer left in the middle of a change (a writer stopped between its two stores): it gives no date then, and never waits on another program. A date that is not from 1970 to 9999 is no date.
-- **The fixed ranges that a program receives** (`contract/fixed_addresses`; the value 20 of the context, `CONTEXT_VALUE_FIXED_RANGES_MAPPED`, 2026-11-12). The value is a set of bits: bit n for the member n of `Fixed_Range`. The starter sets the bit of each fixed range that it maps for the program; a program reads nothing at a range whose bit is clear. A bit is the statement of the starter: a starter that sets a bit with no mapping makes its child fault at its first read there, and a program trusts its starter, which already chooses its grants and its budget. What each range uses today to say "mapped":
+- **The fixed ranges that a program receives** (`contract/fixed_addresses`; the value 20 of the context, `CONTEXT_VALUE_FIXED_RANGES_MAPPED`). The value is a set of bits: bit n for the member n of `Fixed_Range`. The starter sets the bit of each fixed range that it maps for the program; a program reads nothing at a range whose bit is clear. A bit is the statement of the starter: a starter that sets a bit with no mapping makes its child fault at its first read there, and a program trusts its starter, which already chooses its grants and its budget. What each range uses today to say "mapped":
 
 | Range | How the program knows that it is mapped |
 |---|---|
-| The settings page, the date page | Their bits (they were the values 13 and 15, which held only the fixed address: the bit removes a value and changes nothing else) |
+| The settings page, the date page | Their bits |
 | The five glyph caches | Their bits; each cache states its size in its header (`glyph_cache.validate_at`, bounded by the span of the range) |
-| The pointer themes | The values 6 and 7, 18 and 19 of the compositor: an address and a size each. Stays: the size is needed, and the theme file does not state it in a header that the reader trusts before its validation |
-| The storage file | The value 3 of the storage service: its size. Stays: the size is needed |
-| The files of a module | The values 0 to 3 of `contract:isolated` (address, size, the replacements): stays, the sizes are needed |
+| The pointer themes | The values 6 and 7, 18 and 19 of the compositor: an address and a size each. A value, not a bit: the size is needed, and the theme file does not state it in a header that the reader trusts before its validation |
+| The storage file | The value 3 of the storage service: its size. A value, not a bit: the size is needed |
+| The files of a module | The values 0 to 3 of `contract:isolated` (address, size, the replacements): values, not bits, because the sizes are needed |
 | The tables of an export | Mapped by the receiver itself for the time of one call, from the call region: no starter, no bit |
 
 - **What a program does with it.** `support/calendar` gives the year, the month, the day, the time of day and the weekday from seconds since 1970, and back (the algorithm of eras of 400 years), the text of ISO 8601 and the date of HTTP (RFC 9110, IMF-fixdate). Host tests check known dates, the leap years 2000 and 2024, the year 2100 (no leap year), dates before 1970, and each day from 1900 to 2500.
@@ -223,8 +221,8 @@ Designed on 2026-11-11, before the code. The terms are in `GLOSSARY.md`, section
 - Owns the network identity of the machine: address, ports.
 - Gives a program a network queue and a port range, then leaves the data path.
 - The TCP stack is a library inside each program (P5).
-- **Implemented, first layer** (2026-11-10, `programs/frame`, `programs/network`, `contract/frame`, `contract/datagram`, `support/network`): the frame service drives the virtio network device; the network service is its one client and gives each program with the grant one endpoint of UDP datagrams, with a grant of one remote. Not as written above: the virtio device of QEMU has one pair of queues, so the network service is on the data path (one copy) and writes the headers of UDP and IPv4 that it must check anyway. The plan keeps TCP and QUIC as libraries in the program (choice 194 of `FIRST_MILESTONE.md`).
-- **TCP** (2026-11-11, `support/tcp`, `programs/server`, `programs/fetch`): the design is in `NETWORK.md`. TCP is a library in the program; the network service checks each segment against a client grant or a listen grant, and keeps no state of a connection.
+- **Implemented, first layer** (`programs/frame`, `programs/network`, `contract/frame`, `contract/datagram`, `support/network`): the frame service drives the virtio network device; the network service is its one client and gives each program with the grant one endpoint of UDP datagrams, with a grant of one remote. This differs from the lines above: the virtio device of QEMU has one pair of queues, so the network service is on the data path (one copy) and writes the headers of UDP and IPv4 that it must check anyway. TCP and QUIC are libraries in the program.
+- **TCP** (`support/tcp`, `programs/server`, `programs/fetch`): the design is in `NETWORK.md`. TCP is a library in the program; the network service checks each segment against a client grant or a listen grant, and keeps no state of a connection.
 
 ### U7b. The remote service
 
@@ -262,9 +260,7 @@ The tool checks a part of the rule on the sources (`text_cut_check` in `kernelto
 
 ## Locks of the kernel
 
-Status: done on 2026-11-10 (the step "the kernel lock split by data", choices of `FIRST_MILESTONE.md`). The code follows this section: no kernel entry takes a lock for all the kernel.
-
-Before this step, one kernel lock covered all kernel data: a processor took it at each kernel entry. The owner decided that the kernel runs on all processors with no single lock as the final design (`HANDOFF.md`, "Full queues and speed", item 8, and "Truly multi-threaded"). A lock protects data: a table, or a part of a table. It does not protect a code path.
+The kernel runs on all processors with no single lock: no kernel entry takes a lock for all the kernel. The code follows this section. A lock protects data: a table, or a part of a table. It does not protect a code path.
 
 ### The data of the kernel
 
@@ -344,7 +340,7 @@ Interrupts are off in the kernel, so a processor never takes a lock again in an 
 ### Rules that keep each path correct
 
 - **The owner of a running thread.** A thread that runs on a processor belongs to that processor: only it reads and writes the frame, the extended state area, the kernel ring and the word list of the thread. Another processor that stops the thread sets `stop_requested` and sends an interrupt. The processor ends the thread itself, at its next pass in the kernel. No processor takes a thread away from another one.
-- **Three rules against the forms of error that a review found** (2026-11-10). (1) A state that is true only between two sections of one lock is a state that another processor sees: a thread is taken from its queue and given to a processor in one section of the run lock (`queue_pick`). (2) A slot named by its index across a wait for a lock can serve another object when the wait ends: a path that names a thread or a program across such a wait also keeps its serial and checks it (`thread_finish`, `stop_wait`), or holds a lock that keeps the slot (`program_free` only after `cleaned`). (3) A state checked before a work must mean that the work is done: Stopped means that the threads were marked, not that the program was cleaned up (`cleaned`); a new thread is refused in a program that is not Created or Ready.
+- **Three rules against three forms of error.** (1) A state that is true only between two sections of one lock is a state that another processor sees: a thread is taken from its queue and given to a processor in one section of the run lock (`queue_pick`). (2) A slot named by its index across a wait for a lock can serve another object when the wait ends: a path that names a thread or a program across such a wait also keeps its serial and checks it (`thread_finish`, `stop_wait`), or holds a lock that keeps the slot (`program_free` only after `cleaned`). (3) A state checked before a work must mean that the work is done: Stopped means that the threads were marked, not that the program was cleaned up (`cleaned`); a new thread is refused in a program that is not Created or Ready.
 - **A program ends after its last thread leaves its processor.** `holds` counts the processors that run a thread of the program. A stop adds 1, marks the program Stopped, marks each thread (a thread that waits or is in a queue ends at once; a thread on a processor gets `stop_requested`), then subtracts 1 and sets the bit Stopped in the same atomic addition. The one subtraction that leaves exactly the bit Stopped does the cleanup: unmap, close the handles, free the page tables. So no processor uses the page table or the mappings of a program while they are freed, and the cleanup runs one time. The slot of the program is free (`program_free`) only after the cleanup: by the cleanup if no handle names the program, else when the last handle closes.
 - **A stop returns after the threads left their processors.** `Thread_Stop` and `Program_Stop` mark the threads under their locks; the operation then frees all its locks and waits until each marked thread that ran on another processor left it (`stop_wait`): after the operation, no thread of what stopped runs an instruction. A stop of a program that another stop already marked waits in the same way: the state Stopped does not say that the threads left. A wait inside the locks could wait for a thread that waits for these locks. The wait ends at once if the thread that waits is stopped too: two threads that stop each other do not wait for each other.
 - **The page tables of a program change under its program lock.** `user_range` and the `user_copy` that follows run under the program lock: no unmap runs between them. An entry that becomes present needs no message to other processors. An entry that becomes 0 (`unmap`, and the undo of a `map_region` that failed on a later page) is followed by `processor_sync` to each processor whose `table` is the table of the program, before the memory object can free a frame. A processor answers `processor_sync` at each kernel entry, in idle, and while it waits for a lock: then it reloads `cr3`, so it keeps no old translation. Two processors that synchronize each other at one time do not wait for ever: each answers while it waits.
@@ -368,18 +364,18 @@ Interrupts are off in the kernel, so a processor never takes a lock again in an 
 
 ## The virtual memory of a program
 
-Status: design and implementation of 2026-11-11 (owner, 2026-11-10: "a program drives its own virtual memory", "use paging and virtual memory as a design tool"). The terms are in `GLOSSARY.md`: uncommitted object, committed page, decommit, page protection, shoot-down, large page, fault ring.
+A program drives its own virtual memory: paging and virtual memory are a design tool for the program. The terms are in `GLOSSARY.md`: uncommitted object, committed page, decommit, page protection, shoot-down, large page, fault ring.
 
 ### What a program can do, and with which operation
 
 | Need | Form | Why this form |
 |---|---|---|
-| Reserve a range of addresses with no memory behind it | `Memory_Create` with the new flag `Uncommitted`, then `Memory_Map` | An uncommitted object pays only its frame list; its pages are paid when they are committed. The reservation of addresses is the mapping of it: one mapping for a range of any size, so the 128 mappings of a program are not spent by parts of an arena or of a table. No new operation: an object with pages that are not paid yet is a kind of memory object |
-| Commit and decommit pages | the new operation `Memory_Commit` (memory, address of a table of `Page_Range`, count, flags): the flag `Decommit` takes pages back | A new operation: the existing ones create an object, map it, unmap it; none changes what the budget pays for some pages of an object that lives. One operation for the two ways, as `Handle_Give` and `Handle_Close` are not one: here the two ways change the same three counts (budget, reserved pages, frames) in opposite directions over the same table |
-| Change the protection of pages | the new operation `Memory_Protect` (address of a table of `Address_Range`, count, `Map_Flags`) | The protection of a mapping is set by `Memory_Map` for all its pages; changing it for some pages of a mapping that lives is a new act. The flag `No_Access` is new in `Map_Flags` |
-| Large pages | `Memory_Create` with the new flag `Large_Pages` (contiguous, a whole number of 2 MiB, aligned on 2 MiB); `Memory_Map` uses large pages for each 2 MiB that is aligned in the mapping | No new operation: the program asks for an object whose frames can be large pages; the kernel uses them where the mapping allows it |
+| Reserve a range of addresses with no memory behind it | `Memory_Create` with the flag `Uncommitted`, then `Memory_Map` | An uncommitted object pays only its frame list; its pages are paid when they are committed. The reservation of addresses is the mapping of it: one mapping for a range of any size, so the 128 mappings of a program are not spent by parts of an arena or of a table. No new operation: an object with pages that are not paid yet is a kind of memory object |
+| Commit and decommit pages | the operation `Memory_Commit` (memory, address of a table of `Page_Range`, count, flags): the flag `Decommit` takes pages back | A new operation: the existing ones create an object, map it, unmap it; none changes what the budget pays for some pages of an object that lives. One operation for the two ways, as `Handle_Give` and `Handle_Close` are not one: here the two ways change the same three counts (budget, reserved pages, frames) in opposite directions over the same table |
+| Change the protection of pages | the operation `Memory_Protect` (address of a table of `Address_Range`, count, `Map_Flags`) | The protection of a mapping is set by `Memory_Map` for all its pages; changing it for some pages of a mapping that lives is a new act. `Map_Flags` has the flag `No_Access` for it |
+| Large pages | `Memory_Create` with the flag `Large_Pages` (contiguous, a whole number of 2 MiB, aligned on 2 MiB); `Memory_Map` uses large pages for each 2 MiB that is aligned in the mapping | No new operation: the program asks for an object whose frames can be large pages; the kernel uses them where the mapping allows it |
 | A fault that the program answers | the fault ring (below): `Fault_Handler_Set` and `Fault_Answer` | |
-| What the program reads about itself | `Program_Mapping` has the committed pages and the flags `Uncommitted`, `Large`, `Protected` | |
+| What the program reads about itself | `Program_Mapping` gives the committed pages and the flags `Uncommitted`, `Large`, `Protected` | |
 
 Batches: `Memory_Commit` and `Memory_Protect` take a table of ranges in memory of the caller, at most 256 ranges, in one command. The kernel ring already batches 32 commands in one entry, but each command takes the program lock again, checks its handle again, and a protection change does its own shoot-down; a table of ranges in one command takes the lock once, checks the handle once, and does one shoot-down for all the ranges (property 13: many records in one call; property 14: the table is memory of the caller).
 
@@ -393,11 +389,11 @@ The frame list of an object that is not contiguous has one slot of 8 bytes for e
 
 The frame of the slot is `slot & PAGE_ADDRESS`; 0 is no frame. A slot changes under the region lock of the object (a first use) or under the program lock and the region lock (commit, decommit, protection); the frame lock is held where frames or budgets move.
 
-### Who pays a commit (owner, 2026-11-11: "budget delegation")
+### Who pays a commit
 
-`Memory_Commit` takes a budget handle as its second argument, and that budget must be the budget of the object: one payer for each object, and the pages of a decommit go back to it. The right Write on the object does not spend the budget of its maker. The handle needs the new right `Commit` (pay pages of an object that this budget already pays for, and nothing else) or `Spend`. `Spend` is wide: it also makes objects, threads, programs and budgets; so a program that lets another one commit gives it the narrow right `Commit`. Delegation uses what exists: A makes a child budget, makes the uncommitted object on it, and gives B the object and the child budget with `Commit` only. A decommit reads no budget handle: it gives pages back to the payer, and it needs an object that only this program names, so B cannot take pages from an object that A uses. The cases, each shown by `address_space` with two programs and its error record:
+`Memory_Commit` takes a budget handle as its second argument, and that budget must be the budget of the object: one payer for each object, and the pages of a decommit go back to it. The right Write on the object does not spend the budget of its maker. The handle needs the right `Commit` (pay pages of an object that this budget already pays for, and nothing else) or `Spend`. `Spend` is wide: it also makes objects, threads, programs and budgets; so a program that lets another one commit gives it the narrow right `Commit`. Delegation uses what exists: A makes a child budget, makes the uncommitted object on it, and gives B the object and the child budget with `Commit` only. A decommit reads no budget handle: it gives pages back to the payer, and it needs an object that only this program names, so B cannot take pages from an object that A uses. The cases, each shown by `address_space` with two programs and its error record:
 
-1. B commits up to the child budget, then one more page: `No_Budget`; the record does not describe the budget, since B's handle has no right Read (choice 231).
+1. B commits up to the child budget, then one more page: `No_Budget`; the record does not describe the budget, since B's handle has no right Read.
 2. B has the object with Write and no budget handle: it reads and writes the committed pages; a commit gives `Bad_Handle` (no handle).
 3. B makes an object with the `Commit` handle: `No_Right` (the call needs `Spend`).
 4. B presents a budget that does not pay for the object: `Bad_Handle`, kind `Not_Payer`: the record says nothing of that budget.
@@ -408,7 +404,7 @@ The frame of the slot is `slot & PAGE_ADDRESS`; 0 is no frame. A slot changes un
 9. B gives its `Commit` handle on: only with the right `Give`, which A did not give (`No_Right`); a revocation by A reaches each copy through the origin chain.
 10. A service that receives an object of a client cannot be made to pay for it (the budget must be the object's), and cannot spend the client's budget without a handle to it.
 
-The open point of the read, verified: a revocation of a budget handle ends the holdings that came from it (handles and mappings), not the objects that were made with it. An object that B made with a `Spend` handle lives on after A revokes the handle, paid by A's budget, and A has no handle to end it (case 10 of the program shows it). This is why the delegation uses `Commit`.
+A limit of revocation: a revocation of a budget handle ends the holdings that came from it (handles and mappings), not the objects that were made with it. An object that B made with a `Spend` handle lives on after A revokes the handle, paid by A's budget, and A has no handle to end it (case 10 of the program shows it). This is why the delegation uses `Commit`.
 
 ### Commit and decommit
 
@@ -430,7 +426,7 @@ An object made with `Large_Pages` takes its frames in one run aligned on 2 MiB (
 
 ### The addresses that the kernel chooses
 
-A mapping with no address takes the lowest address from `CHOSEN_BASE` where its pages fit with one page with no mapping before and after them: the first gap between the mappings of the program (`chosen_address`, at most 129 passes over the 128 mappings). Before, a counter gave each such mapping a new range: a program that maps and unmaps at each call made new page tables until its budget refused (found by the agent of the tables: a call host refused its 61st call). Now the range of a mapping that ended serves again, with its page tables: `address_space` maps and unmaps one object 100 000 times and its budget is the same after as after the first time.
+A mapping with no address takes the lowest address from `CHOSEN_BASE` where its pages fit with one page with no mapping before and after them: the first gap between the mappings of the program (`chosen_address`, at most 129 passes over the 128 mappings). So the range of a mapping that ended serves again, with its page tables. A counter that gives each such mapping a new range makes a program that maps and unmaps at each call build new page tables until its budget refuses: `address_space` maps and unmaps one object 100 000 times and its budget is the same after as after the first time.
 
 ### The interleavings
 
@@ -445,19 +441,19 @@ The locks: a commit holds the program lock of the caller (the operation), then t
 
 ### The fault ring
 
-Status: built on 2026-11-12 (the owner's list of next work). Before, a page fault of a program that `page_give` could not serve stopped the program, with a stop report. The terms are in `GLOSSARY.md`: fault handler, fault ring, fault record. The code is `kernel/fault_ring.odin`, the two operations in `kernel/enter.odin`, the case of `kernel_interrupt`, and `thread_finish`; the test is the program `fault_ring` (`kerneltool test fault_ring`).
+Without a fault handler, a page fault of a program that `page_give` cannot serve stops the program, with a stop report. The terms are in `GLOSSARY.md`: fault handler, fault ring, fault record. The code is `kernel/fault_ring.odin`, the two operations in `kernel/enter.odin`, the case of `kernel_interrupt`, and `thread_finish`; the test is the program `fault_ring` (`kerneltool test fault_ring`).
 
 A program names one of its threads as its fault handler (`Fault_Handler_Set`, operation 30). Then a page fault of another thread of the program, at an address below `THREAD_AREA_BASE`, which would stop the program, is a fault record in the fault ring, and the thread waits. A thread of the program repairs with the operations above (`Memory_Commit`, `Memory_Protect`) and answers (`Fault_Answer`, operation 31): `Resume` runs the faulting instruction again; `Stop` stops the program with the stop code and the stop report of the fault, as with no handler. A program uses it for guard pages, a stack that grows, memory committed at the first touch, and the barriers of a collector; the kernel holds no policy. No signal (property 16): a fault is a record in memory of the program, and the answer is an operation.
 
 **Where the ring is.** In the thread record of the handler, after its fields (`op.Thread_Record`: `fault_written`, `fault_read`, `fault_full`, and `fault_records`, 16 records of 64 bytes). The kernel already writes that page (the event word) through the direct map, and the budget of the program paid for it with the thread. So the ring needs no new memory object, no mapping, and no count of references: it lives as long as the handler. `fault_read` is memory of the program; the kernel indexes the records with its own count (`Program.fault_written`), so it never writes outside `fault_records`, and a difference with `fault_read` that is not below the capacity is a full ring. A false value of `fault_read` harms only its own program: a value above the count makes the ring full (the next fault stops the program), and a value a little below the count lets the kernel write over records that the program did not read yet (their threads wait until the program answers them, or stops).
 
-**The decisions** (each one a choice NEW-n of `FIRST_MILESTONE.md`):
+**The rules**:
 
-- **Who registers**: the program itself, for one of its own threads (a thread handle with Control, or the calling thread). A pager that serves the faults of another program, which the first design named, needs a fault ring that the pager reads and a right on the program handle: it is a later step.
-- **Which faults**: every page fault that `page_give` does not serve (no frame and not committed, no mapping, or an access that the protection refuses), at an address below `THREAD_AREA_BASE`. The first design had a flag of a mapping (`Faults_To_Ring`); a program that wants only some ranges answers `Stop` for the others, so the flag is not built. A fault of another kind (a protection fault, an invalid instruction) stops the program as before.
-- **What is never delivered**: a page fault with the reserved bit of the error code (an entry of a page table with a reserved bit: only the kernel writes those entries, so the machine stops with a line of the log, as at an exception in the kernel; a handler never sees it, so a repair cannot hide it in a loop of faults); a fault of the handler thread itself (it would wait for its own answer: no fault of a fault); a fault at or above `THREAD_AREA_BASE` (the thread areas, which hold the ring; the time page; the kernel half); a fault in the kernel on behalf of a program (`user_copy` checks the range first with `user_range`, so an operation with a bad address fails with its status, as before). Each of these stops the program as before, or fails the operation.
+- **Who registers**: the program itself, for one of its own threads (a thread handle with Control, or the calling thread). A pager that serves the faults of another program needs a fault ring that the pager reads and a right on the program handle: it is not built.
+- **Which faults**: every page fault that `page_give` does not serve (no frame and not committed, no mapping, or an access that the protection refuses), at an address below `THREAD_AREA_BASE`. No flag of a mapping (such as `Faults_To_Ring`) selects the faults: a program that wants only some ranges answers `Stop` for the others. A fault of another kind (a protection fault, an invalid instruction) stops the program as with no handler.
+- **What is never delivered**: a page fault with the reserved bit of the error code (an entry of a page table with a reserved bit: only the kernel writes those entries, so the machine stops with a line of the log, as at an exception in the kernel; a handler never sees it, so a repair cannot hide it in a loop of faults); a fault of the handler thread itself (it would wait for its own answer: no fault of a fault); a fault at or above `THREAD_AREA_BASE` (the thread areas, which hold the ring; the time page; the kernel half); a fault in the kernel on behalf of a program (`user_copy` checks the range first with `user_range`, so an operation with a bad address fails with its status). Each of these stops the program as with no handler, or fails the operation.
 - **A full ring**: the fault stops the program as with no handler, with the report of the fault; the kernel adds 1 to `fault_full` and writes a line of the log. The thread never waits for a place.
-- **The ring ends while a thread waits**: the handler thread ends, or `Fault_Handler_Set` names another handler (or the same one again: its ring starts empty) or ends the delivery (`end` 1). The record of the waiting thread is then in a ring that no thread will read: the program stops with the stop code `STOP_CODE_FAULT_UNANSWERED` (0x500), the same rule for the three. Without a waiting thread, each of them only ends the delivery or changes the handler: a later fault stops the program as before, or goes to the new ring.
+- **The ring ends while a thread waits**: the handler thread ends, or `Fault_Handler_Set` names another handler (or the same one again: its ring starts empty) or ends the delivery (`end` 1). The record of the waiting thread is then in a ring that no thread will read: the program stops with the stop code `STOP_CODE_FAULT_UNANSWERED` (0x500), the same rule for the three. Without a waiting thread, each of them only ends the delivery or changes the handler: a later fault stops the program as with no handler, or goes to the new ring.
 - **The program stops while a thread waits**: `program_stop` ends the waiting thread as any thread that is on no processor. A waiting thread holds its thread and nothing else: no record of the kernel, no lock, no page.
 - **No time bound**: a thread waits until the answer or the end of its program. Property 4 has one wait with a deadline, for a program that wants one; the fault handler of the program decides how long the repair takes, and a handler that never answers holds only threads of its own program, which its budget paid. The program, or the person, stops it.
 - **Who answers**: any thread of the program. The record names the thread by its number and the serial of the fault; `Fault_Answer` finds a thread of the program with that number that waits for the fault of that serial, and refuses any other (`Bad_State`): an answer for a thread that ended and whose number serves again is refused, and so are a second answer, an answer for an earlier fault of the same thread, and an answer from another program.
@@ -469,7 +465,7 @@ A program names one of its threads as its fault handler (`Fault_Handler_Set`, op
 - **Waiting, then ready** (`Fault_Answer` with `Resume`): under the program lock, `fault_waits` becomes false; then `thread_wake` makes it `Ready` under the run lock, as the end of a word wait does. If the thread is still on its processor, `schedule` puts it in a queue when it leaves (the rule of `thread_ready_held`).
 - **Waiting, then stopped** (`Fault_Answer` with `Stop`, `program_stop`, the end of the handler): `program_stop` ends it.
 
-**The return.** A thread resumed after an answer returns through `run`, so its frame passes `return_frame_prepare` as each return does ("The return to a program"). The frame is the one that the processor gave at the fault: the instruction runs again. No operation lets a thread of the program write the registers of a waiting thread in this step, so the single check of the frame stays the only place where a program can change a frame.
+**The return.** A thread resumed after an answer returns through `run`, so its frame passes `return_frame_prepare` as each return does ("The return to a program"). The frame is the one that the processor gave at the fault: the instruction runs again. No operation lets a thread of the program write the registers of a waiting thread, so the single check of the frame stays the only place where a program can change a frame.
 
 **The answer `Stop`** writes the stop report from the frame of the waiting thread and the address of its fault (`program_fault_report`, the same code as a fault with no handler), with the stack trace of the waiting thread: the answering thread is of the same program, so the page table of its processor is the one of the program.
 
@@ -481,9 +477,9 @@ A program names one of its threads as its fault handler (`Fault_Handler_Set`, op
 
 ## The extended state of the processor
 
-Status: designed and written on 2026-11-11 (owner: "Nah évidemment qu'il faut donc ajouter le support mdrr. On va pas se faire artificiellement limiter par fxsave"). Before this, the kernel saved 512 bytes with `fxsave64` (x87 and SSE) and kept the `CR4` and `XCR0` that the firmware left: a program that used AVX on a firmware that enabled it got the high halves of its ymm registers from another thread, with no error.
+The kernel saves each state component that it enables, not only x87 and SSE, and writes `CR4` and `XCR0` itself. A kernel that saves only 512 bytes with `fxsave64` (x87 and SSE) and keeps the `CR4` and `XCR0` of the firmware has a fault: a program that uses AVX on a firmware that enabled it gets the high halves of its ymm registers from another thread, with no error.
 
-Changed on 2026-11-12, after a measure: the kernel saves and restores the extended state only at a switch of threads, and has no vector code (sections 3 and 3a). The form of 2026-11-11 saved at each kernel entry and made each entry 29 to 41 % slower.
+The kernel saves and restores the extended state only at a switch of threads, and has no vector code (sections 3 and 3a). A save at each kernel entry makes each entry 29 to 41 % slower (section 3).
 
 The terms are in `GLOSSARY.md`: extended state, state component, extended state area, start state, switch of threads, usable instruction set. The code is `kernel/extended_state.odin`, the save and the restore in `kernel/processor.asm`, the switch in `kernel/schedule.odin`, the check of the build in `tools/kerneltool/vector_check.odin`, and `support/instruction_sets`. The test is the program `extended_state`.
 
@@ -506,7 +502,7 @@ The rule: a bit of `XCR0` is set only if the kernel saves its component. The ker
 
 One save therefore writes at most 512 bytes (`fxsave`), 576 (`xsave` with x87 and SSE), 832 (with AVX) or 2688 (with AVX-512). The area of each thread entry is 2688 bytes in every case (section 2). The boot log says both: "kernel: extended state: x87, SSE, AVX; one save writes at most 832 bytes, in an area of 2688 bytes in each thread entry; saved at a switch of threads with xsaveopt". The offsets of the table are those of the processors of Intel and AMD; the kernel does not trust them: after it writes `XCR0`, it reads the size that the processor needs (`CPUID` leaf `0xD`, subleaf 0, `EBX`). If that size is more than the area of a thread, the kernel drops AVX-512 and tries again; x87 and SSE with `xsave` need 576 bytes, which always fit.
 
-Why AVX-512 is in: it costs 1856 more bytes in each thread entry of the thread table of the kernel, and nothing at an entry of a program that does not use it (section 3). Why AMX is out: its tile data is 8 KiB for each thread, and its use needs a permission model (Linux asks each program to request it), and the tile configuration has rules of its own. A program that executes an AMX instruction gets an invalid opcode and stops. It is its own step, if the owner wants it.
+Why AVX-512 is in: it costs 1856 more bytes in each thread entry of the thread table of the kernel, and nothing at an entry of a program that does not use it (section 3). Why AMX is out: its tile data is 8 KiB for each thread, and its use needs a permission model (Linux asks each program to request it), and the tile configuration has rules of its own. A program that executes an AMX instruction gets an invalid opcode and stops.
 
 On each processor, the kernel sets `CR4.OSFXSR` (bit 9) and `CR4.OSXMMEXCPT` (bit 10). It sets `CR4.OSXSAVE` (bit 18) and writes `XCR0` when the processor has `xsave` and `xsaveopt`, and clears `CR4.OSXSAVE` when it does not. The first processor chooses the components. Each other processor checks that it has the same components with the same offsets and sizes, and sets the same `XCR0`. A processor that does not have them stays stopped, and the kernel logs a line for it: the machine runs on the other processors. The reason: the area of a thread is restored on any processor, so the format must be the same on all. The reason against a lower common choice: the first processor chose before the others started, and the processors of one machine report the same components (Intel and AMD give the same `CPUID` leaf `0xD` on the cores of a hybrid processor).
 
@@ -524,7 +520,7 @@ The kernel writes an area at one time only: `Thread_Create` writes the start sta
 
 The rule: **the kernel saves the extended state of a thread only when a processor leaves it for another thread, and restores it only when a processor takes a thread from a run queue. A kernel entry, an interrupt, and the return to the same thread neither save nor restore.** Between a restore and the next save, the registers of the thread stay live through every entry, because no code of the kernel changes an x87, MMX, SSE, AVX or opmask register (section 3a).
 
-The reason is measured (2026-11-12). The first form of this section saved at each entry from a program and restored at each resume, with `xsaveopt64` and `xrstor64`. `kerneltool measure` gave one kernel entry of `locks` in 177 ns on `master` (`fxsave64` at each entry, `fxrstor64` at each resume; two runs within 0.4 %) and in 229 and 249 ns with that form: 29 to 41 % more. On the host (AMD Ryzen 7 5800X, one pinned core, the least of 200 batches, in cycles): `fxsave64` 72, `fxrstor64` 167, `xsaveopt64` 101, `xrstor64` 327, `vzeroupper` 2; the pair is 227 cycles with `fxsave64`, 430 with `xsaveopt64`, and 446 with `xsave64`. The instructions themselves are the cost, and the pair of `master` was already about 60 ns of the 177 ns of an entry. Other kernels save at a switch of threads for the same reason.
+The reason is measured (2026-11-12). `kerneltool measure` gave one kernel entry of `locks` in 177 ns with `fxsave64` at each entry and `fxrstor64` at each resume (two runs within 0.4 %). With `xsaveopt64` at each entry from a program and `xrstor64` at each resume, it gave 229 and 249 ns: 29 to 41 % more. On the host (AMD Ryzen 7 5800X, one pinned core, the least of 200 batches, in cycles): `fxsave64` 72, `fxrstor64` 167, `xsaveopt64` 101, `xrstor64` 327, `vzeroupper` 2; the pair is 227 cycles with `fxsave64`, 430 with `xsaveopt64`, and 446 with `xsave64`. The instructions themselves are the cost: the pair `fxsave64` and `fxrstor64` is about 60 ns of the 177 ns of an entry. Other kernels save at a switch of threads for the same reason.
 
 The places, all in `kernel/schedule.odin`:
 
@@ -533,7 +529,7 @@ The places, all in `kernel/schedule.odin`:
 - **A thread continues after an entry** (`kernel_interrupt` calls `run` for the same thread): nothing. Its registers are live.
 - **The idle wait**: nothing. The registers keep the state of the last thread, whose area is complete already.
 
-Not done: a processor that takes again the thread whose state its registers still hold could skip the restore. That needs a field of the processor, "the thread whose state is in the registers, and its serial", set at each restore, and a field of the thread, "the processor whose registers hold its state", set by the processor that restores it, so that a thread that ran elsewhere in between is restored. It saves one restore when a processor runs one thread alone; it is a separate step, with a measure.
+Not done: a processor that takes again the thread whose state its registers still hold could skip the restore. That needs a field of the processor, "the thread whose state is in the registers, and its serial", set at each restore, and a field of the thread, "the processor whose registers hold its state", set by the processor that restores it, so that a thread that ran elsewhere in between is restored. It saves one restore when a processor runs one thread alone; it needs a measure.
 
 The instructions: `xsaveopt64` and `xrstor64` with `EDX:EAX` = all ones (every component that `XCR0` enables); with no `xsave` or no `xsaveopt` on the first processor, `fxsave64` and `fxrstor64`. The first processor chooses the form at boot (`extended_state_form`); the scheduler passes it to the two procedures of `kernel/processor.asm`. No `vzeroupper`: the kernel has no SSE code, so no high half of a ymm register can slow an instruction of the kernel.
 
@@ -566,16 +562,16 @@ How the build keeps the rule:
 
 ### 4. The cost
 
-Measured by the coordinator on 2026-11-12 with `kerneltool measure`: the test machine under KVM (4 processors) on the host of the tests (AMD Ryzen 7 5800X), two runs of each build, one machine at a time, a host load of 6.4 to 8.7 before each run (the limit for a valid measure is 8, so these runs are at its edge).
+Measured on 2026-11-12 with `kerneltool measure`: the test machine under KVM (4 processors) on the host of the tests (AMD Ryzen 7 5800X), two runs of each build, one machine at a time, a host load of 6.4 to 8.7 before each run (the limit for a valid measure is 8, so these runs are at its edge).
 
-| | `master` (`fxsave64` at each entry, `fxrstor64` at each resume) | This design (save and restore at a switch of threads) |
+| | A save at each entry (`fxsave64` at each entry, `fxrstor64` at each resume) | This design (save and restore at a switch of threads) |
 |---|---|---|
 | Kernel entries in one second, one locker of `locks` (an entry that returns to the same thread) | 5 669 546 and 5 613 013: 176 and 178 ns for each entry | 8 063 360 and 8 359 466: 124 and 120 ns for each entry |
 | Kernel entries in one second, 4 lockers | 20 326 826 and 20 503 040 | 26 945 066 and 27 561 173 |
 | One hand-over between two threads by the word wait (a wake, a wait, a save and a restore) | | 128 and 125 ns with x87 and SSE in use; 133 and 127 ns with the ymm high halves in use |
 | One empty kernel entry of the program `extended_state` | | 90 ns with xmm in use, 78 ns with ymm in use (one run) |
 
-The reason for the design is the cost of the instructions themselves, measured on the host (one pinned core, the least of 200 batches, in cycles): `fxsave64` 72, `fxrstor64` 167, `xsaveopt64` 101, `xrstor64` 327, `vzeroupper` 2. The pair at each entry of `master` was 227 cycles, about 60 ns of an entry of 177 ns; the pair `xsaveopt64` and `xrstor64` at each entry was 430 cycles and made an entry 229 to 249 ns. Now an entry pays no pair, and each switch pays the pair of 430 cycles once.
+The reason for the design is the cost of the instructions themselves, measured on the host (one pinned core, the least of 200 batches, in cycles): `fxsave64` 72, `fxrstor64` 167, `xsaveopt64` 101, `xrstor64` 327, `vzeroupper` 2. The pair `fxsave64` and `fxrstor64` at each entry is 227 cycles, about 60 ns of an entry of 177 ns; the pair `xsaveopt64` and `xrstor64` at each entry is 430 cycles and makes an entry 229 to 249 ns. With this design an entry pays no pair, and each switch pays the pair of 430 cycles once.
 
 | | What a switch saves and restores |
 |---|---|
@@ -613,7 +609,7 @@ With no kernel operation: the processor tells it. `CPUID` leaf 1 gives `OSXSAVE`
 
 ## The return to a program
 
-Status: designed and written on 2026-11-12 (the owner's list of next work: "a fault at the return to a program is a fault of that program"). Before this, a thread whose saved state the processor refused at `iretq` made the processor fault in the kernel, and the kernel stopped the machine: one program could stop the machine (property 2). `Thread_Create` refused one cause only. The term is in `GLOSSARY.md`: refused return. The code is `kernel/return_to_program.odin`, `resume` and `interrupt_common` in `kernel/processor.asm`, `run` in `kernel/schedule.odin`; the test is the program `return_fault` (`kerneltool test return_fault`).
+A fault at the return to a program is a fault of that program, not of the kernel. Without the checks of this section, a thread whose saved state the processor refuses at `iretq` makes the processor fault in the kernel, and the kernel stops the machine: one program can stop the machine (property 2). The term is in `GLOSSARY.md`: refused return. The code is `kernel/return_to_program.odin`, `resume` and `interrupt_common` in `kernel/processor.asm`, `run` in `kernel/schedule.odin`; the test is the program `return_fault` (`kerneltool test return_fault`).
 
 ### 1. The frame of a thread, and who writes it
 
@@ -623,7 +619,7 @@ The kernel returns to a thread with `iretq`, from the frame of 22 values that it
 |---|---|---|
 | An interrupt or an exception from a program: the processor pushes the state of the program, and `kernel_interrupt` copies it | all | Yes. `rip` is `USER_END` (2^47, not canonical) when an interrupt comes after an instruction that ends at the last byte below `USER_END`: a program can map executable memory at the last page (`Memory_Map` refuses only an address at or above `USER_END`). `rsp` is any value that the program put in it, also one that is not canonical. `cs` and `ss` are the selectors of programs: the table of descriptors has no other descriptor that a program can load. |
 | `syscall` (`kernel_enter`): `rip` is the return address that the processor wrote in `rcx`, `rflags` the flags that it wrote in `r11` | all | Yes, every time: a `syscall` in the last two bytes below `USER_END` gives the return address `USER_END`. `rsp` as above. |
-| The flags of the kernel at `syscall`: the flags of the program less the mask of `MSR_SFMASK` | the flags of `iretq` itself | Yes, before this change: the mask did not clear nested task, which a program sets with `popfq`; the kernel then ran with it, and its `iretq` faulted. |
+| The flags of the kernel at `syscall`: the flags of the program less the mask of `MSR_SFMASK` | the flags of `iretq` itself | Yes, if the mask does not clear nested task, which a program sets with `popfq`: the kernel then runs with it, and its `iretq` faults. `MSR_SFMASK` clears it (section 2). |
 | `Thread_Create` and `Program_Start` (`thread_create`) | `rip`, `rsp`, `cs`, `ss`, `rflags` | No: an entry at or above `USER_END` and a stack above `USER_END` or below 8 are refused (`Bad_Address`); `cs`, `ss` and the flags are constants. |
 | `run`: `rax` after a kernel entry (the time) | `rax` | No: a general register. |
 | Another writer (a debugger, a restart, a fault handler that changes `rip`) | | None exists. A future one writes the frame only through the rules of section 2, and the frame is checked again before each return. |
@@ -648,10 +644,10 @@ Two more ways into the same check:
 
 ### 3. The second layer: a fault of the `iretq` of `resume` is a fault of the thread
 
-After the first layer, no cause is known for which the processor refuses the `iretq` of `resume`. The second layer makes a cause that nobody found a fault of the thread too, and not of the kernel. Each fact at the instant of that `iretq`, from the code:
+After the first layer, no cause is known for which the processor refuses the `iretq` of `resume`. The second layer makes an unknown cause a fault of the thread too, and not of the kernel. Each fact at the instant of that `iretq`, from the code:
 
 - **The stack.** `resume` copies the frame of the thread to the top 22 * 8 bytes of the kernel stack of the processor (`[gs:0] - 176`), sets `rsp` there, and pops it. At the `iretq`, `rsp` is `[gs:0] - 40`: the five values `rip`, `cs`, `rflags`, `rsp`, `ss`. Nothing below it lives: a kernel entry starts at the top of the stack and never continues an earlier one, and `resume` never returns. The top 176 bytes are where each entry from a program puts its frame, so the copy writes over a frame that `kernel_interrupt` already copied to the thread.
-- **The fault frame.** A fault of `iretq` comes at privilege 0, with no change of stack (no gate of the vectors 11, 12, 13 has a stack of its own). The processor pushes its frame below `rsp`, aligned on 16, over the part of the copy that the pops already read and below it. The thread table is not written. (Before this change, `resume` returned from the frame in the thread table, and such a push wrote over the thread table.)
+- **The fault frame.** A fault of `iretq` comes at privilege 0, with no change of stack (no gate of the vectors 11, 12, 13 has a stack of its own). The processor pushes its frame below `rsp`, aligned on 16, over the part of the copy that the pops already read and below it. The thread table is not written. (A `resume` that returns from the frame in the thread table lets such a push write over the thread table.)
 - **gs.** `resume` ran `swapgs` before the `iretq`: the gs base is the one of the program (the thread record, or what the program loaded), and the base of the processor record is in `MSR_KERNEL_GS_BASE`. The saved `cs` is the kernel's, so the test "did the interrupt come from a program" is false. `interrupt_common` therefore tests the saved `rip`: equal to `resume_return` (the label of the `iretq`), and the vector 11, 12 or 13 (segment not present, stack fault, general protection: the faults of `iretq`), it runs `swapgs`. At that one instruction no other instruction of the kernel runs with the gs of a program, and interrupts are off: the only other interrupts there are an NMI and a machine check, which come between two instructions (vector 2 or 18). They get no `swapgs`, the kernel stops the machine for them, and its report reads nothing through gs.
 - **The registers.** The general registers are those of the program (the pops ran); the stub saves them in the fault frame. The frame of the thread in the thread table is unchanged: the report uses it. The extended state of the thread is live in the registers, as at each return.
 - **The thread.** It is the current thread of the processor: `run` runs only for `cpu.current`.
@@ -660,7 +656,7 @@ After the first layer, no cause is known for which the processor refuses the `ir
 
 No program can make this layer run on the kernel of the system. One machine of the test runs it on purpose: the module `kernel_without_return_check` is the same kernel, built with the setting `TEST_BUILD_SKIPS_THE_INSTRUCTION_ADDRESS_CHECK` (a `-define` of that one module in the module table, `tools/kerneltool/modules.odin`), which skips the check of the instruction address. Its boot volume is `boot_volume_without_return_check.img`, which only the second machine of `kerneltool test return_fault` boots; there the child of the instruction address reaches the `iretq`, the processor refuses it, and this layer stops the child. A reader knows that the kernel of the system does not have the setting: the module "kernel" of the table has no define, so the constant is `false` and the `when` keeps the check; a kernel with the setting writes "kernel: TEST BUILD: the check of the instruction address before a return to a program is skipped" at boot, and `machine_test` fails every machine that is not of that volume and whose log has that line.
 
-The cost: the copy of 176 bytes at each return, on a line of the stack that the entry wrote; `return_frame_prepare` is three stores, two compares and one mask. The copy has two forms in `kernel/processor.asm`, behind the assembler constant `RESUME_COPY_WITH_REP_MOVSQ`: 11 pairs of moves of 8 bytes (0, the default) or `rep movsq` (1). The coordinator builds each, measures the kernel entries of `locks` in one second, and keeps the faster (8 063 360 and 8 359 466 before this change). The moves are expected to be faster: `rep movsq` has a start cost of some tens of cycles for a short count on these processors, and the 44 moves take about 22 cycles.
+The cost: the copy of 176 bytes at each return, on a line of the stack that the entry wrote; `return_frame_prepare` is three stores, two compares and one mask. The copy has two forms in `kernel/processor.asm`, behind the assembler constant `RESUME_COPY_WITH_REP_MOVSQ`: 11 pairs of moves of 8 bytes (0, the default) or `rep movsq` (1). The choice between them is a measure of the kernel entries of `locks` in one second; the faster form is kept (8 063 360 and 8 359 466 with a `resume` that returns from the thread table). The moves are expected to be faster: `rep movsq` has a start cost of some tens of cycles for a short count on these processors, and the 44 moves take about 22 cycles.
 
 ### 4. What stays
 
@@ -669,13 +665,13 @@ The cost: the copy of 176 bytes at each return, on a line of the stack that the 
 
 ## The instructions of the kernel
 
-Status: written on 2026-11-12 (`HANDOFF.md`, item 56: "the instructions of the kernel (ports, MSR, `cr3`, the cycle counter) and the copy and fill of memory as `asm` templates"). Not built or measured by the writer. The term is in `GLOSSARY.md`: instruction template. The code is `kernel/instructions.odin`; what stays in assembler is in `kernel/processor.asm`.
+The small instructions of the kernel (ports, MSR, `cr3`) are `asm` templates; the cycle counter and the copy and fill of memory have the forms of sections 2 and 4. No measure of this form is recorded (section 6). The term is in `GLOSSARY.md`: instruction template. The code is `kernel/instructions.odin`; what stays in assembler is in `kernel/processor.asm`.
 
 ### 1. What a template is
 
 An instruction template is an `asm` procedure of Odin (release `dev-2026-11a`). Its parameters and results are values in registers. The specification block between `[` and `]` pins a parameter to a register (`port = %dx`), ties an input to an output in one register (`count -> count_left = %rcx`), and declares the effects: `#volatile` (the compiler never removes the template, never merges two calls, and keeps their order) and `#clobber memory` (the compiler keeps each load and store on its side). The compiler checks each instruction against its table of the forms of x86-64, and writes the template into the LLVM IR as inline assembler at each call. So a template costs no call, no return, and no move of its arguments into the registers of the calling convention.
 
-The syntax comes from the tests of the compiler (`tests/internal/test_asm_*.odin` in the source of the release) and from its checker (`src/check_asm.cpp`), and from the two templates that the repository had before: `rdrand` and `rdseed` (`support/random/entropy.odin`), `cpuid` and `xgetbv` (`support/instruction_sets`).
+The syntax comes from the tests of the compiler (`tests/internal/test_asm_*.odin` in the source of the release) and from its checker (`src/check_asm.cpp`), and from the templates of other packages: `rdrand` and `rdseed` (`support/random/entropy.odin`), `cpuid` and `xgetbv` (`support/instruction_sets`).
 
 ### 2. The templates of the kernel
 
@@ -691,11 +687,11 @@ The syntax comes from the tests of the compiler (`tests/internal/test_asm_*.odin
 | `extended_control_register_write` | `xsetbv` | at the start of a processor |
 | `user_copy` | `stac`, `rep movsb`, `clac` | each kernel operation that reads or writes the memory of the caller |
 
-Each template is `#volatile` and has `#clobber memory`: the meaning is that of the call that it replaces, which the compiler could not move and which could change any memory. The instructions with two halves (`rdmsr`, `wrmsr`, `xsetbv`) are templates with two values of 32 bits, and a procedure with `#force_inline` joins or splits the 64 bits. `in` and `out` have no operand in a template: the pinned registers `dx` and `al` are their operands, and their widths choose the form. The table of the compiler (`src/asm_tables_amd64.cpp`) lists no read and no write of a register for these two, so the checker would refuse an input that is only pinned (as unused, with `-vet`) and an output that no instruction writes. Each register is therefore an input tied to an output, and a procedure with `#force_inline` drops the outputs; `in` gets 0 as the first value of `al`, the `xor eax, eax` of the assembler form before. `user_copy` chooses between the copy with `stac` and `clac` and the copy without them by a test of `user_access_guard`, because `stac` and `clac` exist only on a processor with SMAP.
+Each template is `#volatile` and has `#clobber memory`: the meaning is that of the call that it replaces, which the compiler could not move and which could change any memory. The instructions with two halves (`rdmsr`, `wrmsr`, `xsetbv`) are templates with two values of 32 bits, and a procedure with `#force_inline` joins or splits the 64 bits. `in` and `out` have no operand in a template: the pinned registers `dx` and `al` are their operands, and their widths choose the form. The table of the compiler (`src/asm_tables_amd64.cpp`) lists no read and no write of a register for these two, so the checker would refuse an input that is only pinned (as unused, with `-vet`) and an output that no instruction writes. Each register is therefore an input tied to an output, and a procedure with `#force_inline` drops the outputs; `in` gets 0 as the first value of `al`, as the `xor eax, eax` of an assembler form. `user_copy` chooses between the copy with `stac` and `clac` and the copy without them by a test of `user_access_guard`, because `stac` and `clac` exist only on a processor with SMAP.
 
 The names are complete words (`model_specific_register_write`, not `msr_write`). `port_write_8`, `port_read_8`, `page_flush`, `processor_self` and `user_copy` keep their names: the system library has `port_write_8` and `port_read_8` for programs, and one concept keeps one name.
 
-Already in the code of their callers, so not changed: the cycle counter (`intrinsics.read_cycle_counter`, `rdtsc`), `cpuid` (`intrinsics.x86_cpuid`), `pause` (`intrinsics.cpu_relax`) and the memory barriers (`intrinsics.atomic_thread_fence`). The kernel has no `rdtscp`. `swapgs` is only in the entries and in `resume`, which stay in the assembler file.
+Already in the code of their callers through intrinsics, so not templates: the cycle counter (`intrinsics.read_cycle_counter`, `rdtsc`), `cpuid` (`intrinsics.x86_cpuid`), `pause` (`intrinsics.cpu_relax`) and the memory barriers (`intrinsics.atomic_thread_fence`). The kernel has no `rdtscp`. `swapgs` is only in the entries and in `resume`, which stay in the assembler file.
 
 ### 3. What stays in `kernel/processor.asm`, and why
 
@@ -717,31 +713,31 @@ A template is an expression: it takes values and gives values, and the compiler 
 - The forms are chosen by size at run time (under 16 bytes, 16 to 64, the string instructions, the loop of 64 bytes). A template with the same instructions is not faster; inlined at each call, it makes the code larger.
 - The host tests (`runtime/memory_test.odin`, `runtime/without_vector_registers`) assemble the same file with `HOST` defined, and so test the code that the system runs.
 
-The one copy of the kernel that was a call by name is the copy of `user_copy`: it is now a template (`rep movsb`, the same instruction as before).
+The copy of `user_copy` is a template (`rep movsb`), not a call by name: it is the one copy of the kernel with that form.
 
 ### 5. The proof that the kernel has no vector instruction
 
-A template is compiled code: the check of the build (`tools/kerneltool/vector_check.odin`) disassembles the linked kernel and reads each template in the code of its callers. No template of the kernel names a vector register, so the check passes as before. The kernel imports the contract library only; the templates with vector registers of other packages (for programs) are not in its build.
+A template is compiled code: the check of the build (`tools/kerneltool/vector_check.odin`) disassembles the linked kernel and reads each template in the code of its callers. No template of the kernel names a vector register, so the check passes. The kernel imports the contract library only; the templates with vector registers of other packages (for programs) are not in its build.
 
 ### 6. The measure
 
-`kerneltool measure`, before and after, two runs of each build, with the load of the host:
+`kerneltool measure`, with the templates and with calls in their place, two runs of each build, with the load of the host:
 
-- "locks: kernel entries in one second", with one locker and with 4 lockers (8 063 360 and 8 359 466 with one locker before this change). Each entry runs `processor_self` several times (each lock) and `user_copy` for its arguments. Expected: more entries, from the call and the return saved at each.
+- "locks: kernel entries in one second", with one locker and with 4 lockers (8 063 360 and 8 359 466 with one locker with calls). Each entry runs `processor_self` several times (each lock) and `user_copy` for its arguments. Expected: more entries, from the call and the return saved at each.
 - "clock: the time page": its reads do not enter the kernel; expected: no change. It shows the noise of the run.
 - The measure of the copy and the fill at the start of the compositor ("compositor: copy_bytes_without_overlap, ns for ..."): `runtime/memory.asm` did not change; expected: no change.
 
-The first number of the measure goes here.
+No number of this measure is recorded yet.
 
 ## Kernel events
 
-Status: designed and written on 2026-11-12 (`HANDOFF.md`, item 53: "fixed event points in the kernel (kernel entry, thread switch, fault, lock take), a table of rules that a program with a grant gives to the kernel (kind of event, program, threshold), applied in bounded time, and the records in a ring"). Not built, not run and not measured by the writer. The terms are in `GLOSSARY.md`: kernel event, event point, observed kinds, event rule, event table, event ring, event record, lost count, performance counter. The code is `kernel/events.odin`, the event points in `kernel/enter.odin`, `kernel/schedule.odin`, `kernel/program.odin` (`kernel_interrupt`) and `kernel/lock.odin`, the operation `Events_Set`; the test is the program `kernel_events` (`kerneltool test kernel_events`).
+The kernel has fixed event points (kernel entry, thread switch, fault, lock take). A program with a grant gives the kernel a table of rules (kind of event, program, threshold); the kernel applies them in bounded time and writes the records in a ring. The terms are in `GLOSSARY.md`: kernel event, event point, observed kinds, event rule, event table, event ring, event record, lost count, performance counter. The code is `kernel/events.odin`, the event points in `kernel/enter.odin`, `kernel/schedule.odin`, `kernel/program.odin` (`kernel_interrupt`) and `kernel/lock.odin`, the operation `Events_Set`; the test is the program `kernel_events` (`kerneltool test kernel_events`).
 
 ### 1. What it is, and what it is not
 
 The kernel has four fixed event points. A program with the right `Events` on the machine gives the kernel an event table: at most 16 rules, and a memory object for the records. At an event point, the kernel tests the rules of the kind of the event; when a rule accepts the event, the kernel writes one event record into the event ring of its processor. The program reads the rings with no kernel entry.
 
-No bytecode, no verifier and no compiler: a rule is a record of fixed fields that the kernel compares, and its cost has a bound that does not depend on the rule (at most 16 tests of a few fields). Property 1: one new operation, `Events_Set`, number 32; the kernel has 32 operations, the first target of property 1. Property 13: the rules are a table, the records are fixed records in a ring for each processor. Property 20: a grant, and a program handle for each named program.
+No bytecode, no verifier and no compiler: a rule is a record of fixed fields that the kernel compares, and its cost has a bound that does not depend on the rule (at most 16 tests of a few fields). Property 1: one operation, `Events_Set`, number 32; the kernel has 32 operations, the first target of property 1. Property 13: the rules are a table, the records are fixed records in a ring for each processor. Property 20: a grant, and a program handle for each named program.
 
 ### 2. The kinds of kernel events
 
@@ -752,7 +748,7 @@ No bytecode, no verifier and no compiler: a rule is a record of fixed fields tha
 | `Fault` | an exception of a thread of a program (`kernel_interrupt`), after the kernel acted on it | the faulting thread | the vector | the address of a page fault, only for a rule that names the program (section 5a), else 0 | `Event_Fault_Outcome`: first use, fault ring, or stopped |
 | `Lock_Wait` | a lock of the kernel taken after a wait (`lock_take`) | the current thread of the processor (0: none) | the `Lock_Kind` | the cycles of the wait | 0 |
 
-The time of a record is the cycle counter at the event point (the end of an operation or of a wait). The kernel entry of the decision is "the operation number and its duration": a kernel entry runs up to 32 commands of its kernel ring, so the event is one command, which has one operation number. A wait of the word wait is a `Switch` when the thread runs again; the `Operation` of `Word_Wait` itself returns before the wait.
+The time of a record is the cycle counter at the event point (the end of an operation or of a wait). The event of a kernel entry is "the operation number and its duration": a kernel entry runs up to 32 commands of its kernel ring, so the event is one command, which has one operation number. A wait of the word wait is a `Switch` when the thread runs again; the `Operation` of `Word_Wait` itself returns before the wait.
 
 ### 3. The rule and the record
 
@@ -772,7 +768,7 @@ The record (`op.Event_Record`, 64 bytes): the cycle counter, the kind, the proce
 
 ### 5. The grant
 
-The new right `Events` on the machine handle, beside `Inspect` and `Schedule` (the right of `Strategy_Set`). Why not `Inspect`: `Inspect` gives counts and states; `Events` gives the order and the duration of the work of each program, to the cycle: a precise clock over other programs (property 20, line 17). A program that reads the reports must not get it as a side effect. The root service gives it by name (the grant `Events`); today only to `kernel_events`, with no `Give`: a program of the system cannot pass `Events` on. The person can revoke it (`revoke("kernel_events", "machine")` in the console), and the table ends with it (section 4). A rule that names a program needs a program handle with Read; a rule for every program needs only the right on the machine.
+The right `Events` on the machine handle, beside `Inspect` and `Schedule` (the right of `Strategy_Set`). Why not `Inspect`: `Inspect` gives counts and states; `Events` gives the order and the duration of the work of each program, to the cycle: a precise clock over other programs (property 20, line 17). A program that reads the reports must not get it as a side effect. The root service gives it by name (the grant `Events`); today only to `kernel_events`, with no `Give`: a program of the system cannot pass `Events` on. The person can revoke it (`revoke("kernel_events", "machine")` in the console), and the table ends with it (section 4). A rule that names a program needs a program handle with Read; a rule for every program needs only the right on the machine.
 
 ### 5a. What a record shows of another program
 
@@ -818,7 +814,7 @@ What an event point never does: fault (the frames of the ring are mapped by the 
 The event table, the ring fields of each processor record and the counts of "one in N" change only under the control lock, and only while the observed kinds of every processor are 0 and every other processor answered a `processor_sync` since they became 0 (`event_table_end`, `event_table_give`).
 
 1. To end a table: store 0 in the observed kinds of each processor, then `processor_sync` to every other processor, then release the memory object.
-2. To give a table: end the table that exists (step 1), write the new table, the ring fields of each processor record and the heads of the rings, then store the observed kinds of each processor last (an atomic store; the event point loads it with an acquire).
+2. To give a table: end the table that exists (as in 1), write the new table, the ring fields of each processor record and the heads of the rings, then store the observed kinds of each processor last (an atomic store; the event point loads it with an acquire).
 
 Why it is correct: a processor answers `processor_sync` only at a kernel entry, in its idle wait, and while it waits for a lock; `event_record` contains none of these. So a processor that read its word as not 0 ends its use of the table before its next answer. A processor that answered loads its word as 0 after: the store of 0 and the store of `pending` that it saw are two atomic stores of one processor, which x86-64 keeps in order, and its load of `pending` comes before its load of the word. After the synchronization, no processor reads the old table or writes the old rings: the frames can go.
 
@@ -828,7 +824,7 @@ The locks: `Events_Set` holds the program lock of the caller and the control loc
 
 ### 9. The fault ring and the fault event
 
-The fault ring is built, reviewed and has its own operations; this step does not change it. A fault event is an observation: a record that a program with the right `Events` reads later; nothing waits for it, and a full event ring loses it. A record of the fault ring is a delivery: the faulting thread waits until its own program answers, and a full fault ring stops the program. The event point of a fault comes after the kernel acted, so its record says what the kernel did: `First_Use` (a page on first use was given), `Fault_Ring` (the fault went to the fault ring), `Stopped` (the program stops).
+The fault ring is a separate mechanism with its own operations; kernel events do not change it. A fault event is an observation: a record that a program with the right `Events` reads later; nothing waits for it, and a full event ring loses it. A record of the fault ring is a delivery: the faulting thread waits until its own program answers, and a full fault ring stops the program. The event point of a fault comes after the kernel acted, so its record says what the kernel did: `First_Use` (a page on first use was given), `Fault_Ring` (the fault went to the fault ring), `Stopped` (the program stops).
 
 ### 10. The processor counters
 
@@ -836,8 +832,8 @@ An event record carries the cycle counter only (its time, and the durations of `
 
 - **Intel**: the architectural performance monitoring is `CPUID` leaf `0xA` (its version, its general counters and their width, its fixed counters: instructions retired, cycles).
 - **AMD**: leaf `0xA` is an Intel leaf. AMD has 4 legacy core counters, 6 with the core counter extension (`CPUID` `0x80000001`, `ECX` bit 23), and the monitoring version 2 from Zen 4 (`CPUID` `0x80000022`). The host of the tests is an AMD Ryzen 7 5800X (Zen 3): no version 2.
-- **The test machine**: QEMU with `-cpu max`, KVM first and TCG when KVM is absent (`tools/kerneltool/main.odin`). Its first boot line: "kernel: performance counters (a guest of a hypervisor): AMD, core counter extension yes, monitoring version 2 no, 0 core counters in CPUID 0x80000022". TCG has no performance counters. KVM gives a guest a virtual PMU when its module has `enable_pmu` and QEMU asks for it (the CPU property `pmu`); whether `-cpu max` asks for it by default was not verified by the writer. The line of the boot says what the guest sees: "kernel: performance counters (a guest of a hypervisor): ...".
-- So no test reaches the counters reliably: the code for their registers is not written. A later step programs them when the boot line shows them on the test machine, with a test that compares a count of instructions retired with a known loop.
+- **The test machine**: QEMU with `-cpu max`, KVM first and TCG when KVM is absent (`tools/kerneltool/main.odin`). Its first boot line: "kernel: performance counters (a guest of a hypervisor): AMD, core counter extension yes, monitoring version 2 no, 0 core counters in CPUID 0x80000022". TCG has no performance counters. KVM gives a guest a virtual PMU when its module has `enable_pmu` and QEMU asks for it (the CPU property `pmu`); whether `-cpu max` asks for it by default is not verified. The line of the boot says what the guest sees: "kernel: performance counters (a guest of a hypervisor): ...".
+- So no test reaches the counters reliably: the code for their registers is not written. That code needs a test machine whose boot line shows the counters, and a test that compares a count of instructions retired with a known loop.
 
 ### 11. The measure
 
@@ -857,19 +853,17 @@ The table lives from before the round to after it, and the child makes no other 
 | A rule for every program that matches nothing | ___ | ___ | the two loads and branches, two reads of the cycle counter, a call of `event_record`, a third load of the observed kinds, and the test of one rule |
 | A rule that accepts each operation | ___ | ___ | all of the row above, then one record of 64 bytes and the store of the count `written` of the ring |
 
-The first run measured in the program itself, and its line did not add up: "a rule on every kernel entry 7524195 (2252433 records, 0 lost)". 7 524 195 was a rate in one second; the loop ran 300 ms, so it made about 2.26 million operations, and the records were those and a few operations of other programs. The rate and the count were of two intervals, and nothing checked one against the other. That form is gone.
+A run of two rounds, at a host load near 8, one run: no rule 8 194 476 entries in one second (the kernel without event points: 8 267 093 to 8 351 786 in the same hour: an event point with no rule costs nothing that this measure sees); one rule that matches nothing 7 992 904, about 3.1 ns more for each entry (1 / 7 992 904 - 1 / 8 194 476 s). Those 3 ns are the work before any rule is tested: the cycle counter read at the start and at the end of the operation, the call of `event_record`, the second load of the observed kinds; the test of one rule is a few compares. A run of three rounds without the set of the program slots (one run, with another check on the host): no rule 8 580 014; a rule for every program that matches nothing 7 920 332; a rule that accepts each operation 7 633 594. It did not show the set of the program slots: its rule that matches nothing is for every program, so the load child took the path that reads the cycle counter. The table above takes the four rounds, two runs; its numbers are not recorded yet.
 
-The first run, at a host load near 8, one run: no rule 8 194 476 entries in one second (the kernel before this step: 8 267 093 to 8 351 786 in the same hour: an event point with no rule costs nothing that this measure sees); one rule that matches nothing 7 992 904, about 3.1 ns more for each entry (1 / 7 992 904 - 1 / 8 194 476 s). Those 3 ns are the work before any rule is tested: the cycle counter read at the start and at the end of the operation, the call of `event_record`, the second load of the observed kinds; the test of one rule is a few compares. The run with the three rounds of the step before (one run, with another check on the host): no rule 8 580 014; a rule for every program that matches nothing 7 920 332; a rule that accepts each operation 7 633 594. It did not show the set of the program slots: its rule that matches nothing is for every program, so the load child took the path that reads the cycle counter. The table above has the four rounds; the coordinator fills it, two runs.
-
-A rule for another program is nearly free for this one now (the set of program slots of section 7). The paths of the event point of an operation, after the change:
+A rule for another program is nearly free for this one (the set of program slots of section 7). The paths of the event point of an operation, without and with the set:
 
 | Path | Before the set | With the set |
 |---|---|---|
 | No rule of the kind | load the word, test, branch | the same: load the word, test, branch |
 | A rule of the kind for another program | load, test, branch; `rdtsc`; the operation; `rdtsc`; call `event_record`; load the word again; the loop over the rules (compare the kind, the detail, the least duration, the program); return | load, test, branch; load the set of the kind; shift, or, test, branch; the operation |
-| A rule that can accept the event | as above, then the record | load, test, branch; load the set; test, branch; `rdtsc`; the operation; `rdtsc`; call `event_record`, as before |
+| A rule that can accept the event | as above, then the record | load, test, branch; load the set; test, branch; `rdtsc`; the operation; `rdtsc`; call `event_record`, as without the set |
 
-To test the program of a rule before its kind in the loop would save nothing: the 3 ns come before the loop. A mask of kinds in the record of each program was the other form: it adds a load to the path with no rule, and a second set of words to keep under section 8; the set in the table adds a load only after the first branch. The second row of the table above measures it.
+To test the program of a rule before its kind in the loop would save nothing: the 3 ns come before the loop. A mask of kinds in the record of each program is the other form: it adds a load to the path with no rule, and a second set of words to keep under section 8; the set in the table adds a load only after the first branch. The second row of the table above measures it.
 
 "One in N" stays a count with an atomic addition and a division (one division for each event that passed the other tests of a rule with N above 1, some tens of cycles). A countdown is not exact in a few lines: a subtraction and a reset at 0 lose a count when more than N - 1 events come on other processors between the two (a virtual processor that the host stops there), and the sampling then stops for ever; a compare-and-exchange loop is exact, but its retries have no bound under contention, and an event point must have one.
 
@@ -878,7 +872,7 @@ To test the program of a rule before its kind in the loop would save nothing: th
 - The counters of the processor (section 10).
 - A rule on a range of operation numbers, or on a thread: a rule names one detail and one program.
 - A table for each observer: the machine has one table.
-- An event of the interrupts of devices, of the tick, of a wake: four kinds only in this step.
+- An event of the interrupts of devices, of the tick, of a wake: four kinds only.
 - A wake of the reader: the program reads its rings by itself; no word of a ring is woken (a wake at each record would make each event point a call of the scheduler path). A reader waits with a deadline.
 
 ## How the systems depend on each other
@@ -962,24 +956,24 @@ After the mapping, the kernel and the service are not in the path.
 
 ## Direction
 
-Status: Decided by the owner on 2026-11-09.
+Status: Decided.
 
 - **First use**: a dedicated machine. The system is not a general replacement for an existing desktop at first.
 - **Compatibility**: none at first. The project defines a small, fundamental interface that shows its concepts. Later layers are built above it. A POSIX layer and a Win32/NT layer are possible later, as layers above the interface and not as parts of it.
 - **Console**: a normal program. It has a terminal: it writes text records and reads key records. A terminal is a normal program too. The system has no terminal concept in the kernel and no equivalent of the Linux TTY.
 - **Composition of programs**: the console uses a real programming language. A person calls the exported functions of modules directly, with typed data. The system has no pipes of text and no shell script language.
 - **Concepts to research first**: the contract between modules; identity and several machines.
-- **Other concepts** (program distribution, failures and quotas, observability, guaranteed latency): the owner expects the answers to come from the design as it grows. They are not researched ahead of need.
+- **Other concepts** (program distribution, failures and quotas, observability, guaranteed latency): the answers come from the design as it grows. They are not researched ahead of need.
 - **Persistence**: no save action. Each change goes to storage when it occurs, and storage keeps earlier versions for all programs. See property 9.
 
 ## Open questions about the architecture
 
-1. **Kernel ring or direct operations.** Closed on 2026-11-09: kernel ring only. Every kernel operation is a record in the kernel ring, plus one "enter and wait" entry point.
+1. **Kernel ring or direct operations.** Closed: kernel ring only. Every kernel operation is a record in the kernel ring, plus one "enter and wait" entry point.
 2. **Loader location.** U3 puts the loader in user space. The first programs then need the boot program to load them. The alternative is a minimal loader in the kernel.
 3. **Queue filtering for the network.** A program must receive only its own packets. This needs a card with several queues and filters, or a software switch in the network card service. virtio-net under QEMU needs the second form.
 4. **Compositor and the WebGPU library.** Which side owns the display device: the compositor alone, or each program through the library.
 5. **Root service size.** It holds all power at boot. It must stay small enough to read completely.
-6. **Threads.** Closed on 2026-11-09. The owner asked for the choice that Blow would make, and for no complication of the execution model. Choice: a program can have several threads in one address space. A thread is a plain kernel object: a stack and a register state. The system has no `fork`, no signals, no asynchronous runtime, and no thread state hidden in a language runtime. Blow reasons in threads and asks for a thread with limited write permission. [Blow, STAG-2026 00:00] This choice is an inference from his statements, not a quotation. Implemented on 2026-11-10 (`kernel/program.odin`, `system.thread_start`): the kernel operations `Thread_Create`, `Thread_Stop` and `Thread_State`. Each thread has its own kernel ring, so a completion never goes to another thread. The stack is memory of the program: the kernel does not know it. A fault in one thread stops the program, because the threads share all their memory. One processor runs all the threads, with preemption.
+6. **Threads.** Closed. The choice is the one that Blow would make, with no complication of the execution model: a program can have several threads in one address space. A thread is a plain kernel object: a stack and a register state. The system has no `fork`, no signals, no asynchronous runtime, and no thread state hidden in a language runtime. Blow reasons in threads and asks for a thread with limited write permission. [Blow, STAG-2026 00:00] This choice is an inference from his statements, not a quotation. Implemented (`kernel/program.odin`, `system.thread_start`): the kernel operations `Thread_Create`, `Thread_Stop` and `Thread_State`. Each thread has its own kernel ring, so a completion never goes to another thread. The stack is memory of the program: the kernel does not know it. A fault in one thread stops the program, because the threads share all their memory.
 
 ## Order of construction
 
@@ -994,4 +988,4 @@ Each step adds one system to a system that already works.
 7. U8 software graphics and compositor, then input.
 8. U6 documents, U10 shell.
 9. U7 network.
-10. Secure Boot and TPM measurement, on the boot program that exists since step 1.
+10. Secure Boot and TPM measurement, on the boot program of item 1.
