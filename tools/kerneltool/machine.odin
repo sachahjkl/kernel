@@ -68,6 +68,7 @@ Step_Kind :: enum {
 	Generation,
 	Peer_Start, // The peer starts the TCP case text; the next steps run while it runs.
 	Peer_Result, // The end of the case of the last Peer_Start: it must pass. text is its name.
+	Peer_Mark, // The case of the last Peer_Start learns that the action that it waits for comes now, at the next step. text is its name.
 	Fetch, // The TCP of the host fetches the page text of `server` through QEMU user networking (web_host.odin).
 	Http, // The TCP of the host runs the HTTP case text against `server` (web_host.odin, http_case_run); `expected` is the body that a page must have.
 	Quic_Key, // As Remember: the 64 hexadecimal digits after text, in the log after the last Wait, are the public key of a QUIC server, which the QUIC client of the peer pins (peer_quic.odin).
@@ -2143,7 +2144,7 @@ Machine :: struct {
 	x, y:      int, // The pointer.
 	pointer_known: bool, // The tool knows where the pointer is.
 	film_frames: int, // The pictures of the film that the tool asked for.
-	call_port:   int, // The peer receives the call requests of the host there.
+	call_socket: string, // The socket where the peer receives the calls of the tool.
 	peer:        ^Peer,
 	confirm:     bool, // The tool reads compositor.pointer() before each press: see pointer_confirm.
 	keys_confirmed: int, // Keys that the tool sent only after the compositor had the key before (key_send).
@@ -2621,7 +2622,7 @@ machine_test :: proc(steps: []Step, volume: string, output: string, exit_status:
 		process   = process,
 		monitor   = monitor_write,
 		output    = output,
-		call_port = peer.call_port,
+		call_socket = peer.call_socket,
 		peer      = &peer,
 		forward   = forward,
 		disk_server = disk_server,
@@ -2686,12 +2687,61 @@ machine_test :: proc(steps: []Step, volume: string, output: string, exit_status:
 // machines): the step Distinct compares them.
 remembered_values: [dynamic]string
 
+// remote_starts_or_ends says if a step starts `remote` or closes it: the
+// next start makes a new key, so the key of the log is read again.
+remote_starts_or_ends :: proc(step: Step) -> bool {
+	#partial switch step.kind {
+	case .Launch, .Close:
+		return step.text == "remote"
+	case .Type:
+		return strings.contains(step.text, "start(\"remote\")")
+	case .Power_Loss:
+		return true
+	}
+	return false
+}
+
+// remote_key_problem names the first step that calls `remote` with no step
+// Remote_Key since the last start of `remote`, or gives "". The key of
+// `remote` belongs to one start: a call with the key of an earlier start,
+// or of another machine, is refused by the pin, so a scenario that could
+// make one does not run.
+remote_key_problem :: proc(steps: []Step) -> string {
+	key_read := false
+	for step, index in steps {
+		if remote_starts_or_ends(step) {
+			key_read = false
+			continue
+		}
+		#partial switch step.kind {
+		case .Remote_Key:
+			key_read = true
+		case .Call, .Record, .Agree, .Remote_Case, .Point:
+			if !key_read {
+				return fmt.tprintf("step %d (%v %s) calls remote with no step Remote_Key since the last start of remote", index + 1, step.kind, step.text)
+			}
+		}
+	}
+	return ""
+}
+
 scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
+	if problem := remote_key_problem(steps); problem != "" {
+		fmt.eprintfln("kerneltool: test failed: the scenario is refused before it runs: %s", problem)
+		return false
+	}
 	peer_case_started := 0 // The number of the case of the last step Peer_Start.
 	first_wait := true // The first Wait of the machine is its boot: BOOT_WAIT_TIMEOUT.
 	generation_base: i64 = -1 // The number that the last step Generation read; -1: none.
 	for given_step, index in steps {
 		step := given_step
+		if index > 0 && remote_starts_or_ends(steps[index - 1]) && machine.peer != nil && machine.peer.remote != nil {
+			// The step before started or closed `remote`: its key of the
+			// start before is forgotten, and the tool no longer reads the
+			// pointer through it until a call with pointer again.
+			peer_remote_unpin(machine.peer.remote)
+			machine.confirm = false
+		}
 		if strings.contains(step.text, "{generation") || strings.contains(step.expected, "{generation") {
 			if generation_base < 0 {
 				fmt.eprintfln("kerneltool: test failed: step %d names {generation} before a step Generation", index + 1)
@@ -2971,7 +3021,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 			}
 		case .Record:
 			if !machine.client_open {
-				if !call_client_open(&machine.client, machine.call_port) {
+				if !call_client_open(&machine.client, machine.call_socket) {
 					return false
 				}
 				machine.client_open = true
@@ -3057,7 +3107,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 			fmt.printfln("kerneltool: test passed: %s: inspect gives %d pages in %d mappings and %d threads, as monitor.programs() gives", step.text, pages, mappings.total, threads.total)
 		case .Call:
 			if !machine.client_open {
-				if !call_client_open(&machine.client, machine.call_port) {
+				if !call_client_open(&machine.client, machine.call_socket) {
 					return false
 				}
 				machine.client_open = true
@@ -3179,7 +3229,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 			fmt.printfln("kerneltool: the QUIC client of remote in the peer pins the key %s", line)
 		case .Remote_Case:
 			if !machine.client_open {
-				if !call_client_open(&machine.client, machine.call_port) {
+				if !call_client_open(&machine.client, machine.call_socket) {
 					return false
 				}
 				machine.client_open = true
@@ -3209,6 +3259,9 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 		case .Peer_Start:
 			peer_case_started = peer_case_start_from_the_tool(machine.peer, step.text)
 			fmt.printfln("kerneltool: the TCP case \"%s\" of the peer runs; the next steps run with it", step.text)
+		case .Peer_Mark:
+			peer_case_mark(machine.peer, peer_case_started)
+			fmt.printfln("kerneltool: the TCP case \"%s\" of the peer is marked: the next step acts", step.text)
 		case .Peer_Result:
 			passed, result := peer_case_result(machine.peer, peer_case_started)
 			if !passed {

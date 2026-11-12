@@ -88,6 +88,15 @@ ANSWER_TIME_LIMIT :: 10_000
 // long after; else the connection ends (CONNECTION_CLOSE, Timeout): a
 // stream record that the host never ends would hold one call of the 8.
 RELEASE_TIME_LIMIT :: 10_000
+// An isolated call blocks the QUIC of this program. After a call that took
+// SLOW_CALL_MILLISECONDS or more, the next call waits
+// EXCHANGE_AFTER_SLOW_CALL_MILLISECONDS, in which the loop only moves
+// datagrams: a handshake of a second connection, or the next flight of a
+// stream, goes as far as the round trips of that time allow. On the test
+// network a round trip is under 1 ms. A call of 5 s then waits 1 % more at
+// most; a fast call adds no wait.
+SLOW_CALL_MILLISECONDS :: 100
+EXCHANGE_AFTER_SLOW_CALL_MILLISECONDS :: 50
 // The time that the program may see a deadline after it passed: it learns
 // it when its wait ends, and a busy or slow machine, or an isolated call
 // (CALL_LIMIT), wakes it late. A log line of a bound says "held" when the
@@ -445,6 +454,14 @@ call_work :: proc "contextless" (connection: ^quic.Connection, peer: quic.Remote
 			}
 		}
 	case .Answering:
+		if stream := quic.stream_of(connection, call.identifier); stream != nil && stream.reset_sent {
+			// A STOP_SENDING of the host made the library reset this
+			// direction: the answer will never go, and its bound need not run.
+			call.phase = .Discarding
+			call.phase_started_at = now
+			counts.cancelled += 1
+			return
+		}
 		if call.answer_written < call.answer_length {
 			call.answer_written += quic.stream_write(connection, call.identifier, buffer[call.answer_written:call.answer_length], true)
 		}
@@ -608,10 +625,25 @@ exchange :: proc "contextless" (arrived: []ring.Record) -> (deadline: u64) {
 	return quic.server_deadline(&server)
 }
 
+// call_bounds_pause moves the start of the bound of each call whose stream
+// moves (reading, answering, discarding) later by the time of an isolated
+// call: during it this program runs no QUIC, so the host could not move the
+// stream, and a bound counts only the time in which the stream could move.
+call_bounds_pause :: proc "contextless" (place_calls: []Call, paused: u64) {
+	for &call in place_calls {
+		switch call.phase {
+		case .Reading, .Answering, .Discarding:
+			call.phase_started_at += paused
+		case .None, .Waiting:
+		}
+	}
+}
+
 // serve_next makes the isolated call of the request that became whole
-// first, and puts its answer in the buffer of its stream. false: no request
-// waits.
-serve_next :: proc "contextless" () -> bool {
+// first, and puts its answer in the buffer of its stream. served is false
+// when no request waits; duration is the time of the isolated call, in
+// milliseconds of the machine.
+serve_next :: proc "contextless" () -> (served: bool, duration: u64) {
 	chosen := -1
 	for &call, index in calls {
 		if call.phase == .Waiting && (chosen < 0 || call.order < calls[chosen].order) {
@@ -619,7 +651,7 @@ serve_next :: proc "contextless" () -> bool {
 		}
 	}
 	if chosen < 0 {
-		return false
+		return false, 0
 	}
 	call := &calls[chosen]
 	place := chosen / STREAMS_PER_CONNECTION
@@ -627,7 +659,7 @@ serve_next :: proc "contextless" () -> bool {
 	stream := quic.stream_of(connection, call.identifier)
 	if stream == nil || !records[place].in_use || records[place].generation != call.generation {
 		call^ = {}
-		return true
+		return true, 0
 	}
 	if stream.reset_received || stream.reset_sent {
 		// The host gave up the call before its turn (a reset, or a
@@ -636,15 +668,21 @@ serve_next :: proc "contextless" () -> bool {
 		call.phase = .Discarding
 		call.phase_started_at = system.time()
 		counts.cancelled += 1
-		return true
+		return true, 0
 	}
+	call_started_at := system.time()
 	call.answer_length = serve(call_buffers[chosen][:], call.received)
+	call_ended_at := system.time()
+	duration = call_ended_at - min(call_started_at, call_ended_at)
+	// The other calls: their streams did not move during the isolated call.
+	// This call is still waiting here, so it is not moved.
+	call_bounds_pause(calls[:], duration)
 	call.answer_written = 0
 	call.phase = .Answering
 	// The bound of the answer starts when the answer exists: the time of
 	// the isolated call is bounded by CALL_LIMIT.
-	call.phase_started_at = system.time()
-	return true
+	call.phase_started_at = call_ended_at
+	return true, duration
 }
 
 // answer_put writes an answer in the buffer of a stream, and gives its
@@ -994,6 +1032,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	arrived: [RECEIVE_PLACES]ring.Record
 	drawn: u64
 	dirty := true
+	// After a slow isolated call: no call before this time, only datagrams.
+	exchange_until: u64
 	for {
 		wait := system.wait_begin()
 		held_commands_push()
@@ -1028,10 +1068,17 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			dirty = true
 		}
 		// One isolated call in each pass: the datagrams of the connections
-		// move between two calls.
-		served := serve_next()
-		if served {
-			dirty = true
+		// move between two calls, for a while after a slow one.
+		served := false
+		if system.time() >= exchange_until {
+			duration: u64
+			served, duration = serve_next()
+			if served {
+				dirty = true
+			}
+			if duration >= SLOW_CALL_MILLISECONDS {
+				exchange_until = system.time() + EXCHANGE_AFTER_SLOW_CALL_MILLISECONDS
+			}
 		}
 		now := system.time()
 		if has_window {
@@ -1067,6 +1114,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			limit = min(limit, deadline / 1000 + 1)
 		}
 		limit = min(limit, calls_deadline())
+		if exchange_until > system.time() {
+			limit = min(limit, exchange_until)
+		}
 		system.wait_end(&wait, limit)
 	}
 }

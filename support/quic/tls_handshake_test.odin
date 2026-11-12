@@ -273,6 +273,12 @@ handshakes_that_are_refused :: proc(t: ^testing.T) {
 	testing.expect_value(t, pair.client.state, Tls_State.Failed)
 	testing.expect_value(t, pair.client.alert, Alert.Bad_Certificate)
 	testing.expect(t, pair.server.state != .Connected)
+	// The client keeps the key that the server presented: the pinned key
+	// with its first byte changed back.
+	presented := pair.client_configuration.server_public_key
+	presented[0] ~= 0x01
+	testing.expect(t, pair.client.refused_server_public_key == presented, "the client keeps the key that it refused")
+	testing.expect(t, pair.client.refused_server_public_key != pair.client_configuration.server_public_key)
 
 	pair_make(&pair, client_protocol = "h3")
 	handshake_run(&pair)

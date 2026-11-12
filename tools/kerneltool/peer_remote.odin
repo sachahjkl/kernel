@@ -4,7 +4,8 @@ import "contract:errors"
 import "contract:remote"
 import "core:encoding/hex"
 import "core:fmt"
-import "core:net"
+import "core:strings"
+import "core:sys/linux"
 import "core:sync"
 import "core:time"
 import "support:quic"
@@ -18,10 +19,11 @@ import cryptography_module "../../modules/cryptography"
 // It pins the public key that the machine printed (step Remote_Key), or the
 // key that a call of the host names (`kerneltool call <key> ...`).
 //
-// The tool gives a call to the peer on the loopback of the host: one TCP
-// connection of the loopback for each call (peer_remote_serve_loopback),
-// with a Loopback_Call header, the bytes of the request, and the end of the
-// sending; the peer answers with a Loopback_Result, the bytes of the
+// The tool gives a call to the peer on a Unix socket that only its user
+// reaches (call_socket_linux.odin): one connection for each call
+// (peer_remote_serve_socket), with a Call_Socket_Request header, the bytes
+// of the request, and the end of the sending; the peer answers with a
+// Call_Socket_Result, the bytes of the
 // answer, and the end. The test cases of the peer (peer_remote_case) give
 // their calls to the thread of the peer directly.
 //
@@ -62,8 +64,10 @@ Remote_Call_Outcome :: enum u32 {
 	Answer, // The whole answer, up to the end of the stream of `remote`.
 	Reset, // `remote` reset the stream: code is a remote.Stream_Error.
 	Lost, // The connection ended before the answer: the call may have run.
-	No_Key, // No key of `remote` is pinned.
+	No_Key, // No key of `remote` is pinned since its last start.
 	Answer_Too_Large, // More than remote.ANSWER_LIMIT bytes: the peer reset the stream.
+	Key_Refused, // `remote` presented another key than the pinned one, or the call named another one: the reason gives both.
+	Bad_Socket_Call, // The bytes on the socket of the calls are not a header and the request that it counts.
 }
 
 Remote_Call :: struct {
@@ -79,7 +83,7 @@ Remote_Call :: struct {
 	received:       int,
 	outcome:        Remote_Call_Outcome,
 	code:           u64,
-	reason:         string, // A constant text: why the connection ended.
+	reason:         string, // Why the call has no answer: a constant text, or the text of a refused key in the memory of the peer.
 	datagrams:      int, // The datagrams of `remote` that came while the call was not done.
 	new_connection: bool, // The call made a new connection.
 	submitted_at:   time.Tick,
@@ -87,11 +91,27 @@ Remote_Call :: struct {
 }
 
 Peer_Remote :: struct {
-	lock:             sync.Mutex, // Each field below: the thread of the peer, the thread of the loopback, and the tool read them.
+	lock:             sync.Mutex, // Each field below: the thread of the peer, the thread of the socket of the calls, and the tool read them.
 	cryptography:     quic.Cryptography,
 	generator:        random.Generator,
 	configuration:    quic.Connection_Configuration,
+	// The pin belongs to one start of `remote`: the tool sets it from the
+	// log line of that start (step Remote_Key), and clears it when it
+	// starts or closes `remote` (peer_remote_unpin).
 	pinned:           bool,
+	// The peer of `kerneltool run` takes the key that a call names (the
+	// person reads it in the window); the peer of a machine test takes the
+	// key of the log only, and refuses a call that names another one.
+	keys_from_calls:  bool,
+	// `remote` presented another key than the pinned one: each call fails at
+	// once with key_refusal, and no connection is made, until a new pin.
+	key_refused:      bool,
+	key_refusal:      [256]u8,
+	key_refusal_length: int,
+	// The connection reached the end of its handshake: a connection that
+	// ends before it fails the calls that wait for it, and is not made
+	// again for them.
+	connected:        bool,
 	client:           quic.Connection,
 	streams:          []quic.Stream, // remote.CALLS_AT_ONCE stream records.
 	active:           bool, // The client holds a connection that did not end.
@@ -106,25 +126,30 @@ Peer_Remote :: struct {
 	lost:             int,
 	silent:           bool, // The peer drops each datagram of the connection, both ways: the test of a lost connection.
 	stranger_answers: int, // Datagrams of `remote` to an address that its grant does not admit: there must be none.
-	// The loopback of the calls of the host.
-	listener:         net.TCP_Socket,
-	loopback_port:    int,
-	loopback_thread_running: bool,
+	// The socket of the calls of the tool (call_socket_linux.odin).
+	listener:         linux.Fd,
+	socket_path:      string,
 }
 
-// The loopback form of one call, before the bytes of the request.
-Loopback_Call :: struct {
-	key: [32]u8, // The public key of `remote` that the tool pins; all zero: the key that the peer pinned.
+// The form of one call on the socket of the calls, before the bytes of the
+// request. The peer reads the bytes as they come; the mark and the count
+// make a header that is not at the start of the bytes, or a request that
+// is cut, a refusal, not a call with a wrong key or a wrong request.
+Call_Socket_Request :: struct {
+	mark:           u64, // CALL_SOCKET_MARK.
+	request_length: u64, // The bytes of the request after this header.
+	key:            [32]u8, // The public key of `remote` that the call names; all zero: the key that the peer pinned.
 }
+CALL_SOCKET_MARK :: u64(0x6c6c_6163_6574_6f6d) // "moteecall", read as a little-endian number: any value that a request does not start with.
 
-// The loopback form of the outcome of one call, before the bytes of the
-// answer.
-Loopback_Result :: struct {
+// The form of the outcome of one call on the socket of the calls, before
+// the bytes of the answer.
+Call_Socket_Result :: struct {
 	outcome:        Remote_Call_Outcome,
 	new_connection: u32,
 	code:           u64,
 	datagrams:      u64,
-	reason:         [96]u8, // The reason of a Lost, with zero bytes after it.
+	reason:         [256]u8, // The reason of a call with no answer, with zero bytes after it.
 }
 
 peer_remote_make :: proc() -> ^Peer_Remote {
@@ -179,9 +204,9 @@ peer_remote_now :: proc(state: ^Peer_Remote) -> u64 {
 	return u64(time.tick_since(state.start) / time.Microsecond) + 1
 }
 
-// peer_remote_pin takes the public key of `remote`. A key that differs from
-// the key of the connection closes the connection: the next call makes a
-// new one with the new key.
+// peer_remote_pin takes the public key of one start of `remote`. A key that
+// differs from the key of the connection closes the connection: the next
+// call makes a new one with the new key.
 peer_remote_pin :: proc(state: ^Peer_Remote, key: [32]u8) {
 	sync.mutex_lock(&state.lock)
 	defer sync.mutex_unlock(&state.lock)
@@ -190,9 +215,35 @@ peer_remote_pin :: proc(state: ^Peer_Remote, key: [32]u8) {
 	}
 	state.configuration.tls.server_public_key = key
 	state.pinned = true
+	state.key_refused = false
 	if state.active {
 		quic.connection_close(&state.client, u64(remote.Stream_Error.Cancelled), peer_remote_now(state))
 	}
+}
+
+// peer_remote_unpin forgets the key: the tool starts or closes `remote`,
+// and the next start makes a new key. A call before the next pin fails at
+// once (No_Key), and never goes to a connection with the key of an earlier
+// start.
+peer_remote_unpin :: proc(state: ^Peer_Remote) {
+	sync.mutex_lock(&state.lock)
+	defer sync.mutex_unlock(&state.lock)
+	state.pinned = false
+	state.key_refused = false
+	state.configuration.tls.server_public_key = {}
+	if state.active {
+		quic.connection_close(&state.client, u64(remote.Stream_Error.Cancelled), peer_remote_now(state))
+	}
+}
+
+// peer_remote_key_refusal_write writes the text of a refused key, with the
+// key that is pinned and the key that came. The lock is held.
+@(private = "file")
+peer_remote_key_refusal_write :: proc(state: ^Peer_Remote, what: string, given: [32]u8) {
+	other := given // A parameter has no address: the copy can be sliced.
+	pinned := state.configuration.tls.server_public_key
+	text := fmt.bprintf(state.key_refusal[:], "the pin does not match: the pinned key of remote is %s, %s %s", hex_of(pinned[:]), what, hex_of(other[:]))
+	state.key_refusal_length = len(text)
 }
 
 // peer_remote_pin_text takes the public key of `remote` as 64 hexadecimal
@@ -252,7 +303,9 @@ peer_remote_wait :: proc(state: ^Peer_Remote, place: int) -> (result: Remote_Cal
 	}
 	sync.mutex_lock(&state.lock)
 	defer sync.mutex_unlock(&state.lock)
-	result = {outcome = call.outcome, code = call.code, reason = call.reason, datagrams = call.datagrams, new_connection = call.new_connection}
+	// The reason can be in the memory of the peer, which a later refusal
+	// writes again: a copy.
+	result = {outcome = call.outcome, code = call.code, reason = strings.clone(call.reason, context.temp_allocator), datagrams = call.datagrams, new_connection = call.new_connection}
 	if call.outcome == .Answer {
 		result.answer = make([]u8, call.received, context.temp_allocator)
 		copy(result.answer, call.answer[:call.received])
@@ -381,16 +434,33 @@ peer_remote_tick :: proc(peer: ^Peer) {
 	defer sync.mutex_unlock(&state.lock)
 	now := peer_remote_now(state)
 	client := &state.client
+	if state.active && client.state == .Connected {
+		state.connected = true
+	}
 	if state.active && client.state == .Closed {
 		// The connection ended: each call on it ends with the reason. A
-		// call that waits for a stream gets the next connection.
+		// call that waits for a stream gets the next connection only when
+		// this one had completed its handshake: a handshake that failed fails
+		// the same way again, and is not tried again in a loop.
 		state.active = false
 		reason := peer_remote_end_reason(client)
+		outcome := Remote_Call_Outcome.Lost
+		if client.close_error_code == quic.CRYPTO_ERROR_BASE + 42 && !client.closed_by_peer {
+			// `remote` presented another key than the pinned one: no call
+			// goes until the tool pins a key again.
+			state.key_refused = true
+			peer_remote_key_refusal_write(state, "and remote presented", client.tls.refused_server_public_key)
+		}
+		if state.key_refused {
+			outcome = .Key_Refused
+			reason = string(state.key_refusal[:state.key_refusal_length])
+		}
 		for &call in state.calls {
-			if call.state == .Open {
-				peer_remote_call_end(&call, .Lost, 0, reason)
+			if call.state == .Open || (call.state == .Submitted && !state.connected) {
+				peer_remote_call_end(&call, outcome, 0, reason)
 			}
 		}
+		state.connected = false
 	}
 	submitted, open := 0, 0
 	for &call in state.calls {
@@ -401,10 +471,15 @@ peer_remote_tick :: proc(peer: ^Peer) {
 			open += 1
 		}
 	}
-	if submitted > 0 && !state.pinned {
+	if submitted > 0 && (!state.pinned || state.key_refused) {
 		for &call in state.calls {
-			if call.state == .Submitted {
-				peer_remote_call_end(&call, .No_Key, 0, "no key of remote is pinned")
+			if call.state != .Submitted {
+				continue
+			}
+			if state.key_refused {
+				peer_remote_call_end(&call, .Key_Refused, 0, string(state.key_refusal[:state.key_refusal_length]))
+			} else {
+				peer_remote_call_end(&call, .No_Key, 0, "no key of remote is pinned since its last start: the step Remote_Key reads it from the log")
 			}
 		}
 		submitted = 0
@@ -423,6 +498,7 @@ peer_remote_tick :: proc(peer: ^Peer) {
 			error: errors.Error_Record
 			state.port = state.next_port
 			state.next_port += 1
+			state.connected = false
 			if quic.connection_start_client(client, state.streams, &state.configuration, &state.cryptography, &state.generator, now, &error) {
 				state.active = true
 				state.connections_made += 1
@@ -480,100 +556,113 @@ peer_remote_tick :: proc(peer: ^Peer) {
 	}
 }
 
-// peer_remote_loopback_start opens the listener of the calls of the host on
-// the loopback. port 0 lets the system choose it.
-peer_remote_loopback_start :: proc(state: ^Peer_Remote, port: int) -> bool {
-	listener, err := net.listen_tcp({address = net.IP4_Loopback, port = port})
-	if err != nil {
-		fmt.eprintfln("kerneltool: the peer cannot receive calls on 127.0.0.1 TCP port %d: %v", port, err)
+// peer_remote_socket_start takes the socket of the calls of the tool, in
+// the private folder of the user (call_socket_linux.odin), at a name.
+peer_remote_socket_start :: proc(state: ^Peer_Remote, name: string) -> bool {
+	path, problem := call_socket_path(name)
+	if problem != "" {
+		fmt.eprintfln("kerneltool: the peer takes no calls: %s", problem)
 		return false
 	}
-	bound, bound_err := net.bound_endpoint(listener)
-	if bound_err != nil {
-		net.close(listener)
+	listener, listening := call_socket_listen(path)
+	if !listening {
 		return false
 	}
-	// The accept ends each 100 ms: the thread sees the stop of the peer.
-	_ = net.set_option(listener, .Receive_Timeout, 100 * time.Millisecond)
 	state.listener = listener
-	state.loopback_port = bound.port
+	state.socket_path = strings.clone(path)
 	return true
 }
 
-// peer_remote_serve_loopback takes the calls of the host on the loopback,
-// one TCP connection at a time, and gives each one to the thread of the
-// peer. It runs in its own thread until the peer stops.
-peer_remote_serve_loopback :: proc(peer: ^Peer) {
+// peer_remote_socket_stop closes the socket of the calls and removes it.
+peer_remote_socket_stop :: proc(state: ^Peer_Remote) {
+	call_socket_remove(state.listener, state.socket_path)
+	delete(state.socket_path)
+	state.socket_path = ""
+}
+
+// peer_remote_serve_socket takes the calls of the tool on its socket, one
+// connection at a time, and gives each one to the thread of the peer. It
+// runs in its own thread until the peer stops: an accept ends each 100 ms.
+peer_remote_serve_socket :: proc(peer: ^Peer) {
 	state := peer.remote
 	for !sync.atomic_load(&peer.stop) {
-		connection, _, err := net.accept_tcp(state.listener)
-		if err != nil {
+		connection, accepted := call_socket_accept(state.listener)
+		if !accepted {
 			continue
 		}
 		peer_remote_serve_one(state, connection)
-		net.close(connection)
+		call_socket_close(connection)
 		free_all(context.temp_allocator)
 	}
 }
 
-// peer_remote_serve_one reads one call of the loopback, gives it to the
-// thread of the peer, and writes its outcome.
+// peer_remote_call_key_taken takes the key that a call of the socket names.
+// The peer of `kerneltool run` pins it; the peer of a machine test takes it
+// only when it is the pinned key.
 @(private = "file")
-peer_remote_serve_one :: proc(state: ^Peer_Remote, connection: net.TCP_Socket) {
-	_ = net.set_option(connection, .Receive_Timeout, 100 * time.Millisecond)
-	buffer := make([]u8, size_of(Loopback_Call) + remote.REQUEST_LIMIT + 1, context.temp_allocator)
-	count := 0
-	start := time.tick_now()
-	for count < len(buffer) {
-		if time.tick_since(start) > PEER_REMOTE_CALL_LIMIT {
-			return
-		}
-		read, err := net.recv_tcp(connection, buffer[count:])
-		if err == .Timeout || err == .Would_Block {
-			continue
-		}
-		if err != nil || read == 0 {
-			break
-		}
-		count += read
+peer_remote_call_key_taken :: proc(state: ^Peer_Remote, key: [32]u8) -> bool {
+	sync.mutex_lock(&state.lock)
+	keys_from_calls := state.keys_from_calls
+	same := state.pinned && state.configuration.tls.server_public_key == key
+	sync.mutex_unlock(&state.lock)
+	if same {
+		return true
 	}
-	if count < size_of(Loopback_Call) {
-		return
+	if !keys_from_calls {
+		return false
 	}
-	header := (^Loopback_Call)(raw_data(buffer))^
-	if header.key != ([32]u8{}) {
-		peer_remote_pin(state, header.key)
+	peer_remote_pin(state, key)
+	return true
+}
+
+// peer_remote_key_refusal_text gives the text of a call that names another
+// key than the pinned one, in the temporary memory.
+@(private = "file")
+peer_remote_key_refusal_text :: proc(state: ^Peer_Remote, given: [32]u8) -> string {
+	key := given // A parameter has no address: the copy can be sliced.
+	sync.mutex_lock(&state.lock)
+	defer sync.mutex_unlock(&state.lock)
+	pinned := state.configuration.tls.server_public_key
+	if !state.pinned {
+		return fmt.tprintf("the call names the key %s, and the peer of a machine test takes the key of the log only: no key is pinned", hex_of(key[:]))
 	}
-	answer: Loopback_Result
+	return fmt.tprintf("the pin does not match: the pinned key of remote is %s, the call names %s", hex_of(pinned[:]), hex_of(key[:]))
+}
+
+// peer_remote_serve_one reads one call of the socket, gives it to the thread
+// of the peer, and writes its outcome.
+@(private = "file")
+peer_remote_serve_one :: proc(state: ^Peer_Remote, connection: linux.Fd) {
+	buffer := make([]u8, size_of(Call_Socket_Request) + remote.REQUEST_LIMIT + 1, context.temp_allocator)
+	count, ended := call_socket_receive_all(connection, buffer, PEER_REMOTE_CALL_LIMIT)
+	answer: Call_Socket_Result
 	result: Remote_Call_Result
-	place, taken := peer_remote_submit(state, buffer[size_of(Loopback_Call):count])
-	if taken {
-		result = peer_remote_wait(state, place)
-	} else {
-		result = {outcome = .Lost, reason = "the peer holds as many calls as it can"}
+	header: Call_Socket_Request
+	if count >= size_of(Call_Socket_Request) {
+		header = (^Call_Socket_Request)(raw_data(buffer))^
+	}
+	switch {
+	case !ended || count < size_of(Call_Socket_Request) || header.mark != CALL_SOCKET_MARK || header.request_length != u64(count - size_of(Call_Socket_Request)):
+		result = {outcome = .Bad_Socket_Call, reason = fmt.tprintf("the peer read %d bytes on the socket of the calls (the end: %v), not a header and the request that it counts", count, ended)}
+	case header.key != ([32]u8{}) && !peer_remote_call_key_taken(state, header.key):
+		result = {outcome = .Key_Refused, reason = peer_remote_key_refusal_text(state, header.key)}
+	case:
+		place, taken := peer_remote_submit(state, buffer[size_of(Call_Socket_Request):count])
+		if taken {
+			result = peer_remote_wait(state, place)
+		} else {
+			result = {outcome = .Lost, reason = "the peer holds as many calls as it can"}
+		}
 	}
 	answer.outcome = result.outcome
 	answer.code = result.code
 	answer.datagrams = u64(result.datagrams)
 	answer.new_connection = result.new_connection ? 1 : 0
 	copy(answer.reason[:len(answer.reason) - 1], result.reason)
-	answer_bytes := transmute([size_of(Loopback_Result)]u8)answer
-	if loopback_send_all(connection, answer_bytes[:]) {
-		loopback_send_all(connection, result.answer)
+	answer_bytes := transmute([size_of(Call_Socket_Result)]u8)answer
+	if call_socket_send_all(connection, answer_bytes[:]) {
+		call_socket_send_all(connection, result.answer)
 	}
-}
-
-// loopback_send_all writes each byte on a TCP connection of the loopback.
-loopback_send_all :: proc(connection: net.TCP_Socket, bytes: []u8) -> bool {
-	sent := 0
-	for sent < len(bytes) {
-		count, err := net.send_tcp(connection, bytes[sent:])
-		if err != nil || count <= 0 {
-			return false
-		}
-		sent += count
-	}
-	return true
 }
 
 // peer_remote_report prints what the peer counted of `remote`, when it made

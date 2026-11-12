@@ -7,7 +7,6 @@ import module "contract:module"
 import "contract:remote"
 import "core:encoding/hex"
 import "core:fmt"
-import "core:net"
 import "core:os"
 import "core:slice"
 import "core:strconv"
@@ -22,18 +21,18 @@ import "support:sentence"
 // The tool reads the description of the export in the module file of the
 // service (build/modules/<service>.module), checks each argument against
 // it, and writes the argument record with isolated.encode, as a caller
-// program does. It gives the call request to the peer on a TCP connection
-// of the loopback of the host (Loopback_Call, peer_remote.odin); the QUIC
+// program does. It gives the call request to the peer on a Unix socket
+// that only its user reaches (Call_Socket_Request, peer_remote.odin,
+// call_socket_linux.odin); the QUIC
 // client of the peer carries it on one stream of its connection to the
 // remote service in the machine, and gives the call answer back.
 //
-// `kerneltool run` starts the peer with its port of calls at CALL_PORT;
-// `kerneltool call` names the public key of `remote` that the person reads
-// in its window. The machine test gives the peer a port of the system and
-// the key on the log (step Remote_Key), and the step Call uses the same
-// code.
+// `kerneltool run` starts the peer with the socket CALL_SOCKET_RUN_NAME,
+// and `kerneltool call` finds it by the same rule; it names the public key
+// of `remote` that the person reads in its window. The machine test gives
+// the peer a socket of its own and the key on the log (step Remote_Key),
+// and the step Call uses the same code.
 
-CALL_PORT :: 7101 // On 127.0.0.1, TCP: the peer of `kerneltool run` receives the calls there.
 // On the clock of the host: it only ends a call that hangs. The peer ends a
 // call at PEER_REMOTE_CALL_LIMIT.
 CALL_TIME_LIMIT :: PEER_REMOTE_CALL_LIMIT + 10 * time.Second
@@ -71,7 +70,7 @@ Prepared_Call :: struct {
 }
 
 Call_Client :: struct {
-	peer:   net.Endpoint, // The TCP port of the calls of the peer, on the loopback.
+	socket: string, // The path of the socket of the calls of the peer.
 	key:    [32]u8, // The public key of `remote` that the call names; all zero: the key that the peer pinned.
 	wrong_hash: bool, // The next call request names another hash of the module: the test of the refusal.
 	last_hash:  [32]u8, // The hash that the last call request named.
@@ -79,16 +78,16 @@ Call_Client :: struct {
 	region: []u8,
 	result: []u8,
 	request: []u8, // The bytes of a whole request.
-	received: []u8, // A Loopback_Result and the bytes of a whole answer.
+	received: []u8, // A Call_Socket_Result and the bytes of a whole answer.
 }
 
-call_client_open :: proc(client: ^Call_Client, port: int, key: [32]u8 = {}) -> bool {
-	client.peer = {address = net.IP4_Loopback, port = port}
+call_client_open :: proc(client: ^Call_Client, socket: string, key: [32]u8 = {}) -> bool {
+	client.socket = socket
 	client.key = key
 	client.region = make([]u8, remote.REGION_SIZE)
 	client.result = make([]u8, remote.REGION_SIZE)
 	client.request = make([]u8, remote.REQUEST_LIMIT)
-	client.received = make([]u8, size_of(Loopback_Result) + remote.ANSWER_LIMIT + 1)
+	client.received = make([]u8, size_of(Call_Socket_Result) + remote.ANSWER_LIMIT + 1)
 	return true
 }
 
@@ -470,14 +469,14 @@ call_send :: proc(client: ^Call_Client, call: ^Prepared_Call) -> (answer: remote
 	if !written {
 		return {}, nil, {outcome = .Lost, reason = "the request does not fit in a call region"}, false
 	}
-	received, sent := loopback_call(client, bytes)
+	received, sent := socket_call(client, bytes)
 	if !sent {
-		return {}, nil, {outcome = .Lost, reason = "the peer of the tool does not answer on the loopback: does `kerneltool run` run?"}, false
+		return {}, nil, {outcome = .Lost, reason = fmt.tprintf("the peer of the tool does not answer at %s: does `kerneltool run` run?", client.socket)}, false
 	}
-	if len(received) < size_of(Loopback_Result) {
+	if len(received) < size_of(Call_Socket_Result) {
 		return {}, nil, {outcome = .Lost, reason = "the peer ended the call with no outcome"}, false
 	}
-	outcome := (^Loopback_Result)(raw_data(received))^
+	outcome := (^Call_Socket_Result)(raw_data(received))^
 	transport = {outcome = outcome.outcome, code = outcome.code, datagrams = int(outcome.datagrams), new_connection = outcome.new_connection != 0}
 	reason_count := 0
 	for reason_count < len(outcome.reason) && outcome.reason[reason_count] != 0 {
@@ -487,7 +486,7 @@ call_send :: proc(client: ^Call_Client, call: ^Prepared_Call) -> (answer: remote
 	if outcome.outcome != .Answer {
 		return {}, nil, transport, false
 	}
-	answer_part := received[size_of(Loopback_Result):]
+	answer_part := received[size_of(Call_Socket_Result):]
 	transport.answer_bytes = len(answer_part)
 	checked, part, valid := remote.answer_check(answer_part)
 	if !valid {
@@ -499,34 +498,22 @@ call_send :: proc(client: ^Call_Client, call: ^Prepared_Call) -> (answer: remote
 	return checked, client.result[:len(part)], transport, true
 }
 
-// loopback_call writes a call on a TCP connection of the loopback to the
-// peer, and reads all that the peer writes back, up to its end.
+// socket_call writes a call on a connection of the socket of the calls of
+// the peer, and reads all that the peer writes back, up to its end.
 @(private = "file")
-loopback_call :: proc(client: ^Call_Client, request: []u8) -> (received: []u8, ok: bool) {
-	connection, err := net.dial_tcp(client.peer)
-	if err != nil {
+socket_call :: proc(client: ^Call_Client, request: []u8) -> (received: []u8, ok: bool) {
+	connection, connected := call_socket_connect(client.socket)
+	if !connected {
 		return nil, false
 	}
-	defer net.close(connection)
-	_ = net.set_option(connection, .Receive_Timeout, 100 * time.Millisecond)
-	header := Loopback_Call{key = client.key}
-	header_bytes := transmute([size_of(Loopback_Call)]u8)header
-	if !loopback_send_all(connection, header_bytes[:]) || !loopback_send_all(connection, request) {
+	defer call_socket_close(connection)
+	header := Call_Socket_Request{mark = CALL_SOCKET_MARK, request_length = u64(len(request)), key = client.key}
+	header_bytes := transmute([size_of(Call_Socket_Request)]u8)header
+	if !call_socket_send_all(connection, header_bytes[:]) || !call_socket_send_all(connection, request) {
 		return nil, false
 	}
-	_ = net.shutdown(connection, .Send)
-	count := 0
-	start := time.tick_now()
-	for count < len(client.received) && time.tick_since(start) < CALL_TIME_LIMIT {
-		read, receive_err := net.recv_tcp(connection, client.received[count:])
-		if receive_err == .Timeout || receive_err == .Would_Block {
-			continue
-		}
-		if receive_err != nil || read == 0 {
-			break
-		}
-		count += read
-	}
+	call_socket_end_sending(connection)
+	count, _ := call_socket_receive_all(connection, client.received, CALL_TIME_LIMIT)
 	return client.received[:count], true
 }
 
@@ -545,6 +532,9 @@ call_run :: proc(client: ^Call_Client, text: string) -> (outcome: Call_Result) {
 	outcome.new_connection = transport.new_connection
 	if !answered {
 		#partial switch transport.outcome {
+		case .Key_Refused, .No_Key:
+			outcome.outcome = .No_Answer
+			append(&outcome.lines, fmt.tprintf("error: %s", transport.reason))
 		case .Reset:
 			outcome.outcome = .Reset
 			name := remote.stream_error_name(transport.code)
@@ -906,8 +896,13 @@ run_call :: proc(args: []string) -> int {
 	}
 	key: [32]u8
 	copy(key[:], key_bytes)
+	socket, problem := call_socket_path(CALL_SOCKET_RUN_NAME)
+	if problem != "" {
+		fmt.eprintfln("kerneltool: %s", problem)
+		return EXIT_FAILURE
+	}
 	client: Call_Client
-	if !call_client_open(&client, CALL_PORT, key) {
+	if !call_client_open(&client, socket, key) {
 		return EXIT_FAILURE
 	}
 	defer call_client_close(&client)

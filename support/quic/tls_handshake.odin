@@ -173,6 +173,10 @@ Tls_Handshake :: struct {
 	peer_transport_parameters:     [TRANSPORT_PARAMETERS_LIMIT]u8,
 	peer_transport_parameters_length: int,
 	server_public_key:             [ED25519_KEY_SIZE]u8, // The server: its own public key; the client: the key that the server proved.
+	// The client: the key that a server presented and that is not the
+	// pinned key (alert bad_certificate). A public value: the caller says
+	// which key came, so that a person sees a stale pin at once.
+	refused_server_public_key:     [ED25519_KEY_SIZE]u8,
 	handshake_keys_ready:          bool,
 	application_keys_ready:        bool,
 	// Bytes of the peer came at a level after the keys of the next level
@@ -1101,6 +1105,7 @@ certificate_read :: proc "contextless" (handshake: ^Tls_Handshake, message: []u8
 	if string(information[12:]) != string(handshake.configuration.server_public_key[:]) {
 		// Not the key that the caller pinned: whoever holds it is not the
 		// server that the caller wants.
+		copy(handshake.refused_server_public_key[:], information[12:])
 		return tls_fail(handshake, error, .Bad_Certificate, .Not_Authentic)
 	}
 	copy(handshake.server_public_key[:], information[12:])

@@ -55,9 +55,9 @@ scenario_tcp := [?]Step {
 	{kind = .Peer, text = "sink again"},
 	{kind = .Peer, text = "large again"},
 	{kind = .Peer, text = "sink again"},
-	// B1: segments that must not fill the admitted remotes, then a page.
+	// segments that must not fill the admitted remotes, then a page.
 	{kind = .Peer, text = "leak"},
-	// B2: 32 connections of one host that make no progress: 8 refused by
+	// 32 connections of one host that make no progress: 8 refused by
 	// the limit for each remote, each other one ended by a limit, then a page.
 	{kind = .Peer, text = "slow"},
 	{kind = .Wait, text = ": no request in 10 s, closed", any_order = true},
@@ -65,23 +65,26 @@ scenario_tcp := [?]Step {
 	{kind = .Wait, text = " aborted: an answer under 4096 bytes in one second: "},
 	// An independent read of the HTTP server: each case is a client that
 	// the server must end.
-	// B1: a whole request and one byte of the next one: 408 after 10 s.
+	// a whole request and one byte of the next one: 408 after 10 s.
 	{kind = .Peer, text = "one byte after a request"},
-	// F3: the answers fill the window of the peer, which never reads; the
+	// the answers fill the window of the peer, which never reads; the
 	// server closed, and must still end the connection.
 	{kind = .Peer, text = "answers then close to a zero window"},
-	// W6: 1 MiB of a body of 16 MiB, then nothing; a reader of 1 KiB in one second.
+	// 1 MiB of a body of 16 MiB, then nothing; a reader of 1 KiB in one second.
 	{kind = .Peer, text = "body then nothing"},
 	{kind = .Wait, text = " aborted: no byte of the body in 10 s: "},
 	{kind = .Peer, text = "slow reader"},
 	{kind = .Wait, text = " aborted: an answer under 4096 bytes in one second: "},
-	// B2: the console removes a page while answers of it are in progress.
+	// the console removes a page while answers of it are in progress.
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "connect(\"server\")"},
 	{kind = .Wait, text = "root: connected console to the service server"},
 	{kind = .Type, text = "server.put(\"changing.txt\", repeat(\"0123456789abcdef\", 200))"},
 	{kind = .Wait, text = "server: the page /changing.txt is in the store: 3200 bytes"},
 	{kind = .Peer_Start, text = "page changed during its answer"},
+	// The mark goes before the removal: a RST after it can be the change of
+	// the page, a RST before it cannot.
+	{kind = .Peer_Mark, text = "page changed during its answer"},
 	{kind = .Type, text = "server.remove(\"changing.txt\")"},
 	{kind = .Wait, text = "server: the page /changing.txt is out of the store"},
 	// Until now the peer read at three times the least pace of the
@@ -145,14 +148,14 @@ scenario_tcp_real := [?]Step {
 	{kind = .Http, text = "keep-alive"},
 	{kind = .Wait, text = " requests on one connection of 10.0.2.2 port ", any_order = true},
 	{kind = .Http, text = "new-connections"},
-	// W10: the ends of connections have their own budget on the log.
+	// The ends of connections have their own budget on the log.
 	{kind = .Wait, text = " ends of connections in one second are not on the log (the limit is 50)", any_order = true},
 	{kind = .Http, text = "pipeline"},
 	{kind = .Http, text = "split"},
 	{kind = .Http, text = "head"},
 	{kind = .Http, text = "crowd"},
 	{kind = .Http, text = "errors"},
-	// An independent read of the HTTP server: F4, W7, the notes.
+	// An independent read of the HTTP server.
 	{kind = .Http, text = "body-not-taken"},
 	{kind = .Http, text = "requests-then-fin"},
 	{kind = .Http, text = "headers"},
@@ -160,7 +163,7 @@ scenario_tcp_real := [?]Step {
 	{kind = .Type, text = "server.remove(\"hello.txt\")"},
 	{kind = .Wait, text = "server: the page /hello.txt is out of the store"},
 	{kind = .Http, text = "missing hello.txt"},
-	// F5 and W8: the person revokes the store of server: a put and a remove
+	// The person revokes the store of server: a put and a remove
 	// are refused, and the page that is served does not change.
 	{kind = .Type, text = "server.put(\"kept.txt\", \"the first text\")"},
 	{kind = .Wait, text = "server: the page /kept.txt is in the store: 14 bytes"},

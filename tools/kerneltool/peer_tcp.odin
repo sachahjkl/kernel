@@ -34,7 +34,7 @@ SERVER_PORT :: 80
 CASE_TIME_LIMIT :: 180 * time.Second
 
 // The connections of a host that wants to keep the records of the server
-// (case "slow"; an independent read of the step, B2).
+// (case "slow").
 Attack :: enum {
 	None,
 	Idle, // A handshake, then nothing.
@@ -45,11 +45,11 @@ Attack :: enum {
 	Zero_Window, // /large, and a window of 0 for ever.
 	Huge, // A Content-Length of 999 999 999 999.
 	// The kinds of an independent read of the HTTP server (after the 7 of "slow").
-	Request_Then_One_Byte, // A whole request and one byte of the next one, then nothing (B1).
-	Answers_Then_Close_To_A_Zero_Window, // 64 pipelined requests, the last one with "Connection: close"; it never reads (F3).
-	Body_Then_Nothing, // 1 MiB of a body of 16 MiB at once, then nothing (W6).
-	Slow_Reader, // GET /large; it reads 8 KiB each 8 s: 1 KiB in one second (W6).
-	Reader_Of_A_Page_That_Changes, // CHANGING_PAGE_REQUESTS pipelined GET of a page of 3200 bytes; it reads at CHANGING_PAGE_READ_PACE until the step Peer_Result, after the console removed the page, then as fast as it can (B2).
+	Request_Then_One_Byte, // A whole request and one byte of the next one, then nothing.
+	Answers_Then_Close_To_A_Zero_Window, // 64 pipelined requests, the last one with "Connection: close"; it never reads.
+	Body_Then_Nothing, // 1 MiB of a body of 16 MiB at once, then nothing.
+	Slow_Reader, // GET /large; it reads 8 KiB each 8 s: 1 KiB in one second.
+	Reader_Of_A_Page_That_Changes, // CHANGING_PAGE_REQUESTS pipelined GET of a page of 3200 bytes; it reads at CHANGING_PAGE_READ_PACE until the step Peer_Result, after the console removed the page, then as fast as it can.
 }
 
 // The case "page changed during its answer". The client reads its answers
@@ -117,7 +117,7 @@ Client :: struct {
 	page_announced:     int, // The Content-Length of the last head.
 	page_answers:       int, // The whole answers.
 	page_wrong:         string, // The first answer that is not the page of CHANGING_PAGE_SIZE bytes with the status 200.
-	reset_after_removal: bool, // The server ended the connection after the step Peer_Result: after the console removed the page.
+	reset_after_removal: bool, // The server ended the connection after the step Peer_Mark, which comes just before the console removes the page.
 }
 
 Peer_Tcp :: struct {
@@ -154,6 +154,7 @@ Peer_Tcp :: struct {
 	// Between the threads: the tool writes `wanted`, the peer writes `done`.
 	wanted:      int,
 	result_wanted: int, // The tool waits for the end of the case with this number (step Peer_Result).
+	marked:      int, // The case with this number reached the step Peer_Mark: the action that the case waits for comes after it.
 	started_case: int, // The number of the case that peer_case_start prepared.
 	done:        int,
 	passed:      bool,
@@ -208,6 +209,13 @@ peer_case_start_from_the_tool :: proc(peer: ^Peer, name: string) -> int {
 	serial := sync.atomic_load(&state.wanted) + 1
 	sync.atomic_store(&state.wanted, serial)
 	return serial
+}
+
+// peer_case_mark tells the case with the number serial that the action that
+// it waits for comes now (step Peer_Mark): the tool marks it before the step
+// that does it, so the peer never sees the effect before the mark.
+peer_case_mark :: proc(peer: ^Peer, serial: int) {
+	sync.atomic_store(&peer.tcp.marked, serial)
 }
 
 // peer_case_result waits for the end of the case with the number serial
@@ -312,7 +320,7 @@ peer_case_start :: proc(state: ^Peer_Tcp, name: string) -> bool {
 			add(state, client_page(true))
 		}
 	case "leak":
-		// B1: 192 ports each of a bare RST, a bare ACK, a SYN then a RST at
+		// 192 ports each of a bare RST, a bare ACK, a SYN then a RST at
 		// its exact sequence, and a SYN with an option that the library
 		// refuses: three times the 64 admitted remotes. With the old
 		// admission, they fill the table and the SYN of the page is dropped
@@ -345,7 +353,7 @@ peer_case_start :: proc(state: ^Peer_Tcp, name: string) -> bool {
 		client.delayed = true
 		add(state, client)
 	case "slow":
-		// B2: 32 connections of one host, 7 kinds in turn, then a page.
+		// 32 connections of one host, 7 kinds in turn, then a page.
 		for index in 0 ..< 32 {
 			add(state, {attack = Attack(1 + index % 7)})
 		}
@@ -758,7 +766,7 @@ client_run :: proc(peer: ^Peer, state: ^Peer_Tcp, client: ^Client, now: u64) {
 					// The bytes that came before the end are part of the reason:
 					// they are read before the case ends.
 					changing_page_read(state, client, index, max(int))
-					client.reset_after_removal = sync.atomic_load(&state.result_wanted) == sync.atomic_load(&state.wanted)
+					client.reset_after_removal = sync.atomic_load(&state.marked) == sync.atomic_load(&state.wanted)
 				}
 				client.ended_at = time.tick_since(state.started)
 				client.reset_by_server = .Reset in kinds
@@ -945,7 +953,7 @@ peer_inject :: proc(peer: ^Peer, state: ^Peer_Tcp, connection: ^tcp.Connection, 
 
 // peer_stray sends an ACK from a port with no connection. The network
 // service admits a remote on a SYN only, so the segment does not reach the
-// server, and nothing answers it (B1): after 1 s, no RST came.
+// server, and nothing answers it: after 1 s, no RST came.
 peer_stray :: proc(peer: ^Peer, state: ^Peer_Tcp, serial: int) {
 	if !state.stray_sent {
 		state.stray_sent = true

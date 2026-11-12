@@ -4,6 +4,7 @@ import "contract:remote"
 import "core:fmt"
 import "core:net"
 import "core:sync"
+import "core:sys/linux"
 import "core:thread"
 import "core:time"
 
@@ -25,7 +26,8 @@ import "core:time"
 // The peer is also the host for the remote service (docs/MODULE_CONTRACT.md,
 // "A call from the host"): its QUIC client of `remote` (peer_remote.odin)
 // carries each call of the tool on a stream. The tool gives it the calls on
-// a TCP port of the loopback (call_port).
+// a Unix socket that only its user reaches (call_socket, in
+// call_socket_linux.odin).
 
 @(rodata)
 PEER_HARDWARE := [6]u8{0x52, 0x55, 0x0A, 0x00, 0x02, 0x02}
@@ -62,7 +64,7 @@ Peer :: struct {
 	udp_answers:  int,
 	ping_replies: int, // Echo replies of the machine to the echo request of the peer.
 	// The host of the remote service.
-	call_port:    int, // The tool gives the calls on 127.0.0.1, at this TCP port.
+	call_socket:  string, // The path of the Unix socket where the tool gives the calls.
 	lock:         sync.Mutex, // machine and hardware: two threads read them.
 	remote:       ^Peer_Remote, // The peer as the QUIC client of `remote` (peer_remote.odin).
 	tcp:          ^Peer_Tcp, // The peer as a TCP client (peer_tcp.odin).
@@ -71,9 +73,14 @@ Peer :: struct {
 	tcp_segments: int, // TCP segments of the machine.
 }
 
-// peer_start starts the peer. call_port: the TCP port of the calls of the
-// tool on the loopback; 0 lets the system choose it.
-peer_start :: proc(peer: ^Peer, call_port := 0) -> bool {
+// The peers that this process started: the name of the socket of the calls
+// of a machine test.
+peers_started: int
+
+// peer_start starts the peer. call_socket_name: the name of the socket of
+// the calls in the private folder of the user; "" gives a name of this
+// process and of this peer, so that two machine tests never share one.
+peer_start :: proc(peer: ^Peer, call_socket_name := "") -> bool {
 	socket, err := net.make_bound_udp_socket(net.IP4_Loopback, 0)
 	if err != nil {
 		fmt.eprintfln("kerneltool: the peer has no UDP socket: %v", err)
@@ -103,19 +110,24 @@ peer_start :: proc(peer: ^Peer, call_port := 0) -> bool {
 	net.close(machine_socket)
 	peer^ = {socket = socket, port = bound.port, machine = machine_bound}
 	peer.remote = peer_remote_make()
-	if !peer_remote_loopback_start(peer.remote, call_port) {
+	socket_name := call_socket_name
+	if socket_name == "" {
+		peers_started += 1
+		socket_name = fmt.tprintf("test-%d-%d", int(linux.getpid()), peers_started)
+	}
+	if !peer_remote_socket_start(peer.remote, socket_name) {
 		peer_remote_free(peer.remote)
 		peer.remote = nil
 		net.close(socket)
 		return false
 	}
-	peer.call_port = peer.remote.loopback_port
+	peer.call_socket = peer.remote.socket_path
 	peer.tcp = peer_tcp_make()
 	peer.quic = peer_quic_make()
 	if !peer_relay_start(&peer.relay) {
 		peer_tcp_free(peer.tcp)
 		peer_quic_free(peer.quic)
-		net.close(peer.remote.listener)
+		peer_remote_socket_stop(peer.remote)
 		peer_remote_free(peer.remote)
 		peer.tcp, peer.quic, peer.remote = nil, nil, nil
 		net.close(socket)
@@ -124,7 +136,7 @@ peer_start :: proc(peer: ^Peer, call_port := 0) -> bool {
 	hardware_of_machine := [6]u8{0x52, 0x54, 0x00, 0x12, 0x34, 0x56}
 	peer.hardware = hardware_of_machine
 	peer.thread = thread.create_and_start_with_poly_data(peer, peer_run)
-	peer.call_thread = thread.create_and_start_with_poly_data(peer, peer_remote_serve_loopback)
+	peer.call_thread = thread.create_and_start_with_poly_data(peer, peer_remote_serve_socket)
 	return true
 }
 
@@ -138,7 +150,8 @@ peer_stop :: proc(peer: ^Peer) {
 	thread.join(peer.call_thread)
 	thread.destroy(peer.call_thread)
 	net.close(peer.socket)
-	net.close(peer.remote.listener)
+	peer_remote_socket_stop(peer.remote)
+	peer.call_socket = ""
 	peer.thread = nil
 	peer_tcp_free(peer.tcp)
 	peer.tcp = nil
