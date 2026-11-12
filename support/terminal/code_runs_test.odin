@@ -10,12 +10,6 @@ import "support:graphics"
 // completion list on the card.
 CODE_CONTRAST_LEAST :: 4.5
 
-// The chosen row of the list is on the blue of the title bar, as each
-// chosen line of the desktop: white has 4.29 to 1 there, and no color of a
-// kind has more than white. The row draws each kind in white; this is the
-// contrast that it keeps.
-CHOSEN_ROW_CONTRAST_LEAST :: 4.25
-
 // contrast_ratio gives the contrast ratio of two colors (WCAG 2), as the
 // tests of the site compute it.
 contrast_ratio :: proc(first, second: graphics.Color) -> f64 {
@@ -35,7 +29,8 @@ contrast_ratio :: proc(first, second: graphics.Color) -> f64 {
 }
 
 // Each kind with a color keeps its contrast on the background and on the
-// card; the plain parts have the text color; the chosen row is white.
+// card; the plain parts have the text color; the chosen row keeps its
+// contrast too.
 @(test)
 code_colors_keep_their_contrast :: proc(t: ^testing.T) {
 	surfaces := [?]graphics.Color{graphics.COLOR_BACKGROUND, graphics.COLOR_CARD_TOP, graphics.COLOR_CARD_BOTTOM}
@@ -46,11 +41,16 @@ code_colors_keep_their_contrast :: proc(t: ^testing.T) {
 			testing.expectf(t, ratio >= CODE_CONTRAST_LEAST, "the kind %v (%06x) on %06x: a contrast of %.2f; at least %.1f", kind, u32(color), u32(surface), ratio, CODE_CONTRAST_LEAST)
 		}
 	}
-	white := contrast_ratio(graphics.COLOR_WHITE, graphics.COLOR_TITLE)
-	testing.expectf(t, white >= CHOSEN_ROW_CONTRAST_LEAST, "white on the chosen row: %.2f", white)
-	for kind in Code_Kind {
-		testing.expectf(t, contrast_ratio(code_kind_color(kind, graphics.COLOR_TEXT), graphics.COLOR_TITLE) <= white, "the kind %v has more contrast than white on the chosen row", kind)
-	}
+	// The chosen row: its text is white on COLOR_CHOSEN, and a matched
+	// character is the reverse, the chosen blue on a white cell. Both keep
+	// the same bound as the colors of code.
+	white := contrast_ratio(graphics.COLOR_WHITE, graphics.COLOR_CHOSEN)
+	testing.expectf(t, white >= CODE_CONTRAST_LEAST, "white on the chosen row: %.2f; at least %.1f", white, CODE_CONTRAST_LEAST)
+	matched := contrast_ratio(graphics.COLOR_CHOSEN, graphics.COLOR_WHITE)
+	testing.expectf(t, matched >= CODE_CONTRAST_LEAST, "a matched character of the chosen row: %.2f; at least %.1f", matched, CODE_CONTRAST_LEAST)
+	// The chosen color is the title blue at 96 percent: a chosen row is
+	// still read as the blue of the desktop.
+	testing.expect_value(t, graphics.Color(graphics.COLOR_CHOSEN), graphics.shade(graphics.COLOR_TITLE, 96))
 	// The site and the terminal read one table: the colors of a type and
 	// of a literal on a dark surface.
 	testing.expect_value(t, code_kind_color(.Type, 0), graphics.code_class_color(.Type, false))

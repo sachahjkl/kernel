@@ -75,7 +75,7 @@ Code has one set of colors wherever it is shown: on the site, and in the console
 
 - A part with no class has the color of the text around it.
 - Each class has at least 4.5 to 1 on each surface that shows code: the block of code of the site in both forms, and the background and the card in the terminal. Host tests compute each contrast.
-- On a chosen line in the blue of the title bar, no class keeps that contrast: the line is white.
+- On a chosen row (`COLOR_CHOSEN`, section 10), no class keeps that contrast: the row is white.
 
 ## 5. Text
 
@@ -134,7 +134,7 @@ The desktop is the screen of the compositor: the background, the bar, the window
 - A menu of the bar is a card under its button: a border of 1 pixel in the color of the kernel, a title in capital letters, the caption of its source and the count of its lines.
 - The menu of the programs has two columns of lines. Its caption is `bar.names`, the table of the names in `support/bar`.
 - The menu of the windows has one line for each window, in the order of the client table. The window that has the focus has a square of 8 pixels before its title, and its title is white.
-- A line is 24 pixels high. The line under the pointer is in `COLOR_TITLE`, with its text in white.
+- A line is 24 pixels high. The line under the pointer is a chosen row: `COLOR_CHOSEN`, with its text in white (section 10).
 
 ### Windows
 
@@ -157,7 +157,7 @@ The desktop is the screen of the compositor: the background, the bar, the window
 - While the launcher is open, it takes each key: a character adds to the typed part, backspace removes the last one, up and down move the choice (from the last line to the first, and back), Enter starts the chosen program, Escape closes the launcher. A press of the pointer closes it. The program that has the focus receives no key and no pointer event while the launcher is open.
 - The panel is a card of 384 pixels in the middle of the screen, on the grid. It has the title `LAUNCHER`, the caption `bar.names`, and the count of the names that match, "6 of 31".
 - The input line is a field of 24 pixels in `COLOR_TRACK`, with a line of 2 pixels in `COLOR_TITLE` under it. It shows the typed part in white and a caret of 2 x 16 pixels in `COLOR_TITLE`. When it is empty, it says "type a part of a name" in the dim color.
-- The list shows 10 lines. A name matches if it contains the typed part, without the case of the letters. The names that start with the typed part come first, then the others; each group is in the order of `bar.names`. A line of 2 pixels is under the typed part in each name. The chosen line is in `COLOR_TITLE`, with "enter: start" at its right. If more than 10 names match, a bar at the right says which part of the list the panel shows.
+- The list shows 10 lines. A name matches if it contains the typed part, without the case of the letters. The names that start with the typed part come first, then the others; each group is in the order of `bar.names`. A line of 2 pixels is under the typed part in each name. The chosen line is a chosen row: `COLOR_CHOSEN`, with its name and "enter: start" at its right in white (section 10). If more than 10 names match, a bar at the right says which part of the list the panel shows.
 - With no match, the list says `no program has "xyz" in its name`, and Enter starts nothing.
 - The launcher lists what the menu of the programs lists, from the same table, and starts a program as the menu does: the compositor sends `Start` with the name to the root service. It has no other power.
 
@@ -174,9 +174,19 @@ The interface package (`support/interface`, `docs/INTERFACE.md`) draws these ele
 | Table | The titles of the columns in the dim color; lines of 24 pixels; every second line, from the first, on a band of `COLOR_CARD_TOP`; numbers at the right of their column |
 | Bar | The track in `COLOR_TRACK`; the full part from 125 % of its color at the top to 78 % at the bottom; 2 pixels at least for a value above 0 |
 | Button | A rectangle of the track with its label in the text color; blue (`COLOR_TITLE`) at 60 % when it has the focus or the pointer is over it, full blue with a white label when it is open or both |
-| List with a choice | Lines of 24 pixels; the chosen line in `COLOR_TITLE` with its name in white; a line of 2 pixels under a searched part of each name; a bar of 2 pixels at the right when the lines do not fit |
+| List with a choice | Lines of 24 pixels; the chosen line in `COLOR_CHOSEN` with its name and its hint in white; a line of 2 pixels under a searched part of each name; a bar of 2 pixels at the right when the lines do not fit |
 | Text input | A field of the track with a line of 2 pixels at its bottom (`COLOR_TITLE` with the focus, `COLOR_NOT_USABLE` without); the text in white; a caret of 2 x 16 pixels in `COLOR_TITLE` with the focus; the placeholder in the dim color |
 | Large number | The font at 3 times its size, drawn from its outline at 24 x 48: the one number of a card (section 5) |
+
+### The chosen row
+
+A chosen row is the chosen line of a list, of a menu of the bar, of the launcher, and of the completion list of the terminal.
+
+- Its color is `COLOR_CHOSEN`, `0x3C76BB`: the blue of the title bar at 96 % (`shade(COLOR_TITLE, 96)`). It is not the title blue itself: white has 4.29 to 1 on `0x3F7CC4`, under the 4.5 that a text needs.
+- Its text is white: 4.67 to 1. No other color of the rules keeps 4.5 on it: the text color has 3.63, the accent of a match under 3.3.
+- A matched character of a chosen row in a grid of cells is the reverse: the chosen blue on a white cell, 4.67 to 1. In a list of the interface font, the line of 2 pixels under the searched part is white.
+- A title bar is not a chosen row: it keeps its gradient from `COLOR_TITLE`. An open button draws its white label on `COLOR_CHOSEN` too (4.67).
+- A host test computes the contrast of the text and of a matched character on the chosen row (`support/terminal/code_runs_test.odin`).
 
 - An element that takes input can take the focus, and the keyboard reaches it: Tab, Enter, Space, the arrows (`docs/INTERFACE.md`, section 4).
 

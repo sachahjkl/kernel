@@ -80,14 +80,12 @@ COLOR_THUMB :: 0x5A6878
 COLOR_STOPPED :: 0xF07060
 COLOR_HELD :: 0xF0C050
 COLOR_CURSOR :: 0x7FC8FF
-// The completion list: a card over the text, its chosen row in the blue of
-// the title bar, the matched characters in the accent, a border of one
-// pixel in the color of the kernel as the menus of the bar.
+// The completion list: a card over the text, its chosen row in the chosen
+// blue of the rules with its text in white, the matched characters in the
+// accent, a border of one pixel in the color of the kernel as the menus of
+// the bar.
 COLOR_LIST :: graphics.COLOR_CARD_TOP
-COLOR_LIST_CHOSEN :: graphics.COLOR_TITLE
 COLOR_LIST_BORDER :: graphics.COLOR_KERNEL
-COLOR_MATCH_ON_CHOSEN_ROW :: 0xA8E0FF // The accent is too close to the blue of the chosen row.
-COLOR_ABOUT_ON_CHOSEN_ROW :: 0xB8C8DC
 LIST_WIDTH_LEAST :: 16 // Cells: a list of short names stays wide enough to read.
 
 // The color of each tone.
@@ -402,10 +400,9 @@ list_fill :: proc "contextless" (edit_top, below: int) {
 	for index in 0 ..< shown_rows {
 		row := &list_keeping.shown.rows[offset + index]
 		chosen := offset + index == list_keeping.shown.chosen
-		background: graphics.Color = chosen ? COLOR_LIST_CHOSEN : COLOR_LIST
+		background: graphics.Color = chosen ? graphics.COLOR_CHOSEN : COLOR_LIST
 		name_color: graphics.Color = chosen ? graphics.COLOR_WHITE : graphics.COLOR_TEXT
-		match_color: graphics.Color = chosen ? COLOR_MATCH_ON_CHOSEN_ROW : tone_colors[.Accent]
-		about_color: graphics.Color = chosen ? COLOR_ABOUT_ON_CHOSEN_ROW : tone_colors[.Dim]
+		about_color: graphics.Color = chosen ? graphics.COLOR_WHITE : tone_colors[.Dim]
 		cells := view.cells[top + index][left:][:list_width]
 		for &cell in cells {
 			cell = {character = ' ', filled = true, color = name_color, background = background}
@@ -414,18 +411,26 @@ list_fill :: proc "contextless" (edit_top, below: int) {
 		// the part with no kind in the color of the name. On the chosen row
 		// each part is white: no color of a kind keeps its contrast on the
 		// blue (docs/CONSOLE.md, section 7). A matched character is in the
-		// match color over its kind: the match is what the person typed.
+		// accent over its kind: the match is what the person typed. No tone
+		// but white keeps its contrast on the chosen blue, so there a matched
+		// character is the reverse: the chosen blue on a white cell.
 		colored := row.code.count != 0
-		if colored {
-			about_color = chosen ? graphics.COLOR_WHITE : name_color
+		if colored && !chosen {
+			about_color = name_color
 		}
 		code_cursor := 0 // The run of code of the bytes of the row, in order.
 		name_shown := min(row.name_length, inner)
 		for place in 0 ..< name_shown {
 			matched := row.matched[place / 64] & (1 << u64(place % 64)) != 0
 			kind := terminal.code_runs_kind_at(&row.code, place, &code_cursor)
-			color := chosen ? name_color : terminal.code_kind_color(kind, name_color)
-			cells[1 + place] = {character = shown_character(row.text[place]), filled = true, color = matched ? match_color : color, background = background}
+			name_cell := Cell{character = shown_character(row.text[place]), filled = true, color = chosen ? name_color : terminal.code_kind_color(kind, name_color), background = background}
+			switch {
+			case matched && chosen:
+				name_cell.color, name_cell.background = graphics.COLOR_CHOSEN, graphics.COLOR_WHITE
+			case matched:
+				name_cell.color = tone_colors[.Accent]
+			}
+			cells[1 + place] = name_cell
 		}
 		// What the name is, at the right, cut at its end when the room is short.
 		about_room := inner - name_shown - 2

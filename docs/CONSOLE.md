@@ -88,7 +88,7 @@ The console knows the names; the terminal owns the cells and the keys. The conso
 
 So no record has a place on the screen, and the terminal stays a program with no knowledge of the language of the console. The rows go through the text region of the console and its terminal: no third program reads it, and the terminal already shows each name that `help()` prints.
 
-The look follows `docs/DESIGN.md`: the cells of the list have the card color, the chosen row the blue of the title bar, the matched characters the accent, what a name is at the right of its row, in the colors of its code (section 7); a border of one pixel in the color of the kernel, as the menus of the bar; no shadow, no round corner. A cell of the text grid has a fill color for this (`interface.Text_Grid_Cell.filled` and `background`, draw record version 5): a cell is 12 bytes in place of 8, and the damage by difference redraws only the rows of the list that change. The border is four records after all the others, so the records before keep their places when the list opens or closes.
+The look follows `docs/DESIGN.md`: the cells of the list have the card color, the chosen row the chosen blue `COLOR_CHOSEN` with its text in white, the matched characters the accent (on the chosen row: the chosen blue on a white cell), what a name is at the right of its row, in the colors of its code (section 7); a border of one pixel in the color of the kernel, as the menus of the bar; no shadow, no round corner. A cell of the text grid has a fill color for this (`interface.Text_Grid_Cell.filled` and `background`, draw record version 5): a cell is 12 bytes in place of 8, and the damage by difference redraws only the rows of the list that change. The border is four records after all the others, so the records before keep their places when the list opens or closes.
 
 The line under the edit line (the hint line) and the list are drawn over the grid. The terminal keeps one free row under the edit line at all times, with or without a hint: the hint is drawn in that row. So the text never moves by one row when a hint comes or goes. When the view follows the text, the free row is the last row of the view, and the edit line the row above it. The list opens under the free row when the rows below hold it; when the edit line is near the bottom, it opens above the edit line, over the text.
 
@@ -152,7 +152,7 @@ A part with no class has the color of the text around it: the tone of the line, 
 
 **The marks over the colors.** The caret of the edit line is drawn over its byte, as before. A matched character of the list, and of the search of the history, has the accent over the color of its kind: the match is what the person typed. The line editor has no selection of text. The hint line stays dim, with its mark on the parameter at the caret.
 
-**The chosen row.** On the blue of the title bar `0x3F7CC4`, white has 4.29 to 1 and no color of a kind has more. The chosen row draws each part in white, and its matched characters in `0xA8E0FF` (3.02), as before: the kinds show on the other rows. The test holds white at 4.25 at least there.
+**The chosen row.** The chosen row is on `COLOR_CHOSEN` `0x3C76BB` (`docs/DESIGN.md`, section 10). White has 4.67 to 1 there, and no color of a kind keeps 4.5. The chosen row draws each part in white: the kinds show on the other rows. A matched character of the chosen row is the reverse, the chosen blue on a white cell: 4.67 to 1. The host test holds 4.5 for both.
 
 **The records** (`support/terminal`, record version 2):
 
