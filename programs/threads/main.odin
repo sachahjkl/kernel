@@ -12,6 +12,21 @@
 // registers of each thread: a wrong picture means a lost register.
 //
 //   1 to 4: stop the thread of a square, or start it again
+//
+// **What it is for.** It shows that a thread is cheap and that the kernel
+// keeps its state whole: each square must stay correct while threads stop,
+// start and share the processors. A thread that ends is a value that the
+// first thread waits for: one thread first adds the numbers to 1000, and
+// the first thread reads the sum in the shared memory.
+//
+// **Start**: `start("threads")` in the console, or the bar of the desktop.
+// It has no grant of `grants_of`; its budget has room for 6 threads.
+//
+// **What a reader sees**: four squares, each with its thread and its count
+// of frames, or "stopped". The log has "threads: a thread added the numbers
+// to 1000: 500500", then "threads: ok, 4 threads draw in one surface" when
+// each square has a frame, and "threads: thread N stopped at frame F" or
+// "started" after a key.
 package threads
 
 import "support:display"
@@ -115,6 +130,13 @@ worker_start :: proc "contextless" (index: int) -> bool {
 	return worker.runs
 }
 
+// The entry of threads: one thread that ends, then four threads that draw,
+// and a loop that shows their squares and stops or starts them on a key.
+//
+// With no window, or when a thread does not start, it stops with the code
+// 1. The first thread never draws a pixel of a square: it only shows the
+// pictures that the four threads wrote, at the rate of the screen. A key 1
+// to 4 ends the thread of that square (`thread_end`), or starts a new one.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "threads")

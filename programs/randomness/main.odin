@@ -8,6 +8,32 @@
 // generator, seeded by its starter (the values 9 to 12). The window shows
 // both, a live draw of the stream, the counts of each byte value in 1 MiB,
 // and the speed of the generator.
+//
+// **What it is for.** It shows where the random bytes of a program come
+// from, and what the system claims of them: the strength of the seed is a
+// fact that the root service measured, not a promise. A program that makes
+// a key (`remote`, `quic_echo`, `unlock`) refuses a seed under the strength
+// that it needs; this program shows that strength.
+//
+// **Start**: `start("randomness")` in the console, or the bar of the
+// desktop. It has no grant of `grants_of`: the root service writes the
+// facts of the seed into its context because of its name, and these are
+// facts, not the seed.
+//
+// **What a reader sees**: the sources of the seed (rdseed, rdrand, the
+// jitter of the cycle counter) with their counts, the strength, a live draw
+// of the stream every 500 ms, the 16 bars of 1 MiB counted by the high 4
+// bits of each byte, and the speed. The log has:
+//
+// - "randomness: the seed of the system: strength ...; the first bytes of
+//   the stream of this program: ...";
+// - "randomness: 1 MiB by the high 4 bits of each byte: from A to B in each
+//   of 16 (the mean is 65536)";
+// - "randomness: the generator: 4 MiB in T us, R MB/s".
+//
+// **What it does not prove**: even bars are no test of quality; a weak
+// generator gives them too. The quality of the seed rests on the sources of
+// the processor (docs/RANDOMNESS.md, section 3).
 package randomness
 
 import "support:display"
@@ -135,6 +161,13 @@ draw :: proc "contextless" (window: ^display.Window) {
 	interface.window_frame_end(&drawing, &frame, window)
 }
 
+// The entry of randomness: it shows the seed, counts 1 MiB, measures 4 MiB,
+// then draws a live stream every 500 ms for ever.
+//
+// With no seed in its context, it writes "randomness: no random seed in the
+// context" and stops with the code 1; with no window, it stops with the
+// code 1. The counts and the measure run once, in the main thread, after
+// the first picture.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if !random.generator_from_context(&program_generator, ctx) {

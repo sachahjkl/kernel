@@ -73,7 +73,23 @@ acts_for_principal :: proc "contextless" () -> bool {
 	return caller == nil || caller.grant & isolated.CALLER_ACTS_FOR_PRINCIPAL != 0
 }
 
-// programs gives one row for each program that runs, from the reports of the kernel: its slot, its name, its state, its pages with a frame and its mapped pages, its handles, threads, processor time in milliseconds, kernel entries, and the time of its start in microseconds. The result is the count of rows, or a negative number with an error record. The error kinds: No_Grant (-1, the caller does not act for the principal); Refused (-2, the kernel refused a report to the monitor, with its status).
+// programs gives one row for each program that runs, from the reports of the kernel: its slot, its name, its state, its pages with a frame and its mapped pages, its handles, threads, processor time in milliseconds, kernel entries, and the time of its start in microseconds.
+//
+// The monitor asks the kernel for the report of each program slot, and skips a slot with no program. A stopped
+// program that its parent has not closed yet has a row, with the state `stopped`.
+//
+// - **result**: a table of `Program` rows that the call fills. A table shorter than the count gets the first rows
+//   only; the result still counts every program.
+//
+// The result is the count of programs, or a negative number with an error record:
+//
+// - `No_Grant` (-1): the caller does not act for the principal. A program sees no other program, so only the
+//   console and the host through the remote service get rows.
+// - `Refused` (-2): the kernel refused the system report to the monitor; the record holds its status. This comes
+//   when the grant **Inspect** of the monitor was revoked.
+//
+// Example, in the console after `connect("monitor")`: `monitor.programs()`, or
+// `where(monitor.programs(), "threads", 2)` to keep the rows of a column value.
 @(export, link_name = "programs")
 programs :: proc "c" (result: ^[]Program, error: ^errors.Error_Record) -> i64 {
 	if !acts_for_principal() {
@@ -111,7 +127,18 @@ programs :: proc "c" (result: ^[]Program, error: ^errors.Error_Record) -> i64 {
 	return i64(total)
 }
 
-// counts gives one row for each count of the machine that the kernel reports: the time, the pages, the free pages, the reserved pages, the memory objects, the programs, the processors, the kernel entries, the interrupts, the page faults of a first use, and the takes and the waits of the locks of the kernel, the scheduling strategy (its number, and its name as the unit) and its changes. The result is the count of rows, or a negative number with an error record. The error kinds: No_Grant (-1, the caller does not act for the principal); Refused (-2, the kernel refused the report to the monitor, with its status).
+// counts gives one row for each count of the machine that the kernel reports: the time, the pages, the free pages, the reserved pages, the memory objects, the programs, the processors, the kernel entries, the interrupts, the page faults of a first use, and the takes and the waits of the locks of the kernel, the scheduling strategy (its number, and its name as the unit) and its changes.
+//
+// Each row is a `Count`: a name, a value and a unit ("free pages", 12345, "pages"). The names are the names that
+// [count](monitor.count) and [counts_named](monitor.counts_named) take. The counts of the locks add the takes and
+// the waits of every kind of lock. The count "programs" counts the slots in use, stopped programs included.
+//
+// - **result**: a table of `Count` rows; the call fills at most its length.
+//
+// The result is the count of rows, or a negative number with an error record:
+//
+// - `No_Grant` (-1): the caller does not act for the principal.
+// - `Refused` (-2): the kernel refused the system report; the record holds its status.
 @(export, link_name = "counts")
 counts :: proc "c" (result: ^[]Count, error: ^errors.Error_Record) -> i64 {
 	if !acts_for_principal() {
@@ -126,7 +153,20 @@ counts :: proc "c" (result: ^[]Count, error: ^errors.Error_Record) -> i64 {
 	return i64(total)
 }
 
-// count gives one count of the machine by its name, as counts() names it: count("free pages"). The result is the count, or a negative number with an error record. The error kinds: No_Grant (-1, the caller does not act for the principal); Refused (-2, the kernel refused the report to the monitor); Absent (-3, no count has this name).
+// count gives one count of the machine by its name, as counts() names it: count("free pages").
+//
+// It reads all the counts, as [counts](monitor.counts) does, and gives the value of one of them: a caller that needs
+// one number needs no table.
+//
+// - **name**: the name of a count, as the first column of `counts()` gives it, 23 bytes at most. The match is exact.
+//
+// The result is the value of the count, or a negative number with an error record:
+//
+// - `No_Grant` (-1): the caller does not act for the principal.
+// - `Refused` (-2): the kernel refused the system report.
+// - `Absent` (-3): no count has this name, or the name is longer than 23 bytes.
+//
+// Example: `monitor.count("kernel entries")`.
 @(export, link_name = "count")
 count :: proc "c" (name: ^string, error: ^errors.Error_Record) -> i64 {
 	if !acts_for_principal() {
@@ -151,7 +191,23 @@ count :: proc "c" (name: ^string, error: ^errors.Error_Record) -> i64 {
 	return errors.fail(error, ERROR_ABSENT, .Absent, .None, 1)
 }
 
-// counts_named gives the counts of the machine that a table of names names, in the order of the table: many counts in one call. The result is the count of rows, or a negative number with an error record. The error kinds: No_Grant (-1, the caller does not act for the principal); Refused (-2, the kernel refused the report to the monitor); Absent (-3, a name names no count: found is the number of its row, from 1). With a table of error details, it gives one Absent detail for each row that names no count, in the order of the rows; the error record is the first of them.
+// counts_named gives the counts of the machine that a table of names names, in the order of the table: many counts in one call.
+//
+// It is the form of [count](monitor.count) for several names: one call, one read of the reports, and the values
+// of one moment.
+//
+// - **names**: a table of `Count_Name` rows, each a name as `counts()` gives it.
+// - **details**: a table of error details, or none. With a table, the call checks every row and appends one
+//   `Absent` detail for each row that names no count, in the order of the rows. With no table, it stops at the
+//   first such row.
+// - **result**: a table of `Count` rows, in the order of the names; row n answers name n.
+//
+// The result is the count of names, or a negative number with an error record:
+//
+// - `No_Grant` (-1): the caller does not act for the principal.
+// - `Refused` (-2): the kernel refused the system report.
+// - `Absent` (-3): a name names no count. The value *found* of the record is the number of its row, from 1; with
+//   a table of details, the record is the first of them.
 @(export, link_name = "counts_named")
 counts_named :: proc "c" (names: ^system.Table_To_Read(Count_Name), details: ^system.Table_To_Append(errors.Error_Record), result: ^[]Count, error: ^errors.Error_Record) -> i64 {
 	if !acts_for_principal() {
@@ -254,7 +310,15 @@ counts_read :: proc "contextless" (rows: ^[COUNT_CAPACITY]Count) -> (total: int,
 	return len(items), .Ok
 }
 
-// served gives what the monitor did as a service: the calls that it executed, the connections that it has now, and the pictures of its window. These are facts of the monitor itself: each caller sees them.
+// served gives what the monitor did as a service: the calls that it executed, the connections that it has now, and the pictures of its window.
+//
+// These are facts of the monitor itself, not of other programs: each caller sees them, with no grant to act for
+// the principal. The test of the calls from the host reads `calls` before and after a call over a link that loses
+// datagrams: the count grows by one, so the call ran one time.
+//
+// - **result**: one `Served` record: `calls`, `callers`, `pictures`.
+//
+// It never fails.
 @(export, link_name = "served")
 served :: proc "c" (result: ^Served) {
 	result^ = {calls = i64(service.calls), callers = i64(service.connected), pictures = i64(pictures)}

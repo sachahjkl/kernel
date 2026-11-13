@@ -1,6 +1,8 @@
-// The real shortage of page frames (docs/ARCHITECTURE.md, "The frame
-// caches"). This program runs alone, on a machine of the test whose boot
-// image has no desktop: the root service gives it nearly all of its pages.
+// The real shortage of page frames: the frame caches of the processors
+// drained so that a take that cannot fail succeeds (docs/ARCHITECTURE.md,
+// "Rules that keep each path correct", the item "The frame caches"). This
+// program runs alone, on a machine of the test whose boot image has no
+// desktop: the root service gives it nearly all of its pages.
 //
 // The frame table becomes empty only when the unspent pages of all the
 // budgets and the reserved pages are fewer than the frames in the stacks of
@@ -13,6 +15,24 @@
 // anywhere that a budget can pay, that a Memory_Create fails with its error
 // record, frees everything, and checks that the sums are those of the start.
 // It stops the machine with the code 0.
+//
+// **What it is for.** It proves a rule of the kernel that no other test can
+// reach: a page that a budget paid for is always there when the program
+// uses it, even when every free frame sits in the cache of another
+// processor. On a machine with a desktop the other programs hold the pages,
+// so the frame table never becomes empty.
+//
+// **Start**: no reader starts it. The root service starts it in place of
+// the desktop when the boot image has the program `shortage` and no
+// program `input`: the tool builds that image for the test of the shortage.
+// It is not named in `grants_of`: `shortage_start` in the root service
+// gives it the machine and nearly all the pages of the root service.
+//
+// **What a reader sees**: no window. The log has three lines of counts,
+// "shortage: start: ...", "shortage: full: ..." and "shortage: freed in
+// ...", then "shortage: ok, the stacks were drained for takes that cannot
+// fail, a new object failed only when its budget could pay no page, and
+// each frame returned", or "shortage: wrong". Then the machine stops.
 package shortage
 
 import "base:intrinsics"
@@ -82,6 +102,21 @@ fill :: proc "c" (parameter: rawptr) -> ! {
 	system.thread_stop()
 }
 
+// The entry of shortage: fill all the memory that its budget pays, check
+// the counts, free it all, check again, and stop the machine.
+//
+// In order:
+//
+// 1. it reads the system report and its budget, and writes the start line;
+// 2. 4 threads create memory objects and write one byte in each page, until
+//    the budget pays no more; the last pages of the budget become one object
+//    that is never used;
+// 3. it checks that no free frame is left that a budget can pay, and that a
+//    new object of one page fails with the error kind `Budget`;
+// 4. it closes everything, and waits (with the hang bound) until its budget
+//    holds again what it held at the start;
+// 5. it writes "shortage: ok, ..." or "shortage: wrong", and stops the
+//    machine with the code 0 in both cases: the test reads the log.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	machine = ctx.handles[system.GRANT_MACHINE]

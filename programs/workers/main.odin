@@ -9,6 +9,27 @@
 //
 // Before the picture, the four threads add to one number, first with the
 // lock, then with no lock. With no lock, additions are lost.
+//
+// **What it is for.** It shows the two tools of the system for threads
+// that share memory: the lock of the system library, which counts its
+// waits, and the word wait of the kernel, where a thread sleeps on a word of
+// memory with no kernel object. The sum with no lock shows why the lock
+// exists.
+//
+// **Start**: `start("workers")` in the console, or the bar of the desktop.
+// It has no grant of `grants_of`; its budget has room for 9 threads.
+//
+// **What a reader sees**: the picture in the tints of the four threads,
+// which zooms in at each new picture, the tiles of each thread and the
+// waits of the lock. The log has:
+//
+// - "workers: with the lock, 4 threads made N additions: the number is N,
+//   W waits";
+// - "workers: with no lock, ...: the number is M", where M is usually
+//   smaller than N;
+// - "workers: the lock lost no addition";
+// - "workers: ok, 4 threads computed T tiles: A B C D" after the first
+//   picture.
 package workers
 
 import "support:display"
@@ -160,6 +181,12 @@ compute :: proc "c" (parameter: rawptr) -> ! {
 	}
 }
 
+// The entry of workers: the two sums, then the four workers, then a loop
+// that gives them a new picture after each pause.
+//
+// With no window, or when a thread does not start, it stops with the code
+// 1. The first thread never computes a tile: it fills the queue, changes
+// the word that the workers wait on, and draws at the rate of the screen.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "workers")

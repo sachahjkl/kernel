@@ -9,6 +9,31 @@
 // the time of each picture, and the load of each processor.
 //
 // The program needs the grant to inspect the machine.
+//
+// **What it is for.** It shows that the kernel runs the threads of one
+// program on several processors at one time, and what that gives on a job
+// that divides well. A lock guards the next row to compute: the panel
+// counts its waits, so a reader sees the cost of the shared state.
+//
+// **Start**: `start("processors")` in the console, or the bar of the
+// desktop. Its budget has room for 9 threads: the main thread, the 4
+// threads that compute, and the threads of the first part.
+//
+// **Grants**, as the root service gives them:
+//
+// - **Inspect**: the machine with the right Inspect, for the processor
+//   reports (what each processor runs) and the system report (how many
+//   processors exist). With no such grant it writes "processors: no grant
+//   to inspect the machine" and stops with the code 1.
+//
+// **What a reader sees**: the picture in the tints of the threads, the time
+// of each of the three pictures, the load of each processor and the waits
+// of the lock. The log has "processors: ok, N processors ran the program at
+// the same time" (or "at most N of M"), then once "processors: the picture
+// took A ms with 1 thread, B ms with 2 threads, C ms with 4 threads".
+//
+// **What it does not prove**: the times depend on the machine and on QEMU;
+// the program prints them as measures and asserts no speed-up.
 package processors
 
 import "support:display"
@@ -185,6 +210,14 @@ load_measure :: proc "contextless" (elapsed: u64) {
 	}
 }
 
+// The entry of processors: the test of the processors at one time, then the
+// pictures with 1, 2 and 4 threads in a loop for ever.
+//
+// With no window, or with no grant to inspect the machine, it stops with
+// the code 1. It runs `run_together` once and writes its result. Then it
+// starts 4 threads that compute rows, and the main thread gives them the
+// same picture with 1, then 2, then 4 of them at work, and starts again.
+// The main thread draws the panel at the rate of the screen.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "processors")

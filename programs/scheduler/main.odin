@@ -18,6 +18,33 @@
 // change with no right Schedule and a weight above the full weight.
 //
 // The program needs the machine with the rights Inspect and Schedule.
+//
+// **What it is for.** The kernel has three scheduling strategies (round
+// robin, fair, EEVDF) and changes from one to another at run time. This
+// program shows what each one gives on the same load, and checks what each
+// one must keep, whatever the speed of the host.
+//
+// **Start**: `start("scheduler")` in the console, or the bar of the
+// desktop. Its budget has room for 24 threads: 12 spinners, two threads
+// that wake each other, one that sleeps, a changer, and a thread that
+// starts threads.
+//
+// **Grants**, as the root service gives them:
+//
+// - **Inspect**: the machine with the right Inspect, for the counts of the
+//   scheduler in the system report.
+// - **Schedule**: the right to change the strategy of the whole machine. A
+//   change touches every program, so this right is rare.
+//
+// **What a reader sees**: one tile for each strategy with its numbers, and
+// the strategy in use. The log has one line of results for each strategy,
+// then "scheduler: ok, no spinner starved under 3 strategies, ..." or
+// "scheduler: wrong: ..." with the first problem, and the time to draw the
+// window. At the end the program sets the strategy that was in use at its
+// start.
+//
+// **What it does not prove**: the wakes in one second and the shares are
+// measures of this host, printed and not checked.
 package scheduler
 
 import "base:intrinsics"
@@ -811,6 +838,15 @@ choose :: proc "contextless" (index: int) {
 	}
 }
 
+// The entry of scheduler: the checks of the refusals, the four cases under
+// each strategy, the stress of the changes, then a window where a key or a
+// click chooses the strategy.
+//
+// With no window it stops with the code 1. A failed check does not stop
+// it: `fail` keeps the first problem, and the result line says it. After
+// the measures it gives the machine back the strategy of its start. Then it
+// draws every 500 ms; the keys 1, 2 and 3, or a click on a tile, change the
+// strategy of the machine.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "scheduler")

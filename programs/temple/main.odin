@@ -3,6 +3,14 @@
 // The processor draws all of it: the system has no GPU code yet, and
 // programs draw on the processor first (docs/PROPERTIES.md, "One graphics
 // interface").
+//
+// **What it is for.** It is a load of floating point work on the
+// processor, with perspective, that a reader can judge by eye: a lost
+// register or a late frame shows at once.
+//
+// **Start**: `start("temple")` in the console, or the bar of the desktop.
+// It has no grant of `grants_of`: a window is all that it needs. The log has
+// "temple: ok" after the first picture.
 package temple
 
 import "support:display"
@@ -42,6 +50,13 @@ pictures: [1]graphics.Canvas
 records_now, records_before: [2]interface.Draw_Record
 drawing: interface.Window_Drawing
 
+// The entry of temple: it prepares the portrait, then draws the light, the
+// temple and the turning portrait for ever.
+//
+// With no window it stops with the code 1. The angle of the portrait comes
+// from the clock, not from a count of pictures, so a slow picture does not
+// slow the turn. After a slow picture the program sleeps at least 5 ms, so
+// it never takes the whole processor.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "temple")
@@ -58,7 +73,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	for {
 		now := system.time()
 		elapsed := now - start
-		// The first frame shows the portrait a little before it faces the person.
+		// The first frame shows the portrait a little before it faces the viewer.
 		turn := f32((elapsed + TURN_TIME - TURN_TIME / 16) % TURN_TIME) / TURN_TIME
 		draw_light(pictures[0], int(elapsed / RAY_TIME))
 		draw_temple(pictures[0])

@@ -22,6 +22,26 @@
 //      comes in the program, after its first instruction: its own fault.
 //   5. A stack address that is not canonical, held at a syscall: the entry
 //      saves it without a use of it, and the return refuses it.
+//
+// **What it is for.** It is the regression test of a fault of the kernel
+// that let one program stop the machine. Each case is a hostile
+// state that the return of the kernel once trusted; the machine must go on
+// after each one.
+//
+// **Start**: `start("return_fault")` in the console, or the bar of the
+// desktop. The parent starts each child from the boot image, one at a time:
+// its budget has room for two programs.
+//
+// **Grants**, as the root service gives them:
+//
+// - **Image**: the boot image, read-only, to start the children from it.
+//
+// **What a reader sees**: one row for each case, with the stop code and the
+// stop report of the child. The log has "return_fault: ok, 5 cases: each
+// child stopped as its own fault or returned with the flags of a program,
+// and the machine goes on", or "return_fault: failed: N cases of 5".
+//
+// The design: (docs/ARCHITECTURE.md, "The return to a program").
 package return_fault
 
 import "contract:module"
@@ -197,6 +217,19 @@ draw :: proc "contextless" (window: ^display.Window) {
 	interface.window_frame_end(&drawing, &frame, window)
 }
 
+// The entry of return_fault: a child runs its one hostile case; the parent
+// runs the five cases and shows them.
+//
+// The context value `VALUE_ROLE` chooses the role:
+//
+// - a role of a case: the child makes its hostile state at once. It never
+//   comes back here: the kernel stops it as its own fault, or it stops
+//   itself. The child of the trap flag stops with the code 4 when no trap
+//   came.
+// - `Parent` (0, as the root service starts it): it takes its random
+//   generator, opens its window and maps the boot image (a failure stops it
+//   with the code 1), runs each case with `case_run`, writes the result on
+//   the log, and then draws its window for ever.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	switch Role(ctx.values[VALUE_ROLE]) {

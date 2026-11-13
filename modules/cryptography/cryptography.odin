@@ -271,6 +271,15 @@ sha256_run :: #force_no_inline proc "contextless" (text: string, output: []u8) -
 }
 
 // sha256 gives the SHA-256 hash of a text: 32 bytes (FIPS 180-4).
+//
+// - **text**: the bytes to hash, of any length.
+// - **result**: a buffer of 32 bytes at least.
+//
+// **Result**: 32. A buffer under 32 bytes receives nothing, and the result 32 says how much room the hash needs.
+// It has no error record: each text has a hash. The stack below the export is erased after the work, because a
+// text can be a secret (a transcript, a key).
+//
+// Example, after `load("cryptography")`: `sha256("abc")` gives the 32 bytes that start with ba 78 16 bf.
 @(export, link_name = "sha256")
 sha256 :: proc "c" (text: ^string, result: ^[]u8) -> i64 {
 	count := sha256_run(text^, result^)
@@ -296,6 +305,13 @@ hmac_sha256_run :: #force_no_inline proc "contextless" (key, text: string, outpu
 }
 
 // hmac_sha256 gives the HMAC of a text with a key, with SHA-256: 32 bytes (RFC 2104).
+//
+// - **key**: the key, of any length; a key longer than 64 bytes is hashed first, as the standard says.
+// - **text**: the bytes to authenticate.
+// - **result**: a buffer of 32 bytes at least.
+//
+// **Result**: 32. A buffer under 32 bytes receives nothing. The tag is computed in memory of the module, then
+// copied: the buffer of the caller never holds a part of the work. The copy of the tag is erased.
 @(export, link_name = "hmac_sha256")
 hmac_sha256 :: proc "c" (key, text: ^string, result: ^[]u8) -> i64 {
 	count := hmac_sha256_run(key^, text^, result^)
@@ -665,6 +681,14 @@ header_protection_mask_run :: #force_no_inline proc "contextless" (kind: Header_
 }
 
 // header_protection_mask_with_aes_128 gives the 5 bytes of the QUIC header protection mask of a sample of 16 bytes with a key of 16 bytes: AES-128 of the sample (RFC 9001, section 5.4.3). The result is 5, or a negative number with an error record for a key or a sample of another size.
+//
+// - **key**: the header protection key of 16 bytes (argument 1).
+// - **sample**: the 16 bytes of the protected packet that the standard names (argument 2).
+// - **result**: a buffer of 5 bytes at least; a shorter buffer receives nothing, and the result is 5.
+//
+// The errors: `Empty`, `Too_Small` or `Too_Long` for a key or a sample of another size, with the number of the
+// argument. The copy of the key is erased. The QUIC library of the system calls it for each packet of a suite with
+// AES.
 @(export, link_name = "header_protection_mask_with_aes_128")
 header_protection_mask_with_aes_128 :: proc "c" (key, sample: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 {
 	count := header_protection_mask_run(.Aes_128, key^, sample^, result^, error)
@@ -673,6 +697,12 @@ header_protection_mask_with_aes_128 :: proc "c" (key, sample: ^string, result: ^
 }
 
 // header_protection_mask_with_chacha20 gives the 5 bytes of the QUIC header protection mask of a sample of 16 bytes with a key of 32 bytes: the ChaCha20 keystream at the counter and the nonce that the sample gives (RFC 9001, section 5.4.4). The result is 5, or a negative number with an error record for a key or a sample of another size.
+//
+// - **key**: the header protection key of 32 bytes (argument 1).
+// - **sample**: 16 bytes of the protected packet: the first 4 are the counter, the other 12 the nonce (argument 2).
+// - **result**: a buffer of 5 bytes at least; a shorter buffer receives nothing, and the result is 5.
+//
+// The errors are those of [the mask with AES-128](cryptography.header_protection_mask_with_aes_128).
 @(export, link_name = "header_protection_mask_with_chacha20")
 header_protection_mask_with_chacha20 :: proc "c" (key, sample: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 {
 	count := header_protection_mask_run(.ChaCha20, key^, sample^, result^, error)

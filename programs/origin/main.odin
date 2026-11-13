@@ -6,6 +6,34 @@
 // came from. A program takes back what came from a handle of its own: the
 // copies, the handles that other programs received, and their mappings.
 // The window shows each case and the answer of the kernel.
+//
+// **What it is for.** It shows that each access in the system can be taken
+// back. A program lends a handle for one call, then revokes it: the kernel
+// ends each copy and each mapping that came from it, in this program and in
+// the programs that received it. No program needs the cooperation of the
+// receiver to take back what it gave.
+//
+// **The cases**, in order:
+//
+// - a copy with the right Read, then a copy of the copy that asks for Write:
+//   the kernel gives Read only, because a copy never has more rights;
+// - the count of what came from a handle, before and after a close;
+// - a revocation: the copies end, the mapping of the program stays;
+// - a mapping in another program, then its revocation;
+// - a revocation in one other program only, with `Handle_Revoke` and the
+//   handle of that program;
+// - a revocation of a handle that the program does not have: `Bad_Handle`.
+//
+// **Start**: `start("origin")` in the console, or the bar of the desktop.
+// It has no grant of `grants_of`: everything that it uses, it makes. Its
+// budget has room for two programs: itself and the program "held", which
+// never runs and only receives.
+//
+// **What a reader sees**: the table of the cases and the answers of the
+// kernel. The log has "origin: ok, 12 cases", or "origin: wrong answer: ..."
+// for each case that failed, then the cost of a lent handle: "origin: lend a
+// handle and take it back: N ns with 4 kernel entries; copy and close: M ns
+// with 2".
 package origin
 
 import "support:display"
@@ -55,6 +83,15 @@ live :: proc "contextless" (handle: system.Handle) -> bool {
 	return kind != .None
 }
 
+// The entry of origin: it runs the cases of the origin of a handle once,
+// measures a lent handle, then shows the result until the principal closes
+// the window.
+//
+// With no window it stops with the code 1. It creates one memory object and
+// one program "held" from its own budget, runs the cases (each one compares
+// the answer of the kernel with the expected answer), writes the result on
+// the log, and measures 20000 cycles of "lend and take back" and 20000 of
+// "copy and close". Then it draws the table and waits for events for ever.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "origin")

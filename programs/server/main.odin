@@ -10,9 +10,38 @@
 //   a service ring: the console calls its exports server.put,
 //       server.pages, server.remove and server.served, functions with
 //       typed parameters.
-// No shared folder: a person puts a page with server.put from the console.
-// PUT and DELETE over HTTP are refused (405): the network is not
+// No shared folder: the principal puts a page with server.put from the
+// console. PUT and DELETE over HTTP are refused (405): the network is not
 // authenticated.
+//
+// **What it is for.** It shows a network service of the system against
+// clients that the project did not write: a browser or curl on the host.
+// TCP is a library in the program, so the network service keeps no state of
+// a connection, and the bounds against a slow or hostile client are the
+// bounds of this program.
+//
+// **Start**: `start("server")` in the console, or the bar of the desktop.
+// Then, from the console: `connect("server")`,
+// `server.put("hello.html", "<h1>hello</h1>")`.
+//
+// **Grants**, as the root service gives them:
+//
+// - **Network**: a listen grant of TCP on port 80.
+// - **Serve**: the exports for the console.
+// - **Store**: its private store, which holds the pages and their index.
+//
+// **What a reader sees**: a window with the counts of the requests, of the
+// connections and of the pages. The log has "server: N pages read from the
+// private store, M refused", "server: listening on the TCP port 80, ...",
+// one line for each change of a page and for each end of a connection (50
+// in one second at most), and "server: N requests answered in one second"
+// for each second with 50 requests or more.
+//
+// **What it serves**: `/` and `/counts.json`, its own counts, and the pages
+// of its store by name, with the field Date when the date is known. It
+// serves no TLS: the TLS of the system is the one of QUIC.
+//
+// The design: (docs/NETWORK.md, "The HTTP server").
 //
 // main.odin: the TCP side and the loop. http.odin: the requests and the
 // answers. pages.odin: the pages of the store, and the exports. draw.odin:
@@ -395,6 +424,25 @@ exchange :: proc "contextless" (incoming: []tcp.Incoming) -> (deadline: u64) {
 	return deadline
 }
 
+// The entry of server: it checks its grant, reads its pages, then serves
+// TCP and the calls of the console until the machine stops.
+//
+// The entry, in order:
+//
+// 1. takes its random generator; with no seed it stops with the code 1;
+// 2. opens its window and its service, then its endpoint and its datagram
+//    region; a missing part stops it (`fail`);
+// 3. asks the network service for its grant; a grant that is not a listen
+//    grant of TCP stops it;
+// 4. creates the table of 48 connections and their buffers, with a secret
+//    of the initial sequence numbers from its generator;
+// 5. reads the pages of its private store into memory (`pages_load`);
+// 6. writes "server: listening on the TCP port 80, ...".
+//
+// Then one loop runs for ever. Each pass gives the segments that arrived to
+// the TCP library, answers the requests, runs the calls of the console, and
+// draws the window at most ten times in one second. It waits for a segment,
+// a call, an event of the window, or the next timer of TCP.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if !random.generator_from_context(&program_generator, ctx) {

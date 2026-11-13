@@ -27,6 +27,36 @@
 //
 // The window shows the public key, the counts of the calls and of the
 // resets, the connections to services, and the last calls.
+//
+// **What it is for.** A program on the host calls an export of a service of
+// the machine as the console calls it: the same descriptions, the same
+// isolated call, the same error records. The tool of the project uses it
+// to test and to measure a running machine from outside, with no screen:
+//
+// ```
+// kerneltool call <the public key, 64 hexadecimal digits> "monitor.programs()"
+// ```
+//
+// **Start**: `start("remote")` in the console, or the bar of the desktop.
+// Read the public key in its window or on the log.
+//
+// **Grants**, as the root service gives them:
+//
+// - **Network**: a listen grant of UDP on port 7100 for the address
+//   10.0.2.2 only. The program refuses any other grant: a grant that admits
+//   each address lets each machine of the network call as the principal.
+// - **Connect**: a ring to the root service for `Connect` and `Disconnect`,
+//   to the services of `callable_of`: compositor, date, inspect, log,
+//   manual, monitor, settings and storage. A call to another service fails
+//   with the refusal of the root service.
+// - **Acts_For_Principal**: a service gives the caller what it holds for
+//   all callers, as it does for the console: the host is the principal at
+//   the keyboard.
+//
+// **What it proves**: a call from outside the machine passes the same
+// checks as a call from inside, and a lost datagram never runs a call two
+// times. It does not prove that the caller is who it says: the host pins the
+// key of the service, but the service admits the host by its address only.
 package remote_service
 
 import "base:intrinsics"
@@ -935,6 +965,32 @@ key_make :: proc "contextless" (configuration: ^quic.Connection_Configuration) -
 	return true
 }
 
+// The entry of the remote service: it makes its key, checks its grant, then
+// runs QUIC and the calls of the host until the machine stops.
+//
+// The entry, in order:
+//
+// 1. takes the random generator of its context, and opens its window (it
+//    runs with no window too);
+// 2. makes its Ed25519 key. With a seed under the strength "processor" it
+//    writes "remote: the random seed of this program is weak" and then only
+//    draws its window: it listens on nothing;
+// 3. writes "remote: the public key of this service: " and 64 hexadecimal
+//    digits;
+// 4. opens its datagram endpoint and the ring to the root service, and asks
+//    the network service for its grant. A grant that is not a listen grant
+//    of UDP for the host only stops it (`fail`);
+// 5. maps the table of the connections, the streams and their buffers,
+//    starts the QUIC server, and erases its own copy of the private key;
+// 6. writes "remote: listening on the UDP port 7100, for the host 10.0.2.2
+//    only: ...".
+//
+// Then one loop runs for ever. Each pass gives the arrived datagrams to the
+// server, makes at most one isolated call, and draws the window at most ten
+// times in one second. After a call of 100 ms or more, the passes of the
+// next 50 ms only move datagrams, so that the handshake of another
+// connection goes on. The loop waits for a datagram, an event of the
+// window, the next deadline of QUIC, or the bound of a call.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if !random.generator_from_context(&program_generator, ctx) {
@@ -992,7 +1048,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if grant.tcp || !grant.listen || grant.address != remote.HOST_ADDRESS {
 		// The rule of who may call is the grant: a listen grant that admits
 		// each address would let any machine of the network call as the
-		// person.
+		// principal.
 		fail("the grant is not a listen grant of UDP for the address of the host only")
 	}
 	listen_port = grant.port

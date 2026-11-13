@@ -5,6 +5,35 @@
 // rights: the machine with Inspect, the boot image with Read. The program
 // asks the kernel for nine operations. The window shows each answer of the
 // kernel: the kernel refuses each operation that needs another right.
+//
+// **What it is for.** It shows that a right is part of a handle, and that
+// the kernel checks it on each operation: holding the machine is not
+// holding all of it. A handle that the program creates itself has each
+// right, so the program is not crippled for its own work.
+//
+// **The nine operations**, with the answer that the kernel must give:
+//
+// - read the report of the machine (Inspect): allowed;
+// - create a handle to the ports of the keyboard: `No_Right`;
+// - stop the machine: `No_Right`;
+// - map the boot image to read it: allowed;
+// - map it to write in it, or to execute it: `No_Right`;
+// - give the boot image to the compositor: `No_Right`, because the handle
+//   has no right Give;
+// - create memory and write in it: allowed;
+// - start a thread and read its state: allowed.
+//
+// **Start**: `start("rights")` in the console, or the bar of the desktop.
+//
+// **Grants**, as the root service gives them:
+//
+// - **Inspect**: the machine, with the right Inspect only.
+// - **Image**: the boot image, with the right Read only.
+//
+// **What a reader sees**: the two handles, then one row for each operation
+// with the answer of the kernel; an unexpected answer is in another color.
+// The log has "rights: ok, 4 allowed, 5 refused", or "rights: wrong answer:
+// ..." for each unexpected answer.
 package rights
 
 import "support:display"
@@ -71,6 +100,12 @@ idle :: proc "c" (parameter: rawptr) -> ! {
 	system.thread_stop()
 }
 
+// The entry of rights: it asks the kernel for the nine operations once,
+// writes the result, then shows the table until the principal closes the
+// window.
+//
+// With no window it stops with the code 1. Each operation is noted with
+// the status that the kernel gave and the status that it must give.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "rights")

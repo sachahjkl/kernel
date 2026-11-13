@@ -5,6 +5,22 @@
 // **A change is one commit**, on the disk when the call returns: the system has no save action. The state of an object before a change is a version: a program reads, compares, restores and clones versions with no code of its own. The disk always has the state of the last commit, or of the one before: a stop of the machine during a commit never shows a part of it. The checks of the blocks show each change that the service did not make.
 //
 // A program that acts for a principal (the console, remote for the host) sees the stores of that principal with [stores](storage.stores), and opens a place on one of them with [open_store](storage.open_store).
+//
+// **Grants**, as the root service gives them:
+//
+// - **Serve**: each program with the grant **Store** reaches its private store through a connection.
+// - **Data_Disk**: the block service of the data disk and its block ring. The storage service is the one client of
+//   that disk: no other program reads its blocks.
+//
+// **Start**: no line starts it. The root service starts it when a program asks for a connection to `storage`, or
+// before a program with a private store. From the console: `connect("storage")`, then for example
+// `storage.write(0, "greeting", "kept on the disk")` and `storage.read(0, "greeting")`.
+//
+// **What it proves**: a program keeps its state across a stop of the machine with no file system, no path and no
+// save action, and it reaches no store but its own. It does not prove secrecy against a reader of the disk: the
+// blocks are not encrypted.
+//
+// The design: `docs/STORAGE.md`; the large objects: [read_range](storage.read_range) and the exports after it.
 package storage_service
 
 import "contract:block"
@@ -1033,6 +1049,29 @@ shares_serve :: proc "contextless" () -> (calls: int) {
 	return calls
 }
 
+// The entry of the storage service: it attaches to the block service of the data disk, opens the disk, then
+// serves the calls of its connections for the life of the machine.
+//
+// The root service starts it on demand: at the first connection to `storage`, or before the first program with a
+// private store. The entry, in order:
+//
+// 1. opens its service ring and the block ring; with no ring, it writes "storage: no service ring" or
+//    "storage: no block ring" and stops with the code 1;
+// 2. creates the data region, one contiguous memory object that the device reads and writes, and gives it to the
+//    block service with the command `Attach`; a refusal stops it with the code 1;
+// 3. opens the disk (`mount`): it reads the two roots, takes the newest one with a good check, and checks each
+//    block that a store names.
+//
+// The open ends in one of three ways:
+//
+// - **no valid root**: "storage: no valid root on the disk"; the service keeps the disk as it is, serves nothing,
+//   and stops with the code 1;
+// - **a new disk**: it formats the disk and writes "storage: ok, a new disk: generation 1, N blocks";
+// - **a disk with data**: "storage: ok, generation G: S stores, O objects, ...", with one warning line for each
+//   kind of damage that it found. A damaged object gives `Damaged` to a read; the other objects are served.
+//
+// Then one loop runs for ever. It waits on the service ring and on each share, and runs the calls that wait. When
+// no call waits, it frees one step of a tree that a removal left: a large removal never makes a caller wait.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	date_page = date.page_of(ctx)

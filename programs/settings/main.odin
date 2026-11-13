@@ -14,6 +14,31 @@
 // At boot the root service starts this program for one pass with no window
 // (the context value VALUE_BOOT_PASS): it reads the record of its store,
 // writes the page, and stops.
+//
+// **What it is for.** It shows that a choice of the principal is state like
+// any other: kept in a private store with no save action, and seen by every
+// program at once through one page that each reads and only one writes. No
+// program reads a configuration file, and no program needs code to follow a
+// change.
+//
+// **Start**: `start("settings")` in the console, or the bar of the desktop.
+// Keys: Tab moves between the buttons, Enter presses one; a click works
+// too. From the console, with no window: `connect("settings")`, then
+// `settings.set("font", "spleen")`.
+//
+// **Grants**, as the root service gives them:
+//
+// - **Settings**: the settings page with the right Write. No other program
+//   can write it.
+// - **Store**: its private store, which keeps the record of the settings
+//   across a stop of the machine.
+// - **Serve**: the exports `set`, `get` and `repeat`.
+//
+// **What a reader sees**: a card with one row of buttons for each setting,
+// and a card with the text of the system at its three sizes. The log has
+// "settings: the boot pass: ..." at boot, "settings: ok, font vector, ..."
+// when the window opens, and one line for each change, with "kept in the
+// store" or "NOT kept: the store refused".
 package settings_program
 
 import "contract:errors"
@@ -119,7 +144,26 @@ setting_of :: proc "contextless" (name: string) -> (setting: settings.Setting, f
 	return {}, false
 }
 
-// set changes a setting of the person, and keeps it in the store: set("font", "vector" or "spleen"); set("subpixel_order", "rgb", "bgr" or "none"); set("pointer_theme", "owner" or "system"); set("grid_fit", "on" or "off"). Every window draws again. The result is 1, or a negative number with an error record. The error kinds: No_Grant (-1, the caller does not act for the principal); Absent (-2, no setting has this name); Bad_Value (-3, the setting has no such value); Refused (-4, the page changed but the store did not keep it).
+// set changes a setting of the person, and keeps it in the store: set("font", "vector" or "spleen"); set("subpixel_order", "rgb", "bgr" or "none"); set("pointer_theme", "owner" or "system"); set("grid_fit", "on" or "off").
+//
+// Every window draws again: the settings page wakes the compositor, which gives the new font and pointer theme to
+// each window. The order is the store first, then the page, so a stop of the machine between the two keeps the
+// new value. A value equal to the value of the page changes nothing and returns 1.
+//
+// - **name**: the name of a setting: `font`, `subpixel_order`, `pointer_theme` or `grid_fit`; 32 bytes at most.
+// - **value**: one of the values of that setting, as above; 32 bytes at most.
+//
+// The caller must act for the principal (**Acts_For_Principal**): the console and the host have it. The result is
+// 1, or a negative number with an error record:
+//
+// - `No_Grant` (-1): the caller does not act for the principal.
+// - `Absent` (-2): no setting has this name.
+// - `Too_Long` (-3): the name or the value has more than 32 bytes; the record names the argument.
+// - `Bad_Value` (-3): the setting has no such value.
+// - `Refused` (-4): the store did not keep the value. The page changed all the same, so the windows show the new
+//   value until the next start of the machine.
+//
+// Example: `settings.set("font", "spleen")`, then `settings.get("font")` gives "spleen".
 @(export, link_name = "set")
 set :: proc "c" (name: ^string, value: ^string, error: ^errors.Error_Record) -> i64 {
 	if !acts_for_principal() {
@@ -149,7 +193,16 @@ set :: proc "c" (name: ^string, value: ^string, error: ^errors.Error_Record) -> 
 	return errors.fail(error, ERROR_VALUE, .Bad_Value, .None, 2)
 }
 
-// get gives the value of a setting of the person as a text: get("font"), get("subpixel_order"), get("pointer_theme"), get("grid_fit"). The text is empty for a name that no setting has.
+// get gives the value of a setting of the person as a text: get("font"), get("subpixel_order"), get("pointer_theme"), get("grid_fit").
+//
+// It reads the settings page, which each program can read too: so it needs no grant, and each caller gets the
+// value.
+//
+// - **name**: the name of a setting, 32 bytes at most.
+//
+// The result is the length of the value name, and the text holds the value name. The text is empty, with the
+// result 0, for a name that no setting has or a name of more than 32 bytes. A text shorter than the value gets its
+// first bytes; the result still counts them all.
 @(export, link_name = "get")
 get :: proc "c" (name: ^string, result: ^[]u8) -> i64 {
 	name_buffer: [32]u8
@@ -169,7 +222,19 @@ get :: proc "c" (name: ^string, result: ^[]u8) -> i64 {
 	return i64(len(value_name))
 }
 
-// repeat keeps count records in the store, one commit each, with the font and the subpixel order of each record from its number: the case of the loss of power of the machine test (a loss in the middle gives the record before or the record in flight, never a mix). The page takes the last record. The result is the count of records kept, or a negative number with an error record: No_Grant (-1); Bad_Value (-3, a count outside 1 to 1000); Refused (-4, the store refused a record).
+// repeat keeps count records in the store, one commit each, with the font and the subpixel order of each record from its number: the case of the loss of power of the machine test (a loss in the middle gives the record before or the record in flight, never a mix).
+//
+// It is a test export, not a setting that a reader changes. The machine test calls it, then cuts the power of the
+// machine during the commits; at the next start, the boot pass must read one whole record. The font of record n
+// is n mod 2, its subpixel order n mod 3, so a mix of two records shows. The page takes the last record.
+//
+// - **count**: the number of records, from 1 to 1000.
+//
+// The result is the count of records kept, or a negative number with an error record:
+//
+// - `No_Grant` (-1): the caller does not act for the principal.
+// - `Bad_Value` (-3): a count outside 1 to 1000.
+// - `Refused` (-4): the store refused a record; the record of the error holds its number.
 @(export, link_name = "repeat")
 repeat :: proc "c" (count: i64, error: ^errors.Error_Record) -> i64 {
 	if !acts_for_principal() {
@@ -298,6 +363,20 @@ draw :: proc "contextless" (window: ^display.Window) {
 	drawn_change = choice.change_count
 }
 
+// The entry of settings: the boot pass, or the window and the service.
+//
+// The entry maps the settings page; with no page it writes "settings: no
+// settings page" and stops with the code 1. It opens its private store; a
+// program with no store still runs, and says "NOT kept: no store".
+//
+// - **The boot pass** (the context value `VALUE_BOOT_PASS` is not 0): it
+//   reads the record of its store, writes the page, wakes the compositor,
+//   writes "settings: the boot pass: ..." with its time, and stops with the
+//   code 0. A missing or unreadable record gives the defaults.
+// - **Otherwise**: it opens its window (with none, it stops with the code
+//   1) and its service, draws, and writes "settings: ok, ...". Then one loop
+//   waits on the events of the window and on the service ring, runs the
+//   calls, and draws after an event. It never stops by itself.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	page_handle := ctx.handles[settings.GRANT_PAGE]

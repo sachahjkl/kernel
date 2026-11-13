@@ -1,8 +1,56 @@
-// The root service: the first program (docs/ARCHITECTURE.md, U2).
+// The root service: the first program, and the centre of the grants.
 //
-// The kernel gives it every handle that exists at boot. It starts the other
-// programs, and it gives each one only the handles of its role. It is the
-// only program that creates access from nothing.
+// The kernel gives it every handle that exists at boot: the machine, the
+// boot image, the framebuffer, the devices. It starts the other programs,
+// and it gives each one only the handles of its role. It is the **only
+// program that creates access from nothing**: each other handle of the
+// system came from it, directly or through a chain of programs.
+//
+// **What it is for.** A program never takes access for itself. It receives
+// it at its start, or it asks this service on its *root ring*, and this
+// service answers by the tables of this file:
+//
+// - `grants_of`: the grants of each program, by its name, with the reason
+//   of each beside its case. The site shows them in the table "The grants
+//   of each program".
+// - `callable_of`: the services that a program with the grant `Connect`
+//   can reach.
+// - `store_limit_of`: the blocks of a private store.
+// - `things_of` and `budget_of`: the pages, the programs, the threads, the
+//   processor time and the log records of each program.
+//
+// A program that no case names receives the log and a window, and no grant.
+//
+// **The commands of the root ring** (`Root_Command` in the package
+// system). A program with the grant **Root_Ring** (the console) sends all
+// of them; a program with **Connect** sends `Connect` to the services of
+// `callable_of`, and `Disconnect`; the program with **Principals** sends
+// `Principal_Record` and `Principal_Unlock`, and no other program can.
+//
+// - `Start`, `Stop`: a program by name, in the session of the caller.
+// - `Connect`, `Disconnect`, `Connect_History`: a connection to a service.
+// - `Grants`, `Revoke`: read the grants of a program, end one of them.
+//   The kernel ends each handle that came from the grant, also in the
+//   programs that received it from that program.
+// - `Replace`: change the replacement table of the machine.
+// - `Principal_Create`, `Principal_Lock`, `Principals`: the named
+//   principals (docs/PRINCIPALS.md, "7. The commands").
+//
+// A refused command has an error record in its completion (`refusal`): the
+// console prints it, for example after `revoke("notes", "store")` on a
+// program that does not run.
+//
+// **What a reader sees.** At boot the screen shows the boot display, with
+// each step, until the compositor takes the screen. The log has
+// "root: ok, N modules in the boot image", the strength of the random seed,
+// then one line "root: started NAME" for each program.
+//
+// **What it does not do.** It does not run the code of a program, and it
+// does not check what a program does with a grant. It checks only the
+// identity of the boot image against the system description
+// (docs/TRUSTED_BOOT.md), and the budget of each program.
+//
+// The design: (docs/ARCHITECTURE.md, "U2. Root service").
 package root
 
 import "support:bootscreen"
@@ -61,8 +109,28 @@ Grant :: enum {
 grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 	switch name {
 	case "console":
+		// The console is the shell of the machine, and its commands need
+		// each grant:
+		// - **Root_Ring**: `start`, `stop`, `grants`, `revoke`, `connect`
+		//   and the commands of the principals ask this service.
+		// - **Inspect**: `programs`, `memory` and `modules` read the reports
+		//   of the machine.
+		// - **Stop**: `shutdown` stops the machine.
+		// - **Image**: `load` and `isolate` map the modules of the boot image.
+		// - **Debug_Image**: a stop report names the procedures and the
+		//   source lines.
+		// - **Replacements** and **Replace**: `replacements` reads the
+		//   replacement table, `replace` changes it.
+		// - **Terminal**: the console has no surface of its own.
+		// - **Store**: `connect storage` opens its private store, with a
+		//   small limit of blocks that a test reaches.
+		// - **History_Store**: the line history, apart from that store.
+		// - **Acts_For_Principal**: a service that it connects to shows what
+		//   it holds for all callers.
 		return {.Root_Ring, .Inspect, .Stop, .Image, .Terminal, .Store, .Acts_For_Principal, .Replacements, .Replace, .History_Store, .Debug_Image}
 	case "flood":
+		// It writes its lines to a terminal and reads the key Space from
+		// it: it has no surface and needs nothing else.
 		return {.Terminal}
 	case "inspect":
 		// A developer tool: it reads the reports of the machine and the names
@@ -71,6 +139,9 @@ grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 	case "monitor":
 		return {.Inspect, .Serve} // It serves programs() and counts() to a caller that acts for the principal.
 	case "processors", "pages", "flow", "crowd", "clock":
+		// Each reads reports of the machine: processors what each processor
+		// runs, pages the page tables, flow, crowd and clock the kernel
+		// entries of the program for their measures.
 		return {.Inspect}
 	case "rights":
 		return {.Inspect, .Image} // It shows what the kernel refuses.
@@ -97,6 +168,8 @@ grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 	case "scheduler":
 		return {.Inspect, .Schedule} // It reads the counts of the scheduler, and changes the strategy.
 	case "paint", "life", "tally", "sample":
+		// Each is a service: the console calls its exports through a
+		// connection.
 		return {.Serve} // sample: the module of the tables, started as a program when a caller connects.
 	case "settings":
 		return {.Settings, .Serve, .Store} // It writes the settings, keeps them in its private store, and serves set() and get().
@@ -105,10 +178,15 @@ grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 	case "manual":
 		return {.Serve, .Image, .Replacements, .Inspect} // It reads the documentation of each module of the boot image, and the module records of each program.
 	case "disk":
+		// It measures the block service on the disk of the measures, which
+		// holds no data of a program: its writes destroy nothing.
 		return {.Scratch_Disk}
 	case "storage":
+		// It is the one client of the block service of the data disk, and it
+		// serves a private store to each caller with the grant Store.
 		return {.Serve, .Data_Disk}
 	case "notes":
+		// Its note, its count and their versions live in its private store.
 		return {.Store}
 	case "unlock":
 		// The records of the named principals in its private store, the
@@ -130,10 +208,14 @@ grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 	case "server":
 		return {.Network, .Serve, .Store} // A listen grant, its exports for the console, and its pages in its private store.
 	case "fetch":
+		// A client grant of TCP to one web server, 10.0.2.100 port 80.
 		return {.Network}
 	case "quic_echo":
 		return {.Network} // A listen grant of UDP: QUIC in the program, the module cryptography through its imports.
 	case "network":
+		// It is the one client of the frame service of the network device,
+		// and it receives from this service the endpoint of each program
+		// with the grant Network.
 		return {.Network_Device}
 	case "remote":
 		// The calls of the host: a listen grant of UDP that admits the
@@ -150,7 +232,7 @@ grants_of :: proc "contextless" (name: string) -> bit_set[Grant] {
 		// "Tables and bytes as parameters").
 		return {.Image, .Connect}
 	}
-	return {}
+	return {} // The log and a window, as each program receives, and no grant of this list.
 }
 
 // callable_of gives the services that a program with the grant Connect can
@@ -531,6 +613,37 @@ fail :: proc "contextless" (text: string, status: system.Status) -> ! {
 program_generator: random.Generator
 entropy_report: random.Entropy_Report
 
+// The entry of the root service: it brings up the system, then answers the
+// root rings of the programs for the life of the machine.
+//
+// The kernel starts it with the context of the root service: the machine,
+// the boot image, the framebuffer and their values. The entry, in order:
+//
+// 1. maps the boot image and the debug image; writes "root: ok, N modules
+//    in the boot image";
+// 2. takes the screen for the boot display;
+// 3. checks the boot image against the system description (trust.odin);
+//    a failure stays on the screen and no program starts;
+// 4. reads the principals, and seeds the random generator of the system
+//    from the sources of the processor; a seed of 32 zero bytes ends the
+//    boot;
+// 5. on the machine of the test of a shortage of frames, starts the program
+//    `shortage` and nothing else;
+// 6. creates the settings page, the date page and the replacement table;
+// 7. starts `input` with the ports and the interrupts of the PS/2
+//    controller, then the compositor with the framebuffer;
+// 8. starts `date`, then the console, then the settings that were kept,
+//    then `unlock` if a named principal exists.
+//
+// A failure in steps 1 to 8 calls `fail`: the boot display shows the cause,
+// and the machine waits until it is stopped from outside.
+//
+// Then one loop runs for ever. It waits on the control ring of the
+// compositor (a start or a stop from the desktop), on the root ring of each
+// program, and on the answers of the network service. It checks each command
+// against the grants of the caller, runs it, and sends a completion. After
+// each pass, `reap` frees what this service held for the programs that
+// stopped. The root service never returns.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	machine = ctx.handles[op.ROOT_MACHINE]

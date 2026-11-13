@@ -9,6 +9,28 @@
 // weighed").
 // The text of the window itself is the text of the system: the glyph
 // cache that the root service maps, or Spleen, as the setting says.
+//
+// **What it is for.** It is the record of a choice: a reader sees the same
+// lines in each candidate font at the sizes of the system, and the cost of
+// each place where a glyph can come from, before a font becomes the font
+// of the system.
+//
+// **Start**: `start("vector_glyphs")` in the console, or the bar of the
+// desktop. It has no grant of `grants_of`.
+//
+// **What a reader sees**: one block for each candidate and one for Spleen
+// 8x16. The log has:
+//
+// - "vector_glyphs: one glyph from its outline, ...": the time of one glyph
+//   at the scales 1, 2 and 3, from the glyph cache of the system, and from
+//   Spleen; each time is the least of 50 short batches, so that a batch that
+//   the host stopped does not count;
+// - one line for each candidate: the time to build its cache of 95
+//   characters at 3 scales, and its bytes;
+// - "vector_glyphs: ok, 6 candidates beside Spleen 8x16".
+//
+// **What it does not prove**: the times are measures of this host, not
+// bounds.
 package vector_glyphs
 
 import "contract:glyph_cache"
@@ -136,6 +158,13 @@ draw :: proc "contextless" (window: ^display.Window) {
 	display.present(window)
 }
 
+// The entry of vector_glyphs: it measures the three sources of a glyph,
+// draws the candidates, writes the measures, then draws again after each
+// event for ever.
+//
+// With no window it stops with the code 1. The measures run before the
+// first picture, on a scratch canvas that is not the window. The caches of
+// the candidates are built during the first `draw`.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "vector_glyphs")

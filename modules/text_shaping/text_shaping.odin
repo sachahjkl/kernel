@@ -8,6 +8,20 @@
 // The tables are hostile input: the counts are checked here; each advance,
 // each pair, each byte and each range is read once by the package, and kept
 // in its limits there, because the caller can change them during the call.
+//
+// **What it is for.** A proportional font needs the place of each glyph:
+// its advance, and the adjustment of each pair of characters. This module
+// gives that work through the call form, in batches, so one call places a
+// whole text or measures all the labels of a window. Because the spacing
+// comes from the caller, the module holds no font and no state, and an
+// isolated call gives the same answer as a direct call. A program in the
+// system calls the package `support/text_shaping` directly; this module is
+// the same code for a caller that loads it or isolates it.
+//
+// **The units**: each position and width is in 1/64 of a pixel.
+//
+// **What it does not do**: no character outside 32 to 126 (each such byte
+// is placed as "?"), no ligature, no direction other than left to right.
 package text_shaping_module
 
 import "contract:errors"
