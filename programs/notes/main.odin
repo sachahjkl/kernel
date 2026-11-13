@@ -5,6 +5,30 @@
 // Keys: a character adds to the note, Backspace removes the last one, Enter writes the note on the log. Tab counts 1000 more, one commit for each step.
 //
 // Versions: each key is one commit, and the storage service keeps the state before it as a version, so the program has undo to any earlier version with no code of its own to keep them. Up shows the version before the one shown, Down the one after; Enter restores the version shown (a new commit: nothing is lost); Escape goes back to the current note. The bar under the note has one mark for each version.
+//
+// **What it is for.** It is the smallest program that shows persistence as a property of the system and not of
+// the program: no file, no path, no save action, and undo with no code of its own. The test of a loss of power
+// stops the machine during the run of Tab, then checks at the next start that the three blocks of the count agree.
+//
+// **Start**: `start("notes")` in the console, or the bar of the desktop. The note holds 60 characters at most.
+//
+// **Grants**, as the root service gives them:
+//
+// - **Store**: its private store in the storage service, with a limit of 4500 blocks: the versions of a run of
+//   1000 commits of the count, then thinning at the limit. The root service starts the storage service first.
+//
+// **What a reader sees**: the note, the count, the generation of the last commit and a bar with one mark for each
+// version. The log has, at the start, one of:
+//
+// - `notes: a new store: no note, the count 0`;
+// - `notes: restored the note "..." and the count N, its 3 blocks agree`;
+// - `notes: WRONG: ...` when an object is damaged or the 3 blocks do not agree;
+// - `notes: no store` when the program has no store: it then keeps nothing.
+//
+// **What it does not prove**: one writer only. Two programs never share the note: each private store belongs to
+// one program.
+//
+// The design: (docs/STORAGE.md, "Versions, thinning and the limit") and (docs/STORAGE.md, "A loss of power").
 package notes
 
 import "contract:errors"
@@ -213,6 +237,21 @@ draw :: proc "contextless" (window: ^display.Window) {
 	interface.window_frame_end(&drawing, &frame, window)
 }
 
+// The entry of notes: it restores the note and the count from its store, then commits each key until the
+// principal closes the window.
+//
+// With no window it stops with the code 1. With no store it runs, and keeps nothing. With a store it reads the
+// note, the count and the list of the versions of the note (`restore`, `history_read`), and writes the line of
+// the start on the log.
+//
+// Then one loop waits for keys and draws after each one:
+//
+// - a printable character or Backspace: one commit of the object "note";
+// - Tab: 1000 commits of the object "count", one for each step, with a log line every 100 steps, then the time
+//   of the run and the time to list the versions of the count;
+// - Enter: the note, its generation, its count of versions and the mean time of one commit, on the log;
+// - Up, Down: show an older or a newer version of the note; Enter then restores it in one commit, and Escape
+//   goes back to the current note.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "notes")

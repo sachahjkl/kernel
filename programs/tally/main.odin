@@ -9,6 +9,24 @@
 // The data of a module belongs to the program that runs it. The four uses give three counts: the program and the service have one count, the caller that loads the module has its own, and the sandboxed program has its own.
 //
 // An export needs nothing from the entry: it reads and writes the data of the module only. That is the one rule for a module that has each role.
+//
+// **Grants**, as the root service gives them: **Serve**, so that `connect("tally")` reaches the program that runs.
+// `load` and `isolate` need no grant of tally: the console maps the file from the boot image.
+//
+// **What a reader sees**, as a program: the count, the number of adds, the last 8 notes with the newest first, and
+// the callers and the calls. The key Space adds 1, with the note "a key of the program". The log has "tally: ok"
+// when the window opens.
+//
+// **Example**, in the console:
+//
+// ```
+// load("tally")
+// add(2, "two")       the count of the console: 2
+// connect("tally")
+// tally.add(5, "five")  the count of the program: 5
+// ```
+//
+// The design: (docs/MODULE_CONTRACT.md, "3. Static is dynamic").
 package tally
 
 import "contract:errors"
@@ -37,7 +55,22 @@ count: i64
 calls: i64 // The calls of add.
 notes: [NOTE_CAPACITY]Note // notes[(calls - 1) % NOTE_CAPACITY] is the last.
 
-// add adds an amount to the count, with a note that says why. The result is the new count, never negative. The module keeps the last 8 notes. It fails with -1 and an error record: Too_Long when the note has more than 36 bytes; Too_Small when the amount takes the count below 0; Bad_Value when the count passes the largest integer.
+// add adds an amount to the count, with a note that says why.
+//
+// The count and the notes are data of the module, in the program that runs it: the four ways of tally give three
+// counts. The module keeps the last 8 notes.
+//
+// - **amount**: the amount, positive or negative.
+// - **note**: why, 36 bytes at most.
+//
+// The result is the new count, never negative. It fails with -1 and an error record, and the count does not
+// change:
+//
+// - `Too_Long`: the note has more than 36 bytes;
+// - `Too_Small`: the amount takes the count below 0; the record holds the least amount that is allowed;
+// - `Bad_Value`: the count passes the largest integer.
+//
+// Example: `tally.add(-3, "a refund")`.
 @(export, link_name = "add")
 add :: proc "c" (amount: i64, note: ^string, error: ^errors.Error_Record) -> i64 {
 	if len(note) > NOTE_SIZE {
@@ -61,18 +94,26 @@ add :: proc "c" (amount: i64, note: ^string, error: ^errors.Error_Record) -> i64
 }
 
 // total gives the count.
+//
+// The count of the program that runs the module: after `load("tally")` it is the count of the caller itself. It
+// never fails.
 @(export, link_name = "total")
 total :: proc "c" () -> i64 {
 	return count
 }
 
 // adds gives the number of calls of add after the start, or after the last reset.
+//
+// A refused add does not count. A test compares it with the calls that it made: a call over a ring that ran two
+// times shows here.
 @(export, link_name = "adds")
 adds :: proc "c" () -> i64 {
 	return calls
 }
 
 // last gives the note of the last add. The text is empty before the first add.
+//
+// The result is the length of the note, 36 at most; a text shorter than the note gets its first bytes.
 @(export, link_name = "last")
 last :: proc "c" (result: ^[]u8) -> i64 {
 	if calls == 0 {
@@ -86,6 +127,8 @@ last :: proc "c" (result: ^[]u8) -> i64 {
 }
 
 // reset puts the count at 0 and removes the notes. The result is the count before.
+//
+// It also sets the count of [adds](tally.adds) to 0. It never fails.
 @(export, link_name = "reset")
 reset :: proc "c" () -> i64 {
 	before := count
@@ -134,6 +177,14 @@ draw_records :: proc "contextless" (table: ^interface.Draw_Table, service: ^syst
 	interface.draw_text(table, x, HEIGHT - 22, system.format(buffer[:], service.calls), graphics.COLOR_TEXT)
 }
 
+// The entry of tally: it runs only when tally is a program (`start` or
+// `connect`), never after `load`. It opens the service and the window, then
+// runs the calls and the key Space in one loop until the principal closes
+// the window.
+//
+// With no window it stops with the code 1. It writes "tally: ok". Each turn
+// draws the window, waits for an event or a call, runs the calls, then the
+// keys: Space is one add of 1.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	service, _ := system.service_open(ctx)

@@ -1,5 +1,5 @@
 // The pointer themes of the boot image (docs/POINTERS.md), as a table that
-// a person reads: each pointer shape of a theme at each of its sizes, its
+// a reader reads: each pointer shape of a theme at each of its sizes, its
 // hot spot marked, its frames, and the theme with its license and its
 // attribution.
 //
@@ -13,6 +13,29 @@
 // has no record of a picture of pixels. Over a tile, the program asks the
 // compositor for the shape of the tile (display.pointer_shape_set): the
 // pointer over this surface shows it.
+//
+// **What it is for.** It is the check, by eye, of a resource of the boot
+// image: a reader sees each picture that the compositor can show, at each
+// size, with its license, before it trusts the theme. It also shows the
+// identity rule of a resource: a file whose bytes do not have the hash of
+// its entry is shown as not valid, with the reason.
+//
+// **Start**: `start("pointers")` in the console, or the bar of the desktop.
+//
+// **Grants**, as the root service gives them:
+//
+// - **Image**: the boot image, read-only, for the resource table and the
+//   bytes of each theme. With no image it writes "pointers: no boot image"
+//   and stops with the code 1.
+//
+// **What a reader sees**: the tiles of one theme; two buttons change the
+// theme. The log has one line for each theme ("pointers: NAME: the theme,
+// its license, N shapes, M pictures, ...; the hash and the validation in T
+// us", or "... is not valid: ..."), then "pointers: ok, N themes; ...", and
+// "pointers: the pointer is over the tile ..." when the pointer enters a
+// tile.
+//
+// The design: `docs/POINTERS.md`.
 package pointers
 
 import "contract:blake3"
@@ -259,6 +282,15 @@ frame_draw :: proc "contextless" (window: ^display.Window) -> u64 {
 	return system.nanoseconds() - start
 }
 
+// The entry of pointers: it checks each pointer theme of the boot image,
+// then shows them until the principal closes the window.
+//
+// It maps the boot image, read-only, and takes the themes in the order in
+// which the compositor prefers them. For each theme it computes the hash,
+// compares it with the entry of the resource, validates the file with the
+// validation of the compositor, and writes one line on the log. With no
+// theme it stops with the code 1; with no window it stops with the code 1.
+// Then it draws, and draws again after each event that changes the window.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	image_handle := ctx.handles[system.GRANT_IMAGE]

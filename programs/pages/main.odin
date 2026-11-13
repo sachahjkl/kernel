@@ -7,6 +7,33 @@
 // with one protection. No page is both writable and executable.
 //
 // The program needs the grant to inspect the machine.
+//
+// **What it is for.** It shows two rules of the memory of the system as the
+// processor sees them, not as a document claims them: no page is both
+// writable and executable, and each kernel stack has a guard page on each
+// side. It also shows whether the processor keeps the kernel out of the
+// memory of programs (no execution of it, and no access outside a copy).
+//
+// **Start**: `start("pages")` in the console, or the bar of the desktop.
+//
+// **Grants**, as the root service gives them:
+//
+// - **Inspect**: the machine with the right Inspect, for the report
+//   `Inspect_Kind.Mappings` of the kernel half and of the half of this
+//   program. The kernel walks the page tables themselves to make it.
+//
+// **What a reader sees**: the two halves as runs of pages, each with its
+// protection, and the rules with a mark each. The log has, once:
+//
+// - the pages, the runs, the pages that are write and execute, and the
+//   guard pages of the kernel half;
+// - the same counts for this program;
+// - "pages: ok, the page tables keep the rules", or "pages: failed, ...";
+// - whether the processor refuses the memory of programs to the kernel.
+//
+// **What it does not prove**: it reads the tables of one program, its own.
+// It shows the state at one moment, every 500 ms; it does not watch each
+// change of a mapping.
 package pages
 
 import info "contract:boot_info"
@@ -210,6 +237,10 @@ draw :: proc "contextless" (canvas: graphics.Canvas) {
 	half(canvas, line + 5, "the half of this program", &program_half, PROGRAM_ROWS, false)
 }
 
+// The entry of pages: every 500 ms it reads the two mapping reports and
+// draws them, and the first time it writes the result on the log.
+//
+// With no window it stops with the code 1. It never stops by itself.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "pages")

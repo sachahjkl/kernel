@@ -16,6 +16,37 @@
 // makes a new key. A seed weaker than "processor" makes no key: the
 // program says so in its window, and listens on nothing.
 //
+// **What it is for.** It is the test bench of the QUIC library on a real
+// network path: the handshake of TLS 1.3, streams in both directions, Retry,
+// the budgets of work against a hostile client, and the idle end. Its echo
+// has no other use: the peer of the kernel tool writes a pattern on each
+// stream and checks each byte that comes back. The service `remote` uses
+// the same library and the same limits.
+//
+// **Start**: `start("quic_echo")` in the console, or the bar of the
+// desktop. A client needs the public key from the log or the window.
+//
+// **Grants**, as the root service gives them:
+//
+// - **Network**: a listen grant of UDP on port 4433. The network service
+//   admits a new remote only on a datagram of 1200 bytes or more, and holds
+//   the limit of three times the bytes that came from it.
+//
+// It needs no other grant: the cryptography is the module `cryptography`,
+// which the loader gives through the imports of this program.
+//
+// **What a reader sees**: a window with the key and the counts of the
+// server. The log has "quic_echo: the public key of this server: ...",
+// "quic_echo: listening on the UDP port 4433, ...", one line for each
+// connection that starts and ends, a line on each idle end that says if it
+// held its bound, and the counters of the server when they change: the
+// connections accepted and ended, the Retries, the Initials refused by each
+// limit, the datagrams over the budget.
+//
+// **What it does not prove**: the client is the peer of the kernel tool,
+// not a QUIC stack of another project. 0-RTT and the migration of a
+// connection are not built (docs/QUIC.md, section 9).
+//
 // main.odin: the endpoint, the server and the loop. draw.odin: the window.
 package quic_echo
 
@@ -478,6 +509,28 @@ key_make :: proc "contextless" (configuration: ^quic.Connection_Configuration) -
 	return true
 }
 
+// The entry of quic_echo: it makes its key, checks its grant, then runs the
+// QUIC server until the machine stops.
+//
+// The entry, in order:
+//
+// 1. takes its random generator (with no seed it stops: `fail`) and opens
+//    its window;
+// 2. makes its Ed25519 key. With a seed under the strength "processor" it
+//    writes "quic_echo: the random seed of this program is weak: ..." and
+//    then only draws its window;
+// 3. writes the public key on the log;
+// 4. opens its endpoint and its datagram region, and asks the network
+//    service for its grant; a grant that is not a listen grant of UDP stops
+//    it;
+// 5. maps the table of the connections and their streams, and starts the
+//    QUIC server;
+// 6. writes "quic_echo: listening on the UDP port 4433, ...".
+//
+// Then one loop runs for ever. Each pass gives the datagrams that arrived
+// to the server, which echoes the bytes of each stream, and draws the
+// window at most ten times in one second. It waits for a datagram, an event
+// of the window, the next deadline of QUIC, or one second.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if !random.generator_from_context(&program_generator, ctx) {

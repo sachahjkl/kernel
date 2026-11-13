@@ -3,6 +3,29 @@
 //
 // It is also a service: programs(), counts() and count() give the same
 // facts as tables of records (exports.odin).
+//
+// **What it is for.** It shows what the machine does now, from the reports
+// of the kernel and not from a program that counts for itself: the memory
+// in use and reserved, the kernel entries, the interrupts, the waits of the
+// locks of the kernel, and one row for each program with its pages and its
+// share of the processor in the last half second.
+//
+// **Start**: the bar of the desktop, or `start("monitor")` in the console.
+// The log has "monitor: ok" after the first picture. From the console,
+// `connect("monitor")`, then `monitor.programs()` or
+// `monitor.count("free pages")`.
+//
+// **Grants**, as the root service gives them:
+//
+// - **Inspect**: the machine with the right Inspect, for the system report
+//   and the report of each program. With no such grant, the window says
+//   "no grant to inspect the machine" and the log has the same line.
+// - **Serve**: its exports, for the console and for the host through the
+//   remote service.
+//
+// **What it does not prove**: the share of a program is its processor time
+// over the elapsed time of one processor, so a program with several
+// threads on several processors shows 100% at most.
 package monitor
 
 import "support:display"
@@ -29,6 +52,20 @@ PROGRAM_SLOTS :: 64
 
 previous_run_time: [PROGRAM_SLOTS]u64
 
+// The entry of the monitor: it opens its window and its service, then draws
+// a picture of the machine every 500 ms and runs the calls between two
+// pictures.
+//
+// With no window it stops with the code 1. Each turn of the loop:
+//
+// 1. asks the kernel for the system report, then the report of each
+//    program slot that is in use;
+// 2. draws the memory bar, the counters, the locks and one row for each
+//    program; the first picture writes "monitor: ok";
+// 3. waits until the next picture, and runs each call of a caller as it
+//    comes: a caller never waits for a picture.
+//
+// The monitor never stops by itself.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "monitor")

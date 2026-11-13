@@ -5,6 +5,22 @@
 // table (Table of Draw_Record, Append) and the text table (Bytes, Append).
 // The module holds no state of the program: a frame of the package is made
 // over the two tables for the time of one call.
+//
+// **What it is for.** It checks a claim of the interface package by doing
+// it: the same functions, called through the call form, give the same draw
+// records as a call of the package in the program. The program
+// `interface_through_module` loads it, draws its window through it, and
+// compares the records and the time of each way.
+//
+// **The rule of the results** of each export that appends: the result is
+// the count of draw records of the whole answer. A result larger than the
+// capacity of the table says that the answer did not fit, and the caller
+// gives a larger table. The result is -1 for a table over 2^40 records or
+// bytes, or for one element over 64 records or 4096 bytes of text.
+//
+// **What it does not prove**: a module draws records, not pixels, except in
+// `execute_in_rectangles`; the compositor and the window of a program are
+// not in this module.
 package interface_module
 
 import "base:intrinsics"

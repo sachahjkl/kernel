@@ -26,6 +26,23 @@
 // The manual is a service: another program asks for a page with [show](manual.show), and reads a description as
 // a text with [about](manual.about) and [signature](manual.signature). The other exports give the facts of the
 // modules as tables, which the console combines with `where()`, `sort()`, `join()` and `columns()`.
+//
+// **Start**: the console line `start("manual")`, or the bar of the desktop. A call of `connect("manual")` from
+// the console also reaches it when it runs.
+//
+// **Grants**, as the root service gives them:
+//
+// - **Serve**: other programs call its exports through connections.
+// - **Image**: it reads the file of each module of the boot image, read-only.
+// - **Replacements**: it reads the replacement table, so that a page names the module that a loader gives in
+//   place of an import.
+// - **Inspect**: it reads the module records of each program that runs. It gives these facts only to a caller
+//   that acts for the principal (information.odin).
+//
+// **What it proves**: the documentation of a module is in its file, and a reader needs neither its source nor a
+// load of it. It does not prove that a text is true: the build copies the comments, and checks only their form.
+//
+// The design of the description tables: (docs/MODULE_CONTRACT.md, "Description tables").
 package manual
 
 import "support:display"
@@ -510,6 +527,21 @@ signature :: proc "c" (name: ^string, export: i64, result: ^[]u8) -> i64 {
 	return 0
 }
 
+// The entry of the manual: it opens its service and its window, then serves calls and keys until the principal
+// closes the window.
+//
+// When the loader starts it, the entry:
+//
+// 1. opens the service ring, so that callers can reach the exports;
+// 2. opens a window of two pictures; with no window, it stops with the code 1;
+// 3. maps the boot image and the replacement table, read-only;
+// 4. measures the information functions once (`information_start`), and writes the line
+//    "manual: information: ... modules break a rule" on the log;
+// 5. shows the page of the module `manual` and writes "manual: ok, N modules, M have their documentation".
+//
+// Then one loop waits on the events of the window and on the service ring. A call to an export runs in this
+// loop and can change the page; a key moves the page or the list. The window is drawn again only after a change.
+// The program never stops by itself: the compositor or the console stops it.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	service, _ := system.service_open(ctx)

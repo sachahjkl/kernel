@@ -165,8 +165,6 @@ answer_start :: proc "contextless" (index: int, status: int, content_type: strin
 	// script on this origin by design: the origin holds no secret, no
 	// cookie and no authority (docs/NETWORK.md, "The HTTP server").
 	text(&head, "X-Content-Type-Options: nosniff\r\n")
-	// No Date field: this system has no clock of the day, and RFC 9110
-	// 6.6.1 says that a server with no clock does not send one.
 	text(&head, "\r\n")
 	head_length := head.count
 	is_head := request.method == .Head
@@ -272,7 +270,7 @@ request_route :: proc "contextless" (index: int) {
 		return
 	case !reading:
 		// PUT and DELETE stay off: the network is not authenticated. A
-		// person changes the pages with server.put and server.remove.
+		// principal changes the pages with server.put and server.remove.
 		answer_start(index, 405, "text/plain; charset=utf-8", "this server takes GET and HEAD here; a page changes with server.put from the console\n", allow = "GET, HEAD")
 	case path == "/":
 		page: [4096]u8

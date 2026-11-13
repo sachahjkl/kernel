@@ -1,6 +1,25 @@
 // A test of the large objects of a store (docs/STORAGE.md, "Large objects"): an object of 8 GiB made by three range writes holds a few blocks; 1000 small writes at scrambled offsets and one commit hash and write what they touched, not the whole object; a version keeps its bytes; a cut and an extension; the refusals.
 //
 // The first run (an empty store) checks each case, then makes a loop of range commits (the scenario of a loss of power stops the machine in it). The second run, on the same disk after a new start of the machine, reads back what the first run left. Each case ends with a line "...: as it must", or a line "WRONG". The times and the counts of a commit are measures, printed: a case checks a bound that comes from the blocks changed, never a speed.
+//
+// **What it is for.** It proves that the cost of a change of a large object follows the bytes changed, not the
+// size of the object: a program can keep an object of gigabytes and change a few blocks of it in one commit.
+//
+// **Start**: the machine test of the large objects starts it from the console with `start("ranges")`; it is not on
+// the bar of the desktop. A reader can start it the same way; the second start, after a new start of the machine,
+// runs the second run.
+//
+// **Grants**, as the root service gives them:
+//
+// - **Store**: its private store, with a limit of 12000 blocks: a commit of 1000 blocks spread over the object of
+//   8 GiB holds about 2000 blocks with its version, and the loop of range commits about 4000.
+//
+// **What a reader sees**: no window. The log has one line for each case, "...: as it must" or "WRONG", the
+// measures of the commits, and at the end "ranges: done, N wrong". The program stops with the code 0 when no case
+// is wrong, else with the code 2.
+//
+// The exports that it calls: [write_range](storage.write_range), [set_size](storage.set_size) and
+// [commit](storage.commit) of the storage service.
 package ranges
 
 import "contract:errors"
@@ -329,6 +348,13 @@ second_run :: proc "contextless" () {
 	outcome(string(small) == "whole" && u64(cut_size) == EXTENDED_SIZE && kept && u64(loop_size) == LOOP_SIZE, "after the remount: the small object, the object of the cut and the object of the loop")
 }
 
+// The entry of ranges: the first run on an empty store, or the second run on the store that the first run left;
+// then it stops.
+//
+// It opens its private store and reads its usage; with no store or no usage it writes "ranges: WRONG: ..." and
+// stops with the code 1. A store with no object gives the first run: each case, then the loop of range commits. A
+// store with objects gives the second run: it reads back the small object, the object of the cut and the object
+// of the loop. It writes "ranges: done, N wrong" and stops with the code 0, or 2 when a case is wrong.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	ok: bool

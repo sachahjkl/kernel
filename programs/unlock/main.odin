@@ -23,6 +23,38 @@
 // The passphrase shows as dots. The seal by the TPM is not built: the
 // strength of the record is the strength of the passphrase against
 // Argon2id with 19 MiB and 2 passes, on a copy of the disk.
+//
+// **What it is for.** It separates who holds the machine (principal 0) from
+// a named principal whose programs run in a session of their own, with
+// stores of their own. It is the only program that the root service
+// believes when it says that a passphrase opened a seal.
+//
+// **Start**: the root service starts it; no line of the console does.
+//
+// - At boot, and again after `lock()` in the console.
+// - With a name, after `principal_create("alice")` in the console: the
+//   window asks for the passphrase two times.
+//
+// **Grants**, as the root service gives them:
+//
+// - **Store**: its private store, which holds the file "principal".
+// - **Principals**: a ring to the root service for `Principal_Record` and
+//   `Principal_Unlock` only. No other program can send these two commands,
+//   so no other program can start a session.
+//
+// **What a reader sees**: a window with the name of the principal and the
+// passphrase as dots; Enter tries it, Backspace removes one byte, Escape
+// clears it. The log has, for example:
+//
+// - `unlock: principal 1 "alice" is locked: its passphrase opens its session`;
+// - `unlock: the passphrase of principal 1 "alice" opens its seal; ...`;
+// - `unlock: the passphrase of principal 1 "alice" is wrong: ...`.
+//
+// **What it does not prove**: the secret keys sign and decrypt nothing yet.
+// A wrong passphrase costs one derivation of Argon2id; nothing counts or
+// slows the tries.
+//
+// The design: (docs/PRINCIPALS.md, "4. The unlock and the lock").
 package unlock
 
 import "base:intrinsics"
@@ -341,6 +373,24 @@ enter :: proc "contextless" (window: ^display.Window) {
 	typed_count = 0
 }
 
+// The entry of unlock: it reads or creates the record of a named principal,
+// asks for the passphrase, and stops when the session starts.
+//
+// The entry takes its random generator, opens the ring to the root service
+// and its private store; with no ring or no store it stops with the code 1.
+// Then:
+//
+// - **Create** (the context value `VALUE_CREATE` is 1): it checks the name
+//   of the new principal and asks for a passphrase of 8 bytes at least.
+// - **Unlock**: it reads the file "principal". With no file it writes
+//   "unlock: no named principal: the machine runs as principal 0, with no
+//   unlock" and stops with the code 0. A file that does not decode, or a
+//   record that the root service refuses, stops it with the code 1.
+//
+// It reserves the memory of Argon2id (about 19 MiB), opens its window, and
+// reads keys until the passphrase opens the seal and the root service
+// starts the session. It then stops with the code 0. A wrong passphrase
+// keeps the window open.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// With no seed, each key is refused (create).

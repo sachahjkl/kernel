@@ -1,4 +1,19 @@
 // A demonstration: an animation that the processor computes for each frame.
+//
+// **What it is for.** It is a load that never ends and never waits for an
+// input: one thread computes each pixel of a picture of 320 by 200, about
+// 30 times in one second, with integers only. It shows the share of the
+// processor of a busy program in `monitor`, and the cost of a full picture
+// for the compositor.
+//
+// **Start**: `start("plasma")` in the console, or the bar of the desktop.
+// The log has "plasma: ok" after the first picture. It has no grant of
+// `grants_of`: a window is all that it needs.
+//
+// **How it computes**: a table of the sine in 256 steps, from the
+// approximation of Bhaskara in integers, and a palette of 256 colors from
+// three sines a third of a turn apart. Each pixel is the sum of four sines
+// of its place and of the frame number.
 package plasma
 
 import "support:display"
@@ -19,6 +34,12 @@ pictures: [1]graphics.Canvas
 records_now, records_before: [2]interface.Draw_Record
 drawing: interface.Window_Drawing
 
+// The entry of plasma: it builds the sine table and the palette, then
+// computes and shows one picture every 33 ms for ever.
+//
+// With no window it stops with the code 1. The time of each picture is
+// fixed from the first one: after a slow picture, the next pictures follow
+// with no sleep until the program is on time again.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "plasma")

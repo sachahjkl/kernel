@@ -1,12 +1,47 @@
 // One node of the `rings` demonstration (package relay). It has four memory
 // objects and no other handle: it cannot draw, and it cannot see the other
 // nodes. It communicates only through its rings.
+//
+// **What it is for.** It shows that a program with no grant but four memory
+// objects is still useful, and still contained: it passes records from the
+// ring before it to the ring after it, and it can do nothing else. The
+// program `rings` starts six nodes in a circle from the boot image and
+// draws what each one holds.
+//
+// **Start**: `rings` starts it from the boot image and gives it its four
+// handles. It is not named in `grants_of`: a start by the root service does
+// not give it these handles, so it has no use there.
+//
+// **Its context**, as the package relay names the places:
+//
+// - `GRANT_BEFORE`, `GRANT_AFTER`: the ring that it reads, the ring that it
+//   writes;
+// - `GRANT_CONTROL`: a ring from `rings`, which can put a record in the
+//   circle;
+// - `GRANT_STATE`: a shared page where the node says what it holds, since
+//   when, and if the ring after it is full;
+// - `VALUE_WORK_TIME`: the milliseconds that it holds each record.
+//
+// It writes nothing on the log and has no window.
 package node
 
 import "support:relay"
 import "contract:ring"
 import "support:system"
 
+// The entry of a node: it maps its four memory objects, then passes records
+// for ever.
+//
+// A memory object that does not map stops it with the code 1. Each turn:
+//
+// 1. a record that it held for its work time goes to the ring after it; a
+//    full ring refuses it, and the node keeps it and marks itself blocked;
+// 2. with no record held, it takes one from the control ring first, then
+//    from the ring before it, adds one to its count of hops, and holds it;
+// 3. it waits for one thing only: a record, the end of its work, or room
+//    in the ring after it.
+//
+// A node never stops by itself: `rings` stops it.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	memory: [4]system.Handle

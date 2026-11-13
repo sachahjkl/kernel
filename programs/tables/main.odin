@@ -8,6 +8,33 @@
 // (the same module, started by the root service as a program). It shows
 // each answer, the hostile cases, and the cost of each way for tables of
 // 64, 1024 and 65536 records of 40 bytes.
+//
+// **What it is for.** It proves that one description of an export serves
+// the three ways of a call with the same answer: the caller chooses the
+// isolation, and the module has no code of its own for it. A table travels
+// as records of fixed size, so the callee checks a count and a size, never
+// a pointer of the caller. The hostile cases are exports of the module
+// `hostile_exports` that lie on purpose: the call path must refuse each one.
+//
+// **Start**: `start("tables")` in the console, or the bar of the desktop.
+//
+// **Grants**, as the root service gives them:
+//
+// - **Image**: the boot image, read-only: it loads `sample` and
+//   `hostile_exports` into its own address space, and starts their call
+//   hosts from it.
+// - **Connect**: a ring to the root service that serves `Connect` to the
+//   service `sample` only. The root service starts `sample` on demand.
+//
+// **What a reader sees**: a table with one row for each case and one
+// column for each way, the hostile cases, and the measures. The log has
+// "tables: the ways: direct ready, call host ready, service ready", one
+// line for each hostile case, the time of `sum_values` in each way for 64,
+// 1024 and 65536 rows, and "tables: ok, N cases in 3 ways and M hostile
+// cases", or "tables: wrong answer: ..." for each wrong answer.
+//
+// **What it does not prove**: a way that does not start is shown as
+// "refused" and its cases fail; the program does not retry it.
 package tables
 
 import "base:intrinsics"
@@ -552,6 +579,15 @@ draw :: proc "contextless" (canvas: graphics.Canvas) {
 // host that this program starts.
 program_generator: random.Generator
 
+// The entry of tables: it prepares the three ways, runs the cases, the
+// hostile cases and the measures once, then shows the result for ever.
+//
+// With no seed or no window it stops with the code 1. It loads `sample`
+// here (the direct way), starts a call host of it (the second way), and
+// connects to the service `sample` (the third way); a way that fails is
+// marked refused and the program goes on. It does the same for
+// `hostile_exports`, with no service. Then it fills a table of 65536
+// readings for the measures, runs everything, and writes the result.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if !random.generator_from_context(&program_generator, ctx) {

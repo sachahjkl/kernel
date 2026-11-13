@@ -7,6 +7,39 @@
 // granted it the remote 10.0.2.2, port 7, and nothing else. It has no
 // address to choose and no port to open. The window shows each case, the
 // answer, and whether it is the expected answer.
+//
+// **What it is for.** It shows that a network grant is a capability: the
+// program reaches the one remote of its grant, and the network service
+// refuses each other request with the detail of the grant. It also measures
+// what one datagram costs when no kernel entry is on the path of the data.
+//
+// **Start**: `start("net")` in the console, or the bar of the desktop.
+//
+// **Grants**, as the root service gives them:
+//
+// - **Network**: one datagram endpoint, the remote 10.0.2.2 port 7.
+// - **Inspect**: the machine, read for the frequency of the cycle counter
+//   and for the kernel entries of the two services. With no such grant,
+//   the window says "the services: no right Inspect".
+//
+// **What a reader sees**: the window lists the cases; the log has one line
+// for each case ("net: ...: answer", with "(WRONG)" after an unexpected
+// answer), then "net: ok, N cases", then the measures:
+//
+// - the round trip of one datagram of 64 bytes, least and middle;
+// - the time from a refused command to its completion;
+// - the rate of a burst with 64 datagrams in flight;
+// - the kernel entries for each datagram, of this program, of the network
+//   service and of the frame service.
+//
+// After the measures, each key sends one more datagram to the remote. After
+// `revoke("net", "network")` in the console, that datagram is refused: the
+// grant ends while the program runs.
+//
+// **What it does not prove**: in the test of the network the echo server at
+// the gateway is the peer of the kernel tool (`tools/kerneltool/peer.odin`),
+// not a stack of another project; the test of TCP against libslirp is the
+// program fetch.
 package net
 
 import "contract:datagram"
@@ -452,6 +485,16 @@ draw :: proc "contextless" (window: ^display.Window) {
 	interface.window_frame_end(&drawing, &frame, window)
 }
 
+// The entry of net: it runs the cases of its endpoint once, then the
+// measures, then sends one datagram after each key.
+//
+// The entry opens its window (with none, it stops with the code 1), reads
+// the frequency of the cycle counter, and opens its endpoint and its
+// datagram region. With no endpoint it writes "net: no endpoint: the
+// program has no grant of the network" and stops with the code 1. Then it
+// runs the cases, writes "net: ok, N cases" or "net: WRONG: ...", runs the
+// three measures, and writes "net: the measures are done". The program
+// then waits for keys for ever: each key runs `after_key`.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "net")

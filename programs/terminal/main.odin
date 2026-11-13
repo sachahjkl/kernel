@@ -1,5 +1,5 @@
 // The terminal: it shows the text that a program gives as records, and it
-// gives the keys of the person to that program (support/terminal).
+// gives the keys that the input types to that program (support/terminal).
 //
 // The terminal starts no program. The root service starts a program and its
 // terminal, and gives the same terminal ring and text region to the two.
@@ -28,6 +28,32 @@
 // The lines that the terminal keeps are in three areas of fixed size: the
 // lines, the runs, the bytes. Each area starts again at its first place
 // when it is full: the oldest lines go.
+//
+// **What it is for.** A program with the grant **Terminal** (the console,
+// flood) writes typed records, not pixels and not escape sequences: a run
+// of text has its style as a field. The program never draws, never waits
+// for a picture, and never parses a key sequence. See the terms
+// [terminal](term:terminal) and [terminal ring](term:terminal-ring).
+//
+// **Start**: nothing starts it by name. The root service starts one
+// terminal with each program that has the grant **Terminal**, and refuses
+// `start("terminal")`. It has no grant of `grants_of`: it receives only
+// the handles above.
+//
+// **What a reader sees**: a window with the name of the program, its
+// lines, a status bar that the program fills, and on the log:
+//
+// - "terminal: ok, console writes in a ring of N records";
+// - "terminal: the first key goes to console";
+// - "terminal: console stopped with code C after L lines and R records".
+//
+// The terminal of flood measures: it shows the rates of the program, and
+// writes one line with the lines, the records and the kernel entries of one
+// second.
+//
+// **What it proves**: a text output with no kernel entry for each line, and
+// a writer that never waits for the screen. It does not prove fairness
+// between two writers: one terminal serves one program.
 package terminal_program
 
 import "support:display"
@@ -822,6 +848,27 @@ fail :: proc "contextless" (text: string) -> ! {
 	system.stop(1)
 }
 
+// The entry of the terminal: it opens the window of one program, starts the
+// reader thread, then draws the lines and sends the keys until the machine
+// stops.
+//
+// When the root service starts it, the entry:
+//
+// 1. reads its values: the name of the program, the columns (40 at least),
+//    the rows (4 at least), and the flag that it measures;
+// 2. opens a window of two pictures with the name of the program; with no
+//    window, it writes "terminal: no surface" and stops with the code 1;
+// 3. creates the three areas of the lines;
+// 4. opens the terminal ring and maps the text region, read-only; a wrong
+//    ring or region stops it with the code 1;
+// 5. starts the reader thread, and writes "terminal: ok, ...".
+//
+// The first thread is then the drawer. It sleeps while nothing changes,
+// and wakes for a record, a key, or every 250 ms to look at the state of
+// the program. Page Up and Page Down move the view; each other key goes to
+// the program, and a key is lost when the queue is full. When the program
+// stops, the terminal shows its code and keeps its lines: it does not stop
+// with it.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	name_bytes = system.name_unpack({ctx.values[terminal.VALUE_NAME], ctx.values[terminal.VALUE_NAME + 1], ctx.values[terminal.VALUE_NAME + 2], ctx.values[terminal.VALUE_NAME + 3]})

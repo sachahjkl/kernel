@@ -4,6 +4,24 @@
 // This program is also a service: it serves its exports while it runs.
 // Another program draws on the paper with isolated calls. The calls execute
 // in the one thread of this program, between two input events.
+//
+// **What it is for.** It is the smallest program that is both an
+// application and a service: the same window takes the pointer and the
+// calls of the console, with one thread and no lock, because a call runs
+// between two events. The top line counts the callers and the calls.
+//
+// **Start**: `start("paint")` in the console, or the bar of the desktop.
+// Then, from the console: `connect("paint")`, `paint.line(0, 0, 479, 295,
+// 1)`, `paint.write(20, 20, "hello", 3)`. The log has "paint: ok" when the
+// window opens.
+//
+// **Grants**, as the root service gives them:
+//
+// - **Serve**: its exports, for the console.
+//
+// **The paper**: 480 by 296 pixels under a palette of 24 pixels. The
+// colors of the palette are numbered 0 to 5: black, red, green, blue,
+// yellow, violet. The paper is not kept: a new start gives a clean paper.
 package paint
 
 import "contract:errors"
@@ -39,7 +57,19 @@ paper :: proc "contextless" () -> graphics.Canvas {
 	return {pixels = raw_data(paper_pixels[:]), width = WIDTH, height = PAPER_HEIGHT, stride = WIDTH}
 }
 
-// line draws a line on the paper, with a color of the palette (0 to 5). A point off the paper is fine: the paper shows the part of the line on it. The result is the count of lines that calls drew since the last clear. It fails with -1 and an error record: Bad_Value when the color is not 0 to 5.
+// line draws a line on the paper, with a color of the palette (0 to 5). A point off the paper is fine: the paper shows the part of the line on it.
+//
+// The line is 3 pixels wide. A coordinate beyond 4096 in either direction is taken as 4096: the paper is far
+// smaller, so the visible part does not change.
+//
+// - **from_x**, **from_y**: the first point, in pixels of the paper (0, 0 is its top left corner).
+// - **to_x**, **to_y**: the last point.
+// - **color**: the number of a color of the palette, 0 to 5.
+//
+// The result is the count of lines that calls drew since the last clear. It fails with -1 and an error record:
+// `Bad_Value` when the color is not 0 to 5; the record names the fifth argument.
+//
+// Example: `paint.line(0, 0, 479, 295, 1)` draws a red diagonal.
 @(export, link_name = "line")
 line :: proc "c" (from_x, from_y, to_x, to_y, color: i64, error: ^errors.Error_Record) -> i64 {
 	if color < 0 || color >= i64(len(colors)) {
@@ -51,7 +81,18 @@ line :: proc "c" (from_x, from_y, to_x, to_y, color: i64, error: ^errors.Error_R
 	return drawn
 }
 
-// write draws a text on the paper, with a color of the palette (0 to 5). The result is the count of bytes of the text. It fails with -1 and an error record: Bad_Value when x is not 0 to 480, when y is not 0 to 320, or when the color is not 0 to 5.
+// write draws a text on the paper, with a color of the palette (0 to 5).
+//
+// The text is drawn with the font of the system, from its top left corner. A text that passes the edge of the
+// paper is cut there.
+//
+// - **x**: 0 to 480, the left of the text.
+// - **y**: 0 to 320, the top of the text. The paper has 296 rows: a text below row 296 does not show.
+// - **text**: the bytes of the text.
+// - **color**: the number of a color of the palette, 0 to 5.
+//
+// The result is the count of bytes of the text. It fails with -1 and an error record: `Bad_Value` when x is not 0
+// to 480, when y is not 0 to 320, or when the color is not 0 to 5; the record names the argument.
 @(export, link_name = "write")
 write :: proc "c" (x, y: i64, text: ^string, color: i64, error: ^errors.Error_Record) -> i64 {
 	switch {
@@ -67,6 +108,9 @@ write :: proc "c" (x, y: i64, text: ^string, color: i64, error: ^errors.Error_Re
 }
 
 // clear erases the paper.
+//
+// It also sets the count of lines that [lines](paint.lines) gives back to 0. The key c in the window does the
+// same. It has no parameter, no result, and never fails.
 @(export, link_name = "clear")
 clear :: proc "c" () {
 	graphics.clear(paper(), COLOR_PAPER)
@@ -74,11 +118,23 @@ clear :: proc "c" () {
 }
 
 // lines gives the count of lines that calls drew since the last clear.
+//
+// Only the calls of [line](paint.line) count: the lines that the pointer draws do not. A test draws through
+// calls, then reads this count to check that each call ran one time.
 @(export, link_name = "lines")
 lines :: proc "c" () -> i64 {
 	return drawn
 }
 
+// The entry of paint: it opens its service and its window, then runs the
+// calls and the events of the pointer in one loop until the principal
+// closes the window.
+//
+// With no window it stops with the code 1. Each turn draws the palette, the
+// counts of the callers and the paper, then waits for an event or a call.
+// The calls run first, then the events: the left button draws, the right
+// button erases with a wide line, a click on the palette chooses a color,
+// and the key c clears the paper.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	service, _ := system.service_open(ctx)

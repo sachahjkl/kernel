@@ -3,7 +3,7 @@ package server
 // The pages that the server serves by name: objects of its private store in
 // the storage service, as each program has one. The server reads them into
 // its memory when it starts, and serves them from there: a request never
-// waits for the storage service. A person changes them from the console
+// waits for the storage service. The principal changes them from the console
 // through the exports of the server, functions with typed parameters,
 // which write the store first:
 //
@@ -165,7 +165,27 @@ acts_for_principal :: proc "contextless" () -> bool {
 	return caller == nil || caller.grant & isolated.CALLER_ACTS_FOR_PRINCIPAL != 0
 }
 
-// put writes a page in the private store of the server, and serves it at /name from now on. The name has 1 to 39 bytes of letters, digits, ".", "-" and "_"; its end gives the content type (.html, .txt, .css, .js, .json, .svg). The text has 60 KiB at most. The result is the bytes of the page, or a negative number with an error record. The error kinds: No_Grant (-1, the caller does not act for the principal); Empty, Too_Long or Bad_Byte (-2, the name); Too_Long (-3, the text); Full (-4, 16 pages); Refused (-6, the storage service refused the write, or the server has no store).
+// put writes a page in the private store of the server, and serves it at /name from now on.
+//
+// It is the one way to change what the network sees: HTTP itself refuses PUT and DELETE (405), because the
+// network is not authenticated. The order is the store first, then the memory of the server: the page that is
+// served is always the page that the store keeps, and a refused write leaves the old page in place. A page that
+// changes keeps its count of answers.
+//
+// - **name**: 1 to 39 bytes of letters, digits, ".", "-" and "_". Its end gives the content type: .html, .txt,
+//   .css, .js, .json or .svg.
+// - **text**: the bytes of the page, 60 KiB at most (the call region of a connection has 64 KiB).
+//
+// The caller must act for the principal (**Acts_For_Principal**). The result is the bytes of the page, or a
+// negative number with an error record:
+//
+// - `No_Grant` (-1): the caller does not act for the principal.
+// - `Empty`, `Too_Long` or `Bad_Byte` (-2): the name; for `Bad_Byte`, the record holds the place of the byte.
+// - `Too_Long` (-3): the text has more than 60 KiB.
+// - `Full` (-4): 16 pages exist, and the name is new.
+// - `Refused` (-6): the server has no store, or the storage service refused the page or the index of the pages.
+//
+// Example: `server.put("hello.html", "<h1>hello</h1>")`, then the host reads `http://<the address>/hello.html`.
 @(export, link_name = "put")
 put :: proc "c" (name: ^string, text: ^string, error: ^errors.Error_Record) -> i64 {
 	if !acts_for_principal() {
@@ -231,7 +251,19 @@ put :: proc "c" (name: ^string, text: ^string, error: ^errors.Error_Record) -> i
 	return i64(length)
 }
 
-// remove takes a page out of the private store of the server: /name gives 404 from now on. The result is 0, or a negative number with an error record. The error kinds: No_Grant (-1, the caller does not act for the principal); Absent (-5, no page has this name); Refused (-6, the storage service refused).
+// remove takes a page out of the private store of the server: /name gives 404 from now on.
+//
+// The store first: when the storage service refuses, the page stays in the store and stays served, so what the
+// network sees never differs from what the store keeps.
+//
+// - **name**: the name of a page, as [put](server.put) gave it.
+//
+// The caller must act for the principal (**Acts_For_Principal**). The result is 0, or a negative number with an
+// error record:
+//
+// - `No_Grant` (-1): the caller does not act for the principal.
+// - `Absent` (-5): no page has this name.
+// - `Refused` (-6): the storage service refused the removal; the page is still served.
 @(export, link_name = "remove")
 remove :: proc "c" (name: ^string, error: ^errors.Error_Record) -> i64 {
 	if !acts_for_principal() {
@@ -263,7 +295,13 @@ remove :: proc "c" (name: ^string, error: ^errors.Error_Record) -> i64 {
 	return 0
 }
 
-// pages gives one row for each page that the server serves: its name, its bytes, the answers of it since the start, its content type. The result is the count of rows.
+// pages gives one row for each page that the server serves: its name, its bytes, the answers of it since the start, its content type.
+//
+// Each caller gets the rows, with no grant: the pages are public on the network already.
+//
+// - **result**: a table of `Page_Row` rows; the call fills at most its length.
+//
+// The result is the count of pages, 16 at most. It never fails.
 @(export, link_name = "pages")
 pages_export :: proc "c" (result: ^[]Page_Row, error: ^errors.Error_Record) -> i64 {
 	total := 0
@@ -282,7 +320,14 @@ pages_export :: proc "c" (result: ^[]Page_Row, error: ^errors.Error_Record) -> i
 	return i64(total)
 }
 
-// served gives the counts of the server: the requests that it answered, by class of status, its connections, its bytes and its pages. These are facts of the server itself: each caller sees them.
+// served gives the counts of the server: the requests that it answered, by class of status, its connections, its bytes and its pages.
+//
+// These are facts of the server itself: each caller sees them. The bytes in count the data of connections that
+// ended; `calls` counts the calls of the exports.
+//
+// - **result**: one `Served` record.
+//
+// It never fails.
 @(export, link_name = "served")
 served :: proc "c" (result: ^Served) {
 	page_count := 0

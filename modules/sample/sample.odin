@@ -9,6 +9,28 @@
 // as a program that serves its exports. A service holds no export that is
 // wrong on purpose: those are in the module hostile_exports, which no
 // service holds.
+//
+// **What it is for.** It is the reference module of the call form for
+// everything that is not an integer or a text: records, lent handles, and
+// tables in each direction. The program `tables` calls it in three ways
+// with the same arguments and compares the answers; the console tests call
+// it the same way.
+//
+// **Example**, in the console:
+//
+// ```
+// load("sample")
+// t = readings(4)        a table of 4 readings: values 10, 20, 30, 40
+// sum_values(t)          100
+// scale_values(t, 3)     4; t now holds 30, 60, 90, 120
+// ```
+//
+// **As a service**: the root service starts it on demand when a program
+// with the grant to connect to it asks for `sample`. Its only grant is
+// **Serve**.
+//
+// The design: (docs/MODULE_CONTRACT.md, "Tables and bytes as parameters")
+// and (docs/MODULE_CONTRACT.md, "Records and handles, as implemented").
 package sample
 
 import "base:intrinsics"
@@ -32,12 +54,16 @@ Span :: struct {
 }
 
 // area gives the width of a rectangle times its height.
+//
+// The rectangle is a record of four integers; the caller writes it as `Rectangle{x = 0, y = 0, width = 3, height = 4}`, and the result is 12. A negative width gives a negative area: the module checks nothing.
 @(export, link_name = "area")
 area :: proc "c" (rectangle: ^Rectangle) -> i64 {
 	return rectangle.width * rectangle.height
 }
 
 // grow gives a rectangle with a margin of `by` on each side.
+//
+// The result is a record that the export writes in the memory of the caller (in an isolated call, in the call region). A negative `by` shrinks the rectangle.
 @(export, link_name = "grow")
 grow :: proc "c" (rectangle: ^Rectangle, by: i64, result: ^Rectangle) {
 	result^ = {rectangle.x - by, rectangle.y - by, rectangle.width + 2 * by, rectangle.height + 2 * by}
@@ -53,6 +79,9 @@ bytes_of :: proc "contextless" (memory: system.Handle, flags: op.Map_Flags) -> (
 
 // fill writes a value in each byte of a memory object, and gives the count
 // of bytes. The caller lends the object to read and to write.
+//
+// The handle is lent for this call only: the module cannot keep it. The value is taken modulo 256. A negative
+// result is the status of the kernel, negated, when the map is refused.
 @(export, link_name = "fill")
 fill :: proc "c" (memory: system.Lent({.Read, .Write}), value: i64) -> i64 {
 	bytes, status := bytes_of(memory.handle, {.Write})
@@ -68,6 +97,8 @@ fill :: proc "c" (memory: system.Lent({.Read, .Write}), value: i64) -> i64 {
 
 // total adds the bytes of a memory object. The caller lends the object to
 // read only.
+//
+// A negative result is the status of the kernel, negated, when the map is refused.
 @(export, link_name = "total")
 total :: proc "c" (memory: system.Lent({.Read})) -> i64 {
 	bytes, status := bytes_of(memory.handle, {})
@@ -84,6 +115,9 @@ total :: proc "c" (memory: system.Lent({.Read})) -> i64 {
 
 // span_total adds the bytes of a part of a memory object. The handle is a
 // field of the record.
+//
+// A span outside the object gives 0: the export checks first, count and their sum against the size. The handle
+// in a record is lent as a handle parameter is: the rights of the field description, for the call only.
 @(export, link_name = "span_total")
 span_total :: proc "c" (span: ^Span) -> i64 {
 	bytes, status := bytes_of(span.memory.handle, {})
@@ -102,6 +136,9 @@ span_total :: proc "c" (span: ^Span) -> i64 {
 
 // spoil tries to write in a memory object that the caller lent to read. The
 // result is the status of the kernel: 7 is "no right".
+//
+// The handle has the right Read only, as the description says, so the kernel refuses the map with Write. The
+// result 0 means that the lent handle had more rights than its description.
 @(export, link_name = "spoil")
 spoil :: proc "c" (memory: system.Lent({.Read})) -> i64 {
 	bytes, status := bytes_of(memory.handle, {.Write})
@@ -213,6 +250,9 @@ upper_case :: proc "c" (text: ^system.Bytes_To_Change) -> i64 {
 }
 
 // scale_values_up_to multiplies the value, the minimum and the maximum of each reading by a factor, in order, in the memory of the caller (the direction Change), while each new value stays at most largest_value, and gives the count of readings. At the first reading whose value would pass it, it stops with -1 and an error record Bad_Value for the factor, with the largest factor that this reading takes: the readings before it are already changed. A caller in another program receives none of these changes: a failed export gives back only its table of error details.
+//
+// A factor under 1 fails at once with -1 and an error record `Too_Small` for the factor, with the limit 1; no
+// reading changes.
 @(export, link_name = "scale_values_up_to")
 scale_values_up_to :: proc "c" (readings: ^system.Table_To_Change(Reading), factor: i64, largest_value: i64, error: ^errors.Error_Record) -> i64 {
 	if factor < 1 {
@@ -232,6 +272,10 @@ scale_values_up_to :: proc "c" (readings: ^system.Table_To_Change(Reading), fact
 
 // The same module as a program: a service that serves the exports above.
 // An export needs nothing from the entry.
+//
+// The entry opens the service ring; with none it writes "sample: no service
+// ring" and stops with the code 1. It writes "sample: serves its exports",
+// then waits for calls and runs them for ever. It has no window.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	service, ok := system.service_open(ctx)

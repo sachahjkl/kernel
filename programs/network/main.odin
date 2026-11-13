@@ -24,6 +24,37 @@
 // answer. The data of a datagram is copied one time, between the datagram
 // region of the program and the frame region; the kernel is not on the path
 // of the data, so data moves with no kernel entry.
+//
+// **What it is for.** It is the one place where the frames of the machine
+// meet the grants of the programs. A program never sees a frame and never
+// names an address that its grant does not hold, so a program with a
+// network grant reaches one remote, or answers on one port, and nothing
+// else.
+//
+// **Start**: no line starts it. The root service starts it, with the frame
+// service of the device, before the first program with the grant
+// **Network** (net, server, fetch, quic_echo, remote).
+//
+// **Grants**, as the root service gives them:
+//
+// - **Network_Device**: the frame ring of the frame service of the network
+//   device, and a control ring from the root service. The root service
+//   sends on the control ring the endpoint of each program that it starts
+//   with the grant **Network**, with the grant of that endpoint.
+//
+// **What a reader sees**: no window. The log has "network: ok, the address
+// 10.0.2.15/24 ..., the gateway 10.0.2.2, the link is up, ...", then the
+// cost of the headers and the checksum of one datagram of 1472 bytes.
+// A program reads its own counts and problem rows through its endpoint;
+// a program with the grant to inspect the machine also reads the counts of
+// the whole service.
+//
+// **What it does not do**: no DHCP and no DNS (the address is static), no
+// fragments of IPv4 (a fragment is a problem `Unsupported`), and no state
+// of a TCP connection.
+//
+// The design: `docs/NETWORK.md`, and (docs/NETWORK.md, "The listen grant of
+// UDP").
 package network_service
 
 import "contract:datagram"
@@ -935,6 +966,28 @@ call :: proc "contextless" (command: frame.Command, tag: u32, values: [7]u64 = {
 	}
 }
 
+// The entry of the network service: it attaches to the frame service of the
+// device, then moves frames and datagrams for the life of the machine.
+//
+// The entry, in order:
+//
+// 1. opens the frame ring and the control ring of the root service; with
+//    no ring, it stops (`fail`);
+// 2. creates the frame region, contiguous because the device reads and
+//    writes it, and gives it to the frame service with `Attach`;
+// 3. reads the hardware address and the state of the link, and posts the
+//    places for the frames that arrive;
+// 4. writes "network: ok, the address 10.0.2.15/24 ...", then measures the
+//    headers and the checksum of one datagram 20000 times and writes the
+//    cost of one.
+//
+// Then one loop runs for ever. Each pass takes the frames that arrived and
+// the frames that left, the new endpoints of the control ring, and the
+// commands of each endpoint while its completion queue has room. A command
+// that has no room waits in the endpoint, so a program that reads no
+// completion slows only itself. The loop then wakes the rings that changed,
+// and waits for a record or for the deadline of the oldest request that
+// waits for an answer (an ARP request, an echo).
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	frames_memory = ctx.handles[frame.GRANT_RING]

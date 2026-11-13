@@ -17,6 +17,27 @@
 // A stopped node takes no record: the records wait in the ring before it.
 // A ring holds 32 records. When it is full, the node before keeps its
 // record and waits.
+//
+// **What it is for.** It makes the base interface of the kernel visible:
+// six isolated programs in a circle, each with four memory objects and no
+// other handle. The picture is not a model: it is the content of the real
+// queues, which this program maps too. A stopped node shows that the others
+// go on, and that its records wait for it in its ring.
+//
+// **Start**: `start("rings")` in the console, or the bar of the desktop. It
+// starts its six nodes from the boot image (the module `node`), each with
+// its own work time: 260, 420, 180, 700, 240 and 340 ms. Its budget has room
+// for seven programs: itself and the six nodes.
+//
+// **Grants**, as the root service gives them:
+//
+// - **Image**: the boot image, read-only, to start the nodes from it.
+//
+// **What a reader sees**: the circle of nodes, the records in each ring, the
+// record that each node holds, and its work time. The log has "rings: ok, 6
+// programs, 6 rings, 5 records", "rings: node N stopped" or "started" after
+// a key, "rings: node N stopped alone" when the kernel stopped it, and
+// "rings: node N does not run: M records wait in the ring before it".
 package rings
 
 import "support:display"
@@ -132,6 +153,14 @@ drawing: interface.Window_Drawing
 // The random generator of this program (support/random).
 program_generator: random.Generator
 
+// The entry of rings: it makes the rings, starts the six nodes, puts five
+// records in the circle, then draws and answers keys and clicks for ever.
+//
+// It takes its random generator: each node gets its seed from it. With no
+// seed, no window, no boot image, no memory for the rings or a node that
+// does not start, it stops (`fail`, or the code 1). Each turn of the loop
+// takes the events, looks for a node that stopped (`watch`), draws the
+// rings, and waits 33 ms or until the next event.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// The random generator of this program, from the seed that its starter
