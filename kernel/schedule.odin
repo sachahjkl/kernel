@@ -105,7 +105,7 @@ queue_remove :: proc "contextless" (thread: ^Thread) {
 // the home.
 queue_ready :: proc "contextless" (thread: ^Thread, kind: Ready_Kind) {
 	queue := &run_queues[thread.home]
-	strategy_of(queue).ready(queue, thread.home, thread, kind)
+	queue_strategy_ready(queue, thread.home, thread, kind)
 	queue_push(thread)
 }
 
@@ -119,7 +119,7 @@ queue_ready :: proc "contextless" (thread: ^Thread, kind: Ready_Kind) {
 queue_pick :: proc "contextless" (home: u32, cpu: ^Processor) -> u32 {
 	start := cycles_now()
 	queue := &run_queues[home]
-	thread := strategy_of(queue).pick(queue, home)
+	thread := queue_strategy_pick(queue, home)
 	if thread == nil {
 		return 0
 	}
@@ -127,7 +127,7 @@ queue_pick :: proc "contextless" (home: u32, cpu: ^Processor) -> u32 {
 	if home != cpu.index {
 		to := &run_queues[cpu.index]
 		if to.strategy == queue.strategy {
-			strategy_of(queue).move(queue, home, to, cpu.index, thread)
+			queue_strategy_move(queue, home, to, cpu.index, thread)
 		} else {
 			// During a change of strategy: the fields of the old strategy
 			// mean nothing in the new one (strategy_change).
@@ -268,7 +268,7 @@ thread_ready_held :: proc "contextless" (thread: ^Thread) -> (queued: bool, pree
 		other := threads[running].program != thread.program
 		now := intrinsics.atomic_load(&time_milliseconds) + 1
 		if !other || home.preempted_at != now {
-			preempts = strategy_of(queue).wake_preempts(queue, thread.home, &threads[running], thread)
+			preempts = queue_strategy_wake_preempts(queue, thread.home, &threads[running], thread)
 			if preempts && other {
 				home.preempted_at = now
 			}
@@ -372,15 +372,14 @@ schedule :: proc "contextless" () -> ! {
 		// The strategy sees the thread while it is still the current
 		// thread of its home: the last part of its turn, and its lag.
 		queue := &run_queues[home]
-		strategy := strategy_of(queue)
 		if !thread.placed {
-			strategy.ready(queue, home, thread, .New)
+			queue_strategy_ready(queue, home, thread, .New)
 		}
 		// A thread that a stop holds leaves the queue as a thread that
 		// waits: its strategy keeps its lag for the Resume that puts it
 		// back (thread_control.odin).
 		held := thread.control_stops != 0
-		strategy.stopping(queue, cpu, thread, spent, ended || thread.state != .Ready || held)
+		queue_strategy_stopping(queue, cpu, thread, spent, ended || thread.state != .Ready || held)
 		intrinsics.atomic_store(&thread.processor, 0)
 		// The slot of an ended thread can serve a new thread before this
 		// processor gets the control lock: the serial names this thread.
