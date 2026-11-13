@@ -126,6 +126,9 @@ SITE_STYLE_RULES :: `*, *::before, *::after { box-sizing: border-box; }
 :root {
   --reading: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", "Helvetica Neue", Arial, sans-serif;
   --mono: ui-monospace, "SF Mono", "Cascadia Mono", "JetBrains Mono", "DejaVu Sans Mono", "Liberation Mono", Menlo, Consolas, monospace;
+  /* A tree line: the track alone is too near the surface of the tree to
+     show a line of 1 pixel, and the dim color alone is the color of a text. */
+  --tree-line: color-mix(in srgb, var(--dim) 40%, var(--track));
 }
 html {
   background: var(--background);
@@ -351,18 +354,40 @@ span.search-kind.value-icon::before { margin-right: 4px; }
 .tree a[aria-current="page"] { border-left-color: var(--line); background: var(--track); }
 .tree-sections > li { margin-bottom: 16px; }
 .tree-sections > li > a { font-weight: 700; }
-.tree-sections ul ul a, .tree-groups ul a { padding-left: 24px; }
-.tree-group { display: block; padding: 6px 8px 2px; color: var(--dim); }
-.tree-count { font-family: var(--mono); font-size: 12px; }
-.tree-sections .tree-glossary a { padding-left: 40px; }
+.tree-group { display: block; padding: 2px 8px; border-left: 2px solid transparent; color: var(--dim); overflow-wrap: anywhere; }
+.tree-count { font-family: var(--mono); font-size: 12px; line-height: 1; }
 .outline { font-size: 14px; line-height: 20px; margin: 16px 0; }
 .outline > summary { cursor: pointer; color: var(--dim); }
 .outline ul { list-style: none; margin: 0; padding: 0; }
 .outline li { margin: 0; }
-.outline a { display: block; padding: 2px 8px; text-decoration: none; border-left: 2px solid var(--track); overflow-wrap: anywhere; }
+.outline a { display: block; padding: 2px 8px; text-decoration: none; border-left: 2px solid transparent; overflow-wrap: anywhere; }
 .outline a[aria-current="location"] { border-left-color: var(--line); }
-.outline .outline-level-3, .outline .outline-symbol { padding-left: 16px; }
 .outline .outline-symbol code { background: none; padding: 0; }
+/* The tree lines (docs/SITE.md, "The tree lines"): one rule for each list
+   of a navigation that is under an item of another list. A row is 24
+   pixels high. A level is 16 pixels: the vertical line is 8 pixels from
+   the left edge of the row of the parent, and the branch of an item is 8
+   pixels long, at the middle of its first line. Each item draws two parts
+   with borders of 1 pixel: its corner (the line from its top to its
+   branch, and the branch), and the line from its branch to its bottom,
+   which the last item does not have. So the vertical line stops at the
+   branch of the last item, and an item that wraps keeps its branch on its
+   first line. The parts have no text: a screen reader reads the list as
+   before. */
+ul.tree-lines { margin-left: 8px; }
+ul.tree-lines > li { position: relative; padding-left: 8px; }
+ul.tree-lines > li::before, ul.tree-lines > li::after { content: ""; position: absolute; left: 0; border: 0 solid var(--tree-line); pointer-events: none; }
+ul.tree-lines > li::before { top: 0; width: 8px; height: 13px; border-left-width: 1px; border-bottom-width: 1px; }
+ul.tree-lines > li::after { top: 13px; bottom: 0; border-left-width: 1px; }
+ul.tree-lines > li:last-child::after { display: none; }
+/* The lines from the first list to the current item are in the line color:
+   the corner of each item that holds it, and the vertical line beside each
+   item before one that holds it. A browser with no :has() draws every line
+   in the color of a tree line. */
+ul.tree-lines > li:has([aria-current])::before { border-color: var(--line); }
+ul.tree-lines > li:has(~ li [aria-current])::before, ul.tree-lines > li:has(~ li [aria-current])::after { border-left-color: var(--line); }
+/* The outline of the focus is over the lines beside it, never under them. */
+.tree a:focus-visible, .outline a:focus-visible { position: relative; z-index: 1; }
 .symbol { margin: 0 0 32px; padding-top: 8px; border-top: 1px solid var(--track); }
 .symbol h3 { margin: 0 0 8px; }
 .symbol h3 code { background: none; padding: 0; font-size: 18px; }

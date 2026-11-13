@@ -15,6 +15,13 @@ import "contract:blake3"
 SITE_TREE_OPEN :: "<nav class=\"tree\" aria-label=\"Documentation\">"
 SITE_OUTLINE_OPEN :: "<details class=\"outline\">"
 SITE_OUTLINE_LIST_OPEN :: "<nav class=\"outline-list\" aria-label=\"On this page\">"
+// The start of each list of a navigation tree that is under an item of
+// another list: the style sheet draws the tree lines of its items
+// (docs/SITE.md, "The tree lines"). The check of a page refuses a nested
+// list of a navigation with no such class, so a new tree cannot forget
+// its lines.
+SITE_TREE_LINES_CLASS :: "tree-lines"
+SITE_TREE_LINES_LIST_OPEN :: "<ul class=\"" + SITE_TREE_LINES_CLASS + "\">"
 
 // The files of the site whose bytes change between builds. A proxy keeps a
 // file for hours, so each link to one of them carries a version of its
@@ -108,7 +115,8 @@ site_tree_link :: proc(site: ^Site, b: ^strings.Builder, from_page, target, titl
 // the reference, of a module or of the status shows the reference pages,
 // every module under the heading of its group, and the status. The tree is
 // whole: nothing is folded, so a reader sees every page of the part at once.
-// Each tree starts with a link to the home of the docs.
+// Each tree starts with a link to the home of the docs. Each list under an
+// item is a list of tree lines.
 site_tree_html :: proc(site: ^Site, page: Site_Page) -> string {
 	b := strings.builder_make(context.temp_allocator)
 	strings.write_string(&b, SITE_TREE_OPEN)
@@ -130,7 +138,7 @@ site_tree_html :: proc(site: ^Site, page: Site_Page) -> string {
 		}
 		strings.write_string(&b, "<li>")
 		site_tree_link(site, &b, page.path, guides_page, site_section_titles[.Guides], false)
-		strings.write_string(&b, "\n<ul>\n")
+		strings.write_string(&b, "\n" + SITE_TREE_LINES_LIST_OPEN + "\n")
 		for guide in site.guides {
 			strings.write_string(&b, "<li>")
 			site_tree_link(site, &b, page.path, guide.path, guide.title, false)
@@ -145,7 +153,7 @@ site_tree_html :: proc(site: ^Site, page: Site_Page) -> string {
 	if site_page_exists(site, reference_page) {
 		strings.write_string(&b, "<li>")
 		site_tree_link(site, &b, page.path, reference_page, site_section_titles[.Reference], false)
-		strings.write_string(&b, "\n<ul>\n")
+		strings.write_string(&b, "\n" + SITE_TREE_LINES_LIST_OPEN + "\n")
 		for entry in site.reference_entries {
 			if entry.path == modules_page {
 				continue // The modules have their own part of the tree.
@@ -155,7 +163,7 @@ site_tree_html :: proc(site: ^Site, page: Site_Page) -> string {
 			// The glossary is one page for each group: the groups are
 			// under it, each with the count of its terms.
 			if entry.path == site_page_file(SITE_GLOSSARY_FOLDER) && len(site.glossary.groups) > 0 {
-				strings.write_string(&b, "\n<ul class=\"tree-glossary\">\n")
+				strings.write_string(&b, "\n" + SITE_TREE_LINES_LIST_OPEN + "\n")
 				for group in site.glossary.groups {
 					group_page := site_glossary_group_page(group.id)
 					if !site_page_exists(site, group_page) {
@@ -179,7 +187,7 @@ site_tree_html :: proc(site: ^Site, page: Site_Page) -> string {
 	if len(site.reference.modules) > 0 && site_page_exists(site, modules_page) {
 		strings.write_string(&b, "<li>")
 		site_tree_link(site, &b, page.path, modules_page, "Modules", false)
-		strings.write_string(&b, "\n<ul class=\"tree-groups\">\n")
+		strings.write_string(&b, "\n" + SITE_TREE_LINES_LIST_OPEN + "\n")
 		for group in Site_Module_Group {
 			count := 0
 			for item in site.reference.modules {
@@ -190,7 +198,7 @@ site_tree_html :: proc(site: ^Site, page: Site_Page) -> string {
 			if count == 0 {
 				continue
 			}
-			fmt.sbprintf(&b, "<li><span class=\"tree-group\">%s <span class=\"tree-count\">%d</span></span>\n<ul>\n", site_module_group_titles[group], count)
+			fmt.sbprintf(&b, "<li><span class=\"tree-group\">%s <span class=\"tree-count\">%d</span></span>\n%s\n", site_module_group_titles[group], count, SITE_TREE_LINES_LIST_OPEN)
 			for item in site.reference.modules {
 				if site_module_group(item) != group {
 					continue
@@ -304,7 +312,11 @@ site_outline_entries :: proc(body: string) -> []Site_Outline_Entry {
 }
 
 // site_outline_html writes the list "On this page": the top of the text,
-// then the headings and the symbols of the page. It is a details element:
+// then the headings and the symbols of the page. It is a tree of two
+// levels: the title of the page and each heading of level 2 are the items
+// of its first list; a heading of level 3 or a symbol is a branch of the
+// item before it, in a list of tree lines, so a symbol with no heading of
+// level 2 before it is a branch of the title. It is a details element:
 // beside the text on a wide screen, where the style sheet and the script
 // show it open, and closed above the text on a narrower screen. With no
 // script it is a list of links that its summary opens.
@@ -315,7 +327,10 @@ site_outline_html :: proc(page: Site_Page) -> string {
 	strings.write_string(&b, SITE_OUTLINE_LIST_OPEN)
 	strings.write_string(&b, "\n<ul>\n<li class=\"outline-top\"><a href=\"#content\" aria-current=\"location\">")
 	site_plain(&b, page.title)
-	strings.write_string(&b, "</a></li>\n")
+	strings.write_string(&b, "</a>")
+	// An item of the first list stays open until the next one, so that
+	// its branches are inside it.
+	branches_are_open := false
 	for entry in site_outline_entries(page.body) {
 		class: string
 		switch entry.level {
@@ -326,6 +341,18 @@ site_outline_html :: proc(page: Site_Page) -> string {
 		case:
 			class = "outline-symbol"
 		}
+		is_branch := entry.level != 2
+		if is_branch && !branches_are_open {
+			strings.write_string(&b, "\n" + SITE_TREE_LINES_LIST_OPEN + "\n")
+			branches_are_open = true
+		}
+		if !is_branch {
+			if branches_are_open {
+				strings.write_string(&b, "</ul>\n")
+				branches_are_open = false
+			}
+			strings.write_string(&b, "</li>\n")
+		}
 		fmt.sbprintf(&b, "<li class=\"%s\"><a href=\"#%s\">", class, entry.id)
 		if entry.level == 0 {
 			strings.write_string(&b, "<code>")
@@ -334,10 +361,80 @@ site_outline_html :: proc(page: Site_Page) -> string {
 		} else {
 			strings.write_string(&b, entry.text)
 		}
-		strings.write_string(&b, "</a></li>\n")
+		strings.write_string(&b, "</a>")
+		if is_branch {
+			strings.write_string(&b, "</li>\n")
+		}
 	}
-	strings.write_string(&b, "</ul>\n</nav>\n</details>\n")
+	if branches_are_open {
+		strings.write_string(&b, "</ul>\n")
+	}
+	strings.write_string(&b, "</li>\n</ul>\n</nav>\n</details>\n")
 	return strings.to_string(b)
+}
+
+// site_tag_is tells whether a tag, from its "<" to its ">", opens the
+// element of a name: "<li>" and "<li class=...>" open "li"; "<link ...>"
+// and "</li>" do not.
+site_tag_is :: proc(tag, name: string) -> bool {
+	if len(tag) < len(name) + 2 || tag[0] != '<' || tag[1:1 + len(name)] != name {
+		return false
+	}
+	after := tag[1 + len(name)]
+	return after == ' ' || after == '>' || after == '\n'
+}
+
+// site_tree_lines_problem gives the fault of the navigation trees of a
+// written page, or "": each list that is under an item of a list, inside a
+// nav element, is a list of tree lines. So every tree of navigation of the
+// site shows its levels by the same lines, and a new one cannot show them
+// by its indentation alone.
+site_tree_lines_problem :: proc(html: string) -> string {
+	navigations_open := 0
+	items_open := 0 // The items that are open inside a nav element.
+	position := 0
+	for position < len(html) {
+		start := strings.index_byte(html[position:], '<')
+		if start < 0 {
+			break
+		}
+		start += position
+		end := strings.index_byte(html[start:], '>')
+		if end < 0 {
+			break
+		}
+		end += start
+		tag := html[start:end + 1]
+		position = end + 1
+		switch {
+		case site_tag_is(tag, "nav"):
+			navigations_open += 1
+		case tag == "</nav>":
+			navigations_open = max(navigations_open - 1, 0)
+			if navigations_open == 0 {
+				items_open = 0
+			}
+		case navigations_open == 0:
+		case site_tag_is(tag, "li"):
+			items_open += 1
+		case tag == "</li>":
+			items_open = max(items_open - 1, 0)
+		case site_tag_is(tag, "ul"), site_tag_is(tag, "ol"):
+			if items_open == 0 {
+				continue
+			}
+			has_class := false
+			for class in strings.fields(site_tag_attribute(tag, "class"), context.temp_allocator) {
+				if class == SITE_TREE_LINES_CLASS {
+					has_class = true
+				}
+			}
+			if !has_class {
+				return fmt.tprintf("a list under an item of a navigation has no class \"%s\": %s", SITE_TREE_LINES_CLASS, tag)
+			}
+		}
+	}
+	return ""
 }
 
 // site_layout_problem gives the fault of the layout of a written page, or

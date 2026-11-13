@@ -5560,7 +5560,7 @@ Do not use: docs theme, sidebar layout.
 
 The documentation tree is the list of the documentation pages of the docs, generated from the pages that exist, at the left of each documentation page.
 
-Its first link is the docs home. Then come the guides in their reading order, the reference pages, the modules in their groups (Kernel, Programs, Modules) and the status. It is one `nav` on each page, in the site menu on a narrow screen.
+Its first link is the docs home. Then come the guides in their reading order, the reference pages, the modules in their groups (Kernel, Programs, Modules) and the status. It is one `nav` on each page, in the site menu on a narrow screen. Tree lines show its levels.
 
 The design: `docs/SITE.md`, "The two layouts".
 
@@ -5570,11 +5570,21 @@ Do not use: sidebar, navigation tree, table of contents (for this).
 
 "On this page" is the list of the headings and the symbols of one documentation page, each a link to its id.
 
-It lists the headings of levels 2 and 3, then each symbol in the order of the page: on a module page, each export. From 1100 pixels it is a column at the right of the text with its own scroll; on a narrower screen it is a `details` above the text.
+It lists the headings of levels 2 and 3 and each symbol, in the order of the page: on a module page, each export. A heading of level 3 or a symbol is a branch of the heading of level 2 before it, with a tree line. From 1100 pixels it is a column at the right of the text with its own scroll; on a narrower screen it is a `details` above the text.
 
 The design: `docs/SITE.md`, "The two layouts".
 
 Do not use: table of contents (for this), outline, minitoc.
+
+### Tree line
+
+A tree line is a line of 1 pixel that joins an item of a navigation of the site to the item above it in the tree.
+
+A vertical line runs down from under a parent, beside its branches, and a short horizontal line, the branch, goes from it to each item. The vertical line stops at the branch of the last item. The documentation tree and "On this page" have tree lines at each level under their first list; the lines that lead to the current item are in the color of the line under a link. A list of the text of a page has none.
+
+The design: `docs/SITE.md`, "The tree lines".
+
+Do not use: guide line, indent guide, connector.
 
 ### Symbol
 
