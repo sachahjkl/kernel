@@ -21,7 +21,7 @@ This file is the record of the decisions of the project: who decided what, when,
 2. [The way of working](#2-the-way-of-working): D-040 to D-070, D-190, D-202 to D-204, D-211 to D-213, D-218, D-219, D-224
 3. [The kernel](#3-the-kernel): D-071 to D-083, D-220
 4. [Memory](#4-memory): D-084 to D-088
-5. [The scheduler](#5-the-scheduler): D-089 to D-091, D-226, D-227
+5. [The scheduler](#5-the-scheduler): D-089 to D-091, D-226, D-227, D-228
 6. [Storage](#6-storage): D-092 to D-095, D-221
 7. [The network and QUIC](#7-the-network-and-quic): D-096 to D-100
 8. [Cryptography and randomness](#8-cryptography-and-randomness): D-101 to D-105
@@ -820,6 +820,13 @@ This file is the record of the decisions of the project: who decided what, when,
 - Words: "tu m'as convaincu que il y a pas besoin du coup de ce compilateur dans le noyau c'était juste une discussion [...] vaut mieux bien choisir nos contraintes par exemple la forme proche que tu as dit la politique dehors le mécanisme dedans c'est exactement je pense que ce sur quoi on devrait s'arrêter"
 - State: decided, not built: which values a program can set, and under which right, is not designed.
 - Where: `SCHEDULING.md`; `FIRST_MILESTONE.md`, "Next steps".
+
+### D-228 The first layer of the policy of scheduling is built now: the weight and the request of a live thread
+- 2026-11-13. Decided by: the owner (to build it now, during the pause of D-224); the coordinator (the design).
+- Decision: two commands of `Thread_Control` read and write the weight and the request of a live thread, with no new kernel operation. A program writes them for its own threads; a holder of a thread handle with **Control** for that thread; the holder of the machine handle with **Schedule** for any thread. The weight stays at most the full weight. The placement of a thread on processors and a share for each budget are later layers.
+- Words: "ouais enfin ça reste à concevoir mais je pense que c'est relativement évident étant donné notre design actuel donc hésite pas à commencer à le faire pour pas laisser traîner"
+- State: in work.
+- Where: `SCHEDULING.md`; `ARCHITECTURE.md`, "The control of a thread".
 
 ## 6. Storage
 
