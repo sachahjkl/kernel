@@ -16,9 +16,11 @@ The terms are in `GLOSSARY.md`, section "Text": font, glyph, outline, coverage, 
 
 Nothing in its code. A program calls `graphics.text`, `graphics.character`, `graphics.unsigned` or the elements of `support/interface`, `support/display` gives the setting of the principal and the glyph cache to `support/graphics` when the program opens its window, and again at each change. Each window of the machine test draws with the vector font with no line of its own changed.
 
-Five places draw large text: `large` in `scheduler` and `terminal`, `write_large` in `server` and the boot display, `text_draw` in `support/interface`. Each one calls `graphics.text_scaled`, one line. They do not read the bitmap of Spleen directly: a program that uses the interface of the text needs no change for the vector font.
+Three places draw large text directly: `write_large` in `server` and in the boot display (`support/bootscreen`), and `text_draw` in `support/interface`. Each one calls `graphics.text_scaled`, one line. The `large` of `scheduler` writes a text record with a scale through `interface.draw_text`, so the package draws it; `terminal` has no large text of its own. They do not read the bitmap of Spleen directly: a program that uses the interface of the text needs no change for the vector font.
 
 ## 2. The grid
+
+The font must fit the grid of the system: every layout was made for cells of 8 x 16 pixels. So the font of the cells is scaled until its advance is exactly 8 pixels, and each glyph stays inside its cell.
 
 The system is laid out in cells of 8 x 16 pixels, and the design rules are a grid of 8 (`DESIGN.md`, sections 5 and 6). The vector font lives on it:
 
@@ -41,6 +43,8 @@ Why: at 13 to 14 pixels to the em, the tops of the lowercase letters and of the 
 The picture `build/fonts/candidates.png` (`kerneltool vector_fonts`) has the default font with and without the fit; the default is with it. The default value is an open decision (section 11).
 
 ## 3. Subpixel bands
+
+A pixel of a usual screen is three thin stripes: red, green and blue. Drawing each stripe on its own triples the resolution across, so the stems of the letters can sit at a third of a pixel. The cost is a faint color at the edges, which a filter keeps small.
 
 - **Coverage at 3 samples for each pixel across**, one for each color stripe of the screen: the outline is drawn into an accumulation three times wider than the cell, with a margin of 6 thirds on each side.
 - **The filter**: each third spreads over its neighbours with the weights 8, 77, 86, 77, 8 of 256 (the default filter of the usual LCD rendering), so that a side of a stem does not show one color alone. Measured on a stem of one pixel at its three places of a third (host test `filters_measured`): the five taps give a fringe of at most 162 of 255 and a peak of 239; three taps (85, 86, 85) give 170 and 255; no filter gives 255 and 255. The five taps are chosen: the least fringe for a loss of 16 levels at the peak.
@@ -74,6 +78,8 @@ A picture of the screen holds the colored edges of each glyph: enlarged, each le
 
 ## 4. Fixed point
 
+The renderer uses integers only, so the same font gives the same bytes on every build and every host. This section says how the coverage stays exact with integers, and why no sum can overflow.
+
 `support/vector_font/raster.odin` has no floating point, and neither has the text path of a display (`support/graphics`, `support/display`):
 
 - **Coordinates** in subunits: 256 to a pixel on each axis (24.8). The points of an outline are integers in units of the font; the placement maps them with rational numbers rounded to the nearest subunit (`divide_rounded`).
@@ -85,6 +91,8 @@ A picture of the screen holds the colored edges of each glyph: enlarged, each le
 - **The result does not depend on the build**: integers only; the host test `golden_glyph_cache` builds the cache of JetBrains Mono two times, compares the bytes, and compares the hash of the words of each scale with a constant. A change of the renderer changes these hashes: it needs a new `RENDERER_VERSION` and new constants.
 
 ## 5. The glyph cache
+
+The glyph cache is the font already drawn: the tool renders each character at each scale at build time, and the programs only copy from it. It is a resource of the boot image, checked by its hash and mapped read-only into each program with a window.
 
 A table of drawn glyphs: for each scale (1, 2, 3) and each character 32 to 126. Format: `contract/glyph_cache`, version 2: a header of 128 bytes, a size entry of 16 bytes for each scale, a glyph entry of 12 bytes for each character, position and scale, the advance of each character and scale, the pairs of each scale, then the words; a glyph keeps only its rows with ink. Fixed capacity: 3 sizes, 95 characters, 3 positions, 9 025 pairs; no replacement rule is needed, because the table holds every glyph that the grid can draw. All zero is valid: a program with no cache draws Spleen.
 
@@ -166,6 +174,8 @@ The blend of a glyph now has an SSE2 form beside this scalar form, with the same
 
 ## 6. The font file
 
+The font of the cells must be monospace, have clear forms at 8 x 16 pixels, and have a license that allows a subset inside the system. Six candidates were read and compared; Paper Mono is the font of the system.
+
 Six candidates, each read from the build input of `flake.nix` (the packages of nixpkgs, pinned by `flake.lock`). Their license texts were read at the source on 2026-11-11.
 
 | Candidate | License, as read | Outlines | Source | ASCII subset | Glyphs made of glyphs |
@@ -238,9 +248,11 @@ The titles of the cards (the card of `support/interface` and of the boot display
 
 ## 7. The setting
 
+The principal chooses the font, the order of the stripes, the pointer theme and the grid fit in the program `settings`. The choice is one shared page that only `settings` writes; every window reads it and draws again when it changes, and the choice survives a stop of the machine.
+
 The settings are the smallest form that keeps the properties:
 
-- **Where it lives**: one page, the settings page (`contract/settings`). The root service creates it at start. The page holds the choices only (the change count and one value for each setting): it holds no address, no size and no hash of a glyph cache, because the program `settings` writes it (below, "Who can write a cache"). The program `settings` receives it with Write (the role `Settings` of the root service: the one writer). Each program with a surface, each terminal and the compositor receive it read-only at a fixed address, with its address in the value 13 of their context (P20: a grant of the root service, read-only; P9: no shared file). All zero is valid: the vector font, `rgb`.
+- **Where it lives**: one page, the settings page (`contract/settings`). The root service creates it at start. The page holds the choices only (the change count and one value for each setting): it holds no address, no size and no hash of a glyph cache, because the program `settings` writes it (below, "Who can write a cache"). The program `settings` receives it with Write (the role `Settings` of the root service: the one writer). Each program with a surface, each terminal and the compositor receive it read-only at the fixed range `Settings_Page` (`settings.PAGE_ADDRESS`), with its bit in the value 20 of their context, as the glyph caches (P20: a grant of the root service, read-only; P9: no shared file). All zero is valid: the vector font, `rgb`.
 - **A change while programs run**: `settings` writes the page (the change count is odd during the write) and wakes the threads that wait on the change count. The compositor waits on it: it gives the new choice to its own text, draws its whole screen again, and sends the display event `Settings_Changed` to each window. `support/display` gives the new font to `support/graphics` when the program reads the event, between two frames; `support/interface` draws the whole window at the next frame (each draw record is the same, each pixel of text is not). A program draws again as it does for any event.
 - **The settings** (one value of the page and one row of `settings.descriptions` each; the window, the exports and the kept record read the same table): `font` (`vector`, `spleen`), `subpixel_order` (`rgb`, `bgr`, `none`), `pointer_theme` (`owner`, `system`) and `grid_fit` (`on`, `off`). Value 0 of each is its default.
   - **The pointer theme**: the root service gives the compositor both pointer theme files of the boot image (`pointer_theme_choice` in `programs/root/resources.odin` is the one place of their order: the values 6 and 7, then 18 and 19); the compositor validates each once and the setting chooses one live (`pointer_theme_choose`, a log line "the pointer theme in use").
@@ -294,6 +306,8 @@ The console stays fast: the producer writes into the terminal ring, and the term
 5. **The scheduling strategy across a stop**: a record that the root service reads at boot, or none (section 7).
 
 ## 12. The interface font and the text shaping module
+
+Words that name things (titles, labels, buttons, menus) read better in a proportional font, where each letter has its own width. The system has one, B612, beside the font of the cells. A proportional font needs shaping: the place of each glyph comes from its advance and from the pair that it forms with the next one.
 
 B612 (<https://github.com/polarsys/b612>, version 1.008, the package `b612` of nixpkgs; SIL OFL 1.1 with no Reserved Font Name: "Copyright 2012 The B612 Project Authors [...] This Font Software is licensed under the SIL Open Font License, Version 1.1", read in `OFL.txt` of its repository) is the font of the interface: the titles, the bar, the menus, the labels, the cards. It is proportional. Paper Mono stays the font of the text that is monospace (section 6). The system needs a module of text shaping and pair spacing for it. This section is the design; 12.8 says which parts are written.
 
@@ -367,7 +381,7 @@ A module (property 10: shared code with exports), with batch exports whose param
 ### 12.5 What changes in `support/interface`
 
 - **A font kind**: `Font_Kind` gains `Interface` (B612), beside `Cells_8x16` (the monospace font). The weight stays the byte `kind_detail`.
-- **The text record**: its x is the origin of the run, its `text_subpixel_x` the fraction of the origin in 1/64 of a pixel (the field exists since the first format), its width the width that the caller measured with the shaping module. Its rectangle for the damage is the measured box widened by a margin of the font on each side: 2 pixels for B612 (its ink passes the box by at most 126 units, 0.84 pixel, and the filter by two thirds of a pixel). So the damage stays exact with no new field.
+- **The text record**: a new kind, `Interface_Text` (draw record version 7). Its rectangle is the measured box widened by the ink margin of the font on each side, which the record keeps in `second_color`: 2 pixels for B612 (its ink passes the box by at most 126 units, 0.84 pixel, and the filter by two thirds of a pixel). Its origin is at `x` + the margin + `text_origin_thirds` thirds of a pixel. So the damage stays exact. (The design first put a fraction of 1/64 of a pixel in the byte `text_subpixel_x`; the byte became `text_origin_thirds`, because the cache has 3 positions only: `docs/INTERFACE.md`, section 2.1.)
 - **The draw**: `execute` asks the module for the placed glyphs of the run, then draws each glyph from the cache at its third of a pixel. The glyphs of one run can overlap by their margins: the blend reads the pixel under, so an overlap is drawn right.
 - **The grid of 8 stays for the places of the elements**, not for the letters: a card, a button, a line of a table start on the grid; the text inside starts at the inner place of the element, and its width is what it is. A size of a column that came from a count of characters (`characters(n)`) stays n times 8 for the monospace font; a new size `measured(text)` gives the width of a text in the interface font, rounded up to the grid.
 - **Elements that change**: the title and the caption of a card, a label of `label_value_line`, a button, a line of a list, the bar and the menus of the compositor, the title bar of a window. The values of `label_value_line` that are numbers stay monospace (the rule below).

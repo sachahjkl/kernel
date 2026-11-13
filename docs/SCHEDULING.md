@@ -1,6 +1,6 @@
 # Scheduling strategies
 
-Status: research note and design. The system takes ideas from CFS, EEVDF and `sched_ext`, and it can change from one strategy to another while it runs.
+Status: built. The kernel runs three strategies (`kernel/strategy.odin`), and this guide is their design, with the research behind it. The system takes ideas from CFS, EEVDF and `sched_ext`, and it can change from one strategy to another while it runs.
 
 **The idea in plain words.** A scheduling strategy decides which ready thread runs next on a processor. This system has three behind one table of six functions (round robin, fair, EEVDF), and a program with the right **Schedule** on the machine changes the strategy of the whole machine while it runs, with no stop.
 
@@ -17,6 +17,8 @@ This note says what the three Linux designs do, which ideas this system takes, w
 Sources. The EEVDF and `sched_ext` paragraphs were checked against the kernel documentation (`docs.kernel.org/scheduler/sched-eevdf.html` and `sched-ext.html`, read on 2026-11-11). The constants of CFS and the details of the Linux code (the names of fields, the clamp of the lag) are from memory of the Linux sources: they are not checked against a source.
 
 ## 1. What Linux does
+
+Linux has had three answers to the question "which thread runs next": CFS shares the processor by weight, EEVDF adds a deadline so that a thread can ask for a short delay, and `sched_ext` lets a loaded program be the strategy. This system takes ideas from each; this section says what each one does.
 
 ### CFS: virtual run time and weights
 
@@ -95,6 +97,8 @@ The change does not stop the machine and loses no thread: each run queue changes
 
 ## 3. Design details
 
+This section says how the strategies keep their data small and their arithmetic safe, how the strategy changes while the machine runs, and how a woken thread gets a processor.
+
 ### The hot data
 
 The fields that a pick and a wake read are in the first 64 bytes of the thread record: state, home, the links of the queue, processor, budget, weight, request, virtual time, virtual deadline, lag, queued, placed. `Thread` is aligned on 64 bytes, so the line is one cache line. The run queue is one line too: the lock, the head, the tail, the counts, the strategy of the queue, the sum of the weights, the queue clock.
@@ -142,9 +146,13 @@ Two rules limit wake preemption:
 
 ## 4. Measured
 
+The numbers below are measures printed by the program `scheduler`; no test asserts them (`docs/TOOLS.md`, "The bounds of the tests").
+
 The program `scheduler` runs the same cases under each strategy in the machine test (QEMU with KVM, 4 processors, a host loaded by other tests). Three runs: two threads that wake each other while a spinner runs on each processor make 80 to 84 wakes in one second under round robin, 461 732 to 498 800 under the fair strategy and 313 601 to 332 954 under EEVDF. A thread that sleeps 2 ms among 8 spinners runs 18.5 to 19.3 ms late in the middle under round robin, 0.3 to 0.9 ms under the two others. With the weights 1, 2 and 4, one spinner of each weight gets about 4, 7.5 and 13.5 % under the fair strategy and EEVDF, and about 8 % each under round robin. One pick takes 43 ns (fair), 81 to 86 ns (EEVDF) and 77 to 117 ns (round robin, with more picks from another queue). The spinners did 10 to 20 % less work under the fair strategy than under the two others in each of these three runs. One run with the limit of preemptions, the hint, and the placement of new threads under the fair strategy: two threads that wake each other made 65 (round robin), 458 431 (fair) and 114 643 (EEVDF) wakes in one second; the sleeper was late by 202 us (fair) and 1 005 us (EEVDF) in the middle, 3 031 and 7 275 us at worst. The fall of EEVDF from about 320 000 is between two runs of the full machine test on two trees of the source: with only the desktop (`kerneltool measure scheduler N`), EEVDF made 127 559 to 178 706 wakes in one second in 5 runs with these three rules, and 147 666 to 173 462 in 3 runs without them, so the rules are not its cause. EEVDF stays below the fair strategy in each run: its wake path and its pick read the queue three times each.
 
 ## 5. What this system refuses, and why
+
+Each item is an idea of Linux that the system does not take, or does not take yet, with the property or the measure that decides.
 
 - **A tree for the queue** (CFS, EEVDF): refused for now. A scan of a small queue in one table is fewer lines (property 13); a measure decides when a queue becomes large.
 - **The nice value**: refused. A weight is a number from 1 to 1024 that a program can only lower (property 20), not a level that a privileged program raises.

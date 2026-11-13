@@ -22,15 +22,20 @@ A developer tool (`GLOSSARY.md`) shows how the system runs. It reads reports of 
 | "Names and lines", "The debugger: the design" | How an address becomes a procedure and a source line, and the debugger that is designed |
 | "What `inspect` does not read: the bytes of another program", "The cost" | The limit of the grant, and the price of a sample |
 | "The comments of the sources", "The form of a documented comment" | The rules that the tool checks on every comment, and the form of a comment that the site and the console show |
+| "The commands of the tool" | The commands of `kerneltool`, and the parts of the machine test that `kerneltool test` runs alone |
 | "The bounds of the tests" | How a test waits, and why no test asserts a speed |
 
 ![The program inspect: the address space of the console as a band scaled by pages, its mappings, its modules and its threads](screenshots/inspect.png)
 
 ## What each tool reads
 
+Each developer tool is a program of the boot image. The root service gives it its grants when it starts, and the kernel answers its operation `Inspect` with one report at a time. The table names, for each tool, the handle and the rights that it holds, and the reports that it reads.
+
+A tool with no grant to inspect the machine reads nothing. It says so in its window and in the log: the monitor writes "no grant to inspect the machine".
+
 | Tool | Grant | Reports |
 |---|---|---|
-| `monitor` | machine, Inspect | `System_Report`, `Program_Report` of each slot. It serves `programs()`, `counts()`, `count()` and `served()` |
+| `monitor` | machine, Inspect | `System_Report`, `Program_Report` of each slot. It serves `programs()`, `counts()`, `count()`, `counts_named()` and `served()` |
 | `pages` | machine, Inspect | `Mapping_Report` of its own page table and of the kernel half |
 | `processors` | machine, Inspect | `Processor_Report` of each processor |
 | `locks` | machine, Inspect | `System_Report.locks` |
@@ -41,9 +46,20 @@ A developer tool (`GLOSSARY.md`) shows how the system runs. It reads reports of 
 
 ## The log
 
+The log is the list of the lines that the kernel and the programs write as they run. The kernel keeps the newest records in memory and prints each one on the serial port. A record knows which of its bytes are values, so a window can color a size or a time without guessing from the text.
+
 A log record (`GLOSSARY.md`) keeps its text and the value runs of the text: which bytes are a number, a size, a time, a module, a version or a status. The text is the text that the serial port prints, byte for byte: the machine tests wait for texts of the serial port, and a reader that ignores the runs reads the same record.
 
-**The writer states the kind.** A line of the log is made of parts (`system.log`, `system.log_in`, and `log` in the kernel). A text is plain. Each other part is a value with a value kind (`contract/value_kinds`):
+On the serial port, each line starts with the program and the channel in brackets. Two lines of the console, from the machine test:
+
+```
+[console] error: the instruction is at peek + 0x4 in probe (modules/probe/probe.odin:18)
+[console] error: frame 0: peek + 0x4 in probe (modules/probe/probe.odin:18), the instruction
+```
+
+### The writer states the kind
+
+A line of the log is made of parts (`system.log`, `system.log_in`, and `log` in the kernel). A text is plain. Each other part is a value with a value kind (`contract/value_kinds`):
 
 | Part | Writes | Value kind |
 |---|---|---|
@@ -54,44 +70,70 @@ A log record (`GLOSSARY.md`) keeps its text and the value runs of the text: whic
 | `Module_Name{name}` | the name of a program or of a module | Module |
 | a status of the kernel (`system.Status`) | its number | Status |
 
-No text is classified by its look. A value that a writer gives as a text stays plain.
+No text is classified by its look. A value that a writer gives as a text stays plain. The reason: a guess from the look is wrong for a name that holds digits, and only the writer knows that `4096` is a size and not a count.
 
-**The record.** A log record has 152 bytes of text and at most 8 value runs (`op.LOG_RUN_CAPACITY`): 3 bytes each, a start, a length and the kind. The operation `Log` takes the runs of its text in its seventh value, a count of at most 32 (`op.LOG_CALL_RUN_LIMIT`); the runs (6 bytes each, `Value_Run_In_Call`) follow the text at its address. The kernel copies them once and checks them in its copy: each run inside the text, after the run before it, with at least one byte and a kind. One run that fails: the record has no runs, and its text is whole. The kernel cuts the runs at the bounds of the records: a run across two records is one run in each. A text with more values than runs keeps the runs of its first values; the rest of its text is plain.
+### The record and its value runs
 
-**The cost.** On the path of `log` in the kernel: one store of 6 bytes for each value, and at most 12 runs on the stack (72 bytes). In `log_record`, under the log lock: one pass over the runs for each record, at most 32 steps. No allocation. The serial port gets the same bytes as before.
+A log record has 152 bytes of text and at most 8 value runs (`op.LOG_RUN_CAPACITY`): 3 bytes each, a start, a length and the kind. The operation `Log` takes the runs of its text in its seventh value, a count of at most 32 (`op.LOG_CALL_RUN_LIMIT`); the runs (6 bytes each, `Value_Run_In_Call`) follow the text at its address. The kernel copies them once and checks them in its copy: each run inside the text, after the run before it, with at least one byte and a kind. One run that fails: the record has no runs, and its text is whole. The kernel cuts the runs at the bounds of the records: a run across two records is one run in each. A text with more values than runs keeps the runs of its first values; the rest of its text is plain.
 
-**The window.** The program `log` shows the last 30 records: the time, the mark of the level, the program, the channel, and the text in the font of the cells. Each value run is in the color of its value kind (`docs/DESIGN.md`, "The colors of values"); the rest of the text is in the text color, or in the color "failed" for a record of the level error. The head of the column of the text is the legend: the six kinds that the logs write, each in its color. A text that starts with the name of its program and ": ", then its channel and ": ", shows without that start: the columns at its left say it. The record keeps its text whole.
+A run that fails its check costs the record its colors, never its text: the text is the fact, and the runs only describe it.
 
-**The tables.** `log.records(after)` gives one row for each record: its fields, the count of its value runs (`runs`), and its text. `log.value_runs(after)` gives the value runs: the number of the record, the start and the length in bytes of its text, and the name of the kind (`size`, `time`...). Join them on `number`.
+### The cost of the value runs
 
-**The console and the terminal.** A log record reaches the console only as the rows of these two tables: the console prints them as a table, with no colors. A program writes to its terminal apart from the log; a Text record of the terminal already carries a color for each run (`Style.color`), so a console that writes a record as runs of text, one run for each value run, needs no new form of the terminal.
+On the path of `log` in the kernel: one store of 6 bytes for each value, and at most 12 runs on the stack (72 bytes, `KERNEL_LOG_RUN_LIMIT` in `kernel/serial.odin`). In `log_record`, under the log lock: one pass over the runs for each record, at most 32 steps. No allocation. The serial port gets the same bytes as a record with no runs.
+
+### The window of the log
+
+The program `log` shows the last 30 records: the time, the mark of the level, the program, the channel, and the text in the font of the cells. Each value run is in the color of its value kind (`docs/DESIGN.md`, "The colors of values"); the rest of the text is in the text color, or in the color "failed" for a record of the level error. The head of the column of the text is the legend: the six kinds that the logs write, each in its color. A text that starts with the name of its program and ": ", then its channel and ": ", shows without that start: the columns at its left say it. The record keeps its text whole.
+
+### The tables of the log service
+
+`log.records(after)` gives one row for each record: its fields, the count of its value runs (`runs`), and its text. `log.value_runs(after)` gives the value runs: the number of the record, the start and the length in bytes of its text, and the name of the kind (`size`, `time`...). Join them on `number`. The first row of `records` also says in `lost` how many records after `after` the kernel wrote over before the call read them: a reader that is slow knows what it missed.
+
+### The console and the terminal
+
+A log record reaches the console only as the rows of these two tables: the console prints them as a table, with no colors. A program writes to its terminal apart from the log; a Text record of the terminal already carries a color for each run (`Style.color`), so a console that writes a record as runs of text, one run for each value run, needs no new form of the terminal.
 
 ## The program `inspect`
 
+`inspect` is a window that shows one running program: its memory, its modules, its threads, and the stack trace when it stopped on a fault. It reads the same reports as any holder of the machine with **Inspect**, so it never sees the bytes of the program. The picture at the top of this guide shows it on the console.
+
 One window for one program that the principal chooses in a list. It shows:
 
-1. **The address space** (`Inspect_Kind.Program_Mappings`, `op.Program_Mapping_Report`): each mapping of the program, with its address, its pages, the first page of its memory object, the pages that have a frame (a count that each mapping keeps where an entry becomes present, under the program lock: the report reads one count for each mapping, not one entry for each page), the size and the serial of the memory object, and flags: Write, Execute, Uncached, Device, Contiguous, Shared (another mapping or handle names the object), Thread_Area. The window draws one band scaled by address. A gap between two mappings is folded: it has a fixed width and lines at an angle (`DESIGN.md`, section 2: lines at an angle are a part with no measure on the scale). The kind of a mapping comes from these facts and from the module records: module code, module constants, module data, thread area, device, shared memory, memory of the program. The kernel does not know a stack: it is memory of the program.
+1. **The address space** (`Inspect_Kind.Program_Mappings`, `op.Program_Mapping_Report`): each mapping of the program, with its address, its pages, the first page of its memory object, the pages that have a frame (a count that each mapping keeps where an entry becomes present, under the program lock: the report reads one count for each mapping, not one entry for each page), the size and the serial of the memory object, and flags (`op.Program_Mapping_Flag`): Write, Execute, Uncached, Device, Contiguous, Shared (another mapping or handle names the object), Thread_Area, Uncommitted (an object made with Uncommitted: the field `committed` says which part its budget pays), Large (pages of 2 MiB), Protected (`Memory_Protect` changed pages of the mapping) and No_Access (its protection is No_Access now). The window draws one band scaled by address. A gap between two mappings is folded: it has a fixed width and lines at an angle (`DESIGN.md`, section 2: lines at an angle are a part with no measure on the scale). The kind of a mapping comes from these facts and from the module records: module code, module constants, module data, thread area, device, shared memory, memory of the program. The kernel does not know a stack: it is memory of the program.
 2. **The modules** (`Module_Report`): name (from the boot image), hash, base and size. Each address in the window is `module + offset` when a module record holds it, as the stack trace of a fault names a frame (`MODULE_CONTRACT.md`, section 8).
 3. **The threads** (`Inspect_Kind.Threads`, `op.Thread_Table_Report`): the thread area, the state, the processor that runs it and its home queue, the weight and the request, the virtual time, the virtual deadline and the lag of the strategy, the processor time, the words of a word wait and its deadline. The kernel reads the fields of the scheduler with no run lock: each field is whole, two fields can come from two instants.
-4. **The stop report** of a program that stopped on a fault (`Inspect_Kind.Stop`): the vector, the address, and each frame with the name of its procedure and its source line, `fault::three + 0x8 in fault (programs/fault/main.odin:15)`, from the debug image (section "Names and lines"). With no debug image, or a frame that no procedure of the debug object holds, the frame is `module + offset, near export`. The names are made when the stop report changes, not at each picture. The kernel filters the report (see below).
+4. **The stop report** of a program that stopped on a fault (`Inspect_Kind.Stop`): the vector, the address, and each frame with the name of its procedure and its source line, `fault::three + 0x8 in fault (programs/fault/main.odin:15)`, from the debug image (section "Names and lines"). With no debug image, or a frame that no procedure of the debug object holds, the frame is `module + offset, near export`. The names are made when the stop report changes, not at each picture. The kernel filters the report (see below). The machine test waits for the log line `inspect: fault stopped: page fault at 0x0; stack: fault::three + 0x...`.
 5. **Live**: a sample each 250 ms. A value that changed since the sample before is drawn in the color of the boot program for one sample. Space freezes the sample. The window shows the time of one sample and its kernel entries.
 6. **A hex view** of the memory of `inspect` itself (the code of its export `entry`, and four pages of a memory object of which two were written): 16 bytes in each row, the address as `module + offset`, the ASCII at the right, the boundary of each page marked. A page with no frame is shown as such, and the tool does not read it: it asks `Inspect_Kind.Pages` (`op.Page_Report`) which pages have a frame, so its read gives no frame to a page. `Pages` answers for the program that asks only: about another program it is a side channel (a holder of Inspect watches which pages of a program get a frame, page by page, as the program runs), finer than each other report.
 7. **One program, by its slot and its serial.** Each report has the serial of the program of the slot. A sample whose reports have two serials (a program ended, and a new one took its slot between two reports) is dropped, and the window keeps the sample before. The tool chooses a program by its slot and its serial, not by its name: two programs can have one name.
 
 ## Names and lines
 
+A stop report gives addresses, and a reader wants the name of a procedure and a line of a source file. The names come from the debug object of each module, which the kernel never reads: a few programs with a grant read the debug image and translate. With no debug image, a frame keeps the form `module + offset`.
+
 The kernel gives an address of a stop report as an address in a module record. The module names its exports only. The names of its other procedures and its source lines are in its debug object (`GLOSSARY.md`; `MODULE_CONTRACT.md`, "Debug information").
 
 - **Who names**: a program with the grant `Debug_Image` of the root service: `console`, `inspect` and `errors`. The root service maps the debug image read-only into each of them (the fixed range `Debug_Image`). The kernel reads no debug object: its line of the log stays "in module <hash> at offset X".
 - **The form of a frame**: `procedure + offset in module (file:line)`. Frame 0 is the instruction. Each next frame is a return address: the procedure and the line are those of the call, the byte before the return address. The offset is the distance of the address from the start of the procedure.
-- **The console**: a call host that stops on a fault prints "error: the instruction is at " and the name of its instruction, then one line "error: frame N: ..." for each frame (`fault_print`).
+- **The console**: a call host that stops on a fault prints "error: the instruction is at " and the name of its instruction, then one line "error: frame N: ..." for each frame (`fault_print`). A frame that no procedure of the debug object holds stays `module + offset`.
 - **The program `errors`**: the case of the program `fault` writes its stack trace with the names: "fault::three + 0x8 in fault (programs/fault/main.odin:15), fault::two + 0x... in fault (programs/fault/main.odin:20), ...".
 - **The machine test** (`Trace`): the tool takes the names that the system wrote, or names a frame `module + offset` from the debug object of the module in `build/modules`, with the same reader.
-- **With no debug image** (a volume with no file `DEBUG/OBJECTS.IMG`): each frame is `module + offset`, as before.
+- **With no debug image** (a volume with no file `DEBUG/OBJECTS.IMG`): each frame is `module + offset`.
+
+Lines of the machine test, after the console called the module `probe`, which tests the sandbox of an isolated call and reads an address that it must not read. Frame 1 is in a part of `host` that no procedure of its debug object holds:
+
+```
+[console] error: frame 0: peek + 0x4 in probe (modules/probe/probe.odin:18), the instruction
+[console] error: frame 1: host + 0x2e14
+[console] error: frame 2: entry + 0x224d in host (support/system/service.odin:337)
+```
 
 ## The debugger: the design
 
-Not built. The console reads a stop report with names, and `Thread_Control` stops, reads and writes a thread. A debugger needs four more things of the kernel. This section gives each one with its reason; the console commands use them, and a window can come later over the same commands.
+A debugger stops a program where its author asks, shows its threads, registers and stack, and runs it one instruction at a time. The system has the parts that read and change one thread, but not yet the grant, the breakpoints and the read of the memory of another program. This section is the design of what is missing; no command below exists yet.
+
+Not built. The console reads a stop report with names, and `Thread_Control` stops, reads and writes a thread (`Stop`, `Resume`, `Read_Registers`, `Write_Registers`, `Read_Extended_State`, `Write_Extended_State`). A debugger needs four more things of the kernel. This section gives each one with its reason; the console commands use them, and a window can come later over the same commands.
 
 ### The commands of the console
 
@@ -108,6 +150,8 @@ Not built. The console reads a stop report with names, and `Thread_Control` stop
 | `memory(address, count)` | The bytes, in the form of the hex view of `inspect` | `Read_Memory` (below) |
 | `detach()` | Removes each breakpoint, clears the trap flag, resumes each thread, closes the handle | The end of the debug handler (below) |
 
+The console already has a command `stop`, which stops a whole program by its name. The command that holds one thread needs a name of its own when it is built.
+
 ### What the kernel lacks, and the least addition for each
 
 1. **Who may debug whom.** Property 20, line 2: "Debug access is a handle to one program. The principal grants it". So the grant is a new right of a program handle, `Debug`, and a new command of the root ring, `Debug` (a name). The root service gives the handle of the program with `Debug` only to a caller that acts for the principal whose session runs that program (`PRINCIPALS.md`): never a program of another principal, and principal 0 does not debug the programs of a named principal. The grant is a record of the root service, visible in `grants()` and revocable. A thread of the program is named by its number and this handle: today only a thread handle names a thread of another program, and the root service holds no handle of a thread that a program made.
@@ -119,13 +163,21 @@ Each addition is a command or an argument of an existing operation: the count of
 
 ## What `inspect` does not read: the bytes of another program
 
-The reports give counts, places, states and the stack trace. The stack trace comes from the stack of the program: with a chain of frame pointers that the program broke, a frame holds a word of its memory, and the address of a page fault can be a value that the program computed. The holder of the program handle with Read reads the whole stop report. For a holder of the machine with Inspect, the kernel gives a frame only when a module record of the program holds its address (else the frame is zero, and the tool shows "not code"), and the address of the fault only when it is in the first page or in a module record (else 0); the report counts the values that it took out (`hidden_value_count`). So no report through Inspect gives a byte of the memory of a program. To read the bytes of another program is a stronger right than Inspect: a tool with it reads the secrets of each program (P20, line 2: "Debug access is a handle to one program. The principal grants it"). The system does not have that right: the hex view shows the memory of `inspect` itself. The right, if it is built, is a right of the program handle (one program, not the machine), that the root service gives to a tool on the request of the principal, visible in `grants()` and revocable.
+The right **Inspect** on the machine shows how every program runs, but it must not show what a program holds: its keys, its documents, its passwords. So the kernel removes from a report each value that can come from the memory of the program. The rule and its reason follow.
+
+The reports give counts, places, states and the stack trace. The stack trace comes from the stack of the program: with a chain of frame pointers that the program broke, a frame holds a word of its memory, and the address of a page fault can be a value that the program computed. The holder of the program handle with Read reads the whole stop report. For a holder of the machine with Inspect, the kernel gives a frame only when a module record of the program holds its address (else the frame is zero, and the tool shows "not code"), and the address of the fault only when it is in the first page or in a module record (else 0); the report counts the values that it took out (`hidden_value_count`). So no report through Inspect gives a byte of the memory of a program. To read the bytes of another program is a stronger right than Inspect: a tool with it reads the secrets of each program (property 20, line 2: "Debug access is a handle to one program. The principal grants it"). The system does not have that right: the hex view shows the memory of `inspect` itself. The right, if it is built, is a right of the program handle (one program, not the machine), that the root service gives to a tool on the request of the principal, visible in `grants()` and revocable.
 
 ## The cost
+
+A tool that watches the system must not slow it in proportion to what it watches. Each report is built from counts that the kernel keeps anyway, so a sample costs the same for a small program and for a large one.
 
 A sample makes one kernel entry for each report: the program reports of the list (one for each slot), and the mappings, the modules, the threads and the stop report of the chosen program. Each report costs one read for each mapping, thread or module: the pages with a frame are a count of each mapping, not a walk of the page table, so a program that maps 1 GiB 128 times costs the same as one that maps 128 pages. The test build checks the count against the page table at each unmap, in the walk that the unmap makes anyway. The window and the log give the measured time and entries of one sample.
 
 ## The comments of the sources
+
+A comment must stay true for a reader who has only the source file. A number of a working record (the number of a property, the label of a review finding) means nothing to that reader, and it goes stale when the record changes. So a check refuses those numbers, and a comment gives its reason in words.
+
+### What the check refuses
 
 `kerneltool check` reads each comment of the sources and refuses a comment that names a thing of the working records by its number, its label or its date. A comment gives the reason itself, in plain words. When the reason is long, a pointer names a document and its heading, as `(docs/MODULE_CONTRACT.md, "Did not fit, across calls")`, or a numbered section, as `(docs/CONSOLE.md, section 3)`.
 
@@ -150,6 +202,8 @@ The check reads the `.odin`, `.asm` and `.nix` files of `kernel`, `boot`, `runti
 
 Each comment breach is one line of the output: the file, the line, the words, and what they name. One comment breach fails the check.
 
+### What the check allows, and what it does not see
+
 The forms that the check does not refuse:
 
 - A pointer to a document with a section, a label or a heading: `docs/CONSOLE.md, section 3`, `docs/ARCHITECTURE.md, U3`. The heading in quotes of a pointer is not read: it is the text of a heading, and `kerneltool site` checks that the heading exists. `docs/PROPERTIES.md, property 10` is refused: the number of a property is not a heading.
@@ -169,6 +223,8 @@ A file that `support/cryptography/origin.manifest` lists is not read: it is take
 The marks of Markdown (next section) are not words: a list item, a mark of bold or a link is not a breach, and a breach in bold or in a list item is still a breach. The host test `comment_markdown_and_the_comment_rules` checks both.
 
 ## The form of a documented comment
+
+The comments of the sources are also the reference of the system: the site and the console show them. So a comment that documents a declaration is written in a small part of Markdown, which both can show. The rules below say which part.
 
 A comment above a declaration, on the line of a member of an enumeration, or before `package` is a documented comment: the site shows it on the reference pages (the kernel operations, the types, the modules and their exports, the console, the errors, the context, the grants), and a module carries the one of its package and of each export. A documented comment is Markdown, in a small part:
 
@@ -192,6 +248,56 @@ A link is a claim of its author: `kerneltool site` stops on a link whose target 
 A module carries the same text with the marks taken away, because `manual` and the help of the console draw plain lines with the cell font (`MODULE_CONTRACT.md`, "Description tables"): a paragraph is one line, a list item stays a line that starts with `- ` or its number, a line of an example keeps its form, a link becomes its text, bold and italics lose their stars, and a code span keeps its backticks, the one sign of code in a text of one font. The help of an export is the first sentence of that text.
 
 The documentation of the kernel operations is the model: for each operation, one sentence that says what it does, its arguments as a list, its results, its statuses as a list with when each comes, the rights that it needs in bold, links to its records and to its guide, and an example call through `support/system` when one helps.
+
+## The commands of the tool
+
+All the automation of the project is one program of the host, `tools/kerneltool`. Each task (a build, a test, the site, a release) is one of its commands, so the same steps run on each computer and in each check. Run a command with `nix develop -c kerneltool <command>`; `kerneltool help` prints the list with one line for each.
+
+| Command | What it does |
+|---|---|
+| `build [processes]` | Builds the modules, the boot images and the boot programs: the usual one, and one for each volume that a test needs (a start that fails, a shortage of frames, the volumes of the trusted boot that the boot program must refuse, the volumes of Secure Boot, one for each self test of the kernel) |
+| `module <name> ...` | Builds one module of the table, and its debug object. The parallel build runs it; run it by hand to see the errors of one module alone |
+| `run [without_checks]` | Builds, then starts the machine under QEMU in a window, with the log of the kernel on the terminal. The data disk stays from run to run. It starts the peer that takes the calls of `kerneltool call` |
+| `call <key> "<call>"` | Calls an export of a service of the machine that `run` started, through the program `remote` over QUIC, and prints the typed result |
+| `test [part]` | The machine tests (below), then the tests of the loader, of the system descriptions and of the debug objects on the host. It ends with "kerneltool: all tests passed" |
+| `measure ...` | A machine that measures with no other load: the locks, `scheduler N`, `windows`, `address_space`, `shortage`. The numbers are measures, never conditions |
+| `screenshots` | The whole test and a second build, then the measure record and the copy of the pictures to `docs/screenshots` and to the development log. `screenshots compress` compresses the PNG files that are stored with no compression |
+| `check` | `odin check -vet` and the host tests, the checks of the sources (the origin of the cryptography, the mark, the fixed addresses, the bounds of the tests, the rule on comments, the glossary, the changelog, the news), then `test` and a second build that must give the same bytes |
+| `repeat <module> <count>` | Builds one module again and again, with no machine, and counts the distinct results (`docs/REPRODUCIBLE_BUILD.md`) |
+| `site` | Writes the site in `build/site/` |
+| `changelog ...`, `news ...`, `release_number` | The fragments of the changelog and its releases, the news entries, the number of the newest release |
+| `key new <folder>`, `key show` | The key that signs the system description |
+| `font`, `vector_fonts`, `pointers`, `logo`, `portrait` | Convert a source (a font, a pointer theme, the mark, a picture) into the files of the repository. A build reads the result, never the source |
+| `cryptography-take`, `cryptography-system-hashes`, `cryptography-origin` | Take a file of the cryptography of Odin, list the files that the project wrote, and check the origin of each taken file (`docs/CRYPTOGRAPHY.md`) |
+| `film` | Films the terminal for the development log (needs ffmpeg) |
+
+### The parts of the machine test
+
+`kerneltool test` with no argument runs every machine in this order: a start that fails, the trusted boot, the shortage of frames, the self tests of the kernel, the main machine, the network, TCP, QUIC, QUIC against a real client, the randomness, the extended state, the return to a program, the fault ring, the kernel events, the cryptography, the persistence, the principals, the hierarchy, the ranges, and the loss of power. Each machine writes its log in a file `build/test_output*.txt` and its pictures in `build/screenshots`.
+
+`kerneltool test <part>` runs one part only, for the work on it. The parts that the command accepts:
+
+| Part | The machines that it runs |
+|---|---|
+| `main` | The main machine: the desktop, the console, the programs and the developer tools |
+| `network` | The machine of the network service |
+| `tcp` | The two machines of TCP |
+| `quic` | The machine of QUIC through the network service |
+| `quic-real` | The QUIC client of OpenSSL against `quic_echo`, through the UDP relay of the peer |
+| `random` | The three machines of the randomness |
+| `crypto` | The machine of the module `cryptography` |
+| `extended_state` | The three machines of the extended state |
+| `return_fault` | The machine of the return to a program |
+| `fault_ring` | The machine of the fault ring |
+| `kernel_events` | The machine of the kernel events |
+| `shortage` | The machine of the shortage of frames |
+| `principals` | The two machines of the principals |
+| `hierarchy` | The machines of the hierarchy of storage |
+| `ranges` | The machines of the ranges of storage |
+| `power` | The loss of power: of the storage, of the settings, of the ranges |
+| `trusted_boot` | The volumes of the trusted boot; `trusted_boot tpm` adds the two machines with a software TPM |
+
+The persistence and the self tests of the kernel have no part of their own: only the whole run starts them. An argument that is not a part runs the whole test.
 
 ## The bounds of the tests
 
