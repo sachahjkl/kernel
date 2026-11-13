@@ -223,6 +223,10 @@ value_runs_check :: proc "contextless" (runs: []Value_Run_In_Call, length: int) 
 		if run.kind == .None || u8(run.kind) > u8(max(Value_Kind)) {
 			return false
 		}
+		// The byte with no use yet is zero, so that it can get a use later.
+		if run.reserved != 0 {
+			return false
+		}
 		end = int(run.start) + int(run.length)
 	}
 	return true

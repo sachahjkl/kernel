@@ -144,9 +144,8 @@ Operation :: enum u32 {
 	// **Statuses**
 	//
 	// - `Bad_Handle`, `No_Right`: `log` is not a log handle with **Write**.
-	// - `Bad_Address`: `length` is above 4096, `runs` is above `LOG_CALL_RUN_LIMIT`, or the program cannot
-	//   read the text and its runs.
-	// - `Bad_Operation`: `level` is above `Error`.
+	// - `Bad_Address`: `length` is above 4096, or the program cannot read the text and its runs.
+	// - `Bad_Operation`: `level` is above `Error`, or `runs` is above `LOG_CALL_RUN_LIMIT`.
 	// - `No_Budget`: the budget of the program, or a budget above it, accepted all the records of its limit
 	//   in this second (`Budget_Amounts`, `log_records`).
 	Memory_Create  = 2, // (budget, pages, flags: Memory_Flags) -> memory handle.
