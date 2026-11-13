@@ -1246,7 +1246,7 @@ This file is the record of the decisions of the project: who decided what, when,
 - 2026-11-13. Decided by: the owner (the palette, the flush input, the film; "go" to the form); the coordinator and a design (the form).
 - Decision: one panel that a key opens, the palette, reaches every operation of the system that the principal of the session can do. It replaces the launcher of D-130, and the term launcher leaves the system. The form keeps property 20: the panel is in the compositor and gets no new right; the console is the provider: it gives a table of entries made from its commands, which the compositor reads, and it runs the chosen entry as a line. A grant `Palette` of the console is visible and can be revoked; without it the palette keeps the programs and the windows. The input band is flush with the top, the left and the right edges of the panel, with no border on those three sides. The typed text is at scale 2. An entry that destroys asks for a second Enter. A table opens in the console. A film shows it.
 - Words: "ce serait la everything palette c'est à dire une palette de commande dans [laquelle] il [y a] toutes les opérations du système [...] faut maximiser l'ux et surtout j'aimerais que la zone de saisie elle soit flush avec les bords en haut à gauche et à droite [...] qu'elle soit pas entouré[e]"; "tu me fera une vidéo"; then "Go"
-- State: in work.
+- State: done: programs, windows, the commands of the console with their arguments, the settings, the prefixes. The palette runs the row that is drawn: the choice is an entry, and a list that arrives late does not move it. Not done: the film; the scheduling strategy, which no command reaches.
 - Where: `DESIGN.md`, section 9; `CONSOLE.md`.
 
 ## 10. The console and the tools
