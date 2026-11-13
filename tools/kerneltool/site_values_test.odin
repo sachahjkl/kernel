@@ -1,5 +1,6 @@
 package kerneltool
 
+import "contract:value_kinds"
 import "core:fmt"
 import "core:strings"
 import "core:testing"
@@ -11,19 +12,19 @@ import "support:graphics"
 // least the bound.
 @(test)
 site_value_kinds_are_complete :: proc(t: ^testing.T) {
-	names := make(map[string]Site_Value_Kind, context.temp_allocator)
-	icons := make(map[string]Site_Value_Kind, context.temp_allocator)
+	names := make(map[string]value_kinds.Value_Kind, context.temp_allocator)
+	icons := make(map[string]value_kinds.Value_Kind, context.temp_allocator)
 	dark, light := site_dark_colors(), site_light_colors()
-	for kind in Site_Value_Kind {
+	for kind in value_kinds.Value_Kind {
 		if kind == .None {
 			continue
 		}
 		description := site_value_kinds[kind]
-		testing.expectf(t, description.name != "" && description.title != "" && description.meaning != "", "the kind %v has no name, no title or no meaning", kind)
-		if other, found := names[description.name]; found {
-			testing.expectf(t, false, "the kinds %v and %v have the name %s", kind, other, description.name)
+		testing.expectf(t, value_kinds.VALUE_KIND_NAMES[kind] != "" && description.title != "" && description.meaning != "", "the kind %v has no name, no title or no meaning", kind)
+		if other, found := names[value_kinds.VALUE_KIND_NAMES[kind]]; found {
+			testing.expectf(t, false, "the kinds %v and %v have the name %s", kind, other, value_kinds.VALUE_KIND_NAMES[kind])
 		}
-		names[description.name] = kind
+		names[value_kinds.VALUE_KIND_NAMES[kind]] = kind
 		filled := 0
 		for row in description.cells {
 			testing.expectf(t, len(row) == SITE_VALUE_ICON_SIZE, "a row of the icon of %v has %d cells", kind, len(row))
@@ -63,11 +64,11 @@ site_value_icons_in_the_style_sheet :: proc(t: ^testing.T) {
 	sheet := site_style_sheet("")
 	testing.expect(t, !strings.contains(sheet, "pictures/values"), "the style sheet names a file of icons")
 	kind_count := 0
-	for kind in Site_Value_Kind {
+	for kind in value_kinds.Value_Kind {
 		kind_count += kind == .None ? 0 : 1
 	}
 	testing.expect_value(t, site_style_sheet_icon_count(sheet), kind_count)
-	for kind in Site_Value_Kind {
+	for kind in value_kinds.Value_Kind {
 		if kind == .None {
 			continue
 		}
@@ -151,11 +152,11 @@ site_value_legend_lists_every_kind :: proc(t: ^testing.T) {
 	b := strings.builder_make(context.temp_allocator)
 	site_value_legend(&b)
 	html := strings.to_string(b)
-	for kind in Site_Value_Kind {
+	for kind in value_kinds.Value_Kind {
 		if kind == .None {
 			continue
 		}
-		name := site_value_kinds[kind].name
+		name := value_kinds.VALUE_KIND_NAMES[kind]
 		testing.expectf(t, strings.contains(html, fmt.tprintf("<tr id=\"value-kind-%s\"><td class=\"column-short\"><span class=\"value-icon value-%s\" aria-hidden=\"true\"></span></td>", name, name)), "the legend has no row for %v", kind)
 	}
 	testing.expect_value(t, site_heading_value_problem(html), "")

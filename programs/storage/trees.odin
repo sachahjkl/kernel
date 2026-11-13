@@ -484,7 +484,7 @@ commit_at_limit :: proc "contextless" (store: Store_Of, error: ^errors.Error_Rec
 		// One line for each store and each start of the service: the later
 		// commits at the limit thin the same way.
 		limit_reached[plan.store_index] = true
-		system.log("storage: the store ", store.name, " is at its limit of ", store.limit, " blocks: the commit of generation ", generation, " thinned ", at_limit, at_limit == 1 ? string(" version") : string(" versions"), ", the oldest of the store first")
+		system.log("storage: the store ", store.name, " is at its limit of ", system.Size{store.limit, .Blocks}, ": the commit of generation ", generation, " thinned ", at_limit, at_limit == 1 ? string(" version") : string(" versions"), ", the oldest of the store first")
 	}
 	return generation
 }

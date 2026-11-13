@@ -3,6 +3,7 @@ package kernel
 import "base:intrinsics"
 import "contract:cut_mark"
 import op "contract:operation"
+import "contract:value_kinds"
 
 // The serial port is the log of the kernel. It is the only device that the
 // kernel has code for, apart from the processor and its interrupt controller.
@@ -35,14 +36,32 @@ log_bytes :: proc "contextless" (bytes: []u8) {
 
 // The log (operation.Log_Record). Each record goes to two places: the
 // serial port, as one line of text, and the memory object of the log,
-// that programs with the grant read.
+// that programs with the grant read. The record also keeps the kind of each
+// typed part of its text (contract:value_kinds); the serial port has the
+// text only.
 Hex :: distinct u64
+Size :: value_kinds.Size
+Duration :: value_kinds.Duration
+Hash :: value_kinds.Hash
+Module_Name :: value_kinds.Module_Name
 
+// A part of a line of the log. A string is plain text; each other part is a
+// value with a kind: an integer and a Hex are numbers, a Size a size, a
+// Duration a time, a Hash a version, a Module_Name a module.
 Log_Part :: union {
 	string,
 	u64,
 	Hex,
+	Size,
+	Duration,
+	Hash,
+	Module_Name,
 }
+
+// The value runs of one line that the kernel writes for itself. The stack of
+// the kernel is small: a line with more typed parts keeps its first runs,
+// and the rest of its text is plain.
+KERNEL_LOG_RUN_LIMIT :: 12
 
 log_head: ^op.Log_Head // nil before log_start.
 log_records: [^]op.Log_Record
@@ -174,8 +193,8 @@ log :: proc "contextless" (parts: ..Log_Part) {
 	log_in("", .Info, ..parts)
 }
 
-// log_in writes one record of the kernel. A part is a string, an integer
-// (decimal), or a Hex.
+// log_in writes one record of the kernel. A part is a string, or a value
+// with a kind (Log_Part): the record keeps where each value is in the text.
 //
 // The text of one record of the kernel has at most 352 bytes: the stack of
 // the kernel is small. A longer text ends with the cut mark and the count
@@ -184,26 +203,34 @@ log_in :: proc "contextless" (channel: string, level: op.Log_Level, parts: ..Log
 	buffer: [352]u8
 	count := 0
 	dropped := 0
+	runs: [KERNEL_LOG_RUN_LIMIT]value_kinds.Value_Run_In_Call
+	run_count := 0
 	put :: proc "contextless" (buffer: []u8, count: ^int, dropped: ^int, bytes: []u8) {
 		taken := copy(buffer[count^:], bytes)
 		count^ += taken
 		dropped^ += len(bytes) - taken
 	}
+	put_decimal :: proc "contextless" (buffer: []u8, count: ^int, dropped: ^int, value: u64) {
+		digits: [20]u8
+		digit_count := 0
+		rest := value
+		for {
+			digits[len(digits) - 1 - digit_count] = u8('0' + rest % 10)
+			digit_count += 1
+			rest /= 10
+			if rest == 0 {break}
+		}
+		put(buffer, count, dropped, digits[len(digits) - digit_count:])
+	}
 	for part in parts {
+		start := count
+		kind := value_kinds.Value_Kind.None
 		switch value in part {
 		case string:
 			put(buffer[:], &count, &dropped, transmute([]u8)value)
 		case u64:
-			digits: [20]u8
-			digit_count := 0
-			rest := value
-			for {
-				digits[len(digits) - 1 - digit_count] = u8('0' + rest % 10)
-				digit_count += 1
-				rest /= 10
-				if rest == 0 {break}
-			}
-			put(buffer[:], &count, &dropped, digits[len(digits) - digit_count:])
+			put_decimal(buffer[:], &count, &dropped, value)
+			kind = .Number
 		case Hex:
 			digits: [16]u8
 			alphabet := HEX_DIGITS
@@ -211,24 +238,50 @@ log_in :: proc "contextless" (channel: string, level: op.Log_Level, parts: ..Log
 				digits[i] = alphabet[(u64(value) >> uint(60 - 4 * i)) & 0xF]
 			}
 			put(buffer[:], &count, &dropped, digits[:])
+			kind = .Number
+		case Size:
+			put_decimal(buffer[:], &count, &dropped, value.value)
+			put(buffer[:], &count, &dropped, transmute([]u8)value_kinds.size_unit_text(value.unit))
+			kind = .Size
+		case Duration:
+			put_decimal(buffer[:], &count, &dropped, value.value)
+			put(buffer[:], &count, &dropped, transmute([]u8)value_kinds.duration_unit_text(value.unit))
+			kind = .Time
+		case Hash:
+			alphabet := HEX_DIGITS
+			for byte_value in value.bytes {
+				put(buffer[:], &count, &dropped, {alphabet[byte_value >> 4], alphabet[byte_value & 0xF]})
+			}
+			kind = .Version
+		case Module_Name:
+			put(buffer[:], &count, &dropped, transmute([]u8)value.name)
+			kind = .Module
 		}
+		value_kinds.value_run_add(runs[:], &run_count, start, count, kind)
 	}
-	count, _, _ = cut_mark.apply(buffer[:], count, dropped)
+	mark_start: int
+	count, mark_start, _ = cut_mark.apply(buffer[:], count, dropped)
+	if dropped > 0 {
+		run_count = value_kinds.value_runs_cut(runs[:], run_count, mark_start)
+	}
 	taken := log_take()
 	log_bytes(buffer[:count])
 	log_bytes({'\r', '\n'})
 	name := KERNEL_NAME
-	log_record(0, 0, name[:], transmute([]u8)channel, level, buffer[:count])
+	log_record(0, 0, name[:], transmute([]u8)channel, level, buffer[:count], runs[:run_count])
 	log_free(taken)
 }
 
 // log_record adds a text to the memory object of the log: one record, or
-// more if the text is long. The caller holds the log lock.
-log_record :: proc "contextless" (program: u32, thread: u32, name: []u8, channel: []u8, level: op.Log_Level, text: []u8) {
+// more if the text is long. Each record keeps the part of the value runs
+// that falls in its text; the runs are in order and inside the text
+// (value_kinds.value_runs_check). The caller holds the log lock.
+log_record :: proc "contextless" (program: u32, thread: u32, name: []u8, channel: []u8, level: op.Log_Level, text: []u8, runs: []value_kinds.Value_Run_In_Call) {
 	if log_head == nil || log_serial_only {
 		return
 	}
 	rest := text
+	offset := 0
 	for {
 		part := rest[:min(len(rest), op.LOG_TEXT_CAPACITY)]
 		rest = rest[len(part):]
@@ -246,6 +299,8 @@ log_record :: proc "contextless" (program: u32, thread: u32, name: []u8, channel
 		copy(record.name[:len(record.name) - 1], name)
 		copy(record.channel[:], channel)
 		copy(record.text[:], part)
+		record.run_count = u8(value_kinds.value_runs_of_record(runs, offset, len(part), record.runs[:]))
+		offset += len(part)
 		// The record is complete before a reader can see it.
 		intrinsics.atomic_store(&log_head.written, written + 1)
 		if len(rest) == 0 {

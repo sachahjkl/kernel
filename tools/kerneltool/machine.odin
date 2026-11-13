@@ -1569,6 +1569,10 @@ scenario := [?]Step {
 	// service: from here on some checks read the program, the channel and
 	// the level of a record (step Record), not only a line of text.
 	{kind = .Call, text = "log.records(0)", expected = " rows of Record"},
+	// Each record keeps the kind of each value of its text: the kernel
+	// writes its free memory as a size ("kernel: free memory 2013 MiB"), so
+	// the first records have a run of the kind size.
+	{kind = .Call, text = "log.value_runs(0)", expected = "  size"},
 	{kind = .Front, text = "console"},
 	// The refusals of the console come after the check of the log, which
 	// needs each record since the boot (" 0 lost"): the lines before it stay
@@ -1838,8 +1842,8 @@ scenario := [?]Step {
 	{kind = .Wait, text = "errors: y an export: tally.add, a note of 40 bytes: tally.add: the argument note has 40 bytes; it can have at most 36 bytes"},
 	{kind = .Wait, text = "errors: ok, 25 cases, each with the expected error record"},
 	{kind = .Wait, text = "errors: under contention: "},
-	// A text longer than one row of log.records (160 bytes): its end is in
-	// the next row, and the tool joins the rows.
+	// A text longer than one row of log.records (one log record, 152
+	// bytes): its end is in the next row, and the tool joins the rows.
 	{kind = .Record, program = "errors", level = "info", text = " records name no cause (Refused)", any_order = true},
 	{kind = .Wait, text = " handles; 0 records contradict their status, "},
 	{kind = .Wait, text = "errors: a failed call of each family: a wrapper of support (terminal.open with no terminal): ", any_order = true},
@@ -3207,8 +3211,9 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				last_rows, last_total, last_ok = rows, table.total, ok
 				last_table = table
 				// A text goes on in the next row when its row says so
-				// (log.records: a row has 160 bytes of text): the rows of one
-				// text are joined before the comparison.
+				// (log.records: a row is one log record, of 152 bytes of
+				// text): the rows of one text are joined before the
+				// comparison.
 				for row := 0; row < rows; {
 					last := row
 					for last < rows - 1 && table_value(&table, last, "continues") == "1" {

@@ -6,6 +6,7 @@
 // source of the module (describe.odin), and the root service.
 package kerneltool
 
+import "contract:value_kinds"
 import "core:fmt"
 import "core:strings"
 import module "contract:module"
@@ -117,7 +118,7 @@ site_module_pages_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Ent
 				site_module_link(site, &b, modules_page, item.build.name)
 				// A column of two states: each cell has the icon of its state.
 				strings.write_string(&b, "</td><td>")
-				site_value(&b, item.build.image ? Site_Value_Kind.Yes : Site_Value_Kind.No, item.build.image ? "yes" : "no", true)
+				site_value(&b, item.build.image ? value_kinds.Value_Kind.Yes : value_kinds.Value_Kind.No, item.build.image ? "yes" : "no", true)
 				fmt.sbprintf(&b, "</td><td>%d</td><td>", len(item.description.exports))
 				// A module with no import has an empty cell: "none" in most
 				// rows would hide the few that import.
@@ -262,7 +263,7 @@ site_module_pages_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Ent
 			amounts := make([dynamic]string, context.temp_allocator)
 			for field in budget.fields {
 				// The pages are a size; the programs and the threads are counts.
-				kind := field.name == "pages" ? Site_Value_Kind.Size : Site_Value_Kind.Number
+				kind := field.name == "pages" ? value_kinds.Value_Kind.Size : value_kinds.Value_Kind.Number
 				append(&amounts, strings.concatenate({site_text_html(field.name), " ", site_value_html_with_icon(kind, field.value)}, context.temp_allocator))
 			}
 			site_value_list(&b, amounts[:])

@@ -30,7 +30,7 @@ entry :: proc "c" (boot: ^info.Boot_Info) -> ! {
 	processors_start(boot)
 	stage_end(.Kernel_Processors)
 	log("kernel: ", u64(processor_count), " processors")
-	log("kernel: free memory ", free_frames * PAGE_SIZE >> 20, " MiB")
+	log("kernel: free memory ", Size{free_frames * PAGE_SIZE >> 20, .Mebibytes})
 	log("kernel: framebuffer ", u64(boot.framebuffer.width), "x", u64(boot.framebuffer.height), " at ", Hex(boot.framebuffer.address))
 	log(KERNEL_MARK)
 	control_take()
@@ -40,7 +40,7 @@ entry :: proc "c" (boot: ^info.Boot_Info) -> ! {
 	stage_end(.Kernel_Root)
 	paging_audit()
 	for stage in Stage {
-		log_in("boot", .Info, "kernel: boot: ", STAGE_NAMES[stage], ": ", microseconds(stage_cycles[stage] - (stage == .Firmware ? 0 : stage_cycles[Stage(int(stage) - 1)])), " us")
+		log_in("boot", .Info, "kernel: boot: ", STAGE_NAMES[stage], ": ", Duration{microseconds(stage_cycles[stage] - (stage == .Firmware ? 0 : stage_cycles[Stage(int(stage) - 1)])), .Microseconds})
 	}
 	// The stack of the boot program has no guard pages: the processor
 	// continues on its own kernel stack.

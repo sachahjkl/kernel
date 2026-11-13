@@ -3,6 +3,7 @@ package kernel
 import "contract:ring"
 import "base:intrinsics"
 import op "contract:operation"
+import "contract:value_kinds"
 
 // The kernel entry (docs/ARCHITECTURE.md, "Rings and wait"). It executes the
 // command records of the kernel ring
@@ -145,7 +146,11 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 
 	case .Log:
 		_ = handle_find(program, v[0], .Log, {.Write}) or_return
-		if v[2] > 4096 || !user_range(program, v[1], v[2], false) {
+		if v[6] > op.LOG_CALL_RUN_LIMIT {
+			return .Bad_Operation
+		}
+		run_bytes := v[6] * size_of(value_kinds.Value_Run_In_Call)
+		if v[2] > 4096 || !user_range(program, v[1], v[2] + run_bytes, false) {
 			return .Bad_Address
 		}
 		if v[3] > u64(max(op.Log_Level)) {
@@ -164,6 +169,13 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		name := transmute([]u8)program_name(program)
 		log_text := &processor_self().log_text
 		user_copy(log_text, rawptr(uintptr(v[1])), v[2])
+		// The value runs: checked once, in the copy of this processor. Runs
+		// that do not fit the text leave the record plain; the text is whole.
+		log_runs := processor_self().log_runs[:v[6]]
+		user_copy(raw_data(log_runs), rawptr(uintptr(v[1] + v[2])), run_bytes)
+		if !value_kinds.value_runs_check(log_runs, int(v[2])) {
+			log_runs = nil
+		}
 		taken := log_take()
 		defer log_free(taken)
 		log_bytes({'['})
@@ -175,7 +187,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		log_bytes({']', ' '})
 		log_bytes(log_text[:v[2]])
 		log_bytes({'\r', '\n'})
-		log_record(program_index, index, name, channel[:channel_count], op.Log_Level(v[3]), log_text[:v[2]])
+		log_record(program_index, index, name, channel[:channel_count], op.Log_Level(v[3]), log_text[:v[2]], log_runs)
 		return .Ok
 
 	case .Memory_Create:

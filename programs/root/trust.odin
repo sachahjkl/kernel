@@ -52,9 +52,9 @@ trust_check :: proc "contextless" () {
 		}
 		fail(text, .Bad_State)
 	}
-	system.log("root: the boot image agrees with the system description that the boot program verified: ", trust.entry_count - 1, " modules and resources checked in ", spent / 1000, " us; the kernel was checked by the boot program only")
+	system.log("root: the boot image agrees with the system description that the boot program verified: ", trust.entry_count - 1, " modules and resources checked in ", system.Duration{spent / 1000, .Microseconds}, "; the kernel was checked by the boot program only")
 	if report.cycle_frequency != 0 {
-		system.log("root: the boot program checked the signature and every hash in ", trust.check_cycles * 1_000_000 / report.cycle_frequency, " us")
+		system.log("root: the boot program checked the signature and every hash in ", system.Duration{trust.check_cycles * 1_000_000 / report.cycle_frequency, .Microseconds})
 	}
 	if trust.key_kind == .Test {
 		system.log_in("programs", .Warning, "root: the system description is signed by the test signing key, whose private key is published: this system is not trusted")

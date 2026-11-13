@@ -4,6 +4,7 @@
 // documentation: a guide (a document of docs/) or a reference table.
 package kerneltool
 
+import "contract:value_kinds"
 import "core:fmt"
 import "core:os"
 import "core:slice"
@@ -21,7 +22,7 @@ Site_Reference_Entry :: struct {
 	what:   string,
 	source: string,
 	count:  int, // The rows of its tables: the docs home shows it.
-	kind:   Site_Value_Kind, // The kind of what its rows name: the docs home shows its icon.
+	kind:   value_kinds.Value_Kind, // The kind of what its rows name: the docs home shows its icon.
 }
 
 // The kind of a column of a table (docs/SITE.md, "The tables"): it gives the
@@ -76,7 +77,7 @@ Site_Table :: struct {
 // that its writer states, else the number kind for a column of numbers and
 // the time kind for a column of dates. A column of names or of prose holds
 // no value of one kind.
-site_column_value_kind :: proc(column_kind: Site_Column_Kind, stated: Site_Value_Kind) -> Site_Value_Kind {
+site_column_value_kind :: proc(column_kind: Site_Column_Kind, stated: value_kinds.Value_Kind) -> value_kinds.Value_Kind {
 	if stated != .None {
 		return stated
 	}
@@ -97,19 +98,19 @@ site_column_value_kind :: proc(column_kind: Site_Column_Kind, stated: Site_Value
 // column of another sort) shows the icon of that kind once, in its head,
 // and its cells keep the font and the color of the kind: no row repeats
 // the icon (docs/SITE.md, "The kinds of values").
-site_table_start :: proc(b: ^strings.Builder, name: string, columns: []Site_Column, values: []Site_Value_Kind = nil) -> Site_Table {
+site_table_start :: proc(b: ^strings.Builder, name: string, columns: []Site_Column, values: []value_kinds.Value_Kind = nil) -> Site_Table {
 	table := Site_Table{start = strings.builder_len(b^), kinds = make([]Site_Column_Kind, len(columns), context.temp_allocator), classes = make([]string, len(columns), context.temp_allocator)}
 	strings.write_string(b, "<div class=\"table\" role=\"region\" tabindex=\"0\" aria-label=\"")
 	site_escape(b, name)
 	strings.write_string(b, "\"><table>\n<thead><tr>")
 	for column, index in columns {
 		table.kinds[index] = column.kind
-		stated: Site_Value_Kind = index < len(values) ? values[index] : .None
+		stated: value_kinds.Value_Kind = index < len(values) ? values[index] : .None
 		value_kind := site_column_value_kind(column.kind, stated)
 		table.classes[index] = site_column_classes[column.kind]
 		head_class := site_column_classes[column.kind]
 		if value_kind != .None {
-			value_name := site_value_kinds[value_kind].name
+			value_name := value_kinds.VALUE_KIND_NAMES[value_kind]
 			table.classes[index] = strings.concatenate({site_column_classes[column.kind], " value value-", value_name}, context.temp_allocator)
 			head_class = strings.concatenate({site_column_classes[column.kind], " value-head value-icon value-", value_name}, context.temp_allocator)
 		}

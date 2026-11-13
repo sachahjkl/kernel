@@ -2,12 +2,18 @@ package system
 
 import "contract:cut_mark"
 import op "contract:operation"
+import "contract:value_kinds"
 import "support:sentence"
 
 // Text without an allocator: support/sentence. These names stay in this
 // library, so a program writes system.Writer and system.format.
 Hex :: sentence.Hex
+Size :: sentence.Size
+Duration :: sentence.Duration
+Hash :: sentence.Hash
+Module_Name :: sentence.Module_Name
 Part :: sentence.Part
+part_kind :: sentence.part_kind
 Writer :: sentence.Writer
 HEX_DIGITS :: sentence.HEX_DIGITS
 write_bytes :: sentence.write_bytes
@@ -45,6 +51,10 @@ log :: proc "contextless" (parts: ..Part) {
 // bytes, and each time the buffer is full it goes to the kernel as one line
 // of the log, ended after a whole character; the text continues on the next
 // line. Nothing is cut.
+//
+// Each part that is a value (part_kind) goes with its value run, so that the
+// log record keeps its kind. A line with more than LOG_CALL_RUN_LIMIT values
+// keeps the runs of its first values; the text is the same either way.
 LOG_PART_SIZE :: 512
 
 log_in :: proc "contextless" (channel: string, level: op.Log_Level, parts: ..Part) {
@@ -57,17 +67,22 @@ log_in :: proc "contextless" (channel: string, level: op.Log_Level, parts: ..Par
 	packed := transmute([2]u64)name
 	buffer: [LOG_PART_SIZE]u8
 	count := 0
-	send :: proc "contextless" (handle: Handle, bytes: []u8, level: op.Log_Level, packed: [2]u64) {
-		call(.Log, u64(handle), u64(uintptr(raw_data(bytes))), u64(len(bytes)), u64(level), packed[0], packed[1])
-	}
+	runs: [op.LOG_CALL_RUN_LIMIT]value_kinds.Value_Run_In_Call
+	run_count := 0
 	for part in parts {
-		number: [24]u8
+		// The widest value is a hash of 32 bytes: 64 digits.
+		number: [96]u8
 		bytes: []u8
-		if text, is_text := part.(string); is_text {
-			bytes = transmute([]u8)text
-		} else {
+		kind := part_kind(part)
+		switch value in part {
+		case string:
+			bytes = transmute([]u8)value
+		case Module_Name:
+			bytes = transmute([]u8)value.name
+		case u64, i64, Hex, Size, Duration, Hash, op.Status:
 			bytes = transmute([]u8)format(number[:], part)
 		}
+		part_start := count
 		for len(bytes) > 0 {
 			taken := copy(buffer[count:], bytes)
 			log_control_bytes_replace(buffer[count:][:taken])
@@ -76,17 +91,40 @@ log_in :: proc "contextless" (channel: string, level: op.Log_Level, parts: ..Par
 			if count == len(buffer) && len(bytes) > 0 {
 				// A full buffer and more to come: one line, ended after a
 				// whole character; the bytes of a cut character go first on
-				// the next line.
+				// the next line. The run of this part ends with the line,
+				// and goes on in the next one.
 				line := cut_mark.complete_characters(buffer[:count])
 				if line == 0 {
 					line = count
 				}
-				send(handle, buffer[:line], level, packed)
+				sent := runs
+				sent_count := value_kinds.value_runs_cut(sent[:], run_count, line)
+				if part_start < line {
+					value_kinds.value_run_add(sent[:], &sent_count, part_start, line, kind)
+				}
+				log_send(handle, buffer[:line], sent[:sent_count], level, packed)
+				run_count = value_kinds.value_runs_after(runs[:], run_count, line)
+				part_start = max(part_start - line, 0)
 				count = copy(buffer[:], buffer[line:count])
 			}
 		}
+		value_kinds.value_run_add(runs[:], &run_count, part_start, count, kind)
 	}
-	send(handle, buffer[:count], level, packed)
+	log_send(handle, buffer[:count], runs[:run_count], level, packed)
+}
+
+// log_send gives one line to the kernel: its text, then its value runs right
+// after it, as the operation Log takes them.
+@(private = "file")
+log_send :: proc "contextless" (handle: Handle, text: []u8, runs: []value_kinds.Value_Run_In_Call, level: op.Log_Level, packed: [2]u64) {
+	RUN_SIZE :: size_of(value_kinds.Value_Run_In_Call)
+	area: [LOG_PART_SIZE + op.LOG_CALL_RUN_LIMIT * RUN_SIZE]u8
+	count := copy(area[:], text)
+	run_count := min(len(runs), op.LOG_CALL_RUN_LIMIT)
+	if run_count > 0 {
+		copy(area[count:], ([^]u8)(raw_data(runs))[:run_count * RUN_SIZE])
+	}
+	call(.Log, u64(handle), u64(uintptr(&area[0])), u64(count), u64(level), packed[0], packed[1], u64(run_count))
 }
 
 // log_control_bytes_replace writes "?" in place of each control byte of ASCII

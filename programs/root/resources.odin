@@ -25,7 +25,7 @@ resource_mapping :: proc "contextless" (name: string, address: u64, receiver: st
 		return {}, 0, false
 	}
 	spent := system.nanoseconds() - start
-	system.log("root: the resource ", name, " (", entry.size, " bytes, its hash checked in ", spent / 1000, " us) is given to ", receiver, ", read-only")
+	system.log("root: the resource ", name, " (", system.Size{entry.size, .Bytes}, ", its hash checked in ", system.Duration{spent / 1000, .Microseconds}, ") is given to ", system.Module_Name{receiver}, ", read-only")
 	// No flag: the mapping has the right Read only.
 	return {memory = image_memory, address = address, first = entry.offset / system.PAGE_SIZE, page_count = (entry.size + system.PAGE_SIZE - 1) / system.PAGE_SIZE}, entry.size, true
 }
