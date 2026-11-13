@@ -7,17 +7,54 @@
 package sentence
 
 import "contract:cut_mark"
+import op "contract:operation"
+import "contract:value_kinds"
 
-// Text without an allocator: a Part is a string or a number, and format
-// writes parts in a buffer.
+// Text without an allocator: a Part is a string or a value with a kind, and
+// format writes parts in a buffer.
 
 Hex :: distinct u64
+Size :: value_kinds.Size
+Duration :: value_kinds.Duration
+Hash :: value_kinds.Hash
+Module_Name :: value_kinds.Module_Name
 
+// A string is plain text. Each other part is a value with a kind
+// (part_kind): an integer and a Hex are numbers, a Size a size, a Duration
+// a time, a Hash a version, a Module_Name a module, and a status of the
+// kernel a status, written as its number.
 Part :: union {
 	string,
 	u64,
 	i64,
 	Hex,
+	Size,
+	Duration,
+	Hash,
+	Module_Name,
+	op.Status,
+}
+
+// part_kind gives the value kind of a part: the log keeps it beside the
+// text, so that a reader colors each value by what it is.
+part_kind :: proc "contextless" (part: Part) -> value_kinds.Value_Kind {
+	switch _ in part {
+	case string:
+		return .None
+	case u64, i64, Hex:
+		return .Number
+	case Size:
+		return .Size
+	case Duration:
+		return .Time
+	case Hash:
+		return .Version
+	case Module_Name:
+		return .Module
+	case op.Status:
+		return .Status
+	}
+	return .None
 }
 
 HEX_DIGITS :: [16]u8{'0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'}
@@ -92,6 +129,20 @@ write_part :: proc "contextless" (writer: ^Writer, part: Part) {
 		}
 	case Hex:
 		write_hex(writer, u64(value))
+	case Size:
+		write_unsigned(writer, value.value)
+		write_bytes(writer, transmute([]u8)value_kinds.size_unit_text(value.unit))
+	case Duration:
+		write_unsigned(writer, value.value)
+		write_bytes(writer, transmute([]u8)value_kinds.duration_unit_text(value.unit))
+	case Hash:
+		for byte_value in value.bytes {
+			write_hex(writer, u64(byte_value), 2)
+		}
+	case Module_Name:
+		write_bytes(writer, transmute([]u8)value.name)
+	case op.Status:
+		write_unsigned(writer, u64(value))
 	}
 }
 

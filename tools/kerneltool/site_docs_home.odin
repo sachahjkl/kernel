@@ -6,6 +6,7 @@
 // search show; no count is typed.
 package kerneltool
 
+import "contract:value_kinds"
 import "core:fmt"
 import "core:strings"
 
@@ -15,7 +16,7 @@ import "core:strings"
 // in a column of one width.
 Site_Docs_Row :: struct {
 	number:    int, // The place in a reading order, from 1, or 0 for an icon.
-	kind:      Site_Value_Kind, // The icon of the lead when number is 0.
+	kind:      value_kinds.Value_Kind, // The icon of the lead when number is 0.
 	name:      string,
 	address:   string, // The link of the name, or "".
 	about:     string, // Plain text, dim, after the name or under it; or "".
@@ -25,11 +26,11 @@ Site_Docs_Row :: struct {
 
 // site_docs_row_lead writes the lead of a row: its number, which the list
 // already says to a screen reader, or the icon of its kind.
-site_docs_row_lead :: proc(b: ^strings.Builder, number: int, kind: Site_Value_Kind) {
+site_docs_row_lead :: proc(b: ^strings.Builder, number: int, kind: value_kinds.Value_Kind) {
 	if number > 0 {
 		fmt.sbprintf(b, "<span class=\"docs-row-lead docs-row-number\" aria-hidden=\"true\">%d</span>", number)
 	} else {
-		fmt.sbprintf(b, "<span class=\"docs-row-lead value-icon value-%s\" aria-hidden=\"true\"></span>", site_value_kinds[kind].name)
+		fmt.sbprintf(b, "<span class=\"docs-row-lead value-icon value-%s\" aria-hidden=\"true\"></span>", value_kinds.VALUE_KIND_NAMES[kind])
 	}
 }
 
@@ -165,7 +166,7 @@ site_search_chart :: proc(b: ^strings.Builder, site: ^Site, path: string, rows: 
 	strings.write_string(b, "<section class=\"search-chart\" aria-labelledby=\"search-finds\">\n<h2 class=\"search-chart-heading\" id=\"search-finds\">What the search finds</h2>\n<div class=\"search-chart-line\">\n")
 	strings.write_string(b, "<svg class=\"search-chart-bar\" id=\"search-chart-bar\" aria-hidden=\"true\" focusable=\"false\">")
 	for row, index in rows {
-		value_name := site_value_kinds[site_search_kinds[row.kind].value_kind].name
+		value_name := value_kinds.VALUE_KIND_NAMES[site_search_kinds[row.kind].value_kind]
 		fmt.sbprintf(b, "<rect class=\"search-chart-segment value-%s\" data-kind=\"%d\" x=\"%s\" width=\"%s\" height=\"100%%\"/>", value_name, int(row.kind), site_search_chart_percent(segments[index].start), site_search_chart_percent(segments[index].width))
 	}
 	strings.write_string(b, "</svg>\n")
@@ -175,7 +176,7 @@ site_search_chart :: proc(b: ^strings.Builder, site: ^Site, path: string, rows: 
 	strings.write_string(b, "<ul class=\"search-chart-rows\" id=\"search-chart\">\n")
 	for row in rows {
 		description := site_search_kinds[row.kind]
-		value_name := site_value_kinds[description.value_kind].name
+		value_name := value_kinds.VALUE_KIND_NAMES[description.value_kind]
 		// The name of a chip is the name of its kind for many entries, at
 		// every count: the width of a chip does not change while the reader
 		// types, so the row of chips does not break at another place.

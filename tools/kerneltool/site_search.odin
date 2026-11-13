@@ -17,6 +17,7 @@
 //     then fails the self test of the script until the script has the new rule.
 package kerneltool
 
+import "contract:value_kinds"
 import "core:fmt"
 import "core:strings"
 import "core:unicode/utf8"
@@ -64,7 +65,7 @@ Site_Search_Kind :: enum u8 {
 // kind. No page lists every page or every export: their folder is "".
 Site_Search_Kind_Description :: struct {
 	name:       string,
-	value_kind: Site_Value_Kind,
+	value_kind: value_kinds.Value_Kind,
 	folder:     string,
 }
 
@@ -503,7 +504,7 @@ site_search_index_json :: proc(site: ^Site, entries: []Site_Search_Entry, pages:
 		strings.write_byte(&b, '[')
 		site_json_string(&b, site_search_kinds[kind].name)
 		strings.write_byte(&b, ',')
-		site_json_string(&b, site_value_kinds[site_search_kinds[kind].value_kind].name)
+		site_json_string(&b, value_kinds.VALUE_KIND_NAMES[site_search_kinds[kind].value_kind])
 		strings.write_byte(&b, ']')
 	}
 	strings.write_string(&b, "],\n\"pages\":[")

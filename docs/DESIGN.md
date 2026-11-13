@@ -80,6 +80,25 @@ Code has one set of colors wherever it is shown: on the site, and in the console
 - Each class has at least 4.5 to 1 on each surface that shows code: the block of code of the site in both forms, and the background and the card in the terminal. Host tests compute each contrast.
 - On a chosen row (`COLOR_CHOSEN`, section 10), no class keeps that contrast: the row is white.
 
+### The colors of values
+
+A technical value has one color wherever it is shown: on the site, and in the programs of the system that show values of mixed kinds, as the log does. The kinds are the value kinds (`GLOSSARY.md`, `contract/value_kinds`), one enumeration for the site and the system. The colors are one table, `support/graphics/value_colors.odin` (`value_kind_colors`); the site (`tools/kerneltool/site_values.odin`) and the program `log` read it. The site keeps only what is its own: the title, the meaning and the icon of each kind (`docs/SITE.md`, "The kinds of values"). No kind and no color is new: the log uses the kinds of the site, so no new decoration exists.
+
+The kinds that the log writes, on a dark surface (contrast on the background `0x0B1018`, the top of a card `0x17212E`, the band of a row of the log `0x131B26`):
+
+| Kind | Accent | Color | Contrast |
+|---|---|---|---|
+| Number | Memory | `0x38C0B0` | 8.47 / 7.22 / 7.70 |
+| Size | Memory | `0x38C0B0` | 8.47 / 7.22 / 7.70 |
+| Time | Boot program | `0xE0A040` | 8.42 / 7.17 / 7.65 |
+| Module | Program | `0x58D878` | 10.45 / 8.90 / 9.49 |
+| Version | Boot program | `0xE0A040` | 8.42 / 7.17 / 7.65 |
+| Status | Failed | `0xF06060` | 5.94 / 5.06 / 5.40 |
+
+- A part with no kind has the color of the text around it.
+- Each kind has at least 4.5 to 1 on the background, on both colors of a card and on the band of a row of the log (`support/graphics/value_colors_test.odin`), and on both surfaces of a table of the site in both forms (`tools/kerneltool/site_values_test.odin`).
+- A color is never the only sign: the text of the value and its unit say the same fact.
+
 ## 5. Text
 
 - **Two fonts** (`docs/FONTS.md`, section 12.6):
@@ -95,7 +114,7 @@ Code has one set of colors wherever it is shown: on the site, and in the console
 - The font of the cells is monospace: its advance is the width of a cell, so a layout in cells holds with the vector font and with Spleen. A glyph of the font of the cells stays inside its cell.
 - An enlarged picture of the screen shows colored edges on each letter: the subpixel bands, not a fault. The setting `subpixel_order` `none` gives gray edges.
 - The title of a card is in capital letters, in the bold weight of the interface font, in the accent of the card, after a bar of 4 x 16 pixels in the same accent.
-- A name is in the dim color. A value is in the text color. A measure of a concept is in the color of that concept.
+- A name is in the dim color. A value is in the text color. A measure of a concept is in the color of that concept. Where values of mixed kinds follow one another, as in a line of the log or a table of the site, each value is in the color of its value kind (section 4, "The colors of values").
 - A card has at most one number in the large size: the number that the card is about.
 - Numbers of one column are aligned on the right, each with its unit.
 - A sentence follows the language rules of the project: short, exact, one term for one concept.

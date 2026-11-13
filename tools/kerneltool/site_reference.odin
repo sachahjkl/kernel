@@ -6,6 +6,7 @@
 // file that it was read from, at the commit of the build.
 package kerneltool
 
+import "contract:value_kinds"
 import "core:fmt"
 import "core:strings"
 import "contract:fixed_addresses"
@@ -478,7 +479,7 @@ site_text_cell :: proc(b: ^strings.Builder, text: string, class: string = "") {
 // number, the name (a link to its line), and its comment.
 // The names are values of one kind (a status, a grant): the kind is in the
 // head of their column.
-site_enumeration_table :: proc(site: ^Site, b: ^strings.Builder, from_page: string, members: []Site_Enumeration_Member, file, id_prefix, name: string, headers: [3]string, name_kind: Site_Value_Kind) {
+site_enumeration_table :: proc(site: ^Site, b: ^strings.Builder, from_page: string, members: []Site_Enumeration_Member, file, id_prefix, name: string, headers: [3]string, name_kind: value_kinds.Value_Kind) {
 	enumeration_table := site_table_start(b, name, {{headers[0], .Number}, {headers[1], .Name}, {headers[2], .Prose}}, {.None, name_kind, .None})
 	for member in members {
 		fmt.sbprintf(b, "<tr id=\"%s-%s\" data-outline=\"%s\">", id_prefix, site_slug(member.name), member.name)
@@ -494,7 +495,7 @@ site_enumeration_table :: proc(site: ^Site, b: ^strings.Builder, from_page: stri
 // code, and their lines in the index of the reference.
 site_generated_tables_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Entry) {
 	reference := &site.reference
-	add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Entry, path, title, description, what, source: string, count: int, kind: Site_Value_Kind, b: ^strings.Builder, sources: ..string) {
+	add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Entry, path, title, description, what, source: string, count: int, kind: value_kinds.Value_Kind, b: ^strings.Builder, sources: ..string) {
 		site_page_add(site, Site_Page{path = path, title = title, description = site_description_cut(description), section = .Reference, crumbs = site_crumbs(.Reference), body = strings.to_string(b^), sources = site_sources(..sources), layout = .Documentation})
 		append(entries, Site_Reference_Entry{path = path, title = title, what = what, source = source, count = count, kind = kind})
 	}
@@ -593,7 +594,7 @@ site_generated_tables_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference
 				site_name_cell(site, &b, role.name, group.file, role.line)
 				// The column holds handles and values: each cell has the icon of its kind.
 				fmt.sbprintf(&b, "<td>%d</td><td>", role.value)
-				site_value(&b, what == "value" ? Site_Value_Kind.Value : Site_Value_Kind.Handle, what, true)
+				site_value(&b, what == "value" ? value_kinds.Value_Kind.Value : value_kinds.Value_Kind.Handle, what, true)
 				strings.write_string(&b, "</td>")
 				site_comment_cell(site, &b, site_page_file(SITE_CONTEXT_FOLDER), role.comment)
 				strings.write_string(&b, "</tr>\n")

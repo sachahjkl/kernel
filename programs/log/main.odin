@@ -5,12 +5,18 @@
 // maps it with the right Read, and waits on its counter. The top part
 // counts the records of each channel. The bottom part shows the last
 // records: the color of the mark is the level, and the color of the name
-// is the program.
+// is the program. Each value of a text is in the color of its value kind,
+// as the record keeps it (contract:value_kinds); the head of the column of
+// the text is the legend of the kinds. A text that starts with its program,
+// or its channel, and ": " shows without that start: the columns at its
+// left already say it. The record keeps its text whole.
 //
 // The program needs the grant to read the records of the log. It is also a
-// service: records() gives the records as a table (exports.odin).
+// service: records() and value_runs() give the records and their value runs
+// as tables (exports.odin).
 package log
 
+import "contract:value_kinds"
 import "support:display"
 import "support:graphics"
 import "support:system"
@@ -57,6 +63,53 @@ kernel_boot: u64 // Records of the kernel in the channel "boot".
 
 same :: proc "contextless" (name: []u8, text: string) -> bool {
 	return system.name_of(name) == text
+}
+
+// The kinds that the legend shows: the kinds that the logs of the system
+// write.
+@(rodata)
+legend_kinds := [?]value_kinds.Value_Kind{.Number, .Size, .Time, .Module, .Version, .Status}
+
+@(rodata)
+legend_names := [?]string{"number", "size", "time", "module", "version", "status"}
+
+// repeated_start gives the count of bytes at the start of a text that say
+// its program, then its channel, each followed by ": ": "kernel: boot: " in
+// a record of the kernel in the channel boot.
+repeated_start :: proc "contextless" (record: ^system.Log_Record, text: string) -> int {
+	skip := 0
+	fields := [2]string{system.name_of(record.name[:]), system.name_of(record.channel[:])}
+	for field in fields {
+		rest := text[skip:]
+		if field != "" && len(rest) >= len(field) + 2 && rest[:len(field)] == field && rest[len(field):][:2] == ": " {
+			skip += len(field) + 2
+		}
+	}
+	return skip
+}
+
+// record_text_draw draws the bytes from ..< end of the text of a record:
+// each value run in the color of its kind, the rest in plain. A run that
+// starts before `from`, or that the record cannot hold, is drawn plain.
+record_text_draw :: proc "contextless" (canvas: graphics.Canvas, x, y: int, record: ^system.Log_Record, from, end: int, plain: graphics.Color) {
+	text_count := min(int(record.text_count), len(record.text))
+	at := from
+	left := x
+	for index in 0 ..< min(int(record.run_count), len(record.runs)) {
+		run := record.runs[index]
+		start, run_end, ok := value_kinds.value_run_in_text(run, text_count)
+		if !ok || start < at {
+			continue
+		}
+		if start >= end {
+			break
+		}
+		run_end = min(run_end, end)
+		left = graphics.text(canvas, left, y, string(record.text[at:start]), plain)
+		left = graphics.text(canvas, left, y, string(record.text[start:run_end]), graphics.value_kind_color(run.kind, false, plain))
+		at = run_end
+	}
+	graphics.text(canvas, left, y, string(record.text[at:end]), plain)
 }
 
 take :: proc "contextless" (record: ^system.Log_Record) {
@@ -123,7 +176,10 @@ draw :: proc "contextless" (canvas: graphics.Canvas) {
 	graphics.text(canvas, MARGIN, top - LINE, "time (s)", graphics.COLOR_DIM)
 	graphics.text(canvas, MARGIN + COLUMN_PROGRAM, top - LINE, "program", graphics.COLOR_DIM)
 	graphics.text(canvas, MARGIN + COLUMN_CHANNEL, top - LINE, "channel", graphics.COLOR_DIM)
-	graphics.text(canvas, MARGIN + COLUMN_TEXT, top - LINE, "text", graphics.COLOR_DIM)
+	x = graphics.text(canvas, MARGIN + COLUMN_TEXT, top - LINE, "text   ", graphics.COLOR_DIM)
+	for kind, index in legend_kinds {
+		x = graphics.text(canvas, x, top - LINE, legend_names[index], graphics.value_kind_color(kind, false)) + 16
+	}
 	shown := min(row_count, ROWS)
 	for line in 0 ..< shown {
 		record := &rows[(row_count - shown + line) % ROWS]
@@ -139,8 +195,9 @@ draw :: proc "contextless" (canvas: graphics.Canvas) {
 		name := system.name_of(record.name[:])
 		graphics.text(canvas, MARGIN + COLUMN_PROGRAM, y, name[:min(len(name), 12)], record.program == 0 ? graphics.COLOR_TEXT : program_colors[record.program % len(program_colors)])
 		graphics.text(canvas, MARGIN + COLUMN_CHANNEL, y, system.name_of(record.channel[:10]), graphics.COLOR_DIM)
-		text := string(record.text[:min(int(record.text_count), TEXT_CHARACTERS)])
-		graphics.text(canvas, MARGIN + COLUMN_TEXT, y, text, record.level == .Error ? level_colors[.Error] : graphics.COLOR_TEXT)
+		text_count := min(int(record.text_count), len(record.text))
+		from := repeated_start(record, string(record.text[:text_count]))
+		record_text_draw(canvas, MARGIN + COLUMN_TEXT, y, record, from, min(text_count, from + TEXT_CHARACTERS), record.level == .Error ? level_colors[.Error] : graphics.COLOR_TEXT)
 	}
 }
 

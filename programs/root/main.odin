@@ -497,10 +497,10 @@ shortage_start :: proc "contextless" (ctx: ^system.Context) -> ! {
 		log_records = 1000,
 	}
 	if _, status := system.program_start(system.image_find(image, "shortage"), "shortage", grants, random.values_with_seed(&program_generator, {}), amounts, nil, &prepared); status != .Ok {
-		system.log("root: cannot start shortage: status ", u64(status))
+		system.log("root: cannot start shortage: status ", status)
 		system.call(.Machine_Stop, u64(machine), 1)
 	}
-	system.log("root: started shortage with ", amounts.pages, " pages")
+	system.log("root: started shortage with ", system.Size{amounts.pages, .Pages})
 	for {
 		system.sleep(max(u64))
 	}
@@ -509,7 +509,7 @@ shortage_start :: proc "contextless" (ctx: ^system.Context) -> ! {
 // fail ends the start of the machine. The machine does not stop: the boot
 // display stays, with the failure, until the machine is stopped from outside.
 fail :: proc "contextless" (text: string, status: system.Status) -> ! {
-	system.log_in("programs", .Error, "root: ", text, ": status ", u64(status))
+	system.log_in("programs", .Error, "root: ", text, ": status ", status)
 	if compositor != 0 {
 		system.call(.Program_Stop, u64(compositor), 0) // The screen returns to this service.
 	}
@@ -1141,9 +1141,9 @@ start :: proc "contextless" (name: string, principal: u64 = principals.MACHINE) 
 			buffer: [512]u8
 			writer := system.Writer{buffer = buffer[:]}
 			system.load_error_text(&writer, &load_error)
-			system.log_in("programs", .Warning, "root: cannot start ", name, ": ", system.written(&writer))
+			system.log_in("programs", .Warning, "root: cannot start ", system.Module_Name{name}, ": ", system.written(&writer))
 		} else {
-			system.log_in("programs", .Warning, "root: cannot start ", name, ": status ", u64(status))
+			system.log_in("programs", .Warning, "root: cannot start ", system.Module_Name{name}, ": status ", status)
 		}
 		release(slot)
 		if driver != nil {
@@ -1186,9 +1186,9 @@ start :: proc "contextless" (name: string, principal: u64 = principals.MACHINE) 
 // principal: "root: started notes, in the session of principal 1 \"alice\"".
 started_log :: proc "contextless" (name: string, principal: u64, terminal: string) {
 	if principal == principals.MACHINE {
-		system.log_in("programs", .Info, "root: started ", name, terminal)
+		system.log_in("programs", .Info, "root: started ", system.Module_Name{name}, terminal)
 	} else {
-		system.log_in("programs", .Info, "root: started ", name, terminal, ", in the session of principal ", principal, " \"", principal_name(principal), "\"")
+		system.log_in("programs", .Info, "root: started ", system.Module_Name{name}, terminal, ", in the session of principal ", principal, " \"", principal_name(principal), "\"")
 	}
 }
 
@@ -1241,7 +1241,7 @@ revoke :: proc "contextless" (name: string, grant: u64, values: ^[7]u64) -> syst
 		item.granted -= {which}
 		item.revoked += {which}
 		values[0] = count
-		system.log_in("programs", .Info, "root: revoked the grant store of ", name, ", connections changed: ", count)
+		system.log_in("programs", .Info, "root: revoked the grant store of ", system.Module_Name{name}, ", connections changed: ", count)
 		return .Ok
 	case .Acts_For_Principal:
 		// The grant is data of each service that the program is connected
@@ -1260,7 +1260,7 @@ revoke :: proc "contextless" (name: string, grant: u64, values: ^[7]u64) -> syst
 			}
 		}
 		values[0] = count
-		system.log_in("programs", .Info, "root: revoked the grant acts_for_principal of ", name, ", connections changed: ", count)
+		system.log_in("programs", .Info, "root: revoked the grant acts_for_principal of ", system.Module_Name{name}, ", connections changed: ", count)
 		return .Ok
 	case .History:
 		// The store of the history is data of the storage service, as the
@@ -1279,7 +1279,7 @@ revoke :: proc "contextless" (name: string, grant: u64, values: ^[7]u64) -> syst
 			count += 1
 		}
 		values[0] = count
-		system.log_in("programs", .Info, "root: revoked the grant history of ", name, ", connections changed: ", count)
+		system.log_in("programs", .Info, "root: revoked the grant history of ", system.Module_Name{name}, ", connections changed: ", count)
 		return .Ok
 	case .Network:
 		// The endpoint is data of the network service, as a store is data of
@@ -1288,7 +1288,7 @@ revoke :: proc "contextless" (name: string, grant: u64, values: ^[7]u64) -> syst
 		item.granted -= {which}
 		item.revoked += {which}
 		values[0] = count
-		system.log_in("programs", .Info, "root: revoked the grant network of ", name, ", endpoints changed: ", count)
+		system.log_in("programs", .Info, "root: revoked the grant network of ", system.Module_Name{name}, ", endpoints changed: ", count)
 		return .Ok
 	case .Log:
 		handle = system.context_record().handles[op.CONTEXT_LOG]
@@ -1303,7 +1303,7 @@ revoke :: proc "contextless" (name: string, grant: u64, values: ^[7]u64) -> syst
 	item.granted -= {which}
 	item.revoked += {which}
 	values[0] = count
-	system.log_in("programs", .Info, "root: revoked the grant ", system.root_grant_names[which], " of ", name, ", holdings ended: ", count)
+	system.log_in("programs", .Info, "root: revoked the grant ", system.root_grant_names[which], " of ", system.Module_Name{name}, ", holdings ended: ", count)
 	return .Ok
 }
 
@@ -1341,9 +1341,9 @@ replace :: proc "contextless" (asker: ^Started, name: string, by: u64) -> system
 	}
 	system.replacements_write(replacement_table, from, to) or_return
 	if by == 0 {
-		system.log_in("programs", .Info, "root: no replacement of ", from_name)
+		system.log_in("programs", .Info, "root: no replacement of ", system.Module_Name{from_name})
 	} else {
-		system.log_in("programs", .Info, "root: ", system.name_of(entries[by - 1].name[:]), " replaces ", from_name, " in each load that follows")
+		system.log_in("programs", .Info, "root: ", system.Module_Name{system.name_of(entries[by - 1].name[:])}, " replaces ", system.Module_Name{from_name}, " in each load that follows")
 	}
 	return .Ok
 }
@@ -1413,9 +1413,9 @@ connect :: proc "contextless" (caller: ^Started, name: string, values: ^[7]u64, 
 	// The principal of the connection, and whether the caller acts for it.
 	acts := connection_grant(free) & isolated.CALLER_ACTS_FOR_PRINCIPAL != 0
 	if history {
-		system.log_in("calls", .Info, "root: connected ", system.name_of(caller.name[:]), " to the store of its line history in the service ", name, ", ", u64(HISTORY_STORE_LIMIT), " blocks, for principal ", caller.principal)
+		system.log_in("calls", .Info, "root: connected ", system.Module_Name{system.name_of(caller.name[:])}, " to the store of its line history in the service ", system.Module_Name{name}, ", ", system.Size{HISTORY_STORE_LIMIT, .Blocks}, ", for principal ", caller.principal)
 	} else {
-		system.log_in("calls", .Info, "root: connected ", system.name_of(caller.name[:]), " to the service ", name, acts ? ", acting for principal " : ", for principal ", caller.principal)
+		system.log_in("calls", .Info, "root: connected ", system.Module_Name{system.name_of(caller.name[:])}, " to the service ", system.Module_Name{name}, acts ? ", acting for principal " : ", for principal ", caller.principal)
 	}
 	return .Ok
 }
@@ -1471,7 +1471,7 @@ connection_open :: proc "contextless" (caller: ^Started, name: string, history :
 	store_name: system.Name
 	if system.name_of(service.name[:]) == "storage" {
 		if !principals.store_name_write(&store_name, system.name_of(caller.name[:]), caller.principal, history) {
-			system.log_in("calls", .Warning, "root: the name of the store of ", system.name_of(caller.name[:]), " for principal ", caller.principal, " has more than 31 bytes: no connection")
+			system.log_in("calls", .Warning, "root: the name of the store of ", system.Module_Name{system.name_of(caller.name[:])}, " for principal ", caller.principal, " has more than 31 bytes: no connection")
 			return nil, nil, 0, 0, .Bad_Operation
 		}
 	} else {
@@ -1520,7 +1520,7 @@ disconnect :: proc "contextless" (connection: ^Connection) {
 	if connection.service.program != 0 {
 		system.send(&connection.service.service.commands, ring.Record{kind = u32(isolated.Service_Command.Disconnect), values = {0 = u64(connection.ring), 1 = u64(connection.region)}})
 	}
-	system.log_in("calls", .Info, "root: disconnected ", system.name_of(connection.caller.name[:]), " from the service ", system.name_of(connection.service.name[:]))
+	system.log_in("calls", .Info, "root: disconnected ", system.Module_Name{system.name_of(connection.caller.name[:])}, " from the service ", system.Module_Name{system.name_of(connection.service.name[:])})
 	connection^ = {}
 }
 
@@ -1588,7 +1588,7 @@ reap :: proc "contextless" () {
 		}
 		state, code := system.program_state(item.program)
 		if state == .Stopped {
-			system.log_in("programs", code == 0 ? .Info : .Warning, "root: ", system.name_of(item.name[:]), " stopped with code ", u64(code))
+			system.log_in("programs", code == 0 ? .Info : .Warning, "root: ", system.Module_Name{system.name_of(item.name[:])}, " stopped with code ", u64(code))
 			release(&item)
 		}
 	}

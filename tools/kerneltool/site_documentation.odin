@@ -5,6 +5,7 @@
 // and the check of the layout of a page.
 package kerneltool
 
+import "contract:value_kinds"
 import "core:fmt"
 import "core:strings"
 import "contract:blake3"
@@ -364,7 +365,7 @@ site_layout_problem :: proc(page: Site_Page, html: string, page_ids: map[string]
 Site_Symbol_Fact :: struct {
 	label: string,
 	html:  string,
-	kind:  Site_Value_Kind, // The kind of its values: the icon of the kind is before the label, once.
+	kind:  value_kinds.Value_Kind, // The kind of its values: the icon of the kind is before the label, once.
 }
 
 // A documented symbol: an operation of the kernel, a command, or an export
@@ -412,7 +413,7 @@ site_symbol_write :: proc(site: ^Site, b: ^strings.Builder, symbol: Site_Symbol)
 		strings.write_string(b, "<dl class=\"symbol-facts\">\n")
 		for fact in symbol.facts {
 			if fact.kind != .None {
-				fmt.sbprintf(b, "<dt class=\"value-head value-icon value-%s\">", site_value_kinds[fact.kind].name)
+				fmt.sbprintf(b, "<dt class=\"value-head value-icon value-%s\">", value_kinds.VALUE_KIND_NAMES[fact.kind])
 			} else {
 				strings.write_string(b, "<dt>")
 			}

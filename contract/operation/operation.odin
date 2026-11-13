@@ -17,6 +17,7 @@
 package operation
 
 import info "contract:boot_info"
+import "contract:value_kinds"
 
 PAGE_SIZE :: 4096
 WAIT_FOREVER :: max(u64)
@@ -120,7 +121,7 @@ Object_Kind :: enum u8 {
 // (`system.memory_create`) or with `system.call`.
 Operation :: enum u32 {
 	None           = 0,
-	Log            = 1, // (log, address, length, level: Log_Level, channel, channel).
+	Log            = 1, // (log, address, length, level: Log_Level, channel, channel, runs).
 	// Writes one text on the log of the kernel: records of the log, which a reader with the memory of the log
 	// reads, and one line `[name:channel] text` on the serial port. The kernel sets the time, the program and
 	// the thread of each record, so a program cannot write a record of another program.
@@ -133,14 +134,18 @@ Operation :: enum u32 {
 	// - `level`: a `Log_Level`, from `Info` (0) to `Error` (3).
 	// - `channel`, `channel`: the name of the channel, 16 bytes in two values. The name is the bytes before
 	//   the first one that is not a printable character: all zero is no channel.
+	// - `runs`: the count of the value runs of the text, at most `LOG_CALL_RUN_LIMIT`; 0 is a plain text. The
+	//   runs (`value_kinds.Value_Run_In_Call`) follow the `length` bytes of the text at `address`. A run says
+	//   which bytes of the text are one value, and its kind: a reader of the log shows each value in the color
+	//   of its kind. The text is written whole in every case: if a run is wrong, the record is plain.
 	//
 	// **Results**: none.
 	//
 	// **Statuses**
 	//
 	// - `Bad_Handle`, `No_Right`: `log` is not a log handle with **Write**.
-	// - `Bad_Address`: `length` is above 4096, or the program cannot read the text.
-	// - `Bad_Operation`: `level` is above `Error`.
+	// - `Bad_Address`: `length` is above 4096, or the program cannot read the text and its runs.
+	// - `Bad_Operation`: `level` is above `Error`, or `runs` is above `LOG_CALL_RUN_LIMIT`.
 	// - `No_Budget`: the budget of the program, or a budget above it, accepted all the records of its limit
 	//   in this second (`Budget_Amounts`, `log_records`).
 	Memory_Create  = 2, // (budget, pages, flags: Memory_Flags) -> memory handle.
@@ -1776,8 +1781,14 @@ Log_Level :: enum u8 {
 	Error   = 3,
 }
 
-LOG_TEXT_CAPACITY :: 176
+LOG_TEXT_CAPACITY :: 152
 LOG_CHANNEL_CAPACITY :: 16
+// The value runs that one record keeps: the kind of each typed part of its
+// text (contract:value_kinds). A text with more typed parts keeps its first
+// runs; the rest of its text is plain.
+LOG_RUN_CAPACITY :: 8
+// The value runs that one Log operation takes, after its text.
+LOG_CALL_RUN_LIMIT :: 32
 // 128 pages: 2047 records. With 64 pages (1023 records), the main machine
 // test wrote about 1024 records before it starts the program log, which
 // checks that it lost none: each new line of a program broke the check.
@@ -1798,9 +1809,11 @@ Log_Record :: struct {
 	level:      Log_Level,
 	more:       u8, // 1: the text continues in the next record.
 	text_count: u16,
-	reserved:   u32,
+	run_count:  u8, // The value runs of the text: runs[:run_count].
+	reserved:   [3]u8,
 	name:       [32]u8, // The name of the program, or "kernel".
 	channel:    [LOG_CHANNEL_CAPACITY]u8, // All zero: the program gave no channel.
+	runs:       [LOG_RUN_CAPACITY]value_kinds.Value_Run, // In order, inside text[:text_count].
 	text:       [LOG_TEXT_CAPACITY]u8,
 }
 

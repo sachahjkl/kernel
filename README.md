@@ -65,7 +65,7 @@ Tables as parameters: one description, three ways to call (a direct call, a call
 
 ![A service serves its own exports while it runs: the console draws in the window of paint with isolated calls](docs/screenshots/services.png)
 
-![The log: records with a time, a program, a channel and a level](docs/screenshots/log.png)
+![The log: records with a time, a program, a channel and a level, each value of a text in the color of its kind](docs/screenshots/log.png)
 
 ![One ring between two threads: the records of one second and the kernel entries that they cost, for two capacities and two ways to wait](docs/screenshots/flow.png)
 

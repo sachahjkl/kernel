@@ -4,6 +4,7 @@ import "base:intrinsics"
 import "contract:errors"
 import op "contract:operation"
 import "contract:ring"
+import "contract:value_kinds"
 
 // The error record of a kernel operation that failed, and the stack trace
 // of a fault (docs/MODULE_CONTRACT.md, section 8).
@@ -726,10 +727,11 @@ INSPECT_SIZES := [op.Inspect_Kind]u64 {
 address_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Program, operation: op.Operation, v: [7]u64) -> bool {
 	#partial switch operation {
 	case .Log:
+		// The text, then its value runs, at the address.
 		if v[2] > 4096 {
 			record_set(record, .Too_Long, .Bytes, 3, v[2], 4096, 0)
-		} else if !read_range(program, v[1], v[2]) {
-			record_set(record, .Bad_Address, .Bytes, 2, v[1], v[2], 0)
+		} else if v[6] <= op.LOG_CALL_RUN_LIMIT && !read_range(program, v[1], v[2] + v[6] * size_of(value_kinds.Value_Run_In_Call)) {
+			record_set(record, .Bad_Address, .Bytes, 2, v[1], v[2] + v[6] * size_of(value_kinds.Value_Run_In_Call), 0)
 		} else {
 			return false
 		}
@@ -1013,6 +1015,11 @@ state_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Pro
 value_explain :: proc "contextless" (record: ^errors.Error_Record, program: ^Program, operation: op.Operation, v: [7]u64) -> bool {
 	form := &op.OPERATIONS[operation]
 	#partial switch operation {
+	case .Log:
+		if v[6] > op.LOG_CALL_RUN_LIMIT {
+			record_set(record, .Too_Long, .Records, 7, v[6], op.LOG_CALL_RUN_LIMIT, 0)
+			return true
+		}
 	case .Inspect:
 		if op.Inspect_Kind(v[1]) != .Pages {
 			break

@@ -1,5 +1,6 @@
 package kerneltool
 
+import "contract:value_kinds"
 import "core:fmt"
 import "core:strings"
 import "core:testing"
@@ -244,7 +245,7 @@ site_search_chart_of_a_small_index :: proc(t: ^testing.T) {
 		testing.expectf(t, segment == expected_segments[index], "the segment %d is %v, not %v", index, segment, expected_segments[index])
 	}
 	for row, index in rows {
-		value_name := site_value_kinds[site_search_kinds[row.kind].value_kind].name
+		value_name := value_kinds.VALUE_KIND_NAMES[site_search_kinds[row.kind].value_kind]
 		segment := fmt.tprintf("<rect class=\"search-chart-segment value-%s\" data-kind=\"%d\" x=\"%s\" width=\"%s\" height=\"100%%\"/>", value_name, int(row.kind), site_search_chart_percent(segments[index].start), site_search_chart_percent(segments[index].width))
 		testing.expectf(t, strings.contains(html, segment), "the chart has not the segment %s:\n%s", segment, html)
 	}

@@ -279,5 +279,5 @@ extended_state_log :: proc "contextless" () {
 	avx := .Avx in extended_state_components ? ", AVX" : ""
 	avx_512 := AVX_512_COMPONENTS <= extended_state_components ? ", AVX-512" : ""
 	how := extended_state_form == .Fxsave ? "fxsave: the processor has no xsave or no xsaveopt" : "xsaveopt"
-	log("kernel: extended state: x87, SSE", avx, avx_512, "; one save writes at most ", extended_state_size, " bytes, in an area of ", u64(EXTENDED_STATE_CAPACITY), " bytes in each thread entry; saved at a switch of threads with ", how)
+	log("kernel: extended state: x87, SSE", avx, avx_512, "; one save writes at most ", Size{extended_state_size, .Bytes}, ", in an area of ", Size{EXTENDED_STATE_CAPACITY, .Bytes}, " in each thread entry; saved at a switch of threads with ", how)
 }
