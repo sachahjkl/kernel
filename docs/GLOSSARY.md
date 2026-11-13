@@ -2043,109 +2043,267 @@ Do not use: default constructor.
 
 ### Physical address
 
-The number that the memory and the devices use for a byte of memory, before the page tables. A program uses virtual addresses only; a device uses physical addresses only.
+A physical address is the number that the memory and the devices use for a byte of memory, before the page tables translate anything.
+
+A program sees only virtual addresses: the page tables of its program translate each one to a physical address, and the program never learns the result. A device sees only physical addresses: it reads and writes memory by itself (direct memory access), with no page table of a program between. So a device service must know the physical address of the memory that it gives to its device, and nothing else in the system needs one.
+
+A device service gets a physical address with the kernel operation `Memory_Physical`. It needs the machine handle with the right **Physical**, which the root service gives to each device service and to no other program. The memory object must have pages that follow each other in physical memory and do not move: an object made with the flag `Contiguous` or `Large_Pages`, or device memory. An object whose pages get their frames at their first use gives `Bad_Operation`: its pages are anywhere, and a page can still have no frame. Example: the block service gives the device the physical address of the data region of its client, plus the place that a request names.
+
+A physical address is not a handle and gives no access to a program: a program that knows one cannot map it. The kernel does not yet program the IOMMU, so a device can today reach any physical address; the device services are trusted for that reason only.
+
+The design: `docs/ARCHITECTURE.md`, "K5. Device grant and interrupts".
 
 Do not use: real address, bus address.
 
 ### Device memory
 
-A memory object over the registers of a device: physical addresses that are not memory of the kernel. A mapping of it uses no cache. The root service makes it with the right Devices.
+Device memory is a memory object over the registers of a device, at physical addresses that are not memory of the kernel, and mapped with no cache.
+
+A device service drives its device by reads and writes of its registers. Device memory gives it these registers as an ordinary memory object, with a handle and the rights of a handle, so a device service needs no special access and can reach only the registers of its own device.
+
+The root service makes it with `Device_Create`, the kind `Memory`, a physical address (a multiple of 4096) and a count of pages. This needs the machine handle with the right **Devices**, which only the root service holds. The kernel refuses a range that meets memory that the firmware gave as free or as loaded, so device memory never reaches the memory of a program or of the kernel. The result is a memory handle with **Give**, **Read** and **Write**. The root service reads the base address registers of the device on the bus, makes one device memory object for each of them, and gives each to the device service in its context (the roles `GRANT_BAR + n` of `support/pci`). A mapping of it uses no cache, because a read of a register has an effect and must reach the device each time.
+
+Device memory is not the memory that a device reads and writes for data: that is ordinary memory made `Contiguous`, such as the data region or the memory of the queues. It pays nothing from a budget, because it is not memory.
+
+The design: `docs/ARCHITECTURE.md`, "K5. Device grant and interrupts".
 
 Do not use: MMIO region, BAR mapping.
 
 ### Message interrupt
 
-An interrupt that a device sends as a write of a value to an address of the interrupt controller of a processor (MSI-X). The kernel gives each one a vector of its own, and an Interrupt object.
+A message interrupt is an interrupt that a device sends as a write of a value to an address of the interrupt controller of a processor (MSI-X).
+
+A device signals that it has done work by an interrupt. The old interrupt lines are few and shared between devices; a message interrupt belongs to one device, so the kernel knows which device signalled with no question to it. The kernel gives each message interrupt a vector of its own on the first processor; it has 16 (`MESSAGE_CAPACITY`).
+
+The root service makes one with `Device_Create`, the kind `Message`, with the machine handle and the right **Devices**. The results are an interrupt handle with **Give** and **Read**, the address that the device must write, and the value that it must write there. The root service writes the address and the value in the table of the device on the bus, enables the table, and gives the interrupt handle to the device service with the right **Read**. The device service never writes the configuration of its device.
+
+When the device writes the value, the kernel adds 1 to the count of the interrupt and to the `events` word of each thread of the program that holds the handle, and wakes them. The device service reads and resets the count with `Interrupt_Read`, then reads its queues.
+
+A message interrupt is not a vector: the vector is the number that the kernel chose for it inside the processor, and a program never sees it. The kernel does no work of the device at an interrupt: it counts and wakes.
+
+The design: `docs/ARCHITECTURE.md`, "K5. Device grant and interrupts".
 
 Do not use: MSI, vector.
 
 ### Bus
 
-The PCI bus of the machine: each device has a place on it (bus, device, function) and a configuration. Only the root service reads and writes the configuration.
+The bus is the PCI bus of the machine: each device has a place on it (bus, device, function) and a configuration of 256 bytes or more.
+
+The configuration of a device says what it is (its vendor and its device numbers), where its registers are (its base address registers), and how it interrupts. A program that can write the configuration of any device can make any device read or write any memory. For that reason only the root service holds the two ports of the configuration (`0xCF8` and `0xCFC`), as a ports handle that it makes with `Device_Create`.
+
+The root service reads the configuration at a fixed place, checks that the device there is the expected virtio device, enables it, gives it the right to use memory (bus master), sets its message interrupt, and starts its device service. The service gets a copy of the first 256 bytes of the configuration, read only (`GRANT_CONFIGURATION`), the device memory of its registers and one message interrupt. On the first machine the places are fixed: the data disk at device 16 (`0x10`), the disk of the measures at 17, the network device at 18. If no device of the right kind is at the place, the root service logs "root: no virtio device for block at the place 16 of the bus" and starts no service.
+
+The bus is not a tree that the kernel walks: the kernel does not read it at all. The code of the bus is `support/pci`.
+
+The design: `docs/ARCHITECTURE.md`, "K5. Device grant and interrupts", and `docs/ARCHITECTURE.md`, "U4. Device services".
 
 Do not use: PCI tree.
 
 ### Disk
 
-A device that keeps blocks when the machine stops. The machine of the test has three: the boot volume, the data disk, and the disk of the measures.
+A disk is a device that keeps blocks when the machine stops.
+
+A disk is the one place where data survives a stop of the machine. The system reads and writes a disk only through the block service of that disk, as a row of blocks numbered from 0; no program but the storage service and the program `disk` is a client of one.
+
+The test machine has three disks, three virtio block devices:
+
+- the boot volume: the FAT volume that the firmware reads to start the boot program. No block service serves it.
+- the data disk: the disk of the storage service, 64 MiB on the test machine.
+- the disk of the measures: the disk where the program `disk` measures the block service.
+
+A disk is not a volume with a file system: the system puts no partition table and no file system on the data disk; the storage service writes its own format on the whole disk.
+
+The design: `docs/ARCHITECTURE.md`, "U4. Device services", and `docs/STORAGE.md`, "3. The format on the disk".
 
 Do not use: drive, volume (except the boot volume), LUN.
 
 ### Block
 
-4096 bytes of a disk, at a number from 0. The unit of the block contract.
+A block is 4096 bytes of a disk at a number from 0: the unit of each read and write of the block contract.
+
+A block is the unit that a block service reads and writes (`BLOCK_SIZE` in `contract/block`). A request names its first block, a count of blocks and a place in the data region; a device that has smaller sectors still serves whole blocks. The storage service builds everything that it writes from blocks: a node, an object node, a block of data, a root block.
+
+A block is the same size as a page of memory, so one block fits one page of the data region, but a block is on the disk and a page is in memory: the two words are not exchangeable.
+
+The design: `contract/block`, and `docs/STORAGE.md`, "3.1 The blocks".
 
 Do not use: sector, page (for a disk).
 
 ### Block service
 
-The device service of one disk. It serves read, write and flush of blocks to one client, through a block ring (`contract/block`).
+A block service is the device service of one disk: it serves read, write and flush of blocks to one client through a block ring.
+
+A block service keeps the code that knows a disk device out of the kernel and out of the storage service. The first one is the program `block`, for a virtio block device; a service for another class of device (NVMe) can serve the same contract, `contract/block`, and its client does not change.
+
+The root service starts one block service for each disk that a program needs, with exactly one device: the device memory of its registers, one message interrupt, memory for its queues, the machine handle with the right **Physical** only, and a copy of its configuration. It makes the block ring, and gives it to the service and to its one client. The client sends `Attach` with its data region, then `Info`, `Read`, `Write`, `Flush` and `Statistics`. The service turns each request into a request of the device, and the device moves the bytes to and from the data region with no copy and no kernel entry. The service enters the kernel only to wait and to wake its client; one entry serves many requests.
+
+The service takes a command only when the completion queue has room: a client that does not read its completions stops only its own requests. A write is on the disk only after a `Flush` that the client sent after the completion of that write.
+
+Example: on the disk of the measures, its first line is "block: ok, 8192 blocks of 4096 bytes, a queue of ...", then the size of the queue of the device, the most requests in flight, and whether the disk has a cache that `Flush` empties.
+
+A block service is not a block layer: it has no cache, no scheduler of requests and no partition. It does not know what a block holds.
+
+The design: `docs/ARCHITECTURE.md`, "U4. Device services", and `contract/block`.
 
 Do not use: disk driver, block layer.
 
 ### Block ring
 
-The ring between a block service and its client. One command record is one request; many are in flight; a completion has the tag of its command and a status.
+The block ring is the ring between a block service and its one client: one command record is one request on blocks, and its completion record has the tag of the command and a status.
+
+The block ring carries each request of a client to its disk with no kernel entry for each request. It has a capacity of 256 records (`RING_CAPACITY` of `contract/block`). The root service makes it; it is the role 0 in the context of the block service and the role 6 in the context of the client.
+
+A command record has a kind (`Attach`, `Info`, `Read`, `Write`, `Flush`, `Statistics`), a tag of the client and values. For `Read` and `Write`: the first block, the count of blocks, and the place in the data region in bytes, a multiple of 4096. Many requests are in flight at once, and the device does them in any order: a client that needs an order waits for the completion of the first request. The status of a completion is `Ok`, `Bad_Command`, `Out_Of_Range`, `No_Region`, `Device_Error` or `Unsupported`; when it is not `Ok`, the values are an error record, so the client can say which value was wrong.
+
+The handle of the data region goes through the ring with `Handle_Give` in the command `Attach`, and the service proves with `Handle_State` that it came through this ring.
+
+A block ring is not a queue of the device: the device has its own queues, which only the block service sees.
+
+The design: `contract/block`, and `docs/ARCHITECTURE.md`, "Rings and wait".
 
 Do not use: I/O queue, submission queue.
 
 ### Data region
 
-The memory object of the client of a block service where the device reads and writes the bytes of the blocks, with no copy. It is contiguous (`Memory_Create` with `Contiguous`). A request names a place in it, never an address.
+The data region is the memory object of the client of a block service where the device reads and writes the bytes of the blocks, with no copy.
+
+The device moves the bytes of a block directly to and from memory of the client, so no program copies them. For this the region must be contiguous: the client makes it with `Memory_Create` and the flag `Contiguous`, and the block service reads its physical address with `Memory_Physical`. The storage service makes a region of 64 blocks; the program `disk` makes one of 1 MiB.
+
+The client gives the region to the block service with the command `Attach`. A request names a place in the region in bytes, never an address: the service checks that each byte of the request is in the region (`Out_Of_Range`), so a client cannot make the device write outside its own memory. A new `Attach` replaces the region; a client sends it when no request is in flight.
+
+The data region is not a cache: the client decides what it holds and when, and it must not change a place while a request on that place is in flight. The frame region is the same idea for a frame service.
+
+The design: `contract/block`.
 
 Do not use: DMA buffer, bounce buffer.
 
 ### Data disk
 
-The disk of the storage service.
+The data disk is the disk of the storage service: it holds the private stores of each program.
+
+The data disk is the one disk whose content the system keeps. The root service starts its block service (the device at place 16 of the bus) when the storage service starts, and gives the block ring to the storage service only. The storage service writes its own format on the whole disk: two places for the root block, then the blocks of the trees, the objects and the versions. The kernel tool makes a disk of 64 MiB for a run and a new one for each machine test.
+
+The data disk is not a home disk or a disk of the user: no program reads it but the storage service, and a program sees only its own private store.
+
+The design: `docs/STORAGE.md`, "3. The format on the disk".
 
 Do not use: data drive, home disk.
 
 ### Disk of the measures
 
-A disk that holds no data that a program keeps: the program `disk` measures the block service on it.
+The disk of the measures is a disk that holds no data that a program keeps: the program `disk` measures the block service on it.
+
+A measure of the block service writes blocks. A measure on the data disk destroys the stores. So the test machine has a second disk for it, the device at place 17 of the bus, and the root service gives its block ring only to the program `disk`.
+
+The program reads and writes the first 4096 blocks (16 MiB) for one second in each measure, with one request in flight and then with 32, and counts the blocks and the kernel entries of the two programs for each request. Then it writes a pattern, flushes, reads the pattern back and compares. It shows the result in its window.
+
+The disk of the measures is not a disk for tests of the storage service: the storage service never uses it.
+
+The design: `programs/disk`.
 
 Do not use: scratch disk, test disk.
 
 ### Network device
 
-A device that sends and receives frames on a link. The machine of the test has one virtio network device at the place 18 of the bus.
+A network device is a device that sends and receives frames on a link.
+
+The test machine has one virtio network device, at place 18 of the bus, with the hardware address 52:54:00:12:34:56. Its link is the user network of QEMU, where the peer of the kernel tool is the gateway.
+
+The root service starts the frame service of the device when the first program that needs the network starts. The frame service is the only program that touches the device, and the network service is the only client of the frame service. So no program but these two can send a frame.
+
+A network device is not an interface with an address: the device has a hardware address only. The IPv4 address 10.0.2.15 belongs to the network service.
+
+The design: `docs/ARCHITECTURE.md`, "U4. Device services", and `docs/NETWORK.md`, "The parts".
 
 Do not use: NIC, network card, network adapter.
 
 ### Frame
 
-One Ethernet frame: from the destination hardware address to the end of the data, with no check sequence. 1514 bytes at most.
+In the group Devices, a frame is one Ethernet frame: the bytes from the destination hardware address to the end of the data, with no check sequence, 1514 bytes at most.
+
+A frame is the unit that a network device sends and receives, and the unit of the frame contract (`FRAME_LIMIT` in `contract/frame`): 14 bytes of header and 1500 bytes of data. The device adds the check sequence when it sends and removes it when it receives. The device pads a frame shorter than 60 bytes with zero bytes.
+
+The network service builds each frame that it sends and reads each frame that it receives, with `support/network`. A datagram of 1472 bytes or a segment of 1480 bytes fits one frame, so the system never fragments.
+
+A frame is not a datagram and not a packet of IPv4: those are the content of a frame. It is also not the frame of QUIC, the unit inside a packet of QUIC, which has its own entry in the group QUIC.
+
+The design: `contract/frame`.
 
 Do not use: packet (for this), datagram (for this), message.
 
 ### Hardware address
 
-The 6 bytes that name a network device on its link.
+A hardware address is the 6 bytes that name a network device on its link.
+
+A frame names its destination and its source by hardware addresses. The network service learns the hardware address of its own device from the completion of the command `Info` of the frame ring, and learns the hardware address of each other machine of the link by ARP, as a neighbor. The device of the test machine has 52:54:00:12:34:56.
+
+A hardware address has meaning on one link only: it is not an address of IPv4 and it does not cross the gateway.
+
+The design: `contract/frame`.
 
 Do not use: MAC address, physical address (for this).
 
 ### Frame service
 
-The device service of one network device. It sends and receives frames for one client, through a frame ring (`contract/frame`). It does not read a frame.
+A frame service is the device service of one network device: it sends and receives frames for one client through a frame ring, and it does not read a frame.
+
+The frame service keeps the code that knows a network device out of the kernel and out of the network service. The first one is the program `frame`, for a virtio network device; a service for another class of device can serve the same contract, `contract/frame`.
+
+The root service starts it with exactly one device, as for a block service: device memory of its registers, one message interrupt, memory for its queues, the machine handle with the right **Physical** only, and a copy of the configuration. Its one client is the network service. The client sends `Attach` with its frame region, then `Send` for each frame to send and `Receive` for each place where a frame can arrive. The device reads and writes the frames in the frame region with no copy.
+
+The service checks no address and computes no check: the client builds and checks each frame. If no `Receive` waits when a frame arrives, the device drops the frame. Example of its first line: "frame: ok, the hardware address 52:54:00:12:34:56, the link is up, ...", then the sizes of its two queues of the device and the count of places for frames that arrive.
+
+A frame service is not a network stack: it knows no protocol.
+
+The design: `docs/ARCHITECTURE.md`, "U4. Device services", and `contract/frame`.
 
 Do not use: NIC driver, network driver.
 
 ### Frame ring
 
-The ring between a frame service and its client. One command record is the Send of one frame, or a Receive: a place for one frame that arrives. Many are in flight.
+The frame ring is the ring between a frame service and its one client: one command record is the send of one frame, or a place for one frame that arrives.
+
+The frame ring has a capacity of 256 records (`RING_CAPACITY` of `contract/frame`); it is role 0 of the frame service and role 6 of its client. Its commands:
+
+- `Attach`: the handle of the frame region.
+- `Info`: the hardware address, whether the link is up, the most bytes of a frame, the most `Receive` and `Send` in flight.
+- `Send`: a place in the frame region and a count of bytes, from 14 to 1514.
+- `Receive`: a place and its room. Its completion comes only when a frame arrives there, with the count of bytes of the frame.
+- `Statistics`: the frames and bytes sent and received, the kernel entries and the interrupts of the service.
+
+Many requests are in flight. A `Receive` can stay in flight for a long time: the client gives the places before the frames arrive, so the service allocates no memory for a frame. More `Receive` in flight than the device has places gives `Too_Many`; a frame of more than 1514 bytes gives `Too_Large`.
+
+A frame ring is not one queue for each direction: one ring carries both, and the tag of the command says which request completed.
+
+The design: `contract/frame`.
 
 Do not use: TX queue, RX queue, descriptor ring (for this).
 
 ### Frame region
 
-The memory of the client of a frame service where the device reads and writes the frames, with no copy. It is contiguous. A request names a place in it, never an address.
+The frame region is the memory object of the client of a frame service where the device reads and writes the frames, with no copy.
+
+It is the data region of the frame contract: contiguous, so that the device uses one physical address for each place, and given to the service with `Attach` through the frame ring. A request names a place in the region in bytes, never an address; the service refuses a byte outside it with `Out_Of_Range`. A place for a frame that arrives has 2048 bytes (`PLACE_SIZE`): less room than 1514 bytes can lose a frame.
+
+The network service owns the frame region. It copies the data of each datagram one time, between the datagram region of a program and the frame region.
+
+A frame region is not a socket buffer: a program with an endpoint never sees it.
+
+The design: `contract/frame`.
 
 Do not use: DMA buffer, skb, mbuf.
 
 ### Virtio
 
-The standard of devices in shared queues that the first machine uses (`docs/PROPERTIES.md`, "No drivers in the kernel, and fixed hardware first"). `support/virtio` holds what each device service of a virtio device does the same way.
+Virtio is the standard of devices that work through queues in shared memory, which the first machine uses for its disks and its network device.
+
+Virtio makes the first device services short: a virtio device is already a set of queues in memory, so a device service translates between these queues and a ring with little code. The system uses virtio 1 over PCI, the "modern" interface, with no older interface (`disable-legacy=on` in the command of QEMU).
+
+`support/virtio` holds what each virtio device service does the same way: it reads the virtio capabilities in the copy of the configuration, agrees on the features with the device, and drives split queues. A queue takes three pages of the memory of the queues: the descriptors, what the driver gives, what the device used. The block service and the frame service use it.
+
+Virtio is not a part of the kernel: the kernel has no code for any device. Virtio is the first class of devices because the system starts on fixed hardware; a device of another class gets its own device service with the same contract.
+
+The design: `docs/ARCHITECTURE.md`, "U4. Device services", and `docs/PROPERTIES.md`, "No drivers in the kernel, and fixed hardware first".
 
 Do not use: paravirtual device.
 
@@ -2153,199 +2311,477 @@ Do not use: paravirtual device.
 
 ### Network service
 
-The one client of the frame service. It speaks Ethernet, ARP, IPv4, ICMP echo and UDP with the protocol library `support/network`, checks TCP segments against their grant, and gives each program with the grant one endpoint. It keeps no state of a TCP connection. It starts when the first such program starts.
+The network service is the one client of the frame service: it gives each program with a network grant one endpoint, and it checks each datagram and segment against that grant.
+
+Only one program can read the frames of the device of the first machine, because the device has one pair of queues. The network service is that program. It is also the place where the grant of each program is enforced: a program reaches only the remote that its grant names, so no program has ambient access to the network.
+
+The network service speaks Ethernet, ARP, IPv4, ICMP echo and UDP with the protocol library `support/network`. It has one static address, 10.0.2.15/24, and the gateway 10.0.2.2. For TCP it checks the headers, the TCP checksum and the ports of each segment, writes the IPv4 header, and keeps no state of a connection: the protocol of TCP is a library in the program (`support/tcp`). It copies the data of each datagram or segment one time, between the datagram region of the program and its own frame region. It has one thread, which waits on the frame ring, on the control ring of the root service and on the command queue of each endpoint.
+
+The root service starts it when the first program with a network grant starts, and adds each endpoint with the command `Endpoint_Add` of its control ring. Example of its first line: "network: ok, the address 10.0.2.15/24 52:54:00:12:34:56, the gateway 10.0.2.2, the link is up, ..."; then, for each endpoint, a line such as "network: an endpoint for server: TCP, the listen port 80, the remotes that send to it".
+
+The network service is not a network stack in the sense of Linux: it has no sockets, no connection, no retransmission and no routing table. A frame that it refuses becomes a problem row of the endpoint, or of the machine, with the layer, the field and the rule.
+
+The design: `docs/NETWORK.md`, "The parts", and `docs/ARCHITECTURE.md`, "U7. Network steering service".
 
 Do not use: network stack, TCP/IP stack, netd, network daemon.
 
 ### Endpoint
 
-What a program holds to send and receive datagrams or segments: a datagram ring and a datagram region, with a grant. The grant of a datagram endpoint names one remote, and the network service gives its local UDP port; or it is a listen grant of one local UDP port. A segment endpoint has a client grant or a listen grant. The program does not choose a remote that its grant does not name (`docs/PROPERTIES.md`, "No ambient access: the other holes to close"). With the right Inspect of its grant, it also reads the facts of the network of the machine: the frames that no endpoint owns, the kernel entries of the two services.
+An endpoint is what a program holds to send and receive datagrams or segments: a datagram ring and a datagram region, with a grant that names what it can reach.
+
+An endpoint replaces the socket of other systems, with one difference: the program does not choose the address. The root service names the grant, the network service enforces it, and a request to another remote fails with `Not_Granted` and the remote of the grant in its error record. A datagram or a segment from a remote that the grant does not name never reaches the program.
+
+The kinds of endpoint:
+
+- a datagram endpoint (UDP) with a client grant: one remote address and one remote UDP port; the network service gives the local UDP port and writes the UDP header.
+- a datagram endpoint with a listen grant: one local UDP port; the program answers the admitted remotes only.
+- a segment endpoint (TCP), with a client grant or a listen grant.
+
+A program gets its endpoint at its start: the root service makes the datagram ring and the datagram region, gives them to the program (the roles 11 and 13 of its context) and to the network service. A program has one endpoint. With the right **Inspect** of its grant, the program also reads the facts of the machine: the frames that no endpoint owns, the kernel entries of the network service and of the frame service. The console shows the grant with `grants("server")` and ends it with `revoke`; a revocation sets the grant to none, and each later request that names a remote gives `Not_Granted`.
+
+An endpoint is not a connection: a segment endpoint carries the segments of all the TCP connections of its program.
+
+The design: `contract/datagram`, and `docs/PROPERTIES.md`, "No ambient access: the other holes to close".
 
 Do not use: socket, port (for this), connection (for this).
 
 ### Datagram
 
-The data of one UDP datagram and its remote: what a program sends and receives through an endpoint. 1472 bytes at most: one frame, no fragment.
+A datagram is the data of one UDP datagram and its remote: what a program sends and receives through a datagram endpoint, 1472 bytes at most.
+
+1472 bytes is the data of one Ethernet frame after the IPv4 header (20 bytes) and the UDP header (8 bytes): the system never fragments, so a datagram is one frame (`DATA_LIMIT` of `contract/datagram`). A larger `Send` fails with `Too_Large`.
+
+A program sends a datagram with the command `Send` of its datagram ring: the place of the data in the datagram region, its count of bytes, and the remote address and port. The completion comes when the network service has copied the data: the place is then free again. A program gives a place for a datagram that arrives with `Receive`; its completion carries the place, the count of bytes and the remote. Example: QUIC is a library in the program over datagrams; `quic_echo` and `remote` send and receive each datagram of QUIC through their datagram endpoint.
+
+A datagram is not a frame and not a segment: the frame is the whole Ethernet unit, and a segment is the unit of a segment endpoint, with its TCP header.
+
+The design: `contract/datagram`.
 
 Do not use: packet, message.
 
 ### Remote
 
-The IPv4 address and the UDP port or TCP port at the other end of a datagram or of a connection.
+A remote is the IPv4 address and the UDP port or TCP port at the other end of a datagram or of a connection.
+
+A grant names remotes: a client grant names one, and a listen grant admits the remotes that came to it. A command of the datagram ring names a remote in two values (address and port); an error record of `Not_Granted` packs the remote that a request named and the remote of the grant. Example: the remote of the client grant of `fetch` on the test network is 10.0.2.100 port 80; the remote service admits the address of the host, 10.0.2.2, with any port.
+
+A remote is not a host: the host is the computer that runs QEMU, and a remote is any address and port. It is not a peer either: the peer is one part of the kernel tool.
+
+The design: `contract/datagram`.
 
 Do not use: peer (for this), destination, host.
 
 ### UDP port
 
-The 16-bit number of UDP that names an endpoint at an address. It is not the Ports object of the kernel.
+A UDP port is the 16-bit number of UDP that names one endpoint at an address.
+
+A datagram has a source UDP port and a destination UDP port. The network service finds the endpoint of a datagram that arrives by its destination port: the local UDP port of the endpoint. A program does not choose its local port with a client grant: the network service gives it, and the command `Info` returns it. A listen grant names its port: the remote service listens on the UDP port 7100, `quic_echo` on 4433.
+
+A UDP port is not the Ports object of the kernel (a handle to ports of input and output of the processor), and not a TCP port: the same number is two different ports in UDP and in TCP.
+
+The design: `contract/datagram`.
 
 Do not use: port (alone), socket number.
 
 ### TCP port
 
-The 16-bit number of TCP that names one end of a connection at an address. It is not the Ports object of the kernel, and not a UDP port.
+A TCP port is the 16-bit number of TCP that names one end of a connection at an address.
+
+A segment has a source TCP port and a destination TCP port. The network service reads the ports of each segment to find the endpoint and to check the grant: a client grant has a block of 64 local TCP ports, and a listen grant has one local TCP port. Unlike a UDP port, the TCP port is in the header that the program writes, so the network service checks the local port of each segment that the program sends against its block or its listen port, in its own copy of the segment. Example: `server` has the listen grant of the TCP port 80.
+
+A TCP port is not the Ports object of the kernel, and not a UDP port.
+
+The design: `docs/NETWORK.md`, "The grant of a segment endpoint".
 
 Do not use: port (alone), socket number.
 
 ### Segment
 
-One TCP segment: its header, its options and its data, 1480 bytes at most (one frame, no fragment). What a program sends and receives through a segment endpoint.
+A segment is one TCP segment: its header, its options and its data, 1480 bytes at most, what a program sends and receives through a segment endpoint.
+
+1480 bytes is the room of one Ethernet frame after the IPv4 header, so a segment is one frame and never a fragment (`SEGMENT_LIMIT` of `contract/datagram`). A segment has 20 bytes at least, a TCP header with no option (`SEGMENT_LEAST`); a shorter one fails with `Bad_Command`.
+
+The TCP library of the program writes each segment directly in a place of the datagram region, with its checksum, and the program sends it with `Send`. The network service copies it to a frame, reads its ports from the copy, checks them against the grant, and writes the IPv4 header. For a segment that arrives, the network service checks the TCP checksum before the program sees it.
+
+A segment is not a datagram and not a packet: the program sees no IPv4 header.
+
+The design: `docs/NETWORK.md`, "The segment endpoint".
 
 Do not use: packet, TCP packet, message.
 
 ### Segment endpoint
 
-An endpoint whose grant has the protocol TCP. The program writes and reads whole segments; the network service writes the IPv4 header and keeps no state of a connection.
+A segment endpoint is an endpoint whose grant has the protocol TCP: the program writes and reads whole segments, and the network service keeps no state of a connection.
+
+A segment endpoint puts TCP in the program. The program owns each connection, each window and each timer in its own memory, and can read each field; the network service only checks the grant and copies the bytes. The ring, the region, the commands and the error records are those of a datagram endpoint. Two things differ: a `Send` names a whole segment, header included, and the grant names TCP ports.
+
+A segment endpoint has a client grant (one remote, a block of 64 local TCP ports) or a listen grant (one local TCP port). The program drives it with the TCP library: `tcp.step` takes the segments that arrived and writes the segments to send in the places of the datagram region. Examples: `server` has a segment endpoint with a listen grant of the TCP port 80; `fetch` has one with a client grant.
+
+A segment endpoint is not a TCP socket: it is not one connection, and it does not accept or connect. The program does both, with the library.
+
+The design: `docs/NETWORK.md`, "The segment endpoint".
 
 Do not use: TCP socket, listening socket.
 
 ### Client grant
 
-The grant of a segment endpoint that reaches one remote, from a block of 64 local TCP ports that the network service chooses.
+A client grant is the grant of an endpoint that reaches one remote: one remote address and one remote port.
+
+A client grant lets a program reach exactly one server and nothing else. The network service refuses a request to another remote with `Not_Granted`, and drops what another remote sends.
+
+A client grant exists for both endpoints:
+
+- a datagram endpoint: one remote address and UDP port; the network service gives one local UDP port.
+- a segment endpoint: one remote address and TCP port; the network service gives a block of 64 local TCP ports (`PORT_BLOCK`). The program chooses one port of its block for each connection, because a closed connection stays in TIME-WAIT and one local port serves one connection at a time to one remote.
+
+The root service names the grant by the name of the program. Examples from the root service: `net` has a UDP client grant of 10.0.2.2 port 7, the echo server of the peer; `fetch` has a TCP client grant of 10.0.2.100 port 80. The network service logs the second one as "network: an endpoint for fetch: TCP, the local ports ", the first and the last port of the block, then ", the grant 10.0.2.100 port 80".
+
+A client grant is not a rule of a firewall that a check reads: it is the only remote that the endpoint can name.
+
+The design: `docs/NETWORK.md`, "The grant of a segment endpoint".
 
 Do not use: outbound rule, connect permission.
 
 ### Listen grant
 
-The grant of an endpoint that receives on one local TCP or UDP port that the root service names, from any remote, and answers only the admitted remotes. A UDP listen grant can name one remote address: then only that address is admitted.
+A listen grant is the grant of an endpoint that receives on one local TCP or UDP port that the root service names, from any remote, and answers only the admitted remotes.
+
+A server must receive from remotes that it does not know in advance, but must not reach a machine that did not come to it. The listen grant gives exactly that: the program answers, but it does not reach. A send to a remote that is not admitted fails with `Not_Granted`, and the commands `Resolve` and `Echo` are refused.
+
+The network service keeps the admitted remotes of each listen grant, 64 at most. A UDP listen grant can also name one remote address: then only that address is admitted, whatever the size of its datagram. The remote service uses that form, with the address of the host. A UDP listen grant also limits what the program sends to a remote that it did not validate: at most 3 times the bytes that came from it (status `Amplification`), until the command `Validate`.
+
+Examples: `server` has the listen grant of the TCP port 80; `quic_echo` the UDP port 4433; `remote` the UDP port 7100, for the address 10.0.2.2 only.
+
+A listen grant is not a listening socket: it accepts nothing, and the program has no new object for each connection.
+
+The design: `docs/NETWORK.md`, "The grant of a segment endpoint", and `docs/NETWORK.md`, "The listen grant of UDP".
 
 Do not use: listening socket, bind permission, server socket.
 
 ### Admitted remote
 
-A remote that sent a SYN to the TCP port of a listen grant, or a datagram of 1200 bytes at least to its UDP port. The network service keeps 64 for each listen grant, until the program releases one.
+An admitted remote is a remote that came to the port of a listen grant, and that the program can therefore answer.
+
+A remote becomes admitted when it sends a SYN (with no ACK and no RST) to the TCP port of a listen grant, or a datagram of 1200 bytes at least to its UDP port, while a `Receive` of the endpoint waits. 1200 bytes is the least first datagram of a QUIC client, so a stray small datagram of an unknown remote takes no place. The remote must have an address that can answer: not 0, not a broadcast or multicast address, not the local address.
+
+The network service keeps 64 admitted remotes for each listen grant (`ADMITTED_CAPACITY`), each with the time of its last segment or datagram in or out. The program releases one with the command `Release` when its connection ended. When the table is full, the oldest place with no traffic for 120 s serves again; with none, the new remote is dropped and counted as the problem `Full`. This table is the one state of TCP in the network service: addresses and ports, with no sequence number and no window.
+
+An admitted remote is not an entry of connection tracking: the network service does not follow the state of a connection. An admitted remote is one address and one port; another port of the same address must be admitted on its own.
+
+The design: `docs/NETWORK.md`, "The grant of a segment endpoint".
 
 Do not use: connection tracking entry, conntrack, NAT entry.
 
 ### Connection
 
-The state of one TCP connection in the program that owns it: one fixed-size record of the TCP library (`tcp.Connection`), with a send buffer and a receive buffer of the caller.
+In the group Network, a connection is the state of one TCP connection in the program that owns it: one record of fixed size of the TCP library, `tcp.Connection`.
+
+TCP is a library in the program, so the state of each connection is in the memory of the program, not in a service. The record has 400 bytes: the state, the sequence numbers, the windows, the timers, the round trip estimate and the counts. The program can read each field with no call; `server` draws them in its window.
+
+The program does not make a connection record: the records are the rows of its connection table. `tcp.connect` opens one actively; a SYN to the listen port opens one passively, at the next `tcp.step`. `tcp.write`, `tcp.read`, `tcp.close` and `tcp.abort` change one record; the segments that follow come at the next `step`. The step reports what happened as events: the index of a connection and a set of kinds (`Opened`, `Accepted`, `Readable`, `Writable`, `Peer_Closed`, `Closed`, `Reset`, `Timed_Out`, `Refused`). Each connection has a send buffer and a receive buffer at a place that its index gives.
+
+A TCP connection is not the connection of the group Communication (a call ring and a call region between a caller and a service), and not a socket: no handle names it, and no other program sees it.
+
+The design: `docs/NETWORK.md`, "The TCP library".
 
 Do not use: socket, TCB (in this system), session.
 
 ### Web page
 
-An object of the private store of `server` that it serves by its name, at `/name`. A person puts one with `server.put` from the console.
+A web page is an object of the private store of `server` that `server` serves by its name, at the target `/name`.
+
+`server` shows that a program reaches only what it was granted: its pages come from its own private store, not from a shared folder. The principal changes them from the console through the exports of `server`, functions with typed parameters:
+
+- `server.put("hello.html", "a text")`: a new or a changed page.
+- `server.remove("hello.html")`.
+- `server.pages()`: the table of the pages.
+- `server.served()`: the counts of the server.
+
+`server` keeps at most 16 pages. It reads them into its memory at its start and serves them from there, so a request never waits for the storage service. `put` and `remove` write the store first. A page that changes while an answer of it goes out ends that connection with a RST. PUT and DELETE over HTTP are refused with 405, because the network is not authenticated.
+
+A web page is not a file of a web root: no path, no folder, and no other program reaches it.
+
+The design: `docs/NETWORK.md`, "The HTTP server".
 
 Do not use: file (for this), static file, asset.
 
 ### Access record
 
-The record of one request that `server` answered: the remote, the method, the target, the status, the bytes and the time. The window shows the last ones, and the log channel `requests` has one for each request.
+An access record is the record of one request that `server` answered: the remote, the method, the target, the status, the bytes of the body and the time.
+
+The access records let the principal see the traffic of the server with no text log to parse. `server` keeps the last 18 in its window (`ACCESS_HISTORY`), and writes one log record for each request on the log channel `requests`. The time runs from the first byte of the head to the last byte of the answer in the send buffer, in microseconds. Example of the line: "server: GET /hello.html 200, 12 bytes, 157 us, 10.0.2.2 port 49200" (the values depend on the request).
+
+An access record is not a line of an access log in a common format: it is a record of fixed size (`Access_Record`), and its log line has value runs for its numbers.
+
+The design: `programs/server`.
 
 Do not use: access log line, hit.
 
 ### Connection table
 
-The records of the connections of one program, the memory of their buffers, and what is common to them: the local address, the listen port, the secret of the initial sequence numbers. `tcp.step` works on one table.
+A connection table is the connection records of one program, the memory of their buffers, and what is common to them: the local address, the listen port, the block of local ports and the secret of the initial sequence numbers.
+
+The TCP library allocates nothing: the caller gives the table (`tcp.Table`) with its records and one block of memory for all the buffers. Each connection has a send buffer and a receive buffer at a place that its index gives. One call, `tcp.step`, works on one whole table: it takes all the segments that arrived, runs the timers, writes the segments to send, and gives the deadline of the next timer. A table with one place in its table of events for each connection is enough.
+
+The table also counts what no connection took: the RSTs sent, the SYNs refused because no record was free, and the records in TIME-WAIT that a SYN took. `remote_limit` limits the open connections of one remote address. Example: `server` has one table of 48 connections and serves all of them from one thread.
+
+A connection table is not a pool of sockets in a kernel: it is memory of the program.
+
+The design: `docs/NETWORK.md`, "The form of the interface".
 
 Do not use: socket table, connection pool.
 
 ### Datagram ring
 
-The ring between a program and the network service for one endpoint (`contract/datagram`). A command is a Send, a Receive, or a question (Info, Resolve, Echo, Statistics, Problems).
+The datagram ring is the ring between a program and the network service for one endpoint.
+
+Its commands, in `contract/datagram`:
+
+- `Send`: a datagram, or a whole segment for a segment endpoint.
+- `Receive`: a place for a datagram or a segment that arrives.
+- `Info`: the local address and port, the gateway, the hardware address, the link, the grant.
+- `Resolve`: ask the hardware address of an address again (ARP).
+- `Echo`: send an echo request (ICMP) and wait for its reply.
+- `Statistics`: the counts of the endpoint, and the facts of the machine with the right **Inspect**.
+- `Problems`: the problem rows of the frames refused for this endpoint.
+- `Release`, `Validate`: for a listen grant.
+
+The capacity is 256 records. Many requests are in flight; a `Receive` stays in flight until a datagram arrives, and the network service drops a datagram when no place waits. A refused request has an error record in its completion: the request, and the limit or the grant that refused it. The program finds the ring in the role 11 of its context.
+
+A datagram ring is not a socket: it carries typed requests, and a request names a place in the datagram region, never an address of memory.
+
+The design: `contract/datagram`.
 
 Do not use: socket, channel.
 
 ### Datagram region
 
-The memory of an endpoint where the program writes the data of a datagram to send, and where the network service writes the data of a datagram that arrives. The root service makes it with the datagram ring.
+The datagram region is the memory of an endpoint, 512 KiB, where the program writes the data to send and the network service writes the data that arrives.
+
+The root service makes the datagram region with the datagram ring and gives it to the program and to the network service (the role 13 of the context of the program). A program does not give a region of its own: if the program gave it, a revocation of that memory by the program stops the network service on a page fault, for all programs. A request names a place in the region in bytes; a byte outside it gives `Out_Of_Range`. The network service copies each datagram one time between the region and a frame, and computes no header and no checksum over bytes that the program can still change.
+
+The program organizes the region itself. Example: `server` divides it into 256 places of 2048 bytes, and its TCP library writes each segment directly in one place.
+
+A datagram region is not a socket buffer of a kernel: no data waits in it for a read call, and the program decides which place serves which request.
+
+The design: `contract/datagram`.
 
 Do not use: socket buffer, send buffer, receive buffer.
 
 ### Neighbor
 
-An address of the link and its hardware address, that the network service learned from an answer to its own ARP request. The network service keeps 16.
+A neighbor is an address of the link and its hardware address, which the network service learned from an answer to its own ARP request.
+
+A frame needs the hardware address of the next machine on the link. The network service asks it by ARP and keeps the answer in a table of 16 neighbors (`ARP_CAPACITY` of `support/network`). It learns only an address that one of its own requests asked, so an ARP frame that nobody asked for changes nothing, not even the entry of the gateway. When the table is full, the answer replaces the oldest entry that no waiting request uses. A program asks the network service to resolve an address again with the command `Resolve`.
+
+A neighbor is not an entry of a cache that each ARP frame of the link can change.
+
+The design: `support/network`.
 
 Do not use: ARP cache entry, neighbour entry.
 
 ### Gateway
 
-The machine of the link that carries IPv4 packets to other networks: 10.0.2.2 on the first machine.
+The gateway is the machine of the link that carries IPv4 packets to other networks: 10.0.2.2 on the first machine.
+
+The network service sends each datagram whose address is not on its link (10.0.2.0/24) to the hardware address of the gateway. On the test machine with the network of the tests, the gateway is the peer of the kernel tool; with the user network of QEMU, it is libslirp. The address of the gateway is also the address from which the host reaches the machine, so the listen grant of the remote service admits that address only.
+
+The gateway is not a routing table: the network service has one route, to the gateway, and no other.
+
+The design: `docs/NETWORK.md`, "The parts".
 
 Do not use: router, default route.
 
 ### Peer
 
-The part of the kernel tool that is the gateway and the echo server of the network of the test machine, and a TCP client that the tool drives. QEMU gives it each frame as a UDP datagram on the loopback of the host. It reads each frame with its own code. It can drop, reorder and repeat the frames of TCP. It is also the QUIC client of the remote service: it carries each call request of the tool on a call stream, and the call answer back.
+The peer is the part of the kernel tool that is the gateway and the echo server of the network of the test machine, a TCP client that the tool drives, and the QUIC client of the remote service.
+
+The peer makes the network tests closed and repeatable: no frame leaves the host, and each run has the same answers. QEMU gives it each frame of the network device as one UDP datagram on the loopback of the host (`-netdev dgram`). It reads each frame with its own code, not with `support/network`, so a fault of the network service in a checksum or a length is a fault that the peer sees. It answers ARP, an echo request and a datagram to port 7. It sends frames that the network service must refuse, and can drop, reorder and repeat the frames of TCP with a generator that each case seeds. It carries each call of the tool to the remote service on a call stream, and the call answer back.
+
+The peer is not a simulator of a network: it speaks the real protocols, with the TCP library and the QUIC library of the system. It is in `tools/kerneltool/peer.odin` and `tools/kerneltool/peer_remote.odin`.
+
+The design: `docs/NETWORK.md`, "With the controlled peer", and `docs/QUIC.md`, "7. `remote` over QUIC (built)".
 
 Do not use: mock, fake server, simulator.
 
 ### Host
 
-The computer that runs QEMU and the kernel tool. The system does not run on it. For the network of the machine, the host is at the address of the gateway, 10.0.2.2.
+The host is the computer that runs QEMU and the kernel tool; the system does not run on it.
+
+The host builds the system, starts the machine, and drives the tests. For the network of the machine, the host is at the address of the gateway, 10.0.2.2: the peer of the tool answers for it, and each call of the tool to the remote service comes from that address.
+
+The host is not the machine: the machine is the computer, real or emulated, that runs the system. The host is not a remote either: a remote is any address and port at the other end of a datagram.
+
+The design: `docs/QUIC.md`, "7. `remote` over QUIC (built)".
 
 Do not use: build machine (for this), remote (for this).
 
 ### Remote service
 
-The program `remote`. It is a QUIC server over a UDP listen grant that admits the address of the host only, with its own key, and it holds the connections to the services that the root service lets it call. It receives each call request on a call stream, makes it as an isolated call, and writes the call answer on the same stream. It does not read the descriptions of the exports: it checks places and sizes only (`programs/remote`, `contract/remote`).
+The remote service is the program `remote`: a QUIC server that takes each call of the host on a call stream, makes it as an isolated call of an export of a service, and writes the call answer on the same stream.
+
+The remote service lets the kernel tool on the host call an export of a running service, for tests and for the console of the developer, with the same descriptions and checks as a call inside the system.
+
+It has a UDP listen grant on the port 7100 that admits the address of the host only. It makes an Ed25519 key at its start and logs it ("remote: the public key of this service: " and 64 hexadecimal digits); the tool pins that key. It holds the connections to the services that the root service lets it call. It has 2 connection records of 8 streams each, so 8 calls can wait at once on one connection, and it makes one isolated call at a time. It does not read the descriptions of the exports: it checks the places and the sizes of each request against the bytes of the stream and the size of the call region (`remote.request_check`), and the service checks the argument record, as for each caller.
+
+The remote service is not a debug agent: it does not read or change the memory of a program, and it calls only exports. It does not know who the client is: whoever holds the address 10.0.2.2 can call as the principal.
+
+The design: `docs/QUIC.md`, "7. `remote` over QUIC (built)", and `docs/MODULE_CONTRACT.md`, "A call from the host".
 
 Do not use: RPC server, debug agent, gdbstub.
 
 ### Call socket
 
-The Unix socket where the peer of the tool takes the calls of the tool to the remote service, one connection for each call. It is in a folder of the user of the tool with the mode 0700, so no other user of the host reaches it.
+The call socket is the Unix socket where the peer of the kernel tool takes the calls of the tool to the remote service, one connection of the socket for each call.
+
+The call socket keeps the calls on the host to one user. It is in `$XDG_RUNTIME_DIR/kerneltool`, or in `/tmp/kerneltool-<user number>` when that variable is not set; the tool makes that folder with the mode 0700 and uses it only when it is a folder of this user with no right for the group and the others. `kerneltool run` takes the socket `calls-run.socket` and prints its path; `kerneltool call` finds it by the same rule; a machine test takes a socket of its own.
+
+On a connection, the tool writes a header with a fixed mark, the key to pin and the count of the bytes, then the call request, then the end of its sending; the peer writes the outcome and the bytes of the call answer. If the peer does not answer, the call fails with "the peer of the tool does not answer at <path>: does `kerneltool run` run?".
+
+The call socket is not a port of the network: no program of another user and no other machine reaches it.
+
+The design: `docs/QUIC.md`, "7. `remote` over QUIC (built)".
 
 Do not use: call port, loopback port (for this).
 
 ### Call stream
 
-One bidirectional QUIC stream of a connection to the remote service that carries one call: the call request and the end of the stream from the host, then the call answer and the end of the stream from the remote service. A call that fails before its answer ends its stream with a stream error code.
+A call stream is one bidirectional QUIC stream of a connection to the remote service that carries one call: the call request from the host, then the call answer from the remote service.
+
+The stream names the call: no number in a header matches an answer to its request. The host opens the stream, writes the call request and ends its direction; the remote service reads until the end, makes the call, writes the call answer and ends its direction. The stream ends when both ends were read and acknowledged; the server then gives the host one more stream. QUIC sends a lost datagram again, so the host never sends a call again: a call whose answer did not come can have run, and the tool says so.
+
+A call that fails before its answer ends its stream with RESET_STREAM and a stream error code, never with a close of the connection, so the other calls go on.
+
+A call stream is not a channel that carries many calls: one stream, one call.
+
+The design: `docs/QUIC.md`, "7. `remote` over QUIC (built)".
 
 Do not use: RPC channel, request stream (for this).
 
 ### Stream error code
 
-The application error code of a RESET_STREAM, a STOP_SENDING or a CONNECTION_CLOSE of the remote service: a value of `remote.Stream_Error` (Too_Large, Timeout, Cancelled), which the tool prints by its name.
+A stream error code is the application error code of a RESET_STREAM, a STOP_SENDING or a CONNECTION_CLOSE of the remote service: a value of `remote.Stream_Error`, which the tool prints by its name.
+
+The values:
+
+- `Too_Large` (1): the request has more than `REQUEST_LIMIT` bytes; the remote service stops the stream before any call.
+- `Timeout` (2): a bound of time passed: a request not whole 10 s after its stream came, an answer that the host did not take 10 s after the call, or a reset stream that the host did not end 10 s later.
+- `Cancelled` (3): the host reset its stream or sent STOP_SENDING before the call. A call that ran keeps its effects.
+
+A request that does not pass its check does not get a stream error code: it gets a call answer with the status Refused and its error record.
+
+A stream error code is not a status of a call and not an error number: it says why the transport of one call ended.
+
+The design: `docs/QUIC.md`, "7. `remote` over QUIC (built)".
 
 Do not use: status (for this), error number.
 
 ### Call request
 
-The bytes of a call stream from the host to the remote service: a fixed header (`remote.Request`) that names the service, the hash of its module, the export, the places of the result and of the error record, then the bytes of the call region from offset 0.
+A call request is the bytes of a call stream from the host to the remote service: a fixed header, `remote.Request`, then the bytes of the call region from offset 0.
+
+The header has 104 bytes: the kind (`Call`), the name of the service, the BLAKE3 hash of the module of the service that the host read, the index of the export, the count of the bytes that follow, the size of the argument record, the places of the result and of the error record, and the end of the table of error details. The host encodes the arguments with the description of the export (`isolated.encode`), as a call inside the system does. A request has at most `REQUEST_LIMIT` bytes: its header and a whole call region (65 640 bytes).
+
+The remote service trusts nothing in a request: `remote.request_check` checks each count and each place against the bytes of the stream and the size of the call region. A refusal is a call answer with the status Refused, such as "the call has 20 bytes; it must have at least 104 bytes".
+
+A call request is not a message of a protocol of remote procedures with names in text: it names the export by its index and the module by its hash, and has no field whose size depends on a language or a machine.
+
+The design: `contract/remote`, and `docs/MODULE_CONTRACT.md`, "A call from the host".
 
 Do not use: RPC request, message, packet.
 
 ### Call answer
 
-The bytes of a call stream from the remote service to the host: a fixed header (`remote.Answer`) with the status, the integer result, the error record and the count of the bytes of the result, then those bytes.
+A call answer is the bytes of a call stream from the remote service to the host: a fixed header, `remote.Answer`, then the bytes of the result.
+
+The header has 112 bytes: the status, the integer result, the error record, and the count of the bytes of the result that follow (`total`). The host trusts nothing in it: `remote.answer_check` checks that the bytes are exactly a header and its total. The host decodes the result with the description of the export and prints it, as the console does. A call answer has at most a header and a whole call region (`ANSWER_LIMIT`).
+
+The answers come back in any order; the host matches each one to its call by its stream.
+
+A call answer is not a response of HTTP: it has no headers of text, and its status is a status of the call.
+
+The design: `contract/remote`.
 
 Do not use: response, reply.
 
 ### Developer tool
 
-A program that shows a person how the system runs: what a program holds in memory and how its threads run (`docs/TOOLS.md`). It reads reports of the kernel with a grant; it changes nothing.
+A developer tool is a program that shows how the system runs: what a program holds in memory and how its threads run; it reads reports of the kernel with a grant and changes nothing.
+
+A developer tool makes the state of the kernel visible without a debugger attached. Each tool reads reports with the operation `Inspect`, with the machine handle and the right **Inspect**; the scheduler also needs **Schedule**. A program without the right sees no other program. The tools:
+
+- `monitor`: the counts of the system and of each program.
+- `pages`: its own page table and the kernel half.
+- `processors`: the report of each processor.
+- `locks`: the locks of the kernel.
+- `scheduler`: the run queues and the strategy.
+- `manual`: the flat tables of each module.
+- `log`: the log records.
+- `inspect`: the address space, the modules, the threads and the stop report of one program that the principal chooses.
+
+Each tool also serves its facts as exports, so the console reads them as tables: `inspect.mappings()`, `monitor.programs()`.
+
+A developer tool is not a debugger: it does not stop a thread, read the bytes of another program, or change anything.
+
+The design: `docs/TOOLS.md`, "What each tool reads".
 
 Do not use: debugger (for this), profiler, task manager.
 
 ### Sample
 
-One read of all the reports that a developer tool shows, at one time. The tool takes a sample a few times in one second, and measures its cost.
+A sample is one read of all the reports that a developer tool shows, at one time.
+
+A developer tool reads several reports, and the system runs between two reads. A sample groups them so that the window shows one state. `inspect` takes a sample each 250 ms, and shows the time of one sample and its kernel entries, so the cost of the tool is visible. Each report has the serial of its program: a sample whose reports have two serials (a program ended, and a new one took its slot between two reports) is dropped, and the window keeps the sample before. A value that changed since the last sample is drawn in another color for one sample; the key space freezes the sample.
+
+A sample is not a snapshot of the store, and not a frame of the screen.
+
+The design: `docs/TOOLS.md`, "The program `inspect`".
 
 Do not use: snapshot (for this), poll, frame (for this).
 
 ### Folded gap
 
-The part of the band of an address space between two mappings that has no mapping: the band draws it with a fixed width and lines at an angle, because its size has no measure on the scale of the band.
+A folded gap is the part of the band of an address space between two mappings that has no mapping: the band draws it with a fixed width and lines at an angle.
+
+An address space of a program has small mappings far apart. On a scale by address, the mappings are invisible lines. `inspect` folds each gap, so each mapping keeps a readable width, and draws lines at an angle on the gap to show that it has no measure on the scale.
+
+A folded gap is not an ellipsis of a text: it is a part of a drawn band, and its width says nothing of its size.
+
+The design: `docs/TOOLS.md`, "The program `inspect`", and `docs/DESIGN.md`, "2. Forms".
 
 Do not use: ellipsis, break.
 
 ### Near export
 
-The export of a module with the highest address at or below an address: a reader names the address "module + offset, near name". The module names its exports only, so a function that is not an export has the name of the export before it.
+A near export is the export of a module with the highest address at or below an address: a reader names the address "module + offset, near name".
+
+A module names its exports only. With no debug image, a frame of a stack trace in a function that is not an export has no name of its own. The near export gives it the name of the export before it, as a hint, with the offset from the module. With a debug image, a frame has the name of its procedure and its source line instead: "fault::three + 0x8 in fault (programs/fault/main.odin:15)".
+
+A near export is not a symbol: it is an export, the only name that a module carries, and it can be far from the real function.
+
+The design: `docs/TOOLS.md`, "Names and lines".
 
 Do not use: symbol (for this), nearest symbol.
 
 ### Confirmed place
 
-A place of the pointer that the test tool read from the compositor (`compositor.pointer()`, through the remote service) before a press: the tool moves the pointer again until the compositor has it at the place that the step wants.
+A confirmed place is a place of the pointer that the kernel tool read from the compositor before a press, through the remote service.
+
+A loaded host can lose a move of the pointer that the tool sends through the monitor of QEMU, and a press then lands elsewhere. So, in a machine test, the tool calls `compositor.pointer()` before each press and moves the pointer again until the compositor has it at the place that the step wants, 6 tries at most (`POINTER_TRIES`). Before the remote service runs, the tool moves the pointer with no confirmation.
+
+A confirmed place is not a move of the pointer by the system: the compositor only reports where the pointer is.
+
+The design: `pointer_confirm` in `tools/kerneltool/machine.odin`.
 
 Do not use: pointer sync, warp.
 
 ### Request number
 
-The number that the host gives to a call request; each datagram of its call answer has it. A call request with the number of the last call answer gets that call answer again: the call does not run two times. 0 is no request.
+A request number was the number that the host gave to a call request in the protocol of datagrams of the remote service, before QUIC; no part of the system uses it now.
+
+With that protocol, each datagram of a call answer carried the number of its request, and a request with the number of the last call answer got that answer again, so a call did not run two times. The remote service now runs over QUIC: a call stream names the call, a header of `contract/remote` has no request number, and QUIC sends a lost datagram again.
+
+The design: `docs/QUIC.md`, "7. `remote` over QUIC (built)".
 
 Do not use: sequence number, request id, transaction id.
 
@@ -2353,454 +2789,962 @@ Do not use: sequence number, request id, transaction id.
 
 ### Object
 
-Bytes that never change, named by their hash (BLAKE3). A new content is a new object. An entry of a tree names an object; a write gives the entry a new object (`docs/PROPERTIES.md`, "A storage engine with one private store per program"; `docs/STORAGE.md`).
+An object is bytes that never change, named by their hash: a new content is a new object.
+
+The object is the unit of stored data in the model of the system. A module, a font, a picture and the text of a note are the same thing: bytes and their hash. Because the bytes never change, a hash names them for certain, a cache of objects needs no trust, and a version costs nothing more than keeping the old object.
+
+Today an object exists as an entry of kind object in a tree: the entry holds the size, the hash of the object, the root of its block tree, and its version index. A program writes an object with `storage.write(place, name, data)` (one commit, up to 64 KiB), or by ranges with `write_range` and `commit`; it reads it with `read` or `read_range`. A write does not change the bytes of the object of before: it gives the entry a new state, and the state of before becomes a version. The hash is kept in the entry, but the blocks are still found through the entry, not by the hash: two entries with the same bytes still hold two block trees, and the index from a hash to its blocks is a later step.
+
+An object is not a file: it has no path, no owner and no permission bits, and it is never changed in place. A program reaches it only through a place of its own connection.
+
+The design: `docs/STORAGE.md`, "1. The model", and `docs/PROPERTIES.md`, "A storage engine with one private store per program".
 
 Do not use: file, blob, inode.
 
 ### Tree
 
-An object that names other objects and trees: each entry has a name. A tree holds trees, so it fixes everything under it. On the disk each tree is a B+ tree of nodes, its own one (`docs/STORAGE.md`).
+A tree is an object that names other objects and trees, each by an entry with a name.
+
+A tree replaces the folder of other systems, and is the only kind of folder. A tree holds trees, so in the model the hash of a tree fixes each byte under it, and a system or a package is one tree. A handle on a tree reaches what is under it and nothing above it.
+
+On the disk, each tree is its own B+ tree of nodes: a tree inside a tree is an entry whose pointer names the root node of the inner tree. The entries are in the order of the bytes of their names, and a tree has no limit of entries but the disk. A program makes a tree with `storage.add` (up to 256 entries in one commit, each an empty object or an empty tree), opens it with `storage.open(place, name)`, which gives a new place, and lists it by pages with `storage.list(place, after, ...)`, so a tree of a million entries is never given whole. Example: the machine test of `hierarchy` makes 100000 entries in trees inside trees.
+
+A tree is not a directory with a link to its parent: an entry is always one step down, and no name reaches the tree above. Today a tree that changes has no hash: the entry of a tree holds a zero hash, because the form of a B+ tree depends on the order of the changes.
+
+The design: `docs/STORAGE.md`, "1. The model", and `docs/STORAGE.md`, "3.2 An entry".
 
 Do not use: directory, folder, list (for this), manifest, catalog (for this).
 
 ### Entry
 
-One name of a tree and what it names: an object or a tree. A name has 1 to 64 bytes, no zero byte, no byte `/`, and is not `.` or `..`: it is one step down, never up.
+An entry is one name of a tree and what it names: an object or a tree.
+
+An entry is the only link between a name and data. It holds, in 104 bytes (`Entry` of `contract/store`): the kind, the size (the bytes of an object, the entries of a tree), the generation, the time and the date of its last change, the hash of an object, the pointer of the root of its block tree or of the root node of its tree, and the version index of an object.
+
+A name has 1 to 64 bytes, no zero byte, no byte `/`, and is not `.` or `..`. So a name is one step down, never up, and a name that a program looks up under a place never reaches a node outside it. The service refuses a bad name with the byte that breaks the rule. A rename moves an entry, with its versions, inside one store.
+
+An entry is not a path and not a hard link: a program never names an entry by a path, only by a place and one name.
+
+The design: `docs/STORAGE.md`, "3.2 An entry".
 
 Do not use: directory entry, link, file name, path.
 
 ### Node
 
-One block of the B+ tree of a tree: a leaf of up to 24 entries, or a branch of up to 50 children.
+A node is one block of the B+ tree of a tree: a leaf of up to 24 entries, or a branch of up to 50 children.
+
+A node keeps a tree of any size in blocks of 4096 bytes, with a search in a few reads. A leaf holds records of a name (64 bytes) and its entry (104 bytes); a branch holds records of a name and the pointer of a child. A B+ tree has at most 8 levels. Each node starts with a header with its level, its count and the mark "TREE", so a block of another kind is damage.
+
+A commit never writes over a node that the root on the disk names: it writes each changed node to a free block, then the node above it, up to the root node of the store (copy on write). The open of the disk walks each node once and checks it; a node that breaks a rule of its format is damage of its store.
+
+A node is not an object node: an object node is a block of the block tree of one object. It is not a page of memory either.
+
+The design: `docs/STORAGE.md`, "3.1 The blocks", and `contract/store`.
 
 Do not use: page (for this), bucket, inode.
 
 ### Store
 
-A cell that names one tree now: the one thing of storage that changes. A commit moves it to another tree in one step; its versions are its history.
+A store is a cell that names one tree now: the one thing of storage that changes.
+
+The store is the unit of access and of accounting. A grant of the root service gives a program a connection to one store, with a limit of blocks; a commit moves the store to another tree in one atomic step, and the versions are its history.
+
+On the disk, the root block has one store entry for each store (60 at most): its name, its limit of blocks, the blocks that it uses, and the pointer of its store block. The store block holds the root node of the tree of the store, the root node of its removal queue, and its counts (objects, trees, the blocks of the current objects, the nodes). A program sees the counts of its store with `storage.usage()`. Example: "storage: ok, generation 1027: 3 stores, 4 objects, ..." at the start of the storage service.
+
+A store is not a volume, a file system or a mount: a program never names a store by a path, and sees no other store unless it acts for the principal of that store. It is not a head of a version control system either: a store holds no history of its own tree today; the versions are kept for each object.
+
+The design: `docs/STORAGE.md`, "1. The model", and `docs/STORAGE.md`, "3.1 The blocks".
 
 Do not use: reference (for this), volume, file system, mount, head.
 
 ### Place
 
-A number that a connection to the storage service holds: the names of a path from the root of the connection, and the right to change or read only. Place 0 is the root of the connection. A place is valid on its connection only.
+A place is a number that a connection to the storage service holds: the names of a path from the root of the connection, and the right to change or read only.
+
+A place lets a program name a tree under the root of its connection with no path in a call. Each export that names an entry takes a place and one name: `storage.write(place, name, data)`. The place 0 is the root of the connection, with no call. `storage.open(place, name)` gives the place of the tree `name` under `place`; `storage.close(place)` frees it. A place on the root of another store comes from `storage.open_store(store)`, for a caller that can name that store: such a place reads, restores and clones only.
+
+A place follows the names, not the bytes: if a program with a wider place renames a tree above the path, the place names what is at the path now. A place has at most 32 trees on its path. A place is valid on its connection only: a call that names a place of another connection gets `Absent` with the unit `Places`.
+
+A place is not a file descriptor and not a working directory: it is not a handle of the kernel, it cannot leave its connection, and it never reaches above its root.
+
+The design: `docs/STORAGE.md`, "4.1 Places", and `docs/STORAGE.md`, "4.2 No way up".
 
 Do not use: file descriptor, directory handle, working directory, path.
 
 ### Share
 
-A connection to the storage service that the service itself makes for a caller: its root is a tree of the store of the caller, with or without the right to change. The caller gives its two handles to another program; `unshare` revokes them.
+A share is a connection to the storage service that the service itself makes for a caller, whose root is a tree of the store of the caller, with or without the right to change.
+
+A share is the way to give another program a part of a store, and only that part. `storage.share(place, read_only)` gives the caller two handles: the call ring and the call region of the new connection. The caller gives them to the other program with `Handle_Give`. The other program reaches the tree of the place and what is under it, and nothing above; a share made with `read_only` refuses each change with `No_Grant`, unit `Changes`. `storage.unshare(share)` revokes the two handles in each program (`Handle_Revoke`), and a later call gives `Gone`. When the grant of the store of the maker ends, each of its shares ends too, at its next call.
+
+A share is not a mount and not a bind: it adds no name to any tree, and the program that receives it sees a connection with its own place 0.
+
+The design: `docs/STORAGE.md`, "4.3 Read only, and revocation".
 
 Do not use: mount, bind, export (for this), link.
 
 ### Removal queue
 
-The trees of a store that a remove took out of their tree. The storage service frees them in steps of 64 entries, one commit each, when no call waits.
+The removal queue is the trees of a store that a remove took out of their tree and whose blocks the storage service has not freed yet.
+
+A remove of a tree with a million entries must not be one huge commit. So `storage.remove(place, name)` of a tree is one commit: the entry leaves its tree, and the tree goes into the removal queue of the store. The name is gone at that commit. The storage service then frees the queue in steps, when no call waits: each step is one commit that removes up to 64 entries of the first tree of the queue, and an inner tree goes into the queue in its turn. The queue is a tree on the disk (its root node is in the store block), so a loss of power loses no step. `storage.usage()` gives the trees in the queue (`removing`), and the blocks under them stay counted in the store until they are free.
+
+The removal queue is not a trash: nothing in it can come back, and no program can read it.
+
+The design: `docs/STORAGE.md`, "4.4 The removal of a tree".
 
 Do not use: trash, bin, garbage list.
 
 ### Version
 
-The state of the object of one entry at one commit: its bytes, its size, the generation and the time of that commit. Each commit that changes an object keeps the state before it as a version, in the version index of the object. The storage service keeps versions (`docs/PROPERTIES.md`, "A storage engine with one private store per program").
+A version is the state of one object at one commit: its size, the root of its block tree, and the generation, the time and the date of that commit.
+
+Versions remove the save action: a program never asks to keep a state, and each commit that changes an object keeps the state before it as a version, in the version index of the object. A version costs only the blocks that only it names: the blocks of the state of before are already on the disk, and the new state names each block that did not change.
+
+A program reads versions with exports of the storage service:
+
+- `versions(place, name)`: a table of the versions: generation, time, date, bytes, and the blocks that only this version holds.
+- `version(place, name, generation)`: the bytes of one version.
+- `compare(place, name, first, second)`: the ranges of bytes that differ between two states.
+- `restore(place, name, generation)` and `clone(place, name, new_name)`.
+
+An object has at most 21590 versions; the retention rule and the thinning at the limit remove versions. A remove ends the object and its versions. A rename keeps them. A damaged state is not kept as a version: the change replaces it.
+
+A version is not a backup on another disk, and not a revision that a program makes on purpose. It is kept for each object, not for the store: the history of a store is a later step.
+
+The design: `docs/ARCHITECTURE.md`, "U5. Storage service", and `docs/STORAGE.md`, "Versions, thinning and the limit".
 
 Do not use: snapshot (when it means one object), backup, revision, undo step.
 
 ### Current version
 
-The state of an object that its last commit made: what a read gives. It is not in the version index.
+The current version is the state of an object that its last commit made: what a read gives.
+
+The entry of the object names the current version directly: its size, its hash and the root of its block tree. It is not in the version index. A commit makes a new current version, and the current version of before becomes a version. A pending change of a connection is not yet the current version: the connection sees it on its reads, and each other connection sees the current version.
+
+The current version is not a working copy: it is on the disk, at the commit that made it.
+
+The design: `docs/STORAGE.md`, "3.2 An entry".
 
 Do not use: head, working copy, latest revision.
 
 ### Version index
 
-The blocks of one object that list its versions: an index block, which names leaf blocks, which hold the version entries, the oldest first.
+The version index is the blocks of one object that list its versions: an index block that names leaf blocks, which hold the version entries, the oldest first.
+
+The entry of an object points to its version index. The index names up to 254 leaves; a leaf holds 85 version entries of 48 bytes (generation, size, time, date, and the root of the block tree of the state). So an object has at most 21590 versions. The index also keeps the time of the last application of the retention rule to the object. A commit that changes the object rewrites the index and the leaf that it changes: 2 blocks, copy on write. When the 254 leaves are full, a commit moves the remaining versions to the first leaves (a compaction).
+
+A version index with a wrong check does not lock its object: the next commit of the object drops those versions, and until then `versions`, `version` and `restore` give `Damaged`.
+
+A version index is not a journal: it records states, not operations, and nothing replays it.
+
+The design: `docs/ARCHITECTURE.md`, "U5. Storage service", and `contract/store`.
 
 Do not use: history file, journal, log.
 
 ### Shared block
 
-A block that two lists or two versions name: an unchanged block of an object, or the blocks of a clone. The storage service counts it one time in the blocks of the store.
+A shared block is a block that two states, two objects or two nodes name: a block that a change did not touch, or a block of a clone.
+
+Copy on write makes shared blocks: a commit writes new blocks only on the paths that it changes, and the new state names each other object node and block of data of the state before. A clone names the root of the block tree of its source, so the two share each block until one of them changes. A store counts each distinct block one time in its blocks in use. Example: after 1000 writes in an object of 8 GiB, the version before them holds 4 blocks of its own, and its other blocks are shared. The start line of the storage service gives the count of shared blocks.
+
+One exception: the count of the current objects (`current_blocks`) counts a block that two clones share two times, so a change at the limit of a store can be refused early.
+
+A shared block is not a deduplicated block: the service does not search for equal bytes; it shares only what a commit did not change, and what a clone names.
+
+The design: `docs/STORAGE.md`, "Versions, thinning and the limit".
 
 Do not use: deduplicated block, extent reference.
 
 ### Reference count
 
-For each block in use, the count of what names it: list entries for a block of data, versions and objects for a list. The storage service frees a block when its count goes to 0.
+A reference count is, for each block in use, the count of what names it: the nodes that name it, and the entries and versions that name it as a root.
+
+The reference count lets the storage service free a block at the commit that drops its last name, with no walk of the disk. A release of a state takes one name from its root; a node with no name left gives one name less to each of its children. A block is free when its count goes to 0. The counts are in the memory of the service only: the open of the disk makes them again by a walk of each node and each block tree. A count is 32 bits; a commit that passes 2^32 - 1 is refused with `Over_Limit`, unit `References`. A commit that takes a count below 0 is refused as a fault of the engine, and the service then changes nothing in that store until its next start.
+
+A store block, a node, a version index and a version leaf are named one time; only object nodes and blocks of data can have a count above 1.
+
+A reference count is not a link count of a file: no program sees it, and no name of a path is counted.
+
+The design: `docs/STORAGE.md`, "Versions, thinning and the limit".
 
 Do not use: link count, refcount (in text).
 
 ### Thinning
 
-A commit that removes versions of an object: by the retention rule, or the oldest version of the store when a change does not fit in the limit of the store. Its blocks that no other version names become free.
+Thinning is the removal of versions of an object in a commit, by the retention rule or at the limit of the store; its blocks that no other state names become free.
+
+Thinning keeps the versions from filling the disk with no action of a program. It has two causes:
+
+1. The retention rule: the service applies it to an object at a commit of that object, at most one time each minute.
+2. The limit of the store: a change that does not fit thins the oldest versions of the store (the lowest generations, in any object), in the same commit as the change, until it fits. The version that the change itself makes can go too.
+
+A change that does not fit even with each earlier version thinned is refused before any thinning, with `Over_Limit` and the sentence "with no earlier version kept": a refused change destroys no history. A thinning and its change are one commit, so a loss of power never keeps one without the other. The service writes a line for each thinning.
+
+Thinning is not a collection of garbage: it removes versions by a rule, and the reference count frees the blocks at once, with no walk.
+
+The design: `docs/ARCHITECTURE.md`, "U5. Storage service".
 
 Do not use: garbage collection, pruning, cleanup, compaction.
 
 ### Retention rule
 
-Which versions the storage service keeps: each version for 10 minutes, then one for each hour for one day, then one for each day.
+The retention rule is which versions the storage service keeps: each version for 10 minutes, then the newest of each hour until it is one day old, then the newest of each day.
+
+The rule keeps many versions of a recent state and few of an old one, with no setting. Its code is pure and has host tests (`support/storage_retention`). The hours and the days are counted from the format of the disk, so the buckets do not move from one application to the next, and a version that the rule keeps stays kept until it changes zone. The age of a version is the smaller of its age by the date and its age by the time since the format, so a wrong clock on one start never makes a version look older than it is.
+
+The retention rule is not a policy that a program sets: it is the same for each store. The limit of the store can still thin a version that the rule keeps.
+
+The design: `docs/ARCHITECTURE.md`, "U5. Storage service".
 
 Do not use: backup policy, history limit.
 
 ### Clone
 
-A new entry that names the object of another entry, with its list: the two share each block until one of them changes (`docs/PROPERTIES.md`, "A storage engine with one private store per program").
+A clone is a new entry that names the block tree of another object: the two share each block until one of them changes.
+
+A clone copies an object of any size in one commit that writes no block of data. `storage.clone(place, name, new_name)` makes `new_name` under the same place name the root of the block tree of `name`. A state of `new_name` before the clone becomes a version. After the clone, a change of either object writes new blocks on its own paths only.
+
+A clone is not a copy of the bytes, not a hard link (a change of one does not change the other), and not a reflink of a file system: it is the normal sharing of the block tree.
+
+The design: `docs/ARCHITECTURE.md`, "U5. Storage service".
 
 Do not use: copy (for this), hard link, reflink.
 
 ### Restore
 
-A commit that makes a version the current version again. The current version before it becomes a version: nothing is lost.
+A restore is a commit that makes a version of an object its current version again; the current version before it becomes a version, so nothing is lost.
+
+`storage.restore(place, name, generation)` writes no block of data: the entry names the root of the block tree of the version. The result is the generation of the commit. Because the state of before becomes a version, a restore can itself be undone by another restore.
+
+A restore is not a rollback of the store: it changes one object, and each other object keeps its current version.
+
+The design: `docs/ARCHITECTURE.md`, "U5. Storage service".
 
 Do not use: revert, rollback, undo.
 
 ### Time since the format
 
-The milliseconds of the storage service since the format of the disk: the root block keeps it at each commit. It is the time of a version until the system has a date.
+The time since the format is the milliseconds of the storage service since the format of the data disk: the root block keeps it at each commit.
+
+A version needs a time that never goes back, also when the machine has no date. The root block keeps the time since the format at each commit; at its start, the service takes it from the root and adds its own time since its start. Each entry and each version keeps it beside the date. The retention rule counts its hours and days from it, and takes the age of a version as the smaller of its age by the date and its age by the time since the format.
+
+The time since the format is not the time since the start of the machine, and not a date: it does not count the time when no machine ran.
+
+The design: `docs/ARCHITECTURE.md`, "U5. Storage service".
 
 Do not use: uptime, timestamp.
 
 ### Snapshot
 
-The tree that a store named at one commit. Not kept apart today: the versions are kept for each object (`docs/STORAGE.md`, section 1.3).
+A snapshot is the tree that a store named at one commit; the system does not keep it apart.
+
+The state of a store at a generation G is, for each object, its version with the highest generation at or below G. So the versions of each object hold each snapshot, with no structure of its own. In the model, the versions of a store will be the trees that it named; that history of a store is a later step.
+
+A snapshot is not a copy and not a backup.
+
+The design: `docs/STORAGE.md`, "1.3 Where the model does not hold as it was first stated".
 
 Do not use: checkpoint, backup.
 
 ### Private store
 
-The store of one program: the root service names it after the program, with a limit of blocks. No other program sees it, except through a share (`docs/PROPERTIES.md`, "No global, mutable, shared file system"; `docs/PROPERTIES.md`, "A storage engine with one private store per program").
+A private store is the store of one program: the root service names it after the program and gives it a limit of blocks, and no other program sees it.
+
+The private store replaces the shared file system: a program keeps its data where no other program can read or damage it. The root service gives a program with the grant `Store` a connection to the storage service whose store is named after the program: the name of the program for principal 0, `<program>.principal.<number>` for a named principal, so two principals that run one program have two stores. The limit of blocks counts the nodes, the object nodes, the blocks of data and the versions, so a program cannot fill the disk with versions. Examples: `notes` keeps its notes there; `server` keeps its web pages.
+
+Another program reaches a part of a private store only through a share. A program that acts for a principal (the console, `remote` for the host) can open a place on the stores of that principal with `open_store`.
+
+A private store is not a home folder of a user and not a container: it belongs to one program, and holds no file of another.
+
+The design: `docs/PROPERTIES.md`, "No global, mutable, shared file system", and `docs/STORAGE.md`, "4.2 No way up".
 
 Do not use: home directory, app data, container.
 
 ### Document
 
-An object that belongs to the person and not to one program. The document service grants it (`docs/PROPERTIES.md`, "No global, mutable, shared file system").
+A document is an object that belongs to the principal and not to one program, which a program reaches only through a grant of the document service.
+
+A document solves what the private store does not: data that several programs open, such as a text or a picture. In the design, the document service owns the documents, shows the picker where the principal chooses one, returns a handle to the program that asked, and records each grant so that it can be listed and revoked. The document service is not built: no program serves documents today.
+
+A document is not a file of a shared file system: a program cannot list or open the documents by itself.
+
+The design: `docs/ARCHITECTURE.md`, "U6. Document service", and `docs/PROPERTIES.md`, "No global, mutable, shared file system".
 
 Do not use: file, user file.
 
 ### Module store
 
-The set of all modules and system data, each identified by content hash (`docs/PROPERTIES.md`, "Reproducible system").
+The module store is the set of all modules and system data, each named by the hash of its content.
+
+In the model, the module store is the objects of the tree of the system: the root service loads each module, font and pointer theme by its hash, and an object can come by any channel because its hash proves it. It is not built: today the boot image is the one source of modules and resources, and modules are not in the storage service. The hash of a module is the BLAKE3 hash of its file, the same function that names an object.
+
+The module store is not a store of the storage service, and not a repository of packages with versions by name.
+
+The design: `docs/STORAGE.md`, "5. Not built: the next steps", and `docs/PROPERTIES.md`, "Reproducible system".
 
 Do not use: package store, repository, the Nix store.
 
 ### System description
 
-The list of hashes that defines one version of the whole system (`docs/PROPERTIES.md`, "Reproducible system"). Its file (`contract/system_description`) names the kernel and each module and resource of the boot image, with its kind, its size and its BLAKE3 hash, in the order of the boot image. The boot image holds it as the resource `system_description`.
+The system description is the list of hashes that defines one version of the whole system: the kernel, then each module and each resource of the boot image, with its kind, its size and its BLAKE3 hash.
+
+The system description makes the system reproducible and verifiable: two machines with the same description run the same bytes. Its file (`contract/system_description`) has a header of 16 bytes and one entry of 80 bytes for each part, in the order of the boot image, and no other byte. The signing key of the machine signs its hash (`docs/TRUSTED_BOOT.md`, "5. The signing key"). The boot program verifies the signature and each hash before it starts the kernel, and the root service checks the boot image against it again before it starts the first program. The boot image holds the description and its signature as its last two resources, which the description does not list, because a file cannot hold its own hash.
+
+The system description is not the boot image (which carries the bytes) and not a generation of the storage service. In the model it becomes the tree of the system, signed by its publisher.
+
+The design: `docs/TRUSTED_BOOT.md`, "3. The system description", and `docs/PROPERTIES.md`, "Reproducible system".
 
 Do not use: image, generation, manifest, profile, system list.
 
 ### Distinct result
 
-One content of one output of a build (a module, its LLVM IR, its object, the boot program) among the contents that several builds of the same source gave. One source must give one distinct result for each output (`docs/PROPERTIES.md`, "Reproducible system"). `kerneltool repeat` counts them, and `check` and `repeat` keep each one in `build/different_builds/`.
+A distinct result is one content of one output of a build (a module, its LLVM IR, its object, the boot program) among the contents that several builds of the same source gave.
+
+The identity of a module is the hash of its content, so a build must be deterministic: one source must give one distinct result for each output. `kerneltool check` builds everything a second time and compares; `kerneltool repeat` builds again and again with no machine. Each compares each output, not only the module: a difference in the LLVM IR or in the object is an early sign. When an output differs, each distinct result stays in `build/different_builds/<owner>/<file name>.variant_<n>`, and the tool prints where the first difference is.
+
+A distinct result is not a version of a module: it is a fault of the build to correct.
+
+The design: `docs/REPRODUCIBLE_BUILD.md`, "6. What is proved, and what is not", and `docs/PROPERTIES.md`, "Reproducible system".
 
 Do not use: variant (except in the names of the kept files), version.
 
 ### Storage service
 
-The service that owns the block device and keeps the stores, their trees, their objects and their versions (`docs/PROPERTIES.md`, "A storage engine with one private store per program"; `docs/STORAGE.md`).
+The storage service is the service that keeps the stores, their trees, their objects and their versions on the data disk, through the block service of that disk.
+
+The storage service is the one program that writes the data disk. Each other program reaches its own store through a connection that the root service gives, with a limit of blocks; each change is one commit, on the disk when the call returns. The service writes the format `STORAGE4` of `contract/store`, with copy on write and two places for the root block, so a stop of the machine never shows a part of a commit.
+
+At its start, it opens the disk: it reads both root blocks, takes the valid one with the highest generation, walks each node and each block tree once, checks each block, and counts the names of each block. Its line says what it found: "storage: ok, generation 1027: 3 stores, 4 objects, ...", or "storage: ok, a new disk: generation 1, 16384 blocks" on an empty disk. Its exports include `open`, `close`, `add`, `write`, `read`, `read_range`, `write_range`, `set_size`, `commit`, `list`, `rename`, `remove`, `share`, `unshare`, `usage`, `stores`, `open_store`, `versions`, `version`, `restore`, `clone` and `compare`.
+
+The storage service is not a file system: it has no paths, no mount, and no global tree of names that a program can walk.
+
+The design: `docs/STORAGE.md`, "4. The interface of the service", and `docs/ARCHITECTURE.md`, "U5. Storage service".
 
 Do not use: file system.
 
 ### Root block
 
-The block of the data disk that names the private stores. The disk has two places for it; the storage service takes the valid one with the highest generation.
+The root block is the block of the data disk that names each store, with the generation of the last commit; the disk has two places for it.
+
+The root block makes a commit atomic. A commit writes each new block to a free block, asks the disk to keep it (`Flush`), then writes the root block in the place of the older of the two roots. The root has its own check. At the start, the storage service takes the valid root with the highest generation: a root that a stop of the machine cut is not valid, and the root before it names blocks that no commit changed.
+
+The root block (`Root` of `contract/store`) holds the mark `STORAGE4`, the generation, the count of blocks of the disk, the time since the format, the date, and one store entry for each of up to 60 stores. Blocks 0 and 1 are its two places. Example of a log line: "storage: the newest root names a block with a wrong check, and the root before it names none: the root before it is used".
+
+The root block is not a superblock that a program can read: only the storage service and the kernel tool read it.
+
+The design: `docs/STORAGE.md`, "3.3 The commit and the open", and `contract/store`.
 
 Do not use: superblock, uberblock, meta page.
 
 ### Commit
 
-One change of the stores: the storage service writes new blocks, then a new root block. A commit is on the disk completely or not at all.
+A commit is one change of the stores that is on the disk completely or not at all: new blocks first, then a new root block.
+
+The commit is the unit of change and the unit of history: each commit that changes an object makes a version, and each commit has its own generation. Each export that changes something is one commit, on the disk when the call returns: `write`, `add`, `rename`, `remove`, `restore`, `clone`, and `commit` for pending changes. A commit plans its work in memory first (the blocks to write, the counts to change, the versions to thin); a refusal drops the plan and changes nothing.
+
+A commit has fixed capacities (the blocks whose names it changes, the blocks that it writes); a commit that needs more is refused with `Full`, unit `Commit_Blocks`, not with a full disk. Example: the export `commit` gives a row with the generation and the measure of the commit: the blocks changed, hashed and written, and the time.
+
+A commit is not a save that a program asks for, and not a transaction that holds several calls open.
+
+The design: `docs/STORAGE.md`, "3.3 The commit and the open".
 
 Do not use: transaction (for this), save, sync.
 
 ### Generation
 
-The number of a commit. Each commit has the generation of the one before plus 1. It counts the commits of the whole disk, of each store.
+A generation is the number of a commit: each commit has the generation of the commit before it plus 1, on the whole disk.
+
+The generation orders every state on the disk. The root block keeps it, so the start takes the root with the highest valid one. Each entry keeps the generation of its last change, and each version the generation of its commit; `version`, `restore` and `compare` name a version by its generation. Many exports give the generation of their commit as their result.
+
+A generation counts the commits of the whole disk, not of one store: a commit of another program, or of the line history of the console, takes a number too. So a test cannot predict an absolute generation; it reads a base of the generations.
+
+A generation is not a version of an object and not a time.
+
+The design: `docs/STORAGE.md`, "3.3 The commit and the open".
 
 Do not use: epoch, transaction id, version (for this).
 
 ### History store
 
-The store of the line history of the console in the storage service, apart from its private store: named after the console with `.history`, a limit of 4 blocks, and no grant to act for the principal. The root service gives the connection to it (`Root_Command.Connect_History`), with the grant `history`.
+The history store is the store of the line history of the console in the storage service, apart from its private store.
+
+The line history must survive a stop, but the console must not need the grant of its private store, or the grant to act for the principal, for it. So the root service gives the console a second connection (`Root_Command.Connect_History`, the grant `history`): its store is named after the console with `.history` (for example `console.history`), its limit is 4 blocks (`HISTORY_STORE_LIMIT`), and the connection does not act for the principal. One object of one block takes 3 blocks, and a change of it needs one more block in the commit that thins the version before: 4 is the least limit with which the history can change.
+
+The history store is not a file of a shell in a home folder: no other program reads it, and `revoke("console", "history")` ends it.
+
+The design: `docs/CONSOLE.md`, "6. The line history across a stop".
 
 Do not use: shell history file, profile directory.
 
 ### Base of the generations
 
-In a machine test, the generation of one commit that a step `Generation` reads from the log: the steps after it name the generations that they wait for as the base and a count (`{generation+4}`), because other commits (the line history) come before.
+The base of the generations is, in a machine test, the generation of one commit that a step `Generation` reads from the log, so that the steps after it name the generations that they wait for as the base and a count.
+
+A generation counts the commits of the whole disk, and the console commits its line history after each line: an absolute generation in a test changes with each line before it. So a step `Generation` waits for a line of the log and keeps the number in it; a later step names `{generation}` or `{generation+4}` in its text or its expected text. A step that names `{generation}` before any step `Generation` stops the test.
+
+The base of the generations is not an offset of a file: it is a number of the kernel tool, not of the system.
+
+The design: the step `Generation` of `tools/kerneltool/machine.odin`.
 
 Do not use: offset, delta.
 
 ### Damaged object
 
-An object with a block that a valid root block names and that does not have its check. The storage service does not give its bytes; a write or a remove replaces it. A private store with a node or a store block of that kind is a damaged store.
+A damaged object is an object whose state names a block with a wrong check under a valid root block: the storage service does not give its bytes.
+
+Damage is a change on the disk that the service did not make. The open of the disk checks each block that a root names. A wrong object node or a wrong block of data damages the state of the object that names it only: a read gives `Damaged`, and the other objects of the store are served. A write or a remove of the object replaces the damaged state; it is not kept as a version. A wrong node or a wrong store block damages its whole store: the service gives nothing of that store and changes nothing in it. Example of the line: "storage: 1 blocks have a wrong check: 1 objects and 0 stores are damaged; the service serves the others".
+
+A damaged object is not a bad sector: the device reported no error, and the check found the damage.
+
+The design: `docs/STORAGE.md`, "3.3 The commit and the open".
 
 Do not use: corrupt file, bad sector.
 
 ### Check
 
-The first 8 bytes of the BLAKE3 hash of a block, kept in the block that names it. A block that does not have its check is wrong, and the storage service does not use it.
+A check is 8 bytes of a hash of a block, kept in the pointer that names the block: a block that does not have its check is not used.
+
+The check finds each change of a block that the storage service did not make, and each block that a cut commit left. A pointer is a block number and a check. The check of a block of data is the first 8 bytes of its value; the check of each other block is the first 8 bytes of the BLAKE3 hash of its 4096 bytes. The root block has its own check, over the bytes before it. The open reads each block that a root names and compares its check.
+
+A check is not a checksum of the device, and not a CRC: it is a cryptographic hash, and it is kept in the block above, not in the block itself.
+
+The design: `docs/STORAGE.md`, "3.1 The blocks".
 
 Do not use: checksum, CRC, digest.
 
 ### Block tree
 
-The blocks of one state of an object: its blocks of data, the block n with its bytes from n × 4096, and the object nodes above them. A state of one block has its block of data as its root (`docs/STORAGE.md`, "Large objects")
+A block tree is the blocks of one state of an object: its blocks of data, where the block n holds the bytes from n × 4096, and the object nodes above them.
 
-Do not use: extent tree, block map, list of blocks
+The block tree makes a large object cheap to change: a commit of K changed blocks writes those K blocks and the object nodes on their paths, and names each other block of the state before. An object holds up to 4 TiB, five levels of object nodes of 64 children. The level of the root comes from the size: level 0 when the object has at most one block, and then the root is that block of data; else the least level whose node covers each block. A block of zero bytes is a hole and is not in the tree. An entry with each byte zero names no block at all.
+
+A program never sees the block tree: it reads and writes bytes and ranges. The entry of an object and each version name the root of a block tree; two states share the blocks that neither changed. Example: an object of 8 GiB written by three range writes holds 13 blocks.
+
+A block tree is not an extent tree: it names each block of data by its place, with no runs of blocks.
+
+The design: `docs/STORAGE.md`, "The block tree".
+
+Do not use: extent tree, block map, list of blocks.
 
 ### Object node
 
-One block of a block tree above the blocks of data: 64 children, each an object node of the level below, a block of data, or a hole, with the check, the count of blocks and the value of each
+An object node is one block of a block tree above the blocks of data: 64 children, each an object node of the level below, a block of data, or a hole.
 
-Do not use: indirect block, extent node, node (for this: a node is of a tree)
+Each child holds its block number, its check, the count of blocks under it (itself included), and its value. 64 is a power of two, so an object node covers a whole subtree of the BLAKE3 tree of the bytes, and its value is the parent of the values of its children. An object node starts with the mark "BLOB". A child whose blocks start at or past the size is a hole, and a node with no child is a hole too. The open checks an object node by its check, by the rules of its format, and by the counts and the values of its children.
+
+An object node is not a node: a node is a block of the B+ tree of a tree, and holds entries. It is not an indirect block of a file system either: it carries the value of each child, so the hash of the object comes from the nodes.
+
+The design: `docs/STORAGE.md`, "The block tree".
+
+Do not use: indirect block, extent node, node (for this: a node is of a tree).
 
 ### Hole
 
-A part of an object whose bytes are all zero: nothing names it, it costs no block, and it reads as zero bytes. The storage service never writes a block of zero bytes: a write that leaves one makes a hole
+A hole is a part of an object whose bytes are all zero: nothing names it, it costs no block, and it reads as zero bytes.
 
-Do not use: sparse region, gap, zero block (for this)
+Holes let an object have a large size and few blocks. The service never writes a block of zero bytes: a write that leaves one makes a hole, so the blocks of a state come from its bytes alone, and the open takes a block of data of zero bytes for damage. A hole has the value zero, and two halves of value zero give zero, so a hole costs nothing in the hash of the object either. A hole counts no block in the limit of the store. Example: `read_range` across a hole gives zero bytes; an object of 8 GiB with three blocks of data counts 13 blocks.
+
+A hole is not a reserved area: a write in a hole takes new blocks at its commit.
+
+The design: `docs/STORAGE.md`, "The block tree".
+
+Do not use: sparse region, gap, zero block (for this).
 
 ### Value
 
-The BLAKE3 chaining value of a part of an object, as a subtree of the BLAKE3 tree of its bytes, with zero bytes past its size; zero for a hole. The value of a block of data is its check; an object node holds the value of each child (`docs/STORAGE.md`, "The hash of an object")
+A value is the BLAKE3 chaining value of a part of an object, as a subtree of the BLAKE3 tree of its bytes, with zero bytes past its size; a hole has the value zero.
 
-Do not use: digest, checksum, fingerprint
+Values let the storage service compute the hash of an object from the blocks that a commit changed, not from the whole object. The value of a block of data is the chaining value of its 4 chunks of 1 KiB at its place in the object: its first 8 bytes are the check of the block. The value of an object node is the parent of the values of its children, two by two, and each object node keeps the value of each child. A value is 32 bytes (`Block_Value` of `contract/store`).
+
+A value is not a hash of a block alone: BLAKE3 puts the place of each chunk in its compression, so the same bytes at two places have two values.
+
+The design: `docs/STORAGE.md`, "The block tree", and `docs/STORAGE.md`, "The hash of an object".
+
+Do not use: digest, checksum, fingerprint.
 
 ### Hash of an object
 
-The name of an object: the BLAKE3 hash of its bytes, but a hole before its last block counts with the value zero. It comes from the values on the path of the last block, so a commit never hashes the whole object
+The hash of an object is its name: the BLAKE3 hash of its bytes, except that a hole before its last block counts with the value zero.
 
-Do not use: content id, checksum (for this)
+The hash comes from the values on the path of the last block and the bytes of the last block, so a commit never hashes the whole object: at most 64 parent compressions for each level, and the bytes of the last block. For an object of at most 4096 bytes, or with no hole before its last block, the hash is exactly the BLAKE3 hash of its bytes; the host tests compute the official vectors of BLAKE3 through the block tree. With a hole before the last block, the hash differs from the BLAKE3 hash of the bytes. It is still a function of the bytes alone, because a block of zero bytes is always a hole. The entry of the object keeps it.
+
+The hash of an object is not always the hash of a module: a module file with an aligned block of 4096 zero bytes before its last block has another hash as an object. Which of the two names a module in the store is not decided.
+
+The design: `docs/STORAGE.md`, "The hash of an object".
+
+Do not use: content id, checksum (for this).
 
 ### Range
 
-A count of bytes from an offset of an object. `read_range` reads one; `write_range` changes one as a pending change
+A range is a count of bytes from an offset of an object.
 
-Do not use: extent (for this), segment, slice (for this)
+Ranges let a program read and change a part of a large object with no copy of the rest. `storage.read_range(place, name, offset, result)` reads the bytes from `offset` up to the end or the room of the result, with the pending changes of the connection; a hole reads as zero bytes. `storage.write_range(place, name, offset, data)` changes one range as a pending change; `storage.set_size` changes the size the same way. `storage.compare` gives the ranges that differ between two states. The data of one call is at most the call region, 64 KiB. Example: the program `ranges` makes 1000 writes of 16 bytes at scrambled places of an object of 8 GiB, then one commit.
+
+A range is not an extent of the disk: it is a part of the bytes of an object, and says nothing of its blocks.
+
+The design: `docs/STORAGE.md`, "Ranges".
+
+Do not use: extent (for this), segment, slice (for this).
 
 ### Pending change
 
-A range write or a change of size that the storage service keeps for one connection until its commit: not on the disk, not hashed. Another change of the object first drops it; a loss of power loses it, and nothing else (`docs/STORAGE.md`, "Ranges")
+A pending change is a range write or a change of size that the storage service keeps for one connection until its commit: not on the disk, and not hashed.
 
-Do not use: dirty page, write buffer, uncommitted write, transaction (for this)
+Pending changes group many small writes into one commit, which is one version. The service keeps a copy of each changed block as the connection sees it. A read of the connection sees its pending changes; another connection sees the last commit. `storage.commit(place, name)` makes the pending changes of the connection on the object one commit. The pending changes of all the connections hold at most 1024 blocks (4 MiB) and 16 objects; a range write past that is refused with `Full`, unit `Pending`, and the caller commits first.
 
+Another change of the object before the commit (a write, a restore, a remove, a rename, or a commit of another connection) comes first: the commit is then refused with `Absent`, unit `Pending`, and the pending changes are dropped. A loss of power loses the pending changes and nothing else. The end of a connection drops them.
+
+A pending change is not a dirty page of a cache that the system writes later by itself: only a commit of the program writes it.
+
+The design: `docs/STORAGE.md`, "Ranges".
+
+Do not use: dirty page, write buffer, uncommitted write, transaction (for this).
 
 ## Desktop
 
 ### Surface
 
-A region of shared memory that one program draws into and the compositor displays (`docs/PROPERTIES.md`, "One graphics interface: WebGPU with WGSL").
+A surface is a memory object that one program draws into and the compositor shows as the content of a window.
+
+A surface keeps the pixels out of the kernel and out of the rings: the program writes pixels in its own memory, and the compositor reads the same memory. No pixel goes through a ring or through the kernel.
+
+A program opens a surface with `display.open(ctx, width, height, title, two_pictures)`. This needs the grant of the display, a ring to the compositor in its context; without it the call fails with `No_Grant`. A width or a height is 1 to 2048 pixels (`SURFACE_LIMIT`). The call makes a memory object for one picture or two, maps it, gives the compositor a handle with **Read** only through the ring, and sends `Surface_Create`. Then the program draws a picture and sends `Present` with the rectangle that changed. The compositor sends the input of the window back as completion records of the same ring: keys, pointer events, and `Settings_Changed`.
+
+A surface is not a framebuffer: the framebuffer is the memory of the screen that the firmware gave, and only the compositor writes it. A program cannot write another program's surface or the screen.
+
+The design: `docs/DESIGN.md`, "3. Surfaces", and `docs/ARCHITECTURE.md`, "U8. Graphics: WebGPU library and compositor".
 
 Do not use: window buffer, framebuffer (reserved for the UEFI one).
 
 ### Picture
 
-One complete image in the memory of a surface. A surface has one picture or two. With two, the program draws one while the compositor reads the other.
+A picture is one complete image in the memory of a surface; a surface has one picture or two.
+
+With one picture, the compositor can read the picture while the program draws, and the screen can show a part of the new image with a part of the old one. With two pictures, the program draws one while the compositor reads the other, and `Present` names the picture that is complete; the next frame draws in the other one. A program asks for two pictures with the argument `two_pictures` of `display.open`. The interface package keeps one draw table for each picture, because the picture that a frame draws holds the frame of two frames before.
+
+A picture is not a picture resource or a picture record: a picture record shows pixels of a picture that the program holds in its own memory, inside its surface.
+
+The design: `support/display`, and `docs/INTERFACE.md`, "2.2 Damage by difference".
 
 Do not use: back buffer, front buffer, swap chain.
 
 ### Compositor
 
-The service that owns the display, combines surfaces and routes input to the program with focus. In the first milestone it is also the desktop shell.
+The compositor is the service that owns the display: it combines the surfaces of the programs into the framebuffer and routes the input to the program that has the focus.
+
+The compositor is the one program that writes the screen. The root service gives it the framebuffer, a ring to the input service, and a ring to each program with a surface (`Client_Add`). It draws the background, the bar, each window (a title bar over the surface of its program, with a border), the two menus of the bar, the launcher and the pointer. It draws again only the damage rectangles of a frame. It sends each key to the program in front, and each pointer event over a surface to the program of that surface, in the coordinates of the surface.
+
+In the first version, it is also the desktop shell: it starts a program from its menus or the launcher by the command `Start` to the root service, and it stops a program when its window closes. It serves exports, such as `compositor.pointer()`, which the machine tests read through the remote service.
+
+The compositor is not a window manager that another program can replace, and not a display server with a protocol of drawing: a program gives it pixels, never commands to draw.
+
+The design: `docs/ARCHITECTURE.md`, "U8. Graphics: WebGPU library and compositor", and `docs/DESIGN.md`, "9. The desktop".
 
 Do not use: window manager, display server.
 
 ### Damage rectangle
 
-A rectangle of the screen that changed. The compositor draws again only the damage rectangles of a frame.
+A damage rectangle is a rectangle of the screen or of a surface that changed and that the next frame draws again.
+
+To draw only what changed costs much less than to draw the whole screen. The compositor keeps up to 8 damage rectangles (`DAMAGE_CAPACITY`): a rectangle that touches another joins it, and with no room left a new rectangle joins the first one. A program sends the rectangle that changed in its picture with `display.present_rectangle`, and the compositor draws again only that part of the window. The interface package finds the damage rectangles of a window itself, by damage by difference.
+
+A damage rectangle is never too small: if a rule cannot say what changed, the damage is larger, and only the time grows.
+
+The design: `docs/INTERFACE.md`, "2.2 Damage by difference".
 
 Do not use: dirty region, invalid area.
 
 ### Boot display
 
-The picture of how the machine started, drawn from the boot record and the other records of the kernel. The boot program and the root service draw it on the screen; the program `boot` draws it in a window.
+The boot display is the picture of how the machine started, drawn from the boot record and the other records of the kernel.
+
+The boot display shows each stage of the start and its time, the memory that the firmware gave, the firmware, the framebuffer, the processors, the programs and the modules of the boot image. Three programs draw it with one package, `support/bootscreen`: the boot program before the kernel exists; the root service while it starts the first programs, so that a failure of the start stays on the screen with its cause; and the program `boot`, in a window at any time. A record that is all zero is valid: its card shows that the fact is not known yet.
+
+The boot display is not a splash screen and not a log of text: it is made of cards with measures, and it follows the design rules.
+
+The design: `docs/DESIGN.md`, "12. The card of the boot image", and `docs/ARCHITECTURE.md`, "U1. Boot program".
 
 Do not use: splash screen, boot log, POST screen.
 
 ### Console
 
-A normal program that calls commands in a real programming language (`docs/PROPERTIES.md`, "A command is a function: no text between programs"). It has a terminal and no surface: it writes text records, and reads key records.
+The console is a normal program that calls commands, functions with typed parameters and a typed result, in a small programming language.
+
+The console replaces the shell: a command is an export of a module, not a program that parses text, so its arguments and its result are typed values. The console has a terminal and no surface: it writes text records to the terminal ring, and reads key records from it. It owns the edit line, the line history, and the completion list; the terminal draws them. It has two threads: one reads the keys, the other runs the lines, so the input can type during a line and Escape stops an isolated call. Examples: `grants("notes")` shows the grants of a program; `load("calendar")` loads a module into the console and calls its exports directly; `isolate("calendar")` starts it as its own program.
+
+The console acts for the principal of its session. It is not a TTY and not a shell: it starts no program by a path, passes no text between programs, and has no pipe.
+
+The design: `docs/CONSOLE.md`, "1. The keys", and `docs/PROPERTIES.md`, "A command is a function: no text between programs".
 
 Do not use: TTY, shell.
 
 ### Desktop shell
 
-The program that starts programs and shows surfaces and grants to the person.
+The desktop shell is the program that starts programs and shows their windows to the principal.
+
+In the first version, the compositor is the desktop shell: its bar has the menu of the programs and the menu of the windows, the launcher starts a program by a key, and the close button of a window stops its program. The compositor starts a program by the command `Start` to the root service, with the name of the program, and has no other power: the root service decides the grants of the program. The design also gives the desktop shell the list of the grants of each program; today the console shows them, with `grants`.
+
+The desktop shell is not a window manager with rules of placement: the compositor places new windows at fixed steps on the grid.
+
+The design: `docs/ARCHITECTURE.md`, "U10. Desktop shell".
 
 Do not use: window manager.
 
 ### Focus
 
-The state of the window in front: its program receives the keys, and the pointer events over its surface. Its title bar is blue.
+The focus is the state of the window in front: its program receives the keys, and its title bar shows it in blue.
+
+The focus decides where each key goes. A press on a window brings it to the front and gives it the focus; a line of the menu of the windows does the same. The compositor sends the keys only to the program that has the focus, and sends a pointer event to the program of the surface under the pointer. While the launcher is open, no program receives a key or a pointer event. The key super never reaches a program: the compositor keeps it.
+
+Inside a window, the interface package has a focus of its own: the element that takes the keys, which Tab and Shift+Tab move. The two are different: the focus of the compositor chooses a window, the focus of the interface state chooses an element in it.
+
+The focus is not an active window that a program can take: no program can give itself the focus.
+
+The design: `docs/DESIGN.md`, "Windows", and `docs/INTERFACE.md`, "4. Input and focus".
 
 Do not use: active window, keyboard owner.
 
 ### Title bar
 
-The top part of the frame of a window: the title and the close button. The title bar of the window that has the focus goes from blue to a darker blue toward the right; the others are quiet (`docs/DESIGN.md`, section 9).
+The title bar is the top part of the frame of a window, 24 pixels high: the title and the close button.
+
+The title bar says which window has the focus. The title bar of the window that has the focus goes from the blue `0x3F7CC4` at its left to a darker blue at its right, and its title is white. The title bar of another window is quiet: a dark grey gradient and a dim title. The close button is a square of 24 pixels at its right end, with the character `x` in a deep red, the color of the concept "stop a program"; a press on it stops the program of the window. A press on the title bar and a move drag the window, and the pointer shape over it is `move`.
+
+The title bar is drawn by the compositor, not by the program: a program cannot draw its own title bar or hide the close button.
+
+The design: `docs/DESIGN.md`, "Windows".
 
 Do not use: header, caption, decoration.
 
 ### Bar
 
-The line at the top of the screen that the compositor draws: the mark of the system, the buttons of the two menus, the key of the launcher, the time since the start. `support/bar` holds its places and the table of the names of the programs.
+The bar is the line at the top of the screen that the compositor draws: the mark of the system, the buttons of the two menus, the key of the launcher, and the time since the start.
+
+The bar is the fixed place of the desktop where the input starts a program or finds a window. It is 32 pixels high. From the left: the mark of the system, the button `programs`, the button `windows`; at the right, "launcher: super" and the time since the start of the machine. A press on a button opens its menu under it. `support/bar` holds the places of the buttons and of each line of the menus, and the table of the names of the programs, `bar.names`: the compositor draws from it, and the kernel tool presses the same places in the machine tests.
+
+The bar is not a task bar with an icon for each program, and not a dock: it holds two menus and no state of a program.
+
+The design: `docs/DESIGN.md`, "Background and bar".
 
 Do not use: task bar, panel, dock.
 
 ### Bar layout
 
-The widths of the texts of the bar (`programs`, `windows`, the widest name), measured in the font that draws them; the place of each button and of each line of a menu comes from it (`bar.Layout`). The compositor writes in its log which font it is, and the kernel tool measures the same layout from the same cache.
+The bar layout is the widths of the texts of the bar, measured in the font that draws them, from which come the place of each button and of each line of a menu.
+
+The names of the bar are in the interface font, which has proportional widths. If the places came from a fixed width, a press can land beside the entry that the eye sees. So the compositor measures `bar.Layout` (the width of `programs`, of `windows`, and of the widest name) once, and again when the font changes. It writes which font it used in its log, such as "compositor: the bar is in the interface font: programs ... pixels, windows ..., the widest name ...", or "compositor: the bar is in the font of the cells". The kernel tool measures the same layout from the same glyph cache, so it presses the right places.
+
+The bar layout is not a set of constants: it depends on the font in use.
+
+The design: `support/bar`, and `docs/DESIGN.md`, "Background and bar".
 
 Do not use: bar geometry, bar metrics.
 
 ### Menu of the programs
 
-The menu of the bar with one line for each name of the table `bar.names`. A press on a line starts the program.
+The menu of the programs is the menu of the bar with one line for each name of the table `bar.names`: a press on a line starts that program.
+
+The menu is the way of the pointer to start a program. It is a card under the button `programs`, in two columns, with the caption `bar.names` and the count of its lines. The line under the pointer is a chosen row. A press sends `Start` with the name to the root service, which decides the grants of the program.
+
+The menu of the programs is not the launcher: the launcher lists the same names but is opened by a key and narrows as the input types. It is not a start menu with folders: it has one flat table.
+
+The design: `docs/DESIGN.md`, "Menus".
 
 Do not use: launcher, start menu.
 
 ### Menu of the windows
 
-The menu of the bar with one line for each window. A press on a line brings the window to the front and gives it the focus.
+The menu of the windows is the menu of the bar with one line for each window: a press on a line brings the window to the front and gives it the focus.
+
+The menu lists the windows in the order of the client table of the compositor. The window that has the focus has a square of 8 pixels before its title, and its title is white. The menu lets the input reach a window that other windows cover. It does not move a window: a window that a drag put far away comes back by a drag of its title bar, which the compositor always keeps on the screen.
+
+The menu of the windows is not a task switcher with pictures of the windows, and not a task bar.
+
+The design: `docs/DESIGN.md`, "Menus".
 
 Do not use: task bar, window list, switcher.
 
 ### Launcher
 
-The panel in the middle of the screen that the key super opens. The person types a part of a name, and the list has the names of `bar.names` that contain it, the names that start with it first. Enter starts the chosen program, as the menu of the programs does.
+The launcher is the panel in the middle of the screen that the key super opens, where the input types a part of a name and starts the chosen program.
+
+The launcher is the way of the keyboard to start a program. While it is open it takes each key: a character adds to the typed part, Backspace removes the last one, up and down move the choice, Enter starts the chosen program, Escape closes it. The list has the names of `bar.names` that contain the typed part, without the case of the letters: the names that start with it first, then the others, 10 lines at once, and the count "6 of 31". With no match, the list says `no program has "xyz" in its name`. Enter sends `Start` to the root service, as the menu of the programs does; the launcher has no other power.
+
+The launcher is not a run dialog: it starts only the names of the table, never a path or a command line. It is not the menu of the programs, which the pointer opens from the bar.
+
+The design: `docs/DESIGN.md`, "Launcher".
 
 Do not use: run dialog, command palette, menu of the programs.
 
 ### Interface package
 
-`support/interface`: the code that builds the window of a program as a draw table each frame, lays it out on the grid, takes the pointer and the keys, finds the damage and draws (`docs/INTERFACE.md`).
+The interface package is `support/interface`: the code that builds the window of a program as a draw table at each frame, lays it out on the grid, takes the pointer and the keys, finds the damage, and draws.
+
+The interface package gives each program one way to draw its window by the design rules, with no retained tree of widgets. It works in immediate mode: at each frame, the program calls an element procedure for each part of its window (`card`, `label_value_line`, `button`, `list_with_choice`, `text_input`). Each call appends draw records to the draw table and gives back what the input did to that element: pressed, has the focus, changed. Then `damage_by_difference` finds what changed, and `execute_in_rectangles` draws it.
+
+The package allocates nothing: the program gives the draw tables, the text tables and the interface state. An error is a value: a full table keeps the flag `full`, and the next frame of that picture is drawn whole. Its core makes no kernel call. Example: the programs `disk`, `inspect` and `monitor`, and the launcher of the compositor, are drawn with it.
+
+The interface package is not a toolkit with objects, callbacks and a tree; its state is the state of the program.
+
+The design: `docs/INTERFACE.md`, "2. The model: an immediate pass over flat tables".
 
 Do not use: toolkit, widget library, UI framework.
 
 ### Draw record
 
-One thing to draw, 40 bytes: a rectangle, a gradient, a run of text or a clip, with its place and its colors (`docs/INTERFACE.md`, section 2.1).
+A draw record is one thing to draw, in 40 bytes: a rectangle, a gradient, a run of text, a clip, a picture, a text grid or a line, with its place and its colors.
+
+Records of one fixed size make the output of a frame plain data: a table that can be compared, measured, drawn again in a part, or tested. A record holds its kind, the rectangle in pixels of the surface, two colors, a range of bytes in the text table (or an index of a picture or of a grid), and the low 32 bits of the element identity that wrote it. A `Clip` sets the rectangle that the next records are cut to, with no stack. The format has a version, `DRAW_RECORD_VERSION` (7 today); a new kind or field is a new version. The execution checks each record of a hostile caller: a range outside the text table, or a value past its limit, draws nothing.
+
+A draw record is not a command to a graphics processor: the interface package executes it on the processor, in the memory of the program.
+
+The design: `docs/INTERFACE.md`, "2.1 Draw record (format version 7)".
 
 Do not use: draw command, display list item, primitive.
 
 ### Draw table
 
-The draw records of one frame of a window, and the bytes of their texts, in the memory of the program.
+A draw table is the draw records of one frame of a window, the bytes of their texts, and the pictures and text grids that they name, in the memory of the program.
+
+The draw table is what a frame produces. The program owns it (`Draw_Table` of `support/interface`) and keeps the table of the frame before, one for each picture of its surface, so that the next frame can find the damage by difference. A table that is full stops taking records and sets `full`; a record that names a picture or a grid that the table does not have sets `refused`. Example: `interface_elements` draws a window of 68 records.
+
+A draw table is not a tree: its order is the order of the drawing, and two tables compare record by record at the same index.
+
+The design: `docs/INTERFACE.md`, "2.1 Draw record (format version 7)".
 
 Do not use: display list, command buffer, render tree.
 
 ### Text grid
 
-A grid of text cells of a program (a character, reverse, a color), drawn by one draw record; the difference compares its cells and damages only the rows spans that changed (`docs/INTERFACE.md`, section 2.4).
+A text grid is a grid of text cells of a program (a character, reverse, a color, or a fill), drawn by one draw record.
+
+A terminal changes many cells many times in one second. One record for each cell makes a large table; one text grid record names the whole grid, up to 104 by 32 cells for the terminal. Its 40 bytes do not change when its cells change, so the difference compares the cells: in each row, the span from the first changed cell to the last one is damaged. Each draw table keeps its own copy of the cells that its picture shows. The execution draws the cells of one color that follow each other as one text. The console draws no pixels: its records go into the terminal, so the text grid of the terminal is also the drawing of the console.
+
+A text grid is not a screen buffer of a text mode: it is memory of the program, drawn into its surface.
+
+The design: `docs/INTERFACE.md`, "2.4 Text grid".
 
 Do not use: character matrix, screen buffer.
 
 ### Picture record
 
-A draw record that shows the pixels of a picture of the program, with a generation that changes when the pixels change.
+A picture record is a draw record that shows the pixels of a picture of the program, with a generation that changes when the pixels change.
+
+A program that computes its own pixels, such as `life`, `paint`, `plasma` or `temple`, puts its image in a draw table as one record. The record names the index of the picture in the pictures of the draw table and its generation. The program raises the generation when its pixels change; with the same generation the record compares equal and damages nothing. The compositor draws the surface of each window as a picture record too.
+
+A picture record is not a picture of a surface: it shows a canvas that the program holds, inside its surface.
+
+The design: `docs/INTERFACE.md`, "2.1 Draw record (format version 7)".
 
 Do not use: image node, bitmap item.
 
 ### Line record
 
-A draw record of a straight line between two points, with a thickness and a color; a line and its reverse are one record (`docs/INTERFACE.md`, section 2.5).
+A line record is a draw record of a straight line between two points, with a thickness of 1 to 32 pixels and one color.
+
+A line record draws the lines at an angle that the design rules allow, sparingly: a folded gap, a chart. `draw_line(table, from_x, from_y, to_x, to_y, thickness, color)` writes it, the left end first, so a line and its reverse are one record and draw the same pixels. The pixels follow the line of Bresenham with a square of the thickness at each point, so the execution in a damage rectangle draws the same pixels as a whole frame. Its damage is the rectangle that holds the whole path. A thickness of 0 or less, or an end past 32768 pixels, gives no record.
+
+A line record has no rounded ends, no antialiasing and no dashes. It is not a path with curves.
+
+The design: `docs/INTERFACE.md`, "2.5 Line".
 
 Do not use: stroke, path, polyline.
 
 ### Element
 
-A part of a window that one call of the interface package draws: a card, a line of a label and a value, a bar, a table, a button, a list with a choice, a text input.
+An element is a part of a window that one call of the interface package draws: a card, a line of a label and a value, a bar, a table, a button, a list with a choice, or a text input.
+
+An element is a call, not an object: the program calls it at each frame with its area and its data, and gets back an `Element_Result` (pressed, has the focus, changed). An element that takes input also takes an element identity, so the interface state can follow it from one frame to the next. Example: `button(frame, area, identity("start"), "start")` draws a button and says if the input pressed it in this frame.
+
+An element is not a widget: it does not live between frames, has no callback, and holds no copy of the data of the program.
+
+The design: `docs/INTERFACE.md`, "2. The model: an immediate pass over flat tables", and `docs/DESIGN.md`, "10. Elements".
 
 Do not use: widget, control, component, view.
 
 ### Element identity
 
-A number that names one element from one frame to the next, made from a text: the focus and the pointer state follow it.
+An element identity is a number that names one element from one frame to the next, made from a text: the focus and the state of the pointer follow it.
+
+In immediate mode no object lives between frames, so the interface state needs a stable name for each element that takes input. `identity("launcher list")` gives the 64-bit FNV-1a hash of the text. Two elements with one text have one identity; `identity_with(base, row)` and `identity_in(parent, name)` make them two, and `Frame.identity_collisions` counts the elements of a frame that repeat an identity. Each draw record keeps the low 32 bits of the identity that wrote it, so a tool can say which element changed.
+
+An element identity is not a handle: it names nothing in the kernel and gives no access.
+
+The design: `docs/INTERFACE.md`, "4. Input and focus".
 
 Do not use: id, key, handle (reserved for the kernel).
 
 ### Interface state
 
-What the interface package keeps between frames, in the memory of the program: the element with the focus, the element under the pointer, the pressed element, the order of the focus.
+The interface state is what the interface package keeps between frames, in the memory of the program: the element with the focus, the element under the pointer, the pressed element, and the order of the focus.
+
+The interface state is the only state of the package, about 2 KiB, and the program owns it. With it, a press and a release on one element press that element, and Tab and Shift+Tab move the focus in the order of the elements of the last frame. The order holds 64 elements (`FOCUS_ORDER_CAPACITY`); an element after them takes a press but not Tab, and `Frame.focus_overflow` counts them.
+
+The interface state is not a retained tree of the window: it holds element identities only, and no copy of the data that the window shows.
+
+The design: `docs/INTERFACE.md`, "4. Input and focus".
 
 Do not use: UI context, retained state.
 
 ### Damage by difference
 
-The damage rectangles that the interface package finds by a comparison of the draw table of this frame with the draw table of the frame before.
+Damage by difference is the damage rectangles that the interface package finds by a comparison of the draw table of this frame with the draw table of the frame before.
+
+Immediate mode has no tree whose nodes know what changed. The difference gives that back: `damage_by_difference` compares the two tables record by record at the same index. Two equal records (the same 40 bytes and the same bytes of text) damage nothing; two different records damage the old rectangle and the new one; the records after the end of the shorter table are damaged. The program never tracks damage by hand. A record added in the middle moves the records after it, so the damage is too large, never too small. Example of a measure of `interface_elements`: on 68 records, the difference takes about 1 us.
+
+Damage by difference is not an invalidation that a program calls: no call says what changed.
+
+The design: `docs/INTERFACE.md`, "2.2 Damage by difference".
 
 Do not use: dirty tracking, invalidation.
 
 ### Pointer
 
-The mark on the screen that the pointing device moves. Its place is a point of the screen: a press acts there. The compositor draws it with the pointer picture of the pointer shape that it chose. Not the caret.
+The pointer is the mark on the screen that the pointing device moves: a press acts at its place.
+
+The compositor draws the pointer last, with the pointer picture of the pointer shape that it chose for the place, and puts the hot spot of the picture at the place of the pointer. It sends each pointer event to the program of the surface under the pointer, in the coordinates of the surface. In a machine test, `compositor.pointer()` gives the place and the shape of the pointer, so the kernel tool can confirm a place before a press.
+
+The pointer is not the caret, which marks a place in a text. The system does not use the word "cursor" for either one.
+
+The design: `docs/DESIGN.md`, "Pointer", and `docs/POINTERS.md`.
 
 Do not use: cursor, mouse cursor, mouse pointer.
 
 ### Pointer shape
 
-What the pointer shows, as one name of the system (`pointer_pictures.Pointer_Shape`): `arrow`, `text`, `move`, `wait`, ... The compositor chooses it from what is under the pointer; a program asks for one over its own surface (`docs/POINTERS.md`).
+A pointer shape is what the pointer shows, as one name of the system: `arrow`, `text`, `pointing_hand`, `move`, `wait`, and ten more.
+
+One list of names lets any theme serve each program: a program asks for a name, and the theme gives the pictures. The 15 shapes are `Pointer_Shape` of `contract/pointer_pictures`; zero is `arrow`, so a zero record asks for the default. The compositor chooses the shape from what is under the pointer: `move` over a title bar, `pointing_hand` over a button, `text` over the input line of the launcher. A program asks for a shape over its own surface with `display.pointer_shape_set`; the compositor shows it only while the pointer is over that surface and that surface is in front there, so a program cannot change the pointer over another program, the bar or a frame. A number outside the list is ignored.
+
+A pointer shape is not a file name of a theme: the manifest of a theme maps each shape to its sources.
+
+The design: `docs/POINTERS.md`, "The pointer shapes".
 
 Do not use: cursor type, cursor name, cursor kind.
 
 ### Pointer picture
 
-One image of one pointer shape at one nominal size, for one frame of an animation: its width, height, hot spot, delay and pixels with premultiplied alpha.
+A pointer picture is one image of one pointer shape at one nominal size, for one frame of an animation: its width, height, hot spot, delay and pixels with premultiplied alpha.
+
+A pointer theme file holds the pictures of each shape: the frames of the smallest size, then of the next. A picture is 1 to 256 pixels wide and high, and its hot spot is inside it. An animated shape has 1 to 256 frames with a delay of 1 to 60000 ms each; `wait` in the theme of the system has 4 frames of 250 ms. The compositor blends the picture over the screen with premultiplied alpha.
+
+A pointer picture is the one picture of the desktop that is not made of rectangles: the pictures of the Posy theme have smooth edges and transparency.
+
+The design: `docs/POINTERS.md`, "3. The format of the system: one pointer theme file".
 
 Do not use: cursor image, sprite, icon.
 
 ### Hot spot
 
-The pixel of a pointer picture that the compositor puts at the place of the pointer.
+The hot spot is the pixel of a pointer picture that the compositor puts at the place of the pointer.
+
+A press acts at the place of the pointer, so the hot spot is the pixel that "points": the top left square of the arrow, the centre of a crosshair. Each pointer picture has its own hot spot, inside its width and its height. A manifest gives it with `hot` in pixels of the smallest size, or in squares for a grid; the tool multiplies it for the other sizes.
+
+The hot spot is not the top left corner of the picture, except for the arrow.
+
+The design: `docs/POINTERS.md`, "3. The format of the system: one pointer theme file".
 
 Do not use: click point, hotspot, anchor.
 
 ### Nominal size
 
-The size in pixels that a theme gives to a pointer picture, to choose among its sizes. The width and the height of the picture can differ from it.
+A nominal size is the size in pixels that a theme gives to a pointer picture, to choose among its sizes.
+
+A theme has 1 to 8 sizes for each shape, in increasing order: the theme of the system has 24 and 48, the Posy theme 32 and 64. The frames of one size share one nominal size. The width and the height of a picture can differ from its nominal size.
+
+A nominal size is not the width of a picture, and not a scale of the screen.
+
+The design: `docs/POINTERS.md`, "3. The format of the system: one pointer theme file".
 
 Do not use: cursor size.
 
 ### Pointer theme
 
-The pointer pictures of each pointer shape, with a name, a license and an attribution. The system has its own theme in the repository; the theme Posy's Cursor comes from a build input.
+A pointer theme is the pointer pictures of each pointer shape, with a name, a license and an attribution.
+
+The system has two themes:
+
+- the theme of the system (`resources/pointers/system.manifest`): the 15 shapes as grids of squares of 2 pixels, in the style of the arrow of the design rules. It is always in the boot image, as the resource `pointers_system`.
+- the Posy theme, "Posy's Cursor", from the build input `posy-cursors`: the tool converts it at each build into the resource `pointers_posy`. No file of it is in the repository.
+
+The Posy theme is the default when the build has its input; the theme of the system is the fallback. The setting `pointer_theme` chooses one of them.
+
+A pointer theme is not an icon theme: it holds the pictures of the pointer only.
+
+The design: `docs/POINTERS.md`, "5. The two themes".
 
 Do not use: cursor theme, icon theme.
 
 ### Pointer theme file
 
-One pointer theme in the format of the system (`contract/pointer_pictures`): a header, a table of shapes, a table of pictures, the pixels. A program maps it and reads it with no parse, after one validation.
+A pointer theme file is one pointer theme in the format of the system: a header, a table of shapes, a table of pictures, then the pixels.
+
+One file for a whole theme lets a program map it read-only and read it in place, with no parse at run time. The format is `contract/pointer_pictures`: a header of 512 bytes (the mark "POINTERS", the version, the counts, the name, the license, the attribution), one shape entry of 16 bytes for each shape, one picture entry of 32 bytes for each picture, then the pixels. One function, `pointer_pictures.validate`, checks every field once; the tool and the compositor run it, and the compositor does not trust the file even from the root service. A failure gives a `Problem` with the table, the index, the field, the value and its limit.
+
+A pointer theme file is not an Xcursor file or a `.cur` file: the tool reads those formats only to make this one.
+
+The design: `docs/POINTERS.md`, "3. The format of the system: one pointer theme file".
 
 Do not use: cursor file, .cur, Xcursor file (for this).
 
 ### Pointer manifest
 
-A text file of the repository that says how the tool makes a pointer theme file: for each pointer shape, the files of an Xcursor theme or grids of squares, and the adjustments (`docs/POINTERS.md`, "The manifest").
+A pointer manifest is a text file of the repository that says how the tool makes a pointer theme file: for each pointer shape, the files of an Xcursor theme or grids of squares, and the adjustments.
+
+The manifest keeps the choices about a theme in text that a reader can review, with no JSON and no general parser. It has the statements `theme`, `license`, `attribution`, `sizes`, `shape`, `frame`, and lines of a grid that start with `|`. A shape has sources or a grid, not both. `kerneltool pointers` reads it and writes the pointer theme file. An error gives the file, the line, the column and what was expected: `resources/pointers/posy.manifest:12:7: expected a pointer shape name such as "arrow"; found "arow"`.
+
+A pointer manifest is not the `index.theme` of an icon theme: the system reads no file of a theme at run time.
+
+The design: `docs/POINTERS.md`, "4. The manifest".
 
 Do not use: config, recipe, index.theme.
 
 ### Premultiplied alpha
 
-A form of a pixel whose red, green and blue are already multiplied by its alpha. A blend is then `result = source + destination * (255 - alpha) / 255` for each channel.
+Premultiplied alpha is a form of a pixel whose red, green and blue are already multiplied by its alpha.
+
+With premultiplied alpha, a blend is one multiplication for each channel: `result = source + destination * (255 - alpha) / 255`. Straight alpha needs three more multiplications for each pixel. The pixels of a pointer theme file are `0xAARRGGBB` with premultiplied alpha, the form of an Xcursor file, so the tool converts nothing. The validation refuses a pixel with a channel above its alpha.
+
+Premultiplied alpha is not straight alpha: a straight pixel with alpha 0 can hold any color, and a premultiplied one is all zero.
+
+The design: `docs/POINTERS.md`, "3. The format of the system: one pointer theme file".
 
 Do not use: straight alpha (for this).
 
 ### Resource
 
-A file of the boot image that is not a module: a pointer theme file or the glyph cache of the vector font. It has a name and the hash of its bytes, in the resource table of the boot image. The root service gives a program a read-only mapping of it.
+A resource is a file of the boot image that is not a module: data that a program reads in place, named by the hash of its bytes.
+
+The resources are the pointer theme files, the glyph caches of the vector font and of the interface font, and the system description with its signature. Each one has a name of 31 bytes at most and the BLAKE3 hash of its bytes in the resource table of the boot image, after the table of the modules, so a reader of modules never takes a resource for a module. No program reads the resource table by itself: the root service finds a resource by its name, checks its hash, and gives one program a read-only mapping of it. Example of the log: "root: the resource pointers_posy (883008 bytes, its hash checked in 1395 us) is given to compositor, read-only". A program with the grant `Image` finds resources with `system.image_resource_find`.
+
+A resource is not an asset that a program loads by a path: it has no path, and the program validates its bytes with the reader of its format.
+
+The design: `docs/ARCHITECTURE.md`, "U2b. Resources of the boot image".
 
 Do not use: asset, data file, blob.
 
 ### Caret
 
-The mark in a text input of the place where the next typed character goes. Not the pointer.
+The caret is the mark in a text input of the place where the next typed character goes.
+
+The caret shows where the keys act. In the launcher it is a bar of 2 by 16 pixels in the blue of the title bar; in the edit line of the console the line editor keeps its place. A text input shows the caret only when it has the focus.
+
+The caret is not the pointer: the pointer follows the pointing device, the caret follows the keys. The system does not use the word "cursor" for either one.
+
+The design: `docs/DESIGN.md`, "Launcher".
 
 Do not use: cursor, text cursor, insertion point.
 
 ### Picker
 
-The surface of the document service where the person chooses a document. Its result is a grant.
+The picker is the surface of the document service where the principal chooses a document; its result is a grant to the program that asked.
+
+The picker makes the choice of the principal the grant: a program cannot list documents, and gets a handle to the one document that the principal chose. The document service records each grant, so that the principal can list and revoke it. The document service and its picker are not built.
+
+The picker is not a file dialog that a program draws: it is the surface of another program, so the program that asks sees only the result.
+
+The design: `docs/ARCHITECTURE.md`, "U6. Document service".
 
 Do not use: file dialog, powerbox.
 
