@@ -3227,25 +3227,39 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				return false
 			}
 		case .Agree:
-			// The program list of the monitor, and the reports of inspect.
-			monitor, has_monitor := table_call(&machine.client, "monitor.programs()")
-			mapped, threads_count := -1, -1
-			if has_monitor {
-				for row in 0 ..< len(monitor.rows) / monitor.size {
-					if table_value(&monitor, row, "name") == step.text {
-						mapped, _ = strconv.parse_int(table_value(&monitor, row, "mapped"))
-						threads_count, _ = strconv.parse_int(table_value(&monitor, row, "threads"))
+			// The program list of the monitor, and the reports of inspect. The
+			// monitor reads the programs of the machine at its own rhythm: a
+			// program that just started is in its list at its next read. So
+			// the step asks again until the two agree; the bound only ends a
+			// hang.
+			monitor, mappings, threads: Call_Table
+			has_monitor, has_mappings, has_threads: bool
+			mapped, threads_count, pages: int
+			agree_started := time.now()
+			for {
+				monitor, has_monitor = table_call(&machine.client, "monitor.programs()")
+				mapped, threads_count = -1, -1
+				if has_monitor {
+					for row in 0 ..< len(monitor.rows) / monitor.size {
+						if table_value(&monitor, row, "name") == step.text {
+							mapped, _ = strconv.parse_int(table_value(&monitor, row, "mapped"))
+							threads_count, _ = strconv.parse_int(table_value(&monitor, row, "threads"))
+						}
 					}
 				}
-			}
-			mappings, has_mappings := table_call(&machine.client, fmt.tprintf("inspect.mappings(%q)", step.text))
-			threads, has_threads := table_call(&machine.client, fmt.tprintf("inspect.threads(%q)", step.text))
-			pages := 0
-			if has_mappings {
-				for row in 0 ..< len(mappings.rows) / mappings.size {
-					value, _ := strconv.parse_int(table_value(&mappings, row, "pages"))
-					pages += value
+				mappings, has_mappings = table_call(&machine.client, fmt.tprintf("inspect.mappings(%q)", step.text))
+				threads, has_threads = table_call(&machine.client, fmt.tprintf("inspect.threads(%q)", step.text))
+				pages = 0
+				if has_mappings {
+					for row in 0 ..< len(mappings.rows) / mappings.size {
+						value, _ := strconv.parse_int(table_value(&mappings, row, "pages"))
+						pages += value
+					}
 				}
+				if (has_monitor && has_mappings && has_threads && mapped >= 0 && pages == mapped && int(threads.total) == threads_count) || time.since(agree_started) > HANG_BOUND {
+					break
+				}
+				time.sleep(CONDITION_POLL_PERIOD)
 			}
 			if !has_monitor || !has_mappings || !has_threads || mapped < 0 || pages != mapped || int(threads.total) != threads_count {
 				fmt.eprintfln("kerneltool: test failed: step %d: %s: monitor.programs() gives %d mapped pages and %d threads, inspect gives %d pages in %d mappings and %d threads", index + 1, step.text, mapped, threads_count, pages, mappings.total, threads.total)
