@@ -2,9 +2,10 @@
 // source comment"). A comment of the sources is written in a small part of
 // Markdown: paragraphs, bold, italics, code, lists, examples and links. The
 // site renders it with the renderer of the guides. A module carries the
-// same text with its marks removed, because the programs that show it in
-// the system (`manual`, the help of the console) draw plain lines with the
-// cell font: this file makes that text, and the plain text of a summary.
+// same text with its marks, and `manual` reads them in the system
+// (support/source_comment_markdown). The line of help of a module and of an
+// export has no mark: the console prints it as one plain line. This file
+// makes that plain text, and the plain text of a summary.
 package kerneltool
 
 import "core:strings"
@@ -140,9 +141,10 @@ Documentation_Block :: struct {
 	continues: bool, // The next line can continue it.
 }
 
-// documentation_text_of_markdown gives the documentation text that a module
-// carries from the Markdown of a comment (contract/module/format.odin,
-// Documentation): a paragraph is one line; a list item is one line that
+// documentation_text_of_markdown gives the plain text of the Markdown of a
+// comment, from which the build takes the line of help that a module
+// carries (contract/module/format.odin, Documentation; the documentation
+// text itself keeps its marks): a paragraph is one line; a list item is one line that
 // starts with its marker ("- ", "1. "), its nested items with their
 // indentation; a line of an example keeps its form, behind four spaces,
 // so that it starts with a space; an empty line separates two blocks. The

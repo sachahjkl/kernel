@@ -245,7 +245,7 @@ A comment has no heading, no table, no quote, no line of HTML and no picture: it
 
 A link is a claim of its author: `kerneltool site` stops on a link whose target names nothing, with its file and its line, as it stops on a pointer whose heading does not exist. A code span that names nothing stays code.
 
-A module carries the same text with the marks taken away, because `manual` and the help of the console draw plain lines with the cell font (`MODULE_CONTRACT.md`, "Description tables"): a paragraph is one line, a list item stays a line that starts with `- ` or its number, a line of an example keeps its form, a link becomes its text, bold and italics lose their stars, and a code span keeps its backticks, the one sign of code in a text of one font. The help of an export is the first sentence of that text.
+A module carries the same text, with its marks, and the program `manual` reads them in the system (`MODULE_CONTRACT.md`, "Description tables"): a bold word is in the bold weight, a word in italics has a thin line under it, a code span is in the font of the cells, a list item has its mark and its indentation, an example is a block, and a link is a colored name. The help of an export is the first sentence of the comment with the marks removed: the console prints it as one plain line. So the first sentence of a comment must read well with no mark.
 
 The documentation of the kernel operations is the model: for each operation, one sentence that says what it does, its arguments as a list, its results, its statuses as a list with when each comes, the rights that it needs in bold, links to its records and to its guide, and an example call through `support/system` when one helps.
 

@@ -55,13 +55,14 @@ describe_reads_the_source :: proc(t: ^testing.T) {
 	list := make([dynamic]Export_Description, context.temp_allocator)
 	package_text: string
 	testing.expect(t, describe_source("sample.odin", DESCRIBED_SOURCE, &list, &package_text))
-	// The documentation text: one line for each paragraph.
+	// The documentation text: the comment as its author wrote it. The
+	// reader of the system joins the lines of a paragraph.
 	testing.expect_value(
 		t,
 		package_text,
-		"A sample of a module. The second sentence of the first paragraph.\n\nA list:\n  one line that stays\n- a point\n- a second point, on two lines",
+		"A sample of a module. The second sentence\nof the first paragraph.\n\nA list:\n  one line that stays\n- a point\n- a second point,\non two lines",
 	)
-	testing.expect_value(t, about_of(package_text, ""), "A sample of a module")
+	testing.expect_value(t, about_of(documentation_text_of_markdown(package_text), ""), "A sample of a module")
 	testing.expect_value(t, len(list), 4)
 	if len(list) != 4 {
 		return
