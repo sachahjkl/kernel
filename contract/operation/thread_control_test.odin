@@ -97,12 +97,14 @@ the_form_of_thread_control :: proc(t: ^testing.T) {
 	testing.expect_value(t, form.name, "Thread_Control")
 	testing.expect_value(t, form.parameters[2].form, Form.Choice)
 	testing.expect_value(t, form.parameters[2].limit, u64(max(Thread_Control_Command)))
-	testing.expect_value(t, form.parameters[0].rights, Rights{.Inspect})
+	// No right in the form: each command has its own.
+	testing.expect_value(t, form.parameters[0].rights, Rights{})
 }
 
-// Each command needs Inspect; a write needs Write too; no command needs
-// Control, the right to end a thread, so a handle given to
-// end a thread neither holds it nor writes its registers.
+// A hold and each read need Inspect; a write of the registers needs Write
+// too; only the write of the schedule needs Control, the right to end a
+// thread, so a handle given to end a thread neither holds it nor writes its
+// registers, and it can give the thread a smaller share.
 @(test)
 the_rights_of_each_command :: proc(t: ^testing.T) {
 	for command in Thread_Control_Command {
@@ -110,9 +112,36 @@ the_rights_of_each_command :: proc(t: ^testing.T) {
 		switch command {
 		case .Write_Registers, .Write_Extended_State:
 			testing.expect_value(t, rights, Rights{.Inspect, .Write})
-		case .None, .Stop, .Resume, .Read_Registers, .Read_Extended_State:
+			testing.expect(t, .Control not_in rights)
+		case .None, .Stop, .Resume, .Read_Registers, .Read_Extended_State, .Read_Schedule:
 			testing.expect_value(t, rights, Rights{.Inspect})
+		case .Write_Schedule:
+			testing.expect_value(t, rights, Rights{.Control})
 		}
-		testing.expect(t, .Control not_in rights)
+		// The machine handle: the schedule only. Schedule alone writes; a
+		// read is a report of the machine, and needs Inspect too.
+		machine_rights, by_machine_number := thread_control_machine_rights(command)
+		#partial switch command {
+		case .Read_Schedule:
+			testing.expect(t, by_machine_number)
+			testing.expect_value(t, machine_rights, Rights{.Schedule, .Inspect})
+		case .Write_Schedule:
+			testing.expect(t, by_machine_number)
+			testing.expect_value(t, machine_rights, Rights{.Schedule})
+		case:
+			testing.expect(t, !by_machine_number)
+			testing.expect_value(t, machine_rights, Rights{})
+		}
 	}
+}
+
+// The values of a schedule that a thread can have: 0 is the default of
+// each, the full weight and the longest request are the last ones accepted.
+@(test)
+the_values_of_a_schedule :: proc(t: ^testing.T) {
+	testing.expect(t, thread_schedule_accepted(0, 0))
+	testing.expect(t, thread_schedule_accepted(1, 1))
+	testing.expect(t, thread_schedule_accepted(WEIGHT_FULL, REQUEST_LIMIT))
+	testing.expect(t, !thread_schedule_accepted(WEIGHT_FULL + 1, 0))
+	testing.expect(t, !thread_schedule_accepted(0, REQUEST_LIMIT + 1))
 }

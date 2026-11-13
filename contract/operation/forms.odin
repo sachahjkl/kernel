@@ -80,9 +80,11 @@ OPERATIONS := [Operation]Operation_Form {
 	.Fault_Handler_Set = {"Fault_Handler_Set", {{"thread", .Handle_Or_Zero, .Thread, {.Control}, 0}, {"end", .Choice, .None, {}, 1}, {"kinds", .Flags, .None, {}, FAULT_KINDS_DELIVERED}, {}, {}, {}, {}}},
 	.Fault_Answer = {"Fault_Answer", {{"thread", .Value, .None, {}, 0}, {"serial", .Value, .None, {}, 0}, {"answer", .Choice, .None, {}, u64(max(Fault_Answer_Kind))}, {}, {}, {}, {}}},
 	.Events_Set = {"Events_Set", {{"machine", .Handle, .Machine, {.Events}, 0}, {"memory", .Handle_Or_Zero, .Memory, {.Write}, 0}, {"rules", .Address, .None, {}, 0}, {"count", .Count, .None, {}, EVENT_RULE_CAPACITY}, {"records", .Count, .None, {}, EVENT_RING_RECORDS_MOST}, {}, {}}},
-	// The rights of the thread handle that every command needs: Inspect; a
-	// write needs Write too (thread_control_rights).
-	.Thread_Control = {"Thread_Control", {{"thread", .Handle_Or_Zero, .Thread, {.Inspect}, 0}, {"number", .Value, .None, {}, 0}, {"command", .Choice, .None, {}, u64(max(Thread_Control_Command))}, {"address", .Address, .None, {}, 0}, {"size", .Count, .None, {}, 0}, {}, {}}},
+	// The form names no right of the thread handle: each command has its
+	// own (thread_control_rights: Inspect, Inspect and Write, or Control),
+	// and a command of the schedule also takes the machine handle
+	// (thread_control_machine_rights).
+	.Thread_Control = {"Thread_Control", {{"thread", .Handle_Or_Zero, .Thread, {}, 0}, {"number", .Value, .None, {}, 0}, {"command", .Choice, .None, {}, u64(max(Thread_Control_Command))}, {"address", .Address, .None, {}, 0}, {"size", .Count, .None, {}, 0}, {}, {}}},
 }
 
 // The name of each object kind, for the sentence of an error record

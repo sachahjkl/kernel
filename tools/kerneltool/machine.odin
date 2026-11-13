@@ -1214,12 +1214,26 @@ scenario := [?]Step {
 	// fair strategy and EEVDF, then 100 changes of strategy while threads
 	// start, stop, wake each other and move. The program checks what does
 	// not depend on the load of the host. Two keys change the strategy.
+	// The schedule of a live thread: a thread reads and writes its own
+	// weight and request, the kernel refuses each write that it must
+	// refuse, the weights written through the machine handle order the
+	// shares, and writes during the changes of strategy lose no thread. A
+	// thread of another program is written through the machine handle, and
+	// a weight limit holds against the writes and the new threads of its
+	// thread.
 	{kind = .Launch, text = "scheduler"},
+	{kind = .Wait, text = "scheduler: a thread created with the weight 300 and the request 700 us read its own schedule: weight 300, request 700 us; after it wrote the weight 150 and the request 0: weight 150, request 3000 us; the first thread: weight 1024, request 3000 us: as it must"},
+	{kind = .Wait, text = "scheduler: refused writes of a schedule: a weight above the full weight Bad_Operation, a request above the limit Bad_Operation, and the schedule stayed: 1; the machine handle with no right Schedule No_Right; a read through the machine handle with Schedule and no Inspect No_Right; a thread handle with Inspect and no Control No_Right, and it reads: 1; another command with the machine handle Bad_Handle; the machine number of a thread that ended Bad_State: as it must"},
+	{kind = .Wait, text = "scheduler: a thread of another program, the root service, found by its name and its serial: through the machine handle its schedule was read, written, read back and written back: as it must"},
+	{kind = .Wait, text = "scheduler: the weight limit 256 written through the machine handle: the thread has the weight 256; its own write of the full weight Bad_Operation, the error record has the limit: 1; its own write of the full limit changed nothing: 1; 1000 rounds of its own writes of the weights 256, 1, 1024 and 256: 3000 accepted, 1000 refused, a weight above the limit or a changed limit 0 times: as it must"},
+	{kind = .Wait, text = "scheduler: under the weight limit 256: a new thread with the weight 257 Bad_Operation; a new thread with the weight 0 has the weight 256 and the limit 256, and its own write of the full weight Bad_Operation; after the machine handle wrote the full limit the first thread has the weight 1024: as it must"},
 	{kind = .Wait, text = "scheduler: round robin: two threads that wake each other, a spinner on each processor: "},
 	{kind = .Wait, text = "scheduler: fair: two threads that wake each other, a spinner on each processor: "},
 	{kind = .Wait, text = "scheduler: EEVDF: two threads that wake each other, a spinner on each processor: "},
+	{kind = .Wait, text = "scheduler: the weights 1 2 4 written through the machine handle while 12 spinners ran: each write was read back, and the heavier weight got more under fair and EEVDF: as it must"},
 	{kind = .Wait, text = "scheduler: one Strategy_Set, with its kernel entry: "},
 	{kind = .Wait, text = "scheduler: stress: 100 changes of strategy while "},
+	{kind = .Wait, text = "scheduler: writes of a schedule through the machine handle while the strategy changed 100 times: none was refused, each of the 8 spinners ran after them and has the schedule written last: as it must"},
 	{kind = .Wait, text = "scheduler: ok, no spinner starved under 3 strategies, EEVDF woke "},
 	{kind = .Wait, text = "scheduler: the window took "},
 	{kind = .Shot, text = "scheduler"},

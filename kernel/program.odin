@@ -162,8 +162,8 @@ Thread :: struct #align (64) {
 	queue_previous: u32,
 	processor:      u32, // 1 + the index of the processor that runs the thread. 0: none.
 	budget:         u32, // The budget that paid for the slot. Written under the frame lock (atomic).
-	weight:         u32, // 1 to op.WEIGHT_FULL. Written at the creation only.
-	request:        u32, // Microseconds: the request of EEVDF. Written at the creation only.
+	weight:         u32, // 1 to op.WEIGHT_FULL. Written at the creation, then by thread_schedule_write.
+	request:        u32, // Microseconds: the request of EEVDF. Written at the creation, then by thread_schedule_write.
 	// The fields of the strategy of the queue of home (strategy.odin). Zero
 	// is valid for each strategy: the thread is not placed.
 	virtual:          u64, // The virtual time.
@@ -216,6 +216,13 @@ Thread :: struct #align (64) {
 	// last fault of the thread: Fault_Answer then accepts Resume for any
 	// kind. Program lock.
 	registers_written: bool,
+	// The most that the weight can be: 1 to op.WEIGHT_FULL. Only a write
+	// of the schedule through the machine handle changes it; a new thread
+	// gets the limit of the thread that creates it. Read at a write of the
+	// schedule and at a creation only, so it is not in the hot line.
+	// Written under the run lock of home (atomic: a diagnosis reads it
+	// with no lock).
+	weight_limit: u32,
 }
 
 #assert(offset_of(Thread, placed) < 64)
@@ -1284,9 +1291,12 @@ thread_free :: proc "contextless" (thread: ^Thread) {
 // thread_create adds a thread to a program. The kernel makes the thread
 // area: the thread record and the kernel ring of the thread.
 // The budget pays for the slot and for the thread area. The weight and the
-// request are checked by the caller; 0 gives the full weight and the
-// default request (docs/SCHEDULING.md). The caller holds the control lock.
-thread_create :: proc "contextless" (program_index: u32, budget: u32, entry, stack, parameter: u64, weight: u64 = 0, request: u64 = 0) -> (index: u32, status: op.Status) {
+// request are checked by the caller, the weight against weight_limit too;
+// 0 gives the weight limit and the default request (docs/SCHEDULING.md).
+// weight_limit is the limit of the thread that creates this one: a
+// program does not leave a limit by a new thread, or by the first thread
+// of a program that it starts. The caller holds the control lock.
+thread_create :: proc "contextless" (program_index: u32, budget: u32, entry, stack, parameter: u64, weight: u64 = 0, request: u64 = 0, weight_limit: u32 = op.WEIGHT_FULL) -> (index: u32, status: op.Status) {
 	// The first instruction and the stack are in the half of the addresses
 	// of a program. The processor refuses to return to an address that is
 	// not canonical, and it refuses in the kernel, after the kernel loaded
@@ -1357,7 +1367,8 @@ thread_create :: proc "contextless" (program_index: u32, budget: u32, entry, sta
 	thread.serial = serial
 	thread.wait_serial = wait_serial
 	thread.home = home
-	thread.weight = weight == 0 ? op.WEIGHT_FULL : u32(weight)
+	thread.weight_limit = weight_limit
+	thread.weight = weight == 0 ? weight_limit : u32(weight)
 	thread.request = request == 0 ? op.REQUEST_DEFAULT : u32(request)
 	thread.frame = {
 		rip    = entry,

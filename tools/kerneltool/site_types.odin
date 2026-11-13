@@ -166,6 +166,7 @@ site_contract_type_rows :: proc() -> []Site_Type_Row {
 		{"operation", "Thread_Control_Command", type_info_of(op.Thread_Control_Command)},
 		{"operation", "Thread_Registers", type_info_of(op.Thread_Registers)},
 		{"operation", "Thread_Write_Refusal", type_info_of(op.Thread_Write_Refusal)},
+		{"operation", "Thread_Schedule", type_info_of(op.Thread_Schedule)},
 		{"operation", "Event_Kind", type_info_of(op.Event_Kind)},
 		{"operation", "Event_Fault_Outcome", type_info_of(op.Event_Fault_Outcome)},
 		{"operation", "Event_Rule_Flag", type_info_of(op.Event_Rule_Flag)},

@@ -12,7 +12,8 @@
 //   the memory (`memory_create`, `memory_map`, `memory_commit`,
 //   `memory_protect`), the handles (`give`, `handle_state`, `close`), the
 //   rings (`ring_create`, `ring_open`), the threads (`thread_start`,
-//   `thread_wait`), the fault ring and the kernel events.
+//   `thread_wait`, `thread_schedule_read`, `thread_schedule_write`), the
+//   fault ring and the kernel events.
 // - `wait.odin`: the waits on words and the queues with waits (`send`,
 //   `receive`, `wait_begin`, `wait_end`).
 // - `text.odin`, `log.odin`: the log of a program (`log`, `log_in`,
@@ -627,7 +628,9 @@ THREAD_STACK_PAGES :: 16
 //
 // The entry never returns: it calls thread_stop. The budget (0: the budget
 // of this program) pays for the thread and gives its processor time. The
-// weight (1 to op.WEIGHT_FULL, 0: the full weight) and the request in
+// weight (1 to the weight limit of the calling thread, which is
+// op.WEIGHT_FULL unless the holder of the machine lowered it; 0: that
+// limit) and the request in
 // microseconds (0: op.REQUEST_DEFAULT) are for the scheduling strategies
 // that use them (docs/SCHEDULING.md).
 thread_start :: proc "contextless" (entry: proc "c" (parameter: rawptr) -> !, parameter: rawptr, stack_pages: u64 = THREAD_STACK_PAGES, budget: Handle = 0, weight: u64 = 0, request: u64 = 0, error: ^errors.Error_Record = nil) -> (thread: Thread, status: Status) {
@@ -651,6 +654,41 @@ strategy_set :: proc "contextless" (machine: Handle, strategy: op.Strategy, erro
 	results: [7]u64
 	results, status = call_with_error(error, .Strategy_Set, u64(machine), u64(strategy))
 	return op.Strategy(results[0]), status
+}
+
+// thread_schedule_read gives the schedule of a thread: its weight and its
+// request, the values in use (docs/SCHEDULING.md, "The schedule of a live
+// thread"). The thread is named in one of three ways:
+// - `thread` 0 and the number of a thread of this program
+//   (`Thread_Record.number`);
+// - a thread handle with the right Inspect (`number` is not read);
+// - the machine handle with the rights Schedule and Inspect, and the
+//   machine number of any thread (`op.Thread_Report.machine_number`).
+//
+// ```odin
+// schedule, status := system.thread_schedule_read(0, system.thread_record().number)
+// ```
+thread_schedule_read :: proc "contextless" (thread: Handle, number: u64, error: ^errors.Error_Record = nil) -> (schedule: op.Thread_Schedule, status: Status) {
+	_, status = call_with_error(error, .Thread_Control, u64(thread), number, u64(op.Thread_Control_Command.Read_Schedule), u64(uintptr(&schedule)), size_of(schedule))
+	return schedule, status
+}
+
+// thread_schedule_write gives a thread a weight (1 to the weight limit of
+// the thread, 0: that limit) and a request in microseconds (1 to
+// op.REQUEST_LIMIT, 0: op.REQUEST_DEFAULT), also while the thread runs.
+// The thread is named as for thread_schedule_read; a thread handle needs
+// the right Control, the machine handle the right Schedule. Only a write
+// through the machine handle reads `weight_limit` (0: op.WEIGHT_FULL) and
+// sets the weight limit of the thread: such a write gives the three
+// values, so read the schedule first to change one of them.
+//
+// ```odin
+// status := system.thread_schedule_write(worker.handle, 0, {weight = 256})
+// ```
+thread_schedule_write :: proc "contextless" (thread: Handle, number: u64, schedule: op.Thread_Schedule, error: ^errors.Error_Record = nil) -> (status: Status) {
+	written := schedule
+	_, status = call_with_error(error, .Thread_Control, u64(thread), number, u64(op.Thread_Control_Command.Write_Schedule), u64(uintptr(&written)), size_of(written))
+	return status
 }
 
 // events_set gives the event table of the machine (docs/ARCHITECTURE.md,

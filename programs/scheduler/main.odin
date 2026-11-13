@@ -5,8 +5,11 @@
 // each other while spinners keep each processor busy; a thread that sleeps
 // 2 ms, many times, while 8 spinners run, with the delay of each wake;
 // 8 spinners of one weight, their shares and their work; 12 spinners with
-// the weights 1, 2 and 4, their shares. Then it changes the strategy 100
-// times while threads start, stop, wake each other and move. The window
+// the weights 1, 2 and 4, their shares; 12 spinners that start with the
+// full weight and get the weights 1, 2 and 4 while they run, their shares.
+// Then it changes the strategy 100 times while threads start, stop, wake
+// each other and move, and while a thread writes the schedule of the
+// spinners. The window
 // shows the numbers and the strategy in use; the keys 1, 2 and 3, or a
 // click on a strategy, change it.
 //
@@ -15,7 +18,15 @@
 // robin (the counts of the kernel; the wakes in one second are measures),
 // the weights order the shares under the strategies with weights, each
 // thread runs after the changes, no wake was lost, the kernel refuses a
-// change with no right Schedule and a weight above the full weight.
+// change with no right Schedule and a weight above the full weight. For the
+// schedule of a live thread (docs/SCHEDULING.md, "The schedule of a live
+// thread"): a thread reads and writes its own schedule, the weights written
+// through the machine handle order the shares, the kernel refuses each
+// write that it must refuse, and writes during the changes of strategy
+// lose no thread; the schedule of a thread of another program is read and
+// written through the machine handle; a weight limit that the machine
+// handle wrote holds against the writes of the thread and against its new
+// threads.
 //
 // The program needs the machine with the rights Inspect and Schedule.
 //
@@ -26,15 +37,16 @@
 //
 // **Start**: `start("scheduler")` in the console, or the bar of the
 // desktop. Its budget has room for 24 threads: 12 spinners, two threads
-// that wake each other, one that sleeps, a changer, and a thread that
-// starts threads.
+// that wake each other, one that sleeps, a changer, a thread that writes
+// schedules, and a thread that starts threads.
 //
 // **Grants**, as the root service gives them:
 //
 // - **Inspect**: the machine with the right Inspect, for the counts of the
 //   scheduler in the system report.
-// - **Schedule**: the right to change the strategy of the whole machine. A
-//   change touches every program, so this right is rare.
+// - **Schedule**: the right to change the strategy of the whole machine,
+//   and the weight and the request of any thread. A change touches every
+//   program, so this right is rare.
 //
 // **What a reader sees**: one tile for each strategy with its numbers, and
 // the strategy in use. The log has one line of results for each strategy,
@@ -48,6 +60,7 @@
 package scheduler
 
 import "base:intrinsics"
+import "contract:errors"
 import "support:display"
 import "support:graphics"
 import "support:interface"
@@ -77,8 +90,9 @@ SPINNER_LIMIT :: 16
 
 // One spinner: its count of work, alone in its cache line.
 Spinner :: struct #align (64) {
-	count: u64,
-	stop:  u32,
+	count:  u64,
+	stop:   u32,
+	number: u32, // 1 + the number of its thread in the program: the spinner writes it when it starts. 0: not yet.
 }
 
 // The results of one strategy.
@@ -94,6 +108,10 @@ Result :: struct {
 	work:        u64, // Increments in one second, all the spinners.
 	weighted:    [3]u64, // Tenths of a percent: the mean share of a spinner of each weight.
 	weighted_least: u64, // The least share of the 12, tenths of a percent.
+	// The same for 12 spinners that started with the full weight and got
+	// their weights through the machine handle while they ran.
+	written:         [3]u64,
+	written_ordered: bool, // The heavier weight got more.
 	preemptions: u64,
 	interrupt_preemption: u64, // Nanoseconds in the kernel for one wake preemption by an interrupt.
 	pick:        u64, // Nanoseconds for one pick.
@@ -152,6 +170,8 @@ counts :: proc "contextless" (processors: u64) -> (sum: Counts) {
 
 spin :: proc "c" (parameter: rawptr) -> ! {
 	spinner := (^Spinner)(parameter)
+	intrinsics.atomic_store(&spinner.number, u32(system.thread_record().number) + 1)
+	system.word_wake(&spinner.number)
 	for intrinsics.atomic_load(&spinner.stop) == 0 {
 		for _ in 0 ..< 256 {
 			intrinsics.volatile_store(&spinner.count, intrinsics.volatile_load(&spinner.count) + 1)
@@ -199,6 +219,133 @@ spinner_counts :: proc "contextless" (first, count: int) -> (values: [SPINNER_LI
 		values[index] = intrinsics.volatile_load(&spinners[index].count)
 	}
 	return values
+}
+
+// The threads of this program as the kernel reports them: the machine
+// number of each one is its name for the machine handle.
+self_slot, self_serial: u64
+self_machine_number: u64 // The machine number of the first thread of this program.
+thread_table: op.Thread_Table_Report
+
+program_report :: proc "contextless" (slot: u64) -> (report: op.Program_Report, status: system.Status) {
+	_, status = system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Program), slot, u64(uintptr(&report)), size_of(report))
+	return report, status
+}
+
+// threads_of reads the thread report of a program slot into thread_table.
+// true: the report is of the program with this serial.
+threads_of :: proc "contextless" (slot, serial: u64) -> bool {
+	_, status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Threads), slot, u64(uintptr(&thread_table)), size_of(thread_table))
+	return status == .Ok && thread_table.program_serial == serial
+}
+
+// machine_number_is_this_thread says if a machine number names the calling
+// thread. A name of a program does not say it: two programs can have one
+// name. The thread writes a request by its own number, which names a
+// thread of this program only, and reads it by the machine number: two
+// times, with two values that come from the clock. Then it writes the
+// defaults back.
+machine_number_is_this_thread :: proc "contextless" (candidate: u64) -> bool {
+	number := system.thread_record().number
+	own := true
+	for round in 0 ..< 2 {
+		marker := u32(50_001 + (system.nanoseconds() + u64(round) * 7919) % 49_000)
+		own &&= system.thread_schedule_write(0, number, {request = marker}) == .Ok
+		schedule, status := system.thread_schedule_read(machine, candidate)
+		own &&= status == .Ok && schedule.request == marker
+	}
+	system.thread_schedule_write(0, number, {})
+	return own
+}
+
+// find_self finds the slot and the serial of this program, and the machine
+// number of its first thread, which runs this code. A slot is a candidate
+// by its name; it is this program only when the thread of the calling
+// number in its report is the calling thread. false: not found.
+find_self :: proc "contextless" () -> bool {
+	number := u32(system.thread_record().number)
+	for index in u64(1) ..< 64 {
+		report, status := program_report(index)
+		if status != .Ok || system.name_of(report.name[:]) != "scheduler" || report.state == .Stopped || report.state == .None {
+			continue
+		}
+		if !threads_of(index, report.program_serial) {
+			continue
+		}
+		candidate: u64
+		for &item in thread_table.threads[:min(thread_table.count, op.THREAD_REPORT_CAPACITY)] {
+			if item.number == number && item.state != .Stopped {
+				candidate = item.machine_number
+			}
+		}
+		if candidate != 0 && machine_number_is_this_thread(candidate) {
+			self_slot, self_serial, self_machine_number = index, report.program_serial, candidate
+			return true
+		}
+	}
+	return false
+}
+
+// spinner_machine_numbers gives the machine number of each of count
+// spinners from first. It waits until each spinner wrote the number of its
+// thread (the time only ends a hang), then reads the thread report of this
+// program. false: a spinner did not start, or the report does not name it.
+spinner_machine_numbers :: proc "contextless" (first, count: int, numbers: ^[SPINNER_LIMIT]u64) -> bool {
+	deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS
+	for index in first ..< first + count {
+		for intrinsics.atomic_load(&spinners[index].number) == 0 {
+			if system.time() >= deadline {
+				return false
+			}
+			system.word_wait(&spinners[index].number, 0, deadline)
+		}
+	}
+	if self_slot == 0 || !threads_of(self_slot, self_serial) {
+		return false
+	}
+	for index in first ..< first + count {
+		numbers[index] = 0
+		for &item in thread_table.threads[:min(thread_table.count, op.THREAD_REPORT_CAPACITY)] {
+			if item.number + 1 == intrinsics.atomic_load(&spinners[index].number) && item.state != .Stopped {
+				numbers[index] = item.machine_number
+			}
+		}
+		if numbers[index] == 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// weighted_shares measures the 12 spinners that run now, in three classes
+// (the spinner n is of the class n modulo 3): the mean share of a spinner
+// of each class and the least share of the 12, in tenths of a percent; if
+// the class of the heaviest weight did more work than the class of the
+// lightest; if a spinner starved (it has a sixteenth of its equal part or
+// less). The shares are a measure of this host.
+weighted_shares :: proc "contextless" () -> (shares: [3]u64, least: u64, heavier_got_more: bool, starved: bool) {
+	system.sleep(system.time() + WARM_TIME)
+	first := spinner_counts(0, WEIGHTED_COUNT)
+	system.sleep(system.time() + SHARE_TIME)
+	last := spinner_counts(0, WEIGHTED_COUNT)
+	total: u64
+	for spinner in 0 ..< WEIGHTED_COUNT {
+		total += last[spinner] - first[spinner]
+	}
+	class_sum: [3]u64
+	least = 1000
+	for spinner in 0 ..< WEIGHTED_COUNT {
+		part := last[spinner] - first[spinner]
+		class_sum[spinner % 3] += part
+		least = min(least, share_tenths(part, total))
+		if part * 16 * WEIGHTED_COUNT <= total {
+			starved = true
+		}
+	}
+	for class in 0 ..< 3 {
+		shares[class] = share_tenths(class_sum[class], total * (WEIGHTED_COUNT / 3))
+	}
+	return shares, least, class_sum[2] > class_sum[0], starved
 }
 
 // Two threads wake each other with the word wait: each one changes the
@@ -262,7 +409,11 @@ pair_stop :: proc "contextless" () {
 	intrinsics.atomic_add(&pair.turn, 2)
 	system.word_wake(&pair.turn, system.WAKE_ALL)
 	for &thread in pair_threads {
-		system.thread_wait(thread)
+		// A side that did not start has no handle: a wait for the handle 0
+		// would end the calling thread.
+		if thread.handle != 0 {
+			system.thread_wait(thread)
+		}
 		thread = {}
 	}
 	lost_wakes += pair.lost[0] + pair.lost[1]
@@ -306,6 +457,8 @@ measure :: proc "contextless" (index: int, processors: u64) {
 
 	// 1. Two threads wake each other while a spinner runs on each processor.
 	if !spinners_start(0, int(processors), full_weight) || !pair_start() {
+		pair_stop()
+		spinners_stop(0, int(processors))
 		fail("a thread did not start")
 		return
 	}
@@ -327,6 +480,7 @@ measure :: proc "contextless" (index: int, processors: u64) {
 	// 2. The delay of a thread that sleeps, while 8 spinners run. Its
 	// request is short: under EEVDF, its deadline comes early.
 	if !spinners_start(0, EQUAL_COUNT, full_weight) {
+		spinners_stop(0, EQUAL_COUNT)
 		fail("a thread did not start")
 		return
 	}
@@ -334,6 +488,7 @@ measure :: proc "contextless" (index: int, processors: u64) {
 	sleeper = {}
 	sleeping, status := system.thread_start(sleep_run, nil, request = 500)
 	if status != .Ok {
+		spinners_stop(0, EQUAL_COUNT)
 		fail("a thread did not start")
 		return
 	}
@@ -373,33 +528,52 @@ measure :: proc "contextless" (index: int, processors: u64) {
 
 	// 4. 12 spinners with the weights 1, 2 and 4.
 	if !spinners_start(0, WEIGHTED_COUNT, weight_of_class) {
+		spinners_stop(0, WEIGHTED_COUNT)
 		fail("a thread did not start")
 		return
 	}
-	system.sleep(system.time() + WARM_TIME)
-	first = spinner_counts(0, WEIGHTED_COUNT)
-	system.sleep(system.time() + SHARE_TIME)
-	last = spinner_counts(0, WEIGHTED_COUNT)
+	heavier_got_more, starved: bool
+	result.weighted, result.weighted_least, heavier_got_more, starved = weighted_shares()
 	spinners_stop(0, WEIGHTED_COUNT)
-	total = 0
-	for spinner in 0 ..< WEIGHTED_COUNT {
-		total += last[spinner] - first[spinner]
+	if starved {
+		fail("a spinner with a weight starved")
 	}
-	class_sum: [3]u64
-	result.weighted_least = 1000
+	if strategies[index] != .Round_Robin && !heavier_got_more {
+		fail("the weights did not order the shares")
+	}
+
+	// 5. 12 spinners that start with the full weight. While they run, the
+	// program writes the weights 1, 2 and 4 through the machine handle, and
+	// reads each one back. The condition is the one of the case 4.
+	if !spinners_start(0, WEIGHTED_COUNT, full_weight) {
+		spinners_stop(0, WEIGHTED_COUNT)
+		fail("a thread did not start")
+		return
+	}
+	numbers: [SPINNER_LIMIT]u64
+	weights_written := spinner_machine_numbers(0, WEIGHTED_COUNT, &numbers)
 	for spinner in 0 ..< WEIGHTED_COUNT {
-		part := last[spinner] - first[spinner]
-		class_sum[spinner % 3] += part
-		result.weighted_least = min(result.weighted_least, share_tenths(part, total))
-		if part * 16 * WEIGHTED_COUNT <= total {
-			fail("a spinner with a weight starved")
+		if !weights_written {
+			break
+		}
+		weight := u32(weights[spinner % 3])
+		weights_written = system.thread_schedule_write(machine, numbers[spinner], {weight = weight}) == .Ok
+		if schedule, read_status := system.thread_schedule_read(machine, numbers[spinner]); read_status != .Ok || schedule.weight != weight || schedule.request != op.REQUEST_DEFAULT {
+			weights_written = false
 		}
 	}
-	for class in 0 ..< 3 {
-		result.weighted[class] = share_tenths(class_sum[class], total * (WEIGHTED_COUNT / 3))
+	if !weights_written {
+		spinners_stop(0, WEIGHTED_COUNT)
+		fail("a weight was not written through the machine handle")
+		return
 	}
-	if strategies[index] != .Round_Robin && class_sum[2] <= class_sum[0] {
-		fail("the weights did not order the shares")
+	result.written, _, result.written_ordered, starved = weighted_shares()
+	spinners_stop(0, WEIGHTED_COUNT)
+	if starved {
+		fail("a spinner with a written weight starved")
+	}
+	if strategies[index] != .Round_Robin && !result.written_ordered {
+		fail("the written weights did not order the shares")
 	}
 
 	after := counts(processors)
@@ -462,9 +636,36 @@ log_result :: proc "contextless" (index: int) {
 	system.write_part(&writer, " ns, one preemption by an interrupt ")
 	system.write_unsigned(&writer, result.interrupt_preemption)
 	system.write_part(&writer, " ns in the kernel")
-	// Longer than the buffer of system.log (512 bytes): one Log of the whole text.
-	text := system.written(&writer)
+	log_whole(system.written(&writer))
+}
+
+// log_whole writes one text on the log in one Log call: a text can be
+// longer than the buffer of system.log (512 bytes).
+log_whole :: proc "contextless" (text: string) {
 	system.call(.Log, u64(system.context_record().handles[op.CONTEXT_LOG]), u64(uintptr(raw_data(text))), u64(len(text)), u64(op.Log_Level.Info), 0, 0)
+}
+
+// log_written writes the two lines of the weights written through the
+// machine handle: the shares under each strategy, which are a measure of
+// this host; then if the heavier weight got more under the two strategies
+// that use weights.
+log_written :: proc "contextless" () {
+	buffer: [800]u8
+	writer := system.Writer{buffer = buffer[:]}
+	system.write_part(&writer, "scheduler: 12 spinners that started with the full weight, the weights 1 2 4 written through the machine handle while they ran: a spinner of each weight")
+	for index in 0 ..< STRATEGY_COUNT {
+		system.write_part(&writer, index == 0 ? " " : "; ")
+		tenths_part(&writer, results[index].written[0])
+		system.write_part(&writer, ", ")
+		tenths_part(&writer, results[index].written[1])
+		system.write_part(&writer, ", ")
+		tenths_part(&writer, results[index].written[2])
+		system.write_part(&writer, " under ")
+		system.write_part(&writer, op.STRATEGY_NAMES[strategies[index]])
+	}
+	log_whole(system.written(&writer))
+	ordered := results[1].measured && results[2].measured && results[1].written_ordered && results[2].written_ordered
+	system.log("scheduler: the weights 1 2 4 written through the machine handle while 12 spinners ran: each write was read back, and the heavier weight got more under fair and EEVDF", ordered ? string(": as it must") : string(": WRONG"))
 }
 
 // The stress case: a thread changes the strategy CHANGES times while 8
@@ -506,15 +707,64 @@ brief :: proc "c" (parameter: rawptr) -> ! {
 	system.thread_stop()
 }
 
+// The thread that writes the schedule of the 8 spinners of the stress case
+// through the machine handle, while the strategy changes.
+Schedule_Writer :: struct {
+	numbers: [SPINNER_LIMIT]u64, // The machine numbers of the spinners.
+	writes:  u64,
+	refused: u64,
+}
+
+schedule_writer: Schedule_Writer
+
+schedule_write_run :: proc "c" (parameter: rawptr) -> ! {
+	for round := 0; intrinsics.atomic_load(&changer.ended) == 0; round += 1 {
+		for spinner in 0 ..< EQUAL_COUNT {
+			schedule := op.Thread_Schedule {
+				weight  = u32(weights[(spinner + round) % 3]),
+				request = u32(500 + (round % 4) * 1000),
+			}
+			if system.thread_schedule_write(machine, schedule_writer.numbers[spinner], schedule) == .Ok {
+				schedule_writer.writes += 1
+			} else {
+				schedule_writer.refused += 1
+			}
+		}
+		// A pause, so that the writes fall at many moments of the changes.
+		system.sleep(system.time() + 1)
+	}
+	system.thread_stop()
+}
+
 stress :: proc "contextless" () {
 	at_start, _ := system.budget_read()
 	if !spinners_start(0, EQUAL_COUNT, weight_of_class) || !pair_start() {
+		pair_stop()
+		spinners_stop(0, EQUAL_COUNT)
 		fail("a thread did not start")
+		return
+	}
+	schedule_writer = {}
+	if !spinner_machine_numbers(0, EQUAL_COUNT, &schedule_writer.numbers) {
+		pair_stop()
+		spinners_stop(0, EQUAL_COUNT)
+		fail("the thread report did not name a spinner")
 		return
 	}
 	changer = {}
 	thread, status := system.thread_start(change_run, nil)
 	if status != .Ok {
+		pair_stop()
+		spinners_stop(0, EQUAL_COUNT)
+		fail("a thread did not start")
+		return
+	}
+	writing, writing_status := system.thread_start(schedule_write_run, nil)
+	if writing_status != .Ok {
+		// The changer ends by itself after its changes.
+		system.thread_wait(thread)
+		pair_stop()
+		spinners_stop(0, EQUAL_COUNT)
 		fail("a thread did not start")
 		return
 	}
@@ -525,6 +775,15 @@ stress :: proc "contextless" () {
 		}
 	}
 	system.thread_wait(thread)
+	system.thread_wait(writing)
+	// The schedule written last is the schedule of each spinner.
+	last_schedule := op.Thread_Schedule{weight = 512, request = 2000, weight_limit = op.WEIGHT_FULL}
+	schedules_right := schedule_writer.writes != 0 && schedule_writer.refused == 0
+	for spinner in 0 ..< EQUAL_COUNT {
+		write_status := system.thread_schedule_write(machine, schedule_writer.numbers[spinner], last_schedule)
+		schedule, read_status := system.thread_schedule_read(machine, schedule_writer.numbers[spinner])
+		schedules_right &&= write_status == .Ok && read_status == .Ok && schedule == last_schedule
+	}
 	// After the last change, each thread still runs: the wait is for each
 	// count to grow, and the bound only ends a hang.
 	first := spinner_counts(0, EQUAL_COUNT)
@@ -558,13 +817,220 @@ stress :: proc "contextless" () {
 		}
 	}
 	change_least, change_middle, change_worst = sorted[0], sorted[CHANGES / 2], sorted[CHANGES - 1]
-	stress_right = ran && changer.changes == CHANGES && changer.refused == 0 && after.threads == at_start.threads
+	stress_right = ran && schedules_right && changer.changes == CHANGES && changer.refused == 0 && after.threads == at_start.threads
 	if !stress_right {
 		fail("the stress case")
 	}
 	stress_done = true
 	system.log("scheduler: one Strategy_Set, with its kernel entry: ", change_least, " ns at least, ", change_middle, " ns in the middle, ", change_worst, " ns at worst")
-	system.log("scheduler: stress: ", changer.changes, " changes of strategy while ", stress_churned, " threads started and stopped, two threads woke each other ", stress_wakes, " times and 8 spinners ran and moved; after the last change each thread ran: ", u64(ran), "; thread slots ", after.threads, " of ", at_start.threads)
+	system.log("scheduler: stress: ", changer.changes, " changes of strategy while ", stress_churned, " threads started and stopped, two threads woke each other ", stress_wakes, " times and 8 spinners ran and moved; after the last change each thread ran: ", u64(ran), "; thread slots ", after.threads, " of ", at_start.threads, "; ", schedule_writer.writes, " writes of a schedule through the machine handle, ", schedule_writer.refused, " refused")
+	system.log("scheduler: writes of a schedule through the machine handle while the strategy changed 100 times: none was refused, each of the 8 spinners ran after them and has the schedule written last", ran && schedules_right && changer.changes == CHANGES ? string(": as it must") : string(": WRONG"))
+}
+
+// The thread that reads and writes its own schedule, by its number.
+OWN_WEIGHT :: 300
+OWN_REQUEST :: 700
+
+Own_Schedule :: struct {
+	created: op.Thread_Schedule, // What the thread read first: the values of its creation.
+	written: op.Thread_Schedule, // What it read after it wrote half the weight and the request 0.
+	statuses_right: bool,
+}
+
+own_schedule: Own_Schedule
+
+own_schedule_run :: proc "c" (parameter: rawptr) -> ! {
+	number := system.thread_record().number
+	read_status, write_status, again_status: system.Status
+	own_schedule.created, read_status = system.thread_schedule_read(0, number)
+	write_status = system.thread_schedule_write(0, number, {weight = OWN_WEIGHT / 2})
+	own_schedule.written, again_status = system.thread_schedule_read(0, number)
+	own_schedule.statuses_right = read_status == .Ok && write_status == .Ok && again_status == .Ok
+	system.thread_stop()
+}
+
+// own_schedules: a thread reads the schedule of its creation, writes
+// another one and reads it; the first thread of the program reads the
+// defaults.
+own_schedules :: proc "contextless" () -> bool {
+	own_schedule = {}
+	thread, status := system.thread_start(own_schedule_run, nil, weight = OWN_WEIGHT, request = OWN_REQUEST)
+	if status != .Ok {
+		return false
+	}
+	system.thread_wait(thread)
+	first, first_status := system.thread_schedule_read(0, system.thread_record().number)
+	as_it_must := own_schedule.statuses_right && first_status == .Ok
+	as_it_must &&= own_schedule.created == op.Thread_Schedule{weight = OWN_WEIGHT, request = OWN_REQUEST, weight_limit = op.WEIGHT_FULL}
+	as_it_must &&= own_schedule.written == op.Thread_Schedule{weight = OWN_WEIGHT / 2, request = op.REQUEST_DEFAULT, weight_limit = op.WEIGHT_FULL}
+	as_it_must &&= first == op.Thread_Schedule{weight = op.WEIGHT_FULL, request = op.REQUEST_DEFAULT, weight_limit = op.WEIGHT_FULL}
+	system.log("scheduler: a thread created with the weight ", u64(OWN_WEIGHT), " and the request ", u64(OWN_REQUEST), " us read its own schedule: weight ", u64(own_schedule.created.weight), ", request ", u64(own_schedule.created.request), " us; after it wrote the weight ", u64(OWN_WEIGHT / 2), " and the request 0: weight ", u64(own_schedule.written.weight), ", request ", u64(own_schedule.written.request), " us; the first thread: weight ", u64(first.weight), ", request ", u64(first.request), as_it_must ? string(" us: as it must") : string(" us: WRONG"))
+	return as_it_must
+}
+
+// schedule_refusals: each write of a schedule that the kernel must refuse,
+// on one spinner that runs. The statuses are in the line of the log.
+schedule_refusals :: proc "contextless" () -> bool {
+	if !spinners_start(0, 1, full_weight) {
+		return false
+	}
+	numbers: [SPINNER_LIMIT]u64
+	if !spinner_machine_numbers(0, 1, &numbers) {
+		spinners_stop(0, 1)
+		return false
+	}
+	spinner := spinner_threads[0].handle
+	too_heavy := system.thread_schedule_write(spinner, 0, {weight = op.WEIGHT_FULL + 1})
+	too_long := system.thread_schedule_write(spinner, 0, {request = op.REQUEST_LIMIT + 1})
+	// A refused write changed nothing.
+	kept, kept_status := system.thread_schedule_read(spinner, 0)
+	unchanged := kept_status == .Ok && kept == op.Thread_Schedule{weight = op.WEIGHT_FULL, request = op.REQUEST_DEFAULT, weight_limit = op.WEIGHT_FULL}
+	// The machine with no right Schedule; the machine with Schedule and no
+	// Inspect, which does not read; a thread handle with Inspect and no
+	// Control, which reads and does not write.
+	no_schedule, no_inspect, no_control := system.Status.Ok, system.Status.Ok, system.Status.Ok
+	reads := false
+	if copy, status := system.give(0, machine, {.Inspect}); status == .Ok {
+		no_schedule = system.thread_schedule_write(copy, numbers[0], {weight = 1})
+		system.close(copy)
+	}
+	if copy, status := system.give(0, machine, {.Schedule}); status == .Ok {
+		_, no_inspect = system.thread_schedule_read(copy, numbers[0])
+		system.close(copy)
+	}
+	if copy, status := system.give(0, spinner, {.Inspect}); status == .Ok {
+		no_control = system.thread_schedule_write(copy, 0, {weight = 1})
+		_, read_status := system.thread_schedule_read(copy, 0)
+		reads = read_status == .Ok
+		system.close(copy)
+	}
+	// The machine handle names a thread for the schedule only.
+	_, other_command := system.call(.Thread_Control, u64(machine), numbers[0], u64(op.Thread_Control_Command.Stop))
+	// The spinner ends: its machine number names no thread.
+	spinners_stop(0, 1)
+	ended := system.thread_schedule_write(machine, numbers[0], {weight = 1})
+	as_it_must := too_heavy == .Bad_Operation && too_long == .Bad_Operation && unchanged && no_schedule == .No_Right && no_inspect == .No_Right && no_control == .No_Right && reads && other_command == .Bad_Handle && ended == .Bad_State
+	system.log("scheduler: refused writes of a schedule: a weight above the full weight ", op.STATUS_NAMES[too_heavy], ", a request above the limit ", op.STATUS_NAMES[too_long], ", and the schedule stayed: ", u64(unchanged), "; the machine handle with no right Schedule ", op.STATUS_NAMES[no_schedule], "; a read through the machine handle with Schedule and no Inspect ", op.STATUS_NAMES[no_inspect], "; a thread handle with Inspect and no Control ", op.STATUS_NAMES[no_control], ", and it reads: ", u64(reads), "; another command with the machine handle ", op.STATUS_NAMES[other_command], "; the machine number of a thread that ended ", op.STATUS_NAMES[ended], as_it_must ? string(": as it must") : string(": WRONG"))
+	return as_it_must
+}
+
+// other_program_schedule reads and writes the schedule of a thread of
+// another program through the machine handle: the root service, which
+// lives as long as the machine. Its slot is found by its name, and it is
+// not this program by its serial; the thread report and a second program
+// report have the same serial, so each read is of one program. The write
+// changes the request by one microsecond, and the last write gives the
+// schedule that the thread had.
+other_program_schedule :: proc "contextless" () -> bool {
+	slot, serial: u64
+	for index in u64(1) ..< 64 {
+		report, status := program_report(index)
+		if status == .Ok && system.name_of(report.name[:]) == "root" && report.state != .Stopped && report.state != .None && report.program_serial != self_serial {
+			slot, serial = index, report.program_serial
+			break
+		}
+	}
+	number: u64
+	if slot != 0 && threads_of(slot, serial) {
+		for &item in thread_table.threads[:min(thread_table.count, op.THREAD_REPORT_CAPACITY)] {
+			if item.state != .Stopped && number == 0 {
+				number = item.machine_number
+			}
+		}
+	}
+	as_it_must := false
+	if number != 0 {
+		before, before_status := system.thread_schedule_read(machine, number)
+		changed := before
+		changed.request = before.request == 2999 ? 2998 : 2999
+		write_status := before_status == .Ok ? system.thread_schedule_write(machine, number, changed) : system.Status.Bad_State
+		after, after_status := system.thread_schedule_read(machine, number)
+		restore_status := before_status == .Ok ? system.thread_schedule_write(machine, number, before) : system.Status.Bad_State
+		restored, restored_status := system.thread_schedule_read(machine, number)
+		again, again_status := program_report(slot)
+		as_it_must = before_status == .Ok && write_status == .Ok && after_status == .Ok && restore_status == .Ok && restored_status == .Ok
+		as_it_must &&= after == changed && restored == before
+		as_it_must &&= again_status == .Ok && again.program_serial == serial
+	}
+	system.log("scheduler: a thread of another program, the root service, found by its name and its serial: through the machine handle its schedule was read, written, read back and written back", as_it_must ? string(": as it must") : string(": WRONG"))
+	return as_it_must
+}
+
+// The weight limit (docs/SCHEDULING.md, "The schedule of a live thread"). The first
+// thread of the program gets a limit through the machine handle, tries to
+// leave it by its own writes and by new threads, and gets the full limit
+// back at the end, on each path.
+WEIGHT_LIMIT_OF_THE_CASE :: 256
+LIMIT_ROUNDS :: 1000
+
+// A thread that the limited thread created: what it read of its own
+// schedule, and the status of its own write of the full weight.
+Limited_Child :: struct {
+	schedule: op.Thread_Schedule,
+	read:     system.Status,
+	raise:    system.Status,
+}
+
+limited_child: Limited_Child
+
+limited_child_run :: proc "c" (parameter: rawptr) -> ! {
+	number := system.thread_record().number
+	limited_child.schedule, limited_child.read = system.thread_schedule_read(0, number)
+	limited_child.raise = system.thread_schedule_write(0, number, {weight = op.WEIGHT_FULL})
+	system.thread_stop()
+}
+
+// weight_limits: no gain by writes. The conditions are statuses and values
+// that the kernel gives, with no time in them: under a limit, no write of
+// the thread and no new thread has a weight above the limit, each write
+// above it is refused, and only the machine handle raises the limit.
+weight_limits :: proc "contextless" () -> bool {
+	LIMIT :: WEIGHT_LIMIT_OF_THE_CASE
+	number := system.thread_record().number
+	limited := op.Thread_Schedule{weight = LIMIT, request = op.REQUEST_DEFAULT, weight_limit = LIMIT}
+	lowered := system.thread_schedule_write(machine, self_machine_number, {weight_limit = LIMIT})
+	now, now_status := system.thread_schedule_read(0, number)
+	error: errors.Error_Record
+	raise := system.thread_schedule_write(0, number, {weight = op.WEIGHT_FULL}, &error)
+	record_right := error.kind == i64(errors.Kind.Bad_Value) && error.value == op.WEIGHT_FULL && error.limit == LIMIT && error.found == i64(op.Thread_Write_Refusal.Weight)
+	// The limit of the record of an own write is not read: the thread
+	// keeps its limit, and the weight 0 is the limit.
+	ignored := system.thread_schedule_write(0, number, {weight_limit = op.WEIGHT_FULL})
+	kept, kept_status := system.thread_schedule_read(0, number)
+	first_right := lowered == .Ok && now_status == .Ok && now == limited && raise == .Bad_Operation && record_right && ignored == .Ok && kept_status == .Ok && kept == limited
+	// The same weight again, down, up above the limit, up to the limit.
+	accepted, refused, above: u64
+	for _ in 0 ..< LIMIT_ROUNDS {
+		accepted += u64(system.thread_schedule_write(0, number, {weight = LIMIT}) == .Ok)
+		accepted += u64(system.thread_schedule_write(0, number, {weight = 1}) == .Ok)
+		refused += u64(system.thread_schedule_write(0, number, {weight = op.WEIGHT_FULL}) == .Bad_Operation)
+		// The refused write changed nothing: the weight is still 1.
+		after_refusal, after_status := system.thread_schedule_read(0, number)
+		accepted += u64(system.thread_schedule_write(0, number, {weight = LIMIT}) == .Ok)
+		last, last_status := system.thread_schedule_read(0, number)
+		if after_status != .Ok || after_refusal.weight != 1 || after_refusal.weight_limit != LIMIT || last_status != .Ok || last != limited {
+			above += 1
+		}
+	}
+	rounds_right := accepted == 3 * LIMIT_ROUNDS && refused == LIMIT_ROUNDS && above == 0
+	system.log("scheduler: the weight limit ", u64(LIMIT), " written through the machine handle: the thread has the weight ", u64(now.weight), "; its own write of the full weight ", op.STATUS_NAMES[raise], ", the error record has the limit: ", u64(record_right), "; its own write of the full limit changed nothing: ", u64(kept == limited), "; ", u64(LIMIT_ROUNDS), " rounds of its own writes of the weights ", u64(LIMIT), ", 1, 1024 and ", u64(LIMIT), ": ", accepted, " accepted, ", refused, " refused, a weight above the limit or a changed limit ", above, " times", first_right && rounds_right ? string(": as it must") : string(": WRONG"))
+
+	// A new thread: a weight above the limit is refused; with the weight
+	// 0 it has the limit as its weight and as its limit.
+	limited_child = {read = .Bad_State, raise = .Ok}
+	_, too_heavy := system.thread_start(brief, nil, weight = LIMIT + 1)
+	child, child_status := system.thread_start(limited_child_run, nil)
+	if child_status == .Ok {
+		system.thread_wait(child)
+	}
+	child_right := too_heavy == .Bad_Operation && child_status == .Ok && limited_child.read == .Ok && limited_child.schedule == limited && limited_child.raise == .Bad_Operation
+	// The machine handle gives the full limit back, on each path.
+	full := op.Thread_Schedule{weight = op.WEIGHT_FULL, request = op.REQUEST_DEFAULT, weight_limit = op.WEIGHT_FULL}
+	raised := system.thread_schedule_write(machine, self_machine_number, {})
+	restored, restored_status := system.thread_schedule_read(0, number)
+	restored_right := raised == .Ok && restored_status == .Ok && restored == full
+	system.log("scheduler: under the weight limit ", u64(LIMIT), ": a new thread with the weight ", u64(LIMIT + 1), " ", op.STATUS_NAMES[too_heavy], "; a new thread with the weight 0 has the weight ", u64(limited_child.schedule.weight), " and the limit ", u64(limited_child.schedule.weight_limit), ", and its own write of the full weight ", op.STATUS_NAMES[limited_child.raise], "; after the machine handle wrote the full limit the first thread has the weight ", u64(restored.weight), child_right && restored_right ? string(": as it must") : string(": WRONG"))
+	return first_right && rounds_right && child_right && restored_right
 }
 
 // refusals: Strategy_Set with a copy of the machine handle that has no
@@ -863,6 +1329,21 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if !refusals_right {
 		fail("a change with no right Schedule, or a weight above 1024, was not refused")
 	}
+	if !find_self() {
+		fail("the program did not find its own threads in the reports")
+	}
+	if !own_schedules() {
+		fail("a thread did not read or write its own schedule")
+	}
+	if !schedule_refusals() {
+		fail("a write of a schedule was not refused as it must")
+	}
+	if !other_program_schedule() {
+		fail("the schedule of a thread of another program was not read and written")
+	}
+	if self_machine_number == 0 || !weight_limits() {
+		fail("a weight limit did not hold")
+	}
 	for index in 0 ..< STRATEGY_COUNT {
 		measure(index, processors)
 		if results[index].measured {
@@ -870,6 +1351,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 		draw(&window, system_report(), processors)
 	}
+	log_written()
 	if lost_wakes != 0 {
 		fail("a wake was lost")
 	}

@@ -923,9 +923,9 @@ Do not use: quantum.
 
 A weight is a number from 1 to 1024 of a thread: its share of a processor against the other threads of its queue, under a strategy with weights.
 
-The weight is set when the thread is created. 0 is 1024, the full weight, so a program that gives no weight gets the most. A program can only lower or split its own share, never raise it above a thread with no weight. The processor limit of the budget stays above any weight: a strategy only orders the time that the budget gives.
+The weight is set when the thread is created, and a write of the thread schedule changes it while the thread lives. 0 is the weight limit of the thread, which is 1024, the full weight, unless it was lowered: a program that gives no weight gets the most. A program sets the weight of its threads up to their weight limit, never above it, so never above a thread with no weight. The processor limit of the budget stays above any weight: a strategy only orders the time that the budget gives.
 
-The design: `docs/SCHEDULING.md`, "Weights and requests: a field at thread creation".
+The design: `docs/SCHEDULING.md`, "Weights and requests: a field at thread creation" and "The schedule of a live thread".
 
 Do not use: priority, nice value, shares.
 
@@ -967,11 +967,57 @@ Do not use: runnable (for this).
 
 A request is the processor time that a thread asks for at each turn under EEVDF, in microseconds: 1 to 100 000, and 0 is 3000.
 
-The request sets the virtual deadline, not the share: a short request makes the thread run sooner and more often, for shorter turns. Its cost, more switches, is in the time of the thread, which its budget pays.
+The request sets the virtual deadline, not the share: a short request makes the thread run sooner and more often, for shorter turns. Its cost, more switches, is in the time of the thread, which its budget pays. A write of the thread schedule changes it while the thread lives.
 
 The design: `docs/SCHEDULING.md`, "Weights and requests: a field at thread creation".
 
 Do not use: slice (for this), quantum.
+
+### Thread schedule
+
+A thread schedule is the weight, the request and the weight limit of one thread: the values that are set for it for the scheduling strategies (`op.Thread_Schedule`).
+
+It is the policy of scheduling that a program holds: the program chooses the values, at a slow rate, and the kernel applies them at each tick with its own strategy. No code of a program runs when the kernel picks a thread. `Thread_Create` gives the first thread schedule; thread control reads it (`Read_Schedule`) and writes it (`Write_Schedule`) while the thread lives, also while it runs.
+
+Who can read and write it:
+
+- a program, for its own threads, by number;
+- the holder of a thread handle: **Inspect** reads, **Control** writes, because a holder that can end a thread can also give it a smaller share;
+- the holder of the machine handle with **Schedule**, for any thread, by its machine number; a read through it needs **Inspect** too. Only this holder writes the weight limit.
+
+A write keeps what the thread owes to the other threads, and never makes larger what it is owed. So a thread gains nothing by writing its own thread schedule again and again. It is not the placement of a thread on the processors, and not a share for a budget: neither is built.
+
+Example: `{weight = 256, request = 500}` gives a thread a quarter of the share of a thread of the full weight, and turns of 500 microseconds under EEVDF.
+
+The design: `docs/SCHEDULING.md`, "The schedule of a live thread".
+
+Do not use: scheduling parameters, scheduling attributes, priority.
+
+### Weight limit
+
+A weight limit is the most that the weight of one thread can be: a number from 1 to 1024, and 1024, the full weight, for a thread that nobody limited.
+
+It makes a lowered weight last. Without it, the program of a thread writes the full weight back in one operation, and the holder of the right **Schedule** decides nothing. Only a write of the thread schedule through the machine handle with **Schedule** sets the limit; a weight above the new limit becomes the limit in the same write. A write of a program for its own thread, or through a thread handle, does not read the limit of the record, and its weight is refused above the limit of the thread (`Bad_Operation`). A new thread gets the weight limit of the thread that creates it, and the first thread of a new program gets the limit of the thread that starts it: a program does not leave a limit by a new thread.
+
+It is not a share for a program: a program under a limit that creates more threads has more threads of that weight.
+
+Example: the machine handle writes `{weight_limit = 256}` for a thread; the thread then has the weight 256, its own write of the weight 1024 is refused, and a thread that it creates with the weight 0 has the weight 256.
+
+The design: `docs/SCHEDULING.md`, "The schedule of a live thread", "The weight limit".
+
+Do not use: maximum priority, weight cap, ceiling.
+
+### Machine number
+
+A machine number is the number that names one thread among all the threads of the machine (`op.Thread_Report.machine_number`).
+
+A thread number names a thread inside its program only, and a thread handle names one thread that its program gave. The machine handle with **Schedule** needs a name for any thread: the thread report of `Inspect` gives the machine number of each thread, and thread control takes it for the two commands of the thread schedule. The low 32 bits are the place of the thread in the thread table of the kernel; the high 32 bits change for each new thread in that place. So the machine number of a thread that ended names no later thread: the kernel gives `Bad_State` for it.
+
+It is not a handle: it gives no right. Only the holder of the machine handle with **Inspect** reads it, and only the machine handle with **Schedule** makes the kernel take it (with **Inspect** too for a read).
+
+The design: `docs/SCHEDULING.md`, "The schedule of a live thread".
+
+Do not use: thread identifier, TID, global thread number.
 
 ### Virtual deadline
 
@@ -1405,13 +1451,13 @@ Do not use: siginfo, fault message.
 
 Thread control is the kernel operation `Thread_Control`: it stops a thread, reads and writes its registers and its extended state, and resumes it.
 
-No other operation stops a thread without ending it, or gives its registers. A debugger, a garbage collector that reads the roots of each thread, a sampling profiler and the program that runs a guest need both. One operation with a command (`op.Thread_Control_Command`) keeps the count of kernel operations low: `Stop`, `Resume`, `Read_Registers`, `Write_Registers`, `Read_Extended_State`, `Write_Extended_State`.
+No other operation stops a thread without ending it, or gives its registers. A debugger, a garbage collector that reads the roots of each thread, a sampling profiler and the program that runs a guest need both. One operation with a command (`op.Thread_Control_Command`) keeps the count of kernel operations low: `Stop`, `Resume`, `Read_Registers`, `Write_Registers`, `Read_Extended_State`, `Write_Extended_State`. Two more commands read and write the thread schedule of a thread that is not held, with their own rights: `Read_Schedule` and `Write_Schedule`.
 
 Who can act on a thread:
 
 - a program acts on its own threads, by number or by handle;
-- a thread of another program needs a thread handle that the program received with `Handle_Give`, with **Inspect** for each command, and **Inspect** and **Write** for a write, because a write lets its holder choose the code that the thread runs;
-- **Control**, the right to end a thread, gives none of these: a handle given so that another program can end a thread does not become a grant to read it.
+- a thread of another program needs a thread handle that the program received with `Handle_Give`, with **Inspect** for a hold and for each read, and **Inspect** and **Write** for a write of the registers, because such a write lets its holder choose the code that the thread runs;
+- **Control**, the right to end a thread, gives none of these: a handle given so that another program can end a thread does not become a grant to read it. It gives only the write of the thread schedule.
 
 The four commands of the registers need a held thread, else `Bad_State`. A write is copied once into the kernel, checked whole, and refused whole if one field is wrong (`Bad_Operation`, with the refused field in the error record): a thread never gets a frame that the processor refuses.
 

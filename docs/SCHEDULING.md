@@ -8,11 +8,11 @@ Status: built. The kernel runs three strategies (`kernel/strategy.odin`), and th
 
 **Read before.** `ARCHITECTURE.md`, "K3. Scheduler" and, for the locks, "Rules that keep each path correct". After this guide, the picture of the program `scheduler`.
 
-**The map of this note.** "1. What Linux does" describes CFS, EEVDF and `sched_ext`. "2. What this system takes" gives the table of six functions. "3. Design details" gives the virtual time, the queue clock and the lag. "4. Measured" and "5. What this system refuses, and why" close.
+**The map of this note.** "1. What Linux does" describes CFS, EEVDF and `sched_ext`. "2. What this system takes" gives the table of six functions, and the weight and the request that a program sets for a thread. "3. Design details" gives the virtual time, the queue clock and the lag. "4. Measured" and "5. What this system refuses, and why" close.
 
 ![The scheduling strategies side by side, with the wakes, the delay of a wake, the shares of spinners with weights, and the strategy in use](screenshots/scheduler.png)
 
-This note says what the three Linux designs do, which ideas this system takes, which it refuses, and why. The terms are in `GLOSSARY.md`: strategy, weight, virtual time, lag, eligible, virtual deadline, request, wake preemption.
+This note says what the three Linux designs do, which ideas this system takes, which it refuses, and why. The terms are in `GLOSSARY.md`: strategy, weight, virtual time, lag, eligible, virtual deadline, request, thread schedule, machine number, wake preemption.
 
 Sources. The EEVDF and `sched_ext` paragraphs were checked against the kernel documentation (`docs.kernel.org/scheduler/sched-eevdf.html` and `sched-ext.html`, read on 2026-11-11). The constants of CFS and the details of the Linux code (the names of fields, the clamp of the lag) are from memory of the Linux sources: they are not checked against a source.
 
@@ -83,11 +83,80 @@ The run queue, the run lock, the balance between processors and the budgets stay
 
 ### Weights and requests: a field at thread creation
 
-`Thread_Create` has two more values: the weight (1 to 1024; 0 is 1024, the full weight) and the request in microseconds (1 to 100 000; 0 is 3000). Zero is the default, so a program that gives neither value gets the full weight and the default request (property 13).
+`Thread_Create` has two more values: the weight (1 to the weight limit of the calling thread, which is 1024, the full weight, unless it was lowered; 0 is that limit) and the request in microseconds (1 to 100 000; 0 is 3000). Zero is the default, so a program that gives neither value gets the most weight that it can have and the default request (property 13).
 
-Property 20: a program can lower or split its own share, never raise it. The weight of a thread is at most the full weight, which is the default. So a program can give one thread less than another, and cannot take more than a thread with no weight. The processor limit of the budget stays above any weight: a strategy only orders the time that the budget gives. The request does not change the share: it moves the deadline. A short request can cost more switches; the cost is in the time of the thread itself, which its budget pays.
+Property 20, as an exact rule: a program sets the weight of each of its threads from 1 to the weight limit of that thread, and never above it. The weight limit is the full weight, until the holder of the right **Schedule** on the machine lowers it; only that holder raises it again. A new thread gets the weight limit of the thread that creates it. So a program can give one thread less than another, can raise again a weight that it lowered itself, and cannot take more than a thread with no weight, or more than its limit ("The weight limit", below). The processor limit of the budget stays above any weight: a strategy only orders the time that the budget gives. The request does not change the share: it moves the deadline. A short request can cost more switches; the cost is in the time of the thread itself, which its budget pays.
 
 A weight is for a thread, not for a program or a budget: a program with many threads still has more share than a program with one thread, as with round robin. A share for each budget (the groups of Linux) is not built: see section 5.
+
+### The schedule of a live thread
+
+The policy of scheduling is outside the kernel, and the mechanism is inside. A program chooses the weight and the request of threads, at a slow rate. The kernel applies them at each tick with its own strategy. No code of a program runs when the kernel picks a thread, charges a turn or wakes a thread.
+
+The two values of one thread are its thread schedule (`op.Thread_Schedule`: `weight`, `request`). `Thread_Create` gives the first one. `Thread_Control` has two commands for a thread that lives:
+
+| Command | What it does |
+|---|---|
+| `Read_Schedule` | Writes the thread schedule at the address of the caller: the values in use, never 0 |
+| `Write_Schedule` | Reads a thread schedule at the address of the caller: the thread has these values from now on. 0 is the default of each value, as for `Thread_Create` |
+
+The thread is not held: its schedule changes while it runs, while it is in a run queue, and while it waits. The rules of the values are the rules of `Thread_Create` (one check, `op.thread_schedule_accepted`, then the weight limit of the thread): a weight above the weight limit or a request above the limit gives `Bad_Operation`, and nothing changes. The error record names the refused value and the most that it can be.
+
+**Who can read and write.** No program reaches the schedule of a thread because it runs (property 20). Three ways name a thread:
+
+| The argument `thread` | The argument `number` | `Read_Schedule` needs | `Write_Schedule` needs |
+|---|---|---|---|
+| 0 | The number of a live thread of the calling program | Nothing: its own thread | Nothing: its own share |
+| A thread handle | Not read | **Inspect** | **Control** |
+| The machine handle | The machine number of any thread | **Schedule** and **Inspect** | **Schedule** |
+
+- **Control** is the right to end the thread. A holder that can end a thread can also give it a smaller share, which is less. **Write**, the right to write the registers, is not needed: a weight chooses no code.
+- **Schedule** on the machine is the right of `Strategy_Set`. Its holder already changes the order of every thread of the machine, so the same right lets it set the weight and the request of any thread. The root service gives it to the program `scheduler` only.
+- A read through the machine handle needs **Inspect** too (`op.thread_control_machine_rights`). Each report of the machine needs **Inspect**, and this read is one: it gives values of any thread, and its status says which machine numbers name a thread. So **Schedule** alone writes, and reads nothing.
+- The machine handle names a thread for these two commands only. Each other command of `Thread_Control` with the machine handle gives `Bad_Handle`: **Schedule** holds no thread and reads no register.
+- Every write keeps the rule of the weights: a weight is at most the weight limit of the thread, and a limit is at most the full weight. So no holder, also the holder of **Schedule**, gives a thread more than a thread that asked for nothing.
+
+**The weight limit.** Each thread has a weight limit, from 1 to the full weight: the most that its weight can be. The third field of the thread schedule is the limit (`Thread_Schedule.weight_limit`), and `Read_Schedule` gives it.
+
+- Only a write through the machine handle sets the limit; 0 is the full weight. A weight above the new limit becomes the limit in the same write, so one write lowers both. A write through the machine handle always writes the three values: a holder that changes one value reads the schedule first.
+- A write of a program for its own thread, and a write through a thread handle, do not read the limit of the record. Their weight is refused above the limit that the thread has (`Bad_Operation`; the error record has the refusal `Weight` and the limit). Their weight 0 is the limit: the most that the thread can have.
+- A new thread gets the weight limit of the thread that creates it, and `Thread_Create` refuses a weight above it. The first thread of a new program gets the limit of the thread that starts the program. The first thread of the root service has the full weight.
+
+Why. Without a limit the last writer decides, and the program of a thread is always a writer: it writes the full weight back in one operation, and a weight that the holder of **Schedule** lowered does not last. The limit makes the policy of that holder hold. Why a new thread takes the limit of its creator: with the full weight for each new thread, a program leaves a limit by a new thread that does the same work. The limit follows the creation of threads, so a program under a limit stays under it, also through a program that it starts. The limit is one word of the thread record, outside its first 64 bytes: only a write of a schedule and a creation read it.
+
+What the limit is not: a share for a program. A program under a limit that creates more threads has more threads of that weight, as a program with the full weight has. A share for each budget is the next layer (section 5).
+
+**The machine number.** A thread number names a thread inside its program. The machine handle needs a name for any thread: the thread report of `Inspect` (`Inspect_Kind.Threads`) gives the machine number of each thread (`Thread_Report.machine_number`). Its low 32 bits are the place of the thread in the thread table of the kernel. Its high 32 bits are the serial of the thread in that place, which changes for each new thread there. The kernel compares the serial under the control lock, where no place gets a new thread. So the machine number of a thread that ended gives `Bad_State`, and never names a later thread.
+
+**What a write does in the kernel.** The write is one section of the run lock of the home of the thread (`thread_schedule_write`). If the thread is in the list of the queue, the sum of the weights of the queue loses the old weight and gets the new one, so it stays exact. The thread keeps its state, its home, its processor and its place in the list.
+
+**The history of the thread stays.** The invariant of a write: a write keeps what the thread owes to the other threads, and never makes larger what it is owed. A change of strategy gives each thread the zero values of the strategy fields, because the history of one strategy has no meaning under another. A write of a schedule does not: the strategy is the same, and the history still has a meaning. The reason is the rule of the shares. A thread that ran more than its share owes time: under EEVDF its lag is negative, and it waits until the other threads caught up. Zero values forgive that debt. A thread that wrote its own schedule again and again, also with the same values, would lose its debt at each write, and would run before threads that waited longer. So a program would raise its share with an operation that it is always allowed to do.
+
+What each strategy keeps and what it corrects (`strategy_schedule_changed`):
+
+| Strategy | Thread in the list or on a processor | Thread that waits, or that a stop holds |
+|---|---|---|
+| Round robin | Nothing: it reads no weight and no request | Nothing |
+| Fair | The virtual time stays. The next charge and the next turn use the new weight | The distance to the queue clock stays: its bounds do not depend on the weight |
+| EEVDF | The virtual time stays, within the new lag bound under the queue clock (the rule of each pick). The virtual deadline is at most one new request after the virtual time, and never later than it was | The lag is converted to the new weight, then kept within the new lag bound |
+
+Why the lag of a waiting thread is converted. The lag that EEVDF keeps across a wait is not a plain distance. At the stop, the average `V` counts the thread with its weight `w`: with `D` the distance of the thread to the average of the other threads, and `W` the sum of their weights, the kept lag is `D * W / (W + w)`. At the wake, the place scales it back by `(W + w) / W`. With one weight the two factors cancel. With a write between them they do not: a lag kept under the full weight and placed under the weight 1 gives about half of `D` with one other thread, so a thread would lose half of its debt at each wait. The same holds for a thread that a stop holds.
+
+The conversion (`eevdf_lag_converted`): the lag times the weight is the processor time that the thread owes (a lag below 0) or is owed (above 0). A write keeps that time: the new lag is `lag * old weight / new weight`. A debt converts exactly, in both directions: a weight written down and up again during one wait gives the same debt back. One exception: what a thread is owed does not grow when the weight goes down; it stays as it is. The reason is the thread in the list, which keeps its virtual time across a write: a lag made 1024 times larger under the weight 1, then the full weight written again after the wake, would be time that the thread never waited for, up to two requests at each wake. So what a thread is owed can only get smaller by a write. The product is safe: a lag is at most 2^40 and a weight at most 2^10, so it is below 2^51.
+
+The fair strategy needs no conversion. The distance that it keeps across a wait is the virtual time minus the queue clock, with no weight in it, and the wake adds it back with no factor: a thread in the list and a thread that waits keep the same quantity.
+
+A stop of `Thread_Control` follows the same rule. A thread that a `Stop` takes out of the list leaves it as a thread that starts to wait (`strategy_leaves_list`): its strategy keeps its lag or its distance, and the `Resume` places it as a woken thread. So a `Stop` and a `Resume` forgive no debt.
+
+Why the two corrections of EEVDF for a thread in the list. The lag bound of a thread is two requests in weighted cycles, so it is large under a small weight. A thread that was owed that much virtual time, and then gets the full weight, would be owed much more real time than any thread of the full weight: the new bound removes the difference. The deadline rule makes a shorter request count at once, and gives no later end of a turn to a thread that writes its request again.
+
+Why no write raises a share. A write never moves a virtual time back. Each charge of a run is at least the charge of the full weight. A debt that a thread keeps across a wait is converted exactly. What a thread is owed never grows by a write, and stays within the bound of its new values. So after any number of writes, a thread has at most what a thread of the full weight has. One small case stays: a thread of a small weight that waited long in the list, and then gets a larger weight, keeps up to the new lag bound of virtual time, which is more processor time than the same lag was under the small weight; it is at most two requests, and what a thread of the full weight can be owed.
+
+One limit: the time that a running thread used since its last charge is charged at the new weight, at its next tick or when it leaves its processor. That time is at most one tick.
+
+The interleavings with a pick, a move, a wake, the end of a thread and a change of strategy are in `ARCHITECTURE.md`, "Locks of the kernel", "The schedule of a live thread". The program `scheduler` checks the commands: a thread reads and writes its own schedule; the weights 1, 2 and 4 written through the machine handle to 12 spinners that run order their shares under the fair strategy and EEVDF; each refusal has its status; the schedule of a thread of another program is read and written through the machine handle; under a weight limit, 1000 rounds of writes of the thread give no weight above the limit, and a new thread has the limit; writes during 100 changes of strategy lose no thread. No machine test measures a gain of processor time by writes: the argument above is by the code.
+
+**Not built.** The placement of a thread on the processors, and a share for each budget. Section 5 says what each one needs.
 
 ### The change of strategy is a kernel operation with a right
 
@@ -157,6 +226,6 @@ Each item is an idea of Linux that the system does not take, or does not take ye
 - **A tree for the queue** (CFS, EEVDF): refused for now. A scan of a small queue in one table is fewer lines (property 13); a measure decides when a queue becomes large.
 - **The nice value**: refused. A weight is a number from 1 to 1024 that a program can only lower (property 20), not a level that a privileged program raises.
 - **A program of the principal as the strategy** (`sched_ext`): not built. The kernel must stay off the hot path (property 5) and must not run code that it did not verify; a program that answers each pick through a ring puts a round trip between programs on each switch. What it needs: (1) a form of strategy code that the kernel can check before it runs it: a small language of callbacks over the fixed fields (a verifier, as BPF), or a module that the kernel runs only after a proof of bounded time and of the fields that it reads and writes; (2) the six callbacks, which are already the whole interface; (3) a watchdog: a thread that is ready and does not run for a time ends the strategy, as the kernel of Linux does; (4) the fallback: `Strategy_Set` to round robin, which already works without a stop; (5) a right: the same right `Schedule` on the machine. What exists for it: the six callbacks, the state in fixed fields that a strategy owns and that a change resets to zero, the change at run time without a stop, and the counts that a watchdog reads.
-- **Groups** (the CFS groups, the cgroups of Linux): not built. A share for each budget needs a virtual time for each budget in each queue: a strategy can add it with the same six callbacks.
+- **Groups** (the CFS groups, the cgroups of Linux): not built. A share for each budget needs a virtual time for each budget in each queue: a strategy can add it with the same six callbacks. It is the next layer of the policy that a program holds, after the schedule of a live thread: a program with the right would write the weight of a budget as it writes the weight of a thread.
 - **The deferred dequeue of Linux** (a sleeping thread stays in the queue so that its lag decays): refused. It keeps a thread that waits in a structure of threads that are ready; here the lag is clamped at the sleep and the change of strategy resets it.
-- **Per-thread affinity**: not built. A move keeps the virtual time or the lag; the balance stays the one of the lock split.
+- **Per-thread affinity**: not built. A move keeps the virtual time or the lag; the balance stays the one of the lock split. The placement of a thread on the processors is a layer of the policy that a program holds, as the schedule of a live thread is: a set of processors for a thread, which the pick and the move of each queue would read. No command writes it yet.
