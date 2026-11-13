@@ -208,12 +208,13 @@ files_with_suffix :: proc(folder, suffix: string) -> (paths: []string, ok: bool)
 	return list[:], true
 }
 
-// The checks of the kernel: the lock order at each take (TEST_BUILD_CHECKS_LOCK_ORDER)
-// and the sums of the frames at each report and each drain, with a drain
-// of all the frame caches at each 64th refill (TEST_BUILD_CHECKS_FRAME_SUMS). The test
+// The checks of the kernel: the lock order at each take (TEST_BUILD_CHECKS_LOCK_ORDER),
+// the sums of the frames at each report and each drain, with a drain
+// of all the frame caches at each 64th refill (TEST_BUILD_CHECKS_FRAME_SUMS), and the
+// placement of each thread that enters a run queue (TEST_BUILD_CHECKS_PLACEMENT). The test
 // build has them (`check`, `test`, `screenshots`, `measure`, `run`); the
 // measure build has none (`measure without_checks`, `run without_checks`). The tool
-// passes the two defines in each build: the defaults of the source never
+// passes the three defines in each build: the defaults of the source never
 // decide.
 test_build_checks := true
 // A measure run of the windows: the programs write the time of their
@@ -266,6 +267,7 @@ module_compile_command :: proc(build: Module_Build) -> []string {
 		append(&compile, "-disable-red-zone")
 		append(&compile, test_build_checks ? "-define:TEST_BUILD_CHECKS_LOCK_ORDER=true" : "-define:TEST_BUILD_CHECKS_LOCK_ORDER=false")
 		append(&compile, test_build_checks ? "-define:TEST_BUILD_CHECKS_FRAME_SUMS=true" : "-define:TEST_BUILD_CHECKS_FRAME_SUMS=false")
+		append(&compile, test_build_checks ? "-define:TEST_BUILD_CHECKS_PLACEMENT=true" : "-define:TEST_BUILD_CHECKS_PLACEMENT=false")
 	} else {
 		append(&compile, SUPPORT_LIBRARY) // The kernel has the contract library only.
 		if measure_run {

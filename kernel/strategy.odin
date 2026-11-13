@@ -55,17 +55,38 @@ queue_strategy_ready :: #force_inline proc "contextless" (queue: ^Run_Queue, hom
 }
 
 // queue_strategy_pick gives the next thread of a queue, among the threads
-// that a budget lets run, or nil. The generic code takes it out of the list.
-queue_strategy_pick :: #force_inline proc "contextless" (queue: ^Run_Queue, home: u32) -> (picked: ^Thread) {
+// that a budget lets run and that the processor `taker` can run, or nil.
+// The generic code takes it out of the list.
+queue_strategy_pick :: #force_inline proc "contextless" (queue: ^Run_Queue, home: u32, taker: u32) -> (picked: ^Thread) {
 	switch queue.strategy {
 	case .None, .Round_Robin:
-		picked = round_robin_pick(queue, home)
+		picked = round_robin_pick(queue, home, taker)
 	case .Fair:
-		picked = fair_pick(queue, home)
+		picked = fair_pick(queue, home, taker)
 	case .Eevdf:
-		picked = eevdf_pick(queue, home)
+		picked = eevdf_pick(queue, home, taker)
 	}
 	return
+}
+
+// thread_allowed says if a processor can run a thread: the thread has no
+// placement, or the processor is in its set (docs/SCHEDULING.md, "The
+// placement of a thread"). A thread with no placement costs one test of a
+// byte of its hot line. Under the run lock of the home of the thread the
+// answer is exact; with no lock it is a hint.
+thread_allowed :: #force_inline proc "contextless" (thread: ^Thread, processor: u32) -> bool {
+	return !thread.placement_restricted || thread.processors & (u64(1) << processor) != 0
+}
+
+// pick_allowed says if the processor `taker` can take a thread of the list
+// of the queue of `home`. The processor of the queue takes each thread of
+// its list with no test: a thread is in a list only when the processor of
+// that list is in its set. Another processor takes the best thread among
+// those that it can run, as it takes the best among those whose budget
+// has time: the average and the clock of the queue stay values of all its
+// threads.
+pick_allowed :: #force_inline proc "contextless" (thread: ^Thread, home: u32, taker: u32) -> bool {
+	return taker == home || thread_allowed(thread, taker)
 }
 
 // queue_strategy_tick: the tick on the processor that runs the thread:
@@ -320,9 +341,9 @@ round_robin_ready :: proc "contextless" (queue: ^Run_Queue, home: u32, thread: ^
 
 // The first thread of the queue whose budget has processor time in this
 // period: one line of the queue and one line of each thread passed over.
-round_robin_pick :: proc "contextless" (queue: ^Run_Queue, home: u32) -> ^Thread {
+round_robin_pick :: proc "contextless" (queue: ^Run_Queue, home: u32, taker: u32) -> ^Thread {
 	for index := queue.head; index != 0; index = threads[index].queue_next {
-		if !budget_spent(threads[index].budget) {
+		if pick_allowed(&threads[index], home, taker) && !budget_spent(threads[index].budget) {
 			return &threads[index]
 		}
 	}
@@ -405,14 +426,15 @@ fair_ready :: proc "contextless" (queue: ^Run_Queue, home: u32, thread: ^Thread,
 }
 
 // One pass over the list: each thread is kept within the credit under the
-// clock; the least virtual time among the threads that a budget lets run.
-fair_pick :: proc "contextless" (queue: ^Run_Queue, home: u32) -> ^Thread {
+// clock; the least virtual time among the threads that a budget lets run
+// and that the taker can run.
+fair_pick :: proc "contextless" (queue: ^Run_Queue, home: u32, taker: u32) -> ^Thread {
 	best: ^Thread
 	floor := queue.virtual - fair_credit
 	for index := queue.head; index != 0; index = threads[index].queue_next {
 		thread := &threads[index]
 		floor_to(thread, floor)
-		if !budget_spent(thread.budget) && (best == nil || before(thread.virtual, best.virtual)) {
+		if pick_allowed(thread, home, taker) && !budget_spent(thread.budget) && (best == nil || before(thread.virtual, best.virtual)) {
 			best = thread
 		}
 	}
@@ -535,9 +557,10 @@ eevdf_ready :: proc "contextless" (queue: ^Run_Queue, home: u32, thread: ^Thread
 }
 
 // Three passes over the list: each thread is kept within its lag bound
-// under the clock; V; the earliest deadline among the eligible threads.
-// The second and the third read lines that the first brought.
-eevdf_pick :: proc "contextless" (queue: ^Run_Queue, home: u32) -> ^Thread {
+// under the clock; V; the earliest deadline among the eligible threads
+// that the taker can run. The second and the third read lines that the
+// first brought.
+eevdf_pick :: proc "contextless" (queue: ^Run_Queue, home: u32, taker: u32) -> ^Thread {
 	if queue.head == 0 {
 		return nil
 	}
@@ -549,7 +572,7 @@ eevdf_pick :: proc "contextless" (queue: ^Run_Queue, home: u32) -> ^Thread {
 	best, least: ^Thread
 	for index := queue.head; index != 0; index = threads[index].queue_next {
 		thread := &threads[index]
-		if budget_spent(thread.budget) {
+		if !pick_allowed(thread, home, taker) || budget_spent(thread.budget) {
 			continue
 		}
 		if least == nil || before(thread.virtual, least.virtual) {

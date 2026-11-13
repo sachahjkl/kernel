@@ -292,9 +292,9 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			return .Bad_State
 		}
 		// The first thread of the program gets the weight limit of the
-		// thread that starts it: a program does not leave its limit by a
-		// program that it starts.
-		if _, status := thread_create(slot.object, to.budget, v[1], v[2], v[3], weight_limit = intrinsics.atomic_load(&threads[index].weight_limit)); status != .Ok {
+		// thread that starts it, and the limit of its placement: a program
+		// does not leave a limit by a program that it starts.
+		if _, status := thread_create(slot.object, to.budget, v[1], v[2], v[3], weight_limit = intrinsics.atomic_load(&threads[index].weight_limit), processors_limit = intrinsics.atomic_load(&threads[index].processors_limit)); status != .Ok {
 			return status
 		}
 		to.state = .Ready
@@ -315,7 +315,10 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		if !op.thread_schedule_accepted(v[4], v[5]) || v[4] > u64(weight_limit) {
 			return .Bad_Operation
 		}
-		created := thread_create(program_index, budget.object, v[1], v[2], v[3], v[4], v[5], weight_limit) or_return
+		// The limit of the placement of the calling thread goes to the new
+		// thread in the same way, and a write of it at the same time comes
+		// before this read or after it.
+		created := thread_create(program_index, budget.object, v[1], v[2], v[3], v[4], v[5], weight_limit, intrinsics.atomic_load(&threads[index].processors_limit)) or_return
 		handle := handle_insert(program, {kind = .Thread, rights = RIGHTS_THREAD, object = created})
 		if handle == 0 {
 			thread_stop(created)

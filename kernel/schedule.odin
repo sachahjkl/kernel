@@ -15,6 +15,15 @@ import op "contract:operation"
 // preemption and move. This file keeps the lists, the locks and the
 // balance between the processors.
 //
+// The placement of a thread (docs/SCHEDULING.md, "The placement of a
+// thread") is a set of processors. The invariant: the home of a thread is
+// in its set, or the thread is on the processor of its home. So each
+// thread of a list can run on the processor of that list. A processor that
+// takes a thread from another queue tests the set under the two run locks
+// (queue_pick); a thread on a processor that left its set moves when it
+// leaves that processor (schedule); a write of a set moves a thread that
+// is on no processor (thread_placement_write).
+//
 // A thread that a processor runs belongs to that processor. Another
 // processor that ends it sets stop_requested; the processor ends it in
 // schedule. A program ends when the last processor that ran one of its
@@ -57,9 +66,52 @@ thread_index :: #force_inline proc "contextless" (thread: ^Thread) -> u32 {
 	return u32(intrinsics.ptr_sub(thread, &threads[0]))
 }
 
+// The test build checks, at each entry of a thread in a list, that the
+// processor of the list is in the placement of the thread.
+TEST_BUILD_CHECKS_PLACEMENT :: #config(TEST_BUILD_CHECKS_PLACEMENT, true)
+
+// machine_processors gives the set of the processors that run threads: one
+// bit for each. The count does not change after the start of the
+// processors.
+machine_processors :: #force_inline proc "contextless" () -> u64 {
+	return processor_count >= 64 ? max(u64) : (u64(1) << processor_count) - 1
+}
+
+// placement_home gives the home of a thread with a set of processors, for
+// a thread whose home is `home` now: the same home when the set has it,
+// else the processor of the set with the least load (the threads in its
+// queue, plus 1 if it runs a thread), the lowest index among equals. It
+// reads the loads with no lock: a hint, on a path that is not hot (a write
+// of a placement, a thread that leaves a processor outside its set, a new
+// thread of a creator with a limit). A set always has a processor of the
+// machine; with none the home stays.
+placement_home :: proc "contextless" (set: u64, home: u32) -> u32 {
+	if set & (u64(1) << home) != 0 {
+		return home
+	}
+	best, least := home, max(u32)
+	for cpu in processors[:processor_count] {
+		if set & (u64(1) << cpu.index) == 0 {
+			continue
+		}
+		load := intrinsics.atomic_load(&run_queues[cpu.index].count) + (intrinsics.atomic_load(&cpu.current) != 0 ? 1 : 0)
+		if load < least {
+			best, least = cpu.index, load
+		}
+	}
+	return best
+}
+
 // queue_push puts a thread at the end of the queue of its home. The caller
 // holds the run lock of the home.
 queue_push :: proc "contextless" (thread: ^Thread) {
+	when TEST_BUILD_CHECKS_PLACEMENT {
+		if !thread_allowed(thread, thread.home) {
+			fault_report_begin()
+			log("kernel: a thread entered the run queue of processor ", u64(thread.home), ", which is not in its placement ", Hex(thread.processors))
+			machine_stop(3)
+		}
+	}
 	queue := &run_queues[thread.home]
 	index := thread_index(thread)
 	thread.queue_next = 0
@@ -110,7 +162,9 @@ queue_ready :: proc "contextless" (thread: ^Thread, kind: Ready_Kind) {
 }
 
 // queue_pick takes the thread that the strategy of a queue picks, among
-// the threads whose budget has processor time in this period, and gives it
+// the threads whose budget has processor time in this period and that the
+// processor can run (this test of the placement, under the run locks, is
+// the one that decides; each other read of a set is a hint), and gives it
 // to a processor, in the same section: the thread is never Ready in no
 // queue and on no processor, where a stop would end it while the processor
 // is about to run it. The caller holds the run lock of the queue, and the
@@ -119,7 +173,7 @@ queue_ready :: proc "contextless" (thread: ^Thread, kind: Ready_Kind) {
 queue_pick :: proc "contextless" (home: u32, cpu: ^Processor) -> u32 {
 	start := cycles_now()
 	queue := &run_queues[home]
-	thread := queue_strategy_pick(queue, home)
+	thread := queue_strategy_pick(queue, home, cpu.index)
 	if thread == nil {
 		return 0
 	}
@@ -162,10 +216,12 @@ queue_move :: proc "contextless" (from: u32, cpu: ^Processor) -> u32 {
 
 // busiest_queue gives the other processor with the highest load (the
 // threads that wait in its queue, plus 1 if it runs a thread) that has a
-// thread in its queue, and that load. It reads with no lock: a hint.
-busiest_queue :: proc "contextless" (cpu: ^Processor) -> (busiest: u32, load: u32) {
+// thread in its queue, and that load. It reads with no lock: a hint. The
+// queues of `tried` (bit n: the processor n) are passed over: this pick
+// already found no thread there.
+busiest_queue :: proc "contextless" (cpu: ^Processor, tried: u64 = 0) -> (busiest: u32, load: u32) {
 	for other in processors[:processor_count] {
-		if other == cpu {
+		if other == cpu || tried & (u64(1) << other.index) != 0 {
 			continue
 		}
 		waiting := intrinsics.atomic_load(&run_queues[other.index].count)
@@ -196,11 +252,23 @@ queue_pushes :: proc "contextless" () -> (sum: u32) {
 // and an interrupt (the case VECTOR_WAKE of kernel_interrupt). The thread
 // that runs there can have changed since the decision: then the turn of
 // another thread ends, which costs one pass through schedule.
-kick :: proc "contextless" (home: u32, preempts := false) {
+//
+// `thread` is the thread that became ready. An idle processor that is not
+// in its placement is passed over: that processor would wake, find no
+// thread that it can take, and the thread would wait while a processor of
+// its set is idle. The set is read with no lock, as a hint: a wrong read
+// costs one wake of an idle processor that takes nothing. A thread with no
+// placement costs one test of a byte of its hot line, which the waker
+// wrote just before.
+kick :: proc "contextless" (home: u32, thread: ^Thread, preempts := false) {
 	target := processors[home]
 	if intrinsics.atomic_exchange(&target.idle, false) {
 		apic_send(target.apic_id, VECTOR_WAKE)
 		return
+	}
+	allowed := max(u64)
+	if thread.placement_restricted {
+		allowed = intrinsics.atomic_load(&thread.processors)
 	}
 	// The idle processor that the waker wakes gets the queue of the thread
 	// as a hint (look_first), after the exchange of `idle` and before the
@@ -212,7 +280,7 @@ kick :: proc "contextless" (home: u32, preempts := false) {
 	// replaces before the pick is lost, and the pick is the one of before
 	// (the busiest queue).
 	for cpu in processors[:processor_count] {
-		if intrinsics.atomic_exchange(&cpu.idle, false) {
+		if allowed & (u64(1) << cpu.index) != 0 && intrinsics.atomic_exchange(&cpu.idle, false) {
 			intrinsics.atomic_store(&cpu.look_first, home + 1)
 			apic_send(cpu.apic_id, VECTOR_WAKE)
 			return
@@ -288,15 +356,21 @@ thread_wake :: proc "contextless" (thread: ^Thread, deadline_before := max(u64))
 	}
 	run_unlock(home)
 	if queued {
-		kick(home, preempts)
+		kick(home, thread, preempts)
 	}
 	return woken
 }
 
 // thread_queue puts a new thread in the queue of the processor that runs
-// this code.
+// this code, or, when that processor is not in the placement that the
+// thread got from its creator, in the queue of a processor of that set.
+// No other processor writes the placement of a thread that is in no queue
+// yet: its creation holds the program lock of its program.
 thread_queue :: proc "contextless" (thread: ^Thread) {
 	home := processor_self().index
+	if thread.placement_restricted {
+		home = placement_home(thread.processors, home)
+	}
 	lock_take(&run_queues[home].lock, .Run)
 	// The home changes under the run lock of the new home: a change of
 	// strategy that visits the old home does not count this thread
@@ -305,7 +379,7 @@ thread_queue :: proc "contextless" (thread: ^Thread) {
 	intrinsics.atomic_store(&thread.home, home)
 	queue_ready(thread, .New)
 	lock_free(&run_queues[home].lock, .Run)
-	kick(home)
+	kick(home, thread)
 }
 
 // schedule_pick takes the next thread for a processor that runs no thread,
@@ -314,6 +388,16 @@ thread_queue :: proc "contextless" (thread: ^Thread) {
 // that wait in the own queue, else from the own queue. So the threads that
 // are ready move to the processors that have less, and each one gets its
 // turn on all the processors, as with one queue. 0: none.
+//
+// A queue can hold only threads that this processor cannot take: threads
+// whose budget has no time in this period, or threads whose placement does
+// not have this processor. The move then gives no thread, and the balance
+// tries the next busiest queue, while its load is above the own count.
+// With one try only, such a queue, when it is the busiest, would keep each
+// other processor away from the threads that wait in a third queue. Each
+// queue is tried one time in a pick: at most one pair of run locks for
+// each other processor, and each thread of the machine is in one list, so
+// one pick still scans each thread one time at most.
 schedule_pick :: proc "contextless" (cpu: ^Processor) -> u32 {
 	// The queue of a thread that woke this processor from idle (kick).
 	if hint := intrinsics.atomic_exchange(&cpu.look_first, 0); hint != 0 && hint - 1 != cpu.index && intrinsics.atomic_load(&run_queues[hint - 1].count) != 0 {
@@ -322,10 +406,16 @@ schedule_pick :: proc "contextless" (cpu: ^Processor) -> u32 {
 		}
 	}
 	own := intrinsics.atomic_load(&run_queues[cpu.index].count)
-	if busiest, load := busiest_queue(cpu); load > own {
+	tried: u64
+	for {
+		busiest, load := busiest_queue(cpu, tried)
+		if load <= own {
+			break
+		}
 		if index := queue_move(busiest, cpu); index != 0 {
 			return index
 		}
+		tried |= u64(1) << busiest
 	}
 	lock_take(&run_queues[cpu.index].lock, .Run)
 	index := queue_pick(cpu.index, cpu)
@@ -345,6 +435,42 @@ threads_alive :: proc "contextless" () -> bool {
 		}
 	}
 	return false
+}
+
+// schedule_placement_target gives the processor whose queue gets a thread
+// that leaves its processor, and takes the run lock of that processor when
+// it is not the home. The thread is the current thread of this processor,
+// which is its home, and the caller holds the run lock of the home; it
+// holds it at the return too. The result is the home when the home is in
+// the placement of the thread.
+//
+// Two run locks are taken in the order of the processors. For a target
+// below the home, the lock of the home is freed and the two are taken in
+// order. A write of the placement can come in between; the home cannot
+// change, because only a thread that is on no processor gets another home.
+// So the set is read again under the two locks: if the home is in it now,
+// or the target is not, the lock of the target is freed and the choice
+// starts again. It starts again only after a write of the placement of
+// this thread.
+schedule_placement_target :: proc "contextless" (thread: ^Thread, home: u32) -> u32 {
+	for !thread_allowed(thread, home) {
+		target := placement_home(thread.processors, home)
+		if target == home {
+			break // A set with no processor of the machine: no write gives one.
+		}
+		if target > home {
+			lock_take(&run_queues[target].lock, .Run)
+			return target
+		}
+		lock_free(&run_queues[home].lock, .Run)
+		lock_take(&run_queues[target].lock, .Run)
+		lock_take(&run_queues[home].lock, .Run)
+		if !thread_allowed(thread, home) && thread_allowed(thread, target) {
+			return target
+		}
+		lock_free(&run_queues[target].lock, .Run)
+	}
+	return home
 }
 
 // schedule leaves the current thread and runs the next one. With none, the
@@ -373,6 +499,15 @@ schedule :: proc "contextless" () -> ! {
 		}
 		program := thread.program
 		home := run_lock(thread)
+		// A thread whose placement lost this processor moves to a
+		// processor of its set now, where it leaves this one: the run
+		// lock of that processor too, until the thread is in its new
+		// list or has its new home. A thread with no placement takes
+		// no second lock: one test of a byte of its hot line.
+		target := home
+		if thread.placement_restricted {
+			target = schedule_placement_target(thread, home)
+		}
 		ended := intrinsics.atomic_load(&thread.stop_requested)
 		// The strategy sees the thread while it is still the current
 		// thread of its home: the last part of its turn, and its lag.
@@ -384,7 +519,26 @@ schedule :: proc "contextless" () -> ! {
 		// waits: its strategy keeps its lag for the Resume that puts it
 		// back (thread_control.odin).
 		held := thread.control_stops != 0
-		queue_strategy_stopping(queue, cpu, thread, spent, ended || thread.state != .Ready || held)
+		waits := ended || thread.state != .Ready || held
+		queue_strategy_stopping(queue, cpu, thread, spent, waits)
+		if target != home && !ended {
+			// The move of a thread to another queue, as queue_pick makes
+			// it: the strategy of the two queues moves its place, or,
+			// during a change of strategy, the fields of the old strategy
+			// are cleared. The thread is still the current thread of this
+			// processor: the average of the old queue counts it. A thread
+			// that waits, or that a stop holds, keeps what `stopping`
+			// wrote: a value relative to its queue, which has its meaning
+			// in each queue of the same strategy.
+			to := &run_queues[target]
+			if to.strategy != queue.strategy {
+				strategy_clear(thread)
+			} else if !waits {
+				queue_strategy_move(queue, home, to, target, thread)
+			}
+			intrinsics.atomic_store(&thread.home, target)
+		}
+		displaced := false
 		intrinsics.atomic_store(&thread.processor, 0)
 		// The slot of an ended thread can serve a new thread before this
 		// processor gets the control lock: the serial names this thread.
@@ -396,9 +550,18 @@ schedule :: proc "contextless" () -> ! {
 			intrinsics.atomic_add(&thread.wait_serial, 1)
 		} else if thread.state == .Ready && !held {
 			queue_ready(thread, .Back)
+			displaced = target != home
 		}
 		intrinsics.atomic_store(&cpu.current, 0)
+		if target != home {
+			lock_free(&run_queues[target].lock, .Run)
+		}
 		run_unlock(home)
+		if displaced {
+			// The thread is in the list of another processor: that
+			// processor, or an idle one of its set, looks at it.
+			kick(target, thread)
+		}
 		cleanup := program_leave(program)
 		if ended || cleanup {
 			control_take()

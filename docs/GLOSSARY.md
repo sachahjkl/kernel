@@ -1042,7 +1042,7 @@ Who can read and write it:
 - the holder of a thread handle: **Inspect** reads, **Control** writes, and that write only lowers too, because a holder that can end a thread can also give it a smaller share;
 - the holder of the machine handle with **Schedule** and **Inspect**, for any thread, by its machine number. Only this holder raises a weight or a request, and only it writes the weight limit.
 
-A write that lowers leaves the place of the thread in its queue as it is. A raise starts the thread again as a new thread for its strategy: what it owed and what it was owed are gone. A program chooses the moment of its writes, so with a raise it could keep a place that it got under a small weight; with one direction only, no sequence of writes gets back what a write gave up. It is not the placement of a thread on the processors, and not a share for a budget: neither is built.
+A write that lowers leaves the place of the thread in its queue as it is. A raise starts the thread again as a new thread for its strategy: what it owed and what it was owed are gone. A program chooses the moment of its writes, so with a raise it could keep a place that it got under a small weight; with one direction only, no sequence of writes gets back what a write gave up. It is not the thread placement, which is the set of the processors that can run the thread, and not a share for a budget, which the kernel does not have.
 
 Example: `{weight = 256, request = 500}` gives a thread a quarter of the share of a thread of the full weight, and turns of 500 microseconds under EEVDF.
 
@@ -1063,6 +1063,30 @@ Example: the machine handle writes `{weight_limit = 256}` for a thread; the thre
 The design: `docs/SCHEDULING.md`, "The schedule of a live thread", "The weight limit".
 
 Do not use: maximum priority, weight cap, ceiling.
+
+### Thread placement
+
+A thread placement is the set of the processors that can run one thread, and the limit of that set (`op.Thread_Placement`).
+
+A set of processors is a `u64`: bit `n` is the processor `n` of the processor report. A thread that never got a placement has every processor of the machine in its set and in its limit, and is scheduled as a thread of a system with no placement. It is the second part of the policy of scheduling that a program holds, after the thread schedule: the program chooses the set, at a slow rate, and the kernel applies it at each pick. Thread control reads it (`Read_Placement`) and writes it (`Write_Placement`) while the thread lives, also while it runs.
+
+Who can read and write it:
+
+- a program, for its own threads, by number: its write only narrows the set;
+- the holder of a thread handle: **Inspect** reads, **Control** writes, and that write only narrows too;
+- the holder of the machine handle with **Schedule** and **Inspect**, for any thread, by its machine number. Only this holder widens a set, and only it writes the limit.
+
+The limit is the most that the set can be. A new thread, and the first thread of a program that a thread starts, get the limit of their creator as their set and as their limit, so a program stays inside a limit that the holder wrote. A set with no processor of the machine is refused: a thread with no processor is a stopped thread, and `Stop` has its own right.
+
+A thread in a run queue whose processor left the set moves at the write. A thread that runs on a processor that left the set leaves it at the end of its turn at the latest. The move is the one of the balance: nothing that the thread owes is forgiven.
+
+The holder uses it to keep two programs off the same processors, against side channels: two programs whose limits share no processor never run on the same processor. It is not a knowledge of the cores: the kernel does not know which processors are siblings of one core, and the cache that all the cores share stays shared. It is not a share of processor time.
+
+Example: `{processors = 0b0100}` keeps a thread on the processor 2; the machine handle writes `{processors_limit = 0b0011}` to each thread of a program, and the program then runs on the processors 0 and 1 only.
+
+The design: `docs/SCHEDULING.md`, "The placement of a thread".
+
+Do not use: affinity, affinity mask, CPU set, pinning, cpuset.
 
 ### Machine number
 
@@ -1508,14 +1532,14 @@ Do not use: siginfo, fault message.
 
 Thread control is the kernel operation `Thread_Control`: it stops a thread, reads and writes its registers and its extended state, and resumes it.
 
-No other operation stops a thread without ending it, or gives its registers. A debugger, a garbage collector that reads the roots of each thread, a sampling profiler and the program that runs a guest need both. One operation with a command (`op.Thread_Control_Command`) keeps the count of kernel operations low: `Stop`, `Resume`, `Read_Registers`, `Write_Registers`, `Read_Extended_State`, `Write_Extended_State`. Two more commands read and write the thread schedule of a thread that is not held, with their own rights: `Read_Schedule` and `Write_Schedule`. Three more serve a debugger: `Read_Breakpoints` and `Write_Breakpoints` for the breakpoints of a held thread, and `Read_Memory` for the bytes of the program of a thread.
+No other operation stops a thread without ending it, or gives its registers. A debugger, a garbage collector that reads the roots of each thread, a sampling profiler and the program that runs a guest need both. One operation with a command (`op.Thread_Control_Command`) keeps the count of kernel operations low: `Stop`, `Resume`, `Read_Registers`, `Write_Registers`, `Read_Extended_State`, `Write_Extended_State`. Two more commands read and write the thread schedule of a thread that is not held, with their own rights: `Read_Schedule` and `Write_Schedule`. Two more do the same for its thread placement: `Read_Placement` and `Write_Placement`. Three more serve a debugger: `Read_Breakpoints` and `Write_Breakpoints` for the breakpoints of a held thread, and `Read_Memory` for the bytes of the program of a thread.
 
 Who can act on a thread:
 
 - a program acts on its own threads, by number or by handle;
 - a thread of another program needs a thread handle that the program received with `Handle_Give`, with **Inspect** for a hold and for each read, and **Inspect** and **Write** for a write of the registers, because such a write lets its holder choose the code that the thread runs;
 - the debugger of a program names a thread of that program by its number, with the program handle that has **Debug**;
-- **Control**, the right to end a thread, gives none of these: a handle given so that another program can end a thread does not become a grant to read it. It gives only the write of the thread schedule, which only lowers.
+- **Control**, the right to end a thread, gives none of these: a handle given so that another program can end a thread does not become a grant to read it. It gives only the write of the thread schedule, which only lowers, and the write of the thread placement, which only narrows.
 
 The four commands of the registers need a held thread, else `Bad_State`. A write is copied once into the kernel, checked whole, and refused whole if one field is wrong (`Bad_Operation`, with the refused field in the error record): a thread never gets a frame that the processor refuses.
 

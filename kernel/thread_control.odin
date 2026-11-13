@@ -69,6 +69,13 @@ import op "contract:operation"
 // weight that the holder of Schedule lowered stays lowered: the program
 // of the thread cannot write it back, and cannot leave the limit by a new
 // thread.
+//
+// The placement of a thread (the processors that can run it,
+// op.Thread_Placement) is read and written by the same three callers with
+// the same rights, and with no hold (docs/SCHEDULING.md, "The placement of
+// a thread"). A program, and the holder of a thread handle, only narrow
+// the set; the machine handle writes any set and the limit of the set,
+// which a new thread gets from the thread that creates it.
 
 // thread_control runs the operation Thread_Control. The caller holds the
 // program lock of the program of the calling thread, and the control lock
@@ -84,7 +91,7 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 	}
 	target_index: u32
 	owner := caller_program_index
-	by_machine := false // The machine handle names the thread: a write sets its weight limit.
+	by_machine := false // The machine handle names the thread: a write sets its weight limit, or the limit of its placement.
 	by_debugger := false // The program handle with Debug names the thread: the caller is the debugger of its program.
 	if v[0] == 0 {
 		// A breakpoint is written only by the debugger of the program of
@@ -102,7 +109,8 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 		named := handle_find(caller_program, v[0], .None) or_return
 		machine_rights, by_machine_number := op.thread_control_machine_rights(command)
 		if named.kind == .Machine && by_machine_number {
-			// The machine handle names any thread, for the schedule only:
+			// The machine handle names any thread, for the schedule and
+			// the placement only:
 			// the right Schedule already lets its holder change the order
 			// of every thread (Strategy_Set). Each other command with a
 			// machine handle goes to the branch below, which refuses a
@@ -348,6 +356,35 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 		}
 		results[0] = size
 		return .Ok
+	case .Read_Placement, .Write_Placement:
+		size := u64(size_of(op.Thread_Placement))
+		if v[4] < size || !user_range(caller_program, v[3], size, command == .Read_Placement) {
+			return .Bad_Address
+		}
+		// One copy in the memory of the kernel: the sets that the check
+		// accepts are the sets that the thread gets.
+		placement: op.Thread_Placement
+		if command == .Read_Placement {
+			read_status: op.Status
+			placement, read_status = thread_placement_read(thread)
+			if read_status != .Ok {
+				return read_status
+			}
+			user_copy(rawptr(uintptr(v[3])), &placement, size)
+		} else {
+			user_copy(&placement, rawptr(uintptr(v[3])), size)
+			write_status, refusal, most := thread_placement_write(thread, placement, by_machine, target_index == caller_index)
+			if write_status == .Bad_Operation {
+				// The refused set, and the set that it had to stay inside.
+				refused := refusal == .Processors_Limit ? placement.processors_limit : placement.processors
+				cpu.thread_write_refusal, cpu.thread_write_refused_value, cpu.thread_write_refused_limit = refusal, refused, most
+			}
+			if write_status != .Ok {
+				return write_status
+			}
+		}
+		results[0] = size
+		return .Ok
 	}
 	return .Bad_Operation
 }
@@ -448,6 +485,131 @@ thread_schedule_write :: proc "contextless" (thread: ^Thread, schedule: op.Threa
 	return .Ok, .None, 0
 }
 
+// thread_placement_read gives the set of processors of a thread and the
+// limit of that set, both of one moment: they change together under the
+// run lock of its home. The caller holds the program lock of the thread.
+thread_placement_read :: proc "contextless" (thread: ^Thread) -> (placement: op.Thread_Placement, status: op.Status) {
+	home := run_lock(thread)
+	defer run_unlock(home)
+	if thread_schedule_ends(thread) {
+		return {}, .Bad_State
+	}
+	return op.Thread_Placement{processors = thread.processors, processors_limit = thread.processors_limit}, .Ok
+}
+
+// thread_placement_write gives a thread a set of processors, in any state
+// of the thread: in the queue of its home, on a processor, in a wait, or
+// held by a stop (docs/SCHEDULING.md, "The placement of a thread"). The
+// caller holds the program lock of the thread, so the thread does not end
+// its life in the table, its place serves no new thread, and no other
+// write of its placement runs: the placement that this procedure reads
+// before it takes a run lock is the one that it finds under the lock.
+//
+// by_machine false: the program of the thread, or the holder of a thread
+// handle, writes. Such a write only narrows (op.thread_placement_after_write):
+// a program chooses the moment of its writes, and with one direction one
+// thread commands fewer moves than the machine has processors. by_machine
+// true: the holder of the machine writes any set and the limit.
+//
+// The home of a thread is in its set, or the thread is on the processor of
+// its home. So when the new set does not have the home:
+// - a thread in the list of its home moves to the list of a processor of
+//   the set, in this section, under the run locks of the two processors,
+//   taken in the order of the processors. The move is the one that the
+//   balance makes (queue_pick): the strategy of the two queues moves the
+//   place of the thread, or, during a change of strategy, its fields are
+//   cleared. Nothing that the thread owes is forgiven;
+// - a thread that waits, or that a stop holds, is in no list: it gets the
+//   new home, and the wake or the Resume puts it in that queue. What it
+//   keeps for its strategy is a value relative to its queue, which has
+//   its meaning in each queue of the same strategy;
+// - a thread on a processor keeps its home: only its processor takes it
+//   out of there. It moves when it leaves that processor (schedule), at
+//   the end of its turn at the latest.
+//
+// The write sends no interrupt and ends the turn of no other thread: the
+// thread that runs on a processor when an interrupt arrives can be a
+// thread of another program, which would pay for it. When the calling
+// thread wrote its own set and its processor is not in it, its own turn
+// ends at the end of this kernel entry (is_caller).
+//
+// A pick by another processor can change the home between the read of the
+// home and the take of the locks: then the locks are freed and the choice
+// starts again.
+thread_placement_write :: proc "contextless" (thread: ^Thread, written: op.Thread_Placement, by_machine: bool, is_caller: bool) -> (status: op.Status, refusal: op.Thread_Write_Refusal, most: u64) {
+	every_processor := machine_processors()
+	held := op.Thread_Placement {
+		processors       = intrinsics.atomic_load(&thread.processors),
+		processors_limit = intrinsics.atomic_load(&thread.processors_limit),
+	}
+	after: op.Thread_Placement
+	after, refusal, most = op.thread_placement_after_write(written, held, every_processor, by_machine)
+	entered := false
+	target: u32
+	for {
+		home := intrinsics.atomic_load(&thread.home)
+		target = refusal == .None ? placement_home(after.processors, home) : home
+		first, second := min(home, target), max(home, target)
+		lock_take(&run_queues[first].lock, .Run)
+		if second != first {
+			lock_take(&run_queues[second].lock, .Run)
+		}
+		status = .Ok
+		home_changed := false
+		switch {
+		case intrinsics.atomic_load(&thread.home) != home:
+			home_changed = true // Another processor took the thread from its list.
+		case thread_schedule_ends(thread):
+			status = .Bad_State
+		case refusal != .None:
+			status = .Bad_Operation
+		case:
+			intrinsics.atomic_store(&thread.processors, after.processors)
+			intrinsics.atomic_store(&thread.processors_limit, after.processors_limit)
+			intrinsics.atomic_store(&thread.placement_restricted, after.processors != every_processor)
+			if target != home && thread.processor == 0 {
+				from, to := &run_queues[home], &run_queues[target]
+				same_strategy := from.strategy == to.strategy
+				if thread.queued {
+					if same_strategy {
+						queue_strategy_move(from, home, to, target, thread)
+					} else {
+						strategy_clear(thread)
+					}
+					queue_remove(thread)
+					intrinsics.atomic_store(&thread.home, target)
+					queue_ready(thread, .Back)
+					entered = true
+				} else {
+					if !same_strategy {
+						strategy_clear(thread)
+					}
+					intrinsics.atomic_store(&thread.home, target)
+				}
+			}
+		}
+		if second != first {
+			lock_free(&run_queues[second].lock, .Run)
+		}
+		lock_free(&run_queues[first].lock, .Run)
+		if !home_changed {
+			break
+		}
+	}
+	if status != .Ok {
+		return status, refusal, most
+	}
+	if entered {
+		// The thread is in the list of another processor: that processor,
+		// or an idle one of its set, looks at it.
+		kick(target, thread)
+	}
+	if cpu := processor_self(); is_caller && after.processors & (u64(1) << cpu.index) == 0 {
+		cpu.slice_left = 0
+	}
+	return .Ok, .None, 0
+}
+
 // thread_of_number gives the live thread of a program with a number, or 0.
 // The caller holds the program lock.
 thread_of_number :: proc "contextless" (program_index: u32, number: u64) -> u32 {
@@ -517,7 +679,7 @@ thread_control_resume :: proc "contextless" (thread: ^Thread, results: ^[7]u64) 
 	}
 	run_unlock(home)
 	if queued {
-		kick(home)
+		kick(home, thread)
 	}
 	results[0] = u64(count)
 	return .Ok

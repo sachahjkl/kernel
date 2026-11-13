@@ -820,6 +820,42 @@ thread_schedule_write :: proc "contextless" (thread: Handle, number: u64, schedu
 	return status
 }
 
+// thread_placement_read gives the placement of a thread: the set of the
+// processors that can run it, and the limit of that set
+// (docs/SCHEDULING.md, "The placement of a thread"). Bit n of a set is the
+// processor n. The thread is named as for thread_schedule_read, with the
+// same rights.
+//
+// ```odin
+// placement, status := system.thread_placement_read(0, system.thread_record().number)
+// ```
+thread_placement_read :: proc "contextless" (thread: Handle, number: u64, error: ^errors.Error_Record = nil) -> (placement: op.Thread_Placement, status: Status) {
+	_, status = call_with_error(error, .Thread_Control, u64(thread), number, u64(op.Thread_Control_Command.Read_Placement), u64(uintptr(&placement)), size_of(placement))
+	return placement, status
+}
+
+// thread_placement_write gives a thread the set of the processors that can
+// run it, also while the thread runs. The thread is named as for
+// thread_schedule_write, with the same rights.
+//
+// Through 0 or a thread handle the write only narrows: a set with a
+// processor that the set of the thread does not have gives Bad_Operation;
+// 0 keeps the set. Only a write through the machine handle widens a set,
+// and reads `processors_limit`: it gives the two sets (0: every processor
+// for the limit, the limit for the set), so read the placement first to
+// change one of them. A set with no processor of the machine is refused.
+// A thread that runs on a processor that left its set leaves it at the
+// end of its turn at the latest.
+//
+// ```odin
+// status := system.thread_placement_write(worker.handle, 0, {processors = 0b0011})
+// ```
+thread_placement_write :: proc "contextless" (thread: Handle, number: u64, placement: op.Thread_Placement, error: ^errors.Error_Record = nil) -> (status: Status) {
+	written := placement
+	_, status = call_with_error(error, .Thread_Control, u64(thread), number, u64(op.Thread_Control_Command.Write_Placement), u64(uintptr(&written)), size_of(written))
+	return status
+}
+
 // events_set gives the event table of the machine (docs/ARCHITECTURE.md,
 // "Kernel events"): the rules, and a Contiguous memory object with Write
 // that holds one event ring of `records` records for each processor. It
