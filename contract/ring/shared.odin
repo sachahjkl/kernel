@@ -30,9 +30,9 @@ package ring
 import "base:intrinsics"
 
 SHARED_CAPACITY :: 64 // The capacity of the smallest shared queue.
-SHARED_CAPACITY_LIMIT :: 1 << 16
-TURNS_IN_PAGE :: PAGE_SIZE / size_of(u32)
-RECORDS_IN_PAGE :: PAGE_SIZE / size_of(Record)
+SHARED_CAPACITY_LIMIT :: 1 << 16 // The largest capacity that `shared_open` takes: 65536 records.
+TURNS_IN_PAGE :: PAGE_SIZE / size_of(u32) // The turn words of one page: 1024.
+RECORDS_IN_PAGE :: PAGE_SIZE / size_of(Record) // The records of one page: 64.
 SHARED_TRIES :: 1 << 16 // The times that a thread tries to take a count before it gives up.
 
 // The head of a shared queue. write and read count records since the
@@ -44,13 +44,13 @@ SHARED_TRIES :: 1 << 16 // The times that a thread tries to take a count before 
 Shared_Head :: struct {
 	write:        u32, // The count of the next write.
 	written:      u32, // A writer adds 1 after each record that it completed.
-	reserved_0:   [56]u8,
+	reserved_0:   [56]u8, // The rest of the line of the writers.
 	read:         u32, // The count of the next read.
 	taken:        u32, // A reader adds 1 after each record that it took.
-	reserved_1:   [56]u8,
+	reserved_1:   [56]u8, // The rest of the line of the readers.
 	readers:      Waiters, // The threads that wait for a record.
 	writer_waits: u32, // 1: a thread waits, or will wait, for room.
-	reserved_2:   [48]u8,
+	reserved_2:   [48]u8, // The rest of the third line.
 }
 #assert(size_of(Shared_Head) == 192)
 
@@ -64,19 +64,25 @@ Waiters :: struct {
 // A shared queue that is mapped. head is nil for no queue. This record is
 // not in the shared memory: each thread can have a copy.
 Shared :: struct {
-	head:    ^Shared_Head,
-	turns:   [^]u32,
-	records: [^]Record,
+	head:    ^Shared_Head, // The shared head.
+	turns:   [^]u32, // The turn words, from the second page: one for each record.
+	records: [^]Record, // The records, after the pages of the turn words.
 	mask:    u32, // The capacity - 1.
 }
 
-// shared_pages gives the pages of a shared queue with a capacity.
+// shared_pages gives the pages of a shared queue with a capacity: the head,
+// the pages of the turn words, and the pages of the records.
+//
+// Example: `shared_pages(64)` is 3: the head, one page of turn words, one
+// page of records.
 shared_pages :: proc "contextless" (capacity: u32) -> u64 {
 	return 1 + (u64(capacity) + TURNS_IN_PAGE - 1) / TURNS_IN_PAGE + u64(capacity) / RECORDS_IN_PAGE
 }
 
 // shared_open gives the shared queue in mapped memory of page_count pages.
-// false: no shared queue has this size.
+// false: no shared queue has this size: the count of pages is the count of
+// `shared_pages` of no power of two from `SHARED_CAPACITY` to
+// `SHARED_CAPACITY_LIMIT`.
 shared_open :: proc "contextless" (memory: rawptr, page_count: u64) -> (queue: Shared, ok: bool) {
 	if memory == nil {
 		return {}, false
@@ -90,6 +96,8 @@ shared_open :: proc "contextless" (memory: rawptr, page_count: u64) -> (queue: S
 	return {}, false
 }
 
+// shared_capacity gives the records that a shared queue holds when it is
+// full.
 shared_capacity :: proc "contextless" (queue: ^Shared) -> u32 {
 	return queue.mask + 1
 }

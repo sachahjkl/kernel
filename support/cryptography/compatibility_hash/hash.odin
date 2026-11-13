@@ -7,16 +7,18 @@ package compatibility_hash
 
 import "support:cryptography/sha2"
 
-MAX_DIGEST_SIZE :: 64
-MAX_BLOCK_SIZE :: sha2.BLOCK_SIZE_512
+MAX_DIGEST_SIZE :: 64 // The largest digest: SHA-512.
+MAX_BLOCK_SIZE :: sha2.BLOCK_SIZE_512 // The largest block: 128 bytes.
 
+// A hash of this layer.
 Algorithm :: enum {
-	Invalid,
-	SHA256,
-	SHA384,
-	SHA512,
+	Invalid, // No hash: init refuses it.
+	SHA256, // SHA-256.
+	SHA384, // SHA-384.
+	SHA512, // SHA-512.
 }
 
+// The bytes of the digest of each hash.
 DIGEST_SIZES := [Algorithm]int {
 	.Invalid = 0,
 	.SHA256  = sha2.DIGEST_SIZE_256,
@@ -24,6 +26,7 @@ DIGEST_SIZES := [Algorithm]int {
 	.SHA512  = sha2.DIGEST_SIZE_512,
 }
 
+// The bytes of the block of each hash.
 BLOCK_SIZES := [Algorithm]int {
 	.Invalid = 0,
 	.SHA256  = sha2.BLOCK_SIZE_256,
@@ -31,14 +34,16 @@ BLOCK_SIZES := [Algorithm]int {
 	.SHA512  = sha2.BLOCK_SIZE_512,
 }
 
+// The state of one hash in progress.
 Context :: struct {
-	_algo: Algorithm,
-	_impl: union {
+	_algo: Algorithm, // The hash.
+	_impl: union { // The state of SHA-256, or of SHA-384 and SHA-512.
 		sha2.Context_256,
 		sha2.Context_512,
 	},
 }
 
+// init starts a hash of an algorithm.
 init :: proc(ctx: ^Context, algorithm: Algorithm) {
 	ctx._algo = algorithm
 	switch algorithm {
@@ -56,6 +61,7 @@ init :: proc(ctx: ^Context, algorithm: Algorithm) {
 	}
 }
 
+// update adds bytes to the hash.
 update :: proc(ctx: ^Context, data: []byte) {
 	switch &impl in ctx._impl {
 	case sha2.Context_256:
@@ -67,6 +73,8 @@ update :: proc(ctx: ^Context, data: []byte) {
 	}
 }
 
+// final writes the digest in `hash` and ends the hash; with
+// finalize_clone, the context stays usable for more bytes.
 final :: proc(ctx: ^Context, hash: []byte, finalize_clone: bool = false) {
 	switch &impl in ctx._impl {
 	case sha2.Context_256:
@@ -81,6 +89,7 @@ final :: proc(ctx: ^Context, hash: []byte, finalize_clone: bool = false) {
 	}
 }
 
+// clone makes ctx a copy of the hash in progress of other.
 clone :: proc(ctx, other: ^Context) {
 	if ctx == other {
 		return
@@ -99,6 +108,7 @@ clone :: proc(ctx, other: ^Context) {
 	}
 }
 
+// reset erases the state of a hash.
 reset :: proc(ctx: ^Context) {
 	switch &impl in ctx._impl {
 	case sha2.Context_256:
@@ -111,14 +121,17 @@ reset :: proc(ctx: ^Context) {
 	ctx._impl = nil
 }
 
+// algorithm gives the hash of a context.
 algorithm :: proc(ctx: ^Context) -> Algorithm {
 	return ctx._algo
 }
 
+// digest_size gives the bytes of the digest of a context.
 digest_size :: proc(ctx: ^Context) -> int {
 	return DIGEST_SIZES[ctx._algo]
 }
 
+// block_size gives the bytes of the block of a context.
 block_size :: proc(ctx: ^Context) -> int {
 	return BLOCK_SIZES[ctx._algo]
 }

@@ -11,6 +11,14 @@ Lock :: struct {
 	waits: u32, // The times that a thread waited. For measures only.
 }
 
+// lock takes a lock, and waits while another thread holds it. A free lock
+// costs one atomic instruction and no kernel entry. The lock is not
+// recursive: a thread that takes a lock that it holds waits forever.
+//
+// ```odin
+// system.lock(&table.lock)
+// defer system.unlock(&table.lock)
+// ```
 lock :: proc "contextless" (the_lock: ^Lock) {
 	if _, ok := intrinsics.atomic_compare_exchange_strong(&the_lock.state, 0, 1); ok {
 		return
@@ -21,6 +29,8 @@ lock :: proc "contextless" (the_lock: ^Lock) {
 	}
 }
 
+// unlock frees a lock that this thread holds, and wakes one thread that
+// waits for it. It enters the kernel only when a thread can wait.
 unlock :: proc "contextless" (the_lock: ^Lock) {
 	if intrinsics.atomic_exchange(&the_lock.state, 0) == 2 {
 		word_wake(&the_lock.state, 1)

@@ -13,28 +13,30 @@
 // the runs read the same bytes as before (docs/TOOLS.md, "The log").
 package value_kinds
 
+// What a value is: the kind of a part of a text. See
+// [value run](term:value-run).
 Value_Kind :: enum u8 {
 	None      = 0, // Not a value: a name or a text.
 	Number    = 1, // A count, a place, an index or an address.
 	Size      = 2, // A size in bytes, pages or blocks.
 	Time      = 3, // A duration, a date or a time.
-	Handle    = 4,
+	Handle    = 4, // A handle number, or the index of a handle in a context.
 	Value     = 5, // A plain value of the context of a program: not a handle.
-	Grant     = 6,
+	Grant     = 6, // A grant of a program.
 	Status    = 7, // A status, an error kind or the state of a property.
-	Type      = 8,
-	Operation = 9,
-	Command   = 10,
+	Type      = 8, // A type of the contract or of a module.
+	Operation = 9, // A kernel operation.
+	Command   = 10, // A command of the console.
 	Module    = 11, // A module or a program.
-	File      = 12,
-	Guide     = 13,
-	Term      = 14,
+	File      = 12, // A file of the sources.
+	Guide     = 13, // A guide of the documentation.
+	Term      = 14, // A term of the glossary.
 	Version   = 15, // A version, a release, a commit or a hash.
-	Yes       = 16,
-	No        = 17,
-	Procedure = 18,
-	Constant  = 19,
-	Variable  = 20,
+	Yes       = 16, // A fact that holds: a check that passed.
+	No        = 17, // A fact that does not hold.
+	Procedure = 18, // A procedure of the sources.
+	Constant  = 19, // A constant of the sources.
+	Variable  = 20, // A variable of the sources.
 }
 
 // The name of each kind: the class "value-<name>" of the site, and the kind
@@ -74,9 +76,9 @@ value_kind_of :: proc "contextless" (value: u8) -> Value_Kind {
 // record. A record has fewer than 256 bytes of text, so a byte holds its
 // start.
 Value_Run :: struct {
-	start:  u8,
-	length: u8,
-	kind:   Value_Kind,
+	start:  u8, // The first byte of the value in the text of the record.
+	length: u8, // The bytes of the value.
+	kind:   Value_Kind, // What the value is.
 }
 #assert(size_of(Value_Run) == 3)
 
@@ -84,10 +86,10 @@ Value_Run :: struct {
 // operation (at most 4096 bytes), or the text that the kernel writes for
 // itself. The kernel cuts these runs at the bounds of the records.
 Value_Run_In_Call :: struct {
-	start:    u16,
-	length:   u16,
-	kind:     Value_Kind,
-	reserved: u8,
+	start:    u16, // The first byte of the value in the text of the call.
+	length:   u16, // The bytes of the value.
+	kind:     Value_Kind, // What the value is.
+	reserved: u8, // 0.
 }
 #assert(size_of(Value_Run_In_Call) == 6)
 
@@ -96,14 +98,16 @@ Value_Run_In_Call :: struct {
 // value in decimal, then the unit with a space before it. The run covers the
 // number and its unit.
 
+// The unit of a `Size`.
 Size_Unit :: enum u8 {
-	Bytes     = 0,
-	Kibibytes = 1,
-	Mebibytes = 2,
-	Pages     = 3,
-	Blocks    = 4,
+	Bytes     = 0, // " bytes".
+	Kibibytes = 1, // " KiB": 1024 bytes.
+	Mebibytes = 2, // " MiB": 1024 KiB.
+	Pages     = 3, // " pages": 4096 bytes each.
+	Blocks    = 4, // " blocks": blocks of a disk or a store.
 }
 
+// The text of each unit of a size, with the space before it.
 @(rodata)
 SIZE_UNIT_TEXTS := [Size_Unit]string {
 	.Bytes     = " bytes",
@@ -115,17 +119,19 @@ SIZE_UNIT_TEXTS := [Size_Unit]string {
 
 // A size: the value in its unit. "Size{64, .Mebibytes}" writes "64 MiB".
 Size :: struct {
-	value: u64,
-	unit:  Size_Unit,
+	value: u64, // The number, in the unit.
+	unit:  Size_Unit, // The unit.
 }
 
+// The unit of a `Duration`.
 Duration_Unit :: enum u8 {
-	Nanoseconds  = 0,
-	Microseconds = 1,
-	Milliseconds = 2,
-	Seconds      = 3,
+	Nanoseconds  = 0, // " ns".
+	Microseconds = 1, // " us".
+	Milliseconds = 2, // " ms".
+	Seconds      = 3, // " s".
 }
 
+// The text of each unit of a duration, with the space before it.
 @(rodata)
 DURATION_UNIT_TEXTS := [Duration_Unit]string {
 	.Nanoseconds  = " ns",
@@ -137,25 +143,29 @@ DURATION_UNIT_TEXTS := [Duration_Unit]string {
 // A duration: the value in its unit. "Duration{820, .Microseconds}" writes
 // "820 us".
 Duration :: struct {
-	value: u64,
-	unit:  Duration_Unit,
+	value: u64, // The number, in the unit.
+	unit:  Duration_Unit, // The unit.
 }
 
 // A hash, or the head of one: two hexadecimal digits for each byte, the
 // first byte first. The kind is Version.
 Hash :: struct {
-	bytes: []u8,
+	bytes: []u8, // The bytes of the hash, or of its head.
 }
 
 // The name of a program or of a module, as it is. The kind is Module.
 Module_Name :: struct {
-	name: string,
+	name: string, // The name.
 }
 
+// size_unit_text gives the text of a unit of a size, or an empty text for a
+// unit out of the enumeration.
 size_unit_text :: proc "contextless" (unit: Size_Unit) -> string {
 	return unit <= max(Size_Unit) ? SIZE_UNIT_TEXTS[unit] : ""
 }
 
+// duration_unit_text gives the text of a unit of a duration, or an empty
+// text for a unit out of the enumeration.
 duration_unit_text :: proc "contextless" (unit: Duration_Unit) -> string {
 	return unit <= max(Duration_Unit) ? DURATION_UNIT_TEXTS[unit] : ""
 }

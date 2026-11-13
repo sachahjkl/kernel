@@ -21,13 +21,14 @@ import "base:intrinsics"
 import "contract:blake3"
 import format "contract:store"
 
+// The names of the format of the disk and of BLAKE3 that this package uses.
 BLOCK_SIZE :: format.BLOCK_SIZE
 FANOUT :: format.OBJECT_FANOUT
 LEVEL_LIMIT :: format.OBJECT_LEVEL_LIMIT
-CHUNK_SIZE :: blake3.CHUNK_SIZE
-CHUNKS_IN_BLOCK :: BLOCK_SIZE / CHUNK_SIZE
+CHUNK_SIZE :: blake3.CHUNK_SIZE // The bytes of one chunk of BLAKE3: 1024.
+CHUNKS_IN_BLOCK :: BLOCK_SIZE / CHUNK_SIZE // 4: a block is a whole subtree of four chunks.
 
-Block :: [BLOCK_SIZE]u8
+Block :: [BLOCK_SIZE]u8 // One block: a block of data, or an object node.
 Value :: format.Block_Value
 Child :: format.Object_Child
 Pointer :: format.Pointer
@@ -35,8 +36,9 @@ Node :: format.Object_Node
 
 #assert(size_of(Node) == BLOCK_SIZE)
 
+// What a read of a block, or of a value, gave.
 Read :: enum {
-	Good,
+	Good, // The block is there and has its check.
 	Wrong, // A block does not have the check that names it, or breaks a rule of the format.
 	Device, // The device reported an error.
 }
@@ -115,17 +117,18 @@ Hash_Source :: struct {
 	range_value: proc "contextless" (source: ^Hash_Source, first: u64, count: u64) -> (value: Value, outcome: Read),
 	// last_block gives the bytes of the block `index`: zero bytes for a hole.
 	last_block:  proc "contextless" (source: ^Hash_Source, index: u64, into: ^Block) -> Read,
-	data:        rawptr,
+	data:        rawptr, // The state of the caller.
 }
 
+// The state of `object_hash` while it joins the values.
 @(private)
 Hash_Walk :: struct {
-	source:     ^Hash_Source,
-	size:       u64,
-	last_index: u64,
-	last:       Block,
-	loaded:     bool,
-	outcome:    Read,
+	source:     ^Hash_Source, // Where the values and the last block come from.
+	size:       u64, // The bytes of the object.
+	last_index: u64, // The index of its last block.
+	last:       Block, // The bytes of the last block, once loaded.
+	loaded:     bool, // `last` holds them.
+	outcome:    Read, // The first read that was not Good.
 	last_hashed: bool, // The bytes of the last block were hashed.
 }
 
@@ -218,13 +221,14 @@ Source :: struct {
 	// block `index` of its object. nil: block_value. The kernel tool gives
 	// the value that it computed before for the same bytes.
 	value:      proc "contextless" (source: ^Source, number: u64, index: u64, bytes: ^Block) -> Value,
-	data:       rawptr,
+	data:       rawptr, // The state of the caller.
 }
 
-// One state of an object: the root of its block tree and its size.
+// One state of an object: the root of its block tree and its size. An entry
+// names its current state; a version entry names an older one.
 State :: struct {
-	root: Pointer,
-	size: u64,
+	root: Pointer, // The root of the block tree: an object node, the one block of data, or no block when each byte is zero.
+	size: u64, // The bytes of the object.
 }
 
 // node_valid checks the rules of the format for an object node of `level`
@@ -396,17 +400,19 @@ range_value :: proc "contextless" (source: ^Source, state: State, first: u64, co
 // The walk of the hash of a state on the disk.
 State_Hash :: struct {
 	using hash_source: Hash_Source,
-	source:      ^Source,
-	state:       State,
-	node:        Node,
+	source:      ^Source, // Where the blocks come from.
+	state:       State, // The state whose hash is computed.
+	node:        Node, // A node that the walk reads into.
 }
 
+// state_range_value is the `range_value` of a state on the disk.
 @(private)
 state_range_value :: proc "contextless" (from: ^Hash_Source, first: u64, count: u64) -> (Value, Read) {
 	walk := (^State_Hash)(from)
 	return range_value(walk.source, walk.state, first, count, &walk.node)
 }
 
+// state_last_block is the `last_block` of a state on the disk.
 @(private)
 state_last_block :: proc "contextless" (from: ^Hash_Source, index: u64, into: ^Block) -> Read {
 	walk := (^State_Hash)(from)
@@ -460,6 +466,8 @@ next_block :: proc "contextless" (source: ^Source, state: State, from: u64, node
 	return next_under(source, state, state.root, levels, 0, from, nodes)
 }
 
+// next_under finds, under one node, the first block of data at or after
+// the block `from`.
 @(private)
 next_under :: proc "contextless" (source: ^Source, state: State, pointer: Pointer, level: int, base: u64, from: u64, nodes: ^[LEVEL_LIMIT]Node) -> (index: u64, found_pointer: Pointer, found: bool, outcome: Read) {
 	node := &nodes[level - 1]
@@ -503,6 +511,7 @@ walk_blocks :: proc "contextless" (source: ^Source, state: State, visit: Block_V
 	return walk_under(source, state, state.root, levels, 0, visit, data, nodes)
 }
 
+// walk_under visits each block under one node, the node first.
 @(private)
 walk_under :: proc "contextless" (source: ^Source, state: State, pointer: Pointer, level: int, base: u64, visit: Block_Visit, data: rawptr, nodes: ^[LEVEL_LIMIT]Node) -> Read {
 	node := &nodes[level - 1]

@@ -16,28 +16,29 @@ MSS_LOCAL :: 1460 // The MSS that this library gives: SEGMENT_LIMIT less the hea
 MSS_DEFAULT :: 536 // The MSS of a remote that gave no MSS option (RFC 9293 3.7.1).
 WINDOW_LIMIT :: 65535 // No window scaling: the window field is the window.
 
+// A control bit of a segment (RFC 9293, section 3.1).
 Flag :: enum u8 {
-	Fin = 0,
-	Syn = 1,
-	Rst = 2,
-	Psh = 3,
-	Ack = 4,
-	Urg = 5,
-	Ece = 6,
-	Cwr = 7,
+	Fin = 0, // The sender has no more data.
+	Syn = 1, // Synchronize the sequence numbers: the first segment of each side.
+	Rst = 2, // Reset the connection.
+	Psh = 3, // Push: give the data to the program now.
+	Ack = 4, // The acknowledgment number is valid.
+	Urg = 5, // Urgent data: this library ignores it.
+	Ece = 6, // ECN echo: this library ignores it.
+	Cwr = 7, // Congestion window reduced: this library ignores it.
 }
 Flags :: bit_set[Flag;u8] // The byte 13 of the header.
 
 // Header is what header_read found in a segment. data is a part of the segment.
 Header :: struct {
-	source_port:      u16,
-	destination_port: u16,
-	sequence:         u32,
-	acknowledgment:   u32,
-	flags:            Flags,
-	window:           u16,
+	source_port:      u16, // The TCP port of the sender.
+	destination_port: u16, // The TCP port of the receiver.
+	sequence:         u32, // The sequence number of the first byte of data, or of the SYN.
+	acknowledgment:   u32, // The next sequence number that the sender expects, with Ack.
+	flags:            Flags, // The control bits.
+	window:           u16, // The bytes that the sender can receive after `acknowledgment`.
 	mss:              u16, // The MSS option. 0: the segment has none.
-	data:             []u8,
+	data:             []u8, // The data of the segment, after the header.
 }
 
 // The order of sequence numbers is modulo 2^32 (RFC 9293 3.4): a is before
@@ -47,14 +48,17 @@ before :: #force_inline proc "contextless" (a, b: u32) -> bool {
 	return i32(a - b) < 0
 }
 
+// after says if a is after b.
 after :: #force_inline proc "contextless" (a, b: u32) -> bool {
 	return i32(a - b) > 0
 }
 
+// before_or_same says if a is before b or is b.
 before_or_same :: #force_inline proc "contextless" (a, b: u32) -> bool {
 	return i32(a - b) <= 0
 }
 
+// after_or_same says if a is after b or is b.
 after_or_same :: #force_inline proc "contextless" (a, b: u32) -> bool {
 	return i32(a - b) >= 0
 }
@@ -64,19 +68,23 @@ inside :: #force_inline proc "contextless" (value, first, count: u32) -> bool {
 	return value - first < count
 }
 
+// read_16 reads a number of 16 bits in network order (big-endian).
 read_16 :: #force_inline proc "contextless" (bytes: []u8, offset: int) -> u16 {
 	return u16(bytes[offset]) << 8 | u16(bytes[offset + 1])
 }
 
+// read_32 reads a number of 32 bits in network order.
 read_32 :: #force_inline proc "contextless" (bytes: []u8, offset: int) -> u32 {
 	return u32(bytes[offset]) << 24 | u32(bytes[offset + 1]) << 16 | u32(bytes[offset + 2]) << 8 | u32(bytes[offset + 3])
 }
 
+// write_16 writes a number of 16 bits in network order.
 write_16 :: #force_inline proc "contextless" (bytes: []u8, offset: int, value: u16) {
 	bytes[offset] = u8(value >> 8)
 	bytes[offset + 1] = u8(value)
 }
 
+// write_32 writes a number of 32 bits in network order.
 write_32 :: #force_inline proc "contextless" (bytes: []u8, offset: int, value: u32) {
 	bytes[offset] = u8(value >> 24)
 	bytes[offset + 1] = u8(value >> 16)

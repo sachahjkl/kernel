@@ -7,6 +7,10 @@ import "support:bootscreen"
 import op "contract:operation"
 import "support:system"
 
+// data fills a Data with the boot report, the system report, the report of
+// each processor, the report of each program, and the name of the
+// processor. A report that the kernel refuses stays zero: its card shows
+// that the fact is not known.
 data :: proc "contextless" (result: ^bootscreen.Data, machine: system.Handle) {
 	inspect :: proc "contextless" (machine: system.Handle, kind: op.Inspect_Kind, index: u64, report: ^$T) {
 		system.call(.Inspect, u64(machine), u64(kind), index, u64(uintptr(report)), size_of(T))

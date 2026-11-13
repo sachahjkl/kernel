@@ -12,13 +12,17 @@ import crypto "support:cryptography/compatibility_crypto"
 // this system does not measure and counts as 0 bits: a seed from it alone
 // is "weak", and the window and the log say so.
 
-DOMAIN_SEED :: "kernel random: the seed of the root service, version 1"
-DOMAIN_RESEED :: "kernel random: a reseed, version 1"
+DOMAIN_SEED :: "kernel random: the seed of the root service, version 1" // The context of the key derivation of a gathering: a hash of other bytes never gives this seed.
+DOMAIN_RESEED :: "kernel random: a reseed, version 1" // The context of the key derivation of a reseed.
 PROCESSOR_VALUES :: 8 // Values of 64 bits of rdseed or rdrand in a seed: 512 bits.
 PROCESSOR_ATTEMPTS :: 32 // Tries for one value: rdseed can be empty for a while.
-JITTER_SAMPLES :: 2048
+JITTER_SAMPLES :: 2048 // The deltas of the cycle counter in one gathering.
 FRESH_LIMIT :: 10 * 1024 // Bytes that key_derive hashes at most: a gathering has 8320.
 
+// How strong the source of a seed is: the strongest source that gave all its
+// values at the gathering of the root service. Each program receives it with
+// its seed (`op.CONTEXT_VALUE_SEED_STRENGTH`), and `fill_for_a_key` refuses
+// a seed below the strength that the caller asks.
 Seed_Strength :: enum u8 {
 	None      = 0, // No gathering yet.
 	Weak      = 1, // The cycle counter only: no claim of entropy.
@@ -26,6 +30,7 @@ Seed_Strength :: enum u8 {
 	Entropy   = 3, // rdseed: the entropy source of the processor.
 }
 
+// The words of each strength, for the window and the log.
 @(rodata)
 seed_strength_names := [Seed_Strength]string {
 	.None      = "none",
@@ -36,16 +41,16 @@ seed_strength_names := [Seed_Strength]string {
 
 // What a gathering found: the window and the log show it.
 Entropy_Report :: struct {
-	rdseed_present:   bool,
-	rdrand_present:   bool,
-	rdseed_good:      u32,
+	rdseed_present:   bool, // The processor has rdseed.
+	rdrand_present:   bool, // The processor has rdrand.
+	rdseed_good:      u32, // Good values of rdseed.
 	rdseed_refused:   u32, // Carry clear (empty), all ones, or a value that came before.
-	rdrand_good:      u32,
-	rdrand_refused:   u32,
-	jitter_samples:   u32,
+	rdrand_good:      u32, // Good values of rdrand.
+	rdrand_refused:   u32, // Refused values of rdrand: carry clear, all ones, or repeated.
+	jitter_samples:   u32, // The deltas of the cycle counter that the gathering hashed.
 	jitter_distinct:  u32, // Distinct low bytes of the deltas: a sign of life of the counter, not a measure of entropy.
 	device_bytes:     u32, // Bytes of an entropy device (virtio-rng) mixed in later.
-	strength:         Seed_Strength,
+	strength:         Seed_Strength, // The strength of the seed.
 }
 
 // Cycles_Read reads the cycle counter.
@@ -67,6 +72,7 @@ processor_seed_value :: asm() -> (value: u64, good: bool) [
 	rdseed value
 }
 
+// processor_random_value is rdrand, as processor_seed_value is rdseed.
 processor_random_value :: asm() -> (value: u64, good: bool) [
 	good = %flags.c,
 	#volatile,
@@ -74,11 +80,13 @@ processor_random_value :: asm() -> (value: u64, good: bool) [
 	rdrand value
 }
 
+// rdseed_read reads one value of rdseed. A value 0 is refused.
 rdseed_read :: proc "contextless" () -> (value: u64, ok: bool) {
 	value, ok = processor_seed_value()
 	return value, ok && value != 0
 }
 
+// rdrand_read reads one value of rdrand. A value 0 is refused.
 rdrand_read :: proc "contextless" () -> (value: u64, ok: bool) {
 	value, ok = processor_random_value()
 	return value, ok && value != 0
@@ -177,7 +185,7 @@ key_derive :: #force_no_inline proc "contextless" (domain: string, key: []u8, fr
 Entropy_Sources :: struct {
 	rdseed: Processor_Read, // nil: the processor has no rdseed.
 	rdrand: Processor_Read, // nil: the processor has no rdrand.
-	cycles: Cycles_Read,
+	cycles: Cycles_Read, // The cycle counter.
 }
 
 // sources_of_the_processor gives the reads that the processor has.
@@ -220,6 +228,7 @@ entropy_gather :: proc "contextless" (sources: Entropy_Sources, report: ^Entropy
 // (the values 9 to 12 are the seed of the program).
 REPORT_VALUES :: 8
 
+// report_values_write writes a report in the values 0 to 7 of a context.
 report_values_write :: proc "contextless" (report: ^Entropy_Report, values: ^[op.CONTEXT_VALUES]u64) {
 	values[0] = u64(report.strength) | u64(report.rdseed_present) << 8 | u64(report.rdrand_present) << 9
 	values[1] = u64(report.rdseed_good)
@@ -231,6 +240,9 @@ report_values_write :: proc "contextless" (report: ^Entropy_Report, values: ^[op
 	values[7] = u64(report.device_bytes)
 }
 
+// report_values_read reads a report from the values 0 to 7 of a context. A
+// strength out of the enumeration is taken as the strongest: the values come
+// from the starter.
 report_values_read :: proc "contextless" (values: ^[op.CONTEXT_VALUES]u64) -> (report: Entropy_Report) {
 	report.strength = Seed_Strength(min(values[0] & 0xFF, u64(max(Seed_Strength))))
 	report.rdseed_present = values[0] >> 8 & 1 != 0

@@ -22,17 +22,17 @@ DEBUG_OBJECT_VERDICT_CAPACITY :: 16
 // The verdict of one search: the module, and its debug object after the
 // whole check, or nil (no object, or an object that is not whole).
 Debug_Object_Verdict :: struct {
-	module_hash: [32]u8,
-	object:      []u8,
+	module_hash: [32]u8, // The module that was searched.
+	object:      []u8, // Its debug object, inside the image, or nil.
 }
 
 // The debug image of a program and the verdicts of its searches. Each
 // object is searched and checked once, then each lookup is two binary
 // searches. One thread uses one of them: it is not shared.
 Debug_Names :: struct {
-	image:         []u8,
-	verdicts:      [DEBUG_OBJECT_VERDICT_CAPACITY]Debug_Object_Verdict,
-	verdict_count: int,
+	image:         []u8, // The debug image that the starter mapped. nil: none.
+	verdicts:      [DEBUG_OBJECT_VERDICT_CAPACITY]Debug_Object_Verdict, // The modules searched so far.
+	verdict_count: int, // The verdicts in use.
 	next_verdict:  int, // The place of the next verdict when all are taken.
 }
 

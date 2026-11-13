@@ -7,7 +7,7 @@
 // real content of each ring.
 package relay
 
-NODE_COUNT :: 6
+NODE_COUNT :: 6 // The nodes of the demonstration.
 
 // The roles of the context of a node.
 GRANT_BEFORE :: 0 // Memory: the ring from the node before. This node reads its command queue.
@@ -24,7 +24,7 @@ RECORD :: 1
 State :: struct {
 	holding: u32, // 1: the node has a record.
 	blocked: u32, // 1: the ring after the node is full.
-	color:   u32,
+	color:   u32, // The color of the record that the node holds.
 	since:   u64, // When the node took the record.
 	release: u64, // When the node gives the record.
 	passed:  u64, // Records that the node gave to the ring after it.

@@ -20,40 +20,46 @@ import module "contract:module"
 // (table_append and bytes_append do it, with a count that stops at the
 // largest number).
 
+// A table that the callee reads: the direction Read.
 Table_To_Read :: struct($Record: typeid) {
-	records:  [^]Record,
-	count:    u64,
-	capacity: u64,
+	records:  [^]Record, // The first record, in memory of the caller.
+	count:    u64, // The records of the table.
+	capacity: u64, // The records that fit at `records`.
 }
 
+// A table that the callee reads and changes in place: the direction Change.
 Table_To_Change :: struct($Record: typeid) {
-	records:  [^]Record,
-	count:    u64,
-	capacity: u64,
+	records:  [^]Record, // The first record, in memory of the caller.
+	count:    u64, // The records of the table: the callee does not change it.
+	capacity: u64, // The records that fit at `records`.
 }
 
+// A table that the callee fills after its count: the direction Append.
 Table_To_Append :: struct($Record: typeid) {
-	records:  [^]Record,
-	count:    u64,
-	capacity: u64,
+	records:  [^]Record, // The first record, in memory of the caller.
+	count:    u64, // On entry, the records already there; on return, the count of the full answer.
+	capacity: u64, // The records that fit: the callee writes none at or after it.
 }
 
+// Bytes that the callee reads: the direction Read.
 Bytes_To_Read :: struct {
-	bytes:    [^]u8,
-	count:    u64,
-	capacity: u64,
+	bytes:    [^]u8, // The first byte, in memory of the caller.
+	count:    u64, // The bytes to read.
+	capacity: u64, // The bytes at `bytes`.
 }
 
+// Bytes that the callee reads and changes in place: the direction Change.
 Bytes_To_Change :: struct {
-	bytes:    [^]u8,
-	count:    u64,
-	capacity: u64,
+	bytes:    [^]u8, // The first byte, in memory of the caller.
+	count:    u64, // The bytes: the callee does not change it.
+	capacity: u64, // The bytes at `bytes`.
 }
 
+// Bytes that the callee writes after its count: the direction Append.
 Bytes_To_Append :: struct {
-	bytes:    [^]u8,
-	count:    u64,
-	capacity: u64,
+	bytes:    [^]u8, // The first byte, in memory of the caller.
+	count:    u64, // On entry, the bytes already there; on return, the count of the full answer.
+	capacity: u64, // The bytes that fit: the callee writes none at or after it.
 }
 
 #assert(size_of(Table_To_Read(u64)) == size_of(module.Table_Place))

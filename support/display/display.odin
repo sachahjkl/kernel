@@ -10,6 +10,26 @@
 // show a part of the new picture with a part of the old one. With two
 // pictures, the program draws one while the compositor reads the other,
 // and Present names the picture that is complete.
+//
+// Who uses it: each program with a window (`open`, `next_event`,
+// `present`), the compositor (the other side of the ring, and the rings
+// `Control` and `Input`), and `support/interface`, which draws with it. It
+// also loads the text settings of the program: the glyph caches and the
+// setting of the font (`text_settings_open`, `interface_font_open`).
+//
+// ```odin
+// window := display.open(ctx, 640, 400, "clock") or_return
+// for {
+// 	for event in display.next_event(&window) {
+// 		// ... the keys and the pointer ...
+// 	}
+// 	// ... draw in window.canvas ...
+// 	display.present(&window)
+// 	display.wait(&window)
+// }
+// ```
+//
+// See [surface](term:surface) and [compositor](term:compositor).
 package display
 
 import "contract:errors"
@@ -21,18 +41,21 @@ import "contract:pointer_pictures"
 import "contract:settings"
 import "support:system"
 
+// A command of a program to the compositor, on the ring of its window.
 Command :: enum u32 {
-	None           = 0,
+	None           = 0, // Not a command.
 	Surface_Create = 1, // values: memory handle (in the compositor), width, height, title (4 values)
 	Present        = 2, // The pixels of the surface changed. values: the picture to show (0 or 1), then the rectangle that changed: x, y, width, height (width 0: the whole surface)
 	Pointer_Shape  = 3, // The pointer shape over this surface (docs/POINTERS.md). values: a number of pointer_pictures.Pointer_Shape
 }
 
+// What the compositor tells a program, as the kind of a completion record of
+// its ring, and as the kind of an `Event`.
 Event_Kind :: enum u32 {
-	None             = 0,
+	None             = 0, // No event.
 	Key              = 1, // values: code, character, 1 when pressed, modifiers
 	Pointer          = 2, // values: x, y in the surface (signed), buttons
-	// The settings of the person changed (contract:settings): next_event
+	// The settings of the owner changed (contract:settings): next_event
 	// already gave the new font to support/graphics; the program draws its
 	// window again. values: the change count of the settings page.
 	Settings_Changed = 3,
@@ -40,7 +63,7 @@ Event_Kind :: enum u32 {
 
 // The ring between the root service and the compositor.
 Control :: enum u32 {
-	None          = 0,
+	None          = 0, // Not a command.
 	Client_Add    = 1, // root to compositor. values: ring memory handle (in the compositor)
 	Client_Remove = 2, // root to compositor. values: the same handle
 	Start         = 3, // compositor to root. values: name (4 values)
@@ -49,16 +72,18 @@ Control :: enum u32 {
 
 // The ring from the input service to the compositor.
 Input :: enum u32 {
-	None    = 0,
+	None    = 0, // Not a command.
 	Key     = 1, // values: code, character, 1 when pressed, modifiers
 	Pointer = 2, // values: x motion, y motion (signed), buttons
 }
 
+// The codes of the keys: the scan code of set 1 of the keyboard of the PC.
+// A key whose scan code comes after the prefix 0xE0 has KEY_EXTENDED added.
 KEY_EXTENDED :: 0x100
-KEY_ESCAPE :: 0x01
-KEY_BACKSPACE :: 0x0E
-KEY_ENTER :: 0x1C
-KEY_TAB :: 0x0F
+KEY_ESCAPE :: 0x01 // Escape.
+KEY_BACKSPACE :: 0x0E // Backspace.
+KEY_ENTER :: 0x1C // Enter.
+KEY_TAB :: 0x0F // Tab.
 KEY_DELETE :: KEY_EXTENDED | 0x53
 KEY_UP :: KEY_EXTENDED | 0x48
 KEY_DOWN :: KEY_EXTENDED | 0x50
@@ -70,44 +95,49 @@ KEY_PAGE_UP :: KEY_EXTENDED | 0x49
 KEY_PAGE_DOWN :: KEY_EXTENDED | 0x51
 KEY_SUPER :: KEY_EXTENDED | 0x5B // The left key with the logo. The compositor keeps it: it opens the launcher.
 
-MODIFIER_SHIFT :: 1
-MODIFIER_CONTROL :: 2
+MODIFIER_SHIFT :: 1 // The bit of `Event.modifiers` set while a Shift key is down.
+MODIFIER_CONTROL :: 2 // The bit set while a Control key is down.
 
-BUTTON_LEFT :: 1
-BUTTON_RIGHT :: 2
+BUTTON_LEFT :: 1 // The bit of `Event.buttons` set while the left button is down.
+BUTTON_RIGHT :: 2 // The bit set while the right button is down.
 
 SURFACE_LIMIT :: 2048 // The largest width and height.
 
+// One event of a window, as `next_event` gives it. A key event fills
+// `code`, `character`, `pressed` and `modifiers`; a pointer event fills
+// `x`, `y` and `buttons`.
 Event :: struct {
-	kind:      Event_Kind,
-	code:      u32,
-	character: u8,
-	pressed:   bool,
-	modifiers: u32,
-	x, y:      int,
-	buttons:   u32,
+	kind:      Event_Kind, // What happened.
+	code:      u32, // A key: its code (`KEY_` constants).
+	character: u8, // A key: its character in ASCII, or 0.
+	pressed:   bool, // A key: true when it went down, false when it went up.
+	modifiers: u32, // A key: the `MODIFIER_` bits.
+	x, y:      int, // The pointer: its place in the surface, in pixels; it can be outside the surface.
+	buttons:   u32, // The pointer: the `BUTTON_` bits.
 }
 
+// One window of a program: its ring to the compositor and its surface.
+// `open` makes it; the program draws in `canvas` and calls `present`.
 Window :: struct {
-	ring_memory: system.Handle,
-	ring:        ring.Ring,
-	surface:     system.Handle,
+	ring_memory: system.Handle, // The memory of the ring to the compositor.
+	ring:        ring.Ring, // The ring, mapped.
+	surface:     system.Handle, // The memory of the pixels of the surface.
 	canvas:      graphics.Canvas, // Where the program draws now.
-	pictures:    [2]graphics.Canvas,
+	pictures:    [2]graphics.Canvas, // The two pictures; the second is empty with one picture.
 	picture:     int, // The index of canvas in pictures.
 	two:         bool, // The surface has two pictures.
 	presented:   u32, // The count of commands after the last Present.
 	// The measure of the time of a picture (docs/DESIGN.md, section 7):
 	// picture_begin marks the start, present the end; in a measure run the
 	// log has their mean after 1, 3 and 10 pictures.
-	title:              [32]u8,
-	title_count:        int,
-	picture_started:    u64,
-	picture_count:      u64,
-	picture_time:       u64,
+	title:              [32]u8, // The title of the window, for the lines of the measure.
+	title_count:        int, // The bytes of the title.
+	picture_started:    u64, // Nanoseconds: the start of the picture that is drawn now.
+	picture_count:      u64, // The pictures presented.
+	picture_time:       u64, // Nanoseconds: the sum of the times of the pictures.
 }
 
-PICTURES_MEASURED :: 10
+PICTURES_MEASURED :: 10 // The pictures after which a measure run writes its last line.
 // A measure run: the log has the time of the pictures of each window, after
 // 1, 3 and 10 pictures. A normal run writes none of these lines: the ring of
 // the log keeps 1023 records, and the main scenario reads its oldest records
@@ -294,7 +324,7 @@ glyph_cache_valid: [settings.Grid_Fit]bool
 
 // text_settings_open finds the settings page in the context, validates the
 // glyph caches once (a font file and a cache are hostile input), and
-// applies the choice of the person. With no page, or a cache that the
+// applies the choice of the owner. With no page, or a cache that the
 // validation refuses, the text of the program is Spleen 8x16, with a line
 // on the log. The compositor calls it too.
 //
@@ -354,8 +384,8 @@ text_settings_open :: proc "contextless" (ctx: ^system.Context) {
 // Interface_Font: the two glyph caches of the interface font (docs/FONTS.md,
 // section 12), each validated once.
 Interface_Font :: struct {
-	regular: glyph_cache.Cache,
-	bold:    glyph_cache.Cache,
+	regular: glyph_cache.Cache, // The regular weight.
+	bold:    glyph_cache.Cache, // The bold weight.
 }
 
 // interface_font_open validates the two glyph caches of the interface font

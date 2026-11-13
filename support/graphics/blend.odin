@@ -192,18 +192,20 @@ blend_coverage_row_in_order :: #force_inline proc "contextless" (line: [^]Color,
 // value has its generation in the high byte; red is already shifted by 16,
 // green by 8.
 Blend_Table :: struct {
-	color, under: Color,
+	color, under: Color, // The text color and the pixel color of the table.
 	generation:   u32, // 1 to 255; 0: the table holds nothing.
-	channels:     [3][256]u32,
+	channels:     [3][256]u32, // For each channel, the result of each coverage from 0 to 255.
 }
 
+// The tables that a program keeps: the ninth pair of colors replaces the
+// table that `next` names.
 BLEND_TABLE_COUNT :: 8
 
 // Blend_Tables: a few tables, the one replaced next in turn. All zero is
 // valid: no table yet.
 Blend_Tables :: struct {
-	tables: [BLEND_TABLE_COUNT]Blend_Table,
-	next:   int,
+	tables: [BLEND_TABLE_COUNT]Blend_Table, // The tables.
+	next:   int, // The table that the next new pair replaces.
 	last:   int, // The table that the last search found.
 	made:   u64, // Tables made since the start: a measure.
 }
@@ -251,6 +253,8 @@ blend_glyph_rows :: proc "contextless" (canvas_row: [^]Color, stride: int, words
 	}
 }
 
+// blend_glyph_rows_in_order is blend_glyph_rows for one subpixel order, as
+// a constant: the compiler makes one loop for each order.
 @(private)
 blend_glyph_rows_in_order :: #force_inline proc "contextless" (canvas_row: [^]Color, stride: int, words: [^]u32, width, first_row, last_row, first, last: int, color: Color, $ORDER: Subpixel_Order, square_root: ^[4096]u8, tables: ^Blend_Tables) #no_bounds_check {
 	for row in first_row ..< last_row {

@@ -4,6 +4,7 @@ package quic
 // of a connection (RFC 9000, section 20.1). The reading of each frame is in
 // connection_receive.odin; this file holds the numbers and the writing.
 
+// The frame types of RFC 9000, section 19, table 3, by their names there.
 FRAME_PADDING :: 0x00
 FRAME_PING :: 0x01
 FRAME_ACK :: 0x02
@@ -33,11 +34,12 @@ FRAME_CONNECTION_CLOSE_APPLICATION :: 0x1d // An error of the application: 1-RTT
 FRAME_HANDSHAKE_DONE :: 0x1e
 
 STREAMS_LIMIT :: u64(1) << 60 // RFC 9000, section 19.11: a count of streams over this is an encoding error.
-STATELESS_RESET_TOKEN_SIZE :: 16
-PATH_DATA_SIZE :: 8
+STATELESS_RESET_TOKEN_SIZE :: 16 // The bytes of a stateless reset token (RFC 9000, section 10.3).
+PATH_DATA_SIZE :: 8 // The bytes of the data of PATH_CHALLENGE and PATH_RESPONSE.
 
 // The error code of a CONNECTION_CLOSE of QUIC (RFC 9000, section 20.1). A
-// failure of TLS is CRYPTO_ERROR_BASE + its alert.
+// failure of TLS is CRYPTO_ERROR_BASE + its alert. The names are those of
+// the RFC: NO_ERROR, INTERNAL_ERROR and so on.
 Transport_Error :: enum u64 {
 	No_Error                  = 0x00,
 	Internal_Error            = 0x01,
@@ -57,16 +59,18 @@ Transport_Error :: enum u64 {
 	Aead_Limit_Reached        = 0x0f,
 	No_Viable_Path            = 0x10,
 }
-CRYPTO_ERROR_BASE :: 0x0100
+CRYPTO_ERROR_BASE :: 0x0100 // The error code of a TLS alert n is CRYPTO_ERROR_BASE + n.
 
 // A writer of frames into the payload of one packet: each write checks the
 // room first, and a write with no room sets failed and writes nothing.
 Frame_Writer :: struct {
-	bytes:    []u8,
-	position: int,
-	failed:   bool,
+	bytes:    []u8, // The payload of the packet.
+	position: int, // The bytes written.
+	failed:   bool, // A write had no room: the payload is not whole.
 }
 
+// frame_write_integer writes a variable-length integer in its shortest
+// encoding.
 frame_write_integer :: proc "contextless" (writer: ^Frame_Writer, value: u64) {
 	size := variable_length_integer_size(value)
 	if writer.failed || size == 0 || size > len(writer.bytes) - writer.position {
@@ -76,6 +80,7 @@ frame_write_integer :: proc "contextless" (writer: ^Frame_Writer, value: u64) {
 	writer.position += variable_length_integer_write(writer.bytes, writer.position, value, size)
 }
 
+// frame_write_bytes writes bytes as they are.
 frame_write_bytes :: proc "contextless" (writer: ^Frame_Writer, bytes: []u8) {
 	if writer.failed || len(bytes) > len(writer.bytes) - writer.position {
 		writer.failed = true
@@ -84,11 +89,13 @@ frame_write_bytes :: proc "contextless" (writer: ^Frame_Writer, bytes: []u8) {
 	writer.position += copy(writer.bytes[writer.position:], bytes)
 }
 
+// frame_room gives the bytes that the payload has left. 0 after a failed
+// write.
 frame_room :: proc "contextless" (writer: ^Frame_Writer) -> int {
 	return writer.failed ? 0 : len(writer.bytes) - writer.position
 }
 
-// frame_type_is_allowed says if a frame type may come at a level (RFC 9000,
+// frame_type_is_allowed says if a frame type can come at a level (RFC 9000,
 // section 12.4, table 3): Initial and Handshake packets carry PADDING, PING,
 // ACK, CRYPTO and the CONNECTION_CLOSE of QUIC only.
 frame_type_is_allowed :: proc "contextless" (type: u64, level: Encryption_Level) -> bool {

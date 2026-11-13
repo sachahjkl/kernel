@@ -6,8 +6,8 @@
 // mark reads the same in each log line and each record.
 package cut_mark
 
-MARK_START :: "... and "
-MARK_END :: " bytes more"
+MARK_START :: "... and " // The text before the count of the mark.
+MARK_END :: " bytes more" // The text after the count.
 
 // decimal_digits gives the count of digits of a number in decimal.
 decimal_digits :: proc "contextless" (value: u64) -> int {

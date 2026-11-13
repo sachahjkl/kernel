@@ -46,8 +46,9 @@ SERVICE_RING :: 0
 // The role of the frame ring in the context of a client of a frame service.
 GRANT_RING :: 6
 
+// A command of a client, as the kind of a command record of the frame ring.
 Command :: enum u32 {
-	None       = 0,
+	None       = 0, // Not a command: Bad_Command.
 	// values[0]: the handle of the frame region, as the frame service names
 	// it. A new Attach replaces the region of the one before: send it when no
 	// request is in flight.
@@ -75,7 +76,7 @@ Command :: enum u32 {
 // not Ok, the values of the completion are an error record
 // (errors.completion_record).
 Status :: enum u32 {
-	Ok           = 0,
+	Ok           = 0, // The request is done: the values are its results.
 	Bad_Command  = 1, // The command is not known, or a value is wrong.
 	Out_Of_Range = 2, // A byte is not in the frame region.
 	No_Region    = 3, // No frame region, or the handle did not come through the frame ring.
@@ -104,6 +105,8 @@ COMMAND_NAMES := [Command]string {
 	.Statistics = "Statistics",
 }
 
+// command_name gives the name of a command from an error record, or "an
+// unknown command" for a number out of `Command`.
 command_name :: proc "contextless" (command: i64) -> string {
 	return command >= 0 && command <= i64(max(Command)) ? COMMAND_NAMES[Command(command)] : "an unknown command"
 }

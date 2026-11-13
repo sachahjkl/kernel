@@ -5,6 +5,12 @@ package operation
 // operation that failed (kernel/diagnose.odin); a program reads the names to
 // write the sentence of an error record. One table for the two.
 
+// The form of one parameter of a kernel operation: what the kernel checks
+// on it before the operation, and how a sentence names its value.
+//
+// The kernel reads it in `kernel/diagnose.odin` to find which argument of a
+// failed operation is wrong; `support/sentence` reads it to say the
+// argument by its name and its value in its form.
 Form :: enum u8 {
 	None    = 0, // No parameter.
 	Value   = 1, // A number that the operation does not check.
@@ -16,19 +22,29 @@ Form :: enum u8 {
 	Choice  = 7, // A value of an enumeration. `limit`: the largest.
 }
 
+// One parameter of a kernel operation, as `OPERATIONS` describes it.
+//
+// Example: the first parameter of `Memory_Create` is `{"budget", .Handle,
+// .Budget, {.Spend}, 0}`: a budget handle with **Spend**.
 Parameter_Form :: struct {
-	name:   string,
-	form:   Form,
-	kind:   Object_Kind,
-	rights: Rights,
-	limit:  u64,
+	name:   string, // The name of the parameter, as the comment of the operation names it: "budget", "pages".
+	form:   Form, // What the value is.
+	kind:   Object_Kind, // For a handle: the kind of object that it must name. `None`: any kind.
+	rights: Rights, // For a handle: the rights that it must have.
+	limit:  u64, // For a count, a set of flags or a choice: the bound that the comment of `Form` gives. 0: none.
 }
 
+// One kernel operation, as a sentence names it: its name and its seven
+// parameters, in the order of the values of its command record. A parameter
+// with the form `None` is a value that the operation does not take.
 Operation_Form :: struct {
-	name:       string,
-	parameters: [7]Parameter_Form,
+	name:       string, // The name of the operation, as `Operation` names it.
+	parameters: [7]Parameter_Form, // In the order of the values of the command record.
 }
 
+// The form of each kernel operation, by its number. The kernel and the
+// sentences of the error records read this one table, so a parameter has
+// one name everywhere. A new operation adds its row here.
 @(rodata)
 OPERATIONS := [Operation]Operation_Form {
 	.None = {name = "None"},
@@ -69,6 +85,8 @@ OPERATIONS := [Operation]Operation_Form {
 	.Thread_Control = {"Thread_Control", {{"thread", .Handle_Or_Zero, .Thread, {.Inspect}, 0}, {"number", .Value, .None, {}, 0}, {"command", .Choice, .None, {}, u64(max(Thread_Control_Command))}, {"address", .Address, .None, {}, 0}, {"size", .Count, .None, {}, 0}, {}, {}}},
 }
 
+// The name of each object kind, for the sentence of an error record
+// (`errors.Kind.Handle_Kind`).
 @(rodata)
 OBJECT_KIND_NAMES := [Object_Kind]string {
 	.None      = "no object",
@@ -82,6 +100,8 @@ OBJECT_KIND_NAMES := [Object_Kind]string {
 	.Log       = "Log",
 }
 
+// The words of each program state, for the sentence of an error record
+// (`errors.Kind.State`).
 @(rodata)
 STATE_NAMES := [Program_State]string {
 	.None    = "no state that the handle shows",
@@ -91,6 +111,8 @@ STATE_NAMES := [Program_State]string {
 	.Stopped = "stopped",
 }
 
+// The name of each status, as `Status` names it: a program prints it with
+// no copy of the enumeration names.
 @(rodata)
 STATUS_NAMES := [Status]string {
 	.Ok            = "Ok",

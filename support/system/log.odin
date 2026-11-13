@@ -5,15 +5,35 @@ import "base:intrinsics"
 
 // A reader of the records of the log (operation.Log_Record). The program
 // needs the memory object of the log with the right Read.
+//
+// The reader reads the records in order with `log_next`, and waits for the
+// next one with `wait_log`:
+//
+// ```odin
+// reader := system.log_open(memory) or_return
+// for {
+// 	wait := system.wait_begin()
+// 	system.wait_log(&wait, &reader)
+// 	for record, lost in system.log_next(&reader) {
+// 		// ... show the record, and `lost` records before it ...
+// 	}
+// 	system.wait_end(&wait)
+// }
+// ```
 Log_Reader :: struct {
-	head:    ^op.Log_Head,
-	records: [^]op.Log_Record,
+	head:    ^op.Log_Head, // The head of the log, mapped read only.
+	records: [^]op.Log_Record, // The records, after the head.
 	next:    u64, // The number of the next record to read.
 }
 
+// The names of the contract for a reader of the log.
 Log_Level :: op.Log_Level
 Log_Record :: op.Log_Record
 
+// log_open maps the memory object of the log read only, and gives a reader
+// at the record 0. The memory needs **Read**; the status is the one of
+// `memory_map`. A reader that starts late loses the old records: the first
+// `log_next` gives their count in `lost`.
 log_open :: proc "contextless" (memory: Handle) -> (reader: Log_Reader, status: Status) {
 	address := memory_map(memory, {}) or_return
 	reader.head = (^op.Log_Head)(address)

@@ -1,8 +1,8 @@
-// The line that a person edits in a text program: the bytes, the caret
+// The line that the input edits in a text program: the bytes, the caret
 // inside them, and the keys that change them. The package also finds the
 // name at the caret that a completion can replace, and the call that the
 // caret is in (line_context.odin), keeps the history of the lines
-// (history.odin), and orders the names that match what the person typed
+// (history.odin), and orders the names that match what the input typed
 // (fuzzy_match.odin).
 //
 // The package has no state of its own and makes no kernel call: each
@@ -17,8 +17,9 @@ package line_editor
 // after a prompt of a few characters, in one terminal record.
 LINE_CAPACITY :: 200
 
+// One line that the input edits, in the memory of the caller.
 Line :: struct {
-	bytes:  [LINE_CAPACITY]u8,
+	bytes:  [LINE_CAPACITY]u8, // The bytes of the line.
 	count:  int, // The bytes of the line.
 	caret: int, // The place of the caret: 0 is before the first byte, count after the last.
 }
@@ -26,9 +27,9 @@ Line :: struct {
 // The keys that edit a line. The caller translates the codes of its keys:
 // the package does not depend on a keyboard.
 Edit_Key :: enum u8 {
-	None      = 0,
+	None      = 0, // No key: nothing changes.
 	Left      = 1, // The caret goes one byte to the left.
-	Right     = 2,
+	Right     = 2, // The caret goes one byte to the right.
 	Home      = 3, // The caret goes before the first byte.
 	End       = 4, // The caret goes after the last byte.
 	Backspace = 5, // The byte before the caret goes.

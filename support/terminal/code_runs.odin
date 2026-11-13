@@ -25,9 +25,9 @@ Code_Kind :: enum u8 {
 	Type            = 3, // Integer, Text, Table, Bytes, Handle, a record, and what a type holds in its parentheses.
 	Parameter       = 4, // The name of a parameter in a signature, before its ':'.
 	Variable        = 5, // The name of a variable of the console, also before '=' and before '.field'.
-	Number          = 6,
+	Number          = 6, // A number.
 	Text            = 7, // A text in double quotes, with its quotes.
-	Text_Unfinished = 8, // A text with no end quote yet: the person still types it.
+	Text_Unfinished = 8, // A text with no end quote yet: it is still being typed.
 	Operator        = 9, // An operator or punctuation: + - * / % = ( ) , : . { }
 	Arrow           = 10, // '->' before the result of a signature.
 	Words           = 11, // The words of a row of a list that are not code: "export of", "command", "3 lines ago".
@@ -38,19 +38,20 @@ Code_Kind :: enum u8 {
 // most RUN_LIMIT bytes: a byte holds its start. A part of one kind that is
 // longer than 255 bytes is two runs.
 Code_Run :: struct {
-	start:    u8,
-	length:   u8,
-	kind:     Code_Kind,
-	reserved: u8,
+	start:    u8, // The first byte of the run in the text of its row.
+	length:   u8, // The bytes of the run.
+	kind:     Code_Kind, // What the run is.
+	reserved: u8, // 0.
 }
 #assert(size_of(Code_Run) == 4)
 
 // The runs of one row: the bytes of one record of the text region.
 CODE_RUN_LIMIT :: RUN_LIMIT / size_of(Code_Run)
 
+// The runs of one row or one edit line.
 Code_Runs :: struct {
-	runs:  [CODE_RUN_LIMIT]Code_Run,
-	count: int,
+	runs:  [CODE_RUN_LIMIT]Code_Run, // In the order of their bytes.
+	count: int, // The runs in use.
 }
 
 // The class of the colors of code of each kind. Parameter, Module and

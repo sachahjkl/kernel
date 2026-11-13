@@ -36,16 +36,18 @@ Match_Places :: bit_set[0 ..< NAME_SCAN_LIMIT; u128]
 
 // The scoring rules. Each one has its reason:
 SCORE_MATCH :: 16 // Each matched character: a longer query that matches says more.
-SCORE_START :: 32 // A match at the first byte of the name: the person types names from their start.
+SCORE_START :: 32 // A match at the first byte of the name: the input types names from their start.
 SCORE_SEGMENT :: 24 // A match right after '.' or '_': the start of a part of the name ("mc" for monitor.count).
 SCORE_SIDE_BY_SIDE :: 16 // A match right after the match before: a typed run that the name holds as one run.
-SCORE_GAP_OPEN :: 3 // Taken for each gap between two matches: a spread match is less likely what the person means.
+SCORE_GAP_OPEN :: 3 // Taken for each gap between two matches: a spread match is less likely what the input means.
 SCORE_GAP_BYTE :: 1 // Taken for each byte of a gap after its first: a long gap more than a short one.
 // After the score, a tie goes to the smaller tie order (the caller's
 // order: 0 is the newest line of a history), then to the shorter name
 // (fewer bytes to read past the query), then to the name first in the
 // order of the bytes (a stable order).
 
+// lower gives the lower case of an ASCII letter, and each other byte as it
+// is: the match does not tell the cases apart.
 lower :: proc "contextless" (character: u8) -> u8 {
 	return character >= 'A' && character <= 'Z' ? character + ('a' - 'A') : character
 }
@@ -108,7 +110,7 @@ fuzzy_match :: proc "contextless" (query: string, name: string) -> (score: int, 
 	return score, places, true
 }
 
-// What a name is, for the person: the list shows it at the right of the name.
+// What a name is, for the reader: the list shows it at the right of the name.
 Candidate_Kind :: enum u8 {
 	Command      = 0, // A command of the program itself.
 	Export       = 1, // An export of a module or of a service.
@@ -116,15 +118,15 @@ Candidate_Kind :: enum u8 {
 	Service      = 3, // A service that the program is connected to.
 	Module       = 4, // A module of the boot image.
 	Program      = 5, // A program that runs.
-	Variable     = 6,
-	History_Line = 7,
+	Variable     = 6, // A variable of the program.
+	History_Line = 7, // A line of the history.
 }
 
-// A name that can complete what the person typed. The caller fills a
+// A name that can complete what the input typed. The caller fills a
 // table of them; the names stay in the memory of the caller.
 Candidate :: struct {
-	name:      string,
-	kind:      Candidate_Kind,
+	name:      string, // The name, in the memory of the caller.
+	kind:      Candidate_Kind, // What the name is.
 	tie_order: u32, // Equal scores: the smaller first. A history gives the age of the line (0: the newest).
 	number:    u32, // For the caller: the index of the thing in its own table.
 }
@@ -132,8 +134,8 @@ Candidate :: struct {
 // One name that matched, in the order of the ranking.
 Ranked :: struct {
 	candidate: int, // The index in the table of candidates.
-	score:     int,
-	places:    Match_Places,
+	score:     int, // The score of the match: higher is better.
+	places:    Match_Places, // The bytes of the name that matched.
 }
 
 // ranked_before says if a comes before b in the list: the rules after the

@@ -9,6 +9,18 @@
 // with one linear gradient: from the top left corner of the box of the part,
 // where the color is moved 30 % toward white, to the bottom right corner,
 // where it is moved 30 % toward black. The eye is one flat color.
+//
+// Who uses it: the kernel tool (the files of the mark: the logo, the icon of
+// the site), the boot display and the programs that show the mark. The
+// parts:
+//
+// - `heron_rows`, `parts`, `Part`: the heron as cells.
+// - `mark_pixel`, `mark_draw`: the heron at a cell size.
+// - `name_letters`, `name_pixel`, `name_draw`: the name.
+// - `Animation`, `animation_frames`, `play_order` (`animation.odin`): the
+//   idle movements.
+//
+// See [mark](term:mark) and (docs/DESIGN.md, "The mark").
 package mark
 
 import "support:graphics"
@@ -34,7 +46,7 @@ cell_size_is_accepted :: proc "contextless" (cell_size: int) -> bool {
 // The two backgrounds of the mark: the background of the system, and a light
 // background for a page of another program.
 BACKGROUND_DARK :: graphics.COLOR_BACKGROUND
-BACKGROUND_LIGHT :: 0xF4F6F8
+BACKGROUND_LIGHT :: 0xF4F6F8 // The light background: a page of the site.
 
 // The heron, one string for each row of cells, from the top. A "." is an
 // empty cell; each other letter is a part.
@@ -70,17 +82,17 @@ heron_rows := [HERON_GRID_SIZE]string {
 // inclusive. The gradient of the part goes from the top left corner of the
 // box to its bottom right corner.
 Cell_Box :: struct {
-	first_column, first_row, last_column, last_row: int,
+	first_column, first_row, last_column, last_row: int, // In cells, from the top left of the heron.
 }
 
 // A part of the heron. The box is written in the table so that a pixel needs
 // no scan of the rows; a host test checks each box against the rows.
 Part :: struct {
-	letter:         u8,
+	letter:         u8, // The letter of the part in the rows.
 	color_on_dark:  u32, // 0xRRGGBB, on BACKGROUND_DARK.
 	color_on_light: u32, // 0xRRGGBB, on BACKGROUND_LIGHT.
 	flat:           bool, // One color, no gradient.
-	box:            Cell_Box,
+	box:            Cell_Box, // The box of the cells of the part.
 }
 
 // The pale neck is darker on a light background, so that it stays visible
@@ -205,11 +217,12 @@ gradient_color :: proc "contextless" (base: u32, box: Cell_Box, cell_size, x, y:
 // The two rows at the top are for the stem of the d; the other letters start
 // on the third row.
 NAME_LETTER_COLUMNS :: 5
-NAME_ROWS :: 7
+NAME_ROWS :: 7 // The rows of cells of the name.
 NAME_GAP_COLUMNS :: 2 // Empty columns between two letters.
 
-NAME_LETTER_COUNT :: 5
+NAME_LETTER_COUNT :: 5 // The letters of "modus".
 
+// The cells of each letter of the name, by row: '1' is a filled cell.
 @(rodata)
 name_letters := [NAME_LETTER_COUNT][NAME_ROWS]string {
 	{".....", ".....", "11111", "1.1.1", "1.1.1", "1.1.1", "1.1.1"}, // m
@@ -219,6 +232,7 @@ name_letters := [NAME_LETTER_COUNT][NAME_ROWS]string {
 	{".....", ".....", "11111", "1....", "11111", "....1", "11111"}, // s
 }
 
+// The columns of cells of the whole name, the gaps included.
 NAME_COLUMNS :: NAME_LETTER_COUNT * NAME_LETTER_COLUMNS + (NAME_LETTER_COUNT - 1) * NAME_GAP_COLUMNS
 
 // name_size gives the width and the height in pixels of the name, when a
@@ -256,6 +270,8 @@ name_pixel :: proc "contextless" (cell_size, x, y: int, on_light: bool) -> (colo
 	return name_color(on_light), true
 }
 
+// name_color gives the color of the name: the text color on the dark
+// background, the dark background color on the light one.
 name_color :: proc "contextless" (on_light: bool) -> u32 {
 	return BACKGROUND_DARK if on_light else graphics.COLOR_TEXT
 }
@@ -270,9 +286,11 @@ background_color :: proc "contextless" (on_light: bool) -> u32 {
 // machines do.
 Channel_Order :: enum u8 {
 	Red_In_High_Byte, // graphics.Color.
-	Red_In_Low_Byte,
+	Red_In_Low_Byte, // Blue in the high byte: a framebuffer of the format Red_Green_Blue_X.
 }
 
+// color_in_order gives a color of the form 0xRRGGBB in the order of the
+// canvas.
 @(private)
 color_in_order :: #force_inline proc "contextless" (color: u32, order: Channel_Order) -> graphics.Color {
 	if order == .Red_In_Low_Byte {

@@ -60,13 +60,31 @@
 // damaged, and the other objects are served. A store block or a node with a
 // wrong check, or a node that breaks a rule of this format, damages its
 // store.
+//
+// Who uses it: the storage service (`programs/storage`, with
+// `support/storage_tree` and `support/storage_object`), and the tools that
+// check or damage a disk in the tests. A program never reads the disk: it
+// calls the storage service. The parts:
+//
+// - `Root`, `Store_Entry`: the root block, the one place that changes.
+// - `Store_Block`: the counts of one store.
+// - `Tree_Header`, `Entry_Name`, `Entry`: the nodes of the B+ trees.
+// - `Object_Node`, `Object_Child`, `Block_Value`: the block tree of an
+//   object.
+// - `Version_Index`, `Version_Leaf`, `Version_Entry`: the versions.
+// - `Pointer`, `check`, `root_valid`: the checks of the blocks.
+// - `name_refusal`: the rule of a name.
+//
+// See [store](term:store), [tree](term:tree) and [version](term:version).
 package store
 
 import "base:intrinsics"
 import "contract:blake3"
 
-BLOCK_SIZE :: 4096
+BLOCK_SIZE :: 4096 // The bytes of one block of the disk: one page, one block of the block service.
 ROOT_MAGIC :: u64(0x34454741524F5453) // The bytes "STORAGE4": the format with an object as a tree of blocks.
+// The stores of one disk: the cells of the root block. 60 cells of 64 bytes
+// fit in one block with the head of the root and its check.
 STORE_CAPACITY :: 60
 NAME_CAPACITY :: 32 // A name of a store: the name that the root service gives, with zero bytes after it.
 DISK_BLOCKS_LIMIT :: 1 << 18 // 1 GiB: the service uses no block after this.
@@ -79,8 +97,8 @@ DISK_BLOCKS_LIMIT :: 1 << 18 // 1 GiB: the service uses no block after this.
 // and the open takes a deeper tree for damage. 4 TiB is more than a disk of
 // DISK_BLOCKS_LIMIT blocks holds, and a sixth level costs one more node on
 // each path.
-OBJECT_FANOUT :: 64
-OBJECT_LEVEL_LIMIT :: 5
+OBJECT_FANOUT :: 64 // The children of one object node.
+OBJECT_LEVEL_LIMIT :: 5 // The most levels of the block tree of one object.
 OBJECT_BLOCKS_LIMIT :: u64(1) << 30 // 64^5 blocks.
 OBJECT_SIZE_LIMIT :: OBJECT_BLOCKS_LIMIT * BLOCK_SIZE // 4 TiB.
 
@@ -101,9 +119,12 @@ TREE_DEPTH_LIMIT :: 8
 // names of its path, and a commit rewrites one tree on each level of it.
 NESTING_LIMIT :: 32
 
+// How a block names another block: its number and its check. A reader that
+// follows a pointer reads the block, computes its check and compares: a
+// block that does not match is damage, and the reader does not use it.
 Pointer :: struct {
 	block: u64, // 0: no block.
-	check: u64,
+	check: u64, // The check of the block: `check` of its bytes, or `value_check` of its value for a block of data.
 }
 
 // The cell of one store (docs/STORAGE.md: the one thing that changes).
@@ -114,15 +135,20 @@ Store_Entry :: struct {
 	store: Pointer, // The store block.
 }
 
+// The root block: the generation of the last commit and the cell of each
+// store. It is at block 0 or block 1: a commit writes the older of the two,
+// so a cut write leaves the other valid (`root_valid`). The service takes
+// the valid root with the highest generation. 4096 bytes. See
+// [root block](term:root-block).
 Root :: struct {
-	magic:       u64,
-	generation:  u64,
-	disk_blocks: u64,
+	magic:       u64, // `ROOT_MAGIC`.
+	generation:  u64, // The count of commits of the disk: one more at each commit.
+	disk_blocks: u64, // The blocks of the disk that the format uses: at least 2, at most the blocks of the disk.
 	time:        u64, // The time since the format of the disk at this commit, in milliseconds.
 	date:        u64, // The date of this commit in seconds since 1970 (UTC). 0: not known.
-	reserved:    [3]u64,
-	stores:      [STORE_CAPACITY]Store_Entry,
-	padding:     [BLOCK_SIZE - 64 - STORE_CAPACITY * size_of(Store_Entry) - 8]u8,
+	reserved:    [3]u64, // 0.
+	stores:      [STORE_CAPACITY]Store_Entry, // The cell of each store; a free cell has no name.
+	padding:     [BLOCK_SIZE - 64 - STORE_CAPACITY * size_of(Store_Entry) - 8]u8, // 0.
 	check:       u64, // The hash of the bytes before it.
 }
 
@@ -131,7 +157,7 @@ Root :: struct {
 Store_Block :: struct {
 	tree:           Pointer, // The root node of the tree of the store. No block: the tree has no entry.
 	removals:       Pointer, // The root node of the removal queue: a tree whose entries are trees to free, named by the 8 bytes of next_removal at their remove, big-endian.
-	next_removal:   u64,
+	next_removal:   u64, // The number of the next remove: the name of the next entry of the removal queue.
 	objects:        u64, // The objects of the store, with those in the removal queue.
 	trees:          u64, // The trees inside the tree of the store, with those in the removal queue.
 	// The blocks of the current objects: each object node and each block of
@@ -142,14 +168,15 @@ Store_Block :: struct {
 	current_blocks: u64,
 	node_blocks:    u64, // The nodes of all the trees of the store, and of its removal queue.
 	removing:       u64, // The entries of the removal queue.
-	reserved:       [4]u64,
-	padding:        [BLOCK_SIZE - 112]u8,
+	reserved:       [4]u64, // 0.
+	padding:        [BLOCK_SIZE - 112]u8, // 0.
 }
 
+// What an entry of a tree names.
 Entry_Kind :: enum u64 {
-	None   = 0,
-	Object = 1,
-	Tree   = 2,
+	None   = 0, // Not an entry: a leaf holds no such record.
+	Object = 1, // An object: bytes, with versions.
+	Tree   = 2, // A tree: names of other entries.
 }
 
 // The key of an entry: its name, with zero bytes after it. The order of the
@@ -158,8 +185,12 @@ Entry_Kind :: enum u64 {
 Entry_Name :: [ENTRY_NAME_CAPACITY]u8
 
 // What an entry names.
+//
+// The record of a leaf, after its name. The storage service writes it at a
+// commit, and gives its fields to a program as the state of an object or of
+// a tree. 104 bytes. See [entry](term:entry).
 Entry :: struct {
-	kind:       Entry_Kind,
+	kind:       Entry_Kind, // An object or a tree.
 	size:       u64, // An object: its bytes. A tree: its entries.
 	generation: u64, // The commit of its last change.
 	time:       u64, // The time since the format at that commit, in milliseconds.
@@ -182,44 +213,51 @@ Entry :: struct {
 // names, each name once.
 NODE_MAGIC :: u32(0x45455254) // The bytes "TREE".
 
-TREE_HEADER_SIZE :: 32
+TREE_HEADER_SIZE :: 32 // The bytes of the header of a node and of an object node.
+// The first 32 bytes of a node of a B+ tree, and of an object node.
 Tree_Header :: struct {
 	level:    u32, // 0: a leaf.
 	count:    u32, // The records in use.
 	magic:    u32, // NODE_MAGIC: a block of another kind is damage.
-	reserved: u32,
-	unused:   [2]u64,
+	reserved: u32, // 0.
+	unused:   [2]u64, // 0.
 }
 #assert(size_of(Tree_Header) == TREE_HEADER_SIZE)
 
-LEAF_CAPACITY :: (BLOCK_SIZE - TREE_HEADER_SIZE) / (size_of(Entry_Name) + size_of(Entry)) // 24
-BRANCH_CAPACITY :: (BLOCK_SIZE - TREE_HEADER_SIZE) / (size_of(Entry_Name) + size_of(Pointer)) // 50
+LEAF_CAPACITY :: (BLOCK_SIZE - TREE_HEADER_SIZE) / (size_of(Entry_Name) + size_of(Entry)) // 24: the records of a name and an entry that fit in one block.
+BRANCH_CAPACITY :: (BLOCK_SIZE - TREE_HEADER_SIZE) / (size_of(Entry_Name) + size_of(Pointer)) // 50: the records of a name and a pointer that fit in one block.
 
 // One version of an object: its state at the commit of `generation`.
+//
+// The service adds one at each commit that changes the object, and the
+// retention rule removes old ones (docs/STORAGE.md). 48 bytes.
 Version_Entry :: struct {
-	generation: u64,
-	size:       u64,
+	generation: u64, // The commit of the state.
+	size:       u64, // The bytes of the object in that state.
 	time:       u64, // The time since the format, in milliseconds.
 	date:       u64, // Seconds since 1970 (UTC). 0: not known.
 	root:       Pointer, // The root of the block tree of the state. No block: each of its bytes was zero.
 }
 #assert(size_of(Version_Entry) == 48)
 
-VERSION_LEAF_CAPACITY :: 85
-VERSION_INDEX_CAPACITY :: 254
+VERSION_LEAF_CAPACITY :: 85 // The version entries of 48 bytes that fit in one block after the 16 bytes of the head of a leaf.
+VERSION_INDEX_CAPACITY :: 254 // The pointers of 16 bytes that fit in one block after the 32 bytes of the head of an index.
 VERSIONS_LIMIT :: VERSION_LEAF_CAPACITY * VERSION_INDEX_CAPACITY // 21590 versions of one object.
 
+// One block of version entries of one object. 4096 bytes.
 Version_Leaf :: struct {
-	count:    u64,
-	reserved: u64,
+	count:    u64, // The entries in use, from 1.
+	reserved: u64, // 0.
 	entries:  [VERSION_LEAF_CAPACITY]Version_Entry, // The oldest first; count of them are used.
 }
 
+// The block that names the version leaves of one object: the entry of the
+// object names it in `versions`. 4096 bytes.
 Version_Index :: struct {
-	leaf_count:     u64,
+	leaf_count:     u64, // The leaves in use.
 	version_count:  u64, // The entries of all its leaves.
 	retention_time: u64, // The time since the format of the last application of the retention rule to this object.
-	reserved:       u64,
+	reserved:       u64, // 0.
 	leaves:         [VERSION_INDEX_CAPACITY]Pointer, // The oldest leaf first; leaf_count of them are used. No leaf is empty.
 }
 
@@ -241,7 +279,7 @@ value_check :: #force_inline proc "contextless" (value: Block_Value) -> u64 {
 // data under a node of level 1, or a hole (block 0, and each other field
 // zero).
 Object_Child :: struct {
-	block:  u64,
+	block:  u64, // The block of the child. 0: a hole.
 	check:  u64, // A node: the first 8 bytes of the BLAKE3 hash of its block. A block of data: value_check(value).
 	blocks: u64, // The blocks of the child: itself and each block under it.
 	value:  Block_Value, // The value of the 64^level blocks that the child covers, zero bytes past the size included.
@@ -254,10 +292,11 @@ Object_Child :: struct {
 // the size of the state is a hole.
 OBJECT_NODE_MAGIC :: u32(0x424F4C42) // The bytes "BLOB".
 
+// One node of the block tree of an object. 4096 bytes.
 Object_Node :: struct {
-	header:   Tree_Header,
-	children: [OBJECT_FANOUT]Object_Child,
-	padding:  [BLOCK_SIZE - TREE_HEADER_SIZE - OBJECT_FANOUT * size_of(Object_Child)]u8,
+	header:   Tree_Header, // The level, the count of children that are not holes, `OBJECT_NODE_MAGIC`.
+	children: [OBJECT_FANOUT]Object_Child, // Child n covers the blocks from n * 64^(level - 1) under the node.
+	padding:  [BLOCK_SIZE - TREE_HEADER_SIZE - OBJECT_FANOUT * size_of(Object_Child)]u8, // 0.
 }
 
 #assert(size_of(Root) == BLOCK_SIZE)
@@ -268,6 +307,8 @@ Object_Node :: struct {
 
 // object_blocks gives the blocks of an object of `size` bytes, holes
 // included.
+//
+// Example: `object_blocks(4097)` is 2.
 object_blocks :: proc "contextless" (size: u64) -> u64 {
 	return size / BLOCK_SIZE + u64(size % BLOCK_SIZE != 0)
 }
@@ -275,6 +316,9 @@ object_blocks :: proc "contextless" (size: u64) -> u64 {
 // object_levels gives the level of the root of the block tree of an object:
 // 0 when it has at most one block (the root is its block of data), else
 // the least level whose node covers each of its blocks.
+//
+// Example: an object of 1 MiB (256 blocks) has the level 2: a node of
+// level 1 covers 64 blocks, a node of level 2 covers 4096.
 object_levels :: proc "contextless" (size: u64) -> int {
 	count := object_blocks(size)
 	levels := 0
@@ -335,9 +379,12 @@ removal_name :: proc "contextless" (number: u64) -> (key: Entry_Name) {
 	return key
 }
 
+// Why a name cannot be the name of an entry: the result of `name_refusal`.
+// The storage service turns it into the error kinds `Empty`, `Too_Long` and
+// `Bad_Byte`.
 Name_Refusal :: enum {
-	None,
-	Empty,
+	None, // The name is valid.
+	Empty, // The name has no byte.
 	Too_Long, // More than ENTRY_NAME_CAPACITY bytes.
 	Bad_Byte, // A zero byte or a byte '/': at `offset`. "." and "..": offset 0.
 }

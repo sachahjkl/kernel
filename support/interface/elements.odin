@@ -10,7 +10,7 @@ import "support:graphics"
 // The two fonts (docs/DESIGN.md, section 5; docs/FONTS.md, section 12.6):
 // a text that names or explains (a title, a caption, a label, the name of a
 // button, a line of a list, the title of a column) is in the interface
-// font; a value (a number, a hash, a text that a person types, the count of
+// font; a value (a number, a hash, a text that the input types, the count of
 // a card, the cells of a table) is in the font of the cells, so values
 // align by character. Each element measures a text in the font that draws
 // it, and cuts it to its box: no text passes its element in either font.
@@ -73,8 +73,9 @@ table_band :: proc "contextless" (frame: ^Frame, area: Area, index: int) {
 	}
 }
 
+// Where a text sits in the width of a cell.
 Alignment :: enum u8 {
-	Left,
+	Left, // Names and texts.
 	Right, // Numbers, with their unit.
 }
 

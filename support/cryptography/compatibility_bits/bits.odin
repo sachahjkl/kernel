@@ -6,12 +6,14 @@ package compatibility_bits
 
 import "base:intrinsics"
 
+// rotate_left32 rotates the bits of a word of 32 bits left by k.
 rotate_left32 :: #force_inline proc "contextless" (x: u32, k: int) -> u32 {
 	n :: 32
 	s := uint(k) & (n - 1)
 	return x << s | x >> (n - s)
 }
 
+// rotate_left64 rotates the bits of a word of 64 bits left by k.
 rotate_left64 :: #force_inline proc "contextless" (x: u64, k: int) -> u64 {
 	n :: 64
 	s := uint(k) & (n - 1)
@@ -38,6 +40,9 @@ mul_u64 :: #force_inline proc "contextless" (x, y: u64) -> (high, low: u64) {
 	return u64(product >> 64), u64(product)
 }
 
+// The conversions between the order of the machine (little endian) and an
+// order of bytes: a little-endian value is unchanged, a big-endian one has
+// its bytes swapped.
 from_le_u32 :: #force_inline proc "contextless" (value: u32) -> u32 {return value}
 from_le_u64 :: #force_inline proc "contextless" (value: u64) -> u64 {return value}
 to_le_u32 :: #force_inline proc "contextless" (value: u32) -> u32 {return value}

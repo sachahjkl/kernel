@@ -12,19 +12,22 @@ REQUEST_TARGET_LIMIT :: 1024 // The bytes of the target: 414 over it.
 CONTENT_LENGTH_DIGITS_LIMIT :: 15 // A Content-Length of 15 digits at most: a larger one is 413 for each server of this system.
 LEADING_EMPTY_LINES_LIMIT :: 2 // Empty lines before the request line that are ignored (RFC 9112 2.2).
 
+// The methods of RFC 9110, section 9, that the reader knows. Another method
+// is the problem Unknown_Method (501).
 Request_Method :: enum u8 {
-	None    = 0,
-	Get     = 1,
-	Head    = 2,
-	Post    = 3,
-	Put     = 4,
-	Delete  = 5,
-	Options = 6,
-	Patch   = 7,
-	Connect = 8,
-	Trace   = 9,
+	None    = 0, // No method: the request line was not read.
+	Get     = 1, // GET.
+	Head    = 2, // HEAD.
+	Post    = 3, // POST.
+	Put     = 4, // PUT.
+	Delete  = 5, // DELETE.
+	Options = 6, // OPTIONS.
+	Patch   = 7, // PATCH (RFC 5789).
+	Connect = 8, // CONNECT.
+	Trace   = 9, // TRACE.
 }
 
+// The name of each method, as the request line writes it.
 @(rodata)
 request_method_names := [Request_Method]string {
 	.None    = "",
@@ -41,7 +44,7 @@ request_method_names := [Request_Method]string {
 
 // What is wrong with a request head, and the status that answers it.
 Request_Problem :: enum u8 {
-	None                  = 0,
+	None                  = 0, // The head is valid.
 	Bad_Request_Line      = 1, // 400
 	Bad_Field             = 2, // 400: a field with no colon, a space before the colon, a name that is not a token, a folded line.
 	Missing_Host          = 3, // 400: HTTP/1.1 with no Host.
@@ -57,6 +60,7 @@ Request_Problem :: enum u8 {
 	Version_Not_Supported = 13, // 505
 }
 
+// The status code that answers each problem.
 @(rodata)
 request_problem_statuses := [Request_Problem]int {
 	.None                     = 200,
@@ -75,6 +79,7 @@ request_problem_statuses := [Request_Problem]int {
 	.Version_Not_Supported    = 505,
 }
 
+// The words of each problem, for the log of the server.
 @(rodata)
 request_problem_texts := [Request_Problem]string {
 	.None                     = "",
@@ -93,32 +98,38 @@ request_problem_texts := [Request_Problem]string {
 	.Version_Not_Supported    = "this server speaks HTTP/1.1 and HTTP/1.0",
 }
 
+// A request head, as `request_read` gives it.
 Request :: struct {
 	head_size:      int, // The bytes of the head, with its empty line.
-	method:         Request_Method,
-	target:         [REQUEST_TARGET_LIMIT]u8,
-	target_length:  int,
+	method:         Request_Method, // The method.
+	target:         [REQUEST_TARGET_LIMIT]u8, // The target, copied.
+	target_length:  int, // The bytes of the target.
 	minor_version:  u8, // 1: HTTP/1.1, 0: HTTP/1.0.
-	has_host:       bool,
+	has_host:       bool, // The head has a Host field.
 	content_length: i64, // -1: no Content-Length.
 	close:          bool, // The connection ends after the answer: "Connection: close", or HTTP/1.0 with no "keep-alive".
-	field_count:    int,
-	problem:        Request_Problem,
+	field_count:    int, // The header fields.
+	problem:        Request_Problem, // What is wrong. None: the head is valid.
 	problem_offset: int, // The byte of the head where the problem is.
 }
 
+// request_target gives the target of a request.
 request_target :: proc "contextless" (request: ^Request) -> string {
 	return string(request.target[:request.target_length])
 }
 
+// request_problem_status gives the status that answers a problem: 400 for
+// a number out of the enumeration.
 request_problem_status :: proc "contextless" (problem: Request_Problem) -> int {
 	return request_problem_statuses[problem] if problem <= max(Request_Problem) else 400
 }
 
+// request_problem_text gives the words of a problem.
 request_problem_text :: proc "contextless" (problem: Request_Problem) -> string {
 	return request_problem_texts[problem] if problem <= max(Request_Problem) else "an unknown problem"
 }
 
+// request_method_name gives the name of a method, or an empty text.
 request_method_name :: proc "contextless" (method: Request_Method) -> string {
 	return request_method_names[method] if method <= max(Request_Method) else ""
 }
@@ -160,6 +171,7 @@ token_character :: proc "contextless" (byte: u8) -> bool {
 	return false
 }
 
+// same_text_without_case compares bytes and a text in any case of ASCII.
 @(private)
 same_text_without_case :: proc "contextless" (bytes: []u8, text: string) -> bool {
 	if len(bytes) != len(text) {
@@ -173,6 +185,8 @@ same_text_without_case :: proc "contextless" (bytes: []u8, text: string) -> bool
 	return true
 }
 
+// trim_spaces gives the bytes with the spaces and tabs around them taken
+// away.
 @(private)
 trim_spaces :: proc "contextless" (bytes: []u8) -> []u8 {
 	first, end := 0, len(bytes)
@@ -388,6 +402,8 @@ content_types := [?][2]string {
 	{".ico", "image/x-icon"},
 }
 
+// content_type_of_name gives the media type of a page by the end of its
+// name (".html", ".png"), or the type of a file of bytes.
 content_type_of_name :: proc "contextless" (name: string) -> string {
 	for item in content_types {
 		if len(name) >= len(item[0]) && name[len(name) - len(item[0]):] == item[0] {
@@ -430,7 +446,7 @@ status_text :: proc "contextless" (status: int) -> string {
 // rules of their names, and the index object that lists them. The store is
 // hostile input too: an index that the server reads back can have each byte.
 PAGE_NAME_LIMIT :: 39 // The names of the storage service have 39 bytes at most.
-PAGE_INDEX_NAME :: "pages.index"
+PAGE_INDEX_NAME :: "pages.index" // The object that lists the pages.
 PAGE_INDEX_ENTRY_SIZE :: 40 // One name in the index, ended by a zero byte.
 
 // page_name_valid: 1 to 39 bytes of letters, digits, ".", "-" and "_", not

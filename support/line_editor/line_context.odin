@@ -11,8 +11,9 @@ Completion_Place :: enum u8 {
 	Quoted = 3, // Inside the quotes of the first argument of a call: owner is the name of the call.
 }
 
+// What the caret is in, for a completion: `completion_context` gives it.
 Completion_Context :: struct {
-	place:          Completion_Place,
+	place:          Completion_Place, // Where the caret is.
 	query:          string, // The bytes before the caret that a name must match.
 	owner:          string, // Member: the name before the last dot. Quoted: the name of the call.
 	word_start:     int, // The first byte of the whole name (Name and Member), or of the text (Quoted).
@@ -22,16 +23,19 @@ Completion_Context :: struct {
 	quote_follows:  bool, // Quoted: a '"' follows replace_end: a chosen name needs no closing quote.
 }
 
+// name_character says if a byte can be in a name: a letter, a digit or
+// '_'.
 name_character :: proc "contextless" (character: u8) -> bool {
 	return character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' || character >= '0' && character <= '9' || character == '_'
 }
 
+// digit says if a byte is a decimal digit.
 digit :: proc "contextless" (character: u8) -> bool {
 	return character >= '0' && character <= '9'
 }
 
 // completion_context reads the line before the caret. allow_empty: an
-// empty name at the caret is a Name with an empty query (the person asks
+// empty name at the caret is a Name with an empty query (the input asks
 // for all the names with Tab); with false, it is None.
 completion_context :: proc "contextless" (text: string, caret_asked: int, allow_empty := false) -> (found: Completion_Context) {
 	caret := clamp(caret_asked, 0, len(text))

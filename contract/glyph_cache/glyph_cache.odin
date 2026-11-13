@@ -34,68 +34,71 @@
 package glyph_cache
 
 MAGIC :: u64(0x5345485048594C47) // The bytes "GLYPHSES" ("GLYPH" and "SES").
-VERSION :: 2
-HEADER_SIZE :: 128
-SIZE_ENTRY_SIZE :: 16
-GLYPH_ENTRY_SIZE :: 12
-ADVANCE_SIZE :: 4
-PAIR_ENTRY_SIZE :: 8
+VERSION :: 2 // The version of the format. A reader refuses another.
+HEADER_SIZE :: 128 // The bytes of `Header`.
+SIZE_ENTRY_SIZE :: 16 // The bytes of `Size_Entry`.
+GLYPH_ENTRY_SIZE :: 12 // The bytes of `Glyph_Entry`.
+ADVANCE_SIZE :: 4 // The bytes of one advance: an i32.
+PAIR_ENTRY_SIZE :: 8 // The bytes of `Pair_Entry`.
 SIZE_LIMIT :: 3 // The scales 1, 2 and 3 of the grid (docs/DESIGN.md, section 5).
 CHARACTER_LIMIT :: 95 // ASCII 32 to 126.
-CELL_WIDTH_LIMIT :: 24
-CELL_HEIGHT_LIMIT :: 48
+CELL_WIDTH_LIMIT :: 24 // The widest cell: 8 pixels at scale 3.
+CELL_HEIGHT_LIMIT :: 48 // The tallest cell: 16 pixels at scale 3.
 // The positions of a glyph inside one pixel: 0, 1/3 and 2/3 of a pixel at
 // most, the step of the color stripes.
 POSITION_LIMIT :: 3
 // The widest glyph, in pixels, and how far left of its origin a glyph can
 // start: the ink of a proportional glyph at scale 3 with the spread of the
 // filter and its position.
-GLYPH_WIDTH_LIMIT :: 64
-LEFT_LIMIT :: 16
+GLYPH_WIDTH_LIMIT :: 64 // Pixels.
+LEFT_LIMIT :: 16 // Pixels.
 // The largest advance and the largest adjustment of a pair, in 1/64 of a
 // pixel: 64 pixels.
 ADVANCE_LIMIT :: 64 * 64
 PAIR_LIMIT :: CHARACTER_LIMIT * CHARACTER_LIMIT // Each pair of two characters at most once.
 SUBPIXEL :: 64 // An advance, a pair adjustment and a place of text are in 1/64 of a pixel.
 
+// The first 128 bytes of a glyph cache file.
 Header :: struct #packed {
-	magic:            u64,
-	version:          u32,
+	magic:            u64, // MAGIC.
+	version:          u32, // VERSION.
 	renderer_version: u32, // The version of the renderer of support/vector_font that drew the words.
-	file_size:        u64,
+	file_size:        u64, // The bytes of the file.
 	first_character:  u32, // 32.
 	character_count:  u32, // 95.
 	size_count:       u32, // One entry for each scale, in the order 1, 2, 3.
 	flags:            u32, // FLAG_GRID_FIT, FLAG_PROPORTIONAL, and the filter in bits 8 to 15 (FILTER_COUNT values).
 	word_offset:      u64, // From the start of the file; a multiple of 64.
-	word_count:       u64,
+	word_count:       u64, // The words of coverage.
 	font_hash:        [32]u8, // BLAKE3 of the font file that the glyphs come from: the cache is named by what made it.
 	font_name:        [32]u8, // ASCII 32 to 126, then zero bytes.
 	pair_count:       u32, // The pairs of each size; 0 for a monospace font.
-	reserved:         u32,
+	reserved:         u32, // 0.
 }
 #assert(size_of(Header) == HEADER_SIZE)
 
 FLAG_GRID_FIT :: 1 // The baseline, the x-height and the cap height are on whole pixels.
 FLAG_PROPORTIONAL :: 2 // Each character has its own advance; glyphs are boxes of ink at their positions.
-FILTER_SHIFT :: 8
+FILTER_SHIFT :: 8 // The first bit of the filter in `flags`.
 FILTER_COUNT :: 3 // The filters of the color stripes of support/vector_font (Stripe_Filter).
+// The bits of `flags` that a reader takes; another bit is Bad_Flags.
 FLAGS_KNOWN :: FLAG_GRID_FIT | FLAG_PROPORTIONAL | 0xFF << FILTER_SHIFT
 
+// One size of the cache: one scale of the grid.
 Size_Entry :: struct #packed {
 	cell_width:     u16, // 8, 16, 24: the cell of the grid; the advance of every character of a monospace font.
 	cell_height:    u16, // 16, 32, 48: the line.
 	baseline:       u16, // The row of the baseline, from the top of the line.
 	position_count: u16, // 1 to POSITION_LIMIT: the glyphs of this size are drawn at each k / position_count of a pixel.
 	first_glyph:    u32, // The index of the entry of the first character at the first position of this size.
-	reserved:       u32,
+	reserved:       u32, // 0.
 }
 #assert(size_of(Size_Entry) == SIZE_ENTRY_SIZE)
 
 // The glyph of position p of character c of a size is the entry
 // first_glyph + p * character_count + c.
 Glyph_Entry :: struct #packed {
-	first_row:   u16,
+	first_row:   u16, // The first row with ink, from the top of the line.
 	row_count:   u16, // 0: a glyph with no ink, a space.
 	word_offset: u32, // From the first word: the first word of row first_row.
 	left:        i16, // The column of the first word, in pixels from the whole pixel of the origin.
@@ -109,18 +112,18 @@ Glyph_Entry :: struct #packed {
 // table of these records as a parameter.
 Pair_Entry :: struct {
 	left:       u8, // A character, from first_character.
-	right:      u8,
-	reserved:   u16,
+	right:      u8, // The character that follows, from first_character.
+	reserved:   u16, // 0.
 	adjustment: i32, // In 1/64 of a pixel.
 }
 #assert(size_of(Pair_Entry) == PAIR_ENTRY_SIZE && offset_of(Pair_Entry, adjustment) == 4)
 
 // Problem: why a file was refused. A zero problem is a valid file.
 Problem_Kind :: enum u8 {
-	None,
+	None, // The file is valid.
 	Too_Short, // The file is shorter than its header or than a table.
-	Bad_Magic,
-	Bad_Version,
+	Bad_Magic, // The file does not start with MAGIC.
+	Bad_Version, // Another version.
 	Bad_Size, // file_size is not the size of the file.
 	Bad_Count, // A count is 0 or above its limit, or a size does not start where the sizes before it end.
 	Bad_Cell, // A cell size or a baseline is out of its limits.
@@ -134,13 +137,15 @@ Problem_Kind :: enum u8 {
 	Not_Mapped, // The starter of the program did not map this cache: no byte was read.
 }
 
+// Why a file was refused, with the place and the value.
 Problem :: struct {
-	kind:  Problem_Kind,
+	kind:  Problem_Kind, // What is wrong.
 	index: u32, // The size, the glyph, the advance or the pair.
-	value: u64,
-	limit: u64,
+	value: u64, // The value that the file has.
+	limit: u64, // The value that the reader needs.
 }
 
+// The sentence of each problem, for the log.
 problem_sentences := [Problem_Kind]string {
 	.None        = "the glyph cache is valid",
 	.Too_Short   = "the glyph cache is shorter than its header or its tables",

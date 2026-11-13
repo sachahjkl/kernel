@@ -29,11 +29,13 @@ import "contract:ring"
 // A program with no grant to serve has a Service that is all zero:
 // service_wait and service_run do nothing.
 
+// One caller of a service: its call ring and its call region, as the root
+// service named them with `Connect`, and what it is.
 Connection :: struct {
 	ring_memory:   Handle, // 0: the place is free.
-	region_memory: Handle,
-	calls:         ring.Ring,
-	region:        []u8,
+	region_memory: Handle, // The memory of the call region.
+	calls:         ring.Ring, // The call ring, mapped in this program.
+	region:        []u8, // The call region, mapped in this program.
 	caller:        Name, // The name of the caller, as the root service names it.
 	grant:         u64, // What the root service grants to the caller here (isolated.CALLER_AMOUNT_MASK, isolated.CALLER_ACTS_FOR_PRINCIPAL).
 }
@@ -50,14 +52,21 @@ service_caller :: proc "contextless" () -> ^Connection {
 	return serving
 }
 
+// The side of a program that serves its own exports: its service ring and
+// its callers. `service_open` makes it; `service_wait` and `service_run`
+// serve it in a loop (the example above).
 Service :: struct {
 	file:        []u8, // The file of this program: the descriptions of its exports.
 	names:       ring.Ring, // The service ring.
-	connections: [isolated.SERVICE_CONNECTION_CAPACITY]Connection,
-	connected:   int,
+	connections: [isolated.SERVICE_CONNECTION_CAPACITY]Connection, // The callers; a free place has no ring.
+	connected:   int, // The callers connected now.
 	calls:       u64, // The calls that this program executed.
 }
 
+// service_open opens the service ring of this program (`GRANT_SERVICE`) and
+// the file of its exports (`GRANT_VALUE_FILE_ADDRESS`). ok is false, and the
+// service is all zero, for a program with no grant to serve, or a ring that
+// does not open.
 service_open :: proc "contextless" (ctx: ^Context) -> (service: Service, ok: bool) {
 	memory := ctx.handles[GRANT_SERVICE]
 	if memory == 0 {
@@ -193,6 +202,8 @@ connection_serve :: proc "contextless" (service: ^Service, connection: ^Connecti
 	return calls
 }
 
+// connection_add maps the two memory objects of a new caller in a free
+// place. false: no place is free, or a memory object does not map.
 @(private)
 connection_add :: proc "contextless" (service: ^Service, ring_memory, region_memory: Handle, caller: Name, grant: u64) -> bool {
 	for &connection in service.connections {
@@ -353,8 +364,8 @@ export_serve :: proc "contextless" (file: []u8, base: u64, region: []u8, ring_me
 
 // The copies that a caller made for one isolated call: see lend.
 Lending :: struct {
-	copies: [module.HANDLE_CAPACITY]Handle,
-	count:  int,
+	copies: [module.HANDLE_CAPACITY]Handle, // The copies in this program, to close after the call.
+	count:  int, // The copies in use.
 }
 
 // lend prepares the handles of the arguments of an isolated call: the

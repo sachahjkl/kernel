@@ -1,4 +1,4 @@
-// The settings of the person (docs/FONTS.md, "The setting"): one page that
+// The settings of the owner (docs/FONTS.md, "The setting"): one page that
 // the root service creates. The program `settings` is its one writer; each
 // program with a surface or a terminal, and the compositor, map it with the
 // right Read only, at PAGE_ADDRESS. The bit of the range Settings_Page in
@@ -37,57 +37,60 @@ import "contract:fixed_addresses"
 import "contract:glyph_cache"
 import op "contract:operation"
 
-PAGE_ADDRESS :: fixed_addresses.SETTINGS_PAGE_ADDRESS
-GLYPH_CACHE_ADDRESS :: fixed_addresses.GLYPH_CACHE_ADDRESS
-GLYPH_CACHE_WITHOUT_GRID_FIT_ADDRESS :: fixed_addresses.GLYPH_CACHE_WITHOUT_GRID_FIT_ADDRESS
-GLYPH_CACHE_BOLD_ADDRESS :: fixed_addresses.GLYPH_CACHE_BOLD_ADDRESS
+PAGE_ADDRESS :: fixed_addresses.SETTINGS_PAGE_ADDRESS // Where a program maps the settings page.
+GLYPH_CACHE_ADDRESS :: fixed_addresses.GLYPH_CACHE_ADDRESS // Where a program maps the glyph cache with grid fit.
+GLYPH_CACHE_WITHOUT_GRID_FIT_ADDRESS :: fixed_addresses.GLYPH_CACHE_WITHOUT_GRID_FIT_ADDRESS // The glyph cache with no grid fit.
+GLYPH_CACHE_BOLD_ADDRESS :: fixed_addresses.GLYPH_CACHE_BOLD_ADDRESS // The glyph cache of the bold weight.
 GRANT_PAGE :: 12 // The handle of the context of the program `settings`: the page, with Read and Write.
 VALUE_BOOT_PASS :: op.CONTEXT_VALUE_SETTINGS_BOOT_PASS // The program `settings`: 1 for the pass at boot (read the kept record, write the page, stop).
 KEPT_OBJECT_NAME :: "settings" // The object of the private store of `settings` that holds Kept_Settings.
 
 // The settings, in the order of the page and of the window.
 Setting :: enum u32 {
-	Font           = 0,
-	Subpixel_Order = 1,
-	Pointer_Theme  = 2,
-	Grid_Fit       = 3,
+	Font           = 0, // Which font draws the text of the system: `Font`.
+	Subpixel_Order = 1, // The order of the color stripes of the screen: `Subpixel_Order`.
+	Pointer_Theme  = 2, // Which pointer theme the compositor draws: `Pointer_Theme`.
+	Grid_Fit       = 3, // Whether the glyphs sit on whole pixels: `Grid_Fit`.
 }
 
 // The values of each setting. 0 is the default.
 Font :: enum u32 {
 	Vector = 0, // The vector font of the glyph cache.
-	Spleen = 1, // The bitmap font Spleen 8x16: the fallback, and a choice of the person.
+	Spleen = 1, // The bitmap font Spleen 8x16: the fallback, and a choice of the owner.
 }
 
 // The order of the color stripes of the pixels of the screen, from the left.
 Subpixel_Order :: enum u32 {
-	Red_Green_Blue = 0,
-	Blue_Green_Red = 1,
+	Red_Green_Blue = 0, // Red at the left: most screens.
+	Blue_Green_Red = 1, // Blue at the left.
 	None           = 2, // Grayscale: a screen with no stripes in rows, or a screenshot to read.
 }
 
+// The pointer theme that the compositor draws (docs/POINTERS.md).
 Pointer_Theme :: enum u32 {
 	Of_The_Owner  = 0, // The first theme of pointer_pictures.RESOURCE_PREFERENCE that the boot image has.
 	Of_The_System = 1, // The theme of the system (resources/pointers/system.manifest).
 }
 
+// Whether the text of the system is fitted to the grid of pixels.
 Grid_Fit :: enum u32 {
 	On  = 0, // The baseline, the x-height and the cap height on whole pixels (docs/FONTS.md, "Grid fit").
 	Off = 1, // The shapes of the design: the glyph cache with no grid fit.
 }
 
 SETTING_CAPACITY :: 8 // The page and the kept record have room for 8 values.
-VALUE_NAME_CAPACITY :: 4
+VALUE_NAME_CAPACITY :: 4 // The most values of one setting.
 
 // Description: the name of a setting and the names of its values, for the
 // exports and the window of `settings`.
 Description :: struct {
-	name:        string,
+	name:        string, // The name in the exports and in the console: "subpixel_order".
 	title:       string, // For the window.
-	value_names: [VALUE_NAME_CAPACITY]string,
-	value_count: u32,
+	value_names: [VALUE_NAME_CAPACITY]string, // The name of each value, by its number.
+	value_count: u32, // The values of the setting.
 }
 
+// The description of each setting.
 descriptions := [Setting]Description {
 	.Font           = {"font", "font", {"vector", "spleen", "", ""}, 2},
 	.Subpixel_Order = {"subpixel_order", "subpixel order", {"rgb", "bgr", "none", ""}, 3},
@@ -95,9 +98,12 @@ descriptions := [Setting]Description {
 	.Grid_Fit       = {"grid_fit", "grid fit", {"on", "off", "", ""}, 2},
 }
 
+// The settings page: what the program `settings` writes and each program
+// with a surface reads, at PAGE_ADDRESS. A reader copies it while
+// change_count stays even and the same.
 Page :: struct {
 	change_count:                     u32, // Even when the page is stable. Each change adds 2.
-	reserved:                         u32,
+	reserved:                         u32, // 0.
 	values:                           [SETTING_CAPACITY]u32, // By Setting. A reader keeps each value through `valid`.
 }
 #assert(size_of(Page) <= 4096)
@@ -106,8 +112,8 @@ Page :: struct {
 // receive: the three of the font of the cells, and the two of the
 // interface font (docs/FONTS.md, section 12).
 Glyph_Cache :: enum u8 {
-	With_Grid_Fit,
-	Without_Grid_Fit,
+	With_Grid_Fit, // The font of the cells, with grid fit.
+	Without_Grid_Fit, // The font of the cells, with no grid fit.
 	Bold, // Scale 1 only: the titles of the cards. Absent: the titles are the regular weight.
 	Interface, // B612 Regular: three positions at scale 1, one at the scales 2 and 3.
 	Interface_Bold, // B612 Bold: scale 1 only, three positions.
@@ -140,22 +146,26 @@ glyph_cache_open :: proc "contextless" (values: ^[op.CONTEXT_VALUES]u64, cache: 
 
 // Choice: the values of a page, as one copy.
 Choice :: struct {
-	values:       [Setting]u32,
-	change_count: u32,
+	values:       [Setting]u32, // The value of each setting, kept valid.
+	change_count: u32, // The change count of the page at the copy.
 }
 
+// font_of gives the font of a choice.
 font_of :: #force_inline proc "contextless" (choice: Choice) -> Font {
 	return Font(choice.values[.Font])
 }
 
+// subpixel_order_of gives the subpixel order of a choice.
 subpixel_order_of :: #force_inline proc "contextless" (choice: Choice) -> Subpixel_Order {
 	return Subpixel_Order(choice.values[.Subpixel_Order])
 }
 
+// pointer_theme_of gives the pointer theme of a choice.
 pointer_theme_of :: #force_inline proc "contextless" (choice: Choice) -> Pointer_Theme {
 	return Pointer_Theme(choice.values[.Pointer_Theme])
 }
 
+// grid_fit_of gives the grid fit of a choice.
 grid_fit_of :: #force_inline proc "contextless" (choice: Choice) -> Grid_Fit {
 	return Grid_Fit(choice.values[.Grid_Fit])
 }
@@ -170,7 +180,7 @@ valid :: proc "contextless" (setting: Setting, value: u32) -> u32 {
 // of changes is not compared: the program `settings` can change the count
 // with no end and leave the values as they were, and a reader that acts on
 // each new count then does work for nothing (the compositor tells every
-// window, and a window ring that is full loses the keys of the person).
+// window, and a window ring that is full loses the keys of the input).
 values_differ :: proc "contextless" (first, second: Choice) -> bool {
 	for setting in Setting {
 		if first.values[setting] != second.values[setting] {

@@ -23,14 +23,21 @@
 // band, at OWN_CHOICE_START or after. The modules that a program loads
 // end at MODULES_END or before: support/system (load.odin) refuses a
 // module that passes it.
+//
+// Example: the settings page of each program with a surface is at
+// `SETTINGS_PAGE_ADDRESS`, 0x0000_3200_0000_0000: the slot 2 of the band.
+// A program reads it only when the bit `Settings_Page` of
+// `ranges_mapped(&ctx.values)` is set.
+//
+// See [fixed range](term:fixed-range) and [mapped ranges](term:mapped-ranges).
 package fixed_addresses
 
 import op "contract:operation"
 
 // The band of the fixed ranges: one slot of 1 TiB for each range.
 BAND_START :: 0x0000_3000_0000_0000
-SLOT :: 0x0000_0100_0000_0000
-SLOT_COUNT :: 16
+SLOT :: 0x0000_0100_0000_0000 // 1 TiB: the addresses of one range.
+SLOT_COUNT :: 16 // The slots of the band: the most members of Fixed_Range.
 BAND_END :: BAND_START + SLOT_COUNT * SLOT
 // The first address of a mapping that a program places by its own choice.
 OWN_CHOICE_START :: BAND_END
@@ -48,8 +55,8 @@ Fixed_Range :: enum u8 {
 	Pointer_Themes, // The pointer themes of the compositor, one after the other (programs/root).
 	Settings_Page, // The settings page (contract:settings).
 	Glyph_Cache, // The glyph caches of the text of the system (contract:settings).
-	Glyph_Cache_Without_Grid_Fit,
-	Glyph_Cache_Bold,
+	Glyph_Cache_Without_Grid_Fit, // The glyph cache of the text of the system with no grid fit (contract:settings).
+	Glyph_Cache_Bold, // The glyph cache of the bold weight of the text of the system (contract:settings).
 	Date_Page, // The date page (contract:date).
 	Storage_File, // The file of the storage service (support/storage).
 	Module_Tables, // The tables of the parameters of one export, in the program that receives the call (contract:isolated).
@@ -81,6 +88,7 @@ range_mapped_add :: proc "contextless" (values: ^[op.CONTEXT_VALUES]u64, range: 
 #assert(BAND_START >= op.MODULE_BASE + SLOT)
 #assert(BAND_END <= op.USER_END)
 
+// The address of each range: the first byte of its slot.
 MODULE_FILES_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Module_Files)
 POINTER_THEMES_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Pointer_Themes)
 SETTINGS_PAGE_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Settings_Page)
@@ -94,9 +102,10 @@ INTERFACE_GLYPH_CACHE_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Interface_G
 INTERFACE_GLYPH_CACHE_BOLD_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Interface_Glyph_Cache_Bold)
 DEBUG_IMAGE_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Debug_Image)
 
+// The addresses of one range.
 Address_Range :: struct {
-	address: u64,
-	span:    u64,
+	address: u64, // The first byte of the range.
+	span:    u64, // The bytes of addresses of the range: RANGE_SPAN.
 }
 
 // range_of gives the address and the span of a range.

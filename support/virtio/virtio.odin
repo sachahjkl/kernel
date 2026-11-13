@@ -12,6 +12,14 @@
 // A queue takes three pages of the memory of the queues: the descriptors,
 // what the driver gives (avail), what the device used. A queue has at most
 // QUEUE_SIZE_LIMIT descriptors: its descriptors fill one page.
+//
+// The order of a start: `find` finds the registers in the copy of the
+// configuration; `start` resets the device and agrees on the features;
+// `queue_start` gives each queue; `ready` tells the device that the driver
+// is ready. The names and the offsets are those of the specification
+// "Virtual I/O Device (VIRTIO) Version 1.2", section 4.1.
+//
+// See [virtio](term:virtio) and [device service](term:device-service).
 package virtio
 
 import "base:intrinsics"
@@ -20,79 +28,84 @@ import "support:system"
 
 // The capabilities of a virtio device in its configuration (kind 9).
 CAPABILITY_VIRTIO :: 0x09
-CAPABILITY_COMMON :: 1
-CAPABILITY_NOTIFY :: 2
-CAPABILITY_DEVICE :: 4
+CAPABILITY_COMMON :: 1 // The type of the capability of the common configuration.
+CAPABILITY_NOTIFY :: 2 // The type of the capability of the notifications.
+CAPABILITY_DEVICE :: 4 // The type of the capability of the configuration of the device class.
 
 // The common configuration of a virtio device: offsets in its registers.
-COMMON_DEVICE_FEATURE_SELECT :: 0x00
-COMMON_DEVICE_FEATURE :: 0x04
-COMMON_DRIVER_FEATURE_SELECT :: 0x08
-COMMON_DRIVER_FEATURE :: 0x0C
-COMMON_CONFIG_VECTOR :: 0x10
-COMMON_STATUS :: 0x14
-COMMON_QUEUE_SELECT :: 0x16
-COMMON_QUEUE_SIZE :: 0x18
-COMMON_QUEUE_VECTOR :: 0x1A
-COMMON_QUEUE_ENABLE :: 0x1C
-COMMON_QUEUE_NOTIFY_OFF :: 0x1E
-COMMON_QUEUE_DESCRIPTORS :: 0x20
-COMMON_QUEUE_DRIVER :: 0x28
-COMMON_QUEUE_DEVICE :: 0x30
+COMMON_DEVICE_FEATURE_SELECT :: 0x00 // u32: which word of 32 bits of the device features to read.
+COMMON_DEVICE_FEATURE :: 0x04 // u32: that word of the device features.
+COMMON_DRIVER_FEATURE_SELECT :: 0x08 // u32: which word of the driver features to write.
+COMMON_DRIVER_FEATURE :: 0x0C // u32: that word of the driver features.
+COMMON_CONFIG_VECTOR :: 0x10 // u16: the message interrupt of a change of the configuration.
+COMMON_STATUS :: 0x14 // u8: the device status.
+COMMON_QUEUE_SELECT :: 0x16 // u16: the queue that the next fields name.
+COMMON_QUEUE_SIZE :: 0x18 // u16: the descriptors of the queue.
+COMMON_QUEUE_VECTOR :: 0x1A // u16: the message interrupt of the queue.
+COMMON_QUEUE_ENABLE :: 0x1C // u16: 1 enables the queue.
+COMMON_QUEUE_NOTIFY_OFF :: 0x1E // u16: the place of the notify register of the queue, in multipliers.
+COMMON_QUEUE_DESCRIPTORS :: 0x20 // u64: the physical address of the descriptors.
+COMMON_QUEUE_DRIVER :: 0x28 // u64: the physical address of what the driver gives.
+COMMON_QUEUE_DEVICE :: 0x30 // u64: the physical address of what the device used.
 
-STATUS_ACKNOWLEDGE :: 1
-STATUS_DRIVER :: 2
-STATUS_DRIVER_OK :: 4
-STATUS_FEATURES_OK :: 8
-NO_VECTOR :: 0xFFFF
+// The bits of the device status, set in this order at a start.
+STATUS_ACKNOWLEDGE :: 1 // The driver saw the device.
+STATUS_DRIVER :: 2 // The driver knows how to drive it.
+STATUS_DRIVER_OK :: 4 // The driver is ready: the device can use the queues.
+STATUS_FEATURES_OK :: 8 // The driver chose the features; the device keeps the bit when it accepts them.
+NO_VECTOR :: 0xFFFF // No message interrupt.
 
 FEATURE_VERSION_1 :: 32 // The bit of the virtio 1 interface, in the second word of the features.
 
-DESCRIPTOR_NEXT :: 1
-DESCRIPTOR_DEVICE_WRITES :: 2
+DESCRIPTOR_NEXT :: 1 // The flag of a descriptor that continues in `next`.
+DESCRIPTOR_DEVICE_WRITES :: 2 // The flag of a descriptor whose buffer the device writes.
 
 QUEUE_SIZE_LIMIT :: 256 // 256 descriptors of 16 bytes: one page.
-QUEUE_PAGES :: 3
+QUEUE_PAGES :: 3 // The pages of one queue: descriptors, driver ring, device ring.
 
+// One descriptor of a split virtqueue: one buffer in physical memory.
 Descriptor :: struct {
-	address: u64,
-	length:  u32,
-	flags:   u16,
-	next:    u16,
+	address: u64, // The physical address of the buffer.
+	length:  u32, // Its bytes.
+	flags:   u16, // DESCRIPTOR_NEXT, DESCRIPTOR_DEVICE_WRITES.
+	next:    u16, // With DESCRIPTOR_NEXT: the next descriptor of the chain.
 }
 #assert(size_of(Descriptor) == 16)
 #assert(QUEUE_SIZE_LIMIT * size_of(Descriptor) == system.PAGE_SIZE)
 
+// One entry of the ring of the device: a chain that the device used.
 Used :: struct {
-	id:     u32,
-	length: u32,
+	id:     u32, // The first descriptor of the chain.
+	length: u32, // The bytes that the device wrote in its buffers.
 }
 
 // The registers of one device, found in its capabilities.
 Device :: struct {
-	common:        uintptr,
+	common:        uintptr, // The common configuration, mapped.
 	device_config: uintptr, // The configuration of the device class.
-	notify_base:   uintptr,
-	multiplier:    u32,
+	notify_base:   uintptr, // The first notify register.
+	multiplier:    u32, // The bytes between the notify registers of two queues, per unit of COMMON_QUEUE_NOTIFY_OFF.
 }
 
 // One split virtqueue, as the driver sees it.
 Queue :: struct {
 	index:        u16, // The number of the queue in its device.
-	size:         u32,
-	descriptors:  [^]Descriptor,
-	driver_index: ^u16,
-	driver_ring:  [^]u16,
-	device_flags: ^u16,
-	device_index: ^u16,
-	device_ring:  [^]Used,
+	size:         u32, // The descriptors of the queue, at most QUEUE_SIZE_LIMIT.
+	descriptors:  [^]Descriptor, // The table of the descriptors.
+	driver_index: ^u16, // The count of chains that the driver gave.
+	driver_ring:  [^]u16, // The chains that the driver gave.
+	device_flags: ^u16, // The flags of the ring of the device.
+	device_index: ^u16, // The count of chains that the device used.
+	device_ring:  [^]Used, // The chains that the device used.
 	notify:       uintptr, // The register that tells the device that the queue has new requests.
 	physical:     u64, // The physical address of the descriptors.
-	used_seen:    u16,
-	given:        u16,
+	used_seen:    u16, // The count of used chains that the driver read.
+	given:        u16, // The count of chains that the driver gave.
 	added:        u16, // Given since the last notice.
 }
 
+// The reads and the writes of the registers of a device: volatile, so that
+// the compiler keeps each one and its order.
 load_32 :: #force_inline proc "contextless" (address: uintptr) -> u32 {
 	return intrinsics.volatile_load((^u32)(address))
 }
@@ -170,16 +183,19 @@ find :: proc "contextless" (ctx: ^system.Context, configuration: []u8) -> (devic
 	return device, device.common != 0 && device.notify_base != 0 && device.device_config != 0
 }
 
+// status_write writes the device status.
 status_write :: proc "contextless" (device: ^Device, value: u8) {
 	intrinsics.volatile_store((^u8)(device.common + COMMON_STATUS), value)
 }
 
+// status_read reads the device status.
 status_read :: proc "contextless" (device: ^Device) -> u8 {
 	return intrinsics.volatile_load((^u8)(device.common + COMMON_STATUS))
 }
 
+// Why `start` failed.
 Start_Error :: enum {
-	None,
+	None, // The device accepted the features.
 	No_Version_1, // The device has no virtio 1 interface.
 	Features_Refused, // The device did not accept the features.
 }
@@ -214,8 +230,9 @@ start :: proc "contextless" (device: ^Device, wanted: u32) -> (offered: u32, err
 	return offered, .None
 }
 
+// Why `queue_start` failed.
 Queue_Error :: enum {
-	None,
+	None, // The queue runs.
 	Too_Small, // The queue of the device has fewer than `least` descriptors.
 	No_Vector, // The device has no message interrupt for the queue.
 }

@@ -11,7 +11,7 @@
 //                        and remote UDP port that the program reaches; the
 //                        network service gives the local port and writes the
 //                        UDP header. A listen grant names one local UDP
-//                        port, and may name one remote address: then a
+//                        port, and can name one remote address: then a
 //                        datagram of another address is dropped. It answers
 //                        only the admitted remotes: each
 //                        remote that sent a datagram of LISTEN_FIRST_LEAST
@@ -80,14 +80,16 @@ LISTEN_FIRST_LEAST :: 1200
 REGION_PAGES :: 128 // The datagram region: 512 KiB.
 
 // The roles of the endpoint in the context of a program.
-GRANT_RING :: 11
-GRANT_REGION :: 13
+GRANT_RING :: 11 // Memory: the datagram ring of the endpoint.
+GRANT_REGION :: 13 // Memory: the datagram region of the endpoint.
 // The roles in the context of the network service: the frame ring is the
 // role frame.GRANT_RING; the control ring from the root service is this one.
 SERVICE_CONTROL :: 12
 
+// A command of a program to its endpoint, as the kind of a command record of
+// the datagram ring.
 Command :: enum u32 {
-	None       = 0,
+	None       = 0, // Not a command: Bad_Command.
 	// The completion: values[0] the local address, values[1] the local
 	// port (a client grant of TCP: the first of PORT_BLOCK ports), values[2]
 	// the address of the gateway, values[3] the length of
@@ -158,7 +160,7 @@ Command :: enum u32 {
 // not Ok, the values of the completion are an error record
 // (errors.completion_record), with the kind and the values below.
 Status :: enum u32 {
-	Ok           = 0,
+	Ok           = 0, // The request is done: the values are its results.
 	Bad_Command  = 1, // Unsupported: the command is not known, or not for this grant; Too_Small: a segment of fewer bytes than SEGMENT_LEAST.
 	Out_Of_Range = 2, // Out_Of_Range, unit Bytes: a byte is not in the region. value: the end of the place and its count; limit: the size of the region.
 	No_Region    = 3, // Absent, unit Region: the endpoint has no datagram region.
@@ -182,7 +184,7 @@ Status :: enum u32 {
 // The command of the control ring, from the root service to the network
 // service. The completion has the tag of the command and a Status.
 Control :: enum u32 {
-	None            = 0,
+	None            = 0, // Not a command.
 	// values[0], values[1]: the datagram ring and the datagram region, as
 	// the network service names them (the root service gives them through
 	// the memory of the control ring). values[2]: the grant (grant_pack),
@@ -203,17 +205,18 @@ Control :: enum u32 {
 
 // The layer of a frame where a rule broke.
 Layer :: enum u8 {
-	None     = 0,
-	Ethernet = 1,
-	Arp      = 2,
-	Ipv4     = 3,
-	Icmp     = 4,
-	Udp      = 5,
-	Tcp      = 6,
+	None     = 0, // The frame as a whole.
+	Ethernet = 1, // The Ethernet header.
+	Arp      = 2, // An ARP message.
+	Ipv4     = 3, // The IPv4 header.
+	Icmp     = 4, // An ICMP message.
+	Udp      = 5, // A UDP datagram.
+	Tcp      = 6, // A TCP segment.
 }
 
+// What rule a frame broke.
 Problem_Kind :: enum u8 {
-	None         = 0,
+	None         = 0, // No problem.
 	Too_Short    = 1, // value: the bytes of the layer; limit: the bytes that its header needs.
 	Bad_Header   = 2, // A field that the layer refuses. value: the field; limit: the value that the layer needs, or its least value.
 	Bad_Length   = 3, // A length field. value: the field; limit: the bytes that the frame has, or the least length.
@@ -226,12 +229,12 @@ Problem_Kind :: enum u8 {
 
 // The error of one frame: a record, not a number. Zero is no problem.
 Problem :: struct {
-	kind:     Problem_Kind,
-	layer:    Layer,
+	kind:     Problem_Kind, // What rule broke.
+	layer:    Layer, // In which layer.
 	offset:   u16, // The byte of the frame where the field starts.
-	value:    u32,
-	limit:    u32,
-	reserved: u32,
+	value:    u32, // The value that the frame had: see Problem_Kind.
+	limit:    u32, // The value that the layer needs: see Problem_Kind.
+	reserved: u32, // 0.
 }
 #assert(size_of(Problem) == 16)
 
@@ -244,9 +247,9 @@ Problem_Scope :: enum u64 {
 // One row of the table that Problems writes: the frames refused for one
 // kind and one layer, and the problem of the last one.
 Problem_Row :: struct {
-	last:  Problem,
-	count: u64,
-	scope: Problem_Scope,
+	last:  Problem, // The problem of the last refused frame.
+	count: u64, // The frames refused for this kind and this layer.
+	scope: Problem_Scope, // Whose fact the row is.
 }
 #assert(size_of(Problem_Row) == 32)
 
@@ -256,15 +259,15 @@ Problem_Row :: struct {
 // facts of all programs already.
 GRANT_INSPECT :: u64(1) << 48
 GRANT_TCP :: u64(1) << 49 // A segment endpoint.
-GRANT_LISTEN :: u64(1) << 50 // A listen grant: the port is the local TCP or UDP port. A UDP listen grant may name one remote address; no remote port is named.
+GRANT_LISTEN :: u64(1) << 50 // A listen grant: the port is the local TCP or UDP port. A UDP listen grant can name one remote address; no remote port is named.
 
 // The grant of an endpoint.
 Grant :: struct {
 	address: u32, // The remote address. With a UDP listen grant: the one address that it admits, or 0 for each address. 0 with a TCP listen grant.
 	port:    u16, // The remote port; with a listen grant, the local TCP or UDP port.
-	inspect: bool,
-	tcp:     bool,
-	listen:  bool,
+	inspect: bool, // GRANT_INSPECT.
+	tcp:     bool, // GRANT_TCP.
+	listen:  bool, // GRANT_LISTEN.
 }
 
 // grant_pack gives the grant of an endpoint in one value: the address << 16
@@ -283,6 +286,7 @@ grant_pack :: proc "contextless" (grant: Grant) -> u64 {
 	return value
 }
 
+// grant_unpack gives the grant of a value that grant_pack made.
 grant_unpack :: proc "contextless" (value: u64) -> Grant {
 	return {address = u32(value >> 16), port = u16(value), inspect = value & GRANT_INSPECT != 0, tcp = value & GRANT_TCP != 0, listen = value & GRANT_LISTEN != 0}
 }
@@ -308,6 +312,8 @@ COMMAND_NAMES := [Command]string {
 	.Validate = "Validate",
 }
 
+// command_name gives the name of a command from an error record, or "an
+// unknown command".
 command_name :: proc "contextless" (command: i64) -> string {
 	return command >= 0 && command <= i64(max(Command)) ? COMMAND_NAMES[Command(command)] : "an unknown command"
 }
@@ -340,6 +346,7 @@ argument_name :: proc "contextless" (command: i64, argument: i64) -> string {
 	return ""
 }
 
+// The names of the commands of the control ring.
 @(rodata)
 CONTROL_NAMES := [Control]string {
 	.None            = "None",
@@ -348,6 +355,8 @@ CONTROL_NAMES := [Control]string {
 	.Endpoint_Remove = "Endpoint_Remove",
 }
 
+// control_name gives the name of a command of the control ring, or "an
+// unknown command".
 control_name :: proc "contextless" (command: i64) -> string {
 	return command >= 0 && command <= i64(max(Control)) ? CONTROL_NAMES[Control(command)] : "an unknown command"
 }

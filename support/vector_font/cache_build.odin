@@ -3,17 +3,20 @@ package vector_font
 import "contract:blake3"
 import "contract:glyph_cache"
 
-FIRST_CHARACTER :: 32
+FIRST_CHARACTER :: 32 // The first character of a glyph cache: the space.
 #assert(int(max(Stripe_Filter)) + 1 == glyph_cache.FILTER_COUNT)
-CHARACTER_COUNT :: glyph_cache.CHARACTER_LIMIT
+CHARACTER_COUNT :: glyph_cache.CHARACTER_LIMIT // The characters of a glyph cache: 32 to 126.
 
 // The places of the tables of a glyph cache file (contract:glyph_cache).
 @(private)
 Cache_Layout :: struct {
-	sizes, glyphs, advances, pairs, words: int,
-	glyph_count:                           int,
+	sizes, glyphs, advances, pairs, words: int, // The offset of each table in the file.
+	glyph_count:                           int, // The glyph entries: each position of each size times the characters.
 }
 
+// cache_layout_of gives the offsets of the tables of a cache with one size
+// for each count of positions, and `pair_count` pairs for each size. The
+// words start on 64 bytes.
 @(private)
 cache_layout_of :: proc "contextless" (positions: []int, pair_count: int) -> (layout: Cache_Layout) {
 	for count in positions {
@@ -30,13 +33,15 @@ cache_layout_of :: proc "contextless" (positions: []int, pair_count: int) -> (la
 // The tables of a cache in the memory of the caller, all zero.
 @(private)
 Cache_Tables :: struct {
-	sizes:    []glyph_cache.Size_Entry,
-	glyphs:   []glyph_cache.Glyph_Entry,
-	advances: []i32,
-	pairs:    []glyph_cache.Pair_Entry,
-	words:    []u32,
+	sizes:    []glyph_cache.Size_Entry, // One entry for each size.
+	glyphs:   []glyph_cache.Glyph_Entry, // One entry for each glyph of each position of each size.
+	advances: []i32, // The advance of each character at each size.
+	pairs:    []glyph_cache.Pair_Entry, // The pair adjustments of each size.
+	words:    []u32, // The coverage words of the glyphs.
 }
 
+// cache_tables_of empties the memory of a cache and gives its tables. ok is
+// false when the memory is too small or not aligned on 8.
 @(private)
 cache_tables_of :: proc "contextless" (out: []u8, layout: Cache_Layout, size_count, pair_count: int) -> (tables: Cache_Tables, ok: bool) {
 	if len(out) < layout.words || uintptr(raw_data(out)) % 8 != 0 {
@@ -53,6 +58,9 @@ cache_tables_of :: proc "contextless" (out: []u8, layout: Cache_Layout, size_cou
 	return tables, true
 }
 
+// cache_header_write writes the header of a cache: its magic, the hash of
+// the font, its options and the places of its tables. It gives the bytes of
+// the file.
 @(private)
 cache_header_write :: proc "contextless" (out: []u8, font_bytes: []u8, font_name: string, grid_fit, proportional: bool, layout: Cache_Layout, size_count, pair_count, word_count: int) -> int {
 	header := (^glyph_cache.Header)(raw_data(out))

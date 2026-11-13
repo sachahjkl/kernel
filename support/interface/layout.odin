@@ -10,6 +10,7 @@ Area :: struct {
 LINE :: graphics.LINE_HEIGHT // A line of text.
 TABLE_LINE :: 24 // A line of a table or a list: a line of text and 8 pixels.
 
+// area_rectangle gives the rectangle of an area.
 area_rectangle :: proc "contextless" (area: Area) -> Rectangle {
 	return {area.x, area.y, area.x + area.width, area.y + area.height}
 }
@@ -31,6 +32,14 @@ Column :: struct {
 	gap:  int,
 }
 
+// column_of makes a column over an area, with a gap in pixels between two
+// areas that it gives.
+//
+// ```odin
+// column := interface.column_of(card, 8)
+// title := interface.column_take(&column, interface.LINE)
+// rest := interface.column_rest(&column)
+// ```
 column_of :: proc "contextless" (area: Area, gap: int = 0) -> Column {
 	return {area = area, gap = gap}
 }
@@ -50,23 +59,31 @@ column_rest :: proc "contextless" (column: ^Column) -> Area {
 	return {column.area.x, column.area.y + top, column.area.width, max(column.area.height - top, 0)}
 }
 
+// How the size of a column of a row is given (`row_split`).
 Size_Kind :: enum u8 {
 	Pixels, // value pixels.
 	Characters, // value characters of the font of the system.
 	Share, // A part of what the fixed sizes leave, in proportion to value.
 }
 
+// The size of one column of a row: `pixels(120)`, `characters(12)` or
+// `share(1)`.
 Size :: struct {
-	kind:  Size_Kind,
-	value: int,
+	kind:  Size_Kind, // What `value` counts.
+	value: int, // Pixels, characters, or the weight of a share.
 }
 
+// pixels gives a size of a number of pixels.
 pixels :: proc "contextless" (value: int) -> Size {
 	return {.Pixels, value}
 }
+// characters gives a size of a number of characters of the font of the
+// cells: a column of numbers stays as wide when its text changes.
 characters :: proc "contextless" (value: int) -> Size {
 	return {.Characters, value}
 }
+// share gives a part of the width that the fixed sizes leave, in
+// proportion to `value`.
 share :: proc "contextless" (value: int = 1) -> Size {
 	return {.Share, value}
 }

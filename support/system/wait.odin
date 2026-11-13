@@ -20,16 +20,21 @@ import "base:intrinsics"
 // If a word changes after the thread reads it and before the thread waits,
 // the wait ends at once: no wake is lost.
 
+// The count of `word_wake` that wakes each thread that waits on the word.
 WAKE_ALL :: max(u64)
 
+// The list of the words of one wait, built by `wait_begin` and the
+// `wait_` procedures, ended by `wait_end`. It lives on the stack of the
+// thread for one turn of its loop; it holds at most `op.WORD_WAIT_CAPACITY`
+// words, the `waits` flags of the queues included.
 Wait :: struct {
-	words:   [op.WORD_WAIT_CAPACITY]op.Word,
+	words:   [op.WORD_WAIT_CAPACITY]op.Word, // The words, and the value that each one holds while the thread waits.
 	flags:   [op.WORD_WAIT_CAPACITY]^u32, // The `waits` word of a queue: wait_end sets it.
 	other_flags: [op.WORD_WAIT_CAPACITY]^u32, // A queue: the `waits` word of the other side.
 	other_words: [op.WORD_WAIT_CAPACITY]^u32, // A queue: the counter that the other side waits on.
 	waiters: [op.WORD_WAIT_CAPACITY]^ring.Waiters, // A word that several threads wait on, when one wake is for one thread.
 	kept:    [op.WORD_WAIT_CAPACITY]bool, // Several threads set the flag: the thread does not clear it after the wait.
-	count:   int,
+	count:   int, // The words in the list.
 	flag_count: int, // The words that have a flag: wait_end adds one word for each.
 	full:    bool, // A word did not fit: the wait ends at once.
 }
@@ -262,6 +267,9 @@ Event :: struct {
 	waits: u32, // 1: a thread waits, or will wait.
 }
 
+// event_count gives the count of an event: the value to give to
+// `event_wait` or `wait_event`. Read it before the state that the event
+// changes, so that no event between the two is lost.
 event_count :: proc "contextless" (event: ^Event) -> u32 {
 	return intrinsics.atomic_load(&event.count)
 }

@@ -17,10 +17,10 @@ package text_shaping
 import "base:intrinsics"
 import "contract:glyph_cache"
 
-FIRST_CHARACTER :: 32
-CHARACTER_COUNT :: glyph_cache.CHARACTER_LIMIT
+FIRST_CHARACTER :: 32 // The first character of a glyph cache: the space.
+CHARACTER_COUNT :: glyph_cache.CHARACTER_LIMIT // The characters of a glyph cache: 32 to 126.
 // A character outside the cache (a control character, a byte above 126)
-// is placed as this character: a person sees that the text has a
+// is placed as this character: a reader sees that the text has a
 // character that the font does not draw.
 REPLACEMENT_CHARACTER :: '?'
 // The most bytes of one text. With an advance and a pair adjustment of at
@@ -58,7 +58,7 @@ Character_Advance :: struct {
 // font at one scale, sorted by left then right.
 Spacing :: struct {
 	advances: []i32, // CHARACTER_COUNT of them.
-	pairs:    []glyph_cache.Pair_Entry,
+	pairs:    []glyph_cache.Pair_Entry, // The pair adjustments, sorted by left then right character.
 }
 
 // spacing_of gives the spacing of one scale of a valid glyph cache. ok is
@@ -158,7 +158,7 @@ text_width :: proc "contextless" (spacing: ^Spacing, text: []u8) -> (width: i64,
 
 // Range_Problem: why measure_ranges stopped.
 Range_Problem :: enum u8 {
-	None,
+	None, // Each range was measured.
 	Past_The_Text, // A range names bytes after the end of the text.
 	Too_Long, // A range has more than TEXT_LIMIT bytes.
 }

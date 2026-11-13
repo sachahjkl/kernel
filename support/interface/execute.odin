@@ -228,10 +228,13 @@ text_draw :: proc "contextless" (canvas: graphics.Canvas, x, y: int, text: strin
 	graphics.text_scaled(canvas, x, y, text, color, scale)
 }
 
+// intersection gives the part that two rectangles share. It is empty
+// (`empty`) when they do not meet.
 intersection :: proc "contextless" (first, second: Rectangle) -> Rectangle {
 	return {max(first.left, second.left), max(first.top, second.top), min(first.right, second.right), min(first.bottom, second.bottom)}
 }
 
+// empty says if a rectangle holds no pixel.
 empty :: proc "contextless" (rectangle: Rectangle) -> bool {
 	return rectangle.left >= rectangle.right || rectangle.top >= rectangle.bottom
 }

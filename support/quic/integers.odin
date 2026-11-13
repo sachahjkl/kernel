@@ -3,13 +3,35 @@
 // memory of the caller: it allocates nothing, makes no kernel call, and
 // gives each failure as an error record.
 //
+// Who uses it: the remote service (`programs/remote`, a server), the
+// program `quic_echo` and the kernel tool (a client of the remote
+// service). The parts, by file:
+//
+// - `connection.odin`, `connection_receive.odin`, `connection_send.odin`:
+//   one connection (`Connection`): `connection_start_client`,
+//   `connection_start_server`, `connection_datagram_receive`,
+//   `connection_datagram_send`, `connection_time_passes`.
+// - `streams.odin`: the streams of a connection (`Stream`).
+// - `server.odin`, `server_budgets.odin`, `retry.odin`: a server of many
+//   connections, its bounds and the Retry.
+// - `tls_handshake.odin`, `tls_key_schedule.odin`: TLS 1.3 with a raw
+//   public key (RFC 8446, RFC 7250).
+// - `packets.odin`, `keys.odin`: the packet protection and the header
+//   protection (RFC 9001).
+// - `frames.odin`, `transport_parameters.odin`, `ranges.odin`,
+//   `recovery.odin`: the frames, the parameters, the sets of ranges and the
+//   loss detection.
+//
+// See [packet protection](term:packet-protection),
+// [encryption level](term:encryption-level) and (docs/QUIC.md).
+//
 // This file: the variable-length integers (RFC 9000, section 16) and the
 // packet numbers (RFC 9000, section 17.1 and appendix A).
 package quic
 
 import "contract:errors"
 
-VARIABLE_LENGTH_INTEGER_LARGEST :: (u64(1) << 62) - 1
+VARIABLE_LENGTH_INTEGER_LARGEST :: (u64(1) << 62) - 1 // The largest value of 8 bytes of encoding.
 
 // variable_length_integer_read reads a variable-length integer at offset.
 // size is the bytes that it takes. A first byte past the bytes, or a length

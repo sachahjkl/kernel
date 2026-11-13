@@ -17,33 +17,37 @@ import "support:text_shaping"
 
 // The fonts of the setting "font". Zero is the default (ZII): the vector font.
 Text_Font :: enum u8 {
-	Vector,
-	Spleen,
+	Vector, // The vector font of the system, from the glyph cache.
+	Spleen, // Spleen 8x16, a bitmap font in the library itself.
 }
 
 // The order of the color stripes of the pixels of the screen: the setting
 // "subpixel_order". None draws the vector font in grayscale.
 Subpixel_Order :: enum u8 {
-	Red_Green_Blue,
-	Blue_Green_Red,
-	None,
+	Red_Green_Blue, // Red on the left of each pixel: most screens.
+	Blue_Green_Red, // Blue on the left.
+	None, // No subpixels: grayscale.
 }
 
+// The text state of a program: the setting of the font, the caches, and
+// the tables of the blend. One for the program, in `text_state`.
 Text_State :: struct {
-	font:        Text_Font,
-	order:       Subpixel_Order,
-	has_cache:   bool,
-	cache:       glyph_cache.Cache,
+	font:        Text_Font, // The setting "font".
+	order:       Subpixel_Order, // The setting "subpixel_order".
+	has_cache:   bool, // A glyph cache was accepted: the vector font can draw.
+	cache:       glyph_cache.Cache, // The glyph cache of the regular weight.
 	// The blend in linear light: square_root[i] is the 8-bit value whose
 	// square is nearest to (4096 i + 2048) / 255 (docs/FONTS.md, "The blend in linear light").
 	square_root: [4096]u8,
 	// The bold weight at scale 1, for emphasis: the titles of the cards.
-	has_bold_cache: bool,
-	bold_cache:     glyph_cache.Cache,
+	has_bold_cache: bool, // A bold cache was accepted.
+	bold_cache:     glyph_cache.Cache, // The glyph cache of the bold weight.
 	// The blend tables of text over a flat color (blend.odin), 24 KiB.
 	blend_tables: Blend_Tables,
 }
 
+// The text state of this program. `text_cache_set` and `text_choice_set`
+// change it, between two frames.
 text_state: Text_State
 
 // text_cache_set validates a glyph cache once and makes it the cache of the
@@ -202,6 +206,9 @@ text_scaled :: proc "contextless" (canvas: Canvas, x, y: int, characters: string
 	return x + advance * len(characters)
 }
 
+// text_width gives the width of a text in the font of the cells at scale 1,
+// in pixels: 8 pixels for each byte. Both fonts of the cells have that
+// width.
 text_width :: proc "contextless" (characters: string) -> int {
 	return len(characters) * CELL_WIDTH
 }

@@ -49,8 +49,8 @@ HOST_ADDRESS :: 0x0A000202
 APPLICATION_PROTOCOL :: "modus-remote-call"
 
 REGION_SIZE :: isolated.REGION_PAGES * 4096 // The call region of a connection.
-REQUEST_SIZE :: size_of(Request)
-ANSWER_SIZE :: size_of(Answer)
+REQUEST_SIZE :: size_of(Request) // The header of a request: 104 bytes.
+ANSWER_SIZE :: size_of(Answer) // The header of an answer: 112 bytes.
 // The bytes of a request on a stream at most: its header and a whole call
 // region. One byte more and the remote service resets the stream with
 // Too_Large, before any call.
@@ -72,7 +72,7 @@ CALLS_AT_ONCE :: 8
 // The application error code of a RESET_STREAM or a STOP_SENDING of a call
 // stream, and of a CONNECTION_CLOSE of the application.
 Stream_Error :: enum u64 {
-	None      = 0,
+	None      = 0, // No error: a CONNECTION_CLOSE of a normal end.
 	// The request has more than REQUEST_LIMIT bytes: the remote service
 	// sends STOP_SENDING and RESET_STREAM before any call.
 	Too_Large = 1,
@@ -85,6 +85,7 @@ Stream_Error :: enum u64 {
 	Cancelled = 3,
 }
 
+// The name of each code, for the log of the two sides.
 @(rodata)
 STREAM_ERROR_NAMES := [Stream_Error]string {
 	.None      = "None",
@@ -102,14 +103,19 @@ stream_error_name :: proc "contextless" (code: u64) -> string {
 	return STREAM_ERROR_NAMES[Stream_Error(code)]
 }
 
+// What a request asks.
 Request_Kind :: enum u32 {
-	None = 0,
+	None = 0, // Not a request: refused.
 	Call = 1, // An isolated call of one export of one service.
 }
 
 // The header of a call request. The bytes of the call region follow it.
+//
+// The host writes it; the remote service reads it as hostile input and
+// refuses a field that it cannot use (`Status.Refused`, with the field in the
+// error record).
 Request :: struct {
-	kind:         Request_Kind,
+	kind:         Request_Kind, // Call.
 	export:       u32, // The index of the export in the module of the service: the kind of the command record.
 	service:      [32]u8, // The name of the service, as the root service names it: zero bytes after the name.
 	hash:         [32]u8, // The BLAKE3 hash of the module file of the service that the host read.
@@ -133,6 +139,7 @@ Request :: struct {
 @(rodata)
 REQUEST_FIELD_NAMES := [?]string{"kind", "export", "service", "hash", "arguments", "record_size", "result_start", "result_count", "result_unit", "error_start", "details_end"}
 
+// The status of an answer.
 Status :: enum u32 {
 	// The call ran. call_status is the isolated.Status of the completion;
 	// value is the integer result. When value is negative and the export
@@ -147,28 +154,31 @@ Status :: enum u32 {
 // The header of a call answer. The bytes of the result follow it: total
 // bytes, then the end of the stream.
 Answer :: struct {
-	status:      Status,
+	status:      Status, // Ok or Refused.
 	call_status: u32, // isolated.Status.
 	value:       i64, // The integer result of the export.
 	total:       u32, // The bytes of the result after this header.
 	details:     u32, // A call that failed: the count of its error details, of the full answer, at most the largest u32. The bytes of the answer are the details that fit.
 	hash:        [32]u8, // The hash of the module of the service that runs, when the remote service knows it.
-	error:       errors.Error_Record,
+	error:       errors.Error_Record, // The record of a refusal, or of an export that failed.
 }
 #assert(size_of(Answer) == 112)
 
+// read copies a value out of bytes, with no alignment.
 @(private)
 read :: proc "contextless" (bytes: []u8, $T: typeid) -> (value: T) {
 	intrinsics.mem_copy_non_overlapping(&value, raw_data(bytes), size_of(T))
 	return value
 }
 
+// write copies a value into bytes, with no alignment.
 @(private)
 write :: proc "contextless" (bytes: []u8, value: $T) {
 	value := value
 	intrinsics.mem_copy_non_overlapping(raw_data(bytes), &value, size_of(T))
 }
 
+// refuse gives the error record of a refusal of a field of a request.
 @(private)
 refuse :: proc "contextless" (kind: errors.Kind, unit: errors.Unit, field: int, value: i64, limit: i64 = 0) -> errors.Error_Record {
 	return errors.error_make(kind, unit, i64(field), value, limit)

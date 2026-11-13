@@ -18,6 +18,8 @@ Code_Class :: enum u8 {
 	Punctuation = 7, // An operator or punctuation: the other quiet class.
 }
 
+// The color of one class of code: one accent of the design, and how much
+// of it to show on each surface.
 Code_Class_Color :: struct {
 	accent:        Color, // A color of the concepts or the dim color.
 	dark_percent:  u32, // shade of the accent on a dark surface: 100 is the accent itself.

@@ -22,17 +22,17 @@ package vector_font
 // and a prefix sum stay under SEGMENT_LIMIT * FULL_PIXEL = 2^30, which an
 // i32 holds.
 
-SUBUNITS_PER_PIXEL :: 256
-FULL_PIXEL :: 256 * 512
-SEGMENT_LIMIT :: 8192
+SUBUNITS_PER_PIXEL :: 256 // The units of a coordinate in one pixel.
+FULL_PIXEL :: 256 * 512 // The coverage of a whole pixel in a cell: an area of 256 by 256 subunits, times 2.
+SEGMENT_LIMIT :: 8192 // The line segments of one glyph: the bound of the argument above.
 CURVE_SEGMENT_LIMIT :: 16 // A quadratic curve is cut into 1 to 16 line segments.
 
 // Accumulation: the memory of the caller for the cells of one glyph. A row
 // has width + 1 cells: the cell after the last column takes what a piece on
 // the right side of the last column gives to its right.
 Accumulation :: struct {
-	cells:         []i32,
-	width, height: int,
+	cells:         []i32, // (width + 1) * height cells, from the caller.
+	width, height: int, // The pixels of the glyph.
 	segments:      int, // The line segments added since the last finish.
 }
 
@@ -59,6 +59,8 @@ divide_rounded :: #force_inline proc "contextless" (numerator, denominator: i64)
 	return quotient
 }
 
+// floor_divide divides and rounds toward minus infinity, as a coordinate
+// below 0 needs.
 @(private)
 floor_divide :: #force_inline proc "contextless" (value, by: i64) -> i64 {
 	quotient := value / by
@@ -217,6 +219,8 @@ Stripe_Filter :: enum u8 {
 	None, // Each third as it is: the most color.
 }
 
+// The five weights of each filter, out of 256: the share of the coverage of
+// each third of a pixel that goes to a stripe.
 stripe_filter_weights := [Stripe_Filter][5]i32 {
 	.Five_Taps  = {8, 77, 86, 77, 8},
 	.Three_Taps = {0, 85, 86, 85, 0},

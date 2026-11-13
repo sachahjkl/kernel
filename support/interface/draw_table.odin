@@ -6,6 +6,28 @@
 // table, its execution, the difference, the layout, the text, the input,
 // the elements) make no kernel call; window_drawing.odin does: it reads the
 // events of a window and presents its surface.
+//
+// Who uses it: each program with a window (the console, the bar, the
+// developer tools, the settings). The parts:
+//
+// - `Draw_Table`, `Draw_Record`, `Draw_Kind`: the frame as records
+//   (`draw_rectangle`, `draw_text` and the other `draw_` procedures).
+// - `Damage`, `records_equal` (`difference.odin`): what changed since the
+//   frame before.
+// - `execute`, `execute_in_rectangles` (`execute.odin`): the records drawn
+//   into a canvas.
+// - `Area`, `Column`, `Size`, `row_split` (`layout.odin`): where each element
+//   goes.
+// - `Font`, `Text_Builder`, `text_width` (`text.odin`): the measure of a text.
+// - `Frame`, `Input`, `Interface_State`, `Element_Identity` (`input.odin`):
+//   the input and the focus.
+// - The elements (`elements.odin`): buttons, cards, lists, text inputs.
+// - `Window_Drawing` (`window_drawing.odin`): one window from its events to
+//   its surface.
+//
+// See [interface package](term:interface-package),
+// [draw record](term:draw-record) and
+// [damage by difference](term:damage-by-difference).
 package interface
 
 import "contract:glyph_cache"
@@ -14,8 +36,10 @@ import "support:graphics"
 
 DRAW_RECORD_VERSION :: 7 // A new kind of record, or a new field, is a new version. 2: Folded_Gap, Picture. 3: Text_Grid. 4: Line, and the field line_thickness. 5: the fields filled and background of a cell of a text grid. 6: the byte line_thickness is kind_detail, the weight of a text too. 7: Interface_Text, and the byte text_subpixel_x is text_origin_thirds.
 
+// What one draw record draws. The fields of `Draw_Record` that each kind
+// reads are in the comment of the member.
 Draw_Kind :: enum u8 {
-	None                = 0,
+	None                = 0, // Nothing: a record of this kind is not drawn.
 	Rectangle           = 1, // One color.
 	Vertical_Gradient   = 2, // first_color at the top line, second_color at the bottom line.
 	Horizontal_Gradient = 3, // first_color at the left column, second_color at the right column.
@@ -71,9 +95,9 @@ LINE_COORDINATE_LIMIT :: 1 << 15
 // bytes more than a cell with no background: 12 bytes for each cell.
 Text_Grid_Cell :: struct {
 	character:  u8, // 0 to 32: no character.
-	reverse:    bool,
-	filled:     bool,
-	color:      graphics.Color,
+	reverse:    bool, // The character in the color of the background, on a cell of `color`.
+	filled:     bool, // The character in `color`, on a cell of `background`.
+	color:      graphics.Color, // The color of the character.
 	background: graphics.Color, // For a filled cell.
 }
 
@@ -81,22 +105,28 @@ Text_Grid_Cell :: struct {
 // cells. In the table of the frame now, the cells of the caller; in a table
 // before, the copy of the cells that the surface shows (draw_table_copy).
 Text_Grid :: struct {
-	cells:                  []Text_Grid_Cell,
-	columns, rows, stride: int,
+	cells:                  []Text_Grid_Cell, // At least `rows * stride` cells.
+	columns, rows, stride: int, // The cells of a line, the lines, and the cells from one line to the next.
 }
 
 // One thing to draw: 40 bytes, little-endian (docs/INTERFACE.md, section 2.1).
+//
+// A `draw_` procedure appends it to the table of the frame; the difference
+// compares it with the records of the frame before; the execution draws
+// it. Example: `draw_rectangle(table, 0, 0, 100, 24, graphics.COLOR_CARD_TOP)`
+// appends `{kind = .Rectangle, x = 0, y = 0, width = 100, height = 24,
+// first_color = <the color>}`.
 Draw_Record :: struct {
-	kind:            Draw_Kind,
+	kind:            Draw_Kind, // What the record draws.
 	text_scale:      u8, // Text: 1, 2 or 3.
 	text_origin_thirds: u8, // Interface_Text: the origin after x + margin, in thirds of a pixel: 0, 1 or 2. 0 for the other kinds.
 	kind_detail:     u8, // Line: the thickness, 1 to LINE_THICKNESS_LIMIT pixels. Text: the weight (Font_Weight: 0 regular, 1 bold). 0 for the other kinds.
-	x, y:            i32,
-	width, height:   i32,
-	first_color:     u32,
-	second_color:    u32,
-	text_start:      u32,
-	text_count:      u32,
+	x, y:            i32, // The top left corner, in pixels of the surface.
+	width, height:   i32, // The size, in pixels; a Line: the vector to its end.
+	first_color:     u32, // The main color: see `Draw_Kind`.
+	second_color:    u32, // A gradient: its end color. Interface_Text: the ink margin.
+	text_start:      u32, // A text: its first byte in the text table. A picture or a grid: its index.
+	text_count:      u32, // A text: its bytes. A picture: its generation.
 	element:         u32, // The low 32 bits of the identity of the element that wrote the record.
 }
 
@@ -110,12 +140,12 @@ Draw_Record :: struct {
 // size). That record is missing, and each other record is in the table, so
 // the difference with the next frame stays exact.
 Draw_Table :: struct {
-	records:      []Draw_Record,
-	record_count: int,
-	text:         []u8,
-	text_count:   int,
-	full:         bool,
-	refused:      bool,
+	records:      []Draw_Record, // The memory of the records, from the caller.
+	record_count: int, // The records of the frame so far.
+	text:         []u8, // The memory of the text table, from the caller.
+	text_count:   int, // The bytes of the text table in use.
+	full:         bool, // A record or a text did not fit.
+	refused:      bool, // A record that the caller asked for was not made.
 	pictures:     []graphics.Canvas, // The pictures that Picture records show.
 	grids:        []Text_Grid, // The grids that Text_Grid records show.
 	// The interface font that measures and draws the Interface_Text records
@@ -127,9 +157,11 @@ Draw_Table :: struct {
 
 // A rectangle of the surface. right and bottom are not in it.
 Rectangle :: struct {
-	left, top, right, bottom: int,
+	left, top, right, bottom: int, // In pixels of the surface.
 }
 
+// draw_table_clear empties a table for a new frame: no record and no text.
+// The memory of the caller stays.
 draw_table_clear :: proc "contextless" (table: ^Draw_Table) {
 	table.record_count = 0
 	table.text_count = 0

@@ -10,38 +10,47 @@ package calendar
 
 import "base:intrinsics"
 
-SECONDS_IN_A_DAY :: 86400
+SECONDS_IN_A_DAY :: 86400 // No leap second.
 
+// A day of the week, Monday first (ISO 8601).
 Weekday :: enum u8 {
-	Monday    = 0,
-	Tuesday   = 1,
-	Wednesday = 2,
-	Thursday  = 3,
-	Friday    = 4,
-	Saturday  = 5,
-	Sunday    = 6,
+	Monday    = 0, // Monday.
+	Tuesday   = 1, // Tuesday.
+	Wednesday = 2, // Wednesday.
+	Thursday  = 3, // Thursday: 1970-01-01 was one.
+	Friday    = 4, // Friday.
+	Saturday  = 5, // Saturday.
+	Sunday    = 6, // Sunday.
 }
 
+// A date and a time of day in UTC.
+//
+// Example: 0 seconds is `{year = 1970, month = 1, day = 1, weekday = .Thursday}`.
 Civil :: struct {
-	year:    i64,
+	year:    i64, // The year: 1970, 2026.
 	month:   int, // 1 to 12.
 	day:     int, // 1 to 31.
-	hour:    int,
-	minute:  int,
-	second:  int,
-	weekday: Weekday,
+	hour:    int, // 0 to 23.
+	minute:  int, // 0 to 59.
+	second:  int, // 0 to 59.
+	weekday: Weekday, // The day of the week.
 }
 
+// The names of three letters of the days, for a clock and the date page.
 @(rodata)
 WEEKDAY_SHORT_NAMES := [Weekday]string{.Monday = "Mon", .Tuesday = "Tue", .Wednesday = "Wed", .Thursday = "Thu", .Friday = "Fri", .Saturday = "Sat", .Sunday = "Sun"}
 
+// The names of three letters of the months, January first.
 @(rodata)
 MONTH_SHORT_NAMES := [12]string{"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"}
 
+// leap_year says if a year of the Gregorian calendar has 366 days.
 leap_year :: proc "contextless" (year: i64) -> bool {
 	return year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)
 }
 
+// days_in_month gives the days of a month (1 to 12) of a year. A month out
+// of range is taken as the nearest one.
 days_in_month :: proc "contextless" (year: i64, month: int) -> int {
 	lengths := [12]int{31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31}
 	if month == 2 && leap_year(year) {
@@ -102,6 +111,8 @@ seconds_of :: proc "contextless" (value: Civil) -> i64 {
 	return days_from_civil(value.year, value.month, value.day) * SECONDS_IN_A_DAY + i64(value.hour) * 3600 + i64(value.minute) * 60 + i64(value.second)
 }
 
+// put_digits writes the low `digits` decimal digits of a value; the bytes
+// past the buffer are counted, not written.
 @(private)
 put_digits :: proc "contextless" (buffer: []u8, at: ^int, value: i64, digits: int) {
 	for place := digits - 1; place >= 0; place -= 1 {
@@ -116,6 +127,8 @@ put_digits :: proc "contextless" (buffer: []u8, at: ^int, value: i64, digits: in
 	}
 }
 
+// put_text writes a text; the bytes past the buffer are counted, not
+// written.
 @(private)
 put_text :: proc "contextless" (buffer: []u8, at: ^int, text: string) {
 	for byte in transmute([]u8)text {
@@ -176,12 +189,12 @@ _ :: intrinsics
 // The real-time clock of a PC (the CMOS clock): the bytes of its registers,
 // as the program `date` reads them, and their meaning.
 Clock_Reading :: struct {
-	second, minute, hour, day, month, year: u8,
+	second, minute, hour, day, month, year: u8, // The registers 0, 2, 4, 7, 8 and 9, as the clock gives them.
 }
 
 CLOCK_STATUS_BINARY :: 0x04 // Status register B: the values are binary, not two decimal digits in a byte.
 CLOCK_STATUS_24_HOURS :: 0x02 // Status register B: 24 hours, not 12 with bit 7 of the hour for the afternoon.
-CLOCK_HOUR_AFTERNOON :: 0x80
+CLOCK_HOUR_AFTERNOON :: 0x80 // The bit of the hour register for the afternoon, in the mode of 12 hours.
 
 // CLOCK_EARLIEST_YEAR is the first year that the clock gives. The year
 // register has two digits, and the century register is not read: only the

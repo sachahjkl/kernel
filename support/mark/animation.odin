@@ -24,6 +24,7 @@ import "support:graphics"
 // the gradient over the box of the part in the still heron. A cell outside
 // that box takes the color of the nearer end of the gradient.
 
+// One idle movement of the heron.
 Animation :: enum u8 {
 	Blink, // The eye closes.
 	Look, // The head and the beak move forward one cell, then back one cell.
@@ -34,6 +35,7 @@ Animation :: enum u8 {
 	Scratch, // The raised leg goes down and scratches the ground three times.
 }
 
+// The name of each animation, for a test and a line of the log.
 @(rodata)
 animation_names := [Animation]string {
 	.Blink  = "blink",
@@ -56,6 +58,7 @@ animation_names := [Animation]string {
 FRAME_CHANGE_LIMIT :: 24
 PREEN_FRAME_CHANGE_LIMIT :: 48
 
+// The limit of the changed cells of a frame, for each animation.
 @(rodata)
 animation_change_limits := [Animation]int {
 	.Blink   = FRAME_CHANGE_LIMIT,
@@ -68,26 +71,29 @@ animation_change_limits := [Animation]int {
 }
 
 FRAME_DURATION_LEAST :: 150 // Milliseconds.
-FRAME_DURATION_MOST :: 1000
+FRAME_DURATION_MOST :: 1000 // Milliseconds.
 ANIMATION_DURATION_MOST :: 3000 // All the frames of one animation.
 STILL_DURATION_LEAST :: 2000 // The still heron between two animations.
-STILL_DURATION_MOST :: 6000
+STILL_DURATION_MOST :: 6000 // Milliseconds.
 
+// One frame of an animation: a row of animation_frames.
 Animation_Frame :: struct {
-	animation:             Animation,
+	animation:             Animation, // The animation of the frame.
 	frame:                 u8, // 1, 2, ...: the order of play.
 	base_frame:            u8, // 0: the still heron. Else an earlier frame of the same animation.
-	duration_milliseconds: u16,
+	duration_milliseconds: u16, // How long the frame stays.
 }
 
+// One cell that a frame changes: a row of animation_changes.
 Cell_Change :: struct {
-	animation: Animation,
-	frame:     u8,
-	column:    u8,
-	row:       u8,
+	animation: Animation, // The animation of the frame.
+	frame:     u8, // The frame, from 1.
+	column:    u8, // The column of the cell, from 0.
+	row:       u8, // The row of the cell, from 0.
 	letter:    u8, // The letter of a part, or '.' for an empty cell.
 }
 
+// The frames of all the animations, by animation, in the order of play.
 @(rodata)
 animation_frames := [?]Animation_Frame {
 	{.Blink, 1, 0, 150},
@@ -377,8 +383,8 @@ animation_changes := [?]Cell_Change {
 // One step of the order of play: the still heron for still_milliseconds,
 // then the animation.
 Play_Step :: struct {
-	still_milliseconds: u16,
-	animation:          Animation,
+	still_milliseconds: u16, // The still heron before the animation.
+	animation:          Animation, // The animation that follows.
 }
 
 // The order of play. It repeats after its last step, about every 80 seconds:
@@ -410,6 +416,7 @@ play_order := [?]Play_Step {
 // The letter of each cell of the heron, by row, then by column.
 Heron_Cells :: [HERON_GRID_SIZE][HERON_GRID_SIZE]u8
 
+// still_cells gives the letters of the still heron.
 still_cells :: proc "contextless" () -> (cells: Heron_Cells) {
 	for row in 0 ..< HERON_GRID_SIZE {
 		for column in 0 ..< HERON_GRID_SIZE {

@@ -6,10 +6,21 @@
 // A font file is hostile input: each read is checked against the length of
 // the file, and each problem is a value. No floating point: a result does
 // not depend on the build.
+//
+// The parts: `font_open` and `Font_File` (the tables), `glyph_of` and
+// `glyph_outline` with `Outline` (the points of a glyph), the accumulation
+// of the coverage (`raster.odin`), the spacing and the substitutions
+// (`spacing.odin`, `substitution.odin`), and the build of a glyph cache
+// (`cache_build.odin`).
+//
+// See [font](term:font), [outline](term:outline) and
+// [glyph cache](term:glyph-cache).
 package vector_font
 
+// What is wrong with a font file or with a glyph. Each reader of this
+// package gives one, never a fault.
 Font_Problem :: enum u8 {
-	None,
+	None, // No problem.
 	Too_Short, // A read past the end of the file or of a table.
 	Missing_Table, // head, hhea, maxp, hmtx, loca, glyf or cmap is not there.
 	Unknown_Format, // No cmap of format 4, a loca format other than 0 and 1, or a glyph that breaks a rule of the format.
@@ -20,6 +31,7 @@ Font_Problem :: enum u8 {
 	No_Feature, // The table GSUB has no single substitution of this feature for this glyph.
 }
 
+// The words of each problem, for the kernel tool and the log.
 font_problem_names := [Font_Problem]string {
 	.None               = "none",
 	.Too_Short          = "a read passes the end of the file or of a table",
@@ -34,37 +46,38 @@ font_problem_names := [Font_Problem]string {
 
 // The tables of a font file, as offsets in the file.
 Font_File :: struct {
-	bytes:               []u8,
-	units_per_em:        int,
-	ascender, descender: int,
-	glyph_count:         int,
-	long_offsets:        bool,
-	horizontal_metrics:  int,
-	head, hhea, maxp:    Table,
-	hmtx, loca, glyf:    Table,
+	bytes:               []u8, // The file, from the caller.
+	units_per_em:        int, // The units of the font in one em.
+	ascender, descender: int, // From hhea, in units of the font.
+	glyph_count:         int, // From maxp.
+	long_offsets:        bool, // loca has offsets of 32 bits (format 1).
+	horizontal_metrics:  int, // The long metrics of hmtx.
+	head, hhea, maxp:    Table, // The tables that the reader needs.
+	hmtx, loca, glyf:    Table, // The metrics and the glyphs.
 	character_map:       Table, // The cmap subtable of format 4.
 	name, os2, post:     Table, // Read by the tool only.
 	kern:                Table, // The pair adjustments; absent in many fonts (spacing.odin).
 	gsub:                Table, // The substitutions of glyphs; read by the tool only (substitution.odin).
 }
 
+// One table of the file: its bytes, checked to be inside the file.
 Table :: struct {
-	offset, length: int,
+	offset, length: int, // In bytes from the start of the file.
 }
 
 // A point of an outline, in units of the font, y up.
 Outline_Point :: struct {
-	x, y:     i32,
-	on_curve: bool,
+	x, y:     i32, // In units of the font.
+	on_curve: bool, // On the curve; else a control point of a quadratic curve.
 }
 
 // An outline in the memory of the caller: the points, and the index after
 // the last point of each contour.
 Outline :: struct {
-	points:        []Outline_Point,
-	point_count:   int,
-	contour_ends:  []int,
-	contour_count: int,
+	points:        []Outline_Point, // The memory of the points, from the caller.
+	point_count:   int, // The points in use.
+	contour_ends:  []int, // The memory of the contour ends, from the caller.
+	contour_count: int, // The contours in use.
 	advance:       int, // The advance width, in units of the font.
 }
 
@@ -78,6 +91,8 @@ COMPOSITE_PART_LIMIT :: 64
 // The flags of one simple glyph are read into a table of this size.
 POINT_LIMIT :: 1024
 
+// read_u16 reads a number of 16 bits, big-endian, when it is inside the
+// bytes.
 @(private)
 read_u16 :: proc "contextless" (bytes: []u8, at: int) -> (value: int, ok: bool) {
 	if at < 0 || at + 2 > len(bytes) {
@@ -86,12 +101,14 @@ read_u16 :: proc "contextless" (bytes: []u8, at: int) -> (value: int, ok: bool) 
 	return int(bytes[at]) << 8 | int(bytes[at + 1]), true
 }
 
+// read_i16 reads a signed number of 16 bits, big-endian.
 @(private)
 read_i16 :: proc "contextless" (bytes: []u8, at: int) -> (value: int, ok: bool) {
 	unsigned := read_u16(bytes, at) or_return
 	return unsigned >= 0x8000 ? unsigned - 0x10000 : unsigned, true
 }
 
+// read_u32 reads a number of 32 bits, big-endian.
 @(private)
 read_u32 :: proc "contextless" (bytes: []u8, at: int) -> (value: int, ok: bool) {
 	high := read_u16(bytes, at) or_return
@@ -297,10 +314,12 @@ glyph_outline :: proc "contextless" (font: ^Font_File, glyph: int, outline: ^Out
 // y' = b x + d y + f, with a, b, c, d in 1/65536.
 @(private)
 Part_Transform :: struct {
-	a, b, c, d: i64,
-	e, f:       i64,
+	a, b, c, d: i64, // The matrix, in 1/65536.
+	e, f:       i64, // The move, in units of the font.
 }
 
+// glyph_outline_add adds the points of one glyph to an outline: a simple
+// glyph, or each part of a composite, at most COMPOSITE_DEPTH levels deep.
 @(private)
 glyph_outline_add :: proc "contextless" (font: ^Font_File, glyph: int, outline: ^Outline, transform: Part_Transform, depth: int, parts: ^int) -> Font_Problem {
 	data := glyph_data(font, glyph) or_return
@@ -394,6 +413,7 @@ glyph_outline_add :: proc "contextless" (font: ^Font_File, glyph: int, outline: 
 	return .None
 }
 
+// simple_glyph_add adds the contours and the points of a simple glyph.
 @(private)
 simple_glyph_add :: proc "contextless" (data: []u8, contours: int, outline: ^Outline, transform: Part_Transform) -> Font_Problem {
 	first_point := outline.point_count

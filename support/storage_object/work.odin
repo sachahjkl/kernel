@@ -24,17 +24,19 @@ NODE_SLOT_CAPACITY :: 1536 // The object nodes that one commit changes: 1000 blo
 // One block of data that a commit changes: its place, and its 4096 bytes
 // after the change, with zero bytes past the size.
 Change :: struct {
-	index:          u64,
-	bytes:          ^Block,
+	index:          u64, // The block of the object, from 0.
+	bytes:          ^Block, // Its bytes after the change, in memory of the caller.
 	original:       Child, // The child that it replaces: a hole when none.
 	original_known: bool, // original has its value: false for the block of a state of one block.
-	value:          Value,
+	value:          Value, // Its value after the change, which the work computes.
 	kept:           bool, // Its value is the value of the original: the block of the state before stays.
 }
 
 // What the work asks of its caller: the names of the blocks, and the
 // writes of the new ones.
 Counter :: struct {
+	// name adds one name to a block of the disk: a copied node names each of
+	// its children again.
 	name:       proc "contextless" (counter: ^Counter, block: u64),
 	// release takes one name of a child: a block of data at level 0, or an
 	// object node of its level. The caller frees what no name holds.
@@ -43,11 +45,12 @@ Counter :: struct {
 	// parent, and give its Pointer; a Pointer with no block when they cannot.
 	write_node: proc "contextless" (counter: ^Counter, bytes: ^Block) -> Pointer,
 	write_data: proc "contextless" (counter: ^Counter, bytes: ^Block, check: u64) -> Pointer,
-	data:       rawptr,
+	data:       rawptr, // The state of the caller.
 }
 
+// Why a work failed. The first failure stays (`work_failed`).
 Failure :: enum {
-	None,
+	None, // No failure.
 	Device, // A read failed on the device.
 	Wrong, // A block of the state before has a wrong check, or breaks a rule.
 	Full, // No slot is free.
@@ -56,12 +59,12 @@ Failure :: enum {
 
 // A copy of an object node that the commit writes.
 Slot :: struct {
-	node:  Node,
+	node:  Node, // The copy of the node, as the commit changes it.
 	// > 0: 1 + the slot of the child node that the commit makes; < 0:
 	// -(1 + the change) of the child block of data; 0: the child in node.
 	refs:  [FANOUT]i32,
-	level: int,
-	used:  bool,
+	level: int, // The level of the node, from 1.
+	used:  bool, // The slot holds a node of this work.
 }
 
 // The measure of one commit: what it hashed and wrote.
@@ -72,31 +75,36 @@ Measure :: struct {
 	written:       u64, // Blocks that the commit writes: data and object nodes.
 }
 
+// The commit of a change of one object: the state before, the changes, and
+// the copies of the nodes on their paths. About 6 MiB, which the caller
+// keeps. `work_begin` starts it; `work_finish` writes it.
 Work :: struct {
-	source:         ^Source,
-	counter:        ^Counter,
-	slots:          [NODE_SLOT_CAPACITY]Slot,
+	source:         ^Source, // Where the blocks of the state before come from.
+	counter:        ^Counter, // The names and the writes of the caller.
+	slots:          [NODE_SLOT_CAPACITY]Slot, // The nodes that the commit copies.
 	slots_high:     int, // No slot from here is used.
 	// The root when root_reference is 0: a block of the disk, or a hole.
 	// root_known: its value and its blocks are known.
 	root:           Child,
 	root_known:     bool,
 	root_reference: i32, // As Slot.refs.
-	levels:         int,
-	size_before:    u64,
-	size:           u64,
-	changes:        []Change,
-	failure:        Failure,
-	failed_block:   u64,
-	measure:        Measure,
-	scratch:        Node,
-	walk:           Work_Hash,
+	levels:         int, // The levels of the block tree for `size`.
+	size_before:    u64, // The size of the state before.
+	size:           u64, // The size after the commit.
+	changes:        []Change, // The blocks that change, in the order of their indexes.
+	failure:        Failure, // The first failure.
+	failed_block:   u64, // The block that the failure names.
+	measure:        Measure, // What the commit hashed and wrote.
+	scratch:        Node, // A node to read into.
+	walk:           Work_Hash, // The state of the hash of the new state.
 }
 
+// work_failed says if the work failed: its failure stays.
 work_failed :: proc "contextless" (work: ^Work) -> bool {
 	return work.failure != .None
 }
 
+// work_fail records the first failure of the work.
 @(private)
 work_fail :: proc "contextless" (work: ^Work, failure: Failure, block: u64 = 0) {
 	if work.failure == .None {
@@ -105,6 +113,7 @@ work_fail :: proc "contextless" (work: ^Work, failure: Failure, block: u64 = 0) 
 	}
 }
 
+// fail_of_read records the failure of a read that was not Good.
 @(private)
 fail_of_read :: proc "contextless" (work: ^Work, outcome: Read, block: u64) {
 	work_fail(work, outcome == .Device ? .Device : .Wrong, block)
@@ -129,6 +138,8 @@ work_begin :: proc "contextless" (work: ^Work, source: ^Source, counter: ^Counte
 	work.measure = {}
 }
 
+// slot_take gives a free slot for a node of a level, or -1 with the
+// failure Full.
 @(private)
 slot_take :: proc "contextless" (work: ^Work, level: int) -> int {
 	for index in 0 ..< NODE_SLOT_CAPACITY {

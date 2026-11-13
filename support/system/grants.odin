@@ -12,18 +12,26 @@ GRANT_IMAGE :: 3 // Memory: the boot image, to list the modules.
 GRANT_LOG_RECORDS :: 4 // Memory, with Read: the records of the log.
 GRANT_SERVICE :: 5 // Memory: the service ring. The root service names each connection of a caller on it.
 GRANT_REPLACEMENTS :: 10 // Memory, with Read: the replacement table of the machine (Replacement_Table). 6 to 9 are the terminal and the store (packages terminal, storage).
-GRANT_VALUE_IMAGE_SIZE :: 0
+GRANT_VALUE_IMAGE_SIZE :: 0 // The bytes of the boot image, with GRANT_IMAGE.
 GRANT_VALUE_FILE_ADDRESS :: 1 // A service: where the file of the program is, read-only (the descriptions of its exports).
-GRANT_VALUE_FILE_SIZE :: 2
+GRANT_VALUE_FILE_SIZE :: 2 // A service: the bytes of that file.
 
 // The ring to the root service. The name of the program is in values[0..4].
 // The completion record has the tag of the command, and a Status as kind.
 // When the status is not Ok, its values are an error record
 // (errors.completion_record): the argument 1 is the name.
+//
+// A program with the grant of the root ring (`GRANT_ROOT`) writes these
+// commands; the root service checks the role of the program for each one.
+//
+// ```odin
+// name := system.name_pack("clock")
+// system.send(&root.commands, {kind = u32(system.Root_Command.Start), tag = 1, values = {name[0], name[1], name[2], name[3], 0, 0, 0}})
+// ```
 Root_Command :: enum u32 {
-	None       = 0,
-	Start      = 1,
-	Stop       = 2,
+	None       = 0, // Refused.
+	Start      = 1, // Start the program of the boot image with this name. A program of the system (root, input, compositor, terminal, block, frame) is refused with `Reserved`; a name with no module with `Absent`.
+	Stop       = 2, // Stop the program with this name. The compositor and the terminal are refused with `Reserved`; a name that runs no program with `Absent`.
 	// Connect makes a connection to a service that runs. The completion has
 	// three handles of the caller: values[0] the program (right Read: its
 	// state), values[1] the call ring, values[2] the call region. values[3..7]
@@ -106,10 +114,14 @@ Principal_State :: enum u64 {
 // gives it with the right Read. It gives the records to each program that
 // it starts (system.program_start); a program that loads modules reads the
 // table before each load. version is odd while the root service writes.
-REPLACEMENT_CAPACITY :: 32
+//
+// A reader copies the table with `replacements_read`, which reads again
+// while the version changes; `replacements_write` is for the root service.
+// See [replacement table](term:replacement-table).
+REPLACEMENT_CAPACITY :: 32 // The replacements of one machine. `Replace` gives No_Slot for one more.
 Replacement_Table :: struct {
-	version: u32,
-	count:   u32,
+	version: u32, // Odd while the root service writes; one more at each start and each end of a write.
+	count:   u32, // The records in use.
 	records: [REPLACEMENT_CAPACITY]module.Replacement,
 }
 #assert(size_of(Replacement_Table) <= PAGE_SIZE)
@@ -167,8 +179,6 @@ replacements_write :: proc "contextless" (table: ^Replacement_Table, from, to: [
 	return .Ok
 }
 
-// The grants that the root service records for each program, and that it
-// can revoke while the program runs.
 // The names of the commands of the root ring and of their values, for the
 // sentence of the error record of a completion that failed: the value 1 is
 // the name (values[0..4]), the value 2 is values[4].
@@ -190,10 +200,16 @@ root_command_names := [Root_Command]string {
 	.Principal_Unlock = "Principal_Unlock",
 }
 
+// root_command_name gives the name of a command of the root ring, or "an
+// unknown command" for a number out of `Root_Command`: the number comes from
+// an error record.
 root_command_name :: proc "contextless" (command: i64) -> string {
 	return command >= 0 && command <= i64(max(Root_Command)) ? root_command_names[Root_Command(command)] : "an unknown command"
 }
 
+// root_argument_name gives the name of an argument of a command of the root
+// ring, as an error record numbers it: 1 is the name, 2 is values[4]. An
+// empty text: the command has no such argument.
 root_argument_name :: proc "contextless" (command: i64, argument: i64) -> string {
 	switch argument {
 	case 1:
@@ -211,6 +227,10 @@ root_argument_name :: proc "contextless" (command: i64, argument: i64) -> string
 	return ""
 }
 
+// The grants that the root service records for each program, and that it
+// can revoke while the program runs (the command `Revoke`). Each grant is a
+// handle of the context, or a connection that the root service made; a
+// revocation ends each handle and each mapping that came from it.
 Root_Grant :: enum u32 {
 	Log         = 0, // Write on the log.
 	Machine     = 1, // The machine, with the rights of the role.
@@ -221,8 +241,11 @@ Root_Grant :: enum u32 {
 	Acts_For_Principal = 6, // To act for the principal of its session in each service that the program is connected to (isolated.CALLER_ACTS_FOR_PRINCIPAL).
 	History     = 7, // The store of the line history of the console in the storage service (Root_Command.Connect_History).
 }
+// A set of grants: bit n is the grant n. The completion of `Grants` holds
+// two of them.
 Root_Grants :: bit_set[Root_Grant;u64]
 
+// The name of each grant, as the console and the log write it.
 root_grant_names := [Root_Grant]string {
 	.Log         = "log",
 	.Machine     = "machine",
@@ -234,14 +257,20 @@ root_grant_names := [Root_Grant]string {
 	.History     = "history",
 }
 
+// A name of a program in a command of the root ring: 31 bytes at most, zero
+// bytes after it.
 Name :: [32]u8
 
+// name_pack gives the four values of a name, as a command of the root ring
+// carries it. A name longer than 31 bytes is cut.
 name_pack :: proc "contextless" (name: string) -> (values: [4]u64) {
 	bytes: Name
 	copy(bytes[:len(bytes) - 1], name)
 	return transmute([4]u64)bytes
 }
 
+// name_unpack gives the name of four values. Its last byte is always zero,
+// whatever the values hold: a reader takes the bytes before the first zero.
 name_unpack :: proc "contextless" (values: [4]u64) -> Name {
 	bytes := transmute(Name)values
 	bytes[len(bytes) - 1] = 0

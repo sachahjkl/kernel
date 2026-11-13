@@ -13,25 +13,25 @@ CARD_TITLE :: 40 // The height of the title of a card.
 // The surfaces (section 3).
 COLOR_BACKGROUND :: 0x0B1018 // Under all cards.
 COLOR_POINT :: 0x18212D // The grid of points on the background.
-POINT_SIZE :: 2
-POINT_STEP :: 24
+POINT_SIZE :: 2 // The side of one point of the grid, in pixels.
+POINT_STEP :: 24 // The distance between two points of the grid, in pixels.
 COLOR_CARD_TOP :: 0x17212E // A card goes from this color at the top...
 COLOR_CARD_BOTTOM :: 0x111822 // ...to this color at the bottom.
 COLOR_TRACK :: 0x1C2633 // The empty part of a bar, a band or a tube.
 
 // The colors of the concepts (section 4). One color is one concept.
-COLOR_FIRMWARE :: 0x8E7CC3
+COLOR_FIRMWARE :: 0x8E7CC3 // The firmware.
 COLOR_BOOT_PROGRAM :: 0xE0A040 // Also the state "starts".
-COLOR_KERNEL :: 0x4A9CF0
+COLOR_KERNEL :: 0x4A9CF0 // The kernel.
 COLOR_PROGRAM :: 0x58D878 // Also the state "runs", and an expected answer.
-COLOR_MEMORY :: 0x38C0B0
-COLOR_MACHINE :: 0xD070B0
+COLOR_MEMORY :: 0x38C0B0 // Memory, and the values that count it.
+COLOR_MACHINE :: 0xD070B0 // The machine and its devices.
 COLOR_NO_ENTRY :: 0xC8C058 // A module with no entry export: other modules import it.
 COLOR_RESOURCE :: 0x9AA8C8 // A resource of the boot image: a file that is not a module.
-COLOR_FAILED :: 0xF06060
-COLOR_NOT_USABLE :: 0x4A5563
-COLOR_TEXT :: 0xDCE4EC
-COLOR_DIM :: 0x7C8A99
+COLOR_FAILED :: 0xF06060 // A failure: a check that did not pass, a program that stopped on a fault.
+COLOR_NOT_USABLE :: 0x4A5563 // Something that is there and cannot be used: reserved memory, a disabled control.
+COLOR_TEXT :: 0xDCE4EC // The text.
+COLOR_DIM :: 0x7C8A99 // A text of less weight: a unit, a caption.
 
 // The desktop (section 9). The title bar of the window that has the focus
 // goes from COLOR_TITLE at the left to COLOR_TITLE_END at the right. The
@@ -44,8 +44,8 @@ COLOR_TITLE_END :: 0x162C45 // graphics.shade(COLOR_TITLE, 36).
 // blue itself white has only 4.29, under the 4.5 that a text needs. A
 // matched character of a chosen row is the reverse: this blue on white.
 COLOR_CHOSEN :: 0x3C76BB
-COLOR_TITLE_QUIET :: 0x2A3442
-COLOR_TITLE_QUIET_END :: 0x161D27
+COLOR_TITLE_QUIET :: 0x2A3442 // The left end of the title bar of a window that has not the focus.
+COLOR_TITLE_QUIET_END :: 0x161D27 // Its right end.
 // The concept "stop a program": the close button of a window, in a rich
 // red, so that the cross that closes a window is seen at once. A deep red,
 // not the coral of COLOR_FAILED: to stop a program is not a failure.
@@ -53,8 +53,8 @@ COLOR_STOP_PROGRAM :: 0xB82232 // On the window that has the focus.
 COLOR_STOP_PROGRAM_POINTER_OVER :: 0xE0343F // The pointer is over the button.
 COLOR_STOP_PROGRAM_QUIET :: 0x4E2229 // On a window that is not in front.
 COLOR_STOP_PROGRAM_QUIET_MARK :: 0xC09098 // The x on the quiet button.
-COLOR_BLACK :: 0x000000
-COLOR_WHITE :: 0xFFFFFF
+COLOR_BLACK :: 0x000000 // Black: no surface of the design uses it as a background.
+COLOR_WHITE :: 0xFFFFFF // White: a text on `COLOR_CHOSEN`.
 
 // mix gives a color between two colors: level 0 is the first, 255 the second.
 mix :: proc "contextless" (first, second: Color, level: u32) -> Color {

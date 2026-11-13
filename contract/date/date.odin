@@ -12,32 +12,42 @@
 //
 // The date of now is milliseconds_at_time_zero + the milliseconds of the
 // time page (system.time()): no kernel entry. The date is in UTC; the time
-// zone will be a setting of the person (not built). Leap seconds are not
+// zone will be a setting of the owner (not built). Leap seconds are not
 // counted: a day has 86400 seconds, as in the time of POSIX.
 //
 // A change: the writer makes change_count odd, writes the fields, makes it
 // even again. A reader copies the fields while change_count stays even and
 // the same (read). All zero is valid (ZII): no date is known.
+//
+// ```odin
+// if milliseconds, known := date.milliseconds_now(date.page_of(ctx), system.time()); known {
+// 	now := calendar.civil(milliseconds / 1000)
+// }
+// ```
+//
+// See [date page](term:date-page) and [date](term:date).
 package date
 
 import "base:intrinsics"
 import "contract:fixed_addresses"
 import op "contract:operation"
 
-PAGE_ADDRESS :: fixed_addresses.DATE_PAGE_ADDRESS
+PAGE_ADDRESS :: fixed_addresses.DATE_PAGE_ADDRESS // Where a program maps the date page.
 GRANT_PAGE :: 6 // The handle of the context of the program `date`: the page, with Read and Write.
 GRANT_PORTS :: 7 // The handle of the context of the program `date`: the ports 0x70 and 0x71 of the real-time clock.
 
+// Where the date of the page comes from.
 Source :: enum u32 {
 	None           = 0, // No date is known.
 	Real_Time_Clock = 1, // The real-time clock of the machine (CMOS), read at the start.
 }
 
+// The date page: what the program `date` writes and each program reads.
 Page :: struct {
 	change_count:              u32, // Even when the page is stable. Each change adds 2.
-	source:                    Source,
+	source:                    Source, // Where the date comes from. None: no date is known.
 	milliseconds_at_time_zero: i64, // Milliseconds since 1970-01-01 00:00:00 UTC at the time 0 of the system.
-	zone_offset_seconds:       i64, // The time zone of the person: 0, UTC, until the settings have it.
+	zone_offset_seconds:       i64, // The time zone of the owner: 0, UTC, until the settings have it.
 }
 #assert(size_of(Page) <= 4096)
 

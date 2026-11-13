@@ -32,7 +32,7 @@
 // This package allocates no memory and calls no kernel operation.
 package block
 
-BLOCK_SIZE :: 4096
+BLOCK_SIZE :: 4096 // The bytes of one block: the unit of each request.
 RING_CAPACITY :: 256 // The capacity of the block ring.
 
 // The role of the block ring in the context of a block service.
@@ -40,8 +40,9 @@ SERVICE_RING :: 0
 // The role of the block ring in the context of a client of a block service.
 GRANT_RING :: 6
 
+// A command of a client, as the kind of a command record of the block ring.
 Command :: enum u32 {
-	None       = 0,
+	None       = 0, // Not a command: Bad_Command.
 	// values[0]: the handle of the data region, as the block service names
 	// it. A new Attach replaces the region of the one before: send it when
 	// no request is in flight.
@@ -54,7 +55,7 @@ Command :: enum u32 {
 	// values[2]: the place in the data region, in bytes: a multiple of
 	// BLOCK_SIZE.
 	Read       = 3,
-	Write      = 4,
+	Write      = 4, // The values of Read: the blocks are written from the data region.
 	// The writes that completed before this command are on the disk when
 	// its completion arrives.
 	Flush      = 5,
@@ -68,7 +69,7 @@ Command :: enum u32 {
 // not Ok, the values of the completion are an error record
 // (errors.completion_record).
 Status :: enum u32 {
-	Ok           = 0,
+	Ok           = 0, // The request is done: the values are its results.
 	Bad_Command  = 1, // The command is not known, or a value is wrong.
 	Out_Of_Range = 2, // A block is not on the disk, or a byte is not in the data region.
 	No_Region    = 3, // No data region, or the handle did not come through the block ring.
@@ -89,6 +90,8 @@ COMMAND_NAMES := [Command]string {
 	.Statistics = "Statistics",
 }
 
+// command_name gives the name of a command from an error record, or "an
+// unknown command" for a number out of `Command`.
 command_name :: proc "contextless" (command: i64) -> string {
 	return command >= 0 && command <= i64(max(Command)) ? COMMAND_NAMES[Command(command)] : "an unknown command"
 }
