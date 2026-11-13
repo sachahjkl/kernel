@@ -296,7 +296,7 @@ snapshot_take :: proc "contextless" (memory: []u8, snapshot: ^Snapshot) -> (prob
 	copied := false
 	count: u32
 	for _ in 0 ..< SNAPSHOT_TRIES {
-		before := intrinsics.volatile_load(&header.change_count)
+		before := intrinsics.atomic_load_explicit(&header.change_count, .Acquire)
 		if before & 1 != 0 {
 			continue
 		}
@@ -312,7 +312,7 @@ snapshot_take :: proc "contextless" (memory: []u8, snapshot: ^Snapshot) -> (prob
 			return .Too_Many_Entries, 0
 		}
 		intrinsics.mem_copy_non_overlapping(&snapshot.entries[0], &memory[ENTRIES_OFFSET], int(count) * size_of(Entry))
-		if intrinsics.volatile_load(&header.change_count) == before {
+		if intrinsics.atomic_load_explicit(&header.change_count, .Acquire) == before {
 			snapshot.generation = before
 			copied = true
 			break

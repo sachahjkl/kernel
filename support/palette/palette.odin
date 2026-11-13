@@ -354,7 +354,9 @@ panel_adopt :: proc "contextless" (panel: ^Panel, list: ^List) -> Adoption {
 
 // panel_adopt_after is panel_adopt for a list that was made in the memory
 // of the list before: shown is what the panel showed, taken before.
-panel_adopt_after :: proc "contextless" (panel: ^Panel, list: ^List, shown: Shown) -> Adoption {
+panel_adopt_after :: proc "contextless" (panel: ^Panel, list: ^List, shown_before: Shown) -> Adoption {
+	// A copy that has an address: a parameter is not sliced.
+	shown := shown_before
 	panel.list = list
 	panel.pressed_row = NO_ROW
 	same_typed_part := panel.state != .Closed && shown.listed && string(shown.query[:shown.query_length]) == string(list.query[:clamp(list.query_length, 0, TYPED_CAPACITY)])

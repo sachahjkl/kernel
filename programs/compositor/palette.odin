@@ -225,7 +225,7 @@ palette_wait :: proc "contextless" (wait: ^system.Wait) {
 palette_turn :: proc "contextless" () {
 	if palette_provider_ring.head != nil {
 		header := (^palette_table.Header)(raw_data(palette_ranking.table))
-		if generation := intrinsics.volatile_load(&header.change_count); generation != palette_generation_seen {
+		if generation := intrinsics.atomic_load_explicit(&header.change_count, .Acquire); generation != palette_generation_seen {
 			palette_generation_seen = generation
 			palette_entries_refresh()
 		}
