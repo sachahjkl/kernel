@@ -1476,12 +1476,14 @@ debug_refusing_grant :: proc "contextless" (caller: ^Started, target: ^Started) 
 //   service started for the program alone, and its ring;
 // - Network: an endpoint names its own remote and its own ports;
 // - Connect: the services that a program can connect to are its own list;
-// - Principals: a ring of its own, and the records of the principals.
+// - Principals: a ring of its own, and the records of the principals;
+// - Debugger: a ring of its own, and the debuggings of its callers;
+// - System_Part: handles that no other grant names.
 // Each other grant reaches one thing that each of its holders reaches: the
 // machine by its rights, the boot image, the debug image, the replacement
 // table, the settings page, the date page, the records of the log, the
 // commands of the root ring.
-GRANTS_OF_ONE_PROGRAM :: bit_set[Grant]{.Serve, .Terminal, .Store, .History_Store, .Data_Disk, .Scratch_Disk, .Network_Device, .Network, .Connect, .Principals}
+GRANTS_OF_ONE_PROGRAM :: bit_set[Grant]{.Serve, .Terminal, .Store, .History_Store, .Data_Disk, .Scratch_Disk, .Network_Device, .Network, .Connect, .Principals, .Debugger, .System_Part}
 
 // debug gives the debugger service the handle of the program with a name,
 // with the right Debug and no other, on behalf of one of its callers:

@@ -240,7 +240,8 @@ root_request_put :: proc "contextless" (request: ^Root_Request) -> bool {
 // completion of an end needs nothing. A completion that gives a debug
 // access after its export stopped waiting: the handle is closed, and the
 // root service is told that the access ended, so that no handle and no
-// record of the root service stays.
+// record of the root service stays; it is not told when a newer debugging
+// or a newer request of the same caller for the same program exists.
 root_completion_take :: proc "contextless" (record: ring.Record) {
 	for &item in root_requests {
 		if item.tag == 0 || item.tag != record.tag {
@@ -256,6 +257,23 @@ root_completion_take :: proc "contextless" (record: ring.Record) {
 			system.close(handle)
 		}
 		name := string(request.name[:request.name_count])
+		// The same caller can have asked again for the same program since:
+		// the root service keeps one record for the two handles, and an
+		// end command ends each handle of the program in this service.
+		// So, with a session or another request for that program and that
+		// ring, only the late handle is closed: the kernel ends a
+		// debugging at the close of the last handle with Debug, and the
+		// session holds another one.
+		in_use := session.attached && session.caller_ring == request.ring && session_name() == name
+		for &other in root_requests {
+			if other.tag != 0 && !other.end && other.ring == request.ring && string(other.name[:other.name_count]) == name {
+				in_use = true
+			}
+		}
+		if in_use {
+			system.log("debugger: the root service answered an earlier attach to ", system.Module_Name{name}, " after the export stopped waiting: its handle is closed, and the debugging that runs stays")
+			return
+		}
 		system.log("debugger: the root service answered the attach to ", system.Module_Name{name}, " after the export stopped waiting: the debug access is given back")
 		root_request_send(name, request.ring, true)
 		return

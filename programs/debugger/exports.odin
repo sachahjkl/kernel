@@ -1115,30 +1115,30 @@ break_remove :: proc "c" (number: i64, result: ^[]Break_Row, error: ^errors.Erro
 // next stop until a deadline. `stepped` is false when the thread did not
 // stop in time: a thread in a wait of the kernel runs its next instruction
 // only when its wait ends; its stop then comes as an event.
-step_one :: proc "contextless" (number: u64, deadline: u64) -> (stepped: bool, status: system.Status) {
+step_one :: proc "contextless" (number: u64, deadline: u64) -> (stepped: bool, at_breakpoint: bool, status: system.Status) {
 	image_of_thread: op.Thread_Registers
 	image_of_thread, status = system.thread_registers_read(session.program, number)
 	if status != .Ok {
-		return false, status
+		return false, false, status
 	}
 	image_of_thread.rflags |= FLAG_TRAP
 	status = system.thread_registers_write(session.program, number, image_of_thread)
 	if status != .Ok {
-		return false, status
+		return false, false, status
 	}
 	session.threads[number].stepping = true
 	status = thread_release(number)
 	if status != .Ok {
-		return false, status
+		return false, false, status
 	}
 	for {
 		record, came := system.fault_record_next(deadline)
 		if !came {
-			return false, .Ok
+			return false, false, .Ok
 		}
 		record_keep(record, record.thread == number)
 		if record.thread == number {
-			return true, .Ok
+			return true, record.kind == .Debug && record.error_code & op.DEBUG_STATUS_BREAKPOINTS != 0, .Ok
 		}
 	}
 }
@@ -1170,7 +1170,7 @@ step :: proc "c" (thread: i64, result: ^[]Thread_Row, error: ^errors.Error_Recor
 	if failure != 0 {
 		return failure
 	}
-	stepped, status := step_one(number, system.time() + STEP_WAIT_MILLISECONDS)
+	stepped, _, status := step_one(number, system.time() + STEP_WAIT_MILLISECONDS)
 	if status != .Ok {
 		return refused(error, status)
 	}
@@ -1181,7 +1181,10 @@ step :: proc "c" (thread: i64, result: ^[]Thread_Row, error: ^errors.Error_Recor
 //
 // It runs one instruction at a time, until the instruction has a source
 // line that is not the line of the start, in the same file or in another:
-// it enters a procedure that the line calls. The whole export has two
+// it enters a procedure that the line calls. A breakpoint or a watch that
+// the thread reaches before the line changes ends the export there: the
+// row is the row of the thread at the breakpoint, with `pending` 0, and
+// the stop is also an event. The whole export has two
 // bounds: 4096 instructions, and 2000 ms, because the debugged program
 // chooses how long one of its instructions takes and the service serves
 // each caller with one thread. At a bound the row has `pending` 1: the
@@ -1216,12 +1219,18 @@ step_line :: proc "c" (thread: i64, result: ^[]Thread_Row, error: ^errors.Error_
 		if system.time() >= deadline {
 			break
 		}
-		stepped: bool
-		stepped, status = step_one(number, deadline)
+		stepped, at_breakpoint: bool
+		stepped, at_breakpoint, status = step_one(number, deadline)
 		if status != .Ok {
 			return refused(error, status)
 		}
 		if !stepped {
+			break
+		}
+		// A breakpoint or a watch that the thread reached: it stops
+		// there, as it does with no step, and the stop is an event.
+		if at_breakpoint {
+			pending = 0
 			break
 		}
 		image_of_thread, status = system.thread_registers_read(session.program, number)
